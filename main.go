@@ -1,9 +1,12 @@
 package main
 
 import (
+	"crypto/md5"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -16,6 +19,11 @@ import (
 
 const logLevel = logs.ErrorLevel
 
+type checksummedFile struct {
+	path string
+	md5  string
+}
+
 func main() {
 	basenames := os.Args[1:]
 	idir := "/lustre/scratch123/hgi/teams/hgi/sb10/irods"
@@ -24,77 +32,74 @@ func main() {
 	setupLogger()
 
 	pool := ex.NewClientPool(ex.DefaultClientPoolParams, "")
+	defer pool.Close()
 
-	putClient, err := pool.Get()
+	client, err := pool.Get()
 	if err != nil {
 		fmt.Printf("start up failure: %s\n", err)
 		os.Exit(1)
 	}
 
-	_, err = putClient.MkDir(ex.Args{}, ex.RodsItem{IPath: ipath})
+	defer client.Stop()
+
+	_, err = client.MkDir(ex.Args{}, ex.RodsItem{IPath: ipath})
 	if err != nil {
 		fmt.Printf("MkDir failure: %s\n", err)
 		os.Exit(1)
 	}
 
+	cfCh := make(chan checksummedFile, len(basenames))
 	errCh := make(chan error, len(basenames))
-	metaCh := make(chan ex.RodsItem, len(basenames))
 	var wg sync.WaitGroup
-	wg.Add(1)
+
+	for _, basename := range basenames {
+		source := filepath.Join(idir, basename)
+		wg.Add(1)
+
+		go func(path string) {
+			defer wg.Done()
+
+			md5, err := calculateMD5ChecksumOfFile(path)
+			if err != nil {
+				errCh <- err
+			} else {
+				cfCh <- checksummedFile{path, md5}
+			}
+		}(source)
+	}
+
+	var wg2 sync.WaitGroup
+	wg2.Add(1)
 
 	go func() {
-		defer wg.Done()
+		defer wg2.Done()
 
-		metaClient, errg := pool.Get()
-		if errg != nil {
-			fmt.Printf("start up failure: %s\n", errg)
-			os.Exit(1)
-		}
+		for cf := range cfCh {
+			_, err = ex.ArchiveDataObject(
+				client,
+				cf.path,
+				filepath.Join(ipath, filepath.Base(cf.path)),
+				cf.md5,
+				[]ex.AVU{
+					{Attr: "archive-date", Value: "2022-09-27"},
+					{Attr: "archived-by", Value: "ibackup-v0"},
+				},
+			)
 
-		defer metaClient.Stop()
-
-		for item := range metaCh {
-			item.IAVUs = []ex.AVU{
-				{Attr: "archive-date", Value: "2022-09-27"},
-				{Attr: "archived-by", Value: "ibackup-v0"},
-			}
-
-			_, errm := metaClient.MetaAdd(ex.Args{}, item)
-			if errm != nil {
-				errCh <- errm
+			if err != nil {
+				errCh <- err
 			}
 		}
 	}()
 
-	for _, basename := range basenames {
-		items, errp := putClient.Put(ex.Args{}, ex.RodsItem{
-			IDirectory: idir,
-			IFile:      basename,
-			IPath:      ipath,
-			IName:      basename,
-		})
-		if errp != nil {
-			errCh <- errp
-
-			continue
-		}
-
-		checksum, errl := putClient.ListChecksum(items[0])
-		fmt.Printf("%s (%s)\n", checksum, errl)
-
-		metaCh <- items[0]
-	}
-
-	close(metaCh)
 	wg.Wait()
+	close(cfCh)
+	wg2.Wait()
 	close(errCh)
 
 	for err := range errCh {
 		fmt.Printf("error: %s\n", err)
 	}
-
-	putClient.Stop()
-	pool.Close()
 }
 
 func setupLogger() logs.Logger {
@@ -108,4 +113,20 @@ func setupLogger() logs.Logger {
 	logger := zlog.New(zerolog.SyncWriter(writer), logLevel)
 
 	return logs.InstallLogger(logger)
+}
+
+func calculateMD5ChecksumOfFile(path string) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+
+	defer file.Close()
+
+	hash := md5.New()
+	_, err = io.Copy(hash, file)
+
+	hashInBytes := hash.Sum(nil)[:16]
+
+	return hex.EncodeToString(hashInBytes), err
 }
