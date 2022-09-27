@@ -51,6 +51,8 @@ func main() {
 			os.Exit(1)
 		}
 
+		defer metaClient.Stop()
+
 		for item := range metaCh {
 			item.IAVUs = []ex.AVU{
 				{Attr: "archive-date", Value: "2022-09-27"},
@@ -77,6 +79,9 @@ func main() {
 			continue
 		}
 
+		checksum, errl := putClient.ListChecksum(items[0])
+		fmt.Printf("%s (%s)\n", checksum, errl)
+
 		metaCh <- items[0]
 	}
 
@@ -87,6 +92,9 @@ func main() {
 	for err := range errCh {
 		fmt.Printf("error: %s\n", err)
 	}
+
+	putClient.Stop()
+	pool.Close()
 }
 
 func setupLogger() logs.Logger {
