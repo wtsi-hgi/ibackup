@@ -37,7 +37,7 @@ func main() {
 	_, err = putClient.MkDir(ex.Args{}, ex.RodsItem{IPath: ipath})
 	if err != nil {
 		fmt.Printf("MkDir failure: %s\n", err)
-		os.Exit(1)
+		// os.Exit(1)
 	}
 
 	errCh := make(chan error, len(basenames))
@@ -57,12 +57,14 @@ func main() {
 		defer metaClient.Stop()
 
 		for item := range metaCh {
-			item.IAVUs = []ex.AVU{
+			// errm := item.ReplaceMetadata([]ex.AVU{
+			// 	{Attr: "archive-date", Value: "2022-09-27"},
+			// 	{Attr: "archived-by", Value: "ibackup-v0"},
+			// })
+			errm := ReplaceMetadata(metaClient, &item, []ex.AVU{
 				{Attr: "archive-date", Value: "2022-09-27"},
 				{Attr: "archived-by", Value: "ibackup-v0"},
-			}
-
-			_, errm := metaClient.MetaAdd(ex.Args{}, item)
+			})
 			if errm != nil {
 				errCh <- errm
 			}
@@ -88,7 +90,6 @@ func main() {
 			continue
 		}
 
-		// checksum, errl := putClient.ListChecksum(items[0])
 		fmt.Printf("%s\n", items[0].IChecksum)
 
 		metaCh <- items[0]
@@ -114,4 +115,54 @@ func setupLogger() logs.Logger {
 	logger := zlog.New(zerolog.SyncWriter(writer), logLevel)
 
 	return logs.InstallLogger(logger)
+}
+
+func ReplaceMetadata(client *ex.Client, item *ex.RodsItem, avus []ex.AVU) error {
+	// Attributes whose AVUs are to be replaced
+	repAttrs := make(map[string]struct{})
+	for _, avu := range avus {
+		repAttrs[avu.Attr] = struct{}{}
+	}
+
+	it, err := client.ListItem(ex.Args{AVU: true}, *item)
+	if err != nil {
+		return err
+	}
+	item.IAVUs = it.IAVUs
+	currentAVUs := item.IAVUs
+
+	// These are in the both the existing and replacement sets. Avoid removing
+	// them.
+	toKeep := ex.SetIntersectAVUs(avus, currentAVUs)
+
+	var toRemove []ex.AVU
+	for _, avu := range currentAVUs {
+		if _, ok := repAttrs[avu.Attr]; ok {
+			if !ex.SearchAVU(avu, toKeep) {
+				toRemove = append(toRemove, avu)
+			}
+		}
+	}
+
+	toAdd := ex.SetDiffAVUs(avus, toKeep)
+
+	rem := ex.CopyRodsItem(*item)
+	rem.IAVUs = toRemove
+
+	if len(toRemove) > 0 {
+		if _, err := client.MetaRem(ex.Args{}, rem); err != nil {
+			return err
+		}
+	}
+
+	if len(toAdd) > 0 {
+		add := ex.CopyRodsItem(*item)
+		add.IAVUs = toAdd
+
+		if _, err := client.MetaAdd(ex.Args{}, add); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
