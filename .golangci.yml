@@ -1,0 +1,169 @@
+run:
+  deadline: 4m
+  build-tags:
+    - netgo
+  modules-download-mode: readonly
+
+linters-settings:
+  dupl:
+    threshold: 100
+  errcheck:
+    check-type-assertions: true
+    check-blank: true
+  exhaustive:
+    default-signifies-exhaustive: true
+  funlen:
+    lines: 30
+    statements: 20
+  gocognit:
+    min-complexity: 9
+  gocyclo:
+    min-complexity: 7
+  gomnd:
+    ignored-functions:
+      - 'strconv.Parse*'
+  govet:
+    check-shadowing: true
+    enable-all: true
+    disable-all: false
+    disable:
+      - fieldalignment
+  lll:
+    line-length: 120
+  misspell:
+    locale: UK
+  nakedret:
+    max-func-lines: 20
+  nestif:
+    min-complexity: 2
+  prealloc:
+    simple: true
+    range-loops: true
+    for-loops: true
+  unparam:
+    check-exported: true
+  unused:
+    check-exported: false
+  whitespace:
+    multi-if: true
+    multi-func: false
+  wsl:
+    allow-cuddle-declarations: false
+    force-err-cuddling: true
+
+issues:
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - funlen
+        - maintidx
+        - contextcheck
+    - path: cmd
+      linters:
+        - gochecknoinits
+        - gochecknoglobals
+        - dupl
+        - forbidigo
+    - path: version\.go
+      linters:
+        - forbidigo
+    - path: groupuser\.go
+      linters:
+        - dupl
+    - path: usergroup\.go
+      linters:
+        - dupl
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  new-from-rev: main
+
+linters:
+  disable-all: true
+  enable:
+    - deadcode
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - structcheck
+    - typecheck
+    - unused
+    - varcheck
+    - containedctx
+    - contextcheck
+    - cyclop
+    - dogsled
+    - dupl
+    - durationcheck
+    - errname
+    - errorlint
+    - exportloopref
+    - exhaustive
+    - forbidigo
+    - forcetypeassert
+    - funlen
+    - gci
+    - gochecknoglobals
+    - gochecknoinits
+    - gocognit
+    - goconst
+    - gocritic
+    - gocyclo
+    - godot
+    - godox
+    - goerr113
+    - goimports
+    - gomnd
+    - gosec
+    - importas
+    - lll
+    - maintidx
+    - makezero
+    - misspell
+    - nakedret
+    - nestif
+    - nilerr
+    - nilnil
+    - nlreturn
+    - noctx
+    - nolintlint
+    - prealloc
+    - predeclared
+    - revive
+    - rowserrcheck
+    - stylecheck
+    - tenv
+    - thelper
+    - unconvert
+    - unparam
+    - wastedassign
+    - whitespace
+    - wsl
+  # disable:
+  #   - asciicheck
+  #   - bidichk
+  #   - bodyclose
+  #   - decorder
+  #   - depguard
+  #   - errchkjson
+  #   - exhaustivestruct
+  #   - gofmt
+  #   - gofumpt
+  #   - goheader
+  #   - gomoddirectives
+  #   - gomodguard
+  #   - goprintffuncname
+  #   - grouper
+  #   - ifshort
+  #   - interfacer
+  #   - ireturn
+  #   - paralleltest
+  #   - promlinter
+  #   - revive
+  #   - sqlclosecheck
+  #   - tagliatelle
+  #   - testpackage
+  #   - tparallel
+  #   - varnamelen
+  #   - wrapcheck

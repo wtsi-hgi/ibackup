@@ -23,14 +23,28 @@
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  ******************************************************************************/
 
-// package main is the access point to our cmd package sub-commands.
-
-package main
+package cmd
 
 import (
-	"github.com/wtsi-hgi/ibackup/cmd"
+	"fmt"
+
+	"github.com/spf13/cobra"
 )
 
-func main() {
-	cmd.Execute()
+// Version gets set during build:
+// go build -ldflags "-X github.com/wtsi-hgi/ibackup/cmd.Version=`git describe --tags --always --long --dirty`" .
+var Version string
+
+// versionCmd represents the version command.
+var versionCmd = &cobra.Command{
+	Use:   "version",
+	Short: "Print ibackup version",
+	Long:  `Print ibackup version.`,
+	Run: func(cmd *cobra.Command, args []string) {
+		fmt.Println(Version)
+	},
+}
+
+func init() {
+	RootCmd.AddCommand(versionCmd)
 }
