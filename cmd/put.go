@@ -30,39 +30,22 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
-	"sync"
-	"time"
 
-	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
-	ex "github.com/wtsi-npg/extendo/v2"
-	logs "github.com/wtsi-npg/logshim"
-	"github.com/wtsi-npg/logshim-zerolog/zlog"
-	"golang.org/x/term"
+	"github.com/wtsi-hgi/ibackup/put"
 )
 
-type Error string
-
-func (e Error) Error() string { return string(e) }
-
 const (
-	errPutFailure = Error("one or more put operations failed")
-
 	// maxScanTokenSize defines the size of bufio scan's buffer, enabling us to
 	// parse very long lines - longer than the max length of of 2 file paths,
 	// plus lots extra for metadata.
 	maxScanTokenSize = 4096 * 1024
 
-	putFileCols      = 3
-	putFileMinCols   = 2
-	putMetaParts     = 2
-	numBatonClients  = 2
-	minDirsForUnique = 2
+	putFileCols    = 3
+	putFileMinCols = 2
+	putMetaParts   = 2
 )
-
-const logLevel = logs.ErrorLevel
 
 // options for this cmd.
 var putFile string
@@ -102,9 +85,29 @@ you, so should this.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		requests := parsePutFile(putFile, putMeta)
 
-		err := put(requests)
+		handler, err := put.GetBatonHandler()
 		if err != nil {
 			die("%s", err)
+		}
+
+		p, err := put.New(handler, requests)
+		if err != nil {
+			die("%s", err)
+		}
+
+		err = p.CreateCollections()
+		if err != nil {
+			die("%s", err)
+		}
+
+		failed := p.Put()
+
+		for _, fail := range failed {
+			warn("%s failed: %s", fail.Local, fail.Error)
+		}
+
+		if len(failed) > 0 {
+			os.Exit(1)
 		}
 	},
 }
@@ -119,39 +122,13 @@ func init() {
 		"key:val;key:val default metadata to apply to -f rows lacking column 3")
 }
 
-type PutRequest struct {
-	Local  string
-	Remote string
-	Meta   map[string]string
-}
-
-func (p *PutRequest) ToRodsItem() *ex.RodsItem {
-	avus := make([]ex.AVU, len(p.Meta))
-
-	i := 0
-
-	for k, v := range p.Meta {
-		avus[i].Attr = k
-		avus[i].Value = v
-		i++
-	}
-
-	return &ex.RodsItem{
-		IDirectory: filepath.Dir(p.Local),
-		IFile:      filepath.Base(p.Local),
-		IPath:      filepath.Dir(p.Remote),
-		IName:      filepath.Base(p.Remote),
-		IAVUs:      avus,
-	}
-}
-
-func parsePutFile(path string, meta string) []*PutRequest {
+func parsePutFile(path string, meta string) []*put.Request {
 	defaultMeta := parseMetaString(meta)
 	scanner, df := createScannerForFile(path)
 
 	defer df()
 
-	var prs []*PutRequest //nolint:prealloc
+	var prs []*put.Request //nolint:prealloc
 
 	lineNum := 0
 	for scanner.Scan() {
@@ -222,7 +199,7 @@ func openPutFile(path string) (io.Reader, func()) {
 	}
 }
 
-func parsePutFileLine(line string, lineNum int, defaultMeta map[string]string) *PutRequest {
+func parsePutFileLine(line string, lineNum int, defaultMeta map[string]string) *put.Request {
 	cols := strings.Split(line, "\t")
 	colsn := len(cols)
 
@@ -242,7 +219,11 @@ func parsePutFileLine(line string, lineNum int, defaultMeta map[string]string) *
 		meta = parseMetaString(cols[2])
 	}
 
-	return &PutRequest{local, cols[1], meta}
+	return &put.Request{
+		Local:  local,
+		Remote: cols[1],
+		Meta:   meta,
+	}
 }
 
 func checkPutFileCols(cols int, lineNum int) {
@@ -264,283 +245,4 @@ func checkPutFilePathAbsolute(path string, lineNum int) {
 	if !filepath.IsAbs(path) {
 		die("line %d has non-absolute iRODS path '%s'", lineNum, path)
 	}
-}
-
-func put(requests []*PutRequest) error {
-	clients, df, err := getBatonClients(numBatonClients)
-	if err != nil {
-		return err
-	}
-
-	defer df()
-
-	err = createCollections(clients[0], requests)
-	if err != nil {
-		return err
-	}
-
-	errCh := putFilesInIRODS(clients, requests)
-
-	var hadErrors bool
-
-	for err := range errCh {
-		warn("error: %s", err)
-
-		hadErrors = true
-	}
-
-	if hadErrors {
-		return errPutFailure
-	}
-
-	return nil
-}
-
-func setupLogger() logs.Logger {
-	var writer io.Writer
-	if term.IsTerminal(int(os.Stdout.Fd())) {
-		writer = zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: time.RFC3339}
-	} else {
-		writer = os.Stderr
-	}
-
-	logger := zlog.New(zerolog.SyncWriter(writer), logLevel)
-
-	return logs.InstallLogger(logger)
-}
-
-func getBatonClients(n int) ([]*ex.Client, func(), error) {
-	setupLogger()
-
-	pool := ex.NewClientPool(ex.DefaultClientPoolParams, "")
-
-	clientCh, err := getClientsFromPoolConcurrently(pool, n)
-
-	clients := make([]*ex.Client, n)
-
-	i := 0
-
-	for client := range clientCh {
-		clients[i] = client
-		i++
-	}
-
-	return clients, stopBatonClientsAndClosePool(pool, clients), err
-}
-
-func getClientsFromPoolConcurrently(pool *ex.ClientPool, n int) (chan *ex.Client, error) {
-	clientCh := make(chan *ex.Client, n)
-	errCh := make(chan error, n)
-
-	var wg sync.WaitGroup
-
-	for i := 0; i < n; i++ {
-		wg.Add(1)
-
-		go func() {
-			defer wg.Done()
-
-			client, err := pool.Get()
-			if err != nil {
-				errCh <- err
-			}
-
-			clientCh <- client
-		}()
-	}
-
-	wg.Wait()
-	close(errCh)
-	close(clientCh)
-
-	return clientCh, <-errCh
-}
-
-// stopBatonClientsAndClosePool returns a function you can defer that will stop
-// the given clients and close the pool.
-func stopBatonClientsAndClosePool(pool *ex.ClientPool, clients []*ex.Client) func() {
-	return func() {
-		for _, client := range clients {
-			errs := client.Stop()
-			if errs != nil {
-				warn("client stop failure: %s", errs)
-			}
-		}
-
-		pool.Close()
-	}
-}
-
-// createCollections creates all the unique leaf collections in the Remotes of
-// the given requests. Double-checks they really got created, because it doesn't
-// always seem to work.
-func createCollections(client *ex.Client, requests []*PutRequest) error {
-	dirs := getUniqueRequestLeafCollections(requests)
-	args := ex.Args{}
-
-	for _, dir := range dirs {
-		ri := ex.RodsItem{IPath: dir}
-
-		if _, err := client.ListItem(args, ri); err == nil {
-			continue
-		}
-
-		if _, err := client.MkDir(args, ri); err != nil {
-			return err
-		}
-
-		if _, err := client.ListItem(args, ri); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-func getUniqueRequestLeafCollections(requests []*PutRequest) []string {
-	dirs := getSortedRequestCollections(requests)
-	if len(dirs) < minDirsForUnique {
-		return dirs
-	}
-
-	var uniqueLeafs []string //nolint:prealloc
-
-	previous, dirs := dirs[0], dirs[1:]
-
-	for _, dir := range dirs {
-		if dir == previous || strings.HasPrefix(dir, previous+"/") {
-			previous = dir
-
-			continue
-		}
-
-		uniqueLeafs = append(uniqueLeafs, previous)
-		previous = dir
-	}
-
-	if noLeavesOrNewLeaf(uniqueLeafs, previous) {
-		uniqueLeafs = append(uniqueLeafs, previous)
-	}
-
-	return uniqueLeafs
-}
-
-func noLeavesOrNewLeaf(uniqueLeafs []string, last string) bool {
-	return len(uniqueLeafs) == 0 || last != uniqueLeafs[len(uniqueLeafs)-1]
-}
-
-func getSortedRequestCollections(requests []*PutRequest) []string {
-	dirs := make([]string, len(requests))
-
-	for i, request := range requests {
-		dirs[i] = filepath.Dir(request.Remote)
-	}
-
-	sort.Strings(dirs)
-
-	return dirs
-}
-
-func putFilesInIRODS(clients []*ex.Client, requests []*PutRequest) chan error {
-	errCh := make(chan error, len(requests))
-	metaCh := make(chan ex.RodsItem, len(requests))
-
-	metaDoneCh := applyMetadataConcurrently(clients[1], metaCh, errCh)
-
-	for _, pr := range requests {
-		items, errp := clients[0].Put(
-			ex.Args{
-				Force:    true,
-				Checksum: true,
-			},
-			*pr.ToRodsItem(),
-		)
-		if errp != nil {
-			errCh <- errp
-
-			continue
-		}
-
-		info("%s", items[0].IChecksum)
-
-		metaCh <- items[0]
-	}
-
-	close(metaCh)
-	<-metaDoneCh
-	close(errCh)
-
-	return errCh
-}
-
-func applyMetadataConcurrently(client *ex.Client, metaCh chan ex.RodsItem, errCh chan error) chan struct{} {
-	doneCh := make(chan struct{})
-
-	go func() {
-		for item := range metaCh {
-			errm := replaceMetadata(client, &item, item.IAVUs)
-			if errm != nil {
-				errCh <- errm
-			}
-		}
-
-		close(doneCh)
-	}()
-
-	return doneCh
-}
-
-func replaceMetadata(client *ex.Client, item *ex.RodsItem, avus []ex.AVU) error {
-	it, err := client.ListItem(ex.Args{AVU: true}, *item)
-	if err != nil {
-		return err
-	}
-
-	item.IAVUs = it.IAVUs
-	currentAVUs := item.IAVUs
-
-	toKeep := ex.SetIntersectAVUs(avus, currentAVUs)
-
-	if err = removeUnneededAVUs(client, item, avus, currentAVUs, toKeep); err != nil {
-		return err
-	}
-
-	toAdd := ex.SetDiffAVUs(avus, toKeep)
-
-	if len(toAdd) > 0 {
-		add := ex.CopyRodsItem(*item)
-		add.IAVUs = toAdd
-
-		if _, err := client.MetaAdd(ex.Args{}, add); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-func removeUnneededAVUs(client *ex.Client, item *ex.RodsItem, newAVUs, currentAVUs, toKeep []ex.AVU) error {
-	repAttrs := make(map[string]struct{})
-	for _, avu := range newAVUs {
-		repAttrs[avu.Attr] = struct{}{}
-	}
-
-	var toRemove []ex.AVU
-
-	for _, avu := range currentAVUs {
-		if _, ok := repAttrs[avu.Attr]; ok && !ex.SearchAVU(avu, toKeep) {
-			toRemove = append(toRemove, avu)
-		}
-	}
-
-	rem := ex.CopyRodsItem(*item)
-	rem.IAVUs = toRemove
-
-	if len(toRemove) > 0 {
-		if _, err := client.MetaRem(ex.Args{}, rem); err != nil {
-			return err
-		}
-	}
-
-	return nil
 }

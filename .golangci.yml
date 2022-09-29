@@ -58,6 +58,8 @@ issues:
         - funlen
         - maintidx
         - contextcheck
+        - gocognit
+        - gocyclo
     - path: cmd
       linters:
         - gochecknoinits
