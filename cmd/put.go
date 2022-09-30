@@ -174,8 +174,9 @@ func createScannerForFile(path string) (*bufio.Scanner, func()) {
 
 	if path == "-" {
 		reader = os.Stdin
+		dfunc = func() {}
 	} else {
-		reader, dfunc = openPutFile(path)
+		reader, dfunc = openFile(path)
 	}
 
 	scanner := bufio.NewScanner(reader)
@@ -185,9 +186,9 @@ func createScannerForFile(path string) (*bufio.Scanner, func()) {
 	return scanner, dfunc
 }
 
-// openPutFile opens the given path, and returns it as an io.Reader along with a
+// openFile opens the given path, and returns it as an io.Reader along with a
 // function you should defer (to close the file).
-func openPutFile(path string) (io.Reader, func()) {
+func openFile(path string) (io.Reader, func()) {
 	file, err := os.Open(path)
 	if err != nil {
 		die("could not open file '%s': %s", path, err)
