@@ -78,32 +78,6 @@ type Handler interface {
 	ReplaceMetadata(request *Request) error
 }
 
-// Request represents a local file you would like transferred to a remote iRODS
-// path, and the metadata you'd like to associate with it.
-type Request struct {
-	Local  string
-	Remote string
-	Meta   map[string]string
-	Error  error
-}
-
-// ValidatePaths checks that both Local and Remote paths are absolute. (It does
-// NOT check that either path exists.)
-func (r *Request) ValidatePaths() error {
-	local, err := filepath.Abs(r.Local)
-	if err != nil {
-		return Error{ErrLocalNotAbs, r.Local}
-	}
-
-	r.Local = local
-
-	if !filepath.IsAbs(r.Remote) {
-		return Error{ErrRemoteNotAbs, r.Remote}
-	}
-
-	return nil
-}
-
 // Putter is used to Put() files in iRODS.
 type Putter struct {
 	handler  Handler

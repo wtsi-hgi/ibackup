@@ -27,17 +27,15 @@ package cmd
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/wtsi-hgi/ibackup/put"
 )
 
 // options for this cmd.
 var arFile string
 var arPrefix string
-var localPrefix string
-var remotePrefix string
 var arHumgen bool
 
 const arPrefixParts = 2
@@ -84,13 +82,12 @@ option to do a more complex transformation from local "lustre" paths to the
 			die("you must specify one of --prefix and --humgen")
 		}
 
-		tf := humgenTransform
+		pt := put.HumgenTransformer
 		if arPrefix != "" {
-			preparePrefix(arPrefix)
-			tf = prefixTransform
+			pt = makePrefixTransformer(arPrefix)
 		}
 
-		transformARFile(arFile, tf)
+		transformARFile(arFile, pt)
 	},
 }
 
@@ -106,56 +103,33 @@ func init() {
 		"generate the humgen zone canonical path for lustre paths")
 }
 
-func humgenTransform(local string) string {
-	parts := strings.Split(local, "/")
-	ptPart := -1
-
-	for i, part := range parts {
-		if part == "projects" || part == "teams" || part == "users" {
-			ptPart = i
-
-			break
-		}
-	}
-
-	if parts[1] != "lustre" || ptPart < 4 || ptPart+2 > len(parts)-1 {
-		die("'%s' is not a valid humgen lustre path", local)
-	}
-
-	return fmt.Sprintf("/humgen/%s/%s/%s/%s", parts[ptPart], parts[ptPart+1], parts[2],
-		strings.Join(parts[ptPart+2:], "/"))
-}
-
-func preparePrefix(def string) {
+func makePrefixTransformer(def string) put.PathTransformer {
 	parts := strings.Split(def, ":")
 	if len(parts) != arPrefixParts {
 		die("'%s' wrong format, must be like '/local/prefix:/remote/prefix'", def)
 	}
 
-	localPrefix = parts[0]
-	remotePrefix = parts[1]
+	return put.PrefixTransformer(parts[0], parts[1])
 }
 
-func prefixTransform(local string) string {
-	remote := strings.Replace(local, localPrefix, remotePrefix, 1)
-
-	if remote == local {
-		remote = filepath.Join(remotePrefix, local)
-	}
-
-	return remote
-}
-
-type transformFunc func(string) string
-
-func transformARFile(path string, tf transformFunc) {
+func transformARFile(path string, pt put.PathTransformer) {
 	scanner, df := createScannerForFile(path)
 	defer df()
 
 	for scanner.Scan() {
 		local := scanner.Text()
-		remote := tf(local)
-		fmt.Printf("%s\t%s\n", local, remote)
+
+		r, err := put.NewRequestWithTransformedLocal(local, pt)
+		if err != nil {
+			die("%s", err)
+		}
+
+		err = r.ValidatePaths()
+		if err != nil {
+			die("%s", err)
+		}
+
+		fmt.Printf("%s\t%s\n", r.Local, r.Remote)
 	}
 
 	serr := scanner.Err()
