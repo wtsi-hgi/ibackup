@@ -29,7 +29,6 @@ import (
 	"bufio"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -209,10 +208,6 @@ func parsePutFileLine(line string, lineNum int, defaultMeta map[string]string) *
 
 	checkPutFileCols(colsn, lineNum)
 
-	local := makePutFilePathAbsolute(cols[0], lineNum)
-
-	checkPutFilePathAbsolute(cols[1], lineNum)
-
 	meta := defaultMeta
 
 	if colsn == putFileCols && cols[2] != "" {
@@ -220,7 +215,7 @@ func parsePutFileLine(line string, lineNum int, defaultMeta map[string]string) *
 	}
 
 	return &put.Request{
-		Local:  local,
+		Local:  cols[0],
 		Remote: cols[1],
 		Meta:   meta,
 	}
@@ -229,20 +224,5 @@ func parsePutFileLine(line string, lineNum int, defaultMeta map[string]string) *
 func checkPutFileCols(cols int, lineNum int) {
 	if cols > putFileCols {
 		die("line %d has too many columns; check `ibackup put -h`", lineNum)
-	}
-}
-
-func makePutFilePathAbsolute(path string, lineNum int) string {
-	local, err := filepath.Abs(path)
-	if err != nil {
-		die("line %d has an invalid local path '%s': %s", lineNum, path, err)
-	}
-
-	return local
-}
-
-func checkPutFilePathAbsolute(path string, lineNum int) {
-	if !filepath.IsAbs(path) {
-		die("line %d has non-absolute iRODS path '%s'", lineNum, path)
 	}
 }

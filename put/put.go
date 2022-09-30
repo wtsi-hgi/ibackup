@@ -28,12 +28,30 @@
 package put
 
 import (
+	"fmt"
 	"path/filepath"
 	"sort"
 	"strings"
 )
 
-const minDirsForUnique = 2
+type Error struct {
+	msg  string
+	path string
+}
+
+func (e Error) Error() string {
+	if e.path != "" {
+		return fmt.Sprintf("%s [%s]", e.msg, e.path)
+	}
+
+	return e.msg
+}
+
+const (
+	ErrLocalNotAbs   = "local path could not be made absolute"
+	ErrRemoteNotAbs  = "remote path not absolute"
+	minDirsForUnique = 2
+)
 
 // Handler is something that knows how to communicate with iRODS and carry out
 // certain operations.
@@ -69,6 +87,23 @@ type Request struct {
 	Error  error
 }
 
+// ValidatePaths checks that both Local and Remote paths are absolute. (It does
+// NOT check that either path exists.)
+func (r *Request) ValidatePaths() error {
+	local, err := filepath.Abs(r.Local)
+	if err != nil {
+		return Error{ErrLocalNotAbs, r.Local}
+	}
+
+	r.Local = local
+
+	if !filepath.IsAbs(r.Remote) {
+		return Error{ErrRemoteNotAbs, r.Remote}
+	}
+
+	return nil
+}
+
 // Putter is used to Put() files in iRODS.
 type Putter struct {
 	handler  Handler
@@ -76,11 +111,18 @@ type Putter struct {
 }
 
 // New returns a *Putter that will use the given Handler to Put() all the
-// requests in iRODS. You should defer Cleanup() on the return value.
+// requests in iRODS. You should defer Cleanup() on the return value. All the
+// incoming requests will have their paths validated.
 func New(handler Handler, requests []*Request) (*Putter, error) {
 	err := handler.Connect()
 	if err != nil {
 		return nil, err
+	}
+
+	for _, request := range requests {
+		if err := request.ValidatePaths(); err != nil {
+			return nil, err
+		}
 	}
 
 	return &Putter{handler: handler, requests: requests}, nil

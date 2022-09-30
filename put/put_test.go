@@ -34,13 +34,9 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-type Error string
-
-func (e Error) Error() string { return string(e) }
-
 const userPerms = 0700
-const errMockPutFail = Error("put fail")
-const errMockMetaFail = Error("meta fail")
+const errMockPutFail = "put fail"
+const errMockMetaFail = "meta fail"
 
 // mockHandler satisfies the Handler interface, treating "Remote" as local
 // paths and moving from Local to Remote for the Put().
@@ -80,7 +76,7 @@ func (m *mockHandler) EnsureCollection(dir string) error {
 // Remote.
 func (m *mockHandler) Put(request *Request) error {
 	if m.putfail == request.Remote {
-		return errMockPutFail
+		return Error{errMockPutFail, ""}
 	}
 
 	return os.Rename(request.Local, request.Remote)
@@ -90,7 +86,7 @@ func (m *mockHandler) Put(request *Request) error {
 // key. Returns an error if metafail == Remote.
 func (m *mockHandler) ReplaceMetadata(request *Request) error {
 	if m.metafail == request.Remote {
-		return errMockMetaFail
+		return Error{errMockMetaFail, ""}
 	}
 
 	m.meta[request.Remote] = request.Meta
@@ -145,8 +141,8 @@ func TestPutMock(t *testing.T) {
 				failed := p.Put()
 				So(failed, ShouldNotBeNil)
 				So(len(failed), ShouldEqual, 2)
-				So(failed[0].Error, ShouldEqual, errMockPutFail)
-				So(failed[1].Error, ShouldEqual, errMockMetaFail)
+				So(failed[0].Error.Error(), ShouldContainSubstring, errMockPutFail)
+				So(failed[1].Error.Error(), ShouldContainSubstring, errMockMetaFail)
 			})
 		})
 
@@ -189,6 +185,45 @@ func TestPutMock(t *testing.T) {
 		So(err, ShouldBeNil)
 
 		So(mh.collections, ShouldResemble, []string{col})
+	})
+
+	Convey("Relative local paths are made absolute", t, func() {
+		mh := &mockHandler{}
+		p, err := New(mh, []*Request{{Local: "foo", Remote: "/bar"}})
+		So(err, ShouldBeNil)
+
+		wd, err := os.Getwd()
+		So(err, ShouldBeNil)
+
+		So(p.requests[0].Local, ShouldEqual, filepath.Join(wd, "foo"))
+
+		Convey("unless that's not possible", func() {
+			dir := t.TempDir()
+			err = os.Chdir(dir)
+			So(err, ShouldBeNil)
+			err = os.RemoveAll(dir)
+			So(err, ShouldBeNil)
+
+			defer func() {
+				err = os.Chdir(wd)
+				if err != nil {
+					t.Logf("%s", err)
+				}
+			}()
+
+			_, err = New(mh, []*Request{{Local: "foo", Remote: "/bar"}})
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, ErrLocalNotAbs)
+			So(err.Error(), ShouldContainSubstring, "foo")
+		})
+	})
+
+	Convey("You can't make a Putter with relative remote paths", t, func() {
+		mh := &mockHandler{}
+		_, err := New(mh, []*Request{{Local: "/foo", Remote: "bar"}})
+		So(err, ShouldNotBeNil)
+		So(err.Error(), ShouldContainSubstring, ErrRemoteNotAbs)
+		So(err.Error(), ShouldContainSubstring, "bar")
 	})
 }
 
