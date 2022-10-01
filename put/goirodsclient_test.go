@@ -34,7 +34,7 @@ import (
 )
 
 func TestPutGIC(t *testing.T) {
-	h, err := GetGICHandler("/nfs/users/nfs_s/sb10/.irods/gic.yml")
+	h, err := GetGICHandler()
 	if err != nil {
 		t.Logf("GetGICHandler error: %s", err)
 		SkipConvey("Skipping gic tests since couldn't load config yml", t, func() {})

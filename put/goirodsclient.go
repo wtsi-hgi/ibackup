@@ -29,10 +29,14 @@ package put
 
 import (
 	"os"
+	"path/filepath"
 
 	"github.com/cyverse/go-irodsclient/fs"
 	"github.com/cyverse/go-irodsclient/irods/types"
 )
+
+const gicYMLPath = ".irods/gic.yml"
+const gicPutRetries = 10
 
 // GIC is a Handler that uses the pure Go go-irodsclient to interact with iRODS.
 type GIC struct {
@@ -42,10 +46,16 @@ type GIC struct {
 	fsMeta   *fs.FileSystem
 }
 
-// GetGICHandler returns a Handler that uses Baton to interact with iRODS. If
-// you don't have baton-do in your PATH, you'll get an error.
-func GetGICHandler(accountYML string) (*GIC, error) {
-	yaml, err := os.ReadFile(accountYML)
+// GetGICHandler returns a Handler that uses the go-irodsclient to interact with
+// iRODS. If you don't have ~/.irods/gic.yml with your iRODS account details in
+// it, you'll get an error.
+func GetGICHandler() (*GIC, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+
+	yaml, err := os.ReadFile(filepath.Join(home, gicYMLPath))
 	if err != nil {
 		return nil, err
 	}
@@ -102,7 +112,22 @@ func (g *GIC) EnsureCollection(collection string) error {
 // Put uploads request Local to the Remote object, overwriting it if it already
 // exists. It calculates and stores the md5 checksum remotely.
 func (g *GIC) Put(request *Request) error {
-	return g.fsUpload.UploadFile(request.Local, request.Remote, "", true, nil)
+	var err error
+
+	for i := 0; i < gicPutRetries; i++ {
+		if err = g.fsUpload.UploadFile(request.Local, request.Remote, "", true, nil); err == nil {
+			break
+		}
+
+		if err.Error() == "OVERWRITE_WITHOUT_FORCE_FLAG" {
+			err = g.fsUpload.RemoveFile(request.Remote, true)
+			if err != nil {
+				break
+			}
+		}
+	}
+
+	return err
 }
 
 // ReplaceMetadata adds the request Meta to the Remote object, deleting existing
