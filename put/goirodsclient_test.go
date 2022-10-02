@@ -42,29 +42,6 @@ func TestPutGIC(t *testing.T) {
 		return
 	}
 
-	bh, err := GetBatonHandler()
-	if err != nil {
-		t.Logf("GetBatonHandler error: %s", err)
-		SkipConvey("Skipping gic tests since couldn't find baton", t, func() {})
-
-		return
-	}
-
-	err = bh.Connect()
-	if err != nil {
-		t.Logf("GetBatonHandler error: %s", err)
-		SkipConvey("Skipping gic tests since couldn't connect with baton", t, func() {})
-
-		return
-	}
-
-	defer func() {
-		err = bh.Cleanup()
-		if err != nil {
-			t.Logf("cleanup failure: %s", err)
-		}
-	}()
-
 	rootCollection := os.Getenv("IBACKUP_TEST_COLLECTION")
 	if rootCollection == "" {
 		SkipConvey("Skipping gic tests since IBACKUP_TEST_COLLECTION is not defined", t, func() {})
@@ -73,7 +50,7 @@ func TestPutGIC(t *testing.T) {
 	}
 
 	Convey("Given Requests and a gic Handler, you can make a new Putter", t, func() {
-		requests, expectedCollections := makeBatonRequests(t, rootCollection)
+		requests, expectedCollections := makeRequests(t, rootCollection)
 
 		p, err := New(h, requests)
 		So(err, ShouldBeNil)

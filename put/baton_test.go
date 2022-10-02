@@ -52,7 +52,7 @@ func TestPutBaton(t *testing.T) {
 	}
 
 	Convey("Given Requests and a baton Handler, you can make a new Putter", t, func() {
-		requests, expectedCollections := makeBatonRequests(t, rootCollection)
+		requests, expectedCollections := makeRequests(t, rootCollection)
 
 		p, err := New(h, requests)
 		So(err, ShouldBeNil)
@@ -120,11 +120,11 @@ func TestPutBaton(t *testing.T) {
 	})
 }
 
-// makeBatonRequests creates some local directories and files, and returns
-// requests that all share the same metadata, with remotes pointing to
-// corresponding paths within remoteCollection. Also returns the execpted remote
-// directories that would have to be created.
-func makeBatonRequests(t *testing.T, remoteCollection string) ([]*Request, []string) {
+// makeRequests creates some local directories and files, and returns requests
+// that all share the same metadata, with remotes pointing to corresponding
+// paths within remoteCollection. Also returns the execpted remote directories
+// that would have to be created.
+func makeRequests(t *testing.T, remoteCollection string) ([]*Request, []string) {
 	t.Helper()
 
 	sourceDir := t.TempDir()
