@@ -99,13 +99,31 @@ you, so should this.`,
 			die("%s", err)
 		}
 
-		failed := p.Put()
+		results := p.Put()
 
-		for _, fail := range failed {
-			warn("%s failed: %s", fail.Local, fail.Error)
+		fails, replaced, uploads, skipped := 0, 0, 0, 0
+
+		for r := range results {
+			switch r.Status {
+			case put.RequestStatusFailed:
+				warn("%s failed: %s", r.Local, r.Error)
+				fails++
+			case put.RequestStatusMissing:
+				warn("%s missing: %s", r.Local, r.Error)
+				fails++
+			case put.RequestStatusReplaced:
+				replaced++
+			case put.RequestStatusUnmodified:
+				skipped++
+			case put.RequestStatusUploaded:
+				uploads++
+			}
+
 		}
 
-		if len(failed) > 0 {
+		info("%d uploaded (%d overwrites); %d skipped; %d failed", uploads+replaced, replaced, skipped, fails)
+
+		if fails > 0 {
 			os.Exit(1)
 		}
 	},

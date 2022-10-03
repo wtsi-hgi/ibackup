@@ -23,8 +23,6 @@
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  ******************************************************************************/
 
-// package put is used to put files in iRODS.
-
 package put
 
 import (
@@ -33,15 +31,48 @@ import (
 	"strings"
 )
 
-const ErrNotHumgenLustre = "not a valid humgen lustre path"
+type RequestStatus string
+
+const (
+	RequestStatusUploaded   RequestStatus = "uploaded"
+	RequestStatusReplaced   RequestStatus = "replaced"
+	RequestStatusUnmodified RequestStatus = "unmodified"
+	RequestStatusMissing    RequestStatus = "missing"
+	RequestStatusFailed     RequestStatus = "failed"
+	ErrNotHumgenLustre                    = "not a valid humgen lustre path"
+)
 
 // Request represents a local file you would like transferred to a remote iRODS
 // path, and the metadata you'd like to associate with it.
 type Request struct {
-	Local  string
-	Remote string
-	Meta   map[string]string
-	Error  error
+	Local      string
+	Remote     string
+	Meta       map[string]string
+	Status     RequestStatus
+	Error      error
+	remoteMeta map[string]string
+}
+
+// determineMetadataToRemoveAndAdd compares our Meta to our remoteMeta and
+// returns a map of entries where both share a key but have a different value
+// (remove these), and a map of those key vals, plus key vals unique to
+// wantedMeta (add these).
+func (r *Request) determineMetadataToRemoveAndAdd() (map[string]string, map[string]string) {
+	toRemove := make(map[string]string)
+	toAdd := make(map[string]string)
+
+	for attr, wanted := range r.Meta {
+		if remote, exists := r.remoteMeta[attr]; exists { //nolint:nestif
+			if wanted != remote {
+				toRemove[attr] = remote
+				toAdd[attr] = wanted
+			}
+		} else {
+			toAdd[attr] = wanted
+		}
+	}
+
+	return toRemove, toAdd
 }
 
 // ValidatePaths checks that both Local and Remote paths are absolute. (It does

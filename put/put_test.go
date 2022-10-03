@@ -26,15 +26,18 @@
 package put
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
 
 const userPerms = 0700
+const errMockStatFail = "stat fail"
 const errMockPutFail = "put fail"
 const errMockMetaFail = "meta fail"
 
@@ -45,6 +48,7 @@ type mockHandler struct {
 	cleaned     bool
 	collections []string
 	meta        map[string]map[string]string
+	statfail    string
 	putfail     string
 	metafail    string
 }
@@ -72,24 +76,102 @@ func (m *mockHandler) EnsureCollection(dir string) error {
 	return os.MkdirAll(dir, userPerms)
 }
 
-// Put just does a rename from Local to Remote. Returns an error if putfail ==
-// Remote.
+// Stat returns info about the Remote file, which is a local file on disk.
+// Returns an error if statfail == Remote.
+func (m *mockHandler) Stat(request *Request) (*ObjectInfo, error) {
+	if m.statfail == request.Remote {
+		return nil, Error{errMockStatFail, ""}
+	}
+
+	_, err := os.Stat(request.Remote)
+	if os.IsNotExist(err) {
+		return &ObjectInfo{Exists: false}, nil
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	meta, exists := m.meta[request.Remote]
+	if !exists {
+		meta = make(map[string]string)
+	}
+
+	return &ObjectInfo{Exists: true, Meta: meta}, nil
+}
+
+// Put just copies from Local to Remote. Returns an error if putfail == Remote.
 func (m *mockHandler) Put(request *Request) error {
 	if m.putfail == request.Remote {
 		return Error{errMockPutFail, ""}
 	}
 
-	return os.Rename(request.Local, request.Remote)
+	in, err := os.Open(request.Local)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.Create(request.Remote)
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		cerr := out.Close()
+		if err == nil {
+			err = cerr
+		}
+	}()
+
+	if _, err = io.Copy(out, in); err != nil {
+		return err
+	}
+
+	err = out.Sync()
+
+	return err
 }
 
-// ReplaceMetadata stores the requests metadata in a map, with Remote as the
-// key. Returns an error if metafail == Remote.
-func (m *mockHandler) ReplaceMetadata(request *Request) error {
-	if m.metafail == request.Remote {
+// RemoveMeta deletes the given keys from a map stored under path. Returns an
+// error if metafail == path.
+func (m *mockHandler) RemoveMeta(path string, meta map[string]string) error {
+	if m.metafail == path {
 		return Error{errMockMetaFail, ""}
 	}
 
-	m.meta[request.Remote] = request.Meta
+	pathMeta, exists := m.meta[path]
+	if !exists {
+		return nil
+	}
+
+	for key := range meta {
+		delete(pathMeta, key)
+	}
+
+	return nil
+}
+
+// AddMeta adds the given meta to a map stored under path. Returns an error
+// if metafail == path, or if keys were already defined in the map.
+func (m *mockHandler) AddMeta(path string, meta map[string]string) error {
+	if m.metafail == path {
+		return Error{errMockMetaFail, ""}
+	}
+
+	pathMeta, exists := m.meta[path]
+	if !exists {
+		pathMeta = make(map[string]string)
+		m.meta[path] = pathMeta
+	}
+
+	for key, val := range meta {
+		if _, exists = pathMeta[key]; exists {
+			return Error{errMockMetaFail, ""}
+		}
+
+		pathMeta[key] = val
+	}
 
 	return nil
 }
@@ -117,15 +199,41 @@ func TestPutMock(t *testing.T) {
 			So(mh.collections, ShouldResemble, expectedCollections)
 
 			Convey("Put() then puts the files, and adds the metadata", func() {
-				failed := p.Put()
-				So(failed, ShouldBeNil)
+				rCh := p.Put()
 
-				for _, request := range requests {
+				for request := range rCh {
+					So(request.Status, ShouldEqual, RequestStatusUploaded)
+
 					_, err = os.Stat(request.Remote)
 					So(err, ShouldBeNil)
 
 					So(mh.meta[request.Remote], ShouldResemble, request.Meta)
 				}
+
+				Convey("A second put of the same files skips them all, except for modified ones", func() {
+					requests[0].Meta = map[string]string{"a": "1", "b": "3", "c": "4"}
+					touchFile(requests[0].Local, 1*time.Hour)
+
+					rCh = p.Put()
+
+					replaced, unmod, other := 0, 0, 0
+
+					for request := range rCh {
+						switch request.Status {
+						case RequestStatusReplaced:
+							replaced++
+							So(mh.meta[request.Remote], ShouldResemble, requests[0].Meta)
+						case RequestStatusUnmodified:
+							unmod++
+						default:
+							other++
+						}
+					}
+
+					So(replaced, ShouldEqual, 1)
+					So(unmod, ShouldEqual, len(requests)-1)
+					So(other, ShouldEqual, 0)
+				})
 
 				Convey("Finally, Cleanup() defers to the handler", func() {
 					err = p.Cleanup()
@@ -134,24 +242,60 @@ func TestPutMock(t *testing.T) {
 				})
 			})
 
-			Convey("Underlying put and metadata operation failures result in returned requests", func() {
-				mh.putfail = requests[0].Remote
-				mh.metafail = requests[1].Remote
+			Convey("Put() fails if the local files don't exist", func() {
+				for _, r := range requests {
+					err = os.Remove(r.Local)
+					So(err, ShouldBeNil)
+				}
 
-				failed := p.Put()
-				So(failed, ShouldNotBeNil)
-				So(len(failed), ShouldEqual, 2)
-				So(failed[0].Error.Error(), ShouldContainSubstring, errMockPutFail)
-				So(failed[1].Error.Error(), ShouldContainSubstring, errMockMetaFail)
+				rCh := p.Put()
+
+				for request := range rCh {
+					So(request.Status, ShouldEqual, RequestStatusMissing)
+				}
+			})
+
+			Convey("Underlying put and metadata operation failures result in failed requests", func() {
+				mh.statfail = requests[0].Remote
+				mh.putfail = requests[1].Remote
+				mh.metafail = requests[2].Remote
+
+				rCh := p.Put()
+
+				fails, uploaded, other := 0, 0, 0
+
+				for r := range rCh {
+					switch r.Status {
+					case RequestStatusFailed:
+						fails++
+
+						switch r.Remote {
+						case requests[0].Remote:
+							So(r.Error.Error(), ShouldContainSubstring, errMockStatFail)
+						case requests[1].Remote:
+							So(r.Error.Error(), ShouldContainSubstring, errMockPutFail)
+						case requests[2].Remote:
+							So(r.Error.Error(), ShouldContainSubstring, errMockMetaFail)
+						}
+					case RequestStatusUploaded:
+						uploaded++
+					default:
+						other++
+					}
+				}
+
+				So(fails, ShouldEqual, 3)
+				So(uploaded, ShouldEqual, len(requests)-3)
+				So(other, ShouldEqual, 0)
+
 			})
 		})
 
 		Convey("Put() fails if CreateCollections wasn't run", func() {
-			failed := p.Put()
-			So(failed, ShouldNotBeNil)
-			So(len(failed), ShouldEqual, len(requests))
+			rCh := p.Put()
 
-			for _, request := range requests {
+			for request := range rCh {
+				So(request.Status, ShouldEqual, RequestStatusFailed)
 				_, err = os.Stat(request.Remote)
 				So(err, ShouldNotBeNil)
 			}
@@ -282,4 +426,14 @@ func makeTestRequests(t *testing.T, sourceDir, destDir string) []*Request {
 	}
 
 	return requests
+}
+
+// touchFile alters the mtime of the given file by the given duration. Returns
+// the time set.
+func touchFile(path string, d time.Duration) time.Time {
+	newT := time.Now().Local().Add(d)
+	err := os.Chtimes(path, newT, newT)
+	So(err, ShouldBeNil)
+
+	return newT
 }

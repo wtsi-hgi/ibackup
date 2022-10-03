@@ -30,6 +30,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	ex "github.com/wtsi-npg/extendo/v2"
@@ -82,17 +83,28 @@ func TestPutBaton(t *testing.T) {
 			}
 
 			Convey("Put() then puts the files, and adds the metadata", func() {
-				failed := p.Put()
-				So(failed, ShouldBeNil)
+				expectedMTime := touchFile(requests[0].Local, -1*time.Hour)
+				rCh := p.Put()
 
-				for _, request := range requests {
+				for request := range rCh {
+					So(request.Error, ShouldBeNil)
+					So(request.Status, ShouldEqual, RequestStatusUploaded)
 					meta := getObjectMetadataWithBaton(h.putClient, request.Remote)
 					So(meta, ShouldResemble, request.Meta)
+
+					if request.Local == requests[0].Local {
+						mtime := time.Time{}
+						err = mtime.UnmarshalText([]byte(meta[objectInfoMtimeKey]))
+						So(err, ShouldBeNil)
+
+						So(mtime.UTC().Truncate(time.Second), ShouldEqual, expectedMTime.UTC().Truncate(time.Second))
+					}
 				}
 
-				Convey("You can put the same file again, with different metadata", func() {
+				Convey("You can put the same file again if it changed, with different metadata", func() {
 					request := requests[0]
 					request.Meta = map[string]string{"a": "1", "b": "3", "c": "4"}
+					touchFile(request.Local, 1*time.Hour)
 
 					p, err = New(h, []*Request{request})
 					So(err, ShouldBeNil)
@@ -100,20 +112,34 @@ func TestPutBaton(t *testing.T) {
 					err = p.CreateCollections()
 					So(err, ShouldBeNil)
 
-					failed = p.Put()
-					So(failed, ShouldBeNil)
+					rCh = p.Put()
 
+					got := <-rCh
+					So(got.Status, ShouldEqual, RequestStatusReplaced)
 					meta := getObjectMetadataWithBaton(h.putClient, request.Remote)
 					So(meta, ShouldResemble, request.Meta)
+
+					Convey("Finally, Cleanup() stops the clients", func() {
+						err = p.Cleanup()
+						So(err, ShouldBeNil)
+
+						So(h.pool.IsOpen(), ShouldBeFalse)
+						So(h.putClient.IsRunning(), ShouldBeFalse)
+						So(h.metaClient.IsRunning(), ShouldBeFalse)
+					})
 				})
 
-				Convey("Finally, Cleanup() stops the clients", func() {
-					err = p.Cleanup()
+				Convey("Unchanged files aren't replaced", func() {
+					request := requests[0]
+
+					p, err = New(h, []*Request{request})
 					So(err, ShouldBeNil)
 
-					So(h.pool.IsOpen(), ShouldBeFalse)
-					So(h.putClient.IsRunning(), ShouldBeFalse)
-					So(h.metaClient.IsRunning(), ShouldBeFalse)
+					rCh = p.Put()
+
+					got := <-rCh
+					So(got.Error, ShouldBeNil)
+					So(got.Status, ShouldEqual, RequestStatusUnmodified)
 				})
 			})
 		})
@@ -144,7 +170,7 @@ func checkPathExistsWithBaton(client *ex.Client, path string) bool {
 }
 
 func getItemWithBaton(client *ex.Client, path string) (ex.RodsItem, error) {
-	return client.ListItem(ex.Args{AVU: true}, ex.RodsItem{
+	return client.ListItem(ex.Args{AVU: true, Timestamp: true}, ex.RodsItem{
 		IPath: filepath.Dir(path),
 		IName: filepath.Base(path),
 	})
@@ -154,11 +180,5 @@ func getObjectMetadataWithBaton(client *ex.Client, path string) map[string]strin
 	it, err := getItemWithBaton(client, path)
 	So(err, ShouldBeNil)
 
-	meta := make(map[string]string, len(it.IAVUs))
-
-	for _, iavu := range it.IAVUs {
-		meta[iavu.Attr] = iavu.Value
-	}
-
-	return meta
+	return rodsItemToMeta(it)
 }

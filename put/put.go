@@ -29,9 +29,12 @@ package put
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 )
 
 type Error struct {
@@ -68,14 +71,23 @@ type Handler interface {
 	// it if not, then double-checks it now exists.
 	EnsureCollection(collection string) error
 
+	// Stat checks if the Request's Remote object exists. If it does, records
+	// its metadata in the returned ObjectInfo. Returns an error if there was a
+	// problem finding out information (but not if the object does not exist).
+	Stat(request *Request) (*ObjectInfo, error)
+
 	// Put uploads the Request's Local file to the Remote location, overwriting
 	// any existing object, and ensuring that a locally calculated and remotely
 	// calculated md5 checksum match.
 	Put(request *Request) error
 
-	// ReplaceMetadata replaces the Requests's Remote object metadata with the
-	// Request's metadata.
-	ReplaceMetadata(request *Request) error
+	// RemoveMeta deletes the given metadata from the given object.
+	RemoveMeta(path string, meta map[string]string) error
+
+	// AddMeta adds the given metadata to the given object. Given metadata keys
+	// should already have been removed with RemoveMeta() from the remote
+	// object.
+	AddMeta(path string, meta map[string]string) error
 }
 
 // Putter is used to Put() files in iRODS.
@@ -86,7 +98,7 @@ type Putter struct {
 
 // New returns a *Putter that will use the given Handler to Put() all the
 // requests in iRODS. You should defer Cleanup() on the return value. All the
-// incoming requests will have their paths validated.
+// incoming requests will have their paths validated (they must be absolute).
 func New(handler Handler, requests []*Request) (*Putter, error) {
 	err := handler.Connect()
 	if err != nil {
@@ -172,40 +184,123 @@ func noLeavesOrNewLeaf(uniqueLeafs []string, last string) bool {
 	return len(uniqueLeafs) == 0 || last != uniqueLeafs[len(uniqueLeafs)-1]
 }
 
-// Put will put all our request Local files in iRODS at the Remote locations.
+// Put will upload all our request Local files to iRODS at the Remote locations.
 // You ought to call CreateCollections() before calling this.
 //
-// Existing files in iRODS will be overwritten. MD5 checksums will be calculated
-// locally and remotely and compared to ensure a perfect upload. The request
-// metadata will then replace any existing metadata for the Remote object.
+// Existing files in iRODS will be overwritten if the local file's mtime is
+// different to the remote's. If the same, the put will be skipped.
 //
-// If any requests fail during any of these operations, those requests will be
-// returned, with Error set. The return value wil be nil on complete success.
-func (p *Putter) Put() []*Request {
-	failedCh := p.putFilesInIRODS()
+// MD5 checksums will be calculated locally and remotely and compared to ensure
+// a perfect upload. The request metadata will then replace any existing
+// metadata with the same keys on the Remote object.
+//
+// All our requests are eventually sent on the returned channel (in potentially
+// a different order to our input Request slice) with Status set on them:
+//
+//	"uploaded":   a new object was uploaded to iRODS
+//	"replaced":   an existing object was replaced in iRODS, because Local was
+//				  newer than Remote
+//	"unmodified": Local and Remote had the same modification time, so nothing
+//				  was done
+//	"missing":    Local path could not be accessed, upload skipped; see Error
+//	"failed":     An upload attempt failed; see Error
+func (p *Putter) Put() chan *Request {
+	returnCh := make(chan *Request, len(p.requests))
+	putCh := make(chan *Request, len(p.requests))
 
-	var failed []*Request //nolint:prealloc
+	go p.pickFilesToPut(putCh, returnCh)
+	go p.putFilesInIRODS(putCh, returnCh)
 
-	for request := range failedCh {
-		failed = append(failed, request)
-	}
-
-	return failed
+	return returnCh
 }
 
-// putFilesInIRODS uses our handler to Put() all our requests in to iRODS
-// sequentially, and concurrently ReplaceMetadata() on those objects once
-// they're in.
-func (p *Putter) putFilesInIRODS() chan *Request {
-	failedCh := make(chan *Request, len(p.requests))
-	metaCh := make(chan *Request, len(p.requests))
-
-	metaDoneCh := p.applyMetadataConcurrently(metaCh, failedCh)
+// pickFilesToPut goes through all our Requests, immediately returns bad ones
+// (eg. local file doesn't exist) and ones we don't need to do (hasn't been
+// modified since last uploaded) via the returnCh, and sends the remainder to
+// the putCh.
+func (p *Putter) pickFilesToPut(putCh chan *Request, returnCh chan *Request) {
+	var wg sync.WaitGroup
 
 	for _, request := range p.requests {
+		wg.Add(1)
+
+		go func(request *Request) {
+			defer wg.Done()
+
+			p.statPathsAndReturnOrPut(request, putCh, returnCh)
+		}(request)
+	}
+
+	wg.Wait()
+	close(putCh)
+}
+
+// statPathsAndReturnOrPut stats the Local and Remote paths. On error, sends the
+// request to the returnCh straight away. Otherwise, sends them to the putCh.
+func (p *Putter) statPathsAndReturnOrPut(request *Request, putCh chan *Request, returnCh chan *Request) {
+	lInfo, err := os.Stat(request.Local)
+	if err != nil {
+		sendRequest(request, RequestStatusMissing, err, returnCh)
+
+		return
+	}
+
+	rInfo, err := p.handler.Stat(request)
+	if err != nil {
+		sendRequest(request, RequestStatusFailed, err, returnCh)
+
+		return
+	}
+
+	request.Meta = cloneMeta(request.Meta)
+	request.Meta[objectInfoMtimeKey] = timeToMeta(lInfo.ModTime())
+
+	if !rInfo.Exists {
+		sendRequest(request, RequestStatusUploaded, nil, putCh)
+
+		return
+	}
+
+	if lInfo.ModTime().UTC().Truncate(time.Second) == rInfo.ModTime().UTC().Truncate(time.Second) {
+		sendRequest(request, RequestStatusUnmodified, nil, returnCh)
+	} else {
+		request.remoteMeta = rInfo.Meta
+		sendRequest(request, RequestStatusReplaced, nil, putCh)
+	}
+}
+
+// sendRequest sets the given status and err on the given request, then sends it
+// down the given channel.
+func sendRequest(request *Request, status RequestStatus, err error, ch chan *Request) {
+	request.Status = status
+	request.Error = err
+	ch <- request
+}
+
+// cloneMeta is used to ensure that each Request has its own metadata map, since
+// we alter it by adding unique per-request metadata of our own.
+func cloneMeta(meta map[string]string) map[string]string {
+	clone := make(map[string]string, len(meta))
+
+	for k, v := range meta {
+		clone[k] = v
+	}
+
+	return clone
+}
+
+// putFilesInIRODS uses our handler to Put() requests sent on the given putCh in
+// to iRODS sequentially, and concurrently ReplaceMetadata() on those objects
+// once they're in.
+func (p *Putter) putFilesInIRODS(putCh chan *Request, returnCh chan *Request) {
+	metaCh := make(chan *Request, len(p.requests))
+	metaDoneCh := p.applyMetadataConcurrently(metaCh, returnCh)
+
+	for request := range putCh {
 		if err := p.handler.Put(request); err != nil {
+			request.Status = RequestStatusFailed
 			request.Error = err
-			failedCh <- request
+			returnCh <- request
 
 			continue
 		}
@@ -215,24 +310,50 @@ func (p *Putter) putFilesInIRODS() chan *Request {
 
 	close(metaCh)
 	<-metaDoneCh
-	close(failedCh)
-
-	return failedCh
+	close(returnCh)
 }
 
-func (p *Putter) applyMetadataConcurrently(metaCh chan *Request, failedCh chan *Request) chan struct{} {
+func (p *Putter) applyMetadataConcurrently(metaCh chan *Request, returnCh chan *Request) chan struct{} {
 	doneCh := make(chan struct{})
 
 	go func() {
 		for request := range metaCh {
-			if err := p.handler.ReplaceMetadata(request); err != nil {
+			toRemove, toAdd := request.determineMetadataToRemoveAndAdd()
+
+			if err := p.removeMeta(request.Remote, toRemove); err != nil {
+				request.Status = RequestStatusFailed
 				request.Error = err
-				failedCh <- request
+				returnCh <- request
+
+				continue
 			}
+
+			if err := p.addMeta(request.Remote, toAdd); err != nil {
+				request.Status = RequestStatusFailed
+				request.Error = err
+			}
+
+			returnCh <- request
 		}
 
 		close(doneCh)
 	}()
 
 	return doneCh
+}
+
+func (p *Putter) removeMeta(path string, toRemove map[string]string) error {
+	if len(toRemove) == 0 {
+		return nil
+	}
+
+	return p.handler.RemoveMeta(path, toRemove)
+}
+
+func (p *Putter) addMeta(path string, toAdd map[string]string) error {
+	if len(toAdd) == 0 {
+		return nil
+	}
+
+	return p.handler.AddMeta(path, toAdd)
 }

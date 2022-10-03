@@ -30,6 +30,7 @@ package put
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/rs/zerolog"
@@ -38,8 +39,11 @@ import (
 	"github.com/wtsi-npg/logshim-zerolog/zlog"
 )
 
-const extendoLogLevel = logs.ErrorLevel
-const numExtendoClients = 2
+const (
+	extendoLogLevel   = logs.ErrorLevel
+	numExtendoClients = 2
+	extendoNotExist   = "does not exist"
+)
 
 // Baton is a Handler that uses Baton (via extendo) to interact with iRODS.
 type Baton struct {
@@ -143,6 +147,41 @@ func (b *Baton) EnsureCollection(collection string) error {
 	return nil
 }
 
+// Stat gets mtime and metadata info for the request Remote object.
+func (b *Baton) Stat(request *Request) (*ObjectInfo, error) {
+	it, err := b.metaClient.ListItem(ex.Args{Timestamp: true, AVU: true}, *requestToRodsItem(request))
+	if err != nil {
+		if strings.Contains(err.Error(), extendoNotExist) {
+			return &ObjectInfo{Exists: false}, nil
+		}
+
+		return nil, err
+	}
+
+	return &ObjectInfo{Exists: true, Meta: rodsItemToMeta(it)}, nil
+}
+
+// requestToRodsItem converts a Request in to an extendo RodsItem without AVUs.
+func requestToRodsItem(request *Request) *ex.RodsItem {
+	return &ex.RodsItem{
+		IDirectory: filepath.Dir(request.Local),
+		IFile:      filepath.Base(request.Local),
+		IPath:      filepath.Dir(request.Remote),
+		IName:      filepath.Base(request.Remote),
+	}
+}
+
+// rodsItemToMeta pulls out the AVUs from a RodsItem and returns them as a map.
+func rodsItemToMeta(it ex.RodsItem) map[string]string {
+	meta := make(map[string]string, len(it.IAVUs))
+
+	for _, iavu := range it.IAVUs {
+		meta[iavu.Attr] = iavu.Value
+	}
+
+	return meta
+}
+
 // Put uploads request Local to the Remote object, overwriting it if it already
 // exists. It calculates and stores the md5 checksum remotely.
 //
@@ -155,88 +194,55 @@ func (b *Baton) Put(request *Request) error {
 			Force:    true,
 			Checksum: true,
 		},
-		*requestToRodsItem(request),
+		*requestToRodsItemWithAVUs(request),
 	)
 
 	return err
 }
 
-// requestToRodsItem converts a Request in to an extendo RodsItem.
-func requestToRodsItem(request *Request) *ex.RodsItem {
-	avus := make([]ex.AVU, len(request.Meta))
+// requestToRodsItemWithAVUs converts a Request in to an extendo RodsItem with
+// AVUs.
+func requestToRodsItemWithAVUs(request *Request) *ex.RodsItem {
+	item := requestToRodsItem(request)
+	item.IAVUs = metaToAVUs(request.Meta)
+
+	return item
+}
+
+func metaToAVUs(meta map[string]string) []ex.AVU {
+	avus := make([]ex.AVU, len(meta))
 	i := 0
 
-	for k, v := range request.Meta {
+	for k, v := range meta {
 		avus[i] = ex.AVU{Attr: k, Value: v}
 		i++
 	}
 
+	return avus
+}
+
+func (b *Baton) RemoveMeta(path string, meta map[string]string) error {
+	it := remotePathToRodsItem(path)
+	it.IAVUs = metaToAVUs(meta)
+
+	_, err := b.metaClient.MetaRem(ex.Args{}, *it)
+
+	return err
+}
+
+// remotePathToRodsItem converts a path in to an extendo RodsItem.
+func remotePathToRodsItem(path string) *ex.RodsItem {
 	return &ex.RodsItem{
-		IDirectory: filepath.Dir(request.Local),
-		IFile:      filepath.Base(request.Local),
-		IPath:      filepath.Dir(request.Remote),
-		IName:      filepath.Base(request.Remote),
-		IAVUs:      avus,
+		IPath: filepath.Dir(path),
+		IName: filepath.Base(path),
 	}
 }
 
-// ReplaceMetadata replaces any metadata on the request Remote object with the
-// request's Meta.
-func (b *Baton) ReplaceMetadata(request *Request) error {
-	item := requestToRodsItem(request)
-	avus := item.IAVUs
+func (b *Baton) AddMeta(path string, meta map[string]string) error {
+	it := remotePathToRodsItem(path)
+	it.IAVUs = metaToAVUs(meta)
 
-	it, err := b.metaClient.ListItem(ex.Args{AVU: true}, *item)
-	if err != nil {
-		return err
-	}
+	_, err := b.metaClient.MetaAdd(ex.Args{}, *it)
 
-	item.IAVUs = it.IAVUs
-	currentAVUs := item.IAVUs
-
-	toKeep := ex.SetIntersectAVUs(avus, currentAVUs)
-
-	if err = removeUnneededAVUs(b.metaClient, item, avus, currentAVUs, toKeep); err != nil {
-		return err
-	}
-
-	toAdd := ex.SetDiffAVUs(avus, toKeep)
-
-	if len(toAdd) > 0 {
-		add := ex.CopyRodsItem(*item)
-		add.IAVUs = toAdd
-
-		if _, err := b.metaClient.MetaAdd(ex.Args{}, add); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// removeUnneededAVUs removes metadata we don't need.
-func removeUnneededAVUs(client *ex.Client, item *ex.RodsItem, newAVUs, currentAVUs, toKeep []ex.AVU) error {
-	repAttrs := make(map[string]struct{})
-	for _, avu := range newAVUs {
-		repAttrs[avu.Attr] = struct{}{}
-	}
-
-	var toRemove []ex.AVU
-
-	for _, avu := range currentAVUs {
-		if _, ok := repAttrs[avu.Attr]; ok && !ex.SearchAVU(avu, toKeep) {
-			toRemove = append(toRemove, avu)
-		}
-	}
-
-	rem := ex.CopyRodsItem(*item)
-	rem.IAVUs = toRemove
-
-	if len(toRemove) > 0 {
-		if _, err := client.MetaRem(ex.Args{}, rem); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return err
 }
