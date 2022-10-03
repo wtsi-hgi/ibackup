@@ -5,7 +5,6 @@ go 1.19
 require (
 	github.com/cyverse/go-irodsclient v0.9.8
 	github.com/inconshreveable/log15 v0.0.0-20201112154412-8562bdadbbac
-	github.com/jjacquay712/GoRODS v1.0.5
 	github.com/rs/zerolog v1.28.0
 	github.com/smartystreets/goconvey v1.7.2
 	github.com/spf13/cobra v1.5.0
