@@ -66,7 +66,7 @@ func TestPutBaton(t *testing.T) {
 			_, err = h.putClient.RemDir(ex.Args{Force: true, Recurse: true}, ex.RodsItem{
 				IPath: rootCollection,
 			})
-			if err != nil && !strings.Contains(err.Error(), "-816000") {
+			if err != nil && !strings.Contains(err.Error(), "-816000") && !strings.Contains(err.Error(), "-310000") {
 				So(err, ShouldBeNil)
 			}
 
