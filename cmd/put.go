@@ -29,6 +29,7 @@ import (
 	"bufio"
 	"io"
 	"os"
+	"os/user"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -44,6 +45,7 @@ const (
 	putFileCols    = 3
 	putFileMinCols = 2
 	putMetaParts   = 2
+	putSet         = "manual"
 )
 
 // options for this cmd.
@@ -56,7 +58,7 @@ var putCmd = &cobra.Command{
 	Short: "Safely copy files from a local filesystem to iRODS, with metadata",
 	Long: `Safely copy files from a local filesystem to iRODS, with metadata.
 
-Use the -f arg (defaults to STDIN) to provide a tab-delimited file with these 4
+Use the -f arg (defaults to STDIN) to provide a tab-delimited file with these 3
 columns:
 /absolute/path/of/local/file /remote/irods/path/of/file key1:val1;key2:val2
 
@@ -64,14 +66,26 @@ columns:
 Column 3 is optional, and you can use the -m arg to apply the same metadata to
 lines lacking column 3 instead.
 
+Some 'ibackup:' prefixed metadata will always be added:
+  "mtime"      : mtime of source file, 1sec truncated UTC RFC 3339
+  "owner"      : a username
+  "group"      : a unix group name
+  "date"       : date upload initiated, 1sec truncated UTC RFC 3339
+  "requesters" : a comma sep list of usernames of people who reqested the backup
+  "sets"       : a comma sep list of backup set names this file belongs to
+
+(when using this command, the "set" is automatically named "manual")
+
 put will then efficiently copy all column 1 paths to column 2 locations in
 iRODS, using a single connection, sequentially. Another connection in parallel
-will apply the column 3 metadata. (This makes it orders of magnitude faster than
-running 'iput' for each of many small files.)
+will apply the metadata. (This makes it orders of magnitude faster than running
+'iput' for each of many small files.)
 
-put will always forcable overwrite existing iRODS locations, and calculate and
-register a checksum on the server side and verify against a locally-calculated
-checksum.
+put will always calculate and register a checksum on the server side and verify
+against a locally-calculated checksum.
+
+It will overwrite outdated iRODS files, but it will skip files if they already
+exist in iRODS with ibackup:mtime metadata matching the mtime of the local file.
 
 Collections for your iRODS paths in column 2 will be automatically created if
 necessary.
@@ -82,7 +96,12 @@ You also need to have your iRODS environment set up and must be authenticated
 with iRODS (eg. run 'iinit') before running this command. If 'iput' works for
 you, so should this.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		requests := parsePutFile(putFile, putMeta)
+		user, err := user.Current()
+		if err != nil {
+			die("%s", err)
+		}
+
+		requests := parsePutFile(putFile, putMeta, user.Username)
 
 		handler, err := put.GetBatonHandler()
 		if err != nil {
@@ -139,7 +158,7 @@ func init() {
 		"key:val;key:val default metadata to apply to -f rows lacking column 3")
 }
 
-func parsePutFile(path string, meta string) []*put.Request {
+func parsePutFile(path string, meta, requester string) []*put.Request {
 	defaultMeta := parseMetaString(meta)
 	scanner, df := createScannerForFile(path)
 
@@ -151,7 +170,7 @@ func parsePutFile(path string, meta string) []*put.Request {
 	for scanner.Scan() {
 		lineNum++
 
-		pr := parsePutFileLine(scanner.Text(), lineNum, defaultMeta)
+		pr := parsePutFileLine(scanner.Text(), lineNum, defaultMeta, requester)
 		if pr == nil {
 			continue
 		}
@@ -168,6 +187,10 @@ func parsePutFile(path string, meta string) []*put.Request {
 }
 
 func parseMetaString(meta string) map[string]string {
+	if meta == "" {
+		return nil
+	}
+
 	kvs := strings.Split(meta, ";")
 	mm := make(map[string]string, len(kvs))
 
@@ -217,7 +240,7 @@ func openFile(path string) (io.Reader, func()) {
 	}
 }
 
-func parsePutFileLine(line string, lineNum int, defaultMeta map[string]string) *put.Request {
+func parsePutFileLine(line string, lineNum int, defaultMeta map[string]string, requester string) *put.Request {
 	cols := strings.Split(line, "\t")
 	colsn := len(cols)
 
@@ -234,9 +257,11 @@ func parsePutFileLine(line string, lineNum int, defaultMeta map[string]string) *
 	}
 
 	return &put.Request{
-		Local:  cols[0],
-		Remote: cols[1],
-		Meta:   meta,
+		Local:     cols[0],
+		Remote:    cols[1],
+		Requester: requester,
+		Set:       putSet,
+		Meta:      meta,
 	}
 }
 
