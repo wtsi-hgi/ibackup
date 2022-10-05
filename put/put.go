@@ -234,7 +234,10 @@ func (p *Putter) pickFilesToPut(putCh chan *Request, returnCh chan *Request) {
 }
 
 // statPathsAndReturnOrPut stats the Local and Remote paths. On error, sends the
-// request to the returnCh straight away. Otherwise, sends them to the putCh.
+// request to the returnCh straight away. If mtime unchanged, doesn't do the
+// put, sending to returnCh if metdata unchanged, otherwise to putCh but with a
+// note to skip the actual put and just do metadata. Otherwise, sends them to
+// the putCh normally.
 func (p *Putter) statPathsAndReturnOrPut(request *Request, putCh chan *Request, returnCh chan *Request) {
 	lInfo, err := Stat(request.Local)
 	if err != nil {
@@ -259,10 +262,18 @@ func (p *Putter) statPathsAndReturnOrPut(request *Request, putCh chan *Request, 
 	}
 
 	if lInfo.HasSameModTime(rInfo) {
+		if request.needsMetadataUpdate() {
+			sendRequest(request, RequestStatusUnmodified, nil, putCh)
+
+			return
+		}
+
 		sendRequest(request, RequestStatusUnmodified, nil, returnCh)
-	} else {
-		sendRequest(request, RequestStatusReplaced, nil, putCh)
+
+		return
 	}
+
+	sendRequest(request, RequestStatusReplaced, nil, putCh)
 }
 
 // sendRequest sets the given status and err on the given request, then sends it
@@ -281,6 +292,12 @@ func (p *Putter) putFilesInIRODS(putCh chan *Request, returnCh chan *Request) {
 	metaDoneCh := p.applyMetadataConcurrently(metaCh, returnCh)
 
 	for request := range putCh {
+		if request.skipPut {
+			metaCh <- request
+
+			continue
+		}
+
 		if err := p.handler.Put(request); err != nil {
 			request.Status = RequestStatusFailed
 			request.Error = err

@@ -57,28 +57,7 @@ type Request struct {
 	Status     RequestStatus
 	Error      error
 	remoteMeta map[string]string
-}
-
-// determineMetadataToRemoveAndAdd compares our Meta to our remoteMeta and
-// returns a map of entries where both share a key but have a different value
-// (remove these), and a map of those key vals, plus key vals unique to
-// wantedMeta (add these).
-func (r *Request) determineMetadataToRemoveAndAdd() (map[string]string, map[string]string) {
-	toRemove := make(map[string]string)
-	toAdd := make(map[string]string)
-
-	for attr, wanted := range r.Meta {
-		if remote, exists := r.remoteMeta[attr]; exists { //nolint:nestif
-			if wanted != remote {
-				toRemove[attr] = remote
-				toAdd[attr] = wanted
-			}
-		} else {
-			toAdd[attr] = wanted
-		}
-	}
-
-	return toRemove, toAdd
+	skipPut    bool
 }
 
 // ValidatePaths checks that both Local and Remote paths are absolute. (It does
@@ -178,6 +157,61 @@ func appendValIfNotInList(val string, list []string) string {
 	}
 
 	return strings.Join(list, metaListSeparator)
+}
+
+// needsMetadataUpdate returns true if requesters or sets is different between
+// our Meta and remoteMeta. Call this only after confirming a put isn't needed
+// by comparing mtimes; this sets skipPut if returning true. Also sets our date
+// metadata to the remote value, since we're not uploading now.
+func (r *Request) needsMetadataUpdate() bool {
+	need := false
+	defer func() {
+		r.skipPut = need
+		r.Meta[metaKeyDate] = r.remoteMeta[metaKeyDate]
+	}()
+
+	need = r.valForMetaKeyDifferentOnRemote(metaKeyRequester)
+	if need {
+		return need
+	}
+
+	need = r.valForMetaKeyDifferentOnRemote(metaKeySets)
+
+	return need
+}
+
+// valForMetaKeyDifferentOnRemote returns false if key has no remote value.
+// Returns true if the remote value is different to ours.
+func (r *Request) valForMetaKeyDifferentOnRemote(key string) bool {
+	if rval, defined := r.remoteMeta[key]; defined {
+		if rval != r.Meta[key] {
+			return true
+		}
+	}
+
+	return false
+}
+
+// determineMetadataToRemoveAndAdd compares our Meta to our remoteMeta and
+// returns a map of entries where both share a key but have a different value
+// (remove these), and a map of those key vals, plus key vals unique to
+// wantedMeta (add these).
+func (r *Request) determineMetadataToRemoveAndAdd() (map[string]string, map[string]string) {
+	toRemove := make(map[string]string)
+	toAdd := make(map[string]string)
+
+	for attr, wanted := range r.Meta {
+		if remote, exists := r.remoteMeta[attr]; exists { //nolint:nestif
+			if wanted != remote {
+				toRemove[attr] = remote
+				toAdd[attr] = wanted
+			}
+		} else {
+			toAdd[attr] = wanted
+		}
+	}
+
+	return toRemove, toAdd
 }
 
 // PathTransformer is a function that given a local path, returns the

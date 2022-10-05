@@ -234,6 +234,8 @@ func TestPutMock(t *testing.T) {
 
 					replaced, unmod, other := 0, 0, 0
 
+					var date string
+
 					for request := range rCh {
 						switch request.Status {
 						case RequestStatusReplaced:
@@ -242,6 +244,7 @@ func TestPutMock(t *testing.T) {
 							So(mh.meta[request.Remote], ShouldResemble, requests[0].Meta)
 							So(mh.meta[request.Remote][metaKeyRequester], ShouldEqual, "John,Sam")
 							So(mh.meta[request.Remote][metaKeySets], ShouldEqual, "setA,setB")
+							date = mh.meta[request.Remote][metaKeyDate]
 							mh.mu.RUnlock()
 						case RequestStatusUnmodified:
 							unmod++
@@ -254,21 +257,22 @@ func TestPutMock(t *testing.T) {
 					So(unmod, ShouldEqual, len(requests)-1)
 					So(other, ShouldEqual, 0)
 
-					Convey("A third put of the same file handles Requester and Set correctly", func() {
+					Convey("A third request of the same unchagned file updates Requester and Set", func() {
 						requests[0].Requester = "Sam"
 						requests[0].Set = "setC"
-						touchFile(requests[0].Local, 2*time.Hour)
 
 						p.requests = []*Request{requests[0]}
 
+						<-time.After(1 * time.Second)
 						rCh = p.Put()
 
 						request := <-rCh
 
-						So(request.Status, ShouldEqual, RequestStatusReplaced)
+						So(request.Status, ShouldEqual, RequestStatusUnmodified)
 						mh.mu.RLock()
 						So(mh.meta[request.Remote][metaKeyRequester], ShouldEqual, "John,Sam")
 						So(mh.meta[request.Remote][metaKeySets], ShouldEqual, "setA,setB,setC")
+						So(mh.meta[request.Remote][metaKeyDate], ShouldEqual, date)
 						mh.mu.RUnlock()
 					})
 				})
