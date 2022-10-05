@@ -29,12 +29,10 @@ package put
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
-	"time"
 )
 
 type Error struct {
@@ -238,7 +236,7 @@ func (p *Putter) pickFilesToPut(putCh chan *Request, returnCh chan *Request) {
 // statPathsAndReturnOrPut stats the Local and Remote paths. On error, sends the
 // request to the returnCh straight away. Otherwise, sends them to the putCh.
 func (p *Putter) statPathsAndReturnOrPut(request *Request, putCh chan *Request, returnCh chan *Request) {
-	lInfo, err := os.Stat(request.Local)
+	lInfo, err := Stat(request.Local)
 	if err != nil {
 		sendRequest(request, RequestStatusMissing, err, returnCh)
 
@@ -252,8 +250,7 @@ func (p *Putter) statPathsAndReturnOrPut(request *Request, putCh chan *Request, 
 		return
 	}
 
-	request.Meta = cloneMeta(request.Meta)
-	request.Meta[objectInfoMtimeKey] = timeToMeta(lInfo.ModTime())
+	request.AddMeta(lInfo.Meta)
 
 	if !rInfo.Exists {
 		sendRequest(request, RequestStatusUploaded, nil, putCh)
@@ -261,10 +258,10 @@ func (p *Putter) statPathsAndReturnOrPut(request *Request, putCh chan *Request, 
 		return
 	}
 
-	if lInfo.ModTime().UTC().Truncate(time.Second) == rInfo.ModTime().UTC().Truncate(time.Second) {
+	if lInfo.HasSameModTime(rInfo) {
 		sendRequest(request, RequestStatusUnmodified, nil, returnCh)
 	} else {
-		request.remoteMeta = rInfo.Meta
+		request.SetRemoteMeta(rInfo.Meta)
 		sendRequest(request, RequestStatusReplaced, nil, putCh)
 	}
 }
@@ -275,18 +272,6 @@ func sendRequest(request *Request, status RequestStatus, err error, ch chan *Req
 	request.Status = status
 	request.Error = err
 	ch <- request
-}
-
-// cloneMeta is used to ensure that each Request has its own metadata map, since
-// we alter it by adding unique per-request metadata of our own.
-func cloneMeta(meta map[string]string) map[string]string {
-	clone := make(map[string]string, len(meta))
-
-	for k, v := range meta {
-		clone[k] = v
-	}
-
-	return clone
 }
 
 // putFilesInIRODS uses our handler to Put() requests sent on the given putCh in

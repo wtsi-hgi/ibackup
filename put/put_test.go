@@ -30,6 +30,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -51,6 +52,7 @@ type mockHandler struct {
 	statfail    string
 	putfail     string
 	metafail    string
+	mu          sync.RWMutex
 }
 
 // Connect does no actual connection, just records this was called and prepares
@@ -140,6 +142,9 @@ func (m *mockHandler) RemoveMeta(path string, meta map[string]string) error {
 		return Error{errMockMetaFail, ""}
 	}
 
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	pathMeta, exists := m.meta[path]
 	if !exists {
 		return nil
@@ -158,6 +163,9 @@ func (m *mockHandler) AddMeta(path string, meta map[string]string) error {
 	if m.metafail == path {
 		return Error{errMockMetaFail, ""}
 	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	pathMeta, exists := m.meta[path]
 	if !exists {
@@ -207,7 +215,10 @@ func TestPutMock(t *testing.T) {
 					_, err = os.Stat(request.Remote)
 					So(err, ShouldBeNil)
 
+					mh.mu.RLock()
 					So(mh.meta[request.Remote], ShouldResemble, request.Meta)
+					checkAddedMeta(mh.meta[request.Remote])
+					mh.mu.RUnlock()
 				}
 
 				Convey("A second put of the same files skips them all, except for modified ones", func() {
@@ -426,6 +437,14 @@ func makeTestRequests(t *testing.T, sourceDir, destDir string) []*Request {
 	}
 
 	return requests
+}
+
+// checkAddedMeta checks that the given map contains all the extra metadata keys
+// that we add to requests.
+func checkAddedMeta(meta map[string]string) {
+	So(meta[metaKeyMtime], ShouldNotBeBlank)
+	So(meta[metaKeyOwner], ShouldNotBeBlank)
+	So(meta[metaKeyGroup], ShouldNotBeBlank)
 }
 
 // touchFile alters the mtime of the given file by the given duration. Returns

@@ -92,6 +92,35 @@ func (r *Request) ValidatePaths() error {
 	return nil
 }
 
+// AddMeta ensures our Meta is unique to us, and adds key vals from the given
+// map to our own Meta, replacing exisiting keys.
+func (r *Request) AddMeta(meta map[string]string) {
+	r.cloneMeta()
+
+	for k, v := range meta {
+		r.Meta[k] = v
+	}
+}
+
+// cloneMeta is used to ensure that our Meta is unique to us, so that if we
+// alter it, we don't alter any other Request's Meta.
+func (r *Request) cloneMeta() {
+	clone := make(map[string]string, len(r.Meta))
+
+	for k, v := range r.Meta {
+		clone[k] = v
+	}
+
+	r.Meta = clone
+}
+
+// SetRemoteMeta sets our remoteMeta to the given map. remoteMeta is used
+// to determine which keys need to be removed, and which can be left untouched,
+// when updating the metadata for an existing object.
+func (r *Request) SetRemoteMeta(meta map[string]string) {
+	r.remoteMeta = meta
+}
+
 // PathTransformer is a function that given a local path, returns the
 // corresponding remote path.
 type PathTransformer func(local string) (remote string, err error)

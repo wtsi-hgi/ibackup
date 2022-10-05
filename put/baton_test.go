@@ -91,10 +91,11 @@ func TestPutBaton(t *testing.T) {
 					So(request.Status, ShouldEqual, RequestStatusUploaded)
 					meta := getObjectMetadataWithBaton(h.putClient, request.Remote)
 					So(meta, ShouldResemble, request.Meta)
+					checkAddedMeta(meta)
 
 					if request.Local == requests[0].Local {
 						mtime := time.Time{}
-						err = mtime.UnmarshalText([]byte(meta[objectInfoMtimeKey]))
+						err = mtime.UnmarshalText([]byte(meta[metaKeyMtime]))
 						So(err, ShouldBeNil)
 
 						So(mtime.UTC().Truncate(time.Second), ShouldEqual, expectedMTime.UTC().Truncate(time.Second))
@@ -115,6 +116,7 @@ func TestPutBaton(t *testing.T) {
 					rCh = p.Put()
 
 					got := <-rCh
+					So(got.Error, ShouldBeNil)
 					So(got.Status, ShouldEqual, RequestStatusReplaced)
 					meta := getObjectMetadataWithBaton(h.putClient, request.Remote)
 					So(meta, ShouldResemble, request.Meta)
