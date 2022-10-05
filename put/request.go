@@ -29,6 +29,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 type RequestStatus string
@@ -40,13 +41,18 @@ const (
 	RequestStatusMissing    RequestStatus = "missing"
 	RequestStatusFailed     RequestStatus = "failed"
 	ErrNotHumgenLustre                    = "not a valid humgen lustre path"
+	metaListSeparator                     = ","
 )
 
 // Request represents a local file you would like transferred to a remote iRODS
-// path, and the metadata you'd like to associate with it.
+// path, and any extra metadata (beyond the defaults which include user, group,
+// mtime, upload date) you'd like to associate with it. Setting Requester and
+// Set will add these to the requesters and sets metadata on upload.
 type Request struct {
 	Local      string
 	Remote     string
+	Requester  string
+	Set        string
 	Meta       map[string]string
 	Status     RequestStatus
 	Error      error
@@ -92,14 +98,30 @@ func (r *Request) ValidatePaths() error {
 	return nil
 }
 
-// AddMeta ensures our Meta is unique to us, and adds key vals from the given
-// map to our own Meta, replacing exisiting keys.
-func (r *Request) AddMeta(meta map[string]string) {
+// addStandardMeta ensures our Meta is unique to us, and adds key vals from the
+// diskMeta map (which should be from a Stat().Meta call) to our own Meta,
+// replacing exisiting keys.
+//
+// It sets our remoteMeta to the given remoteMeta. remoteMeta is used to
+// determine which keys need to be removed, and which can be left untouched,
+// when updating the metadata for an existing object.
+//
+// Finally, it adds the remaining standard metadata we apply, replacing existing
+// values: date, using the current date, and requesters and sets, appending
+// Requester and Set to any existing values in the remoteMeta.
+func (r *Request) addStandardMeta(diskMeta, remoteMeta map[string]string) {
 	r.cloneMeta()
 
-	for k, v := range meta {
+	for k, v := range diskMeta {
 		r.Meta[k] = v
 	}
+
+	r.remoteMeta = remoteMeta
+
+	r.addDate()
+
+	r.appendMeta(metaKeyRequester, r.Requester)
+	r.appendMeta(metaKeySets, r.Set)
 }
 
 // cloneMeta is used to ensure that our Meta is unique to us, so that if we
@@ -114,11 +136,48 @@ func (r *Request) cloneMeta() {
 	r.Meta = clone
 }
 
-// SetRemoteMeta sets our remoteMeta to the given map. remoteMeta is used
-// to determine which keys need to be removed, and which can be left untouched,
-// when updating the metadata for an existing object.
-func (r *Request) SetRemoteMeta(meta map[string]string) {
-	r.remoteMeta = meta
+// addDate adds the current date to Meta, replacing any exisiting value.
+func (r *Request) addDate() {
+	date, _ := timeToMeta(time.Now()) //nolint:errcheck
+
+	r.Meta[metaKeyDate] = date
+}
+
+// appendMeta appends the given value to the given key value in our remoteMeta,
+// and sets it for our Meta.
+func (r *Request) appendMeta(key, val string) {
+	if val == "" {
+		return
+	}
+
+	appended := val
+
+	if rval, exists := r.remoteMeta[key]; exists {
+		rvals := strings.Split(rval, metaListSeparator)
+		appended = appendValIfNotInList(val, rvals)
+	}
+
+	r.Meta[key] = appended
+}
+
+// appendValIfNotInList appends val to list if not already in list. Returns the
+// list as a comma separated string.
+func appendValIfNotInList(val string, list []string) string {
+	found := false
+
+	for _, v := range list {
+		if v == val {
+			found = true
+
+			break
+		}
+	}
+
+	if !found {
+		list = append(list, val)
+	}
+
+	return strings.Join(list, metaListSeparator)
 }
 
 // PathTransformer is a function that given a local path, returns the

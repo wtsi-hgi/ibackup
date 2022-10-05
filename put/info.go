@@ -34,10 +34,14 @@ import (
 )
 
 const (
-	metaKeyMtime  = "localdisk:mtime" // 1sec truncated UTC RFC 3339
-	metaKeyOwner  = "localdisk:owner" // a username
-	metaKeyGroup  = "localdisk:group" // a unix group name
-	ErrStatFailed = "stat of local path returned strange results"
+	MetaNamespace    = "ibackup:"
+	metaKeyMtime     = MetaNamespace + "mtime"      // mtime of source file, 1sec truncated UTC RFC 3339
+	metaKeyOwner     = MetaNamespace + "owner"      // a username
+	metaKeyGroup     = MetaNamespace + "group"      // a unix group name
+	metaKeyDate      = MetaNamespace + "date"       // date upload initiated, 1sec truncated UTC RFC 3339
+	metaKeyRequester = MetaNamespace + "requesters" // a comma sep list of usernames of the people who reqested the backup
+	metaKeySets      = MetaNamespace + "sets"       // a comma sep list of backup set names this file belongs to
+	ErrStatFailed    = "stat of local path returned strange results"
 )
 
 type ObjectInfo struct {
@@ -46,7 +50,7 @@ type ObjectInfo struct {
 }
 
 // Stat stats localPath like os.Stat(), but returns information about the file
-// in ObjectInfo Meta (the "localdisk:" information).
+// in ObjectInfo Meta (mtime, owner and group information).
 func Stat(localPath string) (*ObjectInfo, error) {
 	fi, err := os.Stat(localPath)
 	if err != nil {

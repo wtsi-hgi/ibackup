@@ -250,7 +250,7 @@ func (p *Putter) statPathsAndReturnOrPut(request *Request, putCh chan *Request, 
 		return
 	}
 
-	request.AddMeta(lInfo.Meta)
+	request.addStandardMeta(lInfo.Meta, rInfo.Meta)
 
 	if !rInfo.Exists {
 		sendRequest(request, RequestStatusUploaded, nil, putCh)
@@ -261,7 +261,6 @@ func (p *Putter) statPathsAndReturnOrPut(request *Request, putCh chan *Request, 
 	if lInfo.HasSameModTime(rInfo) {
 		sendRequest(request, RequestStatusUnmodified, nil, returnCh)
 	} else {
-		request.SetRemoteMeta(rInfo.Meta)
 		sendRequest(request, RequestStatusReplaced, nil, putCh)
 	}
 }

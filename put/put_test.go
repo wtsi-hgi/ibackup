@@ -207,6 +207,9 @@ func TestPutMock(t *testing.T) {
 			So(mh.collections, ShouldResemble, expectedCollections)
 
 			Convey("Put() then puts the files, and adds the metadata", func() {
+				requests[0].Requester = "John"
+				requests[0].Set = "setA"
+
 				rCh := p.Put()
 
 				for request := range rCh {
@@ -222,6 +225,8 @@ func TestPutMock(t *testing.T) {
 				}
 
 				Convey("A second put of the same files skips them all, except for modified ones", func() {
+					requests[0].Requester = "Sam"
+					requests[0].Set = "setB"
 					requests[0].Meta = map[string]string{"a": "1", "b": "3", "c": "4"}
 					touchFile(requests[0].Local, 1*time.Hour)
 
@@ -233,7 +238,11 @@ func TestPutMock(t *testing.T) {
 						switch request.Status {
 						case RequestStatusReplaced:
 							replaced++
+							mh.mu.RLock()
 							So(mh.meta[request.Remote], ShouldResemble, requests[0].Meta)
+							So(mh.meta[request.Remote][metaKeyRequester], ShouldEqual, "John,Sam")
+							So(mh.meta[request.Remote][metaKeySets], ShouldEqual, "setA,setB")
+							mh.mu.RUnlock()
 						case RequestStatusUnmodified:
 							unmod++
 						default:
@@ -244,6 +253,24 @@ func TestPutMock(t *testing.T) {
 					So(replaced, ShouldEqual, 1)
 					So(unmod, ShouldEqual, len(requests)-1)
 					So(other, ShouldEqual, 0)
+
+					Convey("A third put of the same file handles Requester and Set correctly", func() {
+						requests[0].Requester = "Sam"
+						requests[0].Set = "setC"
+						touchFile(requests[0].Local, 2*time.Hour)
+
+						p.requests = []*Request{requests[0]}
+
+						rCh = p.Put()
+
+						request := <-rCh
+
+						So(request.Status, ShouldEqual, RequestStatusReplaced)
+						mh.mu.RLock()
+						So(mh.meta[request.Remote][metaKeyRequester], ShouldEqual, "John,Sam")
+						So(mh.meta[request.Remote][metaKeySets], ShouldEqual, "setA,setB,setC")
+						mh.mu.RUnlock()
+					})
 				})
 
 				Convey("Finally, Cleanup() defers to the handler", func() {
@@ -445,6 +472,7 @@ func checkAddedMeta(meta map[string]string) {
 	So(meta[metaKeyMtime], ShouldNotBeBlank)
 	So(meta[metaKeyOwner], ShouldNotBeBlank)
 	So(meta[metaKeyGroup], ShouldNotBeBlank)
+	So(meta[metaKeyDate], ShouldNotBeBlank)
 }
 
 // touchFile alters the mtime of the given file by the given duration. Returns

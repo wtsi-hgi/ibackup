@@ -83,6 +83,9 @@ func TestPutBaton(t *testing.T) {
 			}
 
 			Convey("Put() then puts the files, and adds the metadata", func() {
+				requester := "John"
+				requests[0].Requester = requester
+				requests[0].Set = "setA"
 				expectedMTime := touchFile(requests[0].Local, -1*time.Hour)
 				rCh := p.Put()
 
@@ -104,6 +107,8 @@ func TestPutBaton(t *testing.T) {
 
 				Convey("You can put the same file again if it changed, with different metadata", func() {
 					request := requests[0]
+					request.Requester = requester
+					request.Set = "setB"
 					request.Meta = map[string]string{"a": "1", "b": "3", "c": "4"}
 					touchFile(request.Local, 1*time.Hour)
 
@@ -120,6 +125,8 @@ func TestPutBaton(t *testing.T) {
 					So(got.Status, ShouldEqual, RequestStatusReplaced)
 					meta := getObjectMetadataWithBaton(h.putClient, request.Remote)
 					So(meta, ShouldResemble, request.Meta)
+					So(meta[metaKeyRequester], ShouldEqual, requester)
+					So(meta[metaKeySets], ShouldEqual, "setA,setB")
 
 					Convey("Finally, Cleanup() stops the clients", func() {
 						err = p.Cleanup()
