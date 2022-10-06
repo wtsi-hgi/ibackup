@@ -191,8 +191,8 @@ func rodsItemToMeta(it ex.RodsItem) map[string]string {
 func (b *Baton) Put(request *Request) error {
 	_, err := b.putClient.Put(
 		ex.Args{
-			Force:    true,
-			Checksum: true,
+			Force:  true,
+			Verify: true,
 		},
 		*requestToRodsItemWithAVUs(request),
 	)
