@@ -71,6 +71,10 @@ func TestRequest(t *testing.T) {
 		So(err, ShouldNotBeNil)
 		So(r, ShouldBeNil)
 
+		r, err = NewRequestWithTransformedLocal("file.txt", HumgenTransformer)
+		So(err, ShouldNotBeNil)
+		So(r, ShouldBeNil)
+
 		locals := []string{
 			"/lustre/scratch118/humgen/projects/ddd/file.txt",
 			"/lustre/scratch118/humgen/hgi/projects/ibdx10/file.txt",

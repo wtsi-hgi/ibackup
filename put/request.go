@@ -252,6 +252,11 @@ func PrefixTransformer(localPrefix, remotePrefix string) PathTransformer {
 //
 // This transform is specific to the "humgen" group at the Sanger Institute.
 func HumgenTransformer(local string) (string, error) {
+	local, err := filepath.Abs(local)
+	if err != nil {
+		return "", err
+	}
+
 	parts := strings.Split(local, "/")
 	ptuPart := -1
 
