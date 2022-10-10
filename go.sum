@@ -55,11 +55,7 @@ github.com/wtsi-npg/logshim v1.3.0 h1:J4JIzWrEVC6RghSdnhadjviOwAwQ4BUqG7hveqxris
 github.com/wtsi-npg/logshim v1.3.0/go.mod h1:O1IqtDB3IiWuIpEE42IznMkJD8d++UFp40gBSjps3ac=
 github.com/wtsi-npg/logshim-zerolog v1.3.0 h1:7BoTUhTKtBwuduc+8mCcsYVWCAptqFY1CT1Y3pSjoaw=
 github.com/wtsi-npg/logshim-zerolog v1.3.0/go.mod h1:yWGzgCuHUkg1tcKcF0DBKi2laec69EIUMkXl77P2yII=
-github.com/wtsi-ssg/wrstat v1.1.4-0.20221008232152-3030622a8cf8 h1:QQwr4/Pl1+kCMSs5M6H4U3CjOeZ5Np9/SC/guG/eDwk=
-github.com/wtsi-ssg/wrstat v1.1.4-0.20221008232152-3030622a8cf8/go.mod h1:hdiZads69hY0iElr13PWdugL3QiWpRxtmfplZPFb0Xc=
 github.com/yuin/goldmark v1.2.1/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
-go.etcd.io/bbolt v1.3.6 h1:/ecaJf0sk1l4l6V4awd65v2C3ILy7MSj+s/x1ADCIMU=
-go.etcd.io/bbolt v1.3.6/go.mod h1:qXsaaIqmgQH0T+OPdb99Bf+PKfBBQVAdyD6TY9G8XM4=
 golang.org/x/crypto v0.0.0-20190308221718-c2843e01d9a2/go.mod h1:djNgcEr1/C05ACkg1iLfiJU5Ep61QUkGW8qpdssI0+w=
 golang.org/x/crypto v0.0.0-20191011191535-87dc89f01550/go.mod h1:yigFU9vqHzYiE8UmvKecakEJjdnWj3jj499lnFckfCI=
 golang.org/x/crypto v0.0.0-20200622213623-75b288015ac9/go.mod h1:LzIPMQfyMNhhGPhUkYOs5KpL4U8rLKemX1yGLhDgUto=
@@ -74,7 +70,6 @@ golang.org/x/sync v0.0.0-20190423024810-112230192c58/go.mod h1:RxMgew5VJxzue5/jJ
 golang.org/x/sync v0.0.0-20201020160332-67f06af15bc9/go.mod h1:RxMgew5VJxzue5/jJTE5uejpjVlOe/izrB70Jof72aM=
 golang.org/x/sys v0.0.0-20190215142949-d0b11bdaac8a/go.mod h1:STP8DvDyc/dI5b8T5hshtkjS+E42TnysNCUPdjciGhY=
 golang.org/x/sys v0.0.0-20190412213103-97732733099d/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
-golang.org/x/sys v0.0.0-20200923182605-d9f96fdee20d/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
 golang.org/x/sys v0.0.0-20200930185726-fdedc70b468f/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
 golang.org/x/sys v0.0.0-20210119212857-b64e53b001e4/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
 golang.org/x/sys v0.0.0-20210630005230-0f9fa26af87c/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=

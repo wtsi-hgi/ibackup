@@ -10,7 +10,6 @@ require (
 	github.com/wtsi-npg/extendo/v2 v2.3.1-0.20221006092230-de9e05a07c64
 	github.com/wtsi-npg/logshim v1.3.0
 	github.com/wtsi-npg/logshim-zerolog v1.3.0
-	github.com/wtsi-ssg/wrstat v1.1.4-0.20221008232152-3030622a8cf8
 )
 
 require (
@@ -23,7 +22,6 @@ require (
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/smartystreets/assertions v1.13.0 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
-	go.etcd.io/bbolt v1.3.6 // indirect
 	golang.org/x/net v0.0.0-20221004154528-8021a29435af // indirect
 	golang.org/x/sys v0.0.0-20221006211917-84dc82d7e875 // indirect
 )
