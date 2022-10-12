@@ -51,6 +51,7 @@ const (
 // options for this cmd.
 var putFile string
 var putMeta string
+var putVerbose bool
 
 // putCmd represents the put command.
 var putCmd = &cobra.Command{
@@ -120,15 +121,24 @@ you, so should this.`,
 
 		results := p.Put()
 
-		fails, replaced, uploads, skipped := 0, 0, 0, 0
+		i, fails, replaced, uploads, skipped, total := 0, 0, 0, 0, 0, len(requests)
 
 		for r := range results {
+			i++
+
+			switch r.Status {
+			case put.RequestStatusFailed, put.RequestStatusMissing:
+				warn("[%d/%d] %s %s: %s", i, total, r.Local, r.Status, r.Error)
+			default:
+				if putVerbose {
+					info("[%d/%d] %s %s", i, total, r.Local, r.Status)
+				}
+			}
+
 			switch r.Status {
 			case put.RequestStatusFailed:
-				warn("%s failed: %s", r.Local, r.Error)
 				fails++
 			case put.RequestStatusMissing:
-				warn("%s missing: %s", r.Local, r.Error)
 				fails++
 			case put.RequestStatusReplaced:
 				replaced++
@@ -137,10 +147,9 @@ you, so should this.`,
 			case put.RequestStatusUploaded:
 				uploads++
 			}
-
 		}
 
-		info("%d uploaded (%d overwrites); %d skipped; %d failed", uploads+replaced, replaced, skipped, fails)
+		info("%d uploaded (%d replaced); %d skipped; %d failed", uploads+replaced, replaced, skipped, fails)
 
 		if fails > 0 {
 			os.Exit(1)
@@ -156,6 +165,8 @@ func init() {
 		"tab-delimited /local/path /irods/path key:val;key:val file (- means STDIN)")
 	putCmd.Flags().StringVarP(&putMeta, "meta", "m", "",
 		"key:val;key:val default metadata to apply to -f rows lacking column 3")
+	putCmd.Flags().BoolVarP(&putVerbose, "verbose", "v", false,
+		"report upload status of every file")
 }
 
 func parsePutFile(path string, meta, requester string) []*put.Request {
