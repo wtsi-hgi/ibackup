@@ -27,6 +27,8 @@ package cmd
 
 import (
 	"bufio"
+	"bytes"
+	b64 "encoding/base64"
 	"io"
 	"os"
 	"os/user"
@@ -52,6 +54,7 @@ const (
 var putFile string
 var putMeta string
 var putVerbose bool
+var putBase64 bool
 
 // putCmd represents the put command.
 var putCmd = &cobra.Command{
@@ -76,6 +79,9 @@ Some 'ibackup:' prefixed metadata will always be added:
   "sets"       : a comma sep list of backup set names this file belongs to
 
 (when using this command, the "set" is automatically named "manual")
+
+Because local and remote paths could contain tabs and newlines in their names,
+you can base64 encode them and use the --base64 option.
 
 put will then efficiently copy all column 1 paths to column 2 locations in
 iRODS, using a single connection, sequentially. Another connection in parallel
@@ -102,7 +108,7 @@ you, so should this.`,
 			die("%s", err)
 		}
 
-		requests := parsePutFile(putFile, putMeta, user.Username)
+		requests := parsePutFile(putFile, putMeta, user.Username, fofnLineSplitter(false), putBase64)
 
 		handler, err := put.GetBatonHandler()
 		if err != nil {
@@ -114,9 +120,17 @@ you, so should this.`,
 			die("%s", err)
 		}
 
+		if putVerbose {
+			info("will create collections")
+		}
+
 		err = p.CreateCollections()
 		if err != nil {
 			die("%s", err)
+		}
+
+		if putVerbose {
+			info("collections created")
 		}
 
 		results := p.Put()
@@ -167,11 +181,13 @@ func init() {
 		"key:val;key:val default metadata to apply to -f rows lacking column 3")
 	putCmd.Flags().BoolVarP(&putVerbose, "verbose", "v", false,
 		"report upload status of every file")
+	putCmd.Flags().BoolVarP(&putBase64, "base64", "b", false,
+		"input paths are base64 encoded")
 }
 
-func parsePutFile(path string, meta, requester string) []*put.Request {
+func parsePutFile(path, meta, requester string, splitter bufio.SplitFunc, base64Encoded bool) []*put.Request {
 	defaultMeta := parseMetaString(meta)
-	scanner, df := createScannerForFile(path)
+	scanner, df := createScannerForFile(path, splitter)
 
 	defer df()
 
@@ -181,7 +197,7 @@ func parsePutFile(path string, meta, requester string) []*put.Request {
 	for scanner.Scan() {
 		lineNum++
 
-		pr := parsePutFileLine(scanner.Text(), lineNum, defaultMeta, requester)
+		pr := parsePutFileLine(scanner.Text(), base64Encoded, lineNum, defaultMeta, requester)
 		if pr == nil {
 			continue
 		}
@@ -219,7 +235,37 @@ func parseMetaString(meta string) map[string]string {
 	return mm
 }
 
-func createScannerForFile(path string) (*bufio.Scanner, func()) {
+// fofnLineSplitter returns a bufio.SplitFunc that splits on \n be default, or
+// null if the given bool is true.
+func fofnLineSplitter(onNull bool) bufio.SplitFunc {
+	if onNull {
+		return scanNulls
+	}
+
+	return bufio.ScanLines
+}
+
+// scanNulls is a bufio.SplitFunc like bufio.ScanLines, but it splits on null
+// characters.
+func scanNulls(data []byte, atEOF bool) (advance int, token []byte, err error) {
+	if atEOF && len(data) == 0 {
+		return 0, nil, nil
+	}
+
+	if i := bytes.IndexByte(data, '\000'); i >= 0 {
+		return i + 1, data[0:i], nil
+	}
+
+	if atEOF {
+		return len(data), data, nil
+	}
+
+	return 0, nil, nil
+}
+
+// createScannerForFile creates a bufio.Scanner that will scan the given file,
+// splitting lines using the given splitter (eg. output of fofnLineSplitter()).
+func createScannerForFile(path string, splitter bufio.SplitFunc) (*bufio.Scanner, func()) {
 	var reader io.Reader
 
 	var dfunc func()
@@ -232,6 +278,9 @@ func createScannerForFile(path string) (*bufio.Scanner, func()) {
 	}
 
 	scanner := bufio.NewScanner(reader)
+
+	scanner.Split(splitter)
+
 	buf := make([]byte, maxScanTokenSize)
 	scanner.Buffer(buf, maxScanTokenSize)
 
@@ -251,7 +300,8 @@ func openFile(path string) (io.Reader, func()) {
 	}
 }
 
-func parsePutFileLine(line string, lineNum int, defaultMeta map[string]string, requester string) *put.Request {
+func parsePutFileLine(line string, base64Encoded bool, lineNum int,
+	defaultMeta map[string]string, requester string) *put.Request {
 	cols := strings.Split(line, "\t")
 	colsn := len(cols)
 
@@ -268,8 +318,8 @@ func parsePutFileLine(line string, lineNum int, defaultMeta map[string]string, r
 	}
 
 	return &put.Request{
-		Local:     cols[0],
-		Remote:    cols[1],
+		Local:     decodeBase64(cols[0], base64Encoded),
+		Remote:    decodeBase64(cols[1], base64Encoded),
 		Requester: requester,
 		Set:       putSet,
 		Meta:      meta,
@@ -280,4 +330,19 @@ func checkPutFileCols(cols int, lineNum int) {
 	if cols > putFileCols {
 		die("line %d has too many columns; check `ibackup put -h`", lineNum)
 	}
+}
+
+// decodeBase64 returns path as-is if isEncoded is false, or after base64
+// decoding it if true.
+func decodeBase64(path string, isEncoded bool) string {
+	if !isEncoded {
+		return path
+	}
+
+	b, err := b64.StdEncoding.DecodeString(path)
+	if err != nil {
+		die("%s", err)
+	}
+
+	return string(b)
 }

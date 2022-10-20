@@ -26,6 +26,8 @@
 package cmd
 
 import (
+	"bufio"
+	b64 "encoding/base64"
 	"fmt"
 	"strings"
 
@@ -37,6 +39,8 @@ import (
 var arFile string
 var arPrefix string
 var arHumgen bool
+var arNull bool
+var arBase64 bool
 
 const arPrefixParts = 2
 
@@ -53,6 +57,11 @@ them.
 If you have a fofn of local paths, and want to put them in iRODS at similar
 paths, just with different root directories, you can use this subcommand to add
 the remote path column.
+
+Because local path file names can have tabs and newlines in them, it is
+recommended you that you pass in null-terminated paths, and output
+base64-encoded paths. To do that, use both these options: -0 --base64. You'll
+also need to use the --base64 option in 'ibackup put' in that case.
 
 Provide the fofn to -f, or pipe it in. Results are output to STDOUT.
 
@@ -87,7 +96,7 @@ option to do a more complex transformation from local "lustre" paths to the
 			pt = makePrefixTransformer(arPrefix)
 		}
 
-		transformARFile(arFile, pt)
+		transformARFile(arFile, pt, fofnLineSplitter(arNull), arBase64)
 	},
 }
 
@@ -101,6 +110,10 @@ func init() {
 		"'/local/prefix:/remote/prefix' string to replace local prefix with remote")
 	addremoteCmd.Flags().BoolVar(&arHumgen, "humgen", false,
 		"generate the humgen zone canonical path for lustre paths")
+	addremoteCmd.Flags().BoolVarP(&arNull, "null", "0", false,
+		"input paths are terminated by a null charcater instead of a new line")
+	addremoteCmd.Flags().BoolVarP(&arBase64, "base64", "b", false,
+		"output paths base64 encoded")
 }
 
 func makePrefixTransformer(def string) put.PathTransformer {
@@ -112,8 +125,8 @@ func makePrefixTransformer(def string) put.PathTransformer {
 	return put.PrefixTransformer(parts[0], parts[1])
 }
 
-func transformARFile(path string, pt put.PathTransformer) {
-	scanner, df := createScannerForFile(path)
+func transformARFile(path string, pt put.PathTransformer, splitter bufio.SplitFunc, encode bool) {
+	scanner, df := createScannerForFile(path, splitter)
 	defer df()
 
 	for scanner.Scan() {
@@ -129,11 +142,21 @@ func transformARFile(path string, pt put.PathTransformer) {
 			die("%s", err)
 		}
 
-		fmt.Printf("%s\t%s\n", r.Local, r.Remote)
+		fmt.Printf("%s\t%s\n", encodeBase64(r.Local, encode), encodeBase64(r.Remote, encode))
 	}
 
 	serr := scanner.Err()
 	if serr != nil {
 		die("failed to read whole file: %s", serr.Error())
 	}
+}
+
+// encodeBase64 returns path as-is if encode is false, or after base64 encoding
+// it if true.
+func encodeBase64(path string, isEncoded bool) string {
+	if !isEncoded {
+		return path
+	}
+
+	return b64.StdEncoding.EncodeToString([]byte(path))
 }
