@@ -39,6 +39,13 @@ import (
 // appLogger is used for logging events in our commands.
 var appLogger = log15.New()
 
+// global options.
+var serverURL string
+var serverCert string
+
+const serverURLEnvKey = "IBACKUP_SERVER_URL"
+const serverCertEnvKey = "IBACKUP_SERVER_CERT"
+
 // RootCmd represents the base command when called without any subcommands.
 var RootCmd = &cobra.Command{
 	Use:   "ibackup",
@@ -60,6 +67,35 @@ func Execute() {
 func init() {
 	// set up logging to stderr
 	appLogger.SetHandler(log15.LvlFilterHandler(log15.LvlInfo, log15.StderrHandler))
+
+	// global flags
+	RootCmd.PersistentFlags().StringVarP(&serverURL, "url", "u", os.Getenv(serverURLEnvKey),
+		"ibackup server URL in the form host:port")
+	RootCmd.PersistentFlags().StringVarP(&serverCert, "cert", "c", os.Getenv(serverCertEnvKey),
+		"path to server certificate file")
+}
+
+// ensureURLandCert dies if --url or --cert have not been set.
+func ensureURLandCert() {
+	if serverURL == "" {
+		die("you must supply --url")
+	}
+
+	if serverCert == "" {
+		die("you must supply --cert")
+	}
+}
+
+// logToFile logs to the given file.
+func logToFile(path string) {
+	fh, err := log15.FileHandler(path, log15.LogfmtFormat())
+	if err != nil {
+		warn("Could not log to file [%s]: %s", path, err)
+
+		return
+	}
+
+	appLogger.SetHandler(fh)
 }
 
 // // setCLIFormat logs plain text log messages to STDERR.
@@ -77,10 +113,10 @@ func init() {
 // 	})
 // }
 
-// // cliPrint outputs the message to STDOUT.
-// func cliPrint(msg string, a ...interface{}) {
-// 	fmt.Fprintf(os.Stdout, msg, a...)
-// }
+// cliPrint outputs the message to STDOUT.
+func cliPrint(msg string, a ...interface{}) {
+	fmt.Fprintf(os.Stdout, msg, a...)
+}
 
 // info is a convenience to log a message at the Info level.
 func info(msg string, a ...interface{}) {
