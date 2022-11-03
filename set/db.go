@@ -21,37 +21,36 @@
  * CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
  * TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-
-A set should have properties:
-- status: pendingDiscovery (waiting on existence, size and dir content discovery) | pendingUpload (waiting on at least 1 of its entries to be non-pending) | uploading (not all entries have uploaded) | complete | failing (there are failed entries)
-- total size and number of files
-- date of last attempt
-
-A set has a nested bucket with the set entries, each of which has properties:
-- status: pendingDiscovery (waiting on existence check and size discovery)  | pendingUpload (waiting on reservation) | uploading (reserved by put client) | uploaded | replaced | skipped | missing | failed
-- size
-- date of last attempt
-- last error
-- number of retries
-- primary bool (if true, a file in the original set; if false, a file discovered to be in one of the set's directories)
-
-There are lookup buckets to find sets by name and user.
-
-
  ******************************************************************************/
 
 package set
 
 import (
 	"bytes"
+	"fmt"
 	"strings"
+	"time"
 
 	"github.com/ugorji/go/codec"
 	bolt "go.etcd.io/bbolt"
 )
 
+type Error struct {
+	msg string
+	id  string
+}
+
+func (e Error) Error() string {
+	if e.id != "" {
+		return fmt.Sprintf("%s [%s]", e.msg, e.id)
+	}
+
+	return e.msg
+}
+
 const (
+	ErrInvalidSetID = "invalid set ID"
+
 	setsBucket      = "sets"
 	userToSetBucket = "userLookup"
 	fileBucket      = "files"
@@ -111,15 +110,24 @@ func (d *DB) AddOrUpdate(set *Set) error {
 		b := tx.Bucket([]byte(setsBucket))
 
 		id := set.ID()
+		bid := []byte(id)
 
-		errp := b.Put([]byte(id), d.encodeToBytes(set))
+		if existing := b.Get(bid); existing != nil {
+			eset := d.decodeSet(existing)
+			eset.Transformer = set.Transformer
+			eset.Monitor = set.Monitor
+			eset.Description = set.Description
+			set = eset
+		}
+
+		errp := b.Put(bid, d.encodeToBytes(set))
 		if errp != nil {
 			return errp
 		}
 
 		b = tx.Bucket([]byte(userToSetBucket))
 
-		return b.Put([]byte(set.Requester+separator+id), []byte(id))
+		return b.Put([]byte(set.Requester+separator+id), bid)
 	})
 
 	return err
@@ -146,7 +154,7 @@ func (d *DB) SetFileEntries(setID string, paths []string) error {
 //
 // *** Currently ignores old entries that are not in the given paths.
 func (d *DB) setEntries(setID string, paths []string, bucketName string) error {
-	err := d.db.Update(func(tx *bolt.Tx) error {
+	return d.db.Update(func(tx *bolt.Tx) error {
 		subBucketName := []byte(bucketName + separator + setID)
 		b, existing, err := d.getAndDeleteExistingEntries(tx, subBucketName)
 		if err != nil {
@@ -163,8 +171,53 @@ func (d *DB) setEntries(setID string, paths []string, bucketName string) error {
 
 		return nil
 	})
+}
 
-	return err
+// setDiscoveryStarted updates StartedDiscovery and resets some status values
+// for the given set. Returns an error if the setID isn't in the database.
+func (d *DB) setDiscoveryStarted(setID string) error {
+	return d.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(setsBucket))
+		bid := []byte(setID)
+
+		v := b.Get(bid)
+		if v == nil {
+			return Error{ErrInvalidSetID, setID}
+		}
+
+		set := d.decodeSet(v)
+		set.StartedDiscovery = time.Now()
+		set.NumFiles = 0
+		set.SizeFiles = 0
+		set.Uploaded = 0
+		set.Status = PendingDiscovery
+
+		return b.Put(bid, d.encodeToBytes(set))
+	})
+}
+
+// setDiscoveryCompleted updates LastDiscovery, sets numFiles and sizeFiles and
+// sets status to PendingUpload. Returns an error if the setID isn't in the
+// database.
+func (d *DB) setDiscoveryCompleted(setID string, numFiles, sizeFiles uint64) error {
+	return d.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(setsBucket))
+		bid := []byte(setID)
+
+		v := b.Get(bid)
+		if v == nil {
+			return Error{ErrInvalidSetID, setID}
+		}
+
+		set := d.decodeSet(v)
+		set.LastDiscovery = time.Now()
+		set.NumFiles = numFiles
+		set.SizeFiles = sizeFiles
+		set.Uploaded = 0
+		set.Status = PendingUpload
+
+		return b.Put(bid, d.encodeToBytes(set))
+	})
 }
 
 // getAndDeleteExistingEntries gets existing entries in the given sub bucket

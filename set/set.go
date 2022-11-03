@@ -21,32 +21,39 @@
  * CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
  * TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-
-A set should have properties:
-- status: pendingDiscovery (waiting on existence, size and dir content discovery) | pendingUpload (waiting on at least 1 of its entries to be non-pending) | uploading (not all entries have uploaded) | complete | failing (there are failed entries)
-- total size and number of files
-- date of last attempt
-
-A set has a nested bucket with the set entries, each of which has properties:
-- status: pendingDiscovery (waiting on existence check and size discovery)  | pendingUpload (waiting on reservation) | uploading (reserved by put client) | uploaded | replaced | skipped | missing | failed
-- size
-- date of last attempt
-- last error
-- number of retries
-- primary bool (if true, a file in the original set; if false, a file discovered to be in one of the set's directories)
-
-There are lookup buckets to find sets by name and user.
-
-
  ******************************************************************************/
 
 package set
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/dgryski/go-farm"
+)
+
+type SetStatus int
+
+const (
+	// PendingDiscovery is a Set status meaning the set's entries are pending
+	// existence, size and directory content discovery.
+	PendingDiscovery SetStatus = iota
+
+	// PendingUpload is a Set status meaning discovery has completed, but no
+	// entries have been uploaded since then.
+	PendingUpload
+
+	// Uploading is a Set status meaning discovery has completed and upload of
+	// entries has started.
+	Uploading
+
+	// Failing is a Set status meaning at least 1 of the entries has failed to
+	// upload.
+	Failing
+
+	// Complete is a Set status meaning all entries have successfully uploaded
+	// since the last discovery.
+	Complete
 )
 
 // Set describes a backup set; a list of files and directories to backup, plus
@@ -57,10 +64,6 @@ type Set struct {
 
 	// The username of the person requesting this backup.
 	Requester string
-
-	// The list of local file and directory paths you want uploaded. Paths must
-	// be absolute.
-	Entries []string
 
 	// The method of transforming local Entries paths in to remote paths, to
 	// determine the upload location. "humgen" to use the put.HumgenTransformer,
@@ -79,12 +82,49 @@ type Set struct {
 	// DeleteLocal bool
 
 	// Delete remote paths if removed from the set. Optional, defaults to no
-	// deletions (ie. keep all uploads and ignore changes to the Entries).
+	// deletions (ie. keep all uploads and ignore removed Entries).
 	// DeleteRemote bool
 
 	// Receive an optional notification after this date if DeleteRemote is true
 	// and there are still Entries in this set.
 	// Expiry time.Time
+
+	// StartedDiscovery provides the last time that discovery started. This is a
+	// read-only value.
+	StartedDiscovery time.Time
+
+	// LastDiscovery provides the last time that discovery completed. This is a
+	// read-only value.
+	LastDiscovery time.Time
+
+	// NumFiles provides the total number of set and discovered files in this
+	// set, as of the last discovery. This is a read-only value.
+	NumFiles uint64
+
+	// SizeFiles provides the total size (bytes) of set and discovered files in
+	// this set, as of the last discovery. This is a read-only value.
+	SizeFiles uint64
+
+	// Uploaded provides the total number of set and discovered files in this
+	// set that have been uploaded or confirmed uploaded since the last
+	// discovery. This is a read-only value.
+	Uploaded uint64
+
+	// Status provides the current status for the set since the last discovery.
+	// This is a read-only value.
+	Status SetStatus
+
+	// LastCompleted provides the last time that all uploads completed. This is
+	// a read-only value.
+	LastCompleted time.Time
+
+	// LastCompletedCount provides the count of files there were uploaded on the
+	// last successful upload attempt. This is a read-only value.
+	LastCompletedCount uint64
+
+	// LastCompletedSize provides the size of files (bytes) there were uploaded
+	// on the last successful upload attempt. This is a read-only value.
+	LastCompletedSize uint64
 }
 
 // ID returns an ID for this set, generated deterministiclly from its Name and
@@ -109,4 +149,18 @@ func (s *Set) Files(db *DB) ([]*Entry, error) {
 // status of all the directory paths in this Set.
 func (s *Set) Dirs(db *DB) ([]*Entry, error) {
 	return db.getDirEntries(s.ID())
+}
+
+// DiscoveryStarted should be called when you start discovering the existence
+// of file entries and the contents of directory entries in this set. It resets
+// a number of the status-type values for this Set.
+func (s *Set) DiscoveryStarted(db *DB) error {
+	return db.setDiscoveryStarted(s.ID())
+}
+
+// DiscoveryCompleted should be called when you finish discovering the existence
+// of file entries and the contents of directory entries in this set. Provide
+// the count and size (bytes) of the discovered entries.
+func (s *Set) DiscoveryCompleted(db *DB, count, size uint64) error {
+	return db.setDiscoveryCompleted(s.ID(), count, size)
 }

@@ -21,11 +21,23 @@
  * CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
  * TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+A set has a nested bucket with the set entries, each of which has properties:
+- status: pendingDiscovery (waiting on existence check and size discovery)  | pendingUpload (waiting on reservation) | uploading (reserved by put client) | uploaded | replaced | skipped | missing | failed
+- size
+- date of last attempt
+- last error
+- number of retries
+- primary bool (if true, a file in the original set; if false, a file discovered to be in one of the set's directories)
+
+There are lookup buckets to find sets by name and user.
+
+
  ******************************************************************************/
 
 package set
 
-// Entry.
+// Entry holds the status of an entry in a backup set.
 type Entry struct {
 	Path string
 }

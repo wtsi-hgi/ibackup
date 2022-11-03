@@ -28,6 +28,7 @@ package set
 import (
 	"path/filepath"
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
@@ -110,16 +111,52 @@ func TestSet(t *testing.T) {
 					So(len(dEntries), ShouldEqual, 0)
 				})
 
-				Convey("Then get all the Sets and their entries for a particular Requester", func() {
+				Convey("Then get all the Sets for a particular Requester", func() {
 					sets, err := db.GetByRequester("jane")
 					So(err, ShouldBeNil)
 					So(sets, ShouldNotBeNil)
 					So(len(sets), ShouldEqual, 1)
 					So(sets, ShouldResemble, []*Set{set2})
 
-					fEntries, err := sets[0].Files(db)
-					So(err, ShouldBeNil)
-					So(len(fEntries), ShouldEqual, 2)
+					Convey("And update Set status", func() {
+						So(sets[0].Status, ShouldEqual, PendingDiscovery)
+						So(sets[0].StartedDiscovery.IsZero(), ShouldBeTrue)
+						So(sets[0].LastDiscovery.IsZero(), ShouldBeTrue)
+						So(sets[0].Description, ShouldBeBlank)
+
+						sets[0].LastDiscovery = time.Now()
+						sets[0].Description = "desc"
+						err = db.AddOrUpdate(sets[0])
+						So(err, ShouldBeNil)
+
+						sets, err = db.GetByRequester("jane")
+						So(err, ShouldBeNil)
+
+						So(sets[0].Status, ShouldEqual, PendingDiscovery)
+						So(sets[0].LastDiscovery.IsZero(), ShouldBeTrue)
+						So(sets[0].Description, ShouldEqual, "desc")
+
+						err = sets[0].DiscoveryStarted(db)
+						So(err, ShouldBeNil)
+
+						sets, err = db.GetByRequester("jane")
+						So(err, ShouldBeNil)
+
+						So(sets[0].Status, ShouldEqual, PendingDiscovery)
+						So(sets[0].StartedDiscovery.IsZero(), ShouldBeFalse)
+
+						err = sets[0].DiscoveryCompleted(db, 10, 100)
+						So(err, ShouldBeNil)
+
+						sets, err = db.GetByRequester("jane")
+						So(err, ShouldBeNil)
+
+						So(sets[0].Status, ShouldEqual, PendingUpload)
+						So(sets[0].StartedDiscovery.IsZero(), ShouldBeFalse)
+						So(sets[0].LastDiscovery.IsZero(), ShouldBeFalse)
+						So(sets[0].NumFiles, ShouldEqual, 10)
+						So(sets[0].SizeFiles, ShouldEqual, 100)
+					})
 				})
 			})
 		})
