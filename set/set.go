@@ -24,7 +24,6 @@
 
 
 A set should have properties:
-- unique ID
 - status: pendingDiscovery (waiting on existence, size and dir content discovery) | pendingUpload (waiting on at least 1 of its entries to be non-pending) | uploading (not all entries have uploaded) | complete | failing (there are failed entries)
 - total size and number of files
 - date of last attempt
@@ -49,13 +48,6 @@ import (
 
 	"github.com/dgryski/go-farm"
 	"github.com/ugorji/go/codec"
-	bolt "go.etcd.io/bbolt"
-)
-
-const (
-	setsBucket    = "sets"
-	entriesBucket = "entries"
-	dbOpenMode    = 0600
 )
 
 // Set describes a backup set; a list of files and directories to backup, plus
@@ -67,7 +59,8 @@ type Set struct {
 	// The username of the person requesting this backup.
 	Requester string
 
-	// The list of local file and directory paths you want uploaded.
+	// The list of local file and directory paths you want uploaded. Paths must
+	// be absolute.
 	Entries []string
 
 	// The method of transforming local Entries paths in to remote paths, to
@@ -107,73 +100,12 @@ func (s *Set) ID() string {
 	return fmt.Sprintf("%016x%016x", l, h)
 }
 
-// DB is used to create and query a database for storing backup sets (lists of
-// files a user wants to have backed up) and their backup status.
-type DB struct {
-	db *bolt.DB
-	ch codec.Handle
+// encodeToBytes represents this Set as a byte slice, suitable for storing in
+// a database. The given codec handle is used to do the encoding.
+func (s *Set) encodeToBytes(ch codec.Handle) []byte {
+	var encoded []byte
+	enc := codec.NewEncoderBytes(&encoded, ch)
+	enc.MustEncode(s)
+
+	return encoded
 }
-
-// New returns a *DB that can be used to create or query a set database. Provide
-// the path to the database file.
-//
-// Returns an error if path exists but can't be opened	, or if it doesn't exist
-// and can't be created.
-func New(path string) (*DB, error) {
-	db, err := bolt.Open(path, dbOpenMode, &bolt.Options{
-		NoFreelistSync: true,
-		NoGrowSync:     true,
-		FreelistType:   bolt.FreelistMapType,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	err = db.Update(func(tx *bolt.Tx) error {
-		_, errc := tx.CreateBucketIfNotExists([]byte(setsBucket))
-
-		return errc
-	})
-
-	return &DB{
-		db: db,
-		ch: new(codec.BincHandle),
-	}, err
-}
-
-// Close closes the database. Be sure to call this to finalise any writes to
-// disk correctly.
-func (d *DB) Close() error {
-	return d.db.Close()
-}
-
-// // decodeChildBytes converts the byte slice returned by encodeChildren() back
-// // in to a []string.
-// func (d *DB) decodeChildrenBytes(encoded []byte) []string {
-// 	dec := codec.NewDecoderBytes(encoded, d.ch)
-
-// 	var children []string
-
-// 	dec.MustDecode(&children)
-
-// 	return children
-// }
-
-// // encodeChildren returns converts the given string slice into a []byte suitable
-// // for storing on disk.
-// func (d *DB) encodeChildren(dirs []string) []byte {
-// 	var encoded []byte
-// 	enc := codec.NewEncoderBytes(&encoded, d.ch)
-// 	enc.MustEncode(dirs)
-
-// 	return encoded
-// }
-
-// // storeDGUTs stores the current batch of DGUTs in the db.
-// func (d *DB) storeDGUTs(tx *bolt.Tx) error {
-// 	b := tx.Bucket([]byte(gutBucket))
-
-// 	dir, guts := dgut.encodeToBytes(d.ch)
-
-// 	return b.Put(dir, guts)
-// }

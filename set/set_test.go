@@ -41,6 +41,43 @@ func TestSet(t *testing.T) {
 			db, err := New(dbPath)
 			So(err, ShouldBeNil)
 			So(db, ShouldNotBeNil)
+
+			Convey("And add Sets to it", func() {
+				set := &Set{
+					Name:        "set1",
+					Requester:   "me",
+					Entries:     []string{"a/b.txt", "b/c.txt"},
+					Transformer: "prefix=/local:/remote",
+					Monitor:     false,
+				}
+
+				err = db.AddOrUpdate(set)
+				So(err, ShouldBeNil)
+
+				set.Monitor = true
+				err = db.AddOrUpdate(set)
+				So(err, ShouldBeNil)
+
+				set2 := &Set{
+					Name:        "set2",
+					Requester:   "me",
+					Entries:     []string{"a/d.txt", "b/e.txt"},
+					Transformer: "prefix=/local:/remote",
+					Monitor:     false,
+				}
+
+				err = db.AddOrUpdate(set2)
+				So(err, ShouldBeNil)
+
+				Convey("Then get the Sets", func() {
+					sets, err := db.GetAll()
+					So(err, ShouldBeNil)
+					So(sets, ShouldNotBeNil)
+					So(len(sets), ShouldEqual, 2)
+					So(map[string]*Set{sets[0].ID(): sets[0], sets[1].ID(): sets[1]}, ShouldResemble,
+						map[string]*Set{set.ID(): set, set2.ID(): set2})
+				})
+			})
 		})
 	})
 }

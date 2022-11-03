@@ -3,7 +3,6 @@
  *
  * Authors:
  *	- Sendu Bala <sb10@sanger.ac.uk>
- *	- Michael Grace <mg38@sanger.ac.uk>
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
