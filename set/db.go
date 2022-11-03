@@ -44,14 +44,20 @@ There are lookup buckets to find sets by name and user.
 package set
 
 import (
+	"bytes"
+	"strings"
+
 	"github.com/ugorji/go/codec"
 	bolt "go.etcd.io/bbolt"
 )
 
 const (
-	setsBucket    = "sets"
-	entriesBucket = "entries"
-	dbOpenMode    = 0600
+	setsBucket      = "sets"
+	userToSetBucket = "userLookup"
+	fileBucket      = "files"
+	dirBucket       = "dirs"
+	dbOpenMode      = 0600
+	separator       = ":!:"
 )
 
 // DB is used to create and query a database for storing backup sets (lists of
@@ -78,6 +84,11 @@ func New(path string) (*DB, error) {
 
 	err = db.Update(func(tx *bolt.Tx) error {
 		_, errc := tx.CreateBucketIfNotExists([]byte(setsBucket))
+		if errc != nil {
+			return errc
+		}
+
+		_, errc = tx.CreateBucketIfNotExists([]byte(userToSetBucket))
 
 		return errc
 	})
@@ -99,10 +110,110 @@ func (d *DB) AddOrUpdate(set *Set) error {
 	err := d.db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(setsBucket))
 
-		return b.Put([]byte(set.ID()), set.encodeToBytes(d.ch))
+		id := set.ID()
+
+		errp := b.Put([]byte(id), d.encodeToBytes(set))
+		if errp != nil {
+			return errp
+		}
+
+		b = tx.Bucket([]byte(userToSetBucket))
+
+		return b.Put([]byte(set.Requester+separator+id), []byte(id))
 	})
 
 	return err
+}
+
+// encodeToBytes encodes the given thing as a byte slice, suitable for storing
+// in a database.
+func (d *DB) encodeToBytes(thing interface{}) []byte {
+	var encoded []byte
+	enc := codec.NewEncoderBytes(&encoded, d.ch)
+	enc.MustEncode(thing)
+
+	return encoded
+}
+
+// SetFileEntries sets the file paths for the given backup set. Only supply
+// absolute paths to files.
+func (d *DB) SetFileEntries(setID string, paths []string) error {
+	return d.setEntries(setID, paths, fileBucket)
+}
+
+// setEntries sets the paths for the given backup set in a sub bucket with the
+// given prefix. Only supply absolute paths.
+//
+// *** Currently ignores old entries that are not in the given paths.
+func (d *DB) setEntries(setID string, paths []string, bucketName string) error {
+	err := d.db.Update(func(tx *bolt.Tx) error {
+		subBucketName := []byte(bucketName + separator + setID)
+		b, existing, err := d.getAndDeleteExistingEntries(tx, subBucketName)
+		if err != nil {
+			return err
+		}
+
+		for _, path := range paths {
+			e := d.existingOrNewEncodedEntry(path, existing)
+
+			if errp := b.Put([]byte(path), e); errp != nil {
+				return errp
+			}
+		}
+
+		return nil
+	})
+
+	return err
+}
+
+// getAndDeleteExistingEntries gets existing entries in the given sub bucket
+// of the setsBucket, then deletes and recreates the sub bucket. Returns the
+// empty sub bucket and any old values.
+func (d *DB) getAndDeleteExistingEntries(tx *bolt.Tx, subBucketName []byte) (*bolt.Bucket, map[string][]byte, error) {
+	setsBucket := tx.Bucket([]byte(setsBucket))
+	existing := make(map[string][]byte)
+
+	b, err := setsBucket.CreateBucketIfNotExists(subBucketName)
+	if err != nil {
+		return b, existing, err
+	}
+
+	err = b.ForEach(func(k, v []byte) error {
+		existing[string(k)] = v
+
+		return nil
+	})
+	if err != nil {
+		return b, existing, err
+	}
+
+	if len(existing) > 0 {
+		if err = setsBucket.DeleteBucket(subBucketName); err != nil {
+			return b, existing, err
+		}
+
+		b, err = setsBucket.CreateBucket(subBucketName)
+	}
+
+	return b, existing, err
+}
+
+// existingOrNewEncodedEntry returns the encoded entry from the given map with
+// the given path key, or creates a new Entry for path and returns its encoding.
+func (d *DB) existingOrNewEncodedEntry(path string, existing map[string][]byte) []byte {
+	e := existing[path]
+	if e == nil {
+		e = d.encodeToBytes(&Entry{Path: path})
+	}
+
+	return e
+}
+
+// SetDirEntries sets the directory paths for the given backup set. Only supply
+// absolute paths to directories.
+func (d *DB) SetDirEntries(setID string, paths []string) error {
+	return d.setEntries(setID, paths, dirBucket)
 }
 
 // GetAll returns all the Sets previously added to the database.
@@ -112,12 +223,13 @@ func (d *DB) GetAll() ([]*Set, error) {
 	err := d.db.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(setsBucket))
 
-		return b.ForEach(func(_, v []byte) error {
-			dec := codec.NewDecoderBytes(v, d.ch)
-			var set *Set
-			dec.MustDecode(&set)
+		return b.ForEach(func(k, v []byte) error {
+			switch {
+			case strings.HasPrefix(string(k), dirBucket), strings.HasPrefix(string(k), fileBucket):
+				return nil
+			}
 
-			sets = append(sets, set)
+			sets = append(sets, d.decodeSet(v))
 
 			return nil
 		})
@@ -126,33 +238,85 @@ func (d *DB) GetAll() ([]*Set, error) {
 	return sets, err
 }
 
-// // decodeChildBytes converts the byte slice returned by encodeChildren() back
-// // in to a []string.
-// func (d *DB) decodeChildrenBytes(encoded []byte) []string {
-// 	dec := codec.NewDecoderBytes(encoded, d.ch)
+// decodeSet takes a byte slice representation of a Set as stored in the db by
+// AddOrUpdate(), and converts it back in to a *Set.
+func (d *DB) decodeSet(v []byte) *Set {
+	dec := codec.NewDecoderBytes(v, d.ch)
 
-// 	var children []string
+	var set *Set
 
-// 	dec.MustDecode(&children)
+	dec.MustDecode(&set)
 
-// 	return children
-// }
+	return set
+}
 
-// // encodeChildren returns converts the given string slice into a []byte suitable
-// // for storing on disk.
-// func (d *DB) encodeChildren(dirs []string) []byte {
-// 	var encoded []byte
-// 	enc := codec.NewEncoderBytes(&encoded, d.ch)
-// 	enc.MustEncode(dirs)
+// GetByRequester returns all the Sets previously added to the database by the
+// given requester.
+func (d *DB) GetByRequester(requester string) ([]*Set, error) {
+	var sets []*Set
 
-// 	return encoded
-// }
+	err := d.db.View(func(tx *bolt.Tx) error {
+		c := tx.Bucket([]byte(userToSetBucket)).Cursor()
+		b := tx.Bucket([]byte(setsBucket))
 
-// // storeDGUTs stores the current batch of DGUTs in the db.
-// func (d *DB) storeDGUTs(tx *bolt.Tx) error {
-// 	b := tx.Bucket([]byte(gutBucket))
+		prefix := []byte(requester + separator)
+		for k, v := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, v = c.Next() {
+			encodedSet := b.Get(v)
+			if encodedSet == nil {
+				continue
+			}
 
-// 	dir, guts := dgut.encodeToBytes(d.ch)
+			sets = append(sets, d.decodeSet(encodedSet))
+		}
 
-// 	return b.Put(dir, guts)
-// }
+		return nil
+	})
+
+	return sets, err
+}
+
+// getFileEntries returns all the file entries for the given set.
+func (d *DB) getFileEntries(setID string) ([]*Entry, error) {
+	return d.getEntries(setID, fileBucket)
+}
+
+// getEntries returns all the entries for the given set from the given sub
+// bucket prefix.
+func (d *DB) getEntries(setID, bucketName string) ([]*Entry, error) {
+	var entries []*Entry
+
+	err := d.db.View(func(tx *bolt.Tx) error {
+		subBucketName := []byte(bucketName + separator + setID)
+		setsBucket := tx.Bucket([]byte(setsBucket))
+
+		entriesBucket := setsBucket.Bucket(subBucketName)
+		if entriesBucket == nil {
+			return nil
+		}
+
+		return entriesBucket.ForEach(func(_, v []byte) error {
+			entries = append(entries, d.decodeEntry(v))
+
+			return nil
+		})
+	})
+
+	return entries, err
+}
+
+// decodeEntry takes a byte slice representation of an Entry as stored in the db
+// by Set*Entries(), and converts it back in to an *Entry.
+func (d *DB) decodeEntry(v []byte) *Entry {
+	dec := codec.NewDecoderBytes(v, d.ch)
+
+	var entry *Entry
+
+	dec.MustDecode(&entry)
+
+	return entry
+}
+
+// getDirEntries returns all the dir entries for the given set.
+func (d *DB) getDirEntries(setID string) ([]*Entry, error) {
+	return d.getEntries(setID, dirBucket)
+}

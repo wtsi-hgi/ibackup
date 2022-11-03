@@ -47,7 +47,6 @@ import (
 	"fmt"
 
 	"github.com/dgryski/go-farm"
-	"github.com/ugorji/go/codec"
 )
 
 // Set describes a backup set; a list of files and directories to backup, plus
@@ -100,12 +99,14 @@ func (s *Set) ID() string {
 	return fmt.Sprintf("%016x%016x", l, h)
 }
 
-// encodeToBytes represents this Set as a byte slice, suitable for storing in
-// a database. The given codec handle is used to do the encoding.
-func (s *Set) encodeToBytes(ch codec.Handle) []byte {
-	var encoded []byte
-	enc := codec.NewEncoderBytes(&encoded, ch)
-	enc.MustEncode(s)
+// Files uses the database to retrieve our file entries, giving the backup
+// status of all the file paths in this Set.
+func (s *Set) Files(db *DB) ([]*Entry, error) {
+	return db.getFileEntries(s.ID())
+}
 
-	return encoded
+// Dirs uses the database to retrieve our directory entries, giving the backup
+// status of all the directory paths in this Set.
+func (s *Set) Dirs(db *DB) ([]*Entry, error) {
+	return db.getDirEntries(s.ID())
 }

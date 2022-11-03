@@ -45,13 +45,18 @@ func TestSet(t *testing.T) {
 			Convey("And add Sets to it", func() {
 				set := &Set{
 					Name:        "set1",
-					Requester:   "me",
-					Entries:     []string{"a/b.txt", "b/c.txt"},
+					Requester:   "jim",
 					Transformer: "prefix=/local:/remote",
 					Monitor:     false,
 				}
 
 				err = db.AddOrUpdate(set)
+				So(err, ShouldBeNil)
+
+				err = db.SetFileEntries(set.ID(), []string{"/a/b.txt", "/c/d.txt", "/e/f.txt"})
+				So(err, ShouldBeNil)
+
+				err = db.SetDirEntries(set.ID(), []string{"/g/h", "/g/i"})
 				So(err, ShouldBeNil)
 
 				set.Monitor = true
@@ -60,8 +65,7 @@ func TestSet(t *testing.T) {
 
 				set2 := &Set{
 					Name:        "set2",
-					Requester:   "me",
-					Entries:     []string{"a/d.txt", "b/e.txt"},
+					Requester:   "jane",
 					Transformer: "prefix=/local:/remote",
 					Monitor:     false,
 				}
@@ -69,13 +73,53 @@ func TestSet(t *testing.T) {
 				err = db.AddOrUpdate(set2)
 				So(err, ShouldBeNil)
 
-				Convey("Then get the Sets", func() {
+				err = db.SetFileEntries(set2.ID(), []string{"/a/b.txt", "/c/j.txt"})
+				So(err, ShouldBeNil)
+
+				err = db.SetFileEntries(set2.ID(), []string{"/a/b.txt", "/c/k.txt"})
+				So(err, ShouldBeNil)
+
+				Convey("Then get all the Sets and their entries", func() {
 					sets, err := db.GetAll()
 					So(err, ShouldBeNil)
 					So(sets, ShouldNotBeNil)
 					So(len(sets), ShouldEqual, 2)
-					So(map[string]*Set{sets[0].ID(): sets[0], sets[1].ID(): sets[1]}, ShouldResemble,
-						map[string]*Set{set.ID(): set, set2.ID(): set2})
+					So(sets, ShouldResemble, []*Set{set2, set})
+
+					fEntries, err := sets[1].Files(db)
+					So(err, ShouldBeNil)
+					So(len(fEntries), ShouldEqual, 3)
+					So(fEntries[0], ShouldResemble, &Entry{Path: "/a/b.txt"})
+					So(fEntries[1], ShouldResemble, &Entry{Path: "/c/d.txt"})
+					So(fEntries[2], ShouldResemble, &Entry{Path: "/e/f.txt"})
+
+					dEntries, err := sets[1].Dirs(db)
+					So(err, ShouldBeNil)
+					So(len(dEntries), ShouldEqual, 2)
+					So(dEntries[0], ShouldResemble, &Entry{Path: "/g/h"})
+					So(dEntries[1], ShouldResemble, &Entry{Path: "/g/i"})
+
+					fEntries, err = sets[0].Files(db)
+					So(err, ShouldBeNil)
+					So(len(fEntries), ShouldEqual, 2)
+					So(fEntries[0], ShouldResemble, &Entry{Path: "/a/b.txt"})
+					So(fEntries[1], ShouldResemble, &Entry{Path: "/c/k.txt"})
+
+					dEntries, err = sets[0].Dirs(db)
+					So(err, ShouldBeNil)
+					So(len(dEntries), ShouldEqual, 0)
+				})
+
+				Convey("Then get all the Sets and their entries for a particular Requester", func() {
+					sets, err := db.GetByRequester("jane")
+					So(err, ShouldBeNil)
+					So(sets, ShouldNotBeNil)
+					So(len(sets), ShouldEqual, 1)
+					So(sets, ShouldResemble, []*Set{set2})
+
+					fEntries, err := sets[0].Files(db)
+					So(err, ShouldBeNil)
+					So(len(fEntries), ShouldEqual, 2)
 				})
 			})
 		})
