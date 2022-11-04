@@ -214,6 +214,7 @@ func TestPutMock(t *testing.T) {
 
 				for request := range rCh {
 					So(request.Status, ShouldEqual, RequestStatusUploaded)
+					So(request.Size, ShouldEqual, 2)
 
 					_, err = os.Stat(request.Remote)
 					So(err, ShouldBeNil)
@@ -454,6 +455,11 @@ func makeTestRequests(t *testing.T, sourceDir, destDir string) []*Request {
 		}
 
 		f, err := os.Create(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		_, err = f.WriteString("1\n")
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -92,6 +92,7 @@ func TestPutBaton(t *testing.T) {
 				for request := range rCh {
 					So(request.Error, ShouldBeNil)
 					So(request.Status, ShouldEqual, RequestStatusUploaded)
+					So(request.Size, ShouldEqual, 2)
 					meta := getObjectMetadataWithBaton(h.putClient, request.Remote)
 					So(meta, ShouldResemble, request.Meta)
 					checkAddedMeta(meta)

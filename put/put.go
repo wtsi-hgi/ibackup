@@ -246,6 +246,8 @@ func (p *Putter) statPathsAndReturnOrPut(request *Request, putCh chan *Request, 
 		return
 	}
 
+	request.Size = lInfo.Size
+
 	rInfo, err := p.handler.Stat(request)
 	if err != nil {
 		sendRequest(request, RequestStatusFailed, err, returnCh)

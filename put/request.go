@@ -55,6 +55,7 @@ type Request struct {
 	Set        string
 	Meta       map[string]string
 	Status     RequestStatus
+	Size       uint64 // size of Local in bytes, set for you on returned Requests.
 	Error      error
 	remoteMeta map[string]string
 	skipPut    bool
