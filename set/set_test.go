@@ -31,6 +31,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/wtsi-hgi/ibackup/put"
 )
 
 func TestSet(t *testing.T) {
@@ -112,13 +113,13 @@ func TestSet(t *testing.T) {
 				})
 
 				Convey("Then get all the Sets for a particular Requester", func() {
-					sets, err := db.GetByRequester("jane")
+					sets, err := db.GetByRequester("jim")
 					So(err, ShouldBeNil)
 					So(sets, ShouldNotBeNil)
 					So(len(sets), ShouldEqual, 1)
-					So(sets, ShouldResemble, []*Set{set2})
+					So(sets, ShouldResemble, []*Set{set})
 
-					Convey("And update Set status", func() {
+					Convey("And update Set status on discovering dir files and uploading all", func() {
 						So(sets[0].Status, ShouldEqual, PendingDiscovery)
 						So(sets[0].StartedDiscovery.IsZero(), ShouldBeTrue)
 						So(sets[0].LastDiscovery.IsZero(), ShouldBeTrue)
@@ -129,7 +130,7 @@ func TestSet(t *testing.T) {
 						err = db.AddOrUpdate(sets[0])
 						So(err, ShouldBeNil)
 
-						sets, err = db.GetByRequester("jane")
+						sets, err = db.GetByRequester("jim")
 						So(err, ShouldBeNil)
 
 						So(sets[0].Status, ShouldEqual, PendingDiscovery)
@@ -139,23 +140,317 @@ func TestSet(t *testing.T) {
 						err = sets[0].DiscoveryStarted(db)
 						So(err, ShouldBeNil)
 
-						sets, err = db.GetByRequester("jane")
+						sets, err = db.GetByRequester("jim")
 						So(err, ShouldBeNil)
 
 						So(sets[0].Status, ShouldEqual, PendingDiscovery)
 						So(sets[0].StartedDiscovery.IsZero(), ShouldBeFalse)
 
-						err = sets[0].DiscoveryCompleted(db, 10, 100)
+						err = db.SetDiscoveredEntries(set.ID(), []string{"/g/h/l.txt", "/g/i/m.txt"})
 						So(err, ShouldBeNil)
 
-						sets, err = db.GetByRequester("jane")
+						fEntries, err := sets[0].Files(db)
+						So(err, ShouldBeNil)
+						So(len(fEntries), ShouldEqual, 5)
+						So(fEntries[0], ShouldResemble, &Entry{Path: "/a/b.txt"})
+						So(fEntries[1], ShouldResemble, &Entry{Path: "/c/d.txt"})
+						So(fEntries[2], ShouldResemble, &Entry{Path: "/e/f.txt"})
+						So(fEntries[3], ShouldResemble, &Entry{Path: "/g/h/l.txt"})
+						So(fEntries[4], ShouldResemble, &Entry{Path: "/g/i/m.txt"})
+
+						sets, err = db.GetByRequester("jim")
 						So(err, ShouldBeNil)
 
 						So(sets[0].Status, ShouldEqual, PendingUpload)
 						So(sets[0].StartedDiscovery.IsZero(), ShouldBeFalse)
 						So(sets[0].LastDiscovery.IsZero(), ShouldBeFalse)
-						So(sets[0].NumFiles, ShouldEqual, 10)
-						So(sets[0].SizeFiles, ShouldEqual, 100)
+						So(sets[0].NumFiles, ShouldEqual, 5)
+						So(sets[0].SizeFiles, ShouldEqual, 0)
+
+						setsAll, err := db.GetAll()
+						So(err, ShouldBeNil)
+						So(setsAll, ShouldNotBeNil)
+						So(len(setsAll), ShouldEqual, 2)
+
+						r := &put.Request{
+							Local:     "/a/b.txt",
+							Requester: set.Requester,
+							Set:       set.Name,
+							Size:      3,
+							Status:    put.RequestStatusUploaded,
+							Error:     nil,
+						}
+
+						err = db.SetEntryStatus(r)
+						So(err, ShouldBeNil)
+
+						sets, err = db.GetByRequester("jim")
+						So(err, ShouldBeNil)
+
+						So(sets[0].Status, ShouldEqual, Uploading)
+						So(sets[0].NumFiles, ShouldEqual, 5)
+						So(sets[0].SizeFiles, ShouldEqual, 3)
+						So(sets[0].Uploaded, ShouldEqual, 1)
+						So(sets[0].LastCompletedSize, ShouldEqual, 0)
+
+						fEntries, err = sets[0].Files(db)
+						So(err, ShouldBeNil)
+						So(len(fEntries), ShouldEqual, 5)
+						So(fEntries[0].Size, ShouldEqual, 3)
+						So(fEntries[0].Status, ShouldEqual, Uploaded)
+						So(fEntries[0].LastAttempt.IsZero(), ShouldBeFalse)
+
+						r = &put.Request{
+							Local:     "/c/d.txt",
+							Requester: set.Requester,
+							Set:       set.Name,
+							Size:      2,
+							Status:    put.RequestStatusUnmodified,
+							Error:     nil,
+						}
+
+						err = db.SetEntryStatus(r)
+						So(err, ShouldBeNil)
+
+						sets, err = db.GetByRequester("jim")
+						So(err, ShouldBeNil)
+
+						So(sets[0].Status, ShouldEqual, Uploading)
+						So(sets[0].SizeFiles, ShouldEqual, 5)
+						So(sets[0].Uploaded, ShouldEqual, 2)
+
+						fEntries, err = sets[0].Files(db)
+						So(err, ShouldBeNil)
+						So(len(fEntries), ShouldEqual, 5)
+						So(fEntries[1].Size, ShouldEqual, 2)
+						So(fEntries[1].Status, ShouldEqual, Uploaded)
+						So(fEntries[1].LastAttempt.IsZero(), ShouldBeFalse)
+
+						r = &put.Request{
+							Local:     "/e/f.txt",
+							Requester: set.Requester,
+							Set:       set.Name,
+							Size:      4,
+							Status:    put.RequestStatusReplaced,
+							Error:     nil,
+						}
+
+						err = db.SetEntryStatus(r)
+						So(err, ShouldBeNil)
+
+						sets, err = db.GetByRequester("jim")
+						So(err, ShouldBeNil)
+
+						So(sets[0].Status, ShouldEqual, Uploading)
+						So(sets[0].SizeFiles, ShouldEqual, 9)
+						So(sets[0].Uploaded, ShouldEqual, 3)
+
+						fEntries, err = sets[0].Files(db)
+						So(err, ShouldBeNil)
+						So(len(fEntries), ShouldEqual, 5)
+						So(fEntries[2].Size, ShouldEqual, 4)
+						So(fEntries[2].Status, ShouldEqual, Uploaded)
+						So(fEntries[2].LastAttempt.IsZero(), ShouldBeFalse)
+
+						r = &put.Request{
+							Local:     "/g/h/l.txt",
+							Requester: set.Requester,
+							Set:       set.Name,
+							Size:      6,
+							Status:    put.RequestStatusFailed,
+							Error:     Error{msg: "upload failed"},
+						}
+
+						err = db.SetEntryStatus(r)
+						So(err, ShouldBeNil)
+
+						sets, err = db.GetByRequester("jim")
+						So(err, ShouldBeNil)
+
+						So(sets[0].Status, ShouldEqual, Uploading)
+						So(sets[0].SizeFiles, ShouldEqual, 15)
+						So(sets[0].Uploaded, ShouldEqual, 3)
+						So(sets[0].Failed, ShouldEqual, 1)
+
+						fEntries, err = sets[0].Files(db)
+						So(err, ShouldBeNil)
+						So(len(fEntries), ShouldEqual, 5)
+						So(fEntries[3].Size, ShouldEqual, 6)
+						So(fEntries[3].Status, ShouldEqual, Failed)
+						So(fEntries[3].Attempts, ShouldEqual, 1)
+						So(fEntries[3].LastAttempt.IsZero(), ShouldBeFalse)
+						So(fEntries[3].LastError, ShouldEqual, "upload failed")
+
+						err = db.SetEntryStatus(r)
+						So(err, ShouldBeNil)
+
+						sets, err = db.GetByRequester("jim")
+						So(err, ShouldBeNil)
+
+						So(sets[0].Status, ShouldEqual, Uploading)
+						So(sets[0].SizeFiles, ShouldEqual, 15)
+						So(sets[0].Uploaded, ShouldEqual, 3)
+						So(sets[0].Failed, ShouldEqual, 1)
+
+						fEntries, err = sets[0].Files(db)
+						So(err, ShouldBeNil)
+						So(len(fEntries), ShouldEqual, 5)
+						So(fEntries[3].Size, ShouldEqual, 6)
+						So(fEntries[3].Status, ShouldEqual, Failed)
+						So(fEntries[3].Attempts, ShouldEqual, 2)
+						So(fEntries[3].LastAttempt.IsZero(), ShouldBeFalse)
+						So(fEntries[3].LastError, ShouldEqual, "upload failed")
+
+						err = db.SetEntryStatus(r)
+						So(err, ShouldBeNil)
+
+						sets, err = db.GetByRequester("jim")
+						So(err, ShouldBeNil)
+
+						So(sets[0].Status, ShouldEqual, Failing)
+						So(sets[0].SizeFiles, ShouldEqual, 15)
+						So(sets[0].Uploaded, ShouldEqual, 3)
+						So(sets[0].Failed, ShouldEqual, 1)
+
+						fEntries, err = sets[0].Files(db)
+						So(err, ShouldBeNil)
+						So(len(fEntries), ShouldEqual, 5)
+						So(fEntries[3].Size, ShouldEqual, 6)
+						So(fEntries[3].Status, ShouldEqual, Failed)
+						So(fEntries[3].Attempts, ShouldEqual, 3)
+						So(fEntries[3].LastAttempt.IsZero(), ShouldBeFalse)
+						So(fEntries[3].LastError, ShouldEqual, "upload failed")
+
+						r = &put.Request{
+							Local:     "/g/i/m.txt",
+							Requester: set.Requester,
+							Set:       set.Name,
+							Size:      0,
+							Status:    put.RequestStatusMissing,
+							Error:     nil,
+						}
+
+						err = db.SetEntryStatus(r)
+						So(err, ShouldBeNil)
+
+						sets, err = db.GetByRequester("jim")
+						So(err, ShouldBeNil)
+
+						So(sets[0].Status, ShouldEqual, Complete)
+						So(sets[0].SizeFiles, ShouldEqual, 15)
+						So(sets[0].Uploaded, ShouldEqual, 3)
+						So(sets[0].Failed, ShouldEqual, 1)
+						So(sets[0].Missing, ShouldEqual, 1)
+						lastCompleted := sets[0].LastCompleted
+						So(lastCompleted.IsZero(), ShouldBeFalse)
+						So(sets[0].LastCompletedSize, ShouldEqual, 15)
+						So(sets[0].LastCompletedCount, ShouldEqual, 4)
+
+						fEntries, err = sets[0].Files(db)
+						So(err, ShouldBeNil)
+						So(len(fEntries), ShouldEqual, 5)
+						So(fEntries[4].Size, ShouldEqual, 0)
+						So(fEntries[4].Status, ShouldEqual, Missing)
+						So(fEntries[4].LastAttempt.IsZero(), ShouldBeFalse)
+						So(fEntries[4].LastError, ShouldBeBlank)
+
+						r = &put.Request{
+							Local:     "/g/h/l.txt",
+							Requester: set.Requester,
+							Set:       set.Name,
+							Size:      6,
+							Status:    put.RequestStatusUploaded,
+							Error:     nil,
+						}
+
+						err = db.SetEntryStatus(r)
+						So(err, ShouldBeNil)
+
+						sets, err = db.GetByRequester("jim")
+						So(err, ShouldBeNil)
+
+						So(sets[0].Status, ShouldEqual, Complete)
+						So(sets[0].SizeFiles, ShouldEqual, 15)
+						So(sets[0].Uploaded, ShouldEqual, 4)
+						So(sets[0].Failed, ShouldEqual, 0)
+						lastCompleted2 := sets[0].LastCompleted
+						So(lastCompleted2.After(lastCompleted), ShouldBeTrue)
+						So(sets[0].LastCompletedSize, ShouldEqual, 15)
+						So(sets[0].LastCompletedCount, ShouldEqual, 4)
+
+						fEntries, err = sets[0].Files(db)
+						So(err, ShouldBeNil)
+						So(len(fEntries), ShouldEqual, 5)
+						So(fEntries[3].Size, ShouldEqual, 6)
+						So(fEntries[3].Status, ShouldEqual, Uploaded)
+						So(fEntries[3].Attempts, ShouldEqual, 4)
+						So(fEntries[3].LastAttempt.IsZero(), ShouldBeFalse)
+						So(fEntries[3].LastError, ShouldEqual, "upload failed")
+
+						Convey("Finally, set status gets reset on new discovery", func() {
+							oldStart := sets[0].StartedDiscovery
+							oldDisc := sets[0].LastDiscovery
+
+							err = sets[0].DiscoveryStarted(db)
+							So(err, ShouldBeNil)
+
+							sets, err = db.GetByRequester("jim")
+							So(err, ShouldBeNil)
+
+							So(sets[0].Status, ShouldEqual, PendingDiscovery)
+							So(sets[0].StartedDiscovery.After(oldStart), ShouldBeTrue)
+							So(sets[0].NumFiles, ShouldEqual, 0)
+							So(sets[0].SizeFiles, ShouldEqual, 0)
+							So(sets[0].Uploaded, ShouldEqual, 0)
+							So(sets[0].Failed, ShouldEqual, 0)
+							So(sets[0].Missing, ShouldEqual, 0)
+							So(sets[0].LastCompletedCount, ShouldEqual, 4)
+							So(sets[0].LastCompletedSize, ShouldEqual, 15)
+
+							err = db.SetDiscoveredEntries(set.ID(), []string{"/g/h/l.txt", "/g/i/m.txt", "/g/i/n.txt"})
+							So(err, ShouldBeNil)
+
+							fEntries, err := sets[0].Files(db)
+							So(err, ShouldBeNil)
+							So(len(fEntries), ShouldEqual, 6)
+							So(fEntries[5], ShouldResemble, &Entry{Path: "/g/i/n.txt"})
+
+							sets, err = db.GetByRequester("jim")
+							So(err, ShouldBeNil)
+
+							So(sets[0].Status, ShouldEqual, PendingUpload)
+							So(sets[0].LastDiscovery.After(oldDisc), ShouldBeTrue)
+							So(sets[0].NumFiles, ShouldEqual, 6)
+							So(sets[0].SizeFiles, ShouldEqual, 0)
+
+							r = &put.Request{
+								Local:     "/g/h/l.txt",
+								Requester: set.Requester,
+								Set:       set.Name,
+								Size:      7,
+								Status:    put.RequestStatusUploaded,
+								Error:     nil,
+							}
+
+							err = db.SetEntryStatus(r)
+							So(err, ShouldBeNil)
+
+							sets, err = db.GetByRequester("jim")
+							So(err, ShouldBeNil)
+
+							So(sets[0].Status, ShouldEqual, Uploading)
+							So(sets[0].SizeFiles, ShouldEqual, 7)
+							So(sets[0].Uploaded, ShouldEqual, 1)
+							So(sets[0].Failed, ShouldEqual, 0)
+
+							fEntries, err = sets[0].Files(db)
+							So(err, ShouldBeNil)
+							So(len(fEntries), ShouldEqual, 6)
+							So(fEntries[3].Size, ShouldEqual, 7)
+							So(fEntries[3].Status, ShouldEqual, Uploaded)
+							So(fEntries[3].Attempts, ShouldEqual, 1)
+							So(fEntries[3].LastError, ShouldBeBlank)
+						})
 					})
 				})
 			})

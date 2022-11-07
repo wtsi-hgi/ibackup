@@ -21,23 +21,41 @@
  * CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
  * TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-A set has a nested bucket with the set entries, each of which has properties:
-- status: pendingDiscovery (waiting on existence check and size discovery)  | pendingUpload (waiting on reservation) | uploading (reserved by put client) | uploaded | replaced | skipped | missing | failed
-- size
-- date of last attempt
-- last error
-- number of retries
-- primary bool (if true, a file in the original set; if false, a file discovered to be in one of the set's directories)
-
-There are lookup buckets to find sets by name and user.
-
-
  ******************************************************************************/
 
 package set
 
+import "time"
+
+type EntryStatus int
+
+const (
+	// Pending is an Entry status meaning the file has not yet had an upload
+	// attempt.
+	Pending EntryStatus = iota
+
+	// Uploaded is an Entry status meaning the file has been uploaded
+	// successfully.
+	Uploaded
+
+	// Failed is an Entry status meaning the file failed to upload due to some
+	// remote issue.
+	Failed
+
+	// Failed is an Entry status meaning the local file is missing so can't be
+	// uploaded.
+	Missing
+)
+
 // Entry holds the status of an entry in a backup set.
 type Entry struct {
-	Path string
+	Path        string
+	Size        uint64 // size of local file in bytes.
+	Status      EntryStatus
+	LastError   string
+	LastAttempt time.Time
+	Attempts    int
+
+	newFail  bool
+	unFailed bool
 }

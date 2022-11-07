@@ -32,12 +32,12 @@ import (
 	"github.com/dgryski/go-farm"
 )
 
-type SetStatus int
+type Status int
 
 const (
 	// PendingDiscovery is a Set status meaning the set's entries are pending
 	// existence, size and directory content discovery.
-	PendingDiscovery SetStatus = iota
+	PendingDiscovery Status = iota
 
 	// PendingUpload is a Set status meaning discovery has completed, but no
 	// entries have been uploaded since then.
@@ -48,11 +48,12 @@ const (
 	Uploading
 
 	// Failing is a Set status meaning at least 1 of the entries has failed to
-	// upload.
+	// upload after 3 attempts. Other uploads are ongoing.
 	Failing
 
-	// Complete is a Set status meaning all entries have successfully uploaded
-	// since the last discovery.
+	// Complete is a Set status meaning all entries have had an upload attempt
+	// since the last discovery. (Some uploads may have failed, but they had
+	// 3 retries.)
 	Complete
 )
 
@@ -110,20 +111,30 @@ type Set struct {
 	// discovery. This is a read-only value.
 	Uploaded uint64
 
+	// Failed provides the total number of set and discovered files in this set
+	// that have failed their upload since the last discovery. This is a
+	// read-only value.
+	Failed uint64
+
+	// Missing provides the total number of set and discovered files in this set
+	// that no longer exist locally since the last discovery. This is a
+	// read-only value.
+	Missing uint64
+
 	// Status provides the current status for the set since the last discovery.
 	// This is a read-only value.
-	Status SetStatus
+	Status Status
 
-	// LastCompleted provides the last time that all uploads completed. This is
-	// a read-only value.
+	// LastCompleted provides the last time that all uploads completed
+	// (regardless of success or failure). This is a read-only value.
 	LastCompleted time.Time
 
 	// LastCompletedCount provides the count of files there were uploaded on the
-	// last successful upload attempt. This is a read-only value.
+	// last upload attempt. This is a read-only value.
 	LastCompletedCount uint64
 
 	// LastCompletedSize provides the size of files (bytes) there were uploaded
-	// on the last successful upload attempt. This is a read-only value.
+	// on the last upload attempt. This is a read-only value.
 	LastCompletedSize uint64
 }
 
@@ -156,11 +167,4 @@ func (s *Set) Dirs(db *DB) ([]*Entry, error) {
 // a number of the status-type values for this Set.
 func (s *Set) DiscoveryStarted(db *DB) error {
 	return db.setDiscoveryStarted(s.ID())
-}
-
-// DiscoveryCompleted should be called when you finish discovering the existence
-// of file entries and the contents of directory entries in this set. Provide
-// the count and size (bytes) of the discovered entries.
-func (s *Set) DiscoveryCompleted(db *DB, count, size uint64) error {
-	return db.setDiscoveryCompleted(s.ID(), count, size)
 }
