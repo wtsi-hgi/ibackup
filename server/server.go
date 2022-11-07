@@ -32,12 +32,14 @@ import (
 	"io"
 
 	gas "github.com/wtsi-hgi/go-authserver"
+	"github.com/wtsi-hgi/ibackup/set"
 )
 
 // Server is used to start a web server that provides a REST API to the setdb
 // package's database, and a website that displays the information nicely.
 type Server struct {
 	gas.Server
+	db *set.DB
 }
 
 // New creates a Server which can serve a REST API and website.
@@ -57,5 +59,12 @@ func New(logWriter io.Writer) *Server {
 // stop is called when the server is Stop()ped, cleaning up our additional
 // properties.
 func (s *Server) stop() {
+	if s.db == nil {
+		return
+	}
 
+	err := s.db.Close()
+	if err != nil {
+		s.Logger.Printf("database close failed: %s", err)
+	}
 }

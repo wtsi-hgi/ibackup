@@ -30,30 +30,63 @@ import (
 	"net/http"
 
 	gas "github.com/wtsi-hgi/go-authserver"
+	"github.com/wtsi-hgi/ibackup/set"
 )
 
+const ErrBadRequester = gas.Error("bad requester")
+
 // AddOrUpdateSet is a client call to a Server listening at the given
-// domain:port url to add a backup set to the Server's database, so that the
-// files in the set will get backed up. Returns a unique set ID assigned to the
-// set.
+// domain:port url to add details about a backup set to the Server's database.
 //
 // Provide a non-blank path to a certificate to force us to trust that
 // certificate, eg. if the server was started with a self-signed certificate.
 //
 // You must first gas.Login() to get a JWT that you must supply here.
-func AddOrUpdateSet(url, cert, jwt string) (string, error) {
+func AddOrUpdateSet(url, cert, jwt string, set *set.Set) error {
 	r := gas.NewAuthenticatedClientRequest(url, cert, jwt)
 
 	resp, err := r.ForceContentType("application/json").
-		Get(EndPointAuthSet)
+		SetBody(set).
+		Put(EndPointAuthSet)
 	if err != nil {
-		return "", err
+		return err
 	}
 
 	switch resp.StatusCode() {
 	case http.StatusUnauthorized, http.StatusNotFound:
-		return "", gas.ErrNoAuth
+		return gas.ErrNoAuth
 	}
 
-	return resp.String(), nil
+	return nil
+}
+
+// GetSets is a client call to a Server listening at the given
+// domain:port url to get details about a given requester's backup sets from the
+// Server's database.
+//
+// Provide a non-blank path to a certificate to force us to trust that
+// certificate, eg. if the server was started with a self-signed certificate.
+//
+// You must first gas.Login() to get a JWT that you must supply here.
+func GetSets(url, cert, jwt, requester string) ([]*set.Set, error) {
+	r := gas.NewAuthenticatedClientRequest(url, cert, jwt)
+
+	var sets []*set.Set
+
+	resp, err := r.ForceContentType("application/json").
+		SetQueryParams(map[string]string{getSetByRequesterKey: requester}).
+		SetResult(&sets).
+		Get(EndPointAuthSet)
+	if err != nil {
+		return nil, err
+	}
+
+	switch resp.StatusCode() {
+	case http.StatusUnauthorized, http.StatusNotFound:
+		return nil, gas.ErrNoAuth
+	case http.StatusBadRequest:
+		return nil, ErrBadRequester
+	}
+
+	return sets, nil
 }

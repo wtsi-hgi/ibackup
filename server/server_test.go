@@ -26,20 +26,27 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strings"
+	"path/filepath"
 	"testing"
 
 	"github.com/go-resty/resty/v2"
 	. "github.com/smartystreets/goconvey/convey"
 	gas "github.com/wtsi-hgi/go-authserver"
+	"github.com/wtsi-hgi/ibackup/set"
 )
 
 func TestServer(t *testing.T) {
-	_, uid := gas.GetUser(t)
+	exampleSet := &set.Set{
+		Name:        "set1",
+		Requester:   "jim",
+		Transformer: "prefix=/local:/remote",
+		Monitor:     false,
+	}
 
 	Convey("Given a Server", t, func() {
 		logWriter := gas.NewStringLogger()
@@ -49,7 +56,7 @@ func TestServer(t *testing.T) {
 			certPath, keyPath, err := gas.CreateTestCert(t)
 			So(err, ShouldBeNil)
 
-			_, dfunc, err := gas.StartTestServer(s, certPath, keyPath)
+			addr, dfunc, err := gas.StartTestServer(s, certPath, keyPath)
 			So(err, ShouldBeNil)
 			defer func() {
 				errd := dfunc()
@@ -60,29 +67,40 @@ func TestServer(t *testing.T) {
 			client.SetRootCertificate(certPath)
 
 			Convey("The jwt endpoint works after enabling it", func() {
-				// err = s.EnableAuth(certPath, keyPath, func(u, p string) (bool, string) {
-				// 	returnUID := uid
+				err = s.EnableAuth(certPath, keyPath, func(u, p string) (bool, string) {
+					return true, "1"
+				})
+				So(err, ShouldBeNil)
 
-				// 	if u == "user" {
-				// 		returnUID = "-1"
-				// 	}
+				token, errl := gas.Login(addr, certPath, exampleSet.Requester, "pass")
+				So(errl, ShouldBeNil)
+				So(token, ShouldNotBeBlank)
 
-				// 	return true, returnUID
-				// })
-				// So(err, ShouldBeNil)
+				Convey("And then you can LoadSetDB and use client methods AddOrUpdateSet and GetSets", func() {
+					path := createDBLocation(t)
+					err = s.LoadSetDB(path)
+					So(err, ShouldBeNil)
 
-				// token, errl := gas.Login(addr, certPath, username, "pass")
-				// So(errl, ShouldBeNil)
-				// r := gas.NewAuthenticatedClientRequest(addr, certPath, token)
+					err = AddOrUpdateSet(addr, certPath, token, exampleSet)
+					So(err, ShouldBeNil)
 
-				// tokenBadUID, errl := gas.Login(addr, certPath, "user", "pass")
-				// So(errl, ShouldBeNil)
-				// So(tokenBadUID, ShouldNotBeBlank)
+					sets, err := GetSets(addr, certPath, token, exampleSet.Requester)
+					So(err, ShouldBeNil)
+					So(len(sets), ShouldEqual, 1)
+					So(sets[0], ShouldResemble, exampleSet)
+
+					_, err = GetSets(addr, certPath, token, "foo")
+					So(err, ShouldNotBeNil)
+
+					exampleSet.Requester = "foo"
+					err = AddOrUpdateSet(addr, certPath, token, exampleSet)
+					So(err, ShouldNotBeNil)
+				})
 			})
 		})
 
 		Convey("You can use the set endpoint", func() {
-			response, err := querySet(s, "")
+			response, err := putSet(s, nil)
 			So(err, ShouldBeNil)
 			So(response.Code, ShouldEqual, http.StatusNotFound)
 			So(logWriter.String(), ShouldContainSubstring, "[PUT /rest/v1/set")
@@ -90,25 +108,22 @@ func TestServer(t *testing.T) {
 			logWriter.Reset()
 
 			Convey("And given a set database", func() {
-				path, err := createExampleDB(t, uid)
-				So(err, ShouldBeNil)
-
-				// sdb, err := set.NewDB(path)
-				// So(err, ShouldBeNil)
+				path := createDBLocation(t)
 
 				Convey("You can add sets after calling LoadSetDB", func() {
 					err = s.LoadSetDB(path)
 					So(err, ShouldBeNil)
 
-					response, err := querySet(s, "")
+					response, err := putSet(s, exampleSet)
 					So(err, ShouldBeNil)
 					So(response.Code, ShouldEqual, http.StatusOK)
 					So(logWriter.String(), ShouldContainSubstring, "[PUT /rest/v1/set")
 					So(logWriter.String(), ShouldContainSubstring, "STATUS=200")
 
-					result, err := decodeSetResult(response)
+					sets, err := s.db.GetAll()
 					So(err, ShouldBeNil)
-					So(result, ShouldResemble, "foo")
+					So(len(sets), ShouldEqual, 1)
+					So(sets[0], ShouldResemble, exampleSet)
 				})
 			})
 
@@ -120,12 +135,26 @@ func TestServer(t *testing.T) {
 	})
 }
 
-// querySet does a test PUT of /rest/v1/set, with extra appended (start it
-// with ?).
-func querySet(s *Server, extra string) (*httptest.ResponseRecorder, error) {
+// createDBLocation creates a temporary location for to store a database and
+// returns the path to the (non-existent) database file.
+func createDBLocation(t *testing.T) string {
+	t.Helper()
+
+	tdir := t.TempDir()
+	path := filepath.Join(tdir, "set.db")
+
+	return path
+}
+
+// putSet does a test PUT of /rest/v1/set, with the given set converted to
+// ?.
+func putSet(s *Server, set *set.Set) (*httptest.ResponseRecorder, error) {
 	response := httptest.NewRecorder()
 
-	req, err := http.NewRequestWithContext(context.Background(), "PUT", EndPointSet+extra, nil)
+	buf := new(bytes.Buffer)
+	json.NewEncoder(buf).Encode(set)
+
+	req, err := http.NewRequestWithContext(context.Background(), "PUT", EndPointSet, buf)
 	if err != nil {
 		return nil, err
 	}
@@ -135,39 +164,10 @@ func querySet(s *Server, extra string) (*httptest.ResponseRecorder, error) {
 	return response, nil
 }
 
-// decodeSetResult decodes the result of a set query.
-func decodeSetResult(response *httptest.ResponseRecorder) (string, error) {
-	var result string
-	err := json.NewDecoder(response.Body).Decode(&result)
+// decodeSetResult decodes the result of a set put.
+// func decodeSetResult(response *httptest.ResponseRecorder) (string, error) {
+// 	var result string
+// 	err := json.NewDecoder(response.Body).Decode(&result)
 
-	return result, err
-}
-
-// createExampleDB creates a temporary set.db from some example data that uses
-// the given uid, and returns the path to the database file.
-func createExampleDB(t *testing.T, uid string) (string, error) {
-	t.Helper()
-
-	// tdir := t.TempDir()
-	// path := filepath.Join(tdir, "set.db")
-
-	// setData := exampleSetData(uid)
-	// data := strings.NewReader(setData)
-	// db := set.NewDB(path, setData)
-
-	// err = db.Store(data, 20)
-
-	// return path, err
-
-	return "", nil
-}
-
-// exampleSetData is some example set data that uses the given uid.
-func exampleSetData(uid string) string {
-	data := `xxx
-`
-
-	data = strings.ReplaceAll(data, "z", uid)
-
-	return data
-}
+// 	return result, err
+// }

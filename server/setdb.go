@@ -26,10 +26,13 @@
 package server
 
 import (
+	"encoding/json"
+	"io"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 	gas "github.com/wtsi-hgi/go-authserver"
+	"github.com/wtsi-hgi/ibackup/set"
 )
 
 const (
@@ -44,6 +47,9 @@ const (
 	EndPointAuthSet = gas.EndPointAuth + setPath
 
 	ErrNoSetDBDirFound = gas.Error("set database directory not found")
+	ErrNoRequester     = gas.Error("requester not supplied")
+
+	getSetByRequesterKey = "requester"
 )
 
 // LoadSetDB loads the given set.db or creates it if it doesn't exist, and adds
@@ -51,44 +57,104 @@ const (
 // EnableAuth() first, then these endpoints will be secured and be available at
 // /rest/v1/auth/set.
 //
-// The set endpoint needs the x, y, z parameters, which correspond to arguments
-// that set.X takes.
+// The set put endpoint takes a set.Set encoded as JSON in the body.
+// The set get endpoint takes an id or a user parameter.
 func (s *Server) LoadSetDB(path string) error {
-	// s.treeMutex.Lock()
-	// defer s.treeMutex.Unlock()
+	db, err := set.New(path)
+	if err != nil {
+		return err
+	}
 
-	// tree, err := dgut.NewTree(paths...)
-	// if err != nil {
-	// 	return err
-	// }
-
-	// s.tree = tree
-	// s.dgutPaths = paths
+	s.db = db
 
 	authGroup := s.AuthRouter()
 
 	if authGroup == nil {
 		s.Router().PUT(EndPointSet, s.putSet)
+		s.Router().GET(EndPointSet, s.getSets)
 	} else {
-		authGroup.PUT(EndPointAuthSet, s.putSet)
+		authGroup.PUT(setPath, s.putSet)
+		authGroup.GET(setPath, s.getSets)
 	}
 
 	return nil
 }
 
-// putSet stores the given set information in the db and responds with the
-// corresponding set ID. LoadSetDB() must already have been called. This is
-// called when there is a PUT on /rest/v1/set or /rest/v1/auth/set.
+// putSet interprets the body as a JSON encoding of a set.Set and stores it in
+// the database.
+//
+// LoadSetDB() must already have been called. This is called when there is a PUT
+// on /rest/v1/set or /rest/v1/auth/set.
 func (s *Server) putSet(c *gin.Context) {
-	// s.treeMutex.Lock()
-	// defer s.treeMutex.Unlock()
+	jsonData, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
-	// dcss, err := s.tree.Where(dir, filter, convertSplitsValue(splits))
-	// if err != nil {
-	// 	c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+		return
+	}
 
-	// 	return
-	// }
+	set := &set.Set{}
 
-	c.IndentedJSON(http.StatusOK, "")
+	err = json.Unmarshal(jsonData, set)
+	if err != nil {
+		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+
+		return
+	}
+
+	if !s.allowedAccess(c, set.Requester) {
+		c.AbortWithError(http.StatusUnauthorized, err) //nolint:errcheck
+
+		return
+	}
+
+	err = s.db.AddOrUpdate(set)
+	if err != nil {
+		c.AbortWithError(http.StatusInternalServerError, err) //nolint:errcheck
+
+		return
+	}
+
+	c.Status(http.StatusOK)
+}
+
+// allowedAccess gets our current user if we have EnableAuth(), and returns
+// true if that matches the given username. Always returns true if we have not
+// EnableAuth().
+func (s *Server) allowedAccess(c *gin.Context, user string) bool {
+	u := s.GetUser(c)
+	if u == nil {
+		return true
+	}
+
+	return u.Username == user
+}
+
+// getSets returns the requester's set(s) from the database. requester parameter
+// must be given. Returns the sets as a JSON encoding of a []*set.Set.
+//
+// LoadSetDB() must already have been called. This is called when there is a PUT
+// on /rest/v1/set or /rest/v1/auth/set.
+func (s *Server) getSets(c *gin.Context) {
+	requester, given := c.GetQuery(getSetByRequesterKey)
+	if !given {
+		c.AbortWithError(http.StatusBadRequest, ErrNoRequester) //nolint:errcheck
+
+		return
+	}
+
+	if !s.allowedAccess(c, requester) {
+		c.AbortWithError(http.StatusUnauthorized, ErrBadRequester) //nolint:errcheck
+
+		return
+	}
+
+	sets, err := s.db.GetByRequester(requester)
+	if err != nil {
+		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+
+		return
+	}
+
+	c.JSON(http.StatusOK, sets)
 }
