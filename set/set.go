@@ -129,12 +129,13 @@ type Set struct {
 	// (regardless of success or failure). This is a read-only value.
 	LastCompleted time.Time
 
-	// LastCompletedCount provides the count of files there were uploaded on the
-	// last upload attempt. This is a read-only value.
+	// LastCompletedCount provides the count of files on the last upload attempt
+	// (those successfully uploaded, those which failed, but not those which
+	// were missing locally). This is a read-only value.
 	LastCompletedCount uint64
 
-	// LastCompletedSize provides the size of files (bytes) there were uploaded
-	// on the last upload attempt. This is a read-only value.
+	// LastCompletedSize provides the size of files (bytes) counted in
+	// LastCompletedCount. This is a read-only value.
 	LastCompletedSize uint64
 }
 
