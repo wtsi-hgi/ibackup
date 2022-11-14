@@ -57,38 +57,60 @@ func (s *Server) triggerDiscovery(c *gin.Context) {
 }
 
 // discoverSet discovers and stores file entry details for the given set.
+// Immediately tries to record in the db that discovery has started, and returns
+// any error from doing that. Actual discovery will then proceed asynchronously.
 func (s *Server) discoverSet(set *set.Set) error {
 	if err := s.db.SetDiscoveryStarted(set.ID()); err != nil {
 		return err
 	}
 
-	if err := s.updateSetFileExistence(set); err != nil {
-		return err
-	}
+	go func() {
+		doneCh := make(chan bool, 1)
 
-	if err := s.discoverDirEntries(set); err != nil {
-		return err
-	}
+		go func() {
+			if err := s.updateSetFileExistence(set); err != nil {
+				s.Logger.Printf("update file existence for %s failed: %s", set.ID(), err)
+			}
+
+			close(doneCh)
+		}()
+
+		if err := s.discoverDirEntries(set, doneCh); err != nil {
+			s.Logger.Printf("discover dir contents for %s failed: %s", set.ID(), err)
+		}
+	}()
 
 	return nil
 }
 
 // updateSetFileExistence gets the file entries (not discovered ones) for the
-// set, checks if they all exist locally, and if not updates the entry status
-// in the db.
+// set, checks if they all exist locally (concurrently), and if not updates the
+// entry status in the db.
 func (s *Server) updateSetFileExistence(set *set.Set) error {
 	entries, err := s.db.GetPureFileEntries(set.ID())
 	if err != nil {
 		return err
 	}
 
+	errCh := make(chan error, len(entries))
+
 	for _, entry := range entries {
-		if _, err := s.setEntryMissingIfNotExist(set, entry.Path); err != nil {
-			return err
+		path := entry.Path
+
+		s.filePool.Submit(func() {
+			_, errs := s.setEntryMissingIfNotExist(set, path)
+			errCh <- errs
+		})
+	}
+
+	for i := 0; i < len(entries); i++ {
+		thisErr := <-errCh
+		if thisErr != nil {
+			err = thisErr
 		}
 	}
 
-	return nil
+	return err
 }
 
 // setEntryMissingIfNotExist checks if the given path exists, and if not returns
@@ -108,43 +130,92 @@ func (s *Server) setEntryMissingIfNotExist(set *set.Set, path string) (bool, err
 		Error:     nil,
 	}
 
-	err := s.db.SetEntryStatus(r)
-
-	return true, err
+	return true, s.db.SetEntryStatus(r)
 }
 
-func (s *Server) discoverDirEntries(set *set.Set) error {
+// discoverDirEntries concurrently walks the set's directories, waits until
+// the filesDoneCh closes (file entries have been updated), then sets the
+// discovered file paths, which makes the db consider discovery to be complete.
+func (s *Server) discoverDirEntries(set *set.Set, filesDoneCh chan bool) error {
 	entries, err := s.db.GetDirEntries(set.ID())
 	if err != nil {
 		return err
 	}
 
-	var paths []string
+	pathsCh := make(chan string)
+	doneCh := make(chan error)
 
-	cb := func(path string) error {
+	go s.doSetDirWalks(set, entries, pathsCh, doneCh)
+
+	var paths []string //nolint:prealloc
+
+	for path := range pathsCh {
 		paths = append(paths, path)
+	}
+
+	err = <-doneCh
+	if err != nil {
+		return err
+	}
+
+	<-filesDoneCh
+
+	return s.db.SetDiscoveredEntries(set.ID(), paths)
+}
+
+// doSetDirWalks walks the given dir entries of the given set concurrently,
+// sending discovered file paths to the pathsCh. Closes the pathsCh when done,
+// then sends any error on the doneCh.
+func (s *Server) doSetDirWalks(set *set.Set, entries []*set.Entry, pathsCh chan string, doneCh chan error) {
+	errCh := make(chan error, len(entries))
+
+	var cb walk.PathCallback = func(path string) error {
+		pathsCh <- path
 
 		return nil
 	}
 
 	for _, entry := range entries {
-		missing, err := s.setEntryMissingIfNotExist(set, entry.Path)
-		if err != nil {
-			return err
-		}
+		dir := entry.Path
 
-		if missing {
-			continue
-		}
+		s.dirPool.Submit(func() {
+			errCh <- s.checkAndWalkDir(set, dir, cb)
+		})
+	}
 
-		walker := walk.New(cb, false)
-		if err = walker.Walk(entry.Path, walkErrorCallback); err != nil {
-			return err
+	var err error
+
+	for i := 0; i < len(entries); i++ {
+		thisErr := <-errCh
+		if thisErr != nil {
+			err = thisErr
 		}
 	}
 
-	return s.db.SetDiscoveredEntries(set.ID(), paths)
+	close(pathsCh)
+
+	doneCh <- err
 }
 
-// walkErrorCallback is for giving to Walk; we currently just ignore all errors.
-func walkErrorCallback(string, error) {}
+// checkAndWalkDir checks if the given dir exists, and if it does, walks the
+// dir using the given cb. Major errors are returned; walk errors are logged but
+// otherwise ignored.
+func (s *Server) checkAndWalkDir(set *set.Set, dir string, cb walk.PathCallback) error {
+	missing, err := s.setEntryMissingIfNotExist(set, dir)
+	if err != nil {
+		return err
+	}
+
+	if missing {
+		return nil
+	}
+
+	walker := walk.New(cb, false)
+
+	return walker.Walk(dir, s.walkErrorCallback)
+}
+
+// walkErrorCallback is for giving to Walk; we just log errors.
+func (s *Server) walkErrorCallback(path string, err error) {
+	s.Logger.Printf("walk found %s, but had error: %s", path, err)
+}

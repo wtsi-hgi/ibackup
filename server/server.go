@@ -31,15 +31,27 @@ package server
 import (
 	"io"
 
+	"github.com/gammazero/workerpool"
 	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/ibackup/set"
 )
+
+// workerPoolSizeFiles is the max number of concurrent file stats we'll do
+// during discovery.
+const workerPoolSizeFiles = 16
+
+// workerPoolSizeDir is the max number of directory walks we'll do concurrently
+// during discovery; each of those walks in turn operate on 16 subdirs
+// concurrently.
+const workerPoolSizeDir = 3
 
 // Server is used to start a web server that provides a REST API to the setdb
 // package's database, and a website that displays the information nicely.
 type Server struct {
 	gas.Server
-	db *set.DB
+	db       *set.DB
+	filePool *workerpool.WorkerPool
+	dirPool  *workerpool.WorkerPool
 }
 
 // New creates a Server which can serve a REST API and website.
@@ -48,7 +60,9 @@ type Server struct {
 // log/syslog pkg with syslog.new(syslog.LOG_INFO, "tag").
 func New(logWriter io.Writer) *Server {
 	s := &Server{
-		Server: *gas.New(logWriter),
+		Server:   *gas.New(logWriter),
+		filePool: workerpool.New(workerPoolSizeFiles),
+		dirPool:  workerpool.New(workerPoolSizeDir),
 	}
 
 	s.SetStopCallBack(s.stop)
@@ -59,6 +73,9 @@ func New(logWriter io.Writer) *Server {
 // stop is called when the server is Stop()ped, cleaning up our additional
 // properties.
 func (s *Server) stop() {
+	s.filePool.StopWait()
+	s.dirPool.StopWait()
+
 	if s.db == nil {
 		return
 	}

@@ -48,6 +48,20 @@ func TestServer(t *testing.T) {
 		Monitor:     false,
 	}
 
+	exampleSet2 := &set.Set{
+		Name:        "set2",
+		Requester:   exampleSet.Requester,
+		Transformer: exampleSet.Transformer,
+		Monitor:     true,
+	}
+
+	exampleSet3 := &set.Set{
+		Name:        "set3",
+		Requester:   exampleSet.Requester,
+		Transformer: exampleSet.Transformer,
+		Monitor:     false,
+	}
+
 	Convey("Given a Server", t, func() {
 		logWriter := gas.NewStringLogger()
 		s := New(logWriter)
@@ -139,6 +153,54 @@ func TestServer(t *testing.T) {
 						gotSetByName, err := client.GetSetByName(exampleSet.Requester, exampleSet.Name)
 						So(err, ShouldBeNil)
 						So(gotSetByName, ShouldResemble, gotSet)
+
+						err = client.AddOrUpdateSet(exampleSet2)
+						So(err, ShouldBeNil)
+
+						err = client.SetFiles(exampleSet2.ID(), files)
+						So(err, ShouldBeNil)
+
+						err = client.SetDirs(exampleSet2.ID(), nil)
+						So(err, ShouldBeNil)
+
+						t = time.Now()
+
+						err = client.TriggerDiscovery(exampleSet2.ID())
+						So(err, ShouldBeNil)
+
+						entries, err = client.GetFiles(exampleSet2.ID())
+						So(err, ShouldBeNil)
+						So(len(entries), ShouldEqual, len(files))
+
+						gotSet, err = client.GetSetByID(exampleSet2.Requester, exampleSet2.ID())
+						So(err, ShouldBeNil)
+						So(gotSet.LastDiscovery, ShouldHappenAfter, t)
+						So(gotSet.Missing, ShouldEqual, 1)
+						So(gotSet.NumFiles, ShouldEqual, 2)
+
+						err = client.AddOrUpdateSet(exampleSet3)
+						So(err, ShouldBeNil)
+
+						err = client.SetFiles(exampleSet3.ID(), nil)
+						So(err, ShouldBeNil)
+
+						err = client.SetDirs(exampleSet3.ID(), dirs)
+						So(err, ShouldBeNil)
+
+						t = time.Now()
+
+						err = client.TriggerDiscovery(exampleSet3.ID())
+						So(err, ShouldBeNil)
+
+						entries, err = client.GetFiles(exampleSet3.ID())
+						So(err, ShouldBeNil)
+						So(len(entries), ShouldEqual, len(discovers))
+
+						gotSet, err = client.GetSetByID(exampleSet3.Requester, exampleSet3.ID())
+						So(err, ShouldBeNil)
+						So(gotSet.LastDiscovery, ShouldHappenAfter, t)
+						So(gotSet.Missing, ShouldEqual, 0)
+						So(gotSet.NumFiles, ShouldEqual, 3)
 					})
 				})
 			})
