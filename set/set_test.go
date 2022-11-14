@@ -97,26 +97,26 @@ func TestSet(t *testing.T) {
 					So(len(sets), ShouldEqual, 2)
 					So(sets, ShouldResemble, []*Set{set2, set})
 
-					fEntries, err := sets[1].Files(db)
+					fEntries, err := db.GetFileEntries(sets[1].ID())
 					So(err, ShouldBeNil)
 					So(len(fEntries), ShouldEqual, 3)
 					So(fEntries[0], ShouldResemble, &Entry{Path: "/a/b.txt"})
 					So(fEntries[1], ShouldResemble, &Entry{Path: "/c/d.txt"})
 					So(fEntries[2], ShouldResemble, &Entry{Path: "/e/f.txt"})
 
-					dEntries, err := sets[1].Dirs(db)
+					dEntries, err := db.GetDirEntries(sets[1].ID())
 					So(err, ShouldBeNil)
 					So(len(dEntries), ShouldEqual, 2)
 					So(dEntries[0], ShouldResemble, &Entry{Path: "/g/h"})
 					So(dEntries[1], ShouldResemble, &Entry{Path: "/g/i"})
 
-					fEntries, err = sets[0].Files(db)
+					fEntries, err = db.GetFileEntries(sets[0].ID())
 					So(err, ShouldBeNil)
 					So(len(fEntries), ShouldEqual, 2)
 					So(fEntries[0], ShouldResemble, &Entry{Path: "/a/b.txt"})
 					So(fEntries[1], ShouldResemble, &Entry{Path: "/c/k.txt"})
 
-					dEntries, err = sets[0].Dirs(db)
+					dEntries, err = db.GetDirEntries(sets[0].ID())
 					So(err, ShouldBeNil)
 					So(len(dEntries), ShouldEqual, 0)
 				})
@@ -146,7 +146,7 @@ func TestSet(t *testing.T) {
 						So(sets[0].LastDiscovery.IsZero(), ShouldBeTrue)
 						So(sets[0].Description, ShouldEqual, "desc")
 
-						err = sets[0].DiscoveryStarted(db)
+						err = db.SetDiscoveryStarted(sets[0].ID())
 						So(err, ShouldBeNil)
 
 						sets, err = db.GetByRequester("jim")
@@ -158,7 +158,7 @@ func TestSet(t *testing.T) {
 						err = db.SetDiscoveredEntries(set.ID(), []string{"/g/h/l.txt", "/g/i/m.txt"})
 						So(err, ShouldBeNil)
 
-						fEntries, err := sets[0].Files(db)
+						fEntries, err := db.GetFileEntries(sets[0].ID())
 						So(err, ShouldBeNil)
 						So(len(fEntries), ShouldEqual, 5)
 						So(fEntries[0], ShouldResemble, &Entry{Path: "/a/b.txt"})
@@ -202,7 +202,7 @@ func TestSet(t *testing.T) {
 						So(sets[0].Uploaded, ShouldEqual, 1)
 						So(sets[0].LastCompletedSize, ShouldEqual, 0)
 
-						fEntries, err = sets[0].Files(db)
+						fEntries, err = db.GetFileEntries(sets[0].ID())
 						So(err, ShouldBeNil)
 						So(len(fEntries), ShouldEqual, 5)
 						So(fEntries[0].Size, ShouldEqual, 3)
@@ -228,7 +228,7 @@ func TestSet(t *testing.T) {
 						So(sets[0].SizeFiles, ShouldEqual, 5)
 						So(sets[0].Uploaded, ShouldEqual, 2)
 
-						fEntries, err = sets[0].Files(db)
+						fEntries, err = db.GetFileEntries(sets[0].ID())
 						So(err, ShouldBeNil)
 						So(len(fEntries), ShouldEqual, 5)
 						So(fEntries[1].Size, ShouldEqual, 2)
@@ -254,7 +254,7 @@ func TestSet(t *testing.T) {
 						So(sets[0].SizeFiles, ShouldEqual, 9)
 						So(sets[0].Uploaded, ShouldEqual, 3)
 
-						fEntries, err = sets[0].Files(db)
+						fEntries, err = db.GetFileEntries(sets[0].ID())
 						So(err, ShouldBeNil)
 						So(len(fEntries), ShouldEqual, 5)
 						So(fEntries[2].Size, ShouldEqual, 4)
@@ -281,7 +281,7 @@ func TestSet(t *testing.T) {
 						So(sets[0].Uploaded, ShouldEqual, 3)
 						So(sets[0].Failed, ShouldEqual, 1)
 
-						fEntries, err = sets[0].Files(db)
+						fEntries, err = db.GetFileEntries(sets[0].ID())
 						So(err, ShouldBeNil)
 						So(len(fEntries), ShouldEqual, 5)
 						So(fEntries[3].Size, ShouldEqual, 6)
@@ -301,7 +301,7 @@ func TestSet(t *testing.T) {
 						So(sets[0].Uploaded, ShouldEqual, 3)
 						So(sets[0].Failed, ShouldEqual, 1)
 
-						fEntries, err = sets[0].Files(db)
+						fEntries, err = db.GetFileEntries(sets[0].ID())
 						So(err, ShouldBeNil)
 						So(len(fEntries), ShouldEqual, 5)
 						So(fEntries[3].Size, ShouldEqual, 6)
@@ -321,7 +321,7 @@ func TestSet(t *testing.T) {
 						So(sets[0].Uploaded, ShouldEqual, 3)
 						So(sets[0].Failed, ShouldEqual, 1)
 
-						fEntries, err = sets[0].Files(db)
+						fEntries, err = db.GetFileEntries(sets[0].ID())
 						So(err, ShouldBeNil)
 						So(len(fEntries), ShouldEqual, 5)
 						So(fEntries[3].Size, ShouldEqual, 6)
@@ -355,7 +355,7 @@ func TestSet(t *testing.T) {
 						So(sets[0].LastCompletedSize, ShouldEqual, 15)
 						So(sets[0].LastCompletedCount, ShouldEqual, 4)
 
-						fEntries, err = sets[0].Files(db)
+						fEntries, err = db.GetFileEntries(sets[0].ID())
 						So(err, ShouldBeNil)
 						So(len(fEntries), ShouldEqual, 5)
 						So(fEntries[4].Size, ShouldEqual, 0)
@@ -387,7 +387,7 @@ func TestSet(t *testing.T) {
 						So(sets[0].LastCompletedSize, ShouldEqual, 15)
 						So(sets[0].LastCompletedCount, ShouldEqual, 4)
 
-						fEntries, err = sets[0].Files(db)
+						fEntries, err = db.GetFileEntries(sets[0].ID())
 						So(err, ShouldBeNil)
 						So(len(fEntries), ShouldEqual, 5)
 						So(fEntries[3].Size, ShouldEqual, 6)
@@ -400,7 +400,7 @@ func TestSet(t *testing.T) {
 							oldStart := sets[0].StartedDiscovery
 							oldDisc := sets[0].LastDiscovery
 
-							err = sets[0].DiscoveryStarted(db)
+							err = db.SetDiscoveryStarted(sets[0].ID())
 							So(err, ShouldBeNil)
 
 							sets, err = db.GetByRequester("jim")
@@ -419,7 +419,7 @@ func TestSet(t *testing.T) {
 							err = db.SetDiscoveredEntries(set.ID(), []string{"/g/h/l.txt", "/g/i/m.txt", "/g/i/n.txt"})
 							So(err, ShouldBeNil)
 
-							fEntries, err := sets[0].Files(db)
+							fEntries, err := db.GetFileEntries(sets[0].ID())
 							So(err, ShouldBeNil)
 							So(len(fEntries), ShouldEqual, 6)
 							So(fEntries[5], ShouldResemble, &Entry{Path: "/g/i/n.txt"})
@@ -452,13 +452,17 @@ func TestSet(t *testing.T) {
 							So(sets[0].Uploaded, ShouldEqual, 1)
 							So(sets[0].Failed, ShouldEqual, 0)
 
-							fEntries, err = sets[0].Files(db)
+							fEntries, err = db.GetFileEntries(sets[0].ID())
 							So(err, ShouldBeNil)
 							So(len(fEntries), ShouldEqual, 6)
 							So(fEntries[3].Size, ShouldEqual, 7)
 							So(fEntries[3].Status, ShouldEqual, Uploaded)
 							So(fEntries[3].Attempts, ShouldEqual, 1)
 							So(fEntries[3].LastError, ShouldBeBlank)
+
+							fEntries, err = db.GetPureFileEntries(sets[0].ID())
+							So(err, ShouldBeNil)
+							So(len(fEntries), ShouldEqual, 3)
 						})
 					})
 				})

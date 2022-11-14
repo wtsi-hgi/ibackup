@@ -150,22 +150,3 @@ func (s *Set) ID() string {
 
 	return fmt.Sprintf("%016x%016x", l, h)
 }
-
-// Files uses the database to retrieve our file entries, giving the backup
-// status of all the file paths in this Set.
-func (s *Set) Files(db *DB) ([]*Entry, error) {
-	return db.GetFileEntries(s.ID())
-}
-
-// Dirs uses the database to retrieve our directory entries, giving the backup
-// status of all the directory paths in this Set.
-func (s *Set) Dirs(db *DB) ([]*Entry, error) {
-	return db.getDirEntries(s.ID())
-}
-
-// DiscoveryStarted should be called when you start discovering the existence
-// of file entries and the contents of directory entries in this set. It resets
-// a number of the status-type values for this Set.
-func (s *Set) DiscoveryStarted(db *DB) error {
-	return db.setDiscoveryStarted(s.ID())
-}

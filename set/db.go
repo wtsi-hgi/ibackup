@@ -228,9 +228,9 @@ func (d *DB) SetDirEntries(setID string, paths []string) error {
 	return d.setEntries(setID, paths, dirBucket)
 }
 
-// setDiscoveryStarted updates StartedDiscovery and resets some status values
+// SetDiscoveryStarted updates StartedDiscovery and resets some status values
 // for the given set. Returns an error if the setID isn't in the database.
-func (d *DB) setDiscoveryStarted(setID string) error {
+func (d *DB) SetDiscoveryStarted(setID string) error {
 	return d.db.Update(func(tx *bolt.Tx) error {
 		set, bid, b, err := d.getSetByID(tx, setID)
 		if err != nil {
@@ -614,7 +614,13 @@ func (d *DB) decodeEntry(v []byte) *Entry {
 	return entry
 }
 
-// getDirEntries returns all the dir entries for the given set.
-func (d *DB) getDirEntries(setID string) ([]*Entry, error) {
+// GetPureFileEntries returns all the file entries for the given set (only
+// SetFileEntries, not SetDiscoveredEntries).
+func (d *DB) GetPureFileEntries(setID string) ([]*Entry, error) {
+	return d.getEntries(setID, fileBucket)
+}
+
+// GetDirEntries returns all the dir entries for the given set.
+func (d *DB) GetDirEntries(setID string) ([]*Entry, error) {
 	return d.getEntries(setID, dirBucket)
 }
