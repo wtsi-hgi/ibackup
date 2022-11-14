@@ -154,7 +154,7 @@ func (s *Set) ID() string {
 // Files uses the database to retrieve our file entries, giving the backup
 // status of all the file paths in this Set.
 func (s *Set) Files(db *DB) ([]*Entry, error) {
-	return db.getFileEntries(s.ID())
+	return db.GetFileEntries(s.ID())
 }
 
 // Dirs uses the database to retrieve our directory entries, giving the backup

@@ -531,9 +531,28 @@ func (d *DB) GetByRequester(requester string) ([]*Set, error) {
 	return sets, err
 }
 
-// getFileEntries returns all the file entries for the given set (both
+// GetByID returns the Sets with the given ID previously added to the database.
+// Returns nil if such a set does not exist.
+func (d *DB) GetByID(id string) *Set {
+	var set *Set
+
+	d.db.View(func(tx *bolt.Tx) error { //nolint:errcheck
+		b := tx.Bucket([]byte(setsBucket))
+
+		v := b.Get([]byte(id))
+		if v != nil {
+			set = d.decodeSet(v)
+		}
+
+		return nil
+	})
+
+	return set
+}
+
+// GetFileEntries returns all the file entries for the given set (both
 // SetFileEntries and SetDiscoveredEntries).
-func (d *DB) getFileEntries(setID string) ([]*Entry, error) {
+func (d *DB) GetFileEntries(setID string) ([]*Entry, error) {
 	entries, err := d.getEntries(setID, fileBucket)
 	if err != nil {
 		return nil, err

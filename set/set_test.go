@@ -81,6 +81,15 @@ func TestSet(t *testing.T) {
 				err = db.SetFileEntries(set2.ID(), []string{"/a/b.txt", "/c/k.txt"})
 				So(err, ShouldBeNil)
 
+				Convey("Then get a particular Set", func() {
+					retrieved := db.GetByID(set.ID())
+					So(retrieved, ShouldNotBeNil)
+					So(retrieved, ShouldResemble, set)
+
+					retrieved = db.GetByID("sdf")
+					So(retrieved, ShouldBeNil)
+				})
+
 				Convey("Then get all the Sets and their entries", func() {
 					sets, err := db.GetAll()
 					So(err, ShouldBeNil)
