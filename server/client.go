@@ -116,23 +116,41 @@ func (c *Client) getThing(url string, thing interface{}) error {
 	return responseToErr(resp)
 }
 
-// GetSet gets details about a given requester's backup set from the Server's
-// database. This is a convienience function that calls GetSet() and filters on
-// the given set ID. Returns an error if the requester has no set with the given
-// ID.
-func (c *Client) GetSet(requester, setID string) (*set.Set, error) {
+// GetSetByID gets details about a given requester's backup set from the
+// Server's database. This is a convienience function that calls GetSets() and
+// filters on the given set ID. Returns an error if the requester has no set
+// with the given ID.
+func (c *Client) GetSetByID(requester, setID string) (*set.Set, error) {
+	return c.getFilteredSet(requester, func(set *set.Set) bool {
+		return set.ID() == setID
+	})
+}
+
+// getFilteredSet calls GetSets() and returns the set that the given checker
+// returned true for.
+func (c *Client) getFilteredSet(requester string, checker func(*set.Set) bool) (*set.Set, error) {
 	sets, err := c.GetSets(requester)
 	if err != nil {
 		return nil, err
 	}
 
 	for _, set := range sets {
-		if set.ID() == setID {
+		if checker(set) {
 			return set, nil
 		}
 	}
 
 	return nil, ErrBadSet
+}
+
+// GetSetByName gets details about a given requester's backup set from the
+// Server's database. This is a convienience function that calls GetSets() and
+// filters on the given set name. Returns an error if the requester has no set
+// with the given name.
+func (c *Client) GetSetByName(requester, setName string) (*set.Set, error) {
+	return c.getFilteredSet(requester, func(set *set.Set) bool {
+		return set.Name == setName
+	})
 }
 
 // SetFiles sets the given paths as the file paths for the backup set with the

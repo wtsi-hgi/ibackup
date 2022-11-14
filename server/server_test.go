@@ -129,12 +129,16 @@ func TestServer(t *testing.T) {
 						So(entries[3].Path, ShouldContainSubstring, "c/d/h")
 						So(entries[4].Path, ShouldContainSubstring, "e/f/i/j/k/l")
 
-						gotSet, err := client.GetSet(exampleSet.Requester, exampleSet.ID())
+						gotSet, err := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
 						So(err, ShouldBeNil)
 						So(gotSet.LastDiscovery, ShouldHappenAfter, t)
 						So(gotSet.Missing, ShouldEqual, 1)
 						So(gotSet.NumFiles, ShouldEqual, 5)
 						So(gotSet.Status, ShouldEqual, set.PendingUpload)
+
+						gotSetByName, err := client.GetSetByName(exampleSet.Requester, exampleSet.Name)
+						So(err, ShouldBeNil)
+						So(gotSetByName, ShouldResemble, gotSet)
 					})
 				})
 			})
