@@ -26,13 +26,10 @@
 package server
 
 import (
-	"bytes"
-	"context"
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/go-resty/resty/v2"
 	. "github.com/smartystreets/goconvey/convey"
@@ -40,11 +37,14 @@ import (
 	"github.com/wtsi-hgi/ibackup/set"
 )
 
+const userPerms = 0700
+
 func TestServer(t *testing.T) {
+	localDir := t.TempDir()
 	exampleSet := &set.Set{
 		Name:        "set1",
 		Requester:   "jim",
-		Transformer: "prefix=/local:/remote",
+		Transformer: "prefix=" + localDir + ":/remote",
 		Monitor:     false,
 	}
 
@@ -81,55 +81,62 @@ func TestServer(t *testing.T) {
 					err = s.LoadSetDB(path)
 					So(err, ShouldBeNil)
 
-					err = AddOrUpdateSet(addr, certPath, token, exampleSet)
+					client := NewClient(addr, certPath, token)
+
+					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldBeNil)
 
-					sets, err := GetSets(addr, certPath, token, exampleSet.Requester)
+					sets, err := client.GetSets(exampleSet.Requester)
 					So(err, ShouldBeNil)
 					So(len(sets), ShouldEqual, 1)
 					So(sets[0], ShouldResemble, exampleSet)
 
-					_, err = GetSets(addr, certPath, token, "foo")
+					_, err = client.GetSets("foo")
 					So(err, ShouldNotBeNil)
 
 					exampleSet.Requester = "foo"
-					err = AddOrUpdateSet(addr, certPath, token, exampleSet)
+					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldNotBeNil)
+					exampleSet.Requester = "jim"
+
+					err = client.AddOrUpdateSet(exampleSet)
+					So(err, ShouldBeNil)
+
+					Convey("And then you can set file and directory entries, trigger discovery and get all file statuses", func() {
+						files, dirs, discovers := createTestBackupFiles(t, localDir)
+
+						err = client.SetFiles(exampleSet.ID(), files)
+						So(err, ShouldBeNil)
+
+						err = client.SetDirs(exampleSet.ID(), dirs)
+						So(err, ShouldBeNil)
+
+						err = os.Remove(files[1])
+						So(err, ShouldBeNil)
+
+						t := time.Now()
+
+						err = client.TriggerDiscovery(exampleSet.ID())
+						So(err, ShouldBeNil)
+
+						entries, err := client.GetFiles(exampleSet.ID())
+						So(err, ShouldBeNil)
+						So(len(entries), ShouldEqual, len(files)+len(discovers))
+
+						So(entries[0].Status, ShouldEqual, set.Pending)
+						So(entries[1].Status, ShouldEqual, set.Missing)
+						So(entries[2].Path, ShouldContainSubstring, "c/d/g")
+						So(entries[3].Path, ShouldContainSubstring, "c/d/h")
+						So(entries[4].Path, ShouldContainSubstring, "e/f/i/j/k/l")
+
+						gotSet, err := client.GetSet(exampleSet.Requester, exampleSet.ID())
+						So(err, ShouldBeNil)
+						So(gotSet.LastDiscovery, ShouldHappenAfter, t)
+						So(gotSet.Missing, ShouldEqual, 1)
+						So(gotSet.NumFiles, ShouldEqual, 5)
+						So(gotSet.Status, ShouldEqual, set.PendingUpload)
+					})
 				})
-			})
-		})
-
-		Convey("You can use the set endpoint", func() {
-			response, err := putSet(s, nil)
-			So(err, ShouldBeNil)
-			So(response.Code, ShouldEqual, http.StatusNotFound)
-			So(logWriter.String(), ShouldContainSubstring, "[PUT /rest/v1/set")
-			So(logWriter.String(), ShouldContainSubstring, "STATUS=404")
-			logWriter.Reset()
-
-			Convey("And given a set database", func() {
-				path := createDBLocation(t)
-
-				Convey("You can add sets after calling LoadSetDB", func() {
-					err = s.LoadSetDB(path)
-					So(err, ShouldBeNil)
-
-					response, err := putSet(s, exampleSet)
-					So(err, ShouldBeNil)
-					So(response.Code, ShouldEqual, http.StatusOK)
-					So(logWriter.String(), ShouldContainSubstring, "[PUT /rest/v1/set")
-					So(logWriter.String(), ShouldContainSubstring, "STATUS=200")
-
-					sets, err := s.db.GetAll()
-					So(err, ShouldBeNil)
-					So(len(sets), ShouldEqual, 1)
-					So(sets[0], ShouldResemble, exampleSet)
-				})
-			})
-
-			Convey("LoadSetDB fails on an invalid path", func() {
-				err := s.LoadSetDB("/foo")
-				So(err, ShouldNotBeNil)
 			})
 		})
 	})
@@ -146,28 +153,67 @@ func createDBLocation(t *testing.T) string {
 	return path
 }
 
-// putSet does a test PUT of /rest/v1/set, with the given set converted to
-// ?.
-func putSet(s *Server, set *set.Set) (*httptest.ResponseRecorder, error) {
-	response := httptest.NewRecorder()
+// createTestBackupFiles creates and returns files, dirs and the files we're
+// expecting to discover in the dirs.
+func createTestBackupFiles(t *testing.T, dir string) ([]string, []string, []string) {
+	t.Helper()
 
-	buf := new(bytes.Buffer)
-	json.NewEncoder(buf).Encode(set)
-
-	req, err := http.NewRequestWithContext(context.Background(), "PUT", EndPointSet, buf)
-	if err != nil {
-		return nil, err
+	files := []string{
+		filepath.Join(dir, "a"),
+		filepath.Join(dir, "b"),
 	}
 
-	s.Router().ServeHTTP(response, req)
+	dirs := []string{
+		filepath.Join(dir, "c/d"),
+		filepath.Join(dir, "e/f"),
+	}
 
-	return response, nil
+	discovers := []string{
+		filepath.Join(dir, "c/d/g"),
+		filepath.Join(dir, "c/d/h"),
+		filepath.Join(dir, "e/f/i/j/k/l"),
+	}
+
+	for i, path := range files {
+		createFile(t, path, i+1)
+	}
+
+	for i, path := range discovers {
+		createFile(t, path, i+1)
+	}
+
+	return files, dirs, discovers
 }
 
-// decodeSetResult decodes the result of a set put.
-// func decodeSetResult(response *httptest.ResponseRecorder) (string, error) {
-// 	var result string
-// 	err := json.NewDecoder(response.Body).Decode(&result)
+// createFile creates a file at the given path with the given number of bytes of
+// content. It creates any directories the path needs as necessary.
+func createFile(t *testing.T, path string, n int) {
+	t.Helper()
 
-// 	return result, err
-// }
+	dir := filepath.Dir(path)
+
+	err := os.MkdirAll(dir, userPerms)
+	if err != nil {
+		t.Fatalf("mkdir failed: %s", err)
+	}
+
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create failed: %s", err)
+	}
+
+	b := make([]byte, n)
+	for i := range b {
+		b[i] = 1
+	}
+
+	_, err = f.Write(b)
+	if err != nil {
+		t.Fatalf("close failed: %s", err)
+	}
+
+	err = f.Close()
+	if err != nil {
+		t.Fatalf("close failed: %s", err)
+	}
+}

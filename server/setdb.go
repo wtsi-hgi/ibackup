@@ -26,8 +26,6 @@
 package server
 
 import (
-	"encoding/json"
-	"io"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -36,30 +34,72 @@ import (
 )
 
 const (
-	setPath = "/set"
+	setPath       = "/set"
+	filePath      = "/files"
+	dirPath       = "/dirs"
+	entryPath     = "/entries"
+	discoveryPath = "/discover"
 
-	// EndPointSet is the endpoint for making set queries if authorization
-	// isn't implemented.
-	EndPointSet = gas.EndPointREST + setPath
-
-	// EndPointAuthSet is the endpoint for making set queries if authorization
-	// is implemented.
+	// EndPointAuthSet is the endpoint for getting and setting sets.
 	EndPointAuthSet = gas.EndPointAuth + setPath
 
+	// EndPointAuthFiles is the endpoint for setting set file paths.
+	EndPointAuthFiles = gas.EndPointAuth + filePath
+
+	// EndPointAuthDirs is the endpoint for setting set directory paths.
+	EndPointAuthDirs = gas.EndPointAuth + dirPath
+
+	// EndPointAuthEntries is the endpoint for getting set entries.
+	EndPointAuthEntries = gas.EndPointAuth + entryPath
+
+	// EndPointAuthDiscovery is the endpoint for triggering set discovery.
+	EndPointAuthDiscovery = gas.EndPointAuth + discoveryPath
+
+	ErrNoAuth          = gas.Error("auth must be enabled")
 	ErrNoSetDBDirFound = gas.Error("set database directory not found")
 	ErrNoRequester     = gas.Error("requester not supplied")
+	ErrBadRequester    = gas.Error("you are not the set requester")
+	ErrBadSet          = gas.Error("set with that id does not exist")
+	ErrInvalidInput    = gas.Error("invalid input")
 
-	getSetByRequesterKey = "requester"
+	paramRequester = "requester"
+	paramSetID     = "id"
 )
 
 // LoadSetDB loads the given set.db or creates it if it doesn't exist, and adds
-// the /rest/v1/set PUT and GET endpoint to the REST API. If you call
-// EnableAuth() first, then these endpoints will be secured and be available at
-// /rest/v1/auth/set.
+// a number of endpoints to the REST API for working with the set and its
+// entries:
 //
-// The set put endpoint takes a set.Set encoded as JSON in the body.
-// The set get endpoint takes an id or a user parameter.
+// PUT /rest/v1/auth/set : takes a set.Set encoded as JSON in the body to add or
+// update details about the given set.
+//
+// GET /rest/v1/auth/set/[requester] : takes "requester" URL parameter to get
+// the sets requested by this requester.
+//
+// PUT /rest/v1/auth/files/[id] : takes a []string of paths encoded as JSON in
+// the body plus a set "id" URL parameter to store these as the files to back up
+// for the set.
+//
+// PUT /rest/v1/auth/dirs/[id] : takes a []string of paths encoded as JSON in
+// the body plus a set "id" URL parameter to store these as the directories to
+// recursively back up for the set.
+//
+// GET /rest/v1/auth/discover/[id]: takes a set "id" URL parameter to trigger
+// the discovery of files for the set.
+//
+// GET /rest/v1/auth/entries/[id] : takes a set "id" URL parameter and returns the
+// set.Entries with backup status about each file (both set with
+// /rest/v1/auth/files and discovered inside /rest/v1/auth/dirs).
+//
+// You must call EnableAuth() before calling this method, and the endpoints will
+// only let you work on sets where the Requester matches your logged-in
+// username.
 func (s *Server) LoadSetDB(path string) error {
+	authGroup := s.AuthRouter()
+	if authGroup == nil {
+		return ErrNoAuth
+	}
+
 	db, err := set.New(path)
 	if err != nil {
 		return err
@@ -67,15 +107,17 @@ func (s *Server) LoadSetDB(path string) error {
 
 	s.db = db
 
-	authGroup := s.AuthRouter()
+	authGroup.PUT(setPath, s.putSet)
+	authGroup.GET(setPath+"/:"+paramRequester, s.getSets)
 
-	if authGroup == nil {
-		s.Router().PUT(EndPointSet, s.putSet)
-		s.Router().GET(EndPointSet, s.getSets)
-	} else {
-		authGroup.PUT(setPath, s.putSet)
-		authGroup.GET(setPath, s.getSets)
-	}
+	idParam := "/:" + paramSetID
+
+	authGroup.PUT(filePath+idParam, s.putFiles)
+	authGroup.PUT(dirPath+idParam, s.putDirs)
+
+	authGroup.GET(discoveryPath+idParam, s.triggerDiscovery)
+
+	authGroup.GET(entryPath+idParam, s.getEntries)
 
 	return nil
 }
@@ -84,31 +126,23 @@ func (s *Server) LoadSetDB(path string) error {
 // the database.
 //
 // LoadSetDB() must already have been called. This is called when there is a PUT
-// on /rest/v1/set or /rest/v1/auth/set.
+// on /rest/v1/auth/set.
 func (s *Server) putSet(c *gin.Context) {
-	jsonData, err := io.ReadAll(c.Request.Body)
-	if err != nil {
-		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
-
-		return
-	}
-
 	set := &set.Set{}
 
-	err = json.Unmarshal(jsonData, set)
-	if err != nil {
+	if err := c.BindJSON(set); err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
 		return
 	}
 
 	if !s.allowedAccess(c, set.Requester) {
-		c.AbortWithError(http.StatusUnauthorized, err) //nolint:errcheck
+		c.AbortWithError(http.StatusUnauthorized, ErrBadRequester) //nolint:errcheck
 
 		return
 	}
 
-	err = s.db.AddOrUpdate(set)
+	err := s.db.AddOrUpdate(set)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, err) //nolint:errcheck
 
@@ -130,18 +164,13 @@ func (s *Server) allowedAccess(c *gin.Context, user string) bool {
 	return u.Username == user
 }
 
-// getSets returns the requester's set(s) from the database. requester parameter
-// must be given. Returns the sets as a JSON encoding of a []*set.Set.
+// getSets returns the requester's set(s) from the database. requester URL
+// parameter must be given. Returns the sets as a JSON encoding of a []*set.Set.
 //
-// LoadSetDB() must already have been called. This is called when there is a PUT
-// on /rest/v1/set or /rest/v1/auth/set.
+// LoadSetDB() must already have been called. This is called when there is a GET
+// on /rest/v1/auth/set.
 func (s *Server) getSets(c *gin.Context) {
-	requester, given := c.GetQuery(getSetByRequesterKey)
-	if !given {
-		c.AbortWithError(http.StatusBadRequest, ErrNoRequester) //nolint:errcheck
-
-		return
-	}
+	requester := c.Param(paramRequester)
 
 	if !s.allowedAccess(c, requester) {
 		c.AbortWithError(http.StatusUnauthorized, ErrBadRequester) //nolint:errcheck
@@ -157,4 +186,109 @@ func (s *Server) getSets(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, sets)
+}
+
+// putFiles sets the file paths encoded in to the body as JSON as the files
+// to be backed up for the set with the id specified in the URL parameter.
+//
+// LoadSetDB() must already have been called. This is called when there is a PUT
+// on /rest/v1/auth/files/[id].
+func (s *Server) putFiles(c *gin.Context) {
+	sid, paths, ok := s.bindPathsAndValidateSet(c)
+	if !ok {
+		return
+	}
+
+	err := s.db.SetFileEntries(sid, paths)
+	if err != nil {
+		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+
+		return
+	}
+
+	c.Status(http.StatusOK)
+}
+
+// bindPathsAndValidateSet gets the paths out of the JSON body, and the set id
+// from the URL parameter if Requester matches logged-in username.
+func (s *Server) bindPathsAndValidateSet(c *gin.Context) (string, []string, bool) {
+	var paths []string
+
+	if err := c.BindJSON(&paths); err != nil {
+		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+
+		return "", nil, false
+	}
+
+	set, ok := s.validateSet(c)
+	if !ok {
+		return "", nil, false
+	}
+
+	return set.ID(), paths, true
+}
+
+// validateSet gets the id parameter from the given context and checks a
+// corresponding set exists and the logged-in user is the same as the set's
+// Requester. If so, returns the set and true. If not, Aborts with an error
+// and returns false.
+func (s *Server) validateSet(c *gin.Context) (*set.Set, bool) {
+	sid := c.Param(paramSetID)
+
+	set := s.db.GetByID(sid)
+	if set == nil {
+		c.AbortWithError(http.StatusBadRequest, ErrBadSet) //nolint:errcheck
+
+		return nil, false
+	}
+
+	if !s.allowedAccess(c, set.Requester) {
+		c.AbortWithError(http.StatusUnauthorized, ErrBadRequester) //nolint:errcheck
+
+		return nil, false
+	}
+
+	return set, true
+}
+
+// putDirs sets the directory paths encoded in to the body as JSON as the dirs
+// to be backed up for the set with the id specified in the URL parameter.
+//
+// LoadSetDB() must already have been called. This is called when there is a PUT
+// on /rest/v1/auth/dirs/[id].
+func (s *Server) putDirs(c *gin.Context) {
+	sid, paths, ok := s.bindPathsAndValidateSet(c)
+	if !ok {
+		return
+	}
+
+	err := s.db.SetDirEntries(sid, paths)
+	if err != nil {
+		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+
+		return
+	}
+
+	c.Status(http.StatusOK)
+}
+
+// getEntries gets the defined and discovered file entries for the set with the
+// id specified in the URL parameter.
+//
+// LoadSetDB() must already have been called. This is called when there is a GET
+// on /rest/v1/auth/entries/[id].
+func (s *Server) getEntries(c *gin.Context) {
+	set, ok := s.validateSet(c)
+	if !ok {
+		return
+	}
+
+	entries, err := s.db.GetFileEntries(set.ID())
+	if err != nil {
+		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+
+		return
+	}
+
+	c.JSON(http.StatusOK, entries)
 }

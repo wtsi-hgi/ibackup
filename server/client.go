@@ -29,64 +29,143 @@ package server
 import (
 	"net/http"
 
+	"github.com/go-resty/resty/v2"
 	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/ibackup/set"
 )
 
-const ErrBadRequester = gas.Error("bad requester")
+// Client is used to interact with the Server over the network, with
+// authentication.
+type Client struct {
+	url  string
+	cert string
+	jwt  string
+}
 
-// AddOrUpdateSet is a client call to a Server listening at the given
-// domain:port url to add details about a backup set to the Server's database.
+// NewClient returns a Client you can use to call methods on a Server listening
+// at the given domain:port url.
 //
 // Provide a non-blank path to a certificate to force us to trust that
 // certificate, eg. if the server was started with a self-signed certificate.
 //
 // You must first gas.Login() to get a JWT that you must supply here.
-func AddOrUpdateSet(url, cert, jwt string, set *set.Set) error {
-	r := gas.NewAuthenticatedClientRequest(url, cert, jwt)
+func NewClient(url, cert, jwt string) *Client {
+	return &Client{
+		url:  url,
+		cert: cert,
+		jwt:  jwt,
+	}
+}
 
-	resp, err := r.ForceContentType("application/json").
-		SetBody(set).
-		Put(EndPointAuthSet)
+func (c *Client) request() *resty.Request {
+	return gas.NewAuthenticatedClientRequest(c.url, c.cert, c.jwt)
+}
+
+// AddOrUpdateSet adds details about a backup set to the Server's database.
+func (c *Client) AddOrUpdateSet(set *set.Set) error {
+	return c.putThing(EndPointAuthSet, set)
+}
+
+// putThing sends thing encoded as JSON in the body via a PUT to the given
+// url.
+func (c *Client) putThing(url string, thing interface{}) error {
+	resp, err := c.request().ForceContentType("application/json").
+		SetBody(thing).
+		Put(url)
 	if err != nil {
 		return err
 	}
 
+	return responseToErr(resp)
+}
+
+// responseToErr converts a response's status code to one of our errors, or nil
+// if there's no problem.
+func responseToErr(resp *resty.Response) error {
 	switch resp.StatusCode() {
-	case http.StatusUnauthorized, http.StatusNotFound:
+	case http.StatusUnauthorized:
 		return gas.ErrNoAuth
+	case http.StatusBadRequest:
+		return ErrInvalidInput
+	case http.StatusNotFound:
+		return gas.ErrNeedsAuth
 	}
 
 	return nil
 }
 
-// GetSets is a client call to a Server listening at the given
-// domain:port url to get details about a given requester's backup sets from the
+// GetSets gets details about a given requester's backup sets from the
 // Server's database.
-//
-// Provide a non-blank path to a certificate to force us to trust that
-// certificate, eg. if the server was started with a self-signed certificate.
-//
-// You must first gas.Login() to get a JWT that you must supply here.
-func GetSets(url, cert, jwt, requester string) ([]*set.Set, error) {
-	r := gas.NewAuthenticatedClientRequest(url, cert, jwt)
-
+func (c *Client) GetSets(requester string) ([]*set.Set, error) {
 	var sets []*set.Set
 
-	resp, err := r.ForceContentType("application/json").
-		SetQueryParams(map[string]string{getSetByRequesterKey: requester}).
-		SetResult(&sets).
-		Get(EndPointAuthSet)
+	err := c.getThing(EndPointAuthSet+"/"+requester, &sets)
+
+	return sets, err
+}
+
+// getThing gets thing decoded from JSON from the given url.
+func (c *Client) getThing(url string, thing interface{}) error {
+	resp, err := c.request().ForceContentType("application/json").
+		SetResult(&thing).
+		Get(url)
+	if err != nil {
+		return err
+	}
+
+	return responseToErr(resp)
+}
+
+// GetSet gets details about a given requester's backup set from the Server's
+// database. This is a convienience function that calls GetSet() and filters on
+// the given set ID. Returns an error if the requester has no set with the given
+// ID.
+func (c *Client) GetSet(requester, setID string) (*set.Set, error) {
+	sets, err := c.GetSets(requester)
 	if err != nil {
 		return nil, err
 	}
 
-	switch resp.StatusCode() {
-	case http.StatusUnauthorized, http.StatusNotFound:
-		return nil, gas.ErrNoAuth
-	case http.StatusBadRequest:
-		return nil, ErrBadRequester
+	for _, set := range sets {
+		if set.ID() == setID {
+			return set, nil
+		}
 	}
 
-	return sets, nil
+	return nil, ErrBadSet
+}
+
+// SetFiles sets the given paths as the file paths for the backup set with the
+// given ID.
+func (c *Client) SetFiles(setID string, paths []string) error {
+	return c.putThing(EndPointAuthFiles+"/"+setID, paths)
+}
+
+// SetDirs sets the given paths as the directory paths for the backup set with
+// the given ID.
+func (c *Client) SetDirs(setID string, paths []string) error {
+	return c.putThing(EndPointAuthDirs+"/"+setID, paths)
+}
+
+// TriggerDiscovery tells the server that you've called SetFiles() and SetDirs()
+// for the given set, and now want it to discover the files that exist and
+// discover the contents of the directories, and start the process of backing up
+// the files.
+func (c *Client) TriggerDiscovery(setID string) error {
+	resp, err := c.request().Get(EndPointAuthDiscovery + "/" + setID)
+	if err != nil {
+		return err
+	}
+
+	return responseToErr(resp)
+}
+
+// GetFiles gets the defined and discovered file paths and their backup status
+// for the given set.
+func (c *Client) GetFiles(setID string) ([]*set.Entry, error) {
+	var entries []*set.Entry
+
+	err := c.getThing(EndPointAuthEntries+"/"+setID, &entries)
+
+	return entries, err
 }
