@@ -52,7 +52,25 @@ var RootCmd = &cobra.Command{
 	Short: "ibackup backs up local files to iRODS",
 	Long: `ibackup backs up local files to iRODS.
 
-Not yet fully implemented. Try using the sub-commands directly for now.`,
+For automated backups via an ibackup server, use the add and status
+sub-commands, eg.:
+
+echo /abs/path/to/file1.txt > files.txt
+echo /abs/path/to/file2.txt >> files.txt
+echo /abs/path/to/dir1 > dirs.txt
+echo /abs/path/to/dir2 >> dirs.txt
+ibackup add -n myfirstbackup -t 'humgen' -f files.txt -d dirs.txt
+ibackup status
+
+(You'll need the IBACKUP_SERVER_URL and IBACKUP_SERVER_CERT environment
+variables set up for you by whoever started the server.)
+
+
+For manual backups, use the addremote and put sub-commands, eg. to backup
+everything in a directory:
+
+find /abs/path/to/dir -type f -print0 | ibackup addremote --humgen -0 -b | ibackup put -b
+`,
 }
 
 // Execute adds all child commands to the root command and sets flags

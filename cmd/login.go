@@ -126,11 +126,6 @@ func jwtStoragePath() (string, error) {
 // login prompts the user for a password to log them in. Returns the JWT for the
 // user.
 func login(url, cert string) (string, error) {
-	user, err := user.Current()
-	if err != nil {
-		die("couldn't get user: %s", err)
-	}
-
 	cliPrint("Password: ")
 
 	passwordB, err := term.ReadPassword(syscall.Stdin)
@@ -140,7 +135,16 @@ func login(url, cert string) (string, error) {
 
 	cliPrint("\n")
 
-	return server.Login(url, cert, user.Username, string(passwordB))
+	return server.Login(url, cert, currentUsername(), string(passwordB))
+}
+
+func currentUsername() string {
+	user, err := user.Current()
+	if err != nil {
+		die("couldn't get user: %s", err)
+	}
+
+	return user.Username
 }
 
 // storeJWT writes the given token string to a private file in user's home dir.
