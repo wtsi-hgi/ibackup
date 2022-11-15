@@ -116,21 +116,6 @@ func logToFile(path string) {
 	appLogger.SetHandler(fh)
 }
 
-// // setCLIFormat logs plain text log messages to STDERR.
-// func setCLIFormat() {
-// 	appLogger.SetHandler(log15.StreamHandler(os.Stderr, cliFormat()))
-// }
-
-// // cliFormat returns a log15.Format that only prints the plain log msg.
-// func cliFormat() log15.Format { //nolint:ireturn
-// 	return log15.FormatFunc(func(r *log15.Record) []byte {
-// 		b := &bytes.Buffer{}
-// 		fmt.Fprintf(b, "%s\n", r.Msg)
-
-// 		return b.Bytes()
-// 	})
-// }
-
 // cliPrint outputs the message to STDOUT.
 func cliPrint(msg string, a ...interface{}) {
 	fmt.Fprintf(os.Stdout, msg, a...)

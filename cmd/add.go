@@ -34,10 +34,6 @@ import (
 	"github.com/wtsi-hgi/ibackup/set"
 )
 
-// type Error string
-
-// func (e Error) Error() string { return string(e) }
-
 // options for this cmd.
 var setName string
 var setTransformer string
