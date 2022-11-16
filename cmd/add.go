@@ -28,6 +28,7 @@ package cmd
 
 import (
 	"bufio"
+	"os"
 
 	"github.com/spf13/cobra"
 	"github.com/wtsi-hgi/ibackup/server"
@@ -40,6 +41,7 @@ var setTransformer string
 var setDescription string
 var setFiles string
 var setDirs string
+var setPath string
 var setNull bool
 var setMonitor bool
 
@@ -76,6 +78,8 @@ You must also provide at least one of:
 		  argument.
 --dirs : like --files, but the file contains directories you want to back up.
          Directories will be recursed and all files inside will be backed up.
+--path : if you just want to backup a single file or directory, provide its
+         absolute path.
 
 You can also provide:
 --description : an longer description of the backup set, to describe its
@@ -91,8 +95,8 @@ it will backup and monitor the new list of files in future.
 	Run: func(cmd *cobra.Command, args []string) {
 		ensureURLandCert()
 
-		if setFiles == "" && setDirs == "" {
-			die("at least one of --files or --dirs must be set")
+		if setFiles == "" && setDirs == "" && setPath == "" {
+			die("at least one of --files or --dirs or --path must be set")
 		}
 
 		client, err := newServerClient(serverURL, serverCert)
@@ -102,6 +106,19 @@ it will backup and monitor the new list of files in future.
 
 		files := readPaths(setFiles, fofnLineSplitter(setNull))
 		dirs := readPaths(setDirs, fofnLineSplitter(setNull))
+
+		if setPath != "" {
+			info, errs := os.Stat(setPath)
+			if errs != nil {
+				die(errs.Error())
+			}
+
+			if info.IsDir() {
+				dirs = append(dirs, setPath)
+			} else {
+				files = append(files, setPath)
+			}
+		}
 
 		err = add(client, setName, setTransformer, setDescription, setMonitor, files, dirs)
 		if err != nil {
@@ -122,6 +139,8 @@ func init() {
 		"path to file with one absolute local file path per line")
 	addCmd.Flags().StringVarP(&setDirs, "dirs", "d", "",
 		"path to file with one absolute local directory path per line")
+	addCmd.Flags().StringVarP(&setPath, "path", "p", "",
+		"path to a single file or directory you wish to backup")
 	addCmd.Flags().BoolVarP(&setNull, "null", "0", false,
 		"input paths are terminated by a null character instead of a new line")
 	addCmd.Flags().StringVar(&setDescription, "description", "", "a long description of this backup set")

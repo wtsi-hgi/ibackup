@@ -50,6 +50,49 @@ func TestSet(t *testing.T) {
 		So(Missing.String(), ShouldEqual, "missing")
 	})
 
+	Convey("Discovered() returns friendly strings", t, func() {
+		set := &Set{}
+		So(set.Discovered(), ShouldEqual, "not started")
+
+		t := time.Now()
+		set.StartedDiscovery = t
+		So(set.Discovered(), ShouldEqual, "started "+t.Format(dateFormat))
+
+		t2 := t.Add(24 * time.Hour)
+		set.LastDiscovery = t2
+		So(set.Discovered(), ShouldEqual, "completed "+t2.Format(dateFormat))
+
+		t3 := t2.Add(24 * time.Hour)
+		set.StartedDiscovery = t3
+		So(set.Discovered(), ShouldEqual, "started "+t3.Format(dateFormat))
+	})
+
+	Convey("Count() and Size() return friendly strings", t, func() {
+		set := &Set{}
+		So(set.Count(), ShouldEqual, "pending")
+		So(set.Size(), ShouldEqual, "pending")
+
+		set.NumFiles = 3
+		So(set.Count(), ShouldEqual, "3")
+		So(set.Size(), ShouldEqual, "0 B (and counting)")
+
+		set.SizeFiles = 30
+		So(set.Size(), ShouldEqual, "30 B (and counting)")
+
+		set.Status = Complete
+		So(set.Count(), ShouldEqual, "3")
+		So(set.Size(), ShouldEqual, "30 B")
+
+		set.LastCompletedCount = 3
+		set.LastCompletedSize = 30
+		set.NumFiles = 0
+		set.SizeFiles = 0
+		set.Status = PendingDiscovery
+
+		So(set.Count(), ShouldEqual, "3 (as of last completion)")
+		So(set.Size(), ShouldEqual, "30 B (as of last completion)")
+	})
+
 	Convey("Given a path", t, func() {
 		tDir := t.TempDir()
 		dbPath := filepath.Join(tDir, "set.db")

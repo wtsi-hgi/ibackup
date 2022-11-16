@@ -27,10 +27,16 @@
 package cmd
 
 import (
+	"os"
+
+	"github.com/dustin/go-humanize" //nolint:misspell
+	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 	"github.com/wtsi-hgi/ibackup/server"
 	"github.com/wtsi-hgi/ibackup/set"
 )
+
+const dateShort = "06/01/02"
 
 // options for this cmd.
 var statusName string
@@ -53,22 +59,26 @@ argument) and if necessary, the certificate (using the IBACKUP_SERVER_CERT
 environment variable, or overriding that with the --cert argument).
 
 Once a backup set has been added, it goes through these statuses:
-PendingDiscovery: the server will check which files in the set exist, and
+pending discovery: the server will check which files in the set exist, and
   discover the contents of directories in the set.
-PendingUpload: the server completed discovery, and has queued your files to be
+pending upload: the server completed discovery, and has queued your files to be
   backed up, but none have been backed up yet. Most likely because other files
   from other sets are being backed up first.
-Uploading: at least one file in your set has been uploaded to iRODS, but not all
+uploading: at least one file in your set has been uploaded to iRODS, but not all
   of them have.
-Failing: at least one file in your set has failed to upload to iRODS after
+failing: at least one file in your set has failed to upload to iRODS after
   multiple retries, and the server has given up on it while it continues to try
   to upload other files in your set.
-Complete: all files in your backup set were either missing, successfully
+complete: all files in your backup set were either missing, successfully
   uploaded, or permanently failed. Details of any failures will be given even
   without the --details option.
 `,
 	Run: func(cmd *cobra.Command, args []string) {
 		ensureURLandCert()
+
+		if statusDetails && statusName == "" {
+			die("--details can only be used with --name")
+		}
 
 		client, err := newServerClient(serverURL, serverCert)
 		if err != nil {
@@ -101,19 +111,16 @@ func status(client *server.Client, name string, details bool) {
 	}
 
 	if len(sets) == 0 {
-		warn("no sets")
+		warn("no backup sets")
 
 		return
 	}
 
-	for _, set := range sets {
-		displaySet(set, details)
-	}
-
-	return
+	displaySets(client, sets, details)
 }
 
-// getSetByName
+// getSetByName gets a set with the given name owned by the given user. Dies
+// on error.
 func getSetByName(client *server.Client, user, name string) []*set.Set {
 	got, err := client.GetSetByName(user, name)
 	if err != nil {
@@ -123,6 +130,7 @@ func getSetByName(client *server.Client, user, name string) []*set.Set {
 	return []*set.Set{got}
 }
 
+// getSets gets all the sets belonging to the given user. Dies on error.
 func getSets(client *server.Client, user string) []*set.Set {
 	sets, err := client.GetSets(user)
 	if err != nil {
@@ -132,8 +140,121 @@ func getSets(client *server.Client, user string) []*set.Set {
 	return sets
 }
 
-// displaySet prints info about the given set to STDOUT, optionally with details
-// on the status of every file in the set.
-func displaySet(set *set.Set, details bool) {
+// displaySets prints info about the given sets to STDOUT. Failed entry details
+// will also be printed, and optionally non-failed.
+func displaySets(client *server.Client, sets []*set.Set, showNonFailedEntries bool) {
+	l := len(sets)
 
+	for i, forDisplay := range sets {
+		displaySet(forDisplay)
+
+		failed, nonFailed := getEntries(client, sets[0].ID())
+
+		displayFailedEntries(failed)
+
+		if showNonFailedEntries {
+			displayEntries(nonFailed)
+		}
+
+		if i != l-1 {
+			cliPrint("\n-----\n\n")
+		}
+	}
+}
+
+// displaySet prints info about the given set to STDOUT.
+func displaySet(s *set.Set) {
+	cliPrint("Name: %s\n", s.Name)
+	cliPrint("Transformer: %s\n", s.Transformer)
+	cliPrint("Monitored: %v\n", s.Monitor)
+
+	if s.Description != "" {
+		cliPrint("Description: %s\n", s.Description)
+	}
+
+	cliPrint("Status: %s\n", s.Status)
+	cliPrint("Discovery: %s\n", s.Discovered())
+	cliPrint("Num files: %s\n", s.Count())
+	cliPrint("Size files: %s\n", s.Size())
+	cliPrint("Uploaded: %d\n", s.Uploaded)
+	cliPrint("Failed: %d\n", s.Failed)
+	cliPrint("Missing: %d\n", s.Missing)
+}
+
+// getEntries gets the file entries for a set. It returns ones that have errors,
+// and then all the others.
+func getEntries(client *server.Client, setID string) ([]*set.Entry, []*set.Entry) {
+	got, err := client.GetFiles(setID)
+	if err != nil {
+		die(err.Error())
+	}
+
+	var failed, others []*set.Entry
+
+	for _, entry := range got {
+		if entry.Status != set.Uploaded && entry.LastError != "" {
+			failed = append(failed, entry)
+		} else {
+			others = append(others, entry)
+		}
+	}
+
+	return failed, others
+}
+
+// displayFailedEntries prints info about the given failing file entries to
+// STDOUT.
+func displayFailedEntries(entries []*set.Entry) {
+	if len(entries) == 0 {
+		return
+	}
+
+	table := tablewriter.NewWriter(os.Stdout)
+	table.SetHeader([]string{"Path", "Status", "Size", "Date", "Error"})
+
+	appendEntryTableRows(table, entries, true)
+
+	table.Render()
+}
+
+// appendEntryTableRows adds a row to the table for each entry, with an optional
+// column for error details.
+func appendEntryTableRows(table *tablewriter.Table, entries []*set.Entry, errorCol bool) {
+	for _, entry := range entries {
+		var date string
+
+		if entry.LastAttempt.IsZero() {
+			date = "-"
+		} else {
+			date = entry.LastAttempt.Format(dateShort)
+		}
+
+		cols := []string{
+			entry.Path,
+			entry.Status.String(),
+			humanize.Bytes(entry.Size),
+			date,
+		}
+
+		if errorCol {
+			cols = append(cols, entry.LastError)
+		}
+
+		table.Append(cols)
+	}
+}
+
+// displayEntries prints info about the given file entries with no errors to
+// STDOUT.
+func displayEntries(entries []*set.Entry) {
+	if len(entries) == 0 {
+		return
+	}
+
+	table := tablewriter.NewWriter(os.Stdout)
+	table.SetHeader([]string{"Path", "Status", "Size", "Date"})
+
+	appendEntryTableRows(table, entries, false)
+
+	table.Render()
 }

@@ -30,9 +30,12 @@ import (
 	"time"
 
 	"github.com/dgryski/go-farm"
+	"github.com/dustin/go-humanize" //nolint:misspell
 )
 
 type Status int
+
+const dateFormat = "2006-01-02 15:04:05"
 
 const (
 	// PendingDiscovery is a Set status meaning the set's entries are pending
@@ -160,4 +163,57 @@ func (s *Set) ID() string {
 	l, h := farm.Hash128([]byte(concat))
 
 	return fmt.Sprintf("%016x%016x", l, h)
+}
+
+// Discovered provides a string representation of when discovery last completed,
+// or if it hasn't, when it started, or if it hasn't, says "not started".
+func (s *Set) Discovered() string {
+	discovered := ""
+
+	switch {
+	case s.StartedDiscovery.IsZero() && s.LastDiscovery.IsZero():
+		discovered = "not started"
+	case s.StartedDiscovery.After(s.LastDiscovery):
+		discovered = fmt.Sprintf("started %s", s.StartedDiscovery.Format(dateFormat))
+	default:
+		discovered = fmt.Sprintf("completed %s", s.LastDiscovery.Format(dateFormat))
+	}
+
+	return discovered
+}
+
+// Count provides a string representation of NumFiles, or if 0, returns the
+// LastCompletedCount with a textual note to that effect.
+func (s *Set) Count() string {
+	nfiles := "pending"
+
+	if s.NumFiles > 0 {
+		nfiles = fmt.Sprintf("%d", s.NumFiles)
+	} else if s.LastCompletedCount != 0 {
+		nfiles = fmt.Sprintf("%d (as of last completion)", s.LastCompletedCount)
+	}
+
+	return nfiles
+}
+
+// Size provides a string representation of SizeFiles in a human readable
+// format, or if 0, returns the LastCompletedSize with a textual note to that
+// effect.
+func (s *Set) Size() string {
+	sfiles := ""
+
+	switch {
+	case s.NumFiles > 0:
+		sfiles = humanize.Bytes(s.SizeFiles)
+
+		if s.Status != Complete {
+			sfiles += " (and counting)"
+		}
+	case s.LastCompletedCount != 0:
+		sfiles = fmt.Sprintf("%s (as of last completion)", humanize.Bytes(s.LastCompletedSize))
+	default:
+		sfiles = "pending"
+	}
+
+	return sfiles
 }
