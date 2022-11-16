@@ -118,6 +118,7 @@ func (s *Server) LoadSetDB(path string) error {
 	authGroup.GET(discoveryPath+idParam, s.triggerDiscovery)
 
 	authGroup.GET(entryPath+idParam, s.getEntries)
+	authGroup.GET(dirPath+idParam, s.getDirs)
 
 	return nil
 }
@@ -284,6 +285,27 @@ func (s *Server) getEntries(c *gin.Context) {
 	}
 
 	entries, err := s.db.GetFileEntries(set.ID())
+	if err != nil {
+		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+
+		return
+	}
+
+	c.JSON(http.StatusOK, entries)
+}
+
+// getDirs gets the defined directory entries for the set with the id specified
+// in the URL parameter.
+//
+// LoadSetDB() must already have been called. This is called when there is a GET
+// on /rest/v1/auth/dirs/[id].
+func (s *Server) getDirs(c *gin.Context) {
+	set, ok := s.validateSet(c)
+	if !ok {
+		return
+	}
+
+	entries, err := s.db.GetDirEntries(set.ID())
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 

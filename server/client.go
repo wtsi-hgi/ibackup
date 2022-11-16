@@ -187,3 +187,13 @@ func (c *Client) GetFiles(setID string) ([]*set.Entry, error) {
 
 	return entries, err
 }
+
+// GetDirs gets the directories for the given set that were supplied to
+// SetDirs().
+func (c *Client) GetDirs(setID string) ([]*set.Entry, error) {
+	var entries []*set.Entry
+
+	err := c.getThing(EndPointAuthDirs+"/"+setID, &entries)
+
+	return entries, err
+}

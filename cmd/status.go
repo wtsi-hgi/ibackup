@@ -148,7 +148,16 @@ func displaySets(client *server.Client, sets []*set.Set, showNonFailedEntries bo
 	for i, forDisplay := range sets {
 		displaySet(forDisplay)
 
-		failed, nonFailed := getEntries(client, sets[0].ID())
+		dirs := getDirs(client, sets[i].ID())
+		if len(dirs) > 0 {
+			cliPrint("Directories:\n")
+
+			for _, dir := range dirs {
+				cliPrint("  %s\n", dir)
+			}
+		}
+
+		failed, nonFailed := getEntries(client, sets[i].ID())
 
 		displayFailedEntries(failed)
 
@@ -179,6 +188,22 @@ func displaySet(s *set.Set) {
 	cliPrint("Uploaded: %d\n", s.Uploaded)
 	cliPrint("Failed: %d\n", s.Failed)
 	cliPrint("Missing: %d\n", s.Missing)
+}
+
+// getDirs gets the dir entries for a set and returns their paths.
+func getDirs(client *server.Client, setID string) []string {
+	got, err := client.GetDirs(setID)
+	if err != nil {
+		die(err.Error())
+	}
+
+	paths := make([]string, len(got))
+
+	for i, entry := range got {
+		paths[i] = entry.Path
+	}
+
+	return paths
 }
 
 // getEntries gets the file entries for a set. It returns ones that have errors,

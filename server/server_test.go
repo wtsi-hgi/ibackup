@@ -125,6 +125,12 @@ func TestServer(t *testing.T) {
 						err = client.SetDirs(exampleSet.ID(), dirs)
 						So(err, ShouldBeNil)
 
+						gotDirs, err := client.GetDirs(exampleSet.ID())
+						So(err, ShouldBeNil)
+						So(len(gotDirs), ShouldEqual, 2)
+						So(gotDirs[0].Path, ShouldEqual, dirs[0])
+						So(gotDirs[1].Path, ShouldEqual, dirs[1])
+
 						err = os.Remove(files[1])
 						So(err, ShouldBeNil)
 
