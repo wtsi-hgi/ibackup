@@ -47,6 +47,16 @@ const (
 	Missing
 )
 
+// String lets you convert a EntryStatus to a meaningful string.
+func (e EntryStatus) String() string {
+	return [...]string{
+		"pending",
+		"uploaded",
+		"failed",
+		"missing",
+	}[e]
+}
+
 // Entry holds the status of an entry in a backup set.
 type Entry struct {
 	Path        string

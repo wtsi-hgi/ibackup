@@ -57,6 +57,17 @@ const (
 	Complete
 )
 
+// String lets you convert a Status to a meaningful string.
+func (s Status) String() string {
+	return [...]string{
+		"pending discovery",
+		"pending upload",
+		"uploading",
+		"failing",
+		"complete",
+	}[s]
+}
+
 // Set describes a backup set; a list of files and directories to backup, plus
 // some metadata. All properties are required unless otherwise noted.
 type Set struct {

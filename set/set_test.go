@@ -35,6 +35,21 @@ import (
 )
 
 func TestSet(t *testing.T) {
+	Convey("Set statuses convert nicely to strings", t, func() {
+		So(PendingDiscovery.String(), ShouldEqual, "pending discovery")
+		So(PendingUpload.String(), ShouldEqual, "pending upload")
+		So(Uploading.String(), ShouldEqual, "uploading")
+		So(Failing.String(), ShouldEqual, "failing")
+		So(Complete.String(), ShouldEqual, "complete")
+	})
+
+	Convey("Entry statuses convert nicely to strings", t, func() {
+		So(Pending.String(), ShouldEqual, "pending")
+		So(Uploaded.String(), ShouldEqual, "uploaded")
+		So(Failed.String(), ShouldEqual, "failed")
+		So(Missing.String(), ShouldEqual, "missing")
+	})
+
 	Convey("Given a path", t, func() {
 		tDir := t.TempDir()
 		dbPath := filepath.Join(tDir, "set.db")
