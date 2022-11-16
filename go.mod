@@ -3,6 +3,7 @@ module github.com/wtsi-hgi/ibackup
 go 1.19
 
 require (
+	github.com/VertebrateResequencing/wr v0.32.0
 	github.com/dgryski/go-farm v0.0.0-20200201041132-a6ae2369ad13
 	github.com/dustin/go-humanize v1.0.0
 	github.com/gammazero/workerpool v1.1.3
@@ -62,8 +63,12 @@ require (
 	github.com/okta/okta-jwt-verifier-golang v1.3.1 // indirect
 	github.com/patrickmn/go-cache v2.1.0+incompatible // indirect
 	github.com/pelletier/go-toml/v2 v2.0.5 // indirect
+	github.com/petermattis/goid v0.0.0-20220712135657-ac599d9cba15 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/rivo/uniseg v0.3.4 // indirect
+	github.com/rs/xid v1.4.0 // indirect
+	github.com/sasha-s/go-deadlock v0.3.1 // indirect
+	github.com/sb10/l15h v0.0.0-20170510122137-64c488bf8e22 // indirect
 	github.com/smartystreets/assertions v1.13.0 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/thanhpk/randstr v1.0.4 // indirect

@@ -244,6 +244,7 @@ func (d *DB) SetDiscoveryStarted(setID string) error {
 		set.Failed = 0
 		set.Missing = 0
 		set.Status = PendingDiscovery
+		set.Error = ""
 
 		return b.Put(bid, d.encodeToBytes(set))
 	})
@@ -623,4 +624,19 @@ func (d *DB) GetPureFileEntries(setID string) ([]*Entry, error) {
 // GetDirEntries returns all the dir entries for the given set.
 func (d *DB) GetDirEntries(setID string) ([]*Entry, error) {
 	return d.getEntries(setID, dirBucket)
+}
+
+// SetError updates a set with the given error message. Returns an error if the
+// setID isn't in the database.
+func (d *DB) SetError(setID, errMsg string) error {
+	return d.db.Update(func(tx *bolt.Tx) error {
+		set, bid, b, err := d.getSetByID(tx, setID)
+		if err != nil {
+			return err
+		}
+
+		set.Error = errMsg
+
+		return b.Put(bid, d.encodeToBytes(set))
+	})
 }

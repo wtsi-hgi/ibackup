@@ -27,15 +27,22 @@ package set
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/dgryski/go-farm"
 	"github.com/dustin/go-humanize" //nolint:misspell
+	"github.com/wtsi-hgi/ibackup/put"
 )
 
 type Status int
 
-const dateFormat = "2006-01-02 15:04:05"
+const (
+	dateFormat            = "2006-01-02 15:04:05"
+	arPrefixParts         = 2
+	ErrInvalidTransformer = "invalid transformer"
+	prefixTransformerKey  = "prefix="
+)
 
 const (
 	// PendingDiscovery is a Set status meaning the set's entries are pending
@@ -151,6 +158,10 @@ type Set struct {
 	// LastCompletedSize provides the size of files (bytes) counted in
 	// LastCompletedCount. This is a read-only value.
 	LastCompletedSize uint64
+
+	// Error holds any error that applies to the whole set, such as an issue
+	// with the Transformer. This is a read-only value.
+	Error string
 }
 
 // ID returns an ID for this set, generated deterministiclly from its Name and
@@ -216,4 +227,25 @@ func (s *Set) Size() string {
 	}
 
 	return sfiles
+}
+
+// MakeTransformer turns our Transformer string in to a put.HumgenTransformer or
+// a put.PrefixTransformer as appropriate.
+func (s *Set) MakeTransformer() (put.PathTransformer, error) {
+	if s.Transformer == "humgen" {
+		return put.HumgenTransformer, nil
+	}
+
+	if !strings.HasPrefix(s.Transformer, prefixTransformerKey) {
+		return nil, Error{ErrInvalidTransformer, ""}
+	}
+
+	lr := strings.TrimPrefix(s.Transformer, prefixTransformerKey)
+
+	parts := strings.Split(lr, ":")
+	if len(parts) != arPrefixParts {
+		return nil, Error{ErrInvalidTransformer, ""}
+	}
+
+	return put.PrefixTransformer(parts[0], parts[1]), nil
 }

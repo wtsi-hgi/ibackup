@@ -28,8 +28,10 @@
 package server
 
 import (
+	"context"
 	"io"
 
+	"github.com/VertebrateResequencing/wr/queue"
 	"github.com/gammazero/workerpool"
 	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/ibackup/set"
@@ -51,6 +53,7 @@ type Server struct {
 	db       *set.DB
 	filePool *workerpool.WorkerPool
 	dirPool  *workerpool.WorkerPool
+	queue    *queue.Queue
 }
 
 // New creates a Server which can serve a REST API and website.
@@ -62,6 +65,7 @@ func New(logWriter io.Writer) *Server {
 		Server:   *gas.New(logWriter),
 		filePool: workerpool.New(workerPoolSizeFiles),
 		dirPool:  workerpool.New(workerPoolSizeDir),
+		queue:    queue.New(context.Background(), "put"),
 	}
 
 	s.SetStopCallBack(s.stop)
@@ -79,8 +83,11 @@ func (s *Server) stop() {
 		return
 	}
 
-	err := s.db.Close()
-	if err != nil {
+	if err := s.db.Close(); err != nil {
 		s.Logger.Printf("database close failed: %s", err)
+	}
+
+	if err := s.queue.Destroy(); err != nil {
+		s.Logger.Printf("queue desrtroy failed: %s", err)
 	}
 }

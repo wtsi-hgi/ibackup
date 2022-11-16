@@ -26,6 +26,7 @@
 package set
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -93,6 +94,25 @@ func TestSet(t *testing.T) {
 		So(set.Size(), ShouldEqual, "30 B (as of last completion)")
 	})
 
+	Convey("MakeTransformer works", t, func() {
+		set := &Set{Transformer: "humgen"}
+		trans, err := set.MakeTransformer()
+		So(err, ShouldBeNil)
+		remote, err := trans("/lustre/scratch118/humgen/projects/ddd/file.txt")
+		So(err, ShouldBeNil)
+		So(remote, ShouldEqual, "/humgen/projects/ddd/scratch118/file.txt")
+
+		dir, err := os.Getwd()
+		So(err, ShouldBeNil)
+
+		set = &Set{Transformer: "prefix=" + dir + ":/zone"}
+		trans, err = set.MakeTransformer()
+		So(err, ShouldBeNil)
+		remote, err = trans(filepath.Join(dir, "file.txt"))
+		So(err, ShouldBeNil)
+		So(remote, ShouldEqual, "/zone/file.txt")
+	})
+
 	Convey("Given a path", t, func() {
 		tDir := t.TempDir()
 		dbPath := filepath.Join(tDir, "set.db")
@@ -146,6 +166,23 @@ func TestSet(t *testing.T) {
 
 					retrieved = db.GetByID("sdf")
 					So(retrieved, ShouldBeNil)
+
+					Convey("And set an Error for it, which is cleared when we start discovery again", func() {
+						msg := "foo"
+						err = db.SetError(set.ID(), msg)
+						So(err, ShouldBeNil)
+
+						retrieved = db.GetByID(set.ID())
+						So(retrieved, ShouldNotBeNil)
+						So(retrieved.Error, ShouldEqual, msg)
+
+						err = db.SetDiscoveryStarted(set.ID())
+						So(err, ShouldBeNil)
+
+						retrieved = db.GetByID(set.ID())
+						So(retrieved, ShouldNotBeNil)
+						So(retrieved.Error, ShouldBeBlank)
+					})
 				})
 
 				Convey("Then get all the Sets and their entries", func() {

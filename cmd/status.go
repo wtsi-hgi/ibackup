@@ -174,6 +174,10 @@ func displaySet(s *set.Set) {
 		cliPrint("Description: %s\n", s.Description)
 	}
 
+	if s.Error != "" {
+		cliPrint("Error: %s\n", s.Error)
+	}
+
 	cliPrint("Status: %s\n", s.Status)
 	cliPrint("Discovery: %s\n", s.Discovered())
 	cliPrint("Num files: %s\n", s.Count())
