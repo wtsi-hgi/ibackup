@@ -1,8 +1,7 @@
 /*******************************************************************************
  * Copyright (c) 2022 Genome Research Ltd.
  *
- * Authors:
- *	- Sendu Bala <sb10@sanger.ac.uk>
+ * Author: Sendu Bala <sb10@sanger.ac.uk>
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -32,6 +31,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/VertebrateResequencing/wr/queue"
 	"github.com/gin-gonic/gin"
 	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/set"
@@ -61,8 +61,10 @@ func (s *Server) triggerDiscovery(c *gin.Context) {
 }
 
 // discoverSet discovers and stores file entry details for the given set.
-// Immediately tries to record in the db that discovery has started, and returns
-// any error from doing that. Actual discovery will then proceed asynchronously.
+// Immediately tries to record in the db that discovery has started, and create
+// a transformer for local->remote paths and returns any error from doing that.
+// Actual discovery will then proceed asynchronously, followed by adding all
+// upload requests for the set to the global put queue.
 func (s *Server) discoverSet(given *set.Set) error {
 	if err := s.db.SetDiscoveryStarted(given.ID()); err != nil {
 		return err
@@ -70,36 +72,45 @@ func (s *Server) discoverSet(given *set.Set) error {
 
 	transformer, err := given.MakeTransformer()
 	if err != nil {
-		s.recordSetError(given.ID(), err)
+		s.recordSetError("making transformer for %s failed: %s", given.ID(), err)
 
 		return err
 	}
 
-	go func() {
-		doneCh := make(chan bool, 1)
-
-		go func() {
-			if err := s.enqueueFiles(given, transformer); err != nil {
-				s.Logger.Printf("enqueue for %s failed: %s", given.ID(), err)
-				s.recordSetError(given.ID(), err)
-			}
-
-			close(doneCh)
-		}()
-
-		if err := s.discoverDirEntries(given, transformer, doneCh); err != nil {
-			s.Logger.Printf("discover dir contents for %s failed: %s", given.ID(), err)
-			s.recordSetError(given.ID(), err)
-		}
-	}()
+	go s.discoverThenEnqueue(given, transformer)
 
 	return nil
 }
 
-// enqueueFiles gets the file entries (not discovered ones) for the set, checks
-// if they all exist locally (concurrently), and adds requests for them to the
-// global put queue if so. If not, updates the entry status in the db.
-func (s *Server) enqueueFiles(given *set.Set, transformer put.PathTransformer) error {
+// discoverThenEnqueue updates file existence, discovers dir contents, then
+// queues the set's files for uploading. Call this in a go-routine, but don't
+// call it multiple times at once for the same set!
+func (s *Server) discoverThenEnqueue(given *set.Set, transformer put.PathTransformer) {
+	doneCh := make(chan bool, 1)
+
+	go func() {
+		if err := s.updateSetFileExistence(given); err != nil {
+			s.recordSetError("enqueue for %s failed: %s", given.ID(), err)
+		}
+
+		close(doneCh)
+	}()
+
+	if err := s.discoverDirEntries(given, doneCh); err != nil {
+		s.recordSetError("discover dir contents for %s failed: %s", given.ID(), err)
+
+		return
+	}
+
+	if err := s.enqueueSetFiles(given, transformer); err != nil {
+		s.recordSetError("queuing files for %s failed: %s", given.ID(), err)
+	}
+}
+
+// updateSetFileExistence gets the file entries (not discovered ones) for the
+// set, checks if they all exist locally (concurrently), and updates their entry
+// status in the db if they're missing.
+func (s *Server) updateSetFileExistence(given *set.Set) error {
 	entries, err := s.db.GetPureFileEntries(given.ID())
 	if err != nil {
 		return err
@@ -111,13 +122,8 @@ func (s *Server) enqueueFiles(given *set.Set, transformer put.PathTransformer) e
 		path := entry.Path
 
 		s.filePool.Submit(func() {
-			if _, errs := os.Stat(path); errs != nil {
-				errCh <- s.setEntryMissing(given, path)
-
-				return
-			}
-
-			errCh <- s.enqueueFile(given, path, transformer)
+			_, errs := s.setEntryMissingIfNotExist(given, path)
+			errCh <- errs
 		})
 	}
 
@@ -131,16 +137,14 @@ func (s *Server) enqueueFiles(given *set.Set, transformer put.PathTransformer) e
 	return err
 }
 
-// recordSetError sets the given err on the set, and logs on failure to do so.
-func (s *Server) recordSetError(sid string, err error) {
-	if err = s.db.SetError(sid, err.Error()); err != nil {
-		s.Logger.Printf("setting error for %s failed: %s", sid, err)
+// setEntryMissingIfNotExist checks if the given path exists, and if not returns
+// true and updates the corresponding entry for that path in the given set with
+// a missing status.
+func (s *Server) setEntryMissingIfNotExist(given *set.Set, path string) (bool, error) {
+	if _, err := os.Stat(path); err == nil {
+		return false, nil
 	}
-}
 
-// setEntryMissing updates the corresponding entry for the given path in the
-// given set with a missing status.
-func (s *Server) setEntryMissing(given *set.Set, path string) error {
 	r := &put.Request{
 		Local:     path,
 		Requester: given.Requester,
@@ -150,34 +154,24 @@ func (s *Server) setEntryMissing(given *set.Set, path string) error {
 		Error:     nil,
 	}
 
-	return s.db.SetEntryStatus(r)
+	return true, s.db.SetEntryStatus(r)
 }
 
-// enqueueFile makes a request for the given path in the given set and adds it
-// to the global put queue for uploading.
-func (s *Server) enqueueFile(given *set.Set, path string, transformer put.PathTransformer) error {
-	r, err := put.NewRequestWithTransformedLocal(path, transformer)
-	if err != nil {
-		return err
+// recordSetError sets the given err on the set, and logs on failure to do so.
+// Also logs the given message which should include 2 %s which will be filled
+// with the sid and err.
+func (s *Server) recordSetError(msg, sid string, err error) {
+	s.Logger.Printf(msg, sid, err)
+
+	if err = s.db.SetError(sid, err.Error()); err != nil {
+		s.Logger.Printf("setting error for %s failed: %s", sid, err)
 	}
-
-	if err = r.ValidatePaths(); err != nil {
-		return err
-	}
-
-	r.Set = given.Name
-	r.Requester = given.Requester
-
-	_, err = s.queue.Add(context.Background(), "uniquekey...", "", r, 0, 0, ttr, "")
-
-	return err
 }
 
-// discoverDirEntries concurrently walks the set's directories and adds requests
-// for discovered files to the global put queue. It then waits until the
-// filesDoneCh closes (file entries have been updated), then sets the discovered
-// file paths, which makes the db consider discovery to be complete.
-func (s *Server) discoverDirEntries(given *set.Set, transformer put.PathTransformer, filesDoneCh chan bool) error {
+// discoverDirEntries concurrently walks the set's directories, waits until
+// the filesDoneCh closes (file entries have been updated), then sets the
+// discovered file paths, which makes the db consider discovery to be complete.
+func (s *Server) discoverDirEntries(given *set.Set, filesDoneCh chan bool) error {
 	entries, err := s.db.GetDirEntries(given.ID())
 	if err != nil {
 		return err
@@ -188,15 +182,15 @@ func (s *Server) discoverDirEntries(given *set.Set, transformer put.PathTransfor
 
 	go s.doSetDirWalks(given, entries, pathsCh, doneCh)
 
-	paths, enqueueErr := s.readAndEnqueuePaths(pathsCh, given, transformer)
+	var paths []string //nolint:prealloc
+
+	for path := range pathsCh {
+		paths = append(paths, path)
+	}
 
 	err = <-doneCh
 	if err != nil {
 		return err
-	}
-
-	if enqueueErr != nil {
-		return enqueueErr
 	}
 
 	<-filesDoneCh
@@ -242,8 +236,13 @@ func (s *Server) doSetDirWalks(given *set.Set, entries []*set.Entry, pathsCh cha
 // dir using the given cb. Major errors are returned; walk errors are logged but
 // otherwise ignored.
 func (s *Server) checkAndWalkDir(given *set.Set, dir string, cb walk.PathCallback) error {
-	if _, err := os.Stat(dir); err != nil {
-		return s.setEntryMissing(given, dir)
+	missing, err := s.setEntryMissingIfNotExist(given, dir)
+	if err != nil {
+		return err
+	}
+
+	if missing {
+		return nil
 	}
 
 	walker := walk.New(cb, false)
@@ -256,20 +255,48 @@ func (s *Server) walkErrorCallback(path string, err error) {
 	s.Logger.Printf("walk found %s, but had error: %s", path, err)
 }
 
-// readAndEnqueuePaths reads paths from the pathsCh and enqueues them. Returns
-// the paths from the channel as a slice, and the last enqueue error.
-func (s *Server) readAndEnqueuePaths(pathsCh chan string, given *set.Set, pt put.PathTransformer) ([]string, error) {
-	var paths []string //nolint:prealloc
-
-	var err error
-
-	for path := range pathsCh {
-		if thisErr := s.enqueueFile(given, path, pt); thisErr != nil {
-			err = thisErr
-		}
-
-		paths = append(paths, path)
+// enqueueSetFiles gets all the set's file entries (set and discovered), creates
+// put requests for them and adds them to the global put queue for uploading.
+func (s *Server) enqueueSetFiles(given *set.Set, transformer put.PathTransformer) error {
+	entries, err := s.db.GetFileEntries(given.ID())
+	if err != nil {
+		return err
 	}
 
-	return paths, err
+	defs := make([]*queue.ItemDef, len(entries))
+
+	for i, entry := range entries {
+		r, erre := entryToRequest(entry, transformer, given)
+		if erre != nil {
+			return erre
+		}
+
+		defs[i] = &queue.ItemDef{
+			Key:  r.ID(),
+			Data: r,
+			TTR:  ttr,
+		}
+	}
+
+	_, _, err = s.queue.AddMany(context.Background(), defs)
+
+	return err
+}
+
+// entryToRequest converts an Entry to a Request containing details of the given
+// set.
+func entryToRequest(entry *set.Entry, transformer put.PathTransformer, given *set.Set) (*put.Request, error) {
+	r, err := put.NewRequestWithTransformedLocal(entry.Path, transformer)
+	if err != nil {
+		return nil, err
+	}
+
+	if err = r.ValidatePaths(); err != nil {
+		return nil, err
+	}
+
+	r.Set = given.Name
+	r.Requester = given.Requester
+
+	return r, nil
 }

@@ -30,6 +30,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/dgryski/go-farm"
 )
 
 type RequestStatus string
@@ -59,6 +61,16 @@ type Request struct {
 	Error      error
 	remoteMeta map[string]string
 	skipPut    bool
+}
+
+// ID returns a deterministic identifier that is unique to this Request's
+// combination of Local, Remote, Requester and Set.
+func (r *Request) ID() string {
+	concat := strings.Join([]string{r.Local, r.Remote, r.Requester, r.Set}, ":")
+
+	l, h := farm.Hash128([]byte(concat))
+
+	return fmt.Sprintf("%016x%016x", l, h)
 }
 
 // ValidatePaths checks that both Local and Remote paths are absolute. (It does
