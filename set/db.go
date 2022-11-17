@@ -323,6 +323,10 @@ func (d *DB) SetEntryStatus(r *put.Request) error {
 			return err
 		}
 
+		if entry.isDir {
+			return nil
+		}
+
 		updateSetBasedOnEntry(set, entry)
 
 		return b.Put(bid, d.encodeToBytes(set))
@@ -344,9 +348,10 @@ func requestToSetID(r *put.Request) (string, error) {
 // updateFileEntry updates the file entry for the set based on the request's
 // info.
 //
-// Returns the updated entry with private properties indicating if the upload
-// failed, and this was the first upload attempt since the last success, and if
-// this was the first successful upload after a failure.
+// Returns the updated entry with private properties indicating if the its a
+// dir, or otherwise if upload failed, and this was the first upload attempt
+// since the last success, and if this was the first successful upload after a
+// failure.
 //
 // If setDiscoveryTime is later than the entry's last attempt, resets the
 // entries Attempts to 0.
@@ -395,32 +400,38 @@ func requestStatusToEntryStatus(r *put.Request, entry *Entry) {
 // Returns an error if the entry can't be found.
 func (d *DB) getEntry(tx *bolt.Tx, setID, path string) (*Entry, *bolt.Bucket, error) {
 	setsBucket := tx.Bucket([]byte(setsBucket))
-	subBucketName := []byte(fileBucket + separator + setID)
 
-	b := setsBucket.Bucket(subBucketName)
-	if b == nil {
-		return nil, nil, Error{ErrInvalidSetID, setID}
-	}
+	var b *bolt.Bucket
 
-	v := b.Get([]byte(path))
-	possibleErr := Error{ErrInvalidEntry, setID + " -> " + path}
+	var v []byte
 
-	if v == nil {
-		subBucketName = []byte(discoveredBucket + separator + setID)
+	var isDir bool
+
+	for _, sbn := range []string{fileBucket, discoveredBucket, dirBucket} {
+		subBucketName := []byte(sbn + separator + setID)
+
+		if sbn == dirBucket {
+			isDir = true
+		}
 
 		b = setsBucket.Bucket(subBucketName)
 		if b == nil {
-			return nil, nil, possibleErr
+			return nil, nil, Error{ErrInvalidSetID, setID}
 		}
 
 		v = b.Get([]byte(path))
+		if v != nil {
+			break
+		}
 	}
 
 	if v == nil {
-		return nil, nil, possibleErr
+		return nil, nil, Error{ErrInvalidEntry, "set " + setID + " has no path " + path}
 	}
 
 	entry := d.decodeEntry(v)
+
+	entry.isDir = isDir
 
 	return entry, b, nil
 }

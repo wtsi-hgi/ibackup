@@ -90,4 +90,6 @@ func (s *Server) stop() {
 	if err := s.queue.Destroy(); err != nil {
 		s.Logger.Printf("queue desrtroy failed: %s", err)
 	}
+
+	s.Logger.Printf("gracefully shut down")
 }

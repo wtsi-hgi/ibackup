@@ -68,6 +68,7 @@ type Entry struct {
 
 	newFail  bool
 	unFailed bool
+	isDir    bool
 }
 
 // ShouldUpload returns true if this Entry is pending or has failed less than 3

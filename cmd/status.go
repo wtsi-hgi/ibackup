@@ -150,12 +150,14 @@ func displaySets(client *server.Client, sets []*set.Set, showNonFailedEntries bo
 
 		displayDirs(getDirs(client, sets[i].ID()))
 
-		failed, nonFailed := getEntries(client, sets[i].ID())
+		if forDisplay.Error != "" || showNonFailedEntries {
+			failed, nonFailed := getEntries(client, sets[i].ID())
 
-		displayFailedEntries(failed)
+			displayFailedEntries(failed)
 
-		if showNonFailedEntries {
-			displayEntries(nonFailed)
+			if showNonFailedEntries {
+				displayEntries(nonFailed)
+			}
 		}
 
 		if i != l-1 {
@@ -175,10 +177,12 @@ func displaySet(s *set.Set) {
 	}
 
 	if s.Error != "" {
+		cliPrint("Status: unable to proceed\n")
 		cliPrint("Error: %s\n", s.Error)
+	} else {
+		cliPrint("Status: %s\n", s.Status)
 	}
 
-	cliPrint("Status: %s\n", s.Status)
 	cliPrint("Discovery: %s\n", s.Discovered())
 	cliPrint("Num files: %s\n", s.Count())
 	cliPrint("Size files: %s\n", s.Size())
@@ -210,6 +214,7 @@ func displayDirs(dirs []string) {
 		cliPrint("Directories:\n")
 
 		for _, dir := range dirs {
+
 			cliPrint("  %s\n", dir)
 		}
 	}
