@@ -69,3 +69,23 @@ type Entry struct {
 	newFail  bool
 	unFailed bool
 }
+
+// ShouldUpload returns true if this Entry is pending or has failed less than 3
+// times or was previously uploaded before the given time.
+func (e *Entry) ShouldUpload(reuploadAfter time.Time) bool {
+	switch e.Status {
+	case Missing:
+		return false
+	case Failed:
+		if e.Attempts >= attemptsToBeConsideredFailing {
+			return false
+		}
+	case Uploaded:
+		if e.LastAttempt.After(reuploadAfter) {
+			return false
+		}
+	case Pending:
+	}
+
+	return true
+}

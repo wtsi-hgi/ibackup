@@ -257,11 +257,15 @@ func (s *Server) walkErrorCallback(path string, err error) {
 
 // enqueueSetFiles gets all the set's file entries (set and discovered), creates
 // put requests for them and adds them to the global put queue for uploading.
+// Skips entries that are missing or that have failed or uploaded since the
+// last discovery.
 func (s *Server) enqueueSetFiles(given *set.Set, transformer put.PathTransformer) error {
 	entries, err := s.db.GetFileEntries(given.ID())
 	if err != nil {
 		return err
 	}
+
+	entries = uploadableEntries(entries, given)
 
 	defs := make([]*queue.ItemDef, len(entries))
 
@@ -278,9 +282,28 @@ func (s *Server) enqueueSetFiles(given *set.Set, transformer put.PathTransformer
 		}
 	}
 
+	if len(defs) == 0 {
+		return nil
+	}
+
 	_, _, err = s.queue.AddMany(context.Background(), defs)
 
 	return err
+}
+
+// uploadableEntries returns the subset of given entries that are suitable for
+// uploading: pending and those that have failed less than 3 times and those
+// that were uploaded before the the last discovery.
+func uploadableEntries(entries []*set.Entry, given *set.Set) []*set.Entry {
+	var filtered []*set.Entry
+
+	for _, entry := range entries {
+		if entry.ShouldUpload(given.LastDiscovery) {
+			filtered = append(filtered, entry)
+		}
+	}
+
+	return filtered
 }
 
 // entryToRequest converts an Entry to a Request containing details of the given

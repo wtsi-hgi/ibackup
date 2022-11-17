@@ -26,6 +26,7 @@
 package server
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -138,6 +139,7 @@ func TestServer(t *testing.T) {
 						t := time.Now()
 
 						var racRequests []*put.Request
+						racCalls := 0
 						racCalled := make(chan bool, 1)
 
 						s.queue.SetReadyAddedCallback(func(queuename string, allitemdata []interface{}) {
@@ -155,11 +157,22 @@ func TestServer(t *testing.T) {
 								racRequests[i] = r
 							}
 
+							racCalls++
 							racCalled <- true
 						})
 
 						err = client.TriggerDiscovery(exampleSet.ID())
 						So(err, ShouldBeNil)
+
+						ok := <-racCalled
+						So(ok, ShouldBeTrue)
+						So(len(racRequests), ShouldEqual, len(files)-1+len(discovers))
+						So(racRequests[0], ShouldResemble, &put.Request{
+							Local:     files[0],
+							Remote:    "/remote/a",
+							Requester: exampleSet.Requester,
+							Set:       exampleSet.Name,
+						})
 
 						entries, err := client.GetFiles(exampleSet.ID())
 						So(err, ShouldBeNil)
@@ -191,20 +204,14 @@ func TestServer(t *testing.T) {
 						err = client.SetDirs(exampleSet2.ID(), nil)
 						So(err, ShouldBeNil)
 
-						ok := <-racCalled
-						So(ok, ShouldBeTrue)
-						So(len(racRequests), ShouldEqual, len(entries))
-						So(racRequests[0], ShouldResemble, &put.Request{
-							Local:     entries[0].Path,
-							Remote:    "/remote/a",
-							Requester: exampleSet.Requester,
-							Set:       exampleSet.Name,
-						})
-
 						t = time.Now()
 
 						err = client.TriggerDiscovery(exampleSet2.ID())
 						So(err, ShouldBeNil)
+
+						ok = <-racCalled
+						So(ok, ShouldBeTrue)
+						So(len(racRequests), ShouldEqual, len(files)-1+len(discovers)+len(files)-1)
 
 						entries, err = client.GetFiles(exampleSet2.ID())
 						So(err, ShouldBeNil)
@@ -230,6 +237,10 @@ func TestServer(t *testing.T) {
 						err = client.TriggerDiscovery(exampleSet3.ID())
 						So(err, ShouldBeNil)
 
+						ok = <-racCalled
+						So(ok, ShouldBeTrue)
+						So(len(racRequests), ShouldEqual, len(files)-1+len(discovers)+len(files)-1+len(discovers))
+
 						entries, err = client.GetFiles(exampleSet3.ID())
 						So(err, ShouldBeNil)
 						So(len(entries), ShouldEqual, len(discovers))
@@ -239,6 +250,20 @@ func TestServer(t *testing.T) {
 						So(gotSet.LastDiscovery, ShouldHappenAfter, t)
 						So(gotSet.Missing, ShouldEqual, 0)
 						So(gotSet.NumFiles, ShouldEqual, 3)
+
+						So(racCalls, ShouldEqual, 3)
+						err = client.TriggerDiscovery(exampleSet.ID())
+						So(err, ShouldBeNil)
+
+						<-time.After(100 * time.Millisecond)
+						So(racCalls, ShouldEqual, 3)
+
+						s.queue.TriggerReadyAddedCallback(context.Background())
+
+						ok = <-racCalled
+						So(ok, ShouldBeTrue)
+						So(racCalls, ShouldEqual, 4)
+						So(len(racRequests), ShouldEqual, len(files)-1+len(discovers)+len(files)-1+len(discovers))
 					})
 				})
 			})

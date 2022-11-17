@@ -51,6 +51,28 @@ func TestSet(t *testing.T) {
 		So(Missing.String(), ShouldEqual, "missing")
 	})
 
+	Convey("Entry.ShouldUpload() gives good advice", t, func() {
+		reuploadAfter := time.Now()
+
+		e := &Entry{Status: Pending}
+		So(e.ShouldUpload(reuploadAfter), ShouldBeTrue)
+
+		e.Status = Missing
+		So(e.ShouldUpload(reuploadAfter), ShouldBeFalse)
+
+		e.Status = Failed
+		So(e.ShouldUpload(reuploadAfter), ShouldBeTrue)
+
+		e.Attempts = attemptsToBeConsideredFailing
+		So(e.ShouldUpload(reuploadAfter), ShouldBeFalse)
+
+		e.Attempts = 1
+		e.LastAttempt = reuploadAfter.Add(1 * time.Second)
+		e.Status = Uploaded
+		So(e.ShouldUpload(reuploadAfter), ShouldBeFalse)
+		So(e.ShouldUpload(reuploadAfter.Add(2*time.Second)), ShouldBeTrue)
+	})
+
 	Convey("Discovered() returns friendly strings", t, func() {
 		set := &Set{}
 		So(set.Discovered(), ShouldEqual, "not started")
