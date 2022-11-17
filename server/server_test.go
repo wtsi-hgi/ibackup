@@ -34,6 +34,7 @@ import (
 	"github.com/go-resty/resty/v2"
 	. "github.com/smartystreets/goconvey/convey"
 	gas "github.com/wtsi-hgi/go-authserver"
+	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/set"
 )
 
@@ -136,6 +137,27 @@ func TestServer(t *testing.T) {
 
 						t := time.Now()
 
+						var racRequests []*put.Request
+						racCalled := make(chan bool, 1)
+
+						s.queue.SetReadyAddedCallback(func(queuename string, allitemdata []interface{}) {
+							racRequests = make([]*put.Request, len(allitemdata))
+
+							for i, item := range allitemdata {
+								r, ok := item.(*put.Request)
+
+								if !ok {
+									racCalled <- false
+
+									return
+								}
+
+								racRequests[i] = r
+							}
+
+							racCalled <- true
+						})
+
 						err = client.TriggerDiscovery(exampleSet.ID())
 						So(err, ShouldBeNil)
 
@@ -168,6 +190,16 @@ func TestServer(t *testing.T) {
 
 						err = client.SetDirs(exampleSet2.ID(), nil)
 						So(err, ShouldBeNil)
+
+						ok := <-racCalled
+						So(ok, ShouldBeTrue)
+						So(len(racRequests), ShouldEqual, len(entries))
+						So(racRequests[0], ShouldResemble, &put.Request{
+							Local:     entries[0].Path,
+							Remote:    "/remote/a",
+							Requester: exampleSet.Requester,
+							Set:       exampleSet.Name,
+						})
 
 						t = time.Now()
 
