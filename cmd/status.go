@@ -191,7 +191,8 @@ func displaySet(s *set.Set) {
 	cliPrint("Missing: %d\n", s.Missing)
 }
 
-// getDirs gets the dir entries for a set and returns their paths.
+// getDirs gets the dir entries for a set and returns their paths. If the dir is
+// missing, the path is appended with some text mentioning that.
 func getDirs(client *server.Client, setID string) []string {
 	got, err := client.GetDirs(setID)
 	if err != nil {
@@ -202,6 +203,10 @@ func getDirs(client *server.Client, setID string) []string {
 
 	for i, entry := range got {
 		paths[i] = entry.Path
+
+		if entry.Status == set.Missing {
+			paths[i] += " (missing)"
+		}
 	}
 
 	return paths
@@ -214,7 +219,6 @@ func displayDirs(dirs []string) {
 		cliPrint("Directories:\n")
 
 		for _, dir := range dirs {
-
 			cliPrint("  %s\n", dir)
 		}
 	}
