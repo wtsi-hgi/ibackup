@@ -401,39 +401,46 @@ func requestStatusToEntryStatus(r *put.Request, entry *Entry) {
 func (d *DB) getEntry(tx *bolt.Tx, setID, path string) (*Entry, *bolt.Bucket, error) {
 	setsBucket := tx.Bucket([]byte(setsBucket))
 
-	var b *bolt.Bucket
+	var (
+		entry *Entry
+		b     *bolt.Bucket
+	)
 
-	var v []byte
-
-	var isDir bool
-
-	for _, sbn := range []string{fileBucket, discoveredBucket, dirBucket} {
-		subBucketName := []byte(sbn + separator + setID)
-
-		if sbn == dirBucket {
-			isDir = true
-		}
-
-		b = setsBucket.Bucket(subBucketName)
-		if b == nil {
-			return nil, nil, Error{ErrInvalidSetID, setID}
-		}
-
-		v = b.Get([]byte(path))
-		if v != nil {
+	for _, kind := range []string{fileBucket, discoveredBucket, dirBucket} {
+		entry, b = d.getEntryFromSubbucket(kind, setID, path, setsBucket)
+		if entry != nil {
 			break
 		}
 	}
 
-	if v == nil {
+	if entry == nil {
 		return nil, nil, Error{ErrInvalidEntry, "set " + setID + " has no path " + path}
 	}
 
-	entry := d.decodeEntry(v)
-
-	entry.isDir = isDir
-
 	return entry, b, nil
+}
+
+// getEntryFromSubbucket gets an Entry for the given path from a sub-bucket of
+// the setsBucket for the kind (fileBucket, discoveredBucket or dirBucket) and
+// set ID. If it doesn't exist, just returns nil. Also returns the subbucket it
+// was in. The entry will have isDir true if kind is dirBucket.
+func (d *DB) getEntryFromSubbucket(kind, setID, path string, setsBucket *bolt.Bucket) (*Entry, *bolt.Bucket) {
+	subBucketName := []byte(kind + separator + setID)
+
+	b := setsBucket.Bucket(subBucketName)
+	if b == nil {
+		return nil, nil
+	}
+
+	v := b.Get([]byte(path))
+	if v == nil {
+		return nil, nil
+	}
+
+	entry := d.decodeEntry(v)
+	entry.isDir = kind == dirBucket
+
+	return entry, b
 }
 
 // updateSetBasedOnEntry updates set status values based on an updated Entry

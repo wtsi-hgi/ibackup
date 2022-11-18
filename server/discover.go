@@ -27,7 +27,6 @@ package server
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"os"
 	"time"
@@ -237,15 +236,12 @@ func (s *Server) doSetDirWalks(given *set.Set, entries []*set.Entry, pathsCh cha
 // dir using the given cb. Major errors are returned; walk errors are logged but
 // otherwise ignored.
 func (s *Server) checkAndWalkDir(given *set.Set, dir string, cb walk.PathCallback) error {
-	fmt.Printf("checkAndWalkDir for %s\n", dir)
 	missing, err := s.setEntryMissingIfNotExist(given, dir)
 	if err != nil {
-		fmt.Printf("setEntryMissingIfNotExist error %s\n", err)
 		return err
 	}
 
 	if missing {
-		fmt.Printf("skipping missing dir\n")
 		return nil
 	}
 

@@ -120,6 +120,7 @@ func TestServer(t *testing.T) {
 
 					Convey("And then you can set file and directory entries, trigger discovery and get all file statuses", func() {
 						files, dirs, discovers := createTestBackupFiles(t, localDir)
+						dirs = append(dirs, filepath.Join(localDir, "missing"))
 
 						err = client.SetFiles(exampleSet.ID(), files)
 						So(err, ShouldBeNil)
@@ -129,9 +130,10 @@ func TestServer(t *testing.T) {
 
 						gotDirs, err := client.GetDirs(exampleSet.ID())
 						So(err, ShouldBeNil)
-						So(len(gotDirs), ShouldEqual, 2)
+						So(len(gotDirs), ShouldEqual, 3)
 						So(gotDirs[0].Path, ShouldEqual, dirs[0])
 						So(gotDirs[1].Path, ShouldEqual, dirs[1])
+						So(gotDirs[2].Path, ShouldEqual, dirs[2])
 
 						err = os.Remove(files[1])
 						So(err, ShouldBeNil)
@@ -183,6 +185,11 @@ func TestServer(t *testing.T) {
 						So(entries[2].Path, ShouldContainSubstring, "c/d/g")
 						So(entries[3].Path, ShouldContainSubstring, "c/d/h")
 						So(entries[4].Path, ShouldContainSubstring, "e/f/i/j/k/l")
+
+						entries, err = client.GetDirs(exampleSet.ID())
+						So(err, ShouldBeNil)
+						So(len(entries), ShouldEqual, len(dirs))
+						So(entries[2].Status, ShouldEqual, set.Missing)
 
 						gotSet, err := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
 						So(err, ShouldBeNil)
