@@ -27,10 +27,9 @@
 package cmd
 
 import (
-	"os"
+	"strings"
 
 	"github.com/dustin/go-humanize" //nolint:misspell
-	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 	"github.com/wtsi-hgi/ibackup/server"
 	"github.com/wtsi-hgi/ibackup/set"
@@ -70,8 +69,13 @@ failing: at least one file in your set has failed to upload to iRODS after
   multiple retries, and the server has given up on it while it continues to try
   to upload other files in your set.
 complete: all files in your backup set were either missing, successfully
-  uploaded, or permanently failed. Details of any failures will be given even
-  without the --details option.
+  uploaded, or permanently failed.
+
+With --details, you'll see tab-separated columns of Path, Status, Size, Date
+and Error, with one file per line, and those with errors appearing first.
+
+Without --details, you'll still see these details for files that failed their
+upload.
 `,
 	Run: func(cmd *cobra.Command, args []string) {
 		ensureURLandCert()
@@ -148,17 +152,9 @@ func displaySets(client *server.Client, sets []*set.Set, showNonFailedEntries bo
 	for i, forDisplay := range sets {
 		displaySet(forDisplay)
 
-		displayDirs(getDirs(client, sets[i].ID()))
+		displayDirs(getDirs(client, forDisplay.ID()))
 
-		if forDisplay.Error != "" || showNonFailedEntries {
-			failed, nonFailed := getEntries(client, sets[i].ID())
-
-			displayFailedEntries(failed)
-
-			if showNonFailedEntries {
-				displayEntries(nonFailed)
-			}
-		}
+		displayEntriesIfFailed(client, forDisplay, showNonFailedEntries)
 
 		if i != l-1 {
 			cliPrint("\n-----\n\n")
@@ -224,6 +220,27 @@ func displayDirs(dirs []string) {
 	}
 }
 
+// displayEntriesIfFailed prints out details about failed entries in the given
+// set. Also prints other details if showNonFailed is true.
+func displayEntriesIfFailed(client *server.Client, given *set.Set, showNonFailed bool) {
+	if given.Error == "" && !showNonFailed {
+		return
+	}
+
+	failed, nonFailed := getEntries(client, given.ID())
+
+	printed := printEntriesHeader(failed)
+	displayEntries(failed)
+
+	if showNonFailed {
+		if !printed {
+			printEntriesHeader(nonFailed)
+		}
+
+		displayEntries(nonFailed)
+	}
+}
+
 // getEntries gets the file entries for a set. It returns ones that have errors,
 // and then all the others.
 func getEntries(client *server.Client, setID string) ([]*set.Entry, []*set.Entry) {
@@ -245,24 +262,23 @@ func getEntries(client *server.Client, setID string) ([]*set.Entry, []*set.Entry
 	return failed, others
 }
 
-// displayFailedEntries prints info about the given failing file entries to
-// STDOUT.
-func displayFailedEntries(entries []*set.Entry) {
+// printEntriesHeader prints a header for a subsequent 5 column output of entry
+// details, but only if there are more than 0 entries. Returns true if it
+// printed the header.
+func printEntriesHeader(entries []*set.Entry) bool {
 	if len(entries) == 0 {
-		return
+		return false
 	}
 
-	table := tablewriter.NewWriter(os.Stdout)
-	table.SetHeader([]string{"Path", "Status", "Size", "Date", "Error"})
+	cliPrint("\n")
+	cliPrint(strings.Join([]string{"Path", "Status", "Size", "Date", "Error"}, "\t"))
+	cliPrint("\n")
 
-	appendEntryTableRows(table, entries, true)
-
-	table.Render()
+	return true
 }
 
-// appendEntryTableRows adds a row to the table for each entry, with an optional
-// column for error details.
-func appendEntryTableRows(table *tablewriter.Table, entries []*set.Entry, errorCol bool) {
+// displayEntries prints info about the given file entries to STDOUT.
+func displayEntries(entries []*set.Entry) {
 	for _, entry := range entries {
 		var date string
 
@@ -277,27 +293,10 @@ func appendEntryTableRows(table *tablewriter.Table, entries []*set.Entry, errorC
 			entry.Status.String(),
 			humanize.Bytes(entry.Size),
 			date,
+			entry.LastError,
 		}
 
-		if errorCol {
-			cols = append(cols, entry.LastError)
-		}
-
-		table.Append(cols)
+		cliPrint(strings.Join(cols, "\t"))
+		cliPrint("\n")
 	}
-}
-
-// displayEntries prints info about the given file entries with no errors to
-// STDOUT.
-func displayEntries(entries []*set.Entry) {
-	if len(entries) == 0 {
-		return
-	}
-
-	table := tablewriter.NewWriter(os.Stdout)
-	table.SetHeader([]string{"Path", "Status", "Size", "Date"})
-
-	appendEntryTableRows(table, entries, false)
-
-	table.Render()
 }
