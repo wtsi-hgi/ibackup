@@ -104,6 +104,11 @@ ctrl-z; bg. Or better yet, use the daemonize program to daemonize this.
 			die("failed to enable authentication: %s", err)
 		}
 
+		err = s.EnableJobSubmission("true", "production", "", "", appLogger)
+		if err != nil {
+			die("failed to enable job submission: %s", err)
+		}
+
 		info("opening database, please wait...")
 
 		err = s.LoadSetDB(args[0])
