@@ -94,6 +94,10 @@ against a locally-calculated checksum.
 It will overwrite outdated iRODS files, but it will skip files if they already
 exist in iRODS with ibackup:mtime metadata matching the mtime of the local file.
 
+If local file paths are missing, warnings about them will be logged, but this
+cmd will still exit 0. It only exits non-zero on failure to upload an existing
+local file.
+
 Collections for your iRODS paths in column 2 will be automatically created if
 necessary.
 
@@ -135,7 +139,7 @@ you, so should this.`,
 
 		results := p.Put()
 
-		i, fails, replaced, uploads, skipped, total := 0, 0, 0, 0, 0, len(requests)
+		i, missing, fails, replaced, uploads, skipped, total := 0, 0, 0, 0, 0, 0, len(requests)
 
 		for r := range results {
 			i++
@@ -153,7 +157,7 @@ you, so should this.`,
 			case put.RequestStatusFailed:
 				fails++
 			case put.RequestStatusMissing:
-				fails++
+				missing++
 			case put.RequestStatusReplaced:
 				replaced++
 			case put.RequestStatusUnmodified:
@@ -163,7 +167,8 @@ you, so should this.`,
 			}
 		}
 
-		info("%d uploaded (%d replaced); %d skipped; %d failed", uploads+replaced, replaced, skipped, fails)
+		info("%d uploaded (%d replaced); %d skipped; %d failed; %d missing",
+			uploads+replaced, replaced, skipped, fails, missing)
 
 		if fails > 0 {
 			os.Exit(1)
