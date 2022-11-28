@@ -155,10 +155,14 @@ func (s *Server) putSet(c *gin.Context) {
 
 // allowedAccess gets our current user if we have EnableAuth(), and returns
 // true if that matches the given username. Always returns true if we have not
-// EnableAuth().
+// EnableAuth(), or if our current user is the user who started the Server.
 func (s *Server) allowedAccess(c *gin.Context, user string) bool {
 	u := s.GetUser(c)
 	if u == nil {
+		return true
+	}
+
+	if u.Username == s.username {
 		return true
 	}
 

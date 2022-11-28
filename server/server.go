@@ -31,6 +31,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os/user"
 	"strings"
 	"time"
 
@@ -76,6 +77,7 @@ type Server struct {
 	sched    *scheduler.Scheduler
 	putCmd   string
 	req      *jqs.Requirements
+	username string
 }
 
 // New creates a Server which can serve a REST API and website.
@@ -93,6 +95,20 @@ func New(logWriter io.Writer) *Server {
 	s.SetStopCallBack(s.stop)
 
 	return s
+}
+
+// EnableAuth does the same as gas.EnableAuth, but also records the current
+// username as a user with root-like permissions to work with everyone's
+// backup sets.
+func (s *Server) EnableAuth(certFile, keyFile string, acb gas.AuthCallback) error {
+	u, err := user.Current()
+	if err != nil {
+		return err
+	}
+
+	s.username = u.Username
+
+	return s.Server.EnableAuth(certFile, keyFile, acb)
 }
 
 // EnableJobSubmission enables submission of `ibackup put` jobs to wr in

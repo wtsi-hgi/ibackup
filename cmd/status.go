@@ -1,8 +1,7 @@
 /*******************************************************************************
  * Copyright (c) 2022 Genome Research Ltd.
  *
- * Authors:
- *	- Sendu Bala <sb10@sanger.ac.uk>
+ * Author: Sendu Bala <sb10@sanger.ac.uk>
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -40,6 +39,7 @@ const dateShort = "06/01/02"
 // options for this cmd.
 var statusName string
 var statusDetails bool
+var statusUser string
 
 // statusCmd represents the status command.
 var statusCmd = &cobra.Command{
@@ -76,6 +76,10 @@ and Error, with one file per line, and those with errors appearing first.
 
 Without --details, you'll still see these details for files that failed their
 upload.
+
+If you are the user who started the ibackup server, you can use the --user
+option to get the status of a given requestor's backup sets, instead of your
+own.
 `,
 	Run: func(cmd *cobra.Command, args []string) {
 		ensureURLandCert()
@@ -89,7 +93,7 @@ upload.
 			die(err.Error())
 		}
 
-		status(client, statusName, statusDetails)
+		status(client, statusUser, statusName, statusDetails)
 	},
 }
 
@@ -97,14 +101,19 @@ func init() {
 	RootCmd.AddCommand(statusCmd)
 
 	// flags specific to this sub-command
-	statusCmd.Flags().StringVarP(&statusName, "name", "n", "", "get status for just the set with this name")
+	statusCmd.Flags().StringVarP(&statusName, "name", "n", "",
+		"get status for just the set with this name")
 	statusCmd.Flags().BoolVarP(&statusDetails, "details", "d", false,
 		"in combination with --name, show the status of every file in the set")
+	statusCmd.Flags().StringVar(&statusUser, "user", "",
+		"pretend to be the this user (only works if you started the server)")
 }
 
 // status does the main job of getting backup set status from the server.
-func status(client *server.Client, name string, details bool) {
-	user := currentUsername()
+func status(client *server.Client, user, name string, details bool) {
+	if user == "" {
+		user = currentUsername()
+	}
 
 	var sets []*set.Set
 
