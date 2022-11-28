@@ -30,6 +30,9 @@ import (
 	"fmt"
 	"io"
 	"log/syslog"
+	"os"
+	"os/user"
+	"path/filepath"
 	"time"
 
 	ldap "github.com/go-ldap/ldap/v3"
@@ -38,6 +41,12 @@ import (
 	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/ibackup/server"
 )
+
+const serverTokenBasename = ".ibackup.token"
+
+var serverUser string
+var serverUID string
+var serverToken []byte
 
 // options for this cmd.
 var serverLogPath string
@@ -99,12 +108,9 @@ ctrl-z; bg. Or better yet, use the daemonize program to daemonize this.
 
 		s := server.New(logWriter)
 
-		err := s.EnableAuth(serverCert, serverKey, checkLDAPPassword)
-		if err != nil {
-			die("failed to enable authentication: %s", err)
-		}
+		prepareAuth(s)
 
-		err = s.EnableJobSubmission("true", "production", "", "", appLogger)
+		err := s.EnableJobSubmission("true", "production", "", "", appLogger)
 		if err != nil {
 			die("failed to enable job submission: %s", err)
 		}
@@ -174,6 +180,65 @@ func (w *log15Writer) Write(p []byte) (n int, err error) {
 	w.logger.Info(string(p))
 
 	return len(p), nil
+}
+
+// prepareAuth sets up a token for our own clients to log in with, then enables
+// auth allowing that token for us, or LDAP for normal users.
+func prepareAuth(s *server.Server) {
+	user, err := user.Current()
+	if err != nil {
+		die("%s", err)
+	}
+
+	serverUser = user.Username
+	serverUID = user.Uid
+
+	tokenPath, err := tokenStoragePath()
+	if err != nil {
+		die("%s", err)
+	}
+
+	serverToken, err = gas.GenerateAndStoreTokenForSelfClient(tokenPath)
+	if err != nil {
+		die("failed to generate a token: %s", err)
+	}
+
+	err = s.EnableAuth(serverCert, serverKey, checkPassword)
+	if err != nil {
+		die("failed to enable authentication: %s", err)
+	}
+}
+
+// tokenStoragePath returns the path where we store our token for self-clients
+// to use.
+func tokenStoragePath() (string, error) {
+	dir, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+
+	return filepath.Join(dir, serverTokenBasename), nil
+}
+
+// checkPassword returns true if myselfLoggingIn(), otherwise defers to
+// checkLDAPPassword().
+func checkPassword(username, password string) (bool, string) {
+	if myselfLoggingIn(username, password) {
+		return true, serverUID
+	}
+
+	return checkLDAPPassword(username, password)
+}
+
+// myselfLoggingIn checks if the supplied user is ourselves, and the password is
+// the unique token generated when we started the server and stored in a file
+// only readable by us. If it is, we return true.
+func myselfLoggingIn(username, password string) bool {
+	if username != serverUser {
+		return false
+	}
+
+	return gas.TokenMatches([]byte(password), serverToken)
 }
 
 // checkLDAPPassword checks with LDAP if the given password is valid for the

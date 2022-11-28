@@ -124,8 +124,24 @@ func jwtStoragePath() (string, error) {
 }
 
 // login prompts the user for a password to log them in. Returns the JWT for the
-// user.
+// user. If this user started the server, gets the "password" from the token
+// file instead, and does not prompt.
 func login(url, cert string) (string, error) {
+	tokenPath, err := tokenStoragePath()
+	if err != nil {
+		die("%s", err)
+	}
+
+	passwordB, err := server.GetStoredToken(tokenPath)
+	if err != nil || passwordB == nil {
+		passwordB = askForPassword()
+	}
+
+	return server.Login(url, cert, currentUsername(), string(passwordB))
+}
+
+// askForPassword asks the user for their password on the command line.
+func askForPassword() []byte {
 	cliPrint("Password: ")
 
 	passwordB, err := term.ReadPassword(syscall.Stdin)
@@ -135,7 +151,7 @@ func login(url, cert string) (string, error) {
 
 	cliPrint("\n")
 
-	return server.Login(url, cert, currentUsername(), string(passwordB))
+	return passwordB
 }
 
 func currentUsername() string {
