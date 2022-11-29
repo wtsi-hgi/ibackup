@@ -123,7 +123,7 @@ you, so should this.`,
 				die(err.Error())
 			}
 
-			requests, err = getServerRequests(client)
+			requests, err = client.GetSomeUploadRequests()
 		} else {
 			requests, err = getRequestsFromFile(putFile, putMeta, putBase64)
 		}
@@ -188,12 +188,6 @@ func init() {
 		"input paths are base64 encoded")
 	putCmd.Flags().BoolVarP(&putServerMode, "server", "s", false,
 		"pull requests from the server instead of --file; only usable by the user who started the server")
-}
-
-// getServerRequests asks the server using the given client for about 10GB of
-// files to upload.
-func getServerRequests(client *server.Client) ([]*put.Request, error) {
-	return nil, nil
 }
 
 // getRequestsFromFile reads our 3 column file format from a file or STDIN and
@@ -372,10 +366,19 @@ func decodeBase64(path string, isEncoded bool) string {
 }
 
 // sendResultsToServer reads from the given channel and sends the results to
-// the server, which will deal with any failures and update its database. Always
-// exits 0.
+// the server, which will deal with any failures and update its database. Could
+// return an error related to not being able to update the server with the
+// results.
 func sendResultsToServer(client *server.Client, results chan *put.Request) error {
-	return nil
+	var err error
+
+	for r := range results {
+		if thisErr := client.UpdateFileStatus(r); thisErr != nil {
+			err = thisErr
+		}
+	}
+
+	return err
 }
 
 // printResults reads from the given channel, outputs info about them to STDOUT

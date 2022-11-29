@@ -50,9 +50,9 @@ const (
 	// during discovery.
 	workerPoolSizeFiles = 16
 
-	// workerPoolSizeDir is the max number of directory walks we'll do concurrently
-	// during discovery; each of those walks in turn operate on 16 subdirs
-	// concurrently.
+	// workerPoolSizeDir is the max number of directory walks we'll do
+	// concurrently during discovery; each of those walks in turn operate on 16
+	// subdirs concurrently.
 	workerPoolSizeDir = 3
 
 	// connectTimeout is the timeout for connecting to wr for job submission.

@@ -26,19 +26,24 @@
 package server
 
 import (
+	"errors"
 	"net/http"
 
+	"github.com/VertebrateResequencing/wr/queue"
 	"github.com/gin-gonic/gin"
 	gas "github.com/wtsi-hgi/go-authserver"
+	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/set"
 )
 
 const (
-	setPath       = "/set"
-	filePath      = "/files"
-	dirPath       = "/dirs"
-	entryPath     = "/entries"
-	discoveryPath = "/discover"
+	setPath        = "/set"
+	filePath       = "/files"
+	dirPath        = "/dirs"
+	entryPath      = "/entries"
+	discoveryPath  = "/discover"
+	fileStatusPath = "/file_status"
+	requestsPath   = "/requests"
 
 	// EndPointAuthSet is the endpoint for getting and setting sets.
 	EndPointAuthSet = gas.EndPointAuth + setPath
@@ -55,15 +60,30 @@ const (
 	// EndPointAuthDiscovery is the endpoint for triggering set discovery.
 	EndPointAuthDiscovery = gas.EndPointAuth + discoveryPath
 
+	// EndPointAuthFileStatus is the endpoint for updating file upload status.
+	EndPointAuthFileStatus = gas.EndPointAuth + fileStatusPath
+
+	// EndPointAuthRequests is the endpoint for getting file upload requests.
+	EndPointAuthRequests = gas.EndPointAuth + requestsPath
+
 	ErrNoAuth          = gas.Error("auth must be enabled")
 	ErrNoSetDBDirFound = gas.Error("set database directory not found")
 	ErrNoRequester     = gas.Error("requester not supplied")
 	ErrBadRequester    = gas.Error("you are not the set requester")
+	ErrNotAdmin        = gas.Error("you are not the server admin")
 	ErrBadSet          = gas.Error("set with that id does not exist")
 	ErrInvalidInput    = gas.Error("invalid input")
 
 	paramRequester = "requester"
 	paramSetID     = "id"
+
+	// defaultFileSize is 1MB in bytes, because most files on lustre volumes
+	// are between 64KB and 1MB in size.
+	defaultFileSize uint64 = 1024 * 1024
+
+	// desiredFileSize is the total size of files we want to return in
+	// getRequests (10GB).
+	desiredFileSize uint64 = defaultFileSize * 1024 * 10
 )
 
 // LoadSetDB loads the given set.db or creates it if it doesn't exist, and adds
@@ -87,13 +107,21 @@ const (
 // GET /rest/v1/auth/discover/[id]: takes a set "id" URL parameter to trigger
 // the discovery of files for the set.
 //
-// GET /rest/v1/auth/entries/[id] : takes a set "id" URL parameter and returns the
-// set.Entries with backup status about each file (both set with
+// GET /rest/v1/auth/entries/[id] : takes a set "id" URL parameter and returns
+// the set.Entries with backup status about each file (both set with
 // /rest/v1/auth/files and discovered inside /rest/v1/auth/dirs).
+//
+// GET /rest/v1/auth/requests : returns about 10GB worth of upload requests from
+// the global put queue. Only the user who started the server has permission to
+// call this.
+//
+// PUT /rest/v1/auth/file_status : takes a put.Request encoded as JSON in the
+// body to update the status of the corresponding set's file entry.
 //
 // You must call EnableAuth() before calling this method, and the endpoints will
 // only let you work on sets where the Requester matches your logged-in
-// username.
+// username, or if the logged-in user is the same as the user who started the
+// Server.
 func (s *Server) LoadSetDB(path string) error {
 	authGroup := s.AuthRouter()
 	if authGroup == nil {
@@ -119,6 +147,10 @@ func (s *Server) LoadSetDB(path string) error {
 
 	authGroup.GET(entryPath+idParam, s.getEntries)
 	authGroup.GET(dirPath+idParam, s.getDirs)
+
+	authGroup.GET(requestsPath, s.getRequests)
+
+	authGroup.PUT(fileStatusPath, s.putFileStatus)
 
 	return nil
 }
@@ -156,6 +188,7 @@ func (s *Server) putSet(c *gin.Context) {
 // allowedAccess gets our current user if we have EnableAuth(), and returns
 // true if that matches the given username. Always returns true if we have not
 // EnableAuth(), or if our current user is the user who started the Server.
+// If user is blank, it's a test if the current user started the Server.
 func (s *Server) allowedAccess(c *gin.Context, user string) bool {
 	u := s.GetUser(c)
 	if u == nil {
@@ -317,4 +350,113 @@ func (s *Server) getDirs(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, entries)
+}
+
+// getRequests gets about 10GB worth of put Requests from the global in-memory
+// put-queue (as populated during set discoveries).
+//
+// LoadSetDB() must already have been called. This is called when there is a GET
+// on /rest/v1/auth/requests. Only the user who started the Server has
+// permission to call this.
+func (s *Server) getRequests(c *gin.Context) {
+	if !s.allowedAccess(c, "") {
+		c.AbortWithError(http.StatusUnauthorized, ErrNotAdmin) //nolint:errcheck
+
+		return
+	}
+
+	requests, err := s.reserveRequests()
+	if err != nil {
+		c.AbortWithError(http.StatusInternalServerError, err) //nolint:errcheck
+
+		return
+	}
+
+	c.JSON(http.StatusOK, requests)
+}
+
+// reserveRequests keeps reserving items from our queue until we have about 10GB
+// of them (assuming each file is 1MB unless we know better), or the queue is
+// empty. Returns the Requests in the items.
+func (s *Server) reserveRequests() ([]*put.Request, error) {
+	var requests []*put.Request //nolint:prealloc
+
+	var size uint64
+
+	for {
+		r, err := s.reserveRequest()
+		if err != nil {
+			return nil, err
+		}
+
+		if r == nil {
+			break
+		}
+
+		requests = append(requests, r)
+
+		s := r.Size
+		if s == 0 {
+			s = defaultFileSize
+		}
+
+		size += s
+		if size >= desiredFileSize {
+			break
+		}
+	}
+
+	return requests, nil
+}
+
+// reserveRequest reserves an item from our queue and converts it to a Request.
+// Returns nil and no error if the queue is empty.
+func (s *Server) reserveRequest() (*put.Request, error) {
+	item, err := s.queue.Reserve("", 0)
+	if err != nil {
+		qerr, ok := err.(queue.Error) //nolint:errorlint
+		if ok && errors.Is(qerr.Err, queue.ErrNothingReady) {
+			err = nil
+		}
+
+		return nil, err
+	}
+
+	r, ok := item.Data().(*put.Request)
+	if !ok {
+		return nil, ErrInvalidInput
+	}
+
+	return r, nil
+}
+
+// putFileStatus interprets the body as a JSON encoding of a put.Request and
+// stores it in the database.
+//
+// LoadSetDB() must already have been called. This is called when there is a PUT
+// on /rest/v1/auth/file_status. Only the user who started the Server has
+// permission to call this.
+func (s *Server) putFileStatus(c *gin.Context) {
+	r := &put.Request{}
+
+	if err := c.BindJSON(r); err != nil {
+		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+
+		return
+	}
+
+	if !s.allowedAccess(c, "") {
+		c.AbortWithError(http.StatusUnauthorized, ErrNotAdmin) //nolint:errcheck
+
+		return
+	}
+
+	err := s.db.SetEntryStatus(r)
+	if err != nil {
+		c.AbortWithError(http.StatusInternalServerError, err) //nolint:errcheck
+
+		return
+	}
+
+	c.Status(http.StatusOK)
 }

@@ -31,6 +31,7 @@ import (
 
 	"github.com/go-resty/resty/v2"
 	gas "github.com/wtsi-hgi/go-authserver"
+	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/set"
 )
 
@@ -196,4 +197,35 @@ func (c *Client) GetDirs(setID string) ([]*set.Entry, error) {
 	err := c.getThing(EndPointAuthDirs+"/"+setID, &entries)
 
 	return entries, err
+}
+
+// GetSomeUploadRequests gets some (approx 10GB worth of) upload Requests from
+// the global put queue and returns them, moving from "ready" status in the
+// queue to "running".
+//
+// This automatically handles "touching" the requests so the server knows we're
+// still working on them.
+//
+// You can only call this once per Client. You should probably exit after
+// dealing with the Requests you get back.
+//
+// Only the user who started the server has permission to call this.
+func (c *Client) GetSomeUploadRequests() ([]*put.Request, error) {
+	var requests []*put.Request
+
+	err := c.getThing(EndPointAuthRequests, &requests)
+
+	return requests, err
+}
+
+// UpdateFileStatus updates a file's status in the DB based on the given
+// Request's status.
+//
+// This also tells the server we're no longer working on the request. The db
+// update will not be carried out if we're not currently touching a
+// corresponding request due to a prior GetSomeUploadRequests().
+//
+// Only the user who started the server has permission to call this.
+func (c *Client) UpdateFileStatus(r *put.Request) error {
+	return c.putThing(EndPointAuthFileStatus, r)
 }

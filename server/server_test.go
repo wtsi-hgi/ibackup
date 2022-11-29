@@ -28,6 +28,7 @@ package server
 import (
 	"context"
 	"os"
+	"os/user"
 	"path/filepath"
 	"testing"
 	"time"
@@ -42,6 +43,13 @@ import (
 const userPerms = 0700
 
 func TestServer(t *testing.T) {
+	u, err := user.Current()
+	if err != nil {
+		t.Fatalf("could not get current user: %s", err)
+	}
+
+	admin := u.Username
+
 	localDir := t.TempDir()
 	exampleSet := &set.Set{
 		Name:        "set1",
@@ -271,6 +279,38 @@ func TestServer(t *testing.T) {
 						So(ok, ShouldBeTrue)
 						So(racCalls, ShouldEqual, 4)
 						So(len(racRequests), ShouldEqual, len(files)-1+len(discovers)+len(files)-1+len(discovers))
+
+						Convey("After discovery, admin can get upload requests and update file entry status", func() {
+							entries, err = client.GetFiles(exampleSet.ID())
+							So(err, ShouldBeNil)
+
+							_, err = client.GetSomeUploadRequests()
+							So(err, ShouldNotBeNil)
+
+							token, errl = gas.Login(addr, certPath, admin, "pass")
+							So(errl, ShouldBeNil)
+
+							client = NewClient(addr, certPath, token)
+
+							requests, err := client.GetSomeUploadRequests()
+							So(err, ShouldBeNil)
+							So(len(requests), ShouldEqual, 8)
+							So(requests[0].Local, ShouldEqual, entries[0].Path)
+
+							requests[0].Status = put.RequestStatusUploaded
+
+							err = client.UpdateFileStatus(requests[0])
+							So(err, ShouldBeNil)
+
+							entries, err = client.GetFiles(exampleSet.ID())
+							So(err, ShouldBeNil)
+							So(entries[0].Status, ShouldEqual, set.Uploaded)
+
+							gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+							So(err, ShouldBeNil)
+							So(gotSet.Uploaded, ShouldEqual, 1)
+							So(gotSet.NumFiles, ShouldEqual, 5)
+						})
 					})
 				})
 			})
