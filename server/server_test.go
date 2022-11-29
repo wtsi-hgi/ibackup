@@ -310,6 +310,75 @@ func TestServer(t *testing.T) {
 							So(err, ShouldBeNil)
 							So(gotSet.Uploaded, ShouldEqual, 1)
 							So(gotSet.NumFiles, ShouldEqual, 5)
+
+							stats := s.queue.Stats()
+							So(stats.Items, ShouldEqual, 7)
+
+							requests[1].Status = put.RequestStatusFailed
+
+							err = client.UpdateFileStatus(requests[1])
+							So(err, ShouldBeNil)
+
+							entries, err = client.GetFiles(exampleSet.ID())
+							So(err, ShouldBeNil)
+							So(entries[2].Path, ShouldEqual, requests[1].Local)
+							So(entries[2].Status, ShouldEqual, set.Failed)
+
+							gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+							So(err, ShouldBeNil)
+							So(gotSet.Status, ShouldEqual, set.Uploading)
+							So(gotSet.Uploaded, ShouldEqual, 1)
+							So(gotSet.Failed, ShouldEqual, 1)
+
+							stats = s.queue.Stats()
+							So(stats.Items, ShouldEqual, 7)
+							So(stats.Running, ShouldEqual, 6)
+							So(stats.Ready, ShouldEqual, 1)
+
+							err = client.UpdateFileStatus(requests[1])
+							So(err, ShouldNotBeNil)
+
+							frequests, err := client.GetSomeUploadRequests()
+							So(err, ShouldBeNil)
+							So(len(frequests), ShouldEqual, 1)
+
+							frequests[0].Status = put.RequestStatusFailed
+							err = client.UpdateFileStatus(frequests[0])
+							So(err, ShouldBeNil)
+
+							gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+							So(err, ShouldBeNil)
+							So(gotSet.Status, ShouldEqual, set.Uploading)
+							So(gotSet.Uploaded, ShouldEqual, 1)
+							So(gotSet.Failed, ShouldEqual, 1)
+
+							stats = s.queue.Stats()
+							So(stats.Items, ShouldEqual, 7)
+							So(stats.Running, ShouldEqual, 6)
+							So(stats.Ready, ShouldEqual, 1)
+
+							frequests, err = client.GetSomeUploadRequests()
+							So(err, ShouldBeNil)
+							So(len(frequests), ShouldEqual, 1)
+
+							frequests[0].Status = put.RequestStatusFailed
+							err = client.UpdateFileStatus(frequests[0])
+							So(err, ShouldBeNil)
+
+							gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+							So(err, ShouldBeNil)
+							So(gotSet.Status, ShouldEqual, set.Failing)
+							So(gotSet.Uploaded, ShouldEqual, 1)
+							So(gotSet.Failed, ShouldEqual, 1)
+
+							stats = s.queue.Stats()
+							So(stats.Items, ShouldEqual, 7)
+							So(stats.Running, ShouldEqual, 6)
+							So(stats.Buried, ShouldEqual, 1)
+
+							frequests, err = client.GetSomeUploadRequests()
+							So(err, ShouldBeNil)
+							So(len(frequests), ShouldEqual, 0)
 						})
 					})
 				})

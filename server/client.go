@@ -90,9 +90,11 @@ func responseToErr(resp *resty.Response) error {
 		return ErrInvalidInput
 	case http.StatusNotFound:
 		return gas.ErrNeedsAuth
+	case http.StatusOK:
+		return nil
+	default:
+		return ErrInteral
 	}
-
-	return nil
 }
 
 // GetSets gets details about a given requester's backup sets from the

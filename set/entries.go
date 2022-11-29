@@ -78,7 +78,7 @@ func (e *Entry) ShouldUpload(reuploadAfter time.Time) bool {
 	case Missing:
 		return false
 	case Failed:
-		if e.Attempts >= attemptsToBeConsideredFailing {
+		if e.Attempts >= AttemptsToBeConsideredFailing {
 			return false
 		}
 	case Uploaded:

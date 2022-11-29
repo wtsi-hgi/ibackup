@@ -26,6 +26,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
@@ -73,6 +74,7 @@ const (
 	ErrNotAdmin        = gas.Error("you are not the server admin")
 	ErrBadSet          = gas.Error("set with that id does not exist")
 	ErrInvalidInput    = gas.Error("invalid input")
+	ErrInteral         = gas.Error("internal server error")
 
 	paramRequester = "requester"
 	paramSetID     = "id"
@@ -433,6 +435,10 @@ func (s *Server) reserveRequest() (*put.Request, error) {
 // putFileStatus interprets the body as a JSON encoding of a put.Request and
 // stores it in the database.
 //
+// Only works if a corresponding Request is currently in "run" state in our
+// queue, in which case it will be removed from, released or buried in the queue
+// depending on the number of failures.
+//
 // LoadSetDB() must already have been called. This is called when there is a PUT
 // on /rest/v1/auth/file_status. Only the user who started the Server has
 // permission to call this.
@@ -451,12 +457,49 @@ func (s *Server) putFileStatus(c *gin.Context) {
 		return
 	}
 
-	err := s.db.SetEntryStatus(r)
-	if err != nil {
+	if err := s.requestWasReserved(r); err != nil {
+		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+
+		return
+	}
+
+	if err := s.updateFileStatus(r); err != nil {
 		c.AbortWithError(http.StatusInternalServerError, err) //nolint:errcheck
 
 		return
 	}
 
 	c.Status(http.StatusOK)
+}
+
+// requestWasReserved returns an error unless the given request is in the "run"
+// sub-queue of our global put queue, ie. it was reserved by reserveRequest().
+func (s *Server) requestWasReserved(r *put.Request) error {
+	return s.queue.Touch(r.ID())
+}
+
+// updateFileStatus updates the request's file entry status in the db, and
+// removes the request from our queue.
+func (s *Server) updateFileStatus(r *put.Request) error {
+	entry, err := s.db.SetEntryStatus(r)
+	if err != nil {
+		return err
+	}
+
+	return s.removeOrReleaseRequestFromQueue(r, entry)
+}
+
+// removeOrReleaseRequestFromQueue removes the given Request from our queue
+// unless it has failed. < 3 failures results in it being released, 3 results in
+// it being buried.
+func (s *Server) removeOrReleaseRequestFromQueue(r *put.Request, entry *set.Entry) error {
+	if r.Status == put.RequestStatusFailed {
+		if entry.Attempts >= set.AttemptsToBeConsideredFailing {
+			return s.queue.Bury(r.ID())
+		}
+
+		return s.queue.Release(context.Background(), r.ID())
+	}
+
+	return s.queue.Remove(context.Background(), r.ID())
 }

@@ -154,7 +154,9 @@ func (s *Server) setEntryMissingIfNotExist(given *set.Set, path string) (bool, e
 		Error:     nil,
 	}
 
-	return true, s.db.SetEntryStatus(r)
+	_, err := s.db.SetEntryStatus(r)
+
+	return true, err
 }
 
 // recordSetError sets the given err on the set, and logs on failure to do so.

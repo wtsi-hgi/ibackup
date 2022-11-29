@@ -62,7 +62,7 @@ const (
 	discoveredBucket              = subBucketPrefix + "discovered"
 	dbOpenMode                    = 0600
 	separator                     = ":!:"
-	attemptsToBeConsideredFailing = 3
+	AttemptsToBeConsideredFailing = 3
 )
 
 // DB is used to create and query a database for storing backup sets (lists of
@@ -302,25 +302,33 @@ func (d *DB) SetDiscoveredEntries(setID string, paths []string) error {
 	})
 }
 
-// SetEntryStatus finds the set Entry corresponding to the given Request's
-// Local path, Requester and Set name, and updates its status in the database,
-// and also updates summary status for the Set. Returns an error if a set or
-// entry corresponding to the Request can't be found.
-func (d *DB) SetEntryStatus(r *put.Request) error {
+// SetEntryStatus finds the set Entry corresponding to the given Request's Local
+// path, Requester and Set name, and updates its status in the database, and
+// also updates summary status for the Set.
+//
+// Returns the Entry, which is a reflection of the Request, but contains
+// additional information such as the number of Attempts if the Request is
+// failing and you keep retrying.
+//
+// Returns an error if a set or entry corresponding to the Request can't be
+// found.
+func (d *DB) SetEntryStatus(r *put.Request) (*Entry, error) {
 	setID, err := requestToSetID(r)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	return d.db.Update(func(tx *bolt.Tx) error {
-		set, bid, b, err := d.getSetByID(tx, setID)
-		if err != nil {
-			return err
+	var entry *Entry
+
+	err = d.db.Update(func(tx *bolt.Tx) error {
+		set, bid, b, errt := d.getSetByID(tx, setID)
+		if errt != nil {
+			return errt
 		}
 
-		entry, err := d.updateFileEntry(tx, setID, r, set.LastDiscovery)
-		if err != nil {
-			return err
+		entry, errt = d.updateFileEntry(tx, setID, r, set.LastDiscovery)
+		if errt != nil {
+			return errt
 		}
 
 		if entry.isDir {
@@ -331,6 +339,8 @@ func (d *DB) SetEntryStatus(r *put.Request) error {
 
 		return b.Put(bid, d.encodeToBytes(set))
 	})
+
+	return entry, err
 }
 
 // requestToSetID returns a setID for the Request. Returns an error if the
@@ -387,7 +397,11 @@ func requestStatusToEntryStatus(r *put.Request, entry *Entry) {
 		entry.unFailed = oldAttempts > 1
 	case put.RequestStatusFailed:
 		entry.Status = Failed
-		entry.LastError = r.Error.Error()
+
+		if r.Error != nil {
+			entry.LastError = r.Error.Error()
+		}
+
 		entry.newFail = oldAttempts == 0
 	case put.RequestStatusMissing:
 		entry.Status = Missing
@@ -484,7 +498,7 @@ func entryStatusToSetCounts(entry *Entry, set *Set) {
 			set.Failed++
 		}
 
-		if entry.Attempts >= attemptsToBeConsideredFailing {
+		if entry.Attempts >= AttemptsToBeConsideredFailing {
 			set.Status = Failing
 		}
 	case Missing:

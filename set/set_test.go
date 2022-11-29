@@ -63,7 +63,7 @@ func TestSet(t *testing.T) {
 		e.Status = Failed
 		So(e.ShouldUpload(reuploadAfter), ShouldBeTrue)
 
-		e.Attempts = attemptsToBeConsideredFailing
+		e.Attempts = AttemptsToBeConsideredFailing
 		So(e.ShouldUpload(reuploadAfter), ShouldBeFalse)
 
 		e.Attempts = 1
@@ -307,8 +307,12 @@ func TestSet(t *testing.T) {
 							Error:     nil,
 						}
 
-						err = db.SetEntryStatus(r)
+						e, err := db.SetEntryStatus(r)
 						So(err, ShouldBeNil)
+						So(e, ShouldNotBeNil)
+						So(e.Path, ShouldEqual, fEntries[0].Path)
+						So(e.Size, ShouldEqual, r.Size)
+						So(e.Status, ShouldEqual, Uploaded)
 
 						sets, err = db.GetByRequester("jim")
 						So(err, ShouldBeNil)
@@ -335,7 +339,7 @@ func TestSet(t *testing.T) {
 							Error:     nil,
 						}
 
-						err = db.SetEntryStatus(r)
+						_, err = db.SetEntryStatus(r)
 						So(err, ShouldBeNil)
 
 						sets, err = db.GetByRequester("jim")
@@ -361,7 +365,7 @@ func TestSet(t *testing.T) {
 							Error:     nil,
 						}
 
-						err = db.SetEntryStatus(r)
+						_, err = db.SetEntryStatus(r)
 						So(err, ShouldBeNil)
 
 						sets, err = db.GetByRequester("jim")
@@ -387,7 +391,7 @@ func TestSet(t *testing.T) {
 							Error:     Error{msg: "upload failed"},
 						}
 
-						err = db.SetEntryStatus(r)
+						_, err = db.SetEntryStatus(r)
 						So(err, ShouldBeNil)
 
 						sets, err = db.GetByRequester("jim")
@@ -407,7 +411,7 @@ func TestSet(t *testing.T) {
 						So(fEntries[3].LastAttempt.IsZero(), ShouldBeFalse)
 						So(fEntries[3].LastError, ShouldEqual, "upload failed")
 
-						err = db.SetEntryStatus(r)
+						_, err = db.SetEntryStatus(r)
 						So(err, ShouldBeNil)
 
 						sets, err = db.GetByRequester("jim")
@@ -427,7 +431,7 @@ func TestSet(t *testing.T) {
 						So(fEntries[3].LastAttempt.IsZero(), ShouldBeFalse)
 						So(fEntries[3].LastError, ShouldEqual, "upload failed")
 
-						err = db.SetEntryStatus(r)
+						_, err = db.SetEntryStatus(r)
 						So(err, ShouldBeNil)
 
 						sets, err = db.GetByRequester("jim")
@@ -456,7 +460,7 @@ func TestSet(t *testing.T) {
 							Error:     nil,
 						}
 
-						err = db.SetEntryStatus(r)
+						_, err = db.SetEntryStatus(r)
 						So(err, ShouldBeNil)
 
 						sets, err = db.GetByRequester("jim")
@@ -489,7 +493,7 @@ func TestSet(t *testing.T) {
 							Error:     nil,
 						}
 
-						err = db.SetEntryStatus(r)
+						_, err = db.SetEntryStatus(r)
 						So(err, ShouldBeNil)
 
 						sets, err = db.GetByRequester("jim")
@@ -558,7 +562,7 @@ func TestSet(t *testing.T) {
 								Error:     nil,
 							}
 
-							err = db.SetEntryStatus(r)
+							_, err = db.SetEntryStatus(r)
 							So(err, ShouldBeNil)
 
 							sets, err = db.GetByRequester("jim")
