@@ -314,11 +314,11 @@ func TestPutMock(t *testing.T) {
 
 						switch r.Remote {
 						case requests[0].Remote:
-							So(r.Error.Error(), ShouldContainSubstring, errMockStatFail)
+							So(r.Error, ShouldContainSubstring, errMockStatFail)
 						case requests[1].Remote:
-							So(r.Error.Error(), ShouldContainSubstring, errMockPutFail)
+							So(r.Error, ShouldContainSubstring, errMockPutFail)
 						case requests[2].Remote:
-							So(r.Error.Error(), ShouldContainSubstring, errMockMetaFail)
+							So(r.Error, ShouldContainSubstring, errMockMetaFail)
 						}
 					case RequestStatusUploaded:
 						uploaded++

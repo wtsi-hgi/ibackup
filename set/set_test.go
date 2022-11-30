@@ -304,7 +304,7 @@ func TestSet(t *testing.T) {
 							Set:       set.Name,
 							Size:      3,
 							Status:    put.RequestStatusUploaded,
-							Error:     nil,
+							Error:     "",
 						}
 
 						e, err := db.SetEntryStatus(r)
@@ -336,7 +336,7 @@ func TestSet(t *testing.T) {
 							Set:       set.Name,
 							Size:      2,
 							Status:    put.RequestStatusUnmodified,
-							Error:     nil,
+							Error:     "",
 						}
 
 						_, err = db.SetEntryStatus(r)
@@ -362,7 +362,7 @@ func TestSet(t *testing.T) {
 							Set:       set.Name,
 							Size:      4,
 							Status:    put.RequestStatusReplaced,
-							Error:     nil,
+							Error:     "",
 						}
 
 						_, err = db.SetEntryStatus(r)
@@ -388,7 +388,7 @@ func TestSet(t *testing.T) {
 							Set:       set.Name,
 							Size:      6,
 							Status:    put.RequestStatusFailed,
-							Error:     Error{msg: "upload failed"},
+							Error:     "upload failed",
 						}
 
 						_, err = db.SetEntryStatus(r)
@@ -457,7 +457,7 @@ func TestSet(t *testing.T) {
 							Set:       set.Name,
 							Size:      0,
 							Status:    put.RequestStatusMissing,
-							Error:     nil,
+							Error:     "",
 						}
 
 						_, err = db.SetEntryStatus(r)
@@ -490,7 +490,7 @@ func TestSet(t *testing.T) {
 							Set:       set.Name,
 							Size:      6,
 							Status:    put.RequestStatusUploaded,
-							Error:     nil,
+							Error:     "",
 						}
 
 						_, err = db.SetEntryStatus(r)
@@ -559,7 +559,7 @@ func TestSet(t *testing.T) {
 								Set:       set.Name,
 								Size:      7,
 								Status:    put.RequestStatusUploaded,
-								Error:     nil,
+								Error:     "",
 							}
 
 							_, err = db.SetEntryStatus(r)

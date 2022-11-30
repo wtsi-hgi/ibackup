@@ -254,32 +254,43 @@ func (c *Client) startTouching(requests []*put.Request) {
 func (c *Client) touchRegularly() {
 	ticker := time.NewTicker(touchFrequency)
 
-	for range ticker.C {
-		c.touchMu.Lock()
-		rids := make([]string, len(c.toTouch))
-		i := 0
+	var err error
 
-		for rid := range c.toTouch {
-			rids[i] = rid
-			i++
-		}
+	defer func() {
+		ticker.Stop()
+		c.touchMu.Lock()
+		c.touchErr = err
+		c.touching = false
+		c.touchMu.Unlock()
+	}()
+
+	for range ticker.C {
+		rids := c.getRequestIDsToTouch()
 
 		if len(rids) == 0 {
-			c.touching = false
-			c.touchMu.Unlock()
-			ticker.Stop()
-
 			return
 		}
 
-		c.touchMu.Unlock()
-
-		if err := c.stillWorkingOnRequests(rids); err != nil {
-			c.touchMu.Lock()
-			c.touchErr = err
-			c.touchMu.Unlock()
+		if err = c.stillWorkingOnRequests(rids); err != nil {
+			return
 		}
 	}
+}
+
+// getRequestIDsToTouch converts our toTouch map to a slice of its keys.
+func (c *Client) getRequestIDsToTouch() []string {
+	c.touchMu.Lock()
+	defer c.touchMu.Unlock()
+
+	rids := make([]string, len(c.toTouch))
+	i := 0
+
+	for rid := range c.toTouch {
+		rids[i] = rid
+		i++
+	}
+
+	return rids
 }
 
 // stillWorkingOnRequests should be called more frequently than the ttr to tell
@@ -288,7 +299,7 @@ func (c *Client) touchRegularly() {
 //
 // Only the user who started the server has permission to call this.
 func (c *Client) stillWorkingOnRequests(rids []string) error {
-	return c.getThing(EndPointAuthWorking, rids)
+	return c.putThing(EndPointAuthWorking, rids)
 }
 
 // UpdateFileStatus updates a file's status in the DB based on the given

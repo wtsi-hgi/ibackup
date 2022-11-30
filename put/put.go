@@ -282,7 +282,13 @@ func (p *Putter) statPathsAndReturnOrPut(request *Request, putCh chan *Request, 
 // down the given channel.
 func sendRequest(request *Request, status RequestStatus, err error, ch chan *Request) {
 	request.Status = status
-	request.Error = err
+
+	if err != nil {
+		request.Error = err.Error()
+	} else {
+		request.Error = ""
+	}
+
 	ch <- request
 }
 
@@ -302,7 +308,7 @@ func (p *Putter) putFilesInIRODS(putCh chan *Request, returnCh chan *Request) {
 
 		if err := p.handler.Put(request); err != nil {
 			request.Status = RequestStatusFailed
-			request.Error = err
+			request.Error = err.Error()
 			returnCh <- request
 
 			continue
@@ -325,7 +331,7 @@ func (p *Putter) applyMetadataConcurrently(metaCh chan *Request, returnCh chan *
 
 			if err := p.removeMeta(request.Remote, toRemove); err != nil {
 				request.Status = RequestStatusFailed
-				request.Error = err
+				request.Error = err.Error()
 				returnCh <- request
 
 				continue
@@ -333,7 +339,7 @@ func (p *Putter) applyMetadataConcurrently(metaCh chan *Request, returnCh chan *
 
 			if err := p.addMeta(request.Remote, toAdd); err != nil {
 				request.Status = RequestStatusFailed
-				request.Error = err
+				request.Error = err.Error()
 			}
 
 			returnCh <- request

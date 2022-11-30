@@ -90,7 +90,7 @@ func TestPutBaton(t *testing.T) {
 				rCh := p.Put()
 
 				for request := range rCh {
-					So(request.Error, ShouldBeNil)
+					So(request.Error, ShouldBeBlank)
 					So(request.Status, ShouldEqual, RequestStatusUploaded)
 					So(request.Size, ShouldEqual, 2)
 					meta := getObjectMetadataWithBaton(h.putClient, request.Remote)
@@ -122,7 +122,7 @@ func TestPutBaton(t *testing.T) {
 					rCh = p.Put()
 
 					got := <-rCh
-					So(got.Error, ShouldBeNil)
+					So(got.Error, ShouldBeBlank)
 					So(got.Status, ShouldEqual, RequestStatusReplaced)
 					meta := getObjectMetadataWithBaton(h.putClient, request.Remote)
 					So(meta, ShouldResemble, request.Meta)
@@ -148,7 +148,7 @@ func TestPutBaton(t *testing.T) {
 					rCh = p.Put()
 
 					got := <-rCh
-					So(got.Error, ShouldBeNil)
+					So(got.Error, ShouldBeBlank)
 					So(got.Status, ShouldEqual, RequestStatusUnmodified)
 				})
 			})

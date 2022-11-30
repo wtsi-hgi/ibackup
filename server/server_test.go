@@ -379,6 +379,15 @@ func TestServer(t *testing.T) {
 							frequests, err = client.GetSomeUploadRequests()
 							So(err, ShouldBeNil)
 							So(len(frequests), ShouldEqual, 0)
+
+							err = client.stillWorkingOnRequests([]string{requests[0].ID()})
+							So(err, ShouldNotBeNil)
+
+							err = client.stillWorkingOnRequests([]string{requests[2].ID()})
+							So(err, ShouldBeNil)
+
+							err = client.stillWorkingOnRequests(client.getRequestIDsToTouch())
+							So(err, ShouldBeNil)
 						})
 					})
 				})

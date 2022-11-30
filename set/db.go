@@ -398,8 +398,8 @@ func requestStatusToEntryStatus(r *put.Request, entry *Entry) {
 	case put.RequestStatusFailed:
 		entry.Status = Failed
 
-		if r.Error != nil {
-			entry.LastError = r.Error.Error()
+		if r.Error != "" {
+			entry.LastError = r.Error
 		}
 
 		entry.newFail = oldAttempts == 0

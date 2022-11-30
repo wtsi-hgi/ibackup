@@ -122,10 +122,10 @@ const (
 // the global put queue. Only the user who started the server has permission to
 // call this.
 //
-// GET /rest/v1/auth/working : takes a []string of Request ids encoded as JSON
-// received from the requests endpoint to advise the server you're still working
-// on uploading those requests. Only the user who started the server has
-// permission to call this.
+// PUT /rest/v1/auth/working : takes a []string of Request ids encoded as JSON
+// in the body received from the requests endpoint to advise the server you're
+// still working on uploading those requests. Only the user who started the
+// server has permission to call this.
 //
 // PUT /rest/v1/auth/file_status : takes a put.Request encoded as JSON in the
 // body to update the status of the corresponding set's file entry.
@@ -173,7 +173,7 @@ func (s *Server) addDBEndpoints(authGroup *gin.RouterGroup) {
 
 	authGroup.GET(requestsPath, s.getRequests)
 
-	authGroup.GET(workingPath, s.getWorking)
+	authGroup.PUT(workingPath, s.putWorking)
 
 	authGroup.PUT(fileStatusPath, s.putFileStatus)
 }
@@ -453,15 +453,15 @@ func (s *Server) reserveRequest() (*put.Request, error) {
 	return r, nil
 }
 
-// getWorking interprets the body as a JSON encoding of a []string of Request
+// putWorking interprets the body as a JSON encoding of a []string of Request
 // ids retrieved from getRequests().
 //
 // For each request, touches it in the queue.
 //
-// LoadSetDB() must already have been called. This is called when there is a GET
-// on /rest/v1/auth/workig. Only the user who started the Server has permission
+// LoadSetDB() must already have been called. This is called when there is a PUT
+// on /rest/v1/auth/working. Only the user who started the Server has permission
 // to call this.
-func (s *Server) getWorking(c *gin.Context) {
+func (s *Server) putWorking(c *gin.Context) {
 	if !s.allowedAccess(c, "") {
 		c.AbortWithError(http.StatusUnauthorized, ErrNotAdmin) //nolint:errcheck
 

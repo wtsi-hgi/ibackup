@@ -151,7 +151,7 @@ func (s *Server) setEntryMissingIfNotExist(given *set.Set, path string) (bool, e
 		Set:       given.Name,
 		Size:      0,
 		Status:    put.RequestStatusMissing,
-		Error:     nil,
+		Error:     "",
 	}
 
 	_, err := s.db.SetEntryStatus(r)
