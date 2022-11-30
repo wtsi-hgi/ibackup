@@ -44,6 +44,7 @@ var setDirs string
 var setPath string
 var setNull bool
 var setMonitor bool
+var setUser string
 
 // addCmd represents the add command.
 var addCmd = &cobra.Command{
@@ -91,6 +92,9 @@ Having added a set, you can use 'ibackup status' to monitor the backup progress
 of your sets. If you add a set with the same --name again, you will overwrite
 its properties. Eg. if you provide a different list of files to a monitored set,
 it will backup and monitor the new list of files in future.
+
+If you are the user who started the ibackup server, you can use the --user
+option to add sets on behalf of other users.
 `,
 	Run: func(cmd *cobra.Command, args []string) {
 		ensureURLandCert()
@@ -120,7 +124,7 @@ it will backup and monitor the new list of files in future.
 			}
 		}
 
-		err = add(client, setName, setTransformer, setDescription, setMonitor, files, dirs)
+		err = add(client, setName, setUser, setTransformer, setDescription, setMonitor, files, dirs)
 		if err != nil {
 			die(err.Error())
 		}
@@ -146,6 +150,8 @@ func init() {
 	addCmd.Flags().StringVar(&setDescription, "description", "", "a long description of this backup set")
 	addCmd.Flags().BoolVarP(&setMonitor, "monitor", "m", false,
 		"monitor the paths daily for changes and new files to upload")
+	addCmd.Flags().StringVar(&setUser, "user", currentUsername(),
+		"pretend to be the this user (only works if you started the server)")
 
 	if err := addCmd.MarkFlagRequired("name"); err != nil {
 		die(err.Error())
@@ -192,10 +198,10 @@ func readPaths(file string, splitter bufio.SplitFunc) []string {
 }
 
 // add does the main job of sending the backup set details to the server.
-func add(client *server.Client, name, transformer, description string, monitor bool, files, dirs []string) error {
+func add(client *server.Client, name, requester, transformer, description string, monitor bool, files, dirs []string) error {
 	set := &set.Set{
 		Name:        name,
-		Requester:   currentUsername(),
+		Requester:   requester,
 		Transformer: transformer,
 		Description: description,
 		Monitor:     monitor,
