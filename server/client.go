@@ -28,6 +28,8 @@ package server
 
 import (
 	"net/http"
+	"sync"
+	"time"
 
 	"github.com/go-resty/resty/v2"
 	gas "github.com/wtsi-hgi/go-authserver"
@@ -35,12 +37,18 @@ import (
 	"github.com/wtsi-hgi/ibackup/set"
 )
 
+const touchFrequency = ttr / 2
+
 // Client is used to interact with the Server over the network, with
 // authentication.
 type Client struct {
-	url  string
-	cert string
-	jwt  string
+	url      string
+	cert     string
+	jwt      string
+	toTouch  map[string]bool
+	touchMu  sync.Mutex
+	touching bool
+	touchErr error
 }
 
 // NewClient returns a Client you can use to call methods on a Server listening
@@ -52,9 +60,10 @@ type Client struct {
 // You must first gas.Login() to get a JWT that you must supply here.
 func NewClient(url, cert, jwt string) *Client {
 	return &Client{
-		url:  url,
-		cert: cert,
-		jwt:  jwt,
+		url:     url,
+		cert:    cert,
+		jwt:     jwt,
+		toTouch: make(map[string]bool),
 	}
 }
 
@@ -205,11 +214,8 @@ func (c *Client) GetDirs(setID string) ([]*set.Entry, error) {
 // the global put queue and returns them, moving from "ready" status in the
 // queue to "running".
 //
-// This automatically handles "touching" the requests so the server knows we're
-// still working on them.
-//
-// You can only call this once per Client. You should probably exit after
-// dealing with the Requests you get back.
+// This automatically handles regularly telling the server knows we're still
+// working on them, stopping when you UpdateFileStatus().
 //
 // Only the user who started the server has permission to call this.
 func (c *Client) GetSomeUploadRequests() ([]*put.Request, error) {
@@ -217,7 +223,72 @@ func (c *Client) GetSomeUploadRequests() ([]*put.Request, error) {
 
 	err := c.getThing(EndPointAuthRequests, &requests)
 
+	c.startTouching(requests)
+
 	return requests, err
+}
+
+// startTouching adds the given request's IDs to our touch map, and starts a
+// goroutine to regularly do the touching if not already started.
+func (c *Client) startTouching(requests []*put.Request) {
+	c.touchMu.Lock()
+	defer c.touchMu.Unlock()
+
+	for _, r := range requests {
+		c.toTouch[r.ID()] = true
+	}
+
+	if len(c.toTouch) == 0 {
+		return
+	}
+
+	if !c.touching {
+		c.touching = true
+		go c.touchRegularly()
+	}
+}
+
+// touchRegularly will periodically (more frequently than the ttr) tell the
+// server we're still working on all the Request IDs in our touch map. Ends if
+// the map is empty.
+func (c *Client) touchRegularly() {
+	ticker := time.NewTicker(touchFrequency)
+
+	for range ticker.C {
+		c.touchMu.Lock()
+		rids := make([]string, len(c.toTouch))
+		i := 0
+
+		for rid := range c.toTouch {
+			rids[i] = rid
+			i++
+		}
+
+		if len(rids) == 0 {
+			c.touching = false
+			c.touchMu.Unlock()
+			ticker.Stop()
+
+			return
+		}
+
+		c.touchMu.Unlock()
+
+		if err := c.stillWorkingOnRequests(rids); err != nil {
+			c.touchMu.Lock()
+			c.touchErr = err
+			c.touchMu.Unlock()
+		}
+	}
+}
+
+// stillWorkingOnRequests should be called more frequently than the ttr to tell
+// the server that you're still working on the requests received from
+// GetSomeUploadRequests().
+//
+// Only the user who started the server has permission to call this.
+func (c *Client) stillWorkingOnRequests(rids []string) error {
+	return c.getThing(EndPointAuthWorking, rids)
 }
 
 // UpdateFileStatus updates a file's status in the DB based on the given
@@ -229,5 +300,9 @@ func (c *Client) GetSomeUploadRequests() ([]*put.Request, error) {
 //
 // Only the user who started the server has permission to call this.
 func (c *Client) UpdateFileStatus(r *put.Request) error {
+	c.touchMu.Lock()
+	delete(c.toTouch, r.ID())
+	c.touchMu.Unlock()
+
 	return c.putThing(EndPointAuthFileStatus, r)
 }

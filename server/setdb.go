@@ -43,8 +43,9 @@ const (
 	dirPath        = "/dirs"
 	entryPath      = "/entries"
 	discoveryPath  = "/discover"
-	fileStatusPath = "/file_status"
 	requestsPath   = "/requests"
+	workingPath    = "/working"
+	fileStatusPath = "/file_status"
 
 	// EndPointAuthSet is the endpoint for getting and setting sets.
 	EndPointAuthSet = gas.EndPointAuth + setPath
@@ -61,11 +62,15 @@ const (
 	// EndPointAuthDiscovery is the endpoint for triggering set discovery.
 	EndPointAuthDiscovery = gas.EndPointAuth + discoveryPath
 
-	// EndPointAuthFileStatus is the endpoint for updating file upload status.
-	EndPointAuthFileStatus = gas.EndPointAuth + fileStatusPath
-
 	// EndPointAuthRequests is the endpoint for getting file upload requests.
 	EndPointAuthRequests = gas.EndPointAuth + requestsPath
+
+	// EndPointAuthWorking is the endpoint for advising the server you're still
+	// working on Requests retrieved from EndPointAuthRequests.
+	EndPointAuthWorking = gas.EndPointAuth + workingPath
+
+	// EndPointAuthFileStatus is the endpoint for updating file upload status.
+	EndPointAuthFileStatus = gas.EndPointAuth + fileStatusPath
 
 	ErrNoAuth          = gas.Error("auth must be enabled")
 	ErrNoSetDBDirFound = gas.Error("set database directory not found")
@@ -117,6 +122,11 @@ const (
 // the global put queue. Only the user who started the server has permission to
 // call this.
 //
+// GET /rest/v1/auth/working : takes a []string of Request ids encoded as JSON
+// received from the requests endpoint to advise the server you're still working
+// on uploading those requests. Only the user who started the server has
+// permission to call this.
+//
 // PUT /rest/v1/auth/file_status : takes a put.Request encoded as JSON in the
 // body to update the status of the corresponding set's file entry.
 //
@@ -141,6 +151,13 @@ func (s *Server) LoadSetDB(path string) error {
 
 	s.db = db
 
+	s.addDBEndpoints(authGroup)
+
+	return s.recoverQueue()
+}
+
+// addDBEndpoints adds all the REST API endpoints to the given router group.
+func (s *Server) addDBEndpoints(authGroup *gin.RouterGroup) {
 	authGroup.PUT(setPath, s.putSet)
 	authGroup.GET(setPath+"/:"+paramRequester, s.getSets)
 
@@ -156,9 +173,9 @@ func (s *Server) LoadSetDB(path string) error {
 
 	authGroup.GET(requestsPath, s.getRequests)
 
-	authGroup.PUT(fileStatusPath, s.putFileStatus)
+	authGroup.GET(workingPath, s.getWorking)
 
-	return s.recoverQueue()
+	authGroup.PUT(fileStatusPath, s.putFileStatus)
 }
 
 // putSet interprets the body as a JSON encoding of a set.Set and stores it in
@@ -436,6 +453,46 @@ func (s *Server) reserveRequest() (*put.Request, error) {
 	return r, nil
 }
 
+// getWorking interprets the body as a JSON encoding of a []string of Request
+// ids retrieved from getRequests().
+//
+// For each request, touches it in the queue.
+//
+// LoadSetDB() must already have been called. This is called when there is a GET
+// on /rest/v1/auth/workig. Only the user who started the Server has permission
+// to call this.
+func (s *Server) getWorking(c *gin.Context) {
+	if !s.allowedAccess(c, "") {
+		c.AbortWithError(http.StatusUnauthorized, ErrNotAdmin) //nolint:errcheck
+
+		return
+	}
+
+	var rids []string
+
+	if err := c.BindJSON(&rids); err != nil {
+		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+
+		return
+	}
+
+	var err error
+
+	for _, rid := range rids {
+		if thisErr := s.touchRequest(rid); thisErr != nil {
+			err = thisErr
+		}
+	}
+
+	if err != nil {
+		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+
+		return
+	}
+
+	c.Status(http.StatusOK)
+}
+
 // putFileStatus interprets the body as a JSON encoding of a put.Request and
 // stores it in the database.
 //
@@ -461,7 +518,7 @@ func (s *Server) putFileStatus(c *gin.Context) {
 		return
 	}
 
-	if err := s.requestWasReserved(r); err != nil {
+	if err := s.touchRequest(r.ID()); err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
 		return
@@ -476,10 +533,15 @@ func (s *Server) putFileStatus(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
-// requestWasReserved returns an error unless the given request is in the "run"
-// sub-queue of our global put queue, ie. it was reserved by reserveRequest().
-func (s *Server) requestWasReserved(r *put.Request) error {
-	return s.queue.Touch(r.ID())
+// touchRequest returns an error unless a request with the given ID is in the
+// "run" sub-queue of our global put queue, ie. it was reserved by
+// reserveRequest().
+//
+// If no error, extends the time that some client can work on this request
+// before we consider the client dead and we release it to be be reserved by a
+// different client.
+func (s *Server) touchRequest(rid string) error {
+	return s.queue.Touch(rid)
 }
 
 // updateFileStatus updates the request's file entry status in the db, and
