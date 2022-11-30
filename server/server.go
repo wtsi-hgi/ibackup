@@ -31,6 +31,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"os/user"
 	"strings"
 	"time"
@@ -58,12 +59,15 @@ const (
 	// connectTimeout is the timeout for connecting to wr for job submission.
 	connectTimeout = 10 * time.Second
 
-	repGroup            = "ibackup_server_put"
-	reqGroup            = "ibackup_server"
-	reqRAM              = 1024
-	reqTime             = 8 * time.Hour
-	jobRetries    uint8 = 3
-	jobLimitGroup       = "irods"
+	repGroup                      = "ibackup_server_put"
+	reqGroup                      = "ibackup_server"
+	reqRAM                        = 1024
+	reqTime                       = 8 * time.Hour
+	jobRetries            uint8   = 3
+	jobLimitGroup                 = "irods"
+	assumedRequestsPerJob float64 = 10000
+	maxJobsToSubmit               = 100
+	racRetriggerDelay             = 1 * time.Minute
 )
 
 // Server is used to start a web server that provides a REST API to the setdb
@@ -145,8 +149,17 @@ func (s *Server) EnableJobSubmission(putCmd, deployment, cwd, queue string, logg
 
 // rac is our queue's ready added callback which will get all ready put Requests
 // and ensure there are enough put jobs added to wr.
+//
+// We submit up to 100 jobs; with the limit most likely being 10 simulteanous
+// jobs at once, that should keep jobs flowing continuously until we next
+// trigger the rac.
 func (s *Server) rac(queuename string, allitemdata []interface{}) {
-	jobs := make([]*jobqueue.Job, len(allitemdata))
+	n := s.estimateJobsNeeded(allitemdata)
+	if n == 0 {
+		return
+	}
+
+	jobs := make([]*jobqueue.Job, n)
 
 	for i := range jobs {
 		job := s.sched.NewJob(
@@ -162,6 +175,28 @@ func (s *Server) rac(queuename string, allitemdata []interface{}) {
 	if err := s.sched.SubmitJobs(jobs); err != nil && !strings.Contains(err.Error(), "duplicate") {
 		s.Logger.Printf("failed to add jobs to wr's queue: %s", err)
 	}
+
+	go func() {
+		<-time.After(racRetriggerDelay)
+		s.queue.TriggerReadyAddedCallback(context.Background())
+	}()
+}
+
+// estimateJobsNeeded looks at the number of items which correspond to
+// upload requests, and esimates how many put jobs we need to upload them all.
+// Max 100 jobs, minimum 1 if there are any items at all, assumed 10k uploads
+// per job.
+func (s *Server) estimateJobsNeeded(itemdata []interface{}) int {
+	if len(itemdata) == 0 {
+		return 0
+	}
+
+	n := int(math.Ceil(float64(len(itemdata)) / assumedRequestsPerJob))
+	if n > maxJobsToSubmit {
+		n = maxJobsToSubmit
+	}
+
+	return n
 }
 
 // stop is called when the server is Stop()ped, cleaning up our additional
