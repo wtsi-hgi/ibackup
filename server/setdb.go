@@ -120,6 +120,10 @@ const (
 // PUT /rest/v1/auth/file_status : takes a put.Request encoded as JSON in the
 // body to update the status of the corresponding set's file entry.
 //
+// If the database indicates there are sets we were in the middle of working on,
+// the upload requests will be added to our in-memory queue, just like during
+// discovery.
+//
 // You must call EnableAuth() before calling this method, and the endpoints will
 // only let you work on sets where the Requester matches your logged-in
 // username, or if the logged-in user is the same as the user who started the
@@ -154,7 +158,7 @@ func (s *Server) LoadSetDB(path string) error {
 
 	authGroup.PUT(fileStatusPath, s.putFileStatus)
 
-	return nil
+	return s.recoverQueue()
 }
 
 // putSet interprets the body as a JSON encoding of a set.Set and stores it in
@@ -502,4 +506,47 @@ func (s *Server) removeOrReleaseRequestFromQueue(r *put.Request, entry *set.Entr
 	}
 
 	return s.queue.Remove(context.Background(), r.ID())
+}
+
+// recoverQueue is used at startup to fill the in-memory queue with requests for
+// sets we were in the middle of working on before.
+func (s *Server) recoverQueue() error {
+	sets, err := s.db.GetAll()
+	if err != nil {
+		return err
+	}
+
+	for _, given := range sets {
+		err = s.recoverSet(given)
+		if err != nil {
+			s.Logger.Printf("failed to recover set %s for %s: %s", given.Name, given.Requester, err)
+		}
+	}
+
+	return nil
+}
+
+// recoverSet checks the status of the given Set and recovers its state as
+// appropriate: discover it if it was previously in the middle of being
+// discovered; adds its remaining upload requests if it was previously in the
+// middle of uploading; otherwise do nothing.
+func (s *Server) recoverSet(given *set.Set) error {
+	if given.StartedDiscovery.After(given.LastDiscovery) {
+		return s.discoverSet(given)
+	}
+
+	var transformer put.PathTransformer
+
+	var err error
+
+	if given.LastDiscovery.After(given.LastCompleted) {
+		transformer, err = given.MakeTransformer()
+		if err != nil {
+			return err
+		}
+
+		err = s.enqueueSetFiles(given, transformer)
+	}
+
+	return err
 }
