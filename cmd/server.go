@@ -110,7 +110,13 @@ ctrl-z; bg. Or better yet, use the daemonize program to daemonize this.
 
 		prepareAuth(s)
 
-		err := s.EnableJobSubmission("true", "production", "", "", appLogger)
+		exe, err := os.Executable()
+		if err != nil {
+			die("failed to get own exe: %s", err)
+		}
+
+		err = s.EnableJobSubmission(fmt.Sprintf("%s put -s -u '%s' -c '%s'", exe, serverURL, serverCert),
+			"production", "", "", appLogger)
 		if err != nil {
 			die("failed to enable job submission: %s", err)
 		}
