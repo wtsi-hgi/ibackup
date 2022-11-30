@@ -198,7 +198,8 @@ func readPaths(file string, splitter bufio.SplitFunc) []string {
 }
 
 // add does the main job of sending the backup set details to the server.
-func add(client *server.Client, name, requester, transformer, description string, monitor bool, files, dirs []string) error {
+func add(client *server.Client, name, requester, transformer, description string,
+	monitor bool, files, dirs []string) error {
 	set := &set.Set{
 		Name:        name,
 		Requester:   requester,
