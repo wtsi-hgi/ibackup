@@ -456,7 +456,8 @@ func (s *Server) reserveRequest() (*put.Request, error) {
 // putWorking interprets the body as a JSON encoding of a []string of Request
 // ids retrieved from getRequests().
 //
-// For each request, touches it in the queue.
+// For each request, touches it in the queue. Due to timing issues, does not
+// return an error if some of the requests were not running in the queue.
 //
 // LoadSetDB() must already have been called. This is called when there is a PUT
 // on /rest/v1/auth/working. Only the user who started the Server has permission
@@ -478,19 +479,31 @@ func (s *Server) putWorking(c *gin.Context) {
 
 	var err error
 
+	fails := 0
+
 	for _, rid := range rids {
 		if thisErr := s.touchRequest(rid); thisErr != nil {
 			err = thisErr
+			fails++
 		}
 	}
 
 	if err != nil {
-		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
-
-		return
+		s.Logger.Printf("failed to touch %d/%d requests; example error: %s", fails, len(rids), err)
 	}
 
 	c.Status(http.StatusOK)
+}
+
+// touchRequest returns an error unless a request with the given ID is in the
+// "run" sub-queue of our global put queue, ie. it was reserved by
+// reserveRequest().
+//
+// If no error, extends the time that some client can work on this request
+// before we consider the client dead and we release it to be be reserved by a
+// different client.
+func (s *Server) touchRequest(rid string) error {
+	return s.queue.Touch(rid)
 }
 
 // putFileStatus interprets the body as a JSON encoding of a put.Request and
@@ -531,17 +544,6 @@ func (s *Server) putFileStatus(c *gin.Context) {
 	}
 
 	c.Status(http.StatusOK)
-}
-
-// touchRequest returns an error unless a request with the given ID is in the
-// "run" sub-queue of our global put queue, ie. it was reserved by
-// reserveRequest().
-//
-// If no error, extends the time that some client can work on this request
-// before we consider the client dead and we release it to be be reserved by a
-// different client.
-func (s *Server) touchRequest(rid string) error {
-	return s.queue.Touch(rid)
 }
 
 // updateFileStatus updates the request's file entry status in the db, and

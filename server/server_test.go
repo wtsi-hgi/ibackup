@@ -381,7 +381,7 @@ func TestServer(t *testing.T) {
 							So(len(frequests), ShouldEqual, 0)
 
 							err = client.stillWorkingOnRequests([]string{requests[0].ID()})
-							So(err, ShouldNotBeNil)
+							So(err, ShouldBeNil)
 
 							err = client.stillWorkingOnRequests([]string{requests[2].ID()})
 							So(err, ShouldBeNil)
