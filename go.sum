@@ -385,6 +385,8 @@ github.com/wtsi-hgi/go-authserver v1.1.0 h1:otMYH1p7Pkzb2S95aCY9KoiJv+xPOAipc3T5
 github.com/wtsi-hgi/go-authserver v1.1.0/go.mod h1:JmXQYlfT3mIXosjuvQk9vPVvrloQmV2jQdvK8eGXkBU=
 github.com/wtsi-npg/extendo/v2 v2.3.1-0.20221006092230-de9e05a07c64 h1:wiQkmraCMaZ8aFS27LI4iVSciz1yQPac/tcjhFHmeLk=
 github.com/wtsi-npg/extendo/v2 v2.3.1-0.20221006092230-de9e05a07c64/go.mod h1:b2eEJtuLPWaDgtrrT48a3pTYSQcg5JTtBqpOWa61/nw=
+github.com/wtsi-npg/extendo/v2 v2.5.0 h1:Cz2xIn1+QlEaHmJX63w7U54C9BKao2H6XEfuRgIxR/s=
+github.com/wtsi-npg/extendo/v2 v2.5.0/go.mod h1:b2eEJtuLPWaDgtrrT48a3pTYSQcg5JTtBqpOWa61/nw=
 github.com/wtsi-npg/logshim v1.2.0/go.mod h1:1JRn1t/rlx1/oAtv3LOcshcpjDDvHGHCK8p8ua0Hrss=
 github.com/wtsi-npg/logshim v1.3.0 h1:J4JIzWrEVC6RghSdnhadjviOwAwQ4BUqG7hveqxrisY=
 github.com/wtsi-npg/logshim v1.3.0/go.mod h1:O1IqtDB3IiWuIpEE42IznMkJD8d++UFp40gBSjps3ac=

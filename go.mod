@@ -16,7 +16,7 @@ require (
 	github.com/spf13/cobra v1.6.1
 	github.com/ugorji/go/codec v1.2.7
 	github.com/wtsi-hgi/go-authserver v1.1.0
-	github.com/wtsi-npg/extendo/v2 v2.3.1-0.20221006092230-de9e05a07c64
+	github.com/wtsi-npg/extendo/v2 v2.5.0
 	github.com/wtsi-npg/logshim v1.3.0
 	github.com/wtsi-npg/logshim-zerolog v1.3.0
 	github.com/wtsi-ssg/wrstat/v3 v3.1.2
