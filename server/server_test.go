@@ -127,7 +127,8 @@ func TestServer(t *testing.T) {
 					So(err, ShouldBeNil)
 
 					Convey("And then you can set file and directory entries, trigger discovery and get all file statuses", func() {
-						files, dirs, discovers := createTestBackupFiles(t, localDir)
+						files, dirs, discovers, symlinkPath := createTestBackupFiles(t, localDir)
+						files = append(files, symlinkPath)
 						dirs = append(dirs, filepath.Join(localDir, "missing"))
 
 						err = client.SetFiles(exampleSet.ID(), files)
@@ -145,6 +146,7 @@ func TestServer(t *testing.T) {
 
 						err = os.Remove(files[1])
 						So(err, ShouldBeNil)
+						numExistingFiles := len(files) - 2
 
 						t := time.Now()
 
@@ -176,7 +178,7 @@ func TestServer(t *testing.T) {
 
 						ok := <-racCalled
 						So(ok, ShouldBeTrue)
-						So(len(racRequests), ShouldEqual, len(files)-1+len(discovers))
+						So(len(racRequests), ShouldEqual, numExistingFiles+len(discovers))
 						So(racRequests[0], ShouldResemble, &put.Request{
 							Local:     files[0],
 							Remote:    "/remote/a",
@@ -190,9 +192,11 @@ func TestServer(t *testing.T) {
 
 						So(entries[0].Status, ShouldEqual, set.Pending)
 						So(entries[1].Status, ShouldEqual, set.Missing)
-						So(entries[2].Path, ShouldContainSubstring, "c/d/g")
-						So(entries[3].Path, ShouldContainSubstring, "c/d/h")
-						So(entries[4].Path, ShouldContainSubstring, "e/f/i/j/k/l")
+						So(entries[2].Path, ShouldContainSubstring, "c/d/symlink")
+						So(entries[2].Status, ShouldEqual, set.Missing)
+						So(entries[3].Path, ShouldContainSubstring, "c/d/g")
+						So(entries[4].Path, ShouldContainSubstring, "c/d/h")
+						So(entries[5].Path, ShouldContainSubstring, "e/f/i/j/k/l")
 
 						entries, err = client.GetDirs(exampleSet.ID())
 						So(err, ShouldBeNil)
@@ -202,8 +206,8 @@ func TestServer(t *testing.T) {
 						gotSet, err := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
 						So(err, ShouldBeNil)
 						So(gotSet.LastDiscovery, ShouldHappenAfter, t)
-						So(gotSet.Missing, ShouldEqual, 1)
-						So(gotSet.NumFiles, ShouldEqual, 5)
+						So(gotSet.Missing, ShouldEqual, 2)
+						So(gotSet.NumFiles, ShouldEqual, 6)
 						So(gotSet.Status, ShouldEqual, set.PendingUpload)
 
 						gotSetByName, err := client.GetSetByName(exampleSet.Requester, exampleSet.Name)
@@ -226,7 +230,7 @@ func TestServer(t *testing.T) {
 
 						ok = <-racCalled
 						So(ok, ShouldBeTrue)
-						So(len(racRequests), ShouldEqual, len(files)-1+len(discovers)+len(files)-1)
+						So(len(racRequests), ShouldEqual, numExistingFiles+len(discovers)+numExistingFiles)
 
 						entries, err = client.GetFiles(exampleSet2.ID())
 						So(err, ShouldBeNil)
@@ -235,8 +239,8 @@ func TestServer(t *testing.T) {
 						gotSet, err = client.GetSetByID(exampleSet2.Requester, exampleSet2.ID())
 						So(err, ShouldBeNil)
 						So(gotSet.LastDiscovery, ShouldHappenAfter, t)
-						So(gotSet.Missing, ShouldEqual, 1)
-						So(gotSet.NumFiles, ShouldEqual, 2)
+						So(gotSet.Missing, ShouldEqual, 2)
+						So(gotSet.NumFiles, ShouldEqual, 3)
 
 						err = client.AddOrUpdateSet(exampleSet3)
 						So(err, ShouldBeNil)
@@ -254,7 +258,7 @@ func TestServer(t *testing.T) {
 
 						ok = <-racCalled
 						So(ok, ShouldBeTrue)
-						So(len(racRequests), ShouldEqual, len(files)-1+len(discovers)+len(files)-1+len(discovers))
+						So(len(racRequests), ShouldEqual, numExistingFiles+len(discovers)+numExistingFiles+len(discovers))
 
 						entries, err = client.GetFiles(exampleSet3.ID())
 						So(err, ShouldBeNil)
@@ -278,7 +282,7 @@ func TestServer(t *testing.T) {
 						ok = <-racCalled
 						So(ok, ShouldBeTrue)
 						So(racCalls, ShouldEqual, 4)
-						So(len(racRequests), ShouldEqual, len(files)-1+len(discovers)+len(files)-1+len(discovers))
+						So(len(racRequests), ShouldEqual, numExistingFiles+len(discovers)+numExistingFiles+len(discovers))
 
 						Convey("After discovery, admin can get upload requests and update file entry status", func() {
 							entries, err = client.GetFiles(exampleSet.ID())
@@ -309,7 +313,7 @@ func TestServer(t *testing.T) {
 							gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
 							So(err, ShouldBeNil)
 							So(gotSet.Uploaded, ShouldEqual, 1)
-							So(gotSet.NumFiles, ShouldEqual, 5)
+							So(gotSet.NumFiles, ShouldEqual, 6)
 
 							stats := s.queue.Stats()
 							So(stats.Items, ShouldEqual, 7)
@@ -321,8 +325,8 @@ func TestServer(t *testing.T) {
 
 							entries, err = client.GetFiles(exampleSet.ID())
 							So(err, ShouldBeNil)
-							So(entries[2].Path, ShouldEqual, requests[1].Local)
-							So(entries[2].Status, ShouldEqual, set.Failed)
+							So(entries[3].Path, ShouldEqual, requests[1].Local)
+							So(entries[3].Status, ShouldEqual, set.Failed)
 
 							gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
 							So(err, ShouldBeNil)
@@ -408,8 +412,9 @@ func createDBLocation(t *testing.T) string {
 }
 
 // createTestBackupFiles creates and returns files, dirs and the files we're
-// expecting to discover in the dirs.
-func createTestBackupFiles(t *testing.T, dir string) ([]string, []string, []string) {
+// expecting to discover in the dirs. Also created is a symlink in one of the
+// directories; the path to this is returned separately.
+func createTestBackupFiles(t *testing.T, dir string) ([]string, []string, []string, string) {
 	t.Helper()
 
 	files := []string{
@@ -436,7 +441,12 @@ func createTestBackupFiles(t *testing.T, dir string) ([]string, []string, []stri
 		createFile(t, path, i+1)
 	}
 
-	return files, dirs, discovers
+	symlinkPath := filepath.Join(dirs[0], "symlink")
+	if err := os.Symlink(files[0], symlinkPath); err != nil {
+		t.Fatalf("failed to create symlink: %s", err)
+	}
+
+	return files, dirs, discovers, symlinkPath
 }
 
 // createFile creates a file at the given path with the given number of bytes of

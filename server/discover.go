@@ -139,9 +139,9 @@ func (s *Server) updateSetFileExistence(given *set.Set) error {
 
 // setEntryMissingIfNotExist checks if the given path exists, and if not returns
 // true and updates the corresponding entry for that path in the given set with
-// a missing status.
+// a missing status. Symlinks are treated as if they are missing.
 func (s *Server) setEntryMissingIfNotExist(given *set.Set, path string) (bool, error) {
-	if _, err := os.Stat(path); err == nil {
+	if info, err := os.Lstat(path); err == nil && info.Mode().Type()&os.ModeSymlink == 0 {
 		return false, nil
 	}
 
@@ -247,7 +247,7 @@ func (s *Server) checkAndWalkDir(given *set.Set, dir string, cb walk.PathCallbac
 		return nil
 	}
 
-	walker := walk.New(cb, false)
+	walker := walk.New(cb, false, true)
 
 	return walker.Walk(dir, s.walkErrorCallback)
 }

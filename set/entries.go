@@ -43,6 +43,7 @@ const (
 	Failed
 
 	// Failed is an Entry status meaning the local file is missing so can't be
+	// uploaded. Symlinks are considered to be "missing" since they can't be
 	// uploaded.
 	Missing
 )
