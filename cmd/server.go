@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"io"
 	"log/syslog"
+	"net"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -255,7 +256,7 @@ func checkLDAPPassword(username, password string) (bool, string) {
 		return false, ""
 	}
 
-	l, err := ldap.DialURL(fmt.Sprintf("ldaps://%s:636", serverLDAPFQDN))
+	l, err := ldap.DialURL(fmt.Sprintf("ldaps://%s", net.JoinHostPort(serverLDAPFQDN, "636")))
 	if err != nil {
 		return false, ""
 	}
