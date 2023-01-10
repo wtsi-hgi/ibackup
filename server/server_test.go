@@ -27,20 +27,23 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/user"
 	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/go-resty/resty/v2"
 	. "github.com/smartystreets/goconvey/convey"
 	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/set"
 )
 
-const userPerms = 0700
+const (
+	userPerms        = 0700
+	numManyTestFiles = 1000
+)
 
 func TestServer(t *testing.T) {
 	u, err := user.Current()
@@ -49,28 +52,6 @@ func TestServer(t *testing.T) {
 	}
 
 	admin := u.Username
-
-	localDir := t.TempDir()
-	exampleSet := &set.Set{
-		Name:        "set1",
-		Requester:   "jim",
-		Transformer: "prefix=" + localDir + ":/remote",
-		Monitor:     false,
-	}
-
-	exampleSet2 := &set.Set{
-		Name:        "set2",
-		Requester:   exampleSet.Requester,
-		Transformer: exampleSet.Transformer,
-		Monitor:     true,
-	}
-
-	exampleSet3 := &set.Set{
-		Name:        "set3",
-		Requester:   exampleSet.Requester,
-		Transformer: exampleSet.Transformer,
-		Monitor:     false,
-	}
 
 	Convey("Given a Server", t, func() {
 		logWriter := gas.NewStringLogger()
@@ -87,23 +68,42 @@ func TestServer(t *testing.T) {
 				So(errd, ShouldBeNil)
 			}()
 
-			client := resty.New()
-			client.SetRootCertificate(certPath)
-
-			Convey("The jwt endpoint works after enabling it", func() {
+			Convey("The jwt endpoint works after enabling it, and you can LoadSetDB", func() {
 				err = s.EnableAuth(certPath, keyPath, func(u, p string) (bool, string) {
 					return true, "1"
 				})
 				So(err, ShouldBeNil)
 
-				token, errl := gas.Login(addr, certPath, exampleSet.Requester, "pass")
+				path := createDBLocation(t)
+				err = s.LoadSetDB(path)
+				So(err, ShouldBeNil)
+
+				token, errl := gas.Login(addr, certPath, "jim", "pass")
 				So(errl, ShouldBeNil)
 				So(token, ShouldNotBeBlank)
 
-				Convey("And then you can LoadSetDB and use client methods AddOrUpdateSet and GetSets", func() {
-					path := createDBLocation(t)
-					err = s.LoadSetDB(path)
-					So(err, ShouldBeNil)
+				Convey("And then you use client methods AddOrUpdateSet and GetSets", func() {
+					localDir := t.TempDir()
+					exampleSet := &set.Set{
+						Name:        "set1",
+						Requester:   "jim",
+						Transformer: "prefix=" + localDir + ":/remote",
+						Monitor:     false,
+					}
+
+					exampleSet2 := &set.Set{
+						Name:        "set2",
+						Requester:   exampleSet.Requester,
+						Transformer: exampleSet.Transformer,
+						Monitor:     true,
+					}
+
+					exampleSet3 := &set.Set{
+						Name:        "set3",
+						Requester:   exampleSet.Requester,
+						Transformer: exampleSet.Transformer,
+						Monitor:     false,
+					}
 
 					client := NewClient(addr, certPath, token)
 
@@ -148,8 +148,6 @@ func TestServer(t *testing.T) {
 						So(err, ShouldBeNil)
 						numExistingFiles := len(files) - 2
 
-						t := time.Now()
-
 						var racRequests []*put.Request
 						racCalls := 0
 						racCalled := make(chan bool, 1)
@@ -173,6 +171,7 @@ func TestServer(t *testing.T) {
 							racCalled <- true
 						})
 
+						tn := time.Now()
 						err = client.TriggerDiscovery(exampleSet.ID())
 						So(err, ShouldBeNil)
 
@@ -205,7 +204,7 @@ func TestServer(t *testing.T) {
 
 						gotSet, err := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
 						So(err, ShouldBeNil)
-						So(gotSet.LastDiscovery, ShouldHappenAfter, t)
+						So(gotSet.LastDiscovery, ShouldHappenAfter, tn)
 						So(gotSet.Missing, ShouldEqual, 2)
 						So(gotSet.NumFiles, ShouldEqual, 6)
 						So(gotSet.Status, ShouldEqual, set.PendingUpload)
@@ -223,7 +222,7 @@ func TestServer(t *testing.T) {
 						err = client.SetDirs(exampleSet2.ID(), nil)
 						So(err, ShouldBeNil)
 
-						t = time.Now()
+						tn = time.Now()
 
 						err = client.TriggerDiscovery(exampleSet2.ID())
 						So(err, ShouldBeNil)
@@ -238,7 +237,7 @@ func TestServer(t *testing.T) {
 
 						gotSet, err = client.GetSetByID(exampleSet2.Requester, exampleSet2.ID())
 						So(err, ShouldBeNil)
-						So(gotSet.LastDiscovery, ShouldHappenAfter, t)
+						So(gotSet.LastDiscovery, ShouldHappenAfter, tn)
 						So(gotSet.Missing, ShouldEqual, 2)
 						So(gotSet.NumFiles, ShouldEqual, 3)
 
@@ -251,7 +250,7 @@ func TestServer(t *testing.T) {
 						err = client.SetDirs(exampleSet3.ID(), dirs)
 						So(err, ShouldBeNil)
 
-						t = time.Now()
+						tn = time.Now()
 
 						err = client.TriggerDiscovery(exampleSet3.ID())
 						So(err, ShouldBeNil)
@@ -266,7 +265,7 @@ func TestServer(t *testing.T) {
 
 						gotSet, err = client.GetSetByID(exampleSet3.Requester, exampleSet3.ID())
 						So(err, ShouldBeNil)
-						So(gotSet.LastDiscovery, ShouldHappenAfter, t)
+						So(gotSet.LastDiscovery, ShouldHappenAfter, tn)
 						So(gotSet.Missing, ShouldEqual, 0)
 						So(gotSet.NumFiles, ShouldEqual, 3)
 
@@ -296,8 +295,8 @@ func TestServer(t *testing.T) {
 
 							client = NewClient(addr, certPath, token)
 
-							requests, err := client.GetSomeUploadRequests()
-							So(err, ShouldBeNil)
+							requests, errg := client.GetSomeUploadRequests()
+							So(errg, ShouldBeNil)
 							So(len(requests), ShouldEqual, 8)
 							So(requests[0].Local, ShouldEqual, entries[0].Path)
 
@@ -342,8 +341,8 @@ func TestServer(t *testing.T) {
 							err = client.UpdateFileStatus(requests[1])
 							So(err, ShouldNotBeNil)
 
-							frequests, err := client.GetSomeUploadRequests()
-							So(err, ShouldBeNil)
+							frequests, errg := client.GetSomeUploadRequests()
+							So(errg, ShouldBeNil)
 							So(len(frequests), ShouldEqual, 1)
 
 							frequests[0].Status = put.RequestStatusFailed
@@ -392,6 +391,40 @@ func TestServer(t *testing.T) {
 
 							err = client.stillWorkingOnRequests(client.getRequestIDsToTouch())
 							So(err, ShouldBeNil)
+						})
+
+						Convey("During discovery, you can add a new set", func() {
+							files := createManyTestBackupFiles(t)
+							dir := filepath.Dir(files[0])
+
+							err = client.SetDirs(exampleSet.ID(), []string{dir})
+							So(err, ShouldBeNil)
+
+							err = client.TriggerDiscovery(exampleSet.ID())
+							So(err, ShouldBeNil)
+
+							tsCh := make(chan time.Time, 1)
+							errCh := make(chan error, 1)
+							go func() {
+								exampleSet4 := &set.Set{
+									Name:        "set4",
+									Requester:   exampleSet.Requester,
+									Transformer: exampleSet.Transformer,
+									Monitor:     false,
+								}
+
+								errCh <- client.AddOrUpdateSet(exampleSet4)
+								tsCh <- time.Now()
+							}()
+
+							ok := <-racCalled
+							So(ok, ShouldBeTrue)
+							tr := time.Now()
+
+							err = <-errCh
+							So(err, ShouldBeNil)
+							ts := <-tsCh
+							So(ts, ShouldHappenAfter, tr)
 						})
 					})
 				})
@@ -480,4 +513,21 @@ func createFile(t *testing.T, path string, n int) {
 	if err != nil {
 		t.Fatalf("close failed: %s", err)
 	}
+}
+
+// createManyTestBackupFiles creates and returns the paths to many files in a
+// new temp directory.
+func createManyTestBackupFiles(t *testing.T) []string {
+	t.Helper()
+	dir := t.TempDir()
+
+	paths := make([]string, numManyTestFiles)
+
+	for i := range paths {
+		path := filepath.Join(dir, fmt.Sprintf("%d.file", i))
+		paths[i] = path
+		createFile(t, path, 1)
+	}
+
+	return paths
 }
