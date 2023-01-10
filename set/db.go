@@ -56,10 +56,10 @@ const (
 
 	setsBucket                    = "sets"
 	userToSetBucket               = "userLookup"
-	forSubsBucket                 = "subs"
-	fileBucket                    = "files"
-	dirBucket                     = "dirs"
-	discoveredBucket              = "discovered"
+	subBucketPrefix               = "~!~"
+	fileBucket                    = subBucketPrefix + "files"
+	dirBucket                     = subBucketPrefix + "dirs"
+	discoveredBucket              = subBucketPrefix + "discovered"
 	dbOpenMode                    = 0600
 	separator                     = ":!:"
 	AttemptsToBeConsideredFailing = 3
@@ -88,13 +88,14 @@ func New(path string) (*DB, error) {
 	}
 
 	err = db.Update(func(tx *bolt.Tx) error {
-		for _, bucket := range []string{setsBucket, userToSetBucket, fileBucket, dirBucket, discoveredBucket} {
-			if _, errc := tx.CreateBucketIfNotExists([]byte(bucket)); errc != nil {
-				return errc
-			}
+		_, errc := tx.CreateBucketIfNotExists([]byte(setsBucket))
+		if errc != nil {
+			return errc
 		}
 
-		return nil
+		_, errc = tx.CreateBucketIfNotExists([]byte(userToSetBucket))
+
+		return errc
 	})
 
 	return &DB{
@@ -160,40 +161,54 @@ func (d *DB) SetFileEntries(setID string, paths []string) error {
 // *** Currently ignores old entries that are not in the given paths.
 func (d *DB) setEntries(setID string, paths []string, bucketName string) error {
 	return d.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte(bucketName))
+		subBucketName := []byte(bucketName + separator + setID)
+		b, existing, err := d.getAndDeleteExistingEntries(tx, subBucketName)
+		if err != nil {
+			return err
+		}
 
-		t := time.Now()
-		existing := d.getAndDeleteExistingEntries(tx, b, setID)
-		fmt.Printf("getAndDeleteExistingEntries(%s) took %s\n", bucketName, time.Since(t))
-
-		t = time.Now()
 		for _, path := range paths {
 			e := d.existingOrNewEncodedEntry(path, existing)
 
-			if errp := b.Put([]byte(setID+separator+path), e); errp != nil {
+			if errp := b.Put([]byte(path), e); errp != nil {
 				return errp
 			}
 		}
-		fmt.Printf("putting %d paths in %s took %s\n", len(paths), bucketName, time.Since(t))
 
 		return nil
 	})
 }
 
-// getAndDeleteExistingEntries gets existing entries in the given bucket, and
-// deletes them all. Returns any old values.
-func (d *DB) getAndDeleteExistingEntries(tx *bolt.Tx, b *bolt.Bucket, setID string) map[string][]byte {
+// getAndDeleteExistingEntries gets existing entries in the given sub bucket
+// of the setsBucket, then deletes and recreates the sub bucket. Returns the
+// empty sub bucket and any old values.
+func (d *DB) getAndDeleteExistingEntries(tx *bolt.Tx, subBucketName []byte) (*bolt.Bucket, map[string][]byte, error) {
+	setsBucket := tx.Bucket([]byte(setsBucket))
 	existing := make(map[string][]byte)
-	prefix := []byte(setID + separator)
-	c := b.Cursor()
 
-	for k, v := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, v = c.Next() {
-		path := strings.TrimPrefix(string(k), string(prefix))
-		existing[path] = v
-		b.Delete(k)
+	b, err := setsBucket.CreateBucketIfNotExists(subBucketName)
+	if err != nil {
+		return b, existing, err
 	}
 
-	return existing
+	err = b.ForEach(func(k, v []byte) error {
+		existing[string(k)] = v
+
+		return nil
+	})
+	if err != nil {
+		return b, existing, err
+	}
+
+	if len(existing) > 0 {
+		if err = setsBucket.DeleteBucket(subBucketName); err != nil {
+			return b, existing, err
+		}
+
+		b, err = setsBucket.CreateBucket(subBucketName)
+	}
+
+	return b, existing, err
 }
 
 // existingOrNewEncodedEntry returns the encoded entry from the given map with
@@ -261,15 +276,11 @@ func (d *DB) getSetByID(tx *bolt.Tx, setID string) (*Set, []byte, *bolt.Bucket, 
 //
 // Returns an error if the setID isn't in the database.
 func (d *DB) SetDiscoveredEntries(setID string, paths []string) error {
-	fmt.Printf(" sde will setEntries for %d paths\n", len(paths))
-	t := time.Now()
 	if err := d.setEntries(setID, paths, discoveredBucket); err != nil {
 		return err
 	}
-	fmt.Printf(" sde setEntries took %s\n", time.Since(t))
 
 	return d.db.Update(func(tx *bolt.Tx) error {
-		fmt.Printf(" sde update transaction started\n")
 		set, bid, b, err := d.getSetByID(tx, setID)
 		if err != nil {
 			return err
@@ -287,7 +298,6 @@ func (d *DB) SetDiscoveredEntries(setID string, paths []string) error {
 		set.NumFiles = numFiles
 		set.Status = PendingUpload
 
-		fmt.Printf(" sde will updat the set with num files and status and return\n")
 		return b.Put(bid, d.encodeToBytes(set))
 	})
 }
@@ -370,7 +380,7 @@ func (d *DB) updateFileEntry(tx *bolt.Tx, setID string, r *put.Request, setDisco
 	entry.Size = r.Size
 	requestStatusToEntryStatus(r, entry)
 
-	return entry, b.Put([]byte(setID+separator+r.Local), d.encodeToBytes(entry))
+	return entry, b.Put([]byte(r.Local), d.encodeToBytes(entry))
 }
 
 // requestStatusToEntryStatus converts Request.Status and stores it as a Status
@@ -403,13 +413,15 @@ func requestStatusToEntryStatus(r *put.Request, entry *Entry) {
 // along with the bucket it was in, so you can alter the Entry and put it back.
 // Returns an error if the entry can't be found.
 func (d *DB) getEntry(tx *bolt.Tx, setID, path string) (*Entry, *bolt.Bucket, error) {
+	setsBucket := tx.Bucket([]byte(setsBucket))
+
 	var (
 		entry *Entry
 		b     *bolt.Bucket
 	)
 
-	for _, bucket := range []string{fileBucket, discoveredBucket, dirBucket} {
-		entry, b = d.getEntryFromBucket(tx, bucket, setID, path)
+	for _, kind := range []string{fileBucket, discoveredBucket, dirBucket} {
+		entry, b = d.getEntryFromSubbucket(kind, setID, path, setsBucket)
 		if entry != nil {
 			break
 		}
@@ -422,19 +434,25 @@ func (d *DB) getEntry(tx *bolt.Tx, setID, path string) (*Entry, *bolt.Bucket, er
 	return entry, b, nil
 }
 
-// getEntryFromBucket gets an Entry for the given path from and set ID from the
-// given bucket name. If it doesn't exist, just returns nil. Also returns the
-// bucket. The entry will have isDir true if bucket name was dirBucket.
-func (d *DB) getEntryFromBucket(tx *bolt.Tx, bucketName, setID, path string) (*Entry, *bolt.Bucket) {
-	b := tx.Bucket([]byte(bucketName))
+// getEntryFromSubbucket gets an Entry for the given path from a sub-bucket of
+// the setsBucket for the kind (fileBucket, discoveredBucket or dirBucket) and
+// set ID. If it doesn't exist, just returns nil. Also returns the subbucket it
+// was in. The entry will have isDir true if kind is dirBucket.
+func (d *DB) getEntryFromSubbucket(kind, setID, path string, setsBucket *bolt.Bucket) (*Entry, *bolt.Bucket) {
+	subBucketName := []byte(kind + separator + setID)
 
-	v := b.Get([]byte(setID + separator + path))
+	b := setsBucket.Bucket(subBucketName)
+	if b == nil {
+		return nil, nil
+	}
+
+	v := b.Get([]byte(path))
 	if v == nil {
 		return nil, nil
 	}
 
 	entry := d.decodeEntry(v)
-	entry.isDir = bucketName == dirBucket
+	entry.isDir = kind == dirBucket
 
 	return entry, b
 }
@@ -496,6 +514,10 @@ func (d *DB) GetAll() ([]*Set, error) {
 		b := tx.Bucket([]byte(setsBucket))
 
 		return b.ForEach(func(k, v []byte) error {
+			if strings.HasPrefix(string(k), subBucketPrefix) {
+				return nil
+			}
+
 			sets = append(sets, d.decodeSet(v))
 
 			return nil
@@ -597,15 +619,20 @@ func (d *DB) getEntries(setID, bucketName string) ([]*Entry, error) {
 
 type getEntriesViewCallBack func(v []byte)
 
-// getEntriesViewFunc sends every value in the given bucket prefixed with setID
-// to your callback.
 func getEntriesViewFunc(tx *bolt.Tx, setID, bucketName string, cb getEntriesViewCallBack) {
-	c := tx.Bucket([]byte(bucketName)).Cursor()
-	prefix := []byte(setID + separator)
+	subBucketName := []byte(bucketName + separator + setID)
+	setsBucket := tx.Bucket([]byte(setsBucket))
 
-	for k, v := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, v = c.Next() {
-		cb(v)
+	entriesBucket := setsBucket.Bucket(subBucketName)
+	if entriesBucket == nil {
+		return
 	}
+
+	entriesBucket.ForEach(func(_, v []byte) error { //nolint:errcheck
+		cb(v)
+
+		return nil
+	})
 }
 
 // decodeEntry takes a byte slice representation of an Entry as stored in the db
