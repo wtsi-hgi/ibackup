@@ -27,7 +27,6 @@ package server
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"os"
 	"time"
@@ -47,7 +46,6 @@ const ttr = 2 * time.Minute
 // LoadSetDB() must already have been called. This is called when there is a GET
 // on /rest/v1/auth/discover/[id].
 func (s *Server) triggerDiscovery(c *gin.Context) {
-	fmt.Printf("\ntriggerDiscovery called\n")
 	set, ok := s.validateSet(c)
 	if !ok {
 		return
@@ -68,11 +66,9 @@ func (s *Server) triggerDiscovery(c *gin.Context) {
 // Actual discovery will then proceed asynchronously, followed by adding all
 // upload requests for the set to the global put queue.
 func (s *Server) discoverSet(given *set.Set) error {
-	fmt.Printf("discoverSet called\n")
 	if err := s.db.SetDiscoveryStarted(given.ID()); err != nil {
 		return err
 	}
-	fmt.Printf("ds 1\n")
 
 	transformer, err := given.MakeTransformer()
 	if err != nil {
@@ -80,7 +76,6 @@ func (s *Server) discoverSet(given *set.Set) error {
 
 		return err
 	}
-	fmt.Printf("ds 12\n")
 
 	go s.discoverThenEnqueue(given, transformer)
 
@@ -91,39 +86,31 @@ func (s *Server) discoverSet(given *set.Set) error {
 // queues the set's files for uploading. Call this in a go-routine, but don't
 // call it multiple times at once for the same set!
 func (s *Server) discoverThenEnqueue(given *set.Set, transformer put.PathTransformer) {
-	fmt.Printf("ds 3\n")
 	doneCh := make(chan bool, 1)
 
 	go func() {
-		fmt.Printf("ds 4\n")
 		if err := s.updateSetFileExistence(given); err != nil {
 			s.recordSetError("enqueue for %s failed: %s", given.ID(), err)
 		}
-		fmt.Printf("ds 5\n")
 
 		close(doneCh)
-		fmt.Printf("ds 6\n")
 	}()
 
-	fmt.Printf("ds 7\n")
 	if err := s.discoverDirEntries(given, doneCh); err != nil {
 		s.recordSetError("discover dir contents for %s failed: %s", given.ID(), err)
 
 		return
 	}
 
-	fmt.Printf("ds 8\n")
 	if err := s.enqueueSetFiles(given, transformer); err != nil {
 		s.recordSetError("queuing files for %s failed: %s", given.ID(), err)
 	}
-	fmt.Printf("ds 9\n")
 }
 
 // updateSetFileExistence gets the file entries (not discovered ones) for the
 // set, checks if they all exist locally (concurrently), and updates their entry
 // status in the db if they're missing.
 func (s *Server) updateSetFileExistence(given *set.Set) error {
-	fmt.Printf("ds 10\n")
 	entries, err := s.db.GetPureFileEntries(given.ID())
 	if err != nil {
 		return err
@@ -146,8 +133,6 @@ func (s *Server) updateSetFileExistence(given *set.Set) error {
 			err = thisErr
 		}
 	}
-
-	fmt.Printf("ds 11\n")
 
 	return err
 }
@@ -189,12 +174,10 @@ func (s *Server) recordSetError(msg, sid string, err error) {
 // the filesDoneCh closes (file entries have been updated), then sets the
 // discovered file paths, which makes the db consider discovery to be complete.
 func (s *Server) discoverDirEntries(given *set.Set, filesDoneCh chan bool) error {
-	fmt.Printf("ds 12\n")
 	entries, err := s.db.GetDirEntries(given.ID())
 	if err != nil {
 		return err
 	}
-	fmt.Printf("ds 13\n")
 
 	pathsCh := make(chan string)
 	doneCh := make(chan error)
@@ -208,13 +191,11 @@ func (s *Server) discoverDirEntries(given *set.Set, filesDoneCh chan bool) error
 	}
 
 	err = <-doneCh
-	fmt.Printf("ds 14\n")
 	if err != nil {
 		return err
 	}
 
 	<-filesDoneCh
-	fmt.Printf("ds 15\n")
 
 	return s.db.SetDiscoveredEntries(given.ID(), paths)
 }

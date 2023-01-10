@@ -28,6 +28,7 @@ package set
 import (
 	"bytes"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -166,6 +167,9 @@ func (d *DB) setEntries(setID string, paths []string, bucketName string) error {
 		if err != nil {
 			return err
 		}
+
+		// this sort is critical to database write speed.
+		sort.Strings(paths)
 
 		for _, path := range paths {
 			e := d.existingOrNewEncodedEntry(path, existing)

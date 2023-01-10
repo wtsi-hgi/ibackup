@@ -57,8 +57,17 @@ func TestServer(t *testing.T) {
 		logWriter := gas.NewStringLogger()
 		s := New(logWriter)
 
-		Convey("You can Start the Server", func() {
+		Convey("You can Start the Server with Auth and LoadSetDB", func() {
 			certPath, keyPath, err := gas.CreateTestCert(t)
+			So(err, ShouldBeNil)
+
+			err = s.EnableAuth(certPath, keyPath, func(u, p string) (bool, string) {
+				return true, "1"
+			})
+			So(err, ShouldBeNil)
+
+			path := createDBLocation(t)
+			err = s.LoadSetDB(path)
 			So(err, ShouldBeNil)
 
 			addr, dfunc, err := gas.StartTestServer(s, certPath, keyPath)
@@ -68,16 +77,7 @@ func TestServer(t *testing.T) {
 				So(errd, ShouldBeNil)
 			}()
 
-			Convey("The jwt endpoint works after enabling it, and you can LoadSetDB", func() {
-				err = s.EnableAuth(certPath, keyPath, func(u, p string) (bool, string) {
-					return true, "1"
-				})
-				So(err, ShouldBeNil)
-
-				path := createDBLocation(t)
-				err = s.LoadSetDB(path)
-				So(err, ShouldBeNil)
-
+			Convey("Which lets you login", func() {
 				token, errl := gas.Login(addr, certPath, "jim", "pass")
 				So(errl, ShouldBeNil)
 				So(token, ShouldNotBeBlank)
@@ -424,7 +424,7 @@ func TestServer(t *testing.T) {
 							err = <-errCh
 							So(err, ShouldBeNil)
 							ts := <-tsCh
-							So(ts, ShouldHappenAfter, tr)
+							So(ts, ShouldHappenBefore, tr)
 						})
 					})
 				})
