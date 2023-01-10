@@ -111,20 +111,20 @@ ctrl-z; bg. Or better yet, use the daemonize program to daemonize this.
 
 		prepareAuth(s)
 
-		// exe, err := os.Executable()
-		// if err != nil {
-		// 	die("failed to get own exe: %s", err)
-		// }
+		exe, err := os.Executable()
+		if err != nil {
+			die("failed to get own exe: %s", err)
+		}
 
-		// err = s.EnableJobSubmission(fmt.Sprintf("%s put -s -u '%s' -c '%s'", exe, serverURL, serverCert),
-		// 	"production", "", "", appLogger)
-		// if err != nil {
-		// 	die("failed to enable job submission: %s", err)
-		// }
+		err = s.EnableJobSubmission(fmt.Sprintf("%s put -s -u '%s' -c '%s'", exe, serverURL, serverCert),
+			"production", "", "", appLogger)
+		if err != nil {
+			die("failed to enable job submission: %s", err)
+		}
 
 		info("opening database, please wait...")
 
-		err := s.LoadSetDB(args[0])
+		err = s.LoadSetDB(args[0])
 		if err != nil {
 			die("failed to load database: %s", err)
 		}
