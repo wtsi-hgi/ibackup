@@ -215,13 +215,13 @@ func (s *Set) Size() string {
 
 	switch {
 	case s.NumFiles > 0:
-		sfiles = humanize.Bytes(s.SizeFiles)
+		sfiles = humanize.IBytes(s.SizeFiles)
 
 		if s.Status != Complete {
 			sfiles += " (and counting)"
 		}
 	case s.LastCompletedCount != 0:
-		sfiles = fmt.Sprintf("%s (as of last completion)", humanize.Bytes(s.LastCompletedSize))
+		sfiles = fmt.Sprintf("%s (as of last completion)", humanize.IBytes(s.LastCompletedSize))
 	default:
 		sfiles = "pending"
 	}

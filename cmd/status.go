@@ -300,7 +300,7 @@ func displayEntries(entries []*set.Entry) {
 		cols := []string{
 			entry.Path,
 			entry.Status.String(),
-			humanize.Bytes(entry.Size),
+			humanize.IBytes(entry.Size),
 			date,
 			entry.LastError,
 		}
