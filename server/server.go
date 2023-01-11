@@ -154,7 +154,7 @@ func (s *Server) EnableJobSubmission(putCmd, deployment, cwd, queue string, logg
 // jobs at once, that should keep jobs flowing continuously until we next
 // trigger the rac.
 func (s *Server) rac(queuename string, allitemdata []interface{}) {
-	n := s.estimateJobsNeeded(allitemdata)
+	n := s.estimateJobsNeeded(len(allitemdata))
 	if n == 0 {
 		return
 	}
@@ -182,16 +182,25 @@ func (s *Server) rac(queuename string, allitemdata []interface{}) {
 	}()
 }
 
-// estimateJobsNeeded looks at the number of items which correspond to
-// upload requests, and esimates how many put jobs we need to upload them all.
+// estimateJobsNeeded looks at the number of ready upload requests, and
+// estimates how many put jobs we need to upload them all. It takes in to
+// account how many requests we're currently touching in already running jobs.
+//
 // Max 100 jobs, minimum 1 if there are any items at all, assumed 10k uploads
 // per job.
-func (s *Server) estimateJobsNeeded(itemdata []interface{}) int {
-	if len(itemdata) == 0 {
+func (s *Server) estimateJobsNeeded(numReady int) int {
+	if numReady == 0 {
 		return 0
 	}
 
-	n := int(math.Ceil(float64(len(itemdata)) / assumedRequestsPerJob))
+	running := s.queue.GetRunningData()
+
+	return jobsNeeded(numReady) + jobsNeeded(len(running))
+}
+
+// jobsNeeded returns n/assumedRequestsPerJob, min 1, max maxJobsToSubmit.
+func jobsNeeded(n int) int {
+	n = int(math.Ceil(float64(n) / assumedRequestsPerJob))
 	if n > maxJobsToSubmit {
 		n = maxJobsToSubmit
 	}
