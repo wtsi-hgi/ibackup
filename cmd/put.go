@@ -161,10 +161,10 @@ you, so should this.`,
 			info("collections created")
 		}
 
-		results := p.Put()
+		results, uploadStarts := p.Put()
 
 		if client != nil {
-			err = sendResultsToServer(client, results)
+			err = sendResultsToServer(client, results, uploadStarts)
 			if err != nil {
 				die("%s", err)
 			}
@@ -369,8 +369,16 @@ func decodeBase64(path string, isEncoded bool) string {
 // the server, which will deal with any failures and update its database. Could
 // return an error related to not being able to update the server with the
 // results.
-func sendResultsToServer(client *server.Client, results chan *put.Request) error {
+func sendResultsToServer(client *server.Client, results, uploadStarts chan *put.Request) error {
 	var err error
+
+	go func() {
+		for r := range uploadStarts {
+			if thisErr := client.UpdateFileStatus(r); thisErr != nil {
+				warn("failed up update file upload start: %s", thisErr)
+			}
+		}
+	}()
 
 	for r := range results {
 		if thisErr := client.UpdateFileStatus(r); thisErr != nil {
@@ -393,7 +401,7 @@ func printResults(results chan *put.Request, total int, verbose bool) { //nolint
 		warnIfBad(r, i, total, verbose)
 
 		switch r.Status {
-		case put.RequestStatusFailed:
+		case put.RequestStatusFailed, put.RequestStatusUploading:
 			fails++
 		case put.RequestStatusMissing:
 			missing++

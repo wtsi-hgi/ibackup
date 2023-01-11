@@ -34,6 +34,9 @@ const (
 	// attempt.
 	Pending EntryStatus = iota
 
+	// UploadingEntry is an Entry status meaning the file has started to upload.
+	UploadingEntry
+
 	// Uploaded is an Entry status meaning the file has been uploaded
 	// successfully.
 	Uploaded
@@ -52,6 +55,7 @@ const (
 func (e EntryStatus) String() string {
 	return [...]string{
 		"pending",
+		"uploading",
 		"uploaded",
 		"failed",
 		"missing",
@@ -86,7 +90,7 @@ func (e *Entry) ShouldUpload(reuploadAfter time.Time) bool {
 		if e.LastAttempt.After(reuploadAfter) {
 			return false
 		}
-	case Pending:
+	case Pending, UploadingEntry:
 	}
 
 	return true

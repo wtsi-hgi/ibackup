@@ -305,15 +305,18 @@ func (c *Client) stillWorkingOnRequests(rids []string) error {
 // UpdateFileStatus updates a file's status in the DB based on the given
 // Request's status.
 //
-// This also tells the server we're no longer working on the request. The db
-// update will not be carried out if we're not currently touching a
-// corresponding request due to a prior GetSomeUploadRequests().
+// If the status isn't "uploading", this also tells the server we're no longer
+// working on the request. The db update will not be carried out if we're not
+// currently touching a corresponding request due to a prior
+// GetSomeUploadRequests().
 //
 // Only the user who started the server has permission to call this.
 func (c *Client) UpdateFileStatus(r *put.Request) error {
-	c.touchMu.Lock()
-	delete(c.toTouch, r.ID())
-	c.touchMu.Unlock()
+	if r.Status != put.RequestStatusUploading {
+		c.touchMu.Lock()
+		delete(c.toTouch, r.ID())
+		c.touchMu.Unlock()
+	}
 
 	return c.putThing(EndPointAuthFileStatus, r)
 }

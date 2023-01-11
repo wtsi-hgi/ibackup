@@ -547,11 +547,15 @@ func (s *Server) putFileStatus(c *gin.Context) {
 }
 
 // updateFileStatus updates the request's file entry status in the db, and
-// removes the request from our queue.
+// removes the request from our queue if not still uploading.
 func (s *Server) updateFileStatus(r *put.Request) error {
 	entry, err := s.db.SetEntryStatus(r)
 	if err != nil {
 		return err
+	}
+
+	if r.Status == put.RequestStatusUploading {
+		return nil
 	}
 
 	return s.removeOrReleaseRequestFromQueue(r, entry)

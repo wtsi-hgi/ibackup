@@ -300,6 +300,21 @@ func TestServer(t *testing.T) {
 							So(len(requests), ShouldEqual, 8)
 							So(requests[0].Local, ShouldEqual, entries[0].Path)
 
+							requests[0].Status = put.RequestStatusUploading
+
+							err = client.UpdateFileStatus(requests[0])
+							So(err, ShouldBeNil)
+
+							entries, err = client.GetFiles(exampleSet.ID())
+							So(err, ShouldBeNil)
+							So(entries[0].Status, ShouldEqual, set.UploadingEntry)
+
+							gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+							So(err, ShouldBeNil)
+							So(gotSet.Status, ShouldEqual, set.Uploading)
+							So(gotSet.Uploaded, ShouldEqual, 0)
+							So(gotSet.NumFiles, ShouldEqual, 6)
+
 							requests[0].Status = put.RequestStatusUploaded
 
 							err = client.UpdateFileStatus(requests[0])

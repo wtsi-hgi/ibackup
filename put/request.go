@@ -37,6 +37,7 @@ import (
 type RequestStatus string
 
 const (
+	RequestStatusUploading  RequestStatus = "uploading"
 	RequestStatusUploaded   RequestStatus = "uploaded"
 	RequestStatusReplaced   RequestStatus = "replaced"
 	RequestStatusUnmodified RequestStatus = "unmodified"
@@ -90,6 +91,27 @@ func (r *Request) ValidatePaths() error {
 	return nil
 }
 
+// Clone returns a copy of this request that can safely be altered without
+// affecting the original.
+func (r *Request) Clone() *Request {
+	clone := &Request{
+		Local:      r.Local,
+		Remote:     r.Remote,
+		Requester:  r.Requester,
+		Set:        r.Set,
+		Meta:       r.Meta,
+		Status:     r.Status,
+		Size:       r.Size,
+		Error:      r.Error,
+		remoteMeta: r.remoteMeta,
+		skipPut:    r.skipPut,
+	}
+
+	clone.cloneMeta()
+
+	return clone
+}
+
 // addStandardMeta ensures our Meta is unique to us, and adds key vals from the
 // diskMeta map (which should be from a Stat().Meta call) to our own Meta,
 // replacing exisiting keys.
@@ -119,13 +141,19 @@ func (r *Request) addStandardMeta(diskMeta, remoteMeta map[string]string) {
 // cloneMeta is used to ensure that our Meta is unique to us, so that if we
 // alter it, we don't alter any other Request's Meta.
 func (r *Request) cloneMeta() {
-	clone := make(map[string]string, len(r.Meta))
+	r.Meta = cloneMap(r.Meta)
+	r.remoteMeta = cloneMap(r.remoteMeta)
+}
 
-	for k, v := range r.Meta {
+// cloneMap makes a copy of the given map.
+func cloneMap(m map[string]string) map[string]string {
+	clone := make(map[string]string, len(m))
+
+	for k, v := range m {
 		clone[k] = v
 	}
 
-	r.Meta = clone
+	return clone
 }
 
 // addDate adds the current date to Meta, replacing any exisiting value.

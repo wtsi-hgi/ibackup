@@ -303,11 +303,36 @@ func TestSet(t *testing.T) {
 							Requester: set.Requester,
 							Set:       set.Name,
 							Size:      3,
-							Status:    put.RequestStatusUploaded,
+							Status:    put.RequestStatusUploading,
 							Error:     "",
 						}
 
 						e, err := db.SetEntryStatus(r)
+						So(err, ShouldBeNil)
+						So(e, ShouldNotBeNil)
+						So(e.Path, ShouldEqual, fEntries[0].Path)
+						So(e.Size, ShouldEqual, r.Size)
+						So(e.Status, ShouldEqual, UploadingEntry)
+
+						sets, err = db.GetByRequester("jim")
+						So(err, ShouldBeNil)
+
+						So(sets[0].Status, ShouldEqual, Uploading)
+						So(sets[0].NumFiles, ShouldEqual, 5)
+						So(sets[0].SizeFiles, ShouldEqual, 3)
+						So(sets[0].Uploaded, ShouldEqual, 0)
+						So(sets[0].LastCompletedSize, ShouldEqual, 0)
+
+						r = &put.Request{
+							Local:     "/a/b.txt",
+							Requester: set.Requester,
+							Set:       set.Name,
+							Size:      3,
+							Status:    put.RequestStatusUploaded,
+							Error:     "",
+						}
+
+						e, err = db.SetEntryStatus(r)
 						So(err, ShouldBeNil)
 						So(e, ShouldNotBeNil)
 						So(e.Path, ShouldEqual, fEntries[0].Path)

@@ -87,7 +87,11 @@ func TestPutBaton(t *testing.T) {
 				requests[0].Requester = requester
 				requests[0].Set = "setA"
 				expectedMTime := touchFile(requests[0].Local, -1*time.Hour)
-				rCh := p.Put()
+				rCh, uCh := p.Put()
+
+				for request := range uCh {
+					So(request.Status, ShouldEqual, RequestStatusUploading)
+				}
 
 				for request := range rCh {
 					So(request.Error, ShouldBeBlank)
@@ -119,9 +123,12 @@ func TestPutBaton(t *testing.T) {
 					err = p.CreateCollections()
 					So(err, ShouldBeNil)
 
-					rCh = p.Put()
+					rCh, uCh = p.Put()
 
-					got := <-rCh
+					got := <-uCh
+					So(got.Status, ShouldEqual, RequestStatusUploading)
+
+					got = <-rCh
 					So(got.Error, ShouldBeBlank)
 					So(got.Status, ShouldEqual, RequestStatusReplaced)
 					meta := getObjectMetadataWithBaton(h.putClient, request.Remote)
@@ -145,9 +152,12 @@ func TestPutBaton(t *testing.T) {
 					p, err = New(h, []*Request{request})
 					So(err, ShouldBeNil)
 
-					rCh = p.Put()
+					rCh, uCh = p.Put()
 
-					got := <-rCh
+					got := <-uCh
+					So(got, ShouldBeNil)
+
+					got = <-rCh
 					So(got.Error, ShouldBeBlank)
 					So(got.Status, ShouldEqual, RequestStatusUnmodified)
 				})

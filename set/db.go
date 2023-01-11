@@ -396,6 +396,8 @@ func requestStatusToEntryStatus(r *put.Request, entry *Entry) {
 	entry.unFailed = false
 
 	switch r.Status {
+	case put.RequestStatusUploading:
+		entry.Status = UploadingEntry
 	case put.RequestStatusUploaded, put.RequestStatusUnmodified, put.RequestStatusReplaced:
 		entry.Status = Uploaded
 		entry.unFailed = oldAttempts > 1
