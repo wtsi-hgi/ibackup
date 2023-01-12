@@ -44,6 +44,7 @@ var setDirs string
 var setPath string
 var setNull bool
 var setMonitor bool
+var setArchive bool
 var setUser string
 
 // addCmd represents the add command.
@@ -87,6 +88,9 @@ You can also provide:
                 purpose.
 --monitor : recheck the saved file and directory paths every day, and backup any
             new or altered files in the set.
+--archive : delete local files after successfully uploading them. (The actual
+            deletion is not yet implemented, but you can at least record the
+		    fact you wanted deletion now, so they can be deleted in the future.)
 
 Having added a set, you can use 'ibackup status' to monitor the backup progress
 of your sets. If you add a set with the same --name again, you will overwrite
@@ -124,7 +128,7 @@ option to add sets on behalf of other users.
 			}
 		}
 
-		err = add(client, setName, setUser, setTransformer, setDescription, setMonitor, files, dirs)
+		err = add(client, setName, setUser, setTransformer, setDescription, setMonitor, setArchive, files, dirs)
 		if err != nil {
 			die(err.Error())
 		}
@@ -150,6 +154,8 @@ func init() {
 	addCmd.Flags().StringVar(&setDescription, "description", "", "a long description of this backup set")
 	addCmd.Flags().BoolVarP(&setMonitor, "monitor", "m", false,
 		"monitor the paths daily for changes and new files to upload")
+	addCmd.Flags().BoolVarP(&setArchive, "archive", "a", false,
+		"delete local files after successfully uploading them (deletions not yet implemented)")
 	addCmd.Flags().StringVar(&setUser, "user", currentUsername(),
 		"pretend to be the this user (only works if you started the server)")
 
@@ -199,13 +205,14 @@ func readPaths(file string, splitter bufio.SplitFunc) []string {
 
 // add does the main job of sending the backup set details to the server.
 func add(client *server.Client, name, requester, transformer, description string,
-	monitor bool, files, dirs []string) error {
+	monitor, archive bool, files, dirs []string) error {
 	set := &set.Set{
 		Name:        name,
 		Requester:   requester,
 		Transformer: transformer,
 		Description: description,
 		Monitor:     monitor,
+		DeleteLocal: archive,
 	}
 
 	if err := client.AddOrUpdateSet(set); err != nil {

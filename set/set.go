@@ -101,7 +101,7 @@ type Set struct {
 
 	// Delete local paths after successful upload. Optional, defaults to no
 	// deletions (ie. do a backup, not a move).
-	// DeleteLocal bool
+	DeleteLocal bool
 
 	// Delete remote paths if removed from the set. Optional, defaults to no
 	// deletions (ie. keep all uploads and ignore removed Entries).

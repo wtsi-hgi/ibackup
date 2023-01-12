@@ -150,6 +150,7 @@ func TestSet(t *testing.T) {
 					Requester:   "jim",
 					Transformer: "prefix=/local:/remote",
 					Monitor:     false,
+					DeleteLocal: false,
 				}
 
 				err = db.AddOrUpdate(set)
@@ -170,6 +171,7 @@ func TestSet(t *testing.T) {
 					Requester:   "jane",
 					Transformer: "prefix=/local:/remote",
 					Monitor:     false,
+					DeleteLocal: true,
 				}
 
 				err = db.AddOrUpdate(set2)
@@ -186,8 +188,7 @@ func TestSet(t *testing.T) {
 					So(retrieved, ShouldNotBeNil)
 					So(retrieved, ShouldResemble, set)
 
-					retrieved = db.GetByID("sdf")
-					So(retrieved, ShouldBeNil)
+					So(db.GetByID("sdf"), ShouldBeNil)
 
 					Convey("And set an Error for it, which is cleared when we start discovery again", func() {
 						msg := "foo"
@@ -204,6 +205,29 @@ func TestSet(t *testing.T) {
 						retrieved = db.GetByID(set.ID())
 						So(retrieved, ShouldNotBeNil)
 						So(retrieved.Error, ShouldBeBlank)
+					})
+
+					Convey("And set bool vals back to false on update", func() {
+						So(retrieved.Monitor, ShouldBeTrue)
+
+						retrieved2 := db.GetByID(set2.ID())
+						So(retrieved2, ShouldNotBeNil)
+						So(retrieved2, ShouldResemble, set2)
+						So(retrieved2.DeleteLocal, ShouldBeTrue)
+
+						retrieved.Monitor = false
+						retrieved2.DeleteLocal = false
+
+						err = db.AddOrUpdate(retrieved)
+						So(err, ShouldBeNil)
+						err = db.AddOrUpdate(retrieved2)
+						So(err, ShouldBeNil)
+
+						retrieved = db.GetByID(set.ID())
+						So(retrieved.Monitor, ShouldBeFalse)
+
+						retrieved2 = db.GetByID(set2.ID())
+						So(retrieved2.DeleteLocal, ShouldBeFalse)
 					})
 				})
 

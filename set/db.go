@@ -123,6 +123,7 @@ func (d *DB) AddOrUpdate(set *Set) error {
 			eset := d.decodeSet(existing)
 			eset.Transformer = set.Transformer
 			eset.Monitor = set.Monitor
+			eset.DeleteLocal = set.DeleteLocal
 			eset.Description = set.Description
 			set = eset
 		}

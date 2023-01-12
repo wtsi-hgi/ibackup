@@ -175,7 +175,7 @@ func displaySets(client *server.Client, sets []*set.Set, showNonFailedEntries bo
 func displaySet(s *set.Set) {
 	cliPrint("Name: %s\n", s.Name)
 	cliPrint("Transformer: %s\n", s.Transformer)
-	cliPrint("Monitored: %v\n", s.Monitor)
+	cliPrint("Monitored: %v; Archive: %v\n", s.Monitor, s.DeleteLocal)
 
 	if s.Description != "" {
 		cliPrint("Description: %s\n", s.Description)
@@ -189,11 +189,8 @@ func displaySet(s *set.Set) {
 	}
 
 	cliPrint("Discovery: %s\n", s.Discovered())
-	cliPrint("Num files: %s\n", s.Count())
-	cliPrint("Size files: %s\n", s.Size())
-	cliPrint("Uploaded: %d\n", s.Uploaded)
-	cliPrint("Failed: %d\n", s.Failed)
-	cliPrint("Missing: %d\n", s.Missing)
+	cliPrint("Num files: %s; Size files: %s\n", s.Count(), s.Size())
+	cliPrint("Uploaded: %d; Failed: %d; Missing: %d\n", s.Uploaded, s.Failed, s.Missing)
 }
 
 // getDirs gets the dir entries for a set and returns their paths. If the dir is
