@@ -106,7 +106,7 @@ func init() {
 	statusCmd.Flags().BoolVarP(&statusDetails, "details", "d", false,
 		"in combination with --name, show the status of every file in the set")
 	statusCmd.Flags().StringVar(&statusUser, "user", "",
-		"pretend to be the this user (only works if you started the server)")
+		"pretend to be this user (only works if you started the server)")
 }
 
 // status does the main job of getting backup set status from the server.
