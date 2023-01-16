@@ -29,6 +29,7 @@ package cmd
 import (
 	"bufio"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 	"github.com/wtsi-hgi/ibackup/server"
@@ -116,6 +117,11 @@ option to add sets on behalf of other users.
 		dirs := readPaths(setDirs, fofnLineSplitter(setNull))
 
 		if setPath != "" {
+			setPath, err = filepath.Abs(setPath)
+			if err != nil {
+				die(err.Error())
+			}
+
 			info, errs := os.Stat(setPath)
 			if errs != nil {
 				die(errs.Error())
