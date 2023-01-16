@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2022 Genome Research Ltd.
+ * Copyright (c) 2022, 2023 Genome Research Ltd.
  *
  * Author: Sendu Bala <sb10@sanger.ac.uk>
  *
@@ -71,6 +71,7 @@ type Entry struct {
 	LastAttempt time.Time
 	Attempts    int
 
+	newSize  bool
 	newFail  bool
 	unFailed bool
 	isDir    bool

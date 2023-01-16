@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2022 Genome Research Ltd.
+ * Copyright (c) 2022, 2023 Genome Research Ltd.
  *
  * Author: Sendu Bala <sb10@sanger.ac.uk>
  *
@@ -111,6 +111,13 @@ func init() {
 
 // status does the main job of getting backup set status from the server.
 func status(client *server.Client, user, name string, details bool) {
+	qs, err := client.GetQueueStatus()
+	if err != nil {
+		die("unable to get server queue status: %s", err)
+	}
+
+	displayQueueStatus(qs)
+
 	if user == "" {
 		user = currentUsername()
 	}
@@ -130,6 +137,22 @@ func status(client *server.Client, user, name string, details bool) {
 	}
 
 	displaySets(client, sets, details)
+}
+
+// displayQueueStatus prints out QStatus in a nice way. If user is admin, also
+// shows details of stuck requests.
+func displayQueueStatus(qs *server.QStatus) {
+	info("Global put queue status: %d queued; %d reserved to be worked on; %d currently uploading; %d failed",
+		qs.Total, qs.Reserved, qs.Uploading, qs.Failed)
+
+	if qs.Stuck != nil {
+		_, err := getPasswordFromServerTokenFile()
+		if err == nil {
+			for _, r := range qs.Stuck {
+				warn("set '%s' for %s [%s => %s] %s", r.Set, r.Requester, r.Local, r.Remote, r.Stuck)
+			}
+		}
+	}
 }
 
 // getSetByName gets a set with the given name owned by the given user. Dies

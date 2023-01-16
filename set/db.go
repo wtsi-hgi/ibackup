@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2022 Genome Research Ltd.
+ * Copyright (c) 2022, 2023 Genome Research Ltd.
  *
  * Author: Sendu Bala <sb10@sanger.ac.uk>
  *
@@ -383,6 +383,12 @@ func (d *DB) updateFileEntry(tx *bolt.Tx, setID string, r *put.Request, setDisco
 
 	entry.LastAttempt = time.Now()
 	entry.Size = r.Size
+
+	if (r.Status == put.RequestStatusUploading && r.Stuck == nil) || r.Status == put.RequestStatusUnmodified {
+		entry.Attempts++
+		entry.newSize = entry.Attempts == 1
+	}
+
 	requestStatusToEntryStatus(r, entry)
 
 	return entry, b.Put([]byte(r.Local), d.encodeToBytes(entry))
@@ -391,17 +397,20 @@ func (d *DB) updateFileEntry(tx *bolt.Tx, setID string, r *put.Request, setDisco
 // requestStatusToEntryStatus converts Request.Status and stores it as a Status
 // on the entry. Also sets entry.Attempts, unFailed and newFail as appropriate.
 func requestStatusToEntryStatus(r *put.Request, entry *Entry) {
-	oldAttempts := entry.Attempts
-	entry.Attempts++
 	entry.newFail = false
 	entry.unFailed = false
 
 	switch r.Status {
 	case put.RequestStatusUploading:
 		entry.Status = UploadingEntry
+
+		if r.Stuck != nil {
+			entry.LastError = r.Stuck.String()
+		}
 	case put.RequestStatusUploaded, put.RequestStatusUnmodified, put.RequestStatusReplaced:
 		entry.Status = Uploaded
-		entry.unFailed = oldAttempts > 1
+		entry.unFailed = entry.Attempts > 1
+		entry.LastError = ""
 	case put.RequestStatusFailed:
 		entry.Status = Failed
 
@@ -409,10 +418,10 @@ func requestStatusToEntryStatus(r *put.Request, entry *Entry) {
 			entry.LastError = r.Error
 		}
 
-		entry.newFail = oldAttempts == 0
+		entry.newFail = entry.Attempts == 1
 	case put.RequestStatusMissing:
 		entry.Status = Missing
-		entry.unFailed = oldAttempts > 1
+		entry.unFailed = entry.Attempts > 1
 	}
 }
 
@@ -472,7 +481,7 @@ func updateSetBasedOnEntry(set *Set, entry *Entry) {
 		set.Status = Uploading
 	}
 
-	if entry.Attempts == 1 {
+	if entry.newSize {
 		set.SizeFiles += entry.Size
 	}
 

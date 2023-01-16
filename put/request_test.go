@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2022 Genome Research Ltd.
+ * Copyright (c) 2022, 2023 Genome Research Ltd.
  *
  * Author: Sendu Bala <sb10@sanger.ac.uk>
  *
@@ -28,7 +28,9 @@ package put
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
@@ -132,5 +134,16 @@ func TestRequest(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(r.Remote, ShouldEqual, expected[i])
 		}
+	})
+
+	Convey("You can create and stringify Stucks", t, func() {
+		n := time.Now()
+		s := NewStuck(n)
+		So(s, ShouldNotBeNil)
+		So(s.Host, ShouldNotBeBlank)
+		So(s.PID, ShouldEqual, os.Getpid())
+		So(s.String(), ShouldContainSubstring, "upload stuck? started ")
+		So(s.String(), ShouldContainSubstring, " on host "+s.Host)
+		So(s.String(), ShouldContainSubstring, ", PID "+strconv.Itoa(s.PID))
 	})
 }

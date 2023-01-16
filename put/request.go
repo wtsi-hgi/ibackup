@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2022 Genome Research Ltd.
+ * Copyright (c) 2022, 2023 Genome Research Ltd.
  *
  * Author: Sendu Bala <sb10@sanger.ac.uk>
  *
@@ -27,6 +27,7 @@ package put
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -45,7 +46,36 @@ const (
 	RequestStatusFailed     RequestStatus = "failed"
 	ErrNotHumgenLustre                    = "not a valid humgen lustre path"
 	metaListSeparator                     = ","
+	stuckTimeFormat                       = "02/01/06 15:04 MST"
 )
+
+// Stuck is used to provide details of a potentially "stuck" upload Request.
+type Stuck struct {
+	UploadStarted time.Time
+	Host          string
+	PID           int
+}
+
+// NewStuck returns a Stuck with the given UploadStarted and the current Host
+// and PID.
+func NewStuck(uploadStarted time.Time) *Stuck {
+	hostname, err := os.Hostname()
+	if err != nil {
+		hostname = "unknown"
+	}
+
+	return &Stuck{
+		UploadStarted: uploadStarted,
+		Host:          hostname,
+		PID:           os.Getpid(),
+	}
+}
+
+// String returns a message explaining our stuck details.
+func (s *Stuck) String() string {
+	return fmt.Sprintf("upload stuck? started %s on host %s, PID %d",
+		s.UploadStarted.Format(stuckTimeFormat), s.Host, s.PID)
+}
 
 // Request represents a local file you would like transferred to a remote iRODS
 // path, and any extra metadata (beyond the defaults which include user, group,
@@ -60,6 +90,7 @@ type Request struct {
 	Status     RequestStatus
 	Size       uint64 // size of Local in bytes, set for you on returned Requests.
 	Error      string
+	Stuck      *Stuck
 	remoteMeta map[string]string
 	skipPut    bool
 }

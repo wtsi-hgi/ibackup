@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2022 Genome Research Ltd.
+ * Copyright (c) 2022, 2023 Genome Research Ltd.
  *
  * Authors:
  *	- Sendu Bala <sb10@sanger.ac.uk>
@@ -104,6 +104,15 @@ func responseToErr(resp *resty.Response) error {
 	default:
 		return ErrInteral
 	}
+}
+
+// GetQueueStatus gets information about the server's queue.
+func (c *Client) GetQueueStatus() (*QStatus, error) {
+	var qs *QStatus
+
+	err := c.getThing(EndPointAuthQueueStatus, &qs)
+
+	return qs, err
 }
 
 // GetSets gets details about a given requester's backup sets from the

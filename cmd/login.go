@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2022 Genome Research Ltd.
+ * Copyright (c) 2022, 2023 Genome Research Ltd.
  *
  * Authors:
  *	- Sendu Bala <sb10@sanger.ac.uk>
@@ -127,17 +127,21 @@ func jwtStoragePath() (string, error) {
 // user. If this user started the server, gets the "password" from the token
 // file instead, and does not prompt.
 func login(url, cert string) (string, error) {
-	tokenPath, err := tokenStoragePath()
-	if err != nil {
-		die("%s", err)
-	}
-
-	passwordB, err := server.GetStoredToken(tokenPath)
+	passwordB, err := getPasswordFromServerTokenFile()
 	if err != nil || passwordB == nil {
 		passwordB = askForPassword()
 	}
 
 	return server.Login(url, cert, currentUsername(), string(passwordB))
+}
+
+func getPasswordFromServerTokenFile() ([]byte, error) {
+	tokenPath, err := tokenStoragePath()
+	if err != nil {
+		die("%s", err)
+	}
+
+	return server.GetStoredToken(tokenPath)
 }
 
 // askForPassword asks the user for their password on the command line.

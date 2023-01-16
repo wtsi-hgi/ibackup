@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2022 Genome Research Ltd.
+ * Copyright (c) 2022, 2023 Genome Research Ltd.
  *
  * Author: Sendu Bala <sb10@sanger.ac.uk>
  *
@@ -38,14 +38,15 @@ import (
 )
 
 const (
-	setPath        = "/set"
-	filePath       = "/files"
-	dirPath        = "/dirs"
-	entryPath      = "/entries"
-	discoveryPath  = "/discover"
-	requestsPath   = "/requests"
-	workingPath    = "/working"
-	fileStatusPath = "/file_status"
+	setPath         = "/set"
+	filePath        = "/files"
+	dirPath         = "/dirs"
+	entryPath       = "/entries"
+	discoveryPath   = "/discover"
+	requestsPath    = "/requests"
+	workingPath     = "/working"
+	queueStatusPath = "/status"
+	fileStatusPath  = "/file_status"
 
 	// EndPointAuthSet is the endpoint for getting and setting sets.
 	EndPointAuthSet = gas.EndPointAuth + setPath
@@ -68,6 +69,9 @@ const (
 	// EndPointAuthWorking is the endpoint for advising the server you're still
 	// working on Requests retrieved from EndPointAuthRequests.
 	EndPointAuthWorking = gas.EndPointAuth + workingPath
+
+	// EndPointAuthQueueStatus is the endpoint for getting queue status.
+	EndPointAuthQueueStatus = gas.EndPointAuth + queueStatusPath
 
 	// EndPointAuthFileStatus is the endpoint for updating file upload status.
 	EndPointAuthFileStatus = gas.EndPointAuth + fileStatusPath
@@ -96,6 +100,8 @@ const (
 // LoadSetDB loads the given set.db or creates it if it doesn't exist, and adds
 // a number of endpoints to the REST API for working with the set and its
 // entries:
+//
+// GET /rest/v1/auth/status : get the global put request queue status.
 //
 // PUT /rest/v1/auth/set : takes a set.Set encoded as JSON in the body to add or
 // update details about the given set.
@@ -163,6 +169,8 @@ func (s *Server) addDBEndpoints(authGroup *gin.RouterGroup) {
 
 	idParam := "/:" + paramSetID
 
+	authGroup.GET(queueStatusPath, s.getQueueStatus)
+
 	authGroup.PUT(filePath+idParam, s.putFiles)
 	authGroup.PUT(dirPath+idParam, s.putDirs)
 
@@ -176,6 +184,14 @@ func (s *Server) addDBEndpoints(authGroup *gin.RouterGroup) {
 	authGroup.PUT(workingPath, s.putWorking)
 
 	authGroup.PUT(fileStatusPath, s.putFileStatus)
+}
+
+// getQueueStatus gets the server's QueueStatus.
+//
+// LoadSetDB() must already have been called. This is called when there is a GET
+// on /rest/v1/auth/status.
+func (s *Server) getQueueStatus(c *gin.Context) {
+	c.JSON(http.StatusOK, s.QueueStatus())
 }
 
 // putSet interprets the body as a JSON encoding of a set.Set and stores it in
@@ -547,16 +563,31 @@ func (s *Server) putFileStatus(c *gin.Context) {
 }
 
 // updateFileStatus updates the request's file entry status in the db, and
-// removes the request from our queue if not still uploading.
+// removes the request from our queue if not still uploading. Possibly stuck
+// requests are noted in the server's in-memory list of stuck requests.
 func (s *Server) updateFileStatus(r *put.Request) error {
 	entry, err := s.db.SetEntryStatus(r)
 	if err != nil {
 		return err
 	}
 
+	rid := r.ID()
+
+	s.mapMu.Lock()
+	defer s.mapMu.Unlock()
+
 	if r.Status == put.RequestStatusUploading {
+		s.uploading[rid] = r
+
+		if r.Stuck != nil {
+			s.stuckRequests[rid] = r
+		}
+
 		return nil
 	}
+
+	delete(s.uploading, rid)
+	delete(s.stuckRequests, rid)
 
 	return s.removeOrReleaseRequestFromQueue(r, entry)
 }

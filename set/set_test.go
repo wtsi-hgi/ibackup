@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2022 Genome Research Ltd.
+ * Copyright (c) 2022, 2023 Genome Research Ltd.
  *
  * Author: Sendu Bala <sb10@sanger.ac.uk>
  *
@@ -410,10 +410,14 @@ func TestSet(t *testing.T) {
 							Requester: set.Requester,
 							Set:       set.Name,
 							Size:      4,
-							Status:    put.RequestStatusReplaced,
+							Status:    put.RequestStatusUploading,
 							Error:     "",
 						}
 
+						_, err = db.SetEntryStatus(r)
+						So(err, ShouldBeNil)
+
+						r.Status = put.RequestStatusReplaced
 						_, err = db.SetEntryStatus(r)
 						So(err, ShouldBeNil)
 
@@ -436,10 +440,16 @@ func TestSet(t *testing.T) {
 							Requester: set.Requester,
 							Set:       set.Name,
 							Size:      6,
-							Status:    put.RequestStatusFailed,
-							Error:     "upload failed",
+							Status:    put.RequestStatusUploading,
+							Error:     "",
 						}
 
+						_, err = db.SetEntryStatus(r)
+						So(err, ShouldBeNil)
+
+						r.Status = put.RequestStatusFailed
+						errMsg := "upload failed"
+						r.Error = errMsg
 						_, err = db.SetEntryStatus(r)
 						So(err, ShouldBeNil)
 
@@ -458,8 +468,13 @@ func TestSet(t *testing.T) {
 						So(fEntries[3].Status, ShouldEqual, Failed)
 						So(fEntries[3].Attempts, ShouldEqual, 1)
 						So(fEntries[3].LastAttempt.IsZero(), ShouldBeFalse)
-						So(fEntries[3].LastError, ShouldEqual, "upload failed")
+						So(fEntries[3].LastError, ShouldEqual, errMsg)
 
+						r.Status = put.RequestStatusUploading
+						_, err = db.SetEntryStatus(r)
+						So(err, ShouldBeNil)
+						r.Status = put.RequestStatusFailed
+						r.Error = errMsg
 						_, err = db.SetEntryStatus(r)
 						So(err, ShouldBeNil)
 
@@ -478,8 +493,13 @@ func TestSet(t *testing.T) {
 						So(fEntries[3].Status, ShouldEqual, Failed)
 						So(fEntries[3].Attempts, ShouldEqual, 2)
 						So(fEntries[3].LastAttempt.IsZero(), ShouldBeFalse)
-						So(fEntries[3].LastError, ShouldEqual, "upload failed")
+						So(fEntries[3].LastError, ShouldEqual, errMsg)
 
+						r.Status = put.RequestStatusUploading
+						_, err = db.SetEntryStatus(r)
+						So(err, ShouldBeNil)
+						r.Status = put.RequestStatusFailed
+						r.Error = errMsg
 						_, err = db.SetEntryStatus(r)
 						So(err, ShouldBeNil)
 
@@ -498,7 +518,7 @@ func TestSet(t *testing.T) {
 						So(fEntries[3].Status, ShouldEqual, Failed)
 						So(fEntries[3].Attempts, ShouldEqual, 3)
 						So(fEntries[3].LastAttempt.IsZero(), ShouldBeFalse)
-						So(fEntries[3].LastError, ShouldEqual, "upload failed")
+						So(fEntries[3].LastError, ShouldEqual, errMsg)
 
 						r = &put.Request{
 							Local:     "/g/i/m.txt",
@@ -538,10 +558,13 @@ func TestSet(t *testing.T) {
 							Requester: set.Requester,
 							Set:       set.Name,
 							Size:      6,
-							Status:    put.RequestStatusUploaded,
+							Status:    put.RequestStatusUploading,
 							Error:     "",
 						}
 
+						_, err = db.SetEntryStatus(r)
+						So(err, ShouldBeNil)
+						r.Status = put.RequestStatusUploaded
 						_, err = db.SetEntryStatus(r)
 						So(err, ShouldBeNil)
 
@@ -564,7 +587,7 @@ func TestSet(t *testing.T) {
 						So(fEntries[3].Status, ShouldEqual, Uploaded)
 						So(fEntries[3].Attempts, ShouldEqual, 4)
 						So(fEntries[3].LastAttempt.IsZero(), ShouldBeFalse)
-						So(fEntries[3].LastError, ShouldEqual, "upload failed")
+						So(fEntries[3].LastError, ShouldBeBlank)
 
 						Convey("Finally, set status gets reset on new discovery", func() {
 							oldStart := sets[0].StartedDiscovery
@@ -607,10 +630,13 @@ func TestSet(t *testing.T) {
 								Requester: set.Requester,
 								Set:       set.Name,
 								Size:      7,
-								Status:    put.RequestStatusUploaded,
+								Status:    put.RequestStatusUploading,
 								Error:     "",
 							}
 
+							_, err = db.SetEntryStatus(r)
+							So(err, ShouldBeNil)
+							r.Status = put.RequestStatusUploaded
 							_, err = db.SetEntryStatus(r)
 							So(err, ShouldBeNil)
 

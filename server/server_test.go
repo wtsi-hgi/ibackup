@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2022 Genome Research Ltd.
+ * Copyright (c) 2022, 2023 Genome Research Ltd.
  *
  * Author: Sendu Bala <sb10@sanger.ac.uk>
  *
@@ -42,7 +42,7 @@ import (
 
 const (
 	userPerms        = 0700
-	numManyTestFiles = 1000
+	numManyTestFiles = 5000
 )
 
 func TestServer(t *testing.T) {
@@ -301,7 +301,6 @@ func TestServer(t *testing.T) {
 							So(requests[0].Local, ShouldEqual, entries[0].Path)
 
 							requests[0].Status = put.RequestStatusUploading
-
 							err = client.UpdateFileStatus(requests[0])
 							So(err, ShouldBeNil)
 
@@ -315,25 +314,48 @@ func TestServer(t *testing.T) {
 							So(gotSet.Uploaded, ShouldEqual, 0)
 							So(gotSet.NumFiles, ShouldEqual, 6)
 
-							requests[0].Status = put.RequestStatusUploaded
+							requests[0].Status = put.RequestStatusUploading
+							requests[0].Stuck = put.NewStuck(time.Now())
+							err = client.UpdateFileStatus(requests[0])
+							So(err, ShouldBeNil)
 
+							entries, err = client.GetFiles(exampleSet.ID())
+							So(err, ShouldBeNil)
+							So(entries[0].Status, ShouldEqual, set.UploadingEntry)
+							So(entries[0].LastError, ShouldContainSubstring, "stuck?")
+
+							gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+							So(err, ShouldBeNil)
+							So(gotSet.Status, ShouldEqual, set.Uploading)
+							So(gotSet.Uploaded, ShouldEqual, 0)
+							So(gotSet.NumFiles, ShouldEqual, 6)
+							So(gotSet.Failed, ShouldEqual, 0)
+							So(gotSet.Error, ShouldBeBlank)
+
+							requests[0].Status = put.RequestStatusUploaded
 							err = client.UpdateFileStatus(requests[0])
 							So(err, ShouldBeNil)
 
 							entries, err = client.GetFiles(exampleSet.ID())
 							So(err, ShouldBeNil)
 							So(entries[0].Status, ShouldEqual, set.Uploaded)
+							So(entries[0].LastError, ShouldBeBlank)
 
 							gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
 							So(err, ShouldBeNil)
 							So(gotSet.Uploaded, ShouldEqual, 1)
 							So(gotSet.NumFiles, ShouldEqual, 6)
+							So(gotSet.Failed, ShouldEqual, 0)
+							So(gotSet.Error, ShouldBeBlank)
 
 							stats := s.queue.Stats()
 							So(stats.Items, ShouldEqual, 7)
 
-							requests[1].Status = put.RequestStatusFailed
+							requests[1].Status = put.RequestStatusUploading
+							err = client.UpdateFileStatus(requests[1])
+							So(err, ShouldBeNil)
 
+							requests[1].Status = put.RequestStatusFailed
 							err = client.UpdateFileStatus(requests[1])
 							So(err, ShouldBeNil)
 
@@ -360,6 +382,10 @@ func TestServer(t *testing.T) {
 							So(errg, ShouldBeNil)
 							So(len(frequests), ShouldEqual, 1)
 
+							frequests[0].Status = put.RequestStatusUploading
+							err = client.UpdateFileStatus(frequests[0])
+							So(err, ShouldBeNil)
+
 							frequests[0].Status = put.RequestStatusFailed
 							err = client.UpdateFileStatus(frequests[0])
 							So(err, ShouldBeNil)
@@ -378,6 +404,10 @@ func TestServer(t *testing.T) {
 							frequests, err = client.GetSomeUploadRequests()
 							So(err, ShouldBeNil)
 							So(len(frequests), ShouldEqual, 1)
+
+							frequests[0].Status = put.RequestStatusUploading
+							err = client.UpdateFileStatus(frequests[0])
+							So(err, ShouldBeNil)
 
 							frequests[0].Status = put.RequestStatusFailed
 							err = client.UpdateFileStatus(frequests[0])
@@ -406,6 +436,69 @@ func TestServer(t *testing.T) {
 
 							err = client.stillWorkingOnRequests(client.getRequestIDsToTouch())
 							So(err, ShouldBeNil)
+						})
+
+						Convey("Stuck requests are recorded separately by the server, retrievable with QueueStatus", func() {
+							token, errl = gas.Login(addr, certPath, admin, "pass")
+							So(errl, ShouldBeNil)
+
+							client = NewClient(addr, certPath, token)
+
+							qs := s.QueueStatus()
+							So(qs, ShouldNotBeNil)
+							So(len(qs.Stuck), ShouldEqual, 0)
+							So(qs.Total, ShouldEqual, 8)
+							So(qs.Reserved, ShouldEqual, 0)
+							So(qs.Uploading, ShouldEqual, 0)
+
+							qsClient, errs := client.GetQueueStatus()
+							So(errs, ShouldBeNil)
+							So(qsClient, ShouldResemble, qs)
+
+							requests, errg := client.GetSomeUploadRequests()
+							So(errg, ShouldBeNil)
+
+							requests[0].Status = put.RequestStatusUploading
+
+							err = client.UpdateFileStatus(requests[0])
+							So(err, ShouldBeNil)
+
+							entries, err = client.GetFiles(exampleSet.ID())
+							So(err, ShouldBeNil)
+							So(entries[0].Status, ShouldEqual, set.UploadingEntry)
+							So(entries[0].LastError, ShouldBeBlank)
+
+							So(len(s.stuckRequests), ShouldEqual, 0)
+
+							requests[0].Stuck = put.NewStuck(time.Now())
+							err = client.UpdateFileStatus(requests[0])
+							So(err, ShouldBeNil)
+
+							entries, err = client.GetFiles(exampleSet.ID())
+							So(err, ShouldBeNil)
+							So(entries[0].Status, ShouldEqual, set.UploadingEntry)
+							So(entries[0].LastError, ShouldContainSubstring, "stuck?")
+
+							So(len(s.stuckRequests), ShouldEqual, 1)
+
+							qs = s.QueueStatus()
+							So(qs, ShouldNotBeNil)
+							So(len(qs.Stuck), ShouldEqual, 1)
+							So(qs.Total, ShouldEqual, 8)
+							So(qs.Reserved, ShouldEqual, 8)
+							So(qs.Uploading, ShouldEqual, 1)
+
+							requests[0].Status = put.RequestStatusUploaded
+
+							err = client.UpdateFileStatus(requests[0])
+							So(err, ShouldBeNil)
+
+							qs = s.QueueStatus()
+							So(qs, ShouldNotBeNil)
+							So(len(qs.Stuck), ShouldEqual, 0)
+							So(qs.Total, ShouldEqual, 7)
+							So(qs.Reserved, ShouldEqual, 7)
+							So(qs.Uploading, ShouldEqual, 0)
 						})
 
 						Convey("During discovery, you can add a new set", func() {

@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2022 Genome Research Ltd.
+ * Copyright (c) 2022, 2023 Genome Research Ltd.
  *
  * Author: Sendu Bala <sb10@sanger.ac.uk>
  *
@@ -34,6 +34,7 @@ import (
 	"math"
 	"os/user"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/VertebrateResequencing/wr/jobqueue"
@@ -42,6 +43,7 @@ import (
 	"github.com/gammazero/workerpool"
 	"github.com/inconshreveable/log15"
 	gas "github.com/wtsi-hgi/go-authserver"
+	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/set"
 	"github.com/wtsi-ssg/wrstat/v3/scheduler"
 )
@@ -70,18 +72,30 @@ const (
 	racRetriggerDelay             = 1 * time.Minute
 )
 
+// QStatus describes the status of a Server's in-memory put request queue.
+type QStatus struct {
+	Total     int
+	Reserved  int
+	Uploading int
+	Failed    int
+	Stuck     []*put.Request
+}
+
 // Server is used to start a web server that provides a REST API to the setdb
 // package's database, and a website that displays the information nicely.
 type Server struct {
 	gas.Server
-	db       *set.DB
-	filePool *workerpool.WorkerPool
-	dirPool  *workerpool.WorkerPool
-	queue    *queue.Queue
-	sched    *scheduler.Scheduler
-	putCmd   string
-	req      *jqs.Requirements
-	username string
+	db            *set.DB
+	filePool      *workerpool.WorkerPool
+	dirPool       *workerpool.WorkerPool
+	queue         *queue.Queue
+	sched         *scheduler.Scheduler
+	putCmd        string
+	req           *jqs.Requirements
+	username      string
+	uploading     map[string]*put.Request
+	stuckRequests map[string]*put.Request
+	mapMu         sync.RWMutex
 }
 
 // New creates a Server which can serve a REST API and website.
@@ -90,10 +104,12 @@ type Server struct {
 // log/syslog pkg with syslog.new(syslog.LOG_INFO, "tag").
 func New(logWriter io.Writer) *Server {
 	s := &Server{
-		Server:   *gas.New(logWriter),
-		filePool: workerpool.New(workerPoolSizeFiles),
-		dirPool:  workerpool.New(workerPoolSizeDir),
-		queue:    queue.New(context.Background(), "put"),
+		Server:        *gas.New(logWriter),
+		filePool:      workerpool.New(workerPoolSizeFiles),
+		dirPool:       workerpool.New(workerPoolSizeDir),
+		queue:         queue.New(context.Background(), "put"),
+		uploading:     make(map[string]*put.Request),
+		stuckRequests: make(map[string]*put.Request),
 	}
 
 	s.SetStopCallBack(s.stop)
@@ -113,6 +129,31 @@ func (s *Server) EnableAuth(certFile, keyFile string, acb gas.AuthCallback) erro
 	s.username = u.Username
 
 	return s.Server.EnableAuth(certFile, keyFile, acb)
+}
+
+// QueueStatus returns current information about the queue's stats and any
+// possibly stuck requests.
+func (s *Server) QueueStatus() *QStatus {
+	s.mapMu.RLock()
+	defer s.mapMu.RUnlock()
+
+	stats := s.queue.Stats()
+
+	stuck := make([]*put.Request, len(s.stuckRequests))
+	i := 0
+
+	for _, r := range s.stuckRequests {
+		stuck[i] = r
+		i++
+	}
+
+	return &QStatus{
+		Total:     stats.Items,
+		Reserved:  stats.Running,
+		Uploading: len(s.uploading),
+		Failed:    stats.Buried,
+		Stuck:     stuck,
+	}
 }
 
 // EnableJobSubmission enables submission of `ibackup put` jobs to wr in
