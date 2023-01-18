@@ -296,8 +296,9 @@ func TestSet(t *testing.T) {
 						So(sets[0].Status, ShouldEqual, PendingDiscovery)
 						So(sets[0].StartedDiscovery.IsZero(), ShouldBeFalse)
 
-						err = db.SetDiscoveredEntries(set.ID(), []string{"/g/h/l.txt", "/g/i/m.txt"})
+						uset, err := db.SetDiscoveredEntries(set.ID(), []string{"/g/h/l.txt", "/g/i/m.txt"})
 						So(err, ShouldBeNil)
+						So(uset.LastDiscovery, ShouldHappenAfter, sets[0].LastDiscovery)
 
 						fEntries, err := db.GetFileEntries(sets[0].ID())
 						So(err, ShouldBeNil)
@@ -609,7 +610,7 @@ func TestSet(t *testing.T) {
 							So(sets[0].LastCompletedCount, ShouldEqual, 4)
 							So(sets[0].LastCompletedSize, ShouldEqual, 15)
 
-							err = db.SetDiscoveredEntries(set.ID(), []string{"/g/h/l.txt", "/g/i/m.txt", "/g/i/n.txt"})
+							_, err = db.SetDiscoveredEntries(set.ID(), []string{"/g/h/l.txt", "/g/i/m.txt", "/g/i/n.txt"})
 							So(err, ShouldBeNil)
 
 							fEntries, err := db.GetFileEntries(sets[0].ID())

@@ -71,6 +71,7 @@ func TestServer(t *testing.T) {
 	}
 
 	admin := u.Username
+	minMBperSecondUploadSpeed := 10
 
 	Convey("Given a Server", t, func() {
 		logWriter := gas.NewStringLogger()
@@ -103,10 +104,11 @@ func TestServer(t *testing.T) {
 
 				Convey("And then you use client methods AddOrUpdateSet and GetSets", func() {
 					localDir := t.TempDir()
+					remoteDir := filepath.Join(localDir, "remote")
 					exampleSet := &set.Set{
 						Name:        "set1",
 						Requester:   "jim",
-						Transformer: "prefix=" + localDir + ":/remote",
+						Transformer: "prefix=" + localDir + ":" + remoteDir,
 						Monitor:     false,
 					}
 
@@ -199,7 +201,7 @@ func TestServer(t *testing.T) {
 						So(len(racRequests), ShouldEqual, numExistingFiles+len(discovers))
 						So(racRequests[0], ShouldResemble, &put.Request{
 							Local:     files[0],
-							Remote:    "/remote/a",
+							Remote:    filepath.Join(remoteDir, "a"),
 							Requester: exampleSet.Requester,
 							Set:       exampleSet.Name,
 						})
@@ -520,99 +522,219 @@ func TestServer(t *testing.T) {
 							So(qs.Uploading, ShouldEqual, 0)
 						})
 
-						Convey("SendPutResultsToServer automatically updates server given Putter-style output", func() {
+						Convey("Once logged in and with a client", func() {
 							token, errl = gas.Login(addr, certPath, admin, "pass")
 							So(errl, ShouldBeNil)
 
 							client = NewClient(addr, certPath, token)
 
-							requests, errg := client.GetSomeUploadRequests()
-							So(errg, ShouldBeNil)
-							So(len(requests), ShouldEqual, 8)
+							Convey("The client automatically updates server given Putter-style output using SendPutResultsToServer", func() {
+								resultsCh := make(chan *put.Request)
+								uploadStartsCh := make(chan *put.Request)
+								errCh := make(chan error)
 
-							resultsCh := make(chan *put.Request)
-							uploadStartsCh := make(chan *put.Request)
-							errCh := make(chan error)
+								go func() {
+									errCh <- client.SendPutResultsToServer(resultsCh, uploadStartsCh, minMBperSecondUploadSpeed)
+								}()
 
-							go func() {
-								errCh <- client.SendPutResultsToServer(resultsCh, uploadStartsCh, 10)
-							}()
+								requests, errg := client.GetSomeUploadRequests()
+								So(errg, ShouldBeNil)
+								So(len(requests), ShouldEqual, 8)
 
-							// first 4 requests are for set1, 5th is set2, 6-8 are set3, no other details on them
+								gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+								So(err, ShouldBeNil)
+								So(gotSet.Status, ShouldEqual, set.PendingUpload)
+								So(gotSet.NumFiles, ShouldEqual, 6)
+								So(gotSet.Uploaded, ShouldEqual, 0)
 
-							gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
-							So(err, ShouldBeNil)
-							So(gotSet.Status, ShouldEqual, set.PendingUpload)
-							So(gotSet.Uploaded, ShouldEqual, 0)
-							So(gotSet.NumFiles, ShouldEqual, 6)
+								r := requests[0].Clone()
+								r.Status = put.RequestStatusUploading
+								r.Size = 1
+								uploadStartsCh <- r
+								r2 := r.Clone()
+								r2.Status = put.RequestStatusUploaded
+								resultsCh <- r2
 
-							r := requests[0].Clone()
-							r.Status = put.RequestStatusUploading
-							r.Size = 1
-							uploadStartsCh <- r
-							r2 := r.Clone()
-							r2.Status = put.RequestStatusUploaded
-							resultsCh <- r2
+								r3 := requests[1].Clone()
+								r3.Status = put.RequestStatusUnmodified
+								r3.Size = 2
+								resultsCh <- r3
 
-							r3 := requests[1].Clone()
-							r3.Status = put.RequestStatusUnmodified
-							r3.Size = 2
-							resultsCh <- r3
+								r4 := requests[2].Clone()
+								r4.Status = put.RequestStatusUploading
+								r4.Size = 3
+								uploadStartsCh <- r4
+								r5 := r4.Clone()
+								r5.Status = put.RequestStatusReplaced
+								resultsCh <- r5
 
-							r4 := requests[2].Clone()
-							r4.Status = put.RequestStatusUploading
-							r4.Size = 3
-							uploadStartsCh <- r4
-							r5 := r4.Clone()
-							r5.Status = put.RequestStatusReplaced
-							resultsCh <- r5
+								r6 := requests[3].Clone()
+								r6.Status = put.RequestStatusUploading
+								r6.Size = 4
+								uploadStartsCh <- r6
+								r7 := r6.Clone()
+								r7.Status = put.RequestStatusFailed
+								resultsCh <- r7
 
-							r6 := requests[3].Clone()
-							r6.Status = put.RequestStatusUploading
-							r6.Size = 4
-							uploadStartsCh <- r6
-							r7 := r6.Clone()
-							r7.Status = put.RequestStatusFailed
-							resultsCh <- r7
+								gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet2.ID())
+								So(err, ShouldBeNil)
+								So(gotSet.Status, ShouldEqual, set.PendingUpload)
+								So(gotSet.NumFiles, ShouldEqual, 3)
+								So(gotSet.Uploaded, ShouldEqual, 0)
 
-							gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet2.ID())
-							So(err, ShouldBeNil)
-							So(gotSet.Status, ShouldEqual, set.PendingUpload)
-							So(gotSet.NumFiles, ShouldEqual, 3)
-							So(gotSet.Uploaded, ShouldEqual, 0)
+								r8 := requests[4].Clone()
+								r8.Status = put.RequestStatusUploading
+								r8.Size = 5
+								uploadStartsCh <- r8
+								r9 := r8.Clone()
+								r9.Stuck = put.NewStuck(time.Now())
+								resultsCh <- r9
 
-							r8 := requests[4].Clone()
-							r8.Status = put.RequestStatusUploading
-							r8.Size = 5
-							uploadStartsCh <- r8
-							r9 := r8.Clone()
-							r9.Stuck = put.NewStuck(time.Now())
-							resultsCh <- r9
+								close(uploadStartsCh)
+								close(resultsCh)
 
-							close(uploadStartsCh)
-							close(resultsCh)
+								err = <-errCh
+								So(err, ShouldBeNil)
 
-							err = <-errCh
-							So(err, ShouldBeNil)
+								gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+								So(err, ShouldBeNil)
+								So(gotSet.Status, ShouldEqual, set.Complete)
+								So(gotSet.NumFiles, ShouldEqual, 6)
+								So(gotSet.SizeFiles, ShouldEqual, 10)
+								So(gotSet.Uploaded, ShouldEqual, 3)
+								So(gotSet.Failed, ShouldEqual, 1)
 
-							gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
-							So(err, ShouldBeNil)
-							So(gotSet.Status, ShouldEqual, set.Complete)
-							So(gotSet.NumFiles, ShouldEqual, 6)
-							So(gotSet.SizeFiles, ShouldEqual, 10)
-							So(gotSet.Uploaded, ShouldEqual, 3)
-							So(gotSet.Failed, ShouldEqual, 1)
+								gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet2.ID())
+								So(err, ShouldBeNil)
+								So(gotSet.Status, ShouldEqual, set.Uploading)
+								So(gotSet.NumFiles, ShouldEqual, 3)
+								So(gotSet.Uploaded, ShouldEqual, 0)
+								So(gotSet.Error, ShouldBeBlank)
+								entries, err = client.GetFiles(exampleSet2.ID())
+								So(err, ShouldBeNil)
+								So(entries[0].Status, ShouldEqual, set.UploadingEntry)
+								So(entries[0].LastError, ShouldContainSubstring, "stuck?")
+							})
 
-							gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet2.ID())
-							So(err, ShouldBeNil)
-							So(gotSet.Status, ShouldEqual, set.Uploading)
-							So(gotSet.NumFiles, ShouldEqual, 3)
-							So(gotSet.Uploaded, ShouldEqual, 0)
-							So(gotSet.Error, ShouldBeBlank)
-							entries, err = client.GetFiles(exampleSet2.ID())
-							So(err, ShouldBeNil)
-							So(entries[0].Status, ShouldEqual, set.UploadingEntry)
-							So(entries[0].LastError, ShouldContainSubstring, "stuck?")
+							Convey("You can use a Putter to automatically deal with upload requests", func() {
+								requests, errg := client.GetSomeUploadRequests()
+								So(errg, ShouldBeNil)
+
+								for _, r := range requests {
+									err = s.queue.Remove(context.Background(), r.ID())
+									So(err, ShouldBeNil)
+								}
+
+								requests, errg = client.GetSomeUploadRequests()
+								So(errg, ShouldBeNil)
+								So(len(requests), ShouldEqual, 0)
+
+								exampleSet4 := &set.Set{
+									Name:        "set4",
+									Requester:   exampleSet.Requester,
+									Transformer: exampleSet.Transformer,
+									Monitor:     false,
+								}
+
+								err = client.AddOrUpdateSet(exampleSet4)
+								So(err, ShouldBeNil)
+
+								parent := filepath.Dir(files[0])
+								newCollection := "newDir"
+								newDir := filepath.Join(parent, newCollection)
+								newFile := filepath.Join(newDir, "a")
+								createFile(t, newFile, 1)
+
+								err = client.SetDirs(exampleSet4.ID(), []string{newDir})
+								So(err, ShouldBeNil)
+
+								err = client.TriggerDiscovery(exampleSet4.ID())
+								So(err, ShouldBeNil)
+
+								ok := <-racCalled
+								So(ok, ShouldBeTrue)
+
+								requests, errg = client.GetSomeUploadRequests()
+								So(errg, ShouldBeNil)
+								So(len(requests), ShouldEqual, 1)
+
+								gotSet, err = client.GetSetByID(exampleSet4.Requester, exampleSet4.ID())
+								So(err, ShouldBeNil)
+								So(gotSet.Status, ShouldEqual, set.PendingUpload)
+								So(gotSet.NumFiles, ShouldEqual, 1)
+								So(gotSet.Uploaded, ShouldEqual, 0)
+
+								handler, errh := put.GetLocalHandler()
+								So(errh, ShouldBeNil)
+
+								p, errp := put.New(handler, requests)
+								So(errp, ShouldBeNil)
+
+								defer func() {
+									if errc := p.Cleanup(); errc != nil {
+										t.Logf("putter cleanup gave errors: %s", errc)
+									}
+								}()
+
+								err = p.CreateCollections()
+								So(err, ShouldBeNil)
+
+								results, uploadStarts := p.Put()
+
+								err = client.SendPutResultsToServer(results, uploadStarts, minMBperSecondUploadSpeed)
+								So(err, ShouldBeNil)
+
+								gotSet, err = client.GetSetByID(exampleSet4.Requester, exampleSet4.ID())
+								So(err, ShouldBeNil)
+								So(gotSet.Status, ShouldEqual, set.Complete)
+								So(gotSet.NumFiles, ShouldEqual, 1)
+								So(gotSet.Uploaded, ShouldEqual, 1)
+
+								Convey("After completion, re-discovery can find new files and we can re-complete", func() {
+									newFile2 := filepath.Join(newDir, "b")
+									createFile(t, newFile2, 2)
+
+									err = client.TriggerDiscovery(exampleSet4.ID())
+									So(err, ShouldBeNil)
+
+									ok := <-racCalled
+									So(ok, ShouldBeTrue)
+
+									requests, errg = client.GetSomeUploadRequests()
+									So(errg, ShouldBeNil)
+									So(len(requests), ShouldEqual, 2)
+
+									gotSet, err = client.GetSetByID(exampleSet4.Requester, exampleSet4.ID())
+									So(err, ShouldBeNil)
+									So(gotSet.Status, ShouldEqual, set.PendingUpload)
+									So(gotSet.NumFiles, ShouldEqual, 2)
+									So(gotSet.Uploaded, ShouldEqual, 0)
+
+									p, errp = put.New(handler, requests)
+									So(errp, ShouldBeNil)
+									results, uploadStarts = p.Put()
+
+									err = client.SendPutResultsToServer(results, uploadStarts, minMBperSecondUploadSpeed)
+									So(err, ShouldBeNil)
+
+									gotSet, err = client.GetSetByID(exampleSet4.Requester, exampleSet4.ID())
+									So(err, ShouldBeNil)
+									So(gotSet.Status, ShouldEqual, set.Complete)
+									So(gotSet.NumFiles, ShouldEqual, 2)
+									So(gotSet.Uploaded, ShouldEqual, 2)
+
+									entries, err = client.GetFiles(exampleSet4.ID())
+									So(err, ShouldBeNil)
+									So(len(entries), ShouldEqual, 2)
+									So(entries[0].Status, ShouldEqual, set.Uploaded)
+									So(entries[1].Status, ShouldEqual, set.Uploaded)
+
+									_, err = os.Stat(filepath.Join(remoteDir, newCollection, "a"))
+									So(err, ShouldBeNil)
+									_, err = os.Stat(filepath.Join(remoteDir, newCollection, "b"))
+									So(err, ShouldBeNil)
+								})
+							})
 						})
 
 						Convey("During discovery, you can add a new set", func() {

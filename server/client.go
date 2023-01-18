@@ -356,8 +356,12 @@ func (c *Client) SendPutResultsToServer(results, uploadStarts chan *put.Request,
 // if they take too long.
 func (c *Client) handleUploadTracking(uploadStarts chan *put.Request) {
 	go func() {
-		<-time.After(1 * time.Second)
-		c.waitForUploadStarts <- true
+		select {
+		case <-c.uploadsErrCh:
+			close(c.waitForUploadStarts)
+		case <-time.After(1 * time.Second):
+			c.waitForUploadStarts <- true
+		}
 	}()
 
 	uploadsStarted := false

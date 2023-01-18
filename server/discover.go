@@ -96,14 +96,15 @@ func (s *Server) discoverThenEnqueue(given *set.Set, transformer put.PathTransfo
 		close(doneCh)
 	}()
 
-	if err := s.discoverDirEntries(given, doneCh); err != nil {
+	updated, err := s.discoverDirEntries(given, doneCh)
+	if err != nil {
 		s.recordSetError("discover dir contents for %s failed: %s", given.ID(), err)
 
 		return
 	}
 
-	if err := s.enqueueSetFiles(given, transformer); err != nil {
-		s.recordSetError("queuing files for %s failed: %s", given.ID(), err)
+	if err := s.enqueueSetFiles(updated, transformer); err != nil {
+		s.recordSetError("queuing files for %s failed: %s", updated.ID(), err)
 	}
 }
 
@@ -173,10 +174,12 @@ func (s *Server) recordSetError(msg, sid string, err error) {
 // discoverDirEntries concurrently walks the set's directories, waits until
 // the filesDoneCh closes (file entries have been updated), then sets the
 // discovered file paths, which makes the db consider discovery to be complete.
-func (s *Server) discoverDirEntries(given *set.Set, filesDoneCh chan bool) error {
+//
+// Returns the updated set and any error.
+func (s *Server) discoverDirEntries(given *set.Set, filesDoneCh chan bool) (*set.Set, error) {
 	entries, err := s.db.GetDirEntries(given.ID())
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	pathsCh := make(chan string)
@@ -192,7 +195,7 @@ func (s *Server) discoverDirEntries(given *set.Set, filesDoneCh chan bool) error
 
 	err = <-doneCh
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	<-filesDoneCh
@@ -268,7 +271,6 @@ func (s *Server) enqueueSetFiles(given *set.Set, transformer put.PathTransformer
 	}
 
 	entries = uploadableEntries(entries, given)
-
 	defs := make([]*queue.ItemDef, len(entries))
 
 	for i, entry := range entries {

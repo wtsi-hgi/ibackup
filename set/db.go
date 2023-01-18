@@ -279,13 +279,15 @@ func (d *DB) getSetByID(tx *bolt.Tx, setID string) (*Set, []byte, *bolt.Bucket, 
 // It also updates LastDiscovery, sets NumFiles and sets status to
 // PendingUpload.
 //
-// Returns an error if the setID isn't in the database.
-func (d *DB) SetDiscoveredEntries(setID string, paths []string) error {
+// Returns the updated set and an error if the setID isn't in the database.
+func (d *DB) SetDiscoveredEntries(setID string, paths []string) (*Set, error) {
 	if err := d.setEntries(setID, paths, discoveredBucket); err != nil {
-		return err
+		return nil, err
 	}
 
-	return d.db.Update(func(tx *bolt.Tx) error {
+	var updatedSet *Set
+
+	err := d.db.Update(func(tx *bolt.Tx) error {
 		set, bid, b, err := d.getSetByID(tx, setID)
 		if err != nil {
 			return err
@@ -303,8 +305,12 @@ func (d *DB) SetDiscoveredEntries(setID string, paths []string) error {
 		set.NumFiles = numFiles
 		set.Status = PendingUpload
 
+		updatedSet = set
+
 		return b.Put(bid, d.encodeToBytes(set))
 	})
+
+	return updatedSet, err
 }
 
 // SetEntryStatus finds the set Entry corresponding to the given Request's Local
