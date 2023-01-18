@@ -10,6 +10,7 @@ require (
 	github.com/gin-gonic/gin v1.8.2
 	github.com/go-ldap/ldap/v3 v3.4.4
 	github.com/go-resty/resty/v2 v2.7.0
+	github.com/hashicorp/go-multierror v1.1.1
 	github.com/inconshreveable/log15 v3.0.0-testing.5+incompatible
 	github.com/rs/zerolog v1.28.0
 	github.com/smartystreets/goconvey v1.7.2
@@ -73,7 +74,6 @@ require (
 	github.com/grafov/bcast v0.0.0-20190217190352-1447f067e08d // indirect
 	github.com/hanwen/go-fuse/v2 v2.2.0 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
-	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/hashicorp/golang-lru v0.5.4 // indirect
 	github.com/howeyc/gopass v0.0.0-20210920133722-c8aef6fb66ef // indirect
 	github.com/imdario/mergo v0.3.13 // indirect

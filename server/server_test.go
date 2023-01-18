@@ -45,6 +45,25 @@ const (
 	numManyTestFiles = 5000
 )
 
+func TestClient(t *testing.T) {
+	Convey("maxTimeForUpload works with small and large requests, returning minimum 1s", t, func() {
+		c := &Client{}
+
+		c.minMBperSecondUploadSpeed = 10
+		d := c.maxTimeForUpload(&put.Request{Size: 10 * bytesInMiB})
+		So(d, ShouldEqual, 1*time.Second)
+
+		d = c.maxTimeForUpload(&put.Request{Size: 100 * bytesInMiB})
+		So(d, ShouldEqual, 10*time.Second)
+
+		d = c.maxTimeForUpload(&put.Request{Size: 1 * bytesInMiB})
+		So(d, ShouldEqual, 1*time.Second)
+
+		d = c.maxTimeForUpload(&put.Request{Size: 1})
+		So(d, ShouldEqual, 1*time.Second)
+	})
+}
+
 func TestServer(t *testing.T) {
 	u, err := user.Current()
 	if err != nil {
@@ -499,6 +518,101 @@ func TestServer(t *testing.T) {
 							So(qs.Total, ShouldEqual, 7)
 							So(qs.Reserved, ShouldEqual, 7)
 							So(qs.Uploading, ShouldEqual, 0)
+						})
+
+						Convey("SendPutResultsToServer automatically updates server given Putter-style output", func() {
+							token, errl = gas.Login(addr, certPath, admin, "pass")
+							So(errl, ShouldBeNil)
+
+							client = NewClient(addr, certPath, token)
+
+							requests, errg := client.GetSomeUploadRequests()
+							So(errg, ShouldBeNil)
+							So(len(requests), ShouldEqual, 8)
+
+							resultsCh := make(chan *put.Request)
+							uploadStartsCh := make(chan *put.Request)
+							errCh := make(chan error)
+
+							go func() {
+								errCh <- client.SendPutResultsToServer(resultsCh, uploadStartsCh, 10)
+							}()
+
+							// first 4 requests are for set1, 5th is set2, 6-8 are set3, no other details on them
+
+							gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+							So(err, ShouldBeNil)
+							So(gotSet.Status, ShouldEqual, set.PendingUpload)
+							So(gotSet.Uploaded, ShouldEqual, 0)
+							So(gotSet.NumFiles, ShouldEqual, 6)
+
+							r := requests[0].Clone()
+							r.Status = put.RequestStatusUploading
+							r.Size = 1
+							uploadStartsCh <- r
+							r2 := r.Clone()
+							r2.Status = put.RequestStatusUploaded
+							resultsCh <- r2
+
+							r3 := requests[1].Clone()
+							r3.Status = put.RequestStatusUnmodified
+							r3.Size = 2
+							resultsCh <- r3
+
+							r4 := requests[2].Clone()
+							r4.Status = put.RequestStatusUploading
+							r4.Size = 3
+							uploadStartsCh <- r4
+							r5 := r4.Clone()
+							r5.Status = put.RequestStatusReplaced
+							resultsCh <- r5
+
+							r6 := requests[3].Clone()
+							r6.Status = put.RequestStatusUploading
+							r6.Size = 4
+							uploadStartsCh <- r6
+							r7 := r6.Clone()
+							r7.Status = put.RequestStatusFailed
+							resultsCh <- r7
+
+							gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet2.ID())
+							So(err, ShouldBeNil)
+							So(gotSet.Status, ShouldEqual, set.PendingUpload)
+							So(gotSet.NumFiles, ShouldEqual, 3)
+							So(gotSet.Uploaded, ShouldEqual, 0)
+
+							r8 := requests[4].Clone()
+							r8.Status = put.RequestStatusUploading
+							r8.Size = 5
+							uploadStartsCh <- r8
+							r9 := r8.Clone()
+							r9.Stuck = put.NewStuck(time.Now())
+							resultsCh <- r9
+
+							close(uploadStartsCh)
+							close(resultsCh)
+
+							err = <-errCh
+							So(err, ShouldBeNil)
+
+							gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+							So(err, ShouldBeNil)
+							So(gotSet.Status, ShouldEqual, set.Complete)
+							So(gotSet.NumFiles, ShouldEqual, 6)
+							So(gotSet.SizeFiles, ShouldEqual, 10)
+							So(gotSet.Uploaded, ShouldEqual, 3)
+							So(gotSet.Failed, ShouldEqual, 1)
+
+							gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet2.ID())
+							So(err, ShouldBeNil)
+							So(gotSet.Status, ShouldEqual, set.Uploading)
+							So(gotSet.NumFiles, ShouldEqual, 3)
+							So(gotSet.Uploaded, ShouldEqual, 0)
+							So(gotSet.Error, ShouldBeBlank)
+							entries, err = client.GetFiles(exampleSet2.ID())
+							So(err, ShouldBeNil)
+							So(entries[0].Status, ShouldEqual, set.UploadingEntry)
+							So(entries[0].LastError, ShouldContainSubstring, "stuck?")
 						})
 
 						Convey("During discovery, you can add a new set", func() {

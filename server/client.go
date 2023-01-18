@@ -32,23 +32,37 @@ import (
 	"time"
 
 	"github.com/go-resty/resty/v2"
+	"github.com/hashicorp/go-multierror"
 	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/set"
 )
 
-const touchFrequency = ttr / 2
+const (
+	touchFrequency   = ttr / 2
+	minTimeForUpload = 1 * time.Second
+	bytesInMiB       = 1024 * 1024
+
+	// waitForUploadStartsMessages is a channel buffer size we use to allow both
+	// expected messages to be sent when we only read from the channel once.
+	waitForUploadStartsMessages = 2
+)
 
 // Client is used to interact with the Server over the network, with
 // authentication.
 type Client struct {
-	url      string
-	cert     string
-	jwt      string
-	toTouch  map[string]bool
-	touchMu  sync.Mutex
-	touching bool
-	touchErr error
+	url                       string
+	cert                      string
+	jwt                       string
+	toTouch                   map[string]bool
+	touchMu                   sync.Mutex
+	touching                  bool
+	touchErr                  error
+	minMBperSecondUploadSpeed float64
+	uploadsErrCh              chan error
+	waitForUploadStarts       chan bool
+	uploads                   map[string]chan bool
+	uploadsMu                 sync.Mutex
 }
 
 // NewClient returns a Client you can use to call methods on a Server listening
@@ -309,6 +323,132 @@ func (c *Client) getRequestIDsToTouch() []string {
 // Only the user who started the server has permission to call this.
 func (c *Client) stillWorkingOnRequests(rids []string) error {
 	return c.putThing(EndPointAuthWorking, rids)
+}
+
+// SendPutResultsToServer reads from the given channels (as returned by
+// put.Putter.Put()) and sends the results to the server, which will deal with
+// any failures and update its database. Could return an error related to not
+// being able to update the server with the results.
+//
+// If an upload seems to take too long, based on the given minimum MB/s upload
+// speed, tells the server the upload might be stuck, but continues to wait.
+//
+// Do not call this concurrently!
+func (c *Client) SendPutResultsToServer(results, uploadStarts chan *put.Request, minMBperSecondUploadSpeed int) error {
+	c.minMBperSecondUploadSpeed = float64(minMBperSecondUploadSpeed)
+	c.uploadsErrCh = make(chan error)
+	c.uploads = make(map[string]chan bool)
+	c.waitForUploadStarts = make(chan bool, waitForUploadStartsMessages)
+
+	go c.handleUploadTracking(uploadStarts)
+	go c.handleSendingResults(results)
+
+	var merr *multierror.Error
+
+	for err := range c.uploadsErrCh {
+		merr = multierror.Append(merr, err)
+	}
+
+	return merr.ErrorOrNil()
+}
+
+// handleUploadTracking starts timing uploads and sends stuck message to server
+// if they take too long.
+func (c *Client) handleUploadTracking(uploadStarts chan *put.Request) {
+	go func() {
+		<-time.After(1 * time.Second)
+		c.waitForUploadStarts <- true
+	}()
+
+	uploadsStarted := false
+
+	for r := range uploadStarts {
+		c.uploadsMu.Lock()
+
+		if err := c.UpdateFileStatus(r); err != nil {
+			c.uploadsErrCh <- err
+		}
+
+		c.uploads[r.ID()] = c.stuckIfUploadTakesTooLong(r)
+		c.uploadsMu.Unlock()
+
+		if !uploadsStarted {
+			uploadsStarted = true
+			c.waitForUploadStarts <- true
+		}
+	}
+}
+
+// stuckIfUploadTakesTooLong will send stuck info to the server after some time
+// based on the size of the request, unless the returned channel is closed to
+// indicate the upload completed.
+func (c *Client) stuckIfUploadTakesTooLong(request *put.Request) chan bool {
+	started := time.Now()
+	timer := time.NewTimer(c.maxTimeForUpload(request))
+	doneCh := make(chan bool)
+
+	go func() {
+		select {
+		case <-doneCh:
+			timer.Stop()
+
+			return
+		case <-timer.C:
+			request.Stuck = put.NewStuck(started)
+
+			if err := c.UpdateFileStatus(request); err != nil {
+				c.uploadsErrCh <- err
+			}
+
+			<-doneCh
+		}
+	}()
+
+	return doneCh
+}
+
+// maxTimeForUpload assumes uploads happen in at least our
+// minMBperSecondUploadSpeed, and returns a duration based on that and the
+// request Size. The minimum duration returned is 1 second.
+func (c *Client) maxTimeForUpload(r *put.Request) time.Duration {
+	mb := float64(r.Size) / bytesInMiB
+	seconds := mb / c.minMBperSecondUploadSpeed
+	d := time.Duration(seconds) * time.Second
+
+	if d < minTimeForUpload {
+		d = minTimeForUpload
+	}
+
+	return d
+}
+
+// handleSendingResults updates file status for each completed request. If the
+// request had previously started to upload, we also tell our upload tracker
+// that the upload completed.
+func (c *Client) handleSendingResults(results chan *put.Request) {
+	<-c.waitForUploadStarts
+
+	for r := range results {
+		c.uploadsMu.Lock()
+		if doneCh, ok := c.uploads[r.ID()]; ok {
+			delete(c.uploads, r.ID())
+			close(doneCh)
+		}
+		c.uploadsMu.Unlock()
+
+		if err := c.UpdateFileStatus(r); err != nil {
+			c.uploadsErrCh <- err
+		}
+	}
+
+	c.uploadsMu.Lock()
+	for rid, doneCh := range c.uploads {
+		delete(c.uploads, rid)
+		close(doneCh)
+	}
+
+	close(c.uploadsErrCh)
+	c.uploadsMu.Unlock()
 }
 
 // UpdateFileStatus updates a file's status in the DB based on the given

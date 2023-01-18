@@ -33,8 +33,6 @@ import (
 	"os"
 	"os/user"
 	"strings"
-	"sync"
-	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/wtsi-hgi/ibackup/put"
@@ -56,7 +54,6 @@ const (
 	// take; if it drops below this and is still uploading, we'll report to the
 	// server the upload might be stuck.
 	minMBperSecondUploadSpeed = 10
-	bytesInMiB                = 1024 * 1024
 )
 
 // options for this cmd.
@@ -178,7 +175,7 @@ you, so should this.`,
 		results, uploadStarts := p.Put()
 
 		if client != nil {
-			err = sendResultsToServer(client, results, uploadStarts)
+			err = client.SendPutResultsToServer(results, uploadStarts, minMBperSecondUploadSpeed)
 			if err != nil {
 				die("%s", err)
 			}
@@ -377,86 +374,6 @@ func decodeBase64(path string, isEncoded bool) string {
 	}
 
 	return string(b)
-}
-
-// sendResultsToServer reads from the given channel and sends the results to
-// the server, which will deal with any failures and update its database. Could
-// return an error related to not being able to update the server with the
-// results.
-func sendResultsToServer(client *server.Client, results, uploadStarts chan *put.Request) error {
-	var (
-		mu  sync.Mutex
-		err error
-	)
-
-	uploadDoneCh := make(chan bool)
-	uploads := make(map[string]bool)
-
-	go handleUploadTracking(client, uploadStarts, &mu, uploads, uploadDoneCh)
-
-	for r := range results {
-		mu.Lock()
-		if uploads[r.ID()] {
-			delete(uploads, r.ID())
-			uploadDoneCh <- true
-		}
-		mu.Unlock()
-
-		if thisErr := client.UpdateFileStatus(r); thisErr != nil {
-			err = thisErr
-		}
-	}
-
-	close(uploadDoneCh)
-
-	return err
-}
-
-// handleUploadTracking starts timing uploads and sends stuck message to server
-// if they take too long.
-func handleUploadTracking(client *server.Client, uploadStarts chan *put.Request,
-	mu *sync.Mutex, uploads map[string]bool, uploadDoneCh chan bool) {
-	for r := range uploadStarts {
-		mu.Lock()
-		uploads[r.ID()] = true
-		mu.Unlock()
-
-		if thisErr := client.UpdateFileStatus(r); thisErr != nil {
-			warn("failed up update file upload start: %s", thisErr)
-		}
-
-		go stuckIfUploadTakesTooLong(client, r, uploadDoneCh)
-	}
-}
-
-// stuckIfUploadTakesTooLong will send stuck info to the server after some time
-// based on the size of the request, unless we receive on the doneCh.
-func stuckIfUploadTakesTooLong(client *server.Client, request *put.Request, doneCh chan bool) {
-	started := time.Now()
-	timer := time.NewTimer(maxTimeForUpload(request))
-
-	select {
-	case <-doneCh:
-		timer.Stop()
-
-		return
-	case <-timer.C:
-		request.Stuck = put.NewStuck(started)
-
-		if err := client.UpdateFileStatus(request); err != nil {
-			warn("failed up update file upload stuck: %s", err)
-		}
-
-		<-doneCh
-	}
-}
-
-// maxTimeForUpload assumes uploads happen in at least 10MB/s, and returns a
-// duration based on that and the request Size.
-func maxTimeForUpload(r *put.Request) time.Duration {
-	mb := r.Size / bytesInMiB
-
-	return time.Duration(mb/minMBperSecondUploadSpeed) * time.Second
 }
 
 // printResults reads from the given channel, outputs info about them to STDOUT
