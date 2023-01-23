@@ -48,8 +48,8 @@ Start the server process like this (changing the -s and -l option as appropriate
 for your own LDAP):
 
 ```
-export IBACKUP_SERVER_URL='wrstat.internal.sanger.ac.uk:4678'
-export IBACKUP_SERVER_CERT='/nfs/hgi/ibackup/server/cert.pem'
+export IBACKUP_SERVER_URL='internal.domain:4678'
+export IBACKUP_SERVER_CERT='/path/to/cert.pem'
 export no_proxy=localhost,127.0.0.1,.internal.sanger.ac.uk
 
 wr manager start
@@ -62,8 +62,8 @@ Then you can add a new backup set on behalf of a user (setting -t as
 appropriate):
 
 ```
-export IBACKUP_SERVER_URL='wrstat.internal.sanger.ac.uk:4678'
-export IBACKUP_SERVER_CERT='/nfs/hgi/ibackup/server/cert.pem'
+export IBACKUP_SERVER_URL='internal.domain:4678'
+export IBACKUP_SERVER_CERT='/path/to/cert.pem'
 export no_proxy=localhost,127.0.0.1,.internal.sanger.ac.uk
 
 ibackup add --user <the user's username> -n <a good name for the backup set> -t 'prefix=local:remote' [then -d, -f or -p to specify what to backup; see -h for details]
