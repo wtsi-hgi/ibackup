@@ -72,6 +72,7 @@ To describe the backup set you must provide:
     'prefix=local:remote': replace 'local' with a local path prefix, and 'remote'
       with a remote one, eg. 'prefix=/mnt/diska=/zone1' would backup
 	  /mnt/diska/subdir/file.txt to /zone1/subdir/file.txt.
+  This defaults to the environment variable IBACKUP_TRANSFORMER.
 
 You must also provide at least one of:
 --files : the path to a file containing the paths of files you want to have
@@ -105,7 +106,11 @@ option to add sets on behalf of other users.
 		ensureURLandCert()
 
 		if setFiles == "" && setDirs == "" && setPath == "" {
-			die("at least one of --files or --dirs or --path must be set")
+			die("at least one of --files or --dirs or --path must be provided")
+		}
+
+		if setTransformer == "" {
+			die("-t must be provided")
 		}
 
 		client, err := newServerClient(serverURL, serverCert)
@@ -148,7 +153,8 @@ func init() {
 
 	// flags specific to this sub-command
 	addCmd.Flags().StringVarP(&setName, "name", "n", "", "a short name for this backup set")
-	addCmd.Flags().StringVarP(&setTransformer, "transformer", "t", "humgen", "'humgen' | 'prefix=local:remote'")
+	addCmd.Flags().StringVarP(&setTransformer, "transformer", "t",
+		os.Getenv("IBACKUP_TRANSFORMER"), "'humgen' | 'prefix=local:remote'")
 	addCmd.Flags().StringVarP(&setFiles, "files", "f", "",
 		"path to file with one absolute local file path per line")
 	addCmd.Flags().StringVarP(&setDirs, "dirs", "d", "",
@@ -166,10 +172,6 @@ func init() {
 		"pretend to be the this user (only works if you started the server)")
 
 	if err := addCmd.MarkFlagRequired("name"); err != nil {
-		die(err.Error())
-	}
-
-	if err := addCmd.MarkFlagRequired("transformer"); err != nil {
 		die(err.Error())
 	}
 }
