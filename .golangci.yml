@@ -82,16 +82,13 @@ issues:
 linters:
   disable-all: true
   enable:
-    - deadcode
     - errcheck
     - gosimple
     - govet
     - ineffassign
     - staticcheck
-    - structcheck
     - typecheck
     - unused
-    - varcheck
     - containedctx
     - contextcheck
     - cyclop
@@ -100,8 +97,8 @@ linters:
     - durationcheck
     - errname
     - errorlint
-    - exportloopref
     - exhaustive
+    - exportloopref
     - forbidigo
     - forcetypeassert
     - funlen
@@ -130,29 +127,36 @@ linters:
     - nlreturn
     - noctx
     - nolintlint
+    - nosprintfhostport
     - prealloc
     - predeclared
+    - reassign
     - revive
-    - rowserrcheck
     - stylecheck
     - tenv
     - thelper
     - unconvert
     - unparam
-    - wastedassign
+    - usestdlibvars
+    #- wastedassign
     - whitespace
     - wsl
   # disable:
+  #   - asasalint
   #   - asciicheck
   #   - bidichk
   #   - bodyclose
   #   - decorder
   #   - depguard
   #   - errchkjson
+  #   - execinquery
   #   - exhaustivestruct
+  #   - exhaustruct
+  #   - ginkgolinter
   #   - gofmt
   #   - gofumpt
   #   - goheader
+  #   - golint
   #   - gomoddirectives
   #   - gomodguard
   #   - goprintffuncname
@@ -160,12 +164,20 @@ linters:
   #   - ifshort
   #   - interfacer
   #   - ireturn
+  #   - loggercheck
+  #   - maligned
+  #   - nonamedreturns
+  #   - nosnakecase
   #   - paralleltest
   #   - promlinter
-  #   - revive
+  #   - rowserrcheck
+  #   - scopeline
   #   - sqlclosecheck
+  #   - structcheck
   #   - tagliatelle
+  #   - testableexamples
   #   - testpackage
   #   - tparallel
+  #   - varcheck
   #   - varnamelen
   #   - wrapcheck

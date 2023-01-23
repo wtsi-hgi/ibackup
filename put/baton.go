@@ -183,11 +183,8 @@ func rodsItemToMeta(it ex.RodsItem) map[string]string {
 }
 
 // Put uploads request Local to the Remote object, overwriting it if it already
-// exists. It calculates and stores the md5 checksum remotely.
-//
-// NB: extendo does not yet support the "verify" mode, which we need to compare
-// the remote checksum to a locally calculated one. This must be implemented and
-// used before using this in production!
+// exists. It calculates and stores the md5 checksum remotely, comparing to the
+// local checksum.
 func (b *Baton) Put(request *Request) error {
 	_, err := b.putClient.Put(
 		ex.Args{

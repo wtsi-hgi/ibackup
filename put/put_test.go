@@ -26,163 +26,14 @@
 package put
 
 import (
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
-
-const userPerms = 0700
-const errMockStatFail = "stat fail"
-const errMockPutFail = "put fail"
-const errMockMetaFail = "meta fail"
-
-// mockHandler satisfies the Handler interface, treating "Remote" as local
-// paths and moving from Local to Remote for the Put().
-type mockHandler struct {
-	connected   bool
-	cleaned     bool
-	collections []string
-	meta        map[string]map[string]string
-	statfail    string
-	putfail     string
-	metafail    string
-	mu          sync.RWMutex
-}
-
-// Connect does no actual connection, just records this was called and prepares
-// a private variable.
-func (m *mockHandler) Connect() error {
-	m.connected = true
-	m.meta = make(map[string]map[string]string)
-
-	return nil
-}
-
-// Cleanup just records this was called.
-func (m *mockHandler) Cleanup() error {
-	m.cleaned = true
-
-	return nil
-}
-
-// EnsureCollection creates the given dir locally and records that we did this.
-func (m *mockHandler) EnsureCollection(dir string) error {
-	m.collections = append(m.collections, dir)
-
-	return os.MkdirAll(dir, userPerms)
-}
-
-// Stat returns info about the Remote file, which is a local file on disk.
-// Returns an error if statfail == Remote.
-func (m *mockHandler) Stat(request *Request) (*ObjectInfo, error) {
-	if m.statfail == request.Remote {
-		return nil, Error{errMockStatFail, ""}
-	}
-
-	_, err := os.Stat(request.Remote)
-	if os.IsNotExist(err) {
-		return &ObjectInfo{Exists: false}, nil
-	}
-
-	if err != nil {
-		return nil, err
-	}
-
-	meta, exists := m.meta[request.Remote]
-	if !exists {
-		meta = make(map[string]string)
-	}
-
-	return &ObjectInfo{Exists: true, Meta: meta}, nil
-}
-
-// Put just copies from Local to Remote. Returns an error if putfail == Remote.
-func (m *mockHandler) Put(request *Request) error {
-	if m.putfail == request.Remote {
-		return Error{errMockPutFail, ""}
-	}
-
-	in, err := os.Open(request.Local)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-
-	out, err := os.Create(request.Remote)
-	if err != nil {
-		return err
-	}
-
-	defer func() {
-		cerr := out.Close()
-		if err == nil {
-			err = cerr
-		}
-	}()
-
-	if _, err = io.Copy(out, in); err != nil {
-		return err
-	}
-
-	err = out.Sync()
-
-	return err
-}
-
-// RemoveMeta deletes the given keys from a map stored under path. Returns an
-// error if metafail == path.
-func (m *mockHandler) RemoveMeta(path string, meta map[string]string) error {
-	if m.metafail == path {
-		return Error{errMockMetaFail, ""}
-	}
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	pathMeta, exists := m.meta[path]
-	if !exists {
-		return nil
-	}
-
-	for key := range meta {
-		delete(pathMeta, key)
-	}
-
-	return nil
-}
-
-// AddMeta adds the given meta to a map stored under path. Returns an error
-// if metafail == path, or if keys were already defined in the map.
-func (m *mockHandler) AddMeta(path string, meta map[string]string) error {
-	if m.metafail == path {
-		return Error{errMockMetaFail, ""}
-	}
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	pathMeta, exists := m.meta[path]
-	if !exists {
-		pathMeta = make(map[string]string)
-		m.meta[path] = pathMeta
-	}
-
-	for key, val := range meta {
-		if _, exists = pathMeta[key]; exists {
-			return Error{errMockMetaFail, ""}
-		}
-
-		pathMeta[key] = val
-	}
-
-	return nil
-}
 
 func TestPutMock(t *testing.T) {
 	Convey("Given Requests and a mock Handler, you can make a new Putter", t, func() {
@@ -210,10 +61,15 @@ func TestPutMock(t *testing.T) {
 				requests[0].Requester = "John"
 				requests[0].Set = "setA"
 
-				rCh := p.Put()
+				rCh, uCh := p.Put()
+
+				for request := range uCh {
+					So(request.Status, ShouldEqual, RequestStatusUploading)
+				}
 
 				for request := range rCh {
 					So(request.Status, ShouldEqual, RequestStatusUploaded)
+					So(request.Size, ShouldEqual, 2)
 
 					_, err = os.Stat(request.Remote)
 					So(err, ShouldBeNil)
@@ -230,11 +86,15 @@ func TestPutMock(t *testing.T) {
 					requests[0].Meta = map[string]string{"a": "1", "b": "3", "c": "4"}
 					touchFile(requests[0].Local, 1*time.Hour)
 
-					rCh = p.Put()
+					rCh, uCh = p.Put()
 
-					replaced, unmod, other := 0, 0, 0
+					uploading, replaced, unmod, other := 0, 0, 0, 0
 
 					var date string
+
+					for range uCh {
+						uploading++
+					}
 
 					for request := range rCh {
 						switch request.Status {
@@ -254,6 +114,7 @@ func TestPutMock(t *testing.T) {
 					}
 
 					So(replaced, ShouldEqual, 1)
+					So(uploading, ShouldEqual, replaced)
 					So(unmod, ShouldEqual, len(requests)-1)
 					So(other, ShouldEqual, 0)
 
@@ -264,10 +125,12 @@ func TestPutMock(t *testing.T) {
 						p.requests = []*Request{requests[0]}
 
 						<-time.After(1 * time.Second)
-						rCh = p.Put()
+						rCh, uCh = p.Put()
 
-						request := <-rCh
+						request := <-uCh
+						So(request, ShouldBeNil)
 
+						request = <-rCh
 						So(request.Status, ShouldEqual, RequestStatusUnmodified)
 						mh.mu.RLock()
 						So(mh.meta[request.Remote][metaKeyRequester], ShouldEqual, "John,Sam")
@@ -290,7 +153,10 @@ func TestPutMock(t *testing.T) {
 					So(err, ShouldBeNil)
 				}
 
-				rCh := p.Put()
+				rCh, uCh := p.Put()
+
+				request := <-uCh
+				So(request, ShouldBeNil)
 
 				for request := range rCh {
 					So(request.Status, ShouldEqual, RequestStatusMissing)
@@ -302,9 +168,13 @@ func TestPutMock(t *testing.T) {
 				mh.putfail = requests[1].Remote
 				mh.metafail = requests[2].Remote
 
-				rCh := p.Put()
+				rCh, uCh := p.Put()
 
-				fails, uploaded, other := 0, 0, 0
+				uploading, fails, uploaded, other := 0, 0, 0, 0
+
+				for range uCh {
+					uploading++
+				}
 
 				for r := range rCh {
 					switch r.Status {
@@ -313,11 +183,11 @@ func TestPutMock(t *testing.T) {
 
 						switch r.Remote {
 						case requests[0].Remote:
-							So(r.Error.Error(), ShouldContainSubstring, errMockStatFail)
+							So(r.Error, ShouldContainSubstring, errMockStatFail)
 						case requests[1].Remote:
-							So(r.Error.Error(), ShouldContainSubstring, errMockPutFail)
+							So(r.Error, ShouldContainSubstring, errMockPutFail)
 						case requests[2].Remote:
-							So(r.Error.Error(), ShouldContainSubstring, errMockMetaFail)
+							So(r.Error, ShouldContainSubstring, errMockMetaFail)
 						}
 					case RequestStatusUploaded:
 						uploaded++
@@ -329,12 +199,12 @@ func TestPutMock(t *testing.T) {
 				So(fails, ShouldEqual, 3)
 				So(uploaded, ShouldEqual, len(requests)-3)
 				So(other, ShouldEqual, 0)
-
+				So(uploading, ShouldEqual, fails+uploaded-1)
 			})
 		})
 
 		Convey("Put() fails if CreateCollections wasn't run", func() {
-			rCh := p.Put()
+			rCh, _ := p.Put()
 
 			for request := range rCh {
 				So(request.Status, ShouldEqual, RequestStatusFailed)
@@ -454,6 +324,11 @@ func makeTestRequests(t *testing.T, sourceDir, destDir string) []*Request {
 		}
 
 		f, err := os.Create(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		_, err = f.WriteString("1\n")
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2022 Genome Research Ltd.
+ * Copyright (c) 2022, 2023 Genome Research Ltd.
  *
  * Author: Sendu Bala <sb10@sanger.ac.uk>
  *
@@ -36,6 +36,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/wtsi-hgi/ibackup/put"
+	"github.com/wtsi-hgi/ibackup/server"
 )
 
 const (
@@ -48,6 +49,11 @@ const (
 	putFileMinCols = 2
 	putMetaParts   = 2
 	putSet         = "manual"
+
+	// minMBperSecondUploadSpeed is the slowest MB/s we think an upload should
+	// take; if it drops below this and is still uploading, we'll report to the
+	// server the upload might be stuck.
+	minMBperSecondUploadSpeed = 10
 )
 
 // options for this cmd.
@@ -55,6 +61,7 @@ var putFile string
 var putMeta string
 var putVerbose bool
 var putBase64 bool
+var putServerMode bool
 
 // putCmd represents the put command.
 var putCmd = &cobra.Command{
@@ -94,8 +101,16 @@ against a locally-calculated checksum.
 It will overwrite outdated iRODS files, but it will skip files if they already
 exist in iRODS with ibackup:mtime metadata matching the mtime of the local file.
 
+If local file paths are missing, warnings about them will be logged, but this
+cmd will still exit 0. It only exits non-zero on failure to upload an existing
+local file.
+
 Collections for your iRODS paths in column 2 will be automatically created if
 necessary.
+
+(The ibackup server also calls this command with the --from_server and --url
+options instead of a 3 column -f file, which makes this command work on upload
+requests stored in the server.)
 
 You need to have the baton commands in your PATH for this to work.
 
@@ -103,12 +118,30 @@ You also need to have your iRODS environment set up and must be authenticated
 with iRODS (eg. run 'iinit') before running this command. If 'iput' works for
 you, so should this.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		user, err := user.Current()
+		var requests []*put.Request
+		var client *server.Client
+		var err error
+
+		if putServerMode && serverURL != "" {
+			client, err = newServerClient(serverURL, serverCert)
+			if err != nil {
+				die(err.Error())
+			}
+
+			requests, err = client.GetSomeUploadRequests()
+		} else {
+			requests, err = getRequestsFromFile(putFile, putMeta, putBase64)
+		}
+
 		if err != nil {
 			die("%s", err)
 		}
 
-		requests := parsePutFile(putFile, putMeta, user.Username, fofnLineSplitter(false), putBase64)
+		if len(requests) == 0 {
+			info("no requests to work on")
+
+			return
+		}
 
 		handler, err := put.GetBatonHandler()
 		if err != nil {
@@ -119,6 +152,12 @@ you, so should this.`,
 		if err != nil {
 			die("%s", err)
 		}
+
+		defer func() {
+			if errc := p.Cleanup(); errc != nil {
+				warn("cleanup gave errors: %s", errc)
+			}
+		}()
 
 		if putVerbose {
 			info("will create collections")
@@ -133,40 +172,15 @@ you, so should this.`,
 			info("collections created")
 		}
 
-		results := p.Put()
+		results, uploadStarts := p.Put()
 
-		i, fails, replaced, uploads, skipped, total := 0, 0, 0, 0, 0, len(requests)
-
-		for r := range results {
-			i++
-
-			switch r.Status {
-			case put.RequestStatusFailed, put.RequestStatusMissing:
-				warn("[%d/%d] %s %s: %s", i, total, r.Local, r.Status, r.Error)
-			default:
-				if putVerbose {
-					info("[%d/%d] %s %s", i, total, r.Local, r.Status)
-				}
+		if client != nil {
+			err = client.SendPutResultsToServer(results, uploadStarts, minMBperSecondUploadSpeed)
+			if err != nil {
+				die("%s", err)
 			}
-
-			switch r.Status {
-			case put.RequestStatusFailed:
-				fails++
-			case put.RequestStatusMissing:
-				fails++
-			case put.RequestStatusReplaced:
-				replaced++
-			case put.RequestStatusUnmodified:
-				skipped++
-			case put.RequestStatusUploaded:
-				uploads++
-			}
-		}
-
-		info("%d uploaded (%d replaced); %d skipped; %d failed", uploads+replaced, replaced, skipped, fails)
-
-		if fails > 0 {
-			os.Exit(1)
+		} else {
+			printResults(results, len(requests), putVerbose)
 		}
 	},
 }
@@ -183,6 +197,21 @@ func init() {
 		"report upload status of every file")
 	putCmd.Flags().BoolVarP(&putBase64, "base64", "b", false,
 		"input paths are base64 encoded")
+	putCmd.Flags().BoolVarP(&putServerMode, "server", "s", false,
+		"pull requests from the server instead of --file; only usable by the user who started the server")
+}
+
+// getRequestsFromFile reads our 3 column file format from a file or STDIN and
+// turns the info in to put Requests.
+func getRequestsFromFile(file, meta string, base64Encoded bool) ([]*put.Request, error) {
+	user, err := user.Current()
+	if err != nil {
+		return nil, err
+	}
+
+	requests := parsePutFile(file, meta, user.Username, fofnLineSplitter(false), base64Encoded)
+
+	return requests, nil
 }
 
 func parsePutFile(path, meta, requester string, splitter bufio.SplitFunc, base64Encoded bool) []*put.Request {
@@ -345,4 +374,50 @@ func decodeBase64(path string, isEncoded bool) string {
 	}
 
 	return string(b)
+}
+
+// printResults reads from the given channel, outputs info about them to STDOUT
+// and STDERR, then emits summary numbers. Supply the total number of requests
+// made. Exits 1 if there were upload errors.
+func printResults(results chan *put.Request, total int, verbose bool) { //nolint:gocyclo
+	i, missing, fails, replaced, uploads, skipped := 0, 0, 0, 0, 0, 0
+
+	for r := range results {
+		i++
+
+		warnIfBad(r, i, total, verbose)
+
+		switch r.Status {
+		case put.RequestStatusFailed, put.RequestStatusUploading:
+			fails++
+		case put.RequestStatusMissing:
+			missing++
+		case put.RequestStatusReplaced:
+			replaced++
+		case put.RequestStatusUnmodified:
+			skipped++
+		case put.RequestStatusUploaded:
+			uploads++
+		}
+	}
+
+	info("%d uploaded (%d replaced); %d skipped; %d failed; %d missing",
+		uploads+replaced, replaced, skipped, fails, missing)
+
+	if fails > 0 {
+		os.Exit(1)
+	}
+}
+
+// warnIfBad warns if this Request failed or is missing. If verbose, logs at
+// info level the Request details.
+func warnIfBad(r *put.Request, i, total int, verbose bool) {
+	switch r.Status {
+	case put.RequestStatusFailed, put.RequestStatusMissing:
+		warn("[%d/%d] %s %s: %s", i, total, r.Local, r.Status, r.Error)
+	default:
+		if verbose {
+			info("[%d/%d] %s %s", i, total, r.Local, r.Status)
+		}
+	}
 }

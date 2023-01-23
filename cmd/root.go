@@ -39,13 +39,38 @@ import (
 // appLogger is used for logging events in our commands.
 var appLogger = log15.New()
 
+// global options.
+var serverURL string
+var serverCert string
+
+const serverURLEnvKey = "IBACKUP_SERVER_URL"
+const serverCertEnvKey = "IBACKUP_SERVER_CERT"
+
 // RootCmd represents the base command when called without any subcommands.
 var RootCmd = &cobra.Command{
 	Use:   "ibackup",
 	Short: "ibackup backs up local files to iRODS",
 	Long: `ibackup backs up local files to iRODS.
 
-Not yet fully implemented. Try using the sub-commands directly for now.`,
+For automated backups via an ibackup server, use the add and status
+sub-commands, eg.:
+
+echo /abs/path/to/file1.txt > files.txt
+echo /abs/path/to/file2.txt >> files.txt
+echo /abs/path/to/dir1 > dirs.txt
+echo /abs/path/to/dir2 >> dirs.txt
+ibackup add -n myfirstbackup -t 'humgen' -f files.txt -d dirs.txt
+ibackup status
+
+(You'll need the IBACKUP_SERVER_URL and IBACKUP_SERVER_CERT environment
+variables set up for you by whoever started the server.)
+
+
+For manual backups, use the addremote and put sub-commands, eg. to backup
+everything in a directory:
+
+find /abs/path/to/dir -type f -print0 | ibackup addremote --humgen -0 -b | ibackup put -b
+`,
 }
 
 // Execute adds all child commands to the root command and sets flags
@@ -60,27 +85,41 @@ func Execute() {
 func init() {
 	// set up logging to stderr
 	appLogger.SetHandler(log15.LvlFilterHandler(log15.LvlInfo, log15.StderrHandler))
+
+	// global flags
+	RootCmd.PersistentFlags().StringVarP(&serverURL, "url", "u", os.Getenv(serverURLEnvKey),
+		"ibackup server URL in the form host:port")
+	RootCmd.PersistentFlags().StringVarP(&serverCert, "cert", "c", os.Getenv(serverCertEnvKey),
+		"path to server certificate file")
 }
 
-// // setCLIFormat logs plain text log messages to STDERR.
-// func setCLIFormat() {
-// 	appLogger.SetHandler(log15.StreamHandler(os.Stderr, cliFormat()))
-// }
+// ensureURLandCert dies if --url or --cert have not been set.
+func ensureURLandCert() {
+	if serverURL == "" {
+		die("you must supply --url")
+	}
 
-// // cliFormat returns a log15.Format that only prints the plain log msg.
-// func cliFormat() log15.Format { //nolint:ireturn
-// 	return log15.FormatFunc(func(r *log15.Record) []byte {
-// 		b := &bytes.Buffer{}
-// 		fmt.Fprintf(b, "%s\n", r.Msg)
+	if serverCert == "" {
+		die("you must supply --cert")
+	}
+}
 
-// 		return b.Bytes()
-// 	})
-// }
+// logToFile logs to the given file.
+func logToFile(path string) {
+	fh, err := log15.FileHandler(path, log15.LogfmtFormat())
+	if err != nil {
+		warn("Could not log to file [%s]: %s", path, err)
 
-// // cliPrint outputs the message to STDOUT.
-// func cliPrint(msg string, a ...interface{}) {
-// 	fmt.Fprintf(os.Stdout, msg, a...)
-// }
+		return
+	}
+
+	appLogger.SetHandler(fh)
+}
+
+// cliPrint outputs the message to STDOUT.
+func cliPrint(msg string, a ...interface{}) {
+	fmt.Fprintf(os.Stdout, msg, a...)
+}
 
 // info is a convenience to log a message at the Info level.
 func info(msg string, a ...interface{}) {

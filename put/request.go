@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2022 Genome Research Ltd.
+ * Copyright (c) 2022, 2023 Genome Research Ltd.
  *
  * Author: Sendu Bala <sb10@sanger.ac.uk>
  *
@@ -27,14 +27,18 @@ package put
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/dgryski/go-farm"
 )
 
 type RequestStatus string
 
 const (
+	RequestStatusUploading  RequestStatus = "uploading"
 	RequestStatusUploaded   RequestStatus = "uploaded"
 	RequestStatusReplaced   RequestStatus = "replaced"
 	RequestStatusUnmodified RequestStatus = "unmodified"
@@ -42,7 +46,36 @@ const (
 	RequestStatusFailed     RequestStatus = "failed"
 	ErrNotHumgenLustre                    = "not a valid humgen lustre path"
 	metaListSeparator                     = ","
+	stuckTimeFormat                       = "02/01/06 15:04 MST"
 )
+
+// Stuck is used to provide details of a potentially "stuck" upload Request.
+type Stuck struct {
+	UploadStarted time.Time
+	Host          string
+	PID           int
+}
+
+// NewStuck returns a Stuck with the given UploadStarted and the current Host
+// and PID.
+func NewStuck(uploadStarted time.Time) *Stuck {
+	hostname, err := os.Hostname()
+	if err != nil {
+		hostname = "unknown"
+	}
+
+	return &Stuck{
+		UploadStarted: uploadStarted,
+		Host:          hostname,
+		PID:           os.Getpid(),
+	}
+}
+
+// String returns a message explaining our stuck details.
+func (s *Stuck) String() string {
+	return fmt.Sprintf("upload stuck? started %s on host %s, PID %d",
+		s.UploadStarted.Format(stuckTimeFormat), s.Host, s.PID)
+}
 
 // Request represents a local file you would like transferred to a remote iRODS
 // path, and any extra metadata (beyond the defaults which include user, group,
@@ -55,9 +88,21 @@ type Request struct {
 	Set        string
 	Meta       map[string]string
 	Status     RequestStatus
-	Error      error
+	Size       uint64 // size of Local in bytes, set for you on returned Requests.
+	Error      string
+	Stuck      *Stuck
 	remoteMeta map[string]string
 	skipPut    bool
+}
+
+// ID returns a deterministic identifier that is unique to this Request's
+// combination of Local, Remote, Requester and Set.
+func (r *Request) ID() string {
+	concat := strings.Join([]string{r.Local, r.Remote, r.Requester, r.Set}, ":")
+
+	l, h := farm.Hash128([]byte(concat))
+
+	return fmt.Sprintf("%016x%016x", l, h)
 }
 
 // ValidatePaths checks that both Local and Remote paths are absolute. (It does
@@ -75,6 +120,27 @@ func (r *Request) ValidatePaths() error {
 	}
 
 	return nil
+}
+
+// Clone returns a copy of this request that can safely be altered without
+// affecting the original.
+func (r *Request) Clone() *Request {
+	clone := &Request{
+		Local:      r.Local,
+		Remote:     r.Remote,
+		Requester:  r.Requester,
+		Set:        r.Set,
+		Meta:       r.Meta,
+		Status:     r.Status,
+		Size:       r.Size,
+		Error:      r.Error,
+		remoteMeta: r.remoteMeta,
+		skipPut:    r.skipPut,
+	}
+
+	clone.cloneMeta()
+
+	return clone
 }
 
 // addStandardMeta ensures our Meta is unique to us, and adds key vals from the
@@ -106,13 +172,19 @@ func (r *Request) addStandardMeta(diskMeta, remoteMeta map[string]string) {
 // cloneMeta is used to ensure that our Meta is unique to us, so that if we
 // alter it, we don't alter any other Request's Meta.
 func (r *Request) cloneMeta() {
-	clone := make(map[string]string, len(r.Meta))
+	r.Meta = cloneMap(r.Meta)
+	r.remoteMeta = cloneMap(r.remoteMeta)
+}
 
-	for k, v := range r.Meta {
+// cloneMap makes a copy of the given map.
+func cloneMap(m map[string]string) map[string]string {
+	clone := make(map[string]string, len(m))
+
+	for k, v := range m {
 		clone[k] = v
 	}
 
-	r.Meta = clone
+	return clone
 }
 
 // addDate adds the current date to Meta, replacing any exisiting value.

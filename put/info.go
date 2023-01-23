@@ -46,6 +46,7 @@ const (
 
 type ObjectInfo struct {
 	Exists bool
+	Size   uint64
 	Meta   map[string]string
 }
 
@@ -69,6 +70,7 @@ func Stat(localPath string) (*ObjectInfo, error) {
 
 	return &ObjectInfo{
 		Exists: true,
+		Size:   uint64(fi.Size()),
 		Meta: map[string]string{
 			metaKeyMtime: mtime,
 			metaKeyOwner: user,

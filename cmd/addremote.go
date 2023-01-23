@@ -111,7 +111,7 @@ func init() {
 	addremoteCmd.Flags().BoolVar(&arHumgen, "humgen", false,
 		"generate the humgen zone canonical path for lustre paths")
 	addremoteCmd.Flags().BoolVarP(&arNull, "null", "0", false,
-		"input paths are terminated by a null charcater instead of a new line")
+		"input paths are terminated by a null character instead of a new line")
 	addremoteCmd.Flags().BoolVarP(&arBase64, "base64", "b", false,
 		"output paths base64 encoded")
 }

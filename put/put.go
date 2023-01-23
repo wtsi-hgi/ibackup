@@ -192,24 +192,30 @@ func noLeavesOrNewLeaf(uniqueLeafs []string, last string) bool {
 // a perfect upload. The request metadata will then replace any existing
 // metadata with the same keys on the Remote object.
 //
-// All our requests are eventually sent on the returned channel (in potentially
-// a different order to our input Request slice) with Status set on them:
+// All our requests are eventually sent on the first returned channel (in
+// potentially a different order to our input Request slice) with Status set on
+// them:
 //
 //	"uploaded":   a new object was uploaded to iRODS
 //	"replaced":   an existing object was replaced in iRODS, because Local was
-//				  newer than Remote
+//	              newer than Remote
 //	"unmodified": Local and Remote had the same modification time, so nothing
-//				  was done
+//	              was done
 //	"missing":    Local path could not be accessed, upload skipped; see Error
 //	"failed":     An upload attempt failed; see Error
-func (p *Putter) Put() chan *Request {
+//
+// The second returned channel receives an input request with Status uploading
+// as soon as we start to upload that request. All input requests are not
+// guaranteed to be send on this channel (eg. not missing or unmodified ones).
+func (p *Putter) Put() (chan *Request, chan *Request) {
 	returnCh := make(chan *Request, len(p.requests))
+	uploadStartCh := make(chan *Request, len(p.requests))
 	putCh := make(chan *Request, len(p.requests))
 
 	go p.pickFilesToPut(putCh, returnCh)
-	go p.putFilesInIRODS(putCh, returnCh)
+	go p.putFilesInIRODS(putCh, returnCh, uploadStartCh)
 
-	return returnCh
+	return returnCh, uploadStartCh
 }
 
 // pickFilesToPut goes through all our Requests, immediately returns bad ones
@@ -246,6 +252,8 @@ func (p *Putter) statPathsAndReturnOrPut(request *Request, putCh chan *Request, 
 		return
 	}
 
+	request.Size = lInfo.Size
+
 	rInfo, err := p.handler.Stat(request)
 	if err != nil {
 		sendRequest(request, RequestStatusFailed, err, returnCh)
@@ -262,13 +270,13 @@ func (p *Putter) statPathsAndReturnOrPut(request *Request, putCh chan *Request, 
 	}
 
 	if lInfo.HasSameModTime(rInfo) {
-		if request.needsMetadataUpdate() {
-			sendRequest(request, RequestStatusUnmodified, nil, putCh)
+		ch := returnCh
 
-			return
+		if request.needsMetadataUpdate() {
+			ch = putCh
 		}
 
-		sendRequest(request, RequestStatusUnmodified, nil, returnCh)
+		sendRequest(request, RequestStatusUnmodified, nil, ch)
 
 		return
 	}
@@ -280,14 +288,21 @@ func (p *Putter) statPathsAndReturnOrPut(request *Request, putCh chan *Request, 
 // down the given channel.
 func sendRequest(request *Request, status RequestStatus, err error, ch chan *Request) {
 	request.Status = status
-	request.Error = err
+
+	if err != nil {
+		request.Error = err.Error()
+	} else {
+		request.Error = ""
+	}
+
 	ch <- request
 }
 
 // putFilesInIRODS uses our handler to Put() requests sent on the given putCh in
 // to iRODS sequentially, and concurrently ReplaceMetadata() on those objects
-// once they're in.
-func (p *Putter) putFilesInIRODS(putCh chan *Request, returnCh chan *Request) {
+// once they're in. When each request is about to start uploading, it is sent
+// on uploadStartCh.
+func (p *Putter) putFilesInIRODS(putCh chan *Request, returnCh, uploadStartCh chan *Request) {
 	metaCh := make(chan *Request, len(p.requests))
 	metaDoneCh := p.applyMetadataConcurrently(metaCh, returnCh)
 
@@ -298,9 +313,13 @@ func (p *Putter) putFilesInIRODS(putCh chan *Request, returnCh chan *Request) {
 			continue
 		}
 
+		uploading := request.Clone()
+		uploading.Status = RequestStatusUploading
+		uploadStartCh <- uploading
+
 		if err := p.handler.Put(request); err != nil {
 			request.Status = RequestStatusFailed
-			request.Error = err
+			request.Error = err.Error()
 			returnCh <- request
 
 			continue
@@ -309,6 +328,7 @@ func (p *Putter) putFilesInIRODS(putCh chan *Request, returnCh chan *Request) {
 		metaCh <- request
 	}
 
+	close(uploadStartCh)
 	close(metaCh)
 	<-metaDoneCh
 	close(returnCh)
@@ -323,7 +343,7 @@ func (p *Putter) applyMetadataConcurrently(metaCh chan *Request, returnCh chan *
 
 			if err := p.removeMeta(request.Remote, toRemove); err != nil {
 				request.Status = RequestStatusFailed
-				request.Error = err
+				request.Error = err.Error()
 				returnCh <- request
 
 				continue
@@ -331,7 +351,7 @@ func (p *Putter) applyMetadataConcurrently(metaCh chan *Request, returnCh chan *
 
 			if err := p.addMeta(request.Remote, toAdd); err != nil {
 				request.Status = RequestStatusFailed
-				request.Error = err
+				request.Error = err.Error()
 			}
 
 			returnCh <- request
