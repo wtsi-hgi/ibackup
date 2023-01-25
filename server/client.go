@@ -61,6 +61,7 @@ type Client struct {
 	minMBperSecondUploadSpeed float64
 	uploadsErrCh              chan error
 	waitForUploadStarts       chan bool
+	waitedForUploadStart      chan bool
 	uploads                   map[string]chan bool
 	uploadsMu                 sync.Mutex
 }
@@ -90,17 +91,28 @@ func (c *Client) AddOrUpdateSet(set *set.Set) error {
 	return c.putThing(EndPointAuthSet, set)
 }
 
-// putThing sends thing encoded as JSON in the body via a PUT to the given
-// url.
-func (c *Client) putThing(url string, thing interface{}) error {
-	resp, err := c.request().ForceContentType("application/json").
-		SetBody(thing).
-		Put(url)
+// putThing sends thing encoded as JSON in the body via a PUT to the given url.
+// If optionalResponseThing is defined, gets that decoded from the JSON
+// response.
+func (c *Client) putThing(url string, thing interface{}, optionalResponseThing ...interface{}) error {
+	req := c.setBodyAndOptionalResult(thing, optionalResponseThing...)
+
+	resp, err := req.Put(url)
 	if err != nil {
 		return err
 	}
 
 	return responseToErr(resp)
+}
+
+func (c *Client) setBodyAndOptionalResult(thing interface{}, optionalResponseThing ...interface{}) *resty.Request {
+	req := c.request().ForceContentType("application/json").SetBody(thing)
+
+	if len(optionalResponseThing) == 1 {
+		req = req.SetResult(&optionalResponseThing[0])
+	}
+
+	return req
 }
 
 // responseToErr converts a response's status code to one of our errors, or nil
@@ -118,15 +130,6 @@ func responseToErr(resp *resty.Response) error {
 	default:
 		return ErrInteral
 	}
-}
-
-// GetQueueStatus gets information about the server's queue.
-func (c *Client) GetQueueStatus() (*QStatus, error) {
-	var qs *QStatus
-
-	err := c.getThing(EndPointAuthQueueStatus, &qs)
-
-	return qs, err
 }
 
 // GetSets gets details about a given requester's backup sets from the
@@ -339,6 +342,7 @@ func (c *Client) SendPutResultsToServer(results, uploadStarts chan *put.Request,
 	c.uploadsErrCh = make(chan error)
 	c.uploads = make(map[string]chan bool)
 	c.waitForUploadStarts = make(chan bool, waitForUploadStartsMessages)
+	c.waitedForUploadStart = make(chan bool)
 
 	go c.handleUploadTracking(uploadStarts)
 	go c.handleSendingResults(results)
@@ -349,6 +353,8 @@ func (c *Client) SendPutResultsToServer(results, uploadStarts chan *put.Request,
 		merr = multierror.Append(merr, err)
 	}
 
+	close(c.waitedForUploadStart)
+
 	return merr.ErrorOrNil()
 }
 
@@ -356,10 +362,12 @@ func (c *Client) SendPutResultsToServer(results, uploadStarts chan *put.Request,
 // if they take too long.
 func (c *Client) handleUploadTracking(uploadStarts chan *put.Request) {
 	go func() {
+		timer := time.NewTimer(1 * time.Second)
+
 		select {
-		case <-c.uploadsErrCh:
-			close(c.waitForUploadStarts)
-		case <-time.After(1 * time.Second):
+		case <-c.waitedForUploadStart:
+			timer.Stop()
+		case <-timer.C:
 			c.waitForUploadStarts <- true
 		}
 	}()
@@ -371,6 +379,8 @@ func (c *Client) handleUploadTracking(uploadStarts chan *put.Request) {
 
 		if err := c.UpdateFileStatus(r); err != nil {
 			c.uploadsErrCh <- err
+
+			continue
 		}
 
 		c.uploads[r.ID()] = c.stuckIfUploadTakesTooLong(r)
@@ -431,6 +441,7 @@ func (c *Client) maxTimeForUpload(r *put.Request) time.Duration {
 // that the upload completed.
 func (c *Client) handleSendingResults(results chan *put.Request) {
 	<-c.waitForUploadStarts
+	c.waitedForUploadStart <- true
 
 	for r := range results {
 		c.uploadsMu.Lock()

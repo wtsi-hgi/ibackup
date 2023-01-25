@@ -77,13 +77,16 @@ func TestServer(t *testing.T) {
 		logWriter := gas.NewStringLogger()
 		s := New(logWriter)
 
-		Convey("You can Start the Server with Auth and LoadSetDB", func() {
+		Convey("You can Start the Server with Auth, MakeQueueEndPoints and LoadSetDB", func() {
 			certPath, keyPath, err := gas.CreateTestCert(t)
 			So(err, ShouldBeNil)
 
 			err = s.EnableAuth(certPath, keyPath, func(u, p string) (bool, string) {
 				return true, "1"
 			})
+			So(err, ShouldBeNil)
+
+			err = s.MakeQueueEndPoints()
 			So(err, ShouldBeNil)
 
 			path := createDBLocation(t)
@@ -520,6 +523,141 @@ func TestServer(t *testing.T) {
 							So(qs.Total, ShouldEqual, 7)
 							So(qs.Reserved, ShouldEqual, 7)
 							So(qs.Uploading, ShouldEqual, 0)
+						})
+
+						Convey("Buried requests can be retrieved, kicked and removed", func() {
+							token, errl = gas.Login(addr, certPath, admin, "pass")
+							So(errl, ShouldBeNil)
+
+							client = NewClient(addr, certPath, token)
+
+							buried := s.BuriedRequests()
+							So(buried, ShouldBeNil)
+
+							var failedRequest *put.Request
+
+							failARequest := func() {
+								for i := 0; i < set.AttemptsToBeConsideredFailing; i++ {
+									requests, errg := client.GetSomeUploadRequests()
+									So(errg, ShouldBeNil)
+									So(len(requests), ShouldBeGreaterThan, 0)
+
+									requests[0].Status = put.RequestStatusUploading
+									err = client.UpdateFileStatus(requests[0])
+									So(err, ShouldBeNil)
+
+									requests[0].Status = put.RequestStatusFailed
+									err = client.UpdateFileStatus(requests[0])
+									So(err, ShouldBeNil)
+
+									failedRequest = requests[0]
+
+									if len(requests) > 1 {
+										for i, r := range requests {
+											if i == 0 {
+												continue
+											}
+
+											err = s.queue.Release(context.Background(), r.ID())
+											So(err, ShouldBeNil)
+										}
+									}
+								}
+							}
+
+							failARequest()
+
+							qs := s.QueueStatus()
+							So(qs, ShouldNotBeNil)
+							So(len(qs.Stuck), ShouldEqual, 0)
+							So(qs.Total, ShouldEqual, 8)
+							So(qs.Reserved, ShouldEqual, 0)
+							So(qs.Uploading, ShouldEqual, 0)
+							So(qs.Failed, ShouldEqual, 1)
+
+							buried = s.BuriedRequests()
+							So(buried, ShouldNotBeNil)
+							So(len(buried), ShouldEqual, 1)
+
+							cburied, errb := client.BuriedRequests()
+							So(errb, ShouldBeNil)
+							So(cburied, ShouldResemble, buried)
+
+							bf := &BuriedFilter{}
+
+							n, errr := client.RetryBuried(bf)
+							So(errr, ShouldBeNil)
+							So(n, ShouldEqual, 1)
+
+							qs = s.QueueStatus()
+							So(qs, ShouldNotBeNil)
+							So(qs.Total, ShouldEqual, 8)
+							So(qs.Reserved, ShouldEqual, 0)
+							So(qs.Uploading, ShouldEqual, 0)
+							So(qs.Failed, ShouldEqual, 0)
+							So(s.queue.Stats().Ready, ShouldEqual, 8)
+
+							failARequest()
+
+							qs = s.QueueStatus()
+							So(qs, ShouldNotBeNil)
+							So(qs.Total, ShouldEqual, 8)
+							So(qs.Reserved, ShouldEqual, 0)
+							So(qs.Uploading, ShouldEqual, 0)
+							So(qs.Failed, ShouldEqual, 1)
+
+							n, errr = client.RemoveBuried(bf)
+							So(errr, ShouldBeNil)
+							So(n, ShouldEqual, 1)
+
+							qs = s.QueueStatus()
+							So(qs, ShouldNotBeNil)
+							So(qs.Total, ShouldEqual, 7)
+							So(qs.Reserved, ShouldEqual, 0)
+							So(qs.Uploading, ShouldEqual, 0)
+							So(qs.Failed, ShouldEqual, 0)
+
+							failARequest()
+
+							invalid := "invalid"
+							bf.User = invalid
+							n, errr = client.RetryBuried(bf)
+							So(errr, ShouldBeNil)
+							So(n, ShouldEqual, 0)
+
+							bf.User = failedRequest.Requester
+							bf.Set = invalid
+							n, errr = client.RetryBuried(bf)
+							So(errr, ShouldBeNil)
+							So(n, ShouldEqual, 0)
+
+							bf.Set = failedRequest.Set
+							bf.Path = invalid
+							n, errr = client.RetryBuried(bf)
+							So(errr, ShouldBeNil)
+							So(n, ShouldEqual, 0)
+
+							bf.Path = failedRequest.Local
+							n, errr = client.RetryBuried(bf)
+							So(errr, ShouldBeNil)
+							So(n, ShouldEqual, 1)
+
+							failARequest()
+
+							bf = &BuriedFilter{
+								User: failedRequest.Requester,
+							}
+							n, errr = client.RetryBuried(bf)
+							So(errr, ShouldBeNil)
+							So(n, ShouldEqual, 1)
+
+							failARequest()
+
+							bf.User = failedRequest.Requester
+							bf.Set = failedRequest.Set
+							n, errr = client.RetryBuried(bf)
+							So(errr, ShouldBeNil)
+							So(n, ShouldEqual, 1)
 						})
 
 						Convey("Once logged in and with a client", func() {

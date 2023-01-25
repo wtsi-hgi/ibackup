@@ -72,15 +72,6 @@ const (
 	racRetriggerDelay             = 1 * time.Minute
 )
 
-// QStatus describes the status of a Server's in-memory put request queue.
-type QStatus struct {
-	Total     int
-	Reserved  int
-	Uploading int
-	Failed    int
-	Stuck     []*put.Request
-}
-
 // Server is used to start a web server that provides a REST API to the setdb
 // package's database, and a website that displays the information nicely.
 type Server struct {
@@ -129,31 +120,6 @@ func (s *Server) EnableAuth(certFile, keyFile string, acb gas.AuthCallback) erro
 	s.username = u.Username
 
 	return s.Server.EnableAuth(certFile, keyFile, acb)
-}
-
-// QueueStatus returns current information about the queue's stats and any
-// possibly stuck requests.
-func (s *Server) QueueStatus() *QStatus {
-	s.mapMu.RLock()
-	defer s.mapMu.RUnlock()
-
-	stats := s.queue.Stats()
-
-	stuck := make([]*put.Request, len(s.stuckRequests))
-	i := 0
-
-	for _, r := range s.stuckRequests {
-		stuck[i] = r
-		i++
-	}
-
-	return &QStatus{
-		Total:     stats.Items,
-		Reserved:  stats.Running,
-		Uploading: len(s.uploading),
-		Failed:    stats.Buried,
-		Stuck:     stuck,
-	}
 }
 
 // EnableJobSubmission enables submission of `ibackup put` jobs to wr in

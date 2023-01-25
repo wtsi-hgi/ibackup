@@ -28,6 +28,8 @@ package cmd
 
 import (
 	"github.com/spf13/cobra"
+	"github.com/wtsi-hgi/ibackup/put"
+	"github.com/wtsi-hgi/ibackup/server"
 )
 
 // options for this cmd.
@@ -52,12 +54,12 @@ IBACKUP_SERVER_URL environment variable, or overriding that with the --url
 argument) and if necessary, the certificate (using the IBACKUP_SERVER_CERT
 environment variable, or overriding that with the --cert argument).
 
-You can --retry or --delete --all currently buried items, or specify which ones
-by setting --user and --name (apply to all buried items in the set with that
-name belonging to that user). You can also add a local --path to limit to the a
+You can --retry or --delete --all currently buried requests, or specify which
+ones by setting --user and --name (apply to all buried requests in the set with
+that name belonging to that user). You can also add a local --path to limit to a
 single file in that set.
 
-Specifying nothing displays details about all currently buried items in the
+Specifying nothing displays details about all currently buried requests in the
 queue.
 `,
 	Run: func(cmd *cobra.Command, args []string) {
@@ -70,6 +72,11 @@ queue.
 
 		if queueDelete && queueKick {
 			die("-d and -r are mutually exclusive")
+		}
+
+		client, err := newServerClient(serverURL, serverCert)
+		if err != nil {
+			die(err.Error())
 		}
 
 		if queueDelete || queueKick {
@@ -88,6 +95,25 @@ queue.
 			if queueUser == "" && !queueAll {
 				die("at least one of --all or --user must be provided")
 			}
+
+			bf := &server.BuriedFilter{
+				User: queueUser,
+				Set:  queueSet,
+				Path: queuePath,
+			}
+
+			if queueAll {
+				bf = nil
+			}
+
+			handleBuried(client, queueDelete, queueKick, bf)
+		} else {
+			rs, err := client.BuriedRequests()
+			if err != nil {
+				die("unable to get buried requests: %s", err)
+			}
+
+			displayBuriedRequests(rs)
 		}
 	},
 }
@@ -105,4 +131,32 @@ func init() {
 		"delete certain buried items in the queue")
 	queueCmd.Flags().BoolVarP(&queueKick, "retry", "r", false,
 		"retry certain buried items in the queue")
+}
+
+func displayBuriedRequests(rs []*put.Request) {
+	for _, r := range rs {
+		cliPrint("%+v", r)
+	}
+}
+
+func handleBuried(client *server.Client, remove, retry bool, bf *server.BuriedFilter) {
+	var (
+		n      int
+		err    error
+		action string
+	)
+
+	if remove {
+		n, err = client.RemoveBuried(bf)
+		action = "removed"
+	} else if retry {
+		n, err = client.RetryBuried(bf)
+		action = "retried"
+	}
+
+	if err != nil {
+		die("unable to process buried requests: %s", err)
+	}
+
+	cliPrint("%d requests %s", n, action)
 }

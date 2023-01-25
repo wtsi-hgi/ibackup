@@ -87,9 +87,9 @@ func init() {
 	appLogger.SetHandler(log15.LvlFilterHandler(log15.LvlInfo, log15.StderrHandler))
 
 	// global flags
-	RootCmd.PersistentFlags().StringVarP(&serverURL, "url", "u", os.Getenv(serverURLEnvKey),
+	RootCmd.PersistentFlags().StringVar(&serverURL, "url", os.Getenv(serverURLEnvKey),
 		"ibackup server URL in the form host:port")
-	RootCmd.PersistentFlags().StringVarP(&serverCert, "cert", "c", os.Getenv(serverCertEnvKey),
+	RootCmd.PersistentFlags().StringVar(&serverCert, "cert", os.Getenv(serverCertEnvKey),
 		"path to server certificate file")
 }
 
