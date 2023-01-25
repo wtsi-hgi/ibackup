@@ -121,7 +121,7 @@ ctrl-z; bg. Or better yet, use the daemonize program to daemonize this.
 			die("failed to make queue endpoints: %s", err)
 		}
 
-		err = s.EnableJobSubmission(fmt.Sprintf("%s put -s -u '%s' -c '%s'", exe, serverURL, serverCert),
+		err = s.EnableJobSubmission(fmt.Sprintf("%s put -s --url '%s' --cert '%s'", exe, serverURL, serverCert),
 			"production", "", "", appLogger)
 		if err != nil {
 			die("failed to enable job submission: %s", err)
