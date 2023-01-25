@@ -581,6 +581,11 @@ func (s *Server) updateFileStatus(r *put.Request) error {
 // it being buried.
 func (s *Server) removeOrReleaseRequestFromQueue(r *put.Request, entry *set.Entry) error {
 	if r.Status == put.RequestStatusFailed {
+		if item, err := s.queue.Get(r.ID()); err == nil {
+			stats := item.Stats()
+			s.queue.Update(context.Background(), item.Key, "", r, stats.Priority, stats.Delay, stats.TTR) //nolint:errcheck
+		}
+
 		if entry.Attempts%set.AttemptsToBeConsideredFailing == 0 {
 			return s.queue.Bury(r.ID())
 		}

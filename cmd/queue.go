@@ -102,10 +102,6 @@ queue.
 				Path: queuePath,
 			}
 
-			if queueAll {
-				bf = nil
-			}
-
 			handleBuried(client, queueDelete, queueKick, bf)
 		} else {
 			rs, err := client.BuriedRequests()
@@ -134,8 +130,16 @@ func init() {
 }
 
 func displayBuriedRequests(rs []*put.Request) {
+	if len(rs) == 0 {
+		warn("no buried requests")
+
+		return
+	}
+
+	cliPrint("Requester\tSet\tPath\tError\n")
+
 	for _, r := range rs {
-		cliPrint("%+v", r)
+		cliPrint("%s\t%s\t%s\t%s\n", r.Requester, r.Set, r.Local, r.Error)
 	}
 }
 
@@ -158,5 +162,5 @@ func handleBuried(client *server.Client, remove, retry bool, bf *server.BuriedFi
 		die("unable to process buried requests: %s", err)
 	}
 
-	cliPrint("%d requests %s", n, action)
+	info("%d requests %s", n, action)
 }

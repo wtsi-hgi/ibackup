@@ -542,15 +542,16 @@ func TestServer(t *testing.T) {
 									So(errg, ShouldBeNil)
 									So(len(requests), ShouldBeGreaterThan, 0)
 
-									requests[0].Status = put.RequestStatusUploading
-									err = client.UpdateFileStatus(requests[0])
+									failedRequest = requests[0].Clone()
+
+									failedRequest.Status = put.RequestStatusUploading
+									err = client.UpdateFileStatus(failedRequest)
 									So(err, ShouldBeNil)
 
-									requests[0].Status = put.RequestStatusFailed
-									err = client.UpdateFileStatus(requests[0])
+									failedRequest.Status = put.RequestStatusFailed
+									failedRequest.Error = "an error"
+									err = client.UpdateFileStatus(failedRequest)
 									So(err, ShouldBeNil)
-
-									failedRequest = requests[0]
 
 									if len(requests) > 1 {
 										for i, r := range requests {
@@ -582,6 +583,7 @@ func TestServer(t *testing.T) {
 							cburied, errb := client.BuriedRequests()
 							So(errb, ShouldBeNil)
 							So(cburied, ShouldResemble, buried)
+							So(cburied[0].Error, ShouldEqual, "an error")
 
 							bf := &BuriedFilter{}
 
