@@ -669,12 +669,15 @@ func TestServer(t *testing.T) {
 							client = NewClient(addr, certPath, token)
 
 							Convey("The client automatically updates server given Putter-style output using SendPutResultsToServer", func() {
-								resultsCh := make(chan *put.Request)
 								uploadStartsCh := make(chan *put.Request)
+								uploadResultsCh := make(chan *put.Request)
+								skippedResultsCh := make(chan *put.Request)
 								errCh := make(chan error)
 
 								go func() {
-									errCh <- client.SendPutResultsToServer(resultsCh, uploadStartsCh, minMBperSecondUploadSpeed)
+									errCh <- client.SendPutResultsToServer(
+										uploadStartsCh, uploadResultsCh, skippedResultsCh, minMBperSecondUploadSpeed,
+									)
 								}()
 
 								requests, errg := client.GetSomeUploadRequests()
@@ -693,12 +696,12 @@ func TestServer(t *testing.T) {
 								uploadStartsCh <- r
 								r2 := r.Clone()
 								r2.Status = put.RequestStatusUploaded
-								resultsCh <- r2
+								uploadResultsCh <- r2
 
 								r3 := requests[1].Clone()
 								r3.Status = put.RequestStatusUnmodified
 								r3.Size = 2
-								resultsCh <- r3
+								skippedResultsCh <- r3
 
 								r4 := requests[2].Clone()
 								r4.Status = put.RequestStatusUploading
@@ -706,7 +709,7 @@ func TestServer(t *testing.T) {
 								uploadStartsCh <- r4
 								r5 := r4.Clone()
 								r5.Status = put.RequestStatusReplaced
-								resultsCh <- r5
+								uploadResultsCh <- r5
 
 								r6 := requests[3].Clone()
 								r6.Status = put.RequestStatusUploading
@@ -714,7 +717,7 @@ func TestServer(t *testing.T) {
 								uploadStartsCh <- r6
 								r7 := r6.Clone()
 								r7.Status = put.RequestStatusFailed
-								resultsCh <- r7
+								uploadResultsCh <- r7
 
 								gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet2.ID())
 								So(err, ShouldBeNil)
@@ -728,10 +731,11 @@ func TestServer(t *testing.T) {
 								uploadStartsCh <- r8
 								r9 := r8.Clone()
 								r9.Stuck = put.NewStuck(time.Now())
-								resultsCh <- r9
+								uploadResultsCh <- r9
 
 								close(uploadStartsCh)
-								close(resultsCh)
+								close(uploadResultsCh)
+								close(skippedResultsCh)
 
 								err = <-errCh
 								So(err, ShouldBeNil)
@@ -819,9 +823,9 @@ func TestServer(t *testing.T) {
 								err = p.CreateCollections()
 								So(err, ShouldBeNil)
 
-								results, uploadStarts := p.Put()
+								uploadStarts, uploadResults, skippedResults := p.Put()
 
-								err = client.SendPutResultsToServer(results, uploadStarts, minMBperSecondUploadSpeed)
+								err = client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults, minMBperSecondUploadSpeed)
 								So(err, ShouldBeNil)
 
 								gotSet, err = client.GetSetByID(exampleSet4.Requester, exampleSet4.ID())
@@ -852,9 +856,9 @@ func TestServer(t *testing.T) {
 
 									p, errp = put.New(handler, requests)
 									So(errp, ShouldBeNil)
-									results, uploadStarts = p.Put()
+									uploadStarts, uploadResults, skippedResults = p.Put()
 
-									err = client.SendPutResultsToServer(results, uploadStarts, minMBperSecondUploadSpeed)
+									err = client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults, minMBperSecondUploadSpeed)
 									So(err, ShouldBeNil)
 
 									gotSet, err = client.GetSetByID(exampleSet4.Requester, exampleSet4.ID())

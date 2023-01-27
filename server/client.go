@@ -42,6 +42,7 @@ const (
 	touchFrequency   = ttr / 2
 	minTimeForUpload = 1 * time.Minute
 	bytesInMiB       = 1024 * 1024
+	numHandlers      = 2
 
 	// waitForUploadStartsMessages is a channel buffer size we use to allow both
 	// expected messages to be sent when we only read from the channel once.
@@ -339,15 +340,22 @@ func (c *Client) stillWorkingOnRequests(rids []string) error {
 // speed, tells the server the upload might be stuck, but continues to wait.
 //
 // Do not call this concurrently!
-func (c *Client) SendPutResultsToServer(results, uploadStarts chan *put.Request, minMBperSecondUploadSpeed int) error {
+func (c *Client) SendPutResultsToServer(uploadStarts, uploadResults, skipResults chan *put.Request,
+	minMBperSecondUploadSpeed int) error {
 	c.minMBperSecondUploadSpeed = float64(minMBperSecondUploadSpeed)
 	c.uploadsErrCh = make(chan error)
-	c.uploads = make(map[string]chan bool)
-	c.waitForUploadStarts = make(chan bool, waitForUploadStartsMessages)
-	c.waitedForUploadStart = make(chan bool)
 
-	go c.handleUploadTracking(uploadStarts)
-	go c.handleSendingResults(results)
+	var wg sync.WaitGroup
+
+	wg.Add(numHandlers)
+
+	go c.handleUploadTracking(&wg, uploadStarts, uploadResults)
+	go c.handleSendingSkipResults(&wg, skipResults)
+
+	go func() {
+		wg.Wait()
+		close(c.uploadsErrCh)
+	}()
 
 	var merr *multierror.Error
 
@@ -355,43 +363,30 @@ func (c *Client) SendPutResultsToServer(results, uploadStarts chan *put.Request,
 		merr = multierror.Append(merr, err)
 	}
 
-	close(c.waitedForUploadStart)
-
 	return merr.ErrorOrNil()
 }
 
 // handleUploadTracking starts timing uploads and sends stuck message to server
-// if they take too long.
-func (c *Client) handleUploadTracking(uploadStarts chan *put.Request) {
-	go func() {
-		timer := time.NewTimer(waitForUploadStartTimeLimit)
+// if they take too long. When uploads complete and are sent on the results
+// chan, updates server again.
+func (c *Client) handleUploadTracking(wg *sync.WaitGroup, uploadStarts, uploadResults chan *put.Request) {
+	defer wg.Done()
 
-		select {
-		case <-c.waitedForUploadStart:
-			timer.Stop()
-		case <-timer.C:
-			c.waitForUploadStarts <- true
-			<-c.waitedForUploadStart
-		}
-	}()
-
-	uploadsStarted := false
-
-	for r := range uploadStarts {
-		c.uploadsMu.Lock()
-
-		if err := c.UpdateFileStatus(r); err != nil {
+	for ru := range uploadStarts {
+		if err := c.UpdateFileStatus(ru); err != nil {
 			c.uploadsErrCh <- err
 
 			continue
 		}
 
-		c.uploads[r.ID()] = c.stuckIfUploadTakesTooLong(r)
-		c.uploadsMu.Unlock()
+		stopStuckTimer := c.stuckIfUploadTakesTooLong(ru)
 
-		if !uploadsStarted {
-			uploadsStarted = true
-			c.waitForUploadStarts <- true
+		rr := <-uploadResults
+
+		close(stopStuckTimer)
+
+		if err := c.UpdateFileStatus(rr); err != nil {
+			c.uploadsErrCh <- err
 		}
 	}
 }
@@ -439,34 +434,16 @@ func (c *Client) maxTimeForUpload(r *put.Request) time.Duration {
 	return d
 }
 
-// handleSendingResults updates file status for each completed request. If the
-// request had previously started to upload, we also tell our upload tracker
-// that the upload completed.
-func (c *Client) handleSendingResults(results chan *put.Request) {
-	<-c.waitForUploadStarts
-	c.waitedForUploadStart <- true
+// handleSendingSkipResults updates file status for each completed request that
+// didn't need to start uploading first.
+func (c *Client) handleSendingSkipResults(wg *sync.WaitGroup, results chan *put.Request) {
+	defer wg.Done()
 
 	for r := range results {
-		c.uploadsMu.Lock()
-		if doneCh, ok := c.uploads[r.ID()]; ok {
-			delete(c.uploads, r.ID())
-			close(doneCh)
-		}
-		c.uploadsMu.Unlock()
-
 		if err := c.UpdateFileStatus(r); err != nil {
 			c.uploadsErrCh <- err
 		}
 	}
-
-	c.uploadsMu.Lock()
-	for rid, doneCh := range c.uploads {
-		delete(c.uploads, rid)
-		close(doneCh)
-	}
-
-	close(c.uploadsErrCh)
-	c.uploadsMu.Unlock()
 }
 
 // UpdateFileStatus updates a file's status in the DB based on the given

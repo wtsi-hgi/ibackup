@@ -33,6 +33,7 @@ import (
 	"os"
 	"os/user"
 	"strings"
+	"sync"
 
 	"github.com/spf13/cobra"
 	"github.com/wtsi-hgi/ibackup/put"
@@ -176,15 +177,15 @@ you, so should this.`,
 			info("collections created")
 		}
 
-		results, uploadStarts := p.Put()
+		uploadStarts, uploadResults, skipResults := p.Put()
 
 		if client != nil {
-			err = client.SendPutResultsToServer(results, uploadStarts, minMBperSecondUploadSpeed)
+			err = client.SendPutResultsToServer(uploadStarts, uploadResults, skipResults, minMBperSecondUploadSpeed)
 			if err != nil {
 				die("%s", err)
 			}
 		} else {
-			printResults(results, len(requests), putVerbose)
+			printResults(uploadResults, skipResults, len(requests), putVerbose)
 		}
 	},
 }
@@ -380,35 +381,66 @@ func decodeBase64(path string, isEncoded bool) string {
 	return string(b)
 }
 
-// printResults reads from the given channel, outputs info about them to STDOUT
+type results struct {
+	total    int
+	verbose  bool
+	i        int
+	fails    int
+	missing  int
+	replaced int
+	skipped  int
+	uploads  int
+	mu       sync.Mutex
+}
+
+func (r *results) update(req *put.Request) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.i++
+
+	warnIfBad(req, r.i, r.total, r.verbose)
+
+	switch req.Status {
+	case put.RequestStatusFailed, put.RequestStatusUploading:
+		r.fails++
+	case put.RequestStatusMissing:
+		r.missing++
+	case put.RequestStatusReplaced:
+		r.replaced++
+	case put.RequestStatusUnmodified:
+		r.skipped++
+	case put.RequestStatusUploaded:
+		r.uploads++
+	}
+}
+
+// printResults reads from the given channels, outputs info about them to STDOUT
 // and STDERR, then emits summary numbers. Supply the total number of requests
 // made. Exits 1 if there were upload errors.
-func printResults(results chan *put.Request, total int, verbose bool) { //nolint:gocyclo
-	i, missing, fails, replaced, uploads, skipped := 0, 0, 0, 0, 0, 0
+func printResults(uploadResults, skipResults chan *put.Request, total int, verbose bool) {
+	r := &results{total: total, verbose: verbose}
 
-	for r := range results {
-		i++
+	var wg sync.WaitGroup
 
-		warnIfBad(r, i, total, verbose)
+	for _, ch := range []chan *put.Request{skipResults, uploadResults} {
+		wg.Add(1)
 
-		switch r.Status {
-		case put.RequestStatusFailed, put.RequestStatusUploading:
-			fails++
-		case put.RequestStatusMissing:
-			missing++
-		case put.RequestStatusReplaced:
-			replaced++
-		case put.RequestStatusUnmodified:
-			skipped++
-		case put.RequestStatusUploaded:
-			uploads++
-		}
+		go func(ch chan *put.Request) {
+			defer wg.Done()
+
+			for req := range ch {
+				r.update(req)
+			}
+		}(ch)
 	}
 
-	info("%d uploaded (%d replaced); %d skipped; %d failed; %d missing",
-		uploads+replaced, replaced, skipped, fails, missing)
+	wg.Wait()
 
-	if fails > 0 {
+	info("%d uploaded (%d replaced); %d skipped; %d failed; %d missing",
+		r.uploads+r.replaced, r.replaced, r.skipped, r.fails, r.missing)
+
+	if r.fails > 0 {
 		os.Exit(1)
 	}
 }
