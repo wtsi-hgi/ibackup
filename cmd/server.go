@@ -111,14 +111,14 @@ ctrl-z; bg. Or better yet, use the daemonize program to daemonize this.
 
 		prepareAuth(s)
 
+		err := s.MakeQueueEndPoints()
+		if err != nil {
+			die("failed to make queue endpoints: %s", err)
+		}
+
 		exe, err := os.Executable()
 		if err != nil {
 			die("failed to get own exe: %s", err)
-		}
-
-		err = s.MakeQueueEndPoints()
-		if err != nil {
-			die("failed to make queue endpoints: %s", err)
 		}
 
 		err = s.EnableJobSubmission(fmt.Sprintf("%s put -s --url '%s' --cert '%s'", exe, serverURL, serverCert),
