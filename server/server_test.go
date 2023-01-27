@@ -51,16 +51,16 @@ func TestClient(t *testing.T) {
 
 		c.minMBperSecondUploadSpeed = 10
 		d := c.maxTimeForUpload(&put.Request{Size: 10 * bytesInMiB})
-		So(d, ShouldEqual, 1*time.Second)
+		So(d, ShouldEqual, 1*time.Minute)
 
-		d = c.maxTimeForUpload(&put.Request{Size: 100 * bytesInMiB})
-		So(d, ShouldEqual, 10*time.Second)
+		d = c.maxTimeForUpload(&put.Request{Size: 1000 * bytesInMiB})
+		So(d, ShouldEqual, 100*time.Second)
 
 		d = c.maxTimeForUpload(&put.Request{Size: 1 * bytesInMiB})
-		So(d, ShouldEqual, 1*time.Second)
+		So(d, ShouldEqual, 1*time.Minute)
 
 		d = c.maxTimeForUpload(&put.Request{Size: 1})
-		So(d, ShouldEqual, 1*time.Second)
+		So(d, ShouldEqual, 1*time.Minute)
 	})
 }
 

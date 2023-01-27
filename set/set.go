@@ -249,3 +249,24 @@ func (s *Set) MakeTransformer() (put.PathTransformer, error) {
 
 	return put.PrefixTransformer(parts[0], parts[1]), nil
 }
+
+// countsValid tells you if our Uploaded, Failed and Missing counts are valid
+// (0..NumFiles).
+func (s *Set) countsValid() bool {
+	// we can't just do the final summed test, because if the numbers are close
+	// to max uint64 value from a wrapping bug, they'll wrap back around and
+	// pass the test
+	if s.Uploaded > s.NumFiles {
+		return false
+	}
+
+	if s.Failed > s.NumFiles {
+		return false
+	}
+
+	if s.Missing > s.NumFiles {
+		return false
+	}
+
+	return s.Uploaded+s.Failed+s.Missing <= s.NumFiles
+}
