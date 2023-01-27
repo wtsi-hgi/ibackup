@@ -70,7 +70,7 @@ To describe the backup set you must provide:
       Human Genetics project or team folder, use this transformer to backup
 	  files to the canonical path in the iRODS humgen zone.
     'prefix=local:remote': replace 'local' with a local path prefix, and 'remote'
-      with a remote one, eg. 'prefix=/mnt/diska=/zone1' would backup
+      with a remote one, eg. 'prefix=/mnt/diska:/zone1' would backup
 	  /mnt/diska/subdir/file.txt to /zone1/subdir/file.txt.
   This defaults to the environment variable IBACKUP_TRANSFORMER.
 
