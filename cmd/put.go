@@ -143,6 +143,10 @@ you, so should this.`,
 			return
 		}
 
+		if putVerbose {
+			info("got %d requests to work on", len(requests))
+		}
+
 		handler, err := put.GetBatonHandler()
 		if err != nil {
 			die("%s", err)
