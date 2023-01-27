@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2022 Genome Research Ltd.
+ * Copyright (c) 2022, 2023 Genome Research Ltd.
  *
  * Authors:
  *	- Sendu Bala <sb10@sanger.ac.uk>
@@ -79,7 +79,8 @@ The server will log all messages (of any severity) to syslog at the INFO level,
 except for non-graceful stops of the server, which are sent at the CRIT level or
 include 'panic' in the message. The messages are tagged 'ibackup-server', and
 you might want to filter away 'STATUS=200' to find problems.
-If --logfile is supplied, logs to that file instaed of syslog.
+If --logfile is supplied, logs to that file instead of syslog. It also results
+in the put clients we spawn logging to files with that prefix.
 
 The server must be running for 'ibackup add' calls to succeed.
 
@@ -121,8 +122,13 @@ ctrl-z; bg. Or better yet, use the daemonize program to daemonize this.
 			die("failed to get own exe: %s", err)
 		}
 
-		err = s.EnableJobSubmission(fmt.Sprintf("%s put -s --url '%s' --cert '%s'", exe, serverURL, serverCert),
-			"production", "", "", appLogger)
+		putCmd := fmt.Sprintf("%s put -s --url '%s' --cert '%s' ", exe, serverURL, serverCert)
+
+		if serverLogPath != "" {
+			putCmd += fmt.Sprintf("--log %s.client.", serverLogPath)
+		}
+
+		err = s.EnableJobSubmission(putCmd, "production", "", "", appLogger)
 		if err != nil {
 			die("failed to enable job submission: %s", err)
 		}

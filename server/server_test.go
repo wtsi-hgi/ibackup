@@ -34,6 +34,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/inconshreveable/log15"
 	. "github.com/smartystreets/goconvey/convey"
 	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/ibackup/put"
@@ -673,10 +674,12 @@ func TestServer(t *testing.T) {
 								uploadResultsCh := make(chan *put.Request)
 								skippedResultsCh := make(chan *put.Request)
 								errCh := make(chan error)
+								logger := log15.New()
 
 								go func() {
 									errCh <- client.SendPutResultsToServer(
-										uploadStartsCh, uploadResultsCh, skippedResultsCh, minMBperSecondUploadSpeed,
+										uploadStartsCh, uploadResultsCh, skippedResultsCh,
+										minMBperSecondUploadSpeed, logger,
 									)
 								}()
 
@@ -825,7 +828,9 @@ func TestServer(t *testing.T) {
 
 								uploadStarts, uploadResults, skippedResults := p.Put()
 
-								err = client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults, minMBperSecondUploadSpeed)
+								logger := log15.New()
+								err = client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults,
+									minMBperSecondUploadSpeed, logger)
 								So(err, ShouldBeNil)
 
 								gotSet, err = client.GetSetByID(exampleSet4.Requester, exampleSet4.ID())
@@ -858,7 +863,8 @@ func TestServer(t *testing.T) {
 									So(errp, ShouldBeNil)
 									uploadStarts, uploadResults, skippedResults = p.Put()
 
-									err = client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults, minMBperSecondUploadSpeed)
+									err = client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults,
+										minMBperSecondUploadSpeed, logger)
 									So(err, ShouldBeNil)
 
 									gotSet, err = client.GetSetByID(exampleSet4.Requester, exampleSet4.ID())

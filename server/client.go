@@ -33,6 +33,7 @@ import (
 
 	"github.com/go-resty/resty/v2"
 	"github.com/hashicorp/go-multierror"
+	"github.com/inconshreveable/log15"
 	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/set"
@@ -67,6 +68,7 @@ type Client struct {
 	waitedForUploadStart      chan bool
 	uploads                   map[string]chan bool
 	uploadsMu                 sync.Mutex
+	logger                    log15.Logger
 }
 
 // NewClient returns a Client you can use to call methods on a Server listening
@@ -341,8 +343,9 @@ func (c *Client) stillWorkingOnRequests(rids []string) error {
 //
 // Do not call this concurrently!
 func (c *Client) SendPutResultsToServer(uploadStarts, uploadResults, skipResults chan *put.Request,
-	minMBperSecondUploadSpeed int) error {
+	minMBperSecondUploadSpeed int, logger log15.Logger) error {
 	c.minMBperSecondUploadSpeed = float64(minMBperSecondUploadSpeed)
+	c.logger = logger
 	c.uploadsErrCh = make(chan error)
 
 	var wg sync.WaitGroup
@@ -360,8 +363,11 @@ func (c *Client) SendPutResultsToServer(uploadStarts, uploadResults, skipResults
 	var merr *multierror.Error
 
 	for err := range c.uploadsErrCh {
+		c.logger.Warn("failed to update file status", "err", err)
 		merr = multierror.Append(merr, err)
 	}
+
+	c.logger.Info("finished sending put results to server")
 
 	return merr.ErrorOrNil()
 }
@@ -373,6 +379,8 @@ func (c *Client) handleUploadTracking(wg *sync.WaitGroup, uploadStarts, uploadRe
 	defer wg.Done()
 
 	for ru := range uploadStarts {
+		c.logger.Info("started upload", "path", ru.Local)
+
 		if err := c.UpdateFileStatus(ru); err != nil {
 			c.uploadsErrCh <- err
 
@@ -383,6 +391,7 @@ func (c *Client) handleUploadTracking(wg *sync.WaitGroup, uploadStarts, uploadRe
 
 		rr := <-uploadResults
 
+		c.logger.Info("finished upload", "path", ru.Local)
 		close(stopStuckTimer)
 
 		if err := c.UpdateFileStatus(rr); err != nil {
@@ -407,6 +416,7 @@ func (c *Client) stuckIfUploadTakesTooLong(request *put.Request) chan bool {
 			return
 		case <-timer.C:
 			request.Stuck = put.NewStuck(started)
+			c.logger.Warn("upload stuck?", "path", request.Local)
 
 			if err := c.UpdateFileStatus(request); err != nil {
 				c.uploadsErrCh <- err
@@ -440,6 +450,8 @@ func (c *Client) handleSendingSkipResults(wg *sync.WaitGroup, results chan *put.
 	defer wg.Done()
 
 	for r := range results {
+		c.logger.Info("skipped upload", "path", r.Local)
+
 		if err := c.UpdateFileStatus(r); err != nil {
 			c.uploadsErrCh <- err
 		}

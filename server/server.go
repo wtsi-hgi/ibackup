@@ -171,7 +171,7 @@ func (s *Server) rac(queuename string, allitemdata []interface{}) {
 
 	for i := range jobs {
 		job := s.sched.NewJob(
-			fmt.Sprintf("%s && echo %d", s.putCmd, i),
+			fmt.Sprintf("%s%d", s.putCmd, i),
 			repGroup, reqGroup, "", "", s.req,
 		)
 		job.Retries = jobRetries
