@@ -150,6 +150,7 @@ func (s *Server) EnableJobSubmission(putCmd, deployment, cwd, queue string, logg
 	s.putCmd = putCmd
 
 	s.queue.SetReadyAddedCallback(s.rac)
+	s.queue.SetTTRCallback(s.ttrc)
 
 	return nil
 }
@@ -213,6 +214,24 @@ func jobsNeeded(n int) int {
 	}
 
 	return n
+}
+
+// ttrc is called when reserved items in our queue are abandoned due to a put
+// client dying, and so we cleanup and send it back to the ready subqueue.
+func (s *Server) ttrc(data interface{}) queue.SubQueue {
+	s.mapMu.Lock()
+	defer s.mapMu.Unlock()
+
+	r, ok := data.(*put.Request)
+	if !ok {
+		s.Logger.Printf("item data not a Request")
+	}
+
+	rid := r.ID()
+	delete(s.uploading, rid)
+	delete(s.stuckRequests, rid)
+
+	return queue.SubQueueReady
 }
 
 // stop is called when the server is Stop()ped, cleaning up our additional
