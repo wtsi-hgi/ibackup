@@ -87,13 +87,14 @@ func TestPutBaton(t *testing.T) {
 				requests[0].Requester = requester
 				requests[0].Set = "setA"
 				expectedMTime := touchFile(requests[0].Local, -1*time.Hour)
-				rCh, uCh := p.Put()
+
+				uCh, urCh, srCh := p.Put()
 
 				for request := range uCh {
 					So(request.Status, ShouldEqual, RequestStatusUploading)
 				}
 
-				for request := range rCh {
+				for request := range urCh {
 					So(request.Error, ShouldBeBlank)
 					So(request.Status, ShouldEqual, RequestStatusUploaded)
 					So(request.Size, ShouldEqual, 2)
@@ -110,6 +111,8 @@ func TestPutBaton(t *testing.T) {
 					}
 				}
 
+				So(<-srCh, ShouldBeNil)
+
 				Convey("You can put the same file again if it changed, with different metadata", func() {
 					request := requests[0]
 					request.Requester = requester
@@ -123,12 +126,15 @@ func TestPutBaton(t *testing.T) {
 					err = p.CreateCollections()
 					So(err, ShouldBeNil)
 
-					rCh, uCh = p.Put()
+					uCh, urCh, srCh = p.Put()
 
 					got := <-uCh
 					So(got.Status, ShouldEqual, RequestStatusUploading)
 
-					got = <-rCh
+					got = <-srCh
+					So(got, ShouldBeNil)
+
+					got = <-urCh
 					So(got.Error, ShouldBeBlank)
 					So(got.Status, ShouldEqual, RequestStatusReplaced)
 					meta := getObjectMetadataWithBaton(h.putClient, request.Remote)
@@ -152,12 +158,15 @@ func TestPutBaton(t *testing.T) {
 					p, err = New(h, []*Request{request})
 					So(err, ShouldBeNil)
 
-					rCh, uCh = p.Put()
+					uCh, urCh, srCh = p.Put()
 
 					got := <-uCh
 					So(got, ShouldBeNil)
 
-					got = <-rCh
+					got = <-urCh
+					So(got, ShouldBeNil)
+
+					got = <-srCh
 					So(got.Error, ShouldBeBlank)
 					So(got.Status, ShouldEqual, RequestStatusUnmodified)
 				})

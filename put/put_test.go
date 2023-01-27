@@ -61,13 +61,13 @@ func TestPutMock(t *testing.T) {
 				requests[0].Requester = "John"
 				requests[0].Set = "setA"
 
-				rCh, uCh := p.Put()
+				uCh, urCh, srCh := p.Put()
 
 				for request := range uCh {
 					So(request.Status, ShouldEqual, RequestStatusUploading)
 				}
 
-				for request := range rCh {
+				for request := range urCh {
 					So(request.Status, ShouldEqual, RequestStatusUploaded)
 					So(request.Size, ShouldEqual, 2)
 
@@ -80,13 +80,19 @@ func TestPutMock(t *testing.T) {
 					mh.mu.RUnlock()
 				}
 
+				skipped := 0
+				for range srCh {
+					skipped++
+				}
+				So(skipped, ShouldEqual, 0)
+
 				Convey("A second put of the same files skips them all, except for modified ones", func() {
 					requests[0].Requester = "Sam"
 					requests[0].Set = "setB"
 					requests[0].Meta = map[string]string{"a": "1", "b": "3", "c": "4"}
 					touchFile(requests[0].Local, 1*time.Hour)
 
-					rCh, uCh = p.Put()
+					uCh, urCh, srCh = p.Put()
 
 					uploading, replaced, unmod, other := 0, 0, 0, 0
 
@@ -96,7 +102,7 @@ func TestPutMock(t *testing.T) {
 						uploading++
 					}
 
-					for request := range rCh {
+					for request := range urCh {
 						switch request.Status {
 						case RequestStatusReplaced:
 							replaced++
@@ -106,6 +112,13 @@ func TestPutMock(t *testing.T) {
 							So(mh.meta[request.Remote][metaKeySets], ShouldEqual, "setA,setB")
 							date = mh.meta[request.Remote][metaKeyDate]
 							mh.mu.RUnlock()
+						default:
+							other++
+						}
+					}
+
+					for request := range srCh {
+						switch request.Status {
 						case RequestStatusUnmodified:
 							unmod++
 						default:
@@ -118,19 +131,22 @@ func TestPutMock(t *testing.T) {
 					So(unmod, ShouldEqual, len(requests)-1)
 					So(other, ShouldEqual, 0)
 
-					Convey("A third request of the same unchagned file updates Requester and Set", func() {
+					Convey("A third request of the same unchanged file updates Requester and Set", func() {
 						requests[0].Requester = "Sam"
 						requests[0].Set = "setC"
 
 						p.requests = []*Request{requests[0]}
 
 						<-time.After(1 * time.Second)
-						rCh, uCh = p.Put()
+						uCh, urCh, srCh = p.Put()
 
 						request := <-uCh
 						So(request, ShouldBeNil)
 
-						request = <-rCh
+						request = <-urCh
+						So(request, ShouldBeNil)
+
+						request = <-srCh
 						So(request.Status, ShouldEqual, RequestStatusUnmodified)
 						mh.mu.RLock()
 						So(mh.meta[request.Remote][metaKeyRequester], ShouldEqual, "John,Sam")
@@ -153,12 +169,15 @@ func TestPutMock(t *testing.T) {
 					So(err, ShouldBeNil)
 				}
 
-				rCh, uCh := p.Put()
+				uCh, urCh, srCh := p.Put()
 
 				request := <-uCh
 				So(request, ShouldBeNil)
 
-				for request := range rCh {
+				request = <-urCh
+				So(request, ShouldBeNil)
+
+				for request := range srCh {
 					So(request.Status, ShouldEqual, RequestStatusMissing)
 				}
 			})
@@ -168,29 +187,42 @@ func TestPutMock(t *testing.T) {
 				mh.putfail = requests[1].Remote
 				mh.metafail = requests[2].Remote
 
-				rCh, uCh := p.Put()
+				uCh, urCh, srCh := p.Put()
 
-				uploading, fails, uploaded, other := 0, 0, 0, 0
+				uploading, fails, uploaded, other, cases := 0, 0, 0, 0, 0
 
 				for range uCh {
 					uploading++
-				}
 
-				for r := range rCh {
+					r := <-urCh
 					switch r.Status {
 					case RequestStatusFailed:
 						fails++
 
 						switch r.Remote {
-						case requests[0].Remote:
-							So(r.Error, ShouldContainSubstring, errMockStatFail)
 						case requests[1].Remote:
 							So(r.Error, ShouldContainSubstring, errMockPutFail)
+							cases++
 						case requests[2].Remote:
 							So(r.Error, ShouldContainSubstring, errMockMetaFail)
+							cases++
 						}
 					case RequestStatusUploaded:
 						uploaded++
+					default:
+						other++
+					}
+				}
+
+				for r := range srCh {
+					switch r.Status {
+					case RequestStatusFailed:
+						fails++
+
+						if r.Remote == requests[0].Remote {
+							So(r.Error, ShouldContainSubstring, errMockStatFail)
+							cases++
+						}
 					default:
 						other++
 					}
@@ -200,13 +232,14 @@ func TestPutMock(t *testing.T) {
 				So(uploaded, ShouldEqual, len(requests)-3)
 				So(other, ShouldEqual, 0)
 				So(uploading, ShouldEqual, fails+uploaded-1)
+				So(cases, ShouldEqual, 3)
 			})
 		})
 
 		Convey("Put() fails if CreateCollections wasn't run", func() {
-			rCh, _ := p.Put()
+			_, urCh, _ := p.Put()
 
-			for request := range rCh {
+			for request := range urCh {
 				So(request.Status, ShouldEqual, RequestStatusFailed)
 				_, err = os.Stat(request.Remote)
 				So(err, ShouldNotBeNil)
