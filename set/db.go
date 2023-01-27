@@ -346,7 +346,7 @@ func (d *DB) SetEntryStatus(r *put.Request) (*Entry, error) {
 			return nil
 		}
 
-		updateSetBasedOnEntry(set, entry)
+		d.updateSetBasedOnEntry(set, entry)
 
 		return b.Put(bid, d.encodeToBytes(set))
 	})
@@ -482,7 +482,7 @@ func (d *DB) getEntryFromSubbucket(kind, setID, path string, setsBucket *bolt.Bu
 // updateSetBasedOnEntry updates set status values based on an updated Entry
 // from updateFileEntry(), assuming that request is for one of set's file
 // entries.
-func updateSetBasedOnEntry(set *Set, entry *Entry) {
+func (d *DB) updateSetBasedOnEntry(set *Set, entry *Entry) {
 	if set.Status == PendingDiscovery || set.Status == PendingUpload {
 		set.Status = Uploading
 	}
@@ -500,6 +500,7 @@ func updateSetBasedOnEntry(set *Set, entry *Entry) {
 	}
 
 	entryStatusToSetCounts(entry, set)
+	d.fixSetCounts(entry, set)
 
 	if set.Uploaded+set.Failed+set.Missing == set.NumFiles {
 		set.Status = Complete
@@ -525,6 +526,36 @@ func entryStatusToSetCounts(entry *Entry, set *Set) {
 		}
 	case Missing:
 		set.Missing++
+	}
+}
+
+// fixSetCounts resets the set counts to 0 and goes through all the entries for
+// the set in the db to recaluclate them. The supplied entry should be one you
+// newly updated and that wasn't in the db before the transaction we're in.
+func (d *DB) fixSetCounts(entry *Entry, set *Set) {
+	if set.countsValid() {
+		return
+	}
+
+	entries, err := d.GetFileEntries(set.ID())
+	if err != nil {
+		return
+	}
+
+	set.Uploaded = 0
+	set.Failed = 0
+	set.Missing = 0
+
+	for _, e := range entries {
+		if e.Path == entry.Path {
+			e = entry
+		}
+
+		if e.Status == Failed {
+			e.newFail = true
+		}
+
+		entryStatusToSetCounts(e, set)
 	}
 }
 

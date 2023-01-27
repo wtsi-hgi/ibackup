@@ -33,6 +33,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/wtsi-hgi/ibackup/put"
+	bolt "go.etcd.io/bbolt"
 )
 
 func TestSet(t *testing.T) {
@@ -357,6 +358,15 @@ func TestSet(t *testing.T) {
 							Error:     "",
 						}
 
+						err = db.db.Update(func(tx *bolt.Tx) error {
+							eg, b, errg := db.getEntry(tx, set.ID(), r.Local)
+							So(errg, ShouldBeNil)
+							eg.Attempts = 2
+
+							return b.Put([]byte(r.Local), db.encodeToBytes(eg))
+						})
+						So(err, ShouldBeNil)
+
 						e, err = db.SetEntryStatus(r)
 						So(err, ShouldBeNil)
 						So(e, ShouldNotBeNil)
@@ -371,6 +381,7 @@ func TestSet(t *testing.T) {
 						So(sets[0].NumFiles, ShouldEqual, 5)
 						So(sets[0].SizeFiles, ShouldEqual, 3)
 						So(sets[0].Uploaded, ShouldEqual, 1)
+						So(sets[0].Failed, ShouldEqual, 0)
 						So(sets[0].LastCompletedSize, ShouldEqual, 0)
 
 						fEntries, err = db.GetFileEntries(sets[0].ID())
