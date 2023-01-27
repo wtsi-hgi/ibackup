@@ -40,12 +40,14 @@ import (
 
 const (
 	touchFrequency   = ttr / 2
-	minTimeForUpload = 1 * time.Second
+	minTimeForUpload = 1 * time.Minute
 	bytesInMiB       = 1024 * 1024
 
 	// waitForUploadStartsMessages is a channel buffer size we use to allow both
 	// expected messages to be sent when we only read from the channel once.
 	waitForUploadStartsMessages = 2
+
+	waitForUploadStartTimeLimit = 15 * time.Second
 )
 
 // Client is used to interact with the Server over the network, with
@@ -362,13 +364,14 @@ func (c *Client) SendPutResultsToServer(results, uploadStarts chan *put.Request,
 // if they take too long.
 func (c *Client) handleUploadTracking(uploadStarts chan *put.Request) {
 	go func() {
-		timer := time.NewTimer(1 * time.Second)
+		timer := time.NewTimer(waitForUploadStartTimeLimit)
 
 		select {
 		case <-c.waitedForUploadStart:
 			timer.Stop()
 		case <-timer.C:
 			c.waitForUploadStarts <- true
+			<-c.waitedForUploadStart
 		}
 	}()
 
