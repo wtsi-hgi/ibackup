@@ -44,12 +44,6 @@ const (
 	minTimeForUpload = 1 * time.Minute
 	bytesInMiB       = 1024 * 1024
 	numHandlers      = 2
-
-	// waitForUploadStartsMessages is a channel buffer size we use to allow both
-	// expected messages to be sent when we only read from the channel once.
-	waitForUploadStartsMessages = 2
-
-	waitForUploadStartTimeLimit = 15 * time.Second
 )
 
 // Client is used to interact with the Server over the network, with
@@ -64,10 +58,6 @@ type Client struct {
 	touchErr                  error
 	minMBperSecondUploadSpeed float64
 	uploadsErrCh              chan error
-	waitForUploadStarts       chan bool
-	waitedForUploadStart      chan bool
-	uploads                   map[string]chan bool
-	uploadsMu                 sync.Mutex
 	logger                    log15.Logger
 }
 

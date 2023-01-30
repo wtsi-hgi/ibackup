@@ -567,6 +567,7 @@ func (s *Server) updateFileStatus(r *put.Request) error {
 		}
 
 		s.mapMu.Unlock()
+
 		return nil
 	}
 
@@ -582,10 +583,7 @@ func (s *Server) updateFileStatus(r *put.Request) error {
 // it being buried.
 func (s *Server) removeOrReleaseRequestFromQueue(r *put.Request, entry *set.Entry) error {
 	if r.Status == put.RequestStatusFailed {
-		if item, err := s.queue.Get(r.ID()); err == nil {
-			stats := item.Stats()
-			s.queue.Update(context.Background(), item.Key, "", r, stats.Priority, stats.Delay, stats.TTR) //nolint:errcheck
-		}
+		s.updateQueueItemData(r)
 
 		if entry.Attempts%set.AttemptsToBeConsideredFailing == 0 {
 			return s.queue.Bury(r.ID())
@@ -595,6 +593,15 @@ func (s *Server) removeOrReleaseRequestFromQueue(r *put.Request, entry *set.Entr
 	}
 
 	return s.queue.Remove(context.Background(), r.ID())
+}
+
+// updateQueueItemData updates the item in our queue corresponding to the
+// given request, with the request's latest properties.
+func (s *Server) updateQueueItemData(r *put.Request) {
+	if item, err := s.queue.Get(r.ID()); err == nil {
+		stats := item.Stats()
+		s.queue.Update(context.Background(), item.Key, "", r, stats.Priority, stats.Delay, stats.TTR) //nolint:errcheck
+	}
 }
 
 // recoverQueue is used at startup to fill the in-memory queue with requests for

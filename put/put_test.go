@@ -35,7 +35,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-func TestPutMock(t *testing.T) {
+func TestPutMock(t *testing.T) { //nolint:cyclop
 	Convey("Given Requests and a mock Handler, you can make a new Putter", t, func() {
 		requests, expectedCollections := makeMockRequests(t)
 
