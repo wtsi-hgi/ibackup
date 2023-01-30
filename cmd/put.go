@@ -144,8 +144,17 @@ you, so should this.`,
 			die("%s", err)
 		}
 
+		if putVerbose {
+			host, errh := os.Hostname()
+			if errh != nil {
+				die("%s", errh)
+			}
+
+			info("client starting on host %s, pid %d", host, os.Getpid())
+		}
+
 		if len(requests) == 0 {
-			info("no requests to work on")
+			warn("no requests to work on")
 
 			return
 		}
