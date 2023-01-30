@@ -33,6 +33,7 @@ import (
 	"github.com/VertebrateResequencing/wr/queue"
 	"github.com/gin-gonic/gin"
 	gas "github.com/wtsi-hgi/go-authserver"
+	"github.com/wtsi-hgi/grand"
 	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/set"
 )
@@ -91,6 +92,8 @@ const (
 	// desiredFileSize is the total size of files we want to return in
 	// getRequests (10GB).
 	desiredFileSize uint64 = defaultFileSize * 1024 * 10
+
+	logTraceIDLen = 8
 )
 
 // LoadSetDB loads the given set.db or creates it if it doesn't exist, and adds
@@ -519,29 +522,40 @@ func (s *Server) touchRequest(rid string) error {
 func (s *Server) putFileStatus(c *gin.Context) {
 	r := &put.Request{}
 
+	trace := grand.LcString(logTraceIDLen)
+
+	s.Logger.Printf("[%s] got a putFileStatus", trace)
+
 	if err := c.BindJSON(r); err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
 		return
 	}
 
+	s.Logger.Printf("[%s] will update status of %s", trace, r.Local)
+
 	if !s.allowedAccess(c, "") {
 		c.AbortWithError(http.StatusUnauthorized, ErrNotAdmin) //nolint:errcheck
+		s.Logger.Printf("[%s] denied access", trace)
 
 		return
 	}
 
 	if err := s.touchRequest(r.ID()); err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+		s.Logger.Printf("[%s] touch failed: %s", trace, err)
 
 		return
 	}
 
-	if err := s.updateFileStatus(r); err != nil {
+	if err := s.updateFileStatus(r, trace); err != nil {
 		c.AbortWithError(http.StatusInternalServerError, err) //nolint:errcheck
+		s.Logger.Printf("[%s] update failed: %s", trace, err)
 
 		return
 	}
+
+	s.Logger.Printf("[%s] update succeeded", trace)
 
 	c.Status(http.StatusOK)
 }
@@ -549,7 +563,9 @@ func (s *Server) putFileStatus(c *gin.Context) {
 // updateFileStatus updates the request's file entry status in the db, and
 // removes the request from our queue if not still uploading. Possibly stuck
 // requests are noted in the server's in-memory list of stuck requests.
-func (s *Server) updateFileStatus(r *put.Request) error {
+//
+// The supplied trace string is used in logging output.
+func (s *Server) updateFileStatus(r *put.Request, trace string) error {
 	entry, err := s.db.SetEntryStatus(r)
 	if err != nil {
 		return err
@@ -568,12 +584,16 @@ func (s *Server) updateFileStatus(r *put.Request) error {
 
 		s.mapMu.Unlock()
 
+		s.Logger.Printf("[%s] uploading, added %s to map", trace, rid)
+
 		return nil
 	}
 
 	delete(s.uploading, rid)
 	delete(s.stuckRequests, rid)
 	s.mapMu.Unlock()
+
+	s.Logger.Printf("[%s] will remove/release, deleted %s from map", trace, rid)
 
 	return s.removeOrReleaseRequestFromQueue(r, entry)
 }

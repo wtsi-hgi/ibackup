@@ -386,6 +386,8 @@ github.com/ugorji/go/codec v1.2.8 h1:sgBJS6COt0b/P40VouWKdseidkDgHxYGm0SAglUHfP0
 github.com/ugorji/go/codec v1.2.8/go.mod h1:UNopzCgEMSXjBc6AOMqYvWC1ktqTAfzJZUZgYf6w6lg=
 github.com/wtsi-hgi/go-authserver v1.1.0 h1:otMYH1p7Pkzb2S95aCY9KoiJv+xPOAipc3T55FgvJ24=
 github.com/wtsi-hgi/go-authserver v1.1.0/go.mod h1:JmXQYlfT3mIXosjuvQk9vPVvrloQmV2jQdvK8eGXkBU=
+github.com/wtsi-hgi/grand v1.0.0 h1:TNrcRcmXSOevZ2Ex/HQ5QCtcGnA7AmlsnhFyre0M5XE=
+github.com/wtsi-hgi/grand v1.0.0/go.mod h1:y8fr2gVC0hBCiMV7oM9UQZ5NOUcbmD9Vf2jeNE6FBdA=
 github.com/wtsi-npg/extendo/v2 v2.5.0 h1:Cz2xIn1+QlEaHmJX63w7U54C9BKao2H6XEfuRgIxR/s=
 github.com/wtsi-npg/extendo/v2 v2.5.0/go.mod h1:b2eEJtuLPWaDgtrrT48a3pTYSQcg5JTtBqpOWa61/nw=
 github.com/wtsi-npg/logshim v1.2.0/go.mod h1:1JRn1t/rlx1/oAtv3LOcshcpjDDvHGHCK8p8ua0Hrss=
