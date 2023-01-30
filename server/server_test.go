@@ -663,6 +663,40 @@ func TestServer(t *testing.T) {
 							So(n, ShouldEqual, 1)
 						})
 
+						Convey("Uploading requests can be retrieved", func() {
+							token, errl = gas.Login(addr, certPath, admin, "pass")
+							So(errl, ShouldBeNil)
+
+							client = NewClient(addr, certPath, token)
+
+							uploading, errc := client.UploadingRequests()
+							So(errc, ShouldBeNil)
+							So(len(uploading), ShouldEqual, 0)
+
+							requests, errg := client.GetSomeUploadRequests()
+							So(errg, ShouldBeNil)
+							So(len(requests), ShouldBeGreaterThan, 0)
+
+							uploadRequest := requests[0].Clone()
+
+							uploadRequest.Status = put.RequestStatusUploading
+							err = client.UpdateFileStatus(uploadRequest)
+							So(err, ShouldBeNil)
+
+							uploading, errc = client.UploadingRequests()
+							So(errc, ShouldBeNil)
+							So(len(uploading), ShouldEqual, 1)
+							So(uploading[0].ID(), ShouldEqual, uploadRequest.ID())
+
+							uploadRequest.Status = put.RequestStatusUploaded
+							err = client.UpdateFileStatus(uploadRequest)
+							So(err, ShouldBeNil)
+
+							uploading, errc = client.UploadingRequests()
+							So(errc, ShouldBeNil)
+							So(len(uploading), ShouldEqual, 0)
+						})
+
 						Convey("Once logged in and with a client", func() {
 							token, errl = gas.Login(addr, certPath, admin, "pass")
 							So(errl, ShouldBeNil)

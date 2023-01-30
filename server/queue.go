@@ -37,8 +37,9 @@ import (
 )
 
 const (
-	queueStatusPath = "/status"
-	queueBuriedPath = "/buried"
+	queueStatusPath    = "/status"
+	queueBuriedPath    = "/buried"
+	queueUploadingPath = "/uploading"
 
 	// EndPointAuthQueueStatus is the endpoint for getting queue status.
 	EndPointAuthQueueStatus = gas.EndPointAuth + queueStatusPath
@@ -46,6 +47,10 @@ const (
 	// EndPointAuthQueueBuried is the endpoint for dealing with buried items in
 	// the queue.
 	EndPointAuthQueueBuried = gas.EndPointAuth + queueBuriedPath
+
+	// EndPointAuthQueueUploading is the endpoint for getting items currently
+	// uploading from the queue.
+	EndPointAuthQueueUploading = gas.EndPointAuth + queueUploadingPath
 )
 
 // MakeQueueEndPoints adds a number of endpoints to the REST API for working
@@ -63,6 +68,8 @@ const (
 // there is a QueueRequest encoded as JSON in the body, limit to just those
 // items that correspond.
 //
+// GET /rest/v1/auth/uploading: get details about uploading items in the queue.
+//
 // You must call EnableAuth() before calling this method, and the non-GET
 // endpoints will only work if the logged-in user is the same as the user who
 // started the Server.
@@ -77,6 +84,8 @@ func (s *Server) MakeQueueEndPoints() error {
 	authGroup.GET(queueBuriedPath, s.getBuried)
 	authGroup.DELETE(queueBuriedPath, s.removeBuried)
 	authGroup.PUT(queueBuriedPath, s.retryBuried)
+
+	authGroup.GET(queueUploadingPath, s.getUploading)
 
 	return nil
 }
@@ -312,4 +321,39 @@ func (s *Server) RemoveBuried(bf *BuriedFilter) int {
 	})
 
 	return n
+}
+
+// getUploading gets the server's UploadingRequests.
+//
+// MakeQueueEndPoints() must already have been called. This is called when there
+// is a GET on /rest/v1/auth/uploading.
+func (s *Server) getUploading(c *gin.Context) {
+	c.JSON(http.StatusOK, s.UploadingRequests())
+}
+
+// UploadingRequests gets the details of put requests that are currently
+// uploading.
+func (c *Client) UploadingRequests() ([]*put.Request, error) {
+	var rs []*put.Request
+
+	err := c.getThing(EndPointAuthQueueUploading, &rs)
+
+	return rs, err
+}
+
+// UploadingRequests returns the put requests that are currently uploading from
+// the global put queue.
+func (s *Server) UploadingRequests() []*put.Request {
+	s.mapMu.RLock()
+	defer s.mapMu.RUnlock()
+
+	uploading := make([]*put.Request, len(s.uploading))
+	i := 0
+
+	for _, r := range s.uploading {
+		uploading[i] = r
+		i++
+	}
+
+	return uploading
 }
