@@ -28,11 +28,15 @@
 package put
 
 import (
+	"errors"
 	"fmt"
+	"io"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 type Error struct {
@@ -51,8 +55,10 @@ func (e Error) Error() string {
 const (
 	ErrLocalNotAbs   = "local path could not be made absolute"
 	ErrRemoteNotAbs  = "remote path not absolute"
+	ErrReadTimeout   = "local file read timed out"
 	minDirsForUnique = 2
 	numPutGoroutines = 2
+	fileReadTimeout  = 1 * time.Second
 )
 
 // Handler is something that knows how to communicate with iRODS and carry out
@@ -403,14 +409,60 @@ func (p *Putter) processPutCh(putCh, uploadStartCh, uploadReturnCh, metaCh chan 
 		uploading.Status = RequestStatusUploading
 		uploadStartCh <- uploading
 
+		if err := p.testRead(request); err != nil {
+			p.sendFailedRequest(request, err, uploadReturnCh)
+
+			continue
+		}
+
 		if err := p.handler.Put(request); err != nil {
-			request.Status = RequestStatusFailed
-			request.Error = err.Error()
-			uploadReturnCh <- request
+			p.sendFailedRequest(request, err, uploadReturnCh)
 
 			continue
 		}
 
 		metaCh <- request
 	}
+}
+
+// testRead tests to see if we can read the request's local file, cancelling the
+// read after a 1s timeout if not and returning an error.
+func (p *Putter) testRead(request *Request) error {
+	file, err := os.Open(request.Local)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	errCh := make(chan error, 1)
+
+	go func() {
+		buf := make([]byte, 1)
+
+		_, errr := file.Read(buf)
+		if errors.Is(errr, io.EOF) {
+			errr = nil
+		}
+
+		errCh <- errr
+	}()
+
+	timer := time.NewTimer(fileReadTimeout)
+
+	select {
+	case err = <-errCh:
+		timer.Stop()
+	case <-timer.C:
+		err = Error{ErrReadTimeout, request.Local}
+	}
+
+	return err
+}
+
+// sendFailedRequest adds the err details to the request and sends it on the
+// given channel.
+func (p *Putter) sendFailedRequest(request *Request, err error, uploadReturnCh chan *Request) {
+	request.Status = RequestStatusFailed
+	request.Error = err.Error()
+	uploadReturnCh <- request
 }
