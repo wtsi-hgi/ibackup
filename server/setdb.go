@@ -558,7 +558,6 @@ func (s *Server) updateFileStatus(r *put.Request) error {
 	rid := r.ID()
 
 	s.mapMu.Lock()
-	defer s.mapMu.Unlock()
 
 	if r.Status == put.RequestStatusUploading {
 		s.uploading[rid] = r
@@ -567,11 +566,13 @@ func (s *Server) updateFileStatus(r *put.Request) error {
 			s.stuckRequests[rid] = r
 		}
 
+		s.mapMu.Unlock()
 		return nil
 	}
 
 	delete(s.uploading, rid)
 	delete(s.stuckRequests, rid)
+	s.mapMu.Unlock()
 
 	return s.removeOrReleaseRequestFromQueue(r, entry)
 }
