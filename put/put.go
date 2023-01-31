@@ -28,10 +28,9 @@
 package put
 
 import (
-	"errors"
+	"context"
 	"fmt"
-	"io"
-	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -58,7 +57,7 @@ const (
 	ErrReadTimeout   = "local file read timed out"
 	minDirsForUnique = 2
 	numPutGoroutines = 2
-	fileReadTimeout  = 1 * time.Second
+	fileReadTimeout  = 10 * time.Second
 )
 
 // Handler is something that knows how to communicate with iRODS and carry out
@@ -425,34 +424,14 @@ func (p *Putter) processPutCh(putCh, uploadStartCh, uploadReturnCh, metaCh chan 
 	}
 }
 
-// testRead tests to see if we can read the request's local file, cancelling the
-// read after a 1s timeout if not and returning an error.
+// testRead tests to see if we can open and read the request's local file,
+// cancelling the read after a 10s timeout if not and returning an error.
 func (p *Putter) testRead(request *Request) error {
-	file, err := os.Open(request.Local)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), fileReadTimeout)
+	defer cancel()
 
-	errCh := make(chan error, 1)
-
-	go func() {
-		buf := make([]byte, 1)
-
-		_, errr := file.Read(buf)
-		if errors.Is(errr, io.EOF) {
-			errr = nil
-		}
-
-		errCh <- errr
-	}()
-
-	timer := time.NewTimer(fileReadTimeout)
-
-	select {
-	case err = <-errCh:
-		timer.Stop()
-	case <-timer.C:
+	err := exec.CommandContext(ctx, "head", "-c", "1", request.Local).Run() //nolint:gosec
+	if err != nil && strings.Contains(err.Error(), "killed") {
 		err = Error{ErrReadTimeout, request.Local}
 	}
 
