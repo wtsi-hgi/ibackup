@@ -28,21 +28,32 @@
 package put
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/rs/zerolog"
 	ex "github.com/wtsi-npg/extendo/v2"
 	logs "github.com/wtsi-npg/logshim"
 	"github.com/wtsi-npg/logshim-zerolog/zlog"
+	"github.com/wtsi-ssg/wr/backoff"
+	"github.com/wtsi-ssg/wr/retry"
 )
 
 const (
-	extendoLogLevel   = logs.ErrorLevel
-	numExtendoClients = 2
-	extendoNotExist   = "does not exist"
+	ErrCollectionTimeout = "iRODS collection creation or checking timed out"
+
+	extendoLogLevel                 = logs.ErrorLevel
+	numExtendoClients               = 2
+	extendoNotExist                 = "does not exist"
+	collectionCreationMinBackoff    = 5 * time.Second
+	collectionCreationMaxBackoff    = 30 * time.Second
+	collectionCreationBackoffFactor = 1.1
+	collectionCreationTimeout       = 10 * time.Second
+	collectionCreationRetries       = 6
 )
 
 // Baton is a Handler that uses Baton (via extendo) to interact with iRODS.
@@ -136,15 +147,78 @@ func (b *Baton) EnsureCollection(collection string) error {
 		return nil
 	}
 
-	if _, err := b.putClient.MkDir(ex.Args{Recurse: true}, ri); err != nil {
+	return b.createCollectionWithTimeoutAndRetries(ri)
+}
+
+// createCollectionWithTimeoutAndRetries tries to make and confirm the given
+// collection, retrying with a backoff because it can fail for no good reason,
+// then work later.
+func (b *Baton) createCollectionWithTimeoutAndRetries(ri ex.RodsItem) error {
+	err := b.doWithTimeoutAndRetries(func() error {
+		_, err := b.putClient.MkDir(ex.Args{Recurse: true}, ri)
+
+		return err
+	}, ri.IPath)
+	if err != nil {
 		return err
 	}
 
-	if _, err := b.putClient.ListItem(ex.Args{}, ri); err != nil {
+	return b.doWithTimeoutAndRetries(func() error {
+		_, err := b.putClient.ListItem(ex.Args{}, ri)
+
+		return err
+	}, ri.IPath)
+}
+
+// doWithTimeoutAndRetries does op, but times it out. On timeout or error,
+// retries a few times with backoff, getting a new baton client for each try.
+func (b *Baton) doWithTimeoutAndRetries(op retry.Operation, path string) error {
+	status := retry.Do(
+		context.Background(),
+		b.timeoutOpAndMakeNewClientOnError(op, path),
+		retry.Untils{&retry.UntilLimit{Max: collectionCreationRetries}, &retry.UntilNoError{}},
+		&backoff.Backoff{
+			Min:    collectionCreationMinBackoff,
+			Max:    collectionCreationMaxBackoff,
+			Factor: collectionCreationBackoffFactor,
+		},
+		"MkDir",
+	)
+
+	return status.Err
+}
+
+// timeoutOpAndMakeNewClientOnError wraps the given op with a timeout, and
+// makes a new client on timeout or error.
+func (b *Baton) timeoutOpAndMakeNewClientOnError(op retry.Operation, path string) retry.Operation {
+	return func() error {
+		errCh := make(chan error, 1)
+
+		go func() {
+			errCh <- op()
+		}()
+
+		timer := time.NewTimer(collectionCreationTimeout)
+
+		var err error
+
+		select {
+		case err = <-errCh:
+			timer.Stop()
+		case <-timer.C:
+			err = Error{ErrCollectionTimeout, path}
+		}
+
+		if err != nil {
+			client, errp := b.pool.Get()
+			if errp == nil {
+				go b.putClient.StopIgnoreError()
+				b.putClient = client
+			}
+		}
+
 		return err
 	}
-
-	return nil
 }
 
 // Stat gets mtime and metadata info for the request Remote object.
