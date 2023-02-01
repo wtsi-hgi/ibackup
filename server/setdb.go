@@ -528,6 +528,7 @@ func (s *Server) putFileStatus(c *gin.Context) {
 
 	if err := c.BindJSON(r); err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+		s.Logger.Printf("[%s] no request sent", trace)
 
 		return
 	}
@@ -593,7 +594,7 @@ func (s *Server) updateFileStatus(r *put.Request, trace string) error {
 	delete(s.stuckRequests, rid)
 	s.mapMu.Unlock()
 
-	s.Logger.Printf("[%s] will remove/release, deleted %s from map", trace, rid)
+	s.Logger.Printf("[%s] will remove/release; deleted %s from map", trace, rid)
 
 	return s.removeOrReleaseRequestFromQueue(r, entry)
 }

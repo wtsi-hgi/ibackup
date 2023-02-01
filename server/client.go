@@ -40,7 +40,7 @@ import (
 )
 
 const (
-	touchFrequency   = ttr / 2
+	touchFrequency   = ttr / 3
 	minTimeForUpload = 1 * time.Minute
 	bytesInMiB       = 1024 * 1024
 	numHandlers      = 2
@@ -70,10 +70,9 @@ type Client struct {
 // You must first gas.Login() to get a JWT that you must supply here.
 func NewClient(url, cert, jwt string) *Client {
 	return &Client{
-		url:     url,
-		cert:    cert,
-		jwt:     jwt,
-		toTouch: make(map[string]bool),
+		url:  url,
+		cert: cert,
+		jwt:  jwt,
 	}
 }
 
@@ -255,11 +254,15 @@ func (c *Client) startTouching(requests []*put.Request) {
 	c.touchMu.Lock()
 	defer c.touchMu.Unlock()
 
+	c.toTouch = make(map[string]bool)
+
 	for _, r := range requests {
 		c.toTouch[r.ID()] = true
 	}
 
 	if len(c.toTouch) == 0 {
+		c.touching = false
+
 		return
 	}
 
@@ -286,23 +289,27 @@ func (c *Client) touchRegularly() {
 	}()
 
 	for range ticker.C {
+		c.touchMu.Lock()
 		rids := c.getRequestIDsToTouch()
 
 		if len(rids) == 0 {
+			c.touchMu.Unlock()
+
 			return
 		}
 
 		if err = c.stillWorkingOnRequests(rids); err != nil {
+			c.touchMu.Unlock()
+
 			return
 		}
+
+		c.touchMu.Unlock()
 	}
 }
 
 // getRequestIDsToTouch converts our toTouch map to a slice of its keys.
 func (c *Client) getRequestIDsToTouch() []string {
-	c.touchMu.Lock()
-	defer c.touchMu.Unlock()
-
 	rids := make([]string, len(c.toTouch))
 	i := 0
 
@@ -353,7 +360,6 @@ func (c *Client) SendPutResultsToServer(uploadStarts, uploadResults, skipResults
 	var merr *multierror.Error
 
 	for err := range c.uploadsErrCh {
-		c.logger.Warn("failed to update file status", "err", err)
 		merr = multierror.Append(merr, err)
 	}
 
@@ -372,6 +378,7 @@ func (c *Client) handleUploadTracking(wg *sync.WaitGroup, uploadStarts, uploadRe
 		c.logger.Info("started upload", "path", ru.Local)
 
 		if err := c.UpdateFileStatus(ru); err != nil {
+			c.logger.Warn("failed to update file status to uploading", "err", err, "path", ru.Local)
 			c.uploadsErrCh <- err
 
 			continue
@@ -385,6 +392,7 @@ func (c *Client) handleUploadTracking(wg *sync.WaitGroup, uploadStarts, uploadRe
 		close(stopStuckTimer)
 
 		if err := c.UpdateFileStatus(rr); err != nil {
+			c.logger.Warn("failed to update file status to complete", "err", err, "path", ru.Local)
 			c.uploadsErrCh <- err
 		}
 	}
@@ -443,6 +451,7 @@ func (c *Client) handleSendingSkipResults(wg *sync.WaitGroup, results chan *put.
 		c.logger.Info("skipped upload", "path", r.Local)
 
 		if err := c.UpdateFileStatus(r); err != nil {
+			c.logger.Warn("failed to update file status for skipped", "err", err, "path", r.Local)
 			c.uploadsErrCh <- err
 		}
 	}
