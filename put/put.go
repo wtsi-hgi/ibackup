@@ -36,6 +36,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/gammazero/workerpool"
 )
 
 type Error struct {
@@ -58,6 +60,10 @@ const (
 	minDirsForUnique = 2
 	numPutGoroutines = 2
 	fileReadTimeout  = 10 * time.Second
+
+	// workerPoolSizeStats is the max number of concurrent file stats we'll do
+	// during Put().
+	workerPoolSizeStats = 16
 )
 
 // Handler is something that knows how to communicate with iRODS and carry out
@@ -244,19 +250,17 @@ func (p *Putter) Put() (chan *Request, chan *Request, chan *Request) {
 func (p *Putter) pickFilesToPut(wg *sync.WaitGroup, putCh chan *Request, skipReturnCh chan *Request) {
 	defer wg.Done()
 
-	var internalWg sync.WaitGroup
+	pool := workerpool.New(workerPoolSizeStats)
 
 	for _, request := range p.requests {
-		internalWg.Add(1)
+		thisRequest := request
 
-		go func(request *Request) {
-			defer internalWg.Done()
-
-			p.statPathsAndReturnOrPut(request, putCh, skipReturnCh)
-		}(request)
+		pool.Submit(func() {
+			p.statPathsAndReturnOrPut(thisRequest, putCh, skipReturnCh)
+		})
 	}
 
-	internalWg.Wait()
+	pool.StopWait()
 	close(putCh)
 }
 
