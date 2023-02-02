@@ -185,10 +185,8 @@ you, so should this.`,
 
 		err = p.CreateCollections()
 		if err != nil {
-			die("%s", err)
-		}
-
-		if putVerbose {
+			warn("collection creation failed: %s", err)
+		} else if putVerbose {
 			info("collections created")
 		}
 

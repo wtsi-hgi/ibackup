@@ -29,6 +29,7 @@ package put
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -44,16 +45,16 @@ import (
 )
 
 const (
-	ErrCollectionTimeout = "iRODS collection creation or checking timed out"
+	ErrOperationTimeout = "iRODS operation timed out"
 
-	extendoLogLevel                 = logs.ErrorLevel
-	numExtendoClients               = 2
-	extendoNotExist                 = "does not exist"
-	collectionCreationMinBackoff    = 5 * time.Second
-	collectionCreationMaxBackoff    = 30 * time.Second
-	collectionCreationBackoffFactor = 1.1
-	collectionCreationTimeout       = 10 * time.Second
-	collectionCreationRetries       = 6
+	extendoLogLevel        = logs.ErrorLevel
+	numExtendoClients      = 2
+	extendoNotExist        = "does not exist"
+	operationMinBackoff    = 5 * time.Second
+	operationMaxBackoff    = 30 * time.Second
+	operationBackoffFactor = 1.1
+	operationTimeout       = 15 * time.Second
+	operationRetries       = 6
 )
 
 // Baton is a Handler that uses Baton (via extendo) to interact with iRODS.
@@ -128,7 +129,11 @@ func (b *Baton) getClientsFromPoolConcurrently() (chan *ex.Client, error) {
 // Cleanup stops our clients and closes our client pool.
 func (b *Baton) Cleanup() error {
 	for _, client := range []*ex.Client{b.putClient, b.metaClient} {
-		if err := client.Stop(); err != nil {
+		err := timeoutOp(func() error {
+			return client.Stop()
+		}, "")
+
+		if err != nil {
 			return err
 		}
 	}
@@ -138,13 +143,45 @@ func (b *Baton) Cleanup() error {
 	return nil
 }
 
+// timeoutOp carries out op, returning any error from it. Has a 10s timeout on
+// running op, and will return a timeout error instead if exceeded.
+func timeoutOp(op retry.Operation, path string) error {
+	errCh := make(chan error, 1)
+
+	go func() {
+		errCh <- op()
+	}()
+
+	timer := time.NewTimer(operationTimeout)
+
+	var err error
+
+	select {
+	case err = <-errCh:
+		timer.Stop()
+	case <-timer.C:
+		err = Error{ErrOperationTimeout, path}
+	}
+
+	return err
+}
+
 // EnsureCollection ensures the given collection exists in iRODS, creating it if
 // necessary. You must call Connect() before calling this.
 func (b *Baton) EnsureCollection(collection string) error {
 	ri := ex.RodsItem{IPath: collection}
 
-	if _, err := b.putClient.ListItem(ex.Args{}, ri); err == nil {
+	err := timeoutOp(func() error {
+		_, errl := b.putClient.ListItem(ex.Args{}, ri)
+
+		return errl
+	}, collection)
+	if err == nil {
 		return nil
+	}
+
+	if errors.Is(err, Error{ErrOperationTimeout, collection}) {
+		return err
 	}
 
 	return b.createCollectionWithTimeoutAndRetries(ri)
@@ -176,11 +213,11 @@ func (b *Baton) doWithTimeoutAndRetries(op retry.Operation, path string) error {
 	status := retry.Do(
 		context.Background(),
 		b.timeoutOpAndMakeNewClientOnError(op, path),
-		retry.Untils{&retry.UntilLimit{Max: collectionCreationRetries}, &retry.UntilNoError{}},
+		retry.Untils{&retry.UntilLimit{Max: operationRetries}, &retry.UntilNoError{}},
 		&backoff.Backoff{
-			Min:    collectionCreationMinBackoff,
-			Max:    collectionCreationMaxBackoff,
-			Factor: collectionCreationBackoffFactor,
+			Min:    operationMinBackoff,
+			Max:    operationMaxBackoff,
+			Factor: operationBackoffFactor,
 		},
 		"MkDir",
 	)
@@ -192,27 +229,19 @@ func (b *Baton) doWithTimeoutAndRetries(op retry.Operation, path string) error {
 // makes a new client on timeout or error.
 func (b *Baton) timeoutOpAndMakeNewClientOnError(op retry.Operation, path string) retry.Operation {
 	return func() error {
-		errCh := make(chan error, 1)
-
-		go func() {
-			errCh <- op()
-		}()
-
-		timer := time.NewTimer(collectionCreationTimeout)
-
-		var err error
-
-		select {
-		case err = <-errCh:
-			timer.Stop()
-		case <-timer.C:
-			err = Error{ErrCollectionTimeout, path}
-		}
+		err := timeoutOp(op, path)
 
 		if err != nil {
 			client, errp := b.pool.Get()
 			if errp == nil {
-				go b.putClient.StopIgnoreError()
+				go func(oldClient *ex.Client) {
+					timeoutOp(func() error { //nolint:errcheck
+						oldClient.StopIgnoreError()
+
+						return nil
+					}, "")
+				}(b.putClient)
+
 				b.putClient = client
 			}
 		}
@@ -223,7 +252,15 @@ func (b *Baton) timeoutOpAndMakeNewClientOnError(op retry.Operation, path string
 
 // Stat gets mtime and metadata info for the request Remote object.
 func (b *Baton) Stat(request *Request) (*ObjectInfo, error) {
-	it, err := b.metaClient.ListItem(ex.Args{Timestamp: true, AVU: true}, *requestToRodsItem(request))
+	var it ex.RodsItem
+
+	err := timeoutOp(func() error {
+		var errl error
+		it, errl = b.metaClient.ListItem(ex.Args{Timestamp: true, AVU: true}, *requestToRodsItem(request))
+
+		return errl
+	}, request.Remote)
+
 	if err != nil {
 		if strings.Contains(err.Error(), extendoNotExist) {
 			return &ObjectInfo{Exists: false}, nil
@@ -296,7 +333,11 @@ func (b *Baton) RemoveMeta(path string, meta map[string]string) error {
 	it := remotePathToRodsItem(path)
 	it.IAVUs = metaToAVUs(meta)
 
-	_, err := b.metaClient.MetaRem(ex.Args{}, *it)
+	err := timeoutOp(func() error {
+		_, errl := b.metaClient.MetaRem(ex.Args{}, *it)
+
+		return errl
+	}, path)
 
 	return err
 }
@@ -313,7 +354,11 @@ func (b *Baton) AddMeta(path string, meta map[string]string) error {
 	it := remotePathToRodsItem(path)
 	it.IAVUs = metaToAVUs(meta)
 
-	_, err := b.metaClient.MetaAdd(ex.Args{}, *it)
+	err := timeoutOp(func() error {
+		_, errl := b.metaClient.MetaAdd(ex.Args{}, *it)
+
+		return errl
+	}, path)
 
 	return err
 }

@@ -29,6 +29,7 @@ package put
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"path/filepath"
@@ -38,6 +39,7 @@ import (
 	"time"
 
 	"github.com/gammazero/workerpool"
+	"github.com/hashicorp/go-multierror"
 )
 
 type Error struct {
@@ -51,6 +53,15 @@ func (e Error) Error() string {
 	}
 
 	return e.msg
+}
+
+func (e Error) Is(err error) bool {
+	var putErr *Error
+	if errors.As(err, &putErr) {
+		return putErr.msg == e.msg
+	}
+
+	return false
 }
 
 const (
@@ -137,17 +148,20 @@ func (p *Putter) Cleanup() error {
 // You should call this before Put(), unless you're sure all collections already
 // exist.
 //
-// Gives up on the first failed operation, and returns that error.
+// Tries to create all needed collections, potentially returning multiple errors
+// wrapped in to one.
 func (p *Putter) CreateCollections() error {
 	dirs := p.getUniqueRequestLeafCollections()
 
+	var merr *multierror.Error
+
 	for _, dir := range dirs {
 		if err := p.handler.EnsureCollection(dir); err != nil {
-			return err
+			merr = multierror.Append(merr, err)
 		}
 	}
 
-	return nil
+	return merr.ErrorOrNil()
 }
 
 func (p *Putter) getUniqueRequestLeafCollections() []string {
@@ -366,16 +380,15 @@ func (p *Putter) applyMetadataConcurrently(metaCh, uploadReturnCh, skipReturnCh 
 		}
 
 		if err := p.removeMeta(request.Remote, toRemove); err != nil {
-			request.Status = RequestStatusFailed
-			request.Error = err.Error()
-			returnCh <- request
+			p.sendFailedRequest(request, err, returnCh)
 
 			continue
 		}
 
 		if err := p.addMeta(request.Remote, toAdd); err != nil {
-			request.Status = RequestStatusFailed
-			request.Error = err.Error()
+			p.sendFailedRequest(request, err, returnCh)
+
+			continue
 		}
 
 		returnCh <- request
@@ -390,6 +403,12 @@ func (p *Putter) removeMeta(path string, toRemove map[string]string) error {
 	}
 
 	return p.handler.RemoveMeta(path, toRemove)
+}
+
+// sendFailedRequest adds the err details to the request and sends it on the
+// given channel.
+func (p *Putter) sendFailedRequest(request *Request, err error, uploadReturnCh chan *Request) {
+	sendRequest(request, RequestStatusFailed, err, uploadReturnCh)
 }
 
 func (p *Putter) addMeta(path string, toAdd map[string]string) error {
@@ -440,12 +459,4 @@ func (p *Putter) testRead(request *Request) error {
 	}
 
 	return err
-}
-
-// sendFailedRequest adds the err details to the request and sends it on the
-// given channel.
-func (p *Putter) sendFailedRequest(request *Request, err error, uploadReturnCh chan *Request) {
-	request.Status = RequestStatusFailed
-	request.Error = err.Error()
-	uploadReturnCh <- request
 }
