@@ -76,17 +76,18 @@ const (
 // package's database, and a website that displays the information nicely.
 type Server struct {
 	gas.Server
-	db            *set.DB
-	filePool      *workerpool.WorkerPool
-	dirPool       *workerpool.WorkerPool
-	queue         *queue.Queue
-	sched         *scheduler.Scheduler
-	putCmd        string
-	req           *jqs.Requirements
-	username      string
-	uploading     map[string]*put.Request
-	stuckRequests map[string]*put.Request
-	mapMu         sync.RWMutex
+	db             *set.DB
+	filePool       *workerpool.WorkerPool
+	dirPool        *workerpool.WorkerPool
+	queue          *queue.Queue
+	sched          *scheduler.Scheduler
+	putCmd         string
+	req            *jqs.Requirements
+	username       string
+	statusUpdateCh chan *fileStatusPacket
+	uploading      map[string]*put.Request
+	stuckRequests  map[string]*put.Request
+	mapMu          sync.RWMutex
 }
 
 // New creates a Server which can serve a REST API and website.
@@ -239,6 +240,10 @@ func (s *Server) ttrc(data interface{}) queue.SubQueue {
 func (s *Server) stop() {
 	s.filePool.StopWait()
 	s.dirPool.StopWait()
+
+	if s.statusUpdateCh != nil {
+		close(s.statusUpdateCh)
+	}
 
 	if s.sched != nil {
 		if err := s.sched.Disconnect(); err != nil {

@@ -156,6 +156,9 @@ func (s *Server) LoadSetDB(path string) error {
 
 	s.addDBEndpoints(authGroup)
 
+	s.statusUpdateCh = make(chan *fileStatusPacket)
+	go s.handleFileStatusUpdates()
+
 	return s.recoverQueue()
 }
 
@@ -509,6 +512,12 @@ func (s *Server) touchRequest(rid string) error {
 	return s.queue.Touch(rid)
 }
 
+// codeAndError is used for sending a http status code and error over a channel.
+type codeAndError struct {
+	code int
+	err  error
+}
+
 // putFileStatus interprets the body as a JSON encoding of a put.Request and
 // stores it in the database.
 //
@@ -522,43 +531,82 @@ func (s *Server) touchRequest(rid string) error {
 func (s *Server) putFileStatus(c *gin.Context) {
 	r := &put.Request{}
 
-	trace := grand.LcString(logTraceIDLen)
-
-	s.Logger.Printf("[%s] got a putFileStatus", trace)
+	s.Logger.Printf("got a putFileStatus")
 
 	if err := c.BindJSON(r); err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
-		s.Logger.Printf("[%s] no request sent", trace)
+		s.Logger.Printf("no request sent to putFileStatus")
 
 		return
 	}
-
-	s.Logger.Printf("[%s] will update status of %s", trace, r.Local)
 
 	if !s.allowedAccess(c, "") {
 		c.AbortWithError(http.StatusUnauthorized, ErrNotAdmin) //nolint:errcheck
-		s.Logger.Printf("[%s] denied access", trace)
+		s.Logger.Printf("denied access during file status update for %s", r.Local)
 
 		return
 	}
 
-	if err := s.touchRequest(r.ID()); err != nil {
-		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
-		s.Logger.Printf("[%s] touch failed: %s", trace, err)
+	ceCh := s.queueFileStatusUpdate(r)
+	ce := <-ceCh
+
+	if ce != nil {
+		c.AbortWithError(ce.code, ce.err) //nolint:errcheck
 
 		return
 	}
-
-	if err := s.updateFileStatus(r, trace); err != nil {
-		c.AbortWithError(http.StatusInternalServerError, err) //nolint:errcheck
-		s.Logger.Printf("[%s] update failed: %s", trace, err)
-
-		return
-	}
-
-	s.Logger.Printf("[%s] update succeeded", trace)
 
 	c.Status(http.StatusOK)
+}
+
+// fileStatusPacket contains a Request and codeAndError channel for sending over
+// a channel.
+type fileStatusPacket struct {
+	r    *put.Request
+	ceCh chan *codeAndError
+}
+
+// queueFileStatusUpdate queues a file status update request from a client,
+// sending it to the channel handleFileStatusUpdates() reads from.
+func (s *Server) queueFileStatusUpdate(r *put.Request) chan *codeAndError {
+	ceCh := make(chan *codeAndError)
+
+	go func() {
+		s.statusUpdateCh <- &fileStatusPacket{
+			r:    r,
+			ceCh: ceCh,
+		}
+	}()
+
+	return ceCh
+}
+
+// handleFileStatusUpdates linearises file status updates by continueously
+// looping over update requests coming in from clients and ensuring they are
+// dealt with fully before dealing with the next request.
+func (s *Server) handleFileStatusUpdates() {
+	for fsp := range s.statusUpdateCh {
+		trace := grand.LcString(logTraceIDLen)
+
+		s.Logger.Printf("[%s] will update status of %s", trace, fsp.r.Local)
+
+		if err := s.touchRequest(fsp.r.ID()); err != nil {
+			s.Logger.Printf("[%s] touch failed: %s", trace, err)
+			fsp.ceCh <- &codeAndError{code: http.StatusBadRequest, err: err}
+
+			continue
+		}
+
+		if err := s.updateFileStatus(fsp.r, trace); err != nil {
+			s.Logger.Printf("[%s] update failed: %s", trace, err)
+			fsp.ceCh <- &codeAndError{code: http.StatusInternalServerError, err: err}
+
+			continue
+		}
+
+		s.Logger.Printf("[%s] update succeeded", trace)
+		fsp.ceCh <- nil
+	}
 }
 
 // updateFileStatus updates the request's file entry status in the db, and
