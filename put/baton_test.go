@@ -36,7 +36,7 @@ import (
 	ex "github.com/wtsi-npg/extendo/v2"
 )
 
-func TestPutBaton(t *testing.T) {
+func TestPutBaton(t *testing.T) { //nolint:cyclop
 	h, err := GetBatonHandler()
 	if err != nil {
 		t.Logf("GetBatonHandler error: %s", err)

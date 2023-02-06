@@ -38,7 +38,7 @@ import (
 	"github.com/wtsi-ssg/wrstat/v3/walk"
 )
 
-const ttr = 2 * time.Minute
+const ttr = 6 * time.Minute
 
 // triggerDiscovery triggers the file discovery process for the set with the id
 // specified in the URL parameter.

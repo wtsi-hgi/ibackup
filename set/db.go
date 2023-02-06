@@ -385,12 +385,13 @@ func (d *DB) updateFileEntry(tx *bolt.Tx, setID string, r *put.Request, setDisco
 	if setDiscoveryTime.After(entry.LastAttempt) {
 		entry.Attempts = 0
 		entry.LastError = ""
+		entry.Status = Pending
 	}
 
 	entry.LastAttempt = time.Now()
 	entry.Size = r.Size
 
-	if (r.Status == put.RequestStatusUploading && r.Stuck == nil) || r.Status == put.RequestStatusUnmodified {
+	if entry.Status == Pending || entry.Status == Failed {
 		entry.Attempts++
 		entry.newSize = entry.Attempts == 1
 	}

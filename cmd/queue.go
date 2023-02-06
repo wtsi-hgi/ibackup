@@ -39,6 +39,7 @@ var queueSet string
 var queuePath string
 var queueKick bool
 var queueDelete bool
+var queueUploading bool
 
 // queueCmd represents the queue command.
 var queueCmd = &cobra.Command{
@@ -60,7 +61,8 @@ that name belonging to that user). You can also add a local --path to limit to a
 single file in that set.
 
 Specifying nothing displays details about all currently buried requests in the
-queue.
+queue. Specifying --uploading instead shows details about requests that are
+currently uploading.
 `,
 	Run: func(cmd *cobra.Command, args []string) {
 		ensureURLandCert()
@@ -103,13 +105,20 @@ queue.
 			}
 
 			handleBuried(client, queueDelete, queueKick, bf)
+		} else if queueUploading {
+			rs, err := client.UploadingRequests()
+			if err != nil {
+				die("unable to get uploading requests: %s", err)
+			}
+
+			displayRequests(rs, "uploading")
 		} else {
 			rs, err := client.BuriedRequests()
 			if err != nil {
 				die("unable to get buried requests: %s", err)
 			}
 
-			displayBuriedRequests(rs)
+			displayRequests(rs, "buried")
 		}
 	},
 }
@@ -127,11 +136,14 @@ func init() {
 		"delete certain buried items in the queue")
 	queueCmd.Flags().BoolVarP(&queueKick, "retry", "r", false,
 		"retry certain buried items in the queue")
+	queueCmd.Flags().BoolVar(&queueUploading, "uploading", false, "show uploading items in the queue")
 }
 
-func displayBuriedRequests(rs []*put.Request) {
+// displayRequests prints out details of each request. If there are none, warns
+// that there aren't the given kind of request.
+func displayRequests(rs []*put.Request, kind string) {
 	if len(rs) == 0 {
-		warn("no buried requests")
+		warn("no %s requests", kind)
 
 		return
 	}

@@ -33,6 +33,7 @@ import (
 	"github.com/VertebrateResequencing/wr/queue"
 	"github.com/gin-gonic/gin"
 	gas "github.com/wtsi-hgi/go-authserver"
+	"github.com/wtsi-hgi/grand"
 	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/set"
 )
@@ -91,6 +92,8 @@ const (
 	// desiredFileSize is the total size of files we want to return in
 	// getRequests (10GB).
 	desiredFileSize uint64 = defaultFileSize * 1024 * 10
+
+	logTraceIDLen = 8
 )
 
 // LoadSetDB loads the given set.db or creates it if it doesn't exist, and adds
@@ -152,6 +155,9 @@ func (s *Server) LoadSetDB(path string) error {
 	s.db = db
 
 	s.addDBEndpoints(authGroup)
+
+	s.statusUpdateCh = make(chan *fileStatusPacket)
+	go s.handleFileStatusUpdates()
 
 	return s.recoverQueue()
 }
@@ -506,6 +512,12 @@ func (s *Server) touchRequest(rid string) error {
 	return s.queue.Touch(rid)
 }
 
+// codeAndError is used for sending a http status code and error over a channel.
+type codeAndError struct {
+	code int
+	err  error
+}
+
 // putFileStatus interprets the body as a JSON encoding of a put.Request and
 // stores it in the database.
 //
@@ -519,26 +531,27 @@ func (s *Server) touchRequest(rid string) error {
 func (s *Server) putFileStatus(c *gin.Context) {
 	r := &put.Request{}
 
+	s.Logger.Printf("got a putFileStatus")
+
 	if err := c.BindJSON(r); err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+		s.Logger.Printf("no request sent to putFileStatus")
 
 		return
 	}
 
 	if !s.allowedAccess(c, "") {
 		c.AbortWithError(http.StatusUnauthorized, ErrNotAdmin) //nolint:errcheck
+		s.Logger.Printf("denied access during file status update for %s", r.Local)
 
 		return
 	}
 
-	if err := s.touchRequest(r.ID()); err != nil {
-		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+	ceCh := s.queueFileStatusUpdate(r)
+	ce := <-ceCh
 
-		return
-	}
-
-	if err := s.updateFileStatus(r); err != nil {
-		c.AbortWithError(http.StatusInternalServerError, err) //nolint:errcheck
+	if ce != nil {
+		c.AbortWithError(ce.code, ce.err) //nolint:errcheck
 
 		return
 	}
@@ -546,10 +559,62 @@ func (s *Server) putFileStatus(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
+// fileStatusPacket contains a Request and codeAndError channel for sending over
+// a channel.
+type fileStatusPacket struct {
+	r    *put.Request
+	ceCh chan *codeAndError
+}
+
+// queueFileStatusUpdate queues a file status update request from a client,
+// sending it to the channel handleFileStatusUpdates() reads from.
+func (s *Server) queueFileStatusUpdate(r *put.Request) chan *codeAndError {
+	ceCh := make(chan *codeAndError)
+
+	go func() {
+		s.statusUpdateCh <- &fileStatusPacket{
+			r:    r,
+			ceCh: ceCh,
+		}
+	}()
+
+	return ceCh
+}
+
+// handleFileStatusUpdates linearises file status updates by continueously
+// looping over update requests coming in from clients and ensuring they are
+// dealt with fully before dealing with the next request.
+func (s *Server) handleFileStatusUpdates() {
+	for fsp := range s.statusUpdateCh {
+		trace := grand.LcString(logTraceIDLen)
+
+		s.Logger.Printf("[%s] will update status of %s", trace, fsp.r.Local)
+
+		if err := s.touchRequest(fsp.r.ID()); err != nil {
+			s.Logger.Printf("[%s] touch failed: %s", trace, err)
+			fsp.ceCh <- &codeAndError{code: http.StatusBadRequest, err: err}
+
+			continue
+		}
+
+		if err := s.updateFileStatus(fsp.r, trace); err != nil {
+			s.Logger.Printf("[%s] update failed: %s", trace, err)
+			fsp.ceCh <- &codeAndError{code: http.StatusInternalServerError, err: err}
+
+			continue
+		}
+
+		s.Logger.Printf("[%s] update succeeded", trace)
+		fsp.ceCh <- nil
+	}
+}
+
 // updateFileStatus updates the request's file entry status in the db, and
 // removes the request from our queue if not still uploading. Possibly stuck
 // requests are noted in the server's in-memory list of stuck requests.
-func (s *Server) updateFileStatus(r *put.Request) error {
+//
+// The supplied trace string is used in logging output.
+func (s *Server) updateFileStatus(r *put.Request, trace string) error {
 	entry, err := s.db.SetEntryStatus(r)
 	if err != nil {
 		return err
@@ -558,7 +623,6 @@ func (s *Server) updateFileStatus(r *put.Request) error {
 	rid := r.ID()
 
 	s.mapMu.Lock()
-	defer s.mapMu.Unlock()
 
 	if r.Status == put.RequestStatusUploading {
 		s.uploading[rid] = r
@@ -567,11 +631,18 @@ func (s *Server) updateFileStatus(r *put.Request) error {
 			s.stuckRequests[rid] = r
 		}
 
+		s.mapMu.Unlock()
+
+		s.Logger.Printf("[%s] uploading, added %s to map", trace, rid)
+
 		return nil
 	}
 
 	delete(s.uploading, rid)
 	delete(s.stuckRequests, rid)
+	s.mapMu.Unlock()
+
+	s.Logger.Printf("[%s] will remove/release; deleted %s from map", trace, rid)
 
 	return s.removeOrReleaseRequestFromQueue(r, entry)
 }
@@ -581,10 +652,7 @@ func (s *Server) updateFileStatus(r *put.Request) error {
 // it being buried.
 func (s *Server) removeOrReleaseRequestFromQueue(r *put.Request, entry *set.Entry) error {
 	if r.Status == put.RequestStatusFailed {
-		if item, err := s.queue.Get(r.ID()); err == nil {
-			stats := item.Stats()
-			s.queue.Update(context.Background(), item.Key, "", r, stats.Priority, stats.Delay, stats.TTR) //nolint:errcheck
-		}
+		s.updateQueueItemData(r)
 
 		if entry.Attempts%set.AttemptsToBeConsideredFailing == 0 {
 			return s.queue.Bury(r.ID())
@@ -594,6 +662,15 @@ func (s *Server) removeOrReleaseRequestFromQueue(r *put.Request, entry *set.Entr
 	}
 
 	return s.queue.Remove(context.Background(), r.ID())
+}
+
+// updateQueueItemData updates the item in our queue corresponding to the
+// given request, with the request's latest properties.
+func (s *Server) updateQueueItemData(r *put.Request) {
+	if item, err := s.queue.Get(r.ID()); err == nil {
+		stats := item.Stats()
+		s.queue.Update(context.Background(), item.Key, "", r, stats.Priority, stats.Delay, stats.TTR) //nolint:errcheck
+	}
 }
 
 // recoverQueue is used at startup to fill the in-memory queue with requests for

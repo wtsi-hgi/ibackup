@@ -63,6 +63,7 @@ var putMeta string
 var putVerbose bool
 var putBase64 bool
 var putServerMode bool
+var putLog string
 
 // putCmd represents the put command.
 var putCmd = &cobra.Command{
@@ -119,6 +120,11 @@ You also need to have your iRODS environment set up and must be authenticated
 with iRODS (eg. run 'iinit') before running this command. If 'iput' works for
 you, so should this.`,
 	Run: func(cmd *cobra.Command, args []string) {
+		if putLog != "" {
+			putVerbose = true
+			logToFile(putLog)
+		}
+
 		var requests []*put.Request
 		var client *server.Client
 		var err error
@@ -138,8 +144,17 @@ you, so should this.`,
 			die("%s", err)
 		}
 
+		if putVerbose {
+			host, errh := os.Hostname()
+			if errh != nil {
+				die("%s", errh)
+			}
+
+			info("client starting on host %s, pid %d", host, os.Getpid())
+		}
+
 		if len(requests) == 0 {
-			info("no requests to work on")
+			warn("no requests to work on")
 
 			return
 		}
@@ -170,19 +185,21 @@ you, so should this.`,
 
 		err = p.CreateCollections()
 		if err != nil {
-			die("%s", err)
-		}
-
-		if putVerbose {
+			warn("collection creation failed: %s", err)
+		} else if putVerbose {
 			info("collections created")
 		}
 
 		uploadStarts, uploadResults, skipResults := p.Put()
 
 		if client != nil {
-			err = client.SendPutResultsToServer(uploadStarts, uploadResults, skipResults, minMBperSecondUploadSpeed)
+			err = client.SendPutResultsToServer(uploadStarts, uploadResults, skipResults, minMBperSecondUploadSpeed, appLogger)
 			if err != nil {
 				die("%s", err)
+			}
+
+			if putVerbose {
+				info("all done, exiting")
 			}
 		} else {
 			printResults(uploadResults, skipResults, len(requests), putVerbose)
@@ -204,6 +221,8 @@ func init() {
 		"input paths are base64 encoded")
 	putCmd.Flags().BoolVarP(&putServerMode, "server", "s", false,
 		"pull requests from the server instead of --file; only usable by the user who started the server")
+	putCmd.Flags().StringVarP(&putLog, "log", "l", "",
+		"log to the given file (implies --verbose)")
 }
 
 // getRequestsFromFile reads our 3 column file format from a file or STDIN and

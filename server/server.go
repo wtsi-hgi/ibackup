@@ -76,17 +76,18 @@ const (
 // package's database, and a website that displays the information nicely.
 type Server struct {
 	gas.Server
-	db            *set.DB
-	filePool      *workerpool.WorkerPool
-	dirPool       *workerpool.WorkerPool
-	queue         *queue.Queue
-	sched         *scheduler.Scheduler
-	putCmd        string
-	req           *jqs.Requirements
-	username      string
-	uploading     map[string]*put.Request
-	stuckRequests map[string]*put.Request
-	mapMu         sync.RWMutex
+	db             *set.DB
+	filePool       *workerpool.WorkerPool
+	dirPool        *workerpool.WorkerPool
+	queue          *queue.Queue
+	sched          *scheduler.Scheduler
+	putCmd         string
+	req            *jqs.Requirements
+	username       string
+	statusUpdateCh chan *fileStatusPacket
+	uploading      map[string]*put.Request
+	stuckRequests  map[string]*put.Request
+	mapMu          sync.RWMutex
 }
 
 // New creates a Server which can serve a REST API and website.
@@ -150,6 +151,7 @@ func (s *Server) EnableJobSubmission(putCmd, deployment, cwd, queue string, logg
 	s.putCmd = putCmd
 
 	s.queue.SetReadyAddedCallback(s.rac)
+	s.queue.SetTTRCallback(s.ttrc)
 
 	return nil
 }
@@ -170,7 +172,7 @@ func (s *Server) rac(queuename string, allitemdata []interface{}) {
 
 	for i := range jobs {
 		job := s.sched.NewJob(
-			fmt.Sprintf("%s && echo %d", s.putCmd, i),
+			fmt.Sprintf("%s%d", s.putCmd, i),
 			repGroup, reqGroup, "", "", s.req,
 		)
 		job.Retries = jobRetries
@@ -215,11 +217,33 @@ func jobsNeeded(n int) int {
 	return n
 }
 
+// ttrc is called when reserved items in our queue are abandoned due to a put
+// client dying, and so we cleanup and send it back to the ready subqueue.
+func (s *Server) ttrc(data interface{}) queue.SubQueue {
+	s.mapMu.Lock()
+	defer s.mapMu.Unlock()
+
+	r, ok := data.(*put.Request)
+	if !ok {
+		s.Logger.Printf("item data not a Request")
+	}
+
+	rid := r.ID()
+	delete(s.uploading, rid)
+	delete(s.stuckRequests, rid)
+
+	return queue.SubQueueReady
+}
+
 // stop is called when the server is Stop()ped, cleaning up our additional
 // properties.
 func (s *Server) stop() {
 	s.filePool.StopWait()
 	s.dirPool.StopWait()
+
+	if s.statusUpdateCh != nil {
+		close(s.statusUpdateCh)
+	}
 
 	if s.sched != nil {
 		if err := s.sched.Disconnect(); err != nil {

@@ -28,11 +28,18 @@
 package put
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
+	"time"
+
+	"github.com/gammazero/workerpool"
+	"github.com/hashicorp/go-multierror"
 )
 
 type Error struct {
@@ -48,11 +55,26 @@ func (e Error) Error() string {
 	return e.msg
 }
 
+func (e Error) Is(err error) bool {
+	var putErr *Error
+	if errors.As(err, &putErr) {
+		return putErr.msg == e.msg
+	}
+
+	return false
+}
+
 const (
 	ErrLocalNotAbs   = "local path could not be made absolute"
 	ErrRemoteNotAbs  = "remote path not absolute"
+	ErrReadTimeout   = "local file read timed out"
 	minDirsForUnique = 2
 	numPutGoroutines = 2
+	fileReadTimeout  = 10 * time.Second
+
+	// workerPoolSizeStats is the max number of concurrent file stats we'll do
+	// during Put().
+	workerPoolSizeStats = 16
 )
 
 // Handler is something that knows how to communicate with iRODS and carry out
@@ -126,17 +148,20 @@ func (p *Putter) Cleanup() error {
 // You should call this before Put(), unless you're sure all collections already
 // exist.
 //
-// Gives up on the first failed operation, and returns that error.
+// Tries to create all needed collections, potentially returning multiple errors
+// wrapped in to one.
 func (p *Putter) CreateCollections() error {
 	dirs := p.getUniqueRequestLeafCollections()
 
+	var merr *multierror.Error
+
 	for _, dir := range dirs {
 		if err := p.handler.EnsureCollection(dir); err != nil {
-			return err
+			merr = multierror.Append(merr, err)
 		}
 	}
 
-	return nil
+	return merr.ErrorOrNil()
 }
 
 func (p *Putter) getUniqueRequestLeafCollections() []string {
@@ -239,19 +264,17 @@ func (p *Putter) Put() (chan *Request, chan *Request, chan *Request) {
 func (p *Putter) pickFilesToPut(wg *sync.WaitGroup, putCh chan *Request, skipReturnCh chan *Request) {
 	defer wg.Done()
 
-	var internalWg sync.WaitGroup
+	pool := workerpool.New(workerPoolSizeStats)
 
 	for _, request := range p.requests {
-		internalWg.Add(1)
+		thisRequest := request
 
-		go func(request *Request) {
-			defer internalWg.Done()
-
-			p.statPathsAndReturnOrPut(request, putCh, skipReturnCh)
-		}(request)
+		pool.Submit(func() {
+			p.statPathsAndReturnOrPut(thisRequest, putCh, skipReturnCh)
+		})
 	}
 
-	internalWg.Wait()
+	pool.StopWait()
 	close(putCh)
 }
 
@@ -357,16 +380,15 @@ func (p *Putter) applyMetadataConcurrently(metaCh, uploadReturnCh, skipReturnCh 
 		}
 
 		if err := p.removeMeta(request.Remote, toRemove); err != nil {
-			request.Status = RequestStatusFailed
-			request.Error = err.Error()
-			returnCh <- request
+			p.sendFailedRequest(request, err, returnCh)
 
 			continue
 		}
 
 		if err := p.addMeta(request.Remote, toAdd); err != nil {
-			request.Status = RequestStatusFailed
-			request.Error = err.Error()
+			p.sendFailedRequest(request, err, returnCh)
+
+			continue
 		}
 
 		returnCh <- request
@@ -381,6 +403,12 @@ func (p *Putter) removeMeta(path string, toRemove map[string]string) error {
 	}
 
 	return p.handler.RemoveMeta(path, toRemove)
+}
+
+// sendFailedRequest adds the err details to the request and sends it on the
+// given channel.
+func (p *Putter) sendFailedRequest(request *Request, err error, uploadReturnCh chan *Request) {
+	sendRequest(request, RequestStatusFailed, err, uploadReturnCh)
 }
 
 func (p *Putter) addMeta(path string, toAdd map[string]string) error {
@@ -403,14 +431,32 @@ func (p *Putter) processPutCh(putCh, uploadStartCh, uploadReturnCh, metaCh chan 
 		uploading.Status = RequestStatusUploading
 		uploadStartCh <- uploading
 
+		if err := p.testRead(request); err != nil {
+			p.sendFailedRequest(request, err, uploadReturnCh)
+
+			continue
+		}
+
 		if err := p.handler.Put(request); err != nil {
-			request.Status = RequestStatusFailed
-			request.Error = err.Error()
-			uploadReturnCh <- request
+			p.sendFailedRequest(request, err, uploadReturnCh)
 
 			continue
 		}
 
 		metaCh <- request
 	}
+}
+
+// testRead tests to see if we can open and read the request's local file,
+// cancelling the read after a 10s timeout if not and returning an error.
+func (p *Putter) testRead(request *Request) error {
+	ctx, cancel := context.WithTimeout(context.Background(), fileReadTimeout)
+	defer cancel()
+
+	err := exec.CommandContext(ctx, "head", "-c", "1", request.Local).Run() //nolint:gosec
+	if err != nil && strings.Contains(err.Error(), "killed") {
+		err = Error{ErrReadTimeout, request.Local}
+	}
+
+	return err
 }

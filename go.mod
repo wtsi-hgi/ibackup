@@ -17,9 +17,11 @@ require (
 	github.com/spf13/cobra v1.6.1
 	github.com/ugorji/go/codec v1.2.8
 	github.com/wtsi-hgi/go-authserver v1.1.0
+	github.com/wtsi-hgi/grand v1.0.0
 	github.com/wtsi-npg/extendo/v2 v2.5.0
 	github.com/wtsi-npg/logshim v1.3.0
 	github.com/wtsi-npg/logshim-zerolog v1.3.0
+	github.com/wtsi-ssg/wr v0.5.5
 	github.com/wtsi-ssg/wrstat/v3 v3.2.0
 	go.etcd.io/bbolt v1.3.6
 	golang.org/x/term v0.4.0
@@ -124,7 +126,6 @@ require (
 	github.com/thanhpk/randstr v1.0.4 // indirect
 	github.com/tklauser/go-sysconf v0.3.11 // indirect
 	github.com/tklauser/numcpus v0.6.0 // indirect
-	github.com/wtsi-ssg/wr v0.5.5 // indirect
 	github.com/yusufpapurcu/wmi v1.2.2 // indirect
 	golang.org/x/crypto v0.5.0 // indirect
 	golang.org/x/mod v0.7.0 // indirect
