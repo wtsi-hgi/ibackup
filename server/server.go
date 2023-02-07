@@ -82,6 +82,7 @@ type Server struct {
 	queue          *queue.Queue
 	sched          *scheduler.Scheduler
 	putCmd         string
+	putHandler     put.Handler
 	req            *jqs.Requirements
 	username       string
 	statusUpdateCh chan *fileStatusPacket

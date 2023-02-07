@@ -51,10 +51,16 @@ const (
 	putMetaParts   = 2
 	putSet         = "manual"
 
+	// maxMBToHandle is the total file size of requests we'll deal with in
+	// server mode, after which we'll exit so another client can use fresh
+	// iRODS connections and so our job doesn't last too long and get killed for
+	// using too much time.
+	maxMBToHandle = 10000
+
 	// minMBperSecondUploadSpeed is the slowest MB/s we think an upload should
 	// take; if it drops below this and is still uploading, we'll report to the
 	// server the upload might be stuck.
-	minMBperSecondUploadSpeed = 10
+	minMBperSecondUploadSpeed = 5
 )
 
 // options for this cmd.
@@ -125,25 +131,6 @@ you, so should this.`,
 			logToFile(putLog)
 		}
 
-		var requests []*put.Request
-		var client *server.Client
-		var err error
-
-		if putServerMode && serverURL != "" {
-			client, err = newServerClient(serverURL, serverCert)
-			if err != nil {
-				die(err.Error())
-			}
-
-			requests, err = client.GetSomeUploadRequests()
-		} else {
-			requests, err = getRequestsFromFile(putFile, putMeta, putBase64)
-		}
-
-		if err != nil {
-			die("%s", err)
-		}
-
 		if putVerbose {
 			host, errh := os.Hostname()
 			if errh != nil {
@@ -153,56 +140,20 @@ you, so should this.`,
 			info("client starting on host %s, pid %d", host, os.Getpid())
 		}
 
-		if len(requests) == 0 {
-			warn("no requests to work on")
-
-			return
-		}
-
-		if putVerbose {
-			info("got %d requests to work on", len(requests))
-		}
-
 		handler, err := put.GetBatonHandler()
 		if err != nil {
 			die("%s", err)
 		}
 
-		p, err := put.New(handler, requests)
-		if err != nil {
-			die("%s", err)
-		}
-
-		defer func() {
-			if errc := p.Cleanup(); errc != nil {
-				warn("cleanup gave errors: %s", errc)
-			}
-		}()
-
-		if putVerbose {
-			info("will create collections")
-		}
-
-		err = p.CreateCollections()
-		if err != nil {
-			warn("collection creation failed: %s", err)
-		} else if putVerbose {
-			info("collections created")
-		}
-
-		uploadStarts, uploadResults, skipResults := p.Put()
-
-		if client != nil {
-			err = client.SendPutResultsToServer(uploadStarts, uploadResults, skipResults, minMBperSecondUploadSpeed, appLogger)
+		if putServerMode && serverURL != "" {
+			client, err := newServerClient(serverURL, serverCert)
 			if err != nil {
-				die("%s", err)
+				die(err.Error())
 			}
 
-			if putVerbose {
-				info("all done, exiting")
-			}
+			doServerPut(client, handler, putVerbose)
 		} else {
-			printResults(uploadResults, skipResults, len(requests), putVerbose)
+			doLocalPut(handler, putFile, putMeta, putBase64, putVerbose)
 		}
 	},
 }
@@ -223,6 +174,60 @@ func init() {
 		"pull requests from the server instead of --file; only usable by the user who started the server")
 	putCmd.Flags().StringVarP(&putLog, "log", "l", "",
 		"log to the given file (implies --verbose)")
+}
+
+func doServerPut(client *server.Client, handler put.Handler, verbose bool) {
+	p, err := put.New(handler)
+	if err != nil {
+		die("%s", err)
+	}
+
+	defer doCleanup(p)
+
+	count, err := client.UploadRequests(p, maxMBToHandle, minMBperSecondUploadSpeed, appLogger)
+	if err != nil {
+		die("got %d requests before error: %s", count, err)
+	}
+
+	if verbose {
+		info("handled %d requests, now exiting", count)
+	}
+}
+
+func doCleanup(p *put.Putter) {
+	if errc := p.Cleanup(); errc != nil {
+		warn("cleanup gave errors: %s", errc)
+	}
+}
+
+func doLocalPut(handler put.Handler, file, meta string, base64Encoded, verbose bool) {
+	requests, err := getRequestsFromFile(file, meta, base64Encoded)
+	if err != nil {
+		die("%s", err)
+	}
+
+	if len(requests) == 0 {
+		warn("no requests to work on")
+
+		return
+	}
+
+	if verbose {
+		info("got %d requests to work on", len(requests))
+	}
+
+	p, err := put.New(handler)
+	if err != nil {
+		die("%s", err)
+	}
+
+	defer doCleanup(p)
+
+	r := handlePutting(p, requests, verbose)
+
+	if r.fails > 0 {
+		defer os.Exit(1)
+	}
 }
 
 // getRequestsFromFile reads our 3 column file format from a file or STDIN and
@@ -434,36 +439,6 @@ func (r *results) update(req *put.Request) {
 	}
 }
 
-// printResults reads from the given channels, outputs info about them to STDOUT
-// and STDERR, then emits summary numbers. Supply the total number of requests
-// made. Exits 1 if there were upload errors.
-func printResults(uploadResults, skipResults chan *put.Request, total int, verbose bool) {
-	r := &results{total: total, verbose: verbose}
-
-	var wg sync.WaitGroup
-
-	for _, ch := range []chan *put.Request{skipResults, uploadResults} {
-		wg.Add(1)
-
-		go func(ch chan *put.Request) {
-			defer wg.Done()
-
-			for req := range ch {
-				r.update(req)
-			}
-		}(ch)
-	}
-
-	wg.Wait()
-
-	info("%d uploaded (%d replaced); %d skipped; %d failed; %d missing",
-		r.uploads+r.replaced, r.replaced, r.skipped, r.fails, r.missing)
-
-	if r.fails > 0 {
-		os.Exit(1)
-	}
-}
-
 // warnIfBad warns if this Request failed or is missing. If verbose, logs at
 // info level the Request details.
 func warnIfBad(r *put.Request, i, total int, verbose bool) {
@@ -475,4 +450,36 @@ func warnIfBad(r *put.Request, i, total int, verbose bool) {
 			info("[%d/%d] %s %s", i, total, r.Local, r.Status)
 		}
 	}
+}
+
+// handlePutting does non-server putting of the given requests, printing results
+// to STDOUT.
+func handlePutting(p *put.Putter, requests []*put.Request, verbose bool) *results {
+	if verbose {
+		info("will create collections")
+	}
+
+	err := p.CreateCollections(requests)
+	if err != nil {
+		warn("collection creation failed: %s", err)
+	} else if verbose {
+		info("collections created")
+	}
+
+	r := &results{total: len(requests), verbose: verbose}
+
+	for _, request := range requests {
+		shouldPut, _ := p.Validate(request)
+
+		if shouldPut {
+			p.Put(request)
+		}
+
+		r.update(request)
+	}
+
+	info("%d uploaded (%d replaced); %d skipped; %d failed; %d missing",
+		r.uploads+r.replaced, r.replaced, r.skipped, r.fails, r.missing)
+
+	return r
 }

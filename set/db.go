@@ -125,6 +125,7 @@ func (d *DB) AddOrUpdate(set *Set) error {
 			eset.Monitor = set.Monitor
 			eset.DeleteLocal = set.DeleteLocal
 			eset.Description = set.Description
+			eset.Error = set.Error
 			set = eset
 		}
 
