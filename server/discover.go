@@ -352,10 +352,16 @@ func (s *Server) createCollections(reqs []*put.Request, given *set.Set) error {
 		}
 	}()
 
+	s.Logger.Printf("got %d requests for set %s, will create collections for them", len(reqs), given.Name)
+
+	t := time.Now()
+
 	err = p.CreateCollections(reqs)
 	if err != nil {
 		s.setErrorOnSet(given, err)
 	}
+
+	s.Logger.Printf("collection creation for set %s took %s", given.Name, time.Since(t))
 
 	return err
 }
