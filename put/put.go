@@ -37,6 +37,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gammazero/workerpool"
 	"github.com/hashicorp/go-multierror"
 )
 
@@ -70,9 +71,9 @@ const (
 	numPutGoroutines = 2
 	fileReadTimeout  = 10 * time.Second
 
-	// workerPoolSizeStats is the max number of concurrent file stats we'll do
-	// during Put().
-	workerPoolSizeStats = 16
+	// workerPoolSizeCollections is the max number of concurrent collection
+	// creations we'll do during CreateCollections().
+	workerPoolSizeCollections = 10
 )
 
 // Handler is something that knows how to communicate with iRODS and carry out
@@ -87,7 +88,8 @@ type Handler interface {
 	Cleanup() error
 
 	// EnsureCollection checks if the given collection exists in iRODS, creates
-	// it if not, then double-checks it now exists.
+	// it if not, then double-checks it now exists. Must support being called up
+	// to 10 times in parallel.
 	EnsureCollection(collection string) error
 
 	// Stat checks if the Request's Remote object exists. If it does, records
@@ -142,11 +144,24 @@ func (p *Putter) Cleanup() error {
 // wrapped in to one.
 func (p *Putter) CreateCollections(requests []*Request) error {
 	dirs := getUniqueRequestLeafCollections(requests)
+	pool := workerpool.New(workerPoolSizeCollections)
+	errCh := make(chan error, len(dirs))
+
+	for _, dir := range dirs {
+		coll := dir
+
+		pool.Submit(func() {
+			errCh <- p.handler.EnsureCollection(coll)
+		})
+	}
+
+	pool.StopWait()
+	close(errCh)
 
 	var merr *multierror.Error
 
-	for _, dir := range dirs {
-		if err := p.handler.EnsureCollection(dir); err != nil {
+	for err := range errCh {
+		if err != nil {
 			merr = multierror.Append(merr, err)
 		}
 	}
