@@ -67,7 +67,7 @@ const (
 	reqTime                       = 8 * time.Hour
 	jobRetries            uint8   = 3
 	jobLimitGroup                 = "irods"
-	assumedRequestsPerJob float64 = 10000
+	assumedRequestsPerJob float64 = 100
 	maxJobsToSubmit               = 100
 	racRetriggerDelay             = 1 * time.Minute
 )
@@ -195,8 +195,8 @@ func (s *Server) rac(queuename string, allitemdata []interface{}) {
 // estimates how many put jobs we need to upload them all. It takes in to
 // account how many requests we're currently touching in already running jobs.
 //
-// Max 100 jobs, minimum 1 if there are any items at all, assumed 10k uploads
-// per job.
+// Max 100 jobs, minimum 1 if there are any items at all, wanting 100 uploads
+// per job for efficiency.
 func (s *Server) estimateJobsNeeded(numReady int) int {
 	if numReady == 0 {
 		return 0
@@ -204,7 +204,7 @@ func (s *Server) estimateJobsNeeded(numReady int) int {
 
 	running := s.queue.GetRunningData()
 
-	return jobsNeeded(numReady) + jobsNeeded(len(running))
+	return jobsNeeded(numReady + len(running))
 }
 
 // jobsNeeded returns n/assumedRequestsPerJob, min 1, max maxJobsToSubmit.
