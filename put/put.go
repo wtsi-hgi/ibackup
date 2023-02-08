@@ -75,6 +75,10 @@ const (
 	// workerPoolSizeStats is the max number of concurrent file stats we'll do
 	// during Put().
 	workerPoolSizeStats = 16
+
+	// workerPoolSizeCollections is the max number of concurrent collection
+	// creations we'll do during CreateCollections().
+	workerPoolSizeCollections = 10
 )
 
 // Handler is something that knows how to communicate with iRODS and carry out
@@ -152,11 +156,24 @@ func (p *Putter) Cleanup() error {
 // wrapped in to one.
 func (p *Putter) CreateCollections() error {
 	dirs := p.getUniqueRequestLeafCollections()
+	pool := workerpool.New(workerPoolSizeCollections)
+	errCh := make(chan error, len(dirs))
+
+	for _, dir := range dirs {
+		coll := dir
+
+		pool.Submit(func() {
+			errCh <- p.handler.EnsureCollection(coll)
+		})
+	}
+
+	pool.StopWait()
+	close(errCh)
 
 	var merr *multierror.Error
 
-	for _, dir := range dirs {
-		if err := p.handler.EnsureCollection(dir); err != nil {
+	for err := range errCh {
+		if err != nil {
 			merr = multierror.Append(merr, err)
 		}
 	}

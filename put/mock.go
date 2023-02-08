@@ -74,6 +74,9 @@ func (m *mockHandler) Cleanup() error {
 
 // EnsureCollection creates the given dir locally and records that we did this.
 func (m *mockHandler) EnsureCollection(dir string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	m.collections = append(m.collections, dir)
 
 	return os.MkdirAll(dir, userPerms)

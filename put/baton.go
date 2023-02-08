@@ -41,6 +41,7 @@ import (
 	logs "github.com/wtsi-npg/logshim"
 	"github.com/wtsi-npg/logshim-zerolog/zlog"
 	"github.com/wtsi-ssg/wr/backoff"
+	btime "github.com/wtsi-ssg/wr/backoff/time"
 	"github.com/wtsi-ssg/wr/retry"
 )
 
@@ -48,7 +49,10 @@ const (
 	ErrOperationTimeout = "iRODS operation timed out"
 
 	extendoLogLevel        = logs.ErrorLevel
-	numExtendoClients      = 2
+	collClientMaxIndex     = 9
+	putClientIndex         = 10
+	metaClientIndex        = 11
+	numExtendoClients      = 12
 	extendoNotExist        = "does not exist"
 	operationMinBackoff    = 5 * time.Second
 	operationMaxBackoff    = 30 * time.Second
@@ -59,9 +63,15 @@ const (
 
 // Baton is a Handler that uses Baton (via extendo) to interact with iRODS.
 type Baton struct {
-	pool       *ex.ClientPool
-	putClient  *ex.Client
-	metaClient *ex.Client
+	pool        *ex.ClientPool
+	putClient   *ex.Client
+	metaClient  *ex.Client
+	collClients []*ex.Client
+	collRunning bool
+	collCh      chan string
+	collErrCh   chan error
+	collMu      sync.Mutex
+	closed      bool
 }
 
 // GetBatonHandler returns a Handler that uses Baton to interact with iRODS. If
@@ -81,10 +91,12 @@ func setupExtendoLogger() {
 	logs.InstallLogger(zlog.New(zerolog.SyncWriter(os.Stderr), extendoLogLevel))
 }
 
-// Connect creates a connection pool and prepares 2 connections to iRODS
+// Connect creates a connection pool and prepares 12 connections to iRODS
 // concurrently, for later use by other methods.
 func (b *Baton) Connect() error {
-	b.pool = ex.NewClientPool(ex.DefaultClientPoolParams, "")
+	params := ex.DefaultClientPoolParams
+	params.MaxSize = numExtendoClients
+	b.pool = ex.NewClientPool(params, "")
 
 	clientCh, err := b.getClientsFromPoolConcurrently()
 	if err != nil {
@@ -93,6 +105,10 @@ func (b *Baton) Connect() error {
 
 	b.putClient = <-clientCh
 	b.metaClient = <-clientCh
+
+	for client := range clientCh {
+		b.collClients = append(b.collClients, client)
+	}
 
 	return nil
 }
@@ -128,7 +144,7 @@ func (b *Baton) getClientsFromPoolConcurrently() (chan *ex.Client, error) {
 
 // Cleanup stops our clients and closes our client pool.
 func (b *Baton) Cleanup() error {
-	for _, client := range []*ex.Client{b.putClient, b.metaClient} {
+	for _, client := range append(b.collClients, b.putClient, b.metaClient) {
 		err := timeoutOp(func() error {
 			return client.Stop()
 		}, "")
@@ -139,6 +155,17 @@ func (b *Baton) Cleanup() error {
 	}
 
 	b.pool.Close()
+
+	b.collMu.Lock()
+	defer b.collMu.Unlock()
+
+	if b.collRunning {
+		close(b.collCh)
+		close(b.collErrCh)
+		b.collRunning = false
+	}
+
+	b.closed = true
 
 	return nil
 }
@@ -168,56 +195,104 @@ func timeoutOp(op retry.Operation, path string) error {
 
 // EnsureCollection ensures the given collection exists in iRODS, creating it if
 // necessary. You must call Connect() before calling this.
+//
+// This is safe for calling concurrently, and uses 10 connections. But an
+// artefact is that the error you get might be for a different
+// EnsureCollection() call you made for a different collection. This shouldn't
+// make much difference if you just collect all your errors and don't care about
+// order.
 func (b *Baton) EnsureCollection(collection string) error {
-	ri := ex.RodsItem{IPath: collection}
+	b.collMu.Lock()
 
+	if !b.collRunning {
+		if err := b.reconnectIfClosed(); err != nil {
+			return err
+		}
+
+		b.collCh = make(chan string)
+		b.collErrCh = make(chan error)
+
+		go func(collCh chan string, errCh chan error) {
+			for index := range b.collClients {
+				go func(index int) {
+					for collection := range collCh {
+						errCh <- b.ensureCollection(index, ex.RodsItem{IPath: collection})
+					}
+				}(index)
+			}
+		}(b.collCh, b.collErrCh)
+
+		b.collRunning = true
+	}
+
+	collCh := b.collCh
+	errCh := b.collErrCh
+	b.collMu.Unlock()
+
+	collCh <- collection
+
+	return <-errCh
+}
+
+func (b *Baton) reconnectIfClosed() error {
+	if b.closed {
+		if err := b.Connect(); err != nil {
+			b.collMu.Unlock()
+
+			return err
+		}
+
+		b.closed = false
+	}
+
+	return nil
+}
+
+func (b *Baton) ensureCollection(clientIndex int, ri ex.RodsItem) error {
 	err := timeoutOp(func() error {
-		_, errl := b.putClient.ListItem(ex.Args{}, ri)
+		_, errl := b.collClients[clientIndex].ListItem(ex.Args{}, ri)
 
 		return errl
-	}, collection)
+	}, ri.IPath)
 	if err == nil {
 		return nil
 	}
 
-	if errors.Is(err, Error{ErrOperationTimeout, collection}) {
+	if errors.Is(err, Error{ErrOperationTimeout, ri.IPath}) {
 		return err
 	}
 
-	return b.createCollectionWithTimeoutAndRetries(ri)
+	return b.createCollectionWithTimeoutAndRetries(clientIndex, ri)
 }
 
 // createCollectionWithTimeoutAndRetries tries to make and confirm the given
 // collection, retrying with a backoff because it can fail for no good reason,
 // then work later.
-func (b *Baton) createCollectionWithTimeoutAndRetries(ri ex.RodsItem) error {
-	err := b.doWithTimeoutAndRetries(func() error {
-		_, err := b.putClient.MkDir(ex.Args{Recurse: true}, ri)
-
-		return err
-	}, ri.IPath)
-	if err != nil {
-		return err
-	}
-
+func (b *Baton) createCollectionWithTimeoutAndRetries(clientIndex int, ri ex.RodsItem) error {
 	return b.doWithTimeoutAndRetries(func() error {
-		_, err := b.putClient.ListItem(ex.Args{}, ri)
+		_, err := b.collClients[clientIndex].MkDir(ex.Args{Recurse: true}, ri)
+		if err != nil {
+			return err
+		}
+
+		_, err = b.collClients[clientIndex].ListItem(ex.Args{}, ri)
 
 		return err
-	}, ri.IPath)
+	}, clientIndex, ri.IPath)
 }
 
 // doWithTimeoutAndRetries does op, but times it out. On timeout or error,
 // retries a few times with backoff, getting a new baton client for each try.
-func (b *Baton) doWithTimeoutAndRetries(op retry.Operation, path string) error {
+func (b *Baton) doWithTimeoutAndRetries(op retry.Operation, clientIndex int, path string) error {
 	status := retry.Do(
 		context.Background(),
-		b.timeoutOpAndMakeNewClientOnError(op, path),
+		b.timeoutOpAndMakeNewClientOnError(op, clientIndex, path),
 		retry.Untils{&retry.UntilLimit{Max: operationRetries}, &retry.UntilNoError{}},
 		&backoff.Backoff{
-			Min:    operationMinBackoff,
-			Max:    operationMaxBackoff,
-			Factor: operationBackoffFactor,
+			Min:     operationMinBackoff,
+			Max:     operationMaxBackoff,
+			Factor:  operationBackoffFactor,
+			Sleeper: &btime.Sleeper{},
 		},
 		"MkDir",
 	)
@@ -227,12 +302,14 @@ func (b *Baton) doWithTimeoutAndRetries(op retry.Operation, path string) error {
 
 // timeoutOpAndMakeNewClientOnError wraps the given op with a timeout, and
 // makes a new client on timeout or error.
-func (b *Baton) timeoutOpAndMakeNewClientOnError(op retry.Operation, path string) retry.Operation {
+func (b *Baton) timeoutOpAndMakeNewClientOnError(op retry.Operation, clientIndex int, path string) retry.Operation {
 	return func() error {
 		err := timeoutOp(op, path)
 
 		if err != nil {
-			client, errp := b.pool.Get()
+			pool := ex.NewClientPool(ex.DefaultClientPoolParams, "")
+
+			client, errp := pool.Get()
 			if errp == nil {
 				go func(oldClient *ex.Client) {
 					timeoutOp(func() error { //nolint:errcheck
@@ -240,13 +317,35 @@ func (b *Baton) timeoutOpAndMakeNewClientOnError(op retry.Operation, path string
 
 						return nil
 					}, "")
-				}(b.putClient)
+				}(b.getClientByIndex(clientIndex))
 
-				b.putClient = client
+				b.setClientByIndex(clientIndex, client)
 			}
 		}
 
 		return err
+	}
+}
+
+func (b *Baton) getClientByIndex(clientIndex int) *ex.Client {
+	switch clientIndex {
+	case putClientIndex:
+		return b.putClient
+	case metaClientIndex:
+		return b.metaClient
+	default:
+		return b.collClients[clientIndex]
+	}
+}
+
+func (b *Baton) setClientByIndex(clientIndex int, client *ex.Client) {
+	switch clientIndex {
+	case putClientIndex:
+		b.putClient = client
+	case metaClientIndex:
+		b.metaClient = client
+	default:
+		b.collClients[clientIndex] = client
 	}
 }
 
