@@ -28,6 +28,7 @@ package put
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -39,12 +40,12 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 	Convey("Given Requests and a mock Handler, you can make a new Putter", t, func() {
 		requests, expectedCollections := makeMockRequests(t)
 
-		mh := &mockHandler{}
+		lh := &LocalHandler{}
 
-		p, err := New(mh)
+		p, err := New(lh)
 		So(err, ShouldBeNil)
 		So(p, ShouldNotBeNil)
-		So(mh.connected, ShouldBeTrue)
+		So(lh.connected, ShouldBeTrue)
 
 		Convey("CreateCollections() creates the minimal number of collections", func() {
 			err = p.CreateCollections(requests)
@@ -55,7 +56,8 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 				So(err, ShouldBeNil)
 			}
 
-			So(mh.collections, ShouldResemble, expectedCollections)
+			sort.Strings(lh.collections)
+			So(lh.collections, ShouldResemble, expectedCollections)
 
 			Convey("Put() then puts the files, and adds the metadata", func() {
 				requests[0].Requester = "John"
@@ -74,10 +76,10 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 					_, err = os.Stat(r.Remote)
 					So(err, ShouldBeNil)
 
-					mh.mu.RLock()
-					So(mh.meta[r.Remote], ShouldResemble, r.Meta)
-					checkAddedMeta(mh.meta[r.Remote])
-					mh.mu.RUnlock()
+					lh.mu.RLock()
+					So(lh.meta[r.Remote], ShouldResemble, r.Meta)
+					checkAddedMeta(lh.meta[r.Remote])
+					lh.mu.RUnlock()
 				}
 
 				Convey("A second put of the same files skips them all, except for modified ones", func() {
@@ -99,12 +101,12 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 							So(r.Status, ShouldEqual, RequestStatusReplaced)
 
 							p.Put(r)
-							mh.mu.RLock()
-							So(mh.meta[r.Remote], ShouldResemble, requests[0].Meta)
-							So(mh.meta[r.Remote][metaKeyRequester], ShouldEqual, "John,Sam")
-							So(mh.meta[r.Remote][metaKeySets], ShouldEqual, "setA,setB")
-							date = mh.meta[r.Remote][metaKeyDate]
-							mh.mu.RUnlock()
+							lh.mu.RLock()
+							So(lh.meta[r.Remote], ShouldResemble, requests[0].Meta)
+							So(lh.meta[r.Remote][metaKeyRequester], ShouldEqual, "John,Sam")
+							So(lh.meta[r.Remote][metaKeySets], ShouldEqual, "setA,setB")
+							date = lh.meta[r.Remote][metaKeyDate]
+							lh.mu.RUnlock()
 						} else {
 							unmod++
 							So(r.Status, ShouldEqual, RequestStatusUnmodified)
@@ -127,18 +129,18 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 
 						p.Put(requests[0])
 
-						mh.mu.RLock()
-						So(mh.meta[requests[0].Remote][metaKeyRequester], ShouldEqual, "John,Sam")
-						So(mh.meta[requests[0].Remote][metaKeySets], ShouldEqual, "setA,setB,setC")
-						So(mh.meta[requests[0].Remote][metaKeyDate], ShouldEqual, date)
-						mh.mu.RUnlock()
+						lh.mu.RLock()
+						So(lh.meta[requests[0].Remote][metaKeyRequester], ShouldEqual, "John,Sam")
+						So(lh.meta[requests[0].Remote][metaKeySets], ShouldEqual, "setA,setB,setC")
+						So(lh.meta[requests[0].Remote][metaKeyDate], ShouldEqual, date)
+						lh.mu.RUnlock()
 					})
 				})
 
 				Convey("Finally, Cleanup() defers to the handler", func() {
 					err = p.Cleanup()
 					So(err, ShouldBeNil)
-					So(mh.cleaned, ShouldBeTrue)
+					So(lh.cleaned, ShouldBeTrue)
 				})
 			})
 
@@ -155,9 +157,9 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 			})
 
 			Convey("Underlying put and metadata operation failures result in failed requests", func() {
-				mh.statfail = requests[0].Remote
-				mh.putfail = requests[1].Remote
-				mh.metafail = requests[2].Remote
+				lh.MakeStatFail(requests[0].Remote)
+				lh.MakePutFail(requests[1].Remote)
+				lh.MakeMetaFail(requests[2].Remote)
 
 				uploading, fails, uploaded, other, cases := 0, 0, 0, 0, 0
 
@@ -178,13 +180,13 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 
 						switch r.Remote {
 						case requests[0].Remote:
-							So(r.Error, ShouldContainSubstring, errMockStatFail)
+							So(r.Error, ShouldContainSubstring, ErrMockStatFail)
 							cases++
 						case requests[1].Remote:
-							So(r.Error, ShouldContainSubstring, errMockPutFail)
+							So(r.Error, ShouldContainSubstring, ErrMockPutFail)
 							cases++
 						case requests[2].Remote:
-							So(r.Error, ShouldContainSubstring, errMockMetaFail)
+							So(r.Error, ShouldContainSubstring, ErrMockMetaFail)
 							cases++
 						}
 					case RequestStatusUploaded:
@@ -216,37 +218,37 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 	})
 
 	Convey("CreateCollections() also works with 0 or 1 requests", t, func() {
-		mh := &mockHandler{}
+		lh := &LocalHandler{}
 
 		var requests []*Request
 
-		p, err := New(mh)
+		p, err := New(lh)
 		So(err, ShouldBeNil)
 		So(p, ShouldNotBeNil)
 
 		err = p.CreateCollections(requests)
 		So(err, ShouldBeNil)
 
-		So(mh.collections, ShouldBeNil)
+		So(lh.collections, ShouldBeNil)
 
 		ddir := t.TempDir()
 		col := filepath.Join(ddir, "bar")
 		remote := filepath.Join(col, "file.txt")
 
 		requests = append(requests, &Request{Local: "foo", Remote: remote})
-		p, err = New(mh)
+		p, err = New(lh)
 		So(err, ShouldBeNil)
 		So(p, ShouldNotBeNil)
 
 		err = p.CreateCollections(requests)
 		So(err, ShouldBeNil)
 
-		So(mh.collections, ShouldResemble, []string{col})
+		So(lh.collections, ShouldResemble, []string{col})
 	})
 
 	Convey("Relative local paths are made absolute", t, func() {
-		mh := &mockHandler{}
-		p, err := New(mh)
+		lh := &LocalHandler{}
+		p, err := New(lh)
 		So(err, ShouldBeNil)
 
 		wd, err := os.Getwd()
@@ -292,8 +294,8 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 	})
 
 	Convey("You can't Validate with relative remote paths", t, func() {
-		mh := &mockHandler{}
-		p, err := New(mh)
+		lh := &LocalHandler{}
+		p, err := New(lh)
 		So(err, ShouldBeNil)
 
 		request := &Request{Local: "/foo", Remote: "bar"}

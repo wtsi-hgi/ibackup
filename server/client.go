@@ -39,25 +39,23 @@ import (
 )
 
 const (
-	touchFrequency   = ttr / 3
-	minTimeForUpload = 1 * time.Minute
-	bytesInMiB       = 1024 * 1024
-	numHandlers      = 2
+	touchFrequency       = ttr / 3
+	bytesInMiB           = 1024 * 1024
+	millisecondsInSecond = 1000
+	numHandlers          = 2
 )
 
 // Client is used to interact with the Server over the network, with
 // authentication.
 type Client struct {
-	url                       string
-	cert                      string
-	jwt                       string
-	toTouch                   *put.Request
-	touchMu                   sync.Mutex
-	touching                  bool
-	touchErr                  error
-	minMBperSecondUploadSpeed float64
-	uploadsErrCh              chan error
-	logger                    log15.Logger
+	url      string
+	cert     string
+	jwt      string
+	toTouch  *put.Request
+	touchMu  sync.Mutex
+	touching bool
+	touchErr error
+	logger   log15.Logger
 }
 
 // NewClient returns a Client you can use to call methods on a Server listening
@@ -314,15 +312,16 @@ func (c *Client) stillWorkingOnRequest() error {
 //
 // If an upload seems to take too long, based on the given minimum MB/s upload
 // speed, tells the server the upload might be stuck, but continues to wait.
+// Does not complain about being stuck until at least minTimeForUpload has
+// passed.
 //
 // Stops after more than maxMB worth of files have been dealt with (or an error
 // dealing with the server is encountered), and returns the total number of
 // Requests processed.
 //
 // Logs server issues to the given logger.
-func (c *Client) UploadRequests(p *put.Putter, maxMB, minMBperSecondUploadSpeed int, //nolint:gocognit
-	logger log15.Logger) (int, error) {
-	c.minMBperSecondUploadSpeed = float64(minMBperSecondUploadSpeed)
+func (c *Client) UploadRequests(p *put.Putter, maxMB int, //nolint:gocognit
+	minMBperSecondUploadSpeed float64, minTimeForUpload time.Duration, logger log15.Logger) (int, error) {
 	c.logger = logger
 
 	var (
@@ -340,7 +339,7 @@ func (c *Client) UploadRequests(p *put.Putter, maxMB, minMBperSecondUploadSpeed 
 
 		count++
 
-		if err = c.handleRequest(p, request); err != nil {
+		if err = c.handleRequest(p, request, minMBperSecondUploadSpeed, minTimeForUpload); err != nil {
 			break
 		}
 
@@ -355,10 +354,11 @@ func (c *Client) UploadRequests(p *put.Putter, maxMB, minMBperSecondUploadSpeed 
 
 // handleRequest validates the given request, puts it if necessary, and updates
 // the server with the new file status.
-func (c *Client) handleRequest(p *put.Putter, request *put.Request) error {
+func (c *Client) handleRequest(p *put.Putter, request *put.Request,
+	minMBperSecondUploadSpeed float64, minTimeForUpload time.Duration) error {
 	shouldPut, metaOnly := p.Validate(request)
 	if shouldPut {
-		if err := c.handlePut(p, request, metaOnly); err != nil {
+		if err := c.handlePut(p, request, minMBperSecondUploadSpeed, minTimeForUpload, metaOnly); err != nil {
 			return err
 		}
 	}
@@ -374,11 +374,17 @@ func (c *Client) handleRequest(p *put.Putter, request *put.Request) error {
 
 // handlePut uses the Putter to put the request in iRODS. If it actually needs
 // uploading, tracks upload time to generate stuck warnings.
-func (c *Client) handlePut(p *put.Putter, request *put.Request, metaOnly bool) error {
+func (c *Client) handlePut(p *put.Putter, request *put.Request,
+	minMBperSecondUploadSpeed float64, minTimeForUpload time.Duration, metaOnly bool) error {
 	uploadDoneCh := make(chan struct{})
 
+	var stuckResolvedCh chan struct{}
+
 	if !metaOnly {
-		if err := c.handleUploadTracking(request, uploadDoneCh); err != nil {
+		var err error
+
+		stuckResolvedCh, err = c.handleUploadTracking(request, minMBperSecondUploadSpeed, minTimeForUpload, uploadDoneCh)
+		if err != nil {
 			return err
 		}
 	}
@@ -386,40 +392,49 @@ func (c *Client) handlePut(p *put.Putter, request *put.Request, metaOnly bool) e
 	p.Put(request)
 
 	if !metaOnly {
-		c.logger.Info("finished upload", "path", request.Local)
 		close(uploadDoneCh)
+		<-stuckResolvedCh
 	}
 
 	return nil
 }
 
 // handleUploadTracking starts timing an upload and sends stuck message to
-// server if it takes too long.
-func (c *Client) handleUploadTracking(request *put.Request, doneCh chan struct{}) error {
+// server if it takes too long. Wait for the returned channel to close before
+// doing any further UpdateFileStatus calls for this request.
+func (c *Client) handleUploadTracking(request *put.Request,
+	minMBperSecondUploadSpeed float64, minTimeForUpload time.Duration, doneCh chan struct{}) (chan struct{}, error) {
 	ru := request.Clone()
 	ru.Status = put.RequestStatusUploading
 
 	if err := c.UpdateFileStatus(ru); err != nil {
 		c.logger.Warn("failed to update file status to uploading", "err", err, "path", ru.Local)
 
-		return err
+		return nil, err
 	}
 
 	c.logger.Info("started upload", "path", ru.Local)
 
-	c.stuckIfUploadTakesTooLong(ru, doneCh)
+	stuckResolvedCh := c.stuckIfUploadTakesTooLong(minMBperSecondUploadSpeed, minTimeForUpload, ru, doneCh)
 
-	return nil
+	return stuckResolvedCh, nil
 }
 
 // stuckIfUploadTakesTooLong will send stuck info to the server after some time
 // based on the size of the request, unless the given channel is closed to
-// indicate the upload completed.
-func (c *Client) stuckIfUploadTakesTooLong(request *put.Request, doneCh chan struct{}) {
+// indicate the upload completed. You should wait for the returned channel to be
+// closed before doing any further UpdateFileStatus calls for this request.
+func (c *Client) stuckIfUploadTakesTooLong(minMBperSecondUploadSpeed float64, minTimeForUpload time.Duration,
+	request *put.Request, doneCh chan struct{}) chan struct{} {
 	started := time.Now()
-	timer := time.NewTimer(c.maxTimeForUpload(request))
+	timer := time.NewTimer(maxTimeForUpload(request, minMBperSecondUploadSpeed, minTimeForUpload))
+	stuckResolvedCh := make(chan struct{})
 
 	go func() {
+		defer func() {
+			close(stuckResolvedCh)
+		}()
+
 		select {
 		case <-doneCh:
 			timer.Stop()
@@ -432,15 +447,17 @@ func (c *Client) stuckIfUploadTakesTooLong(request *put.Request, doneCh chan str
 			}
 		}
 	}()
+
+	return stuckResolvedCh
 }
 
 // maxTimeForUpload assumes uploads happen in at least our
 // minMBperSecondUploadSpeed, and returns a duration based on that and the
 // request Size. The minimum duration returned is 1 second.
-func (c *Client) maxTimeForUpload(r *put.Request) time.Duration {
+func maxTimeForUpload(r *put.Request, minMBperSecondUploadSpeed float64, minTimeForUpload time.Duration) time.Duration {
 	mb := bytesToMB(r.Size)
-	seconds := mb / c.minMBperSecondUploadSpeed
-	d := time.Duration(seconds) * time.Second
+	seconds := mb / minMBperSecondUploadSpeed
+	d := time.Duration(seconds*millisecondsInSecond) * time.Millisecond
 
 	if d < minTimeForUpload {
 		d = minTimeForUpload

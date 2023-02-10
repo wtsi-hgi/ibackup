@@ -34,6 +34,7 @@ import (
 	"os/user"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/wtsi-hgi/ibackup/put"
@@ -61,6 +62,10 @@ const (
 	// take; if it drops below this and is still uploading, we'll report to the
 	// server the upload might be stuck.
 	minMBperSecondUploadSpeed = 5
+
+	// minTimeForUpload is the minimum time an upload carries on for before
+	// we'll consider it stuck, regardless of the MB/s.
+	minTimeForUpload = 1 * time.Minute
 )
 
 // options for this cmd.
@@ -184,7 +189,7 @@ func doServerPut(client *server.Client, handler put.Handler, verbose bool) {
 
 	defer doCleanup(p)
 
-	count, err := client.UploadRequests(p, maxMBToHandle, minMBperSecondUploadSpeed, appLogger)
+	count, err := client.UploadRequests(p, maxMBToHandle, minMBperSecondUploadSpeed, minTimeForUpload, appLogger)
 	if err != nil {
 		die("got %d requests before error: %s", count, err)
 	}
