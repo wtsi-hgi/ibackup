@@ -31,7 +31,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"math"
 	"os/user"
 	"strings"
 	"sync"
@@ -61,15 +60,14 @@ const (
 	// connectTimeout is the timeout for connecting to wr for job submission.
 	connectTimeout = 10 * time.Second
 
-	repGroup                      = "ibackup_server_put"
-	reqGroup                      = "ibackup_server"
-	reqRAM                        = 1024
-	reqTime                       = 8 * time.Hour
-	jobRetries            uint8   = 3
-	jobLimitGroup                 = "irods"
-	assumedRequestsPerJob float64 = 10000
-	maxJobsToSubmit               = 100
-	racRetriggerDelay             = 1 * time.Minute
+	repGroup                = "ibackup_server_put"
+	reqGroup                = "ibackup_server"
+	reqRAM                  = 1024
+	reqTime                 = 8 * time.Hour
+	jobRetries        uint8 = 3
+	jobLimitGroup           = "irods"
+	maxJobsToSubmit         = 100
+	racRetriggerDelay       = 1 * time.Minute
 )
 
 // Server is used to start a web server that provides a REST API to the setdb
@@ -82,6 +80,7 @@ type Server struct {
 	queue          *queue.Queue
 	sched          *scheduler.Scheduler
 	putCmd         string
+	putHandler     put.Handler
 	req            *jqs.Requirements
 	username       string
 	statusUpdateCh chan *fileStatusPacket
@@ -195,8 +194,8 @@ func (s *Server) rac(queuename string, allitemdata []interface{}) {
 // estimates how many put jobs we need to upload them all. It takes in to
 // account how many requests we're currently touching in already running jobs.
 //
-// Max 100 jobs, minimum 1 if there are any items at all, assumed 10k uploads
-// per job.
+// Max 100 jobs, minimum 1 if there are any items at all, assumed 1 upload per
+// job.
 func (s *Server) estimateJobsNeeded(numReady int) int {
 	if numReady == 0 {
 		return 0
@@ -204,12 +203,11 @@ func (s *Server) estimateJobsNeeded(numReady int) int {
 
 	running := s.queue.GetRunningData()
 
-	return jobsNeeded(numReady) + jobsNeeded(len(running))
+	return jobsNeeded(numReady + len(running))
 }
 
-// jobsNeeded returns n/assumedRequestsPerJob, min 1, max maxJobsToSubmit.
+// jobsNeeded returns n, max maxJobsToSubmit.
 func jobsNeeded(n int) int {
-	n = int(math.Ceil(float64(n) / assumedRequestsPerJob))
 	if n > maxJobsToSubmit {
 		n = maxJobsToSubmit
 	}

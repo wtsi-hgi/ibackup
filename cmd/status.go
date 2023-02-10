@@ -214,6 +214,10 @@ func displaySet(s *set.Set) {
 	cliPrint("Discovery: %s\n", s.Discovered())
 	cliPrint("Num files: %s; Size files: %s\n", s.Count(), s.Size())
 	cliPrint("Uploaded: %d; Failed: %d; Missing: %d\n", s.Uploaded, s.Failed, s.Missing)
+
+	if s.Status == set.Complete {
+		cliPrint("Completed in: %s\n", s.LastCompleted.Sub(s.StartedDiscovery))
+	}
 }
 
 // getDirs gets the dir entries for a set and returns their paths. If the dir is

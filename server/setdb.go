@@ -121,9 +121,8 @@ const (
 // the set.Entries with backup status about each file (both set with
 // /rest/v1/auth/files and discovered inside /rest/v1/auth/dirs).
 //
-// GET /rest/v1/auth/requests : returns about 10GB worth of upload requests from
-// the global put queue. Only the user who started the server has permission to
-// call this.
+// GET /rest/v1/auth/requests : returns a single upload request from the global
+// put queue. Only the user who started the server has permission to call this.
 //
 // PUT /rest/v1/auth/working : takes a []string of Request ids encoded as JSON
 // in the body received from the requests endpoint to advise the server you're
@@ -135,13 +134,18 @@ const (
 //
 // If the database indicates there are sets we were in the middle of working on,
 // the upload requests will be added to our in-memory queue, just like during
-// discovery.
+// discovery ("recovery").
+//
+// At the end of dis/recovery, before adding requests to the in-memory queue,
+// the minimal set of collections will be created to support the subsequent
+// efficient putting of the files in the set. For this reason, you must supply
+// a put.Handler which will be used to create collections.
 //
 // You must call EnableAuth() before calling this method, and the endpoints will
 // only let you work on sets where the Requester matches your logged-in
 // username, or if the logged-in user is the same as the user who started the
 // Server.
-func (s *Server) LoadSetDB(path string) error {
+func (s *Server) LoadSetDB(path string, ph put.Handler) error {
 	authGroup := s.AuthRouter()
 	if authGroup == nil {
 		return ErrNoAuth
@@ -153,6 +157,7 @@ func (s *Server) LoadSetDB(path string) error {
 	}
 
 	s.db = db
+	s.putHandler = ph
 
 	s.addDBEndpoints(authGroup)
 
@@ -177,7 +182,7 @@ func (s *Server) addDBEndpoints(authGroup *gin.RouterGroup) {
 	authGroup.GET(entryPath+idParam, s.getEntries)
 	authGroup.GET(dirPath+idParam, s.getDirs)
 
-	authGroup.GET(requestsPath, s.getRequests)
+	authGroup.GET(requestsPath, s.getRequest)
 
 	authGroup.PUT(workingPath, s.putWorking)
 
@@ -381,61 +386,27 @@ func (s *Server) getDirs(c *gin.Context) {
 	c.JSON(http.StatusOK, entries)
 }
 
-// getRequests gets about 10GB worth of put Requests from the global in-memory
-// put-queue (as populated during set discoveries).
+// getRequest gets the next Request from the global in-memory put-queue (as
+// populated during set discoveries).
 //
 // LoadSetDB() must already have been called. This is called when there is a GET
 // on /rest/v1/auth/requests. Only the user who started the Server has
 // permission to call this.
-func (s *Server) getRequests(c *gin.Context) {
+func (s *Server) getRequest(c *gin.Context) {
 	if !s.allowedAccess(c, "") {
 		c.AbortWithError(http.StatusUnauthorized, ErrNotAdmin) //nolint:errcheck
 
 		return
 	}
 
-	requests, err := s.reserveRequests()
+	request, err := s.reserveRequest()
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, err) //nolint:errcheck
 
 		return
 	}
 
-	c.JSON(http.StatusOK, requests)
-}
-
-// reserveRequests keeps reserving items from our queue until we have about 10GB
-// of them (assuming each file is 1MB unless we know better), or the queue is
-// empty. Returns the Requests in the items.
-func (s *Server) reserveRequests() ([]*put.Request, error) {
-	var requests []*put.Request //nolint:prealloc
-
-	var size uint64
-
-	for {
-		r, err := s.reserveRequest()
-		if err != nil {
-			return nil, err
-		}
-
-		if r == nil {
-			break
-		}
-
-		requests = append(requests, r)
-
-		s := r.Size
-		if s == 0 {
-			s = defaultFileSize
-		}
-
-		size += s
-		if size >= desiredFileSize {
-			break
-		}
-	}
-
-	return requests, nil
+	c.JSON(http.StatusOK, request)
 }
 
 // reserveRequest reserves an item from our queue and converts it to a Request.
