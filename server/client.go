@@ -27,6 +27,7 @@
 package server
 
 import (
+	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -51,7 +52,7 @@ type Client struct {
 	url      string
 	cert     string
 	jwt      string
-	toTouch  *put.Request
+	toTouch  map[string]*put.Request
 	touchMu  sync.Mutex
 	touching bool
 	touchErr error
@@ -67,9 +68,10 @@ type Client struct {
 // You must first gas.Login() to get a JWT that you must supply here.
 func NewClient(url, cert, jwt string) *Client {
 	return &Client{
-		url:  url,
-		cert: cert,
-		jwt:  jwt,
+		url:     url,
+		cert:    cert,
+		jwt:     jwt,
+		toTouch: make(map[string]*put.Request),
 	}
 }
 
@@ -252,7 +254,7 @@ func (c *Client) startTouching(r *put.Request) {
 	c.touchMu.Lock()
 	defer c.touchMu.Unlock()
 
-	c.toTouch = r
+	c.toTouch[r.ID()] = r
 
 	if !c.touching {
 		c.touching = true
@@ -300,11 +302,24 @@ func (c *Client) touchRegularly() {
 //
 // Only the user who started the server has permission to call this.
 func (c *Client) stillWorkingOnRequest() error {
-	if c.toTouch == nil {
+	if len(c.toTouch) == 0 {
 		return nil
 	}
 
-	return c.putThing(EndPointAuthWorking, c.toTouch.ID())
+	for rid := range c.toTouch {
+		if err := c.putThing(EndPointAuthWorking, rid); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+type putPackage struct {
+	request         *put.Request
+	metaOnly        bool
+	uploadDoneCh    chan struct{}
+	stuckResolvedCh chan struct{}
 }
 
 // UploadRequests continuously calls GetUploadRequest(), uses the given Putter
@@ -331,6 +346,26 @@ func (c *Client) UploadRequests(p *put.Putter, maxMB int, //nolint:gocognit
 		request *put.Request
 	)
 
+	putCh := make(chan *putPackage, 2)
+	putDoneCh := make(chan struct{})
+
+	go func() {
+		defer close(putDoneCh)
+
+		for pp := range putCh {
+			p.Put(pp.request)
+
+			if !pp.metaOnly {
+				close(pp.uploadDoneCh)
+				<-pp.stuckResolvedCh
+			}
+
+			if erru := c.UpdateFileStatus(pp.request); erru != nil {
+				c.logger.Warn("failed to update file status to complete", "err", erru, "path", pp.request.Local)
+			}
+		}
+	}()
+
 	for {
 		request, err = c.GetUploadRequest()
 		if request == nil || err != nil {
@@ -339,7 +374,8 @@ func (c *Client) UploadRequests(p *put.Putter, maxMB int, //nolint:gocognit
 
 		count++
 
-		if err = c.handleRequest(p, request, minMBperSecondUploadSpeed, minTimeForUpload); err != nil {
+		if err = c.handleRequest(p, request, minMBperSecondUploadSpeed, minTimeForUpload, putCh); err != nil {
+			fmt.Printf("\nbreaking early due to %s\n", err)
 			break
 		}
 
@@ -349,18 +385,19 @@ func (c *Client) UploadRequests(p *put.Putter, maxMB int, //nolint:gocognit
 		}
 	}
 
+	close(putCh)
+	<-putDoneCh
+
 	return count, err
 }
 
-// handleRequest validates the given request, puts it if necessary, and updates
-// the server with the new file status.
+// handleRequest validates the given request, creates a collection for it and
+// puts it if necessary, and updates the server with the new file status.
 func (c *Client) handleRequest(p *put.Putter, request *put.Request,
-	minMBperSecondUploadSpeed float64, minTimeForUpload time.Duration) error {
+	minMBperSecondUploadSpeed float64, minTimeForUpload time.Duration, putCh chan *putPackage) error {
 	shouldPut, metaOnly := p.Validate(request)
 	if shouldPut {
-		if err := c.handlePut(p, request, minMBperSecondUploadSpeed, minTimeForUpload, metaOnly); err != nil {
-			return err
-		}
+		return c.handlePut(p, request, minMBperSecondUploadSpeed, minTimeForUpload, metaOnly, putCh)
 	}
 
 	if err := c.UpdateFileStatus(request); err != nil {
@@ -372,16 +409,21 @@ func (c *Client) handleRequest(p *put.Putter, request *put.Request,
 	return nil
 }
 
-// handlePut uses the Putter to put the request in iRODS. If it actually needs
-// uploading, tracks upload time to generate stuck warnings.
+// handlePut uses the Putter to put the request in iRODS, creating a collection
+// first if necessary. If it actually needs uploading, tracks upload time to
+// generate stuck warnings.
 func (c *Client) handlePut(p *put.Putter, request *put.Request,
-	minMBperSecondUploadSpeed float64, minTimeForUpload time.Duration, metaOnly bool) error {
+	minMBperSecondUploadSpeed float64, minTimeForUpload time.Duration,
+	metaOnly bool, putCh chan *putPackage) error {
 	uploadDoneCh := make(chan struct{})
 
 	var stuckResolvedCh chan struct{}
 
 	if !metaOnly {
-		var err error
+		err := p.CreateCollection(request)
+		if err != nil {
+			return err
+		}
 
 		stuckResolvedCh, err = c.handleUploadTracking(request, minMBperSecondUploadSpeed, minTimeForUpload, uploadDoneCh)
 		if err != nil {
@@ -389,11 +431,11 @@ func (c *Client) handlePut(p *put.Putter, request *put.Request,
 		}
 	}
 
-	p.Put(request)
-
-	if !metaOnly {
-		close(uploadDoneCh)
-		<-stuckResolvedCh
+	putCh <- &putPackage{
+		request:         request.Clone(),
+		metaOnly:        metaOnly,
+		uploadDoneCh:    uploadDoneCh,
+		stuckResolvedCh: stuckResolvedCh,
 	}
 
 	return nil
@@ -483,7 +525,7 @@ func bytesToMB(bytes uint64) float64 {
 func (c *Client) UpdateFileStatus(r *put.Request) error {
 	if r.Status != put.RequestStatusUploading {
 		c.touchMu.Lock()
-		c.toTouch = nil
+		delete(c.toTouch, r.ID())
 		c.touchMu.Unlock()
 	}
 

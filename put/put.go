@@ -167,6 +167,15 @@ func (p *Putter) SetFileReadTester(tester FileReadTester) {
 	p.fileReadTester = tester
 }
 
+// CreateCollection checks if the collections that the given request would need
+// exist, and if not, creates those collections.
+//
+// You should call this before using Put(), unless you're sure all collections
+// already exist.
+func (p *Putter) CreateCollection(request *Request) error {
+	return p.handler.EnsureCollection(filepath.Dir(request.Remote))
+}
+
 // CreateCollections will determine the minimal set of collections that need to
 // be created to support future Put()s for the given requests, checks if those
 // collections exist in iRODS, and creates them if not.

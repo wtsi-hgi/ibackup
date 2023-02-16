@@ -40,7 +40,6 @@ import (
 	"github.com/inconshreveable/log15"
 	"github.com/spf13/cobra"
 	gas "github.com/wtsi-hgi/go-authserver"
-	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/server"
 )
 
@@ -134,14 +133,9 @@ ctrl-z; bg. Or better yet, use the daemonize program to daemonize this.
 			die("failed to enable job submission: %s", err)
 		}
 
-		handler, err := put.GetBatonHandler()
-		if err != nil {
-			die("%s", err)
-		}
-
 		info("opening database, please wait...")
 
-		err = s.LoadSetDB(args[0], handler)
+		err = s.LoadSetDB(args[0])
 		if err != nil {
 			die("failed to load database: %s", err)
 		}

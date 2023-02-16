@@ -136,16 +136,11 @@ const (
 // the upload requests will be added to our in-memory queue, just like during
 // discovery ("recovery").
 //
-// At the end of dis/recovery, before adding requests to the in-memory queue,
-// the minimal set of collections will be created to support the subsequent
-// efficient putting of the files in the set. For this reason, you must supply
-// a put.Handler which will be used to create collections.
-//
 // You must call EnableAuth() before calling this method, and the endpoints will
 // only let you work on sets where the Requester matches your logged-in
 // username, or if the logged-in user is the same as the user who started the
 // Server.
-func (s *Server) LoadSetDB(path string, ph put.Handler) error {
+func (s *Server) LoadSetDB(path string) error {
 	authGroup := s.AuthRouter()
 	if authGroup == nil {
 		return ErrNoAuth
@@ -157,7 +152,6 @@ func (s *Server) LoadSetDB(path string, ph put.Handler) error {
 	}
 
 	s.db = db
-	s.putHandler = ph
 
 	s.addDBEndpoints(authGroup)
 

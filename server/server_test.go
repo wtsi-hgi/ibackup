@@ -93,11 +93,8 @@ func TestServer(t *testing.T) {
 			err = s.MakeQueueEndPoints()
 			So(err, ShouldBeNil)
 
-			ph, err := put.GetLocalHandler()
-			So(err, ShouldBeNil)
-
 			path := createDBLocation(t)
-			err = s.LoadSetDB(path, ph)
+			err = s.LoadSetDB(path)
 			So(err, ShouldBeNil)
 
 			addr, dfunc, err := gas.StartTestServer(s, certPath, keyPath)

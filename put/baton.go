@@ -49,10 +49,10 @@ const (
 	ErrOperationTimeout = "iRODS operation timed out"
 
 	extendoLogLevel        = logs.ErrorLevel
-	collClientMaxIndex     = 9
-	putClientIndex         = 10
-	metaClientIndex        = 11
-	numExtendoClients      = 12
+	collClientIndex        = 1
+	putClientIndex         = 2
+	metaClientIndex        = 3
+	numExtendoClients      = 3
 	extendoNotExist        = "does not exist"
 	operationMinBackoff    = 5 * time.Second
 	operationMaxBackoff    = 30 * time.Second
@@ -63,15 +63,10 @@ const (
 
 // Baton is a Handler that uses Baton (via extendo) to interact with iRODS.
 type Baton struct {
-	pool        *ex.ClientPool
-	putClient   *ex.Client
-	metaClient  *ex.Client
-	collClients []*ex.Client
-	collRunning bool
-	collCh      chan string
-	collErrCh   chan error
-	collMu      sync.Mutex
-	closed      bool
+	pool       *ex.ClientPool
+	putClient  *ex.Client
+	metaClient *ex.Client
+	collClient *ex.Client
 }
 
 // GetBatonHandler returns a Handler that uses Baton to interact with iRODS. If
@@ -103,12 +98,9 @@ func (b *Baton) Connect() error {
 		return err
 	}
 
+	b.collClient = <-clientCh
 	b.putClient = <-clientCh
 	b.metaClient = <-clientCh
-
-	for client := range clientCh {
-		b.collClients = append(b.collClients, client)
-	}
 
 	return nil
 }
@@ -144,7 +136,7 @@ func (b *Baton) getClientsFromPoolConcurrently() (chan *ex.Client, error) {
 
 // Cleanup stops our clients and closes our client pool.
 func (b *Baton) Cleanup() error {
-	for _, client := range append(b.collClients, b.putClient, b.metaClient) {
+	for _, client := range []*ex.Client{b.collClient, b.putClient, b.metaClient} {
 		err := timeoutOp(func() error {
 			return client.Stop()
 		}, "")
@@ -155,17 +147,6 @@ func (b *Baton) Cleanup() error {
 	}
 
 	b.pool.Close()
-
-	b.collMu.Lock()
-	defer b.collMu.Unlock()
-
-	if b.collRunning {
-		close(b.collCh)
-		close(b.collErrCh)
-		b.collRunning = false
-	}
-
-	b.closed = true
 
 	return nil
 }
@@ -195,62 +176,11 @@ func timeoutOp(op retry.Operation, path string) error {
 
 // EnsureCollection ensures the given collection exists in iRODS, creating it if
 // necessary. You must call Connect() before calling this.
-//
-// This is safe for calling concurrently, and uses 10 connections. But an
-// artefact is that the error you get might be for a different
-// EnsureCollection() call you made for a different collection. This shouldn't
-// make much difference if you just collect all your errors and don't care about
-// order.
 func (b *Baton) EnsureCollection(collection string) error {
-	b.collMu.Lock()
+	ri := ex.RodsItem{IPath: collection}
 
-	if !b.collRunning {
-		if err := b.reconnectIfClosed(); err != nil {
-			return err
-		}
-
-		b.collCh = make(chan string)
-		b.collErrCh = make(chan error)
-
-		go func(collCh chan string, errCh chan error) {
-			for index := range b.collClients {
-				go func(index int) {
-					for collection := range collCh {
-						errCh <- b.ensureCollection(index, ex.RodsItem{IPath: collection})
-					}
-				}(index)
-			}
-		}(b.collCh, b.collErrCh)
-
-		b.collRunning = true
-	}
-
-	collCh := b.collCh
-	errCh := b.collErrCh
-	b.collMu.Unlock()
-
-	collCh <- collection
-
-	return <-errCh
-}
-
-func (b *Baton) reconnectIfClosed() error {
-	if b.closed {
-		if err := b.Connect(); err != nil {
-			b.collMu.Unlock()
-
-			return err
-		}
-
-		b.closed = false
-	}
-
-	return nil
-}
-
-func (b *Baton) ensureCollection(clientIndex int, ri ex.RodsItem) error {
 	err := timeoutOp(func() error {
-		_, errl := b.collClients[clientIndex].ListItem(ex.Args{}, ri)
+		_, errl := b.collClient.ListItem(ex.Args{}, ri)
 
 		return errl
 	}, ri.IPath)
@@ -262,23 +192,23 @@ func (b *Baton) ensureCollection(clientIndex int, ri ex.RodsItem) error {
 		return err
 	}
 
-	return b.createCollectionWithTimeoutAndRetries(clientIndex, ri)
+	return b.createCollectionWithTimeoutAndRetries(ri)
 }
 
 // createCollectionWithTimeoutAndRetries tries to make and confirm the given
 // collection, retrying with a backoff because it can fail for no good reason,
 // then work later.
-func (b *Baton) createCollectionWithTimeoutAndRetries(clientIndex int, ri ex.RodsItem) error {
+func (b *Baton) createCollectionWithTimeoutAndRetries(ri ex.RodsItem) error {
 	return b.doWithTimeoutAndRetries(func() error {
-		_, err := b.collClients[clientIndex].MkDir(ex.Args{Recurse: true}, ri)
+		_, err := b.collClient.MkDir(ex.Args{Recurse: true}, ri)
 		if err != nil {
 			return err
 		}
 
-		_, err = b.collClients[clientIndex].ListItem(ex.Args{}, ri)
+		_, err = b.collClient.ListItem(ex.Args{}, ri)
 
 		return err
-	}, clientIndex, ri.IPath)
+	}, collClientIndex, ri.IPath)
 }
 
 // doWithTimeoutAndRetries does op, but times it out. On timeout or error,
@@ -329,23 +259,25 @@ func (b *Baton) timeoutOpAndMakeNewClientOnError(op retry.Operation, clientIndex
 
 func (b *Baton) getClientByIndex(clientIndex int) *ex.Client {
 	switch clientIndex {
+	case collClientIndex:
+		return b.collClient
 	case putClientIndex:
 		return b.putClient
 	case metaClientIndex:
 		return b.metaClient
 	default:
-		return b.collClients[clientIndex]
+		return nil
 	}
 }
 
 func (b *Baton) setClientByIndex(clientIndex int, client *ex.Client) {
 	switch clientIndex {
+	case collClientIndex:
+		b.collClient = client
 	case putClientIndex:
 		b.putClient = client
 	case metaClientIndex:
 		b.metaClient = client
-	default:
-		b.collClients[clientIndex] = client
 	}
 }
 

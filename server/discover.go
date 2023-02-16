@@ -293,10 +293,6 @@ func (s *Server) enqueueSetFiles(given *set.Set, transformer put.PathTransformer
 		return nil
 	}
 
-	if err = s.createCollections(reqs, given); err != nil {
-		return err
-	}
-
 	_, _, err = s.queue.AddMany(context.Background(), defs)
 
 	return err
@@ -333,46 +329,4 @@ func entryToRequest(entry *set.Entry, transformer put.PathTransformer, given *se
 	r.Requester = given.Requester
 
 	return r, nil
-}
-
-// createCollections uses our put.Handler to create the minimal set of
-// collections that all our reqs will go in to. On error, sets the error on the
-// set and returns the error.
-func (s *Server) createCollections(reqs []*put.Request, given *set.Set) error {
-	p, err := put.New(s.putHandler)
-	if err != nil {
-		s.setErrorOnSet(given, err)
-
-		return err
-	}
-
-	defer func() {
-		if errc := p.Cleanup(); errc != nil {
-			s.Logger.Printf("collection creation putter cleanup failed: %s", errc)
-		}
-	}()
-
-	s.Logger.Printf("got %d requests for set %s, will create collections for them", len(reqs), given.Name)
-
-	t := time.Now()
-
-	err = p.CreateCollections(reqs)
-	if err != nil {
-		s.setErrorOnSet(given, err)
-	}
-
-	s.Logger.Printf("collection creation for set %s took %s", given.Name, time.Since(t))
-
-	return err
-}
-
-// setErrorOnSet updates the given set in the db with the given error. Log any
-// failure to do so.
-func (s *Server) setErrorOnSet(given *set.Set, err error) {
-	given.Error = err.Error()
-
-	erra := s.db.AddOrUpdate(given)
-	if erra != nil {
-		s.Logger.Printf("failed to set error on set %s: %s (set error was %s)", given.ID(), erra, err)
-	}
 }
