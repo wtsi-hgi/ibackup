@@ -44,6 +44,7 @@ import (
 )
 
 const serverTokenBasename = ".ibackup.token"
+const numPutClients = 10
 
 var serverUser string
 var serverUID string
@@ -128,7 +129,7 @@ ctrl-z; bg. Or better yet, use the daemonize program to daemonize this.
 			putCmd += fmt.Sprintf("--log %s.client.", serverLogPath)
 		}
 
-		err = s.EnableJobSubmission(putCmd, "production", "", "", appLogger)
+		err = s.EnableJobSubmission(putCmd, "production", "", "", numPutClients, appLogger)
 		if err != nil {
 			die("failed to enable job submission: %s", err)
 		}

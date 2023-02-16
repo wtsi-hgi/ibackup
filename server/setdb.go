@@ -28,6 +28,7 @@ package server
 import (
 	"context"
 	"errors"
+	"math"
 	"net/http"
 
 	"github.com/VertebrateResequencing/wr/queue"
@@ -85,13 +86,9 @@ const (
 	paramRequester = "requester"
 	paramSetID     = "id"
 
-	// defaultFileSize is 1MB in bytes, because most files on lustre volumes
-	// are between 64KB and 1MB in size.
-	defaultFileSize uint64 = 1024 * 1024
-
-	// desiredFileSize is the total size of files we want to return in
-	// getRequests (10GB).
-	desiredFileSize uint64 = defaultFileSize * 1024 * 10
+	// maxRequestsToReserve is the maximum number of requests that
+	// reserveRequests returns.
+	maxRequestsToReserve = 100
 
 	logTraceIDLen = 8
 )
@@ -381,8 +378,8 @@ func (s *Server) getDirs(c *gin.Context) {
 	c.JSON(http.StatusOK, entries)
 }
 
-// getRequests gets about 10GB worth of put Requests from the global in-memory
-// put-queue (as populated during set discoveries).
+// getRequests gets up to 100 Requests from the global in-memory put-queue (as
+// populated during set discoveries).
 //
 // LoadSetDB() must already have been called. This is called when there is a GET
 // on /rest/v1/auth/requests. Only the user who started the Server has
@@ -404,13 +401,18 @@ func (s *Server) getRequests(c *gin.Context) {
 	c.JSON(http.StatusOK, requests)
 }
 
-// reserveRequests keeps reserving items from our queue until we have about 10GB
-// of them (assuming each file is 1MB unless we know better), or the queue is
-// empty. Returns the Requests in the items.
+// reserveRequests keeps reserving items from our queue until we have total
+// requests/s.numClients (but max 100) of them, or the queue is empty.
+//
+// Returns the Requests in the items.
 func (s *Server) reserveRequests() ([]*put.Request, error) {
-	var requests []*put.Request //nolint:prealloc
+	n := s.numRequestsToReserve()
+	if n == 0 {
+		return nil, nil
+	}
 
-	var size uint64
+	requests := make([]*put.Request, 0, n)
+	count := 0
 
 	for {
 		r, err := s.reserveRequest()
@@ -424,18 +426,33 @@ func (s *Server) reserveRequests() ([]*put.Request, error) {
 
 		requests = append(requests, r)
 
-		s := r.Size
-		if s == 0 {
-			s = defaultFileSize
-		}
-
-		size += s
-		if size >= desiredFileSize {
+		count++
+		if count == n {
 			break
 		}
 	}
 
 	return requests, nil
+}
+
+// numRequestsToReserve returns the number of requests we should reserve taking
+// in to account the number of items ready to be reserved, the number of clients
+// we could have running, and our maximum of 100.
+func (s *Server) numRequestsToReserve() int {
+	ready := s.queue.Stats().Ready
+	if ready == 0 {
+		return 0
+	}
+
+	n := int(math.Ceil(float64(ready) / float64(s.numClients)))
+
+	if n > maxRequestsToReserve {
+		n = maxRequestsToReserve
+	}
+
+	s.Logger.Printf("for %d ready items, picked %d items to reserve", ready, n)
+
+	return n
 }
 
 // reserveRequest reserves an item from our queue and converts it to a Request.

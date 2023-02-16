@@ -35,6 +35,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/VertebrateResequencing/wr/queue"
 	"github.com/inconshreveable/log15"
 	. "github.com/smartystreets/goconvey/convey"
 	gas "github.com/wtsi-hgi/go-authserver"
@@ -1159,6 +1160,43 @@ func TestServer(t *testing.T) {
 						So(entry.Attempts, ShouldEqual, 1)
 						So(entry.LastError, ShouldBeBlank)
 					}
+				})
+
+				Convey("numRequestsToReserve returns appropriate numbers", func() {
+					So(s.numRequestsToReserve(), ShouldEqual, len(discovers))
+
+					s.numClients = len(discovers)
+					So(s.numRequestsToReserve(), ShouldEqual, 1)
+
+					s.numClients++
+					So(s.numRequestsToReserve(), ShouldEqual, 1)
+
+					ids := make([]*queue.ItemDef, 1000-len(discovers))
+					for i := range ids {
+						ids[i] = &queue.ItemDef{
+							Key:  fmt.Sprintf("%d", i),
+							Data: i,
+						}
+					}
+
+					_, _, err := s.queue.AddMany(context.Background(), ids)
+					So(err, ShouldBeNil)
+
+					s.numClients = 10
+					So(s.numRequestsToReserve(), ShouldEqual, maxRequestsToReserve)
+
+					ids = make([]*queue.ItemDef, 9000)
+					for i := range ids {
+						ids[i] = &queue.ItemDef{
+							Key:  fmt.Sprintf("%d.extra", i),
+							Data: i,
+						}
+					}
+
+					_, _, err = s.queue.AddMany(context.Background(), ids)
+					So(err, ShouldBeNil)
+
+					So(s.numRequestsToReserve(), ShouldEqual, maxRequestsToReserve)
 				})
 			})
 		})

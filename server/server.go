@@ -77,6 +77,7 @@ const (
 type Server struct {
 	gas.Server
 	db             *set.DB
+	numClients     int
 	filePool       *workerpool.WorkerPool
 	dirPool        *workerpool.WorkerPool
 	queue          *queue.Queue
@@ -97,6 +98,7 @@ type Server struct {
 func New(logWriter io.Writer) *Server {
 	s := &Server{
 		Server:        *gas.New(logWriter),
+		numClients:    1,
 		filePool:      workerpool.New(workerPoolSizeFiles),
 		dirPool:       workerpool.New(workerPoolSizeDir),
 		queue:         queue.New(context.Background(), "put"),
@@ -136,7 +138,10 @@ func (s *Server) EnableAuth(certFile, keyFile string, acb gas.AuthCallback) erro
 // Added jobs will have the given cwd, which matters. If cwd is blank, the
 // current working dir is used. If queue is not blank, that queue will be
 // forced.
-func (s *Server) EnableJobSubmission(putCmd, deployment, cwd, queue string, logger log15.Logger) error {
+//
+// Provide a hint as the the maximum number of put job clients you'll run at
+// once, so that reservations can be balanced between them.
+func (s *Server) EnableJobSubmission(putCmd, deployment, cwd, queue string, numClients int, logger log15.Logger) error {
 	sched, err := scheduler.New(deployment, cwd, queue, connectTimeout, logger, false)
 	if err != nil {
 		return err
@@ -152,6 +157,7 @@ func (s *Server) EnableJobSubmission(putCmd, deployment, cwd, queue string, logg
 
 	s.queue.SetReadyAddedCallback(s.rac)
 	s.queue.SetTTRCallback(s.ttrc)
+	s.numClients = numClients
 
 	return nil
 }
