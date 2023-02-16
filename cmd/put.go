@@ -198,7 +198,8 @@ you, so should this.`,
 		uploadStarts, uploadResults, skipResults := p.Put()
 
 		if client != nil {
-			err = client.SendPutResultsToServer(uploadStarts, uploadResults, skipResults, minMBperSecondUploadSpeed, minTimeForUpload, appLogger)
+			err = client.SendPutResultsToServer(uploadStarts, uploadResults, skipResults,
+				minMBperSecondUploadSpeed, minTimeForUpload, appLogger)
 			if err != nil {
 				die("%s", err)
 			}
