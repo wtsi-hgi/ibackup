@@ -47,21 +47,25 @@ const (
 )
 
 func TestClient(t *testing.T) {
-	Convey("maxTimeForUpload works with small and large requests, returning minimum 1s", t, func() {
-		c := &Client{}
+	Convey("maxTimeForUpload works with small and large requests", t, func() {
+		min := 10 * time.Millisecond
 
-		c.minMBperSecondUploadSpeed = 10
+		c := &Client{
+			minMBperSecondUploadSpeed: float64(10),
+			minTimeForUpload:          min,
+		}
+
 		d := c.maxTimeForUpload(&put.Request{Size: 10 * bytesInMiB})
-		So(d, ShouldEqual, 1*time.Minute)
+		So(d, ShouldEqual, 1*time.Second)
 
 		d = c.maxTimeForUpload(&put.Request{Size: 1000 * bytesInMiB})
 		So(d, ShouldEqual, 100*time.Second)
 
 		d = c.maxTimeForUpload(&put.Request{Size: 1 * bytesInMiB})
-		So(d, ShouldEqual, 1*time.Minute)
+		So(d, ShouldEqual, 100*time.Millisecond)
 
 		d = c.maxTimeForUpload(&put.Request{Size: 1})
-		So(d, ShouldEqual, 1*time.Minute)
+		So(d, ShouldEqual, min)
 	})
 }
 
@@ -72,7 +76,8 @@ func TestServer(t *testing.T) {
 	}
 
 	admin := u.Username
-	minMBperSecondUploadSpeed := 10
+	minMBperSecondUploadSpeed := float64(10)
+	minTimeForUpload := 1 * time.Minute
 
 	Convey("Given a Server", t, func() {
 		logWriter := gas.NewStringLogger()
@@ -713,7 +718,7 @@ func TestServer(t *testing.T) {
 								go func() {
 									errCh <- client.SendPutResultsToServer(
 										uploadStartsCh, uploadResultsCh, skippedResultsCh,
-										minMBperSecondUploadSpeed, logger,
+										minMBperSecondUploadSpeed, minTimeForUpload, logger,
 									)
 								}()
 
@@ -864,7 +869,7 @@ func TestServer(t *testing.T) {
 
 								logger := log15.New()
 								err = client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults,
-									minMBperSecondUploadSpeed, logger)
+									minMBperSecondUploadSpeed, minTimeForUpload, logger)
 								So(err, ShouldBeNil)
 
 								gotSet, err = client.GetSetByID(exampleSet4.Requester, exampleSet4.ID())
@@ -898,7 +903,7 @@ func TestServer(t *testing.T) {
 									uploadStarts, uploadResults, skippedResults = p.Put()
 
 									err = client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults,
-										minMBperSecondUploadSpeed, logger)
+										minMBperSecondUploadSpeed, minTimeForUpload, logger)
 									So(err, ShouldBeNil)
 
 									gotSet, err = client.GetSetByID(exampleSet4.Requester, exampleSet4.ID())

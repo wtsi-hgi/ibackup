@@ -65,12 +65,12 @@ func (e Error) Is(err error) bool {
 }
 
 const (
-	ErrLocalNotAbs   = "local path could not be made absolute"
-	ErrRemoteNotAbs  = "remote path not absolute"
-	ErrReadTimeout   = "local file read timed out"
-	minDirsForUnique = 2
-	numPutGoroutines = 2
-	fileReadTimeout  = 10 * time.Second
+	ErrLocalNotAbs         = "local path could not be made absolute"
+	ErrRemoteNotAbs        = "remote path not absolute"
+	ErrReadTimeout         = "local file read timed out"
+	minDirsForUnique       = 2
+	numPutGoroutines       = 2
+	defaultFileReadTimeout = 10 * time.Second
 
 	// workerPoolSizeStats is the max number of concurrent file stats we'll do
 	// during Put().
@@ -93,7 +93,8 @@ type Handler interface {
 	Cleanup() error
 
 	// EnsureCollection checks if the given collection exists in iRODS, creates
-	// it if not, then double-checks it now exists.
+	// it if not, then double-checks it now exists. Must support being called up
+	// to 10 times in parallel.
 	EnsureCollection(collection string) error
 
 	// Stat checks if the Request's Remote object exists. If it does, records
@@ -115,10 +116,23 @@ type Handler interface {
 	AddMeta(path string, meta map[string]string) error
 }
 
+// FileReadTester is a function that attempts to open and read the given path,
+// returning any error doing so. Should stop and clean up if the given ctx
+// becomes done before the open and read succeeds.
+type FileReadTester func(ctx context.Context, path string) error
+
+// headRead is a FileReadTester that uses the "head" command and kills it if the
+// ctx becomes done. It's the default FileReadTester used for Putters.
+func headRead(ctx context.Context, path string) error {
+	return exec.CommandContext(ctx, "head", "-c", "1", path).Run()
+}
+
 // Putter is used to Put() files in iRODS.
 type Putter struct {
-	handler  Handler
-	requests []*Request
+	handler         Handler
+	fileReadTimeout time.Duration
+	fileReadTester  FileReadTester
+	requests        []*Request
 }
 
 // New returns a *Putter that will use the given Handler to Put() all the
@@ -136,7 +150,29 @@ func New(handler Handler, requests []*Request) (*Putter, error) {
 		}
 	}
 
-	return &Putter{handler: handler, requests: requests}, nil
+	return &Putter{
+		handler:         handler,
+		fileReadTimeout: defaultFileReadTimeout,
+		fileReadTester:  headRead,
+		requests:        requests,
+	}, nil
+}
+
+// SetFileReadTimeout sets how long to wait on a test open and read of each
+// local file before considering it not possible to upload. The default is
+// 10seconds.
+func (p *Putter) SetFileReadTimeout(timeout time.Duration) {
+	p.fileReadTimeout = timeout
+}
+
+// SetFileReadTester sets the function used to see if a file can be opened and
+// read. If this attempt hangs, the function should stop and clean up in
+// response to its context becoming done (when the FileReadTimeout elapses).
+//
+// The default tester shells out to the "head" command so that we don't leak
+// stuck goroutines.
+func (p *Putter) SetFileReadTester(tester FileReadTester) {
+	p.fileReadTester = tester
 }
 
 // Cleanup should be deferred after making a New Putter. It handles things like
@@ -465,15 +501,28 @@ func (p *Putter) processPutCh(putCh, uploadStartCh, uploadReturnCh, metaCh chan 
 }
 
 // testRead tests to see if we can open and read the request's local file,
-// cancelling the read after a 10s timeout if not and returning an error.
+// cancelling the read after a timeout if not and returning an error.
 func (p *Putter) testRead(request *Request) error {
-	ctx, cancel := context.WithTimeout(context.Background(), fileReadTimeout)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	err := exec.CommandContext(ctx, "head", "-c", "1", request.Local).Run() //nolint:gosec
-	if err != nil && strings.Contains(err.Error(), "killed") {
-		err = Error{ErrReadTimeout, request.Local}
-	}
+	timer := time.NewTimer(p.fileReadTimeout)
+	readCh := make(chan error, 1)
 
-	return err
+	go func() {
+		readCh <- p.fileReadTester(ctx, request.Local)
+	}()
+
+	errCh := make(chan error)
+	go func() {
+		select {
+		case <-timer.C:
+			errCh <- Error{ErrReadTimeout, request.Local}
+		case err := <-readCh:
+			timer.Stop()
+			errCh <- err
+		}
+	}()
+
+	return <-errCh
 }

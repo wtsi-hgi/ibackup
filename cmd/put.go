@@ -34,6 +34,7 @@ import (
 	"os/user"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/wtsi-hgi/ibackup/put"
@@ -54,7 +55,11 @@ const (
 	// minMBperSecondUploadSpeed is the slowest MB/s we think an upload should
 	// take; if it drops below this and is still uploading, we'll report to the
 	// server the upload might be stuck.
-	minMBperSecondUploadSpeed = 10
+	minMBperSecondUploadSpeed = 5
+
+	// minTimeForUpload is the minimum time an upload carries on for before
+	// we'll consider it stuck, regardless of the MB/s.
+	minTimeForUpload = 1 * time.Minute
 )
 
 // options for this cmd.
@@ -193,7 +198,7 @@ you, so should this.`,
 		uploadStarts, uploadResults, skipResults := p.Put()
 
 		if client != nil {
-			err = client.SendPutResultsToServer(uploadStarts, uploadResults, skipResults, minMBperSecondUploadSpeed, appLogger)
+			err = client.SendPutResultsToServer(uploadStarts, uploadResults, skipResults, minMBperSecondUploadSpeed, minTimeForUpload, appLogger)
 			if err != nil {
 				die("%s", err)
 			}

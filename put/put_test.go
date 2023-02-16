@@ -39,12 +39,12 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 	Convey("Given Requests and a mock Handler, you can make a new Putter", t, func() {
 		requests, expectedCollections := makeMockRequests(t)
 
-		mh := &mockHandler{}
+		lh := &LocalHandler{}
 
-		p, err := New(mh, requests)
+		p, err := New(lh, requests)
 		So(err, ShouldBeNil)
 		So(p, ShouldNotBeNil)
-		So(mh.connected, ShouldBeTrue)
+		So(lh.connected, ShouldBeTrue)
 
 		Convey("CreateCollections() creates the minimal number of collections", func() {
 			err = p.CreateCollections()
@@ -55,7 +55,7 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 				So(err, ShouldBeNil)
 			}
 
-			So(mh.collections, ShouldResemble, expectedCollections)
+			So(lh.collections, ShouldResemble, expectedCollections)
 
 			Convey("Put() then puts the files, and adds the metadata", func() {
 				requests[0].Requester = "John"
@@ -74,10 +74,10 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 					_, err = os.Stat(request.Remote)
 					So(err, ShouldBeNil)
 
-					mh.mu.RLock()
-					So(mh.meta[request.Remote], ShouldResemble, request.Meta)
-					checkAddedMeta(mh.meta[request.Remote])
-					mh.mu.RUnlock()
+					lh.mu.RLock()
+					So(lh.meta[request.Remote], ShouldResemble, request.Meta)
+					checkAddedMeta(lh.meta[request.Remote])
+					lh.mu.RUnlock()
 				}
 
 				skipped := 0
@@ -106,12 +106,12 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 						switch request.Status {
 						case RequestStatusReplaced:
 							replaced++
-							mh.mu.RLock()
-							So(mh.meta[request.Remote], ShouldResemble, requests[0].Meta)
-							So(mh.meta[request.Remote][metaKeyRequester], ShouldEqual, "John,Sam")
-							So(mh.meta[request.Remote][metaKeySets], ShouldEqual, "setA,setB")
-							date = mh.meta[request.Remote][metaKeyDate]
-							mh.mu.RUnlock()
+							lh.mu.RLock()
+							So(lh.meta[request.Remote], ShouldResemble, requests[0].Meta)
+							So(lh.meta[request.Remote][metaKeyRequester], ShouldEqual, "John,Sam")
+							So(lh.meta[request.Remote][metaKeySets], ShouldEqual, "setA,setB")
+							date = lh.meta[request.Remote][metaKeyDate]
+							lh.mu.RUnlock()
 						default:
 							other++
 						}
@@ -148,18 +148,18 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 
 						request = <-srCh
 						So(request.Status, ShouldEqual, RequestStatusUnmodified)
-						mh.mu.RLock()
-						So(mh.meta[request.Remote][metaKeyRequester], ShouldEqual, "John,Sam")
-						So(mh.meta[request.Remote][metaKeySets], ShouldEqual, "setA,setB,setC")
-						So(mh.meta[request.Remote][metaKeyDate], ShouldEqual, date)
-						mh.mu.RUnlock()
+						lh.mu.RLock()
+						So(lh.meta[request.Remote][metaKeyRequester], ShouldEqual, "John,Sam")
+						So(lh.meta[request.Remote][metaKeySets], ShouldEqual, "setA,setB,setC")
+						So(lh.meta[request.Remote][metaKeyDate], ShouldEqual, date)
+						lh.mu.RUnlock()
 					})
 				})
 
 				Convey("Finally, Cleanup() defers to the handler", func() {
 					err = p.Cleanup()
 					So(err, ShouldBeNil)
-					So(mh.cleaned, ShouldBeTrue)
+					So(lh.cleaned, ShouldBeTrue)
 				})
 			})
 
@@ -183,9 +183,9 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 			})
 
 			Convey("Underlying put and metadata operation failures result in failed requests", func() {
-				mh.statfail = requests[0].Remote
-				mh.putfail = requests[1].Remote
-				mh.metafail = requests[2].Remote
+				lh.MakeStatFail(requests[0].Remote)
+				lh.MakePutFail(requests[1].Remote)
+				lh.MakeMetaFail(requests[2].Remote)
 
 				uCh, urCh, srCh := p.Put()
 
@@ -201,10 +201,10 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 
 						switch r.Remote {
 						case requests[1].Remote:
-							So(r.Error, ShouldContainSubstring, errMockPutFail)
+							So(r.Error, ShouldContainSubstring, ErrMockPutFail)
 							cases++
 						case requests[2].Remote:
-							So(r.Error, ShouldContainSubstring, errMockMetaFail)
+							So(r.Error, ShouldContainSubstring, ErrMockMetaFail)
 							cases++
 						}
 					case RequestStatusUploaded:
@@ -220,7 +220,7 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 						fails++
 
 						if r.Remote == requests[0].Remote {
-							So(r.Error, ShouldContainSubstring, errMockStatFail)
+							So(r.Error, ShouldContainSubstring, ErrMockStatFail)
 							cases++
 						}
 					default:
@@ -248,37 +248,37 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 	})
 
 	Convey("CreateCollections() also works with 0 or 1 requests", t, func() {
-		mh := &mockHandler{}
+		lh := &LocalHandler{}
 
 		var requests []*Request
 
-		p, err := New(mh, requests)
+		p, err := New(lh, requests)
 		So(err, ShouldBeNil)
 		So(p, ShouldNotBeNil)
 
 		err = p.CreateCollections()
 		So(err, ShouldBeNil)
 
-		So(mh.collections, ShouldBeNil)
+		So(lh.collections, ShouldBeNil)
 
 		ddir := t.TempDir()
 		col := filepath.Join(ddir, "bar")
 		remote := filepath.Join(col, "file.txt")
 
 		requests = append(requests, &Request{Local: "foo", Remote: remote})
-		p, err = New(mh, requests)
+		p, err = New(lh, requests)
 		So(err, ShouldBeNil)
 		So(p, ShouldNotBeNil)
 
 		err = p.CreateCollections()
 		So(err, ShouldBeNil)
 
-		So(mh.collections, ShouldResemble, []string{col})
+		So(lh.collections, ShouldResemble, []string{col})
 	})
 
 	Convey("Relative local paths are made absolute", t, func() {
-		mh := &mockHandler{}
-		p, err := New(mh, []*Request{{Local: "foo", Remote: "/bar"}})
+		lh := &LocalHandler{}
+		p, err := New(lh, []*Request{{Local: "foo", Remote: "/bar"}})
 		So(err, ShouldBeNil)
 
 		wd, err := os.Getwd()
@@ -300,7 +300,7 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 				}
 			}()
 
-			_, err = New(mh, []*Request{{Local: "foo", Remote: "/bar"}})
+			_, err = New(lh, []*Request{{Local: "foo", Remote: "/bar"}})
 			So(err, ShouldNotBeNil)
 			So(err.Error(), ShouldContainSubstring, ErrLocalNotAbs)
 			So(err.Error(), ShouldContainSubstring, "foo")
@@ -308,8 +308,8 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 	})
 
 	Convey("You can't make a Putter with relative remote paths", t, func() {
-		mh := &mockHandler{}
-		_, err := New(mh, []*Request{{Local: "/foo", Remote: "bar"}})
+		lh := &LocalHandler{}
+		_, err := New(lh, []*Request{{Local: "/foo", Remote: "bar"}})
 		So(err, ShouldNotBeNil)
 		So(err.Error(), ShouldContainSubstring, ErrRemoteNotAbs)
 		So(err.Error(), ShouldContainSubstring, "bar")

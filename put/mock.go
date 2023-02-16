@@ -29,64 +29,73 @@ import (
 	"io"
 	"os"
 	"sync"
+	"time"
 )
 
 const userPerms = 0700
-const errMockStatFail = "stat fail"
-const errMockPutFail = "put fail"
-const errMockMetaFail = "meta fail"
+const ErrMockStatFail = "stat fail"
+const ErrMockPutFail = "put fail"
+const ErrMockMetaFail = "meta fail"
 
-// mockHandler satisfies the Handler interface, treating "Remote" as local
+// LocalHandler satisfies the Handler interface, treating "Remote" as local
 // paths and moving from Local to Remote for the Put().
-type mockHandler struct {
+type LocalHandler struct {
 	connected   bool
 	cleaned     bool
 	collections []string
 	meta        map[string]map[string]string
-	statfail    string
-	putfail     string
-	metafail    string
+	statFail    string
+	putFail     string
+	putSlow     string
+	putDur      time.Duration
+	metaFail    string
 	mu          sync.RWMutex
 }
 
 // GetLocalHandler returns a Handler that doesn't actually interact with iRODS,
 // but instead simply treats "Remote" as local paths and copies from Local to
-// Remote for any Put()s. Only for use during tests.
-func GetLocalHandler() (Handler, error) {
-	return &mockHandler{}, nil
+// Remote for any Put()s. For use during tests.
+func GetLocalHandler() (*LocalHandler, error) {
+	return &LocalHandler{}, nil
 }
 
 // Connect does no actual connection, just records this was called and prepares
 // a private variable.
-func (m *mockHandler) Connect() error {
-	m.connected = true
-	m.meta = make(map[string]map[string]string)
+func (l *LocalHandler) Connect() error {
+	l.connected = true
+	l.meta = make(map[string]map[string]string)
 
 	return nil
 }
 
 // Cleanup just records this was called.
-func (m *mockHandler) Cleanup() error {
-	m.cleaned = true
+func (l *LocalHandler) Cleanup() error {
+	l.cleaned = true
 
 	return nil
 }
 
 // EnsureCollection creates the given dir locally and records that we did this.
-func (m *mockHandler) EnsureCollection(dir string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+func (l *LocalHandler) EnsureCollection(dir string) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 
-	m.collections = append(m.collections, dir)
+	l.collections = append(l.collections, dir)
 
 	return os.MkdirAll(dir, userPerms)
 }
 
+// MakeStatFail will result in any subsequent Stat()s for a Request with the
+// given remote path failing.
+func (l *LocalHandler) MakeStatFail(remote string) {
+	l.statFail = remote
+}
+
 // Stat returns info about the Remote file, which is a local file on disk.
-// Returns an error if statfail == Remote.
-func (m *mockHandler) Stat(request *Request) (*ObjectInfo, error) {
-	if m.statfail == request.Remote {
-		return nil, Error{errMockStatFail, ""}
+// Returns an error if statFail == Remote.
+func (l *LocalHandler) Stat(request *Request) (*ObjectInfo, error) {
+	if l.statFail == request.Remote {
+		return nil, Error{ErrMockStatFail, ""}
 	}
 
 	_, err := os.Stat(request.Remote)
@@ -98,10 +107,10 @@ func (m *mockHandler) Stat(request *Request) (*ObjectInfo, error) {
 		return nil, err
 	}
 
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	l.mu.RLock()
+	defer l.mu.RUnlock()
 
-	meta, exists := m.meta[request.Remote]
+	meta, exists := l.meta[request.Remote]
 	if !exists {
 		meta = make(map[string]string)
 	}
@@ -109,19 +118,41 @@ func (m *mockHandler) Stat(request *Request) (*ObjectInfo, error) {
 	return &ObjectInfo{Exists: true, Meta: meta}, nil
 }
 
-// Put just copies from Local to Remote. Returns an error if putfail == Remote.
-func (m *mockHandler) Put(request *Request) error {
-	if m.putfail == request.Remote {
-		return Error{errMockPutFail, ""}
+// MakePutFail will result in any subsequent Put()s for a Request with the
+// given remote path failing.
+func (l *LocalHandler) MakePutFail(remote string) {
+	l.putFail = remote
+}
+
+// MakePutSlow will result in any subsequent Put()s for a Request with the
+// given local path taking the given amount of time.
+func (l *LocalHandler) MakePutSlow(local string, dur time.Duration) {
+	l.putSlow = local
+	l.putDur = dur
+}
+
+// Put just copies from Local to Remote. Returns an error if putFail == Remote.
+func (l *LocalHandler) Put(request *Request) error {
+	if l.putFail == request.Remote {
+		return Error{ErrMockPutFail, ""}
 	}
 
-	in, err := os.Open(request.Local)
+	if l.putSlow == request.Local {
+		<-time.After(l.putDur)
+	}
+
+	return copyFile(request.Local, request.Remote)
+}
+
+// copyFile copies source to dest.
+func copyFile(source, dest string) error {
+	in, err := os.Open(source)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
 
-	out, err := os.Create(request.Remote)
+	out, err := os.Create(dest)
 	if err != nil {
 		return err
 	}
@@ -137,22 +168,26 @@ func (m *mockHandler) Put(request *Request) error {
 		return err
 	}
 
-	err = out.Sync()
+	return out.Sync()
+}
 
-	return err
+// MakeMetaFail will result in any subsequent *Meta()s for a Request with the
+// given remote path failing.
+func (l *LocalHandler) MakeMetaFail(remote string) {
+	l.metaFail = remote
 }
 
 // RemoveMeta deletes the given keys from a map stored under path. Returns an
-// error if metafail == path.
-func (m *mockHandler) RemoveMeta(path string, meta map[string]string) error {
-	if m.metafail == path {
-		return Error{errMockMetaFail, ""}
+// error if metaFail == path.
+func (l *LocalHandler) RemoveMeta(path string, meta map[string]string) error {
+	if l.metaFail == path {
+		return Error{ErrMockMetaFail, ""}
 	}
 
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	l.mu.Lock()
+	defer l.mu.Unlock()
 
-	pathMeta, exists := m.meta[path]
+	pathMeta, exists := l.meta[path]
 	if !exists {
 		return nil
 	}
@@ -166,23 +201,23 @@ func (m *mockHandler) RemoveMeta(path string, meta map[string]string) error {
 
 // AddMeta adds the given meta to a map stored under path. Returns an error
 // if metafail == path, or if keys were already defined in the map.
-func (m *mockHandler) AddMeta(path string, meta map[string]string) error {
-	if m.metafail == path {
-		return Error{errMockMetaFail, ""}
+func (l *LocalHandler) AddMeta(path string, meta map[string]string) error {
+	if l.metaFail == path {
+		return Error{ErrMockMetaFail, ""}
 	}
 
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	l.mu.Lock()
+	defer l.mu.Unlock()
 
-	pathMeta, exists := m.meta[path]
+	pathMeta, exists := l.meta[path]
 	if !exists {
 		pathMeta = make(map[string]string)
-		m.meta[path] = pathMeta
+		l.meta[path] = pathMeta
 	}
 
 	for key, val := range meta {
 		if _, exists = pathMeta[key]; exists {
-			return Error{errMockMetaFail, ""}
+			return Error{ErrMockMetaFail, ""}
 		}
 
 		pathMeta[key] = val

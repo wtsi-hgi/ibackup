@@ -40,10 +40,11 @@ import (
 )
 
 const (
-	touchFrequency   = ttr / 3
-	minTimeForUpload = 1 * time.Minute
-	bytesInMiB       = 1024 * 1024
-	numHandlers      = 2
+	touchFrequency       = ttr / 3
+	minTimeForUpload     = 1 * time.Minute
+	bytesInMiB           = 1024 * 1024
+	numHandlers          = 2
+	millisecondsInSecond = 1000
 )
 
 // Client is used to interact with the Server over the network, with
@@ -57,6 +58,7 @@ type Client struct {
 	touching                  bool
 	touchErr                  error
 	minMBperSecondUploadSpeed float64
+	minTimeForUpload          time.Duration
 	uploadsErrCh              chan error
 	logger                    log15.Logger
 }
@@ -340,8 +342,9 @@ func (c *Client) stillWorkingOnRequests(rids []string) error {
 //
 // Do not call this concurrently!
 func (c *Client) SendPutResultsToServer(uploadStarts, uploadResults, skipResults chan *put.Request,
-	minMBperSecondUploadSpeed int, logger log15.Logger) error {
-	c.minMBperSecondUploadSpeed = float64(minMBperSecondUploadSpeed)
+	minMBperSecondUploadSpeed float64, minTimeForUpload time.Duration, logger log15.Logger) error {
+	c.minMBperSecondUploadSpeed = minMBperSecondUploadSpeed
+	c.minTimeForUpload = minTimeForUpload
 	c.logger = logger
 	c.uploadsErrCh = make(chan error)
 
@@ -431,15 +434,20 @@ func (c *Client) stuckIfUploadTakesTooLong(request *put.Request) chan bool {
 // minMBperSecondUploadSpeed, and returns a duration based on that and the
 // request Size. The minimum duration returned is 1 second.
 func (c *Client) maxTimeForUpload(r *put.Request) time.Duration {
-	mb := float64(r.Size) / bytesInMiB
+	mb := bytesToMB(r.Size)
 	seconds := mb / c.minMBperSecondUploadSpeed
-	d := time.Duration(seconds) * time.Second
+	d := time.Duration(seconds*millisecondsInSecond) * time.Millisecond
 
-	if d < minTimeForUpload {
-		d = minTimeForUpload
+	if d < c.minTimeForUpload {
+		d = c.minTimeForUpload
 	}
 
 	return d
+}
+
+// bytesToMB converts bytes to number of MB.
+func bytesToMB(bytes uint64) float64 {
+	return float64(bytes) / bytesInMiB
 }
 
 // handleSendingSkipResults updates file status for each completed request that
