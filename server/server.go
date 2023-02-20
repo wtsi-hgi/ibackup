@@ -174,6 +174,8 @@ func (s *Server) rac(queuename string, allitemdata []interface{}) {
 		return
 	}
 
+	s.Logger.Printf("xyz %d items == %d put jobs", len(allitemdata), n)
+
 	jobs := make([]*jobqueue.Job, n)
 
 	for i := range jobs {
@@ -197,20 +199,20 @@ func (s *Server) rac(queuename string, allitemdata []interface{}) {
 	}()
 }
 
-// estimateJobsNeeded looks at the number of ready upload requests, and
-// estimates how many put jobs we need to upload them all. It takes in to
-// account how many requests we're currently touching in already running jobs.
-//
-// Max 100 jobs, minimum 1 if there are any items at all, wanting 100 uploads
-// per job for efficiency.
+// estimateJobsNeeded always returns our numClients, unless the number of
+// remaining requests is less than that, in which case it will match that
+// number.
 func (s *Server) estimateJobsNeeded(numReady int) int {
 	if numReady == 0 {
 		return 0
 	}
 
-	running := s.queue.GetRunningData()
+	needed := len(s.queue.GetRunningData()) + numReady
+	if needed < s.numClients {
+		return needed
+	}
 
-	return jobsNeeded(numReady + len(running))
+	return s.numClients
 }
 
 // jobsNeeded returns n/assumedRequestsPerJob, min 1, max maxJobsToSubmit.

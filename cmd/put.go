@@ -38,7 +38,6 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/wtsi-hgi/ibackup/put"
-	"github.com/wtsi-hgi/ibackup/server"
 )
 
 const (
@@ -60,6 +59,10 @@ const (
 	// minTimeForUpload is the minimum time an upload carries on for before
 	// we'll consider it stuck, regardless of the MB/s.
 	minTimeForUpload = 1 * time.Minute
+
+	// runFor is the minimum time we'll try and run for in server mode,
+	// getting more requests if we finish early.
+	runFor = 30 * time.Minute
 )
 
 // options for this cmd.
@@ -130,85 +133,10 @@ you, so should this.`,
 			logToFile(putLog)
 		}
 
-		var requests []*put.Request
-		var client *server.Client
-		var err error
-
-		if putServerMode && serverURL != "" {
-			client, err = newServerClient(serverURL, serverCert)
-			if err != nil {
-				die(err.Error())
-			}
-
-			requests, err = client.GetSomeUploadRequests()
+		if serverMode() {
+			handleServerMode(time.Now())
 		} else {
-			requests, err = getRequestsFromFile(putFile, putMeta, putBase64)
-		}
-
-		if err != nil {
-			die("%s", err)
-		}
-
-		if putVerbose {
-			host, errh := os.Hostname()
-			if errh != nil {
-				die("%s", errh)
-			}
-
-			info("client starting on host %s, pid %d", host, os.Getpid())
-		}
-
-		if len(requests) == 0 {
-			warn("no requests to work on")
-
-			return
-		}
-
-		if putVerbose {
-			info("got %d requests to work on", len(requests))
-		}
-
-		handler, err := put.GetBatonHandler()
-		if err != nil {
-			die("%s", err)
-		}
-
-		p, err := put.New(handler, requests)
-		if err != nil {
-			die("%s", err)
-		}
-
-		defer func() {
-			if errc := p.Cleanup(); errc != nil {
-				warn("cleanup gave errors: %s", errc)
-			}
-		}()
-
-		if putVerbose {
-			info("will create collections")
-		}
-
-		err = p.CreateCollections()
-		if err != nil {
-			warn("collection creation failed: %s", err)
-		} else if putVerbose {
-			info("collections created")
-		}
-
-		uploadStarts, uploadResults, skipResults := p.Put()
-
-		if client != nil {
-			err = client.SendPutResultsToServer(uploadStarts, uploadResults, skipResults,
-				minMBperSecondUploadSpeed, minTimeForUpload, appLogger)
-			if err != nil {
-				die("%s", err)
-			}
-
-			if putVerbose {
-				info("all done, exiting")
-			}
-		} else {
-			printResults(uploadResults, skipResults, len(requests), putVerbose)
+			handleManualMode()
 		}
 	},
 }
@@ -229,6 +157,113 @@ func init() {
 		"pull requests from the server instead of --file; only usable by the user who started the server")
 	putCmd.Flags().StringVarP(&putLog, "log", "l", "",
 		"log to the given file (implies --verbose)")
+}
+
+func serverMode() bool {
+	return putServerMode && serverURL != ""
+}
+
+func handleServerMode(started time.Time) {
+	client, err := newServerClient(serverURL, serverCert)
+	if err != nil {
+		die(err.Error())
+	}
+
+	requests, err := client.GetSomeUploadRequests()
+	if err != nil {
+		die("%s", err)
+	}
+
+	uploadStarts, uploadResults, skipResults, dfunc := handlePut(requests)
+
+	defer dfunc()
+
+	err = client.SendPutResultsToServer(uploadStarts, uploadResults, skipResults,
+		minMBperSecondUploadSpeed, minTimeForUpload, appLogger)
+	if err != nil {
+		die("%s", err)
+	}
+
+	if time.Since(started) < runFor {
+		handleServerMode(started)
+	} else if putVerbose {
+		info("all done, exiting")
+	}
+}
+
+func handlePut(requests []*put.Request) (chan *put.Request, chan *put.Request, chan *put.Request, func()) {
+	if putVerbose {
+		host, errh := os.Hostname()
+		if errh != nil {
+			die("%s", errh)
+		}
+
+		info("client starting on host %s, pid %d", host, os.Getpid())
+	}
+
+	if len(requests) == 0 {
+		warn("no requests to work on")
+
+		os.Exit(0)
+	}
+
+	if putVerbose {
+		info("got %d requests to work on", len(requests))
+	}
+
+	p, dfunc := getPutter(requests)
+
+	handleCollections(p)
+
+	uploadStarts, uploadResults, skipResults := p.Put()
+
+	return uploadStarts, uploadResults, skipResults, dfunc
+}
+
+func getPutter(requests []*put.Request) (*put.Putter, func()) {
+	handler, err := put.GetBatonHandler()
+	if err != nil {
+		die("%s", err)
+	}
+
+	p, err := put.New(handler, requests)
+	if err != nil {
+		die("%s", err)
+	}
+
+	dfunc := func() {
+		if errc := p.Cleanup(); errc != nil {
+			warn("cleanup gave errors: %s", errc)
+		}
+	}
+
+	return p, dfunc
+}
+
+func handleCollections(p *put.Putter) {
+	if putVerbose {
+		info("will create collections")
+	}
+
+	err := p.CreateCollections()
+	if err != nil {
+		warn("collection creation failed: %s", err)
+	} else if putVerbose {
+		info("collections created")
+	}
+}
+
+func handleManualMode() {
+	requests, err := getRequestsFromFile(putFile, putMeta, putBase64)
+	if err != nil {
+		die(err.Error())
+	}
+
+	_, uploadResults, skipResults, dfunc := handlePut(requests)
+
+	defer dfunc()
+
+	printResults(uploadResults, skipResults, len(requests), putVerbose)
 }
 
 // getRequestsFromFile reads our 3 column file format from a file or STDIN and
