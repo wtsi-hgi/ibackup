@@ -176,10 +176,11 @@ func handleServerMode(started time.Time) {
 
 	uploadStarts, uploadResults, skipResults, dfunc := handlePut(requests)
 
-	defer dfunc()
-
 	err = client.SendPutResultsToServer(uploadStarts, uploadResults, skipResults,
 		minMBperSecondUploadSpeed, minTimeForUpload, appLogger)
+
+	dfunc()
+
 	if err != nil {
 		die("%s", err)
 	}
