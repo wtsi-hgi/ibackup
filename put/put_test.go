@@ -28,6 +28,7 @@ package put
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -54,6 +55,8 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 				_, err = os.Stat(filepath.Dir(request.Remote))
 				So(err, ShouldBeNil)
 			}
+
+			sort.Strings(lh.collections)
 
 			So(lh.collections, ShouldResemble, expectedCollections)
 
