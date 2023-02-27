@@ -172,8 +172,6 @@ func (s *Server) rac(queuename string, allitemdata []interface{}) {
 		return
 	}
 
-	s.Logger.Printf("xyz %d items == %d put jobs", len(allitemdata), n)
-
 	jobs := make([]*jobqueue.Job, n)
 
 	for i := range jobs {
