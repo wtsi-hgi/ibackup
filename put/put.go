@@ -182,8 +182,8 @@ func (p *Putter) Cleanup() error {
 // be created to support a future Put() request for our requests, checks if
 // those collections exist in iRODS, and creates them if not.
 //
-// You should call this before Put(), unless you're sure all collections already
-// exist.
+// You MUST call this before Put(), even if you think all collections have
+// already been created.
 //
 // Tries to create all needed collections, potentially returning multiple errors
 // wrapped in to one.
