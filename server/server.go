@@ -31,7 +31,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"math"
 	"os/user"
 	"strings"
 	"sync"
@@ -61,15 +60,14 @@ const (
 	// connectTimeout is the timeout for connecting to wr for job submission.
 	connectTimeout = 10 * time.Second
 
-	repGroup                      = "ibackup_server_put"
-	reqGroup                      = "ibackup_server"
-	reqRAM                        = 1024
-	reqTime                       = 8 * time.Hour
-	jobRetries            uint8   = 3
-	jobLimitGroup                 = "irods"
-	assumedRequestsPerJob float64 = 100
-	maxJobsToSubmit               = 100
-	racRetriggerDelay             = 1 * time.Minute
+	repGroup                = "ibackup_server_put"
+	reqGroup                = "ibackup_server"
+	reqRAM                  = 1024
+	reqTime                 = 8 * time.Hour
+	jobRetries        uint8 = 3
+	jobLimitGroup           = "irods"
+	maxJobsToSubmit         = 100
+	racRetriggerDelay       = 1 * time.Minute
 )
 
 // Server is used to start a web server that provides a REST API to the setdb
@@ -213,16 +211,6 @@ func (s *Server) estimateJobsNeeded(numReady int) int {
 	}
 
 	return s.numClients
-}
-
-// jobsNeeded returns n/assumedRequestsPerJob, min 1, max maxJobsToSubmit.
-func jobsNeeded(n int) int {
-	n = int(math.Ceil(float64(n) / assumedRequestsPerJob))
-	if n > maxJobsToSubmit {
-		n = maxJobsToSubmit
-	}
-
-	return n
 }
 
 // ttrc is called when reserved items in our queue are abandoned due to a put

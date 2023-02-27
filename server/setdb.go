@@ -88,7 +88,7 @@ const (
 
 	// maxRequestsToReserve is the maximum number of requests that
 	// reserveRequests returns.
-	maxRequestsToReserve = 100
+	maxRequestsToReserve = 1000
 
 	logTraceIDLen = 8
 )
@@ -437,7 +437,7 @@ func (s *Server) reserveRequests() ([]*put.Request, error) {
 
 // numRequestsToReserve returns the number of requests we should reserve taking
 // in to account the number of items ready to be reserved, the number of clients
-// we could have running, and our maximum of 100.
+// we could have running, and our maximum of maxRequestsToReserve.
 func (s *Server) numRequestsToReserve() int {
 	ready := s.queue.Stats().Ready
 	if ready == 0 {
@@ -449,8 +449,6 @@ func (s *Server) numRequestsToReserve() int {
 	if n > maxRequestsToReserve {
 		n = maxRequestsToReserve
 	}
-
-	s.Logger.Printf("for %d ready items, picked %d items to reserve", ready, n)
 
 	return n
 }
