@@ -59,12 +59,15 @@ func TestPutBaton(t *testing.T) { //nolint:cyclop
 		So(err, ShouldBeNil)
 		So(p, ShouldNotBeNil)
 
-		So(h.pool.IsOpen(), ShouldBeTrue)
-		So(h.putClient.IsRunning(), ShouldBeTrue)
-		So(h.metaClient.IsRunning(), ShouldBeTrue)
-
 		Convey("CreateCollections() creates the needed collections", func() {
-			_, err = h.putClient.RemDir(ex.Args{Force: true, Recurse: true}, ex.RodsItem{
+			testPool := ex.NewClientPool(ex.DefaultClientPoolParams, "")
+			testClientCh, err := h.getClientsFromPoolConcurrently(testPool, 1)
+			So(err, ShouldBeNil)
+			testClient := <-testClientCh
+			defer testClient.StopIgnoreError()
+			defer testPool.Close()
+
+			_, err = testClient.RemDir(ex.Args{Force: true, Recurse: true}, ex.RodsItem{
 				IPath: rootCollection,
 			})
 			if err != nil && !strings.Contains(err.Error(), "-816000") && !strings.Contains(err.Error(), "-310000") {
@@ -72,14 +75,14 @@ func TestPutBaton(t *testing.T) { //nolint:cyclop
 			}
 
 			for _, col := range expectedCollections {
-				So(checkPathExistsWithBaton(h.putClient, col), ShouldBeFalse)
+				So(checkPathExistsWithBaton(testClient, col), ShouldBeFalse)
 			}
 
 			err = p.CreateCollections()
 			So(err, ShouldBeNil)
 
 			for _, col := range expectedCollections {
-				So(checkPathExistsWithBaton(h.putClient, col), ShouldBeTrue)
+				So(checkPathExistsWithBaton(testClient, col), ShouldBeTrue)
 			}
 
 			Convey("Put() then puts the files, and adds the metadata", func() {
@@ -98,7 +101,7 @@ func TestPutBaton(t *testing.T) { //nolint:cyclop
 					So(request.Error, ShouldBeBlank)
 					So(request.Status, ShouldEqual, RequestStatusUploaded)
 					So(request.Size, ShouldEqual, 2)
-					meta := getObjectMetadataWithBaton(h.putClient, request.Remote)
+					meta := getObjectMetadataWithBaton(testClient, request.Remote)
 					So(meta, ShouldResemble, request.Meta)
 					checkAddedMeta(meta)
 
@@ -137,7 +140,7 @@ func TestPutBaton(t *testing.T) { //nolint:cyclop
 					got = <-urCh
 					So(got.Error, ShouldBeBlank)
 					So(got.Status, ShouldEqual, RequestStatusReplaced)
-					meta := getObjectMetadataWithBaton(h.putClient, request.Remote)
+					meta := getObjectMetadataWithBaton(testClient, request.Remote)
 					So(meta, ShouldResemble, request.Meta)
 					So(meta[metaKeyRequester], ShouldEqual, requester)
 					So(meta[metaKeySets], ShouldEqual, "setA,setB")
@@ -146,9 +149,10 @@ func TestPutBaton(t *testing.T) { //nolint:cyclop
 						err = p.Cleanup()
 						So(err, ShouldBeNil)
 
-						So(h.pool.IsOpen(), ShouldBeFalse)
+						So(h.putMetaPool.IsOpen(), ShouldBeFalse)
 						So(h.putClient.IsRunning(), ShouldBeFalse)
 						So(h.metaClient.IsRunning(), ShouldBeFalse)
+						So(h.collClients, ShouldBeNil)
 					})
 				})
 

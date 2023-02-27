@@ -59,15 +59,6 @@ func GetLocalHandler() (*LocalHandler, error) {
 	return &LocalHandler{}, nil
 }
 
-// Connect does no actual connection, just records this was called and prepares
-// a private variable.
-func (l *LocalHandler) Connect() error {
-	l.connected = true
-	l.meta = make(map[string]map[string]string)
-
-	return nil
-}
-
 // Cleanup just records this was called.
 func (l *LocalHandler) Cleanup() error {
 	l.cleaned = true
@@ -83,6 +74,14 @@ func (l *LocalHandler) EnsureCollection(dir string) error {
 	l.collections = append(l.collections, dir)
 
 	return os.MkdirAll(dir, userPerms)
+}
+
+// CollectionsDone says we connected and prepares us for metadata handling.
+func (l *LocalHandler) CollectionsDone() error {
+	l.connected = true
+	l.meta = make(map[string]map[string]string)
+
+	return nil
 }
 
 // MakeStatFail will result in any subsequent Stat()s for a Request with the

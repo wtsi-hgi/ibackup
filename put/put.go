@@ -78,24 +78,22 @@ const (
 
 	// workerPoolSizeCollections is the max number of concurrent collection
 	// creations we'll do during CreateCollections().
-	workerPoolSizeCollections = 10
+	workerPoolSizeCollections = 2
 )
 
 // Handler is something that knows how to communicate with iRODS and carry out
 // certain operations.
 type Handler interface {
-	// Connect uses environmental details to make 1 or more connections to
-	// iRODS, ready for subsequent use.
-	Connect() error
-
-	// Cleanup stops any connections from Connect() and does any other cleanup
-	// needed.
-	Cleanup() error
-
 	// EnsureCollection checks if the given collection exists in iRODS, creates
-	// it if not, then double-checks it now exists. Must support being called up
-	// to 10 times in parallel.
+	// it if not, then double-checks it now exists. Must support being called
+	// concurrently.
 	EnsureCollection(collection string) error
+
+	// CollectionsDone is called after all collections have been created. This
+	// method can do things like cleaning up connections created for collection
+	// creation. It can also create new connections for subsequent Put() and
+	// *Meta calls that are likely to occur.
+	CollectionsDone() error
 
 	// Stat checks if the Request's Remote object exists. If it does, records
 	// its metadata in the returned ObjectInfo. Returns an error if there was a
@@ -114,6 +112,10 @@ type Handler interface {
 	// should already have been removed with RemoveMeta() from the remote
 	// object.
 	AddMeta(path string, meta map[string]string) error
+
+	// Cleanup stops any connections created earlier and does any other cleanup
+	// needed.
+	Cleanup() error
 }
 
 // FileReadTester is a function that attempts to open and read the given path,
@@ -139,11 +141,6 @@ type Putter struct {
 // requests in iRODS. You should defer Cleanup() on the return value. All the
 // incoming requests will have their paths validated (they must be absolute).
 func New(handler Handler, requests []*Request) (*Putter, error) {
-	err := handler.Connect()
-	if err != nil {
-		return nil, err
-	}
-
 	for _, request := range requests {
 		if err := request.ValidatePaths(); err != nil {
 			return nil, err
@@ -212,6 +209,11 @@ func (p *Putter) CreateCollections() error {
 		if err != nil {
 			merr = multierror.Append(merr, err)
 		}
+	}
+
+	cdErr := p.handler.CollectionsDone()
+	if cdErr != nil {
+		merr = multierror.Append(merr, cdErr)
 	}
 
 	return merr.ErrorOrNil()

@@ -45,11 +45,11 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 		p, err := New(lh, requests)
 		So(err, ShouldBeNil)
 		So(p, ShouldNotBeNil)
-		So(lh.connected, ShouldBeTrue)
 
 		Convey("CreateCollections() creates the minimal number of collections", func() {
 			err = p.CreateCollections()
 			So(err, ShouldBeNil)
+			So(lh.connected, ShouldBeTrue)
 
 			for _, request := range requests {
 				_, err = os.Stat(filepath.Dir(request.Remote))
