@@ -38,6 +38,8 @@ import (
 type RequestStatus string
 
 const (
+	RequestStatusPending    RequestStatus = "pending"
+	RequestStatusReserved   RequestStatus = "reserved"
 	RequestStatusUploading  RequestStatus = "uploading"
 	RequestStatusUploaded   RequestStatus = "uploaded"
 	RequestStatusReplaced   RequestStatus = "replaced"

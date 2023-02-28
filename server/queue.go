@@ -42,6 +42,7 @@ const (
 	queueStatusPath       = "/status"
 	queueBuriedPath       = "/buried"
 	queueUploadingPath    = "/uploading"
+	queueAllPath          = "/allrequests"
 	queueCollCreationPath = "/collcreation"
 	paramHostPID          = "hostpid"
 
@@ -55,6 +56,10 @@ const (
 	// EndPointAuthQueueUploading is the endpoint for getting items currently
 	// uploading from the queue.
 	EndPointAuthQueueUploading = gas.EndPointAuth + queueUploadingPath
+
+	// EndPointAuthQueueAll is the endpoint for getting all items currently
+	// in the global put queue.
+	EndPointAuthQueueAll = gas.EndPointAuth + queueAllPath
 
 	// EndPointAuthQueueCollCreation is the endpoint for telling the server
 	// when you start and stop creating collections.
@@ -77,6 +82,8 @@ const (
 // items that correspond.
 //
 // GET /rest/v1/auth/uploading: get details about uploading items in the queue.
+//
+// GET /rest/v1/auth/allrequests: get details about all items in the queue.
 //
 // POST /rest/v1/auth/collcreation: notify the server you are a put client that
 // is about to start creating collections. Provide your host:pid as a hostpid
@@ -102,6 +109,8 @@ func (s *Server) MakeQueueEndPoints() error {
 	authGroup.PUT(queueBuriedPath, s.retryBuried)
 
 	authGroup.GET(queueUploadingPath, s.getUploading)
+
+	authGroup.GET(queueAllPath, s.getAllRequests)
 
 	hostPIDParam := "/:" + paramHostPID
 	authGroup.POST(queueCollCreationPath+hostPIDParam, s.clientStartedCreatingCollections)
@@ -378,6 +387,54 @@ func (s *Server) UploadingRequests() []*put.Request {
 	}
 
 	return uploading
+}
+
+// getAllRequests gets the server's AllRequests.
+//
+// MakeQueueEndPoints() must already have been called. This is called when there
+// is a GET on /rest/v1/auth/allrequests.
+func (s *Server) getAllRequests(c *gin.Context) {
+	c.JSON(http.StatusOK, s.AllRequests())
+}
+
+// AllRequests gets the details of all put requests in the queue.
+func (c *Client) AllRequests() ([]*put.Request, error) {
+	var rs []*put.Request
+
+	err := c.getThing(EndPointAuthQueueAll, &rs)
+
+	return rs, err
+}
+
+// AllRequests returns all the put requests in the global put queue.
+func (s *Server) AllRequests() []*put.Request {
+	s.mapMu.RLock()
+	defer s.mapMu.RUnlock()
+
+	items := s.queue.AllItems()
+	all := make([]*put.Request, len(items))
+
+	for i, item := range items {
+		r := item.Data().(*put.Request) //nolint:forcetypeassert,errcheck
+		r = r.Clone()
+
+		switch item.State() {
+		case queue.ItemStateRun:
+			if _, ok := s.uploading[r.ID()]; ok {
+				r.Status = put.RequestStatusUploading
+			} else {
+				r.Status = put.RequestStatusReserved
+			}
+		case queue.ItemStateBury:
+			r.Status = put.RequestStatusFailed
+		default:
+			r.Status = put.RequestStatusPending
+		}
+
+		all[i] = r
+	}
+
+	return all
 }
 
 // clientStartedCreatingCollections notes that a client started creating

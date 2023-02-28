@@ -62,7 +62,8 @@ single file in that set.
 
 Specifying nothing displays details about all currently buried requests in the
 queue. Specifying --uploading instead shows details about requests that are
-currently uploading.
+currently uploading. Specifying just --all shows details about all requests in
+the queue.
 `,
 	Run: func(cmd *cobra.Command, args []string) {
 		ensureURLandCert()
@@ -81,7 +82,8 @@ currently uploading.
 			die(err.Error())
 		}
 
-		if queueDelete || queueKick {
+		switch {
+		case queueDelete || queueKick:
 			if queuePath != "" && (queueUser == "" || queueSet == "") {
 				die("--path needs --user and --name")
 			}
@@ -105,14 +107,21 @@ currently uploading.
 			}
 
 			handleBuried(client, queueDelete, queueKick, bf)
-		} else if queueUploading {
+		case queueUploading:
 			rs, err := client.UploadingRequests()
 			if err != nil {
 				die("unable to get uploading requests: %s", err)
 			}
 
 			displayRequests(rs, "uploading")
-		} else {
+		case queueAll:
+			rs, err := client.AllRequests()
+			if err != nil {
+				die("unable to get all requests: %s", err)
+			}
+
+			displayRequests(rs, "(0)")
+		default:
 			rs, err := client.BuriedRequests()
 			if err != nil {
 				die("unable to get buried requests: %s", err)
@@ -131,7 +140,7 @@ func init() {
 	queueCmd.Flags().StringVarP(&queueSet, "name", "n", "", "limit -d/-r to this backup set")
 	queueCmd.Flags().StringVarP(&queuePath, "path", "p", "", "limit -d/-r to this local file in the set")
 	queueCmd.Flags().BoolVarP(&queueAll, "all", "a", false,
-		"apply -d/-r to all buried items in the queue")
+		"apply -d/-r to all buried items in the queue, or show all items in the queue")
 	queueCmd.Flags().BoolVarP(&queueDelete, "delete", "d", false,
 		"delete certain buried items in the queue")
 	queueCmd.Flags().BoolVarP(&queueKick, "retry", "r", false,
@@ -148,10 +157,10 @@ func displayRequests(rs []*put.Request, kind string) {
 		return
 	}
 
-	cliPrint("Requester\tSet\tPath\tError\n")
+	cliPrint("Requester\tSet\tLocal\tRemote\tStatus\tError\n")
 
 	for _, r := range rs {
-		cliPrint("%s\t%s\t%s\t%s\n", r.Requester, r.Set, r.Local, r.Error)
+		cliPrint("%s\t%s\t%s\t%s\t%s\t%s\n", r.Requester, r.Set, r.Local, r.Remote, r.Status, r.Error)
 	}
 }
 
