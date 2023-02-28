@@ -184,6 +184,7 @@ func displaySets(client *server.Client, sets []*set.Set, showNonFailedEntries bo
 	l := len(sets)
 
 	for i, forDisplay := range sets {
+		cliPrint("\n")
 		displaySet(forDisplay)
 
 		displayDirs(getDirs(client, forDisplay.ID()))
@@ -191,7 +192,7 @@ func displaySets(client *server.Client, sets []*set.Set, showNonFailedEntries bo
 		displayEntriesIfFailed(client, forDisplay, showNonFailedEntries)
 
 		if i != l-1 {
-			cliPrint("\n-----\n\n")
+			cliPrint("\n-----\n")
 		}
 	}
 }
