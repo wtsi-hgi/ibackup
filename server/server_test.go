@@ -71,7 +71,7 @@ func TestClient(t *testing.T) {
 	})
 }
 
-func TestServer(t *testing.T) {
+func TestServer(t *testing.T) { //nolint:cyclop
 	u, err := user.Current()
 	if err != nil {
 		t.Fatalf("could not get current user: %s", err)
@@ -165,8 +165,8 @@ func TestServer(t *testing.T) {
 					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldBeNil)
 
-					sets, err := client.GetSets(exampleSet.Requester)
-					So(err, ShouldBeNil)
+					sets, errg := client.GetSets(exampleSet.Requester)
+					So(errg, ShouldBeNil)
 					So(len(sets), ShouldEqual, 1)
 					So(sets[0], ShouldResemble, exampleSet)
 
@@ -192,8 +192,8 @@ func TestServer(t *testing.T) {
 						err = client.SetDirs(exampleSet.ID(), dirs)
 						So(err, ShouldBeNil)
 
-						gotDirs, err := client.GetDirs(exampleSet.ID())
-						So(err, ShouldBeNil)
+						gotDirs, errg := client.GetDirs(exampleSet.ID())
+						So(errg, ShouldBeNil)
 						So(len(gotDirs), ShouldEqual, 3)
 						So(gotDirs[0].Path, ShouldEqual, dirs[0])
 						So(gotDirs[1].Path, ShouldEqual, dirs[1])
@@ -217,8 +217,8 @@ func TestServer(t *testing.T) {
 							Set:       exampleSet.Name,
 						})
 
-						entries, err := client.GetFiles(exampleSet.ID())
-						So(err, ShouldBeNil)
+						entries, errg := client.GetFiles(exampleSet.ID())
+						So(errg, ShouldBeNil)
 						So(len(entries), ShouldEqual, len(files)+len(discovers))
 
 						So(entries[0].Status, ShouldEqual, set.Pending)
@@ -234,15 +234,15 @@ func TestServer(t *testing.T) {
 						So(len(entries), ShouldEqual, len(dirs))
 						So(entries[2].Status, ShouldEqual, set.Missing)
 
-						gotSet, err := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
-						So(err, ShouldBeNil)
+						gotSet, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+						So(errg, ShouldBeNil)
 						So(gotSet.LastDiscovery, ShouldHappenAfter, tn)
 						So(gotSet.Missing, ShouldEqual, 2)
 						So(gotSet.NumFiles, ShouldEqual, 6)
 						So(gotSet.Status, ShouldEqual, set.PendingUpload)
 
-						gotSetByName, err := client.GetSetByName(exampleSet.Requester, exampleSet.Name)
-						So(err, ShouldBeNil)
+						gotSetByName, errg := client.GetSetByName(exampleSet.Requester, exampleSet.Name)
+						So(errg, ShouldBeNil)
 						So(gotSetByName, ShouldResemble, gotSet)
 
 						err = client.AddOrUpdateSet(exampleSet2)
