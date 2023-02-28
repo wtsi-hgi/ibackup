@@ -232,9 +232,8 @@ func (c *Client) GetDirs(setID string) ([]*set.Entry, error) {
 	return entries, err
 }
 
-// GetSomeUploadRequests gets some (approx 10GB worth of) upload Requests from
-// the global put queue and returns them, moving from "ready" status in the
-// queue to "running".
+// GetSomeUploadRequests gets up to 100 Requests from the global put queue and
+// returns them, moving from "ready" status in the queue to "running".
 //
 // This automatically handles regularly telling the server knows we're still
 // working on them, stopping when you UpdateFileStatus().

@@ -704,6 +704,55 @@ func TestServer(t *testing.T) { //nolint:cyclop
 							So(len(uploading), ShouldEqual, 0)
 						})
 
+						Convey("All requests can be retrieved", func() {
+							token, errl = gas.Login(addr, certPath, admin, "pass")
+							So(errl, ShouldBeNil)
+
+							client = NewClient(addr, certPath, token)
+
+							all, errc := client.AllRequests()
+							So(errc, ShouldBeNil)
+							So(len(all), ShouldBeGreaterThan, 0)
+
+							for _, r := range all {
+								So(r.Status, ShouldEqual, put.RequestStatusPending)
+							}
+
+							requests, errg := client.GetSomeUploadRequests()
+							So(errg, ShouldBeNil)
+							So(len(requests), ShouldBeGreaterThan, 0)
+
+							uploadRequest := requests[0].Clone()
+
+							uploadRequest.Status = put.RequestStatusUploading
+							err = client.UpdateFileStatus(uploadRequest)
+							So(err, ShouldBeNil)
+
+							all2, errc := client.AllRequests()
+							So(errc, ShouldBeNil)
+							So(len(all2), ShouldBeGreaterThan, 0)
+
+							pending, reserved, uploading, other := 0, 0, 0, 0
+
+							for _, r := range all2 {
+								switch r.Status {
+								case put.RequestStatusUploading:
+									uploading++
+								case put.RequestStatusPending:
+									pending++
+								case put.RequestStatusReserved:
+									reserved++
+								default:
+									other++
+								}
+							}
+
+							So(pending, ShouldEqual, len(all)-len(requests))
+							So(reserved, ShouldEqual, len(requests)-1)
+							So(uploading, ShouldEqual, 1)
+							So(other, ShouldEqual, 0)
+						})
+
 						Convey("Once logged in and with a client", func() {
 							token, errl = gas.Login(addr, certPath, admin, "pass")
 							So(errl, ShouldBeNil)
