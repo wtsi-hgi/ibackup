@@ -887,8 +887,20 @@ func TestServer(t *testing.T) {
 						}
 					}
 
+					err = client.StartingToCreateCollections()
+					So(err, ShouldBeNil)
+					qs, errg := client.GetQueueStatus()
+					So(errg, ShouldBeNil)
+					So(qs.CreatingCollections, ShouldEqual, 1)
+
 					err = p.CreateCollections()
 					So(err, ShouldBeNil)
+
+					err = client.FinishedCreatingCollections()
+					So(err, ShouldBeNil)
+					qs, err = client.GetQueueStatus()
+					So(err, ShouldBeNil)
+					So(qs.CreatingCollections, ShouldEqual, 0)
 
 					return p, d
 				}
@@ -1171,7 +1183,9 @@ func TestServer(t *testing.T) {
 					s.numClients++
 					So(s.numRequestsToReserve(), ShouldEqual, 1)
 
-					ids := make([]*queue.ItemDef, 1000-len(discovers))
+					numRequests := 1000
+					ids := make([]*queue.ItemDef, numRequests-len(discovers))
+
 					for i := range ids {
 						ids[i] = &queue.ItemDef{
 							Key:  fmt.Sprintf("%d", i),
@@ -1183,7 +1197,7 @@ func TestServer(t *testing.T) {
 					So(err, ShouldBeNil)
 
 					s.numClients = 10
-					So(s.numRequestsToReserve(), ShouldEqual, maxRequestsToReserve)
+					So(s.numRequestsToReserve(), ShouldEqual, numRequests/s.numClients)
 
 					ids = make([]*queue.ItemDef, 9000)
 					for i := range ids {

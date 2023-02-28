@@ -38,6 +38,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/wtsi-hgi/ibackup/put"
+	"github.com/wtsi-hgi/ibackup/server"
 )
 
 const (
@@ -174,7 +175,7 @@ func handleServerMode(started time.Time) {
 		die("%s", err)
 	}
 
-	uploadStarts, uploadResults, skipResults, dfunc := handlePut(requests)
+	uploadStarts, uploadResults, skipResults, dfunc := handlePut(client, requests)
 
 	err = client.SendPutResultsToServer(uploadStarts, uploadResults, skipResults,
 		minMBperSecondUploadSpeed, minTimeForUpload, appLogger)
@@ -192,7 +193,8 @@ func handleServerMode(started time.Time) {
 	}
 }
 
-func handlePut(requests []*put.Request) (chan *put.Request, chan *put.Request, chan *put.Request, func()) {
+func handlePut(client *server.Client, requests []*put.Request) (chan *put.Request,
+	chan *put.Request, chan *put.Request, func()) {
 	if putVerbose {
 		host, errh := os.Hostname()
 		if errh != nil {
@@ -214,7 +216,7 @@ func handlePut(requests []*put.Request) (chan *put.Request, chan *put.Request, c
 
 	p, dfunc := getPutter(requests)
 
-	handleCollections(p)
+	handleCollections(client, p)
 
 	uploadStarts, uploadResults, skipResults := p.Put()
 
@@ -241,12 +243,23 @@ func getPutter(requests []*put.Request) (*put.Putter, func()) {
 	return p, dfunc
 }
 
-func handleCollections(p *put.Putter) {
+func handleCollections(client *server.Client, p *put.Putter) {
 	if putVerbose {
 		info("will create collections")
 	}
 
-	err := p.CreateCollections()
+	err := client.StartingToCreateCollections()
+	if err != nil {
+		warn("telling server we started to create collections failed: %s", err)
+	}
+
+	defer func() {
+		if err = client.FinishedCreatingCollections(); err != nil {
+			warn("telling server we finished creating collections failed: %s", err)
+		}
+	}()
+
+	err = p.CreateCollections()
 	if err != nil {
 		warn("collection creation failed: %s", err)
 	} else if putVerbose {
@@ -260,7 +273,7 @@ func handleManualMode() {
 		die(err.Error())
 	}
 
-	_, uploadResults, skipResults, dfunc := handlePut(requests)
+	_, uploadResults, skipResults, dfunc := handlePut(nil, requests)
 
 	defer dfunc()
 

@@ -74,19 +74,20 @@ const (
 // package's database, and a website that displays the information nicely.
 type Server struct {
 	gas.Server
-	db             *set.DB
-	numClients     int
-	filePool       *workerpool.WorkerPool
-	dirPool        *workerpool.WorkerPool
-	queue          *queue.Queue
-	sched          *scheduler.Scheduler
-	putCmd         string
-	req            *jqs.Requirements
-	username       string
-	statusUpdateCh chan *fileStatusPacket
-	uploading      map[string]*put.Request
-	stuckRequests  map[string]*put.Request
-	mapMu          sync.RWMutex
+	db                  *set.DB
+	numClients          int
+	filePool            *workerpool.WorkerPool
+	dirPool             *workerpool.WorkerPool
+	queue               *queue.Queue
+	sched               *scheduler.Scheduler
+	putCmd              string
+	req                 *jqs.Requirements
+	username            string
+	statusUpdateCh      chan *fileStatusPacket
+	creatingCollections map[string]bool
+	uploading           map[string]*put.Request
+	stuckRequests       map[string]*put.Request
+	mapMu               sync.RWMutex
 }
 
 // New creates a Server which can serve a REST API and website.
@@ -95,13 +96,14 @@ type Server struct {
 // log/syslog pkg with syslog.new(syslog.LOG_INFO, "tag").
 func New(logWriter io.Writer) *Server {
 	s := &Server{
-		Server:        *gas.New(logWriter),
-		numClients:    1,
-		filePool:      workerpool.New(workerPoolSizeFiles),
-		dirPool:       workerpool.New(workerPoolSizeDir),
-		queue:         queue.New(context.Background(), "put"),
-		uploading:     make(map[string]*put.Request),
-		stuckRequests: make(map[string]*put.Request),
+		Server:              *gas.New(logWriter),
+		numClients:          1,
+		filePool:            workerpool.New(workerPoolSizeFiles),
+		dirPool:             workerpool.New(workerPoolSizeDir),
+		queue:               queue.New(context.Background(), "put"),
+		creatingCollections: make(map[string]bool),
+		uploading:           make(map[string]*put.Request),
+		stuckRequests:       make(map[string]*put.Request),
 	}
 
 	s.SetStopCallBack(s.stop)
