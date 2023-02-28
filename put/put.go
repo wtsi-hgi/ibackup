@@ -516,6 +516,7 @@ func (p *Putter) testRead(request *Request) error {
 	}()
 
 	errCh := make(chan error)
+
 	go func() {
 		select {
 		case <-timer.C:
