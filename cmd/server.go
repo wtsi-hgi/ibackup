@@ -40,11 +40,11 @@ import (
 	"github.com/inconshreveable/log15"
 	"github.com/spf13/cobra"
 	gas "github.com/wtsi-hgi/go-authserver"
-	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/server"
 )
 
 const serverTokenBasename = ".ibackup.token"
+const numPutClients = 10
 
 var serverUser string
 var serverUID string
@@ -129,19 +129,14 @@ ctrl-z; bg. Or better yet, use the daemonize program to daemonize this.
 			putCmd += fmt.Sprintf("--log %s.client.", serverLogPath)
 		}
 
-		err = s.EnableJobSubmission(putCmd, "production", "", "", appLogger)
+		err = s.EnableJobSubmission(putCmd, "production", "", "", numPutClients, appLogger)
 		if err != nil {
 			die("failed to enable job submission: %s", err)
 		}
 
-		handler, err := put.GetBatonHandler()
-		if err != nil {
-			die("%s", err)
-		}
-
 		info("opening database, please wait...")
 
-		err = s.LoadSetDB(args[0], handler)
+		err = s.LoadSetDB(args[0])
 		if err != nil {
 			die("failed to load database: %s", err)
 		}

@@ -49,10 +49,11 @@ const (
 	ErrOperationTimeout = "iRODS operation timed out"
 
 	extendoLogLevel        = logs.ErrorLevel
-	collClientMaxIndex     = 9
-	putClientIndex         = 10
-	metaClientIndex        = 11
-	numExtendoClients      = 12
+	numCollClients         = workerPoolSizeCollections
+	numPutMetaClients      = 2
+	collClientMaxIndex     = numCollClients - 1
+	putClientIndex         = collClientMaxIndex + 1
+	metaClientIndex        = putClientIndex + 1
 	extendoNotExist        = "does not exist"
 	operationMinBackoff    = 5 * time.Second
 	operationMaxBackoff    = 30 * time.Second
@@ -63,15 +64,15 @@ const (
 
 // Baton is a Handler that uses Baton (via extendo) to interact with iRODS.
 type Baton struct {
-	pool        *ex.ClientPool
-	putClient   *ex.Client
-	metaClient  *ex.Client
+	collPool    *ex.ClientPool
 	collClients []*ex.Client
 	collRunning bool
 	collCh      chan string
 	collErrCh   chan error
 	collMu      sync.Mutex
-	closed      bool
+	putMetaPool *ex.ClientPool
+	putClient   *ex.Client
+	metaClient  *ex.Client
 }
 
 // GetBatonHandler returns a Handler that uses Baton to interact with iRODS. If
@@ -91,20 +92,69 @@ func setupExtendoLogger() {
 	logs.InstallLogger(zlog.New(zerolog.SyncWriter(os.Stderr), extendoLogLevel))
 }
 
-// Connect creates a connection pool and prepares 12 connections to iRODS
-// concurrently, for later use by other methods.
-func (b *Baton) Connect() error {
-	params := ex.DefaultClientPoolParams
-	params.MaxSize = numExtendoClients
-	b.pool = ex.NewClientPool(params, "")
+// EnsureCollection ensures the given collection exists in iRODS, creating it if
+// necessary. You must call Connect() before calling this.
+//
+// This is safe for calling concurrently, and uses multiple connections. But an
+// artefact is that the error you get might be for a different
+// EnsureCollection() call you made for a different collection. This shouldn't
+// make much difference if you just collect all your errors and don't care about
+// order.
+func (b *Baton) EnsureCollection(collection string) error {
+	b.collMu.Lock()
 
-	clientCh, err := b.getClientsFromPoolConcurrently()
+	if !b.collRunning {
+		if err := b.makeCollConnections(); err != nil {
+			return err
+		}
+
+		b.startCreatingCollections()
+
+		b.collRunning = true
+	}
+
+	collCh := b.collCh
+	errCh := b.collErrCh
+	b.collMu.Unlock()
+
+	collCh <- collection
+
+	return <-errCh
+}
+
+// startCreatingCollections creates b.collCh and creates any collection sent to
+// that channel in a goroutine.
+func (b *Baton) startCreatingCollections() {
+	b.collCh = make(chan string)
+	b.collErrCh = make(chan error)
+
+	go func(collCh chan string, errCh chan error) {
+		for index := range b.collClients {
+			go func(index int) {
+				for collection := range collCh {
+					errCh <- b.ensureCollection(index, ex.RodsItem{IPath: collection})
+				}
+			}(index)
+		}
+	}(b.collCh, b.collErrCh)
+}
+
+// makeCollConnections creates connections for making collections, if we don't
+// already have them.
+func (b *Baton) makeCollConnections() error {
+	if b.collClients != nil {
+		return nil
+	}
+
+	pool, clientCh, err := b.connect(numCollClients)
 	if err != nil {
+		b.collMu.Unlock()
+
 		return err
 	}
 
-	b.putClient = <-clientCh
-	b.metaClient = <-clientCh
+	b.collPool = pool
+	b.collClients = make([]*ex.Client, 0, numCollClients)
 
 	for client := range clientCh {
 		b.collClients = append(b.collClients, client)
@@ -113,20 +163,36 @@ func (b *Baton) Connect() error {
 	return nil
 }
 
-// getClientsFromPoolConcurrently gets 2 clients from our pool concurrently.
-func (b *Baton) getClientsFromPoolConcurrently() (chan *ex.Client, error) {
-	clientCh := make(chan *ex.Client, numExtendoClients)
-	errCh := make(chan error, numExtendoClients)
+// connect creates a connection pool and prepares the given number of
+// connections to iRODS concurrently, for later use by other methods.
+//
+// Returns a pool you should later close, and a channel containing numClients
+// clients.
+func (b *Baton) connect(numClients uint8) (*ex.ClientPool, chan *ex.Client, error) {
+	params := ex.DefaultClientPoolParams
+	params.MaxSize = numClients
+	pool := ex.NewClientPool(params, "")
+
+	clientCh, err := b.getClientsFromPoolConcurrently(pool, numClients)
+
+	return pool, clientCh, err
+}
+
+// getClientsFromPoolConcurrently gets numClients clients from the pool
+// concurrently.
+func (b *Baton) getClientsFromPoolConcurrently(pool *ex.ClientPool, numClients uint8) (chan *ex.Client, error) {
+	clientCh := make(chan *ex.Client, numClients)
+	errCh := make(chan error, numClients)
 
 	var wg sync.WaitGroup
 
-	for i := 0; i < numExtendoClients; i++ {
+	for i := 0; i < int(numClients); i++ {
 		wg.Add(1)
 
 		go func() {
 			defer wg.Done()
 
-			client, err := b.pool.Get()
+			client, err := pool.Get()
 			if err != nil {
 				errCh <- err
 			}
@@ -142,32 +208,21 @@ func (b *Baton) getClientsFromPoolConcurrently() (chan *ex.Client, error) {
 	return clientCh, <-errCh
 }
 
-// Cleanup stops our clients and closes our client pool.
-func (b *Baton) Cleanup() error {
-	for _, client := range append(b.collClients, b.putClient, b.metaClient) {
-		err := timeoutOp(func() error {
-			return client.Stop()
-		}, "")
+func (b *Baton) ensureCollection(clientIndex int, ri ex.RodsItem) error {
+	err := timeoutOp(func() error {
+		_, errl := b.collClients[clientIndex].ListItem(ex.Args{}, ri)
 
-		if err != nil {
-			return err
-		}
+		return errl
+	}, ri.IPath)
+	if err == nil {
+		return nil
 	}
 
-	b.pool.Close()
-
-	b.collMu.Lock()
-	defer b.collMu.Unlock()
-
-	if b.collRunning {
-		close(b.collCh)
-		close(b.collErrCh)
-		b.collRunning = false
+	if errors.Is(err, Error{ErrOperationTimeout, ri.IPath}) {
+		return err
 	}
 
-	b.closed = true
-
-	return nil
+	return b.createCollectionWithTimeoutAndRetries(clientIndex, ri)
 }
 
 // timeoutOp carries out op, returning any error from it. Has a 10s timeout on
@@ -191,78 +246,6 @@ func timeoutOp(op retry.Operation, path string) error {
 	}
 
 	return err
-}
-
-// EnsureCollection ensures the given collection exists in iRODS, creating it if
-// necessary. You must call Connect() before calling this.
-//
-// This is safe for calling concurrently, and uses 10 connections. But an
-// artefact is that the error you get might be for a different
-// EnsureCollection() call you made for a different collection. This shouldn't
-// make much difference if you just collect all your errors and don't care about
-// order.
-func (b *Baton) EnsureCollection(collection string) error {
-	b.collMu.Lock()
-
-	if !b.collRunning {
-		if err := b.reconnectIfClosed(); err != nil {
-			return err
-		}
-
-		b.collCh = make(chan string)
-		b.collErrCh = make(chan error)
-
-		go func(collCh chan string, errCh chan error) {
-			for index := range b.collClients {
-				go func(index int) {
-					for collection := range collCh {
-						errCh <- b.ensureCollection(index, ex.RodsItem{IPath: collection})
-					}
-				}(index)
-			}
-		}(b.collCh, b.collErrCh)
-
-		b.collRunning = true
-	}
-
-	collCh := b.collCh
-	errCh := b.collErrCh
-	b.collMu.Unlock()
-
-	collCh <- collection
-
-	return <-errCh
-}
-
-func (b *Baton) reconnectIfClosed() error {
-	if b.closed {
-		if err := b.Connect(); err != nil {
-			b.collMu.Unlock()
-
-			return err
-		}
-
-		b.closed = false
-	}
-
-	return nil
-}
-
-func (b *Baton) ensureCollection(clientIndex int, ri ex.RodsItem) error {
-	err := timeoutOp(func() error {
-		_, errl := b.collClients[clientIndex].ListItem(ex.Args{}, ri)
-
-		return errl
-	}, ri.IPath)
-	if err == nil {
-		return nil
-	}
-
-	if errors.Is(err, Error{ErrOperationTimeout, ri.IPath}) {
-		return err
-	}
-
-	return b.createCollectionWithTimeoutAndRetries(clientIndex, ri)
 }
 
 // createCollectionWithTimeoutAndRetries tries to make and confirm the given
@@ -320,6 +303,7 @@ func (b *Baton) timeoutOpAndMakeNewClientOnError(op retry.Operation, clientIndex
 				}(b.getClientByIndex(clientIndex))
 
 				b.setClientByIndex(clientIndex, client)
+				pool.Close()
 			}
 		}
 
@@ -346,6 +330,46 @@ func (b *Baton) setClientByIndex(clientIndex int, client *ex.Client) {
 		b.metaClient = client
 	default:
 		b.collClients[clientIndex] = client
+	}
+}
+
+// CollectionsDone closes the connections used for connection creation, and
+// creates new ones for doing puts and metadata operations.
+func (b *Baton) CollectionsDone() error {
+	b.collMu.Lock()
+	defer b.collMu.Unlock()
+
+	b.closeConnections(b.collClients)
+	b.collClients = nil
+	b.collPool.Close()
+
+	close(b.collCh)
+	close(b.collErrCh)
+	b.collRunning = false
+
+	pool, clientCh, err := b.connect(numPutMetaClients)
+	if err != nil {
+		b.collMu.Unlock()
+
+		return err
+	}
+
+	b.putMetaPool = pool
+	b.putClient = <-clientCh
+	b.metaClient = <-clientCh
+
+	return nil
+}
+
+// closeConnections closes the given connections, with a timeout, ignoring
+// errors.
+func (b *Baton) closeConnections(clients []*ex.Client) {
+	for _, client := range clients {
+		timeoutOp(func() error { //nolint:errcheck
+			client.StopIgnoreError()
+
+			return nil
+		}, "")
 	}
 }
 
@@ -460,4 +484,23 @@ func (b *Baton) AddMeta(path string, meta map[string]string) error {
 	}, path)
 
 	return err
+}
+
+// Cleanup stops our clients and closes our client pool.
+func (b *Baton) Cleanup() error {
+	b.closeConnections(append(b.collClients, b.putClient, b.metaClient))
+
+	b.putMetaPool.Close()
+
+	b.collMu.Lock()
+	defer b.collMu.Unlock()
+
+	if b.collRunning {
+		close(b.collCh)
+		close(b.collErrCh)
+		b.collPool.Close()
+		b.collRunning = false
+	}
+
+	return nil
 }

@@ -142,8 +142,10 @@ func status(client *server.Client, user, name string, details bool) {
 // displayQueueStatus prints out QStatus in a nice way. If user is admin, also
 // shows details of stuck requests.
 func displayQueueStatus(qs *server.QStatus) {
-	info("Global put queue status: %d queued; %d reserved to be worked on; %d currently uploading; %d failed",
-		qs.Total, qs.Reserved, qs.Uploading, qs.Failed)
+	info("Global put queue status: %d queued; %d reserved to be worked on; %d failed",
+		qs.Total, qs.Reserved, qs.Failed)
+	info("Global put client status (/%d): %d creating collections; %d currently uploading",
+		numPutClients, qs.CreatingCollections, qs.Uploading)
 
 	if qs.Stuck != nil {
 		_, err := getPasswordFromServerTokenFile()
@@ -182,6 +184,7 @@ func displaySets(client *server.Client, sets []*set.Set, showNonFailedEntries bo
 	l := len(sets)
 
 	for i, forDisplay := range sets {
+		cliPrint("\n")
 		displaySet(forDisplay)
 
 		displayDirs(getDirs(client, forDisplay.ID()))
@@ -189,7 +192,7 @@ func displaySets(client *server.Client, sets []*set.Set, showNonFailedEntries bo
 		displayEntriesIfFailed(client, forDisplay, showNonFailedEntries)
 
 		if i != l-1 {
-			cliPrint("\n-----\n\n")
+			cliPrint("\n-----\n")
 		}
 	}
 }

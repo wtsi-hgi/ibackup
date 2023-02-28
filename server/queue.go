@@ -28,7 +28,9 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"os"
 
 	"github.com/VertebrateResequencing/wr/queue"
 	"github.com/gin-gonic/gin"
@@ -37,9 +39,11 @@ import (
 )
 
 const (
-	queueStatusPath    = "/status"
-	queueBuriedPath    = "/buried"
-	queueUploadingPath = "/uploading"
+	queueStatusPath       = "/status"
+	queueBuriedPath       = "/buried"
+	queueUploadingPath    = "/uploading"
+	queueCollCreationPath = "/collcreation"
+	paramHostPID          = "hostpid"
 
 	// EndPointAuthQueueStatus is the endpoint for getting queue status.
 	EndPointAuthQueueStatus = gas.EndPointAuth + queueStatusPath
@@ -51,6 +55,10 @@ const (
 	// EndPointAuthQueueUploading is the endpoint for getting items currently
 	// uploading from the queue.
 	EndPointAuthQueueUploading = gas.EndPointAuth + queueUploadingPath
+
+	// EndPointAuthQueueCollCreation is the endpoint for telling the server
+	// when you start and stop creating collections.
+	EndPointAuthQueueCollCreation = gas.EndPointAuth + queueCollCreationPath
 )
 
 // MakeQueueEndPoints adds a number of endpoints to the REST API for working
@@ -70,6 +78,14 @@ const (
 //
 // GET /rest/v1/auth/uploading: get details about uploading items in the queue.
 //
+// POST /rest/v1/auth/collcreation: notify the server you are a put client that
+// is about to start creating collections. Provide your host:pid as a hostpid
+// parameter.
+//
+// DELETE /rest/v1/auth/collcreation: notify the server you are a put client
+// that has just stopped creating collections. Provide your host:pid as a
+// hostpid parameter.
+//
 // You must call EnableAuth() before calling this method, and the non-GET
 // endpoints will only work if the logged-in user is the same as the user who
 // started the Server.
@@ -87,6 +103,10 @@ func (s *Server) MakeQueueEndPoints() error {
 
 	authGroup.GET(queueUploadingPath, s.getUploading)
 
+	hostPIDParam := "/:" + paramHostPID
+	authGroup.POST(queueCollCreationPath+hostPIDParam, s.clientStartedCreatingCollections)
+	authGroup.DELETE(queueCollCreationPath+hostPIDParam, s.clientStoppedCreatingCollections)
+
 	return nil
 }
 
@@ -100,11 +120,12 @@ func (s *Server) getQueueStatus(c *gin.Context) {
 
 // QStatus describes the status of a Server's in-memory put request queue.
 type QStatus struct {
-	Total     int
-	Reserved  int
-	Uploading int
-	Failed    int
-	Stuck     []*put.Request
+	Total               int
+	Reserved            int
+	CreatingCollections int
+	Uploading           int
+	Failed              int
+	Stuck               []*put.Request
 }
 
 // GetQueueStatus gets information about the server's queue.
@@ -133,11 +154,12 @@ func (s *Server) QueueStatus() *QStatus {
 	}
 
 	return &QStatus{
-		Total:     stats.Items,
-		Reserved:  stats.Running,
-		Uploading: len(s.uploading),
-		Failed:    stats.Buried,
-		Stuck:     stuck,
+		Total:               stats.Items,
+		Reserved:            stats.Running,
+		CreatingCollections: len(s.creatingCollections),
+		Uploading:           len(s.uploading),
+		Failed:              stats.Buried,
+		Stuck:               stuck,
 	}
 }
 
@@ -356,4 +378,103 @@ func (s *Server) UploadingRequests() []*put.Request {
 	}
 
 	return uploading
+}
+
+// clientStartedCreatingCollections notes that a client started creating
+// collections.
+//
+// MakeQueueEndPoints() must already have been called. This is called when there
+// is a POST on /rest/v1/auth/collcreation.
+func (s *Server) clientStartedCreatingCollections(c *gin.Context) {
+	hostPID, status, err := s.extractHostPIDForCreatingCollectionsEndpoints(c)
+	if err != nil {
+		c.AbortWithError(status, err) //nolint:errcheck
+
+		return
+	}
+
+	s.mapMu.Lock()
+	defer s.mapMu.Unlock()
+
+	s.creatingCollections[hostPID] = true
+
+	c.Status(http.StatusOK)
+}
+
+// extractHostPIDForCreatingCollectionsEndpoints gets a hostPID string from the
+// given context and checks user is authorized.
+func (s *Server) extractHostPIDForCreatingCollectionsEndpoints(c *gin.Context) (string, int, error) {
+	if !s.allowedAccess(c, "") {
+		return "", http.StatusUnauthorized, ErrNotAdmin
+	}
+
+	hostPID := c.Param(paramHostPID)
+	if hostPID == "" {
+		return "", http.StatusBadRequest, ErrInvalidInput
+	}
+
+	return hostPID, http.StatusOK, nil
+}
+
+// StartingToCreateCollections tells the server you've started to create
+// collections. Be sure to defer FinishedCreatingCollections().
+func (c *Client) StartingToCreateCollections() error {
+	hostPID, err := hostPID()
+	if err != nil {
+		return err
+	}
+
+	resp, err := c.request().Post(EndPointAuthQueueCollCreation + "/" + hostPID)
+	if err != nil {
+		return err
+	}
+
+	return responseToErr(resp)
+}
+
+// hostPID returns our current host:PID.
+func hostPID() (string, error) {
+	host, err := os.Hostname()
+	if err != nil {
+		return "", err
+	}
+
+	return fmt.Sprintf("%s:%d", host, os.Getpid()), nil
+}
+
+// clientStoppedCreatingCollections notes that a client stopped creating
+// collections.
+//
+// MakeQueueEndPoints() must already have been called. This is called when there
+// is a DELETE on /rest/v1/auth/collcreation.
+func (s *Server) clientStoppedCreatingCollections(c *gin.Context) {
+	hostPID, status, err := s.extractHostPIDForCreatingCollectionsEndpoints(c)
+	if err != nil {
+		c.AbortWithError(status, err) //nolint:errcheck
+
+		return
+	}
+
+	s.mapMu.Lock()
+	defer s.mapMu.Unlock()
+
+	delete(s.creatingCollections, hostPID)
+
+	c.Status(http.StatusOK)
+}
+
+// FinishedCreatingCollections tells the server you've finished creating
+// collections following a StartingToCreateCollections call.
+func (c *Client) FinishedCreatingCollections() error {
+	hostPID, err := hostPID()
+	if err != nil {
+		return err
+	}
+
+	resp, err := c.request().Delete(EndPointAuthQueueCollCreation + "/" + hostPID)
+	if err != nil {
+		return err
+	}
+
+	return responseToErr(resp)
 }

@@ -28,6 +28,7 @@ package server
 import (
 	"context"
 	"errors"
+	"math"
 	"net/http"
 
 	"github.com/VertebrateResequencing/wr/queue"
@@ -85,13 +86,9 @@ const (
 	paramRequester = "requester"
 	paramSetID     = "id"
 
-	// defaultFileSize is 1MB in bytes, because most files on lustre volumes
-	// are between 64KB and 1MB in size.
-	defaultFileSize uint64 = 1024 * 1024
-
-	// desiredFileSize is the total size of files we want to return in
-	// getRequests (10GB).
-	desiredFileSize uint64 = defaultFileSize * 1024 * 10
+	// maxRequestsToReserve is the maximum number of requests that
+	// reserveRequests returns.
+	maxRequestsToReserve = 100
 
 	logTraceIDLen = 8
 )
@@ -121,8 +118,9 @@ const (
 // the set.Entries with backup status about each file (both set with
 // /rest/v1/auth/files and discovered inside /rest/v1/auth/dirs).
 //
-// GET /rest/v1/auth/requests : returns a single upload request from the global
-// put queue. Only the user who started the server has permission to call this.
+// GET /rest/v1/auth/requests : returns about 10GB worth of upload requests from
+// the global put queue. Only the user who started the server has permission to
+// call this.
 //
 // PUT /rest/v1/auth/working : takes a []string of Request ids encoded as JSON
 // in the body received from the requests endpoint to advise the server you're
@@ -134,18 +132,13 @@ const (
 //
 // If the database indicates there are sets we were in the middle of working on,
 // the upload requests will be added to our in-memory queue, just like during
-// discovery ("recovery").
-//
-// At the end of dis/recovery, before adding requests to the in-memory queue,
-// the minimal set of collections will be created to support the subsequent
-// efficient putting of the files in the set. For this reason, you must supply
-// a put.Handler which will be used to create collections.
+// discovery.
 //
 // You must call EnableAuth() before calling this method, and the endpoints will
 // only let you work on sets where the Requester matches your logged-in
 // username, or if the logged-in user is the same as the user who started the
 // Server.
-func (s *Server) LoadSetDB(path string, ph put.Handler) error {
+func (s *Server) LoadSetDB(path string) error {
 	authGroup := s.AuthRouter()
 	if authGroup == nil {
 		return ErrNoAuth
@@ -157,7 +150,6 @@ func (s *Server) LoadSetDB(path string, ph put.Handler) error {
 	}
 
 	s.db = db
-	s.putHandler = ph
 
 	s.addDBEndpoints(authGroup)
 
@@ -182,7 +174,7 @@ func (s *Server) addDBEndpoints(authGroup *gin.RouterGroup) {
 	authGroup.GET(entryPath+idParam, s.getEntries)
 	authGroup.GET(dirPath+idParam, s.getDirs)
 
-	authGroup.GET(requestsPath, s.getRequest)
+	authGroup.GET(requestsPath, s.getRequests)
 
 	authGroup.PUT(workingPath, s.putWorking)
 
@@ -386,27 +378,104 @@ func (s *Server) getDirs(c *gin.Context) {
 	c.JSON(http.StatusOK, entries)
 }
 
-// getRequest gets the next Request from the global in-memory put-queue (as
+// getRequests gets up to 100 Requests from the global in-memory put-queue (as
 // populated during set discoveries).
 //
 // LoadSetDB() must already have been called. This is called when there is a GET
 // on /rest/v1/auth/requests. Only the user who started the Server has
 // permission to call this.
-func (s *Server) getRequest(c *gin.Context) {
+func (s *Server) getRequests(c *gin.Context) {
 	if !s.allowedAccess(c, "") {
 		c.AbortWithError(http.StatusUnauthorized, ErrNotAdmin) //nolint:errcheck
 
 		return
 	}
 
-	request, err := s.reserveRequest()
+	requests, err := s.reserveRequests()
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, err) //nolint:errcheck
 
 		return
 	}
 
-	c.JSON(http.StatusOK, request)
+	c.JSON(http.StatusOK, requests)
+}
+
+// reserveRequests keeps reserving items from our queue until we have total
+// requests/s.numClients (but max 100) of them, or the queue is empty.
+//
+// Returns the Requests in the items.
+func (s *Server) reserveRequests() ([]*put.Request, error) {
+	n := s.getCachedNumRequestsToReserve()
+	requests := make([]*put.Request, 0, n)
+	count := 0
+
+	for {
+		r, err := s.reserveRequest()
+		if err != nil {
+			return nil, err
+		}
+
+		if r == nil {
+			break
+		}
+
+		requests = append(requests, r)
+
+		count++
+		if count == n {
+			break
+		}
+	}
+
+	return requests, nil
+}
+
+// getCachedNumRequestsToReserve calls numRequestsToReserve and caches the
+// result for the remaining numClients to use, so numClients clients all
+// reserve the same amount.
+func (s *Server) getCachedNumRequestsToReserve() int {
+	s.cacheMu.Lock()
+	defer s.cacheMu.Unlock()
+
+	if len(s.numRequestsCache) > 0 {
+		a := s.numRequestsCache
+		n, a := a[len(a)-1], a[:len(a)-1]
+		s.numRequestsCache = a
+
+		return n
+	}
+
+	n := s.numRequestsToReserve()
+	if n == 0 {
+		return n
+	}
+
+	s.numRequestsCache = make([]int, s.numClients-1)
+
+	for i := range s.numRequestsCache {
+		s.numRequestsCache[i] = n
+	}
+
+	return n
+}
+
+// numRequestsToReserve returns the number of requests we should reserve taking
+// in to account the number of items ready to be reserved, the number of clients
+// we could have running, and our maximum of maxRequestsToReserve.
+func (s *Server) numRequestsToReserve() int {
+	ready := s.queue.Stats().Ready
+	if ready == 0 {
+		return 0
+	}
+
+	n := int(math.Ceil(float64(ready) / float64(s.numClients)))
+
+	if n > maxRequestsToReserve {
+		n = maxRequestsToReserve
+	}
+
+	return n
 }
 
 // reserveRequest reserves an item from our queue and converts it to a Request.

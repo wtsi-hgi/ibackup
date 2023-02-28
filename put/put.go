@@ -35,6 +35,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gammazero/workerpool"
@@ -71,26 +72,28 @@ const (
 	numPutGoroutines       = 2
 	defaultFileReadTimeout = 10 * time.Second
 
+	// workerPoolSizeStats is the max number of concurrent file stats we'll do
+	// during Put().
+	workerPoolSizeStats = 16
+
 	// workerPoolSizeCollections is the max number of concurrent collection
 	// creations we'll do during CreateCollections().
-	workerPoolSizeCollections = 10
+	workerPoolSizeCollections = 2
 )
 
 // Handler is something that knows how to communicate with iRODS and carry out
 // certain operations.
 type Handler interface {
-	// Connect uses environmental details to make 1 or more connections to
-	// iRODS, ready for subsequent use.
-	Connect() error
-
-	// Cleanup stops any connections from Connect() and does any other cleanup
-	// needed.
-	Cleanup() error
-
 	// EnsureCollection checks if the given collection exists in iRODS, creates
-	// it if not, then double-checks it now exists. Must support being called up
-	// to 10 times in parallel.
+	// it if not, then double-checks it now exists. Must support being called
+	// concurrently.
 	EnsureCollection(collection string) error
+
+	// CollectionsDone is called after all collections have been created. This
+	// method can do things like cleaning up connections created for collection
+	// creation. It can also create new connections for subsequent Put() and
+	// *Meta calls that are likely to occur.
+	CollectionsDone() error
 
 	// Stat checks if the Request's Remote object exists. If it does, records
 	// its metadata in the returned ObjectInfo. Returns an error if there was a
@@ -109,6 +112,10 @@ type Handler interface {
 	// should already have been removed with RemoveMeta() from the remote
 	// object.
 	AddMeta(path string, meta map[string]string) error
+
+	// Cleanup stops any connections created earlier and does any other cleanup
+	// needed.
+	Cleanup() error
 }
 
 // FileReadTester is a function that attempts to open and read the given path,
@@ -127,27 +134,25 @@ type Putter struct {
 	handler         Handler
 	fileReadTimeout time.Duration
 	fileReadTester  FileReadTester
+	requests        []*Request
 }
 
 // New returns a *Putter that will use the given Handler to Put() all the
-// requests in iRODS. You should defer Cleanup() on the return value.
-func New(handler Handler) (*Putter, error) {
-	err := handler.Connect()
-	if err != nil {
-		return nil, err
+// requests in iRODS. You should defer Cleanup() on the return value. All the
+// incoming requests will have their paths validated (they must be absolute).
+func New(handler Handler, requests []*Request) (*Putter, error) {
+	for _, request := range requests {
+		if err := request.ValidatePaths(); err != nil {
+			return nil, err
+		}
 	}
 
 	return &Putter{
 		handler:         handler,
 		fileReadTimeout: defaultFileReadTimeout,
 		fileReadTester:  headRead,
+		requests:        requests,
 	}, nil
-}
-
-// Cleanup should be deferred after making a New Putter. It handles things like
-// disconnecting.
-func (p *Putter) Cleanup() error {
-	return p.handler.Cleanup()
 }
 
 // SetFileReadTimeout sets how long to wait on a test open and read of each
@@ -167,17 +172,23 @@ func (p *Putter) SetFileReadTester(tester FileReadTester) {
 	p.fileReadTester = tester
 }
 
+// Cleanup should be deferred after making a New Putter. It handles things like
+// disconnecting.
+func (p *Putter) Cleanup() error {
+	return p.handler.Cleanup()
+}
+
 // CreateCollections will determine the minimal set of collections that need to
-// be created to support future Put()s for the given requests, checks if those
-// collections exist in iRODS, and creates them if not.
+// be created to support a future Put() request for our requests, checks if
+// those collections exist in iRODS, and creates them if not.
 //
-// You should call this before using Put(), unless you're sure all collections
-// already exist.
+// You MUST call this before Put(), even if you think all collections have
+// already been created.
 //
 // Tries to create all needed collections, potentially returning multiple errors
 // wrapped in to one.
-func (p *Putter) CreateCollections(requests []*Request) error {
-	dirs := getUniqueRequestLeafCollections(requests)
+func (p *Putter) CreateCollections() error {
+	dirs := p.getUniqueRequestLeafCollections()
 	pool := workerpool.New(workerPoolSizeCollections)
 	errCh := make(chan error, len(dirs))
 
@@ -200,11 +211,16 @@ func (p *Putter) CreateCollections(requests []*Request) error {
 		}
 	}
 
+	cdErr := p.handler.CollectionsDone()
+	if cdErr != nil {
+		merr = multierror.Append(merr, cdErr)
+	}
+
 	return merr.ErrorOrNil()
 }
 
-func getUniqueRequestLeafCollections(requests []*Request) []string {
-	dirs := getSortedRequestCollections(requests)
+func (p *Putter) getUniqueRequestLeafCollections() []string {
+	dirs := p.getSortedRequestCollections()
 	if len(dirs) < minDirsForUnique {
 		return dirs
 	}
@@ -231,10 +247,10 @@ func getUniqueRequestLeafCollections(requests []*Request) []string {
 	return uniqueLeafs
 }
 
-func getSortedRequestCollections(requests []*Request) []string {
-	dirs := make([]string, len(requests))
+func (p *Putter) getSortedRequestCollections() []string {
+	dirs := make([]string, len(p.requests))
 
-	for i, request := range requests {
+	for i, request := range p.requests {
 		dirs[i] = filepath.Dir(request.Remote)
 	}
 
@@ -247,34 +263,85 @@ func noLeavesOrNewLeaf(uniqueLeafs []string, last string) bool {
 	return len(uniqueLeafs) == 0 || last != uniqueLeafs[len(uniqueLeafs)-1]
 }
 
-// Validate checks the request paths are valid, and that the Local path exists.
-// If the Remote already exists, compares mtimes and metadata.
+// Put will upload all our request Local files to iRODS at the Remote locations.
+// You ought to call CreateCollections() before calling this.
 //
-// Modifies the request with an Error and new Status as appropriate, and returns
-// true if it should be passed to Put().
+// Existing files in iRODS will be overwritten if the local file's mtime is
+// different to the remote's. If the same, the put will be skipped.
 //
-// If only a metadata update is required, adds a private note to the Request
-// that will tell Put() to only do a metadata update, and returns a second true.
+// MD5 checksums will be calculated locally and remotely and compared to ensure
+// a perfect upload. The request metadata will then replace any existing
+// metadata with the same keys on the Remote object.
 //
-// The Status set is the Status that would be true after a successful Put(), or
-// that is true now if it shouldn't be Put():
+// Requests that need to be uploaded are first sent on the first returned
+// channel, with Status set to "uploading".
 //
-//	"uploaded":   a new object was uploaded to iRODS
-//	"replaced":   an existing object was replaced in iRODS, because Local was
-//			      newer than Remote
+// Each of those will then be send on the second returned channel, with Status
+// set like:
+//
+//	 "uploaded":   a new object was uploaded to iRODS
+//		"replaced":   an existing object was replaced in iRODS, because Local was
+//		              newer than Remote
+//		"failed":     An upload attempt failed; see Error
+//
+// The third return channel will receive Requests that didn't need to be
+// uploaded, with Status set like:
+//
 //	"unmodified": Local and Remote had the same modification time, so nothing
 //	              was done
 //	"missing":    Local path could not be accessed, upload skipped; see Error
-func (p *Putter) Validate(request *Request) (needsPut bool, metadataChangeOnly bool) {
-	if err := request.ValidatePaths(); err != nil {
-		updateRequest(request, RequestStatusNotAbs, err)
+func (p *Putter) Put() (chan *Request, chan *Request, chan *Request) {
+	uploadStartCh := make(chan *Request, len(p.requests))
+	uploadReturnCh := make(chan *Request, len(p.requests))
+	skipReturnCh := make(chan *Request, len(p.requests))
+	putCh := make(chan *Request, len(p.requests))
 
-		return
+	var wg sync.WaitGroup
+
+	wg.Add(numPutGoroutines)
+
+	go p.pickFilesToPut(&wg, putCh, skipReturnCh)
+	go p.putFilesInIRODS(&wg, putCh, uploadStartCh, uploadReturnCh, skipReturnCh)
+
+	go func() {
+		wg.Wait()
+		close(uploadReturnCh)
+		close(skipReturnCh)
+	}()
+
+	return uploadStartCh, uploadReturnCh, skipReturnCh
+}
+
+// pickFilesToPut goes through all our Requests, immediately returns bad ones
+// (eg. local file doesn't exist) and ones we don't need to do (hasn't been
+// modified since last uploaded) via the returnCh, and sends the remainder to
+// the putCh.
+func (p *Putter) pickFilesToPut(wg *sync.WaitGroup, putCh chan *Request, skipReturnCh chan *Request) {
+	defer wg.Done()
+
+	pool := workerpool.New(workerPoolSizeStats)
+
+	for _, request := range p.requests {
+		thisRequest := request
+
+		pool.Submit(func() {
+			p.statPathsAndReturnOrPut(thisRequest, putCh, skipReturnCh)
+		})
 	}
 
+	pool.StopWait()
+	close(putCh)
+}
+
+// statPathsAndReturnOrPut stats the Local and Remote paths. On error, sends the
+// request to the skipReturnCh straight away. If mtime unchanged, doesn't do the
+// put, sending to skipReturnCh if metadata unchanged, otherwise to putCh but
+// with a note to skip the actual put and just do metadata. Otherwise, sends
+// them to the putCh normally.
+func (p *Putter) statPathsAndReturnOrPut(request *Request, putCh chan *Request, skipReturnCh chan *Request) {
 	lInfo, err := Stat(request.Local)
 	if err != nil {
-		updateRequest(request, RequestStatusMissing, err)
+		sendRequest(request, RequestStatusMissing, err, skipReturnCh)
 
 		return
 	}
@@ -283,18 +350,49 @@ func (p *Putter) Validate(request *Request) (needsPut bool, metadataChangeOnly b
 
 	rInfo, err := p.handler.Stat(request)
 	if err != nil {
-		updateRequest(request, RequestStatusFailed, err)
+		sendRequest(request, RequestStatusFailed, err, skipReturnCh)
 
 		return
 	}
 
 	request.addStandardMeta(lInfo.Meta, rInfo.Meta)
 
-	return determineUploadOrUnmodified(request, lInfo, rInfo)
+	if sendForUploadOrUnmodified(request, lInfo, rInfo, putCh, skipReturnCh) {
+		return
+	}
+
+	sendRequest(request, RequestStatusReplaced, nil, putCh)
 }
 
-// updateRequest sets the given status and err on the given request.
-func updateRequest(request *Request, status RequestStatus, err error) {
+// sendForUploadOrUnmodified sends the request to putCh if remote doesn't exist
+// or if the mtime hasn't change but the metadata has, or the skipReturnCh if
+// the metadata hasn't changed. Returns true in one of those cases, or false if
+// the request needs to be uploaded again because the mtime changed.
+func sendForUploadOrUnmodified(request *Request, lInfo, rInfo *ObjectInfo, putCh, skipReturnCh chan *Request) bool {
+	if !rInfo.Exists {
+		sendRequest(request, RequestStatusUploaded, nil, putCh)
+
+		return true
+	}
+
+	if lInfo.HasSameModTime(rInfo) {
+		ch := skipReturnCh
+
+		if request.needsMetadataUpdate() {
+			ch = putCh
+		}
+
+		sendRequest(request, RequestStatusUnmodified, nil, ch)
+
+		return true
+	}
+
+	return false
+}
+
+// sendRequest sets the given status and err on the given request, then sends it
+// down the given channel.
+func sendRequest(request *Request, status RequestStatus, err error, ch chan *Request) {
 	request.Status = status
 
 	if err != nil {
@@ -302,83 +400,56 @@ func updateRequest(request *Request, status RequestStatus, err error) {
 	} else {
 		request.Error = ""
 	}
+
+	ch <- request
 }
 
-// determineUploadOrUnmodified returns true if remote doesn't exist or if the
-// mtime has changed. Also returns true if the mtime hasn't changed, but the
-// metadata has, in which case the second bool will be true as well.
-func determineUploadOrUnmodified(request *Request, lInfo, rInfo *ObjectInfo) (needsPut bool, metadataChangeOnly bool) {
-	if !rInfo.Exists {
-		updateRequest(request, RequestStatusUploaded, nil)
+// putFilesInIRODS uses our handler to Put() requests sent on the given putCh in
+// to iRODS sequentially, and concurrently ReplaceMetadata() on those objects
+// once they're in. When each request is about to start uploading, it is sent
+// on uploadStartCh, then when it completes it is sent on the returnCh.
+func (p *Putter) putFilesInIRODS(wg *sync.WaitGroup, putCh, uploadStartCh, uploadReturnCh, skipReturnCh chan *Request) {
+	defer wg.Done()
 
-		return true, false
-	}
+	metaCh := make(chan *Request, len(p.requests))
+	metaDoneCh := make(chan struct{})
 
-	if lInfo.HasSameModTime(rInfo) {
-		updateRequest(request, RequestStatusUnmodified, nil)
+	go p.applyMetadataConcurrently(metaCh, uploadReturnCh, skipReturnCh, metaDoneCh)
 
-		if request.needsMetadataUpdate() {
-			return true, true
+	p.processPutCh(putCh, uploadStartCh, uploadReturnCh, metaCh)
+
+	close(uploadStartCh)
+	close(metaCh)
+	<-metaDoneCh
+}
+
+func (p *Putter) applyMetadataConcurrently(metaCh, uploadReturnCh, skipReturnCh chan *Request,
+	metaDoneCh chan struct{}) {
+	for request := range metaCh {
+		toRemove, toAdd := request.determineMetadataToRemoveAndAdd()
+
+		returnCh := uploadReturnCh
+
+		if request.skipPut {
+			returnCh = skipReturnCh
 		}
 
-		return false, false
+		if err := p.removeMeta(request.Remote, toRemove); err != nil {
+			p.sendFailedRequest(request, err, returnCh)
+
+			continue
+		}
+
+		if err := p.addMeta(request.Remote, toAdd); err != nil {
+			p.sendFailedRequest(request, err, returnCh)
+
+			continue
+		}
+
+		returnCh <- request
 	}
 
-	updateRequest(request, RequestStatusReplaced, nil)
-
-	return true, false
-}
-
-// Put will upload the given request Local file to iRODS at the Remote location.
-// You ought to call CreateCollections() before calling this, and you should
-// only call this if Validate() returned true.
-//
-// MD5 checksums will be calculated locally and remotely and compared to ensure
-// a perfect upload. The request metadata will then replace any existing
-// metadata with the same keys on the Remote object.
-//
-// If the put or metadata update fails, the Status of the request will be
-// altered to:
-//
-//	"failed": An upload attempt failed
-//
-// Error on the Request will also be set.
-func (p *Putter) Put(request *Request) {
-	if request.skipPut {
-		p.applyMetadata(request)
-
-		return
-	}
-
-	if err := p.testRead(request); err != nil {
-		updateRequest(request, RequestStatusFailed, err)
-
-		return
-	}
-
-	if err := p.handler.Put(request); err != nil {
-		updateRequest(request, RequestStatusFailed, err)
-
-		return
-	}
-
-	p.applyMetadata(request)
-}
-
-func (p *Putter) applyMetadata(request *Request) {
-	toRemove, toAdd := request.determineMetadataToRemoveAndAdd()
-
-	if err := p.removeMeta(request.Remote, toRemove); err != nil {
-		updateRequest(request, RequestStatusFailed, err)
-
-		return
-	}
-
-	if err := p.addMeta(request.Remote, toAdd); err != nil {
-		updateRequest(request, RequestStatusFailed, err)
-
-		return
-	}
+	close(metaDoneCh)
 }
 
 func (p *Putter) removeMeta(path string, toRemove map[string]string) error {
@@ -389,12 +460,46 @@ func (p *Putter) removeMeta(path string, toRemove map[string]string) error {
 	return p.handler.RemoveMeta(path, toRemove)
 }
 
+// sendFailedRequest adds the err details to the request and sends it on the
+// given channel.
+func (p *Putter) sendFailedRequest(request *Request, err error, uploadReturnCh chan *Request) {
+	sendRequest(request, RequestStatusFailed, err, uploadReturnCh)
+}
+
 func (p *Putter) addMeta(path string, toAdd map[string]string) error {
 	if len(toAdd) == 0 {
 		return nil
 	}
 
 	return p.handler.AddMeta(path, toAdd)
+}
+
+func (p *Putter) processPutCh(putCh, uploadStartCh, uploadReturnCh, metaCh chan *Request) {
+	for request := range putCh {
+		if request.skipPut {
+			metaCh <- request
+
+			continue
+		}
+
+		uploading := request.Clone()
+		uploading.Status = RequestStatusUploading
+		uploadStartCh <- uploading
+
+		if err := p.testRead(request); err != nil {
+			p.sendFailedRequest(request, err, uploadReturnCh)
+
+			continue
+		}
+
+		if err := p.handler.Put(request); err != nil {
+			p.sendFailedRequest(request, err, uploadReturnCh)
+
+			continue
+		}
+
+		metaCh <- request
+	}
 }
 
 // testRead tests to see if we can open and read the request's local file,
@@ -404,7 +509,6 @@ func (p *Putter) testRead(request *Request) error {
 	defer cancel()
 
 	timer := time.NewTimer(p.fileReadTimeout)
-
 	readCh := make(chan error, 1)
 
 	go func() {

@@ -74,19 +74,22 @@ const (
 // package's database, and a website that displays the information nicely.
 type Server struct {
 	gas.Server
-	db             *set.DB
-	filePool       *workerpool.WorkerPool
-	dirPool        *workerpool.WorkerPool
-	queue          *queue.Queue
-	sched          *scheduler.Scheduler
-	putCmd         string
-	putHandler     put.Handler
-	req            *jqs.Requirements
-	username       string
-	statusUpdateCh chan *fileStatusPacket
-	uploading      map[string]*put.Request
-	stuckRequests  map[string]*put.Request
-	mapMu          sync.RWMutex
+	db                  *set.DB
+	numClients          int
+	numRequestsCache    []int
+	cacheMu             sync.Mutex
+	filePool            *workerpool.WorkerPool
+	dirPool             *workerpool.WorkerPool
+	queue               *queue.Queue
+	sched               *scheduler.Scheduler
+	putCmd              string
+	req                 *jqs.Requirements
+	username            string
+	statusUpdateCh      chan *fileStatusPacket
+	creatingCollections map[string]bool
+	uploading           map[string]*put.Request
+	stuckRequests       map[string]*put.Request
+	mapMu               sync.RWMutex
 }
 
 // New creates a Server which can serve a REST API and website.
@@ -95,12 +98,14 @@ type Server struct {
 // log/syslog pkg with syslog.new(syslog.LOG_INFO, "tag").
 func New(logWriter io.Writer) *Server {
 	s := &Server{
-		Server:        *gas.New(logWriter),
-		filePool:      workerpool.New(workerPoolSizeFiles),
-		dirPool:       workerpool.New(workerPoolSizeDir),
-		queue:         queue.New(context.Background(), "put"),
-		uploading:     make(map[string]*put.Request),
-		stuckRequests: make(map[string]*put.Request),
+		Server:              *gas.New(logWriter),
+		numClients:          1,
+		filePool:            workerpool.New(workerPoolSizeFiles),
+		dirPool:             workerpool.New(workerPoolSizeDir),
+		queue:               queue.New(context.Background(), "put"),
+		creatingCollections: make(map[string]bool),
+		uploading:           make(map[string]*put.Request),
+		stuckRequests:       make(map[string]*put.Request),
 	}
 
 	s.SetStopCallBack(s.stop)
@@ -135,7 +140,10 @@ func (s *Server) EnableAuth(certFile, keyFile string, acb gas.AuthCallback) erro
 // Added jobs will have the given cwd, which matters. If cwd is blank, the
 // current working dir is used. If queue is not blank, that queue will be
 // forced.
-func (s *Server) EnableJobSubmission(putCmd, deployment, cwd, queue string, logger log15.Logger) error {
+//
+// Provide a hint as the the maximum number of put job clients you'll run at
+// once, so that reservations can be balanced between them.
+func (s *Server) EnableJobSubmission(putCmd, deployment, cwd, queue string, numClients int, logger log15.Logger) error {
 	sched, err := scheduler.New(deployment, cwd, queue, connectTimeout, logger, false)
 	if err != nil {
 		return err
@@ -151,6 +159,7 @@ func (s *Server) EnableJobSubmission(putCmd, deployment, cwd, queue string, logg
 
 	s.queue.SetReadyAddedCallback(s.rac)
 	s.queue.SetTTRCallback(s.ttrc)
+	s.numClients = numClients
 
 	return nil
 }
@@ -190,29 +199,20 @@ func (s *Server) rac(queuename string, allitemdata []interface{}) {
 	}()
 }
 
-// estimateJobsNeeded looks at the number of ready upload requests, and
-// estimates how many put jobs we need to upload them all. It takes in to
-// account how many requests we're currently touching in already running jobs.
-//
-// Max 100 jobs, minimum 1 if there are any items at all, assumed 1 upload per
-// job.
+// estimateJobsNeeded always returns our numClients, unless the number of
+// remaining requests is less than that, in which case it will match that
+// number.
 func (s *Server) estimateJobsNeeded(numReady int) int {
 	if numReady == 0 {
 		return 0
 	}
 
-	running := s.queue.GetRunningData()
-
-	return jobsNeeded(numReady + len(running))
-}
-
-// jobsNeeded returns n, max maxJobsToSubmit.
-func jobsNeeded(n int) int {
-	if n > maxJobsToSubmit {
-		n = maxJobsToSubmit
+	needed := len(s.queue.GetRunningData()) + numReady
+	if needed < s.numClients {
+		return needed
 	}
 
-	return n
+	return s.numClients
 }
 
 // ttrc is called when reserved items in our queue are abandoned due to a put

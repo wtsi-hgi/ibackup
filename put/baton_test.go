@@ -55,16 +55,19 @@ func TestPutBaton(t *testing.T) { //nolint:cyclop
 	Convey("Given Requests and a baton Handler, you can make a new Putter", t, func() {
 		requests, expectedCollections := makeRequests(t, rootCollection)
 
-		p, err := New(h)
+		p, err := New(h, requests)
 		So(err, ShouldBeNil)
 		So(p, ShouldNotBeNil)
 
-		So(h.pool.IsOpen(), ShouldBeTrue)
-		So(h.putClient.IsRunning(), ShouldBeTrue)
-		So(h.metaClient.IsRunning(), ShouldBeTrue)
-
 		Convey("CreateCollections() creates the needed collections", func() {
-			_, err = h.putClient.RemDir(ex.Args{Force: true, Recurse: true}, ex.RodsItem{
+			testPool := ex.NewClientPool(ex.DefaultClientPoolParams, "")
+			testClientCh, err := h.getClientsFromPoolConcurrently(testPool, 1)
+			So(err, ShouldBeNil)
+			testClient := <-testClientCh
+			defer testClient.StopIgnoreError()
+			defer testPool.Close()
+
+			_, err = testClient.RemDir(ex.Args{Force: true, Recurse: true}, ex.RodsItem{
 				IPath: rootCollection,
 			})
 			if err != nil && !strings.Contains(err.Error(), "-816000") && !strings.Contains(err.Error(), "-310000") {
@@ -72,14 +75,14 @@ func TestPutBaton(t *testing.T) { //nolint:cyclop
 			}
 
 			for _, col := range expectedCollections {
-				So(checkPathExistsWithBaton(h.putClient, col), ShouldBeFalse)
+				So(checkPathExistsWithBaton(testClient, col), ShouldBeFalse)
 			}
 
-			err = p.CreateCollections(requests)
+			err = p.CreateCollections()
 			So(err, ShouldBeNil)
 
 			for _, col := range expectedCollections {
-				So(checkPathExistsWithBaton(h.putClient, col), ShouldBeTrue)
+				So(checkPathExistsWithBaton(testClient, col), ShouldBeTrue)
 			}
 
 			Convey("Put() then puts the files, and adds the metadata", func() {
@@ -88,21 +91,21 @@ func TestPutBaton(t *testing.T) { //nolint:cyclop
 				requests[0].Set = "setA"
 				expectedMTime := touchFile(requests[0].Local, -1*time.Hour)
 
-				for _, r := range requests {
-					shouldPut, metadataChangeOnly := p.Validate(r)
-					So(shouldPut, ShouldBeTrue)
-					So(metadataChangeOnly, ShouldBeFalse)
-					So(r.Status, ShouldEqual, RequestStatusUploaded)
+				uCh, urCh, srCh := p.Put()
 
-					p.Put(r)
+				for request := range uCh {
+					So(request.Status, ShouldEqual, RequestStatusUploading)
+				}
 
-					So(r.Error, ShouldBeBlank)
-					So(r.Size, ShouldEqual, 2)
-					meta := getObjectMetadataWithBaton(h.putClient, r.Remote)
-					So(meta, ShouldResemble, r.Meta)
+				for request := range urCh {
+					So(request.Error, ShouldBeBlank)
+					So(request.Status, ShouldEqual, RequestStatusUploaded)
+					So(request.Size, ShouldEqual, 2)
+					meta := getObjectMetadataWithBaton(testClient, request.Remote)
+					So(meta, ShouldResemble, request.Meta)
 					checkAddedMeta(meta)
 
-					if r.Local == requests[0].Local {
+					if request.Local == requests[0].Local {
 						mtime := time.Time{}
 						err = mtime.UnmarshalText([]byte(meta[metaKeyMtime]))
 						So(err, ShouldBeNil)
@@ -111,6 +114,8 @@ func TestPutBaton(t *testing.T) { //nolint:cyclop
 					}
 				}
 
+				So(<-srCh, ShouldBeNil)
+
 				Convey("You can put the same file again if it changed, with different metadata", func() {
 					request := requests[0]
 					request.Requester = requester
@@ -118,20 +123,24 @@ func TestPutBaton(t *testing.T) { //nolint:cyclop
 					request.Meta = map[string]string{"a": "1", "b": "3", "c": "4"}
 					touchFile(request.Local, 1*time.Hour)
 
-					p, err = New(h)
+					p, err = New(h, []*Request{request})
 					So(err, ShouldBeNil)
 
-					err = p.CreateCollections([]*Request{request})
+					err = p.CreateCollections()
 					So(err, ShouldBeNil)
 
-					shouldPut, metadataChangeOnly := p.Validate(request)
-					So(shouldPut, ShouldBeTrue)
-					So(metadataChangeOnly, ShouldBeFalse)
-					So(request.Status, ShouldEqual, RequestStatusReplaced)
+					uCh, urCh, srCh = p.Put()
 
-					p.Put(request)
+					got := <-uCh
+					So(got.Status, ShouldEqual, RequestStatusUploading)
 
-					meta := getObjectMetadataWithBaton(h.putClient, request.Remote)
+					got = <-srCh
+					So(got, ShouldBeNil)
+
+					got = <-urCh
+					So(got.Error, ShouldBeBlank)
+					So(got.Status, ShouldEqual, RequestStatusReplaced)
+					meta := getObjectMetadataWithBaton(testClient, request.Remote)
 					So(meta, ShouldResemble, request.Meta)
 					So(meta[metaKeyRequester], ShouldEqual, requester)
 					So(meta[metaKeySets], ShouldEqual, "setA,setB")
@@ -140,22 +149,30 @@ func TestPutBaton(t *testing.T) { //nolint:cyclop
 						err = p.Cleanup()
 						So(err, ShouldBeNil)
 
-						So(h.pool.IsOpen(), ShouldBeFalse)
+						So(h.putMetaPool.IsOpen(), ShouldBeFalse)
 						So(h.putClient.IsRunning(), ShouldBeFalse)
 						So(h.metaClient.IsRunning(), ShouldBeFalse)
+						So(h.collClients, ShouldBeNil)
 					})
 				})
 
 				Convey("Unchanged files aren't replaced", func() {
 					request := requests[0]
 
-					p, err = New(h)
+					p, err = New(h, []*Request{request})
 					So(err, ShouldBeNil)
 
-					shouldPut, metadataChangeOnly := p.Validate(request)
-					So(shouldPut, ShouldBeFalse)
-					So(metadataChangeOnly, ShouldBeFalse)
-					So(request.Status, ShouldEqual, RequestStatusUnmodified)
+					uCh, urCh, srCh = p.Put()
+
+					got := <-uCh
+					So(got, ShouldBeNil)
+
+					got = <-urCh
+					So(got, ShouldBeNil)
+
+					got = <-srCh
+					So(got.Error, ShouldBeBlank)
+					So(got.Status, ShouldEqual, RequestStatusUnmodified)
 				})
 			})
 		})
