@@ -408,7 +408,7 @@ func requestStatusToEntryStatus(r *put.Request, entry *Entry) {
 	entry.newFail = false
 	entry.unFailed = false
 
-	switch r.Status {
+	switch r.Status { //nolint:exhaustive
 	case put.RequestStatusUploading:
 		entry.Status = UploadingEntry
 
