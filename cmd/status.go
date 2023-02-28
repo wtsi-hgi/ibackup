@@ -26,6 +26,7 @@
 package cmd
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/dustin/go-humanize" //nolint:misspell
@@ -307,7 +308,7 @@ func printEntriesHeader(entries []*set.Entry) bool {
 	}
 
 	cliPrint("\n")
-	cliPrint(strings.Join([]string{"Path", "Status", "Size", "Date", "Error"}, "\t"))
+	cliPrint(strings.Join([]string{"Path", "Status", "Size", "Attempts", "Date", "Error"}, "\t"))
 	cliPrint("\n")
 
 	return true
@@ -328,6 +329,7 @@ func displayEntries(entries []*set.Entry) {
 			entry.Path,
 			entry.Status.String(),
 			humanize.IBytes(entry.Size),
+			fmt.Sprintf("%d", entry.Attempts),
 			date,
 			entry.LastError,
 		}
