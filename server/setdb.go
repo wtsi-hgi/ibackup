@@ -88,7 +88,7 @@ const (
 
 	// maxRequestsToReserve is the maximum number of requests that
 	// reserveRequests returns.
-	maxRequestsToReserve = 1000
+	maxRequestsToReserve = 100
 
 	logTraceIDLen = 8
 )
@@ -406,11 +406,7 @@ func (s *Server) getRequests(c *gin.Context) {
 //
 // Returns the Requests in the items.
 func (s *Server) reserveRequests() ([]*put.Request, error) {
-	n := s.numRequestsToReserve()
-	if n == 0 {
-		return nil, nil
-	}
-
+	n := s.getCachedNumRequestsToReserve()
 	requests := make([]*put.Request, 0, n)
 	count := 0
 
@@ -433,6 +429,35 @@ func (s *Server) reserveRequests() ([]*put.Request, error) {
 	}
 
 	return requests, nil
+}
+
+// getCachedNumRequestsToReserve calls numRequestsToReserve and caches the
+// result for the remaining numClients to use, so numClients clients all
+// reserve the same amount.
+func (s *Server) getCachedNumRequestsToReserve() int {
+	s.cacheMu.Lock()
+	defer s.cacheMu.Unlock()
+
+	if len(s.numRequestsCache) > 0 {
+		a := s.numRequestsCache
+		n, a := a[len(a)-1], a[:len(a)-1]
+		s.numRequestsCache = a
+
+		return n
+	}
+
+	n := s.numRequestsToReserve()
+	if n == 0 {
+		return n
+	}
+
+	s.numRequestsCache = make([]int, s.numClients-1)
+
+	for i := range s.numRequestsCache {
+		s.numRequestsCache[i] = n
+	}
+
+	return n
 }
 
 // numRequestsToReserve returns the number of requests we should reserve taking

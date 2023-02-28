@@ -1187,9 +1187,11 @@ func TestServer(t *testing.T) {
 					ids := make([]*queue.ItemDef, numRequests-len(discovers))
 
 					for i := range ids {
+						key := fmt.Sprintf("%d", i)
 						ids[i] = &queue.ItemDef{
-							Key:  fmt.Sprintf("%d", i),
-							Data: i,
+							Key:  key,
+							Data: &put.Request{Set: key},
+							TTR:  ttr,
 						}
 					}
 
@@ -1199,11 +1201,15 @@ func TestServer(t *testing.T) {
 					s.numClients = 10
 					So(s.numRequestsToReserve(), ShouldEqual, numRequests/s.numClients)
 
-					ids = make([]*queue.ItemDef, 9000)
+					numExtra := 200
+					ids = make([]*queue.ItemDef, numExtra)
+
 					for i := range ids {
+						key := fmt.Sprintf("%d.extra", i)
 						ids[i] = &queue.ItemDef{
-							Key:  fmt.Sprintf("%d.extra", i),
-							Data: i,
+							Key:  key,
+							Data: &put.Request{Set: key},
+							TTR:  ttr,
 						}
 					}
 
@@ -1211,6 +1217,22 @@ func TestServer(t *testing.T) {
 					So(err, ShouldBeNil)
 
 					So(s.numRequestsToReserve(), ShouldEqual, maxRequestsToReserve)
+
+					for i := 0; i < s.numClients; i++ {
+						rs, errr := s.reserveRequests()
+						So(errr, ShouldBeNil)
+						So(len(rs), ShouldEqual, maxRequestsToReserve)
+					}
+
+					for i := 0; i < s.numClients; i++ {
+						rs, errr := s.reserveRequests()
+						So(errr, ShouldBeNil)
+						So(len(rs), ShouldEqual, numExtra/s.numClients)
+					}
+
+					rs, errr := s.reserveRequests()
+					So(errr, ShouldBeNil)
+					So(len(rs), ShouldEqual, 0)
 				})
 			})
 		})

@@ -76,6 +76,8 @@ type Server struct {
 	gas.Server
 	db                  *set.DB
 	numClients          int
+	numRequestsCache    []int
+	cacheMu             sync.Mutex
 	filePool            *workerpool.WorkerPool
 	dirPool             *workerpool.WorkerPool
 	queue               *queue.Queue
