@@ -38,6 +38,7 @@ import (
 
 	ldap "github.com/go-ldap/ldap/v3"
 	"github.com/inconshreveable/log15"
+	sync "github.com/sasha-s/go-deadlock"
 	"github.com/spf13/cobra"
 	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/ibackup/server"
@@ -45,6 +46,7 @@ import (
 
 const serverTokenBasename = ".ibackup.token"
 const numPutClients = 10
+const deadlockTimeout = 5 * time.Minute
 
 var serverUser string
 var serverUID string
@@ -109,6 +111,7 @@ ctrl-z; bg. Or better yet, use the daemonize program to daemonize this.
 
 		logWriter := setServerLogger(serverLogPath)
 
+		sync.Opts.DeadlockTimeout = deadlockTimeout
 		s := server.New(logWriter)
 
 		prepareAuth(s)
