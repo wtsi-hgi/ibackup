@@ -1169,6 +1169,11 @@ func TestServer(t *testing.T) { //nolint:cyclop
 							So(entry.Attempts, ShouldEqual, 1)
 						}
 					}
+
+					entries, skippedFails, errg := client.GetFailedFiles(exampleSet.ID())
+					So(errg, ShouldBeNil)
+					So(len(entries), ShouldEqual, 1)
+					So(skippedFails, ShouldEqual, 0)
 				})
 
 				Convey("The system warns of possibly stuck uploads", func() {

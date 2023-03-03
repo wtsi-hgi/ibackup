@@ -232,6 +232,24 @@ func (c *Client) GetDirs(setID string) ([]*set.Entry, error) {
 	return entries, err
 }
 
+// FailedEntries holds failed Entries and the number of failed ones that were
+// skipped because there were more than 10.
+type FailedEntries struct {
+	Entries []*set.Entry
+	Skipped int
+}
+
+// GetFailedFiles gets up to 10 examples of GetFiles() Entries that have a
+// failed status, along with a count of how many other failed Entries there
+// were.
+func (c *Client) GetFailedFiles(setID string) ([]*set.Entry, int, error) {
+	fentries := &FailedEntries{}
+
+	err := c.getThing(EndPointAuthFailedEntries+"/"+setID, &fentries)
+
+	return fentries.Entries, fentries.Skipped, err
+}
+
 // GetSomeUploadRequests gets up to 100 Requests from the global put queue and
 // returns them, moving from "ready" status in the queue to "running".
 //

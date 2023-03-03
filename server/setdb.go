@@ -40,14 +40,15 @@ import (
 )
 
 const (
-	setPath        = "/set"
-	filePath       = "/files"
-	dirPath        = "/dirs"
-	entryPath      = "/entries"
-	discoveryPath  = "/discover"
-	requestsPath   = "/requests"
-	workingPath    = "/working"
-	fileStatusPath = "/file_status"
+	setPath         = "/set"
+	filePath        = "/files"
+	dirPath         = "/dirs"
+	entryPath       = "/entries"
+	failedEntryPath = "/failed_entries"
+	discoveryPath   = "/discover"
+	requestsPath    = "/requests"
+	workingPath     = "/working"
+	fileStatusPath  = "/file_status"
 
 	// EndPointAuthSet is the endpoint for getting and setting sets.
 	EndPointAuthSet = gas.EndPointAuth + setPath
@@ -60,6 +61,10 @@ const (
 
 	// EndPointAuthEntries is the endpoint for getting set entries.
 	EndPointAuthEntries = gas.EndPointAuth + entryPath
+
+	// EndPointAuthFailedEntries is the endpoint for getting some failed set
+	// entries.
+	EndPointAuthFailedEntries = gas.EndPointAuth + failedEntryPath
 
 	// EndPointAuthDiscovery is the endpoint for triggering set discovery.
 	EndPointAuthDiscovery = gas.EndPointAuth + discoveryPath
@@ -118,6 +123,12 @@ const (
 // the set.Entries with backup status about each file (both set with
 // /rest/v1/auth/files and discovered inside /rest/v1/auth/dirs).
 //
+// GET /rest/v1/auth/failed_entries/[id] : takes a set "id" URL parameter and
+// returns the set.Entries with backup status about each file (both set with
+// /rest/v1/auth/files and discovered inside /rest/v1/auth/dirs) that has failed
+// status. Up to 10 are returned in an object with Entries and Skipped, where
+// Skipped is the number of failed files not returned.
+//
 // GET /rest/v1/auth/requests : returns about 10GB worth of upload requests from
 // the global put queue. Only the user who started the server has permission to
 // call this.
@@ -173,6 +184,7 @@ func (s *Server) addDBEndpoints(authGroup *gin.RouterGroup) {
 
 	authGroup.GET(entryPath+idParam, s.getEntries)
 	authGroup.GET(dirPath+idParam, s.getDirs)
+	authGroup.GET(failedEntryPath+idParam, s.getFailedEntries)
 
 	authGroup.GET(requestsPath, s.getRequests)
 
@@ -376,6 +388,31 @@ func (s *Server) getDirs(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, entries)
+}
+
+// getFailedEntries gets up to 10 file entries with failed status for the set
+// with the id specified in the URL parameter. Returned in a struct that also
+// has Skipped, the number of failed entries not returned.
+//
+// LoadSetDB() must already have been called. This is called when there is a GET
+// on /rest/v1/auth/failed_entries/[id].
+func (s *Server) getFailedEntries(c *gin.Context) {
+	set, ok := s.validateSet(c)
+	if !ok {
+		return
+	}
+
+	entries, skipped, err := s.db.GetFailedEntries(set.ID())
+	if err != nil {
+		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+
+		return
+	}
+
+	c.JSON(http.StatusOK, &FailedEntries{
+		Entries: entries,
+		Skipped: skipped,
+	})
 }
 
 // getRequests gets up to 100 Requests from the global in-memory put-queue (as
