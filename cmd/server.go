@@ -46,7 +46,7 @@ import (
 
 const serverTokenBasename = ".ibackup.token"
 const numPutClients = 10
-const deadlockTimeout = 5 * time.Minute
+const deadlockTimeout = 30 * time.Minute
 
 var serverUser string
 var serverUID string
