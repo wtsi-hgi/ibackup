@@ -25,10 +25,14 @@ Given an installation of go in your PATH, clone the repo, cd to it, and:
 make
 ```
 
-Then copy the resulting executable to somwhere that
-https://github.com/wtsi-npg/baton (required) and
-https://github.com/VertebrateResequencing/wr (if using the server) have also
-been installed to, and that is in your PATH.
+Then copy the resulting executable to somewhere in your PATH.
+
+## Requirements
+https://github.com/wtsi-npg/baton must also be installed and in your PATH.
+
+To use the server mode, you will also need:
+https://github.com/VertebrateResequencing/wr
+installed and configured to work on your system.
 
 ## Server Usage
 Server usage is the recommended way of dealing with backups. The ibackup server
@@ -50,7 +54,7 @@ for your own LDAP):
 ```
 export IBACKUP_SERVER_URL='internal.domain:4678'
 export IBACKUP_SERVER_CERT='/path/to/cert.pem'
-export no_proxy=localhost,127.0.0.1,.internal.sanger.ac.uk
+export no_proxy=localhost,127.0.0.1,.internal.domain
 
 wr manager start
 wr limit -g irods:10
