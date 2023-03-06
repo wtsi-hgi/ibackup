@@ -505,7 +505,7 @@ func (d *DB) updateFailedLookup(tx *bolt.Tx, setID, path string, entry *Entry) e
 		return d.removeFailedLookup(tx, setID, path)
 	}
 
-	if entry.newFail {
+	if entry.Status == Failed {
 		return d.addFailedLookup(tx, setID, path, entry)
 	}
 

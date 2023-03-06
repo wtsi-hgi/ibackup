@@ -500,3 +500,16 @@ func (c *Client) UpdateFileStatus(r *put.Request) error {
 
 	return c.putThing(EndPointAuthFileStatus, r)
 }
+
+// RetryFailedSetUploads initiates the retry of any failed uploads in the given
+// set.
+//
+// Only the user who started the server can retry sets of other users.
+//
+// Returns the number of failed uploads the retry was initiated for.
+func (c *Client) RetryFailedSetUploads(id string) (int, error) {
+	retried := 0
+	err := c.getThing(EndPointAuthRetryEntries+"/"+id, &retried)
+
+	return retried, err
+}
