@@ -475,7 +475,7 @@ func (r *results) update(req *put.Request) {
 
 	warnIfBad(req, r.i, r.total, r.verbose)
 
-	switch req.Status {
+	switch req.Status { //nolint:exhaustive
 	case put.RequestStatusFailed, put.RequestStatusUploading:
 		r.fails++
 	case put.RequestStatusMissing:

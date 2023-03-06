@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/ugorji/go/codec"
@@ -61,9 +62,11 @@ const (
 	fileBucket                    = subBucketPrefix + "files"
 	dirBucket                     = subBucketPrefix + "dirs"
 	discoveredBucket              = subBucketPrefix + "discovered"
+	failedBucket                  = "failed"
 	dbOpenMode                    = 0600
 	separator                     = ":!:"
 	AttemptsToBeConsideredFailing = 3
+	maxFailedEntries              = 10
 )
 
 // DB is used to create and query a database for storing backup sets (lists of
@@ -83,6 +86,7 @@ func New(path string) (*DB, error) {
 		NoFreelistSync: true,
 		NoGrowSync:     true,
 		FreelistType:   bolt.FreelistMapType,
+		MmapFlags:      syscall.MAP_POPULATE,
 	})
 	if err != nil {
 		return nil, err
@@ -91,6 +95,10 @@ func New(path string) (*DB, error) {
 	err = db.Update(func(tx *bolt.Tx) error {
 		_, errc := tx.CreateBucketIfNotExists([]byte(setsBucket))
 		if errc != nil {
+			return errc
+		}
+
+		if _, errc = tx.CreateBucketIfNotExists([]byte(failedBucket)); errc != nil {
 			return errc
 		}
 
@@ -165,7 +173,7 @@ func (d *DB) SetFileEntries(setID string, paths []string) error {
 func (d *DB) setEntries(setID string, paths []string, bucketName string) error {
 	return d.db.Update(func(tx *bolt.Tx) error {
 		subBucketName := []byte(bucketName + separator + setID)
-		b, existing, err := d.getAndDeleteExistingEntries(tx, subBucketName)
+		b, existing, err := d.getAndDeleteExistingEntries(tx, subBucketName, setID)
 		if err != nil {
 			return err
 		}
@@ -188,7 +196,8 @@ func (d *DB) setEntries(setID string, paths []string, bucketName string) error {
 // getAndDeleteExistingEntries gets existing entries in the given sub bucket
 // of the setsBucket, then deletes and recreates the sub bucket. Returns the
 // empty sub bucket and any old values.
-func (d *DB) getAndDeleteExistingEntries(tx *bolt.Tx, subBucketName []byte) (*bolt.Bucket, map[string][]byte, error) {
+func (d *DB) getAndDeleteExistingEntries(tx *bolt.Tx, subBucketName []byte, setID string) (*bolt.Bucket,
+	map[string][]byte, error) {
 	setsBucket := tx.Bucket([]byte(setsBucket))
 	existing := make(map[string][]byte)
 
@@ -197,10 +206,13 @@ func (d *DB) getAndDeleteExistingEntries(tx *bolt.Tx, subBucketName []byte) (*bo
 		return b, existing, err
 	}
 
-	err = b.ForEach(func(k, v []byte) error {
-		existing[string(k)] = v
+	bFailed := tx.Bucket([]byte(failedBucket))
 
-		return nil
+	err = b.ForEach(func(k, v []byte) error {
+		path := string(k)
+		existing[path] = v
+
+		return bFailed.Delete([]byte(setID + separator + path))
 	})
 	if err != nil {
 		return b, existing, err
@@ -399,38 +411,12 @@ func (d *DB) updateFileEntry(tx *bolt.Tx, setID string, r *put.Request, setDisco
 
 	requestStatusToEntryStatus(r, entry)
 
-	return entry, b.Put([]byte(r.Local), d.encodeToBytes(entry))
-}
-
-// requestStatusToEntryStatus converts Request.Status and stores it as a Status
-// on the entry. Also sets entry.Attempts, unFailed and newFail as appropriate.
-func requestStatusToEntryStatus(r *put.Request, entry *Entry) {
-	entry.newFail = false
-	entry.unFailed = false
-
-	switch r.Status {
-	case put.RequestStatusUploading:
-		entry.Status = UploadingEntry
-
-		if r.Stuck != nil {
-			entry.LastError = r.Stuck.String()
-		}
-	case put.RequestStatusUploaded, put.RequestStatusUnmodified, put.RequestStatusReplaced:
-		entry.Status = Uploaded
-		entry.unFailed = entry.Attempts > 1
-		entry.LastError = ""
-	case put.RequestStatusFailed:
-		entry.Status = Failed
-
-		if r.Error != "" {
-			entry.LastError = r.Error
-		}
-
-		entry.newFail = entry.Attempts == 1
-	case put.RequestStatusMissing:
-		entry.Status = Missing
-		entry.unFailed = entry.Attempts > 1
+	err = d.updateFailedLookup(tx, setID, r.Local, entry)
+	if err != nil {
+		return nil, err
 	}
+
+	return entry, b.Put([]byte(r.Local), d.encodeToBytes(entry))
 }
 
 // getEntry finds the Entry for the given path in the given set. Returns it
@@ -479,6 +465,73 @@ func (d *DB) getEntryFromSubbucket(kind, setID, path string, setsBucket *bolt.Bu
 	entry.isDir = kind == dirBucket
 
 	return entry, b
+}
+
+// requestStatusToEntryStatus converts Request.Status and stores it as a Status
+// on the entry. Also sets entry.Attempts, unFailed and newFail as appropriate.
+func requestStatusToEntryStatus(r *put.Request, entry *Entry) {
+	entry.newFail = false
+	entry.unFailed = false
+
+	switch r.Status { //nolint:exhaustive
+	case put.RequestStatusUploading:
+		entry.Status = UploadingEntry
+
+		if r.Stuck != nil {
+			entry.LastError = r.Stuck.String()
+		}
+	case put.RequestStatusUploaded, put.RequestStatusUnmodified, put.RequestStatusReplaced:
+		entry.Status = Uploaded
+		entry.unFailed = entry.Attempts > 1
+		entry.LastError = ""
+	case put.RequestStatusFailed:
+		entry.Status = Failed
+
+		if r.Error != "" {
+			entry.LastError = r.Error
+		}
+
+		entry.newFail = entry.Attempts == 1
+	case put.RequestStatusMissing:
+		entry.Status = Missing
+		entry.unFailed = entry.Attempts > 1
+	}
+}
+
+// updateFailedLookup adds or removes the given entry to our failed lookup
+// bucket, for quick retieval of just failed entries later.
+func (d *DB) updateFailedLookup(tx *bolt.Tx, setID, path string, entry *Entry) error {
+	if entry.unFailed {
+		return d.removeFailedLookup(tx, setID, path)
+	}
+
+	if entry.Status == Failed {
+		return d.addFailedLookup(tx, setID, path, entry)
+	}
+
+	return nil
+}
+
+// removeFailedLookup removes the given path for the given set from our failed
+// lookup bucket.
+func (d *DB) removeFailedLookup(tx *bolt.Tx, setID, path string) error {
+	b, lookupKey := d.getBucketAndKeyForFailedLookup(tx, setID, path)
+
+	return b.Delete(lookupKey)
+}
+
+// getBucketAndKeyForFailedLookup returns our failedBucket and a lookup key.
+func (d *DB) getBucketAndKeyForFailedLookup(tx *bolt.Tx, setID, path string) (*bolt.Bucket, []byte) {
+	return tx.Bucket([]byte(failedBucket)), []byte(setID + separator + path)
+}
+
+// addFailedLookup adds the given path for the given set from our failed lookup
+// bucket. For speed of retrieval, it's not actually just a lookup, but we
+// duplicate the entry data in the failedBucket.
+func (d *DB) addFailedLookup(tx *bolt.Tx, setID, path string, entry *Entry) error {
+	b, lookupKey := d.getBucketAndKeyForFailedLookup(tx, setID, path)
+
+	return b.Put(lookupKey, d.encodeToBytes(entry))
 }
 
 // updateSetBasedOnEntry updates set status values based on an updated Entry
@@ -700,6 +753,31 @@ func (d *DB) decodeEntry(v []byte) *Entry {
 	dec.MustDecode(&entry)
 
 	return entry
+}
+
+// GetFailedEntries returns up to 10 of the file entries for the given set (both
+// SetFileEntries and SetDiscoveredEntries) that have a failed status. Also
+// returns the number of failed entries that were not returned.
+func (d *DB) GetFailedEntries(setID string) ([]*Entry, int, error) {
+	entries := make([]*Entry, 0, maxFailedEntries)
+	skipped := 0
+
+	err := d.db.View(func(tx *bolt.Tx) error {
+		c := tx.Bucket([]byte(failedBucket)).Cursor()
+		prefix := []byte(setID + separator)
+
+		for k, v := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, v = c.Next() {
+			if len(entries) < maxFailedEntries {
+				entries = append(entries, d.decodeEntry(v))
+			} else {
+				skipped++
+			}
+		}
+
+		return nil
+	})
+
+	return entries, skipped, err
 }
 
 // GetPureFileEntries returns all the file entries for the given set (only

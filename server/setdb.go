@@ -40,14 +40,16 @@ import (
 )
 
 const (
-	setPath        = "/set"
-	filePath       = "/files"
-	dirPath        = "/dirs"
-	entryPath      = "/entries"
-	discoveryPath  = "/discover"
-	requestsPath   = "/requests"
-	workingPath    = "/working"
-	fileStatusPath = "/file_status"
+	setPath         = "/set"
+	filePath        = "/files"
+	dirPath         = "/dirs"
+	entryPath       = "/entries"
+	failedEntryPath = "/failed_entries"
+	discoveryPath   = "/discover"
+	requestsPath    = "/requests"
+	workingPath     = "/working"
+	fileStatusPath  = "/file_status"
+	fileRetryPath   = "/retry"
 
 	// EndPointAuthSet is the endpoint for getting and setting sets.
 	EndPointAuthSet = gas.EndPointAuth + setPath
@@ -61,6 +63,10 @@ const (
 	// EndPointAuthEntries is the endpoint for getting set entries.
 	EndPointAuthEntries = gas.EndPointAuth + entryPath
 
+	// EndPointAuthFailedEntries is the endpoint for getting some failed set
+	// entries.
+	EndPointAuthFailedEntries = gas.EndPointAuth + failedEntryPath
+
 	// EndPointAuthDiscovery is the endpoint for triggering set discovery.
 	EndPointAuthDiscovery = gas.EndPointAuth + discoveryPath
 
@@ -73,6 +79,9 @@ const (
 
 	// EndPointAuthFileStatus is the endpoint for updating file upload status.
 	EndPointAuthFileStatus = gas.EndPointAuth + fileStatusPath
+
+	// EndPointAuthRetryEntries is the endpoint for retrying file uploads.
+	EndPointAuthRetryEntries = gas.EndPointAuth + fileRetryPath
 
 	ErrNoAuth          = gas.Error("auth must be enabled")
 	ErrNoSetDBDirFound = gas.Error("set database directory not found")
@@ -118,6 +127,12 @@ const (
 // the set.Entries with backup status about each file (both set with
 // /rest/v1/auth/files and discovered inside /rest/v1/auth/dirs).
 //
+// GET /rest/v1/auth/failed_entries/[id] : takes a set "id" URL parameter and
+// returns the set.Entries with backup status about each file (both set with
+// /rest/v1/auth/files and discovered inside /rest/v1/auth/dirs) that has failed
+// status. Up to 10 are returned in an object with Entries and Skipped, where
+// Skipped is the number of failed files not returned.
+//
 // GET /rest/v1/auth/requests : returns about 10GB worth of upload requests from
 // the global put queue. Only the user who started the server has permission to
 // call this.
@@ -129,6 +144,9 @@ const (
 //
 // PUT /rest/v1/auth/file_status : takes a put.Request encoded as JSON in the
 // body to update the status of the corresponding set's file entry.
+//
+// GET /rest/v1/auth/retry : takes a set "id" URL parameter to trigger
+// the retry of failed file uploads for the set.
 //
 // If the database indicates there are sets we were in the middle of working on,
 // the upload requests will be added to our in-memory queue, just like during
@@ -173,12 +191,15 @@ func (s *Server) addDBEndpoints(authGroup *gin.RouterGroup) {
 
 	authGroup.GET(entryPath+idParam, s.getEntries)
 	authGroup.GET(dirPath+idParam, s.getDirs)
+	authGroup.GET(failedEntryPath+idParam, s.getFailedEntries)
 
 	authGroup.GET(requestsPath, s.getRequests)
 
 	authGroup.PUT(workingPath, s.putWorking)
 
 	authGroup.PUT(fileStatusPath, s.putFileStatus)
+
+	authGroup.GET(fileRetryPath+idParam, s.retryFailedEntries)
 }
 
 // putSet interprets the body as a JSON encoding of a set.Set and stores it in
@@ -376,6 +397,31 @@ func (s *Server) getDirs(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, entries)
+}
+
+// getFailedEntries gets up to 10 file entries with failed status for the set
+// with the id specified in the URL parameter. Returned in a struct that also
+// has Skipped, the number of failed entries not returned.
+//
+// LoadSetDB() must already have been called. This is called when there is a GET
+// on /rest/v1/auth/failed_entries/[id].
+func (s *Server) getFailedEntries(c *gin.Context) {
+	set, ok := s.validateSet(c)
+	if !ok {
+		return
+	}
+
+	entries, skipped, err := s.db.GetFailedEntries(set.ID())
+	if err != nil {
+		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+
+		return
+	}
+
+	c.JSON(http.StatusOK, &FailedEntries{
+		Entries: entries,
+		Skipped: skipped,
+	})
 }
 
 // getRequests gets up to 100 Requests from the global in-memory put-queue (as
@@ -754,4 +800,54 @@ func (s *Server) recoverSet(given *set.Set) error {
 	}
 
 	return err
+}
+
+// retryFailedEntries adds failed entires in the set with the id specified in
+// the URL parameter back to the in-memory ready queue.
+//
+// LoadSetDB() must already have been called. This is called when there is a GET
+// on /rest/v1/auth/retry/[id].
+func (s *Server) retryFailedEntries(c *gin.Context) {
+	got, ok := s.validateSet(c)
+	if !ok {
+		return
+	}
+
+	failed, err := s.retryFailedSetFiles(got)
+	if err != nil {
+		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+
+		return
+	}
+
+	c.JSON(http.StatusOK, failed)
+}
+
+// retryFailedSetFiles gets all failed entries in the given set and adds them to
+// the global put queue if not already there, or kicks them if they are.
+func (s *Server) retryFailedSetFiles(given *set.Set) (int, error) {
+	transformer, err := given.MakeTransformer()
+	if err != nil {
+		return 0, err
+	}
+
+	s.RetryBuried(&BuriedFilter{
+		User: given.Requester,
+		Set:  given.Name,
+	})
+
+	entries, err := s.db.GetFileEntries(given.ID())
+	if err != nil {
+		return 0, err
+	}
+
+	var filtered []*set.Entry
+
+	for _, entry := range entries {
+		if entry.Status == set.Failed {
+			filtered = append(filtered, entry)
+		}
+	}
+
+	return len(filtered), s.enqueueEntries(filtered, given, transformer)
 }

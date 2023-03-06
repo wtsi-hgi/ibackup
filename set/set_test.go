@@ -459,6 +459,11 @@ func TestSet(t *testing.T) {
 						_, err = db.SetEntryStatus(r)
 						So(err, ShouldBeNil)
 
+						fEntries, failSkips, errg := db.GetFailedEntries(sets[0].ID())
+						So(errg, ShouldBeNil)
+						So(len(fEntries), ShouldEqual, 0)
+						So(failSkips, ShouldEqual, 0)
+
 						r.Status = put.RequestStatusFailed
 						errMsg := "upload failed"
 						r.Error = errMsg
@@ -481,6 +486,11 @@ func TestSet(t *testing.T) {
 						So(fEntries[3].Attempts, ShouldEqual, 1)
 						So(fEntries[3].LastAttempt.IsZero(), ShouldBeFalse)
 						So(fEntries[3].LastError, ShouldEqual, errMsg)
+
+						fEntries, failSkips, err = db.GetFailedEntries(sets[0].ID())
+						So(err, ShouldBeNil)
+						So(len(fEntries), ShouldEqual, 1)
+						So(failSkips, ShouldEqual, 0)
 
 						r.Status = put.RequestStatusUploading
 						_, err = db.SetEntryStatus(r)
@@ -600,6 +610,11 @@ func TestSet(t *testing.T) {
 						So(fEntries[3].Attempts, ShouldEqual, 4)
 						So(fEntries[3].LastAttempt.IsZero(), ShouldBeFalse)
 						So(fEntries[3].LastError, ShouldBeBlank)
+
+						fEntries, failSkips, err = db.GetFailedEntries(sets[0].ID())
+						So(err, ShouldBeNil)
+						So(len(fEntries), ShouldEqual, 0)
+						So(failSkips, ShouldEqual, 0)
 
 						Convey("Finally, set status gets reset on new discovery", func() {
 							oldStart := sets[0].StartedDiscovery

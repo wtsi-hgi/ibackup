@@ -26,6 +26,7 @@
 package cmd
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/dustin/go-humanize" //nolint:misspell
@@ -189,7 +190,11 @@ func displaySets(client *server.Client, sets []*set.Set, showNonFailedEntries bo
 
 		displayDirs(getDirs(client, forDisplay.ID()))
 
-		displayEntriesIfFailed(client, forDisplay, showNonFailedEntries)
+		if showNonFailedEntries {
+			displayAllEntries(client, forDisplay)
+		} else {
+			displayFailedEntries(client, forDisplay)
+		}
 
 		if i != l-1 {
 			cliPrint("\n-----\n")
@@ -256,65 +261,40 @@ func displayDirs(dirs []string) {
 	}
 }
 
-// displayEntriesIfFailed prints out details about failed entries in the given
-// set. Also prints other details if showNonFailed is true.
-func displayEntriesIfFailed(client *server.Client, given *set.Set, showNonFailed bool) {
-	if given.Error == "" && !showNonFailed {
-		return
-	}
-
-	failed, nonFailed := getEntries(client, given.ID())
-
-	printed := printEntriesHeader(failed)
-	displayEntries(failed)
-
-	if showNonFailed {
-		if !printed {
-			printEntriesHeader(nonFailed)
-		}
-
-		displayEntries(nonFailed)
-	}
-}
-
-// getEntries gets the file entries for a set. It returns ones that have errors,
-// and then all the others.
-func getEntries(client *server.Client, setID string) ([]*set.Entry, []*set.Entry) {
-	got, err := client.GetFiles(setID)
+// displayFailedEntries prints out details about up to 10 failed entries in the
+// given set.
+func displayFailedEntries(client *server.Client, given *set.Set) {
+	failed, skipped, err := client.GetFailedFiles(given.ID())
 	if err != nil {
 		die(err.Error())
 	}
 
-	var failed, others []*set.Entry
+	displayEntries(failed)
 
-	for _, entry := range got {
-		if entry.Status != set.Uploaded && entry.LastError != "" {
-			failed = append(failed, entry)
-		} else {
-			others = append(others, entry)
-		}
+	if skipped > 0 {
+		cliPrint("[... and %d others]\n", skipped)
 	}
-
-	return failed, others
 }
 
-// printEntriesHeader prints a header for a subsequent 5 column output of entry
-// details, but only if there are more than 0 entries. Returns true if it
-// printed the header.
-func printEntriesHeader(entries []*set.Entry) bool {
-	if len(entries) == 0 {
-		return false
+// displayAllEntries prints out details about all entries in the given
+// set.
+func displayAllEntries(client *server.Client, given *set.Set) {
+	all, err := client.GetFiles(given.ID())
+	if err != nil {
+		die(err.Error())
 	}
 
-	cliPrint("\n")
-	cliPrint(strings.Join([]string{"Path", "Status", "Size", "Date", "Error"}, "\t"))
-	cliPrint("\n")
-
-	return true
+	displayEntries(all)
 }
 
 // displayEntries prints info about the given file entries to STDOUT.
 func displayEntries(entries []*set.Entry) {
+	if len(entries) == 0 {
+		return
+	}
+
+	printEntriesHeader()
+
 	for _, entry := range entries {
 		var date string
 
@@ -328,6 +308,7 @@ func displayEntries(entries []*set.Entry) {
 			entry.Path,
 			entry.Status.String(),
 			humanize.IBytes(entry.Size),
+			fmt.Sprintf("%d", entry.Attempts),
 			date,
 			entry.LastError,
 		}
@@ -335,4 +316,12 @@ func displayEntries(entries []*set.Entry) {
 		cliPrint(strings.Join(cols, "\t"))
 		cliPrint("\n")
 	}
+}
+
+// printEntriesHeader prints a header for a subsequent 6 column output of entry
+// details.
+func printEntriesHeader() {
+	cliPrint("\n")
+	cliPrint(strings.Join([]string{"Path", "Status", "Size", "Attempts", "Date", "Error"}, "\t"))
+	cliPrint("\n")
 }

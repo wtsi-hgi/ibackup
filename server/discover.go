@@ -271,28 +271,8 @@ func (s *Server) enqueueSetFiles(given *set.Set, transformer put.PathTransformer
 	}
 
 	entries = uploadableEntries(entries, given)
-	defs := make([]*queue.ItemDef, len(entries))
 
-	for i, entry := range entries {
-		r, erre := entryToRequest(entry, transformer, given)
-		if erre != nil {
-			return erre
-		}
-
-		defs[i] = &queue.ItemDef{
-			Key:  r.ID(),
-			Data: r,
-			TTR:  ttr,
-		}
-	}
-
-	if len(defs) == 0 {
-		return nil
-	}
-
-	_, _, err = s.queue.AddMany(context.Background(), defs)
-
-	return err
+	return s.enqueueEntries(entries, given, transformer)
 }
 
 // uploadableEntries returns the subset of given entries that are suitable for
@@ -308,6 +288,33 @@ func uploadableEntries(entries []*set.Entry, given *set.Set) []*set.Entry {
 	}
 
 	return filtered
+}
+
+// enqueueEntries converts the given entries to requests, stores those in items
+// and adds them the in-memory queue.
+func (s *Server) enqueueEntries(entries []*set.Entry, given *set.Set, transformer put.PathTransformer) error {
+	defs := make([]*queue.ItemDef, len(entries))
+
+	for i, entry := range entries {
+		r, err := entryToRequest(entry, transformer, given)
+		if err != nil {
+			return err
+		}
+
+		defs[i] = &queue.ItemDef{
+			Key:  r.ID(),
+			Data: r,
+			TTR:  ttr,
+		}
+	}
+
+	if len(defs) == 0 {
+		return nil
+	}
+
+	_, _, err := s.queue.AddMany(context.Background(), defs)
+
+	return err
 }
 
 // entryToRequest converts an Entry to a Request containing details of the given

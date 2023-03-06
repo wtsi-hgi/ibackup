@@ -1131,14 +1131,16 @@ func TestServer(t *testing.T) { //nolint:cyclop
 					p, d := makePutter(requests)
 					defer d()
 
-					p.SetFileReadTimeout(1 * time.Millisecond)
-					p.SetFileReadTester(func(ctx context.Context, path string) error {
+					var forceSlowRead put.FileReadTester = func(ctx context.Context, path string) error {
 						if path == discovers[0] {
 							<-time.After(5 * time.Millisecond)
 						}
 
 						return nil
-					})
+					}
+
+					p.SetFileReadTimeout(1 * time.Millisecond)
+					p.SetFileReadTester(forceSlowRead)
 
 					uploadStarts, uploadResults, skippedResults := p.Put()
 
@@ -1169,6 +1171,86 @@ func TestServer(t *testing.T) { //nolint:cyclop
 							So(entry.Attempts, ShouldEqual, 1)
 						}
 					}
+
+					entries, skippedFails, errg := client.GetFailedFiles(exampleSet.ID())
+					So(errg, ShouldBeNil)
+					So(len(entries), ShouldEqual, 1)
+					So(skippedFails, ShouldEqual, 0)
+
+					Convey("and failures get retried 3 times", func() {
+						for i := 2; i <= int(jobRetries); i++ {
+							requests, errg := client.GetSomeUploadRequests()
+							So(errg, ShouldBeNil)
+							So(len(requests), ShouldEqual, 1)
+
+							p, d := makePutter(requests)
+							p.SetFileReadTimeout(1 * time.Millisecond)
+							p.SetFileReadTester(forceSlowRead)
+
+							uploadStarts, uploadResults, skippedResults := p.Put()
+
+							err = client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults,
+								minMBperSecondUploadSpeed, minTimeForUpload, logger)
+							So(err, ShouldBeNil)
+
+							entries, skippedFails, errg := client.GetFailedFiles(exampleSet.ID())
+							So(errg, ShouldBeNil)
+							So(len(entries), ShouldEqual, 1)
+							So(skippedFails, ShouldEqual, 0)
+							So(entries[0].Status, ShouldEqual, set.Failed)
+							So(entries[0].Attempts, ShouldEqual, i)
+
+							d()
+						}
+
+						requests, errg := client.GetSomeUploadRequests()
+						So(errg, ShouldBeNil)
+						So(len(requests), ShouldEqual, 0)
+
+						manualRetry := func() {
+							retried, errr := client.RetryFailedSetUploads(exampleSet.ID())
+							So(errr, ShouldBeNil)
+							So(retried, ShouldEqual, 1)
+
+							requests, errg := client.GetSomeUploadRequests()
+							So(errg, ShouldBeNil)
+							So(len(requests), ShouldEqual, 1)
+
+							p, d := makePutter(requests)
+							defer d()
+
+							uploadStarts, uploadResults, skippedResults := p.Put()
+
+							err = client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults,
+								minMBperSecondUploadSpeed, minTimeForUpload, logger)
+							So(err, ShouldBeNil)
+
+							entries, skippedFails, errg := client.GetFailedFiles(exampleSet.ID())
+							So(errg, ShouldBeNil)
+							So(len(entries), ShouldEqual, 0)
+							So(skippedFails, ShouldEqual, 0)
+
+							entries, errg = client.GetFiles(exampleSet.ID())
+							So(errg, ShouldBeNil)
+							So(len(entries), ShouldEqual, len(discovers))
+							So(entries[0].Status, ShouldEqual, set.Uploaded)
+							So(entries[0].Attempts, ShouldEqual, jobRetries+1)
+						}
+
+						Convey("whereupon they can be manually retried", func() {
+							manualRetry()
+						})
+
+						Convey("whereupon they can be manually retried even if not buried in the queue", func() {
+							n := s.RemoveBuried(&BuriedFilter{
+								User: exampleSet.Requester,
+								Set:  exampleSet.Name,
+							})
+							So(n, ShouldEqual, 1)
+
+							manualRetry()
+						})
+					})
 				})
 
 				Convey("The system warns of possibly stuck uploads", func() {
