@@ -38,9 +38,10 @@ import (
 const dateShort = "06/01/02"
 
 // options for this cmd.
+var statusUser string
 var statusName string
 var statusDetails bool
-var statusUser string
+var statusIncomplete bool
 
 // statusCmd represents the status command.
 var statusCmd = &cobra.Command{
@@ -52,6 +53,11 @@ Having used 'ibackup add' to add the details of one or more backup sets, use
 this command to get the current backup status of your sets. Provide --name to
 get the status of just that set, and --details to get the individual backup
 status of every file in the set (only possible with a --name).
+
+When not using --name, provide --incomplete to only see currently incomplete
+sets. This will include sets with failures but everything else uploaded (shown
+with a "complete" status, see below), but exclude sets where everything is
+missing or uploaded.
 
 You need to supply the ibackup server's URL in the form domain:port (using the
 IBACKUP_SERVER_URL environment variable, or overriding that with the --url
@@ -70,10 +76,10 @@ failing: at least one file in your set has failed to upload to iRODS after
   multiple retries, and the server has given up on it while it continues to try
   to upload other files in your set.
 complete: all files in your backup set were either missing, successfully
-  uploaded, or permanently failed.
+  uploaded, or failed.
 
 With --details, you'll see tab-separated columns of Path, Status, Size, Date
-and Error, with one file per line, and those with errors appearing first.
+and Error, with one file per line.
 
 Without --details, you'll still see these details for files that failed their
 upload.
@@ -89,12 +95,16 @@ own.
 			die("--details can only be used with --name")
 		}
 
+		if statusName != "" && statusIncomplete {
+			die("--incomplete and --name can't be used together")
+		}
+
 		client, err := newServerClient(serverURL, serverCert)
 		if err != nil {
 			die(err.Error())
 		}
 
-		status(client, statusUser, statusName, statusDetails)
+		status(client, statusIncomplete, statusUser, statusName, statusDetails)
 	},
 }
 
@@ -102,16 +112,18 @@ func init() {
 	RootCmd.AddCommand(statusCmd)
 
 	// flags specific to this sub-command
+	statusCmd.Flags().StringVar(&statusUser, "user", currentUsername(),
+		"pretend to be this user (only works if you started the server)")
 	statusCmd.Flags().StringVarP(&statusName, "name", "n", "",
 		"get status for just the set with this name")
 	statusCmd.Flags().BoolVarP(&statusDetails, "details", "d", false,
 		"in combination with --name, show the status of every file in the set")
-	statusCmd.Flags().StringVar(&statusUser, "user", "",
-		"pretend to be this user (only works if you started the server)")
+	statusCmd.Flags().BoolVarP(&statusIncomplete, "incomplete", "i", false,
+		"only show currently incomplete sets")
 }
 
 // status does the main job of getting backup set status from the server.
-func status(client *server.Client, user, name string, details bool) {
+func status(client *server.Client, incomplete bool, user, name string, details bool) {
 	qs, err := client.GetQueueStatus()
 	if err != nil {
 		die("unable to get server queue status: %s", err)
@@ -119,16 +131,12 @@ func status(client *server.Client, user, name string, details bool) {
 
 	displayQueueStatus(qs)
 
-	if user == "" {
-		user = currentUsername()
-	}
-
 	var sets []*set.Set
 
 	if name != "" {
 		sets = getSetByName(client, user, name)
 	} else {
-		sets = getSets(client, user)
+		sets = getSets(client, incomplete, user)
 	}
 
 	if len(sets) == 0 {
@@ -169,14 +177,33 @@ func getSetByName(client *server.Client, user, name string) []*set.Set {
 	return []*set.Set{got}
 }
 
-// getSets gets all the sets belonging to the given user. Dies on error.
-func getSets(client *server.Client, user string) []*set.Set {
+// getSets gets all or incomplete sets belonging to the given user. Dies on
+// error.
+func getSets(client *server.Client, incomplete bool, user string) []*set.Set {
 	sets, err := client.GetSets(user)
 	if err != nil {
 		die(err.Error())
 	}
 
+	if incomplete {
+		sets = incompleteSets(sets)
+	}
+
 	return sets
+}
+
+// incompleteSets returns the incomplete sets from amongst the given sets.
+// "incomplete" includes sets with status complete, but failures.
+func incompleteSets(sets []*set.Set) []*set.Set {
+	var incomplete []*set.Set
+
+	for _, s := range sets {
+		if s.Status != set.Complete || s.Failed > 0 {
+			incomplete = append(incomplete, s)
+		}
+	}
+
+	return incomplete
 }
 
 // displaySets prints info about the given sets to STDOUT. Failed entry details
