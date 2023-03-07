@@ -213,7 +213,7 @@ func (b *Baton) ensureCollection(clientIndex int, ri ex.RodsItem) error {
 		_, errl := b.collClients[clientIndex].ListItem(ex.Args{}, ri)
 
 		return errl
-	}, ri.IPath)
+	}, "collection failed: "+ri.IPath)
 	if err == nil {
 		return nil
 	}
@@ -369,7 +369,7 @@ func (b *Baton) closeConnections(clients []*ex.Client) {
 			client.StopIgnoreError()
 
 			return nil
-		}, "")
+		}, "close error")
 	}
 }
 
@@ -382,7 +382,7 @@ func (b *Baton) Stat(request *Request) (*ObjectInfo, error) {
 		it, errl = b.metaClient.ListItem(ex.Args{Timestamp: true, AVU: true}, *requestToRodsItem(request))
 
 		return errl
-	}, request.Remote)
+	}, "stat failed: "+request.Remote)
 
 	if err != nil {
 		if strings.Contains(err.Error(), extendoNotExist) {
@@ -460,7 +460,7 @@ func (b *Baton) RemoveMeta(path string, meta map[string]string) error {
 		_, errl := b.metaClient.MetaRem(ex.Args{}, *it)
 
 		return errl
-	}, path)
+	}, "remove meta error: "+path)
 
 	return err
 }
@@ -481,7 +481,7 @@ func (b *Baton) AddMeta(path string, meta map[string]string) error {
 		_, errl := b.metaClient.MetaAdd(ex.Args{}, *it)
 
 		return errl
-	}, path)
+	}, "add meta error: "+path)
 
 	return err
 }

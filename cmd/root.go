@@ -121,6 +121,12 @@ func cliPrint(msg string, a ...interface{}) {
 	fmt.Fprintf(os.Stdout, msg, a...)
 }
 
+// cliPrintRaw is like cliPrint, but does no interpretation of placeholders in
+// msg.
+func cliPrintRaw(msg string) {
+	fmt.Fprint(os.Stdout, msg)
+}
+
 // info is a convenience to log a message at the Info level.
 func info(msg string, a ...interface{}) {
 	appLogger.Info(fmt.Sprintf(msg, a...))
