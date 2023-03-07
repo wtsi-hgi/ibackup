@@ -177,6 +177,57 @@ func TestPutBaton(t *testing.T) { //nolint:cyclop
 			})
 		})
 	})
+
+	SkipConvey("Uploading a strange path works", t, func() {
+		sourceDir := t.TempDir()
+
+		strangePath := filepath.Join(sourceDir, "strange", "%s.txt")
+		err = os.MkdirAll(filepath.Dir(strangePath), userPerms)
+		So(err, ShouldBeNil)
+		_, err = os.Create(strangePath)
+		So(err, ShouldBeNil)
+
+		req := &Request{
+			Local:  strangePath,
+			Remote: strings.Replace(strangePath, sourceDir, rootCollection, 1),
+		}
+
+		p, err := New(h, []*Request{req})
+		So(err, ShouldBeNil)
+		So(p, ShouldNotBeNil)
+
+		testPool := ex.NewClientPool(ex.DefaultClientPoolParams, "")
+		testClientCh, err := h.getClientsFromPoolConcurrently(testPool, 1)
+		So(err, ShouldBeNil)
+		testClient := <-testClientCh
+		defer testClient.StopIgnoreError()
+		defer testPool.Close()
+
+		_, err = testClient.RemDir(ex.Args{Force: true, Recurse: true}, ex.RodsItem{
+			IPath: rootCollection,
+		})
+		if err != nil && !strings.Contains(err.Error(), "-816000") && !strings.Contains(err.Error(), "-310000") {
+			So(err, ShouldBeNil)
+		}
+
+		err = p.CreateCollections()
+		So(err, ShouldBeNil)
+
+		uCh, urCh, srCh := p.Put()
+
+		for request := range uCh {
+			So(request.Status, ShouldEqual, RequestStatusUploading)
+		}
+
+		for request := range urCh {
+			So(request.Error, ShouldBeBlank)
+			So(request.Status, ShouldEqual, RequestStatusUploaded)
+			So(request.Size, ShouldEqual, 0)
+			So(request.Local, ShouldEqual, strangePath)
+		}
+
+		So(<-srCh, ShouldBeNil)
+	})
 }
 
 // makeRequests creates some local directories and files, and returns requests
