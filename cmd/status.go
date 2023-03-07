@@ -313,8 +313,8 @@ func displayEntries(entries []*set.Entry) {
 			entry.LastError,
 		}
 
-		cliPrint(strings.Join(cols, "\t"))
-		cliPrint("\n")
+		cliPrintRaw(strings.Join(cols, "\t"))
+		cliPrintRaw("\n")
 	}
 }
 
