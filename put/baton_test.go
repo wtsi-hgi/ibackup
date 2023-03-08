@@ -37,9 +37,9 @@ import (
 )
 
 func TestPutBaton(t *testing.T) { //nolint:cyclop
-	h, err := GetBatonHandler()
-	if err != nil {
-		t.Logf("GetBatonHandler error: %s", err)
+	h, errgbh := GetBatonHandler()
+	if errgbh != nil {
+		t.Logf("GetBatonHandler error: %s", errgbh)
 		SkipConvey("Skipping baton tests since couldn't find baton", t, func() {})
 
 		return
@@ -182,7 +182,7 @@ func TestPutBaton(t *testing.T) { //nolint:cyclop
 		sourceDir := t.TempDir()
 
 		strangePath := filepath.Join(sourceDir, "strange", "%s.txt")
-		err = os.MkdirAll(filepath.Dir(strangePath), userPerms)
+		err := os.MkdirAll(filepath.Dir(strangePath), userPerms)
 		So(err, ShouldBeNil)
 		_, err = os.Create(strangePath)
 		So(err, ShouldBeNil)
