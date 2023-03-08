@@ -28,6 +28,7 @@ package cmd
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/dustin/go-humanize" //nolint:misspell
 	"github.com/spf13/cobra"
@@ -36,6 +37,8 @@ import (
 )
 
 const dateShort = "06/01/02"
+const bytesInMiB = 1024 * 1024
+const hundredForPercentCalc float64 = 100
 
 // options for this cmd.
 var statusUser string
@@ -250,9 +253,84 @@ func displaySet(s *set.Set) {
 	cliPrint("Num files: %s; Size files: %s\n", s.Count(), s.Size())
 	cliPrint("Uploaded: %d; Failed: %d; Missing: %d\n", s.Uploaded, s.Failed, s.Missing)
 
-	if s.Status == set.Complete {
+	switch s.Status {
+	case set.Complete:
 		cliPrint("Completed in: %s\n", s.LastCompleted.Sub(s.StartedDiscovery))
+	case set.Uploading:
+		displayETA(s)
+	default:
 	}
+}
+
+// displayETA prints info about ETA for the given currently uploading set to
+// STDOUT.
+func displayETA(s *set.Set) {
+	var (
+		basedOn   string
+		total     uint64
+		done      uint64
+		remaining float64
+		speed     float64
+		unit      string
+		timeUnit  time.Duration
+	)
+
+	if s.LastCompletedSize > 0 {
+		basedOn, unit, total, done, remaining, speed, timeUnit = determineETADetailsFromSize(s)
+	} else {
+		basedOn, unit, total, done, remaining, speed, timeUnit = determineETADetailsFromCount(s)
+	}
+
+	if done == 0 {
+		return
+	}
+
+	percentComplete := (hundredForPercentCalc / float64(total)) * float64(done)
+	eta := time.Duration((remaining / speed) * float64(timeUnit))
+
+	cliPrint("%.2f%% complete (based on %s); %.2f %s; ETA: %s\n",
+		percentComplete, basedOn, speed, unit, eta.Round(time.Second))
+}
+
+func determineETADetailsFromSize(s *set.Set) (basedOn, unit string, total, done uint64, //nolint:unparam
+	remaining, speed float64, timeUnit time.Duration) {
+	basedOn = "last completed size"
+	total = s.LastCompletedSize
+	done = s.SizeFiles
+	remaining = bytesToMB(total - done)
+
+	if done == 0 {
+		return
+	}
+
+	speed = bytesToMB(done) / time.Since(s.LastDiscovery).Seconds()
+	unit = "MB/s"
+	timeUnit = time.Second
+
+	return
+}
+
+func determineETADetailsFromCount(s *set.Set) (basedOn, unit string, total, done uint64, //nolint:unparam
+	remaining, speed float64, timeUnit time.Duration) {
+	basedOn = "number of files"
+	total = s.NumFiles
+	done = s.Uploaded
+	remaining = float64(total - done)
+
+	if done == 0 {
+		return
+	}
+
+	speed = float64(done) / time.Since(s.LastDiscovery).Hours()
+	unit = "files/hr"
+	timeUnit = time.Hour
+
+	return
+}
+
+// bytesToMB converts bytes to number of MB.
+func bytesToMB(bytes uint64) float64 {
+	return float64(bytes) / bytesInMiB
 }
 
 // getDirs gets the dir entries for a set and returns their paths. If the dir is
