@@ -27,8 +27,6 @@
 package cmd
 
 import (
-	"os/user"
-
 	"github.com/spf13/cobra"
 	"github.com/wtsi-hgi/ibackup/server"
 )
@@ -91,15 +89,8 @@ option to retry the given requestor's backup sets, instead of your own.
 func init() {
 	RootCmd.AddCommand(retryCmd)
 
-	defaultUser := ""
-
-	user, err := user.Current()
-	if err == nil {
-		defaultUser = user.Username
-	}
-
 	// flags specific to this sub-command
-	retryCmd.Flags().StringVarP(&retryUser, "user", "u", defaultUser, "set belongs to this user")
+	retryCmd.Flags().StringVarP(&retryUser, "user", "u", currentUsername(), "set belongs to this user")
 	retryCmd.Flags().StringVarP(&retrySet, "name", "n", "", "name of set to retry")
 	retryCmd.Flags().BoolVarP(&retryAll, "all", "a", false,
 		"retry all uploads in the --name'd set")
