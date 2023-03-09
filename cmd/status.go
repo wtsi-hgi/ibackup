@@ -255,7 +255,7 @@ func displaySet(s *set.Set) {
 
 	switch s.Status {
 	case set.Complete:
-		cliPrint("Completed in: %s\n", s.LastCompleted.Sub(s.StartedDiscovery))
+		cliPrint("Completed in: %s\n", s.LastCompleted.Sub(s.StartedDiscovery).Truncate(time.Second))
 	case set.Uploading:
 		displayETA(s)
 	default:
