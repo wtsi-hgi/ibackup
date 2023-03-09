@@ -128,7 +128,7 @@ type FileReadTester func(ctx context.Context, path string) error
 func headRead(ctx context.Context, path string) error {
 	out, err := exec.CommandContext(ctx, "head", "-c", "1", path).CombinedOutput()
 
-	if err != nil {
+	if err != nil && len(out) > 0 {
 		err = Error{msg: string(out)}
 	}
 
