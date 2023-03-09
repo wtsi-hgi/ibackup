@@ -126,7 +126,13 @@ type FileReadTester func(ctx context.Context, path string) error
 // headRead is a FileReadTester that uses the "head" command and kills it if the
 // ctx becomes done. It's the default FileReadTester used for Putters.
 func headRead(ctx context.Context, path string) error {
-	return exec.CommandContext(ctx, "head", "-c", "1", path).Run()
+	out, err := exec.CommandContext(ctx, "head", "-c", "1", path).CombinedOutput()
+
+	if err != nil {
+		err = Error{msg: string(out)}
+	}
+
+	return err
 }
 
 // Putter is used to Put() files in iRODS.
