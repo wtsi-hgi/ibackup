@@ -100,6 +100,7 @@ const (
 	maxRequestsToReserve = 100
 
 	logTraceIDLen = 8
+	allUsers      = "all"
 )
 
 // LoadSetDB loads the given set.db or creates it if it doesn't exist, and adds
@@ -263,7 +264,17 @@ func (s *Server) getSets(c *gin.Context) {
 		return
 	}
 
-	sets, err := s.db.GetByRequester(requester)
+	var (
+		sets []*set.Set
+		err  error
+	)
+
+	if requester == allUsers {
+		sets, err = s.db.GetAll()
+	} else {
+		sets, err = s.db.GetByRequester(requester)
+	}
+
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 

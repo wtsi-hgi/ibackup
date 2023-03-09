@@ -89,7 +89,7 @@ upload.
 
 If you are the user who started the ibackup server, you can use the --user
 option to get the status of a given requestor's backup sets, instead of your
-own.
+own. You can specify the user as "all" to see all user's sets.
 `,
 	Run: func(cmd *cobra.Command, args []string) {
 		ensureURLandCert()

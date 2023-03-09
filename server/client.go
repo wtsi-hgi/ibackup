@@ -129,7 +129,8 @@ func responseToErr(resp *resty.Response) error {
 }
 
 // GetSets gets details about a given requester's backup sets from the
-// Server's database.
+// Server's database. If you started the server, the user "all" will return
+// all sets in the system.
 func (c *Client) GetSets(requester string) ([]*set.Set, error) {
 	var sets []*set.Set
 
