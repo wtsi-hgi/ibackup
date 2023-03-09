@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2022 Genome Research Ltd.
+ * Copyright (c) 2022, 2023 Genome Research Ltd.
  *
  * Author: Sendu Bala <sb10@sanger.ac.uk>
  *
@@ -179,45 +179,8 @@ func TestPutBaton(t *testing.T) { //nolint:cyclop
 	})
 
 	SkipConvey("Uploading a strange path works", t, func() {
-		sourceDir := t.TempDir()
-
-		strangePath := filepath.Join(sourceDir, "strange", "%s.txt")
-		err := os.MkdirAll(filepath.Dir(strangePath), userPerms)
-		So(err, ShouldBeNil)
-		_, err = os.Create(strangePath)
-		So(err, ShouldBeNil)
-
-		req := &Request{
-			Local:  strangePath,
-			Remote: strings.Replace(strangePath, sourceDir, rootCollection, 1),
-		}
-
-		p, err := New(h, []*Request{req})
-		So(err, ShouldBeNil)
-		So(p, ShouldNotBeNil)
-
-		testPool := ex.NewClientPool(ex.DefaultClientPoolParams, "")
-		testClientCh, err := h.getClientsFromPoolConcurrently(testPool, 1)
-		So(err, ShouldBeNil)
-		testClient := <-testClientCh
-		defer testClient.StopIgnoreError()
-		defer testPool.Close()
-
-		_, err = testClient.RemDir(ex.Args{Force: true, Recurse: true}, ex.RodsItem{
-			IPath: rootCollection,
-		})
-		if err != nil && !strings.Contains(err.Error(), "-816000") && !strings.Contains(err.Error(), "-310000") {
-			So(err, ShouldBeNil)
-		}
-
-		err = p.CreateCollections()
-		So(err, ShouldBeNil)
-
-		uCh, urCh, srCh := p.Put()
-
-		for request := range uCh {
-			So(request.Status, ShouldEqual, RequestStatusUploading)
-		}
+		strangePath, p := testPreparePutFile(t, h, "%s.txt", rootCollection)
+		urCh := testPutFile(p)
 
 		for request := range urCh {
 			So(request.Error, ShouldBeBlank)
@@ -225,14 +188,24 @@ func TestPutBaton(t *testing.T) { //nolint:cyclop
 			So(request.Size, ShouldEqual, 0)
 			So(request.Local, ShouldEqual, strangePath)
 		}
+	})
 
-		So(<-srCh, ShouldBeNil)
+	Convey("Uploading a file with no read permission gives a useful error", t, func() {
+		permsPath, p := testPreparePutFile(t, h, "my.txt", rootCollection)
+		err := os.Chmod(permsPath, 0200)
+		So(err, ShouldBeNil)
+		urCh := testPutFile(p)
+
+		for request := range urCh {
+			So(request.Status, ShouldEqual, RequestStatusFailed)
+			So(request.Error, ShouldContainSubstring, "Permission denied")
+		}
 	})
 }
 
 // makeRequests creates some local directories and files, and returns requests
 // that all share the same metadata, with remotes pointing to corresponding
-// paths within remoteCollection. Also returns the execpted remote directories
+// paths within remoteCollection. Also returns the expected remote directories
 // that would have to be created.
 func makeRequests(t *testing.T, remoteCollection string) ([]*Request, []string) {
 	t.Helper()
@@ -265,4 +238,58 @@ func getObjectMetadataWithBaton(client *ex.Client, path string) map[string]strin
 	So(err, ShouldBeNil)
 
 	return rodsItemToMeta(it)
+}
+
+func testPreparePutFile(t *testing.T, h *Baton, basename, rootCollection string) (string, *Putter) {
+	t.Helper()
+
+	sourceDir := t.TempDir()
+
+	path := filepath.Join(sourceDir, "testput", basename)
+	err := os.MkdirAll(filepath.Dir(path), userPerms)
+	So(err, ShouldBeNil)
+	_, err = os.Create(path)
+	So(err, ShouldBeNil)
+
+	req := &Request{
+		Local:  path,
+		Remote: strings.Replace(path, sourceDir, rootCollection, 1),
+	}
+
+	p, err := New(h, []*Request{req})
+	So(err, ShouldBeNil)
+	So(p, ShouldNotBeNil)
+
+	testPool := ex.NewClientPool(ex.DefaultClientPoolParams, "")
+	testClientCh, err := h.getClientsFromPoolConcurrently(testPool, 1)
+	So(err, ShouldBeNil)
+
+	testClient := <-testClientCh
+
+	defer testClient.StopIgnoreError()
+	defer testPool.Close()
+
+	_, err = testClient.RemDir(ex.Args{Force: true, Recurse: true}, ex.RodsItem{
+		IPath: rootCollection,
+	})
+	if err != nil && !strings.Contains(err.Error(), "-816000") && !strings.Contains(err.Error(), "-310000") {
+		So(err, ShouldBeNil)
+	}
+
+	err = p.CreateCollections()
+	So(err, ShouldBeNil)
+
+	return path, p
+}
+
+func testPutFile(p *Putter) chan *Request {
+	uCh, urCh, srCh := p.Put()
+
+	for request := range uCh {
+		So(request.Status, ShouldEqual, RequestStatusUploading)
+	}
+
+	So(<-srCh, ShouldBeNil)
+
+	return urCh
 }
