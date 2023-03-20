@@ -25,7 +25,10 @@
 
 package set
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 type EntryStatus int
 
@@ -82,6 +85,7 @@ type Entry struct {
 func (e *Entry) ShouldUpload(reuploadAfter time.Time) bool {
 	switch e.Status {
 	case Missing:
+		fmt.Printf("entry is missing!\n")
 		return false
 	case Failed:
 		if e.Attempts >= AttemptsToBeConsideredFailing {
