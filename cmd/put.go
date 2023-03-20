@@ -172,7 +172,9 @@ func handleServerMode(started time.Time) {
 
 	requests, err := client.GetSomeUploadRequests()
 	if err != nil {
-		die("%s", err)
+		warn("%s", err)
+
+		os.Exit(0)
 	}
 
 	uploadStarts, uploadResults, skipResults, dfunc := handlePut(client, requests)
@@ -183,7 +185,9 @@ func handleServerMode(started time.Time) {
 	dfunc()
 
 	if err != nil {
-		die("%s", err)
+		warn("%s", err)
+
+		os.Exit(0)
 	}
 
 	if time.Since(started) < runFor {
