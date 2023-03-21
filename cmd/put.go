@@ -119,9 +119,9 @@ local file.
 Collections for your iRODS paths in column 2 will be automatically created if
 necessary.
 
-(The ibackup server also calls this command with the --from_server and --url
-options instead of a 3 column -f file, which makes this command work on upload
-requests stored in the server.)
+(The ibackup server also calls this command with the --server and --url options
+instead of a 3 column -f file, which makes this command work on upload requests
+stored in the server.)
 
 You need to have the baton commands in your PATH for this to work.
 

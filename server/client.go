@@ -191,13 +191,25 @@ func (c *Client) GetSetByName(requester, setName string) (*set.Set, error) {
 // SetFiles sets the given paths as the file paths for the backup set with the
 // given ID.
 func (c *Client) SetFiles(setID string, paths []string) error {
-	return c.putThing(EndPointAuthFiles+"/"+setID, paths)
+	return c.putThing(EndPointAuthFiles+"/"+setID, stringsToBytes(paths))
+}
+
+// stringsToBytes converts []string to [][]byte so that json marshalling
+// doesn't mess with non-UTF8 characters.
+func stringsToBytes(s []string) [][]byte {
+	b := make([][]byte, len(s))
+
+	for i, value := range s {
+		b[i] = []byte(value)
+	}
+
+	return b
 }
 
 // SetDirs sets the given paths as the directory paths for the backup set with
 // the given ID.
 func (c *Client) SetDirs(setID string, paths []string) error {
-	return c.putThing(EndPointAuthDirs+"/"+setID, paths)
+	return c.putThing(EndPointAuthDirs+"/"+setID, stringsToBytes(paths))
 }
 
 // TriggerDiscovery tells the server that you've called SetFiles() and SetDirs()
@@ -220,6 +232,10 @@ func (c *Client) GetFiles(setID string) ([]*set.Entry, error) {
 
 	err := c.getThing(EndPointAuthEntries+"/"+setID, &entries)
 
+	for _, entry := range entries {
+		entry.CorrectFromJSON()
+	}
+
 	return entries, err
 }
 
@@ -229,6 +245,10 @@ func (c *Client) GetDirs(setID string) ([]*set.Entry, error) {
 	var entries []*set.Entry
 
 	err := c.getThing(EndPointAuthDirs+"/"+setID, &entries)
+
+	for _, entry := range entries {
+		entry.CorrectFromJSON()
+	}
 
 	return entries, err
 }
@@ -248,6 +268,12 @@ func (c *Client) GetFailedFiles(setID string) ([]*set.Entry, int, error) {
 
 	err := c.getThing(EndPointAuthFailedEntries+"/"+setID, &fentries)
 
+	if fentries.Entries != nil {
+		for _, entry := range fentries.Entries {
+			entry.CorrectFromJSON()
+		}
+	}
+
 	return fentries.Entries, fentries.Skipped, err
 }
 
@@ -262,6 +288,10 @@ func (c *Client) GetSomeUploadRequests() ([]*put.Request, error) {
 	var requests []*put.Request
 
 	err := c.getThing(EndPointAuthRequests, &requests)
+
+	for _, r := range requests {
+		r.CorrectFromJSON()
+	}
 
 	c.startTouching(requests)
 
@@ -498,6 +528,8 @@ func (c *Client) UpdateFileStatus(r *put.Request) error {
 		delete(c.toTouch, r.ID())
 		c.touchMu.Unlock()
 	}
+
+	r.MakeSafeForJSON()
 
 	return c.putThing(EndPointAuthFileStatus, r)
 }

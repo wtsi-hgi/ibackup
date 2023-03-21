@@ -308,9 +308,9 @@ func (s *Server) putFiles(c *gin.Context) {
 // bindPathsAndValidateSet gets the paths out of the JSON body, and the set id
 // from the URL parameter if Requester matches logged-in username.
 func (s *Server) bindPathsAndValidateSet(c *gin.Context) (string, []string, bool) {
-	var paths []string
+	var bpaths [][]byte
 
-	if err := c.BindJSON(&paths); err != nil {
+	if err := c.BindJSON(&bpaths); err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
 		return "", nil, false
@@ -321,7 +321,7 @@ func (s *Server) bindPathsAndValidateSet(c *gin.Context) (string, []string, bool
 		return "", nil, false
 	}
 
-	return set.ID(), paths, true
+	return set.ID(), bytesToStrings(bpaths), true
 }
 
 // validateSet gets the id parameter from the given context and checks a
@@ -345,6 +345,18 @@ func (s *Server) validateSet(c *gin.Context) (*set.Set, bool) {
 	}
 
 	return set, true
+}
+
+// bytesToStrings converts [][]byte to []string so that json unmarshalling
+// doesn't mess with non-UTF8 characters.
+func bytesToStrings(b [][]byte) []string {
+	s := make([]string, len(b))
+
+	for i, value := range b {
+		s[i] = string(value)
+	}
+
+	return s
 }
 
 // putDirs sets the directory paths encoded in to the body as JSON as the dirs
@@ -386,6 +398,10 @@ func (s *Server) getEntries(c *gin.Context) {
 		return
 	}
 
+	for _, entry := range entries {
+		entry.MakeSafeForJSON()
+	}
+
 	c.JSON(http.StatusOK, entries)
 }
 
@@ -405,6 +421,10 @@ func (s *Server) getDirs(c *gin.Context) {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
 		return
+	}
+
+	for _, entry := range entries {
+		entry.MakeSafeForJSON()
 	}
 
 	c.JSON(http.StatusOK, entries)
@@ -427,6 +447,10 @@ func (s *Server) getFailedEntries(c *gin.Context) {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
 		return
+	}
+
+	for _, entry := range entries {
+		entry.MakeSafeForJSON()
 	}
 
 	c.JSON(http.StatusOK, &FailedEntries{
@@ -477,6 +501,7 @@ func (s *Server) reserveRequests() ([]*put.Request, error) {
 			break
 		}
 
+		r.MakeSafeForJSON()
 		requests = append(requests, r)
 
 		count++
@@ -643,6 +668,8 @@ func (s *Server) putFileStatus(c *gin.Context) {
 
 		return
 	}
+
+	r.CorrectFromJSON()
 
 	ceCh := s.queueFileStatusUpdate(r)
 	ce := <-ceCh

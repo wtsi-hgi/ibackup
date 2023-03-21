@@ -84,23 +84,45 @@ func (s *Stuck) String() string {
 // mtime, upload date) you'd like to associate with it. Setting Requester and
 // Set will add these to the requesters and sets metadata on upload.
 type Request struct {
-	Local      string
-	Remote     string
-	Requester  string
-	Set        string
-	Meta       map[string]string
-	Status     RequestStatus
-	Size       uint64 // size of Local in bytes, set for you on returned Requests.
-	Error      string
-	Stuck      *Stuck
-	remoteMeta map[string]string
-	skipPut    bool
+	Local         string
+	Remote        string
+	LocalForJSON  []byte // set by MakeSafeForJSON(); do not set this yourself.
+	RemoteForJSON []byte // set by MakeSafeForJSON(); do not set this yourself.
+	Requester     string
+	Set           string
+	Meta          map[string]string
+	Status        RequestStatus
+	Size          uint64 // size of Local in bytes, set for you on returned Requests.
+	Error         string
+	Stuck         *Stuck
+	remoteMeta    map[string]string
+	skipPut       bool
+}
+
+// MakeSafeForJSON copies Local and Remote to LocalForJSON and RemoteForJSON,
+// so that if this Request struct is encoded as JSON, non-UTF8 characters will
+// be preserved. On decode be sure to use CorrectFromJSON().
+func (r *Request) MakeSafeForJSON() {
+	r.LocalForJSON = []byte(r.Local)
+	r.RemoteForJSON = []byte(r.Remote)
+}
+
+// CorrectFromJSON copies LocalForJSON and RemoteForJSON to Local and Remote,
+// so that these values are correct following a decode from JSON.
+func (r *Request) CorrectFromJSON() {
+	r.Local = string(r.LocalForJSON)
+	r.Remote = string(r.RemoteForJSON)
 }
 
 // ID returns a deterministic identifier that is unique to this Request's
 // combination of Local, Remote, Requester and Set.
 func (r *Request) ID() string {
-	concat := strings.Join([]string{r.Local, r.Remote, r.Requester, r.Set}, ":")
+	concat := strings.Join([]string{
+		r.Local,
+		r.Remote,
+		r.Requester,
+		r.Set,
+	}, ":")
 
 	l, h := farm.Hash128([]byte(concat))
 
