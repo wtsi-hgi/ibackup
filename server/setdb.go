@@ -28,10 +28,8 @@ package server
 import (
 	"context"
 	"errors"
-	"fmt"
 	"math"
 	"net/http"
-	"path/filepath"
 
 	"github.com/VertebrateResequencing/wr/queue"
 	"github.com/gin-gonic/gin"
@@ -297,8 +295,6 @@ func (s *Server) putFiles(c *gin.Context) {
 		return
 	}
 
-	fmt.Printf("server recieved %s (%v) from client\n", filepath.Base(paths[0]), []byte(filepath.Base(paths[0])))
-
 	err := s.db.SetFileEntries(sid, paths)
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
@@ -402,6 +398,10 @@ func (s *Server) getEntries(c *gin.Context) {
 		return
 	}
 
+	for _, entry := range entries {
+		entry.MakeSafeForJSON()
+	}
+
 	c.JSON(http.StatusOK, entries)
 }
 
@@ -421,6 +421,10 @@ func (s *Server) getDirs(c *gin.Context) {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
 		return
+	}
+
+	for _, entry := range entries {
+		entry.MakeSafeForJSON()
 	}
 
 	c.JSON(http.StatusOK, entries)
@@ -443,6 +447,10 @@ func (s *Server) getFailedEntries(c *gin.Context) {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
 		return
+	}
+
+	for _, entry := range entries {
+		entry.MakeSafeForJSON()
 	}
 
 	c.JSON(http.StatusOK, &FailedEntries{
@@ -493,6 +501,7 @@ func (s *Server) reserveRequests() ([]*put.Request, error) {
 			break
 		}
 
+		r.MakeSafeForJSON()
 		requests = append(requests, r)
 
 		count++
@@ -659,6 +668,8 @@ func (s *Server) putFileStatus(c *gin.Context) {
 
 		return
 	}
+
+	r.CorrectFromJSON()
 
 	ceCh := s.queueFileStatusUpdate(r)
 	ce := <-ceCh

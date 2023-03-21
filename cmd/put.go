@@ -179,14 +179,6 @@ func handleServerMode(started time.Time) {
 
 	uploadStarts, uploadResults, skipResults, dfunc := handlePut(client, requests)
 
-	if dfunc == nil {
-		<-time.After(1 * time.Second)
-
-		handleServerMode(started)
-
-		return
-	}
-
 	err = client.SendPutResultsToServer(uploadStarts, uploadResults, skipResults,
 		minMBperSecondUploadSpeed, minTimeForUpload, appLogger)
 
@@ -207,21 +199,19 @@ func handleServerMode(started time.Time) {
 
 func handlePut(client *server.Client, requests []*put.Request) (chan *put.Request,
 	chan *put.Request, chan *put.Request, func()) {
-	// if putVerbose {
-	// 	host, errh := os.Hostname()
-	// 	if errh != nil {
-	// 		die("%s", errh)
-	// 	}
+	if putVerbose {
+		host, errh := os.Hostname()
+		if errh != nil {
+			die("%s", errh)
+		}
 
-	// 	info("client starting on host %s, pid %d", host, os.Getpid())
-	// }
+		info("client starting on host %s, pid %d", host, os.Getpid())
+	}
 
 	if len(requests) == 0 {
-		//warn("no requests to work on")
+		warn("no requests to work on")
 
-		return nil, nil, nil, nil
-
-		//os.Exit(0)
+		os.Exit(0)
 	}
 
 	if putVerbose {

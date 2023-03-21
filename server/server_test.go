@@ -141,7 +141,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 				Monitor:     false,
 			}
 
-			SkipConvey("Which lets you login", func() {
+			Convey("Which lets you login", func() {
 				token, errl := gas.Login(addr, certPath, "jim", "pass")
 				So(errl, ShouldBeNil)
 				So(token, ShouldNotBeBlank)
@@ -955,7 +955,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 					return p, d
 				}
 
-				SkipConvey("and add a set", func() {
+				Convey("and add a set", func() {
 					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldBeNil)
 

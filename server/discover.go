@@ -27,7 +27,6 @@ package server
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"os"
 	"time"
@@ -118,13 +117,10 @@ func (s *Server) updateSetFileExistence(given *set.Set) error {
 		return err
 	}
 
-	fmt.Printf("\nin updateSetFileExistence with %d entries\n", len(entries))
-
 	errCh := make(chan error, len(entries))
 
 	for _, entry := range entries {
 		path := entry.Path
-		fmt.Printf("entry with path %s has status %s\n", path, entry.Status)
 
 		s.filePool.Submit(func() {
 			_, errs := s.setEntryMissingIfNotExist(given, path)
@@ -146,16 +142,7 @@ func (s *Server) updateSetFileExistence(given *set.Set) error {
 // true and updates the corresponding entry for that path in the given set with
 // a missing status. Symlinks are treated as if they are missing.
 func (s *Server) setEntryMissingIfNotExist(given *set.Set, path string) (bool, error) {
-	info, err := os.Lstat(path)
-	if err != nil {
-		fmt.Printf("Lstat of %s (%v) failed: %s\n", path, []byte(path), err)
-
-		_, errs := os.Stat(path)
-		fmt.Printf("Stat said: %s\n", errs)
-	}
-
-	if err == nil && info.Mode().Type()&os.ModeSymlink == 0 {
-		fmt.Printf("Lstat of %s found symlink\n", path)
+	if info, err := os.Lstat(path); err == nil && info.Mode().Type()&os.ModeSymlink == 0 {
 		return false, nil
 	}
 
@@ -168,7 +155,7 @@ func (s *Server) setEntryMissingIfNotExist(given *set.Set, path string) (bool, e
 		Error:     "",
 	}
 
-	_, err = s.db.SetEntryStatus(r)
+	_, err := s.db.SetEntryStatus(r)
 
 	return true, err
 }
@@ -283,11 +270,7 @@ func (s *Server) enqueueSetFiles(given *set.Set, transformer put.PathTransformer
 		return err
 	}
 
-	fmt.Printf("enqueueSetFiles got %d entries from db\n", len(entries))
-
 	entries = uploadableEntries(entries, given)
-
-	fmt.Printf("will queue %d uploadable entries\n", len(entries))
 
 	return s.enqueueEntries(entries, given, transformer)
 }

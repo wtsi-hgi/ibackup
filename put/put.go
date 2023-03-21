@@ -347,7 +347,6 @@ func (p *Putter) pickFilesToPut(wg *sync.WaitGroup, putCh chan *Request, skipRet
 func (p *Putter) statPathsAndReturnOrPut(request *Request, putCh chan *Request, skipReturnCh chan *Request) {
 	lInfo, err := Stat(request.Local)
 	if err != nil {
-		fmt.Printf("will skip due to local stat err: %s\n", err)
 		sendRequest(request, RequestStatusMissing, err, skipReturnCh)
 
 		return
@@ -357,7 +356,6 @@ func (p *Putter) statPathsAndReturnOrPut(request *Request, putCh chan *Request, 
 
 	rInfo, err := p.handler.Stat(request)
 	if err != nil {
-		fmt.Printf("will skip due to remote stat err: %s\n", err)
 		sendRequest(request, RequestStatusFailed, err, skipReturnCh)
 
 		return
@@ -378,7 +376,6 @@ func (p *Putter) statPathsAndReturnOrPut(request *Request, putCh chan *Request, 
 // the request needs to be uploaded again because the mtime changed.
 func sendForUploadOrUnmodified(request *Request, lInfo, rInfo *ObjectInfo, putCh, skipReturnCh chan *Request) bool {
 	if !rInfo.Exists {
-		fmt.Printf("remote doesn't exist, will upload\n")
 		sendRequest(request, RequestStatusUploaded, nil, putCh)
 
 		return true
@@ -386,10 +383,8 @@ func sendForUploadOrUnmodified(request *Request, lInfo, rInfo *ObjectInfo, putCh
 
 	if lInfo.HasSameModTime(rInfo) {
 		ch := skipReturnCh
-		fmt.Printf("mtime unchanged\n")
 
 		if request.needsMetadataUpdate() {
-			fmt.Printf("but needs metadata update\n")
 			ch = putCh
 		}
 

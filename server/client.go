@@ -232,6 +232,10 @@ func (c *Client) GetFiles(setID string) ([]*set.Entry, error) {
 
 	err := c.getThing(EndPointAuthEntries+"/"+setID, &entries)
 
+	for _, entry := range entries {
+		entry.CorrectFromJSON()
+	}
+
 	return entries, err
 }
 
@@ -241,6 +245,10 @@ func (c *Client) GetDirs(setID string) ([]*set.Entry, error) {
 	var entries []*set.Entry
 
 	err := c.getThing(EndPointAuthDirs+"/"+setID, &entries)
+
+	for _, entry := range entries {
+		entry.CorrectFromJSON()
+	}
 
 	return entries, err
 }
@@ -260,6 +268,12 @@ func (c *Client) GetFailedFiles(setID string) ([]*set.Entry, int, error) {
 
 	err := c.getThing(EndPointAuthFailedEntries+"/"+setID, &fentries)
 
+	if fentries.Entries != nil {
+		for _, entry := range fentries.Entries {
+			entry.CorrectFromJSON()
+		}
+	}
+
 	return fentries.Entries, fentries.Skipped, err
 }
 
@@ -274,6 +288,10 @@ func (c *Client) GetSomeUploadRequests() ([]*put.Request, error) {
 	var requests []*put.Request
 
 	err := c.getThing(EndPointAuthRequests, &requests)
+
+	for _, r := range requests {
+		r.CorrectFromJSON()
+	}
 
 	c.startTouching(requests)
 
@@ -510,6 +528,8 @@ func (c *Client) UpdateFileStatus(r *put.Request) error {
 		delete(c.toTouch, r.ID())
 		c.touchMu.Unlock()
 	}
+
+	r.MakeSafeForJSON()
 
 	return c.putThing(EndPointAuthFileStatus, r)
 }

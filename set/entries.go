@@ -26,7 +26,6 @@
 package set
 
 import (
-	"fmt"
 	"time"
 )
 
@@ -68,6 +67,7 @@ func (e EntryStatus) String() string {
 // Entry holds the status of an entry in a backup set.
 type Entry struct {
 	Path        string
+	PathForJSON []byte // set by MakeSafeForJSON(); do not set this yourself.
 	Size        uint64 // size of local file in bytes.
 	Status      EntryStatus
 	LastError   string
@@ -80,12 +80,24 @@ type Entry struct {
 	isDir    bool
 }
 
+// MakeSafeForJSON copies Path to PathForJSON, so that if this Entry struct is
+// encoded as JSON, non-UTF8 characters will be preserved. On decode be sure to
+// use CorrectFromJSON().
+func (e *Entry) MakeSafeForJSON() {
+	e.PathForJSON = []byte(e.Path)
+}
+
+// CorrectFromJSON copies PathForJSON to Path, so that this value is correct
+// following a decode from JSON.
+func (e *Entry) CorrectFromJSON() {
+	e.Path = string(e.PathForJSON)
+}
+
 // ShouldUpload returns true if this Entry is pending or has failed less than 3
 // times or was previously uploaded before the given time.
 func (e *Entry) ShouldUpload(reuploadAfter time.Time) bool {
 	switch e.Status {
 	case Missing:
-		fmt.Printf("entry is missing!\n")
 		return false
 	case Failed:
 		if e.Attempts >= AttemptsToBeConsideredFailing {
