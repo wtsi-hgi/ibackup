@@ -927,34 +927,6 @@ func TestServer(t *testing.T) { //nolint:cyclop
 
 				logger := log15.New()
 
-				makePutter := func(requests []*put.Request) (*put.Putter, func()) {
-					p, errp := put.New(handler, requests)
-					So(errp, ShouldBeNil)
-
-					d := func() {
-						if errc := p.Cleanup(); errc != nil {
-							t.Logf("putter cleanup gave errors: %s", errc)
-						}
-					}
-
-					err = client.StartingToCreateCollections()
-					So(err, ShouldBeNil)
-					qs, errg := client.GetQueueStatus()
-					So(errg, ShouldBeNil)
-					So(qs.CreatingCollections, ShouldEqual, 1)
-
-					err = p.CreateCollections()
-					So(err, ShouldBeNil)
-
-					err = client.FinishedCreatingCollections()
-					So(err, ShouldBeNil)
-					qs, err = client.GetQueueStatus()
-					So(err, ShouldBeNil)
-					So(qs.CreatingCollections, ShouldEqual, 0)
-
-					return p, d
-				}
-
 				Convey("and add a set", func() {
 					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldBeNil)
@@ -1025,7 +997,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						So(gotSet.Uploaded, ShouldEqual, 0)
 						So(gotSet.Error, ShouldBeBlank)
 
-						p, d := makePutter(requests)
+						p, d := makePutter(t, handler, requests, client)
 						defer d()
 
 						uploadStarts, uploadResults, skippedResults := p.Put()
@@ -1067,7 +1039,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 							So(gotSet.NumFiles, ShouldEqual, expectedNumFiles)
 							So(gotSet.Uploaded, ShouldEqual, 0)
 
-							p, d = makePutter(requests)
+							p, d = makePutter(t, handler, requests, client)
 							defer d()
 
 							uploadStarts, uploadResults, skippedResults = p.Put()
@@ -1106,7 +1078,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						So(errg, ShouldBeNil)
 						So(len(requests), ShouldEqual, len(discovers))
 
-						p, d := makePutter(requests)
+						p, d := makePutter(t, handler, requests, client)
 						defer d()
 
 						os.Remove(discovers[0])
@@ -1144,7 +1116,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 							So(errg, ShouldBeNil)
 							So(len(requests), ShouldEqual, len(discovers))
 
-							p, d := makePutter(requests)
+							p, d := makePutter(t, handler, requests, client)
 							defer d()
 
 							uploadStarts, uploadResults, skippedResults := p.Put()
@@ -1187,7 +1159,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						So(errg, ShouldBeNil)
 						So(len(requests), ShouldEqual, len(discovers))
 
-						p, d := makePutter(requests)
+						p, d := makePutter(t, handler, requests, client)
 						defer d()
 
 						var forceSlowRead put.FileReadTester = func(ctx context.Context, path string) error {
@@ -1249,7 +1221,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 								So(errg, ShouldBeNil)
 								So(len(requests), ShouldEqual, 1)
 
-								p, d := makePutter(requests)
+								p, d := makePutter(t, handler, requests, client)
 								p.SetFileReadTimeout(1 * time.Millisecond)
 								p.SetFileReadTester(forceSlowRead)
 
@@ -1282,7 +1254,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 								So(errg, ShouldBeNil)
 								So(len(requests), ShouldEqual, 1)
 
-								p, d := makePutter(requests)
+								p, d := makePutter(t, handler, requests, client)
 								defer d()
 
 								uploadStarts, uploadResults, skippedResults := p.Put()
@@ -1326,7 +1298,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						So(errg, ShouldBeNil)
 						So(len(requests), ShouldEqual, len(discovers))
 
-						p, d := makePutter(requests)
+						p, d := makePutter(t, handler, requests, client)
 						defer d()
 
 						errCh := make(chan error)
@@ -1443,8 +1415,8 @@ func TestServer(t *testing.T) { //nolint:cyclop
 					err = client.SetFiles(exampleSet.ID(), []string{path})
 					So(err, ShouldBeNil)
 
-					entries, err := s.db.GetPureFileEntries(exampleSet.ID())
-					So(err, ShouldBeNil)
+					entries, errg := s.db.GetPureFileEntries(exampleSet.ID())
+					So(errg, ShouldBeNil)
 					So(len(entries), ShouldEqual, 1)
 					So([]byte(entries[0].Path), ShouldResemble, []byte(path))
 
@@ -1454,30 +1426,33 @@ func TestServer(t *testing.T) { //nolint:cyclop
 					ok := <-racCalled
 					So(ok, ShouldBeTrue)
 
-					gotSet, err := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
-					So(err, ShouldBeNil)
-					So(gotSet.Status, ShouldEqual, set.PendingUpload)
-					So(gotSet.NumFiles, ShouldEqual, 1)
-					So(gotSet.Uploaded, ShouldEqual, 0)
+					putSetWithOneFile(t, handler, client, exampleSet, minMBperSecondUploadSpeed, logger)
+				})
 
-					requests, errg := client.GetSomeUploadRequests()
-					So(errg, ShouldBeNil)
-					So(len(requests), ShouldEqual, 1)
-
-					p, d := makePutter(requests)
-					defer d()
-
-					uploadStarts, uploadResults, skippedResults := p.Put()
-
-					err = client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults,
-						minMBperSecondUploadSpeed, minTimeForUpload, logger)
+				Convey("and add a set with non-UTF8 chars in a discovered directory and have the system process it", func() {
+					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldBeNil)
 
-					gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+					dir := filepath.Join(localDir, "dir\xe9todiscover")
+
+					path := filepath.Join(dir, "\xe9o.frm")
+					createFile(t, path, 1)
+
+					err = client.SetDirs(exampleSet.ID(), []string{dir})
 					So(err, ShouldBeNil)
-					So(gotSet.Status, ShouldEqual, set.Complete)
-					So(gotSet.NumFiles, ShouldEqual, 1)
-					So(gotSet.Uploaded, ShouldEqual, 1)
+
+					err = client.TriggerDiscovery(exampleSet.ID())
+					So(err, ShouldBeNil)
+
+					ok := <-racCalled
+					So(ok, ShouldBeTrue)
+
+					entries, err := s.db.GetFileEntries(exampleSet.ID())
+					So(err, ShouldBeNil)
+					So(len(entries), ShouldEqual, 1)
+					So([]byte(entries[0].Path), ShouldResemble, []byte(path))
+
+					putSetWithOneFile(t, handler, client, exampleSet, minMBperSecondUploadSpeed, logger)
 				})
 			})
 		})
@@ -1581,4 +1556,65 @@ func createManyTestBackupFiles(t *testing.T) []string {
 	}
 
 	return paths
+}
+
+func makePutter(t *testing.T, handler put.Handler, requests []*put.Request, client *Client) (*put.Putter, func()) {
+	t.Helper()
+
+	p, errp := put.New(handler, requests)
+	So(errp, ShouldBeNil)
+
+	d := func() {
+		if errc := p.Cleanup(); errc != nil {
+			t.Logf("putter cleanup gave errors: %s", errc)
+		}
+	}
+
+	err := client.StartingToCreateCollections()
+	So(err, ShouldBeNil)
+
+	qs, err := client.GetQueueStatus()
+	So(err, ShouldBeNil)
+	So(qs.CreatingCollections, ShouldEqual, 1)
+
+	err = p.CreateCollections()
+	So(err, ShouldBeNil)
+
+	err = client.FinishedCreatingCollections()
+	So(err, ShouldBeNil)
+	qs, err = client.GetQueueStatus()
+	So(err, ShouldBeNil)
+	So(qs.CreatingCollections, ShouldEqual, 0)
+
+	return p, d
+}
+
+func putSetWithOneFile(t *testing.T, handler put.Handler, client *Client,
+	exampleSet *set.Set, minMBperSecondUploadSpeed float64, logger log15.Logger) {
+	t.Helper()
+
+	gotSet, err := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+	So(err, ShouldBeNil)
+	So(gotSet.Status, ShouldEqual, set.PendingUpload)
+	So(gotSet.NumFiles, ShouldEqual, 1)
+	So(gotSet.Uploaded, ShouldEqual, 0)
+
+	requests, err := client.GetSomeUploadRequests()
+	So(err, ShouldBeNil)
+	So(len(requests), ShouldEqual, 1)
+
+	p, d := makePutter(t, handler, requests, client)
+	defer d()
+
+	uploadStarts, uploadResults, skippedResults := p.Put()
+
+	err = client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults,
+		minMBperSecondUploadSpeed, minTimeForUpload, logger)
+	So(err, ShouldBeNil)
+
+	gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+	So(err, ShouldBeNil)
+	So(gotSet.Status, ShouldEqual, set.Complete)
+	So(gotSet.NumFiles, ShouldEqual, 1)
+	So(gotSet.Uploaded, ShouldEqual, 1)
 }
