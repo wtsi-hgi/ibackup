@@ -202,7 +202,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 
 						err = os.Remove(files[1])
 						So(err, ShouldBeNil)
-						numExistingFiles := len(files) - 2
+						numFiles := len(files)
 
 						tn := time.Now()
 						err = client.TriggerDiscovery(exampleSet.ID())
@@ -210,7 +210,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 
 						ok := <-racCalled
 						So(ok, ShouldBeTrue)
-						So(len(racRequests), ShouldEqual, numExistingFiles+len(discovers))
+						So(len(racRequests), ShouldEqual, numFiles+len(discovers))
 						So(racRequests[0], ShouldResemble, &put.Request{
 							Local:     files[0],
 							Remote:    filepath.Join(remoteDir, "a"),
@@ -262,7 +262,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 
 						ok = <-racCalled
 						So(ok, ShouldBeTrue)
-						So(len(racRequests), ShouldEqual, numExistingFiles+len(discovers)+numExistingFiles)
+						So(len(racRequests), ShouldEqual, numFiles+len(discovers)+numFiles)
 
 						entries, err = client.GetFiles(exampleSet2.ID())
 						So(err, ShouldBeNil)
@@ -290,7 +290,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 
 						ok = <-racCalled
 						So(ok, ShouldBeTrue)
-						So(len(racRequests), ShouldEqual, numExistingFiles+len(discovers)+numExistingFiles+len(discovers))
+						So(len(racRequests), ShouldEqual, numFiles+len(discovers)+numFiles+len(discovers))
 
 						entries, err = client.GetFiles(exampleSet3.ID())
 						So(err, ShouldBeNil)
@@ -314,7 +314,9 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						ok = <-racCalled
 						So(ok, ShouldBeTrue)
 						So(racCalls, ShouldEqual, 4)
-						So(len(racRequests), ShouldEqual, numExistingFiles+len(discovers)+numExistingFiles+len(discovers))
+						So(len(racRequests), ShouldEqual, numFiles+len(discovers)+numFiles+len(discovers))
+
+						expectedRequests := 12
 
 						Convey("After discovery, admin can get upload requests and update file entry status", func() {
 							entries, err = client.GetFiles(exampleSet.ID())
@@ -330,7 +332,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 
 							requests, errg := client.GetSomeUploadRequests()
 							So(errg, ShouldBeNil)
-							So(len(requests), ShouldEqual, 8)
+							So(len(requests), ShouldEqual, expectedRequests)
 							So(requests[0].Local, ShouldEqual, entries[0].Path)
 
 							requests[0].Status = put.RequestStatusUploading
@@ -382,7 +384,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 							So(gotSet.Error, ShouldBeBlank)
 
 							stats := s.queue.Stats()
-							So(stats.Items, ShouldEqual, 7)
+							So(stats.Items, ShouldEqual, expectedRequests-1)
 
 							requests[1].Status = put.RequestStatusUploading
 							err = client.UpdateFileStatus(requests[1])
@@ -394,8 +396,8 @@ func TestServer(t *testing.T) { //nolint:cyclop
 
 							entries, err = client.GetFiles(exampleSet.ID())
 							So(err, ShouldBeNil)
-							So(entries[3].Path, ShouldEqual, requests[1].Local)
-							So(entries[3].Status, ShouldEqual, set.Failed)
+							So(entries[1].Path, ShouldEqual, requests[1].Local)
+							So(entries[1].Status, ShouldEqual, set.Failed)
 
 							gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
 							So(err, ShouldBeNil)
@@ -404,8 +406,8 @@ func TestServer(t *testing.T) { //nolint:cyclop
 							So(gotSet.Failed, ShouldEqual, 1)
 
 							stats = s.queue.Stats()
-							So(stats.Items, ShouldEqual, 7)
-							So(stats.Running, ShouldEqual, 6)
+							So(stats.Items, ShouldEqual, expectedRequests-1)
+							So(stats.Running, ShouldEqual, expectedRequests-2)
 							So(stats.Ready, ShouldEqual, 1)
 
 							err = client.UpdateFileStatus(requests[1])
@@ -430,8 +432,8 @@ func TestServer(t *testing.T) { //nolint:cyclop
 							So(gotSet.Failed, ShouldEqual, 1)
 
 							stats = s.queue.Stats()
-							So(stats.Items, ShouldEqual, 7)
-							So(stats.Running, ShouldEqual, 6)
+							So(stats.Items, ShouldEqual, expectedRequests-1)
+							So(stats.Running, ShouldEqual, expectedRequests-2)
 							So(stats.Ready, ShouldEqual, 1)
 
 							frequests, err = client.GetSomeUploadRequests()
@@ -453,8 +455,8 @@ func TestServer(t *testing.T) { //nolint:cyclop
 							So(gotSet.Failed, ShouldEqual, 1)
 
 							stats = s.queue.Stats()
-							So(stats.Items, ShouldEqual, 7)
-							So(stats.Running, ShouldEqual, 6)
+							So(stats.Items, ShouldEqual, expectedRequests-1)
+							So(stats.Running, ShouldEqual, expectedRequests-2)
 							So(stats.Buried, ShouldEqual, 1)
 
 							frequests, err = client.GetSomeUploadRequests()
@@ -480,7 +482,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 							qs := s.QueueStatus()
 							So(qs, ShouldNotBeNil)
 							So(len(qs.Stuck), ShouldEqual, 0)
-							So(qs.Total, ShouldEqual, 8)
+							So(qs.Total, ShouldEqual, expectedRequests)
 							So(qs.Reserved, ShouldEqual, 0)
 							So(qs.Uploading, ShouldEqual, 0)
 
@@ -517,8 +519,8 @@ func TestServer(t *testing.T) { //nolint:cyclop
 							qs = s.QueueStatus()
 							So(qs, ShouldNotBeNil)
 							So(len(qs.Stuck), ShouldEqual, 1)
-							So(qs.Total, ShouldEqual, 8)
-							So(qs.Reserved, ShouldEqual, 8)
+							So(qs.Total, ShouldEqual, expectedRequests)
+							So(qs.Reserved, ShouldEqual, expectedRequests)
 							So(qs.Uploading, ShouldEqual, 1)
 
 							requests[0].Status = put.RequestStatusUploaded
@@ -529,8 +531,8 @@ func TestServer(t *testing.T) { //nolint:cyclop
 							qs = s.QueueStatus()
 							So(qs, ShouldNotBeNil)
 							So(len(qs.Stuck), ShouldEqual, 0)
-							So(qs.Total, ShouldEqual, 7)
-							So(qs.Reserved, ShouldEqual, 7)
+							So(qs.Total, ShouldEqual, expectedRequests-1)
+							So(qs.Reserved, ShouldEqual, expectedRequests-1)
 							So(qs.Uploading, ShouldEqual, 0)
 						})
 
@@ -580,7 +582,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 							qs := s.QueueStatus()
 							So(qs, ShouldNotBeNil)
 							So(len(qs.Stuck), ShouldEqual, 0)
-							So(qs.Total, ShouldEqual, 8)
+							So(qs.Total, ShouldEqual, expectedRequests)
 							So(qs.Reserved, ShouldEqual, 0)
 							So(qs.Uploading, ShouldEqual, 0)
 							So(qs.Failed, ShouldEqual, 1)
@@ -602,17 +604,17 @@ func TestServer(t *testing.T) { //nolint:cyclop
 
 							qs = s.QueueStatus()
 							So(qs, ShouldNotBeNil)
-							So(qs.Total, ShouldEqual, 8)
+							So(qs.Total, ShouldEqual, expectedRequests)
 							So(qs.Reserved, ShouldEqual, 0)
 							So(qs.Uploading, ShouldEqual, 0)
 							So(qs.Failed, ShouldEqual, 0)
-							So(s.queue.Stats().Ready, ShouldEqual, 8)
+							So(s.queue.Stats().Ready, ShouldEqual, expectedRequests)
 
 							failARequest()
 
 							qs = s.QueueStatus()
 							So(qs, ShouldNotBeNil)
-							So(qs.Total, ShouldEqual, 8)
+							So(qs.Total, ShouldEqual, expectedRequests)
 							So(qs.Reserved, ShouldEqual, 0)
 							So(qs.Uploading, ShouldEqual, 0)
 							So(qs.Failed, ShouldEqual, 1)
@@ -623,7 +625,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 
 							qs = s.QueueStatus()
 							So(qs, ShouldNotBeNil)
-							So(qs.Total, ShouldEqual, 7)
+							So(qs.Total, ShouldEqual, expectedRequests-1)
 							So(qs.Reserved, ShouldEqual, 0)
 							So(qs.Uploading, ShouldEqual, 0)
 							So(qs.Failed, ShouldEqual, 0)
@@ -775,7 +777,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 
 								requests, errg := client.GetSomeUploadRequests()
 								So(errg, ShouldBeNil)
-								So(len(requests), ShouldEqual, 8)
+								So(len(requests), ShouldEqual, expectedRequests)
 
 								gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
 								So(err, ShouldBeNil)
@@ -818,7 +820,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 								So(gotSet.NumFiles, ShouldEqual, 3)
 								So(gotSet.Uploaded, ShouldEqual, 0)
 
-								r8 := requests[4].Clone()
+								r8 := requests[6].Clone()
 								r8.Status = put.RequestStatusUploading
 								r8.Size = 5
 								uploadStartsCh <- r8
@@ -1081,7 +1083,10 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						p, d := makePutter(t, handler, requests, client)
 						defer d()
 
-						os.Remove(discovers[0])
+						renamed := discovers[0] + ".renamed"
+						err = os.Rename(discovers[0], renamed)
+						So(err, ShouldBeNil)
+
 						uploadStarts, uploadResults, skippedResults := p.Put()
 
 						err = client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults,
@@ -1095,6 +1100,63 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						So(gotSet.Uploaded, ShouldEqual, len(discovers)-1)
 						So(gotSet.Missing, ShouldEqual, 1)
 						So(gotSet.Error, ShouldBeBlank)
+
+						Convey("After completion, re-discovery can upload old files that were previously missing", func() {
+							err = os.Rename(renamed, discovers[0])
+							So(err, ShouldBeNil)
+
+							err = client.TriggerDiscovery(exampleSet.ID())
+							So(err, ShouldBeNil)
+
+							ok := <-racCalled
+							So(ok, ShouldBeTrue)
+
+							gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+							So(err, ShouldBeNil)
+							So(gotSet.Status, ShouldEqual, set.PendingUpload)
+							So(gotSet.NumFiles, ShouldEqual, len(discovers))
+							So(gotSet.Uploaded, ShouldEqual, 0)
+
+							requests, errg = client.GetSomeUploadRequests()
+							So(errg, ShouldBeNil)
+							So(len(requests), ShouldEqual, len(discovers))
+
+							gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+							So(err, ShouldBeNil)
+							So(gotSet.Status, ShouldEqual, set.PendingUpload)
+							So(gotSet.NumFiles, ShouldEqual, len(discovers))
+							So(gotSet.Uploaded, ShouldEqual, 0)
+
+							p, d = makePutter(t, handler, requests, client)
+							defer d()
+
+							uploadStarts, uploadResults, skippedResults = p.Put()
+
+							err = client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults,
+								minMBperSecondUploadSpeed, minTimeForUpload, logger)
+							So(err, ShouldBeNil)
+
+							gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+							So(err, ShouldBeNil)
+							So(gotSet.Status, ShouldEqual, set.Complete)
+							So(gotSet.NumFiles, ShouldEqual, len(discovers))
+							So(gotSet.Uploaded, ShouldEqual, len(discovers))
+
+							entries, errg := client.GetFiles(exampleSet.ID())
+							So(errg, ShouldBeNil)
+							So(len(entries), ShouldEqual, len(discovers))
+
+							for _, entry := range entries {
+								So(entry.Status, ShouldEqual, set.Uploaded)
+							}
+
+							for _, local := range discovers {
+								remote := strings.Replace(local, localDir, remoteDir, 1)
+
+								_, err = os.Stat(remote)
+								So(err, ShouldBeNil)
+							}
+						})
 					})
 
 					Convey("The system handles failures with retries", func() {
@@ -1292,7 +1354,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 					})
 
 					Convey("The system warns of possibly stuck uploads", func() {
-						handler.MakePutSlow(discovers[0], 500*time.Millisecond)
+						handler.MakePutSlow(discovers[0], 600*time.Millisecond)
 
 						requests, errg := client.GetSomeUploadRequests()
 						So(errg, ShouldBeNil)
@@ -1310,7 +1372,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 								minMBperSecondUploadSpeed, 100*time.Millisecond, logger)
 						}()
 
-						<-time.After(200 * time.Millisecond)
+						<-time.After(300 * time.Millisecond)
 						gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
 						So(err, ShouldBeNil)
 						So(gotSet.Status, ShouldEqual, set.Uploading)

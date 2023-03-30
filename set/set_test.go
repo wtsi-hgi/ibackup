@@ -59,13 +59,13 @@ func TestSet(t *testing.T) {
 		So(e.ShouldUpload(reuploadAfter), ShouldBeTrue)
 
 		e.Status = Missing
-		So(e.ShouldUpload(reuploadAfter), ShouldBeFalse)
+		So(e.ShouldUpload(reuploadAfter), ShouldBeTrue)
 
 		e.Status = Failed
 		So(e.ShouldUpload(reuploadAfter), ShouldBeTrue)
 
 		e.Attempts = AttemptsToBeConsideredFailing
-		So(e.ShouldUpload(reuploadAfter), ShouldBeFalse)
+		So(e.ShouldUpload(reuploadAfter), ShouldBeTrue)
 
 		e.Attempts = 1
 		e.LastAttempt = reuploadAfter.Add(1 * time.Second)
