@@ -57,6 +57,7 @@ var serverLogPath string
 var serverKey string
 var serverLDAPFQDN string
 var serverLDAPBindDN string
+var serverDebug bool
 
 // serverCmd represents the server command.
 var serverCmd = &cobra.Command{
@@ -89,6 +90,10 @@ The server must be running for 'ibackup add' calls to succeed.
 
 This command will block forever in the foreground; you can background it with
 ctrl-z; bg. Or better yet, use the daemonize program to daemonize this.
+
+If there's an issue with the database or behaviour of the queue, you can use the
+--debug option to start the server with job submission disabled on a copy of the
+database that you've made, to investigate.
 `,
 	Run: func(cmd *cobra.Command, args []string) {
 		if len(args) != 1 {
@@ -121,20 +126,24 @@ ctrl-z; bg. Or better yet, use the daemonize program to daemonize this.
 			die("failed to make queue endpoints: %s", err)
 		}
 
-		exe, err := os.Executable()
-		if err != nil {
-			die("failed to get own exe: %s", err)
-		}
+		if serverDebug {
+			warn("job submission has been disabled")
+		} else {
+			exe, erre := os.Executable()
+			if erre != nil {
+				die("failed to get own exe: %s", erre)
+			}
 
-		putCmd := fmt.Sprintf("%s put -s --url '%s' --cert '%s' ", exe, serverURL, serverCert)
+			putCmd := fmt.Sprintf("%s put -s --url '%s' --cert '%s' ", exe, serverURL, serverCert)
 
-		if serverLogPath != "" {
-			putCmd += fmt.Sprintf("--log %s.client.", serverLogPath)
-		}
+			if serverLogPath != "" {
+				putCmd += fmt.Sprintf("--log %s.client.", serverLogPath)
+			}
 
-		err = s.EnableJobSubmission(putCmd, "production", "", "", numPutClients, appLogger)
-		if err != nil {
-			die("failed to enable job submission: %s", err)
+			err = s.EnableJobSubmission(putCmd, "production", "", "", numPutClients, appLogger)
+			if err != nil {
+				die("failed to enable job submission: %s", err)
+			}
 		}
 
 		info("opening database, please wait...")
@@ -167,6 +176,8 @@ func init() {
 		"ldap bind dn, with username replaced with %s")
 	serverCmd.Flags().StringVar(&serverLogPath, "logfile", "",
 		"log to this file instead of syslog")
+	serverCmd.Flags().BoolVar(&serverDebug, "debug", false,
+		"disable job submissions for debugging purposes")
 }
 
 // setServerLogger makes our appLogger log to the given path if non-blank,

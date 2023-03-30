@@ -93,22 +93,12 @@ func (e *Entry) CorrectFromJSON() {
 	e.Path = string(e.PathForJSON)
 }
 
-// ShouldUpload returns true if this Entry is pending or has failed less than 3
-// times or was previously uploaded before the given time.
+// ShouldUpload returns true if this Entry is pending or the last attempt was
+// before the given time.
 func (e *Entry) ShouldUpload(reuploadAfter time.Time) bool {
-	switch e.Status {
-	case Missing:
-		return false
-	case Failed:
-		if e.Attempts >= AttemptsToBeConsideredFailing {
-			return false
-		}
-	case Uploaded:
-		if e.LastAttempt.After(reuploadAfter) {
-			return false
-		}
-	case Pending, UploadingEntry:
+	if e.Status == Pending {
+		return true
 	}
 
-	return true
+	return !e.LastAttempt.After(reuploadAfter)
 }

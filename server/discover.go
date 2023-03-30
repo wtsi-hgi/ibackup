@@ -276,8 +276,8 @@ func (s *Server) enqueueSetFiles(given *set.Set, transformer put.PathTransformer
 }
 
 // uploadableEntries returns the subset of given entries that are suitable for
-// uploading: pending and those that have failed less than 3 times and those
-// that were uploaded before the the last discovery.
+// uploading: pending and those that were dealth with before the the last
+// discovery.
 func uploadableEntries(entries []*set.Entry, given *set.Set) []*set.Entry {
 	var filtered []*set.Entry
 
