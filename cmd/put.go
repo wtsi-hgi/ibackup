@@ -61,6 +61,10 @@ const (
 	// we'll consider it stuck, regardless of the MB/s.
 	minTimeForUpload = 1 * time.Minute
 
+	// maxStuckTime is the maximum time we'll wait for an upload we think is
+	// stuck to complete, before giving up with an error.
+	maxStuckTime = 1 * time.Hour
+
 	// runFor is the minimum time we'll try and run for in server mode,
 	// getting more requests if we finish early.
 	runFor = 30 * time.Minute
@@ -180,7 +184,7 @@ func handleServerMode(started time.Time) {
 	uploadStarts, uploadResults, skipResults, dfunc := handlePut(client, requests)
 
 	err = client.SendPutResultsToServer(uploadStarts, uploadResults, skipResults,
-		minMBperSecondUploadSpeed, minTimeForUpload, appLogger)
+		minMBperSecondUploadSpeed, minTimeForUpload, maxStuckTime, appLogger)
 
 	dfunc()
 

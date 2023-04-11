@@ -81,6 +81,11 @@ func TestServer(t *testing.T) { //nolint:cyclop
 
 	admin := u.Username
 	minMBperSecondUploadSpeed := float64(10)
+<<<<<<< HEAD
+=======
+	minTimeForUpload := 1 * time.Minute
+	maxStuckTime := 1 * time.Hour
+>>>>>>> Add maxStuckTime (does nothing atm).
 
 	Convey("Given a Server", t, func() {
 		logWriter := gas.NewStringLogger()
@@ -1008,7 +1013,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 								go func() {
 									errCh <- client.SendPutResultsToServer(
 										uploadStartsCh, uploadResultsCh, skippedResultsCh,
-										minMBperSecondUploadSpeed, minTimeForUpload, logger,
+										minMBperSecondUploadSpeed, minTimeForUpload, maxStuckTime, logger,
 									)
 								}()
 
@@ -1249,7 +1254,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						uploadStarts, uploadResults, skippedResults := p.Put()
 
 						err = client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults,
-							minMBperSecondUploadSpeed, minTimeForUpload, logger)
+							minMBperSecondUploadSpeed, minTimeForUpload, maxStuckTime, logger)
 						So(err, ShouldBeNil)
 
 						gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
@@ -1291,7 +1296,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 							uploadStarts, uploadResults, skippedResults = p.Put()
 
 							err = client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults,
-								minMBperSecondUploadSpeed, minTimeForUpload, logger)
+								minMBperSecondUploadSpeed, minTimeForUpload, maxStuckTime, logger)
 							So(err, ShouldBeNil)
 
 							gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
@@ -1334,7 +1339,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						uploadStarts, uploadResults, skippedResults := p.Put()
 
 						err = client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults,
-							minMBperSecondUploadSpeed, minTimeForUpload, logger)
+							minMBperSecondUploadSpeed, minTimeForUpload, maxStuckTime, logger)
 						So(err, ShouldBeNil)
 
 						gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
@@ -1377,7 +1382,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 							uploadStarts, uploadResults, skippedResults = p.Put()
 
 							err = client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults,
-								minMBperSecondUploadSpeed, minTimeForUpload, logger)
+								minMBperSecondUploadSpeed, minTimeForUpload, maxStuckTime, logger)
 							So(err, ShouldBeNil)
 
 							gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
@@ -1428,7 +1433,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 							uploadStarts, uploadResults, skippedResults := p.Put()
 
 							err = client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults,
-								minMBperSecondUploadSpeed, minTimeForUpload, logger)
+								minMBperSecondUploadSpeed, minTimeForUpload, maxStuckTime, logger)
 							So(err, ShouldBeNil)
 
 							gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
@@ -1482,7 +1487,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						uploadStarts, uploadResults, skippedResults := p.Put()
 
 						err = client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults,
-							minMBperSecondUploadSpeed, minTimeForUpload, logger)
+							minMBperSecondUploadSpeed, minTimeForUpload, maxStuckTime, logger)
 						So(err, ShouldBeNil)
 
 						gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
@@ -1534,7 +1539,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 								uploadStarts, uploadResults, skippedResults := p.Put()
 
 								err = client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults,
-									minMBperSecondUploadSpeed, minTimeForUpload, logger)
+									minMBperSecondUploadSpeed, minTimeForUpload, maxStuckTime, logger)
 								So(err, ShouldBeNil)
 
 								entries, skippedFails, errg := client.GetFailedFiles(exampleSet.ID())
@@ -1566,7 +1571,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 								uploadStarts, uploadResults, skippedResults := p.Put()
 
 								err = client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults,
-									minMBperSecondUploadSpeed, minTimeForUpload, logger)
+									minMBperSecondUploadSpeed, minTimeForUpload, maxStuckTime, logger)
 								So(err, ShouldBeNil)
 
 								entries, skippedFails, errg := client.GetFailedFiles(exampleSet.ID())
@@ -1613,7 +1618,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 							uploadStarts, uploadResults, skippedResults := p.Put()
 
 							errCh <- client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults,
-								minMBperSecondUploadSpeed, 100*time.Millisecond, logger)
+								minMBperSecondUploadSpeed, 100*time.Millisecond, maxStuckTime, logger)
 						}()
 
 						<-time.After(600 * time.Millisecond)
@@ -2053,7 +2058,7 @@ func putSetWithOneFile(t *testing.T, handler put.Handler, client *Client,
 	uploadStarts, uploadResults, skippedResults := p.Put()
 
 	err = client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults,
-		minMBperSecondUploadSpeed, minTimeForUpload, logger)
+		minMBperSecondUploadSpeed, minTimeForUpload, 1*time.Hour, logger)
 	So(err, ShouldBeNil)
 
 	gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())

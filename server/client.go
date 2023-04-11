@@ -59,6 +59,7 @@ type Client struct {
 	touchErr                  error
 	minMBperSecondUploadSpeed float64
 	minTimeForUpload          time.Duration
+	maxStuckTime              time.Duration
 	uploadsErrCh              chan error
 	logger                    log15.Logger
 }
@@ -401,13 +402,15 @@ func (c *Client) stillWorkingOnRequests(rids []string) error {
 // being able to update the server with the results.
 //
 // If an upload seems to take too long, based on the given minimum MB/s upload
-// speed, tells the server the upload might be stuck, but continues to wait.
+// speed, tells the server the upload might be stuck, but continues to wait an
+// additional maxStuckTime before giving up and returning an error.
 //
 // Do not call this concurrently!
 func (c *Client) SendPutResultsToServer(uploadStarts, uploadResults, skipResults chan *put.Request,
-	minMBperSecondUploadSpeed float64, minTimeForUpload time.Duration, logger log15.Logger) error {
+	minMBperSecondUploadSpeed float64, minTimeForUpload, maxStuckTime time.Duration, logger log15.Logger) error {
 	c.minMBperSecondUploadSpeed = minMBperSecondUploadSpeed
 	c.minTimeForUpload = minTimeForUpload
+	c.maxStuckTime = maxStuckTime
 	c.logger = logger
 	c.uploadsErrCh = make(chan error)
 
