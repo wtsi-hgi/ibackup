@@ -245,9 +245,14 @@ func prepareAuth(s *server.Server) {
 // tokenStoragePath returns the path where we store our token for self-clients
 // to use.
 func tokenStoragePath() (string, error) {
-	dir, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
+	dir := os.Getenv("XDG_STATE_HOME")
+	if dir == "" {
+		var err error
+
+		dir, err = os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
 	}
 
 	return filepath.Join(dir, serverTokenBasename), nil

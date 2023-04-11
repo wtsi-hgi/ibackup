@@ -218,7 +218,7 @@ func displaySets(client *server.Client, sets []*set.Set, showNonFailedEntries bo
 		cliPrint("\n")
 		displaySet(forDisplay)
 
-		displayDirs(getDirs(client, forDisplay.ID()))
+		displayDirs(getDirs(client, forDisplay.ID()), forDisplay)
 
 		if showNonFailedEntries {
 			displayAllEntries(client, forDisplay)
@@ -356,12 +356,14 @@ func getDirs(client *server.Client, setID string) []string {
 
 // displayDirs prints out directories one per line with a header, if dirs is not
 // empty.
-func displayDirs(dirs []string) {
+func displayDirs(dirs []string, set *set.Set) {
 	if len(dirs) > 0 {
+		transformer, _ := set.MakeTransformer()
 		cliPrint("Directories:\n")
 
 		for _, dir := range dirs {
-			cliPrint("  %s\n", dir)
+			transformedPath, _ := transformer(dir)
+			cliPrint("  %s => %s\n", dir, transformedPath)
 		}
 	}
 }
