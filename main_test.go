@@ -234,6 +234,7 @@ Directories:
   `+someDir+" => /remote/some/dir")
 		})
 	})
+
 	Convey("Give an added set defined with files", t, func() {
 		dir := t.TempDir()
 		tempTestFile, err := os.CreateTemp(dir, "testFileSet")
@@ -259,7 +260,7 @@ Status: pending upload
 Discovery:
 Num files: 2; Size files: 0 B (and counting)
 Uploaded: 0; Failed: 0; Missing: 2
-Example File: `+dir+`/path/to/some/file => /remote/path/to/some/file`)
+Example File: `+dir+`/path/to/other/file => /remote/path/to/other/file`)
 		})
 	})
 }
@@ -295,7 +296,7 @@ func runBinary(t *testing.T, args ...string) (int, string) {
 	}
 
 	if err != nil {
-		t.Logf("binary gave error: %s\n", err)
+		t.Logf("binary gave error: %s\noutput was: %s\n", err, string(outB))
 	}
 
 	return cmd.ProcessState.ExitCode(), strings.Join(lines, "\n")

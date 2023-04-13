@@ -388,13 +388,17 @@ func displayDirs(dirs []string, transformer put.PathTransformer) {
 }
 
 // getExampleFile gets an example file entry for a set and returns its path.
-func getExampleFile(client *server.Client, setID string) []string {
-	path, err := client.GetExampleFile(setID)
+func getExampleFile(client *server.Client, setID string) string {
+	exampleFile, err := client.GetExampleFile(setID)
 	if err != nil {
 		die(err.Error())
 	}
 
-	return path
+	if exampleFile == nil {
+		return ""
+	}
+
+	return exampleFile.Path
 }
 
 func displayExampleFile(path string, transformer put.PathTransformer) {

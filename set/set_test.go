@@ -239,6 +239,11 @@ func TestSet(t *testing.T) {
 					So(len(sets), ShouldEqual, 2)
 					So(sets, ShouldResemble, []*Set{set2, set})
 
+					definedEntry, err := db.GetDefinedFileEntry(sets[0].ID())
+					So(err, ShouldBeNil)
+					So(definedEntry, ShouldNotBeNil)
+					So(definedEntry.Path, ShouldEqual, "/a/b.txt")
+
 					fEntries, err := db.GetFileEntries(sets[1].ID())
 					So(err, ShouldBeNil)
 					So(len(fEntries), ShouldEqual, 3)

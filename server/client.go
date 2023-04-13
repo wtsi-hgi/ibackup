@@ -240,11 +240,12 @@ func (c *Client) GetFiles(setID string) ([]*set.Entry, error) {
 }
 
 // GetExampleFile gets an example (not discovered) file for the given set that
-// was supplied to SetFiles().
+// was supplied to SetFiles(). If there are no undiscovered files, returns a
+// nil entry and error.
 func (c *Client) GetExampleFile(setID string) (*set.Entry, error) {
 	var entry *set.Entry
 
-	err := c.getThing(EndPointAuthEntries+"/"+setID, &entry)
+	err := c.getThing(EndPointAuthExampleEntry+"/"+setID, &entry)
 
 	if entry != nil {
 		entry.CorrectFromJSON()

@@ -1516,9 +1516,13 @@ func TestServer(t *testing.T) { //nolint:cyclop
 					putSetWithOneFile(t, handler, client, exampleSet, minMBperSecondUploadSpeed, logger)
 				})
 
-				Convey("and add a set with files", func() {
+				Convey("and add a set with files and retrieve an example one", func() {
 					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldBeNil)
+
+					example, err := client.GetExampleFile(exampleSet.ID())
+					So(err, ShouldBeNil)
+					So(example, ShouldBeNil)
 
 					pathExpected := filepath.Join(localDir, "file1.txt")
 					createFile(t, pathExpected, 1)
@@ -1534,7 +1538,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 					So(len(entries), ShouldEqual, 2)
 					So([]byte(entries[0].Path), ShouldResemble, []byte(pathExpected))
 
-					example, err := client.GetExampleFile(exampleSet.ID())
+					example, err = client.GetExampleFile(exampleSet.ID())
 					So(err, ShouldBeNil)
 					So(example.Path, ShouldEqual, pathExpected)
 				})
