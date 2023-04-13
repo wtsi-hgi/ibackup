@@ -27,6 +27,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -207,7 +208,7 @@ Global put client status (/10): 0 creating collections; 0 currently uploading
 no backup sets`)
 	})
 
-	Convey("Given an added set", t, func() {
+	Convey("Given an added set defined with a directory", t, func() {
 		dir := t.TempDir()
 		someDir := filepath.Join(dir, "some/dir")
 
@@ -231,6 +232,34 @@ Num files: pending; Size files: pending
 Uploaded: 0; Failed: 0; Missing: 0
 Directories:
   `+someDir+" => /remote/some/dir")
+		})
+	})
+	Convey("Give an added set defined with files", t, func() {
+		dir := t.TempDir()
+		tempTestFile, err := os.CreateTemp(dir, "testFileSet")
+		So(err, ShouldBeNil)
+
+		_, err = io.WriteString(tempTestFile, dir+`/path/to/some/file
+`+dir+`/path/to/other/file`)
+		So(err, ShouldBeNil)
+
+		exitCode, _ := runBinary(t, "add", "--files", tempTestFile.Name(),
+			"--name", "testAddFiles", "--transformer", "prefix="+dir+":/remote")
+		So(exitCode, ShouldEqual, 0)
+
+		Convey("Status tells you an example of where input files would get uploaded to", func() {
+			confirmOutput(t, []string{"status", "--name", "testAddFiles"}, 0,
+				`Global put queue status: 2 queued; 0 reserved to be worked on; 0 failed
+Global put client status (/10): 0 creating collections; 0 currently uploading
+
+Name: testAddFiles
+Transformer: prefix=`+dir+`:/remote
+Monitored: false; Archive: false
+Status: pending upload
+Discovery:
+Num files: 2; Size files: 0 B (and counting)
+Uploaded: 0; Failed: 0; Missing: 2
+Example File: `+dir+`/path/to/some/file => /remote/path/to/some/file`)
 		})
 	})
 }

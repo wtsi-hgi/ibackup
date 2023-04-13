@@ -239,6 +239,20 @@ func (c *Client) GetFiles(setID string) ([]*set.Entry, error) {
 	return entries, err
 }
 
+// GetExampleFile gets an example (not discovered) file for the given set that
+// was supplied to SetFiles().
+func (c *Client) GetExampleFile(setID string) (*set.Entry, error) {
+	var entry *set.Entry
+
+	err := c.getThing(EndPointAuthEntries+"/"+setID, &entry)
+
+	if entry != nil {
+		entry.CorrectFromJSON()
+	}
+
+	return entry, err
+}
+
 // GetDirs gets the directories for the given set that were supplied to
 // SetDirs().
 func (c *Client) GetDirs(setID string) ([]*set.Entry, error) {

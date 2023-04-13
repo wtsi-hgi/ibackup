@@ -32,6 +32,7 @@ import (
 
 	"github.com/dustin/go-humanize" //nolint:misspell
 	"github.com/spf13/cobra"
+	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/server"
 	"github.com/wtsi-hgi/ibackup/set"
 )
@@ -218,7 +219,10 @@ func displaySets(client *server.Client, sets []*set.Set, showNonFailedEntries bo
 		cliPrint("\n")
 		displaySet(forDisplay)
 
-		displayDirs(getDirs(client, forDisplay.ID()), forDisplay)
+		transformer := getSetTransformer(forDisplay)
+
+		displayDirs(getDirs(client, forDisplay.ID()), transformer)
+		displayExampleFile(getExampleFile(client, forDisplay.ID()), transformer)
 
 		if showNonFailedEntries {
 			displayAllEntries(client, forDisplay)
@@ -333,6 +337,16 @@ func bytesToMB(bytes uint64) float64 {
 	return float64(bytes) / bytesInMiB
 }
 
+// getSetTransformer returns the set's tranformer, or dies.
+func getSetTransformer(given *set.Set) put.PathTransformer {
+	transformer, err := given.MakeTransformer()
+	if err != nil {
+		die("your transformer didn't work: %s", err)
+	}
+
+	return transformer
+}
+
 // getDirs gets the dir entries for a set and returns their paths. If the dir is
 // missing, the path is appended with some text mentioning that.
 func getDirs(client *server.Client, setID string) []string {
@@ -356,14 +370,9 @@ func getDirs(client *server.Client, setID string) []string {
 
 // displayDirs prints out directories one per line with a header, if dirs is not
 // empty.
-func displayDirs(dirs []string, set *set.Set) {
+func displayDirs(dirs []string, transformer put.PathTransformer) {
 	if len(dirs) == 0 {
 		return
-	}
-
-	transformer, err := set.MakeTransformer()
-	if err != nil {
-		die("your transformer didn't work: %s", err)
 	}
 
 	cliPrint("Directories:\n")
@@ -376,6 +385,29 @@ func displayDirs(dirs []string, set *set.Set) {
 
 		cliPrint("  %s => %s\n", dir, transformedPath)
 	}
+}
+
+// getExampleFile gets an example file entry for a set and returns its path.
+func getExampleFile(client *server.Client, setID string) []string {
+	path, err := client.GetExampleFile(setID)
+	if err != nil {
+		die(err.Error())
+	}
+
+	return path
+}
+
+func displayExampleFile(path string, transformer put.PathTransformer) {
+	if path == "" {
+		return
+	}
+
+	transformedPath, err := transformer(path)
+	if err != nil {
+		die("your transformer didn't work: %s", err)
+	}
+
+	cliPrint("Example File: %s => %s\n", path, transformedPath)
 }
 
 // displayFailedEntries prints out details about up to 10 failed entries in the

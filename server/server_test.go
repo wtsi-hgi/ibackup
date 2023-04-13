@@ -1515,6 +1515,29 @@ func TestServer(t *testing.T) { //nolint:cyclop
 
 					putSetWithOneFile(t, handler, client, exampleSet, minMBperSecondUploadSpeed, logger)
 				})
+
+				Convey("and add a set with files", func() {
+					err = client.AddOrUpdateSet(exampleSet)
+					So(err, ShouldBeNil)
+
+					pathExpected := filepath.Join(localDir, "file1.txt")
+					createFile(t, pathExpected, 1)
+
+					pathOther := filepath.Join(localDir, "file2.txt")
+					createFile(t, pathOther, 1)
+
+					err = client.SetFiles(exampleSet.ID(), []string{pathExpected, pathOther})
+					So(err, ShouldBeNil)
+
+					entries, errg := s.db.GetPureFileEntries(exampleSet.ID())
+					So(errg, ShouldBeNil)
+					So(len(entries), ShouldEqual, 2)
+					So([]byte(entries[0].Path), ShouldResemble, []byte(pathExpected))
+
+					example, err := client.GetExampleFile(exampleSet.ID())
+					So(err, ShouldBeNil)
+					So(example.Path, ShouldEqual, pathExpected)
+				})
 			})
 		})
 	})
@@ -1650,6 +1673,8 @@ func makePutter(t *testing.T, handler put.Handler, requests []*put.Request, clie
 	return p, d
 }
 
+// putSetWithOneFile tests that we can successfully upload a set with 1 file in
+// it.
 func putSetWithOneFile(t *testing.T, handler put.Handler, client *Client,
 	exampleSet *set.Set, minMBperSecondUploadSpeed float64, logger log15.Logger) {
 	t.Helper()
