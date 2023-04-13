@@ -40,16 +40,17 @@ import (
 )
 
 const (
-	setPath         = "/set"
-	filePath        = "/files"
-	dirPath         = "/dirs"
-	entryPath       = "/entries"
-	failedEntryPath = "/failed_entries"
-	discoveryPath   = "/discover"
-	requestsPath    = "/requests"
-	workingPath     = "/working"
-	fileStatusPath  = "/file_status"
-	fileRetryPath   = "/retry"
+	setPath          = "/set"
+	filePath         = "/files"
+	dirPath          = "/dirs"
+	entryPath        = "/entries"
+	exampleEntryPath = "/example_entries"
+	failedEntryPath  = "/failed_entries"
+	discoveryPath    = "/discover"
+	requestsPath     = "/requests"
+	workingPath      = "/working"
+	fileStatusPath   = "/file_status"
+	fileRetryPath    = "/retry"
 
 	// EndPointAuthSet is the endpoint for getting and setting sets.
 	EndPointAuthSet = gas.EndPointAuth + setPath
@@ -62,6 +63,9 @@ const (
 
 	// EndPointAuthEntries is the endpoint for getting set entries.
 	EndPointAuthEntries = gas.EndPointAuth + entryPath
+
+	// EndPointAuthExampleEntry is the endpoint for getting set entries.
+	EndPointAuthExampleEntry = gas.EndPointAuth + exampleEntryPath
 
 	// EndPointAuthFailedEntries is the endpoint for getting some failed set
 	// entries.
@@ -191,6 +195,8 @@ func (s *Server) addDBEndpoints(authGroup *gin.RouterGroup) {
 	authGroup.GET(discoveryPath+idParam, s.triggerDiscovery)
 
 	authGroup.GET(entryPath+idParam, s.getEntries)
+	authGroup.GET(exampleEntryPath+idParam, s.getExampleEntry)
+
 	authGroup.GET(dirPath+idParam, s.getDirs)
 	authGroup.GET(failedEntryPath+idParam, s.getFailedEntries)
 
@@ -403,6 +409,31 @@ func (s *Server) getEntries(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, entries)
+}
+
+// getExampleEntry gets the first defined file entry for the set with the
+// id specified in the URL parameter.
+//
+// LoadSetDB() must already have been called. This is called when there is a GET
+// on /rest/v1/auth/example_entry/[id].
+func (s *Server) getExampleEntry(c *gin.Context) {
+	set, ok := s.validateSet(c)
+	if !ok {
+		return
+	}
+
+	entry, err := s.db.GetDefinedFileEntry(set.ID())
+	if err != nil {
+		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+
+		return
+	}
+
+	if entry != nil {
+		entry.MakeSafeForJSON()
+	}
+
+	c.JSON(http.StatusOK, entry)
 }
 
 // getDirs gets the defined directory entries for the set with the id specified

@@ -707,6 +707,18 @@ func (d *DB) GetFileEntries(setID string) ([]*Entry, error) {
 	return append(entries, entries2...), nil
 }
 
+// GetDefinedFileEntry returns the first defined file entry for the given set.
+//
+// Will return nil Entry if SetFileEntries hasn't been called.
+func (d *DB) GetDefinedFileEntry(setID string) (*Entry, error) {
+	entry, err := d.getDefinedFileEntry(setID)
+	if err != nil {
+		return nil, err
+	}
+
+	return entry, nil
+}
+
 // getEntries returns all the entries for the given set from the given sub
 // bucket prefix.
 func (d *DB) getEntries(setID, bucketName string) ([]*Entry, error) {
@@ -723,6 +735,33 @@ func (d *DB) getEntries(setID, bucketName string) ([]*Entry, error) {
 	})
 
 	return entries, err
+}
+
+// getEntries returns all the entries for the given set from the given sub
+// bucket prefix.
+func (d *DB) getDefinedFileEntry(setID string) (*Entry, error) {
+	var entry *Entry
+
+	err := d.db.View(func(tx *bolt.Tx) error {
+		subBucketName := []byte(fileBucket + separator + setID)
+		setsBucket := tx.Bucket([]byte(setsBucket))
+
+		entriesBucket := setsBucket.Bucket(subBucketName)
+		if entriesBucket == nil {
+			return nil
+		}
+
+		_, v := entriesBucket.Cursor().First()
+		if len(v) == 0 {
+			return nil
+		}
+
+		entry = d.decodeEntry(v)
+
+		return nil
+	})
+
+	return entry, err
 }
 
 type getEntriesViewCallBack func(v []byte)

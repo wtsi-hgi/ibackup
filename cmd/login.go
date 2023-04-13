@@ -115,9 +115,14 @@ func getStoredJWT(url, cert string) (string, error) {
 
 // jwtStoragePath returns the path where we store our JWT.
 func jwtStoragePath() (string, error) {
-	dir, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
+	dir := os.Getenv("XDG_STATE_HOME")
+	if dir == "" {
+		var err error
+
+		dir, err = os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
 	}
 
 	return filepath.Join(dir, jwtBasename), nil
