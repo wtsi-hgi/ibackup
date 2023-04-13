@@ -28,6 +28,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -35,6 +36,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/phayes/freeport"
 	. "github.com/smartystreets/goconvey/convey"
 )
 
@@ -95,7 +97,7 @@ func startTestServer() (func(), bool) {
 
 	os.Setenv("XDG_STATE_HOME", dir)
 
-	tv, errStr := getEnvVariables()
+	tv, errStr := prepareConfig(dir)
 	if errStr != "" {
 		failMainTest(errStr)
 
@@ -135,38 +137,45 @@ type testVars struct {
 	ldapLookup string
 }
 
-// getEnvVariables returns IBACKUP_TEST_* env vars and sets SERVER vars as well.
-func getEnvVariables() (*testVars, string) {
+// prepareConfig creates a key and cert to use with a server and looks at
+// IBACKUP_TEST_* env vars to set SERVER vars as well.
+func prepareConfig(dir string) (*testVars, string) {
 	tv := &testVars{}
-
-	tv.key = os.Getenv("IBACKUP_TEST_KEY")
-	if tv.key == "" {
-		return nil, "missing key"
-	}
-
-	tv.ldapServer = os.Getenv("IBACKUP_TEST_LDAP_SERVER")
-	if tv.ldapServer == "" {
-		return nil, "missing ldap server"
-	}
-
-	tv.ldapLookup = os.Getenv("IBACKUP_TEST_LDAP_LOOKUP")
-	if tv.ldapLookup == "" {
-		return nil, "missing ldap lookup"
-	}
 
 	serverURL := os.Getenv("IBACKUP_TEST_SERVER_URL")
 	if serverURL == "" {
-		return nil, "no server url"
+		port, err := freeport.GetFreePort()
+		if err != nil {
+			return nil, err.Error()
+		}
+
+		serverURL = fmt.Sprintf("localhost:%d", port)
 	}
+
+	host, _, err := net.SplitHostPort(serverURL)
+	if err != nil {
+		return nil, err.Error()
+	}
+
+	keyPath := filepath.Join(dir, "key.pem")
+	certPath := filepath.Join(dir, "cert.pem")
+
+	cmd := exec.Command("openssl", "req", "-x509", "-newkey", "rsa:4096", "-keyout",
+		keyPath, "-out", certPath, "-sha256", "-days", "365", "-subj", "/CN="+host, "-addext",
+		"subjectAltName = DNS:"+host, "-nodes")
+
+	outb, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, "could not create openssl cert: " + err.Error() + "\n" + string(outb) + "\n" + cmd.String()
+	}
+
+	tv.key = keyPath
+
+	tv.ldapServer = os.Getenv("IBACKUP_TEST_LDAP_SERVER")
+	tv.ldapLookup = os.Getenv("IBACKUP_TEST_LDAP_LOOKUP")
 
 	os.Setenv("IBACKUP_SERVER_URL", serverURL)
-
-	serverCert := os.Getenv("IBACKUP_TEST_SERVER_CERT")
-	if serverCert == "" {
-		return nil, "no server cert"
-	}
-
-	os.Setenv("IBACKUP_SERVER_CERT", serverCert)
+	os.Setenv("IBACKUP_SERVER_CERT", certPath)
 
 	return tv, ""
 }
@@ -174,12 +183,14 @@ func getEnvVariables() (*testVars, string) {
 func waitForServer() bool {
 	worked := false
 
+	var lastClientOutput []byte
+
 	var lastClientErr error
 
 	for i := 0; i < 100; i++ {
 		clientCmd := exec.Command("./"+app, "status")
 
-		lastClientErr = clientCmd.Run()
+		lastClientOutput, lastClientErr = clientCmd.CombinedOutput()
 
 		if clientCmd.ProcessState.ExitCode() == 0 {
 			worked = true
@@ -191,7 +202,7 @@ func waitForServer() bool {
 	}
 
 	if !worked {
-		failMainTest("timeout on server starting: " + lastClientErr.Error())
+		failMainTest("timeout on server starting: " + lastClientErr.Error() + "\n" + string(lastClientOutput))
 	}
 
 	return worked

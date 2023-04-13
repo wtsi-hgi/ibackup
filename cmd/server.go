@@ -77,7 +77,9 @@ the IBACKUP_SERVER_CERT env var.
 The server authenticates users using LDAP. You must provide the FQDN for your
 LDAP server, eg. --ldap_server ldap.example.com, and the bind DN that you would
 supply to eg. 'ldapwhoami -D' to test user credentials, replacing the username
-part with '%s', eg. --ldap_dn 'uid=%s,ou=people,dc=example,dc=com'.
+part with '%s', eg. --ldap_dn 'uid=%s,ou=people,dc=example,dc=com'. If you don't
+supply both of these, you'll get a warning, but the server will work and assume
+all passwords are valid.
 
 The server will log all messages (of any severity) to syslog at the INFO level,
 except for non-graceful stops of the server, which are sent at the CRIT level or
@@ -106,12 +108,8 @@ database that you've made, to investigate.
 			die("you must supply --key")
 		}
 
-		if serverLDAPFQDN == "" {
-			die("you must supply --ldap_server")
-		}
-
-		if serverLDAPBindDN == "" {
-			die("you must supply --ldap_dn")
+		if serverLDAPFQDN == "" || serverLDAPBindDN == "" {
+			warn("ldap options not supplied, will assume all user passwords are correct!")
 		}
 
 		logWriter := setServerLogger(serverLogPath)
@@ -259,10 +257,15 @@ func tokenStoragePath() (string, error) {
 }
 
 // checkPassword returns true if myselfLoggingIn(), otherwise defers to
-// checkLDAPPassword().
+// checkLDAPPassword(). Warns if we don't have the ldap details we need, and
+// uses an always true password checker.
 func checkPassword(username, password string) (bool, string) {
 	if myselfLoggingIn(username, password) {
 		return true, serverUID
+	}
+
+	if serverLDAPFQDN == "" || serverLDAPBindDN == "" {
+		return fakePasswordCheck(username)
 	}
 
 	return checkLDAPPassword(username, password)
@@ -277,6 +280,17 @@ func myselfLoggingIn(username, password string) bool {
 	}
 
 	return gas.TokenMatches([]byte(password), serverToken)
+}
+
+// fakePasswordCheck is for when we don't have ldap credentials, and are just
+// testing. It always returns true, unless the username doesn't exist at all.
+func fakePasswordCheck(username string) (bool, string) {
+	uid, err := gas.UserNameToUID(username)
+	if err != nil {
+		return false, ""
+	}
+
+	return true, uid
 }
 
 // checkLDAPPassword checks with LDAP if the given password is valid for the
