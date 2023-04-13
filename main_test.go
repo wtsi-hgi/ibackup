@@ -27,7 +27,6 @@ package main
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -38,63 +37,145 @@ import (
 
 const app = "ibackup"
 
+// TestMain builds ourself, starts a test server, runs client tests against the
+// server and cleans up afterwards. It's a full e2e integration test.
 func TestMain(m *testing.M) {
+	var exitCode int
+	defer func() {
+		os.Exit(exitCode)
+	}()
+
+	d1 := buildSelf()
+	if d1 == nil {
+		return
+	}
+
+	defer d1()
+
+	d2, worked := startTestServer()
+
+	if d2 != nil {
+		defer d2()
+	}
+
+	if !worked {
+		exitCode = 2
+
+		return
+	}
+
+	exitCode = m.Run()
+}
+
+func buildSelf() func() {
 	if err := exec.Command("make", "build").Run(); err != nil {
-		panic(err)
+		failMainTest(err.Error())
+
+		return nil
 	}
 
-	key := os.Getenv("IBACKUP_TEST_KEY")
-	if key == "" {
-		panic("missing key")
+	return func() { os.Remove(app) }
+}
+
+func failMainTest(err string) {
+	fmt.Println(err) //nolint:forbidigo
+}
+
+func startTestServer() (func(), bool) {
+	dir, err := os.MkdirTemp("", "ibackup-test")
+	if err != nil {
+		failMainTest(err.Error())
+
+		return nil, false
 	}
 
-	ldapServer := os.Getenv("IBACKUP_TEST_LDAP_SERVER")
-	if ldapServer == "" {
-		panic("missing ldap server")
+	os.Setenv("XDG_STATE_HOME", dir)
+
+	tv, errStr := getEnvVariables()
+	if errStr != "" {
+		failMainTest(errStr)
+
+		return func() { os.RemoveAll(dir) }, false
 	}
 
-	ldapLookup := os.Getenv("IBACKUP_TEST_LDAP_LOOKUP")
-	if ldapLookup == "" {
-		panic("missing ldap lookup")
+	cmd := exec.Command("./"+app, "server", "-k", tv.key, "--logfile", //nolint:gosec
+		filepath.Join(dir, "log"), "-s", tv.ldapServer, "-l", tv.ldapLookup, "--debug",
+		filepath.Join(dir, "db"),
+	)
+
+	if errs := cmd.Start(); errs != nil {
+		failMainTest(errs.Error())
+
+		return func() { os.RemoveAll(dir) }, false
+	}
+
+	worked := waitForServer()
+
+	return func() {
+		if errk := cmd.Process.Kill(); err != nil {
+			failMainTest(errk.Error())
+		}
+
+		errw := cmd.Wait()
+		if errw != nil && errw.Error() != "signal: killed" {
+			failMainTest(errw.Error())
+		}
+
+		os.RemoveAll(dir)
+	}, worked
+}
+
+type testVars struct {
+	key        string
+	ldapServer string
+	ldapLookup string
+}
+
+// getEnvVariables returns IBACKUP_TEST_* env vars and sets SERVER vars as well.
+func getEnvVariables() (*testVars, string) {
+	tv := &testVars{}
+
+	tv.key = os.Getenv("IBACKUP_TEST_KEY")
+	if tv.key == "" {
+		return nil, "missing key"
+	}
+
+	tv.ldapServer = os.Getenv("IBACKUP_TEST_LDAP_SERVER")
+	if tv.ldapServer == "" {
+		return nil, "missing ldap server"
+	}
+
+	tv.ldapLookup = os.Getenv("IBACKUP_TEST_LDAP_LOOKUP")
+	if tv.ldapLookup == "" {
+		return nil, "missing ldap lookup"
 	}
 
 	serverURL := os.Getenv("IBACKUP_TEST_SERVER_URL")
 	if serverURL == "" {
-		panic("no server url")
+		return nil, "no server url"
 	}
 
 	os.Setenv("IBACKUP_SERVER_URL", serverURL)
 
 	serverCert := os.Getenv("IBACKUP_TEST_SERVER_CERT")
 	if serverCert == "" {
-		panic("no server cert")
+		return nil, "no server cert"
 	}
 
 	os.Setenv("IBACKUP_SERVER_CERT", serverCert)
 
-	dir, err := ioutil.TempDir("", "ibackup-test")
-	if err != nil {
-		panic(err)
-	}
+	return tv, ""
+}
 
-	os.Setenv("XDG_STATE_HOME", dir)
-
-	cmd := exec.Command("./"+app, "server", "-k", key, "--logfile",
-		filepath.Join(dir, "log"), "-s", ldapServer, "-l", ldapLookup, "--debug",
-		filepath.Join(dir, "db"),
-	)
-
-	//fmt.Printf("tempdir: %s\ncmd: %s\n", dir, cmd.String())
-
-	if err := cmd.Start(); err != nil {
-		panic(err)
-	}
-
+func waitForServer() bool {
 	worked := false
+
+	var lastClientErr error
 
 	for i := 0; i < 100; i++ {
 		clientCmd := exec.Command("./"+app, "status")
-		clientCmd.Run()
+
+		lastClientErr = clientCmd.Run()
 
 		if clientCmd.ProcessState.ExitCode() == 0 {
 			worked = true
@@ -106,58 +187,10 @@ func TestMain(m *testing.M) {
 	}
 
 	if !worked {
-		panic("timeout on server starting")
+		failMainTest("timeout on server starting: " + lastClientErr.Error())
 	}
 
-	code := m.Run()
-
-	if err := cmd.Process.Kill(); err != nil {
-		panic(err)
-	}
-
-	cmd.Wait() //nolint:errcheck
-
-	os.Remove(app)
-	os.RemoveAll(dir)
-	os.Exit(code)
-}
-
-func runBinary(args ...string) (int, string) {
-	cmd := exec.Command("./"+app, args...)
-
-	outB, err := cmd.CombinedOutput()
-	out := string(outB)
-	out = strings.TrimRight(out, "\n")
-	lines := strings.Split(out, "\n")
-
-	for n, line := range lines {
-		if strings.HasPrefix(line, "t=") {
-			pos := strings.IndexByte(line, '"')
-			lines[n] = line[pos+1 : len(line)-1]
-		}
-
-		if strings.HasPrefix(line, "Discovery:") {
-			lines[n] = line[:10]
-		}
-	}
-
-	if err != nil {
-		fmt.Printf("binary gave error: %s\n", err)
-	}
-
-	return cmd.ProcessState.ExitCode(), strings.Join(lines, "\n")
-}
-
-func confirmOutput(t *testing.T, args []string, expectedCode int, expected string) {
-	exitCode, actual := runBinary(args...)
-
-	if exitCode != expectedCode {
-		t.Fatalf("unexpected error code, actual = %d, expected = %d", exitCode, expectedCode)
-	}
-
-	if actual != expected {
-		t.Fatalf("actual:\n%s\n\nexpected:\n%s", actual, expected)
-	}
+	return worked
 }
 
 func TestCliArgs(t *testing.T) {
@@ -180,8 +213,14 @@ no backup sets`)
 
 	dir := t.TempDir()
 	someDir := filepath.Join(dir, "some/dir")
-	os.MkdirAll(someDir, 0755)
-	if exitCode, _ := runBinary("add", "--name", "testAdd", "--transformer", "prefix="+dir+":/remote", "--path", someDir); exitCode != 0 {
+
+	err := os.MkdirAll(someDir, 0755)
+	if err != nil {
+		t.Fatalf("could not create test subdir: %s", err)
+	}
+
+	if exitCode, _ := runBinary(t, "add", "--name", "testAdd", "--transformer",
+		"prefix="+dir+":/remote", "--path", someDir); exitCode != 0 {
 		t.Fatalf("failed to add file: exit code %d", exitCode)
 	}
 
@@ -199,4 +238,46 @@ Uploaded: 0; Failed: 0; Missing: 0
 Directories:
   `+someDir+" => /remote/some/dir")
 	})
+}
+
+func confirmOutput(t *testing.T, args []string, expectedCode int, expected string) {
+	t.Helper()
+
+	exitCode, actual := runBinary(t, args...)
+
+	if exitCode != expectedCode {
+		t.Fatalf("unexpected error code, actual = %d, expected = %d", exitCode, expectedCode)
+	}
+
+	if actual != expected {
+		t.Fatalf("actual:\n%s\n\nexpected:\n%s", actual, expected)
+	}
+}
+
+func runBinary(t *testing.T, args ...string) (int, string) {
+	t.Helper()
+
+	cmd := exec.Command("./"+app, args...)
+
+	outB, err := cmd.CombinedOutput()
+	out := string(outB)
+	out = strings.TrimRight(out, "\n")
+	lines := strings.Split(out, "\n")
+
+	for n, line := range lines {
+		if strings.HasPrefix(line, "t=") {
+			pos := strings.IndexByte(line, '"')
+			lines[n] = line[pos+1 : len(line)-1]
+		}
+
+		if strings.HasPrefix(line, "Discovery:") {
+			lines[n] = line[:10]
+		}
+	}
+
+	if err != nil {
+		t.Logf("binary gave error: %s\n", err)
+	}
+
+	return cmd.ProcessState.ExitCode(), strings.Join(lines, "\n")
 }

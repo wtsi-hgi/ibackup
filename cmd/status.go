@@ -357,14 +357,24 @@ func getDirs(client *server.Client, setID string) []string {
 // displayDirs prints out directories one per line with a header, if dirs is not
 // empty.
 func displayDirs(dirs []string, set *set.Set) {
-	if len(dirs) > 0 {
-		transformer, _ := set.MakeTransformer()
-		cliPrint("Directories:\n")
+	if len(dirs) == 0 {
+		return
+	}
 
-		for _, dir := range dirs {
-			transformedPath, _ := transformer(dir)
-			cliPrint("  %s => %s\n", dir, transformedPath)
+	transformer, err := set.MakeTransformer()
+	if err != nil {
+		die("your transformer didn't work: %s", err)
+	}
+
+	cliPrint("Directories:\n")
+
+	for _, dir := range dirs {
+		transformedPath, err := transformer(dir)
+		if err != nil {
+			die("your transformer didn't work: %s", err)
 		}
+
+		cliPrint("  %s => %s\n", dir, transformedPath)
 	}
 }
 
