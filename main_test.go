@@ -33,9 +33,12 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	. "github.com/smartystreets/goconvey/convey"
 )
 
 const app = "ibackup"
+const userPerms = 0700
 
 // TestMain builds ourself, starts a test server, runs client tests against the
 // server and cleans up afterwards. It's a full e2e integration test.
@@ -193,39 +196,30 @@ func waitForServer() bool {
 	return worked
 }
 
-func TestCliArgs(t *testing.T) {
-	t.Run("no backup sets", func(t *testing.T) {
+func TestStatus(t *testing.T) {
+	SkipConvey("With no server, status fails", t, func() {
+		confirmOutput(t, []string{"status"}, 1, "you must supply --url")
+	})
+
+	Convey("With no sets defined, status returns no sets", t, func() {
 		confirmOutput(t, []string{"status"}, 0, `Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
 Global put client status (/10): 0 creating collections; 0 currently uploading
 no backup sets`)
-
-		// expectedCode := 1
-		// if exitCode != expectedCode {
-		// 	t.Fatalf("unexpected error code, actual = %d, expected = %d", exitCode, expectedCode)
-		// }
-
-		// expected := "you must supply --url"
-
-		// if !reflect.DeepEqual(actual, expected) {
-		// 	t.Fatalf("actual = %s, expected = %s", actual, expected)
-		// }
 	})
 
-	dir := t.TempDir()
-	someDir := filepath.Join(dir, "some/dir")
+	Convey("Given an added set", t, func() {
+		dir := t.TempDir()
+		someDir := filepath.Join(dir, "some/dir")
 
-	err := os.MkdirAll(someDir, 0755)
-	if err != nil {
-		t.Fatalf("could not create test subdir: %s", err)
-	}
+		err := os.MkdirAll(someDir, userPerms)
+		So(err, ShouldBeNil)
 
-	if exitCode, _ := runBinary(t, "add", "--name", "testAdd", "--transformer",
-		"prefix="+dir+":/remote", "--path", someDir); exitCode != 0 {
-		t.Fatalf("failed to add file: exit code %d", exitCode)
-	}
+		exitCode, _ := runBinary(t, "add", "--name", "testAdd", "--transformer",
+			"prefix="+dir+":/remote", "--path", someDir)
+		So(exitCode, ShouldEqual, 0)
 
-	t.Run("path transformation", func(t *testing.T) {
-		confirmOutput(t, []string{"status"}, 0, `Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
+		Convey("Status tells you where input directories would get uploaded to", func() {
+			confirmOutput(t, []string{"status"}, 0, `Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
 Global put client status (/10): 0 creating collections; 0 currently uploading
 
 Name: testAdd
@@ -237,6 +231,7 @@ Num files: pending; Size files: pending
 Uploaded: 0; Failed: 0; Missing: 0
 Directories:
   `+someDir+" => /remote/some/dir")
+		})
 	})
 }
 
@@ -245,13 +240,8 @@ func confirmOutput(t *testing.T, args []string, expectedCode int, expected strin
 
 	exitCode, actual := runBinary(t, args...)
 
-	if exitCode != expectedCode {
-		t.Fatalf("unexpected error code, actual = %d, expected = %d", exitCode, expectedCode)
-	}
-
-	if actual != expected {
-		t.Fatalf("actual:\n%s\n\nexpected:\n%s", actual, expected)
-	}
+	So(exitCode, ShouldEqual, expectedCode)
+	So(actual, ShouldEqual, expected)
 }
 
 func runBinary(t *testing.T, args ...string) (int, string) {
