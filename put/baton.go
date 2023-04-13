@@ -288,7 +288,6 @@ func (b *Baton) doWithTimeoutAndRetries(op retry.Operation, clientIndex int, pat
 func (b *Baton) timeoutOpAndMakeNewClientOnError(op retry.Operation, clientIndex int, path string) retry.Operation {
 	return func() error {
 		err := timeoutOp(op, path)
-
 		if err != nil {
 			pool := ex.NewClientPool(ex.DefaultClientPoolParams, "")
 

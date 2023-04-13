@@ -80,7 +80,6 @@ func TestServer(t *testing.T) { //nolint:cyclop
 
 	admin := u.Username
 	minMBperSecondUploadSpeed := float64(10)
-	minTimeForUpload := 1 * time.Minute
 
 	Convey("Given a Server", t, func() {
 		logWriter := gas.NewStringLogger()
