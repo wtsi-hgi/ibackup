@@ -137,7 +137,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 				Name:        "set1",
 				Requester:   "jim",
 				Transformer: "prefix=" + localDir + ":" + remoteDir,
-				Monitor:     false,
+				Monitor:     0,
 			}
 
 			Convey("Which lets you login", func() {
@@ -150,14 +150,14 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						Name:        "set2",
 						Requester:   exampleSet.Requester,
 						Transformer: exampleSet.Transformer,
-						Monitor:     true,
+						Monitor:     5 * time.Minute,
 					}
 
 					exampleSet3 := &set.Set{
 						Name:        "set3",
 						Requester:   exampleSet.Requester,
 						Transformer: exampleSet.Transformer,
-						Monitor:     false,
+						Monitor:     0,
 					}
 
 					client := NewClient(addr, certPath, token)
@@ -470,6 +470,22 @@ func TestServer(t *testing.T) { //nolint:cyclop
 
 							err = client.stillWorkingOnRequests(client.getRequestIDsToTouch())
 							So(err, ShouldBeNil)
+						})
+
+						Convey("After discovery, monitored sets get discovered again after the appropriate time", func() {
+							exampleSet2.Monitor = 50 * time.Millisecond
+							err = client.AddOrUpdateSet(exampleSet2)
+							So(err, ShouldBeNil)
+
+							gotSet, err = client.GetSetByID(exampleSet2.Requester, exampleSet2.ID())
+							So(err, ShouldBeNil)
+							discovered := gotSet.LastDiscovery
+
+							<-time.After(100 * time.Millisecond)
+
+							gotSet, err = client.GetSetByID(exampleSet2.Requester, exampleSet2.ID())
+							So(err, ShouldBeNil)
+							So(gotSet.LastDiscovery, ShouldHappenAfter, discovered)
 						})
 
 						Convey("Stuck requests are recorded separately by the server, retrievable with QueueStatus", func() {
@@ -872,7 +888,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 									Name:        "set4",
 									Requester:   exampleSet.Requester,
 									Transformer: exampleSet.Transformer,
-									Monitor:     false,
+									Monitor:     0,
 								}
 
 								errCh <- client.AddOrUpdateSet(exampleSet4)
@@ -1508,8 +1524,8 @@ func TestServer(t *testing.T) { //nolint:cyclop
 					ok := <-racCalled
 					So(ok, ShouldBeTrue)
 
-					entries, err := s.db.GetFileEntries(exampleSet.ID())
-					So(err, ShouldBeNil)
+					entries, errg := s.db.GetFileEntries(exampleSet.ID())
+					So(errg, ShouldBeNil)
 					So(len(entries), ShouldEqual, 1)
 					So([]byte(entries[0].Path), ShouldResemble, []byte(path))
 

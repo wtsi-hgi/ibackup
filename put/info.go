@@ -105,6 +105,7 @@ func getUserAndGroupFromFileInfo(fi os.FileInfo, localPath string) (string, stri
 	}
 
 	gid := strconv.Itoa(int(stat.Gid))
+
 	g, err := user.LookupGroupId(gid)
 	if err != nil {
 		g = &user.Group{

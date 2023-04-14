@@ -77,7 +77,7 @@ issues:
         - dupl
   max-issues-per-linter: 0
   max-same-issues: 0
-  new-from-rev: master
+  # new-from-rev: master
 
 linters:
   disable-all: true

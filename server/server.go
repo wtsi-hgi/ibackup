@@ -90,6 +90,7 @@ type Server struct {
 	uploading           map[string]*put.Request
 	stuckRequests       map[string]*put.Request
 	mapMu               sync.RWMutex
+	monitor             *Monitor
 }
 
 // New creates a Server which can serve a REST API and website.
@@ -107,6 +108,12 @@ func New(logWriter io.Writer) *Server {
 		uploading:           make(map[string]*put.Request),
 		stuckRequests:       make(map[string]*put.Request),
 	}
+
+	s.monitor = NewMonitor(func(given *set.Set) {
+		if err := s.discoverSet(given); err != nil {
+			s.Logger.Printf("error discovering set during monitoring: %s", err)
+		}
+	})
 
 	s.SetStopCallBack(s.stop)
 
