@@ -25,6 +25,9 @@ Given an installation of go in your PATH, clone the repo, cd to it, and:
 make
 ```
 
+NB: `make` requires CGO, but you can build a statically compiled pure-go binary
+if your group information isn't stored in LDAP.
+
 Then copy the resulting executable to somewhere in your PATH.
 
 ## Requirements
