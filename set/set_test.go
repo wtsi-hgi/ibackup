@@ -28,6 +28,7 @@ package set
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"testing"
 	"time"
 
@@ -35,6 +36,8 @@ import (
 	"github.com/wtsi-hgi/ibackup/put"
 	bolt "go.etcd.io/bbolt"
 )
+
+const userPerms = 0700
 
 func TestSet(t *testing.T) {
 	Convey("Set statuses convert nicely to strings", t, func() {
@@ -702,6 +705,93 @@ func TestSet(t *testing.T) {
 					So(got, ShouldBeNil)
 				})
 			})
+		})
+	})
+}
+
+func TestBackup(t *testing.T) {
+	Convey("Given a example database, Backup() backs it up", t, func() {
+		dir := t.TempDir()
+
+		db, err := New(filepath.Join(dir, "db"))
+		So(err, ShouldBeNil)
+		So(db, ShouldNotBeNil)
+
+		example := &Set{
+			Name:      "checkme",
+			Requester: "requester",
+		}
+
+		err = db.AddOrUpdate(example)
+		So(err, ShouldBeNil)
+
+		backupFile := filepath.Join(dir, "backup")
+
+		err = db.Backup(backupFile)
+		So(err, ShouldBeNil)
+
+		testBackupOK := func(path string) {
+			backupUpDB, errn := New(path)
+			So(errn, ShouldBeNil)
+			So(backupUpDB, ShouldNotBeNil)
+
+			got, errg := backupUpDB.GetByNameAndRequester("checkme", "requester")
+			So(errg, ShouldBeNil)
+			So(got, ShouldResemble, example)
+		}
+
+		testBackupOK(backupFile)
+
+		Convey("Backup() again to the same path succeeds", func() {
+			err = db.Backup(backupFile)
+			So(err, ShouldBeNil)
+
+			testBackupOK(backupFile)
+
+			_, err = os.Stat(backupFile + backupExt)
+			So(err, ShouldNotBeNil)
+		})
+
+		Convey("Backup() again to the same path when it is not writable creates a temp file with the backup", func() {
+			err = os.Remove(backupFile)
+			So(err, ShouldBeNil)
+
+			err = os.Mkdir(backupFile, userPerms)
+			So(err, ShouldBeNil)
+
+			err = db.Backup(backupFile)
+			So(err, ShouldNotBeNil)
+
+			testBackupOK(backupFile + backupExt)
+		})
+
+		Convey("Backup()s queue if called multiple times simultaneously", func() {
+			n := 100
+			start := time.Now()
+			dCh := make(chan time.Duration, n)
+
+			for i := 0; i < 100; i++ {
+				go func() {
+					err := db.Backup(backupFile)
+					dCh <- time.Since(start)
+					So(err, ShouldNotBeNil)
+				}()
+			}
+
+			durs := make([]int, n)
+			i := 0
+
+			for dur := range dCh {
+				durs[i] = int(dur)
+				i++
+			}
+
+			sort.Ints(durs)
+			prev := 0
+
+			for _, dur := range durs {
+				So(dur, ShouldBeGreaterThan, prev)
+			}
 		})
 	})
 }

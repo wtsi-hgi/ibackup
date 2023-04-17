@@ -27,7 +27,9 @@ package set
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"syscall"
@@ -67,6 +69,8 @@ const (
 	separator                     = ":!:"
 	AttemptsToBeConsideredFailing = 3
 	maxFailedEntries              = 10
+
+	backupExt = ".backingup"
 )
 
 // DB is used to create and query a database for storing backup sets (lists of
@@ -861,4 +865,29 @@ func (d *DB) SetError(setID, errMsg string) error {
 
 		return b.Put(bid, d.encodeToBytes(set))
 	})
+}
+
+// Backup does an on-line backup of the database to the given file path.
+func (d *DB) Backup(path string) error {
+	backingUp := path + backupExt
+
+	f, err := os.Create(backingUp)
+	if err != nil {
+		return err
+	}
+
+	err = d.db.View(func(tx *bolt.Tx) error {
+		_, errw := tx.WriteTo(f)
+
+		return errw
+	})
+
+	errc := f.Close()
+
+	err = errors.Join(err, errc)
+	if err == nil {
+		err = os.Rename(backingUp, path)
+	}
+
+	return err
 }
