@@ -240,7 +240,13 @@ func displaySets(client *server.Client, sets []*set.Set, showNonFailedEntries bo
 func displaySet(s *set.Set) {
 	cliPrint("Name: %s\n", s.Name)
 	cliPrint("Transformer: %s\n", s.Transformer)
-	cliPrint("Monitored: %v; Archive: %v\n", s.Monitor, s.DeleteLocal)
+
+	monitored := "false"
+	if s.Monitor > 0 {
+		monitored = s.Monitor.String()
+	}
+
+	cliPrint("Monitored: %v; Archive: %v\n", monitored, s.DeleteLocal)
 
 	if s.Description != "" {
 		cliPrint("Description: %s\n", s.Description)

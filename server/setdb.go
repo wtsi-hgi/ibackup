@@ -215,26 +215,28 @@ func (s *Server) addDBEndpoints(authGroup *gin.RouterGroup) {
 // LoadSetDB() must already have been called. This is called when there is a PUT
 // on /rest/v1/auth/set.
 func (s *Server) putSet(c *gin.Context) {
-	set := &set.Set{}
+	given := &set.Set{}
 
-	if err := c.BindJSON(set); err != nil {
+	if err := c.BindJSON(given); err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
 		return
 	}
 
-	if !s.allowedAccess(c, set.Requester) {
+	if !s.allowedAccess(c, given.Requester) {
 		c.AbortWithError(http.StatusUnauthorized, ErrBadRequester) //nolint:errcheck
 
 		return
 	}
 
-	err := s.db.AddOrUpdate(set)
+	err := s.db.AddOrUpdate(given)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, err) //nolint:errcheck
 
 		return
 	}
+
+	s.monitorSet(given)
 
 	c.Status(http.StatusOK)
 }
@@ -775,6 +777,8 @@ func (s *Server) updateFileStatus(r *put.Request, trace string) error {
 		return err
 	}
 
+	s.monitorSetByName(r.Set, r.Requester)
+
 	rid := r.ID()
 
 	s.mapMu.Lock()
@@ -854,6 +858,8 @@ func (s *Server) recoverSet(given *set.Set) error {
 	if given.StartedDiscovery.After(given.LastDiscovery) {
 		return s.discoverSet(given)
 	}
+
+	s.monitorSet(given)
 
 	var transformer put.PathTransformer
 

@@ -93,8 +93,9 @@ type Set struct {
 	Transformer string
 
 	// Monitor the files and directories and re-upload them whenever they
-	// change. Optional, defaults to unmonitored (a one time upload of Entries).
-	Monitor bool
+	// change, checking for changes after the given amount of time. Optional,
+	// defaults to unmonitored (a one time upload of Entries).
+	Monitor time.Duration
 
 	// An optional longer free-text description of this backup set.
 	Description string

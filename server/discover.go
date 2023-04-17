@@ -157,6 +157,8 @@ func (s *Server) setEntryMissingIfNotExist(given *set.Set, path string) (bool, e
 
 	_, err := s.db.SetEntryStatus(r)
 
+	s.monitorSetByName(r.Set, r.Requester)
+
 	return true, err
 }
 
@@ -200,7 +202,11 @@ func (s *Server) discoverDirEntries(given *set.Set, filesDoneCh chan bool) (*set
 
 	<-filesDoneCh
 
-	return s.db.SetDiscoveredEntries(given.ID(), paths)
+	given, err = s.db.SetDiscoveredEntries(given.ID(), paths)
+
+	s.monitorSet(given)
+
+	return given, err
 }
 
 // doSetDirWalks walks the given dir entries of the given set concurrently,

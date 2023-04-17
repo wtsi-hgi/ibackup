@@ -30,6 +30,7 @@ import (
 	"bufio"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/wtsi-hgi/ibackup/server"
@@ -44,7 +45,7 @@ var setFiles string
 var setDirs string
 var setPath string
 var setNull bool
-var setMonitor bool
+var setMonitor string
 var setArchive bool
 var setUser string
 
@@ -88,8 +89,9 @@ You must also provide at least one of:
 You can also provide:
 --description : an longer description of the backup set, to describe its
                 purpose.
---monitor : recheck the saved file and directory paths every day, and backup any
-            new or altered files in the set.
+--monitor : recheck the saved file and directory paths after the given time
+            period (minimum 1hr) after last completion, and backup any new or
+            altered files in the set.
 --archive : delete local files after successfully uploading them. (The actual
             deletion is not yet implemented, but you can at least record the
 		    fact you wanted deletion now, so they can be deleted in the future.)
@@ -111,6 +113,20 @@ option to add sets on behalf of other users.
 
 		if setTransformer == "" {
 			die("-t must be provided")
+		}
+
+		var monitorDuration time.Duration
+		if setMonitor != "" {
+			var err error
+
+			monitorDuration, err = time.ParseDuration(setMonitor)
+			if err != nil {
+				die("invalid monitor duration: %s", err)
+			}
+
+			if monitorDuration < 1*time.Hour {
+				die("monitor duration must be 1h or more, not %s", monitorDuration)
+			}
 		}
 
 		client, err := newServerClient(serverURL, serverCert)
@@ -139,7 +155,7 @@ option to add sets on behalf of other users.
 			}
 		}
 
-		err = add(client, setName, setUser, setTransformer, setDescription, setMonitor, setArchive, files, dirs)
+		err = add(client, setName, setUser, setTransformer, setDescription, monitorDuration, setArchive, files, dirs)
 		if err != nil {
 			die(err.Error())
 		}
@@ -164,8 +180,8 @@ func init() {
 	addCmd.Flags().BoolVarP(&setNull, "null", "0", false,
 		"input paths are terminated by a null character instead of a new line")
 	addCmd.Flags().StringVar(&setDescription, "description", "", "a long description of this backup set")
-	addCmd.Flags().BoolVarP(&setMonitor, "monitor", "m", false,
-		"monitor the paths daily for changes and new files to upload")
+	addCmd.Flags().StringVarP(&setMonitor, "monitor", "m", "",
+		"monitor the paths for changes and new files to upload the given time period (eg. 1d for 1 day) after completion")
 	addCmd.Flags().BoolVarP(&setArchive, "archive", "a", false,
 		"delete local files after successfully uploading them (deletions not yet implemented)")
 	addCmd.Flags().StringVar(&setUser, "user", currentUsername(),
@@ -213,7 +229,7 @@ func readPaths(file string, splitter bufio.SplitFunc) []string {
 
 // add does the main job of sending the backup set details to the server.
 func add(client *server.Client, name, requester, transformer, description string,
-	monitor, archive bool, files, dirs []string) error {
+	monitor time.Duration, archive bool, files, dirs []string) error {
 	set := &set.Set{
 		Name:        name,
 		Requester:   requester,

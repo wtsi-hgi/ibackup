@@ -672,6 +672,24 @@ func (d *DB) GetByRequester(requester string) ([]*Set, error) {
 	return sets, err
 }
 
+// GetByNameAndRequester returns the set with the given name and requester.
+//
+// Returns nil error when no set found.
+func (d *DB) GetByNameAndRequester(name, requester string) (*Set, error) {
+	sets, err := d.GetByRequester(requester)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, set := range sets {
+		if set.Name == name {
+			return set, nil
+		}
+	}
+
+	return nil, nil //nolint:nilnil
+}
+
 // GetByID returns the Sets with the given ID previously added to the database.
 // Returns nil if such a set does not exist.
 func (d *DB) GetByID(id string) *Set {
