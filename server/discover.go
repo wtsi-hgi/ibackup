@@ -157,6 +157,8 @@ func (s *Server) setEntryMissingIfNotExist(given *set.Set, path string) (bool, e
 
 	_, err := s.db.SetEntryStatus(r)
 
+	s.monitorSetByName(r.Set, r.Requester)
+
 	return true, err
 }
 

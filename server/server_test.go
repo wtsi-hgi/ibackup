@@ -473,7 +473,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						})
 
 						Convey("After discovery, monitored sets get discovered again after the appropriate time", func() {
-							exampleSet2.Monitor = 50 * time.Millisecond
+							exampleSet2.Monitor = 500 * time.Millisecond
 							err = client.AddOrUpdateSet(exampleSet2)
 							So(err, ShouldBeNil)
 
@@ -481,7 +481,43 @@ func TestServer(t *testing.T) { //nolint:cyclop
 							So(err, ShouldBeNil)
 							discovered := gotSet.LastDiscovery
 
-							<-time.After(100 * time.Millisecond)
+							<-time.After(1000 * time.Millisecond)
+
+							gotSet, err = client.GetSetByID(exampleSet2.Requester, exampleSet2.ID())
+							So(err, ShouldBeNil)
+							So(gotSet.LastDiscovery, ShouldEqual, discovered)
+
+							token, errl = gas.Login(addr, certPath, admin, "pass")
+							So(errl, ShouldBeNil)
+
+							client = NewClient(addr, certPath, token)
+
+							requests, errg := client.GetSomeUploadRequests()
+							So(errg, ShouldBeNil)
+							So(len(requests), ShouldEqual, expectedRequests)
+
+							for _, request := range requests {
+								if request.Set != exampleSet2.Name {
+									continue
+								}
+
+								request.Status = put.RequestStatusUploading
+								err = client.UpdateFileStatus(request)
+								So(err, ShouldBeNil)
+
+								request.Status = put.RequestStatusUploaded
+								err = client.UpdateFileStatus(request)
+								So(err, ShouldBeNil)
+
+								break
+							}
+
+							gotSet, err = client.GetSetByID(exampleSet2.Requester, exampleSet2.ID())
+							So(err, ShouldBeNil)
+							So(gotSet.Status, ShouldEqual, set.Complete)
+							So(gotSet.LastDiscovery, ShouldEqual, discovered)
+
+							<-time.After(1000 * time.Millisecond)
 
 							gotSet, err = client.GetSetByID(exampleSet2.Requester, exampleSet2.ID())
 							So(err, ShouldBeNil)

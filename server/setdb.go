@@ -777,6 +777,8 @@ func (s *Server) updateFileStatus(r *put.Request, trace string) error {
 		return err
 	}
 
+	s.monitorSetByName(r.Set, r.Requester)
+
 	rid := r.ID()
 
 	s.mapMu.Lock()

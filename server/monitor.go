@@ -96,9 +96,15 @@ func (m *monitorHeap) Pop() any {
 func (m *Monitor) Add(s *set.Set) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	last := s.LastDiscovery
+	if s.LastCompleted.After(last) {
+		last = s.LastCompleted
+	}
+
 	heap.Push(&m.monitorHeap, MonitoredSet{
 		set:  s,
-		next: s.LastDiscovery.Add(s.Monitor),
+		next: last.Add(s.Monitor),
 	})
 
 	nextDiscovery := m.monitorHeap.nextDiscovery()
@@ -151,11 +157,20 @@ func (m *Monitor) NextSet() *set.Set {
 // monitorSet sets up up discovery monitoring on the passed set if set Monitor
 // duration is defined.
 func (s *Server) monitorSet(given *set.Set) {
-	if given.Monitor == 0 {
+	if given.Monitor == 0 || given.Status != set.Complete {
 		return
 	}
 
 	s.monitor.Add(given)
+}
+
+// monitorSetByName sets up discovery monitoring on a set defined by the given
+// name and requester.
+func (s *Server) monitorSetByName(name, requester string) {
+	given, err := s.db.GetByNameAndRequester(name, requester)
+	if err == nil {
+		s.monitorSet(given)
+	}
 }
 
 // monitorSets is called in a goroutine by monitorSet and should not be called
