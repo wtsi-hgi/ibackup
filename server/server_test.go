@@ -1579,8 +1579,8 @@ func TestServer(t *testing.T) { //nolint:cyclop
 					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldBeNil)
 
-					example, err := client.GetExampleFile(exampleSet.ID())
-					So(err, ShouldBeNil)
+					example, errg := client.GetExampleFile(exampleSet.ID())
+					So(errg, ShouldBeNil)
 					So(example, ShouldBeNil)
 
 					pathExpected := filepath.Join(localDir, "file1.txt")
