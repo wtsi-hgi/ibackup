@@ -97,8 +97,8 @@ func TestServer(t *testing.T) { //nolint:cyclop
 			err = s.MakeQueueEndPoints()
 			So(err, ShouldBeNil)
 
-			path := createDBLocation(t)
-			err = s.LoadSetDB(path)
+			dbPath := createDBLocation(t)
+			err = s.LoadSetDB(dbPath)
 			So(err, ShouldBeNil)
 
 			addr, dfunc, err := gas.StartTestServer(s, certPath, keyPath)
@@ -980,6 +980,8 @@ func TestServer(t *testing.T) { //nolint:cyclop
 
 				logger := log15.New()
 
+				backupPath := dbPath + ".bk"
+
 				Convey("and add a set", func() {
 					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldBeNil)
@@ -1005,6 +1007,11 @@ func TestServer(t *testing.T) { //nolint:cyclop
 					So(gotSet.Status, ShouldEqual, set.PendingUpload)
 					So(gotSet.NumFiles, ShouldEqual, len(discovers))
 					So(gotSet.Uploaded, ShouldEqual, 0)
+
+					Convey("which doesn't result in a backed up db if not requested", func() {
+						_, err = os.Stat(backupPath)
+						So(err, ShouldNotBeNil)
+					})
 
 					Convey("And also add sets as other users and retrieve them all", func() {
 						otherUser := "sam"
@@ -1594,6 +1601,49 @@ func TestServer(t *testing.T) { //nolint:cyclop
 					So(err, ShouldBeNil)
 					So(example.Path, ShouldEqual, pathExpected)
 				})
+
+				Convey("and enable database backups which trigger at appropriate times", func() {
+					s.EnableDatabaseBackups(backupPath)
+
+					_, err = os.Stat(backupPath)
+					So(err, ShouldNotBeNil)
+
+					err = client.AddOrUpdateSet(exampleSet)
+					So(err, ShouldBeNil)
+
+					exists := waitForFile(backupPath)
+					So(exists, ShouldBeTrue)
+
+					stat, err := os.Stat(backupPath)
+					So(err, ShouldBeNil)
+
+					lastMod := stat.ModTime()
+
+					pathToBackup := filepath.Join(localDir, "a.file")
+					createFile(t, pathToBackup, 1)
+
+					err = client.SetFiles(exampleSet.ID(), []string{pathToBackup})
+					So(err, ShouldBeNil)
+
+					err = client.TriggerDiscovery(exampleSet.ID())
+					So(err, ShouldBeNil)
+
+					ok := <-racCalled
+					So(ok, ShouldBeTrue)
+
+					changed := waitForFileChange(backupPath, lastMod)
+					So(changed, ShouldBeTrue)
+
+					stat, err = os.Stat(backupPath)
+					So(err, ShouldBeNil)
+
+					lastMod = stat.ModTime()
+
+					putSetWithOneFile(t, handler, client, exampleSet, minMBperSecondUploadSpeed, logger)
+
+					changed = waitForFileChange(backupPath, lastMod)
+					So(changed, ShouldBeTrue)
+				})
 			})
 		})
 	})
@@ -1759,4 +1809,46 @@ func putSetWithOneFile(t *testing.T, handler put.Handler, client *Client,
 	So(gotSet.Status, ShouldEqual, set.Complete)
 	So(gotSet.NumFiles, ShouldEqual, 1)
 	So(gotSet.Uploaded, ShouldEqual, 1)
+}
+
+// waitForFile waits for up to 5 seconds for the given path to exist, and
+// returns false if it doesn't.
+func waitForFile(path string) bool {
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+
+	timeout := time.NewTimer(5 * time.Second)
+
+	for {
+		select {
+		case <-timeout.C:
+			return false
+		case <-ticker.C:
+			_, err := os.Stat(path)
+			if err == nil {
+				return true
+			}
+		}
+	}
+}
+
+// waitForFileChange waits for up to 5 seconds for the given path to change, and
+// returns false if it doesn't.
+func waitForFileChange(path string, lastMod time.Time) bool {
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+
+	timeout := time.NewTimer(5 * time.Second)
+
+	for {
+		select {
+		case <-timeout.C:
+			return false
+		case <-ticker.C:
+			stat, err := os.Stat(path)
+			if err == nil && stat.ModTime().After(lastMod) {
+				return true
+			}
+		}
+	}
 }

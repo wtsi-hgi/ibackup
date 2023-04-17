@@ -91,6 +91,7 @@ type Server struct {
 	stuckRequests       map[string]*put.Request
 	mapMu               sync.RWMutex
 	monitor             *Monitor
+	backupPath          string
 }
 
 // New creates a Server which can serve a REST API and website.
@@ -169,6 +170,10 @@ func (s *Server) EnableJobSubmission(putCmd, deployment, cwd, queue string, numC
 	s.numClients = numClients
 
 	return nil
+}
+
+func (s *Server) EnableDatabaseBackups(path string) {
+	s.backupPath = path
 }
 
 // rac is our queue's ready added callback which will get all ready put Requests

@@ -205,6 +205,7 @@ func (s *Server) discoverDirEntries(given *set.Set, filesDoneCh chan bool) (*set
 	given, err = s.db.SetDiscoveredEntries(given.ID(), paths)
 
 	s.monitorSet(given)
+	s.tryBackup()
 
 	return given, err
 }
