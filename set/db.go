@@ -32,6 +32,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -78,6 +79,7 @@ const (
 type DB struct {
 	db *bolt.DB
 	ch codec.Handle
+	mu sync.Mutex
 }
 
 // New returns a *DB that can be used to create or query a set database. Provide
@@ -869,6 +871,9 @@ func (d *DB) SetError(setID, errMsg string) error {
 
 // Backup does an on-line backup of the database to the given file path.
 func (d *DB) Backup(path string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
 	backingUp := path + backupExt
 
 	f, err := os.Create(backingUp)
@@ -885,9 +890,9 @@ func (d *DB) Backup(path string) error {
 	errc := f.Close()
 
 	err = errors.Join(err, errc)
-	if err == nil {
-		err = os.Rename(backingUp, path)
+	if err != nil {
+		return err
 	}
 
-	return err
+	return os.Rename(backingUp, path)
 }

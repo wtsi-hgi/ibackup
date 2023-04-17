@@ -28,7 +28,6 @@ package set
 import (
 	"os"
 	"path/filepath"
-	"sort"
 	"testing"
 	"time"
 
@@ -767,31 +766,20 @@ func TestBackup(t *testing.T) {
 
 		Convey("Backup()s queue if called multiple times simultaneously", func() {
 			n := 100
-			start := time.Now()
-			dCh := make(chan time.Duration, n)
+			errCh := make(chan error, n)
 
-			for i := 0; i < 100; i++ {
+			for i := 0; i < n; i++ {
 				go func() {
 					err := db.Backup(backupFile)
-					dCh <- time.Since(start)
-					So(err, ShouldNotBeNil)
+					errCh <- err
 				}()
 			}
 
-			durs := make([]int, n)
-			i := 0
-
-			for dur := range dCh {
-				durs[i] = int(dur)
-				i++
+			for i := 0; i < n; i++ {
+				So(<-errCh, ShouldBeNil)
 			}
 
-			sort.Ints(durs)
-			prev := 0
-
-			for _, dur := range durs {
-				So(dur, ShouldBeGreaterThan, prev)
-			}
+			close(errCh)
 		})
 	})
 }
