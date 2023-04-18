@@ -104,10 +104,15 @@ func startTestServer() (func(), bool) {
 		return func() { os.RemoveAll(dir) }, false
 	}
 
+	logFile := filepath.Join(dir, "log")
+
 	cmd := exec.Command("./"+app, "server", "-k", tv.key, "--logfile", //nolint:gosec
-		filepath.Join(dir, "log"), "-s", tv.ldapServer, "-l", tv.ldapLookup, "--debug",
+		logFile, "-s", tv.ldapServer, "-l", tv.ldapLookup, "--debug",
 		filepath.Join(dir, "db"),
 	)
+
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 
 	if errs := cmd.Start(); errs != nil {
 		failMainTest(errs.Error())
@@ -126,6 +131,11 @@ func startTestServer() (func(), bool) {
 		if errw != nil && errw.Error() != "signal: killed" {
 			failMainTest(errw.Error())
 		}
+
+		// content, errr := os.ReadFile(logFile)
+		// if errr == nil {
+		// 	fmt.Printf("\nserver log: %s\n", string(content))
+		// }
 
 		os.RemoveAll(dir)
 	}, worked
@@ -230,6 +240,8 @@ no backup sets`)
 			"prefix="+dir+":/remote", "--path", someDir)
 		So(exitCode, ShouldEqual, 0)
 
+		<-time.After(250 * time.Millisecond)
+
 		Convey("Status tells you where input directories would get uploaded to", func() {
 			confirmOutput(t, []string{"status"}, 0, `Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
 Global put client status (/10): 0 creating collections; 0 currently uploading
@@ -237,16 +249,17 @@ Global put client status (/10): 0 creating collections; 0 currently uploading
 Name: testAdd
 Transformer: prefix=`+dir+`:/remote
 Monitored: false; Archive: false
-Status: pending upload
+Status: complete
 Discovery:
-Num files: pending; Size files: pending
+Num files: 0; Size files: 0 B
 Uploaded: 0; Failed: 0; Missing: 0
+Completed in: 0s
 Directories:
   `+someDir+" => /remote/some/dir")
 		})
 	})
 
-	Convey("Give an added set defined with files", t, func() {
+	Convey("Given an added set defined with files", t, func() {
 		dir := t.TempDir()
 		tempTestFile, err := os.CreateTemp(dir, "testFileSet")
 		So(err, ShouldBeNil)
@@ -258,6 +271,8 @@ Directories:
 		exitCode, _ := runBinary(t, "add", "--files", tempTestFile.Name(),
 			"--name", "testAddFiles", "--transformer", "prefix="+dir+":/remote")
 		So(exitCode, ShouldEqual, 0)
+
+		<-time.After(250 * time.Millisecond)
 
 		Convey("Status tells you an example of where input files would get uploaded to", func() {
 			confirmOutput(t, []string{"status", "--name", "testAddFiles"}, 0,

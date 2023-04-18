@@ -54,7 +54,7 @@ type Monitor struct {
 	mu                sync.Mutex
 	monitorHeap       monitorHeap
 	monitoringStarted bool
-	monitorCh         chan time.Time
+	monitorCh         chan struct{}
 	callback          MonitorCallback
 }
 
@@ -65,7 +65,7 @@ func NewMonitor(fn MonitorCallback) *Monitor {
 		monitorHeap: monitorHeap{
 			byID: make(map[string]int),
 		},
-		monitorCh: make(chan time.Time, 1),
+		monitorCh: make(chan struct{}, 1),
 		callback:  fn,
 	}
 
@@ -133,7 +133,7 @@ func (m *Monitor) Add(s *set.Set) {
 
 		go m.monitorSets(nextDiscovery)
 	} else {
-		m.monitorCh <- nextDiscovery
+		m.monitorCh <- struct{}{}
 	}
 }
 
@@ -199,18 +199,12 @@ func (m *Monitor) monitorSets(nextDiscovery time.Time) {
 
 	for {
 		select {
-		case discovery := <-m.monitorCh:
-			// nextDiscovery = m.monitorHeap.nextDiscovery()
-			// timer.Reset(time.Until(nextDiscovery))
-
-			nextDiscovery = m.monitorHeap.nextDiscovery()
-
-			if discovery.Before(nextDiscovery) {
-				nextDiscovery = discovery
-				timer.Reset(time.Until(nextDiscovery))
-			}
+		case <-m.monitorCh:
+			nextDiscovery = m.NextDiscovery()
+			timer.Reset(time.Until(nextDiscovery))
 		case <-timer.C:
 			m.mu.Lock()
+
 			given := m.monitorHeap.nextSet()
 			if given == nil {
 				m.monitoringStarted = false

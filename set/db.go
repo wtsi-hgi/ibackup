@@ -326,6 +326,7 @@ func (d *DB) SetDiscoveredEntries(setID string, paths []string) (*Set, error) {
 
 		if numFiles == 0 {
 			set.Status = Complete
+			set.LastCompleted = time.Now()
 		} else {
 			set.Status = PendingUpload
 		}

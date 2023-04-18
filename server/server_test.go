@@ -653,9 +653,6 @@ func TestServer(t *testing.T) { //nolint:cyclop
 								err = client.TriggerDiscovery(emptySet.ID())
 								So(err, ShouldBeNil)
 
-								ok = <-racCalled
-								So(ok, ShouldBeTrue)
-
 								gotSet, err = client.GetSetByID(emptySet.Requester, emptySet.ID())
 								So(err, ShouldBeNil)
 
@@ -711,8 +708,6 @@ func TestServer(t *testing.T) { //nolint:cyclop
 								So(gotSet.LastDiscovery, ShouldEqual, discovered)
 							})
 						})
-
-						return
 
 						Convey("Stuck requests are recorded separately by the server, retrievable with QueueStatus", func() {
 							token, errl = gas.Login(addr, certPath, admin, "pass")
@@ -1133,8 +1128,6 @@ func TestServer(t *testing.T) { //nolint:cyclop
 					})
 				})
 
-				return
-
 				Convey("But you can't add sets as other users and can only retrieve your own", func() {
 					otherUser := "sam"
 					exampleSet2 := &set.Set{
@@ -1160,8 +1153,6 @@ func TestServer(t *testing.T) { //nolint:cyclop
 					So(len(got), ShouldEqual, 0)
 				})
 			})
-
-			return
 
 			Convey("Which lets you login as admin", func() {
 				token, errl := gas.Login(addr, certPath, admin, "pass")
