@@ -774,6 +774,29 @@ func TestBackup(t *testing.T) {
 			n := 100
 			errCh := make(chan error, n)
 
+			stopCh := make(chan struct{})
+			modCheckerStopped := make(chan struct{})
+			modTimes := make(map[time.Time]struct{})
+
+			go func() {
+				ticker := time.NewTicker(5 * time.Millisecond)
+				defer ticker.Stop()
+
+				for {
+					select {
+					case <-stopCh:
+						close(modCheckerStopped)
+
+						return
+					case <-ticker.C:
+						stat, errs := os.Stat(backupFile)
+						if errs == nil {
+							modTimes[stat.ModTime()] = struct{}{}
+						}
+					}
+				}
+			}()
+
 			for i := 0; i < n; i++ {
 				go func() {
 					err := db.Backup(backupFile)
@@ -786,6 +809,10 @@ func TestBackup(t *testing.T) {
 			}
 
 			close(errCh)
+
+			close(stopCh)
+			<-modCheckerStopped
+			So(len(modTimes), ShouldEqual, 2)
 		})
 	})
 }
