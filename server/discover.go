@@ -204,10 +204,17 @@ func (s *Server) discoverDirEntries(given *set.Set, filesDoneCh chan bool) (*set
 
 	given, err = s.db.SetDiscoveredEntries(given.ID(), paths)
 
-	s.monitorSet(given)
-	s.tryBackup()
+	s.handleNewlyDefinedSets(given)
 
 	return given, err
+}
+
+// handleNewlyDefinedSets is called when a set has had all its entries
+// discovered and stored in the database. It then ensures the set is
+// appropriately monitored, and we trigger a database backup.
+func (s *Server) handleNewlyDefinedSets(given *set.Set) {
+	s.monitorSet(given)
+	s.tryBackup()
 }
 
 // doSetDirWalks walks the given dir entries of the given set concurrently,

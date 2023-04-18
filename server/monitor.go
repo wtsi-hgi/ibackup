@@ -41,7 +41,10 @@ type MonitoredSet struct {
 }
 
 // monitorHeap is a time sorted heap of sets.
-type monitorHeap []MonitoredSet
+type monitorHeap struct {
+	slice []MonitoredSet
+	byID  map[string]int
+}
 
 // MonitorCallback receives a set when it is time for it to be discovered.
 type MonitorCallback func(*set.Set)
@@ -59,6 +62,9 @@ type Monitor struct {
 // you add to this monitor needs to be discovered.
 func NewMonitor(fn MonitorCallback) *Monitor {
 	m := &Monitor{
+		monitorHeap: monitorHeap{
+			byID: make(map[string]int),
+		},
 		monitorCh: make(chan time.Time, 1),
 		callback:  fn,
 	}
@@ -68,26 +74,31 @@ func NewMonitor(fn MonitorCallback) *Monitor {
 	return m
 }
 
-func (m monitorHeap) Len() int {
-	return len(m)
+func (m *monitorHeap) Len() int {
+	return len(m.slice)
 }
 
-func (m monitorHeap) Less(i, j int) bool {
-	return m[i].next.Before(m[j].next)
+func (m *monitorHeap) Less(i, j int) bool {
+	return m.slice[i].next.Before(m.slice[j].next)
 }
 
-func (m monitorHeap) Swap(i, j int) {
-	m[i], m[j] = m[j], m[i]
+func (m *monitorHeap) Swap(i, j int) {
+	m.slice[i], m.slice[j] = m.slice[j], m.slice[i]
+
+	m.byID[m.slice[i].set.ID()] = i
+	m.byID[m.slice[j].set.ID()] = j
 }
 
 func (m *monitorHeap) Push(x any) {
 	s := x.(MonitoredSet) //nolint:errcheck,forcetypeassert
-	*m = append(*m, s)
+	m.slice = append(m.slice, s)
+	m.byID[s.set.ID()] = len(m.slice) - 1
 }
 
 func (m *monitorHeap) Pop() any {
-	last := (*m)[len(*m)-1]
-	*m = (*m)[:len(*m)-1]
+	last := m.slice[len(m.slice)-1]
+	m.slice = m.slice[:len(m.slice)-1]
+	delete(m.byID, last.set.ID())
 
 	return last
 }
@@ -102,10 +113,18 @@ func (m *Monitor) Add(s *set.Set) {
 		last = s.LastCompleted
 	}
 
-	heap.Push(&m.monitorHeap, MonitoredSet{
+	ms := MonitoredSet{
 		set:  s,
 		next: last.Add(s.Monitor),
-	})
+	}
+
+	currentIndex, found := m.monitorHeap.byID[s.ID()]
+	if found {
+		m.monitorHeap.slice[currentIndex] = ms
+		heap.Fix(&m.monitorHeap, currentIndex)
+	} else {
+		heap.Push(&m.monitorHeap, ms)
+	}
 
 	nextDiscovery := m.monitorHeap.nextDiscovery()
 
@@ -119,11 +138,11 @@ func (m *Monitor) Add(s *set.Set) {
 }
 
 func (m *monitorHeap) nextDiscovery() time.Time {
-	if len(*m) == 0 {
+	if len(m.slice) == 0 {
 		return time.Time{}
 	}
 
-	return (*m)[0].next
+	return m.slice[0].next
 }
 
 // NextDiscovery retrieves the discovery time of the next set in the heap.
@@ -137,7 +156,7 @@ func (m *Monitor) NextDiscovery() time.Time {
 }
 
 func (m *monitorHeap) nextSet() *set.Set {
-	if len(*m) == 0 {
+	if len(m.slice) == 0 {
 		return nil
 	}
 
@@ -181,13 +200,17 @@ func (m *Monitor) monitorSets(nextDiscovery time.Time) {
 	for {
 		select {
 		case discovery := <-m.monitorCh:
+			// nextDiscovery = m.monitorHeap.nextDiscovery()
+			// timer.Reset(time.Until(nextDiscovery))
+
+			nextDiscovery = m.monitorHeap.nextDiscovery()
+
 			if discovery.Before(nextDiscovery) {
 				nextDiscovery = discovery
 				timer.Reset(time.Until(nextDiscovery))
 			}
 		case <-timer.C:
 			m.mu.Lock()
-
 			given := m.monitorHeap.nextSet()
 			if given == nil {
 				m.monitoringStarted = false

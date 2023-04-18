@@ -296,7 +296,8 @@ func (d *DB) getSetByID(tx *bolt.Tx, setID string) (*Set, []byte, *bolt.Bucket, 
 // directory entries. Only supply absolute paths to files.
 //
 // It also updates LastDiscovery, sets NumFiles and sets status to
-// PendingUpload.
+// PendingUpload unless the set contains no files, in which case it sets status
+// to Complete.
 //
 // Returns the updated set and an error if the setID isn't in the database.
 func (d *DB) SetDiscoveredEntries(setID string, paths []string) (*Set, error) {
@@ -322,7 +323,12 @@ func (d *DB) SetDiscoveredEntries(setID string, paths []string) (*Set, error) {
 
 		set.LastDiscovery = time.Now()
 		set.NumFiles = numFiles
-		set.Status = PendingUpload
+
+		if numFiles == 0 {
+			set.Status = Complete
+		} else {
+			set.Status = PendingUpload
+		}
 
 		updatedSet = set
 
