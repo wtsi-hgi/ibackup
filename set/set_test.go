@@ -770,7 +770,7 @@ func TestBackup(t *testing.T) {
 			testBackupOK(backupFile + backupExt)
 		})
 
-		Convey("Backup()s queue if called multiple times simultaneously", func() {
+		Convey("Backup()s queue if called multiple times simultaneously, resulting in 1 extra backup", func() {
 			n := 100
 			errCh := make(chan error, n)
 
