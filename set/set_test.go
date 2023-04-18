@@ -99,6 +99,12 @@ func TestSet(t *testing.T) {
 		So(set.Size(), ShouldEqual, "pending")
 
 		set.NumFiles = 3
+
+		So(set.Count(), ShouldEqual, "pending")
+		So(set.Size(), ShouldEqual, "pending")
+
+		set.LastDiscovery = time.Now()
+
 		So(set.Count(), ShouldEqual, "3")
 		So(set.Size(), ShouldEqual, "0 B (and counting)")
 
