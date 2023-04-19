@@ -27,9 +27,14 @@ package set
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -67,6 +72,8 @@ const (
 	separator                     = ":!:"
 	AttemptsToBeConsideredFailing = 3
 	maxFailedEntries              = 10
+
+	backupExt = ".backingup"
 )
 
 // DB is used to create and query a database for storing backup sets (lists of
@@ -74,14 +81,24 @@ const (
 type DB struct {
 	db *bolt.DB
 	ch codec.Handle
+
+	mu                    sync.Mutex
+	backupPath            string
+	minTimeBetweenBackups time.Duration
+	remoteBackupPath      string
+	remoteBackupHandler   put.Handler
+
+	rebackup atomic.Bool
 }
 
 // New returns a *DB that can be used to create or query a set database. Provide
 // the path to the database file.
 //
+// Optionally, also provide a path to backup the database to.
+//
 // Returns an error if path exists but can't be opened, or if it doesn't exist
 // and can't be created.
-func New(path string) (*DB, error) {
+func New(path, backupPath string) (*DB, error) {
 	db, err := bolt.Open(path, dbOpenMode, &bolt.Options{
 		NoFreelistSync: true,
 		NoGrowSync:     true,
@@ -93,23 +110,24 @@ func New(path string) (*DB, error) {
 	}
 
 	err = db.Update(func(tx *bolt.Tx) error {
-		_, errc := tx.CreateBucketIfNotExists([]byte(setsBucket))
-		if errc != nil {
+		if _, errc := tx.CreateBucketIfNotExists([]byte(setsBucket)); errc != nil {
 			return errc
 		}
 
-		if _, errc = tx.CreateBucketIfNotExists([]byte(failedBucket)); errc != nil {
+		if _, errc := tx.CreateBucketIfNotExists([]byte(failedBucket)); errc != nil {
 			return errc
 		}
 
-		_, errc = tx.CreateBucketIfNotExists([]byte(userToSetBucket))
+		_, errc := tx.CreateBucketIfNotExists([]byte(userToSetBucket))
 
 		return errc
 	})
 
 	return &DB{
-		db: db,
-		ch: new(codec.BincHandle),
+		db:                    db,
+		ch:                    new(codec.BincHandle),
+		backupPath:            backupPath,
+		minTimeBetweenBackups: 1 * time.Second,
 	}, err
 }
 
@@ -290,7 +308,8 @@ func (d *DB) getSetByID(tx *bolt.Tx, setID string) (*Set, []byte, *bolt.Bucket, 
 // directory entries. Only supply absolute paths to files.
 //
 // It also updates LastDiscovery, sets NumFiles and sets status to
-// PendingUpload.
+// PendingUpload unless the set contains no files, in which case it sets status
+// to Complete.
 //
 // Returns the updated set and an error if the setID isn't in the database.
 func (d *DB) SetDiscoveredEntries(setID string, paths []string) (*Set, error) {
@@ -316,7 +335,13 @@ func (d *DB) SetDiscoveredEntries(setID string, paths []string) (*Set, error) {
 
 		set.LastDiscovery = time.Now()
 		set.NumFiles = numFiles
-		set.Status = PendingUpload
+
+		if numFiles == 0 {
+			set.Status = Complete
+			set.LastCompleted = time.Now()
+		} else {
+			set.Status = PendingUpload
+		}
 
 		updatedSet = set
 
@@ -861,4 +886,117 @@ func (d *DB) SetError(setID, errMsg string) error {
 
 		return b.Put(bid, d.encodeToBytes(set))
 	})
+}
+
+// Backup does an on-line backup of the database to the given file path. There's
+// at least 1 second in between backups, and incoming backup requests are noted
+// during an on-going backup, with 1 further backup occurring after the on-going
+// one completes.
+func (d *DB) Backup() error {
+	if d.backupPath == "" {
+		return nil
+	}
+
+	if !d.mu.TryLock() {
+		d.rebackup.Store(true)
+
+		return nil
+	}
+	defer d.mu.Unlock()
+
+	for {
+		if err := d.doBackup(); err != nil {
+			d.rebackup.Store(false)
+
+			return err
+		}
+
+		<-time.After(d.minTimeBetweenBackups)
+
+		if !d.rebackup.CompareAndSwap(true, false) {
+			break
+		}
+	}
+
+	return nil
+}
+
+func (d *DB) doBackup() error {
+	backingUp := d.backupPath + backupExt
+
+	f, err := os.Create(backingUp)
+	if err != nil {
+		return err
+	}
+
+	err = d.db.View(func(tx *bolt.Tx) error {
+		_, errw := tx.WriteTo(f)
+
+		return errw
+	})
+
+	errc := f.Close()
+
+	err = errors.Join(err, errc)
+	if err != nil {
+		return err
+	}
+
+	err = os.Rename(backingUp, d.backupPath)
+	if err != nil {
+		return err
+	}
+
+	return d.doRemoteBackup()
+}
+
+func (d *DB) doRemoteBackup() error {
+	if d.remoteBackupPath == "" {
+		return nil
+	}
+
+	dir := filepath.Dir(d.remoteBackupPath)
+
+	err := d.remoteBackupHandler.EnsureCollection(dir)
+	if err != nil {
+		return err
+	}
+
+	err = d.remoteBackupHandler.CollectionsDone()
+	if err != nil {
+		return err
+	}
+
+	return d.remoteBackupHandler.Put(&put.Request{
+		Local:  d.backupPath,
+		Remote: d.remoteBackupPath,
+	})
+}
+
+// SetMinimumTimeBetweenBackups sets the minimum time between successive
+// backups. Defaults to 1 second if this method not called.
+func (d *DB) SetMinimumTimeBetweenBackups(dur time.Duration) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	d.minTimeBetweenBackups = dur
+}
+
+// SetBackupPath sets the backup path, for if you created the DB without
+// providing one.
+func (d *DB) SetBackupPath(path string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	d.backupPath = path
+}
+
+// EnableRemoteBackups causes the backup file to also be backed up to the
+// remote path.
+func (d *DB) EnableRemoteBackups(remotePath string, handler put.Handler) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	d.remoteBackupPath = remotePath
+	d.remoteBackupHandler = handler
 }

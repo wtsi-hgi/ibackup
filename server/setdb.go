@@ -107,9 +107,11 @@ const (
 	allUsers      = "all"
 )
 
-// LoadSetDB loads the given set.db or creates it if it doesn't exist, and adds
-// a number of endpoints to the REST API for working with the set and its
-// entries:
+// LoadSetDB loads the given set.db or creates it if it doesn't exist.
+// Optionally, also provide a path to backup the database to.
+//
+// It adds a number of endpoints to the REST API for working with the set and
+// its entries:
 //
 // PUT /rest/v1/auth/set : takes a set.Set encoded as JSON in the body to add or
 // update details about the given set.
@@ -161,13 +163,13 @@ const (
 // only let you work on sets where the Requester matches your logged-in
 // username, or if the logged-in user is the same as the user who started the
 // Server.
-func (s *Server) LoadSetDB(path string) error {
+func (s *Server) LoadSetDB(path, backupPath string) error {
 	authGroup := s.AuthRouter()
 	if authGroup == nil {
 		return ErrNoAuth
 	}
 
-	db, err := set.New(path)
+	db, err := set.New(path, backupPath)
 	if err != nil {
 		return err
 	}
@@ -180,6 +182,12 @@ func (s *Server) LoadSetDB(path string) error {
 	go s.handleFileStatusUpdates()
 
 	return s.recoverQueue()
+}
+
+// EnableRemoteDBBackups causes the database backup file to also be backed up to
+// the remote path.
+func (s *Server) EnableRemoteDBBackups(remotePath string, handler put.Handler) {
+	s.db.EnableRemoteBackups(remotePath, handler)
 }
 
 // addDBEndpoints adds all the REST API endpoints to the given router group.
@@ -236,7 +244,7 @@ func (s *Server) putSet(c *gin.Context) {
 		return
 	}
 
-	s.monitorSet(given)
+	s.tryBackup()
 
 	c.Status(http.StatusOK)
 }
@@ -256,6 +264,17 @@ func (s *Server) allowedAccess(c *gin.Context, user string) bool {
 	}
 
 	return u.Username == user
+}
+
+// tryBackup will backup the database if a backup path was specified by
+// EnableDatabaseBackups().
+func (s *Server) tryBackup() {
+	go func() {
+		err := s.db.Backup()
+		if err != nil {
+			s.Logger.Printf("error creating database backup: %s", err)
+		}
+	}()
 }
 
 // getSets returns the requester's set(s) from the database. requester URL
@@ -777,7 +796,9 @@ func (s *Server) updateFileStatus(r *put.Request, trace string) error {
 		return err
 	}
 
-	s.monitorSetByName(r.Set, r.Requester)
+	if err = s.handleNewlyCompletedSets(r); err != nil {
+		return err
+	}
 
 	rid := r.ID()
 
@@ -804,6 +825,25 @@ func (s *Server) updateFileStatus(r *put.Request, trace string) error {
 	s.Logger.Printf("[%s] will remove/release; deleted %s from map", trace, rid)
 
 	return s.removeOrReleaseRequestFromQueue(r, entry)
+}
+
+// handleNewlyCompletedSets gets the set the given request is for, and if it
+// has completed, carries out actions needed for newly completed sets: trigger
+// the monitoring countdown, and do a database backup.
+func (s *Server) handleNewlyCompletedSets(r *put.Request) error {
+	completed, err := s.db.GetByNameAndRequester(r.Set, r.Requester)
+	if err != nil {
+		return err
+	}
+
+	if completed.Status != set.Complete {
+		return nil
+	}
+
+	s.monitorSet(completed)
+	s.tryBackup()
+
+	return nil
 }
 
 // removeOrReleaseRequestFromQueue removes the given Request from our queue

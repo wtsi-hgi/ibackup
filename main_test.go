@@ -38,10 +38,13 @@ import (
 
 	"github.com/phayes/freeport"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/wtsi-hgi/ibackup/internal"
 )
 
 const app = "ibackup"
 const userPerms = 0700
+
+var backupFile string //nolint:gochecknoglobals
 
 // TestMain builds ourself, starts a test server, runs client tests against the
 // server and cleans up afterwards. It's a full e2e integration test.
@@ -104,10 +107,18 @@ func startTestServer() (func(), bool) {
 		return func() { os.RemoveAll(dir) }, false
 	}
 
+	logFile := filepath.Join(dir, "log")
+	backupFile = filepath.Join(dir, "db.bak")
+
+	os.Setenv("IBACKUP_REMOTE_DB_BACKUP_PATH", remoteDBBackupPath())
+
 	cmd := exec.Command("./"+app, "server", "-k", tv.key, "--logfile", //nolint:gosec
-		filepath.Join(dir, "log"), "-s", tv.ldapServer, "-l", tv.ldapLookup, "--debug",
-		filepath.Join(dir, "db"),
+		logFile, "-s", tv.ldapServer, "-l", tv.ldapLookup, "--debug",
+		filepath.Join(dir, "db"), backupFile,
 	)
+
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 
 	if errs := cmd.Start(); errs != nil {
 		failMainTest(errs.Error())
@@ -127,8 +138,22 @@ func startTestServer() (func(), bool) {
 			failMainTest(errw.Error())
 		}
 
+		// content, errr := os.ReadFile(logFile)
+		// if errr == nil {
+		// 	fmt.Printf("\nserver log: %s\n", string(content))
+		// }
+
 		os.RemoveAll(dir)
 	}, worked
+}
+
+func remoteDBBackupPath() string {
+	collection := os.Getenv("IBACKUP_TEST_COLLECTION")
+	if collection == "" {
+		return collection
+	}
+
+	return filepath.Join(collection, "db.bk")
 }
 
 type testVars struct {
@@ -220,33 +245,26 @@ no backup sets`)
 	})
 
 	Convey("Given an added set defined with a directory", t, func() {
-		dir := t.TempDir()
-		someDir := filepath.Join(dir, "some/dir")
-
-		err := os.MkdirAll(someDir, userPerms)
-		So(err, ShouldBeNil)
-
-		exitCode, _ := runBinary(t, "add", "--name", "testAdd", "--transformer",
-			"prefix="+dir+":/remote", "--path", someDir)
-		So(exitCode, ShouldEqual, 0)
+		prefix, localDir, remoteDir := addSetWithEmptyDir(t)
 
 		Convey("Status tells you where input directories would get uploaded to", func() {
 			confirmOutput(t, []string{"status"}, 0, `Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
 Global put client status (/10): 0 creating collections; 0 currently uploading
 
 Name: testAdd
-Transformer: prefix=`+dir+`:/remote
+Transformer: prefix=`+prefix+`
 Monitored: false; Archive: false
-Status: pending upload
+Status: complete
 Discovery:
-Num files: pending; Size files: pending
+Num files: 0; Size files: 0 B
 Uploaded: 0; Failed: 0; Missing: 0
+Completed in: 0s
 Directories:
-  `+someDir+" => /remote/some/dir")
+  `+localDir+" => "+remoteDir)
 		})
 	})
 
-	Convey("Give an added set defined with files", t, func() {
+	Convey("Given an added set defined with files", t, func() {
 		dir := t.TempDir()
 		tempTestFile, err := os.CreateTemp(dir, "testFileSet")
 		So(err, ShouldBeNil)
@@ -258,6 +276,8 @@ Directories:
 		exitCode, _ := runBinary(t, "add", "--files", tempTestFile.Name(),
 			"--name", "testAddFiles", "--transformer", "prefix="+dir+":/remote")
 		So(exitCode, ShouldEqual, 0)
+
+		<-time.After(250 * time.Millisecond)
 
 		Convey("Status tells you an example of where input files would get uploaded to", func() {
 			confirmOutput(t, []string{"status", "--name", "testAddFiles"}, 0,
@@ -273,6 +293,69 @@ Num files: 2; Size files: 0 B (and counting)
 Uploaded: 0; Failed: 0; Missing: 2
 Example File: `+dir+`/path/to/other/file => /remote/path/to/other/file`)
 		})
+	})
+}
+
+// addSetWithEmptyDir creates a tempdir with a subdirectory inside it, adds a
+// set defined with the subdir, and returns the prefix transformer, the path to
+// the subdir, and the remote dir the transformer would upload to.
+func addSetWithEmptyDir(t *testing.T) (string, string, string) {
+	t.Helper()
+
+	dir := t.TempDir()
+	someDir := filepath.Join(dir, "some/dir")
+
+	err := os.MkdirAll(someDir, userPerms)
+	So(err, ShouldBeNil)
+
+	prefix := dir + ":/remote"
+
+	exitCode, _ := runBinary(t, "add", "--name", "testAdd", "--transformer",
+		"prefix="+prefix, "--path", someDir)
+	So(exitCode, ShouldEqual, 0)
+
+	<-time.After(250 * time.Millisecond)
+
+	return prefix, someDir, "/remote/some/dir"
+}
+
+func TestBackup(t *testing.T) {
+	Convey("Adding a set causes a database backup locally and remotely", t, func() {
+		err := os.Remove(backupFile)
+		if os.IsNotExist(err) {
+			err = nil
+		}
+
+		So(err, ShouldBeNil)
+
+		addSetWithEmptyDir(t)
+
+		localBackupExists := internal.WaitForFile(backupFile)
+		So(localBackupExists, ShouldBeTrue)
+
+		remotePath := remoteDBBackupPath()
+		if remotePath == "" {
+			SkipConvey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
+
+			return
+		}
+
+		<-time.After(5 * time.Second)
+
+		tdir := t.TempDir()
+		gotPath := filepath.Join(tdir, "remote.db")
+		cmd := exec.Command("iget", "-K", remotePath, gotPath)
+
+		err = cmd.Run()
+		So(err, ShouldBeNil)
+
+		ri, err := os.Stat(gotPath)
+		So(err, ShouldBeNil)
+
+		li, err := os.Stat(backupFile)
+		So(err, ShouldBeNil)
+
+		So(li.Size(), ShouldEqual, ri.Size())
 	})
 }
 

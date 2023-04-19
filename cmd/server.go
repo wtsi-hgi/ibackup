@@ -41,12 +41,14 @@ import (
 	sync "github.com/sasha-s/go-deadlock"
 	"github.com/spf13/cobra"
 	gas "github.com/wtsi-hgi/go-authserver"
+	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/server"
 )
 
 const serverTokenBasename = ".ibackup.token"
 const numPutClients = 10
 const deadlockTimeout = 30 * time.Minute
+const dbBackupParamPosition = 2
 
 var serverUser string
 var serverUID string
@@ -58,6 +60,7 @@ var serverKey string
 var serverLDAPFQDN string
 var serverLDAPBindDN string
 var serverDebug bool
+var serverRemoteBackupPath string
 
 // serverCmd represents the server command.
 var serverCmd = &cobra.Command{
@@ -67,7 +70,13 @@ var serverCmd = &cobra.Command{
 
 Starting the web server brings up a web interface and REST API that will use the
 given set database path to create a set database if it doesn't exist, add
-backup sets to the database, and return information about their status.
+backup sets to the database, and return information about their status. If you
+provide a second database path, the database will be backed up to that path upon
+significant changes to the database.
+
+If you also set --remote_backup or the IBACKUP_REMOTE_DB_BACKUP_PATH env var,
+and the second database path, the database backup files will also be put in to
+iRODS.
 
 Your --url (in this context, think of it as the bind address) should include the
 port, and for it to work with your --cert, you probably need to specify it as
@@ -98,7 +107,7 @@ If there's an issue with the database or behaviour of the queue, you can use the
 database that you've made, to investigate.
 `,
 	Run: func(cmd *cobra.Command, args []string) {
-		if len(args) != 1 {
+		if len(args) != 1 && len(args) != 2 {
 			die("you must supply the path to your set database file")
 		}
 
@@ -146,9 +155,27 @@ database that you've made, to investigate.
 
 		info("opening database, please wait...")
 
-		err = s.LoadSetDB(args[0])
+		dbBackupPath := ""
+		if len(args) == dbBackupParamPosition {
+			dbBackupPath = args[dbBackupParamPosition-1]
+		}
+
+		err = s.LoadSetDB(args[0], dbBackupPath)
 		if err != nil {
 			die("failed to load database: %s", err)
+		}
+
+		if serverRemoteBackupPath != "" {
+			if dbBackupPath == "" {
+				die("remote backup path defined when no local backup path provided")
+			}
+
+			handler, errb := put.GetBatonHandler()
+			if errb != nil {
+				die("failed to get baton handler: %s", errb)
+			}
+
+			s.EnableRemoteDBBackups(serverRemoteBackupPath, handler)
 		}
 
 		defer s.Stop()
@@ -176,6 +203,8 @@ func init() {
 		"log to this file instead of syslog")
 	serverCmd.Flags().BoolVar(&serverDebug, "debug", false,
 		"disable job submissions for debugging purposes")
+	serverCmd.Flags().StringVar(&serverRemoteBackupPath, "remote_backup", os.Getenv("IBACKUP_REMOTE_DB_BACKUP_PATH"),
+		"enables database backup to the specified iRODS path")
 }
 
 // setServerLogger makes our appLogger log to the given path if non-blank,

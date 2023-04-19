@@ -31,10 +31,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/wtsi-hgi/ibackup/put"
 	bolt "go.etcd.io/bbolt"
 )
+
+const userPerms = 0700
 
 func TestSet(t *testing.T) {
 	Convey("Set statuses convert nicely to strings", t, func() {
@@ -97,6 +100,12 @@ func TestSet(t *testing.T) {
 		So(set.Size(), ShouldEqual, "pending")
 
 		set.NumFiles = 3
+
+		So(set.Count(), ShouldEqual, "pending")
+		So(set.Size(), ShouldEqual, "pending")
+
+		set.LastDiscovery = time.Now()
+
 		So(set.Count(), ShouldEqual, "3")
 		So(set.Size(), ShouldEqual, "0 B (and counting)")
 
@@ -141,7 +150,7 @@ func TestSet(t *testing.T) {
 		dbPath := filepath.Join(tDir, "set.db")
 
 		Convey("You can create a new set database", func() {
-			db, err := New(dbPath)
+			db, err := New(dbPath, "")
 			So(err, ShouldBeNil)
 			So(db, ShouldNotBeNil)
 
@@ -702,6 +711,140 @@ func TestSet(t *testing.T) {
 					So(got, ShouldBeNil)
 				})
 			})
+		})
+	})
+}
+
+func TestBackup(t *testing.T) {
+	Convey("Given a example database, Backup() backs it up", t, func() {
+		dir := t.TempDir()
+
+		backupFile := filepath.Join(dir, "backup")
+
+		db, err := New(filepath.Join(dir, "db"), backupFile)
+		So(err, ShouldBeNil)
+		So(db, ShouldNotBeNil)
+
+		db.SetMinimumTimeBetweenBackups(0)
+
+		example := &Set{
+			Name:      "checkme",
+			Requester: "requester",
+		}
+
+		err = db.AddOrUpdate(example)
+		So(err, ShouldBeNil)
+
+		err = db.Backup()
+		So(err, ShouldBeNil)
+
+		testBackupOK := func(path string) {
+			backupUpDB, errn := New(path, "")
+			So(errn, ShouldBeNil)
+			So(backupUpDB, ShouldNotBeNil)
+
+			got, errg := backupUpDB.GetByNameAndRequester("checkme", "requester")
+			So(errg, ShouldBeNil)
+			So(got, ShouldResemble, example)
+		}
+
+		testBackupOK(backupFile)
+
+		Convey("Backup() again to the same path succeeds", func() {
+			err = db.Backup()
+			So(err, ShouldBeNil)
+
+			testBackupOK(backupFile)
+
+			_, err = os.Stat(backupFile + backupExt)
+			So(err, ShouldNotBeNil)
+		})
+
+		Convey("Backup() again to the same path when it is not writable creates a temp file with the backup", func() {
+			err = os.Remove(backupFile)
+			So(err, ShouldBeNil)
+
+			err = os.Mkdir(backupFile, userPerms)
+			So(err, ShouldBeNil)
+
+			err = db.Backup()
+			So(err, ShouldNotBeNil)
+
+			testBackupOK(backupFile + backupExt)
+		})
+
+		Convey("Backup()s queue if called multiple times simultaneously, resulting in 1 extra backup", func() {
+			db.SetMinimumTimeBetweenBackups(1 * time.Second)
+			n := 100
+			errCh := make(chan error, n)
+
+			watcher, errw := fsnotify.NewWatcher()
+			So(errw, ShouldBeNil)
+			defer watcher.Close()
+
+			doBackupCalls := 0
+			watchingDone := make(chan struct{})
+
+			go func() {
+				defer close(watchingDone)
+
+				for {
+					select {
+					case event, ok := <-watcher.Events:
+						if !ok {
+							return
+						}
+
+						if event.Has(fsnotify.Rename) {
+							doBackupCalls++
+						}
+					case _, ok := <-watcher.Errors:
+						if !ok {
+							return
+						}
+					}
+				}
+			}()
+
+			err = watcher.Add(filepath.Dir(backupFile))
+			So(err, ShouldBeNil)
+
+			for i := 0; i < n; i++ {
+				go func() {
+					errb := db.Backup()
+					errCh <- errb
+				}()
+			}
+
+			for i := 0; i < n; i++ {
+				So(<-errCh, ShouldBeNil)
+			}
+
+			close(errCh)
+			err = watcher.Close()
+			So(err, ShouldBeNil)
+			<-watchingDone
+			So(doBackupCalls, ShouldEqual, 2)
+		})
+
+		Convey("and can back it up to iRODS as well", func() {
+			remoteDir := filepath.Join(dir, "remote")
+			err = os.Mkdir(remoteDir, userPerms)
+			So(err, ShouldBeNil)
+			remotePath := filepath.Join(remoteDir, "db")
+
+			handler, errg := put.GetLocalHandler()
+			So(errg, ShouldBeNil)
+
+			db.EnableRemoteBackups(remotePath, handler)
+
+			err = db.Backup()
+			So(err, ShouldBeNil)
+
+			_, err := os.Stat(remotePath)
+			So(err, ShouldBeNil)
+
+			testBackupOK(remotePath)
 		})
 	})
 }
