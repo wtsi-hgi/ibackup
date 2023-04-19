@@ -74,6 +74,10 @@ backup sets to the database, and return information about their status. If you
 provide a second database path, the database will be backed up to that path upon
 significant changes to the database.
 
+If you also set --remote_backup or the IBACKUP_REMOTE_DB_BACKUP_PATH env var,
+and the second database path, the database backup files will also be put in to
+iRODS.
+
 Your --url (in this context, think of it as the bind address) should include the
 port, and for it to work with your --cert, you probably need to specify it as
 fqdn:port. --url defaults to the IBACKUP_SERVER_URL env var. --cert defaults to
@@ -162,6 +166,10 @@ database that you've made, to investigate.
 		}
 
 		if serverRemoteBackupPath != "" {
+			if dbBackupPath == "" {
+				die("remote backup path defined when no local backup path provided")
+			}
+
 			handler, errb := put.GetBatonHandler()
 			if errb != nil {
 				die("failed to get baton handler: %s", errb)
