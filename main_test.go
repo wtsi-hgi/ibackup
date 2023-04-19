@@ -108,8 +108,9 @@ func startTestServer() (func(), bool) {
 	}
 
 	logFile := filepath.Join(dir, "log")
-
 	backupFile = filepath.Join(dir, "db.bak")
+
+	os.Setenv("IBACKUP_REMOTE_DB_BACKUP_PATH", remoteDBBackupPath())
 
 	cmd := exec.Command("./"+app, "server", "-k", tv.key, "--logfile", //nolint:gosec
 		logFile, "-s", tv.ldapServer, "-l", tv.ldapLookup, "--debug",
@@ -144,6 +145,15 @@ func startTestServer() (func(), bool) {
 
 		os.RemoveAll(dir)
 	}, worked
+}
+
+func remoteDBBackupPath() string {
+	collection := os.Getenv("IBACKUP_TEST_COLLECTION")
+	if collection == "" {
+		return collection
+	}
+
+	return filepath.Join(collection, "db.bk")
 }
 
 type testVars struct {
@@ -310,7 +320,7 @@ func addSetWithEmptyDir(t *testing.T) (string, string, string) {
 }
 
 func TestBackup(t *testing.T) {
-	Convey("Adding a set causes a database backup", t, func() {
+	Convey("Adding a set causes a database backup locally and remotely", t, func() {
 		err := os.Remove(backupFile)
 		if os.IsNotExist(err) {
 			err = nil
@@ -320,8 +330,32 @@ func TestBackup(t *testing.T) {
 
 		addSetWithEmptyDir(t)
 
-		backupExists := internal.WaitForFile(backupFile)
-		So(backupExists, ShouldBeTrue)
+		localBackupExists := internal.WaitForFile(backupFile)
+		So(localBackupExists, ShouldBeTrue)
+
+		remotePath := remoteDBBackupPath()
+		if remotePath == "" {
+			SkipConvey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
+
+			return
+		}
+
+		<-time.After(5 * time.Second)
+
+		tdir := t.TempDir()
+		gotPath := filepath.Join(tdir, "remote.db")
+		cmd := exec.Command("iget", "-K", remotePath, gotPath)
+
+		err = cmd.Run()
+		So(err, ShouldBeNil)
+
+		ri, err := os.Stat(gotPath)
+		So(err, ShouldBeNil)
+
+		li, err := os.Stat(backupFile)
+		So(err, ShouldBeNil)
+
+		So(li.Size(), ShouldEqual, ri.Size())
 	})
 }
 

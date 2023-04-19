@@ -1830,6 +1830,24 @@ func TestServer(t *testing.T) { //nolint:cyclop
 
 					changed = internal.WaitForFileChange(backupPath, lastMod)
 					So(changed, ShouldBeTrue)
+
+					remoteDir := filepath.Join(filepath.Dir(backupPath), "remoteBackup")
+
+					err = os.Mkdir(remoteDir, userPerms)
+					So(err, ShouldBeNil)
+
+					remotePath := filepath.Join(remoteDir, "remoteDB")
+
+					handler, err := put.GetLocalHandler()
+					So(err, ShouldBeNil)
+
+					s.EnableRemoteDBBackups(remotePath, handler)
+
+					err = client.AddOrUpdateSet(exampleSet)
+					So(err, ShouldBeNil)
+
+					remoteBackupExists := internal.WaitForFile(remotePath)
+					So(remoteBackupExists, ShouldBeTrue)
 				})
 			})
 		})

@@ -184,6 +184,12 @@ func (s *Server) LoadSetDB(path, backupPath string) error {
 	return s.recoverQueue()
 }
 
+// EnableRemoteDBBackups causes the database backup file to also be backed up to
+// the remote path.
+func (s *Server) EnableRemoteDBBackups(remotePath string, handler put.Handler) {
+	s.db.EnableRemoteBackups(remotePath, handler)
+}
+
 // addDBEndpoints adds all the REST API endpoints to the given router group.
 func (s *Server) addDBEndpoints(authGroup *gin.RouterGroup) {
 	authGroup.PUT(setPath, s.putSet)

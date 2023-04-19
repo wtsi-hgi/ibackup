@@ -41,6 +41,7 @@ import (
 	sync "github.com/sasha-s/go-deadlock"
 	"github.com/spf13/cobra"
 	gas "github.com/wtsi-hgi/go-authserver"
+	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/server"
 )
 
@@ -59,6 +60,7 @@ var serverKey string
 var serverLDAPFQDN string
 var serverLDAPBindDN string
 var serverDebug bool
+var serverRemoteBackupPath string
 
 // serverCmd represents the server command.
 var serverCmd = &cobra.Command{
@@ -159,6 +161,15 @@ database that you've made, to investigate.
 			die("failed to load database: %s", err)
 		}
 
+		if serverRemoteBackupPath != "" {
+			handler, errb := put.GetBatonHandler()
+			if errb != nil {
+				die("failed to get baton handler: %s", errb)
+			}
+
+			s.EnableRemoteDBBackups(serverRemoteBackupPath, handler)
+		}
+
 		defer s.Stop()
 
 		sayStarted()
@@ -184,6 +195,8 @@ func init() {
 		"log to this file instead of syslog")
 	serverCmd.Flags().BoolVar(&serverDebug, "debug", false,
 		"disable job submissions for debugging purposes")
+	serverCmd.Flags().StringVar(&serverRemoteBackupPath, "remote_backup", os.Getenv("IBACKUP_REMOTE_DB_BACKUP_PATH"),
+		"enables database backup to the specified iRODS path")
 }
 
 // setServerLogger makes our appLogger log to the given path if non-blank,

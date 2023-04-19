@@ -778,8 +778,8 @@ func TestBackup(t *testing.T) {
 			n := 100
 			errCh := make(chan error, n)
 
-			watcher, err := fsnotify.NewWatcher()
-			So(err, ShouldBeNil)
+			watcher, errw := fsnotify.NewWatcher()
+			So(errw, ShouldBeNil)
 			defer watcher.Close()
 
 			doBackupCalls := 0
@@ -825,6 +825,26 @@ func TestBackup(t *testing.T) {
 			So(err, ShouldBeNil)
 			<-watchingDone
 			So(doBackupCalls, ShouldEqual, 2)
+		})
+
+		Convey("and can back it up to iRODS as well", func() {
+			remoteDir := filepath.Join(dir, "remote")
+			err = os.Mkdir(remoteDir, userPerms)
+			So(err, ShouldBeNil)
+			remotePath := filepath.Join(remoteDir, "db")
+
+			handler, errg := put.GetLocalHandler()
+			So(errg, ShouldBeNil)
+
+			db.EnableRemoteBackups(remotePath, handler)
+
+			err = db.Backup()
+			So(err, ShouldBeNil)
+
+			_, err := os.Stat(remotePath)
+			So(err, ShouldBeNil)
+
+			testBackupOK(remotePath)
 		})
 	})
 }

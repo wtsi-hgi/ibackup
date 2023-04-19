@@ -30,6 +30,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -84,6 +85,8 @@ type DB struct {
 	mu                    sync.Mutex
 	backupPath            string
 	minTimeBetweenBackups time.Duration
+	remoteBackupPath      string
+	remoteBackupHandler   put.Handler
 
 	rebackup atomic.Bool
 }
@@ -939,7 +942,35 @@ func (d *DB) doBackup() error {
 		return err
 	}
 
-	return os.Rename(backingUp, d.backupPath)
+	err = os.Rename(backingUp, d.backupPath)
+	if err != nil {
+		return err
+	}
+
+	return d.doRemoteBackup()
+}
+
+func (d *DB) doRemoteBackup() error {
+	if d.remoteBackupPath == "" {
+		return nil
+	}
+
+	dir := filepath.Dir(d.remoteBackupPath)
+
+	err := d.remoteBackupHandler.EnsureCollection(dir)
+	if err != nil {
+		return err
+	}
+
+	err = d.remoteBackupHandler.CollectionsDone()
+	if err != nil {
+		return err
+	}
+
+	return d.remoteBackupHandler.Put(&put.Request{
+		Local:  d.backupPath,
+		Remote: d.remoteBackupPath,
+	})
 }
 
 // SetMinimumTimeBetweenBackups sets the minimum time between successive
@@ -958,4 +989,14 @@ func (d *DB) SetBackupPath(path string) {
 	defer d.mu.Unlock()
 
 	d.backupPath = path
+}
+
+// EnableRemoteBackups causes the backup file to also be backed up to the
+// remote path.
+func (d *DB) EnableRemoteBackups(remotePath string, handler put.Handler) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	d.remoteBackupPath = remotePath
+	d.remoteBackupHandler = handler
 }
