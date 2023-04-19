@@ -40,6 +40,7 @@ import (
 	"github.com/inconshreveable/log15"
 	. "github.com/smartystreets/goconvey/convey"
 	gas "github.com/wtsi-hgi/go-authserver"
+	"github.com/wtsi-hgi/ibackup/internal"
 	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/set"
 )
@@ -1797,7 +1798,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldBeNil)
 
-					exists := waitForFile(backupPath)
+					exists := internal.WaitForFile(backupPath)
 					So(exists, ShouldBeTrue)
 
 					stat, err := os.Stat(backupPath)
@@ -1817,7 +1818,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 					ok := <-racCalled
 					So(ok, ShouldBeTrue)
 
-					changed := waitForFileChange(backupPath, lastMod)
+					changed := internal.WaitForFileChange(backupPath, lastMod)
 					So(changed, ShouldBeTrue)
 
 					stat, err = os.Stat(backupPath)
@@ -1827,7 +1828,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 
 					putSetWithOneFile(t, handler, client, exampleSet, minMBperSecondUploadSpeed, logger)
 
-					changed = waitForFileChange(backupPath, lastMod)
+					changed = internal.WaitForFileChange(backupPath, lastMod)
 					So(changed, ShouldBeTrue)
 				})
 			})
@@ -1995,46 +1996,4 @@ func putSetWithOneFile(t *testing.T, handler put.Handler, client *Client,
 	So(gotSet.Status, ShouldEqual, set.Complete)
 	So(gotSet.NumFiles, ShouldEqual, 1)
 	So(gotSet.Uploaded, ShouldEqual, 1)
-}
-
-// waitForFile waits for up to 5 seconds for the given path to exist, and
-// returns false if it doesn't.
-func waitForFile(path string) bool {
-	ticker := time.NewTicker(10 * time.Millisecond)
-	defer ticker.Stop()
-
-	timeout := time.NewTimer(5 * time.Second)
-
-	for {
-		select {
-		case <-timeout.C:
-			return false
-		case <-ticker.C:
-			_, err := os.Stat(path)
-			if err == nil {
-				return true
-			}
-		}
-	}
-}
-
-// waitForFileChange waits for up to 5 seconds for the given path to change, and
-// returns false if it doesn't.
-func waitForFileChange(path string, lastMod time.Time) bool {
-	ticker := time.NewTicker(10 * time.Millisecond)
-	defer ticker.Stop()
-
-	timeout := time.NewTimer(5 * time.Second)
-
-	for {
-		select {
-		case <-timeout.C:
-			return false
-		case <-ticker.C:
-			stat, err := os.Stat(path)
-			if err == nil && stat.ModTime().After(lastMod) {
-				return true
-			}
-		}
-	}
 }

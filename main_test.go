@@ -38,10 +38,13 @@ import (
 
 	"github.com/phayes/freeport"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/wtsi-hgi/ibackup/internal"
 )
 
 const app = "ibackup"
 const userPerms = 0700
+
+var backupFile string //nolint:gochecknoglobals
 
 // TestMain builds ourself, starts a test server, runs client tests against the
 // server and cleans up afterwards. It's a full e2e integration test.
@@ -106,9 +109,11 @@ func startTestServer() (func(), bool) {
 
 	logFile := filepath.Join(dir, "log")
 
+	backupFile = filepath.Join(dir, "db.bak")
+
 	cmd := exec.Command("./"+app, "server", "-k", tv.key, "--logfile", //nolint:gosec
 		logFile, "-s", tv.ldapServer, "-l", tv.ldapLookup, "--debug",
-		filepath.Join(dir, "db"),
+		filepath.Join(dir, "db"), backupFile,
 	)
 
 	cmd.Stdout = os.Stdout
@@ -230,24 +235,14 @@ no backup sets`)
 	})
 
 	Convey("Given an added set defined with a directory", t, func() {
-		dir := t.TempDir()
-		someDir := filepath.Join(dir, "some/dir")
-
-		err := os.MkdirAll(someDir, userPerms)
-		So(err, ShouldBeNil)
-
-		exitCode, _ := runBinary(t, "add", "--name", "testAdd", "--transformer",
-			"prefix="+dir+":/remote", "--path", someDir)
-		So(exitCode, ShouldEqual, 0)
-
-		<-time.After(250 * time.Millisecond)
+		prefix, localDir, remoteDir := addSetWithEmptyDir(t)
 
 		Convey("Status tells you where input directories would get uploaded to", func() {
 			confirmOutput(t, []string{"status"}, 0, `Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
 Global put client status (/10): 0 creating collections; 0 currently uploading
 
 Name: testAdd
-Transformer: prefix=`+dir+`:/remote
+Transformer: prefix=`+prefix+`
 Monitored: false; Archive: false
 Status: complete
 Discovery:
@@ -255,7 +250,7 @@ Num files: 0; Size files: 0 B
 Uploaded: 0; Failed: 0; Missing: 0
 Completed in: 0s
 Directories:
-  `+someDir+" => /remote/some/dir")
+  `+localDir+" => "+remoteDir)
 		})
 	})
 
@@ -288,6 +283,45 @@ Num files: 2; Size files: 0 B (and counting)
 Uploaded: 0; Failed: 0; Missing: 2
 Example File: `+dir+`/path/to/other/file => /remote/path/to/other/file`)
 		})
+	})
+}
+
+// addSetWithEmptyDir creates a tempdir with a subdirectory inside it, adds a
+// set defined with the subdir, and returns the prefix transformer, the path to
+// the subdir, and the remote dir the transformer would upload to.
+func addSetWithEmptyDir(t *testing.T) (string, string, string) {
+	t.Helper()
+
+	dir := t.TempDir()
+	someDir := filepath.Join(dir, "some/dir")
+
+	err := os.MkdirAll(someDir, userPerms)
+	So(err, ShouldBeNil)
+
+	prefix := dir + ":/remote"
+
+	exitCode, _ := runBinary(t, "add", "--name", "testAdd", "--transformer",
+		"prefix="+prefix, "--path", someDir)
+	So(exitCode, ShouldEqual, 0)
+
+	<-time.After(250 * time.Millisecond)
+
+	return prefix, someDir, "/remote/some/dir"
+}
+
+func TestBackup(t *testing.T) {
+	Convey("Adding a set causes a database backup", t, func() {
+		err := os.Remove(backupFile)
+		if os.IsNotExist(err) {
+			err = nil
+		}
+
+		So(err, ShouldBeNil)
+
+		addSetWithEmptyDir(t)
+
+		backupExists := internal.WaitForFile(backupFile)
+		So(backupExists, ShouldBeTrue)
 	})
 }
 
