@@ -14,20 +14,20 @@ require (
 	github.com/hashicorp/go-multierror v1.1.1
 	github.com/inconshreveable/log15 v3.0.0-testing.5+incompatible
 	github.com/phayes/freeport v0.0.0-20220201140144-74d24b5ae9f5
-	github.com/rs/zerolog v1.28.0
+	github.com/rs/zerolog v1.29.0
 	github.com/sasha-s/go-deadlock v0.3.1
 	github.com/smartystreets/goconvey v1.7.2
 	github.com/spf13/cobra v1.6.1
 	github.com/ugorji/go/codec v1.2.8
 	github.com/wtsi-hgi/go-authserver v1.1.0
 	github.com/wtsi-hgi/grand v1.0.0
-	github.com/wtsi-npg/extendo/v2 v2.5.0
+	github.com/wtsi-npg/extendo/v2 v2.6.0
 	github.com/wtsi-npg/logshim v1.3.0
 	github.com/wtsi-npg/logshim-zerolog v1.3.0
 	github.com/wtsi-ssg/wr v0.5.6
 	github.com/wtsi-ssg/wrstat/v3 v3.2.0
 	go.etcd.io/bbolt v1.3.6
-	golang.org/x/term v0.5.0
+	golang.org/x/term v0.6.0
 )
 
 require (
@@ -130,14 +130,14 @@ require (
 	github.com/tklauser/numcpus v0.6.0 // indirect
 	github.com/yusufpapurcu/wmi v1.2.2 // indirect
 	golang.org/x/crypto v0.5.0 // indirect
-	golang.org/x/mod v0.8.0 // indirect
-	golang.org/x/net v0.7.0 // indirect
+	golang.org/x/mod v0.9.0 // indirect
+	golang.org/x/net v0.8.0 // indirect
 	golang.org/x/oauth2 v0.4.0 // indirect
 	golang.org/x/sync v0.1.0 // indirect
-	golang.org/x/sys v0.5.0 // indirect
-	golang.org/x/text v0.7.0 // indirect
+	golang.org/x/sys v0.6.0 // indirect
+	golang.org/x/text v0.8.0 // indirect
 	golang.org/x/time v0.3.0 // indirect
-	golang.org/x/tools v0.5.0 // indirect
+	golang.org/x/tools v0.7.0 // indirect
 	google.golang.org/appengine v1.6.7 // indirect
 	google.golang.org/protobuf v1.28.1 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect

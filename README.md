@@ -32,6 +32,7 @@ Then copy the resulting executable to somewhere in your PATH.
 
 ## Requirements
 https://github.com/wtsi-npg/baton must also be installed and in your PATH.
+This has been tested with v4.0.1.
 
 To use the server mode, you will also need:
 https://github.com/VertebrateResequencing/wr
