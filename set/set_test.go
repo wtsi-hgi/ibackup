@@ -31,6 +31,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/wtsi-hgi/ibackup/put"
 	bolt "go.etcd.io/bbolt"
@@ -149,7 +150,7 @@ func TestSet(t *testing.T) {
 		dbPath := filepath.Join(tDir, "set.db")
 
 		Convey("You can create a new set database", func() {
-			db, err := New(dbPath)
+			db, err := New(dbPath, "")
 			So(err, ShouldBeNil)
 			So(db, ShouldNotBeNil)
 
@@ -718,9 +719,13 @@ func TestBackup(t *testing.T) {
 	Convey("Given a example database, Backup() backs it up", t, func() {
 		dir := t.TempDir()
 
-		db, err := New(filepath.Join(dir, "db"))
+		backupFile := filepath.Join(dir, "backup")
+
+		db, err := New(filepath.Join(dir, "db"), backupFile)
 		So(err, ShouldBeNil)
 		So(db, ShouldNotBeNil)
+
+		db.SetMinimumTimeBetweenBackups(0)
 
 		example := &Set{
 			Name:      "checkme",
@@ -730,13 +735,11 @@ func TestBackup(t *testing.T) {
 		err = db.AddOrUpdate(example)
 		So(err, ShouldBeNil)
 
-		backupFile := filepath.Join(dir, "backup")
-
-		err = db.Backup(backupFile)
+		err = db.Backup()
 		So(err, ShouldBeNil)
 
 		testBackupOK := func(path string) {
-			backupUpDB, errn := New(path)
+			backupUpDB, errn := New(path, "")
 			So(errn, ShouldBeNil)
 			So(backupUpDB, ShouldNotBeNil)
 
@@ -748,7 +751,7 @@ func TestBackup(t *testing.T) {
 		testBackupOK(backupFile)
 
 		Convey("Backup() again to the same path succeeds", func() {
-			err = db.Backup(backupFile)
+			err = db.Backup()
 			So(err, ShouldBeNil)
 
 			testBackupOK(backupFile)
@@ -764,43 +767,52 @@ func TestBackup(t *testing.T) {
 			err = os.Mkdir(backupFile, userPerms)
 			So(err, ShouldBeNil)
 
-			err = db.Backup(backupFile)
+			err = db.Backup()
 			So(err, ShouldNotBeNil)
 
 			testBackupOK(backupFile + backupExt)
 		})
 
 		Convey("Backup()s queue if called multiple times simultaneously, resulting in 1 extra backup", func() {
+			db.SetMinimumTimeBetweenBackups(1 * time.Second)
 			n := 100
 			errCh := make(chan error, n)
 
-			stopCh := make(chan struct{})
-			modCheckerStopped := make(chan struct{})
-			modTimes := make(map[time.Time]struct{})
+			watcher, err := fsnotify.NewWatcher()
+			So(err, ShouldBeNil)
+			defer watcher.Close()
+
+			doBackupCalls := 0
+			watchingDone := make(chan struct{})
 
 			go func() {
-				ticker := time.NewTicker(5 * time.Millisecond)
-				defer ticker.Stop()
+				defer close(watchingDone)
 
 				for {
 					select {
-					case <-stopCh:
-						close(modCheckerStopped)
+					case event, ok := <-watcher.Events:
+						if !ok {
+							return
+						}
 
-						return
-					case <-ticker.C:
-						stat, errs := os.Stat(backupFile)
-						if errs == nil {
-							modTimes[stat.ModTime()] = struct{}{}
+						if event.Has(fsnotify.Rename) {
+							doBackupCalls++
+						}
+					case _, ok := <-watcher.Errors:
+						if !ok {
+							return
 						}
 					}
 				}
 			}()
 
+			err = watcher.Add(filepath.Dir(backupFile))
+			So(err, ShouldBeNil)
+
 			for i := 0; i < n; i++ {
 				go func() {
-					err := db.Backup(backupFile)
-					errCh <- err
+					errb := db.Backup()
+					errCh <- errb
 				}()
 			}
 
@@ -809,10 +821,10 @@ func TestBackup(t *testing.T) {
 			}
 
 			close(errCh)
-
-			close(stopCh)
-			<-modCheckerStopped
-			So(len(modTimes), ShouldEqual, 2)
+			err = watcher.Close()
+			So(err, ShouldBeNil)
+			<-watchingDone
+			So(doBackupCalls, ShouldEqual, 2)
 		})
 	})
 }

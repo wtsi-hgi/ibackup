@@ -6,6 +6,7 @@ require (
 	github.com/VertebrateResequencing/wr v0.32.0
 	github.com/dgryski/go-farm v0.0.0-20200201041132-a6ae2369ad13
 	github.com/dustin/go-humanize v1.0.0
+	github.com/fsnotify/fsnotify v1.6.0
 	github.com/gammazero/workerpool v1.1.3
 	github.com/gin-gonic/gin v1.8.2
 	github.com/go-ldap/ldap/v3 v3.4.4

@@ -98,7 +98,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 			So(err, ShouldBeNil)
 
 			dbPath := createDBLocation(t)
-			err = s.LoadSetDB(dbPath)
+			err = s.LoadSetDB(dbPath, "")
 			So(err, ShouldBeNil)
 
 			addr, dfunc, err := gas.StartTestServer(s, certPath, keyPath)
@@ -1788,7 +1788,8 @@ func TestServer(t *testing.T) { //nolint:cyclop
 				})
 
 				Convey("and enable database backups which trigger at appropriate times", func() {
-					s.EnableDatabaseBackups(backupPath)
+					s.db.SetBackupPath(backupPath)
+					s.db.SetMinimumTimeBetweenBackups(0)
 
 					_, err = os.Stat(backupPath)
 					So(err, ShouldNotBeNil)

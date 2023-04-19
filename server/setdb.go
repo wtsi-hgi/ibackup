@@ -107,9 +107,11 @@ const (
 	allUsers      = "all"
 )
 
-// LoadSetDB loads the given set.db or creates it if it doesn't exist, and adds
-// a number of endpoints to the REST API for working with the set and its
-// entries:
+// LoadSetDB loads the given set.db or creates it if it doesn't exist.
+// Optionally, also provide a path to backup the database to.
+//
+// It adds a number of endpoints to the REST API for working with the set and
+// its entries:
 //
 // PUT /rest/v1/auth/set : takes a set.Set encoded as JSON in the body to add or
 // update details about the given set.
@@ -161,13 +163,13 @@ const (
 // only let you work on sets where the Requester matches your logged-in
 // username, or if the logged-in user is the same as the user who started the
 // Server.
-func (s *Server) LoadSetDB(path string) error {
+func (s *Server) LoadSetDB(path, backupPath string) error {
 	authGroup := s.AuthRouter()
 	if authGroup == nil {
 		return ErrNoAuth
 	}
 
-	db, err := set.New(path)
+	db, err := set.New(path, backupPath)
 	if err != nil {
 		return err
 	}
@@ -261,14 +263,12 @@ func (s *Server) allowedAccess(c *gin.Context, user string) bool {
 // tryBackup will backup the database if a backup path was specified by
 // EnableDatabaseBackups().
 func (s *Server) tryBackup() {
-	if s.backupPath != "" {
-		go func() {
-			err := s.db.Backup(s.backupPath)
-			if err != nil {
-				s.Logger.Printf("error creating database backup: %s", err)
-			}
-		}()
-	}
+	go func() {
+		err := s.db.Backup()
+		if err != nil {
+			s.Logger.Printf("error creating database backup: %s", err)
+		}
+	}()
 }
 
 // getSets returns the requester's set(s) from the database. requester URL

@@ -146,7 +146,7 @@ database that you've made, to investigate.
 
 		info("opening database, please wait...")
 
-		err = s.LoadSetDB(args[0])
+		err = s.LoadSetDB(args[0], "")
 		if err != nil {
 			die("failed to load database: %s", err)
 		}
