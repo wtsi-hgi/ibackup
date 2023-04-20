@@ -27,6 +27,8 @@ package server
 
 import (
 	"context"
+	"errors"
+	"io/fs"
 	"net/http"
 	"os"
 	"time"
@@ -186,8 +188,21 @@ func (s *Server) discoverDirEntries(given *set.Set, filesDoneCh chan bool) (*set
 
 	pathsCh := make(chan string)
 	doneCh := make(chan error)
+	errCh := make(chan error)
+	errDoneCh := make(chan struct{})
 
-	go s.doSetDirWalks(given, entries, pathsCh, doneCh)
+	var errorSet bool
+
+	go s.doSetDirWalks(given, entries, pathsCh, doneCh, errCh)
+
+	go func() {
+		for errC := range errCh {
+			given.Error += errC.Error() + "\n"
+			errorSet = true
+		}
+
+		close(errDoneCh)
+	}()
 
 	var paths []string //nolint:prealloc
 
@@ -200,7 +215,17 @@ func (s *Server) discoverDirEntries(given *set.Set, filesDoneCh chan bool) (*set
 		return nil, err
 	}
 
+	close(errCh)
+
 	<-filesDoneCh
+	<-errDoneCh
+
+	if errorSet {
+		err = s.db.AddOrUpdate(given)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	given, err = s.db.SetDiscoveredEntries(given.ID(), paths)
 
@@ -220,7 +245,7 @@ func (s *Server) handleNewlyDefinedSets(given *set.Set) {
 // doSetDirWalks walks the given dir entries of the given set concurrently,
 // sending discovered file paths to the pathsCh. Closes the pathsCh when done,
 // then sends any error on the doneCh.
-func (s *Server) doSetDirWalks(given *set.Set, entries []*set.Entry, pathsCh chan string, doneCh chan error) {
+func (s *Server) doSetDirWalks(given *set.Set, entries []*set.Entry, pathsCh chan string, doneCh, errChan chan error) {
 	errCh := make(chan error, len(entries))
 
 	var cb walk.PathCallback = func(path string) error {
@@ -233,7 +258,7 @@ func (s *Server) doSetDirWalks(given *set.Set, entries []*set.Entry, pathsCh cha
 		dir := entry.Path
 
 		s.dirPool.Submit(func() {
-			errCh <- s.checkAndWalkDir(given, dir, cb)
+			errCh <- s.checkAndWalkDir(given, dir, cb, errChan)
 		})
 	}
 
@@ -254,7 +279,7 @@ func (s *Server) doSetDirWalks(given *set.Set, entries []*set.Entry, pathsCh cha
 // checkAndWalkDir checks if the given dir exists, and if it does, walks the
 // dir using the given cb. Major errors are returned; walk errors are logged but
 // otherwise ignored.
-func (s *Server) checkAndWalkDir(given *set.Set, dir string, cb walk.PathCallback) error {
+func (s *Server) checkAndWalkDir(given *set.Set, dir string, cb walk.PathCallback, errCh chan error) error {
 	missing, err := s.setEntryMissingIfNotExist(given, dir)
 	if err != nil {
 		return err
@@ -266,7 +291,11 @@ func (s *Server) checkAndWalkDir(given *set.Set, dir string, cb walk.PathCallbac
 
 	walker := walk.New(cb, false, true)
 
-	return walker.Walk(dir, s.walkErrorCallback)
+	return walker.Walk(dir, func(path string, err error) {
+		if errors.Is(err, fs.ErrPermission) {
+			errCh <- err
+		}
+	})
 }
 
 // walkErrorCallback is for giving to Walk; we just log errors.

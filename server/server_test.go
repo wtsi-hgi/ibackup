@@ -1849,6 +1849,51 @@ func TestServer(t *testing.T) { //nolint:cyclop
 					remoteBackupExists := internal.WaitForFile(remotePath)
 					So(remoteBackupExists, ShouldBeTrue)
 				})
+
+				Convey("and add a set containing directories that can't be accessed, which is shown as a set error", func() {
+					err = client.AddOrUpdateSet(exampleSet)
+					So(err, ShouldBeNil)
+
+					setDir := filepath.Join(localDir, "perms_test")
+
+					pathExpected := filepath.Join(setDir, "dir1", "file1.txt")
+					createFile(t, pathExpected, 1)
+					pathExpected2 := filepath.Join(setDir, "dir2", "file2.txt")
+					createFile(t, pathExpected2, 1)
+					pathExpected3 := filepath.Join(setDir, "dir3", "file3.txt")
+					createFile(t, pathExpected3, 1)
+
+					err = os.Chmod(filepath.Dir(pathExpected2), 0)
+					So(err, ShouldBeNil)
+					err = os.Chmod(filepath.Dir(pathExpected3), 0)
+					So(err, ShouldBeNil)
+
+					defer func() {
+						err = os.Chmod(filepath.Dir(pathExpected2), userPerms)
+						So(err, ShouldBeNil)
+						err = os.Chmod(filepath.Dir(pathExpected3), userPerms)
+						So(err, ShouldBeNil)
+					}()
+
+					err = client.SetDirs(exampleSet.ID(), []string{setDir})
+					So(err, ShouldBeNil)
+
+					err = client.TriggerDiscovery(exampleSet.ID())
+					So(err, ShouldBeNil)
+
+					ok := <-racCalled
+					So(ok, ShouldBeTrue)
+
+					gotSet, err := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+					So(err, ShouldBeNil)
+
+					entries, err := client.GetFiles(exampleSet.ID())
+					So(err, ShouldBeNil)
+					So(len(entries), ShouldEqual, 1)
+
+					So(gotSet.Error, ShouldContainSubstring, fmt.Sprintf("open %s: permission denied\n", filepath.Dir(pathExpected2)))
+					So(gotSet.Error, ShouldContainSubstring, fmt.Sprintf("open %s: permission denied\n", filepath.Dir(pathExpected3)))
+				})
 			})
 		})
 	})
