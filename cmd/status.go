@@ -27,6 +27,7 @@ package cmd
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -383,13 +384,25 @@ func displayDirs(dirs []string, transformer put.PathTransformer) {
 
 	cliPrint("Directories:\n")
 
+	warnedAboutTransformer := false
+
 	for _, dir := range dirs {
-		transformedPath, err := transformer(dir)
+		pretendFile := filepath.Join(dir, "file.txt")
+
+		transformedPath, err := transformer(pretendFile)
 		if err != nil {
-			die("your transformer didn't work: %s", err)
+			if !warnedAboutTransformer {
+				warn("your transformer didn't work: %s", err)
+
+				warnedAboutTransformer = true
+			}
+
+			cliPrint("  %s\n", dir)
+
+			continue
 		}
 
-		cliPrint("  %s => %s\n", dir, transformedPath)
+		cliPrint("  %s => %s\n", dir, filepath.Dir(transformedPath))
 	}
 }
 
@@ -414,7 +427,9 @@ func displayExampleFile(path string, transformer put.PathTransformer) {
 
 	transformedPath, err := transformer(path)
 	if err != nil {
-		die("your transformer didn't work: %s", err)
+		warn("your transformer didn't work: %s", err)
+
+		return
 	}
 
 	cliPrint("Example File: %s => %s\n", path, transformedPath)

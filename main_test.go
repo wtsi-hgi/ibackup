@@ -245,14 +245,15 @@ no backup sets`)
 	})
 
 	Convey("Given an added set defined with a directory", t, func() {
-		prefix, localDir, remoteDir := addSetWithEmptyDir(t)
+		transformer, localDir, remoteDir := prepareSetWithEmptyDir(t)
+		addSetForTesting(t, "testAdd", transformer, localDir)
 
 		Convey("Status tells you where input directories would get uploaded to", func() {
 			confirmOutput(t, []string{"status"}, 0, `Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
 Global put client status (/10): 0 creating collections; 0 currently uploading
 
 Name: testAdd
-Transformer: prefix=`+prefix+`
+Transformer: `+transformer+`
 Monitored: false; Archive: false
 Status: complete
 Discovery:
@@ -294,12 +295,59 @@ Uploaded: 0; Failed: 0; Missing: 2
 Example File: `+dir+`/path/to/other/file => /remote/path/to/other/file`)
 		})
 	})
+
+	Convey("Given an added set defined with a humgen transformer, the remote directory is correct", t, func() {
+		humgenFile := "/lustre/scratch125/humgen/teams/hgi/mercury/ibackup/file_for_testsuite.do_not_delete"
+		humgenDir := filepath.Dir(humgenFile)
+
+		if _, err := os.Stat(humgenDir); err != nil {
+			SkipConvey("skip humgen transformer test since not in humgen", func() {})
+
+			return
+		}
+
+		addSetForTesting(t, "humgenSet", "humgen", humgenFile)
+
+		confirmOutput(t, []string{"status", "-n", "humgenSet"}, 0,
+			`Global put queue status: 3 queued; 0 reserved to be worked on; 0 failed
+Global put client status (/10): 0 creating collections; 0 currently uploading
+
+Name: humgenSet
+Transformer: humgen
+Monitored: false; Archive: false
+Status: pending upload
+Discovery:
+Num files: 1; Size files: 0 B (and counting)
+Uploaded: 0; Failed: 0; Missing: 0
+Example File: `+humgenFile+" => /humgen/teams/hgi/scratch125/mercury/ibackup/file_for_testsuite.do_not_delete")
+	})
+
+	Convey("Given an added set defined with a non-humgen dir and humgen transformer, it warns about the issue", t, func() {
+		_, localDir, _ := prepareSetWithEmptyDir(t)
+		addSetForTesting(t, "badHumgen", "humgen", localDir)
+
+		confirmOutput(t, []string{"status", "-n", "badHumgen"}, 0,
+			`Global put queue status: 3 queued; 0 reserved to be worked on; 0 failed
+Global put client status (/10): 0 creating collections; 0 currently uploading
+
+Name: badHumgen
+Transformer: humgen
+Monitored: false; Archive: false
+Status: complete
+Discovery:
+Num files: 0; Size files: 0 B
+Uploaded: 0; Failed: 0; Missing: 0
+Completed in: 0s
+Directories:
+your transformer didn't work: not a valid humgen lustre path [`+localDir+`/file.txt]
+  `+localDir)
+	})
 }
 
-// addSetWithEmptyDir creates a tempdir with a subdirectory inside it, adds a
-// set defined with the subdir, and returns the prefix transformer, the path to
-// the subdir, and the remote dir the transformer would upload to.
-func addSetWithEmptyDir(t *testing.T) (string, string, string) {
+// prepareSetWithEmptyDir creates a tempdir with a subdirectory inside it, and
+// returns a prefix transformer, the directory created and the remote upload
+// location.
+func prepareSetWithEmptyDir(t *testing.T) (string, string, string) {
 	t.Helper()
 
 	dir := t.TempDir()
@@ -308,15 +356,18 @@ func addSetWithEmptyDir(t *testing.T) (string, string, string) {
 	err := os.MkdirAll(someDir, userPerms)
 	So(err, ShouldBeNil)
 
-	prefix := dir + ":/remote"
+	transformer := "prefix=" + dir + ":/remote"
 
-	exitCode, _ := runBinary(t, "add", "--name", "testAdd", "--transformer",
-		"prefix="+prefix, "--path", someDir)
+	return transformer, someDir, "/remote/some/dir"
+}
+
+func addSetForTesting(t *testing.T, name, transformer, path string) {
+	t.Helper()
+
+	exitCode, _ := runBinary(t, "add", "--name", name, "--transformer", transformer, "--path", path)
 	So(exitCode, ShouldEqual, 0)
 
 	<-time.After(250 * time.Millisecond)
-
-	return prefix, someDir, "/remote/some/dir"
 }
 
 func TestBackup(t *testing.T) {
@@ -328,7 +379,8 @@ func TestBackup(t *testing.T) {
 
 		So(err, ShouldBeNil)
 
-		addSetWithEmptyDir(t)
+		transformer, localDir, _ := prepareSetWithEmptyDir(t)
+		addSetForTesting(t, "testForBackup", transformer, localDir)
 
 		localBackupExists := internal.WaitForFile(backupFile)
 		So(localBackupExists, ShouldBeTrue)
@@ -340,7 +392,7 @@ func TestBackup(t *testing.T) {
 			return
 		}
 
-		<-time.After(5 * time.Second)
+		<-time.After(8 * time.Second)
 
 		tdir := t.TempDir()
 		gotPath := filepath.Join(tdir, "remote.db")
