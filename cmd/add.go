@@ -235,7 +235,7 @@ func add(client *server.Client, name, requester, transformer, description string
 		Requester:   requester,
 		Transformer: transformer,
 		Description: description,
-		Monitor:     monitor,
+		MonitorTime: monitor,
 		DeleteLocal: archive,
 	}
 
