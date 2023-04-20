@@ -392,14 +392,32 @@ func TestBackup(t *testing.T) {
 			return
 		}
 
-		<-time.After(8 * time.Second)
-
+		ticker := time.NewTicker(1 * time.Second)
+		timeout := time.NewTimer(30 * time.Second)
 		tdir := t.TempDir()
 		gotPath := filepath.Join(tdir, "remote.db")
-		cmd := exec.Command("iget", "-K", remotePath, gotPath)
 
-		err = cmd.Run()
-		So(err, ShouldBeNil)
+		var igetErr error
+
+	igetLoop:
+		for {
+			select {
+			case <-ticker.C:
+				cmd := exec.Command("iget", "-K", remotePath, gotPath)
+
+				igetErr = cmd.Run()
+				if igetErr == nil {
+					break igetLoop
+				}
+			case <-timeout.C:
+				break igetLoop
+			}
+		}
+
+		ticker.Stop()
+		timeout.Stop()
+
+		So(igetErr, ShouldBeNil)
 
 		ri, err := os.Stat(gotPath)
 		So(err, ShouldBeNil)
