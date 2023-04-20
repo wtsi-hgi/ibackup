@@ -296,6 +296,27 @@ Example File: `+dir+`/path/to/other/file => /remote/path/to/other/file`)
 		})
 	})
 
+	Convey("Given an added set defined with a non-humgen dir and humgen transformer, it warns about the issue", t, func() {
+		_, localDir, _ := prepareSetWithEmptyDir(t)
+		addSetForTesting(t, "badHumgen", "humgen", localDir)
+
+		confirmOutput(t, []string{"status", "-n", "badHumgen"}, 0,
+			`Global put queue status: 2 queued; 0 reserved to be worked on; 0 failed
+Global put client status (/10): 0 creating collections; 0 currently uploading
+
+Name: badHumgen
+Transformer: humgen
+Monitored: false; Archive: false
+Status: complete
+Discovery:
+Num files: 0; Size files: 0 B
+Uploaded: 0; Failed: 0; Missing: 0
+Completed in: 0s
+Directories:
+your transformer didn't work: not a valid humgen lustre path [`+localDir+`/file.txt]
+  `+localDir)
+	})
+
 	Convey("Given an added set defined with a humgen transformer, the remote directory is correct", t, func() {
 		humgenFile := "/lustre/scratch125/humgen/teams/hgi/mercury/ibackup/file_for_testsuite.do_not_delete"
 		humgenDir := filepath.Dir(humgenFile)
@@ -320,27 +341,6 @@ Discovery:
 Num files: 1; Size files: 0 B (and counting)
 Uploaded: 0; Failed: 0; Missing: 0
 Example File: `+humgenFile+" => /humgen/teams/hgi/scratch125/mercury/ibackup/file_for_testsuite.do_not_delete")
-	})
-
-	Convey("Given an added set defined with a non-humgen dir and humgen transformer, it warns about the issue", t, func() {
-		_, localDir, _ := prepareSetWithEmptyDir(t)
-		addSetForTesting(t, "badHumgen", "humgen", localDir)
-
-		confirmOutput(t, []string{"status", "-n", "badHumgen"}, 0,
-			`Global put queue status: 3 queued; 0 reserved to be worked on; 0 failed
-Global put client status (/10): 0 creating collections; 0 currently uploading
-
-Name: badHumgen
-Transformer: humgen
-Monitored: false; Archive: false
-Status: complete
-Discovery:
-Num files: 0; Size files: 0 B
-Uploaded: 0; Failed: 0; Missing: 0
-Completed in: 0s
-Directories:
-your transformer didn't work: not a valid humgen lustre path [`+localDir+`/file.txt]
-  `+localDir)
 	})
 }
 
