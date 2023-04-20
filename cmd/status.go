@@ -242,8 +242,8 @@ func displaySet(s *set.Set) {
 	cliPrint("Transformer: %s\n", s.Transformer)
 
 	monitored := "false"
-	if s.Monitor > 0 {
-		monitored = s.Monitor.String()
+	if s.MonitorTime > 0 {
+		monitored = s.MonitorTime.String()
 	}
 
 	cliPrint("Monitored: %v; Archive: %v\n", monitored, s.DeleteLocal)

@@ -52,19 +52,19 @@ func TestMonitorHeap(t *testing.T) {
 
 			mh.Add(&set.Set{
 				Name:          "third",
-				Monitor:       3 * time.Second,
+				MonitorTime:   3 * time.Second,
 				LastDiscovery: ld,
 			})
 
 			mh.Add(&set.Set{
 				Name:          "first",
-				Monitor:       1 * time.Second,
+				MonitorTime:   1 * time.Second,
 				LastDiscovery: ld,
 			})
 
 			mh.Add(&set.Set{
 				Name:          "second",
-				Monitor:       2 * time.Second,
+				MonitorTime:   2 * time.Second,
 				LastDiscovery: ld,
 			})
 
@@ -92,19 +92,19 @@ func TestMonitorHeap(t *testing.T) {
 
 			mh.Add(&set.Set{
 				Name:          "third",
-				Monitor:       30 * time.Millisecond,
+				MonitorTime:   30 * time.Millisecond,
 				LastDiscovery: ld,
 			})
 
 			mh.Add(&set.Set{
 				Name:          "first",
-				Monitor:       10 * time.Millisecond,
+				MonitorTime:   10 * time.Millisecond,
 				LastDiscovery: ld,
 			})
 
 			mh.Add(&set.Set{
 				Name:          "second",
-				Monitor:       20 * time.Millisecond,
+				MonitorTime:   20 * time.Millisecond,
 				LastDiscovery: ld,
 			})
 

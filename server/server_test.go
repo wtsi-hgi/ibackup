@@ -138,7 +138,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 				Name:        "set1",
 				Requester:   "jim",
 				Transformer: "prefix=" + localDir + ":" + remoteDir,
-				Monitor:     0,
+				MonitorTime: 0,
 			}
 
 			Convey("Which lets you login", func() {
@@ -151,14 +151,14 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						Name:        "set2",
 						Requester:   exampleSet.Requester,
 						Transformer: exampleSet.Transformer,
-						Monitor:     5 * time.Minute,
+						MonitorTime: 5 * time.Minute,
 					}
 
 					exampleSet3 := &set.Set{
 						Name:        "set3",
 						Requester:   exampleSet.Requester,
 						Transformer: exampleSet.Transformer,
-						Monitor:     0,
+						MonitorTime: 0,
 					}
 
 					client := NewClient(addr, certPath, token)
@@ -474,10 +474,10 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						})
 
 						waitForDiscovery := func(given *set.Set) {
-							ticker := time.NewTicker(given.Monitor / 10)
+							ticker := time.NewTicker(given.MonitorTime / 10)
 							defer ticker.Stop()
 
-							timeout := time.NewTimer(given.Monitor * 2)
+							timeout := time.NewTimer(given.MonitorTime * 2)
 							discovered := given.LastDiscovery
 
 							for {
@@ -496,7 +496,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						}
 
 						Convey("After discovery, monitored sets get discovered again after completion", func() {
-							exampleSet2.Monitor = 500 * time.Millisecond
+							exampleSet2.MonitorTime = 500 * time.Millisecond
 							err = client.AddOrUpdateSet(exampleSet2)
 							So(err, ShouldBeNil)
 
@@ -579,7 +579,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 								Name:        "empty",
 								Requester:   exampleSet2.Requester,
 								Transformer: exampleSet2.Transformer,
-								Monitor:     500 * time.Millisecond,
+								MonitorTime: 500 * time.Millisecond,
 							}
 
 							err = client.AddOrUpdateSet(emptySet)
@@ -609,10 +609,10 @@ func TestServer(t *testing.T) { //nolint:cyclop
 							discovered = gotSet.LastDiscovery
 
 							countDiscovery := func(given *set.Set) int {
-								ticker := time.NewTicker(given.Monitor / 10)
+								ticker := time.NewTicker(given.MonitorTime / 10)
 								defer ticker.Stop()
 
-								timeout := time.NewTimer(given.Monitor * 10)
+								timeout := time.NewTimer(given.MonitorTime * 10)
 								countDiscovered := given.LastDiscovery
 								count := 0
 
@@ -645,7 +645,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 									Name:        emptySet.Name,
 									Requester:   emptySet.Requester,
 									Transformer: emptySet.Transformer,
-									Monitor:     250 * time.Millisecond,
+									MonitorTime: 250 * time.Millisecond,
 								}
 
 								err = client.AddOrUpdateSet(changedSet)
@@ -670,7 +670,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 									Name:        emptySet.Name,
 									Requester:   emptySet.Requester,
 									Transformer: emptySet.Transformer,
-									Monitor:     1 * time.Minute,
+									MonitorTime: 1 * time.Minute,
 								}
 
 								err = client.AddOrUpdateSet(changedSet)
@@ -1110,7 +1110,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 									Name:        "set4",
 									Requester:   exampleSet.Requester,
 									Transformer: exampleSet.Transformer,
-									Monitor:     0,
+									MonitorTime: 0,
 								}
 
 								errCh <- client.AddOrUpdateSet(exampleSet4)

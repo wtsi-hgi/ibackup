@@ -148,7 +148,7 @@ func (d *DB) AddOrUpdate(set *Set) error {
 		if existing := b.Get(bid); existing != nil {
 			eset := d.decodeSet(existing)
 			eset.Transformer = set.Transformer
-			eset.Monitor = set.Monitor
+			eset.MonitorTime = set.MonitorTime
 			eset.DeleteLocal = set.DeleteLocal
 			eset.Description = set.Description
 			eset.Error = set.Error

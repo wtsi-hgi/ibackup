@@ -159,7 +159,7 @@ func TestSet(t *testing.T) {
 					Name:        "set1",
 					Requester:   "jim",
 					Transformer: "prefix=/local:/remote",
-					Monitor:     0,
+					MonitorTime: 0,
 					DeleteLocal: false,
 				}
 
@@ -172,7 +172,7 @@ func TestSet(t *testing.T) {
 				err = db.SetDirEntries(set.ID(), []string{"/g/h", "/g/i"})
 				So(err, ShouldBeNil)
 
-				set.Monitor = 1 * time.Hour
+				set.MonitorTime = 1 * time.Hour
 				err = db.AddOrUpdate(set)
 				So(err, ShouldBeNil)
 
@@ -180,7 +180,7 @@ func TestSet(t *testing.T) {
 					Name:        "set2",
 					Requester:   "jane",
 					Transformer: "prefix=/local:/remote",
-					Monitor:     0,
+					MonitorTime: 0,
 					DeleteLocal: true,
 				}
 

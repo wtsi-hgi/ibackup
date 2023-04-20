@@ -115,7 +115,7 @@ func (m *Monitor) Add(s *set.Set) {
 
 	ms := MonitoredSet{
 		set:  s,
-		next: last.Add(s.Monitor),
+		next: last.Add(s.MonitorTime),
 	}
 
 	currentIndex, found := m.monitorHeap.byID[s.ID()]
@@ -176,7 +176,7 @@ func (m *Monitor) NextSet() *set.Set {
 // monitorSet sets up up discovery monitoring on the passed set if set Monitor
 // duration is defined.
 func (s *Server) monitorSet(given *set.Set) {
-	if given.Monitor == 0 || given.Status != set.Complete {
+	if given.MonitorTime == 0 || given.Status != set.Complete {
 		return
 	}
 
