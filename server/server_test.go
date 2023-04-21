@@ -81,7 +81,6 @@ func TestServer(t *testing.T) { //nolint:cyclop
 
 	admin := u.Username
 	minMBperSecondUploadSpeed := float64(10)
-	minTimeForUpload := 1 * time.Minute
 	maxStuckTime := 1 * time.Hour
 
 	Convey("Given a Server", t, func() {
