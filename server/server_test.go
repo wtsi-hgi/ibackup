@@ -1598,7 +1598,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 					})
 
 					Convey("The system warns of possibly stuck uploads", func() {
-						handler.MakePutSlow(discovers[0], 600*time.Millisecond)
+						handler.MakePutSlow(discovers[0], 1200*time.Millisecond)
 
 						requests, errg := client.GetSomeUploadRequests()
 						So(errg, ShouldBeNil)
@@ -1616,7 +1616,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 								minMBperSecondUploadSpeed, 100*time.Millisecond, logger)
 						}()
 
-						<-time.After(300 * time.Millisecond)
+						<-time.After(600 * time.Millisecond)
 						gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
 						So(err, ShouldBeNil)
 						So(gotSet.Status, ShouldEqual, set.Uploading)
