@@ -68,6 +68,7 @@ const (
 	ErrLocalNotAbs         = "local path could not be made absolute"
 	ErrRemoteNotAbs        = "remote path not absolute"
 	ErrReadTimeout         = "local file read timed out"
+	ErrStuckTimeout        = "upload killed because it was stuck"
 	minDirsForUnique       = 2
 	numPutGoroutines       = 2
 	defaultFileReadTimeout = 10 * time.Second

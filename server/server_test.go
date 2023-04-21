@@ -1652,7 +1652,9 @@ func TestServer(t *testing.T) { //nolint:cyclop
 					})
 
 					Convey("...but if it is beyond the max stuck time, it is killed", func() {
-						handler.MakePutSlow(discovers[0], 1200*time.Millisecond)
+						testStart := time.Now()
+						slowDur := 10 * time.Second
+						handler.MakePutSlow(discovers[0], slowDur)
 
 						requests, errg := client.GetSomeUploadRequests()
 						So(errg, ShouldBeNil)
@@ -1667,20 +1669,13 @@ func TestServer(t *testing.T) { //nolint:cyclop
 							uploadStarts, uploadResults, skippedResults := p.Put()
 
 							errCh <- client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults,
-								minMBperSecondUploadSpeed, 100*time.Millisecond, 100*time.Millisecond, logger)
+								minMBperSecondUploadSpeed, 1*time.Millisecond, 2*time.Millisecond, logger)
 						}()
 
 						err = <-errCh
 						So(err, ShouldNotBeNil)
-
-						gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
-						So(err, ShouldBeNil)
-						So(gotSet.Status, ShouldEqual, set.Complete)
-						So(gotSet.NumFiles, ShouldEqual, len(discovers))
-						So(gotSet.Uploaded, ShouldEqual, len(discovers)-1)
-						So(gotSet.Missing, ShouldEqual, 0)
-						So(gotSet.Failed, ShouldEqual, 1)
-						So(gotSet.Error, ShouldBeBlank)
+						So(err.Error(), ShouldContainSubstring, ErrKilledDueToStuck.Error())
+						So(time.Since(testStart), ShouldBeLessThan, slowDur/2)
 
 						entries, errg := client.GetFiles(exampleSet.ID())
 						So(errg, ShouldBeNil)
@@ -1689,13 +1684,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						firstEntry := entries[0]
 						So(firstEntry.Status, ShouldEqual, set.Failed)
 						So(firstEntry.Attempts, ShouldEqual, 1)
-						So(firstEntry.LastError, ShouldEqual, "upload killed because it was stuck")
-
-						for _, entry := range entries[1:] {
-							So(entry.Status, ShouldEqual, set.Uploaded)
-							So(entry.Attempts, ShouldEqual, 1)
-							So(entry.LastError, ShouldBeBlank)
-						}
+						So(firstEntry.LastError, ShouldEqual, put.ErrStuckTimeout)
 					})
 
 					Convey("numRequestsToReserve returns appropriate numbers", func() {

@@ -27,6 +27,7 @@
 package server
 
 import (
+	"errors"
 	"net/http"
 	"sync"
 	"time"
@@ -45,6 +46,8 @@ const (
 	bytesInMiB           = 1024 * 1024
 	numHandlers          = 2
 	millisecondsInSecond = 1000
+
+	ErrKilledDueToStuck = gas.Error(put.ErrStuckTimeout)
 )
 
 // Client is used to interact with the Server over the network, with
@@ -404,6 +407,8 @@ func (c *Client) stillWorkingOnRequests(rids []string) error {
 // If an upload seems to take too long, based on the given minimum MB/s upload
 // speed, tells the server the upload might be stuck, but continues to wait an
 // additional maxStuckTime before giving up and returning an error.
+// (Note that uploads may still actually be occurring; we only stop updating the
+// server; you should exit your process to stop the uploads.)
 //
 // Do not call this concurrently!
 func (c *Client) SendPutResultsToServer(uploadStarts, uploadResults, skipResults chan *put.Request,
@@ -430,6 +435,10 @@ func (c *Client) SendPutResultsToServer(uploadStarts, uploadResults, skipResults
 
 	for err := range c.uploadsErrCh {
 		merr = multierror.Append(merr, err)
+
+		if errors.Is(err, ErrKilledDueToStuck) {
+			break
+		}
 	}
 
 	c.logger.Info("finished sending put results to server")
@@ -438,8 +447,8 @@ func (c *Client) SendPutResultsToServer(uploadStarts, uploadResults, skipResults
 }
 
 // handleUploadTracking starts timing uploads and sends stuck message to server
-// if they take too long. When uploads complete and are sent on the results
-// chan, updates server again.
+// if they take too long (and errors if they take super long). When uploads
+// complete and are sent on the results chan, updates server again.
 func (c *Client) handleUploadTracking(wg *sync.WaitGroup, uploadStarts, uploadResults chan *put.Request) {
 	defer wg.Done()
 
@@ -472,16 +481,17 @@ func (c *Client) handleUploadTracking(wg *sync.WaitGroup, uploadStarts, uploadRe
 // indicate the upload completed.
 func (c *Client) stuckIfUploadTakesTooLong(request *put.Request) chan bool {
 	started := time.Now()
-	timer := time.NewTimer(c.maxTimeForUpload(request))
+	stuckTimer := time.NewTimer(c.maxTimeForUpload(request))
+
 	doneCh := make(chan bool)
 
 	go func() {
+		defer stuckTimer.Stop()
+
 		select {
 		case <-doneCh:
-			timer.Stop()
-
 			return
-		case <-timer.C:
+		case <-stuckTimer.C:
 			request.Stuck = put.NewStuck(started)
 			c.logger.Warn("upload stuck?", "path", request.Local)
 
@@ -489,7 +499,7 @@ func (c *Client) stuckIfUploadTakesTooLong(request *put.Request) chan bool {
 				c.uploadsErrCh <- err
 			}
 
-			<-doneCh
+			go c.killStuckIfTakesTooLong(request, doneCh)
 		}
 	}()
 
@@ -514,6 +524,28 @@ func (c *Client) maxTimeForUpload(r *put.Request) time.Duration {
 // bytesToMB converts bytes to number of MB.
 func bytesToMB(bytes uint64) float64 {
 	return float64(bytes) / bytesInMiB
+}
+
+// killStuckIfTakesTooLong logs that a stuck upload has breached the
+// maxStuckTime, sets the requests status to failed in the db, and signals that
+// we should stop sending put results to the server.
+func (c *Client) killStuckIfTakesTooLong(request *put.Request, doneCh chan bool) {
+	timeout := time.NewTimer(c.maxStuckTime)
+
+	select {
+	case <-timeout.C:
+		c.logger.Warn("upload stuck for a long time, giving up", "path", request.Local)
+		request.Status = put.RequestStatusFailed
+		request.Error = put.ErrStuckTimeout
+
+		if err := c.UpdateFileStatus(request); err != nil {
+			c.uploadsErrCh <- err
+		}
+
+		c.uploadsErrCh <- ErrKilledDueToStuck
+	case <-doneCh:
+		return
+	}
 }
 
 // handleSendingSkipResults updates file status for each completed request that
