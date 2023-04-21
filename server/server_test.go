@@ -1615,7 +1615,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 							uploadStarts, uploadResults, skippedResults := p.Put()
 
 							errCh <- client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults,
-								minMBperSecondUploadSpeed, minTimeForUpload, slowDur*2, logger)
+								minMBperSecondUploadSpeed, 100*time.Millisecond, slowDur*2, logger)
 						}()
 
 						<-time.After(600 * time.Millisecond)
@@ -1667,12 +1667,35 @@ func TestServer(t *testing.T) { //nolint:cyclop
 							uploadStarts, uploadResults, skippedResults := p.Put()
 
 							errCh <- client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults,
-								minMBperSecondUploadSpeed, minTimeForUpload, 100*time.Millisecond, logger)
+								minMBperSecondUploadSpeed, 100*time.Millisecond, 100*time.Millisecond, logger)
 						}()
 
 						err = <-errCh
-						fmt.Println(err)
 						So(err, ShouldNotBeNil)
+
+						gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+						So(err, ShouldBeNil)
+						So(gotSet.Status, ShouldEqual, set.Complete)
+						So(gotSet.NumFiles, ShouldEqual, len(discovers))
+						So(gotSet.Uploaded, ShouldEqual, len(discovers)-1)
+						So(gotSet.Missing, ShouldEqual, 0)
+						So(gotSet.Failed, ShouldEqual, 1)
+						So(gotSet.Error, ShouldBeBlank)
+
+						entries, errg := client.GetFiles(exampleSet.ID())
+						So(errg, ShouldBeNil)
+						So(len(entries), ShouldEqual, len(discovers))
+
+						firstEntry := entries[0]
+						So(firstEntry.Status, ShouldEqual, set.Failed)
+						So(firstEntry.Attempts, ShouldEqual, 1)
+						So(firstEntry.LastError, ShouldEqual, "upload killed because it was stuck")
+
+						for _, entry := range entries[1:] {
+							So(entry.Status, ShouldEqual, set.Uploaded)
+							So(entry.Attempts, ShouldEqual, 1)
+							So(entry.LastError, ShouldBeBlank)
+						}
 					})
 
 					Convey("numRequestsToReserve returns appropriate numbers", func() {
