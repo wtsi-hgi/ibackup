@@ -255,9 +255,13 @@ func displaySet(s *set.Set) {
 
 	if s.Error != "" {
 		cliPrint("Status: unable to proceed\n")
-		cliPrint("Error: %s\n", strings.TrimSpace(s.Error))
+		cliPrint("Error: %s\n", s.Error)
 	} else {
 		cliPrint("Status: %s\n", s.Status)
+	}
+
+	if s.Warning != "" {
+		cliPrint("Warning: %s\n", s.Warning)
 	}
 
 	cliPrint("Discovery: %s\n", s.Discovered())

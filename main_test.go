@@ -340,8 +340,8 @@ Global put client status (/10): 0 creating collections; 0 currently uploading
 Name: badPerms
 Transformer: `+transformer+`
 Monitored: false; Archive: false
-Status: unable to proceed
-Error: open `+badPermDir+`: permission denied
+Status: complete
+Warning: open `+badPermDir+`: permission denied
 Discovery:
 Num files: 0; Size files: 0 B
 Uploaded: 0; Failed: 0; Missing: 0
@@ -375,7 +375,6 @@ Num files: 1; Size files: 0 B (and counting)
 Uploaded: 0; Failed: 0; Missing: 0
 Example File: `+humgenFile+" => /humgen/teams/hgi/scratch125/mercury/ibackup/file_for_testsuite.do_not_delete")
 	})
-
 }
 
 // prepareSetWithEmptyDir creates a tempdir with a subdirectory inside it, and

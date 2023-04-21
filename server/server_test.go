@@ -1891,8 +1891,10 @@ func TestServer(t *testing.T) { //nolint:cyclop
 					So(err, ShouldBeNil)
 					So(len(entries), ShouldEqual, 1)
 
-					So(gotSet.Error, ShouldContainSubstring, fmt.Sprintf("open %s: permission denied\n", filepath.Dir(pathExpected2)))
-					So(gotSet.Error, ShouldContainSubstring, fmt.Sprintf("open %s: permission denied\n", filepath.Dir(pathExpected3)))
+					So(gotSet.Warning, ShouldContainSubstring,
+						fmt.Sprintf("open %s: permission denied\n", filepath.Dir(pathExpected2)))
+					So(gotSet.Warning, ShouldContainSubstring,
+						fmt.Sprintf("open %s: permission denied\n", filepath.Dir(pathExpected3)))
 				})
 			})
 		})
