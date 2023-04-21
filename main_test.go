@@ -34,12 +34,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/phayes/freeport"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/wtsi-hgi/ibackup/internal"
+	"github.com/wtsi-hgi/ibackup/put"
 )
 
 const app = "ibackup"
@@ -402,6 +404,40 @@ func addSetForTesting(t *testing.T, name, transformer, path string) {
 	So(exitCode, ShouldEqual, 0)
 
 	<-time.After(250 * time.Millisecond)
+}
+
+func TestPut(t *testing.T) {
+	Convey("In server mode, put exits early if there are long-time stuck uploads", t, func() {
+		remoteDBPath := remoteDBBackupPath()
+		if remoteDBPath == "" {
+			SkipConvey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
+
+			return
+		}
+
+		remoteDir := filepath.Dir(remoteDBPath)
+		_, localDir, _ := prepareSetWithEmptyDir(t)
+		transformer := fmt.Sprintf("prefix=%s:%s", localDir, remoteDir)
+		stuckFilePath := filepath.Join(localDir, "stuck.fifo")
+
+		err := syscall.Mkfifo(stuckFilePath, userPerms)
+		So(err, ShouldBeNil)
+
+		go func() {
+			f, erro := os.OpenFile(stuckFilePath, os.O_WRONLY, userPerms)
+			So(erro, ShouldBeNil)
+
+			f.Write([]byte{0})
+		}()
+
+		addSetForTesting(t, "stuckPutTest", transformer, stuckFilePath)
+
+		// send new option to define stuck time
+
+		exitCode, out := runBinary(t, "put", "--server", os.Getenv("IBACKUP_SERVER_URL"))
+		So(exitCode, ShouldEqual, 0)
+		So(out, ShouldContainSubstring, put.ErrStuckTimeout)
+	})
 }
 
 func TestBackup(t *testing.T) {
