@@ -1599,7 +1599,8 @@ func TestServer(t *testing.T) { //nolint:cyclop
 					})
 
 					Convey("The system warns of possibly stuck uploads", func() {
-						handler.MakePutSlow(discovers[0], 1200*time.Millisecond)
+						slowDur := 1200 * time.Millisecond
+						handler.MakePutSlow(discovers[0], slowDur)
 
 						requests, errg := client.GetSomeUploadRequests()
 						So(errg, ShouldBeNil)
@@ -1614,7 +1615,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 							uploadStarts, uploadResults, skippedResults := p.Put()
 
 							errCh <- client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults,
-								minMBperSecondUploadSpeed, 100*time.Millisecond, maxStuckTime, logger)
+								minMBperSecondUploadSpeed, minTimeForUpload, slowDur*2, logger)
 						}()
 
 						<-time.After(600 * time.Millisecond)
@@ -1648,6 +1649,30 @@ func TestServer(t *testing.T) { //nolint:cyclop
 							So(entry.Attempts, ShouldEqual, 1)
 							So(entry.LastError, ShouldBeBlank)
 						}
+					})
+
+					Convey("...but if it is beyond the max stuck time, it is killed", func() {
+						handler.MakePutSlow(discovers[0], 1200*time.Millisecond)
+
+						requests, errg := client.GetSomeUploadRequests()
+						So(errg, ShouldBeNil)
+						So(len(requests), ShouldEqual, len(discovers))
+
+						p, d := makePutter(t, handler, requests, client)
+						defer d()
+
+						errCh := make(chan error)
+
+						go func() {
+							uploadStarts, uploadResults, skippedResults := p.Put()
+
+							errCh <- client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults,
+								minMBperSecondUploadSpeed, minTimeForUpload, 100*time.Millisecond, logger)
+						}()
+
+						err = <-errCh
+						fmt.Println(err)
+						So(err, ShouldNotBeNil)
 					})
 
 					Convey("numRequestsToReserve returns appropriate numbers", func() {
