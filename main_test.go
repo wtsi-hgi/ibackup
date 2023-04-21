@@ -317,6 +317,39 @@ your transformer didn't work: not a valid humgen lustre path [`+localDir+`/file.
   `+localDir)
 	})
 
+	Convey("Given an added set with an inaccessible subfolder, print the error to the user", t, func() {
+		transformer, localDir, remote := prepareSetWithEmptyDir(t)
+		badPermDir := filepath.Join(localDir, "bad-perms-dir")
+		err := os.Mkdir(badPermDir, userPerms)
+		So(err, ShouldBeNil)
+
+		err = os.Chmod(badPermDir, 0)
+		So(err, ShouldBeNil)
+
+		defer func() {
+			err = os.Chmod(filepath.Dir(badPermDir), userPerms)
+			So(err, ShouldBeNil)
+		}()
+
+		addSetForTesting(t, "badPerms", transformer, localDir)
+
+		confirmOutput(t, []string{"status", "-n", "badPerms"}, 0,
+			`Global put queue status: 2 queued; 0 reserved to be worked on; 0 failed
+Global put client status (/10): 0 creating collections; 0 currently uploading
+
+Name: badPerms
+Transformer: `+transformer+`
+Monitored: false; Archive: false
+Status: unable to proceed
+Error: open `+badPermDir+`: permission denied
+Discovery:
+Num files: 0; Size files: 0 B
+Uploaded: 0; Failed: 0; Missing: 0
+Completed in: 0s
+Directories:
+  `+localDir+" => "+remote)
+	})
+
 	Convey("Given an added set defined with a humgen transformer, the remote directory is correct", t, func() {
 		humgenFile := "/lustre/scratch125/humgen/teams/hgi/mercury/ibackup/file_for_testsuite.do_not_delete"
 		humgenDir := filepath.Dir(humgenFile)
@@ -342,6 +375,7 @@ Num files: 1; Size files: 0 B (and counting)
 Uploaded: 0; Failed: 0; Missing: 0
 Example File: `+humgenFile+" => /humgen/teams/hgi/scratch125/mercury/ibackup/file_for_testsuite.do_not_delete")
 	})
+
 }
 
 // prepareSetWithEmptyDir creates a tempdir with a subdirectory inside it, and
