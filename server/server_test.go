@@ -1850,7 +1850,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 					So(remoteBackupExists, ShouldBeTrue)
 				})
 
-				Convey("and add a set containing directories that can't be accessed, which is shown as a set error", func() {
+				Convey("and add a set containing directories that can't be accessed, which is shown as a set warning", func() {
 					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldBeNil)
 
@@ -1892,9 +1892,9 @@ func TestServer(t *testing.T) { //nolint:cyclop
 					So(len(entries), ShouldEqual, 1)
 
 					So(gotSet.Warning, ShouldContainSubstring,
-						fmt.Sprintf("open %s: permission denied\n", filepath.Dir(pathExpected2)))
+						fmt.Sprintf("open %s: permission denied", filepath.Dir(pathExpected2)))
 					So(gotSet.Warning, ShouldContainSubstring,
-						fmt.Sprintf("open %s: permission denied\n", filepath.Dir(pathExpected3)))
+						fmt.Sprintf("open %s: permission denied", filepath.Dir(pathExpected3)))
 				})
 			})
 		})
