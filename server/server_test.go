@@ -1839,8 +1839,8 @@ func TestServer(t *testing.T) { //nolint:cyclop
 					exists := internal.WaitForFile(backupPath)
 					So(exists, ShouldBeTrue)
 
-					stat, err := os.Stat(backupPath)
-					So(err, ShouldBeNil)
+					stat, errS := os.Stat(backupPath)
+					So(errS, ShouldBeNil)
 
 					lastMod := stat.ModTime()
 
@@ -1876,8 +1876,8 @@ func TestServer(t *testing.T) { //nolint:cyclop
 
 					remotePath := filepath.Join(remoteDir, "remoteDB")
 
-					handler, err := put.GetLocalHandler()
-					So(err, ShouldBeNil)
+					handler, errG := put.GetLocalHandler()
+					So(errG, ShouldBeNil)
 
 					s.EnableRemoteDBBackups(remotePath, handler)
 
