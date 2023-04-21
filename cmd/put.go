@@ -61,9 +61,9 @@ const (
 	// we'll consider it stuck, regardless of the MB/s.
 	minTimeForUpload = 1 * time.Minute
 
-	// maxStuckTime is the maximum time we'll wait for an upload we think is
-	// stuck to complete, before giving up with an error.
-	maxStuckTime = 1 * time.Hour
+	// defaultMaxStuckTime is the default maximum time we'll wait for an upload
+	//  we think is stuck to complete, before giving up with an error.
+	defaultMaxStuckTime = 1 * time.Hour
 
 	// runFor is the minimum time we'll try and run for in server mode,
 	// getting more requests if we finish early.
@@ -77,6 +77,7 @@ var putVerbose bool
 var putBase64 bool
 var putServerMode bool
 var putLog string
+var maxStuckTime time.Duration
 
 // putCmd represents the put command.
 var putCmd = &cobra.Command{
@@ -162,6 +163,8 @@ func init() {
 		"pull requests from the server instead of --file; only usable by the user who started the server")
 	putCmd.Flags().StringVarP(&putLog, "log", "l", "",
 		"log to the given file (implies --verbose)")
+	putCmd.Flags().DurationVar(&maxStuckTime, "stuck-timeout", defaultMaxStuckTime,
+		"override the default stuck wait time (1h)")
 }
 
 func serverMode() bool {

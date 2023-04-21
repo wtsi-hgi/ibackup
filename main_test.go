@@ -407,7 +407,16 @@ func addSetForTesting(t *testing.T, name, transformer, path string) {
 }
 
 func TestPut(t *testing.T) {
-	Convey("In server mode, put exits early if there are long-time stuck uploads", t, func() {
+	convey := Convey
+	conveyText := "In server mode, put exits early if there are long-time stuck uploads"
+	// This test takes at least 1 minute to run, so is disabled by default.
+	// This test can be enables by setting the ENABLE_STUCK_TEST env var.
+	if os.Getenv("ENABLE_STUCK_TEST") == "" {
+		convey = SkipConvey
+		conveyText += " (set ENABLE_STUCK_TEST to enable)"
+	}
+
+	convey(conveyText, t, func() {
 		remoteDBPath := remoteDBBackupPath()
 		if remoteDBPath == "" {
 			SkipConvey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
@@ -424,17 +433,14 @@ func TestPut(t *testing.T) {
 		So(err, ShouldBeNil)
 
 		go func() {
-			f, erro := os.OpenFile(stuckFilePath, os.O_WRONLY, userPerms)
-			So(erro, ShouldBeNil)
+			f, _ := os.OpenFile(stuckFilePath, os.O_WRONLY, userPerms) //nolint:errcheck
 
-			f.Write([]byte{0})
+			f.Write([]byte{0}) //nolint:errcheck
 		}()
 
 		addSetForTesting(t, "stuckPutTest", transformer, stuckFilePath)
 
-		// send new option to define stuck time
-
-		exitCode, out := runBinary(t, "put", "--server", os.Getenv("IBACKUP_SERVER_URL"))
+		exitCode, out := runBinary(t, "put", "--server", os.Getenv("IBACKUP_SERVER_URL"), "--stuck-timeout", "10s")
 		So(exitCode, ShouldEqual, 0)
 		So(out, ShouldContainSubstring, put.ErrStuckTimeout)
 	})
