@@ -27,8 +27,11 @@ package server
 
 import (
 	"context"
+	"errors"
+	"io/fs"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/VertebrateResequencing/wr/queue"
@@ -186,8 +189,20 @@ func (s *Server) discoverDirEntries(given *set.Set, filesDoneCh chan bool) (*set
 
 	pathsCh := make(chan string)
 	doneCh := make(chan error)
+	warnCh := make(chan error)
+	warnDoneCh := make(chan struct{})
 
-	go s.doSetDirWalks(given, entries, pathsCh, doneCh)
+	var warning []string
+
+	go s.doSetDirWalks(given, entries, pathsCh, doneCh, warnCh)
+
+	go func() {
+		for warn := range warnCh {
+			warning = append(warning, warn.Error())
+		}
+
+		close(warnDoneCh)
+	}()
 
 	var paths []string //nolint:prealloc
 
@@ -200,7 +215,17 @@ func (s *Server) discoverDirEntries(given *set.Set, filesDoneCh chan bool) (*set
 		return nil, err
 	}
 
+	close(warnCh)
+
 	<-filesDoneCh
+	<-warnDoneCh
+
+	if len(warning) != 0 {
+		err = s.db.SetWarning(given.ID(), strings.Join(warning, "\n"))
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	given, err = s.db.SetDiscoveredEntries(given.ID(), paths)
 
@@ -219,8 +244,9 @@ func (s *Server) handleNewlyDefinedSets(given *set.Set) {
 
 // doSetDirWalks walks the given dir entries of the given set concurrently,
 // sending discovered file paths to the pathsCh. Closes the pathsCh when done,
-// then sends any error on the doneCh.
-func (s *Server) doSetDirWalks(given *set.Set, entries []*set.Entry, pathsCh chan string, doneCh chan error) {
+// then sends any error on the doneCh. Non-critical warnings during the walk are
+// sent to the warnChan.
+func (s *Server) doSetDirWalks(given *set.Set, entries []*set.Entry, pathsCh chan string, doneCh, warnChan chan error) {
 	errCh := make(chan error, len(entries))
 
 	var cb walk.PathCallback = func(path string) error {
@@ -233,7 +259,7 @@ func (s *Server) doSetDirWalks(given *set.Set, entries []*set.Entry, pathsCh cha
 		dir := entry.Path
 
 		s.dirPool.Submit(func() {
-			errCh <- s.checkAndWalkDir(given, dir, cb)
+			errCh <- s.checkAndWalkDir(given, dir, cb, warnChan)
 		})
 	}
 
@@ -252,9 +278,9 @@ func (s *Server) doSetDirWalks(given *set.Set, entries []*set.Entry, pathsCh cha
 }
 
 // checkAndWalkDir checks if the given dir exists, and if it does, walks the
-// dir using the given cb. Major errors are returned; walk errors are logged but
-// otherwise ignored.
-func (s *Server) checkAndWalkDir(given *set.Set, dir string, cb walk.PathCallback) error {
+// dir using the given cb. Major errors are returned; walk errors are logged and
+// permission ones sent to the warnChan.
+func (s *Server) checkAndWalkDir(given *set.Set, dir string, cb walk.PathCallback, warnChan chan error) error {
 	missing, err := s.setEntryMissingIfNotExist(given, dir)
 	if err != nil {
 		return err
@@ -266,12 +292,13 @@ func (s *Server) checkAndWalkDir(given *set.Set, dir string, cb walk.PathCallbac
 
 	walker := walk.New(cb, false, true)
 
-	return walker.Walk(dir, s.walkErrorCallback)
-}
+	return walker.Walk(dir, func(path string, err error) {
+		s.Logger.Printf("walk found %s, but had error: %s", path, err)
 
-// walkErrorCallback is for giving to Walk; we just log errors.
-func (s *Server) walkErrorCallback(path string, err error) {
-	s.Logger.Printf("walk found %s, but had error: %s", path, err)
+		if errors.Is(err, fs.ErrPermission) {
+			warnChan <- err
+		}
+	})
 }
 
 // enqueueSetFiles gets all the set's file entries (set and discovered), creates

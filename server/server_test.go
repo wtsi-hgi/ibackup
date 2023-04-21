@@ -1598,7 +1598,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 					})
 
 					Convey("The system warns of possibly stuck uploads", func() {
-						handler.MakePutSlow(discovers[0], 600*time.Millisecond)
+						handler.MakePutSlow(discovers[0], 1200*time.Millisecond)
 
 						requests, errg := client.GetSomeUploadRequests()
 						So(errg, ShouldBeNil)
@@ -1616,7 +1616,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 								minMBperSecondUploadSpeed, 100*time.Millisecond, logger)
 						}()
 
-						<-time.After(300 * time.Millisecond)
+						<-time.After(600 * time.Millisecond)
 						gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
 						So(err, ShouldBeNil)
 						So(gotSet.Status, ShouldEqual, set.Uploading)
@@ -1848,6 +1848,53 @@ func TestServer(t *testing.T) { //nolint:cyclop
 
 					remoteBackupExists := internal.WaitForFile(remotePath)
 					So(remoteBackupExists, ShouldBeTrue)
+				})
+
+				Convey("and add a set containing directories that can't be accessed, which is shown as a set warning", func() {
+					err = client.AddOrUpdateSet(exampleSet)
+					So(err, ShouldBeNil)
+
+					setDir := filepath.Join(localDir, "perms_test")
+
+					pathExpected := filepath.Join(setDir, "dir1", "file1.txt")
+					createFile(t, pathExpected, 1)
+					pathExpected2 := filepath.Join(setDir, "dir2", "file2.txt")
+					createFile(t, pathExpected2, 1)
+					pathExpected3 := filepath.Join(setDir, "dir3", "file3.txt")
+					createFile(t, pathExpected3, 1)
+
+					err = os.Chmod(filepath.Dir(pathExpected2), 0)
+					So(err, ShouldBeNil)
+					err = os.Chmod(filepath.Dir(pathExpected3), 0)
+					So(err, ShouldBeNil)
+
+					defer func() {
+						err = os.Chmod(filepath.Dir(pathExpected2), userPerms)
+						So(err, ShouldBeNil)
+						err = os.Chmod(filepath.Dir(pathExpected3), userPerms)
+						So(err, ShouldBeNil)
+					}()
+
+					err = client.SetDirs(exampleSet.ID(), []string{setDir})
+					So(err, ShouldBeNil)
+
+					err = client.TriggerDiscovery(exampleSet.ID())
+					So(err, ShouldBeNil)
+
+					ok := <-racCalled
+					So(ok, ShouldBeTrue)
+
+					gotSet, err := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+					So(err, ShouldBeNil)
+
+					entries, err := client.GetFiles(exampleSet.ID())
+					So(err, ShouldBeNil)
+					So(len(entries), ShouldEqual, 1)
+
+					So(gotSet.Warning, ShouldContainSubstring,
+						fmt.Sprintf("open %s: permission denied", filepath.Dir(pathExpected2)))
+					So(gotSet.Warning, ShouldContainSubstring,
+						fmt.Sprintf("open %s: permission denied", filepath.Dir(pathExpected3)))
 				})
 			})
 		})

@@ -152,6 +152,7 @@ func (d *DB) AddOrUpdate(set *Set) error {
 			eset.DeleteLocal = set.DeleteLocal
 			eset.Description = set.Description
 			eset.Error = set.Error
+			eset.Warning = set.Warning
 			set = eset
 		}
 
@@ -281,6 +282,7 @@ func (d *DB) SetDiscoveryStarted(setID string) error {
 		set.Missing = 0
 		set.Status = PendingDiscovery
 		set.Error = ""
+		set.Warning = ""
 
 		return b.Put(bid, d.encodeToBytes(set))
 	})
@@ -876,15 +878,32 @@ func (d *DB) GetDirEntries(setID string) ([]*Entry, error) {
 // SetError updates a set with the given error message. Returns an error if the
 // setID isn't in the database.
 func (d *DB) SetError(setID, errMsg string) error {
+	return d.updateSetProperties(setID, func(got *Set) {
+		got.Error = errMsg
+	})
+}
+
+// updateSetProperties retrives a set from the database and gives it to your
+// callback, allowing you to change properties on it. The altered set will then
+// be stored back in the database.
+func (d *DB) updateSetProperties(setID string, cb func(*Set)) error {
 	return d.db.Update(func(tx *bolt.Tx) error {
 		set, bid, b, err := d.getSetByID(tx, setID)
 		if err != nil {
 			return err
 		}
 
-		set.Error = errMsg
+		cb(set)
 
 		return b.Put(bid, d.encodeToBytes(set))
+	})
+}
+
+// SetWarning updates a set with the given warning message. Returns an error if
+// the setID isn't in the database.
+func (d *DB) SetWarning(setID, warnMsg string) error {
+	return d.updateSetProperties(setID, func(got *Set) {
+		got.Warning = warnMsg
 	})
 }
 

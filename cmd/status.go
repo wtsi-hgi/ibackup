@@ -260,6 +260,10 @@ func displaySet(s *set.Set) {
 		cliPrint("Status: %s\n", s.Status)
 	}
 
+	if s.Warning != "" {
+		cliPrint("Warning: %s\n", s.Warning)
+	}
+
 	cliPrint("Discovery: %s\n", s.Discovered())
 	cliPrint("Num files: %s; Size files: %s\n", s.Count(), s.Size())
 	cliPrint("Uploaded: %d; Failed: %d; Missing: %d\n", s.Uploaded, s.Failed, s.Missing)

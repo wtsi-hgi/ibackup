@@ -200,14 +200,19 @@ func TestSet(t *testing.T) {
 
 					So(db.GetByID("sdf"), ShouldBeNil)
 
-					Convey("And set an Error for it, which is cleared when we start discovery again", func() {
-						msg := "foo"
-						err = db.SetError(set.ID(), msg)
+					Convey("And set an Error and Warning for it, which are cleared when we start discovery again", func() {
+						errMsg := "fooErr"
+						err = db.SetError(set.ID(), errMsg)
+						So(err, ShouldBeNil)
+
+						warnMsg := "fooWarn"
+						err = db.SetWarning(set.ID(), warnMsg)
 						So(err, ShouldBeNil)
 
 						retrieved = db.GetByID(set.ID())
 						So(retrieved, ShouldNotBeNil)
-						So(retrieved.Error, ShouldEqual, msg)
+						So(retrieved.Error, ShouldEqual, errMsg)
+						So(retrieved.Warning, ShouldEqual, warnMsg)
 
 						err = db.SetDiscoveryStarted(set.ID())
 						So(err, ShouldBeNil)
@@ -215,6 +220,7 @@ func TestSet(t *testing.T) {
 						retrieved = db.GetByID(set.ID())
 						So(retrieved, ShouldNotBeNil)
 						So(retrieved.Error, ShouldBeBlank)
+						So(retrieved.Warning, ShouldBeBlank)
 					})
 
 					Convey("And set bool vals back to false on update", func() {

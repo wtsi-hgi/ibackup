@@ -163,6 +163,10 @@ type Set struct {
 	// Error holds any error that applies to the whole set, such as an issue
 	// with the Transformer. This is a read-only value.
 	Error string
+
+	// Warning contains errors that do not stop progression. This is a read-only
+	// value.
+	Warning string
 }
 
 // ID returns an ID for this set, generated deterministiclly from its Name and
