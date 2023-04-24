@@ -62,7 +62,7 @@ const (
 	minTimeForUpload = 1 * time.Minute
 
 	// defaultMaxStuckTime is the default maximum time we'll wait for an upload
-	//  we think is stuck to complete, before giving up with an error.
+	// we think is stuck to complete, before giving up with an error.
 	defaultMaxStuckTime = 1 * time.Hour
 
 	// runFor is the minimum time we'll try and run for in server mode,
