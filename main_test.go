@@ -1,7 +1,8 @@
 /*******************************************************************************
  * Copyright (c) 2023 Genome Research Ltd.
  *
- * Author: Sendu Bala <sb10@sanger.ac.uk>
+ * Authors: Michael Woolnough <mw31@sanger.ac.uk>
+ *          Sendu Bala <sb10@sanger.ac.uk>
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -33,12 +34,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/phayes/freeport"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/wtsi-hgi/ibackup/internal"
+	"github.com/wtsi-hgi/ibackup/put"
 )
 
 const app = "ibackup"
@@ -401,6 +404,46 @@ func addSetForTesting(t *testing.T, name, transformer, path string) {
 	So(exitCode, ShouldEqual, 0)
 
 	<-time.After(250 * time.Millisecond)
+}
+
+func TestPut(t *testing.T) {
+	convey := Convey
+	conveyText := "In server mode, put exits early if there are long-time stuck uploads"
+	// This test takes at least 1 minute to run, so is disabled by default.
+	// This test can be enables by setting the ENABLE_STUCK_TEST env var.
+	if os.Getenv("ENABLE_STUCK_TEST") == "" {
+		convey = SkipConvey
+		conveyText += " (set ENABLE_STUCK_TEST to enable)"
+	}
+
+	convey(conveyText, t, func() {
+		remoteDBPath := remoteDBBackupPath()
+		if remoteDBPath == "" {
+			SkipConvey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
+
+			return
+		}
+
+		remoteDir := filepath.Dir(remoteDBPath)
+		_, localDir, _ := prepareSetWithEmptyDir(t)
+		transformer := fmt.Sprintf("prefix=%s:%s", localDir, remoteDir)
+		stuckFilePath := filepath.Join(localDir, "stuck.fifo")
+
+		err := syscall.Mkfifo(stuckFilePath, userPerms)
+		So(err, ShouldBeNil)
+
+		go func() {
+			f, _ := os.OpenFile(stuckFilePath, os.O_WRONLY, userPerms) //nolint:errcheck
+
+			f.Write([]byte{0}) //nolint:errcheck
+		}()
+
+		addSetForTesting(t, "stuckPutTest", transformer, stuckFilePath)
+
+		exitCode, out := runBinary(t, "put", "--server", os.Getenv("IBACKUP_SERVER_URL"), "--stuck-timeout", "10s")
+		So(exitCode, ShouldEqual, 0)
+		So(out, ShouldContainSubstring, put.ErrStuckTimeout)
+	})
 }
 
 func TestBackup(t *testing.T) {
