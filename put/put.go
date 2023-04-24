@@ -31,6 +31,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
@@ -135,12 +136,18 @@ func headRead(ctx context.Context, path string) error {
 	return err
 }
 
+// PutCallback returns RequestStatusPending if the file is to be uploaded, and
+// returns any other RequestStatus, such as RequestStatusHardlink and
+// RequestStatusSymlink, to not be uploaded.
+type PutCallback func(absPath string, fi os.FileInfo) RequestStatus
+
 // Putter is used to Put() files in iRODS.
 type Putter struct {
 	handler         Handler
 	fileReadTimeout time.Duration
 	fileReadTester  FileReadTester
 	requests        []*Request
+	putCallback     PutCallback
 }
 
 // New returns a *Putter that will use the given Handler to Put() all the
@@ -158,6 +165,7 @@ func New(handler Handler, requests []*Request) (*Putter, error) {
 		fileReadTimeout: defaultFileReadTimeout,
 		fileReadTester:  headRead,
 		requests:        requests,
+		putCallback:     func(_ string, _ os.FileInfo) RequestStatus { return RequestStatusPending },
 	}, nil
 }
 
@@ -345,9 +353,15 @@ func (p *Putter) pickFilesToPut(wg *sync.WaitGroup, putCh chan *Request, skipRet
 // with a note to skip the actual put and just do metadata. Otherwise, sends
 // them to the putCh normally.
 func (p *Putter) statPathsAndReturnOrPut(request *Request, putCh chan *Request, skipReturnCh chan *Request) {
-	lInfo, err := Stat(request.Local)
+	lInfo, stat, err := Stat(request.Local)
 	if err != nil {
 		sendRequest(request, RequestStatusMissing, err, skipReturnCh)
+
+		return
+	}
+
+	if statusRequest := p.putCallback(request.Local, stat); statusRequest != RequestStatusPending {
+		sendRequest(request, statusRequest, nil, skipReturnCh)
 
 		return
 	}
@@ -534,4 +548,8 @@ func (p *Putter) testRead(request *Request) error {
 	}()
 
 	return <-errCh
+}
+
+func (p *Putter) SetPutCallback(cb PutCallback) {
+	p.putCallback = cb
 }

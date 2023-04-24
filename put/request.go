@@ -46,6 +46,8 @@ const (
 	RequestStatusUnmodified RequestStatus = "unmodified"
 	RequestStatusMissing    RequestStatus = "missing"
 	RequestStatusFailed     RequestStatus = "failed"
+	RequestStatusHardlink   RequestStatus = "skipped:hardlink"
+	RequestStatusSymlink    RequestStatus = "skipped:symlink"
 	ErrNotHumgenLustre                    = "not a valid humgen lustre path"
 	metaListSeparator                     = ","
 	stuckTimeFormat                       = "02/01/06 15:04 MST"
