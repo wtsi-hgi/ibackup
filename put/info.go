@@ -50,22 +50,22 @@ type ObjectInfo struct {
 	Meta   map[string]string
 }
 
-// Stat stats localPath like os.Stat(), but returns information about the file
-// in ObjectInfo Meta (mtime, owner and group information).
-func Stat(localPath string) (*ObjectInfo, error) {
+// Stat stats localPath like os.Stat(), but also returns information about the
+// file in ObjectInfo Meta (mtime, owner and group information).
+func Stat(localPath string) (*ObjectInfo, os.FileInfo, error) {
 	fi, err := os.Stat(localPath)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	mtime, err := timeToMeta(fi.ModTime())
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	user, group, err := getUserAndGroupFromFileInfo(fi, localPath)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	return &ObjectInfo{
@@ -76,7 +76,7 @@ func Stat(localPath string) (*ObjectInfo, error) {
 			metaKeyOwner: user,
 			metaKeyGroup: group,
 		},
-	}, nil
+	}, fi, nil
 }
 
 // timeToMeta converts a time to a string suitable for storing as metadata, in
