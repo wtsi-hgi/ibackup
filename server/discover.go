@@ -147,7 +147,7 @@ func (s *Server) updateSetFileExistence(given *set.Set) error {
 func (s *Server) setEntryMissingIfNotExist(given *set.Set, path string) (bool, error) {
 	info, err := os.Lstat(path)
 
-	isSymlink := info != nil && info.Mode().Type()&os.ModeSymlink == 1
+	isSymlink := info != nil && info.Mode().Type()&os.ModeSymlink != 0
 	if err == nil && !isSymlink {
 		return false, nil
 	}

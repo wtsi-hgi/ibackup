@@ -184,7 +184,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 					So(err, ShouldBeNil)
 
 					Convey("And then you can set file and directory entries, trigger discovery and get all file statuses", func() {
-						files, dirs, discovers, _ := createTestBackupFiles(t, localDir)
+						files, dirs, discovers, symlinkPath := createTestBackupFiles(t, localDir)
 						dirs = append(dirs, filepath.Join(localDir, "missing"))
 
 						err = client.SetFiles(exampleSet.ID(), files)
@@ -250,7 +250,8 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						err = client.AddOrUpdateSet(exampleSet2)
 						So(err, ShouldBeNil)
 
-						err = client.SetFiles(exampleSet2.ID(), files)
+						set2Files := append(append([]string{}, files...), symlinkPath)
+						err = client.SetFiles(exampleSet2.ID(), set2Files)
 						So(err, ShouldBeNil)
 
 						err = client.SetDirs(exampleSet2.ID(), nil)
@@ -263,18 +264,18 @@ func TestServer(t *testing.T) { //nolint:cyclop
 
 						ok = <-racCalled
 						So(ok, ShouldBeTrue)
-						So(len(racRequests), ShouldEqual, numFiles+len(discovers)+numFiles)
+						So(len(racRequests), ShouldEqual, numFiles+len(discovers)+len(set2Files))
 
 						entries, err = client.GetFiles(exampleSet2.ID())
 						So(err, ShouldBeNil)
-						So(len(entries), ShouldEqual, numFiles)
+						So(len(entries), ShouldEqual, len(set2Files))
 
 						gotSet, err = client.GetSetByID(exampleSet2.Requester, exampleSet2.ID())
 						So(err, ShouldBeNil)
 						So(gotSet.LastDiscovery, ShouldHappenAfter, tn)
+						So(gotSet.NumFiles, ShouldEqual, len(set2Files))
 						So(gotSet.Missing, ShouldEqual, 1)
-						So(gotSet.Symlinks, ShouldEqual, 0)
-						So(gotSet.NumFiles, ShouldEqual, numFiles)
+						So(gotSet.Symlinks, ShouldEqual, 1)
 
 						err = client.AddOrUpdateSet(exampleSet3)
 						So(err, ShouldBeNil)
@@ -292,7 +293,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 
 						ok = <-racCalled
 						So(ok, ShouldBeTrue)
-						So(len(racRequests), ShouldEqual, numFiles+len(discovers)+numFiles+len(discovers))
+						So(len(racRequests), ShouldEqual, numFiles+len(discovers)+len(set2Files)+len(discovers))
 
 						entries, err = client.GetFiles(exampleSet3.ID())
 						So(err, ShouldBeNil)
@@ -316,9 +317,9 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						ok = <-racCalled
 						So(ok, ShouldBeTrue)
 						So(racCalls, ShouldEqual, 4)
-						So(len(racRequests), ShouldEqual, numFiles+len(discovers)+numFiles+len(discovers))
+						So(len(racRequests), ShouldEqual, numFiles+len(discovers)+len(set2Files)+len(discovers))
 
-						expectedRequests := 12
+						expectedRequests := 13
 
 						Convey("After discovery, admin can get upload requests and update file entry status", func() {
 							entries, err = client.GetFiles(exampleSet.ID())
@@ -1060,7 +1061,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 								gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet2.ID())
 								So(err, ShouldBeNil)
 								So(gotSet.Status, ShouldEqual, set.PendingUpload)
-								So(gotSet.NumFiles, ShouldEqual, numFiles)
+								So(gotSet.NumFiles, ShouldEqual, len(set2Files))
 								So(gotSet.Uploaded, ShouldEqual, 0)
 
 								r9 := requests[6].Clone()
@@ -1090,7 +1091,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 								gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet2.ID())
 								So(err, ShouldBeNil)
 								So(gotSet.Status, ShouldEqual, set.Uploading)
-								So(gotSet.NumFiles, ShouldEqual, numFiles)
+								So(gotSet.NumFiles, ShouldEqual, len(set2Files))
 								So(gotSet.Uploaded, ShouldEqual, 0)
 								So(gotSet.Error, ShouldBeBlank)
 								entries, err = client.GetFiles(exampleSet2.ID())
