@@ -55,13 +55,13 @@ const (
 	// HardLink is an Entry status meaning the local file is a hardlink and so
 	// was not uploaded. (The system will ensure that the data at the inode is
 	// backed up, so hardlinks are restorable.)
-	Hardlink
+	HardLink
 
-	// Symlink is an Entry status meaning the local file is a symbolic link and
+	// SymLink is an Entry status meaning the local file is a symbolic link and
 	// so was not uploaded. (The system will try to upload the destination file
 	// if that's possible, and record the symlink details so the symlinks are
 	// restorable.)
-	Symlink
+	SymLink
 )
 
 // String lets you convert a EntryStatus to a meaningful string.

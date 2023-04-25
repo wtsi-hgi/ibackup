@@ -32,6 +32,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/VertebrateResequencing/wr/queue"
@@ -147,16 +148,24 @@ func (s *Server) updateSetFileExistence(given *set.Set) error {
 func (s *Server) setEntryMissingIfNotExist(given *set.Set, path string) (bool, error) {
 	info, err := os.Lstat(path)
 
-	isSymlink := info != nil && info.Mode().Type()&os.ModeSymlink != 0
-	if err == nil && !isSymlink {
+	var isHardLink, isSymlink bool
+
+	if info != nil {
+		statt, ok := info.Sys().(*syscall.Stat_t)
+		isHardLink = ok && statt.Nlink > 1
+		isSymlink = info.Mode().Type()&os.ModeSymlink != 0
+	}
+
+	if err == nil && !isSymlink && !isHardLink {
 		return false, nil
 	}
 
 	status := put.RequestStatusMissing
 	if isSymlink {
-		status = put.RequestStatusSymlink
+		status = put.RequestStatusSymLink
+	} else if isHardLink {
+		status = put.RequestStatusHardLink
 	}
-
 	r := &put.Request{
 		Local:     path,
 		Requester: given.Requester,

@@ -169,7 +169,7 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 			Convey("Put() with a callback in place that returns false for some files only puts the true ones", func() {
 				p.SetFileStatusCallback(func(absPath string, fi os.FileInfo) RequestStatus {
 					if absPath == requests[0].Local {
-						return RequestStatusHardlink
+						return RequestStatusHardLink
 					}
 
 					return RequestStatusPending
