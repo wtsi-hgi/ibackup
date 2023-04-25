@@ -47,10 +47,21 @@ const (
 	// remote issue.
 	Failed
 
-	// Failed is an Entry status meaning the local file is missing so can't be
+	// Missing is an Entry status meaning the local file is missing so can't be
 	// uploaded. Symlinks are considered to be "missing" since they can't be
 	// uploaded.
 	Missing
+
+	// HardLink is an Entry status meaning the local file is a hardlink and so
+	// was not uploaded. (The system will ensure that the data at the inode is
+	// backed up, so hardlinks are restorable.)
+	Hardlink
+
+	// Symlink is an Entry status meaning the local file is a symbolic link and
+	// so was not uploaded. (The system will try to upload the destination file
+	// if that's possible, and record the symlink details so the symlinks are
+	// restorable.)
+	Symlink
 )
 
 // String lets you convert a EntryStatus to a meaningful string.
@@ -61,6 +72,8 @@ func (e EntryStatus) String() string {
 		"uploaded",
 		"failed",
 		"missing",
+		"hardlink",
+		"symlink",
 	}[e]
 }
 

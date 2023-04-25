@@ -184,8 +184,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 					So(err, ShouldBeNil)
 
 					Convey("And then you can set file and directory entries, trigger discovery and get all file statuses", func() {
-						files, dirs, discovers, symlinkPath := createTestBackupFiles(t, localDir)
-						files = append(files, symlinkPath)
+						files, dirs, discovers, _ := createTestBackupFiles(t, localDir)
 						dirs = append(dirs, filepath.Join(localDir, "missing"))
 
 						err = client.SetFiles(exampleSet.ID(), files)
@@ -225,10 +224,10 @@ func TestServer(t *testing.T) { //nolint:cyclop
 
 						So(entries[0].Status, ShouldEqual, set.Pending)
 						So(entries[1].Status, ShouldEqual, set.Missing)
-						So(entries[2].Path, ShouldContainSubstring, "c/d/symlink")
-						So(entries[2].Status, ShouldEqual, set.Missing)
-						So(entries[3].Path, ShouldContainSubstring, "c/d/g")
-						So(entries[4].Path, ShouldContainSubstring, "c/d/h")
+						So(entries[2].Path, ShouldContainSubstring, "c/d/g")
+						So(entries[3].Path, ShouldContainSubstring, "c/d/h")
+						So(entries[4].Path, ShouldContainSubstring, "c/d/symlink")
+						So(entries[4].Status, ShouldEqual, set.Pending)
 						So(entries[5].Path, ShouldContainSubstring, "e/f/i/j/k/l")
 
 						entries, err = client.GetDirs(exampleSet.ID())
@@ -239,7 +238,8 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						gotSet, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
 						So(errg, ShouldBeNil)
 						So(gotSet.LastDiscovery, ShouldHappenAfter, tn)
-						So(gotSet.Missing, ShouldEqual, 2)
+						So(gotSet.Missing, ShouldEqual, 1)
+						So(gotSet.Symlinks, ShouldEqual, 0)
 						So(gotSet.NumFiles, ShouldEqual, 6)
 						So(gotSet.Status, ShouldEqual, set.PendingUpload)
 
@@ -267,13 +267,14 @@ func TestServer(t *testing.T) { //nolint:cyclop
 
 						entries, err = client.GetFiles(exampleSet2.ID())
 						So(err, ShouldBeNil)
-						So(len(entries), ShouldEqual, len(files))
+						So(len(entries), ShouldEqual, numFiles)
 
 						gotSet, err = client.GetSetByID(exampleSet2.Requester, exampleSet2.ID())
 						So(err, ShouldBeNil)
 						So(gotSet.LastDiscovery, ShouldHappenAfter, tn)
-						So(gotSet.Missing, ShouldEqual, 2)
-						So(gotSet.NumFiles, ShouldEqual, 3)
+						So(gotSet.Missing, ShouldEqual, 1)
+						So(gotSet.Symlinks, ShouldEqual, 0)
+						So(gotSet.NumFiles, ShouldEqual, numFiles)
 
 						err = client.AddOrUpdateSet(exampleSet3)
 						So(err, ShouldBeNil)
@@ -301,7 +302,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						So(err, ShouldBeNil)
 						So(gotSet.LastDiscovery, ShouldHappenAfter, tn)
 						So(gotSet.Missing, ShouldEqual, 0)
-						So(gotSet.NumFiles, ShouldEqual, 3)
+						So(gotSet.NumFiles, ShouldEqual, len(discovers))
 
 						So(racCalls, ShouldEqual, 3)
 						err = client.TriggerDiscovery(exampleSet.ID())
@@ -1052,19 +1053,23 @@ func TestServer(t *testing.T) { //nolint:cyclop
 								r7.Status = put.RequestStatusFailed
 								uploadResultsCh <- r7
 
+								r8 := requests[4].Clone()
+								r8.Status = put.RequestStatusSymlink
+								skippedResultsCh <- r8
+
 								gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet2.ID())
 								So(err, ShouldBeNil)
 								So(gotSet.Status, ShouldEqual, set.PendingUpload)
-								So(gotSet.NumFiles, ShouldEqual, 3)
+								So(gotSet.NumFiles, ShouldEqual, numFiles)
 								So(gotSet.Uploaded, ShouldEqual, 0)
 
-								r8 := requests[6].Clone()
-								r8.Status = put.RequestStatusUploading
-								r8.Size = 5
-								uploadStartsCh <- r8
-								r9 := r8.Clone()
-								r9.Stuck = put.NewStuck(time.Now())
-								uploadResultsCh <- r9
+								r9 := requests[6].Clone()
+								r9.Status = put.RequestStatusUploading
+								r9.Size = 5
+								uploadStartsCh <- r9
+								r10 := r9.Clone()
+								r10.Stuck = put.NewStuck(time.Now())
+								uploadResultsCh <- r10
 
 								close(uploadStartsCh)
 								close(uploadResultsCh)
@@ -1080,11 +1085,12 @@ func TestServer(t *testing.T) { //nolint:cyclop
 								So(gotSet.SizeFiles, ShouldEqual, 10)
 								So(gotSet.Uploaded, ShouldEqual, 3)
 								So(gotSet.Failed, ShouldEqual, 1)
+								So(gotSet.Symlinks, ShouldEqual, 1)
 
 								gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet2.ID())
 								So(err, ShouldBeNil)
 								So(gotSet.Status, ShouldEqual, set.Uploading)
-								So(gotSet.NumFiles, ShouldEqual, 3)
+								So(gotSet.NumFiles, ShouldEqual, numFiles)
 								So(gotSet.Uploaded, ShouldEqual, 0)
 								So(gotSet.Error, ShouldBeBlank)
 								entries, err = client.GetFiles(exampleSet2.ID())
@@ -1257,7 +1263,8 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						So(err, ShouldBeNil)
 						So(gotSet.Status, ShouldEqual, set.Complete)
 						So(gotSet.NumFiles, ShouldEqual, len(discovers))
-						So(gotSet.Uploaded, ShouldEqual, len(discovers))
+						So(gotSet.Uploaded, ShouldEqual, len(discovers)-1)
+						So(gotSet.Symlinks, ShouldEqual, 1)
 
 						Convey("After completion, re-discovery can find new files and we can re-complete", func() {
 							newFile := filepath.Join(dirs[0], "new")
@@ -1299,23 +1306,32 @@ func TestServer(t *testing.T) { //nolint:cyclop
 							So(err, ShouldBeNil)
 							So(gotSet.Status, ShouldEqual, set.Complete)
 							So(gotSet.NumFiles, ShouldEqual, expectedNumFiles)
-							So(gotSet.Uploaded, ShouldEqual, expectedNumFiles)
+							So(gotSet.Uploaded, ShouldEqual, expectedNumFiles-1)
+							So(gotSet.Symlinks, ShouldEqual, 1)
 
 							entries, errg := client.GetFiles(exampleSet.ID())
 							So(errg, ShouldBeNil)
 							So(len(entries), ShouldEqual, expectedNumFiles)
 
-							for _, entry := range entries {
-								So(entry.Status, ShouldEqual, set.Uploaded)
+							for n, entry := range entries {
+								if n == 3 {
+									So(entry.Status, ShouldEqual, set.Symlink)
+								} else {
+									So(entry.Status, ShouldEqual, set.Uploaded)
+								}
 							}
 
 							discovers = append(discovers, newFile)
 
-							for _, local := range discovers {
+							for n, local := range discovers {
 								remote := strings.Replace(local, localDir, remoteDir, 1)
 
 								_, err = os.Stat(remote)
-								So(err, ShouldBeNil)
+								if n == 3 {
+									So(err, ShouldNotBeNil)
+								} else {
+									So(err, ShouldBeNil)
+								}
 							}
 						})
 					})
@@ -1342,7 +1358,8 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						So(err, ShouldBeNil)
 						So(gotSet.Status, ShouldEqual, set.Complete)
 						So(gotSet.NumFiles, ShouldEqual, len(discovers))
-						So(gotSet.Uploaded, ShouldEqual, len(discovers)-1)
+						So(gotSet.Uploaded, ShouldEqual, len(discovers)-2)
+						So(gotSet.Symlinks, ShouldEqual, 1)
 						So(gotSet.Missing, ShouldEqual, 1)
 						So(gotSet.Error, ShouldBeBlank)
 
@@ -1385,21 +1402,31 @@ func TestServer(t *testing.T) { //nolint:cyclop
 							So(err, ShouldBeNil)
 							So(gotSet.Status, ShouldEqual, set.Complete)
 							So(gotSet.NumFiles, ShouldEqual, len(discovers))
-							So(gotSet.Uploaded, ShouldEqual, len(discovers))
+							So(gotSet.Uploaded, ShouldEqual, len(discovers)-1)
+							So(gotSet.Symlinks, ShouldEqual, 1)
 
 							entries, errg := client.GetFiles(exampleSet.ID())
 							So(errg, ShouldBeNil)
 							So(len(entries), ShouldEqual, len(discovers))
 
-							for _, entry := range entries {
-								So(entry.Status, ShouldEqual, set.Uploaded)
+							for n, entry := range entries {
+								if n == 2 {
+									So(entry.Status, ShouldEqual, set.Symlink)
+								} else {
+									So(entry.Status, ShouldEqual, set.Uploaded)
+								}
 							}
 
-							for _, local := range discovers {
+							for n, local := range discovers {
 								remote := strings.Replace(local, localDir, remoteDir, 1)
 
 								_, err = os.Stat(remote)
-								So(err, ShouldBeNil)
+
+								if n == 3 {
+									So(err, ShouldNotBeNil)
+								} else {
+									So(err, ShouldBeNil)
+								}
 							}
 						})
 					})
@@ -1421,7 +1448,11 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						for i := 1; i < int(jobRetries)+1; i++ {
 							requests, errg := client.GetSomeUploadRequests()
 							So(errg, ShouldBeNil)
-							So(len(requests), ShouldEqual, len(discovers))
+							if i == 1 {
+								So(len(requests), ShouldEqual, len(discovers))
+							} else {
+								So(len(requests), ShouldEqual, len(discovers)-1)
+							}
 
 							p, d := makePutter(t, handler, requests, client)
 							defer d()
@@ -1438,7 +1469,8 @@ func TestServer(t *testing.T) { //nolint:cyclop
 							So(gotSet.NumFiles, ShouldEqual, len(discovers))
 							So(gotSet.Uploaded, ShouldEqual, 0)
 							So(gotSet.Missing, ShouldEqual, 0)
-							So(gotSet.Failed, ShouldEqual, len(discovers))
+							So(gotSet.Failed, ShouldEqual, len(discovers)-1)
+							So(gotSet.Symlinks, ShouldEqual, 1)
 							So(gotSet.Error, ShouldBeBlank)
 
 							entries, errg := client.GetFiles(exampleSet.ID())
@@ -1446,15 +1478,20 @@ func TestServer(t *testing.T) { //nolint:cyclop
 							So(len(entries), ShouldEqual, len(discovers))
 
 							for j, entry := range entries {
-								So(entry.Status, ShouldEqual, set.Failed)
-								So(entry.Attempts, ShouldEqual, i)
+								if j == 2 {
+									So(entry.Status, ShouldEqual, set.Symlink)
+									So(entry.Attempts, ShouldEqual, 1)
+								} else {
+									So(entry.Status, ShouldEqual, set.Failed)
+									So(entry.Attempts, ShouldEqual, i)
+								}
 
 								switch j {
 								case 0:
 									So(entry.LastError, ShouldEqual, put.ErrMockStatFail)
 								case 1:
 									So(entry.LastError, ShouldEqual, put.ErrMockPutFail)
-								case 2:
+								case 3:
 									So(entry.LastError, ShouldEqual, put.ErrMockMetaFail)
 								}
 							}
@@ -1509,12 +1546,13 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						for i, entry := range entries {
 							if i == 0 {
 								So(entry.Status, ShouldEqual, set.Failed)
-								So(entry.Attempts, ShouldEqual, 1)
 								So(entry.LastError, ShouldContainSubstring, put.ErrReadTimeout)
+							} else if i == 2 {
+								So(entry.Status, ShouldEqual, set.Symlink)
 							} else {
 								So(entry.Status, ShouldEqual, set.Uploaded)
-								So(entry.Attempts, ShouldEqual, 1)
 							}
+							So(entry.Attempts, ShouldEqual, 1)
 						}
 
 						entries, skippedFails, errg := client.GetFailedFiles(exampleSet.ID())
@@ -1635,8 +1673,9 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						So(err, ShouldBeNil)
 						So(gotSet.Status, ShouldEqual, set.Complete)
 						So(gotSet.NumFiles, ShouldEqual, len(discovers))
-						So(gotSet.Uploaded, ShouldEqual, len(discovers))
+						So(gotSet.Uploaded, ShouldEqual, len(discovers)-1)
 						So(gotSet.Missing, ShouldEqual, 0)
+						So(gotSet.Symlinks, ShouldEqual, 1)
 						So(gotSet.Failed, ShouldEqual, 0)
 						So(gotSet.Error, ShouldBeBlank)
 
@@ -1644,8 +1683,12 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						So(errg, ShouldBeNil)
 						So(len(entries), ShouldEqual, len(discovers))
 
-						for _, entry := range entries {
-							So(entry.Status, ShouldEqual, set.Uploaded)
+						for n, entry := range entries {
+							if n == 2 {
+								So(entry.Status, ShouldEqual, set.Symlink)
+							} else {
+								So(entry.Status, ShouldEqual, set.Uploaded)
+							}
 							So(entry.Attempts, ShouldEqual, 1)
 							So(entry.LastError, ShouldBeBlank)
 						}
@@ -1985,6 +2028,8 @@ func createTestBackupFiles(t *testing.T, dir string) ([]string, []string, []stri
 		t.Fatalf("failed to create symlink: %s", err)
 	}
 
+	discovers = append(discovers, symlinkPath)
+
 	return files, dirs, discovers, symlinkPath
 }
 
@@ -2043,6 +2088,14 @@ func makePutter(t *testing.T, handler put.Handler, requests []*put.Request, clie
 
 	p, errp := put.New(handler, requests)
 	So(errp, ShouldBeNil)
+
+	p.SetFileStatusCallback(func(absPath string, fi os.FileInfo) put.RequestStatus {
+		if strings.HasSuffix(absPath, "symlink") {
+			return put.RequestStatusSymlink
+		}
+
+		return put.RequestStatusPending
+	})
 
 	d := func() {
 		if errc := p.Cleanup(); errc != nil {
