@@ -37,7 +37,7 @@ import (
 )
 
 func TestPutMock(t *testing.T) { //nolint:cyclop
-	FocusConvey("Given Requests and a mock Handler, you can make a new Putter", t, func() {
+	Convey("Given Requests and a mock Handler, you can make a new Putter", t, func() {
 		requests, expectedCollections := makeMockRequests(t)
 
 		lh := &LocalHandler{}
@@ -46,7 +46,7 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 		So(err, ShouldBeNil)
 		So(p, ShouldNotBeNil)
 
-		FocusConvey("CreateCollections() creates the minimal number of collections", func() {
+		Convey("CreateCollections() creates the minimal number of collections", func() {
 			err = p.CreateCollections()
 			So(err, ShouldBeNil)
 			So(lh.connected, ShouldBeTrue)
@@ -166,8 +166,8 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 				})
 			})
 
-			FocusConvey("Put() with a callback in place that returns false for some files only puts the true ones", func() {
-				p.SetPutCallback(func(absPath string, fi os.FileInfo) RequestStatus {
+			Convey("Put() with a callback in place that returns false for some files only puts the true ones", func() {
+				p.SetFileStatusCallback(func(absPath string, fi os.FileInfo) RequestStatus {
 					if absPath == requests[0].Local {
 						return RequestStatusHardlink
 					}
@@ -196,33 +196,6 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 				So(cCount, ShouldEqual, len(requests)-1)
 				So(skipped, ShouldEqual, 1)
 			})
-
-			// FocusConvey("Put() with the links callback in place only uploads non-links", func() {
-			// 	p.SetPutCallback(NoLinksPutCallback)
-
-			// 	hlink := requests[0].Local+".hardlink"
-
-			// 	uCh, urCh, srCh := p.Put()
-
-			// 	uCount := 0
-			// 	for range uCh {
-			// 		uCount++
-			// 	}
-
-			// 	cCount := 0
-			// 	for range urCh {
-			// 		cCount++
-			// 	}
-
-			// 	skipped := 0
-			// 	for range srCh {
-			// 		skipped++
-			// 	}
-
-			// 	So(uCount, ShouldEqual, len(requests)-1)
-			// 	So(cCount, ShouldEqual, len(requests)-1)
-			// 	So(skipped, ShouldEqual, 1)
-			// })
 
 			Convey("Put() fails if the local files don't exist", func() {
 				for _, r := range requests {

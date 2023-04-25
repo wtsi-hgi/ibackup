@@ -143,6 +143,10 @@ type Set struct {
 	// read-only value.
 	Missing uint64
 
+	// Symlinks provides the total number of set and discovered files in this
+	// set that are symlinks. This is a read-only value.
+	Symlinks uint64
+
 	// Status provides the current status for the set since the last discovery.
 	// This is a read-only value.
 	Status Status

@@ -280,6 +280,7 @@ func (d *DB) SetDiscoveryStarted(setID string) error {
 		set.Uploaded = 0
 		set.Failed = 0
 		set.Missing = 0
+		set.Symlinks = 0
 		set.Status = PendingDiscovery
 		set.Error = ""
 		set.Warning = ""
@@ -522,6 +523,9 @@ func requestStatusToEntryStatus(r *put.Request, entry *Entry) {
 	case put.RequestStatusMissing:
 		entry.Status = Missing
 		entry.unFailed = entry.Attempts > 1
+	case put.RequestStatusSymlink:
+		entry.Status = Symlink
+		entry.unFailed = entry.Attempts > 1
 	}
 }
 
@@ -584,7 +588,7 @@ func (d *DB) updateSetBasedOnEntry(set *Set, entry *Entry) {
 	entryStatusToSetCounts(entry, set)
 	d.fixSetCounts(entry, set)
 
-	if set.Uploaded+set.Failed+set.Missing == set.NumFiles {
+	if set.Uploaded+set.Failed+set.Missing+set.Symlinks == set.NumFiles {
 		set.Status = Complete
 		set.LastCompleted = time.Now()
 		set.LastCompletedCount = set.Uploaded + set.Failed
@@ -608,6 +612,8 @@ func entryStatusToSetCounts(entry *Entry, set *Set) {
 		}
 	case Missing:
 		set.Missing++
+	case Symlink:
+		set.Symlinks++
 	}
 }
 
@@ -627,6 +633,7 @@ func (d *DB) fixSetCounts(entry *Entry, set *Set) {
 	set.Uploaded = 0
 	set.Failed = 0
 	set.Missing = 0
+	set.Symlinks = 0
 
 	for _, e := range entries {
 		if e.Path == entry.Path {

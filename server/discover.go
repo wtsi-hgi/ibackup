@@ -145,8 +145,16 @@ func (s *Server) updateSetFileExistence(given *set.Set) error {
 // true and updates the corresponding entry for that path in the given set with
 // a missing status. Symlinks are treated as if they are missing.
 func (s *Server) setEntryMissingIfNotExist(given *set.Set, path string) (bool, error) {
-	if info, err := os.Lstat(path); err == nil && info.Mode().Type()&os.ModeSymlink == 0 {
+	info, err := os.Lstat(path)
+
+	isSymlink := info != nil && info.Mode().Type()&os.ModeSymlink == 1
+	if err == nil && !isSymlink {
 		return false, nil
+	}
+
+	status := put.RequestStatusMissing
+	if isSymlink {
+		status = put.RequestStatusSymlink
 	}
 
 	r := &put.Request{
@@ -154,12 +162,11 @@ func (s *Server) setEntryMissingIfNotExist(given *set.Set, path string) (bool, e
 		Requester: given.Requester,
 		Set:       given.Name,
 		Size:      0,
-		Status:    put.RequestStatusMissing,
+		Status:    status,
 		Error:     "",
 	}
 
-	_, err := s.db.SetEntryStatus(r)
-
+	_, err = s.db.SetEntryStatus(r)
 	s.monitorSetByName(r.Set, r.Requester)
 
 	return true, err
@@ -290,7 +297,7 @@ func (s *Server) checkAndWalkDir(given *set.Set, dir string, cb walk.PathCallbac
 		return nil
 	}
 
-	walker := walk.New(cb, false, true)
+	walker := walk.New(cb, false, false)
 
 	return walker.Walk(dir, func(path string, err error) {
 		s.Logger.Printf("walk found %s, but had error: %s", path, err)
