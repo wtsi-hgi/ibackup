@@ -152,7 +152,7 @@ func (s *Server) setEntryMissingIfNotExist(given *set.Set, path string) (bool, e
 
 	if info != nil {
 		statt, ok := info.Sys().(*syscall.Stat_t)
-		isHardLink = ok && statt.Nlink > 1
+		isHardLink = ok && statt.Nlink > 1 && !info.IsDir()
 		isSymlink = info.Mode().Type()&os.ModeSymlink != 0
 	}
 

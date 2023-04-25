@@ -1979,7 +1979,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						fmt.Sprintf("open %s: permission denied", filepath.Dir(pathExpected3)))
 				})
 
-				FocusConvey("and add a set with hardlinks which only uploads the file once", func() {
+				FocusConvey("and add a set with hardlinks defined directly which only uploads the file once", func() {
 					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldBeNil)
 
@@ -1999,15 +1999,15 @@ func TestServer(t *testing.T) { //nolint:cyclop
 					ok := <-racCalled
 					So(ok, ShouldBeTrue)
 
-					gotSet, err := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
-					So(err, ShouldBeNil)
+					gotSet, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+					So(errg, ShouldBeNil)
 					So(gotSet.Status, ShouldEqual, set.PendingUpload)
 					So(gotSet.NumFiles, ShouldEqual, 2)
 					So(gotSet.Uploaded, ShouldEqual, 0)
 					So(gotSet.HardLinks, ShouldEqual, 2)
 
-					requests, err := client.GetSomeUploadRequests()
-					So(err, ShouldBeNil)
+					requests, errg := client.GetSomeUploadRequests()
+					So(errg, ShouldBeNil)
 					So(len(requests), ShouldEqual, 2)
 
 					for _, item := range s.queue.AllItems() {
@@ -2027,6 +2027,38 @@ func TestServer(t *testing.T) { //nolint:cyclop
 					So(gotSet.NumFiles, ShouldEqual, 2)
 					So(gotSet.Uploaded, ShouldEqual, 0)
 					So(gotSet.HardLinks, ShouldEqual, 2)
+				})
+
+				FocusConvey("and add a set with hardlinks in a directory which only uploads the file once", func() {
+					err = client.AddOrUpdateSet(exampleSet)
+					So(err, ShouldBeNil)
+
+					hdir := filepath.Join(localDir, "hardlinks")
+					err = os.Mkdir(hdir, userPerms)
+					So(err, ShouldBeNil)
+
+					path1 := filepath.Join(hdir, "file.link1")
+					createFile(t, path1, 1)
+
+					path2 := filepath.Join(hdir, "file.link2")
+					err = os.Link(path1, path2)
+					So(err, ShouldBeNil)
+
+					err = client.SetDirs(exampleSet.ID(), []string{hdir})
+					So(err, ShouldBeNil)
+
+					err = client.TriggerDiscovery(exampleSet.ID())
+					So(err, ShouldBeNil)
+
+					ok := <-racCalled
+					So(ok, ShouldBeTrue)
+
+					gotSet, err := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+					So(err, ShouldBeNil)
+					So(gotSet.Status, ShouldEqual, set.PendingUpload)
+					So(gotSet.NumFiles, ShouldEqual, 2)
+					So(gotSet.Uploaded, ShouldEqual, 0)
+					So(gotSet.HardLinks, ShouldEqual, 0)
 				})
 			})
 		})
