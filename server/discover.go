@@ -37,9 +37,10 @@ import (
 
 	"github.com/VertebrateResequencing/wr/queue"
 	"github.com/gin-gonic/gin"
+	"github.com/wtsi-hgi/godirwalk"
 	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/set"
-	"github.com/wtsi-ssg/wrstat/v3/walk"
+	"github.com/wtsi-ssg/wrstat/v4/walk"
 )
 
 const ttr = 6 * time.Minute
@@ -265,7 +266,7 @@ func (s *Server) handleNewlyDefinedSets(given *set.Set) {
 func (s *Server) doSetDirWalks(given *set.Set, entries []*set.Entry, pathsCh chan string, doneCh, warnChan chan error) {
 	errCh := make(chan error, len(entries))
 
-	var cb walk.PathCallback = func(path string) error {
+	var cb walk.PathCallback = func(path string, _ *godirwalk.Dirent) error {
 		pathsCh <- path
 
 		return nil

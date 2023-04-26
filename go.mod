@@ -20,12 +20,13 @@ require (
 	github.com/spf13/cobra v1.7.0
 	github.com/ugorji/go/codec v1.2.11
 	github.com/wtsi-hgi/go-authserver v1.1.0
+	github.com/wtsi-hgi/godirwalk v1.18.1
 	github.com/wtsi-hgi/grand v1.0.0
 	github.com/wtsi-npg/extendo/v2 v2.6.0
 	github.com/wtsi-npg/logshim v1.3.0
 	github.com/wtsi-npg/logshim-zerolog v1.3.0
 	github.com/wtsi-ssg/wr v0.5.6
-	github.com/wtsi-ssg/wrstat/v3 v3.2.3
+	github.com/wtsi-ssg/wrstat/v4 v4.0.1
 	go.etcd.io/bbolt v1.3.7
 	golang.org/x/term v0.7.0
 )
@@ -41,7 +42,7 @@ require (
 	github.com/VividCortex/ewma v1.2.0 // indirect
 	github.com/alexflint/go-filemutex v1.2.0 // indirect
 	github.com/appleboy/gin-jwt/v2 v2.9.1 // indirect
-	github.com/bytedance/sonic v1.8.7 // indirect
+	github.com/bytedance/sonic v1.8.8 // indirect
 	github.com/chenzhuoyu/base64x v0.0.0-20221115062448-fe3a3abad311 // indirect
 	github.com/creasty/defaults v1.7.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
@@ -79,7 +80,7 @@ require (
 	github.com/gorilla/sessions v1.2.1 // indirect
 	github.com/gorilla/websocket v1.5.0 // indirect
 	github.com/grafov/bcast v0.0.0-20190217190352-1447f067e08d // indirect
-	github.com/hanwen/go-fuse/v2 v2.2.0 // indirect
+	github.com/hanwen/go-fuse/v2 v2.3.0 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-uuid v1.0.3 // indirect
 	github.com/hashicorp/golang-lru v0.5.4 // indirect
@@ -90,7 +91,6 @@ require (
 	github.com/jpillora/backoff v1.0.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/jtolds/gls v4.20.0+incompatible // indirect
-	github.com/karrick/godirwalk v1.17.0 // indirect
 	github.com/klauspost/compress v1.16.5 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.4 // indirect
 	github.com/kr/fs v0.1.0 // indirect

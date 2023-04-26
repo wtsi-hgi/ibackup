@@ -44,7 +44,7 @@ import (
 	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/set"
-	"github.com/wtsi-ssg/wrstat/v3/scheduler"
+	"github.com/wtsi-ssg/wrstat/v4/scheduler"
 )
 
 const (
