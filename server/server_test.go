@@ -2004,7 +2004,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 					So(gotSet.Status, ShouldEqual, set.PendingUpload)
 					So(gotSet.NumFiles, ShouldEqual, 2)
 					So(gotSet.Uploaded, ShouldEqual, 0)
-					So(gotSet.HardLinks, ShouldEqual, 2)
+					So(gotSet.HardLinks, ShouldEqual, 1)
 
 					requests, errg := client.GetSomeUploadRequests()
 					So(errg, ShouldBeNil)
@@ -2026,7 +2026,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 					So(gotSet.Status, ShouldEqual, set.PendingUpload)
 					So(gotSet.NumFiles, ShouldEqual, 2)
 					So(gotSet.Uploaded, ShouldEqual, 0)
-					So(gotSet.HardLinks, ShouldEqual, 2)
+					So(gotSet.HardLinks, ShouldEqual, 1)
 				})
 
 				FocusConvey("and add a set with hardlinks in a directory which only uploads the file once", func() {
@@ -2058,7 +2058,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 					So(gotSet.Status, ShouldEqual, set.PendingUpload)
 					So(gotSet.NumFiles, ShouldEqual, 2)
 					So(gotSet.Uploaded, ShouldEqual, 0)
-					So(gotSet.HardLinks, ShouldEqual, 0)
+					So(gotSet.HardLinks, ShouldEqual, 1)
 				})
 			})
 		})

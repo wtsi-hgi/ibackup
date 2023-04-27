@@ -89,8 +89,10 @@ type Server struct {
 	creatingCollections map[string]bool
 	uploading           map[string]*put.Request
 	stuckRequests       map[string]*put.Request
-	mapMu               sync.RWMutex
-	monitor             *Monitor
+	mountList           []string
+
+	mapMu   sync.RWMutex
+	monitor *Monitor
 }
 
 // New creates a Server which can serve a REST API and website.
