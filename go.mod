@@ -13,6 +13,7 @@ require (
 	github.com/go-resty/resty/v2 v2.7.0
 	github.com/hashicorp/go-multierror v1.1.1
 	github.com/inconshreveable/log15 v3.0.0-testing.5+incompatible
+	github.com/moby/sys/mountinfo v0.6.2
 	github.com/phayes/freeport v0.0.0-20220201140144-74d24b5ae9f5
 	github.com/rs/zerolog v1.29.1
 	github.com/sasha-s/go-deadlock v0.3.1
@@ -20,13 +21,12 @@ require (
 	github.com/spf13/cobra v1.7.0
 	github.com/ugorji/go/codec v1.2.11
 	github.com/wtsi-hgi/go-authserver v1.1.0
-	github.com/wtsi-hgi/godirwalk v1.18.1
 	github.com/wtsi-hgi/grand v1.0.0
 	github.com/wtsi-npg/extendo/v2 v2.6.0
 	github.com/wtsi-npg/logshim v1.3.0
 	github.com/wtsi-npg/logshim-zerolog v1.3.0
 	github.com/wtsi-ssg/wr v0.5.6
-	github.com/wtsi-ssg/wrstat/v4 v4.0.1
+	github.com/wtsi-ssg/wrstat/v4 v4.0.2
 	go.etcd.io/bbolt v1.3.7
 	golang.org/x/term v0.7.0
 )
@@ -48,7 +48,7 @@ require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.2.0 // indirect
 	github.com/docker/distribution v2.8.1+incompatible // indirect
-	github.com/docker/docker v23.0.4+incompatible // indirect
+	github.com/docker/docker v23.0.5+incompatible // indirect
 	github.com/docker/go-connections v0.4.0 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/docker/spdystream v0.2.0 // indirect
@@ -132,6 +132,7 @@ require (
 	github.com/tklauser/go-sysconf v0.3.11 // indirect
 	github.com/tklauser/numcpus v0.6.0 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
+	github.com/wtsi-hgi/godirwalk v1.18.1 // indirect
 	github.com/yusufpapurcu/wmi v1.2.2 // indirect
 	golang.org/x/arch v0.3.0 // indirect
 	golang.org/x/crypto v0.8.0 // indirect

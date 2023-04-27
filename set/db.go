@@ -32,6 +32,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -63,6 +64,7 @@ const (
 
 	setsBucket                    = "sets"
 	userToSetBucket               = "userLookup"
+	inodeBucket                   = "inodes"
 	subBucketPrefix               = "~!~"
 	fileBucket                    = subBucketPrefix + "files"
 	dirBucket                     = subBucketPrefix + "dirs"
@@ -72,6 +74,7 @@ const (
 	separator                     = ":!:"
 	AttemptsToBeConsideredFailing = 3
 	maxFailedEntries              = 10
+	hexBase                       = 16
 
 	backupExt = ".backingup"
 )
@@ -115,6 +118,10 @@ func New(path, backupPath string) (*DB, error) {
 		}
 
 		if _, errc := tx.CreateBucketIfNotExists([]byte(failedBucket)); errc != nil {
+			return errc
+		}
+
+		if _, errc := tx.CreateBucketIfNotExists([]byte(inodeBucket)); errc != nil {
 			return errc
 		}
 
@@ -1032,4 +1039,58 @@ func (d *DB) EnableRemoteBackups(remotePath string, handler put.Handler) {
 
 	d.remoteBackupPath = remotePath
 	d.remoteBackupHandler = handler
+}
+
+// AddInodeMountPoint adds the given file with the given inode and mountPoint to
+// the database's inode-tracking bucket, and returns true if a different file
+// with the same inode and mountPath has been added before (ie. this one is a
+// hardlink).
+func (d *DB) AddInodeMountPoint(file string, inode uint64, mountPoint string) (bool, error) {
+	found := false
+	key := d.inodeMountPointKey(inode, mountPoint)
+
+	err := d.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(inodeBucket))
+
+		var files []string
+
+		if existing := b.Get(key); existing != nil {
+			files = d.decodeIMPValue(existing)
+
+			for n, existing := range files {
+				if file == existing {
+					found = n > 0
+
+					return nil
+				}
+			}
+
+			found = true
+		}
+
+		files = append(files, file)
+
+		return b.Put(key, d.encodeToBytes(files))
+	})
+
+	return found, err
+}
+
+// inodeMountPointKey returns the inodeBucket key for the given inode and
+// mountPoint.
+func (d *DB) inodeMountPointKey(inode uint64, mountPoint string) []byte {
+	return append(strconv.AppendUint([]byte{}, inode, hexBase), mountPoint...)
+}
+
+// decodeIMPValue takes a byte slice representation of an InodeMountPoint value
+// (a []string) as stored in the db by AddInodeMountPoint(), and converts it
+// back in to []string.
+func (d *DB) decodeIMPValue(v []byte) []string {
+	dec := codec.NewDecoderBytes(v, d.ch)
+
+	var files []string
+
+	dec.MustDecode(&files)
+
+	return files
 }

@@ -28,6 +28,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"os"
@@ -37,7 +38,6 @@ import (
 
 	"github.com/VertebrateResequencing/wr/queue"
 	"github.com/gin-gonic/gin"
-	"github.com/wtsi-hgi/godirwalk"
 	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/set"
 	"github.com/wtsi-ssg/wrstat/v4/walk"
@@ -128,7 +128,7 @@ func (s *Server) updateSetFileExistence(given *set.Set) error {
 		path := entry.Path
 
 		s.filePool.Submit(func() {
-			_, errs := s.setEntryMissingIfNotExist(given, path)
+			_, errs := s.updateNonRegularEntries(given, path)
 			errCh <- errs
 		})
 	}
@@ -143,43 +143,99 @@ func (s *Server) updateSetFileExistence(given *set.Set) error {
 	return err
 }
 
-// setEntryMissingIfNotExist checks if the given path exists, and if not returns
+// updateNonRegularEntries checks if the given path exists, and if not returns
 // true and updates the corresponding entry for that path in the given set with
 // a missing status. Symlinks are treated as if they are missing.
-func (s *Server) setEntryMissingIfNotExist(given *set.Set, path string) (bool, error) {
+func (s *Server) updateNonRegularEntries(given *set.Set, path string) (bool, error) {
 	info, err := os.Lstat(path)
-
-	var isHardLink, isSymlink bool
-
-	if info != nil {
-		statt, ok := info.Sys().(*syscall.Stat_t)
-		isHardLink = ok && statt.Nlink > 1 && !info.IsDir()
-		isSymlink = info.Mode().Type()&os.ModeSymlink != 0
+	if err != nil {
+		return true, s.updateEntryBasedOnType(given, &walk.Dirent{
+			Path: path,
+		})
 	}
 
-	if err == nil && !isSymlink && !isHardLink {
+	statt, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
 		return false, nil
 	}
 
-	status := put.RequestStatusMissing
-	if isSymlink {
-		status = put.RequestStatusSymLink
-	} else if isHardLink {
-		status = put.RequestStatusHardLink
+	de := &walk.Dirent{
+		Path:  path,
+		Type:  info.Mode().Type(),
+		Inode: statt.Ino,
 	}
+
+	return false, s.updateEntryBasedOnType(given, de)
+}
+
+func (s *Server) updateEntryBasedOnType(given *set.Set, de *walk.Dirent) error {
+	fmt.Printf("\nupdateEntryBasedOnType called for %s\n", de.Path)
+	if de.IsDir() {
+		fmt.Printf("dir\n")
+		return nil
+	}
+
+	status, err := s.entryTypeToRequestStatus(de)
+	if err != nil {
+		fmt.Printf("err1: %s\n", err)
+		return err
+	}
+
+	if status == "" {
+		fmt.Printf("err2: no status\n")
+		return nil
+	}
+
 	r := &put.Request{
-		Local:     path,
+		Local:     de.Path,
 		Requester: given.Requester,
 		Set:       given.Name,
-		Size:      0,
 		Status:    status,
-		Error:     "",
 	}
 
 	_, err = s.db.SetEntryStatus(r)
-	s.monitorSetByName(r.Set, r.Requester)
+	fmt.Printf("err3: %s\n", err)
 
-	return true, err
+	s.monitorSetByName(r.Set, r.Requester) //TODO: huh?
+
+	return err
+}
+
+// entryTypeToRequestStatus returns missing, symlink or hardlink status if the
+// Dirent is one of those. Returns blank string if not.
+func (s *Server) entryTypeToRequestStatus(de *walk.Dirent) (put.RequestStatus, error) {
+	var status put.RequestStatus
+
+	switch {
+	case de.Inode == 0:
+		status = put.RequestStatusMissing
+	case de.IsSymlink():
+		status = put.RequestStatusSymLink
+	default:
+		isHardLink, err := s.db.AddInodeMountPoint(de.Path, de.Inode, s.getMountPointFromPath(de.Path))
+		if err != nil {
+			return status, err
+		}
+
+		if isHardLink {
+			status = put.RequestStatusHardLink
+		}
+	}
+
+	return status, nil
+}
+
+// getMountPointFromPath determines the mount point for the given path based on
+// the mount points available on the system when the server started. If nothing
+// matches, returns /.
+func (s *Server) getMountPointFromPath(path string) string {
+	for _, mp := range s.mountList {
+		if strings.HasPrefix(path, mp) {
+			return mp
+		}
+	}
+
+	return "/"
 }
 
 // recordSetError sets the given err on the set, and logs on failure to do so.
@@ -266,17 +322,11 @@ func (s *Server) handleNewlyDefinedSets(given *set.Set) {
 func (s *Server) doSetDirWalks(given *set.Set, entries []*set.Entry, pathsCh chan string, doneCh, warnChan chan error) {
 	errCh := make(chan error, len(entries))
 
-	var cb walk.PathCallback = func(path string, _ *godirwalk.Dirent) error {
-		pathsCh <- path
-
-		return nil
-	}
-
 	for _, entry := range entries {
 		dir := entry.Path
 
 		s.dirPool.Submit(func() {
-			errCh <- s.checkAndWalkDir(given, dir, cb, warnChan)
+			errCh <- s.checkAndWalkDir(given, dir, s.walkPathCallback(given, pathsCh, warnChan), warnChan)
 		})
 	}
 
@@ -294,11 +344,26 @@ func (s *Server) doSetDirWalks(given *set.Set, entries []*set.Entry, pathsCh cha
 	doneCh <- err
 }
 
+func (s *Server) walkPathCallback(given *set.Set, pathsCh chan string, warnChan chan error) walk.PathCallback {
+	return func(entry *walk.Dirent) error {
+		err := s.updateEntryBasedOnType(given, entry)
+		if err != nil {
+			warnChan <- err
+
+			return nil //nolint:nilerr
+		}
+
+		pathsCh <- entry.Path
+
+		return nil
+	}
+}
+
 // checkAndWalkDir checks if the given dir exists, and if it does, walks the
 // dir using the given cb. Major errors are returned; walk errors are logged and
 // permission ones sent to the warnChan.
 func (s *Server) checkAndWalkDir(given *set.Set, dir string, cb walk.PathCallback, warnChan chan error) error {
-	missing, err := s.setEntryMissingIfNotExist(given, dir)
+	missing, err := s.updateNonRegularEntries(given, dir)
 	if err != nil {
 		return err
 	}

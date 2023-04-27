@@ -149,7 +149,7 @@ func TestSet(t *testing.T) {
 		tDir := t.TempDir()
 		dbPath := filepath.Join(tDir, "set.db")
 
-		Convey("You can create a new set database", func() {
+		Convey("You can create a new database", func() {
 			db, err := New(dbPath, "")
 			So(err, ShouldBeNil)
 			So(db, ShouldNotBeNil)
