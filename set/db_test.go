@@ -43,7 +43,7 @@ func TestMountStore(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(db, ShouldNotBeNil)
 
-			Convey("You can add mountpoint/inodes to a bucker", func() {
+			Convey("You can add mountpoint/inodes to a bucket", func() {
 				hardlink, err := db.AddInodeMountPoint("/mount/point/file", 0, "/mount/point")
 				So(err, ShouldBeNil)
 				So(hardlink, ShouldBeFalse)

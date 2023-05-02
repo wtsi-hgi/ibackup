@@ -41,6 +41,7 @@ import (
 
 	"github.com/ugorji/go/codec"
 	"github.com/wtsi-hgi/ibackup/put"
+	"github.com/wtsi-ssg/wrstat/v4/walk"
 	bolt "go.etcd.io/bbolt"
 )
 
@@ -85,6 +86,8 @@ type DB struct {
 	db *bolt.DB
 	ch codec.Handle
 
+	mountList []string
+
 	mu                    sync.Mutex
 	backupPath            string
 	minTimeBetweenBackups time.Duration
@@ -102,7 +105,7 @@ type DB struct {
 // Returns an error if path exists but can't be opened, or if it doesn't exist
 // and can't be created.
 func New(path, backupPath string) (*DB, error) {
-	db, err := bolt.Open(path, dbOpenMode, &bolt.Options{
+	boltDB, err := bolt.Open(path, dbOpenMode, &bolt.Options{
 		NoFreelistSync: true,
 		NoGrowSync:     true,
 		FreelistType:   bolt.FreelistMapType,
@@ -112,7 +115,7 @@ func New(path, backupPath string) (*DB, error) {
 		return nil, err
 	}
 
-	err = db.Update(func(tx *bolt.Tx) error {
+	err = boltDB.Update(func(tx *bolt.Tx) error {
 		if _, errc := tx.CreateBucketIfNotExists([]byte(setsBucket)); errc != nil {
 			return errc
 		}
@@ -130,12 +133,23 @@ func New(path, backupPath string) (*DB, error) {
 		return errc
 	})
 
-	return &DB{
-		db:                    db,
+	if err != nil {
+		return nil, err
+	}
+
+	db := &DB{
+		db:                    boltDB,
 		ch:                    new(codec.BincHandle),
 		backupPath:            backupPath,
 		minTimeBetweenBackups: 1 * time.Second,
-	}, err
+	}
+
+	err = db.getMountPoints()
+	if err != nil {
+		return nil, err
+	}
+
+	return db, nil
 }
 
 // Close closes the database. Be sure to call this to finalise any writes to
@@ -189,28 +203,63 @@ func (d *DB) encodeToBytes(thing interface{}) []byte {
 // SetFileEntries sets the file paths for the given backup set. Only supply
 // absolute paths to files.
 func (d *DB) SetFileEntries(setID string, paths []string) error {
-	return d.setEntries(setID, paths, fileBucket)
+	entries := make([]*walk.Dirent, len(paths))
+
+	for n, path := range paths {
+		entries[n] = &walk.Dirent{
+			Path: path,
+		}
+	}
+
+	return d.setEntries(setID, entries, fileBucket)
+}
+
+func (d *DB) StatPureFileEntries(setID string) error {
+	return d.db.Update(func(tx *bolt.Tx) error {
+		var errG error
+		getEntriesViewFunc(tx, setID, fileBucket, func(v []byte) {
+			entry := d.decodeEntry(v)
+			status, err := d.updateNonRegularEntries(tx, entry.Path)
+			if err != nil {
+				errG = err
+				return
+			}
+
+			entry.Status = status
+
+			b, _, err := d.getSetFileBucket(tx, fileBucket, setID)
+			if err != nil {
+				errG = err
+
+				return
+			}
+
+			errG = b.Put([]byte(entry.Path), d.encodeToBytes(entry))
+		})
+		return errG
+	})
 }
 
 // setEntries sets the paths for the given backup set in a sub bucket with the
 // given prefix. Only supply absolute paths.
 //
 // *** Currently ignores old entries that are not in the given paths.
-func (d *DB) setEntries(setID string, paths []string, bucketName string) error {
+func (d *DB) setEntries(setID string, entries []*walk.Dirent, bucketName string) error {
 	return d.db.Update(func(tx *bolt.Tx) error {
-		subBucketName := []byte(bucketName + separator + setID)
-		b, existing, err := d.getAndDeleteExistingEntries(tx, subBucketName, setID)
+		b, existing, err := d.getAndDeleteExistingEntries(tx, bucketName, setID)
 		if err != nil {
 			return err
 		}
 
 		// this sort is critical to database write speed.
-		sort.Strings(paths)
+		sort.Slice(entries, func(i, j int) bool {
+			return entries[i].Path < entries[j].Path
+		})
 
-		for _, path := range paths {
-			e := d.existingOrNewEncodedEntry(path, existing)
+		for _, entry := range entries {
+			e := d.existingOrNewEncodedEntry(entry, existing)
 
-			if errp := b.Put([]byte(path), e); errp != nil {
+			if errp := b.Put([]byte(entry.Path), e); errp != nil {
 				return errp
 			}
 		}
@@ -219,15 +268,36 @@ func (d *DB) setEntries(setID string, paths []string, bucketName string) error {
 	})
 }
 
+type setFileSubBucket struct {
+	Name      string
+	Bucket    *bolt.Bucket
+	SetBucket *bolt.Bucket
+}
+
+func (s *setFileSubBucket) DeleteBucket() error {
+
+}
+
+func (s *setFileSubBucket) CreateBucket() error {
+
+}
+
+func (d *DB) getSetFileBucket(tx *bolt.Tx, kindOfFileBucket, setID string) (*bolt.Bucket, *bolt.Bucket, error) {
+	subBucketName := []byte(kindOfFileBucket + separator + setID)
+	setBucket := tx.Bucket([]byte(setsBucket))
+
+	subBucket, err := setBucket.CreateBucketIfNotExists(subBucketName)
+	return subBucket, setBucket, err
+}
+
 // getAndDeleteExistingEntries gets existing entries in the given sub bucket
 // of the setsBucket, then deletes and recreates the sub bucket. Returns the
 // empty sub bucket and any old values.
-func (d *DB) getAndDeleteExistingEntries(tx *bolt.Tx, subBucketName []byte, setID string) (*bolt.Bucket,
+func (d *DB) getAndDeleteExistingEntries(tx *bolt.Tx, subBucketName string, setID string) (*bolt.Bucket,
 	map[string][]byte, error) {
-	setsBucket := tx.Bucket([]byte(setsBucket))
 	existing := make(map[string][]byte)
 
-	b, err := setsBucket.CreateBucketIfNotExists(subBucketName)
+	b, setBucket, err := d.getSetFileBucket(tx, subBucketName, setID)
 	if err != nil {
 		return b, existing, err
 	}
@@ -245,11 +315,11 @@ func (d *DB) getAndDeleteExistingEntries(tx *bolt.Tx, subBucketName []byte, setI
 	}
 
 	if len(existing) > 0 {
-		if err = setsBucket.DeleteBucket(subBucketName); err != nil {
+		if err = setBucket.DeleteBucket(subBucketName); err != nil {
 			return b, existing, err
 		}
 
-		b, err = setsBucket.CreateBucket(subBucketName)
+		b, err = setBucket.CreateBucket(subBucketName)
 	}
 
 	return b, existing, err
@@ -257,10 +327,13 @@ func (d *DB) getAndDeleteExistingEntries(tx *bolt.Tx, subBucketName []byte, setI
 
 // existingOrNewEncodedEntry returns the encoded entry from the given map with
 // the given path key, or creates a new Entry for path and returns its encoding.
-func (d *DB) existingOrNewEncodedEntry(path string, existing map[string][]byte) []byte {
+func (d *DB) existingOrNewEncodedEntry(entry *walk.Dirent, existing map[string][]byte) []byte {
+	path := entry.Path
 	e := existing[path]
 	if e == nil {
-		e = d.encodeToBytes(&Entry{Path: path})
+		e = d.encodeToBytes(&Entry{
+			Path: path,
+		})
 	}
 
 	return e
@@ -268,8 +341,8 @@ func (d *DB) existingOrNewEncodedEntry(path string, existing map[string][]byte) 
 
 // SetDirEntries sets the directory paths for the given backup set. Only supply
 // absolute paths to directories.
-func (d *DB) SetDirEntries(setID string, paths []string) error {
-	return d.setEntries(setID, paths, dirBucket)
+func (d *DB) SetDirEntries(setID string, entries []*walk.Dirent) error {
+	return d.setEntries(setID, entries, dirBucket)
 }
 
 // SetDiscoveryStarted updates StartedDiscovery and resets some status values
@@ -323,8 +396,8 @@ func (d *DB) getSetByID(tx *bolt.Tx, setID string) (*Set, []byte, *bolt.Bucket, 
 // to Complete.
 //
 // Returns the updated set and an error if the setID isn't in the database.
-func (d *DB) SetDiscoveredEntries(setID string, paths []string) (*Set, error) {
-	if err := d.setEntries(setID, paths, discoveredBucket); err != nil {
+func (d *DB) SetDiscoveredEntries(setID string, entries []*walk.Dirent) (*Set, error) {
+	if err := d.setEntries(setID, entries, discoveredBucket); err != nil {
 		return nil, err
 	}
 
@@ -1047,31 +1120,41 @@ func (d *DB) EnableRemoteBackups(remotePath string, handler put.Handler) {
 // hardlink).
 func (d *DB) AddInodeMountPoint(file string, inode uint64, mountPoint string) (bool, error) {
 	found := false
-	key := d.inodeMountPointKey(inode, mountPoint)
 
 	err := d.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte(inodeBucket))
+		var err error
+		found, err = d.addInodeMountPoint(tx, file, inode, mountPoint)
 
-		var files []string
-
-		if existing := b.Get(key); existing != nil {
-			files = d.decodeIMPValue(existing)
-
-			for n, existing := range files {
-				if file == existing {
-					found = n > 0
-
-					return nil
-				}
-			}
-
-			found = true
-		}
-
-		files = append(files, file)
-
-		return b.Put(key, d.encodeToBytes(files))
+		return err
 	})
+
+	return found, err
+}
+
+func (d *DB) addInodeMountPoint(tx *bolt.Tx, file string, inode uint64, mountPoint string) (bool, error) {
+	found := false
+	key := d.inodeMountPointKey(inode, mountPoint)
+
+	b := tx.Bucket([]byte(inodeBucket))
+
+	var files []string
+
+	if existing := b.Get(key); existing != nil {
+		files = d.decodeIMPValue(existing)
+		found = true
+
+		for n, existing := range files {
+			if file == existing {
+				found = n > 0
+
+				break
+			}
+		}
+	}
+
+	files = append(files, file)
+
+	err := b.Put(key, d.encodeToBytes(files))
 
 	return found, err
 }

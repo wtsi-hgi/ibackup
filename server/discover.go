@@ -31,9 +31,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
-	"os"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/VertebrateResequencing/wr/queue"
@@ -143,101 +141,6 @@ func (s *Server) updateSetFileExistence(given *set.Set) error {
 	return err
 }
 
-// updateNonRegularEntries checks if the given path exists, and if not returns
-// true and updates the corresponding entry for that path in the given set with
-// a missing status. Symlinks are treated as if they are missing.
-func (s *Server) updateNonRegularEntries(given *set.Set, path string) (bool, error) {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return true, s.updateEntryBasedOnType(given, &walk.Dirent{
-			Path: path,
-		})
-	}
-
-	statt, ok := info.Sys().(*syscall.Stat_t)
-	if !ok {
-		return false, nil
-	}
-
-	de := &walk.Dirent{
-		Path:  path,
-		Type:  info.Mode().Type(),
-		Inode: statt.Ino,
-	}
-
-	return false, s.updateEntryBasedOnType(given, de)
-}
-
-func (s *Server) updateEntryBasedOnType(given *set.Set, de *walk.Dirent) error {
-	fmt.Printf("\nupdateEntryBasedOnType called for %s\n", de.Path)
-	if de.IsDir() {
-		fmt.Printf("dir\n")
-		return nil
-	}
-
-	status, err := s.entryTypeToRequestStatus(de)
-	if err != nil {
-		fmt.Printf("err1: %s\n", err)
-		return err
-	}
-
-	if status == "" {
-		fmt.Printf("err2: no status\n")
-		return nil
-	}
-
-	r := &put.Request{
-		Local:     de.Path,
-		Requester: given.Requester,
-		Set:       given.Name,
-		Status:    status,
-	}
-
-	_, err = s.db.SetEntryStatus(r)
-	fmt.Printf("err3: %s\n", err)
-
-	s.monitorSetByName(r.Set, r.Requester) //TODO: huh?
-
-	return err
-}
-
-// entryTypeToRequestStatus returns missing, symlink or hardlink status if the
-// Dirent is one of those. Returns blank string if not.
-func (s *Server) entryTypeToRequestStatus(de *walk.Dirent) (put.RequestStatus, error) {
-	var status put.RequestStatus
-
-	switch {
-	case de.Inode == 0:
-		status = put.RequestStatusMissing
-	case de.IsSymlink():
-		status = put.RequestStatusSymLink
-	default:
-		isHardLink, err := s.db.AddInodeMountPoint(de.Path, de.Inode, s.getMountPointFromPath(de.Path))
-		if err != nil {
-			return status, err
-		}
-
-		if isHardLink {
-			status = put.RequestStatusHardLink
-		}
-	}
-
-	return status, nil
-}
-
-// getMountPointFromPath determines the mount point for the given path based on
-// the mount points available on the system when the server started. If nothing
-// matches, returns /.
-func (s *Server) getMountPointFromPath(path string) string {
-	for _, mp := range s.mountList {
-		if strings.HasPrefix(path, mp) {
-			return mp
-		}
-	}
-
-	return "/"
-}
-
 // recordSetError sets the given err on the set, and logs on failure to do so.
 // Also logs the given message which should include 2 %s which will be filled
 // with the sid and err.
@@ -260,14 +163,14 @@ func (s *Server) discoverDirEntries(given *set.Set, filesDoneCh chan bool) (*set
 		return nil, err
 	}
 
-	pathsCh := make(chan string)
+	entriesCh := make(chan *walk.Dirent)
 	doneCh := make(chan error)
 	warnCh := make(chan error)
 	warnDoneCh := make(chan struct{})
 
 	var warning []string
 
-	go s.doSetDirWalks(given, entries, pathsCh, doneCh, warnCh)
+	go s.doSetDirWalks(given, entries, entriesCh, doneCh, warnCh)
 
 	go func() {
 		for warn := range warnCh {
@@ -277,10 +180,10 @@ func (s *Server) discoverDirEntries(given *set.Set, filesDoneCh chan bool) (*set
 		close(warnDoneCh)
 	}()
 
-	var paths []string //nolint:prealloc
+	var fileEntries []*walk.Dirent //nolint:prealloc
 
-	for path := range pathsCh {
-		paths = append(paths, path)
+	for entry := range entriesCh {
+		fileEntries = append(fileEntries, entry)
 	}
 
 	err = <-doneCh
@@ -293,14 +196,24 @@ func (s *Server) discoverDirEntries(given *set.Set, filesDoneCh chan bool) (*set
 	<-filesDoneCh
 	<-warnDoneCh
 
+	given, err = s.db.SetDiscoveredEntries(given.ID(), fileEntries)
+	if err != nil {
+		return nil, err
+	}
+
+	/* for _, entry := range fileEntries {
+		errw := s.updateEntryBasedOnType(given, entry)
+		if errw != nil {
+			warning = append(warning, errw.Error())
+		}
+	} */
+
 	if len(warning) != 0 {
 		err = s.db.SetWarning(given.ID(), strings.Join(warning, "\n"))
 		if err != nil {
 			return nil, err
 		}
 	}
-
-	given, err = s.db.SetDiscoveredEntries(given.ID(), paths)
 
 	s.handleNewlyDefinedSets(given)
 
@@ -316,17 +229,22 @@ func (s *Server) handleNewlyDefinedSets(given *set.Set) {
 }
 
 // doSetDirWalks walks the given dir entries of the given set concurrently,
-// sending discovered file paths to the pathsCh. Closes the pathsCh when done,
+// sending discovered file paths to the entriesCh. Closes the entriesCh when done,
 // then sends any error on the doneCh. Non-critical warnings during the walk are
 // sent to the warnChan.
-func (s *Server) doSetDirWalks(given *set.Set, entries []*set.Entry, pathsCh chan string, doneCh, warnChan chan error) {
+func (s *Server) doSetDirWalks(given *set.Set, entries []*set.Entry, entriesCh chan *walk.Dirent,
+	doneCh, warnChan chan error) {
 	errCh := make(chan error, len(entries))
 
 	for _, entry := range entries {
 		dir := entry.Path
 
 		s.dirPool.Submit(func() {
-			errCh <- s.checkAndWalkDir(given, dir, s.walkPathCallback(given, pathsCh, warnChan), warnChan)
+			errCh <- s.checkAndWalkDir(given, dir, func(entry *walk.Dirent) error {
+				entriesCh <- entry
+
+				return nil
+			}, warnChan)
 		})
 	}
 
@@ -339,24 +257,9 @@ func (s *Server) doSetDirWalks(given *set.Set, entries []*set.Entry, pathsCh cha
 		}
 	}
 
-	close(pathsCh)
+	close(entriesCh)
 
 	doneCh <- err
-}
-
-func (s *Server) walkPathCallback(given *set.Set, pathsCh chan string, warnChan chan error) walk.PathCallback {
-	return func(entry *walk.Dirent) error {
-		err := s.updateEntryBasedOnType(given, entry)
-		if err != nil {
-			warnChan <- err
-
-			return nil //nolint:nilerr
-		}
-
-		pathsCh <- entry.Path
-
-		return nil
-	}
 }
 
 // checkAndWalkDir checks if the given dir exists, and if it does, walks the
@@ -406,7 +309,10 @@ func uploadableEntries(entries []*set.Entry, given *set.Set) []*set.Entry {
 
 	for _, entry := range entries {
 		if entry.ShouldUpload(given.LastDiscovery) {
+			fmt.Printf("entry %s had status %s and so should be uploaded\n", entry.Path, entry.Status)
 			filtered = append(filtered, entry)
+		} else {
+			fmt.Printf("entry %s had status %s and so should NOT be uploaded\n", entry.Path, entry.Status)
 		}
 	}
 

@@ -30,15 +30,15 @@ import (
 	"errors"
 	"math"
 	"net/http"
-	"sort"
+	"os"
 
 	"github.com/VertebrateResequencing/wr/queue"
 	"github.com/gin-gonic/gin"
-	"github.com/moby/sys/mountinfo"
 	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/grand"
 	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/set"
+	"github.com/wtsi-ssg/wrstat/v4/walk"
 )
 
 const (
@@ -182,11 +182,6 @@ func (s *Server) LoadSetDB(path, backupPath string) error {
 
 	s.statusUpdateCh = make(chan *fileStatusPacket)
 	go s.handleFileStatusUpdates()
-
-	err = s.getMountPoints()
-	if err != nil {
-		return err
-	}
 
 	return s.recoverQueue()
 }
@@ -404,7 +399,16 @@ func (s *Server) putDirs(c *gin.Context) {
 		return
 	}
 
-	err := s.db.SetDirEntries(sid, paths)
+	entries := make([]*walk.Dirent, len(paths))
+
+	for n, path := range paths {
+		entries[n] = &walk.Dirent{
+			Path: path,
+			Type: os.ModeDir,
+		}
+	}
+
+	err := s.db.SetDirEntries(sid, entries)
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
@@ -877,37 +881,6 @@ func (s *Server) updateQueueItemData(r *put.Request) {
 		stats := item.Stats()
 		s.queue.Update(context.Background(), item.Key, "", r, stats.Priority, stats.Delay, stats.TTR) //nolint:errcheck
 	}
-}
-
-// getMountPoints retrieves a list of mount point paths to be used when
-// determining hardlinks. The list is sorted longest first and stored on the
-// server object.
-func (s *Server) getMountPoints() error {
-	mounts, err := mountinfo.GetMounts(func(info *mountinfo.Info) (bool, bool) {
-		switch info.FSType {
-		case "devpts", "devtmpfs", "cgroup", "rpc_pipefs", "fusectl",
-			"binfmt_misc", "sysfs", "debugfs", "tracefs", "proc", "securityfs",
-			"pstore", "mqueue", "hugetlbfs", "configfs":
-			return true, false
-		}
-
-		return false, false
-	})
-	if err != nil {
-		return err
-	}
-
-	s.mountList = make([]string, len(mounts))
-
-	for n, mp := range mounts {
-		s.mountList[n] = mp.Mountpoint
-	}
-
-	sort.Slice(s.mountList, func(i, j int) bool {
-		return len(s.mountList[i]) > len(s.mountList[j])
-	})
-
-	return nil
 }
 
 // recoverQueue is used at startup to fill the in-memory queue with requests for

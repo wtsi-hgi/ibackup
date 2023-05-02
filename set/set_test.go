@@ -34,6 +34,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/wtsi-hgi/ibackup/put"
+	"github.com/wtsi-ssg/wrstat/v4/walk"
 	bolt "go.etcd.io/bbolt"
 )
 
@@ -144,7 +145,9 @@ func TestSet(t *testing.T) {
 		So(err, ShouldBeNil)
 		So(remote, ShouldEqual, "/zone/file.txt")
 	})
+}
 
+func TestSetDB(t *testing.T) {
 	Convey("Given a path", t, func() {
 		tDir := t.TempDir()
 		dbPath := filepath.Join(tDir, "set.db")
@@ -169,7 +172,7 @@ func TestSet(t *testing.T) {
 				err = db.SetFileEntries(set.ID(), []string{"/a/b.txt", "/c/d.txt", "/e/f.txt"})
 				So(err, ShouldBeNil)
 
-				err = db.SetDirEntries(set.ID(), []string{"/g/h", "/g/i"})
+				err = db.SetDirEntries(set.ID(), createFileEnts([]string{"/g/h", "/g/i"}))
 				So(err, ShouldBeNil)
 
 				set.MonitorTime = 1 * time.Hour
@@ -309,7 +312,7 @@ func TestSet(t *testing.T) {
 						So(sets[0].Status, ShouldEqual, PendingDiscovery)
 						So(sets[0].StartedDiscovery.IsZero(), ShouldBeFalse)
 
-						uset, err := db.SetDiscoveredEntries(set.ID(), []string{"/g/h/l.txt", "/g/i/m.txt"})
+						uset, err := db.SetDiscoveredEntries(set.ID(), createFileEnts([]string{"/g/h/l.txt", "/g/i/m.txt"}))
 						So(err, ShouldBeNil)
 						So(uset.LastDiscovery, ShouldHappenAfter, sets[0].LastDiscovery)
 
@@ -648,7 +651,7 @@ func TestSet(t *testing.T) {
 							So(sets[0].LastCompletedCount, ShouldEqual, 4)
 							So(sets[0].LastCompletedSize, ShouldEqual, 15)
 
-							_, err = db.SetDiscoveredEntries(set.ID(), []string{"/g/h/l.txt", "/g/i/m.txt", "/g/i/n.txt"})
+							_, err = db.SetDiscoveredEntries(set.ID(), createFileEnts([]string{"/g/h/l.txt", "/g/i/m.txt", "/g/i/n.txt"}))
 							So(err, ShouldBeNil)
 
 							fEntries, err := db.GetFileEntries(sets[0].ID())
@@ -702,7 +705,7 @@ func TestSet(t *testing.T) {
 					})
 				})
 
-				Convey("Then get all a single Set belonging to a particular Requester", func() {
+				Convey("Then get a single Set belonging to a particular Requester", func() {
 					got, err := db.GetByNameAndRequester(set.Name, set.Requester)
 					So(err, ShouldBeNil)
 					So(got, ShouldNotBeNil)
@@ -717,8 +720,55 @@ func TestSet(t *testing.T) {
 					So(got, ShouldBeNil)
 				})
 			})
+
+			Convey("And add a set with hard and symlinks to it", func() {
+				set := &Set{
+					Name:        "setlink",
+					Requester:   "jim",
+					Transformer: "prefix=/local:/remote",
+				}
+
+				err = db.AddOrUpdate(set)
+				So(err, ShouldBeNil)
+
+				localDir := t.TempDir()
+				path1 := filepath.Join(localDir, "file.link1")
+				createEmptyFile(path1)
+
+				path2 := filepath.Join(localDir, "file.link2")
+				err = os.Link(path1, path2)
+				So(err, ShouldBeNil)
+
+				err = db.SetFileEntries(set.ID(), []string{path1, path2})
+				So(err, ShouldBeNil)
+
+				entries, err := db.GetPureFileEntries(set.ID())
+				So(err, ShouldBeNil)
+				So(len(entries), ShouldEqual, 2)
+				So(entries[0].Status, ShouldEqual, Pending)
+				So(entries[1].Status, ShouldEqual, Pending)
+
+				err = db.StatPureFileEntries(set.ID())
+				So(err, ShouldBeNil)
+
+				entries, err = db.GetPureFileEntries(set.ID())
+				So(err, ShouldBeNil)
+				So(len(entries), ShouldEqual, 2)
+				So(entries[0].Status, ShouldEqual, Pending)
+				So(entries[1].Status, ShouldEqual, HardLink)
+
+				err = db.SetDirEntries(set.ID(), createFileEnts([]string{"/g/h", "/g/i"}))
+				So(err, ShouldBeNil)
+			})
 		})
 	})
+}
+
+func createEmptyFile(path string) {
+	f, err := os.Create(path)
+	So(err, ShouldBeNil)
+	err = f.Close()
+	So(err, ShouldBeNil)
 }
 
 func TestBackup(t *testing.T) {
@@ -853,4 +903,16 @@ func TestBackup(t *testing.T) {
 			testBackupOK(remotePath)
 		})
 	})
+}
+
+func createFileEnts(paths []string) []*walk.Dirent {
+	entries := make([]*walk.Dirent, len(paths))
+
+	for n, path := range paths {
+		entries[n] = &walk.Dirent{
+			Path: path,
+		}
+	}
+
+	return entries
 }
