@@ -89,7 +89,6 @@ type Server struct {
 	creatingCollections map[string]bool
 	uploading           map[string]*put.Request
 	stuckRequests       map[string]*put.Request
-	mountList           []string
 
 	mapMu   sync.RWMutex
 	monitor *Monitor
