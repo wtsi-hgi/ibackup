@@ -2,27 +2,27 @@ package set
 
 import (
 	"os"
-	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 
-	"github.com/moby/sys/mountinfo"
+	"github.com/ugorji/go/codec"
 	"github.com/wtsi-ssg/wrstat/v4/walk"
 	bolt "go.etcd.io/bbolt"
 )
 
-// updateNonRegularEntries checks if the given path exists, and if not returns
-// true and updates the corresponding entry for that path in the given set with
-// a missing status. Symlinks are treated as if they are missing.
-func (d *DB) updateNonRegularEntries(tx *bolt.Tx, path string) (EntryStatus, error) {
+// determineTypeOfPath checks if the given path exists, and if not returns
+// a missing status. If it exists and is a link the status returned reflects if
+// it's a hard or symlink. If it's a regular file, the status will be Pending.
+func (d *DB) determineTypeOfPath(tx *bolt.Tx, path string) (EntryType, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
-		return Missing, err
+		return Unknown, err
 	}
 
 	statt, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {
-		return Pending, nil
+		return Unknown, nil
 	}
 
 	de := &walk.Dirent{
@@ -31,39 +31,75 @@ func (d *DB) updateNonRegularEntries(tx *bolt.Tx, path string) (EntryStatus, err
 		Inode: statt.Ino,
 	}
 
-	return d.entryTypeToRequestStatus(tx, de)
+	return d.direntToEntryType(tx, de)
 }
 
-func (d *DB) getEntryStatus(tx *bolt.Tx, de *walk.Dirent) (EntryStatus, error) {
+func (d *DB) getEntryType(tx *bolt.Tx, de *walk.Dirent) (EntryType, error) {
 	if de.IsDir() {
-		return Pending, nil
+		return Directory, nil
 	}
 
-	return d.entryTypeToRequestStatus(tx, de)
+	return d.direntToEntryType(tx, de)
 }
 
-// entryTypeToRequestStatus returns missing, symlink or hardlink status if the
-// Dirent is one of those. Returns blank string if not.
-func (d *DB) entryTypeToRequestStatus(tx *bolt.Tx, de *walk.Dirent) (EntryStatus, error) {
-	var status EntryStatus
+// direntToEntryType returns missing, symlink or hardlink status if the
+// Dirent is one of those (default Pending).
+func (d *DB) direntToEntryType(tx *bolt.Tx, de *walk.Dirent) (EntryType, error) {
+	eType := Regular
 
 	switch {
 	case de.Inode == 0:
-		status = Missing
+		eType = Unknown
 	case de.IsSymlink():
-		status = SymLink
+		eType = Symlink
 	default:
-		isHardLink, err := d.addInodeMountPoint(tx, de.Path, de.Inode, d.getMountPointFromPath(de.Path))
+		isHardLink, err := d.handleInode(tx, de)
 		if err != nil {
-			return status, err
+			return eType, err
 		}
 
 		if isHardLink {
-			status = HardLink
+			eType = Hardlink
 		}
 	}
 
-	return status, nil
+	return eType, nil
+}
+
+// handleInode recordes the inode of the given Dirent in the database, and
+// returns if it is a hardlink (we've seen the inode before).
+func (d *DB) handleInode(tx *bolt.Tx, de *walk.Dirent) (bool, error) {
+	found := false
+	key := d.inodeMountPointKey(de)
+
+	b := tx.Bucket([]byte(inodeBucket))
+
+	var files []string
+
+	if existing := b.Get(key); existing != nil {
+		files = d.decodeIMPValue(existing)
+		found = true
+
+		for n, existing := range files {
+			if de.Path == existing {
+				found = n > 0
+
+				break
+			}
+		}
+	}
+
+	files = append(files, de.Path)
+
+	err := b.Put(key, d.encodeToBytes(files))
+
+	return found, err
+}
+
+// inodeMountPointKey returns the inodeBucket key for the Dirent's inode and
+// the Dirent's mount point for its path.
+func (d *DB) inodeMountPointKey(de *walk.Dirent) []byte {
+	return append(strconv.AppendUint([]byte{}, de.Inode, hexBase), d.getMountPointFromPath(de.Path)...)
 }
 
 // getMountPointFromPath determines the mount point for the given path based on
@@ -79,33 +115,15 @@ func (d *DB) getMountPointFromPath(path string) string {
 	return "/"
 }
 
-// getMountPoints retrieves a list of mount point paths to be used when
-// determining hardlinks. The list is sorted longest first and stored on the
-// server object.
-func (d *DB) getMountPoints() error {
-	mounts, err := mountinfo.GetMounts(func(info *mountinfo.Info) (bool, bool) {
-		switch info.FSType {
-		case "devpts", "devtmpfs", "cgroup", "rpc_pipefs", "fusectl",
-			"binfmt_misc", "sysfs", "debugfs", "tracefs", "proc", "securityfs",
-			"pstore", "mqueue", "hugetlbfs", "configfs":
-			return true, false
-		}
+// decodeIMPValue takes a byte slice representation of an InodeMountPoint value
+// (a []string) as stored in the db by AddInodeMountPoint(), and converts it
+// back in to []string.
+func (d *DB) decodeIMPValue(v []byte) []string {
+	dec := codec.NewDecoderBytes(v, d.ch)
 
-		return false, false
-	})
-	if err != nil {
-		return err
-	}
+	var files []string
 
-	d.mountList = make([]string, len(mounts))
+	dec.MustDecode(&files)
 
-	for n, mp := range mounts {
-		d.mountList[n] = mp.Mountpoint
-	}
-
-	sort.Slice(d.mountList, func(i, j int) bool {
-		return len(d.mountList[i]) > len(d.mountList[j])
-	})
-
-	return nil
+	return files
 }

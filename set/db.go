@@ -32,13 +32,13 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
 
+	"github.com/moby/sys/mountinfo"
 	"github.com/ugorji/go/codec"
 	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-ssg/wrstat/v4/walk"
@@ -152,6 +152,37 @@ func New(path, backupPath string) (*DB, error) {
 	return db, nil
 }
 
+// getMountPoints retrieves a list of mount point paths to be used when
+// determining hardlinks. The list is sorted longest first and stored on the
+// server object.
+func (d *DB) getMountPoints() error {
+	mounts, err := mountinfo.GetMounts(func(info *mountinfo.Info) (bool, bool) {
+		switch info.FSType {
+		case "devpts", "devtmpfs", "cgroup", "rpc_pipefs", "fusectl",
+			"binfmt_misc", "sysfs", "debugfs", "tracefs", "proc", "securityfs",
+			"pstore", "mqueue", "hugetlbfs", "configfs":
+			return true, false
+		}
+
+		return false, false
+	})
+	if err != nil {
+		return err
+	}
+
+	d.mountList = make([]string, len(mounts))
+
+	for n, mp := range mounts {
+		d.mountList[n] = mp.Mountpoint
+	}
+
+	sort.Slice(d.mountList, func(i, j int) bool {
+		return len(d.mountList[i]) > len(d.mountList[j])
+	})
+
+	return nil
+}
+
 // Close closes the database. Be sure to call this to finalise any writes to
 // disk correctly.
 func (d *DB) Close() error {
@@ -219,14 +250,19 @@ func (d *DB) StatPureFileEntries(setID string) error {
 		var errG error
 		getEntriesViewFunc(tx, setID, fileBucket, func(v []byte) {
 			entry := d.decodeEntry(v)
-			status, err := d.updateNonRegularEntries(tx, entry.Path)
+
+			eType, err := d.determineTypeOfPath(tx, entry.Path)
 			if err != nil {
 				errG = err
 
 				return
 			}
 
-			entry.Status = status
+			entry.Type = eType
+
+			if eType == Unknown {
+				entry.Status = Missing
+			}
 
 			sfsb, err := d.newSetFileBucket(tx, fileBucket, setID)
 			if err != nil {
@@ -632,12 +668,6 @@ func requestStatusToEntryStatus(r *put.Request, entry *Entry) {
 	case put.RequestStatusMissing:
 		entry.Status = Missing
 		entry.unFailed = entry.Attempts > 1
-	case put.RequestStatusSymLink:
-		entry.Status = SymLink
-		entry.unFailed = entry.Attempts > 1
-	case put.RequestStatusHardLink:
-		entry.Status = HardLink
-		entry.unFailed = entry.Attempts > 1
 	}
 }
 
@@ -697,7 +727,7 @@ func (d *DB) updateSetBasedOnEntry(set *Set, entry *Entry) {
 		}
 	}
 
-	entryStatusToSetCounts(entry, set)
+	entryToSetCounts(entry, set)
 	d.fixSetCounts(entry, set)
 
 	if set.Uploaded+set.Failed+set.Missing+set.SymLinks == set.NumFiles {
@@ -708,9 +738,9 @@ func (d *DB) updateSetBasedOnEntry(set *Set, entry *Entry) {
 	}
 }
 
-// entryStatusToSetCounts increases set Uploaded, Failed or Missing based on
+// entryToSetCounts increases set Uploaded, Failed or Missing based on
 // set.Status.
-func entryStatusToSetCounts(entry *Entry, set *Set) {
+func entryToSetCounts(entry *Entry, set *Set) {
 	switch entry.Status { //nolint:exhaustive
 	case Uploaded:
 		set.Uploaded++
@@ -724,9 +754,12 @@ func entryStatusToSetCounts(entry *Entry, set *Set) {
 		}
 	case Missing:
 		set.Missing++
-	case SymLink:
+	}
+
+	switch entry.Type { //nolint:exhaustive
+	case Symlink:
 		set.SymLinks++
-	case HardLink:
+	case Hardlink:
 		set.HardLinks++
 	}
 }
@@ -759,7 +792,7 @@ func (d *DB) fixSetCounts(entry *Entry, set *Set) {
 			e.newFail = true
 		}
 
-		entryStatusToSetCounts(e, set)
+		entryToSetCounts(e, set)
 	}
 }
 
@@ -1140,68 +1173,4 @@ func (d *DB) EnableRemoteBackups(remotePath string, handler put.Handler) {
 
 	d.remoteBackupPath = remotePath
 	d.remoteBackupHandler = handler
-}
-
-// AddInodeMountPoint adds the given file with the given inode and mountPoint to
-// the database's inode-tracking bucket, and returns true if a different file
-// with the same inode and mountPath has been added before (ie. this one is a
-// hardlink).
-func (d *DB) AddInodeMountPoint(file string, inode uint64, mountPoint string) (bool, error) {
-	found := false
-
-	err := d.db.Update(func(tx *bolt.Tx) error {
-		var err error
-		found, err = d.addInodeMountPoint(tx, file, inode, mountPoint)
-
-		return err
-	})
-
-	return found, err
-}
-
-func (d *DB) addInodeMountPoint(tx *bolt.Tx, file string, inode uint64, mountPoint string) (bool, error) {
-	found := false
-	key := d.inodeMountPointKey(inode, mountPoint)
-
-	b := tx.Bucket([]byte(inodeBucket))
-
-	var files []string
-
-	if existing := b.Get(key); existing != nil {
-		files = d.decodeIMPValue(existing)
-		found = true
-
-		for n, existing := range files {
-			if file == existing {
-				found = n > 0
-
-				break
-			}
-		}
-	}
-
-	files = append(files, file)
-
-	err := b.Put(key, d.encodeToBytes(files))
-
-	return found, err
-}
-
-// inodeMountPointKey returns the inodeBucket key for the given inode and
-// mountPoint.
-func (d *DB) inodeMountPointKey(inode uint64, mountPoint string) []byte {
-	return append(strconv.AppendUint([]byte{}, inode, hexBase), mountPoint...)
-}
-
-// decodeIMPValue takes a byte slice representation of an InodeMountPoint value
-// (a []string) as stored in the db by AddInodeMountPoint(), and converts it
-// back in to []string.
-func (d *DB) decodeIMPValue(v []byte) []string {
-	dec := codec.NewDecoderBytes(v, d.ch)
-
-	var files []string
-
-	dec.MustDecode(&files)
-
-	return files
 }

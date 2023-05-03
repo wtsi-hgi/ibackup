@@ -51,17 +51,19 @@ const (
 	// uploaded. Symlinks are considered to be "missing" since they can't be
 	// uploaded.
 	Missing
+)
 
-	// HardLink is an Entry status meaning the local file is a hardlink and so
-	// was not uploaded. (The system will ensure that the data at the inode is
-	// backed up, so hardlinks are restorable.)
-	HardLink
+type EntryType int
 
-	// SymLink is an Entry status meaning the local file is a symbolic link and
-	// so was not uploaded. (The system will try to upload the destination file
-	// if that's possible, and record the symlink details so the symlinks are
-	// restorable.)
-	SymLink
+const (
+	Regular EntryType = iota
+	Hardlink
+	Symlink
+	Directory
+
+	// Unknown is an Entry type meaning the local file is either missing or
+	// there was an error trying to get its type.
+	Unknown = -1
 )
 
 // String lets you convert a EntryStatus to a meaningful string.
@@ -83,6 +85,7 @@ type Entry struct {
 	PathForJSON []byte // set by MakeSafeForJSON(); do not set this yourself.
 	Size        uint64 // size of local file in bytes.
 	Status      EntryStatus
+	Type        EntryType
 	LastError   string
 	LastAttempt time.Time
 	Attempts    int

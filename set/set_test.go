@@ -721,14 +721,14 @@ func TestSetDB(t *testing.T) {
 				})
 			})
 
-			Convey("And add a set with hard and symlinks to it", func() {
-				set := &Set{
+			Convey("And add a set with pure hardlinks to it", func() {
+				setl1 := &Set{
 					Name:        "setlink",
 					Requester:   "jim",
 					Transformer: "prefix=/local:/remote",
 				}
 
-				err = db.AddOrUpdate(set)
+				err = db.AddOrUpdate(setl1)
 				So(err, ShouldBeNil)
 
 				localDir := t.TempDir()
@@ -739,27 +739,88 @@ func TestSetDB(t *testing.T) {
 				err = os.Link(path1, path2)
 				So(err, ShouldBeNil)
 
-				err = db.SetFileEntries(set.ID(), []string{path1, path2})
+				confirmHardLinks := func(setID string) {
+					err = db.SetFileEntries(setID, []string{path1, path2})
+					So(err, ShouldBeNil)
+
+					entries, errg := db.GetPureFileEntries(setID)
+					So(errg, ShouldBeNil)
+					So(len(entries), ShouldEqual, 2)
+					So(entries[0].Status, ShouldEqual, Pending)
+					So(entries[1].Status, ShouldEqual, Pending)
+					So(entries[0].Type, ShouldEqual, Regular)
+					So(entries[1].Type, ShouldEqual, Regular)
+
+					err = db.StatPureFileEntries(setID)
+					So(err, ShouldBeNil)
+
+					entries, err = db.GetPureFileEntries(setID)
+					So(err, ShouldBeNil)
+					So(len(entries), ShouldEqual, 2)
+					So(entries[0].Status, ShouldEqual, Pending)
+					So(entries[1].Status, ShouldEqual, Pending)
+					So(entries[0].Type, ShouldEqual, Regular)
+					So(entries[1].Type, ShouldEqual, Hardlink)
+				}
+
+				confirmHardLinks(setl1.ID())
+
+				Convey("which can be added again by a different set", func() {
+					setl2 := &Set{
+						Name:        "setlink2",
+						Requester:   "jim",
+						Transformer: "prefix=/local:/remote",
+					}
+
+					err = db.AddOrUpdate(setl2)
+					So(err, ShouldBeNil)
+
+					confirmHardLinks(setl2.ID())
+				})
+			})
+
+			Convey("And add a set with pure symlinks to it", func() {
+				setl1 := &Set{
+					Name:        "setlink",
+					Requester:   "jim",
+					Transformer: "prefix=/local:/remote",
+				}
+
+				err = db.AddOrUpdate(setl1)
 				So(err, ShouldBeNil)
 
-				entries, err := db.GetPureFileEntries(set.ID())
+				localDir := t.TempDir()
+				path1 := filepath.Join(localDir, "file.source")
+				createEmptyFile(path1)
+
+				path2 := filepath.Join(localDir, "file.dest")
+				err = os.Symlink(path1, path2)
 				So(err, ShouldBeNil)
+
+				err = db.SetFileEntries(setl1.ID(), []string{path1, path2})
+				So(err, ShouldBeNil)
+
+				entries, errg := db.GetPureFileEntries(setl1.ID())
+				So(errg, ShouldBeNil)
 				So(len(entries), ShouldEqual, 2)
 				So(entries[0].Status, ShouldEqual, Pending)
 				So(entries[1].Status, ShouldEqual, Pending)
+				So(entries[0].Type, ShouldEqual, Regular)
+				So(entries[1].Type, ShouldEqual, Regular)
 
-				err = db.StatPureFileEntries(set.ID())
+				err = db.StatPureFileEntries(setl1.ID())
 				So(err, ShouldBeNil)
 
-				entries, err = db.GetPureFileEntries(set.ID())
+				entries, err = db.GetPureFileEntries(setl1.ID())
 				So(err, ShouldBeNil)
 				So(len(entries), ShouldEqual, 2)
+				So(entries[1].Status, ShouldEqual, Pending)
 				So(entries[0].Status, ShouldEqual, Pending)
-				So(entries[1].Status, ShouldEqual, HardLink)
-
-				err = db.SetDirEntries(set.ID(), createFileEnts([]string{"/g/h", "/g/i"}))
-				So(err, ShouldBeNil)
+				So(entries[1].Type, ShouldEqual, Regular)
+				So(entries[0].Type, ShouldEqual, Symlink)
 			})
+
+			// err = db.SetDirEntries(set.ID(), createFileEnts([]string{"/g/h", "/g/i"}))
 		})
 	})
 }
