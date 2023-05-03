@@ -222,20 +222,22 @@ func (d *DB) StatPureFileEntries(setID string) error {
 			status, err := d.updateNonRegularEntries(tx, entry.Path)
 			if err != nil {
 				errG = err
+
 				return
 			}
 
 			entry.Status = status
 
-			b, _, err := d.getSetFileBucket(tx, fileBucket, setID)
+			sfsb, err := d.newSetFileBucket(tx, fileBucket, setID)
 			if err != nil {
 				errG = err
 
 				return
 			}
 
-			errG = b.Put([]byte(entry.Path), d.encodeToBytes(entry))
+			errG = sfsb.Bucket.Put([]byte(entry.Path), d.encodeToBytes(entry))
 		})
+
 		return errG
 	})
 }
@@ -269,25 +271,34 @@ func (d *DB) setEntries(setID string, entries []*walk.Dirent, bucketName string)
 }
 
 type setFileSubBucket struct {
-	Name      string
+	Name      []byte
 	Bucket    *bolt.Bucket
 	SetBucket *bolt.Bucket
 }
 
 func (s *setFileSubBucket) DeleteBucket() error {
-
+	return s.SetBucket.DeleteBucket(s.Name)
 }
 
 func (s *setFileSubBucket) CreateBucket() error {
+	var err error
 
+	s.Bucket, err = s.SetBucket.CreateBucket(s.Name)
+
+	return err
 }
 
-func (d *DB) getSetFileBucket(tx *bolt.Tx, kindOfFileBucket, setID string) (*bolt.Bucket, *bolt.Bucket, error) {
+func (d *DB) newSetFileBucket(tx *bolt.Tx, kindOfFileBucket, setID string) (*setFileSubBucket, error) {
 	subBucketName := []byte(kindOfFileBucket + separator + setID)
 	setBucket := tx.Bucket([]byte(setsBucket))
 
 	subBucket, err := setBucket.CreateBucketIfNotExists(subBucketName)
-	return subBucket, setBucket, err
+
+	return &setFileSubBucket{
+		Name:      subBucketName,
+		Bucket:    subBucket,
+		SetBucket: setBucket,
+	}, err
 }
 
 // getAndDeleteExistingEntries gets existing entries in the given sub bucket
@@ -297,32 +308,32 @@ func (d *DB) getAndDeleteExistingEntries(tx *bolt.Tx, subBucketName string, setI
 	map[string][]byte, error) {
 	existing := make(map[string][]byte)
 
-	b, setBucket, err := d.getSetFileBucket(tx, subBucketName, setID)
+	sfsb, err := d.newSetFileBucket(tx, subBucketName, setID)
 	if err != nil {
-		return b, existing, err
+		return nil, existing, err
 	}
 
 	bFailed := tx.Bucket([]byte(failedBucket))
 
-	err = b.ForEach(func(k, v []byte) error {
+	err = sfsb.Bucket.ForEach(func(k, v []byte) error {
 		path := string(k)
 		existing[path] = v
 
 		return bFailed.Delete([]byte(setID + separator + path))
 	})
 	if err != nil {
-		return b, existing, err
+		return sfsb.Bucket, existing, err
 	}
 
 	if len(existing) > 0 {
-		if err = setBucket.DeleteBucket(subBucketName); err != nil {
-			return b, existing, err
+		if err = sfsb.DeleteBucket(); err != nil {
+			return sfsb.Bucket, existing, err
 		}
 
-		b, err = setBucket.CreateBucket(subBucketName)
+		err = sfsb.CreateBucket()
 	}
 
-	return b, existing, err
+	return sfsb.Bucket, existing, err
 }
 
 // existingOrNewEncodedEntry returns the encoded entry from the given map with
@@ -401,6 +412,18 @@ func (d *DB) SetDiscoveredEntries(setID string, entries []*walk.Dirent) (*Set, e
 		return nil, err
 	}
 
+	return d.updateSetAfterDiscovery(setID)
+}
+
+// updateSetAfterDiscovery updates LastDiscovery, sets NumFiles and sets status
+// to PendingUpload unless the set contains no files, in which case it sets
+// status to Complete.
+//
+// Makes the assumption that pure files and discovered files have already been
+// recorded in the database prior to calling this.
+//
+// Returns the updated set and an error if the setID isn't in the database.
+func (d *DB) updateSetAfterDiscovery(setID string) (*Set, error) {
 	var updatedSet *Set
 
 	err := d.db.Update(func(tx *bolt.Tx) error {
@@ -409,18 +432,10 @@ func (d *DB) SetDiscoveredEntries(setID string, entries []*walk.Dirent) (*Set, e
 			return err
 		}
 
-		var numFiles uint64
-		cb := func([]byte) {
-			numFiles++
-		}
-
-		getEntriesViewFunc(tx, setID, fileBucket, cb)
-		getEntriesViewFunc(tx, setID, discoveredBucket, cb)
-
 		set.LastDiscovery = time.Now()
-		set.NumFiles = numFiles
+		set.NumFiles = d.countAllFilesInSet(tx, setID)
 
-		if numFiles == 0 {
+		if set.NumFiles == 0 {
 			set.Status = Complete
 			set.LastCompleted = time.Now()
 		} else {
@@ -433,6 +448,19 @@ func (d *DB) SetDiscoveredEntries(setID string, entries []*walk.Dirent) (*Set, e
 	})
 
 	return updatedSet, err
+}
+
+func (d *DB) countAllFilesInSet(tx *bolt.Tx, setID string) uint64 {
+	var numFiles uint64
+
+	cb := func([]byte) {
+		numFiles++
+	}
+
+	getEntriesViewFunc(tx, setID, fileBucket, cb)
+	getEntriesViewFunc(tx, setID, discoveredBucket, cb)
+
+	return numFiles
 }
 
 // SetEntryStatus finds the set Entry corresponding to the given Request's Local
