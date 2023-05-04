@@ -820,7 +820,68 @@ func TestSetDB(t *testing.T) {
 				So(entries[0].Type, ShouldEqual, Symlink)
 			})
 
-			// err = db.SetDirEntries(set.ID(), createFileEnts([]string{"/g/h", "/g/i"}))
+			Convey("And add a set with directories containing symlinks to it", func() {
+				setl1 := &Set{
+					Name:        "setlink",
+					Requester:   "jim",
+					Transformer: "prefix=/local:/remote",
+				}
+
+				err = db.AddOrUpdate(setl1)
+				So(err, ShouldBeNil)
+
+				err = db.SetDirEntries(setl1.ID(), []*walk.Dirent{
+					{
+						Path:  "/local/path/to/file",
+						Inode: 1,
+					},
+					{
+						Path:  "/local/path/to/link",
+						Type:  os.ModeSymlink,
+						Inode: 2,
+					},
+				})
+				So(err, ShouldBeNil)
+
+				entries, errG := db.GetDirEntries(setl1.ID())
+				So(errG, ShouldBeNil)
+				So(len(entries), ShouldEqual, 2)
+				So(entries[0].Status, ShouldEqual, Pending)
+				So(entries[1].Status, ShouldEqual, Pending)
+				So(entries[0].Type, ShouldEqual, Regular)
+				So(entries[1].Type, ShouldEqual, Symlink)
+			})
+
+			Convey("And add a set with directories containing hardlinks to it", func() {
+				setl1 := &Set{
+					Name:        "setlink",
+					Requester:   "jim",
+					Transformer: "prefix=/local:/remote",
+				}
+
+				err = db.AddOrUpdate(setl1)
+				So(err, ShouldBeNil)
+
+				err = db.SetDirEntries(setl1.ID(), []*walk.Dirent{
+					{
+						Path:  "/local/path/to/file",
+						Inode: 1,
+					},
+					{
+						Path:  "/local/path/to/link",
+						Inode: 1,
+					},
+				})
+				So(err, ShouldBeNil)
+
+				entries, err := db.GetDirEntries(setl1.ID())
+				So(err, ShouldBeNil)
+				So(len(entries), ShouldEqual, 2)
+				So(entries[0].Status, ShouldEqual, Pending)
+				So(entries[1].Status, ShouldEqual, Pending)
+				So(entries[0].Type, ShouldEqual, Regular)
+				So(entries[1].Type, ShouldEqual, Hardlink)
+			})
 		})
 	})
 }
