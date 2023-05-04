@@ -830,7 +830,7 @@ func TestSetDB(t *testing.T) {
 				err = db.AddOrUpdate(setl1)
 				So(err, ShouldBeNil)
 
-				err = db.SetDirEntries(setl1.ID(), []*walk.Dirent{
+				_, err = db.SetDiscoveredEntries(setl1.ID(), []*walk.Dirent{
 					{
 						Path:  "/local/path/to/file",
 						Inode: 1,
@@ -843,7 +843,7 @@ func TestSetDB(t *testing.T) {
 				})
 				So(err, ShouldBeNil)
 
-				entries, errG := db.GetDirEntries(setl1.ID())
+				entries, errG := db.GetFileEntries(setl1.ID())
 				So(errG, ShouldBeNil)
 				So(len(entries), ShouldEqual, 2)
 				So(entries[0].Status, ShouldEqual, Pending)
@@ -862,7 +862,7 @@ func TestSetDB(t *testing.T) {
 				err = db.AddOrUpdate(setl1)
 				So(err, ShouldBeNil)
 
-				err = db.SetDirEntries(setl1.ID(), []*walk.Dirent{
+				_, err = db.SetDiscoveredEntries(setl1.ID(), []*walk.Dirent{
 					{
 						Path:  "/local/path/to/file",
 						Inode: 1,
@@ -874,7 +874,7 @@ func TestSetDB(t *testing.T) {
 				})
 				So(err, ShouldBeNil)
 
-				entries, err := db.GetDirEntries(setl1.ID())
+				entries, err := db.GetFileEntries(setl1.ID())
 				So(err, ShouldBeNil)
 				So(len(entries), ShouldEqual, 2)
 				So(entries[0].Status, ShouldEqual, Pending)

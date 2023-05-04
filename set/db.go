@@ -258,31 +258,37 @@ func (d *DB) StatPureFileEntries(setID string) error {
 				return
 			}
 
-			entry.Type = eType
-
-			if eType == Unknown {
-				entry.Status = Missing
-			}
-
-			sfsb, err := d.newSetFileBucket(tx, fileBucket, setID)
-			if err != nil {
-				errG = err
-
-				return
-			}
-
-			errG = sfsb.Bucket.Put([]byte(entry.Path), d.encodeToBytes(entry))
+			errG = d.updateEntryType(tx, setID, entry, eType)
 		})
 
 		return errG
 	})
 }
 
+func (d *DB) updateEntryType(tx *bolt.Tx, setID string, entry *Entry, newType EntryType) error {
+	if newType == entry.Type {
+		return nil
+	}
+
+	entry.Type = newType
+
+	if newType == Unknown {
+		entry.Status = Missing
+	}
+
+	sfsb, err := d.newSetFileBucket(tx, fileBucket, setID)
+	if err != nil {
+		return err
+	}
+
+	return sfsb.Bucket.Put([]byte(entry.Path), d.encodeToBytes(entry))
+}
+
 // setEntries sets the paths for the given backup set in a sub bucket with the
 // given prefix. Only supply absolute paths.
 //
 // *** Currently ignores old entries that are not in the given paths.
-func (d *DB) setEntries(setID string, entries []*walk.Dirent, bucketName string) error {
+func (d *DB) setEntries(setID string, dirents []*walk.Dirent, bucketName string) error {
 	return d.db.Update(func(tx *bolt.Tx) error {
 		b, existing, err := d.getAndDeleteExistingEntries(tx, bucketName, setID)
 		if err != nil {
@@ -290,20 +296,28 @@ func (d *DB) setEntries(setID string, entries []*walk.Dirent, bucketName string)
 		}
 
 		// this sort is critical to database write speed.
-		sort.Slice(entries, func(i, j int) bool {
-			return entries[i].Path < entries[j].Path
+		sort.Slice(dirents, func(i, j int) bool {
+			return dirents[i].Path < dirents[j].Path
 		})
 
-		for _, entry := range entries {
-			e := d.existingOrNewEncodedEntry(entry, existing)
+		return d.addDirentsToBucketAsEntries(tx, b, dirents, existing)
+	})
+}
 
-			if errp := b.Put([]byte(entry.Path), e); errp != nil {
-				return errp
-			}
+func (d *DB) addDirentsToBucketAsEntries(tx *bolt.Tx, b *bolt.Bucket, dirents []*walk.Dirent,
+	existing map[string][]byte) error {
+	for _, dirent := range dirents {
+		entry, err := d.existingOrNewEncodedEntry(tx, dirent, existing)
+		if err != nil {
+			return err
 		}
 
-		return nil
-	})
+		if err := b.Put([]byte(dirent.Path), entry); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 type setFileSubBucket struct {
@@ -373,17 +387,36 @@ func (d *DB) getAndDeleteExistingEntries(tx *bolt.Tx, subBucketName string, setI
 }
 
 // existingOrNewEncodedEntry returns the encoded entry from the given map with
-// the given path key, or creates a new Entry for path and returns its encoding.
-func (d *DB) existingOrNewEncodedEntry(entry *walk.Dirent, existing map[string][]byte) []byte {
-	path := entry.Path
-	e := existing[path]
-	if e == nil {
-		e = d.encodeToBytes(&Entry{
-			Path: path,
-		})
+// the given dirent Path, or creates a new Entry for dirent path and returns its
+// encoding.
+func (d *DB) existingOrNewEncodedEntry(tx *bolt.Tx, dirent *walk.Dirent, existing map[string][]byte) ([]byte, error) {
+	path := dirent.Path
+	eType := Regular
+
+	if !dirent.IsRegular() {
+		var err error
+
+		eType, err = d.getEntryType(tx, dirent)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	return e
+	entry := &Entry{}
+
+	e := existing[path]
+	if e != nil {
+		entry = d.decodeEntry(e)
+		if entry.Type == eType {
+			return e, nil
+		}
+	}
+
+	entry.Path = path
+	entry.Type = eType
+	e = d.encodeToBytes(entry)
+
+	return e, nil
 }
 
 // SetDirEntries sets the directory paths for the given backup set. Only supply
@@ -741,21 +774,28 @@ func (d *DB) updateSetBasedOnEntry(set *Set, entry *Entry) {
 // entryToSetCounts increases set Uploaded, Failed or Missing based on
 // set.Status.
 func entryToSetCounts(entry *Entry, set *Set) {
+	entryStatusToSetCounts(entry, set)
+	entryTypeToSetCounts(entry, set)
+}
+
+func entryStatusToSetCounts(entry *Entry, given *Set) {
 	switch entry.Status { //nolint:exhaustive
 	case Uploaded:
-		set.Uploaded++
+		given.Uploaded++
 	case Failed:
 		if entry.newFail {
-			set.Failed++
+			given.Failed++
 		}
 
 		if entry.Attempts >= AttemptsToBeConsideredFailing {
-			set.Status = Failing
+			given.Status = Failing
 		}
 	case Missing:
-		set.Missing++
+		given.Missing++
 	}
+}
 
+func entryTypeToSetCounts(entry *Entry, set *Set) {
 	switch entry.Type { //nolint:exhaustive
 	case Symlink:
 		set.SymLinks++
