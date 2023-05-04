@@ -28,6 +28,7 @@ package set
 import (
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 
@@ -739,6 +740,11 @@ func TestSetDB(t *testing.T) {
 				err = os.Link(path1, path2)
 				So(err, ShouldBeNil)
 
+				info, errl := os.Lstat(path1)
+				So(errl, ShouldBeNil)
+				statt, ok := info.Sys().(*syscall.Stat_t)
+				So(ok, ShouldBeTrue)
+
 				confirmHardLinks := func(setID string) {
 					err = db.SetFileEntries(setID, []string{path1, path2})
 					So(err, ShouldBeNil)
@@ -761,6 +767,7 @@ func TestSetDB(t *testing.T) {
 					So(entries[1].Status, ShouldEqual, Pending)
 					So(entries[0].Type, ShouldEqual, Regular)
 					So(entries[1].Type, ShouldEqual, Hardlink)
+					So(entries[1].Inode, ShouldEqual, statt.Ino)
 				}
 
 				confirmHardLinks(setl1.ID())
@@ -818,38 +825,7 @@ func TestSetDB(t *testing.T) {
 				So(entries[0].Status, ShouldEqual, Pending)
 				So(entries[1].Type, ShouldEqual, Regular)
 				So(entries[0].Type, ShouldEqual, Symlink)
-			})
-
-			Convey("And add a set with directories containing symlinks to it", func() {
-				setl1 := &Set{
-					Name:        "setlink",
-					Requester:   "jim",
-					Transformer: "prefix=/local:/remote",
-				}
-
-				err = db.AddOrUpdate(setl1)
-				So(err, ShouldBeNil)
-
-				_, err = db.SetDiscoveredEntries(setl1.ID(), []*walk.Dirent{
-					{
-						Path:  "/local/path/to/file",
-						Inode: 1,
-					},
-					{
-						Path:  "/local/path/to/link",
-						Type:  os.ModeSymlink,
-						Inode: 2,
-					},
-				})
-				So(err, ShouldBeNil)
-
-				entries, errG := db.GetFileEntries(setl1.ID())
-				So(errG, ShouldBeNil)
-				So(len(entries), ShouldEqual, 2)
-				So(entries[0].Status, ShouldEqual, Pending)
-				So(entries[1].Status, ShouldEqual, Pending)
-				So(entries[0].Type, ShouldEqual, Regular)
-				So(entries[1].Type, ShouldEqual, Symlink)
+				So(entries[0].Dest, ShouldEqual, path1)
 			})
 
 			Convey("And add a set with directories containing hardlinks to it", func() {
@@ -874,13 +850,56 @@ func TestSetDB(t *testing.T) {
 				})
 				So(err, ShouldBeNil)
 
-				entries, err := db.GetFileEntries(setl1.ID())
-				So(err, ShouldBeNil)
+				entries, errG := db.GetFileEntries(setl1.ID())
+				So(errG, ShouldBeNil)
 				So(len(entries), ShouldEqual, 2)
 				So(entries[0].Status, ShouldEqual, Pending)
 				So(entries[1].Status, ShouldEqual, Pending)
 				So(entries[0].Type, ShouldEqual, Regular)
 				So(entries[1].Type, ShouldEqual, Hardlink)
+				So(entries[1].Inode, ShouldEqual, 1)
+			})
+
+			Convey("And add a set with directories containing symlinks to it", func() {
+				setl1 := &Set{
+					Name:        "setlink",
+					Requester:   "jim",
+					Transformer: "prefix=/local:/remote",
+				}
+
+				err = db.AddOrUpdate(setl1)
+				So(err, ShouldBeNil)
+
+				dir := t.TempDir()
+
+				path1 := filepath.Join(dir, "file")
+				path2 := filepath.Join(dir, "link")
+
+				createEmptyFile(path1)
+				err = os.Symlink(path1, path2)
+				So(err, ShouldBeNil)
+
+				_, err = db.SetDiscoveredEntries(setl1.ID(), []*walk.Dirent{
+					{
+						Path:  path1,
+						Inode: 1,
+					},
+					{
+						Path:  path2,
+						Type:  os.ModeSymlink,
+						Inode: 2,
+					},
+				})
+				So(err, ShouldBeNil)
+
+				entries, errG := db.GetFileEntries(setl1.ID())
+				So(errG, ShouldBeNil)
+				So(len(entries), ShouldEqual, 2)
+				So(entries[0].Status, ShouldEqual, Pending)
+				So(entries[1].Status, ShouldEqual, Pending)
+				So(entries[0].Type, ShouldEqual, Regular)
+				So(entries[1].Type, ShouldEqual, Symlink)
+				So(entries[1].Dest, ShouldEqual, path1)
 			})
 		})
 	})

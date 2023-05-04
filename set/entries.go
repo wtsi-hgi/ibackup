@@ -89,6 +89,8 @@ type Entry struct {
 	LastError   string
 	LastAttempt time.Time
 	Attempts    int
+	Inode       uint64
+	Dest        string
 
 	newSize  bool
 	newFail  bool
