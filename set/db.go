@@ -251,28 +251,28 @@ func (d *DB) StatPureFileEntries(setID string) error {
 		getEntriesViewFunc(tx, setID, fileBucket, func(v []byte) {
 			entry := d.decodeEntry(v)
 
-			eType, err := d.determineTypeOfPath(tx, entry.Path)
+			oldType := entry.Type
+
+			err := d.statAndUpdatePureFileEntry(tx, entry)
 			if err != nil {
 				errG = err
 
 				return
 			}
 
-			errG = d.updateEntryType(tx, setID, entry, eType)
+			errG = d.updateEntryType(tx, setID, entry, oldType)
 		})
 
 		return errG
 	})
 }
 
-func (d *DB) updateEntryType(tx *bolt.Tx, setID string, entry *Entry, newType EntryType) error {
-	if newType == entry.Type {
+func (d *DB) updateEntryType(tx *bolt.Tx, setID string, entry *Entry, oldType EntryType) error {
+	if oldType == entry.Type {
 		return nil
 	}
 
-	entry.Type = newType
-
-	if newType == Unknown {
+	if entry.Type == Unknown {
 		entry.Status = Missing
 	}
 
@@ -391,29 +391,34 @@ func (d *DB) getAndDeleteExistingEntries(tx *bolt.Tx, subBucketName string, setI
 // encoding.
 func (d *DB) existingOrNewEncodedEntry(tx *bolt.Tx, dirent *walk.Dirent, existing map[string][]byte) ([]byte, error) {
 	path := dirent.Path
-	eType := Regular
 
-	if !dirent.IsRegular() {
-		var err error
+	entry := &Entry{}
 
-		eType, err = d.getEntryType(tx, dirent)
+	if dirent.Inode != 0 {
+		err := d.updateEntryWithTypeDetails(tx, dirent, entry)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	entry := &Entry{}
+	discoveredType := entry.Type
+	discoveredDest := entry.Dest
+	discoveredInode := dirent.Inode
 
 	e := existing[path]
 	if e != nil {
 		entry = d.decodeEntry(e)
-		if entry.Type == eType {
+		if entry.Type == discoveredType && entry.Dest == discoveredDest && entry.Inode == discoveredInode {
 			return e, nil
 		}
+
+		entry.Type = discoveredType
+		entry.Dest = discoveredDest
 	}
 
 	entry.Path = path
-	entry.Type = eType
+	entry.Inode = discoveredInode
+
 	e = d.encodeToBytes(entry)
 
 	return e, nil
@@ -476,8 +481,8 @@ func (d *DB) getSetByID(tx *bolt.Tx, setID string) (*Set, []byte, *bolt.Bucket, 
 // to Complete.
 //
 // Returns the updated set and an error if the setID isn't in the database.
-func (d *DB) SetDiscoveredEntries(setID string, entries []*walk.Dirent) (*Set, error) {
-	if err := d.setEntries(setID, entries, discoveredBucket); err != nil {
+func (d *DB) SetDiscoveredEntries(setID string, dirents []*walk.Dirent) (*Set, error) {
+	if err := d.setEntries(setID, dirents, discoveredBucket); err != nil {
 		return nil, err
 	}
 

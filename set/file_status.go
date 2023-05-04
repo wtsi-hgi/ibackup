@@ -11,35 +11,50 @@ import (
 	bolt "go.etcd.io/bbolt"
 )
 
-// determineTypeOfPath checks if the given path exists, and if not returns
-// a missing status. If it exists and is a link the status returned reflects if
-// it's a hard or symlink. If it's a regular file, the status will be Pending.
-func (d *DB) determineTypeOfPath(tx *bolt.Tx, path string) (EntryType, error) {
-	info, err := os.Lstat(path)
+// statAndUpdatePureFileEntry checks if the given path exists. If it exists and
+// is a link the entry is updated to reflect if it's a hard or symlink.
+func (d *DB) statAndUpdatePureFileEntry(tx *bolt.Tx, entry *Entry) error {
+	info, err := os.Lstat(entry.Path)
 	if err != nil {
-		return Unknown, err
+		return err
 	}
 
 	statt, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {
-		return Unknown, nil
+		return nil
 	}
 
 	de := &walk.Dirent{
-		Path:  path,
+		Path:  entry.Path,
 		Type:  info.Mode().Type(),
 		Inode: statt.Ino,
 	}
 
-	return d.direntToEntryType(tx, de)
+	entry.Inode = statt.Ino
+
+	return d.updateEntryWithTypeDetails(tx, de, entry)
 }
 
-func (d *DB) getEntryType(tx *bolt.Tx, de *walk.Dirent) (EntryType, error) {
+func (d *DB) updateEntryWithTypeDetails(tx *bolt.Tx, de *walk.Dirent, entry *Entry) error {
 	if de.IsDir() {
-		return Directory, nil
+		entry.Type = Directory
+
+		return nil
 	}
 
-	return d.direntToEntryType(tx, de)
+	eType, err := d.direntToEntryType(tx, de)
+	if err != nil {
+		return err
+	}
+
+	entry.Type = eType
+	entry.Dest = ""
+
+	if eType == Symlink {
+		entry.Dest, err = os.Readlink(de.Path)
+	}
+
+	return err
 }
 
 // direntToEntryType returns missing, symlink or hardlink status if the
