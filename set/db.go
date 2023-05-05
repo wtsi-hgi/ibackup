@@ -162,6 +162,7 @@ func New(path, backupPath string) (*DB, error) {
 // Close closes the database. Be sure to call this to finalise any writes to
 // disk correctly.
 func (d *DB) Close() error {
+	d.filePool.StopWait()
 	return d.db.Close()
 }
 
