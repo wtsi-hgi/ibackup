@@ -147,7 +147,6 @@ type Putter struct {
 	fileReadTimeout time.Duration
 	fileReadTester  FileReadTester
 	requests        []*Request
-	putCallback     FileStatusCallback
 }
 
 // New returns a *Putter that will use the given Handler to Put() all the
@@ -165,7 +164,6 @@ func New(handler Handler, requests []*Request) (*Putter, error) {
 		fileReadTimeout: defaultFileReadTimeout,
 		fileReadTester:  headRead,
 		requests:        requests,
-		putCallback:     func(_ string, _ os.FileInfo) RequestStatus { return RequestStatusPending },
 	}, nil
 }
 
@@ -356,15 +354,9 @@ func (p *Putter) pickFilesToPut(wg *sync.WaitGroup, putCh chan *Request, skipRet
 // with a note to skip the actual put and just do metadata. Otherwise, sends
 // them to the putCh normally.
 func (p *Putter) statPathsAndReturnOrPut(request *Request, putCh chan *Request, skipReturnCh chan *Request) {
-	lInfo, stat, err := Stat(request.Local)
+	lInfo, err := Stat(request.Local)
 	if err != nil {
 		sendRequest(request, RequestStatusMissing, err, skipReturnCh)
-
-		return
-	}
-
-	if statusRequest := p.putCallback(request.Local, stat); statusRequest != RequestStatusPending {
-		sendRequest(request, statusRequest, nil, skipReturnCh)
 
 		return
 	}
@@ -551,11 +543,4 @@ func (p *Putter) testRead(request *Request) error {
 	}()
 
 	return <-errCh
-}
-
-// SetFileStatusCallback sets a FileStatusCallback which alters the behaviour of
-// Put() to not upload files that your callback returns non-RequestStatusPending
-// for. The default always returns RequestStatusPending.
-func (p *Putter) SetFileStatusCallback(cb FileStatusCallback) {
-	p.putCallback = cb
 }
