@@ -901,6 +901,37 @@ func TestSetDB(t *testing.T) {
 				So(entries[1].Type, ShouldEqual, Symlink)
 				So(entries[1].Dest, ShouldEqual, path1)
 			})
+
+			Convey("And add a set with a missing file to it", func() {
+				setl1 := &Set{
+					Name:        "missing",
+					Requester:   "jim",
+					Transformer: "prefix=/local:/remote",
+				}
+
+				err = db.AddOrUpdate(setl1)
+				So(err, ShouldBeNil)
+
+				missing := "/non/existent/file"
+
+				err = db.SetFileEntries(setl1.ID(), []string{missing})
+				So(err, ShouldBeNil)
+
+				entries, errg := db.GetPureFileEntries(setl1.ID())
+				So(errg, ShouldBeNil)
+				So(len(entries), ShouldEqual, 1)
+				So(entries[0].Status, ShouldEqual, Pending)
+				So(entries[0].Type, ShouldEqual, Regular)
+
+				err = db.StatPureFileEntries(setl1.ID())
+				So(err, ShouldBeNil)
+
+				entries, err = db.GetPureFileEntries(setl1.ID())
+				So(err, ShouldBeNil)
+				So(len(entries), ShouldEqual, 1)
+				So(entries[0].Status, ShouldEqual, Missing)
+				So(entries[0].Type, ShouldEqual, Regular)
+			})
 		})
 	})
 }

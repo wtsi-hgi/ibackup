@@ -123,16 +123,21 @@ func (e *Entry) ShouldUpload(reuploadAfter time.Time) bool {
 	return !e.LastAttempt.After(reuploadAfter)
 }
 
-func (e *Entry) updateTypeDestAndInode(discoveredType EntryType, discoveredDest string, discoveredInode uint64) bool {
-	if e.Type == discoveredType && e.Dest == discoveredDest && e.Inode == discoveredInode {
+func (e *Entry) updateTypeDestAndInode(newEntry *Entry) bool {
+	if e.hasSameCoreProperties(newEntry) {
 		return false
 	}
 
-	e.Type = discoveredType
-	e.Dest = discoveredDest
-	e.Inode = discoveredInode
+	e.Type = newEntry.Type
+	e.Dest = newEntry.Dest
+	e.Inode = newEntry.Inode
+	e.Status = newEntry.Status
 
 	return true
+}
+
+func (e *Entry) hasSameCoreProperties(other *Entry) bool {
+	return e.Type == other.Type && e.Dest == other.Dest && e.Inode == other.Inode && e.Status == other.Status
 }
 
 type entryCreator struct {
@@ -198,6 +203,10 @@ func (c *entryCreator) newEntryFromDirent(dirent *walk.Dirent) (*Entry, error) {
 	}
 
 	if dirent.Inode == 0 {
+		if dirent.Type == os.ModeIrregular {
+			entry.Status = Missing
+		}
+
 		return entry, nil
 	}
 
@@ -223,7 +232,7 @@ func (c *entryCreator) existingOrNewEncodedEntry(dirent *walk.Dirent) ([]byte, e
 	e := c.existingEntries[dirent.Path]
 	if e != nil {
 		dbEntry := c.db.decodeEntry(e)
-		if !dbEntry.updateTypeDestAndInode(entry.Type, entry.Dest, dirent.Inode) {
+		if !dbEntry.updateTypeDestAndInode(entry) {
 			return e, nil
 		}
 
