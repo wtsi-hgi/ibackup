@@ -166,37 +166,6 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 				})
 			})
 
-			Convey("Put() with a callback in place that returns false for some files only puts the true ones", func() {
-				p.SetFileStatusCallback(func(absPath string, fi os.FileInfo) RequestStatus {
-					if absPath == requests[0].Local {
-						return RequestStatusHardLink
-					}
-
-					return RequestStatusPending
-				})
-
-				uCh, urCh, srCh := p.Put()
-
-				uCount := 0
-				for range uCh {
-					uCount++
-				}
-
-				cCount := 0
-				for range urCh {
-					cCount++
-				}
-
-				skipped := 0
-				for range srCh {
-					skipped++
-				}
-
-				So(uCount, ShouldEqual, len(requests)-1)
-				So(cCount, ShouldEqual, len(requests)-1)
-				So(skipped, ShouldEqual, 1)
-			})
-
 			Convey("Put() fails if the local files don't exist", func() {
 				for _, r := range requests {
 					err = os.Remove(r.Local)
