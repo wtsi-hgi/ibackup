@@ -31,6 +31,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -115,30 +116,7 @@ func (s *Server) discoverThenEnqueue(given *set.Set, transformer put.PathTransfo
 // set, checks if they all exist locally (concurrently), and updates their entry
 // status in the db if they're missing.
 func (s *Server) updateSetFileExistence(given *set.Set) error {
-	entries, err := s.db.GetPureFileEntries(given.ID())
-	if err != nil {
-		return err
-	}
-
-	errCh := make(chan error, len(entries))
-
-	for _, entry := range entries {
-		path := entry.Path
-
-		s.filePool.Submit(func() {
-			_, errs := s.updateNonRegularEntries(given, path)
-			errCh <- errs
-		})
-	}
-
-	for i := 0; i < len(entries); i++ {
-		thisErr := <-errCh
-		if thisErr != nil {
-			err = thisErr
-		}
-	}
-
-	return err
+	return s.db.StatPureFileEntries(given.ID())
 }
 
 // recordSetError sets the given err on the set, and logs on failure to do so.
@@ -170,7 +148,7 @@ func (s *Server) discoverDirEntries(given *set.Set, filesDoneCh chan bool) (*set
 
 	var warning []string
 
-	go s.doSetDirWalks(given, entries, entriesCh, doneCh, warnCh)
+	go s.doSetDirWalks(entries, given, entriesCh, doneCh, warnCh)
 
 	go func() {
 		for warn := range warnCh {
@@ -201,13 +179,6 @@ func (s *Server) discoverDirEntries(given *set.Set, filesDoneCh chan bool) (*set
 		return nil, err
 	}
 
-	/* for _, entry := range fileEntries {
-		errw := s.updateEntryBasedOnType(given, entry)
-		if errw != nil {
-			warning = append(warning, errw.Error())
-		}
-	} */
-
 	if len(warning) != 0 {
 		err = s.db.SetWarning(given.ID(), strings.Join(warning, "\n"))
 		if err != nil {
@@ -232,19 +203,23 @@ func (s *Server) handleNewlyDefinedSets(given *set.Set) {
 // sending discovered file paths to the entriesCh. Closes the entriesCh when done,
 // then sends any error on the doneCh. Non-critical warnings during the walk are
 // sent to the warnChan.
-func (s *Server) doSetDirWalks(given *set.Set, entries []*set.Entry, entriesCh chan *walk.Dirent,
+func (s *Server) doSetDirWalks(entries []*set.Entry, given *set.Set, entriesCh chan *walk.Dirent,
 	doneCh, warnChan chan error) {
 	errCh := make(chan error, len(entries))
 
 	for _, entry := range entries {
 		dir := entry.Path
 
+		thisEntry := entry
+
 		s.dirPool.Submit(func() {
-			errCh <- s.checkAndWalkDir(given, dir, func(entry *walk.Dirent) error {
+			err := s.checkAndWalkDir(dir, func(entry *walk.Dirent) error {
 				entriesCh <- entry
 
 				return nil
 			}, warnChan)
+
+			errCh <- s.handleMissingDirectories(err, thisEntry, given)
 		})
 	}
 
@@ -265,14 +240,10 @@ func (s *Server) doSetDirWalks(given *set.Set, entries []*set.Entry, entriesCh c
 // checkAndWalkDir checks if the given dir exists, and if it does, walks the
 // dir using the given cb. Major errors are returned; walk errors are logged and
 // permission ones sent to the warnChan.
-func (s *Server) checkAndWalkDir(given *set.Set, dir string, cb walk.PathCallback, warnChan chan error) error {
-	missing, err := s.updateNonRegularEntries(given, dir)
+func (s *Server) checkAndWalkDir(dir string, cb walk.PathCallback, warnChan chan error) error {
+	_, err := os.Lstat(dir)
 	if err != nil {
 		return err
-	}
-
-	if missing {
-		return nil
 	}
 
 	walker := walk.New(cb, false, false)
@@ -284,6 +255,34 @@ func (s *Server) checkAndWalkDir(given *set.Set, dir string, cb walk.PathCallbac
 			warnChan <- err
 		}
 	})
+}
+
+// handleMissingDirectories checks if the given error is not nil, and if so
+// records in the database that the entry has problems or is missing.
+func (s *Server) handleMissingDirectories(dirStatErr error, entry *set.Entry, given *set.Set) error {
+	if dirStatErr == nil {
+		return nil
+	}
+
+	r := &put.Request{
+		Local:     entry.Path,
+		Requester: given.Requester,
+		Set:       given.Name,
+		Size:      0,
+		Status:    put.RequestStatusMissing,
+		Error:     dirStatErr.Error(),
+	}
+
+	_, err := s.db.SetEntryStatus(r)
+	if err != nil {
+		return err
+	}
+
+	if os.IsNotExist(dirStatErr) {
+		return nil
+	}
+
+	return dirStatErr
 }
 
 // enqueueSetFiles gets all the set's file entries (set and discovered), creates
