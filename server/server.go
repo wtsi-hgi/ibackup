@@ -48,10 +48,6 @@ import (
 )
 
 const (
-	// workerPoolSizeFiles is the max number of concurrent file stats we'll do
-	// during discovery.
-	workerPoolSizeFiles = 16
-
 	// workerPoolSizeDir is the max number of directory walks we'll do
 	// concurrently during discovery; each of those walks in turn operate on 16
 	// subdirs concurrently.
@@ -78,7 +74,6 @@ type Server struct {
 	numClients          int
 	numRequestsCache    []int
 	cacheMu             sync.Mutex
-	filePool            *workerpool.WorkerPool
 	dirPool             *workerpool.WorkerPool
 	queue               *queue.Queue
 	sched               *scheduler.Scheduler
@@ -102,7 +97,6 @@ func New(logWriter io.Writer) *Server {
 	s := &Server{
 		Server:              *gas.New(logWriter),
 		numClients:          1,
-		filePool:            workerpool.New(workerPoolSizeFiles),
 		dirPool:             workerpool.New(workerPoolSizeDir),
 		queue:               queue.New(context.Background(), "put"),
 		creatingCollections: make(map[string]bool),
@@ -244,7 +238,6 @@ func (s *Server) ttrc(data interface{}) queue.SubQueue {
 // stop is called when the server is Stop()ped, cleaning up our additional
 // properties.
 func (s *Server) stop() {
-	s.filePool.StopWait()
 	s.dirPool.StopWait()
 
 	if s.statusUpdateCh != nil {
