@@ -26,7 +26,11 @@
 package set
 
 import (
+	"os"
 	"time"
+
+	"github.com/wtsi-ssg/wrstat/v4/walk"
+	bolt "go.etcd.io/bbolt"
 )
 
 type EntryStatus int
@@ -74,8 +78,6 @@ func (e EntryStatus) String() string {
 		"uploaded",
 		"failed",
 		"missing",
-		"hardlink",
-		"symlink",
 	}[e]
 }
 
@@ -119,4 +121,146 @@ func (e *Entry) ShouldUpload(reuploadAfter time.Time) bool {
 	}
 
 	return !e.LastAttempt.After(reuploadAfter)
+}
+
+func (e *Entry) updateTypeDestAndInode(discoveredType EntryType, discoveredDest string, discoveredInode uint64) bool {
+	if e.Type == discoveredType && e.Dest == discoveredDest && e.Inode == discoveredInode {
+		return false
+	}
+
+	e.Type = discoveredType
+	e.Dest = discoveredDest
+	e.Inode = discoveredInode
+
+	return true
+}
+
+type entryCreator struct {
+	db              *DB
+	tx              *bolt.Tx
+	bucket          *bolt.Bucket
+	existingEntries map[string][]byte
+}
+
+// newEntryCreator returns an entryCreator that will create new entries in the
+// given bucket from dirents passed to UpdateOrCreateEntries(), basing them on
+// the supplied existing ones. The bucket is expected to be empty (so get
+// existing ones and then delete the bucket before calling this).
+func newEntryCreator(db *DB, tx *bolt.Tx, bucket *bolt.Bucket, existing map[string][]byte) *entryCreator {
+	return &entryCreator{
+		db:              db,
+		tx:              tx,
+		bucket:          bucket,
+		existingEntries: existing,
+	}
+}
+
+// UpdateOrCreateEntries creates or updates (if already in the existing map)
+// entries in the database based on properties of each given dirent. It handles
+// associating hard and symlink info on the resulting entries.
+func (c *entryCreator) UpdateOrCreateEntries(dirents []*walk.Dirent) error {
+	for _, dirent := range dirents {
+		err := c.updateOrCreateEntryFromDirent(dirent)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (c *entryCreator) updateOrCreateEntryFromDirent(dirent *walk.Dirent) error {
+	entry, err := c.existingOrNewEncodedEntry(dirent)
+	if err != nil {
+		return err
+	}
+
+	return c.bucket.Put([]byte(dirent.Path), entry)
+}
+
+func (e *Entry) setTypeAndDetermineDest(eType EntryType) error {
+	e.Type = eType
+	e.Dest = ""
+
+	var err error
+
+	if eType == Symlink {
+		e.Dest, err = os.Readlink(e.Path)
+	}
+
+	return err
+}
+
+func (c *entryCreator) newEntryFromDirent(dirent *walk.Dirent) (*Entry, error) {
+	entry := &Entry{
+		Path:  dirent.Path,
+		Inode: dirent.Inode,
+	}
+
+	if dirent.Inode == 0 {
+		return entry, nil
+	}
+
+	eType, err := c.determineEntryType(dirent)
+	if err != nil {
+		return nil, err
+	}
+
+	err = entry.setTypeAndDetermineDest(eType)
+	if err != nil {
+		return nil, err
+	}
+
+	return entry, nil
+}
+
+func (c *entryCreator) existingOrNewEncodedEntry(dirent *walk.Dirent) ([]byte, error) {
+	entry, err := c.newEntryFromDirent(dirent)
+	if err != nil {
+		return nil, err
+	}
+
+	e := c.existingEntries[dirent.Path]
+	if e != nil {
+		dbEntry := c.db.decodeEntry(e)
+		if !dbEntry.updateTypeDestAndInode(entry.Type, entry.Dest, dirent.Inode) {
+			return e, nil
+		}
+
+		entry = dbEntry
+	}
+
+	e = c.db.encodeToBytes(entry)
+
+	return e, nil
+}
+
+func (c *entryCreator) determineEntryType(dirent *walk.Dirent) (EntryType, error) {
+	if dirent.IsDir() {
+		return Directory, nil
+	}
+
+	return c.direntToEntryType(dirent)
+}
+
+func (c *entryCreator) direntToEntryType(de *walk.Dirent) (EntryType, error) {
+	eType := Regular
+
+	switch {
+	case de.Inode == 0:
+		eType = Unknown
+	case de.IsSymlink():
+		eType = Symlink
+	default:
+		isHardLink, err := c.db.handleInode(c.tx, de)
+		if err != nil {
+			return eType, err
+		}
+
+		if isHardLink {
+			eType = Hardlink
+		}
+	}
+
+	return eType, nil
 }

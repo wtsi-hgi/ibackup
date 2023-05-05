@@ -38,7 +38,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/moby/sys/mountinfo"
 	"github.com/ugorji/go/codec"
 	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-ssg/wrstat/v4/walk"
@@ -152,37 +151,6 @@ func New(path, backupPath string) (*DB, error) {
 	return db, nil
 }
 
-// getMountPoints retrieves a list of mount point paths to be used when
-// determining hardlinks. The list is sorted longest first and stored on the
-// server object.
-func (d *DB) getMountPoints() error {
-	mounts, err := mountinfo.GetMounts(func(info *mountinfo.Info) (bool, bool) {
-		switch info.FSType {
-		case "devpts", "devtmpfs", "cgroup", "rpc_pipefs", "fusectl",
-			"binfmt_misc", "sysfs", "debugfs", "tracefs", "proc", "securityfs",
-			"pstore", "mqueue", "hugetlbfs", "configfs":
-			return true, false
-		}
-
-		return false, false
-	})
-	if err != nil {
-		return err
-	}
-
-	d.mountList = make([]string, len(mounts))
-
-	for n, mp := range mounts {
-		d.mountList[n] = mp.Mountpoint
-	}
-
-	sort.Slice(d.mountList, func(i, j int) bool {
-		return len(d.mountList[i]) > len(d.mountList[j])
-	})
-
-	return nil
-}
-
 // Close closes the database. Be sure to call this to finalise any writes to
 // disk correctly.
 func (d *DB) Close() error {
@@ -245,45 +213,6 @@ func (d *DB) SetFileEntries(setID string, paths []string) error {
 	return d.setEntries(setID, entries, fileBucket)
 }
 
-func (d *DB) StatPureFileEntries(setID string) error {
-	return d.db.Update(func(tx *bolt.Tx) error {
-		var errG error
-		getEntriesViewFunc(tx, setID, fileBucket, func(v []byte) {
-			entry := d.decodeEntry(v)
-
-			oldType := entry.Type
-
-			err := d.statAndUpdatePureFileEntry(tx, entry)
-			if err != nil {
-				errG = err
-
-				return
-			}
-
-			errG = d.updateEntryType(tx, setID, entry, oldType)
-		})
-
-		return errG
-	})
-}
-
-func (d *DB) updateEntryType(tx *bolt.Tx, setID string, entry *Entry, oldType EntryType) error {
-	if oldType == entry.Type {
-		return nil
-	}
-
-	if entry.Type == Unknown {
-		entry.Status = Missing
-	}
-
-	sfsb, err := d.newSetFileBucket(tx, fileBucket, setID)
-	if err != nil {
-		return err
-	}
-
-	return sfsb.Bucket.Put([]byte(entry.Path), d.encodeToBytes(entry))
-}
-
 // setEntries sets the paths for the given backup set in a sub bucket with the
 // given prefix. Only supply absolute paths.
 //
@@ -300,55 +229,10 @@ func (d *DB) setEntries(setID string, dirents []*walk.Dirent, bucketName string)
 			return dirents[i].Path < dirents[j].Path
 		})
 
-		return d.addDirentsToBucketAsEntries(tx, b, dirents, existing)
+		ec := newEntryCreator(d, tx, b, existing)
+
+		return ec.UpdateOrCreateEntries(dirents)
 	})
-}
-
-func (d *DB) addDirentsToBucketAsEntries(tx *bolt.Tx, b *bolt.Bucket, dirents []*walk.Dirent,
-	existing map[string][]byte) error {
-	for _, dirent := range dirents {
-		entry, err := d.existingOrNewEncodedEntry(tx, dirent, existing)
-		if err != nil {
-			return err
-		}
-
-		if err := b.Put([]byte(dirent.Path), entry); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-type setFileSubBucket struct {
-	Name      []byte
-	Bucket    *bolt.Bucket
-	SetBucket *bolt.Bucket
-}
-
-func (s *setFileSubBucket) DeleteBucket() error {
-	return s.SetBucket.DeleteBucket(s.Name)
-}
-
-func (s *setFileSubBucket) CreateBucket() error {
-	var err error
-
-	s.Bucket, err = s.SetBucket.CreateBucket(s.Name)
-
-	return err
-}
-
-func (d *DB) newSetFileBucket(tx *bolt.Tx, kindOfFileBucket, setID string) (*setFileSubBucket, error) {
-	subBucketName := []byte(kindOfFileBucket + separator + setID)
-	setBucket := tx.Bucket([]byte(setsBucket))
-
-	subBucket, err := setBucket.CreateBucketIfNotExists(subBucketName)
-
-	return &setFileSubBucket{
-		Name:      subBucketName,
-		Bucket:    subBucket,
-		SetBucket: setBucket,
-	}, err
 }
 
 // getAndDeleteExistingEntries gets existing entries in the given sub bucket
@@ -386,42 +270,84 @@ func (d *DB) getAndDeleteExistingEntries(tx *bolt.Tx, subBucketName string, setI
 	return sfsb.Bucket, existing, err
 }
 
-// existingOrNewEncodedEntry returns the encoded entry from the given map with
-// the given dirent Path, or creates a new Entry for dirent path and returns its
-// encoding.
-func (d *DB) existingOrNewEncodedEntry(tx *bolt.Tx, dirent *walk.Dirent, existing map[string][]byte) ([]byte, error) {
-	path := dirent.Path
-
-	entry := &Entry{}
-
-	if dirent.Inode != 0 {
-		err := d.updateEntryWithTypeDetails(tx, dirent, entry)
+func (d *DB) StatPureFileEntries(setID string) error {
+	return d.db.Update(func(tx *bolt.Tx) error {
+		sfsb, err := d.newSetFileBucket(tx, fileBucket, setID)
 		if err != nil {
-			return nil, err
-		}
-	}
-
-	discoveredType := entry.Type
-	discoveredDest := entry.Dest
-	discoveredInode := dirent.Inode
-
-	e := existing[path]
-	if e != nil {
-		entry = d.decodeEntry(e)
-		if entry.Type == discoveredType && entry.Dest == discoveredDest && entry.Inode == discoveredInode {
-			return e, nil
+			return err
 		}
 
-		entry.Type = discoveredType
-		entry.Dest = discoveredDest
+		existing := make(map[string][]byte)
+		var dirents []*walk.Dirent
+
+		sfsb.Bucket.ForEach(func(k, v []byte) error { //nolint:errcheck
+			path := string(k)
+			existing[path] = v
+			dirents = append(dirents, newDirentFromPath(path))
+
+			return nil
+		})
+
+		ec := newEntryCreator(d, tx, sfsb.Bucket, existing)
+
+		return ec.UpdateOrCreateEntries(dirents)
+	})
+}
+
+type setFileSubBucket struct {
+	Name      []byte
+	Bucket    *bolt.Bucket
+	SetBucket *bolt.Bucket
+}
+
+func (s *setFileSubBucket) DeleteBucket() error {
+	return s.SetBucket.DeleteBucket(s.Name)
+}
+
+func (s *setFileSubBucket) CreateBucket() error {
+	var err error
+
+	s.Bucket, err = s.SetBucket.CreateBucket(s.Name)
+
+	return err
+}
+
+func (d *DB) newSetFileBucket(tx *bolt.Tx, kindOfFileBucket, setID string) (*setFileSubBucket, error) {
+	subBucketName := []byte(kindOfFileBucket + separator + setID)
+	setBucket := tx.Bucket([]byte(setsBucket))
+
+	subBucket, err := setBucket.CreateBucketIfNotExists(subBucketName)
+
+	return &setFileSubBucket{
+		Name:      subBucketName,
+		Bucket:    subBucket,
+		SetBucket: setBucket,
+	}, err
+}
+
+// newDirentFromPath returns a Dirent for the path. If it doesn't exist, returns
+// a fake one with no Inode and Type of ModeIrregular.
+func newDirentFromPath(path string) *walk.Dirent {
+	dirent := &walk.Dirent{
+		Path: path,
+		Type: os.ModeIrregular,
 	}
 
-	entry.Path = path
-	entry.Inode = discoveredInode
+	info, err := os.Lstat(path)
+	if err != nil {
+		return dirent
+	}
 
-	e = d.encodeToBytes(entry)
+	dirent.Type = info.Mode().Type()
 
-	return e, nil
+	statt, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return dirent
+	}
+
+	dirent.Inode = statt.Ino
+
+	return dirent
 }
 
 // SetDirEntries sets the directory paths for the given backup set. Only supply
