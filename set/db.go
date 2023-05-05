@@ -238,7 +238,10 @@ func (d *DB) setEntries(setID string, dirents []*walk.Dirent, bucketName string)
 			return dirents[i].Path < dirents[j].Path
 		})
 
-		ec := newEntryCreator(d, tx, b, existing)
+		ec, err := newEntryCreator(d, tx, b, existing, setID)
+		if err != nil {
+			return err
+		}
 
 		return ec.UpdateOrCreateEntries(dirents)
 	})
@@ -304,7 +307,10 @@ func (d *DB) StatPureFileEntries(setID string) error {
 
 		dirents, existing := readFilePoolResults(direntCh, entryCh, numEntries)
 
-		ec := newEntryCreator(d, tx, sfsb.Bucket, existing)
+		ec, err := newEntryCreator(d, tx, sfsb.Bucket, existing, setID)
+		if err != nil {
+			return err
+		}
 
 		return ec.UpdateOrCreateEntries(dirents)
 	})
@@ -405,8 +411,8 @@ func (d *DB) SetDiscoveryStarted(setID string) error {
 		set.Uploaded = 0
 		set.Failed = 0
 		set.Missing = 0
-		set.SymLinks = 0
-		set.HardLinks = 0
+		set.Symlinks = 0
+		set.Hardlinks = 0
 		set.Status = PendingDiscovery
 		set.Error = ""
 		set.Warning = ""
@@ -516,12 +522,12 @@ func (d *DB) SetEntryStatus(r *put.Request) (*Entry, error) {
 	var entry *Entry
 
 	err = d.db.Update(func(tx *bolt.Tx) error {
-		set, bid, b, errt := d.getSetByID(tx, setID)
+		got, bid, b, errt := d.getSetByID(tx, setID)
 		if errt != nil {
 			return errt
 		}
 
-		entry, errt = d.updateFileEntry(tx, setID, r, set.LastDiscovery)
+		entry, errt = d.updateFileEntry(tx, setID, r, got.LastDiscovery)
 		if errt != nil {
 			return errt
 		}
@@ -530,9 +536,17 @@ func (d *DB) SetEntryStatus(r *put.Request) (*Entry, error) {
 			return nil
 		}
 
-		d.updateSetBasedOnEntry(set, entry)
+		if entry.Status == Missing {
+			fmt.Printf("\nentry %s is missing, so will update set, currently %+v\n", entry.Path, got)
+		}
 
-		return b.Put(bid, d.encodeToBytes(set))
+		d.updateSetBasedOnEntry(got, entry)
+
+		if entry.Status == Missing {
+			fmt.Printf("after update, set now %+v\n", got)
+		}
+
+		return b.Put(bid, d.encodeToBytes(got))
 	})
 
 	return entry, err
@@ -728,7 +742,7 @@ func (d *DB) updateSetBasedOnEntry(set *Set, entry *Entry) {
 	entryToSetCounts(entry, set)
 	d.fixSetCounts(entry, set)
 
-	if set.Uploaded+set.Failed+set.Missing+set.SymLinks == set.NumFiles {
+	if set.Uploaded+set.Failed+set.Missing+set.Symlinks == set.NumFiles {
 		set.Status = Complete
 		set.LastCompleted = time.Now()
 		set.LastCompletedCount = set.Uploaded + set.Failed
@@ -763,9 +777,9 @@ func entryStatusToSetCounts(entry *Entry, given *Set) {
 func entryTypeToSetCounts(entry *Entry, set *Set) {
 	switch entry.Type { //nolint:exhaustive
 	case Symlink:
-		set.SymLinks++
+		set.Symlinks++
 	case Hardlink:
-		set.HardLinks++
+		set.Hardlinks++
 	}
 }
 
@@ -785,8 +799,8 @@ func (d *DB) fixSetCounts(entry *Entry, set *Set) {
 	set.Uploaded = 0
 	set.Failed = 0
 	set.Missing = 0
-	set.SymLinks = 0
-	set.HardLinks = 0
+	set.Symlinks = 0
+	set.Hardlinks = 0
 
 	for _, e := range entries {
 		if e.Path == entry.Path {

@@ -768,6 +768,10 @@ func TestSetDB(t *testing.T) {
 					So(entries[0].Type, ShouldEqual, Regular)
 					So(entries[1].Type, ShouldEqual, Hardlink)
 					So(entries[1].Inode, ShouldEqual, statt.Ino)
+
+					got := db.GetByID(setID)
+					So(got, ShouldNotBeNil)
+					So(got.Hardlinks, ShouldEqual, 1)
 				}
 
 				confirmHardLinks(setl1.ID())
@@ -826,6 +830,10 @@ func TestSetDB(t *testing.T) {
 				So(entries[1].Type, ShouldEqual, Regular)
 				So(entries[0].Type, ShouldEqual, Symlink)
 				So(entries[0].Dest, ShouldEqual, path1)
+
+				got := db.GetByID(setl1.ID())
+				So(got, ShouldNotBeNil)
+				So(got.Symlinks, ShouldEqual, 1)
 			})
 
 			Convey("And add a set with directories containing hardlinks to it", func() {
@@ -858,6 +866,11 @@ func TestSetDB(t *testing.T) {
 				So(entries[0].Type, ShouldEqual, Regular)
 				So(entries[1].Type, ShouldEqual, Hardlink)
 				So(entries[1].Inode, ShouldEqual, 1)
+
+				got := db.GetByID(setl1.ID())
+				So(got, ShouldNotBeNil)
+				So(got.Hardlinks, ShouldEqual, 1)
+				So(got.NumFiles, ShouldEqual, 2)
 			})
 
 			Convey("And add a set with directories containing symlinks to it", func() {
@@ -900,6 +913,11 @@ func TestSetDB(t *testing.T) {
 				So(entries[0].Type, ShouldEqual, Regular)
 				So(entries[1].Type, ShouldEqual, Symlink)
 				So(entries[1].Dest, ShouldEqual, path1)
+
+				got := db.GetByID(setl1.ID())
+				So(got, ShouldNotBeNil)
+				So(got.Symlinks, ShouldEqual, 1)
+				So(got.NumFiles, ShouldEqual, 2)
 			})
 
 			Convey("And add a set with a missing file to it", func() {
@@ -931,6 +949,41 @@ func TestSetDB(t *testing.T) {
 				So(len(entries), ShouldEqual, 1)
 				So(entries[0].Status, ShouldEqual, Missing)
 				So(entries[0].Type, ShouldEqual, Regular)
+
+				got := db.GetByID(setl1.ID())
+				So(got, ShouldNotBeNil)
+				So(err, ShouldBeNil)
+				So(got.Missing, ShouldEqual, 1)
+			})
+
+			Convey("And add a set with a missing directory to it (which are just recorded and not checked)", func() {
+				setl1 := &Set{
+					Name:        "missingdir",
+					Requester:   "jim",
+					Transformer: "prefix=/local:/remote",
+				}
+
+				err = db.AddOrUpdate(setl1)
+				So(err, ShouldBeNil)
+
+				missing := "/non/existent/dir"
+
+				err = db.SetDirEntries(setl1.ID(), []*walk.Dirent{{
+					Path: missing,
+					Type: os.ModeDir,
+				}})
+				So(err, ShouldBeNil)
+
+				entries, errg := db.GetDirEntries(setl1.ID())
+				So(errg, ShouldBeNil)
+				So(len(entries), ShouldEqual, 1)
+				So(entries[0].Status, ShouldEqual, Pending)
+				So(entries[0].Type, ShouldEqual, Directory)
+
+				got := db.GetByID(setl1.ID())
+				So(got, ShouldNotBeNil)
+				So(err, ShouldBeNil)
+				So(got.Missing, ShouldEqual, 0)
 			})
 		})
 	})

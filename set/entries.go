@@ -145,19 +145,31 @@ type entryCreator struct {
 	tx              *bolt.Tx
 	bucket          *bolt.Bucket
 	existingEntries map[string][]byte
+	setID           []byte
+	setBucket       *bolt.Bucket
+	set             *Set
 }
 
 // newEntryCreator returns an entryCreator that will create new entries in the
 // given bucket from dirents passed to UpdateOrCreateEntries(), basing them on
 // the supplied existing ones. The bucket is expected to be empty (so get
 // existing ones and then delete the bucket before calling this).
-func newEntryCreator(db *DB, tx *bolt.Tx, bucket *bolt.Bucket, existing map[string][]byte) *entryCreator {
+func newEntryCreator(db *DB, tx *bolt.Tx, bucket *bolt.Bucket, existing map[string][]byte,
+	setID string) (*entryCreator, error) {
+	got, setIDb, setBucket, err := db.getSetByID(tx, setID)
+	if err != nil {
+		return nil, err
+	}
+
 	return &entryCreator{
 		db:              db,
 		tx:              tx,
 		bucket:          bucket,
 		existingEntries: existing,
-	}
+		setID:           setIDb,
+		setBucket:       setBucket,
+		set:             got,
+	}, nil
 }
 
 // UpdateOrCreateEntries creates or updates (if already in the existing map)
@@ -171,7 +183,7 @@ func (c *entryCreator) UpdateOrCreateEntries(dirents []*walk.Dirent) error {
 		}
 	}
 
-	return nil
+	return c.setBucket.Put(c.setID, c.db.encodeToBytes(c.set))
 }
 
 func (c *entryCreator) updateOrCreateEntryFromDirent(dirent *walk.Dirent) error {
@@ -207,6 +219,10 @@ func (c *entryCreator) newEntryFromDirent(dirent *walk.Dirent) (*Entry, error) {
 			entry.Status = Missing
 		}
 
+		if dirent.Type.IsDir() {
+			entry.Type = Directory
+		}
+
 		return entry, nil
 	}
 
@@ -238,6 +254,8 @@ func (c *entryCreator) existingOrNewEncodedEntry(dirent *walk.Dirent) ([]byte, e
 
 		entry = dbEntry
 	}
+
+	entryToSetCounts(entry, c.set)
 
 	e = c.db.encodeToBytes(entry)
 
