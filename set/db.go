@@ -38,6 +38,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gammazero/workerpool"
 	"github.com/ugorji/go/codec"
 	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-ssg/wrstat/v4/walk"
@@ -77,6 +78,10 @@ const (
 	hexBase                       = 16
 
 	backupExt = ".backingup"
+
+	// workerPoolSizeFiles is the max number of concurrent file stats we'll do
+	// during discovery.
+	workerPoolSizeFiles = 16
 )
 
 // DB is used to create and query a database for storing backup sets (lists of
@@ -86,6 +91,7 @@ type DB struct {
 	ch codec.Handle
 
 	mountList []string
+	filePool  *workerpool.WorkerPool
 
 	mu                    sync.Mutex
 	backupPath            string
@@ -141,6 +147,8 @@ func New(path, backupPath string) (*DB, error) {
 		ch:                    new(codec.BincHandle),
 		backupPath:            backupPath,
 		minTimeBetweenBackups: 1 * time.Second,
+
+		filePool: workerpool.New(workerPoolSizeFiles),
 	}
 
 	err = db.getMountPoints()
@@ -277,21 +285,46 @@ func (d *DB) StatPureFileEntries(setID string) error {
 			return err
 		}
 
-		existing := make(map[string][]byte)
-		var dirents []*walk.Dirent
+		direntCh := make(chan *walk.Dirent)
+		entryCh := make(chan []byte)
+		numEntries := 0
 
 		sfsb.Bucket.ForEach(func(k, v []byte) error { //nolint:errcheck
-			path := string(k)
-			existing[path] = v
-			dirents = append(dirents, newDirentFromPath(path))
+			numEntries++
+
+			d.filePool.Submit(func() {
+				path := string(k)
+				direntCh <- newDirentFromPath(path)
+				entryCh <- v
+			})
 
 			return nil
 		})
+
+		dirents, existing := readFilePoolResults(direntCh, entryCh, numEntries)
 
 		ec := newEntryCreator(d, tx, sfsb.Bucket, existing)
 
 		return ec.UpdateOrCreateEntries(dirents)
 	})
+}
+
+func readFilePoolResults(direntCh chan *walk.Dirent, entryCh chan []byte,
+	numEntries int) ([]*walk.Dirent, map[string][]byte) {
+	dirents := make([]*walk.Dirent, numEntries)
+	existing := make(map[string][]byte, numEntries)
+
+	for n := range dirents {
+		dirent := <-direntCh
+		dirents[n] = dirent
+		existing[dirent.Path] = <-entryCh
+	}
+
+	sort.Slice(dirents, func(i, j int) bool {
+		return dirents[i].Path < dirents[j].Path
+	})
+
+	return dirents, existing
 }
 
 type setFileSubBucket struct {
