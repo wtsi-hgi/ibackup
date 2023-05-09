@@ -757,7 +757,13 @@ func TestSetDB(t *testing.T) {
 					So(entries[0].Type, ShouldEqual, Regular)
 					So(entries[1].Type, ShouldEqual, Regular)
 
+					err = db.SetDiscoveryStarted(setID)
+					So(err, ShouldBeNil)
+
 					err = db.StatPureFileEntries(setID)
+					So(err, ShouldBeNil)
+
+					_, err = db.SetDiscoveredEntries(setID, nil)
 					So(err, ShouldBeNil)
 
 					entries, err = db.GetPureFileEntries(setID)
@@ -771,6 +777,7 @@ func TestSetDB(t *testing.T) {
 
 					got := db.GetByID(setID)
 					So(got, ShouldNotBeNil)
+					So(got.NumFiles, ShouldEqual, 2)
 					So(got.Hardlinks, ShouldEqual, 1)
 				}
 
@@ -787,6 +794,42 @@ func TestSetDB(t *testing.T) {
 					So(err, ShouldBeNil)
 
 					confirmHardLinks(setl2.ID())
+				})
+
+				Convey("then change their status to uploaded", func() {
+					entries, errg := db.GetPureFileEntries(setl1.ID())
+					So(errg, ShouldBeNil)
+
+					for _, entry := range entries {
+						r := &put.Request{
+							Local:     entry.Path,
+							Status:    put.RequestStatusUploading,
+							Requester: setl1.Requester,
+							Set:       setl1.Name,
+							Symlink:   entry.Dest,
+						}
+
+						if entry.Type == Hardlink {
+							r.Hardlink = entry.Inode
+						}
+
+						_, err = db.SetEntryStatus(r)
+						So(err, ShouldBeNil)
+
+						r.Status = put.RequestStatusUploaded
+
+						_, err = db.SetEntryStatus(r)
+						So(err, ShouldBeNil)
+					}
+
+					got, erra := db.GetByNameAndRequester(setl1.Name, setl1.Requester)
+					So(erra, ShouldBeNil)
+					So(got.NumFiles, ShouldEqual, len(entries))
+					So(got.Symlinks, ShouldEqual, 0)
+					So(got.Hardlinks, ShouldEqual, 1)
+					So(got.Uploaded, ShouldEqual, 2)
+					So(got.Missing, ShouldEqual, 0)
+					So(got.Failed, ShouldEqual, 0)
 				})
 			})
 
@@ -863,6 +906,42 @@ func TestSetDB(t *testing.T) {
 				got = db.GetByID(setl1.ID())
 				So(got, ShouldNotBeNil)
 				So(got.Status, ShouldEqual, Complete)
+
+				Convey("then change their status to uploaded", func() {
+					entries, errg := db.GetPureFileEntries(setl1.ID())
+					So(errg, ShouldBeNil)
+
+					for _, entry := range entries {
+						r := &put.Request{
+							Local:     entry.Path,
+							Status:    put.RequestStatusUploading,
+							Requester: setl1.Requester,
+							Set:       setl1.Name,
+							Symlink:   entry.Dest,
+						}
+
+						if entry.Type == Hardlink {
+							r.Hardlink = entry.Inode
+						}
+
+						_, err = db.SetEntryStatus(r)
+						So(err, ShouldBeNil)
+
+						r.Status = put.RequestStatusUploaded
+
+						_, err = db.SetEntryStatus(r)
+						So(err, ShouldBeNil)
+					}
+
+					got, erra := db.GetByNameAndRequester(setl1.Name, setl1.Requester)
+					So(erra, ShouldBeNil)
+					So(got.NumFiles, ShouldEqual, len(entries))
+					So(got.Symlinks, ShouldEqual, 1)
+					So(got.Hardlinks, ShouldEqual, 0)
+					So(got.Uploaded, ShouldEqual, 2)
+					So(got.Missing, ShouldEqual, 0)
+					So(got.Failed, ShouldEqual, 0)
+				})
 			})
 
 			Convey("And add a set with directories containing hardlinks to it", func() {
@@ -1187,4 +1266,41 @@ func createFileEnts(paths []string) []*walk.Dirent {
 	}
 
 	return entries
+}
+
+func TestCountsValid(t *testing.T) {
+	Convey("countsValid detects when set counts do or don't make sense", t, func() {
+		s := new(Set)
+
+		So(s.countsValid(), ShouldBeTrue)
+
+		s.NumFiles = 1
+		s.Uploaded = 1
+
+		So(s.countsValid(), ShouldBeTrue)
+
+		s.Hardlinks = 1
+
+		So(s.countsValid(), ShouldBeTrue)
+
+		s.Hardlinks = 0
+		s.Symlinks = 1
+
+		So(s.countsValid(), ShouldBeTrue)
+
+		s.Symlinks = 0
+		s.Uploaded = 0
+		s.Missing = 1
+
+		So(s.countsValid(), ShouldBeTrue)
+
+		s.Missing = 0
+		s.Failed = 1
+
+		So(s.countsValid(), ShouldBeTrue)
+
+		s.Failed = 2
+
+		So(s.countsValid(), ShouldBeFalse)
+	})
 }
