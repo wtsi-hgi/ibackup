@@ -28,6 +28,7 @@ package server
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -457,6 +458,7 @@ func (c *Client) handleUploadTracking(wg *sync.WaitGroup, uploadStarts, uploadRe
 
 		if err := c.UpdateFileStatus(ru); err != nil {
 			c.logger.Warn("failed to update file status to uploading", "err", err, "path", ru.Local)
+			fmt.Printf("\nerr1: %s\n", err)
 			c.uploadsErrCh <- err
 
 			continue

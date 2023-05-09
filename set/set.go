@@ -288,5 +288,5 @@ func (s *Set) countsValid() bool {
 		return false
 	}
 
-	return s.Uploaded+s.Failed+s.Missing+s.Symlinks+s.Hardlinks <= s.NumFiles
+	return s.Uploaded+s.Failed+s.Missing <= s.NumFiles
 }
