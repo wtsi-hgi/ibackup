@@ -819,6 +819,13 @@ func TestSetDB(t *testing.T) {
 				So(entries[0].Type, ShouldEqual, Regular)
 				So(entries[1].Type, ShouldEqual, Regular)
 
+				got := db.GetByID(setl1.ID())
+				So(got, ShouldNotBeNil)
+				So(got.Status, ShouldEqual, PendingDiscovery)
+				So(got.NumFiles, ShouldEqual, 0)
+				err = db.SetDiscoveryStarted(setl1.ID())
+				So(err, ShouldBeNil)
+
 				err = db.StatPureFileEntries(setl1.ID())
 				So(err, ShouldBeNil)
 
@@ -831,9 +838,31 @@ func TestSetDB(t *testing.T) {
 				So(entries[0].Type, ShouldEqual, Symlink)
 				So(entries[0].Dest, ShouldEqual, path1)
 
-				got := db.GetByID(setl1.ID())
+				got = db.GetByID(setl1.ID())
 				So(got, ShouldNotBeNil)
+				So(got.Status, ShouldEqual, PendingDiscovery)
+				So(got.NumFiles, ShouldEqual, 0)
 				So(got.Symlinks, ShouldEqual, 1)
+
+				_, err = db.SetDiscoveredEntries(setl1.ID(), nil)
+				So(err, ShouldBeNil)
+
+				got = db.GetByID(setl1.ID())
+				So(got, ShouldNotBeNil)
+				So(got.NumFiles, ShouldEqual, 2)
+				So(got.Symlinks, ShouldEqual, 1)
+
+				setEntryToUploaded(setl1, entries[1].Path, db)
+
+				got = db.GetByID(setl1.ID())
+				So(got, ShouldNotBeNil)
+				So(got.Status, ShouldEqual, Uploading)
+
+				setEntryToUploaded(setl1, entries[0].Path, db)
+
+				got = db.GetByID(setl1.ID())
+				So(got, ShouldNotBeNil)
+				So(got.Status, ShouldEqual, Complete)
 			})
 
 			Convey("And add a set with directories containing hardlinks to it", func() {
@@ -993,6 +1022,24 @@ func createEmptyFile(path string) {
 	f, err := os.Create(path)
 	So(err, ShouldBeNil)
 	err = f.Close()
+	So(err, ShouldBeNil)
+}
+
+func setEntryToUploaded(given *Set, path string, db *DB) {
+	transformer, err := given.MakeTransformer()
+	So(err, ShouldBeNil)
+
+	r, err := put.NewRequestWithTransformedLocal(path, transformer)
+	So(err, ShouldBeNil)
+
+	r.Set = given.Name
+	r.Requester = given.Requester
+	r.Status = put.RequestStatusUploading
+	_, err = db.SetEntryStatus(r)
+	So(err, ShouldBeNil)
+
+	r.Status = put.RequestStatusUploaded
+	_, err = db.SetEntryStatus(r)
 	So(err, ShouldBeNil)
 }
 

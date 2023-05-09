@@ -123,6 +123,18 @@ func (e *Entry) ShouldUpload(reuploadAfter time.Time) bool {
 	return !e.LastAttempt.After(reuploadAfter)
 }
 
+// setTypeForNoInode sets our type based on the given dirent's Type, for the
+// case that the the dirent has no Inode (is missing or is a directory).
+func (e *Entry) setTypeForNoInode(dirent *walk.Dirent) {
+	if dirent.Type == os.ModeIrregular {
+		e.Status = Missing
+	}
+
+	if dirent.Type.IsDir() {
+		e.Type = Directory
+	}
+}
+
 func (e *Entry) updateTypeDestAndInode(newEntry *Entry) bool {
 	if e.hasSameCoreProperties(newEntry) {
 		return false
@@ -215,13 +227,7 @@ func (c *entryCreator) newEntryFromDirent(dirent *walk.Dirent) (*Entry, error) {
 	}
 
 	if dirent.Inode == 0 {
-		if dirent.Type == os.ModeIrregular {
-			entry.Status = Missing
-		}
-
-		if dirent.Type.IsDir() {
-			entry.Type = Directory
-		}
+		entry.setTypeForNoInode(dirent)
 
 		return entry, nil
 	}

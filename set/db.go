@@ -305,19 +305,13 @@ func (d *DB) StatPureFileEntries(setID string) error {
 			return nil
 		})
 
-		dirents, existing := readFilePoolResults(direntCh, entryCh, numEntries)
-
-		ec, err := newEntryCreator(d, tx, sfsb.Bucket, existing, setID)
-		if err != nil {
-			return err
-		}
-
-		return ec.UpdateOrCreateEntries(dirents)
+		return d.handleFilePoolResults(tx, sfsb, setID, direntCh, entryCh, numEntries)
 	})
 }
 
-func readFilePoolResults(direntCh chan *walk.Dirent, entryCh chan []byte,
-	numEntries int) ([]*walk.Dirent, map[string][]byte) {
+func (d *DB) handleFilePoolResults(tx *bolt.Tx, sfsb *setFileSubBucket, setID string,
+	direntCh chan *walk.Dirent, entryCh chan []byte,
+	numEntries int) error {
 	dirents := make([]*walk.Dirent, numEntries)
 	existing := make(map[string][]byte, numEntries)
 
@@ -331,7 +325,12 @@ func readFilePoolResults(direntCh chan *walk.Dirent, entryCh chan []byte,
 		return dirents[i].Path < dirents[j].Path
 	})
 
-	return dirents, existing
+	ec, err := newEntryCreator(d, tx, sfsb.Bucket, existing, setID)
+	if err != nil {
+		return err
+	}
+
+	return ec.UpdateOrCreateEntries(dirents)
 }
 
 type setFileSubBucket struct {
@@ -536,15 +535,7 @@ func (d *DB) SetEntryStatus(r *put.Request) (*Entry, error) {
 			return nil
 		}
 
-		if entry.Status == Missing {
-			fmt.Printf("\nentry %s is missing, so will update set, currently %+v\n", entry.Path, got)
-		}
-
 		d.updateSetBasedOnEntry(got, entry)
-
-		if entry.Status == Missing {
-			fmt.Printf("after update, set now %+v\n", got)
-		}
 
 		return b.Put(bid, d.encodeToBytes(got))
 	})
@@ -742,7 +733,7 @@ func (d *DB) updateSetBasedOnEntry(set *Set, entry *Entry) {
 	entryToSetCounts(entry, set)
 	d.fixSetCounts(entry, set)
 
-	if set.Uploaded+set.Failed+set.Missing+set.Symlinks == set.NumFiles {
+	if set.Uploaded+set.Failed+set.Missing == set.NumFiles {
 		set.Status = Complete
 		set.LastCompleted = time.Now()
 		set.LastCompletedCount = set.Uploaded + set.Failed
