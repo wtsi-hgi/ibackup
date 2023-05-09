@@ -357,6 +357,12 @@ func entryToRequest(entry *set.Entry, transformer put.PathTransformer, given *se
 
 	r.Set = given.Name
 	r.Requester = given.Requester
+	r.Symlink = entry.Dest
+	//TODO: r.Inode = entry.Inode
+
+	if entry.Type == set.Symlink {
+		fmt.Printf("made a symlink request with path %s, dest %s\n", r.Local, entry.Dest)
+	}
 
 	return r, nil
 }

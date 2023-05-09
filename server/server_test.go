@@ -1504,7 +1504,9 @@ func TestServer(t *testing.T) { //nolint:cyclop
 
 							fmt.Printf("\n")
 							for j, r := range requests {
-								fmt.Printf("%d: %+v\n", j, r)
+								if strings.Contains(r.Local, "symlink") {
+									fmt.Printf("symlink request is %d with dest %s\n", j, r.Symlink)
+								}
 							}
 
 							p, d := makePutter(t, handler, requests, client)
@@ -1524,6 +1526,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 								if j == 2 {
 									So(entry.Status, ShouldEqual, set.Uploaded)
 									So(entry.Type, ShouldEqual, set.Symlink)
+									So(entry.Dest, ShouldNotBeBlank)
 									So(entry.Attempts, ShouldEqual, 1)
 								} else {
 									So(entry.Status, ShouldEqual, set.Failed)

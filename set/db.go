@@ -520,6 +520,8 @@ func (d *DB) SetEntryStatus(r *put.Request) (*Entry, error) {
 
 	var entry *Entry
 
+	fmt.Printf("\nSetEntryStatus got request for %s with status %s and dest %s\n", r.Local, r.Status, r.Symlink)
+
 	err = d.db.Update(func(tx *bolt.Tx) error {
 		got, bid, b, errt := d.getSetByID(tx, setID)
 		if errt != nil {
@@ -534,6 +536,10 @@ func (d *DB) SetEntryStatus(r *put.Request) (*Entry, error) {
 		if entry.isDir {
 			return nil
 		}
+
+		// if entry.Type == Symlink {
+		// 	got.Symlinks--
+		// }
 
 		d.updateSetBasedOnEntry(got, entry)
 
@@ -648,6 +654,10 @@ func (d *DB) getEntryFromSubbucket(kind, setID, path string, setsBucket *bolt.Bu
 func requestStatusToEntryStatus(r *put.Request, entry *Entry) {
 	entry.newFail = false
 	entry.unFailed = false
+
+	if r.Symlink != "" {
+		fmt.Printf("\nrequest %s has status %s\n", r.Local, r.Status)
+	}
 
 	switch r.Status { //nolint:exhaustive
 	case put.RequestStatusUploading:
