@@ -769,6 +769,7 @@ func entryTypeToSetCounts(entry *Entry, set *Set) {
 	switch entry.Type { //nolint:exhaustive
 	case Symlink:
 		set.Symlinks++
+		fmt.Printf("\nsymlinks incremented, now %d\n", set.Symlinks)
 	case Hardlink:
 		set.Hardlinks++
 	}
@@ -781,6 +782,8 @@ func (d *DB) fixSetCounts(entry *Entry, set *Set) {
 	if set.countsValid() {
 		return
 	}
+
+	fmt.Printf("\noh no\n")
 
 	entries, err := d.GetFileEntries(set.ID())
 	if err != nil {

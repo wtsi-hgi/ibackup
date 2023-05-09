@@ -28,6 +28,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"net/http"
 	"os"
@@ -228,6 +229,7 @@ func (s *Server) putSet(c *gin.Context) {
 	given := &set.Set{}
 
 	if err := c.BindJSON(given); err != nil {
+		fmt.Printf("\n4: %s\n", err)
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
 		return
@@ -305,6 +307,7 @@ func (s *Server) getSets(c *gin.Context) {
 	}
 
 	if err != nil {
+		fmt.Printf("\n5: %s\n", err)
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
 		return
@@ -326,6 +329,7 @@ func (s *Server) putFiles(c *gin.Context) {
 
 	err := s.db.SetFileEntries(sid, paths)
 	if err != nil {
+		fmt.Printf("\n6: %s\n", err)
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
 		return
@@ -340,6 +344,7 @@ func (s *Server) bindPathsAndValidateSet(c *gin.Context) (string, []string, bool
 	var bpaths [][]byte
 
 	if err := c.BindJSON(&bpaths); err != nil {
+		fmt.Printf("\n7: %s\n", err)
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
 		return "", nil, false
@@ -362,6 +367,7 @@ func (s *Server) validateSet(c *gin.Context) (*set.Set, bool) {
 
 	set := s.db.GetByID(sid)
 	if set == nil {
+		fmt.Printf("\n8: %s\n", ErrBadSet)
 		c.AbortWithError(http.StatusBadRequest, ErrBadSet) //nolint:errcheck
 
 		return nil, false
@@ -410,6 +416,7 @@ func (s *Server) putDirs(c *gin.Context) {
 
 	err := s.db.SetDirEntries(sid, entries)
 	if err != nil {
+		fmt.Printf("\n9: %s\n", err)
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
 		return
@@ -431,6 +438,7 @@ func (s *Server) getEntries(c *gin.Context) {
 
 	entries, err := s.db.GetFileEntries(set.ID())
 	if err != nil {
+		fmt.Printf("\n10: %s\n", err)
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
 		return
@@ -456,6 +464,7 @@ func (s *Server) getExampleEntry(c *gin.Context) {
 
 	entry, err := s.db.GetDefinedFileEntry(set.ID())
 	if err != nil {
+		fmt.Printf("\n11: %s\n", err)
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
 		return
@@ -481,6 +490,7 @@ func (s *Server) getDirs(c *gin.Context) {
 
 	entries, err := s.db.GetDirEntries(set.ID())
 	if err != nil {
+		fmt.Printf("\n12: %s\n", err)
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
 		return
@@ -507,6 +517,7 @@ func (s *Server) getFailedEntries(c *gin.Context) {
 
 	entries, skipped, err := s.db.GetFailedEntries(set.ID())
 	if err != nil {
+		fmt.Printf("\n13: %s\n", err)
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
 		return
@@ -663,6 +674,7 @@ func (s *Server) putWorking(c *gin.Context) {
 	var rids []string
 
 	if err := c.BindJSON(&rids); err != nil {
+		fmt.Printf("\n14: %s\n", err)
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
 		return
@@ -719,6 +731,7 @@ func (s *Server) putFileStatus(c *gin.Context) {
 	s.Logger.Printf("got a putFileStatus")
 
 	if err := c.BindJSON(r); err != nil {
+		fmt.Printf("\n15: %s\n", err)
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 		s.Logger.Printf("no request sent to putFileStatus")
 
@@ -778,7 +791,8 @@ func (s *Server) handleFileStatusUpdates() {
 		s.Logger.Printf("[%s] will update status of %s", trace, fsp.r.Local)
 
 		if err := s.touchRequest(fsp.r.ID()); err != nil {
-			s.Logger.Printf("[%s] touch failed: %s", trace, err)
+			s.Logger.Printf("[%s] touch failed for: %s", trace, err)
+			fmt.Printf("\n16 (%s:%s): %s\n", fsp.r.Set, fsp.r.Local, err)
 			fsp.ceCh <- &codeAndError{code: http.StatusBadRequest, err: err}
 
 			continue
@@ -941,6 +955,7 @@ func (s *Server) retryFailedEntries(c *gin.Context) {
 
 	failed, err := s.retryFailedSetFiles(got)
 	if err != nil {
+		fmt.Printf("\n17 %s\n", err)
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
 		return

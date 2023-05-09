@@ -56,6 +56,7 @@ func (s *Server) triggerDiscovery(c *gin.Context) {
 	}
 
 	if err := s.discoverSet(set); err != nil {
+		fmt.Printf("\n1: %s\n", err)
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
 		return
@@ -200,9 +201,9 @@ func (s *Server) handleNewlyDefinedSets(given *set.Set) {
 }
 
 // doSetDirWalks walks the given dir entries of the given set concurrently,
-// sending discovered file paths to the entriesCh. Closes the entriesCh when done,
-// then sends any error on the doneCh. Non-critical warnings during the walk are
-// sent to the warnChan.
+// sending discovered file paths to the entriesCh. Closes the entriesCh when
+// done, then sends any error on the doneCh. Non-critical warnings during the
+// walk are sent to the warnChan.
 func (s *Server) doSetDirWalks(entries []*set.Entry, given *set.Set, entriesCh chan *walk.Dirent,
 	doneCh, warnChan chan error) {
 	errCh := make(chan error, len(entries))
@@ -308,10 +309,7 @@ func uploadableEntries(entries []*set.Entry, given *set.Set) []*set.Entry {
 
 	for _, entry := range entries {
 		if entry.ShouldUpload(given.LastDiscovery) {
-			fmt.Printf("entry %s had status %s and so should be uploaded\n", entry.Path, entry.Status)
 			filtered = append(filtered, entry)
-		} else {
-			fmt.Printf("entry %s had status %s and so should NOT be uploaded\n", entry.Path, entry.Status)
 		}
 	}
 
