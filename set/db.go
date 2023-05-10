@@ -454,6 +454,51 @@ func (d *DB) SetDiscoveredEntries(setID string, dirents []*walk.Dirent) (*Set, e
 	return d.updateSetAfterDiscovery(setID)
 }
 
+// DiscoverCallback will receive the sets directory entries and return a list of
+// the files discovered in those directories.
+type DiscoverCallback func([]*Entry) ([]*walk.Dirent, error)
+
+func (d *DB) Discover(setID string, cb DiscoverCallback) (*Set, error) {
+	err := d.SetDiscoveryStarted(setID)
+	if err != nil {
+		return nil, err
+	}
+
+	s, err := d.discover(setID, cb)
+	if err != nil {
+		errb := d.SetError(setID, err.Error())
+		err = errors.Join(err, errb)
+	}
+
+	return s, err
+}
+
+func (d *DB) discover(setID string, cb DiscoverCallback) (*Set, error) {
+	errCh := make(chan error, 1)
+
+	go func() {
+		errCh <- d.StatPureFileEntries(setID)
+	}()
+
+	entries, err := d.GetDirEntries(setID)
+	if err != nil {
+		return nil, err
+	}
+
+	var fileEntries []*walk.Dirent
+
+	if cb != nil {
+		fileEntries, err = cb(entries)
+	}
+
+	err = errors.Join(err, <-errCh)
+	if err != nil {
+		return nil, err
+	}
+
+	return d.SetDiscoveredEntries(setID, fileEntries)
+}
+
 // updateSetAfterDiscovery updates LastDiscovery, sets NumFiles and sets status
 // to PendingUpload unless the set contains no files, in which case it sets
 // status to Complete.
