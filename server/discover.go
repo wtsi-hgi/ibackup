@@ -208,7 +208,6 @@ func (s *Server) doSetDirWalks(entries []*set.Entry, given *set.Set, entriesCh c
 
 	for _, entry := range entries {
 		dir := entry.Path
-
 		thisEntry := entry
 
 		s.dirPool.Submit(func() {
