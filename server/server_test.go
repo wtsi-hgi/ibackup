@@ -83,11 +83,11 @@ func TestServer(t *testing.T) { //nolint:cyclop
 	minMBperSecondUploadSpeed := float64(10)
 	maxStuckTime := 1 * time.Hour
 
-	FocusConvey("Given a Server", t, func() {
+	Convey("Given a Server", t, func() {
 		logWriter := gas.NewStringLogger()
 		s := New(logWriter)
 
-		FocusConvey("You can Start the Server with Auth, MakeQueueEndPoints and LoadSetDB", func() {
+		Convey("You can Start the Server with Auth, MakeQueueEndPoints and LoadSetDB", func() {
 			certPath, keyPath, err := gas.CreateTestCert(t)
 			So(err, ShouldBeNil)
 
@@ -204,6 +204,11 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						So(err, ShouldBeNil)
 						numFiles := len(files)
 
+						gotSet, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+						So(errg, ShouldBeNil)
+						So(gotSet.NumFiles, ShouldEqual, 0)
+						So(gotSet.Symlinks, ShouldEqual, 0)
+
 						tn := time.Now()
 						err = client.TriggerDiscovery(exampleSet.ID())
 						So(err, ShouldBeNil)
@@ -235,7 +240,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						So(len(entries), ShouldEqual, len(dirs))
 						So(entries[2].Status, ShouldEqual, set.Missing)
 
-						gotSet, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+						gotSet, errg = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
 						So(errg, ShouldBeNil)
 						So(gotSet.LastDiscovery, ShouldHappenAfter, tn)
 						So(gotSet.Missing, ShouldEqual, 1)
@@ -1008,8 +1013,8 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						Convey("Once logged in and with a client", func() {
 							token, errl = gas.Login(addr, certPath, admin, "pass")
 							So(errl, ShouldBeNil)
-
 							client = NewClient(addr, certPath, token)
+
 							Convey("Client can automatically update server given Putter-style output using SendPutResultsToServer", func() {
 								uploadStartsCh := make(chan *put.Request)
 								uploadResultsCh := make(chan *put.Request)
@@ -1033,6 +1038,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 								So(gotSet.Status, ShouldEqual, set.PendingUpload)
 								So(gotSet.NumFiles, ShouldEqual, 6)
 								So(gotSet.Uploaded, ShouldEqual, 0)
+								So(gotSet.Symlinks, ShouldEqual, 1)
 
 								updateRequestStatus := func(origReq *put.Request,
 									firstStatus, secondStatus put.RequestStatus,
@@ -1210,7 +1216,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 				})
 			})
 
-			FocusConvey("Which lets you login as admin", func() {
+			Convey("Which lets you login as admin", func() {
 				token, errl := gas.Login(addr, certPath, admin, "pass")
 				So(errl, ShouldBeNil)
 
@@ -1223,7 +1229,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 
 				backupPath := dbPath + ".bk"
 
-				FocusConvey("and add a set", func() {
+				Convey("and add a set", func() {
 					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldBeNil)
 
@@ -1479,7 +1485,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						})
 					})
 
-					FocusConvey("The system handles failures with retries", func() {
+					Convey("The system handles failures with retries", func() {
 						for i, local := range discovers {
 							remote := strings.Replace(local, localDir, remoteDir, 1)
 
@@ -1500,13 +1506,6 @@ func TestServer(t *testing.T) { //nolint:cyclop
 								So(len(requests), ShouldEqual, len(discovers))
 							} else {
 								So(len(requests), ShouldEqual, len(discovers)-1)
-							}
-
-							fmt.Printf("\n")
-							for j, r := range requests {
-								if strings.Contains(r.Local, "symlink") {
-									fmt.Printf("symlink request is %d with dest %s\n", j, r.Symlink)
-								}
 							}
 
 							p, d := makePutter(t, handler, requests, client)
@@ -1541,8 +1540,6 @@ func TestServer(t *testing.T) { //nolint:cyclop
 								case 3:
 									So(entry.LastError, ShouldEqual, put.ErrMockMetaFail)
 								}
-
-								fmt.Printf("%d file was ok\n", j)
 							}
 
 							gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
@@ -1554,8 +1551,6 @@ func TestServer(t *testing.T) { //nolint:cyclop
 							So(gotSet.Failed, ShouldEqual, len(discovers)-1)
 							So(gotSet.Symlinks, ShouldEqual, 1)
 							So(gotSet.Error, ShouldBeBlank)
-
-							fmt.Printf("loop %d worked\n", i)
 						}
 					})
 
