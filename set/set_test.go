@@ -837,16 +837,11 @@ func TestSetDB(t *testing.T) {
 				})
 
 				Convey("then rediscover the set and still know about the hard links", func() {
-					err = db.SetDiscoveryStarted(setl1.ID())
-					So(err, ShouldBeNil)
+					got, errd := db.Discover(setl1.ID(), nil)
+					So(errd, ShouldBeNil)
+					So(got.Hardlinks, ShouldEqual, 1)
 
-					err = db.StatPureFileEntries(setl1.ID())
-					So(err, ShouldBeNil)
-
-					_, err = db.SetDiscoveredEntries(setl1.ID(), nil)
-					So(err, ShouldBeNil)
-
-					got := db.GetByID(setl1.ID())
+					got = db.GetByID(setl1.ID())
 					So(got, ShouldNotBeNil)
 					So(err, ShouldBeNil)
 					So(got.Hardlinks, ShouldEqual, 1)
@@ -960,7 +955,7 @@ func TestSetDB(t *testing.T) {
 				err = db.AddOrUpdate(setl1)
 				So(err, ShouldBeNil)
 
-				_, err = db.SetDiscoveredEntries(setl1.ID(), []*walk.Dirent{
+				dirents := []*walk.Dirent{
 					{
 						Path:  "/local/path/to/file",
 						Inode: 1,
@@ -969,8 +964,12 @@ func TestSetDB(t *testing.T) {
 						Path:  "/local/path/to/link",
 						Inode: 1,
 					},
+				}
+
+				got, errd := db.Discover(setl1.ID(), func(dirEntries []*Entry) ([]*walk.Dirent, error) {
+					return dirents, nil
 				})
-				So(err, ShouldBeNil)
+				So(errd, ShouldBeNil)
 
 				entries, errG := db.GetFileEntries(setl1.ID())
 				So(errG, ShouldBeNil)
@@ -981,10 +980,22 @@ func TestSetDB(t *testing.T) {
 				So(entries[1].Type, ShouldEqual, Hardlink)
 				So(entries[1].Inode, ShouldEqual, 1)
 
-				got := db.GetByID(setl1.ID())
 				So(got, ShouldNotBeNil)
 				So(got.Hardlinks, ShouldEqual, 1)
 				So(got.NumFiles, ShouldEqual, 2)
+
+				Convey("then rediscover the set and still know about the symlinks", func() {
+					got, errd := db.Discover(setl1.ID(), func(dirEntries []*Entry) ([]*walk.Dirent, error) {
+						return dirents, nil
+					})
+					So(errd, ShouldBeNil)
+					So(got.Hardlinks, ShouldEqual, 1)
+
+					got = db.GetByID(setl1.ID())
+					So(got, ShouldNotBeNil)
+					So(err, ShouldBeNil)
+					So(got.Hardlinks, ShouldEqual, 1)
+				})
 			})
 
 			Convey("And add a set with directories containing symlinks to it", func() {
