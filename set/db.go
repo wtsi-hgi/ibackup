@@ -282,57 +282,6 @@ func (d *DB) getAndDeleteExistingEntries(tx *bolt.Tx, subBucketName string, setI
 	return sfsb.Bucket, existing, err
 }
 
-func (d *DB) StatPureFileEntries(setID string) error {
-	return d.db.Update(func(tx *bolt.Tx) error {
-		sfsb, err := d.newSetFileBucket(tx, fileBucket, setID)
-		if err != nil {
-			return err
-		}
-
-		direntCh := make(chan *walk.Dirent)
-		entryCh := make(chan []byte)
-		numEntries := 0
-
-		sfsb.Bucket.ForEach(func(k, v []byte) error { //nolint:errcheck
-			numEntries++
-
-			d.filePool.Submit(func() {
-				path := string(k)
-				direntCh <- newDirentFromPath(path)
-				entryCh <- v
-			})
-
-			return nil
-		})
-
-		return d.handleFilePoolResults(tx, sfsb, setID, direntCh, entryCh, numEntries)
-	})
-}
-
-func (d *DB) handleFilePoolResults(tx *bolt.Tx, sfsb *setFileSubBucket, setID string,
-	direntCh chan *walk.Dirent, entryCh chan []byte,
-	numEntries int) error {
-	dirents := make([]*walk.Dirent, numEntries)
-	existing := make(map[string][]byte, numEntries)
-
-	for n := range dirents {
-		dirent := <-direntCh
-		dirents[n] = dirent
-		existing[dirent.Path] = <-entryCh
-	}
-
-	sort.Slice(dirents, func(i, j int) bool {
-		return dirents[i].Path < dirents[j].Path
-	})
-
-	ec, err := newEntryCreator(d, tx, sfsb.Bucket, existing, setID)
-	if err != nil {
-		return err
-	}
-
-	return ec.UpdateOrCreateEntries(dirents)
-}
-
 type setFileSubBucket struct {
 	Name      []byte
 	Bucket    *bolt.Bucket
@@ -395,9 +344,51 @@ func (d *DB) SetDirEntries(setID string, entries []*walk.Dirent) error {
 	return d.setEntries(setID, entries, dirBucket)
 }
 
-// SetDiscoveryStarted updates StartedDiscovery and resets some status values
+// getSetByID returns the Set with the given ID from the database, along with
+// the byte slice version of the set id and the sets bucket so you can easily
+// put the set back again after making changes. Returns an error of setID isn't
+// in the database.
+func (d *DB) getSetByID(tx *bolt.Tx, setID string) (*Set, []byte, *bolt.Bucket, error) {
+	b := tx.Bucket([]byte(setsBucket))
+	bid := []byte(setID)
+
+	v := b.Get(bid)
+	if v == nil {
+		return nil, nil, nil, Error{ErrInvalidSetID, setID}
+	}
+
+	set := d.decodeSet(v)
+
+	return set, bid, b, nil
+}
+
+// DiscoverCallback will receive the sets directory entries and return a list of
+// the files discovered in those directories.
+type DiscoverCallback func([]*Entry) ([]*walk.Dirent, error)
+
+// Discover discovers and stores file entry details for the given set.
+// Immediately tries to record in the db that discovery has started and returns
+// any error from doing that. Actual discovery using your callback on
+// directories will then proceed, as will the stat'ing of pure files, and return
+// the updated set.
+func (d *DB) Discover(setID string, cb DiscoverCallback) (*Set, error) {
+	err := d.setDiscoveryStarted(setID)
+	if err != nil {
+		return nil, err
+	}
+
+	s, err := d.discover(setID, cb)
+	if err != nil {
+		errb := d.SetError(setID, err.Error())
+		err = errors.Join(err, errb)
+	}
+
+	return s, err
+}
+
+// setDiscoveryStarted updates StartedDiscovery and resets some status values
 // for the given set. Returns an error if the setID isn't in the database.
-func (d *DB) SetDiscoveryStarted(setID string) error {
+func (d *DB) setDiscoveryStarted(setID string) error {
 	return d.db.Update(func(tx *bolt.Tx) error {
 		set, bid, b, err := d.getSetByID(tx, setID)
 		if err != nil {
@@ -420,64 +411,11 @@ func (d *DB) SetDiscoveryStarted(setID string) error {
 	})
 }
 
-// getSetByID returns the Set with the given ID from the database, along with
-// the byte slice version of the set id and the sets bucket so you can easily
-// put the set back again after making changes. Returns an error of setID isn't
-// in the database.
-func (d *DB) getSetByID(tx *bolt.Tx, setID string) (*Set, []byte, *bolt.Bucket, error) {
-	b := tx.Bucket([]byte(setsBucket))
-	bid := []byte(setID)
-
-	v := b.Get(bid)
-	if v == nil {
-		return nil, nil, nil, Error{ErrInvalidSetID, setID}
-	}
-
-	set := d.decodeSet(v)
-
-	return set, bid, b, nil
-}
-
-// SetDiscoveredEntries sets discovered file paths for the given backup set's
-// directory entries. Only supply absolute paths to files.
-//
-// It also updates LastDiscovery, sets NumFiles and sets status to
-// PendingUpload unless the set contains no files, in which case it sets status
-// to Complete.
-//
-// Returns the updated set and an error if the setID isn't in the database.
-func (d *DB) SetDiscoveredEntries(setID string, dirents []*walk.Dirent) (*Set, error) {
-	if err := d.setEntries(setID, dirents, discoveredBucket); err != nil {
-		return nil, err
-	}
-
-	return d.updateSetAfterDiscovery(setID)
-}
-
-// DiscoverCallback will receive the sets directory entries and return a list of
-// the files discovered in those directories.
-type DiscoverCallback func([]*Entry) ([]*walk.Dirent, error)
-
-func (d *DB) Discover(setID string, cb DiscoverCallback) (*Set, error) {
-	err := d.SetDiscoveryStarted(setID)
-	if err != nil {
-		return nil, err
-	}
-
-	s, err := d.discover(setID, cb)
-	if err != nil {
-		errb := d.SetError(setID, err.Error())
-		err = errors.Join(err, errb)
-	}
-
-	return s, err
-}
-
 func (d *DB) discover(setID string, cb DiscoverCallback) (*Set, error) {
 	errCh := make(chan error, 1)
 
 	go func() {
-		errCh <- d.StatPureFileEntries(setID)
+		errCh <- d.statPureFileEntries(setID)
 	}()
 
 	entries, err := d.GetDirEntries(setID)
@@ -496,7 +434,74 @@ func (d *DB) discover(setID string, cb DiscoverCallback) (*Set, error) {
 		return nil, err
 	}
 
-	return d.SetDiscoveredEntries(setID, fileEntries)
+	return d.setDiscoveredEntries(setID, fileEntries)
+}
+
+func (d *DB) statPureFileEntries(setID string) error {
+	return d.db.Update(func(tx *bolt.Tx) error {
+		sfsb, err := d.newSetFileBucket(tx, fileBucket, setID)
+		if err != nil {
+			return err
+		}
+
+		direntCh := make(chan *walk.Dirent)
+		entryCh := make(chan []byte)
+		numEntries := 0
+
+		sfsb.Bucket.ForEach(func(k, v []byte) error { //nolint:errcheck
+			numEntries++
+
+			d.filePool.Submit(func() {
+				path := string(k)
+				direntCh <- newDirentFromPath(path)
+				entryCh <- v
+			})
+
+			return nil
+		})
+
+		return d.handleFilePoolResults(tx, sfsb, setID, direntCh, entryCh, numEntries)
+	})
+}
+
+func (d *DB) handleFilePoolResults(tx *bolt.Tx, sfsb *setFileSubBucket, setID string,
+	direntCh chan *walk.Dirent, entryCh chan []byte,
+	numEntries int) error {
+	dirents := make([]*walk.Dirent, numEntries)
+	existing := make(map[string][]byte, numEntries)
+
+	for n := range dirents {
+		dirent := <-direntCh
+		dirents[n] = dirent
+		existing[dirent.Path] = <-entryCh
+	}
+
+	sort.Slice(dirents, func(i, j int) bool {
+		return dirents[i].Path < dirents[j].Path
+	})
+
+	ec, err := newEntryCreator(d, tx, sfsb.Bucket, existing, setID)
+	if err != nil {
+		return err
+	}
+
+	return ec.UpdateOrCreateEntries(dirents)
+}
+
+// setDiscoveredEntries sets discovered file paths for the given backup set's
+// directory entries. Only supply absolute paths to files.
+//
+// It also updates LastDiscovery, sets NumFiles and sets status to
+// PendingUpload unless the set contains no files, in which case it sets status
+// to Complete.
+//
+// Returns the updated set and an error if the setID isn't in the database.
+func (d *DB) setDiscoveredEntries(setID string, dirents []*walk.Dirent) (*Set, error) {
+	if err := d.setEntries(setID, dirents, discoveredBucket); err != nil {
+		return nil, err
+	}
+
+	return d.updateSetAfterDiscovery(setID)
 }
 
 // updateSetAfterDiscovery updates LastDiscovery, sets NumFiles and sets status
