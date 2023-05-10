@@ -308,7 +308,6 @@ func (s *Server) getBuriedFilterFromContext(c *gin.Context) (*BuriedFilter, bool
 	bf := &BuriedFilter{}
 
 	if err := c.BindJSON(bf); err != nil {
-		fmt.Printf("\n2: %s\n", err)
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
 		return nil, false
@@ -468,7 +467,6 @@ func (s *Server) extractHostPIDForCreatingCollectionsEndpoints(c *gin.Context) (
 
 	hostPID := c.Param(paramHostPID)
 	if hostPID == "" {
-		fmt.Printf("\n3\n")
 		return "", http.StatusBadRequest, ErrInvalidInput
 	}
 

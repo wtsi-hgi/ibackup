@@ -28,7 +28,6 @@ package server
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io/fs"
 	"net/http"
 	"os"
@@ -56,7 +55,6 @@ func (s *Server) triggerDiscovery(c *gin.Context) {
 	}
 
 	if err := s.discoverSet(set); err != nil {
-		fmt.Printf("\n1: %s\n", err)
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
 		return
@@ -359,10 +357,6 @@ func entryToRequest(entry *set.Entry, transformer put.PathTransformer, given *se
 	r.Requester = given.Requester
 	r.Symlink = entry.Dest
 	//TODO: r.Inode = entry.Inode
-
-	if entry.Type == set.Symlink {
-		fmt.Printf("made a symlink request with path %s, dest %s\n", r.Local, entry.Dest)
-	}
 
 	return r, nil
 }
