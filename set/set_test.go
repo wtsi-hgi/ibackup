@@ -835,6 +835,22 @@ func TestSetDB(t *testing.T) {
 					So(got.Missing, ShouldEqual, 1)
 					So(got.Failed, ShouldEqual, 0)
 				})
+
+				Convey("then rediscover the set and still know about the hard links", func() {
+					err = db.SetDiscoveryStarted(setl1.ID())
+					So(err, ShouldBeNil)
+
+					err = db.StatPureFileEntries(setl1.ID())
+					So(err, ShouldBeNil)
+
+					_, err = db.SetDiscoveredEntries(setl1.ID(), nil)
+					So(err, ShouldBeNil)
+
+					got := db.GetByID(setl1.ID())
+					So(got, ShouldNotBeNil)
+					So(err, ShouldBeNil)
+					So(got.Hardlinks, ShouldEqual, 1)
+				})
 			})
 
 			Convey("And add a set with pure symlinks to it", func() {
@@ -916,6 +932,22 @@ func TestSetDB(t *testing.T) {
 				So(got.Uploaded, ShouldEqual, 2)
 				So(got.Missing, ShouldEqual, 1)
 				So(got.Failed, ShouldEqual, 0)
+
+				Convey("then rediscover the set and still know about the symlinks", func() {
+					err = db.SetDiscoveryStarted(setl1.ID())
+					So(err, ShouldBeNil)
+
+					err = db.StatPureFileEntries(setl1.ID())
+					So(err, ShouldBeNil)
+
+					_, err = db.SetDiscoveredEntries(setl1.ID(), nil)
+					So(err, ShouldBeNil)
+
+					got := db.GetByID(setl1.ID())
+					So(got, ShouldNotBeNil)
+					So(err, ShouldBeNil)
+					So(got.Symlinks, ShouldEqual, 1)
+				})
 			})
 
 			Convey("And add a set with directories containing hardlinks to it", func() {
