@@ -520,8 +520,6 @@ func (d *DB) SetEntryStatus(r *put.Request) (*Entry, error) {
 
 	var entry *Entry
 
-	fmt.Printf("\nSetEntryStatus got request for %s with status %s and dest %s\n", r.Local, r.Status, r.Symlink)
-
 	err = d.db.Update(func(tx *bolt.Tx) error {
 		got, bid, b, errt := d.getSetByID(tx, setID)
 		if errt != nil {
@@ -537,9 +535,11 @@ func (d *DB) SetEntryStatus(r *put.Request) (*Entry, error) {
 			return nil
 		}
 
-		// if entry.Type == Symlink {
-		// 	got.Symlinks--
-		// }
+		if entry.Type == Symlink {
+			got.Symlinks--
+		} else if entry.Type == Hardlink {
+			got.Hardlinks--
+		}
 
 		d.updateSetBasedOnEntry(got, entry)
 
@@ -654,10 +654,6 @@ func (d *DB) getEntryFromSubbucket(kind, setID, path string, setsBucket *bolt.Bu
 func requestStatusToEntryStatus(r *put.Request, entry *Entry) {
 	entry.newFail = false
 	entry.unFailed = false
-
-	if r.Symlink != "" {
-		fmt.Printf("\nrequest %s has status %s\n", r.Local, r.Status)
-	}
 
 	switch r.Status { //nolint:exhaustive
 	case put.RequestStatusUploading:
@@ -779,7 +775,6 @@ func entryTypeToSetCounts(entry *Entry, set *Set) {
 	switch entry.Type { //nolint:exhaustive
 	case Symlink:
 		set.Symlinks++
-		fmt.Printf("\nsymlinks incremented, now %d\n", set.Symlinks)
 	case Hardlink:
 		set.Hardlinks++
 	}
@@ -792,8 +787,6 @@ func (d *DB) fixSetCounts(entry *Entry, set *Set) {
 	if set.countsValid() {
 		return
 	}
-
-	fmt.Printf("\noh no\n")
 
 	entries, err := d.GetFileEntries(set.ID())
 	if err != nil {
