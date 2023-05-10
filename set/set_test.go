@@ -26,6 +26,7 @@
 package set
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -218,10 +219,8 @@ func TestSetDB(t *testing.T) {
 						So(retrieved.Error, ShouldEqual, errMsg)
 						So(retrieved.Warning, ShouldEqual, warnMsg)
 
-						err = db.SetDiscoveryStarted(set.ID())
+						retrieved, err = db.Discover(set.ID(), nil)
 						So(err, ShouldBeNil)
-
-						retrieved = db.GetByID(set.ID())
 						So(retrieved, ShouldNotBeNil)
 						So(retrieved.Error, ShouldBeBlank)
 						So(retrieved.Warning, ShouldBeBlank)
@@ -304,27 +303,56 @@ func TestSetDB(t *testing.T) {
 						So(sets[0].LastDiscovery.IsZero(), ShouldBeTrue)
 						So(sets[0].Description, ShouldEqual, "desc")
 
-						err = db.SetDiscoveryStarted(sets[0].ID())
+						tdir := t.TempDir()
+						pureFiles := make([]string, 3)
+
+						for i := range pureFiles {
+							pureFiles[i] = filepath.Join(tdir, fmt.Sprintf("%d.txt", i))
+							createEmptyFile(pureFiles[i])
+						}
+
+						err = db.SetFileEntries(set.ID(), pureFiles)
 						So(err, ShouldBeNil)
+
+						errCh := make(chan error, 1)
+						waitCh := make(chan struct{})
+
+						go func() {
+							_, errd := db.Discover(sets[0].ID(), func(_ []*Entry) ([]*walk.Dirent, error) {
+								waitCh <- struct{}{}
+								<-waitCh
+
+								return createFileEnts([]string{"/g/h/l.txt", "/g/i/m.txt"}), nil
+							})
+
+							errCh <- errd
+						}()
+						So(err, ShouldBeNil)
+
+						<-waitCh
 
 						sets, err = db.GetByRequester("jim")
 						So(err, ShouldBeNil)
-
 						So(sets[0].Status, ShouldEqual, PendingDiscovery)
 						So(sets[0].StartedDiscovery.IsZero(), ShouldBeFalse)
 
-						uset, err := db.SetDiscoveredEntries(set.ID(), createFileEnts([]string{"/g/h/l.txt", "/g/i/m.txt"}))
+						waitCh <- struct{}{}
+
+						err = <-errCh
 						So(err, ShouldBeNil)
-						So(uset.LastDiscovery, ShouldHappenAfter, sets[0].LastDiscovery)
+
+						bsets, err := db.GetByRequester("jim")
+						So(err, ShouldBeNil)
+						So(bsets[0].LastDiscovery, ShouldHappenAfter, sets[0].LastDiscovery)
 
 						fEntries, err := db.GetFileEntries(sets[0].ID())
 						So(err, ShouldBeNil)
 						So(len(fEntries), ShouldEqual, 5)
-						So(fEntries[0], ShouldResemble, &Entry{Path: "/a/b.txt"})
-						So(fEntries[1], ShouldResemble, &Entry{Path: "/c/d.txt"})
-						So(fEntries[2], ShouldResemble, &Entry{Path: "/e/f.txt"})
-						So(fEntries[3], ShouldResemble, &Entry{Path: "/g/h/l.txt"})
-						So(fEntries[4], ShouldResemble, &Entry{Path: "/g/i/m.txt"})
+						So(fEntries[0].Path, ShouldEqual, pureFiles[0])
+						So(fEntries[1].Path, ShouldEqual, pureFiles[1])
+						So(fEntries[2].Path, ShouldEqual, pureFiles[2])
+						So(fEntries[3].Path, ShouldEqual, "/g/h/l.txt")
+						So(fEntries[4].Path, ShouldEqual, "/g/i/m.txt")
 
 						sets, err = db.GetByRequester("jim")
 						So(err, ShouldBeNil)
@@ -341,7 +369,7 @@ func TestSetDB(t *testing.T) {
 						So(len(setsAll), ShouldEqual, 2)
 
 						r := &put.Request{
-							Local:     "/a/b.txt",
+							Local:     pureFiles[0],
 							Requester: set.Requester,
 							Set:       set.Name,
 							Size:      3,
@@ -366,7 +394,7 @@ func TestSetDB(t *testing.T) {
 						So(sets[0].LastCompletedSize, ShouldEqual, 0)
 
 						r = &put.Request{
-							Local:     "/a/b.txt",
+							Local:     pureFiles[0],
 							Requester: set.Requester,
 							Set:       set.Name,
 							Size:      3,
@@ -408,7 +436,7 @@ func TestSetDB(t *testing.T) {
 						So(fEntries[0].LastAttempt.IsZero(), ShouldBeFalse)
 
 						r = &put.Request{
-							Local:     "/c/d.txt",
+							Local:     pureFiles[1],
 							Requester: set.Requester,
 							Set:       set.Name,
 							Size:      2,
@@ -434,7 +462,7 @@ func TestSetDB(t *testing.T) {
 						So(fEntries[1].LastAttempt.IsZero(), ShouldBeFalse)
 
 						r = &put.Request{
-							Local:     "/e/f.txt",
+							Local:     pureFiles[2],
 							Requester: set.Requester,
 							Set:       set.Name,
 							Size:      4,
@@ -452,9 +480,10 @@ func TestSetDB(t *testing.T) {
 						sets, err = db.GetByRequester("jim")
 						So(err, ShouldBeNil)
 
+						So(sets[0].NumFiles, ShouldEqual, 5)
+						So(sets[0].Uploaded, ShouldEqual, 3)
 						So(sets[0].Status, ShouldEqual, Uploading)
 						So(sets[0].SizeFiles, ShouldEqual, 9)
-						So(sets[0].Uploaded, ShouldEqual, 3)
 
 						fEntries, err = db.GetFileEntries(sets[0].ID())
 						So(err, ShouldBeNil)
@@ -636,12 +665,25 @@ func TestSetDB(t *testing.T) {
 							oldStart := sets[0].StartedDiscovery
 							oldDisc := sets[0].LastDiscovery
 
-							err = db.SetDiscoveryStarted(sets[0].ID())
+							errCh := make(chan error, 1)
+							waitCh := make(chan struct{})
+
+							go func() {
+								_, errd := db.Discover(sets[0].ID(), func(_ []*Entry) ([]*walk.Dirent, error) {
+									waitCh <- struct{}{}
+									<-waitCh
+
+									return createFileEnts([]string{"/g/h/l.txt", "/g/i/m.txt", "/g/i/n.txt"}), nil
+								})
+
+								errCh <- errd
+							}()
 							So(err, ShouldBeNil)
+
+							<-waitCh
 
 							sets, err = db.GetByRequester("jim")
 							So(err, ShouldBeNil)
-
 							So(sets[0].Status, ShouldEqual, PendingDiscovery)
 							So(sets[0].StartedDiscovery.After(oldStart), ShouldBeTrue)
 							So(sets[0].NumFiles, ShouldEqual, 0)
@@ -652,7 +694,9 @@ func TestSetDB(t *testing.T) {
 							So(sets[0].LastCompletedCount, ShouldEqual, 4)
 							So(sets[0].LastCompletedSize, ShouldEqual, 15)
 
-							_, err = db.SetDiscoveredEntries(set.ID(), createFileEnts([]string{"/g/h/l.txt", "/g/i/m.txt", "/g/i/n.txt"}))
+							waitCh <- struct{}{}
+
+							err = <-errCh
 							So(err, ShouldBeNil)
 
 							fEntries, err := db.GetFileEntries(sets[0].ID())
@@ -757,13 +801,7 @@ func TestSetDB(t *testing.T) {
 					So(entries[0].Type, ShouldEqual, Regular)
 					So(entries[1].Type, ShouldEqual, Regular)
 
-					err = db.SetDiscoveryStarted(setID)
-					So(err, ShouldBeNil)
-
-					err = db.StatPureFileEntries(setID)
-					So(err, ShouldBeNil)
-
-					_, err = db.SetDiscoveredEntries(setID, nil)
+					_, err = db.Discover(setID, nil)
 					So(err, ShouldBeNil)
 
 					entries, err = db.GetPureFileEntries(setID)
@@ -881,11 +919,12 @@ func TestSetDB(t *testing.T) {
 				So(got, ShouldNotBeNil)
 				So(got.Status, ShouldEqual, PendingDiscovery)
 				So(got.NumFiles, ShouldEqual, 0)
-				err = db.SetDiscoveryStarted(setl1.ID())
-				So(err, ShouldBeNil)
 
-				err = db.StatPureFileEntries(setl1.ID())
+				got, err = db.Discover(setl1.ID(), nil)
 				So(err, ShouldBeNil)
+				So(got, ShouldNotBeNil)
+				So(got.NumFiles, ShouldEqual, 3)
+				So(got.Symlinks, ShouldEqual, 1)
 
 				entries, err = db.GetPureFileEntries(setl1.ID())
 				So(err, ShouldBeNil)
@@ -895,20 +934,6 @@ func TestSetDB(t *testing.T) {
 				So(entries[1].Type, ShouldEqual, Regular)
 				So(entries[0].Type, ShouldEqual, Symlink)
 				So(entries[0].Dest, ShouldEqual, path1)
-
-				got = db.GetByID(setl1.ID())
-				So(got, ShouldNotBeNil)
-				So(got.Status, ShouldEqual, PendingDiscovery)
-				So(got.NumFiles, ShouldEqual, 0)
-				So(got.Symlinks, ShouldEqual, 1)
-
-				_, err = db.SetDiscoveredEntries(setl1.ID(), nil)
-				So(err, ShouldBeNil)
-
-				got = db.GetByID(setl1.ID())
-				So(got, ShouldNotBeNil)
-				So(got.NumFiles, ShouldEqual, 3)
-				So(got.Symlinks, ShouldEqual, 1)
 
 				setEntryToUploaded(entries[1], setl1, db)
 
@@ -929,16 +954,7 @@ func TestSetDB(t *testing.T) {
 				So(got.Failed, ShouldEqual, 0)
 
 				Convey("then rediscover the set and still know about the symlinks", func() {
-					err = db.SetDiscoveryStarted(setl1.ID())
-					So(err, ShouldBeNil)
-
-					err = db.StatPureFileEntries(setl1.ID())
-					So(err, ShouldBeNil)
-
-					_, err = db.SetDiscoveredEntries(setl1.ID(), nil)
-					So(err, ShouldBeNil)
-
-					got := db.GetByID(setl1.ID())
+					got, err = db.Discover(setl1.ID(), nil)
 					So(got, ShouldNotBeNil)
 					So(err, ShouldBeNil)
 					So(got.Symlinks, ShouldEqual, 1)
@@ -1017,18 +1033,23 @@ func TestSetDB(t *testing.T) {
 				err = os.Symlink(path1, path2)
 				So(err, ShouldBeNil)
 
-				_, err = db.SetDiscoveredEntries(setl1.ID(), []*walk.Dirent{
-					{
-						Path:  path1,
-						Inode: 1,
-					},
-					{
-						Path:  path2,
-						Type:  os.ModeSymlink,
-						Inode: 2,
-					},
+				got, errb := db.Discover(setl1.ID(), func(_ []*Entry) ([]*walk.Dirent, error) {
+					return []*walk.Dirent{
+						{
+							Path:  path1,
+							Inode: 1,
+						},
+						{
+							Path:  path2,
+							Type:  os.ModeSymlink,
+							Inode: 2,
+						},
+					}, nil
 				})
-				So(err, ShouldBeNil)
+				So(errb, ShouldBeNil)
+				So(got, ShouldNotBeNil)
+				So(got.Symlinks, ShouldEqual, 1)
+				So(got.NumFiles, ShouldEqual, 2)
 
 				entries, errG := db.GetFileEntries(setl1.ID())
 				So(errG, ShouldBeNil)
@@ -1038,11 +1059,6 @@ func TestSetDB(t *testing.T) {
 				So(entries[0].Type, ShouldEqual, Regular)
 				So(entries[1].Type, ShouldEqual, Symlink)
 				So(entries[1].Dest, ShouldEqual, path1)
-
-				got := db.GetByID(setl1.ID())
-				So(got, ShouldNotBeNil)
-				So(got.Symlinks, ShouldEqual, 1)
-				So(got.NumFiles, ShouldEqual, 2)
 			})
 
 			Convey("And add a set with a missing file to it", func() {
@@ -1066,14 +1082,10 @@ func TestSetDB(t *testing.T) {
 				So(entries[0].Status, ShouldEqual, Pending)
 				So(entries[0].Type, ShouldEqual, Regular)
 
-				err = db.SetDiscoveryStarted(setl1.ID())
-				So(err, ShouldBeNil)
-
-				err = db.StatPureFileEntries(setl1.ID())
-				So(err, ShouldBeNil)
-
-				_, err = db.SetDiscoveredEntries(setl1.ID(), nil)
-				So(err, ShouldBeNil)
+				got, errb := db.Discover(setl1.ID(), nil)
+				So(got, ShouldNotBeNil)
+				So(errb, ShouldBeNil)
+				So(got.Missing, ShouldEqual, 1)
 
 				entries, err = db.GetPureFileEntries(setl1.ID())
 				So(err, ShouldBeNil)
@@ -1081,24 +1093,10 @@ func TestSetDB(t *testing.T) {
 				So(entries[0].Status, ShouldEqual, Missing)
 				So(entries[0].Type, ShouldEqual, Regular)
 
-				got := db.GetByID(setl1.ID())
-				So(got, ShouldNotBeNil)
-				So(err, ShouldBeNil)
-				So(got.Missing, ShouldEqual, 1)
-
 				Convey("then rediscover the set and still know about the missing file", func() {
-					err = db.SetDiscoveryStarted(setl1.ID())
-					So(err, ShouldBeNil)
-
-					err = db.StatPureFileEntries(setl1.ID())
-					So(err, ShouldBeNil)
-
-					_, err = db.SetDiscoveredEntries(setl1.ID(), nil)
-					So(err, ShouldBeNil)
-
-					got := db.GetByID(setl1.ID())
+					got, errb := db.Discover(setl1.ID(), nil)
 					So(got, ShouldNotBeNil)
-					So(err, ShouldBeNil)
+					So(errb, ShouldBeNil)
 					So(got.Missing, ShouldEqual, 1)
 				})
 			})
