@@ -251,6 +251,8 @@ func (c *entryCreator) existingOrNewEncodedEntry(dirent *walk.Dirent) ([]byte, e
 		return nil, err
 	}
 
+	entryToSetCounts(entry, c.set)
+
 	e := c.existingEntries[dirent.Path]
 	if e != nil {
 		dbEntry := c.db.decodeEntry(e)
@@ -260,8 +262,6 @@ func (c *entryCreator) existingOrNewEncodedEntry(dirent *walk.Dirent) ([]byte, e
 
 		entry = dbEntry
 	}
-
-	entryToSetCounts(entry, c.set)
 
 	e = c.db.encodeToBytes(entry)
 

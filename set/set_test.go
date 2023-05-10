@@ -1023,7 +1023,13 @@ func TestSetDB(t *testing.T) {
 				So(entries[0].Status, ShouldEqual, Pending)
 				So(entries[0].Type, ShouldEqual, Regular)
 
+				err = db.SetDiscoveryStarted(setl1.ID())
+				So(err, ShouldBeNil)
+
 				err = db.StatPureFileEntries(setl1.ID())
+				So(err, ShouldBeNil)
+
+				_, err = db.SetDiscoveredEntries(setl1.ID(), nil)
 				So(err, ShouldBeNil)
 
 				entries, err = db.GetPureFileEntries(setl1.ID())
@@ -1036,6 +1042,22 @@ func TestSetDB(t *testing.T) {
 				So(got, ShouldNotBeNil)
 				So(err, ShouldBeNil)
 				So(got.Missing, ShouldEqual, 1)
+
+				Convey("then rediscover the set and still know about the missing file", func() {
+					err = db.SetDiscoveryStarted(setl1.ID())
+					So(err, ShouldBeNil)
+
+					err = db.StatPureFileEntries(setl1.ID())
+					So(err, ShouldBeNil)
+
+					_, err = db.SetDiscoveredEntries(setl1.ID(), nil)
+					So(err, ShouldBeNil)
+
+					got := db.GetByID(setl1.ID())
+					So(got, ShouldNotBeNil)
+					So(err, ShouldBeNil)
+					So(got.Missing, ShouldEqual, 1)
+				})
 			})
 
 			Convey("And add a set with a missing directory to it (which are just recorded and not checked)", func() {
