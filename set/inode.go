@@ -70,32 +70,51 @@ func (d *DB) getMountPoints() error {
 
 // handleInode recordes the inode of the given Dirent in the database, and
 // returns if it is a hardlink (we've seen the inode before).
-func (d *DB) handleInode(tx *bolt.Tx, de *walk.Dirent) (bool, error) {
-	found := false
+func (d *DB) handleInode(tx *bolt.Tx, de *walk.Dirent) (string, error) {
+	var hardlinkDest string
+
 	key := d.inodeMountPointKey(de)
 
 	b := tx.Bucket([]byte(inodeBucket))
 
 	var files []string
 
-	if existing := b.Get(key); existing != nil {
-		files = d.decodeIMPValue(existing)
-		found = true
+	v := b.Get(key)
+	if v == nil {
+		return "", b.Put(key, d.encodeToBytes([]string{de.Path}))
+	}
 
-		for n, existing := range files {
-			if de.Path == existing {
-				found = n > 0
+	files = d.decodeIMPValue(v)
+	hardlinkDest = files[0]
 
-				break
-			}
+	isExistingPath, isOriginalPath := alreadyInFiles(de.Path, files)
+
+	if isOriginalPath {
+		return "", nil
+	}
+
+	if isExistingPath {
+		return hardlinkDest, nil
+	}
+
+	return hardlinkDest, b.Put(key, d.encodeToBytes(append(files, de.Path)))
+}
+
+// alreadyInFiles checks if path is in existing and returns true if so.
+// Additionally returns true if it's the first entry in files, meaning it's the
+// original and not considered a hardlink.
+func alreadyInFiles(path string, existing []string) (bool, bool) {
+	if path == existing[0] {
+		return true, true
+	}
+
+	for _, existing := range existing[1:] {
+		if path == existing {
+			return true, false
 		}
 	}
 
-	files = append(files, de.Path)
-
-	err := b.Put(key, d.encodeToBytes(files))
-
-	return found, err
+	return false, false
 }
 
 // inodeMountPointKey returns the inodeBucket key for the Dirent's inode and

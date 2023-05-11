@@ -331,8 +331,14 @@ func entryToRequest(entry *set.Entry, transformer put.PathTransformer, given *se
 
 	r.Set = given.Name
 	r.Requester = given.Requester
-	r.Symlink = entry.Dest
-	//TODO: r.Inode = entry.Inode
+
+	if entry.Type == set.Symlink {
+		r.Symlink = entry.Dest
+	}
+
+	if entry.Type == set.Hardlink {
+		r.Hardlink = entry.Dest
+	}
 
 	return r, nil
 }

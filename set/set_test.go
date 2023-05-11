@@ -848,11 +848,14 @@ func TestSetDB(t *testing.T) {
 							Status:    put.RequestStatusUploading,
 							Requester: setl1.Requester,
 							Set:       setl1.Name,
-							Symlink:   entry.Dest,
+						}
+
+						if entry.Type == Symlink {
+							r.Symlink = entry.Dest
 						}
 
 						if entry.Type == Hardlink {
-							r.Hardlink = entry.Inode
+							r.Hardlink = entry.Dest
 						}
 
 						_, err = db.SetEntryStatus(r)
@@ -1152,10 +1155,12 @@ func setEntryToUploaded(entry *Entry, given *Set, db *DB) {
 	r.Requester = given.Requester
 
 	if entry.Type == Hardlink {
-		r.Hardlink = entry.Inode
+		r.Hardlink = entry.Dest
 	}
 
-	r.Symlink = entry.Dest
+	if entry.Type == Symlink {
+		r.Symlink = entry.Dest
+	}
 
 	r.Status = put.RequestStatusUploading
 	_, err = db.SetEntryStatus(r)

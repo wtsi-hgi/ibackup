@@ -2068,6 +2068,11 @@ func TestServer(t *testing.T) { //nolint:cyclop
 					So(errg, ShouldBeNil)
 					So(len(requests), ShouldEqual, 2)
 
+					So(requests[0].Local, ShouldEqual, path1)
+					So(requests[0].Hardlink, ShouldBeBlank)
+					So(requests[1].Local, ShouldEqual, path2)
+					So(requests[1].Hardlink, ShouldEqual, path1)
+
 					for _, item := range s.queue.AllItems() {
 						err = s.queue.Remove(context.Background(), item.Key)
 						So(err, ShouldBeNil)
