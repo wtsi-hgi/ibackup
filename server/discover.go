@@ -31,7 +31,6 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/VertebrateResequencing/wr/queue"
@@ -115,41 +114,42 @@ func (s *Server) processSetDirWalkOutput(given *set.Set, entriesCh chan *walk.Di
 	doneCh, warnCh chan error) ([]*walk.Dirent, error) {
 	warnDoneCh := s.processSetDirWalkWarnings(given, warnCh)
 
-	var fileEntries []*walk.Dirent
+	var fileEntries []*walk.Dirent //nolint:prealloc
 
 	for entry := range entriesCh {
 		fileEntries = append(fileEntries, entry)
 	}
 
 	err := <-doneCh
-	if err != nil {
-		return nil, err
-	}
 
 	close(warnCh)
 
-	err = <-warnDoneCh
+	if err != nil {
+		<-warnDoneCh
 
-	return fileEntries, err
+		return nil, err
+	}
+
+	return fileEntries, <-warnDoneCh
 }
 
 func (s *Server) processSetDirWalkWarnings(given *set.Set, warnCh chan error) chan error {
 	warnDoneCh := make(chan error)
 
 	go func() {
-		var warning []string
+		var warning error
 		for warn := range warnCh {
-			warning = append(warning, warn.Error())
+			warning = errors.Join(warning, warn)
 		}
 
-		if len(warning) != 0 {
-			werr := errors.New(strings.Join(warning, "\n"))
+		if warning != nil {
+			if err := s.db.SetWarning(given.ID(), warning.Error()); err != nil {
+				warnDoneCh <- err
 
-			if err := s.db.SetWarning(given.ID(), strings.Join(warning, "\n")); err != nil {
-				warnDoneCh <- errors.Join(err, werr)
+				return
 			}
-			warnDoneCh <- werr
 		}
+
 		warnDoneCh <- nil
 	}()
 
