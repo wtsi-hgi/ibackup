@@ -246,7 +246,7 @@ func (s *Server) putSet(c *gin.Context) {
 		return
 	}
 
-	s.tryBackup()
+	s.handleNewlyDefinedSets(given)
 
 	c.Status(http.StatusOK)
 }
