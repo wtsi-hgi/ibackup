@@ -69,10 +69,6 @@ func (s *Server) triggerDiscovery(c *gin.Context) {
 // Actual discovery will then proceed asynchronously, followed by adding all
 // upload requests for the set to the global put queue.
 func (s *Server) discoverSet(given *set.Set) error {
-	if err := s.db.SetDiscoveryStarted(given.ID()); err != nil {
-		return err
-	}
-
 	transformer, err := given.MakeTransformer()
 	if err != nil {
 		s.recordSetError("making transformer for %s failed: %s", given.ID(), err)
@@ -89,33 +85,75 @@ func (s *Server) discoverSet(given *set.Set) error {
 // queues the set's files for uploading. Call this in a go-routine, but don't
 // call it multiple times at once for the same set!
 func (s *Server) discoverThenEnqueue(given *set.Set, transformer put.PathTransformer) {
-	doneCh := make(chan bool, 1)
-
-	go func() {
-		if err := s.updateSetFileExistence(given); err != nil {
-			s.recordSetError("enqueue for %s failed: %s", given.ID(), err)
-		}
-
-		close(doneCh)
-	}()
-
-	updated, err := s.discoverDirEntries(given, doneCh)
+	updated, err := s.doDiscovery(given)
 	if err != nil {
-		s.recordSetError("discover dir contents for %s failed: %s", given.ID(), err)
+		s.Logger.Printf("discovery error %s: %s", given.ID(), err)
 
 		return
 	}
+
+	s.handleNewlyDefinedSets(updated)
 
 	if err := s.enqueueSetFiles(updated, transformer); err != nil {
 		s.recordSetError("queuing files for %s failed: %s", updated.ID(), err)
 	}
 }
 
-// updateSetFileExistence gets the file entries (not discovered ones) for the
-// set, checks if they all exist locally (concurrently), and updates their entry
-// status in the db if they're missing.
-func (s *Server) updateSetFileExistence(given *set.Set) error {
-	return s.db.StatPureFileEntries(given.ID())
+func (s *Server) doDiscovery(given *set.Set) (*set.Set, error) {
+	return s.db.Discover(given.ID(), func(entries []*set.Entry) ([]*walk.Dirent, error) {
+		entriesCh := make(chan *walk.Dirent)
+		doneCh := make(chan error)
+		warnCh := make(chan error)
+
+		go s.doSetDirWalks(entries, given, entriesCh, doneCh, warnCh)
+
+		return s.processSetDirWalkOutput(given, entriesCh, doneCh, warnCh)
+	})
+}
+
+func (s *Server) processSetDirWalkOutput(given *set.Set, entriesCh chan *walk.Dirent,
+	doneCh, warnCh chan error) ([]*walk.Dirent, error) {
+	warnDoneCh := s.processSetDirWalkWarnings(given, warnCh)
+
+	var fileEntries []*walk.Dirent
+
+	for entry := range entriesCh {
+		fileEntries = append(fileEntries, entry)
+	}
+
+	err := <-doneCh
+	if err != nil {
+		return nil, err
+	}
+
+	close(warnCh)
+
+	err = <-warnDoneCh
+
+	return fileEntries, err
+}
+
+func (s *Server) processSetDirWalkWarnings(given *set.Set, warnCh chan error) chan error {
+	warnDoneCh := make(chan error)
+
+	go func() {
+		var warning []string
+		for warn := range warnCh {
+			warning = append(warning, warn.Error())
+		}
+
+		if len(warning) != 0 {
+			werr := errors.New(strings.Join(warning, "\n"))
+
+			if err := s.db.SetWarning(given.ID(), strings.Join(warning, "\n")); err != nil {
+				warnDoneCh <- errors.Join(err, werr)
+			}
+			warnDoneCh <- werr
+		}
+		warnDoneCh <- nil
+	}()
+
+	return warnDoneCh
 }
 
 // recordSetError sets the given err on the set, and logs on failure to do so.
@@ -127,67 +165,6 @@ func (s *Server) recordSetError(msg, sid string, err error) {
 	if err = s.db.SetError(sid, err.Error()); err != nil {
 		s.Logger.Printf("setting error for %s failed: %s", sid, err)
 	}
-}
-
-// discoverDirEntries concurrently walks the set's directories, waits until
-// the filesDoneCh closes (file entries have been updated), then sets the
-// discovered file paths, which makes the db consider discovery to be complete.
-//
-// Returns the updated set and any error.
-func (s *Server) discoverDirEntries(given *set.Set, filesDoneCh chan bool) (*set.Set, error) {
-	entries, err := s.db.GetDirEntries(given.ID())
-	if err != nil {
-		return nil, err
-	}
-
-	entriesCh := make(chan *walk.Dirent)
-	doneCh := make(chan error)
-	warnCh := make(chan error)
-	warnDoneCh := make(chan struct{})
-
-	var warning []string
-
-	go s.doSetDirWalks(entries, given, entriesCh, doneCh, warnCh)
-
-	go func() {
-		for warn := range warnCh {
-			warning = append(warning, warn.Error())
-		}
-
-		close(warnDoneCh)
-	}()
-
-	var fileEntries []*walk.Dirent //nolint:prealloc
-
-	for entry := range entriesCh {
-		fileEntries = append(fileEntries, entry)
-	}
-
-	err = <-doneCh
-	if err != nil {
-		return nil, err
-	}
-
-	close(warnCh)
-
-	<-filesDoneCh
-	<-warnDoneCh
-
-	given, err = s.db.SetDiscoveredEntries(given.ID(), fileEntries)
-	if err != nil {
-		return nil, err
-	}
-
-	if len(warning) != 0 {
-		err = s.db.SetWarning(given.ID(), strings.Join(warning, "\n"))
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	s.handleNewlyDefinedSets(given)
-
-	return given, err
 }
 
 // handleNewlyDefinedSets is called when a set has had all its entries
