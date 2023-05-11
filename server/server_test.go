@@ -83,11 +83,11 @@ func TestServer(t *testing.T) { //nolint:cyclop
 	minMBperSecondUploadSpeed := float64(10)
 	maxStuckTime := 1 * time.Hour
 
-	Convey("Given a Server", t, func() {
+	FocusConvey("Given a Server", t, func() {
 		logWriter := gas.NewStringLogger()
 		s := New(logWriter)
 
-		Convey("You can Start the Server with Auth, MakeQueueEndPoints and LoadSetDB", func() {
+		FocusConvey("You can Start the Server with Auth, MakeQueueEndPoints and LoadSetDB", func() {
 			certPath, keyPath, err := gas.CreateTestCert(t)
 			So(err, ShouldBeNil)
 
@@ -142,7 +142,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 				MonitorTime: 0,
 			}
 
-			Convey("Which lets you login", func() {
+			FocusConvey("Which lets you login", func() {
 				token, errl := gas.Login(addr, certPath, "jim", "pass")
 				So(errl, ShouldBeNil)
 				So(token, ShouldNotBeBlank)
@@ -1216,7 +1216,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 				})
 			})
 
-			Convey("Which lets you login as admin", func() {
+			FocusConvey("Which lets you login as admin", func() {
 				token, errl := gas.Login(addr, certPath, admin, "pass")
 				So(errl, ShouldBeNil)
 
@@ -1229,7 +1229,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 
 				backupPath := dbPath + ".bk"
 
-				Convey("and add a set", func() {
+				FocusConvey("and add a set", func() {
 					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldBeNil)
 
@@ -1292,7 +1292,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						So(got[1].Name, ShouldResemble, exampleSet2.Name)
 					})
 
-					Convey("Then you can use a Putter to automatically deal with upload requests", func() {
+					FocusConvey("Then you can use a Putter to automatically deal with upload requests", func() {
 						requests, errg := client.GetSomeUploadRequests()
 						So(errg, ShouldBeNil)
 						So(len(requests), ShouldEqual, len(discovers))
@@ -1320,7 +1320,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						So(gotSet.Uploaded, ShouldEqual, len(discovers))
 						So(gotSet.Symlinks, ShouldEqual, 1)
 
-						Convey("After completion, re-discovery can find new files and we can re-complete", func() {
+						FocusConvey("After completion, re-discovery can find new files and we can re-complete", func() {
 							newFile := filepath.Join(dirs[0], "new")
 							createFile(t, newFile, 2)
 							expectedNumFiles := len(discovers) + 1
@@ -1379,13 +1379,17 @@ func TestServer(t *testing.T) { //nolint:cyclop
 
 							discovers = append(discovers, newFile)
 
-							for _, local := range discovers {
+							for n, local := range discovers {
 								remote := strings.Replace(local, localDir, remoteDir, 1)
 
 								_, err = os.Stat(remote)
 								So(err, ShouldBeNil)
 
-								//TODO: check n 3 is an empty file with symlink metadata
+								if n == 3 {
+									remoteMeta := handler.GetMeta(remote)
+									So(remoteMeta, ShouldNotBeNil)
+									So(remoteMeta[put.MetaKeyHardlink], ShouldEqual, entries[2].Dest)
+								}
 							}
 						})
 					})
@@ -1473,14 +1477,18 @@ func TestServer(t *testing.T) { //nolint:cyclop
 								}
 							}
 
-							for _, local := range discovers {
+							for n, local := range discovers {
 								remote := strings.Replace(local, localDir, remoteDir, 1)
 
 								_, err = os.Stat(remote)
 
 								So(err, ShouldBeNil)
 
-								//TODO: check n 3 is an empty file with symlink metadata
+								if n == 3 {
+									remoteMeta := handler.GetMeta(remote)
+									So(remoteMeta, ShouldNotBeNil)
+									So(remoteMeta[put.MetaKeySymlink], ShouldEqual, entries[2].Dest)
+								}
 							}
 						})
 					})
@@ -1978,8 +1986,8 @@ func TestServer(t *testing.T) { //nolint:cyclop
 
 					remotePath := filepath.Join(remoteDir, "remoteDB")
 
-					handler, errG := put.GetLocalHandler()
-					So(errG, ShouldBeNil)
+					handler, err = put.GetLocalHandler()
+					So(err, ShouldBeNil)
 
 					s.EnableRemoteDBBackups(remotePath, handler)
 
@@ -2037,7 +2045,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						fmt.Sprintf("open %s: permission denied", filepath.Dir(pathExpected3)))
 				})
 
-				Convey("and add a set with hardlinks defined directly which only uploads the file once", func() {
+				FocusConvey("and add a set with hardlinks defined directly which only uploads the file once", func() {
 					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldBeNil)
 
@@ -2090,6 +2098,33 @@ func TestServer(t *testing.T) { //nolint:cyclop
 					So(gotSet.NumFiles, ShouldEqual, 2)
 					So(gotSet.Uploaded, ShouldEqual, 0)
 					So(gotSet.Hardlinks, ShouldEqual, 1)
+
+					FocusConvey("uploading hardlinks sets the hardlink metadata on an empty file", func() {
+						requests, errg := client.GetSomeUploadRequests()
+						So(errg, ShouldBeNil)
+						So(len(requests), ShouldEqual, 2)
+
+						p, d := makePutter(t, handler, requests, client)
+						defer d()
+
+						uploadStarts, uploadResults, skippedResults := p.Put()
+
+						err = client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults,
+							minMBperSecondUploadSpeed, minTimeForUpload, 1*time.Hour, logger)
+						So(err, ShouldBeNil)
+
+						transformer, errg := exampleSet.MakeTransformer()
+						So(errg, ShouldBeNil)
+
+						remote, errg := transformer(path2)
+						So(errg, ShouldBeNil)
+
+						remoteMeta := handler.GetMeta(remote)
+						So(remoteMeta, ShouldNotBeNil)
+						So(remoteMeta[put.MetaKeyHardlink], ShouldEqual, path1)
+
+						//TODO: the file is 0 bytes even when the source is >0; likewise for symlink
+					})
 				})
 
 				Convey("and add a set with hardlinks in a directory which only uploads the file once", func() {

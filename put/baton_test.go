@@ -107,7 +107,7 @@ func TestPutBaton(t *testing.T) { //nolint:cyclop
 
 					if request.Local == requests[0].Local {
 						mtime := time.Time{}
-						err = mtime.UnmarshalText([]byte(meta[metaKeyMtime]))
+						err = mtime.UnmarshalText([]byte(meta[MetaKeyMtime]))
 						So(err, ShouldBeNil)
 
 						So(mtime.UTC().Truncate(time.Second), ShouldEqual, expectedMTime.UTC().Truncate(time.Second))
@@ -142,8 +142,8 @@ func TestPutBaton(t *testing.T) { //nolint:cyclop
 					So(got.Status, ShouldEqual, RequestStatusReplaced)
 					meta := getObjectMetadataWithBaton(testClient, request.Remote)
 					So(meta, ShouldResemble, request.Meta)
-					So(meta[metaKeyRequester], ShouldEqual, requester)
-					So(meta[metaKeySets], ShouldEqual, "setA,setB")
+					So(meta[MetaKeyRequester], ShouldEqual, requester)
+					So(meta[MetaKeySets], ShouldEqual, "setA,setB")
 
 					Convey("Finally, Cleanup() stops the clients", func() {
 						err = p.Cleanup()

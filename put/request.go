@@ -191,8 +191,8 @@ func (r *Request) addStandardMeta(diskMeta, remoteMeta map[string]string) {
 
 	r.addDate()
 
-	r.appendMeta(metaKeyRequester, r.Requester)
-	r.appendMeta(metaKeySets, r.Set)
+	r.appendMeta(MetaKeyRequester, r.Requester)
+	r.appendMeta(MetaKeySets, r.Set)
 }
 
 // cloneMeta is used to ensure that our Meta is unique to us, so that if we
@@ -217,7 +217,7 @@ func cloneMap(m map[string]string) map[string]string {
 func (r *Request) addDate() {
 	date, _ := timeToMeta(time.Now()) //nolint:errcheck
 
-	r.Meta[metaKeyDate] = date
+	r.Meta[MetaKeyDate] = date
 }
 
 // appendMeta appends the given value to the given key value in our remoteMeta,
@@ -265,15 +265,15 @@ func (r *Request) needsMetadataUpdate() bool {
 	need := false
 	defer func() {
 		r.skipPut = need
-		r.Meta[metaKeyDate] = r.remoteMeta[metaKeyDate]
+		r.Meta[MetaKeyDate] = r.remoteMeta[MetaKeyDate]
 	}()
 
-	need = r.valForMetaKeyDifferentOnRemote(metaKeyRequester)
+	need = r.valForMetaKeyDifferentOnRemote(MetaKeyRequester)
 	if need {
 		return need
 	}
 
-	need = r.valForMetaKeyDifferentOnRemote(metaKeySets)
+	need = r.valForMetaKeyDifferentOnRemote(MetaKeySets)
 
 	return need
 }
@@ -325,7 +325,7 @@ func NewRequestWithTransformedLocal(local string, pt PathTransformer) (*Request,
 		return nil, err
 	}
 
-	return &Request{Local: local, Remote: remote}, nil
+	return &Request{Local: local, Remote: remote, Meta: make(map[string]string)}, nil
 }
 
 // PrefixTransformer returns a PathTransformer that will replace localPrefix

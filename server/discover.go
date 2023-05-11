@@ -334,10 +334,12 @@ func entryToRequest(entry *set.Entry, transformer put.PathTransformer, given *se
 
 	if entry.Type == set.Symlink {
 		r.Symlink = entry.Dest
+		r.Meta[put.MetaKeySymlink] = entry.Dest
 	}
 
 	if entry.Type == set.Hardlink {
 		r.Hardlink = entry.Dest
+		r.Meta[put.MetaKeyHardlink] = entry.Dest
 	}
 
 	return r, nil
