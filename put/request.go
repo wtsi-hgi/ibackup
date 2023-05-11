@@ -93,7 +93,7 @@ type Request struct {
 	Meta          map[string]string
 	Status        RequestStatus
 	Symlink       string // contains symlink path if request represents a symlink.
-	Hardlink      uint64 // contains inode if request represents a hard-linked file.
+	Hardlink      string // contains first seen path if request represents a hard-linked file.
 	Size          uint64 // size of Local in bytes, set for you on returned Requests.
 	Error         string
 	Stuck         *Stuck

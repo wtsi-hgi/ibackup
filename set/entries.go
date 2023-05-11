@@ -209,12 +209,13 @@ func (c *entryCreator) updateOrCreateEntryFromDirent(dirent *walk.Dirent) error 
 
 func (e *Entry) setTypeAndDetermineDest(eType EntryType) error {
 	e.Type = eType
-	e.Dest = ""
 
 	var err error
 
 	if eType == Symlink {
 		e.Dest, err = os.Readlink(e.Path)
+	} else if eType != Hardlink {
+		e.Dest = ""
 	}
 
 	return err
@@ -232,10 +233,12 @@ func (c *entryCreator) newEntryFromDirent(dirent *walk.Dirent) (*Entry, error) {
 		return entry, nil
 	}
 
-	eType, err := c.determineEntryType(dirent)
+	eType, hardlink, err := c.determineEntryType(dirent)
 	if err != nil {
 		return nil, err
 	}
+
+	entry.Dest = hardlink
 
 	err = entry.setTypeAndDetermineDest(eType)
 	if err != nil {
@@ -268,15 +271,15 @@ func (c *entryCreator) existingOrNewEncodedEntry(dirent *walk.Dirent) ([]byte, e
 	return e, nil
 }
 
-func (c *entryCreator) determineEntryType(dirent *walk.Dirent) (EntryType, error) {
+func (c *entryCreator) determineEntryType(dirent *walk.Dirent) (EntryType, string, error) {
 	if dirent.IsDir() {
-		return Directory, nil
+		return Directory, "", nil
 	}
 
 	return c.direntToEntryType(dirent)
 }
 
-func (c *entryCreator) direntToEntryType(de *walk.Dirent) (EntryType, error) {
+func (c *entryCreator) direntToEntryType(de *walk.Dirent) (EntryType, string, error) {
 	eType := Regular
 
 	switch {
@@ -285,15 +288,15 @@ func (c *entryCreator) direntToEntryType(de *walk.Dirent) (EntryType, error) {
 	case de.IsSymlink():
 		eType = Symlink
 	default:
-		isHardLink, err := c.db.handleInode(c.tx, de)
+		hardLink, err := c.db.handleInode(c.tx, de)
 		if err != nil {
-			return eType, err
+			return eType, "", err
 		}
 
-		if isHardLink {
-			eType = Hardlink
+		if hardLink != "" {
+			return Hardlink, hardLink, nil
 		}
 	}
 
-	return eType, nil
+	return eType, "", nil
 }
