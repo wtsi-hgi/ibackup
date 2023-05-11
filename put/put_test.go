@@ -111,14 +111,17 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 							replaced++
 							lh.mu.RLock()
 							So(lh.meta[request.Remote], ShouldResemble, requests[0].Meta)
-							So(lh.meta[request.Remote][metaKeyRequester], ShouldEqual, "John,Sam")
-							So(lh.meta[request.Remote][metaKeySets], ShouldEqual, "setA,setB")
-							date = lh.meta[request.Remote][metaKeyDate]
+							So(lh.meta[request.Remote][MetaKeyRequester], ShouldEqual, "John,Sam")
+							So(lh.meta[request.Remote][MetaKeySets], ShouldEqual, "setA,setB")
+							date = lh.meta[request.Remote][MetaKeyDate]
 							lh.mu.RUnlock()
 						default:
 							other++
 						}
 					}
+
+					metadata := lh.GetMeta(requests[0].Remote)
+					So(metadata, ShouldResemble, requests[0].Meta)
 
 					for request := range srCh {
 						switch request.Status {
@@ -152,9 +155,9 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 						request = <-srCh
 						So(request.Status, ShouldEqual, RequestStatusUnmodified)
 						lh.mu.RLock()
-						So(lh.meta[request.Remote][metaKeyRequester], ShouldEqual, "John,Sam")
-						So(lh.meta[request.Remote][metaKeySets], ShouldEqual, "setA,setB,setC")
-						So(lh.meta[request.Remote][metaKeyDate], ShouldEqual, date)
+						So(lh.meta[request.Remote][MetaKeyRequester], ShouldEqual, "John,Sam")
+						So(lh.meta[request.Remote][MetaKeySets], ShouldEqual, "setA,setB,setC")
+						So(lh.meta[request.Remote][MetaKeyDate], ShouldEqual, date)
 						lh.mu.RUnlock()
 					})
 				})
@@ -384,10 +387,10 @@ func makeTestRequests(t *testing.T, sourceDir, destDir string) []*Request {
 // checkAddedMeta checks that the given map contains all the extra metadata keys
 // that we add to requests.
 func checkAddedMeta(meta map[string]string) {
-	So(meta[metaKeyMtime], ShouldNotBeBlank)
-	So(meta[metaKeyOwner], ShouldNotBeBlank)
-	So(meta[metaKeyGroup], ShouldNotBeBlank)
-	So(meta[metaKeyDate], ShouldNotBeBlank)
+	So(meta[MetaKeyMtime], ShouldNotBeBlank)
+	So(meta[MetaKeyOwner], ShouldNotBeBlank)
+	So(meta[MetaKeyGroup], ShouldNotBeBlank)
+	So(meta[MetaKeyDate], ShouldNotBeBlank)
 }
 
 // touchFile alters the mtime of the given file by the given duration. Returns
