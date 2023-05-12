@@ -27,6 +27,7 @@
 package main
 
 import (
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -504,6 +505,10 @@ func TestBackup(t *testing.T) {
 		So(err, ShouldBeNil)
 
 		So(li.Size(), ShouldEqual, ri.Size())
+
+		bh := hashFile(s.backupFile)
+		rh := hashFile(gotPath)
+		So(bh, ShouldEqual, rh)
 	})
 }
 
@@ -554,4 +559,17 @@ func (s *TestServer) addSetForTesting(t *testing.T, name, transformer, path stri
 	So(exitCode, ShouldEqual, 0)
 
 	<-time.After(250 * time.Millisecond)
+}
+
+func hashFile(path string) string {
+	f, err := os.Open(path)
+	So(err, ShouldBeNil)
+
+	defer f.Close()
+
+	s := sha256.New()
+	_, err = io.Copy(s, f)
+	So(err, ShouldBeNil)
+
+	return fmt.Sprintf("%x", s.Sum(nil))
 }
