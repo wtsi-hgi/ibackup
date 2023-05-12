@@ -27,6 +27,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -47,8 +48,6 @@ import (
 const app = "ibackup"
 const userPerms = 0700
 
-var backupFile string //nolint:gochecknoglobals
-
 // TestMain builds ourself, starts a test server, runs client tests against the
 // server and cleans up afterwards. It's a full e2e integration test.
 func TestMain(m *testing.M) {
@@ -64,19 +63,13 @@ func TestMain(m *testing.M) {
 
 	defer d1()
 
-	d2, worked := startTestServer()
-
-	if d2 != nil {
-		defer d2()
-	}
-
-	if !worked {
-		exitCode = 2
-
-		return
-	}
-
 	exitCode = m.Run()
+
+	for _, s := range servers {
+		if err := s.Shutdown(); err != nil {
+			fmt.Println("error shutting down server: ", err) //nolint:forbidigo
+		}
+	}
 }
 
 func buildSelf() func() {
@@ -93,134 +86,117 @@ func failMainTest(err string) {
 	fmt.Println(err) //nolint:forbidigo
 }
 
-func startTestServer() (func(), bool) {
-	dir, err := os.MkdirTemp("", "ibackup-test")
-	if err != nil {
-		failMainTest(err.Error())
+var servers []*TestServer //nolint:gochecknoglobals
 
-		return nil, false
-	}
+type TestServer struct {
+	key          string
+	cert         string
+	ldapServer   string
+	ldapLookup   string
+	url          string
+	dir          string
+	dbFile       string
+	backupFile   string
+	remoteDBFile string
+	logFile      string
+	env          []string
 
-	os.Setenv("XDG_STATE_HOME", dir)
-
-	tv, errStr := prepareConfig(dir)
-	if errStr != "" {
-		failMainTest(errStr)
-
-		return func() { os.RemoveAll(dir) }, false
-	}
-
-	logFile := filepath.Join(dir, "log")
-	backupFile = filepath.Join(dir, "db.bak")
-
-	os.Setenv("IBACKUP_REMOTE_DB_BACKUP_PATH", remoteDBBackupPath())
-
-	cmd := exec.Command("./"+app, "server", "-k", tv.key, "--logfile", //nolint:gosec
-		logFile, "-s", tv.ldapServer, "-l", tv.ldapLookup, "--debug",
-		filepath.Join(dir, "db"), backupFile,
-	)
-
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if errs := cmd.Start(); errs != nil {
-		failMainTest(errs.Error())
-
-		return func() { os.RemoveAll(dir) }, false
-	}
-
-	worked := waitForServer()
-
-	return func() {
-		if errk := cmd.Process.Kill(); err != nil {
-			failMainTest(errk.Error())
-		}
-
-		errw := cmd.Wait()
-		if errw != nil && errw.Error() != "signal: killed" {
-			failMainTest(errw.Error())
-		}
-
-		// content, errr := os.ReadFile(logFile)
-		// if errr == nil {
-		// 	fmt.Printf("\nserver log: %s\n", string(content))
-		// }
-
-		os.RemoveAll(dir)
-	}, worked
+	cmd *exec.Cmd
 }
 
-func remoteDBBackupPath() string {
-	collection := os.Getenv("IBACKUP_TEST_COLLECTION")
-	if collection == "" {
-		return collection
-	}
+func NewTestServer(t *testing.T) *TestServer {
+	t.Helper()
 
-	return filepath.Join(collection, "db.bk")
-}
+	dir := t.TempDir()
 
-type testVars struct {
-	key        string
-	ldapServer string
-	ldapLookup string
+	s := new(TestServer)
+
+	s.prepareFilePaths(dir)
+	s.prepareConfig()
+
+	s.startServer()
+
+	return s
 }
 
 // prepareConfig creates a key and cert to use with a server and looks at
 // IBACKUP_TEST_* env vars to set SERVER vars as well.
-func prepareConfig(dir string) (*testVars, string) {
-	tv := &testVars{}
-
-	serverURL := os.Getenv("IBACKUP_TEST_SERVER_URL")
-	if serverURL == "" {
+func (s *TestServer) prepareConfig() {
+	s.url = os.Getenv("IBACKUP_TEST_SERVER_URL")
+	if s.url == "" {
 		port, err := freeport.GetFreePort()
-		if err != nil {
-			return nil, err.Error()
-		}
+		So(err, ShouldBeNil)
 
-		serverURL = fmt.Sprintf("localhost:%d", port)
+		s.url = fmt.Sprintf("localhost:%d", port)
 	}
 
-	host, _, err := net.SplitHostPort(serverURL)
-	if err != nil {
-		return nil, err.Error()
-	}
+	host, _, err := net.SplitHostPort(s.url)
+	So(err, ShouldBeNil)
 
-	keyPath := filepath.Join(dir, "key.pem")
-	certPath := filepath.Join(dir, "cert.pem")
+	s.key = filepath.Join(s.dir, "key.pem")
+	s.cert = filepath.Join(s.dir, "cert.pem")
 
-	cmd := exec.Command("openssl", "req", "-x509", "-newkey", "rsa:4096", "-keyout",
-		keyPath, "-out", certPath, "-sha256", "-days", "365", "-subj", "/CN="+host, "-addext",
-		"subjectAltName = DNS:"+host, "-nodes")
+	cmd := exec.Command( //nolint:gosec
+		"openssl", "req", "-x509", "-newkey", "rsa:4096", "-keyout", s.key,
+		"-out", s.cert, "-sha256", "-days", "365", "-subj", "/CN="+host,
+		"-addext", "subjectAltName = DNS:"+host, "-nodes",
+	)
 
-	outb, err := cmd.CombinedOutput()
-	if err != nil {
-		return nil, "could not create openssl cert: " + err.Error() + "\n" + string(outb) + "\n" + cmd.String()
-	}
+	_, err = cmd.CombinedOutput()
+	So(err, ShouldBeNil)
 
-	tv.key = keyPath
-
-	tv.ldapServer = os.Getenv("IBACKUP_TEST_LDAP_SERVER")
-	tv.ldapLookup = os.Getenv("IBACKUP_TEST_LDAP_LOOKUP")
-
-	os.Setenv("IBACKUP_SERVER_URL", serverURL)
-	os.Setenv("IBACKUP_SERVER_CERT", certPath)
-
-	return tv, ""
+	s.ldapServer = os.Getenv("IBACKUP_TEST_LDAP_SERVER")
+	s.ldapLookup = os.Getenv("IBACKUP_TEST_LDAP_LOOKUP")
 }
 
-func waitForServer() bool {
+func (s *TestServer) prepareFilePaths(dir string) {
+	s.dir = dir
+	s.dbFile = filepath.Join(s.dir, "db")
+	s.logFile = filepath.Join(s.dir, "log")
+
+	home, err := os.UserHomeDir()
+	So(err, ShouldBeNil)
+
+	s.env = []string{"XDG_STATE_HOME=" + s.dir, "PATH=" + os.Getenv("PATH"), "HOME=" + home}
+}
+
+func (s *TestServer) startServer() {
+	args := []string{"server", "--cert", s.cert, "--key", s.key, "--logfile", s.logFile,
+		"-s", s.ldapServer, "-l", s.ldapLookup, "--url", s.url, "--debug"}
+
+	if s.remoteDBFile != "" {
+		args = append(args, "--remote_backup", s.remoteDBFile)
+	}
+
+	args = append(args, s.dbFile)
+
+	if s.backupFile != "" {
+		args = append(args, s.backupFile)
+	}
+
+	s.cmd = exec.Command("./"+app, args...)
+	s.cmd.Env = s.env
+	s.cmd.Stdout = os.Stdout
+	s.cmd.Stderr = os.Stderr
+
+	err := s.cmd.Start()
+	So(err, ShouldBeNil)
+
+	s.waitForServer()
+
+	servers = append(servers, s)
+}
+
+func (s *TestServer) waitForServer() {
 	worked := false
 
-	var lastClientOutput []byte
-
-	var lastClientErr error
+	cmd := []string{"status", "--cert", s.cert, "--url", s.url}
 
 	for i := 0; i < 100; i++ {
-		clientCmd := exec.Command("./"+app, "status")
+		clientCmd := exec.Command("./"+app, cmd...)
+		clientCmd.Env = []string{"XDG_STATE_HOME=" + s.dir}
 
-		lastClientOutput, lastClientErr = clientCmd.CombinedOutput()
-
-		if clientCmd.ProcessState.ExitCode() == 0 {
+		if clientCmd.Run() == nil {
 			worked = true
 
 			break
@@ -229,30 +205,56 @@ func waitForServer() bool {
 		time.Sleep(50 * time.Millisecond)
 	}
 
-	if !worked {
-		failMainTest("timeout on server starting: " + lastClientErr.Error() + "\n" + string(lastClientOutput))
+	So(worked, ShouldEqual, true)
+}
+
+func (s *TestServer) Shutdown() error {
+	err := s.cmd.Process.Signal(os.Interrupt)
+
+	errCh := make(chan error, 1)
+
+	go func() { errCh <- s.cmd.Wait() }()
+
+	select {
+	case errb := <-errCh:
+		return errors.Join(err, errb)
+	case <-time.After(5 * time.Second):
+		return errors.Join(err, s.cmd.Process.Kill())
+	}
+}
+
+func remoteDBBackupPath() string {
+	collection := os.Getenv("IBACKUP_TEST_COLLECTION")
+	if collection == "" {
+		return ""
 	}
 
-	return worked
+	return filepath.Join(collection, "db.bk")
 }
 
 func TestStatus(t *testing.T) {
-	SkipConvey("With no server, status fails", t, func() {
-		confirmOutput(t, []string{"status"}, 1, "you must supply --url")
-	})
+	Convey("With a started server", t, func() {
+		s := NewTestServer(t)
+		So(s, ShouldNotBeNil)
 
-	Convey("With no sets defined, status returns no sets", t, func() {
-		confirmOutput(t, []string{"status"}, 0, `Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
+		/*
+			SkipConvey("With no server, status fails", t, func() {
+				s.confirmOutput(t, []string{"status"}, 1, "you must supply --url")
+			})
+		*/
+
+		Convey("With no sets defined, status returns no sets", func() {
+			s.confirmOutput(t, []string{"status"}, `Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
 Global put client status (/10): 0 creating collections; 0 currently uploading
 no backup sets`)
-	})
+		})
 
-	Convey("Given an added set defined with a directory", t, func() {
-		transformer, localDir, remoteDir := prepareSetWithEmptyDir(t)
-		addSetForTesting(t, "testAdd", transformer, localDir)
+		Convey("Given an added set defined with a directory", func() {
+			transformer, localDir, remoteDir := prepareSetWithEmptyDir(t)
+			s.addSetForTesting(t, "testAdd", transformer, localDir)
 
-		Convey("Status tells you where input directories would get uploaded to", func() {
-			confirmOutput(t, []string{"status"}, 0, `Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
+			Convey("Status tells you where input directories would get uploaded to", func() {
+				s.confirmOutput(t, []string{"status"}, `Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
 Global put client status (/10): 0 creating collections; 0 currently uploading
 
 Name: testAdd
@@ -265,27 +267,27 @@ Uploaded: 0; Failed: 0; Missing: 0
 Completed in: 0s
 Directories:
   `+localDir+" => "+remoteDir)
+			})
 		})
-	})
 
-	Convey("Given an added set defined with files", t, func() {
-		dir := t.TempDir()
-		tempTestFile, err := os.CreateTemp(dir, "testFileSet")
-		So(err, ShouldBeNil)
+		Convey("Given an added set defined with files", func() {
+			dir := t.TempDir()
+			tempTestFile, err := os.CreateTemp(dir, "testFileSet")
+			So(err, ShouldBeNil)
 
-		_, err = io.WriteString(tempTestFile, dir+`/path/to/some/file
+			_, err = io.WriteString(tempTestFile, dir+`/path/to/some/file
 `+dir+`/path/to/other/file`)
-		So(err, ShouldBeNil)
+			So(err, ShouldBeNil)
 
-		exitCode, _ := runBinary(t, "add", "--files", tempTestFile.Name(),
-			"--name", "testAddFiles", "--transformer", "prefix="+dir+":/remote")
-		So(exitCode, ShouldEqual, 0)
+			exitCode, _ := s.runBinary(t, "add", "--files", tempTestFile.Name(),
+				"--name", "testAddFiles", "--transformer", "prefix="+dir+":/remote")
+			So(exitCode, ShouldEqual, 0)
 
-		<-time.After(250 * time.Millisecond)
+			<-time.After(250 * time.Millisecond)
 
-		Convey("Status tells you an example of where input files would get uploaded to", func() {
-			confirmOutput(t, []string{"status", "--name", "testAddFiles"}, 0,
-				`Global put queue status: 2 queued; 0 reserved to be worked on; 0 failed
+			Convey("Status tells you an example of where input files would get uploaded to", func() {
+				s.confirmOutput(t, []string{"status", "--name", "testAddFiles"},
+					`Global put queue status: 2 queued; 0 reserved to be worked on; 0 failed
 Global put client status (/10): 0 creating collections; 0 currently uploading
 
 Name: testAddFiles
@@ -296,15 +298,15 @@ Discovery:
 Num files: 2; Size files: 0 B (and counting)
 Uploaded: 0; Failed: 0; Missing: 2
 Example File: `+dir+`/path/to/other/file => /remote/path/to/other/file`)
+			})
 		})
-	})
 
-	Convey("Given an added set defined with a non-humgen dir and humgen transformer, it warns about the issue", t, func() {
-		_, localDir, _ := prepareSetWithEmptyDir(t)
-		addSetForTesting(t, "badHumgen", "humgen", localDir)
+		Convey("Given an added set defined with a non-humgen dir and humgen transformer, it warns about the issue", func() {
+			_, localDir, _ := prepareSetWithEmptyDir(t)
+			s.addSetForTesting(t, "badHumgen", "humgen", localDir)
 
-		confirmOutput(t, []string{"status", "-n", "badHumgen"}, 0,
-			`Global put queue status: 2 queued; 0 reserved to be worked on; 0 failed
+			s.confirmOutput(t, []string{"status", "-n", "badHumgen"},
+				`Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
 Global put client status (/10): 0 creating collections; 0 currently uploading
 
 Name: badHumgen
@@ -318,26 +320,26 @@ Completed in: 0s
 Directories:
 your transformer didn't work: not a valid humgen lustre path [`+localDir+`/file.txt]
   `+localDir)
-	})
+		})
 
-	Convey("Given an added set with an inaccessible subfolder, print the error to the user", t, func() {
-		transformer, localDir, remote := prepareSetWithEmptyDir(t)
-		badPermDir := filepath.Join(localDir, "bad-perms-dir")
-		err := os.Mkdir(badPermDir, userPerms)
-		So(err, ShouldBeNil)
-
-		err = os.Chmod(badPermDir, 0)
-		So(err, ShouldBeNil)
-
-		defer func() {
-			err = os.Chmod(filepath.Dir(badPermDir), userPerms)
+		Convey("Given an added set with an inaccessible subfolder, print the error to the user", func() {
+			transformer, localDir, remote := prepareSetWithEmptyDir(t)
+			badPermDir := filepath.Join(localDir, "bad-perms-dir")
+			err := os.Mkdir(badPermDir, userPerms)
 			So(err, ShouldBeNil)
-		}()
 
-		addSetForTesting(t, "badPerms", transformer, localDir)
+			err = os.Chmod(badPermDir, 0)
+			So(err, ShouldBeNil)
 
-		confirmOutput(t, []string{"status", "-n", "badPerms"}, 0,
-			`Global put queue status: 2 queued; 0 reserved to be worked on; 0 failed
+			defer func() {
+				err = os.Chmod(filepath.Dir(badPermDir), userPerms)
+				So(err, ShouldBeNil)
+			}()
+
+			s.addSetForTesting(t, "badPerms", transformer, localDir)
+
+			s.confirmOutput(t, []string{"status", "-n", "badPerms"},
+				`Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
 Global put client status (/10): 0 creating collections; 0 currently uploading
 
 Name: badPerms
@@ -351,22 +353,22 @@ Uploaded: 0; Failed: 0; Missing: 0
 Completed in: 0s
 Directories:
   `+localDir+" => "+remote)
-	})
+		})
 
-	Convey("Given an added set defined with a humgen transformer, the remote directory is correct", t, func() {
-		humgenFile := "/lustre/scratch125/humgen/teams/hgi/mercury/ibackup/file_for_testsuite.do_not_delete"
-		humgenDir := filepath.Dir(humgenFile)
+		Convey("Given an added set defined with a humgen transformer, the remote directory is correct", func() {
+			humgenFile := "/lustre/scratch125/humgen/teams/hgi/mercury/ibackup/file_for_testsuite.do_not_delete"
+			humgenDir := filepath.Dir(humgenFile)
 
-		if _, err := os.Stat(humgenDir); err != nil {
-			SkipConvey("skip humgen transformer test since not in humgen", func() {})
+			if _, err := os.Stat(humgenDir); err != nil {
+				SkipConvey("skip humgen transformer test since not in humgen", func() {})
 
-			return
-		}
+				return
+			}
 
-		addSetForTesting(t, "humgenSet", "humgen", humgenFile)
+			s.addSetForTesting(t, "humgenSet", "humgen", humgenFile)
 
-		confirmOutput(t, []string{"status", "-n", "humgenSet"}, 0,
-			`Global put queue status: 3 queued; 0 reserved to be worked on; 0 failed
+			s.confirmOutput(t, []string{"status", "-n", "humgenSet"},
+				`Global put queue status: 1 queued; 0 reserved to be worked on; 0 failed
 Global put client status (/10): 0 creating collections; 0 currently uploading
 
 Name: humgenSet
@@ -377,6 +379,7 @@ Discovery:
 Num files: 1; Size files: 0 B (and counting)
 Uploaded: 0; Failed: 0; Missing: 0
 Example File: `+humgenFile+" => /humgen/teams/hgi/scratch125/mercury/ibackup/file_for_testsuite.do_not_delete")
+		})
 	})
 }
 
@@ -397,15 +400,6 @@ func prepareSetWithEmptyDir(t *testing.T) (string, string, string) {
 	return transformer, someDir, "/remote/some/dir"
 }
 
-func addSetForTesting(t *testing.T, name, transformer, path string) {
-	t.Helper()
-
-	exitCode, _ := runBinary(t, "add", "--name", name, "--transformer", transformer, "--path", path)
-	So(exitCode, ShouldEqual, 0)
-
-	<-time.After(250 * time.Millisecond)
-}
-
 func TestPut(t *testing.T) {
 	convey := Convey
 	conveyText := "In server mode, put exits early if there are long-time stuck uploads"
@@ -417,6 +411,9 @@ func TestPut(t *testing.T) {
 	}
 
 	convey(conveyText, t, func() {
+		s := NewTestServer(t)
+		So(s, ShouldNotBeNil)
+
 		remoteDBPath := remoteDBBackupPath()
 		if remoteDBPath == "" {
 			SkipConvey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
@@ -438,9 +435,9 @@ func TestPut(t *testing.T) {
 			f.Write([]byte{0}) //nolint:errcheck
 		}()
 
-		addSetForTesting(t, "stuckPutTest", transformer, stuckFilePath)
+		s.addSetForTesting(t, "stuckPutTest", transformer, stuckFilePath)
 
-		exitCode, out := runBinary(t, "put", "--server", os.Getenv("IBACKUP_SERVER_URL"), "--stuck-timeout", "10s")
+		exitCode, out := s.runBinary(t, "put", "--server", os.Getenv("IBACKUP_SERVER_URL"), "--stuck-timeout", "10s")
 		So(exitCode, ShouldEqual, 0)
 		So(out, ShouldContainSubstring, put.ErrStuckTimeout)
 	})
@@ -448,25 +445,30 @@ func TestPut(t *testing.T) {
 
 func TestBackup(t *testing.T) {
 	Convey("Adding a set causes a database backup locally and remotely", t, func() {
-		err := os.Remove(backupFile)
-		if os.IsNotExist(err) {
-			err = nil
-		}
-
-		So(err, ShouldBeNil)
-
-		transformer, localDir, _ := prepareSetWithEmptyDir(t)
-		addSetForTesting(t, "testForBackup", transformer, localDir)
-
-		localBackupExists := internal.WaitForFile(backupFile)
-		So(localBackupExists, ShouldBeTrue)
-
 		remotePath := remoteDBBackupPath()
 		if remotePath == "" {
 			SkipConvey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
 
 			return
 		}
+
+		dir := t.TempDir()
+		s := new(TestServer)
+		s.prepareFilePaths(dir)
+		s.prepareConfig()
+
+		s.backupFile = filepath.Join(dir, "db.bak")
+		s.remoteDBFile = remotePath
+
+		s.startServer()
+
+		transformer, localDir, _ := prepareSetWithEmptyDir(t)
+		s.addSetForTesting(t, "testForBackup", transformer, localDir)
+
+		<-time.After(time.Second) // wait for both backup cycles to run
+
+		localBackupExists := internal.WaitForFile(s.backupFile)
+		So(localBackupExists, ShouldBeTrue)
 
 		ticker := time.NewTicker(1 * time.Second)
 		timeout := time.NewTimer(30 * time.Second)
@@ -498,26 +500,29 @@ func TestBackup(t *testing.T) {
 		ri, err := os.Stat(gotPath)
 		So(err, ShouldBeNil)
 
-		li, err := os.Stat(backupFile)
+		li, err := os.Stat(s.backupFile)
 		So(err, ShouldBeNil)
 
 		So(li.Size(), ShouldEqual, ri.Size())
 	})
 }
 
-func confirmOutput(t *testing.T, args []string, expectedCode int, expected string) {
+func (s *TestServer) confirmOutput(t *testing.T, args []string, expected string) {
 	t.Helper()
 
-	exitCode, actual := runBinary(t, args...)
+	exitCode, actual := s.runBinary(t, args...)
 
-	So(exitCode, ShouldEqual, expectedCode)
+	So(exitCode, ShouldEqual, 0)
 	So(actual, ShouldEqual, expected)
 }
 
-func runBinary(t *testing.T, args ...string) (int, string) {
+func (s *TestServer) runBinary(t *testing.T, args ...string) (int, string) {
 	t.Helper()
 
+	args = append([]string{"--url", s.url, "--cert", s.cert}, args...)
+
 	cmd := exec.Command("./"+app, args...)
+	cmd.Env = s.env
 
 	outB, err := cmd.CombinedOutput()
 	out := string(outB)
@@ -540,4 +545,13 @@ func runBinary(t *testing.T, args ...string) (int, string) {
 	}
 
 	return cmd.ProcessState.ExitCode(), strings.Join(lines, "\n")
+}
+
+func (s *TestServer) addSetForTesting(t *testing.T, name, transformer, path string) {
+	t.Helper()
+
+	exitCode, _ := s.runBinary(t, "add", "--name", name, "--transformer", transformer, "--path", path)
+	So(exitCode, ShouldEqual, 0)
+
+	<-time.After(250 * time.Millisecond)
 }
