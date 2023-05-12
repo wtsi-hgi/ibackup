@@ -463,7 +463,7 @@ func TestBackup(t *testing.T) {
 
 		s.startServer()
 
-		transformer, localDir, _ := prepareSetWithEmptyDir(t)
+		transformer, localDir, remoteDir := prepareSetWithEmptyDir(t)
 		s.addSetForTesting(t, "testForBackup", transformer, localDir)
 
 		<-time.After(time.Second) // wait for both backup cycles to run
@@ -509,6 +509,30 @@ func TestBackup(t *testing.T) {
 		bh := hashFile(s.backupFile)
 		rh := hashFile(gotPath)
 		So(bh, ShouldEqual, rh)
+
+		Convey("Running a server with the retrieved db works correctly", func() {
+			bs := new(TestServer)
+			bs.prepareFilePaths(tdir)
+			bs.dbFile = gotPath
+			bs.prepareConfig()
+
+			bs.startServer()
+
+			bs.confirmOutput(t, []string{
+				"status", "-n", "testForBackup"}, `Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
+Global put client status (/10): 0 creating collections; 0 currently uploading
+
+Name: testForBackup
+Transformer: `+transformer+`
+Monitored: false; Archive: false
+Status: complete
+Discovery:
+Num files: 0; Size files: 0 B
+Uploaded: 0; Failed: 0; Missing: 0
+Completed in: 0s
+Directories:
+  `+localDir+` => `+remoteDir)
+		})
 	})
 }
 
