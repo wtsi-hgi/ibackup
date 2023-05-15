@@ -27,6 +27,7 @@ package set
 
 import (
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/wtsi-ssg/wrstat/v4/walk"
@@ -160,6 +161,7 @@ type entryCreator struct {
 	setID           []byte
 	setBucket       *bolt.Bucket
 	set             *Set
+	transformerID   string
 }
 
 // newEntryCreator returns an entryCreator that will create new entries in the
@@ -173,7 +175,7 @@ func newEntryCreator(db *DB, tx *bolt.Tx, bucket *bolt.Bucket, existing map[stri
 		return nil, err
 	}
 
-	return &entryCreator{
+	c := &entryCreator{
 		db:              db,
 		tx:              tx,
 		bucket:          bucket,
@@ -181,7 +183,41 @@ func newEntryCreator(db *DB, tx *bolt.Tx, bucket *bolt.Bucket, existing map[stri
 		setID:           setIDb,
 		setBucket:       setBucket,
 		set:             got,
-	}, nil
+	}
+
+	err = c.setTransformer()
+	if err != nil {
+		return nil, err
+	}
+
+	return c, nil
+}
+
+func (c *entryCreator) setTransformer() error {
+	b := c.tx.Bucket([]byte(transformerToIDBucket))
+
+	v := b.Get([]byte(c.set.Transformer))
+	if v != nil {
+		c.transformerID = string(v)
+
+		return nil
+	}
+
+	id, err := b.NextSequence()
+	if err != nil {
+		return err
+	}
+
+	c.transformerID = strconv.FormatUint(id, 10)
+
+	err = b.Put([]byte(c.set.Transformer), []byte(c.transformerID))
+	if err != nil {
+		return err
+	}
+
+	b = c.tx.Bucket([]byte(transformerFromIDBucket))
+
+	return b.Put([]byte(c.transformerID), []byte(c.set.Transformer))
 }
 
 // UpdateOrCreateEntries creates or updates (if already in the existing map)
@@ -288,7 +324,7 @@ func (c *entryCreator) direntToEntryType(de *walk.Dirent) (EntryType, string, er
 	case de.IsSymlink():
 		eType = Symlink
 	default:
-		hardLink, err := c.db.handleInode(c.tx, de)
+		hardLink, err := c.db.handleInode(c.tx, de, c.transformerID)
 		if err != nil {
 			return eType, "", err
 		}

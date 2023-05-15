@@ -68,9 +68,11 @@ func (d *DB) getMountPoints() error {
 	return nil
 }
 
+const transformerInodeSeparator = ":"
+
 // handleInode recordes the inode of the given Dirent in the database, and
 // returns if it is a hardlink (we've seen the inode before).
-func (d *DB) handleInode(tx *bolt.Tx, de *walk.Dirent) (string, error) {
+func (d *DB) handleInode(tx *bolt.Tx, de *walk.Dirent, transformerID string) (string, error) {
 	var hardlinkDest string
 
 	key := d.inodeMountPointKeyFromDirent(de)
@@ -79,15 +81,17 @@ func (d *DB) handleInode(tx *bolt.Tx, de *walk.Dirent) (string, error) {
 
 	var files []string
 
+	transformerPath := transformerID + transformerInodeSeparator + de.Path
+
 	v := b.Get(key)
 	if v == nil {
-		return "", b.Put(key, d.encodeToBytes([]string{de.Path}))
+		return "", b.Put(key, d.encodeToBytes([]string{transformerPath}))
 	}
 
 	files = d.decodeIMPValue(v)
 	hardlinkDest = files[0]
 
-	isExistingPath, isOriginalPath := alreadyInFiles(de.Path, files)
+	isExistingPath, isOriginalPath := alreadyInFiles(transformerPath, files)
 
 	if isOriginalPath {
 		return "", nil
@@ -97,7 +101,7 @@ func (d *DB) handleInode(tx *bolt.Tx, de *walk.Dirent) (string, error) {
 		return hardlinkDest, nil
 	}
 
-	return hardlinkDest, b.Put(key, d.encodeToBytes(append(files, de.Path)))
+	return hardlinkDest, b.Put(key, d.encodeToBytes(append(files, transformerPath)))
 }
 
 // alreadyInFiles checks if path is in existing and returns true if so.
@@ -156,7 +160,7 @@ func (d *DB) decodeIMPValue(v []byte) []string {
 // HardlinkPaths returns all known hardlink paths that share the same mountpoint
 // and inode as the entry provided.
 func (d *DB) HardlinkPaths(e *Entry) ([]string, error) {
-	var files []string
+	var transformerPaths []string
 
 	if err := d.db.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(inodeBucket))
@@ -168,20 +172,75 @@ func (d *DB) HardlinkPaths(e *Entry) ([]string, error) {
 			return nil
 		}
 
-		files = d.decodeIMPValue(v)
+		transformerPaths = d.decodeIMPValue(v)
 
 		return nil
 	}); err != nil {
 		return nil, err
 	}
 
-	for n, path := range files {
-		if path == e.Path {
-			files = append(files[:n], files[n+1:]...)
+	files := make([]string, 0, len(transformerPaths))
 
-			break
+	for _, transformerPath := range transformerPaths {
+		pos := strings.Index(transformerPath, transformerInodeSeparator)
+		if pos < 0 {
+			return nil, &Error{
+				msg: ErrInvalidTransformerPath,
+			}
 		}
+
+		path := transformerPath[pos+1:]
+		if path == e.Path {
+			continue
+		}
+
+		files = append(files, path)
 	}
 
 	return files, nil
+}
+
+func (d *DB) HardlinkRemote(e *Entry) (string, error) {
+	var remotePath string
+
+	err := d.db.View(func(tx *bolt.Tx) error {
+		ib := tx.Bucket([]byte(inodeBucket))
+
+		key := d.inodeMountPointKeyFromEntry(e)
+
+		v := ib.Get(key)
+		if v == nil {
+			return nil
+		}
+
+		transformerPaths := d.decodeIMPValue(v)
+		if len(transformerPaths) == 0 {
+			return nil
+		}
+
+		transformerID, path, ok := strings.Cut(transformerPaths[0], transformerInodeSeparator)
+		if !ok {
+			return &Error{msg: ErrInvalidTransformerPath}
+		}
+
+		tb := tx.Bucket([]byte(transformerFromIDBucket))
+
+		v = tb.Get([]byte(transformerID))
+		if v == nil {
+			return &Error{msg: ErrInvalidTransformerPath}
+		}
+
+		s := &Set{Transformer: string(v)}
+
+		t, err := s.MakeTransformer()
+		if err != nil {
+			return err
+		}
+
+		remotePath, err = t(path)
+
+		return err
+	})
+
+	return remotePath, err
 }

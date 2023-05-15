@@ -1026,10 +1026,10 @@ func TestSetDB(t *testing.T) {
 					So(paths, ShouldResemble, []string{dirents[1].Path})
 				})
 
-				SkipConvey("then get a remote path for the hardlink", func() {
-					// path, err := db.HardlinkRemote(entries[1])
-					// So(err, ShouldBeNil)
-					// So(path, ShouldEqual, "/remote/path/to/file")
+				Convey("then get a remote path for the hardlink", func() {
+					path, errh := db.HardlinkRemote(entries[1])
+					So(errh, ShouldBeNil)
+					So(path, ShouldEqual, "/remote/path/to/file")
 				})
 			})
 
