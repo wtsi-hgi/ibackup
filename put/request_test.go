@@ -146,4 +146,21 @@ func TestRequest(t *testing.T) {
 		So(s.String(), ShouldContainSubstring, " on host "+s.Host)
 		So(s.String(), ShouldContainSubstring, ", PID "+strconv.Itoa(s.PID))
 	})
+
+	Convey("You can specify link files and get back a path to an empty file for uploading", t, func() {
+		local := "/a/file"
+		size := uint64(123)
+
+		r := &Request{Local: local, Symlink: "/another/file", Size: size}
+		So(r.UploadPath(), ShouldEqual, os.DevNull)
+		So(r.UploadedSize(), ShouldEqual, 0)
+
+		r = &Request{Local: local, Hardlink: "/another/file", Size: size}
+		So(r.UploadPath(), ShouldEqual, os.DevNull)
+		So(r.UploadedSize(), ShouldEqual, 0)
+
+		r = &Request{Local: local, Size: size}
+		So(r.UploadPath(), ShouldEqual, local)
+		So(r.UploadedSize(), ShouldEqual, size)
+	})
 }

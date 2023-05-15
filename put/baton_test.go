@@ -105,6 +105,10 @@ func TestPutBaton(t *testing.T) { //nolint:cyclop
 					So(meta, ShouldResemble, request.Meta)
 					checkAddedMeta(meta)
 
+					it, errg := getItemWithBaton(testClient, request.Remote)
+					So(errg, ShouldBeNil)
+					So(it.ISize, ShouldEqual, 2)
+
 					if request.Local == requests[0].Local {
 						mtime := time.Time{}
 						err = mtime.UnmarshalText([]byte(meta[MetaKeyMtime]))
@@ -175,10 +179,57 @@ func TestPutBaton(t *testing.T) { //nolint:cyclop
 					So(got.Status, ShouldEqual, RequestStatusUnmodified)
 				})
 			})
+
+			Convey("Put() uploads an empty file in place of links", func() {
+				err = os.Remove(requests[0].Local)
+				So(err, ShouldBeNil)
+
+				err = os.Symlink(requests[1].Local, requests[0].Local)
+				So(err, ShouldBeNil)
+
+				requests[0].Symlink = requests[1].Local
+
+				err = os.Remove(requests[2].Local)
+				So(err, ShouldBeNil)
+
+				err = os.Link(requests[3].Local, requests[2].Local)
+				So(err, ShouldBeNil)
+
+				requests[2].Hardlink = requests[3].Local
+
+				uCh, urCh, srCh := p.Put()
+
+				uploading := 0
+				uploaded := 0
+
+				for range uCh {
+					uploading++
+				}
+
+				for request := range urCh {
+					if request.Status == RequestStatusUploaded {
+						uploaded++
+					}
+				}
+
+				So(uploading, ShouldEqual, len(requests))
+				So(uploaded, ShouldEqual, len(requests))
+
+				it, err := getItemWithBaton(testClient, requests[0].Remote)
+				So(err, ShouldBeNil)
+				So(it.ISize, ShouldEqual, 0)
+
+				it, err = getItemWithBaton(testClient, requests[2].Remote)
+				So(err, ShouldBeNil)
+				So(it.ISize, ShouldEqual, 0)
+
+				skipped := <-srCh
+				So(skipped, ShouldBeNil)
+			})
 		})
 	})
 
-	SkipConvey("Uploading a strange path works", t, func() {
+	Convey("Uploading a strange path works", t, func() {
 		strangePath, p := testPreparePutFile(t, h, "%s.txt", rootCollection)
 		urCh := testPutFile(p)
 
@@ -227,7 +278,7 @@ func checkPathExistsWithBaton(client *ex.Client, path string) bool {
 }
 
 func getItemWithBaton(client *ex.Client, path string) (ex.RodsItem, error) {
-	return client.ListItem(ex.Args{AVU: true, Timestamp: true}, ex.RodsItem{
+	return client.ListItem(ex.Args{AVU: true, Timestamp: true, Size: true}, ex.RodsItem{
 		IPath: filepath.Dir(path),
 		IName: filepath.Base(path),
 	})
