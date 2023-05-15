@@ -634,7 +634,7 @@ func (d *DB) updateFileEntry(tx *bolt.Tx, setID string, r *put.Request, setDisco
 	}
 
 	entry.LastAttempt = time.Now()
-	entry.Size = r.Size
+	entry.Size = r.UploadedSize()
 
 	if entry.Status == Pending || entry.Status == Failed {
 		entry.Attempts++

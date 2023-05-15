@@ -83,11 +83,11 @@ func TestServer(t *testing.T) { //nolint:cyclop
 	minMBperSecondUploadSpeed := float64(10)
 	maxStuckTime := 1 * time.Hour
 
-	FocusConvey("Given a Server", t, func() {
+	Convey("Given a Server", t, func() {
 		logWriter := gas.NewStringLogger()
 		s := New(logWriter)
 
-		FocusConvey("You can Start the Server with Auth, MakeQueueEndPoints and LoadSetDB", func() {
+		Convey("You can Start the Server with Auth, MakeQueueEndPoints and LoadSetDB", func() {
 			certPath, keyPath, err := gas.CreateTestCert(t)
 			So(err, ShouldBeNil)
 
@@ -142,7 +142,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 				MonitorTime: 0,
 			}
 
-			FocusConvey("Which lets you login", func() {
+			Convey("Which lets you login", func() {
 				token, errl := gas.Login(addr, certPath, "jim", "pass")
 				So(errl, ShouldBeNil)
 				So(token, ShouldNotBeBlank)
@@ -221,6 +221,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 							Remote:    filepath.Join(remoteDir, "a"),
 							Requester: exampleSet.Requester,
 							Set:       exampleSet.Name,
+							Meta:      make(map[string]string),
 						})
 
 						entries, errg := client.GetFiles(exampleSet.ID())
@@ -1216,7 +1217,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 				})
 			})
 
-			FocusConvey("Which lets you login as admin", func() {
+			Convey("Which lets you login as admin", func() {
 				token, errl := gas.Login(addr, certPath, admin, "pass")
 				So(errl, ShouldBeNil)
 
@@ -1229,7 +1230,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 
 				backupPath := dbPath + ".bk"
 
-				FocusConvey("and add a set", func() {
+				Convey("and add a set", func() {
 					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldBeNil)
 
@@ -1292,7 +1293,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						So(got[1].Name, ShouldResemble, exampleSet2.Name)
 					})
 
-					FocusConvey("Then you can use a Putter to automatically deal with upload requests", func() {
+					Convey("Then you can use a Putter to automatically deal with upload requests", func() {
 						requests, errg := client.GetSomeUploadRequests()
 						So(errg, ShouldBeNil)
 						So(len(requests), ShouldEqual, len(discovers))
@@ -1320,7 +1321,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						So(gotSet.Uploaded, ShouldEqual, len(discovers))
 						So(gotSet.Symlinks, ShouldEqual, 1)
 
-						FocusConvey("After completion, re-discovery can find new files and we can re-complete", func() {
+						Convey("After completion, re-discovery can find new files and we can re-complete", func() {
 							newFile := filepath.Join(dirs[0], "new")
 							createFile(t, newFile, 2)
 							expectedNumFiles := len(discovers) + 1
@@ -1378,19 +1379,26 @@ func TestServer(t *testing.T) { //nolint:cyclop
 							}
 
 							discovers = append(discovers, newFile)
+							expectedSetSize := uint64(0)
 
-							for n, local := range discovers {
+							for _, r := range requests {
+								local := r.Local
 								remote := strings.Replace(local, localDir, remoteDir, 1)
 
-								_, err = os.Stat(remote)
-								So(err, ShouldBeNil)
+								info, errs := os.Stat(remote)
+								So(errs, ShouldBeNil)
 
-								if n == 3 {
+								So(info.Size(), ShouldEqual, r.UploadedSize())
+								expectedSetSize += r.UploadedSize()
+
+								if r.Symlink != "" {
 									remoteMeta := handler.GetMeta(remote)
 									So(remoteMeta, ShouldNotBeNil)
-									So(remoteMeta[put.MetaKeyHardlink], ShouldEqual, entries[2].Dest)
+									So(remoteMeta[put.MetaKeySymlink], ShouldEqual, entries[3].Dest)
 								}
 							}
+
+							So(gotSet.SizeFiles, ShouldEqual, expectedSetSize)
 						})
 					})
 
@@ -1488,6 +1496,10 @@ func TestServer(t *testing.T) { //nolint:cyclop
 									remoteMeta := handler.GetMeta(remote)
 									So(remoteMeta, ShouldNotBeNil)
 									So(remoteMeta[put.MetaKeySymlink], ShouldEqual, entries[2].Dest)
+
+									info, errs := os.Stat(remote)
+									So(errs, ShouldBeNil)
+									So(info.Size(), ShouldEqual, 0)
 								}
 							}
 						})
@@ -2045,7 +2057,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						fmt.Sprintf("open %s: permission denied", filepath.Dir(pathExpected3)))
 				})
 
-				FocusConvey("and add a set with hardlinks defined directly which only uploads the file once", func() {
+				Convey("and add a set with hardlinks defined directly which only uploads the file once", func() {
 					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldBeNil)
 
@@ -2099,7 +2111,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 					So(gotSet.Uploaded, ShouldEqual, 0)
 					So(gotSet.Hardlinks, ShouldEqual, 1)
 
-					FocusConvey("uploading hardlinks sets the hardlink metadata on an empty file", func() {
+					Convey("uploading hardlinks sets the hardlink metadata on an empty file", func() {
 						requests, errg := client.GetSomeUploadRequests()
 						So(errg, ShouldBeNil)
 						So(len(requests), ShouldEqual, 2)
@@ -2123,7 +2135,17 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						So(remoteMeta, ShouldNotBeNil)
 						So(remoteMeta[put.MetaKeyHardlink], ShouldEqual, path1)
 
-						//TODO: the file is 0 bytes even when the source is >0; likewise for symlink
+						info, errs := os.Stat(remote)
+						So(errs, ShouldBeNil)
+						So(info.Size(), ShouldEqual, 0)
+
+						gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+						So(err, ShouldBeNil)
+						So(gotSet.Status, ShouldEqual, set.Complete)
+						So(gotSet.NumFiles, ShouldEqual, 2)
+						So(gotSet.Uploaded, ShouldEqual, 2)
+						So(gotSet.Hardlinks, ShouldEqual, 1)
+						So(gotSet.SizeFiles, ShouldEqual, 1)
 					})
 				})
 
