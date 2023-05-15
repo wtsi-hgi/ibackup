@@ -188,6 +188,53 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 				}
 			})
 
+			Convey("Put() uploads an empty file in place of links", func() {
+				err = os.Remove(requests[0].Local)
+				So(err, ShouldBeNil)
+
+				err = os.Symlink(requests[1].Local, requests[0].Local)
+				So(err, ShouldBeNil)
+
+				requests[0].Symlink = requests[1].Local
+
+				err = os.Remove(requests[2].Local)
+				So(err, ShouldBeNil)
+
+				err = os.Link(requests[3].Local, requests[2].Local)
+				So(err, ShouldBeNil)
+
+				requests[2].Hardlink = requests[3].Local
+
+				uCh, urCh, srCh := p.Put()
+
+				uploading := 0
+				uploaded := 0
+
+				for range uCh {
+					uploading++
+				}
+
+				for request := range urCh {
+					if request.Status == RequestStatusUploaded {
+						uploaded++
+					}
+				}
+
+				So(uploading, ShouldEqual, len(requests))
+				So(uploaded, ShouldEqual, len(requests))
+
+				info, errs := os.Stat(requests[0].Remote)
+				So(errs, ShouldBeNil)
+				So(info.Size(), ShouldEqual, 0)
+
+				info, errs = os.Stat(requests[2].Remote)
+				So(errs, ShouldBeNil)
+				So(info.Size(), ShouldEqual, 0)
+
+				skipped := <-srCh
+				So(skipped, ShouldBeNil)
+			})
+
 			Convey("Underlying put and metadata operation failures result in failed requests", func() {
 				lh.MakeStatFail(requests[0].Remote)
 				lh.MakePutFail(requests[1].Remote)

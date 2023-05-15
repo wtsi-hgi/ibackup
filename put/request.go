@@ -148,6 +148,29 @@ func (r *Request) ValidatePaths() error {
 	return nil
 }
 
+// UploadPath should be used instead of Request.Local for upload purposes.
+//
+// For symlinks and hardlinks, returns a zero-sized file as iRODS doesn't handle
+// links appropriately (there will be metadata allowing its recreation).
+// Otherwise returns Request.Local.
+func (r *Request) UploadPath() string {
+	if r.Symlink == "" && r.Hardlink == "" {
+		return r.Local
+	}
+
+	return os.DevNull
+}
+
+// UploadedSize returns the number of bytes that were uploaded if
+// Request.UploadPath was used.
+func (r *Request) UploadedSize() uint64 {
+	if r.Symlink == "" && r.Hardlink == "" {
+		return r.Size
+	}
+
+	return 0
+}
+
 // Clone returns a copy of this request that can safely be altered without
 // affecting the original.
 func (r *Request) Clone() *Request {

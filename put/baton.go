@@ -396,9 +396,11 @@ func (b *Baton) Stat(request *Request) (*ObjectInfo, error) {
 
 // requestToRodsItem converts a Request in to an extendo RodsItem without AVUs.
 func requestToRodsItem(request *Request) *ex.RodsItem {
+	local := request.UploadPath()
+
 	return &ex.RodsItem{
-		IDirectory: filepath.Dir(request.Local),
-		IFile:      filepath.Base(request.Local),
+		IDirectory: filepath.Dir(local),
+		IFile:      filepath.Base(local),
 		IPath:      filepath.Dir(request.Remote),
 		IName:      filepath.Base(request.Remote),
 	}
@@ -419,12 +421,32 @@ func rodsItemToMeta(it ex.RodsItem) map[string]string {
 // exists. It calculates and stores the md5 checksum remotely, comparing to the
 // local checksum.
 func (b *Baton) Put(request *Request) error {
+	item := requestToRodsItemWithAVUs(request)
+
+	// iRODS treats /dev/null specially, so unless that changes we have to check
+	// for it and create a temporary empty file in its place.
+	if filepath.Join(item.IDirectory, item.IFile) == os.DevNull {
+		file, err := os.CreateTemp("", "ibackup-put-empty-*")
+		if err != nil {
+			return err
+		}
+
+		file.Close()
+
+		name := file.Name()
+
+		item.IDirectory = filepath.Dir(name)
+		item.IFile = filepath.Base(name)
+
+		defer os.Remove(name)
+	}
+
 	_, err := b.putClient.Put(
 		ex.Args{
 			Force:  true,
 			Verify: true,
 		},
-		*requestToRodsItemWithAVUs(request),
+		*item,
 	)
 
 	return err

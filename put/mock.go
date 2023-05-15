@@ -140,7 +140,7 @@ func (l *LocalHandler) Put(request *Request) error {
 		<-time.After(l.putDur)
 	}
 
-	return copyFile(request.Local, request.Remote)
+	return copyFile(request.UploadPath(), request.Remote)
 }
 
 // copyFile copies source to dest.
