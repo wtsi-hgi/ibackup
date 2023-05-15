@@ -1003,7 +1003,7 @@ func TestSetDB(t *testing.T) {
 				So(got.Hardlinks, ShouldEqual, 1)
 				So(got.NumFiles, ShouldEqual, 2)
 
-				Convey("then rediscover the set and still know about the symlinks", func() {
+				Convey("then rediscover the set and still know about the hardlinks", func() {
 					got, errd := db.Discover(setl1.ID(), func(dirEntries []*Entry) ([]*walk.Dirent, error) {
 						return dirents, nil
 					})
@@ -1014,6 +1014,22 @@ func TestSetDB(t *testing.T) {
 					So(got, ShouldNotBeNil)
 					So(err, ShouldBeNil)
 					So(got.Hardlinks, ShouldEqual, 1)
+				})
+
+				Convey("then get back all known local paths for the hardlink", func() {
+					paths, errh := db.HardlinkPaths(entries[1])
+					So(errh, ShouldBeNil)
+					So(paths, ShouldResemble, []string{dirents[0].Path})
+
+					paths, errh = db.HardlinkPaths(entries[0])
+					So(errh, ShouldBeNil)
+					So(paths, ShouldResemble, []string{dirents[1].Path})
+				})
+
+				SkipConvey("then get a remote path for the hardlink", func() {
+					// path, err := db.HardlinkRemote(entries[1])
+					// So(err, ShouldBeNil)
+					// So(path, ShouldEqual, "/remote/path/to/file")
 				})
 			})
 
