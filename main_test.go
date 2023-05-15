@@ -194,18 +194,21 @@ func (s *TestServer) runBinary(t *testing.T, args ...string) (int, string) {
 	}
 
 	if err != nil {
-		t.Logf("binary gave error: %s\noutput was: %s\n", err, string(outB))
+		var exitError *exec.ExitError
+		if !errors.As(err, &exitError) {
+			t.Logf("binary gave error: %s\noutput was: %s\n", err, string(outB))
+		}
 	}
 
 	return cmd.ProcessState.ExitCode(), strings.Join(lines, "\n")
 }
 
-func (s *TestServer) confirmOutput(t *testing.T, args []string, expected string) {
+func (s *TestServer) confirmOutput(t *testing.T, args []string, expectedCode int, expected string) {
 	t.Helper()
 
 	exitCode, actual := s.runBinary(t, args...)
 
-	So(exitCode, ShouldEqual, 0)
+	So(exitCode, ShouldEqual, expectedCode)
 	So(actual, ShouldEqual, expected)
 }
 
@@ -273,19 +276,21 @@ func TestMain(m *testing.M) {
 	}
 }
 
+func TestNoServer(t *testing.T) {
+	Convey("With no server, status fails", t, func() {
+		s := new(TestServer)
+
+		s.confirmOutput(t, []string{"status"}, 1, "you must supply --url")
+	})
+}
+
 func TestStatus(t *testing.T) {
 	Convey("With a started server", t, func() {
 		s := NewTestServer(t)
 		So(s, ShouldNotBeNil)
 
-		/*
-			SkipConvey("With no server, status fails", t, func() {
-				s.confirmOutput(t, []string{"status"}, 1, "you must supply --url")
-			})
-		*/
-
 		Convey("With no sets defined, status returns no sets", func() {
-			s.confirmOutput(t, []string{"status"}, `Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
+			s.confirmOutput(t, []string{"status"}, 0, `Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
 Global put client status (/10): 0 creating collections; 0 currently uploading
 no backup sets`)
 		})
@@ -295,7 +300,7 @@ no backup sets`)
 			s.addSetForTesting(t, "testAdd", transformer, localDir)
 
 			Convey("Status tells you where input directories would get uploaded to", func() {
-				s.confirmOutput(t, []string{"status"}, `Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
+				s.confirmOutput(t, []string{"status"}, 0, `Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
 Global put client status (/10): 0 creating collections; 0 currently uploading
 
 Name: testAdd
@@ -327,7 +332,7 @@ Directories:
 			<-time.After(250 * time.Millisecond)
 
 			Convey("Status tells you an example of where input files would get uploaded to", func() {
-				s.confirmOutput(t, []string{"status", "--name", "testAddFiles"},
+				s.confirmOutput(t, []string{"status", "--name", "testAddFiles"}, 0,
 					`Global put queue status: 2 queued; 0 reserved to be worked on; 0 failed
 Global put client status (/10): 0 creating collections; 0 currently uploading
 
@@ -346,7 +351,7 @@ Example File: `+dir+`/path/to/other/file => /remote/path/to/other/file`)
 			_, localDir, _ := prepareSetWithEmptyDir(t)
 			s.addSetForTesting(t, "badHumgen", "humgen", localDir)
 
-			s.confirmOutput(t, []string{"status", "-n", "badHumgen"},
+			s.confirmOutput(t, []string{"status", "-n", "badHumgen"}, 0,
 				`Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
 Global put client status (/10): 0 creating collections; 0 currently uploading
 
@@ -379,7 +384,7 @@ your transformer didn't work: not a valid humgen lustre path [`+localDir+`/file.
 
 			s.addSetForTesting(t, "badPerms", transformer, localDir)
 
-			s.confirmOutput(t, []string{"status", "-n", "badPerms"},
+			s.confirmOutput(t, []string{"status", "-n", "badPerms"}, 0,
 				`Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
 Global put client status (/10): 0 creating collections; 0 currently uploading
 
@@ -408,7 +413,7 @@ Directories:
 
 			s.addSetForTesting(t, "humgenSet", "humgen", humgenFile)
 
-			s.confirmOutput(t, []string{"status", "-n", "humgenSet"},
+			s.confirmOutput(t, []string{"status", "-n", "humgenSet"}, 0,
 				`Global put queue status: 1 queued; 0 reserved to be worked on; 0 failed
 Global put client status (/10): 0 creating collections; 0 currently uploading
 
@@ -581,7 +586,7 @@ func TestBackup(t *testing.T) {
 			bs.startServer()
 
 			bs.confirmOutput(t, []string{
-				"status", "-n", "testForBackup"}, `Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
+				"status", "-n", "testForBackup"}, 0, `Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
 Global put client status (/10): 0 creating collections; 0 currently uploading
 
 Name: testForBackup
