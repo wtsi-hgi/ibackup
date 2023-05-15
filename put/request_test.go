@@ -28,6 +28,7 @@ package put
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"testing"
 	"time"
@@ -162,5 +163,50 @@ func TestRequest(t *testing.T) {
 		r = &Request{Local: local, Size: size}
 		So(r.UploadPath(), ShouldEqual, local)
 		So(r.UploadedSize(), ShouldEqual, size)
+	})
+
+	Convey("Cloning a request creates an exact copy with cloned maps", t, func() {
+		r := &Request{
+			Local:     "/some/path",
+			Remote:    "/some/remote/path",
+			Requester: "someRequester",
+			Set:       "testSet",
+			Meta: map[string]string{
+				"metaKey": "metaValue",
+			},
+			Status:   RequestStatusFailed,
+			Symlink:  "/path/to/dest",
+			Hardlink: "/path/to/original",
+			Size:     123,
+			Error:    "oh no",
+			Stuck:    new(Stuck),
+			remoteMeta: map[string]string{
+				"remoteMetaKey": "remoteMetaValue",
+			},
+			skipPut: true,
+		}
+
+		v := reflect.ValueOf(r).Elem()
+		t := v.Type()
+
+		fields := t.NumField()
+
+		for i := 0; i < fields; i++ {
+			if t.Field(i).Name == "LocalForJSON" || t.Field(i).Name == "RemoteForJSON" {
+				continue
+			}
+
+			So(v.Field(i).IsZero(), ShouldBeFalse)
+		}
+
+		clone := r.Clone()
+		So(r, ShouldNotEqual, clone)
+		So(*r, ShouldResemble, *clone)
+
+		r.Requester = "someOtherRequester"
+		So(r.Requester, ShouldNotEqual, clone.Requester)
+
+		r.Meta["metaKey"] = "anotherMetaValue"
+		So(r.Meta, ShouldNotResemble, clone.Meta)
 	})
 }

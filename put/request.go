@@ -181,8 +181,11 @@ func (r *Request) Clone() *Request {
 		Set:        r.Set,
 		Meta:       r.Meta,
 		Status:     r.Status,
+		Symlink:    r.Symlink,
+		Hardlink:   r.Hardlink,
 		Size:       r.Size,
 		Error:      r.Error,
+		Stuck:      r.Stuck,
 		remoteMeta: r.remoteMeta,
 		skipPut:    r.skipPut,
 	}
