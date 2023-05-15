@@ -49,46 +49,6 @@ import (
 const app = "ibackup"
 const userPerms = 0700
 
-// TestMain builds ourself, starts a test server, runs client tests against the
-// server and cleans up afterwards. It's a full e2e integration test.
-func TestMain(m *testing.M) {
-	var exitCode int
-	defer func() {
-		os.Exit(exitCode)
-	}()
-
-	d1 := buildSelf()
-	if d1 == nil {
-		return
-	}
-
-	defer d1()
-
-	exitCode = m.Run()
-
-	for _, s := range servers {
-		if err := s.Shutdown(); err != nil {
-			fmt.Println("error shutting down server: ", err) //nolint:forbidigo
-		}
-	}
-}
-
-func buildSelf() func() {
-	if err := exec.Command("make", "build").Run(); err != nil {
-		failMainTest(err.Error())
-
-		return nil
-	}
-
-	return func() { os.Remove(app) }
-}
-
-func failMainTest(err string) {
-	fmt.Println(err) //nolint:forbidigo
-}
-
-var servers []*TestServer //nolint:gochecknoglobals
-
 type TestServer struct {
 	key          string
 	cert         string
@@ -209,6 +169,55 @@ func (s *TestServer) waitForServer() {
 	So(worked, ShouldEqual, true)
 }
 
+func (s *TestServer) runBinary(t *testing.T, args ...string) (int, string) {
+	t.Helper()
+
+	args = append([]string{"--url", s.url, "--cert", s.cert}, args...)
+
+	cmd := exec.Command("./"+app, args...)
+	cmd.Env = s.env
+
+	outB, err := cmd.CombinedOutput()
+	out := string(outB)
+	out = strings.TrimRight(out, "\n")
+	lines := strings.Split(out, "\n")
+
+	for n, line := range lines {
+		if strings.HasPrefix(line, "t=") {
+			pos := strings.IndexByte(line, '"')
+			lines[n] = line[pos+1 : len(line)-1]
+		}
+
+		if strings.HasPrefix(line, "Discovery:") {
+			lines[n] = line[:10]
+		}
+	}
+
+	if err != nil {
+		t.Logf("binary gave error: %s\noutput was: %s\n", err, string(outB))
+	}
+
+	return cmd.ProcessState.ExitCode(), strings.Join(lines, "\n")
+}
+
+func (s *TestServer) confirmOutput(t *testing.T, args []string, expected string) {
+	t.Helper()
+
+	exitCode, actual := s.runBinary(t, args...)
+
+	So(exitCode, ShouldEqual, 0)
+	So(actual, ShouldEqual, expected)
+}
+
+func (s *TestServer) addSetForTesting(t *testing.T, name, transformer, path string) {
+	t.Helper()
+
+	exitCode, _ := s.runBinary(t, "add", "--name", name, "--transformer", transformer, "--path", path)
+	So(exitCode, ShouldEqual, 0)
+
+	<-time.After(250 * time.Millisecond)
+}
+
 func (s *TestServer) Shutdown() error {
 	err := s.cmd.Process.Signal(os.Interrupt)
 
@@ -224,13 +233,44 @@ func (s *TestServer) Shutdown() error {
 	}
 }
 
-func remoteDBBackupPath() string {
-	collection := os.Getenv("IBACKUP_TEST_COLLECTION")
-	if collection == "" {
-		return ""
+var servers []*TestServer //nolint:gochecknoglobals
+
+func failMainTest(err string) {
+	fmt.Println(err) //nolint:forbidigo
+}
+
+func buildSelf() func() {
+	if err := exec.Command("make", "build").Run(); err != nil {
+		failMainTest(err.Error())
+
+		return nil
 	}
 
-	return filepath.Join(collection, "db.bk")
+	return func() { os.Remove(app) }
+}
+
+// TestMain builds ourself, starts a test server, runs client tests against the
+// server and cleans up afterwards. It's a full e2e integration test.
+func TestMain(m *testing.M) {
+	var exitCode int
+	defer func() {
+		os.Exit(exitCode)
+	}()
+
+	d1 := buildSelf()
+	if d1 == nil {
+		return
+	}
+
+	defer d1()
+
+	exitCode = m.Run()
+
+	for _, s := range servers {
+		if err := s.Shutdown(); err != nil {
+			fmt.Println("error shutting down server: ", err) //nolint:forbidigo
+		}
+	}
 }
 
 func TestStatus(t *testing.T) {
@@ -401,6 +441,15 @@ func prepareSetWithEmptyDir(t *testing.T) (string, string, string) {
 	return transformer, someDir, "/remote/some/dir"
 }
 
+func remoteDBBackupPath() string {
+	collection := os.Getenv("IBACKUP_TEST_COLLECTION")
+	if collection == "" {
+		return ""
+	}
+
+	return filepath.Join(collection, "db.bk")
+}
+
 func TestPut(t *testing.T) {
 	convey := Convey
 	conveyText := "In server mode, put exits early if there are long-time stuck uploads"
@@ -506,6 +555,19 @@ func TestBackup(t *testing.T) {
 
 		So(li.Size(), ShouldEqual, ri.Size())
 
+		hashFile := func(path string) string {
+			f, err := os.Open(path)
+			So(err, ShouldBeNil)
+
+			defer f.Close()
+
+			s := sha256.New()
+			_, err = io.Copy(s, f)
+			So(err, ShouldBeNil)
+
+			return fmt.Sprintf("%x", s.Sum(nil))
+		}
+
 		bh := hashFile(s.backupFile)
 		rh := hashFile(gotPath)
 		So(bh, ShouldEqual, rh)
@@ -534,66 +596,4 @@ Directories:
   `+localDir+` => `+remoteDir)
 		})
 	})
-}
-
-func (s *TestServer) confirmOutput(t *testing.T, args []string, expected string) {
-	t.Helper()
-
-	exitCode, actual := s.runBinary(t, args...)
-
-	So(exitCode, ShouldEqual, 0)
-	So(actual, ShouldEqual, expected)
-}
-
-func (s *TestServer) runBinary(t *testing.T, args ...string) (int, string) {
-	t.Helper()
-
-	args = append([]string{"--url", s.url, "--cert", s.cert}, args...)
-
-	cmd := exec.Command("./"+app, args...)
-	cmd.Env = s.env
-
-	outB, err := cmd.CombinedOutput()
-	out := string(outB)
-	out = strings.TrimRight(out, "\n")
-	lines := strings.Split(out, "\n")
-
-	for n, line := range lines {
-		if strings.HasPrefix(line, "t=") {
-			pos := strings.IndexByte(line, '"')
-			lines[n] = line[pos+1 : len(line)-1]
-		}
-
-		if strings.HasPrefix(line, "Discovery:") {
-			lines[n] = line[:10]
-		}
-	}
-
-	if err != nil {
-		t.Logf("binary gave error: %s\noutput was: %s\n", err, string(outB))
-	}
-
-	return cmd.ProcessState.ExitCode(), strings.Join(lines, "\n")
-}
-
-func (s *TestServer) addSetForTesting(t *testing.T, name, transformer, path string) {
-	t.Helper()
-
-	exitCode, _ := s.runBinary(t, "add", "--name", name, "--transformer", transformer, "--path", path)
-	So(exitCode, ShouldEqual, 0)
-
-	<-time.After(250 * time.Millisecond)
-}
-
-func hashFile(path string) string {
-	f, err := os.Open(path)
-	So(err, ShouldBeNil)
-
-	defer f.Close()
-
-	s := sha256.New()
-	_, err = io.Copy(s, f)
-	So(err, ShouldBeNil)
-
-	return fmt.Sprintf("%x", s.Sum(nil))
 }
