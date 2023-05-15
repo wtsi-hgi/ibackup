@@ -59,13 +59,16 @@ func (e Error) Error() string {
 }
 
 const (
-	ErrInvalidSetID   = "invalid set ID"
-	ErrInvalidRequest = "request lacks Requester or Set"
-	ErrInvalidEntry   = "invalid set entry"
+	ErrInvalidSetID           = "invalid set ID"
+	ErrInvalidRequest         = "request lacks Requester or Set"
+	ErrInvalidEntry           = "invalid set entry"
+	ErrInvalidTransformerPath = "invalid transformer path concatenation"
 
 	setsBucket                    = "sets"
 	userToSetBucket               = "userLookup"
 	inodeBucket                   = "inodes"
+	transformerToIDBucket         = "transformerIDs"
+	transformerFromIDBucket       = "transformers"
 	subBucketPrefix               = "~!~"
 	fileBucket                    = subBucketPrefix + "files"
 	dirBucket                     = subBucketPrefix + "dirs"
@@ -121,21 +124,14 @@ func New(path, backupPath string) (*DB, error) {
 	}
 
 	err = boltDB.Update(func(tx *bolt.Tx) error {
-		if _, errc := tx.CreateBucketIfNotExists([]byte(setsBucket)); errc != nil {
-			return errc
+		for _, bucket := range [...]string{setsBucket, failedBucket, inodeBucket,
+			userToSetBucket, userToSetBucket, transformerToIDBucket, transformerFromIDBucket} {
+			if _, errc := tx.CreateBucketIfNotExists([]byte(bucket)); errc != nil {
+				return errc
+			}
 		}
 
-		if _, errc := tx.CreateBucketIfNotExists([]byte(failedBucket)); errc != nil {
-			return errc
-		}
-
-		if _, errc := tx.CreateBucketIfNotExists([]byte(inodeBucket)); errc != nil {
-			return errc
-		}
-
-		_, errc := tx.CreateBucketIfNotExists([]byte(userToSetBucket))
-
-		return errc
+		return nil
 	})
 
 	if err != nil {
