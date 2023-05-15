@@ -73,7 +73,7 @@ func (d *DB) getMountPoints() error {
 func (d *DB) handleInode(tx *bolt.Tx, de *walk.Dirent) (string, error) {
 	var hardlinkDest string
 
-	key := d.inodeMountPointKey(de)
+	key := d.inodeMountPointKeyFromDirent(de)
 
 	b := tx.Bucket([]byte(inodeBucket))
 
@@ -117,10 +117,14 @@ func alreadyInFiles(path string, existing []string) (bool, bool) {
 	return false, false
 }
 
-// inodeMountPointKey returns the inodeBucket key for the Dirent's inode and
+// inodeMountPointKeyFromDirent returns the inodeBucket key for the Dirent's inode and
 // the Dirent's mount point for its path.
-func (d *DB) inodeMountPointKey(de *walk.Dirent) []byte {
+func (d *DB) inodeMountPointKeyFromDirent(de *walk.Dirent) []byte {
 	return append(strconv.AppendUint([]byte{}, de.Inode, hexBase), d.getMountPointFromPath(de.Path)...)
+}
+
+func (d *DB) inodeMountPointKeyFromEntry(e *Entry) []byte {
+	return append(strconv.AppendUint([]byte{}, e.Inode, hexBase), d.getMountPointFromPath(e.Path)...)
 }
 
 // getMountPointFromPath determines the mount point for the given path based on
@@ -147,4 +151,37 @@ func (d *DB) decodeIMPValue(v []byte) []string {
 	dec.MustDecode(&files)
 
 	return files
+}
+
+// HardlinkPaths returns all known hardlink paths that share the same mountpoint
+// and inode as the entry provided.
+func (d *DB) HardlinkPaths(e *Entry) ([]string, error) {
+	var files []string
+
+	if err := d.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(inodeBucket))
+
+		key := d.inodeMountPointKeyFromEntry(e)
+
+		v := b.Get(key)
+		if v == nil {
+			return nil
+		}
+
+		files = d.decodeIMPValue(v)
+
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+
+	for n, path := range files {
+		if path == e.Path {
+			files = append(files[:n], files[n+1:]...)
+
+			break
+		}
+	}
+
+	return files, nil
 }
