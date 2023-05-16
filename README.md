@@ -84,21 +84,21 @@ ibackup status --user <the user's username>
 ```
 ### Monitoring
 
-With the addition of the `--monitor` flag to the add command, you can enable
-monitoring of the set.
+If you would like your set to be periodically checked for changes, you can
+specifiy the `--monitor` flag to the add command.
 
-The `--monitor` flags takes a time period (e.g. 1h for 1 hour) to specify how
-long after the last set completion time you wish the set to be checked again.
+This takes a time period (e.g. 1h for 1 hour) to specify how long after the last
+set completion time you wish the set to be checked again.
 
 For example, the following command will add a monitored set, that will be
-monitored every 72 hours:
+rechecked 72 hours after each completion:
 
 ```
 ibackup add -n monitored_set -p /directory/with/files --monitor 72h
 ```
 
-In this example, every 72 hours, the monitor will activate, rechecking the
-contents of the directory, and will upload any new or modified files to iRODS.
+If the contents of the directory change, with either newly added files or files
+that have been modified, then those will be (re-)uploaded.
 
 NB: This will not remove files already uploaded to iRODS that were removed from
 the local directory.
