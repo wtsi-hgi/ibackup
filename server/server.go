@@ -172,7 +172,7 @@ func (s *Server) EnableJobSubmission(putCmd, deployment, cwd, queue string, numC
 // We submit up to 100 jobs; with the limit most likely being 10 simulteanous
 // jobs at once, that should keep jobs flowing continuously until we next
 // trigger the rac.
-func (s *Server) rac(queuename string, allitemdata []interface{}) {
+func (s *Server) rac(_ string, allitemdata []interface{}) {
 	n := s.estimateJobsNeeded(len(allitemdata))
 	if n == 0 {
 		return
