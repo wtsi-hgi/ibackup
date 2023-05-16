@@ -80,6 +80,17 @@ func NewTestServer(t *testing.T) *TestServer {
 	return s
 }
 
+func (s *TestServer) prepareFilePaths(dir string) {
+	s.dir = dir
+	s.dbFile = filepath.Join(s.dir, "db")
+	s.logFile = filepath.Join(s.dir, "log")
+
+	home, err := os.UserHomeDir()
+	So(err, ShouldBeNil)
+
+	s.env = []string{"XDG_STATE_HOME=" + s.dir, "PATH=" + os.Getenv("PATH"), "HOME=" + home}
+}
+
 // prepareConfig creates a key and cert to use with a server and looks at
 // IBACKUP_TEST_* env vars to set SERVER vars as well.
 func (s *TestServer) prepareConfig() {
@@ -108,17 +119,6 @@ func (s *TestServer) prepareConfig() {
 
 	s.ldapServer = os.Getenv("IBACKUP_TEST_LDAP_SERVER")
 	s.ldapLookup = os.Getenv("IBACKUP_TEST_LDAP_LOOKUP")
-}
-
-func (s *TestServer) prepareFilePaths(dir string) {
-	s.dir = dir
-	s.dbFile = filepath.Join(s.dir, "db")
-	s.logFile = filepath.Join(s.dir, "log")
-
-	home, err := os.UserHomeDir()
-	So(err, ShouldBeNil)
-
-	s.env = []string{"XDG_STATE_HOME=" + s.dir, "PATH=" + os.Getenv("PATH"), "HOME=" + home}
 }
 
 func (s *TestServer) startServer() {
@@ -238,20 +238,6 @@ func (s *TestServer) Shutdown() error {
 
 var servers []*TestServer //nolint:gochecknoglobals
 
-func failMainTest(err string) {
-	fmt.Println(err) //nolint:forbidigo
-}
-
-func buildSelf() func() {
-	if err := exec.Command("make", "build").Run(); err != nil {
-		failMainTest(err.Error())
-
-		return nil
-	}
-
-	return func() { os.Remove(app) }
-}
-
 // TestMain builds ourself, starts a test server, runs client tests against the
 // server and cleans up afterwards. It's a full e2e integration test.
 func TestMain(m *testing.M) {
@@ -276,6 +262,20 @@ func TestMain(m *testing.M) {
 	}
 }
 
+func buildSelf() func() {
+	if err := exec.Command("make", "build").Run(); err != nil {
+		failMainTest(err.Error())
+
+		return nil
+	}
+
+	return func() { os.Remove(app) }
+}
+
+func failMainTest(err string) {
+	fmt.Println(err) //nolint:forbidigo
+}
+
 func TestNoServer(t *testing.T) {
 	Convey("With no server, status fails", t, func() {
 		s := new(TestServer)
@@ -296,7 +296,7 @@ no backup sets`)
 		})
 
 		Convey("Given an added set defined with a directory", func() {
-			transformer, localDir, remoteDir := prepareSetWithEmptyDir(t)
+			transformer, localDir, remoteDir := prepareForSetWithEmptyDir(t)
 			s.addSetForTesting(t, "testAdd", transformer, localDir)
 
 			Convey("Status tells you where input directories would get uploaded to", func() {
@@ -348,7 +348,7 @@ Example File: `+dir+`/path/to/other/file => /remote/path/to/other/file`)
 		})
 
 		Convey("Given an added set defined with a non-humgen dir and humgen transformer, it warns about the issue", func() {
-			_, localDir, _ := prepareSetWithEmptyDir(t)
+			_, localDir, _ := prepareForSetWithEmptyDir(t)
 			s.addSetForTesting(t, "badHumgen", "humgen", localDir)
 
 			s.confirmOutput(t, []string{"status", "-n", "badHumgen"}, 0,
@@ -369,7 +369,7 @@ your transformer didn't work: not a valid humgen lustre path [`+localDir+`/file.
 		})
 
 		Convey("Given an added set with an inaccessible subfolder, print the error to the user", func() {
-			transformer, localDir, remote := prepareSetWithEmptyDir(t)
+			transformer, localDir, remote := prepareForSetWithEmptyDir(t)
 			badPermDir := filepath.Join(localDir, "bad-perms-dir")
 			err := os.Mkdir(badPermDir, userPerms)
 			So(err, ShouldBeNil)
@@ -429,10 +429,10 @@ Example File: `+humgenFile+" => /humgen/teams/hgi/scratch125/mercury/ibackup/fil
 	})
 }
 
-// prepareSetWithEmptyDir creates a tempdir with a subdirectory inside it, and
+// prepareForSetWithEmptyDir creates a tempdir with a subdirectory inside it, and
 // returns a prefix transformer, the directory created and the remote upload
 // location.
-func prepareSetWithEmptyDir(t *testing.T) (string, string, string) {
+func prepareForSetWithEmptyDir(t *testing.T) (string, string, string) {
 	t.Helper()
 
 	dir := t.TempDir()
@@ -444,15 +444,6 @@ func prepareSetWithEmptyDir(t *testing.T) (string, string, string) {
 	transformer := "prefix=" + dir + ":/remote"
 
 	return transformer, someDir, "/remote/some/dir"
-}
-
-func remoteDBBackupPath() string {
-	collection := os.Getenv("IBACKUP_TEST_COLLECTION")
-	if collection == "" {
-		return ""
-	}
-
-	return filepath.Join(collection, "db.bk")
 }
 
 func TestPut(t *testing.T) {
@@ -477,7 +468,7 @@ func TestPut(t *testing.T) {
 		}
 
 		remoteDir := filepath.Dir(remoteDBPath)
-		_, localDir, _ := prepareSetWithEmptyDir(t)
+		_, localDir, _ := prepareForSetWithEmptyDir(t)
 		transformer := fmt.Sprintf("prefix=%s:%s", localDir, remoteDir)
 		stuckFilePath := filepath.Join(localDir, "stuck.fifo")
 
@@ -496,6 +487,15 @@ func TestPut(t *testing.T) {
 		So(exitCode, ShouldEqual, 0)
 		So(out, ShouldContainSubstring, put.ErrStuckTimeout)
 	})
+}
+
+func remoteDBBackupPath() string {
+	collection := os.Getenv("IBACKUP_TEST_COLLECTION")
+	if collection == "" {
+		return ""
+	}
+
+	return filepath.Join(collection, "db.bk")
 }
 
 func TestBackup(t *testing.T) {
@@ -517,7 +517,7 @@ func TestBackup(t *testing.T) {
 
 		s.startServer()
 
-		transformer, localDir, remoteDir := prepareSetWithEmptyDir(t)
+		transformer, localDir, remoteDir := prepareForSetWithEmptyDir(t)
 		s.addSetForTesting(t, "testForBackup", transformer, localDir)
 
 		<-time.After(time.Second) // wait for both backup cycles to run
