@@ -308,7 +308,7 @@ Transformer: `+transformer+`
 Monitored: false; Archive: false
 Status: complete
 Discovery:
-Num files: 0; Size files: 0 B
+Num files: 0; Symlinks: 0; Hardlinks: 0; Size files: 0 B
 Uploaded: 0; Failed: 0; Missing: 0
 Completed in: 0s
 Directories:
@@ -341,7 +341,7 @@ Transformer: prefix=`+dir+`:/remote
 Monitored: false; Archive: false
 Status: pending upload
 Discovery:
-Num files: 2; Size files: 0 B (and counting)
+Num files: 2; Symlinks: 0; Hardlinks: 0; Size files: 0 B (and counting)
 Uploaded: 0; Failed: 0; Missing: 2
 Example File: `+dir+`/path/to/other/file => /remote/path/to/other/file`)
 			})
@@ -360,7 +360,7 @@ Transformer: humgen
 Monitored: false; Archive: false
 Status: complete
 Discovery:
-Num files: 0; Size files: 0 B
+Num files: 0; Symlinks: 0; Hardlinks: 0; Size files: 0 B
 Uploaded: 0; Failed: 0; Missing: 0
 Completed in: 0s
 Directories:
@@ -394,7 +394,7 @@ Monitored: false; Archive: false
 Status: complete
 Warning: open `+badPermDir+`: permission denied
 Discovery:
-Num files: 0; Size files: 0 B
+Num files: 0; Symlinks: 0; Hardlinks: 0; Size files: 0 B
 Uploaded: 0; Failed: 0; Missing: 0
 Completed in: 0s
 Directories:
@@ -422,9 +422,52 @@ Transformer: humgen
 Monitored: false; Archive: false
 Status: pending upload
 Discovery:
-Num files: 1; Size files: 0 B (and counting)
+Num files: 1; Symlinks: 0; Hardlinks: 0; Size files: 0 B (and counting)
 Uploaded: 0; Failed: 0; Missing: 0
 Example File: `+humgenFile+" => /humgen/teams/hgi/scratch125/mercury/ibackup/file_for_testsuite.do_not_delete")
+		})
+
+		Convey("You can add a set with links and their counts show correctly", func() {
+			dir := t.TempDir()
+			regularPath := filepath.Join(dir, "reg")
+			linkPath := filepath.Join(dir, "link")
+			symPath := filepath.Join(dir, "sym")
+			symPath2 := filepath.Join(dir, "sym2")
+
+			f, err := os.Create(regularPath)
+			So(err, ShouldBeNil)
+			_, err = f.WriteString("regular")
+			So(err, ShouldBeNil)
+			err = f.Close()
+			So(err, ShouldBeNil)
+
+			err = os.Link(regularPath, linkPath)
+			So(err, ShouldBeNil)
+
+			err = os.Symlink(linkPath, symPath)
+			So(err, ShouldBeNil)
+			err = os.Symlink(symPath, symPath2)
+			So(err, ShouldBeNil)
+
+			exitCode, _ := s.runBinary(t, "add", "-p", dir,
+				"--name", "testLinks", "--transformer", "prefix="+dir+":/remote")
+			So(exitCode, ShouldEqual, 0)
+
+			<-time.After(250 * time.Millisecond)
+
+			s.confirmOutput(t, []string{"status", "--name", "testLinks"}, 0,
+				`Global put queue status: 4 queued; 0 reserved to be worked on; 0 failed
+Global put client status (/10): 0 creating collections; 0 currently uploading
+
+Name: testLinks
+Transformer: prefix=`+dir+`:/remote
+Monitored: false; Archive: false
+Status: pending upload
+Discovery:
+Num files: 4; Symlinks: 2; Hardlinks: 1; Size files: 0 B (and counting)
+Uploaded: 0; Failed: 0; Missing: 0
+Directories:
+  `+dir+" => /remote")
 		})
 	})
 }
@@ -446,7 +489,7 @@ func prepareForSetWithEmptyDir(t *testing.T) (string, string, string) {
 	return transformer, someDir, "/remote/some/dir"
 }
 
-func TestPut(t *testing.T) {
+func TestStuck(t *testing.T) {
 	convey := Convey
 	conveyText := "In server mode, put exits early if there are long-time stuck uploads"
 	// This test takes at least 1 minute to run, so is disabled by default.
@@ -594,7 +637,7 @@ Transformer: `+transformer+`
 Monitored: false; Archive: false
 Status: complete
 Discovery:
-Num files: 0; Size files: 0 B
+Num files: 0; Symlinks: 0; Hardlinks: 0; Size files: 0 B
 Uploaded: 0; Failed: 0; Missing: 0
 Completed in: 0s
 Directories:
