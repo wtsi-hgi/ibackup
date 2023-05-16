@@ -73,13 +73,9 @@ const transformerInodeSeparator = ":"
 // handleInode recordes the inode of the given Dirent in the database, and
 // returns if it is a hardlink (we've seen the inode before).
 func (d *DB) handleInode(tx *bolt.Tx, de *walk.Dirent, transformerID string) (string, error) {
-	var hardlinkDest string
-
 	key := d.inodeMountPointKeyFromDirent(de)
 
 	b := tx.Bucket([]byte(inodeBucket))
-
-	var files []string
 
 	transformerPath := transformerID + transformerInodeSeparator + de.Path
 
@@ -88,8 +84,12 @@ func (d *DB) handleInode(tx *bolt.Tx, de *walk.Dirent, transformerID string) (st
 		return "", b.Put(key, d.encodeToBytes([]string{transformerPath}))
 	}
 
-	files = d.decodeIMPValue(v)
-	hardlinkDest = files[0]
+	files := d.decodeIMPValue(v)
+
+	_, hardlinkDest, err := splitTransformerPath(files[0])
+	if err != nil {
+		return "", err
+	}
 
 	isExistingPath, isOriginalPath := alreadyInFiles(transformerPath, files)
 
@@ -102,6 +102,15 @@ func (d *DB) handleInode(tx *bolt.Tx, de *walk.Dirent, transformerID string) (st
 	}
 
 	return hardlinkDest, b.Put(key, d.encodeToBytes(append(files, transformerPath)))
+}
+
+func splitTransformerPath(tp string) (string, string, error) {
+	transformerID, hardlinkDest, ok := strings.Cut(tp, transformerInodeSeparator)
+	if !ok {
+		return "", "", &Error{msg: ErrInvalidTransformerPath}
+	}
+
+	return transformerID, hardlinkDest, nil
 }
 
 // alreadyInFiles checks if path is in existing and returns true if so.
@@ -163,16 +172,7 @@ func (d *DB) HardlinkPaths(e *Entry) ([]string, error) {
 	var transformerPaths []string
 
 	if err := d.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte(inodeBucket))
-
-		key := d.inodeMountPointKeyFromEntry(e)
-
-		v := b.Get(key)
-		if v == nil {
-			return nil
-		}
-
-		transformerPaths = d.decodeIMPValue(v)
+		transformerPaths = d.getTransformerPaths(tx, e)
 
 		return nil
 	}); err != nil {
@@ -182,14 +182,11 @@ func (d *DB) HardlinkPaths(e *Entry) ([]string, error) {
 	files := make([]string, 0, len(transformerPaths))
 
 	for _, transformerPath := range transformerPaths {
-		pos := strings.Index(transformerPath, transformerInodeSeparator)
-		if pos < 0 {
-			return nil, &Error{
-				msg: ErrInvalidTransformerPath,
-			}
+		_, path, err := splitTransformerPath(transformerPath)
+		if err != nil {
+			return nil, err
 		}
 
-		path := transformerPath[pos+1:]
 		if path == e.Path {
 			continue
 		}
@@ -200,47 +197,60 @@ func (d *DB) HardlinkPaths(e *Entry) ([]string, error) {
 	return files, nil
 }
 
+func (d *DB) getTransformerPaths(tx *bolt.Tx, e *Entry) []string {
+	ib := tx.Bucket([]byte(inodeBucket))
+
+	key := d.inodeMountPointKeyFromEntry(e)
+
+	v := ib.Get(key)
+	if v == nil {
+		return nil
+	}
+
+	transformerPaths := d.decodeIMPValue(v)
+	if len(transformerPaths) == 0 {
+		return nil
+	}
+
+	return transformerPaths
+}
+
 func (d *DB) HardlinkRemote(e *Entry) (string, error) {
 	var remotePath string
 
 	err := d.db.View(func(tx *bolt.Tx) error {
-		ib := tx.Bucket([]byte(inodeBucket))
-
-		key := d.inodeMountPointKeyFromEntry(e)
-
-		v := ib.Get(key)
-		if v == nil {
-			return nil
-		}
-
-		transformerPaths := d.decodeIMPValue(v)
+		transformerPaths := d.getTransformerPaths(tx, e)
 		if len(transformerPaths) == 0 {
 			return nil
 		}
 
-		transformerID, path, ok := strings.Cut(transformerPaths[0], transformerInodeSeparator)
-		if !ok {
-			return &Error{msg: ErrInvalidTransformerPath}
-		}
-
-		tb := tx.Bucket([]byte(transformerFromIDBucket))
-
-		v = tb.Get([]byte(transformerID))
-		if v == nil {
-			return &Error{msg: ErrInvalidTransformerPath}
-		}
-
-		s := &Set{Transformer: string(v)}
-
-		t, err := s.MakeTransformer()
+		transformerID, path, err := splitTransformerPath(transformerPaths[0])
 		if err != nil {
 			return err
 		}
 
-		remotePath, err = t(path)
+		remotePath, err = getRemotePath(tx, transformerID, path)
 
 		return err
 	})
 
 	return remotePath, err
+}
+
+func getRemotePath(tx *bolt.Tx, transformerID, path string) (string, error) {
+	tb := tx.Bucket([]byte(transformerFromIDBucket))
+
+	v := tb.Get([]byte(transformerID))
+	if v == nil {
+		return "", &Error{msg: ErrInvalidTransformerPath}
+	}
+
+	s := &Set{Transformer: string(v)}
+
+	t, err := s.MakeTransformer()
+	if err != nil {
+		return "", err
+	}
+
+	return t(path)
 }
