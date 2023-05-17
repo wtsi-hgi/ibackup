@@ -2220,6 +2220,8 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						So(gotSet.Uploaded, ShouldEqual, 0)
 						So(gotSet.Hardlinks, ShouldEqual, 1)
 					})
+
+					//TODO: test for update
 				})
 
 				Convey("and add a set with hardlinks in a directory which only uploads the file once", func() {
