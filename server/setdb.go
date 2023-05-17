@@ -851,8 +851,54 @@ func (s *Server) handleNewlyCompletedSets(r *put.Request) error {
 		return nil
 	}
 
+	entries, err := s.db.GetFileEntries(completed.ID())
+	if err != nil {
+		return err
+	}
+
+	for _, entry := range entries {
+
+		s.ensureHardlinkedDataUploaded(completed, entry)
+	}
+
 	s.monitorSet(completed)
 	s.tryBackup()
+
+	return nil
+}
+
+func (s *Server) ensureHardlinkedDataUploaded(completed *set.Set, entry *set.Entry) error {
+	if entry.Type != set.Hardlink {
+		return nil
+	}
+
+	transformer, err := completed.MakeTransformer()
+	if err != nil {
+		return err
+	}
+
+	remote, err := s.db.HardlinkRemote(entry)
+
+	request, err := entryToRequest(entry, transformer, completed)
+	if err != nil {
+		return err
+	}
+
+	request.Remote = remote
+
+	rInfo, err := s.remoteStatter.Stat(request)
+	if err != nil {
+		return err
+	}
+
+	lInfo, err := os.Stat(entry.Path)
+	if err != nil {
+		return err
+	}
+
+	if !rInfo.Exists || lInfo.ModTime().After(rInfo.ModTime()) {
+		//TODO: ...
+	}
 
 	return nil
 }
