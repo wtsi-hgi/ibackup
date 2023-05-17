@@ -121,14 +121,19 @@ database that you've made, to investigate.
 			warn("ldap options not supplied, will assume all user passwords are correct!")
 		}
 
+		handler, err := put.GetBatonHandler()
+		if err != nil {
+			die("failed to get baton handler: %s", err)
+		}
+
 		logWriter := setServerLogger(serverLogPath)
 
 		sync.Opts.DeadlockTimeout = deadlockTimeout
-		s := server.New(logWriter)
+		s := server.New(logWriter, handler)
 
 		prepareAuth(s)
 
-		err := s.MakeQueueEndPoints()
+		err = s.MakeQueueEndPoints()
 		if err != nil {
 			die("failed to make queue endpoints: %s", err)
 		}
@@ -170,12 +175,10 @@ database that you've made, to investigate.
 				die("remote backup path defined when no local backup path provided")
 			}
 
-			handler, errb := put.GetBatonHandler()
-			if errb != nil {
-				die("failed to get baton handler: %s", errb)
-			}
-
 			s.EnableRemoteDBBackups(serverRemoteBackupPath, handler)
+		} else {
+			handler.EnsureCollection("/humgen") //TODO: FIX!!!!!
+			handler.CollectionsDone()
 		}
 
 		defer s.Stop()

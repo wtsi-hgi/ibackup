@@ -94,7 +94,7 @@ type Server struct {
 //
 // It logs to the given io.Writer, which could for example be syslog using the
 // log/syslog pkg with syslog.new(syslog.LOG_INFO, "tag").
-func New(logWriter io.Writer) *Server {
+func New(logWriter io.Writer, handler put.Handler) *Server {
 	s := &Server{
 		Server:              *gas.New(logWriter),
 		numClients:          1,
@@ -103,6 +103,7 @@ func New(logWriter io.Writer) *Server {
 		creatingCollections: make(map[string]bool),
 		uploading:           make(map[string]*put.Request),
 		stuckRequests:       make(map[string]*put.Request),
+		remoteStatter:       handler,
 	}
 
 	s.monitor = NewMonitor(func(given *set.Set) {
