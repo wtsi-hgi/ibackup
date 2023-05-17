@@ -85,7 +85,17 @@ func TestServer(t *testing.T) { //nolint:cyclop
 
 	FocusConvey("Given a Server", t, func() {
 		logWriter := gas.NewStringLogger()
-		s := New(logWriter)
+
+		handler, err := put.GetBatonHandler()
+		So(err, ShouldBeNil)
+
+		err = handler.EnsureCollection("/humgen") //TODO: FIX!!!!!
+		So(err, ShouldBeNil)
+
+		err = handler.CollectionsDone()
+		So(err, ShouldBeNil)
+
+		s := New(logWriter, handler)
 
 		FocusConvey("You can Start the Server with Auth, MakeQueueEndPoints and LoadSetDB", func() {
 			certPath, keyPath, err := gas.CreateTestCert(t)
@@ -2148,7 +2158,8 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						So(gotSet.SizeFiles, ShouldEqual, 1)
 					})
 
-					FocusConvey("if the source hardlink doesn't get uploaded, the next assumed hardlink gets uploaded and corrected", func() {
+					FocusConvey("if the source hardlink doesn't get uploaded,"+
+						" the next assumed hardlink gets uploaded and corrected", func() {
 						unhardSet := &set.Set{
 							Name:        "unhard",
 							Requester:   exampleSet.Requester,
@@ -2182,6 +2193,8 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						So(errg, ShouldBeNil)
 						So(len(requests), ShouldEqual, 3)
 
+						fmt.Printf("\nafter discovery, got 3 requests from queue\n")
+
 						p, d := makePutter(t, handler, requests[2:], client)
 						defer d()
 
@@ -2191,6 +2204,14 @@ func TestServer(t *testing.T) { //nolint:cyclop
 							minMBperSecondUploadSpeed, minTimeForUpload, 1*time.Hour, logger)
 						So(err, ShouldBeNil)
 
+						gotSet, err = client.GetSetByID(unhardSet.Requester, unhardSet.ID())
+						So(err, ShouldBeNil)
+						So(gotSet.Status, ShouldEqual, set.Complete)
+						So(gotSet.NumFiles, ShouldEqual, 1)
+						So(gotSet.Uploaded, ShouldEqual, 1)
+						So(gotSet.Hardlinks, ShouldEqual, 1)
+						So(gotSet.SizeFiles, ShouldEqual, 0)
+
 						transformer, errg := unhardSet.MakeTransformer()
 						So(errg, ShouldBeNil)
 
@@ -2199,6 +2220,27 @@ func TestServer(t *testing.T) { //nolint:cyclop
 
 						info, errs := os.Stat(remote)
 						So(errs, ShouldBeNil)
+						So(info.Size(), ShouldEqual, 0)
+
+						fmt.Printf("\nafter putting, expecting that 1 request got dealt with, then re-added to queue; will wait for rac\nqueue stats: %+v", s.queue.Stats())
+
+						<-racCalled
+
+						requests, err = client.GetSomeUploadRequests()
+						So(err, ShouldBeNil)
+						So(len(requests), ShouldEqual, 1)
+
+						p, d = makePutter(t, handler, requests, client)
+						defer d()
+
+						uploadStarts, uploadResults, skippedResults = p.Put()
+
+						err = client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults,
+							minMBperSecondUploadSpeed, minTimeForUpload, 1*time.Hour, logger)
+						So(err, ShouldBeNil)
+
+						info, err = os.Stat(remote)
+						So(err, ShouldBeNil)
 						So(info.Size(), ShouldEqual, 1)
 
 						remoteMeta := handler.GetMeta(remote)
