@@ -72,7 +72,7 @@ appropriate):
 ```
 export IBACKUP_SERVER_URL='internal.domain:4678'
 export IBACKUP_SERVER_CERT='/path/to/cert.pem'
-export no_proxy=localhost,127.0.0.1,.internal.sanger.ac.uk
+export no_proxy=localhost,127.0.0.1,.internal.domain
 
 ibackup add --user <the user's username> -n <a good name for the backup set> -t 'prefix=local:remote' [then -d, -f or -p to specify what to backup; see -h for details]
 ```
@@ -82,6 +82,26 @@ You can view the status of backups with:
 ```
 ibackup status --user <the user's username>
 ```
+### Monitoring
+
+If you would like your set to be periodically checked for changes, you can
+specifiy the `--monitor` flag to the add command.
+
+This takes a time period (e.g. 1h for 1 hour) to specify how long after the last
+set completion time you wish the set to be checked again.
+
+For example, the following command will add a monitored set, that will be
+rechecked 72 hours after each completion:
+
+```
+ibackup add -n monitored_set -p /directory/with/files --monitor 72h
+```
+
+If the contents of the directory change, with either newly added files or files
+that have been modified, then those will be (re-)uploaded.
+
+NB: This will not remove files already uploaded to iRODS that were removed from
+the local directory.
 
 ## Manual Usage
 Instead of using the server, for simple one-off backup jobs you can manually

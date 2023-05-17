@@ -181,7 +181,7 @@ func init() {
 		"input paths are terminated by a null character instead of a new line")
 	addCmd.Flags().StringVar(&setDescription, "description", "", "a long description of this backup set")
 	addCmd.Flags().StringVarP(&setMonitor, "monitor", "m", "",
-		"monitor the paths for changes and new files to upload the given time period (eg. 1d for 1 day) after completion")
+		"monitor the paths for changes and new files to upload the given time period (eg. 24h for 1 day) after completion")
 	addCmd.Flags().BoolVarP(&setArchive, "archive", "a", false,
 		"delete local files after successfully uploading them (deletions not yet implemented)")
 	addCmd.Flags().StringVar(&setUser, "user", currentUsername(),
