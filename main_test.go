@@ -468,7 +468,7 @@ Example File: `+humgenFile+" => /humgen/teams/hgi/scratch125/mercury/ibackup/fil
 			symPath := filepath.Join(dir, "sym")
 			symPath2 := filepath.Join(dir, "sym2")
 
-			createTestFile(regularPath, "regular")
+			internal.CreateTestFile(t, regularPath, "regular")
 
 			err := os.Link(regularPath, linkPath)
 			So(err, ShouldBeNil)
@@ -695,8 +695,8 @@ func TestManualMode(t *testing.T) {
 		fileContents1 := "abc"
 		fileContents2 := "1234"
 
-		createTestFile(file1, fileContents1)
-		createTestFile(file2, fileContents2)
+		internal.CreateTestFile(t, file1, fileContents1)
+		internal.CreateTestFile(t, file2, fileContents2)
 
 		files := file1 + "	" + remote1 + "\n"
 		files += file2 + "	" + remote2 + "\n"
@@ -720,17 +720,6 @@ func TestManualMode(t *testing.T) {
 		confirmFileContents(got1, fileContents1)
 		confirmFileContents(got2, fileContents2)
 	})
-}
-
-func createTestFile(path, contents string) {
-	f, err := os.Create(path)
-	So(err, ShouldBeNil)
-
-	_, err = f.WriteString(contents)
-	So(err, ShouldBeNil)
-
-	err = f.Close()
-	So(err, ShouldBeNil)
 }
 
 func getFileFromIRODS(remotePath, localPath string) {

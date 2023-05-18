@@ -35,6 +35,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/wtsi-hgi/ibackup/internal"
 	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-ssg/wrstat/v4/walk"
 	bolt "go.etcd.io/bbolt"
@@ -308,7 +309,7 @@ func TestSetDB(t *testing.T) {
 
 						for i := range pureFiles {
 							pureFiles[i] = filepath.Join(tdir, fmt.Sprintf("%d.txt", i))
-							createEmptyFile(pureFiles[i])
+							internal.CreateTestFile(t, pureFiles[i], "")
 						}
 
 						err = db.SetFileEntries(set.ID(), pureFiles)
@@ -778,7 +779,7 @@ func TestSetDB(t *testing.T) {
 
 				localDir := t.TempDir()
 				path1 := filepath.Join(localDir, "file.link1")
-				createEmptyFile(path1)
+				internal.CreateTestFile(t, path1, "")
 
 				path2 := filepath.Join(localDir, "file.link2")
 				err = os.Link(path1, path2)
@@ -901,7 +902,7 @@ func TestSetDB(t *testing.T) {
 
 				localDir := t.TempDir()
 				path1 := filepath.Join(localDir, "file.source")
-				createEmptyFile(path1)
+				internal.CreateTestFile(t, path1, "")
 
 				path2 := filepath.Join(localDir, "file.dest")
 				err = os.Symlink(path1, path2)
@@ -1048,7 +1049,7 @@ func TestSetDB(t *testing.T) {
 				path1 := filepath.Join(dir, "file")
 				path2 := filepath.Join(dir, "link")
 
-				createEmptyFile(path1)
+				internal.CreateTestFile(t, path1, "")
 				err = os.Symlink(path1, path2)
 				So(err, ShouldBeNil)
 
@@ -1151,13 +1152,6 @@ func TestSetDB(t *testing.T) {
 			})
 		})
 	})
-}
-
-func createEmptyFile(path string) {
-	f, err := os.Create(path)
-	So(err, ShouldBeNil)
-	err = f.Close()
-	So(err, ShouldBeNil)
 }
 
 func setEntryToUploaded(entry *Entry, given *Set, db *DB) {

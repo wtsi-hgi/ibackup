@@ -28,12 +28,15 @@ package internal
 
 import (
 	"os"
+	"path/filepath"
+	"testing"
 	"time"
 )
 
 const (
 	fileCheckFrequency = 10 * time.Millisecond
 	fileCheckTimeout   = 5 * time.Second
+	userPerms          = 0700
 )
 
 // WaitForFile waits for up to 5 seconds for the given path to exist, and
@@ -76,4 +79,45 @@ func WaitForFileChange(path string, lastMod time.Time) bool {
 			}
 		}
 	}
+}
+
+// CreateTestFile creates a file at the given path with the given content. It
+// creates any directories the path needs as necessary.
+func CreateTestFile(t *testing.T, path, contents string) {
+	t.Helper()
+
+	dir := filepath.Dir(path)
+
+	err := os.MkdirAll(dir, userPerms)
+	if err != nil {
+		t.Fatalf("mkdir failed: %s", err)
+	}
+
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create failed: %s", err)
+	}
+
+	_, err = f.WriteString(contents)
+	if err != nil {
+		t.Fatalf("close failed: %s", err)
+	}
+
+	err = f.Close()
+	if err != nil {
+		t.Fatalf("close failed: %s", err)
+	}
+}
+
+// CreateTestFileOfLength creates a file at the given path with the given number
+// of bytes of content. It creates any directories the path needs as necessary.
+func CreateTestFileOfLength(t *testing.T, path string, n int) {
+	t.Helper()
+
+	b := make([]byte, n)
+	for i := range b {
+		b[i] = 1
+	}
+
+	CreateTestFile(t, path, string(b))
 }

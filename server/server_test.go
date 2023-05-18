@@ -706,10 +706,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 
 							Convey("Adding a file to an empty set switches to discovery after completion", func() {
 								addedFile := filepath.Join(emptyDir, "file.txt")
-								f, errc := os.Create(addedFile)
-								So(errc, ShouldBeNil)
-								err = f.Close()
-								So(err, ShouldBeNil)
+								internal.CreateTestFile(t, addedFile, "")
 
 								waitForDiscovery(gotSet)
 
@@ -1323,7 +1320,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 
 						Convey("After completion, re-discovery can find new files and we can re-complete", func() {
 							newFile := filepath.Join(dirs[0], "new")
-							createFile(t, newFile, 2)
+							internal.CreateTestFileOfLength(t, newFile, 2)
 							expectedNumFiles := len(discovers) + 1
 
 							err = client.TriggerDiscovery(exampleSet.ID())
@@ -1876,7 +1873,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 					So(err, ShouldBeNil)
 
 					path := filepath.Join(localDir, "F_G\xe9o.frm")
-					createFile(t, path, 1)
+					internal.CreateTestFileOfLength(t, path, 1)
 
 					err = client.SetFiles(exampleSet.ID(), []string{path})
 					So(err, ShouldBeNil)
@@ -1902,7 +1899,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 					dir := filepath.Join(localDir, "dir\xe9todiscover")
 
 					path := filepath.Join(dir, "\xe9o.frm")
-					createFile(t, path, 1)
+					internal.CreateTestFileOfLength(t, path, 1)
 
 					err = client.SetDirs(exampleSet.ID(), []string{dir})
 					So(err, ShouldBeNil)
@@ -1930,10 +1927,10 @@ func TestServer(t *testing.T) { //nolint:cyclop
 					So(example, ShouldBeNil)
 
 					pathExpected := filepath.Join(localDir, "file1.txt")
-					createFile(t, pathExpected, 1)
+					internal.CreateTestFileOfLength(t, pathExpected, 1)
 
 					pathOther := filepath.Join(localDir, "file2.txt")
-					createFile(t, pathOther, 1)
+					internal.CreateTestFileOfLength(t, pathOther, 1)
 
 					err = client.SetFiles(exampleSet.ID(), []string{pathExpected, pathOther})
 					So(err, ShouldBeNil)
@@ -1967,7 +1964,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 					lastMod := stat.ModTime()
 
 					pathToBackup := filepath.Join(localDir, "a.file")
-					createFile(t, pathToBackup, 1)
+					internal.CreateTestFileOfLength(t, pathToBackup, 1)
 
 					err = client.SetFiles(exampleSet.ID(), []string{pathToBackup})
 					So(err, ShouldBeNil)
@@ -2017,11 +2014,11 @@ func TestServer(t *testing.T) { //nolint:cyclop
 					setDir := filepath.Join(localDir, "perms_test")
 
 					pathExpected := filepath.Join(setDir, "dir1", "file1.txt")
-					createFile(t, pathExpected, 1)
+					internal.CreateTestFileOfLength(t, pathExpected, 1)
 					pathExpected2 := filepath.Join(setDir, "dir2", "file2.txt")
-					createFile(t, pathExpected2, 1)
+					internal.CreateTestFileOfLength(t, pathExpected2, 1)
 					pathExpected3 := filepath.Join(setDir, "dir3", "file3.txt")
-					createFile(t, pathExpected3, 1)
+					internal.CreateTestFileOfLength(t, pathExpected3, 1)
 
 					err = os.Chmod(filepath.Dir(pathExpected2), 0)
 					So(err, ShouldBeNil)
@@ -2062,7 +2059,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 					So(err, ShouldBeNil)
 
 					path1 := filepath.Join(localDir, "file.link1")
-					createFile(t, path1, 1)
+					internal.CreateTestFileOfLength(t, path1, 1)
 
 					path2 := filepath.Join(localDir, "file.link2")
 					err = os.Link(path1, path2)
@@ -2158,7 +2155,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 					So(err, ShouldBeNil)
 
 					path1 := filepath.Join(hdir, "file.link1")
-					createFile(t, path1, 1)
+					internal.CreateTestFileOfLength(t, path1, 1)
 
 					path2 := filepath.Join(hdir, "file.link2")
 					err = os.Link(path1, path2)
@@ -2219,11 +2216,11 @@ func createTestBackupFiles(t *testing.T, dir string) ([]string, []string, []stri
 	}
 
 	for i, path := range files {
-		createFile(t, path, i+1)
+		internal.CreateTestFileOfLength(t, path, i+1)
 	}
 
 	for i, path := range discovers {
-		createFile(t, path, i+1)
+		internal.CreateTestFileOfLength(t, path, i+1)
 	}
 
 	symlinkPath := filepath.Join(dirs[0], "symlink")
@@ -2234,39 +2231,6 @@ func createTestBackupFiles(t *testing.T, dir string) ([]string, []string, []stri
 	discovers = append(discovers, symlinkPath)
 
 	return files, dirs, discovers, symlinkPath
-}
-
-// createFile creates a file at the given path with the given number of bytes of
-// content. It creates any directories the path needs as necessary.
-func createFile(t *testing.T, path string, n int) {
-	t.Helper()
-
-	dir := filepath.Dir(path)
-
-	err := os.MkdirAll(dir, userPerms)
-	if err != nil {
-		t.Fatalf("mkdir failed: %s", err)
-	}
-
-	f, err := os.Create(path)
-	if err != nil {
-		t.Fatalf("create failed: %s", err)
-	}
-
-	b := make([]byte, n)
-	for i := range b {
-		b[i] = 1
-	}
-
-	_, err = f.Write(b)
-	if err != nil {
-		t.Fatalf("close failed: %s", err)
-	}
-
-	err = f.Close()
-	if err != nil {
-		t.Fatalf("close failed: %s", err)
-	}
 }
 
 // createManyTestBackupFiles creates and returns the paths to many files in a
@@ -2280,7 +2244,7 @@ func createManyTestBackupFiles(t *testing.T) []string {
 	for i := range paths {
 		path := filepath.Join(dir, fmt.Sprintf("%d.file", i))
 		paths[i] = path
-		createFile(t, path, 1)
+		internal.CreateTestFileOfLength(t, path, 1)
 	}
 
 	return paths
