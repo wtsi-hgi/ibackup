@@ -13,6 +13,7 @@ require (
 	github.com/go-resty/resty/v2 v2.7.0
 	github.com/hashicorp/go-multierror v1.1.1
 	github.com/inconshreveable/log15 v3.0.0-testing.5+incompatible
+	github.com/moby/sys/mountinfo v0.6.2
 	github.com/phayes/freeport v0.0.0-20220201140144-74d24b5ae9f5
 	github.com/rs/zerolog v1.29.1
 	github.com/sasha-s/go-deadlock v0.3.1
@@ -25,7 +26,7 @@ require (
 	github.com/wtsi-npg/logshim v1.3.0
 	github.com/wtsi-npg/logshim-zerolog v1.3.0
 	github.com/wtsi-ssg/wr v0.5.6
-	github.com/wtsi-ssg/wrstat/v3 v3.2.3
+	github.com/wtsi-ssg/wrstat/v4 v4.0.2
 	go.etcd.io/bbolt v1.3.7
 	golang.org/x/term v0.7.0
 )
@@ -41,13 +42,13 @@ require (
 	github.com/VividCortex/ewma v1.2.0 // indirect
 	github.com/alexflint/go-filemutex v1.2.0 // indirect
 	github.com/appleboy/gin-jwt/v2 v2.9.1 // indirect
-	github.com/bytedance/sonic v1.8.7 // indirect
+	github.com/bytedance/sonic v1.8.8 // indirect
 	github.com/chenzhuoyu/base64x v0.0.0-20221115062448-fe3a3abad311 // indirect
 	github.com/creasty/defaults v1.7.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.2.0 // indirect
 	github.com/docker/distribution v2.8.1+incompatible // indirect
-	github.com/docker/docker v23.0.4+incompatible // indirect
+	github.com/docker/docker v23.0.5+incompatible // indirect
 	github.com/docker/go-connections v0.4.0 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/docker/spdystream v0.2.0 // indirect
@@ -79,7 +80,7 @@ require (
 	github.com/gorilla/sessions v1.2.1 // indirect
 	github.com/gorilla/websocket v1.5.0 // indirect
 	github.com/grafov/bcast v0.0.0-20190217190352-1447f067e08d // indirect
-	github.com/hanwen/go-fuse/v2 v2.2.0 // indirect
+	github.com/hanwen/go-fuse/v2 v2.3.0 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-uuid v1.0.3 // indirect
 	github.com/hashicorp/golang-lru v0.5.4 // indirect
@@ -90,7 +91,6 @@ require (
 	github.com/jpillora/backoff v1.0.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/jtolds/gls v4.20.0+incompatible // indirect
-	github.com/karrick/godirwalk v1.17.0 // indirect
 	github.com/klauspost/compress v1.16.5 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.4 // indirect
 	github.com/kr/fs v0.1.0 // indirect
@@ -132,6 +132,7 @@ require (
 	github.com/tklauser/go-sysconf v0.3.11 // indirect
 	github.com/tklauser/numcpus v0.6.0 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
+	github.com/wtsi-hgi/godirwalk v1.18.1 // indirect
 	github.com/yusufpapurcu/wmi v1.2.2 // indirect
 	golang.org/x/arch v0.3.0 // indirect
 	golang.org/x/crypto v0.8.0 // indirect

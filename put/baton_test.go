@@ -26,9 +26,13 @@
 package put
 
 import (
+	"errors"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -105,9 +109,13 @@ func TestPutBaton(t *testing.T) { //nolint:cyclop
 					So(meta, ShouldResemble, request.Meta)
 					checkAddedMeta(meta)
 
+					it, errg := getItemWithBaton(testClient, request.Remote)
+					So(errg, ShouldBeNil)
+					So(it.ISize, ShouldEqual, 2)
+
 					if request.Local == requests[0].Local {
 						mtime := time.Time{}
-						err = mtime.UnmarshalText([]byte(meta[metaKeyMtime]))
+						err = mtime.UnmarshalText([]byte(meta[MetaKeyMtime]))
 						So(err, ShouldBeNil)
 
 						So(mtime.UTC().Truncate(time.Second), ShouldEqual, expectedMTime.UTC().Truncate(time.Second))
@@ -142,8 +150,8 @@ func TestPutBaton(t *testing.T) { //nolint:cyclop
 					So(got.Status, ShouldEqual, RequestStatusReplaced)
 					meta := getObjectMetadataWithBaton(testClient, request.Remote)
 					So(meta, ShouldResemble, request.Meta)
-					So(meta[metaKeyRequester], ShouldEqual, requester)
-					So(meta[metaKeySets], ShouldEqual, "setA,setB")
+					So(meta[MetaKeyRequester], ShouldEqual, requester)
+					So(meta[MetaKeySets], ShouldEqual, "setA,setB")
 
 					Convey("Finally, Cleanup() stops the clients", func() {
 						err = p.Cleanup()
@@ -175,17 +183,64 @@ func TestPutBaton(t *testing.T) { //nolint:cyclop
 					So(got.Status, ShouldEqual, RequestStatusUnmodified)
 				})
 			})
+
+			Convey("Put() uploads an empty file in place of links", func() {
+				err = os.Remove(requests[0].Local)
+				So(err, ShouldBeNil)
+
+				err = os.Symlink(requests[1].Local, requests[0].Local)
+				So(err, ShouldBeNil)
+
+				requests[0].Symlink = requests[1].Local
+
+				err = os.Remove(requests[2].Local)
+				So(err, ShouldBeNil)
+
+				err = os.Link(requests[3].Local, requests[2].Local)
+				So(err, ShouldBeNil)
+
+				requests[2].Hardlink = requests[3].Local
+
+				uCh, urCh, srCh := p.Put()
+
+				uploading := 0
+				uploaded := 0
+
+				for range uCh {
+					uploading++
+				}
+
+				for request := range urCh {
+					if request.Status == RequestStatusUploaded {
+						uploaded++
+					}
+				}
+
+				So(uploading, ShouldEqual, len(requests))
+				So(uploaded, ShouldEqual, len(requests))
+
+				it, err := getItemWithBaton(testClient, requests[0].Remote)
+				So(err, ShouldBeNil)
+				So(it.ISize, ShouldEqual, 0)
+
+				it, err = getItemWithBaton(testClient, requests[2].Remote)
+				So(err, ShouldBeNil)
+				So(it.ISize, ShouldEqual, 0)
+
+				skipped := <-srCh
+				So(skipped, ShouldBeNil)
+			})
 		})
 	})
 
-	SkipConvey("Uploading a strange path works", t, func() {
+	Convey("Uploading a strange path works", t, func() {
 		strangePath, p := testPreparePutFile(t, h, "%s.txt", rootCollection)
 		urCh := testPutFile(p)
 
 		for request := range urCh {
 			So(request.Error, ShouldBeBlank)
 			So(request.Status, ShouldEqual, RequestStatusUploaded)
-			So(request.Size, ShouldEqual, 0)
+			So(request.Size, ShouldEqual, 1)
 			So(request.Local, ShouldEqual, strangePath)
 		}
 	})
@@ -199,6 +254,132 @@ func TestPutBaton(t *testing.T) { //nolint:cyclop
 		for request := range urCh {
 			So(request.Status, ShouldEqual, RequestStatusFailed)
 			So(request.Error, ShouldContainSubstring, "Permission denied")
+		}
+	})
+
+	Convey("Uploading files to the same remote path simultaneously results in 1"+
+		" good upload and the others error", t, func() {
+		numFiles := 5
+		putters := make([]*Putter, numFiles)
+
+		remotePath := filepath.Join(rootCollection, "multi")
+		testDeleteCollection(t, h, remotePath)
+
+		fourkContents := make([]byte, 4096)
+
+		for i := range putters {
+			path, _ := testCreateLocalFile(t, "file")
+
+			for j := range fourkContents {
+				fourkContents[j] = byte(i)
+			}
+
+			f, err := os.Create(path)
+			So(err, ShouldBeNil)
+
+			for j := 0; j < 25000; j++ {
+				_, err = f.Write(fourkContents)
+				if err != nil {
+					So(err, ShouldBeNil)
+				}
+			}
+
+			err = f.Close()
+			So(err, ShouldBeNil)
+
+			req := &Request{
+				Local:  path,
+				Remote: remotePath,
+			}
+
+			p, err := New(h, []*Request{req})
+			So(err, ShouldBeNil)
+			So(p, ShouldNotBeNil)
+
+			err = p.CreateCollections()
+			So(err, ShouldBeNil)
+
+			putters[i] = p
+		}
+
+		type ri struct {
+			i int
+			*Request
+		}
+
+		allUploadsCh := make(chan *ri, numFiles)
+		var wg sync.WaitGroup
+
+		for i, putter := range putters {
+			wg.Add(1)
+
+			go func(p *Putter, i int) {
+				defer wg.Done()
+
+				uCh, urCh, srCh := p.Put()
+
+				<-uCh
+				<-srCh
+
+				for request := range urCh {
+					allUploadsCh <- &ri{i, request}
+				}
+			}(putter, i)
+		}
+
+		wg.Wait()
+		close(allUploadsCh)
+
+		numWorked := 0
+		expectedByte := -1
+
+		for ri := range allUploadsCh {
+			if ri.Status == RequestStatusUploaded {
+				numWorked++
+				expectedByte = ri.i
+			}
+		}
+
+		So(numWorked, ShouldEqual, 1)
+
+		localDir := t.TempDir()
+		gotPath := filepath.Join(localDir, "got")
+
+		outB, err := exec.Command("iget", remotePath, gotPath).CombinedOutput()
+		if err != nil {
+			t.Logf("iget failed with output: %s", string(outB))
+		}
+		So(err, ShouldBeNil)
+
+		f, err := os.Open(gotPath)
+		So(err, ShouldBeNil)
+
+		b := make([]byte, 1)
+		n, err := f.Read(b)
+		So(err, ShouldBeNil)
+		So(n, ShouldEqual, 1)
+		first := b[0]
+
+		if first != byte(expectedByte) {
+			t.Logf("(iRODS does not stop you uploading the same file at the same time;" +
+				" errors only generated when we try to set the same metadata)")
+		}
+
+		for {
+			n, err = f.Read(fourkContents)
+			if errors.Is(err, io.EOF) {
+				break
+			}
+
+			if err != nil {
+				So(err, ShouldBeNil)
+			}
+
+			for _, b := range fourkContents[:n] {
+				if b != first {
+					So(b, ShouldEqual, first)
+				}
+			}
 		}
 	})
 }
@@ -227,7 +408,7 @@ func checkPathExistsWithBaton(client *ex.Client, path string) bool {
 }
 
 func getItemWithBaton(client *ex.Client, path string) (ex.RodsItem, error) {
-	return client.ListItem(ex.Args{AVU: true, Timestamp: true}, ex.RodsItem{
+	return client.ListItem(ex.Args{AVU: true, Timestamp: true, Size: true}, ex.RodsItem{
 		IPath: filepath.Dir(path),
 		IName: filepath.Base(path),
 	})
@@ -243,22 +424,52 @@ func getObjectMetadataWithBaton(client *ex.Client, path string) map[string]strin
 func testPreparePutFile(t *testing.T, h *Baton, basename, rootCollection string) (string, *Putter) {
 	t.Helper()
 
-	sourceDir := t.TempDir()
-
-	path := filepath.Join(sourceDir, "testput", basename)
-	err := os.MkdirAll(filepath.Dir(path), userPerms)
-	So(err, ShouldBeNil)
-	_, err = os.Create(path)
-	So(err, ShouldBeNil)
+	path, sourceDir := testCreateLocalFile(t, basename)
 
 	req := &Request{
 		Local:  path,
 		Remote: strings.Replace(path, sourceDir, rootCollection, 1),
 	}
 
+	return path, testPreparePutter(t, h, req, rootCollection)
+}
+
+func testCreateLocalFile(t *testing.T, basename string) (string, string) {
+	t.Helper()
+
+	sourceDir := t.TempDir()
+
+	path := filepath.Join(sourceDir, "testput", basename)
+	err := os.MkdirAll(filepath.Dir(path), userPerms)
+	So(err, ShouldBeNil)
+	f, err := os.Create(path)
+	So(err, ShouldBeNil)
+
+	_, err = f.WriteString("1")
+	So(err, ShouldBeNil)
+	err = f.Close()
+	So(err, ShouldBeNil)
+
+	return path, sourceDir
+}
+
+func testPreparePutter(t *testing.T, h *Baton, req *Request, rootCollection string) *Putter {
+	t.Helper()
+
 	p, err := New(h, []*Request{req})
 	So(err, ShouldBeNil)
 	So(p, ShouldNotBeNil)
+
+	testDeleteCollection(t, h, rootCollection)
+
+	err = p.CreateCollections()
+	So(err, ShouldBeNil)
+
+	return p
+}
+
+func testDeleteCollection(t *testing.T, h *Baton, collection string) {
+	t.Helper()
 
 	testPool := ex.NewClientPool(ex.DefaultClientPoolParams, "")
 	testClientCh, err := h.getClientsFromPoolConcurrently(testPool, 1)
@@ -270,16 +481,12 @@ func testPreparePutFile(t *testing.T, h *Baton, basename, rootCollection string)
 	defer testPool.Close()
 
 	_, err = testClient.RemDir(ex.Args{Force: true, Recurse: true}, ex.RodsItem{
-		IPath: rootCollection,
+		IPath: collection,
 	})
 	if err != nil && !strings.Contains(err.Error(), "-816000") && !strings.Contains(err.Error(), "-310000") {
 		So(err, ShouldBeNil)
 	}
 
-	err = p.CreateCollections()
-	So(err, ShouldBeNil)
-
-	return path, p
 }
 
 func testPutFile(p *Putter) chan *Request {

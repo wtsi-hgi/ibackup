@@ -31,6 +31,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
@@ -134,6 +135,11 @@ func headRead(ctx context.Context, path string) error {
 
 	return err
 }
+
+// FileStatusCallback returns RequestStatusPending if the file is to be
+// uploaded, and returns any other RequestStatus, such as RequestStatusHardlink
+// and RequestStatusSymlink, to not be uploaded.
+type FileStatusCallback func(absPath string, fi os.FileInfo) RequestStatus
 
 // Putter is used to Put() files in iRODS.
 type Putter struct {
@@ -296,6 +302,9 @@ func noLeavesOrNewLeaf(uniqueLeafs []string, last string) bool {
 //	"unmodified": Local and Remote had the same modification time, so nothing
 //	              was done
 //	"missing":    Local path could not be accessed, upload skipped; see Error
+//
+// By calling SetFileStatusCallback() you can decide additional files to not
+// upload.
 func (p *Putter) Put() (chan *Request, chan *Request, chan *Request) {
 	uploadStartCh := make(chan *Request, len(p.requests))
 	uploadReturnCh := make(chan *Request, len(p.requests))

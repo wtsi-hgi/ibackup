@@ -143,6 +143,14 @@ type Set struct {
 	// read-only value.
 	Missing uint64
 
+	// Symlinks provides the total number of set and discovered files in this
+	// set that are symlinks. This is a read-only value.
+	Symlinks uint64
+
+	// Hardlinks provides the total number of set and discovered files in this
+	// set that are hardlinks and skipped. This is a read-only value.
+	Hardlinks uint64
+
 	// Status provides the current status for the set since the last discovery.
 	// This is a read-only value.
 	Status Status
@@ -269,6 +277,14 @@ func (s *Set) countsValid() bool {
 	}
 
 	if s.Missing > s.NumFiles {
+		return false
+	}
+
+	if s.Symlinks > s.NumFiles {
+		return false
+	}
+
+	if s.Hardlinks > s.NumFiles {
 		return false
 	}
 

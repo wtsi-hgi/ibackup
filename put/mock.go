@@ -140,7 +140,7 @@ func (l *LocalHandler) Put(request *Request) error {
 		<-time.After(l.putDur)
 	}
 
-	return copyFile(request.Local, request.Remote)
+	return copyFile(request.UploadPath(), request.Remote)
 }
 
 // copyFile copies source to dest.
@@ -223,4 +223,30 @@ func (l *LocalHandler) AddMeta(path string, meta map[string]string) error {
 	}
 
 	return nil
+}
+
+// GetMeta gets the metadata stored for the given path (returns an empty map if
+// path is not known about or has no metadata).
+//
+// (Currently this is just for testing and not part of the Handler interface.)
+func (l *LocalHandler) GetMeta(path string) map[string]string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	if l.meta == nil {
+		return make(map[string]string)
+	}
+
+	currentMeta, exists := l.meta[path]
+	if !exists {
+		currentMeta = make(map[string]string)
+	}
+
+	meta := make(map[string]string, len(currentMeta))
+
+	for k, v := range currentMeta {
+		meta[k] = v
+	}
+
+	return meta
 }

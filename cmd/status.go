@@ -265,7 +265,8 @@ func displaySet(s *set.Set) {
 	}
 
 	cliPrint("Discovery: %s\n", s.Discovered())
-	cliPrint("Num files: %s; Size files: %s\n", s.Count(), s.Size())
+	cliPrint("Num files: %s; Symlinks: %d; Hardlinks: %d; Size files: %s\n",
+		s.Count(), s.Symlinks, s.Hardlinks, s.Size())
 	cliPrint("Uploaded: %d; Failed: %d; Missing: %d\n", s.Uploaded, s.Failed, s.Missing)
 
 	switch s.Status {

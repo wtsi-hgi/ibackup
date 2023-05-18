@@ -26,14 +26,17 @@
 package set
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/wtsi-hgi/ibackup/put"
+	"github.com/wtsi-ssg/wrstat/v4/walk"
 	bolt "go.etcd.io/bbolt"
 )
 
@@ -144,12 +147,14 @@ func TestSet(t *testing.T) {
 		So(err, ShouldBeNil)
 		So(remote, ShouldEqual, "/zone/file.txt")
 	})
+}
 
+func TestSetDB(t *testing.T) {
 	Convey("Given a path", t, func() {
 		tDir := t.TempDir()
 		dbPath := filepath.Join(tDir, "set.db")
 
-		Convey("You can create a new set database", func() {
+		Convey("You can create a new database", func() {
 			db, err := New(dbPath, "")
 			So(err, ShouldBeNil)
 			So(db, ShouldNotBeNil)
@@ -169,7 +174,7 @@ func TestSet(t *testing.T) {
 				err = db.SetFileEntries(set.ID(), []string{"/a/b.txt", "/c/d.txt", "/e/f.txt"})
 				So(err, ShouldBeNil)
 
-				err = db.SetDirEntries(set.ID(), []string{"/g/h", "/g/i"})
+				err = db.SetDirEntries(set.ID(), createFileEnts([]string{"/g/h", "/g/i"}))
 				So(err, ShouldBeNil)
 
 				set.MonitorTime = 1 * time.Hour
@@ -214,10 +219,8 @@ func TestSet(t *testing.T) {
 						So(retrieved.Error, ShouldEqual, errMsg)
 						So(retrieved.Warning, ShouldEqual, warnMsg)
 
-						err = db.SetDiscoveryStarted(set.ID())
+						retrieved, err = db.Discover(set.ID(), nil)
 						So(err, ShouldBeNil)
-
-						retrieved = db.GetByID(set.ID())
 						So(retrieved, ShouldNotBeNil)
 						So(retrieved.Error, ShouldBeBlank)
 						So(retrieved.Warning, ShouldBeBlank)
@@ -300,27 +303,56 @@ func TestSet(t *testing.T) {
 						So(sets[0].LastDiscovery.IsZero(), ShouldBeTrue)
 						So(sets[0].Description, ShouldEqual, "desc")
 
-						err = db.SetDiscoveryStarted(sets[0].ID())
+						tdir := t.TempDir()
+						pureFiles := make([]string, 3)
+
+						for i := range pureFiles {
+							pureFiles[i] = filepath.Join(tdir, fmt.Sprintf("%d.txt", i))
+							createEmptyFile(pureFiles[i])
+						}
+
+						err = db.SetFileEntries(set.ID(), pureFiles)
 						So(err, ShouldBeNil)
+
+						errCh := make(chan error, 1)
+						waitCh := make(chan struct{})
+
+						go func() {
+							_, errd := db.Discover(sets[0].ID(), func(_ []*Entry) ([]*walk.Dirent, error) {
+								waitCh <- struct{}{}
+								<-waitCh
+
+								return createFileEnts([]string{"/g/h/l.txt", "/g/i/m.txt"}), nil
+							})
+
+							errCh <- errd
+						}()
+						So(err, ShouldBeNil)
+
+						<-waitCh
 
 						sets, err = db.GetByRequester("jim")
 						So(err, ShouldBeNil)
-
 						So(sets[0].Status, ShouldEqual, PendingDiscovery)
 						So(sets[0].StartedDiscovery.IsZero(), ShouldBeFalse)
 
-						uset, err := db.SetDiscoveredEntries(set.ID(), []string{"/g/h/l.txt", "/g/i/m.txt"})
+						waitCh <- struct{}{}
+
+						err = <-errCh
 						So(err, ShouldBeNil)
-						So(uset.LastDiscovery, ShouldHappenAfter, sets[0].LastDiscovery)
+
+						bsets, err := db.GetByRequester("jim")
+						So(err, ShouldBeNil)
+						So(bsets[0].LastDiscovery, ShouldHappenAfter, sets[0].LastDiscovery)
 
 						fEntries, err := db.GetFileEntries(sets[0].ID())
 						So(err, ShouldBeNil)
 						So(len(fEntries), ShouldEqual, 5)
-						So(fEntries[0], ShouldResemble, &Entry{Path: "/a/b.txt"})
-						So(fEntries[1], ShouldResemble, &Entry{Path: "/c/d.txt"})
-						So(fEntries[2], ShouldResemble, &Entry{Path: "/e/f.txt"})
-						So(fEntries[3], ShouldResemble, &Entry{Path: "/g/h/l.txt"})
-						So(fEntries[4], ShouldResemble, &Entry{Path: "/g/i/m.txt"})
+						So(fEntries[0].Path, ShouldEqual, pureFiles[0])
+						So(fEntries[1].Path, ShouldEqual, pureFiles[1])
+						So(fEntries[2].Path, ShouldEqual, pureFiles[2])
+						So(fEntries[3].Path, ShouldEqual, "/g/h/l.txt")
+						So(fEntries[4].Path, ShouldEqual, "/g/i/m.txt")
 
 						sets, err = db.GetByRequester("jim")
 						So(err, ShouldBeNil)
@@ -337,7 +369,7 @@ func TestSet(t *testing.T) {
 						So(len(setsAll), ShouldEqual, 2)
 
 						r := &put.Request{
-							Local:     "/a/b.txt",
+							Local:     pureFiles[0],
 							Requester: set.Requester,
 							Set:       set.Name,
 							Size:      3,
@@ -362,7 +394,7 @@ func TestSet(t *testing.T) {
 						So(sets[0].LastCompletedSize, ShouldEqual, 0)
 
 						r = &put.Request{
-							Local:     "/a/b.txt",
+							Local:     pureFiles[0],
 							Requester: set.Requester,
 							Set:       set.Name,
 							Size:      3,
@@ -404,7 +436,7 @@ func TestSet(t *testing.T) {
 						So(fEntries[0].LastAttempt.IsZero(), ShouldBeFalse)
 
 						r = &put.Request{
-							Local:     "/c/d.txt",
+							Local:     pureFiles[1],
 							Requester: set.Requester,
 							Set:       set.Name,
 							Size:      2,
@@ -430,7 +462,7 @@ func TestSet(t *testing.T) {
 						So(fEntries[1].LastAttempt.IsZero(), ShouldBeFalse)
 
 						r = &put.Request{
-							Local:     "/e/f.txt",
+							Local:     pureFiles[2],
 							Requester: set.Requester,
 							Set:       set.Name,
 							Size:      4,
@@ -448,9 +480,10 @@ func TestSet(t *testing.T) {
 						sets, err = db.GetByRequester("jim")
 						So(err, ShouldBeNil)
 
+						So(sets[0].NumFiles, ShouldEqual, 5)
+						So(sets[0].Uploaded, ShouldEqual, 3)
 						So(sets[0].Status, ShouldEqual, Uploading)
 						So(sets[0].SizeFiles, ShouldEqual, 9)
-						So(sets[0].Uploaded, ShouldEqual, 3)
 
 						fEntries, err = db.GetFileEntries(sets[0].ID())
 						So(err, ShouldBeNil)
@@ -632,12 +665,25 @@ func TestSet(t *testing.T) {
 							oldStart := sets[0].StartedDiscovery
 							oldDisc := sets[0].LastDiscovery
 
-							err = db.SetDiscoveryStarted(sets[0].ID())
+							errCh := make(chan error, 1)
+							waitCh := make(chan struct{})
+
+							go func() {
+								_, errd := db.Discover(sets[0].ID(), func(_ []*Entry) ([]*walk.Dirent, error) {
+									waitCh <- struct{}{}
+									<-waitCh
+
+									return createFileEnts([]string{"/g/h/l.txt", "/g/i/m.txt", "/g/i/n.txt"}), nil
+								})
+
+								errCh <- errd
+							}()
 							So(err, ShouldBeNil)
+
+							<-waitCh
 
 							sets, err = db.GetByRequester("jim")
 							So(err, ShouldBeNil)
-
 							So(sets[0].Status, ShouldEqual, PendingDiscovery)
 							So(sets[0].StartedDiscovery.After(oldStart), ShouldBeTrue)
 							So(sets[0].NumFiles, ShouldEqual, 0)
@@ -648,7 +694,9 @@ func TestSet(t *testing.T) {
 							So(sets[0].LastCompletedCount, ShouldEqual, 4)
 							So(sets[0].LastCompletedSize, ShouldEqual, 15)
 
-							_, err = db.SetDiscoveredEntries(set.ID(), []string{"/g/h/l.txt", "/g/i/m.txt", "/g/i/n.txt"})
+							waitCh <- struct{}{}
+
+							err = <-errCh
 							So(err, ShouldBeNil)
 
 							fEntries, err := db.GetFileEntries(sets[0].ID())
@@ -702,7 +750,7 @@ func TestSet(t *testing.T) {
 					})
 				})
 
-				Convey("Then get all a single Set belonging to a particular Requester", func() {
+				Convey("Then get a single Set belonging to a particular Requester", func() {
 					got, err := db.GetByNameAndRequester(set.Name, set.Requester)
 					So(err, ShouldBeNil)
 					So(got, ShouldNotBeNil)
@@ -717,8 +765,426 @@ func TestSet(t *testing.T) {
 					So(got, ShouldBeNil)
 				})
 			})
+
+			Convey("And add a set with pure hardlinks to it", func() {
+				setl1 := &Set{
+					Name:        "setlink",
+					Requester:   "jim",
+					Transformer: "prefix=/local:/remote",
+				}
+
+				err = db.AddOrUpdate(setl1)
+				So(err, ShouldBeNil)
+
+				localDir := t.TempDir()
+				path1 := filepath.Join(localDir, "file.link1")
+				createEmptyFile(path1)
+
+				path2 := filepath.Join(localDir, "file.link2")
+				err = os.Link(path1, path2)
+				So(err, ShouldBeNil)
+
+				info, errl := os.Lstat(path1)
+				So(errl, ShouldBeNil)
+				statt, ok := info.Sys().(*syscall.Stat_t)
+				So(ok, ShouldBeTrue)
+
+				confirmHardLinks := func(setID string) {
+					err = db.SetFileEntries(setID, []string{path1, path2, "/zmissing"})
+					So(err, ShouldBeNil)
+
+					entries, errg := db.GetPureFileEntries(setID)
+					So(errg, ShouldBeNil)
+					So(len(entries), ShouldEqual, 3)
+					So(entries[0].Status, ShouldEqual, Pending)
+					So(entries[1].Status, ShouldEqual, Pending)
+					So(entries[0].Type, ShouldEqual, Regular)
+					So(entries[1].Type, ShouldEqual, Regular)
+
+					_, err = db.Discover(setID, nil)
+					So(err, ShouldBeNil)
+
+					entries, err = db.GetPureFileEntries(setID)
+					So(err, ShouldBeNil)
+					So(len(entries), ShouldEqual, 3)
+					So(entries[0].Status, ShouldEqual, Pending)
+					So(entries[1].Status, ShouldEqual, Pending)
+					So(entries[0].Type, ShouldEqual, Regular)
+					So(entries[1].Type, ShouldEqual, Hardlink)
+					So(entries[1].Inode, ShouldEqual, statt.Ino)
+
+					got := db.GetByID(setID)
+					So(got, ShouldNotBeNil)
+					So(got.NumFiles, ShouldEqual, 3)
+					So(got.Hardlinks, ShouldEqual, 1)
+				}
+
+				confirmHardLinks(setl1.ID())
+
+				Convey("which can be added again by a different set", func() {
+					setl2 := &Set{
+						Name:        "setlink2",
+						Requester:   "jim",
+						Transformer: "prefix=/local:/remote",
+					}
+
+					err = db.AddOrUpdate(setl2)
+					So(err, ShouldBeNil)
+
+					confirmHardLinks(setl2.ID())
+				})
+
+				Convey("then change their status to uploaded", func() {
+					entries, errg := db.GetPureFileEntries(setl1.ID())
+					So(errg, ShouldBeNil)
+
+					for _, entry := range entries {
+						if entry.Path == "/zmissing" {
+							continue
+						}
+
+						r := &put.Request{
+							Local:     entry.Path,
+							Status:    put.RequestStatusUploading,
+							Requester: setl1.Requester,
+							Set:       setl1.Name,
+						}
+
+						if entry.Type == Symlink {
+							r.Symlink = entry.Dest
+						}
+
+						if entry.Type == Hardlink {
+							r.Hardlink = entry.Dest
+						}
+
+						_, err = db.SetEntryStatus(r)
+						So(err, ShouldBeNil)
+
+						r.Status = put.RequestStatusUploaded
+
+						_, err = db.SetEntryStatus(r)
+						So(err, ShouldBeNil)
+					}
+
+					got, erra := db.GetByNameAndRequester(setl1.Name, setl1.Requester)
+					So(erra, ShouldBeNil)
+					So(got.NumFiles, ShouldEqual, len(entries))
+					So(got.Symlinks, ShouldEqual, 0)
+					So(got.Hardlinks, ShouldEqual, 1)
+					So(got.Uploaded, ShouldEqual, 2)
+					So(got.Missing, ShouldEqual, 1)
+					So(got.Failed, ShouldEqual, 0)
+				})
+
+				Convey("then rediscover the set and still know about the hard links", func() {
+					got, errd := db.Discover(setl1.ID(), nil)
+					So(errd, ShouldBeNil)
+					So(got.Hardlinks, ShouldEqual, 1)
+
+					got = db.GetByID(setl1.ID())
+					So(got, ShouldNotBeNil)
+					So(err, ShouldBeNil)
+					So(got.Hardlinks, ShouldEqual, 1)
+				})
+			})
+
+			Convey("And add a set with pure symlinks to it", func() {
+				setl1 := &Set{
+					Name:        "setlink",
+					Requester:   "jim",
+					Transformer: "prefix=/local:/remote",
+				}
+
+				err = db.AddOrUpdate(setl1)
+				So(err, ShouldBeNil)
+
+				localDir := t.TempDir()
+				path1 := filepath.Join(localDir, "file.source")
+				createEmptyFile(path1)
+
+				path2 := filepath.Join(localDir, "file.dest")
+				err = os.Symlink(path1, path2)
+				So(err, ShouldBeNil)
+
+				err = db.SetFileEntries(setl1.ID(), []string{path1, path2, "/zmissing"})
+				So(err, ShouldBeNil)
+
+				entries, errg := db.GetPureFileEntries(setl1.ID())
+				So(errg, ShouldBeNil)
+				So(len(entries), ShouldEqual, 3)
+				So(entries[0].Status, ShouldEqual, Pending)
+				So(entries[1].Status, ShouldEqual, Pending)
+				So(entries[0].Type, ShouldEqual, Regular)
+				So(entries[1].Type, ShouldEqual, Regular)
+
+				got := db.GetByID(setl1.ID())
+				So(got, ShouldNotBeNil)
+				So(got.Status, ShouldEqual, PendingDiscovery)
+				So(got.NumFiles, ShouldEqual, 0)
+
+				got, err = db.Discover(setl1.ID(), nil)
+				So(err, ShouldBeNil)
+				So(got, ShouldNotBeNil)
+				So(got.NumFiles, ShouldEqual, 3)
+				So(got.Symlinks, ShouldEqual, 1)
+
+				entries, err = db.GetPureFileEntries(setl1.ID())
+				So(err, ShouldBeNil)
+				So(len(entries), ShouldEqual, 3)
+				So(entries[1].Status, ShouldEqual, Pending)
+				So(entries[0].Status, ShouldEqual, Pending)
+				So(entries[1].Type, ShouldEqual, Regular)
+				So(entries[0].Type, ShouldEqual, Symlink)
+				So(entries[0].Dest, ShouldEqual, path1)
+
+				setEntryToUploaded(entries[1], setl1, db)
+
+				got = db.GetByID(setl1.ID())
+				So(got, ShouldNotBeNil)
+				So(got.Status, ShouldEqual, Uploading)
+
+				setEntryToUploaded(entries[0], setl1, db)
+
+				got = db.GetByID(setl1.ID())
+				So(got, ShouldNotBeNil)
+				So(got.Status, ShouldEqual, Complete)
+				So(got.NumFiles, ShouldEqual, len(entries))
+				So(got.Symlinks, ShouldEqual, 1)
+				So(got.Hardlinks, ShouldEqual, 0)
+				So(got.Uploaded, ShouldEqual, 2)
+				So(got.Missing, ShouldEqual, 1)
+				So(got.Failed, ShouldEqual, 0)
+
+				Convey("then rediscover the set and still know about the symlinks", func() {
+					got, err = db.Discover(setl1.ID(), nil)
+					So(got, ShouldNotBeNil)
+					So(err, ShouldBeNil)
+					So(got.Symlinks, ShouldEqual, 1)
+				})
+			})
+
+			Convey("And add a set with directories containing hardlinks to it", func() {
+				setl1 := &Set{
+					Name:        "setlink",
+					Requester:   "jim",
+					Transformer: "prefix=/local:/remote",
+				}
+
+				err = db.AddOrUpdate(setl1)
+				So(err, ShouldBeNil)
+
+				dirents := []*walk.Dirent{
+					{
+						Path:  "/local/path/to/file",
+						Inode: 1,
+					},
+					{
+						Path:  "/local/path/to/link",
+						Inode: 1,
+					},
+				}
+
+				got, errd := db.Discover(setl1.ID(), func(dirEntries []*Entry) ([]*walk.Dirent, error) {
+					return dirents, nil
+				})
+				So(errd, ShouldBeNil)
+
+				entries, errG := db.GetFileEntries(setl1.ID())
+				So(errG, ShouldBeNil)
+				So(len(entries), ShouldEqual, 2)
+				So(entries[0].Status, ShouldEqual, Pending)
+				So(entries[1].Status, ShouldEqual, Pending)
+				So(entries[0].Type, ShouldEqual, Regular)
+				So(entries[1].Type, ShouldEqual, Hardlink)
+				So(entries[1].Inode, ShouldEqual, 1)
+
+				So(got, ShouldNotBeNil)
+				So(got.Hardlinks, ShouldEqual, 1)
+				So(got.NumFiles, ShouldEqual, 2)
+
+				Convey("then rediscover the set and still know about the hardlinks", func() {
+					got, errd := db.Discover(setl1.ID(), func(dirEntries []*Entry) ([]*walk.Dirent, error) {
+						return dirents, nil
+					})
+					So(errd, ShouldBeNil)
+					So(got.Hardlinks, ShouldEqual, 1)
+
+					got = db.GetByID(setl1.ID())
+					So(got, ShouldNotBeNil)
+					So(err, ShouldBeNil)
+					So(got.Hardlinks, ShouldEqual, 1)
+				})
+
+				Convey("then get back all known local paths for the hardlink", func() {
+					paths, errh := db.HardlinkPaths(entries[1])
+					So(errh, ShouldBeNil)
+					So(paths, ShouldResemble, []string{dirents[0].Path})
+
+					paths, errh = db.HardlinkPaths(entries[0])
+					So(errh, ShouldBeNil)
+					So(paths, ShouldResemble, []string{dirents[1].Path})
+				})
+
+				Convey("then get a remote path for the hardlink", func() {
+					path, errh := db.HardlinkRemote(entries[1])
+					So(errh, ShouldBeNil)
+					So(path, ShouldEqual, "/remote/path/to/file")
+				})
+			})
+
+			Convey("And add a set with directories containing symlinks to it", func() {
+				setl1 := &Set{
+					Name:        "setlink",
+					Requester:   "jim",
+					Transformer: "prefix=/local:/remote",
+				}
+
+				err = db.AddOrUpdate(setl1)
+				So(err, ShouldBeNil)
+
+				dir := t.TempDir()
+
+				path1 := filepath.Join(dir, "file")
+				path2 := filepath.Join(dir, "link")
+
+				createEmptyFile(path1)
+				err = os.Symlink(path1, path2)
+				So(err, ShouldBeNil)
+
+				got, errb := db.Discover(setl1.ID(), func(_ []*Entry) ([]*walk.Dirent, error) {
+					return []*walk.Dirent{
+						{
+							Path:  path1,
+							Inode: 1,
+						},
+						{
+							Path:  path2,
+							Type:  os.ModeSymlink,
+							Inode: 2,
+						},
+					}, nil
+				})
+				So(errb, ShouldBeNil)
+				So(got, ShouldNotBeNil)
+				So(got.Symlinks, ShouldEqual, 1)
+				So(got.NumFiles, ShouldEqual, 2)
+
+				entries, errG := db.GetFileEntries(setl1.ID())
+				So(errG, ShouldBeNil)
+				So(len(entries), ShouldEqual, 2)
+				So(entries[0].Status, ShouldEqual, Pending)
+				So(entries[1].Status, ShouldEqual, Pending)
+				So(entries[0].Type, ShouldEqual, Regular)
+				So(entries[1].Type, ShouldEqual, Symlink)
+				So(entries[1].Dest, ShouldEqual, path1)
+			})
+
+			Convey("And add a set with a missing file to it", func() {
+				setl1 := &Set{
+					Name:        "missing",
+					Requester:   "jim",
+					Transformer: "prefix=/local:/remote",
+				}
+
+				err = db.AddOrUpdate(setl1)
+				So(err, ShouldBeNil)
+
+				missing := "/non/existent/file"
+
+				err = db.SetFileEntries(setl1.ID(), []string{missing})
+				So(err, ShouldBeNil)
+
+				entries, errg := db.GetPureFileEntries(setl1.ID())
+				So(errg, ShouldBeNil)
+				So(len(entries), ShouldEqual, 1)
+				So(entries[0].Status, ShouldEqual, Pending)
+				So(entries[0].Type, ShouldEqual, Regular)
+
+				got, errb := db.Discover(setl1.ID(), nil)
+				So(got, ShouldNotBeNil)
+				So(errb, ShouldBeNil)
+				So(got.Missing, ShouldEqual, 1)
+
+				entries, err = db.GetPureFileEntries(setl1.ID())
+				So(err, ShouldBeNil)
+				So(len(entries), ShouldEqual, 1)
+				So(entries[0].Status, ShouldEqual, Missing)
+				So(entries[0].Type, ShouldEqual, Regular)
+
+				Convey("then rediscover the set and still know about the missing file", func() {
+					got, errb := db.Discover(setl1.ID(), nil)
+					So(got, ShouldNotBeNil)
+					So(errb, ShouldBeNil)
+					So(got.Missing, ShouldEqual, 1)
+				})
+			})
+
+			Convey("And add a set with a missing directory to it (which are just recorded and not checked)", func() {
+				setl1 := &Set{
+					Name:        "missingdir",
+					Requester:   "jim",
+					Transformer: "prefix=/local:/remote",
+				}
+
+				err = db.AddOrUpdate(setl1)
+				So(err, ShouldBeNil)
+
+				missing := "/non/existent/dir"
+
+				err = db.SetDirEntries(setl1.ID(), []*walk.Dirent{{
+					Path: missing,
+					Type: os.ModeDir,
+				}})
+				So(err, ShouldBeNil)
+
+				entries, errg := db.GetDirEntries(setl1.ID())
+				So(errg, ShouldBeNil)
+				So(len(entries), ShouldEqual, 1)
+				So(entries[0].Status, ShouldEqual, Pending)
+				So(entries[0].Type, ShouldEqual, Directory)
+
+				got := db.GetByID(setl1.ID())
+				So(got, ShouldNotBeNil)
+				So(err, ShouldBeNil)
+				So(got.Missing, ShouldEqual, 0)
+			})
 		})
 	})
+}
+
+func createEmptyFile(path string) {
+	f, err := os.Create(path)
+	So(err, ShouldBeNil)
+	err = f.Close()
+	So(err, ShouldBeNil)
+}
+
+func setEntryToUploaded(entry *Entry, given *Set, db *DB) {
+	transformer, err := given.MakeTransformer()
+	So(err, ShouldBeNil)
+
+	r, err := put.NewRequestWithTransformedLocal(entry.Path, transformer)
+	So(err, ShouldBeNil)
+
+	r.Set = given.Name
+	r.Requester = given.Requester
+
+	if entry.Type == Hardlink {
+		r.Hardlink = entry.Dest
+	}
+
+	if entry.Type == Symlink {
+		r.Symlink = entry.Dest
+	}
+
+	r.Status = put.RequestStatusUploading
+	_, err = db.SetEntryStatus(r)
+	So(err, ShouldBeNil)
+
+	r.Status = put.RequestStatusUploaded
+	_, err = db.SetEntryStatus(r)
+	So(err, ShouldBeNil)
 }
 
 func TestBackup(t *testing.T) {
@@ -852,5 +1318,54 @@ func TestBackup(t *testing.T) {
 
 			testBackupOK(remotePath)
 		})
+	})
+}
+
+func createFileEnts(paths []string) []*walk.Dirent {
+	entries := make([]*walk.Dirent, len(paths))
+
+	for n, path := range paths {
+		entries[n] = &walk.Dirent{
+			Path: path,
+		}
+	}
+
+	return entries
+}
+
+func TestCountsValid(t *testing.T) {
+	Convey("countsValid detects when set counts do or don't make sense", t, func() {
+		s := new(Set)
+
+		So(s.countsValid(), ShouldBeTrue)
+
+		s.NumFiles = 1
+		s.Uploaded = 1
+
+		So(s.countsValid(), ShouldBeTrue)
+
+		s.Hardlinks = 1
+
+		So(s.countsValid(), ShouldBeTrue)
+
+		s.Hardlinks = 0
+		s.Symlinks = 1
+
+		So(s.countsValid(), ShouldBeTrue)
+
+		s.Symlinks = 0
+		s.Uploaded = 0
+		s.Missing = 1
+
+		So(s.countsValid(), ShouldBeTrue)
+
+		s.Missing = 0
+		s.Failed = 1
+
+		So(s.countsValid(), ShouldBeTrue)
+
+		s.Failed = 2
+
+		So(s.countsValid(), ShouldBeFalse)
 	})
 }

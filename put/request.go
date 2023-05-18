@@ -92,6 +92,8 @@ type Request struct {
 	Set           string
 	Meta          map[string]string
 	Status        RequestStatus
+	Symlink       string // contains symlink path if request represents a symlink.
+	Hardlink      string // contains first seen path if request represents a hard-linked file.
 	Size          uint64 // size of Local in bytes, set for you on returned Requests.
 	Error         string
 	Stuck         *Stuck
@@ -146,6 +148,29 @@ func (r *Request) ValidatePaths() error {
 	return nil
 }
 
+// UploadPath should be used instead of Request.Local for upload purposes.
+//
+// For symlinks and hardlinks, returns a zero-sized file as iRODS doesn't handle
+// links appropriately (there will be metadata allowing its recreation).
+// Otherwise returns Request.Local.
+func (r *Request) UploadPath() string {
+	if r.Symlink == "" && r.Hardlink == "" {
+		return r.Local
+	}
+
+	return os.DevNull
+}
+
+// UploadedSize returns the number of bytes that were uploaded if
+// Request.UploadPath was used.
+func (r *Request) UploadedSize() uint64 {
+	if r.Symlink == "" && r.Hardlink == "" {
+		return r.Size
+	}
+
+	return 0
+}
+
 // Clone returns a copy of this request that can safely be altered without
 // affecting the original.
 func (r *Request) Clone() *Request {
@@ -156,8 +181,11 @@ func (r *Request) Clone() *Request {
 		Set:        r.Set,
 		Meta:       r.Meta,
 		Status:     r.Status,
+		Symlink:    r.Symlink,
+		Hardlink:   r.Hardlink,
 		Size:       r.Size,
 		Error:      r.Error,
+		Stuck:      r.Stuck,
 		remoteMeta: r.remoteMeta,
 		skipPut:    r.skipPut,
 	}
@@ -189,8 +217,8 @@ func (r *Request) addStandardMeta(diskMeta, remoteMeta map[string]string) {
 
 	r.addDate()
 
-	r.appendMeta(metaKeyRequester, r.Requester)
-	r.appendMeta(metaKeySets, r.Set)
+	r.appendMeta(MetaKeyRequester, r.Requester)
+	r.appendMeta(MetaKeySets, r.Set)
 }
 
 // cloneMeta is used to ensure that our Meta is unique to us, so that if we
@@ -215,7 +243,7 @@ func cloneMap(m map[string]string) map[string]string {
 func (r *Request) addDate() {
 	date, _ := timeToMeta(time.Now()) //nolint:errcheck
 
-	r.Meta[metaKeyDate] = date
+	r.Meta[MetaKeyDate] = date
 }
 
 // appendMeta appends the given value to the given key value in our remoteMeta,
@@ -263,15 +291,15 @@ func (r *Request) needsMetadataUpdate() bool {
 	need := false
 	defer func() {
 		r.skipPut = need
-		r.Meta[metaKeyDate] = r.remoteMeta[metaKeyDate]
+		r.Meta[MetaKeyDate] = r.remoteMeta[MetaKeyDate]
 	}()
 
-	need = r.valForMetaKeyDifferentOnRemote(metaKeyRequester)
+	need = r.valForMetaKeyDifferentOnRemote(MetaKeyRequester)
 	if need {
 		return need
 	}
 
-	need = r.valForMetaKeyDifferentOnRemote(metaKeySets)
+	need = r.valForMetaKeyDifferentOnRemote(MetaKeySets)
 
 	return need
 }
@@ -323,7 +351,7 @@ func NewRequestWithTransformedLocal(local string, pt PathTransformer) (*Request,
 		return nil, err
 	}
 
-	return &Request{Local: local, Remote: remote}, nil
+	return &Request{Local: local, Remote: remote, Meta: make(map[string]string)}, nil
 }
 
 // PrefixTransformer returns a PathTransformer that will replace localPrefix

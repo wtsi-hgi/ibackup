@@ -30,6 +30,7 @@ import (
 	"errors"
 	"math"
 	"net/http"
+	"os"
 
 	"github.com/VertebrateResequencing/wr/queue"
 	"github.com/gin-gonic/gin"
@@ -37,6 +38,7 @@ import (
 	"github.com/wtsi-hgi/grand"
 	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/set"
+	"github.com/wtsi-ssg/wrstat/v4/walk"
 )
 
 const (
@@ -244,7 +246,7 @@ func (s *Server) putSet(c *gin.Context) {
 		return
 	}
 
-	s.tryBackup()
+	s.handleNewlyDefinedSets(given)
 
 	c.Status(http.StatusOK)
 }
@@ -397,7 +399,16 @@ func (s *Server) putDirs(c *gin.Context) {
 		return
 	}
 
-	err := s.db.SetDirEntries(sid, paths)
+	entries := make([]*walk.Dirent, len(paths))
+
+	for n, path := range paths {
+		entries[n] = &walk.Dirent{
+			Path: path,
+			Type: os.ModeDir,
+		}
+	}
+
+	err := s.db.SetDirEntries(sid, entries)
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
@@ -767,7 +778,7 @@ func (s *Server) handleFileStatusUpdates() {
 		s.Logger.Printf("[%s] will update status of %s", trace, fsp.r.Local)
 
 		if err := s.touchRequest(fsp.r.ID()); err != nil {
-			s.Logger.Printf("[%s] touch failed: %s", trace, err)
+			s.Logger.Printf("[%s] touch failed for: %s", trace, err)
 			fsp.ceCh <- &codeAndError{code: http.StatusBadRequest, err: err}
 
 			continue

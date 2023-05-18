@@ -111,14 +111,17 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 							replaced++
 							lh.mu.RLock()
 							So(lh.meta[request.Remote], ShouldResemble, requests[0].Meta)
-							So(lh.meta[request.Remote][metaKeyRequester], ShouldEqual, "John,Sam")
-							So(lh.meta[request.Remote][metaKeySets], ShouldEqual, "setA,setB")
-							date = lh.meta[request.Remote][metaKeyDate]
+							So(lh.meta[request.Remote][MetaKeyRequester], ShouldEqual, "John,Sam")
+							So(lh.meta[request.Remote][MetaKeySets], ShouldEqual, "setA,setB")
+							date = lh.meta[request.Remote][MetaKeyDate]
 							lh.mu.RUnlock()
 						default:
 							other++
 						}
 					}
+
+					metadata := lh.GetMeta(requests[0].Remote)
+					So(metadata, ShouldResemble, requests[0].Meta)
 
 					for request := range srCh {
 						switch request.Status {
@@ -152,9 +155,9 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 						request = <-srCh
 						So(request.Status, ShouldEqual, RequestStatusUnmodified)
 						lh.mu.RLock()
-						So(lh.meta[request.Remote][metaKeyRequester], ShouldEqual, "John,Sam")
-						So(lh.meta[request.Remote][metaKeySets], ShouldEqual, "setA,setB,setC")
-						So(lh.meta[request.Remote][metaKeyDate], ShouldEqual, date)
+						So(lh.meta[request.Remote][MetaKeyRequester], ShouldEqual, "John,Sam")
+						So(lh.meta[request.Remote][MetaKeySets], ShouldEqual, "setA,setB,setC")
+						So(lh.meta[request.Remote][MetaKeyDate], ShouldEqual, date)
 						lh.mu.RUnlock()
 					})
 				})
@@ -183,6 +186,53 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 				for request := range srCh {
 					So(request.Status, ShouldEqual, RequestStatusMissing)
 				}
+			})
+
+			Convey("Put() uploads an empty file in place of links", func() {
+				err = os.Remove(requests[0].Local)
+				So(err, ShouldBeNil)
+
+				err = os.Symlink(requests[1].Local, requests[0].Local)
+				So(err, ShouldBeNil)
+
+				requests[0].Symlink = requests[1].Local
+
+				err = os.Remove(requests[2].Local)
+				So(err, ShouldBeNil)
+
+				err = os.Link(requests[3].Local, requests[2].Local)
+				So(err, ShouldBeNil)
+
+				requests[2].Hardlink = requests[3].Local
+
+				uCh, urCh, srCh := p.Put()
+
+				uploading := 0
+				uploaded := 0
+
+				for range uCh {
+					uploading++
+				}
+
+				for request := range urCh {
+					if request.Status == RequestStatusUploaded {
+						uploaded++
+					}
+				}
+
+				So(uploading, ShouldEqual, len(requests))
+				So(uploaded, ShouldEqual, len(requests))
+
+				info, errs := os.Stat(requests[0].Remote)
+				So(errs, ShouldBeNil)
+				So(info.Size(), ShouldEqual, 0)
+
+				info, errs = os.Stat(requests[2].Remote)
+				So(errs, ShouldBeNil)
+				So(info.Size(), ShouldEqual, 0)
+
+				skipped := <-srCh
+				So(skipped, ShouldBeNil)
 			})
 
 			Convey("Underlying put and metadata operation failures result in failed requests", func() {
@@ -384,10 +434,10 @@ func makeTestRequests(t *testing.T, sourceDir, destDir string) []*Request {
 // checkAddedMeta checks that the given map contains all the extra metadata keys
 // that we add to requests.
 func checkAddedMeta(meta map[string]string) {
-	So(meta[metaKeyMtime], ShouldNotBeBlank)
-	So(meta[metaKeyOwner], ShouldNotBeBlank)
-	So(meta[metaKeyGroup], ShouldNotBeBlank)
-	So(meta[metaKeyDate], ShouldNotBeBlank)
+	So(meta[MetaKeyMtime], ShouldNotBeBlank)
+	So(meta[MetaKeyOwner], ShouldNotBeBlank)
+	So(meta[MetaKeyGroup], ShouldNotBeBlank)
+	So(meta[MetaKeyDate], ShouldNotBeBlank)
 }
 
 // touchFile alters the mtime of the given file by the given duration. Returns

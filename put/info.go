@@ -35,12 +35,14 @@ import (
 
 const (
 	MetaNamespace    = "ibackup:"
-	metaKeyMtime     = MetaNamespace + "mtime"      // mtime of source file, 1sec truncated UTC RFC 3339
-	metaKeyOwner     = MetaNamespace + "owner"      // a username
-	metaKeyGroup     = MetaNamespace + "group"      // a unix group name
-	metaKeyDate      = MetaNamespace + "date"       // date upload initiated, 1sec truncated UTC RFC 3339
-	metaKeyRequester = MetaNamespace + "requesters" // a comma sep list of usernames of the people who reqested the backup
-	metaKeySets      = MetaNamespace + "sets"       // a comma sep list of backup set names this file belongs to
+	MetaKeyMtime     = MetaNamespace + "mtime"      // mtime of source file, 1sec truncated UTC RFC 3339
+	MetaKeyOwner     = MetaNamespace + "owner"      // a username
+	MetaKeyGroup     = MetaNamespace + "group"      // a unix group name
+	MetaKeyDate      = MetaNamespace + "date"       // date upload initiated, 1sec truncated UTC RFC 3339
+	MetaKeyRequester = MetaNamespace + "requesters" // a comma sep list of usernames of the people who reqested the backup
+	MetaKeySets      = MetaNamespace + "sets"       // a comma sep list of backup set names this file belongs to
+	MetaKeySymlink   = MetaNamespace + "symlink"    // symlink destination if file is a symlink
+	MetaKeyHardlink  = MetaNamespace + "hardlink"   // the first path seen with this inode if file is a hardlink
 	ErrStatFailed    = "stat of local path returned strange results"
 )
 
@@ -50,8 +52,8 @@ type ObjectInfo struct {
 	Meta   map[string]string
 }
 
-// Stat stats localPath like os.Stat(), but returns information about the file
-// in ObjectInfo Meta (mtime, owner and group information).
+// Stat stats localPath like os.Stat(), but also returns information about the
+// file in ObjectInfo Meta (mtime, owner and group information).
 func Stat(localPath string) (*ObjectInfo, error) {
 	fi, err := os.Stat(localPath)
 	if err != nil {
@@ -72,9 +74,9 @@ func Stat(localPath string) (*ObjectInfo, error) {
 		Exists: true,
 		Size:   uint64(fi.Size()),
 		Meta: map[string]string{
-			metaKeyMtime: mtime,
-			metaKeyOwner: user,
-			metaKeyGroup: group,
+			MetaKeyMtime: mtime,
+			MetaKeyOwner: user,
+			MetaKeyGroup: group,
 		},
 	}, nil
 }
@@ -129,7 +131,7 @@ func (o *ObjectInfo) HasSameModTime(as *ObjectInfo) bool {
 func (o *ObjectInfo) ModTime() time.Time {
 	t := time.Time{}
 
-	s, exists := o.Meta[metaKeyMtime]
+	s, exists := o.Meta[MetaKeyMtime]
 	if !exists || s == "" {
 		return t
 	}

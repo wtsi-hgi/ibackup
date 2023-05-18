@@ -31,14 +31,13 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/VertebrateResequencing/wr/queue"
 	"github.com/gin-gonic/gin"
 	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/set"
-	"github.com/wtsi-ssg/wrstat/v3/walk"
+	"github.com/wtsi-ssg/wrstat/v4/walk"
 )
 
 const ttr = 6 * time.Minute
@@ -69,10 +68,6 @@ func (s *Server) triggerDiscovery(c *gin.Context) {
 // Actual discovery will then proceed asynchronously, followed by adding all
 // upload requests for the set to the global put queue.
 func (s *Server) discoverSet(given *set.Set) error {
-	if err := s.db.SetDiscoveryStarted(given.ID()); err != nil {
-		return err
-	}
-
 	transformer, err := given.MakeTransformer()
 	if err != nil {
 		s.recordSetError("making transformer for %s failed: %s", given.ID(), err)
@@ -89,80 +84,76 @@ func (s *Server) discoverSet(given *set.Set) error {
 // queues the set's files for uploading. Call this in a go-routine, but don't
 // call it multiple times at once for the same set!
 func (s *Server) discoverThenEnqueue(given *set.Set, transformer put.PathTransformer) {
-	doneCh := make(chan bool, 1)
-
-	go func() {
-		if err := s.updateSetFileExistence(given); err != nil {
-			s.recordSetError("enqueue for %s failed: %s", given.ID(), err)
-		}
-
-		close(doneCh)
-	}()
-
-	updated, err := s.discoverDirEntries(given, doneCh)
+	updated, err := s.doDiscovery(given)
 	if err != nil {
-		s.recordSetError("discover dir contents for %s failed: %s", given.ID(), err)
+		s.Logger.Printf("discovery error %s: %s", given.ID(), err)
 
 		return
 	}
+
+	s.handleNewlyDefinedSets(updated)
 
 	if err := s.enqueueSetFiles(updated, transformer); err != nil {
 		s.recordSetError("queuing files for %s failed: %s", updated.ID(), err)
 	}
 }
 
-// updateSetFileExistence gets the file entries (not discovered ones) for the
-// set, checks if they all exist locally (concurrently), and updates their entry
-// status in the db if they're missing.
-func (s *Server) updateSetFileExistence(given *set.Set) error {
-	entries, err := s.db.GetPureFileEntries(given.ID())
-	if err != nil {
-		return err
-	}
+func (s *Server) doDiscovery(given *set.Set) (*set.Set, error) {
+	return s.db.Discover(given.ID(), func(entries []*set.Entry) ([]*walk.Dirent, error) {
+		entriesCh := make(chan *walk.Dirent)
+		doneCh := make(chan error)
+		warnCh := make(chan error)
 
-	errCh := make(chan error, len(entries))
+		go s.doSetDirWalks(entries, given, entriesCh, doneCh, warnCh)
 
-	for _, entry := range entries {
-		path := entry.Path
-
-		s.filePool.Submit(func() {
-			_, errs := s.setEntryMissingIfNotExist(given, path)
-			errCh <- errs
-		})
-	}
-
-	for i := 0; i < len(entries); i++ {
-		thisErr := <-errCh
-		if thisErr != nil {
-			err = thisErr
-		}
-	}
-
-	return err
+		return s.processSetDirWalkOutput(given, entriesCh, doneCh, warnCh)
+	})
 }
 
-// setEntryMissingIfNotExist checks if the given path exists, and if not returns
-// true and updates the corresponding entry for that path in the given set with
-// a missing status. Symlinks are treated as if they are missing.
-func (s *Server) setEntryMissingIfNotExist(given *set.Set, path string) (bool, error) {
-	if info, err := os.Lstat(path); err == nil && info.Mode().Type()&os.ModeSymlink == 0 {
-		return false, nil
+func (s *Server) processSetDirWalkOutput(given *set.Set, entriesCh chan *walk.Dirent,
+	doneCh, warnCh chan error) ([]*walk.Dirent, error) {
+	warnDoneCh := s.processSetDirWalkWarnings(given, warnCh)
+
+	var fileEntries []*walk.Dirent //nolint:prealloc
+
+	for entry := range entriesCh {
+		fileEntries = append(fileEntries, entry)
 	}
 
-	r := &put.Request{
-		Local:     path,
-		Requester: given.Requester,
-		Set:       given.Name,
-		Size:      0,
-		Status:    put.RequestStatusMissing,
-		Error:     "",
+	err := <-doneCh
+
+	close(warnCh)
+
+	if err != nil {
+		<-warnDoneCh
+
+		return nil, err
 	}
 
-	_, err := s.db.SetEntryStatus(r)
+	return fileEntries, <-warnDoneCh
+}
 
-	s.monitorSetByName(r.Set, r.Requester)
+func (s *Server) processSetDirWalkWarnings(given *set.Set, warnCh chan error) chan error {
+	warnDoneCh := make(chan error)
 
-	return true, err
+	go func() {
+		var warning error
+		for warn := range warnCh {
+			warning = errors.Join(warning, warn)
+		}
+
+		if warning != nil {
+			if err := s.db.SetWarning(given.ID(), warning.Error()); err != nil {
+				warnDoneCh <- err
+
+				return
+			}
+		}
+
+		warnDoneCh <- nil
+	}()
+
+	return warnDoneCh
 }
 
 // recordSetError sets the given err on the set, and logs on failure to do so.
@@ -176,64 +167,6 @@ func (s *Server) recordSetError(msg, sid string, err error) {
 	}
 }
 
-// discoverDirEntries concurrently walks the set's directories, waits until
-// the filesDoneCh closes (file entries have been updated), then sets the
-// discovered file paths, which makes the db consider discovery to be complete.
-//
-// Returns the updated set and any error.
-func (s *Server) discoverDirEntries(given *set.Set, filesDoneCh chan bool) (*set.Set, error) {
-	entries, err := s.db.GetDirEntries(given.ID())
-	if err != nil {
-		return nil, err
-	}
-
-	pathsCh := make(chan string)
-	doneCh := make(chan error)
-	warnCh := make(chan error)
-	warnDoneCh := make(chan struct{})
-
-	var warning []string
-
-	go s.doSetDirWalks(given, entries, pathsCh, doneCh, warnCh)
-
-	go func() {
-		for warn := range warnCh {
-			warning = append(warning, warn.Error())
-		}
-
-		close(warnDoneCh)
-	}()
-
-	var paths []string //nolint:prealloc
-
-	for path := range pathsCh {
-		paths = append(paths, path)
-	}
-
-	err = <-doneCh
-	if err != nil {
-		return nil, err
-	}
-
-	close(warnCh)
-
-	<-filesDoneCh
-	<-warnDoneCh
-
-	if len(warning) != 0 {
-		err = s.db.SetWarning(given.ID(), strings.Join(warning, "\n"))
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	given, err = s.db.SetDiscoveredEntries(given.ID(), paths)
-
-	s.handleNewlyDefinedSets(given)
-
-	return given, err
-}
-
 // handleNewlyDefinedSets is called when a set has had all its entries
 // discovered and stored in the database. It then ensures the set is
 // appropriately monitored, and we trigger a database backup.
@@ -243,23 +176,25 @@ func (s *Server) handleNewlyDefinedSets(given *set.Set) {
 }
 
 // doSetDirWalks walks the given dir entries of the given set concurrently,
-// sending discovered file paths to the pathsCh. Closes the pathsCh when done,
-// then sends any error on the doneCh. Non-critical warnings during the walk are
-// sent to the warnChan.
-func (s *Server) doSetDirWalks(given *set.Set, entries []*set.Entry, pathsCh chan string, doneCh, warnChan chan error) {
+// sending discovered file paths to the entriesCh. Closes the entriesCh when
+// done, then sends any error on the doneCh. Non-critical warnings during the
+// walk are sent to the warnChan.
+func (s *Server) doSetDirWalks(entries []*set.Entry, given *set.Set, entriesCh chan *walk.Dirent,
+	doneCh, warnChan chan error) {
 	errCh := make(chan error, len(entries))
-
-	var cb walk.PathCallback = func(path string) error {
-		pathsCh <- path
-
-		return nil
-	}
 
 	for _, entry := range entries {
 		dir := entry.Path
+		thisEntry := entry
 
 		s.dirPool.Submit(func() {
-			errCh <- s.checkAndWalkDir(given, dir, cb, warnChan)
+			err := s.checkAndWalkDir(dir, func(entry *walk.Dirent) error {
+				entriesCh <- entry
+
+				return nil
+			}, warnChan)
+
+			errCh <- s.handleMissingDirectories(err, thisEntry, given)
 		})
 	}
 
@@ -272,7 +207,7 @@ func (s *Server) doSetDirWalks(given *set.Set, entries []*set.Entry, pathsCh cha
 		}
 	}
 
-	close(pathsCh)
+	close(entriesCh)
 
 	doneCh <- err
 }
@@ -280,17 +215,13 @@ func (s *Server) doSetDirWalks(given *set.Set, entries []*set.Entry, pathsCh cha
 // checkAndWalkDir checks if the given dir exists, and if it does, walks the
 // dir using the given cb. Major errors are returned; walk errors are logged and
 // permission ones sent to the warnChan.
-func (s *Server) checkAndWalkDir(given *set.Set, dir string, cb walk.PathCallback, warnChan chan error) error {
-	missing, err := s.setEntryMissingIfNotExist(given, dir)
+func (s *Server) checkAndWalkDir(dir string, cb walk.PathCallback, warnChan chan error) error {
+	_, err := os.Lstat(dir)
 	if err != nil {
 		return err
 	}
 
-	if missing {
-		return nil
-	}
-
-	walker := walk.New(cb, false, true)
+	walker := walk.New(cb, false, false)
 
 	return walker.Walk(dir, func(path string, err error) {
 		s.Logger.Printf("walk found %s, but had error: %s", path, err)
@@ -299,6 +230,34 @@ func (s *Server) checkAndWalkDir(given *set.Set, dir string, cb walk.PathCallbac
 			warnChan <- err
 		}
 	})
+}
+
+// handleMissingDirectories checks if the given error is not nil, and if so
+// records in the database that the entry has problems or is missing.
+func (s *Server) handleMissingDirectories(dirStatErr error, entry *set.Entry, given *set.Set) error {
+	if dirStatErr == nil {
+		return nil
+	}
+
+	r := &put.Request{
+		Local:     entry.Path,
+		Requester: given.Requester,
+		Set:       given.Name,
+		Size:      0,
+		Status:    put.RequestStatusMissing,
+		Error:     dirStatErr.Error(),
+	}
+
+	_, err := s.db.SetEntryStatus(r)
+	if err != nil {
+		return err
+	}
+
+	if os.IsNotExist(dirStatErr) {
+		return nil
+	}
+
+	return dirStatErr
 }
 
 // enqueueSetFiles gets all the set's file entries (set and discovered), creates
@@ -372,6 +331,16 @@ func entryToRequest(entry *set.Entry, transformer put.PathTransformer, given *se
 
 	r.Set = given.Name
 	r.Requester = given.Requester
+
+	if entry.Type == set.Symlink {
+		r.Symlink = entry.Dest
+		r.Meta[put.MetaKeySymlink] = entry.Dest
+	}
+
+	if entry.Type == set.Hardlink {
+		r.Hardlink = entry.Dest
+		r.Meta[put.MetaKeyHardlink] = entry.Dest
+	}
 
 	return r, nil
 }
