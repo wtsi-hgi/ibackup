@@ -27,6 +27,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
@@ -44,6 +45,8 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/wtsi-hgi/ibackup/internal"
 	"github.com/wtsi-hgi/ibackup/put"
+	btime "github.com/wtsi-ssg/wr/backoff/time"
+	"github.com/wtsi-ssg/wr/retry"
 )
 
 const app = "ibackup"
@@ -149,37 +152,22 @@ func (s *TestServer) startServer() {
 }
 
 func (s *TestServer) waitForServer() {
-	worked := false
+	ctx, cancelFn := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelFn()
 
 	cmd := []string{"status", "--cert", s.cert, "--url", s.url}
 
-	for i := 0; i < 100; i++ {
+	status := retry.Do(ctx, func() error {
 		clientCmd := exec.Command("./"+app, cmd...)
 		clientCmd.Env = []string{"XDG_STATE_HOME=" + s.dir}
 
-		if clientCmd.Run() == nil {
-			worked = true
+		return clientCmd.Run()
+	}, &retry.UntilNoError{}, btime.SecondsRangeBackoff(), "waiting for server to start")
 
-			break
-		}
-
-		time.Sleep(50 * time.Millisecond)
-	}
-
-	So(worked, ShouldEqual, true)
+	So(status.Err, ShouldBeNil)
 }
 
-func (s *TestServer) runBinary(t *testing.T, args ...string) (int, string) {
-	t.Helper()
-
-	args = append([]string{"--url", s.url, "--cert", s.cert}, args...)
-
-	cmd := exec.Command("./"+app, args...)
-	cmd.Env = s.env
-
-	outB, err := cmd.CombinedOutput()
-	out := string(outB)
-	out = strings.TrimRight(out, "\n")
+func normaliseOutput(out string) string {
 	lines := strings.Split(out, "\n")
 
 	for n, line := range lines {
@@ -193,6 +181,22 @@ func (s *TestServer) runBinary(t *testing.T, args ...string) (int, string) {
 		}
 	}
 
+	return strings.Join(lines, "\n")
+}
+
+func (s *TestServer) runBinary(t *testing.T, args ...string) (int, string) {
+	t.Helper()
+
+	args = append([]string{"--url", s.url, "--cert", s.cert}, args...)
+
+	cmd := exec.Command("./"+app, args...)
+	cmd.Env = s.env
+
+	outB, err := cmd.CombinedOutput()
+	out := string(outB)
+	out = strings.TrimRight(out, "\n")
+	out = normaliseOutput(out)
+
 	if err != nil {
 		var exitError *exec.ExitError
 		if !errors.As(err, &exitError) {
@@ -200,7 +204,7 @@ func (s *TestServer) runBinary(t *testing.T, args ...string) (int, string) {
 		}
 	}
 
-	return cmd.ProcessState.ExitCode(), strings.Join(lines, "\n")
+	return cmd.ProcessState.ExitCode(), out
 }
 
 func (s *TestServer) confirmOutput(t *testing.T, args []string, expectedCode int, expected string) {
@@ -212,13 +216,36 @@ func (s *TestServer) confirmOutput(t *testing.T, args []string, expectedCode int
 	So(actual, ShouldEqual, expected)
 }
 
+var ErrNoCompleted = errors.New("discovery not completed")
+
 func (s *TestServer) addSetForTesting(t *testing.T, name, transformer, path string) {
 	t.Helper()
 
 	exitCode, _ := s.runBinary(t, "add", "--name", name, "--transformer", transformer, "--path", path)
 	So(exitCode, ShouldEqual, 0)
 
-	<-time.After(250 * time.Millisecond)
+	ctx, cancelFn := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelFn()
+
+	cmd := []string{"status", "--name", name, "--url", s.url, "--cert", s.cert}
+
+	status := retry.Do(ctx, func() error {
+		clientCmd := exec.Command("./"+app, cmd...)
+		clientCmd.Env = s.env
+
+		output, err := clientCmd.CombinedOutput()
+		if err != nil {
+			return err
+		}
+
+		if strings.Contains(string(output), "\nDiscovery: completed") {
+			return nil
+		}
+
+		return ErrNoCompleted
+	}, &retry.UntilNoError{}, btime.SecondsRangeBackoff(), "waiting for discovery to complete")
+
+	So(status.Err, ShouldBeNil)
 }
 
 func (s *TestServer) Shutdown() error {
@@ -260,6 +287,13 @@ func TestMain(m *testing.M) {
 			fmt.Println("error shutting down server: ", err) //nolint:forbidigo
 		}
 	}
+
+	remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
+	if remotePath == "" {
+		return
+	}
+
+	exec.Command("irm", "-r", remotePath).Run() //nolint:errcheck
 }
 
 func buildSelf() func() {
@@ -434,14 +468,9 @@ Example File: `+humgenFile+" => /humgen/teams/hgi/scratch125/mercury/ibackup/fil
 			symPath := filepath.Join(dir, "sym")
 			symPath2 := filepath.Join(dir, "sym2")
 
-			f, err := os.Create(regularPath)
-			So(err, ShouldBeNil)
-			_, err = f.WriteString("regular")
-			So(err, ShouldBeNil)
-			err = f.Close()
-			So(err, ShouldBeNil)
+			createTestFile(regularPath, "regular")
 
-			err = os.Link(regularPath, linkPath)
+			err := os.Link(regularPath, linkPath)
 			So(err, ShouldBeNil)
 
 			err = os.Symlink(linkPath, symPath)
@@ -558,6 +587,9 @@ func TestBackup(t *testing.T) {
 		s.backupFile = filepath.Join(dir, "db.bak")
 		s.remoteDBFile = remotePath
 
+		tdir := t.TempDir()
+		gotPath := filepath.Join(tdir, "remote.db")
+
 		s.startServer()
 
 		transformer, localDir, remoteDir := prepareForSetWithEmptyDir(t)
@@ -570,8 +602,6 @@ func TestBackup(t *testing.T) {
 
 		ticker := time.NewTicker(1 * time.Second)
 		timeout := time.NewTimer(30 * time.Second)
-		tdir := t.TempDir()
-		gotPath := filepath.Join(tdir, "remote.db")
 
 		var igetErr error
 
@@ -644,4 +674,79 @@ Directories:
   `+localDir+` => `+remoteDir)
 		})
 	})
+}
+
+func TestManualMode(t *testing.T) {
+	Convey("when using a manual put command, files are uploaded correctly", t, func() {
+		remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
+		if remotePath == "" {
+			SkipConvey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
+
+			return
+		}
+		tmpDir := t.TempDir()
+
+		file1 := filepath.Join(tmpDir, "file1")
+		file2 := filepath.Join(tmpDir, "file2")
+
+		remote1 := remotePath + "/" + "file1"
+		remote2 := remotePath + "/" + "file2"
+
+		fileContents1 := "abc"
+		fileContents2 := "1234"
+
+		createTestFile(file1, fileContents1)
+		createTestFile(file2, fileContents2)
+
+		files := file1 + "	" + remote1 + "\n"
+		files += file2 + "	" + remote2 + "\n"
+
+		cmd := exec.Command("./"+app, "put")
+		cmd.Stdin = strings.NewReader(files)
+
+		output, err := cmd.CombinedOutput()
+		So(err, ShouldBeNil)
+		So(cmd.ProcessState.ExitCode(), ShouldEqual, 0)
+
+		out := normaliseOutput(string(output))
+		So(out, ShouldEqual, "2 uploaded (0 replaced); 0 skipped; 0 failed; 0 missing\n")
+
+		got1 := file1 + ".got"
+		got2 := file2 + ".got"
+
+		getFileFromIRODS(remote1, got1)
+		getFileFromIRODS(remote2, got2)
+
+		confirmFileContents(got1, fileContents1)
+		confirmFileContents(got2, fileContents2)
+	})
+}
+
+func createTestFile(path, contents string) {
+	f, err := os.Create(path)
+	So(err, ShouldBeNil)
+
+	_, err = f.WriteString(contents)
+	So(err, ShouldBeNil)
+
+	err = f.Close()
+	So(err, ShouldBeNil)
+}
+
+func getFileFromIRODS(remotePath, localPath string) {
+	cmd := exec.Command("iget", "-K", remotePath, localPath)
+
+	err := cmd.Run()
+	So(err, ShouldBeNil)
+	So(cmd.ProcessState.ExitCode(), ShouldEqual, 0)
+}
+
+func confirmFileContents(file, expectedContents string) {
+	f, err := os.Open(file)
+	So(err, ShouldBeNil)
+
+	data, err := io.ReadAll(f)
+	So(err, ShouldBeNil)
+
+	So(string(data), ShouldEqual, expectedContents)
 }
