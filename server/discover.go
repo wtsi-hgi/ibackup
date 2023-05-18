@@ -28,7 +28,6 @@ package server
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io/fs"
 	"net/http"
 	"os"
@@ -313,10 +312,7 @@ func (s *Server) enqueueEntries(entries []*set.Entry, given *set.Set, transforme
 		return nil
 	}
 
-	fmt.Printf("\nqueued: %v", defs[0].Data)
-
-	added, dups, err := s.queue.AddMany(context.Background(), defs)
-	fmt.Println("\n", added, dups, "-------")
+	_, _, err := s.queue.AddMany(context.Background(), defs)
 
 	return err
 }
