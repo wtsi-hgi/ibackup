@@ -27,6 +27,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/user"
@@ -49,6 +50,8 @@ const (
 	userPerms        = 0700
 	numManyTestFiles = 5000
 )
+
+var errNotDiscovered = errors.New("not discovered")
 
 func TestClient(t *testing.T) {
 	Convey("maxTimeForUpload works with small and large requests", t, func() {
@@ -483,25 +486,18 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						})
 
 						waitForDiscovery := func(given *set.Set) {
-							ticker := time.NewTicker(given.MonitorTime / 10)
-							defer ticker.Stop()
-
-							timeout := time.NewTimer(given.MonitorTime * 2)
 							discovered := given.LastDiscovery
 
-							for {
-								select {
-								case <-ticker.C:
-									tickerSet, errg := client.GetSetByID(given.Requester, given.ID())
-									So(errg, ShouldBeNil)
+							internal.RetryUntilWorksCustom(t, func() error { //nolint:errcheck
+								tickerSet, errg := client.GetSetByID(given.Requester, given.ID())
+								So(errg, ShouldBeNil)
 
-									if tickerSet.LastDiscovery.After(discovered) {
-										return
-									}
-								case <-timeout.C:
-									return
+								if tickerSet.LastDiscovery.After(discovered) {
+									return nil
 								}
-							}
+
+								return errNotDiscovered
+							}, given.MonitorTime*2, given.MonitorTime/10)
 						}
 
 						Convey("After discovery, monitored sets get discovered again after completion", func() {
@@ -627,27 +623,22 @@ func TestServer(t *testing.T) { //nolint:cyclop
 							discovered = gotSet.LastDiscovery
 
 							countDiscovery := func(given *set.Set) int {
-								ticker := time.NewTicker(given.MonitorTime / 10)
-								defer ticker.Stop()
-
-								timeout := time.NewTimer(given.MonitorTime * 10)
 								countDiscovered := given.LastDiscovery
 								count := 0
 
-								for {
-									select {
-									case <-ticker.C:
-										gotSet, err = client.GetSetByID(given.Requester, given.ID())
-										So(err, ShouldBeNil)
+								internal.RetryUntilWorksCustom(t, func() error { //nolint:errcheck
+									gotSet, err = client.GetSetByID(given.Requester, given.ID())
+									So(err, ShouldBeNil)
 
-										if gotSet.LastDiscovery.After(countDiscovered) {
-											count++
-											countDiscovered = gotSet.LastDiscovery
-										}
-									case <-timeout.C:
-										return count
+									if gotSet.LastDiscovery.After(countDiscovered) {
+										count++
+										countDiscovered = gotSet.LastDiscovery
 									}
-								}
+
+									return errNotDiscovered
+								}, given.MonitorTime*10, given.MonitorTime/10)
+
+								return count
 							}
 
 							Convey("Changing discovery from long to short duration works", func() {
@@ -1955,7 +1946,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldBeNil)
 
-					exists := internal.WaitForFile(backupPath)
+					exists := internal.WaitForFile(t, backupPath)
 					So(exists, ShouldBeTrue)
 
 					stat, errS := os.Stat(backupPath)
@@ -1975,7 +1966,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 					ok := <-racCalled
 					So(ok, ShouldBeTrue)
 
-					changed := internal.WaitForFileChange(backupPath, lastMod)
+					changed := internal.WaitForFileChange(t, backupPath, lastMod)
 					So(changed, ShouldBeTrue)
 
 					stat, err = os.Stat(backupPath)
@@ -1985,7 +1976,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 
 					putSetWithOneFile(t, handler, client, exampleSet, minMBperSecondUploadSpeed, logger)
 
-					changed = internal.WaitForFileChange(backupPath, lastMod)
+					changed = internal.WaitForFileChange(t, backupPath, lastMod)
 					So(changed, ShouldBeTrue)
 
 					remoteDir := filepath.Join(filepath.Dir(backupPath), "remoteBackup")
@@ -2003,7 +1994,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldBeNil)
 
-					remoteBackupExists := internal.WaitForFile(remotePath)
+					remoteBackupExists := internal.WaitForFile(t, remotePath)
 					So(remoteBackupExists, ShouldBeTrue)
 				})
 

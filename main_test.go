@@ -52,6 +52,8 @@ import (
 const app = "ibackup"
 const userPerms = 0700
 
+var errTwoBackupsNotSeen = errors.New("2 backups were not seen")
+
 type TestServer struct {
 	key          string
 	cert         string
@@ -592,38 +594,38 @@ func TestBackup(t *testing.T) {
 
 		s.startServer()
 
+		lastMtime := time.Now()
+
 		transformer, localDir, remoteDir := prepareForSetWithEmptyDir(t)
 		s.addSetForTesting(t, "testForBackup", transformer, localDir)
 
-		<-time.After(time.Second) // wait for both backup cycles to run
+		versionsSeen := 0
+		internal.RetryUntilWorksCustom(t, func() error { //nolint:errcheck
+			info, err := os.Stat(s.backupFile)
+			if err != nil {
+				return err
+			}
 
-		localBackupExists := internal.WaitForFile(s.backupFile)
+			if versionsSeen == 0 {
+				lastMtime = info.ModTime()
+				versionsSeen++
+			} else if versionsSeen == 1 && info.ModTime().After(lastMtime) {
+				return nil
+			}
+
+			return errTwoBackupsNotSeen
+		}, 5*time.Second, 0)
+
+		localBackupExists := internal.WaitForFile(t, s.backupFile)
 		So(localBackupExists, ShouldBeTrue)
 
-		ticker := time.NewTicker(1 * time.Second)
-		timeout := time.NewTimer(30 * time.Second)
+		err := internal.RetryUntilWorksCustom(t, func() error {
+			cmd := exec.Command("iget", "-K", remotePath, gotPath)
 
-		var igetErr error
+			return cmd.Run()
+		}, 30*time.Second, 1*time.Second)
 
-	igetLoop:
-		for {
-			select {
-			case <-ticker.C:
-				cmd := exec.Command("iget", "-K", remotePath, gotPath)
-
-				igetErr = cmd.Run()
-				if igetErr == nil {
-					break igetLoop
-				}
-			case <-timeout.C:
-				break igetLoop
-			}
-		}
-
-		ticker.Stop()
-		timeout.Stop()
-
-		So(igetErr, ShouldBeNil)
+		So(err, ShouldBeNil)
 
 		ri, err := os.Stat(gotPath)
 		So(err, ShouldBeNil)
