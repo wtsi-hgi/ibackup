@@ -103,6 +103,23 @@ that have been modified, then those will be (re-)uploaded.
 NB: This will not remove files already uploaded to iRODS that were removed from
 the local directory.
 
+
+### Database Backups
+
+The ibackup server can backup its own database, both locally and in iRODS.
+
+The local backup can be enabled by providing a second database path to the ibackup server command. For  example:
+
+```
+ibackup server -k key.pem --logfile log -s ldap-ro.internal.sanger.ac.uk -l 'uid=%s,ou=people,dc=sanger,dc=ac,dc=uk' set.db /path/to/local/database.backup &
+```
+
+With a local backup specified, the remote backup can be enabled by providing the `--remote_backup` flag with an iRODS path to back up to. i.e.
+
+```
+ibackup server -k key.pem --logfile log -s ldap-ro.internal.sanger.ac.uk -l 'uid=%s,ou=people,dc=sanger,dc=ac,dc=uk' set.db /path/to/local/database.backup --remote_backup /irods/path/for/backup.db &
+```
+
 ## Manual Usage
 Instead of using the server, for simple one-off backup jobs you can manually
 create files listing what you want backed up, and run ibackup put jobs yourself,
