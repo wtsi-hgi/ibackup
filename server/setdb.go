@@ -28,7 +28,6 @@ package server
 import (
 	"context"
 	"errors"
-	"fmt"
 	"math"
 	"net/http"
 	"os"
@@ -808,7 +807,7 @@ func (s *Server) updateFileStatus(r *put.Request, trace string) error {
 		return err
 	}
 
-	if err = s.handleNewlyCompletedSets(r); err != nil && err != hardlinkNotAnError {
+	if err = s.handleNewlyCompletedSets(r); err != nil {
 		return err
 	}
 
@@ -836,10 +835,6 @@ func (s *Server) updateFileStatus(r *put.Request, trace string) error {
 
 	s.Logger.Printf("[%s] will remove/release; deleted %s from map", trace, rid)
 
-	if err != nil {
-		return nil
-	}
-
 	return s.removeOrReleaseRequestFromQueue(r, entry)
 }
 
@@ -856,100 +851,11 @@ func (s *Server) handleNewlyCompletedSets(r *put.Request) error {
 		return nil
 	}
 
-	entries, err := s.db.GetFileEntries(completed.ID())
-	if err != nil {
-		return err
-	}
-
-	for _, entry := range entries {
-		if entry.Type != set.Hardlink {
-			return nil
-		}
-
-		if err = s.ensureHardlinkedDataUploaded(completed, entry); err != nil {
-			return err
-		}
-	}
-
 	s.monitorSet(completed)
 	s.tryBackup()
 
 	return nil
 }
-
-func (s *Server) ensureHardlinkedDataUploaded(completed *set.Set, entry *set.Entry) error {
-	transformer, err := completed.MakeTransformer()
-	if err != nil {
-		return err
-	}
-
-	remote, err := s.db.HardlinkRemote(entry)
-	if err != nil {
-		return err
-	}
-
-	request, err := entryToRequest(entry, transformer, completed)
-	if err != nil {
-		return err
-	}
-
-	rid := request.ID()
-	request.Remote = remote
-
-	rInfo, err := s.remoteStatter.Stat(request)
-	if err != nil {
-		return err
-	}
-
-	lInfo, err := os.Stat(entry.Path)
-	if err != nil {
-		return err
-	}
-
-	if !rInfo.Exists || lInfo.ModTime().After(rInfo.ModTime()) {
-		entry.Type = set.Regular
-
-		qi, err := s.queue.Get(rid)
-		if err != nil {
-			return err
-		}
-		request = qi.Data().(*put.Request)
-
-		request.Hardlink = ""
-		delete(request.Meta, put.MetaKeyHardlink)
-
-		fmt.Printf("\nrequeued: %v \n%v\n", entry, request.Status)
-		request.Status = put.RequestStatusPending
-
-		err = s.queue.Remove(context.Background(), rid)
-		if err != nil {
-			return err
-		}
-
-		_, _, err = s.queue.AddMany(context.Background(), []*queue.ItemDef{
-			{
-				Key:      rid,
-				Data:     request,
-				TTR:      ttr,
-				Priority: 255,
-			},
-		})
-		if err != nil {
-			return err
-		}
-
-		_, err = s.db.SetEntryStatus(request)
-		if err != nil {
-			return err
-		}
-
-		return hardlinkNotAnError
-	}
-
-	return nil
-}
-
-var hardlinkNotAnError = errors.New("")
 
 // removeOrReleaseRequestFromQueue removes the given Request from our queue
 // unless it has failed. < 3 failures results in it being released, 3 results in

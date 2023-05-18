@@ -83,21 +83,11 @@ func TestServer(t *testing.T) { //nolint:cyclop
 	minMBperSecondUploadSpeed := float64(10)
 	maxStuckTime := 1 * time.Hour
 
-	FocusConvey("Given a Server", t, func() {
+	Convey("Given a Server", t, func() {
 		logWriter := gas.NewStringLogger()
+		s := New(logWriter)
 
-		handler, err := put.GetBatonHandler()
-		So(err, ShouldBeNil)
-
-		err = handler.EnsureCollection("/humgen") //TODO: FIX!!!!!
-		So(err, ShouldBeNil)
-
-		err = handler.CollectionsDone()
-		So(err, ShouldBeNil)
-
-		s := New(logWriter, handler)
-
-		FocusConvey("You can Start the Server with Auth, MakeQueueEndPoints and LoadSetDB", func() {
+		Convey("You can Start the Server with Auth, MakeQueueEndPoints and LoadSetDB", func() {
 			certPath, keyPath, err := gas.CreateTestCert(t)
 			So(err, ShouldBeNil)
 
@@ -1227,7 +1217,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 				})
 			})
 
-			FocusConvey("Which lets you login as admin", func() {
+			Convey("Which lets you login as admin", func() {
 				token, errl := gas.Login(addr, certPath, admin, "pass")
 				So(errl, ShouldBeNil)
 
@@ -2067,7 +2057,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						fmt.Sprintf("open %s: permission denied", filepath.Dir(pathExpected3)))
 				})
 
-				FocusConvey("and add a set with hardlinks defined directly which only uploads the file once", func() {
+				Convey("and add a set with hardlinks defined directly which only uploads the file once", func() {
 					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldBeNil)
 
@@ -2157,113 +2147,6 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						So(gotSet.Hardlinks, ShouldEqual, 1)
 						So(gotSet.SizeFiles, ShouldEqual, 1)
 					})
-
-					FocusConvey("if the source hardlink doesn't get uploaded,"+
-						" the next assumed hardlink gets uploaded and corrected", func() {
-						unhardSet := &set.Set{
-							Name:        "unhard",
-							Requester:   exampleSet.Requester,
-							Transformer: exampleSet.Transformer,
-						}
-
-						err = client.AddOrUpdateSet(unhardSet)
-						So(err, ShouldBeNil)
-
-						path3 := filepath.Join(localDir, "file.link3")
-						err = os.Link(path1, path3)
-						So(err, ShouldBeNil)
-
-						err = client.SetFiles(unhardSet.ID(), []string{path3})
-						So(err, ShouldBeNil)
-
-						err = client.TriggerDiscovery(unhardSet.ID())
-						So(err, ShouldBeNil)
-
-						ok := <-racCalled
-						So(ok, ShouldBeTrue)
-
-						gotSet, err = client.GetSetByID(unhardSet.Requester, unhardSet.ID())
-						So(err, ShouldBeNil)
-						So(gotSet.Status, ShouldEqual, set.PendingUpload)
-						So(gotSet.NumFiles, ShouldEqual, 1)
-						So(gotSet.Uploaded, ShouldEqual, 0)
-						So(gotSet.Hardlinks, ShouldEqual, 1)
-
-						requests, errg := client.GetSomeUploadRequests()
-						So(errg, ShouldBeNil)
-						So(len(requests), ShouldEqual, 3)
-
-						fmt.Printf("\nafter discovery, got 3 requests from queue\n")
-
-						p, d := makePutter(t, handler, requests[2:], client)
-						defer d()
-
-						uploadStarts, uploadResults, skippedResults := p.Put()
-
-						err = client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults,
-							minMBperSecondUploadSpeed, minTimeForUpload, 1*time.Hour, logger)
-						So(err, ShouldBeNil)
-
-						gotSet, err = client.GetSetByID(unhardSet.Requester, unhardSet.ID())
-						So(err, ShouldBeNil)
-						So(gotSet.Status, ShouldEqual, set.Complete)
-						So(gotSet.NumFiles, ShouldEqual, 1)
-						So(gotSet.Uploaded, ShouldEqual, 1)
-						So(gotSet.Hardlinks, ShouldEqual, 1)
-						So(gotSet.SizeFiles, ShouldEqual, 0)
-
-						transformer, errg := unhardSet.MakeTransformer()
-						So(errg, ShouldBeNil)
-
-						remote, errg := transformer(path3)
-						So(errg, ShouldBeNil)
-
-						info, errs := os.Stat(remote)
-						So(errs, ShouldBeNil)
-						So(info.Size(), ShouldEqual, 0)
-
-						fmt.Printf("\nafter putting, expecting that 1 request got dealt with, then re-added to queue; will wait for rac\nqueue stats: %+v", s.queue.Stats())
-
-						<-racCalled
-
-						requests, err = client.GetSomeUploadRequests()
-						So(err, ShouldBeNil)
-						So(len(requests), ShouldEqual, 1)
-
-						p, d = makePutter(t, handler, requests, client)
-						defer d()
-
-						uploadStarts, uploadResults, skippedResults = p.Put()
-
-						err = client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults,
-							minMBperSecondUploadSpeed, minTimeForUpload, 1*time.Hour, logger)
-						So(err, ShouldBeNil)
-
-						info, err = os.Stat(remote)
-						So(err, ShouldBeNil)
-						So(info.Size(), ShouldEqual, 1)
-
-						remoteMeta := handler.GetMeta(remote)
-						So(remoteMeta, ShouldNotBeNil)
-						So(remoteMeta[put.MetaKeyHardlink], ShouldBeBlank)
-
-						gotSet, err = client.GetSetByID(unhardSet.Requester, unhardSet.ID())
-						So(err, ShouldBeNil)
-						So(gotSet.Status, ShouldEqual, set.Complete)
-						So(gotSet.NumFiles, ShouldEqual, 1)
-						So(gotSet.Uploaded, ShouldEqual, 1)
-						So(gotSet.Hardlinks, ShouldEqual, 0)
-						So(gotSet.SizeFiles, ShouldEqual, 1)
-
-						gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
-						So(err, ShouldBeNil)
-						So(gotSet.Status, ShouldEqual, set.PendingUpload)
-						So(gotSet.NumFiles, ShouldEqual, 2)
-						So(gotSet.Uploaded, ShouldEqual, 0)
-						So(gotSet.Hardlinks, ShouldEqual, 1)
-					})
-
-					//TODO: test for update
 				})
 
 				Convey("and add a set with hardlinks in a directory which only uploads the file once", func() {
