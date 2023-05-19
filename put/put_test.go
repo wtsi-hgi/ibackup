@@ -34,6 +34,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/wtsi-hgi/ibackup/internal"
 )
 
 func TestPutMock(t *testing.T) { //nolint:cyclop
@@ -409,17 +410,7 @@ func makeTestRequests(t *testing.T, sourceDir, destDir string) []*Request {
 			t.Fatal(err)
 		}
 
-		f, err := os.Create(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		_, err = f.WriteString("1\n")
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		f.Close()
+		internal.CreateTestFile(t, path, "1\n")
 
 		requests[i] = &Request{
 			Local:  path,

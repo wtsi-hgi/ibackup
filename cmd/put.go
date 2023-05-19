@@ -259,18 +259,26 @@ func handleCollections(client *server.Client, p *put.Putter) {
 		info("will create collections")
 	}
 
+	if client == nil {
+		createCollection(p)
+
+		return
+	}
+
 	err := client.StartingToCreateCollections()
 	if err != nil {
 		warn("telling server we started to create collections failed: %s", err)
 	}
 
-	defer func() {
-		if err = client.FinishedCreatingCollections(); err != nil {
-			warn("telling server we finished creating collections failed: %s", err)
-		}
-	}()
+	createCollection(p)
 
-	err = p.CreateCollections()
+	if err = client.FinishedCreatingCollections(); err != nil {
+		warn("telling server we finished creating collections failed: %s", err)
+	}
+}
+
+func createCollection(p *put.Putter) {
+	err := p.CreateCollections()
 	if err != nil {
 		warn("collection creation failed: %s", err)
 	} else if putVerbose {

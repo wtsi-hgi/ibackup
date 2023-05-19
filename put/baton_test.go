@@ -37,6 +37,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/wtsi-hgi/ibackup/internal"
 	ex "github.com/wtsi-npg/extendo/v2"
 )
 
@@ -440,15 +441,7 @@ func testCreateLocalFile(t *testing.T, basename string) (string, string) {
 	sourceDir := t.TempDir()
 
 	path := filepath.Join(sourceDir, "testput", basename)
-	err := os.MkdirAll(filepath.Dir(path), userPerms)
-	So(err, ShouldBeNil)
-	f, err := os.Create(path)
-	So(err, ShouldBeNil)
-
-	_, err = f.WriteString("1")
-	So(err, ShouldBeNil)
-	err = f.Close()
-	So(err, ShouldBeNil)
+	internal.CreateTestFile(t, path, "1")
 
 	return path, sourceDir
 }
