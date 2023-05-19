@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2022 Genome Research Ltd.
+ * Copyright (c) 2022, 2023 Genome Research Ltd.
  *
  * Author: Sendu Bala <sb10@sanger.ac.uk>
  *
@@ -41,7 +41,7 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 	Convey("Given Requests and a mock Handler, you can make a new Putter", t, func() {
 		requests, expectedCollections := makeMockRequests(t)
 
-		lh := &LocalHandler{}
+		lh := GetLocalHandler()
 
 		p, err := New(lh, requests)
 		So(err, ShouldBeNil)
@@ -189,7 +189,7 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 				}
 			})
 
-			Convey("Put() uploads an empty file in place of links", func() {
+			Convey("Put() uploads an empty file in place of links, with hardlink data going to the Hardlink location", func() {
 				err = os.Remove(requests[0].Local)
 				So(err, ShouldBeNil)
 
@@ -204,25 +204,17 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 				err = os.Link(requests[3].Local, requests[2].Local)
 				So(err, ShouldBeNil)
 
-				requests[2].Hardlink = requests[3].Local
+				requests[2].Hardlink = requests[3].Remote + ".inode"
+				setMetaKey := "set"
+				requests[2].Meta = map[string]string{setMetaKey: "a"}
 
-				uCh, urCh, srCh := p.Put()
+				clonedRequest2 := requests[2].Clone()
 
-				uploading := 0
-				uploaded := 0
+				uploading, skipped, statusCounts := uploadRequests(lh, requests)
 
-				for range uCh {
-					uploading++
-				}
-
-				for request := range urCh {
-					if request.Status == RequestStatusUploaded {
-						uploaded++
-					}
-				}
-
-				So(uploading, ShouldEqual, len(requests))
-				So(uploaded, ShouldEqual, len(requests))
+				So(uploading, ShouldEqual, len(requests)+1)
+				So(statusCounts[RequestStatusUploaded], ShouldEqual, len(requests)+1)
+				So(skipped, ShouldEqual, 0)
 
 				info, errs := os.Stat(requests[0].Remote)
 				So(errs, ShouldBeNil)
@@ -232,8 +224,43 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 				So(errs, ShouldBeNil)
 				So(info.Size(), ShouldEqual, 0)
 
-				skipped := <-srCh
-				So(skipped, ShouldBeNil)
+				info, errs = os.Stat(requests[2].Hardlink)
+				So(errs, ShouldBeNil)
+				So(info.Size(), ShouldEqual, 2)
+
+				So(lh.meta[requests[2].Remote][setMetaKey], ShouldEqual, "a")
+				So(lh.meta[requests[2].Hardlink][setMetaKey], ShouldEqual, lh.meta[requests[2].Remote][setMetaKey])
+
+				Convey("re-uploading an unmodified hardlink does not replace remote files", func() {
+					hardlinkMTime := info.ModTime()
+
+					reclonedRequest2 := clonedRequest2.Clone()
+
+					uploading, skipped, statusCounts = uploadRequests(lh, []*Request{clonedRequest2})
+
+					So(uploading, ShouldEqual, 0)
+					So(statusCounts[RequestStatusUploaded], ShouldEqual, 0)
+					So(statusCounts[RequestStatusReplaced], ShouldEqual, 0)
+					So(skipped, ShouldEqual, 2)
+
+					info, errs = os.Stat(requests[2].Hardlink)
+					So(errs, ShouldBeNil)
+					So(info.ModTime(), ShouldResemble, hardlinkMTime)
+
+					Convey("re-uploading a modified hardlink does replace remote files", func() {
+						touchFile(requests[2].Local, time.Hour)
+
+						uploading, skipped, statusCounts = uploadRequests(lh, []*Request{reclonedRequest2})
+
+						So(uploading, ShouldEqual, 2)
+						So(statusCounts[RequestStatusReplaced], ShouldEqual, 2)
+						So(skipped, ShouldEqual, 0)
+
+						info, errs = os.Stat(requests[2].Hardlink)
+						So(errs, ShouldBeNil)
+						So(info.ModTime().After(hardlinkMTime), ShouldBeTrue)
+					})
+				})
 			})
 
 			Convey("Underlying put and metadata operation failures result in failed requests", func() {
@@ -439,4 +466,37 @@ func touchFile(path string, d time.Duration) time.Time {
 	So(err, ShouldBeNil)
 
 	return newT
+}
+
+// uploadRequests uploads the requests with the given handler and returns the
+// count of uploading files, skipped files and a map of RequestStatus count for
+// uploaded ones.
+func uploadRequests(h Handler, requests []*Request) (int, int, map[RequestStatus]int) {
+	p, err := New(h, requests)
+	So(err, ShouldBeNil)
+	So(p, ShouldNotBeNil)
+
+	err = p.CreateCollections()
+	So(err, ShouldBeNil)
+
+	uCh, urCh, srCh := p.Put()
+
+	uploading := 0
+	skipped := 0
+	requestStatusCounts := make(map[RequestStatus]int)
+
+	for range uCh {
+		uploading++
+	}
+
+	for request := range urCh {
+		currentCount := requestStatusCounts[request.Status]
+		requestStatusCounts[request.Status] = currentCount + 1
+	}
+
+	for range srCh {
+		skipped++
+	}
+
+	return uploading, skipped, requestStatusCounts
 }

@@ -55,8 +55,10 @@ type LocalHandler struct {
 // GetLocalHandler returns a Handler that doesn't actually interact with iRODS,
 // but instead simply treats "Remote" as local paths and copies from Local to
 // Remote for any Put()s. For use during tests.
-func GetLocalHandler() (*LocalHandler, error) {
-	return &LocalHandler{}, nil
+func GetLocalHandler() *LocalHandler {
+	return &LocalHandler{
+		meta: make(map[string]map[string]string),
+	}
 }
 
 // Cleanup just records this was called.
@@ -79,7 +81,6 @@ func (l *LocalHandler) EnsureCollection(dir string) error {
 // CollectionsDone says we connected and prepares us for metadata handling.
 func (l *LocalHandler) CollectionsDone() error {
 	l.connected = true
-	l.meta = make(map[string]map[string]string)
 
 	return nil
 }

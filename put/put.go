@@ -306,6 +306,8 @@ func noLeavesOrNewLeaf(uniqueLeafs []string, last string) bool {
 // By calling SetFileStatusCallback() you can decide additional files to not
 // upload.
 func (p *Putter) Put() (chan *Request, chan *Request, chan *Request) {
+	p.addHardlinkRequests()
+
 	uploadStartCh := make(chan *Request, len(p.requests))
 	uploadReturnCh := make(chan *Request, len(p.requests))
 	skipReturnCh := make(chan *Request, len(p.requests))
@@ -325,6 +327,22 @@ func (p *Putter) Put() (chan *Request, chan *Request, chan *Request) {
 	}()
 
 	return uploadStartCh, uploadReturnCh, skipReturnCh
+}
+
+func (p *Putter) addHardlinkRequests() {
+	for _, r := range p.requests {
+		if r.Hardlink != "" {
+			nr := r.Clone()
+			nr.Remote = nr.Hardlink
+			nr.Hardlink = ""
+
+			delete(r.Meta, MetaKeyHardlink)
+
+			p.requests = append(p.requests, nr)
+
+			r.Meta[MetaKeyRemoteHardlink] = r.Hardlink
+		}
+	}
 }
 
 // pickFilesToPut goes through all our Requests, immediately returns bad ones
@@ -426,7 +444,7 @@ func sendRequest(request *Request, status RequestStatus, err error, ch chan *Req
 func (p *Putter) putFilesInIRODS(wg *sync.WaitGroup, putCh, uploadStartCh, uploadReturnCh, skipReturnCh chan *Request) {
 	defer wg.Done()
 
-	metaCh := make(chan *Request, len(p.requests))
+	metaCh := make(chan *Request, cap(uploadReturnCh))
 	metaDoneCh := make(chan struct{})
 
 	go p.applyMetadataConcurrently(metaCh, uploadReturnCh, skipReturnCh, metaDoneCh)

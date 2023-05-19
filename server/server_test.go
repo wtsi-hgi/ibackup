@@ -1211,8 +1211,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 
 				client := NewClient(addr, certPath, token)
 
-				handler, errh := put.GetLocalHandler()
-				So(errh, ShouldBeNil)
+				handler := put.GetLocalHandler()
 
 				logger := log15.New()
 
@@ -1986,8 +1985,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 
 					remotePath := filepath.Join(remoteDir, "remoteDB")
 
-					handler, err = put.GetLocalHandler()
-					So(err, ShouldBeNil)
+					handler = put.GetLocalHandler()
 
 					s.EnableRemoteDBBackups(remotePath, handler)
 

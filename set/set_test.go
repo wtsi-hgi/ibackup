@@ -1299,8 +1299,7 @@ func TestBackup(t *testing.T) {
 			So(err, ShouldBeNil)
 			remotePath := filepath.Join(remoteDir, "db")
 
-			handler, errg := put.GetLocalHandler()
-			So(errg, ShouldBeNil)
+			handler := put.GetLocalHandler()
 
 			db.EnableRemoteBackups(remotePath, handler)
 

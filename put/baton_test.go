@@ -200,25 +200,13 @@ func TestPutBaton(t *testing.T) { //nolint:cyclop
 				err = os.Link(requests[3].Local, requests[2].Local)
 				So(err, ShouldBeNil)
 
-				requests[2].Hardlink = requests[3].Local
+				requests[2].Hardlink = requests[3].Remote + ".inode"
 
-				uCh, urCh, srCh := p.Put()
+				uploading, skipped, statusCounts := uploadRequests(h, requests)
 
-				uploading := 0
-				uploaded := 0
-
-				for range uCh {
-					uploading++
-				}
-
-				for request := range urCh {
-					if request.Status == RequestStatusUploaded {
-						uploaded++
-					}
-				}
-
-				So(uploading, ShouldEqual, len(requests))
-				So(uploaded, ShouldEqual, len(requests))
+				So(uploading, ShouldEqual, len(requests)+1)
+				So(statusCounts[RequestStatusUploaded], ShouldEqual, len(requests)+1)
+				So(skipped, ShouldEqual, 0)
 
 				it, err := getItemWithBaton(testClient, requests[0].Remote)
 				So(err, ShouldBeNil)
@@ -228,8 +216,9 @@ func TestPutBaton(t *testing.T) { //nolint:cyclop
 				So(err, ShouldBeNil)
 				So(it.ISize, ShouldEqual, 0)
 
-				skipped := <-srCh
-				So(skipped, ShouldBeNil)
+				it, err = getItemWithBaton(testClient, requests[2].Hardlink)
+				So(err, ShouldBeNil)
+				So(it.ISize, ShouldEqual, 2)
 			})
 		})
 	})
