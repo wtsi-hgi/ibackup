@@ -36,6 +36,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 	"testing"
@@ -594,22 +595,27 @@ func TestBackup(t *testing.T) {
 
 		s.startServer()
 
-		lastMtime := time.Now()
-
 		transformer, localDir, remoteDir := prepareForSetWithEmptyDir(t)
 		s.addSetForTesting(t, "testForBackup", transformer, localDir)
 
 		versionsSeen := 0
+
+		sizeRe := regexp.MustCompile(` (\d+)\s+\d{4}-\d{2}-\d{2}\.\d{2}:\d{2}`)
+		foundSize := ""
+
 		internal.RetryUntilWorksCustom(t, func() error { //nolint:errcheck
-			info, err := os.Stat(s.backupFile)
+			out, err := exec.Command("ils", "-l", remotePath).CombinedOutput()
 			if err != nil {
 				return err
 			}
 
-			if versionsSeen == 0 {
-				lastMtime = info.ModTime()
+			sizeStr := sizeRe.FindString(string(out))
+			if sizeStr != foundSize {
 				versionsSeen++
-			} else if versionsSeen == 1 && info.ModTime().After(lastMtime) {
+				foundSize = sizeStr
+			}
+
+			if versionsSeen == 2 {
 				return nil
 			}
 

@@ -92,10 +92,6 @@ func retryUntilWorks(t *testing.T, f func() error, retryTimeout time.Duration, b
 
 	status := retry.Do(ctx, f, &retry.UntilNoError{}, backoff, "RetryUntilWorks")
 
-	if status.Err != nil {
-		t.Logf("%s (%s)", status.StoppedBecause, status.Err)
-	}
-
 	return status.Err
 }
 
