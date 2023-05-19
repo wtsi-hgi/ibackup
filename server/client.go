@@ -452,8 +452,15 @@ func (c *Client) SendPutResultsToServer(uploadStarts, uploadResults, skipResults
 func (c *Client) handleUploadTracking(wg *sync.WaitGroup, uploadStarts, uploadResults chan *put.Request) {
 	defer wg.Done()
 
+	entries := make(map[string]*put.Request)
+
 	for ru := range uploadStarts {
 		c.logger.Info("started upload", "path", ru.Local)
+
+		ru = handleHardlinkRequest(entries, ru, handleHardlinkRequestUploading)
+		if ru == nil {
+			continue
+		}
 
 		if err := c.UpdateFileStatus(ru); err != nil {
 			c.logger.Warn("failed to update file status to uploading", "err", err, "path", ru.Local)
@@ -464,7 +471,15 @@ func (c *Client) handleUploadTracking(wg *sync.WaitGroup, uploadStarts, uploadRe
 
 		stopStuckTimer := c.stuckIfUploadTakesTooLong(ru)
 
-		rr := <-uploadResults
+		var rr *put.Request
+
+		for r := range uploadResults {
+			rr = handleHardlinkRequest(entries, r, handleHardlinkRequestComplete)
+
+			if rr != nil {
+				break
+			}
+		}
 
 		c.logger.Info("finished upload", "path", ru.Local)
 		close(stopStuckTimer)
@@ -473,6 +488,61 @@ func (c *Client) handleUploadTracking(wg *sync.WaitGroup, uploadStarts, uploadRe
 			c.logger.Warn("failed to update file status to complete", "err", err, "path", ru.Local)
 			c.uploadsErrCh <- err
 		}
+	}
+}
+
+func handleHardlinkRequest(entries map[string]*put.Request, request *put.Request,
+	cb func(*put.Request, *put.Request)) *put.Request {
+	_, hasMetaHardlink := request.Meta[put.MetaKeyHardlink]
+	_, hasMetaRemoteHardlink := request.Meta[put.MetaKeyRemoteHardlink]
+
+	if !hasMetaHardlink && !hasMetaRemoteHardlink {
+		return request
+	}
+
+	other, ok := entries[request.Local]
+	if !ok {
+		entries[request.Local] = request
+
+		return nil
+	}
+
+	delete(entries, request.Local)
+
+	var requestWithTransformedRemote, requestWithInodeRemote *put.Request
+
+	if hasMetaRemoteHardlink {
+		requestWithTransformedRemote = request.Clone()
+		requestWithInodeRemote = other
+	} else {
+		requestWithTransformedRemote = other.Clone()
+		requestWithInodeRemote = request
+	}
+
+	cb(requestWithTransformedRemote, requestWithInodeRemote)
+
+	return requestWithTransformedRemote
+}
+
+func handleHardlinkRequestUploading(requestWithTransformedRemote, requestWithInodeRemote *put.Request) {
+	if requestWithInodeRemote.Error != "" {
+		requestWithTransformedRemote.Error = requestWithInodeRemote.Error
+	}
+
+	if requestWithInodeRemote.Status != put.RequestStatusUploading {
+		requestWithTransformedRemote.Status = requestWithInodeRemote.Status
+	}
+}
+
+func handleHardlinkRequestComplete(requestWithTransformedRemote, requestWithInodeRemote *put.Request) {
+	if requestWithInodeRemote.Error != "" {
+		requestWithTransformedRemote.Error = requestWithInodeRemote.Error
+	}
+
+	switch requestWithInodeRemote.Status {
+	case put.RequestStatusUploaded, put.RequestStatusReplaced:
+	default:
+		requestWithTransformedRemote.Status = requestWithInodeRemote.Status
 	}
 }
 

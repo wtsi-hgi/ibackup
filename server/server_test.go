@@ -33,7 +33,9 @@ import (
 	"os/user"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -86,11 +88,11 @@ func TestServer(t *testing.T) { //nolint:cyclop
 	minMBperSecondUploadSpeed := float64(10)
 	maxStuckTime := 1 * time.Hour
 
-	Convey("Given a Server", t, func() {
+	FocusConvey("Given a Server", t, func() {
 		logWriter := gas.NewStringLogger()
 		s := New(logWriter)
 
-		Convey("You can Start the Server with Auth, MakeQueueEndPoints and LoadSetDB", func() {
+		FocusConvey("You can Start the Server with Auth, MakeQueueEndPoints and LoadSetDB", func() {
 			certPath, keyPath, err := gas.CreateTestCert(t)
 			So(err, ShouldBeNil)
 
@@ -1205,7 +1207,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 				})
 			})
 
-			Convey("Which lets you login as admin", func() {
+			FocusConvey("Which lets you login as admin", func() {
 				token, errl := gas.Login(addr, certPath, admin, "pass")
 				So(errl, ShouldBeNil)
 
@@ -2043,7 +2045,10 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						fmt.Sprintf("open %s: permission denied", filepath.Dir(pathExpected3)))
 				})
 
-				Convey("and add a set with hardlinks defined directly which only uploads the file once", func() {
+				FocusConvey("and add a set with hardlinks defined directly which only uploads the file once", func() {
+					hardlinksDir := filepath.Join(remoteDir, "mountpoints")
+					s.SetRemoteHardlinkLocation(hardlinksDir)
+
 					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldBeNil)
 
@@ -2077,7 +2082,15 @@ func TestServer(t *testing.T) { //nolint:cyclop
 					So(requests[0].Local, ShouldEqual, path1)
 					So(requests[0].Hardlink, ShouldBeBlank)
 					So(requests[1].Local, ShouldEqual, path2)
-					So(requests[1].Hardlink, ShouldEqual, path1)
+
+					info, errs := os.Stat(path1)
+					So(errs, ShouldBeNil)
+					statt, ok := info.Sys().(*syscall.Stat_t)
+					So(ok, ShouldBeTrue)
+					inodeFile := filepath.Join(hardlinksDir,
+						s.db.GetMountPointFromPath(requests[1].Local),
+						strconv.FormatUint(statt.Ino, 10))
+					So(requests[1].Hardlink, ShouldEqual, inodeFile)
 
 					for _, item := range s.queue.AllItems() {
 						err = s.queue.Remove(context.Background(), item.Key)
@@ -2097,7 +2110,8 @@ func TestServer(t *testing.T) { //nolint:cyclop
 					So(gotSet.Uploaded, ShouldEqual, 0)
 					So(gotSet.Hardlinks, ShouldEqual, 1)
 
-					Convey("uploading hardlinks sets the hardlink metadata on an empty file", func() {
+					FocusConvey("uploading hardlinks sets the hardlink metadata on an empty file"+
+						" and uploads real data to inode file", func() {
 						requests, errg := client.GetSomeUploadRequests()
 						So(errg, ShouldBeNil)
 						So(len(requests), ShouldEqual, 2)
@@ -2120,10 +2134,15 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						remoteMeta := handler.GetMeta(remote)
 						So(remoteMeta, ShouldNotBeNil)
 						So(remoteMeta[put.MetaKeyHardlink], ShouldEqual, path1)
+						So(remoteMeta[put.MetaKeyRemoteHardlink], ShouldEqual, inodeFile)
 
 						info, errs := os.Stat(remote)
 						So(errs, ShouldBeNil)
 						So(info.Size(), ShouldEqual, 0)
+
+						info, errs = os.Stat(inodeFile)
+						So(errs, ShouldBeNil)
+						So(info.Size(), ShouldEqual, 1)
 
 						gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
 						So(err, ShouldBeNil)

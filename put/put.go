@@ -336,7 +336,8 @@ func (p *Putter) addHardlinkRequests() {
 			nr.Remote = nr.Hardlink
 			nr.Hardlink = ""
 
-			delete(r.Meta, MetaKeyHardlink)
+			//TODO: Why were we deleting this?
+			//delete(r.Meta, MetaKeyHardlink)
 
 			p.requests = append(p.requests, nr)
 

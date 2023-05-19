@@ -70,20 +70,21 @@ const (
 // package's database, and a website that displays the information nicely.
 type Server struct {
 	gas.Server
-	db                  *set.DB
-	numClients          int
-	numRequestsCache    []int
-	cacheMu             sync.Mutex
-	dirPool             *workerpool.WorkerPool
-	queue               *queue.Queue
-	sched               *scheduler.Scheduler
-	putCmd              string
-	req                 *jqs.Requirements
-	username            string
-	statusUpdateCh      chan *fileStatusPacket
-	creatingCollections map[string]bool
-	uploading           map[string]*put.Request
-	stuckRequests       map[string]*put.Request
+	db                     *set.DB
+	numClients             int
+	numRequestsCache       []int
+	cacheMu                sync.Mutex
+	dirPool                *workerpool.WorkerPool
+	queue                  *queue.Queue
+	sched                  *scheduler.Scheduler
+	putCmd                 string
+	req                    *jqs.Requirements
+	username               string
+	remoteHardlinkLocation string
+	statusUpdateCh         chan *fileStatusPacket
+	creatingCollections    map[string]bool
+	uploading              map[string]*put.Request
+	stuckRequests          map[string]*put.Request
 
 	mapMu   sync.RWMutex
 	monitor *Monitor
@@ -113,6 +114,10 @@ func New(logWriter io.Writer) *Server {
 	s.SetStopCallBack(s.stop)
 
 	return s
+}
+
+func (s *Server) SetRemoteHardlinkLocation(path string) {
+	s.remoteHardlinkLocation = path
 }
 
 // EnableAuth does the same as gas.EnableAuth, but also records the current

@@ -31,6 +31,8 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/VertebrateResequencing/wr/queue"
@@ -296,7 +298,7 @@ func (s *Server) enqueueEntries(entries []*set.Entry, given *set.Set, transforme
 	defs := make([]*queue.ItemDef, len(entries))
 
 	for i, entry := range entries {
-		r, err := entryToRequest(entry, transformer, given)
+		r, err := s.entryToRequest(entry, transformer, given)
 		if err != nil {
 			return err
 		}
@@ -319,7 +321,8 @@ func (s *Server) enqueueEntries(entries []*set.Entry, given *set.Set, transforme
 
 // entryToRequest converts an Entry to a Request containing details of the given
 // set.
-func entryToRequest(entry *set.Entry, transformer put.PathTransformer, given *set.Set) (*put.Request, error) {
+func (s *Server) entryToRequest(entry *set.Entry, transformer put.PathTransformer,
+	given *set.Set) (*put.Request, error) {
 	r, err := put.NewRequestWithTransformedLocal(entry.Path, transformer)
 	if err != nil {
 		return nil, err
@@ -338,7 +341,8 @@ func entryToRequest(entry *set.Entry, transformer put.PathTransformer, given *se
 	}
 
 	if entry.Type == set.Hardlink {
-		r.Hardlink = entry.Dest
+		r.Hardlink = filepath.Join(s.remoteHardlinkLocation,
+			s.db.GetMountPointFromPath(r.Local), strconv.FormatUint(entry.Inode, 10))
 		r.Meta[put.MetaKeyHardlink] = entry.Dest
 	}
 
