@@ -255,6 +255,10 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 					Convey("re-uploading a modified hardlink does replace remote files", func() {
 						touchFile(requests[2].Local, time.Hour)
 
+						info, errs = os.Stat(requests[2].Local)
+						So(errs, ShouldBeNil)
+						So(info.ModTime().After(hardlinkMTime), ShouldBeTrue)
+
 						uploading, skipped, statusCounts = uploadRequests(lh, []*Request{reclonedRequest2})
 
 						So(uploading, ShouldEqual, 2)

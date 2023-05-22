@@ -94,7 +94,12 @@ func (s *TestServer) prepareFilePaths(dir string) {
 	home, err := os.UserHomeDir()
 	So(err, ShouldBeNil)
 
-	s.env = []string{"XDG_STATE_HOME=" + s.dir, "PATH=" + os.Getenv("PATH"), "HOME=" + home}
+	s.env = []string{
+		"XDG_STATE_HOME=" + s.dir,
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + home,
+		"IRODS_ENVIRONMENT_FILE=" + os.Getenv("IRODS_ENVIRONMENT_FILE"),
+	}
 }
 
 // prepareConfig creates a key and cert to use with a server and looks at
@@ -628,7 +633,12 @@ func TestBackup(t *testing.T) {
 		err := internal.RetryUntilWorksCustom(t, func() error {
 			cmd := exec.Command("iget", "-K", remotePath, gotPath)
 
-			return cmd.Run()
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Logf("iget failed: %s\n%s\n", err, string(out))
+			}
+
+			return err
 		}, 30*time.Second, 1*time.Second)
 
 		So(err, ShouldBeNil)
@@ -682,6 +692,10 @@ Directories:
   `+localDir+` => `+remoteDir)
 		})
 	})
+}
+
+func TestHardlinks(t *testing.T) {
+	_ = t
 }
 
 func TestManualMode(t *testing.T) {
