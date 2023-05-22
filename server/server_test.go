@@ -88,11 +88,11 @@ func TestServer(t *testing.T) { //nolint:cyclop
 	minMBperSecondUploadSpeed := float64(10)
 	maxStuckTime := 1 * time.Hour
 
-	FocusConvey("Given a Server", t, func() {
+	Convey("Given a Server", t, func() {
 		logWriter := gas.NewStringLogger()
 		s := New(logWriter)
 
-		FocusConvey("You can Start the Server with Auth, MakeQueueEndPoints and LoadSetDB", func() {
+		Convey("You can Start the Server with Auth, MakeQueueEndPoints and LoadSetDB", func() {
 			certPath, keyPath, err := gas.CreateTestCert(t)
 			So(err, ShouldBeNil)
 
@@ -1207,7 +1207,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 				})
 			})
 
-			FocusConvey("Which lets you login as admin", func() {
+			Convey("Which lets you login as admin", func() {
 				token, errl := gas.Login(addr, certPath, admin, "pass")
 				So(errl, ShouldBeNil)
 
@@ -2045,7 +2045,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						fmt.Sprintf("open %s: permission denied", filepath.Dir(pathExpected3)))
 				})
 
-				FocusConvey("and add a set with hardlinks defined directly which only uploads the file once", func() {
+				Convey("and add a set with hardlinks defined directly which only uploads the file once", func() {
 					hardlinksDir := filepath.Join(remoteDir, "mountpoints")
 					s.SetRemoteHardlinkLocation(hardlinksDir)
 
@@ -2110,7 +2110,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 					So(gotSet.Uploaded, ShouldEqual, 0)
 					So(gotSet.Hardlinks, ShouldEqual, 1)
 
-					FocusConvey("uploading hardlinks sets the hardlink metadata on an empty file"+
+					Convey("uploading hardlinks sets the hardlink metadata on an empty file"+
 						" and uploads real data to inode file", func() {
 						requests, errg := client.GetSomeUploadRequests()
 						So(errg, ShouldBeNil)
@@ -2133,7 +2133,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 
 						remoteMeta := handler.GetMeta(remote)
 						So(remoteMeta, ShouldNotBeNil)
-						So(remoteMeta[put.MetaKeyHardlink], ShouldEqual, path1)
+						So(remoteMeta[put.MetaKeyHardlink], ShouldEqual, path2)
 						So(remoteMeta[put.MetaKeyRemoteHardlink], ShouldEqual, inodeFile)
 
 						info, errs := os.Stat(remote)
@@ -2143,6 +2143,11 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						info, errs = os.Stat(inodeFile)
 						So(errs, ShouldBeNil)
 						So(info.Size(), ShouldEqual, 1)
+
+						inodeMeta := handler.GetMeta(inodeFile)
+						So(inodeMeta, ShouldNotBeNil)
+						So(inodeMeta[put.MetaKeyHardlink], ShouldEqual, path1)
+						So(inodeMeta[put.MetaKeyRemoteHardlink], ShouldBeBlank)
 
 						gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
 						So(err, ShouldBeNil)
