@@ -56,17 +56,18 @@ const userPerms = 0700
 var errTwoBackupsNotSeen = errors.New("2 backups were not seen")
 
 type TestServer struct {
-	key          string
-	cert         string
-	ldapServer   string
-	ldapLookup   string
-	url          string
-	dir          string
-	dbFile       string
-	backupFile   string
-	remoteDBFile string
-	logFile      string
-	env          []string
+	key                 string
+	cert                string
+	ldapServer          string
+	ldapLookup          string
+	url                 string
+	dir                 string
+	dbFile              string
+	backupFile          string
+	remoteDBFile        string
+	logFile             string
+	schedulerDeployment string
+	env                 []string
 
 	cmd *exec.Cmd
 }
@@ -134,7 +135,13 @@ func (s *TestServer) prepareConfig() {
 
 func (s *TestServer) startServer() {
 	args := []string{"server", "--cert", s.cert, "--key", s.key, "--logfile", s.logFile,
-		"-s", s.ldapServer, "-l", s.ldapLookup, "--url", s.url, "--debug"}
+		"-s", s.ldapServer, "-l", s.ldapLookup, "--url", s.url}
+
+	if s.schedulerDeployment != "" {
+		args = append(args, "-w", s.schedulerDeployment)
+	} else {
+		args = append(args, "--debug")
+	}
 
 	if s.remoteDBFile != "" {
 		args = append(args, "--remote_backup", s.remoteDBFile)
@@ -224,7 +231,7 @@ func (s *TestServer) confirmOutput(t *testing.T, args []string, expectedCode int
 	So(actual, ShouldEqual, expected)
 }
 
-var ErrNoCompleted = errors.New("discovery not completed")
+var ErrStatusNotFound = errors.New("status not found")
 
 func (s *TestServer) addSetForTesting(t *testing.T, name, transformer, path string) {
 	t.Helper()
@@ -232,10 +239,16 @@ func (s *TestServer) addSetForTesting(t *testing.T, name, transformer, path stri
 	exitCode, _ := s.runBinary(t, "add", "--name", name, "--transformer", transformer, "--path", path)
 	So(exitCode, ShouldEqual, 0)
 
-	ctx, cancelFn := context.WithTimeout(context.Background(), 5*time.Second)
+	s.waitForStatus(name, "\nDiscovery: completed", 5*time.Second)
+}
+
+func (s *TestServer) waitForStatus(name, statusToFind string, timeout time.Duration) {
+	ctx, cancelFn := context.WithTimeout(context.Background(), timeout)
 	defer cancelFn()
 
 	cmd := []string{"status", "--name", name, "--url", s.url, "--cert", s.cert}
+
+	var out string
 
 	status := retry.Do(ctx, func() error {
 		clientCmd := exec.Command("./"+app, cmd...)
@@ -246,12 +259,18 @@ func (s *TestServer) addSetForTesting(t *testing.T, name, transformer, path stri
 			return err
 		}
 
-		if strings.Contains(string(output), "\nDiscovery: completed") {
+		if strings.Contains(string(output), statusToFind) {
 			return nil
 		}
 
-		return ErrNoCompleted
-	}, &retry.UntilNoError{}, btime.SecondsRangeBackoff(), "waiting for discovery to complete")
+		out = string(output)
+
+		return ErrStatusNotFound
+	}, &retry.UntilNoError{}, btime.SecondsRangeBackoff(), "waiting for matching status")
+
+	if status.Err != nil {
+		fmt.Printf("\nstatus '%s' not found, got:\n%s\n", statusToFind, out)
+	}
 
 	So(status.Err, ShouldBeNil)
 }
@@ -695,7 +714,55 @@ Directories:
 }
 
 func TestHardlinks(t *testing.T) {
-	_ = t
+	Convey("Putting a set with hardlinks uploads an empty file and special inode file", t, func() {
+		remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
+		if remotePath == "" {
+			SkipConvey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
+
+			return
+		}
+
+		schedulerDeployment := os.Getenv("IBACKUP_TEST_SCHEDULER")
+
+		if schedulerDeployment == "" {
+			SkipConvey("skipping iRODS backup test since IBACKUP_TEST_SCHEDULER not set", func() {})
+
+			return
+		}
+
+		dir := t.TempDir()
+		s := new(TestServer)
+		s.prepareFilePaths(dir)
+		s.prepareConfig()
+
+		s.schedulerDeployment = schedulerDeployment
+
+		s.startServer()
+
+		path := t.TempDir()
+
+		file := filepath.Join(path, "file")
+		link1 := filepath.Join(path, "hardlink1")
+		link2 := filepath.Join(path, "hardlink2")
+
+		remoteFile := filepath.Join(remotePath, "file")
+
+		internal.CreateTestFile(t, file, "some data")
+
+		err := os.Link(file, link1)
+		So(err, ShouldBeNil)
+
+		err = os.Link(file, link2)
+		So(err, ShouldBeNil)
+
+		s.addSetForTesting(t, "hardlinkTest", "prefix="+path+":"+remotePath, path)
+
+		s.waitForStatus("hardlinkTest", "\nStatus: complete", 40*time.Second)
+
+		output, err := exec.Command("imeta", "ls", "-d", remoteFile).CombinedOutput()
+		So(err, ShouldBeNil)
+		So(output, ShouldEqual, "a")
+	})
 }
 
 func TestManualMode(t *testing.T) {

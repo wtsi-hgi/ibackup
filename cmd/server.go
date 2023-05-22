@@ -61,6 +61,7 @@ var serverLDAPFQDN string
 var serverLDAPBindDN string
 var serverDebug bool
 var serverRemoteBackupPath string
+var serverWRDeployment string
 
 // serverCmd represents the server command.
 var serverCmd = &cobra.Command{
@@ -97,7 +98,10 @@ you might want to filter away 'STATUS=200' to find problems.
 If --logfile is supplied, logs to that file instead of syslog. It also results
 in the put clients we spawn logging to files with that prefix.
 
-The server must be running for 'ibackup add' calls to succeed.
+The server must be running for 'ibackup add' calls to succeed. A wr manager
+instance must be running for 'ibackup add' commands to be automatically
+scheduled. Set --wr_deployment to "development" if you're using a development
+manager.
 
 This command will block forever in the foreground; you can background it with
 ctrl-z; bg. Or better yet, use the daemonize program to daemonize this.
@@ -147,7 +151,7 @@ database that you've made, to investigate.
 				putCmd += fmt.Sprintf("--log %s.client.", serverLogPath)
 			}
 
-			err = s.EnableJobSubmission(putCmd, "production", "", "", numPutClients, appLogger)
+			err = s.EnableJobSubmission(putCmd, serverWRDeployment, "", "", numPutClients, appLogger)
 			if err != nil {
 				die("failed to enable job submission: %s", err)
 			}
@@ -201,6 +205,8 @@ func init() {
 		"ldap bind dn, with username replaced with %s")
 	serverCmd.Flags().StringVar(&serverLogPath, "logfile", "",
 		"log to this file instead of syslog")
+	serverCmd.Flags().StringVarP(&serverWRDeployment, "wr_deployment", "w", "production",
+		"use this deployment of wr for your job submission")
 	serverCmd.Flags().BoolVar(&serverDebug, "debug", false,
 		"disable job submissions for debugging purposes")
 	serverCmd.Flags().StringVar(&serverRemoteBackupPath, "remote_backup", os.Getenv("IBACKUP_REMOTE_DB_BACKUP_PATH"),
