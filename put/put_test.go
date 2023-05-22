@@ -204,7 +204,10 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 				err = os.Link(requests[3].Local, requests[2].Local)
 				So(err, ShouldBeNil)
 
-				requests[2].Hardlink = requests[3].Remote + ".inode"
+				inodeBaseDir := t.TempDir()
+				inodeDir := filepath.Join(inodeBaseDir, "mountpoints")
+				inodeRemote := filepath.Join(inodeDir, "inode.file")
+				requests[2].Hardlink = inodeRemote
 				setMetaKey := "set"
 				requests[2].Meta = map[string]string{setMetaKey: "a"}
 
@@ -224,12 +227,14 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 				So(errs, ShouldBeNil)
 				So(info.Size(), ShouldEqual, 0)
 
-				info, errs = os.Stat(requests[2].Hardlink)
+				info, errs = os.Stat(inodeRemote)
 				So(errs, ShouldBeNil)
 				So(info.Size(), ShouldEqual, 2)
 
 				So(lh.meta[requests[2].Remote][setMetaKey], ShouldEqual, "a")
 				So(lh.meta[requests[2].Hardlink][setMetaKey], ShouldEqual, lh.meta[requests[2].Remote][setMetaKey])
+				So(lh.meta[requests[2].Remote][MetaKeyRemoteHardlink], ShouldEqual, requests[2].Hardlink)
+				So(lh.meta[requests[2].Remote][MetaKeyHardlink], ShouldEqual, requests[2].Local)
 
 				Convey("re-uploading an unmodified hardlink does not replace remote files", func() {
 					hardlinkMTime := info.ModTime()

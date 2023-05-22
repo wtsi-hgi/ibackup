@@ -152,7 +152,12 @@ type Putter struct {
 // New returns a *Putter that will use the given Handler to Put() all the
 // requests in iRODS. You should defer Cleanup() on the return value. All the
 // incoming requests will have their paths validated (they must be absolute).
+//
+// Extra requests are created for requests representing a hardlink that will put
+// them in hardlink location, along with an empty file for the original.
 func New(handler Handler, requests []*Request) (*Putter, error) {
+	requests = addHardlinkRequests(requests)
+
 	for _, request := range requests {
 		if err := request.ValidatePaths(); err != nil {
 			return nil, err
@@ -165,6 +170,28 @@ func New(handler Handler, requests []*Request) (*Putter, error) {
 		fileReadTester:  headRead,
 		requests:        requests,
 	}, nil
+}
+
+// addHardlinkRequests adds a new request for each request that represents a
+// hardlink. That request is a clone of the original with the remote set as the
+// hardlink property.
+//
+// We also add metadata to the original that points to the hardlink property.
+func addHardlinkRequests(requests []*Request) []*Request {
+	for _, r := range requests {
+		if r.Hardlink != "" {
+			nr := r.Clone()
+			nr.Remote = nr.Hardlink
+			nr.Hardlink = ""
+
+			requests = append(requests, nr)
+
+			r.Meta[MetaKeyRemoteHardlink] = r.Hardlink
+			r.Meta[MetaKeyHardlink] = r.Local
+		}
+	}
+
+	return requests
 }
 
 // SetFileReadTimeout sets how long to wait on a test open and read of each
@@ -306,8 +333,6 @@ func noLeavesOrNewLeaf(uniqueLeafs []string, last string) bool {
 // By calling SetFileStatusCallback() you can decide additional files to not
 // upload.
 func (p *Putter) Put() (chan *Request, chan *Request, chan *Request) {
-	p.addHardlinkRequests()
-
 	uploadStartCh := make(chan *Request, len(p.requests))
 	uploadReturnCh := make(chan *Request, len(p.requests))
 	skipReturnCh := make(chan *Request, len(p.requests))
@@ -327,23 +352,6 @@ func (p *Putter) Put() (chan *Request, chan *Request, chan *Request) {
 	}()
 
 	return uploadStartCh, uploadReturnCh, skipReturnCh
-}
-
-func (p *Putter) addHardlinkRequests() {
-	for _, r := range p.requests {
-		if r.Hardlink != "" {
-			nr := r.Clone()
-			nr.Remote = nr.Hardlink
-			nr.Hardlink = ""
-
-			//TODO: Why were we deleting this?
-			//delete(r.Meta, MetaKeyHardlink)
-
-			p.requests = append(p.requests, nr)
-
-			r.Meta[MetaKeyRemoteHardlink] = r.Hardlink
-		}
-	}
 }
 
 // pickFilesToPut goes through all our Requests, immediately returns bad ones

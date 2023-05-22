@@ -200,7 +200,8 @@ func TestPutBaton(t *testing.T) { //nolint:cyclop
 				err = os.Link(requests[3].Local, requests[2].Local)
 				So(err, ShouldBeNil)
 
-				requests[2].Hardlink = requests[3].Remote + ".inode"
+				inodesDir := filepath.Join(rootCollection, "mountpoints")
+				requests[2].Hardlink = filepath.Join(inodesDir, "inode.file")
 
 				uploading, skipped, statusCounts := uploadRequests(h, requests)
 
@@ -215,6 +216,9 @@ func TestPutBaton(t *testing.T) { //nolint:cyclop
 				it, err = getItemWithBaton(testClient, requests[2].Remote)
 				So(err, ShouldBeNil)
 				So(it.ISize, ShouldEqual, 0)
+				meta := rodsItemToMeta(it)
+				So(meta[MetaKeyRemoteHardlink], ShouldEqual, requests[2].Hardlink)
+				So(meta[MetaKeyHardlink], ShouldEqual, requests[2].Local)
 
 				it, err = getItemWithBaton(testClient, requests[2].Hardlink)
 				So(err, ShouldBeNil)
