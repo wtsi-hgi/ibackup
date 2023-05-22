@@ -757,11 +757,15 @@ func TestHardlinks(t *testing.T) {
 
 		s.addSetForTesting(t, "hardlinkTest", "prefix="+path+":"+remotePath, path)
 
-		s.waitForStatus("hardlinkTest", "\nStatus: complete", 40*time.Second)
+		<-time.After(10 * time.Second)
+
+		exec.Command("bash", "-c", "cp "+s.logFile+"* /nfs/users/nfs_s/sb10/logs/").Run()
+
+		s.waitForStatus("hardlinkTest", "\nStatus: complete", 5*time.Second)
 
 		output, err := exec.Command("imeta", "ls", "-d", remoteFile).CombinedOutput()
 		So(err, ShouldBeNil)
-		So(output, ShouldEqual, "a")
+		So(string(output), ShouldEqual, "a")
 	})
 }
 
