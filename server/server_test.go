@@ -2045,10 +2045,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						fmt.Sprintf("open %s: permission denied", filepath.Dir(pathExpected3)))
 				})
 
-				Convey("and add a set with hardlinks defined directly which only uploads the file once", func() {
-					hardlinksDir := filepath.Join(remoteDir, "mountpoints")
-					s.SetRemoteHardlinkLocation(hardlinksDir)
-
+				Convey("and add a set with hardlinks defined directly", func() {
 					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldBeNil)
 
@@ -2062,59 +2059,27 @@ func TestServer(t *testing.T) { //nolint:cyclop
 					err = client.SetFiles(exampleSet.ID(), []string{path1, path2})
 					So(err, ShouldBeNil)
 
-					err = client.TriggerDiscovery(exampleSet.ID())
-					So(err, ShouldBeNil)
-
-					ok := <-racCalled
-					So(ok, ShouldBeTrue)
-
-					gotSet, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
-					So(errg, ShouldBeNil)
-					So(gotSet.Status, ShouldEqual, set.PendingUpload)
-					So(gotSet.NumFiles, ShouldEqual, 2)
-					So(gotSet.Uploaded, ShouldEqual, 0)
-					So(gotSet.Hardlinks, ShouldEqual, 1)
-
-					requests, errg := client.GetSomeUploadRequests()
-					So(errg, ShouldBeNil)
-					So(len(requests), ShouldEqual, 2)
-
-					So(requests[0].Local, ShouldEqual, path1)
-					So(requests[0].Hardlink, ShouldBeBlank)
-					So(requests[1].Local, ShouldEqual, path2)
-
-					info, errs := os.Stat(path1)
-					So(errs, ShouldBeNil)
-					statt, ok := info.Sys().(*syscall.Stat_t)
-					So(ok, ShouldBeTrue)
-					inodeFile := filepath.Join(hardlinksDir,
-						s.db.GetMountPointFromPath(requests[1].Local),
-						strconv.FormatUint(statt.Ino, 10))
-					So(requests[1].Hardlink, ShouldEqual, inodeFile)
-
-					for _, item := range s.queue.AllItems() {
-						err = s.queue.Remove(context.Background(), item.Key)
+					Convey("without remote hardlink location set, hardlinks upload multiple times", func() {
+						err = client.TriggerDiscovery(exampleSet.ID())
 						So(err, ShouldBeNil)
-					}
 
-					err = client.TriggerDiscovery(exampleSet.ID())
-					So(err, ShouldBeNil)
+						ok := <-racCalled
+						So(ok, ShouldBeTrue)
 
-					ok = <-racCalled
-					So(ok, ShouldBeTrue)
+						gotSet, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+						So(errg, ShouldBeNil)
+						So(gotSet.Status, ShouldEqual, set.PendingUpload)
+						So(gotSet.NumFiles, ShouldEqual, 2)
+						So(gotSet.Uploaded, ShouldEqual, 0)
+						So(gotSet.Hardlinks, ShouldEqual, 1)
 
-					gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
-					So(err, ShouldBeNil)
-					So(gotSet.Status, ShouldEqual, set.PendingUpload)
-					So(gotSet.NumFiles, ShouldEqual, 2)
-					So(gotSet.Uploaded, ShouldEqual, 0)
-					So(gotSet.Hardlinks, ShouldEqual, 1)
-
-					Convey("uploading hardlinks sets the hardlink metadata on an empty file"+
-						" and uploads real data to inode file", func() {
 						requests, errg := client.GetSomeUploadRequests()
 						So(errg, ShouldBeNil)
 						So(len(requests), ShouldEqual, 2)
+
+						So(requests[0].Local, ShouldEqual, path1)
+						So(requests[0].Hardlink, ShouldBeBlank)
+						So(requests[1].Local, ShouldEqual, path2)
 
 						p, d := makePutter(t, handler, requests, client)
 						defer d()
@@ -2125,37 +2090,113 @@ func TestServer(t *testing.T) { //nolint:cyclop
 							minMBperSecondUploadSpeed, minTimeForUpload, 1*time.Hour, logger)
 						So(err, ShouldBeNil)
 
-						transformer, errg := exampleSet.MakeTransformer()
-						So(errg, ShouldBeNil)
-
-						remote, errg := transformer(path2)
-						So(errg, ShouldBeNil)
-
-						remoteMeta := handler.GetMeta(remote)
-						So(remoteMeta, ShouldNotBeNil)
-						So(remoteMeta[put.MetaKeyHardlink], ShouldEqual, path2)
-						So(remoteMeta[put.MetaKeyRemoteHardlink], ShouldEqual, inodeFile)
-
-						info, errs := os.Stat(remote)
+						info, errs := os.Stat(requests[0].Remote)
 						So(errs, ShouldBeNil)
-						So(info.Size(), ShouldEqual, 0)
-
-						info, errs = os.Stat(inodeFile)
+						So(info.Size(), ShouldNotEqual, 0)
+						info, errs = os.Stat(requests[1].Remote)
 						So(errs, ShouldBeNil)
-						So(info.Size(), ShouldEqual, 1)
+						So(info.Size(), ShouldNotEqual, 0)
+					})
 
-						inodeMeta := handler.GetMeta(inodeFile)
-						So(inodeMeta, ShouldNotBeNil)
-						So(inodeMeta[put.MetaKeyHardlink], ShouldEqual, path1)
-						So(inodeMeta[put.MetaKeyRemoteHardlink], ShouldBeBlank)
+					Convey("with remote hardlink location set only uploads hardlinks once", func() {
+						hardlinksDir := filepath.Join(remoteDir, "mountpoints")
+						s.SetRemoteHardlinkLocation(hardlinksDir)
+
+						err = client.TriggerDiscovery(exampleSet.ID())
+						So(err, ShouldBeNil)
+
+						ok := <-racCalled
+						So(ok, ShouldBeTrue)
+
+						gotSet, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+						So(errg, ShouldBeNil)
+						So(gotSet.Status, ShouldEqual, set.PendingUpload)
+						So(gotSet.NumFiles, ShouldEqual, 2)
+						So(gotSet.Uploaded, ShouldEqual, 0)
+						So(gotSet.Hardlinks, ShouldEqual, 1)
+
+						requests, errg := client.GetSomeUploadRequests()
+						So(errg, ShouldBeNil)
+						So(len(requests), ShouldEqual, 2)
+
+						So(requests[0].Local, ShouldEqual, path1)
+						So(requests[0].Hardlink, ShouldBeBlank)
+						So(requests[1].Local, ShouldEqual, path2)
+
+						info, errs := os.Stat(path1)
+						So(errs, ShouldBeNil)
+						statt, ok := info.Sys().(*syscall.Stat_t)
+						So(ok, ShouldBeTrue)
+						inodeFile := filepath.Join(hardlinksDir,
+							s.db.GetMountPointFromPath(requests[1].Local),
+							strconv.FormatUint(statt.Ino, 10))
+						So(requests[1].Hardlink, ShouldEqual, inodeFile)
+
+						for _, item := range s.queue.AllItems() {
+							err = s.queue.Remove(context.Background(), item.Key)
+							So(err, ShouldBeNil)
+						}
+
+						err = client.TriggerDiscovery(exampleSet.ID())
+						So(err, ShouldBeNil)
+
+						ok = <-racCalled
+						So(ok, ShouldBeTrue)
 
 						gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
 						So(err, ShouldBeNil)
-						So(gotSet.Status, ShouldEqual, set.Complete)
+						So(gotSet.Status, ShouldEqual, set.PendingUpload)
 						So(gotSet.NumFiles, ShouldEqual, 2)
-						So(gotSet.Uploaded, ShouldEqual, 2)
+						So(gotSet.Uploaded, ShouldEqual, 0)
 						So(gotSet.Hardlinks, ShouldEqual, 1)
-						So(gotSet.SizeFiles, ShouldEqual, 1)
+
+						Convey("uploading hardlinks sets the hardlink metadata on an empty file"+
+							" and uploads real data to inode file", func() {
+							requests, errg := client.GetSomeUploadRequests()
+							So(errg, ShouldBeNil)
+							So(len(requests), ShouldEqual, 2)
+
+							p, d := makePutter(t, handler, requests, client)
+							defer d()
+
+							uploadStarts, uploadResults, skippedResults := p.Put()
+
+							err = client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults,
+								minMBperSecondUploadSpeed, minTimeForUpload, 1*time.Hour, logger)
+							So(err, ShouldBeNil)
+
+							transformer, errg := exampleSet.MakeTransformer()
+							So(errg, ShouldBeNil)
+
+							remote, errg := transformer(path2)
+							So(errg, ShouldBeNil)
+
+							remoteMeta := handler.GetMeta(remote)
+							So(remoteMeta, ShouldNotBeNil)
+							So(remoteMeta[put.MetaKeyHardlink], ShouldEqual, path2)
+							So(remoteMeta[put.MetaKeyRemoteHardlink], ShouldEqual, inodeFile)
+
+							info, errs := os.Stat(remote)
+							So(errs, ShouldBeNil)
+							So(info.Size(), ShouldEqual, 0)
+
+							info, errs = os.Stat(inodeFile)
+							So(errs, ShouldBeNil)
+							So(info.Size(), ShouldEqual, 1)
+
+							inodeMeta := handler.GetMeta(inodeFile)
+							So(inodeMeta, ShouldNotBeNil)
+							So(inodeMeta[put.MetaKeyHardlink], ShouldEqual, path1)
+							So(inodeMeta[put.MetaKeyRemoteHardlink], ShouldBeBlank)
+
+							gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+							So(err, ShouldBeNil)
+							So(gotSet.Status, ShouldEqual, set.Complete)
+							So(gotSet.NumFiles, ShouldEqual, 2)
+							So(gotSet.Uploaded, ShouldEqual, 2)
+							So(gotSet.Hardlinks, ShouldEqual, 1)
+							So(gotSet.SizeFiles, ShouldEqual, 1)
+						})
 					})
 				})
 
