@@ -147,6 +147,7 @@ type Putter struct {
 	fileReadTimeout time.Duration
 	fileReadTester  FileReadTester
 	requests        []*Request
+	hardlinksSeen   map[string]bool
 }
 
 // New returns a *Putter that will use the given Handler to Put() all the
@@ -156,7 +157,7 @@ type Putter struct {
 // Extra requests are created for requests representing a hardlink that will put
 // them in hardlink location, along with an empty file for the original.
 func New(handler Handler, requests []*Request) (*Putter, error) {
-	modifyHardlinkRequests(requests)
+	requests = modifyHardlinkRequests(requests)
 
 	for _, request := range requests {
 		if err := request.ValidatePaths(); err != nil {
@@ -169,18 +170,28 @@ func New(handler Handler, requests []*Request) (*Putter, error) {
 		fileReadTimeout: defaultFileReadTimeout,
 		fileReadTester:  headRead,
 		requests:        requests,
+		hardlinksSeen:   make(map[string]bool),
 	}, nil
 }
 
 // modifyHardlinkRequests sets Remote to Hardlink to hardlink requests. Stores
 // the original Remote so it can be recovered later.
-func modifyHardlinkRequests(requests []*Request) {
-	for _, r := range requests {
+func modifyHardlinkRequests(requests []*Request) []*Request {
+	rs := make([]*Request, len(requests))
+
+	for n, r := range requests {
 		if r.Hardlink != "" {
-			r.origRemote = r.Remote
-			r.Remote = r.Hardlink
+			rr := r.Clone()
+			rr.origRemote = r.Remote
+			rr.Remote = r.Hardlink
+
+			rs[n] = rr
+		} else {
+			rs[n] = r
 		}
 	}
+
+	return rs
 }
 
 // SetFileReadTimeout sets how long to wait on a test open and read of each
@@ -370,6 +381,16 @@ func (p *Putter) pickFilesToPut(wg *sync.WaitGroup, putCh chan *Request, skipRet
 // with a note to skip the actual put and just do metadata. Otherwise, sends
 // them to the putCh normally.
 func (p *Putter) statPathsAndReturnOrPut(request *Request, putCh chan *Request, skipReturnCh chan *Request) {
+	if p.hardlinksSeen[request.Remote] {
+		sendRequest(request, RequestStatusUnmodified, nil, skipReturnCh)
+
+		return
+	}
+
+	if request.Hardlink != "" {
+		p.hardlinksSeen[request.Remote] = true
+	}
+
 	lInfo, err := Stat(request.Local)
 	if err != nil {
 		sendRequest(request, RequestStatusMissing, err, skipReturnCh)
@@ -509,6 +530,8 @@ func (p *Putter) addMeta(path string, toAdd map[string]string) error {
 }
 
 func (p *Putter) processPutCh(putCh, uploadStartCh, uploadReturnCh, metaCh chan *Request) {
+	hardlinksSeen := make(map[string]bool)
+
 	for request := range putCh {
 		if request.skipPut {
 			metaCh <- request
@@ -526,6 +549,8 @@ func (p *Putter) processPutCh(putCh, uploadStartCh, uploadReturnCh, metaCh chan 
 			continue
 		}
 
+		fmt.Printf("\nputting: %s in %s\n", request.Local, request.Remote)
+
 		if err := p.handler.Put(request); err != nil {
 			p.sendFailedRequest(request, err, uploadReturnCh)
 
@@ -539,6 +564,7 @@ func (p *Putter) processPutCh(putCh, uploadStartCh, uploadReturnCh, metaCh chan 
 			empty.Meta[MetaKeyHardlink] = request.Local
 			empty.Local = os.DevNull
 
+			fmt.Printf("\nputting empty file: %s in %s\n", empty.Local, empty.Remote)
 			if err := p.handler.Put(empty); err != nil {
 				p.sendFailedRequest(request, err, uploadReturnCh)
 
@@ -558,6 +584,16 @@ func (p *Putter) processPutCh(putCh, uploadStartCh, uploadReturnCh, metaCh chan 
 
 				continue
 			}
+		}
+
+		if hardlinksSeen[request.Remote] {
+			uploadReturnCh <- request
+
+			continue
+		}
+
+		if request.origRemote != "" {
+			hardlinksSeen[request.Remote] = true
 		}
 
 		metaCh <- request

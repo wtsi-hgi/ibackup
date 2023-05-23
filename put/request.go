@@ -151,11 +151,11 @@ func (r *Request) ValidatePaths() error {
 
 // UploadPath should be used instead of Request.Local for upload purposes.
 //
-// For symlinks and hardlinks, returns a zero-sized file as iRODS doesn't handle
+// For symlinks, returns a zero-sized file as iRODS doesn't handle
 // links appropriately (there will be metadata allowing its recreation).
 // Otherwise returns Request.Local.
 func (r *Request) UploadPath() string {
-	if r.Symlink == "" && r.Hardlink == "" {
+	if r.Symlink == "" {
 		return r.Local
 	}
 

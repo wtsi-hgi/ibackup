@@ -26,6 +26,7 @@
 package put
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"sync"
@@ -146,6 +147,7 @@ func (l *LocalHandler) Put(request *Request) error {
 
 // copyFile copies source to dest.
 func copyFile(source, dest string) error {
+	fmt.Printf("\ncopying file from %s to %s\n", source, dest)
 	in, err := os.Open(source)
 	if err != nil {
 		return err

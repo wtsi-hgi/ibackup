@@ -224,16 +224,14 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 
 				uploading, skipped, statusCounts := uploadRequests(lh, requests)
 
-				So(uploading, ShouldEqual, len(requests))
+				So(uploading, ShouldEqual, len(requests)-1)
 				So(statusCounts[RequestStatusUploaded], ShouldEqual, len(requests)-1)
-				fmt.Printf("\n%+v\n", statusCounts)
-				So(statusCounts[RequestStatusUnmodified], ShouldEqual, 1)
-				So(skipped, ShouldEqual, 0)
+				So(skipped, ShouldEqual, 1)
 
 				info, errs := os.Stat(requests[0].Remote)
 				So(errs, ShouldBeNil)
 				So(info.Size(), ShouldEqual, 0)
-
+				fmt.Println("\n!!!!" + requests[2].Remote + "\n")
 				info, errs = os.Stat(requests[2].Remote)
 				So(errs, ShouldBeNil)
 				So(info.Size(), ShouldEqual, 0)
