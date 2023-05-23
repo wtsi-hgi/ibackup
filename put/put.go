@@ -178,13 +178,19 @@ func New(handler Handler, requests []*Request) (*Putter, error) {
 //
 // We also add metadata to the original that points to the hardlink property.
 func addHardlinkRequests(requests []*Request) []*Request {
+	hardlinkSeen := make(map[string]bool)
+
 	for _, r := range requests {
 		if r.Hardlink != "" {
-			nr := r.Clone()
-			nr.Remote = nr.Hardlink
-			nr.Hardlink = ""
+			if !hardlinkSeen[r.Hardlink] {
+				hardlinkSeen[r.Hardlink] = true
 
-			requests = append(requests, nr)
+				nr := r.Clone()
+				nr.Remote = nr.Hardlink
+				nr.Hardlink = ""
+
+				requests = append(requests, nr)
+			}
 
 			r.Meta[MetaKeyRemoteHardlink] = r.Hardlink
 			r.Meta[MetaKeyHardlink] = r.Local
