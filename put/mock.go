@@ -217,7 +217,7 @@ func (l *LocalHandler) AddMeta(path string, meta map[string]string) error {
 
 	for key, val := range meta {
 		if _, exists = pathMeta[key]; exists {
-			return Error{ErrMockMetaFail, ""}
+			return Error{ErrMockMetaFail, key}
 		}
 
 		pathMeta[key] = val

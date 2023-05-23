@@ -99,6 +99,7 @@ type Request struct {
 	Stuck         *Stuck
 	remoteMeta    map[string]string
 	skipPut       bool
+	origRemote    string // used when we change Remote -> Hardlink to upload those.
 }
 
 // MakeSafeForJSON copies Local and Remote to LocalForJSON and RemoteForJSON,

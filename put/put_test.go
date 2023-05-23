@@ -26,6 +26,7 @@
 package put
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -223,8 +224,10 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 
 				uploading, skipped, statusCounts := uploadRequests(lh, requests)
 
-				So(uploading, ShouldEqual, len(requests)+1)
-				So(statusCounts[RequestStatusUploaded], ShouldEqual, len(requests)+1)
+				So(uploading, ShouldEqual, len(requests))
+				So(statusCounts[RequestStatusUploaded], ShouldEqual, len(requests)-1)
+				fmt.Printf("\n%+v\n", statusCounts)
+				So(statusCounts[RequestStatusUnmodified], ShouldEqual, 1)
 				So(skipped, ShouldEqual, 0)
 
 				info, errs := os.Stat(requests[0].Remote)
@@ -518,6 +521,10 @@ func uploadRequests(h Handler, requests []*Request) (int, int, map[RequestStatus
 	for request := range urCh {
 		currentCount := requestStatusCounts[request.Status]
 		requestStatusCounts[request.Status] = currentCount + 1
+
+		if request.Error != "" {
+			fmt.Printf("\n%s failed: %s\n", request.Local, request.Error)
+		}
 	}
 
 	for range srCh {

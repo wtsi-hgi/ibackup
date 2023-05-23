@@ -156,7 +156,7 @@ type Putter struct {
 // Extra requests are created for requests representing a hardlink that will put
 // them in hardlink location, along with an empty file for the original.
 func New(handler Handler, requests []*Request) (*Putter, error) {
-	requests = addHardlinkRequests(requests)
+	modifyHardlinkRequests(requests)
 
 	for _, request := range requests {
 		if err := request.ValidatePaths(); err != nil {
@@ -172,32 +172,15 @@ func New(handler Handler, requests []*Request) (*Putter, error) {
 	}, nil
 }
 
-// addHardlinkRequests adds a new request for each request that represents a
-// hardlink. That request is a clone of the original with the remote set as the
-// hardlink property.
-//
-// We also add metadata to the original that points to the hardlink property.
-func addHardlinkRequests(requests []*Request) []*Request {
-	hardlinkSeen := make(map[string]bool)
-
+// modifyHardlinkRequests sets Remote to Hardlink to hardlink requests. Stores
+// the original Remote so it can be recovered later.
+func modifyHardlinkRequests(requests []*Request) {
 	for _, r := range requests {
 		if r.Hardlink != "" {
-			if !hardlinkSeen[r.Hardlink] {
-				hardlinkSeen[r.Hardlink] = true
-
-				nr := r.Clone()
-				nr.Remote = nr.Hardlink
-				nr.Hardlink = ""
-
-				requests = append(requests, nr)
-			}
-
-			r.Meta[MetaKeyRemoteHardlink] = r.Hardlink
-			r.Meta[MetaKeyHardlink] = r.Local
+			r.origRemote = r.Remote
+			r.Remote = r.Hardlink
 		}
 	}
-
-	return requests
 }
 
 // SetFileReadTimeout sets how long to wait on a test open and read of each
@@ -489,9 +472,12 @@ func (p *Putter) applyMetadataConcurrently(metaCh, uploadReturnCh, skipReturnCh 
 		}
 
 		if err := p.addMeta(request.Remote, toAdd); err != nil {
+			fmt.Printf("\nmetaCh addMeta failure [%s] for %+v\n", err, request)
 			p.sendFailedRequest(request, err, returnCh)
 
 			continue
+		} else {
+			fmt.Printf("\nmetaCh addMeta worked for %+v\n", request)
 		}
 
 		returnCh <- request
@@ -544,6 +530,34 @@ func (p *Putter) processPutCh(putCh, uploadStartCh, uploadReturnCh, metaCh chan 
 			p.sendFailedRequest(request, err, uploadReturnCh)
 
 			continue
+		}
+
+		if request.origRemote != "" {
+			empty := request.Clone()
+			empty.Remote = request.origRemote
+			empty.Meta[MetaKeyRemoteHardlink] = request.Hardlink
+			empty.Meta[MetaKeyHardlink] = request.Local
+			empty.Local = os.DevNull
+
+			if err := p.handler.Put(empty); err != nil {
+				p.sendFailedRequest(request, err, uploadReturnCh)
+
+				continue
+			}
+
+			toRemove, toAdd := empty.determineMetadataToRemoveAndAdd()
+
+			if err := p.removeMeta(empty.Remote, toRemove); err != nil {
+				p.sendFailedRequest(empty, err, uploadReturnCh)
+
+				continue
+			}
+
+			if err := p.addMeta(empty.Remote, toAdd); err != nil {
+				p.sendFailedRequest(empty, err, uploadReturnCh)
+
+				continue
+			}
 		}
 
 		metaCh <- request
