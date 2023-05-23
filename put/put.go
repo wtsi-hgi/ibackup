@@ -143,11 +143,11 @@ type FileStatusCallback func(absPath string, fi os.FileInfo) RequestStatus
 
 // Putter is used to Put() files in iRODS.
 type Putter struct {
-	handler         Handler
-	fileReadTimeout time.Duration
-	fileReadTester  FileReadTester
-	requests        []*Request
-	hardlinksSeen   map[string]bool
+	handler           Handler
+	fileReadTimeout   time.Duration
+	fileReadTester    FileReadTester
+	requests          []*Request
+	duplicateRequests []*Request
 }
 
 // New returns a *Putter that will use the given Handler to Put() all the
@@ -157,41 +157,52 @@ type Putter struct {
 // Extra requests are created for requests representing a hardlink that will put
 // them in hardlink location, along with an empty file for the original.
 func New(handler Handler, requests []*Request) (*Putter, error) {
-	requests = modifyHardlinkRequests(requests)
+	rs, dups := modifyHardlinkRequests(requests)
 
-	for _, request := range requests {
+	for _, request := range append(rs, dups...) {
 		if err := request.ValidatePaths(); err != nil {
 			return nil, err
 		}
 	}
 
 	return &Putter{
-		handler:         handler,
-		fileReadTimeout: defaultFileReadTimeout,
-		fileReadTester:  headRead,
-		requests:        requests,
-		hardlinksSeen:   make(map[string]bool),
+		handler:           handler,
+		fileReadTimeout:   defaultFileReadTimeout,
+		fileReadTester:    headRead,
+		requests:          rs,
+		duplicateRequests: dups,
 	}, nil
 }
 
 // modifyHardlinkRequests sets Remote to Hardlink to hardlink requests. Stores
 // the original Remote so it can be recovered later.
-func modifyHardlinkRequests(requests []*Request) []*Request {
-	rs := make([]*Request, len(requests))
+func modifyHardlinkRequests(requests []*Request) ([]*Request, []*Request) {
+	rs := make([]*Request, 0, len(requests))
+	seen := make(map[string]bool)
 
-	for n, r := range requests {
+	var dups []*Request
+
+	for _, r := range requests {
+		var rr *Request
+
 		if r.Hardlink != "" {
-			rr := r.Clone()
+			rr = r.Clone()
 			rr.origRemote = r.Remote
 			rr.Remote = r.Hardlink
-
-			rs[n] = rr
 		} else {
-			rs[n] = r
+			rr = r
 		}
+
+		if seen[rr.Remote] {
+			dups = append(dups, rr)
+		} else {
+			rs = append(rs, rr)
+		}
+
+		seen[rr.Remote] = true
 	}
 
-	return rs
+	return rs, dups
 }
 
 // SetFileReadTimeout sets how long to wait on a test open and read of each
@@ -333,16 +344,55 @@ func noLeavesOrNewLeaf(uniqueLeafs []string, last string) bool {
 // By calling SetFileStatusCallback() you can decide additional files to not
 // upload.
 func (p *Putter) Put() (chan *Request, chan *Request, chan *Request) {
-	uploadStartCh := make(chan *Request, len(p.requests))
-	uploadReturnCh := make(chan *Request, len(p.requests))
-	skipReturnCh := make(chan *Request, len(p.requests))
-	putCh := make(chan *Request, len(p.requests))
+	chanLen := len(p.requests) + len(p.duplicateRequests)
+	uploadStartCh := make(chan *Request, chanLen)
+	uploadReturnCh := make(chan *Request, chanLen)
+	skipReturnCh := make(chan *Request, chanLen)
+
+	r1, r2, r3 := p.put(p.requests)
+
+	var wg sync.WaitGroup
+
+	wg.Add(3)
+
+	go func() {
+		defer wg.Done()
+		cloneChannel(r1, uploadStartCh)
+	}()
+
+	go func() {
+		defer wg.Done()
+		cloneChannel(r2, uploadReturnCh)
+	}()
+
+	go func() {
+		defer wg.Done()
+		cloneChannel(r3, skipReturnCh)
+	}()
+
+	wg.Wait()
+
+	r1, r2, r3 = p.put(p.duplicateRequests)
+
+	go cloneChannel(r1, uploadStartCh)
+	go cloneChannel(r2, uploadReturnCh)
+	go cloneChannel(r3, skipReturnCh)
+
+	return uploadStartCh, uploadReturnCh, skipReturnCh
+}
+
+func (p *Putter) put(requests []*Request) (chan *Request, chan *Request, chan *Request) {
+	chanLen := len(requests)
+	uploadStartCh := make(chan *Request, chanLen)
+	uploadReturnCh := make(chan *Request, chanLen)
+	skipReturnCh := make(chan *Request, chanLen)
+	putCh := make(chan *Request, chanLen)
 
 	var wg sync.WaitGroup
 
 	wg.Add(numPutGoroutines)
 
-	go p.pickFilesToPut(&wg, putCh, skipReturnCh)
+	go p.pickFilesToPut(&wg, requests, putCh, skipReturnCh)
 	go p.putFilesInIRODS(&wg, putCh, uploadStartCh, uploadReturnCh, skipReturnCh)
 
 	go func() {
@@ -354,16 +404,22 @@ func (p *Putter) Put() (chan *Request, chan *Request, chan *Request) {
 	return uploadStartCh, uploadReturnCh, skipReturnCh
 }
 
+func cloneChannel(source, dest chan *Request) {
+	for r := range source {
+		dest <- r
+	}
+}
+
 // pickFilesToPut goes through all our Requests, immediately returns bad ones
 // (eg. local file doesn't exist) and ones we don't need to do (hasn't been
 // modified since last uploaded) via the returnCh, and sends the remainder to
 // the putCh.
-func (p *Putter) pickFilesToPut(wg *sync.WaitGroup, putCh chan *Request, skipReturnCh chan *Request) {
+func (p *Putter) pickFilesToPut(wg *sync.WaitGroup, requests []*Request, putCh chan *Request, skipReturnCh chan *Request) {
 	defer wg.Done()
 
 	pool := workerpool.New(workerPoolSizeStats)
 
-	for _, request := range p.requests {
+	for _, request := range requests {
 		thisRequest := request
 
 		pool.Submit(func() {
@@ -381,16 +437,6 @@ func (p *Putter) pickFilesToPut(wg *sync.WaitGroup, putCh chan *Request, skipRet
 // with a note to skip the actual put and just do metadata. Otherwise, sends
 // them to the putCh normally.
 func (p *Putter) statPathsAndReturnOrPut(request *Request, putCh chan *Request, skipReturnCh chan *Request) {
-	if p.hardlinksSeen[request.Remote] {
-		sendRequest(request, RequestStatusUnmodified, nil, skipReturnCh)
-
-		return
-	}
-
-	if request.Hardlink != "" {
-		p.hardlinksSeen[request.Remote] = true
-	}
-
 	lInfo, err := Stat(request.Local)
 	if err != nil {
 		sendRequest(request, RequestStatusMissing, err, skipReturnCh)
@@ -530,8 +576,6 @@ func (p *Putter) addMeta(path string, toAdd map[string]string) error {
 }
 
 func (p *Putter) processPutCh(putCh, uploadStartCh, uploadReturnCh, metaCh chan *Request) {
-	hardlinksSeen := make(map[string]bool)
-
 	for request := range putCh {
 		if request.skipPut {
 			metaCh <- request
@@ -584,16 +628,6 @@ func (p *Putter) processPutCh(putCh, uploadStartCh, uploadReturnCh, metaCh chan 
 
 				continue
 			}
-		}
-
-		if hardlinksSeen[request.Remote] {
-			uploadReturnCh <- request
-
-			continue
-		}
-
-		if request.origRemote != "" {
-			hardlinksSeen[request.Remote] = true
 		}
 
 		metaCh <- request
