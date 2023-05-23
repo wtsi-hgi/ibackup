@@ -28,6 +28,7 @@ package server
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -64,6 +65,7 @@ type Client struct {
 	minTimeForUpload          time.Duration
 	maxStuckTime              time.Duration
 	uploadsErrCh              chan error
+	hardlinkRequests          map[string][]*put.Request
 	logger                    log15.Logger
 }
 
@@ -418,10 +420,13 @@ func (c *Client) SendPutResultsToServer(uploadStarts, uploadResults, skipResults
 	c.maxStuckTime = maxStuckTime
 	c.logger = logger
 	c.uploadsErrCh = make(chan error)
+	c.hardlinkRequests = make(map[string][]*put.Request)
 
 	var wg sync.WaitGroup
 
 	wg.Add(numHandlers)
+
+	fmt.Printf("\n\n")
 
 	go c.handleUploadTracking(&wg, uploadStarts, uploadResults)
 	go c.handleSendingSkipResults(&wg, skipResults)
@@ -441,6 +446,8 @@ func (c *Client) SendPutResultsToServer(uploadStarts, uploadResults, skipResults
 		}
 	}
 
+	// c.updateHardlinkFileStatus()
+
 	c.logger.Info("finished sending put results to server")
 
 	return merr.ErrorOrNil()
@@ -452,17 +459,20 @@ func (c *Client) SendPutResultsToServer(uploadStarts, uploadResults, skipResults
 func (c *Client) handleUploadTracking(wg *sync.WaitGroup, uploadStarts, uploadResults chan *put.Request) {
 	defer wg.Done()
 
-	entries := make(map[string]*put.Request)
-
 	for ru := range uploadStarts {
 		c.logger.Info("started upload", "path", ru.Local)
+		fmt.Printf("started upload for %s\n", ru.Local)
 
-		ru = handleHardlinkRequest(entries, ru, handleHardlinkRequestUploading)
-		if ru == nil {
-			continue
-		}
+		// ru = c.handleHardlinkRequest(ru, handleHardlinkRequestUploading)
+		// if ru == nil {
+		// 	fmt.Printf("continue due to handleHardlinkRequest returning nil\n")
+		// 	continue
+		// }
 
-		if err := c.UpdateFileStatus(ru); err != nil {
+		// fmt.Printf("updating file status for %+v\n", ru)
+
+		if err := c.updateFileStatusHandlingHardlinks(ru); err != nil {
+			fmt.Printf("that failed: %s\n", err)
 			c.logger.Warn("failed to update file status to uploading", "err", err, "path", ru.Local)
 			c.uploadsErrCh <- err
 
@@ -471,80 +481,90 @@ func (c *Client) handleUploadTracking(wg *sync.WaitGroup, uploadStarts, uploadRe
 
 		stopStuckTimer := c.stuckIfUploadTakesTooLong(ru)
 
-		var rr *put.Request
+		// var rr *put.Request
 
-		for r := range uploadResults {
-			rr = handleHardlinkRequest(entries, r, handleHardlinkRequestComplete)
+		// fmt.Printf("finished upload of %s\n", ru.Local)
 
-			if rr != nil {
-				break
-			}
-		}
+		// for r := range uploadResults {
+		// 	rr = c.handleHardlinkRequest(r, handleHardlinkRequestComplete)
+
+		// 	if rr != nil {
+		// 		fmt.Printf("not skipping file update because hardlinkrequest returned %+v\n", rr)
+		// 		break
+		// 	}
+		// }
+
+		rr := <-uploadResults
 
 		c.logger.Info("finished upload", "path", ru.Local)
 		close(stopStuckTimer)
 
-		if err := c.UpdateFileStatus(rr); err != nil {
+		if err := c.updateFileStatusHandlingHardlinks(rr); err != nil {
+			fmt.Printf("upload complete status update failed: %s\n", err)
 			c.logger.Warn("failed to update file status to complete", "err", err, "path", ru.Local)
 			c.uploadsErrCh <- err
 		}
 	}
 }
 
-func handleHardlinkRequest(entries map[string]*put.Request, request *put.Request,
-	cb func(*put.Request, *put.Request)) *put.Request {
-	_, hasMetaHardlink := request.Meta[put.MetaKeyHardlink]
-	_, hasMetaRemoteHardlink := request.Meta[put.MetaKeyRemoteHardlink]
+// func (c *Client) handleHardlinkRequest(request *put.Request,
+// 	cb func(*put.Request, *put.Request)) *put.Request {
+// 	_, hasMetaHardlink := request.Meta[put.MetaKeyHardlink]
+// 	_, hasMetaRemoteHardlink := request.Meta[put.MetaKeyRemoteHardlink]
 
-	if !hasMetaHardlink && !hasMetaRemoteHardlink {
-		return request
-	}
+// 	if !hasMetaHardlink && !hasMetaRemoteHardlink {
+// 		return request
+// 	}
 
-	other, ok := entries[request.Local]
-	if !ok {
-		entries[request.Local] = request
+// 	other, ok := c.hardlinkEntries[request.Local]
+// 	if !ok {
+// 		c.hardlinkEntries[request.Local] = request
 
-		return nil
-	}
+// 		return nil
+// 	}
 
-	delete(entries, request.Local)
+// 	delete(c.hardlinkEntries, request.Local)
 
-	var requestWithTransformedRemote, requestWithInodeRemote *put.Request
+// 	var requestWithTransformedRemote, requestWithInodeRemote *put.Request
 
-	if hasMetaRemoteHardlink {
-		requestWithTransformedRemote = request.Clone()
-		requestWithInodeRemote = other
-	} else {
-		requestWithTransformedRemote = other.Clone()
-		requestWithInodeRemote = request
-	}
+// 	if hasMetaRemoteHardlink {
+// 		requestWithTransformedRemote = request.Clone()
+// 		requestWithInodeRemote = other
+// 	} else {
+// 		requestWithTransformedRemote = other.Clone()
+// 		requestWithInodeRemote = request
+// 	}
 
-	cb(requestWithTransformedRemote, requestWithInodeRemote)
+// 	if requestWithInodeRemote.Status == put.RequestStatusUnmodified {
+// 		c.hardlinkEntries[request.Local] = requestWithInodeRemote
+// 	}
 
-	return requestWithTransformedRemote
-}
+// 	cb(requestWithTransformedRemote, requestWithInodeRemote)
 
-func handleHardlinkRequestUploading(requestWithTransformedRemote, requestWithInodeRemote *put.Request) {
-	if requestWithInodeRemote.Error != "" {
-		requestWithTransformedRemote.Error = requestWithInodeRemote.Error
-	}
+// 	return requestWithTransformedRemote
+// }
 
-	if requestWithInodeRemote.Status != put.RequestStatusUploading {
-		requestWithTransformedRemote.Status = requestWithInodeRemote.Status
-	}
-}
+// func handleHardlinkRequestUploading(requestWithTransformedRemote, requestWithInodeRemote *put.Request) {
+// 	if requestWithInodeRemote.Error != "" {
+// 		requestWithTransformedRemote.Error = requestWithInodeRemote.Error
+// 	}
 
-func handleHardlinkRequestComplete(requestWithTransformedRemote, requestWithInodeRemote *put.Request) {
-	if requestWithInodeRemote.Error != "" {
-		requestWithTransformedRemote.Error = requestWithInodeRemote.Error
-	}
+// 	if requestWithInodeRemote.Status != put.RequestStatusUploading {
+// 		requestWithTransformedRemote.Status = requestWithInodeRemote.Status
+// 	}
+// }
 
-	switch requestWithInodeRemote.Status {
-	case put.RequestStatusUploaded, put.RequestStatusReplaced:
-	default:
-		requestWithTransformedRemote.Status = requestWithInodeRemote.Status
-	}
-}
+// func handleHardlinkRequestComplete(requestWithTransformedRemote, requestWithInodeRemote *put.Request) {
+// 	if requestWithInodeRemote.Error != "" {
+// 		requestWithTransformedRemote.Error = requestWithInodeRemote.Error
+// 	}
+
+// 	switch requestWithInodeRemote.Status {
+// 	case put.RequestStatusUploaded, put.RequestStatusReplaced:
+// 	default:
+// 		requestWithTransformedRemote.Status = requestWithInodeRemote.Status
+// 	}
+// }
 
 // stuckIfUploadTakesTooLong will send stuck info to the server after some time
 // based on the size of the request, unless the returned channel is closed to
@@ -565,7 +585,7 @@ func (c *Client) stuckIfUploadTakesTooLong(request *put.Request) chan bool {
 			request.Stuck = put.NewStuck(started)
 			c.logger.Warn("upload stuck?", "path", request.Local)
 
-			if err := c.UpdateFileStatus(request); err != nil {
+			if err := c.updateFileStatusHandlingHardlinks(request); err != nil {
 				c.uploadsErrCh <- err
 			}
 
@@ -608,7 +628,7 @@ func (c *Client) killStuckIfTakesTooLong(request *put.Request, doneCh chan bool)
 		request.Status = put.RequestStatusFailed
 		request.Error = put.ErrStuckTimeout
 
-		if err := c.UpdateFileStatus(request); err != nil {
+		if err := c.updateFileStatusHandlingHardlinks(request); err != nil {
 			c.uploadsErrCh <- err
 		}
 
@@ -625,12 +645,45 @@ func (c *Client) handleSendingSkipResults(wg *sync.WaitGroup, results chan *put.
 
 	for r := range results {
 		c.logger.Info("skipped upload", "path", r.Local)
+		fmt.Printf("skipped upload for %s\n", r.Local)
 
-		if err := c.UpdateFileStatus(r); err != nil {
+		// r = c.handleHardlinkRequest(r, handleHardlinkRequestComplete)
+		// if r == nil {
+		// 	fmt.Printf("skipping update file status becuase hardlinkrequest returned nil\n")
+		// 	continue
+		// }
+
+		if err := c.updateFileStatusHandlingHardlinks(r); err != nil {
+			fmt.Printf("update file status of skipped failed: %s\n", err)
 			c.logger.Warn("failed to update file status for skipped", "err", err, "path", r.Local)
 			c.uploadsErrCh <- err
 		}
 	}
+}
+
+func (c *Client) updateFileStatusHandlingHardlinks(r *put.Request) error {
+	if !requestIsForHardlink(r) {
+		return c.UpdateFileStatus(r)
+	}
+
+	entries := c.hardlinkRequests[r.Remote]
+
+	if r.Status == put.RequestStatusUploading {
+		// var other *put.Request
+
+		// for
+	}
+
+	c.hardlinkRequests[r.Remote] = append(entries, r)
+
+	return nil
+}
+
+func requestIsForHardlink(request *put.Request) bool {
+	_, hasMetaHardlink := request.Meta[put.MetaKeyHardlink]
+	_, hasMetaRemoteHardlink := request.Meta[put.MetaKeyRemoteHardlink]
+
+	return hasMetaHardlink || hasMetaRemoteHardlink
 }
 
 // UpdateFileStatus updates a file's status in the DB based on the given
@@ -653,6 +706,14 @@ func (c *Client) UpdateFileStatus(r *put.Request) error {
 
 	return c.putThing(EndPointAuthFileStatus, r)
 }
+
+// func (c *Client) updateHardlinkFileStatus() error {
+// 	for _, requests := range c.hardlinkRequests {
+
+// 	}
+
+// 	return nil
+// }
 
 // RetryFailedSetUploads initiates the retry of any failed uploads in the given
 // set.

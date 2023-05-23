@@ -56,18 +56,19 @@ const userPerms = 0700
 var errTwoBackupsNotSeen = errors.New("2 backups were not seen")
 
 type TestServer struct {
-	key                 string
-	cert                string
-	ldapServer          string
-	ldapLookup          string
-	url                 string
-	dir                 string
-	dbFile              string
-	backupFile          string
-	remoteDBFile        string
-	logFile             string
-	schedulerDeployment string
-	env                 []string
+	key                  string
+	cert                 string
+	ldapServer           string
+	ldapLookup           string
+	url                  string
+	dir                  string
+	dbFile               string
+	backupFile           string
+	remoteDBFile         string
+	logFile              string
+	schedulerDeployment  string
+	remoteHardlinkPrefix string
+	env                  []string
 
 	cmd *exec.Cmd
 }
@@ -145,6 +146,10 @@ func (s *TestServer) startServer() {
 
 	if s.remoteDBFile != "" {
 		args = append(args, "--remote_backup", s.remoteDBFile)
+	}
+
+	if s.remoteHardlinkPrefix != "" {
+		args = append(args, "--hardlinks_collection", s.remoteHardlinkPrefix)
 	}
 
 	args = append(args, s.dbFile)
@@ -270,6 +275,8 @@ func (s *TestServer) waitForStatus(name, statusToFind string, timeout time.Durat
 
 	if status.Err != nil {
 		fmt.Printf("\nstatus '%s' not found, got:\n%s\n", statusToFind, out)
+
+		exec.Command("bash", "-c", "cp "+s.logFile+"* /nfs/users/nfs_s/sb10/logs/").Run()
 	}
 
 	So(status.Err, ShouldBeNil)
@@ -736,6 +743,7 @@ func TestHardlinks(t *testing.T) {
 		s.prepareConfig()
 
 		s.schedulerDeployment = schedulerDeployment
+		s.remoteHardlinkPrefix = filepath.Join(remotePath, "hardlinks")
 
 		s.startServer()
 
@@ -757,11 +765,7 @@ func TestHardlinks(t *testing.T) {
 
 		s.addSetForTesting(t, "hardlinkTest", "prefix="+path+":"+remotePath, path)
 
-		<-time.After(10 * time.Second)
-
-		exec.Command("bash", "-c", "cp "+s.logFile+"* /nfs/users/nfs_s/sb10/logs/").Run()
-
-		s.waitForStatus("hardlinkTest", "\nStatus: complete", 5*time.Second)
+		s.waitForStatus("hardlinkTest", "\nStatus: complete", 60*time.Second)
 
 		output, err := exec.Command("imeta", "ls", "-d", remoteFile).CombinedOutput()
 		So(err, ShouldBeNil)

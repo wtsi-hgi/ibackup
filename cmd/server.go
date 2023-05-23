@@ -62,12 +62,25 @@ var serverLDAPBindDN string
 var serverDebug bool
 var serverRemoteBackupPath string
 var serverWRDeployment string
+var serverHardlinksCollection string
 
 // serverCmd represents the server command.
 var serverCmd = &cobra.Command{
 	Use:   "server",
 	Short: "Start the web server",
 	Long: `Start the web server.
+
+The ibackup web server is used to record, track, and automate backups of many
+backup sets from many users. It can schedule backup jobs to be run in parallel,
+and can monitor sets for changes.
+
+If you provide the --hardlinks_collection option, hardlinks will be
+de-duplicated by storing them by mountpoint&inode in this iRODS collection.
+The original desired location will be an empty file with metadata pointing to
+the hardlinks_collection location.
+
+Symlinks will also be stored as empty files, this time with metadata indicating
+what the symlink pointed to. The referenced data is NOT backed up.
 
 Starting the web server brings up a web interface and REST API that will use the
 given set database path to create a set database if it doesn't exist, add
@@ -182,6 +195,10 @@ database that you've made, to investigate.
 			s.EnableRemoteDBBackups(serverRemoteBackupPath, handler)
 		}
 
+		if serverHardlinksCollection != "" {
+			s.SetRemoteHardlinkLocation(serverHardlinksCollection)
+		}
+
 		defer s.Stop()
 
 		sayStarted()
@@ -209,6 +226,8 @@ func init() {
 		"use this deployment of wr for your job submission")
 	serverCmd.Flags().BoolVar(&serverDebug, "debug", false,
 		"disable job submissions for debugging purposes")
+	serverCmd.Flags().StringVar(&serverHardlinksCollection, "hardlinks_collection", "",
+		"deduplicate hardlinks by storing them by inode in this iRODS collection")
 	serverCmd.Flags().StringVar(&serverRemoteBackupPath, "remote_backup", os.Getenv("IBACKUP_REMOTE_DB_BACKUP_PATH"),
 		"enables database backup to the specified iRODS path")
 }
