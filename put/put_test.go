@@ -26,7 +26,6 @@
 package put
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -222,16 +221,16 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 
 				clonedRequest2 := requests[2].Clone()
 
-				uploading, skipped, statusCounts := uploadRequests(lh, requests)
+				uploading, skipped, statusCounts := uploadRequests(t, lh, requests)
 
-				So(uploading, ShouldEqual, len(requests)-1)
-				So(statusCounts[RequestStatusUploaded], ShouldEqual, len(requests)-1)
-				So(skipped, ShouldEqual, 1)
+				So(uploading, ShouldEqual, len(requests))
+				So(statusCounts[RequestStatusUploaded], ShouldEqual, len(requests))
+				So(skipped, ShouldEqual, 0)
 
 				info, errs := os.Stat(requests[0].Remote)
 				So(errs, ShouldBeNil)
 				So(info.Size(), ShouldEqual, 0)
-				fmt.Println("\n!!!!" + requests[2].Remote + "\n")
+
 				info, errs = os.Stat(requests[2].Remote)
 				So(errs, ShouldBeNil)
 				So(info.Size(), ShouldEqual, 0)
@@ -259,12 +258,13 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 
 					reclonedRequest2 := clonedRequest2.Clone()
 
-					uploading, skipped, statusCounts = uploadRequests(lh, []*Request{clonedRequest2})
+					uploading, skipped, statusCounts = uploadRequests(t, lh, []*Request{clonedRequest2})
 
 					So(uploading, ShouldEqual, 0)
+
 					So(statusCounts[RequestStatusUploaded], ShouldEqual, 0)
 					So(statusCounts[RequestStatusReplaced], ShouldEqual, 0)
-					So(skipped, ShouldEqual, 2)
+					So(skipped, ShouldEqual, 1)
 
 					info, errs = os.Stat(requests[2].Hardlink)
 					So(errs, ShouldBeNil)
@@ -277,10 +277,9 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 						So(errs, ShouldBeNil)
 						So(info.ModTime().After(hardlinkMTime), ShouldBeTrue)
 
-						uploading, skipped, statusCounts = uploadRequests(lh, []*Request{reclonedRequest2})
-
-						So(uploading, ShouldEqual, 2)
-						So(statusCounts[RequestStatusReplaced], ShouldEqual, 2)
+						uploading, skipped, statusCounts = uploadRequests(t, lh, []*Request{reclonedRequest2})
+						So(uploading, ShouldEqual, 1)
+						So(statusCounts[RequestStatusReplaced], ShouldEqual, 1)
 						So(skipped, ShouldEqual, 0)
 
 						info, errs = os.Stat(requests[2].Hardlink)
@@ -498,7 +497,9 @@ func touchFile(path string, d time.Duration) time.Time {
 // uploadRequests uploads the requests with the given handler and returns the
 // count of uploading files, skipped files and a map of RequestStatus count for
 // uploaded ones.
-func uploadRequests(h Handler, requests []*Request) (int, int, map[RequestStatus]int) {
+func uploadRequests(t *testing.T, h Handler, requests []*Request) (int, int, map[RequestStatus]int) {
+	t.Helper()
+
 	p, err := New(h, requests)
 	So(err, ShouldBeNil)
 	So(p, ShouldNotBeNil)
@@ -521,7 +522,7 @@ func uploadRequests(h Handler, requests []*Request) (int, int, map[RequestStatus
 		requestStatusCounts[request.Status] = currentCount + 1
 
 		if request.Error != "" {
-			fmt.Printf("\n%s failed: %s\n", request.Local, request.Error)
+			t.Logf("%s failed: %s\n", request.Local, request.Error)
 		}
 	}
 

@@ -194,6 +194,13 @@ func modifyHardlinkRequests(requests []*Request) ([]*Request, []*Request) {
 		}
 
 		if seen[rr.Remote] {
+			if r.Hardlink != "" {
+				rr = r.Clone()
+				rr.Local = os.DevNull
+				rr.Meta[MetaKeyHardlink] = r.Local
+				rr.Meta[MetaKeyRemoteHardlink] = r.Hardlink
+				rr.Hardlink = ""
+			}
 			dups = append(dups, rr)
 		} else {
 			rs = append(rs, rr)
@@ -353,18 +360,19 @@ func (p *Putter) Put() (chan *Request, chan *Request, chan *Request) {
 
 	var wg sync.WaitGroup
 
-	wg.Add(3)
-
+	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		cloneChannel(r1, uploadStartCh)
 	}()
 
+	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		cloneChannel(r2, uploadReturnCh)
 	}()
 
+	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		cloneChannel(r3, skipReturnCh)
@@ -374,9 +382,20 @@ func (p *Putter) Put() (chan *Request, chan *Request, chan *Request) {
 
 	r1, r2, r3 = p.put(p.duplicateRequests)
 
-	go cloneChannel(r1, uploadStartCh)
-	go cloneChannel(r2, uploadReturnCh)
-	go cloneChannel(r3, skipReturnCh)
+	go func() {
+		cloneChannel(r1, uploadStartCh)
+		close(uploadStartCh)
+	}()
+
+	go func() {
+		cloneChannel(r2, uploadReturnCh)
+		close(uploadReturnCh)
+	}()
+
+	go func() {
+		cloneChannel(r3, skipReturnCh)
+		close(skipReturnCh)
+	}()
 
 	return uploadStartCh, uploadReturnCh, skipReturnCh
 }
@@ -451,6 +470,22 @@ func (p *Putter) statPathsAndReturnOrPut(request *Request, putCh chan *Request, 
 		sendRequest(request, RequestStatusFailed, err, skipReturnCh)
 
 		return
+	}
+
+	if request.Hardlink != "" {
+		originalRequest := request.Clone()
+		originalRequest.Remote = request.origRemote
+		orInfo, err := p.handler.Stat(originalRequest)
+		if err != nil {
+			sendRequest(request, RequestStatusFailed, err, skipReturnCh)
+
+			return
+		}
+
+		request.addStandardMeta(lInfo.Meta, orInfo.Meta)
+
+		request.originalRemoteMeta = request.remoteMeta
+		request.remoteMeta = make(map[string]string)
 	}
 
 	request.addStandardMeta(lInfo.Meta, rInfo.Meta)
@@ -539,12 +574,9 @@ func (p *Putter) applyMetadataConcurrently(metaCh, uploadReturnCh, skipReturnCh 
 		}
 
 		if err := p.addMeta(request.Remote, toAdd); err != nil {
-			fmt.Printf("\nmetaCh addMeta failure [%s] for %+v\n", err, request)
 			p.sendFailedRequest(request, err, returnCh)
 
 			continue
-		} else {
-			fmt.Printf("\nmetaCh addMeta worked for %+v\n", request)
 		}
 
 		returnCh <- request
@@ -593,8 +625,6 @@ func (p *Putter) processPutCh(putCh, uploadStartCh, uploadReturnCh, metaCh chan 
 			continue
 		}
 
-		fmt.Printf("\nputting: %s in %s\n", request.Local, request.Remote)
-
 		if err := p.handler.Put(request); err != nil {
 			p.sendFailedRequest(request, err, uploadReturnCh)
 
@@ -604,11 +634,11 @@ func (p *Putter) processPutCh(putCh, uploadStartCh, uploadReturnCh, metaCh chan 
 		if request.origRemote != "" {
 			empty := request.Clone()
 			empty.Remote = request.origRemote
+			empty.remoteMeta = request.originalRemoteMeta
 			empty.Meta[MetaKeyRemoteHardlink] = request.Hardlink
 			empty.Meta[MetaKeyHardlink] = request.Local
 			empty.Local = os.DevNull
 
-			fmt.Printf("\nputting empty file: %s in %s\n", empty.Local, empty.Remote)
 			if err := p.handler.Put(empty); err != nil {
 				p.sendFailedRequest(request, err, uploadReturnCh)
 

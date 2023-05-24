@@ -84,22 +84,23 @@ func (s *Stuck) String() string {
 // mtime, upload date) you'd like to associate with it. Setting Requester and
 // Set will add these to the requesters and sets metadata on upload.
 type Request struct {
-	Local         string
-	Remote        string
-	LocalForJSON  []byte // set by MakeSafeForJSON(); do not set this yourself.
-	RemoteForJSON []byte // set by MakeSafeForJSON(); do not set this yourself.
-	Requester     string
-	Set           string
-	Meta          map[string]string
-	Status        RequestStatus
-	Symlink       string // contains symlink path if request represents a symlink.
-	Hardlink      string // contains first seen path if request represents a hard-linked file.
-	Size          uint64 // size of Local in bytes, set for you on returned Requests.
-	Error         string
-	Stuck         *Stuck
-	remoteMeta    map[string]string
-	skipPut       bool
-	origRemote    string // used when we change Remote -> Hardlink to upload those.
+	Local              string
+	Remote             string
+	LocalForJSON       []byte // set by MakeSafeForJSON(); do not set this yourself.
+	RemoteForJSON      []byte // set by MakeSafeForJSON(); do not set this yourself.
+	Requester          string
+	Set                string
+	Meta               map[string]string
+	Status             RequestStatus
+	Symlink            string // contains symlink path if request represents a symlink.
+	Hardlink           string // contains first seen path if request represents a hard-linked file.
+	Size               uint64 // size of Local in bytes, set for you on returned Requests.
+	Error              string
+	Stuck              *Stuck
+	remoteMeta         map[string]string
+	originalRemoteMeta map[string]string
+	skipPut            bool
+	origRemote         string // used when we change Remote -> Hardlink to upload those.
 }
 
 // MakeSafeForJSON copies Local and Remote to LocalForJSON and RemoteForJSON,
