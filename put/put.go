@@ -183,24 +183,10 @@ func modifyHardlinkRequests(requests []*Request) ([]*Request, []*Request) {
 	var dups []*Request
 
 	for _, r := range requests {
-		var rr *Request
-
-		if r.Hardlink != "" {
-			rr = r.Clone()
-			rr.origRemote = r.Remote
-			rr.Remote = r.Hardlink
-		} else {
-			rr = r
-		}
+		rr := r.AsHardlinkRequest()
 
 		if seen[rr.Remote] {
-			if r.Hardlink != "" {
-				rr = r.Clone()
-				rr.Local = os.DevNull
-				rr.Meta[MetaKeyHardlink] = r.Local
-				rr.Meta[MetaKeyRemoteHardlink] = r.Hardlink
-				rr.Hardlink = ""
-			}
+			rr = r.AsHardlinkEmptyRequest()
 			dups = append(dups, rr)
 		} else {
 			rs = append(rs, rr)
@@ -361,18 +347,21 @@ func (p *Putter) Put() (chan *Request, chan *Request, chan *Request) {
 	var wg sync.WaitGroup
 
 	wg.Add(1)
+
 	go func() {
 		defer wg.Done()
 		cloneChannel(r1, uploadStartCh)
 	}()
 
 	wg.Add(1)
+
 	go func() {
 		defer wg.Done()
 		cloneChannel(r2, uploadReturnCh)
 	}()
 
 	wg.Add(1)
+
 	go func() {
 		defer wg.Done()
 		cloneChannel(r3, skipReturnCh)
@@ -433,7 +422,8 @@ func cloneChannel(source, dest chan *Request) {
 // (eg. local file doesn't exist) and ones we don't need to do (hasn't been
 // modified since last uploaded) via the returnCh, and sends the remainder to
 // the putCh.
-func (p *Putter) pickFilesToPut(wg *sync.WaitGroup, requests []*Request, putCh chan *Request, skipReturnCh chan *Request) {
+func (p *Putter) pickFilesToPut(wg *sync.WaitGroup, requests []*Request,
+	putCh chan *Request, skipReturnCh chan *Request) {
 	defer wg.Done()
 
 	pool := workerpool.New(workerPoolSizeStats)
@@ -472,20 +462,10 @@ func (p *Putter) statPathsAndReturnOrPut(request *Request, putCh chan *Request, 
 		return
 	}
 
-	if request.Hardlink != "" {
-		originalRequest := request.Clone()
-		originalRequest.Remote = request.origRemote
-		orInfo, err := p.handler.Stat(originalRequest)
-		if err != nil {
-			sendRequest(request, RequestStatusFailed, err, skipReturnCh)
+	if err := p.getHardlinkOriginalRemoteMeta(request, lInfo); err != nil {
+		sendRequest(request, RequestStatusFailed, err, skipReturnCh)
 
-			return
-		}
-
-		request.addStandardMeta(lInfo.Meta, orInfo.Meta)
-
-		request.originalRemoteMeta = request.remoteMeta
-		request.remoteMeta = make(map[string]string)
+		return
 	}
 
 	request.addStandardMeta(lInfo.Meta, rInfo.Meta)
@@ -495,6 +475,27 @@ func (p *Putter) statPathsAndReturnOrPut(request *Request, putCh chan *Request, 
 	}
 
 	sendRequest(request, RequestStatusReplaced, nil, putCh)
+}
+
+func (p *Putter) getHardlinkOriginalRemoteMeta(request *Request, lInfo *ObjectInfo) error {
+	if request.Hardlink == "" {
+		return nil
+	}
+
+	originalRequest := request.Clone()
+	originalRequest.Remote = request.origRemote
+
+	orInfo, err := p.handler.Stat(originalRequest)
+	if err != nil {
+		return err
+	}
+
+	request.addStandardMeta(lInfo.Meta, orInfo.Meta)
+
+	request.originalRemoteMeta = request.remoteMeta
+	request.remoteMeta = make(map[string]string)
+
+	return nil
 }
 
 // sendForUploadOrUnmodified sends the request to putCh if remote doesn't exist
@@ -631,37 +632,41 @@ func (p *Putter) processPutCh(putCh, uploadStartCh, uploadReturnCh, metaCh chan 
 			continue
 		}
 
-		if request.origRemote != "" {
-			empty := request.Clone()
-			empty.Remote = request.origRemote
-			empty.remoteMeta = request.originalRemoteMeta
-			empty.Meta[MetaKeyRemoteHardlink] = request.Hardlink
-			empty.Meta[MetaKeyHardlink] = request.Local
-			empty.Local = os.DevNull
+		if request.origRemote == "" {
+			metaCh <- request
 
-			if err := p.handler.Put(empty); err != nil {
-				p.sendFailedRequest(request, err, uploadReturnCh)
+			continue
+		}
 
-				continue
-			}
+		err := p.putEmptyFile(request)
+		if err != nil {
+			p.sendFailedRequest(request, err, uploadReturnCh)
 
-			toRemove, toAdd := empty.determineMetadataToRemoveAndAdd()
-
-			if err := p.removeMeta(empty.Remote, toRemove); err != nil {
-				p.sendFailedRequest(empty, err, uploadReturnCh)
-
-				continue
-			}
-
-			if err := p.addMeta(empty.Remote, toAdd); err != nil {
-				p.sendFailedRequest(empty, err, uploadReturnCh)
-
-				continue
-			}
+			continue
 		}
 
 		metaCh <- request
 	}
+}
+
+func (p *Putter) putEmptyFile(request *Request) error {
+	empty := request.AsHardlinkEmptyRequest()
+
+	if err := p.handler.Put(empty); err != nil {
+		return err
+	}
+
+	toRemove, toAdd := empty.determineMetadataToRemoveAndAdd()
+
+	if err := p.removeMeta(empty.Remote, toRemove); err != nil {
+		return err
+	}
+
+	if err := p.addMeta(empty.Remote, toAdd); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // testRead tests to see if we can open and read the request's local file,

@@ -340,6 +340,40 @@ func (r *Request) determineMetadataToRemoveAndAdd() (map[string]string, map[stri
 	return toRemove, toAdd
 }
 
+func (r *Request) AsHardlinkRequest() *Request {
+	if r.Hardlink == "" {
+		return r
+	}
+
+	rr := r.Clone()
+	rr.origRemote = r.Remote
+	rr.Remote = r.Hardlink
+
+	return rr
+}
+
+func (r *Request) AsHardlinkEmptyRequest() *Request {
+	if r.Hardlink == "" {
+		return r
+	}
+
+	rr := r.Clone()
+	rr.Local = os.DevNull
+	rr.Meta[MetaKeyHardlink] = r.Local
+	rr.Meta[MetaKeyRemoteHardlink] = r.Hardlink
+	rr.Hardlink = ""
+
+	if r.origRemote != "" {
+		rr.Remote = r.origRemote
+	}
+
+	if r.originalRemoteMeta != nil {
+		rr.remoteMeta = r.originalRemoteMeta
+	}
+
+	return rr
+}
+
 // PathTransformer is a function that given a local path, returns the
 // corresponding remote path.
 type PathTransformer func(local string) (remote string, err error)

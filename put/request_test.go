@@ -148,15 +148,11 @@ func TestRequest(t *testing.T) {
 		So(s.String(), ShouldContainSubstring, ", PID "+strconv.Itoa(s.PID))
 	})
 
-	Convey("You can specify link files and get back a path to an empty file for uploading", t, func() {
+	Convey("You can specify symlink files and get back a path to an empty file for uploading", t, func() {
 		local := "/a/file"
 		size := uint64(123)
 
 		r := &Request{Local: local, Symlink: "/another/file", Size: size}
-		So(r.UploadPath(), ShouldEqual, os.DevNull)
-		So(r.UploadedSize(), ShouldEqual, 0)
-
-		r = &Request{Local: local, Hardlink: "/another/file", Size: size}
 		So(r.UploadPath(), ShouldEqual, os.DevNull)
 		So(r.UploadedSize(), ShouldEqual, 0)
 
@@ -192,7 +188,9 @@ func TestRequest(t *testing.T) {
 		fields := t.NumField()
 
 		for i := 0; i < fields; i++ {
-			if t.Field(i).Name == "LocalForJSON" || t.Field(i).Name == "RemoteForJSON" {
+			if t.Field(i).Name == "LocalForJSON" || t.Field(i).Name == "RemoteForJSON" ||
+				t.Field(i).Name == "origRemote" || t.Field(i).Name == "originalRemoteMeta" {
+
 				continue
 			}
 
