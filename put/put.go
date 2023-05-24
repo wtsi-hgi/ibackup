@@ -462,7 +462,7 @@ func (p *Putter) statPathsAndReturnOrPut(request *Request, putCh chan *Request, 
 		return
 	}
 
-	if err := p.getHardlinkOriginalRemoteMeta(request, lInfo); err != nil {
+	if err := p.getHardlinkOriginalRemoteMeta(request); err != nil {
 		sendRequest(request, RequestStatusFailed, err, skipReturnCh)
 
 		return
@@ -477,7 +477,7 @@ func (p *Putter) statPathsAndReturnOrPut(request *Request, putCh chan *Request, 
 	sendRequest(request, RequestStatusReplaced, nil, putCh)
 }
 
-func (p *Putter) getHardlinkOriginalRemoteMeta(request *Request, lInfo *ObjectInfo) error {
+func (p *Putter) getHardlinkOriginalRemoteMeta(request *Request) error {
 	if request.Hardlink == "" {
 		return nil
 	}
@@ -490,10 +490,7 @@ func (p *Putter) getHardlinkOriginalRemoteMeta(request *Request, lInfo *ObjectIn
 		return err
 	}
 
-	request.addStandardMeta(lInfo.Meta, orInfo.Meta)
-
-	request.originalRemoteMeta = request.remoteMeta
-	request.remoteMeta = make(map[string]string)
+	request.originalRemoteMeta = orInfo.Meta
 
 	return nil
 }

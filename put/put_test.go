@@ -352,6 +352,47 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 				So(err, ShouldNotBeNil)
 			}
 		})
+
+		Convey("Putting multiple requests with the same local & remote paths should succeed", func() {
+			localDir := t.TempDir()
+			localPath := filepath.Join(localDir, "localFile")
+			remoteDir := t.TempDir()
+			remotePath := filepath.Join(remoteDir, "remoteFile")
+
+			internal.CreateTestFile(t, localPath, "abc123")
+
+			request1 := &Request{
+				Local:     localPath,
+				Remote:    remotePath,
+				Requester: "aRequester",
+				Set:       "aSet",
+				Status:    RequestStatusPending,
+				Meta: map[string]string{
+					"aKey": "aValue",
+				},
+			}
+
+			request2 := request1.Clone()
+			request2.Meta["aKey"] = "bValue"
+			request2.Meta["bKey"] = "anotherValue"
+			request2.Set = "bSet"
+
+			request3 := request1.Clone()
+			request3.Meta["aKey"] = "cValue"
+			request2.Meta["bKey"] = "yetAnotherValue"
+			request3.Set = "cSet"
+
+			uploading, skipped, statusCounts := uploadRequests(t, lh, []*Request{request1, request2, request3})
+
+			So(uploading, ShouldEqual, 1)
+			So(skipped, ShouldEqual, 2)
+			So(statusCounts[RequestStatusUploaded], ShouldEqual, 1)
+			So(statusCounts[RequestStatusUnmodified], ShouldEqual, 0)
+
+			So(lh.meta[remotePath]["aKey"], ShouldEqual, "cValue")
+			So(lh.meta[remotePath][MetaKeySets], ShouldEqual, "aSet,bSet,cSet")
+			So(lh.meta[remotePath]["bKey"], ShouldEqual, "yetAnotherValue")
+		})
 	})
 
 	Convey("CreateCollections() also works with 0 or 1 requests", t, func() {
