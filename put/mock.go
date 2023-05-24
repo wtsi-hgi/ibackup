@@ -26,6 +26,7 @@
 package put
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"sync"
@@ -216,7 +217,9 @@ func (l *LocalHandler) AddMeta(path string, meta map[string]string) error {
 	}
 
 	for key, val := range meta {
-		if _, exists = pathMeta[key]; exists {
+		if pval, exists := pathMeta[key]; exists {
+			fmt.Printf("failing AddMeta because lh pathMeta %s => %s, vs desired add of %s, for path %s\n",
+				key, pval, val, path)
 			return Error{ErrMockMetaFail, key}
 		}
 

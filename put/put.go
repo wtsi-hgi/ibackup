@@ -154,15 +154,13 @@ type Putter struct {
 // requests in iRODS. You should defer Cleanup() on the return value. All the
 // incoming requests will have their paths validated (they must be absolute).
 //
-// Extra requests are created for requests representing a hardlink that will put
-// them in hardlink location, along with an empty file for the original.
+// Requests with Hardlink set will be uploaded to the Hardlink remote location,
+// and an empty file uploaded to the Remote location, with metadata pointing to
+// the Hardlink location.
 func New(handler Handler, requests []*Request) (*Putter, error) {
-	rs, dups := modifyHardlinkRequests(requests)
-
-	for _, request := range append(rs, dups...) {
-		if err := request.ValidatePaths(); err != nil {
-			return nil, err
-		}
+	rs, dups, err := dedupAndPrepareRequests(requests)
+	if err != nil {
+		return nil, err
 	}
 
 	return &Putter{
@@ -174,28 +172,32 @@ func New(handler Handler, requests []*Request) (*Putter, error) {
 	}, nil
 }
 
-// modifyHardlinkRequests sets Remote to Hardlink to hardlink requests. Stores
-// the original Remote so it can be recovered later.
-func modifyHardlinkRequests(requests []*Request) ([]*Request, []*Request) {
-	rs := make([]*Request, 0, len(requests))
+// dedupRequests splits the given requests in to a slice requests that have
+// unique Remote values, and a slice with duplicates. Also "prepares" all
+// requests, ensuring they have valid paths and that hardlinks will be handled
+// appropriately later.
+func dedupAndPrepareRequests(requests []*Request) ([]*Request, []*Request, error) {
+	unique := make([]*Request, 0, len(requests))
 	seen := make(map[string]bool)
 
 	var dups []*Request
 
 	for _, r := range requests {
-		rr := r.AsHardlinkRequest()
-
-		if seen[rr.Remote] {
-			rr = r.AsHardlinkEmptyRequest()
-			dups = append(dups, rr)
-		} else {
-			rs = append(rs, rr)
+		err := r.Prepare()
+		if err != nil {
+			return nil, nil, err
 		}
 
-		seen[rr.Remote] = true
+		if seen[r.Remote] {
+			dups = append(dups, r)
+		} else {
+			unique = append(unique, r)
+		}
+
+		seen[r.Remote] = true
 	}
 
-	return rs, dups
+	return unique, dups, nil
 }
 
 // SetFileReadTimeout sets how long to wait on a test open and read of each
@@ -291,10 +293,12 @@ func (p *Putter) getUniqueRequestLeafCollections() []string {
 }
 
 func (p *Putter) getSortedRequestCollections() []string {
-	dirs := make([]string, len(p.requests))
+	dirs := make([]string, 0, len(p.requests))
 
-	for i, request := range p.requests {
-		dirs[i] = filepath.Dir(request.Remote)
+	for _, request := range p.requests {
+		for _, remote := range request.Remotes() {
+			dirs = append(dirs, filepath.Dir(remote))
+		}
 	}
 
 	sort.Strings(dirs)
@@ -342,7 +346,7 @@ func (p *Putter) Put() (chan *Request, chan *Request, chan *Request) {
 	uploadReturnCh := make(chan *Request, chanLen)
 	skipReturnCh := make(chan *Request, chanLen)
 
-	r1, r2, r3 := p.put(p.requests)
+	r1, r2, r3 := p.put(p.requests, workerPoolSizeStats)
 
 	var wg sync.WaitGroup
 
@@ -369,7 +373,7 @@ func (p *Putter) Put() (chan *Request, chan *Request, chan *Request) {
 
 	wg.Wait()
 
-	r1, r2, r3 = p.put(p.duplicateRequests)
+	r1, r2, r3 = p.put(p.duplicateRequests, 1)
 
 	go func() {
 		cloneChannel(r1, uploadStartCh)
@@ -389,7 +393,7 @@ func (p *Putter) Put() (chan *Request, chan *Request, chan *Request) {
 	return uploadStartCh, uploadReturnCh, skipReturnCh
 }
 
-func (p *Putter) put(requests []*Request) (chan *Request, chan *Request, chan *Request) {
+func (p *Putter) put(requests []*Request, poolSize int) (chan *Request, chan *Request, chan *Request) {
 	chanLen := len(requests)
 	uploadStartCh := make(chan *Request, chanLen)
 	uploadReturnCh := make(chan *Request, chanLen)
@@ -400,7 +404,7 @@ func (p *Putter) put(requests []*Request) (chan *Request, chan *Request, chan *R
 
 	wg.Add(numPutGoroutines)
 
-	go p.pickFilesToPut(&wg, requests, putCh, skipReturnCh)
+	go p.pickFilesToPut(&wg, requests, putCh, skipReturnCh, poolSize)
 	go p.putFilesInIRODS(&wg, putCh, uploadStartCh, uploadReturnCh, skipReturnCh)
 
 	go func() {
@@ -423,10 +427,10 @@ func cloneChannel(source, dest chan *Request) {
 // modified since last uploaded) via the returnCh, and sends the remainder to
 // the putCh.
 func (p *Putter) pickFilesToPut(wg *sync.WaitGroup, requests []*Request,
-	putCh chan *Request, skipReturnCh chan *Request) {
+	putCh chan *Request, skipReturnCh chan *Request, poolSize int) {
 	defer wg.Done()
 
-	pool := workerpool.New(workerPoolSizeStats)
+	pool := workerpool.New(poolSize)
 
 	for _, request := range requests {
 		thisRequest := request
@@ -455,44 +459,18 @@ func (p *Putter) statPathsAndReturnOrPut(request *Request, putCh chan *Request, 
 
 	request.Size = lInfo.Size
 
-	rInfo, err := p.handler.Stat(request)
+	rInfo, err := request.StatAndAssociateStandardMetadata(lInfo.Meta, p.handler)
 	if err != nil {
 		sendRequest(request, RequestStatusFailed, err, skipReturnCh)
 
 		return
 	}
-
-	if err := p.getHardlinkOriginalRemoteMeta(request); err != nil {
-		sendRequest(request, RequestStatusFailed, err, skipReturnCh)
-
-		return
-	}
-
-	request.addStandardMeta(lInfo.Meta, rInfo.Meta)
 
 	if sendForUploadOrUnmodified(request, lInfo, rInfo, putCh, skipReturnCh) {
 		return
 	}
 
 	sendRequest(request, RequestStatusReplaced, nil, putCh)
-}
-
-func (p *Putter) getHardlinkOriginalRemoteMeta(request *Request) error {
-	if request.Hardlink == "" {
-		return nil
-	}
-
-	originalRequest := request.Clone()
-	originalRequest.Remote = request.origRemote
-
-	orInfo, err := p.handler.Stat(originalRequest)
-	if err != nil {
-		return err
-	}
-
-	request.originalRemoteMeta = orInfo.Meta
-
-	return nil
 }
 
 // sendForUploadOrUnmodified sends the request to putCh if remote doesn't exist
@@ -557,21 +535,13 @@ func (p *Putter) putFilesInIRODS(wg *sync.WaitGroup, putCh, uploadStartCh, uploa
 func (p *Putter) applyMetadataConcurrently(metaCh, uploadReturnCh, skipReturnCh chan *Request,
 	metaDoneCh chan struct{}) {
 	for request := range metaCh {
-		toRemove, toAdd := request.determineMetadataToRemoveAndAdd()
-
 		returnCh := uploadReturnCh
 
 		if request.skipPut {
 			returnCh = skipReturnCh
 		}
 
-		if err := p.removeMeta(request.Remote, toRemove); err != nil {
-			p.sendFailedRequest(request, err, returnCh)
-
-			continue
-		}
-
-		if err := p.addMeta(request.Remote, toAdd); err != nil {
+		if err := request.RemoveAndAddMetadata(p.handler); err != nil {
 			p.sendFailedRequest(request, err, returnCh)
 
 			continue
@@ -583,26 +553,10 @@ func (p *Putter) applyMetadataConcurrently(metaCh, uploadReturnCh, skipReturnCh 
 	close(metaDoneCh)
 }
 
-func (p *Putter) removeMeta(path string, toRemove map[string]string) error {
-	if len(toRemove) == 0 {
-		return nil
-	}
-
-	return p.handler.RemoveMeta(path, toRemove)
-}
-
 // sendFailedRequest adds the err details to the request and sends it on the
 // given channel.
 func (p *Putter) sendFailedRequest(request *Request, err error, uploadReturnCh chan *Request) {
 	sendRequest(request, RequestStatusFailed, err, uploadReturnCh)
-}
-
-func (p *Putter) addMeta(path string, toAdd map[string]string) error {
-	if len(toAdd) == 0 {
-		return nil
-	}
-
-	return p.handler.AddMeta(path, toAdd)
 }
 
 func (p *Putter) processPutCh(putCh, uploadStartCh, uploadReturnCh, metaCh chan *Request) {
@@ -623,20 +577,7 @@ func (p *Putter) processPutCh(putCh, uploadStartCh, uploadReturnCh, metaCh chan 
 			continue
 		}
 
-		if err := p.handler.Put(request); err != nil {
-			p.sendFailedRequest(request, err, uploadReturnCh)
-
-			continue
-		}
-
-		if request.origRemote == "" {
-			metaCh <- request
-
-			continue
-		}
-
-		err := p.putEmptyFile(request)
-		if err != nil {
+		if err := request.Put(p.handler); err != nil {
 			p.sendFailedRequest(request, err, uploadReturnCh)
 
 			continue
@@ -644,26 +585,6 @@ func (p *Putter) processPutCh(putCh, uploadStartCh, uploadReturnCh, metaCh chan 
 
 		metaCh <- request
 	}
-}
-
-func (p *Putter) putEmptyFile(request *Request) error {
-	empty := request.AsHardlinkEmptyRequest()
-
-	if err := p.handler.Put(empty); err != nil {
-		return err
-	}
-
-	toRemove, toAdd := empty.determineMetadataToRemoveAndAdd()
-
-	if err := p.removeMeta(empty.Remote, toRemove); err != nil {
-		return err
-	}
-
-	if err := p.addMeta(empty.Remote, toAdd); err != nil {
-		return err
-	}
-
-	return nil
 }
 
 // testRead tests to see if we can open and read the request's local file,

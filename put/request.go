@@ -30,6 +30,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dgryski/go-farm"
@@ -84,23 +85,24 @@ func (s *Stuck) String() string {
 // mtime, upload date) you'd like to associate with it. Setting Requester and
 // Set will add these to the requesters and sets metadata on upload.
 type Request struct {
-	Local              string
-	Remote             string
-	LocalForJSON       []byte // set by MakeSafeForJSON(); do not set this yourself.
-	RemoteForJSON      []byte // set by MakeSafeForJSON(); do not set this yourself.
-	Requester          string
-	Set                string
-	Meta               map[string]string
-	Status             RequestStatus
-	Symlink            string // contains symlink path if request represents a symlink.
-	Hardlink           string // contains first seen path if request represents a hard-linked file.
-	Size               uint64 // size of Local in bytes, set for you on returned Requests.
-	Error              string
-	Stuck              *Stuck
-	remoteMeta         map[string]string
-	originalRemoteMeta map[string]string
-	skipPut            bool
-	origRemote         string // used when we change Remote -> Hardlink to upload those.
+	Local            string
+	Remote           string
+	LocalForJSON     []byte // set by MakeSafeForJSON(); do not set this yourself.
+	RemoteForJSON    []byte // set by MakeSafeForJSON(); do not set this yourself.
+	Requester        string
+	Set              string
+	Meta             map[string]string
+	Status           RequestStatus
+	Symlink          string // contains symlink path if request represents a symlink.
+	Hardlink         string // contains first seen path if request represents a hard-linked file.
+	Size             uint64 // size of Local in bytes, set for you on returned Requests.
+	Error            string
+	Stuck            *Stuck
+	remoteMeta       map[string]string
+	skipPut          bool
+	emptyFileRequest *Request
+	inodeRequest     *Request
+	metaMu           sync.Mutex
 }
 
 // MakeSafeForJSON copies Local and Remote to LocalForJSON and RemoteForJSON,
@@ -133,6 +135,33 @@ func (r *Request) ID() string {
 	return fmt.Sprintf("%016x%016x", l, h)
 }
 
+// Prepare calls ValidatePaths and returns its error, if any. Also prepares
+// the request for correct hardlink handling, if Hardlink is set.
+func (r *Request) Prepare() error {
+	if err := r.ValidatePaths(); err != nil {
+		return err
+	}
+
+	if r.Hardlink == "" {
+		return nil
+	}
+
+	emptyFileRequest := r.Clone()
+	emptyFileRequest.Local = os.DevNull
+	emptyFileRequest.Meta[MetaKeyHardlink] = r.Local
+	emptyFileRequest.Meta[MetaKeyRemoteHardlink] = r.Hardlink
+	emptyFileRequest.Hardlink = ""
+
+	inodeRequest := r.Clone()
+	inodeRequest.Remote = r.Hardlink
+	inodeRequest.Hardlink = ""
+
+	r.emptyFileRequest = emptyFileRequest
+	r.inodeRequest = inodeRequest
+
+	return nil
+}
+
 // ValidatePaths checks that both Local and Remote paths are absolute. (It does
 // NOT check that either path exists.)
 func (r *Request) ValidatePaths() error {
@@ -148,6 +177,18 @@ func (r *Request) ValidatePaths() error {
 	}
 
 	return nil
+}
+
+// Remotes normally returns Remote, but if we have a Hardlink, also returns that
+// as a remote.
+func (r *Request) Remotes() []string {
+	remotes := []string{r.Remote}
+
+	if r.Hardlink != "" {
+		remotes = append(remotes, r.Hardlink)
+	}
+
+	return remotes
 }
 
 // UploadPath should be used instead of Request.Local for upload purposes.
@@ -177,24 +218,63 @@ func (r *Request) UploadedSize() uint64 {
 // affecting the original.
 func (r *Request) Clone() *Request {
 	clone := &Request{
-		Local:      r.Local,
-		Remote:     r.Remote,
-		Requester:  r.Requester,
-		Set:        r.Set,
-		Meta:       r.Meta,
-		Status:     r.Status,
-		Symlink:    r.Symlink,
-		Hardlink:   r.Hardlink,
-		Size:       r.Size,
-		Error:      r.Error,
-		Stuck:      r.Stuck,
-		remoteMeta: r.remoteMeta,
-		skipPut:    r.skipPut,
+		Local:            r.Local,
+		Remote:           r.Remote,
+		Requester:        r.Requester,
+		Set:              r.Set,
+		Meta:             r.Meta,
+		Status:           r.Status,
+		Symlink:          r.Symlink,
+		Hardlink:         r.Hardlink,
+		Size:             r.Size,
+		Error:            r.Error,
+		Stuck:            r.Stuck,
+		remoteMeta:       r.remoteMeta,
+		skipPut:          r.skipPut,
+		emptyFileRequest: r.emptyFileRequest,
+		inodeRequest:     r.inodeRequest,
 	}
 
 	clone.cloneMeta()
 
 	return clone
+}
+
+// StatAndAssociateStandardMetadata uses the handler to "stat" our Remote, and
+// the given diskMeta to apply standard metadata to ourselves.
+//
+// For hardlinks, does the same for our Hardlink and empty file to capture that
+// info.
+func (r *Request) StatAndAssociateStandardMetadata(diskMeta map[string]string, handler Handler) (*ObjectInfo, error) {
+	if r.Hardlink == "" {
+		return statAndAssociateStandardMetadata(r, diskMeta, handler)
+	}
+
+	if _, err := statAndAssociateStandardMetadata(r.emptyFileRequest, diskMeta, handler); err != nil {
+		return nil, err
+	}
+
+	rInfo, err := statAndAssociateStandardMetadata(r.inodeRequest, diskMeta, handler)
+	if err != nil {
+		return nil, err
+	}
+
+	r.Meta = cloneMap(r.inodeRequest.Meta)
+	r.remoteMeta = cloneMap(r.inodeRequest.remoteMeta)
+
+	return rInfo, nil
+}
+
+func statAndAssociateStandardMetadata(request *Request, diskMeta map[string]string,
+	handler Handler) (*ObjectInfo, error) {
+	rInfo, err := handler.Stat(request)
+	if err != nil {
+		return nil, err
+	}
+
+	request.addStandardMeta(diskMeta, rInfo.Meta)
+
+	return rInfo, nil
 }
 
 // addStandardMeta ensures our Meta is unique to us, and adds key vals from the
@@ -257,6 +337,9 @@ func (r *Request) appendMeta(key, val string) {
 
 	appended := val
 
+	r.metaMu.Lock()
+	defer r.metaMu.Unlock()
+
 	if rval, exists := r.remoteMeta[key]; exists {
 		rvals := strings.Split(rval, metaListSeparator)
 		appended = appendValIfNotInList(val, rvals)
@@ -291,7 +374,11 @@ func appendValIfNotInList(val string, list []string) string {
 // metadata to the remote value, since we're not uploading now.
 func (r *Request) needsMetadataUpdate() bool {
 	need := false
+
 	defer func() {
+		r.metaMu.Lock()
+		defer r.metaMu.Unlock()
+
 		r.skipPut = need
 		r.Meta[MetaKeyDate] = r.remoteMeta[MetaKeyDate]
 	}()
@@ -309,6 +396,9 @@ func (r *Request) needsMetadataUpdate() bool {
 // valForMetaKeyDifferentOnRemote returns false if key has no remote value.
 // Returns true if the remote value is different to ours.
 func (r *Request) valForMetaKeyDifferentOnRemote(key string) bool {
+	r.metaMu.Lock()
+	defer r.metaMu.Unlock()
+
 	if rval, defined := r.remoteMeta[key]; defined {
 		if rval != r.Meta[key] {
 			return true
@@ -316,6 +406,43 @@ func (r *Request) valForMetaKeyDifferentOnRemote(key string) bool {
 	}
 
 	return false
+}
+
+// RemoveAndAddMetadata removes and adds metadata on our Remote based on the
+// disk and remote metadata discovered during
+// StatAndAssociateStandardMetadata().
+//
+// Handles hardlinks (their Hardlink remote and empty file) appropriately.
+func (r *Request) RemoveAndAddMetadata(handler Handler) error {
+	if r.Hardlink == "" {
+		return removeAndAddMetadata(r, handler)
+	}
+
+	if err := removeAndAddMetadata(r.emptyFileRequest, handler); err != nil {
+		return err
+	}
+
+	rInfo, err := handler.Stat(r.inodeRequest)
+	if err != nil {
+		return err
+	}
+
+	r.inodeRequest.remoteMeta = rInfo.Meta
+
+	return removeAndAddMetadata(r.inodeRequest, handler)
+}
+
+func removeAndAddMetadata(r *Request, handler Handler) error {
+	r.metaMu.Lock()
+	defer r.metaMu.Unlock()
+
+	toRemove, toAdd := r.determineMetadataToRemoveAndAdd()
+
+	if err := r.removeMeta(handler, toRemove); err != nil {
+		return err
+	}
+
+	return r.addMeta(handler, toAdd)
 }
 
 // determineMetadataToRemoveAndAdd compares our Meta to our remoteMeta and
@@ -340,38 +467,35 @@ func (r *Request) determineMetadataToRemoveAndAdd() (map[string]string, map[stri
 	return toRemove, toAdd
 }
 
-func (r *Request) AsHardlinkRequest() *Request {
-	if r.Hardlink == "" {
-		return r
+func (r *Request) removeMeta(handler Handler, toRemove map[string]string) error {
+	if len(toRemove) == 0 {
+		return nil
 	}
 
-	rr := r.Clone()
-	rr.origRemote = r.Remote
-	rr.Remote = r.Hardlink
-
-	return rr
+	return handler.RemoveMeta(r.Remote, toRemove)
 }
 
-func (r *Request) AsHardlinkEmptyRequest() *Request {
+func (r *Request) addMeta(handler Handler, toAdd map[string]string) error {
+	if len(toAdd) == 0 {
+		return nil
+	}
+
+	return handler.AddMeta(r.Remote, toAdd)
+}
+
+// Put uses the given handler to upload our Local file to Remote. This has
+// special handling for hardlinks: uploads Local to Hardlink, and an empty file
+// to Remote, with linking metadata.
+func (r *Request) Put(handler Handler) error {
 	if r.Hardlink == "" {
-		return r
+		return handler.Put(r)
 	}
 
-	rr := r.Clone()
-	rr.Local = os.DevNull
-	rr.Meta[MetaKeyHardlink] = r.Local
-	rr.Meta[MetaKeyRemoteHardlink] = r.Hardlink
-	rr.Hardlink = ""
-
-	if r.origRemote != "" {
-		rr.Remote = r.origRemote
+	if err := handler.Put(r.inodeRequest); err != nil {
+		return err
 	}
 
-	if r.originalRemoteMeta != nil {
-		rr.remoteMeta = r.originalRemoteMeta
-	}
-
-	return rr
+	return handler.Put(r.emptyFileRequest)
 }
 
 // PathTransformer is a function that given a local path, returns the

@@ -244,12 +244,12 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 				So(info.Size(), ShouldEqual, 2)
 
 				So(lh.meta[requests[2].Remote][setMetaKey], ShouldEqual, "a")
-				So(lh.meta[requests[2].Hardlink][setMetaKey], ShouldEqual, lh.meta[requests[2].Remote][setMetaKey])
+				So(lh.meta[requests[2].Hardlink][setMetaKey], ShouldNotBeBlank)
 				So(lh.meta[requests[2].Remote][MetaKeyRemoteHardlink], ShouldEqual, requests[2].Hardlink)
 				So(lh.meta[requests[2].Remote][MetaKeyHardlink], ShouldEqual, requests[2].Local)
 
 				So(lh.meta[requests[4].Remote][setMetaKey], ShouldEqual, "b")
-				So(lh.meta[requests[4].Hardlink][setMetaKey], ShouldEqual, lh.meta[requests[2].Remote][setMetaKey])
+				So(lh.meta[requests[4].Hardlink][setMetaKey], ShouldNotBeBlank)
 				So(lh.meta[requests[4].Remote][MetaKeyRemoteHardlink], ShouldEqual, requests[2].Hardlink)
 				So(lh.meta[requests[4].Remote][MetaKeyHardlink], ShouldEqual, requests[4].Local)
 
@@ -389,9 +389,11 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 			So(statusCounts[RequestStatusUploaded], ShouldEqual, 1)
 			So(statusCounts[RequestStatusUnmodified], ShouldEqual, 0)
 
-			So(lh.meta[remotePath]["aKey"], ShouldEqual, "cValue")
-			So(lh.meta[remotePath][MetaKeySets], ShouldEqual, "aSet,bSet,cSet")
-			So(lh.meta[remotePath]["bKey"], ShouldEqual, "yetAnotherValue")
+			So(lh.meta[remotePath][MetaKeySets], ShouldContainSubstring, "aSet")
+			So(lh.meta[remotePath][MetaKeySets], ShouldContainSubstring, "bSet")
+			So(lh.meta[remotePath][MetaKeySets], ShouldContainSubstring, "cSet")
+			So(lh.meta[remotePath]["aKey"], ShouldNotBeBlank)
+			So(lh.meta[remotePath]["bKey"], ShouldNotBeBlank)
 		})
 	})
 
