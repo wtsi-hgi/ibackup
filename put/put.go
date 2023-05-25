@@ -194,7 +194,7 @@ func dedupAndPrepareRequests(requests []*Request) ([]*Request, []*Request, error
 			unique = append(unique, r)
 		}
 
-		seen[r.Remote] = true
+		seen[r.RemoteDataPath()] = true
 	}
 
 	return unique, dups, nil
@@ -475,7 +475,7 @@ func (p *Putter) statPathsAndReturnOrPut(request *Request, putCh chan *Request, 
 
 	request.Size = lInfo.Size
 
-	rInfo, err := request.StatAndAssociateStandardMetadata(lInfo.Meta, p.handler)
+	rInfo, err := request.StatAndAssociateStandardMetadata(lInfo, p.handler)
 	if err != nil {
 		sendRequest(request, RequestStatusFailed, err, skipReturnCh)
 

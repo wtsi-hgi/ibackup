@@ -84,23 +84,24 @@ func (s *Stuck) String() string {
 // mtime, upload date) you'd like to associate with it. Setting Requester and
 // Set will add these to the requesters and sets metadata on upload.
 type Request struct {
-	Local            string
-	Remote           string
-	LocalForJSON     []byte // set by MakeSafeForJSON(); do not set this yourself.
-	RemoteForJSON    []byte // set by MakeSafeForJSON(); do not set this yourself.
-	Requester        string
-	Set              string
-	Meta             map[string]string
-	Status           RequestStatus
-	Symlink          string // contains symlink path if request represents a symlink.
-	Hardlink         string // contains first seen path if request represents a hard-linked file.
-	Size             uint64 // size of Local in bytes, set for you on returned Requests.
-	Error            string
-	Stuck            *Stuck
-	remoteMeta       map[string]string
-	skipPut          bool
-	emptyFileRequest *Request
-	inodeRequest     *Request
+	Local               string
+	Remote              string
+	LocalForJSON        []byte // set by MakeSafeForJSON(); do not set this yourself.
+	RemoteForJSON       []byte // set by MakeSafeForJSON(); do not set this yourself.
+	Requester           string
+	Set                 string
+	Meta                map[string]string
+	Status              RequestStatus
+	Symlink             string // contains symlink path if request represents a symlink.
+	Hardlink            string // contains first seen path if request represents a hard-linked file.
+	Size                uint64 // size of Local in bytes, set for you on returned Requests.
+	Error               string
+	Stuck               *Stuck
+	remoteMeta          map[string]string
+	skipPut             bool
+	emptyFileRequest    *Request
+	inodeRequest        *Request
+	onlyUploadEmptyFile bool
 }
 
 // MakeSafeForJSON copies Local and Remote to LocalForJSON and RemoteForJSON,
@@ -254,12 +255,15 @@ func (r *Request) Clone() *Request {
 //
 // For hardlinks, does the same for our Hardlink and empty file to capture that
 // info.
-func (r *Request) StatAndAssociateStandardMetadata(diskMeta map[string]string, handler Handler) (*ObjectInfo, error) {
+func (r *Request) StatAndAssociateStandardMetadata(lInfo *ObjectInfo, handler Handler) (*ObjectInfo, error) {
+	diskMeta := lInfo.Meta
+
 	if r.Hardlink == "" {
 		return statAndAssociateStandardMetadata(r, diskMeta, handler)
 	}
 
-	if _, err := statAndAssociateStandardMetadata(r.emptyFileRequest, diskMeta, handler); err != nil {
+	rInfoEmpty, err := statAndAssociateStandardMetadata(r.emptyFileRequest, diskMeta, handler)
+	if err != nil {
 		return nil, err
 	}
 
@@ -270,6 +274,11 @@ func (r *Request) StatAndAssociateStandardMetadata(diskMeta map[string]string, h
 
 	r.Meta = cloneMap(r.inodeRequest.Meta)
 	r.remoteMeta = cloneMap(r.inodeRequest.remoteMeta)
+
+	if lInfo.HasSameModTime(rInfo) && !rInfoEmpty.Exists {
+		rInfo = rInfoEmpty
+		r.onlyUploadEmptyFile = true
+	}
 
 	return rInfo, nil
 }
@@ -422,12 +431,9 @@ func (r *Request) RemoveAndAddMetadata(handler Handler) error {
 		return err
 	}
 
-	rInfo, err := handler.Stat(r.inodeRequest)
-	if err != nil {
-		return err
+	if r.onlyUploadEmptyFile && !r.inodeRequest.needsMetadataUpdate() {
+		return nil
 	}
-
-	r.inodeRequest.remoteMeta = rInfo.Meta
 
 	return removeAndAddMetadata(r.inodeRequest, handler)
 }
@@ -488,8 +494,10 @@ func (r *Request) Put(handler Handler) error {
 		return handler.Put(r)
 	}
 
-	if err := handler.Put(r.inodeRequest); err != nil {
-		return err
+	if !r.onlyUploadEmptyFile {
+		if err := handler.Put(r.inodeRequest); err != nil {
+			return err
+		}
 	}
 
 	return handler.Put(r.emptyFileRequest)
