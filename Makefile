@@ -21,11 +21,11 @@ install:
 
 test: export CGO_ENABLED = 1
 test:
-	@go test -tags netgo --count 1 ./...
+	@go test -tags netgo -p 1 --count 1 ./...
 
 race: export CGO_ENABLED = 1
 race:
-	go test -tags netgo -race --count 1 ./...
+	go test -tags netgo -race -p 1 --count 1 ./...
 
 bench: export CGO_ENABLED = 1
 bench:

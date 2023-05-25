@@ -253,8 +253,6 @@ func (s *TestServer) waitForStatus(name, statusToFind string, timeout time.Durat
 
 	cmd := []string{"status", "--name", name, "--url", s.url, "--cert", s.cert}
 
-	var out string
-
 	status := retry.Do(ctx, func() error {
 		clientCmd := exec.Command("./"+app, cmd...)
 		clientCmd.Env = s.env
@@ -268,16 +266,8 @@ func (s *TestServer) waitForStatus(name, statusToFind string, timeout time.Durat
 			return nil
 		}
 
-		out = string(output)
-
 		return ErrStatusNotFound
 	}, &retry.UntilNoError{}, btime.SecondsRangeBackoff(), "waiting for matching status")
-
-	if status.Err != nil {
-		fmt.Printf("\nstatus '%s' not found, got:\n%s\n", statusToFind, out)
-
-		exec.Command("bash", "-c", "cp "+s.logFile+"* /nfs/users/nfs_s/sb10/logs/").Run()
-	}
 
 	So(status.Err, ShouldBeNil)
 }
@@ -754,6 +744,8 @@ func TestHardlinks(t *testing.T) {
 		link2 := filepath.Join(path, "hardlink2")
 
 		remoteFile := filepath.Join(remotePath, "file")
+		remoteLink1 := filepath.Join(remotePath, "hardlink1")
+		remoteLink2 := filepath.Join(remotePath, "hardlink2")
 
 		internal.CreateTestFile(t, file, "some data")
 
@@ -767,10 +759,37 @@ func TestHardlinks(t *testing.T) {
 
 		s.waitForStatus("hardlinkTest", "\nStatus: complete", 60*time.Second)
 
-		output, err := exec.Command("imeta", "ls", "-d", remoteFile).CombinedOutput()
-		So(err, ShouldBeNil)
-		So(string(output), ShouldEqual, "a")
+		output := getRemoteMeta(remoteFile)
+		So(output, ShouldNotContainSubstring, "ibackup:hardlink")
+
+		output = getRemoteMeta(remoteLink1)
+		So(output, ShouldContainSubstring, "attribute: ibackup:hardlink\nvalue: "+link1)
+
+		output = getRemoteMeta(remoteLink2)
+		So(output, ShouldContainSubstring, "attribute: ibackup:hardlink\nvalue: "+link2)
+
+		attrFind := "attribute: ibackup:remotehardlink\nvalue: "
+		attrPos := strings.Index(output, attrFind)
+		So(attrPos, ShouldNotEqual, -1)
+
+		remoteInode := output[attrPos+len(attrFind):]
+		nlPos := strings.Index(remoteInode, "\n")
+		So(nlPos, ShouldNotEqual, -1)
+
+		remoteInode = remoteInode[:nlPos]
+		So(remoteInode, ShouldStartWith, s.remoteHardlinkPrefix)
+
+		output = getRemoteMeta(remoteInode)
+		So(output, ShouldContainSubstring, "attribute: ibackup:hardlink\nvalue: "+file)
 	})
+}
+
+func getRemoteMeta(path string) string {
+	output, err := exec.Command("imeta", "ls", "-d", path).CombinedOutput()
+	So(err, ShouldBeNil)
+	So(string(output), ShouldContainSubstring, "ibackup:set")
+
+	return string(output)
 }
 
 func TestManualMode(t *testing.T) {
