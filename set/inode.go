@@ -133,17 +133,17 @@ func alreadyInFiles(path string, existing []string) (bool, bool) {
 // inodeMountPointKeyFromDirent returns the inodeBucket key for the Dirent's inode and
 // the Dirent's mount point for its path.
 func (d *DB) inodeMountPointKeyFromDirent(de *walk.Dirent) []byte {
-	return append(strconv.AppendUint([]byte{}, de.Inode, hexBase), d.getMountPointFromPath(de.Path)...)
+	return append(strconv.AppendUint([]byte{}, de.Inode, hexBase), d.GetMountPointFromPath(de.Path)...)
 }
 
 func (d *DB) inodeMountPointKeyFromEntry(e *Entry) []byte {
-	return append(strconv.AppendUint([]byte{}, e.Inode, hexBase), d.getMountPointFromPath(e.Path)...)
+	return append(strconv.AppendUint([]byte{}, e.Inode, hexBase), d.GetMountPointFromPath(e.Path)...)
 }
 
-// getMountPointFromPath determines the mount point for the given path based on
+// GetMountPointFromPath determines the mount point for the given path based on
 // the mount points available on the system when the server started. If nothing
 // matches, returns /.
-func (d *DB) getMountPointFromPath(path string) string {
+func (d *DB) GetMountPointFromPath(path string) string {
 	for _, mp := range d.mountList {
 		if strings.HasPrefix(path, mp) {
 			return mp

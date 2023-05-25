@@ -396,7 +396,7 @@ func (b *Baton) Stat(request *Request) (*ObjectInfo, error) {
 
 // requestToRodsItem converts a Request in to an extendo RodsItem without AVUs.
 func requestToRodsItem(request *Request) *ex.RodsItem {
-	local := request.UploadPath()
+	local := request.LocalDataPath()
 
 	return &ex.RodsItem{
 		IDirectory: filepath.Dir(local),

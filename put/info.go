@@ -34,16 +34,18 @@ import (
 )
 
 const (
-	MetaNamespace    = "ibackup:"
-	MetaKeyMtime     = MetaNamespace + "mtime"      // mtime of source file, 1sec truncated UTC RFC 3339
-	MetaKeyOwner     = MetaNamespace + "owner"      // a username
-	MetaKeyGroup     = MetaNamespace + "group"      // a unix group name
-	MetaKeyDate      = MetaNamespace + "date"       // date upload initiated, 1sec truncated UTC RFC 3339
-	MetaKeyRequester = MetaNamespace + "requesters" // a comma sep list of usernames of the people who reqested the backup
-	MetaKeySets      = MetaNamespace + "sets"       // a comma sep list of backup set names this file belongs to
-	MetaKeySymlink   = MetaNamespace + "symlink"    // symlink destination if file is a symlink
-	MetaKeyHardlink  = MetaNamespace + "hardlink"   // the first path seen with this inode if file is a hardlink
-	ErrStatFailed    = "stat of local path returned strange results"
+	MetaNamespace = "ibackup:"
+	MetaKeyMtime  = MetaNamespace + "mtime" // mtime of source file, 1sec truncated UTC RFC 3339
+	MetaKeyOwner  = MetaNamespace + "owner" // a username
+	MetaKeyGroup  = MetaNamespace + "group" // a unix group name
+	MetaKeyDate   = MetaNamespace + "date"  // date upload initiated, 1sec truncated UTC RFC 3339
+	// a comma sep list of usernames of the people who reqested the backup.
+	MetaKeyRequester      = MetaNamespace + "requesters"
+	MetaKeySets           = MetaNamespace + "sets"           // a comma sep list of backup set names this file belongs to
+	MetaKeySymlink        = MetaNamespace + "symlink"        // symlink destination if file is a symlink
+	MetaKeyHardlink       = MetaNamespace + "hardlink"       // the first path seen with this inode if file is a hardlink
+	MetaKeyRemoteHardlink = MetaNamespace + "remotehardlink" // iRODS path that contains the data for this hardlink
+	ErrStatFailed         = "stat of local path returned strange results"
 )
 
 type ObjectInfo struct {

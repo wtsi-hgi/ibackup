@@ -56,17 +56,19 @@ const userPerms = 0700
 var errTwoBackupsNotSeen = errors.New("2 backups were not seen")
 
 type TestServer struct {
-	key          string
-	cert         string
-	ldapServer   string
-	ldapLookup   string
-	url          string
-	dir          string
-	dbFile       string
-	backupFile   string
-	remoteDBFile string
-	logFile      string
-	env          []string
+	key                  string
+	cert                 string
+	ldapServer           string
+	ldapLookup           string
+	url                  string
+	dir                  string
+	dbFile               string
+	backupFile           string
+	remoteDBFile         string
+	logFile              string
+	schedulerDeployment  string
+	remoteHardlinkPrefix string
+	env                  []string
 
 	cmd *exec.Cmd
 }
@@ -94,7 +96,12 @@ func (s *TestServer) prepareFilePaths(dir string) {
 	home, err := os.UserHomeDir()
 	So(err, ShouldBeNil)
 
-	s.env = []string{"XDG_STATE_HOME=" + s.dir, "PATH=" + os.Getenv("PATH"), "HOME=" + home}
+	s.env = []string{
+		"XDG_STATE_HOME=" + s.dir,
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + home,
+		"IRODS_ENVIRONMENT_FILE=" + os.Getenv("IRODS_ENVIRONMENT_FILE"),
+	}
 }
 
 // prepareConfig creates a key and cert to use with a server and looks at
@@ -129,10 +136,20 @@ func (s *TestServer) prepareConfig() {
 
 func (s *TestServer) startServer() {
 	args := []string{"server", "--cert", s.cert, "--key", s.key, "--logfile", s.logFile,
-		"-s", s.ldapServer, "-l", s.ldapLookup, "--url", s.url, "--debug"}
+		"-s", s.ldapServer, "-l", s.ldapLookup, "--url", s.url}
+
+	if s.schedulerDeployment != "" {
+		args = append(args, "-w", s.schedulerDeployment)
+	} else {
+		args = append(args, "--debug")
+	}
 
 	if s.remoteDBFile != "" {
 		args = append(args, "--remote_backup", s.remoteDBFile)
+	}
+
+	if s.remoteHardlinkPrefix != "" {
+		args = append(args, "--hardlinks_collection", s.remoteHardlinkPrefix)
 	}
 
 	args = append(args, s.dbFile)
@@ -219,7 +236,7 @@ func (s *TestServer) confirmOutput(t *testing.T, args []string, expectedCode int
 	So(actual, ShouldEqual, expected)
 }
 
-var ErrNoCompleted = errors.New("discovery not completed")
+var ErrStatusNotFound = errors.New("status not found")
 
 func (s *TestServer) addSetForTesting(t *testing.T, name, transformer, path string) {
 	t.Helper()
@@ -227,7 +244,11 @@ func (s *TestServer) addSetForTesting(t *testing.T, name, transformer, path stri
 	exitCode, _ := s.runBinary(t, "add", "--name", name, "--transformer", transformer, "--path", path)
 	So(exitCode, ShouldEqual, 0)
 
-	ctx, cancelFn := context.WithTimeout(context.Background(), 5*time.Second)
+	s.waitForStatus(name, "\nDiscovery: completed", 5*time.Second)
+}
+
+func (s *TestServer) waitForStatus(name, statusToFind string, timeout time.Duration) {
+	ctx, cancelFn := context.WithTimeout(context.Background(), timeout)
 	defer cancelFn()
 
 	cmd := []string{"status", "--name", name, "--url", s.url, "--cert", s.cert}
@@ -241,12 +262,12 @@ func (s *TestServer) addSetForTesting(t *testing.T, name, transformer, path stri
 			return err
 		}
 
-		if strings.Contains(string(output), "\nDiscovery: completed") {
+		if strings.Contains(string(output), statusToFind) {
 			return nil
 		}
 
-		return ErrNoCompleted
-	}, &retry.UntilNoError{}, btime.SecondsRangeBackoff(), "waiting for discovery to complete")
+		return ErrStatusNotFound
+	}, &retry.UntilNoError{}, btime.SecondsRangeBackoff(), "waiting for matching status")
 
 	So(status.Err, ShouldBeNil)
 }
@@ -628,7 +649,12 @@ func TestBackup(t *testing.T) {
 		err := internal.RetryUntilWorksCustom(t, func() error {
 			cmd := exec.Command("iget", "-K", remotePath, gotPath)
 
-			return cmd.Run()
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Logf("iget failed: %s\n%s\n", err, string(out))
+			}
+
+			return err
 		}, 30*time.Second, 1*time.Second)
 
 		So(err, ShouldBeNil)
@@ -682,6 +708,88 @@ Directories:
   `+localDir+` => `+remoteDir)
 		})
 	})
+}
+
+func TestHardlinks(t *testing.T) {
+	Convey("Putting a set with hardlinks uploads an empty file and special inode file", t, func() {
+		remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
+		if remotePath == "" {
+			SkipConvey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
+
+			return
+		}
+
+		schedulerDeployment := os.Getenv("IBACKUP_TEST_SCHEDULER")
+
+		if schedulerDeployment == "" {
+			SkipConvey("skipping iRODS backup test since IBACKUP_TEST_SCHEDULER not set", func() {})
+
+			return
+		}
+
+		dir := t.TempDir()
+		s := new(TestServer)
+		s.prepareFilePaths(dir)
+		s.prepareConfig()
+
+		s.schedulerDeployment = schedulerDeployment
+		s.remoteHardlinkPrefix = filepath.Join(remotePath, "hardlinks")
+
+		s.startServer()
+
+		path := t.TempDir()
+
+		file := filepath.Join(path, "file")
+		link1 := filepath.Join(path, "hardlink1")
+		link2 := filepath.Join(path, "hardlink2")
+
+		remoteFile := filepath.Join(remotePath, "file")
+		remoteLink1 := filepath.Join(remotePath, "hardlink1")
+		remoteLink2 := filepath.Join(remotePath, "hardlink2")
+
+		internal.CreateTestFile(t, file, "some data")
+
+		err := os.Link(file, link1)
+		So(err, ShouldBeNil)
+
+		err = os.Link(file, link2)
+		So(err, ShouldBeNil)
+
+		s.addSetForTesting(t, "hardlinkTest", "prefix="+path+":"+remotePath, path)
+
+		s.waitForStatus("hardlinkTest", "\nStatus: complete", 60*time.Second)
+
+		output := getRemoteMeta(remoteFile)
+		So(output, ShouldNotContainSubstring, "ibackup:hardlink")
+
+		output = getRemoteMeta(remoteLink1)
+		So(output, ShouldContainSubstring, "attribute: ibackup:hardlink\nvalue: "+link1)
+
+		output = getRemoteMeta(remoteLink2)
+		So(output, ShouldContainSubstring, "attribute: ibackup:hardlink\nvalue: "+link2)
+
+		attrFind := "attribute: ibackup:remotehardlink\nvalue: "
+		attrPos := strings.Index(output, attrFind)
+		So(attrPos, ShouldNotEqual, -1)
+
+		remoteInode := output[attrPos+len(attrFind):]
+		nlPos := strings.Index(remoteInode, "\n")
+		So(nlPos, ShouldNotEqual, -1)
+
+		remoteInode = remoteInode[:nlPos]
+		So(remoteInode, ShouldStartWith, s.remoteHardlinkPrefix)
+
+		output = getRemoteMeta(remoteInode)
+		So(output, ShouldContainSubstring, "attribute: ibackup:hardlink\nvalue: "+file)
+	})
+}
+
+func getRemoteMeta(path string) string {
+	output, err := exec.Command("imeta", "ls", "-d", path).CombinedOutput()
+	So(err, ShouldBeNil)
+	So(string(output), ShouldContainSubstring, "ibackup:set")
+
+	return string(output)
 }
 
 func TestManualMode(t *testing.T) {

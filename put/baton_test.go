@@ -200,25 +200,14 @@ func TestPutBaton(t *testing.T) { //nolint:cyclop
 				err = os.Link(requests[3].Local, requests[2].Local)
 				So(err, ShouldBeNil)
 
-				requests[2].Hardlink = requests[3].Local
+				inodesDir := filepath.Join(rootCollection, "mountpoints")
+				requests[2].Hardlink = filepath.Join(inodesDir, "inode.file")
 
-				uCh, urCh, srCh := p.Put()
-
-				uploading := 0
-				uploaded := 0
-
-				for range uCh {
-					uploading++
-				}
-
-				for request := range urCh {
-					if request.Status == RequestStatusUploaded {
-						uploaded++
-					}
-				}
+				uploading, skipped, statusCounts := uploadRequests(t, h, requests)
 
 				So(uploading, ShouldEqual, len(requests))
-				So(uploaded, ShouldEqual, len(requests))
+				So(statusCounts[RequestStatusUploaded], ShouldEqual, len(requests))
+				So(skipped, ShouldEqual, 0)
 
 				it, err := getItemWithBaton(testClient, requests[0].Remote)
 				So(err, ShouldBeNil)
@@ -227,9 +216,13 @@ func TestPutBaton(t *testing.T) { //nolint:cyclop
 				it, err = getItemWithBaton(testClient, requests[2].Remote)
 				So(err, ShouldBeNil)
 				So(it.ISize, ShouldEqual, 0)
+				meta := rodsItemToMeta(it)
+				So(meta[MetaKeyRemoteHardlink], ShouldEqual, requests[2].Hardlink)
+				So(meta[MetaKeyHardlink], ShouldEqual, requests[2].Local)
 
-				skipped := <-srCh
-				So(skipped, ShouldBeNil)
+				it, err = getItemWithBaton(testClient, requests[2].Hardlink)
+				So(err, ShouldBeNil)
+				So(it.ISize, ShouldEqual, 2)
 			})
 		})
 	})

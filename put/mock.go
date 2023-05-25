@@ -55,8 +55,10 @@ type LocalHandler struct {
 // GetLocalHandler returns a Handler that doesn't actually interact with iRODS,
 // but instead simply treats "Remote" as local paths and copies from Local to
 // Remote for any Put()s. For use during tests.
-func GetLocalHandler() (*LocalHandler, error) {
-	return &LocalHandler{}, nil
+func GetLocalHandler() *LocalHandler {
+	return &LocalHandler{
+		meta: make(map[string]map[string]string),
+	}
 }
 
 // Cleanup just records this was called.
@@ -79,7 +81,6 @@ func (l *LocalHandler) EnsureCollection(dir string) error {
 // CollectionsDone says we connected and prepares us for metadata handling.
 func (l *LocalHandler) CollectionsDone() error {
 	l.connected = true
-	l.meta = make(map[string]map[string]string)
 
 	return nil
 }
@@ -112,6 +113,8 @@ func (l *LocalHandler) Stat(request *Request) (*ObjectInfo, error) {
 	meta, exists := l.meta[request.Remote]
 	if !exists {
 		meta = make(map[string]string)
+	} else {
+		meta = cloneMap(meta)
 	}
 
 	return &ObjectInfo{Exists: true, Meta: meta}, nil
@@ -140,7 +143,7 @@ func (l *LocalHandler) Put(request *Request) error {
 		<-time.After(l.putDur)
 	}
 
-	return copyFile(request.UploadPath(), request.Remote)
+	return copyFile(request.LocalDataPath(), request.Remote)
 }
 
 // copyFile copies source to dest.
@@ -215,8 +218,8 @@ func (l *LocalHandler) AddMeta(path string, meta map[string]string) error {
 	}
 
 	for key, val := range meta {
-		if _, exists = pathMeta[key]; exists {
-			return Error{ErrMockMetaFail, ""}
+		if _, exists := pathMeta[key]; exists {
+			return Error{ErrMockMetaFail, key}
 		}
 
 		pathMeta[key] = val

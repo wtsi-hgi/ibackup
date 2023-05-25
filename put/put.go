@@ -143,28 +143,61 @@ type FileStatusCallback func(absPath string, fi os.FileInfo) RequestStatus
 
 // Putter is used to Put() files in iRODS.
 type Putter struct {
-	handler         Handler
-	fileReadTimeout time.Duration
-	fileReadTester  FileReadTester
-	requests        []*Request
+	handler           Handler
+	fileReadTimeout   time.Duration
+	fileReadTester    FileReadTester
+	requests          []*Request
+	duplicateRequests []*Request
 }
 
 // New returns a *Putter that will use the given Handler to Put() all the
 // requests in iRODS. You should defer Cleanup() on the return value. All the
 // incoming requests will have their paths validated (they must be absolute).
+//
+// Requests with Hardlink set will be uploaded to the Hardlink remote location,
+// and an empty file uploaded to the Remote location, with metadata pointing to
+// the Hardlink location.
 func New(handler Handler, requests []*Request) (*Putter, error) {
-	for _, request := range requests {
-		if err := request.ValidatePaths(); err != nil {
-			return nil, err
-		}
+	rs, dups, err := dedupAndPrepareRequests(requests)
+	if err != nil {
+		return nil, err
 	}
 
 	return &Putter{
-		handler:         handler,
-		fileReadTimeout: defaultFileReadTimeout,
-		fileReadTester:  headRead,
-		requests:        requests,
+		handler:           handler,
+		fileReadTimeout:   defaultFileReadTimeout,
+		fileReadTester:    headRead,
+		requests:          rs,
+		duplicateRequests: dups,
 	}, nil
+}
+
+// dedupRequests splits the given requests in to a slice requests that have
+// unique Remote values, and a slice with duplicates. Also "prepares" all
+// requests, ensuring they have valid paths and that hardlinks will be handled
+// appropriately later.
+func dedupAndPrepareRequests(requests []*Request) ([]*Request, []*Request, error) {
+	unique := make([]*Request, 0, len(requests))
+	seen := make(map[string]bool)
+
+	var dups []*Request
+
+	for _, r := range requests {
+		err := r.Prepare()
+		if err != nil {
+			return nil, nil, err
+		}
+
+		if seen[r.RemoteDataPath()] {
+			dups = append(dups, r)
+		} else {
+			unique = append(unique, r)
+		}
+
+		seen[r.RemoteDataPath()] = true
+	}
+
+	return unique, dups, nil
 }
 
 // SetFileReadTimeout sets how long to wait on a test open and read of each
@@ -260,10 +293,12 @@ func (p *Putter) getUniqueRequestLeafCollections() []string {
 }
 
 func (p *Putter) getSortedRequestCollections() []string {
-	dirs := make([]string, len(p.requests))
+	dirs := make([]string, 0, len(p.requests))
 
-	for i, request := range p.requests {
-		dirs[i] = filepath.Dir(request.Remote)
+	for _, request := range p.requests {
+		for _, remote := range request.Remotes() {
+			dirs = append(dirs, filepath.Dir(remote))
+		}
 	}
 
 	sort.Strings(dirs)
@@ -306,16 +341,68 @@ func noLeavesOrNewLeaf(uniqueLeafs []string, last string) bool {
 // By calling SetFileStatusCallback() you can decide additional files to not
 // upload.
 func (p *Putter) Put() (chan *Request, chan *Request, chan *Request) {
-	uploadStartCh := make(chan *Request, len(p.requests))
-	uploadReturnCh := make(chan *Request, len(p.requests))
-	skipReturnCh := make(chan *Request, len(p.requests))
-	putCh := make(chan *Request, len(p.requests))
+	chanLen := len(p.requests) + len(p.duplicateRequests)
+	uploadStartCh := make(chan *Request, chanLen)
+	uploadReturnCh := make(chan *Request, chanLen)
+	skipReturnCh := make(chan *Request, chanLen)
+
+	go func() {
+		p.putRequests(p.requests, uploadStartCh, uploadReturnCh, skipReturnCh)
+
+		for i := range p.duplicateRequests {
+			p.putRequests(p.duplicateRequests[i:i+1], uploadStartCh, uploadReturnCh, skipReturnCh)
+		}
+
+		close(uploadStartCh)
+		close(uploadReturnCh)
+		close(skipReturnCh)
+	}()
+
+	return uploadStartCh, uploadReturnCh, skipReturnCh
+}
+
+func (p *Putter) putRequests(requests []*Request, uploadStartCh, uploadReturnCh,
+	skipReturnCh chan *Request) {
+	r1, r2, r3 := p.put(requests)
+
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+
+	go func() {
+		defer wg.Done()
+		cloneChannel(r1, uploadStartCh)
+	}()
+
+	wg.Add(1)
+
+	go func() {
+		defer wg.Done()
+		cloneChannel(r2, uploadReturnCh)
+	}()
+
+	wg.Add(1)
+
+	go func() {
+		defer wg.Done()
+		cloneChannel(r3, skipReturnCh)
+	}()
+
+	wg.Wait()
+}
+
+func (p *Putter) put(requests []*Request) (chan *Request, chan *Request, chan *Request) {
+	chanLen := len(requests)
+	uploadStartCh := make(chan *Request, chanLen)
+	uploadReturnCh := make(chan *Request, chanLen)
+	skipReturnCh := make(chan *Request, chanLen)
+	putCh := make(chan *Request, chanLen)
 
 	var wg sync.WaitGroup
 
 	wg.Add(numPutGoroutines)
 
-	go p.pickFilesToPut(&wg, putCh, skipReturnCh)
+	go p.pickFilesToPut(&wg, requests, putCh, skipReturnCh)
 	go p.putFilesInIRODS(&wg, putCh, uploadStartCh, uploadReturnCh, skipReturnCh)
 
 	go func() {
@@ -327,16 +414,23 @@ func (p *Putter) Put() (chan *Request, chan *Request, chan *Request) {
 	return uploadStartCh, uploadReturnCh, skipReturnCh
 }
 
+func cloneChannel(source, dest chan *Request) {
+	for r := range source {
+		dest <- r
+	}
+}
+
 // pickFilesToPut goes through all our Requests, immediately returns bad ones
 // (eg. local file doesn't exist) and ones we don't need to do (hasn't been
 // modified since last uploaded) via the returnCh, and sends the remainder to
 // the putCh.
-func (p *Putter) pickFilesToPut(wg *sync.WaitGroup, putCh chan *Request, skipReturnCh chan *Request) {
+func (p *Putter) pickFilesToPut(wg *sync.WaitGroup, requests []*Request,
+	putCh chan *Request, skipReturnCh chan *Request) {
 	defer wg.Done()
 
 	pool := workerpool.New(workerPoolSizeStats)
 
-	for _, request := range p.requests {
+	for _, request := range requests {
 		thisRequest := request
 
 		pool.Submit(func() {
@@ -363,14 +457,12 @@ func (p *Putter) statPathsAndReturnOrPut(request *Request, putCh chan *Request, 
 
 	request.Size = lInfo.Size
 
-	rInfo, err := p.handler.Stat(request)
+	rInfo, err := request.StatAndAssociateStandardMetadata(lInfo, p.handler)
 	if err != nil {
 		sendRequest(request, RequestStatusFailed, err, skipReturnCh)
 
 		return
 	}
-
-	request.addStandardMeta(lInfo.Meta, rInfo.Meta)
 
 	if sendForUploadOrUnmodified(request, lInfo, rInfo, putCh, skipReturnCh) {
 		return
@@ -426,7 +518,7 @@ func sendRequest(request *Request, status RequestStatus, err error, ch chan *Req
 func (p *Putter) putFilesInIRODS(wg *sync.WaitGroup, putCh, uploadStartCh, uploadReturnCh, skipReturnCh chan *Request) {
 	defer wg.Done()
 
-	metaCh := make(chan *Request, len(p.requests))
+	metaCh := make(chan *Request, cap(uploadReturnCh))
 	metaDoneCh := make(chan struct{})
 
 	go p.applyMetadataConcurrently(metaCh, uploadReturnCh, skipReturnCh, metaDoneCh)
@@ -441,21 +533,13 @@ func (p *Putter) putFilesInIRODS(wg *sync.WaitGroup, putCh, uploadStartCh, uploa
 func (p *Putter) applyMetadataConcurrently(metaCh, uploadReturnCh, skipReturnCh chan *Request,
 	metaDoneCh chan struct{}) {
 	for request := range metaCh {
-		toRemove, toAdd := request.determineMetadataToRemoveAndAdd()
-
 		returnCh := uploadReturnCh
 
 		if request.skipPut {
 			returnCh = skipReturnCh
 		}
 
-		if err := p.removeMeta(request.Remote, toRemove); err != nil {
-			p.sendFailedRequest(request, err, returnCh)
-
-			continue
-		}
-
-		if err := p.addMeta(request.Remote, toAdd); err != nil {
+		if err := request.RemoveAndAddMetadata(p.handler); err != nil {
 			p.sendFailedRequest(request, err, returnCh)
 
 			continue
@@ -467,26 +551,10 @@ func (p *Putter) applyMetadataConcurrently(metaCh, uploadReturnCh, skipReturnCh 
 	close(metaDoneCh)
 }
 
-func (p *Putter) removeMeta(path string, toRemove map[string]string) error {
-	if len(toRemove) == 0 {
-		return nil
-	}
-
-	return p.handler.RemoveMeta(path, toRemove)
-}
-
 // sendFailedRequest adds the err details to the request and sends it on the
 // given channel.
 func (p *Putter) sendFailedRequest(request *Request, err error, uploadReturnCh chan *Request) {
 	sendRequest(request, RequestStatusFailed, err, uploadReturnCh)
-}
-
-func (p *Putter) addMeta(path string, toAdd map[string]string) error {
-	if len(toAdd) == 0 {
-		return nil
-	}
-
-	return p.handler.AddMeta(path, toAdd)
 }
 
 func (p *Putter) processPutCh(putCh, uploadStartCh, uploadReturnCh, metaCh chan *Request) {
@@ -507,7 +575,7 @@ func (p *Putter) processPutCh(putCh, uploadStartCh, uploadReturnCh, metaCh chan 
 			continue
 		}
 
-		if err := p.handler.Put(request); err != nil {
+		if err := request.Put(p.handler); err != nil {
 			p.sendFailedRequest(request, err, uploadReturnCh)
 
 			continue

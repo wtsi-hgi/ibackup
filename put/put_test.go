@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2022 Genome Research Ltd.
+ * Copyright (c) 2022, 2023 Genome Research Ltd.
  *
  * Author: Sendu Bala <sb10@sanger.ac.uk>
  *
@@ -41,7 +41,7 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 	Convey("Given Requests and a mock Handler, you can make a new Putter", t, func() {
 		requests, expectedCollections := makeMockRequests(t)
 
-		lh := &LocalHandler{}
+		lh := GetLocalHandler()
 
 		p, err := New(lh, requests)
 		So(err, ShouldBeNil)
@@ -189,7 +189,7 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 				}
 			})
 
-			Convey("Put() uploads an empty file in place of links", func() {
+			Convey("Put() uploads an empty file in place of links, with hardlink data going to the Hardlink location", func() {
 				err = os.Remove(requests[0].Local)
 				So(err, ShouldBeNil)
 
@@ -204,25 +204,28 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 				err = os.Link(requests[3].Local, requests[2].Local)
 				So(err, ShouldBeNil)
 
-				requests[2].Hardlink = requests[3].Local
+				err = os.Remove(requests[4].Local)
+				So(err, ShouldBeNil)
 
-				uCh, urCh, srCh := p.Put()
+				err = os.Link(requests[3].Local, requests[4].Local)
+				So(err, ShouldBeNil)
 
-				uploading := 0
-				uploaded := 0
+				inodeBaseDir := t.TempDir()
+				inodeDir := filepath.Join(inodeBaseDir, "mountpoints")
+				inodeRemote := filepath.Join(inodeDir, "inode.file")
+				requests[2].Hardlink = inodeRemote
+				setMetaKey := "set"
+				requests[2].Meta = map[string]string{setMetaKey: "a"}
+				requests[4].Hardlink = inodeRemote
+				requests[4].Meta = map[string]string{setMetaKey: "b"}
 
-				for range uCh {
-					uploading++
-				}
+				clonedRequest2 := requests[2].Clone()
 
-				for request := range urCh {
-					if request.Status == RequestStatusUploaded {
-						uploaded++
-					}
-				}
+				uploading, skipped, statusCounts := uploadRequests(t, lh, requests)
 
 				So(uploading, ShouldEqual, len(requests))
-				So(uploaded, ShouldEqual, len(requests))
+				So(statusCounts[RequestStatusUploaded], ShouldEqual, len(requests))
+				So(skipped, ShouldEqual, 0)
 
 				info, errs := os.Stat(requests[0].Remote)
 				So(errs, ShouldBeNil)
@@ -232,8 +235,58 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 				So(errs, ShouldBeNil)
 				So(info.Size(), ShouldEqual, 0)
 
-				skipped := <-srCh
-				So(skipped, ShouldBeNil)
+				info, errs = os.Stat(requests[4].Remote)
+				So(errs, ShouldBeNil)
+				So(info.Size(), ShouldEqual, 0)
+
+				info, errs = os.Stat(inodeRemote)
+				So(errs, ShouldBeNil)
+				So(info.Size(), ShouldEqual, 2)
+
+				So(lh.meta[requests[2].Remote][setMetaKey], ShouldEqual, "a")
+				So(lh.meta[requests[2].Hardlink][setMetaKey], ShouldNotBeBlank)
+				So(lh.meta[requests[2].Remote][MetaKeyRemoteHardlink], ShouldEqual, requests[2].Hardlink)
+				So(lh.meta[requests[2].Remote][MetaKeyHardlink], ShouldEqual, requests[2].Local)
+
+				So(lh.meta[requests[4].Remote][setMetaKey], ShouldEqual, "b")
+				So(lh.meta[requests[4].Hardlink][setMetaKey], ShouldNotBeBlank)
+				So(lh.meta[requests[4].Remote][MetaKeyRemoteHardlink], ShouldEqual, requests[2].Hardlink)
+				So(lh.meta[requests[4].Remote][MetaKeyHardlink], ShouldEqual, requests[4].Local)
+
+				Convey("re-uploading an unmodified hardlink does not replace remote files", func() {
+					hardlinkMTime := info.ModTime()
+
+					reclonedRequest2 := clonedRequest2.Clone()
+
+					uploading, skipped, statusCounts = uploadRequests(t, lh, []*Request{clonedRequest2})
+
+					So(uploading, ShouldEqual, 0)
+
+					So(statusCounts[RequestStatusUploaded], ShouldEqual, 0)
+					So(statusCounts[RequestStatusReplaced], ShouldEqual, 0)
+					So(skipped, ShouldEqual, 1)
+
+					info, errs = os.Stat(requests[2].Hardlink)
+					So(errs, ShouldBeNil)
+					So(info.ModTime(), ShouldResemble, hardlinkMTime)
+
+					Convey("re-uploading a modified hardlink does replace remote files", func() {
+						touchFile(requests[2].Local, time.Hour)
+
+						info, errs = os.Stat(requests[2].Local)
+						So(errs, ShouldBeNil)
+						So(info.ModTime().After(hardlinkMTime), ShouldBeTrue)
+
+						uploading, skipped, statusCounts = uploadRequests(t, lh, []*Request{reclonedRequest2})
+						So(uploading, ShouldEqual, 1)
+						So(statusCounts[RequestStatusReplaced], ShouldEqual, 1)
+						So(skipped, ShouldEqual, 0)
+
+						info, errs = os.Stat(requests[2].Hardlink)
+						So(errs, ShouldBeNil)
+						So(info.ModTime().After(hardlinkMTime), ShouldBeTrue)
+					})
+				})
 			})
 
 			Convey("Underlying put and metadata operation failures result in failed requests", func() {
@@ -298,6 +351,47 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 				_, err = os.Stat(request.Remote)
 				So(err, ShouldNotBeNil)
 			}
+		})
+
+		Convey("Putting multiple requests with the same local & remote paths should succeed", func() {
+			localDir := t.TempDir()
+			localPath := filepath.Join(localDir, "localFile")
+			remoteDir := t.TempDir()
+			remotePath := filepath.Join(remoteDir, "remoteFile")
+
+			internal.CreateTestFile(t, localPath, "abc123")
+
+			request1 := &Request{
+				Local:     localPath,
+				Remote:    remotePath,
+				Requester: "aRequester",
+				Set:       "aSet",
+				Status:    RequestStatusPending,
+				Meta: map[string]string{
+					"aKey": "aValue",
+				},
+			}
+
+			request2 := request1.Clone()
+			request2.Meta["aKey"] = "bValue"
+			request2.Meta["bKey"] = "anotherValue"
+			request2.Set = "bSet"
+
+			request3 := request1.Clone()
+			request3.Meta["aKey"] = "cValue"
+			request2.Meta["bKey"] = "yetAnotherValue"
+			request3.Set = "cSet"
+
+			uploading, skipped, statusCounts := uploadRequests(t, lh, []*Request{request1, request2, request3})
+
+			So(uploading, ShouldEqual, 1)
+			So(skipped, ShouldEqual, 2)
+			So(statusCounts[RequestStatusUploaded], ShouldEqual, 1)
+			So(statusCounts[RequestStatusUnmodified], ShouldEqual, 0)
+
+			So(lh.meta[remotePath][MetaKeySets], ShouldEqual, "aSet,bSet,cSet")
+			So(lh.meta[remotePath]["aKey"], ShouldEqual, "cValue")
+			So(lh.meta[remotePath]["bKey"], ShouldEqual, "yetAnotherValue")
 		})
 	})
 
@@ -439,4 +533,43 @@ func touchFile(path string, d time.Duration) time.Time {
 	So(err, ShouldBeNil)
 
 	return newT
+}
+
+// uploadRequests uploads the requests with the given handler and returns the
+// count of uploading files, skipped files and a map of RequestStatus count for
+// uploaded ones.
+func uploadRequests(t *testing.T, h Handler, requests []*Request) (int, int, map[RequestStatus]int) {
+	t.Helper()
+
+	p, err := New(h, requests)
+	So(err, ShouldBeNil)
+	So(p, ShouldNotBeNil)
+
+	err = p.CreateCollections()
+	So(err, ShouldBeNil)
+
+	uCh, urCh, srCh := p.Put()
+
+	uploading := 0
+	skipped := 0
+	requestStatusCounts := make(map[RequestStatus]int)
+
+	for range uCh {
+		uploading++
+	}
+
+	for request := range urCh {
+		currentCount := requestStatusCounts[request.Status]
+		requestStatusCounts[request.Status] = currentCount + 1
+
+		if request.Error != "" {
+			t.Logf("%s failed: %s\n", request.Local, request.Error)
+		}
+	}
+
+	for range srCh {
+		skipped++
+	}
+
+	return uploading, skipped, requestStatusCounts
 }

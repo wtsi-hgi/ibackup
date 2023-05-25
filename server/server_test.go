@@ -33,7 +33,9 @@ import (
 	"os/user"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -1211,8 +1213,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 
 				client := NewClient(addr, certPath, token)
 
-				handler, errh := put.GetLocalHandler()
-				So(errh, ShouldBeNil)
+				handler := put.GetLocalHandler()
 
 				logger := log15.New()
 
@@ -1986,8 +1987,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 
 					remotePath := filepath.Join(remoteDir, "remoteDB")
 
-					handler, err = put.GetLocalHandler()
-					So(err, ShouldBeNil)
+					handler = put.GetLocalHandler()
 
 					s.EnableRemoteDBBackups(remotePath, handler)
 
@@ -2045,7 +2045,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						fmt.Sprintf("open %s: permission denied", filepath.Dir(pathExpected3)))
 				})
 
-				Convey("and add a set with hardlinks defined directly which only uploads the file once", func() {
+				Convey("and add a set with hardlinks defined directly", func() {
 					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldBeNil)
 
@@ -2056,53 +2056,35 @@ func TestServer(t *testing.T) { //nolint:cyclop
 					err = os.Link(path1, path2)
 					So(err, ShouldBeNil)
 
-					err = client.SetFiles(exampleSet.ID(), []string{path1, path2})
+					path3 := filepath.Join(localDir, "file.link3")
+					err = os.Link(path1, path3)
 					So(err, ShouldBeNil)
 
-					err = client.TriggerDiscovery(exampleSet.ID())
+					err = client.SetFiles(exampleSet.ID(), []string{path1, path2, path3})
 					So(err, ShouldBeNil)
 
-					ok := <-racCalled
-					So(ok, ShouldBeTrue)
-
-					gotSet, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
-					So(errg, ShouldBeNil)
-					So(gotSet.Status, ShouldEqual, set.PendingUpload)
-					So(gotSet.NumFiles, ShouldEqual, 2)
-					So(gotSet.Uploaded, ShouldEqual, 0)
-					So(gotSet.Hardlinks, ShouldEqual, 1)
-
-					requests, errg := client.GetSomeUploadRequests()
-					So(errg, ShouldBeNil)
-					So(len(requests), ShouldEqual, 2)
-
-					So(requests[0].Local, ShouldEqual, path1)
-					So(requests[0].Hardlink, ShouldBeBlank)
-					So(requests[1].Local, ShouldEqual, path2)
-					So(requests[1].Hardlink, ShouldEqual, path1)
-
-					for _, item := range s.queue.AllItems() {
-						err = s.queue.Remove(context.Background(), item.Key)
+					Convey("without remote hardlink location set, hardlinks upload multiple times", func() {
+						err = client.TriggerDiscovery(exampleSet.ID())
 						So(err, ShouldBeNil)
-					}
 
-					err = client.TriggerDiscovery(exampleSet.ID())
-					So(err, ShouldBeNil)
+						ok := <-racCalled
+						So(ok, ShouldBeTrue)
 
-					ok = <-racCalled
-					So(ok, ShouldBeTrue)
+						gotSet, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+						So(errg, ShouldBeNil)
+						So(gotSet.Status, ShouldEqual, set.PendingUpload)
+						So(gotSet.NumFiles, ShouldEqual, 3)
+						So(gotSet.Uploaded, ShouldEqual, 0)
+						So(gotSet.Hardlinks, ShouldEqual, 2)
 
-					gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
-					So(err, ShouldBeNil)
-					So(gotSet.Status, ShouldEqual, set.PendingUpload)
-					So(gotSet.NumFiles, ShouldEqual, 2)
-					So(gotSet.Uploaded, ShouldEqual, 0)
-					So(gotSet.Hardlinks, ShouldEqual, 1)
-
-					Convey("uploading hardlinks sets the hardlink metadata on an empty file", func() {
 						requests, errg := client.GetSomeUploadRequests()
 						So(errg, ShouldBeNil)
-						So(len(requests), ShouldEqual, 2)
+						So(len(requests), ShouldEqual, 3)
+
+						So(requests[0].Local, ShouldEqual, path1)
+						So(requests[0].Hardlink, ShouldBeBlank)
+						So(requests[1].Local, ShouldEqual, path2)
+						So(requests[2].Local, ShouldEqual, path3)
 
 						p, d := makePutter(t, handler, requests, client)
 						defer d()
@@ -2113,27 +2095,139 @@ func TestServer(t *testing.T) { //nolint:cyclop
 							minMBperSecondUploadSpeed, minTimeForUpload, 1*time.Hour, logger)
 						So(err, ShouldBeNil)
 
-						transformer, errg := exampleSet.MakeTransformer()
-						So(errg, ShouldBeNil)
-
-						remote, errg := transformer(path2)
-						So(errg, ShouldBeNil)
-
-						remoteMeta := handler.GetMeta(remote)
-						So(remoteMeta, ShouldNotBeNil)
-						So(remoteMeta[put.MetaKeyHardlink], ShouldEqual, path1)
-
-						info, errs := os.Stat(remote)
+						info, errs := os.Stat(requests[0].Remote)
 						So(errs, ShouldBeNil)
-						So(info.Size(), ShouldEqual, 0)
+						So(info.Size(), ShouldNotEqual, 0)
+						info, errs = os.Stat(requests[1].Remote)
+						So(errs, ShouldBeNil)
+						So(info.Size(), ShouldNotEqual, 0)
+						info, errs = os.Stat(requests[2].Remote)
+						So(errs, ShouldBeNil)
+						So(info.Size(), ShouldNotEqual, 0)
+					})
+
+					Convey("with remote hardlink location set only uploads hardlinks once", func() {
+						hardlinksDir := filepath.Join(remoteDir, "mountpoints")
+						s.SetRemoteHardlinkLocation(hardlinksDir)
+
+						err = client.TriggerDiscovery(exampleSet.ID())
+						So(err, ShouldBeNil)
+
+						ok := <-racCalled
+						So(ok, ShouldBeTrue)
+
+						gotSet, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+						So(errg, ShouldBeNil)
+						So(gotSet.Status, ShouldEqual, set.PendingUpload)
+						So(gotSet.NumFiles, ShouldEqual, 3)
+						So(gotSet.Uploaded, ShouldEqual, 0)
+						So(gotSet.Hardlinks, ShouldEqual, 2)
+
+						requests, errg := client.GetSomeUploadRequests()
+						So(errg, ShouldBeNil)
+						So(len(requests), ShouldEqual, 3)
+
+						So(requests[0].Local, ShouldEqual, path1)
+						So(requests[0].Hardlink, ShouldBeBlank)
+						So(requests[1].Local, ShouldEqual, path2)
+						So(requests[1].Hardlink, ShouldContainSubstring, "mountpoints")
+						So(requests[2].Local, ShouldEqual, path3)
+						So(requests[2].Hardlink, ShouldContainSubstring, "mountpoints")
+
+						info, errs := os.Stat(path1)
+						So(errs, ShouldBeNil)
+						statt, ok := info.Sys().(*syscall.Stat_t)
+						So(ok, ShouldBeTrue)
+						inodeFile := filepath.Join(hardlinksDir,
+							s.db.GetMountPointFromPath(requests[1].Local),
+							strconv.FormatUint(statt.Ino, 10))
+						So(requests[1].Hardlink, ShouldEqual, inodeFile)
+						So(requests[2].Hardlink, ShouldEqual, inodeFile)
+
+						for _, item := range s.queue.AllItems() {
+							err = s.queue.Remove(context.Background(), item.Key)
+							So(err, ShouldBeNil)
+						}
+
+						err = client.TriggerDiscovery(exampleSet.ID())
+						So(err, ShouldBeNil)
+
+						ok = <-racCalled
+						So(ok, ShouldBeTrue)
 
 						gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
 						So(err, ShouldBeNil)
-						So(gotSet.Status, ShouldEqual, set.Complete)
-						So(gotSet.NumFiles, ShouldEqual, 2)
-						So(gotSet.Uploaded, ShouldEqual, 2)
-						So(gotSet.Hardlinks, ShouldEqual, 1)
-						So(gotSet.SizeFiles, ShouldEqual, 1)
+						So(gotSet.Status, ShouldEqual, set.PendingUpload)
+						So(gotSet.NumFiles, ShouldEqual, 3)
+						So(gotSet.Uploaded, ShouldEqual, 0)
+						So(gotSet.Hardlinks, ShouldEqual, 2)
+
+						Convey("uploading hardlinks sets the hardlink metadata on an empty file"+
+							" and uploads real data to inode file", func() {
+							requests, errg := client.GetSomeUploadRequests()
+							So(errg, ShouldBeNil)
+							So(len(requests), ShouldEqual, 3)
+
+							p, d := makePutter(t, handler, requests, client)
+							defer d()
+
+							uploadStarts, uploadResults, skippedResults := p.Put()
+
+							err = client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults,
+								minMBperSecondUploadSpeed, minTimeForUpload, 1*time.Hour, logger)
+							So(err, ShouldBeNil)
+
+							entries, errg := client.GetFiles(exampleSet.ID())
+							So(errg, ShouldBeNil)
+							So(len(entries), ShouldEqual, 3)
+							So(entries[0].Status, ShouldEqual, set.Uploaded)
+							So(entries[1].Status, ShouldEqual, set.Uploaded)
+							So(entries[2].Status, ShouldEqual, set.Uploaded)
+
+							transformer, errg := exampleSet.MakeTransformer()
+							So(errg, ShouldBeNil)
+
+							remote1, errg := transformer(path2)
+							So(errg, ShouldBeNil)
+
+							remoteMeta := handler.GetMeta(remote1)
+							So(remoteMeta, ShouldNotBeNil)
+							So(remoteMeta[put.MetaKeyHardlink], ShouldEqual, path2)
+							So(remoteMeta[put.MetaKeyRemoteHardlink], ShouldEqual, inodeFile)
+
+							info, errs := os.Stat(remote1)
+							So(errs, ShouldBeNil)
+							So(info.Size(), ShouldEqual, 0)
+
+							remote2, errg := transformer(path3)
+							So(errg, ShouldBeNil)
+
+							remoteMeta = handler.GetMeta(remote2)
+							So(remoteMeta, ShouldNotBeNil)
+							So(remoteMeta[put.MetaKeyHardlink], ShouldEqual, path3)
+							So(remoteMeta[put.MetaKeyRemoteHardlink], ShouldEqual, inodeFile)
+
+							info, errs = os.Stat(remote2)
+							So(errs, ShouldBeNil)
+							So(info.Size(), ShouldEqual, 0)
+
+							info, errs = os.Stat(inodeFile)
+							So(errs, ShouldBeNil)
+							So(info.Size(), ShouldEqual, 1)
+
+							inodeMeta := handler.GetMeta(inodeFile)
+							So(inodeMeta, ShouldNotBeNil)
+							So(inodeMeta[put.MetaKeyHardlink], ShouldEqual, path1)
+							So(inodeMeta[put.MetaKeyRemoteHardlink], ShouldBeBlank)
+
+							gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+							So(err, ShouldBeNil)
+							So(gotSet.Status, ShouldEqual, set.Complete)
+							So(gotSet.NumFiles, ShouldEqual, 3)
+							So(gotSet.Uploaded, ShouldEqual, 3)
+							So(gotSet.Hardlinks, ShouldEqual, 2)
+							So(gotSet.SizeFiles, ShouldEqual, 1)
+						})
 					})
 				})
 

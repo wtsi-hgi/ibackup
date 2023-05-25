@@ -3,7 +3,7 @@ VERSION := $(shell git describe --tags --always --long --dirty)
 TAG := $(shell git describe --abbrev=0 --tags)
 LDFLAGS = -ldflags "-X ${PKG}/cmd.Version=${VERSION}"
 export GOPATH := $(shell go env GOPATH)
-PATH := $(PATH):${GOPATH}/bin
+PATH := ${PATH}:${GOPATH}/bin
 
 default: install
 
@@ -21,11 +21,13 @@ install:
 
 test: export CGO_ENABLED = 1
 test:
-	@go test -tags netgo --count 1 ./...
+	@go test -tags netgo --count 1
+	@go test -tags netgo --count 1 $(shell go list ./... | tail -n+2)
 
 race: export CGO_ENABLED = 1
 race:
-	go test -tags netgo -race --count 1 ./...
+	@go test -tags netgo -race --count 1
+	@go test -tags netgo -race --count 1 $(shell go list ./... | tail -n+2)
 
 bench: export CGO_ENABLED = 1
 bench:
