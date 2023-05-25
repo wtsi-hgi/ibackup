@@ -189,7 +189,8 @@ func TestRequest(t *testing.T) {
 
 		for i := 0; i < fields; i++ {
 			if t.Field(i).Name == "LocalForJSON" || t.Field(i).Name == "RemoteForJSON" ||
-				t.Field(i).Name == "origRemote" || t.Field(i).Name == "originalRemoteMeta" {
+				t.Field(i).Name == "emptyFileRequest" || t.Field(i).Name == "inodeRequest" ||
+				t.Field(i).Name == "onlyUploadEmptyFile" {
 
 				continue
 			}

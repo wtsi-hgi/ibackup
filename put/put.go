@@ -347,58 +347,10 @@ func (p *Putter) Put() (chan *Request, chan *Request, chan *Request) {
 	skipReturnCh := make(chan *Request, chanLen)
 
 	go func() {
-		r1, r2, r3 := p.put(p.requests, workerPoolSizeStats)
-
-		var wg sync.WaitGroup
-
-		wg.Add(1)
-
-		go func() {
-			defer wg.Done()
-			cloneChannel(r1, uploadStartCh)
-		}()
-
-		wg.Add(1)
-
-		go func() {
-			defer wg.Done()
-			cloneChannel(r2, uploadReturnCh)
-		}()
-
-		wg.Add(1)
-
-		go func() {
-			defer wg.Done()
-			cloneChannel(r3, skipReturnCh)
-		}()
-
-		wg.Wait()
+		p.putRequests(p.requests, uploadStartCh, uploadReturnCh, skipReturnCh)
 
 		for i := range p.duplicateRequests {
-			r1, r2, r3 = p.put(p.duplicateRequests[i:i+1], 1)
-
-			wg.Add(1)
-
-			go func() {
-				defer wg.Done()
-				cloneChannel(r1, uploadStartCh)
-			}()
-
-			wg.Add(1)
-
-			go func() {
-				defer wg.Done()
-				cloneChannel(r2, uploadReturnCh)
-			}()
-
-			wg.Add(1)
-
-			go func() {
-				defer wg.Done()
-				cloneChannel(r3, skipReturnCh)
-			}()
-
-			wg.Wait()
+			p.putRequests(p.duplicateRequests[i:i+1], uploadStartCh, uploadReturnCh, skipReturnCh)
 		}
 
 		close(uploadStartCh)
@@ -409,7 +361,37 @@ func (p *Putter) Put() (chan *Request, chan *Request, chan *Request) {
 	return uploadStartCh, uploadReturnCh, skipReturnCh
 }
 
-func (p *Putter) put(requests []*Request, poolSize int) (chan *Request, chan *Request, chan *Request) {
+func (p *Putter) putRequests(requests []*Request, uploadStartCh, uploadReturnCh,
+	skipReturnCh chan *Request) {
+	r1, r2, r3 := p.put(requests)
+
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+
+	go func() {
+		defer wg.Done()
+		cloneChannel(r1, uploadStartCh)
+	}()
+
+	wg.Add(1)
+
+	go func() {
+		defer wg.Done()
+		cloneChannel(r2, uploadReturnCh)
+	}()
+
+	wg.Add(1)
+
+	go func() {
+		defer wg.Done()
+		cloneChannel(r3, skipReturnCh)
+	}()
+
+	wg.Wait()
+}
+
+func (p *Putter) put(requests []*Request) (chan *Request, chan *Request, chan *Request) {
 	chanLen := len(requests)
 	uploadStartCh := make(chan *Request, chanLen)
 	uploadReturnCh := make(chan *Request, chanLen)
@@ -420,7 +402,7 @@ func (p *Putter) put(requests []*Request, poolSize int) (chan *Request, chan *Re
 
 	wg.Add(numPutGoroutines)
 
-	go p.pickFilesToPut(&wg, requests, putCh, skipReturnCh, poolSize)
+	go p.pickFilesToPut(&wg, requests, putCh, skipReturnCh)
 	go p.putFilesInIRODS(&wg, putCh, uploadStartCh, uploadReturnCh, skipReturnCh)
 
 	go func() {
@@ -443,10 +425,10 @@ func cloneChannel(source, dest chan *Request) {
 // modified since last uploaded) via the returnCh, and sends the remainder to
 // the putCh.
 func (p *Putter) pickFilesToPut(wg *sync.WaitGroup, requests []*Request,
-	putCh chan *Request, skipReturnCh chan *Request, poolSize int) {
+	putCh chan *Request, skipReturnCh chan *Request) {
 	defer wg.Done()
 
-	pool := workerpool.New(poolSize)
+	pool := workerpool.New(workerPoolSizeStats)
 
 	for _, request := range requests {
 		thisRequest := request

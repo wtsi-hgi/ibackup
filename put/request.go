@@ -228,21 +228,19 @@ func (r *Request) UploadedSize() uint64 {
 // affecting the original.
 func (r *Request) Clone() *Request {
 	clone := &Request{
-		Local:            r.Local,
-		Remote:           r.Remote,
-		Requester:        r.Requester,
-		Set:              r.Set,
-		Meta:             r.Meta,
-		Status:           r.Status,
-		Symlink:          r.Symlink,
-		Hardlink:         r.Hardlink,
-		Size:             r.Size,
-		Error:            r.Error,
-		Stuck:            r.Stuck,
-		remoteMeta:       r.remoteMeta,
-		skipPut:          r.skipPut,
-		emptyFileRequest: r.emptyFileRequest,
-		inodeRequest:     r.inodeRequest,
+		Local:      r.Local,
+		Remote:     r.Remote,
+		Requester:  r.Requester,
+		Set:        r.Set,
+		Meta:       r.Meta,
+		Status:     r.Status,
+		Symlink:    r.Symlink,
+		Hardlink:   r.Hardlink,
+		Size:       r.Size,
+		Error:      r.Error,
+		Stuck:      r.Stuck,
+		remoteMeta: r.remoteMeta,
+		skipPut:    r.skipPut,
 	}
 
 	clone.cloneMeta()
