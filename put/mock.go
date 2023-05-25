@@ -142,7 +142,7 @@ func (l *LocalHandler) Put(request *Request) error {
 		<-time.After(l.putDur)
 	}
 
-	return copyFile(request.UploadPath(), request.Remote)
+	return copyFile(request.LocalDataPath(), request.Remote)
 }
 
 // copyFile copies source to dest.
@@ -220,6 +220,7 @@ func (l *LocalHandler) AddMeta(path string, meta map[string]string) error {
 		if pval, exists := pathMeta[key]; exists {
 			fmt.Printf("failing AddMeta because lh pathMeta %s => %s, vs desired add of %s, for path %s\n",
 				key, pval, val, path)
+
 			return Error{ErrMockMetaFail, key}
 		}
 

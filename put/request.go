@@ -191,12 +191,23 @@ func (r *Request) Remotes() []string {
 	return remotes
 }
 
-// UploadPath should be used instead of Request.Local for upload purposes.
+// RemoteDataPath should be used if you want to know where the actual data for
+// this request would get uploaded to. Normally returns Remote, but if a
+// hardlink, returns Hardlink.
+func (r *Request) RemoteDataPath() string {
+	if r.Hardlink == "" {
+		return r.Remote
+	}
+
+	return r.Hardlink
+}
+
+// LocalDataPath should be used instead of Request.Local for upload purposes.
 //
 // For symlinks, returns a zero-sized file as iRODS doesn't handle
 // links appropriately (there will be metadata allowing its recreation).
 // Otherwise returns Request.Local.
-func (r *Request) UploadPath() string {
+func (r *Request) LocalDataPath() string {
 	if r.Symlink == "" {
 		return r.Local
 	}

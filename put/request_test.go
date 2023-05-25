@@ -153,11 +153,11 @@ func TestRequest(t *testing.T) {
 		size := uint64(123)
 
 		r := &Request{Local: local, Symlink: "/another/file", Size: size}
-		So(r.UploadPath(), ShouldEqual, os.DevNull)
+		So(r.LocalDataPath(), ShouldEqual, os.DevNull)
 		So(r.UploadedSize(), ShouldEqual, 0)
 
 		r = &Request{Local: local, Size: size}
-		So(r.UploadPath(), ShouldEqual, local)
+		So(r.LocalDataPath(), ShouldEqual, local)
 		So(r.UploadedSize(), ShouldEqual, size)
 	})
 

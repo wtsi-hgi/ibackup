@@ -188,7 +188,7 @@ func dedupAndPrepareRequests(requests []*Request) ([]*Request, []*Request, error
 			return nil, nil, err
 		}
 
-		if seen[r.Remote] {
+		if seen[r.RemoteDataPath()] {
 			dups = append(dups, r)
 		} else {
 			unique = append(unique, r)
