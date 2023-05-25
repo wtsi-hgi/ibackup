@@ -88,11 +88,11 @@ func TestServer(t *testing.T) { //nolint:cyclop
 	minMBperSecondUploadSpeed := float64(10)
 	maxStuckTime := 1 * time.Hour
 
-	FocusConvey("Given a Server", t, func() {
+	Convey("Given a Server", t, func() {
 		logWriter := gas.NewStringLogger()
 		s := New(logWriter)
 
-		FocusConvey("You can Start the Server with Auth, MakeQueueEndPoints and LoadSetDB", func() {
+		Convey("You can Start the Server with Auth, MakeQueueEndPoints and LoadSetDB", func() {
 			certPath, keyPath, err := gas.CreateTestCert(t)
 			So(err, ShouldBeNil)
 
@@ -1207,7 +1207,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 				})
 			})
 
-			FocusConvey("Which lets you login as admin", func() {
+			Convey("Which lets you login as admin", func() {
 				token, errl := gas.Login(addr, certPath, admin, "pass")
 				So(errl, ShouldBeNil)
 
@@ -2045,7 +2045,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						fmt.Sprintf("open %s: permission denied", filepath.Dir(pathExpected3)))
 				})
 
-				FocusConvey("and add a set with hardlinks defined directly", func() {
+				Convey("and add a set with hardlinks defined directly", func() {
 					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldBeNil)
 
@@ -2106,7 +2106,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						So(info.Size(), ShouldNotEqual, 0)
 					})
 
-					FocusConvey("with remote hardlink location set only uploads hardlinks once", func() {
+					Convey("with remote hardlink location set only uploads hardlinks once", func() {
 						hardlinksDir := filepath.Join(remoteDir, "mountpoints")
 						s.SetRemoteHardlinkLocation(hardlinksDir)
 
@@ -2142,6 +2142,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 							s.db.GetMountPointFromPath(requests[1].Local),
 							strconv.FormatUint(statt.Ino, 10))
 						So(requests[1].Hardlink, ShouldEqual, inodeFile)
+						So(requests[2].Hardlink, ShouldEqual, inodeFile)
 
 						for _, item := range s.queue.AllItems() {
 							err = s.queue.Remove(context.Background(), item.Key)
@@ -2161,7 +2162,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						So(gotSet.Uploaded, ShouldEqual, 0)
 						So(gotSet.Hardlinks, ShouldEqual, 2)
 
-						FocusConvey("uploading hardlinks sets the hardlink metadata on an empty file"+
+						Convey("uploading hardlinks sets the hardlink metadata on an empty file"+
 							" and uploads real data to inode file", func() {
 							requests, errg := client.GetSomeUploadRequests()
 							So(errg, ShouldBeNil)
