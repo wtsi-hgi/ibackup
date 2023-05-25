@@ -389,11 +389,9 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 			So(statusCounts[RequestStatusUploaded], ShouldEqual, 1)
 			So(statusCounts[RequestStatusUnmodified], ShouldEqual, 0)
 
-			So(lh.meta[remotePath][MetaKeySets], ShouldContainSubstring, "aSet")
-			So(lh.meta[remotePath][MetaKeySets], ShouldContainSubstring, "bSet")
-			So(lh.meta[remotePath][MetaKeySets], ShouldContainSubstring, "cSet")
-			So(lh.meta[remotePath]["aKey"], ShouldNotBeBlank)
-			So(lh.meta[remotePath]["bKey"], ShouldNotBeBlank)
+			So(lh.meta[remotePath][MetaKeySets], ShouldEqual, "aSet,bSet,cSet")
+			So(lh.meta[remotePath]["aKey"], ShouldEqual, "cValue")
+			So(lh.meta[remotePath]["bKey"], ShouldEqual, "yetAnotherValue")
 		})
 	})
 

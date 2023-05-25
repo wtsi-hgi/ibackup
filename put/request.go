@@ -30,7 +30,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/dgryski/go-farm"
@@ -102,7 +101,6 @@ type Request struct {
 	skipPut          bool
 	emptyFileRequest *Request
 	inodeRequest     *Request
-	metaMu           sync.Mutex
 }
 
 // MakeSafeForJSON copies Local and Remote to LocalForJSON and RemoteForJSON,
@@ -348,9 +346,6 @@ func (r *Request) appendMeta(key, val string) {
 
 	appended := val
 
-	r.metaMu.Lock()
-	defer r.metaMu.Unlock()
-
 	if rval, exists := r.remoteMeta[key]; exists {
 		rvals := strings.Split(rval, metaListSeparator)
 		appended = appendValIfNotInList(val, rvals)
@@ -387,9 +382,6 @@ func (r *Request) needsMetadataUpdate() bool {
 	need := false
 
 	defer func() {
-		r.metaMu.Lock()
-		defer r.metaMu.Unlock()
-
 		r.skipPut = need
 		r.Meta[MetaKeyDate] = r.remoteMeta[MetaKeyDate]
 	}()
@@ -407,9 +399,6 @@ func (r *Request) needsMetadataUpdate() bool {
 // valForMetaKeyDifferentOnRemote returns false if key has no remote value.
 // Returns true if the remote value is different to ours.
 func (r *Request) valForMetaKeyDifferentOnRemote(key string) bool {
-	r.metaMu.Lock()
-	defer r.metaMu.Unlock()
-
 	if rval, defined := r.remoteMeta[key]; defined {
 		if rval != r.Meta[key] {
 			return true
@@ -444,9 +433,6 @@ func (r *Request) RemoveAndAddMetadata(handler Handler) error {
 }
 
 func removeAndAddMetadata(r *Request, handler Handler) error {
-	r.metaMu.Lock()
-	defer r.metaMu.Unlock()
-
 	toRemove, toAdd := r.determineMetadataToRemoveAndAdd()
 
 	if err := r.removeMeta(handler, toRemove); err != nil {

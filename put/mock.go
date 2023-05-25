@@ -26,7 +26,6 @@
 package put
 
 import (
-	"fmt"
 	"io"
 	"os"
 	"sync"
@@ -114,6 +113,8 @@ func (l *LocalHandler) Stat(request *Request) (*ObjectInfo, error) {
 	meta, exists := l.meta[request.Remote]
 	if !exists {
 		meta = make(map[string]string)
+	} else {
+		meta = cloneMap(meta)
 	}
 
 	return &ObjectInfo{Exists: true, Meta: meta}, nil
@@ -217,10 +218,7 @@ func (l *LocalHandler) AddMeta(path string, meta map[string]string) error {
 	}
 
 	for key, val := range meta {
-		if pval, exists := pathMeta[key]; exists {
-			fmt.Printf("failing AddMeta because lh pathMeta %s => %s, vs desired add of %s, for path %s\n",
-				key, pval, val, path)
-
+		if _, exists := pathMeta[key]; exists {
 			return Error{ErrMockMetaFail, key}
 		}
 

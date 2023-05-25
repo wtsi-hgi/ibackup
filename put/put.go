@@ -346,47 +346,63 @@ func (p *Putter) Put() (chan *Request, chan *Request, chan *Request) {
 	uploadReturnCh := make(chan *Request, chanLen)
 	skipReturnCh := make(chan *Request, chanLen)
 
-	r1, r2, r3 := p.put(p.requests, workerPoolSizeStats)
-
-	var wg sync.WaitGroup
-
-	wg.Add(1)
-
 	go func() {
-		defer wg.Done()
-		cloneChannel(r1, uploadStartCh)
-	}()
+		r1, r2, r3 := p.put(p.requests, workerPoolSizeStats)
 
-	wg.Add(1)
+		var wg sync.WaitGroup
 
-	go func() {
-		defer wg.Done()
-		cloneChannel(r2, uploadReturnCh)
-	}()
+		wg.Add(1)
 
-	wg.Add(1)
+		go func() {
+			defer wg.Done()
+			cloneChannel(r1, uploadStartCh)
+		}()
 
-	go func() {
-		defer wg.Done()
-		cloneChannel(r3, skipReturnCh)
-	}()
+		wg.Add(1)
 
-	wg.Wait()
+		go func() {
+			defer wg.Done()
+			cloneChannel(r2, uploadReturnCh)
+		}()
 
-	r1, r2, r3 = p.put(p.duplicateRequests, 1)
+		wg.Add(1)
 
-	go func() {
-		cloneChannel(r1, uploadStartCh)
+		go func() {
+			defer wg.Done()
+			cloneChannel(r3, skipReturnCh)
+		}()
+
+		wg.Wait()
+
+		for i := range p.duplicateRequests {
+			r1, r2, r3 = p.put(p.duplicateRequests[i:i+1], 1)
+
+			wg.Add(1)
+
+			go func() {
+				defer wg.Done()
+				cloneChannel(r1, uploadStartCh)
+			}()
+
+			wg.Add(1)
+
+			go func() {
+				defer wg.Done()
+				cloneChannel(r2, uploadReturnCh)
+			}()
+
+			wg.Add(1)
+
+			go func() {
+				defer wg.Done()
+				cloneChannel(r3, skipReturnCh)
+			}()
+
+			wg.Wait()
+		}
+
 		close(uploadStartCh)
-	}()
-
-	go func() {
-		cloneChannel(r2, uploadReturnCh)
 		close(uploadReturnCh)
-	}()
-
-	go func() {
-		cloneChannel(r3, skipReturnCh)
 		close(skipReturnCh)
 	}()
 
