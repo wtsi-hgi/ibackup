@@ -193,7 +193,7 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 				err = os.Remove(requests[0].Local)
 				So(err, ShouldBeNil)
 
-				err = os.Symlink(requests[1].Local, requests[0].Local)
+				err = os.Symlink(requests[2].Local, requests[0].Local)
 				So(err, ShouldBeNil)
 
 				requests[0].Symlink = requests[1].Local
@@ -219,6 +219,7 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 				requests[4].Hardlink = inodeRemote
 				requests[4].Meta = map[string]string{setMetaKey: "b"}
 
+				clonedRequest0 := requests[0].Clone()
 				clonedRequest2 := requests[2].Clone()
 
 				uploading, skipped, statusCounts := uploadRequests(t, lh, requests)
@@ -230,6 +231,7 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 				info, errs := os.Stat(requests[0].Remote)
 				So(errs, ShouldBeNil)
 				So(info.Size(), ShouldEqual, 0)
+				symlinkMtime := info.ModTime()
 
 				info, errs = os.Stat(requests[2].Remote)
 				So(errs, ShouldBeNil)
@@ -270,21 +272,26 @@ func TestPutMock(t *testing.T) { //nolint:cyclop
 					So(errs, ShouldBeNil)
 					So(info.ModTime(), ShouldResemble, hardlinkMTime)
 
-					Convey("re-uploading a modified hardlink does replace remote files", func() {
+					Convey("re-uploading a modified hardlink does replace remote files, but doesn't reupload symlink", func() {
 						touchFile(requests[2].Local, time.Hour)
 
 						info, errs = os.Stat(requests[2].Local)
 						So(errs, ShouldBeNil)
 						So(info.ModTime().After(hardlinkMTime), ShouldBeTrue)
 
-						uploading, skipped, statusCounts = uploadRequests(t, lh, []*Request{reclonedRequest2})
+						uploading, skipped, statusCounts = uploadRequests(t, lh, []*Request{reclonedRequest2, clonedRequest0})
 						So(uploading, ShouldEqual, 1)
 						So(statusCounts[RequestStatusReplaced], ShouldEqual, 1)
-						So(skipped, ShouldEqual, 0)
+						So(skipped, ShouldEqual, 1)
 
 						info, errs = os.Stat(requests[2].Hardlink)
 						So(errs, ShouldBeNil)
 						So(info.ModTime().After(hardlinkMTime), ShouldBeTrue)
+
+						info, errs = os.Stat(requests[0].Remote)
+						So(errs, ShouldBeNil)
+						So(info.Size(), ShouldEqual, 0)
+						So(info.ModTime(), ShouldEqual, symlinkMtime)
 					})
 				})
 			})

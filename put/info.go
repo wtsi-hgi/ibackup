@@ -54,10 +54,10 @@ type ObjectInfo struct {
 	Meta   map[string]string
 }
 
-// Stat stats localPath like os.Stat(), but also returns information about the
+// Stat stats localPath like os.Lstat(), but also returns information about the
 // file in ObjectInfo Meta (mtime, owner and group information).
 func Stat(localPath string) (*ObjectInfo, error) {
-	fi, err := os.Stat(localPath)
+	fi, err := os.Lstat(localPath)
 	if err != nil {
 		return nil, err
 	}
