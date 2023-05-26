@@ -27,8 +27,11 @@ package set
 
 import (
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"testing"
 	"time"
@@ -1293,7 +1296,7 @@ func TestBackup(t *testing.T) {
 			So(doBackupCalls, ShouldEqual, 2)
 		})
 
-		Convey("and can back it up to iRODS as well", func() {
+		Convey("and can back it up with local handler as well", func() {
 			remoteDir := filepath.Join(dir, "remote")
 			err = os.Mkdir(remoteDir, userPerms)
 			So(err, ShouldBeNil)
@@ -1310,6 +1313,60 @@ func TestBackup(t *testing.T) {
 			So(err, ShouldBeNil)
 
 			testBackupOK(remotePath)
+		})
+
+		Convey("and can back it up to iRODS as well", func() {
+			remoteDir := os.Getenv("IBACKUP_TEST_COLLECTION")
+			if remoteDir == "" {
+				SkipConvey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
+
+				return
+			}
+
+			remotePath := filepath.Join(remoteDir, "db")
+
+			handler, err := put.GetBatonHandler()
+			So(err, ShouldBeNil)
+
+			db.EnableRemoteBackups(remotePath, handler)
+
+			err = db.Backup()
+			So(err, ShouldBeNil)
+
+			localPath := t.TempDir()
+			localDB := filepath.Join(localPath, "db")
+
+			_, err = exec.Command("iget", remotePath, localDB).CombinedOutput()
+			So(err, ShouldBeNil)
+
+			testBackupOK(localDB)
+
+			Convey("and child baton-do processes end after upload", func() {
+				pid := strconv.FormatInt(int64(os.Getpid()), 10)
+				subtasks, err := filepath.Glob(filepath.Join("/proc", pid, "task", "*", "children"))
+				So(err, ShouldBeNil)
+
+				count := 0
+
+				for _, subtask := range subtasks {
+					childrenFile, err := os.Open(subtask)
+					So(err, ShouldBeNil)
+
+					childrenList, err := io.ReadAll(childrenFile)
+					So(err, ShouldBeNil)
+
+					err = childrenFile.Close()
+					So(err, ShouldBeNil)
+
+					for _, b := range childrenList {
+						if b == ' ' {
+							count++
+						}
+					}
+				}
+
+				So(count, ShouldEqual, 0)
+			})
 		})
 	})
 }
