@@ -1218,7 +1218,7 @@ func (d *DB) doRemoteBackup() (err error) {
 }
 
 func drainChannel(ch chan *put.Request) {
-	for range ch {
+	for range ch { //nolint:revive
 	}
 }
 
