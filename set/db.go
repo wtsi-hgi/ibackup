@@ -30,7 +30,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -1186,27 +1185,41 @@ func (d *DB) doBackup() error {
 	return d.doRemoteBackup()
 }
 
-func (d *DB) doRemoteBackup() error {
+func (d *DB) doRemoteBackup() (err error) {
 	if d.remoteBackupPath == "" {
 		return nil
 	}
 
-	dir := filepath.Dir(d.remoteBackupPath)
-
-	err := d.remoteBackupHandler.EnsureCollection(dir)
-	if err != nil {
-		return err
-	}
-
-	err = d.remoteBackupHandler.CollectionsDone()
-	if err != nil {
-		return err
-	}
-
-	return d.remoteBackupHandler.Put(&put.Request{
+	putter, err := put.New(d.remoteBackupHandler, []*put.Request{{
 		Local:  d.backupPath,
 		Remote: d.remoteBackupPath,
-	})
+	}})
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		if errc := putter.Cleanup(); err == nil {
+			err = errc
+		}
+	}()
+
+	if err = putter.CreateCollections(); err != nil {
+		return err
+	}
+
+	started, finished, skipped := putter.Put()
+
+	drainChannel(started)
+	drainChannel(finished)
+	drainChannel(skipped)
+
+	return err
+}
+
+func drainChannel(ch chan *put.Request) {
+	for range ch { //nolint:revive
+	}
 }
 
 // SetMinimumTimeBetweenBackups sets the minimum time between successive

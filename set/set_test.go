@@ -26,14 +26,17 @@
 package set
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"syscall"
 	"testing"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/shirou/gopsutil/process"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/wtsi-hgi/ibackup/internal"
 	"github.com/wtsi-hgi/ibackup/put"
@@ -1293,7 +1296,7 @@ func TestBackup(t *testing.T) {
 			So(doBackupCalls, ShouldEqual, 2)
 		})
 
-		Convey("and can back it up to iRODS as well", func() {
+		Convey("and can back it up with local handler as well", func() {
 			remoteDir := filepath.Join(dir, "remote")
 			err = os.Mkdir(remoteDir, userPerms)
 			So(err, ShouldBeNil)
@@ -1310,6 +1313,58 @@ func TestBackup(t *testing.T) {
 			So(err, ShouldBeNil)
 
 			testBackupOK(remotePath)
+		})
+
+		Convey("and can back it up to iRODS as well", func() {
+			remoteDir := os.Getenv("IBACKUP_TEST_COLLECTION")
+			if remoteDir == "" {
+				SkipConvey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
+
+				return
+			}
+
+			remotePath := filepath.Join(remoteDir, "db")
+
+			handler, err := put.GetBatonHandler()
+			So(err, ShouldBeNil)
+
+			db.EnableRemoteBackups(remotePath, handler)
+
+			err = db.Backup()
+			So(err, ShouldBeNil)
+
+			localPath := t.TempDir()
+			localDB := filepath.Join(localPath, "db")
+
+			_, err = exec.Command("iget", remotePath, localDB).CombinedOutput()
+			So(err, ShouldBeNil)
+
+			testBackupOK(localDB)
+
+			Convey("and child baton-do processes end after upload", func() {
+				p, err := process.NewProcess(int32(os.Getpid()))
+				So(err, ShouldBeNil)
+
+				children, err := p.Children()
+				if errors.Is(err, process.ErrorNoChildren) {
+					return
+				}
+
+				So(err, ShouldBeNil)
+
+				count := 0
+
+				for _, child := range children {
+					exe, err := child.Exe()
+					So(err, ShouldBeNil)
+
+					if filepath.Base(exe) == "baton-do" {
+						count++
+					}
+				}
+
+				So(count, ShouldEqual, 0)
+			})
 		})
 	})
 }
