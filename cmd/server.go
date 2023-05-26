@@ -43,6 +43,8 @@ import (
 	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/server"
+	"github.com/wtsi-npg/logshim"
+	"github.com/wtsi-npg/logshim-zerolog/zlog"
 )
 
 const serverTokenBasename = ".ibackup.token"
@@ -242,7 +244,11 @@ func setServerLogger(path string) io.Writer {
 		logToFile(path)
 	}
 
-	return &log15Writer{logger: appLogger}
+	lw := &log15Writer{logger: appLogger}
+
+	logshim.InstallLogger(zlog.New(lw, logshim.ErrorLevel))
+
+	return lw
 }
 
 // logToSyslog sets our applogger to log to syslog, dies if it can't.
