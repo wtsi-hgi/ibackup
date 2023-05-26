@@ -26,17 +26,17 @@
 package set
 
 import (
+	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"syscall"
 	"testing"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/shirou/gopsutil/process"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/wtsi-hgi/ibackup/internal"
 	"github.com/wtsi-hgi/ibackup/put"
@@ -1342,26 +1342,24 @@ func TestBackup(t *testing.T) {
 			testBackupOK(localDB)
 
 			Convey("and child baton-do processes end after upload", func() {
-				pid := strconv.FormatInt(int64(os.Getpid()), 10)
-				subtasks, err := filepath.Glob(filepath.Join("/proc", pid, "task", "*", "children"))
+				p, err := process.NewProcess(int32(os.Getpid()))
+				So(err, ShouldBeNil)
+
+				children, err := p.Children()
+				if errors.Is(err, process.ErrorNoChildren) {
+					return
+				}
+
 				So(err, ShouldBeNil)
 
 				count := 0
 
-				for _, subtask := range subtasks {
-					childrenFile, err := os.Open(subtask)
+				for _, child := range children {
+					exe, err := child.Exe()
 					So(err, ShouldBeNil)
 
-					childrenList, err := io.ReadAll(childrenFile)
-					So(err, ShouldBeNil)
-
-					err = childrenFile.Close()
-					So(err, ShouldBeNil)
-
-					for _, b := range childrenList {
-						if b == ' ' {
-							count++
-						}
+					if filepath.Base(exe) == "baton-do" {
+						count++
 					}
 				}
 
