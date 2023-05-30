@@ -62,6 +62,7 @@ const (
 	ErrInvalidRequest         = "request lacks Requester or Set"
 	ErrInvalidEntry           = "invalid set entry"
 	ErrInvalidTransformerPath = "invalid transformer path concatenation"
+	ErrNoAddDuringDiscovery   = "can't add set while set is being discovered"
 
 	setsBucket                    = "sets"
 	userToSetBucket               = "userLookup"
@@ -171,6 +172,11 @@ func (d *DB) AddOrUpdate(set *Set) error {
 
 		if existing := b.Get(bid); existing != nil {
 			eset := d.decodeSet(existing)
+
+			if eset.StartedDiscovery.After(eset.LastDiscovery) {
+				return Error{msg: ErrNoAddDuringDiscovery, id: id}
+			}
+
 			eset.Transformer = set.Transformer
 			eset.MonitorTime = set.MonitorTime
 			eset.DeleteLocal = set.DeleteLocal

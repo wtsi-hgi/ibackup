@@ -28,6 +28,8 @@ package cmd
 
 import (
 	"bufio"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
@@ -48,6 +50,8 @@ var setNull bool
 var setMonitor string
 var setArchive bool
 var setUser string
+
+var ErrCancel = errors.New("cancelled add")
 
 // addCmd represents the add command.
 var addCmd = &cobra.Command{
@@ -230,6 +234,10 @@ func readPaths(file string, splitter bufio.SplitFunc) []string {
 // add does the main job of sending the backup set details to the server.
 func add(client *server.Client, name, requester, transformer, description string,
 	monitor time.Duration, archive bool, files, dirs []string) error {
+	if err := checkExistingSet(client, name, requester); err != nil {
+		return err
+	}
+
 	set := &set.Set{
 		Name:        name,
 		Requester:   requester,
@@ -252,4 +260,42 @@ func add(client *server.Client, name, requester, transformer, description string
 	}
 
 	return client.TriggerDiscovery(set.ID())
+}
+
+func checkExistingSet(client *server.Client, name, requester string) error {
+	_, err := client.GetSetByName(requester, name)
+	if errors.Is(err, server.ErrBadSet) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+
+	resp, err := askYesNo(fmt.Sprintf("Set with name %s already exists, are you sure you wish to overwrite (y/N)? ", name))
+	if err != nil {
+		return err
+	}
+
+	if !resp {
+		return ErrCancel
+	}
+
+	return nil
+}
+
+func askYesNo(prompt string) (bool, error) {
+	b := bufio.NewReader(os.Stdin)
+
+	cliPrint(prompt)
+
+	input, _, err := b.ReadLine()
+	if err != nil {
+		return false, err
+	}
+
+	switch string(input) {
+	case "y", "Y":
+		return true, nil
+	default:
+		return false, nil
+	}
 }
