@@ -32,12 +32,17 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/wtsi-hgi/ibackup/server"
 	"github.com/wtsi-hgi/ibackup/set"
 )
+
+const hoursInDay = 24
+const hoursInWeek = hoursInDay * 7
 
 // options for this cmd.
 var setName string
@@ -123,7 +128,7 @@ option to add sets on behalf of other users.
 		if setMonitor != "" {
 			var err error
 
-			monitorDuration, err = time.ParseDuration(setMonitor)
+			monitorDuration, err = parseDuration(setMonitor)
 			if err != nil {
 				die("invalid monitor duration: %s", err)
 			}
@@ -185,7 +190,8 @@ func init() {
 		"input paths are terminated by a null character instead of a new line")
 	addCmd.Flags().StringVar(&setDescription, "description", "", "a long description of this backup set")
 	addCmd.Flags().StringVarP(&setMonitor, "monitor", "m", "",
-		"monitor the paths for changes and new files to upload the given time period (eg. 24h for 1 day) after completion")
+		"monitor the paths for changes and new files to upload the given time period "+
+			"(eg. 1d for 1 day, or 2w for 2 weeks, min 1h) after completion")
 	addCmd.Flags().BoolVarP(&setArchive, "archive", "a", false,
 		"delete local files after successfully uploading them (deletions not yet implemented)")
 	addCmd.Flags().StringVar(&setUser, "user", currentUsername(),
@@ -298,4 +304,26 @@ func askYesNo(prompt string) (bool, error) {
 	default:
 		return false, nil
 	}
+}
+
+func parseDuration(s string) (time.Duration, error) {
+	durationRegex := regexp.MustCompile("[0-9]+[dw]")
+
+	s = durationRegex.ReplaceAllStringFunc(s, func(d string) string {
+		num, err := strconv.ParseInt(d[:len(d)-1], 10, 64)
+		if err != nil {
+			return d
+		}
+
+		switch d[len(d)-1] {
+		case 'd':
+			num *= hoursInDay
+		case 'w':
+			num *= hoursInWeek
+		}
+
+		return strconv.FormatInt(num, 10) + "h"
+	})
+
+	return time.ParseDuration(s)
 }

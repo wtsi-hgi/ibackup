@@ -27,6 +27,7 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 	"path/filepath"
 	"strings"
 	"time"
@@ -41,6 +42,8 @@ import (
 const dateShort = "06/01/02"
 const bytesInMiB = 1024 * 1024
 const hundredForPercentCalc float64 = 100
+const nsInWeek = hoursInWeek * time.Hour
+const nsInDay = hoursInDay * time.Hour
 
 // options for this cmd.
 var statusUser string
@@ -244,10 +247,10 @@ func displaySet(s *set.Set) {
 
 	monitored := "false"
 	if s.MonitorTime > 0 {
-		monitored = s.MonitorTime.String()
+		monitored = formatDuration(s.MonitorTime)
 	}
 
-	cliPrint("Monitored: %v; Archive: %v\n", monitored, s.DeleteLocal)
+	cliPrint("Monitored: %s; Archive: %v\n", monitored, s.DeleteLocal)
 
 	if s.Description != "" {
 		cliPrint("Description: %s\n", s.Description)
@@ -276,6 +279,28 @@ func displaySet(s *set.Set) {
 		displayETA(s)
 	default:
 	}
+}
+
+func formatDuration(dur time.Duration) string {
+	var sb strings.Builder
+
+	dur = formatDurationPart(&sb, dur, nsInWeek, "w")
+	dur = formatDurationPart(&sb, dur, nsInDay, "d")
+	dur = formatDurationPart(&sb, dur, time.Hour, "h")
+	dur = formatDurationPart(&sb, dur, time.Minute, "m")
+	formatDurationPart(&sb, dur, time.Second, "s")
+
+	return sb.String()
+}
+
+func formatDurationPart(w io.Writer, dur, partDur time.Duration, unit string) time.Duration {
+	if dur >= partDur {
+		fmt.Fprintf(w, "%d%s", dur/partDur, unit)
+
+		dur %= partDur
+	}
+
+	return dur
 }
 
 // displayETA prints info about ETA for the given currently uploading set to

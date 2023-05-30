@@ -433,7 +433,7 @@ Directories:
 				"--name", "testAddFiles", "--transformer", "prefix="+dir+":/remote")
 			So(exitCode, ShouldEqual, 0)
 
-			<-time.After(250 * time.Millisecond)
+			s.waitForStatus("testAddFiles", "Status: pending upload", 1*time.Second)
 
 			Convey("Status tells you an example of where input files would get uploaded to", func() {
 				s.confirmOutput(t, []string{"status", "--name", "testAddFiles"}, 0,
@@ -552,7 +552,7 @@ Example File: `+humgenFile+" => /humgen/teams/hgi/scratch125/mercury/ibackup/fil
 				"--name", "testLinks", "--transformer", "prefix="+dir+":/remote")
 			So(exitCode, ShouldEqual, 0)
 
-			<-time.After(250 * time.Millisecond)
+			s.waitForStatus("testLinks", "Status: pending upload", 1*time.Second)
 
 			s.confirmOutput(t, []string{"status", "--name", "testLinks"}, 0,
 				`Global put queue status: 4 queued; 0 reserved to be worked on; 0 failed
@@ -567,6 +567,28 @@ Num files: 4; Symlinks: 2; Hardlinks: 1; Size files: 0 B (and counting)
 Uploaded: 0; Failed: 0; Missing: 0
 Directories:
   `+dir+" => /remote")
+		})
+
+		Convey("Sets added with friendly monitor durations show the correct monitor duration", func() {
+			dir := t.TempDir()
+
+			setName := "testAddMonitor"
+			exitCode, _ := s.runBinary(t, "add", "--path", dir,
+				"--name", setName, "--transformer", "prefix="+dir+":/remote",
+				"--monitor", "4d")
+
+			So(exitCode, ShouldEqual, 0)
+
+			s.waitForStatus(setName, "Monitored: 4d", 5*time.Second)
+
+			setName = "testAddMonitorWeek"
+			exitCode, _ = s.runBinary(t, "add", "--path", dir,
+				"--name", setName, "--transformer", "prefix="+dir+":/remote",
+				"--monitor", "2w")
+
+			So(exitCode, ShouldEqual, 0)
+
+			s.waitForStatus(setName, "Monitored: 2w", 5*time.Second)
 		})
 	})
 }
