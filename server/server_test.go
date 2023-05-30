@@ -1628,6 +1628,8 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						So(skippedFails, ShouldEqual, 0)
 
 						Convey("and failures get retried 3 times", func() {
+							So(s.queue.Stats().Buried, ShouldEqual, 0)
+
 							for i := 2; i <= int(jobRetries); i++ {
 								requests, errg := client.GetSomeUploadRequests()
 								So(errg, ShouldBeNil)
@@ -1657,6 +1659,8 @@ func TestServer(t *testing.T) { //nolint:cyclop
 							So(errg, ShouldBeNil)
 							So(len(requests), ShouldEqual, 0)
 
+							So(s.queue.Stats().Buried, ShouldEqual, 1)
+
 							manualRetry := func() {
 								retried, errr := client.RetryFailedSetUploads(exampleSet.ID())
 								So(errr, ShouldBeNil)
@@ -1664,7 +1668,7 @@ func TestServer(t *testing.T) { //nolint:cyclop
 
 								requests, errg := client.GetSomeUploadRequests()
 								So(errg, ShouldBeNil)
-								So(len(requests), ShouldEqual, 1)
+								So(len(requests), ShouldBeGreaterThanOrEqualTo, 1)
 
 								p, d := makePutter(t, handler, requests, client)
 								defer d()
@@ -1697,6 +1701,24 @@ func TestServer(t *testing.T) { //nolint:cyclop
 									Set:  exampleSet.Name,
 								})
 								So(n, ShouldEqual, 1)
+
+								manualRetry()
+							})
+
+							Convey("whereupon they can be manually retried even if the set gets re-discovered", func() {
+								err = client.TriggerDiscovery(exampleSet.ID())
+								So(err, ShouldBeNil)
+
+								ok := <-racCalled
+								So(ok, ShouldBeTrue)
+
+								entries, errg = client.GetFiles(exampleSet.ID())
+								So(errg, ShouldBeNil)
+								So(len(entries), ShouldEqual, len(discovers))
+								So(entries[0].Status, ShouldEqual, set.Failed)
+								So(entries[0].Attempts, ShouldEqual, jobRetries)
+								So(entries[0].LastError, ShouldContainSubstring, put.ErrReadTimeout)
+								So(entries[0].LastError, ShouldContainSubstring, entries[0].Path)
 
 								manualRetry()
 							})

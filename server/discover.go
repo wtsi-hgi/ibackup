@@ -314,7 +314,11 @@ func (s *Server) enqueueEntries(entries []*set.Entry, given *set.Set, transforme
 		return nil
 	}
 
-	_, _, err := s.queue.AddMany(context.Background(), defs)
+	_, dups, err := s.queue.AddMany(context.Background(), defs)
+
+	if dups > 0 {
+		s.markFailedEntries(given)
+	}
 
 	return err
 }
@@ -347,4 +351,25 @@ func (s *Server) entryToRequest(entry *set.Entry, transformer put.PathTransforme
 	}
 
 	return r, nil
+}
+
+// markFailedEntries looks for buried items in the queue related to the given
+// set and marks the corresponding entries as failed.
+func (s *Server) markFailedEntries(given *set.Set) {
+	s.forEachBuriedItem(&BuriedFilter{
+		User: given.Requester,
+		Set:  given.Name,
+	}, func(item *queue.Item) {
+		request := item.Data().(*put.Request) //nolint:errcheck,forcetypeassert
+
+		for i := 0; i < int(jobRetries); i++ {
+			_, err := s.db.SetEntryStatus(request)
+			if err != nil {
+				s.Logger.Printf("failed to mark entry as failed for buried item for set %s for %s: %s\n",
+					given.Name, given.Requester, err)
+
+				return
+			}
+		}
+	})
 }

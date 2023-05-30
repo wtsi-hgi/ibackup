@@ -295,6 +295,23 @@ func (s *TestServer) Shutdown() error {
 	}
 }
 
+// interactiveAdd does an add for sets that already exist, where a question
+// will be asked: provide the answer 'y' to do the add.
+func (s *TestServer) interactiveAdd(setName, answer, transformer, path string) error {
+	cmd := s.clientCmd([]string{"add", "--name", setName, "--transformer", transformer, "--path", path})
+
+	wc, err := cmd.StdinPipe()
+	So(err, ShouldBeNil)
+
+	err = cmd.Start()
+	So(err, ShouldBeNil)
+
+	_, err = wc.Write([]byte(answer + "\n"))
+	So(err, ShouldBeNil)
+
+	return cmd.Wait()
+}
+
 func (s *TestServer) getDiscoveryLineFromStatus(setName string) string {
 	cmd := s.clientCmd([]string{"status", "--name", setName})
 
@@ -554,21 +571,26 @@ Directories:
 	})
 }
 
-// prepareForSetWithEmptyDir creates a tempdir with a subdirectory inside it, and
-// returns a prefix transformer, the directory created and the remote upload
+// prepareForSetWithEmptyDir creates a tempdir with a subdirectory inside it,
+// and returns a prefix transformer, the directory created and the remote upload
 // location.
 func prepareForSetWithEmptyDir(t *testing.T) (string, string, string) {
 	t.Helper()
 
 	dir := t.TempDir()
-	someDir := filepath.Join(dir, "some/dir")
+	sourceDir := filepath.Join(dir, "source")
 
-	err := os.MkdirAll(someDir, userPerms)
+	err := os.MkdirAll(sourceDir, userPerms)
 	So(err, ShouldBeNil)
 
-	transformer := "prefix=" + dir + ":/remote"
+	remoteDir := filepath.Join(dir, "remote")
 
-	return transformer, someDir, "/remote/some/dir"
+	err = os.MkdirAll(remoteDir, userPerms)
+	So(err, ShouldBeNil)
+
+	transformer := "prefix=" + dir + ":" + remoteDir
+
+	return transformer, sourceDir, filepath.Join(remoteDir, "source")
 }
 
 func TestStuck(t *testing.T) {
@@ -739,8 +761,8 @@ Directories:
 	})
 }
 
-func TestHardlinks(t *testing.T) {
-	Convey("Putting a set with hardlinks uploads an empty file and special inode file", t, func() {
+func TestPuts(t *testing.T) {
+	Convey("Given a server configured with a remote hardlink location", t, func() {
 		remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
 		if remotePath == "" {
 			SkipConvey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
@@ -766,49 +788,81 @@ func TestHardlinks(t *testing.T) {
 		s.startServer()
 
 		path := t.TempDir()
+		transformer := "prefix=" + path + ":" + remotePath
 
-		file := filepath.Join(path, "file")
-		link1 := filepath.Join(path, "hardlink1")
-		link2 := filepath.Join(path, "hardlink2")
+		Convey("Putting a set with hardlinks uploads an empty file and special inode file", func() {
+			file := filepath.Join(path, "file")
+			link1 := filepath.Join(path, "hardlink1")
+			link2 := filepath.Join(path, "hardlink2")
 
-		remoteFile := filepath.Join(remotePath, "file")
-		remoteLink1 := filepath.Join(remotePath, "hardlink1")
-		remoteLink2 := filepath.Join(remotePath, "hardlink2")
+			remoteFile := filepath.Join(remotePath, "file")
+			remoteLink1 := filepath.Join(remotePath, "hardlink1")
+			remoteLink2 := filepath.Join(remotePath, "hardlink2")
 
-		internal.CreateTestFile(t, file, "some data")
+			internal.CreateTestFile(t, file, "some data")
 
-		err := os.Link(file, link1)
-		So(err, ShouldBeNil)
+			err := os.Link(file, link1)
+			So(err, ShouldBeNil)
 
-		err = os.Link(file, link2)
-		So(err, ShouldBeNil)
+			err = os.Link(file, link2)
+			So(err, ShouldBeNil)
 
-		s.addSetForTesting(t, "hardlinkTest", "prefix="+path+":"+remotePath, path)
+			s.addSetForTesting(t, "hardlinkTest", transformer, path)
 
-		s.waitForStatus("hardlinkTest", "\nStatus: complete", 60*time.Second)
+			s.waitForStatus("hardlinkTest", "\nStatus: complete", 60*time.Second)
 
-		output := getRemoteMeta(remoteFile)
-		So(output, ShouldNotContainSubstring, "ibackup:hardlink")
+			output := getRemoteMeta(remoteFile)
+			So(output, ShouldNotContainSubstring, "ibackup:hardlink")
 
-		output = getRemoteMeta(remoteLink1)
-		So(output, ShouldContainSubstring, "attribute: ibackup:hardlink\nvalue: "+link1)
+			output = getRemoteMeta(remoteLink1)
+			So(output, ShouldContainSubstring, "attribute: ibackup:hardlink\nvalue: "+link1)
 
-		output = getRemoteMeta(remoteLink2)
-		So(output, ShouldContainSubstring, "attribute: ibackup:hardlink\nvalue: "+link2)
+			output = getRemoteMeta(remoteLink2)
+			So(output, ShouldContainSubstring, "attribute: ibackup:hardlink\nvalue: "+link2)
 
-		attrFind := "attribute: ibackup:remotehardlink\nvalue: "
-		attrPos := strings.Index(output, attrFind)
-		So(attrPos, ShouldNotEqual, -1)
+			attrFind := "attribute: ibackup:remotehardlink\nvalue: "
+			attrPos := strings.Index(output, attrFind)
+			So(attrPos, ShouldNotEqual, -1)
 
-		remoteInode := output[attrPos+len(attrFind):]
-		nlPos := strings.Index(remoteInode, "\n")
-		So(nlPos, ShouldNotEqual, -1)
+			remoteInode := output[attrPos+len(attrFind):]
+			nlPos := strings.Index(remoteInode, "\n")
+			So(nlPos, ShouldNotEqual, -1)
 
-		remoteInode = remoteInode[:nlPos]
-		So(remoteInode, ShouldStartWith, s.remoteHardlinkPrefix)
+			remoteInode = remoteInode[:nlPos]
+			So(remoteInode, ShouldStartWith, s.remoteHardlinkPrefix)
 
-		output = getRemoteMeta(remoteInode)
-		So(output, ShouldContainSubstring, "attribute: ibackup:hardlink\nvalue: "+file)
+			output = getRemoteMeta(remoteInode)
+			So(output, ShouldContainSubstring, "attribute: ibackup:hardlink\nvalue: "+file)
+		})
+
+		Convey("Adding a failing set then re-adding it still allows retrying the failures", func() {
+			path := t.TempDir()
+			file := filepath.Join(path, "file")
+			internal.CreateTestFile(t, file, "some data")
+
+			err := os.Chmod(file, 0)
+			So(err, ShouldBeNil)
+
+			setName := "failTest"
+			s.addSetForTesting(t, setName, transformer, path)
+
+			statusLine := "0 reserved to be worked on; 1 failed"
+
+			s.waitForStatus(setName, statusLine, 30*time.Second)
+
+			s.confirmOutput(t, []string{"retry", "--name", setName, "--failed"},
+				0, "initated retry of 1 failed entries")
+
+			s.waitForStatus(setName, statusLine, 30*time.Second)
+
+			err = s.interactiveAdd(setName, "y", transformer, path)
+			So(err, ShouldBeNil)
+
+			s.waitForStatus(setName, statusLine, 30*time.Second)
+
+			s.confirmOutput(t, []string{"retry", "--name", setName, "--failed"},
+				0, "initated retry of 1 failed entries")
+		})
 	})
 }
 
@@ -912,47 +966,35 @@ func TestExtendoLogging(t *testing.T) {
 }
 
 func TestReAdd(t *testing.T) {
-	Convey("Re-adding a set asks for confirmation", t, func() {
+	Convey("After starting a server and preparing for a set", t, func() {
 		s := NewTestServer(t)
 		So(s, ShouldNotBeNil)
 
 		transformer, localDir, _ := prepareForSetWithEmptyDir(t)
 
 		name := "aSet"
-		s.addSetForTesting(t, name, transformer, localDir)
 
-		<-time.After(time.Second)
+		Convey("Re-adding a set asks for confirmation", func() {
+			s.addSetForTesting(t, name, transformer, localDir)
 
-		firstDiscovery := s.getDiscoveryLineFromStatus(name)
+			<-time.After(time.Second)
 
-		interactiveAdd := func(yn string) error {
-			cmd := s.clientCmd([]string{"add", "--name", name, "--transformer", transformer, "--path", localDir})
+			firstDiscovery := s.getDiscoveryLineFromStatus(name)
 
-			wc, err := cmd.StdinPipe()
+			err := s.interactiveAdd(name, "n", transformer, localDir)
+			So(err, ShouldNotBeNil)
+
+			secondDiscovery := s.getDiscoveryLineFromStatus(name)
+			So(secondDiscovery, ShouldEqual, firstDiscovery)
+
+			err = s.interactiveAdd(name, "y", transformer, localDir)
 			So(err, ShouldBeNil)
 
-			err = cmd.Start()
-			So(err, ShouldBeNil)
+			s.waitForStatus(name, "\nDiscovery: completed", 5*time.Second)
 
-			_, err = wc.Write([]byte(yn + "\n"))
-			So(err, ShouldBeNil)
-
-			return cmd.Wait()
-		}
-
-		err := interactiveAdd("n")
-		So(err, ShouldNotBeNil)
-
-		secondDiscovery := s.getDiscoveryLineFromStatus(name)
-		So(secondDiscovery, ShouldEqual, firstDiscovery)
-
-		err = interactiveAdd("y")
-		So(err, ShouldBeNil)
-
-		s.waitForStatus(name, "\nDiscovery: completed", 5*time.Second)
-
-		thirdDiscovery := s.getDiscoveryLineFromStatus(name)
-		So(thirdDiscovery, ShouldNotEqual, firstDiscovery)
+			thirdDiscovery := s.getDiscoveryLineFromStatus(name)
+			So(thirdDiscovery, ShouldNotEqual, firstDiscovery)
+		})
 	})
 }
 
