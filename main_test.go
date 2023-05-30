@@ -208,10 +208,7 @@ func normaliseOutput(out string) string {
 func (s *TestServer) runBinary(t *testing.T, args ...string) (int, string) {
 	t.Helper()
 
-	args = append([]string{"--url", s.url, "--cert", s.cert}, args...)
-
-	cmd := exec.Command("./"+app, args...)
-	cmd.Env = s.env
+	cmd := s.clientCmd(args)
 
 	outB, err := cmd.CombinedOutput()
 	out := string(outB)
@@ -226,6 +223,15 @@ func (s *TestServer) runBinary(t *testing.T, args ...string) (int, string) {
 	}
 
 	return cmd.ProcessState.ExitCode(), out
+}
+
+func (s *TestServer) clientCmd(args []string) *exec.Cmd {
+	args = append([]string{"--url", s.url, "--cert", s.cert}, args...)
+
+	cmd := exec.Command("./"+app, args...)
+	cmd.Env = s.env
+
+	return cmd
 }
 
 func (s *TestServer) confirmOutput(t *testing.T, args []string, expectedCode int, expected string) {
@@ -243,6 +249,7 @@ func (s *TestServer) addSetForTesting(t *testing.T, name, transformer, path stri
 	t.Helper()
 
 	exitCode, _ := s.runBinary(t, "add", "--name", name, "--transformer", transformer, "--path", path)
+
 	So(exitCode, ShouldEqual, 0)
 
 	s.waitForStatus(name, "\nDiscovery: completed", 5*time.Second)
@@ -286,6 +293,27 @@ func (s *TestServer) Shutdown() error {
 	case <-time.After(5 * time.Second):
 		return errors.Join(err, s.cmd.Process.Kill())
 	}
+}
+
+func (s *TestServer) getDiscoveryLineFromStatus(setName string) string {
+	cmd := s.clientCmd([]string{"status", "--name", setName})
+
+	outB, err := cmd.CombinedOutput()
+	So(err, ShouldBeNil)
+
+	var discovery string
+
+	for _, line := range strings.Split(string(outB), "\n") {
+		if strings.HasPrefix(line, "Discovery:") {
+			discovery = line
+
+			break
+		}
+	}
+
+	So(discovery, ShouldNotBeBlank)
+
+	return discovery
 }
 
 var servers []*TestServer //nolint:gochecknoglobals
@@ -880,6 +908,51 @@ func TestExtendoLogging(t *testing.T) {
 
 		log := getLogString(s.logFile)
 		So(log, ShouldContainSubstring, toFind)
+	})
+}
+
+func TestReAdd(t *testing.T) {
+	Convey("Re-adding a set asks for confirmation", t, func() {
+		s := NewTestServer(t)
+		So(s, ShouldNotBeNil)
+
+		transformer, localDir, _ := prepareForSetWithEmptyDir(t)
+
+		name := "aSet"
+		s.addSetForTesting(t, name, transformer, localDir)
+
+		<-time.After(time.Second)
+
+		firstDiscovery := s.getDiscoveryLineFromStatus(name)
+
+		interactiveAdd := func(yn string) error {
+			cmd := s.clientCmd([]string{"add", "--name", name, "--transformer", transformer, "--path", localDir})
+
+			wc, err := cmd.StdinPipe()
+			So(err, ShouldBeNil)
+
+			err = cmd.Start()
+			So(err, ShouldBeNil)
+
+			_, err = wc.Write([]byte(yn + "\n"))
+			So(err, ShouldBeNil)
+
+			return cmd.Wait()
+		}
+
+		err := interactiveAdd("n")
+		So(err, ShouldNotBeNil)
+
+		secondDiscovery := s.getDiscoveryLineFromStatus(name)
+		So(secondDiscovery, ShouldEqual, firstDiscovery)
+
+		err = interactiveAdd("y")
+		So(err, ShouldBeNil)
+
+		s.waitForStatus(name, "\nDiscovery: completed", 5*time.Second)
+
+		thirdDiscovery := s.getDiscoveryLineFromStatus(name)
+		So(thirdDiscovery, ShouldNotEqual, firstDiscovery)
 	})
 }
 
