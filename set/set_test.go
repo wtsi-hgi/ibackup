@@ -768,6 +768,18 @@ func TestSetDB(t *testing.T) {
 					So(err, ShouldBeNil)
 					So(got, ShouldBeNil)
 				})
+
+				Convey("Then fail to re-add a set while it is being discovered", func() {
+					err = db.AddOrUpdate(set)
+					So(err, ShouldBeNil)
+
+					err = db.setDiscoveryStarted(set.ID())
+					So(err, ShouldBeNil)
+
+					err = db.AddOrUpdate(set)
+					So(err, ShouldNotBeNil)
+					So(err.Error(), ShouldStartWith, "can't add set while set is being discovered")
+				})
 			})
 
 			Convey("And add a set with pure hardlinks to it", func() {
