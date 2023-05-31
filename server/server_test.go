@@ -1647,12 +1647,12 @@ func TestServer(t *testing.T) { //nolint:cyclop
 									minMBperSecondUploadSpeed, minTimeForUpload, maxStuckTime, logger)
 								So(err, ShouldBeNil)
 
-								entries, skippedFails, errg := client.GetFailedFiles(exampleSet.ID())
+								failedEntries, skippedFails, errg := client.GetFailedFiles(exampleSet.ID())
 								So(errg, ShouldBeNil)
-								So(len(entries), ShouldEqual, 1)
+								So(len(failedEntries), ShouldEqual, 1)
 								So(skippedFails, ShouldEqual, 0)
-								So(entries[0].Status, ShouldEqual, set.Failed)
-								So(entries[0].Attempts, ShouldEqual, i)
+								So(failedEntries[0].Status, ShouldEqual, set.Failed)
+								So(failedEntries[0].Attempts, ShouldEqual, i)
 
 								d()
 							}
@@ -1668,8 +1668,8 @@ func TestServer(t *testing.T) { //nolint:cyclop
 								So(errr, ShouldBeNil)
 								So(retried, ShouldEqual, 1)
 
-								requests, errg := client.GetSomeUploadRequests()
-								So(errg, ShouldBeNil)
+								requests, errgs := client.GetSomeUploadRequests()
+								So(errgs, ShouldBeNil)
 								So(len(requests), ShouldBeGreaterThanOrEqualTo, 1)
 
 								p, d := makePutter(t, handler, requests, client)
@@ -1681,9 +1681,9 @@ func TestServer(t *testing.T) { //nolint:cyclop
 									minMBperSecondUploadSpeed, minTimeForUpload, maxStuckTime, logger)
 								So(err, ShouldBeNil)
 
-								entries, skippedFails, errg := client.GetFailedFiles(exampleSet.ID())
-								So(errg, ShouldBeNil)
-								So(len(entries), ShouldEqual, 0)
+								failedEntries, skippedFails, errgf := client.GetFailedFiles(exampleSet.ID())
+								So(errgf, ShouldBeNil)
+								So(len(failedEntries), ShouldEqual, 0)
 								So(skippedFails, ShouldEqual, 0)
 
 								entries, errg = client.GetFiles(exampleSet.ID())
@@ -2004,21 +2004,21 @@ func TestServer(t *testing.T) { //nolint:cyclop
 					changed = internal.WaitForFileChange(t, backupPath, lastMod)
 					So(changed, ShouldBeTrue)
 
-					remoteDir := filepath.Join(filepath.Dir(backupPath), "remoteBackup")
+					remoteBackupDir := filepath.Join(filepath.Dir(backupPath), "remoteBackup")
 
-					err = os.Mkdir(remoteDir, userPerms)
+					err = os.Mkdir(remoteBackupDir, userPerms)
 					So(err, ShouldBeNil)
 
-					remotePath := filepath.Join(remoteDir, "remoteDB")
+					remoteBackupPath := filepath.Join(remoteBackupDir, "remoteDB")
 
 					handler = put.GetLocalHandler()
 
-					s.EnableRemoteDBBackups(remotePath, handler)
+					s.EnableRemoteDBBackups(remoteBackupPath, handler)
 
 					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldBeNil)
 
-					remoteBackupExists := internal.WaitForFile(t, remotePath)
+					remoteBackupExists := internal.WaitForFile(t, remoteBackupPath)
 					So(remoteBackupExists, ShouldBeTrue)
 				})
 

@@ -60,6 +60,7 @@ issues:
         - contextcheck
         - gocognit
         - gocyclo
+        - cyclop
     - path: cmd
       linters:
         - gochecknoinits
