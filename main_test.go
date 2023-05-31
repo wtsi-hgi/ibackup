@@ -35,6 +35,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -616,6 +617,49 @@ Directories:
 			So(exitCode, ShouldEqual, 0)
 
 			s.waitForStatus(setName, "Monitored: 2w", 5*time.Second)
+		})
+
+		Convey("When requesting statuses for all users, requesters are shown in output", func() {
+			transformer, local, remote := prepareForSetWithEmptyDir(t)
+			s.addSetForTesting(t, "setForRequesterPrinting", transformer, local)
+
+			transformer2, local2, remote2 := prepareForSetWithEmptyDir(t)
+			s.addSetForTesting(t, "setForRequesterPrinting2", transformer2, local2)
+
+			currentUser, err := user.Current()
+			So(err, ShouldBeNil)
+
+			currentUserName := currentUser.Username
+
+			s.confirmOutput(t, []string{"status", "--user", "all"}, 0,
+				`Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
+Global put client status (/10): 0 creating collections; 0 currently uploading
+
+Name: setForRequesterPrinting2
+Requester: `+currentUserName+`
+Transformer: `+transformer2+`
+Monitored: false; Archive: false
+Status: complete
+Discovery:
+Num files: 0; Symlinks: 0; Hardlinks: 0; Size files: 0 B
+Uploaded: 0; Failed: 0; Missing: 0
+Completed in: 0s
+Directories:
+  `+local2+` => `+remote2+`
+
+-----
+
+Name: setForRequesterPrinting
+Requester: `+currentUserName+`
+Transformer: `+transformer+`
+Monitored: false; Archive: false
+Status: complete
+Discovery:
+Num files: 0; Symlinks: 0; Hardlinks: 0; Size files: 0 B
+Uploaded: 0; Failed: 0; Missing: 0
+Completed in: 0s
+Directories:
+  `+local+" => "+remote)
 		})
 	})
 }

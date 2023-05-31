@@ -153,7 +153,7 @@ func status(client *server.Client, incomplete bool, user, name string, details b
 		return
 	}
 
-	displaySets(client, sets, details)
+	displaySets(client, sets, details, user == "all")
 }
 
 // displayQueueStatus prints out QStatus in a nice way. If user is admin, also
@@ -216,12 +216,12 @@ func incompleteSets(sets []*set.Set) []*set.Set {
 
 // displaySets prints info about the given sets to STDOUT. Failed entry details
 // will also be printed, and optionally non-failed.
-func displaySets(client *server.Client, sets []*set.Set, showNonFailedEntries bool) {
+func displaySets(client *server.Client, sets []*set.Set, showNonFailedEntries, showRequesters bool) {
 	l := len(sets)
 
 	for i, forDisplay := range sets {
 		cliPrint("\n")
-		displaySet(forDisplay)
+		displaySet(forDisplay, showRequesters)
 
 		transformer := getSetTransformer(forDisplay)
 
@@ -241,8 +241,13 @@ func displaySets(client *server.Client, sets []*set.Set, showNonFailedEntries bo
 }
 
 // displaySet prints info about the given set to STDOUT.
-func displaySet(s *set.Set) {
+func displaySet(s *set.Set, showRequesters bool) {
 	cliPrint("Name: %s\n", s.Name)
+
+	if showRequesters {
+		cliPrint("Requester: %s\n", s.Requester)
+	}
+
 	cliPrint("Transformer: %s\n", s.Transformer)
 
 	monitored := "false"
