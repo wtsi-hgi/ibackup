@@ -290,7 +290,7 @@ func (c *entryCreator) existingOrNewEncodedEntry(dirent *walk.Dirent) ([]byte, e
 		return nil, err
 	}
 
-	entryToSetCounts(entry, c.set)
+	c.set.entryToSetCounts(entry)
 
 	e := c.existingEntries[dirent.Path]
 	if e != nil {

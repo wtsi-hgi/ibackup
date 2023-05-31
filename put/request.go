@@ -520,17 +520,11 @@ func NewRequestWithTransformedLocal(local string, pt PathTransformer) (*Request,
 // PrefixTransformer returns a PathTransformer that will replace localPrefix
 // in any path given to it with remotePrefix, and return the result.
 //
-// If the given path does not contain localPrefix, returns the path prefixed
+// If the given path does not start with localPrefix, returns the path prefixed
 // with remotePrefix (treating the given path as relative to localPrefix).
 func PrefixTransformer(localPrefix, remotePrefix string) PathTransformer {
 	return func(local string) (string, error) {
-		remote := strings.Replace(local, localPrefix, remotePrefix, 1)
-
-		if remote == local {
-			remote = filepath.Join(remotePrefix, local)
-		}
-
-		return remote, nil
+		return filepath.Join(remotePrefix, strings.TrimPrefix(local, localPrefix)), nil
 	}
 }
 
