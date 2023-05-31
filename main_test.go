@@ -721,6 +721,8 @@ func remoteDBBackupPath() string {
 	return filepath.Join(collection, "db.bk")
 }
 
+var errMismatchedDBBackupSizes = errors.New("mismatched db backup sizes")
+
 func TestBackup(t *testing.T) {
 	Convey("Adding a set causes a database backup locally and remotely", t, func() {
 		remotePath := remoteDBBackupPath()
@@ -774,25 +776,32 @@ func TestBackup(t *testing.T) {
 		So(localBackupExists, ShouldBeTrue)
 
 		err := internal.RetryUntilWorksCustom(t, func() error {
-			cmd := exec.Command("iget", "-K", remotePath, gotPath)
+			cmd := exec.Command("iget", "-Kf", remotePath, gotPath)
 
 			out, err := cmd.CombinedOutput()
 			if err != nil {
 				t.Logf("iget failed: %s\n%s\n", err, string(out))
+
+				return err
 			}
 
-			return err
+			li, err := os.Stat(s.backupFile)
+			if err != nil {
+				return err
+			}
+			ri, err := os.Stat(gotPath)
+			if err != nil {
+				return err
+			}
+
+			if ri.Size() != li.Size() {
+				return errMismatchedDBBackupSizes
+			}
+
+			return nil
 		}, 30*time.Second, 1*time.Second)
 
 		So(err, ShouldBeNil)
-
-		ri, err := os.Stat(gotPath)
-		So(err, ShouldBeNil)
-
-		li, err := os.Stat(s.backupFile)
-		So(err, ShouldBeNil)
-
-		So(li.Size(), ShouldEqual, ri.Size())
 
 		hashFile := func(path string) string {
 			f, err := os.Open(path)
@@ -809,7 +818,7 @@ func TestBackup(t *testing.T) {
 
 		bh := hashFile(s.backupFile)
 		rh := hashFile(gotPath)
-		So(bh, ShouldEqual, rh)
+		So(rh, ShouldEqual, bh)
 
 		Convey("Running a server with the retrieved db works correctly", func() {
 			bs := new(TestServer)
