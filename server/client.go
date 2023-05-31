@@ -431,15 +431,7 @@ func (c *Client) SendPutResultsToServer(uploadStarts, uploadResults, skipResults
 		close(c.uploadsErrCh)
 	}()
 
-	var merr *multierror.Error
-
-	for err := range c.uploadsErrCh {
-		merr = multierror.Append(merr, err)
-
-		if errors.Is(err, ErrKilledDueToStuck) {
-			break
-		}
-	}
+	merr := c.combineUploadErrors()
 
 	c.logger.Info("finished sending put results to server")
 
@@ -561,6 +553,20 @@ func (c *Client) handleSendingSkipResults(wg *sync.WaitGroup, results chan *put.
 			c.uploadsErrCh <- err
 		}
 	}
+}
+
+func (c *Client) combineUploadErrors() *multierror.Error {
+	var merr *multierror.Error
+
+	for err := range c.uploadsErrCh {
+		merr = multierror.Append(merr, err)
+
+		if errors.Is(err, ErrKilledDueToStuck) {
+			break
+		}
+	}
+
+	return merr
 }
 
 // UpdateFileStatus updates a file's status in the DB based on the given

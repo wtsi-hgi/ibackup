@@ -811,6 +811,29 @@ func (s *Server) updateFileStatus(r *put.Request, trace string) error {
 		return err
 	}
 
+	return s.trackUploadingAndStuckRequests(r, trace, entry)
+}
+
+// handleNewlyCompletedSets gets the set the given request is for, and if it
+// has completed, carries out actions needed for newly completed sets: trigger
+// the monitoring countdown, and do a database backup.
+func (s *Server) handleNewlyCompletedSets(r *put.Request) error {
+	completed, err := s.db.GetByNameAndRequester(r.Set, r.Requester)
+	if err != nil {
+		return err
+	}
+
+	if completed.Status != set.Complete {
+		return nil
+	}
+
+	s.monitorSet(completed)
+	s.tryBackup()
+
+	return nil
+}
+
+func (s *Server) trackUploadingAndStuckRequests(r *put.Request, trace string, entry *set.Entry) error {
 	rid := r.ID()
 
 	s.mapMu.Lock()
@@ -836,25 +859,6 @@ func (s *Server) updateFileStatus(r *put.Request, trace string) error {
 	s.Logger.Printf("[%s] will remove/release; deleted %s from map", trace, rid)
 
 	return s.removeOrReleaseRequestFromQueue(r, entry)
-}
-
-// handleNewlyCompletedSets gets the set the given request is for, and if it
-// has completed, carries out actions needed for newly completed sets: trigger
-// the monitoring countdown, and do a database backup.
-func (s *Server) handleNewlyCompletedSets(r *put.Request) error {
-	completed, err := s.db.GetByNameAndRequester(r.Set, r.Requester)
-	if err != nil {
-		return err
-	}
-
-	if completed.Status != set.Complete {
-		return nil
-	}
-
-	s.monitorSet(completed)
-	s.tryBackup()
-
-	return nil
 }
 
 // removeOrReleaseRequestFromQueue removes the given Request from our queue

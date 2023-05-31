@@ -472,7 +472,6 @@ func testDeleteCollection(t *testing.T, h *Baton, collection string) {
 	if err != nil && !strings.Contains(err.Error(), "-816000") && !strings.Contains(err.Error(), "-310000") {
 		So(err, ShouldBeNil)
 	}
-
 }
 
 func testPutFile(p *Putter) chan *Request {

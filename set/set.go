@@ -290,3 +290,58 @@ func (s *Set) countsValid() bool {
 
 	return s.Uploaded+s.Failed+s.Missing <= s.NumFiles
 }
+
+func (s *Set) adjustBasedOnEntry(entry *Entry) {
+	if entry.Type == Symlink {
+		s.Symlinks--
+	} else if entry.Type == Hardlink {
+		s.Hardlinks--
+	}
+
+	if entry.newSize {
+		s.SizeFiles += entry.Size
+	}
+
+	if entry.unFailed {
+		s.Failed--
+
+		if s.Failed <= 0 {
+			s.Status = Uploading
+		}
+	}
+
+	s.entryToSetCounts(entry)
+}
+
+// entryToSetCounts increases set Uploaded, Failed or Missing based on
+// set.Status.
+func (s *Set) entryToSetCounts(entry *Entry) {
+	s.entryStatusToSetCounts(entry)
+	s.entryTypeToSetCounts(entry)
+}
+
+func (s *Set) entryStatusToSetCounts(entry *Entry) {
+	switch entry.Status { //nolint:exhaustive
+	case Uploaded:
+		s.Uploaded++
+	case Failed:
+		if entry.newFail {
+			s.Failed++
+		}
+
+		if entry.Attempts >= AttemptsToBeConsideredFailing {
+			s.Status = Failing
+		}
+	case Missing:
+		s.Missing++
+	}
+}
+
+func (s *Set) entryTypeToSetCounts(entry *Entry) {
+	switch entry.Type { //nolint:exhaustive
+	case Symlink:
+		s.Symlinks++
+	case Hardlink:
+		s.Hardlinks++
+	}
+}

@@ -183,15 +183,6 @@ func (s *Server) monitorSet(given *set.Set) {
 	s.monitor.Add(given)
 }
 
-// monitorSetByName sets up discovery monitoring on a set defined by the given
-// name and requester.
-func (s *Server) monitorSetByName(name, requester string) {
-	given, err := s.db.GetByNameAndRequester(name, requester)
-	if err == nil {
-		s.monitorSet(given)
-	}
-}
-
 // monitorSets is called in a goroutine by monitorSet and should not be called
 // separately.
 func (m *Monitor) monitorSets(nextDiscovery time.Time) {

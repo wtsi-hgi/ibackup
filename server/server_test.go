@@ -1609,16 +1609,18 @@ func TestServer(t *testing.T) { //nolint:cyclop
 						So(len(entries), ShouldEqual, len(discovers))
 
 						for i, entry := range entries {
-							if i == 0 {
+							switch i {
+							case 0:
 								So(entry.Status, ShouldEqual, set.Failed)
 								So(entry.LastError, ShouldContainSubstring, put.ErrReadTimeout)
-							} else if i == 2 {
+							case 2:
 								So(entry.Type, ShouldEqual, set.Symlink)
 								So(entry.Status, ShouldEqual, set.Uploaded)
-							} else {
+							default:
 								So(entry.Type, ShouldEqual, set.Regular)
 								So(entry.Status, ShouldEqual, set.Uploaded)
 							}
+
 							So(entry.Attempts, ShouldEqual, 1)
 						}
 

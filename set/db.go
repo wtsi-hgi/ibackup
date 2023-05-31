@@ -113,27 +113,7 @@ type DB struct {
 // Returns an error if path exists but can't be opened, or if it doesn't exist
 // and can't be created.
 func New(path, backupPath string) (*DB, error) {
-	boltDB, err := bolt.Open(path, dbOpenMode, &bolt.Options{
-		NoFreelistSync: true,
-		NoGrowSync:     true,
-		FreelistType:   bolt.FreelistMapType,
-		MmapFlags:      syscall.MAP_POPULATE,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	err = boltDB.Update(func(tx *bolt.Tx) error {
-		for _, bucket := range [...]string{setsBucket, failedBucket, inodeBucket,
-			userToSetBucket, userToSetBucket, transformerToIDBucket, transformerFromIDBucket} {
-			if _, errc := tx.CreateBucketIfNotExists([]byte(bucket)); errc != nil {
-				return errc
-			}
-		}
-
-		return nil
-	})
-
+	boltDB, err := initDB(path)
 	if err != nil {
 		return nil, err
 	}
@@ -155,6 +135,31 @@ func New(path, backupPath string) (*DB, error) {
 	return db, nil
 }
 
+func initDB(path string) (*bolt.DB, error) {
+	boltDB, err := bolt.Open(path, dbOpenMode, &bolt.Options{
+		NoFreelistSync: true,
+		NoGrowSync:     true,
+		FreelistType:   bolt.FreelistMapType,
+		MmapFlags:      syscall.MAP_POPULATE,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	err = boltDB.Update(func(tx *bolt.Tx) error {
+		for _, bucket := range [...]string{setsBucket, failedBucket, inodeBucket,
+			userToSetBucket, userToSetBucket, transformerToIDBucket, transformerFromIDBucket} {
+			if _, errc := tx.CreateBucketIfNotExists([]byte(bucket)); errc != nil {
+				return errc
+			}
+		}
+
+		return nil
+	})
+
+	return boltDB, err
+}
+
 // Close closes the database. Be sure to call this to finalise any writes to
 // disk correctly.
 func (d *DB) Close() error {
@@ -173,16 +178,10 @@ func (d *DB) AddOrUpdate(set *Set) error {
 		if existing := b.Get(bid); existing != nil {
 			eset := d.decodeSet(existing)
 
-			if eset.StartedDiscovery.After(eset.LastDiscovery) {
-				return Error{msg: ErrNoAddDuringDiscovery, id: id}
+			if err := updateDatabaseSetWithUserSetDetails(eset, set); err != nil {
+				return err
 			}
 
-			eset.Transformer = set.Transformer
-			eset.MonitorTime = set.MonitorTime
-			eset.DeleteLocal = set.DeleteLocal
-			eset.Description = set.Description
-			eset.Error = set.Error
-			eset.Warning = set.Warning
 			set = eset
 		}
 
@@ -197,6 +196,21 @@ func (d *DB) AddOrUpdate(set *Set) error {
 	})
 
 	return err
+}
+
+func updateDatabaseSetWithUserSetDetails(dbSet, userSet *Set) error {
+	if dbSet.StartedDiscovery.After(dbSet.LastDiscovery) {
+		return Error{msg: ErrNoAddDuringDiscovery, id: dbSet.ID()}
+	}
+
+	dbSet.Transformer = userSet.Transformer
+	dbSet.MonitorTime = userSet.MonitorTime
+	dbSet.DeleteLocal = userSet.DeleteLocal
+	dbSet.Description = userSet.Description
+	dbSet.Error = userSet.Error
+	dbSet.Warning = userSet.Warning
+
+	return nil
 }
 
 // encodeToBytes encodes the given thing as a byte slice, suitable for storing
@@ -586,12 +600,6 @@ func (d *DB) SetEntryStatus(r *put.Request) (*Entry, error) {
 			return nil
 		}
 
-		if entry.Type == Symlink {
-			got.Symlinks--
-		} else if entry.Type == Hardlink {
-			got.Hardlinks--
-		}
-
 		d.updateSetBasedOnEntry(got, entry)
 
 		return b.Put(bid, d.encodeToBytes(got))
@@ -775,19 +783,8 @@ func (d *DB) updateSetBasedOnEntry(set *Set, entry *Entry) {
 		set.Status = Uploading
 	}
 
-	if entry.newSize {
-		set.SizeFiles += entry.Size
-	}
+	set.adjustBasedOnEntry(entry)
 
-	if entry.unFailed {
-		set.Failed--
-
-		if set.Failed <= 0 {
-			set.Status = Uploading
-		}
-	}
-
-	entryToSetCounts(entry, set)
 	d.fixSetCounts(entry, set)
 
 	if set.Uploaded+set.Failed+set.Missing == set.NumFiles {
@@ -795,39 +792,6 @@ func (d *DB) updateSetBasedOnEntry(set *Set, entry *Entry) {
 		set.LastCompleted = time.Now()
 		set.LastCompletedCount = set.Uploaded + set.Failed
 		set.LastCompletedSize = set.SizeFiles
-	}
-}
-
-// entryToSetCounts increases set Uploaded, Failed or Missing based on
-// set.Status.
-func entryToSetCounts(entry *Entry, set *Set) {
-	entryStatusToSetCounts(entry, set)
-	entryTypeToSetCounts(entry, set)
-}
-
-func entryStatusToSetCounts(entry *Entry, given *Set) {
-	switch entry.Status { //nolint:exhaustive
-	case Uploaded:
-		given.Uploaded++
-	case Failed:
-		if entry.newFail {
-			given.Failed++
-		}
-
-		if entry.Attempts >= AttemptsToBeConsideredFailing {
-			given.Status = Failing
-		}
-	case Missing:
-		given.Missing++
-	}
-}
-
-func entryTypeToSetCounts(entry *Entry, set *Set) {
-	switch entry.Type { //nolint:exhaustive
-	case Symlink:
-		set.Symlinks++
-	case Hardlink:
-		set.Hardlinks++
 	}
 }
 
@@ -859,7 +823,7 @@ func (d *DB) fixSetCounts(entry *Entry, set *Set) {
 			e.newFail = true
 		}
 
-		entryToSetCounts(e, set)
+		set.entryToSetCounts(e)
 	}
 }
 
