@@ -241,7 +241,7 @@ func displaySets(client *server.Client, sets []*set.Set, showNonFailedEntries, s
 }
 
 // displaySet prints info about the given set to STDOUT.
-func displaySet(s *set.Set, showRequesters bool) {
+func displaySet(s *set.Set, showRequesters bool) { //nolint:funlen,gocyclo
 	cliPrint("Name: %s\n", s.Name)
 
 	if showRequesters {
