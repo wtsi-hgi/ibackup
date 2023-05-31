@@ -472,6 +472,33 @@ your transformer didn't work: not a valid humgen lustre path [`+localDir+`/file.
   `+localDir)
 		})
 
+		Convey("Given an added set defined with a local path containing the localPrefix "+
+			"in the middle and a prefix transformer, it correctly prefixes the remotePrefix", func() {
+			dir := t.TempDir()
+			localDir := filepath.Join(dir, "a", "b", "c")
+
+			err := os.MkdirAll(localDir, userPerms)
+			So(err, ShouldBeNil)
+
+			transformer := "prefix=/a/b:/remote"
+			s.addSetForTesting(t, "oddPrefix", transformer, localDir)
+
+			s.confirmOutput(t, []string{"status", "-n", "oddPrefix"}, 0,
+				`Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
+Global put client status (/10): 0 creating collections; 0 currently uploading
+
+Name: oddPrefix
+Transformer: `+transformer+`
+Monitored: false; Archive: false
+Status: complete
+Discovery:
+Num files: 0; Symlinks: 0; Hardlinks: 0; Size files: 0 B
+Uploaded: 0; Failed: 0; Missing: 0
+Completed in: 0s
+Directories:
+  `+localDir+" => /remote"+localDir)
+		})
+
 		Convey("Given an added set with an inaccessible subfolder, print the error to the user", func() {
 			transformer, localDir, remote := prepareForSetWithEmptyDir(t)
 			badPermDir := filepath.Join(localDir, "bad-perms-dir")

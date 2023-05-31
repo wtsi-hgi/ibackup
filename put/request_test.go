@@ -97,6 +97,11 @@ func TestRequest(t *testing.T) {
 		So(err, ShouldBeNil)
 		So(r.Local, ShouldEqual, "project2/file.zip")
 		So(r.Remote, ShouldEqual, "/zone/project2/file.zip")
+
+		r, err = NewRequestWithTransformedLocal("project2/mnt/diska/file.zip", transform)
+		So(err, ShouldBeNil)
+		So(r.Local, ShouldEqual, "project2/mnt/diska/file.zip")
+		So(r.Remote, ShouldEqual, "/zone/project2/mnt/diska/file.zip")
 	})
 
 	Convey("You can make new requests using the humgen transform", t, func() {
