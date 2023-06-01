@@ -78,7 +78,7 @@ func TestClient(t *testing.T) {
 	})
 }
 
-func TestServer(t *testing.T) { //nolint:cyclop
+func TestServer(t *testing.T) {
 	u, err := user.Current()
 	if err != nil {
 		t.Fatalf("could not get current user: %s", err)

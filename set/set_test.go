@@ -345,8 +345,8 @@ func TestSetDB(t *testing.T) {
 						err = <-errCh
 						So(err, ShouldBeNil)
 
-						bsets, err := db.GetByRequester("jim")
-						So(err, ShouldBeNil)
+						bsets, errg := db.GetByRequester("jim")
+						So(errg, ShouldBeNil)
 						So(bsets[0].LastDiscovery, ShouldHappenAfter, sets[0].LastDiscovery)
 
 						fEntries, err := db.GetFileEntries(sets[0].ID())
