@@ -37,7 +37,7 @@ import (
 	"github.com/wtsi-hgi/ibackup/internal"
 )
 
-func TestPutMock(t *testing.T) { //nolint:cyclop
+func TestPutMock(t *testing.T) {
 	Convey("Given Requests and a mock Handler, you can make a new Putter", t, func() {
 		requests, expectedCollections := makeMockRequests(t)
 
