@@ -1037,19 +1037,6 @@ func TestReAdd(t *testing.T) {
 	})
 }
 
-func getLogString(file string) string {
-	logFile, err := os.Open(file)
-	So(err, ShouldBeNil)
-
-	logData, err := io.ReadAll(logFile)
-	So(err, ShouldBeNil)
-
-	err = logFile.Close()
-	So(err, ShouldBeNil)
-
-	return string(logData)
-}
-
 func getFileFromIRODS(remotePath, localPath string) {
 	cmd := exec.Command("iget", "-K", remotePath, localPath)
 
