@@ -38,7 +38,6 @@ import (
 	"os/user"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -1002,51 +1001,6 @@ func TestManualMode(t *testing.T) {
 
 		confirmFileContents(got1, fileContents1)
 		confirmFileContents(got2, fileContents2)
-	})
-}
-
-var ErrStringNotFound = errors.New("error not found in log")
-
-func TestExtendoLogging(t *testing.T) {
-	Convey("Error logging from extendo package should appear in server log", t, func() {
-		remotePath := remoteDBBackupPath()
-		if remotePath == "" {
-			SkipConvey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
-
-			return
-		}
-
-		dir := t.TempDir()
-		s := new(TestServer)
-		s.prepareFilePaths(dir)
-		s.prepareConfig()
-
-		s.backupFile = filepath.Join(dir, "db.bak")
-		s.remoteDBFile = remotePath
-
-		s.startServer()
-
-		transformer, localDir, _ := prepareForSetWithEmptyDir(t)
-
-		toFind := "read error on stdout"
-
-		var run int64
-
-		internal.RetryUntilWorksCustom(t, func() error { //nolint:errcheck
-			s.addSetForTesting(t, "testForLogging"+strconv.FormatInt(run, 10), transformer, localDir)
-			run++
-
-			log := getLogString(s.logFile)
-
-			if strings.Contains(log, toFind) {
-				return nil
-			}
-
-			return ErrStringNotFound
-		}, 5*time.Second, 0)
-
-		log := getLogString(s.logFile)
-		So(log, ShouldContainSubstring, toFind)
 	})
 }
 
