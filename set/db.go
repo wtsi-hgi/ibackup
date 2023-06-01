@@ -164,6 +164,7 @@ func initDB(path string) (*bolt.DB, error) {
 // disk correctly.
 func (d *DB) Close() error {
 	d.filePool.StopWait()
+
 	return d.db.Close()
 }
 

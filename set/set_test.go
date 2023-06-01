@@ -247,26 +247,26 @@ func TestSetDB(t *testing.T) {
 				})
 
 				Convey("Then get all the Sets and their entries", func() {
-					sets, err := db.GetAll()
-					So(err, ShouldBeNil)
+					sets, errg := db.GetAll()
+					So(errg, ShouldBeNil)
 					So(sets, ShouldNotBeNil)
 					So(len(sets), ShouldEqual, 2)
 					So(sets, ShouldResemble, []*Set{set2, set})
 
-					definedEntry, err := db.GetDefinedFileEntry(sets[0].ID())
-					So(err, ShouldBeNil)
+					definedEntry, errg := db.GetDefinedFileEntry(sets[0].ID())
+					So(errg, ShouldBeNil)
 					So(definedEntry, ShouldNotBeNil)
 					So(definedEntry.Path, ShouldEqual, "/a/b.txt")
 
-					fEntries, err := db.GetFileEntries(sets[1].ID())
-					So(err, ShouldBeNil)
+					fEntries, errg := db.GetFileEntries(sets[1].ID())
+					So(errg, ShouldBeNil)
 					So(len(fEntries), ShouldEqual, 3)
 					So(fEntries[0], ShouldResemble, &Entry{Path: "/a/b.txt"})
 					So(fEntries[1], ShouldResemble, &Entry{Path: "/c/d.txt"})
 					So(fEntries[2], ShouldResemble, &Entry{Path: "/e/f.txt"})
 
-					dEntries, err := db.GetDirEntries(sets[1].ID())
-					So(err, ShouldBeNil)
+					dEntries, errg := db.GetDirEntries(sets[1].ID())
+					So(errg, ShouldBeNil)
 					So(len(dEntries), ShouldEqual, 2)
 					So(dEntries[0], ShouldResemble, &Entry{Path: "/g/h"})
 					So(dEntries[1], ShouldResemble, &Entry{Path: "/g/i"})
@@ -283,8 +283,8 @@ func TestSetDB(t *testing.T) {
 				})
 
 				Convey("Then get all the Sets for a particular Requester", func() {
-					sets, err := db.GetByRequester("jim")
-					So(err, ShouldBeNil)
+					sets, errg := db.GetByRequester("jim")
+					So(errg, ShouldBeNil)
 					So(sets, ShouldNotBeNil)
 					So(len(sets), ShouldEqual, 1)
 					So(sets, ShouldResemble, []*Set{set})
@@ -755,8 +755,8 @@ func TestSetDB(t *testing.T) {
 				})
 
 				Convey("Then get a single Set belonging to a particular Requester", func() {
-					got, err := db.GetByNameAndRequester(set.Name, set.Requester)
-					So(err, ShouldBeNil)
+					got, errg := db.GetByNameAndRequester(set.Name, set.Requester)
+					So(errg, ShouldBeNil)
 					So(got, ShouldNotBeNil)
 					So(got, ShouldResemble, set)
 

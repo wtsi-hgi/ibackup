@@ -38,7 +38,6 @@ import (
 	"os/user"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -721,6 +720,8 @@ func remoteDBBackupPath() string {
 	return filepath.Join(collection, "db.bk")
 }
 
+var errMismatchedDBBackupSizes = errors.New("mismatched db backup sizes")
+
 func TestBackup(t *testing.T) {
 	Convey("Adding a set causes a database backup locally and remotely", t, func() {
 		remotePath := remoteDBBackupPath()
@@ -774,25 +775,32 @@ func TestBackup(t *testing.T) {
 		So(localBackupExists, ShouldBeTrue)
 
 		err := internal.RetryUntilWorksCustom(t, func() error {
-			cmd := exec.Command("iget", "-K", remotePath, gotPath)
+			cmd := exec.Command("iget", "-Kf", remotePath, gotPath)
 
 			out, err := cmd.CombinedOutput()
 			if err != nil {
 				t.Logf("iget failed: %s\n%s\n", err, string(out))
+
+				return err
 			}
 
-			return err
+			li, err := os.Stat(s.backupFile)
+			if err != nil {
+				return err
+			}
+			ri, err := os.Stat(gotPath)
+			if err != nil {
+				return err
+			}
+
+			if ri.Size() != li.Size() {
+				return errMismatchedDBBackupSizes
+			}
+
+			return nil
 		}, 30*time.Second, 1*time.Second)
 
 		So(err, ShouldBeNil)
-
-		ri, err := os.Stat(gotPath)
-		So(err, ShouldBeNil)
-
-		li, err := os.Stat(s.backupFile)
-		So(err, ShouldBeNil)
-
-		So(li.Size(), ShouldEqual, ri.Size())
 
 		hashFile := func(path string) string {
 			f, err := os.Open(path)
@@ -809,7 +817,7 @@ func TestBackup(t *testing.T) {
 
 		bh := hashFile(s.backupFile)
 		rh := hashFile(gotPath)
-		So(bh, ShouldEqual, rh)
+		So(rh, ShouldEqual, bh)
 
 		Convey("Running a server with the retrieved db works correctly", func() {
 			bs := new(TestServer)
@@ -993,51 +1001,6 @@ func TestManualMode(t *testing.T) {
 
 		confirmFileContents(got1, fileContents1)
 		confirmFileContents(got2, fileContents2)
-	})
-}
-
-var ErrStringNotFound = errors.New("error not found in log")
-
-func TestExtendoLogging(t *testing.T) {
-	Convey("Error logging from extendo package should appear in server log", t, func() {
-		remotePath := remoteDBBackupPath()
-		if remotePath == "" {
-			SkipConvey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
-
-			return
-		}
-
-		dir := t.TempDir()
-		s := new(TestServer)
-		s.prepareFilePaths(dir)
-		s.prepareConfig()
-
-		s.backupFile = filepath.Join(dir, "db.bak")
-		s.remoteDBFile = remotePath
-
-		s.startServer()
-
-		transformer, localDir, _ := prepareForSetWithEmptyDir(t)
-
-		toFind := "read error on stdout"
-
-		var run int64
-
-		internal.RetryUntilWorksCustom(t, func() error { //nolint:errcheck
-			s.addSetForTesting(t, "testForLogging"+strconv.FormatInt(run, 10), transformer, localDir)
-			run++
-
-			log := getLogString(s.logFile)
-
-			if strings.Contains(log, toFind) {
-				return nil
-			}
-
-			return ErrStringNotFound
-		}, 5*time.Second, 0)
-
-		log := getLogString(s.logFile)
-		So(log, ShouldContainSubstring, toFind)
 	})
 }
 

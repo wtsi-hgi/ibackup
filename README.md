@@ -15,8 +15,12 @@ The different ibackup subcommands have documentation; just use the -h  option to
 read it and find out about other options.
 
 ## Status
-In active development, but currently being used in production by admins. Not
-quite "nice" enough for end-users to use yet.
+Since v1 iBackup is production-grade and has been used to correctly (with
+independent verification) back up over 25 million files to iRODS.
+
+There are future development plans for extra features and interface
+improvements, most notably deletion handling (locally == archive, and remotely
+== sync) and a backup restoration tool.
 
 ## Installation
 Given an installation of go in your PATH, clone the repo, cd to it, and:
@@ -32,7 +36,7 @@ Then copy the resulting executable to somewhere in your PATH.
 
 ## Requirements
 https://github.com/wtsi-npg/baton must also be installed and in your PATH.
-This has been tested with v4.0.1.
+iBackup has been tested with v4.0.1.
 
 To use the server mode, you will also need:
 https://github.com/VertebrateResequencing/wr
