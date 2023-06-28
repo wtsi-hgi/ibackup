@@ -196,7 +196,7 @@ func TestPutMock(t *testing.T) {
 				err = os.Symlink(requests[2].Local, requests[0].Local)
 				So(err, ShouldBeNil)
 
-				requests[0].Symlink = requests[1].Local
+				requests[0].Symlink = requests[2].Local
 
 				err = os.Remove(requests[2].Local)
 				So(err, ShouldBeNil)
@@ -294,6 +294,29 @@ func TestPutMock(t *testing.T) {
 						So(info.ModTime(), ShouldEqual, symlinkMtime)
 					})
 				})
+			})
+
+			Convey("Put() uploads broken symlinks without issue", func() {
+				err = os.Remove(requests[0].Local)
+				So(err, ShouldBeNil)
+
+				err = os.Symlink(requests[2].Local, requests[0].Local)
+				So(err, ShouldBeNil)
+
+				requests[0].Symlink = requests[2].Local
+
+				err = os.Remove(requests[2].Local)
+				So(err, ShouldBeNil)
+
+				uploading, skipped, statusCounts := uploadRequests(t, lh, requests[:1])
+
+				So(uploading, ShouldEqual, 1)
+				So(statusCounts[RequestStatusUploaded], ShouldEqual, 1)
+				So(skipped, ShouldEqual, 0)
+
+				info, errs := os.Stat(requests[0].Remote)
+				So(errs, ShouldBeNil)
+				So(info.Size(), ShouldEqual, 0)
 			})
 
 			Convey("Underlying put and metadata operation failures result in failed requests", func() {

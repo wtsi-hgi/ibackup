@@ -588,6 +588,10 @@ func (p *Putter) processPutCh(putCh, uploadStartCh, uploadReturnCh, metaCh chan 
 // testRead tests to see if we can open and read the request's local file,
 // cancelling the read after a timeout if not and returning an error.
 func (p *Putter) testRead(request *Request) error {
+	if request.Symlink != "" {
+		return nil
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
