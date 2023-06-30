@@ -84,6 +84,7 @@ func (e EntryStatus) String() string {
 		"uploaded",
 		"failed",
 		"missing",
+		"abnormal",
 	}[e]
 }
 
