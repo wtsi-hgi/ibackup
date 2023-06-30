@@ -541,7 +541,7 @@ func (d *DB) updateSetAfterDiscovery(setID string) (*Set, error) {
 		set.LastDiscovery = time.Now()
 		set.NumFiles = d.countAllFilesInSet(tx, setID)
 
-		if set.NumFiles == 0 {
+		if set.NumFiles == 0 || (set.Missing+set.Abnormal == set.NumFiles) {
 			set.Status = Complete
 			set.LastCompleted = time.Now()
 		} else {

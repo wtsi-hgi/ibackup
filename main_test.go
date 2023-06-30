@@ -39,6 +39,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -431,7 +432,7 @@ Directories:
 				"--name", "testAddFiles", "--transformer", "prefix="+dir+":/remote")
 			So(exitCode, ShouldEqual, 0)
 
-			s.waitForStatus("testAddFiles", "Status: pending upload", 1*time.Second)
+			s.waitForStatus("testAddFiles", "Status: complete", 1*time.Second)
 
 			Convey("Status tells you an example of where input files would get uploaded to", func() {
 				s.confirmOutput(t, []string{"status", "--name", "testAddFiles"}, 0,
@@ -441,10 +442,11 @@ Global put client status (/10): 0 creating collections; 0 currently uploading
 Name: testAddFiles
 Transformer: prefix=`+dir+`:/remote
 Monitored: false; Archive: false
-Status: pending upload
+Status: complete
 Discovery:
-Num files: 2; Symlinks: 0; Hardlinks: 0; Size files: 0 B (and counting)
+Num files: 2; Symlinks: 0; Hardlinks: 0; Size files: 0 B
 Uploaded: 0; Failed: 0; Missing: 2; Abnormal: 0
+Completed in: 0s
 Example File: `+dir+`/path/to/other/file => /remote/path/to/other/file`)
 			})
 		})
@@ -640,6 +642,58 @@ Uploaded: 0; Failed: 0; Missing: 0; Abnormal: 0
 Completed in: 0s
 Directories:
   `+local+" => "+remote)
+		})
+
+		Convey("Given an abnormal file", func() {
+			dir := t.TempDir()
+			fifoPath := filepath.Join(dir, "fifo")
+			err := syscall.Mkfifo(fifoPath, userPerms)
+			So(err, ShouldBeNil)
+
+			Convey("When you add a set with the file, status tells you it's abnormal", func() {
+				exitCode, _ := s.runBinary(t, "add", "--path", fifoPath,
+					"--name", "testAddFifo", "--transformer", "prefix="+dir+":/remote")
+				So(exitCode, ShouldEqual, 0)
+
+				s.waitForStatus("testAddFifo", "Status: complete", 1*time.Second)
+
+				s.confirmOutput(t, []string{"status", "--name", "testAddFifo"}, 0,
+					`Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
+Global put client status (/10): 0 creating collections; 0 currently uploading
+
+Name: testAddFifo
+Transformer: prefix=`+dir+`:/remote
+Monitored: false; Archive: false
+Status: complete
+Discovery:
+Num files: 1; Symlinks: 0; Hardlinks: 0; Size files: 0 B
+Uploaded: 0; Failed: 0; Missing: 0; Abnormal: 1
+Completed in: 0s
+Example File: `+dir+`/fifo => /remote/fifo`)
+			})
+
+			Convey("When you add a set with the file in a dir, status tells you it's empty", func() {
+				exitCode, _ := s.runBinary(t, "add", "--path", dir,
+					"--name", "testAddFifoDir", "--transformer", "prefix="+dir+":/remote")
+				So(exitCode, ShouldEqual, 0)
+
+				s.waitForStatus("testAddFifoDir", "Status: complete", 1*time.Second)
+
+				s.confirmOutput(t, []string{"status", "--name", "testAddFifoDir"}, 0,
+					`Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
+Global put client status (/10): 0 creating collections; 0 currently uploading
+
+Name: testAddFifoDir
+Transformer: prefix=`+dir+`:/remote
+Monitored: false; Archive: false
+Status: complete
+Discovery:
+Num files: 0; Symlinks: 0; Hardlinks: 0; Size files: 0 B
+Uploaded: 0; Failed: 0; Missing: 0; Abnormal: 0
+Completed in: 0s
+Directories:
+  `+dir+" => /remote")
+			})
 		})
 	})
 }
