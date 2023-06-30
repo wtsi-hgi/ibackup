@@ -53,9 +53,13 @@ const (
 	Failed
 
 	// Missing is an Entry status meaning the local file is missing so can't be
-	// uploaded. Symlinks are considered to be "missing" since they can't be
 	// uploaded.
 	Missing
+
+	// AbnormalEntry is an Entry status meaning the local files is neither
+	// regular nor a symlink (ie. it's a fifo or socket etc.), so shouldn't be
+	// uploaded.
+	AbnormalEntry
 )
 
 type EntryType int
@@ -65,6 +69,7 @@ const (
 	Hardlink
 	Symlink
 	Directory
+	Abnormal // fifos and sockets etc. that we shouldn't upload
 
 	// Unknown is an Entry type meaning the local file is either missing or
 	// there was an error trying to get its type.
@@ -79,6 +84,7 @@ func (e EntryStatus) String() string {
 		"uploaded",
 		"failed",
 		"missing",
+		"abnormal",
 	}[e]
 }
 
@@ -115,8 +121,12 @@ func (e *Entry) CorrectFromJSON() {
 }
 
 // ShouldUpload returns true if this Entry is pending or the last attempt was
-// before the given time.
+// before the given time. Always returns false if the Type is Abnormal.
 func (e *Entry) ShouldUpload(reuploadAfter time.Time) bool {
+	if e.Type == Abnormal {
+		return false
+	}
+
 	if e.Status == Pending {
 		return true
 	}
@@ -254,6 +264,10 @@ func (e *Entry) setTypeAndDetermineDest(eType EntryType) error {
 		e.Dest = ""
 	}
 
+	if eType == Abnormal {
+		e.Status = AbnormalEntry
+	}
+
 	return err
 }
 
@@ -323,6 +337,8 @@ func (c *entryCreator) direntToEntryType(de *walk.Dirent) (EntryType, string, er
 		eType = Unknown
 	case de.IsSymlink():
 		eType = Symlink
+	case !(de.IsRegular() || de.IsDir()):
+		eType = Abnormal
 	default:
 		hardLink, err := c.db.handleInode(c.tx, de, c.transformerID)
 		if err != nil {

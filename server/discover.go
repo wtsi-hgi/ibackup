@@ -191,6 +191,10 @@ func (s *Server) doSetDirWalks(entries []*set.Entry, given *set.Set, entriesCh c
 
 		s.dirPool.Submit(func() {
 			err := s.checkAndWalkDir(dir, func(entry *walk.Dirent) error {
+				if !(entry.IsRegular() || entry.IsSymlink()) {
+					return nil
+				}
+
 				entriesCh <- entry
 
 				return nil
@@ -278,8 +282,7 @@ func (s *Server) enqueueSetFiles(given *set.Set, transformer put.PathTransformer
 }
 
 // uploadableEntries returns the subset of given entries that are suitable for
-// uploading: pending and those that were dealth with before the the last
-// discovery.
+// uploading: pending and those that were dealt with before the last discovery.
 func uploadableEntries(entries []*set.Entry, given *set.Set) []*set.Entry {
 	var filtered []*set.Entry
 

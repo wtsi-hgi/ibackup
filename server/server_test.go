@@ -1908,6 +1908,96 @@ func TestServer(t *testing.T) {
 					putSetWithOneFile(t, handler, client, exampleSet, minMBperSecondUploadSpeed, logger)
 				})
 
+				Convey("and add a set with non-regular files and have the system skip them as abnormal", func() {
+					err = client.AddOrUpdateSet(exampleSet)
+					So(err, ShouldBeNil)
+
+					fifoPath := filepath.Join(localDir, "fifo")
+					err = syscall.Mkfifo(fifoPath, userPerms)
+					So(err, ShouldBeNil)
+
+					regPath := filepath.Join(localDir, "regular")
+					internal.CreateTestFileOfLength(t, regPath, 1)
+
+					err = client.SetFiles(exampleSet.ID(), []string{fifoPath, regPath})
+					So(err, ShouldBeNil)
+
+					entries, errg := s.db.GetPureFileEntries(exampleSet.ID())
+					So(errg, ShouldBeNil)
+					So(len(entries), ShouldEqual, 2)
+					So(entries[0].Path, ShouldEqual, fifoPath)
+					So(entries[1].Path, ShouldEqual, regPath)
+
+					err = client.TriggerDiscovery(exampleSet.ID())
+					So(err, ShouldBeNil)
+
+					ok := <-racCalled
+					So(ok, ShouldBeTrue)
+
+					gotSet, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+					So(errg, ShouldBeNil)
+					So(gotSet.Status, ShouldEqual, set.PendingUpload)
+					So(gotSet.NumFiles, ShouldEqual, 2)
+					So(gotSet.Uploaded, ShouldEqual, 0)
+
+					requests, errg := client.GetSomeUploadRequests()
+					So(errg, ShouldBeNil)
+					So(len(requests), ShouldEqual, 1)
+
+					p, d := makePutter(t, handler, requests, client)
+					defer d()
+
+					uploadStarts, uploadResults, skippedResults := p.Put()
+
+					err = client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults,
+						minMBperSecondUploadSpeed, minTimeForUpload, 1*time.Hour, logger)
+					So(err, ShouldBeNil)
+
+					gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+					So(err, ShouldBeNil)
+					So(gotSet.Status, ShouldEqual, set.Complete)
+					So(gotSet.NumFiles, ShouldEqual, 2)
+					So(gotSet.Uploaded, ShouldEqual, 1)
+					So(gotSet.Failed, ShouldEqual, 0)
+					So(gotSet.Missing, ShouldEqual, 0)
+					So(gotSet.Abnormal, ShouldEqual, 1)
+				})
+
+				Convey("and add a set with non-regular files in a directory and have the system ignore them", func() {
+					err = client.AddOrUpdateSet(exampleSet)
+					So(err, ShouldBeNil)
+
+					setDir := filepath.Join(localDir, "setfiles")
+					err = os.Mkdir(setDir, userPerms)
+					So(err, ShouldBeNil)
+
+					fifoPath := filepath.Join(setDir, "fifo")
+					err = syscall.Mkfifo(fifoPath, userPerms)
+					So(err, ShouldBeNil)
+
+					regPath := filepath.Join(setDir, "regular")
+					internal.CreateTestFileOfLength(t, regPath, 1)
+
+					err = client.SetDirs(exampleSet.ID(), []string{setDir})
+					So(err, ShouldBeNil)
+
+					err = client.TriggerDiscovery(exampleSet.ID())
+					So(err, ShouldBeNil)
+
+					ok := <-racCalled
+					So(ok, ShouldBeTrue)
+
+					gotSet, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+					So(errg, ShouldBeNil)
+					So(gotSet.Status, ShouldEqual, set.PendingUpload)
+					So(gotSet.NumFiles, ShouldEqual, 1)
+
+					entries, errg := s.db.GetFileEntries(exampleSet.ID())
+					So(errg, ShouldBeNil)
+					So(len(entries), ShouldEqual, 1)
+					So(entries[0].Path, ShouldEqual, regPath)
+				})
+
 				Convey("and add a set with non-UTF8 chars in a discovered directory and have the system process it", func() {
 					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldBeNil)

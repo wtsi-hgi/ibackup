@@ -143,6 +143,11 @@ type Set struct {
 	// read-only value.
 	Missing uint64
 
+	// Abnormal provides the total number of set files in this set that were
+	// neither regular files, nor Symlinks (ie. they were fifo or socket files
+	// etc).
+	Abnormal uint64
+
 	// Symlinks provides the total number of set and discovered files in this
 	// set that are symlinks. This is a read-only value.
 	Symlinks uint64
@@ -280,6 +285,10 @@ func (s *Set) countsValid() bool {
 		return false
 	}
 
+	if s.Abnormal > s.NumFiles {
+		return false
+	}
+
 	if s.Symlinks > s.NumFiles {
 		return false
 	}
@@ -288,7 +297,7 @@ func (s *Set) countsValid() bool {
 		return false
 	}
 
-	return s.Uploaded+s.Failed+s.Missing <= s.NumFiles
+	return s.Uploaded+s.Failed+s.Missing+s.Abnormal <= s.NumFiles
 }
 
 func (s *Set) adjustBasedOnEntry(entry *Entry) {
@@ -334,6 +343,8 @@ func (s *Set) entryStatusToSetCounts(entry *Entry) {
 		}
 	case Missing:
 		s.Missing++
+	case AbnormalEntry:
+		s.Abnormal++
 	}
 }
 
