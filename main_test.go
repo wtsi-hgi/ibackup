@@ -39,14 +39,12 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
 	"github.com/phayes/freeport"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/wtsi-hgi/ibackup/internal"
-	"github.com/wtsi-hgi/ibackup/put"
 	btime "github.com/wtsi-ssg/wr/backoff/time"
 	"github.com/wtsi-ssg/wr/retry"
 )
@@ -413,7 +411,7 @@ Monitored: false; Archive: false
 Status: complete
 Discovery:
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size files: 0 B
-Uploaded: 0; Failed: 0; Missing: 0
+Uploaded: 0; Failed: 0; Missing: 0; Abnormal: 0
 Completed in: 0s
 Directories:
   `+localDir+" => "+remoteDir)
@@ -446,7 +444,7 @@ Monitored: false; Archive: false
 Status: pending upload
 Discovery:
 Num files: 2; Symlinks: 0; Hardlinks: 0; Size files: 0 B (and counting)
-Uploaded: 0; Failed: 0; Missing: 2
+Uploaded: 0; Failed: 0; Missing: 2; Abnormal: 0
 Example File: `+dir+`/path/to/other/file => /remote/path/to/other/file`)
 			})
 		})
@@ -465,7 +463,7 @@ Monitored: false; Archive: false
 Status: complete
 Discovery:
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size files: 0 B
-Uploaded: 0; Failed: 0; Missing: 0
+Uploaded: 0; Failed: 0; Missing: 0; Abnormal: 0
 Completed in: 0s
 Directories:
 your transformer didn't work: not a valid humgen lustre path [`+localDir+`/file.txt]
@@ -493,7 +491,7 @@ Monitored: false; Archive: false
 Status: complete
 Discovery:
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size files: 0 B
-Uploaded: 0; Failed: 0; Missing: 0
+Uploaded: 0; Failed: 0; Missing: 0; Abnormal: 0
 Completed in: 0s
 Directories:
   `+localDir+" => /remote"+localDir)
@@ -526,7 +524,7 @@ Status: complete
 Warning: open `+badPermDir+`: permission denied
 Discovery:
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size files: 0 B
-Uploaded: 0; Failed: 0; Missing: 0
+Uploaded: 0; Failed: 0; Missing: 0; Abnormal: 0
 Completed in: 0s
 Directories:
   `+localDir+" => "+remote)
@@ -554,7 +552,7 @@ Monitored: false; Archive: false
 Status: pending upload
 Discovery:
 Num files: 1; Symlinks: 0; Hardlinks: 0; Size files: 0 B (and counting)
-Uploaded: 0; Failed: 0; Missing: 0
+Uploaded: 0; Failed: 0; Missing: 0; Abnormal: 0
 Example File: `+humgenFile+" => /humgen/teams/hgi/scratch125/mercury/ibackup/file_for_testsuite.do_not_delete")
 		})
 
@@ -591,7 +589,7 @@ Monitored: false; Archive: false
 Status: pending upload
 Discovery:
 Num files: 4; Symlinks: 2; Hardlinks: 1; Size files: 0 B (and counting)
-Uploaded: 0; Failed: 0; Missing: 0
+Uploaded: 0; Failed: 0; Missing: 0; Abnormal: 0
 Directories:
   `+dir+" => /remote")
 		})
@@ -638,7 +636,7 @@ Monitored: false; Archive: false
 Status: complete
 Discovery:
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size files: 0 B
-Uploaded: 0; Failed: 0; Missing: 0
+Uploaded: 0; Failed: 0; Missing: 0; Abnormal: 0
 Completed in: 0s
 Directories:
   `+local+" => "+remote)
@@ -666,58 +664,6 @@ func prepareForSetWithEmptyDir(t *testing.T) (string, string, string) {
 	transformer := "prefix=" + dir + ":" + remoteDir
 
 	return transformer, sourceDir, filepath.Join(remoteDir, "source")
-}
-
-func TestStuck(t *testing.T) {
-	convey := Convey
-	conveyText := "In server mode, put exits early if there are long-time stuck uploads"
-	// This test takes at least 1 minute to run, so is disabled by default.
-	// This test can be enables by setting the ENABLE_STUCK_TEST env var.
-	if os.Getenv("ENABLE_STUCK_TEST") == "" {
-		convey = SkipConvey
-		conveyText += " (set ENABLE_STUCK_TEST to enable)"
-	}
-
-	convey(conveyText, t, func() {
-		s := NewTestServer(t)
-		So(s, ShouldNotBeNil)
-
-		remoteDBPath := remoteDBBackupPath()
-		if remoteDBPath == "" {
-			SkipConvey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
-
-			return
-		}
-
-		remoteDir := filepath.Dir(remoteDBPath)
-		_, localDir, _ := prepareForSetWithEmptyDir(t)
-		transformer := fmt.Sprintf("prefix=%s:%s", localDir, remoteDir)
-		stuckFilePath := filepath.Join(localDir, "stuck.fifo")
-
-		err := syscall.Mkfifo(stuckFilePath, userPerms)
-		So(err, ShouldBeNil)
-
-		go func() {
-			f, _ := os.OpenFile(stuckFilePath, os.O_WRONLY, userPerms) //nolint:errcheck
-
-			f.Write([]byte{0}) //nolint:errcheck
-		}()
-
-		s.addSetForTesting(t, "stuckPutTest", transformer, stuckFilePath)
-
-		exitCode, out := s.runBinary(t, "put", "--server", os.Getenv("IBACKUP_SERVER_URL"), "--stuck-timeout", "10s")
-		So(exitCode, ShouldEqual, 0)
-		So(out, ShouldContainSubstring, put.ErrStuckTimeout)
-	})
-}
-
-func remoteDBBackupPath() string {
-	collection := os.Getenv("IBACKUP_TEST_COLLECTION")
-	if collection == "" {
-		return ""
-	}
-
-	return filepath.Join(collection, "db.bk")
 }
 
 var errMismatchedDBBackupSizes = errors.New("mismatched db backup sizes")
@@ -837,12 +783,21 @@ Monitored: false; Archive: false
 Status: complete
 Discovery:
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size files: 0 B
-Uploaded: 0; Failed: 0; Missing: 0
+Uploaded: 0; Failed: 0; Missing: 0; Abnormal: 0
 Completed in: 0s
 Directories:
   `+localDir+` => `+remoteDir)
 		})
 	})
+}
+
+func remoteDBBackupPath() string {
+	collection := os.Getenv("IBACKUP_TEST_COLLECTION")
+	if collection == "" {
+		return ""
+	}
+
+	return filepath.Join(collection, "db.bk")
 }
 
 func TestPuts(t *testing.T) {

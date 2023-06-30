@@ -1165,6 +1165,51 @@ func TestSetDB(t *testing.T) {
 				So(err, ShouldBeNil)
 				So(got.Missing, ShouldEqual, 0)
 			})
+
+			Convey("And add a set with an abnormal file to it", func() {
+				setl1 := &Set{
+					Name:        "abnormal",
+					Requester:   "jim",
+					Transformer: "prefix=/local:/remote",
+				}
+
+				err = db.AddOrUpdate(setl1)
+				So(err, ShouldBeNil)
+
+				dir := t.TempDir()
+
+				fifoPath := filepath.Join(dir, "fifo")
+				err = syscall.Mkfifo(fifoPath, userPerms)
+				So(err, ShouldBeNil)
+
+				err = db.SetFileEntries(setl1.ID(), []string{fifoPath})
+				So(err, ShouldBeNil)
+
+				entries, errg := db.GetPureFileEntries(setl1.ID())
+				So(errg, ShouldBeNil)
+				So(len(entries), ShouldEqual, 1)
+				So(entries[0].Status, ShouldEqual, Pending)
+				So(entries[0].Type, ShouldEqual, Regular)
+
+				got, errb := db.Discover(setl1.ID(), nil)
+				So(got, ShouldNotBeNil)
+				So(errb, ShouldBeNil)
+				So(got.Missing, ShouldEqual, 0)
+				So(got.Abnormal, ShouldEqual, 1)
+
+				entries, err = db.GetPureFileEntries(setl1.ID())
+				So(err, ShouldBeNil)
+				So(len(entries), ShouldEqual, 1)
+				So(entries[0].Status, ShouldEqual, AbnormalEntry)
+				So(entries[0].Type, ShouldEqual, Abnormal)
+
+				Convey("then rediscover the set and still know about the abnormal file", func() {
+					got, errb := db.Discover(setl1.ID(), nil)
+					So(got, ShouldNotBeNil)
+					So(errb, ShouldBeNil)
+					So(got.Abnormal, ShouldEqual, 1)
+				})
+			})
 		})
 	})
 }
