@@ -657,7 +657,7 @@ Directories:
 
 				s.waitForStatus("testAddFifo", "Status: complete", 1*time.Second)
 
-				s.confirmOutput(t, []string{"status", "--name", "testAddFifo"}, 0,
+				s.confirmOutput(t, []string{"status", "--name", "testAddFifo", "--details"}, 0,
 					`Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
 Global put client status (/10): 0 creating collections; 0 currently uploading
 
@@ -669,7 +669,10 @@ Discovery:
 Num files: 1; Symlinks: 0; Hardlinks: 0; Size files: 0 B
 Uploaded: 0; Failed: 0; Missing: 0; Abnormal: 1
 Completed in: 0s
-Example File: `+dir+`/fifo => /remote/fifo`)
+Example File: `+dir+`/fifo => /remote/fifo
+
+Path	Status	Size	Attempts	Date	Error
+`+fifoPath+`	abnormal	0 B	0	-	`)
 			})
 
 			Convey("When you add a set with the file in a dir, status tells you it's empty", func() {
