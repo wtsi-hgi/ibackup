@@ -417,6 +417,7 @@ func (d *DB) setDiscoveryStarted(setID string) error {
 		set.Uploaded = 0
 		set.Failed = 0
 		set.Missing = 0
+		set.Abnormal = 0
 		set.Symlinks = 0
 		set.Hardlinks = 0
 		set.Status = PendingDiscovery
@@ -788,7 +789,7 @@ func (d *DB) updateSetBasedOnEntry(set *Set, entry *Entry) {
 
 	d.fixSetCounts(entry, set)
 
-	if set.Uploaded+set.Failed+set.Missing == set.NumFiles {
+	if set.Uploaded+set.Failed+set.Missing+set.Abnormal == set.NumFiles {
 		set.Status = Complete
 		set.LastCompleted = time.Now()
 		set.LastCompletedCount = set.Uploaded + set.Failed
@@ -812,6 +813,7 @@ func (d *DB) fixSetCounts(entry *Entry, set *Set) {
 	set.Uploaded = 0
 	set.Failed = 0
 	set.Missing = 0
+	set.Abnormal = 0
 	set.Symlinks = 0
 	set.Hardlinks = 0
 
