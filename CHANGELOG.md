@@ -5,6 +5,12 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/) and this
 project adheres to [Semantic Versioning](http://semver.org/).
 
 
+## [1.0.2] - 2023-06-30
+### Changed
+- Non-regular, non-symlink files are marked as 'abnormal' and not uploaded if
+  specified in a fofn, and ignored completely if in a directory.
+
+
 ## [1.0.1] - 2023-06-28
 ### Fixed
 - Broken symlinks now get uploaded.
