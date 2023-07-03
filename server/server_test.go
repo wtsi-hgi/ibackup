@@ -2376,6 +2376,49 @@ func TestServer(t *testing.T) {
 					So(gotSet.Uploaded, ShouldEqual, 0)
 					So(gotSet.Hardlinks, ShouldEqual, 1)
 				})
+
+				Convey("and add a set with previously added moved files, which are not treated as hardlinks", func() {
+					transformer := exampleSet.Transformer
+					exampleSet.Transformer = "humgen"
+					err = client.AddOrUpdateSet(exampleSet)
+					So(err, ShouldBeNil)
+
+					dir := filepath.Join(localDir, "1")
+					err = os.Mkdir(dir, userPerms)
+					So(err, ShouldBeNil)
+
+					path1 := filepath.Join(dir, "file1")
+					internal.CreateTestFileOfLength(t, path1, 1)
+
+					err = client.SetDirs(exampleSet.ID(), []string{dir})
+					So(err, ShouldBeNil)
+
+					err = client.TriggerDiscovery(exampleSet.ID())
+					So(err, ShouldBeNil)
+
+					<-time.After(150 * time.Millisecond)
+
+					exampleSet.Transformer = transformer
+					path2 := filepath.Join(dir, "file2")
+					err = os.Rename(path1, path2)
+					So(err, ShouldBeNil)
+
+					err = client.AddOrUpdateSet(exampleSet)
+					So(err, ShouldBeNil)
+
+					err = client.TriggerDiscovery(exampleSet.ID())
+					So(err, ShouldBeNil)
+
+					ok := <-racCalled
+					So(ok, ShouldBeTrue)
+
+					gotSet, err := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+					So(err, ShouldBeNil)
+					So(gotSet.Status, ShouldEqual, set.PendingUpload)
+					So(gotSet.NumFiles, ShouldEqual, 1)
+					So(gotSet.Uploaded, ShouldEqual, 0)
+					So(gotSet.Hardlinks, ShouldEqual, 0)
+				})
 			})
 		})
 	})

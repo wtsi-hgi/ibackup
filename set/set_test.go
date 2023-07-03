@@ -981,10 +981,30 @@ func TestSetDB(t *testing.T) {
 			})
 
 			Convey("And add a set with directories containing hardlinks to it", func() {
+				dir := t.TempDir()
+				local := filepath.Join(dir, "file")
+				link := filepath.Join(dir, "link")
+				unlinked := filepath.Join(dir, "unlinked")
+
+				internal.CreateTestFile(t, local, "a")
+				err = os.Link(local, link)
+				So(err, ShouldBeNil)
+
+				info, errs := os.Stat(local)
+				So(errs, ShouldBeNil)
+				stat, ok := info.Sys().(*syscall.Stat_t)
+				So(ok, ShouldBeTrue)
+
+				internal.CreateTestFile(t, unlinked, "a")
+				info, errs = os.Stat(unlinked)
+				So(errs, ShouldBeNil)
+				statUnlinked, ok := info.Sys().(*syscall.Stat_t)
+				So(ok, ShouldBeTrue)
+
 				setl1 := &Set{
 					Name:        "setlink",
 					Requester:   "jim",
-					Transformer: "prefix=/local:/remote",
+					Transformer: "prefix=" + dir + ":/remote",
 				}
 
 				err = db.AddOrUpdate(setl1)
@@ -992,32 +1012,40 @@ func TestSetDB(t *testing.T) {
 
 				dirents := []*walk.Dirent{
 					{
-						Path:  "/local/path/to/file",
-						Inode: 1,
+						Path:  local,
+						Inode: stat.Ino,
 					},
 					{
-						Path:  "/local/path/to/link",
-						Inode: 1,
+						Path:  link,
+						Inode: stat.Ino,
+					},
+					{
+						Path:  unlinked,
+						Inode: statUnlinked.Ino,
 					},
 				}
 
-				got, errd := db.Discover(setl1.ID(), func(dirEntries []*Entry) ([]*walk.Dirent, error) {
+				discoverCB := func(_ []*Entry) ([]*walk.Dirent, error) { //nolint:unparam
 					return dirents, nil
-				})
+				}
+
+				got, errd := db.Discover(setl1.ID(), discoverCB)
 				So(errd, ShouldBeNil)
 
-				entries, errG := db.GetFileEntries(setl1.ID())
-				So(errG, ShouldBeNil)
-				So(len(entries), ShouldEqual, 2)
+				entries, errg := db.GetFileEntries(setl1.ID())
+				So(errg, ShouldBeNil)
+				So(len(entries), ShouldEqual, 3)
 				So(entries[0].Status, ShouldEqual, Pending)
 				So(entries[1].Status, ShouldEqual, Pending)
+				So(entries[2].Status, ShouldEqual, Pending)
 				So(entries[0].Type, ShouldEqual, Regular)
 				So(entries[1].Type, ShouldEqual, Hardlink)
-				So(entries[1].Inode, ShouldEqual, 1)
+				So(entries[1].Inode, ShouldEqual, stat.Ino)
+				So(entries[2].Type, ShouldEqual, Regular)
 
 				So(got, ShouldNotBeNil)
 				So(got.Hardlinks, ShouldEqual, 1)
-				So(got.NumFiles, ShouldEqual, 2)
+				So(got.NumFiles, ShouldEqual, 3)
 
 				Convey("then rediscover the set and still know about the hardlinks", func() {
 					got, errd := db.Discover(setl1.ID(), func(dirEntries []*Entry) ([]*walk.Dirent, error) {
@@ -1045,7 +1073,33 @@ func TestSetDB(t *testing.T) {
 				Convey("then get a remote path for the hardlink", func() {
 					path, errh := db.HardlinkRemote(entries[1])
 					So(errh, ShouldBeNil)
-					So(path, ShouldEqual, "/remote/path/to/file")
+					So(path, ShouldEqual, "/remote/file")
+				})
+
+				Convey("then previously seen moved files don't get treated as hardlinks", func() {
+					moved := filepath.Join(dir, "moved")
+					err = os.Rename(unlinked, moved)
+					So(err, ShouldBeNil)
+
+					dirents[2].Path = moved
+
+					got, errd = db.Discover(setl1.ID(), discoverCB)
+					So(errd, ShouldBeNil)
+
+					entries, errg = db.GetFileEntries(setl1.ID())
+					So(errg, ShouldBeNil)
+					So(len(entries), ShouldEqual, 3)
+					So(entries[0].Status, ShouldEqual, Pending)
+					So(entries[1].Status, ShouldEqual, Pending)
+					So(entries[2].Status, ShouldEqual, Pending)
+					So(entries[0].Type, ShouldEqual, Regular)
+					So(entries[1].Type, ShouldEqual, Hardlink)
+					So(entries[1].Inode, ShouldEqual, stat.Ino)
+					So(entries[2].Type, ShouldEqual, Regular)
+
+					So(got, ShouldNotBeNil)
+					So(got.Hardlinks, ShouldEqual, 1)
+					So(got.NumFiles, ShouldEqual, 3)
 				})
 			})
 
