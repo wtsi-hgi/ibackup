@@ -981,13 +981,24 @@ func TestSetDB(t *testing.T) {
 			})
 
 			Convey("And add a set with directories containing hardlinks to it", func() {
-				dir := t.TempDir()
+				tdir := t.TempDir()
+				dir := filepath.Join(tdir, "sub1")
+				err = os.Mkdir(dir, userPerms)
+				So(err, ShouldBeNil)
+
+				dir2 := filepath.Join(tdir, "sub2")
+				err = os.Mkdir(dir2, userPerms)
+				So(err, ShouldBeNil)
+
 				local := filepath.Join(dir, "file")
-				link := filepath.Join(dir, "link")
+				link1 := filepath.Join(dir, "link1")
+				link2 := filepath.Join(dir2, "link2")
 				unlinked := filepath.Join(dir, "unlinked")
 
 				internal.CreateTestFile(t, local, "a")
-				err = os.Link(local, link)
+				err = os.Link(local, link1)
+				So(err, ShouldBeNil)
+				err = os.Link(link1, link2)
 				So(err, ShouldBeNil)
 
 				info, errs := os.Stat(local)
@@ -1004,7 +1015,7 @@ func TestSetDB(t *testing.T) {
 				setl1 := &Set{
 					Name:        "setlink",
 					Requester:   "jim",
-					Transformer: "prefix=" + dir + ":/remote",
+					Transformer: "prefix=" + tdir + ":/remote",
 				}
 
 				err = db.AddOrUpdate(setl1)
@@ -1016,7 +1027,11 @@ func TestSetDB(t *testing.T) {
 						Inode: stat.Ino,
 					},
 					{
-						Path:  link,
+						Path:  link1,
+						Inode: stat.Ino,
+					},
+					{
+						Path:  link2,
 						Inode: stat.Ino,
 					},
 					{
@@ -1032,48 +1047,56 @@ func TestSetDB(t *testing.T) {
 				got, errd := db.Discover(setl1.ID(), discoverCB)
 				So(errd, ShouldBeNil)
 
+				So(got, ShouldNotBeNil)
+				So(got.Hardlinks, ShouldEqual, 2)
+				So(got.NumFiles, ShouldEqual, 4)
+
 				entries, errg := db.GetFileEntries(setl1.ID())
 				So(errg, ShouldBeNil)
-				So(len(entries), ShouldEqual, 3)
+				So(len(entries), ShouldEqual, 4)
 				So(entries[0].Status, ShouldEqual, Pending)
 				So(entries[1].Status, ShouldEqual, Pending)
 				So(entries[2].Status, ShouldEqual, Pending)
+				So(entries[3].Status, ShouldEqual, Pending)
 				So(entries[0].Type, ShouldEqual, Regular)
 				So(entries[1].Type, ShouldEqual, Hardlink)
 				So(entries[1].Inode, ShouldEqual, stat.Ino)
 				So(entries[2].Type, ShouldEqual, Regular)
+				So(entries[3].Type, ShouldEqual, Hardlink)
+				So(entries[3].Inode, ShouldEqual, stat.Ino)
 
-				So(got, ShouldNotBeNil)
-				So(got.Hardlinks, ShouldEqual, 1)
-				So(got.NumFiles, ShouldEqual, 3)
+				So(entries[0].InodeStoragePath(), ShouldBeBlank)
+				So(entries[1].InodeStoragePath(), ShouldStartWith, local)
+				So(entries[1].InodeStoragePath(), ShouldEndWith, fmt.Sprintf("/%d", entries[1].Inode))
+				So(entries[3].InodeStoragePath(), ShouldEqual, entries[1].InodeStoragePath())
 
 				Convey("then rediscover the set and still know about the hardlinks", func() {
 					got, errd := db.Discover(setl1.ID(), func(dirEntries []*Entry) ([]*walk.Dirent, error) {
 						return dirents, nil
 					})
 					So(errd, ShouldBeNil)
-					So(got.Hardlinks, ShouldEqual, 1)
+					So(got.Hardlinks, ShouldEqual, 2)
 
 					got = db.GetByID(setl1.ID())
 					So(got, ShouldNotBeNil)
 					So(err, ShouldBeNil)
-					So(got.Hardlinks, ShouldEqual, 1)
+					So(got.Hardlinks, ShouldEqual, 2)
 				})
 
 				Convey("then get back all known local paths for the hardlink", func() {
 					paths, errh := db.HardlinkPaths(entries[1])
 					So(errh, ShouldBeNil)
-					So(paths, ShouldResemble, []string{dirents[0].Path})
+					So(paths, ShouldResemble, []string{dirents[0].Path, dirents[3].Path})
 
 					paths, errh = db.HardlinkPaths(entries[0])
 					So(errh, ShouldBeNil)
-					So(paths, ShouldResemble, []string{dirents[1].Path})
+					So(paths, ShouldResemble, []string{dirents[1].Path, dirents[3].Path})
 				})
 
 				Convey("then get a remote path for the hardlink", func() {
 					path, errh := db.HardlinkRemote(entries[1])
 					So(errh, ShouldBeNil)
-					So(path, ShouldEqual, "/remote/file")
+					So(path, ShouldEqual, "/remote/sub1/file")
 				})
 
 				Convey("then previously seen moved files don't get treated as hardlinks", func() {
@@ -1088,18 +1111,17 @@ func TestSetDB(t *testing.T) {
 
 					entries, errg = db.GetFileEntries(setl1.ID())
 					So(errg, ShouldBeNil)
-					So(len(entries), ShouldEqual, 3)
-					So(entries[0].Status, ShouldEqual, Pending)
-					So(entries[1].Status, ShouldEqual, Pending)
-					So(entries[2].Status, ShouldEqual, Pending)
+					So(len(entries), ShouldEqual, 4)
 					So(entries[0].Type, ShouldEqual, Regular)
 					So(entries[1].Type, ShouldEqual, Hardlink)
 					So(entries[1].Inode, ShouldEqual, stat.Ino)
 					So(entries[2].Type, ShouldEqual, Regular)
+					So(entries[3].Type, ShouldEqual, Hardlink)
+					So(entries[3].Inode, ShouldEqual, stat.Ino)
 
 					So(got, ShouldNotBeNil)
-					So(got.Hardlinks, ShouldEqual, 1)
-					So(got.NumFiles, ShouldEqual, 3)
+					So(got.Hardlinks, ShouldEqual, 2)
+					So(got.NumFiles, ShouldEqual, 4)
 				})
 			})
 

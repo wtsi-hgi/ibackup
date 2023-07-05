@@ -32,7 +32,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"time"
 
 	"github.com/VertebrateResequencing/wr/queue"
@@ -349,7 +348,7 @@ func (s *Server) entryToRequest(entry *set.Entry, transformer put.PathTransforme
 
 	if entry.Type == set.Hardlink && s.remoteHardlinkLocation != "" {
 		r.Hardlink = filepath.Join(s.remoteHardlinkLocation,
-			s.db.GetMountPointFromPath(r.Local), strconv.FormatUint(entry.Inode, 10))
+			entry.InodeStoragePath())
 		r.Meta[put.MetaKeyHardlink] = entry.Dest
 	}
 

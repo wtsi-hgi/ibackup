@@ -73,7 +73,8 @@ func (d *DB) getMountPoints() error {
 const transformerInodeSeparator = ":"
 
 // handleInode records the inode of the given Dirent in the database, and
-// returns if it is a hardlink (we've seen the inode before).
+// returns the path to the first local file with that inode if we've seen if
+// before.
 func (d *DB) handleInode(tx *bolt.Tx, de *walk.Dirent, transformerID string) (string, error) {
 	key := d.inodeMountPointKeyFromDirent(de)
 
@@ -257,6 +258,8 @@ func (d *DB) getTransformerPaths(tx *bolt.Tx, e *Entry) []string {
 	return transformerPaths
 }
 
+// HardlinkRemote gets the remote path of the first hardlink we uploaded that
+// shares the given entry's inode and mountpoint.
 func (d *DB) HardlinkRemote(e *Entry) (string, error) {
 	var remotePath string
 
