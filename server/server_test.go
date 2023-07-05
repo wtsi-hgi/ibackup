@@ -1573,7 +1573,7 @@ func TestServer(t *testing.T) {
 
 						var forceSlowRead put.FileReadTester = func(ctx context.Context, path string) error {
 							if path == discovers[0] {
-								<-time.After(5 * time.Millisecond)
+								<-time.After(10 * time.Millisecond)
 							}
 
 							return nil
@@ -2241,20 +2241,24 @@ func TestServer(t *testing.T) {
 						So(errg, ShouldBeNil)
 						So(len(requests), ShouldEqual, 3)
 
-						So(requests[0].Local, ShouldEqual, path1)
-						So(requests[0].Hardlink, ShouldBeBlank)
-						So(requests[1].Local, ShouldEqual, path2)
-						So(requests[1].Hardlink, ShouldContainSubstring, "mountpoints")
-						So(requests[2].Local, ShouldEqual, path3)
-						So(requests[2].Hardlink, ShouldContainSubstring, "mountpoints")
-
 						info, errs := os.Stat(path1)
 						So(errs, ShouldBeNil)
 						statt, ok := info.Sys().(*syscall.Stat_t)
 						So(ok, ShouldBeTrue)
+						inoStr := strconv.FormatUint(statt.Ino, 10)
+
+						So(requests[0].Local, ShouldEqual, path1)
+						So(requests[0].Hardlink, ShouldBeBlank)
+						So(requests[1].Local, ShouldEqual, path2)
+						So(requests[1].Hardlink, ShouldContainSubstring, "mountpoints")
+						So(requests[1].Hardlink, ShouldContainSubstring, inoStr)
+						So(requests[2].Local, ShouldEqual, path3)
+						So(requests[2].Hardlink, ShouldContainSubstring, "mountpoints")
+						So(requests[2].Hardlink, ShouldContainSubstring, inoStr)
+
 						inodeFile := filepath.Join(hardlinksDir,
-							s.db.GetMountPointFromPath(requests[1].Local),
-							strconv.FormatUint(statt.Ino, 10))
+							path1,
+							inoStr)
 						So(requests[1].Hardlink, ShouldEqual, inodeFile)
 						So(requests[2].Hardlink, ShouldEqual, inodeFile)
 
@@ -2341,6 +2345,57 @@ func TestServer(t *testing.T) {
 							So(gotSet.Uploaded, ShouldEqual, 3)
 							So(gotSet.Hardlinks, ShouldEqual, 2)
 							So(gotSet.SizeFiles, ShouldEqual, 1)
+
+							Convey("moving all files of an inode uploads hardlinks to new location", func() {
+								path4 := filepath.Join(localDir, "file2.link1")
+								err = os.Rename(path1, path4)
+								So(err, ShouldBeNil)
+
+								path5 := filepath.Join(localDir, "file2.link2")
+								err = os.Rename(path2, path5)
+								So(err, ShouldBeNil)
+
+								path6 := filepath.Join(localDir, "file2.link3")
+								err = os.Rename(path3, path6)
+								So(err, ShouldBeNil)
+
+								err = client.SetFiles(exampleSet.ID(), []string{path4, path5, path6})
+								So(err, ShouldBeNil)
+
+								err = client.TriggerDiscovery(exampleSet.ID())
+								So(err, ShouldBeNil)
+
+								ok := <-racCalled
+								So(ok, ShouldBeTrue)
+
+								gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+								So(err, ShouldBeNil)
+								So(gotSet.Status, ShouldEqual, set.PendingUpload)
+								So(gotSet.NumFiles, ShouldEqual, 3)
+								So(gotSet.Uploaded, ShouldEqual, 0)
+								So(gotSet.Hardlinks, ShouldEqual, 2)
+
+								requests2, errg := client.GetSomeUploadRequests()
+								So(errg, ShouldBeNil)
+								So(len(requests), ShouldEqual, 3)
+
+								So(requests2[0].Local, ShouldEqual, path4)
+								So(requests2[0].Hardlink, ShouldBeBlank)
+								So(requests2[1].Local, ShouldEqual, path5)
+								So(requests2[1].Hardlink, ShouldContainSubstring, "mountpoints")
+								So(requests2[1].Hardlink, ShouldContainSubstring, inoStr)
+								So(requests2[1].Hardlink, ShouldNotEqual, requests[1].Hardlink)
+								So(requests2[2].Local, ShouldEqual, path6)
+								So(requests2[2].Hardlink, ShouldContainSubstring, "mountpoints")
+								So(requests2[2].Hardlink, ShouldContainSubstring, inoStr)
+								So(requests2[2].Hardlink, ShouldNotEqual, requests[2].Hardlink)
+
+								inodeFile = filepath.Join(hardlinksDir,
+									path4,
+									inoStr)
+								So(requests2[1].Hardlink, ShouldEqual, inodeFile)
+								So(requests2[2].Hardlink, ShouldEqual, inodeFile)
+							})
 						})
 					})
 				})
@@ -2375,6 +2430,47 @@ func TestServer(t *testing.T) {
 					So(gotSet.NumFiles, ShouldEqual, 2)
 					So(gotSet.Uploaded, ShouldEqual, 0)
 					So(gotSet.Hardlinks, ShouldEqual, 1)
+				})
+
+				Convey("and add a set with previously added moved files, which are not treated as hardlinks", func() {
+					err = client.AddOrUpdateSet(exampleSet)
+					So(err, ShouldBeNil)
+
+					dir := filepath.Join(localDir, "1")
+					err = os.Mkdir(dir, userPerms)
+					So(err, ShouldBeNil)
+
+					path1 := filepath.Join(dir, "file1")
+					internal.CreateTestFileOfLength(t, path1, 1)
+
+					err = client.SetDirs(exampleSet.ID(), []string{dir})
+					So(err, ShouldBeNil)
+
+					err = client.TriggerDiscovery(exampleSet.ID())
+					So(err, ShouldBeNil)
+
+					ok := <-racCalled
+					So(ok, ShouldBeTrue)
+
+					path2 := filepath.Join(dir, "file2")
+					err = os.Rename(path1, path2)
+					So(err, ShouldBeNil)
+
+					err = client.AddOrUpdateSet(exampleSet)
+					So(err, ShouldBeNil)
+
+					err = client.TriggerDiscovery(exampleSet.ID())
+					So(err, ShouldBeNil)
+
+					ok = <-racCalled
+					So(ok, ShouldBeTrue)
+
+					gotSet, err := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+					So(err, ShouldBeNil)
+					So(gotSet.Status, ShouldEqual, set.PendingUpload)
+					So(gotSet.NumFiles, ShouldEqual, 1)
+					So(gotSet.Uploaded, ShouldEqual, 0)
+					So(gotSet.Hardlinks, ShouldEqual, 0)
 				})
 			})
 		})

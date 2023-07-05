@@ -27,9 +27,11 @@
 package set
 
 import (
+	"os"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/moby/sys/mountinfo"
 	"github.com/ugorji/go/codec"
@@ -70,8 +72,9 @@ func (d *DB) getMountPoints() error {
 
 const transformerInodeSeparator = ":"
 
-// handleInode recordes the inode of the given Dirent in the database, and
-// returns if it is a hardlink (we've seen the inode before).
+// handleInode records the inode of the given Dirent in the database, and
+// returns the path to the first local file with that inode if we've seen if
+// before.
 func (d *DB) handleInode(tx *bolt.Tx, de *walk.Dirent, transformerID string) (string, error) {
 	key := d.inodeMountPointKeyFromDirent(de)
 
@@ -84,7 +87,11 @@ func (d *DB) handleInode(tx *bolt.Tx, de *walk.Dirent, transformerID string) (st
 		return "", b.Put(key, d.encodeToBytes([]string{transformerPath}))
 	}
 
-	files := d.decodeIMPValue(v)
+	files := d.decodeIMPValue(v, de.Inode)
+
+	if len(files) == 0 {
+		return "", b.Put(key, d.encodeToBytes([]string{transformerPath}))
+	}
 
 	_, hardlinkDest, err := splitTransformerPath(files[0])
 	if err != nil {
@@ -130,8 +137,8 @@ func alreadyInFiles(path string, existing []string) (bool, bool) {
 	return false, false
 }
 
-// inodeMountPointKeyFromDirent returns the inodeBucket key for the Dirent's inode and
-// the Dirent's mount point for its path.
+// inodeMountPointKeyFromDirent returns the inodeBucket key for the Dirent's
+// inode and the Dirent's mount point for its path.
 func (d *DB) inodeMountPointKeyFromDirent(de *walk.Dirent) []byte {
 	return append(strconv.AppendUint([]byte{}, de.Inode, hexBase), d.GetMountPointFromPath(de.Path)...)
 }
@@ -156,14 +163,49 @@ func (d *DB) GetMountPointFromPath(path string) string {
 // decodeIMPValue takes a byte slice representation of an InodeMountPoint value
 // (a []string) as stored in the db by AddInodeMountPoint(), and converts it
 // back in to []string.
-func (d *DB) decodeIMPValue(v []byte) []string {
+//
+// Before returning the slice, checks that at least one path still exists and
+// has the given inode; if not, will return an empty slice.
+func (d *DB) decodeIMPValue(v []byte, inode uint64) []string {
 	dec := codec.NewDecoderBytes(v, d.ch)
 
 	var files []string
 
 	dec.MustDecode(&files)
 
-	return files
+	existingFiles := make([]string, 0, len(files))
+
+	var found bool
+
+	for _, file := range files {
+		if !found {
+			if valid := impFileIsValid(file, inode); !valid {
+				continue
+			}
+		}
+
+		found = true
+
+		existingFiles = append(existingFiles, file)
+	}
+
+	return existingFiles
+}
+
+func impFileIsValid(file string, inode uint64) bool {
+	_, path, err := splitTransformerPath(file)
+	if err != nil {
+		return false
+	}
+
+	info, err := os.Lstat(path)
+	if err != nil {
+		return false
+	}
+
+	ino := info.Sys().(*syscall.Stat_t).Ino //nolint:forcetypeassert
+
+	return ino == inode
 }
 
 // HardlinkPaths returns all known hardlink paths that share the same mountpoint
@@ -207,7 +249,8 @@ func (d *DB) getTransformerPaths(tx *bolt.Tx, e *Entry) []string {
 		return nil
 	}
 
-	transformerPaths := d.decodeIMPValue(v)
+	transformerPaths := d.decodeIMPValue(v, e.Inode)
+
 	if len(transformerPaths) == 0 {
 		return nil
 	}
@@ -215,11 +258,14 @@ func (d *DB) getTransformerPaths(tx *bolt.Tx, e *Entry) []string {
 	return transformerPaths
 }
 
+// HardlinkRemote gets the remote path of the first hardlink we uploaded that
+// shares the given entry's inode and mountpoint.
 func (d *DB) HardlinkRemote(e *Entry) (string, error) {
 	var remotePath string
 
 	err := d.db.View(func(tx *bolt.Tx) error {
 		transformerPaths := d.getTransformerPaths(tx, e)
+
 		if len(transformerPaths) == 0 {
 			return nil
 		}

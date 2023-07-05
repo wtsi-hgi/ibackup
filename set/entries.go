@@ -27,6 +27,7 @@ package set
 
 import (
 	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -132,6 +133,19 @@ func (e *Entry) ShouldUpload(reuploadAfter time.Time) bool {
 	}
 
 	return !e.LastAttempt.After(reuploadAfter)
+}
+
+// InodeStoragePath returns a relative path that the data for this entry could
+// be stored at if this entry is for a hardlink. The path includes both the
+// inode and the first local path we saw for this inode. This ensures that if an
+// inode gets re-used after previous hardlinks we saw all got deleted locally,
+// the new file will be stored at a new location.
+func (e *Entry) InodeStoragePath() string {
+	if e.Dest == "" || e.Inode == 0 {
+		return ""
+	}
+
+	return filepath.Join(e.Dest, strconv.FormatUint(e.Inode, 10))
 }
 
 // setTypeForNoInode sets our type based on the given dirent's Type, for the
