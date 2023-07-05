@@ -5,6 +5,13 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/) and this
 project adheres to [Semantic Versioning](http://semver.org/).
 
 
+## [1.0.3] - 2023-07-05
+### Fixed
+- Inodes that get re-used won't be mis-characterised as hardlinks, nor will we
+  over-write existing backup data for hardlinks with different hardlink data
+  for a re-used inode.
+
+
 ## [1.0.2] - 2023-06-30
 ### Changed
 - Non-regular, non-symlink files are marked as 'abnormal' and not uploaded if
