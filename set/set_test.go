@@ -1341,7 +1341,7 @@ func TestBackup(t *testing.T) {
 		So(err, ShouldBeNil)
 
 		testBackupOK := func(path string) {
-			backupUpDB, errn := New(path, "")
+			backupUpDB, errn := NewRO(path)
 			So(errn, ShouldBeNil)
 			So(backupUpDB, ShouldNotBeNil)
 
