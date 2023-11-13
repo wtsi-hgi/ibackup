@@ -26,11 +26,16 @@
 package cmd
 
 import (
+	"fmt"
+	"math"
+	"slices"
 	"sort"
 	"strings"
 
 	//nolint:misspell
 	"github.com/dustin/go-humanize"
+	ui "github.com/gizak/termui/v3"
+	"github.com/gizak/termui/v3/widgets"
 	"github.com/spf13/cobra"
 	"github.com/ugorji/go/codec"
 	"github.com/wtsi-hgi/ibackup/set"
@@ -38,10 +43,11 @@ import (
 )
 
 const (
-	setsBucket      = "sets"
-	subBucketPrefix = "~!~"
-	dbOpenMode      = 0600
-	bySetMax        = 20
+	setsBucket              = "sets"
+	subBucketPrefix         = "~!~"
+	dbOpenMode              = 0600
+	bySetMax                = 20
+	bytesInTiB      float64 = 1024 * 1024 * 1024 * 1024
 )
 
 // summaryCmd represents the summary command.
@@ -96,6 +102,7 @@ func summary(dbPath string) error {
 	totalSizeCount := &sizeCount{}
 	byUser := make(map[string]*sizeCount)
 	bySet := make(map[string]*sizeCount)
+	byMonth := make(map[string]*sizeCount)
 
 	err = boltDB.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(setsBucket))
@@ -120,6 +127,18 @@ func summary(dbPath string) error {
 			sc.add(set)
 			bySet[set.Requester+"."+set.Name] = sc
 
+			if !set.LastCompleted.IsZero() {
+				month := fmt.Sprintf("%d/%d", set.LastCompleted.Year(), int(set.LastCompleted.Month()))
+
+				monthSC, ok := byMonth[month]
+				if !ok {
+					byMonth[month] = &sizeCount{}
+					monthSC = byMonth[month]
+				}
+
+				monthSC.add(set)
+			}
+
 			return nil
 		})
 	})
@@ -136,7 +155,7 @@ func summary(dbPath string) error {
 	cliPrint("\nLargest %d sets:\n", bySetMax)
 	sortAndPrintSCmap(bySet, bySetMax)
 
-	return nil
+	return plotUsageOverTime(byMonth)
 }
 
 func decodeSet(v []byte, ch codec.Handle) *set.Set {
@@ -166,4 +185,51 @@ func sortAndPrintSCmap(scMap map[string]*sizeCount, max int) {
 			break
 		}
 	}
+}
+
+func plotUsageOverTime(byMonth map[string]*sizeCount) error {
+	if err := ui.Init(); err != nil {
+		return err
+	}
+	defer ui.Close()
+
+	months := make([]string, 0, len(byMonth))
+	monthUsage := make([]float64, len(byMonth))
+
+	for month := range byMonth {
+		months = append(months, month)
+	}
+
+	slices.Sort(months)
+
+	for i, month := range months {
+		monthUsage[i] = math.Round(float64(byMonth[month].size) / bytesInTiB)
+	}
+
+	bc := widgets.NewBarChart()
+	bc.Data = monthUsage
+	bc.Labels = months
+	bc.Title = "Usage Over Time"
+	// bc.SetRect(5, 5, 100, 25)
+
+	bc.BarWidth = 9
+	bc.BarColors = []ui.Color{ui.ColorRed}
+	bc.LabelStyles = []ui.Style{ui.NewStyle(ui.ColorBlue)}
+	// bc.NumStyles = []ui.Style{ui.NewStyle(ui.ColorYellow)}
+
+	// ui.Render(bc)
+
+	grid := ui.NewGrid()
+	termWidth, termHeight := ui.TerminalDimensions()
+	grid.SetRect(0, 0, termWidth, termHeight)
+
+	grid.Set(
+		ui.NewRow(1.0,
+			ui.NewCol(1.0, bc),
+		),
+	)
+
+	ui.Render(grid)
+
+	return nil
 }
