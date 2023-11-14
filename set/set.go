@@ -246,6 +246,20 @@ func (s *Set) Size() string {
 	return sfiles
 }
 
+func (s *Set) TransformPath(path string) (string, error) {
+	transformer, err := s.MakeTransformer()
+	if err != nil {
+		return "", err
+	}
+
+	dest, err := transformer(path)
+	if err != nil {
+		return "", err
+	}
+
+	return dest, nil
+}
+
 // MakeTransformer turns our Transformer string in to a put.HumgenTransformer or
 // a put.PrefixTransformer as appropriate.
 func (s *Set) MakeTransformer() (put.PathTransformer, error) {

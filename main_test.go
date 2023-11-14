@@ -724,7 +724,7 @@ func TestFileStatus(t *testing.T) {
 			So(err, ShouldBeNil)
 
 			Convey("You can request the status of a file in a set", func() {
-				exitCode, out := s.runBinary(t, "filestatus", s.dbFile, dir+"/path/to/some/file")
+				exitCode, out := s.runBinary(t, "filestatus", "--database", s.dbFile, dir+"/path/to/some/file")
 				So(exitCode, ShouldEqual, 0)
 				So(out, ShouldContainSubstring, "destination: /remote/path/to/some/file")
 			})

@@ -244,6 +244,12 @@ func TestSetDB(t *testing.T) {
 						retrieved2 = db.GetByID(set2.ID())
 						So(retrieved2.DeleteLocal, ShouldBeFalse)
 					})
+
+					Convey("And transform paths for the set", func() {
+						dest, errr := retrieved.TransformPath("/local/sub/foo.txt")
+						So(errr, ShouldBeNil)
+						So(dest, ShouldEqual, "/remote/sub/foo.txt")
+					})
 				})
 
 				Convey("Then get all the Sets and their entries", func() {

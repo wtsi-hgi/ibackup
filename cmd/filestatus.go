@@ -127,12 +127,7 @@ func (fsg *fileStatusGetter) handleSet(s *set.Set) error {
 }
 
 func (fsg *fileStatusGetter) sendFileStatus(set *set.Set, f *set.Entry) error {
-	transformer, err := set.MakeTransformer()
-	if err != nil {
-		return err
-	}
-
-	dest, err := transformer(f.Path)
+	dest, err := set.TransformPath(f.Path)
 	if err != nil {
 		return err
 	}

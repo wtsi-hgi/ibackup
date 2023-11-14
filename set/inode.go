@@ -293,10 +293,5 @@ func getRemotePath(tx *bolt.Tx, transformerID, path string) (string, error) {
 
 	s := &Set{Transformer: string(v)}
 
-	t, err := s.MakeTransformer()
-	if err != nil {
-		return "", err
-	}
-
-	return t(path)
+	return s.TransformPath(path)
 }
