@@ -27,18 +27,16 @@ package cmd
 
 import (
 	"fmt"
-	"math"
 	"slices"
 	"sort"
 	"strings"
 
 	//nolint:misspell
 	"github.com/dustin/go-humanize"
-	ui "github.com/gizak/termui/v3"
-	"github.com/gizak/termui/v3/widgets"
 	"github.com/spf13/cobra"
 	"github.com/ugorji/go/codec"
 	"github.com/wtsi-hgi/ibackup/set"
+	"github.com/wtsi-hgi/ibackup/tplot"
 	bolt "go.etcd.io/bbolt"
 )
 
@@ -48,6 +46,7 @@ const (
 	dbOpenMode              = 0600
 	bySetMax                = 20
 	bytesInTiB      float64 = 1024 * 1024 * 1024 * 1024
+	youplot                 = "youplot"
 )
 
 // summaryCmd represents the summary command.
@@ -61,6 +60,9 @@ var summaryCmd = &cobra.Command{
  
  This will only work for the user who started the ibackup server, and you need
  to supply the path to the server's database (or its backup).
+
+ The output will look nicer if you have
+ https://github.com/red-data-tools/YouPlot installed.
  `,
 	Run: func(cmd *cobra.Command, args []string) {
 		ensureURLandCert()
@@ -88,6 +90,11 @@ type sizeCount struct {
 func (s *sizeCount) add(set *set.Set) {
 	s.size += set.SizeFiles
 	s.count += set.NumFiles
+}
+
+// sizeTB returns size in TB.
+func (s *sizeCount) sizeTB() float64 {
+	return float64(s.size) / bytesInTiB
 }
 
 func summary(dbPath string) error {
@@ -128,7 +135,7 @@ func summary(dbPath string) error {
 			bySet[set.Requester+"."+set.Name] = sc
 
 			if !set.LastCompleted.IsZero() {
-				month := fmt.Sprintf("%d/%d", set.LastCompleted.Year(), int(set.LastCompleted.Month()))
+				month := fmt.Sprintf("%d/%02d", set.LastCompleted.Year(), int(set.LastCompleted.Month()))
 
 				monthSC, ok := byMonth[month]
 				if !ok {
@@ -149,13 +156,19 @@ func summary(dbPath string) error {
 	cliPrint("Total size: %s\nTotal files: %s\n",
 		humanize.Bytes(totalSizeCount.size), humanize.Comma(int64(totalSizeCount.count)))
 
-	cliPrint("\nBy user:\n")
-	sortAndPrintSCmap(byUser, 0)
+	tp := tplot.New()
 
-	cliPrint("\nLargest %d sets:\n", bySetMax)
-	sortAndPrintSCmap(bySet, bySetMax)
+	err = sortAndPlotSCmap(tp, byUser, 0, "By user (TB backed up)")
+	if err != nil {
+		return err
+	}
 
-	return plotUsageOverTime(byMonth)
+	err = sortAndPlotSCmap(tp, bySet, bySetMax, fmt.Sprintf("Largest %d sets (TB)", bySetMax))
+	if err != nil {
+		return err
+	}
+
+	return plotUsageOverTime(tp, byMonth)
 }
 
 func decodeSet(v []byte, ch codec.Handle) *set.Set {
@@ -168,7 +181,7 @@ func decodeSet(v []byte, ch codec.Handle) *set.Set {
 	return set
 }
 
-func sortAndPrintSCmap(scMap map[string]*sizeCount, max int) {
+func sortAndPlotSCmap(tp *tplot.TPlotter, scMap map[string]*sizeCount, max int, title string) error {
 	keys := make([]string, 0, len(scMap))
 	for user := range scMap {
 		keys = append(keys, user)
@@ -178,23 +191,26 @@ func sortAndPrintSCmap(scMap map[string]*sizeCount, max int) {
 		return scMap[keys[i]].size > scMap[keys[j]].size
 	})
 
+	data := tplot.NewData(title)
+
 	for i, key := range keys {
-		cliPrint(" %s:\t%s\n", key, humanize.Bytes(scMap[key].size))
+		if scMap[key].size == 0 {
+			continue
+		}
+
+		data.Add(key, scMap[key].sizeTB())
 
 		if max > 0 && i == max-1 {
 			break
 		}
 	}
+
+	return tp.Plot(data)
 }
 
-func plotUsageOverTime(byMonth map[string]*sizeCount) error {
-	if err := ui.Init(); err != nil {
-		return err
-	}
-	defer ui.Close()
-
+func plotUsageOverTime(tp *tplot.TPlotter, byMonth map[string]*sizeCount) error {
 	months := make([]string, 0, len(byMonth))
-	monthUsage := make([]float64, len(byMonth))
+	data := tplot.NewData("Backed up (TB) each month")
 
 	for month := range byMonth {
 		months = append(months, month)
@@ -202,34 +218,9 @@ func plotUsageOverTime(byMonth map[string]*sizeCount) error {
 
 	slices.Sort(months)
 
-	for i, month := range months {
-		monthUsage[i] = math.Round(float64(byMonth[month].size) / bytesInTiB)
+	for _, month := range months {
+		data.Add(month, byMonth[month].sizeTB())
 	}
 
-	bc := widgets.NewBarChart()
-	bc.Data = monthUsage
-	bc.Labels = months
-	bc.Title = "Usage Over Time"
-	// bc.SetRect(5, 5, 100, 25)
-
-	bc.BarWidth = 9
-	bc.BarColors = []ui.Color{ui.ColorRed}
-	bc.LabelStyles = []ui.Style{ui.NewStyle(ui.ColorBlue)}
-	// bc.NumStyles = []ui.Style{ui.NewStyle(ui.ColorYellow)}
-
-	// ui.Render(bc)
-
-	grid := ui.NewGrid()
-	termWidth, termHeight := ui.TerminalDimensions()
-	grid.SetRect(0, 0, termWidth, termHeight)
-
-	grid.Set(
-		ui.NewRow(1.0,
-			ui.NewCol(1.0, bc),
-		),
-	)
-
-	ui.Render(grid)
-
-	return nil
+	return tp.Plot(data)
 }
