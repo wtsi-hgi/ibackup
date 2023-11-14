@@ -1,19 +1,19 @@
 package cmd
 
 import (
-	"bytes"
-	"crypto/md5"
-	"encoding/json"
+	"crypto/md5" //nolint:gosec
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"time"
+	"sync"
 
+	"github.com/dustin/go-humanize" //nolint:misspell
 	"github.com/spf13/cobra"
+	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/set"
+	"github.com/wtsi-npg/extendo/v2"
 )
 
 // options for this cmd.
@@ -25,13 +25,22 @@ var filestatusCmd = &cobra.Command{
 	Use:   "filestatus",
 	Short: "Get the status of a file in the database",
 	Long: `Get the status of a file in the database.
+
+Prints out a summary of the given file for each set the file appears in.
+
+The --database option should be the path to the local backup of the iBackup
+database, defaulting to the value of the IBACKUP_DATABASE_PATH environmental
+variable.
+
+The --irods options will gather additional information about the file, such as
+the local and remote checksums.
 `,
 	Run: func(cmd *cobra.Command, args []string) {
 		if len(args) < 1 {
 			die("you must supply the file to be checked")
 		}
 
-		err := filesummary(filestatusDB, args[0])
+		err := fileSummary(filestatusDB, args[0], filestatusIrods)
 		if err != nil {
 			die(err.Error())
 		}
@@ -47,57 +56,66 @@ func init() {
 		"do additional checking in iRods")
 }
 
-type fileStatus struct {
-	SetName       string
-	Status        string
-	Size          uint64
-	Destination   string
-	Uploaded      time.Time
-	IRodsChecksum string
-	LocalChecksum string
-}
-
-type fileStatusGetter struct {
-	ch       chan fileStatus
-	db       *set.DBRO
-	filePath string
-}
-
-func filesummary(dbPath, filePath string) error {
+func fileSummary(dbPath, filePath string, useIrods bool) error {
 	db, err := set.NewRO(dbPath)
 	if err != nil {
 		return err
 	}
+
+	fsg := newFSG(db, filePath, useIrods)
 
 	sets, err := db.GetAll()
 	if err != nil {
 		return err
 	}
 
-	ch := make(chan fileStatus)
+	if err := fsg.getFileStatuses(sets); err != nil {
+		return err
+	}
 
-	go func() {
-		fsg := fileStatusGetter{
-			ch:       ch,
-			db:       db,
-			filePath: filePath,
-		}
-
-		if err := fsg.getFileStatuses(sets); err != nil {
-			die(err.Error())
-		}
-
-		close(ch)
-	}()
-
-	printFileStatuses(ch)
+	if !fsg.found {
+		cliPrint("file not found in any registered set\n")
+	}
 
 	return nil
 }
 
+type fileStatusGetter struct {
+	db       *set.DBRO
+	filePath string
+	baton    *extendo.Client
+	useIRods bool
+	found    bool
+
+	md5once sync.Once
+	md5sum  string
+}
+
+func newFSG(db *set.DBRO, filePath string, useIRods bool) *fileStatusGetter {
+	fsg := &fileStatusGetter{
+		db:       db,
+		filePath: filePath,
+		useIRods: useIRods,
+	}
+
+	if !useIRods {
+		return fsg
+	}
+
+	put.GetBatonHandler() //nolint:errcheck
+
+	if client, err := extendo.FindAndStart("--unbuffered", "--no-error"); err != nil {
+		fsg.useIRods = false
+	} else {
+		fsg.baton = client
+	}
+
+	return fsg
+}
+
 func (fsg *fileStatusGetter) getFileStatuses(sets []*set.Set) error {
 	for _, set := range sets {
-		if err := fsg.handleSet(set); err != nil {
+		if err := fsg.fileStatusInSet(set); err != nil {
 			return err
 		}
 	}
@@ -105,7 +123,7 @@ func (fsg *fileStatusGetter) getFileStatuses(sets []*set.Set) error {
 	return nil
 }
 
-func (fsg *fileStatusGetter) handleSet(s *set.Set) error {
+func (fsg *fileStatusGetter) fileStatusInSet(s *set.Set) error {
 	entry, err := fsg.db.GetFileEntryForSet(s.ID(), fsg.filePath)
 	if err != nil {
 		var errr set.Error
@@ -118,7 +136,9 @@ func (fsg *fileStatusGetter) handleSet(s *set.Set) error {
 	}
 
 	if entry != nil {
-		if err := fsg.sendFileStatus(s, entry); err != nil {
+		fsg.found = true
+
+		if err := fsg.printFileStatus(s, entry); err != nil {
 			return err
 		}
 	}
@@ -126,120 +146,110 @@ func (fsg *fileStatusGetter) handleSet(s *set.Set) error {
 	return nil
 }
 
-func (fsg *fileStatusGetter) sendFileStatus(set *set.Set, f *set.Entry) error {
+func (fsg *fileStatusGetter) printFileStatus(set *set.Set, f *set.Entry) error {
 	dest, err := set.TransformPath(f.Path)
 	if err != nil {
 		return err
 	}
 
-	fs := fileStatus{
-		SetName:     set.Name,
-		Status:      f.Status.String(),
-		Size:        f.Size,
-		Destination: dest,
-		Uploaded:    f.LastAttempt,
+	lastAttemptTime, err := put.TimeToMeta(f.LastAttempt)
+	if err != nil {
+		return err
 	}
 
-	if filestatusIrods {
-		if err := fs.getIrodsStatus(dest); err != nil {
-			return err
-		}
+	cliPrint("file found in set: %s\n", set.Name)
+	cliPrint("           status: %s\n", f.Status)
+	cliPrint("             size: %s\n", humanize.IBytes(f.Size))
+	cliPrint("      destination: %s\n", dest)
+	cliPrint("   last attempted: %s\n", lastAttemptTime)
 
-		fs.LocalChecksum = calcMD5Sum(f.Path)
+	if f.LastError != "" {
+		cliPrint("       last error: %s\n", f.LastError)
 	}
 
-	fsg.ch <- fs
+	if fsg.useIRods {
+		return fsg.printIRodsStatus(f.Path, dest)
+	}
 
 	return nil
 }
 
-type batonRequest struct {
-	Collection string `json:"collection"`
-	DataObject string `json:"data_object"`
-}
-
-type batonResponse struct {
-	Checksum   string `json:"checksum"`
-	Timestamps []struct {
-		Created    time.Time `json:"created"`
-		Modified   time.Time `json:"modified"`
-		Replicates int       `json:"replicates"`
-	} `json:"timestamps"`
-	Message string
-}
-
-func (fs *fileStatus) getIrodsStatus(path string) error {
-	req, err := json.Marshal(batonRequest{
-		Collection: filepath.Dir(path),
-		DataObject: filepath.Base(path),
+func (fsg *fileStatusGetter) printIRodsStatus(local, remote string) error {
+	file, err := fsg.baton.ListItem(extendo.Args{AVU: true, Checksum: true}, extendo.RodsItem{
+		IPath: filepath.Dir(remote),
+		IName: filepath.Base(remote),
 	})
 	if err != nil {
 		return err
 	}
 
-	resp, err := getBatonResponse(req)
-	if err != nil {
-		return err
+	uploadDate, remoteMTime := fsg.getIrodsTimesFromAVUs(file.IAVUs)
+
+	if uploadDate != "" {
+		cliPrint("iRods upload date: %s\n", uploadDate)
 	}
 
-	if resp.Message != "" {
-		return fmt.Errorf("Error getting irods info: %s", resp.Message) //nolint:goerr113
+	if remoteMTime != "" {
+		localTime, err := getMTime(local)
+		if err != nil {
+			return err
+		}
+
+		cliPrint("      local mTime: %s\n", localTime)
+		cliPrint("      iRods mTime: %s\n", remoteMTime)
 	}
 
-	fs.IRodsChecksum = resp.Checksum
+	cliPrint("   iRods checksum: %s\n", file.IChecksum)
+	cliPrint("   local checksum: %s\n", fsg.calcMD5Sum(local))
 
 	return nil
 }
 
-func getBatonResponse(req []byte) (*batonResponse, error) {
-	var buf bytes.Buffer
+func (fsg *fileStatusGetter) getIrodsTimesFromAVUs(avus []extendo.AVU) (string, string) {
+	var uploadDate, remoteMTime string
 
-	cmd := exec.Command("baton-list", "--checksum", "--timestamp")
-	cmd.Stdin = bytes.NewBuffer(req)
-	cmd.Stdout = &buf
+	for _, avu := range avus {
+		if avu.Attr == put.MetaKeyDate {
+			uploadDate = avu.Value
+		}
 
-	if err := cmd.Run(); err != nil {
-		return nil, err
-	}
-
-	var resp batonResponse
-
-	if err := json.Unmarshal(buf.Bytes(), &resp); err != nil {
-		return nil, err
-	}
-
-	return &resp, nil
-}
-
-func calcMD5Sum(path string) string {
-	f, err := os.Open(path)
-	if err != nil {
-		return err.Error()
-	}
-
-	m := md5.New() //nolint:gosec
-
-	_, err = io.Copy(m, f)
-	f.Close()
-
-	if err != nil {
-		return err.Error()
-	}
-
-	return fmt.Sprintf("%x", m.Sum(nil))
-}
-
-func printFileStatuses(ch chan fileStatus) {
-	for fs := range ch {
-		cliPrint("file found in set: %s\n", fs.SetName)
-		cliPrint("           status: %s\n", fs.Status)
-		cliPrint("     size (bytes): %d\n", fs.Size)
-		cliPrint("      destination: %s\n", fs.Destination)
-		cliPrint("         uploaded: %s\n", fs.Uploaded)
-
-		if fs.IRodsChecksum != "" {
-			cliPrint("   iRods checksum: %s\n", fs.IRodsChecksum)
-			cliPrint("   local checksum: %s\n", fs.LocalChecksum)
+		if avu.Attr == put.MetaKeyMtime {
+			remoteMTime = avu.Value
 		}
 	}
+
+	return uploadDate, remoteMTime
+}
+
+func getMTime(local string) (string, error) {
+	stat, err := os.Stat(local)
+	if err != nil {
+		return "", err
+	}
+
+	return put.TimeToMeta(stat.ModTime())
+}
+
+func (fsg *fileStatusGetter) calcMD5Sum(path string) string {
+	fsg.md5once.Do(func() {
+		f, err := os.Open(path)
+		if err != nil {
+			fsg.md5sum = err.Error()
+
+			return
+		}
+
+		m := md5.New() //nolint:gosec
+
+		_, err = io.Copy(m, f)
+		f.Close()
+
+		if err != nil {
+			fsg.md5sum = err.Error()
+		} else {
+			fsg.md5sum = fmt.Sprintf("%x", m.Sum(nil))
+		}
+	})
+
+	return fsg.md5sum
 }

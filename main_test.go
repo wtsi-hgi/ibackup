@@ -388,6 +388,8 @@ func TestNoServer(t *testing.T) {
 }
 
 func TestStatus(t *testing.T) {
+	const toRemote = " => /remote"
+
 	Convey("With a started server", t, func() {
 		s := NewTestServer(t)
 		So(s, ShouldNotBeNil)
@@ -496,7 +498,7 @@ Num files: 0; Symlinks: 0; Hardlinks: 0; Size files: 0 B
 Uploaded: 0; Failed: 0; Missing: 0; Abnormal: 0
 Completed in: 0s
 Directories:
-  `+localDir+" => /remote"+localDir)
+  `+localDir+toRemote+localDir)
 		})
 
 		Convey("Given an added set with an inaccessible subfolder, print the error to the user", func() {
@@ -593,7 +595,7 @@ Discovery:
 Num files: 4; Symlinks: 2; Hardlinks: 1; Size files: 0 B (and counting)
 Uploaded: 0; Failed: 0; Missing: 0; Abnormal: 0
 Directories:
-  `+dir+" => /remote")
+  `+dir+toRemote)
 		})
 
 		Convey("Sets added with friendly monitor durations show the correct monitor duration", func() {
@@ -695,7 +697,7 @@ Num files: 0; Symlinks: 0; Hardlinks: 0; Size files: 0 B
 Uploaded: 0; Failed: 0; Missing: 0; Abnormal: 0
 Completed in: 0s
 Directories:
-  `+dir+" => /remote")
+  `+dir+toRemote)
 			})
 		})
 	})
@@ -941,11 +943,13 @@ func TestPuts(t *testing.T) {
 			output := getRemoteMeta(remoteFile)
 			So(output, ShouldNotContainSubstring, "ibackup:hardlink")
 
+			const expectedPrefix = "attribute: ibackup:hardlink\nvalue: "
+
 			output = getRemoteMeta(remoteLink1)
-			So(output, ShouldContainSubstring, "attribute: ibackup:hardlink\nvalue: "+link1)
+			So(output, ShouldContainSubstring, expectedPrefix+link1)
 
 			output = getRemoteMeta(remoteLink2)
-			So(output, ShouldContainSubstring, "attribute: ibackup:hardlink\nvalue: "+link2)
+			So(output, ShouldContainSubstring, expectedPrefix+link2)
 
 			attrFind := "attribute: ibackup:remotehardlink\nvalue: "
 			attrPos := strings.Index(output, attrFind)
@@ -959,7 +963,7 @@ func TestPuts(t *testing.T) {
 			So(remoteInode, ShouldStartWith, s.remoteHardlinkPrefix)
 
 			output = getRemoteMeta(remoteInode)
-			So(output, ShouldContainSubstring, "attribute: ibackup:hardlink\nvalue: "+file)
+			So(output, ShouldContainSubstring, expectedPrefix+file)
 		})
 
 		Convey("Adding a failing set then re-adding it still allows retrying the failures", func() {
