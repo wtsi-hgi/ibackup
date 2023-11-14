@@ -282,6 +282,16 @@ func TestSetDB(t *testing.T) {
 					So(len(dEntries), ShouldEqual, 0)
 				})
 
+				Convey("The get an particular entry from a set", func() {
+					entry, errr := db.GetFileEntryForSet(set2.ID(), "/a/b.txt")
+					So(errr, ShouldBeNil)
+					So(entry, ShouldResemble, &Entry{Path: "/a/b.txt"})
+
+					entry, errr = db.GetFileEntryForSet(set2.ID(), "/not/a/file.txt")
+					So(errr, ShouldNotBeNil)
+					So(entry, ShouldBeNil)
+				})
+
 				Convey("Then get all the Sets for a particular Requester", func() {
 					sets, errg := db.GetByRequester("jim")
 					So(errg, ShouldBeNil)

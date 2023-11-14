@@ -45,16 +45,16 @@ import (
 )
 
 type Error struct {
-	msg string
+	Msg string
 	id  string
 }
 
 func (e Error) Error() string {
 	if e.id != "" {
-		return fmt.Sprintf("%s [%s]", e.msg, e.id)
+		return fmt.Sprintf("%s [%s]", e.Msg, e.id)
 	}
 
-	return e.msg
+	return e.Msg
 }
 
 const (
@@ -230,7 +230,7 @@ func (d *DB) AddOrUpdate(set *Set) error {
 
 func updateDatabaseSetWithUserSetDetails(dbSet, userSet *Set) error {
 	if dbSet.StartedDiscovery.After(dbSet.LastDiscovery) {
-		return Error{msg: ErrNoAddDuringDiscovery, id: dbSet.ID()}
+		return Error{Msg: ErrNoAddDuringDiscovery, id: dbSet.ID()}
 	}
 
 	dbSet.Transformer = userSet.Transformer
@@ -968,6 +968,24 @@ func (d *DBRO) GetFileEntries(setID string) ([]*Entry, error) {
 	}
 
 	return append(entries, entries2...), nil
+}
+
+// GetFileEntryForSet returns the file entry for the given path in the given
+// set.
+func (d *DBRO) GetFileEntryForSet(setID, filePath string) (*Entry, error) {
+	var entry *Entry
+
+	if err := d.db.View(func(tx *bolt.Tx) error {
+		var err error
+
+		entry, _, err = d.getEntry(tx, setID, filePath)
+
+		return err
+	}); err != nil {
+		return nil, err
+	}
+
+	return entry, nil
 }
 
 // GetDefinedFileEntry returns the first defined file entry for the given set.

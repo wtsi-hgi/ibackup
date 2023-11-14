@@ -701,6 +701,37 @@ Directories:
 	})
 }
 
+func TestFileStatus(t *testing.T) {
+	Convey("With a started server", t, func() {
+		s := NewTestServer(t)
+		So(s, ShouldNotBeNil)
+
+		Convey("Given an added set defined with files", func() {
+			dir := t.TempDir()
+			tempTestFile, err := os.CreateTemp(dir, "testFileSet")
+			So(err, ShouldBeNil)
+
+			_, err = io.WriteString(tempTestFile, dir+`/path/to/some/file
+`+dir+`/path/to/other/file`)
+			So(err, ShouldBeNil)
+
+			exitCode, _ := s.runBinary(t, "add", "--files", tempTestFile.Name(),
+				"--name", "testAddFiles", "--transformer", "prefix="+dir+":/remote")
+			So(exitCode, ShouldEqual, 0)
+
+			s.waitForStatus("testAddFiles", "Status: complete", 1*time.Second)
+			err = s.Shutdown()
+			So(err, ShouldBeNil)
+
+			Convey("You can request the status of a file in a set", func() {
+				exitCode, out := s.runBinary(t, "filestatus", s.dbFile, dir+"/path/to/some/file")
+				So(exitCode, ShouldEqual, 0)
+				So(out, ShouldContainSubstring, "destination: /remote/path/to/some/file")
+			})
+		})
+	})
+}
+
 // prepareForSetWithEmptyDir creates a tempdir with a subdirectory inside it,
 // and returns a prefix transformer, the directory created and the remote upload
 // location.
