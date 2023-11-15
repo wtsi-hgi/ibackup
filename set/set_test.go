@@ -133,13 +133,23 @@ func TestSet(t *testing.T) {
 		So(set.Size(), ShouldEqual, "30 B (as of last completion)")
 	})
 
-	Convey("MakeTransformer works", t, func() {
+	Convey("MakeTransformer and TransformPath work", t, func() {
 		set := &Set{Transformer: "humgen"}
 		trans, err := set.MakeTransformer()
 		So(err, ShouldBeNil)
-		remote, err := trans("/lustre/scratch118/humgen/projects/ddd/file.txt")
+
+		dddLocalPath := "/lustre/scratch118/humgen/projects/ddd/file.txt"
+		remote, err := trans(dddLocalPath)
 		So(err, ShouldBeNil)
-		So(remote, ShouldEqual, "/humgen/projects/ddd/scratch118/file.txt")
+		dddRemotePath := "/humgen/projects/ddd/scratch118/file.txt"
+		So(remote, ShouldEqual, dddRemotePath)
+
+		dest, err := set.TransformPath(dddLocalPath)
+		So(err, ShouldBeNil)
+		So(dest, ShouldEqual, dddRemotePath)
+
+		_, err = set.TransformPath("/invalid/path.txt")
+		So(err, ShouldNotBeNil)
 
 		dir, err := os.Getwd()
 		So(err, ShouldBeNil)
@@ -243,12 +253,6 @@ func TestSetDB(t *testing.T) {
 
 						retrieved2 = db.GetByID(set2.ID())
 						So(retrieved2.DeleteLocal, ShouldBeFalse)
-					})
-
-					Convey("And transform paths for the set", func() {
-						dest, errr := retrieved.TransformPath("/local/sub/foo.txt")
-						So(errr, ShouldBeNil)
-						So(dest, ShouldEqual, "/remote/sub/foo.txt")
 					})
 				})
 
