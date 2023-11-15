@@ -51,7 +51,7 @@ func init() {
 	RootCmd.AddCommand(filestatusCmd)
 
 	filestatusCmd.Flags().StringVarP(&filestatusDB, "database", "d",
-		os.Getenv("IBACKUP_DATABASE_PATH"), "path to iBackup database file")
+		os.Getenv("IBACKUP_LOCAL_DB_BACKUP_PATH"), "path to iBackup database file")
 	filestatusCmd.Flags().BoolVarP(&filestatusIrods, "irods", "i", false,
 		"do additional checking in iRods")
 }
@@ -62,14 +62,14 @@ func fileSummary(dbPath, filePath string, useIrods bool) error {
 		return err
 	}
 
-	fsg := newFSG(db, filePath, useIrods)
-
 	sets, err := db.GetAll()
 	if err != nil {
 		return err
 	}
 
-	if err := fsg.getFileStatuses(sets); err != nil {
+	fsg := newFSG(db, filePath, useIrods)
+
+	if err := fsg.printFileStatuses(sets); err != nil {
 		return err
 	}
 
@@ -105,6 +105,8 @@ func newFSG(db *set.DBRO, filePath string, useIRods bool) *fileStatusGetter {
 	put.GetBatonHandler() //nolint:errcheck
 
 	if client, err := extendo.FindAndStart("--unbuffered", "--no-error"); err != nil {
+		warn("error occurred invoking baton; disabling irods mode: %s", err)
+
 		fsg.useIRods = false
 	} else {
 		fsg.baton = client
@@ -113,9 +115,9 @@ func newFSG(db *set.DBRO, filePath string, useIRods bool) *fileStatusGetter {
 	return fsg
 }
 
-func (fsg *fileStatusGetter) getFileStatuses(sets []*set.Set) error {
+func (fsg *fileStatusGetter) printFileStatuses(sets []*set.Set) error {
 	for _, set := range sets {
-		if err := fsg.fileStatusInSet(set); err != nil {
+		if err := fsg.printFileStatusIfInSet(set); err != nil {
 			return err
 		}
 	}
@@ -123,7 +125,7 @@ func (fsg *fileStatusGetter) getFileStatuses(sets []*set.Set) error {
 	return nil
 }
 
-func (fsg *fileStatusGetter) fileStatusInSet(s *set.Set) error {
+func (fsg *fileStatusGetter) printFileStatusIfInSet(s *set.Set) error {
 	entry, err := fsg.db.GetFileEntryForSet(s.ID(), fsg.filePath)
 	if err != nil {
 		var errr set.Error

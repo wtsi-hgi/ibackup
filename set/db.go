@@ -97,11 +97,13 @@ type DBRO struct {
 // NewRO returns a *DBRO that can be used to query a set database. Provide
 // the path to the database file.
 //
-// Returns an error if path exists but can't be opened, or if it doesn't exist
-// and can't be created.
+// Returns an error if database can't be opened.
 func NewRO(path string) (*DBRO, error) {
 	boltDB, err := bolt.Open(path, dbOpenMode, &bolt.Options{
 		ReadOnly: true,
+		OpenFile: func(name string, _ int, _ os.FileMode) (*os.File, error) {
+			return os.Open(name)
+		},
 	})
 	if err != nil {
 		return nil, err
@@ -109,7 +111,6 @@ func NewRO(path string) (*DBRO, error) {
 
 	return &DBRO{
 		db: boltDB,
-
 		ch: new(codec.BincHandle),
 	}, nil
 }
@@ -147,7 +148,6 @@ func New(path, backupPath string) (*DB, error) {
 	db := &DB{
 		DBRO: DBRO{
 			db: boltDB,
-
 			ch: new(codec.BincHandle),
 		},
 		backupPath:            backupPath,
