@@ -189,16 +189,7 @@ func (s *Server) doSetDirWalks(entries []*set.Entry, given *set.Set, entriesCh c
 		thisEntry := entry
 
 		s.dirPool.Submit(func() {
-			err := s.checkAndWalkDir(dir, func(entry *walk.Dirent) error {
-				if !(entry.IsRegular() || entry.IsSymlink()) {
-					return nil
-				}
-
-				entriesCh <- entry
-
-				return nil
-			}, warnChan)
-
+			err := s.checkAndWalkDir(dir, onlyRegularAndSymlinks(entriesCh), warnChan)
 			errCh <- s.handleMissingDirectories(err, thisEntry, given)
 		})
 	}
@@ -235,6 +226,21 @@ func (s *Server) checkAndWalkDir(dir string, cb walk.PathCallback, warnChan chan
 			warnChan <- err
 		}
 	})
+}
+
+// onlyRegularAndSymlinks sends every entry found on the walk to the given
+// entriesCh, except for entries that are not regular files or symlinks, which
+// are silently skipped.
+func onlyRegularAndSymlinks(entriesCh chan *walk.Dirent) func(entry *walk.Dirent) error {
+	return func(entry *walk.Dirent) error {
+		if !(entry.IsRegular() || entry.IsSymlink()) {
+			return nil
+		}
+
+		entriesCh <- entry
+
+		return nil
+	}
 }
 
 // handleMissingDirectories checks if the given error is not nil, and if so

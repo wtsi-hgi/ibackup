@@ -39,6 +39,8 @@ import (
 	bolt "go.etcd.io/bbolt"
 )
 
+const transformerInodeSeparator = ":"
+
 // getMountPoints retrieves a list of mount point paths to be used when
 // determining hardlinks. The list is sorted longest first and stored on the
 // server object.
@@ -70,16 +72,12 @@ func (d *DB) getMountPoints() error {
 	return nil
 }
 
-const transformerInodeSeparator = ":"
-
 // handleInode records the inode of the given Dirent in the database, and
 // returns the path to the first local file with that inode if we've seen if
 // before.
 func (d *DB) handleInode(tx *bolt.Tx, de *walk.Dirent, transformerID string) (string, error) {
 	key := d.inodeMountPointKeyFromDirent(de)
-
 	b := tx.Bucket([]byte(inodeBucket))
-
 	transformerPath := transformerID + transformerInodeSeparator + de.Path
 
 	v := b.Get(key)
@@ -88,7 +86,6 @@ func (d *DB) handleInode(tx *bolt.Tx, de *walk.Dirent, transformerID string) (st
 	}
 
 	files := d.decodeIMPValue(v, de.Inode)
-
 	if len(files) == 0 {
 		return "", b.Put(key, d.encodeToBytes([]string{transformerPath}))
 	}
