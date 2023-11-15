@@ -68,6 +68,7 @@ func fileSummary(dbPath, filePath string, useIrods bool) error {
 	}
 
 	fsg := newFSG(db, filePath, useIrods)
+	defer fsg.baton.StopIgnoreError()
 
 	if err := fsg.printFileStatuses(sets); err != nil {
 		return err
