@@ -29,8 +29,8 @@ var filestatusCmd = &cobra.Command{
 Prints out a summary of the given file for each set the file appears in.
 
 The --database option should be the path to the local backup of the iBackup
-database, defaulting to the value of the IBACKUP_DATABASE_PATH environmental
-variable.
+database, defaulting to the value of the IBACKUP_LOCAL_DB_BACKUP_PATH
+environmental variable.
 
 The --irods options will gather additional information about the file, such as
 the local and remote checksums.
@@ -68,7 +68,10 @@ func fileSummary(dbPath, filePath string, useIrods bool) error {
 	}
 
 	fsg := newFSG(db, filePath, useIrods)
-	defer fsg.baton.StopIgnoreError()
+
+	if fsg.baton != nil {
+		defer fsg.baton.StopIgnoreError()
+	}
 
 	if err := fsg.printFileStatuses(sets); err != nil {
 		return err
