@@ -369,8 +369,8 @@ func TestSetDB(t *testing.T) {
 						So(errg, ShouldBeNil)
 						So(bsets[0].LastDiscovery, ShouldHappenAfter, sets[0].LastDiscovery)
 
-						fEntries, err := db.GetFileEntries(sets[0].ID())
-						So(err, ShouldBeNil)
+						fEntries, errg := db.GetFileEntries(sets[0].ID())
+						So(errg, ShouldBeNil)
 						So(len(fEntries), ShouldEqual, 5)
 						So(fEntries[0].Path, ShouldEqual, pureFiles[0])
 						So(fEntries[1].Path, ShouldEqual, pureFiles[1])
@@ -427,8 +427,8 @@ func TestSetDB(t *testing.T) {
 						}
 
 						err = db.db.Update(func(tx *bolt.Tx) error {
-							eg, b, errg := db.getEntry(tx, set.ID(), r.Local)
-							So(errg, ShouldBeNil)
+							eg, b, errge := db.getEntry(tx, set.ID(), r.Local)
+							So(errge, ShouldBeNil)
 							eg.Attempts = 2
 
 							return b.Put([]byte(r.Local), db.encodeToBytes(eg))
@@ -1091,7 +1091,7 @@ func TestSetDB(t *testing.T) {
 				So(entries[3].InodeStoragePath(), ShouldEqual, entries[1].InodeStoragePath())
 
 				Convey("then rediscover the set and still know about the hardlinks", func() {
-					got, errd := db.Discover(setl1.ID(), func(dirEntries []*Entry) ([]*walk.Dirent, error) {
+					got, errd = db.Discover(setl1.ID(), func(dirEntries []*Entry) ([]*walk.Dirent, error) {
 						return dirents, nil
 					})
 					So(errd, ShouldBeNil)
