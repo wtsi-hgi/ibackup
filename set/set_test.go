@@ -161,6 +161,80 @@ func TestSet(t *testing.T) {
 		So(err, ShouldBeNil)
 		So(remote, ShouldEqual, "/zone/file.txt")
 	})
+
+	Convey("UsageSummary returns summaries of all given sets", t, func() {
+		nov23 := time.Unix(1700063826, 0)
+		month := 730 * time.Hour
+		sets := []*Set{
+			{Name: "setA", Requester: "userA", LastCompleted: nov23,
+				SizeFiles: 10, NumFiles: 1},
+			{Name: "setB", Requester: "userA", LastCompleted: nov23.Add(month),
+				SizeFiles: 20, NumFiles: 2},
+			{Name: "setC", Requester: "userB", LastCompleted: nov23,
+				SizeFiles: 40, NumFiles: 3},
+			{Name: "setD", Requester: "userC", LastCompleted: nov23.Add(-1 * month),
+				SizeFiles: 1, NumFiles: 4},
+			{Name: "setE", Requester: "userD", LastCompleted: nov23.Add(-1 * month),
+				SizeFiles: 1, NumFiles: 5},
+			{Name: "setF", Requester: "userE", SizeFiles: 0, NumFiles: 1},
+		}
+
+		usage := UsageSummary(sets)
+		So(usage, ShouldNotBeNil)
+
+		So(usage.Total.Size, ShouldEqual, 72)
+		So(usage.Total.Number, ShouldEqual, 16)
+
+		br := usage.ByRequester
+		So(len(br), ShouldEqual, 5)
+		So(br[0].For, ShouldEqual, "userB")
+		So(br[0].Size, ShouldEqual, 40)
+		So(br[0].Number, ShouldEqual, 3)
+		So(br[1].For, ShouldEqual, "userA")
+		So(br[1].Size, ShouldEqual, 30)
+		So(br[1].Number, ShouldEqual, 3)
+		So(br[2].For, ShouldEqual, "userD")
+		So(br[2].Size, ShouldEqual, 1)
+		So(br[2].Number, ShouldEqual, 5)
+		So(br[3].For, ShouldEqual, "userC")
+		So(br[3].Size, ShouldEqual, 1)
+		So(br[3].Number, ShouldEqual, 4)
+		So(br[4].For, ShouldEqual, "userE")
+		So(br[4].Size, ShouldEqual, 0)
+		So(br[4].Number, ShouldEqual, 1)
+
+		bs := usage.BySet
+		So(len(bs), ShouldEqual, 6)
+		So(bs[0].For, ShouldEqual, "userB.setC")
+		So(bs[0].Size, ShouldEqual, 40)
+		So(bs[1].For, ShouldEqual, "userA.setB")
+		So(bs[1].Size, ShouldEqual, 20)
+		So(bs[2].For, ShouldEqual, "userA.setA")
+		So(bs[2].Size, ShouldEqual, 10)
+		So(bs[3].For, ShouldEqual, "userD.setE")
+		So(bs[3].Size, ShouldEqual, 1)
+		So(bs[4].For, ShouldEqual, "userC.setD")
+		So(bs[4].Size, ShouldEqual, 1)
+		So(bs[5].For, ShouldEqual, "userE.setF")
+		So(bs[5].Size, ShouldEqual, 0)
+
+		bm := usage.ByMonth
+		So(len(bm), ShouldEqual, 3)
+		So(bm[0].For, ShouldEqual, "2023/10")
+		So(bm[0].Size, ShouldEqual, 2)
+		So(bm[1].For, ShouldEqual, "2023/11")
+		So(bm[1].Size, ShouldEqual, 50)
+		So(bm[2].For, ShouldEqual, "2023/12")
+		So(bm[2].Size, ShouldEqual, 20)
+
+		sets = []*Set{
+			{Name: "setA", Requester: "userA",
+				SizeFiles: 10 * uint64(bytesInTiB), NumFiles: 1},
+		}
+
+		usage = UsageSummary(sets)
+		So(usage.Total.SizeTiB(), ShouldEqual, 10)
+	})
 }
 
 func TestSetDB(t *testing.T) {

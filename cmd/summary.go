@@ -28,8 +28,6 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"slices"
-	"sort"
 
 	//nolint:misspell
 	"github.com/dustin/go-humanize"
@@ -38,14 +36,7 @@ import (
 	"github.com/wtsi-hgi/ibackup/tplot"
 )
 
-const (
-	setsBucket              = "sets"
-	subBucketPrefix         = "~!~"
-	dbOpenMode              = 0600
-	bySetMax                = 20
-	bytesInTiB      float64 = 1024 * 1024 * 1024 * 1024
-	youplot                 = "youplot"
-)
+const bySetMax = 20
 
 // options for this cmd.
 var summaryDB string
@@ -57,7 +48,7 @@ var summaryCmd = &cobra.Command{
 	Long: `Get a summary of backed up sets.
 
 The user who started the server can use this sub-command to summarise what has
-been backed up (follwing 'ibackup add' calls).
+been backed up (following 'ibackup add' calls).
  
 The --database option should be the path to the local backup of the ibackup
 database, defaulting to the value of the IBACKUP_LOCAL_DB_BACKUP_PATH
@@ -81,21 +72,6 @@ func init() {
 		os.Getenv("IBACKUP_LOCAL_DB_BACKUP_PATH"), "path to ibackup database file")
 }
 
-type sizeCount struct {
-	size  uint64
-	count uint64
-}
-
-func (s *sizeCount) add(set *set.Set) {
-	s.size += set.SizeFiles
-	s.count += set.NumFiles
-}
-
-// sizeTB returns size in TiB.
-func (s *sizeCount) sizeTB() float64 {
-	return float64(s.size) / bytesInTiB
-}
-
 func summary(dbPath string) error {
 	db, err := set.NewRO(dbPath)
 	if err != nil {
@@ -107,96 +83,35 @@ func summary(dbPath string) error {
 		return err
 	}
 
-	totalSizeCount := &sizeCount{}
-	byUser := make(map[string]*sizeCount)
-	bySet := make(map[string]*sizeCount)
-	byMonth := make(map[string]*sizeCount)
-
-	for _, set := range sets {
-		totalSizeCount.add(set)
-
-		userSC, ok := byUser[set.Requester]
-		if !ok {
-			byUser[set.Requester] = &sizeCount{}
-			userSC = byUser[set.Requester]
-		}
-
-		userSC.add(set)
-
-		sc := &sizeCount{}
-		sc.add(set)
-		bySet[set.Requester+"."+set.Name] = sc
-
-		if !set.LastCompleted.IsZero() {
-			month := fmt.Sprintf("%d/%02d", set.LastCompleted.Year(), int(set.LastCompleted.Month()))
-
-			monthSC, ok := byMonth[month]
-			if !ok {
-				byMonth[month] = &sizeCount{}
-				monthSC = byMonth[month]
-			}
-
-			monthSC.add(set)
-		}
-	}
+	usage := set.UsageSummary(sets)
 
 	cliPrint("Total size: %s\nTotal files: %s\n",
-		humanize.Bytes(totalSizeCount.size), humanize.Comma(int64(totalSizeCount.count)))
+		humanize.IBytes(usage.Total.Size), humanize.Comma(int64(usage.Total.Number)))
 
 	tp := tplot.New()
 
-	err = sortAndPlotSCmap(tp, byUser, 0, "By user (TB backed up)")
+	err = plotSANs(tp, usage.ByRequester, 0, "By user (TB backed up)")
 	if err != nil {
 		return err
 	}
 
-	err = sortAndPlotSCmap(tp, bySet, bySetMax, fmt.Sprintf("Largest %d sets (TB)", bySetMax))
+	err = plotSANs(tp, usage.BySet, bySetMax, fmt.Sprintf("Largest %d sets (TB)", bySetMax))
 	if err != nil {
 		return err
 	}
 
-	return plotUsageOverTime(tp, byMonth)
+	return plotSANs(tp, usage.ByMonth, 0, "Backed up (TB) each month")
 }
 
-func sortAndPlotSCmap(tp *tplot.TPlotter, scMap map[string]*sizeCount, max int, title string) error {
-	keys := make([]string, 0, len(scMap))
-	for user := range scMap {
-		keys = append(keys, user)
-	}
-
-	sort.Slice(keys, func(i, j int) bool {
-		return scMap[keys[i]].size > scMap[keys[j]].size
-	})
-
+func plotSANs(tp *tplot.TPlotter, sans []*set.SizeAndNumber, max int, title string) error {
 	data := tplot.NewData(title)
 
-	for i, key := range keys {
-		if scMap[key].size == 0 {
-			continue
-		}
-
-		data.Add(key, scMap[key].sizeTB())
+	for i, san := range sans {
+		data.Add(san.For, san.SizeTiB())
 
 		if max > 0 && i == max-1 {
 			break
 		}
-	}
-
-	return tp.Plot(data)
-}
-
-func plotUsageOverTime(tp *tplot.TPlotter, byMonth map[string]*sizeCount) error {
-	months := make([]string, 0, len(byMonth))
-	data := tplot.NewData("Backed up (TB) each month")
-
-	for month := range byMonth {
-		months = append(months, month)
-	}
-
-	slices.Sort(months)
-
-	for _, month := range months {
-		data.Add(month, byMonth[month].sizeTB())
 	}
 
 	return tp.Plot(data)
