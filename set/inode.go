@@ -114,7 +114,7 @@ func (d *DB) handleInode(tx *bolt.Tx, de *walk.Dirent, transformerID string) (st
 func splitTransformerPath(tp string) (string, string, error) {
 	transformerID, hardlinkDest, ok := strings.Cut(tp, transformerInodeSeparator)
 	if !ok {
-		return "", "", &Error{msg: ErrInvalidTransformerPath}
+		return "", "", &Error{Msg: ErrInvalidTransformerPath}
 	}
 
 	return transformerID, hardlinkDest, nil
@@ -288,15 +288,10 @@ func getRemotePath(tx *bolt.Tx, transformerID, path string) (string, error) {
 
 	v := tb.Get([]byte(transformerID))
 	if v == nil {
-		return "", &Error{msg: ErrInvalidTransformerPath}
+		return "", &Error{Msg: ErrInvalidTransformerPath}
 	}
 
 	s := &Set{Transformer: string(v)}
 
-	t, err := s.MakeTransformer()
-	if err != nil {
-		return "", err
-	}
-
-	return t(path)
+	return s.TransformPath(path)
 }

@@ -62,7 +62,7 @@ func Stat(localPath string) (*ObjectInfo, error) {
 		return nil, err
 	}
 
-	mtime, err := timeToMeta(fi.ModTime())
+	mtime, err := TimeToMeta(fi.ModTime())
 	if err != nil {
 		return nil, err
 	}
@@ -83,10 +83,10 @@ func Stat(localPath string) (*ObjectInfo, error) {
 	}, nil
 }
 
-// timeToMeta converts a time to a string suitable for storing as metadata, in
+// TimeToMeta converts a time to a string suitable for storing as metadata, in
 // a way that ObjectInfo.ModTime() will understand and be able to convert back
 // again.
-func timeToMeta(t time.Time) (string, error) {
+func TimeToMeta(t time.Time) (string, error) {
 	b, err := t.UTC().Truncate(time.Second).MarshalText()
 	if err != nil {
 		return "", err

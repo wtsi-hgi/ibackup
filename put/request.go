@@ -339,7 +339,7 @@ func cloneMap(m map[string]string) map[string]string {
 
 // addDate adds the current date to Meta, replacing any exisiting value.
 func (r *Request) addDate() {
-	date, _ := timeToMeta(time.Now()) //nolint:errcheck
+	date, _ := TimeToMeta(time.Now()) //nolint:errcheck
 
 	r.Meta[MetaKeyDate] = date
 }
