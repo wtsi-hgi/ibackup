@@ -27,17 +27,15 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"slices"
 	"sort"
-	"strings"
 
 	//nolint:misspell
 	"github.com/dustin/go-humanize"
 	"github.com/spf13/cobra"
-	"github.com/ugorji/go/codec"
 	"github.com/wtsi-hgi/ibackup/set"
 	"github.com/wtsi-hgi/ibackup/tplot"
-	bolt "go.etcd.io/bbolt"
 )
 
 const (
@@ -49,29 +47,27 @@ const (
 	youplot                 = "youplot"
 )
 
+// options for this cmd.
+var summaryDB string
+
 // summaryCmd represents the summary command.
 var summaryCmd = &cobra.Command{
 	Use:   "summary",
 	Short: "Get a summary of backed up sets",
 	Long: `Get a summary of backed up sets.
- 
- Having used 'ibackup add' to add the details of one or more backup sets, use
- this command to summarise what has been backed up.
- 
- This will only work for the user who started the ibackup server, and you need
- to supply the path to the server's database (or its backup).
 
- The output will look nicer if you have
- https://github.com/red-data-tools/YouPlot installed.
+The user who started the server can use this sub-command to summarise what has
+been backed up (follwing 'ibackup add' calls).
+ 
+The --database option should be the path to the local backup of the ibackup
+database, defaulting to the value of the IBACKUP_LOCAL_DB_BACKUP_PATH
+environmental variable.
+
+The output will look nicer if you have https://github.com/red-data-tools/YouPlot
+installed.
  `,
 	Run: func(cmd *cobra.Command, args []string) {
-		ensureURLandCert()
-
-		if len(args) != 1 {
-			die("you must supply the path to an ibackup database")
-		}
-
-		err := summary(args[0])
+		err := summary(summaryDB)
 		if err != nil {
 			die(err.Error())
 		}
@@ -80,6 +76,9 @@ var summaryCmd = &cobra.Command{
 
 func init() {
 	RootCmd.AddCommand(summaryCmd)
+
+	summaryCmd.Flags().StringVarP(&summaryDB, "database", "d",
+		os.Getenv("IBACKUP_LOCAL_DB_BACKUP_PATH"), "path to ibackup database file")
 }
 
 type sizeCount struct {
@@ -92,65 +91,53 @@ func (s *sizeCount) add(set *set.Set) {
 	s.count += set.NumFiles
 }
 
-// sizeTB returns size in TB.
+// sizeTB returns size in TiB.
 func (s *sizeCount) sizeTB() float64 {
 	return float64(s.size) / bytesInTiB
 }
 
 func summary(dbPath string) error {
-	boltDB, err := bolt.Open(dbPath, dbOpenMode, &bolt.Options{
-		ReadOnly: true,
-	})
+	db, err := set.NewRO(dbPath)
 	if err != nil {
 		return err
 	}
 
-	ch := new(codec.BincHandle)
+	sets, err := db.GetAll()
+	if err != nil {
+		return err
+	}
+
 	totalSizeCount := &sizeCount{}
 	byUser := make(map[string]*sizeCount)
 	bySet := make(map[string]*sizeCount)
 	byMonth := make(map[string]*sizeCount)
 
-	err = boltDB.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte(setsBucket))
+	for _, set := range sets {
+		totalSizeCount.add(set)
 
-		return b.ForEach(func(k, v []byte) error {
-			if strings.HasPrefix(string(k), subBucketPrefix) {
-				return nil
-			}
+		userSC, ok := byUser[set.Requester]
+		if !ok {
+			byUser[set.Requester] = &sizeCount{}
+			userSC = byUser[set.Requester]
+		}
 
-			set := decodeSet(v, ch)
-			totalSizeCount.add(set)
+		userSC.add(set)
 
-			userSC, ok := byUser[set.Requester]
+		sc := &sizeCount{}
+		sc.add(set)
+		bySet[set.Requester+"."+set.Name] = sc
+
+		if !set.LastCompleted.IsZero() {
+			month := fmt.Sprintf("%d/%02d", set.LastCompleted.Year(), int(set.LastCompleted.Month()))
+
+			monthSC, ok := byMonth[month]
 			if !ok {
-				byUser[set.Requester] = &sizeCount{}
-				userSC = byUser[set.Requester]
+				byMonth[month] = &sizeCount{}
+				monthSC = byMonth[month]
 			}
 
-			userSC.add(set)
-
-			sc := &sizeCount{}
-			sc.add(set)
-			bySet[set.Requester+"."+set.Name] = sc
-
-			if !set.LastCompleted.IsZero() {
-				month := fmt.Sprintf("%d/%02d", set.LastCompleted.Year(), int(set.LastCompleted.Month()))
-
-				monthSC, ok := byMonth[month]
-				if !ok {
-					byMonth[month] = &sizeCount{}
-					monthSC = byMonth[month]
-				}
-
-				monthSC.add(set)
-			}
-
-			return nil
-		})
-	})
-	if err != nil {
-		return err
+			monthSC.add(set)
+		}
 	}
 
 	cliPrint("Total size: %s\nTotal files: %s\n",
@@ -169,16 +156,6 @@ func summary(dbPath string) error {
 	}
 
 	return plotUsageOverTime(tp, byMonth)
-}
-
-func decodeSet(v []byte, ch codec.Handle) *set.Set {
-	dec := codec.NewDecoderBytes(v, ch)
-
-	var set *set.Set
-
-	dec.MustDecode(&set)
-
-	return set
 }
 
 func sortAndPlotSCmap(tp *tplot.TPlotter, scMap map[string]*sizeCount, max int, title string) error {

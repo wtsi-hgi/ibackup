@@ -26,9 +26,10 @@ var filestatusCmd = &cobra.Command{
 	Short: "Get the status of a file in the database",
 	Long: `Get the status of a file in the database.
 
-Prints out a summary of the given file for each set the file appears in.
+The user who started the server can use this sub-command to print out a the
+status of the given file for each set the file appears in.
 
-The --database option should be the path to the local backup of the iBackup
+The --database option should be the path to the local backup of the ibackup
 database, defaulting to the value of the IBACKUP_LOCAL_DB_BACKUP_PATH
 environmental variable.
 
@@ -51,7 +52,7 @@ func init() {
 	RootCmd.AddCommand(filestatusCmd)
 
 	filestatusCmd.Flags().StringVarP(&filestatusDB, "database", "d",
-		os.Getenv("IBACKUP_LOCAL_DB_BACKUP_PATH"), "path to iBackup database file")
+		os.Getenv("IBACKUP_LOCAL_DB_BACKUP_PATH"), "path to ibackup database file")
 	filestatusCmd.Flags().BoolVarP(&filestatusIrods, "irods", "i", false,
 		"do additional checking in iRods")
 }
