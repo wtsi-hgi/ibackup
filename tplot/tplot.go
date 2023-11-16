@@ -49,17 +49,23 @@ type datum struct {
 	x, y string
 }
 
+// Data represents the data for an individual plot.
 type Data struct {
 	title string
 	data  []*datum
 }
 
+// NewData returns a Data that can be used to plot Add()ed data with the given
+// title.
 func NewData(title string) *Data {
 	return &Data{
 		title: title,
 	}
 }
 
+// Add adds a new "row" to the eventual barplot (which is printed on its side,
+// with x values on the vertical axis), where x is the name of the bar, and y
+// is its "height".
 func (d *Data) Add(x string, y float64) {
 	var dp int
 
@@ -84,11 +90,13 @@ func (d *Data) Add(x string, y float64) {
 	d.data = append(d.data, xy)
 }
 
+// TPlotter is used to do barplots.
 type TPlotter struct {
 	youPlotExe string
 	output     io.Writer
 }
 
+// New returns a TPlotter that can Plot() Data.
 func New() *TPlotter {
 	exe, _ := exec.LookPath(youplot) //nolint:errcheck
 
@@ -98,6 +106,8 @@ func New() *TPlotter {
 	}
 }
 
+// Plot plots the given data as a barplot to the terminal, using YouPlot if
+// available, otherwise with simple text.
 func (t *TPlotter) Plot(data *Data) error {
 	if t.youPlotExe == "" {
 		t.simplePlot(data)
