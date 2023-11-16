@@ -101,6 +101,7 @@ func (s *TestServer) prepareFilePaths(dir string) {
 		"PATH=" + os.Getenv("PATH"),
 		"HOME=" + home,
 		"IRODS_ENVIRONMENT_FILE=" + os.Getenv("IRODS_ENVIRONMENT_FILE"),
+		"GEM_HOME=" + os.Getenv("GEM_HOME"),
 	}
 }
 
@@ -217,8 +218,12 @@ func (s *TestServer) runBinary(t *testing.T, args ...string) (int, string) {
 	if err != nil {
 		var exitError *exec.ExitError
 		if !errors.As(err, &exitError) {
-			t.Logf("binary gave error: %s\noutput was: %s\n", err, string(outB))
+			t.Logf("\nbinary gave error: %s\noutput was: %s\n", err, out)
+		} else {
+			t.Logf("\nnon ExitError error: %s\noutput was: %s\n", err, out)
 		}
+	} else if cmd.ProcessState.ExitCode() != 0 {
+		t.Logf("\nno error, but non-0 exit; binary output: %s\n", out)
 	}
 
 	return cmd.ProcessState.ExitCode(), out
@@ -913,6 +918,7 @@ func TestPuts(t *testing.T) {
 
 		s.schedulerDeployment = schedulerDeployment
 		s.remoteHardlinkPrefix = filepath.Join(remotePath, "hardlinks")
+		s.backupFile = filepath.Join(dir, "db.bak")
 
 		s.startServer()
 
@@ -964,6 +970,12 @@ func TestPuts(t *testing.T) {
 
 			output = getRemoteMeta(remoteInode)
 			So(output, ShouldContainSubstring, expectedPrefix+file)
+
+			Convey("and summary tells you about the set", func() {
+				exitCode, out := s.runBinary(t, "summary", "--database", s.backupFile)
+				So(exitCode, ShouldEqual, 0)
+				So(out, ShouldContainSubstring, "Total size: 9 B")
+			})
 		})
 
 		Convey("Adding a failing set then re-adding it still allows retrying the failures", func() {

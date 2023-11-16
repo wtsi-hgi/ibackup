@@ -2424,8 +2424,8 @@ func TestServer(t *testing.T) {
 					ok := <-racCalled
 					So(ok, ShouldBeTrue)
 
-					gotSet, err := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
-					So(err, ShouldBeNil)
+					gotSet, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+					So(errg, ShouldBeNil)
 					So(gotSet.Status, ShouldEqual, set.PendingUpload)
 					So(gotSet.NumFiles, ShouldEqual, 2)
 					So(gotSet.Uploaded, ShouldEqual, 0)

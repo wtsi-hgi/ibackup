@@ -133,13 +133,23 @@ func TestSet(t *testing.T) {
 		So(set.Size(), ShouldEqual, "30 B (as of last completion)")
 	})
 
-	Convey("MakeTransformer works", t, func() {
+	Convey("MakeTransformer and TransformPath work", t, func() {
 		set := &Set{Transformer: "humgen"}
 		trans, err := set.MakeTransformer()
 		So(err, ShouldBeNil)
-		remote, err := trans("/lustre/scratch118/humgen/projects/ddd/file.txt")
+
+		dddLocalPath := "/lustre/scratch118/humgen/projects/ddd/file.txt"
+		remote, err := trans(dddLocalPath)
 		So(err, ShouldBeNil)
-		So(remote, ShouldEqual, "/humgen/projects/ddd/scratch118/file.txt")
+		dddRemotePath := "/humgen/projects/ddd/scratch118/file.txt"
+		So(remote, ShouldEqual, dddRemotePath)
+
+		dest, err := set.TransformPath(dddLocalPath)
+		So(err, ShouldBeNil)
+		So(dest, ShouldEqual, dddRemotePath)
+
+		_, err = set.TransformPath("/invalid/path.txt")
+		So(err, ShouldNotBeNil)
 
 		dir, err := os.Getwd()
 		So(err, ShouldBeNil)
@@ -150,6 +160,80 @@ func TestSet(t *testing.T) {
 		remote, err = trans(filepath.Join(dir, "file.txt"))
 		So(err, ShouldBeNil)
 		So(remote, ShouldEqual, "/zone/file.txt")
+	})
+
+	Convey("UsageSummary returns summaries of all given sets", t, func() {
+		nov23 := time.Unix(1700063826, 0)
+		month := 730 * time.Hour
+		sets := []*Set{
+			{Name: "setA", Requester: "userA", LastCompleted: nov23,
+				SizeFiles: 10, NumFiles: 1},
+			{Name: "setB", Requester: "userA", LastCompleted: nov23.Add(month),
+				SizeFiles: 20, NumFiles: 2},
+			{Name: "setC", Requester: "userB", LastCompleted: nov23,
+				SizeFiles: 40, NumFiles: 3},
+			{Name: "setD", Requester: "userC", LastCompleted: nov23.Add(-1 * month),
+				SizeFiles: 1, NumFiles: 4},
+			{Name: "setE", Requester: "userD", LastCompleted: nov23.Add(-1 * month),
+				SizeFiles: 1, NumFiles: 5},
+			{Name: "setF", Requester: "userE", SizeFiles: 0, NumFiles: 1},
+		}
+
+		usage := UsageSummary(sets)
+		So(usage, ShouldNotBeNil)
+
+		So(usage.Total.Size, ShouldEqual, 72)
+		So(usage.Total.Number, ShouldEqual, 16)
+
+		br := usage.ByRequester
+		So(len(br), ShouldEqual, 5)
+		So(br[0].For, ShouldEqual, "userB")
+		So(br[0].Size, ShouldEqual, 40)
+		So(br[0].Number, ShouldEqual, 3)
+		So(br[1].For, ShouldEqual, "userA")
+		So(br[1].Size, ShouldEqual, 30)
+		So(br[1].Number, ShouldEqual, 3)
+		So(br[2].For, ShouldEqual, "userD")
+		So(br[2].Size, ShouldEqual, 1)
+		So(br[2].Number, ShouldEqual, 5)
+		So(br[3].For, ShouldEqual, "userC")
+		So(br[3].Size, ShouldEqual, 1)
+		So(br[3].Number, ShouldEqual, 4)
+		So(br[4].For, ShouldEqual, "userE")
+		So(br[4].Size, ShouldEqual, 0)
+		So(br[4].Number, ShouldEqual, 1)
+
+		bs := usage.BySet
+		So(len(bs), ShouldEqual, 6)
+		So(bs[0].For, ShouldEqual, "userB.setC")
+		So(bs[0].Size, ShouldEqual, 40)
+		So(bs[1].For, ShouldEqual, "userA.setB")
+		So(bs[1].Size, ShouldEqual, 20)
+		So(bs[2].For, ShouldEqual, "userA.setA")
+		So(bs[2].Size, ShouldEqual, 10)
+		So(bs[3].For, ShouldEqual, "userD.setE")
+		So(bs[3].Size, ShouldEqual, 1)
+		So(bs[4].For, ShouldEqual, "userC.setD")
+		So(bs[4].Size, ShouldEqual, 1)
+		So(bs[5].For, ShouldEqual, "userE.setF")
+		So(bs[5].Size, ShouldEqual, 0)
+
+		bm := usage.ByMonth
+		So(len(bm), ShouldEqual, 3)
+		So(bm[0].For, ShouldEqual, "2023/10")
+		So(bm[0].Size, ShouldEqual, 2)
+		So(bm[1].For, ShouldEqual, "2023/11")
+		So(bm[1].Size, ShouldEqual, 50)
+		So(bm[2].For, ShouldEqual, "2023/12")
+		So(bm[2].Size, ShouldEqual, 20)
+
+		sets = []*Set{
+			{Name: "setA", Requester: "userA",
+				SizeFiles: 10 * uint64(bytesInTiB), NumFiles: 1},
+		}
+
+		usage = UsageSummary(sets)
+		So(usage.Total.SizeTiB(), ShouldEqual, 10)
 	})
 }
 
@@ -243,12 +327,6 @@ func TestSetDB(t *testing.T) {
 
 						retrieved2 = db.GetByID(set2.ID())
 						So(retrieved2.DeleteLocal, ShouldBeFalse)
-					})
-
-					Convey("And transform paths for the set", func() {
-						dest, errr := retrieved.TransformPath("/local/sub/foo.txt")
-						So(errr, ShouldBeNil)
-						So(dest, ShouldEqual, "/remote/sub/foo.txt")
 					})
 				})
 
@@ -365,8 +443,8 @@ func TestSetDB(t *testing.T) {
 						So(errg, ShouldBeNil)
 						So(bsets[0].LastDiscovery, ShouldHappenAfter, sets[0].LastDiscovery)
 
-						fEntries, err := db.GetFileEntries(sets[0].ID())
-						So(err, ShouldBeNil)
+						fEntries, errg := db.GetFileEntries(sets[0].ID())
+						So(errg, ShouldBeNil)
 						So(len(fEntries), ShouldEqual, 5)
 						So(fEntries[0].Path, ShouldEqual, pureFiles[0])
 						So(fEntries[1].Path, ShouldEqual, pureFiles[1])
@@ -423,8 +501,8 @@ func TestSetDB(t *testing.T) {
 						}
 
 						err = db.db.Update(func(tx *bolt.Tx) error {
-							eg, b, errg := db.getEntry(tx, set.ID(), r.Local)
-							So(errg, ShouldBeNil)
+							eg, b, errge := db.getEntry(tx, set.ID(), r.Local)
+							So(errge, ShouldBeNil)
 							eg.Attempts = 2
 
 							return b.Put([]byte(r.Local), db.encodeToBytes(eg))
@@ -1087,7 +1165,7 @@ func TestSetDB(t *testing.T) {
 				So(entries[3].InodeStoragePath(), ShouldEqual, entries[1].InodeStoragePath())
 
 				Convey("then rediscover the set and still know about the hardlinks", func() {
-					got, errd := db.Discover(setl1.ID(), func(dirEntries []*Entry) ([]*walk.Dirent, error) {
+					got, errd = db.Discover(setl1.ID(), func(dirEntries []*Entry) ([]*walk.Dirent, error) {
 						return dirents, nil
 					})
 					So(errd, ShouldBeNil)
