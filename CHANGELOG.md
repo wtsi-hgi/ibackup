@@ -5,6 +5,16 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/) and this
 project adheres to [Semantic Versioning](http://semver.org/).
 
 
+## [1.1.0] - 2023-11-16
+### Added
+- Admin-only filestatus sub-command to print out the status of a file for each
+  set the file appears in.
+- Admin-only summary sub-command to summarise usage of all sets.
+
+### Security
+- Dependencies updated to avoid potential security vulnerabilites.
+
+
 ## [1.0.3] - 2023-07-05
 ### Fixed
 - Inodes that get re-used won't be mis-characterised as hardlinks, nor will we
