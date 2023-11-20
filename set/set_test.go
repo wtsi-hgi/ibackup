@@ -461,8 +461,8 @@ func TestSetDB(t *testing.T) {
 						So(sets[0].NumFiles, ShouldEqual, 5)
 						So(sets[0].SizeFiles, ShouldEqual, 0)
 
-						setsAll, err := db.GetAll()
-						So(err, ShouldBeNil)
+						setsAll, errg := db.GetAll()
+						So(errg, ShouldBeNil)
 						So(setsAll, ShouldNotBeNil)
 						So(len(setsAll), ShouldEqual, 2)
 
@@ -475,8 +475,8 @@ func TestSetDB(t *testing.T) {
 							Error:     "",
 						}
 
-						e, err := db.SetEntryStatus(r)
-						So(err, ShouldBeNil)
+						e, errs := db.SetEntryStatus(r)
+						So(errs, ShouldBeNil)
 						So(e, ShouldNotBeNil)
 						So(e.Path, ShouldEqual, fEntries[0].Path)
 						So(e.Size, ShouldEqual, r.Size)
@@ -797,8 +797,8 @@ func TestSetDB(t *testing.T) {
 							err = <-errCh
 							So(err, ShouldBeNil)
 
-							fEntries, err := db.GetFileEntries(sets[0].ID())
-							So(err, ShouldBeNil)
+							fEntries, errg := db.GetFileEntries(sets[0].ID())
+							So(errg, ShouldBeNil)
 							So(len(fEntries), ShouldEqual, 6)
 							So(fEntries[5], ShouldResemble, &Entry{Path: "/g/i/n.txt"})
 

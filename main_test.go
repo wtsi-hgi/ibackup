@@ -216,12 +216,7 @@ func (s *TestServer) runBinary(t *testing.T, args ...string) (int, string) {
 	out = normaliseOutput(out)
 
 	if err != nil {
-		var exitError *exec.ExitError
-		if !errors.As(err, &exitError) {
-			t.Logf("\nbinary gave error: %s\noutput was: %s\n", err, out)
-		} else {
-			t.Logf("\nnon ExitError error: %s\noutput was: %s\n", err, out)
-		}
+		t.Logf("\nbinary gave error: %s\noutput was: %s\n", err, out)
 	} else if cmd.ProcessState.ExitCode() != 0 {
 		t.Logf("\nno error, but non-0 exit; binary output: %s\n", out)
 	}
