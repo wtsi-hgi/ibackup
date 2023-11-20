@@ -69,6 +69,7 @@ type TestServer struct {
 	schedulerDeployment  string
 	remoteHardlinkPrefix string
 	env                  []string
+	stopped              bool
 
 	cmd *exec.Cmd
 }
@@ -159,6 +160,7 @@ func (s *TestServer) startServer() {
 		args = append(args, s.backupFile)
 	}
 
+	s.stopped = false
 	s.cmd = exec.Command("./"+app, args...)
 	s.cmd.Env = s.env
 	s.cmd.Stdout = os.Stdout
@@ -280,6 +282,11 @@ func (s *TestServer) waitForStatus(name, statusToFind string, timeout time.Durat
 }
 
 func (s *TestServer) Shutdown() error {
+	if s.stopped {
+		return nil
+	}
+
+	s.stopped = true
 	err := s.cmd.Process.Signal(os.Interrupt)
 
 	errCh := make(chan error, 1)
