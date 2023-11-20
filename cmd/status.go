@@ -104,7 +104,7 @@ func (sf *statusFilter) filter(sets []*set.Set) []*set.Set {
 	return filtered
 }
 
-func (sf *statusFilter) pass(given *set.Set) bool { //nolint:gocyclo
+func (sf *statusFilter) pass(given *set.Set) bool { //nolint:gocyclo,gocognit,nolintlint
 	switch {
 	case sf.incomplete:
 		return given.Status != set.Complete || given.Failed > 0
@@ -140,7 +140,7 @@ When not using --name, provide one of:
 --queued to only see sets that have been added and are queued, but have not yet
   started to upload any files.
 
-If none of the above flags are supplied, --incomplete is the default.
+If none of the above flags are supplied, you'll get the status of all your sets.
 
 You need to supply the ibackup server's URL in the form domain:port (using the
 IBACKUP_SERVER_URL environment variable, or overriding that with the --url
@@ -182,10 +182,6 @@ own. You can specify the user as "all" to see all user's sets.
 
 		if statusName != "" && sf != nil {
 			die("--name can't be used together with the status filtering options")
-		}
-
-		if statusName == "" && sf == nil {
-			sf = newStatusFilter(true, false, false, false)
 		}
 
 		client, err := newServerClient(serverURL, serverCert)
