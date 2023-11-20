@@ -88,10 +88,11 @@ func newStatusFilter(incomplete, complete, failed, queued bool) *statusFilter {
 
 // filter returns the desired subset from amongst the given sets.
 //
-// - "incomplete" includes sets with status complete, but failures.
-// - "complete" is sets with status complete, but excluding those with failures.
-// - "failed" is any set with any failures or errors.
-// - "queued" is sets that are between "only just added" and their first upload.
+//   - "incomplete" includes sets with status complete, but failures.
+//   - "complete" is sets with status complete, but excluding those with failures
+//     or errors.
+//   - "failed" is any set with any failures or errors.
+//   - "queued" is sets that are between "only just added" and their first upload.
 func (sf *statusFilter) filter(sets []*set.Set) []*set.Set {
 	var filtered []*set.Set
 
@@ -104,16 +105,16 @@ func (sf *statusFilter) filter(sets []*set.Set) []*set.Set {
 	return filtered
 }
 
-func (sf *statusFilter) pass(given *set.Set) bool { //nolint:gocyclo,gocognit,nolintlint
+func (sf *statusFilter) pass(given *set.Set) bool {
 	switch {
 	case sf.incomplete:
-		return given.Status != set.Complete || given.Failed > 0
+		return given.Incomplete()
 	case sf.complete:
-		return given.Status == set.Complete && given.Failed == 0
+		return !given.Incomplete()
 	case sf.failed:
-		return given.Failed > 0 || given.Error != ""
+		return given.HasProblems()
 	case sf.queued:
-		return given.Status == set.PendingDiscovery || given.Status == set.PendingUpload
+		return given.Queued()
 	default:
 		return false
 	}

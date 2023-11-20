@@ -464,8 +464,7 @@ Example File: `+dir+`/path/to/other/file => /remote/path/to/other/file`)
 			_, localDir, _ := prepareForSetWithEmptyDir(t)
 			s.addSetForTesting(t, "badHumgen", "humgen", localDir)
 
-			s.confirmOutput(t, []string{"status", "-n", "badHumgen"}, 0,
-				`Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
+			expected := `Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
 Global put client status (/10): 0 creating collections; 0 currently uploading
 
 Name: badHumgen
@@ -477,8 +476,17 @@ Num files: 0; Symlinks: 0; Hardlinks: 0; Size files: 0 B
 Uploaded: 0; Failed: 0; Missing: 0; Abnormal: 0
 Completed in: 0s
 Directories:
-your transformer didn't work: not a valid humgen lustre path [`+localDir+`/file.txt]
-  `+localDir)
+your transformer didn't work: not a valid humgen lustre path [` + localDir + `/file.txt]
+  ` + localDir
+
+			s.confirmOutput(t, []string{"status", "-n", "badHumgen"}, 0, expected)
+			s.confirmOutput(t, []string{"status", "-c"}, 0, expected)
+
+			expected = `Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
+Global put client status (/10): 0 creating collections; 0 currently uploading
+no backup sets`
+			s.confirmOutput(t, []string{"status", "-f"}, 0, expected)
+			s.confirmOutput(t, []string{"status", "-i"}, 0, expected)
 		})
 
 		Convey("Given an added set defined with a local path containing the localPrefix "+

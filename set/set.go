@@ -281,6 +281,31 @@ func (s *Set) MakeTransformer() (put.PathTransformer, error) {
 	return put.PrefixTransformer(parts[0], parts[1]), nil
 }
 
+// Incomplete returns true if our Status is not Complete, or if we
+// HasProblems(). (Status can be "Complete" even if there are upload failures,
+// because "Complete" status only means we're not trying to upload any more.)
+func (s *Set) Incomplete() bool {
+	return s.Status != Complete || s.HasProblems()
+}
+
+// HasProblems returns true if any uploads have failed, if there's an error on
+// the set itself, or if our transformer doesn't work.
+//
+// Currently does NOT check if all of the user's desired local paths can be
+// transformed, so there might actually be problems.
+func (s *Set) HasProblems() bool {
+	_, err := s.MakeTransformer()
+
+	return s.Failed > 0 || s.Error != "" || err != nil
+}
+
+// Queued returns true if we're either pending discovery or upload. Ie. the
+// set was recently added or updated, but uploads haven't begun yet probably due
+// to uploads for other sets being first in the queue.
+func (s *Set) Queued() bool {
+	return s.Status == PendingDiscovery || s.Status == PendingUpload
+}
+
 // countsValid tells you if our Uploaded, Failed and Missing counts are valid
 // (0..NumFiles).
 func (s *Set) countsValid() bool {

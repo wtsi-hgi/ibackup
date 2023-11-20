@@ -62,6 +62,46 @@ func TestSet(t *testing.T) {
 		So(Missing.String(), ShouldEqual, "missing")
 	})
 
+	Convey("Status methods are useful helpers", t, func() {
+		s := &Set{Transformer: "humgen"}
+		So(s.Incomplete(), ShouldBeTrue)
+		So(s.HasProblems(), ShouldBeFalse)
+		So(s.Queued(), ShouldBeTrue)
+
+		s.Status = Complete
+		So(s.Incomplete(), ShouldBeFalse)
+		So(s.HasProblems(), ShouldBeFalse)
+		So(s.Queued(), ShouldBeFalse)
+
+		s.Failed = 1
+		So(s.Incomplete(), ShouldBeTrue)
+		So(s.HasProblems(), ShouldBeTrue)
+		So(s.Queued(), ShouldBeFalse)
+
+		s.Failed = 0
+		s.Error = "error"
+		So(s.Incomplete(), ShouldBeTrue)
+		So(s.HasProblems(), ShouldBeTrue)
+		So(s.Queued(), ShouldBeFalse)
+
+		s.Error = ""
+		s.Transformer = "invalid"
+		So(s.Incomplete(), ShouldBeTrue)
+		So(s.HasProblems(), ShouldBeTrue)
+		So(s.Queued(), ShouldBeFalse)
+
+		s.Transformer = "humgen"
+		s.Status = PendingDiscovery
+		So(s.Incomplete(), ShouldBeTrue)
+		So(s.HasProblems(), ShouldBeFalse)
+		So(s.Queued(), ShouldBeTrue)
+
+		s.Status = PendingUpload
+		So(s.Incomplete(), ShouldBeTrue)
+		So(s.HasProblems(), ShouldBeFalse)
+		So(s.Queued(), ShouldBeTrue)
+	})
+
 	Convey("Entry.ShouldUpload() gives good advice", t, func() {
 		reuploadAfter := time.Now()
 
@@ -85,57 +125,57 @@ func TestSet(t *testing.T) {
 	})
 
 	Convey("Discovered() returns friendly strings", t, func() {
-		set := &Set{}
-		So(set.Discovered(), ShouldEqual, "not started")
+		s := &Set{}
+		So(s.Discovered(), ShouldEqual, "not started")
 
 		t := time.Now()
-		set.StartedDiscovery = t
-		So(set.Discovered(), ShouldEqual, "started "+t.Format(dateFormat))
+		s.StartedDiscovery = t
+		So(s.Discovered(), ShouldEqual, "started "+t.Format(dateFormat))
 
 		t2 := t.Add(24 * time.Hour)
-		set.LastDiscovery = t2
-		So(set.Discovered(), ShouldEqual, "completed "+t2.Format(dateFormat))
+		s.LastDiscovery = t2
+		So(s.Discovered(), ShouldEqual, "completed "+t2.Format(dateFormat))
 
 		t3 := t2.Add(24 * time.Hour)
-		set.StartedDiscovery = t3
-		So(set.Discovered(), ShouldEqual, "started "+t3.Format(dateFormat))
+		s.StartedDiscovery = t3
+		So(s.Discovered(), ShouldEqual, "started "+t3.Format(dateFormat))
 	})
 
 	Convey("Count() and Size() return friendly strings", t, func() {
-		set := &Set{}
-		So(set.Count(), ShouldEqual, "pending")
-		So(set.Size(), ShouldEqual, "pending")
+		s := &Set{}
+		So(s.Count(), ShouldEqual, "pending")
+		So(s.Size(), ShouldEqual, "pending")
 
-		set.NumFiles = 3
+		s.NumFiles = 3
 
-		So(set.Count(), ShouldEqual, "pending")
-		So(set.Size(), ShouldEqual, "pending")
+		So(s.Count(), ShouldEqual, "pending")
+		So(s.Size(), ShouldEqual, "pending")
 
-		set.LastDiscovery = time.Now()
+		s.LastDiscovery = time.Now()
 
-		So(set.Count(), ShouldEqual, "3")
-		So(set.Size(), ShouldEqual, "0 B (and counting)")
+		So(s.Count(), ShouldEqual, "3")
+		So(s.Size(), ShouldEqual, "0 B (and counting)")
 
-		set.SizeFiles = 30
-		So(set.Size(), ShouldEqual, "30 B (and counting)")
+		s.SizeFiles = 30
+		So(s.Size(), ShouldEqual, "30 B (and counting)")
 
-		set.Status = Complete
-		So(set.Count(), ShouldEqual, "3")
-		So(set.Size(), ShouldEqual, "30 B")
+		s.Status = Complete
+		So(s.Count(), ShouldEqual, "3")
+		So(s.Size(), ShouldEqual, "30 B")
 
-		set.LastCompletedCount = 3
-		set.LastCompletedSize = 30
-		set.NumFiles = 0
-		set.SizeFiles = 0
-		set.Status = PendingDiscovery
+		s.LastCompletedCount = 3
+		s.LastCompletedSize = 30
+		s.NumFiles = 0
+		s.SizeFiles = 0
+		s.Status = PendingDiscovery
 
-		So(set.Count(), ShouldEqual, "3 (as of last completion)")
-		So(set.Size(), ShouldEqual, "30 B (as of last completion)")
+		So(s.Count(), ShouldEqual, "3 (as of last completion)")
+		So(s.Size(), ShouldEqual, "30 B (as of last completion)")
 	})
 
 	Convey("MakeTransformer and TransformPath work", t, func() {
-		set := &Set{Transformer: "humgen"}
-		trans, err := set.MakeTransformer()
+		s := &Set{Transformer: "humgen"}
+		trans, err := s.MakeTransformer()
 		So(err, ShouldBeNil)
 
 		dddLocalPath := "/lustre/scratch118/humgen/projects/ddd/file.txt"
@@ -144,18 +184,18 @@ func TestSet(t *testing.T) {
 		dddRemotePath := "/humgen/projects/ddd/scratch118/file.txt"
 		So(remote, ShouldEqual, dddRemotePath)
 
-		dest, err := set.TransformPath(dddLocalPath)
+		dest, err := s.TransformPath(dddLocalPath)
 		So(err, ShouldBeNil)
 		So(dest, ShouldEqual, dddRemotePath)
 
-		_, err = set.TransformPath("/invalid/path.txt")
+		_, err = s.TransformPath("/invalid/path.txt")
 		So(err, ShouldNotBeNil)
 
 		dir, err := os.Getwd()
 		So(err, ShouldBeNil)
 
-		set = &Set{Transformer: "prefix=" + dir + ":/zone"}
-		trans, err = set.MakeTransformer()
+		s = &Set{Transformer: "prefix=" + dir + ":/zone"}
+		trans, err = s.MakeTransformer()
 		So(err, ShouldBeNil)
 		remote, err = trans(filepath.Join(dir, "file.txt"))
 		So(err, ShouldBeNil)
