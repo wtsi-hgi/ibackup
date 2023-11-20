@@ -50,6 +50,74 @@ var statusUser string
 var statusName string
 var statusDetails bool
 var statusIncomplete bool
+var statusComplete bool
+var statusFailed bool
+var statusQueued bool
+
+type statusFilter struct {
+	incomplete bool
+	complete   bool
+	failed     bool
+	queued     bool
+}
+
+func newStatusFilter(incomplete, complete, failed, queued bool) *statusFilter {
+	set := false
+
+	for _, flag := range []bool{incomplete, complete, failed, queued} {
+		if flag {
+			if set {
+				die("--incomplete, --complete, --failed and --queued are mutually exclusive")
+			}
+
+			set = true
+		}
+	}
+
+	if !set {
+		return nil
+	}
+
+	return &statusFilter{
+		incomplete: incomplete,
+		complete:   complete,
+		failed:     failed,
+		queued:     queued,
+	}
+}
+
+// filter returns the desired subset from amongst the given sets.
+//
+// - "incomplete" includes sets with status complete, but failures.
+// - "complete" is sets with status complete, but excluding those with failures.
+// - "failed" is any set with any failures or errors.
+// - "queued" is sets that are between "only just added" and their first upload.
+func (sf *statusFilter) filter(sets []*set.Set) []*set.Set {
+	var filtered []*set.Set
+
+	for _, s := range sets {
+		if sf.pass(s) {
+			filtered = append(filtered, s)
+		}
+	}
+
+	return filtered
+}
+
+func (sf *statusFilter) pass(given *set.Set) bool { //nolint:gocyclo
+	switch {
+	case sf.incomplete:
+		return given.Status != set.Complete || given.Failed > 0
+	case sf.complete:
+		return given.Status == set.Complete && given.Failed == 0
+	case sf.failed:
+		return given.Failed > 0 || given.Error != ""
+	case sf.queued:
+		return given.Status == set.PendingDiscovery || given.Status == set.PendingUpload
+	default:
+		return false
+	}
+}
 
 // statusCmd represents the status command.
 var statusCmd = &cobra.Command{
@@ -62,10 +130,17 @@ this command to get the current backup status of your sets. Provide --name to
 get the status of just that set, and --details to get the individual backup
 status of every file in the set (only possible with a --name).
 
-When not using --name, provide --incomplete to only see currently incomplete
-sets. This will include sets with failures but everything else uploaded (shown
-with a "complete" status, see below), but exclude sets where everything is
-missing or uploaded.
+When not using --name, provide one of:
+--incomplete to only see currently incomplete sets. This will include sets
+  with failures but everything else uploaded (shown with a "complete" status,
+  see below), but exclude sets where everything is missing or uploaded.
+--complete to only see sets that both have a "complete" status and no failures.
+--failed to only see sets that have failed uploads or fundamental failures with
+  the definition of the set.
+--queued to only see sets that have been added and are queued, but have not yet
+  started to upload any files.
+
+If none of the above flags are supplied, --incomplete is the default.
 
 You need to supply the ibackup server's URL in the form domain:port (using the
 IBACKUP_SERVER_URL environment variable, or overriding that with the --url
@@ -103,8 +178,14 @@ own. You can specify the user as "all" to see all user's sets.
 			die("--details can only be used with --name")
 		}
 
-		if statusName != "" && statusIncomplete {
-			die("--incomplete and --name can't be used together")
+		sf := newStatusFilter(statusIncomplete, statusComplete, statusFailed, statusQueued)
+
+		if statusName != "" && sf != nil {
+			die("--name can't be used together with the status filtering options")
+		}
+
+		if statusName == "" && sf == nil {
+			sf = newStatusFilter(true, false, false, false)
 		}
 
 		client, err := newServerClient(serverURL, serverCert)
@@ -112,7 +193,7 @@ own. You can specify the user as "all" to see all user's sets.
 			die(err.Error())
 		}
 
-		status(client, statusIncomplete, statusUser, statusName, statusDetails)
+		status(client, sf, statusUser, statusName, statusDetails)
 	},
 }
 
@@ -128,10 +209,16 @@ func init() {
 		"in combination with --name, show the status of every file in the set")
 	statusCmd.Flags().BoolVarP(&statusIncomplete, "incomplete", "i", false,
 		"only show currently incomplete sets")
+	statusCmd.Flags().BoolVarP(&statusComplete, "complete", "c", false,
+		"only show truly complete sets (no failures)")
+	statusCmd.Flags().BoolVarP(&statusFailed, "failed", "f", false,
+		"only show sets with failed uploads")
+	statusCmd.Flags().BoolVarP(&statusQueued, "queued", "q", false,
+		"only show queued sets (added but hasn't started to upload yet)")
 }
 
 // status does the main job of getting backup set status from the server.
-func status(client *server.Client, incomplete bool, user, name string, details bool) {
+func status(client *server.Client, sf *statusFilter, user, name string, details bool) {
 	qs, err := client.GetQueueStatus()
 	if err != nil {
 		die("unable to get server queue status: %s", err)
@@ -144,7 +231,7 @@ func status(client *server.Client, incomplete bool, user, name string, details b
 	if name != "" {
 		sets = getSetByName(client, user, name)
 	} else {
-		sets = getSets(client, incomplete, user)
+		sets = getSets(client, sf, user)
 	}
 
 	if len(sets) == 0 {
@@ -185,33 +272,18 @@ func getSetByName(client *server.Client, user, name string) []*set.Set {
 	return []*set.Set{got}
 }
 
-// getSets gets all or incomplete sets belonging to the given user. Dies on
-// error.
-func getSets(client *server.Client, incomplete bool, user string) []*set.Set {
+// getSets gets all or filtered sets belonging to the given user. Dies on error.
+func getSets(client *server.Client, sf *statusFilter, user string) []*set.Set {
 	sets, err := client.GetSets(user)
 	if err != nil {
 		die(err.Error())
 	}
 
-	if incomplete {
-		sets = incompleteSets(sets)
+	if sf != nil {
+		sets = sf.filter(sets)
 	}
 
 	return sets
-}
-
-// incompleteSets returns the incomplete sets from amongst the given sets.
-// "incomplete" includes sets with status complete, but failures.
-func incompleteSets(sets []*set.Set) []*set.Set {
-	var incomplete []*set.Set
-
-	for _, s := range sets {
-		if s.Status != set.Complete || s.Failed > 0 {
-			incomplete = append(incomplete, s)
-		}
-	}
-
-	return incomplete
 }
 
 // displaySets prints info about the given sets to STDOUT. Failed entry details
