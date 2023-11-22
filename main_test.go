@@ -53,6 +53,10 @@ import (
 const app = "ibackup"
 const userPerms = 0700
 
+const noBackupSets = `Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
+Global put client status (/10): 0 creating collections; 0 currently uploading
+no backup sets`
+
 var errTwoBackupsNotSeen = errors.New("2 backups were not seen")
 
 type TestServer struct {
@@ -69,6 +73,7 @@ type TestServer struct {
 	schedulerDeployment  string
 	remoteHardlinkPrefix string
 	env                  []string
+	stopped              bool
 
 	cmd *exec.Cmd
 }
@@ -159,6 +164,7 @@ func (s *TestServer) startServer() {
 		args = append(args, s.backupFile)
 	}
 
+	s.stopped = false
 	s.cmd = exec.Command("./"+app, args...)
 	s.cmd.Env = s.env
 	s.cmd.Stdout = os.Stdout
@@ -216,12 +222,7 @@ func (s *TestServer) runBinary(t *testing.T, args ...string) (int, string) {
 	out = normaliseOutput(out)
 
 	if err != nil {
-		var exitError *exec.ExitError
-		if !errors.As(err, &exitError) {
-			t.Logf("\nbinary gave error: %s\noutput was: %s\n", err, out)
-		} else {
-			t.Logf("\nnon ExitError error: %s\noutput was: %s\n", err, out)
-		}
+		t.Logf("\nbinary gave error: %s\noutput was: %s\n", err, out)
 	} else if cmd.ProcessState.ExitCode() != 0 {
 		t.Logf("\nno error, but non-0 exit; binary output: %s\n", out)
 	}
@@ -245,6 +246,15 @@ func (s *TestServer) confirmOutput(t *testing.T, args []string, expectedCode int
 
 	So(exitCode, ShouldEqual, expectedCode)
 	So(actual, ShouldEqual, expected)
+}
+
+func (s *TestServer) confirmOutputContains(t *testing.T, args []string, expectedCode int, expected string) {
+	t.Helper()
+
+	exitCode, actual := s.runBinary(t, args...)
+
+	So(exitCode, ShouldEqual, expectedCode)
+	So(actual, ShouldContainSubstring, expected)
 }
 
 var ErrStatusNotFound = errors.New("status not found")
@@ -285,6 +295,11 @@ func (s *TestServer) waitForStatus(name, statusToFind string, timeout time.Durat
 }
 
 func (s *TestServer) Shutdown() error {
+	if s.stopped {
+		return nil
+	}
+
+	s.stopped = true
 	err := s.cmd.Process.Signal(os.Interrupt)
 
 	errCh := make(chan error, 1)
@@ -400,9 +415,7 @@ func TestStatus(t *testing.T) {
 		So(s, ShouldNotBeNil)
 
 		Convey("With no sets defined, status returns no sets", func() {
-			s.confirmOutput(t, []string{"status"}, 0, `Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
-Global put client status (/10): 0 creating collections; 0 currently uploading
-no backup sets`)
+			s.confirmOutput(t, []string{"status"}, 0, noBackupSets)
 		})
 
 		Convey("Given an added set defined with a directory", func() {
@@ -462,8 +475,7 @@ Example File: `+dir+`/path/to/other/file => /remote/path/to/other/file`)
 			_, localDir, _ := prepareForSetWithEmptyDir(t)
 			s.addSetForTesting(t, "badHumgen", "humgen", localDir)
 
-			s.confirmOutput(t, []string{"status", "-n", "badHumgen"}, 0,
-				`Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
+			expected := `Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
 Global put client status (/10): 0 creating collections; 0 currently uploading
 
 Name: badHumgen
@@ -475,8 +487,14 @@ Num files: 0; Symlinks: 0; Hardlinks: 0; Size files: 0 B
 Uploaded: 0; Failed: 0; Missing: 0; Abnormal: 0
 Completed in: 0s
 Directories:
-your transformer didn't work: not a valid humgen lustre path [`+localDir+`/file.txt]
-  `+localDir)
+your transformer didn't work: not a valid humgen lustre path [` + localDir + `/file.txt]
+  ` + localDir
+
+			s.confirmOutput(t, []string{"status", "-n", "badHumgen"}, 0, expected)
+			s.confirmOutput(t, []string{"status", "-c"}, 0, expected)
+			s.confirmOutput(t, []string{"status", "-f"}, 0, noBackupSets)
+			s.confirmOutput(t, []string{"status", "-i"}, 0, noBackupSets)
+			s.confirmOutput(t, []string{"status", "-q"}, 0, noBackupSets)
 		})
 
 		Convey("Given an added set defined with a local path containing the localPrefix "+
@@ -992,6 +1010,16 @@ func TestPuts(t *testing.T) {
 			statusLine := "0 reserved to be worked on; 1 failed"
 
 			s.waitForStatus(setName, statusLine, 30*time.Second)
+
+			expected := `Global put queue status: 1 queued; 0 reserved to be worked on; 1 failed
+Global put client status (/10): 0 creating collections; 0 currently uploading
+no backup sets`
+			s.confirmOutput(t, []string{"status", "-c"}, 0, expected)
+			s.confirmOutput(t, []string{"status", "-q"}, 0, expected)
+
+			expected = `Name: failTest`
+			s.confirmOutputContains(t, []string{"status", "-f"}, 0, expected)
+			s.confirmOutputContains(t, []string{"status", "-i"}, 0, expected)
 
 			s.confirmOutput(t, []string{"retry", "--name", setName, "--failed"},
 				0, "initated retry of 1 failed entries")
