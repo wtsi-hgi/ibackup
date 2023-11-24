@@ -96,7 +96,7 @@ const (
 	ErrNotAdmin        = gas.Error("you are not the server admin")
 	ErrBadSet          = gas.Error("set with that id does not exist")
 	ErrInvalidInput    = gas.Error("invalid input")
-	ErrInteral         = gas.Error("internal server error")
+	ErrInternal        = gas.Error("internal server error")
 
 	paramRequester = "requester"
 	paramSetID     = "id"
@@ -786,7 +786,7 @@ func (s *Server) handleFileStatusUpdates() {
 
 		if err := s.updateFileStatus(fsp.r, trace); err != nil {
 			s.Logger.Printf("[%s] update failed: %s", trace, err)
-			fsp.ceCh <- &codeAndError{code: http.StatusInternalServerError, err: err}
+			fsp.ceCh <- &codeAndError{code: http.StatusBadRequest, err: err}
 
 			continue
 		}
@@ -797,14 +797,22 @@ func (s *Server) handleFileStatusUpdates() {
 }
 
 // updateFileStatus updates the request's file entry status in the db, and
-// removes the request from our queue if not still uploading. Possibly stuck
-// requests are noted in the server's in-memory list of stuck requests.
+// removes the request from our queue if not still uploading or no longer in the
+// set. Possibly stuck requests are noted in the server's in-memory list of
+// stuck requests.
 //
 // The supplied trace string is used in logging output.
 func (s *Server) updateFileStatus(r *put.Request, trace string) error {
 	entry, err := s.db.SetEntryStatus(r)
 	if err != nil {
-		return err
+		var errr error
+
+		errs := &set.Error{}
+		if errors.As(err, errs) && errs.Msg == set.ErrInvalidEntry {
+			errr = s.removeOrReleaseRequestFromQueue(r, entry)
+		}
+
+		return errors.Join(err, errr)
 	}
 
 	if err = s.handleNewlyCompletedSets(r); err != nil {
