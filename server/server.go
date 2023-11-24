@@ -105,6 +105,8 @@ func New(logWriter io.Writer) *Server {
 		stuckRequests:       make(map[string]*put.Request),
 	}
 
+	s.Server.Router().Use(gas.IncludeAbortErrorsInBody)
+
 	s.monitor = NewMonitor(func(given *set.Set) {
 		if err := s.discoverSet(given); err != nil {
 			s.Logger.Printf("error discovering set during monitoring: %s", err)

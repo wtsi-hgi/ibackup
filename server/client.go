@@ -28,6 +28,7 @@ package server
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -118,18 +119,28 @@ func (c *Client) setBodyAndOptionalResult(thing interface{}, optionalResponseThi
 // responseToErr converts a response's status code to one of our errors, or nil
 // if there's no problem.
 func responseToErr(resp *resty.Response) error {
+	var err error
+
 	switch resp.StatusCode() {
 	case http.StatusUnauthorized:
-		return gas.ErrNoAuth
+		err = gas.ErrNoAuth
 	case http.StatusBadRequest:
-		return ErrInvalidInput
+		err = ErrInvalidInput
 	case http.StatusNotFound:
-		return gas.ErrNeedsAuth
+		err = gas.ErrNeedsAuth
 	case http.StatusOK:
 		return nil
 	default:
-		return ErrInteral
+		err = ErrInternal
 	}
+
+	body := string(resp.Body())
+
+	if body != "" {
+		err = fmt.Errorf("%w: %s", err, body)
+	}
+
+	return err
 }
 
 // GetSets gets details about a given requester's backup sets from the

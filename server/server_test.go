@@ -1508,7 +1508,7 @@ func TestServer(t *testing.T) {
 							}
 						}
 
-						for i := 1; i < int(jobRetries)+1; i++ {
+						for i := 1; i <= int(jobRetries); i++ {
 							requests, errg := client.GetSomeUploadRequests()
 							So(errg, ShouldBeNil)
 							if i == 1 {
@@ -1561,6 +1561,10 @@ func TestServer(t *testing.T) {
 							So(gotSet.Symlinks, ShouldEqual, 1)
 							So(gotSet.Error, ShouldBeBlank)
 						}
+
+						requests, errg := client.GetSomeUploadRequests()
+						So(errg, ShouldBeNil)
+						So(len(requests), ShouldEqual, 0)
 					})
 
 					Convey("The system issues a failure when local files hang when opened", func() {
@@ -1882,6 +1886,70 @@ func TestServer(t *testing.T) {
 						So(errr, ShouldBeNil)
 						So(len(rs), ShouldEqual, 0)
 					})
+				})
+
+				Convey("and add a set with a failing file that can be removed from the set during retries", func() {
+					err = client.AddOrUpdateSet(exampleSet)
+					So(err, ShouldBeNil)
+
+					files, dirs, _, _ := createTestBackupFiles(t, localDir)
+					files = []string{files[0], dirs[0]}
+
+					err = client.SetFiles(exampleSet.ID(), files)
+					So(err, ShouldBeNil)
+
+					err = client.TriggerDiscovery(exampleSet.ID())
+					So(err, ShouldBeNil)
+
+					ok := <-racCalled
+					So(ok, ShouldBeTrue)
+
+					requests, errg := client.GetSomeUploadRequests()
+					So(errg, ShouldBeNil)
+					So(len(requests), ShouldEqual, len(files))
+
+					p, d := makePutter(t, handler, requests, client)
+					defer d()
+
+					uploadStarts, uploadResults, skippedResults := p.Put()
+
+					err = client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults,
+						minMBperSecondUploadSpeed, minTimeForUpload, maxStuckTime, logger)
+					So(err, ShouldBeNil)
+
+					gotSet, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+					So(errg, ShouldBeNil)
+					So(gotSet.Uploaded, ShouldEqual, 1)
+					So(gotSet.Failed, ShouldEqual, 1)
+
+					err = client.SetFiles(exampleSet.ID(), []string{files[0]})
+
+					err = client.TriggerDiscovery(exampleSet.ID())
+					So(err, ShouldBeNil)
+
+					ok = <-racCalled
+					So(ok, ShouldBeTrue)
+
+					requests, errg = client.GetSomeUploadRequests()
+					So(errg, ShouldBeNil)
+					So(len(requests), ShouldEqual, 2)
+					So(requests[0].Local, ShouldEqual, dirs[0])
+
+					p, d = makePutter(t, handler, requests, client)
+					defer d()
+
+					uploadStarts, uploadResults, skippedResults = p.Put()
+
+					err = client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults,
+						minMBperSecondUploadSpeed, minTimeForUpload, maxStuckTime, logger)
+					So(err, ShouldNotBeNil)
+
+					items := s.queue.AllItems()
+					So(len(items), ShouldEqual, 0)
+
+					requests, errg = client.GetSomeUploadRequests()
+					So(errg, ShouldBeNil)
+					So(len(requests), ShouldEqual, 0)
 				})
 
 				Convey("and add a set with non-UTF8 chars in a filename and have the system process it", func() {
