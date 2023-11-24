@@ -291,6 +291,10 @@ func (s *TestServer) waitForStatus(name, statusToFind string, timeout time.Durat
 		return ErrStatusNotFound
 	}, &retry.UntilNoError{}, btime.SecondsRangeBackoff(), "waiting for matching status")
 
+	if status.Err != nil {
+		fmt.Printf("\nfailed to see set %s get status: %s\n", name, statusToFind) //nolint:forbidigo
+	}
+
 	So(status.Err, ShouldBeNil)
 }
 
