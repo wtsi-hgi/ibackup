@@ -5,6 +5,16 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/) and this
 project adheres to [Semantic Versioning](http://semver.org/).
 
 
+## [1.2.0] - 2023-11-24
+### Added
+- New filtering options for `status` command: `--complete`, `--failed` and
+  `--queued`.
+
+### Fixed
+- When files are removed from sets while their uploads are still queued, they
+  no longer remain in the queue forever.
+
+
 ## [1.1.0] - 2023-11-16
 ### Added
 - Admin-only filestatus sub-command to print out the status of a file for each
