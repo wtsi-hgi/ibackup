@@ -202,17 +202,6 @@ func init() {
 	}
 }
 
-// newServerClient tries to get a jwt for the given server url, and returns a
-// client that can interact with it.
-func newServerClient(url, cert string) (*server.Client, error) {
-	token, err := getJWT(url, cert)
-	if err != nil {
-		return nil, err
-	}
-
-	return server.NewClient(url, cert, token), nil
-}
-
 // readPaths turns the line content (split as per splitter) of the given file.
 // If file is blank, returns nil.
 func readPaths(file string, splitter bufio.SplitFunc) []string {

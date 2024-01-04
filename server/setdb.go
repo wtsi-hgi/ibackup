@@ -154,17 +154,17 @@ const (
 // PUT /rest/v1/auth/file_status : takes a put.Request encoded as JSON in the
 // body to update the status of the corresponding set's file entry.
 //
-// GET /rest/v1/auth/retry : takes a set "id" URL parameter to trigger
-// the retry of failed file uploads for the set.
+// GET /rest/v1/auth/retry : takes a set "id" URL parameter to trigger the retry
+// of failed file uploads for the set.
 //
 // If the database indicates there are sets we were in the middle of working on,
 // the upload requests will be added to our in-memory queue, just like during
 // discovery.
 //
-// You must call EnableAuth() before calling this method, and the endpoints will
-// only let you work on sets where the Requester matches your logged-in
-// username, or if the logged-in user is the same as the user who started the
-// Server.
+// You must call EnableAuthWithServerToken() before calling this method, and the
+// endpoints will only let you work on sets where the Requester matches your
+// logged-in username, or if the logged-in user is the same as the user who
+// started the Server.
 func (s *Server) LoadSetDB(path, backupPath string) error {
 	authGroup := s.AuthRouter()
 	if authGroup == nil {
@@ -233,7 +233,7 @@ func (s *Server) putSet(c *gin.Context) {
 		return
 	}
 
-	if !s.allowedAccess(c, given.Requester) {
+	if !s.AllowedAccess(c, given.Requester) {
 		c.AbortWithError(http.StatusUnauthorized, ErrBadRequester) //nolint:errcheck
 
 		return
@@ -249,23 +249,6 @@ func (s *Server) putSet(c *gin.Context) {
 	s.handleNewlyDefinedSets(given)
 
 	c.Status(http.StatusOK)
-}
-
-// allowedAccess gets our current user if we have EnableAuth(), and returns
-// true if that matches the given username. Always returns true if we have not
-// EnableAuth(), or if our current user is the user who started the Server.
-// If user is blank, it's a test if the current user started the Server.
-func (s *Server) allowedAccess(c *gin.Context, user string) bool {
-	u := s.GetUser(c)
-	if u == nil {
-		return true
-	}
-
-	if u.Username == s.username {
-		return true
-	}
-
-	return u.Username == user
 }
 
 // tryBackup will backup the database if a backup path was specified by
@@ -287,7 +270,7 @@ func (s *Server) tryBackup() {
 func (s *Server) getSets(c *gin.Context) {
 	requester := c.Param(paramRequester)
 
-	if !s.allowedAccess(c, requester) {
+	if !s.AllowedAccess(c, requester) {
 		c.AbortWithError(http.StatusUnauthorized, ErrBadRequester) //nolint:errcheck
 
 		return
@@ -367,7 +350,7 @@ func (s *Server) validateSet(c *gin.Context) (*set.Set, bool) {
 		return nil, false
 	}
 
-	if !s.allowedAccess(c, set.Requester) {
+	if !s.AllowedAccess(c, set.Requester) {
 		c.AbortWithError(http.StatusUnauthorized, ErrBadRequester) //nolint:errcheck
 
 		return nil, false
@@ -529,7 +512,7 @@ func (s *Server) getFailedEntries(c *gin.Context) {
 // on /rest/v1/auth/requests. Only the user who started the Server has
 // permission to call this.
 func (s *Server) getRequests(c *gin.Context) {
-	if !s.allowedAccess(c, "") {
+	if !s.AllowedAccess(c, "") {
 		c.AbortWithError(http.StatusUnauthorized, ErrNotAdmin) //nolint:errcheck
 
 		return
@@ -654,7 +637,7 @@ func (s *Server) reserveRequest() (*put.Request, error) {
 // on /rest/v1/auth/working. Only the user who started the Server has permission
 // to call this.
 func (s *Server) putWorking(c *gin.Context) {
-	if !s.allowedAccess(c, "") {
+	if !s.AllowedAccess(c, "") {
 		c.AbortWithError(http.StatusUnauthorized, ErrNotAdmin) //nolint:errcheck
 
 		return
@@ -725,7 +708,7 @@ func (s *Server) putFileStatus(c *gin.Context) {
 		return
 	}
 
-	if !s.allowedAccess(c, "") {
+	if !s.AllowedAccess(c, "") {
 		c.AbortWithError(http.StatusUnauthorized, ErrNotAdmin) //nolint:errcheck
 		s.Logger.Printf("denied access during file status update for %s", r.Local)
 

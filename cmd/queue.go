@@ -68,8 +68,7 @@ the queue.
 	Run: func(cmd *cobra.Command, args []string) {
 		ensureURLandCert()
 
-		_, err := getPasswordFromServerTokenFile()
-		if err != nil {
+		if !gasClientCLI(serverURL, serverCert).CanReadServerToken() {
 			die("Only the user who started the server can use this sub-command.")
 		}
 

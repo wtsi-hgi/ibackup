@@ -96,7 +96,7 @@ func TestServer(t *testing.T) {
 			certPath, keyPath, err := gas.CreateTestCert(t)
 			So(err, ShouldBeNil)
 
-			err = s.EnableAuth(certPath, keyPath, func(u, p string) (bool, string) {
+			err = s.EnableAuthWithServerToken(certPath, keyPath, ".ibackup.test.servertoken", func(u, p string) (bool, string) {
 				return true, "1"
 			})
 			So(err, ShouldBeNil)
@@ -148,7 +148,7 @@ func TestServer(t *testing.T) {
 			}
 
 			Convey("Which lets you login", func() {
-				token, errl := gas.Login(addr, certPath, "jim", "pass")
+				token, errl := gas.Login(gas.NewClientRequest(addr, certPath), "jim", "pass")
 				So(errl, ShouldBeNil)
 				So(token, ShouldNotBeBlank)
 
@@ -339,7 +339,7 @@ func TestServer(t *testing.T) {
 							_, err = client.GetSomeUploadRequests()
 							So(err, ShouldNotBeNil)
 
-							token, errl = gas.Login(addr, certPath, admin, "pass")
+							token, errl = gas.Login(gas.NewClientRequest(addr, certPath), admin, "pass")
 							So(errl, ShouldBeNil)
 
 							client = NewClient(addr, certPath, token)
@@ -528,7 +528,7 @@ func TestServer(t *testing.T) {
 							So(entries[1].Status, ShouldEqual, set.Missing)
 							So(entries[2].Type, ShouldEqual, set.Symlink)
 
-							token, errl = gas.Login(addr, certPath, admin, "pass")
+							token, errl = gas.Login(gas.NewClientRequest(addr, certPath), admin, "pass")
 							So(errl, ShouldBeNil)
 
 							client = NewClient(addr, certPath, token)
@@ -719,7 +719,7 @@ func TestServer(t *testing.T) {
 						})
 
 						Convey("Stuck requests are recorded separately by the server, retrievable with QueueStatus", func() {
-							token, errl = gas.Login(addr, certPath, admin, "pass")
+							token, errl = gas.Login(gas.NewClientRequest(addr, certPath), admin, "pass")
 							So(errl, ShouldBeNil)
 
 							client = NewClient(addr, certPath, token)
@@ -782,7 +782,7 @@ func TestServer(t *testing.T) {
 						})
 
 						Convey("Buried requests can be retrieved, kicked and removed", func() {
-							token, errl = gas.Login(addr, certPath, admin, "pass")
+							token, errl = gas.Login(gas.NewClientRequest(addr, certPath), admin, "pass")
 							So(errl, ShouldBeNil)
 
 							client = NewClient(addr, certPath, token)
@@ -919,7 +919,7 @@ func TestServer(t *testing.T) {
 						})
 
 						Convey("Uploading requests can be retrieved", func() {
-							token, errl = gas.Login(addr, certPath, admin, "pass")
+							token, errl = gas.Login(gas.NewClientRequest(addr, certPath), admin, "pass")
 							So(errl, ShouldBeNil)
 
 							client = NewClient(addr, certPath, token)
@@ -953,7 +953,7 @@ func TestServer(t *testing.T) {
 						})
 
 						Convey("All requests can be retrieved", func() {
-							token, errl = gas.Login(addr, certPath, admin, "pass")
+							token, errl = gas.Login(gas.NewClientRequest(addr, certPath), admin, "pass")
 							So(errl, ShouldBeNil)
 
 							client = NewClient(addr, certPath, token)
@@ -1002,7 +1002,7 @@ func TestServer(t *testing.T) {
 						})
 
 						Convey("Once logged in and with a client", func() {
-							token, errl = gas.Login(addr, certPath, admin, "pass")
+							token, errl = gas.Login(gas.NewClientRequest(addr, certPath), admin, "pass")
 							So(errl, ShouldBeNil)
 							client = NewClient(addr, certPath, token)
 
@@ -1208,7 +1208,7 @@ func TestServer(t *testing.T) {
 			})
 
 			Convey("Which lets you login as admin", func() {
-				token, errl := gas.Login(addr, certPath, admin, "pass")
+				token, errl := gas.Login(gas.NewClientRequest(addr, certPath), admin, "pass")
 				So(errl, ShouldBeNil)
 
 				client := NewClient(addr, certPath, token)

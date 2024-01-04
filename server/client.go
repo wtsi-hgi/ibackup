@@ -74,7 +74,7 @@ type Client struct {
 // Provide a non-blank path to a certificate to force us to trust that
 // certificate, eg. if the server was started with a self-signed certificate.
 //
-// You must first gas.Login() to get a JWT that you must supply here.
+// You must first gas.GetJWT() to get a JWT that you must supply here.
 func NewClient(url, cert, jwt string) *Client {
 	return &Client{
 		url:  url,
