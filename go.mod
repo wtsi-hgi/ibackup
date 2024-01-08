@@ -10,7 +10,7 @@ require (
 	github.com/gammazero/workerpool v1.1.3
 	github.com/gin-gonic/gin v1.9.1
 	github.com/go-ldap/ldap/v3 v3.4.4
-	github.com/go-resty/resty/v2 v2.10.0
+	github.com/go-resty/resty/v2 v2.11.0
 	github.com/hashicorp/go-multierror v1.1.1
 	github.com/inconshreveable/log15 v3.0.0-testing.5+incompatible
 	github.com/moby/sys/mountinfo v0.6.2
