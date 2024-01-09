@@ -32,7 +32,6 @@ import (
 	"log/syslog"
 	"net"
 	"os"
-	"os/user"
 	"path/filepath"
 	"time"
 
@@ -51,10 +50,6 @@ const serverTokenBasename = ".ibackup.token"
 const numPutClients = 10
 const deadlockTimeout = 30 * time.Minute
 const dbBackupParamPosition = 2
-
-var serverUser string
-var serverUID string
-var serverToken []byte
 
 // options for this cmd.
 var serverLogPath string
@@ -145,9 +140,12 @@ database that you've made, to investigate.
 		sync.Opts.DeadlockTimeout = deadlockTimeout
 		s := server.New(logWriter)
 
-		prepareAuth(s)
+		err := s.EnableAuthWithServerToken(serverCert, serverKey, serverTokenBasename, checkPassword)
+		if err != nil {
+			die("failed toenable authentication: %s", err)
+		}
 
-		err := s.MakeQueueEndPoints()
+		err = s.MakeQueueEndPoints()
 		if err != nil {
 			die("failed to make queue endpoints: %s", err)
 		}
@@ -273,33 +271,6 @@ func (w *log15Writer) Write(p []byte) (n int, err error) {
 	return len(p), nil
 }
 
-// prepareAuth sets up a token for our own clients to log in with, then enables
-// auth allowing that token for us, or LDAP for normal users.
-func prepareAuth(s *server.Server) {
-	user, err := user.Current()
-	if err != nil {
-		die("%s", err)
-	}
-
-	serverUser = user.Username
-	serverUID = user.Uid
-
-	tokenPath, err := tokenStoragePath()
-	if err != nil {
-		die("%s", err)
-	}
-
-	serverToken, err = gas.GenerateAndStoreTokenForSelfClient(tokenPath)
-	if err != nil {
-		die("failed to generate a token: %s", err)
-	}
-
-	err = s.EnableAuth(serverCert, serverKey, checkPassword)
-	if err != nil {
-		die("failed to enable authentication: %s", err)
-	}
-}
-
 // tokenStoragePath returns the path where we store our token for self-clients
 // to use.
 func tokenStoragePath() (string, error) {
@@ -316,30 +287,14 @@ func tokenStoragePath() (string, error) {
 	return filepath.Join(dir, serverTokenBasename), nil
 }
 
-// checkPassword returns true if myselfLoggingIn(), otherwise defers to
-// checkLDAPPassword(). Warns if we don't have the ldap details we need, and
-// uses an always true password checker.
+// checkPassword defers to checkLDAPPassword(). Warns if we don't have the ldap
+// details we need, and uses an always true password checker.
 func checkPassword(username, password string) (bool, string) {
-	if myselfLoggingIn(username, password) {
-		return true, serverUID
-	}
-
 	if serverLDAPFQDN == "" || serverLDAPBindDN == "" {
 		return fakePasswordCheck(username)
 	}
 
 	return checkLDAPPassword(username, password)
-}
-
-// myselfLoggingIn checks if the supplied user is ourselves, and the password is
-// the unique token generated when we started the server and stored in a file
-// only readable by us. If it is, we return true.
-func myselfLoggingIn(username, password string) bool {
-	if username != serverUser {
-		return false
-	}
-
-	return gas.TokenMatches([]byte(password), serverToken)
 }
 
 // fakePasswordCheck is for when we don't have ldap credentials, and are just

@@ -224,8 +224,7 @@ func displayQueueStatus(qs *server.QStatus) {
 		numPutClients, qs.CreatingCollections, qs.Uploading)
 
 	if qs.Stuck != nil {
-		_, err := getPasswordFromServerTokenFile()
-		if err == nil {
+		if gasClientCLI(serverURL, serverCert).CanReadServerToken() {
 			for _, r := range qs.Stuck {
 				warn("set '%s' for %s [%s => %s] %s", r.Set, r.Requester, r.Local, r.Remote, r.Stuck)
 			}

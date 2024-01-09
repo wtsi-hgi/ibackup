@@ -27,140 +27,32 @@
 package cmd
 
 import (
-	"errors"
-	"fmt"
-	"os"
 	"os/user"
-	"path/filepath"
-	"strings"
-	"syscall"
 
-	server "github.com/wtsi-hgi/go-authserver"
-	"golang.org/x/term"
+	gas "github.com/wtsi-hgi/go-authserver"
+	"github.com/wtsi-hgi/ibackup/server"
 )
 
-const (
-	privatePerms os.FileMode = 0600
-	jwtBasename              = ".ibackup.jwt"
-)
+const jwtBasename = ".ibackup.jwt"
 
-// JWTPermissionsError is used to distinguish this type of error - where the
-// already stored JWT token doesn't have private permissions.
-type JWTPermissionsError struct {
-	tokenFile string
-}
-
-// Error is the print out string for JWTPermissionsError, so the user can
-// see and rectify the permissions issue.
-func (e JWTPermissionsError) Error() string {
-	return fmt.Sprintf("Token %s does not have %v permissions "+
-		"- won't use it", e.tokenFile, privatePerms)
-}
-
-// getJWT checks if we have stored a jwt in a file in user's home directory.
-// If so, the JWT is refreshed and returned.
-//
-// Otherwise, we ask the user for the password and login, storing and returning
-// the new JWT.
-func getJWT(url, cert string) (string, error) {
-	token, err := getStoredJWT(url, cert)
-	if err == nil {
-		return token, nil
-	}
-
-	if errors.As(err, &JWTPermissionsError{}) {
-		return "", err
-	}
-
-	token, err = login(url, cert)
-	if err == nil {
-		err = storeJWT(token)
-	}
-
-	return token, err
-}
-
-// getStoredJWT sees if we've previously called storeJWT(), gets the token from
-// the file it made, then tries to refresh it on the Server.
-//
-// We also check if the token has private permissions, otherwise we won't use
-// it. This is as an attempt to reduce the likelihood of the token being leaked
-// with its long expiry time (used so the user doesn't have to continuously log
-// in, as we're not working with specific refresh tokens to get new access
-// tokens).
-func getStoredJWT(url, cert string) (string, error) {
-	path, err := jwtStoragePath()
+// newServerClient tries to get a jwt for the given server url, and returns a
+// client that can interact with it.
+func newServerClient(url, cert string) (*server.Client, error) {
+	token, err := gasClientCLI(url, cert).GetJWT()
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
-	stat, err := os.Stat(path)
-	if err != nil {
-		return "", err
-	}
-
-	if stat.Mode() != privatePerms {
-		return "", JWTPermissionsError{tokenFile: path}
-	}
-
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-
-	token := strings.TrimSpace(string(content))
-
-	return server.RefreshJWT(url, cert, token)
+	return server.NewClient(url, cert, token), nil
 }
 
-// jwtStoragePath returns the path where we store our JWT.
-func jwtStoragePath() (string, error) {
-	dir := os.Getenv("XDG_STATE_HOME")
-	if dir == "" {
-		var err error
-
-		dir, err = os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-	}
-
-	return filepath.Join(dir, jwtBasename), nil
-}
-
-// login prompts the user for a password to log them in. Returns the JWT for the
-// user. If this user started the server, gets the "password" from the token
-// file instead, and does not prompt.
-func login(url, cert string) (string, error) {
-	passwordB, err := getPasswordFromServerTokenFile()
-	if err != nil || passwordB == nil {
-		passwordB = askForPassword()
-	}
-
-	return server.Login(url, cert, currentUsername(), string(passwordB))
-}
-
-func getPasswordFromServerTokenFile() ([]byte, error) {
-	tokenPath, err := tokenStoragePath()
+func gasClientCLI(url, cert string) *gas.ClientCLI {
+	c, err := gas.NewClientCLI(jwtBasename, serverTokenBasename, url, cert, false)
 	if err != nil {
-		die("%s", err)
+		die(err.Error())
 	}
 
-	return server.GetStoredToken(tokenPath)
-}
-
-// askForPassword asks the user for their password on the command line.
-func askForPassword() []byte {
-	cliPrint("Password: ")
-
-	passwordB, err := term.ReadPassword(syscall.Stdin)
-	if err != nil {
-		die("couldn't read password: %s", err)
-	}
-
-	cliPrint("\n")
-
-	return passwordB
+	return c
 }
 
 func currentUsername() string {
@@ -170,14 +62,4 @@ func currentUsername() string {
 	}
 
 	return user.Username
-}
-
-// storeJWT writes the given token string to a private file in user's home dir.
-func storeJWT(token string) error {
-	path, err := jwtStoragePath()
-	if err != nil {
-		return err
-	}
-
-	return os.WriteFile(path, []byte(token), privatePerms)
 }

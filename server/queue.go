@@ -93,9 +93,9 @@ const (
 // that has just stopped creating collections. Provide your host:pid as a
 // hostpid parameter.
 //
-// You must call EnableAuth() before calling this method, and the non-GET
-// endpoints will only work if the logged-in user is the same as the user who
-// started the Server.
+// You must call EnableAuthWithServerToken() before calling this method, and the
+// non-GET endpoints will only work if the logged-in user is the same as the
+// user who started the Server.
 func (s *Server) MakeQueueEndPoints() error {
 	authGroup := s.AuthRouter()
 	if authGroup == nil {
@@ -299,7 +299,7 @@ func (s *Server) removeBuried(c *gin.Context) {
 // getBuriedFilterFromContext gets the BuriedFilter from c and returns it. The
 // returned bool will be false if we aborted with an error.
 func (s *Server) getBuriedFilterFromContext(c *gin.Context) (*BuriedFilter, bool) {
-	if !s.allowedAccess(c, "") {
+	if !s.AllowedAccess(c, "") {
 		c.AbortWithError(http.StatusUnauthorized, ErrNotAdmin) //nolint:errcheck
 
 		return nil, false
@@ -461,7 +461,7 @@ func (s *Server) clientStartedCreatingCollections(c *gin.Context) {
 // extractHostPIDForCreatingCollectionsEndpoints gets a hostPID string from the
 // given context and checks user is authorized.
 func (s *Server) extractHostPIDForCreatingCollectionsEndpoints(c *gin.Context) (string, int, error) {
-	if !s.allowedAccess(c, "") {
+	if !s.AllowedAccess(c, "") {
 		return "", http.StatusUnauthorized, ErrNotAdmin
 	}
 

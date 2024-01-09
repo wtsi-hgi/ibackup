@@ -31,7 +31,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os/user"
 	"strings"
 	"sync"
 	"time"
@@ -120,20 +119,6 @@ func New(logWriter io.Writer) *Server {
 
 func (s *Server) SetRemoteHardlinkLocation(path string) {
 	s.remoteHardlinkLocation = path
-}
-
-// EnableAuth does the same as gas.EnableAuth, but also records the current
-// username as a user with root-like permissions to work with everyone's
-// backup sets.
-func (s *Server) EnableAuth(certFile, keyFile string, acb gas.AuthCallback) error {
-	u, err := user.Current()
-	if err != nil {
-		return err
-	}
-
-	s.username = u.Username
-
-	return s.Server.EnableAuth(certFile, keyFile, acb)
 }
 
 // EnableJobSubmission enables submission of `ibackup put` jobs to wr in
