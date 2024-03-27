@@ -108,9 +108,8 @@ func ensureURLandCert() {
 func logToFile(path string) {
 	fh, err := log15.FileHandler(path, log15.LogfmtFormat())
 	if err != nil {
-		warn("Could not log to file [%s]: %s", path, err)
-
-		return
+		fh = log15.StderrHandler
+		warn("can't write to log file; logging to stderr instead (%s)", err)
 	}
 
 	appLogger.SetHandler(fh)
