@@ -557,6 +557,19 @@ func HumgenTransformer(local string) (string, error) {
 		strings.Join(parts[ptuPart+2:], "/")), nil
 }
 
+// GengenTransformer is a PathTransformer that will convert a local "lustre"
+// path to a "canonical" path in the humgen iRODS zone, for the gengen BoM.
+//
+// This transform is specific to the "gengen" group at the Sanger Institute.
+func GengenTransformer(local string) (string, error) {
+	humgenPath, err := HumgenTransformer(local)
+	if err != nil {
+		return "", err
+	}
+
+	return strings.Replace(humgenPath, "/humgen", "/humgen/gengen", 1), nil
+}
+
 // dirIsProjectOrTeamOrUsers returns true if the given directory is projects,
 // teams or users.
 func dirIsProjectOrTeamOrUsers(dir string) bool {

@@ -142,6 +142,34 @@ func TestRequest(t *testing.T) {
 		}
 	})
 
+	Convey("You can make new requests using the gengen transform", t, func() {
+		r, err := NewRequestWithTransformedLocal("/lustre/scratch117/casm/team78/so11/file.txt", GengenTransformer)
+		So(err, ShouldNotBeNil)
+		So(r, ShouldBeNil)
+
+		r, err = NewRequestWithTransformedLocal("file.txt", GengenTransformer)
+		So(err, ShouldNotBeNil)
+		So(r, ShouldBeNil)
+
+		locals := []string{
+			"/lustre/scratch126/gengen/teams/lehner/file.txt",
+			"/lustre/scratch126/gengen/projects/alpha-allostery-global/file.txt",
+			"/lustre/scratch126/gengen/teams/parts/sequencing/file.txt",
+		}
+
+		expected := []string{
+			"/humgen/gengen/teams/lehner/scratch126/file.txt",
+			"/humgen/gengen/projects/alpha-allostery-global/scratch126/file.txt",
+			"/humgen/gengen/teams/parts/scratch126/sequencing/file.txt",
+		}
+
+		for i, local := range locals {
+			r, err = NewRequestWithTransformedLocal(local, GengenTransformer)
+			So(err, ShouldBeNil)
+			So(r.Remote, ShouldEqual, expected[i])
+		}
+	})
+
 	Convey("You can create and stringify Stucks", t, func() {
 		n := time.Now()
 		s := NewStuck(n)

@@ -39,6 +39,7 @@ import (
 var arFile string
 var arPrefix string
 var arHumgen bool
+var arGengen bool
 var arNull bool
 var arBase64 bool
 
@@ -78,22 +79,32 @@ Which you can pipe to the 'put' subcommand.
 (If the local prefix isn't present, the local path will be assumed to be
 relative to the local prefix, and will end up relative to the remote prefix.)
 
-Specific to the "humgen" group at the Sanger Institute, you can use the --humgen
-option to do a more complex transformation from local "lustre" paths to the
-"canonical" iRODS path in the humgen zone.
+Specific to the "humgen" and "genge" groups at the Sanger Institute, you can use
+the --humgen or --gengen options to do a more complex transformation from local
+"lustre" paths to the "canonical" iRODS path in the humgen zone.
 `,
 	Run: func(cmd *cobra.Command, args []string) {
 		if arHumgen && arPrefix != "" {
 			die("--humgen and --prefix are mutually exclusive")
 		}
 
-		if !arHumgen && arPrefix == "" {
-			die("you must specify one of --prefix and --humgen")
+		if arGengen && arPrefix != "" {
+			die("--gengen and --prefix are mutually exclusive")
+		}
+
+		if arHumgen && arGengen {
+			die("--humgen and --gengen are mutually exclusive")
+		}
+
+		if !arHumgen && !arGengen && arPrefix == "" {
+			die("you must specify one of --prefix, --humgen or --gengen")
 		}
 
 		pt := put.HumgenTransformer
 		if arPrefix != "" {
 			pt = makePrefixTransformer(arPrefix)
+		} else if arGengen {
+			pt = put.GengenTransformer
 		}
 
 		transformARFile(arFile, pt, fofnLineSplitter(arNull), arBase64)
@@ -109,7 +120,9 @@ func init() {
 	addremoteCmd.Flags().StringVarP(&arPrefix, "prefix", "p", "",
 		"'/local/prefix:/remote/prefix' string to replace local prefix with remote")
 	addremoteCmd.Flags().BoolVar(&arHumgen, "humgen", false,
-		"generate the humgen zone canonical path for lustre paths")
+		"generate the humgen zone canonical path for humgen lustre paths")
+	addremoteCmd.Flags().BoolVar(&arGengen, "gengen", false,
+		"generate the humgen zone canonical path for gengen lustre paths")
 	addremoteCmd.Flags().BoolVarP(&arNull, "null", "0", false,
 		"input paths are terminated by a null character instead of a new line")
 	addremoteCmd.Flags().BoolVarP(&arBase64, "base64", "b", false,

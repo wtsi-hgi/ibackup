@@ -587,6 +587,32 @@ Uploaded: 0; Failed: 0; Missing: 0; Abnormal: 0
 Example File: `+humgenFile+" => /humgen/teams/hgi/scratch125/mercury/ibackup/file_for_testsuite.do_not_delete")
 		})
 
+		Convey("Given an added set defined with a gengen transformer, the remote directory is correct", func() {
+			gengenFile := "/lustre/scratch126/gengen/teams/hgi/mercury/ibackup/file_for_testsuite.do_not_delete"
+			gengenDir := filepath.Dir(gengenFile)
+
+			if _, err := os.Stat(gengenDir); err != nil {
+				SkipConvey("skip gengen transformer test since not in gengen", func() {})
+
+				return
+			}
+
+			s.addSetForTesting(t, "gengenSet", "gengen", gengenFile)
+
+			s.confirmOutput(t, []string{"status", "-n", "gengenSet"}, 0,
+				`Global put queue status: 1 queued; 0 reserved to be worked on; 0 failed
+Global put client status (/10): 0 creating collections; 0 currently uploading
+
+Name: gengenSet
+Transformer: gengen
+Monitored: false; Archive: false
+Status: pending upload
+Discovery:
+Num files: 1; Symlinks: 0; Hardlinks: 0; Size files: 0 B (and counting)
+Uploaded: 0; Failed: 0; Missing: 0; Abnormal: 0
+Example File: `+gengenFile+" => /humgen/gengen/teams/hgi/scratch126/mercury/ibackup/file_for_testsuite.do_not_delete")
+		})
+
 		Convey("You can add a set with links and their counts show correctly", func() {
 			dir := t.TempDir()
 			regularPath := filepath.Join(dir, "reg")

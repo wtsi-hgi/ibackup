@@ -267,6 +267,10 @@ func (s *Set) MakeTransformer() (put.PathTransformer, error) {
 		return put.HumgenTransformer, nil
 	}
 
+	if s.Transformer == "gengen" {
+		return put.GengenTransformer, nil
+	}
+
 	if !strings.HasPrefix(s.Transformer, prefixTransformerKey) {
 		return nil, Error{ErrInvalidTransformer, ""}
 	}
