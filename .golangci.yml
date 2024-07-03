@@ -23,7 +23,7 @@ linters-settings:
     ignored-functions:
       - 'strconv.Parse*'
   govet:
-    check-shadowing: true
+    shadow: true
     enable-all: true
     disable-all: false
     disable:
@@ -61,6 +61,7 @@ issues:
         - gocognit
         - gocyclo
         - cyclop
+        - revive
     - path: cmd
       linters:
         - gochecknoinits
@@ -83,44 +84,58 @@ issues:
 linters:
   disable-all: true
   enable:
+    # defaults
     - errcheck
     - gosimple
     - govet
     - ineffassign
     - staticcheck
-    - typecheck
     - unused
+    # extras
     - containedctx
     - contextcheck
+    - copyloopvar
     - cyclop
     - dogsled
     - dupl
+    - dupword
     - durationcheck
+    - err113
+    - errchkjson
     - errname
     - errorlint
     - exhaustive
     - exportloopref
+    - fatcontext
     - forbidigo
     - forcetypeassert
     - funlen
     - gci
+    - gocheckcompilerdirectives
     - gochecknoglobals
     - gochecknoinits
+    - gochecksumtype
     - gocognit
     - goconst
     - gocritic
     - gocyclo
     - godot
     - godox
-    - goerr113
     - goimports
-    - gomnd
     - gosec
+    - gosmopolitan
+    - grouper
     - importas
+    - inamedparam
+    - interfacebloat
+    - intrange
+    - ireturn
     - lll
     - maintidx
     - makezero
+    - mirror
     - misspell
+    - mnd
     - nakedret
     - nestif
     - nilerr
@@ -129,56 +144,53 @@ linters:
     - noctx
     - nolintlint
     - nosprintfhostport
+    - perfsprint
     - prealloc
     - predeclared
     - reassign
     - revive
+    - sloglint
     - stylecheck
+    - tagalign
     - tenv
     - thelper
+    - tparallel
     - unconvert
     - unparam
     - usestdlibvars
-    #- wastedassign
+    - wastedassign
     - whitespace
     - wsl
-  # disable:
+
+  #disable:
   #   - asasalint
   #   - asciicheck
   #   - bidichk
   #   - bodyclose
+  #   - canonicalheader
   #   - decorder
   #   - depguard
-  #   - errchkjson
-  #   - execinquery
-  #   - exhaustivestruct
   #   - exhaustruct
   #   - ginkgolinter
   #   - gofmt
   #   - gofumpt
   #   - goheader
-  #   - golint
   #   - gomoddirectives
   #   - gomodguard
   #   - goprintffuncname
-  #   - grouper
-  #   - ifshort
-  #   - interfacer
-  #   - ireturn
   #   - loggercheck
-  #   - maligned
+  #   - musttag
   #   - nonamedreturns
-  #   - nosnakecase
   #   - paralleltest
   #   - promlinter
+  #   - protogetter
   #   - rowserrcheck
-  #   - scopeline
+  #   - spancheck
   #   - sqlclosecheck
-  #   - structcheck
   #   - tagliatelle
   #   - testableexamples
+  #   - testifylint
   #   - testpackage
-  #   - tparallel
-  #   - varcheck
   #   - varnamelen
   #   - wrapcheck
+  #   - zerologlint

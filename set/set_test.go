@@ -198,6 +198,7 @@ func TestSet(t *testing.T) {
 		partsLocalPath := "/lustre/scratch126/gengen/teams/parts/sequencing/file.txt"
 		remote, err = trans(partsLocalPath)
 		So(err, ShouldBeNil)
+
 		partsRemotePath := "/humgen/gengen/teams/parts/scratch126/sequencing/file.txt"
 		So(remote, ShouldEqual, partsRemotePath)
 
