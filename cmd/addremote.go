@@ -79,9 +79,9 @@ Which you can pipe to the 'put' subcommand.
 (If the local prefix isn't present, the local path will be assumed to be
 relative to the local prefix, and will end up relative to the remote prefix.)
 
-Specific to the "humgen" and "genge" groups at the Sanger Institute, you can use
-the --humgen or --gengen options to do a more complex transformation from local
-"lustre" paths to the "canonical" iRODS path in the humgen zone.
+Specific to the "humgen" and "gengen" groups at the Sanger Institute, you can
+use the --humgen or --gengen options to do a more complex transformation from
+local "lustre" paths to the "canonical" iRODS path in the humgen zone.
 `,
 	Run: func(cmd *cobra.Command, args []string) {
 		if arHumgen && arPrefix != "" {
