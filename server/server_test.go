@@ -90,7 +90,11 @@ func TestServer(t *testing.T) {
 
 	Convey("Given a Server", t, func() {
 		logWriter := gas.NewStringLogger()
-		s := New(logWriter)
+		conf := Config{
+			HTTPLogger: logWriter,
+		}
+
+		s := New(conf)
 
 		Convey("You can Start the Server with Auth, MakeQueueEndPoints and LoadSetDB", func() {
 			certPath, keyPath, err := gas.CreateTestCert(t)
@@ -148,9 +152,13 @@ func TestServer(t *testing.T) {
 			}
 
 			Convey("Which lets you login", func() {
+				So(logWriter.String(), ShouldBeBlank)
+
 				token, errl := gas.Login(gas.NewClientRequest(addr, certPath), "jim", "pass")
 				So(errl, ShouldBeNil)
 				So(token, ShouldNotBeBlank)
+
+				So(strings.Count(logWriter.String(), "STATUS=200"), ShouldEqual, 1)
 
 				Convey("And then you use client methods AddOrUpdateSet and GetSets", func() {
 					exampleSet2 := &set.Set{

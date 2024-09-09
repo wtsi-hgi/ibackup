@@ -136,9 +136,12 @@ database that you've made, to investigate.
 		}
 
 		logWriter := setServerLogger(serverLogPath)
+		conf := server.Config{
+			HTTPLogger: logWriter,
+		}
 
 		sync.Opts.DeadlockTimeout = deadlockTimeout
-		s := server.New(logWriter)
+		s := server.New(conf)
 
 		err := s.EnableAuthWithServerToken(serverCert, serverKey, serverTokenBasename, checkPassword)
 		if err != nil {

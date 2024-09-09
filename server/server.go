@@ -65,6 +65,10 @@ const (
 	racRetriggerDelay       = 1 * time.Minute
 )
 
+type Config struct {
+	HTTPLogger io.Writer
+}
+
 // Server is used to start a web server that provides a REST API to the setdb
 // package's database, and a website that displays the information nicely.
 type Server struct {
@@ -93,9 +97,9 @@ type Server struct {
 //
 // It logs to the given io.Writer, which could for example be syslog using the
 // log/syslog pkg with syslog.new(syslog.LOG_INFO, "tag").
-func New(logWriter io.Writer) *Server {
+func New(conf Config) *Server {
 	s := &Server{
-		Server:              *gas.New(logWriter),
+		Server:              *gas.New(conf.HTTPLogger),
 		numClients:          1,
 		dirPool:             workerpool.New(workerPoolSizeDir),
 		queue:               queue.New(context.Background(), "put"),
