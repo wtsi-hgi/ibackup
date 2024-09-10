@@ -141,11 +141,14 @@ database that you've made, to investigate.
 		}
 
 		sync.Opts.DeadlockTimeout = deadlockTimeout
-		s := server.New(conf)
-
-		err := s.EnableAuthWithServerToken(serverCert, serverKey, serverTokenBasename, checkPassword)
+		s, err := server.New(conf)
 		if err != nil {
-			die("failed toenable authentication: %s", err)
+			die("%s", err)
+		}
+
+		err = s.EnableAuthWithServerToken(serverCert, serverKey, serverTokenBasename, checkPassword)
+		if err != nil {
+			die("failed to enable authentication: %s", err)
 		}
 
 		err = s.MakeQueueEndPoints()

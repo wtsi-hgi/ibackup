@@ -47,6 +47,8 @@ import (
 )
 
 const (
+	ErrNoLogger = gas.Error("a http logger must be configured")
+
 	// workerPoolSizeDir is the max number of directory walks we'll do
 	// concurrently during discovery; each of those walks in turn operate on 16
 	// subdirs concurrently.
@@ -65,7 +67,9 @@ const (
 	racRetriggerDelay       = 1 * time.Minute
 )
 
+// Config configures the server.
 type Config struct {
+	// HTTPLogger is used to log all HTTP requests. This is required.
 	HTTPLogger io.Writer
 }
 
@@ -95,9 +99,13 @@ type Server struct {
 
 // New creates a Server which can serve a REST API and website.
 //
-// It logs to the given io.Writer, which could for example be syslog using the
-// log/syslog pkg with syslog.new(syslog.LOG_INFO, "tag").
-func New(conf Config) *Server {
+// It logs to the required configured io.Writer, which could for example be
+// syslog using the log/syslog pkg with syslog.new(syslog.LOG_INFO, "tag").
+func New(conf Config) (*Server, error) {
+	if conf.HTTPLogger == nil {
+		return nil, ErrNoLogger
+	}
+
 	s := &Server{
 		Server:              *gas.New(conf.HTTPLogger),
 		numClients:          1,
@@ -118,7 +126,7 @@ func New(conf Config) *Server {
 
 	s.SetStopCallBack(s.stop)
 
-	return s
+	return s, nil
 }
 
 func (s *Server) SetRemoteHardlinkLocation(path string) {

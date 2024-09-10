@@ -88,16 +88,25 @@ func TestServer(t *testing.T) {
 	minMBperSecondUploadSpeed := float64(10)
 	maxStuckTime := 1 * time.Hour
 
-	Convey("Given a Server", t, func() {
-		logWriter := gas.NewStringLogger()
-		conf := Config{
-			HTTPLogger: logWriter,
-		}
+	Convey("Given a test cert and db location", t, func() {
+		certPath, keyPath, err := gas.CreateTestCert(t)
+		So(err, ShouldBeNil)
 
-		s := New(conf)
+		dbPath := createDBLocation(t)
 
-		Convey("You can Start the Server with Auth, MakeQueueEndPoints and LoadSetDB", func() {
-			certPath, keyPath, err := gas.CreateTestCert(t)
+		Convey("You can make a Server without a logger configured, but it isn't usable", func() {
+			s, err := New(Config{})
+			So(err, ShouldNotBeNil)
+			So(s, ShouldBeNil)
+		})
+
+		Convey("You can make a Server with a logger configured and setup Auth, MakeQueueEndPoints and LoadSetDB", func() {
+			logWriter := gas.NewStringLogger()
+			conf := Config{
+				HTTPLogger: logWriter,
+			}
+
+			s, err := New(conf)
 			So(err, ShouldBeNil)
 
 			err = s.EnableAuthWithServerToken(certPath, keyPath, ".ibackup.test.servertoken", func(u, p string) (bool, string) {
@@ -108,7 +117,6 @@ func TestServer(t *testing.T) {
 			err = s.MakeQueueEndPoints()
 			So(err, ShouldBeNil)
 
-			dbPath := createDBLocation(t)
 			err = s.LoadSetDB(dbPath, "")
 			So(err, ShouldBeNil)
 
@@ -179,6 +187,8 @@ func TestServer(t *testing.T) {
 
 					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldBeNil)
+
+					So(strings.Count(logWriter.String(), "STATUS=200"), ShouldEqual, 2)
 
 					sets, errg := client.GetSets(exampleSet.Requester)
 					So(errg, ShouldBeNil)
@@ -2550,6 +2560,7 @@ func TestServer(t *testing.T) {
 				})
 			})
 		})
+
 	})
 }
 
