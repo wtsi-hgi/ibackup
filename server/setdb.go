@@ -28,6 +28,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"net/http"
 	"os"
@@ -247,6 +248,10 @@ func (s *Server) putSet(c *gin.Context) {
 	}
 
 	s.handleNewlyDefinedSets(given)
+	err = s.slacker.SendMessage(fmt.Sprintf("%s added/updated backup set %s", given.Requester, given.Name))
+	if err != nil {
+		fmt.Println(err)
+	}
 
 	c.Status(http.StatusOK)
 }

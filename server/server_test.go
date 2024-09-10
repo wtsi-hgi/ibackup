@@ -55,6 +55,20 @@ const (
 
 var errNotDiscovered = errors.New("not discovered")
 
+type mockSlacker struct {
+	logger *gas.StringLogger
+}
+
+func newMockSlacker(logger *gas.StringLogger) *mockSlacker {
+	return &mockSlacker{logger: logger}
+}
+
+func (s *mockSlacker) SendMessage(msg string) error {
+	_, err := s.logger.Write([]byte(msg))
+
+	return err
+}
+
 func TestClient(t *testing.T) {
 	Convey("maxTimeForUpload works with small and large requests", t, func() {
 		min := 10 * time.Millisecond
@@ -88,7 +102,7 @@ func TestServer(t *testing.T) {
 	minMBperSecondUploadSpeed := float64(10)
 	maxStuckTime := 1 * time.Hour
 
-	Convey("Given a test cert and db location", t, func() {
+	FocusConvey("Given a test cert and db location", t, func() {
 		certPath, keyPath, err := gas.CreateTestCert(t)
 		So(err, ShouldBeNil)
 
@@ -100,7 +114,7 @@ func TestServer(t *testing.T) {
 			So(s, ShouldBeNil)
 		})
 
-		Convey("You can make a Server with a logger configured and setup Auth, MakeQueueEndPoints and LoadSetDB", func() {
+		FocusConvey("You can make a Server with a logger configured and setup Auth, MakeQueueEndPoints and LoadSetDB", func() {
 			logWriter := gas.NewStringLogger()
 			conf := Config{
 				HTTPLogger: logWriter,
@@ -159,7 +173,7 @@ func TestServer(t *testing.T) {
 				MonitorTime: 0,
 			}
 
-			Convey("Which lets you login", func() {
+			FocusConvey("Which lets you login", func() {
 				So(logWriter.String(), ShouldBeBlank)
 
 				token, errl := gas.Login(gas.NewClientRequest(addr, certPath), "jim", "pass")
@@ -168,7 +182,7 @@ func TestServer(t *testing.T) {
 
 				So(strings.Count(logWriter.String(), "STATUS=200"), ShouldEqual, 1)
 
-				Convey("And then you use client methods AddOrUpdateSet and GetSets", func() {
+				FocusConvey("And then you use client methods AddOrUpdateSet (which logs to slack) and GetSets", func() {
 					exampleSet2 := &set.Set{
 						Name:        "set2",
 						Requester:   exampleSet.Requester,
@@ -185,8 +199,12 @@ func TestServer(t *testing.T) {
 
 					client := NewClient(addr, certPath, token)
 
+					slackWriter := gas.NewStringLogger()
+
 					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldBeNil)
+
+					So(slackWriter.String(), ShouldBeBlank)
 
 					So(strings.Count(logWriter.String(), "STATUS=200"), ShouldEqual, 2)
 
@@ -198,6 +216,10 @@ func TestServer(t *testing.T) {
 					_, err = client.GetSets("foo")
 					So(err, ShouldNotBeNil)
 
+					slacker := newMockSlacker(slackWriter)
+
+					s.LogImportantEventsToSlack(slacker)
+
 					exampleSet.Requester = "foo"
 					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldNotBeNil)
@@ -206,7 +228,7 @@ func TestServer(t *testing.T) {
 					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldBeNil)
 
-					Convey("And then you can set file and directory entries, trigger discovery and get all file statuses", func() {
+					FocusConvey("And then you can set file and directory entries, trigger discovery and get all file statuses", func() {
 						files, dirs, discovers, symlinkPath := createTestBackupFiles(t, localDir)
 						dirs = append(dirs, filepath.Join(localDir, "missing"))
 
@@ -232,9 +254,14 @@ func TestServer(t *testing.T) {
 						So(gotSet.NumFiles, ShouldEqual, 0)
 						So(gotSet.Symlinks, ShouldEqual, 0)
 
+						So(slackWriter.String(), ShouldEqual, "jim added/updated backup set set1")
+						slackWriter.Reset()
+
 						tn := time.Now()
 						err = client.TriggerDiscovery(exampleSet.ID())
 						So(err, ShouldBeNil)
+
+						So(slackWriter.String(), ShouldBeBlank)
 
 						ok := <-racCalled
 						So(ok, ShouldBeTrue)
@@ -250,6 +277,8 @@ func TestServer(t *testing.T) {
 						entries, errg := client.GetFiles(exampleSet.ID())
 						So(errg, ShouldBeNil)
 						So(len(entries), ShouldEqual, len(files)+len(discovers))
+
+						So(slackWriter.String(), ShouldEqual, fmt.Sprintf("set [set1] for jim finished discovery and has %d files", len(entries)))
 
 						So(entries[0].Status, ShouldEqual, set.Pending)
 						So(entries[1].Status, ShouldEqual, set.Missing)

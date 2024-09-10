@@ -67,6 +67,20 @@ const (
 	racRetriggerDelay       = 1 * time.Minute
 )
 
+type Slacker interface {
+	SendMessage(msg string) error
+}
+
+type defaultSlacker struct {
+	logger io.Writer
+}
+
+func (s *defaultSlacker) SendMessage(msg string) error {
+	_, err := s.logger.Write([]byte(msg))
+
+	return err
+}
+
 // Config configures the server.
 type Config struct {
 	// HTTPLogger is used to log all HTTP requests. This is required.
@@ -92,6 +106,7 @@ type Server struct {
 	creatingCollections    map[string]bool
 	uploading              map[string]*put.Request
 	stuckRequests          map[string]*put.Request
+	slacker                Slacker
 
 	mapMu   sync.RWMutex
 	monitor *Monitor
@@ -114,6 +129,7 @@ func New(conf Config) (*Server, error) {
 		creatingCollections: make(map[string]bool),
 		uploading:           make(map[string]*put.Request),
 		stuckRequests:       make(map[string]*put.Request),
+		slacker:             &defaultSlacker{conf.HTTPLogger},
 	}
 
 	s.Server.Router().Use(gas.IncludeAbortErrorsInBody)
@@ -237,6 +253,10 @@ func (s *Server) ttrc(data interface{}) queue.SubQueue {
 	delete(s.stuckRequests, rid)
 
 	return queue.SubQueueReady
+}
+
+func (s *Server) LogImportantEventsToSlack(slacker Slacker) {
+	s.slacker = slacker
 }
 
 // stop is called when the server is Stop()ped, cleaning up our additional
