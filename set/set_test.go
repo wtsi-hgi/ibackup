@@ -38,6 +38,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/shirou/gopsutil/process"
 	. "github.com/smartystreets/goconvey/convey"
+	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/ibackup/internal"
 	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-ssg/wrstat/v4/walk"
@@ -45,6 +46,20 @@ import (
 )
 
 const userPerms = 0700
+
+type mockSlacker struct {
+	logger *gas.StringLogger
+}
+
+func newMockSlacker(logger *gas.StringLogger) *mockSlacker {
+	return &mockSlacker{logger: logger}
+}
+
+func (s *mockSlacker) SendMessage(msg string) error {
+	_, err := s.logger.Write([]byte(msg))
+
+	return err
+}
 
 func TestSet(t *testing.T) {
 	Convey("Set statuses convert nicely to strings", t, func() {
@@ -301,9 +316,14 @@ func TestSetDB(t *testing.T) {
 		dbPath := filepath.Join(tDir, "set.db")
 
 		Convey("You can create a new database", func() {
+			slackWriter := gas.NewStringLogger()
+			slacker := newMockSlacker(slackWriter)
+
 			db, err := New(dbPath, "")
 			So(err, ShouldBeNil)
 			So(db, ShouldNotBeNil)
+
+			db.LogSetChangesToSlack(slacker)
 
 			Convey("And add Sets to it", func() {
 				set := &Set{
@@ -314,8 +334,13 @@ func TestSetDB(t *testing.T) {
 					DeleteLocal: false,
 				}
 
+				set.LogChangesToSlack(slacker)
+
 				err = db.AddOrUpdate(set)
 				So(err, ShouldBeNil)
+
+				So(slackWriter.String(), ShouldEqual, "set [jim.set1] stored in db")
+				slackWriter.Reset()
 
 				err = db.SetFileEntries(set.ID(), []string{"/a/b.txt", "/c/d.txt", "/e/f.txt"})
 				So(err, ShouldBeNil)
@@ -334,6 +359,8 @@ func TestSetDB(t *testing.T) {
 					MonitorTime: 0,
 					DeleteLocal: true,
 				}
+
+				set2.LogChangesToSlack(slacker)
 
 				err = db.AddOrUpdate(set2)
 				So(err, ShouldBeNil)
@@ -473,6 +500,8 @@ func TestSetDB(t *testing.T) {
 						errCh := make(chan error, 1)
 						waitCh := make(chan struct{})
 
+						slackWriter.Reset()
+
 						go func() {
 							_, errd := db.Discover(sets[0].ID(), func(_ []*Entry) ([]*walk.Dirent, error) {
 								waitCh <- struct{}{}
@@ -504,6 +533,7 @@ func TestSetDB(t *testing.T) {
 						fEntries, errg := db.GetFileEntries(sets[0].ID())
 						So(errg, ShouldBeNil)
 						So(len(fEntries), ShouldEqual, 5)
+						So(slackWriter.String(), ShouldEqual, fmt.Sprintf("set [jim.set1] completed discovery: %d files", len(fEntries)))
 						So(fEntries[0].Path, ShouldEqual, pureFiles[0])
 						So(fEntries[1].Path, ShouldEqual, pureFiles[1])
 						So(fEntries[2].Path, ShouldEqual, pureFiles[2])

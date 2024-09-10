@@ -92,6 +92,8 @@ type DBRO struct {
 	db *bolt.DB
 
 	ch codec.Handle
+
+	slacker Slacker
 }
 
 // NewRO returns a *DBRO that can be used to query a set database. Provide
@@ -224,6 +226,8 @@ func (d *DB) AddOrUpdate(set *Set) error {
 
 		return b.Put([]byte(set.Requester+separator+id), bid)
 	})
+
+	set.SuccessfullyStoredInDB()
 
 	return err
 }
@@ -567,15 +571,7 @@ func (d *DB) updateSetAfterDiscovery(setID string) (*Set, error) {
 			return err
 		}
 
-		set.LastDiscovery = time.Now()
-		set.NumFiles = d.countAllFilesInSet(tx, setID)
-
-		if set.NumFiles == 0 || (set.Missing+set.Abnormal == set.NumFiles) {
-			set.Status = Complete
-			set.LastCompleted = time.Now()
-		} else {
-			set.Status = PendingUpload
-		}
+		set.DiscoveryCompleted(d.countAllFilesInSet(tx, setID))
 
 		updatedSet = set
 
@@ -888,6 +884,8 @@ func (d *DBRO) decodeSet(v []byte) *Set {
 	var set *Set
 
 	dec.MustDecode(&set)
+
+	set.LogChangesToSlack(d.slacker)
 
 	return set
 }
@@ -1268,4 +1266,8 @@ func (d *DB) EnableRemoteBackups(remotePath string, handler put.Handler) {
 
 	d.remoteBackupPath = remotePath
 	d.remoteBackupHandler = handler
+}
+
+func (d *DBRO) LogSetChangesToSlack(slacker Slacker) {
+	d.slacker = slacker
 }

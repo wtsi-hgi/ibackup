@@ -37,6 +37,10 @@ import (
 
 type Status int
 
+type Slacker interface {
+	SendMessage(msg string) error
+}
+
 const (
 	dateFormat            = "2006-01-02 15:04:05"
 	arPrefixParts         = 2
@@ -180,6 +184,8 @@ type Set struct {
 	// Warning contains errors that do not stop progression. This is a read-only
 	// value.
 	Warning string
+
+	slacker Slacker
 }
 
 // ID returns an ID for this set, generated deterministiclly from its Name and
@@ -397,5 +403,31 @@ func (s *Set) entryTypeToSetCounts(entry *Entry) {
 		s.Symlinks++
 	case Hardlink:
 		s.Hardlinks++
+	}
+}
+
+func (s *Set) LogChangesToSlack(slacker Slacker) {
+	s.slacker = slacker
+}
+
+func (s *Set) SuccessfullyStoredInDB() {
+	if s.slacker != nil {
+		s.slacker.SendMessage(fmt.Sprintf("set [%s.%s] stored in db", s.Requester, s.Name))
+	}
+}
+
+func (s *Set) DiscoveryCompleted(numFiles uint64) {
+	s.LastDiscovery = time.Now()
+	s.NumFiles = numFiles
+
+	if s.NumFiles == 0 || (s.Missing+s.Abnormal == s.NumFiles) {
+		s.Status = Complete
+		s.LastCompleted = time.Now()
+	} else {
+		s.Status = PendingUpload
+	}
+
+	if s.slacker != nil {
+		s.slacker.SendMessage(fmt.Sprintf("set [%s.%s] completed discovery: %d files", s.Requester, s.Name, numFiles))
 	}
 }
