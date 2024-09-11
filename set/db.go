@@ -227,7 +227,9 @@ func (d *DB) AddOrUpdate(set *Set) error {
 		return b.Put([]byte(set.Requester+separator+id), bid)
 	})
 
-	set.SuccessfullyStoredInDB()
+	if err == nil {
+		err = set.SuccessfullyStoredInDB()
+	}
 
 	return err
 }
@@ -571,7 +573,10 @@ func (d *DB) updateSetAfterDiscovery(setID string) (*Set, error) {
 			return err
 		}
 
-		set.DiscoveryCompleted(d.countAllFilesInSet(tx, setID))
+		err = set.DiscoveryCompleted(d.countAllFilesInSet(tx, setID))
+		if err != nil {
+			return err
+		}
 
 		updatedSet = set
 

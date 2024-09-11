@@ -406,17 +406,21 @@ func (s *Set) entryTypeToSetCounts(entry *Entry) {
 	}
 }
 
+// LogChangesToSlack will cause the set to use the slacker when significant
+// events happen to the set.
 func (s *Set) LogChangesToSlack(slacker Slacker) {
 	s.slacker = slacker
 }
 
-func (s *Set) SuccessfullyStoredInDB() {
-	if s.slacker != nil {
-		s.slacker.SendMessage(fmt.Sprintf("set [%s.%s] stored in db", s.Requester, s.Name))
-	}
+// SuccessfullyStoredInDB should be called when you successfully store the set
+// in DB.
+func (s *Set) SuccessfullyStoredInDB() error {
+	return s.createAndSendMessage("stored in db")
 }
 
-func (s *Set) DiscoveryCompleted(numFiles uint64) {
+// DiscoveryCompleted should be called when you complete discovering a set. Pass
+// in the number of files you discovered.
+func (s *Set) DiscoveryCompleted(numFiles uint64) error {
 	s.LastDiscovery = time.Now()
 	s.NumFiles = numFiles
 
@@ -427,7 +431,13 @@ func (s *Set) DiscoveryCompleted(numFiles uint64) {
 		s.Status = PendingUpload
 	}
 
-	if s.slacker != nil {
-		s.slacker.SendMessage(fmt.Sprintf("set [%s.%s] completed discovery: %d files", s.Requester, s.Name, numFiles))
+	return s.createAndSendMessage(fmt.Sprintf("completed discovery: %d files", numFiles))
+}
+
+func (s *Set) createAndSendMessage(msg string) error {
+	if s.slacker == nil {
+		return nil
 	}
+
+	return s.slacker.SendMessage(fmt.Sprintf("set [%s.%s] %s", s.Requester, s.Name, msg))
 }
