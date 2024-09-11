@@ -632,7 +632,10 @@ func (d *DB) SetEntryStatus(r *put.Request) (*Entry, error) {
 			return nil
 		}
 
-		d.updateSetBasedOnEntry(got, entry)
+		erru := d.updateSetBasedOnEntry(got, entry)
+		if erru != nil {
+			return erru
+		}
 
 		return b.Put(bid, d.encodeToBytes(got))
 	})
@@ -810,54 +813,8 @@ func (d *DB) addFailedLookup(tx *bolt.Tx, setID, path string, entry *Entry) erro
 // updateSetBasedOnEntry updates set status values based on an updated Entry
 // from updateFileEntry(), assuming that request is for one of set's file
 // entries.
-func (d *DB) updateSetBasedOnEntry(set *Set, entry *Entry) {
-	if set.Status == PendingDiscovery || set.Status == PendingUpload {
-		set.Status = Uploading
-	}
-
-	set.adjustBasedOnEntry(entry)
-
-	d.fixSetCounts(entry, set)
-
-	if set.Uploaded+set.Failed+set.Missing+set.Abnormal == set.NumFiles {
-		set.Status = Complete
-		set.LastCompleted = time.Now()
-		set.LastCompletedCount = set.Uploaded + set.Failed
-		set.LastCompletedSize = set.SizeFiles
-	}
-}
-
-// fixSetCounts resets the set counts to 0 and goes through all the entries for
-// the set in the db to recaluclate them. The supplied entry should be one you
-// newly updated and that wasn't in the db before the transaction we're in.
-func (d *DB) fixSetCounts(entry *Entry, set *Set) {
-	if set.countsValid() {
-		return
-	}
-
-	entries, err := d.GetFileEntries(set.ID())
-	if err != nil {
-		return
-	}
-
-	set.Uploaded = 0
-	set.Failed = 0
-	set.Missing = 0
-	set.Abnormal = 0
-	set.Symlinks = 0
-	set.Hardlinks = 0
-
-	for _, e := range entries {
-		if e.Path == entry.Path {
-			e = entry
-		}
-
-		if e.Status == Failed {
-			e.newFail = true
-		}
-
-		set.entryToSetCounts(e)
-	}
+func (d *DB) updateSetBasedOnEntry(set *Set, entry *Entry) error {
+	return set.UpdateBasedOnEntry(entry, d.GetFileEntries)
 }
 
 // GetAll returns all the Sets previously added to the database.

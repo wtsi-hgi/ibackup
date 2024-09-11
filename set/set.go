@@ -418,6 +418,14 @@ func (s *Set) SuccessfullyStoredInDB() error {
 	return s.createAndSendMessage("stored in db")
 }
 
+func (s *Set) createAndSendMessage(msg string) error {
+	if s.slacker == nil {
+		return nil
+	}
+
+	return s.slacker.SendMessage(fmt.Sprintf("set [%s.%s] %s", s.Requester, s.Name, msg))
+}
+
 // DiscoveryCompleted should be called when you complete discovering a set. Pass
 // in the number of files you discovered.
 func (s *Set) DiscoveryCompleted(numFiles uint64) error {
@@ -436,10 +444,62 @@ func (s *Set) DiscoveryCompleted(numFiles uint64) error {
 	return s.createAndSendMessage(fmt.Sprintf("completed discovery: %d files", numFiles))
 }
 
-func (s *Set) createAndSendMessage(msg string) error {
-	if s.slacker == nil {
-		return nil
+// UpdateBasedOnEntry updates set status values based on an updated Entry
+// from updateFileEntry(), assuming that request is for one of set's file
+// entries.
+func (s *Set) UpdateBasedOnEntry(entry *Entry, getFileEntries func(string) ([]*Entry, error)) error {
+	if s.Status == PendingDiscovery || s.Status == PendingUpload {
+		s.Status = Uploading
+
+		err := s.createAndSendMessage("started uploading files")
+		if err != nil {
+			return err
+		}
 	}
 
-	return s.slacker.SendMessage(fmt.Sprintf("set [%s.%s] %s", s.Requester, s.Name, msg))
+	s.adjustBasedOnEntry(entry)
+
+	s.fixCounts(entry, getFileEntries)
+
+	if s.Uploaded+s.Failed+s.Missing+s.Abnormal == s.NumFiles {
+		s.Status = Complete
+		s.LastCompleted = time.Now()
+		s.LastCompletedCount = s.Uploaded + s.Failed
+		s.LastCompletedSize = s.SizeFiles
+	}
+
+	return nil
+}
+
+// fixCounts resets the set counts to 0 and goes through all the entries for
+// the set in the db to recaluclate them. The supplied entry should be one you
+// newly updated and that wasn't in the db before the transaction we're in.
+func (s *Set) fixCounts(entry *Entry, getFileEntries func(string) ([]*Entry, error)) {
+	if s.countsValid() {
+		return
+	}
+
+	entries, err := getFileEntries(s.ID())
+	if err != nil {
+		return
+	}
+
+	s.Uploaded = 0
+	s.Failed = 0
+	s.Missing = 0
+	s.Abnormal = 0
+	s.Symlinks = 0
+	s.Hardlinks = 0
+
+	for _, e := range entries {
+		if e.Path == entry.Path {
+			e = entry
+		}
+
+		if e.Status == Failed {
+			e.newFail = true
+		}
+
+		s.entryToSetCounts(e)
+	}
 }

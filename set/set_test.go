@@ -516,6 +516,7 @@ func TestSetDB(t *testing.T) {
 						So(errg, ShouldBeNil)
 						So(len(fEntries), ShouldEqual, 5)
 						So(slackWriter.String(), ShouldEqual, fmt.Sprintf("set [jim.set1] completed discovery: %d files", len(fEntries)))
+						slackWriter.Reset()
 						So(fEntries[0].Path, ShouldEqual, pureFiles[0])
 						So(fEntries[1].Path, ShouldEqual, pureFiles[1])
 						So(fEntries[2].Path, ShouldEqual, pureFiles[2])
@@ -545,12 +546,14 @@ func TestSetDB(t *testing.T) {
 							Error:     "",
 						}
 
+						So(slackWriter.String(), ShouldBeBlank)
 						e, errs := db.SetEntryStatus(r)
 						So(errs, ShouldBeNil)
 						So(e, ShouldNotBeNil)
 						So(e.Path, ShouldEqual, fEntries[0].Path)
 						So(e.Size, ShouldEqual, r.Size)
 						So(e.Status, ShouldEqual, UploadingEntry)
+						So(slackWriter.String(), ShouldEqual, ("set [jim.set1] started uploading files"))
 
 						sets, err = db.GetByRequester("jim")
 						So(err, ShouldBeNil)
