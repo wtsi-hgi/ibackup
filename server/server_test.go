@@ -114,7 +114,7 @@ func TestServer(t *testing.T) {
 			So(s, ShouldBeNil)
 		})
 
-		FocusConvey("You can make a Server with a logger configured and setup Auth, MakeQueueEndPoints and LoadSetDB", func() {
+		Convey("You can make a Server with a logger configured and setup Auth, MakeQueueEndPoints and LoadSetDB", func() {
 			logWriter := gas.NewStringLogger()
 			conf := Config{
 				HTTPLogger: logWriter,

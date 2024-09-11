@@ -427,9 +427,11 @@ func (s *Set) DiscoveryCompleted(numFiles uint64) error {
 	if s.NumFiles == 0 || (s.Missing+s.Abnormal == s.NumFiles) {
 		s.Status = Complete
 		s.LastCompleted = time.Now()
-	} else {
-		s.Status = PendingUpload
+
+		return s.createAndSendMessage("completed discovery and backup due to no files")
 	}
+
+	s.Status = PendingUpload
 
 	return s.createAndSendMessage(fmt.Sprintf("completed discovery: %d files", numFiles))
 }

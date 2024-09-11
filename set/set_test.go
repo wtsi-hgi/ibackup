@@ -497,34 +497,16 @@ func TestSetDB(t *testing.T) {
 						err = db.SetFileEntries(set.ID(), pureFiles)
 						So(err, ShouldBeNil)
 
-						errCh := make(chan error, 1)
-						waitCh := make(chan struct{})
-
 						slackWriter.Reset()
 
-						go func() {
-							_, errd := db.Discover(sets[0].ID(), func(_ []*Entry) ([]*walk.Dirent, error) {
-								waitCh <- struct{}{}
-								<-waitCh
-
-								return createFileEnts([]string{"/g/h/l.txt", "/g/i/m.txt"}), nil
-							})
-
-							errCh <- errd
-						}()
-						So(err, ShouldBeNil)
-
-						<-waitCh
-
-						sets, err = db.GetByRequester("jim")
-						So(err, ShouldBeNil)
-						So(sets[0].Status, ShouldEqual, PendingDiscovery)
-						So(sets[0].StartedDiscovery.IsZero(), ShouldBeFalse)
-
-						waitCh <- struct{}{}
-
-						err = <-errCh
-						So(err, ShouldBeNil)
+						discoverASet(db, sets[0], func() ([]*walk.Dirent, error) {
+							return createFileEnts([]string{"/g/h/l.txt", "/g/i/m.txt"}), nil
+						}, func() {
+							sets, err = db.GetByRequester("jim")
+							So(err, ShouldBeNil)
+							So(sets[0].Status, ShouldEqual, PendingDiscovery)
+							So(sets[0].StartedDiscovery.IsZero(), ShouldBeFalse)
+						})
 
 						bsets, errg := db.GetByRequester("jim")
 						So(errg, ShouldBeNil)
@@ -851,39 +833,21 @@ func TestSetDB(t *testing.T) {
 							oldStart := sets[0].StartedDiscovery
 							oldDisc := sets[0].LastDiscovery
 
-							errCh := make(chan error, 1)
-							waitCh := make(chan struct{})
-
-							go func() {
-								_, errd := db.Discover(sets[0].ID(), func(_ []*Entry) ([]*walk.Dirent, error) {
-									waitCh <- struct{}{}
-									<-waitCh
-
-									return createFileEnts([]string{"/g/h/l.txt", "/g/i/m.txt", "/g/i/n.txt"}), nil
-								})
-
-								errCh <- errd
-							}()
-							So(err, ShouldBeNil)
-
-							<-waitCh
-
-							sets, err = db.GetByRequester("jim")
-							So(err, ShouldBeNil)
-							So(sets[0].Status, ShouldEqual, PendingDiscovery)
-							So(sets[0].StartedDiscovery.After(oldStart), ShouldBeTrue)
-							So(sets[0].NumFiles, ShouldEqual, 0)
-							So(sets[0].SizeFiles, ShouldEqual, 0)
-							So(sets[0].Uploaded, ShouldEqual, 0)
-							So(sets[0].Failed, ShouldEqual, 0)
-							So(sets[0].Missing, ShouldEqual, 0)
-							So(sets[0].LastCompletedCount, ShouldEqual, 4)
-							So(sets[0].LastCompletedSize, ShouldEqual, 15)
-
-							waitCh <- struct{}{}
-
-							err = <-errCh
-							So(err, ShouldBeNil)
+							discoverASet(db, sets[0], func() ([]*walk.Dirent, error) {
+								return createFileEnts([]string{"/g/h/l.txt", "/g/i/m.txt", "/g/i/n.txt"}), nil
+							}, func() {
+								sets, err = db.GetByRequester("jim")
+								So(err, ShouldBeNil)
+								So(sets[0].Status, ShouldEqual, PendingDiscovery)
+								So(sets[0].StartedDiscovery.After(oldStart), ShouldBeTrue)
+								So(sets[0].NumFiles, ShouldEqual, 0)
+								So(sets[0].SizeFiles, ShouldEqual, 0)
+								So(sets[0].Uploaded, ShouldEqual, 0)
+								So(sets[0].Failed, ShouldEqual, 0)
+								So(sets[0].Missing, ShouldEqual, 0)
+								So(sets[0].LastCompletedCount, ShouldEqual, 4)
+								So(sets[0].LastCompletedSize, ShouldEqual, 15)
+							})
 
 							fEntries, errg := db.GetFileEntries(sets[0].ID())
 							So(errg, ShouldBeNil)
@@ -932,6 +896,62 @@ func TestSetDB(t *testing.T) {
 							fEntries, err = db.GetPureFileEntries(sets[0].ID())
 							So(err, ShouldBeNil)
 							So(len(fEntries), ShouldEqual, 3)
+						})
+
+						Convey("Set status becomes complete on new discovery with all missing files", func() {
+							err = db.SetFileEntries(sets[0].ID(), []string{})
+							So(err, ShouldBeNil)
+
+							slackWriter.Reset()
+
+							oldDisc := sets[0].LastDiscovery
+
+							discoverASet(db, sets[0], func() ([]*walk.Dirent, error) {
+								dirents := createFileEnts([]string{"/g/h/l.txt", "/g/i/m.txt", "/g/i/n.txt"})
+								for _, dirent := range dirents {
+									dirent.Inode = 0
+									dirent.Type = os.ModeIrregular
+								}
+
+								return dirents, nil
+							}, func() {})
+
+							sets, err = db.GetByRequester("jim")
+							So(err, ShouldBeNil)
+
+							So(sets[0].Status, ShouldEqual, Complete)
+							So(sets[0].LastDiscovery.After(oldDisc), ShouldBeTrue)
+							So(sets[0].NumFiles, ShouldEqual, 3)
+							So(sets[0].Missing, ShouldEqual, 3)
+							So(sets[0].SizeFiles, ShouldEqual, 0)
+
+							So(slackWriter.String(), ShouldEqual, "set [jim.set1] completed discovery and backup due to no files")
+						})
+
+						Convey("Set status becomes complete on new discovery with no files", func() {
+							err = db.SetFileEntries(sets[0].ID(), []string{})
+							So(err, ShouldBeNil)
+							err = db.SetDirEntries(sets[0].ID(), nil)
+							So(err, ShouldBeNil)
+
+							slackWriter.Reset()
+
+							oldDisc := sets[0].LastDiscovery
+
+							discoverASet(db, sets[0], func() ([]*walk.Dirent, error) {
+								return nil, nil
+							}, func() {})
+
+							sets, err = db.GetByRequester("jim")
+							So(err, ShouldBeNil)
+
+							So(sets[0].Status, ShouldEqual, Complete)
+							So(sets[0].LastDiscovery.After(oldDisc), ShouldBeTrue)
+							So(sets[0].NumFiles, ShouldEqual, 0)
+							So(sets[0].Missing, ShouldEqual, 0)
+							So(sets[0].SizeFiles, ShouldEqual, 0)
+
+							So(slackWriter.String(), ShouldEqual, "set [jim.set1] completed discovery and backup due to no files")
 						})
 					})
 				})
@@ -1470,6 +1490,31 @@ func TestSetDB(t *testing.T) {
 			})
 		})
 	})
+}
+
+func discoverASet(db *DB, set *Set, discoveryFunc func() ([]*walk.Dirent, error), pendingTestsFunc func()) {
+	errCh := make(chan error, 1)
+	waitCh := make(chan struct{})
+
+	go func() {
+		_, errd := db.Discover(set.ID(), func(e []*Entry) ([]*walk.Dirent, error) {
+			waitCh <- struct{}{}
+			<-waitCh
+
+			return discoveryFunc()
+		})
+
+		errCh <- errd
+	}()
+
+	<-waitCh
+
+	pendingTestsFunc()
+
+	waitCh <- struct{}{}
+
+	err := <-errCh
+	So(err, ShouldBeNil)
 }
 
 func setEntryToUploaded(entry *Entry, given *Set, db *DB) {
