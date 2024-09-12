@@ -239,12 +239,7 @@ func updateDatabaseSetWithUserSetDetails(dbSet, userSet *Set) error {
 		return Error{Msg: ErrNoAddDuringDiscovery, id: dbSet.ID()}
 	}
 
-	dbSet.Transformer = userSet.Transformer
-	dbSet.MonitorTime = userSet.MonitorTime
-	dbSet.DeleteLocal = userSet.DeleteLocal
-	dbSet.Description = userSet.Description
-	dbSet.Error = userSet.Error
-	dbSet.Warning = userSet.Warning
+	dbSet.copyUserProperties(userSet)
 
 	return nil
 }
@@ -446,18 +441,7 @@ func (d *DB) setDiscoveryStarted(setID string) error {
 			return err
 		}
 
-		set.StartedDiscovery = time.Now()
-		set.NumFiles = 0
-		set.SizeFiles = 0
-		set.Uploaded = 0
-		set.Failed = 0
-		set.Missing = 0
-		set.Abnormal = 0
-		set.Symlinks = 0
-		set.Hardlinks = 0
-		set.Status = PendingDiscovery
-		set.Error = ""
-		set.Warning = ""
+		set.reset()
 
 		return b.Put(bid, d.encodeToBytes(set))
 	})
@@ -1074,22 +1058,25 @@ func (d *DBRO) GetDirEntries(setID string) ([]*Entry, error) {
 // SetError updates a set with the given error message. Returns an error if the
 // setID isn't in the database.
 func (d *DB) SetError(setID, errMsg string) error {
-	return d.updateSetProperties(setID, func(got *Set) {
-		got.Error = errMsg
+	return d.updateSetProperties(setID, func(got *Set) error {
+		return got.SetError(errMsg)
 	})
 }
 
 // updateSetProperties retrives a set from the database and gives it to your
 // callback, allowing you to change properties on it. The altered set will then
 // be stored back in the database.
-func (d *DB) updateSetProperties(setID string, cb func(*Set)) error {
+func (d *DB) updateSetProperties(setID string, cb func(*Set) error) error {
 	return d.db.Update(func(tx *bolt.Tx) error {
 		set, bid, b, err := d.getSetByID(tx, setID)
 		if err != nil {
 			return err
 		}
 
-		cb(set)
+		err = cb(set)
+		if err != nil {
+			return err
+		}
 
 		return b.Put(bid, d.encodeToBytes(set))
 	})
@@ -1098,8 +1085,8 @@ func (d *DB) updateSetProperties(setID string, cb func(*Set)) error {
 // SetWarning updates a set with the given warning message. Returns an error if
 // the setID isn't in the database.
 func (d *DB) SetWarning(setID, warnMsg string) error {
-	return d.updateSetProperties(setID, func(got *Set) {
-		got.Warning = warnMsg
+	return d.updateSetProperties(setID, func(got *Set) error {
+		return got.SetWarning(warnMsg)
 	})
 }
 

@@ -349,7 +349,7 @@ func (s *Set) countsValid() bool {
 	return s.Uploaded+s.Failed+s.Missing+s.Abnormal <= s.NumFiles
 }
 
-func (s *Set) adjustBasedOnEntry(entry *Entry) {
+func (s *Set) adjustBasedOnEntry(entry *Entry) error {
 	if entry.Type == Symlink {
 		s.Symlinks--
 	} else if entry.Type == Hardlink {
@@ -368,17 +368,23 @@ func (s *Set) adjustBasedOnEntry(entry *Entry) {
 		}
 	}
 
-	s.entryToSetCounts(entry)
+	return s.entryToSetCounts(entry)
 }
 
 // entryToSetCounts increases set Uploaded, Failed or Missing based on
 // set.Status.
-func (s *Set) entryToSetCounts(entry *Entry) {
-	s.entryStatusToSetCounts(entry)
+func (s *Set) entryToSetCounts(entry *Entry) error {
+	err := s.entryStatusToSetCounts(entry)
+	if err != nil {
+		return err
+	}
+
 	s.entryTypeToSetCounts(entry)
+
+	return nil
 }
 
-func (s *Set) entryStatusToSetCounts(entry *Entry) {
+func (s *Set) entryStatusToSetCounts(entry *Entry) error {
 	switch entry.Status { //nolint:exhaustive
 	case Uploaded:
 		s.Uploaded++
@@ -389,12 +395,24 @@ func (s *Set) entryStatusToSetCounts(entry *Entry) {
 
 		if entry.Attempts >= AttemptsToBeConsideredFailing {
 			s.Status = Failing
+
+			return s.createAndSendMessage("has failed uploads")
 		}
 	case Missing:
 		s.Missing++
 	case AbnormalEntry:
 		s.Abnormal++
 	}
+
+	return nil
+}
+
+func (s *Set) createAndSendMessage(msg string) error {
+	if s.slacker == nil {
+		return nil
+	}
+
+	return s.slacker.SendMessage(fmt.Sprintf("set [%s.%s] %s", s.Requester, s.Name, msg))
 }
 
 func (s *Set) entryTypeToSetCounts(entry *Entry) {
@@ -416,14 +434,6 @@ func (s *Set) LogChangesToSlack(slacker Slacker) {
 // in DB.
 func (s *Set) SuccessfullyStoredInDB() error {
 	return s.createAndSendMessage("stored in db")
-}
-
-func (s *Set) createAndSendMessage(msg string) error {
-	if s.slacker == nil {
-		return nil
-	}
-
-	return s.slacker.SendMessage(fmt.Sprintf("set [%s.%s] %s", s.Requester, s.Name, msg))
 }
 
 // DiscoveryCompleted should be called when you complete discovering a set. Pass
@@ -448,40 +458,60 @@ func (s *Set) DiscoveryCompleted(numFiles uint64) error {
 // from updateFileEntry(), assuming that request is for one of set's file
 // entries.
 func (s *Set) UpdateBasedOnEntry(entry *Entry, getFileEntries func(string) ([]*Entry, error)) error {
-	if s.Status == PendingDiscovery || s.Status == PendingUpload {
-		s.Status = Uploading
-
-		err := s.createAndSendMessage("started uploading files")
-		if err != nil {
-			return err
-		}
+	err := s.checkIfUploading()
+	if err != nil {
+		return err
 	}
 
-	s.adjustBasedOnEntry(entry)
-
-	s.fixCounts(entry, getFileEntries)
-
-	if s.Uploaded+s.Failed+s.Missing+s.Abnormal == s.NumFiles {
-		s.Status = Complete
-		s.LastCompleted = time.Now()
-		s.LastCompletedCount = s.Uploaded + s.Failed
-		s.LastCompletedSize = s.SizeFiles
+	err = s.adjustBasedOnEntry(entry)
+	if err != nil {
+		return err
 	}
 
-	return nil
+	err = s.fixCounts(entry, getFileEntries)
+	if err != nil {
+		return err
+	}
+
+	return s.checkIfComplete()
+}
+
+func (s *Set) checkIfUploading() error {
+	if !(s.Status == PendingDiscovery || s.Status == PendingUpload) {
+		return nil
+	}
+
+	s.Status = Uploading
+
+	return s.createAndSendMessage("started uploading files")
+}
+
+func (s *Set) checkIfComplete() error {
+	if !(s.Uploaded+s.Failed+s.Missing+s.Abnormal == s.NumFiles) {
+		return nil
+	}
+
+	s.Status = Complete
+	s.LastCompleted = time.Now()
+	s.LastCompletedCount = s.Uploaded + s.Failed
+	s.LastCompletedSize = s.SizeFiles
+
+	return s.createAndSendMessage(fmt.Sprintf("completed backup "+
+		"(%d uploaded; %d failed; %d missing; %d abnormal; %s of data)",
+		s.Uploaded, s.Failed, s.Missing, s.Abnormal, s.Size()))
 }
 
 // fixCounts resets the set counts to 0 and goes through all the entries for
 // the set in the db to recaluclate them. The supplied entry should be one you
 // newly updated and that wasn't in the db before the transaction we're in.
-func (s *Set) fixCounts(entry *Entry, getFileEntries func(string) ([]*Entry, error)) {
+func (s *Set) fixCounts(entry *Entry, getFileEntries func(string) ([]*Entry, error)) error {
 	if s.countsValid() {
-		return
+		return nil
 	}
 
 	entries, err := getFileEntries(s.ID())
 	if err != nil {
-		return
+		return err
 	}
 
 	s.Uploaded = 0
@@ -491,6 +521,13 @@ func (s *Set) fixCounts(entry *Entry, getFileEntries func(string) ([]*Entry, err
 	s.Symlinks = 0
 	s.Hardlinks = 0
 
+	return s.updateAllCounts(entries, entry)
+}
+
+// updateAllCounts should be called after setting all counts to 0 (because they
+// had become invalid), and then recalculates the counts. Also marks the given
+// entry as newFail if any entry in entries is Failed.
+func (s *Set) updateAllCounts(entries []*Entry, entry *Entry) error {
 	for _, e := range entries {
 		if e.Path == entry.Path {
 			e = entry
@@ -500,6 +537,52 @@ func (s *Set) fixCounts(entry *Entry, getFileEntries func(string) ([]*Entry, err
 			e.newFail = true
 		}
 
-		s.entryToSetCounts(e)
+		err := s.entryToSetCounts(e)
+		if err != nil {
+			return err
+		}
 	}
+
+	return nil
+}
+
+// SetError records the given error against the set, indicating it wont work.
+func (s *Set) SetError(errMsg string) error {
+	s.Error = errMsg
+
+	return s.createAndSendMessage("is invalid: " + errMsg)
+}
+
+// SetWarning records the given warning against the set, indicating it has an
+// issue.
+func (s *Set) SetWarning(warnMsg string) error {
+	s.Warning = warnMsg
+
+	return s.createAndSendMessage("has an issue: " + warnMsg)
+}
+
+// copyUserProperties copies data from one set into another.
+func (s *Set) copyUserProperties(copySet *Set) {
+	s.Transformer = copySet.Transformer
+	s.MonitorTime = copySet.MonitorTime
+	s.DeleteLocal = copySet.DeleteLocal
+	s.Description = copySet.Description
+	s.Error = copySet.Error
+	s.Warning = copySet.Warning
+}
+
+// reset puts the Set data back to zero/initial/empty values.
+func (s *Set) reset() {
+	s.StartedDiscovery = time.Now()
+	s.NumFiles = 0
+	s.SizeFiles = 0
+	s.Uploaded = 0
+	s.Failed = 0
+	s.Missing = 0
+	s.Abnormal = 0
+	s.Symlinks = 0
+	s.Hardlinks = 0
+	s.Status = PendingDiscovery
+	s.Error = ""
+	s.Warning = ""
 }

@@ -378,14 +378,19 @@ func TestSetDB(t *testing.T) {
 
 					So(db.GetByID("sdf"), ShouldBeNil)
 
+					slackWriter.Reset()
+
 					Convey("And set an Error and Warning for it, which are cleared when we start discovery again", func() {
 						errMsg := "fooErr"
 						err = db.SetError(set.ID(), errMsg)
 						So(err, ShouldBeNil)
+						So(slackWriter.String(), ShouldEqual, "set [jim.set1] is invalid: "+errMsg)
+						slackWriter.Reset()
 
 						warnMsg := "fooWarn"
 						err = db.SetWarning(set.ID(), warnMsg)
 						So(err, ShouldBeNil)
+						So(slackWriter.String(), ShouldEqual, "set [jim.set1] has an issue: "+warnMsg)
 
 						retrieved = db.GetByID(set.ID())
 						So(retrieved, ShouldNotBeNil)
@@ -554,6 +559,7 @@ func TestSetDB(t *testing.T) {
 						So(e.Size, ShouldEqual, r.Size)
 						So(e.Status, ShouldEqual, UploadingEntry)
 						So(slackWriter.String(), ShouldEqual, ("set [jim.set1] started uploading files"))
+						slackWriter.Reset()
 
 						sets, err = db.GetByRequester("jim")
 						So(err, ShouldBeNil)
@@ -748,6 +754,8 @@ func TestSetDB(t *testing.T) {
 						So(sets[0].SizeFiles, ShouldEqual, 15)
 						So(sets[0].Uploaded, ShouldEqual, 3)
 						So(sets[0].Failed, ShouldEqual, 1)
+						So(slackWriter.String(), ShouldEqual, "set [jim.set1] has failed uploads")
+						slackWriter.Reset()
 
 						fEntries, err = db.GetFileEntries(sets[0].ID())
 						So(err, ShouldBeNil)
@@ -778,6 +786,10 @@ func TestSetDB(t *testing.T) {
 						So(sets[0].Uploaded, ShouldEqual, 3)
 						So(sets[0].Failed, ShouldEqual, 1)
 						So(sets[0].Missing, ShouldEqual, 1)
+						So(slackWriter.String(), ShouldEqual,
+							fmt.Sprintf("set [jim.set1] completed backup "+
+								"(%d uploaded; %d failed; %d missing; %d abnormal; %s of data)",
+								sets[0].Uploaded, sets[0].Failed, sets[0].Missing, sets[0].Abnormal, sets[0].Size()))
 						lastCompleted := sets[0].LastCompleted
 						So(lastCompleted.IsZero(), ShouldBeFalse)
 						So(sets[0].LastCompletedSize, ShouldEqual, 15)
