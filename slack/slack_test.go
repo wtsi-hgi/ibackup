@@ -47,7 +47,7 @@ func TestRealSlack(t *testing.T) {
 	Convey("You can send a message to real slack", t, func() {
 		s := New(Config{Token: token, Channel: channel})
 
-		msg := "test"
+		msg := "github.com/wtsi-hgi/ibackup slack package test"
 		err := s.SendMessage(msg)
 		So(err, ShouldBeNil)
 	})

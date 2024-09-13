@@ -30,24 +30,48 @@ import (
 	slackGo "github.com/slack-go/slack"
 )
 
+// Config provides configuration for a Slack.
 type Config struct {
-	Token   string
+	// Token is the token you get from the OAuth&Permissions tab in your slack
+	// application's features.
+	Token string
+
+	// Channel is the channel ID you get after pressing the 'Get channel
+	// details' button (channel title) in any channel, the Channel ID is at the
+	// bottom of the pop-up box.
 	Channel string
-	URL     string
+
+	// URL is optional and only needs to be set when testing with a local mock
+	// slack server.
+	URL string
 }
 
+// Slack is something that lets you send messages to Slack.
 type Slack struct {
 	api     *slackGo.Client
 	channel string
 }
 
+// New creates a new Slack using the Token, Channel and URL (if provided) from
+// the Config.
+//
+// To get the token you must first create a Slack application, which needs to be
+// a bot with these scopes added: chat:write, chat:write.customize,
+// chat:write.public, groups:read and incoming-webhook, and then add this bot to
+// your workspace.
 func New(config Config) *Slack {
-	s := Slack{api: slackGo.New(config.Token, slackGo.OptionAPIURL(config.URL))}
-	s.channel = config.Channel
+	var options []slackGo.Option
+	if config.URL != "" {
+		options = append(options, slackGo.OptionAPIURL(config.URL))
+	}
 
-	return &s
+	return &Slack{
+		api:     slackGo.New(config.Token, options...),
+		channel: config.Channel,
+	}
 }
 
+// SendMessage sends the given message to our configured channel.
 func (s *Slack) SendMessage(msg string) error {
 	_, _, _, err := s.api.SendMessage(s.channel, slackGo.MsgOptionText(msg, false)) //nolint:dogsled
 
