@@ -15,7 +15,6 @@ require (
 	github.com/go-resty/resty/v2 v2.13.1
 	github.com/hashicorp/go-multierror v1.1.1
 	github.com/inconshreveable/log15 v3.0.0-testing.5+incompatible
-	github.com/joho/godotenv v1.5.1
 	github.com/moby/sys/mountinfo v0.7.1
 	github.com/phayes/freeport v0.0.0-20220201140144-74d24b5ae9f5
 	github.com/rs/zerolog v1.33.0

@@ -102,7 +102,7 @@ func TestServer(t *testing.T) {
 	minMBperSecondUploadSpeed := float64(10)
 	maxStuckTime := 1 * time.Hour
 
-	FocusConvey("Given a test cert and db location", t, func() {
+	Convey("Given a test cert and db location", t, func() {
 		certPath, keyPath, err := gas.CreateTestCert(t)
 		So(err, ShouldBeNil)
 
@@ -112,6 +112,53 @@ func TestServer(t *testing.T) {
 			s, err := New(Config{})
 			So(err, ShouldNotBeNil)
 			So(s, ShouldBeNil)
+		})
+
+		localDir := t.TempDir()
+		remoteDir := filepath.Join(localDir, "remote")
+		exampleSet := &set.Set{
+			Name:        "set1",
+			Requester:   "jim",
+			Transformer: "prefix=" + localDir + ":" + remoteDir,
+			MonitorTime: 0,
+		}
+
+		Convey("You can make a Server with a logger configured and no slacker", func() {
+			logWriter := gas.NewStringLogger()
+			conf := Config{
+				HTTPLogger: logWriter,
+			}
+
+			s, err := New(conf)
+			So(err, ShouldBeNil)
+
+			err = s.EnableAuthWithServerToken(certPath, keyPath, ".ibackup.test.servertoken", func(u, p string) (bool, string) {
+				return true, "1"
+			})
+			So(err, ShouldBeNil)
+
+			err = s.MakeQueueEndPoints()
+			So(err, ShouldBeNil)
+
+			err = s.LoadSetDB(dbPath, "", nil)
+			So(err, ShouldBeNil)
+
+			addr, dfunc, err := gas.StartTestServer(s, certPath, keyPath)
+			So(err, ShouldBeNil)
+
+			defer func() {
+				errd := dfunc()
+				So(errd, ShouldBeNil)
+			}()
+
+			token, errl := gas.Login(gas.NewClientRequest(addr, certPath), "jim", "pass")
+			So(errl, ShouldBeNil)
+			So(token, ShouldNotBeBlank)
+
+			client := NewClient(addr, certPath, token)
+
+			err = client.AddOrUpdateSet(exampleSet)
+			So(err, ShouldBeNil)
 		})
 
 		Convey("You can make a Server with a logger configured and setup Auth, MakeQueueEndPoints and LoadSetDB", func() {
@@ -131,7 +178,10 @@ func TestServer(t *testing.T) {
 			err = s.MakeQueueEndPoints()
 			So(err, ShouldBeNil)
 
-			err = s.LoadSetDB(dbPath, "")
+			slackWriter := gas.NewStringLogger()
+			slacker := newMockSlacker(slackWriter)
+
+			err = s.LoadSetDB(dbPath, "", slacker)
 			So(err, ShouldBeNil)
 
 			addr, dfunc, err := gas.StartTestServer(s, certPath, keyPath)
@@ -164,16 +214,7 @@ func TestServer(t *testing.T) {
 				racCalled <- true
 			})
 
-			localDir := t.TempDir()
-			remoteDir := filepath.Join(localDir, "remote")
-			exampleSet := &set.Set{
-				Name:        "set1",
-				Requester:   "jim",
-				Transformer: "prefix=" + localDir + ":" + remoteDir,
-				MonitorTime: 0,
-			}
-
-			FocusConvey("Which lets you login", func() {
+			Convey("Which lets you login", func() {
 				So(logWriter.String(), ShouldBeBlank)
 
 				token, errl := gas.Login(gas.NewClientRequest(addr, certPath), "jim", "pass")
@@ -182,7 +223,7 @@ func TestServer(t *testing.T) {
 
 				So(strings.Count(logWriter.String(), "STATUS=200"), ShouldEqual, 1)
 
-				FocusConvey("And then you use client methods AddOrUpdateSet (which logs to slack) and GetSets", func() {
+				Convey("And then you use client methods AddOrUpdateSet (which logs to slack) and GetSets", func() {
 					exampleSet2 := &set.Set{
 						Name:        "set2",
 						Requester:   exampleSet.Requester,
@@ -199,8 +240,6 @@ func TestServer(t *testing.T) {
 
 					client := NewClient(addr, certPath, token)
 
-					slackWriter := gas.NewStringLogger()
-
 					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldBeNil)
 
@@ -216,10 +255,6 @@ func TestServer(t *testing.T) {
 					_, err = client.GetSets("foo")
 					So(err, ShouldNotBeNil)
 
-					slacker := newMockSlacker(slackWriter)
-
-					s.LogImportantEventsToSlack(slacker)
-
 					exampleSet.Requester = "foo"
 					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldNotBeNil)
@@ -228,7 +263,7 @@ func TestServer(t *testing.T) {
 					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldBeNil)
 
-					FocusConvey("And then you can set file and directory entries, trigger discovery and get all file statuses", func() {
+					Convey("And then you can set file and directory entries, trigger discovery and get all file statuses", func() {
 						files, dirs, discovers, symlinkPath := createTestBackupFiles(t, localDir)
 						dirs = append(dirs, filepath.Join(localDir, "missing"))
 
@@ -254,7 +289,7 @@ func TestServer(t *testing.T) {
 						So(gotSet.NumFiles, ShouldEqual, 0)
 						So(gotSet.Symlinks, ShouldEqual, 0)
 
-						So(slackWriter.String(), ShouldEqual, "jim added/updated backup set set1")
+						So(slackWriter.String(), ShouldEqual, "set [jim.set1] stored in db")
 						slackWriter.Reset()
 
 						tn := time.Now()
@@ -278,7 +313,7 @@ func TestServer(t *testing.T) {
 						So(errg, ShouldBeNil)
 						So(len(entries), ShouldEqual, len(files)+len(discovers))
 
-						So(slackWriter.String(), ShouldEqual, fmt.Sprintf("set [set1] for jim finished discovery and has %d files", len(entries)))
+						So(slackWriter.String(), ShouldEqual, fmt.Sprintf("set [jim.set1] completed discovery: %d files", len(entries)))
 
 						So(entries[0].Status, ShouldEqual, set.Pending)
 						So(entries[1].Status, ShouldEqual, set.Missing)

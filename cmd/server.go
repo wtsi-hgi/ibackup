@@ -42,6 +42,8 @@ import (
 	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/server"
+	"github.com/wtsi-hgi/ibackup/set"
+	"github.com/wtsi-hgi/ibackup/slack"
 	"github.com/wtsi-npg/logshim"
 	"github.com/wtsi-npg/logshim-zerolog/zlog"
 )
@@ -183,7 +185,16 @@ database that you've made, to investigate.
 			dbBackupPath = args[dbBackupParamPosition-1]
 		}
 
-		err = s.LoadSetDB(args[0], dbBackupPath)
+		token := os.Getenv("IBACKUP_SLACK_TOKEN")
+		channel := os.Getenv("IBACKUP_SLACK_CHANNEL")
+
+		var slacker set.Slacker
+
+		if token != "" && channel != "" {
+			slacker = slack.New(slack.Config{Token: token, Channel: channel})
+		}
+
+		err = s.LoadSetDB(args[0], dbBackupPath, slacker)
 		if err != nil {
 			die("failed to load database: %s", err)
 		}

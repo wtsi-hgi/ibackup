@@ -28,7 +28,6 @@ package server
 import (
 	"context"
 	"errors"
-	"fmt"
 	"math"
 	"net/http"
 	"os"
@@ -166,7 +165,7 @@ const (
 // endpoints will only let you work on sets where the Requester matches your
 // logged-in username, or if the logged-in user is the same as the user who
 // started the Server.
-func (s *Server) LoadSetDB(path, backupPath string) error {
+func (s *Server) LoadSetDB(path, backupPath string, slacker set.Slacker) error {
 	authGroup := s.AuthRouter()
 	if authGroup == nil {
 		return ErrNoAuth
@@ -176,6 +175,8 @@ func (s *Server) LoadSetDB(path, backupPath string) error {
 	if err != nil {
 		return err
 	}
+
+	db.LogSetChangesToSlack(slacker)
 
 	s.db = db
 
@@ -248,11 +249,6 @@ func (s *Server) putSet(c *gin.Context) {
 	}
 
 	s.handleNewlyDefinedSets(given)
-
-	err = s.slacker.SendMessage(fmt.Sprintf("%s added/updated backup set %s", given.Requester, given.Name))
-	if err != nil {
-		return
-	}
 
 	c.Status(http.StatusOK)
 }
