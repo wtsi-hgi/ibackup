@@ -289,7 +289,7 @@ func TestServer(t *testing.T) {
 						So(gotSet.NumFiles, ShouldEqual, 0)
 						So(gotSet.Symlinks, ShouldEqual, 0)
 
-						So(slackWriter.String(), ShouldEqual, "set [jim.set1] stored in db")
+						So(slackWriter.String(), ShouldEqual, "⬜️ `jim.set1` stored in db")
 						slackWriter.Reset()
 
 						tn := time.Now()
@@ -313,7 +313,7 @@ func TestServer(t *testing.T) {
 						So(errg, ShouldBeNil)
 						So(len(entries), ShouldEqual, len(files)+len(discovers))
 
-						So(slackWriter.String(), ShouldEqual, fmt.Sprintf("set [jim.set1] completed discovery: %d files", len(entries)))
+						So(slackWriter.String(), ShouldEqual, fmt.Sprintf("⬜️ `jim.set1` completed discovery: %d files", len(entries)))
 
 						So(entries[0].Status, ShouldEqual, set.Pending)
 						So(entries[1].Status, ShouldEqual, set.Missing)
@@ -2624,7 +2624,6 @@ func TestServer(t *testing.T) {
 				})
 			})
 		})
-
 	})
 }
 

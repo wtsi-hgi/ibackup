@@ -339,7 +339,7 @@ func TestSetDB(t *testing.T) {
 				err = db.AddOrUpdate(set)
 				So(err, ShouldBeNil)
 
-				So(slackWriter.String(), ShouldEqual, "set [jim.set1] stored in db")
+				So(slackWriter.String(), ShouldEqual, "⬜️ `jim.set1` stored in db")
 				slackWriter.Reset()
 
 				err = db.SetFileEntries(set.ID(), []string{"/a/b.txt", "/c/d.txt", "/e/f.txt"})
@@ -384,13 +384,13 @@ func TestSetDB(t *testing.T) {
 						errMsg := "fooErr"
 						err = db.SetError(set.ID(), errMsg)
 						So(err, ShouldBeNil)
-						So(slackWriter.String(), ShouldEqual, "set [jim.set1] is invalid: "+errMsg)
+						So(slackWriter.String(), ShouldEqual, "🟥 `jim.set1` is invalid: "+errMsg)
 						slackWriter.Reset()
 
 						warnMsg := "fooWarn"
 						err = db.SetWarning(set.ID(), warnMsg)
 						So(err, ShouldBeNil)
-						So(slackWriter.String(), ShouldEqual, "set [jim.set1] has an issue: "+warnMsg)
+						So(slackWriter.String(), ShouldEqual, "🟧 `jim.set1` has an issue: "+warnMsg)
 
 						retrieved = db.GetByID(set.ID())
 						So(retrieved, ShouldNotBeNil)
@@ -520,7 +520,7 @@ func TestSetDB(t *testing.T) {
 						fEntries, errg := db.GetFileEntries(sets[0].ID())
 						So(errg, ShouldBeNil)
 						So(len(fEntries), ShouldEqual, 5)
-						So(slackWriter.String(), ShouldEqual, fmt.Sprintf("set [jim.set1] completed discovery: %d files", len(fEntries)))
+						So(slackWriter.String(), ShouldEqual, fmt.Sprintf("⬜️ `jim.set1` completed discovery: %d files", len(fEntries)))
 						slackWriter.Reset()
 						So(fEntries[0].Path, ShouldEqual, pureFiles[0])
 						So(fEntries[1].Path, ShouldEqual, pureFiles[1])
@@ -558,7 +558,7 @@ func TestSetDB(t *testing.T) {
 						So(e.Path, ShouldEqual, fEntries[0].Path)
 						So(e.Size, ShouldEqual, r.Size)
 						So(e.Status, ShouldEqual, UploadingEntry)
-						So(slackWriter.String(), ShouldEqual, ("set [jim.set1] started uploading files"))
+						So(slackWriter.String(), ShouldEqual, ("⬜️ `jim.set1` started uploading files"))
 						slackWriter.Reset()
 
 						sets, err = db.GetByRequester("jim")
@@ -754,7 +754,7 @@ func TestSetDB(t *testing.T) {
 						So(sets[0].SizeFiles, ShouldEqual, 15)
 						So(sets[0].Uploaded, ShouldEqual, 3)
 						So(sets[0].Failed, ShouldEqual, 1)
-						So(slackWriter.String(), ShouldEqual, "set [jim.set1] has failed uploads")
+						So(slackWriter.String(), ShouldEqual, "🟥 `jim.set1` has failed uploads")
 						slackWriter.Reset()
 
 						fEntries, err = db.GetFileEntries(sets[0].ID())
@@ -787,7 +787,7 @@ func TestSetDB(t *testing.T) {
 						So(sets[0].Failed, ShouldEqual, 1)
 						So(sets[0].Missing, ShouldEqual, 1)
 						So(slackWriter.String(), ShouldEqual,
-							fmt.Sprintf("set [jim.set1] completed backup "+
+							fmt.Sprintf("🟩 `jim.set1` completed backup "+
 								"(%d uploaded; %d failed; %d missing; %d abnormal; %s of data)",
 								sets[0].Uploaded, sets[0].Failed, sets[0].Missing, sets[0].Abnormal, sets[0].Size()))
 						lastCompleted := sets[0].LastCompleted
@@ -940,7 +940,7 @@ func TestSetDB(t *testing.T) {
 							So(sets[0].Missing, ShouldEqual, 3)
 							So(sets[0].SizeFiles, ShouldEqual, 0)
 
-							So(slackWriter.String(), ShouldEqual, "set [jim.set1] completed discovery and backup due to no files")
+							So(slackWriter.String(), ShouldEqual, "🟧 `jim.set1` completed discovery and backup due to no files")
 						})
 
 						Convey("Set status becomes complete on new discovery with no files", func() {
@@ -966,7 +966,7 @@ func TestSetDB(t *testing.T) {
 							So(sets[0].Missing, ShouldEqual, 0)
 							So(sets[0].SizeFiles, ShouldEqual, 0)
 
-							So(slackWriter.String(), ShouldEqual, "set [jim.set1] completed discovery and backup due to no files")
+							So(slackWriter.String(), ShouldEqual, "🟧 `jim.set1` completed discovery and backup due to no files")
 						})
 					})
 				})

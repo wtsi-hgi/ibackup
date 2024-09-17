@@ -396,7 +396,7 @@ func (s *Set) entryStatusToSetCounts(entry *Entry) error {
 		if entry.Attempts >= AttemptsToBeConsideredFailing {
 			s.Status = Failing
 
-			return s.createAndSendMessage("has failed uploads")
+			return s.messageError("has failed uploads")
 		}
 	case Missing:
 		s.Missing++
@@ -407,12 +407,16 @@ func (s *Set) entryStatusToSetCounts(entry *Entry) error {
 	return nil
 }
 
-func (s *Set) createAndSendMessage(msg string) error {
+func (s *Set) messageError(msg string) error {
+	return s.createAndSendMessage("🟥", msg)
+}
+
+func (s *Set) createAndSendMessage(prefix, msg string) error {
 	if s.slacker == nil {
 		return nil
 	}
 
-	return s.slacker.SendMessage(fmt.Sprintf("set [%s.%s] %s", s.Requester, s.Name, msg))
+	return s.slacker.SendMessage(fmt.Sprintf("%s `%s.%s` %s", prefix, s.Requester, s.Name, msg))
 }
 
 func (s *Set) entryTypeToSetCounts(entry *Entry) {
@@ -433,7 +437,11 @@ func (s *Set) LogChangesToSlack(slacker Slacker) {
 // SuccessfullyStoredInDB should be called when you successfully store the set
 // in DB.
 func (s *Set) SuccessfullyStoredInDB() error {
-	return s.createAndSendMessage("stored in db")
+	return s.messageInfo("stored in db")
+}
+
+func (s *Set) messageInfo(msg string) error {
+	return s.createAndSendMessage("⬜️", msg)
 }
 
 // DiscoveryCompleted should be called when you complete discovering a set. Pass
@@ -446,12 +454,16 @@ func (s *Set) DiscoveryCompleted(numFiles uint64) error {
 		s.Status = Complete
 		s.LastCompleted = time.Now()
 
-		return s.createAndSendMessage("completed discovery and backup due to no files")
+		return s.messageWarn("completed discovery and backup due to no files")
 	}
 
 	s.Status = PendingUpload
 
-	return s.createAndSendMessage(fmt.Sprintf("completed discovery: %d files", numFiles))
+	return s.messageInfo(fmt.Sprintf("completed discovery: %d files", numFiles))
+}
+
+func (s *Set) messageWarn(msg string) error {
+	return s.createAndSendMessage("🟧", msg)
 }
 
 // UpdateBasedOnEntry updates set status values based on an updated Entry
@@ -483,7 +495,7 @@ func (s *Set) checkIfUploading() error {
 
 	s.Status = Uploading
 
-	return s.createAndSendMessage("started uploading files")
+	return s.messageInfo("started uploading files")
 }
 
 func (s *Set) checkIfComplete() error {
@@ -496,9 +508,13 @@ func (s *Set) checkIfComplete() error {
 	s.LastCompletedCount = s.Uploaded + s.Failed
 	s.LastCompletedSize = s.SizeFiles
 
-	return s.createAndSendMessage(fmt.Sprintf("completed backup "+
+	return s.messageSuccess(fmt.Sprintf("completed backup "+
 		"(%d uploaded; %d failed; %d missing; %d abnormal; %s of data)",
 		s.Uploaded, s.Failed, s.Missing, s.Abnormal, s.Size()))
+}
+
+func (s *Set) messageSuccess(msg string) error {
+	return s.createAndSendMessage("🟩", msg)
 }
 
 // fixCounts resets the set counts to 0 and goes through all the entries for
@@ -550,7 +566,7 @@ func (s *Set) updateAllCounts(entries []*Entry, entry *Entry) error {
 func (s *Set) SetError(errMsg string) error {
 	s.Error = errMsg
 
-	return s.createAndSendMessage("is invalid: " + errMsg)
+	return s.messageError("is invalid: " + errMsg)
 }
 
 // SetWarning records the given warning against the set, indicating it has an
@@ -558,7 +574,7 @@ func (s *Set) SetError(errMsg string) error {
 func (s *Set) SetWarning(warnMsg string) error {
 	s.Warning = warnMsg
 
-	return s.createAndSendMessage("has an issue: " + warnMsg)
+	return s.messageWarn("has an issue: " + warnMsg)
 }
 
 // copyUserProperties copies data from one set into another.
