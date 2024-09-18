@@ -165,13 +165,25 @@ const (
 // endpoints will only let you work on sets where the Requester matches your
 // logged-in username, or if the logged-in user is the same as the user who
 // started the Server.
-func (s *Server) LoadSetDB(path, backupPath string, slacker set.Slacker) error {
+func (s *Server) LoadSetDB(path, backupPath string, slacker set.Slacker) error { //nolint:funlen
 	authGroup := s.AuthRouter()
 	if authGroup == nil {
 		return ErrNoAuth
 	}
 
+	s.slacker = slacker
+
+	err := s.sendSlackMessage("⬜️ server starting, loading database")
+	if err != nil {
+		return err
+	}
+
 	db, err := set.New(path, backupPath)
+	if err != nil {
+		return err
+	}
+
+	err = s.sendSlackMessage("🟩 server loaded database")
 	if err != nil {
 		return err
 	}
@@ -186,6 +198,14 @@ func (s *Server) LoadSetDB(path, backupPath string, slacker set.Slacker) error {
 	go s.handleFileStatusUpdates()
 
 	return s.recoverQueue()
+}
+
+func (s *Server) sendSlackMessage(msg string) error {
+	if s.slacker == nil {
+		return nil
+	}
+
+	return s.slacker.SendMessage(msg)
 }
 
 // EnableRemoteDBBackups causes the database backup file to also be backed up to

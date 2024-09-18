@@ -95,6 +95,8 @@ type Server struct {
 
 	mapMu   sync.RWMutex
 	monitor *Monitor
+
+	slacker set.Slacker
 }
 
 // New creates a Server which can serve a REST API and website.
@@ -242,6 +244,7 @@ func (s *Server) ttrc(data interface{}) queue.SubQueue {
 // stop is called when the server is Stop()ped, cleaning up our additional
 // properties.
 func (s *Server) stop() {
+	s.sendSlackMessage("🟧 server stopped") //nolint:errcheck
 	s.dirPool.StopWait()
 
 	if s.statusUpdateCh != nil {
