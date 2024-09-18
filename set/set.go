@@ -577,6 +577,10 @@ func (s *Set) SetWarning(warnMsg string) error {
 	return s.messageWarn("has an issue: " + warnMsg)
 }
 
+func (s *Set) RecoveryError(err error) error {
+	return s.messageError("could not be recovered: " + err.Error())
+}
+
 // copyUserProperties copies data from one set into another.
 func (s *Set) copyUserProperties(copySet *Set) {
 	s.Transformer = copySet.Transformer

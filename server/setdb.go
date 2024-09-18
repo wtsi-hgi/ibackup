@@ -891,6 +891,7 @@ func (s *Server) recoverQueue() error {
 	for _, given := range sets {
 		err = s.recoverSet(given)
 		if err != nil {
+			given.RecoveryError(err) //nolint:errcheck
 			s.Logger.Printf("failed to recover set %s for %s: %s", given.Name, given.Requester, err)
 		}
 	}

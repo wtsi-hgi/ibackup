@@ -109,8 +109,8 @@ func TestServer(t *testing.T) {
 		dbPath := createDBLocation(t)
 
 		Convey("You can make a Server without a logger configured, but it isn't usable", func() {
-			s, err := New(Config{})
-			So(err, ShouldNotBeNil)
+			s, errn := New(Config{})
+			So(errn, ShouldNotBeNil)
 			So(s, ShouldBeNil)
 		})
 
@@ -129,8 +129,8 @@ func TestServer(t *testing.T) {
 				HTTPLogger: logWriter,
 			}
 
-			s, err := New(conf)
-			So(err, ShouldBeNil)
+			s, errn := New(conf)
+			So(errn, ShouldBeNil)
 
 			err = s.EnableAuthWithServerToken(certPath, keyPath, ".ibackup.test.servertoken", func(u, p string) (bool, string) {
 				return true, "1"
@@ -167,26 +167,39 @@ func TestServer(t *testing.T) {
 				HTTPLogger: logWriter,
 			}
 
-			s, err := New(conf)
-			So(err, ShouldBeNil)
+			makeAndStartServer := func() (*Server, *gas.StringLogger, string, func() error) {
+				s, errn := New(conf)
+				So(errn, ShouldBeNil)
 
-			err = s.EnableAuthWithServerToken(certPath, keyPath, ".ibackup.test.servertoken", func(u, p string) (bool, string) {
-				return true, "1"
-			})
-			So(err, ShouldBeNil)
+				err = s.EnableAuthWithServerToken(certPath, keyPath, ".ibackup.test.servertoken", func(u, p string) (bool, string) {
+					return true, "1"
+				})
+				So(err, ShouldBeNil)
 
-			err = s.MakeQueueEndPoints()
-			So(err, ShouldBeNil)
+				err = s.MakeQueueEndPoints()
+				So(err, ShouldBeNil)
 
-			slackWriter := gas.NewStringLogger()
-			slacker := newMockSlacker(slackWriter)
+				slackWriter := gas.NewStringLogger()
+				slacker := newMockSlacker(slackWriter)
 
-			err = s.LoadSetDB(dbPath, "", slacker)
-			So(err, ShouldBeNil)
+				err = s.LoadSetDB(dbPath, "", slacker)
+				So(err, ShouldBeNil)
 
-			addr, dfunc, err := gas.StartTestServer(s, certPath, keyPath)
-			So(err, ShouldBeNil)
+				addr, dfunc, errs := gas.StartTestServer(s, certPath, keyPath)
+				So(errs, ShouldBeNil)
+
+				return s, slackWriter, addr, dfunc
+			}
+
+			s, slackWriter, addr, dfunc := makeAndStartServer()
+
+			serverStopped := false
+
 			defer func() {
+				if serverStopped {
+					return
+				}
+
 				errd := dfunc()
 				So(errd, ShouldBeNil)
 			}()
@@ -1260,6 +1273,75 @@ func TestServer(t *testing.T) {
 							ts := <-tsCh
 							So(ts, ShouldHappenBefore, tr)
 						})
+					})
+
+					Convey("If you have an invalid transformer, discovery fails", func() {
+						badSet := &set.Set{
+							Name:        "setbad",
+							Requester:   "jim",
+							Transformer: "humgen",
+							MonitorTime: 0,
+						}
+
+						_, dirs, expected, _ := createTestBackupFiles(t, localDir)
+
+						err = client.AddOrUpdateSet(badSet)
+						So(err, ShouldBeNil)
+
+						err = client.SetDirs(badSet.ID(), dirs)
+						So(err, ShouldBeNil)
+
+						slackWriter.Reset()
+
+						badSet2 := &set.Set{
+							Name:        "setbad2",
+							Requester:   "jim",
+							Transformer: "invalid",
+							MonitorTime: 0,
+						}
+
+						err = client.AddOrUpdateSet(badSet2)
+						So(err, ShouldBeNil)
+
+						So(racCalls, ShouldEqual, 0)
+
+						err = client.TriggerDiscovery(badSet2.ID())
+						So(err, ShouldNotBeNil)
+						So(slackWriter.String(), ShouldEqual, "🟥 `jim.setbad2` is invalid: invalid transformer")
+
+						slackWriter.Reset()
+
+						err = client.TriggerDiscovery(badSet.ID())
+						So(err, ShouldBeNil)
+
+						<-time.After(300 * time.Millisecond)
+						So(racCalls, ShouldEqual, 0)
+
+						gotSet, errg := client.GetSetByID(badSet.Requester, badSet.ID())
+						So(errg, ShouldBeNil)
+						So(gotSet.Error, ShouldNotBeNil)
+						So(slackWriter.String(), ShouldEqual,
+							fmt.Sprintf("⬜️ `jim.setbad` completed discovery: 4 files"+
+								"🟥 `jim.setbad` is invalid: not a valid humgen lustre path [%s]", expected[0]))
+
+						err = dfunc()
+						So(err, ShouldBeNil)
+
+						serverStopped = true
+
+						logWriter.Reset()
+
+						_, slackWriter2, _, dfunc2 := makeAndStartServer()
+
+						defer func() {
+							errd := dfunc2()
+							So(errd, ShouldBeNil)
+						}()
+
+						So(logWriter.String(), ShouldEqual, fmt.Sprintf("failed to recover set setbad for jim: "+
+							"not a valid humgen lustre path [%s]\n", expected[0]))
+						So(slackWriter2.String(), ShouldEqual, fmt.Sprintf("🟥 `jim.setbad` could not be recovered: "+
+							"not a valid humgen lustre path [%s]", expected[0]))
 					})
 				})
 
