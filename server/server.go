@@ -71,6 +71,13 @@ const (
 type Config struct {
 	// HTTPLogger is used to log all HTTP requests. This is required.
 	HTTPLogger io.Writer
+
+	// StillRunningMsgFreq is the time between slack messages being sent about
+	// the server still running.
+	StillRunningMsgFreq time.Duration
+
+	// Slacker is used to send messages to a slack channel.
+	Slacker set.Slacker
 }
 
 // Server is used to start a web server that provides a REST API to the setdb
@@ -97,6 +104,10 @@ type Server struct {
 	monitor *Monitor
 
 	slacker set.Slacker
+
+	stillRunningMsgFreq time.Duration
+
+	serverAliveCh chan bool
 }
 
 // New creates a Server which can serve a REST API and website.
@@ -116,6 +127,8 @@ func New(conf Config) (*Server, error) {
 		creatingCollections: make(map[string]bool),
 		uploading:           make(map[string]*put.Request),
 		stuckRequests:       make(map[string]*put.Request),
+		slacker:             conf.Slacker,
+		stillRunningMsgFreq: conf.StillRunningMsgFreq,
 	}
 
 	s.Server.Router().Use(gas.IncludeAbortErrorsInBody)
@@ -245,6 +258,11 @@ func (s *Server) ttrc(data interface{}) queue.SubQueue {
 // properties.
 func (s *Server) stop() {
 	s.sendSlackMessage("🟧 server stopped") //nolint:errcheck
+
+	if s.serverAliveCh != nil {
+		close(s.serverAliveCh)
+	}
+
 	s.dirPool.StopWait()
 
 	if s.statusUpdateCh != nil {

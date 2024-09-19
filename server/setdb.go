@@ -31,6 +31,7 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/VertebrateResequencing/wr/queue"
 	"github.com/gin-gonic/gin"
@@ -165,13 +166,13 @@ const (
 // endpoints will only let you work on sets where the Requester matches your
 // logged-in username, or if the logged-in user is the same as the user who
 // started the Server.
-func (s *Server) LoadSetDB(path, backupPath string, slacker set.Slacker) error {
+func (s *Server) LoadSetDB(path, backupPath string) error {
 	authGroup := s.AuthRouter()
 	if authGroup == nil {
 		return ErrNoAuth
 	}
 
-	err := s.setupDB(path, backupPath, slacker, authGroup)
+	err := s.setupDB(path, backupPath, authGroup)
 	if err != nil {
 		return err
 	}
@@ -182,9 +183,7 @@ func (s *Server) LoadSetDB(path, backupPath string, slacker set.Slacker) error {
 	return s.recoverQueue()
 }
 
-func (s *Server) setupDB(path, backupPath string, slacker set.Slacker, authGroup *gin.RouterGroup) error {
-	s.slacker = slacker
-
+func (s *Server) setupDB(path, backupPath string, authGroup *gin.RouterGroup) error {
 	err := s.sendSlackMessage("⬜️ server starting, loading database")
 	if err != nil {
 		return err
@@ -200,7 +199,9 @@ func (s *Server) setupDB(path, backupPath string, slacker set.Slacker, authGroup
 		return err
 	}
 
-	db.LogSetChangesToSlack(slacker)
+	go s.tellSlackStillRunning()
+
+	db.LogSetChangesToSlack(s.slacker)
 
 	s.db = db
 
@@ -215,6 +216,34 @@ func (s *Server) sendSlackMessage(msg string) error {
 	}
 
 	return s.slacker.SendMessage(msg)
+}
+
+func (s *Server) tellSlackStillRunning() {
+	if s.slacker == nil || s.stillRunningMsgFreq <= 0 {
+		return
+	}
+
+	ticker := time.NewTicker(s.stillRunningMsgFreq)
+
+	defer ticker.Stop()
+
+	s.serverAliveCh = make(chan bool)
+
+	for {
+		select {
+		case <-ticker.C:
+			err := s.serverStillRunning()
+			if err != nil {
+				return
+			}
+		case <-s.serverAliveCh:
+			return
+		}
+	}
+}
+
+func (s *Server) serverStillRunning() error {
+	return s.slacker.SendMessage("⬜️ server is still running")
 }
 
 // EnableRemoteDBBackups causes the database backup file to also be backed up to

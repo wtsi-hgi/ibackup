@@ -62,6 +62,7 @@ var serverDebug bool
 var serverRemoteBackupPath string
 var serverWRDeployment string
 var serverHardlinksCollection string
+var serverStillRunningMsgFreq string
 
 // serverCmd represents the server command.
 var serverCmd = &cobra.Command{
@@ -138,8 +139,38 @@ database that you've made, to investigate.
 		}
 
 		logWriter := setServerLogger(serverLogPath)
+
+		token := os.Getenv("IBACKUP_SLACK_TOKEN")
+		channel := os.Getenv("IBACKUP_SLACK_CHANNEL")
+
+		var slacker set.Slacker
+
+		if token != "" && channel != "" {
+			slacker = slack.New(slack.Config{Token: token, Channel: channel})
+		} else {
+			if serverStillRunningMsgFreq != "" {
+				die("--still_running requires slack variables")
+			}
+		}
+
+		var stillRunningMsgFreq time.Duration
+		if serverStillRunningMsgFreq != "" {
+			var err error
+
+			stillRunningMsgFreq, err = parseDuration(serverStillRunningMsgFreq)
+			if err != nil {
+				die("invalid still_running message frequency: %s", err)
+			}
+
+			if stillRunningMsgFreq < 1*time.Minute {
+				die("message frequency must be 1m or more, not %s", stillRunningMsgFreq)
+			}
+		}
+
 		conf := server.Config{
-			HTTPLogger: logWriter,
+			HTTPLogger:          logWriter,
+			Slacker:             slacker,
+			StillRunningMsgFreq: stillRunningMsgFreq,
 		}
 
 		sync.Opts.DeadlockTimeout = deadlockTimeout
@@ -185,16 +216,7 @@ database that you've made, to investigate.
 			dbBackupPath = args[dbBackupParamPosition-1]
 		}
 
-		token := os.Getenv("IBACKUP_SLACK_TOKEN")
-		channel := os.Getenv("IBACKUP_SLACK_CHANNEL")
-
-		var slacker set.Slacker
-
-		if token != "" && channel != "" {
-			slacker = slack.New(slack.Config{Token: token, Channel: channel})
-		}
-
-		err = s.LoadSetDB(args[0], dbBackupPath, slacker)
+		err = s.LoadSetDB(args[0], dbBackupPath)
 		if err != nil {
 			die("failed to load database: %s", err)
 		}
@@ -247,6 +269,9 @@ func init() {
 		"deduplicate hardlinks by storing them by inode in this iRODS collection")
 	serverCmd.Flags().StringVar(&serverRemoteBackupPath, "remote_backup", os.Getenv("IBACKUP_REMOTE_DB_BACKUP_PATH"),
 		"enables database backup to the specified iRODS path")
+	serverCmd.Flags().StringVarP(&serverStillRunningMsgFreq, "still_running", "r", "",
+		"send a slack message every this period of time to say the server is still running"+
+			"(eg. 10m for 10 minutes, or 6h for 6 hours, minimum 1m), defaults to nothing")
 }
 
 // setServerLogger makes our appLogger log to the given path if non-blank,

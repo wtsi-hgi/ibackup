@@ -123,12 +123,15 @@ func TestServer(t *testing.T) {
 			MonitorTime: 0,
 		}
 
-		Convey("You can make a Server with a logger configured and no slacker", func() {
-			logWriter := gas.NewStringLogger()
-			conf := Config{
-				HTTPLogger: logWriter,
-			}
+		logWriter := gas.NewStringLogger()
+		slackWriter := gas.NewStringLogger()
+		conf := Config{
+			HTTPLogger: logWriter,
+			Slacker:    newMockSlacker(slackWriter),
+		}
 
+		Convey("You can make a Server with a logger configured and no slacker", func() {
+			conf.StillRunningMsgFreq = 1 * time.Millisecond
 			s, errn := New(conf)
 			So(errn, ShouldBeNil)
 
@@ -140,7 +143,7 @@ func TestServer(t *testing.T) {
 			err = s.MakeQueueEndPoints()
 			So(err, ShouldBeNil)
 
-			err = s.LoadSetDB(dbPath, "", nil)
+			err = s.LoadSetDB(dbPath, "")
 			So(err, ShouldBeNil)
 
 			addr, dfunc, err := gas.StartTestServer(s, certPath, keyPath)
@@ -161,40 +164,57 @@ func TestServer(t *testing.T) {
 			So(err, ShouldBeNil)
 		})
 
+		const serverStartMessage = "⬜️ server starting, loading database🟩 server loaded database"
+
+		makeAndStartServer := func() (*Server, string, func() error) {
+			s, errn := New(conf)
+			So(errn, ShouldBeNil)
+
+			err = s.EnableAuthWithServerToken(certPath, keyPath, ".ibackup.test.servertoken", func(u, p string) (bool, string) {
+				return true, "1"
+			})
+			So(err, ShouldBeNil)
+
+			err = s.MakeQueueEndPoints()
+			So(err, ShouldBeNil)
+
+			slackWriter.Reset()
+
+			err = s.LoadSetDB(dbPath, "")
+			So(err, ShouldBeNil)
+
+			addr, dfunc, errs := gas.StartTestServer(s, certPath, keyPath)
+			So(errs, ShouldBeNil)
+			So(slackWriter.String(), ShouldStartWith, serverStartMessage)
+
+			return s, addr, dfunc
+		}
+
+		Convey("You can make a server that frequently logs to slack that it is still running, until it isn't", func() {
+			conf.StillRunningMsgFreq = 200 * time.Millisecond
+			_, _, dfunc := makeAndStartServer()
+
+			slackWriter.Reset()
+
+			time.Sleep(conf.StillRunningMsgFreq)
+
+			expectedMsg := "⬜️ server is still running"
+			So(slackWriter.String(), ShouldEqual, expectedMsg)
+
+			time.Sleep(conf.StillRunningMsgFreq)
+
+			So(slackWriter.String(), ShouldEqual, expectedMsg+expectedMsg)
+
+			err = dfunc()
+			So(err, ShouldBeNil)
+
+			time.Sleep(conf.StillRunningMsgFreq)
+
+			So(slackWriter.String(), ShouldEqual, expectedMsg+expectedMsg+"🟧 server stopped")
+		})
+
 		Convey("You can make a Server with a logger configured and setup Auth, MakeQueueEndPoints and LoadSetDB", func() {
-			logWriter := gas.NewStringLogger()
-			conf := Config{
-				HTTPLogger: logWriter,
-			}
-
-			const serverStartMessage = "⬜️ server starting, loading database🟩 server loaded database"
-
-			makeAndStartServer := func() (*Server, *gas.StringLogger, string, func() error) {
-				s, errn := New(conf)
-				So(errn, ShouldBeNil)
-
-				err = s.EnableAuthWithServerToken(certPath, keyPath, ".ibackup.test.servertoken", func(u, p string) (bool, string) {
-					return true, "1"
-				})
-				So(err, ShouldBeNil)
-
-				err = s.MakeQueueEndPoints()
-				So(err, ShouldBeNil)
-
-				slackWriter := gas.NewStringLogger()
-				slacker := newMockSlacker(slackWriter)
-
-				err = s.LoadSetDB(dbPath, "", slacker)
-				So(err, ShouldBeNil)
-
-				addr, dfunc, errs := gas.StartTestServer(s, certPath, keyPath)
-				So(errs, ShouldBeNil)
-				So(slackWriter.String(), ShouldStartWith, serverStartMessage)
-
-				return s, slackWriter, addr, dfunc
-			}
-
-			s, slackWriter, addr, dfunc := makeAndStartServer()
+			s, addr, dfunc := makeAndStartServer()
 
 			serverStopped := false
 
@@ -1342,7 +1362,7 @@ func TestServer(t *testing.T) {
 
 						logWriter.Reset()
 
-						_, slackWriter2, _, dfunc2 := makeAndStartServer()
+						_, _, dfunc2 := makeAndStartServer()
 
 						defer func() {
 							errd := dfunc2()
@@ -1351,7 +1371,7 @@ func TestServer(t *testing.T) {
 
 						So(logWriter.String(), ShouldEqual, fmt.Sprintf("failed to recover set setbad for jim: "+
 							"not a valid humgen lustre path [%s]\n", expected[0]))
-						So(slackWriter2.String(), ShouldEqual, fmt.Sprintf(serverStartMessage+
+						So(slackWriter.String(), ShouldEqual, fmt.Sprintf(serverStartMessage+
 							"🟥 `jim.setbad` could not be recovered: "+
 							"not a valid humgen lustre path [%s]", expected[0]))
 					})
