@@ -165,12 +165,24 @@ const (
 // endpoints will only let you work on sets where the Requester matches your
 // logged-in username, or if the logged-in user is the same as the user who
 // started the Server.
-func (s *Server) LoadSetDB(path, backupPath string, slacker set.Slacker) error { //nolint:funlen
+func (s *Server) LoadSetDB(path, backupPath string, slacker set.Slacker) error {
 	authGroup := s.AuthRouter()
 	if authGroup == nil {
 		return ErrNoAuth
 	}
 
+	err := s.setupDB(path, backupPath, slacker, authGroup)
+	if err != nil {
+		return err
+	}
+
+	s.statusUpdateCh = make(chan *fileStatusPacket)
+	go s.handleFileStatusUpdates()
+
+	return s.recoverQueue()
+}
+
+func (s *Server) setupDB(path, backupPath string, slacker set.Slacker, authGroup *gin.RouterGroup) error {
 	s.slacker = slacker
 
 	err := s.sendSlackMessage("⬜️ server starting, loading database")
@@ -194,10 +206,7 @@ func (s *Server) LoadSetDB(path, backupPath string, slacker set.Slacker) error {
 
 	s.addDBEndpoints(authGroup)
 
-	s.statusUpdateCh = make(chan *fileStatusPacket)
-	go s.handleFileStatusUpdates()
-
-	return s.recoverQueue()
+	return nil
 }
 
 func (s *Server) sendSlackMessage(msg string) error {

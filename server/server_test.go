@@ -167,6 +167,8 @@ func TestServer(t *testing.T) {
 				HTTPLogger: logWriter,
 			}
 
+			const serverStartMessage = "⬜️ server starting, loading database🟩 server loaded database"
+
 			makeAndStartServer := func() (*Server, *gas.StringLogger, string, func() error) {
 				s, errn := New(conf)
 				So(errn, ShouldBeNil)
@@ -187,7 +189,7 @@ func TestServer(t *testing.T) {
 
 				addr, dfunc, errs := gas.StartTestServer(s, certPath, keyPath)
 				So(errs, ShouldBeNil)
-				So(slackWriter.String(), ShouldStartWith, "⬜️ server starting, loading database🟩 server loaded database")
+				So(slackWriter.String(), ShouldStartWith, serverStartMessage)
 
 				return s, slackWriter, addr, dfunc
 			}
@@ -1349,7 +1351,7 @@ func TestServer(t *testing.T) {
 
 						So(logWriter.String(), ShouldEqual, fmt.Sprintf("failed to recover set setbad for jim: "+
 							"not a valid humgen lustre path [%s]\n", expected[0]))
-						So(slackWriter2.String(), ShouldEqual, fmt.Sprintf("⬜️ server starting, loading database🟩 server loaded database"+
+						So(slackWriter2.String(), ShouldEqual, fmt.Sprintf(serverStartMessage+
 							"🟥 `jim.setbad` could not be recovered: "+
 							"not a valid humgen lustre path [%s]", expected[0]))
 					})
