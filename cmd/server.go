@@ -111,6 +111,19 @@ you might want to filter away 'STATUS=200' to find problems.
 If --logfile is supplied, logs to that file instead of syslog. It also results
 in the put clients we spawn logging to files with that prefix.
 
+To send important events (changes to sets and the server starting and stopping)
+to slack for easier monitoring than looking at the logs, set the environment
+variables IBACKUP_SLACK_TOKEN and IBACKUP_SLACK_CHANNEL. To get the token you
+must first create a Slack application, which needs to be a bot with these
+scopes added: chat:write, chat:write.customize, chat:write.public, groups:read
+and incoming-webhook, and then add this bot to your workspace. To get the
+channel, find the channel ID given after pressing the 'Get channel details'
+button (channel title) in the desired channel; it'll be at the bottom of the
+pop-up box.
+
+With slack setup, you can also have the server send "still running" messages
+periodically by defining the --still_running option.
+
 The server must be running for 'ibackup add' calls to succeed. A wr manager
 instance must be running for 'ibackup add' commands to be automatically
 scheduled. Set --wr_deployment to "development" if you're using a development
