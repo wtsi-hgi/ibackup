@@ -36,6 +36,12 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
+const (
+	testToken   = "TEST_TOKEN"
+	testChannel = "#random"
+	testMaxWait = 5 * time.Second
+)
+
 func TestRealSlack(t *testing.T) {
 	token := os.Getenv("IBACKUP_SLACK_TOKEN")
 	channel := os.Getenv("IBACKUP_SLACK_CHANNEL")
@@ -48,52 +54,84 @@ func TestRealSlack(t *testing.T) {
 		s := New(Config{Token: token, Channel: channel})
 
 		msg := "github.com/wtsi-hgi/ibackup slack package test"
-		err := s.SendMessage(msg)
+		err := s.SendMessage(Info, msg)
 		So(err, ShouldBeNil)
 	})
 }
 
 func TestMockSlack(t *testing.T) {
-	testToken := "TEST_TOKEN"
-
 	Convey("You can send a message to a mock slack server", t, func() {
-		testServer := slacktest.NewTestServer()
-		go testServer.Start()
-		defer testServer.Stop()
-
-		maxWait := 5 * time.Second
-
-		api := slackGo.New(testToken, slackGo.OptionAPIURL(testServer.GetAPIURL()))
-		rtm := api.NewRTM()
-
-		go rtm.ManageConnection()
-
-		messageChan := make(chan (*slackGo.MessageEvent), 1)
-
-		go func() {
-			for msg := range rtm.IncomingEvents {
-				if ev, ok := msg.Data.(*slackGo.MessageEvent); ok {
-					messageChan <- ev
-				}
-			}
-		}()
-
-		testChannel := "#random"
+		s, messageChan, dfunc := startMockSlackAndCreateSlack()
 		testMessage := "test message"
 
-		s := New(Config{Token: testToken, Channel: testChannel, URL: testServer.GetAPIURL()})
+		defer dfunc()
 
-		err := s.SendMessage(testMessage)
+		err := s.SendMessage(Info, testMessage)
 		So(err, ShouldBeNil)
 
-		select {
-		case m := <-messageChan:
-			So(m.Channel, ShouldEqual, testChannel)
-			So(m.Text, ShouldEqual, testMessage)
-
-			break
-		case <-time.After(maxWait):
-			So(false, ShouldBeTrue, "did not get channel message in time")
-		}
+		checkMessage(BoxPrefixInfo+testMessage, messageChan)
 	})
+
+	Convey("You can send different levels of message", t, func() {
+		s, messageChan, dfunc := startMockSlackAndCreateSlack()
+		testMessage := "test message"
+
+		defer dfunc()
+
+		err := s.SendMessage(Info, testMessage)
+		So(err, ShouldBeNil)
+
+		checkMessage(BoxPrefixInfo+testMessage, messageChan)
+
+		err = s.SendMessage(Warn, testMessage)
+		So(err, ShouldBeNil)
+
+		checkMessage(BoxPrefixWarn+testMessage, messageChan)
+
+		err = s.SendMessage(Error, testMessage)
+		So(err, ShouldBeNil)
+
+		checkMessage(BoxPrefixError+testMessage, messageChan)
+
+		err = s.SendMessage(Success, testMessage)
+		So(err, ShouldBeNil)
+
+		checkMessage(BoxPrefixSuccess+testMessage, messageChan)
+	})
+}
+
+func startMockSlackAndCreateSlack() (*Slack, chan *slackGo.MessageEvent, func()) {
+	testServer := slacktest.NewTestServer()
+	go testServer.Start()
+
+	api := slackGo.New(testToken, slackGo.OptionAPIURL(testServer.GetAPIURL()))
+	rtm := api.NewRTM()
+
+	go rtm.ManageConnection()
+
+	messageChan := make(chan (*slackGo.MessageEvent), 1)
+
+	go func() {
+		for msg := range rtm.IncomingEvents {
+			if ev, ok := msg.Data.(*slackGo.MessageEvent); ok {
+				messageChan <- ev
+			}
+		}
+	}()
+
+	s := New(Config{Token: testToken, Channel: testChannel, URL: testServer.GetAPIURL()})
+
+	return s, messageChan, testServer.Stop
+}
+
+func checkMessage(expectedMsg string, messageChan chan *slackGo.MessageEvent) {
+	select {
+	case m := <-messageChan:
+		So(m.Channel, ShouldEqual, testChannel)
+		So(m.Text, ShouldEqual, expectedMsg)
+
+		break
+	case <-time.After(testMaxWait):
+		So(false, ShouldBeTrue, "did not get channel message in time")
+	}
 }

@@ -46,6 +46,7 @@ import (
 	"github.com/wtsi-hgi/ibackup/internal"
 	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/set"
+	"github.com/wtsi-hgi/ibackup/slack"
 )
 
 const (
@@ -54,20 +55,6 @@ const (
 )
 
 var errNotDiscovered = errors.New("not discovered")
-
-type mockSlacker struct {
-	logger *gas.StringLogger
-}
-
-func newMockSlacker(logger *gas.StringLogger) *mockSlacker {
-	return &mockSlacker{logger: logger}
-}
-
-func (s *mockSlacker) SendMessage(msg string) error {
-	_, err := s.logger.Write([]byte(msg))
-
-	return err
-}
 
 func TestClient(t *testing.T) {
 	Convey("maxTimeForUpload works with small and large requests", t, func() {
@@ -127,7 +114,7 @@ func TestServer(t *testing.T) {
 		slackWriter := gas.NewStringLogger()
 		conf := Config{
 			HTTPLogger: logWriter,
-			Slacker:    newMockSlacker(slackWriter),
+			Slacker:    slack.NewMock(slackWriter),
 		}
 
 		Convey("You can make a Server with a logger configured and no slacker", func() {
@@ -164,7 +151,8 @@ func TestServer(t *testing.T) {
 			So(err, ShouldBeNil)
 		})
 
-		const serverStartMessage = "⬜️ server starting, loading database🟩 server loaded database"
+		const serverStartMessage = slack.BoxPrefixInfo + "server starting, loading database" +
+			slack.BoxPrefixSuccess + "server loaded database"
 
 		makeAndStartServer := func() (*Server, string, func() error) {
 			s, errn := New(conf)
@@ -198,7 +186,7 @@ func TestServer(t *testing.T) {
 
 			time.Sleep(conf.StillRunningMsgFreq)
 
-			expectedMsg := "⬜️ server is still running"
+			expectedMsg := slack.BoxPrefixInfo + "server is still running"
 			So(slackWriter.String(), ShouldEqual, expectedMsg)
 
 			time.Sleep(conf.StillRunningMsgFreq)
@@ -210,7 +198,7 @@ func TestServer(t *testing.T) {
 
 			time.Sleep(conf.StillRunningMsgFreq)
 
-			So(slackWriter.String(), ShouldEqual, expectedMsg+expectedMsg+"🟧 server stopped")
+			So(slackWriter.String(), ShouldEqual, expectedMsg+expectedMsg+slack.BoxPrefixWarn+"server stopped")
 		})
 
 		Convey("You can make a Server with a logger configured and setup Auth, MakeQueueEndPoints and LoadSetDB", func() {
@@ -228,7 +216,7 @@ func TestServer(t *testing.T) {
 				errd := dfunc()
 				So(errd, ShouldBeNil)
 
-				So(slackWriter.String(), ShouldEndWith, "🟧 server stopped")
+				So(slackWriter.String(), ShouldContainSubstring, slack.BoxPrefixWarn+"server stopped")
 
 				slackWriter.Reset()
 			}()
@@ -333,7 +321,7 @@ func TestServer(t *testing.T) {
 						So(gotSet.NumFiles, ShouldEqual, 0)
 						So(gotSet.Symlinks, ShouldEqual, 0)
 
-						So(slackWriter.String(), ShouldEqual, "⬜️ `jim.set1` stored in db")
+						So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"`jim.set1` stored in db")
 						slackWriter.Reset()
 
 						tn := time.Now()
@@ -357,7 +345,8 @@ func TestServer(t *testing.T) {
 						So(errg, ShouldBeNil)
 						So(len(entries), ShouldEqual, len(files)+len(discovers))
 
-						So(slackWriter.String(), ShouldEqual, fmt.Sprintf("⬜️ `jim.set1` completed discovery: %d files", len(entries)))
+						So(slackWriter.String(), ShouldEqual, fmt.Sprintf("%s`jim.set1` completed discovery: %d files",
+							slack.BoxPrefixInfo, len(entries)))
 
 						So(entries[0].Status, ShouldEqual, set.Pending)
 						So(entries[1].Status, ShouldEqual, set.Missing)
@@ -736,6 +725,8 @@ func TestServer(t *testing.T) {
 
 							err = client.TriggerDiscovery(emptySet.ID())
 							So(err, ShouldBeNil)
+
+							<-time.After(100 * time.Millisecond)
 
 							gotSet, err = client.GetSetByID(emptySet.Requester, emptySet.ID())
 							So(err, ShouldBeNil)
@@ -1338,7 +1329,7 @@ func TestServer(t *testing.T) {
 
 						err = client.TriggerDiscovery(badSet2.ID())
 						So(err, ShouldNotBeNil)
-						So(slackWriter.String(), ShouldEqual, "🟥 `jim.setbad2` is invalid: invalid transformer")
+						So(slackWriter.String(), ShouldEqual, slack.BoxPrefixError+"`jim.setbad2` is invalid: invalid transformer")
 
 						slackWriter.Reset()
 
@@ -1352,8 +1343,8 @@ func TestServer(t *testing.T) {
 						So(errg, ShouldBeNil)
 						So(gotSet.Error, ShouldNotBeNil)
 						So(slackWriter.String(), ShouldEqual,
-							fmt.Sprintf("⬜️ `jim.setbad` completed discovery: 4 files"+
-								"🟥 `jim.setbad` is invalid: not a valid humgen lustre path [%s]", expected[0]))
+							fmt.Sprintf(slack.BoxPrefixInfo+"`jim.setbad` completed discovery: 4 files"+
+								slack.BoxPrefixError+"`jim.setbad` is invalid: not a valid humgen lustre path [%s]", expected[0]))
 
 						err = dfunc()
 						So(err, ShouldBeNil)
@@ -1372,7 +1363,7 @@ func TestServer(t *testing.T) {
 						So(logWriter.String(), ShouldEqual, fmt.Sprintf("failed to recover set setbad for jim: "+
 							"not a valid humgen lustre path [%s]\n", expected[0]))
 						So(slackWriter.String(), ShouldEqual, fmt.Sprintf(serverStartMessage+
-							"🟥 `jim.setbad` could not be recovered: "+
+							slack.BoxPrefixError+"`jim.setbad` could not be recovered: "+
 							"not a valid humgen lustre path [%s]", expected[0]))
 					})
 				})
@@ -1773,7 +1764,7 @@ func TestServer(t *testing.T) {
 
 						var forceSlowRead put.FileReadTester = func(ctx context.Context, path string) error {
 							if path == discovers[0] {
-								<-time.After(10 * time.Millisecond)
+								<-time.After(100 * time.Millisecond)
 							}
 
 							return nil

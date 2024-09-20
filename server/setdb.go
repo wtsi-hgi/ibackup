@@ -39,6 +39,7 @@ import (
 	"github.com/wtsi-hgi/grand"
 	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/set"
+	"github.com/wtsi-hgi/ibackup/slack"
 	"github.com/wtsi-ssg/wrstat/v4/walk"
 )
 
@@ -184,7 +185,7 @@ func (s *Server) LoadSetDB(path, backupPath string) error {
 }
 
 func (s *Server) setupDB(path, backupPath string, authGroup *gin.RouterGroup) error {
-	err := s.sendSlackMessage("⬜️ server starting, loading database")
+	err := s.sendSlackMessage(slack.Info, "server starting, loading database")
 	if err != nil {
 		return err
 	}
@@ -194,7 +195,7 @@ func (s *Server) setupDB(path, backupPath string, authGroup *gin.RouterGroup) er
 		return err
 	}
 
-	err = s.sendSlackMessage("🟩 server loaded database")
+	err = s.sendSlackMessage(slack.Success, "server loaded database")
 	if err != nil {
 		return err
 	}
@@ -210,12 +211,12 @@ func (s *Server) setupDB(path, backupPath string, authGroup *gin.RouterGroup) er
 	return nil
 }
 
-func (s *Server) sendSlackMessage(msg string) error {
+func (s *Server) sendSlackMessage(level slack.Level, msg string) error {
 	if s.slacker == nil {
 		return nil
 	}
 
-	return s.slacker.SendMessage(msg)
+	return s.slacker.SendMessage(level, msg)
 }
 
 func (s *Server) tellSlackStillRunning() {
@@ -243,7 +244,7 @@ func (s *Server) tellSlackStillRunning() {
 }
 
 func (s *Server) serverStillRunning() error {
-	return s.slacker.SendMessage("⬜️ server is still running")
+	return s.slacker.SendMessage(slack.Info, "server is still running")
 }
 
 // EnableRemoteDBBackups causes the database backup file to also be backed up to

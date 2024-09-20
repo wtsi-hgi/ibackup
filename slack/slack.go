@@ -28,6 +28,23 @@ package slack
 
 import (
 	slackGo "github.com/slack-go/slack"
+	gas "github.com/wtsi-hgi/go-authserver"
+)
+
+const (
+	BoxPrefixInfo    = "⬜️ "
+	BoxPrefixWarn    = "🟧 "
+	BoxPrefixError   = "🟥 "
+	BoxPrefixSuccess = "🟩 "
+)
+
+type Level int
+
+const (
+	Info Level = iota
+	Warn
+	Error
+	Success
 )
 
 // Config provides configuration for a Slack.
@@ -71,9 +88,39 @@ func New(config Config) *Slack {
 	}
 }
 
-// SendMessage sends the given message to our configured channel.
-func (s *Slack) SendMessage(msg string) error {
-	_, _, _, err := s.api.SendMessage(s.channel, slackGo.MsgOptionText(msg, false)) //nolint:dogsled
+// SendMessage sends the given message to our configured channel, prefixing it
+// with a colour corresponding to its level.
+func (s *Slack) SendMessage(level Level, msg string) error {
+	_, _, _, err := s.api.SendMessage(s.channel, slackGo.MsgOptionText(levelToPrefix(level)+msg, false)) //nolint:dogsled
+
+	return err
+}
+
+func levelToPrefix(level Level) string {
+	switch level {
+	case Info:
+		return BoxPrefixInfo
+	case Warn:
+		return BoxPrefixWarn
+	case Error:
+		return BoxPrefixError
+	case Success:
+		return BoxPrefixSuccess
+	}
+
+	return ""
+}
+
+type Mock struct {
+	logger *gas.StringLogger
+}
+
+func NewMock(logger *gas.StringLogger) *Mock {
+	return &Mock{logger: logger}
+}
+
+func (s *Mock) SendMessage(level Level, msg string) error {
+	_, err := s.logger.Write([]byte(levelToPrefix(level) + msg))
 
 	return err
 }

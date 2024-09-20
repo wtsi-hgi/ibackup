@@ -43,6 +43,7 @@ import (
 	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/set"
+	"github.com/wtsi-hgi/ibackup/slack"
 	"github.com/wtsi-ssg/wrstat/v4/scheduler"
 )
 
@@ -257,7 +258,7 @@ func (s *Server) ttrc(data interface{}) queue.SubQueue {
 // stop is called when the server is Stop()ped, cleaning up our additional
 // properties.
 func (s *Server) stop() {
-	s.sendSlackMessage("🟧 server stopped") //nolint:errcheck
+	s.sendSlackMessage(slack.Warn, "server stopped") //nolint:errcheck
 
 	if s.serverAliveCh != nil {
 		close(s.serverAliveCh)
