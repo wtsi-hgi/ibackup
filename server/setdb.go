@@ -886,29 +886,23 @@ func (s *Server) handleNewlyCompletedSets(r *put.Request) error {
 }
 
 func (s *Server) trackUploadingAndStuckRequests(r *put.Request, trace string, entry *set.Entry) error {
-	rid := r.ID()
-
-	s.mapMu.Lock()
-
 	if r.Status == put.RequestStatusUploading {
-		s.uploading[rid] = r
-
-		if r.Stuck != nil {
-			s.stuckRequests[rid] = r
+		err := s.uploadTracker.uploadStarting(r)
+		if err != nil {
+			return err
 		}
 
-		s.mapMu.Unlock()
-
-		s.Logger.Printf("[%s] uploading, added %s to map", trace, rid)
+		s.Logger.Printf("[%s] uploading, called uploadStarting()", trace)
 
 		return nil
 	}
 
-	delete(s.uploading, rid)
-	delete(s.stuckRequests, rid)
-	s.mapMu.Unlock()
+	err := s.uploadTracker.uploadFinished(r)
+	if err != nil {
+		return err
+	}
 
-	s.Logger.Printf("[%s] will remove/release; deleted %s from map", trace, rid)
+	s.Logger.Printf("[%s] will remove/release; called uploadFinished()", trace)
 
 	return s.removeOrReleaseRequestFromQueue(r, entry)
 }

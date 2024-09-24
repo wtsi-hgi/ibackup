@@ -97,18 +97,14 @@ type Server struct {
 	username               string
 	remoteHardlinkLocation string
 	statusUpdateCh         chan *fileStatusPacket
-	creatingCollections    map[string]bool
-	uploading              map[string]*put.Request
-	stuckRequests          map[string]*put.Request
+	monitor                *Monitor
+	slacker                set.Slacker
+	stillRunningMsgFreq    time.Duration
+	serverAliveCh          chan bool
+	uploadTracker          *uploadTracker
 
-	mapMu   sync.RWMutex
-	monitor *Monitor
-
-	slacker set.Slacker
-
-	stillRunningMsgFreq time.Duration
-
-	serverAliveCh chan bool
+	mapMu               sync.RWMutex
+	creatingCollections map[string]bool
 }
 
 // New creates a Server which can serve a REST API and website.
@@ -126,10 +122,9 @@ func New(conf Config) (*Server, error) {
 		dirPool:             workerpool.New(workerPoolSizeDir),
 		queue:               queue.New(context.Background(), "put"),
 		creatingCollections: make(map[string]bool),
-		uploading:           make(map[string]*put.Request),
-		stuckRequests:       make(map[string]*put.Request),
 		slacker:             conf.Slacker,
 		stillRunningMsgFreq: conf.StillRunningMsgFreq,
+		uploadTracker:       newUploadTracker(conf.Slacker),
 	}
 
 	s.Server.Router().Use(gas.IncludeAbortErrorsInBody)
@@ -240,17 +235,15 @@ func (s *Server) estimateJobsNeeded(numReady int) int {
 // ttrc is called when reserved items in our queue are abandoned due to a put
 // client dying, and so we cleanup and send it back to the ready subqueue.
 func (s *Server) ttrc(data interface{}) queue.SubQueue {
-	s.mapMu.Lock()
-	defer s.mapMu.Unlock()
-
 	r, ok := data.(*put.Request)
 	if !ok {
 		s.Logger.Printf("item data not a Request")
 	}
 
-	rid := r.ID()
-	delete(s.uploading, rid)
-	delete(s.stuckRequests, rid)
+	err := s.uploadTracker.uploadFinished(r)
+	if err != nil {
+		s.Logger.Println(err.Error())
+	}
 
 	return queue.SubQueueReady
 }

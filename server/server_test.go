@@ -602,6 +602,76 @@ func TestServer(t *testing.T) {
 							So(err, ShouldBeNil)
 						})
 
+						Convey("Uploading files logs how many uploads are happening at once", func() {
+							token, errl = gas.Login(gas.NewClientRequest(addr, certPath), admin, "pass")
+							So(errl, ShouldBeNil)
+
+							client = NewClient(addr, certPath, token)
+
+							requests, errg := client.GetSomeUploadRequests()
+							So(errg, ShouldBeNil)
+							So(len(requests), ShouldEqual, expectedRequests)
+
+							slackWriter.Reset()
+
+							requests[0].Status = put.RequestStatusUploading
+							err = client.UpdateFileStatus(requests[0])
+							So(err, ShouldBeNil)
+
+							So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"`jim.set1` started uploading files"+
+								slack.BoxPrefixInfo+"1 client uploading")
+							slackWriter.Reset()
+
+							requests[1].Status = put.RequestStatusUploading
+							err = client.UpdateFileStatus(requests[1])
+							So(err, ShouldBeNil)
+
+							So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"2 clients uploading")
+							slackWriter.Reset()
+
+							requests[1].Status = put.RequestStatusUploading
+							requests[1].Stuck = &put.Stuck{Host: "host"}
+							err = client.UpdateFileStatus(requests[1])
+							So(err, ShouldBeNil)
+
+							So(slackWriter.String(), ShouldBeBlank)
+							So(s.uploadTracker.numStuck(), ShouldEqual, 1)
+
+							requests[2].Status = put.RequestStatusUploading
+							err = client.UpdateFileStatus(requests[2])
+							So(err, ShouldBeNil)
+
+							So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"3 clients uploading")
+							slackWriter.Reset()
+
+							requests[1].Status = put.RequestStatusUploaded
+							err = client.UpdateFileStatus(requests[1])
+							So(err, ShouldBeNil)
+
+							So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"2 clients uploading")
+							slackWriter.Reset()
+
+							requests[0].Status = put.RequestStatusFailed
+							err = client.UpdateFileStatus(requests[0])
+							So(err, ShouldBeNil)
+
+							So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"1 client uploading")
+							slackWriter.Reset()
+
+							requests[0].Status = put.RequestStatusFailed
+							err = client.UpdateFileStatus(requests[0])
+							So(err.Error(), ShouldContainSubstring, "not running")
+
+							So(slackWriter.String(), ShouldBeBlank)
+
+							requests[2].Status = put.RequestStatusUploaded
+							err = client.UpdateFileStatus(requests[2])
+							So(err, ShouldBeNil)
+
+							So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"0 clients uploading")
+							So(s.uploadTracker.numStuck(), ShouldEqual, 0)
+						})
+
 						waitForDiscovery := func(given *set.Set) {
 							discovered := given.LastDiscovery
 
@@ -865,7 +935,7 @@ func TestServer(t *testing.T) {
 							So(entries[0].Status, ShouldEqual, set.UploadingEntry)
 							So(entries[0].LastError, ShouldBeBlank)
 
-							So(len(s.stuckRequests), ShouldEqual, 0)
+							So(s.uploadTracker.numStuck(), ShouldEqual, 0)
 
 							requests[0].Stuck = put.NewStuck(time.Now())
 							err = client.UpdateFileStatus(requests[0])
@@ -876,7 +946,7 @@ func TestServer(t *testing.T) {
 							So(entries[0].Status, ShouldEqual, set.UploadingEntry)
 							So(entries[0].LastError, ShouldContainSubstring, "stuck?")
 
-							So(len(s.stuckRequests), ShouldEqual, 1)
+							So(s.uploadTracker.numStuck(), ShouldEqual, 1)
 
 							qs = s.QueueStatus()
 							So(qs, ShouldNotBeNil)
