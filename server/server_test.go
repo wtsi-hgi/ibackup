@@ -672,6 +672,67 @@ func TestServer(t *testing.T) {
 							So(s.uploadTracker.numStuck(), ShouldEqual, 0)
 						})
 
+						Convey("Upload messages are debounced if desired", func() {
+							s.Stop()
+
+							serverStopped = true
+
+							slackDebounce := 500 * time.Millisecond
+							conf.SlackMessageDebounce = slackDebounce
+
+							_, addr2, dfunc2 := makeAndStartServer()
+							defer dfunc2() //nolint:errcheck
+
+							token, errl = gas.Login(gas.NewClientRequest(addr2, certPath), admin, "pass")
+							So(errl, ShouldBeNil)
+
+							client = NewClient(addr2, certPath, token)
+
+							requests, errg := client.GetSomeUploadRequests()
+							So(errg, ShouldBeNil)
+
+							requests[3].Status = put.RequestStatusUploading
+							err = client.UpdateFileStatus(requests[3])
+							So(err, ShouldBeNil)
+
+							So(slackWriter.String(), ShouldContainSubstring, slack.BoxPrefixInfo+"1 client uploading")
+							slackWriter.Reset()
+
+							requests[3].Status = put.RequestStatusFailed
+							err = client.UpdateFileStatus(requests[3])
+							So(err, ShouldBeNil)
+
+							requests[9].Status = put.RequestStatusUploading
+							err = client.UpdateFileStatus(requests[9])
+							So(err, ShouldBeNil)
+
+							requests[9].Status = put.RequestStatusUploaded
+							err = client.UpdateFileStatus(requests[9])
+							So(err, ShouldBeNil)
+
+							So(slackWriter.String(), ShouldNotContainSubstring, "client")
+							slackWriter.Reset()
+
+							<-time.After(slackDebounce)
+
+							So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"0 clients uploading")
+							slackWriter.Reset()
+
+							requests[12].Status = put.RequestStatusUploading
+							err = client.UpdateFileStatus(requests[12])
+							So(err, ShouldBeNil)
+
+							So(slackWriter.String(), ShouldBeBlank)
+
+							requests[12].Status = put.RequestStatusFailed
+							err = client.UpdateFileStatus(requests[12])
+							So(err, ShouldBeNil)
+
+							<-time.After(slackDebounce)
+
+							So(slackWriter.String(), ShouldBeBlank)
+						})
+
 						waitForDiscovery := func(given *set.Set) {
 							discovered := given.LastDiscovery
 

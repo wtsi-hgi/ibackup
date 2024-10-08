@@ -30,6 +30,7 @@ package server
 import (
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/set"
@@ -41,20 +42,24 @@ type uploadTracker struct {
 	uploading     map[string]*put.Request
 	stuckRequests map[string]*put.Request
 
-	slacker set.Slacker
+	slacker  set.Slacker
+	debounce time.Duration
+	bouncing bool
+	lastMsg  string
 }
 
-func newUploadTracker(slacker set.Slacker) *uploadTracker {
+func newUploadTracker(slacker set.Slacker, debounce time.Duration) *uploadTracker {
 	ut := &uploadTracker{
 		uploading:     make(map[string]*put.Request),
 		stuckRequests: make(map[string]*put.Request),
 		slacker:       slacker,
+		debounce:      debounce,
 	}
 
 	return ut
 }
 
-func (ut *uploadTracker) uploadStarting(r *put.Request) error {
+func (ut *uploadTracker) uploadStarting(r *put.Request) {
 	ut.Lock()
 	defer ut.Unlock()
 
@@ -63,31 +68,49 @@ func (ut *uploadTracker) uploadStarting(r *put.Request) error {
 	}
 
 	if _, ok := ut.uploading[r.ID()]; ok {
-		return nil
+		return
 	}
 
 	ut.uploading[r.ID()] = r
 
-	return ut.createAndSendSlackMsg()
+	ut.createAndSendSlackMsg()
 }
 
-func (ut *uploadTracker) createAndSendSlackMsg() error {
+func (ut *uploadTracker) createAndSendSlackMsg() {
 	suffix := ""
 	if len(ut.uploading) != 1 {
 		suffix = "s"
 	}
 
-	return ut.slacker.SendMessage(slack.Info, fmt.Sprintf("%d client%s uploading", len(ut.uploading), suffix))
+	msg := fmt.Sprintf("%d client%s uploading", len(ut.uploading), suffix)
+
+	if ut.bouncing || msg == ut.lastMsg {
+		return
+	}
+
+	ut.slacker.SendMessage(slack.Info, msg) //nolint:errcheck
+	ut.lastMsg = msg
+	ut.bouncing = true
+	debounce := ut.debounce
+
+	go func() {
+		<-time.After(debounce)
+
+		ut.Lock()
+		defer ut.Unlock()
+		ut.bouncing = false
+		ut.createAndSendSlackMsg()
+	}()
 }
 
-func (ut *uploadTracker) uploadFinished(r *put.Request) error {
+func (ut *uploadTracker) uploadFinished(r *put.Request) {
 	ut.Lock()
 	defer ut.Unlock()
 
 	delete(ut.uploading, r.ID())
 	delete(ut.stuckRequests, r.ID())
 
-	return ut.createAndSendSlackMsg()
+	ut.createAndSendSlackMsg()
 }
 
 func (ut *uploadTracker) currentlyUploading() []*put.Request {

@@ -887,20 +887,14 @@ func (s *Server) handleNewlyCompletedSets(r *put.Request) error {
 
 func (s *Server) trackUploadingAndStuckRequests(r *put.Request, trace string, entry *set.Entry) error {
 	if r.Status == put.RequestStatusUploading {
-		err := s.uploadTracker.uploadStarting(r)
-		if err != nil {
-			return err
-		}
+		s.uploadTracker.uploadStarting(r)
 
 		s.Logger.Printf("[%s] uploading, called uploadStarting()", trace)
 
 		return nil
 	}
 
-	err := s.uploadTracker.uploadFinished(r)
-	if err != nil {
-		return err
-	}
+	s.uploadTracker.uploadFinished(r)
 
 	s.Logger.Printf("[%s] will remove/release; called uploadFinished()", trace)
 

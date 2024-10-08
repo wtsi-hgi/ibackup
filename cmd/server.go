@@ -52,6 +52,7 @@ const serverTokenBasename = ".ibackup.token"
 const numPutClients = 10
 const deadlockTimeout = 30 * time.Minute
 const dbBackupParamPosition = 2
+const slackMsgDebounce = 5 * time.Second
 
 // options for this cmd.
 var serverLogPath string
@@ -181,9 +182,10 @@ database that you've made, to investigate.
 		logWriter := setServerLogger(serverLogPath)
 
 		conf := server.Config{
-			HTTPLogger:          logWriter,
-			Slacker:             slacker,
-			StillRunningMsgFreq: stillRunningMsgFreq,
+			HTTPLogger:           logWriter,
+			Slacker:              slacker,
+			SlackMessageDebounce: slackMsgDebounce,
+			StillRunningMsgFreq:  stillRunningMsgFreq,
 		}
 
 		sync.Opts.DeadlockTimeout = deadlockTimeout

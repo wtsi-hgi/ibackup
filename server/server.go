@@ -79,6 +79,11 @@ type Config struct {
 
 	// Slacker is used to send messages to a slack channel.
 	Slacker set.Slacker
+
+	// SlackMessageDebounce is the minimum time between slack upload count
+	// messages. Default value means send unlimited messages, which will likely
+	// result in slack restricting messages itself.
+	SlackMessageDebounce time.Duration
 }
 
 // Server is used to start a web server that provides a REST API to the setdb
@@ -124,7 +129,7 @@ func New(conf Config) (*Server, error) {
 		creatingCollections: make(map[string]bool),
 		slacker:             conf.Slacker,
 		stillRunningMsgFreq: conf.StillRunningMsgFreq,
-		uploadTracker:       newUploadTracker(conf.Slacker),
+		uploadTracker:       newUploadTracker(conf.Slacker, conf.SlackMessageDebounce),
 	}
 
 	s.Server.Router().Use(gas.IncludeAbortErrorsInBody)
@@ -240,10 +245,7 @@ func (s *Server) ttrc(data interface{}) queue.SubQueue {
 		s.Logger.Printf("item data not a Request")
 	}
 
-	err := s.uploadTracker.uploadFinished(r)
-	if err != nil {
-		s.Logger.Println(err.Error())
-	}
+	s.uploadTracker.uploadFinished(r)
 
 	return queue.SubQueueReady
 }
