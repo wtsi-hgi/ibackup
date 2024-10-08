@@ -92,6 +92,8 @@ type DBRO struct {
 	db *bolt.DB
 
 	ch codec.Handle
+
+	slacker Slacker
 }
 
 // NewRO returns a *DBRO that can be used to query a set database. Provide
@@ -225,6 +227,10 @@ func (d *DB) AddOrUpdate(set *Set) error {
 		return b.Put([]byte(set.Requester+separator+id), bid)
 	})
 
+	if err == nil {
+		err = set.SuccessfullyStoredInDB()
+	}
+
 	return err
 }
 
@@ -233,12 +239,7 @@ func updateDatabaseSetWithUserSetDetails(dbSet, userSet *Set) error {
 		return Error{Msg: ErrNoAddDuringDiscovery, id: dbSet.ID()}
 	}
 
-	dbSet.Transformer = userSet.Transformer
-	dbSet.MonitorTime = userSet.MonitorTime
-	dbSet.DeleteLocal = userSet.DeleteLocal
-	dbSet.Description = userSet.Description
-	dbSet.Error = userSet.Error
-	dbSet.Warning = userSet.Warning
+	dbSet.copyUserProperties(userSet)
 
 	return nil
 }
@@ -440,18 +441,7 @@ func (d *DB) setDiscoveryStarted(setID string) error {
 			return err
 		}
 
-		set.StartedDiscovery = time.Now()
-		set.NumFiles = 0
-		set.SizeFiles = 0
-		set.Uploaded = 0
-		set.Failed = 0
-		set.Missing = 0
-		set.Abnormal = 0
-		set.Symlinks = 0
-		set.Hardlinks = 0
-		set.Status = PendingDiscovery
-		set.Error = ""
-		set.Warning = ""
+		set.reset()
 
 		return b.Put(bid, d.encodeToBytes(set))
 	})
@@ -567,14 +557,9 @@ func (d *DB) updateSetAfterDiscovery(setID string) (*Set, error) {
 			return err
 		}
 
-		set.LastDiscovery = time.Now()
-		set.NumFiles = d.countAllFilesInSet(tx, setID)
-
-		if set.NumFiles == 0 || (set.Missing+set.Abnormal == set.NumFiles) {
-			set.Status = Complete
-			set.LastCompleted = time.Now()
-		} else {
-			set.Status = PendingUpload
+		err = set.DiscoveryCompleted(d.countAllFilesInSet(tx, setID))
+		if err != nil {
+			return err
 		}
 
 		updatedSet = set
@@ -631,7 +616,10 @@ func (d *DB) SetEntryStatus(r *put.Request) (*Entry, error) {
 			return nil
 		}
 
-		d.updateSetBasedOnEntry(got, entry)
+		erru := d.updateSetBasedOnEntry(got, entry)
+		if erru != nil {
+			return erru
+		}
 
 		return b.Put(bid, d.encodeToBytes(got))
 	})
@@ -809,54 +797,8 @@ func (d *DB) addFailedLookup(tx *bolt.Tx, setID, path string, entry *Entry) erro
 // updateSetBasedOnEntry updates set status values based on an updated Entry
 // from updateFileEntry(), assuming that request is for one of set's file
 // entries.
-func (d *DB) updateSetBasedOnEntry(set *Set, entry *Entry) {
-	if set.Status == PendingDiscovery || set.Status == PendingUpload {
-		set.Status = Uploading
-	}
-
-	set.adjustBasedOnEntry(entry)
-
-	d.fixSetCounts(entry, set)
-
-	if set.Uploaded+set.Failed+set.Missing+set.Abnormal == set.NumFiles {
-		set.Status = Complete
-		set.LastCompleted = time.Now()
-		set.LastCompletedCount = set.Uploaded + set.Failed
-		set.LastCompletedSize = set.SizeFiles
-	}
-}
-
-// fixSetCounts resets the set counts to 0 and goes through all the entries for
-// the set in the db to recaluclate them. The supplied entry should be one you
-// newly updated and that wasn't in the db before the transaction we're in.
-func (d *DB) fixSetCounts(entry *Entry, set *Set) {
-	if set.countsValid() {
-		return
-	}
-
-	entries, err := d.GetFileEntries(set.ID())
-	if err != nil {
-		return
-	}
-
-	set.Uploaded = 0
-	set.Failed = 0
-	set.Missing = 0
-	set.Abnormal = 0
-	set.Symlinks = 0
-	set.Hardlinks = 0
-
-	for _, e := range entries {
-		if e.Path == entry.Path {
-			e = entry
-		}
-
-		if e.Status == Failed {
-			e.newFail = true
-		}
-
-		set.entryToSetCounts(e)
-	}
+func (d *DB) updateSetBasedOnEntry(set *Set, entry *Entry) error {
+	return set.UpdateBasedOnEntry(entry, d.GetFileEntries)
 }
 
 // GetAll returns all the Sets previously added to the database.
@@ -888,6 +830,8 @@ func (d *DBRO) decodeSet(v []byte) *Set {
 	var set *Set
 
 	dec.MustDecode(&set)
+
+	set.LogChangesToSlack(d.slacker)
 
 	return set
 }
@@ -1114,22 +1058,25 @@ func (d *DBRO) GetDirEntries(setID string) ([]*Entry, error) {
 // SetError updates a set with the given error message. Returns an error if the
 // setID isn't in the database.
 func (d *DB) SetError(setID, errMsg string) error {
-	return d.updateSetProperties(setID, func(got *Set) {
-		got.Error = errMsg
+	return d.updateSetProperties(setID, func(got *Set) error {
+		return got.SetError(errMsg)
 	})
 }
 
 // updateSetProperties retrives a set from the database and gives it to your
 // callback, allowing you to change properties on it. The altered set will then
 // be stored back in the database.
-func (d *DB) updateSetProperties(setID string, cb func(*Set)) error {
+func (d *DB) updateSetProperties(setID string, cb func(*Set) error) error {
 	return d.db.Update(func(tx *bolt.Tx) error {
 		set, bid, b, err := d.getSetByID(tx, setID)
 		if err != nil {
 			return err
 		}
 
-		cb(set)
+		err = cb(set)
+		if err != nil {
+			return err
+		}
 
 		return b.Put(bid, d.encodeToBytes(set))
 	})
@@ -1138,8 +1085,8 @@ func (d *DB) updateSetProperties(setID string, cb func(*Set)) error {
 // SetWarning updates a set with the given warning message. Returns an error if
 // the setID isn't in the database.
 func (d *DB) SetWarning(setID, warnMsg string) error {
-	return d.updateSetProperties(setID, func(got *Set) {
-		got.Warning = warnMsg
+	return d.updateSetProperties(setID, func(got *Set) error {
+		return got.SetWarning(warnMsg)
 	})
 }
 
@@ -1268,4 +1215,8 @@ func (d *DB) EnableRemoteBackups(remotePath string, handler put.Handler) {
 
 	d.remoteBackupPath = remotePath
 	d.remoteBackupHandler = handler
+}
+
+func (d *DBRO) LogSetChangesToSlack(slacker Slacker) {
+	d.slacker = slacker
 }

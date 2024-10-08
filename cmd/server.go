@@ -42,6 +42,8 @@ import (
 	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/server"
+	"github.com/wtsi-hgi/ibackup/set"
+	"github.com/wtsi-hgi/ibackup/slack"
 	"github.com/wtsi-npg/logshim"
 	"github.com/wtsi-npg/logshim-zerolog/zlog"
 )
@@ -60,6 +62,7 @@ var serverDebug bool
 var serverRemoteBackupPath string
 var serverWRDeployment string
 var serverHardlinksCollection string
+var serverStillRunningMsgFreq string
 
 // serverCmd represents the server command.
 var serverCmd = &cobra.Command{
@@ -108,6 +111,19 @@ you might want to filter away 'STATUS=200' to find problems.
 If --logfile is supplied, logs to that file instead of syslog. It also results
 in the put clients we spawn logging to files with that prefix.
 
+To send important events (changes to sets and the server starting and stopping)
+to slack for easier monitoring than looking at the logs, set the environment
+variables IBACKUP_SLACK_TOKEN and IBACKUP_SLACK_CHANNEL. To get the token you
+must first create a Slack application, which needs to be a bot with these
+scopes added: chat:write, chat:write.customize, chat:write.public, groups:read
+and incoming-webhook, and then add this bot to your workspace. To get the
+channel, find the channel ID given after pressing the 'Get channel details'
+button (channel title) in the desired channel; it'll be at the bottom of the
+pop-up box.
+
+With slack setup, you can also have the server send "still running" messages
+periodically by defining the --still_running option.
+
 The server must be running for 'ibackup add' calls to succeed. A wr manager
 instance must be running for 'ibackup add' commands to be automatically
 scheduled. Set --wr_deployment to "development" if you're using a development
@@ -135,14 +151,50 @@ database that you've made, to investigate.
 			warn("ldap options not supplied, will assume all user passwords are correct!")
 		}
 
+		token := os.Getenv("IBACKUP_SLACK_TOKEN")
+		channel := os.Getenv("IBACKUP_SLACK_CHANNEL")
+
+		var slacker set.Slacker
+
+		if token != "" && channel != "" {
+			slacker = slack.New(slack.Config{Token: token, Channel: channel})
+		} else {
+			if serverStillRunningMsgFreq != "" {
+				die("--still_running requires slack variables")
+			}
+		}
+
+		var stillRunningMsgFreq time.Duration
+		if serverStillRunningMsgFreq != "" {
+			var err error
+
+			stillRunningMsgFreq, err = parseDuration(serverStillRunningMsgFreq)
+			if err != nil {
+				die("invalid still_running message frequency: %s", err)
+			}
+
+			if stillRunningMsgFreq < 1*time.Minute {
+				die("message frequency must be 1m or more, not %s", stillRunningMsgFreq)
+			}
+		}
+
 		logWriter := setServerLogger(serverLogPath)
 
-		sync.Opts.DeadlockTimeout = deadlockTimeout
-		s := server.New(logWriter)
+		conf := server.Config{
+			HTTPLogger:          logWriter,
+			Slacker:             slacker,
+			StillRunningMsgFreq: stillRunningMsgFreq,
+		}
 
-		err := s.EnableAuthWithServerToken(serverCert, serverKey, serverTokenBasename, checkPassword)
+		sync.Opts.DeadlockTimeout = deadlockTimeout
+		s, err := server.New(conf)
 		if err != nil {
-			die("failed toenable authentication: %s", err)
+			die("%s", err)
+		}
+
+		err = s.EnableAuthWithServerToken(serverCert, serverKey, serverTokenBasename, checkPassword)
+		if err != nil {
+			die("failed to enable authentication: %s", err)
 		}
 
 		err = s.MakeQueueEndPoints()
@@ -230,6 +282,9 @@ func init() {
 		"deduplicate hardlinks by storing them by inode in this iRODS collection")
 	serverCmd.Flags().StringVar(&serverRemoteBackupPath, "remote_backup", os.Getenv("IBACKUP_REMOTE_DB_BACKUP_PATH"),
 		"enables database backup to the specified iRODS path")
+	serverCmd.Flags().StringVarP(&serverStillRunningMsgFreq, "still_running", "r", "",
+		"send a slack message every this period of time to say the server is still running"+
+			"(eg. 10m for 10 minutes, or 6h for 6 hours, minimum 1m), defaults to nothing")
 }
 
 // setServerLogger makes our appLogger log to the given path if non-blank,

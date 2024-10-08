@@ -31,6 +31,7 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/VertebrateResequencing/wr/queue"
 	"github.com/gin-gonic/gin"
@@ -38,6 +39,7 @@ import (
 	"github.com/wtsi-hgi/grand"
 	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/set"
+	"github.com/wtsi-hgi/ibackup/slack"
 	"github.com/wtsi-ssg/wrstat/v4/walk"
 )
 
@@ -171,19 +173,78 @@ func (s *Server) LoadSetDB(path, backupPath string) error {
 		return ErrNoAuth
 	}
 
-	db, err := set.New(path, backupPath)
+	err := s.setupDB(path, backupPath, authGroup)
 	if err != nil {
 		return err
 	}
-
-	s.db = db
-
-	s.addDBEndpoints(authGroup)
 
 	s.statusUpdateCh = make(chan *fileStatusPacket)
 	go s.handleFileStatusUpdates()
 
 	return s.recoverQueue()
+}
+
+func (s *Server) setupDB(path, backupPath string, authGroup *gin.RouterGroup) error {
+	err := s.sendSlackMessage(slack.Info, "server starting, loading database")
+	if err != nil {
+		return err
+	}
+
+	db, err := set.New(path, backupPath)
+	if err != nil {
+		return err
+	}
+
+	err = s.sendSlackMessage(slack.Success, "server loaded database")
+	if err != nil {
+		return err
+	}
+
+	go s.tellSlackStillRunning()
+
+	db.LogSetChangesToSlack(s.slacker)
+
+	s.db = db
+
+	s.addDBEndpoints(authGroup)
+
+	return nil
+}
+
+func (s *Server) sendSlackMessage(level slack.Level, msg string) error {
+	if s.slacker == nil {
+		return nil
+	}
+
+	return s.slacker.SendMessage(level, msg)
+}
+
+func (s *Server) tellSlackStillRunning() {
+	if s.slacker == nil || s.stillRunningMsgFreq <= 0 {
+		return
+	}
+
+	ticker := time.NewTicker(s.stillRunningMsgFreq)
+
+	defer ticker.Stop()
+
+	s.serverAliveCh = make(chan bool)
+
+	for {
+		select {
+		case <-ticker.C:
+			err := s.serverStillRunning()
+			if err != nil {
+				return
+			}
+		case <-s.serverAliveCh:
+			return
+		}
+	}
+}
+
+func (s *Server) serverStillRunning() error {
+	return s.slacker.SendMessage(slack.Info, "server is still running")
 }
 
 // EnableRemoteDBBackups causes the database backup file to also be backed up to
@@ -825,29 +886,23 @@ func (s *Server) handleNewlyCompletedSets(r *put.Request) error {
 }
 
 func (s *Server) trackUploadingAndStuckRequests(r *put.Request, trace string, entry *set.Entry) error {
-	rid := r.ID()
-
-	s.mapMu.Lock()
-
 	if r.Status == put.RequestStatusUploading {
-		s.uploading[rid] = r
-
-		if r.Stuck != nil {
-			s.stuckRequests[rid] = r
+		err := s.uploadTracker.uploadStarting(r)
+		if err != nil {
+			return err
 		}
 
-		s.mapMu.Unlock()
-
-		s.Logger.Printf("[%s] uploading, added %s to map", trace, rid)
+		s.Logger.Printf("[%s] uploading, called uploadStarting()", trace)
 
 		return nil
 	}
 
-	delete(s.uploading, rid)
-	delete(s.stuckRequests, rid)
-	s.mapMu.Unlock()
+	err := s.uploadTracker.uploadFinished(r)
+	if err != nil {
+		return err
+	}
 
-	s.Logger.Printf("[%s] will remove/release; deleted %s from map", trace, rid)
+	s.Logger.Printf("[%s] will remove/release; called uploadFinished()", trace)
 
 	return s.removeOrReleaseRequestFromQueue(r, entry)
 }
@@ -889,6 +944,7 @@ func (s *Server) recoverQueue() error {
 	for _, given := range sets {
 		err = s.recoverSet(given)
 		if err != nil {
+			given.RecoveryError(err) //nolint:errcheck
 			s.Logger.Printf("failed to recover set %s for %s: %s", given.Name, given.Requester, err)
 		}
 	}

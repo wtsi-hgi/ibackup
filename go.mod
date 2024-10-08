@@ -20,6 +20,7 @@ require (
 	github.com/rs/zerolog v1.33.0
 	github.com/sasha-s/go-deadlock v0.3.1
 	github.com/shirou/gopsutil v3.21.11+incompatible
+	github.com/slack-go/slack v0.14.0
 	github.com/smartystreets/goconvey v1.7.2
 	github.com/spf13/cobra v1.8.1
 	github.com/ugorji/go/codec v1.2.12

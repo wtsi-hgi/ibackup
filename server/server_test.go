@@ -46,6 +46,7 @@ import (
 	"github.com/wtsi-hgi/ibackup/internal"
 	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/set"
+	"github.com/wtsi-hgi/ibackup/slack"
 )
 
 const (
@@ -88,13 +89,38 @@ func TestServer(t *testing.T) {
 	minMBperSecondUploadSpeed := float64(10)
 	maxStuckTime := 1 * time.Hour
 
-	Convey("Given a Server", t, func() {
-		logWriter := gas.NewStringLogger()
-		s := New(logWriter)
+	Convey("Given a test cert and db location", t, func() {
+		certPath, keyPath, err := gas.CreateTestCert(t)
+		So(err, ShouldBeNil)
 
-		Convey("You can Start the Server with Auth, MakeQueueEndPoints and LoadSetDB", func() {
-			certPath, keyPath, err := gas.CreateTestCert(t)
-			So(err, ShouldBeNil)
+		dbPath := createDBLocation(t)
+
+		Convey("You can make a Server without a logger configured, but it isn't usable", func() {
+			s, errn := New(Config{})
+			So(errn, ShouldNotBeNil)
+			So(s, ShouldBeNil)
+		})
+
+		localDir := t.TempDir()
+		remoteDir := filepath.Join(localDir, "remote")
+		exampleSet := &set.Set{
+			Name:        "set1",
+			Requester:   "jim",
+			Transformer: "prefix=" + localDir + ":" + remoteDir,
+			MonitorTime: 0,
+		}
+
+		logWriter := gas.NewStringLogger()
+		slackWriter := gas.NewStringLogger()
+		conf := Config{
+			HTTPLogger: logWriter,
+			Slacker:    slack.NewMock(slackWriter),
+		}
+
+		Convey("You can make a Server with a logger configured and no slacker", func() {
+			conf.StillRunningMsgFreq = 1 * time.Millisecond
+			s, errn := New(conf)
+			So(errn, ShouldBeNil)
 
 			err = s.EnableAuthWithServerToken(certPath, keyPath, ".ibackup.test.servertoken", func(u, p string) (bool, string) {
 				return true, "1"
@@ -104,15 +130,95 @@ func TestServer(t *testing.T) {
 			err = s.MakeQueueEndPoints()
 			So(err, ShouldBeNil)
 
-			dbPath := createDBLocation(t)
 			err = s.LoadSetDB(dbPath, "")
 			So(err, ShouldBeNil)
 
 			addr, dfunc, err := gas.StartTestServer(s, certPath, keyPath)
 			So(err, ShouldBeNil)
+
 			defer func() {
 				errd := dfunc()
 				So(errd, ShouldBeNil)
+			}()
+
+			token, errl := gas.Login(gas.NewClientRequest(addr, certPath), "jim", "pass")
+			So(errl, ShouldBeNil)
+			So(token, ShouldNotBeBlank)
+
+			client := NewClient(addr, certPath, token)
+
+			err = client.AddOrUpdateSet(exampleSet)
+			So(err, ShouldBeNil)
+		})
+
+		const serverStartMessage = slack.BoxPrefixInfo + "server starting, loading database" +
+			slack.BoxPrefixSuccess + "server loaded database"
+
+		makeAndStartServer := func() (*Server, string, func() error) {
+			s, errn := New(conf)
+			So(errn, ShouldBeNil)
+
+			err = s.EnableAuthWithServerToken(certPath, keyPath, ".ibackup.test.servertoken", func(u, p string) (bool, string) {
+				return true, "1"
+			})
+			So(err, ShouldBeNil)
+
+			err = s.MakeQueueEndPoints()
+			So(err, ShouldBeNil)
+
+			slackWriter.Reset()
+
+			err = s.LoadSetDB(dbPath, "")
+			So(err, ShouldBeNil)
+
+			addr, dfunc, errs := gas.StartTestServer(s, certPath, keyPath)
+			So(errs, ShouldBeNil)
+			So(slackWriter.String(), ShouldStartWith, serverStartMessage)
+
+			return s, addr, dfunc
+		}
+
+		Convey("You can make a server that frequently logs to slack that it is still running, until it isn't", func() {
+			conf.StillRunningMsgFreq = 200 * time.Millisecond
+			_, _, dfunc := makeAndStartServer()
+
+			slackWriter.Reset()
+
+			time.Sleep(conf.StillRunningMsgFreq)
+
+			expectedMsg := slack.BoxPrefixInfo + "server is still running"
+			So(slackWriter.String(), ShouldEqual, expectedMsg)
+
+			time.Sleep(conf.StillRunningMsgFreq)
+
+			So(slackWriter.String(), ShouldEqual, expectedMsg+expectedMsg)
+
+			err = dfunc()
+			So(err, ShouldBeNil)
+
+			time.Sleep(conf.StillRunningMsgFreq)
+
+			So(slackWriter.String(), ShouldEqual, expectedMsg+expectedMsg+slack.BoxPrefixWarn+"server stopped")
+		})
+
+		Convey("You can make a Server with a logger configured and setup Auth, MakeQueueEndPoints and LoadSetDB", func() {
+			s, addr, dfunc := makeAndStartServer()
+
+			serverStopped := false
+
+			defer func() {
+				if serverStopped {
+					return
+				}
+
+				slackWriter.Reset()
+
+				errd := dfunc()
+				So(errd, ShouldBeNil)
+
+				So(slackWriter.String(), ShouldContainSubstring, slack.BoxPrefixWarn+"server stopped")
+
+				slackWriter.Reset()
 			}()
 
 			var racRequests []*put.Request
@@ -138,21 +244,16 @@ func TestServer(t *testing.T) {
 				racCalled <- true
 			})
 
-			localDir := t.TempDir()
-			remoteDir := filepath.Join(localDir, "remote")
-			exampleSet := &set.Set{
-				Name:        "set1",
-				Requester:   "jim",
-				Transformer: "prefix=" + localDir + ":" + remoteDir,
-				MonitorTime: 0,
-			}
-
 			Convey("Which lets you login", func() {
+				So(logWriter.String(), ShouldBeBlank)
+
 				token, errl := gas.Login(gas.NewClientRequest(addr, certPath), "jim", "pass")
 				So(errl, ShouldBeNil)
 				So(token, ShouldNotBeBlank)
 
-				Convey("And then you use client methods AddOrUpdateSet and GetSets", func() {
+				So(strings.Count(logWriter.String(), "STATUS=200"), ShouldEqual, 1)
+
+				Convey("And then you use client methods AddOrUpdateSet (which logs to slack) and GetSets", func() {
 					exampleSet2 := &set.Set{
 						Name:        "set2",
 						Requester:   exampleSet.Requester,
@@ -167,10 +268,16 @@ func TestServer(t *testing.T) {
 						MonitorTime: 0,
 					}
 
+					slackWriter.Reset()
+
 					client := NewClient(addr, certPath, token)
 
 					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldBeNil)
+
+					So(slackWriter.String(), ShouldBeBlank)
+
+					So(strings.Count(logWriter.String(), "STATUS=200"), ShouldEqual, 2)
 
 					sets, errg := client.GetSets(exampleSet.Requester)
 					So(errg, ShouldBeNil)
@@ -214,9 +321,14 @@ func TestServer(t *testing.T) {
 						So(gotSet.NumFiles, ShouldEqual, 0)
 						So(gotSet.Symlinks, ShouldEqual, 0)
 
+						So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"`jim.set1` stored in db")
+						slackWriter.Reset()
+
 						tn := time.Now()
 						err = client.TriggerDiscovery(exampleSet.ID())
 						So(err, ShouldBeNil)
+
+						So(slackWriter.String(), ShouldBeBlank)
 
 						ok := <-racCalled
 						So(ok, ShouldBeTrue)
@@ -232,6 +344,9 @@ func TestServer(t *testing.T) {
 						entries, errg := client.GetFiles(exampleSet.ID())
 						So(errg, ShouldBeNil)
 						So(len(entries), ShouldEqual, len(files)+len(discovers))
+
+						So(slackWriter.String(), ShouldEqual, fmt.Sprintf("%s`jim.set1` completed discovery: %d files",
+							slack.BoxPrefixInfo, len(entries)))
 
 						So(entries[0].Status, ShouldEqual, set.Pending)
 						So(entries[1].Status, ShouldEqual, set.Missing)
@@ -487,6 +602,76 @@ func TestServer(t *testing.T) {
 							So(err, ShouldBeNil)
 						})
 
+						Convey("Uploading files logs how many uploads are happening at once", func() {
+							token, errl = gas.Login(gas.NewClientRequest(addr, certPath), admin, "pass")
+							So(errl, ShouldBeNil)
+
+							client = NewClient(addr, certPath, token)
+
+							requests, errg := client.GetSomeUploadRequests()
+							So(errg, ShouldBeNil)
+							So(len(requests), ShouldEqual, expectedRequests)
+
+							slackWriter.Reset()
+
+							requests[0].Status = put.RequestStatusUploading
+							err = client.UpdateFileStatus(requests[0])
+							So(err, ShouldBeNil)
+
+							So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"`jim.set1` started uploading files"+
+								slack.BoxPrefixInfo+"1 client uploading")
+							slackWriter.Reset()
+
+							requests[1].Status = put.RequestStatusUploading
+							err = client.UpdateFileStatus(requests[1])
+							So(err, ShouldBeNil)
+
+							So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"2 clients uploading")
+							slackWriter.Reset()
+
+							requests[1].Status = put.RequestStatusUploading
+							requests[1].Stuck = &put.Stuck{Host: "host"}
+							err = client.UpdateFileStatus(requests[1])
+							So(err, ShouldBeNil)
+
+							So(slackWriter.String(), ShouldBeBlank)
+							So(s.uploadTracker.numStuck(), ShouldEqual, 1)
+
+							requests[2].Status = put.RequestStatusUploading
+							err = client.UpdateFileStatus(requests[2])
+							So(err, ShouldBeNil)
+
+							So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"3 clients uploading")
+							slackWriter.Reset()
+
+							requests[1].Status = put.RequestStatusUploaded
+							err = client.UpdateFileStatus(requests[1])
+							So(err, ShouldBeNil)
+
+							So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"2 clients uploading")
+							slackWriter.Reset()
+
+							requests[0].Status = put.RequestStatusFailed
+							err = client.UpdateFileStatus(requests[0])
+							So(err, ShouldBeNil)
+
+							So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"1 client uploading")
+							slackWriter.Reset()
+
+							requests[0].Status = put.RequestStatusFailed
+							err = client.UpdateFileStatus(requests[0])
+							So(err.Error(), ShouldContainSubstring, "not running")
+
+							So(slackWriter.String(), ShouldBeBlank)
+
+							requests[2].Status = put.RequestStatusUploaded
+							err = client.UpdateFileStatus(requests[2])
+							So(err, ShouldBeNil)
+
+							So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"0 clients uploading")
+							So(s.uploadTracker.numStuck(), ShouldEqual, 0)
+						})
+
 						waitForDiscovery := func(given *set.Set) {
 							discovered := given.LastDiscovery
 
@@ -610,6 +795,8 @@ func TestServer(t *testing.T) {
 
 							err = client.TriggerDiscovery(emptySet.ID())
 							So(err, ShouldBeNil)
+
+							<-time.After(100 * time.Millisecond)
 
 							gotSet, err = client.GetSetByID(emptySet.Requester, emptySet.ID())
 							So(err, ShouldBeNil)
@@ -748,7 +935,7 @@ func TestServer(t *testing.T) {
 							So(entries[0].Status, ShouldEqual, set.UploadingEntry)
 							So(entries[0].LastError, ShouldBeBlank)
 
-							So(len(s.stuckRequests), ShouldEqual, 0)
+							So(s.uploadTracker.numStuck(), ShouldEqual, 0)
 
 							requests[0].Stuck = put.NewStuck(time.Now())
 							err = client.UpdateFileStatus(requests[0])
@@ -759,7 +946,7 @@ func TestServer(t *testing.T) {
 							So(entries[0].Status, ShouldEqual, set.UploadingEntry)
 							So(entries[0].LastError, ShouldContainSubstring, "stuck?")
 
-							So(len(s.stuckRequests), ShouldEqual, 1)
+							So(s.uploadTracker.numStuck(), ShouldEqual, 1)
 
 							qs = s.QueueStatus()
 							So(qs, ShouldNotBeNil)
@@ -1179,6 +1366,76 @@ func TestServer(t *testing.T) {
 							So(ts, ShouldHappenBefore, tr)
 						})
 					})
+
+					Convey("If you have an invalid transformer, discovery fails", func() {
+						badSet := &set.Set{
+							Name:        "setbad",
+							Requester:   "jim",
+							Transformer: "humgen",
+							MonitorTime: 0,
+						}
+
+						_, dirs, expected, _ := createTestBackupFiles(t, localDir)
+
+						err = client.AddOrUpdateSet(badSet)
+						So(err, ShouldBeNil)
+
+						err = client.SetDirs(badSet.ID(), dirs)
+						So(err, ShouldBeNil)
+
+						slackWriter.Reset()
+
+						badSet2 := &set.Set{
+							Name:        "setbad2",
+							Requester:   "jim",
+							Transformer: "invalid",
+							MonitorTime: 0,
+						}
+
+						err = client.AddOrUpdateSet(badSet2)
+						So(err, ShouldBeNil)
+
+						So(racCalls, ShouldEqual, 0)
+
+						err = client.TriggerDiscovery(badSet2.ID())
+						So(err, ShouldNotBeNil)
+						So(slackWriter.String(), ShouldEqual, slack.BoxPrefixError+"`jim.setbad2` is invalid: invalid transformer")
+
+						slackWriter.Reset()
+
+						err = client.TriggerDiscovery(badSet.ID())
+						So(err, ShouldBeNil)
+
+						<-time.After(300 * time.Millisecond)
+						So(racCalls, ShouldEqual, 0)
+
+						gotSet, errg := client.GetSetByID(badSet.Requester, badSet.ID())
+						So(errg, ShouldBeNil)
+						So(gotSet.Error, ShouldNotBeNil)
+						So(slackWriter.String(), ShouldEqual,
+							fmt.Sprintf(slack.BoxPrefixInfo+"`jim.setbad` completed discovery: 4 files"+
+								slack.BoxPrefixError+"`jim.setbad` is invalid: not a valid humgen lustre path [%s]", expected[0]))
+
+						err = dfunc()
+						So(err, ShouldBeNil)
+
+						serverStopped = true
+
+						logWriter.Reset()
+
+						_, _, dfunc2 := makeAndStartServer()
+
+						defer func() {
+							errd := dfunc2()
+							So(errd, ShouldBeNil)
+						}()
+
+						So(logWriter.String(), ShouldEqual, fmt.Sprintf("failed to recover set setbad for jim: "+
+							"not a valid humgen lustre path [%s]\n", expected[0]))
+						So(slackWriter.String(), ShouldEqual, fmt.Sprintf(serverStartMessage+
+							slack.BoxPrefixError+"`jim.setbad` could not be recovered: "+
+							"not a valid humgen lustre path [%s]", expected[0]))
+					})
 				})
 
 				Convey("But you can't add sets as other users and can only retrieve your own", func() {
@@ -1577,7 +1834,7 @@ func TestServer(t *testing.T) {
 
 						var forceSlowRead put.FileReadTester = func(ctx context.Context, path string) error {
 							if path == discovers[0] {
-								<-time.After(10 * time.Millisecond)
+								<-time.After(100 * time.Millisecond)
 							}
 
 							return nil

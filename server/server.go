@@ -43,10 +43,13 @@ import (
 	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/set"
+	"github.com/wtsi-hgi/ibackup/slack"
 	"github.com/wtsi-ssg/wrstat/v4/scheduler"
 )
 
 const (
+	ErrNoLogger = gas.Error("a http logger must be configured")
+
 	// workerPoolSizeDir is the max number of directory walks we'll do
 	// concurrently during discovery; each of those walks in turn operate on 16
 	// subdirs concurrently.
@@ -65,6 +68,19 @@ const (
 	racRetriggerDelay       = 1 * time.Minute
 )
 
+// Config configures the server.
+type Config struct {
+	// HTTPLogger is used to log all HTTP requests. This is required.
+	HTTPLogger io.Writer
+
+	// StillRunningMsgFreq is the time between slack messages being sent about
+	// the server still running.
+	StillRunningMsgFreq time.Duration
+
+	// Slacker is used to send messages to a slack channel.
+	Slacker set.Slacker
+}
+
 // Server is used to start a web server that provides a REST API to the setdb
 // package's database, and a website that displays the information nicely.
 type Server struct {
@@ -81,27 +97,34 @@ type Server struct {
 	username               string
 	remoteHardlinkLocation string
 	statusUpdateCh         chan *fileStatusPacket
-	creatingCollections    map[string]bool
-	uploading              map[string]*put.Request
-	stuckRequests          map[string]*put.Request
+	monitor                *Monitor
+	slacker                set.Slacker
+	stillRunningMsgFreq    time.Duration
+	serverAliveCh          chan bool
+	uploadTracker          *uploadTracker
 
-	mapMu   sync.RWMutex
-	monitor *Monitor
+	mapMu               sync.RWMutex
+	creatingCollections map[string]bool
 }
 
 // New creates a Server which can serve a REST API and website.
 //
-// It logs to the given io.Writer, which could for example be syslog using the
-// log/syslog pkg with syslog.new(syslog.LOG_INFO, "tag").
-func New(logWriter io.Writer) *Server {
+// It logs to the required configured io.Writer, which could for example be
+// syslog using the log/syslog pkg with syslog.new(syslog.LOG_INFO, "tag").
+func New(conf Config) (*Server, error) {
+	if conf.HTTPLogger == nil {
+		return nil, ErrNoLogger
+	}
+
 	s := &Server{
-		Server:              *gas.New(logWriter),
+		Server:              *gas.New(conf.HTTPLogger),
 		numClients:          1,
 		dirPool:             workerpool.New(workerPoolSizeDir),
 		queue:               queue.New(context.Background(), "put"),
 		creatingCollections: make(map[string]bool),
-		uploading:           make(map[string]*put.Request),
-		stuckRequests:       make(map[string]*put.Request),
+		slacker:             conf.Slacker,
+		stillRunningMsgFreq: conf.StillRunningMsgFreq,
+		uploadTracker:       newUploadTracker(conf.Slacker),
 	}
 
 	s.Server.Router().Use(gas.IncludeAbortErrorsInBody)
@@ -114,7 +137,7 @@ func New(logWriter io.Writer) *Server {
 
 	s.SetStopCallBack(s.stop)
 
-	return s
+	return s, nil
 }
 
 func (s *Server) SetRemoteHardlinkLocation(path string) {
@@ -212,17 +235,15 @@ func (s *Server) estimateJobsNeeded(numReady int) int {
 // ttrc is called when reserved items in our queue are abandoned due to a put
 // client dying, and so we cleanup and send it back to the ready subqueue.
 func (s *Server) ttrc(data interface{}) queue.SubQueue {
-	s.mapMu.Lock()
-	defer s.mapMu.Unlock()
-
 	r, ok := data.(*put.Request)
 	if !ok {
 		s.Logger.Printf("item data not a Request")
 	}
 
-	rid := r.ID()
-	delete(s.uploading, rid)
-	delete(s.stuckRequests, rid)
+	err := s.uploadTracker.uploadFinished(r)
+	if err != nil {
+		s.Logger.Println(err.Error())
+	}
 
 	return queue.SubQueueReady
 }
@@ -230,6 +251,12 @@ func (s *Server) ttrc(data interface{}) queue.SubQueue {
 // stop is called when the server is Stop()ped, cleaning up our additional
 // properties.
 func (s *Server) stop() {
+	s.sendSlackMessage(slack.Warn, "server stopped") //nolint:errcheck
+
+	if s.serverAliveCh != nil {
+		close(s.serverAliveCh)
+	}
+
 	s.dirPool.StopWait()
 
 	if s.statusUpdateCh != nil {

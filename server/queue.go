@@ -154,19 +154,13 @@ func (s *Server) QueueStatus() *QStatus {
 
 	stats := s.queue.Stats()
 
-	stuck := make([]*put.Request, len(s.stuckRequests))
-	i := 0
-
-	for _, r := range s.stuckRequests {
-		stuck[i] = r
-		i++
-	}
+	stuck := s.uploadTracker.currentlyStuck()
 
 	return &QStatus{
 		Total:               stats.Items,
 		Reserved:            stats.Running,
 		CreatingCollections: len(s.creatingCollections),
-		Uploading:           len(s.uploading),
+		Uploading:           s.uploadTracker.numUploading(),
 		Failed:              stats.Buried,
 		Stuck:               stuck,
 	}
@@ -375,18 +369,7 @@ func (c *Client) UploadingRequests() ([]*put.Request, error) {
 // UploadingRequests returns the put requests that are currently uploading from
 // the global put queue.
 func (s *Server) UploadingRequests() []*put.Request {
-	s.mapMu.RLock()
-	defer s.mapMu.RUnlock()
-
-	uploading := make([]*put.Request, len(s.uploading))
-	i := 0
-
-	for _, r := range s.uploading {
-		uploading[i] = r
-		i++
-	}
-
-	return uploading
+	return s.uploadTracker.currentlyUploading()
 }
 
 // getAllRequests gets the server's AllRequests.
@@ -408,9 +391,6 @@ func (c *Client) AllRequests() ([]*put.Request, error) {
 
 // AllRequests returns all the put requests in the global put queue.
 func (s *Server) AllRequests() []*put.Request {
-	s.mapMu.RLock()
-	defer s.mapMu.RUnlock()
-
 	items := s.queue.AllItems()
 	all := make([]*put.Request, len(items))
 
@@ -420,7 +400,7 @@ func (s *Server) AllRequests() []*put.Request {
 
 		switch item.State() {
 		case queue.ItemStateRun:
-			if _, ok := s.uploading[r.ID()]; ok {
+			if s.uploadTracker.isUploading(r) {
 				r.Status = put.RequestStatusUploading
 			} else {
 				r.Status = put.RequestStatusReserved

@@ -299,21 +299,23 @@ func askYesNo(prompt string) (bool, error) {
 func parseDuration(s string) (time.Duration, error) {
 	durationRegex := regexp.MustCompile("[0-9]+[dw]")
 
-	s = durationRegex.ReplaceAllStringFunc(s, func(d string) string {
-		num, err := strconv.ParseInt(d[:len(d)-1], 10, 64)
-		if err != nil {
-			return d
-		}
+	if durationRegex.MatchString(s) {
+		s = durationRegex.ReplaceAllStringFunc(s, func(d string) string {
+			num, err := strconv.ParseInt(d[:len(d)-1], 10, 64)
+			if err != nil {
+				return d
+			}
 
-		switch d[len(d)-1] {
-		case 'd':
-			num *= hoursInDay
-		case 'w':
-			num *= hoursInWeek
-		}
+			switch d[len(d)-1] {
+			case 'd':
+				num *= hoursInDay
+			case 'w':
+				num *= hoursInWeek
+			}
 
-		return strconv.FormatInt(num, 10) + "h"
-	})
+			return strconv.FormatInt(num, 10) + "h"
+		})
+	}
 
 	return time.ParseDuration(s)
 }
