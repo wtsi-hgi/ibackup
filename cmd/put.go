@@ -246,10 +246,11 @@ func handlePut(client *server.Client, requests []*put.Request) (chan *put.Reques
 }
 
 func getPutter(requests []*put.Request) (*put.Putter, func()) {
-	handler, err := put.GetBatonHandler()
-	if err != nil {
-		die("%s", err)
-	}
+	// handler, err := put.GetBatonHandler()
+	// if err != nil {
+	// 	die("%s", err)
+	// }
+	handler := put.GetLocalHandler() //TODO: undo!
 
 	p, err := put.New(handler, requests)
 	if err != nil {
