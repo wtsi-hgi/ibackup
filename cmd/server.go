@@ -247,17 +247,21 @@ database that you've made, to investigate.
 			dief("failed to load database: %s", err)
 		}
 
+		info("loaded database...")
+
 		if serverRemoteBackupPath != "" {
 			if dbBackupPath == "" {
 				dief("remote backup path defined when no local backup path provided")
 			}
 
+			info("enabling remote backups...")
 			handler, errb := put.GetBatonHandler()
 			if errb != nil {
 				dief("failed to get baton handler: %s", errb)
 			}
 
 			s.EnableRemoteDBBackups(serverRemoteBackupPath, handler)
+			info("enabled remote backups...")
 		}
 
 		if serverHardlinksCollection != "" {
@@ -268,10 +272,13 @@ database that you've made, to investigate.
 
 		sayStarted()
 
+		info("starting server...")
 		err = s.Start(serverURL, serverCert, serverKey)
 		if err != nil {
 			dief("non-graceful stop: %s", err)
 		}
+
+		info("graceful server stop")
 	},
 }
 
