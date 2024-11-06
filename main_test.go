@@ -54,7 +54,7 @@ const app = "ibackup"
 const userPerms = 0700
 
 const noBackupSets = `Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
-Global put client status (/10): 0 creating collections; 0 currently uploading
+Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
 no backup sets`
 
 var errTwoBackupsNotSeen = errors.New("2 backups were not seen")
@@ -430,7 +430,7 @@ func TestStatus(t *testing.T) {
 
 			Convey("Status tells you where input directories would get uploaded to", func() {
 				s.confirmOutput(t, []string{"status"}, 0, `Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
-Global put client status (/10): 0 creating collections; 0 currently uploading
+Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
 
 Name: testAdd
 Transformer: `+transformer+`
@@ -463,7 +463,7 @@ Directories:
 			Convey("Status tells you an example of where input files would get uploaded to", func() {
 				s.confirmOutput(t, []string{"status", "--name", "testAddFiles"}, 0,
 					`Global put queue status: 2 queued; 0 reserved to be worked on; 0 failed
-Global put client status (/10): 0 creating collections; 0 currently uploading
+Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
 
 Name: testAddFiles
 Transformer: prefix=`+dir+`:/remote
@@ -482,7 +482,7 @@ Example File: `+dir+`/path/to/other/file => /remote/path/to/other/file`)
 			s.addSetForTesting(t, "badHumgen", "humgen", localDir)
 
 			expected := `Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
-Global put client status (/10): 0 creating collections; 0 currently uploading
+Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
 
 Name: badHumgen
 Transformer: humgen
@@ -516,7 +516,7 @@ your transformer didn't work: not a valid humgen lustre path [` + localDir + `/f
 
 			s.confirmOutput(t, []string{"status", "-n", "oddPrefix"}, 0,
 				`Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
-Global put client status (/10): 0 creating collections; 0 currently uploading
+Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
 
 Name: oddPrefix
 Transformer: `+transformer+`
@@ -548,7 +548,7 @@ Directories:
 
 			s.confirmOutput(t, []string{"status", "-n", "badPerms"}, 0,
 				`Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
-Global put client status (/10): 0 creating collections; 0 currently uploading
+Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
 
 Name: badPerms
 Transformer: `+transformer+`
@@ -577,7 +577,7 @@ Directories:
 
 			s.confirmOutput(t, []string{"status", "-n", "humgenSet"}, 0,
 				`Global put queue status: 1 queued; 0 reserved to be worked on; 0 failed
-Global put client status (/10): 0 creating collections; 0 currently uploading
+Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
 
 Name: humgenSet
 Transformer: humgen
@@ -603,7 +603,7 @@ Example File: `+humgenFile+" => /humgen/teams/hgi/scratch125/mercury/ibackup/fil
 
 			s.confirmOutput(t, []string{"status", "-n", "gengenSet"}, 0,
 				`Global put queue status: 1 queued; 0 reserved to be worked on; 0 failed
-Global put client status (/10): 0 creating collections; 0 currently uploading
+Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
 
 Name: gengenSet
 Transformer: gengen
@@ -640,7 +640,7 @@ Example File: `+gengenFile+" => /humgen/gengen/teams/hgi/scratch126/mercury/ibac
 
 			s.confirmOutput(t, []string{"status", "--name", "testLinks"}, 0,
 				`Global put queue status: 4 queued; 0 reserved to be worked on; 0 failed
-Global put client status (/10): 0 creating collections; 0 currently uploading
+Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
 
 Name: testLinks
 Transformer: prefix=`+dir+`:/remote
@@ -686,7 +686,7 @@ Directories:
 
 			s.confirmOutput(t, []string{"status", "--user", "all"}, 0,
 				`Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
-Global put client status (/10): 0 creating collections; 0 currently uploading
+Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
 
 Name: setForRequesterPrinting
 Requester: `+currentUserName+`
@@ -716,7 +716,7 @@ Directories:
 
 				s.confirmOutput(t, []string{"status", "--name", "testAddFifo", "--details"}, 0,
 					`Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
-Global put client status (/10): 0 creating collections; 0 currently uploading
+Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
 
 Name: testAddFifo
 Transformer: prefix=`+dir+`:/remote
@@ -741,7 +741,7 @@ Path	Status	Size	Attempts	Date	Error
 
 				s.confirmOutput(t, []string{"status", "--name", "testAddFifoDir"}, 0,
 					`Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
-Global put client status (/10): 0 creating collections; 0 currently uploading
+Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
 
 Name: testAddFifoDir
 Transformer: prefix=`+dir+`:/remote
@@ -920,7 +920,7 @@ func TestBackup(t *testing.T) {
 
 			bs.confirmOutput(t, []string{
 				"status", "-n", "testForBackup"}, 0, `Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
-Global put client status (/10): 0 creating collections; 0 currently uploading
+Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
 
 Name: testForBackup
 Transformer: `+transformer+`
@@ -994,6 +994,11 @@ func TestPuts(t *testing.T) {
 
 			s.addSetForTesting(t, "hardlinkTest", transformer, path)
 
+			s.waitForStatus("hardlinkTest", "\nStatus: uploading", 60*time.Second)
+			s.confirmOutputContains(t, []string{"status", "--name", "hardlinkTest"}, 0,
+				`Global put queue status: 3 queued; 3 reserved to be worked on; 0 failed
+Global put client status (/10): 6 iRODS connections`)
+
 			s.waitForStatus("hardlinkTest", "\nStatus: complete", 60*time.Second)
 
 			output := getRemoteMeta(remoteFile)
@@ -1044,7 +1049,7 @@ func TestPuts(t *testing.T) {
 			s.waitForStatus(setName, statusLine, 30*time.Second)
 
 			expected := `Global put queue status: 1 queued; 0 reserved to be worked on; 1 failed
-Global put client status (/10): 0 creating collections; 0 currently uploading
+Global put client status (/10): 2 iRODS connections; 0 creating collections; 0 currently uploading
 no backup sets`
 			s.confirmOutput(t, []string{"status", "-c"}, 0, expected)
 			s.confirmOutput(t, []string{"status", "-q"}, 0, expected)

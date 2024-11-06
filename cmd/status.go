@@ -220,8 +220,8 @@ func status(client *server.Client, sf statusFilterer, user, name string, details
 func displayQueueStatus(qs *server.QStatus) {
 	info("Global put queue status: %d queued; %d reserved to be worked on; %d failed",
 		qs.Total, qs.Reserved, qs.Failed)
-	info("Global put client status (/%d): %d creating collections; %d currently uploading",
-		numPutClients, qs.CreatingCollections, qs.Uploading)
+	info("Global put client status (/%d): %d iRODS connections; %d creating collections; %d currently uploading",
+		numPutClients, qs.IRODSConnections, qs.CreatingCollections, qs.Uploading)
 
 	if qs.Stuck != nil {
 		if gasClientCLI(serverURL, serverCert).CanReadServerToken() {
