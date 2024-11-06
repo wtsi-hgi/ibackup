@@ -27,6 +27,8 @@
 package slack
 
 import (
+	"io"
+
 	slackGo "github.com/slack-go/slack"
 	gas "github.com/wtsi-hgi/go-authserver"
 )
@@ -61,12 +63,18 @@ type Config struct {
 	// URL is optional and only needs to be set when testing with a local mock
 	// slack server.
 	URL string
+
+	// ErrorLogger is an optional place that any failures to send slack messages
+	// are written to; to prevent issues our SendMessage() never returns an
+	// error because it runs in a goroutine and returns immediately.
+	ErrorLogger io.Writer
 }
 
 // Slack is something that lets you send messages to Slack.
 type Slack struct {
 	api     *slackGo.Client
 	channel string
+	logger  io.Writer
 }
 
 // New creates a new Slack using the Token, Channel and URL (if provided) from
@@ -85,15 +93,24 @@ func New(config Config) *Slack {
 	return &Slack{
 		api:     slackGo.New(config.Token, options...),
 		channel: config.Channel,
+		logger:  config.ErrorLogger,
 	}
 }
 
 // SendMessage sends the given message to our configured channel, prefixing it
 // with a colour corresponding to its level.
+//
+// NB: this returns immediately, sending in a goroutine, and always returns nil.
+// To see errors, configer the slacker with an ErrorLogger.
 func (s *Slack) SendMessage(level Level, msg string) error {
-	_, _, _, err := s.api.SendMessage(s.channel, slackGo.MsgOptionText(levelToPrefix(level)+msg, false)) //nolint:dogsled
+	go func() {
+		_, _, _, err := s.api.SendMessage(s.channel, slackGo.MsgOptionText(levelToPrefix(level)+msg, false))
+		if s.logger != nil && err != nil {
+			s.logger.Write([]byte(err.Error())) //nolint:errcheck
+		}
+	}()
 
-	return err
+	return nil
 }
 
 func levelToPrefix(level Level) string {

@@ -152,13 +152,18 @@ database that you've made, to investigate.
 			warn("ldap options not supplied, will assume all user passwords are correct!")
 		}
 
+		logWriter := setServerLogger(serverLogPath)
 		token := os.Getenv("IBACKUP_SLACK_TOKEN")
 		channel := os.Getenv("IBACKUP_SLACK_CHANNEL")
 
 		var slacker set.Slacker
 
 		if token != "" && channel != "" {
-			slacker = slack.New(slack.Config{Token: token, Channel: channel})
+			slacker = slack.New(slack.Config{
+				Token:       token,
+				Channel:     channel,
+				ErrorLogger: logWriter,
+			})
 		} else {
 			if serverStillRunningMsgFreq != "" {
 				die("--still_running requires slack variables")
@@ -178,8 +183,6 @@ database that you've made, to investigate.
 				die("message frequency must be 1m or more, not %s", stillRunningMsgFreq)
 			}
 		}
-
-		logWriter := setServerLogger(serverLogPath)
 
 		conf := server.Config{
 			HTTPLogger:           logWriter,
