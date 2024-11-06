@@ -1612,8 +1612,19 @@ func TestServer(t *testing.T) {
 						So(gotSet.Uploaded, ShouldEqual, 0)
 						So(gotSet.Error, ShouldBeBlank)
 
+						qs, errg := client.GetQueueStatus()
+						So(errg, ShouldBeNil)
+						So(qs.IRODSConnections, ShouldEqual, 0)
+
+						err = client.MakingIRODSConnections(2)
+						So(err, ShouldBeNil)
+
 						p, d := makePutter(t, handler, requests, client)
 						defer d()
+
+						qs, err = client.GetQueueStatus()
+						So(err, ShouldBeNil)
+						So(qs.IRODSConnections, ShouldEqual, 2)
 
 						uploadStarts, uploadResults, skippedResults := p.Put()
 
@@ -1627,6 +1638,13 @@ func TestServer(t *testing.T) {
 						So(gotSet.NumFiles, ShouldEqual, len(discovers))
 						So(gotSet.Uploaded, ShouldEqual, len(discovers))
 						So(gotSet.Symlinks, ShouldEqual, 1)
+
+						err = client.ClosedIRODSConnections()
+						So(err, ShouldBeNil)
+
+						qs, err = client.GetQueueStatus()
+						So(err, ShouldBeNil)
+						So(qs.IRODSConnections, ShouldEqual, 0)
 
 						Convey("After completion, re-discovery can find new files and we can re-complete", func() {
 							newFile := filepath.Join(dirs[0], "new")

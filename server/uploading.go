@@ -84,7 +84,7 @@ func (ut *uploadTracker) createAndSendSlackMsg() {
 
 	msg := fmt.Sprintf("%d client%s uploading", len(ut.uploading), suffix)
 
-	if ut.bouncing || msg == ut.lastMsg {
+	if ut.slacker == nil || ut.bouncing || msg == ut.lastMsg {
 		return
 	}
 

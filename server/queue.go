@@ -31,6 +31,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 
 	"github.com/VertebrateResequencing/wr/queue"
 	"github.com/gin-gonic/gin"
@@ -44,7 +45,10 @@ const (
 	queueUploadingPath    = "/uploading"
 	queueAllPath          = "/allrequests"
 	queueCollCreationPath = "/collcreation"
+	iRODSConnectionPath   = "/irodsconnection"
 	paramHostPID          = "hostpid"
+
+	ErrNoConnectionsNumber = gas.Error("nconnections must be provided")
 
 	// EndPointAuthQueueStatus is the endpoint for getting queue status.
 	EndPointAuthQueueStatus = gas.EndPointAuth + queueStatusPath
@@ -64,6 +68,10 @@ const (
 	// EndPointAuthQueueCollCreation is the endpoint for telling the server
 	// when you start and stop creating collections.
 	EndPointAuthQueueCollCreation = gas.EndPointAuth + queueCollCreationPath
+
+	// EndPointAuthIRODSConnection is the endpoint for telling the server
+	// that a client created or closed its connections.
+	EndPointAuthIRODSConnection = gas.EndPointAuth + iRODSConnectionPath
 )
 
 // MakeQueueEndPoints adds a number of endpoints to the REST API for working
@@ -116,6 +124,9 @@ func (s *Server) MakeQueueEndPoints() error {
 	authGroup.POST(queueCollCreationPath+hostPIDParam, s.clientStartedCreatingCollections)
 	authGroup.DELETE(queueCollCreationPath+hostPIDParam, s.clientStoppedCreatingCollections)
 
+	authGroup.POST(iRODSConnectionPath+hostPIDParam, s.clientMadeIRODSConnections)
+	authGroup.DELETE(iRODSConnectionPath+hostPIDParam, s.clientClosedIRODSConnections)
+
 	return nil
 }
 
@@ -131,6 +142,7 @@ func (s *Server) getQueueStatus(c *gin.Context) {
 type QStatus struct {
 	Total               int
 	Reserved            int
+	IRODSConnections    int
 	CreatingCollections int
 	Uploading           int
 	Failed              int
@@ -156,10 +168,16 @@ func (s *Server) QueueStatus() *QStatus {
 
 	stuck := s.uploadTracker.currentlyStuck()
 
+	var iRODSConnectionsNumber int
+	for _, val := range s.iRODSConnections {
+		iRODSConnectionsNumber += val
+	}
+
 	return &QStatus{
 		Total:               stats.Items,
 		Reserved:            stats.Running,
 		CreatingCollections: len(s.creatingCollections),
+		IRODSConnections:    iRODSConnectionsNumber,
 		Uploading:           s.uploadTracker.numUploading(),
 		Failed:              stats.Buried,
 		Stuck:               stuck,
@@ -514,4 +532,86 @@ func (c *Client) FinishedCreatingCollections() error {
 	}
 
 	return responseToErr(resp)
+}
+
+// MakingIRODSConnections tells the server you've started to create iRODS
+// connections. Be sure to defer ClosedIRODSConnections().
+func (c *Client) MakingIRODSConnections(number int) error {
+	hostPID, err := hostPID()
+	if err != nil {
+		return err
+	}
+
+	resp, err := c.request().Post(EndPointAuthIRODSConnection + "/" + hostPID + "?nconnections=" + strconv.Itoa(number))
+	if err != nil {
+		return err
+	}
+
+	return responseToErr(resp)
+}
+
+// ClosedIRODSConnections tells the server you've closed some iRODS connections
+// following a MakingIRODSConnections call.
+func (c *Client) ClosedIRODSConnections() error {
+	hostPID, err := hostPID()
+	if err != nil {
+		return err
+	}
+
+	resp, err := c.request().Delete(EndPointAuthIRODSConnection + "/" + hostPID)
+	if err != nil {
+		return err
+	}
+
+	return responseToErr(resp)
+}
+
+// clientMadeIRODSConnections notes that a client created some iRODS connections.
+//
+// MakeQueueEndPoints() must already have been called. This is called when there
+// is a POST on /rest/v1/auth/irodsconnection.
+func (s *Server) clientMadeIRODSConnections(c *gin.Context) {
+	hostPID, status, err := s.extractHostPIDForCreatingCollectionsEndpoints(c)
+	if err != nil {
+		c.AbortWithError(status, err) //nolint:errcheck
+
+		return
+	}
+
+	numberOfConnections := c.Query("nconnections")
+	if numberOfConnections == "" {
+		c.AbortWithError(http.StatusBadRequest, ErrNoConnectionsNumber) //nolint:errcheck
+
+		return
+	}
+
+	n, err := strconv.Atoi(numberOfConnections)
+	if err != nil {
+		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+
+		return
+	}
+
+	s.mapMu.Lock()
+	defer s.mapMu.Unlock()
+
+	s.iRODSConnections[hostPID] += n
+
+	c.Status(http.StatusOK)
+}
+
+func (s *Server) clientClosedIRODSConnections(c *gin.Context) {
+	hostPID, status, err := s.extractHostPIDForCreatingCollectionsEndpoints(c)
+	if err != nil {
+		c.AbortWithError(status, err) //nolint:errcheck
+
+		return
+	}
+
+	s.mapMu.Lock()
+	defer s.mapMu.Unlock()
+
+	delete(s.iRODSConnections, hostPID)
+
+	c.Status(http.StatusOK)
 }
