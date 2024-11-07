@@ -88,7 +88,7 @@ func (ut *uploadTracker) createAndSendSlackMsg() {
 		return
 	}
 
-	ut.slacker.SendMessage(slack.Info, msg) //nolint:errcheck
+	ut.slacker.SendMessage(slack.Info, msg)
 	ut.lastMsg = msg
 	ut.bouncing = true
 	debounce := ut.debounce
