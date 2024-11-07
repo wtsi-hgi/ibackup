@@ -134,9 +134,19 @@ type Set struct {
 	SizeFiles uint64
 
 	// Uploaded provides the total number of set and discovered files in this
-	// set that have been uploaded or confirmed uploaded since the last
-	// discovery. This is a read-only value.
+	// set that have, for the first time, been uploaded or confirmed uploaded
+	// since the last discovery. This is a read-only value.
 	Uploaded uint64
+
+	// Replaced is like Uploaded, but for files that had previously been
+	// uploaded to iRODS, and now uploaded again because the file on local disk
+	// was newer.
+	Replaced uint64
+
+	// Skipped is like Uploaded, but for files that had previously been
+	// uploaded to iRODS, and were not uploaded again because the file on local
+	// disk was the same age.
+	Skipped uint64
 
 	// Failed provides the total number of set and discovered files in this set
 	// that have failed their upload since the last discovery. This is a
@@ -383,6 +393,10 @@ func (s *Set) entryStatusToSetCounts(entry *Entry) {
 	switch entry.Status { //nolint:exhaustive
 	case Uploaded:
 		s.Uploaded++
+	case Replaced:
+		s.Replaced++
+	case Skipped:
+		s.Skipped++
 	case Failed:
 		if entry.newFail {
 			s.Failed++
@@ -481,18 +495,18 @@ func (s *Set) checkIfUploading() {
 }
 
 func (s *Set) checkIfComplete() {
-	if !(s.Uploaded+s.Failed+s.Missing+s.Abnormal == s.NumFiles) {
+	if !(s.Uploaded+s.Replaced+s.Skipped+s.Failed+s.Missing+s.Abnormal == s.NumFiles) {
 		return
 	}
 
 	s.Status = Complete
 	s.LastCompleted = time.Now()
-	s.LastCompletedCount = s.Uploaded + s.Failed
+	s.LastCompletedCount = s.Uploaded + s.Replaced + s.Skipped + s.Failed
 	s.LastCompletedSize = s.SizeFiles
 
 	s.sendSlackMessage(slack.Success, fmt.Sprintf("completed backup "+
-		"(%d uploaded; %d failed; %d missing; %d abnormal; %s of data)",
-		s.Uploaded, s.Failed, s.Missing, s.Abnormal, s.Size()))
+		"(%d newly uploaded; %d replaced; %d skipped; %d failed; %d missing; %d abnormal; %s of data)",
+		s.Uploaded, s.Replaced, s.Skipped, s.Failed, s.Missing, s.Abnormal, s.Size()))
 }
 
 // fixCounts resets the set counts to 0 and goes through all the entries for

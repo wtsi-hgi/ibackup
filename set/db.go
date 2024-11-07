@@ -737,9 +737,16 @@ func requestStatusToEntryStatus(r *put.Request, entry *Entry) {
 		if r.Stuck != nil {
 			entry.LastError = r.Stuck.String()
 		}
-	case put.RequestStatusUploaded, put.RequestStatusUnmodified, put.RequestStatusReplaced:
+	case put.RequestStatusUploaded:
 		entry.Status = Uploaded
 		entry.unFailed = entry.Attempts > 1
+		entry.LastError = ""
+	case put.RequestStatusReplaced:
+		entry.Status = Replaced
+		entry.unFailed = entry.Attempts > 1
+		entry.LastError = ""
+	case put.RequestStatusUnmodified:
+		entry.Status = Skipped
 		entry.LastError = ""
 	case put.RequestStatusFailed:
 		entry.Status = Failed

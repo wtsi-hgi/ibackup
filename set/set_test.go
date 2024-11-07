@@ -617,13 +617,15 @@ func TestSetDB(t *testing.T) {
 
 						So(sets[0].Status, ShouldEqual, Uploading)
 						So(sets[0].SizeFiles, ShouldEqual, 5)
-						So(sets[0].Uploaded, ShouldEqual, 2)
+						So(sets[0].Uploaded, ShouldEqual, 1)
+						So(sets[0].Replaced, ShouldEqual, 0)
+						So(sets[0].Skipped, ShouldEqual, 1)
 
 						fEntries, err = db.GetFileEntries(sets[0].ID())
 						So(err, ShouldBeNil)
 						So(len(fEntries), ShouldEqual, 5)
 						So(fEntries[1].Size, ShouldEqual, 2)
-						So(fEntries[1].Status, ShouldEqual, Uploaded)
+						So(fEntries[1].Status, ShouldEqual, Skipped)
 						So(fEntries[1].LastAttempt.IsZero(), ShouldBeFalse)
 
 						r = &put.Request{
@@ -646,7 +648,9 @@ func TestSetDB(t *testing.T) {
 						So(err, ShouldBeNil)
 
 						So(sets[0].NumFiles, ShouldEqual, 5)
-						So(sets[0].Uploaded, ShouldEqual, 3)
+						So(sets[0].Uploaded, ShouldEqual, 1)
+						So(sets[0].Replaced, ShouldEqual, 1)
+						So(sets[0].Skipped, ShouldEqual, 1)
 						So(sets[0].Status, ShouldEqual, Uploading)
 						So(sets[0].SizeFiles, ShouldEqual, 9)
 
@@ -654,7 +658,7 @@ func TestSetDB(t *testing.T) {
 						So(err, ShouldBeNil)
 						So(len(fEntries), ShouldEqual, 5)
 						So(fEntries[2].Size, ShouldEqual, 4)
-						So(fEntries[2].Status, ShouldEqual, Uploaded)
+						So(fEntries[2].Status, ShouldEqual, Replaced)
 						So(fEntries[2].LastAttempt.IsZero(), ShouldBeFalse)
 
 						r = &put.Request{
@@ -685,7 +689,9 @@ func TestSetDB(t *testing.T) {
 
 						So(sets[0].Status, ShouldEqual, Uploading)
 						So(sets[0].SizeFiles, ShouldEqual, 15)
-						So(sets[0].Uploaded, ShouldEqual, 3)
+						So(sets[0].Uploaded, ShouldEqual, 1)
+						So(sets[0].Replaced, ShouldEqual, 1)
+						So(sets[0].Skipped, ShouldEqual, 1)
 						So(sets[0].Failed, ShouldEqual, 1)
 
 						fEntries, err = db.GetFileEntries(sets[0].ID())
@@ -715,7 +721,9 @@ func TestSetDB(t *testing.T) {
 
 						So(sets[0].Status, ShouldEqual, Uploading)
 						So(sets[0].SizeFiles, ShouldEqual, 15)
-						So(sets[0].Uploaded, ShouldEqual, 3)
+						So(sets[0].Uploaded, ShouldEqual, 1)
+						So(sets[0].Replaced, ShouldEqual, 1)
+						So(sets[0].Skipped, ShouldEqual, 1)
 						So(sets[0].Failed, ShouldEqual, 1)
 
 						fEntries, err = db.GetFileEntries(sets[0].ID())
@@ -740,7 +748,9 @@ func TestSetDB(t *testing.T) {
 
 						So(sets[0].Status, ShouldEqual, Failing)
 						So(sets[0].SizeFiles, ShouldEqual, 15)
-						So(sets[0].Uploaded, ShouldEqual, 3)
+						So(sets[0].Uploaded, ShouldEqual, 1)
+						So(sets[0].Replaced, ShouldEqual, 1)
+						So(sets[0].Skipped, ShouldEqual, 1)
 						So(sets[0].Failed, ShouldEqual, 1)
 						So(slackWriter.String(), ShouldEqual, slack.BoxPrefixError+"`jim.set1` has failed uploads")
 						slackWriter.Reset()
@@ -771,13 +781,15 @@ func TestSetDB(t *testing.T) {
 
 						So(sets[0].Status, ShouldEqual, Complete)
 						So(sets[0].SizeFiles, ShouldEqual, 15)
-						So(sets[0].Uploaded, ShouldEqual, 3)
+						So(sets[0].Uploaded, ShouldEqual, 1)
+						So(sets[0].Replaced, ShouldEqual, 1)
+						So(sets[0].Skipped, ShouldEqual, 1)
 						So(sets[0].Failed, ShouldEqual, 1)
 						So(sets[0].Missing, ShouldEqual, 1)
 						So(slackWriter.String(), ShouldEqual,
 							fmt.Sprintf("%s`jim.set1` completed backup "+
-								"(%d uploaded; %d failed; %d missing; %d abnormal; %s of data)",
-								slack.BoxPrefixSuccess, sets[0].Uploaded, sets[0].Failed,
+								"(%d newly uploaded; %d replaced; %d skipped; %d failed; %d missing; %d abnormal; %s of data)",
+								slack.BoxPrefixSuccess, sets[0].Uploaded, sets[0].Replaced, sets[0].Skipped, sets[0].Failed,
 								sets[0].Missing, sets[0].Abnormal, sets[0].Size()))
 						lastCompleted := sets[0].LastCompleted
 						So(lastCompleted.IsZero(), ShouldBeFalse)
@@ -812,7 +824,9 @@ func TestSetDB(t *testing.T) {
 
 						So(sets[0].Status, ShouldEqual, Complete)
 						So(sets[0].SizeFiles, ShouldEqual, 15)
-						So(sets[0].Uploaded, ShouldEqual, 4)
+						So(sets[0].Uploaded, ShouldEqual, 2)
+						So(sets[0].Replaced, ShouldEqual, 1)
+						So(sets[0].Skipped, ShouldEqual, 1)
 						So(sets[0].Failed, ShouldEqual, 0)
 						lastCompleted2 := sets[0].LastCompleted
 						So(lastCompleted2.After(lastCompleted), ShouldBeTrue)

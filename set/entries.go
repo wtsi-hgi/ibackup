@@ -45,8 +45,8 @@ const (
 	// UploadingEntry is an Entry status meaning the file has started to upload.
 	UploadingEntry
 
-	// Uploaded is an Entry status meaning the file has been uploaded
-	// successfully.
+	// Uploaded is an Entry status meaning the file has been uploaded for the
+	// first time successfully.
 	Uploaded
 
 	// Failed is an Entry status meaning the file failed to upload due to some
@@ -61,6 +61,14 @@ const (
 	// regular nor a symlink (ie. it's a fifo or socket etc.), so shouldn't be
 	// uploaded.
 	AbnormalEntry
+
+	// Replaced is an Entry status meaning the file has been uploaded previously
+	// but was uploaded again because the local file was changed.
+	Replaced
+
+	// Skipped is an Entry status meaning the file was not uploaded because it
+	// was uploaded previously and hasn't changed since.
+	Skipped
 )
 
 type EntryType int
@@ -86,6 +94,8 @@ func (e EntryStatus) String() string {
 		"failed",
 		"missing",
 		"abnormal",
+		"replaced",
+		"skipped",
 	}[e]
 }
 
