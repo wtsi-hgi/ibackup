@@ -100,17 +100,15 @@ func New(config Config) *Slack {
 // SendMessage sends the given message to our configured channel, prefixing it
 // with a colour corresponding to its level.
 //
-// NB: this returns immediately, sending in a goroutine, and always returns nil.
-// To see errors, configer the slacker with an ErrorLogger.
-func (s *Slack) SendMessage(level Level, msg string) error {
+// NB: this returns immediately, sending in a goroutine. To see errors, configer
+// the slacker with an ErrorLogger.
+func (s *Slack) SendMessage(level Level, msg string) {
 	go func() {
 		_, _, _, err := s.api.SendMessage(s.channel, slackGo.MsgOptionText(levelToPrefix(level)+msg, false))
 		if s.logger != nil && err != nil {
 			s.logger.Write([]byte(err.Error())) //nolint:errcheck
 		}
 	}()
-
-	return nil
 }
 
 func levelToPrefix(level Level) string {

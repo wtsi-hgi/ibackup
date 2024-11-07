@@ -1650,6 +1650,8 @@ func TestServer(t *testing.T) {
 
 						So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"4 iRODS connections open")
 
+						slackWriter.Reset()
+
 						err = client.ClosedIRODSConnections()
 						So(err, ShouldBeNil)
 

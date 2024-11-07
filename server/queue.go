@@ -605,10 +605,7 @@ func (s *Server) clientMadeIRODSConnections(c *gin.Context) {
 	defer s.mapMu.Unlock()
 
 	s.iRODSConnections[hostPID] += n
-
-	totalConnections := s.totalIRODSConnections()
-
-	s.slacker.SendMessage(slack.Info, strconv.Itoa(totalConnections)+" iRODS connections open")
+	s.slacker.SendMessage(slack.Info, strconv.Itoa(s.totalIRODSConnections())+" iRODS connections open")
 
 	c.Status(http.StatusOK)
 }
@@ -625,6 +622,7 @@ func (s *Server) clientClosedIRODSConnections(c *gin.Context) {
 	defer s.mapMu.Unlock()
 
 	delete(s.iRODSConnections, hostPID)
+	s.slacker.SendMessage(slack.Info, strconv.Itoa(s.totalIRODSConnections())+" iRODS connections open")
 
 	c.Status(http.StatusOK)
 }

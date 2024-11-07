@@ -57,8 +57,7 @@ func TestRealSlack(t *testing.T) {
 		s := New(Config{Token: token, Channel: channel, ErrorLogger: logWriter})
 
 		msg := "github.com/wtsi-hgi/ibackup slack package test"
-		err := s.SendMessage(Info, msg)
-		So(err, ShouldBeNil)
+		s.SendMessage(Info, msg)
 
 		<-time.After(1 * time.Second)
 
@@ -70,8 +69,7 @@ func TestRealSlack(t *testing.T) {
 		s := New(config)
 
 		msg := "github.com/wtsi-hgi/ibackup slack package error test"
-		err := s.SendMessage(Info, msg)
-		So(err, ShouldBeNil)
+		s.SendMessage(Info, msg)
 
 		<-time.After(1 * time.Second)
 
@@ -81,8 +79,7 @@ func TestRealSlack(t *testing.T) {
 			config.ErrorLogger = nil
 			s = New(config)
 
-			err = s.SendMessage(Info, msg)
-			So(err, ShouldBeNil)
+			s.SendMessage(Info, msg)
 			<-time.After(1 * time.Second)
 		})
 	})
@@ -95,9 +92,7 @@ func TestMockSlack(t *testing.T) {
 
 		defer dfunc()
 
-		err := s.SendMessage(Info, testMessage)
-		So(err, ShouldBeNil)
-
+		s.SendMessage(Info, testMessage)
 		checkMessage(BoxPrefixInfo+testMessage, messageChan)
 	})
 
@@ -107,24 +102,16 @@ func TestMockSlack(t *testing.T) {
 
 		defer dfunc()
 
-		err := s.SendMessage(Info, testMessage)
-		So(err, ShouldBeNil)
-
+		s.SendMessage(Info, testMessage)
 		checkMessage(BoxPrefixInfo+testMessage, messageChan)
 
-		err = s.SendMessage(Warn, testMessage)
-		So(err, ShouldBeNil)
-
+		s.SendMessage(Warn, testMessage)
 		checkMessage(BoxPrefixWarn+testMessage, messageChan)
 
-		err = s.SendMessage(Error, testMessage)
-		So(err, ShouldBeNil)
-
+		s.SendMessage(Error, testMessage)
 		checkMessage(BoxPrefixError+testMessage, messageChan)
 
-		err = s.SendMessage(Success, testMessage)
-		So(err, ShouldBeNil)
-
+		s.SendMessage(Success, testMessage)
 		checkMessage(BoxPrefixSuccess+testMessage, messageChan)
 	})
 }
