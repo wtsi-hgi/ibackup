@@ -37,6 +37,7 @@ import (
 	"github.com/gin-gonic/gin"
 	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/ibackup/put"
+	"github.com/wtsi-hgi/ibackup/slack"
 )
 
 const (
@@ -168,10 +169,7 @@ func (s *Server) QueueStatus() *QStatus {
 
 	stuck := s.uploadTracker.currentlyStuck()
 
-	var iRODSConnectionsNumber int
-	for _, val := range s.iRODSConnections {
-		iRODSConnectionsNumber += val
-	}
+	iRODSConnectionsNumber := s.totalIRODSConnections()
 
 	return &QStatus{
 		Total:               stats.Items,
@@ -182,6 +180,17 @@ func (s *Server) QueueStatus() *QStatus {
 		Failed:              stats.Buried,
 		Stuck:               stuck,
 	}
+}
+
+// totalIRODSConnections requires you have the mapMu lock before calling.
+func (s *Server) totalIRODSConnections() int {
+	var totalConnections int
+
+	for _, v := range s.iRODSConnections {
+		totalConnections += v
+	}
+
+	return totalConnections
 }
 
 // getBuried gets the server's BuriedRequests.
@@ -596,6 +605,10 @@ func (s *Server) clientMadeIRODSConnections(c *gin.Context) {
 	defer s.mapMu.Unlock()
 
 	s.iRODSConnections[hostPID] += n
+
+	totalConnections := s.totalIRODSConnections()
+
+	s.slacker.SendMessage(slack.Info, strconv.Itoa(totalConnections)+" iRODS connections open")
 
 	c.Status(http.StatusOK)
 }

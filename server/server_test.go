@@ -1616,8 +1616,12 @@ func TestServer(t *testing.T) {
 						So(errg, ShouldBeNil)
 						So(qs.IRODSConnections, ShouldEqual, 0)
 
+						slackWriter.Reset()
+
 						err = client.MakingIRODSConnections(2)
 						So(err, ShouldBeNil)
+
+						So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"2 iRODS connections open")
 
 						p, d := makePutter(t, handler, requests, client)
 						defer d()
@@ -1639,12 +1643,21 @@ func TestServer(t *testing.T) {
 						So(gotSet.Uploaded, ShouldEqual, len(discovers))
 						So(gotSet.Symlinks, ShouldEqual, 1)
 
+						slackWriter.Reset()
+
+						err = client.MakingIRODSConnections(2)
+						So(err, ShouldBeNil)
+
+						So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"4 iRODS connections open")
+
 						err = client.ClosedIRODSConnections()
 						So(err, ShouldBeNil)
 
 						qs, err = client.GetQueueStatus()
 						So(err, ShouldBeNil)
 						So(qs.IRODSConnections, ShouldEqual, 0)
+
+						So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"0 iRODS connections open")
 
 						Convey("After completion, re-discovery can find new files and we can re-complete", func() {
 							newFile := filepath.Join(dirs[0], "new")

@@ -39,7 +39,7 @@ import (
 type Status int
 
 type Slacker interface {
-	SendMessage(level slack.Level, msg string) error
+	SendMessage(level slack.Level, msg string)
 }
 
 const (
@@ -350,7 +350,7 @@ func (s *Set) countsValid() bool {
 	return s.Uploaded+s.Failed+s.Missing+s.Abnormal <= s.NumFiles
 }
 
-func (s *Set) adjustBasedOnEntry(entry *Entry) error {
+func (s *Set) adjustBasedOnEntry(entry *Entry) {
 	if entry.Type == Symlink {
 		s.Symlinks--
 	} else if entry.Type == Hardlink {
@@ -369,23 +369,17 @@ func (s *Set) adjustBasedOnEntry(entry *Entry) error {
 		}
 	}
 
-	return s.entryToSetCounts(entry)
+	s.entryToSetCounts(entry)
 }
 
 // entryToSetCounts increases set Uploaded, Failed or Missing based on
 // set.Status.
-func (s *Set) entryToSetCounts(entry *Entry) error {
-	err := s.entryStatusToSetCounts(entry)
-	if err != nil {
-		return err
-	}
-
+func (s *Set) entryToSetCounts(entry *Entry) {
+	s.entryStatusToSetCounts(entry)
 	s.entryTypeToSetCounts(entry)
-
-	return nil
 }
 
-func (s *Set) entryStatusToSetCounts(entry *Entry) error {
+func (s *Set) entryStatusToSetCounts(entry *Entry) {
 	switch entry.Status { //nolint:exhaustive
 	case Uploaded:
 		s.Uploaded++
@@ -396,24 +390,21 @@ func (s *Set) entryStatusToSetCounts(entry *Entry) error {
 
 		if entry.Attempts >= AttemptsToBeConsideredFailing {
 			s.Status = Failing
-
-			return s.sendSlackMessage(slack.Error, "has failed uploads")
+			s.sendSlackMessage(slack.Error, "has failed uploads")
 		}
 	case Missing:
 		s.Missing++
 	case AbnormalEntry:
 		s.Abnormal++
 	}
-
-	return nil
 }
 
-func (s *Set) sendSlackMessage(level slack.Level, msg string) error {
+func (s *Set) sendSlackMessage(level slack.Level, msg string) {
 	if s.slacker == nil {
-		return nil
+		return
 	}
 
-	return s.slacker.SendMessage(level, s.createSlackMessage(msg))
+	s.slacker.SendMessage(level, s.createSlackMessage(msg))
 }
 
 func (s *Set) createSlackMessage(msg string) string {
@@ -437,13 +428,13 @@ func (s *Set) LogChangesToSlack(slacker Slacker) {
 
 // SuccessfullyStoredInDB should be called when you successfully store the set
 // in DB.
-func (s *Set) SuccessfullyStoredInDB() error {
-	return s.sendSlackMessage(slack.Info, "stored in db")
+func (s *Set) SuccessfullyStoredInDB() {
+	s.sendSlackMessage(slack.Info, "stored in db")
 }
 
 // DiscoveryCompleted should be called when you complete discovering a set. Pass
 // in the number of files you discovered.
-func (s *Set) DiscoveryCompleted(numFiles uint64) error {
+func (s *Set) DiscoveryCompleted(numFiles uint64) {
 	s.LastDiscovery = time.Now()
 	s.NumFiles = numFiles
 
@@ -451,49 +442,47 @@ func (s *Set) DiscoveryCompleted(numFiles uint64) error {
 		s.Status = Complete
 		s.LastCompleted = time.Now()
 
-		return s.sendSlackMessage(slack.Warn, "completed discovery and backup due to no files")
+		s.sendSlackMessage(slack.Warn, "completed discovery and backup due to no files")
+
+		return
 	}
 
 	s.Status = PendingUpload
 
-	return s.sendSlackMessage(slack.Info, fmt.Sprintf("completed discovery: %d files", numFiles))
+	s.sendSlackMessage(slack.Info, fmt.Sprintf("completed discovery: %d files", numFiles))
 }
 
 // UpdateBasedOnEntry updates set status values based on an updated Entry
 // from updateFileEntry(), assuming that request is for one of set's file
 // entries.
 func (s *Set) UpdateBasedOnEntry(entry *Entry, getFileEntries func(string) ([]*Entry, error)) error {
-	err := s.checkIfUploading()
+	s.checkIfUploading()
+
+	s.adjustBasedOnEntry(entry)
+
+	err := s.fixCounts(entry, getFileEntries)
 	if err != nil {
 		return err
 	}
 
-	err = s.adjustBasedOnEntry(entry)
-	if err != nil {
-		return err
-	}
+	s.checkIfComplete()
 
-	err = s.fixCounts(entry, getFileEntries)
-	if err != nil {
-		return err
-	}
-
-	return s.checkIfComplete()
+	return nil
 }
 
-func (s *Set) checkIfUploading() error {
+func (s *Set) checkIfUploading() {
 	if !(s.Status == PendingDiscovery || s.Status == PendingUpload) {
-		return nil
+		return
 	}
 
 	s.Status = Uploading
 
-	return s.sendSlackMessage(slack.Info, "started uploading files")
+	s.sendSlackMessage(slack.Info, "started uploading files")
 }
 
-func (s *Set) checkIfComplete() error {
+func (s *Set) checkIfComplete() {
 	if !(s.Uploaded+s.Failed+s.Missing+s.Abnormal == s.NumFiles) {
-		return nil
+		return
 	}
 
 	s.Status = Complete
@@ -501,7 +490,7 @@ func (s *Set) checkIfComplete() error {
 	s.LastCompletedCount = s.Uploaded + s.Failed
 	s.LastCompletedSize = s.SizeFiles
 
-	return s.sendSlackMessage(slack.Success, fmt.Sprintf("completed backup "+
+	s.sendSlackMessage(slack.Success, fmt.Sprintf("completed backup "+
 		"(%d uploaded; %d failed; %d missing; %d abnormal; %s of data)",
 		s.Uploaded, s.Failed, s.Missing, s.Abnormal, s.Size()))
 }
@@ -526,13 +515,15 @@ func (s *Set) fixCounts(entry *Entry, getFileEntries func(string) ([]*Entry, err
 	s.Symlinks = 0
 	s.Hardlinks = 0
 
-	return s.updateAllCounts(entries, entry)
+	s.updateAllCounts(entries, entry)
+
+	return nil
 }
 
 // updateAllCounts should be called after setting all counts to 0 (because they
 // had become invalid), and then recalculates the counts. Also marks the given
 // entry as newFail if any entry in entries is Failed.
-func (s *Set) updateAllCounts(entries []*Entry, entry *Entry) error {
+func (s *Set) updateAllCounts(entries []*Entry, entry *Entry) {
 	for _, e := range entries {
 		if e.Path == entry.Path {
 			e = entry
@@ -542,32 +533,27 @@ func (s *Set) updateAllCounts(entries []*Entry, entry *Entry) error {
 			e.newFail = true
 		}
 
-		err := s.entryToSetCounts(e)
-		if err != nil {
-			return err
-		}
+		s.entryToSetCounts(e)
 	}
-
-	return nil
 }
 
 // SetError records the given error against the set, indicating it wont work.
-func (s *Set) SetError(errMsg string) error {
+func (s *Set) SetError(errMsg string) {
 	s.Error = errMsg
 
-	return s.sendSlackMessage(slack.Error, "is invalid: "+errMsg)
+	s.sendSlackMessage(slack.Error, "is invalid: "+errMsg)
 }
 
 // SetWarning records the given warning against the set, indicating it has an
 // issue.
-func (s *Set) SetWarning(warnMsg string) error {
+func (s *Set) SetWarning(warnMsg string) {
 	s.Warning = warnMsg
 
-	return s.sendSlackMessage(slack.Warn, "has an issue: "+warnMsg)
+	s.sendSlackMessage(slack.Warn, "has an issue: "+warnMsg)
 }
 
-func (s *Set) RecoveryError(err error) error {
-	return s.sendSlackMessage(slack.Error, "could not be recovered: "+err.Error())
+func (s *Set) RecoveryError(err error) {
+	s.sendSlackMessage(slack.Error, "could not be recovered: "+err.Error())
 }
 
 // copyUserProperties copies data from one set into another.

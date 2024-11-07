@@ -136,8 +136,6 @@ func NewMock(logger *gas.StringLogger) *Mock {
 	return &Mock{logger: logger}
 }
 
-func (s *Mock) SendMessage(level Level, msg string) error {
-	_, err := s.logger.Write([]byte(levelToPrefix(level) + msg))
-
-	return err
+func (s *Mock) SendMessage(level Level, msg string) {
+	s.logger.Write([]byte(levelToPrefix(level) + msg)) //nolint:errcheck
 }
