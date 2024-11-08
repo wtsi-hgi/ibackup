@@ -529,8 +529,8 @@ func (s *Set) checkIfComplete() {
 	s.LastCompletedSize = s.SizeTotal
 
 	s.sendSlackMessage(slack.Success, fmt.Sprintf("completed backup "+
-		"(%d newly uploaded; %d replaced; %d skipped; %d failed; %d missing; %d abnormal; %s of data)",
-		s.Uploaded, s.Replaced, s.Skipped, s.Failed, s.Missing, s.Abnormal, s.Size()))
+		"(%d newly uploaded; %d replaced; %d skipped; %d failed; %d missing; %d abnormal; %s data uploaded)",
+		s.Uploaded, s.Replaced, s.Skipped, s.Failed, s.Missing, s.Abnormal, s.UploadedSize()))
 }
 
 // fixCounts resets the set counts to 0 and goes through all the entries for
