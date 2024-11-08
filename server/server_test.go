@@ -1374,8 +1374,10 @@ func TestServer(t *testing.T) {
 								So(err, ShouldBeNil)
 								So(gotSet.Status, ShouldEqual, set.Complete)
 								So(gotSet.NumFiles, ShouldEqual, 6)
-								So(gotSet.SizeFiles, ShouldEqual, 15)
-								So(gotSet.Uploaded, ShouldEqual, 5)
+								So(gotSet.SizeTotal, ShouldEqual, 15)
+								So(gotSet.Uploaded, ShouldEqual, 3)
+								So(gotSet.Replaced, ShouldEqual, 1)
+								So(gotSet.Skipped, ShouldEqual, 1)
 								So(gotSet.Failed, ShouldEqual, 1)
 								So(gotSet.Symlinks, ShouldEqual, 1)
 								So(gotSet.Missing, ShouldEqual, 0)
@@ -1701,7 +1703,9 @@ func TestServer(t *testing.T) {
 							So(err, ShouldBeNil)
 							So(gotSet.Status, ShouldEqual, set.Complete)
 							So(gotSet.NumFiles, ShouldEqual, expectedNumFiles)
-							So(gotSet.Uploaded, ShouldEqual, expectedNumFiles)
+							So(gotSet.Uploaded, ShouldEqual, 1)
+							So(gotSet.Replaced, ShouldEqual, 0)
+							So(gotSet.Skipped, ShouldEqual, expectedNumFiles-1)
 							So(gotSet.Symlinks, ShouldEqual, 1)
 
 							entries, errg := client.GetFiles(exampleSet.ID())
@@ -1709,7 +1713,7 @@ func TestServer(t *testing.T) {
 							So(len(entries), ShouldEqual, expectedNumFiles)
 
 							for n, entry := range entries {
-								So(entry.Status, ShouldEqual, set.Uploaded)
+								So(entry.Status == set.Uploaded || entry.Status == set.Skipped, ShouldBeTrue)
 
 								if n == 3 {
 									So(entry.Type, ShouldEqual, set.Symlink)
@@ -1738,7 +1742,7 @@ func TestServer(t *testing.T) {
 								}
 							}
 
-							So(gotSet.SizeFiles, ShouldEqual, expectedSetSize)
+							So(gotSet.SizeTotal, ShouldEqual, expectedSetSize)
 						})
 					})
 
@@ -1808,7 +1812,9 @@ func TestServer(t *testing.T) {
 							So(err, ShouldBeNil)
 							So(gotSet.Status, ShouldEqual, set.Complete)
 							So(gotSet.NumFiles, ShouldEqual, len(discovers))
-							So(gotSet.Uploaded, ShouldEqual, len(discovers))
+							So(gotSet.Uploaded, ShouldEqual, 1)
+							So(gotSet.Replaced, ShouldEqual, 0)
+							So(gotSet.Skipped, ShouldEqual, len(discovers)-1)
 							So(gotSet.Symlinks, ShouldEqual, 1)
 
 							entries, errg := client.GetFiles(exampleSet.ID())
@@ -1816,7 +1822,7 @@ func TestServer(t *testing.T) {
 							So(len(entries), ShouldEqual, len(discovers))
 
 							for n, entry := range entries {
-								So(entry.Status, ShouldEqual, set.Uploaded)
+								So(entry.Status == set.Uploaded || entry.Status == set.Skipped, ShouldBeTrue)
 
 								if n == 2 {
 									So(entry.Type, ShouldEqual, set.Symlink)
@@ -2763,7 +2769,7 @@ func TestServer(t *testing.T) {
 							So(gotSet.NumFiles, ShouldEqual, 3)
 							So(gotSet.Uploaded, ShouldEqual, 3)
 							So(gotSet.Hardlinks, ShouldEqual, 2)
-							So(gotSet.SizeFiles, ShouldEqual, 1)
+							So(gotSet.SizeTotal, ShouldEqual, 1)
 
 							Convey("moving all files of an inode uploads hardlinks to new location", func() {
 								path4 := filepath.Join(localDir, "file2.link1")

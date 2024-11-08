@@ -158,7 +158,7 @@ func TestSet(t *testing.T) {
 		So(s.Count(), ShouldEqual, "3")
 		So(s.Size(), ShouldEqual, "0 B (and counting)")
 
-		s.SizeFiles = 30
+		s.SizeTotal = 30
 		So(s.Size(), ShouldEqual, "30 B (and counting)")
 
 		s.Status = Complete
@@ -168,7 +168,7 @@ func TestSet(t *testing.T) {
 		s.LastCompletedCount = 3
 		s.LastCompletedSize = 30
 		s.NumFiles = 0
-		s.SizeFiles = 0
+		s.SizeTotal = 0
 		s.Status = PendingDiscovery
 
 		So(s.Count(), ShouldEqual, "3 (as of last completion)")
@@ -227,16 +227,16 @@ func TestSet(t *testing.T) {
 		month := 730 * time.Hour
 		sets := []*Set{
 			{Name: "setA", Requester: "userA", LastCompleted: nov23,
-				SizeFiles: 10, NumFiles: 1},
+				SizeTotal: 10, NumFiles: 1},
 			{Name: "setB", Requester: "userA", LastCompleted: nov23.Add(month),
-				SizeFiles: 20, NumFiles: 2},
+				SizeTotal: 20, NumFiles: 2},
 			{Name: "setC", Requester: "userB", LastCompleted: nov23,
-				SizeFiles: 40, NumFiles: 3},
+				SizeTotal: 40, NumFiles: 3},
 			{Name: "setD", Requester: "userC", LastCompleted: nov23.Add(-1 * month),
-				SizeFiles: 1, NumFiles: 4},
+				SizeTotal: 1, NumFiles: 4},
 			{Name: "setE", Requester: "userD", LastCompleted: nov23.Add(-1 * month),
-				SizeFiles: 1, NumFiles: 5},
-			{Name: "setF", Requester: "userE", SizeFiles: 0, NumFiles: 1},
+				SizeTotal: 1, NumFiles: 5},
+			{Name: "setF", Requester: "userE", SizeTotal: 0, NumFiles: 1},
 		}
 
 		usage := UsageSummary(sets)
@@ -289,7 +289,7 @@ func TestSet(t *testing.T) {
 
 		sets = []*Set{
 			{Name: "setA", Requester: "userA",
-				SizeFiles: 10 * uint64(bytesInTiB), NumFiles: 1},
+				SizeTotal: 10 * uint64(bytesInTiB), NumFiles: 1},
 		}
 
 		usage = UsageSummary(sets)
@@ -523,7 +523,7 @@ func TestSetDB(t *testing.T) {
 						So(sets[0].StartedDiscovery.IsZero(), ShouldBeFalse)
 						So(sets[0].LastDiscovery.IsZero(), ShouldBeFalse)
 						So(sets[0].NumFiles, ShouldEqual, 5)
-						So(sets[0].SizeFiles, ShouldEqual, 0)
+						So(sets[0].SizeTotal, ShouldEqual, 0)
 
 						setsAll, errg := db.GetAll()
 						So(errg, ShouldBeNil)
@@ -554,7 +554,7 @@ func TestSetDB(t *testing.T) {
 
 						So(sets[0].Status, ShouldEqual, Uploading)
 						So(sets[0].NumFiles, ShouldEqual, 5)
-						So(sets[0].SizeFiles, ShouldEqual, 3)
+						So(sets[0].SizeTotal, ShouldEqual, 3)
 						So(sets[0].Uploaded, ShouldEqual, 0)
 						So(sets[0].LastCompletedSize, ShouldEqual, 0)
 
@@ -588,7 +588,7 @@ func TestSetDB(t *testing.T) {
 
 						So(sets[0].Status, ShouldEqual, Uploading)
 						So(sets[0].NumFiles, ShouldEqual, 5)
-						So(sets[0].SizeFiles, ShouldEqual, 3)
+						So(sets[0].SizeTotal, ShouldEqual, 3)
 						So(sets[0].Uploaded, ShouldEqual, 1)
 						So(sets[0].Failed, ShouldEqual, 0)
 						So(sets[0].LastCompletedSize, ShouldEqual, 0)
@@ -616,7 +616,7 @@ func TestSetDB(t *testing.T) {
 						So(err, ShouldBeNil)
 
 						So(sets[0].Status, ShouldEqual, Uploading)
-						So(sets[0].SizeFiles, ShouldEqual, 5)
+						So(sets[0].SizeTotal, ShouldEqual, 5)
 						So(sets[0].Uploaded, ShouldEqual, 1)
 						So(sets[0].Replaced, ShouldEqual, 0)
 						So(sets[0].Skipped, ShouldEqual, 1)
@@ -652,7 +652,7 @@ func TestSetDB(t *testing.T) {
 						So(sets[0].Replaced, ShouldEqual, 1)
 						So(sets[0].Skipped, ShouldEqual, 1)
 						So(sets[0].Status, ShouldEqual, Uploading)
-						So(sets[0].SizeFiles, ShouldEqual, 9)
+						So(sets[0].SizeTotal, ShouldEqual, 9)
 
 						fEntries, err = db.GetFileEntries(sets[0].ID())
 						So(err, ShouldBeNil)
@@ -688,7 +688,7 @@ func TestSetDB(t *testing.T) {
 						So(err, ShouldBeNil)
 
 						So(sets[0].Status, ShouldEqual, Uploading)
-						So(sets[0].SizeFiles, ShouldEqual, 15)
+						So(sets[0].SizeTotal, ShouldEqual, 15)
 						So(sets[0].Uploaded, ShouldEqual, 1)
 						So(sets[0].Replaced, ShouldEqual, 1)
 						So(sets[0].Skipped, ShouldEqual, 1)
@@ -720,7 +720,7 @@ func TestSetDB(t *testing.T) {
 						So(err, ShouldBeNil)
 
 						So(sets[0].Status, ShouldEqual, Uploading)
-						So(sets[0].SizeFiles, ShouldEqual, 15)
+						So(sets[0].SizeTotal, ShouldEqual, 15)
 						So(sets[0].Uploaded, ShouldEqual, 1)
 						So(sets[0].Replaced, ShouldEqual, 1)
 						So(sets[0].Skipped, ShouldEqual, 1)
@@ -747,7 +747,7 @@ func TestSetDB(t *testing.T) {
 						So(err, ShouldBeNil)
 
 						So(sets[0].Status, ShouldEqual, Failing)
-						So(sets[0].SizeFiles, ShouldEqual, 15)
+						So(sets[0].SizeTotal, ShouldEqual, 15)
 						So(sets[0].Uploaded, ShouldEqual, 1)
 						So(sets[0].Replaced, ShouldEqual, 1)
 						So(sets[0].Skipped, ShouldEqual, 1)
@@ -780,7 +780,7 @@ func TestSetDB(t *testing.T) {
 						So(err, ShouldBeNil)
 
 						So(sets[0].Status, ShouldEqual, Complete)
-						So(sets[0].SizeFiles, ShouldEqual, 15)
+						So(sets[0].SizeTotal, ShouldEqual, 15)
 						So(sets[0].Uploaded, ShouldEqual, 1)
 						So(sets[0].Replaced, ShouldEqual, 1)
 						So(sets[0].Skipped, ShouldEqual, 1)
@@ -795,6 +795,7 @@ func TestSetDB(t *testing.T) {
 						So(lastCompleted.IsZero(), ShouldBeFalse)
 						So(sets[0].LastCompletedSize, ShouldEqual, 15)
 						So(sets[0].LastCompletedCount, ShouldEqual, 4)
+						So(sets[0].SizeUploaded, ShouldEqual, 13)
 
 						fEntries, err = db.GetFileEntries(sets[0].ID())
 						So(err, ShouldBeNil)
@@ -823,7 +824,7 @@ func TestSetDB(t *testing.T) {
 						So(err, ShouldBeNil)
 
 						So(sets[0].Status, ShouldEqual, Complete)
-						So(sets[0].SizeFiles, ShouldEqual, 15)
+						So(sets[0].SizeTotal, ShouldEqual, 15)
 						So(sets[0].Uploaded, ShouldEqual, 2)
 						So(sets[0].Replaced, ShouldEqual, 1)
 						So(sets[0].Skipped, ShouldEqual, 1)
@@ -859,12 +860,15 @@ func TestSetDB(t *testing.T) {
 								So(sets[0].Status, ShouldEqual, PendingDiscovery)
 								So(sets[0].StartedDiscovery.After(oldStart), ShouldBeTrue)
 								So(sets[0].NumFiles, ShouldEqual, 0)
-								So(sets[0].SizeFiles, ShouldEqual, 0)
+								So(sets[0].SizeTotal, ShouldEqual, 0)
 								So(sets[0].Uploaded, ShouldEqual, 0)
+								So(sets[0].Replaced, ShouldEqual, 0)
+								So(sets[0].Skipped, ShouldEqual, 0)
 								So(sets[0].Failed, ShouldEqual, 0)
 								So(sets[0].Missing, ShouldEqual, 0)
 								So(sets[0].LastCompletedCount, ShouldEqual, 4)
 								So(sets[0].LastCompletedSize, ShouldEqual, 15)
+								So(sets[0].SizeUploaded, ShouldEqual, 0)
 							})
 
 							fEntries, errg := db.GetFileEntries(sets[0].ID())
@@ -878,7 +882,7 @@ func TestSetDB(t *testing.T) {
 							So(sets[0].Status, ShouldEqual, PendingUpload)
 							So(sets[0].LastDiscovery.After(oldDisc), ShouldBeTrue)
 							So(sets[0].NumFiles, ShouldEqual, 6)
-							So(sets[0].SizeFiles, ShouldEqual, 0)
+							So(sets[0].SizeTotal, ShouldEqual, 0)
 
 							r = &put.Request{
 								Local:     "/g/h/l.txt",
@@ -899,9 +903,12 @@ func TestSetDB(t *testing.T) {
 							So(err, ShouldBeNil)
 
 							So(sets[0].Status, ShouldEqual, Uploading)
-							So(sets[0].SizeFiles, ShouldEqual, 7)
+							So(sets[0].SizeTotal, ShouldEqual, 7)
 							So(sets[0].Uploaded, ShouldEqual, 1)
+							So(sets[0].Skipped, ShouldEqual, 0)
+							So(sets[0].Replaced, ShouldEqual, 0)
 							So(sets[0].Failed, ShouldEqual, 0)
+							So(sets[0].SizeUploaded, ShouldEqual, 7)
 
 							fEntries, err = db.GetFileEntries(sets[0].ID())
 							So(err, ShouldBeNil)
@@ -914,6 +921,60 @@ func TestSetDB(t *testing.T) {
 							fEntries, err = db.GetPureFileEntries(sets[0].ID())
 							So(err, ShouldBeNil)
 							So(len(fEntries), ShouldEqual, 3)
+
+							r = &put.Request{
+								Local:     "/g/i/m.txt",
+								Requester: set.Requester,
+								Set:       set.Name,
+								Size:      6,
+								Status:    put.RequestStatusUploading,
+								Error:     "",
+							}
+
+							_, err = db.SetEntryStatus(r)
+							So(err, ShouldBeNil)
+
+							r.Status = put.RequestStatusReplaced
+							_, err = db.SetEntryStatus(r)
+							So(err, ShouldBeNil)
+
+							sets, err = db.GetByRequester("jim")
+							So(err, ShouldBeNil)
+
+							So(sets[0].Status, ShouldEqual, Uploading)
+							So(sets[0].SizeTotal, ShouldEqual, 13)
+							So(sets[0].Uploaded, ShouldEqual, 1)
+							So(sets[0].Skipped, ShouldEqual, 0)
+							So(sets[0].Replaced, ShouldEqual, 1)
+							So(sets[0].Failed, ShouldEqual, 0)
+							So(sets[0].SizeUploaded, ShouldEqual, 13)
+
+							r = &put.Request{
+								Local:     "/g/i/n.txt",
+								Requester: set.Requester,
+								Set:       set.Name,
+								Size:      5,
+								Status:    put.RequestStatusUploading,
+								Error:     "",
+							}
+
+							_, err = db.SetEntryStatus(r)
+							So(err, ShouldBeNil)
+
+							r.Status = put.RequestStatusUnmodified
+							_, err = db.SetEntryStatus(r)
+							So(err, ShouldBeNil)
+
+							sets, err = db.GetByRequester("jim")
+							So(err, ShouldBeNil)
+
+							So(sets[0].Status, ShouldEqual, Uploading)
+							So(sets[0].SizeTotal, ShouldEqual, 18)
+							So(sets[0].Uploaded, ShouldEqual, 1)
+							So(sets[0].Skipped, ShouldEqual, 1)
+							So(sets[0].Replaced, ShouldEqual, 1)
+							So(sets[0].Failed, ShouldEqual, 0)
+							So(sets[0].SizeUploaded, ShouldEqual, 13)
 						})
 
 						Convey("Set status becomes complete on new discovery with all missing files", func() {
@@ -941,7 +1002,7 @@ func TestSetDB(t *testing.T) {
 							So(sets[0].LastDiscovery.After(oldDisc), ShouldBeTrue)
 							So(sets[0].NumFiles, ShouldEqual, 3)
 							So(sets[0].Missing, ShouldEqual, 3)
-							So(sets[0].SizeFiles, ShouldEqual, 0)
+							So(sets[0].SizeTotal, ShouldEqual, 0)
 
 							So(slackWriter.String(), ShouldEqual, slack.BoxPrefixWarn+
 								"`jim.set1` completed discovery and backup due to no files")
@@ -968,7 +1029,7 @@ func TestSetDB(t *testing.T) {
 							So(sets[0].LastDiscovery.After(oldDisc), ShouldBeTrue)
 							So(sets[0].NumFiles, ShouldEqual, 0)
 							So(sets[0].Missing, ShouldEqual, 0)
-							So(sets[0].SizeFiles, ShouldEqual, 0)
+							So(sets[0].SizeTotal, ShouldEqual, 0)
 
 							So(slackWriter.String(), ShouldEqual, slack.BoxPrefixWarn+
 								"`jim.set1` completed discovery and backup due to no files")

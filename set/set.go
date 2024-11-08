@@ -129,9 +129,9 @@ type Set struct {
 	// set, as of the last discovery. This is a read-only value.
 	NumFiles uint64
 
-	// SizeFiles provides the total size (bytes) of set and discovered files in
+	// SizeTotal provides the total size (bytes) of set and discovered files in
 	// this set, as of the last discovery. This is a read-only value.
-	SizeFiles uint64
+	SizeTotal uint64
 
 	// Uploaded provides the total number of set and discovered files in this
 	// set that have, for the first time, been uploaded or confirmed uploaded
@@ -187,6 +187,10 @@ type Set struct {
 	// LastCompletedSize provides the size of files (bytes) counted in
 	// LastCompletedCount. This is a read-only value.
 	LastCompletedSize uint64
+
+	// SizeUploaded provides the size of files (bytes) actually uploaded (not
+	// skipped) since the last discovery. This is a read-only value.
+	SizeUploaded uint64
 
 	// Error holds any error that applies to the whole set, such as an issue
 	// with the Transformer. This is a read-only value.
@@ -254,13 +258,20 @@ func (s *Set) Size() string {
 		return fmt.Sprintf("%s (as of last completion)", humanize.IBytes(s.LastCompletedSize))
 	}
 
-	sfiles := humanize.IBytes(s.SizeFiles)
+	sfiles := humanize.IBytes(s.SizeTotal) //nolint:misspell
 
 	if s.Status != Complete {
 		sfiles += " (and counting)"
 	}
 
 	return sfiles
+}
+
+// UploadedSize provides a string representation of SizeUploaded in a human
+// readable format. This is the size of actual uploads (excluding skipped,
+// unlike Size()) since the last discovery.
+func (s *Set) UploadedSize() string {
+	return humanize.IBytes(s.SizeUploaded) //nolint:misspell
 }
 
 func (s *Set) TransformPath(path string) (string, error) {
@@ -327,13 +338,21 @@ func (s *Set) Queued() bool {
 	return s.Status == PendingDiscovery || s.Status == PendingUpload
 }
 
-// countsValid tells you if our Uploaded, Failed and Missing counts are valid
-// (0..NumFiles).
+// countsValid tells you if our Uploaded, Replaced, Skipped, Failed and Missing
+// counts are valid (0..NumFiles).
 func (s *Set) countsValid() bool {
 	// we can't just do the final summed test, because if the numbers are close
 	// to max uint64 value from a wrapping bug, they'll wrap back around and
 	// pass the test
 	if s.Uploaded > s.NumFiles {
+		return false
+	}
+
+	if s.Replaced > s.NumFiles {
+		return false
+	}
+
+	if s.Skipped > s.NumFiles {
 		return false
 	}
 
@@ -357,7 +376,7 @@ func (s *Set) countsValid() bool {
 		return false
 	}
 
-	return s.Uploaded+s.Failed+s.Missing+s.Abnormal <= s.NumFiles
+	return s.Uploaded+s.Replaced+s.Skipped+s.Failed+s.Missing+s.Abnormal <= s.NumFiles
 }
 
 func (s *Set) adjustBasedOnEntry(entry *Entry) {
@@ -368,7 +387,12 @@ func (s *Set) adjustBasedOnEntry(entry *Entry) {
 	}
 
 	if entry.newSize {
-		s.SizeFiles += entry.Size
+		s.SizeTotal += entry.Size
+		s.SizeUploaded += entry.Size
+	}
+
+	if entry.Status == Skipped {
+		s.SizeUploaded -= entry.Size
 	}
 
 	if entry.unFailed {
@@ -389,7 +413,7 @@ func (s *Set) entryToSetCounts(entry *Entry) {
 	s.entryTypeToSetCounts(entry)
 }
 
-func (s *Set) entryStatusToSetCounts(entry *Entry) {
+func (s *Set) entryStatusToSetCounts(entry *Entry) { //nolint:gocyclo
 	switch entry.Status { //nolint:exhaustive
 	case Uploaded:
 		s.Uploaded++
@@ -502,7 +526,7 @@ func (s *Set) checkIfComplete() {
 	s.Status = Complete
 	s.LastCompleted = time.Now()
 	s.LastCompletedCount = s.Uploaded + s.Replaced + s.Skipped + s.Failed
-	s.LastCompletedSize = s.SizeFiles
+	s.LastCompletedSize = s.SizeTotal
 
 	s.sendSlackMessage(slack.Success, fmt.Sprintf("completed backup "+
 		"(%d newly uploaded; %d replaced; %d skipped; %d failed; %d missing; %d abnormal; %s of data)",
@@ -523,6 +547,8 @@ func (s *Set) fixCounts(entry *Entry, getFileEntries func(string) ([]*Entry, err
 	}
 
 	s.Uploaded = 0
+	s.Replaced = 0
+	s.Skipped = 0
 	s.Failed = 0
 	s.Missing = 0
 	s.Abnormal = 0
@@ -584,8 +610,11 @@ func (s *Set) copyUserProperties(copySet *Set) {
 func (s *Set) reset() {
 	s.StartedDiscovery = time.Now()
 	s.NumFiles = 0
-	s.SizeFiles = 0
+	s.SizeTotal = 0
+	s.SizeUploaded = 0
 	s.Uploaded = 0
+	s.Replaced = 0
+	s.Skipped = 0
 	s.Failed = 0
 	s.Missing = 0
 	s.Abnormal = 0
