@@ -338,8 +338,8 @@ func displaySet(s *set.Set, showRequesters bool) { //nolint:funlen,gocyclo
 	cliPrint("Discovery: %s\n", s.Discovered())
 	cliPrint("Num files: %s; Symlinks: %d; Hardlinks: %d; Size files: %s\n",
 		s.Count(), s.Symlinks, s.Hardlinks, s.Size())
-	cliPrint("Uploaded: %d; Failed: %d; Missing: %d; Abnormal: %d\n",
-		s.Uploaded, s.Failed, s.Missing, s.Abnormal)
+	cliPrint("Uploaded: %d; Replaced: %d; Skipped: %d; Failed: %d; Missing: %d; Abnormal: %d\n",
+		s.Uploaded, s.Replaced, s.Skipped, s.Failed, s.Missing, s.Abnormal)
 
 	switch s.Status {
 	case set.Complete:

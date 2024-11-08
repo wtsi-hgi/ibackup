@@ -438,7 +438,7 @@ Monitored: false; Archive: false
 Status: complete
 Discovery:
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size files: 0 B
-Uploaded: 0; Failed: 0; Missing: 0; Abnormal: 0
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
 Completed in: 0s
 Directories:
   `+localDir+" => "+remoteDir)
@@ -471,7 +471,7 @@ Monitored: false; Archive: false
 Status: complete
 Discovery:
 Num files: 2; Symlinks: 0; Hardlinks: 0; Size files: 0 B
-Uploaded: 0; Failed: 0; Missing: 2; Abnormal: 0
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 2; Abnormal: 0
 Completed in: 0s
 Example File: `+dir+`/path/to/other/file => /remote/path/to/other/file`)
 			})
@@ -490,7 +490,7 @@ Monitored: false; Archive: false
 Status: complete
 Discovery:
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size files: 0 B
-Uploaded: 0; Failed: 0; Missing: 0; Abnormal: 0
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
 Completed in: 0s
 Directories:
 your transformer didn't work: not a valid humgen lustre path [` + localDir + `/file.txt]
@@ -524,7 +524,7 @@ Monitored: false; Archive: false
 Status: complete
 Discovery:
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size files: 0 B
-Uploaded: 0; Failed: 0; Missing: 0; Abnormal: 0
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
 Completed in: 0s
 Directories:
   `+localDir+toRemote+localDir)
@@ -557,7 +557,7 @@ Status: complete
 Warning: open `+badPermDir+`: permission denied
 Discovery:
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size files: 0 B
-Uploaded: 0; Failed: 0; Missing: 0; Abnormal: 0
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
 Completed in: 0s
 Directories:
   `+localDir+" => "+remote)
@@ -585,7 +585,7 @@ Monitored: false; Archive: false
 Status: pending upload
 Discovery:
 Num files: 1; Symlinks: 0; Hardlinks: 0; Size files: 0 B (and counting)
-Uploaded: 0; Failed: 0; Missing: 0; Abnormal: 0
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
 Example File: `+humgenFile+" => /humgen/teams/hgi/scratch125/mercury/ibackup/file_for_testsuite.do_not_delete")
 		})
 
@@ -611,7 +611,7 @@ Monitored: false; Archive: false
 Status: pending upload
 Discovery:
 Num files: 1; Symlinks: 0; Hardlinks: 0; Size files: 0 B (and counting)
-Uploaded: 0; Failed: 0; Missing: 0; Abnormal: 0
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
 Example File: `+gengenFile+" => /humgen/gengen/teams/hgi/scratch126/mercury/ibackup/file_for_testsuite.do_not_delete")
 		})
 
@@ -648,7 +648,7 @@ Monitored: false; Archive: false
 Status: pending upload
 Discovery:
 Num files: 4; Symlinks: 2; Hardlinks: 1; Size files: 0 B (and counting)
-Uploaded: 0; Failed: 0; Missing: 0; Abnormal: 0
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
 Directories:
   `+dir+toRemote)
 		})
@@ -695,7 +695,7 @@ Monitored: false; Archive: false
 Status: complete
 Discovery:
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size files: 0 B
-Uploaded: 0; Failed: 0; Missing: 0; Abnormal: 0
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
 Completed in: 0s
 Directories:
   `+local+" => "+remote)
@@ -724,7 +724,7 @@ Monitored: false; Archive: false
 Status: complete
 Discovery:
 Num files: 1; Symlinks: 0; Hardlinks: 0; Size files: 0 B
-Uploaded: 0; Failed: 0; Missing: 0; Abnormal: 1
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 1
 Completed in: 0s
 Example File: `+dir+`/fifo => /remote/fifo
 
@@ -749,7 +749,7 @@ Monitored: false; Archive: false
 Status: complete
 Discovery:
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size files: 0 B
-Uploaded: 0; Failed: 0; Missing: 0; Abnormal: 0
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
 Completed in: 0s
 Directories:
   `+dir+toRemote)
@@ -928,7 +928,7 @@ Monitored: false; Archive: false
 Status: complete
 Discovery:
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size files: 0 B
-Uploaded: 0; Failed: 0; Missing: 0; Abnormal: 0
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
 Completed in: 0s
 Directories:
   `+localDir+` => `+remoteDir)
@@ -994,12 +994,17 @@ func TestPuts(t *testing.T) {
 
 			s.addSetForTesting(t, "hardlinkTest", transformer, path)
 
+			hardlinkStatusCmd := []string{"status", "--name", "hardlinkTest"}
+
 			s.waitForStatus("hardlinkTest", "\nStatus: uploading", 60*time.Second)
-			s.confirmOutputContains(t, []string{"status", "--name", "hardlinkTest"}, 0,
+			s.confirmOutputContains(t, hardlinkStatusCmd, 0,
 				`Global put queue status: 3 queued; 3 reserved to be worked on; 0 failed
 Global put client status (/10): 6 iRODS connections`)
 
 			s.waitForStatus("hardlinkTest", "\nStatus: complete", 60*time.Second)
+
+			s.confirmOutputContains(t, hardlinkStatusCmd, 0,
+				"Uploaded: 3; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0")
 
 			output := getRemoteMeta(remoteFile)
 			So(output, ShouldNotContainSubstring, "ibackup:hardlink")
@@ -1030,6 +1035,13 @@ Global put client status (/10): 6 iRODS connections`)
 				exitCode, out := s.runBinary(t, "summary", "--database", s.backupFile)
 				So(exitCode, ShouldEqual, 0)
 				So(out, ShouldContainSubstring, "Total size: 9 B")
+			})
+
+			Convey("re-adding the set and completing it again results in skipped files", func() {
+				s.addSetForTesting(t, "hardlinkTest", transformer, path)
+				s.waitForStatus("hardlinkTest", "\nStatus: complete", 60*time.Second)
+				s.confirmOutputContains(t, hardlinkStatusCmd, 0,
+					"Uploaded: 0; Replaced: 0; Skipped: 3; Failed: 0; Missing: 0; Abnormal: 0")
 			})
 		})
 
