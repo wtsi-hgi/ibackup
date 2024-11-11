@@ -34,6 +34,7 @@ import (
 	slackGo "github.com/slack-go/slack"
 	"github.com/slack-go/slack/slacktest"
 	. "github.com/smartystreets/goconvey/convey"
+	gas "github.com/wtsi-hgi/go-authserver"
 )
 
 const (
@@ -50,12 +51,37 @@ func TestRealSlack(t *testing.T) {
 		t.Skip("IBACKUP_SLACK_TOKEN not set or IBACKUP_SLACK_CHANNEL not set")
 	}
 
+	logWriter := gas.NewStringLogger()
+
 	Convey("You can send a message to real slack", t, func() {
-		s := New(Config{Token: token, Channel: channel})
+		s := New(Config{Token: token, Channel: channel, ErrorLogger: logWriter})
 
 		msg := "github.com/wtsi-hgi/ibackup slack package test"
-		err := s.SendMessage(Info, msg)
-		So(err, ShouldBeNil)
+		s.SendMessage(Info, msg)
+
+		<-time.After(1 * time.Second)
+
+		So(logWriter.String(), ShouldBeBlank)
+	})
+
+	Convey("Bad token/channel results in error being logged", t, func() {
+		config := Config{Token: "non", Channel: "sense", ErrorLogger: logWriter}
+		s := New(config)
+
+		msg := "github.com/wtsi-hgi/ibackup slack package error test"
+		s.SendMessage(Info, msg)
+
+		<-time.After(1 * time.Second)
+
+		So(logWriter.String(), ShouldEqual, "invalid_auth")
+
+		Convey("And that works fine with no ErrorLogger", func() {
+			config.ErrorLogger = nil
+			s = New(config)
+
+			s.SendMessage(Info, msg)
+			<-time.After(1 * time.Second)
+		})
 	})
 }
 
@@ -66,9 +92,7 @@ func TestMockSlack(t *testing.T) {
 
 		defer dfunc()
 
-		err := s.SendMessage(Info, testMessage)
-		So(err, ShouldBeNil)
-
+		s.SendMessage(Info, testMessage)
 		checkMessage(BoxPrefixInfo+testMessage, messageChan)
 	})
 
@@ -78,24 +102,16 @@ func TestMockSlack(t *testing.T) {
 
 		defer dfunc()
 
-		err := s.SendMessage(Info, testMessage)
-		So(err, ShouldBeNil)
-
+		s.SendMessage(Info, testMessage)
 		checkMessage(BoxPrefixInfo+testMessage, messageChan)
 
-		err = s.SendMessage(Warn, testMessage)
-		So(err, ShouldBeNil)
-
+		s.SendMessage(Warn, testMessage)
 		checkMessage(BoxPrefixWarn+testMessage, messageChan)
 
-		err = s.SendMessage(Error, testMessage)
-		So(err, ShouldBeNil)
-
+		s.SendMessage(Error, testMessage)
 		checkMessage(BoxPrefixError+testMessage, messageChan)
 
-		err = s.SendMessage(Success, testMessage)
-		So(err, ShouldBeNil)
-
+		s.SendMessage(Success, testMessage)
 		checkMessage(BoxPrefixSuccess+testMessage, messageChan)
 	})
 }

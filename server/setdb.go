@@ -185,20 +185,14 @@ func (s *Server) LoadSetDB(path, backupPath string) error {
 }
 
 func (s *Server) setupDB(path, backupPath string, authGroup *gin.RouterGroup) error {
-	err := s.sendSlackMessage(slack.Info, "server starting, loading database")
-	if err != nil {
-		return err
-	}
+	s.sendSlackMessage(slack.Info, "server starting, loading database")
 
 	db, err := set.New(path, backupPath)
 	if err != nil {
 		return err
 	}
 
-	err = s.sendSlackMessage(slack.Success, "server loaded database")
-	if err != nil {
-		return err
-	}
+	s.sendSlackMessage(slack.Success, "server loaded database")
 
 	go s.tellSlackStillRunning()
 
@@ -211,12 +205,12 @@ func (s *Server) setupDB(path, backupPath string, authGroup *gin.RouterGroup) er
 	return nil
 }
 
-func (s *Server) sendSlackMessage(level slack.Level, msg string) error {
+func (s *Server) sendSlackMessage(level slack.Level, msg string) {
 	if s.slacker == nil {
-		return nil
+		return
 	}
 
-	return s.slacker.SendMessage(level, msg)
+	s.slacker.SendMessage(level, msg)
 }
 
 func (s *Server) tellSlackStillRunning() {
@@ -233,18 +227,15 @@ func (s *Server) tellSlackStillRunning() {
 	for {
 		select {
 		case <-ticker.C:
-			err := s.serverStillRunning()
-			if err != nil {
-				return
-			}
+			s.serverStillRunning()
 		case <-s.serverAliveCh:
 			return
 		}
 	}
 }
 
-func (s *Server) serverStillRunning() error {
-	return s.slacker.SendMessage(slack.Info, "server is still running")
+func (s *Server) serverStillRunning() {
+	s.slacker.SendMessage(slack.Info, "server is still running")
 }
 
 // EnableRemoteDBBackups causes the database backup file to also be backed up to

@@ -52,6 +52,8 @@ const (
 	putMetaParts   = 2
 	putSet         = "manual"
 
+	numIRODSConnections = 2
+
 	// minMBperSecondUploadSpeed is the slowest MB/s we think an upload should
 	// take; if it drops below this and is still uploading, we'll report to the
 	// server the upload might be stuck.
@@ -184,12 +186,22 @@ func handleServerMode(started time.Time) {
 		os.Exit(0)
 	}
 
+	err = client.MakingIRODSConnections(numIRODSConnections)
+	if err != nil {
+		die(err.Error())
+	}
+
 	uploadStarts, uploadResults, skipResults, dfunc := handlePut(client, requests)
 
 	err = client.SendPutResultsToServer(uploadStarts, uploadResults, skipResults,
 		minMBperSecondUploadSpeed, minTimeForUpload, maxStuckTime, appLogger)
 
 	dfunc()
+
+	errm := client.ClosedIRODSConnections()
+	if errm != nil {
+		warn(errm.Error())
+	}
 
 	if err != nil {
 		warn("%s", err)

@@ -51,7 +51,7 @@ func (s *SizeAndNumber) SizeTiB() float64 {
 
 // add increases our totals based on the info in the given set.
 func (s *SizeAndNumber) add(set *Set) {
-	s.Size += set.SizeFiles
+	s.Size += set.SizeTotal
 	s.Number += set.NumFiles
 }
 

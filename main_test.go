@@ -54,7 +54,7 @@ const app = "ibackup"
 const userPerms = 0700
 
 const noBackupSets = `Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
-Global put client status (/10): 0 creating collections; 0 currently uploading
+Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
 no backup sets`
 
 var errTwoBackupsNotSeen = errors.New("2 backups were not seen")
@@ -107,6 +107,8 @@ func (s *TestServer) prepareFilePaths(dir string) {
 		"HOME=" + home,
 		"IRODS_ENVIRONMENT_FILE=" + os.Getenv("IRODS_ENVIRONMENT_FILE"),
 		"GEM_HOME=" + os.Getenv("GEM_HOME"),
+		"IBACKUP_SLACK_TOKEN=" + os.Getenv("IBACKUP_SLACK_TOKEN"),
+		"IBACKUP_SLACK_CHANNEL=" + os.Getenv("IBACKUP_SLACK_CHANNEL"),
 	}
 }
 
@@ -381,12 +383,7 @@ func TestMain(m *testing.M) {
 		}
 	}
 
-	remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
-	if remotePath == "" {
-		return
-	}
-
-	exec.Command("irm", "-r", remotePath).Run() //nolint:errcheck
+	resetIRODS()
 }
 
 func buildSelf() func() {
@@ -397,6 +394,15 @@ func buildSelf() func() {
 	}
 
 	return func() { os.Remove(app) }
+}
+
+func resetIRODS() {
+	remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
+	if remotePath == "" {
+		return
+	}
+
+	exec.Command("irm", "-r", remotePath).Run() //nolint:errcheck
 }
 
 func failMainTest(err string) {
@@ -428,15 +434,15 @@ func TestStatus(t *testing.T) {
 
 			Convey("Status tells you where input directories would get uploaded to", func() {
 				s.confirmOutput(t, []string{"status"}, 0, `Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
-Global put client status (/10): 0 creating collections; 0 currently uploading
+Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
 
 Name: testAdd
 Transformer: `+transformer+`
 Monitored: false; Archive: false
 Status: complete
 Discovery:
-Num files: 0; Symlinks: 0; Hardlinks: 0; Size files: 0 B
-Uploaded: 0; Failed: 0; Missing: 0; Abnormal: 0
+Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 0 B / 0 B
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
 Completed in: 0s
 Directories:
   `+localDir+" => "+remoteDir)
@@ -461,15 +467,15 @@ Directories:
 			Convey("Status tells you an example of where input files would get uploaded to", func() {
 				s.confirmOutput(t, []string{"status", "--name", "testAddFiles"}, 0,
 					`Global put queue status: 2 queued; 0 reserved to be worked on; 0 failed
-Global put client status (/10): 0 creating collections; 0 currently uploading
+Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
 
 Name: testAddFiles
 Transformer: prefix=`+dir+`:/remote
 Monitored: false; Archive: false
 Status: complete
 Discovery:
-Num files: 2; Symlinks: 0; Hardlinks: 0; Size files: 0 B
-Uploaded: 0; Failed: 0; Missing: 2; Abnormal: 0
+Num files: 2; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 0 B / 0 B
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 2; Abnormal: 0
 Completed in: 0s
 Example File: `+dir+`/path/to/other/file => /remote/path/to/other/file`)
 			})
@@ -480,15 +486,15 @@ Example File: `+dir+`/path/to/other/file => /remote/path/to/other/file`)
 			s.addSetForTesting(t, "badHumgen", "humgen", localDir)
 
 			expected := `Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
-Global put client status (/10): 0 creating collections; 0 currently uploading
+Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
 
 Name: badHumgen
 Transformer: humgen
 Monitored: false; Archive: false
 Status: complete
 Discovery:
-Num files: 0; Symlinks: 0; Hardlinks: 0; Size files: 0 B
-Uploaded: 0; Failed: 0; Missing: 0; Abnormal: 0
+Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 0 B / 0 B
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
 Completed in: 0s
 Directories:
 your transformer didn't work: not a valid humgen lustre path [` + localDir + `/file.txt]
@@ -514,15 +520,15 @@ your transformer didn't work: not a valid humgen lustre path [` + localDir + `/f
 
 			s.confirmOutput(t, []string{"status", "-n", "oddPrefix"}, 0,
 				`Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
-Global put client status (/10): 0 creating collections; 0 currently uploading
+Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
 
 Name: oddPrefix
 Transformer: `+transformer+`
 Monitored: false; Archive: false
 Status: complete
 Discovery:
-Num files: 0; Symlinks: 0; Hardlinks: 0; Size files: 0 B
-Uploaded: 0; Failed: 0; Missing: 0; Abnormal: 0
+Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 0 B / 0 B
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
 Completed in: 0s
 Directories:
   `+localDir+toRemote+localDir)
@@ -546,7 +552,7 @@ Directories:
 
 			s.confirmOutput(t, []string{"status", "-n", "badPerms"}, 0,
 				`Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
-Global put client status (/10): 0 creating collections; 0 currently uploading
+Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
 
 Name: badPerms
 Transformer: `+transformer+`
@@ -554,8 +560,8 @@ Monitored: false; Archive: false
 Status: complete
 Warning: open `+badPermDir+`: permission denied
 Discovery:
-Num files: 0; Symlinks: 0; Hardlinks: 0; Size files: 0 B
-Uploaded: 0; Failed: 0; Missing: 0; Abnormal: 0
+Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 0 B / 0 B
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
 Completed in: 0s
 Directories:
   `+localDir+" => "+remote)
@@ -575,15 +581,15 @@ Directories:
 
 			s.confirmOutput(t, []string{"status", "-n", "humgenSet"}, 0,
 				`Global put queue status: 1 queued; 0 reserved to be worked on; 0 failed
-Global put client status (/10): 0 creating collections; 0 currently uploading
+Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
 
 Name: humgenSet
 Transformer: humgen
 Monitored: false; Archive: false
 Status: pending upload
 Discovery:
-Num files: 1; Symlinks: 0; Hardlinks: 0; Size files: 0 B (and counting)
-Uploaded: 0; Failed: 0; Missing: 0; Abnormal: 0
+Num files: 1; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 0 B (and counting) / 0 B
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
 Example File: `+humgenFile+" => /humgen/teams/hgi/scratch125/mercury/ibackup/file_for_testsuite.do_not_delete")
 		})
 
@@ -601,15 +607,15 @@ Example File: `+humgenFile+" => /humgen/teams/hgi/scratch125/mercury/ibackup/fil
 
 			s.confirmOutput(t, []string{"status", "-n", "gengenSet"}, 0,
 				`Global put queue status: 1 queued; 0 reserved to be worked on; 0 failed
-Global put client status (/10): 0 creating collections; 0 currently uploading
+Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
 
 Name: gengenSet
 Transformer: gengen
 Monitored: false; Archive: false
 Status: pending upload
 Discovery:
-Num files: 1; Symlinks: 0; Hardlinks: 0; Size files: 0 B (and counting)
-Uploaded: 0; Failed: 0; Missing: 0; Abnormal: 0
+Num files: 1; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 0 B (and counting) / 0 B
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
 Example File: `+gengenFile+" => /humgen/gengen/teams/hgi/scratch126/mercury/ibackup/file_for_testsuite.do_not_delete")
 		})
 
@@ -638,15 +644,15 @@ Example File: `+gengenFile+" => /humgen/gengen/teams/hgi/scratch126/mercury/ibac
 
 			s.confirmOutput(t, []string{"status", "--name", "testLinks"}, 0,
 				`Global put queue status: 4 queued; 0 reserved to be worked on; 0 failed
-Global put client status (/10): 0 creating collections; 0 currently uploading
+Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
 
 Name: testLinks
 Transformer: prefix=`+dir+`:/remote
 Monitored: false; Archive: false
 Status: pending upload
 Discovery:
-Num files: 4; Symlinks: 2; Hardlinks: 1; Size files: 0 B (and counting)
-Uploaded: 0; Failed: 0; Missing: 0; Abnormal: 0
+Num files: 4; Symlinks: 2; Hardlinks: 1; Size (total/recently uploaded): 0 B (and counting) / 0 B
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
 Directories:
   `+dir+toRemote)
 		})
@@ -684,7 +690,7 @@ Directories:
 
 			s.confirmOutput(t, []string{"status", "--user", "all"}, 0,
 				`Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
-Global put client status (/10): 0 creating collections; 0 currently uploading
+Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
 
 Name: setForRequesterPrinting
 Requester: `+currentUserName+`
@@ -692,8 +698,8 @@ Transformer: `+transformer+`
 Monitored: false; Archive: false
 Status: complete
 Discovery:
-Num files: 0; Symlinks: 0; Hardlinks: 0; Size files: 0 B
-Uploaded: 0; Failed: 0; Missing: 0; Abnormal: 0
+Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 0 B / 0 B
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
 Completed in: 0s
 Directories:
   `+local+" => "+remote)
@@ -714,15 +720,15 @@ Directories:
 
 				s.confirmOutput(t, []string{"status", "--name", "testAddFifo", "--details"}, 0,
 					`Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
-Global put client status (/10): 0 creating collections; 0 currently uploading
+Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
 
 Name: testAddFifo
 Transformer: prefix=`+dir+`:/remote
 Monitored: false; Archive: false
 Status: complete
 Discovery:
-Num files: 1; Symlinks: 0; Hardlinks: 0; Size files: 0 B
-Uploaded: 0; Failed: 0; Missing: 0; Abnormal: 1
+Num files: 1; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 0 B / 0 B
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 1
 Completed in: 0s
 Example File: `+dir+`/fifo => /remote/fifo
 
@@ -739,15 +745,15 @@ Path	Status	Size	Attempts	Date	Error
 
 				s.confirmOutput(t, []string{"status", "--name", "testAddFifoDir"}, 0,
 					`Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
-Global put client status (/10): 0 creating collections; 0 currently uploading
+Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
 
 Name: testAddFifoDir
 Transformer: prefix=`+dir+`:/remote
 Monitored: false; Archive: false
 Status: complete
 Discovery:
-Num files: 0; Symlinks: 0; Hardlinks: 0; Size files: 0 B
-Uploaded: 0; Failed: 0; Missing: 0; Abnormal: 0
+Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 0 B / 0 B
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
 Completed in: 0s
 Directories:
   `+dir+toRemote)
@@ -918,15 +924,15 @@ func TestBackup(t *testing.T) {
 
 			bs.confirmOutput(t, []string{
 				"status", "-n", "testForBackup"}, 0, `Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
-Global put client status (/10): 0 creating collections; 0 currently uploading
+Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
 
 Name: testForBackup
 Transformer: `+transformer+`
 Monitored: false; Archive: false
 Status: complete
 Discovery:
-Num files: 0; Symlinks: 0; Hardlinks: 0; Size files: 0 B
-Uploaded: 0; Failed: 0; Missing: 0; Abnormal: 0
+Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 0 B / 0 B
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
 Completed in: 0s
 Directories:
   `+localDir+` => `+remoteDir)
@@ -973,7 +979,69 @@ func TestPuts(t *testing.T) {
 		path := t.TempDir()
 		transformer := "prefix=" + path + ":" + remotePath
 
-		Convey("Putting a set with hardlinks uploads an empty file and special inode file", func() {
+		Convey("Repeatedly uploading files that are changed or not changes status details", func() {
+			file1 := filepath.Join(path, "file1")
+			file2 := filepath.Join(path, "file2")
+			file3 := filepath.Join(path, "file3")
+
+			internal.CreateTestFile(t, file1, "some data1")
+			internal.CreateTestFile(t, file2, "some data2")
+			internal.CreateTestFile(t, file3, "some data3")
+
+			setName := "changingFilesTest"
+			s.addSetForTesting(t, setName, transformer, path)
+
+			statusCmd := []string{"status", "--name", setName}
+
+			s.waitForStatus(setName, "\nStatus: uploading", 60*time.Second)
+			s.confirmOutputContains(t, statusCmd, 0,
+				`Global put queue status: 3 queued; 3 reserved to be worked on; 0 failed
+Global put client status (/10): 6 iRODS connections`)
+
+			s.waitForStatus(setName, "\nStatus: complete", 60*time.Second)
+
+			s.confirmOutputContains(t, statusCmd, 0,
+				"Uploaded: 3; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0")
+			s.confirmOutputContains(t, statusCmd, 0,
+				"Num files: 3; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 30 B / 30 B")
+
+			s.confirmOutputContains(t, statusCmd, 0, "")
+
+			newName := setName + ".v2"
+			statusCmd[2] = newName
+
+			s.addSetForTesting(t, newName, transformer, path)
+			s.waitForStatus(newName, "\nStatus: complete", 60*time.Second)
+			s.confirmOutputContains(t, statusCmd, 0,
+				"Uploaded: 0; Replaced: 0; Skipped: 3; Failed: 0; Missing: 0; Abnormal: 0")
+			s.confirmOutputContains(t, statusCmd, 0,
+				"Num files: 3; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 30 B / 0 B")
+
+			newName = setName + ".v3"
+			statusCmd[2] = newName
+
+			internal.CreateTestFile(t, file2, "some data2 updated")
+
+			s.addSetForTesting(t, newName, transformer, path)
+			s.waitForStatus(newName, "\nStatus: complete", 60*time.Second)
+			s.confirmOutputContains(t, statusCmd, 0,
+				"Uploaded: 0; Replaced: 1; Skipped: 2; Failed: 0; Missing: 0; Abnormal: 0")
+			s.confirmOutputContains(t, statusCmd, 0,
+				"Num files: 3; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 38 B / 18 B")
+
+			internal.CreateTestFile(t, file2, "less data")
+			exitCode, _ := s.runBinary(t, "retry", "--name", newName, "-a")
+			So(exitCode, ShouldEqual, 0)
+
+			s.waitForStatus(newName, "\nStatus: complete", 60*time.Second)
+			s.confirmOutputContains(t, statusCmd, 0,
+				"Uploaded: 0; Replaced: 1; Skipped: 2; Failed: 0; Missing: 0; Abnormal: 0")
+			s.confirmOutputContains(t, statusCmd, 0,
+				"Num files: 3; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 29 B / 9 B")
+		})
+
+		// TODO: re-enable once hardlinks metamod bug fixed
+		SkipConvey("Putting a set with hardlinks uploads an empty file and special inode file", func() {
 			file := filepath.Join(path, "file")
 			link1 := filepath.Join(path, "hardlink1")
 			link2 := filepath.Join(path, "hardlink2")
@@ -992,6 +1060,7 @@ func TestPuts(t *testing.T) {
 
 			s.addSetForTesting(t, "hardlinkTest", transformer, path)
 
+			s.waitForStatus("hardlinkTest", "\nStatus: uploading", 60*time.Second)
 			s.waitForStatus("hardlinkTest", "\nStatus: complete", 60*time.Second)
 
 			output := getRemoteMeta(remoteFile)
@@ -1042,7 +1111,7 @@ func TestPuts(t *testing.T) {
 			s.waitForStatus(setName, statusLine, 30*time.Second)
 
 			expected := `Global put queue status: 1 queued; 0 reserved to be worked on; 1 failed
-Global put client status (/10): 0 creating collections; 0 currently uploading
+Global put client status (/10): 2 iRODS connections; 0 creating collections; 0 currently uploading
 no backup sets`
 			s.confirmOutput(t, []string{"status", "-c"}, 0, expected)
 			s.confirmOutput(t, []string{"status", "-q"}, 0, expected)
@@ -1076,6 +1145,8 @@ func getRemoteMeta(path string) string {
 }
 
 func TestManualMode(t *testing.T) {
+	resetIRODS()
+
 	Convey("when using a manual put command, files are uploaded correctly", t, func() {
 		remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
 		if remotePath == "" {

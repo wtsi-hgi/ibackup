@@ -228,7 +228,7 @@ func (d *DB) AddOrUpdate(set *Set) error {
 	})
 
 	if err == nil {
-		err = set.SuccessfullyStoredInDB()
+		set.SuccessfullyStoredInDB()
 	}
 
 	return err
@@ -557,10 +557,7 @@ func (d *DB) updateSetAfterDiscovery(setID string) (*Set, error) {
 			return err
 		}
 
-		err = set.DiscoveryCompleted(d.countAllFilesInSet(tx, setID))
-		if err != nil {
-			return err
-		}
+		set.DiscoveryCompleted(d.countAllFilesInSet(tx, setID))
 
 		updatedSet = set
 
@@ -740,9 +737,16 @@ func requestStatusToEntryStatus(r *put.Request, entry *Entry) {
 		if r.Stuck != nil {
 			entry.LastError = r.Stuck.String()
 		}
-	case put.RequestStatusUploaded, put.RequestStatusUnmodified, put.RequestStatusReplaced:
+	case put.RequestStatusUploaded:
 		entry.Status = Uploaded
 		entry.unFailed = entry.Attempts > 1
+		entry.LastError = ""
+	case put.RequestStatusReplaced:
+		entry.Status = Replaced
+		entry.unFailed = entry.Attempts > 1
+		entry.LastError = ""
+	case put.RequestStatusUnmodified:
+		entry.Status = Skipped
 		entry.LastError = ""
 	case put.RequestStatusFailed:
 		entry.Status = Failed
@@ -1058,25 +1062,22 @@ func (d *DBRO) GetDirEntries(setID string) ([]*Entry, error) {
 // SetError updates a set with the given error message. Returns an error if the
 // setID isn't in the database.
 func (d *DB) SetError(setID, errMsg string) error {
-	return d.updateSetProperties(setID, func(got *Set) error {
-		return got.SetError(errMsg)
+	return d.updateSetProperties(setID, func(got *Set) {
+		got.SetError(errMsg)
 	})
 }
 
 // updateSetProperties retrives a set from the database and gives it to your
 // callback, allowing you to change properties on it. The altered set will then
 // be stored back in the database.
-func (d *DB) updateSetProperties(setID string, cb func(*Set) error) error {
+func (d *DB) updateSetProperties(setID string, cb func(*Set)) error {
 	return d.db.Update(func(tx *bolt.Tx) error {
 		set, bid, b, err := d.getSetByID(tx, setID)
 		if err != nil {
 			return err
 		}
 
-		err = cb(set)
-		if err != nil {
-			return err
-		}
+		cb(set)
 
 		return b.Put(bid, d.encodeToBytes(set))
 	})
@@ -1085,8 +1086,8 @@ func (d *DB) updateSetProperties(setID string, cb func(*Set) error) error {
 // SetWarning updates a set with the given warning message. Returns an error if
 // the setID isn't in the database.
 func (d *DB) SetWarning(setID, warnMsg string) error {
-	return d.updateSetProperties(setID, func(got *Set) error {
-		return got.SetWarning(warnMsg)
+	return d.updateSetProperties(setID, func(got *Set) {
+		got.SetWarning(warnMsg)
 	})
 }
 

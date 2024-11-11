@@ -1374,8 +1374,10 @@ func TestServer(t *testing.T) {
 								So(err, ShouldBeNil)
 								So(gotSet.Status, ShouldEqual, set.Complete)
 								So(gotSet.NumFiles, ShouldEqual, 6)
-								So(gotSet.SizeFiles, ShouldEqual, 15)
-								So(gotSet.Uploaded, ShouldEqual, 5)
+								So(gotSet.SizeTotal, ShouldEqual, 15)
+								So(gotSet.Uploaded, ShouldEqual, 3)
+								So(gotSet.Replaced, ShouldEqual, 1)
+								So(gotSet.Skipped, ShouldEqual, 1)
 								So(gotSet.Failed, ShouldEqual, 1)
 								So(gotSet.Symlinks, ShouldEqual, 1)
 								So(gotSet.Missing, ShouldEqual, 0)
@@ -1612,8 +1614,23 @@ func TestServer(t *testing.T) {
 						So(gotSet.Uploaded, ShouldEqual, 0)
 						So(gotSet.Error, ShouldBeBlank)
 
+						qs, errg := client.GetQueueStatus()
+						So(errg, ShouldBeNil)
+						So(qs.IRODSConnections, ShouldEqual, 0)
+
+						slackWriter.Reset()
+
+						err = client.MakingIRODSConnections(2)
+						So(err, ShouldBeNil)
+
+						So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"2 iRODS connections open")
+
 						p, d := makePutter(t, handler, requests, client)
 						defer d()
+
+						qs, err = client.GetQueueStatus()
+						So(err, ShouldBeNil)
+						So(qs.IRODSConnections, ShouldEqual, 2)
 
 						uploadStarts, uploadResults, skippedResults := p.Put()
 
@@ -1627,6 +1644,24 @@ func TestServer(t *testing.T) {
 						So(gotSet.NumFiles, ShouldEqual, len(discovers))
 						So(gotSet.Uploaded, ShouldEqual, len(discovers))
 						So(gotSet.Symlinks, ShouldEqual, 1)
+
+						slackWriter.Reset()
+
+						err = client.MakingIRODSConnections(2)
+						So(err, ShouldBeNil)
+
+						So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"4 iRODS connections open")
+
+						slackWriter.Reset()
+
+						err = client.ClosedIRODSConnections()
+						So(err, ShouldBeNil)
+
+						qs, err = client.GetQueueStatus()
+						So(err, ShouldBeNil)
+						So(qs.IRODSConnections, ShouldEqual, 0)
+
+						So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"0 iRODS connections open")
 
 						Convey("After completion, re-discovery can find new files and we can re-complete", func() {
 							newFile := filepath.Join(dirs[0], "new")
@@ -1668,7 +1703,9 @@ func TestServer(t *testing.T) {
 							So(err, ShouldBeNil)
 							So(gotSet.Status, ShouldEqual, set.Complete)
 							So(gotSet.NumFiles, ShouldEqual, expectedNumFiles)
-							So(gotSet.Uploaded, ShouldEqual, expectedNumFiles)
+							So(gotSet.Uploaded, ShouldEqual, 1)
+							So(gotSet.Replaced, ShouldEqual, 0)
+							So(gotSet.Skipped, ShouldEqual, expectedNumFiles-1)
 							So(gotSet.Symlinks, ShouldEqual, 1)
 
 							entries, errg := client.GetFiles(exampleSet.ID())
@@ -1676,7 +1713,7 @@ func TestServer(t *testing.T) {
 							So(len(entries), ShouldEqual, expectedNumFiles)
 
 							for n, entry := range entries {
-								So(entry.Status, ShouldEqual, set.Uploaded)
+								So(entry.Status == set.Uploaded || entry.Status == set.Skipped, ShouldBeTrue)
 
 								if n == 3 {
 									So(entry.Type, ShouldEqual, set.Symlink)
@@ -1705,7 +1742,7 @@ func TestServer(t *testing.T) {
 								}
 							}
 
-							So(gotSet.SizeFiles, ShouldEqual, expectedSetSize)
+							So(gotSet.SizeTotal, ShouldEqual, expectedSetSize)
 						})
 					})
 
@@ -1775,7 +1812,9 @@ func TestServer(t *testing.T) {
 							So(err, ShouldBeNil)
 							So(gotSet.Status, ShouldEqual, set.Complete)
 							So(gotSet.NumFiles, ShouldEqual, len(discovers))
-							So(gotSet.Uploaded, ShouldEqual, len(discovers))
+							So(gotSet.Uploaded, ShouldEqual, 1)
+							So(gotSet.Replaced, ShouldEqual, 0)
+							So(gotSet.Skipped, ShouldEqual, len(discovers)-1)
 							So(gotSet.Symlinks, ShouldEqual, 1)
 
 							entries, errg := client.GetFiles(exampleSet.ID())
@@ -1783,7 +1822,7 @@ func TestServer(t *testing.T) {
 							So(len(entries), ShouldEqual, len(discovers))
 
 							for n, entry := range entries {
-								So(entry.Status, ShouldEqual, set.Uploaded)
+								So(entry.Status == set.Uploaded || entry.Status == set.Skipped, ShouldBeTrue)
 
 								if n == 2 {
 									So(entry.Type, ShouldEqual, set.Symlink)
@@ -2730,7 +2769,7 @@ func TestServer(t *testing.T) {
 							So(gotSet.NumFiles, ShouldEqual, 3)
 							So(gotSet.Uploaded, ShouldEqual, 3)
 							So(gotSet.Hardlinks, ShouldEqual, 2)
-							So(gotSet.SizeFiles, ShouldEqual, 1)
+							So(gotSet.SizeTotal, ShouldEqual, 1)
 
 							Convey("moving all files of an inode uploads hardlinks to new location", func() {
 								path4 := filepath.Join(localDir, "file2.link1")
