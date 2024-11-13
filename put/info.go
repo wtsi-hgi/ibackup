@@ -51,7 +51,7 @@ const (
 type ObjectInfo struct {
 	Exists bool
 	Size   uint64
-	Meta   map[string]string
+	Meta   AVs
 }
 
 // Stat stats localPath like os.Lstat(), but also returns information about the
@@ -62,24 +62,25 @@ func Stat(localPath string) (*ObjectInfo, error) {
 		return nil, err
 	}
 
-	mtime, err := TimeToMeta(fi.ModTime())
-	if err != nil {
-		return nil, err
-	}
+	// mtime, err := TimeToMeta(fi.ModTime())
+	// if err != nil {
+	// 	return nil, err
+	// }
 
-	user, group, err := getUserAndGroupFromFileInfo(fi, localPath)
-	if err != nil {
-		return nil, err
-	}
+	// user, group, err := getUserAndGroupFromFileInfo(fi, localPath)
+	// if err != nil {
+	// 	return nil, err
+	// }
 
 	return &ObjectInfo{
 		Exists: true,
 		Size:   uint64(fi.Size()),
-		Meta: map[string]string{
-			MetaKeyMtime: mtime,
-			MetaKeyOwner: user,
-			MetaKeyGroup: group,
-		},
+		Meta:   AVs{}, //TODO
+		// Meta: map[string]string{
+		// 	MetaKeyMtime: mtime,
+		// 	MetaKeyOwner: user,
+		// 	MetaKeyGroup: group,
+		// },
 	}, nil
 }
 
@@ -133,12 +134,12 @@ func (o *ObjectInfo) HasSameModTime(as *ObjectInfo) bool {
 func (o *ObjectInfo) ModTime() time.Time {
 	t := time.Time{}
 
-	s, exists := o.Meta[MetaKeyMtime]
-	if !exists || s == "" {
+	s := o.Meta.Get(MetaKeyMtime)
+	if s == nil {
 		return t
 	}
 
-	t.UnmarshalText([]byte(s)) //nolint:errcheck
+	t.UnmarshalText([]byte(s[0])) //nolint:errcheck
 
 	return t
 }

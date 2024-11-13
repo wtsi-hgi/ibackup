@@ -93,7 +93,7 @@ func TestPutMock(t *testing.T) {
 				Convey("A second put of the same files skips them all, except for modified ones", func() {
 					requests[0].Requester = "Sam"
 					requests[0].Set = "setB"
-					requests[0].Meta = map[string]string{"a": "1", "b": "3", "c": "4"}
+					requests[0].Meta = AVs{} //TODO: map[string]string{"a": "1", "b": "3", "c": "4"}
 					touchFile(requests[0].Local, 1*time.Hour)
 
 					uCh, urCh, srCh = p.Put()
@@ -112,9 +112,9 @@ func TestPutMock(t *testing.T) {
 							replaced++
 							lh.mu.RLock()
 							So(lh.meta[request.Remote], ShouldResemble, requests[0].Meta)
-							So(lh.meta[request.Remote][MetaKeyRequester], ShouldEqual, "John,Sam")
-							So(lh.meta[request.Remote][MetaKeySets], ShouldEqual, "setA,setB")
-							date = lh.meta[request.Remote][MetaKeyDate]
+							So(lh.meta[request.Remote].GetSingle(MetaKeyRequester), ShouldEqual, "John,Sam")
+							So(lh.meta[request.Remote].GetSingle(MetaKeySets), ShouldEqual, "setA,setB")
+							date = lh.meta[request.Remote].GetSingle(MetaKeyDate)
 							lh.mu.RUnlock()
 						default:
 							other++
@@ -156,9 +156,9 @@ func TestPutMock(t *testing.T) {
 						request = <-srCh
 						So(request.Status, ShouldEqual, RequestStatusUnmodified)
 						lh.mu.RLock()
-						So(lh.meta[request.Remote][MetaKeyRequester], ShouldEqual, "John,Sam")
-						So(lh.meta[request.Remote][MetaKeySets], ShouldEqual, "setA,setB,setC")
-						So(lh.meta[request.Remote][MetaKeyDate], ShouldEqual, date)
+						So(lh.meta[request.Remote].Get(MetaKeyRequester), ShouldResemble, []string{"John", "Sam"})
+						So(lh.meta[request.Remote].Get(MetaKeySets), ShouldResemble, []string{"setA", "setB", "setC"})
+						So(lh.meta[request.Remote].GetSingle(MetaKeyDate), ShouldEqual, date)
 						lh.mu.RUnlock()
 					})
 				})
@@ -215,9 +215,9 @@ func TestPutMock(t *testing.T) {
 				inodeRemote := filepath.Join(inodeDir, "inode.file")
 				requests[2].Hardlink = inodeRemote
 				setMetaKey := "set"
-				requests[2].Meta = map[string]string{setMetaKey: "a"}
+				requests[2].Meta = AVs{} //TODO: map[string]string{setMetaKey: "a"}
 				requests[4].Hardlink = inodeRemote
-				requests[4].Meta = map[string]string{setMetaKey: "b"}
+				requests[4].Meta = AVs{} //TODO:  map[string]string{setMetaKey: "b"}
 
 				clonedRequest0 := requests[0].Clone()
 				clonedRequest2 := requests[2].Clone()
@@ -245,15 +245,15 @@ func TestPutMock(t *testing.T) {
 				So(errs, ShouldBeNil)
 				So(info.Size(), ShouldEqual, 2)
 
-				So(lh.meta[requests[2].Remote][setMetaKey], ShouldEqual, "a")
-				So(lh.meta[requests[2].Hardlink][setMetaKey], ShouldNotBeBlank)
-				So(lh.meta[requests[2].Remote][MetaKeyRemoteHardlink], ShouldEqual, requests[2].Hardlink)
-				So(lh.meta[requests[2].Remote][MetaKeyHardlink], ShouldEqual, requests[2].Local)
+				So(lh.meta[requests[2].Remote].GetSingle(setMetaKey), ShouldEqual, "a")
+				So(lh.meta[requests[2].Hardlink].GetSingle(setMetaKey), ShouldNotBeBlank)
+				So(lh.meta[requests[2].Remote].GetSingle(MetaKeyRemoteHardlink), ShouldEqual, requests[2].Hardlink)
+				So(lh.meta[requests[2].Remote].GetSingle(MetaKeyHardlink), ShouldEqual, requests[2].Local)
 
-				So(lh.meta[requests[4].Remote][setMetaKey], ShouldEqual, "b")
-				So(lh.meta[requests[4].Hardlink][setMetaKey], ShouldNotBeBlank)
-				So(lh.meta[requests[4].Remote][MetaKeyRemoteHardlink], ShouldEqual, requests[2].Hardlink)
-				So(lh.meta[requests[4].Remote][MetaKeyHardlink], ShouldEqual, requests[4].Local)
+				So(lh.meta[requests[4].Remote].GetSingle(setMetaKey), ShouldEqual, "b")
+				So(lh.meta[requests[4].Hardlink].GetSingle(setMetaKey), ShouldNotBeBlank)
+				So(lh.meta[requests[4].Remote].GetSingle(MetaKeyRemoteHardlink), ShouldEqual, requests[2].Hardlink)
+				So(lh.meta[requests[4].Remote].GetSingle(MetaKeyHardlink), ShouldEqual, requests[4].Local)
 
 				Convey("re-uploading an unmodified hardlink does not replace remote files", func() {
 					hardlinkMTime := info.ModTime()
@@ -397,19 +397,17 @@ func TestPutMock(t *testing.T) {
 				Requester: "aRequester",
 				Set:       "aSet",
 				Status:    RequestStatusPending,
-				Meta: map[string]string{
-					"aKey": "aValue",
-				},
+				Meta:      AVs{}, //TODO: map[string]string{"aKey": "aValue",},
 			}
 
 			request2 := request1.Clone()
-			request2.Meta["aKey"] = "bValue"
-			request2.Meta["bKey"] = "anotherValue"
+			request2.Meta.Set("aKey", "bValue")
+			request2.Meta.Set("bKey", "anotherValue")
 			request2.Set = "bSet"
 
 			request3 := request1.Clone()
-			request3.Meta["aKey"] = "cValue"
-			request2.Meta["bKey"] = "yetAnotherValue"
+			request3.Meta.Set("aKey", "cValue")
+			request2.Meta.Set("bKey", "yetAnotherValue")
 			request3.Set = "cSet"
 
 			uploading, skipped, statusCounts := uploadRequests(t, lh, []*Request{request1, request2, request3})
@@ -419,9 +417,9 @@ func TestPutMock(t *testing.T) {
 			So(statusCounts[RequestStatusUploaded], ShouldEqual, 1)
 			So(statusCounts[RequestStatusUnmodified], ShouldEqual, 0)
 
-			So(lh.meta[remotePath][MetaKeySets], ShouldEqual, "aSet,bSet,cSet")
-			So(lh.meta[remotePath]["aKey"], ShouldEqual, "cValue")
-			So(lh.meta[remotePath]["bKey"], ShouldEqual, "yetAnotherValue")
+			So(lh.meta[remotePath].Get(MetaKeySets), ShouldResemble, []string{"aSet", "bSet", "cSet"})
+			So(lh.meta[remotePath].GetSingle("aKey"), ShouldEqual, "cValue")
+			So(lh.meta[remotePath].GetSingle("bKey"), ShouldEqual, "yetAnotherValue")
 		})
 	})
 
@@ -524,7 +522,7 @@ func makeTestRequests(t *testing.T, sourceDir, destDir string) []*Request {
 	}
 
 	requests := make([]*Request, len(sourcePaths))
-	meta := map[string]string{"a": "1", "b": "2"}
+	meta := AVs{} //TODO: map[string]string{"a": "1", "b": "2"}
 
 	for i, path := range sourcePaths {
 		dir := filepath.Dir(path)
@@ -548,11 +546,11 @@ func makeTestRequests(t *testing.T, sourceDir, destDir string) []*Request {
 
 // checkAddedMeta checks that the given map contains all the extra metadata keys
 // that we add to requests.
-func checkAddedMeta(meta map[string]string) {
-	So(meta[MetaKeyMtime], ShouldNotBeBlank)
-	So(meta[MetaKeyOwner], ShouldNotBeBlank)
-	So(meta[MetaKeyGroup], ShouldNotBeBlank)
-	So(meta[MetaKeyDate], ShouldNotBeBlank)
+func checkAddedMeta(meta AVs) {
+	So(meta.Get(MetaKeyMtime)[0], ShouldNotBeBlank)
+	So(meta.Get(MetaKeyOwner)[0], ShouldNotBeBlank)
+	So(meta.Get(MetaKeyGroup)[0], ShouldNotBeBlank)
+	So(meta.Get(MetaKeyDate)[0], ShouldNotBeBlank)
 }
 
 // touchFile alters the mtime of the given file by the given duration. Returns

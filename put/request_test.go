@@ -200,18 +200,20 @@ func TestRequest(t *testing.T) {
 			Remote:    "/some/remote/path",
 			Requester: "someRequester",
 			Set:       "testSet",
-			Meta: map[string]string{
-				"metaKey": "metaValue",
-			},
-			Status:   RequestStatusFailed,
-			Symlink:  "/path/to/dest",
-			Hardlink: "/path/to/original",
-			Size:     123,
-			Error:    "oh no",
-			Stuck:    new(Stuck),
-			remoteMeta: map[string]string{
-				"remoteMetaKey": "remoteMetaValue",
-			},
+			Meta:      AVs{}, //TODO
+			// Meta: map[string]string{
+			// 	"metaKey": "metaValue",
+			// },
+			Status:     RequestStatusFailed,
+			Symlink:    "/path/to/dest",
+			Hardlink:   "/path/to/original",
+			Size:       123,
+			Error:      "oh no",
+			Stuck:      new(Stuck),
+			remoteMeta: AVs{}, //TODO
+			// remoteMeta: map[string]string{
+			// 	"remoteMetaKey": "remoteMetaValue",
+			// },
 			skipPut: true,
 		}
 
@@ -238,7 +240,7 @@ func TestRequest(t *testing.T) {
 		r.Requester = "someOtherRequester"
 		So(r.Requester, ShouldNotEqual, clone.Requester)
 
-		r.Meta["metaKey"] = "anotherMetaValue"
+		r.Meta.Set("metaKey", "anotherMetaValue")
 		So(r.Meta, ShouldNotResemble, clone.Meta)
 	})
 }

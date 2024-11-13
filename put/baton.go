@@ -407,14 +407,17 @@ func requestToRodsItem(request *Request) *ex.RodsItem {
 }
 
 // rodsItemToMeta pulls out the AVUs from a RodsItem and returns them as a map.
-func rodsItemToMeta(it ex.RodsItem) map[string]string {
-	meta := make(map[string]string, len(it.IAVUs))
+func rodsItemToMeta(it ex.RodsItem) AVs {
+	// meta := make(map[string]string, len(it.IAVUs))
 
-	for _, iavu := range it.IAVUs {
-		meta[iavu.Attr] = iavu.Value
-	}
+	// for _, iavu := range it.IAVUs {
+	// 	meta[iavu.Attr] = iavu.Value
+	// }
 
-	return meta
+	// return meta
+	var avs AVs
+
+	return avs
 }
 
 // Put uploads request Local to the Remote object, overwriting it if it already
@@ -461,19 +464,17 @@ func requestToRodsItemWithAVUs(request *Request) *ex.RodsItem {
 	return item
 }
 
-func metaToAVUs(meta map[string]string) []ex.AVU {
+func metaToAVUs(meta AVs) []ex.AVU {
 	avus := make([]ex.AVU, len(meta))
-	i := 0
 
-	for k, v := range meta {
-		avus[i] = ex.AVU{Attr: k, Value: v}
-		i++
+	for i, av := range meta {
+		avus[i] = ex.AVU{Attr: av.Attr, Value: av.Val}
 	}
 
 	return avus
 }
 
-func (b *Baton) RemoveMeta(path string, meta map[string]string) error {
+func (b *Baton) RemoveMeta(path string, meta AVs) error {
 	it := remotePathToRodsItem(path)
 	it.IAVUs = metaToAVUs(meta)
 
@@ -494,7 +495,7 @@ func remotePathToRodsItem(path string) *ex.RodsItem {
 	}
 }
 
-func (b *Baton) AddMeta(path string, meta map[string]string) error {
+func (b *Baton) AddMeta(path string, meta AVs) error {
 	it := remotePathToRodsItem(path)
 	it.IAVUs = metaToAVUs(meta)
 

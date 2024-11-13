@@ -108,12 +108,12 @@ type Handler interface {
 	Put(request *Request) error
 
 	// RemoveMeta deletes the given metadata from the given object.
-	RemoveMeta(path string, meta map[string]string) error
+	RemoveMeta(path string, meta AVs) error
 
 	// AddMeta adds the given metadata to the given object. Given metadata keys
 	// should already have been removed with RemoveMeta() from the remote
-	// object.
-	AddMeta(path string, meta map[string]string) error
+	// object, unless you want multiple values with the same key.
+	AddMeta(path string, meta AVs) error
 
 	// Cleanup stops any connections created earlier and does any other cleanup
 	// needed.

@@ -43,7 +43,7 @@ type LocalHandler struct {
 	connected   bool
 	cleaned     bool
 	collections []string
-	meta        map[string]map[string]string
+	meta        map[string]AVs
 	statFail    string
 	putFail     string
 	putSlow     string
@@ -57,7 +57,7 @@ type LocalHandler struct {
 // Remote for any Put()s. For use during tests.
 func GetLocalHandler() *LocalHandler {
 	return &LocalHandler{
-		meta: make(map[string]map[string]string),
+		meta: make(map[string]AVs),
 	}
 }
 
@@ -112,9 +112,9 @@ func (l *LocalHandler) Stat(request *Request) (*ObjectInfo, error) {
 
 	meta, exists := l.meta[request.Remote]
 	if !exists {
-		meta = make(map[string]string)
+		meta = AVs{}
 	} else {
-		meta = cloneMap(meta)
+		meta = meta.Clone()
 	}
 
 	return &ObjectInfo{Exists: true, Meta: meta}, nil
@@ -181,7 +181,7 @@ func (l *LocalHandler) MakeMetaFail(remote string) {
 
 // RemoveMeta deletes the given keys from a map stored under path. Returns an
 // error if metaFail == path.
-func (l *LocalHandler) RemoveMeta(path string, meta map[string]string) error {
+func (l *LocalHandler) RemoveMeta(path string, meta AVs) error {
 	if l.metaFail == path {
 		return Error{ErrMockMetaFail, ""}
 	}
@@ -194,8 +194,8 @@ func (l *LocalHandler) RemoveMeta(path string, meta map[string]string) error {
 		return nil
 	}
 
-	for key := range meta {
-		delete(pathMeta, key)
+	for _, av := range meta {
+		pathMeta.Remove(av.Attr)
 	}
 
 	return nil
@@ -203,7 +203,7 @@ func (l *LocalHandler) RemoveMeta(path string, meta map[string]string) error {
 
 // AddMeta adds the given meta to a map stored under path. Returns an error
 // if metafail == path, or if keys were already defined in the map.
-func (l *LocalHandler) AddMeta(path string, meta map[string]string) error {
+func (l *LocalHandler) AddMeta(path string, meta AVs) error {
 	if l.metaFail == path {
 		return Error{ErrMockMetaFail, ""}
 	}
@@ -213,16 +213,17 @@ func (l *LocalHandler) AddMeta(path string, meta map[string]string) error {
 
 	pathMeta, exists := l.meta[path]
 	if !exists {
-		pathMeta = make(map[string]string)
+		pathMeta = AVs{}
 		l.meta[path] = pathMeta
 	}
 
-	for key, val := range meta {
-		if _, exists := pathMeta[key]; exists {
-			return Error{ErrMockMetaFail, key}
+	for _, av := range meta {
+		current := pathMeta.Get(av.Attr)
+		if current != nil {
+			return Error{ErrMockMetaFail, av.Attr}
 		}
 
-		pathMeta[key] = val
+		pathMeta.Set(av.Attr, av.Attr)
 	}
 
 	return nil
@@ -232,24 +233,24 @@ func (l *LocalHandler) AddMeta(path string, meta map[string]string) error {
 // path is not known about or has no metadata).
 //
 // (Currently this is just for testing and not part of the Handler interface.)
-func (l *LocalHandler) GetMeta(path string) map[string]string {
+func (l *LocalHandler) GetMeta(path string) AVs {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
 	if l.meta == nil {
-		return make(map[string]string)
+		return AVs{}
 	}
 
-	currentMeta, exists := l.meta[path]
-	if !exists {
-		currentMeta = make(map[string]string)
-	}
+	// currentMeta, exists := l.meta[path]
+	// if !exists {
+	// 	currentMeta = AVs{}
+	// }
 
-	meta := make(map[string]string, len(currentMeta))
+	meta := AVs{} //TODO: make(map[string]string, len(currentMeta))
 
-	for k, v := range currentMeta {
-		meta[k] = v
-	}
+	// for k, v := range currentMeta {
+	// 	meta[k] = v
+	// }
 
 	return meta
 }

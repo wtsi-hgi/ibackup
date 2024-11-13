@@ -83,6 +83,38 @@ func (s *Stuck) String() string {
 		s.UploadStarted.Format(stuckTimeFormat), s.Host, s.PID)
 }
 
+type AV struct {
+	Attr string
+	Val  string
+}
+
+type AVs []AV
+
+func (a AVs) Resembles(cmp AVs) bool {
+	return false
+}
+func (a AVs) AttrResembles(attribute string, cmp AVs) bool {
+	return false
+}
+func (a AVs) Get(attribute string) []string {
+	return []string{}
+}
+func (a AVs) GetSingle(attribute string) string {
+	return ""
+}
+func (a AVs) Set(attribute, value string) {
+	return
+}
+func (a AVs) Remove(attribute string) {
+	return
+}
+func (a AVs) Clone() AVs {
+	return AVs{}
+}
+func DetermineMetadataToRemoveAndAdd(a, b AVs) (AVs, AVs) {
+	return AVs{}, AVs{}
+}
+
 // Request represents a local file you would like transferred to a remote iRODS
 // path, and any extra metadata (beyond the defaults which include user, group,
 // mtime, upload date) you'd like to associate with it. Setting Requester and
@@ -94,14 +126,14 @@ type Request struct {
 	RemoteForJSON       []byte // set by MakeSafeForJSON(); do not set this yourself.
 	Requester           string
 	Set                 string
-	Meta                map[string]string
+	Meta                AVs
 	Status              RequestStatus
 	Symlink             string // contains symlink path if request represents a symlink.
 	Hardlink            string // contains first seen path if request represents a hard-linked file.
 	Size                uint64 // size of Local in bytes, set for you on returned Requests.
 	Error               string
 	Stuck               *Stuck
-	remoteMeta          map[string]string
+	remoteMeta          AVs
 	skipPut             bool
 	emptyFileRequest    *Request
 	inodeRequest        *Request
@@ -151,8 +183,8 @@ func (r *Request) Prepare() error {
 
 	emptyFileRequest := r.Clone()
 	emptyFileRequest.Local = os.DevNull
-	emptyFileRequest.Meta[MetaKeyHardlink] = r.Local
-	emptyFileRequest.Meta[MetaKeyRemoteHardlink] = r.Hardlink
+	emptyFileRequest.Meta.Set(MetaKeyHardlink, r.Local)
+	emptyFileRequest.Meta.Set(MetaKeyRemoteHardlink, r.Hardlink)
 	emptyFileRequest.Hardlink = ""
 
 	inodeRequest := r.Clone()
@@ -274,8 +306,8 @@ func (r *Request) StatAndAssociateStandardMetadata(lInfo *ObjectInfo, handler Ha
 		return nil, err
 	}
 
-	r.Meta = cloneMap(r.inodeRequest.Meta)
-	r.remoteMeta = cloneMap(r.inodeRequest.remoteMeta)
+	r.Meta = r.inodeRequest.Meta.Clone()
+	r.remoteMeta = r.inodeRequest.remoteMeta.Clone()
 
 	if lInfo.HasSameModTime(rInfo) && !rInfoEmpty.Exists {
 		rInfo = rInfoEmpty
@@ -285,7 +317,7 @@ func (r *Request) StatAndAssociateStandardMetadata(lInfo *ObjectInfo, handler Ha
 	return rInfo, nil
 }
 
-func statAndAssociateStandardMetadata(request *Request, diskMeta map[string]string,
+func statAndAssociateStandardMetadata(request *Request, diskMeta AVs,
 	handler Handler) (*ObjectInfo, error) {
 	rInfo, err := handler.Stat(request)
 	if err != nil {
@@ -308,12 +340,12 @@ func statAndAssociateStandardMetadata(request *Request, diskMeta map[string]stri
 // Finally, it adds the remaining standard metadata we apply, replacing existing
 // values: date, using the current date, and requesters and sets, appending
 // Requester and Set to any existing values in the remoteMeta.
-func (r *Request) addStandardMeta(diskMeta, remoteMeta map[string]string) {
+func (r *Request) addStandardMeta(diskMeta, remoteMeta AVs) {
 	r.cloneMeta()
 
-	for k, v := range diskMeta {
-		r.Meta[k] = v
-	}
+	// for k, v := range diskMeta {
+	// 	r.Meta[k] = v
+	// }
 
 	r.updateMetadataBasedOnRemote(remoteMeta)
 }
@@ -321,10 +353,11 @@ func (r *Request) addStandardMeta(diskMeta, remoteMeta map[string]string) {
 // cloneMeta is used to ensure that our Meta is unique to us, so that if we
 // alter it, we don't alter any other Request's Meta.
 func (r *Request) cloneMeta() {
-	r.Meta = cloneMap(r.Meta)
-	r.remoteMeta = cloneMap(r.remoteMeta)
+	r.Meta = r.Meta.Clone()
+	r.remoteMeta = r.remoteMeta.Clone()
 }
 
+// TODO: delete or use as starting point for AVs.Clone()
 // cloneMap makes a copy of the given map.
 func cloneMap(m map[string]string) map[string]string {
 	clone := make(map[string]string, len(m))
@@ -342,7 +375,7 @@ func cloneMap(m map[string]string) map[string]string {
 // metadata to be lists that include our or Set and Requester in addition to any
 // others already recorded in the remote metadata. It also sets our date
 // metadata to now.
-func (r *Request) updateMetadataBasedOnRemote(remoteMeta map[string]string) {
+func (r *Request) updateMetadataBasedOnRemote(remoteMeta AVs) {
 	r.remoteMeta = remoteMeta
 
 	r.addDate()
@@ -355,7 +388,7 @@ func (r *Request) updateMetadataBasedOnRemote(remoteMeta map[string]string) {
 func (r *Request) addDate() {
 	date, _ := TimeToMeta(time.Now()) //nolint:errcheck
 
-	r.Meta[MetaKeyDate] = date
+	r.Meta.Set(MetaKeyDate, date)
 }
 
 // appendMeta appends the given value to the given key value in our remoteMeta,
@@ -367,12 +400,13 @@ func (r *Request) appendMeta(key, val string) {
 
 	appended := val
 
-	if rval, exists := r.remoteMeta[key]; exists {
-		rvals := strings.Split(rval, metaListSeparator)
-		appended = appendValIfNotInList(val, rvals)
+	current := r.remoteMeta.Get(key)
+	if current != nil {
+		// rvals := strings.Split(rval, metaListSeparator)
+		// appended = appendValIfNotInList(val, rvals)
 	}
 
-	r.Meta[key] = appended
+	r.Meta.Set(key, appended) //TODO: actually, a new Add function
 }
 
 // appendValIfNotInList appends val to list if not already in list. Returns the
@@ -404,7 +438,7 @@ func (r *Request) needsMetadataUpdate() bool {
 
 	defer func() {
 		r.skipPut = need
-		r.Meta[MetaKeyDate] = r.remoteMeta[MetaKeyDate]
+		r.Meta.Set(MetaKeyDate, r.remoteMeta.GetSingle(MetaKeyDate))
 	}()
 
 	need = r.valForMetaKeyDifferentOnRemote(MetaKeyRequester)
@@ -420,13 +454,14 @@ func (r *Request) needsMetadataUpdate() bool {
 // valForMetaKeyDifferentOnRemote returns false if key has no remote value.
 // Returns true if the remote value is different to ours.
 func (r *Request) valForMetaKeyDifferentOnRemote(key string) bool {
-	if rval, defined := r.remoteMeta[key]; defined {
-		if rval != r.Meta[key] {
-			return true
-		}
-	}
+	return r.remoteMeta.AttrResembles(key, r.Meta)
+	// if rval, defined := r.remoteMeta[key]; defined {
+	// 	if rval != r.Meta[key] {
+	// 		return true
+	// 	}
+	// }
 
-	return false
+	// return false
 }
 
 // RemoveAndAddMetadata removes and adds metadata on our Remote based on the
@@ -454,7 +489,7 @@ func removeAndAddMetadata(r *Request, handler Handler) error {
 	status := retry.Do(
 		context.Background(),
 		func() (err error) {
-			toRemove, toAdd := r.determineMetadataToRemoveAndAdd()
+			toRemove, toAdd := DetermineMetadataToRemoveAndAdd(r.Meta, r.remoteMeta)
 
 			defer func() {
 				if err != nil {
@@ -489,29 +524,30 @@ func removeAndAddMetadata(r *Request, handler Handler) error {
 	return status.Err
 }
 
+// TODO: remove, replaced by AVs method
 // determineMetadataToRemoveAndAdd compares our Meta to our remoteMeta and
 // returns a map of entries where both share a key but have a different value
 // (remove these), and a map of those key vals, plus key vals unique to
 // wantedMeta (add these).
-func (r *Request) determineMetadataToRemoveAndAdd() (map[string]string, map[string]string) {
-	toRemove := make(map[string]string)
-	toAdd := make(map[string]string)
+// func (r *Request) determineMetadataToRemoveAndAdd() (map[string]string, map[string]string) {
+// 	toRemove := make(map[string]string)
+// 	toAdd := make(map[string]string)
 
-	for attr, wanted := range r.Meta {
-		if remote, exists := r.remoteMeta[attr]; exists { //nolint:nestif
-			if wanted != remote {
-				toRemove[attr] = remote
-				toAdd[attr] = wanted
-			}
-		} else {
-			toAdd[attr] = wanted
-		}
-	}
+// 	for attr, wanted := range r.Meta {
+// 		if remote, exists := r.remoteMeta[attr]; exists { //nolint:nestif
+// 			if wanted != remote {
+// 				toRemove[attr] = remote
+// 				toAdd[attr] = wanted
+// 			}
+// 		} else {
+// 			toAdd[attr] = wanted
+// 		}
+// 	}
 
-	return toRemove, toAdd
-}
+// 	return toRemove, toAdd
+// }
 
-func (r *Request) removeMeta(handler Handler, toRemove map[string]string) error {
+func (r *Request) removeMeta(handler Handler, toRemove AVs) error {
 	if len(toRemove) == 0 {
 		return nil
 	}
@@ -519,7 +555,7 @@ func (r *Request) removeMeta(handler Handler, toRemove map[string]string) error 
 	return handler.RemoveMeta(r.Remote, toRemove)
 }
 
-func (r *Request) addMeta(handler Handler, toAdd map[string]string) error {
+func (r *Request) addMeta(handler Handler, toAdd AVs) error {
 	if len(toAdd) == 0 {
 		return nil
 	}
@@ -557,7 +593,7 @@ func NewRequestWithTransformedLocal(local string, pt PathTransformer) (*Request,
 		return nil, err
 	}
 
-	return &Request{Local: local, Remote: remote, Meta: make(map[string]string)}, nil
+	return &Request{Local: local, Remote: remote, Meta: AVs{}}, nil
 }
 
 // PrefixTransformer returns a PathTransformer that will replace localPrefix
