@@ -88,7 +88,9 @@ type AV struct {
 	Val  string
 }
 
-type AVs []AV
+type AVs struct {
+	avs []AV
+}
 
 func (a AVs) Resembles(cmp AVs) bool {
 	return false
@@ -96,18 +98,43 @@ func (a AVs) Resembles(cmp AVs) bool {
 func (a AVs) AttrResembles(attribute string, cmp AVs) bool {
 	return false
 }
+
 func (a AVs) Get(attribute string) []string {
-	return []string{}
+	var values []string
+
+	for _, av := range a.avs {
+		if av.Attr == attribute {
+			values = append(values, av.Val)
+		}
+	}
+
+	return values
 }
+
 func (a AVs) GetSingle(attribute string) string {
-	return ""
+	values := a.Get(attribute)
+	if len(values) != 1 {
+		return ""
+	}
+
+	return values[0]
 }
 func (a AVs) Set(attribute, value string) {
 	return
 }
-func (a AVs) Remove(attribute string) {
-	return
+
+func (a *AVs) Remove(attribute string) {
+	var result []AV
+
+	for _, av := range a.avs {
+		if av.Attr != attribute {
+			result = append(result, av)
+		}
+	}
+
+	a.avs = result
 }
+
 func (a AVs) Clone() AVs {
 	return AVs{}
 }
