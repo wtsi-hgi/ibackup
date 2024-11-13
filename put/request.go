@@ -26,6 +26,7 @@
 package put
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -33,6 +34,9 @@ import (
 	"time"
 
 	"github.com/dgryski/go-farm"
+	"github.com/wtsi-ssg/wr/backoff"
+	btime "github.com/wtsi-ssg/wr/backoff/time"
+	"github.com/wtsi-ssg/wr/retry"
 )
 
 type RequestStatus string
@@ -311,12 +315,7 @@ func (r *Request) addStandardMeta(diskMeta, remoteMeta map[string]string) {
 		r.Meta[k] = v
 	}
 
-	r.remoteMeta = remoteMeta
-
-	r.addDate()
-
-	r.appendMeta(MetaKeyRequester, r.Requester)
-	r.appendMeta(MetaKeySets, r.Set)
+	r.updateMetadataBasedOnRemote(remoteMeta)
 }
 
 // cloneMeta is used to ensure that our Meta is unique to us, so that if we
@@ -335,6 +334,21 @@ func cloneMap(m map[string]string) map[string]string {
 	}
 
 	return clone
+}
+
+// updateMetadataBasedOnRemote records the given metadata as remote metadata for
+// future comparisons needed when deciding if and how to update metadata in
+// iRODS. It uses the given remote metadata to update our sets and requesters
+// metadata to be lists that include our or Set and Requester in addition to any
+// others already recorded in the remote metadata. It also sets our date
+// metadata to now.
+func (r *Request) updateMetadataBasedOnRemote(remoteMeta map[string]string) {
+	r.remoteMeta = remoteMeta
+
+	r.addDate()
+
+	r.appendMeta(MetaKeyRequester, r.Requester)
+	r.appendMeta(MetaKeySets, r.Set)
 }
 
 // addDate adds the current date to Meta, replacing any exisiting value.
@@ -437,13 +451,42 @@ func (r *Request) RemoveAndAddMetadata(handler Handler) error {
 }
 
 func removeAndAddMetadata(r *Request, handler Handler) error {
-	toRemove, toAdd := r.determineMetadataToRemoveAndAdd()
+	status := retry.Do(
+		context.Background(),
+		func() (err error) {
+			toRemove, toAdd := r.determineMetadataToRemoveAndAdd()
 
-	if err := r.removeMeta(handler, toRemove); err != nil {
-		return err
-	}
+			defer func() {
+				if err != nil {
+					irodsInfo, errs := handler.Stat(r)
+					if errs != nil {
+						return
+					}
 
-	return r.addMeta(handler, toAdd)
+					r.updateMetadataBasedOnRemote(irodsInfo.Meta)
+				}
+			}()
+
+			err = r.removeMeta(handler, toRemove)
+			if err != nil {
+				return err
+			}
+
+			err = r.addMeta(handler, toAdd)
+
+			return err
+		},
+		retry.Untils{&retry.UntilLimit{Max: operationRetries}, &retry.UntilNoError{}},
+		&backoff.Backoff{
+			Min:     operationMinBackoff,
+			Max:     operationMaxBackoff,
+			Factor:  operationBackoffFactor,
+			Sleeper: &btime.Sleeper{},
+		},
+		"removeAndAddMetadata",
+	)
+
+	return status.Err
 }
 
 // determineMetadataToRemoveAndAdd compares our Meta to our remoteMeta and

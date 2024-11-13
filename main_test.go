@@ -1040,8 +1040,7 @@ Global put client status (/10): 6 iRODS connections`)
 				"Num files: 3; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 29 B / 9 B")
 		})
 
-		// TODO: re-enable once hardlinks metamod bug fixed
-		SkipConvey("Putting a set with hardlinks uploads an empty file and special inode file", func() {
+		Convey("Putting a set with hardlinks uploads an empty file and special inode file", func() {
 			file := filepath.Join(path, "file")
 			link1 := filepath.Join(path, "hardlink1")
 			link2 := filepath.Join(path, "hardlink2")

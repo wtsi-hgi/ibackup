@@ -31,6 +31,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -42,7 +43,7 @@ import (
 )
 
 func TestPutBaton(t *testing.T) {
-	h, errgbh := GetBatonHandler()
+	batonHandler, errgbh := GetBatonHandler()
 	if errgbh != nil {
 		t.Logf("GetBatonHandler error: %s", errgbh)
 		SkipConvey("Skipping baton tests since couldn't find baton", t, func() {})
@@ -60,17 +61,13 @@ func TestPutBaton(t *testing.T) {
 	Convey("Given Requests and a baton Handler, you can make a new Putter", t, func() {
 		requests, expectedCollections := makeRequests(t, rootCollection)
 
-		p, err := New(h, requests)
+		p, err := New(batonHandler, requests)
 		So(err, ShouldBeNil)
 		So(p, ShouldNotBeNil)
 
 		Convey("CreateCollections() creates the needed collections", func() {
-			testPool := ex.NewClientPool(ex.DefaultClientPoolParams, "")
-			testClientCh, err := h.getClientsFromPoolConcurrently(testPool, 1)
-			So(err, ShouldBeNil)
-			testClient := <-testClientCh
-			defer testClient.StopIgnoreError()
-			defer testPool.Close()
+			testClient, closePool := getTestBatonClient(batonHandler)
+			defer closePool()
 
 			_, err = testClient.RemDir(ex.Args{Force: true, Recurse: true}, ex.RodsItem{
 				IPath: rootCollection,
@@ -132,7 +129,7 @@ func TestPutBaton(t *testing.T) {
 					request.Meta = map[string]string{"a": "1", "b": "3", "c": "4"}
 					touchFile(request.Local, 1*time.Hour)
 
-					p, err = New(h, []*Request{request})
+					p, err = New(batonHandler, []*Request{request})
 					So(err, ShouldBeNil)
 
 					err = p.CreateCollections()
@@ -149,6 +146,7 @@ func TestPutBaton(t *testing.T) {
 					got = <-urCh
 					So(got.Error, ShouldBeBlank)
 					So(got.Status, ShouldEqual, RequestStatusReplaced)
+
 					meta := getObjectMetadataWithBaton(testClient, request.Remote)
 					So(meta, ShouldResemble, request.Meta)
 					So(meta[MetaKeyRequester], ShouldEqual, requester)
@@ -158,17 +156,17 @@ func TestPutBaton(t *testing.T) {
 						err = p.Cleanup()
 						So(err, ShouldBeNil)
 
-						So(h.putMetaPool.IsOpen(), ShouldBeFalse)
-						So(h.putClient.IsRunning(), ShouldBeFalse)
-						So(h.metaClient.IsRunning(), ShouldBeFalse)
-						So(h.collClients, ShouldBeNil)
+						So(batonHandler.putMetaPool.IsOpen(), ShouldBeFalse)
+						So(batonHandler.putClient.IsRunning(), ShouldBeFalse)
+						So(batonHandler.metaClient.IsRunning(), ShouldBeFalse)
+						So(batonHandler.collClients, ShouldBeNil)
 					})
 				})
 
 				Convey("Unchanged files aren't replaced", func() {
 					request := requests[0]
 
-					p, err = New(h, []*Request{request})
+					p, err = New(batonHandler, []*Request{request})
 					So(err, ShouldBeNil)
 
 					uCh, urCh, srCh = p.Put()
@@ -203,7 +201,7 @@ func TestPutBaton(t *testing.T) {
 				inodesDir := filepath.Join(rootCollection, "mountpoints")
 				requests[2].Hardlink = filepath.Join(inodesDir, "inode.file")
 
-				uploading, skipped, statusCounts := uploadRequests(t, h, requests)
+				uploading, skipped, statusCounts := uploadRequests(t, batonHandler, requests)
 
 				So(uploading, ShouldEqual, len(requests))
 				So(statusCounts[RequestStatusUploaded], ShouldEqual, len(requests))
@@ -228,7 +226,7 @@ func TestPutBaton(t *testing.T) {
 	})
 
 	Convey("Uploading a strange path works", t, func() {
-		strangePath, p := testPreparePutFile(t, h, "%s.txt", rootCollection)
+		strangePath, p := testPreparePutFile(t, batonHandler, "%s.txt", rootCollection)
 		urCh := testPutFile(p)
 
 		for request := range urCh {
@@ -240,7 +238,7 @@ func TestPutBaton(t *testing.T) {
 	})
 
 	Convey("Uploading a file with no read permission gives a useful error", t, func() {
-		permsPath, p := testPreparePutFile(t, h, "my.txt", rootCollection)
+		permsPath, p := testPreparePutFile(t, batonHandler, "my.txt", rootCollection)
 		err := os.Chmod(permsPath, 0200)
 		So(err, ShouldBeNil)
 		urCh := testPutFile(p)
@@ -257,7 +255,7 @@ func TestPutBaton(t *testing.T) {
 		putters := make([]*Putter, numFiles)
 
 		remotePath := filepath.Join(rootCollection, "multi")
-		testDeleteCollection(t, h, remotePath)
+		testDeleteCollection(t, batonHandler, remotePath)
 
 		fourkContents := make([]byte, 4096)
 
@@ -284,9 +282,13 @@ func TestPutBaton(t *testing.T) {
 			req := &Request{
 				Local:  path,
 				Remote: remotePath,
+				Meta: map[string]string{
+					strconv.Itoa(i): "val",
+				},
+				Requester: strconv.Itoa(i),
 			}
 
-			p, err := New(h, []*Request{req})
+			p, err := New(batonHandler, []*Request{req})
 			So(err, ShouldBeNil)
 			So(p, ShouldNotBeNil)
 
@@ -334,7 +336,7 @@ func TestPutBaton(t *testing.T) {
 			}
 		}
 
-		So(numWorked, ShouldEqual, 1)
+		So(numWorked, ShouldEqual, numFiles)
 
 		localDir := t.TempDir()
 		gotPath := filepath.Join(localDir, "got")
@@ -356,7 +358,7 @@ func TestPutBaton(t *testing.T) {
 
 		if first != byte(expectedByte) {
 			t.Logf("(iRODS does not stop you uploading the same file at the same time;" +
-				" errors only generated when we try to set the same metadata)")
+				" we upload all sequentially in a random order and apply the metadata sequentially in a (different) random order)")
 		}
 
 		for {
@@ -375,7 +377,38 @@ func TestPutBaton(t *testing.T) {
 				}
 			}
 		}
+
+		testClient, closePool := getTestBatonClient(batonHandler)
+		defer closePool()
+
+		it, err := getItemWithBaton(testClient, remotePath)
+		So(err, ShouldBeNil)
+
+		meta := rodsItemToMeta(it)
+
+		for i := range numFiles {
+			So(meta[strconv.Itoa(i)], ShouldEqual, "val")
+			So(meta[MetaKeyRequester], ShouldContainSubstring, strconv.Itoa(i))
+		}
 	})
+}
+
+// getTestBatonClient returns an extendo Client that lets yu do Baton
+// operations. It gets it from a pool that you should close by deferring the
+// returned function.
+func getTestBatonClient(batonHandler *Baton) (*ex.Client, func()) {
+	testPool := ex.NewClientPool(ex.DefaultClientPoolParams, "")
+	testClientCh, err := batonHandler.getClientsFromPoolConcurrently(testPool, 1)
+	So(err, ShouldBeNil)
+
+	testClient := <-testClientCh
+
+	df := func() {
+		testClient.StopIgnoreError()
+		testPool.Close()
+	}
+
+	return testClient, df
 }
 
 // makeRequests creates some local directories and files, and returns requests
