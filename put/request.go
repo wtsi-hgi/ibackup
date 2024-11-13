@@ -92,11 +92,60 @@ type AVs struct {
 	avs []AV
 }
 
-func (a AVs) Resembles(cmp AVs) bool {
-	return false
+func (a AVs) Len() int {
+	return len(a.avs)
 }
+
+func (a AVs) Resembles(cmp AVs) bool {
+	// Quick length check to avoid unnecessary comparisons
+	if len(a.avs) != len(cmp.avs) {
+		return false
+	}
+
+	// Create maps to count occurrences of each attribute-value pair in both AVs
+	countsA := make(map[AV]int)
+	countsB := make(map[AV]int)
+
+	for _, av := range a.avs {
+		countsA[av]++
+	}
+
+	for _, av := range cmp.avs {
+		countsB[av]++
+	}
+
+	if len(countsA) != len(countsB) {
+		return false
+	}
+
+	// Compare both maps
+	for key, countA := range countsA {
+		if countB, found := countsB[key]; !found || countA != countB {
+			return false
+		}
+	}
+
+	return true
+}
+
 func (a AVs) AttrResembles(attribute string, cmp AVs) bool {
-	return false
+	valuesA := a.Get(attribute)
+	valuesB := cmp.Get(attribute)
+
+	countMap := make(map[string]int)
+
+	for _, v := range valuesA {
+		countMap[v]++
+	}
+
+	for _, v := range valuesB {
+		countMap[v]--
+		if countMap[v] == 0 {
+			delete(countMap, v)
+		}
+	}
+
+	return len(countMap) == 0
 }
 
 func (a AVs) Get(attribute string) []string {
@@ -119,25 +168,41 @@ func (a AVs) GetSingle(attribute string) string {
 
 	return values[0]
 }
-func (a AVs) Set(attribute, value string) {
-	return
+
+func (a *AVs) Add(attribute, value string) {
+	av := AV{Attr: attribute, Val: value}
+	a.avs = append(a.avs, av)
+}
+
+func (a *AVs) Set(attribute, value string) {
+	// There can be multiple AV with the given attribute
+	a.Remove(attribute)
+	a.Add(attribute, value)
 }
 
 func (a *AVs) Remove(attribute string) {
-	var result []AV
+	// Use a write index to overwrite unwanted elements
+	writeIdx := 0
 
 	for _, av := range a.avs {
 		if av.Attr != attribute {
-			result = append(result, av)
+			a.avs[writeIdx] = av
+			writeIdx++
 		}
 	}
 
-	a.avs = result
+	// Resize the slice to remove unwanted elements
+	a.avs = a.avs[:writeIdx]
 }
 
 func (a AVs) Clone() AVs {
-	return AVs{}
+	clonedAVs := make([]AV, len(a.avs))
+
+	copy(clonedAVs, a.avs)
+
+	return AVs{avs: clonedAVs}
 }
+
 func DetermineMetadataToRemoveAndAdd(a, b AVs) (AVs, AVs) {
 	return AVs{}, AVs{}
 }
@@ -575,7 +640,7 @@ func removeAndAddMetadata(r *Request, handler Handler) error {
 // }
 
 func (r *Request) removeMeta(handler Handler, toRemove AVs) error {
-	if len(toRemove) == 0 {
+	if toRemove.Len() == 0 {
 		return nil
 	}
 
@@ -583,7 +648,7 @@ func (r *Request) removeMeta(handler Handler, toRemove AVs) error {
 }
 
 func (r *Request) addMeta(handler Handler, toAdd AVs) error {
-	if len(toAdd) == 0 {
+	if toAdd.Len() == 0 {
 		return nil
 	}
 

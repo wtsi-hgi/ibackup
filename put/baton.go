@@ -465,9 +465,9 @@ func requestToRodsItemWithAVUs(request *Request) *ex.RodsItem {
 }
 
 func metaToAVUs(meta AVs) []ex.AVU {
-	avus := make([]ex.AVU, len(meta))
+	avus := make([]ex.AVU, meta.Len())
 
-	for i, av := range meta {
+	for i, av := range meta.avs {
 		avus[i] = ex.AVU{Attr: av.Attr, Value: av.Val}
 	}
 

@@ -194,7 +194,7 @@ func (l *LocalHandler) RemoveMeta(path string, meta AVs) error {
 		return nil
 	}
 
-	for _, av := range meta {
+	for _, av := range meta.avs {
 		pathMeta.Remove(av.Attr)
 	}
 
@@ -217,7 +217,7 @@ func (l *LocalHandler) AddMeta(path string, meta AVs) error {
 		l.meta[path] = pathMeta
 	}
 
-	for _, av := range meta {
+	for _, av := range meta.avs {
 		current := pathMeta.Get(av.Attr)
 		if current != nil {
 			return Error{ErrMockMetaFail, av.Attr}
