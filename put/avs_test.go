@@ -64,6 +64,9 @@ func TestAVs(t *testing.T) {
 				avs.Add("key4", "val5")
 				So(avs.Len(), ShouldEqual, 5)
 				So(avs.GetSingle("key4"), ShouldEqual, "val5")
+
+				avs.Add("key4", "val5")
+				So(avs.Len(), ShouldEqual, 5)
 			})
 
 			Convey("and remove an AV", func() {
@@ -107,6 +110,16 @@ func TestAVs(t *testing.T) {
 					So(avs.AttrResembles("key2", avs2), ShouldBeTrue)
 					So(avs.AttrResembles("key1", avs2), ShouldBeFalse)
 				})
+
+				Convey("and compare with another instance", func() {
+					avs2.Remove("key1")
+					avs2.Set("key4", "val1")
+
+					add, remove := DetermineMetadataToRemoveAndAdd(avs, avs2)
+
+					So(add.Len(), ShouldEqual, 1)
+					So(remove.Len(), ShouldEqual, 2)
+				})
 			})
 
 			Convey("and clone it", func() {
@@ -117,6 +130,19 @@ func TestAVs(t *testing.T) {
 				So(avs2.Resembles(avs), ShouldBeFalse)
 
 				So(fmt.Sprintf("%p", avs.avs), ShouldNotEqual, fmt.Sprintf("%p", avs2.avs))
+			})
+
+			Convey("and iterate over it", func() {
+				for av := range avs.Iter() {
+					So(av.Attr, ShouldContainSubstring, "key")
+					So(av.Val, ShouldContainSubstring, "val")
+				}
+			})
+
+			Convey("and check the presence of AV", func() {
+				So(avs.Contains(AV{"key1", "val1"}), ShouldBeTrue)
+				So(avs.Contains(AV{"key1", "val2"}), ShouldBeFalse)
+				So(avs.Contains(AV{"key4", "val1"}), ShouldBeFalse)
 			})
 		})
 	})
