@@ -200,7 +200,7 @@ func TestRequest(t *testing.T) {
 			Remote:    "/some/remote/path",
 			Requester: "someRequester",
 			Set:       "testSet",
-			Meta:      AVs{}, //TODO
+			Meta:      NewAVs(), //TODO
 			// Meta: map[string]string{
 			// 	"metaKey": "metaValue",
 			// },
@@ -210,7 +210,7 @@ func TestRequest(t *testing.T) {
 			Size:       123,
 			Error:      "oh no",
 			Stuck:      new(Stuck),
-			remoteMeta: AVs{}, //TODO
+			remoteMeta: NewAVs(), //TODO
 			// remoteMeta: map[string]string{
 			// 	"remoteMetaKey": "remoteMetaValue",
 			// },

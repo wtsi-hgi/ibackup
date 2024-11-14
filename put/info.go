@@ -51,7 +51,7 @@ const (
 type ObjectInfo struct {
 	Exists bool
 	Size   uint64
-	Meta   AVs
+	Meta   *AVs
 }
 
 // Stat stats localPath like os.Lstat(), but also returns information about the
@@ -75,7 +75,7 @@ func Stat(localPath string) (*ObjectInfo, error) {
 	return &ObjectInfo{
 		Exists: true,
 		Size:   uint64(fi.Size()),
-		Meta:   AVs{}, //TODO
+		Meta:   NewAVs(), //TODO
 		// Meta: map[string]string{
 		// 	MetaKeyMtime: mtime,
 		// 	MetaKeyOwner: user,

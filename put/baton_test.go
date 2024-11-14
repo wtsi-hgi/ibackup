@@ -126,7 +126,7 @@ func TestPutBaton(t *testing.T) {
 					request := requests[0]
 					request.Requester = requester
 					request.Set = "setB"
-					request.Meta = AVs{} //TODO: map[string]string{"a": "1", "b": "3", "c": "4"}
+					request.Meta = NewAVs() //TODO: map[string]string{"a": "1", "b": "3", "c": "4"}
 					touchFile(request.Local, 1*time.Hour)
 
 					p, err = New(batonHandler, []*Request{request})
@@ -284,7 +284,7 @@ func TestPutBaton(t *testing.T) {
 			req := &Request{
 				Local:     path,
 				Remote:    remotePath,
-				Meta:      AVs{}, //TODO: map[string]string{strconv.Itoa(i): "val",},
+				Meta:      NewAVs(), //TODO: map[string]string{strconv.Itoa(i): "val",},
 				Requester: strconv.Itoa(i),
 			}
 
@@ -441,7 +441,7 @@ func getItemWithBaton(client *ex.Client, path string) (ex.RodsItem, error) {
 	})
 }
 
-func getObjectMetadataWithBaton(client *ex.Client, path string) AVs {
+func getObjectMetadataWithBaton(client *ex.Client, path string) *AVs {
 	it, err := getItemWithBaton(client, path)
 	So(err, ShouldBeNil)
 

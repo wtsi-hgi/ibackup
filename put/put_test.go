@@ -93,7 +93,7 @@ func TestPutMock(t *testing.T) {
 				Convey("A second put of the same files skips them all, except for modified ones", func() {
 					requests[0].Requester = "Sam"
 					requests[0].Set = "setB"
-					requests[0].Meta = AVs{} //TODO: map[string]string{"a": "1", "b": "3", "c": "4"}
+					requests[0].Meta = NewAVs() //TODO: map[string]string{"a": "1", "b": "3", "c": "4"}
 					touchFile(requests[0].Local, 1*time.Hour)
 
 					uCh, urCh, srCh = p.Put()
@@ -215,9 +215,9 @@ func TestPutMock(t *testing.T) {
 				inodeRemote := filepath.Join(inodeDir, "inode.file")
 				requests[2].Hardlink = inodeRemote
 				setMetaKey := "set"
-				requests[2].Meta = AVs{} //TODO: map[string]string{setMetaKey: "a"}
+				requests[2].Meta = NewAVs() //TODO: map[string]string{setMetaKey: "a"}
 				requests[4].Hardlink = inodeRemote
-				requests[4].Meta = AVs{} //TODO:  map[string]string{setMetaKey: "b"}
+				requests[4].Meta = NewAVs() //TODO:  map[string]string{setMetaKey: "b"}
 
 				clonedRequest0 := requests[0].Clone()
 				clonedRequest2 := requests[2].Clone()
@@ -397,7 +397,7 @@ func TestPutMock(t *testing.T) {
 				Requester: "aRequester",
 				Set:       "aSet",
 				Status:    RequestStatusPending,
-				Meta:      AVs{}, //TODO: map[string]string{"aKey": "aValue",},
+				Meta:      NewAVs(), //TODO: map[string]string{"aKey": "aValue",},
 			}
 
 			request2 := request1.Clone()
@@ -522,7 +522,7 @@ func makeTestRequests(t *testing.T, sourceDir, destDir string) []*Request {
 	}
 
 	requests := make([]*Request, len(sourcePaths))
-	meta := AVs{} //TODO: map[string]string{"a": "1", "b": "2"}
+	meta := NewAVs() //TODO: map[string]string{"a": "1", "b": "2"}
 
 	for i, path := range sourcePaths {
 		dir := filepath.Dir(path)
@@ -546,7 +546,7 @@ func makeTestRequests(t *testing.T, sourceDir, destDir string) []*Request {
 
 // checkAddedMeta checks that the given map contains all the extra metadata keys
 // that we add to requests.
-func checkAddedMeta(meta AVs) {
+func checkAddedMeta(meta *AVs) {
 	So(meta.Get(MetaKeyMtime)[0], ShouldNotBeBlank)
 	So(meta.Get(MetaKeyOwner)[0], ShouldNotBeBlank)
 	So(meta.Get(MetaKeyGroup)[0], ShouldNotBeBlank)

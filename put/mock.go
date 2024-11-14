@@ -43,7 +43,7 @@ type LocalHandler struct {
 	connected   bool
 	cleaned     bool
 	collections []string
-	meta        map[string]AVs
+	meta        map[string]*AVs
 	statFail    string
 	putFail     string
 	putSlow     string
@@ -57,7 +57,7 @@ type LocalHandler struct {
 // Remote for any Put()s. For use during tests.
 func GetLocalHandler() *LocalHandler {
 	return &LocalHandler{
-		meta: make(map[string]AVs),
+		meta: make(map[string]*AVs),
 	}
 }
 
@@ -112,7 +112,7 @@ func (l *LocalHandler) Stat(request *Request) (*ObjectInfo, error) {
 
 	meta, exists := l.meta[request.Remote]
 	if !exists {
-		meta = AVs{}
+		meta = NewAVs()
 	} else {
 		meta = meta.Clone()
 	}
@@ -181,7 +181,7 @@ func (l *LocalHandler) MakeMetaFail(remote string) {
 
 // RemoveMeta deletes the given keys from a map stored under path. Returns an
 // error if metaFail == path.
-func (l *LocalHandler) RemoveMeta(path string, meta AVs) error {
+func (l *LocalHandler) RemoveMeta(path string, meta *AVs) error {
 	if l.metaFail == path {
 		return Error{ErrMockMetaFail, ""}
 	}
@@ -203,7 +203,7 @@ func (l *LocalHandler) RemoveMeta(path string, meta AVs) error {
 
 // AddMeta adds the given meta to a map stored under path. Returns an error
 // if metafail == path, or if keys were already defined in the map.
-func (l *LocalHandler) AddMeta(path string, meta AVs) error {
+func (l *LocalHandler) AddMeta(path string, meta *AVs) error {
 	if l.metaFail == path {
 		return Error{ErrMockMetaFail, ""}
 	}
@@ -213,7 +213,7 @@ func (l *LocalHandler) AddMeta(path string, meta AVs) error {
 
 	pathMeta, exists := l.meta[path]
 	if !exists {
-		pathMeta = AVs{}
+		pathMeta = NewAVs()
 		l.meta[path] = pathMeta
 	}
 
@@ -233,12 +233,12 @@ func (l *LocalHandler) AddMeta(path string, meta AVs) error {
 // path is not known about or has no metadata).
 //
 // (Currently this is just for testing and not part of the Handler interface.)
-func (l *LocalHandler) GetMeta(path string) AVs {
+func (l *LocalHandler) GetMeta(path string) *AVs {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
 	if l.meta == nil {
-		return AVs{}
+		return NewAVs()
 	}
 
 	// currentMeta, exists := l.meta[path]
@@ -246,7 +246,7 @@ func (l *LocalHandler) GetMeta(path string) AVs {
 	// 	currentMeta = AVs{}
 	// }
 
-	meta := AVs{} //TODO: make(map[string]string, len(currentMeta))
+	meta := NewAVs() //TODO: make(map[string]string, len(currentMeta))
 
 	// for k, v := range currentMeta {
 	// 	meta[k] = v

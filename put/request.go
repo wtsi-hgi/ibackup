@@ -83,130 +83,6 @@ func (s *Stuck) String() string {
 		s.UploadStarted.Format(stuckTimeFormat), s.Host, s.PID)
 }
 
-type AV struct {
-	Attr string
-	Val  string
-}
-
-type AVs struct {
-	avs []AV
-}
-
-func (a AVs) Len() int {
-	return len(a.avs)
-}
-
-func (a AVs) Resembles(cmp AVs) bool {
-	// Quick length check to avoid unnecessary comparisons
-	if len(a.avs) != len(cmp.avs) {
-		return false
-	}
-
-	// Create maps to count occurrences of each attribute-value pair in both AVs
-	countsA := make(map[AV]int)
-	countsB := make(map[AV]int)
-
-	for _, av := range a.avs {
-		countsA[av]++
-	}
-
-	for _, av := range cmp.avs {
-		countsB[av]++
-	}
-
-	if len(countsA) != len(countsB) {
-		return false
-	}
-
-	// Compare both maps
-	for key, countA := range countsA {
-		if countB, found := countsB[key]; !found || countA != countB {
-			return false
-		}
-	}
-
-	return true
-}
-
-func (a AVs) AttrResembles(attribute string, cmp AVs) bool {
-	valuesA := a.Get(attribute)
-	valuesB := cmp.Get(attribute)
-
-	countMap := make(map[string]int)
-
-	for _, v := range valuesA {
-		countMap[v]++
-	}
-
-	for _, v := range valuesB {
-		countMap[v]--
-		if countMap[v] == 0 {
-			delete(countMap, v)
-		}
-	}
-
-	return len(countMap) == 0
-}
-
-func (a AVs) Get(attribute string) []string {
-	var values []string
-
-	for _, av := range a.avs {
-		if av.Attr == attribute {
-			values = append(values, av.Val)
-		}
-	}
-
-	return values
-}
-
-func (a AVs) GetSingle(attribute string) string {
-	values := a.Get(attribute)
-	if len(values) != 1 {
-		return ""
-	}
-
-	return values[0]
-}
-
-func (a *AVs) Add(attribute, value string) {
-	av := AV{Attr: attribute, Val: value}
-	a.avs = append(a.avs, av)
-}
-
-func (a *AVs) Set(attribute, value string) {
-	// There can be multiple AV with the given attribute
-	a.Remove(attribute)
-	a.Add(attribute, value)
-}
-
-func (a *AVs) Remove(attribute string) {
-	// Use a write index to overwrite unwanted elements
-	writeIdx := 0
-
-	for _, av := range a.avs {
-		if av.Attr != attribute {
-			a.avs[writeIdx] = av
-			writeIdx++
-		}
-	}
-
-	// Resize the slice to remove unwanted elements
-	a.avs = a.avs[:writeIdx]
-}
-
-func (a AVs) Clone() AVs {
-	clonedAVs := make([]AV, len(a.avs))
-
-	copy(clonedAVs, a.avs)
-
-	return AVs{avs: clonedAVs}
-}
-
-func DetermineMetadataToRemoveAndAdd(a, b AVs) (AVs, AVs) {
-	return AVs{}, AVs{}
-}
-
 // Request represents a local file you would like transferred to a remote iRODS
 // path, and any extra metadata (beyond the defaults which include user, group,
 // mtime, upload date) you'd like to associate with it. Setting Requester and
@@ -218,14 +94,14 @@ type Request struct {
 	RemoteForJSON       []byte // set by MakeSafeForJSON(); do not set this yourself.
 	Requester           string
 	Set                 string
-	Meta                AVs
+	Meta                *AVs
 	Status              RequestStatus
 	Symlink             string // contains symlink path if request represents a symlink.
 	Hardlink            string // contains first seen path if request represents a hard-linked file.
 	Size                uint64 // size of Local in bytes, set for you on returned Requests.
 	Error               string
 	Stuck               *Stuck
-	remoteMeta          AVs
+	remoteMeta          *AVs
 	skipPut             bool
 	emptyFileRequest    *Request
 	inodeRequest        *Request
@@ -409,7 +285,7 @@ func (r *Request) StatAndAssociateStandardMetadata(lInfo *ObjectInfo, handler Ha
 	return rInfo, nil
 }
 
-func statAndAssociateStandardMetadata(request *Request, diskMeta AVs,
+func statAndAssociateStandardMetadata(request *Request, diskMeta *AVs,
 	handler Handler) (*ObjectInfo, error) {
 	rInfo, err := handler.Stat(request)
 	if err != nil {
@@ -432,7 +308,7 @@ func statAndAssociateStandardMetadata(request *Request, diskMeta AVs,
 // Finally, it adds the remaining standard metadata we apply, replacing existing
 // values: date, using the current date, and requesters and sets, appending
 // Requester and Set to any existing values in the remoteMeta.
-func (r *Request) addStandardMeta(diskMeta, remoteMeta AVs) {
+func (r *Request) addStandardMeta(diskMeta, remoteMeta *AVs) {
 	r.cloneMeta()
 
 	// for k, v := range diskMeta {
@@ -467,7 +343,7 @@ func cloneMap(m map[string]string) map[string]string {
 // metadata to be lists that include our or Set and Requester in addition to any
 // others already recorded in the remote metadata. It also sets our date
 // metadata to now.
-func (r *Request) updateMetadataBasedOnRemote(remoteMeta AVs) {
+func (r *Request) updateMetadataBasedOnRemote(remoteMeta *AVs) {
 	r.remoteMeta = remoteMeta
 
 	r.addDate()
@@ -639,7 +515,7 @@ func removeAndAddMetadata(r *Request, handler Handler) error {
 // 	return toRemove, toAdd
 // }
 
-func (r *Request) removeMeta(handler Handler, toRemove AVs) error {
+func (r *Request) removeMeta(handler Handler, toRemove *AVs) error {
 	if toRemove.Len() == 0 {
 		return nil
 	}
@@ -647,7 +523,7 @@ func (r *Request) removeMeta(handler Handler, toRemove AVs) error {
 	return handler.RemoveMeta(r.Remote, toRemove)
 }
 
-func (r *Request) addMeta(handler Handler, toAdd AVs) error {
+func (r *Request) addMeta(handler Handler, toAdd *AVs) error {
 	if toAdd.Len() == 0 {
 		return nil
 	}
@@ -685,7 +561,7 @@ func NewRequestWithTransformedLocal(local string, pt PathTransformer) (*Request,
 		return nil, err
 	}
 
-	return &Request{Local: local, Remote: remote, Meta: AVs{}}, nil
+	return &Request{Local: local, Remote: remote, Meta: NewAVs()}, nil
 }
 
 // PrefixTransformer returns a PathTransformer that will replace localPrefix
