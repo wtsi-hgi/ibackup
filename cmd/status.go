@@ -29,6 +29,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -49,6 +50,7 @@ const nsInDay = hoursInDay * time.Hour
 var statusUser string
 var statusName string
 var statusDetails bool
+var statusRemotePaths bool
 var statusIncomplete bool
 var statusComplete bool
 var statusFailed bool
@@ -113,6 +115,10 @@ own. You can specify the user as "all" to see all user's sets.
 			die("--details can only be used with --name")
 		}
 
+		if statusRemotePaths && !statusDetails {
+			die("--remote can only be used with --details and --name")
+		}
+
 		sf := newStatusFilterer(statusIncomplete, statusComplete, statusFailed, statusQueued)
 
 		if statusName != "" && sf != nil {
@@ -124,7 +130,7 @@ own. You can specify the user as "all" to see all user's sets.
 			die(err.Error())
 		}
 
-		status(client, sf, statusUser, statusName, statusDetails)
+		status(client, sf, statusUser, statusName, statusDetails, statusRemotePaths)
 	},
 }
 
@@ -138,6 +144,8 @@ func init() {
 		"get status for just the set with this name")
 	statusCmd.Flags().BoolVarP(&statusDetails, "details", "d", false,
 		"in combination with --name, show the status of every file in the set")
+	statusCmd.Flags().BoolVarP(&statusRemotePaths, "remotepaths", "r", false,
+		"in combination with --name and --details, show the remote path of every file in the set")
 	statusCmd.Flags().BoolVarP(&statusIncomplete, "incomplete", "i", false,
 		"only show currently incomplete sets")
 	statusCmd.Flags().BoolVarP(&statusComplete, "complete", "c", false,
@@ -190,7 +198,7 @@ func checkOnlyOneStatusFlagSet(incomplete, complete, failed, queued bool) {
 }
 
 // status does the main job of getting backup set status from the server.
-func status(client *server.Client, sf statusFilterer, user, name string, details bool) {
+func status(client *server.Client, sf statusFilterer, user, name string, details, remote bool) {
 	qs, err := client.GetQueueStatus()
 	if err != nil {
 		die("unable to get server queue status: %s", err)
@@ -212,7 +220,7 @@ func status(client *server.Client, sf statusFilterer, user, name string, details
 		return
 	}
 
-	displaySets(client, sets, details, user == "all")
+	displaySets(client, sets, details, remote, user == "all")
 }
 
 // displayQueueStatus prints out QStatus in a nice way. If user is admin, also
@@ -279,7 +287,7 @@ func filter(sf statusFilterer, sets []*set.Set) []*set.Set {
 
 // displaySets prints info about the given sets to STDOUT. Failed entry details
 // will also be printed, and optionally non-failed.
-func displaySets(client *server.Client, sets []*set.Set, showNonFailedEntries, showRequesters bool) {
+func displaySets(client *server.Client, sets []*set.Set, showNonFailedEntries, showRemotePaths, showRequesters bool) {
 	l := len(sets)
 
 	for i, forDisplay := range sets {
@@ -292,7 +300,7 @@ func displaySets(client *server.Client, sets []*set.Set, showNonFailedEntries, s
 		displayExampleFile(getExampleFile(client, forDisplay.ID()), transformer)
 
 		if showNonFailedEntries {
-			displayAllEntries(client, forDisplay)
+			displayAllEntries(client, forDisplay, showRemotePaths, transformer)
 		} else {
 			displayFailedEntries(client, forDisplay)
 		}
@@ -542,7 +550,7 @@ func displayFailedEntries(client *server.Client, given *set.Set) {
 		die(err.Error())
 	}
 
-	displayEntries(failed)
+	displayEntries(failed, false, nil)
 
 	if skipped > 0 {
 		cliPrint("[... and %d others]\n", skipped)
@@ -551,50 +559,90 @@ func displayFailedEntries(client *server.Client, given *set.Set) {
 
 // displayAllEntries prints out details about all entries in the given
 // set.
-func displayAllEntries(client *server.Client, given *set.Set) {
+func displayAllEntries(client *server.Client, given *set.Set, showRemotePaths bool, transformer put.PathTransformer) {
 	all, err := client.GetFiles(given.ID())
 	if err != nil {
 		die(err.Error())
 	}
 
-	displayEntries(all)
+	displayEntries(all, showRemotePaths, transformer)
 }
 
 // displayEntries prints info about the given file entries to STDOUT.
-func displayEntries(entries []*set.Entry) {
+func displayEntries(entries []*set.Entry, showRemotePaths bool, transformer put.PathTransformer) {
 	if len(entries) == 0 {
 		return
 	}
 
-	printEntriesHeader()
+	displayHeader(showRemotePaths)
 
 	for _, entry := range entries {
-		var date string
+		var remotePath string
 
-		if entry.LastAttempt.IsZero() {
-			date = "-"
-		} else {
-			date = entry.LastAttempt.Format(dateShort)
+		if showRemotePaths {
+			remotePath = getRemotePath(entry.Path, transformer)
 		}
 
-		cols := []string{
-			entry.Path,
-			entry.Status.String(),
-			humanize.IBytes(entry.Size),
-			fmt.Sprintf("%d", entry.Attempts),
-			date,
-			entry.LastError,
-		}
-
-		cliPrintRaw(strings.Join(cols, "\t"))
-		cliPrintRaw("\n")
+		displayEntry(entry, remotePath)
 	}
 }
 
-// printEntriesHeader prints a header for a subsequent 6 column output of entry
-// details.
-func printEntriesHeader() {
+// displayHeader adds a column for remote path if showRemotePath is true and
+// prints the header.
+func displayHeader(showRemotePath bool) {
+	cols := []string{"Path", "Status", "Size", "Attempts", "Date", "Error"}
+
+	if showRemotePath {
+		cols = append(cols, "Remote Path")
+	}
+
+	printEntriesHeader(cols)
+}
+
+// printEntriesHeader prints a header including the given columns relating to
+// the output of entry details.
+func printEntriesHeader(cols []string) {
 	cliPrint("\n")
-	cliPrint(strings.Join([]string{"Path", "Status", "Size", "Attempts", "Date", "Error"}, "\t"))
+	cliPrint(strings.Join(cols, "\t"))
 	cliPrint("\n")
+}
+
+// getRemotePath returns the remote path for a given path.
+func getRemotePath(path string, transformer put.PathTransformer) string {
+	remotePath, err := transformer(path)
+	if err != nil {
+		warn("your transformer didn't work: %s", err)
+
+		return "-"
+	}
+
+	return remotePath
+}
+
+// displayEntry displays information about a given entry, including its remote path
+// if it's set.
+func displayEntry(entry *set.Entry, remotePath string) {
+	var date string
+
+	if entry.LastAttempt.IsZero() {
+		date = "-"
+	} else {
+		date = entry.LastAttempt.Format(dateShort)
+	}
+
+	cols := []string{
+		entry.Path,
+		strconv.Itoa(int(entry.Status)),
+		humanize.IBytes(entry.Size),
+		strconv.Itoa(entry.Attempts),
+		date,
+		entry.LastError,
+	}
+
+	if remotePath != "" {
+		cols = append(cols, remotePath)
+	}
+
+	cliPrintRaw(strings.Join(cols, "\t"))
+	cliPrintRaw("\n")
 }
