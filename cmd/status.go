@@ -65,7 +65,9 @@ var statusCmd = &cobra.Command{
 Having used 'ibackup add' to add the details of one or more backup sets, use
 this command to get the current backup status of your sets. Provide --name to
 get the status of just that set, and --details to get the individual backup
-status of every file in the set (only possible with a --name).
+status of every file in the set (only possible with a --name). Provide 
+--remotepaths alongside --details to also display the remote path for each file
+(only possible with --details and a --name).
 
 When not using --name, provide one of:
 --incomplete to only see currently incomplete sets. This will include sets
@@ -99,7 +101,8 @@ complete: all files in your backup set were either missing, successfully
   uploaded, or failed.
 
 With --details, you'll see tab-separated columns of Path, Status, Size, Date
-and Error, with one file per line.
+and Error, with one file per line. If you include --remotepaths you will also 
+see a column for Remote Path.
 
 Without --details, you'll still see these details for files that failed their
 upload.
@@ -632,8 +635,8 @@ func displayEntry(entry *set.Entry, remotePath string) {
 
 	cols := []string{
 		entry.Path,
-		strconv.Itoa(int(entry.Status)),
-		humanize.IBytes(entry.Size),
+		entry.Status.String(),
+		humanize.IBytes(entry.Size), //nolint:misspell
 		strconv.Itoa(entry.Attempts),
 		date,
 		entry.LastError,
