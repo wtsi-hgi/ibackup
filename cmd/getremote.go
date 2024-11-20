@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2022 Genome Research Ltd.
+ * Copyright (c) 2024 Genome Research Ltd.
  *
  * Author: Rosie Kern <rk18@sanger.ac.uk>
  *
@@ -42,8 +42,8 @@ var getremoteCmd = &cobra.Command{
 	Long: `Get remote paths for a set.
  
 Having used 'ibackup add' to add the details of one or more backup sets, use
-this command to see the remote paths for every file in a set. This command
-requires --name to be supplied, this is to specify which paths will be shown.
+this command to see the remote path for every file in a set. This command
+requires --name to be supplied.
 
 You need to supply the ibackup server's URL in the form domain:port (using the
 IBACKUP_SERVER_URL environment variable, or overriding that with the --url
@@ -78,6 +78,7 @@ func init() {
 		"get remote paths for the set with this name")
 }
 
+// getRemote gets the set from the provided name and displays its remote paths.
 func getRemote(client *server.Client, user, name string) {
 	sets := getSetByName(client, user, name)
 	if len(sets) == 0 {
