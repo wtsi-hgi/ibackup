@@ -98,6 +98,7 @@ func displayRemotePaths(client *server.Client, given *set.Set) {
 	}
 
 	var remotePath string
+
 	warnedAboutTransformer := false
 
 	for _, entry := range entries {
