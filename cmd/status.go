@@ -579,11 +579,13 @@ func displayEntries(entries []*set.Entry, showRemotePaths bool, transformer put.
 
 	displayHeader(showRemotePaths)
 
+	warnedAboutTransformer := false
+
 	for _, entry := range entries {
 		var remotePath string
 
 		if showRemotePaths {
-			remotePath = getRemotePath(entry.Path, transformer)
+			remotePath, warnedAboutTransformer = getRemotePath(entry.Path, transformer, warnedAboutTransformer)
 		}
 
 		displayEntry(entry, remotePath)
@@ -611,15 +613,17 @@ func printEntriesHeader(cols []string) {
 }
 
 // getRemotePath returns the remote path for a given path.
-func getRemotePath(path string, transformer put.PathTransformer) string {
+func getRemotePath(path string, transformer put.PathTransformer, warnedAboutTransformer bool) (string, bool) {
 	remotePath, err := transformer(path)
 	if err != nil {
-		warn("your transformer didn't work: %s", err)
+		if !warnedAboutTransformer {
+			warn("your transformer didn't work: %s", err)
+		}
 
-		return "-"
+		return "", true
 	}
 
-	return remotePath
+	return remotePath, warnedAboutTransformer
 }
 
 // displayEntry displays information about a given entry, including its remote path

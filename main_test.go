@@ -417,6 +417,52 @@ func TestNoServer(t *testing.T) {
 	})
 }
 
+func TestGetRemote(t *testing.T) {
+	Convey("With a started server", t, func() {
+		s := NewTestServer(t)
+		So(s, ShouldNotBeNil)
+
+		Convey("With no --name given, getremote returns an error", func() {
+			s.confirmOutput(t, []string{"getremote"}, 1, "--name must be set")
+		})
+
+		Convey("Given an added set defined with files", func() {
+			dir := t.TempDir()
+			tempTestFile, err := os.CreateTemp(dir, "testFileSet")
+			So(err, ShouldBeNil)
+
+			_, err = io.WriteString(tempTestFile, dir+`/path/to/some/file
+`+dir+`/path/to/other/file`)
+			So(err, ShouldBeNil)
+
+			Convey("And a valid transformer for the path", func() {
+				exitCode, _ := s.runBinary(t, "add", "--files", tempTestFile.Name(),
+					"--name", "testAddFiles", "--transformer", "prefix="+dir+":/remote")
+				So(exitCode, ShouldEqual, 0)
+
+				s.waitForStatus("testAddFiles", "Status: complete", 1*time.Second)
+
+				Convey("getremote tells the remote path for every file in the set", func() {
+					s.confirmOutput(t, []string{"getremote", "--name", "testAddFiles"}, 0,
+						"/remote/path/to/other/file\n/remote/path/to/some/file")
+				})
+			})
+
+			Convey("And an invalid transformer for the path", func() {
+				exitCode, _ := s.runBinary(t, "add", "--files", tempTestFile.Name(),
+					"--name", "testAddFiles", "--transformer", "humgen")
+				So(exitCode, ShouldEqual, 0)
+
+				Convey("getremote tells the remote path for every file in the set", func() {
+					s.confirmOutput(t, []string{"getremote", "--name", "testAddFiles"}, 0,
+						"your transformer didn't work: not a valid humgen lustre path ["+
+							dir+"/path/to/other/file]")
+				})
+			})
+		})
+	})
+}
+
 func TestStatus(t *testing.T) {
 	const toRemote = " => /remote"
 
@@ -478,6 +524,27 @@ Num files: 2; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 0 B / 0
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 2; Abnormal: 0
 Completed in: 0s
 Example File: `+dir+`/path/to/other/file => /remote/path/to/other/file`)
+			})
+
+			Convey("Status with --details and --remotepaths displays the remote path for each file", func() {
+				s.confirmOutput(t, []string{"status", "--name", "testAddFiles",
+					"--details", "--remotepaths"}, 0,
+					`Global put queue status: 2 queued; 0 reserved to be worked on; 0 failed
+Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
+
+Name: testAddFiles
+Transformer: prefix=`+dir+`:/remote
+Monitored: false; Archive: false
+Status: complete
+Discovery:
+Num files: 2; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 0 B / 0 B
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 2; Abnormal: 0
+Completed in: 0s
+Example File: `+dir+`/path/to/other/file => /remote/path/to/other/file
+
+Path	Status	Size	Attempts	Date	Error	Remote Path`+"\n"+
+						dir+"/path/to/other/file\tmissing\t0 B\t0\t-\t\t/remote/path/to/other/file\n"+
+						dir+"/path/to/some/file\tmissing\t0 B\t0\t-\t\t/remote/path/to/some/file")
 			})
 		})
 
