@@ -61,7 +61,7 @@ own. You can specify the user as "all" to see all user's sets.
 
 		client, err := newServerClient(serverURL, serverCert)
 		if err != nil {
-			die(err.Error()) //nolint:govet
+			die(err.Error())
 		}
 
 		getRemote(client, grUser, grName)
@@ -94,7 +94,7 @@ func displayRemotePaths(client *server.Client, given *set.Set) {
 
 	entries, err := client.GetFiles(given.ID())
 	if err != nil {
-		die(err.Error()) //nolint:govet
+		die(err.Error())
 	}
 
 	var remotePath string
@@ -105,7 +105,7 @@ func displayRemotePaths(client *server.Client, given *set.Set) {
 		remotePath, warnedAboutTransformer = getRemotePath(entry.Path, transformer, warnedAboutTransformer)
 
 		if remotePath != "" {
-			cliPrint(remotePath) //nolint:govet
+			cliPrint(remotePath)
 			cliPrint("\n")
 		}
 	}
