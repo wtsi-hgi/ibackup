@@ -54,14 +54,14 @@ If you are the user who started the ibackup server, you can use the --user
 option to get the status of a given requestor's backup sets, instead of your
 own. You can specify the user as "all" to see all user's sets.
 `,
-	Run: func(cmd *cobra.Command, args []string) {
+	Run: func(_ *cobra.Command, _ []string) {
 		if grName == "" {
 			die("--name must be set")
 		}
 
 		client, err := newServerClient(serverURL, serverCert)
 		if err != nil {
-			die(err.Error())
+			die(err.Error()) //nolint:govet
 		}
 
 		getRemote(client, grUser, grName)
@@ -94,7 +94,7 @@ func displayRemotePaths(client *server.Client, given *set.Set) {
 
 	entries, err := client.GetFiles(given.ID())
 	if err != nil {
-		die(err.Error())
+		die(err.Error()) //nolint:govet
 	}
 
 	var remotePath string
@@ -105,7 +105,7 @@ func displayRemotePaths(client *server.Client, given *set.Set) {
 		remotePath, warnedAboutTransformer = getRemotePath(entry.Path, transformer, warnedAboutTransformer)
 
 		if remotePath != "" {
-			cliPrint(remotePath)
+			cliPrint(remotePath) //nolint:govet
 			cliPrint("\n")
 		}
 	}
