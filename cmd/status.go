@@ -29,6 +29,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -579,13 +580,11 @@ func displayEntries(entries []*set.Entry, showRemotePaths bool, transformer put.
 
 	displayHeader(showRemotePaths)
 
-	warnedAboutTransformer := false
-
 	for _, entry := range entries {
 		var remotePath string
 
 		if showRemotePaths {
-			remotePath, warnedAboutTransformer = getRemotePath(entry.Path, transformer, warnedAboutTransformer)
+			remotePath = getRemotePath(entry.Path, transformer)
 		}
 
 		displayEntry(entry, remotePath)
@@ -595,10 +594,10 @@ func displayEntries(entries []*set.Entry, showRemotePaths bool, transformer put.
 // displayHeader adds a column for remote path if showRemotePath is true and
 // prints the header.
 func displayHeader(showRemotePath bool) {
-	cols := []string{"Path", "Status", "Size", "Attempts", "Date", "Error"}
+	cols := []string{"Local Path", "Status", "Size", "Attempts", "Date", "Error"}
 
 	if showRemotePath {
-		cols = append(cols, "Remote Path")
+		cols = slices.Insert(cols, 1, "Remote Path")
 	}
 
 	printEntriesHeader(cols)
@@ -613,17 +612,13 @@ func printEntriesHeader(cols []string) {
 }
 
 // getRemotePath returns the remote path for a given path.
-func getRemotePath(path string, transformer put.PathTransformer, warnedAboutTransformer bool) (string, bool) {
+func getRemotePath(path string, transformer put.PathTransformer) string {
 	remotePath, err := transformer(path)
 	if err != nil {
-		if !warnedAboutTransformer {
-			warn("your transformer didn't work: %s", err)
-		}
-
-		return "", true
+		die("your transformer didn't work: %s", err)
 	}
 
-	return remotePath, warnedAboutTransformer
+	return remotePath
 }
 
 // displayEntry displays information about a given entry, including its remote path
@@ -647,7 +642,7 @@ func displayEntry(entry *set.Entry, remotePath string) {
 	}
 
 	if remotePath != "" {
-		cols = append(cols, remotePath)
+		cols = slices.Insert(cols, 1, remotePath)
 	}
 
 	cliPrintRaw(strings.Join(cols, "\t"))

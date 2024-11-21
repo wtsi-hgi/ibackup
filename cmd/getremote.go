@@ -100,10 +100,8 @@ func displayRemotePaths(client *server.Client, given *set.Set) {
 
 	var remotePath string
 
-	warnedAboutTransformer := false
-
 	for _, entry := range entries {
-		remotePath, warnedAboutTransformer = getRemotePath(entry.Path, transformer, warnedAboutTransformer)
+		remotePath = getRemotePath(entry.Path, transformer)
 
 		if remotePath != "" {
 			cliPrint(remotePath)

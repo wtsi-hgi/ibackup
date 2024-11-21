@@ -453,8 +453,8 @@ func TestGetRemote(t *testing.T) {
 					"--name", "testAddFiles", "--transformer", "humgen")
 				So(exitCode, ShouldEqual, 0)
 
-				Convey("getremote tells the remote path for every file in the set", func() {
-					s.confirmOutput(t, []string{"getremote", "--name", "testAddFiles"}, 0,
+				Convey("getremote returns an error", func() {
+					s.confirmOutput(t, []string{"getremote", "--name", "testAddFiles"}, 1,
 						"your transformer didn't work: not a valid humgen lustre path ["+
 							dir+"/path/to/other/file]")
 				})
@@ -542,9 +542,9 @@ Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 2; Abnormal: 0
 Completed in: 0s
 Example File: `+dir+`/path/to/other/file => /remote/path/to/other/file
 
-Path	Status	Size	Attempts	Date	Error	Remote Path`+"\n"+
-						dir+"/path/to/other/file\tmissing\t0 B\t0\t-\t\t/remote/path/to/other/file\n"+
-						dir+"/path/to/some/file\tmissing\t0 B\t0\t-\t\t/remote/path/to/some/file")
+Local Path	Remote Path	Status	Size	Attempts	Date	Error`+"\n"+
+						dir+"/path/to/other/file\t/remote/path/to/other/file\tmissing\t0 B\t0\t-\t\n"+
+						dir+"/path/to/some/file\t/remote/path/to/some/file\tmissing\t0 B\t0\t-\t")
 			})
 		})
 
@@ -799,7 +799,7 @@ Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 1
 Completed in: 0s
 Example File: `+dir+`/fifo => /remote/fifo
 
-Path	Status	Size	Attempts	Date	Error
+Local Path	Status	Size	Attempts	Date	Error
 `+fifoPath+`	abnormal	0 B	0	-	`)
 			})
 
