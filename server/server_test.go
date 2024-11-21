@@ -29,6 +29,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -40,6 +42,7 @@ import (
 	"time"
 
 	"github.com/VertebrateResequencing/wr/queue"
+	"github.com/gin-gonic/gin"
 	"github.com/inconshreveable/log15"
 	. "github.com/smartystreets/goconvey/convey"
 	gas "github.com/wtsi-hgi/go-authserver"
@@ -114,7 +117,6 @@ func TestServer(t *testing.T) {
 		slackWriter := gas.NewStringLogger()
 		conf := Config{
 			HTTPLogger: logWriter,
-			Slacker:    slack.NewMock(slackWriter),
 		}
 
 		Convey("You can make a Server with a logger configured and no slacker", func() {
@@ -149,7 +151,34 @@ func TestServer(t *testing.T) {
 
 			err = client.AddOrUpdateSet(exampleSet)
 			So(err, ShouldBeNil)
+
+			Convey("Endpoints still work with no slacker", func() {
+				router := gin.Default()
+				router.POST("/irods/:hostpid", s.clientMadeIRODSConnections)
+				router.DELETE("/irods/:hostpid", s.clientClosedIRODSConnections)
+
+				ctx := context.Background()
+				req, err := http.NewRequestWithContext(ctx, http.MethodPost, "/irods/testPID?nconnections=5", nil)
+				So(err, ShouldBeNil)
+
+				w := httptest.NewRecorder()
+
+				router.ServeHTTP(w, req)
+
+				So(http.StatusOK, ShouldEqual, w.Code)
+
+				req, err = http.NewRequestWithContext(ctx, http.MethodDelete, "/irods/testPID", nil)
+				So(err, ShouldBeNil)
+
+				w = httptest.NewRecorder()
+
+				router.ServeHTTP(w, req)
+
+				So(http.StatusOK, ShouldEqual, w.Code)
+			})
 		})
+
+		conf.Slacker = slack.NewMock(slackWriter)
 
 		const serverStartMessage = slack.BoxPrefixInfo + "server starting, loading database" +
 			slack.BoxPrefixSuccess + "server loaded database"
