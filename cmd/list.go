@@ -87,11 +87,11 @@ func init() {
 	listCmd.Flags().StringVar(&lstUser, "user", currentUsername(),
 		"pretend to be this user (only works if you started the server)")
 	listCmd.Flags().StringVarP(&lstName, "name", "n", "",
-		"get local and remote paths for the set with this name")
+		"get local and remote paths for the --name'd set")
 	listCmd.Flags().BoolVarP(&lstLocal, "local", "l", false,
-		"get local paths only for the set with this name")
+		"only get local paths for the --name'd set")
 	listCmd.Flags().BoolVarP(&lstRemote, "remote", "r", false,
-		"get remote paths only for the set with this name")
+		"only get remote paths for the --name'd set")
 }
 
 // getRemote gets the set from the provided name and displays its remote paths.
