@@ -27,23 +27,31 @@ package cmd
 
 import (
 	"github.com/spf13/cobra"
+	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/server"
 	"github.com/wtsi-hgi/ibackup/set"
 )
 
 // options for this cmd.
-var grName string
-var grUser string
+var lstName string
+var lstUser string
+var lstLocal bool
+var lstRemote bool
 
-// getremoteCmd represents the getremote command.
-var getremoteCmd = &cobra.Command{
-	Use:   "getremote",
-	Short: "Get remote paths for a set.",
-	Long: `Get remote paths for a set.
+// listCmd represents the list command.
+var listCmd = &cobra.Command{
+	Use:   "list",
+	Short: "Get paths for a set.",
+	Long: `Get paths for a set.
  
 Having used 'ibackup add' to add the details of one or more backup sets, use
-this command to see the remote path for every file in a set. This command
+this command to see the paths for every file in a set. This command
 requires --name to be supplied.
+
+Provide --local or --remote to see all the local/remote file paths for the set 
+(these flags are mutually exclusive). If neither --local nor --remote is 
+provided, each line will contain the local path and the corresponding remote 
+path, tab separated.
 
 You need to supply the ibackup server's URL in the form domain:port (using the
 IBACKUP_SERVER_URL environment variable, or overriding that with the --url
@@ -55,8 +63,12 @@ option to get the status of a given requestor's backup sets, instead of your
 own. You can specify the user as "all" to see all user's sets.
 `,
 	Run: func(_ *cobra.Command, _ []string) {
-		if grName == "" {
+		if lstName == "" {
 			die("--name must be set")
+		}
+
+		if lstLocal && lstRemote {
+			die("--local and --remote are mutually exclusive")
 		}
 
 		client, err := newServerClient(serverURL, serverCert)
@@ -64,22 +76,26 @@ own. You can specify the user as "all" to see all user's sets.
 			die(err.Error())
 		}
 
-		getRemote(client, grUser, grName)
+		getRemote(client, lstLocal, lstRemote, lstUser, lstName)
 	},
 }
 
 func init() {
-	RootCmd.AddCommand(getremoteCmd)
+	RootCmd.AddCommand(listCmd)
 
 	// flags specific to this sub-command
-	getremoteCmd.Flags().StringVar(&grUser, "user", currentUsername(),
+	listCmd.Flags().StringVar(&lstUser, "user", currentUsername(),
 		"pretend to be this user (only works if you started the server)")
-	getremoteCmd.Flags().StringVarP(&grName, "name", "n", "",
-		"get remote paths for the set with this name")
+	listCmd.Flags().StringVarP(&lstName, "name", "n", "",
+		"get local and remote paths for the set with this name")
+	listCmd.Flags().BoolVarP(&lstLocal, "local", "l", false,
+		"get local paths only for the set with this name")
+	listCmd.Flags().BoolVarP(&lstRemote, "remote", "r", false,
+		"get remote paths only for the set with this name")
 }
 
 // getRemote gets the set from the provided name and displays its remote paths.
-func getRemote(client *server.Client, user, name string) {
+func getRemote(client *server.Client, local, remote bool, user, name string) {
 	sets := getSetByName(client, user, name)
 	if len(sets) == 0 {
 		warn("no backup sets")
@@ -87,25 +103,50 @@ func getRemote(client *server.Client, user, name string) {
 		return
 	}
 
-	displayRemotePaths(client, sets[0])
+	displayPaths(client, sets[0], local, remote)
 }
 
-func displayRemotePaths(client *server.Client, given *set.Set) {
-	transformer := getSetTransformer(given)
-
+func displayPaths(client *server.Client, given *set.Set, local, remote bool) {
 	entries, err := client.GetFiles(given.ID())
 	if err != nil {
 		die(err.Error())
 	}
 
-	var remotePath string
+	if local {
+		displayLocalPaths(entries)
 
+		return
+	}
+
+	transformer := getSetTransformer(given)
+
+	if remote {
+		displayRemotePaths(entries, transformer)
+
+		return
+	}
+
+	displayLocalAndRemotePaths(entries, transformer)
+}
+
+func displayLocalPaths(entries []*set.Entry) {
 	for _, entry := range entries {
-		remotePath = getRemotePath(entry.Path, transformer)
+		cliPrint(entry.Path + "\n")
+	}
+}
 
-		if remotePath != "" {
-			cliPrint(remotePath)
-			cliPrint("\n")
-		}
+func displayRemotePaths(entries []*set.Entry, transformer put.PathTransformer) {
+	for _, entry := range entries {
+		remotePath := getRemotePath(entry.Path, transformer)
+
+		cliPrint(remotePath + "\n")
+	}
+}
+
+func displayLocalAndRemotePaths(entries []*set.Entry, transformer put.PathTransformer) {
+	for _, entry := range entries {
+		remotePath := getRemotePath(entry.Path, transformer)
+
+		cliPrint(entry.Path + "\t" + remotePath + "\n")
 	}
 }

@@ -417,13 +417,18 @@ func TestNoServer(t *testing.T) {
 	})
 }
 
-func TestGetRemote(t *testing.T) {
+func TestList(t *testing.T) {
 	Convey("With a started server", t, func() {
 		s := NewTestServer(t)
 		So(s, ShouldNotBeNil)
 
-		Convey("With no --name given, getremote returns an error", func() {
-			s.confirmOutput(t, []string{"getremote"}, 1, "--name must be set")
+		Convey("With no --name given, list returns an error", func() {
+			s.confirmOutput(t, []string{"list"}, 1, "--name must be set")
+		})
+
+		Convey("With --local and --remote given, list returns an error", func() {
+			s.confirmOutput(t, []string{"list", "--name", "test", "--local", "--remote"},
+				1, "--local and --remote are mutually exclusive")
 		})
 
 		Convey("Given an added set defined with files", func() {
@@ -442,9 +447,22 @@ func TestGetRemote(t *testing.T) {
 
 				s.waitForStatus("testAddFiles", "Status: complete", 1*time.Second)
 
-				Convey("getremote tells the remote path for every file in the set", func() {
-					s.confirmOutput(t, []string{"getremote", "--name", "testAddFiles"}, 0,
-						"/remote/path/to/other/file\n/remote/path/to/some/file")
+				Convey("list tells the local path and remote path for every file in the set", func() {
+					s.confirmOutput(t, []string{"list", "--name", "testAddFiles"}, 0,
+						dir+"/path/to/other/file\t"+"/remote/path/to/other/file\n"+
+							dir+"/path/to/some/file\t"+"/remote/path/to/some/file")
+				})
+
+				Convey("list and --local tells the local path for every file in the set", func() {
+					s.confirmOutput(t, []string{"list", "--name", "testAddFiles", "--local"}, 0,
+						dir+"/path/to/other/file\n"+
+							dir+"/path/to/some/file")
+				})
+
+				Convey("list and --remote tells the remote path for every file in the set", func() {
+					s.confirmOutput(t, []string{"list", "--name", "testAddFiles", "--remote"}, 0,
+						"/remote/path/to/other/file\n"+
+							"/remote/path/to/some/file")
 				})
 			})
 
@@ -453,8 +471,8 @@ func TestGetRemote(t *testing.T) {
 					"--name", "testAddFiles", "--transformer", "humgen")
 				So(exitCode, ShouldEqual, 0)
 
-				Convey("getremote returns an error", func() {
-					s.confirmOutput(t, []string{"getremote", "--name", "testAddFiles"}, 1,
+				Convey("list returns an error", func() {
+					s.confirmOutput(t, []string{"list", "--name", "testAddFiles"}, 1,
 						"your transformer didn't work: not a valid humgen lustre path ["+
 							dir+"/path/to/other/file]")
 				})
