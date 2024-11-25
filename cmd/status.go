@@ -30,6 +30,7 @@ import (
 	"io"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -49,6 +50,7 @@ const nsInDay = hoursInDay * time.Hour
 
 // options for this cmd.
 var statusUser string
+var statusOrder string
 var statusName string
 var statusDetails bool
 var statusRemotePaths bool
@@ -81,6 +83,10 @@ When not using --name, provide one of:
   started to upload any files.
 
 If none of the above flags are supplied, you'll get the status of all your sets.
+
+Provide --order with either 'alphabetic' (default) or 'recent' to determine the 
+order the sets are displayed. Choosing recent puts the most recently discovered
+sets towards the end of the list, with undiscovered sets last.
 
 You need to supply the ibackup server's URL in the form domain:port (using the
 IBACKUP_SERVER_URL environment variable, or overriding that with the --url
@@ -123,6 +129,10 @@ own. You can specify the user as "all" to see all user's sets.
 			die("--remote can only be used with --details and --name")
 		}
 
+		if statusOrder != "" && statusOrder != "alphabetic" && statusOrder != "recent" {
+			die("--order can only be 'alphabetic' or 'recent'")
+		}
+
 		sf := newStatusFilterer(statusIncomplete, statusComplete, statusFailed, statusQueued)
 
 		if statusName != "" && sf != nil {
@@ -134,7 +144,7 @@ own. You can specify the user as "all" to see all user's sets.
 			die(err.Error())
 		}
 
-		status(client, sf, statusUser, statusName, statusDetails, statusRemotePaths)
+		status(client, sf, statusUser, statusOrder, statusName, statusDetails, statusRemotePaths)
 	},
 }
 
@@ -144,6 +154,8 @@ func init() {
 	// flags specific to this sub-command
 	statusCmd.Flags().StringVar(&statusUser, "user", currentUsername(),
 		"pretend to be this user (only works if you started the server)")
+	statusCmd.Flags().StringVarP(&statusOrder, "order", "o", "",
+		"show sets in this order (alphabetic or recent)")
 	statusCmd.Flags().StringVarP(&statusName, "name", "n", "",
 		"get status for just the set with this name")
 	statusCmd.Flags().BoolVarP(&statusDetails, "details", "d", false,
@@ -202,7 +214,7 @@ func checkOnlyOneStatusFlagSet(incomplete, complete, failed, queued bool) {
 }
 
 // status does the main job of getting backup set status from the server.
-func status(client *server.Client, sf statusFilterer, user, name string, details, remote bool) {
+func status(client *server.Client, sf statusFilterer, user, order, name string, details, remote bool) {
 	qs, err := client.GetQueueStatus()
 	if err != nil {
 		die("unable to get server queue status: %s", err)
@@ -224,7 +236,7 @@ func status(client *server.Client, sf statusFilterer, user, name string, details
 		return
 	}
 
-	displaySets(client, sets, details, remote, user == "all")
+	displaySets(client, sets, details, remote, user == "all", order)
 }
 
 // displayQueueStatus prints out QStatus in a nice way. If user is admin, also
@@ -291,8 +303,11 @@ func filter(sf statusFilterer, sets []*set.Set) []*set.Set {
 
 // displaySets prints info about the given sets to STDOUT. Failed entry details
 // will also be printed, and optionally non-failed.
-func displaySets(client *server.Client, sets []*set.Set, showNonFailedEntries, showRemotePaths, showRequesters bool) {
+func displaySets(client *server.Client, sets []*set.Set,
+	showNonFailedEntries, showRemotePaths, showRequesters bool, order string) {
 	l := len(sets)
+
+	sortSets(order, sets)
 
 	for i, forDisplay := range sets {
 		cliPrint("\n")
@@ -313,6 +328,40 @@ func displaySets(client *server.Client, sets []*set.Set, showNonFailedEntries, s
 			cliPrint("\n-----\n")
 		}
 	}
+}
+
+// sortSets sorts the slice of sets alphabetically by default or by most
+// recently discovered files.
+func sortSets(order string, sets []*set.Set) {
+	if order == "recent" {
+		sortSetsByRecent(sets)
+
+		return
+	}
+
+	sortSetsAlphabetically(sets)
+}
+
+// sortSetsByRecent sorts the sets by the most recently discovered being towards
+// the end, with undiscovered files being put last.
+func sortSetsByRecent(sets []*set.Set) {
+	sort.Slice(sets, func(i, j int) bool {
+		if sets[i].LastDiscovery.IsZero() && !sets[j].LastDiscovery.IsZero() {
+			return false
+		}
+
+		if !sets[i].LastDiscovery.IsZero() && sets[j].LastDiscovery.IsZero() {
+			return true
+		}
+
+		return sets[i].LastDiscovery.After(sets[j].LastDiscovery)
+	})
+}
+
+func sortSetsAlphabetically(sets []*set.Set) {
+	sort.Slice(sets, func(i, j int) bool {
+		return sets[i].Name < sets[j].Name
+	})
 }
 
 // displaySet prints info about the given set to STDOUT.
