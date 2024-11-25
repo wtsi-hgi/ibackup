@@ -157,7 +157,7 @@ func init() {
 	statusCmd.Flags().StringVar(&statusUser, "user", currentUsername(),
 		"pretend to be this user (only works if you started the server)")
 	statusCmd.Flags().StringVarP(&statusOrder, "order", "o", alphabetic,
-		"show sets in 'alphabetic' (default) or 'recent' order")
+		"show sets in 'alphabetic' or 'recent' order")
 	statusCmd.Flags().StringVarP(&statusName, "name", "n", "",
 		"get status for just the set with this name")
 	statusCmd.Flags().BoolVarP(&statusDetails, "details", "d", false,
