@@ -47,6 +47,8 @@ const bytesInMiB = 1024 * 1024
 const hundredForPercentCalc float64 = 100
 const nsInWeek = hoursInWeek * time.Hour
 const nsInDay = hoursInDay * time.Hour
+const alphabetic = "alphabetic"
+const recent = "recent"
 
 // options for this cmd.
 var statusUser string
@@ -129,7 +131,7 @@ own. You can specify the user as "all" to see all user's sets.
 			die("--remote can only be used with --details and --name")
 		}
 
-		if statusOrder != "" && statusOrder != "alphabetic" && statusOrder != "recent" {
+		if statusOrder != alphabetic && statusOrder != recent {
 			die("--order can only be 'alphabetic' or 'recent'")
 		}
 
@@ -154,8 +156,8 @@ func init() {
 	// flags specific to this sub-command
 	statusCmd.Flags().StringVar(&statusUser, "user", currentUsername(),
 		"pretend to be this user (only works if you started the server)")
-	statusCmd.Flags().StringVarP(&statusOrder, "order", "o", "",
-		"show sets in this order (alphabetic or recent)")
+	statusCmd.Flags().StringVarP(&statusOrder, "order", "o", alphabetic,
+		"show sets in 'alphabetic' (default) or 'recent' order")
 	statusCmd.Flags().StringVarP(&statusName, "name", "n", "",
 		"get status for just the set with this name")
 	statusCmd.Flags().BoolVarP(&statusDetails, "details", "d", false,
@@ -333,7 +335,7 @@ func displaySets(client *server.Client, sets []*set.Set,
 // sortSets sorts the slice of sets alphabetically by default or by most
 // recently discovered files.
 func sortSets(order string, sets []*set.Set) {
-	if order == "recent" {
+	if order == recent {
 		sortSetsByRecent(sets)
 
 		return
