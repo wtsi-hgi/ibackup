@@ -37,7 +37,6 @@ import (
 
 	ldap "github.com/go-ldap/ldap/v3"
 	"github.com/inconshreveable/log15"
-	sync "github.com/sasha-s/go-deadlock"
 	"github.com/spf13/cobra"
 	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/ibackup/put"
@@ -191,7 +190,6 @@ database that you've made, to investigate.
 			StillRunningMsgFreq:  stillRunningMsgFreq,
 		}
 
-		sync.Opts.DeadlockTimeout = deadlockTimeout
 		s, err := server.New(conf)
 		if err != nil {
 			die("%s", err)
