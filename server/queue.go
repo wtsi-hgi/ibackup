@@ -615,6 +615,9 @@ func (s *Server) clientMadeIRODSConnections(c *gin.Context) {
 }
 
 func (s *Server) createAndSendIRODSSlackMsg() {
+	s.iRodsMu.Lock()
+	defer s.iRodsMu.Unlock()
+
 	msg := fmt.Sprintf("%d iRODS connections open", s.totalIRODSConnections())
 
 	if s.iRodsTracker.slacker == nil || s.iRodsTracker.bouncing || msg == s.iRodsTracker.lastMsg {
