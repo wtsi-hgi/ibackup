@@ -621,10 +621,10 @@ func (s *Server) createAndSendIRODSSlackMsg() {
 	s.iRodsTracker.slacker.SendMessage(slack.Info, msg)
 	s.iRodsTracker.lastMsg = msg
 	s.iRodsTracker.bouncing = true
-	debounce := s.iRodsTracker.debounce
+	debounce := s.iRodsTracker.debounceTimeout
 
 	go func() {
-		<-time.After(debounce)
+		time.Sleep(debounce)
 
 		s.mapMu.Lock()
 		defer s.mapMu.Unlock()
