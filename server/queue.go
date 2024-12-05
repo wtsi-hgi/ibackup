@@ -605,19 +605,13 @@ func (s *Server) clientMadeIRODSConnections(c *gin.Context) {
 	s.mapMu.Lock()
 	defer s.mapMu.Unlock()
 
-	s.iRodsMu.Lock()
 	s.iRODSConnections[hostPID] += n
-	s.iRodsMu.Unlock()
-
 	s.createAndSendIRODSSlackMsg()
 
 	c.Status(http.StatusOK)
 }
 
 func (s *Server) createAndSendIRODSSlackMsg() {
-	s.iRodsMu.Lock()
-	defer s.iRodsMu.Unlock()
-
 	msg := fmt.Sprintf("%d iRODS connections open", s.totalIRODSConnections())
 
 	if s.iRodsTracker.slacker == nil || s.iRodsTracker.bouncing || msg == s.iRodsTracker.lastMsg {
@@ -632,6 +626,8 @@ func (s *Server) createAndSendIRODSSlackMsg() {
 	go func() {
 		<-time.After(debounce)
 
+		s.mapMu.Lock()
+		defer s.mapMu.Unlock()
 		s.iRodsTracker.bouncing = false
 		s.createAndSendIRODSSlackMsg()
 	}()
@@ -648,10 +644,7 @@ func (s *Server) clientClosedIRODSConnections(c *gin.Context) {
 	s.mapMu.Lock()
 	defer s.mapMu.Unlock()
 
-	s.iRodsMu.Lock()
 	delete(s.iRODSConnections, hostPID)
-	s.iRodsMu.Unlock()
-
 	s.createAndSendIRODSSlackMsg()
 
 	c.Status(http.StatusOK)

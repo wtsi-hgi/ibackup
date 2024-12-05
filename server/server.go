@@ -111,7 +111,6 @@ type Server struct {
 	mapMu               sync.RWMutex
 	creatingCollections map[string]bool
 	iRODSConnections    map[string]int
-	iRodsMu             sync.RWMutex
 	iRodsTracker        SlackConfig
 }
 
