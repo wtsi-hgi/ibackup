@@ -32,6 +32,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/VertebrateResequencing/wr/queue"
 	"github.com/gin-gonic/gin"
@@ -605,9 +606,31 @@ func (s *Server) clientMadeIRODSConnections(c *gin.Context) {
 	defer s.mapMu.Unlock()
 
 	s.iRODSConnections[hostPID] += n
-	s.sendSlackMessage(slack.Info, strconv.Itoa(s.totalIRODSConnections())+" iRODS connections open")
+	s.createAndSendIRODSSlackMsg()
 
 	c.Status(http.StatusOK)
+}
+
+func (s *Server) createAndSendIRODSSlackMsg() {
+	msg := fmt.Sprintf("%d iRODS connections open", s.totalIRODSConnections())
+
+	if s.iRodsTracker.slacker == nil || s.iRodsTracker.bouncing || msg == s.iRodsTracker.lastMsg {
+		return
+	}
+
+	s.iRodsTracker.slacker.SendMessage(slack.Info, msg)
+	s.iRodsTracker.lastMsg = msg
+	s.iRodsTracker.bouncing = true
+	debounce := s.iRodsTracker.debounce
+
+	go func() {
+		<-time.After(debounce)
+
+		s.iRodsMu.Lock()
+		defer s.iRodsMu.Unlock()
+		s.iRodsTracker.bouncing = false
+		s.createAndSendIRODSSlackMsg()
+	}()
 }
 
 func (s *Server) clientClosedIRODSConnections(c *gin.Context) {
@@ -622,7 +645,7 @@ func (s *Server) clientClosedIRODSConnections(c *gin.Context) {
 	defer s.mapMu.Unlock()
 
 	delete(s.iRODSConnections, hostPID)
-	s.sendSlackMessage(slack.Info, strconv.Itoa(s.totalIRODSConnections())+" iRODS connections open")
+	s.createAndSendIRODSSlackMsg()
 
 	c.Status(http.StatusOK)
 }

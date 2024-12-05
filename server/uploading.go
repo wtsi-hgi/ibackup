@@ -42,18 +42,17 @@ type uploadTracker struct {
 	uploading     map[string]*put.Request
 	stuckRequests map[string]*put.Request
 
-	slacker  set.Slacker
-	debounce time.Duration
-	bouncing bool
-	lastMsg  string
+	slackConfig SlackConfig
 }
 
 func newUploadTracker(slacker set.Slacker, debounce time.Duration) *uploadTracker {
 	ut := &uploadTracker{
 		uploading:     make(map[string]*put.Request),
 		stuckRequests: make(map[string]*put.Request),
-		slacker:       slacker,
-		debounce:      debounce,
+		slackConfig: SlackConfig{
+			slacker:  slacker,
+			debounce: debounce,
+		},
 	}
 
 	return ut
@@ -84,21 +83,21 @@ func (ut *uploadTracker) createAndSendSlackMsg() {
 
 	msg := fmt.Sprintf("%d client%s uploading", len(ut.uploading), suffix)
 
-	if ut.slacker == nil || ut.bouncing || msg == ut.lastMsg {
+	if ut.slackConfig.slacker == nil || ut.slackConfig.bouncing || msg == ut.slackConfig.lastMsg {
 		return
 	}
 
-	ut.slacker.SendMessage(slack.Info, msg)
-	ut.lastMsg = msg
-	ut.bouncing = true
-	debounce := ut.debounce
+	ut.slackConfig.slacker.SendMessage(slack.Info, msg)
+	ut.slackConfig.lastMsg = msg
+	ut.slackConfig.bouncing = true
+	debounce := ut.slackConfig.debounce
 
 	go func() {
 		<-time.After(debounce)
 
 		ut.Lock()
 		defer ut.Unlock()
-		ut.bouncing = false
+		ut.slackConfig.bouncing = false
 		ut.createAndSendSlackMsg()
 	}()
 }
