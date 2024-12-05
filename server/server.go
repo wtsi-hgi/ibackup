@@ -117,10 +117,10 @@ type Server struct {
 // SlackConfig is used for slack messages that debounce, such as clients
 // uploading and iRODS connections.
 type SlackConfig struct {
-	slacker  set.Slacker
-	debounce time.Duration
-	bouncing bool
-	lastMsg  string
+	slacker         set.Slacker
+	debounceTimeout time.Duration
+	bouncing        bool
+	lastMsg         string
 }
 
 // New creates a Server which can serve a REST API and website.
@@ -142,7 +142,7 @@ func New(conf Config) (*Server, error) {
 		slacker:             conf.Slacker,
 		stillRunningMsgFreq: conf.StillRunningMsgFreq,
 		uploadTracker:       newUploadTracker(conf.Slacker, conf.SlackMessageDebounce),
-		iRodsTracker:        SlackConfig{slacker: conf.Slacker, debounce: conf.SlackMessageDebounce},
+		iRodsTracker:        SlackConfig{slacker: conf.Slacker, debounceTimeout: conf.SlackMessageDebounce},
 	}
 
 	s.Server.Router().Use(gas.IncludeAbortErrorsInBody)

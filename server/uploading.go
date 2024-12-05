@@ -50,8 +50,8 @@ func newUploadTracker(slacker set.Slacker, debounce time.Duration) *uploadTracke
 		uploading:     make(map[string]*put.Request),
 		stuckRequests: make(map[string]*put.Request),
 		slackConfig: SlackConfig{
-			slacker:  slacker,
-			debounce: debounce,
+			slacker:         slacker,
+			debounceTimeout: debounce,
 		},
 	}
 
@@ -90,7 +90,7 @@ func (ut *uploadTracker) createAndSendSlackMsg() {
 	ut.slackConfig.slacker.SendMessage(slack.Info, msg)
 	ut.slackConfig.lastMsg = msg
 	ut.slackConfig.bouncing = true
-	debounce := ut.slackConfig.debounce
+	debounce := ut.slackConfig.debounceTimeout
 
 	go func() {
 		<-time.After(debounce)
