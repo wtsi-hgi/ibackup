@@ -632,8 +632,6 @@ func (s *Server) createAndSendIRODSSlackMsg() {
 	go func() {
 		<-time.After(debounce)
 
-		s.iRodsMu.Lock()
-		defer s.iRodsMu.Unlock()
 		s.iRodsTracker.bouncing = false
 		s.createAndSendIRODSSlackMsg()
 	}()
