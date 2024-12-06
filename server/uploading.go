@@ -37,19 +37,29 @@ import (
 	"github.com/wtsi-hgi/ibackup/slack"
 )
 
+// debounceTracker holds values for debouncing slack messages.
+type debounceTracker struct {
+	sync.Mutex
+	slacker         set.Slacker
+	debounceTimeout time.Duration
+	bouncing        bool
+	lastMsg         string
+	curMsg          string
+}
+
 type uploadTracker struct {
 	sync.RWMutex
 	uploading     map[string]*put.Request
 	stuckRequests map[string]*put.Request
 
-	slackConfig SlackConfig
+	debounceTracker debounceTracker
 }
 
 func newUploadTracker(slacker set.Slacker, debounce time.Duration) *uploadTracker {
 	ut := &uploadTracker{
 		uploading:     make(map[string]*put.Request),
 		stuckRequests: make(map[string]*put.Request),
-		slackConfig: SlackConfig{
+		debounceTracker: debounceTracker{
 			slacker:         slacker,
 			debounceTimeout: debounce,
 		},
@@ -81,24 +91,29 @@ func (ut *uploadTracker) createAndSendSlackMsg() {
 		suffix = "s"
 	}
 
-	msg := fmt.Sprintf("%d client%s uploading", len(ut.uploading), suffix)
+	ut.debounceTracker.sendSlackMsg(
+		fmt.Sprintf("%d client%s uploading", len(ut.uploading), suffix))
+}
 
-	if ut.slackConfig.slacker == nil || ut.slackConfig.bouncing || msg == ut.slackConfig.lastMsg {
+func (dt *debounceTracker) sendSlackMsg(msg string) {
+	dt.curMsg = msg
+
+	if dt.slacker == nil || dt.bouncing || msg == dt.lastMsg {
 		return
 	}
 
-	ut.slackConfig.slacker.SendMessage(slack.Info, msg)
-	ut.slackConfig.lastMsg = msg
-	ut.slackConfig.bouncing = true
-	debounce := ut.slackConfig.debounceTimeout
+	dt.slacker.SendMessage(slack.Info, msg)
+	dt.lastMsg = msg
+	dt.bouncing = true
+	debounce := dt.debounceTimeout
 
 	go func() {
 		<-time.After(debounce)
 
-		ut.Lock()
-		defer ut.Unlock()
-		ut.slackConfig.bouncing = false
-		ut.createAndSendSlackMsg()
+		dt.Lock()
+		defer dt.Unlock()
+		dt.bouncing = false
+		dt.sendSlackMsg(dt.curMsg)
 	}()
 }
 
