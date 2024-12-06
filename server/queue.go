@@ -628,8 +628,8 @@ func (s *Server) clientMadeIRODSConnections(c *gin.Context) {
 }
 
 func (irt *iRodsTracker) addIRODSConnections(hostPID string, numberOfConnections int) {
-	irt.Lock()
-	defer irt.Unlock()
+	irt.debounceTracker.Lock()
+	defer irt.debounceTracker.Unlock()
 
 	irt.iRODSConnections[hostPID] += numberOfConnections
 
@@ -650,8 +650,8 @@ func (s *Server) clientClosedIRODSConnections(c *gin.Context) {
 }
 
 func (irt *iRodsTracker) deleteIRODSConnections(hostPID string) {
-	irt.Lock()
-	defer irt.Unlock()
+	irt.debounceTracker.Lock()
+	defer irt.debounceTracker.Unlock()
 
 	delete(irt.iRODSConnections, hostPID)
 

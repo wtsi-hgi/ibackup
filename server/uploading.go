@@ -86,6 +86,9 @@ func (ut *uploadTracker) uploadStarting(r *put.Request) {
 }
 
 func (ut *uploadTracker) createAndSendSlackMsg() {
+	ut.debounceTracker.Lock()
+	defer ut.debounceTracker.Unlock()
+
 	suffix := ""
 	if len(ut.uploading) != 1 {
 		suffix = "s"
