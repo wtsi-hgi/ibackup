@@ -37,23 +37,32 @@ import (
 	"github.com/wtsi-hgi/ibackup/slack"
 )
 
+// debounceTracker holds values for debouncing slack messages.
+type debounceTracker struct {
+	sync.Mutex
+	slacker         set.Slacker
+	debounceTimeout time.Duration
+	bouncing        bool
+	lastMsg         string
+	curMsg          string
+}
+
 type uploadTracker struct {
 	sync.RWMutex
 	uploading     map[string]*put.Request
 	stuckRequests map[string]*put.Request
 
-	slacker  set.Slacker
-	debounce time.Duration
-	bouncing bool
-	lastMsg  string
+	debounceTracker debounceTracker
 }
 
 func newUploadTracker(slacker set.Slacker, debounce time.Duration) *uploadTracker {
 	ut := &uploadTracker{
 		uploading:     make(map[string]*put.Request),
 		stuckRequests: make(map[string]*put.Request),
-		slacker:       slacker,
-		debounce:      debounce,
+		debounceTracker: debounceTracker{
+			slacker:         slacker,
+			debounceTimeout: debounce,
+		},
 	}
 
 	return ut
@@ -77,29 +86,37 @@ func (ut *uploadTracker) uploadStarting(r *put.Request) {
 }
 
 func (ut *uploadTracker) createAndSendSlackMsg() {
+	ut.debounceTracker.Lock()
+	defer ut.debounceTracker.Unlock()
+
 	suffix := ""
 	if len(ut.uploading) != 1 {
 		suffix = "s"
 	}
 
-	msg := fmt.Sprintf("%d client%s uploading", len(ut.uploading), suffix)
+	ut.debounceTracker.sendSlackMsg(
+		fmt.Sprintf("%d client%s uploading", len(ut.uploading), suffix))
+}
 
-	if ut.slacker == nil || ut.bouncing || msg == ut.lastMsg {
+func (dt *debounceTracker) sendSlackMsg(msg string) {
+	dt.curMsg = msg
+
+	if dt.slacker == nil || dt.bouncing || msg == dt.lastMsg {
 		return
 	}
 
-	ut.slacker.SendMessage(slack.Info, msg)
-	ut.lastMsg = msg
-	ut.bouncing = true
-	debounce := ut.debounce
+	dt.slacker.SendMessage(slack.Info, msg)
+	dt.lastMsg = msg
+	dt.bouncing = true
+	debounce := dt.debounceTimeout
 
 	go func() {
 		<-time.After(debounce)
 
-		ut.Lock()
-		defer ut.Unlock()
-		ut.bouncing = false
-		ut.createAndSendSlackMsg()
+		dt.Lock()
+		defer dt.Unlock()
+		dt.bouncing = false
+		dt.sendSlackMsg(dt.curMsg)
 	}()
 }
 

@@ -357,8 +357,6 @@ func TestServer(t *testing.T) {
 						err = client.TriggerDiscovery(exampleSet.ID())
 						So(err, ShouldBeNil)
 
-						So(slackWriter.String(), ShouldBeBlank)
-
 						ok := <-racCalled
 						So(ok, ShouldBeTrue)
 						So(len(racRequests), ShouldEqual, numFiles+len(discovers))
@@ -1691,6 +1689,56 @@ func TestServer(t *testing.T) {
 						So(qs.IRODSConnections, ShouldEqual, 0)
 
 						So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"0 iRODS connections open")
+
+						Convey("iRODS messages are debounced if desired", func() {
+							s.Stop()
+
+							serverStopped = true
+
+							slackDebounce := 500 * time.Millisecond
+							conf.SlackMessageDebounce = slackDebounce
+
+							_, addr2, dfunc2 := makeAndStartServer()
+							defer dfunc2() //nolint:errcheck
+
+							token, errl = gas.Login(gas.NewClientRequest(addr2, certPath), admin, "pass")
+							So(errl, ShouldBeNil)
+
+							client = NewClient(addr2, certPath, token)
+
+							slackWriter.Reset()
+
+							err = client.MakingIRODSConnections(2)
+							So(err, ShouldBeNil)
+
+							So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"2 iRODS connections open")
+							slackWriter.Reset()
+
+							err = client.MakingIRODSConnections(2)
+							So(err, ShouldBeNil)
+
+							So(slackWriter.String(), ShouldBeBlank)
+
+							<-time.After(slackDebounce)
+
+							So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"4 iRODS connections open")
+							slackWriter.Reset()
+
+							err = client.MakingIRODSConnections(2)
+							So(err, ShouldBeNil)
+
+							So(slackWriter.String(), ShouldBeBlank)
+							slackWriter.Reset()
+
+							err = client.ClosedIRODSConnections()
+							So(err, ShouldBeNil)
+
+							So(slackWriter.String(), ShouldBeBlank)
+
+							<-time.After(slackDebounce)
+
+							So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"0 iRODS connections open")
+						})
 
 						Convey("After completion, re-discovery can find new files and we can re-complete", func() {
 							newFile := filepath.Join(dirs[0], "new")
