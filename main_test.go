@@ -1256,7 +1256,7 @@ func TestPuts(t *testing.T) {
 			s.waitForStatus(setName, "\nStatus: uploading", 60*time.Second)
 			s.confirmOutputContains(t, statusCmd, 0,
 				`Global put queue status: 3 queued; 3 reserved to be worked on; 0 failed
-			Global put client status (/10): 6 iRODS connections`)
+Global put client status (/10): 6 iRODS connections`)
 
 			s.waitForStatus(setName, "\nStatus: complete", 60*time.Second)
 
