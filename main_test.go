@@ -495,7 +495,7 @@ func TestList(t *testing.T) {
 func TestStatus(t *testing.T) {
 	const toRemote = " => /remote"
 
-	FocusConvey("With a started server", t, func() {
+	Convey("With a started server", t, func() {
 		s := NewTestServer(t)
 		So(s, ShouldNotBeNil)
 
@@ -616,7 +616,7 @@ Directories:
 			})
 		})
 
-		FocusConvey("Given an added set defined with files", func() {
+		Convey("Given an added set defined with files", func() {
 			dir := t.TempDir()
 			tempTestFile, err := os.CreateTemp(dir, "testFileSet")
 			So(err, ShouldBeNil)
@@ -631,7 +631,7 @@ Directories:
 
 			s.waitForStatus("testAddFiles", "Status: complete", 1*time.Second)
 
-			FocusConvey("Status tells you an example of where input files would get uploaded to", func() {
+			Convey("Status tells you an example of where input files would get uploaded to", func() {
 				s.confirmOutput(t, []string{"status", "--name", "testAddFiles"}, 0,
 					`Global put queue status: 2 queued; 0 reserved to be worked on; 0 failed
 Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
@@ -645,8 +645,6 @@ Num files: 2; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 0 B / 0
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 2; Abnormal: 0
 Completed in: 0s
 Example File: `+dir+`/path/to/other/file => /remote/path/to/other/file`)
-
-				fmt.Println(getRemoteMeta("/remote/path/to/other/file"))
 			})
 
 			Convey("Status with --details and --remotepaths displays the remote path for each file", func() {
@@ -1140,7 +1138,7 @@ func remoteDBBackupPath() string {
 }
 
 func TestPuts(t *testing.T) {
-	FocusConvey("Given a server configured with a remote hardlink location", t, func() {
+	Convey("Given a server configured with a remote hardlink location", t, func() {
 		remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
 		if remotePath == "" {
 			SkipConvey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
@@ -1284,46 +1282,6 @@ func TestPuts(t *testing.T) {
 
 				So(output, ShouldNotContainSubstring, "testValue1\n")
 			}
-		})
-
-		FocusConvey("testing", func() {
-			file1 := filepath.Join(path, "file1")
-			file2 := filepath.Join(path, "file2")
-			file3 := filepath.Join(path, "file3")
-
-			internal.CreateTestFile(t, file1, "some data1")
-			internal.CreateTestFile(t, file2, "some data2")
-			internal.CreateTestFile(t, file3, "some data3")
-
-			setName := "changingFilesTest"
-
-			setMetadata := "testKey:testValue;testKey2:testValue2"
-
-			t.Helper()
-
-			exitCode, _ := s.runBinary(t, "add", "--name", setName, "--transformer",
-				transformer, "--path", path, "--metadata", setMetadata)
-
-			So(exitCode, ShouldEqual, 0)
-
-			s.waitForStatus(setName, "\nDiscovery: completed", 5*time.Second)
-
-			s.waitForStatus(setName, "\nStatus: uploading", 60*time.Second)
-
-			s.waitForStatus(setName, "\nStatus: complete", 60*time.Second)
-
-			output := getRemoteMeta(filepath.Join(remotePath, "file1"))
-			So(output, ShouldContainSubstring, "testKey")
-			So(output, ShouldContainSubstring, "testKey2")
-
-			output = getRemoteMeta(filepath.Join(remotePath, "file2"))
-			So(output, ShouldContainSubstring, "testKey")
-			So(output, ShouldContainSubstring, "testKey2")
-
-			output = getRemoteMeta(filepath.Join(remotePath, "file3"))
-			So(output, ShouldContainSubstring, "testKey")
-			So(output, ShouldContainSubstring, "testKey2")
-
 		})
 
 		Convey("Repeatedly uploading files that are changed or not changes status details", func() {

@@ -205,8 +205,6 @@ type Set struct {
 	Warning string
 
 	slacker Slacker
-
-	Metadata map[string]string
 }
 
 // ID returns an ID for this set, generated deterministiclly from its Name and
