@@ -271,6 +271,17 @@ func (s *TestServer) addSetForTesting(t *testing.T, name, transformer, path stri
 	s.waitForStatus(name, "\nDiscovery: completed", 5*time.Second)
 }
 
+func (s *TestServer) addSetForTestingWithMetadata(t *testing.T, name, transformer, path, metadata string) {
+	t.Helper()
+
+	exitCode, _ := s.runBinary(t, "add", "--name", name, "--transformer", transformer,
+		"--path", path, "--metadata", metadata)
+
+	So(exitCode, ShouldEqual, 0)
+
+	s.waitForStatus(name, "\nDiscovery: completed", 5*time.Second)
+}
+
 func (s *TestServer) waitForStatus(name, statusToFind string, timeout time.Duration) {
 	ctx, cancelFn := context.WithTimeout(context.Background(), timeout)
 	defer cancelFn()
@@ -484,7 +495,7 @@ func TestList(t *testing.T) {
 func TestStatus(t *testing.T) {
 	const toRemote = " => /remote"
 
-	FocusConvey("With a started server", t, func() {
+	Convey("With a started server", t, func() {
 		s := NewTestServer(t)
 		So(s, ShouldNotBeNil)
 
@@ -605,7 +616,7 @@ Directories:
 			})
 		})
 
-		FocusConvey("Given an added set defined with files", func() {
+		Convey("Given an added set defined with files", func() {
 			dir := t.TempDir()
 			tempTestFile, err := os.CreateTemp(dir, "testFileSet")
 			So(err, ShouldBeNil)
@@ -620,7 +631,7 @@ Directories:
 
 			s.waitForStatus("testAddFiles", "Status: complete", 1*time.Second)
 
-			FocusConvey("Status tells you an example of where input files would get uploaded to", func() {
+			Convey("Status tells you an example of where input files would get uploaded to", func() {
 				s.confirmOutput(t, []string{"status", "--name", "testAddFiles"}, 0,
 					`Global put queue status: 2 queued; 0 reserved to be worked on; 0 failed
 Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
@@ -634,8 +645,6 @@ Num files: 2; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 0 B / 0
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 2; Abnormal: 0
 Completed in: 0s
 Example File: `+dir+`/path/to/other/file => /remote/path/to/other/file`)
-
-				fmt.Println(getRemoteMeta("/remote/path/to/other/file"))
 			})
 
 			Convey("Status with --details and --remotepaths displays the remote path for each file", func() {
@@ -1129,7 +1138,7 @@ func remoteDBBackupPath() string {
 }
 
 func TestPuts(t *testing.T) {
-	FocusConvey("Given a server configured with a remote hardlink location", t, func() {
+	Convey("Given a server configured with a remote hardlink location", t, func() {
 		remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
 		if remotePath == "" {
 			SkipConvey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
@@ -1172,7 +1181,22 @@ func TestPuts(t *testing.T) {
 			s.waitForStatus(setName, "\nStatus: complete (but with failures - try a retry)", 60*time.Second)
 		})
 
-		FocusConvey("testing", func() {
+		Convey("Invalid metadata throws an error", func() {
+			file1 := filepath.Join(path, "file1")
+
+			internal.CreateTestFile(t, file1, "some data1")
+
+			setName := "invalidMetadataTest"
+			setMetadata := "testKey:testValue:anotherValue"
+
+			exitCode, err := s.runBinary(t, "add", "--name", setName, "--transformer", transformer,
+				"--path", path, "--metadata", setMetadata)
+
+			So(exitCode, ShouldEqual, 1)
+			So(err, ShouldContainSubstring, "invalid meta: testKey:testValue:anotherValue")
+		})
+
+		Convey("Putting metadata on a set adds that metadata to every file in the set", func() {
 			file1 := filepath.Join(path, "file1")
 			file2 := filepath.Join(path, "file2")
 			file3 := filepath.Join(path, "file3")
@@ -1181,35 +1205,38 @@ func TestPuts(t *testing.T) {
 			internal.CreateTestFile(t, file2, "some data2")
 			internal.CreateTestFile(t, file3, "some data3")
 
-			setName := "changingFilesTest"
+			setName := "metadataTest"
+			fileNames := []string{"file1", "file2", "file3"}
+			setMetadata := "testKey1:testValue1;testKey2:testValue2"
 
-			setMetadata := "testKey:testValue;testKey2:testValue2"
-
-			t.Helper()
-
-			exitCode, _ := s.runBinary(t, "add", "--name", setName, "--transformer",
-				transformer, "--path", path, "--metadata", setMetadata)
-
-			So(exitCode, ShouldEqual, 0)
-
-			s.waitForStatus(setName, "\nDiscovery: completed", 5*time.Second)
-
-			s.waitForStatus(setName, "\nStatus: uploading", 60*time.Second)
+			s.addSetForTestingWithMetadata(t, setName, transformer, path, setMetadata)
 
 			s.waitForStatus(setName, "\nStatus: complete", 60*time.Second)
 
-			output := getRemoteMeta(filepath.Join(remotePath, "file1"))
-			So(output, ShouldContainSubstring, "testKey")
-			So(output, ShouldContainSubstring, "testKey2")
+			for _, fileName := range fileNames {
+				output := getRemoteMeta(filepath.Join(remotePath, fileName))
+				So(output, ShouldContainSubstring, "testKey1\n")
+				So(output, ShouldContainSubstring, "testValue1\n")
+				So(output, ShouldContainSubstring, "testKey2\n")
+				So(output, ShouldContainSubstring, "testValue2\n")
+			}
 
-			output = getRemoteMeta(filepath.Join(remotePath, "file2"))
-			So(output, ShouldContainSubstring, "testKey")
-			So(output, ShouldContainSubstring, "testKey2")
+			newName := setName + ".v2"
+			setMetadata = "testKey2:testValue2Updated"
 
-			output = getRemoteMeta(filepath.Join(remotePath, "file3"))
-			So(output, ShouldContainSubstring, "testKey")
-			So(output, ShouldContainSubstring, "testKey2")
+			s.addSetForTestingWithMetadata(t, newName, transformer, path, setMetadata)
 
+			s.waitForStatus(newName, "\nStatus: complete", 60*time.Second)
+
+			for _, fileName := range fileNames {
+				output := getRemoteMeta(filepath.Join(remotePath, fileName))
+				So(output, ShouldContainSubstring, "testKey1\n")
+				So(output, ShouldContainSubstring, "testValue1\n")
+				So(output, ShouldContainSubstring, "testKey2\n")
+				So(output, ShouldContainSubstring, "testValue2Updated\n")
+
+				So(output, ShouldNotContainSubstring, "testValue2\n")
+			}
 		})
 
 		Convey("Repeatedly uploading files that are changed or not changes status details", func() {
