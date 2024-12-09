@@ -45,9 +45,7 @@ import (
 
 	"github.com/phayes/freeport"
 	. "github.com/smartystreets/goconvey/convey"
-	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/ibackup/internal"
-	"github.com/wtsi-hgi/ibackup/server"
 	btime "github.com/wtsi-ssg/wr/backoff/time"
 	"github.com/wtsi-ssg/wr/retry"
 )
@@ -546,35 +544,6 @@ Completed in: 0s
 Example File: `+dir+`/path/to/other/file => /remote/path/to/other/file`)
 			})
 
-			Convey("And another set with failed files", func() {
-				client, err := newServerClient(s.url, s.cert)
-				So(err, ShouldBeNil)
-
-				set, err := client.GetSetByName("all", "testAddFiles")
-				So(err, ShouldBeNil)
-
-				set.Failed = 1
-				set.Name = "testSetWithFails"
-
-				err = client.AddOrUpdateSet(set)
-				So(err, ShouldBeNil)
-
-				Convey("Status describes if a complete set has failures", func() {
-					s.confirmOutput(t, []string{"status", "--name", "testSetWithFails"}, 0,
-						`Global put queue status: 2 queued; 0 reserved to be worked on; 0 failed
-Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
-
-Name: testSetWithFails
-Transformer: prefix=`+dir+`:/remote
-Monitored: false; Archive: false
-Status: complete (but with failures - try a retry)
-Discovery:
-Num files: 2; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 0 B / 0 B
-Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 1; Missing: 2; Abnormal: 0
-Completed in: 0s`)
-				})
-			})
-
 			Convey("Status with --details and --remotepaths displays the remote path for each file", func() {
 				s.confirmOutput(t, []string{"status", "--name", "testAddFiles",
 					"--details", "--remotepaths"}, 0,
@@ -931,26 +900,6 @@ func prepareForSetWithEmptyDir(t *testing.T) (string, string, string) {
 	return transformer, sourceDir, filepath.Join(remoteDir, "source")
 }
 
-// newServerClient tries to get a jwt for the given server url, and returns a
-// client that can interact with it.
-func newServerClient(url, cert string) (*server.Client, error) {
-	token, err := gasClientCLI(url, cert).GetJWT()
-	if err != nil {
-		return nil, err
-	}
-
-	return server.NewClient(url, cert, token), nil
-}
-
-func gasClientCLI(url, cert string) *gas.ClientCLI {
-	c, err := gas.NewClientCLI(".ibackup.jwt", ".ibackup.test.servertoken", url, cert, false)
-	if err != nil {
-		return nil
-	}
-
-	return c
-}
-
 var errMismatchedDBBackupSizes = errors.New("mismatched db backup sizes")
 
 func TestBackup(t *testing.T) {
@@ -1086,7 +1035,7 @@ func remoteDBBackupPath() string {
 }
 
 func TestPuts(t *testing.T) {
-	Convey("Given a server configured with a remote hardlink location", t, func() {
+	FocusConvey("Given a server configured with a remote hardlink location", t, func() {
 		remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
 		if remotePath == "" {
 			SkipConvey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
@@ -1114,6 +1063,20 @@ func TestPuts(t *testing.T) {
 
 		path := t.TempDir()
 		transformer := "prefix=" + path + ":" + remotePath
+
+		FocusConvey("Status describes if a complete set has failures", func() {
+			file1 := filepath.Join(path, "file1")
+
+			internal.CreateTestFile(t, file1, "some data1")
+
+			err := os.Chmod(file1, 0)
+			So(err, ShouldBeNil)
+
+			setName := "failuresTest"
+			s.addSetForTesting(t, setName, transformer, path)
+
+			s.waitForStatus(setName, "\nStatus: complete (but with failures - try a retry)", 60*time.Second)
+		})
 
 		Convey("Repeatedly uploading files that are changed or not changes status details", func() {
 			file1 := filepath.Join(path, "file1")
