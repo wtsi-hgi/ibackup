@@ -1,5 +1,5 @@
 run:
-  deadline: 6m
+  deadline: 4m
   build-tags:
     - netgo
   modules-download-mode: readonly
