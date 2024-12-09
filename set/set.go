@@ -105,6 +105,10 @@ type Set struct {
 	// An optional longer free-text description of this backup set.
 	Description string
 
+	// Optional additional metadata which will be applied to every file in the
+	// set.
+	Metadata map[string]string
+
 	// Delete local paths after successful upload. Optional, defaults to no
 	// deletions (ie. do a backup, not a move).
 	DeleteLocal bool
@@ -201,8 +205,6 @@ type Set struct {
 	Warning string
 
 	slacker Slacker
-
-	Metadata map[string]string
 }
 
 // ID returns an ID for this set, generated deterministiclly from its Name and
