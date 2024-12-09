@@ -1127,7 +1127,7 @@ func remoteDBBackupPath() string {
 }
 
 func TestPuts(t *testing.T) {
-	FocusConvey("Given a server configured with a remote hardlink location", t, func() {
+	Convey("Given a server configured with a remote hardlink location", t, func() {
 		remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
 		if remotePath == "" {
 			SkipConvey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
@@ -1156,7 +1156,7 @@ func TestPuts(t *testing.T) {
 		path := t.TempDir()
 		transformer := "prefix=" + path + ":" + remotePath
 
-		FocusConvey("Status describes if a complete set has failures", func() {
+		Convey("Status on an added set describes if a complete set has failures", func() {
 			file1 := filepath.Join(path, "file1")
 
 			internal.CreateTestFile(t, file1, "some data1")
