@@ -513,6 +513,98 @@ Directories:
 			})
 		})
 
+		Convey("Given multiple added sets defined with a directory", func() {
+			transformer, localDir, remoteDir := prepareForSetWithEmptyDir(t)
+			s.addSetForTesting(t, "c", transformer, localDir)
+			s.addSetForTesting(t, "a", transformer, localDir)
+			s.addSetForTesting(t, "b", transformer, localDir)
+
+			Convey("Status is ordered alphabetically by default", func() {
+				s.confirmOutput(t, []string{"status"}, 0, `Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
+Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
+
+Name: a
+Transformer: `+transformer+`
+Monitored: false; Archive: false
+Status: complete
+Discovery:
+Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 0 B / 0 B
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
+Completed in: 0s
+Directories:
+  `+localDir+" => "+remoteDir+`
+
+-----
+
+Name: b
+Transformer: `+transformer+`
+Monitored: false; Archive: false
+Status: complete
+Discovery:
+Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 0 B / 0 B
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
+Completed in: 0s
+Directories:
+  `+localDir+" => "+remoteDir+`
+
+-----
+
+Name: c
+Transformer: `+transformer+`
+Monitored: false; Archive: false
+Status: complete
+Discovery:
+Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 0 B / 0 B
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
+Completed in: 0s
+Directories:
+  `+localDir+" => "+remoteDir)
+			})
+
+			Convey("Status with '--order recent' orders the output by recent files", func() {
+				s.confirmOutput(t, []string{"status", "--order", "recent"}, 0,
+					`Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
+Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
+
+Name: b
+Transformer: `+transformer+`
+Monitored: false; Archive: false
+Status: complete
+Discovery:
+Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 0 B / 0 B
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
+Completed in: 0s
+Directories:
+  `+localDir+" => "+remoteDir+`
+
+-----
+
+Name: a
+Transformer: `+transformer+`
+Monitored: false; Archive: false
+Status: complete
+Discovery:
+Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 0 B / 0 B
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
+Completed in: 0s
+Directories:
+  `+localDir+" => "+remoteDir+`
+
+-----
+
+Name: c
+Transformer: `+transformer+`
+Monitored: false; Archive: false
+Status: complete
+Discovery:
+Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 0 B / 0 B
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
+Completed in: 0s
+Directories:
+  `+localDir+" => "+remoteDir)
+			})
+		})
+
 		Convey("Given an added set defined with files", func() {
 			dir := t.TempDir()
 			tempTestFile, err := os.CreateTemp(dir, "testFileSet")
