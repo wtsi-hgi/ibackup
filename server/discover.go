@@ -352,6 +352,10 @@ func (s *Server) entryToRequest(entry *set.Entry, transformer put.PathTransforme
 		r.Meta[put.MetaKeySymlink] = entry.Dest
 	}
 
+	for i, v := range given.Metadata {
+		r.Meta[i] = v
+	}
+
 	if entry.Type == set.Hardlink && s.remoteHardlinkLocation != "" {
 		r.Hardlink = filepath.Join(s.remoteHardlinkLocation,
 			entry.InodeStoragePath())
