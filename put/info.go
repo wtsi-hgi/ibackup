@@ -34,11 +34,12 @@ import (
 )
 
 const (
-	MetaNamespace = "ibackup:"
-	MetaKeyMtime  = MetaNamespace + "mtime" // mtime of source file, 1sec truncated UTC RFC 3339
-	MetaKeyOwner  = MetaNamespace + "owner" // a username
-	MetaKeyGroup  = MetaNamespace + "group" // a unix group name
-	MetaKeyDate   = MetaNamespace + "date"  // date upload initiated, 1sec truncated UTC RFC 3339
+	MetaUserNamespace = "user:"
+	MetaNamespace     = "ibackup:"
+	MetaKeyMtime      = MetaNamespace + "mtime" // mtime of source file, 1sec truncated UTC RFC 3339
+	MetaKeyOwner      = MetaNamespace + "owner" // a username
+	MetaKeyGroup      = MetaNamespace + "group" // a unix group name
+	MetaKeyDate       = MetaNamespace + "date"  // date upload initiated, 1sec truncated UTC RFC 3339
 	// a comma sep list of usernames of the people who reqested the backup.
 	MetaKeyRequester      = MetaNamespace + "requesters"
 	MetaKeySets           = MetaNamespace + "sets"           // a comma sep list of backup set names this file belongs to

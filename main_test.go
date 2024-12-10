@@ -1186,7 +1186,7 @@ func TestPuts(t *testing.T) {
 
 			internal.CreateTestFile(t, file1, "some data1")
 
-			setName := "invalidMetadataTest"
+			setName := "invalidMetadataTest1"
 			setMetadata := "testKey:testValue:anotherValue"
 
 			exitCode, err := s.runBinary(t, "add", "--name", setName, "--transformer", transformer,
@@ -1194,9 +1194,28 @@ func TestPuts(t *testing.T) {
 
 			So(exitCode, ShouldEqual, 1)
 			So(err, ShouldContainSubstring, "invalid meta: testKey:testValue:anotherValue")
+
+			setName = "invalidMetadataTest2"
+			setMetadata = "ibackup:set:invalidMetadataTest2"
+
+			exitCode, _ = s.runBinary(t, "add", "--name", setName, "--transformer", transformer,
+				"--path", path, "--metadata", setMetadata)
+
+			So(exitCode, ShouldEqual, 1)
+
+			setName = "invalidMetadataTest3"
+			setMetadata = "name:name:name:name"
+
+			exitCode, _ = s.runBinary(t, "add", "--name", setName, "--transformer", transformer,
+				"--path", path, "--metadata", setMetadata)
+
+			So(exitCode, ShouldEqual, 1)
 		})
 
 		Convey("Putting metadata on a set adds that metadata to every file in the set", func() {
+			attributePrefix := "attribute: user:"
+			valuePrefix := "\nvalue: "
+
 			file1 := filepath.Join(path, "file1")
 			file2 := filepath.Join(path, "file2")
 			file3 := filepath.Join(path, "file3")
@@ -1215,10 +1234,10 @@ func TestPuts(t *testing.T) {
 
 			for _, fileName := range fileNames {
 				output := getRemoteMeta(filepath.Join(remotePath, fileName))
-				So(output, ShouldContainSubstring, "testKey1\n")
-				So(output, ShouldContainSubstring, "testValue1\n")
-				So(output, ShouldContainSubstring, "testKey2\n")
-				So(output, ShouldContainSubstring, "testValue2\n")
+				So(output, ShouldContainSubstring, attributePrefix+"testKey1\n")
+				So(output, ShouldContainSubstring, valuePrefix+"testValue1\n")
+				So(output, ShouldContainSubstring, attributePrefix+"testKey2\n")
+				So(output, ShouldContainSubstring, valuePrefix+"testValue2\n")
 			}
 
 			newName := setName + ".v2"
@@ -1230,10 +1249,10 @@ func TestPuts(t *testing.T) {
 
 			for _, fileName := range fileNames {
 				output := getRemoteMeta(filepath.Join(remotePath, fileName))
-				So(output, ShouldContainSubstring, "testKey1\n")
-				So(output, ShouldContainSubstring, "testValue1\n")
-				So(output, ShouldContainSubstring, "testKey2\n")
-				So(output, ShouldContainSubstring, "testValue2Updated\n")
+				So(output, ShouldContainSubstring, attributePrefix+"testKey1\n")
+				So(output, ShouldContainSubstring, valuePrefix+"testValue1\n")
+				So(output, ShouldContainSubstring, attributePrefix+"testKey2\n")
+				So(output, ShouldContainSubstring, valuePrefix+"testValue2Updated\n")
 
 				So(output, ShouldNotContainSubstring, "testValue2\n")
 			}
