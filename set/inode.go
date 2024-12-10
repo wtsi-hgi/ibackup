@@ -35,7 +35,7 @@ import (
 
 	"github.com/moby/sys/mountinfo"
 	"github.com/ugorji/go/codec"
-	"github.com/wtsi-ssg/wrstat/v4/walk"
+	"github.com/wtsi-ssg/wrstat/v6/walk"
 	bolt "go.etcd.io/bbolt"
 )
 
@@ -78,7 +78,7 @@ func (d *DB) getMountPoints() error {
 func (d *DB) handleInode(tx *bolt.Tx, de *walk.Dirent, transformerID string) (string, error) {
 	key := d.inodeMountPointKeyFromDirent(de)
 	b := tx.Bucket([]byte(inodeBucket))
-	transformerPath := transformerID + transformerInodeSeparator + de.Path
+	transformerPath := transformerID + transformerInodeSeparator + string(de.Path.Bytes())
 
 	v := b.Get(key)
 	if v == nil {
@@ -137,7 +137,7 @@ func alreadyInFiles(path string, existing []string) (bool, bool) {
 // inodeMountPointKeyFromDirent returns the inodeBucket key for the Dirent's
 // inode and the Dirent's mount point for its path.
 func (d *DB) inodeMountPointKeyFromDirent(de *walk.Dirent) []byte {
-	return append(strconv.AppendUint([]byte{}, de.Inode, hexBase), d.GetMountPointFromPath(de.Path)...)
+	return append(strconv.AppendUint([]byte{}, de.Inode, hexBase), d.GetMountPointFromPath(string(de.Path.Bytes()))...)
 }
 
 func (d *DB) inodeMountPointKeyFromEntry(e *Entry) []byte {

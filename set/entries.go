@@ -31,7 +31,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/wtsi-ssg/wrstat/v4/walk"
+	"github.com/wtsi-ssg/wrstat/v6/walk"
 	bolt "go.etcd.io/bbolt"
 )
 
@@ -274,7 +274,7 @@ func (c *entryCreator) updateOrCreateEntryFromDirent(dirent *walk.Dirent) error 
 		return err
 	}
 
-	return c.bucket.Put([]byte(dirent.Path), entry)
+	return c.bucket.Put(dirent.Path.Bytes(), entry)
 }
 
 func (e *Entry) setTypeAndDetermineDest(eType EntryType) error {
@@ -297,7 +297,7 @@ func (e *Entry) setTypeAndDetermineDest(eType EntryType) error {
 
 func (c *entryCreator) newEntryFromDirent(dirent *walk.Dirent) (*Entry, error) {
 	entry := &Entry{
-		Path:  dirent.Path,
+		Path:  string(dirent.Path.Bytes()),
 		Inode: dirent.Inode,
 	}
 
@@ -330,7 +330,7 @@ func (c *entryCreator) existingOrNewEncodedEntry(dirent *walk.Dirent) ([]byte, e
 
 	c.set.entryToSetCounts(entry)
 
-	e := c.existingEntries[dirent.Path]
+	e := c.existingEntries[string(dirent.Path.Bytes())]
 	if e != nil {
 		dbEntry := c.db.decodeEntry(e)
 		if !dbEntry.updateTypeDestAndInode(entry) {

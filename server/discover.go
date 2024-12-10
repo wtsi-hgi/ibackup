@@ -38,7 +38,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/set"
-	"github.com/wtsi-ssg/wrstat/v4/walk"
+	"github.com/wtsi-ssg/wrstat/v6/walk"
 )
 
 const ttr = 6 * time.Minute
