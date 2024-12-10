@@ -90,6 +90,7 @@ func newiRodsTracker(slacker set.Slacker, debounce time.Duration) *iRodsTracker 
 		debounceTracker: debounceTracker{
 			slacker:         slacker,
 			debounceTimeout: debounce,
+			msg:             "iRODS connections open",
 		},
 	}
 
@@ -633,7 +634,7 @@ func (irt *iRodsTracker) addIRODSConnections(hostPID string, numberOfConnections
 
 	irt.iRODSConnections[hostPID] += numberOfConnections
 
-	irt.debounceTracker.sendSlackMsg(fmt.Sprintf("%d iRODS connections open", irt.totalIRODSConnections()))
+	irt.debounceTracker.sendSlackMsg(irt.totalIRODSConnections())
 }
 
 func (s *Server) clientClosedIRODSConnections(c *gin.Context) {
@@ -655,5 +656,5 @@ func (irt *iRodsTracker) deleteIRODSConnections(hostPID string) {
 
 	delete(irt.iRODSConnections, hostPID)
 
-	irt.debounceTracker.sendSlackMsg(fmt.Sprintf("%d iRODS connections open", irt.totalIRODSConnections()))
+	irt.debounceTracker.sendSlackMsg(irt.totalIRODSConnections())
 }
