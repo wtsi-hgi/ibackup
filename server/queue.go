@@ -629,9 +629,6 @@ func (s *Server) clientMadeIRODSConnections(c *gin.Context) {
 }
 
 func (irt *iRodsTracker) addIRODSConnections(hostPID string, numberOfConnections int) {
-	irt.debounceTracker.Lock()
-	defer irt.debounceTracker.Unlock()
-
 	irt.iRODSConnections[hostPID] += numberOfConnections
 
 	irt.debounceTracker.sendSlackMsg(irt.totalIRODSConnections())
@@ -651,9 +648,6 @@ func (s *Server) clientClosedIRODSConnections(c *gin.Context) {
 }
 
 func (irt *iRodsTracker) deleteIRODSConnections(hostPID string) {
-	irt.debounceTracker.Lock()
-	defer irt.debounceTracker.Unlock()
-
 	delete(irt.iRODSConnections, hostPID)
 
 	irt.debounceTracker.sendSlackMsg(irt.totalIRODSConnections())
