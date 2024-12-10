@@ -44,7 +44,7 @@ import (
 	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/set"
 	"github.com/wtsi-hgi/ibackup/slack"
-	"github.com/wtsi-ssg/wrstat/v4/scheduler"
+	"github.com/wtsi-ssg/wrstat/v6/scheduler"
 )
 
 const (
@@ -168,7 +168,7 @@ func (s *Server) SetRemoteHardlinkLocation(path string) {
 // Provide a hint as the the maximum number of put job clients you'll run at
 // once, so that reservations can be balanced between them.
 func (s *Server) EnableJobSubmission(putCmd, deployment, cwd, queue string, numClients int, logger log15.Logger) error {
-	sched, err := scheduler.New(deployment, cwd, queue, connectTimeout, logger, false)
+	sched, err := scheduler.New(deployment, cwd, queue, "", connectTimeout, logger)
 	if err != nil {
 		return err
 	}
