@@ -42,7 +42,7 @@ import (
 	"github.com/wtsi-hgi/ibackup/internal"
 	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/slack"
-	"github.com/wtsi-ssg/wrstat/v4/walk"
+	"github.com/wtsi-ssg/wrstat/v6/walk"
 	bolt "go.etcd.io/bbolt"
 )
 
@@ -1306,19 +1306,19 @@ func TestSetDB(t *testing.T) {
 
 				dirents := []*walk.Dirent{
 					{
-						Path:  local,
+						Path:  walk.NewFilePath(local),
 						Inode: stat.Ino,
 					},
 					{
-						Path:  link1,
+						Path:  walk.NewFilePath(link1),
 						Inode: stat.Ino,
 					},
 					{
-						Path:  link2,
+						Path:  walk.NewFilePath(link2),
 						Inode: stat.Ino,
 					},
 					{
-						Path:  unlinked,
+						Path:  walk.NewFilePath(unlinked),
 						Inode: statUnlinked.Ino,
 					},
 				}
@@ -1369,11 +1369,11 @@ func TestSetDB(t *testing.T) {
 				Convey("then get back all known local paths for the hardlink", func() {
 					paths, errh := db.HardlinkPaths(entries[1])
 					So(errh, ShouldBeNil)
-					So(paths, ShouldResemble, []string{dirents[0].Path, dirents[3].Path})
+					So(paths, ShouldResemble, []string{string(dirents[0].Path.Bytes()), string(dirents[3].Path.Bytes())})
 
 					paths, errh = db.HardlinkPaths(entries[0])
 					So(errh, ShouldBeNil)
-					So(paths, ShouldResemble, []string{dirents[1].Path, dirents[3].Path})
+					So(paths, ShouldResemble, []string{string(dirents[1].Path.Bytes()), string(dirents[3].Path.Bytes())})
 				})
 
 				Convey("then get a remote path for the hardlink", func() {
@@ -1387,7 +1387,7 @@ func TestSetDB(t *testing.T) {
 					err = os.Rename(unlinked, moved)
 					So(err, ShouldBeNil)
 
-					dirents[2].Path = moved
+					dirents[2].Path = walk.NewFilePath(moved)
 
 					got, errd = db.Discover(setl1.ID(), discoverCB)
 					So(errd, ShouldBeNil)
@@ -1430,11 +1430,11 @@ func TestSetDB(t *testing.T) {
 				got, errb := db.Discover(setl1.ID(), func(_ []*Entry) ([]*walk.Dirent, error) {
 					return []*walk.Dirent{
 						{
-							Path:  path1,
+							Path:  walk.NewFilePath(path1),
 							Inode: 1,
 						},
 						{
-							Path:  path2,
+							Path:  walk.NewFilePath(path2),
 							Type:  os.ModeSymlink,
 							Inode: 2,
 						},
@@ -1508,7 +1508,7 @@ func TestSetDB(t *testing.T) {
 				missing := "/non/existent/dir"
 
 				err = db.SetDirEntries(setl1.ID(), []*walk.Dirent{{
-					Path: missing,
+					Path: walk.NewFilePath(missing),
 					Type: os.ModeDir,
 				}})
 				So(err, ShouldBeNil)
@@ -1815,7 +1815,7 @@ func createFileEnts(paths []string) []*walk.Dirent {
 
 	for n, path := range paths {
 		entries[n] = &walk.Dirent{
-			Path: path,
+			Path: walk.NewFilePath(path),
 		}
 	}
 
