@@ -43,8 +43,10 @@ type debounceTracker struct {
 	slacker         set.Slacker
 	debounceTimeout time.Duration
 	bouncing        bool
-	lastMsg         string
-	curMsg          string
+
+	msg     string
+	lastNum int
+	curNum  int
 }
 
 type uploadTracker struct {
@@ -62,6 +64,7 @@ func newUploadTracker(slacker set.Slacker, debounce time.Duration) *uploadTracke
 		debounceTracker: debounceTracker{
 			slacker:         slacker,
 			debounceTimeout: debounce,
+			msg:             "clients uploading",
 		},
 	}
 
@@ -89,24 +92,20 @@ func (ut *uploadTracker) createAndSendSlackMsg() {
 	ut.debounceTracker.Lock()
 	defer ut.debounceTracker.Unlock()
 
-	suffix := ""
-	if len(ut.uploading) != 1 {
-		suffix = "s"
-	}
-
-	ut.debounceTracker.sendSlackMsg(
-		fmt.Sprintf("%d client%s uploading", len(ut.uploading), suffix))
+	ut.debounceTracker.sendSlackMsg(len(ut.uploading))
 }
 
-func (dt *debounceTracker) sendSlackMsg(msg string) {
-	dt.curMsg = msg
+func (dt *debounceTracker) sendSlackMsg(num int) {
+	if num > dt.curNum || dt.curNum == dt.lastNum {
+		dt.curNum = num
+	}
 
-	if dt.slacker == nil || dt.bouncing || msg == dt.lastMsg {
+	if dt.slacker == nil || dt.bouncing || num == dt.lastNum {
 		return
 	}
 
-	dt.slacker.SendMessage(slack.Info, msg)
-	dt.lastMsg = msg
+	dt.slacker.SendMessage(slack.Info, fmt.Sprintf("%d %s", num, dt.msg))
+	dt.lastNum = num
 	dt.bouncing = true
 	debounce := dt.debounceTimeout
 
@@ -116,7 +115,11 @@ func (dt *debounceTracker) sendSlackMsg(msg string) {
 		dt.Lock()
 		defer dt.Unlock()
 		dt.bouncing = false
-		dt.sendSlackMsg(dt.curMsg)
+
+		nextNum := dt.curNum
+		dt.curNum = 0
+
+		dt.sendSlackMsg(nextNum)
 	}()
 }
 

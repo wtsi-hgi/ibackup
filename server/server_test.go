@@ -646,7 +646,7 @@ func TestServer(t *testing.T) {
 							So(err, ShouldBeNil)
 
 							So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"`jim.set1` started uploading files"+
-								slack.BoxPrefixInfo+"1 client uploading")
+								slack.BoxPrefixInfo+"1 clients uploading")
 							slackWriter.Reset()
 
 							requests[1].Status = put.RequestStatusUploading
@@ -682,7 +682,7 @@ func TestServer(t *testing.T) {
 							err = client.UpdateFileStatus(requests[0])
 							So(err, ShouldBeNil)
 
-							So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"1 client uploading")
+							So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"1 clients uploading")
 							slackWriter.Reset()
 
 							requests[0].Status = put.RequestStatusFailed
@@ -722,7 +722,7 @@ func TestServer(t *testing.T) {
 							err = client.UpdateFileStatus(requests[3])
 							So(err, ShouldBeNil)
 
-							So(slackWriter.String(), ShouldContainSubstring, slack.BoxPrefixInfo+"1 client uploading")
+							So(slackWriter.String(), ShouldContainSubstring, slack.BoxPrefixInfo+"1 clients uploading")
 							slackWriter.Reset()
 
 							requests[3].Status = put.RequestStatusFailed
@@ -757,7 +757,8 @@ func TestServer(t *testing.T) {
 
 							<-time.After(slackDebounce)
 
-							So(slackWriter.String(), ShouldBeBlank)
+							So(slackWriter.String(), ShouldContainSubstring, slack.BoxPrefixInfo+"1 clients uploading")
+							slackWriter.Reset()
 						})
 
 						waitForDiscovery := func(given *set.Set) {
@@ -1737,7 +1738,7 @@ func TestServer(t *testing.T) {
 
 							<-time.After(slackDebounce)
 
-							So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"0 iRODS connections open")
+							So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"6 iRODS connections open")
 						})
 
 						Convey("After completion, re-discovery can find new files and we can re-complete", func() {
