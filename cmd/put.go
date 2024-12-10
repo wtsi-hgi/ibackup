@@ -29,6 +29,7 @@ import (
 	"bufio"
 	"bytes"
 	b64 "encoding/base64"
+	"fmt"
 	"io"
 	"os"
 	"os/user"
@@ -49,7 +50,6 @@ const (
 
 	putFileCols    = 3
 	putFileMinCols = 2
-	putMetaParts   = 2
 	putSet         = "manual"
 
 	numIRODSConnections = 2
@@ -361,14 +361,12 @@ func parseMetaString(meta string) map[string]string {
 	mm := make(map[string]string, len(kvs))
 
 	for _, kv := range kvs {
-		parts := strings.Split(kv, ":")
-		if len(parts) == putMetaParts {
-			mm[parts[0]] = parts[1]
+		key, value, err := put.ValidateAndCreateUserMetadata(kv)
+		if err != nil {
+			die(fmt.Sprintf("%s: %s", err.Error(), kv))
 		}
-	}
 
-	if len(mm) != len(kvs) {
-		die("invalid meta: %s", meta)
+		mm[key] = value
 	}
 
 	return mm

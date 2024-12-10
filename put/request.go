@@ -26,6 +26,7 @@
 package put
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -49,7 +50,12 @@ const (
 	ErrNotHumgenLustre                    = "not a valid humgen lustre path"
 	metaListSeparator                     = ","
 	stuckTimeFormat                       = "02/01/06 15:04 MST"
+
+	validMetaParts              = 2
+	validMetaWithNamespaceParts = 3
 )
+
+var errInvalidMeta = errors.New("invalid meta")
 
 // Stuck is used to provide details of a potentially "stuck" upload Request.
 type Stuck struct {
@@ -581,4 +587,24 @@ func dirIsProjectOrTeamOrUsers(dir string) bool {
 // at the leaf or its parent.
 func dirIsLustreWithPTUSubDir(dir string, ptuPart, numParts int) bool {
 	return dir == "lustre" && ptuPart >= 4 && ptuPart+2 <= numParts-1
+}
+
+// ValidateAndCreateUserMetadata takes a key:value string, validates it's a valid
+// metadata value then returns the key prefixed with the user namespace,
+// 'user:', and the value. Returns an error if the meta is invalid.
+func ValidateAndCreateUserMetadata(kv string) (string, string, error) {
+	parts := strings.Split(kv, ":")
+	if !isValidMeta(parts) {
+		return "", "", errInvalidMeta
+	}
+
+	key := MetaUserNamespace + parts[len(parts)-2]
+	value := parts[len(parts)-1]
+
+	return key, value, nil
+}
+
+// isValidMeta returns true if the parts given match a valid user metadata format.
+func isValidMeta(parts []string) bool {
+	return len(parts) == validMetaParts || (len(parts) == validMetaWithNamespaceParts && parts[0] == "user")
 }
