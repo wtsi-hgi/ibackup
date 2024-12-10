@@ -32,12 +32,14 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"sync"
+	"time"
 
 	"github.com/VertebrateResequencing/wr/queue"
 	"github.com/gin-gonic/gin"
 	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/ibackup/put"
-	"github.com/wtsi-hgi/ibackup/slack"
+	"github.com/wtsi-hgi/ibackup/set"
 )
 
 const (
@@ -74,6 +76,26 @@ const (
 	// that a client created or closed its connections.
 	EndPointAuthIRODSConnection = gas.EndPointAuth + iRODSConnectionPath
 )
+
+type iRodsTracker struct {
+	sync.RWMutex
+	iRODSConnections map[string]int
+
+	debounceTracker debounceTracker
+}
+
+func newiRodsTracker(slacker set.Slacker, debounce time.Duration) *iRodsTracker {
+	irt := &iRodsTracker{
+		iRODSConnections: make(map[string]int),
+		debounceTracker: debounceTracker{
+			slacker:         slacker,
+			debounceTimeout: debounce,
+			msg:             "iRODS connections open",
+		},
+	}
+
+	return irt
+}
 
 // MakeQueueEndPoints adds a number of endpoints to the REST API for working
 // with the global in-memory put request queue:
@@ -169,7 +191,7 @@ func (s *Server) QueueStatus() *QStatus {
 
 	stuck := s.uploadTracker.currentlyStuck()
 
-	iRODSConnectionsNumber := s.totalIRODSConnections()
+	iRODSConnectionsNumber := s.iRodsTracker.totalIRODSConnections()
 
 	return &QStatus{
 		Total:               stats.Items,
@@ -183,10 +205,10 @@ func (s *Server) QueueStatus() *QStatus {
 }
 
 // totalIRODSConnections requires you have the mapMu lock before calling.
-func (s *Server) totalIRODSConnections() int {
+func (irt *iRodsTracker) totalIRODSConnections() int {
 	var totalConnections int
 
-	for _, v := range s.iRODSConnections {
+	for _, v := range irt.iRODSConnections {
 		totalConnections += v
 	}
 
@@ -601,13 +623,15 @@ func (s *Server) clientMadeIRODSConnections(c *gin.Context) {
 		return
 	}
 
-	s.mapMu.Lock()
-	defer s.mapMu.Unlock()
-
-	s.iRODSConnections[hostPID] += n
-	s.sendSlackMessage(slack.Info, strconv.Itoa(s.totalIRODSConnections())+" iRODS connections open")
+	s.iRodsTracker.addIRODSConnections(hostPID, n)
 
 	c.Status(http.StatusOK)
+}
+
+func (irt *iRodsTracker) addIRODSConnections(hostPID string, numberOfConnections int) {
+	irt.iRODSConnections[hostPID] += numberOfConnections
+
+	irt.debounceTracker.sendSlackMsg(irt.totalIRODSConnections())
 }
 
 func (s *Server) clientClosedIRODSConnections(c *gin.Context) {
@@ -618,11 +642,13 @@ func (s *Server) clientClosedIRODSConnections(c *gin.Context) {
 		return
 	}
 
-	s.mapMu.Lock()
-	defer s.mapMu.Unlock()
-
-	delete(s.iRODSConnections, hostPID)
-	s.sendSlackMessage(slack.Info, strconv.Itoa(s.totalIRODSConnections())+" iRODS connections open")
+	s.iRodsTracker.deleteIRODSConnections(hostPID)
 
 	c.Status(http.StatusOK)
+}
+
+func (irt *iRodsTracker) deleteIRODSConnections(hostPID string) {
+	delete(irt.iRODSConnections, hostPID)
+
+	irt.debounceTracker.sendSlackMsg(irt.totalIRODSConnections())
 }

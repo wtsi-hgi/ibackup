@@ -37,23 +37,35 @@ import (
 	"github.com/wtsi-hgi/ibackup/slack"
 )
 
+// debounceTracker holds values for debouncing slack messages.
+type debounceTracker struct {
+	sync.Mutex
+	slacker         set.Slacker
+	debounceTimeout time.Duration
+	bouncing        bool
+
+	msg     string
+	lastNum int
+	curNum  int
+}
+
 type uploadTracker struct {
 	sync.RWMutex
 	uploading     map[string]*put.Request
 	stuckRequests map[string]*put.Request
 
-	slacker  set.Slacker
-	debounce time.Duration
-	bouncing bool
-	lastMsg  string
+	debounceTracker debounceTracker
 }
 
 func newUploadTracker(slacker set.Slacker, debounce time.Duration) *uploadTracker {
 	ut := &uploadTracker{
 		uploading:     make(map[string]*put.Request),
 		stuckRequests: make(map[string]*put.Request),
-		slacker:       slacker,
-		debounce:      debounce,
+		debounceTracker: debounceTracker{
+			slacker:         slacker,
+			debounceTimeout: debounce,
+			msg:             "clients uploading",
+		},
 	}
 
 	return ut
@@ -73,33 +85,38 @@ func (ut *uploadTracker) uploadStarting(r *put.Request) {
 
 	ut.uploading[r.ID()] = r
 
-	ut.createAndSendSlackMsg()
+	ut.debounceTracker.sendSlackMsg(len(ut.uploading))
 }
 
-func (ut *uploadTracker) createAndSendSlackMsg() {
-	suffix := ""
-	if len(ut.uploading) != 1 {
-		suffix = "s"
+func (dt *debounceTracker) sendSlackMsg(num int) {
+	dt.Lock()
+	defer dt.Unlock()
+
+	if num > dt.curNum || dt.curNum == dt.lastNum {
+		dt.curNum = num
 	}
 
-	msg := fmt.Sprintf("%d client%s uploading", len(ut.uploading), suffix)
-
-	if ut.slacker == nil || ut.bouncing || msg == ut.lastMsg {
+	if dt.slacker == nil || dt.bouncing || num == dt.lastNum {
 		return
 	}
 
-	ut.slacker.SendMessage(slack.Info, msg)
-	ut.lastMsg = msg
-	ut.bouncing = true
-	debounce := ut.debounce
+	dt.slacker.SendMessage(slack.Info, fmt.Sprintf("%d %s", num, dt.msg))
+	dt.lastNum = num
+	dt.bouncing = true
+	debounce := dt.debounceTimeout
 
 	go func() {
 		<-time.After(debounce)
 
-		ut.Lock()
-		defer ut.Unlock()
-		ut.bouncing = false
-		ut.createAndSendSlackMsg()
+		dt.Lock()
+		dt.bouncing = false
+
+		nextNum := dt.curNum
+		dt.curNum = 0
+
+		dt.Unlock()
+
+		dt.sendSlackMsg(nextNum)
 	}()
 }
 
@@ -110,7 +127,7 @@ func (ut *uploadTracker) uploadFinished(r *put.Request) {
 	delete(ut.uploading, r.ID())
 	delete(ut.stuckRequests, r.ID())
 
-	ut.createAndSendSlackMsg()
+	ut.debounceTracker.sendSlackMsg(len(ut.uploading))
 }
 
 func (ut *uploadTracker) currentlyUploading() []*put.Request {
