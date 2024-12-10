@@ -85,17 +85,13 @@ func (ut *uploadTracker) uploadStarting(r *put.Request) {
 
 	ut.uploading[r.ID()] = r
 
-	ut.createAndSendSlackMsg()
-}
-
-func (ut *uploadTracker) createAndSendSlackMsg() {
-	ut.debounceTracker.Lock()
-	defer ut.debounceTracker.Unlock()
-
 	ut.debounceTracker.sendSlackMsg(len(ut.uploading))
 }
 
 func (dt *debounceTracker) sendSlackMsg(num int) {
+	dt.Lock()
+	defer dt.Unlock()
+
 	if num > dt.curNum || dt.curNum == dt.lastNum {
 		dt.curNum = num
 	}
@@ -113,11 +109,12 @@ func (dt *debounceTracker) sendSlackMsg(num int) {
 		<-time.After(debounce)
 
 		dt.Lock()
-		defer dt.Unlock()
 		dt.bouncing = false
 
 		nextNum := dt.curNum
 		dt.curNum = 0
+
+		dt.Unlock()
 
 		dt.sendSlackMsg(nextNum)
 	}()
@@ -130,7 +127,7 @@ func (ut *uploadTracker) uploadFinished(r *put.Request) {
 	delete(ut.uploading, r.ID())
 	delete(ut.stuckRequests, r.ID())
 
-	ut.createAndSendSlackMsg()
+	ut.debounceTracker.sendSlackMsg(len(ut.uploading))
 }
 
 func (ut *uploadTracker) currentlyUploading() []*put.Request {
