@@ -40,6 +40,7 @@ import (
 	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/set"
+	"github.com/wtsi-hgi/ibackup/slack"
 )
 
 const (
@@ -81,17 +82,13 @@ type iRodsTracker struct {
 	sync.RWMutex
 	iRODSConnections map[string]int
 
-	debounceTracker debounceTracker
+	debounceTracker *slack.DebounceTracker
 }
 
 func newiRodsTracker(slacker set.Slacker, debounce time.Duration) *iRodsTracker {
 	irt := &iRodsTracker{
 		iRODSConnections: make(map[string]int),
-		debounceTracker: debounceTracker{
-			slacker:         slacker,
-			debounceTimeout: debounce,
-			msg:             "iRODS connections open",
-		},
+		debounceTracker:  slack.NewDebounceTracker(slacker, debounce, "iRODS connections open"),
 	}
 
 	return irt
@@ -631,7 +628,7 @@ func (s *Server) clientMadeIRODSConnections(c *gin.Context) {
 func (irt *iRodsTracker) addIRODSConnections(hostPID string, numberOfConnections int) {
 	irt.iRODSConnections[hostPID] += numberOfConnections
 
-	irt.debounceTracker.sendSlackMsg(irt.totalIRODSConnections())
+	irt.debounceTracker.SendDebounceMsg(irt.totalIRODSConnections())
 }
 
 func (s *Server) clientClosedIRODSConnections(c *gin.Context) {
@@ -650,5 +647,5 @@ func (s *Server) clientClosedIRODSConnections(c *gin.Context) {
 func (irt *iRodsTracker) deleteIRODSConnections(hostPID string) {
 	delete(irt.iRODSConnections, hostPID)
 
-	irt.debounceTracker.sendSlackMsg(irt.totalIRODSConnections())
+	irt.debounceTracker.SendDebounceMsg(irt.totalIRODSConnections())
 }

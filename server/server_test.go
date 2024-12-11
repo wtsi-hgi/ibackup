@@ -759,6 +759,11 @@ func TestServer(t *testing.T) {
 
 							So(slackWriter.String(), ShouldContainSubstring, slack.BoxPrefixInfo+"1 clients uploading")
 							slackWriter.Reset()
+
+							<-time.After(slackDebounce)
+
+							So(slackWriter.String(), ShouldContainSubstring, slack.BoxPrefixInfo+"0 clients uploading")
+							slackWriter.Reset()
 						})
 
 						waitForDiscovery := func(given *set.Set) {
@@ -1739,6 +1744,11 @@ func TestServer(t *testing.T) {
 							<-time.After(slackDebounce)
 
 							So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"6 iRODS connections open")
+							slackWriter.Reset()
+
+							<-time.After(slackDebounce)
+
+							So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"0 iRODS connections open")
 						})
 
 						Convey("After completion, re-discovery can find new files and we can re-complete", func() {

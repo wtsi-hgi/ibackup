@@ -27,7 +27,10 @@
 package slack
 
 import (
+	"fmt"
 	"io"
+	"sync"
+	"time"
 
 	slackGo "github.com/slack-go/slack"
 	gas "github.com/wtsi-hgi/go-authserver"
@@ -124,6 +127,89 @@ func levelToPrefix(level Level) string {
 	}
 
 	return ""
+}
+
+type Slacker interface {
+	SendMessage(level Level, msg string)
+}
+
+// DebounceTracker holds values for debouncing slack messages.
+type DebounceTracker struct {
+	sync.Mutex
+	slacker         Slacker
+	debounceTimeout time.Duration
+	bouncing        bool
+
+	msg         string
+	lastNum     int
+	curMaxNum   int
+	pendingZero bool
+}
+
+// NewDebounceTracker creates a new DebounceTracker instance. The
+// debounceTimeout is the frequency at which messages are sent. The msg is a
+// string without the number, e.g. 'connections' rather than '2
+// connections'.
+func NewDebounceTracker(slacker Slacker, debounceTimeout time.Duration, msg string) *DebounceTracker {
+	return &DebounceTracker{
+		slacker:         slacker,
+		debounceTimeout: debounceTimeout,
+		msg:             msg,
+	}
+}
+
+// SendDebounceMsg sends a unique slack message once per specified interval.
+// With the highest number from the previous interval being output.
+func (dt *DebounceTracker) SendDebounceMsg(num int) {
+	dt.Lock()
+	defer dt.Unlock()
+
+	dt.updateCurMaxNum(num)
+
+	if dt.slacker == nil || dt.bouncing || num == dt.lastNum {
+		dt.pendingZero = dt.isZeroSkipped(num)
+
+		return
+	}
+
+	dt.slacker.SendMessage(Info, fmt.Sprintf("%d %s", num, dt.msg))
+	dt.lastNum = num
+	dt.bouncing = true
+	debounce := dt.debounceTimeout
+
+	go func() {
+		<-time.After(debounce)
+
+		dt.Lock()
+		dt.bouncing = false
+
+		nextNum := dt.getNextNum()
+
+		dt.Unlock()
+
+		dt.SendDebounceMsg(nextNum)
+	}()
+}
+
+func (dt *DebounceTracker) updateCurMaxNum(num int) {
+	if num > dt.curMaxNum || dt.curMaxNum == dt.lastNum {
+		dt.curMaxNum = num
+	}
+}
+
+func (dt *DebounceTracker) isZeroSkipped(num int) bool {
+	return num == 0 && dt.bouncing
+}
+
+func (dt *DebounceTracker) getNextNum() int {
+	nextNum := dt.curMaxNum
+	dt.curMaxNum = 0
+
+	if dt.pendingZero && nextNum == dt.lastNum {
+		nextNum = 0
+	}
+
+	return nextNum
 }
 
 type Mock struct {
