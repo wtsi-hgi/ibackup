@@ -159,7 +159,7 @@ func NewDebounceTracker(slacker Slacker, debounceTimeout time.Duration, msg stri
 }
 
 // SendDebounceMsg sends a Slack message if conditions are met, ensuring only
-// one unique message is sent within the specified debounce interval
+// one unique message is sent within the specified debounce interval.
 func (dt *DebounceTracker) SendDebounceMsg(num int) {
 	dt.Lock()
 	defer dt.Unlock()
