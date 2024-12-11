@@ -146,10 +146,10 @@ type DebounceTracker struct {
 	pendingZero bool
 }
 
-// NewDebounceTracker creates a new DebounceTracker instance. The
-// debounceTimeout is the frequency at which messages are sent. The msg is a
-// string without the number, e.g. 'connections' rather than '2
-// connections'.
+// NewDebounceTracker initialises a new DebounceTracker instance.
+// - slacker: a slacker.
+// - debounceTimeout: the minimum interval between sending messages.
+// - msg: the base message to be send without numbers, e.g. "connections".
 func NewDebounceTracker(slacker Slacker, debounceTimeout time.Duration, msg string) *DebounceTracker {
 	return &DebounceTracker{
 		slacker:         slacker,
@@ -158,8 +158,8 @@ func NewDebounceTracker(slacker Slacker, debounceTimeout time.Duration, msg stri
 	}
 }
 
-// SendDebounceMsg sends a unique slack message once per specified interval.
-// With the highest number from the previous interval being output.
+// SendDebounceMsg sends a Slack message if conditions are met, ensuring only
+// one unique message is sent within the specified debounce interval
 func (dt *DebounceTracker) SendDebounceMsg(num int) {
 	dt.Lock()
 	defer dt.Unlock()
@@ -178,7 +178,7 @@ func (dt *DebounceTracker) SendDebounceMsg(num int) {
 	debounce := dt.debounceTimeout
 
 	go func() {
-		<-time.After(debounce)
+		time.Sleep(debounce)
 
 		dt.Lock()
 		dt.bouncing = false
