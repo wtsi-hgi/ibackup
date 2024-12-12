@@ -1156,6 +1156,20 @@ func TestPuts(t *testing.T) {
 		path := t.TempDir()
 		transformer := "prefix=" + path + ":" + remotePath
 
+		Convey("Status on an added set describes if a complete set has failures", func() {
+			file1 := filepath.Join(path, "file1")
+
+			internal.CreateTestFile(t, file1, "some data1")
+
+			err := os.Chmod(file1, 0)
+			So(err, ShouldBeNil)
+
+			setName := "failuresTest"
+			s.addSetForTesting(t, setName, transformer, path)
+
+			s.waitForStatus(setName, "\nStatus: complete (but with failures - try a retry)", 60*time.Second)
+		})
+
 		Convey("Repeatedly uploading files that are changed or not changes status details", func() {
 			file1 := filepath.Join(path, "file1")
 			file2 := filepath.Join(path, "file2")

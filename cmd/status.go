@@ -390,6 +390,8 @@ func displaySet(s *set.Set, showRequesters bool) { //nolint:funlen,gocyclo
 	if s.Error != "" {
 		cliPrint("Status: unable to proceed\n")
 		cliPrint("Error: %s\n", s.Error)
+	} else if s.Status == set.Complete && s.Failed != 0 {
+		cliPrint("Status: %s (but with failures - try a retry)\n", s.Status)
 	} else {
 		cliPrint("Status: %s\n", s.Status)
 	}
