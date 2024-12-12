@@ -201,7 +201,7 @@ func init() {
 	addCmd.Flags().StringVar(&setUser, "user", currentUsername(),
 		"pretend to be the this user (only works if you started the server)")
 	addCmd.Flags().StringVar(&setMetadata, "metadata", "",
-		"key:val;key:val metadata to apply to all files in the set")
+		"key=val;key=val metadata to apply to all files in the set")
 
 	if err := addCmd.MarkFlagRequired("name"); err != nil {
 		die(err.Error())

@@ -29,7 +29,6 @@ import (
 	"bufio"
 	"bytes"
 	b64 "encoding/base64"
-	"fmt"
 	"io"
 	"os"
 	"os/user"
@@ -156,7 +155,7 @@ func init() {
 	putCmd.Flags().StringVarP(&putFile, "file", "f", "-",
 		"tab-delimited /local/path /irods/path key:val;key:val file (- means STDIN)")
 	putCmd.Flags().StringVarP(&putMeta, "meta", "m", "",
-		"key:val;key:val default metadata to apply to -f rows lacking column 3")
+		"key=val;key=val default metadata to apply to -f rows lacking column 3")
 	putCmd.Flags().BoolVarP(&putVerbose, "verbose", "v", false,
 		"report upload status of every file")
 	putCmd.Flags().BoolVarP(&putBase64, "base64", "b", false,
@@ -363,7 +362,7 @@ func parseMetaString(meta string) map[string]string {
 	for _, kv := range kvs {
 		key, value, err := put.ValidateAndCreateUserMetadata(kv)
 		if err != nil {
-			die(fmt.Sprintf("%s: %s", err.Error(), kv))
+			die("invalid meta: '%s' %s", kv, err.Error())
 		}
 
 		mm[key] = value

@@ -34,8 +34,8 @@ import (
 )
 
 const (
-	MetaUserNamespace = "user:"
 	MetaNamespace     = "ibackup:"
+	MetaUserNamespace = MetaNamespace + "user:"
 	MetaKeyMtime      = MetaNamespace + "mtime" // mtime of source file, 1sec truncated UTC RFC 3339
 	MetaKeyOwner      = MetaNamespace + "owner" // a username
 	MetaKeyGroup      = MetaNamespace + "group" // a unix group name

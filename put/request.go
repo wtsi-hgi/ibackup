@@ -55,7 +55,8 @@ const (
 	validMetaWithNamespaceParts = 3
 )
 
-var errInvalidMeta = errors.New("invalid meta")
+var errInvalidMetaNamespace = errors.New("namespace is incorrect, must be 'ibackup:user:' or empty")
+var errInvalidMetaLength = errors.New("meta must be provided in the form key=value")
 
 // Stuck is used to provide details of a potentially "stuck" upload Request.
 type Stuck struct {
@@ -589,22 +590,31 @@ func dirIsLustreWithPTUSubDir(dir string, ptuPart, numParts int) bool {
 	return dir == "lustre" && ptuPart >= 4 && ptuPart+2 <= numParts-1
 }
 
-// ValidateAndCreateUserMetadata takes a key:value string, validates it's a valid
+// ValidateAndCreateUserMetadata takes a key:value string, validates it as a
 // metadata value then returns the key prefixed with the user namespace,
-// 'user:', and the value. Returns an error if the meta is invalid.
+// 'ibackup:user:', and the value. Returns an error if the meta is invalid.
 func ValidateAndCreateUserMetadata(kv string) (string, string, error) {
-	parts := strings.Split(kv, ":")
-	if !isValidMeta(parts) {
-		return "", "", errInvalidMeta
+	parts := strings.Split(kv, "=")
+	if len(parts) != validMetaParts {
+		return "", "", errInvalidMetaLength
 	}
 
-	key := MetaUserNamespace + parts[len(parts)-2]
-	value := parts[len(parts)-1]
+	key, err := handleNamespace(parts[0])
+	value := parts[1]
 
-	return key, value, nil
+	return key, value, err
 }
 
-// isValidMeta returns true if the parts given match a valid user metadata format.
-func isValidMeta(parts []string) bool {
-	return len(parts) == validMetaParts || (len(parts) == validMetaWithNamespaceParts && parts[0] == "user")
+// handleNamespace prefixes the user namespace 'ibackup:user:' onto the key if
+// it isn't already included. Returns an error if the key contains a different
+// namespace.
+func handleNamespace(key string) (string, error) {
+	switch {
+	case !strings.Contains(key, ":"):
+		return MetaUserNamespace + key, nil
+	case strings.Contains(key, MetaUserNamespace):
+		return key, nil
+	default:
+		return "", errInvalidMetaNamespace
+	}
 }
