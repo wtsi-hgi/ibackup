@@ -51,8 +51,8 @@ const (
 	metaListSeparator                     = ","
 	stuckTimeFormat                       = "02/01/06 15:04 MST"
 
-	validMetaParts              = 2
-	validMetaWithNamespaceParts = 3
+	validMetaParts                 = 2
+	validMetaWithNamespaceKeyParts = 3
 )
 
 var errInvalidMetaNamespace = errors.New("namespace is incorrect, must be 'ibackup:user:' or empty")
@@ -590,7 +590,7 @@ func dirIsLustreWithPTUSubDir(dir string, ptuPart, numParts int) bool {
 	return dir == "lustre" && ptuPart >= 4 && ptuPart+2 <= numParts-1
 }
 
-// ValidateAndCreateUserMetadata takes a key:value string, validates it as a
+// ValidateAndCreateUserMetadata takes a key=value string, validates it as a
 // metadata value then returns the key prefixed with the user namespace,
 // 'ibackup:user:', and the value. Returns an error if the meta is invalid.
 func ValidateAndCreateUserMetadata(kv string) (string, string, error) {
@@ -606,12 +606,16 @@ func ValidateAndCreateUserMetadata(kv string) (string, string, error) {
 }
 
 // handleNamespace prefixes the user namespace 'ibackup:user:' onto the key if
-// it isn't already included. Returns an error if the key contains a different
+// it isn't already included. Returns an error if the key contains an invalid
 // namespace.
 func handleNamespace(key string) (string, error) {
+	keyParts := len(strings.Split(key, ":"))
+
 	switch {
-	case !strings.Contains(key, ":"):
+	case keyParts == 1:
 		return MetaUserNamespace + key, nil
+	case keyParts != validMetaWithNamespaceKeyParts:
+		return "", errInvalidMetaNamespace
 	case strings.Contains(key, MetaUserNamespace):
 		return key, nil
 	default:

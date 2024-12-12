@@ -1205,7 +1205,15 @@ func TestPuts(t *testing.T) {
 			So(err, ShouldContainSubstring, "namespace is incorrect, must be 'ibackup:user:' or empty")
 
 			setName = "invalidMetadataTest3"
-			setMetadata = "name:name:name=name"
+			setMetadata = "ibackup:name=name"
+
+			exitCode, _ = s.runBinary(t, "add", "--name", setName, "--transformer", transformer,
+				"--path", path, "--metadata", setMetadata)
+
+			So(exitCode, ShouldEqual, 1)
+
+			setName = "invalidMetadataTest4"
+			setMetadata = "name:ibackup:user:name=name"
 
 			exitCode, _ = s.runBinary(t, "add", "--name", setName, "--transformer", transformer,
 				"--path", path, "--metadata", setMetadata)
