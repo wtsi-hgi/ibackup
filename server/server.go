@@ -110,7 +110,7 @@ type Server struct {
 
 	mapMu               sync.RWMutex
 	creatingCollections map[string]bool
-	iRodsTracker        *iRodsTracker
+	iRODSTracker        *iRODSTracker
 }
 
 // New creates a Server which can serve a REST API and website.
@@ -131,7 +131,7 @@ func New(conf Config) (*Server, error) {
 		slacker:             conf.Slacker,
 		stillRunningMsgFreq: conf.StillRunningMsgFreq,
 		uploadTracker:       newUploadTracker(conf.Slacker, conf.SlackMessageDebounce),
-		iRodsTracker:        newiRodsTracker(conf.Slacker, conf.SlackMessageDebounce),
+		iRODSTracker:        newiRODSTracker(conf.Slacker, conf.SlackMessageDebounce),
 	}
 
 	s.Server.Router().Use(gas.IncludeAbortErrorsInBody)

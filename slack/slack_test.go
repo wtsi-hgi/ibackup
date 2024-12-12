@@ -88,24 +88,32 @@ func TestRealSlack(t *testing.T) {
 }
 
 func TestDebounce(t *testing.T) {
+	testMessageSuffix := "test messages"
+
+	debounce := 500 * time.Millisecond
+
+	Convey("Without a slacker you can still create a max value debouncer", t, func() {
+		hnd := NewHighestNumDebouncer(nil, debounce, testMessageSuffix)
+
+		Convey("Which doesn't panic when SendDebounceMsg is called", func() {
+			hnd.SendDebounceMsg(1)
+		})
+	})
+
 	Convey("Given a slacker", t, func() {
 		s, messageChan, dfunc := startMockSlackAndCreateSlack()
 		defer dfunc()
 
-		Convey("You can create a debounce tracker", func() {
-			testMessageSuffix := "test messages"
-
-			debounce := 500 * time.Millisecond
-
-			dt := NewDebounceTracker(s, debounce, testMessageSuffix)
+		Convey("You can create a highest number debouncer", func() {
+			hnd := NewHighestNumDebouncer(s, debounce, testMessageSuffix)
 
 			Convey("Which only sends messages after the debounce timeout", func() {
-				dt.SendDebounceMsg(1)
+				hnd.SendDebounceMsg(1)
 
 				expectedOutput := fmt.Sprintf("%s1 %s", BoxPrefixInfo, testMessageSuffix)
 				checkMessage(expectedOutput, messageChan)
 
-				dt.SendDebounceMsg(2)
+				hnd.SendDebounceMsg(2)
 				So(checkNoMessage(messageChan), ShouldBeTrue)
 
 				<-time.After(debounce)
@@ -115,12 +123,12 @@ func TestDebounce(t *testing.T) {
 			})
 
 			Convey("Which only sends unique messages", func() {
-				dt.SendDebounceMsg(1)
+				hnd.SendDebounceMsg(1)
 
 				expectedOutput := fmt.Sprintf("%s1 %s", BoxPrefixInfo, testMessageSuffix)
 				checkMessage(expectedOutput, messageChan)
 
-				dt.SendDebounceMsg(1)
+				hnd.SendDebounceMsg(1)
 				So(checkNoMessage(messageChan), ShouldBeTrue)
 
 				<-time.After(debounce)
@@ -129,15 +137,15 @@ func TestDebounce(t *testing.T) {
 			})
 
 			Convey("Which sends the highest number seen in the debounce period", func() {
-				dt.SendDebounceMsg(4)
+				hnd.SendDebounceMsg(4)
 
 				expectedOutput := fmt.Sprintf("%s4 %s", BoxPrefixInfo, testMessageSuffix)
 				checkMessage(expectedOutput, messageChan)
 
-				dt.SendDebounceMsg(3)
-				dt.SendDebounceMsg(0)
-				dt.SendDebounceMsg(6)
-				dt.SendDebounceMsg(5)
+				hnd.SendDebounceMsg(3)
+				hnd.SendDebounceMsg(0)
+				hnd.SendDebounceMsg(6)
+				hnd.SendDebounceMsg(5)
 
 				<-time.After(debounce)
 
@@ -146,20 +154,20 @@ func TestDebounce(t *testing.T) {
 			})
 
 			Convey("Which always sends the final 0 message", func() {
-				dt.SendDebounceMsg(1)
+				hnd.SendDebounceMsg(1)
 
 				expectedOutput := fmt.Sprintf("%s1 %s", BoxPrefixInfo, testMessageSuffix)
 				checkMessage(expectedOutput, messageChan)
 
-				dt.SendDebounceMsg(3)
+				hnd.SendDebounceMsg(3)
 
 				<-time.After(debounce)
 
 				expectedOutput = fmt.Sprintf("%s3 %s", BoxPrefixInfo, testMessageSuffix)
 				checkMessage(expectedOutput, messageChan)
 
-				dt.SendDebounceMsg(2)
-				dt.SendDebounceMsg(0)
+				hnd.SendDebounceMsg(2)
+				hnd.SendDebounceMsg(0)
 
 				<-time.After(debounce)
 

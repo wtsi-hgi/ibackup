@@ -32,7 +32,6 @@ import (
 	"time"
 
 	"github.com/wtsi-hgi/ibackup/put"
-	"github.com/wtsi-hgi/ibackup/set"
 	"github.com/wtsi-hgi/ibackup/slack"
 )
 
@@ -41,14 +40,14 @@ type uploadTracker struct {
 	uploading     map[string]*put.Request
 	stuckRequests map[string]*put.Request
 
-	debounceTracker *slack.DebounceTracker
+	highestNumDebouncer *slack.HighestNumDebouncer
 }
 
-func newUploadTracker(slacker set.Slacker, debounce time.Duration) *uploadTracker {
+func newUploadTracker(slacker slack.Slacker, debounce time.Duration) *uploadTracker {
 	ut := &uploadTracker{
-		uploading:       make(map[string]*put.Request),
-		stuckRequests:   make(map[string]*put.Request),
-		debounceTracker: slack.NewDebounceTracker(slacker, debounce, "clients uploading"),
+		uploading:           make(map[string]*put.Request),
+		stuckRequests:       make(map[string]*put.Request),
+		highestNumDebouncer: slack.NewHighestNumDebouncer(slacker, debounce, "clients uploading"),
 	}
 
 	return ut
@@ -68,7 +67,7 @@ func (ut *uploadTracker) uploadStarting(r *put.Request) {
 
 	ut.uploading[r.ID()] = r
 
-	ut.debounceTracker.SendDebounceMsg(len(ut.uploading))
+	ut.highestNumDebouncer.SendDebounceMsg(len(ut.uploading))
 }
 
 func (ut *uploadTracker) uploadFinished(r *put.Request) {
@@ -78,7 +77,7 @@ func (ut *uploadTracker) uploadFinished(r *put.Request) {
 	delete(ut.uploading, r.ID())
 	delete(ut.stuckRequests, r.ID())
 
-	ut.debounceTracker.SendDebounceMsg(len(ut.uploading))
+	ut.highestNumDebouncer.SendDebounceMsg(len(ut.uploading))
 }
 
 func (ut *uploadTracker) currentlyUploading() []*put.Request {

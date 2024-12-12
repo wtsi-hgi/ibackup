@@ -133,8 +133,9 @@ type Slacker interface {
 	SendMessage(level Level, msg string)
 }
 
-// DebounceTracker holds values for debouncing slack messages.
-type DebounceTracker struct {
+// HighestNumDebouncer holds values for debouncing slack messages based on the
+// highest number in a given period.
+type HighestNumDebouncer struct {
 	sync.Mutex
 	slacker         Slacker
 	debounceTimeout time.Duration
@@ -146,12 +147,12 @@ type DebounceTracker struct {
 	pendingZero bool
 }
 
-// NewDebounceTracker initialises a new DebounceTracker instance.
+// NewHighestNumDebouncer initialises a new HighestNumDebouncer instance.
 // - slacker: a slacker.
 // - debounceTimeout: the minimum interval between sending messages.
 // - msg: the base message to be send without numbers, e.g. "connections".
-func NewDebounceTracker(slacker Slacker, debounceTimeout time.Duration, msg string) *DebounceTracker {
-	return &DebounceTracker{
+func NewHighestNumDebouncer(slacker Slacker, debounceTimeout time.Duration, msg string) *HighestNumDebouncer {
+	return &HighestNumDebouncer{
 		slacker:         slacker,
 		debounceTimeout: debounceTimeout,
 		msg:             msg,
@@ -160,52 +161,52 @@ func NewDebounceTracker(slacker Slacker, debounceTimeout time.Duration, msg stri
 
 // SendDebounceMsg sends a Slack message if conditions are met, ensuring only
 // one unique message is sent within the specified debounce interval.
-func (dt *DebounceTracker) SendDebounceMsg(num int) {
-	dt.Lock()
-	defer dt.Unlock()
+func (hnd *HighestNumDebouncer) SendDebounceMsg(num int) {
+	hnd.Lock()
+	defer hnd.Unlock()
 
-	dt.updateCurMaxNum(num)
+	hnd.updateCurMaxNum(num)
 
-	if dt.slacker == nil || dt.bouncing || num == dt.lastNum {
-		dt.pendingZero = dt.isZeroSkipped(num)
+	if hnd.slacker == nil || hnd.bouncing || num == hnd.lastNum {
+		hnd.pendingZero = hnd.isZeroSkipped(num)
 
 		return
 	}
 
-	dt.slacker.SendMessage(Info, fmt.Sprintf("%d %s", num, dt.msg))
-	dt.lastNum = num
-	dt.bouncing = true
-	debounce := dt.debounceTimeout
+	hnd.slacker.SendMessage(Info, fmt.Sprintf("%d %s", num, hnd.msg))
+	hnd.lastNum = num
+	hnd.bouncing = true
+	debounce := hnd.debounceTimeout
 
 	go func() {
 		time.Sleep(debounce)
 
-		dt.Lock()
-		dt.bouncing = false
+		hnd.Lock()
+		hnd.bouncing = false
 
-		nextNum := dt.getNextNum()
+		nextNum := hnd.getNextNum()
 
-		dt.Unlock()
+		hnd.Unlock()
 
-		dt.SendDebounceMsg(nextNum)
+		hnd.SendDebounceMsg(nextNum)
 	}()
 }
 
-func (dt *DebounceTracker) updateCurMaxNum(num int) {
-	if num > dt.curMaxNum || dt.curMaxNum == dt.lastNum {
-		dt.curMaxNum = num
+func (hnd *HighestNumDebouncer) updateCurMaxNum(num int) {
+	if num > hnd.curMaxNum || hnd.curMaxNum == hnd.lastNum {
+		hnd.curMaxNum = num
 	}
 }
 
-func (dt *DebounceTracker) isZeroSkipped(num int) bool {
-	return num == 0 && dt.bouncing
+func (hnd *HighestNumDebouncer) isZeroSkipped(num int) bool {
+	return num == 0 && hnd.bouncing
 }
 
-func (dt *DebounceTracker) getNextNum() int {
-	nextNum := dt.curMaxNum
-	dt.curMaxNum = 0
+func (hnd *HighestNumDebouncer) getNextNum() int {
+	nextNum := hnd.curMaxNum
+	hnd.curMaxNum = 0
 
-	if dt.pendingZero && nextNum == dt.lastNum {
+	if hnd.pendingZero && nextNum == hnd.lastNum {
 		nextNum = 0
 	}
 
