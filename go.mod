@@ -29,7 +29,7 @@ require (
 	github.com/wtsi-npg/logshim v1.4.0
 	github.com/wtsi-npg/logshim-zerolog v1.4.0
 	github.com/wtsi-ssg/wr v0.5.10
-	github.com/wtsi-ssg/wrstat/v6 v6.0.2
+	github.com/wtsi-ssg/wrstat/v6 v6.0.3
 	go.etcd.io/bbolt v1.3.11
 )
 
