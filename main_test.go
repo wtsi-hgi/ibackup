@@ -735,7 +735,7 @@ Name: badPerms
 Transformer: `+transformer+`
 Monitored: false; Archive: false
 Status: complete
-Warning: open `+badPermDir+`: permission denied
+Warning: open `+badPermDir+`/: permission denied
 Discovery:
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
