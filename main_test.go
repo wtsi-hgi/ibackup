@@ -1213,7 +1213,23 @@ func TestPuts(t *testing.T) {
 			So(exitCode, ShouldEqual, 1)
 
 			setName = "invalidMetadataTest4"
-			setMetadata = "name:ibackup:user:name=name"
+			setMetadata = "namespace:ibackup:user:mykey=value"
+
+			exitCode, _ = s.runBinary(t, "add", "--name", setName, "--transformer", transformer,
+				"--path", path, "--metadata", setMetadata)
+
+			So(exitCode, ShouldEqual, 1)
+
+			setName = "invalidMetadataTest5"
+			setMetadata = "mykey:ibackup:user=value"
+
+			exitCode, _ = s.runBinary(t, "add", "--name", setName, "--transformer", transformer,
+				"--path", path, "--metadata", setMetadata)
+
+			So(exitCode, ShouldEqual, 1)
+
+			setName = "invalidMetadataTest6"
+			setMetadata = "ibackup:user:mykey:mysubKey=value"
 
 			exitCode, _ = s.runBinary(t, "add", "--name", setName, "--transformer", transformer,
 				"--path", path, "--metadata", setMetadata)

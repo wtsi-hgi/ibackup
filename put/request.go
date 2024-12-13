@@ -51,8 +51,8 @@ const (
 	metaListSeparator                     = ","
 	stuckTimeFormat                       = "02/01/06 15:04 MST"
 
-	validMetaParts                 = 2
-	validMetaWithNamespaceKeyParts = 3
+	validMetaParts       = 2
+	validMetaKeyDividers = 2
 )
 
 var errInvalidMetaNamespace = errors.New("namespace is incorrect, must be 'ibackup:user:' or empty")
@@ -609,12 +609,12 @@ func ValidateAndCreateUserMetadata(kv string) (string, string, error) {
 // it isn't already included. Returns an error if the key contains an invalid
 // namespace.
 func handleNamespace(key string) (string, error) {
-	keyParts := len(strings.Split(key, ":"))
+	keyDividers := strings.Count(key, ":")
 
 	switch {
-	case keyParts == 1:
+	case keyDividers == 0:
 		return MetaUserNamespace + key, nil
-	case keyParts != validMetaWithNamespaceKeyParts:
+	case keyDividers != validMetaKeyDividers:
 		return "", errInvalidMetaNamespace
 	case strings.Contains(key, MetaUserNamespace):
 		return key, nil
