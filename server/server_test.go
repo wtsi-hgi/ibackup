@@ -2608,9 +2608,9 @@ func TestServer(t *testing.T) {
 					So(len(entries), ShouldEqual, 1)
 
 					So(gotSet.Warning, ShouldContainSubstring,
-						fmt.Sprintf("open %s: permission denied", filepath.Dir(pathExpected2)))
+						fmt.Sprintf("open %s/: permission denied", filepath.Dir(pathExpected2)))
 					So(gotSet.Warning, ShouldContainSubstring,
-						fmt.Sprintf("open %s: permission denied", filepath.Dir(pathExpected3)))
+						fmt.Sprintf("open %s/: permission denied", filepath.Dir(pathExpected3)))
 				})
 
 				Convey("and add a set with hardlinks defined directly", func() {

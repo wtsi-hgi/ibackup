@@ -1,6 +1,8 @@
 module github.com/wtsi-hgi/ibackup
 
-go 1.23
+go 1.23.0
+
+toolchain go1.23.3
 
 require (
 	github.com/VertebrateResequencing/wr v0.33.0
@@ -27,7 +29,7 @@ require (
 	github.com/wtsi-npg/logshim v1.4.0
 	github.com/wtsi-npg/logshim-zerolog v1.4.0
 	github.com/wtsi-ssg/wr v0.5.10
-	github.com/wtsi-ssg/wrstat/v4 v4.10.5
+	github.com/wtsi-ssg/wrstat/v6 v6.0.3
 	go.etcd.io/bbolt v1.3.11
 )
 
@@ -85,7 +87,6 @@ require (
 	github.com/gorilla/sessions v1.4.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/grafov/bcast v0.0.0-20190217190352-1447f067e08d // indirect
-	github.com/grpc-ecosystem/grpc-gateway/v2 v2.20.0 // indirect
 	github.com/hanwen/go-fuse/v2 v2.7.2 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-uuid v1.0.3 // indirect
@@ -100,7 +101,6 @@ require (
 	github.com/klauspost/compress v1.17.11 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.9 // indirect
 	github.com/kr/fs v0.1.0 // indirect
-	github.com/kr/text v0.2.0 // indirect
 	github.com/leodido/go-urn v1.4.0 // indirect
 	github.com/lestrrat-go/backoff/v2 v2.0.8 // indirect
 	github.com/lestrrat-go/blackmagic v1.0.2 // indirect
@@ -151,7 +151,6 @@ require (
 	golang.org/x/term v0.26.0 // indirect
 	golang.org/x/text v0.20.0 // indirect
 	golang.org/x/time v0.8.0 // indirect
-	google.golang.org/grpc v1.64.0 // indirect
 	google.golang.org/protobuf v1.35.2 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/tylerb/graceful.v1 v1.2.15 // indirect
