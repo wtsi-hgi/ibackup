@@ -495,7 +495,7 @@ func TestAdd(t *testing.T) {
 					0, "Directories:")
 
 				s.confirmOutputContains(t, []string{"status", "--name", "testAddFiles", "-d", "-r"},
-					0, "Example File:")
+					0, "Example Files:")
 			})
 		})
 	})
