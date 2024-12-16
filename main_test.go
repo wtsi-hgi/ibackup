@@ -417,6 +417,90 @@ func TestNoServer(t *testing.T) {
 	})
 }
 
+func TestAdd(t *testing.T) {
+	Convey("With a started server", t, func() {
+		s := NewTestServer(t)
+		So(s, ShouldNotBeNil)
+
+		Convey("Given a file of file paths", func() {
+			dir := t.TempDir()
+			tempTestFile, err := os.CreateTemp(dir, "testFileSet")
+			So(err, ShouldBeNil)
+
+			_, err = io.WriteString(tempTestFile, dir+`/path/to/some/file
+`+dir+`/path/to/other/file`)
+			So(err, ShouldBeNil)
+
+			Convey("Add will add every file", func() {
+				exitCode, _ := s.runBinary(t, "add", "--files", tempTestFile.Name(),
+					"--name", "testAddFiles", "--transformer", "prefix="+dir+":/remote")
+				So(exitCode, ShouldEqual, 0)
+
+				s.waitForStatus("testAddFiles", "Status: complete", 1*time.Second)
+
+				s.confirmOutputContains(t, []string{"status", "--name", "testAddFiles", "-d", "-r"},
+					0, "Example File:")
+			})
+		})
+		Convey("Given a file of directory paths", func() {
+			dir := t.TempDir()
+			tempTestFile, err := os.CreateTemp(dir, "testFileSet")
+			So(err, ShouldBeNil)
+
+			err = os.MkdirAll(dir+"/path/to/some/dir/", 0755)
+			So(err, ShouldBeNil)
+
+			err = os.MkdirAll(dir+"/path/to/other/dir/", 0755)
+			So(err, ShouldBeNil)
+
+			_, err = io.WriteString(tempTestFile, dir+`/path/to/some/dir/
+`+dir+`/path/to/other/dir/`)
+			So(err, ShouldBeNil)
+
+			Convey("Add will add every directory", func() {
+				exitCode, _ := s.runBinary(t, "add", "--dirs", tempTestFile.Name(),
+					"--name", "testAddFiles", "--transformer", "prefix="+dir+":/remote")
+				So(exitCode, ShouldEqual, 0)
+
+				s.waitForStatus("testAddFiles", "Status: complete", 10*time.Second)
+
+				s.confirmOutputContains(t, []string{"status", "--name", "testAddFiles", "-d", "-r"},
+					0, "Directories:")
+			})
+		})
+		Convey("Given a file of directory and file paths", func() {
+			dir := t.TempDir()
+			tempTestFile, err := os.CreateTemp(dir, "testFileSet")
+			So(err, ShouldBeNil)
+
+			err = os.MkdirAll(dir+"/path/to/some/dir/", 0755)
+			So(err, ShouldBeNil)
+
+			err = os.MkdirAll(dir+"/path/to/other/dir/", 0755)
+			So(err, ShouldBeNil)
+
+			_, err = io.WriteString(tempTestFile, dir+`/path/to/some/dir/
+`+dir+`/path/to/other/dir/
+`+dir+`/path/to/some/file.txt`)
+			So(err, ShouldBeNil)
+
+			Convey("Add will add all the directories and files", func() {
+				exitCode, _ := s.runBinary(t, "add", "--items", tempTestFile.Name(),
+					"--name", "testAddFiles", "--transformer", "prefix="+dir+":/remote")
+				So(exitCode, ShouldEqual, 0)
+
+				s.waitForStatus("testAddFiles", "Status: complete", 10*time.Second)
+
+				s.confirmOutputContains(t, []string{"status", "--name", "testAddFiles", "-d", "-r"},
+					0, "Directories:")
+
+				s.confirmOutputContains(t, []string{"status", "--name", "testAddFiles", "-d", "-r"},
+					0, "Example File:")
+			})
+		})
+	})
+}
+
 func TestList(t *testing.T) {
 	Convey("With a started server", t, func() {
 		s := NewTestServer(t)
