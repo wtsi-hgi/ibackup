@@ -417,90 +417,6 @@ func TestNoServer(t *testing.T) {
 	})
 }
 
-func TestAdd(t *testing.T) {
-	Convey("With a started server", t, func() {
-		s := NewTestServer(t)
-		So(s, ShouldNotBeNil)
-
-		Convey("Given a file of file paths", func() {
-			dir := t.TempDir()
-			tempTestFile, err := os.CreateTemp(dir, "testFileSet")
-			So(err, ShouldBeNil)
-
-			_, err = io.WriteString(tempTestFile, dir+`/path/to/some/file
-`+dir+`/path/to/other/file`)
-			So(err, ShouldBeNil)
-
-			Convey("Add will add every file", func() {
-				exitCode, _ := s.runBinary(t, "add", "--files", tempTestFile.Name(),
-					"--name", "testAddFiles", "--transformer", "prefix="+dir+":/remote")
-				So(exitCode, ShouldEqual, 0)
-
-				s.waitForStatus("testAddFiles", "Status: complete", 1*time.Second)
-
-				s.confirmOutputContains(t, []string{"status", "--name", "testAddFiles", "-d", "-r"},
-					0, "Example File:")
-			})
-		})
-		Convey("Given a file of directory paths", func() {
-			dir := t.TempDir()
-			tempTestFile, err := os.CreateTemp(dir, "testFileSet")
-			So(err, ShouldBeNil)
-
-			err = os.MkdirAll(dir+"/path/to/some/dir/", 0755)
-			So(err, ShouldBeNil)
-
-			err = os.MkdirAll(dir+"/path/to/other/dir/", 0755)
-			So(err, ShouldBeNil)
-
-			_, err = io.WriteString(tempTestFile, dir+`/path/to/some/dir/
-`+dir+`/path/to/other/dir/`)
-			So(err, ShouldBeNil)
-
-			Convey("Add will add every directory", func() {
-				exitCode, _ := s.runBinary(t, "add", "--dirs", tempTestFile.Name(),
-					"--name", "testAddFiles", "--transformer", "prefix="+dir+":/remote")
-				So(exitCode, ShouldEqual, 0)
-
-				s.waitForStatus("testAddFiles", "Status: complete", 10*time.Second)
-
-				s.confirmOutputContains(t, []string{"status", "--name", "testAddFiles", "-d", "-r"},
-					0, "Directories:")
-			})
-		})
-		Convey("Given a file of directory and file paths", func() {
-			dir := t.TempDir()
-			tempTestFile, err := os.CreateTemp(dir, "testFileSet")
-			So(err, ShouldBeNil)
-
-			err = os.MkdirAll(dir+"/path/to/some/dir/", 0755)
-			So(err, ShouldBeNil)
-
-			err = os.MkdirAll(dir+"/path/to/other/dir/", 0755)
-			So(err, ShouldBeNil)
-
-			_, err = io.WriteString(tempTestFile, dir+`/path/to/some/dir/
-`+dir+`/path/to/other/dir/
-`+dir+`/path/to/some/file.txt`)
-			So(err, ShouldBeNil)
-
-			Convey("Add will add all the directories and files", func() {
-				exitCode, _ := s.runBinary(t, "add", "--items", tempTestFile.Name(),
-					"--name", "testAddFiles", "--transformer", "prefix="+dir+":/remote")
-				So(exitCode, ShouldEqual, 0)
-
-				s.waitForStatus("testAddFiles", "Status: complete", 10*time.Second)
-
-				s.confirmOutputContains(t, []string{"status", "--name", "testAddFiles", "-d", "-r"},
-					0, "Directories:")
-
-				s.confirmOutputContains(t, []string{"status", "--name", "testAddFiles", "-d", "-r"},
-					0, "Example Files:")
-			})
-		})
-	})
-}
-
 func TestList(t *testing.T) {
 	Convey("With a started server", t, func() {
 		s := NewTestServer(t)
@@ -1252,6 +1168,51 @@ func TestPuts(t *testing.T) {
 			s.addSetForTesting(t, setName, transformer, path)
 
 			s.waitForStatus(setName, "\nStatus: complete (but with failures - try a retry)", 60*time.Second)
+		})
+
+		Convey("Given a file containing directory and file paths", func() {
+			dir1 := filepath.Join(path, "path/to/some/dir/")
+			dir2 := filepath.Join(path, "path/to/other/dir/")
+
+			tempTestFileOfPaths, err := os.CreateTemp(dir, "testFileSet")
+			So(err, ShouldBeNil)
+
+			err = os.MkdirAll(dir1, 0755)
+			So(err, ShouldBeNil)
+
+			err = os.MkdirAll(dir2, 0755)
+			So(err, ShouldBeNil)
+
+			file1 := filepath.Join(dir1, "file1")
+			file2 := filepath.Join(dir1, "file2")
+			file3 := filepath.Join(path, "file3")
+
+			internal.CreateTestFile(t, file1, "some data1")
+			internal.CreateTestFile(t, file2, "some data2")
+			internal.CreateTestFile(t, file3, "some data3")
+
+			_, err = io.WriteString(tempTestFileOfPaths,
+				fmt.Sprintf("%s\n%s\n%s\n%s", dir1, dir2, file3, file1))
+			So(err, ShouldBeNil)
+
+			Convey("Add will add all the directories and files except duplicates", func() {
+				exitCode, _ := s.runBinary(t, "add", "--items", tempTestFileOfPaths.Name(),
+					"--name", "testAddFiles", "--transformer", transformer)
+				So(exitCode, ShouldEqual, 0)
+
+				s.confirmOutputContains(t, []string{"status", "--name", "testAddFiles", "-d"},
+					0, "Directories:")
+
+				s.confirmOutputContains(t, []string{"status", "--name", "testAddFiles", "-d"},
+					0, "Example File:")
+
+				s.confirmOutputContains(t, []string{"status", "--name", "testAddFiles", "-d"},
+					0, `
+Local Path	Status	Size	Attempts	Date	Error`+"\n"+
+						file3+"\tpending\t0 B\t0\t-\t\n"+
+						file1+"\tpending\t0 B\t0\t-\t\n"+
+						file2+"\tpending\t0 B\t0\t-\t")
+			})
 		})
 
 		Convey("Repeatedly uploading files that are changed or not changes status details", func() {

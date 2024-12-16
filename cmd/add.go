@@ -33,6 +33,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"time"
 
@@ -258,12 +259,28 @@ func readAndCatagorisePaths(file string, files, dirs []string) ([]string, []stri
 		files = append(files, scanner.Text())
 	}
 
+	for i, path := range files {
+		dir := filepath.Dir(path)
+
+		if slices.Contains(dirs, dir) {
+			files = deleteSliceElement(files, i)
+		}
+	}
+
 	serr := scanner.Err()
 	if serr != nil {
 		die("failed to read whole file: %s", serr.Error())
 	}
 
 	return files, dirs
+}
+
+func deleteSliceElement(files []string, index int) []string {
+	if index == len(files)-1 {
+		return files[:index]
+	}
+
+	return append(files[:index], files[index+1:]...)
 }
 
 func pathIsDir(path string) bool {
