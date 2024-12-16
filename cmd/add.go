@@ -33,7 +33,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strconv"
 	"time"
 
@@ -156,7 +155,8 @@ option to add sets on behalf of other users.
 		dirs := readPaths(setDirs, fofnLineSplitter(setNull))
 
 		if setItems != "" {
-			files, dirs = readAndCatagorisePaths(setItems, files, dirs)
+			filesAndDirs := readPaths(setItems, fofnLineSplitter(setNull))
+			files, dirs = categorisePaths(filesAndDirs, files, dirs)
 		}
 
 		if setPath != "" {
@@ -241,46 +241,27 @@ func readPaths(file string, splitter bufio.SplitFunc) []string {
 	return paths
 }
 
-// readAndCatagorisePaths catagorises each line in a file of paths into either a
+// categorisePaths categorises each path in a given slice into either a
 // directory or file and appends the path to the corresponding slice.
-func readAndCatagorisePaths(file string, files, dirs []string) ([]string, []string) {
-	readFile, df := openFile(file)
-	defer df()
+func categorisePaths(filesAndDirs, files, dirs []string) ([]string, []string) {
+	dirSet := make(map[string]bool)
 
-	scanner := bufio.NewScanner(readFile)
-
-	for scanner.Scan() {
-		if pathIsDir(scanner.Text()) {
-			dirs = append(dirs, scanner.Text())
-
-			continue
-		}
-
-		files = append(files, scanner.Text())
-	}
-
-	for i, path := range files {
-		dir := filepath.Dir(path)
-
-		if slices.Contains(dirs, dir) {
-			files = deleteSliceElement(files, i)
+	for _, path := range filesAndDirs {
+		if pathIsDir(path) {
+			dirs = append(dirs, path)
+			dirSet[path] = true
 		}
 	}
 
-	serr := scanner.Err()
-	if serr != nil {
-		die("failed to read whole file: %s", serr.Error())
+	for _, path := range filesAndDirs {
+		if !pathIsDir(path) {
+			if !dirSet[filepath.Dir(path)] {
+				files = append(files, path)
+			}
+		}
 	}
 
 	return files, dirs
-}
-
-func deleteSliceElement(files []string, index int) []string {
-	if index == len(files)-1 {
-		return files[:index]
-	}
-
-	return append(files[:index], files[index+1:]...)
 }
 
 func pathIsDir(path string) bool {

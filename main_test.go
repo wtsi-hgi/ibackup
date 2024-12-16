@@ -1192,7 +1192,7 @@ func TestPuts(t *testing.T) {
 			internal.CreateTestFile(t, file3, "some data3")
 
 			_, err = io.WriteString(tempTestFileOfPaths,
-				fmt.Sprintf("%s\n%s\n%s\n%s", dir1, dir2, file3, file1))
+				fmt.Sprintf("%s\n%s\n%s\n%s", file3, file1, dir1, dir2))
 			So(err, ShouldBeNil)
 
 			Convey("Add will add all the directories and files except duplicates", func() {
