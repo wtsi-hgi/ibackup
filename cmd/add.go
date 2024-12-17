@@ -254,7 +254,7 @@ func categorisePaths(filesAndDirs, files, dirs []string) ([]string, []string) {
 	}
 
 	for _, path := range filesAndDirs {
-		if !dirSet[path] && !dirSet[filepath.Dir(path)] {
+		if !dirSet[path] && !fileDirIsInDirs(path, dirSet) {
 			files = append(files, path)
 		}
 	}
@@ -271,6 +271,20 @@ func pathIsDir(path string) bool {
 	}
 
 	return info.IsDir()
+}
+
+func fileDirIsInDirs(file string, dirSet map[string]bool) bool {
+	fileDir := filepath.Dir(file)
+
+	for fileDir != filepath.Dir(fileDir) {
+		if dirSet[fileDir] {
+			return true
+		}
+
+		fileDir = filepath.Dir(fileDir)
+	}
+
+	return false
 }
 
 // add does the main job of sending the backup set details to the server.

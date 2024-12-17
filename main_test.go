@@ -1173,6 +1173,7 @@ func TestPuts(t *testing.T) {
 		Convey("Given a file containing directory and file paths", func() {
 			dir1 := filepath.Join(path, "path/to/some/dir/")
 			dir2 := filepath.Join(path, "path/to/other/dir/")
+			subdir1 := filepath.Join(dir1, "subdir/")
 
 			tempTestFileOfPaths, err := os.CreateTemp(dir, "testFileSet")
 			So(err, ShouldBeNil)
@@ -1183,8 +1184,11 @@ func TestPuts(t *testing.T) {
 			err = os.MkdirAll(dir2, 0755)
 			So(err, ShouldBeNil)
 
+			err = os.MkdirAll(subdir1, 0755)
+			So(err, ShouldBeNil)
+
 			file1 := filepath.Join(dir1, "file1")
-			file2 := filepath.Join(dir1, "file2")
+			file2 := filepath.Join(subdir1, "file2")
 			file3 := filepath.Join(path, "file3")
 
 			internal.CreateTestFile(t, file1, "some data1")
@@ -1192,7 +1196,7 @@ func TestPuts(t *testing.T) {
 			internal.CreateTestFile(t, file3, "some data3")
 
 			_, err = io.WriteString(tempTestFileOfPaths,
-				fmt.Sprintf("%s\n%s\n%s\n%s", file3, file1, dir1, dir2))
+				fmt.Sprintf("%s\n%s\n%s\n%s\n%s", file3, file2, file1, dir1, dir2))
 			So(err, ShouldBeNil)
 
 			Convey("Add will add all the directories and files except duplicates", func() {
