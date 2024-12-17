@@ -150,7 +150,7 @@ type HighestNumDebouncer struct {
 // NewHighestNumDebouncer initialises a new HighestNumDebouncer instance.
 //   - slacker: a slacker.
 //   - debounceTimeout: the minimum interval between sending messages.
-//   - msg: a message suffix that will be appended to to the highest number in the
+//   - msg: a message suffix that will be appended to the highest number in the
 //     debounce period.
 func NewHighestNumDebouncer(slacker Slacker, debounceTimeout time.Duration, msg string) *HighestNumDebouncer {
 	return &HighestNumDebouncer{
