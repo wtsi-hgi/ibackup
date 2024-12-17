@@ -49,7 +49,6 @@ const (
 
 	putFileCols    = 3
 	putFileMinCols = 2
-	putMetaParts   = 2
 	putSet         = "manual"
 
 	numIRODSConnections = 2
@@ -156,7 +155,7 @@ func init() {
 	putCmd.Flags().StringVarP(&putFile, "file", "f", "-",
 		"tab-delimited /local/path /irods/path key:val;key:val file (- means STDIN)")
 	putCmd.Flags().StringVarP(&putMeta, "meta", "m", "",
-		"key:val;key:val default metadata to apply to -f rows lacking column 3")
+		"key=val;key=val default metadata to apply to -f rows lacking column 3")
 	putCmd.Flags().BoolVarP(&putVerbose, "verbose", "v", false,
 		"report upload status of every file")
 	putCmd.Flags().BoolVarP(&putBase64, "base64", "b", false,
@@ -361,14 +360,12 @@ func parseMetaString(meta string) map[string]string {
 	mm := make(map[string]string, len(kvs))
 
 	for _, kv := range kvs {
-		parts := strings.Split(kv, ":")
-		if len(parts) == putMetaParts {
-			mm[parts[0]] = parts[1]
+		key, value, err := put.ValidateAndCreateUserMetadata(kv)
+		if err != nil {
+			die("invalid meta: '%s' %s", kv, err.Error())
 		}
-	}
 
-	if len(mm) != len(kvs) {
-		die("invalid meta: %s", meta)
+		mm[key] = value
 	}
 
 	return mm

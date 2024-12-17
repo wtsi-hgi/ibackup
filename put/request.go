@@ -26,6 +26,7 @@
 package put
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -49,7 +50,13 @@ const (
 	ErrNotHumgenLustre                    = "not a valid humgen lustre path"
 	metaListSeparator                     = ","
 	stuckTimeFormat                       = "02/01/06 15:04 MST"
+
+	validMetaParts       = 2
+	validMetaKeyDividers = 2
 )
+
+var errInvalidMetaNamespace = errors.New("namespace is incorrect, must be 'ibackup:user:' or empty")
+var errInvalidMetaLength = errors.New("meta must be provided in the form key=value")
 
 // Stuck is used to provide details of a potentially "stuck" upload Request.
 type Stuck struct {
@@ -581,4 +588,37 @@ func dirIsProjectOrTeamOrUsers(dir string) bool {
 // at the leaf or its parent.
 func dirIsLustreWithPTUSubDir(dir string, ptuPart, numParts int) bool {
 	return dir == "lustre" && ptuPart >= 4 && ptuPart+2 <= numParts-1
+}
+
+// ValidateAndCreateUserMetadata takes a key=value string, validates it as a
+// metadata value then returns the key prefixed with the user namespace,
+// 'ibackup:user:', and the value. Returns an error if the meta is invalid.
+func ValidateAndCreateUserMetadata(kv string) (string, string, error) {
+	parts := strings.Split(kv, "=")
+	if len(parts) != validMetaParts {
+		return "", "", errInvalidMetaLength
+	}
+
+	key, err := handleNamespace(parts[0])
+	value := parts[1]
+
+	return key, value, err
+}
+
+// handleNamespace prefixes the user namespace 'ibackup:user:' onto the key if
+// it isn't already included. Returns an error if the key contains an invalid
+// namespace.
+func handleNamespace(key string) (string, error) {
+	keyDividers := strings.Count(key, ":")
+
+	switch {
+	case keyDividers == 0:
+		return MetaUserNamespace + key, nil
+	case keyDividers != validMetaKeyDividers:
+		return "", errInvalidMetaNamespace
+	case strings.HasPrefix(key, MetaUserNamespace):
+		return key, nil
+	default:
+		return "", errInvalidMetaNamespace
+	}
 }

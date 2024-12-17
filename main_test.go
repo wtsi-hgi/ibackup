@@ -271,6 +271,17 @@ func (s *TestServer) addSetForTesting(t *testing.T, name, transformer, path stri
 	s.waitForStatus(name, "\nDiscovery: completed", 5*time.Second)
 }
 
+func (s *TestServer) addSetForTestingWithMetadata(t *testing.T, name, transformer, path, metadata string) {
+	t.Helper()
+
+	exitCode, _ := s.runBinary(t, "add", "--name", name, "--transformer", transformer,
+		"--path", path, "--metadata", metadata)
+
+	So(exitCode, ShouldEqual, 0)
+
+	s.waitForStatus(name, "\nDiscovery: completed", 5*time.Second)
+}
+
 func (s *TestServer) waitForStatus(name, statusToFind string, timeout time.Duration) {
 	ctx, cancelFn := context.WithTimeout(context.Background(), timeout)
 	defer cancelFn()
@@ -1170,6 +1181,125 @@ func TestPuts(t *testing.T) {
 			s.waitForStatus(setName, "\nStatus: complete (but with failures - try a retry)", 60*time.Second)
 		})
 
+		Convey("Invalid metadata throws an error", func() {
+			file1 := filepath.Join(path, "file1")
+
+			internal.CreateTestFile(t, file1, "some data1")
+
+			setName := "invalidMetadataTest1"
+			setMetadata := "testKey=testValue=anotherValue"
+
+			exitCode, err := s.runBinary(t, "add", "--name", setName, "--transformer", transformer,
+				"--path", path, "--metadata", setMetadata)
+
+			So(exitCode, ShouldEqual, 1)
+			So(err, ShouldContainSubstring, "meta must be provided in the form key=value")
+
+			setName = "invalidMetadataTest2"
+			setMetadata = "ibackup:set=invalidMetadataTest2"
+
+			exitCode, err = s.runBinary(t, "add", "--name", setName, "--transformer", transformer,
+				"--path", path, "--metadata", setMetadata)
+
+			So(exitCode, ShouldEqual, 1)
+			So(err, ShouldContainSubstring, "namespace is incorrect, must be 'ibackup:user:' or empty")
+
+			setName = "invalidMetadataTest3"
+			setMetadata = "ibackup:name=name"
+
+			exitCode, _ = s.runBinary(t, "add", "--name", setName, "--transformer", transformer,
+				"--path", path, "--metadata", setMetadata)
+
+			So(exitCode, ShouldEqual, 1)
+
+			setName = "invalidMetadataTest4"
+			setMetadata = "namespace:ibackup:user:mykey=value"
+
+			exitCode, _ = s.runBinary(t, "add", "--name", setName, "--transformer", transformer,
+				"--path", path, "--metadata", setMetadata)
+
+			So(exitCode, ShouldEqual, 1)
+
+			setName = "invalidMetadataTest5"
+			setMetadata = "mykeyibackup:user:=value"
+
+			exitCode, _ = s.runBinary(t, "add", "--name", setName, "--transformer", transformer,
+				"--path", path, "--metadata", setMetadata)
+
+			So(exitCode, ShouldEqual, 1)
+
+			setName = "invalidMetadataTest6"
+			setMetadata = "ibackup:user:mykey:mysubKey=value"
+
+			exitCode, _ = s.runBinary(t, "add", "--name", setName, "--transformer", transformer,
+				"--path", path, "--metadata", setMetadata)
+
+			So(exitCode, ShouldEqual, 1)
+		})
+
+		Convey("Putting metadata on a set adds that metadata to every file in the set", func() {
+			attributePrefix := "attribute: ibackup:user:"
+			valuePrefix := "\nvalue: "
+
+			file1 := filepath.Join(path, "file1")
+			file2 := filepath.Join(path, "file2")
+			file3 := filepath.Join(path, "file3")
+
+			internal.CreateTestFile(t, file1, "some data1")
+			internal.CreateTestFile(t, file2, "some data2")
+			internal.CreateTestFile(t, file3, "some data3")
+
+			setName := "metadataTest"
+			fileNames := []string{"file1", "file2", "file3"}
+			setMetadata := "testKey1=testValue1;testKey2=testValue2"
+
+			s.addSetForTestingWithMetadata(t, setName, transformer, path, setMetadata)
+
+			s.waitForStatus(setName, "\nStatus: complete", 60*time.Second)
+
+			for _, fileName := range fileNames {
+				output := getRemoteMeta(filepath.Join(remotePath, fileName))
+				So(output, ShouldContainSubstring, attributePrefix+"testKey1\n")
+				So(output, ShouldContainSubstring, valuePrefix+"testValue1\n")
+				So(output, ShouldContainSubstring, attributePrefix+"testKey2\n")
+				So(output, ShouldContainSubstring, valuePrefix+"testValue2\n")
+			}
+
+			newName := setName + ".v2"
+			setMetadata = "testKey2=testValue2Updated"
+
+			s.addSetForTestingWithMetadata(t, newName, transformer, path, setMetadata)
+
+			s.waitForStatus(newName, "\nStatus: complete", 60*time.Second)
+
+			for _, fileName := range fileNames {
+				output := getRemoteMeta(filepath.Join(remotePath, fileName))
+				So(output, ShouldContainSubstring, attributePrefix+"testKey1\n")
+				So(output, ShouldContainSubstring, valuePrefix+"testValue1\n")
+				So(output, ShouldContainSubstring, attributePrefix+"testKey2\n")
+				So(output, ShouldContainSubstring, valuePrefix+"testValue2Updated\n")
+
+				So(output, ShouldNotContainSubstring, "testValue2\n")
+			}
+
+			newName = setName + ".v3"
+			setMetadata = "ibackup:user:testKey1=testValue1Updated"
+
+			s.addSetForTestingWithMetadata(t, newName, transformer, path, setMetadata)
+
+			s.waitForStatus(newName, "\nStatus: complete", 60*time.Second)
+
+			for _, fileName := range fileNames {
+				output := getRemoteMeta(filepath.Join(remotePath, fileName))
+				So(output, ShouldContainSubstring, attributePrefix+"testKey1\n")
+				So(output, ShouldContainSubstring, valuePrefix+"testValue1Updated\n")
+				So(output, ShouldContainSubstring, attributePrefix+"testKey2\n")
+				So(output, ShouldContainSubstring, valuePrefix+"testValue2Updated\n")
+
+				So(output, ShouldNotContainSubstring, "testValue1\n")
+			}
+		})
+
 		Convey("Repeatedly uploading files that are changed or not changes status details", func() {
 			file1 := filepath.Join(path, "file1")
 			file2 := filepath.Join(path, "file2")
@@ -1187,7 +1317,7 @@ func TestPuts(t *testing.T) {
 			s.waitForStatus(setName, "\nStatus: uploading", 60*time.Second)
 			s.confirmOutputContains(t, statusCmd, 0,
 				`Global put queue status: 3 queued; 3 reserved to be worked on; 0 failed
-Global put client status (/10): 6 iRODS connections`)
+			Global put client status (/10): 6 iRODS connections`)
 
 			s.waitForStatus(setName, "\nStatus: complete", 60*time.Second)
 
