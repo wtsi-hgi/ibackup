@@ -254,10 +254,8 @@ func categorisePaths(filesAndDirs, files, dirs []string) ([]string, []string) {
 	}
 
 	for _, path := range filesAndDirs {
-		if !pathIsDir(path) {
-			if !dirSet[filepath.Dir(path)] {
-				files = append(files, path)
-			}
+		if !dirSet[path] && !dirSet[filepath.Dir(path)] {
+			files = append(files, path)
 		}
 	}
 
