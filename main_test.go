@@ -1221,7 +1221,7 @@ func TestPuts(t *testing.T) {
 			So(exitCode, ShouldEqual, 1)
 
 			setName = "invalidMetadataTest5"
-			setMetadata = "mykey:ibackup:user=value"
+			setMetadata = "mykeyibackup:user:=value"
 
 			exitCode, _ = s.runBinary(t, "add", "--name", setName, "--transformer", transformer,
 				"--path", path, "--metadata", setMetadata)

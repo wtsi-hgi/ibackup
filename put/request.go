@@ -616,7 +616,7 @@ func handleNamespace(key string) (string, error) {
 		return MetaUserNamespace + key, nil
 	case keyDividers != validMetaKeyDividers:
 		return "", errInvalidMetaNamespace
-	case strings.Contains(key, MetaUserNamespace):
+	case strings.HasPrefix(key, MetaUserNamespace):
 		return key, nil
 	default:
 		return "", errInvalidMetaNamespace
