@@ -28,12 +28,10 @@
 package server
 
 import (
-	"fmt"
 	"sync"
 	"time"
 
 	"github.com/wtsi-hgi/ibackup/put"
-	"github.com/wtsi-hgi/ibackup/set"
 	"github.com/wtsi-hgi/ibackup/slack"
 )
 
@@ -42,18 +40,14 @@ type uploadTracker struct {
 	uploading     map[string]*put.Request
 	stuckRequests map[string]*put.Request
 
-	slacker  set.Slacker
-	debounce time.Duration
-	bouncing bool
-	lastMsg  string
+	highestNumDebouncer *slack.HighestNumDebouncer
 }
 
-func newUploadTracker(slacker set.Slacker, debounce time.Duration) *uploadTracker {
+func newUploadTracker(slacker slack.Slacker, debounce time.Duration) *uploadTracker {
 	ut := &uploadTracker{
-		uploading:     make(map[string]*put.Request),
-		stuckRequests: make(map[string]*put.Request),
-		slacker:       slacker,
-		debounce:      debounce,
+		uploading:           make(map[string]*put.Request),
+		stuckRequests:       make(map[string]*put.Request),
+		highestNumDebouncer: slack.NewHighestNumDebouncer(slacker, debounce, "clients uploading"),
 	}
 
 	return ut
@@ -73,34 +67,7 @@ func (ut *uploadTracker) uploadStarting(r *put.Request) {
 
 	ut.uploading[r.ID()] = r
 
-	ut.createAndSendSlackMsg()
-}
-
-func (ut *uploadTracker) createAndSendSlackMsg() {
-	suffix := ""
-	if len(ut.uploading) != 1 {
-		suffix = "s"
-	}
-
-	msg := fmt.Sprintf("%d client%s uploading", len(ut.uploading), suffix)
-
-	if ut.slacker == nil || ut.bouncing || msg == ut.lastMsg {
-		return
-	}
-
-	ut.slacker.SendMessage(slack.Info, msg)
-	ut.lastMsg = msg
-	ut.bouncing = true
-	debounce := ut.debounce
-
-	go func() {
-		<-time.After(debounce)
-
-		ut.Lock()
-		defer ut.Unlock()
-		ut.bouncing = false
-		ut.createAndSendSlackMsg()
-	}()
+	ut.highestNumDebouncer.SendDebounceMsg(len(ut.uploading))
 }
 
 func (ut *uploadTracker) uploadFinished(r *put.Request) {
@@ -110,7 +77,7 @@ func (ut *uploadTracker) uploadFinished(r *put.Request) {
 	delete(ut.uploading, r.ID())
 	delete(ut.stuckRequests, r.ID())
 
-	ut.createAndSendSlackMsg()
+	ut.highestNumDebouncer.SendDebounceMsg(len(ut.uploading))
 }
 
 func (ut *uploadTracker) currentlyUploading() []*put.Request {

@@ -27,6 +27,7 @@
 package slack
 
 import (
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -38,9 +39,10 @@ import (
 )
 
 const (
-	testToken   = "TEST_TOKEN"
-	testChannel = "#random"
-	testMaxWait = 5 * time.Second
+	testToken          = "TEST_TOKEN"
+	testChannel        = "#random"
+	testMaxWait        = 5 * time.Second
+	testSmallerMaxWait = 300 * time.Millisecond
 )
 
 func TestRealSlack(t *testing.T) {
@@ -81,6 +83,102 @@ func TestRealSlack(t *testing.T) {
 
 			s.SendMessage(Info, msg)
 			<-time.After(1 * time.Second)
+		})
+	})
+}
+
+func TestDebounce(t *testing.T) {
+	testMessageSuffix := "test messages"
+
+	debounce := 500 * time.Millisecond
+
+	Convey("Without a slacker you can still create a max value debouncer", t, func() {
+		hnd := NewHighestNumDebouncer(nil, debounce, testMessageSuffix)
+
+		Convey("Which doesn't panic when SendDebounceMsg is called", func() {
+			hnd.SendDebounceMsg(1)
+		})
+	})
+
+	Convey("Given a slacker", t, func() {
+		s, messageChan, dfunc := startMockSlackAndCreateSlack()
+		defer dfunc()
+
+		Convey("You can create a highest number debouncer", func() {
+			hnd := NewHighestNumDebouncer(s, debounce, testMessageSuffix)
+
+			Convey("Which only sends messages after the debounce timeout", func() {
+				hnd.SendDebounceMsg(1)
+
+				expectedOutput := fmt.Sprintf("%s1 %s", BoxPrefixInfo, testMessageSuffix)
+				checkMessage(expectedOutput, messageChan)
+
+				hnd.SendDebounceMsg(2)
+				So(checkNoMessage(messageChan), ShouldBeTrue)
+
+				<-time.After(debounce)
+
+				expectedOutput = fmt.Sprintf("%s2 %s", BoxPrefixInfo, testMessageSuffix)
+				checkMessage(expectedOutput, messageChan)
+			})
+
+			Convey("Which only sends unique messages", func() {
+				hnd.SendDebounceMsg(1)
+
+				expectedOutput := fmt.Sprintf("%s1 %s", BoxPrefixInfo, testMessageSuffix)
+				checkMessage(expectedOutput, messageChan)
+
+				hnd.SendDebounceMsg(1)
+				So(checkNoMessage(messageChan), ShouldBeTrue)
+
+				<-time.After(debounce)
+
+				So(checkNoMessage(messageChan), ShouldBeTrue)
+			})
+
+			Convey("Which sends the highest number seen in the debounce period", func() {
+				hnd.SendDebounceMsg(4)
+
+				expectedOutput := fmt.Sprintf("%s4 %s", BoxPrefixInfo, testMessageSuffix)
+				checkMessage(expectedOutput, messageChan)
+
+				hnd.SendDebounceMsg(3)
+				hnd.SendDebounceMsg(0)
+				hnd.SendDebounceMsg(6)
+				hnd.SendDebounceMsg(5)
+
+				<-time.After(debounce)
+
+				expectedOutput = fmt.Sprintf("%s6 %s", BoxPrefixInfo, testMessageSuffix)
+				checkMessage(expectedOutput, messageChan)
+			})
+
+			Convey("Which always sends the final 0 message", func() {
+				hnd.SendDebounceMsg(1)
+
+				expectedOutput := fmt.Sprintf("%s1 %s", BoxPrefixInfo, testMessageSuffix)
+				checkMessage(expectedOutput, messageChan)
+
+				hnd.SendDebounceMsg(3)
+
+				<-time.After(debounce)
+
+				expectedOutput = fmt.Sprintf("%s3 %s", BoxPrefixInfo, testMessageSuffix)
+				checkMessage(expectedOutput, messageChan)
+
+				hnd.SendDebounceMsg(2)
+				hnd.SendDebounceMsg(0)
+
+				<-time.After(debounce)
+
+				expectedOutput = fmt.Sprintf("%s2 %s", BoxPrefixInfo, testMessageSuffix)
+				checkMessage(expectedOutput, messageChan)
+
+				<-time.After(debounce)
+
+				expectedOutput = fmt.Sprintf("%s0 %s", BoxPrefixInfo, testMessageSuffix)
+				checkMessage(expectedOutput, messageChan)
+			})
 		})
 	})
 }
@@ -149,5 +247,14 @@ func checkMessage(expectedMsg string, messageChan chan *slackGo.MessageEvent) {
 		break
 	case <-time.After(testMaxWait):
 		So(false, ShouldBeTrue, "did not get channel message in time")
+	}
+}
+
+func checkNoMessage(messageChan chan *slackGo.MessageEvent) bool {
+	select {
+	case <-messageChan:
+		return false
+	case <-time.After(testSmallerMaxWait):
+		return true
 	}
 }
