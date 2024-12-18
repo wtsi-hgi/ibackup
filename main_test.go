@@ -74,6 +74,7 @@ type TestServer struct {
 	remoteHardlinkPrefix string
 	env                  []string
 	stopped              bool
+	debouncePeriod       string
 
 	cmd *exec.Cmd
 }
@@ -140,11 +141,13 @@ func (s *TestServer) prepareConfig() {
 
 	s.ldapServer = os.Getenv("IBACKUP_TEST_LDAP_SERVER")
 	s.ldapLookup = os.Getenv("IBACKUP_TEST_LDAP_LOOKUP")
+
+	s.debouncePeriod = "5"
 }
 
 func (s *TestServer) startServer() {
 	args := []string{"server", "--cert", s.cert, "--key", s.key, "--logfile", s.logFile,
-		"-s", s.ldapServer, "-l", s.ldapLookup, "--url", s.url}
+		"-s", s.ldapServer, "-l", s.ldapLookup, "--url", s.url, "--slack_debounce", s.debouncePeriod}
 
 	if s.schedulerDeployment != "" {
 		args = append(args, "-w", s.schedulerDeployment)
