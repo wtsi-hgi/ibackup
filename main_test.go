@@ -1202,13 +1202,13 @@ func TestPuts(t *testing.T) {
 
 			file1 := filepath.Join(dir1, "file1")
 			file2 := filepath.Join(subdir1, "file2")
-      file3 := filepath.Join(path, "file3")
+			file3 := filepath.Join(path, "file3")
 
 			internal.CreateTestFile(t, file1, "some data1")
 			internal.CreateTestFile(t, file2, "some data2")
 			internal.CreateTestFile(t, file3, "some data3")
-      
-      _, err = io.WriteString(tempTestFileOfPaths,
+
+			_, err = io.WriteString(tempTestFileOfPaths,
 				fmt.Sprintf("%s\n%s\n%s\n%s\n%s", file3, file2, file1, dir1, dir2))
 			So(err, ShouldBeNil)
 
@@ -1232,8 +1232,8 @@ Local Path	Status	Size	Attempts	Date	Error`+"\n"+
 						file1+"\tpending\t0 B\t0\t-\t\n"+
 						file2+"\tpending\t0 B\t0\t-\t")
 			})
-    })
-    
+		})
+
 		Convey("Invalid metadata throws an error", func() {
 			file1 := filepath.Join(path, "file1")
 
