@@ -50,6 +50,7 @@ var setTransformer string
 var setDescription string
 var setFiles string
 var setDirs string
+var setItems string
 var setPath string
 var setNull bool
 var setMonitor string
@@ -94,8 +95,14 @@ You must also provide at least one of:
 		  argument.
 --dirs : like --files, but the file contains directories you want to back up.
          Directories will be recursed and all files inside will be backed up.
+--items: like --files and --dirs, but the file can contain either a file or 
+		 directory on each line. Should only be used for a smaller number of 
+		 entries.
 --path : if you just want to backup a single file or directory, provide its
          absolute path.
+
+For a quicker add, use --files or --dirs. If you have a smaller, simpler set,
+--items can be used.
 
 You can also provide:
 --description : an longer description of the backup set, to describe its
@@ -118,8 +125,8 @@ option to add sets on behalf of other users.
 	Run: func(cmd *cobra.Command, args []string) {
 		ensureURLandCert()
 
-		if setFiles == "" && setDirs == "" && setPath == "" {
-			die("at least one of --files or --dirs or --path must be provided")
+		if setFiles == "" && setDirs == "" && setPath == "" && setItems == "" {
+			die("at least one of --files or --dirs or --items or --path must be provided")
 		}
 
 		if setTransformer == "" {
@@ -147,6 +154,11 @@ option to add sets on behalf of other users.
 
 		files := readPaths(setFiles, fofnLineSplitter(setNull))
 		dirs := readPaths(setDirs, fofnLineSplitter(setNull))
+
+		if setItems != "" {
+			filesAndDirs := readPaths(setItems, fofnLineSplitter(setNull))
+			files, dirs = categorisePaths(filesAndDirs, files, dirs)
+		}
 
 		if setPath != "" {
 			setPath, err = filepath.Abs(setPath)
@@ -188,6 +200,8 @@ func init() {
 		"path to file with one absolute local file path per line")
 	addCmd.Flags().StringVarP(&setDirs, "dirs", "d", "",
 		"path to file with one absolute local directory path per line")
+	addCmd.Flags().StringVarP(&setItems, "items", "i", "",
+		"path to file with one absolute local directory or file path per line")
 	addCmd.Flags().StringVarP(&setPath, "path", "p", "",
 		"path to a single file or directory you wish to backup")
 	addCmd.Flags().BoolVarP(&setNull, "null", "0", false,
@@ -230,6 +244,54 @@ func readPaths(file string, splitter bufio.SplitFunc) []string {
 	}
 
 	return paths
+}
+
+// categorisePaths categorises each path in a given slice into either a
+// directory or file and appends the path to the corresponding slice.
+func categorisePaths(filesAndDirs, files, dirs []string) ([]string, []string) {
+	dirSet := make(map[string]bool)
+
+	for _, path := range filesAndDirs {
+		if pathIsDir(path) {
+			dirs = append(dirs, path)
+			dirSet[path] = true
+		}
+	}
+
+	for _, path := range filesAndDirs {
+		if !dirSet[path] && !fileDirIsInDirs(path, dirSet) {
+			files = append(files, path)
+		}
+	}
+
+	return files, dirs
+}
+
+func pathIsDir(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil {
+		warn("Invalid path: %s", err)
+
+		return false
+	}
+
+	return info.IsDir()
+}
+
+// fileDirIsInDirs returns true if the directory of the provided file (or any of
+// its parents) is present in the provided map of directories.
+func fileDirIsInDirs(file string, dirSet map[string]bool) bool {
+	fileDir := filepath.Dir(file)
+
+	for fileDir != filepath.Dir(fileDir) {
+		if dirSet[fileDir] {
+			return true
+		}
+
+		fileDir = filepath.Dir(fileDir)
+	}
+
+	return false
 }
 
 // add does the main job of sending the backup set details to the server.

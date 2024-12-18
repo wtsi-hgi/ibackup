@@ -1181,6 +1181,59 @@ func TestPuts(t *testing.T) {
 			s.waitForStatus(setName, "\nStatus: complete (but with failures - try a retry)", 60*time.Second)
 		})
 
+		Convey("Given a file containing directory and file paths", func() {
+			dir1 := filepath.Join(path, "path/to/some/dir/")
+			dir2 := filepath.Join(path, "path/to/other/dir/")
+			subdir1 := filepath.Join(dir1, "subdir/")
+			remoteDir1 := filepath.Join(remotePath, "path/to/some/dir/")
+			remoteDir2 := filepath.Join(remotePath, "path/to/other/dir/")
+
+			tempTestFileOfPaths, err := os.CreateTemp(dir, "testFileSet")
+			So(err, ShouldBeNil)
+
+			err = os.MkdirAll(dir1, 0755)
+			So(err, ShouldBeNil)
+
+			err = os.MkdirAll(dir2, 0755)
+			So(err, ShouldBeNil)
+
+			err = os.MkdirAll(subdir1, 0755)
+			So(err, ShouldBeNil)
+
+			file1 := filepath.Join(dir1, "file1")
+			file2 := filepath.Join(subdir1, "file2")
+			file3 := filepath.Join(path, "file3")
+
+			internal.CreateTestFile(t, file1, "some data1")
+			internal.CreateTestFile(t, file2, "some data2")
+			internal.CreateTestFile(t, file3, "some data3")
+
+			_, err = io.WriteString(tempTestFileOfPaths,
+				fmt.Sprintf("%s\n%s\n%s\n%s\n%s", file3, file2, file1, dir1, dir2))
+			So(err, ShouldBeNil)
+
+			Convey("Add will add all the directories and files except duplicates", func() {
+				exitCode, _ := s.runBinary(t, "add", "--items", tempTestFileOfPaths.Name(),
+					"--name", "testAddFiles", "--transformer", transformer)
+				So(exitCode, ShouldEqual, 0)
+
+				s.confirmOutputContains(t, []string{"status", "--name", "testAddFiles", "-d"},
+					0, "Directories:\n  "+
+						dir2+" => "+remoteDir2+"\n  "+
+						dir1+" => "+remoteDir1)
+
+				s.confirmOutputContains(t, []string{"status", "--name", "testAddFiles", "-d"},
+					0, "Example File:")
+
+				s.confirmOutputContains(t, []string{"status", "--name", "testAddFiles", "-d"},
+					0, `
+Local Path	Status	Size	Attempts	Date	Error`+"\n"+
+						file3+"\tpending\t0 B\t0\t-\t\n"+
+						file1+"\tpending\t0 B\t0\t-\t\n"+
+						file2+"\tpending\t0 B\t0\t-\t")
+			})
+		})
+
 		Convey("Invalid metadata throws an error", func() {
 			file1 := filepath.Join(path, "file1")
 
