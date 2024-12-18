@@ -1127,7 +1127,7 @@ func remoteDBBackupPath() string {
 }
 
 func TestPuts(t *testing.T) {
-	Convey("Given a server configured with a remote hardlink location", t, func() {
+	FocusConvey("Given a server configured with a remote hardlink location", t, func() {
 		remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
 		if remotePath == "" {
 			SkipConvey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
@@ -1170,10 +1170,12 @@ func TestPuts(t *testing.T) {
 			s.waitForStatus(setName, "\nStatus: complete (but with failures - try a retry)", 60*time.Second)
 		})
 
-		Convey("Given a file containing directory and file paths", func() {
+		FocusConvey("Given a file containing directory and file paths", func() {
 			dir1 := filepath.Join(path, "path/to/some/dir/")
 			dir2 := filepath.Join(path, "path/to/other/dir/")
 			subdir1 := filepath.Join(dir1, "subdir/")
+			remoteDir1 := filepath.Join(remotePath, "path/to/some/dir/")
+			remoteDir2 := filepath.Join(remotePath, "path/to/other/dir/")
 
 			tempTestFileOfPaths, err := os.CreateTemp(dir, "testFileSet")
 			So(err, ShouldBeNil)
@@ -1199,13 +1201,15 @@ func TestPuts(t *testing.T) {
 				fmt.Sprintf("%s\n%s\n%s\n%s\n%s", file3, file2, file1, dir1, dir2))
 			So(err, ShouldBeNil)
 
-			Convey("Add will add all the directories and files except duplicates", func() {
+			FocusConvey("Add will add all the directories and files except duplicates", func() {
 				exitCode, _ := s.runBinary(t, "add", "--items", tempTestFileOfPaths.Name(),
 					"--name", "testAddFiles", "--transformer", transformer)
 				So(exitCode, ShouldEqual, 0)
 
 				s.confirmOutputContains(t, []string{"status", "--name", "testAddFiles", "-d"},
-					0, "Directories:")
+					0, "Directories:\n  "+
+						dir2+" => "+remoteDir2+"\n  "+
+						dir1+" => "+remoteDir1)
 
 				s.confirmOutputContains(t, []string{"status", "--name", "testAddFiles", "-d"},
 					0, "Example File:")
