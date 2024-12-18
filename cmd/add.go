@@ -273,6 +273,8 @@ func pathIsDir(path string) bool {
 	return info.IsDir()
 }
 
+// fileDirIsInDirs returns true if the directory of the provided file (or any of
+// its parents) is present in the provided map of directories.
 func fileDirIsInDirs(file string, dirSet map[string]bool) bool {
 	fileDir := filepath.Dir(file)
 
