@@ -51,6 +51,7 @@ const serverTokenBasename = ".ibackup.token"
 const numPutClients = 10
 const deadlockTimeout = 30 * time.Minute
 const dbBackupParamPosition = 2
+const defaultDebounceSeconds = 600
 
 // options for this cmd.
 var serverLogPath string
@@ -188,6 +189,10 @@ database that you've made, to investigate.
 			}
 		}
 
+		if serverSlackDebouncePeriod < 0 {
+			die("slack_debounce period must be positive, not: %d", serverSlackDebouncePeriod)
+		}
+
 		conf := server.Config{
 			HTTPLogger:           logWriter,
 			Slacker:              slacker,
@@ -290,7 +295,7 @@ func init() {
 		"deduplicate hardlinks by storing them by inode in this iRODS collection")
 	serverCmd.Flags().StringVar(&serverRemoteBackupPath, "remote_backup", os.Getenv("IBACKUP_REMOTE_DB_BACKUP_PATH"),
 		"enables database backup to the specified iRODS path")
-	serverCmd.Flags().IntVarP(&serverSlackDebouncePeriod, "slack_debounce", "d", 600, //nolint:mnd
+	serverCmd.Flags().IntVarP(&serverSlackDebouncePeriod, "slack_debounce", "d", defaultDebounceSeconds,
 		"debounced slack messages are sent only once every period of this many seconds"+
 			"(eg. 10 for 10 seconds), defaults to 10 minutes")
 	serverCmd.Flags().StringVarP(&serverStillRunningMsgFreq, "still_running", "r", "",
