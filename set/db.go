@@ -40,7 +40,7 @@ import (
 	"github.com/gammazero/workerpool"
 	"github.com/ugorji/go/codec"
 	"github.com/wtsi-hgi/ibackup/put"
-	"github.com/wtsi-ssg/wrstat/v4/walk"
+	"github.com/wtsi-ssg/wrstat/v6/walk"
 	bolt "go.etcd.io/bbolt"
 )
 
@@ -261,7 +261,7 @@ func (d *DB) SetFileEntries(setID string, paths []string) error {
 
 	for n, path := range paths {
 		entries[n] = &walk.Dirent{
-			Path: path,
+			Path: walk.NewFilePath(path),
 		}
 	}
 
@@ -281,7 +281,7 @@ func (d *DB) setEntries(setID string, dirents []*walk.Dirent, bucketName string)
 
 		// this sort is critical to database write speed.
 		sort.Slice(dirents, func(i, j int) bool {
-			return dirents[i].Path < dirents[j].Path
+			return bytes.Compare(dirents[i].Path.Bytes(), dirents[j].Path.Bytes()) == -1
 		})
 
 		ec, err := newEntryCreator(d, tx, b, existing, setID)
@@ -363,7 +363,7 @@ func (d *DB) newSetFileBucket(tx *bolt.Tx, kindOfFileBucket, setID string) (*set
 // a fake one with no Inode and Type of ModeIrregular.
 func newDirentFromPath(path string) *walk.Dirent {
 	dirent := &walk.Dirent{
-		Path: path,
+		Path: walk.NewFilePath(path),
 		Type: os.ModeIrregular,
 	}
 
@@ -509,11 +509,11 @@ func (d *DB) handleFilePoolResults(tx *bolt.Tx, sfsb *setFileSubBucket, setID st
 	for n := range dirents {
 		dirent := <-direntCh
 		dirents[n] = dirent
-		existing[dirent.Path] = <-entryCh
+		existing[string(dirent.Path.Bytes())] = <-entryCh
 	}
 
 	sort.Slice(dirents, func(i, j int) bool {
-		return dirents[i].Path < dirents[j].Path
+		return bytes.Compare(dirents[i].Path.Bytes(), dirents[j].Path.Bytes()) == -1
 	})
 
 	ec, err := newEntryCreator(d, tx, sfsb.Bucket, existing, setID)

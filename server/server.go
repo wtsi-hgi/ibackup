@@ -44,7 +44,7 @@ import (
 	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/set"
 	"github.com/wtsi-hgi/ibackup/slack"
-	"github.com/wtsi-ssg/wrstat/v4/scheduler"
+	"github.com/wtsi-ssg/wrstat/v6/scheduler"
 )
 
 const (
@@ -110,7 +110,7 @@ type Server struct {
 
 	mapMu               sync.RWMutex
 	creatingCollections map[string]bool
-	iRODSConnections    map[string]int
+	iRODSTracker        *iRODSTracker
 }
 
 // New creates a Server which can serve a REST API and website.
@@ -128,10 +128,10 @@ func New(conf Config) (*Server, error) {
 		dirPool:             workerpool.New(workerPoolSizeDir),
 		queue:               queue.New(context.Background(), "put"),
 		creatingCollections: make(map[string]bool),
-		iRODSConnections:    make(map[string]int),
 		slacker:             conf.Slacker,
 		stillRunningMsgFreq: conf.StillRunningMsgFreq,
 		uploadTracker:       newUploadTracker(conf.Slacker, conf.SlackMessageDebounce),
+		iRODSTracker:        newiRODSTracker(conf.Slacker, conf.SlackMessageDebounce),
 	}
 
 	s.Server.Router().Use(gas.IncludeAbortErrorsInBody)
@@ -168,7 +168,7 @@ func (s *Server) SetRemoteHardlinkLocation(path string) {
 // Provide a hint as the the maximum number of put job clients you'll run at
 // once, so that reservations can be balanced between them.
 func (s *Server) EnableJobSubmission(putCmd, deployment, cwd, queue string, numClients int, logger log15.Logger) error {
-	sched, err := scheduler.New(deployment, cwd, queue, connectTimeout, logger, false)
+	sched, err := scheduler.New(deployment, cwd, queue, "", connectTimeout, logger)
 	if err != nil {
 		return err
 	}

@@ -38,7 +38,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/set"
-	"github.com/wtsi-ssg/wrstat/v4/walk"
+	"github.com/wtsi-ssg/wrstat/v6/walk"
 )
 
 const ttr = 6 * time.Minute
@@ -350,6 +350,10 @@ func (s *Server) entryToRequest(entry *set.Entry, transformer put.PathTransforme
 	if entry.Type == set.Symlink {
 		r.Symlink = entry.Dest
 		r.Meta[put.MetaKeySymlink] = entry.Dest
+	}
+
+	for k, v := range given.Metadata {
+		r.Meta[k] = v
 	}
 
 	if entry.Type == set.Hardlink && s.remoteHardlinkLocation != "" {

@@ -357,8 +357,6 @@ func TestServer(t *testing.T) {
 						err = client.TriggerDiscovery(exampleSet.ID())
 						So(err, ShouldBeNil)
 
-						So(slackWriter.String(), ShouldBeBlank)
-
 						ok := <-racCalled
 						So(ok, ShouldBeTrue)
 						So(len(racRequests), ShouldEqual, numFiles+len(discovers))
@@ -648,7 +646,7 @@ func TestServer(t *testing.T) {
 							So(err, ShouldBeNil)
 
 							So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"`jim.set1` started uploading files"+
-								slack.BoxPrefixInfo+"1 client uploading")
+								slack.BoxPrefixInfo+"1 clients uploading")
 							slackWriter.Reset()
 
 							requests[1].Status = put.RequestStatusUploading
@@ -684,7 +682,7 @@ func TestServer(t *testing.T) {
 							err = client.UpdateFileStatus(requests[0])
 							So(err, ShouldBeNil)
 
-							So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"1 client uploading")
+							So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"1 clients uploading")
 							slackWriter.Reset()
 
 							requests[0].Status = put.RequestStatusFailed
@@ -724,7 +722,7 @@ func TestServer(t *testing.T) {
 							err = client.UpdateFileStatus(requests[3])
 							So(err, ShouldBeNil)
 
-							So(slackWriter.String(), ShouldContainSubstring, slack.BoxPrefixInfo+"1 client uploading")
+							So(slackWriter.String(), ShouldContainSubstring, slack.BoxPrefixInfo+"1 clients uploading")
 							slackWriter.Reset()
 
 							requests[3].Status = put.RequestStatusFailed
@@ -759,7 +757,13 @@ func TestServer(t *testing.T) {
 
 							<-time.After(slackDebounce)
 
-							So(slackWriter.String(), ShouldBeBlank)
+							So(slackWriter.String(), ShouldContainSubstring, slack.BoxPrefixInfo+"1 clients uploading")
+							slackWriter.Reset()
+
+							<-time.After(slackDebounce)
+
+							So(slackWriter.String(), ShouldContainSubstring, slack.BoxPrefixInfo+"0 clients uploading")
+							slackWriter.Reset()
 						})
 
 						waitForDiscovery := func(given *set.Set) {
@@ -1692,6 +1696,61 @@ func TestServer(t *testing.T) {
 
 						So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"0 iRODS connections open")
 
+						Convey("iRODS messages are debounced if desired", func() {
+							s.Stop()
+
+							serverStopped = true
+
+							slackDebounce := 500 * time.Millisecond
+							conf.SlackMessageDebounce = slackDebounce
+
+							_, addr2, dfunc2 := makeAndStartServer()
+							defer dfunc2() //nolint:errcheck
+
+							token, errl = gas.Login(gas.NewClientRequest(addr2, certPath), admin, "pass")
+							So(errl, ShouldBeNil)
+
+							client = NewClient(addr2, certPath, token)
+
+							slackWriter.Reset()
+
+							err = client.MakingIRODSConnections(2)
+							So(err, ShouldBeNil)
+
+							So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"2 iRODS connections open")
+							slackWriter.Reset()
+
+							err = client.MakingIRODSConnections(2)
+							So(err, ShouldBeNil)
+
+							So(slackWriter.String(), ShouldBeBlank)
+
+							<-time.After(slackDebounce)
+
+							So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"4 iRODS connections open")
+							slackWriter.Reset()
+
+							err = client.MakingIRODSConnections(2)
+							So(err, ShouldBeNil)
+
+							So(slackWriter.String(), ShouldBeBlank)
+							slackWriter.Reset()
+
+							err = client.ClosedIRODSConnections()
+							So(err, ShouldBeNil)
+
+							So(slackWriter.String(), ShouldBeBlank)
+
+							<-time.After(slackDebounce)
+
+							So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"6 iRODS connections open")
+							slackWriter.Reset()
+
+							<-time.After(slackDebounce)
+
+							So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"0 iRODS connections open")
+						})
+
 						Convey("After completion, re-discovery can find new files and we can re-complete", func() {
 							newFile := filepath.Join(dirs[0], "new")
 							internal.CreateTestFileOfLength(t, newFile, 2)
@@ -2608,9 +2667,9 @@ func TestServer(t *testing.T) {
 					So(len(entries), ShouldEqual, 1)
 
 					So(gotSet.Warning, ShouldContainSubstring,
-						fmt.Sprintf("open %s: permission denied", filepath.Dir(pathExpected2)))
+						fmt.Sprintf("open %s/: permission denied", filepath.Dir(pathExpected2)))
 					So(gotSet.Warning, ShouldContainSubstring,
-						fmt.Sprintf("open %s: permission denied", filepath.Dir(pathExpected3)))
+						fmt.Sprintf("open %s/: permission denied", filepath.Dir(pathExpected3)))
 				})
 
 				Convey("and add a set with hardlinks defined directly", func() {

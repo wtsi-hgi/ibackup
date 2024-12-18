@@ -56,6 +56,7 @@ var setNull bool
 var setMonitor string
 var setArchive bool
 var setUser string
+var setMetadata string
 
 var ErrCancel = errors.New("cancelled add")
 
@@ -177,7 +178,9 @@ option to add sets on behalf of other users.
 			}
 		}
 
-		err = add(client, setName, setUser, setTransformer, setDescription, monitorDuration, setArchive, files, dirs)
+		meta := parseMetaString(setMetadata)
+
+		err = add(client, setName, setUser, setTransformer, setDescription, monitorDuration, setArchive, files, dirs, meta)
 		if err != nil {
 			die(err.Error())
 		}
@@ -211,6 +214,8 @@ func init() {
 		"delete local files after successfully uploading them (deletions not yet implemented)")
 	addCmd.Flags().StringVar(&setUser, "user", currentUsername(),
 		"pretend to be the this user (only works if you started the server)")
+	addCmd.Flags().StringVar(&setMetadata, "metadata", "",
+		"key=val;key=val metadata to apply to all files in the set")
 
 	if err := addCmd.MarkFlagRequired("name"); err != nil {
 		die(err.Error())
@@ -291,7 +296,7 @@ func fileDirIsInDirs(file string, dirSet map[string]bool) bool {
 
 // add does the main job of sending the backup set details to the server.
 func add(client *server.Client, name, requester, transformer, description string,
-	monitor time.Duration, archive bool, files, dirs []string) error {
+	monitor time.Duration, archive bool, files, dirs []string, meta map[string]string) error {
 	if err := checkExistingSet(client, name, requester); err != nil {
 		return err
 	}
@@ -303,6 +308,7 @@ func add(client *server.Client, name, requester, transformer, description string
 		Description: description,
 		MonitorTime: monitor,
 		DeleteLocal: archive,
+		Metadata:    meta,
 	}
 
 	if err := client.AddOrUpdateSet(set); err != nil {

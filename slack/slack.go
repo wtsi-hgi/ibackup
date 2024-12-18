@@ -27,7 +27,10 @@
 package slack
 
 import (
+	"fmt"
 	"io"
+	"sync"
+	"time"
 
 	slackGo "github.com/slack-go/slack"
 	gas "github.com/wtsi-hgi/go-authserver"
@@ -124,6 +127,91 @@ func levelToPrefix(level Level) string {
 	}
 
 	return ""
+}
+
+type Slacker interface {
+	SendMessage(level Level, msg string)
+}
+
+// HighestNumDebouncer holds values for debouncing slack messages based on the
+// highest number in a given period.
+type HighestNumDebouncer struct {
+	sync.Mutex
+	slacker         Slacker
+	debounceTimeout time.Duration
+	bouncing        bool
+
+	msg         string
+	lastNum     int
+	curMaxNum   int
+	pendingZero bool
+}
+
+// NewHighestNumDebouncer initialises a new HighestNumDebouncer instance.
+//   - slacker: a slacker.
+//   - debounceTimeout: the minimum interval between sending messages.
+//   - msg: a message suffix that will be appended to the highest number in the
+//     debounce period.
+func NewHighestNumDebouncer(slacker Slacker, debounceTimeout time.Duration, msg string) *HighestNumDebouncer {
+	return &HighestNumDebouncer{
+		slacker:         slacker,
+		debounceTimeout: debounceTimeout,
+		msg:             msg,
+	}
+}
+
+// SendDebounceMsg sends a Slack message if conditions are met, ensuring only
+// one unique message is sent within the specified debounce interval.
+func (hnd *HighestNumDebouncer) SendDebounceMsg(num int) {
+	hnd.Lock()
+	defer hnd.Unlock()
+
+	hnd.updateCurMaxNum(num)
+
+	if hnd.slacker == nil || hnd.bouncing || num == hnd.lastNum {
+		hnd.pendingZero = hnd.isZeroSkipped(num)
+
+		return
+	}
+
+	hnd.slacker.SendMessage(Info, fmt.Sprintf("%d %s", num, hnd.msg))
+	hnd.lastNum = num
+	hnd.bouncing = true
+	debounce := hnd.debounceTimeout
+
+	go func() {
+		time.Sleep(debounce)
+
+		hnd.Lock()
+		hnd.bouncing = false
+
+		nextNum := hnd.getNextNum()
+
+		hnd.Unlock()
+
+		hnd.SendDebounceMsg(nextNum)
+	}()
+}
+
+func (hnd *HighestNumDebouncer) updateCurMaxNum(num int) {
+	if num > hnd.curMaxNum || hnd.curMaxNum == hnd.lastNum {
+		hnd.curMaxNum = num
+	}
+}
+
+func (hnd *HighestNumDebouncer) isZeroSkipped(num int) bool {
+	return num == 0 && hnd.bouncing
+}
+
+func (hnd *HighestNumDebouncer) getNextNum() int {
+	nextNum := hnd.curMaxNum
+	hnd.curMaxNum = 0
+
+	if hnd.pendingZero && nextNum == hnd.lastNum {
+		nextNum = 0
+	}
+
+	return nextNum
 }
 
 type Mock struct {
