@@ -30,6 +30,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -37,12 +38,14 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/server"
 	"github.com/wtsi-hgi/ibackup/set"
 )
 
 const hoursInDay = 24
 const hoursInWeek = hoursInDay * 7
+const numOfBackupMeta = 3
 
 // options for this cmd.
 var setName string
@@ -57,6 +60,9 @@ var setMonitor string
 var setArchive bool
 var setUser string
 var setMetadata string
+var setReason string
+var setReview string
+var setRemoval string
 
 var ErrCancel = errors.New("cancelled add")
 
@@ -113,6 +119,15 @@ You can also provide:
 --archive : delete local files after successfully uploading them. (The actual
             deletion is not yet implemented, but you can at least record the
 		    fact you wanted deletion now, so they can be deleted in the future.)
+--reason  : the reason you are storing the set, which can be 'backup', 'archive' 
+			or 'quarantine'. The default is 'backup' which will set review date 
+			to 6 months and removal date to 1 year. 'archive' sets review date 
+			to 1 year and removal date to 2 years, while 'quarantine' sets 
+			review date to 2 months and removal date to 3 months.
+--review  : the time until the set should be reviewed, provided in months or
+			years. This duration must be shorter than the time until removal.
+--remove  : the time until the set should be removed, provided in months or 
+			years. This duration must be longer than the time until review.
 
 Having added a set, you can use 'ibackup status' to monitor the backup progress
 of your sets. If you add a set with the same --name again, you will overwrite
@@ -178,7 +193,7 @@ option to add sets on behalf of other users.
 			}
 		}
 
-		meta := parseMetaString(setMetadata)
+		meta := handleMeta(setMetadata, setReason, setReview, setRemoval)
 
 		err = add(client, setName, setUser, setTransformer, setDescription, monitorDuration, setArchive, files, dirs, meta)
 		if err != nil {
@@ -216,6 +231,12 @@ func init() {
 		"pretend to be the this user (only works if you started the server)")
 	addCmd.Flags().StringVar(&setMetadata, "metadata", "",
 		"key=val;key=val metadata to apply to all files in the set")
+	addCmd.Flags().StringVar(&setReason, "reason", "backup",
+		"storage reason: 'backup' | 'archive' | 'quarantine'")
+	addCmd.Flags().StringVar(&setReview, "review", "",
+		"months/years until review date, provided in format: <number><unit>, e.g. 1y for 1 year")
+	addCmd.Flags().StringVar(&setRemoval, "remove", "",
+		"months/years until removal date, provided in format: <number><unit>, e.g. 1y for 1 year")
 
 	if err := addCmd.MarkFlagRequired("name"); err != nil {
 		die(err.Error())
@@ -292,6 +313,82 @@ func fileDirIsInDirs(file string, dirSet map[string]bool) bool {
 	}
 
 	return false
+}
+
+// handleMeta takes the user provided meta and the backup meta inputs and
+// returns a map containing all valid metadata.
+func handleMeta(meta, reason, review, removal string) map[string]string {
+	userMeta := parseMetaString(meta)
+
+	backupMeta, err := createBackupMetadata(reason, review, removal)
+	if err != nil {
+		die(err.Error())
+	}
+
+	mm := make(map[string]string, len(userMeta)+len(backupMeta))
+	maps.Copy(mm, userMeta)
+	maps.Copy(mm, backupMeta)
+
+	return mm
+}
+
+// createBackupMetadata returns a map containing the backup metadata values if
+// the provided inputs are valid.
+func createBackupMetadata(reason, review, removal string) (map[string]string, error) {
+	mm := make(map[string]string, numOfBackupMeta)
+
+	reasonKey, err := put.ValidateAndCreateReasonMetadata(reason)
+	if err != nil {
+		return nil, err
+	}
+
+	review, removal = setReviewAndRemovalDurations(reason, review, removal)
+
+	removalKey, removalDate, err := put.ValidateAndCreateRemovalMetadata(removal)
+	if err != nil {
+		return nil, err
+	}
+
+	reviewKey, reviewDate, err := put.ValidateAndCreateReviewMetadata(review)
+	if err != nil {
+		return nil, err
+	}
+
+	if reviewDate.After(removalDate) {
+		die("--review duration must be smaller than --removal duration")
+	}
+
+	mm[reasonKey] = reason
+	mm[reviewKey] = reviewDate.Format("2006-01-02")
+	mm[removalKey] = removalDate.Format("2006-01-02")
+
+	return mm, nil
+}
+
+// setReviewAndRemovalDurations returns the review and removal durations for a
+// given reason. If the user has not set a duration, the function will return
+// the default corresponding to the provided reason.
+func setReviewAndRemovalDurations(reason, review, removal string) (string, string) {
+	defaultReviewDuration, defaultRemovalDuration := getDefaultReviewAndRemovalDurations(reason)
+	if review == "" {
+		review = defaultReviewDuration
+	}
+
+	if removal == "" {
+		removal = defaultRemovalDuration
+	}
+
+	return review, removal
+}
+func getDefaultReviewAndRemovalDurations(reason string) (string, string) {
+	switch reason {
+	case "archive":
+		return "1y", "2y"
+	case "quarantine":
+		return "2m", "3m"
+	default:
+		return "6m", "1y"
+	}
 }
 
 // add does the main job of sending the backup set details to the server.
