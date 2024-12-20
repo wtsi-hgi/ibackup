@@ -322,7 +322,7 @@ func handleMeta(meta, reason, review, removal string) map[string]string {
 
 	backupMeta, err := createBackupMetadata(reason, review, removal)
 	if err != nil {
-		die(err.Error())
+		die(err.Error()) //nolint:govet
 	}
 
 	mm := make(map[string]string, len(userMeta)+len(backupMeta))
