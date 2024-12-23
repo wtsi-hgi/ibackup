@@ -352,12 +352,12 @@ func parsePutFile(path, meta, requester string, splitter bufio.SplitFunc, base64
 }
 
 func parseMetaString(meta string) map[string]string {
-	if meta == "" {
-		return nil
-	}
-
 	kvs := strings.Split(meta, ";")
 	mm := make(map[string]string, len(kvs))
+
+	if meta == "" {
+		return mm
+	}
 
 	for _, kv := range kvs {
 		key, value, err := put.ValidateAndCreateUserMetadata(kv)

@@ -235,6 +235,19 @@ func (s *TestServer) runBinary(t *testing.T, args ...string) (int, string) {
 	return cmd.ProcessState.ExitCode(), out
 }
 
+func (s *TestServer) runBinaryWithNoLogging(t *testing.T, args ...string) (int, string) {
+	t.Helper()
+
+	cmd := s.clientCmd(args)
+
+	outB, _ := cmd.CombinedOutput() //nolint:errcheck
+	out := string(outB)
+	out = strings.TrimRight(out, "\n")
+	out = normaliseOutput(out)
+
+	return cmd.ProcessState.ExitCode(), out
+}
+
 func (s *TestServer) clientCmd(args []string) *exec.Cmd {
 	args = append([]string{"--url", s.url, "--cert", s.cert}, args...)
 
@@ -1246,7 +1259,7 @@ Local Path	Status	Size	Attempts	Date	Error`+"\n"+
 			setName := "invalidMetadataTest1"
 			setMetadata := "testKey=testValue=anotherValue"
 
-			exitCode, err := s.runBinary(t, "add", "--name", setName, "--transformer", transformer,
+			exitCode, err := s.runBinaryWithNoLogging(t, "add", "--name", setName, "--transformer", transformer,
 				"--path", path, "--metadata", setMetadata)
 
 			So(exitCode, ShouldEqual, 1)
@@ -1255,7 +1268,7 @@ Local Path	Status	Size	Attempts	Date	Error`+"\n"+
 			setName = "invalidMetadataTest2"
 			setMetadata = "ibackup:set=invalidMetadataTest2"
 
-			exitCode, err = s.runBinary(t, "add", "--name", setName, "--transformer", transformer,
+			exitCode, err = s.runBinaryWithNoLogging(t, "add", "--name", setName, "--transformer", transformer,
 				"--path", path, "--metadata", setMetadata)
 
 			So(exitCode, ShouldEqual, 1)
@@ -1264,7 +1277,7 @@ Local Path	Status	Size	Attempts	Date	Error`+"\n"+
 			setName = "invalidMetadataTest3"
 			setMetadata = "ibackup:name=name"
 
-			exitCode, _ = s.runBinary(t, "add", "--name", setName, "--transformer", transformer,
+			exitCode, _ = s.runBinaryWithNoLogging(t, "add", "--name", setName, "--transformer", transformer,
 				"--path", path, "--metadata", setMetadata)
 
 			So(exitCode, ShouldEqual, 1)
@@ -1272,7 +1285,7 @@ Local Path	Status	Size	Attempts	Date	Error`+"\n"+
 			setName = "invalidMetadataTest4"
 			setMetadata = "namespace:ibackup:user:mykey=value"
 
-			exitCode, _ = s.runBinary(t, "add", "--name", setName, "--transformer", transformer,
+			exitCode, _ = s.runBinaryWithNoLogging(t, "add", "--name", setName, "--transformer", transformer,
 				"--path", path, "--metadata", setMetadata)
 
 			So(exitCode, ShouldEqual, 1)
@@ -1280,7 +1293,7 @@ Local Path	Status	Size	Attempts	Date	Error`+"\n"+
 			setName = "invalidMetadataTest5"
 			setMetadata = "mykeyibackup:user:=value"
 
-			exitCode, _ = s.runBinary(t, "add", "--name", setName, "--transformer", transformer,
+			exitCode, _ = s.runBinaryWithNoLogging(t, "add", "--name", setName, "--transformer", transformer,
 				"--path", path, "--metadata", setMetadata)
 
 			So(exitCode, ShouldEqual, 1)
@@ -1288,7 +1301,7 @@ Local Path	Status	Size	Attempts	Date	Error`+"\n"+
 			setName = "invalidMetadataTest6"
 			setMetadata = "ibackup:user:mykey:mysubKey=value"
 
-			exitCode, _ = s.runBinary(t, "add", "--name", setName, "--transformer", transformer,
+			exitCode, _ = s.runBinaryWithNoLogging(t, "add", "--name", setName, "--transformer", transformer,
 				"--path", path, "--metadata", setMetadata)
 
 			So(exitCode, ShouldEqual, 1)
@@ -1370,7 +1383,7 @@ Local Path	Status	Size	Attempts	Date	Error`+"\n"+
 
 			Convey("Add with invalid --reason/--review/--remove inputs throws an error", func() {
 				checkExitCode := func(reason, review, removal string, expectedCode int) {
-					exitCode, _ := s.runBinary(t, "add", "--name", setName, "--transformer", transformer,
+					exitCode, _ := s.runBinaryWithNoLogging(t, "add", "--name", setName, "--transformer", transformer,
 						"--path", path, "--reason", reason, "--review", review, "--remove", removal)
 					So(exitCode, ShouldEqual, expectedCode)
 				}
@@ -1382,6 +1395,7 @@ Local Path	Status	Size	Attempts	Date	Error`+"\n"+
 				checkExitCode("backup", "5y", "1y", 1)
 				checkExitCode("backup", "1y", "1y", 1)
 				checkExitCode("backup", "1d", "1y", 1)
+				checkExitCode("backup", "1", "1", 1)
 				checkExitCode("backup", "oney", "1y", 1)
 			})
 

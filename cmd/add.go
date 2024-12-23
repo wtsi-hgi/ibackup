@@ -30,10 +30,10 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
-	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"time"
 
@@ -43,9 +43,22 @@ import (
 	"github.com/wtsi-hgi/ibackup/set"
 )
 
-const hoursInDay = 24
-const hoursInWeek = hoursInDay * 7
-const numOfBackupMeta = 3
+const (
+	hoursInDay      = 24
+	hoursInWeek     = hoursInDay * 7
+	numOfBackupMeta = 3
+)
+
+type Reason int
+
+const (
+	Backup Reason = iota
+	Archive
+	Quarantine
+)
+
+// valid ibackup reasons.
+var Reasons = []string{"backup", "archive", "quarantine"}
 
 // options for this cmd.
 var setName string
@@ -60,11 +73,13 @@ var setMonitor string
 var setArchive bool
 var setUser string
 var setMetadata string
-var setReason string
+var setReason Reason
 var setReview string
 var setRemoval string
 
 var ErrCancel = errors.New("cancelled add")
+var ErrInvalidReason = errors.New("reason must be 'backup', 'archive', 'quarantine'")
+var ErrInvalidDurationFormat = errors.New("duration must be in the form <number><unit>")
 
 // addCmd represents the add command.
 var addCmd = &cobra.Command{
@@ -231,7 +246,7 @@ func init() {
 		"pretend to be the this user (only works if you started the server)")
 	addCmd.Flags().StringVar(&setMetadata, "metadata", "",
 		"key=val;key=val metadata to apply to all files in the set")
-	addCmd.Flags().StringVar(&setReason, "reason", "backup",
+	addCmd.Flags().Var(&setReason, "reason",
 		"storage reason: 'backup' | 'archive' | 'quarantine'")
 	addCmd.Flags().StringVar(&setReview, "review", "",
 		"months/years until review date, provided in format: <number><unit>, e.g. 1y for 1 year")
@@ -241,6 +256,24 @@ func init() {
 	if err := addCmd.MarkFlagRequired("name"); err != nil {
 		die(err.Error())
 	}
+}
+
+func (r *Reason) Set(value string) error {
+	if slices.Contains(Reasons, value) {
+		*r = Reason(slices.Index(Reasons, value))
+
+		return nil
+	}
+
+	return ErrInvalidReason
+}
+
+func (r *Reason) String() string {
+	return Reasons[*r]
+}
+
+func (r *Reason) Type() string {
+	return "Reason"
 }
 
 // readPaths turns the line content (split as per splitter) of the given file.
@@ -317,39 +350,28 @@ func fileDirIsInDirs(file string, dirSet map[string]bool) bool {
 
 // handleMeta takes the user provided meta and the backup meta inputs and
 // returns a map containing all valid metadata.
-func handleMeta(meta, reason, review, removal string) map[string]string {
+func handleMeta(meta string, reason Reason, review, removal string) map[string]string {
 	userMeta := parseMetaString(meta)
 
-	backupMeta, err := createBackupMetadata(reason, review, removal)
+	mm, err := createBackupMetadata(reason, review, removal, userMeta)
 	if err != nil {
 		die(err.Error()) //nolint:govet
 	}
-
-	mm := make(map[string]string, len(userMeta)+len(backupMeta))
-	maps.Copy(mm, userMeta)
-	maps.Copy(mm, backupMeta)
 
 	return mm
 }
 
 // createBackupMetadata returns a map containing the backup metadata values if
 // the provided inputs are valid.
-func createBackupMetadata(reason, review, removal string) (map[string]string, error) {
-	mm := make(map[string]string, numOfBackupMeta)
-
-	reasonKey, err := put.ValidateAndCreateReasonMetadata(reason)
-	if err != nil {
-		return nil, err
-	}
-
+func createBackupMetadata(reason Reason, review, removal string, mm map[string]string) (map[string]string, error) {
 	review, removal = setReviewAndRemovalDurations(reason, review, removal)
 
-	removalKey, removalDate, err := put.ValidateAndCreateRemovalMetadata(removal)
+	removalDate, err := getFutureDateFromDuration(removal)
 	if err != nil {
 		return nil, err
 	}
 
-	reviewKey, reviewDate, err := put.ValidateAndCreateReviewMetadata(review)
+	reviewDate, err := getFutureDateFromDuration(review)
 	if err != nil {
 		return nil, err
 	}
@@ -358,9 +380,9 @@ func createBackupMetadata(reason, review, removal string) (map[string]string, er
 		die("--review duration must be smaller than --removal duration")
 	}
 
-	mm[reasonKey] = reason
-	mm[reviewKey] = reviewDate.Format("2006-01-02")
-	mm[removalKey] = removalDate.Format("2006-01-02")
+	mm[put.MetaKeyReason] = Reasons[reason]
+	mm[put.MetaKeyReview] = reviewDate.Format("2006-01-02")
+	mm[put.MetaKeyRemoval] = removalDate.Format("2006-01-02")
 
 	return mm, nil
 }
@@ -368,7 +390,7 @@ func createBackupMetadata(reason, review, removal string) (map[string]string, er
 // setReviewAndRemovalDurations returns the review and removal durations for a
 // given reason. If the user has not set a duration, the function will return
 // the default corresponding to the provided reason.
-func setReviewAndRemovalDurations(reason, review, removal string) (string, string) {
+func setReviewAndRemovalDurations(reason Reason, review, removal string) (string, string) {
 	defaultReviewDuration, defaultRemovalDuration := getDefaultReviewAndRemovalDurations(reason)
 	if review == "" {
 		review = defaultReviewDuration
@@ -380,14 +402,34 @@ func setReviewAndRemovalDurations(reason, review, removal string) (string, strin
 
 	return review, removal
 }
-func getDefaultReviewAndRemovalDurations(reason string) (string, string) {
-	switch reason {
+
+func getDefaultReviewAndRemovalDurations(reason Reason) (string, string) {
+	switch reason.String() {
 	case "archive":
 		return "1y", "2y"
 	case "quarantine":
 		return "2m", "3m"
 	default:
 		return "6m", "1y"
+	}
+}
+
+// getFutureDateFromDuration calculates the future date based on the duration
+// string provided. Returns an error if duration is not in the format
+// '<number><unit>', e.g. '1y', '12m'.
+func getFutureDateFromDuration(duration string) (time.Time, error) {
+	num, err := strconv.Atoi(duration[:len(duration)-1])
+	if err != nil {
+		return time.Time{}, ErrInvalidDurationFormat
+	}
+
+	switch duration[len(duration)-1] {
+	case 'y':
+		return time.Now().AddDate(num, 0, 0), nil
+	case 'm':
+		return time.Now().AddDate(0, num, 0), nil
+	default:
+		return time.Time{}, ErrInvalidDurationFormat
 	}
 }
 

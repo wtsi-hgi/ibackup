@@ -30,9 +30,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
-	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -61,8 +58,6 @@ const (
 
 var errInvalidMetaNamespace = errors.New("namespace is incorrect, must be 'ibackup:user:' or empty")
 var errInvalidMetaLength = errors.New("meta must be provided in the form key=value")
-var errInvalidReasonMeta = errors.New("reason must be backup, archive or quarantine")
-var errInvalidMetaDuration = errors.New("invalid duration")
 
 // Stuck is used to provide details of a potentially "stuck" upload Request.
 type Stuck struct {
@@ -627,60 +622,4 @@ func handleNamespace(key string) (string, error) {
 	default:
 		return "", errInvalidMetaNamespace
 	}
-}
-
-// ValidateAndCreateReasonMetadata returns an error if the provided string is
-// not a valid ibackup reason, otherwise returns the related reason metadata
-// key.
-func ValidateAndCreateReasonMetadata(reason string) (string, error) {
-	validReasons := []string{"backup", "archive", "quarantine"}
-	if !slices.Contains(validReasons, reason) {
-		return "", errInvalidReasonMeta
-	}
-
-	return MetaKeyReason, nil
-}
-
-// ValidateAndCreateReviewMetadata checks the given duration string is valid and
-// returns the date corresponding to the duration along with the related review
-// metadata key.
-func ValidateAndCreateReviewMetadata(durationTilReview string) (string, time.Time, error) {
-	date, err := getFutureDateFromDuration(durationTilReview)
-
-	return MetaKeyReview, date, err
-}
-
-// getFutureDateFromDuration calculates the future date based on the duration
-// string provided. Returns an error if duration is not in the format
-// '<number><unit>', e.g. '1y', '12m'.
-func getFutureDateFromDuration(duration string) (time.Time, error) {
-	re := regexp.MustCompile(`(\d+)([a-zA-Z])`)
-	matches := re.FindStringSubmatch(duration)
-
-	if len(matches) != validDurationParts {
-		return time.Now(), errInvalidMetaDuration
-	}
-
-	num, err := strconv.Atoi(matches[1])
-	if err != nil {
-		return time.Now(), errInvalidMetaDuration
-	}
-
-	switch matches[2] {
-	case "y":
-		return time.Now().AddDate(num, 0, 0), nil
-	case "m":
-		return time.Now().AddDate(0, num, 0), nil
-	default:
-		return time.Now(), errInvalidMetaDuration
-	}
-}
-
-// ValidateAndCreateRemovalMetadata checks the given duration string is valid
-// and returns the date corresponding to the duration along with the related
-// removal metadata key.
-func ValidateAndCreateRemovalMetadata(durationTilRemoval string) (string, time.Time, error) {
-	date, err := getFutureDateFromDuration(durationTilRemoval)
-
-	return MetaKeyRemoval, date, err
 }
