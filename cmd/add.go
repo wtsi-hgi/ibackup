@@ -80,6 +80,7 @@ var setRemoval string
 var ErrCancel = errors.New("cancelled add")
 var ErrInvalidReason = errors.New("reason must be 'backup', 'archive', 'quarantine'")
 var ErrInvalidDurationFormat = errors.New("duration must be in the form <number><unit>")
+var ErrInvalidReviewRemoveDate = errors.New("--review duration must be smaller than --removal duration")
 
 // addCmd represents the add command.
 var addCmd = &cobra.Command{
@@ -259,8 +260,9 @@ func init() {
 }
 
 func (r *Reason) Set(value string) error {
-	if slices.Contains(Reasons, value) {
-		*r = Reason(slices.Index(Reasons, value))
+	index := slices.Index(Reasons, value)
+	if index != -1 {
+		*r = Reason(index)
 
 		return nil
 	}
@@ -268,11 +270,11 @@ func (r *Reason) Set(value string) error {
 	return ErrInvalidReason
 }
 
-func (r *Reason) String() string {
-	return Reasons[*r]
+func (r Reason) String() string {
+	return Reasons[r]
 }
 
-func (r *Reason) Type() string {
+func (r Reason) Type() string {
 	return "Reason"
 }
 
@@ -351,9 +353,9 @@ func fileDirIsInDirs(file string, dirSet map[string]bool) bool {
 // handleMeta takes the user provided meta and the backup meta inputs and
 // returns a map containing all valid metadata.
 func handleMeta(meta string, reason Reason, review, removal string) map[string]string {
-	userMeta := parseMetaString(meta)
+	mm := parseMetaString(meta)
 
-	mm, err := createBackupMetadata(reason, review, removal, userMeta)
+	err := createBackupMetadata(reason, review, removal, mm)
 	if err != nil {
 		die(err.Error()) //nolint:govet
 	}
@@ -361,30 +363,30 @@ func handleMeta(meta string, reason Reason, review, removal string) map[string]s
 	return mm
 }
 
-// createBackupMetadata returns a map containing the backup metadata values if
-// the provided inputs are valid.
-func createBackupMetadata(reason Reason, review, removal string, mm map[string]string) (map[string]string, error) {
+// createBackupMetadata adds the backup metadata values to the meta map if the
+// provided inputs are valid.
+func createBackupMetadata(reason Reason, review, removal string, mm map[string]string) error {
 	review, removal = setReviewAndRemovalDurations(reason, review, removal)
 
 	removalDate, err := getFutureDateFromDuration(removal)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	reviewDate, err := getFutureDateFromDuration(review)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	if reviewDate.After(removalDate) {
-		die("--review duration must be smaller than --removal duration")
+		return ErrInvalidReviewRemoveDate
 	}
 
 	mm[put.MetaKeyReason] = Reasons[reason]
 	mm[put.MetaKeyReview] = reviewDate.Format("2006-01-02")
 	mm[put.MetaKeyRemoval] = removalDate.Format("2006-01-02")
 
-	return mm, nil
+	return nil
 }
 
 // setReviewAndRemovalDurations returns the review and removal durations for a
@@ -404,10 +406,10 @@ func setReviewAndRemovalDurations(reason Reason, review, removal string) (string
 }
 
 func getDefaultReviewAndRemovalDurations(reason Reason) (string, string) {
-	switch reason.String() {
-	case "archive":
+	switch reason {
+	case Archive:
 		return "1y", "2y"
-	case "quarantine":
+	case Quarantine:
 		return "2m", "3m"
 	default:
 		return "6m", "1y"
