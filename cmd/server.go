@@ -51,7 +51,7 @@ const serverTokenBasename = ".ibackup.token"
 const numPutClients = 10
 const deadlockTimeout = 30 * time.Minute
 const dbBackupParamPosition = 2
-const slackMsgDebounce = 5 * time.Second
+const defaultDebounceSeconds = 600
 
 // options for this cmd.
 var serverLogPath string
@@ -62,6 +62,7 @@ var serverDebug bool
 var serverRemoteBackupPath string
 var serverWRDeployment string
 var serverHardlinksCollection string
+var serverSlackDebouncePeriod int
 var serverStillRunningMsgFreq string
 
 // serverCmd represents the server command.
@@ -120,6 +121,11 @@ and incoming-webhook, and then add this bot to your workspace. To get the
 channel, find the channel ID given after pressing the 'Get channel details'
 button (channel title) in the desired channel; it'll be at the bottom of the
 pop-up box.
+
+Certain important events, iRODS connections and clients uploading, are
+debounced as to not flood the slack channel with messages. This debounce period 
+can be set using --slack_debounce, otherwise it will default to 10 minutes 
+between each message.
 
 With slack setup, you can also have the server send "still running" messages
 periodically by defining the --still_running option.
@@ -183,10 +189,14 @@ database that you've made, to investigate.
 			}
 		}
 
+		if serverSlackDebouncePeriod < 0 {
+			die("slack_debounce period must be positive, not: %d", serverSlackDebouncePeriod)
+		}
+
 		conf := server.Config{
 			HTTPLogger:           logWriter,
 			Slacker:              slacker,
-			SlackMessageDebounce: slackMsgDebounce,
+			SlackMessageDebounce: time.Duration(serverSlackDebouncePeriod) * time.Second,
 			StillRunningMsgFreq:  stillRunningMsgFreq,
 		}
 
@@ -285,6 +295,9 @@ func init() {
 		"deduplicate hardlinks by storing them by inode in this iRODS collection")
 	serverCmd.Flags().StringVar(&serverRemoteBackupPath, "remote_backup", os.Getenv("IBACKUP_REMOTE_DB_BACKUP_PATH"),
 		"enables database backup to the specified iRODS path")
+	serverCmd.Flags().IntVarP(&serverSlackDebouncePeriod, "slack_debounce", "d", defaultDebounceSeconds,
+		"debounced slack messages are sent only once every period of this many seconds"+
+			"(eg. 10 for 10 seconds), defaults to 10 minutes")
 	serverCmd.Flags().StringVarP(&serverStillRunningMsgFreq, "still_running", "r", "",
 		"send a slack message every this period of time to say the server is still running"+
 			"(eg. 10m for 10 minutes, or 6h for 6 hours, minimum 1m), defaults to nothing")
