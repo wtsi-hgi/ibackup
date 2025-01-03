@@ -324,7 +324,11 @@ func getRequestsFromFile(file, meta string, base64Encoded bool) ([]*put.Request,
 }
 
 func parsePutFile(path, meta, requester string, splitter bufio.SplitFunc, base64Encoded bool) []*put.Request {
-	defaultMeta := parseMetaString(meta)
+	defaultMeta, err := put.ParseMetaString(meta)
+	if err != nil {
+		die(err.Error())
+	}
+
 	scanner, df := createScannerForFile(path, splitter)
 
 	defer df()
@@ -349,26 +353,6 @@ func parsePutFile(path, meta, requester string, splitter bufio.SplitFunc, base64
 	}
 
 	return prs
-}
-
-func parseMetaString(meta string) map[string]string {
-	kvs := strings.Split(meta, ";")
-	mm := make(map[string]string, len(kvs))
-
-	if meta == "" {
-		return mm
-	}
-
-	for _, kv := range kvs {
-		key, value, err := put.ValidateAndCreateUserMetadata(kv)
-		if err != nil {
-			die("invalid meta: '%s' %s", kv, err.Error())
-		}
-
-		mm[key] = value
-	}
-
-	return mm
 }
 
 // fofnLineSplitter returns a bufio.SplitFunc that splits on \n be default, or
@@ -437,7 +421,7 @@ func openFile(path string) (io.Reader, func()) {
 }
 
 func parsePutFileLine(line string, base64Encoded bool, lineNum int,
-	defaultMeta map[string]string, requester string) *put.Request {
+	defaultMeta *put.Meta, requester string) *put.Request {
 	cols := strings.Split(line, "\t")
 	colsn := len(cols)
 
@@ -450,7 +434,12 @@ func parsePutFileLine(line string, base64Encoded bool, lineNum int,
 	meta := defaultMeta
 
 	if colsn == putFileCols && cols[2] != "" {
-		meta = parseMetaString(cols[2])
+		parsedMeta, err := put.ParseMetaString(cols[2])
+		if err != nil {
+			die(err.Error())
+		}
+
+		meta = parsedMeta
 	}
 
 	return &put.Request{

@@ -485,7 +485,8 @@ func sendForUploadOrUnmodified(request *Request, lInfo, rInfo *ObjectInfo, putCh
 	if lInfo.HasSameModTime(rInfo) {
 		ch := skipReturnCh
 
-		if request.needsMetadataUpdate() {
+		request.skipPut = request.Meta.needsMetadataUpdate()
+		if request.skipPut {
 			ch = putCh
 		}
 

@@ -365,7 +365,7 @@ func TestServer(t *testing.T) {
 							Remote:    filepath.Join(remoteDir, "a"),
 							Requester: exampleSet.Requester,
 							Set:       exampleSet.Name,
-							Meta:      make(map[string]string),
+							Meta:      put.NewMeta(),
 						})
 
 						entries, errg := client.GetFiles(exampleSet.ID())

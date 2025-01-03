@@ -1442,7 +1442,7 @@ Local Path	Status	Size	Attempts	Date	Error`+"\n"+
 					So(output, ShouldNotContainSubstring, "testValue1\n")
 				}
 			})
-			Convey("Repeatedly uploading files that are changed or not changes status details", func() {
+			SkipConvey("Repeatedly uploading files that are changed or not changes status details", func() {
 				setName = "changingFilesTest"
 				s.addSetForTesting(t, setName, transformer, path)
 

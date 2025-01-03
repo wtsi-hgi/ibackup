@@ -33,7 +33,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strconv"
 	"time"
 
@@ -49,17 +48,6 @@ const (
 	numOfBackupMeta = 3
 )
 
-type Reason int
-
-const (
-	Backup Reason = iota
-	Archive
-	Quarantine
-)
-
-// valid ibackup reasons.
-var Reasons = []string{"backup", "archive", "quarantine"}
-
 // options for this cmd.
 var setName string
 var setTransformer string
@@ -73,14 +61,11 @@ var setMonitor string
 var setArchive bool
 var setUser string
 var setMetadata string
-var setReason Reason
+var setReason put.Reason
 var setReview string
 var setRemoval string
 
 var ErrCancel = errors.New("cancelled add")
-var ErrInvalidReason = errors.New("reason must be 'backup', 'archive', 'quarantine'")
-var ErrInvalidDurationFormat = errors.New("duration must be in the form <number><unit>")
-var ErrInvalidReviewRemoveDate = errors.New("--review duration must be smaller than --removal duration")
 
 // addCmd represents the add command.
 var addCmd = &cobra.Command{
@@ -209,7 +194,10 @@ option to add sets on behalf of other users.
 			}
 		}
 
-		meta := handleMeta(setMetadata, setReason, setReview, setRemoval)
+		meta, err := put.HandleMeta(setMetadata, setReason, setReview, setRemoval)
+		if err != nil {
+			die(err.Error())
+		}
 
 		err = add(client, setName, setUser, setTransformer, setDescription, monitorDuration, setArchive, files, dirs, meta)
 		if err != nil {
@@ -257,25 +245,6 @@ func init() {
 	if err := addCmd.MarkFlagRequired("name"); err != nil {
 		die(err.Error())
 	}
-}
-
-func (r *Reason) Set(value string) error {
-	index := slices.Index(Reasons, value)
-	if index != -1 {
-		*r = Reason(index)
-
-		return nil
-	}
-
-	return ErrInvalidReason
-}
-
-func (r Reason) String() string {
-	return Reasons[r]
-}
-
-func (r Reason) Type() string {
-	return "Reason"
 }
 
 // readPaths turns the line content (split as per splitter) of the given file.
@@ -350,94 +319,9 @@ func fileDirIsInDirs(file string, dirSet map[string]bool) bool {
 	return false
 }
 
-// handleMeta takes the user provided meta and the backup meta inputs and
-// returns a map containing all valid metadata.
-func handleMeta(meta string, reason Reason, review, removal string) map[string]string {
-	mm := parseMetaString(meta)
-
-	err := createBackupMetadata(reason, review, removal, mm)
-	if err != nil {
-		die(err.Error()) //nolint:govet
-	}
-
-	return mm
-}
-
-// createBackupMetadata adds the backup metadata values to the meta map if the
-// provided inputs are valid.
-func createBackupMetadata(reason Reason, review, removal string, mm map[string]string) error {
-	review, removal = setReviewAndRemovalDurations(reason, review, removal)
-
-	removalDate, err := getFutureDateFromDuration(removal)
-	if err != nil {
-		return err
-	}
-
-	reviewDate, err := getFutureDateFromDuration(review)
-	if err != nil {
-		return err
-	}
-
-	if reviewDate.After(removalDate) {
-		return ErrInvalidReviewRemoveDate
-	}
-
-	mm[put.MetaKeyReason] = Reasons[reason]
-	mm[put.MetaKeyReview] = reviewDate.Format("2006-01-02")
-	mm[put.MetaKeyRemoval] = removalDate.Format("2006-01-02")
-
-	return nil
-}
-
-// setReviewAndRemovalDurations returns the review and removal durations for a
-// given reason. If the user has not set a duration, the function will return
-// the default corresponding to the provided reason.
-func setReviewAndRemovalDurations(reason Reason, review, removal string) (string, string) {
-	defaultReviewDuration, defaultRemovalDuration := getDefaultReviewAndRemovalDurations(reason)
-	if review == "" {
-		review = defaultReviewDuration
-	}
-
-	if removal == "" {
-		removal = defaultRemovalDuration
-	}
-
-	return review, removal
-}
-
-func getDefaultReviewAndRemovalDurations(reason Reason) (string, string) {
-	switch reason {
-	case Archive:
-		return "1y", "2y"
-	case Quarantine:
-		return "2m", "3m"
-	default:
-		return "6m", "1y"
-	}
-}
-
-// getFutureDateFromDuration calculates the future date based on the duration
-// string provided. Returns an error if duration is not in the format
-// '<number><unit>', e.g. '1y', '12m'.
-func getFutureDateFromDuration(duration string) (time.Time, error) {
-	num, err := strconv.Atoi(duration[:len(duration)-1])
-	if err != nil {
-		return time.Time{}, ErrInvalidDurationFormat
-	}
-
-	switch duration[len(duration)-1] {
-	case 'y':
-		return time.Now().AddDate(num, 0, 0), nil
-	case 'm':
-		return time.Now().AddDate(0, num, 0), nil
-	default:
-		return time.Time{}, ErrInvalidDurationFormat
-	}
-}
-
 // add does the main job of sending the backup set details to the server.
 func add(client *server.Client, name, requester, transformer, description string,
-	monitor time.Duration, archive bool, files, dirs []string, meta map[string]string) error {
+	monitor time.Duration, archive bool, files, dirs []string, meta *put.Meta) error {
 	if err := checkExistingSet(client, name, requester); err != nil {
 		return err
 	}
@@ -449,7 +333,7 @@ func add(client *server.Client, name, requester, transformer, description string
 		Description: description,
 		MonitorTime: monitor,
 		DeleteLocal: archive,
-		Metadata:    meta,
+		Metadata:    meta.Metadata(),
 	}
 
 	if err := client.AddOrUpdateSet(set); err != nil {
