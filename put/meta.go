@@ -196,12 +196,12 @@ func handleNamespace(key string) (string, error) {
 func createBackupMetadata(reason Reason, review, removal string, mm *Meta) error {
 	review, removal = setReviewAndRemovalDurations(reason, review, removal)
 
-	removalDate, err := getFutureDateFromDuration(removal)
+	removalDate, err := getFutureDateFromDurationOrDate(removal)
 	if err != nil {
 		return err
 	}
 
-	reviewDate, err := getFutureDateFromDuration(review)
+	reviewDate, err := getFutureDateFromDurationOrDate(review)
 	if err != nil {
 		return err
 	}
@@ -260,16 +260,21 @@ func getDefaultReviewAndRemovalDurations(reason Reason) (string, string) {
 	}
 }
 
-// getFutureDateFromDuration calculates the future date based on the duration
+// getFutureDateFromDurationOrDate calculates the future date based on the time
 // string provided. Returns an error if duration is not in the format
-// '<number><unit>', e.g. '1y', '12m'.
-func getFutureDateFromDuration(duration string) (time.Time, error) {
-	num, err := strconv.Atoi(duration[:len(duration)-1])
+// '<number><unit>', e.g. '1y', '12m' or YYYY-MM-DD.
+func getFutureDateFromDurationOrDate(t string) (time.Time, error) {
+	date, err := time.Parse("2006-01-02", t)
+	if err == nil {
+		return date, nil
+	}
+
+	num, err := strconv.Atoi(t[:len(t)-1])
 	if err != nil {
 		return time.Time{}, ErrInvalidDurationFormat
 	}
 
-	switch duration[len(duration)-1] {
+	switch t[len(t)-1] {
 	case 'y':
 		return time.Now().AddDate(num, 0, 0), nil
 	case 'm':

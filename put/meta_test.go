@@ -99,11 +99,25 @@ func TestMeta(t *testing.T) {
 			So(meta.Metadata()[MetaKeyRemoval], ShouldEqual, defaultRemoval)
 		})
 
-		Convey("And a review/removal date, invalid dates return an error", func() {
+		Convey("Valid review/removal inputs return the correct date", func() {
+			defaultReview, defaultRemoval := testTimesToMeta(t, now.AddDate(2, 0, 0), now.AddDate(3, 0, 0))
+
 			err := createBackupMetadata(Backup, "2y", "3y", meta)
 			So(err, ShouldBeNil)
+			So(meta.Metadata()[MetaKeyReview], ShouldEqual, defaultReview)
+			So(meta.Metadata()[MetaKeyRemoval], ShouldEqual, defaultRemoval)
 
-			err = createBackupMetadata(Backup, "2y", "1y", meta)
+			customReview := "2050-01-01"
+			customRemoval := "2055-01-01"
+
+			err = createBackupMetadata(Backup, customReview, customRemoval, meta)
+			So(err, ShouldBeNil)
+			So(meta.Metadata()[MetaKeyReview], ShouldContainSubstring, customReview)
+			So(meta.Metadata()[MetaKeyRemoval], ShouldContainSubstring, customRemoval)
+		})
+
+		Convey("Invalid review/removal inputs return an error", func() {
+			err := createBackupMetadata(Backup, "2y", "1y", meta)
 			So(err, ShouldEqual, ErrInvalidReviewRemoveDate)
 
 			err = createBackupMetadata(Backup, "2y", "", meta)

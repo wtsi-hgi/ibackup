@@ -125,10 +125,12 @@ You can also provide:
 			date to 6 months and removal date to 1 year. 'archive' sets review 
 			date to 1 year and removal date to 2 years, while 'quarantine' sets 
 			review date to 2 months and removal date to 3 months.
---review  : the time until the set should be reviewed, provided in months or
-			years. This duration must be shorter than the time until removal.
---remove  : the time until the set should be removed, provided in months or 
-			years. This duration must be longer than the time until review.
+--review  : the date when the set should be reviewed, provided as a duration in 
+			months or years or the date itself. This date must be before the 
+			removal date.
+--remove  : the date when the set should be removed, provided as a duration in 
+			months or years or the date itself. This date must be after the 
+			review date.
 
 Having added a set, you can use 'ibackup status' to monitor the backup progress
 of your sets. If you add a set with the same --name again, you will overwrite
@@ -238,9 +240,11 @@ func init() {
 	addCmd.Flags().Var(&setReason, "reason",
 		"storage reason: 'backup' | 'archive' | 'quarantine'")
 	addCmd.Flags().StringVar(&setReview, "review", "",
-		"months/years until review date, provided in format: <number><unit>, e.g. 1y for 1 year")
+		"months/years until review date, provided in format: <number><unit>, e.g. 1y for 1 year. "+
+			"Or exact date for review, provided in format YYYY-MM-DD")
 	addCmd.Flags().StringVar(&setRemoval, "remove", "",
-		"months/years until removal date, provided in format: <number><unit>, e.g. 1y for 1 year")
+		"months/years until removal date, provided in format: <number><unit>, e.g. 1y for 1 year. "+
+			"Or exact date for removal, provided in format YYYY-MM-DD")
 
 	if err := addCmd.MarkFlagRequired("name"); err != nil {
 		die(err.Error())
