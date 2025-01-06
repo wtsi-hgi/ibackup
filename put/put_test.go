@@ -79,7 +79,7 @@ func TestPutMock(t *testing.T) {
 					So(err, ShouldBeNil)
 
 					lh.mu.RLock()
-					So(lh.meta[request.Remote], ShouldResemble, request.Meta.LocalMeta)
+					So(lh.meta[request.Remote], ShouldResemble, request.Meta.localMeta)
 					checkAddedMeta(lh.meta[request.Remote])
 					lh.mu.RUnlock()
 				}
@@ -93,7 +93,7 @@ func TestPutMock(t *testing.T) {
 				Convey("A second put of the same files skips them all, except for modified ones", func() {
 					requests[0].Requester = "Sam"
 					requests[0].Set = "setB"
-					requests[0].Meta = &Meta{LocalMeta: map[string]string{"a": "1", "b": "3", "c": "4"}}
+					requests[0].Meta = &Meta{localMeta: map[string]string{"a": "1", "b": "3", "c": "4"}}
 					touchFile(requests[0].Local, 1*time.Hour)
 
 					uCh, urCh, srCh = p.Put()
@@ -111,7 +111,7 @@ func TestPutMock(t *testing.T) {
 						case RequestStatusReplaced:
 							replaced++
 							lh.mu.RLock()
-							So(lh.meta[request.Remote], ShouldResemble, requests[0].Meta.LocalMeta)
+							So(lh.meta[request.Remote], ShouldResemble, requests[0].Meta.localMeta)
 							So(lh.meta[request.Remote][MetaKeyRequester], ShouldEqual, "John,Sam")
 							So(lh.meta[request.Remote][MetaKeySets], ShouldEqual, "setA,setB")
 							date = lh.meta[request.Remote][MetaKeyDate]
@@ -122,7 +122,7 @@ func TestPutMock(t *testing.T) {
 					}
 
 					metadata := lh.GetMeta(requests[0].Remote)
-					So(metadata, ShouldResemble, requests[0].Meta.LocalMeta)
+					So(metadata, ShouldResemble, requests[0].Meta.localMeta)
 
 					for request := range srCh {
 						switch request.Status {
@@ -215,9 +215,9 @@ func TestPutMock(t *testing.T) {
 				inodeRemote := filepath.Join(inodeDir, "inode.file")
 				requests[2].Hardlink = inodeRemote
 				setMetaKey := "set"
-				requests[2].Meta = &Meta{LocalMeta: map[string]string{setMetaKey: "a"}}
+				requests[2].Meta = &Meta{localMeta: map[string]string{setMetaKey: "a"}}
 				requests[4].Hardlink = inodeRemote
-				requests[4].Meta = &Meta{LocalMeta: map[string]string{setMetaKey: "b"}}
+				requests[4].Meta = &Meta{localMeta: map[string]string{setMetaKey: "b"}}
 
 				clonedRequest0 := requests[0].Clone()
 				clonedRequest2 := requests[2].Clone()
@@ -398,20 +398,20 @@ func TestPutMock(t *testing.T) {
 				Set:       "aSet",
 				Status:    RequestStatusPending,
 				Meta: &Meta{
-					LocalMeta: map[string]string{
+					localMeta: map[string]string{
 						"aKey": "aValue",
 					},
 				},
 			}
 
 			request2 := request1.Clone()
-			request2.Meta.LocalMeta["aKey"] = "bValue"
-			request2.Meta.LocalMeta["bKey"] = "anotherValue"
+			request2.Meta.localMeta["aKey"] = "bValue"
+			request2.Meta.localMeta["bKey"] = "anotherValue"
 			request2.Set = "bSet"
 
 			request3 := request1.Clone()
-			request3.Meta.LocalMeta["aKey"] = "cValue"
-			request2.Meta.LocalMeta["bKey"] = "yetAnotherValue"
+			request3.Meta.localMeta["aKey"] = "cValue"
+			request2.Meta.localMeta["bKey"] = "yetAnotherValue"
 			request3.Set = "cSet"
 
 			uploading, skipped, statusCounts := uploadRequests(t, lh, []*Request{request1, request2, request3})
@@ -541,7 +541,7 @@ func makeTestRequests(t *testing.T, sourceDir, destDir string) []*Request {
 		requests[i] = &Request{
 			Local:  path,
 			Remote: strings.Replace(path, sourceDir, destDir, 1),
-			Meta:   &Meta{LocalMeta: localMeta},
+			Meta:   &Meta{localMeta: localMeta},
 		}
 	}
 

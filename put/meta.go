@@ -114,13 +114,13 @@ var (
 )
 
 type Meta struct {
-	LocalMeta  map[string]string
+	localMeta  map[string]string
 	remoteMeta map[string]string
 }
 
 func NewMeta() *Meta {
 	return &Meta{
-		LocalMeta:  make(map[string]string),
+		localMeta:  make(map[string]string),
 		remoteMeta: make(map[string]string),
 	}
 }
@@ -136,6 +136,59 @@ func HandleMeta(meta string, reason Reason, review, removal string) (*Meta, erro
 	err = createBackupMetadata(reason, review, removal, mm)
 
 	return mm, err
+}
+
+func ParseMetaString(meta string) (*Meta, error) {
+	kvs := strings.Split(meta, ";")
+	mm := make(map[string]string, len(kvs))
+
+	if meta == "" {
+		return NewMeta(), nil
+	}
+
+	for _, kv := range kvs {
+		key, value, err := ValidateAndCreateUserMetadata(kv)
+		if err != nil {
+			return nil, MetaError{err: err, keyVal: kv}
+		}
+
+		mm[key] = value
+	}
+
+	return &Meta{localMeta: mm}, nil
+}
+
+// ValidateAndCreateUserMetadata takes a key=value string, validates it as a
+// metadata value then returns the key prefixed with the user namespace,
+// 'ibackup:user:', and the value. Returns an error if the meta is invalid.
+func ValidateAndCreateUserMetadata(kv string) (string, string, error) {
+	parts := strings.Split(kv, "=")
+	if len(parts) != validMetaParts {
+		return "", "", errInvalidMetaLength
+	}
+
+	key, err := handleNamespace(parts[0])
+	value := parts[1]
+
+	return key, value, err
+}
+
+// handleNamespace prefixes the user namespace 'ibackup:user:' onto the key if
+// it isn't already included. Returns an error if the key contains an invalid
+// namespace.
+func handleNamespace(key string) (string, error) {
+	keyDividers := strings.Count(key, ":")
+
+	switch {
+	case keyDividers == 0:
+		return MetaUserNamespace + key, nil
+	case keyDividers != validMetaKeyDividers:
+		return "", errInvalidMetaNamespace
+	case strings.HasPrefix(key, MetaUserNamespace):
+		return key, nil
+	default:
+		return "", errInvalidMetaNamespace
+	}
 }
 
 // createBackupMetadata adds the backup metadata values to the local meta map if
@@ -157,9 +210,9 @@ func createBackupMetadata(reason Reason, review, removal string, mm *Meta) error
 		return ErrInvalidReviewRemoveDate
 	}
 
-	mm.LocalMeta[MetaKeyReason] = Reasons[reason]
-	mm.LocalMeta[MetaKeyReview] = reviewDate.Format("2006-01-02")
-	mm.LocalMeta[MetaKeyRemoval] = removalDate.Format("2006-01-02")
+	mm.localMeta[MetaKeyReason] = Reasons[reason]
+	mm.localMeta[MetaKeyReview] = reviewDate.Format("2006-01-02")
+	mm.localMeta[MetaKeyRemoval] = removalDate.Format("2006-01-02")
 
 	return nil
 }
@@ -210,26 +263,6 @@ func getFutureDateFromDuration(duration string) (time.Time, error) {
 	}
 }
 
-func ParseMetaString(meta string) (*Meta, error) {
-	kvs := strings.Split(meta, ";")
-	mm := make(map[string]string, len(kvs))
-
-	if meta == "" {
-		return NewMeta(), nil
-	}
-
-	for _, kv := range kvs {
-		key, value, err := ValidateAndCreateUserMetadata(kv)
-		if err != nil {
-			return nil, MetaError{err: err, keyVal: kv}
-		}
-
-		mm[key] = value
-	}
-
-	return &Meta{LocalMeta: mm}, nil
-}
-
 // addStandardMeta ensures our Meta is unique to us, and adds key vals from the
 // diskMeta map (which should be from a Stat().Meta call) to our own Meta,
 // replacing exisiting keys.
@@ -245,7 +278,7 @@ func (m *Meta) addStandardMeta(diskMeta, remoteMeta map[string]string, requester
 	m.uniquify()
 
 	for k, v := range diskMeta {
-		m.LocalMeta[k] = v
+		m.localMeta[k] = v
 	}
 
 	m.remoteMeta = remoteMeta
@@ -259,7 +292,7 @@ func (m *Meta) addStandardMeta(diskMeta, remoteMeta map[string]string, requester
 // uniquify is used to ensure that our Meta is unique to us, so that if we
 // alter it, we don't alter any other Request's Meta.
 func (m *Meta) uniquify() {
-	m.LocalMeta = cloneMap(m.LocalMeta)
+	m.localMeta = cloneMap(m.localMeta)
 	m.remoteMeta = cloneMap(m.remoteMeta)
 }
 
@@ -278,7 +311,7 @@ func cloneMap(m map[string]string) map[string]string {
 // Meta.
 func (m *Meta) clone() *Meta {
 	newMeta := Meta{}
-	newMeta.LocalMeta = cloneMap(m.LocalMeta)
+	newMeta.localMeta = cloneMap(m.localMeta)
 	newMeta.remoteMeta = cloneMap(m.remoteMeta)
 
 	return &newMeta
@@ -288,7 +321,7 @@ func (m *Meta) clone() *Meta {
 func (m *Meta) addDate() {
 	date, _ := TimeToMeta(time.Now()) //nolint:errcheck
 
-	m.LocalMeta[MetaKeyDate] = date
+	m.localMeta[MetaKeyDate] = date
 }
 
 // TimeToMeta converts a time to a string suitable for storing as metadata, in
@@ -317,7 +350,7 @@ func (m *Meta) appendMeta(key, val string) {
 		appended = appendValIfNotInList(val, rvals)
 	}
 
-	m.LocalMeta[key] = appended
+	m.localMeta[key] = appended
 }
 
 // appendValIfNotInList appends val to list if not already in list. Returns the
@@ -346,7 +379,7 @@ func appendValIfNotInList(val string, list []string) string {
 // sets our date metadata to the remote value, since we're not uploading now.
 func (m *Meta) needsMetadataUpdate() bool {
 	defer func() {
-		m.LocalMeta[MetaKeyDate] = m.remoteMeta[MetaKeyDate]
+		m.localMeta[MetaKeyDate] = m.remoteMeta[MetaKeyDate]
 	}()
 
 	need := m.valForMetaKeyDifferentOnRemote(MetaKeyRequester)
@@ -361,7 +394,7 @@ func (m *Meta) needsMetadataUpdate() bool {
 // Returns true if the remote value is different to ours.
 func (m *Meta) valForMetaKeyDifferentOnRemote(key string) bool {
 	if rval, defined := m.remoteMeta[key]; defined {
-		if rval != m.LocalMeta[key] {
+		if rval != m.localMeta[key] {
 			return true
 		}
 	}
@@ -377,7 +410,7 @@ func (m *Meta) determineMetadataToRemoveAndAdd() (map[string]string, map[string]
 	toRemove := make(map[string]string)
 	toAdd := make(map[string]string)
 
-	for attr, wanted := range m.LocalMeta {
+	for attr, wanted := range m.localMeta {
 		if remote, exists := m.remoteMeta[attr]; exists { //nolint:nestif
 			if wanted != remote {
 				toRemove[attr] = remote
@@ -391,51 +424,18 @@ func (m *Meta) determineMetadataToRemoveAndAdd() (map[string]string, map[string]
 	return toRemove, toAdd
 }
 
-// ValidateAndCreateUserMetadata takes a key=value string, validates it as a
-// metadata value then returns the key prefixed with the user namespace,
-// 'ibackup:user:', and the value. Returns an error if the meta is invalid.
-func ValidateAndCreateUserMetadata(kv string) (string, string, error) {
-	parts := strings.Split(kv, "=")
-	if len(parts) != validMetaParts {
-		return "", "", errInvalidMetaLength
-	}
-
-	key, err := handleNamespace(parts[0])
-	value := parts[1]
-
-	return key, value, err
-}
-
-// handleNamespace prefixes the user namespace 'ibackup:user:' onto the key if
-// it isn't already included. Returns an error if the key contains an invalid
-// namespace.
-func handleNamespace(key string) (string, error) {
-	keyDividers := strings.Count(key, ":")
-
-	switch {
-	case keyDividers == 0:
-		return MetaUserNamespace + key, nil
-	case keyDividers != validMetaKeyDividers:
-		return "", errInvalidMetaNamespace
-	case strings.HasPrefix(key, MetaUserNamespace):
-		return key, nil
-	default:
-		return "", errInvalidMetaNamespace
-	}
-}
-
 // setHardlinks takes the local and remote hardlinks and sets them in localMeta.
 func (m *Meta) setHardlinks(local, remote string) {
-	m.LocalMeta[MetaKeyHardlink] = local
-	m.LocalMeta[MetaKeyRemoteHardlink] = remote
+	m.localMeta[MetaKeyHardlink] = local
+	m.localMeta[MetaKeyRemoteHardlink] = remote
 }
 
 // Metadata returns a clone of a Meta's localMeta.
 func (m *Meta) Metadata() map[string]string {
-	return cloneMap(m.LocalMeta)
+	return cloneMap(m.localMeta)
 }
 
 // SetLocal sets a Meta's localMeta given a key and a value.
 func (m *Meta) SetLocal(key, value string) {
-	m.LocalMeta[key] = value
+	m.localMeta[key] = value
 }

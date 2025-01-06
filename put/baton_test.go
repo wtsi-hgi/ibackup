@@ -107,7 +107,7 @@ func TestPutBaton(t *testing.T) {
 					So(request.Status, ShouldEqual, RequestStatusUploaded)
 					So(request.Size, ShouldEqual, 2)
 					meta := getObjectMetadataWithBaton(testClient, request.Remote)
-					So(meta, ShouldResemble, request.Meta.LocalMeta)
+					So(meta, ShouldResemble, request.Meta.localMeta)
 					checkAddedMeta(meta)
 
 					it, errg := getItemWithBaton(testClient, request.Remote)
@@ -129,7 +129,7 @@ func TestPutBaton(t *testing.T) {
 					request := requests[0]
 					request.Requester = requester
 					request.Set = "setB"
-					request.Meta = &Meta{LocalMeta: map[string]string{"a": "1", "b": "3", "c": "4"}}
+					request.Meta = &Meta{localMeta: map[string]string{"a": "1", "b": "3", "c": "4"}}
 					touchFile(request.Local, 1*time.Hour)
 
 					p, err = New(h, []*Request{request})
@@ -150,7 +150,7 @@ func TestPutBaton(t *testing.T) {
 					So(got.Error, ShouldBeBlank)
 					So(got.Status, ShouldEqual, RequestStatusReplaced)
 					meta := getObjectMetadataWithBaton(testClient, request.Remote)
-					So(meta, ShouldResemble, request.Meta.LocalMeta)
+					So(meta, ShouldResemble, request.Meta.localMeta)
 					So(meta[MetaKeyRequester], ShouldEqual, requester)
 					So(meta[MetaKeySets], ShouldEqual, "setA,setB")
 
