@@ -187,7 +187,7 @@ func handleServerMode(started time.Time) {
 
 	err = client.MakingIRODSConnections(numIRODSConnections)
 	if err != nil {
-		die(err.Error())
+		die(err.Error()) //nolint:govet
 	}
 
 	uploadStarts, uploadResults, skipResults, dfunc := handlePut(client, requests)
@@ -199,7 +199,7 @@ func handleServerMode(started time.Time) {
 
 	errm := client.ClosedIRODSConnections()
 	if errm != nil {
-		warn(errm.Error())
+		warn(errm.Error()) //nolint:govet
 	}
 
 	if err != nil {
@@ -326,7 +326,7 @@ func getRequestsFromFile(file, meta string, base64Encoded bool) ([]*put.Request,
 func parsePutFile(path, meta, requester string, splitter bufio.SplitFunc, base64Encoded bool) []*put.Request {
 	defaultMeta, err := put.ParseMetaString(meta)
 	if err != nil {
-		die(err.Error())
+		die(err.Error()) //nolint:govet
 	}
 
 	scanner, df := createScannerForFile(path, splitter)
@@ -436,7 +436,7 @@ func parsePutFileLine(line string, base64Encoded bool, lineNum int,
 	if colsn == putFileCols && cols[2] != "" {
 		parsedMeta, err := put.ParseMetaString(cols[2])
 		if err != nil {
-			die(err.Error())
+			die(err.Error()) //nolint:govet
 		}
 
 		meta = parsedMeta

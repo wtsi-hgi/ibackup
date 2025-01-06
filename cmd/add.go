@@ -198,12 +198,12 @@ option to add sets on behalf of other users.
 
 		meta, err := put.HandleMeta(setMetadata, setReason, setReview, setRemoval)
 		if err != nil {
-			die(err.Error())
+			die(err.Error()) //nolint:govet
 		}
 
 		err = add(client, setName, setUser, setTransformer, setDescription, monitorDuration, setArchive, files, dirs, meta)
 		if err != nil {
-			die(err.Error())
+			die(err.Error()) //nolint:govet
 		}
 
 		info("your backup set has been saved and will now be processed")
