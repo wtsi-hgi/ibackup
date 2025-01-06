@@ -26,7 +26,6 @@
 package put
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -48,15 +47,8 @@ const (
 	RequestStatusMissing    RequestStatus = "missing"
 	RequestStatusFailed     RequestStatus = "failed"
 	ErrNotHumgenLustre                    = "not a valid humgen lustre path"
-	metaListSeparator                     = ","
 	stuckTimeFormat                       = "02/01/06 15:04 MST"
-
-	validMetaParts       = 2
-	validMetaKeyDividers = 2
 )
-
-var errInvalidMetaNamespace = errors.New("namespace is incorrect, must be 'ibackup:user:' or empty")
-var errInvalidMetaLength = errors.New("meta must be provided in the form key=value")
 
 // Stuck is used to provide details of a potentially "stuck" upload Request.
 type Stuck struct {
@@ -97,14 +89,13 @@ type Request struct {
 	RemoteForJSON       []byte // set by MakeSafeForJSON(); do not set this yourself.
 	Requester           string
 	Set                 string
-	Meta                map[string]string
+	Meta                *Meta
 	Status              RequestStatus
 	Symlink             string // contains symlink path if request represents a symlink.
 	Hardlink            string // contains first seen path if request represents a hard-linked file.
 	Size                uint64 // size of Local in bytes, set for you on returned Requests.
 	Error               string
 	Stuck               *Stuck
-	remoteMeta          map[string]string
 	skipPut             bool
 	emptyFileRequest    *Request
 	inodeRequest        *Request
@@ -154,8 +145,7 @@ func (r *Request) Prepare() error {
 
 	emptyFileRequest := r.Clone()
 	emptyFileRequest.Local = os.DevNull
-	emptyFileRequest.Meta[MetaKeyHardlink] = r.Local
-	emptyFileRequest.Meta[MetaKeyRemoteHardlink] = r.Hardlink
+	emptyFileRequest.Meta.setHardlinks(r.Local, r.Hardlink)
 	emptyFileRequest.Hardlink = ""
 
 	inodeRequest := r.Clone()
@@ -235,22 +225,21 @@ func (r *Request) UploadedSize() uint64 {
 // affecting the original.
 func (r *Request) Clone() *Request {
 	clone := &Request{
-		Local:      r.Local,
-		Remote:     r.Remote,
-		Requester:  r.Requester,
-		Set:        r.Set,
-		Meta:       r.Meta,
-		Status:     r.Status,
-		Symlink:    r.Symlink,
-		Hardlink:   r.Hardlink,
-		Size:       r.Size,
-		Error:      r.Error,
-		Stuck:      r.Stuck,
-		remoteMeta: r.remoteMeta,
-		skipPut:    r.skipPut,
+		Local:     r.Local,
+		Remote:    r.Remote,
+		Requester: r.Requester,
+		Set:       r.Set,
+		Meta:      r.Meta,
+		Status:    r.Status,
+		Symlink:   r.Symlink,
+		Hardlink:  r.Hardlink,
+		Size:      r.Size,
+		Error:     r.Error,
+		Stuck:     r.Stuck,
+		skipPut:   r.skipPut,
 	}
 
-	clone.cloneMeta()
+	clone.Meta = r.Meta.clone()
 
 	return clone
 }
@@ -277,8 +266,7 @@ func (r *Request) StatAndAssociateStandardMetadata(lInfo *ObjectInfo, handler Ha
 		return nil, err
 	}
 
-	r.Meta = cloneMap(r.inodeRequest.Meta)
-	r.remoteMeta = cloneMap(r.inodeRequest.remoteMeta)
+	r.Meta = r.inodeRequest.Meta.clone()
 
 	if lInfo.HasSameModTime(rInfo) && !rInfoEmpty.Exists {
 		rInfo = rInfoEmpty
@@ -295,131 +283,9 @@ func statAndAssociateStandardMetadata(request *Request, diskMeta map[string]stri
 		return nil, err
 	}
 
-	request.addStandardMeta(diskMeta, rInfo.Meta)
+	request.Meta.addStandardMeta(diskMeta, rInfo.Meta, request.Requester, request.Set)
 
 	return rInfo, nil
-}
-
-// addStandardMeta ensures our Meta is unique to us, and adds key vals from the
-// diskMeta map (which should be from a Stat().Meta call) to our own Meta,
-// replacing exisiting keys.
-//
-// It sets our remoteMeta to the given remoteMeta. remoteMeta is used to
-// determine which keys need to be removed, and which can be left untouched,
-// when updating the metadata for an existing object.
-//
-// Finally, it adds the remaining standard metadata we apply, replacing existing
-// values: date, using the current date, and requesters and sets, appending
-// Requester and Set to any existing values in the remoteMeta.
-func (r *Request) addStandardMeta(diskMeta, remoteMeta map[string]string) {
-	r.cloneMeta()
-
-	for k, v := range diskMeta {
-		r.Meta[k] = v
-	}
-
-	r.remoteMeta = remoteMeta
-
-	r.addDate()
-
-	r.appendMeta(MetaKeyRequester, r.Requester)
-	r.appendMeta(MetaKeySets, r.Set)
-}
-
-// cloneMeta is used to ensure that our Meta is unique to us, so that if we
-// alter it, we don't alter any other Request's Meta.
-func (r *Request) cloneMeta() {
-	r.Meta = cloneMap(r.Meta)
-	r.remoteMeta = cloneMap(r.remoteMeta)
-}
-
-// cloneMap makes a copy of the given map.
-func cloneMap(m map[string]string) map[string]string {
-	clone := make(map[string]string, len(m))
-
-	for k, v := range m {
-		clone[k] = v
-	}
-
-	return clone
-}
-
-// addDate adds the current date to Meta, replacing any exisiting value.
-func (r *Request) addDate() {
-	date, _ := TimeToMeta(time.Now()) //nolint:errcheck
-
-	r.Meta[MetaKeyDate] = date
-}
-
-// appendMeta appends the given value to the given key value in our remoteMeta,
-// and sets it for our Meta.
-func (r *Request) appendMeta(key, val string) {
-	if val == "" {
-		return
-	}
-
-	appended := val
-
-	if rval, exists := r.remoteMeta[key]; exists {
-		rvals := strings.Split(rval, metaListSeparator)
-		appended = appendValIfNotInList(val, rvals)
-	}
-
-	r.Meta[key] = appended
-}
-
-// appendValIfNotInList appends val to list if not already in list. Returns the
-// list as a comma separated string.
-func appendValIfNotInList(val string, list []string) string {
-	found := false
-
-	for _, v := range list {
-		if v == val {
-			found = true
-
-			break
-		}
-	}
-
-	if !found {
-		list = append(list, val)
-	}
-
-	return strings.Join(list, metaListSeparator)
-}
-
-// needsMetadataUpdate returns true if requesters or sets is different between
-// our Meta and remoteMeta. Call this only after confirming a put isn't needed
-// by comparing mtimes; this sets skipPut if returning true. Also sets our date
-// metadata to the remote value, since we're not uploading now.
-func (r *Request) needsMetadataUpdate() bool {
-	need := false
-
-	defer func() {
-		r.skipPut = need
-		r.Meta[MetaKeyDate] = r.remoteMeta[MetaKeyDate]
-	}()
-
-	need = r.valForMetaKeyDifferentOnRemote(MetaKeyRequester)
-	if need {
-		return need
-	}
-
-	need = r.valForMetaKeyDifferentOnRemote(MetaKeySets)
-
-	return need
-}
-
-// valForMetaKeyDifferentOnRemote returns false if key has no remote value.
-// Returns true if the remote value is different to ours.
-func (r *Request) valForMetaKeyDifferentOnRemote(key string) bool {
-	if rval, defined := r.remoteMeta[key]; defined {
-		if rval != r.Meta[key] {
-			return true
-		}
-	}
-
-	return false
 }
 
 // RemoveAndAddMetadata removes and adds metadata on our Remote based on the
@@ -436,43 +302,24 @@ func (r *Request) RemoveAndAddMetadata(handler Handler) error {
 		return err
 	}
 
-	if r.onlyUploadEmptyFile && !r.inodeRequest.needsMetadataUpdate() {
-		return nil
+	if r.onlyUploadEmptyFile && !r.inodeRequest.skipPut {
+		r.inodeRequest.skipPut = r.inodeRequest.Meta.needsMetadataUpdate()
+		if !r.inodeRequest.skipPut {
+			return nil
+		}
 	}
 
 	return removeAndAddMetadata(r.inodeRequest, handler)
 }
 
 func removeAndAddMetadata(r *Request, handler Handler) error {
-	toRemove, toAdd := r.determineMetadataToRemoveAndAdd()
+	toRemove, toAdd := r.Meta.determineMetadataToRemoveAndAdd()
 
 	if err := r.removeMeta(handler, toRemove); err != nil {
 		return err
 	}
 
 	return r.addMeta(handler, toAdd)
-}
-
-// determineMetadataToRemoveAndAdd compares our Meta to our remoteMeta and
-// returns a map of entries where both share a key but have a different value
-// (remove these), and a map of those key vals, plus key vals unique to
-// wantedMeta (add these).
-func (r *Request) determineMetadataToRemoveAndAdd() (map[string]string, map[string]string) {
-	toRemove := make(map[string]string)
-	toAdd := make(map[string]string)
-
-	for attr, wanted := range r.Meta {
-		if remote, exists := r.remoteMeta[attr]; exists { //nolint:nestif
-			if wanted != remote {
-				toRemove[attr] = remote
-				toAdd[attr] = wanted
-			}
-		} else {
-			toAdd[attr] = wanted
-		}
-	}
-
-	return toRemove, toAdd
 }
 
 func (r *Request) removeMeta(handler Handler, toRemove map[string]string) error {
@@ -521,7 +368,7 @@ func NewRequestWithTransformedLocal(local string, pt PathTransformer) (*Request,
 		return nil, err
 	}
 
-	return &Request{Local: local, Remote: remote, Meta: make(map[string]string)}, nil
+	return &Request{Local: local, Remote: remote, Meta: NewMeta()}, nil
 }
 
 // PrefixTransformer returns a PathTransformer that will replace localPrefix
@@ -588,37 +435,4 @@ func dirIsProjectOrTeamOrUsers(dir string) bool {
 // at the leaf or its parent.
 func dirIsLustreWithPTUSubDir(dir string, ptuPart, numParts int) bool {
 	return dir == "lustre" && ptuPart >= 4 && ptuPart+2 <= numParts-1
-}
-
-// ValidateAndCreateUserMetadata takes a key=value string, validates it as a
-// metadata value then returns the key prefixed with the user namespace,
-// 'ibackup:user:', and the value. Returns an error if the meta is invalid.
-func ValidateAndCreateUserMetadata(kv string) (string, string, error) {
-	parts := strings.Split(kv, "=")
-	if len(parts) != validMetaParts {
-		return "", "", errInvalidMetaLength
-	}
-
-	key, err := handleNamespace(parts[0])
-	value := parts[1]
-
-	return key, value, err
-}
-
-// handleNamespace prefixes the user namespace 'ibackup:user:' onto the key if
-// it isn't already included. Returns an error if the key contains an invalid
-// namespace.
-func handleNamespace(key string) (string, error) {
-	keyDividers := strings.Count(key, ":")
-
-	switch {
-	case keyDividers == 0:
-		return MetaUserNamespace + key, nil
-	case keyDividers != validMetaKeyDividers:
-		return "", errInvalidMetaNamespace
-	case strings.HasPrefix(key, MetaUserNamespace):
-		return key, nil
-	default:
-		return "", errInvalidMetaNamespace
-	}
 }

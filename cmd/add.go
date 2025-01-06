@@ -37,12 +37,15 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/server"
 	"github.com/wtsi-hgi/ibackup/set"
 )
 
-const hoursInDay = 24
-const hoursInWeek = hoursInDay * 7
+const (
+	hoursInDay  = 24
+	hoursInWeek = hoursInDay * 7
+)
 
 // options for this cmd.
 var setName string
@@ -57,6 +60,9 @@ var setMonitor string
 var setArchive bool
 var setUser string
 var setMetadata string
+var setReason put.Reason
+var setReview string
+var setRemoval string
 
 var ErrCancel = errors.New("cancelled add")
 
@@ -113,6 +119,20 @@ You can also provide:
 --archive : delete local files after successfully uploading them. (The actual
             deletion is not yet implemented, but you can at least record the
 		    fact you wanted deletion now, so they can be deleted in the future.)
+--reason  : the reason you are storing the set, which can be 'backup', 'archive' 
+			or 'quarantine'. The default is 'backup' which will default review 
+			date to 6 months and removal date to 1 year. 'archive' defaults 
+			review date to 1 year and removal date to 2 years, while 
+			'quarantine' defaults review date to 2 months and removal date to 3 
+			months.
+--review  : the date when the set should be reviewed, provided as a duration in 
+			months or years or the date itself. E.g. '6m' for a review date 6 
+			months from now, '2y' for a review date 2 years from now, 
+			'2030-04-21' for the review date to be as provided. This date must 
+			be before the removal date.
+--remove  : the date when the set should be removed, provided as a duration in 
+			months or years or the date itself. Input format is the same as for 
+			--review. This date must be after the review date.
 
 Having added a set, you can use 'ibackup status' to monitor the backup progress
 of your sets. If you add a set with the same --name again, you will overwrite
@@ -178,7 +198,10 @@ option to add sets on behalf of other users.
 			}
 		}
 
-		meta := parseMetaString(setMetadata)
+		meta, err := put.HandleMeta(setMetadata, setReason, setReview, setRemoval)
+		if err != nil {
+			die("metadata error: %s", err)
+		}
 
 		err = add(client, setName, setUser, setTransformer, setDescription, monitorDuration, setArchive, files, dirs, meta)
 		if err != nil {
@@ -216,6 +239,12 @@ func init() {
 		"pretend to be the this user (only works if you started the server)")
 	addCmd.Flags().StringVar(&setMetadata, "metadata", "",
 		"key=val;key=val metadata to apply to all files in the set")
+	addCmd.Flags().Var(&setReason, "reason",
+		"storage reason: 'backup' | 'archive' | 'quarantine'")
+	addCmd.Flags().StringVar(&setReview, "review", "",
+		"time until review date (<number><y|m>, eg. 1y for 1 year), or exact review date in the format YYYY-MM-DD")
+	addCmd.Flags().StringVar(&setRemoval, "remove", "",
+		"time until removal date (<number><y|m>, eg. 1y for 1 year), or exact removal date in the format YYYY-MM-DD")
 
 	if err := addCmd.MarkFlagRequired("name"); err != nil {
 		die(err.Error())
@@ -296,7 +325,7 @@ func fileDirIsInDirs(file string, dirSet map[string]bool) bool {
 
 // add does the main job of sending the backup set details to the server.
 func add(client *server.Client, name, requester, transformer, description string,
-	monitor time.Duration, archive bool, files, dirs []string, meta map[string]string) error {
+	monitor time.Duration, archive bool, files, dirs []string, meta *put.Meta) error {
 	if err := checkExistingSet(client, name, requester); err != nil {
 		return err
 	}
@@ -308,7 +337,7 @@ func add(client *server.Client, name, requester, transformer, description string
 		Description: description,
 		MonitorTime: monitor,
 		DeleteLocal: archive,
-		Metadata:    meta,
+		Metadata:    meta.Metadata(),
 	}
 
 	if err := client.AddOrUpdateSet(set); err != nil {

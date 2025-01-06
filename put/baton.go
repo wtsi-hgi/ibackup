@@ -456,7 +456,7 @@ func (b *Baton) Put(request *Request) error {
 // AVUs.
 func requestToRodsItemWithAVUs(request *Request) *ex.RodsItem {
 	item := requestToRodsItem(request)
-	item.IAVUs = metaToAVUs(request.Meta)
+	item.IAVUs = metaToAVUs(request.Meta.Metadata())
 
 	return item
 }

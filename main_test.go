@@ -235,6 +235,19 @@ func (s *TestServer) runBinary(t *testing.T, args ...string) (int, string) {
 	return cmd.ProcessState.ExitCode(), out
 }
 
+func (s *TestServer) runBinaryWithNoLogging(t *testing.T, args ...string) (int, string) {
+	t.Helper()
+
+	cmd := s.clientCmd(args)
+
+	outB, _ := cmd.CombinedOutput() //nolint:errcheck
+	out := string(outB)
+	out = strings.TrimRight(out, "\n")
+	out = normaliseOutput(out)
+
+	return cmd.ProcessState.ExitCode(), out
+}
+
 func (s *TestServer) clientCmd(args []string) *exec.Cmd {
 	args = append([]string{"--url", s.url, "--cert", s.cert}, args...)
 
@@ -274,15 +287,16 @@ func (s *TestServer) addSetForTesting(t *testing.T, name, transformer, path stri
 	s.waitForStatus(name, "\nDiscovery: completed", 5*time.Second)
 }
 
-func (s *TestServer) addSetForTestingWithMetadata(t *testing.T, name, transformer, path, metadata string) {
+func (s *TestServer) addSetForTestingWithFlag(t *testing.T, name, transformer, path, flag, data string) {
 	t.Helper()
 
 	exitCode, _ := s.runBinary(t, "add", "--name", name, "--transformer", transformer,
-		"--path", path, "--metadata", metadata)
+		"--path", path, flag, data)
 
 	So(exitCode, ShouldEqual, 0)
 
 	s.waitForStatus(name, "\nDiscovery: completed", 5*time.Second)
+	s.waitForStatus(name, "\nStatus: complete", 5*time.Second)
 }
 
 func (s *TestServer) waitForStatus(name, statusToFind string, timeout time.Duration) {
@@ -1245,7 +1259,7 @@ Local Path	Status	Size	Attempts	Date	Error`+"\n"+
 			setName := "invalidMetadataTest1"
 			setMetadata := "testKey=testValue=anotherValue"
 
-			exitCode, err := s.runBinary(t, "add", "--name", setName, "--transformer", transformer,
+			exitCode, err := s.runBinaryWithNoLogging(t, "add", "--name", setName, "--transformer", transformer,
 				"--path", path, "--metadata", setMetadata)
 
 			So(exitCode, ShouldEqual, 1)
@@ -1254,7 +1268,7 @@ Local Path	Status	Size	Attempts	Date	Error`+"\n"+
 			setName = "invalidMetadataTest2"
 			setMetadata = "ibackup:set=invalidMetadataTest2"
 
-			exitCode, err = s.runBinary(t, "add", "--name", setName, "--transformer", transformer,
+			exitCode, err = s.runBinaryWithNoLogging(t, "add", "--name", setName, "--transformer", transformer,
 				"--path", path, "--metadata", setMetadata)
 
 			So(exitCode, ShouldEqual, 1)
@@ -1263,7 +1277,7 @@ Local Path	Status	Size	Attempts	Date	Error`+"\n"+
 			setName = "invalidMetadataTest3"
 			setMetadata = "ibackup:name=name"
 
-			exitCode, _ = s.runBinary(t, "add", "--name", setName, "--transformer", transformer,
+			exitCode, _ = s.runBinaryWithNoLogging(t, "add", "--name", setName, "--transformer", transformer,
 				"--path", path, "--metadata", setMetadata)
 
 			So(exitCode, ShouldEqual, 1)
@@ -1271,7 +1285,7 @@ Local Path	Status	Size	Attempts	Date	Error`+"\n"+
 			setName = "invalidMetadataTest4"
 			setMetadata = "namespace:ibackup:user:mykey=value"
 
-			exitCode, _ = s.runBinary(t, "add", "--name", setName, "--transformer", transformer,
+			exitCode, _ = s.runBinaryWithNoLogging(t, "add", "--name", setName, "--transformer", transformer,
 				"--path", path, "--metadata", setMetadata)
 
 			So(exitCode, ShouldEqual, 1)
@@ -1279,7 +1293,7 @@ Local Path	Status	Size	Attempts	Date	Error`+"\n"+
 			setName = "invalidMetadataTest5"
 			setMetadata = "mykeyibackup:user:=value"
 
-			exitCode, _ = s.runBinary(t, "add", "--name", setName, "--transformer", transformer,
+			exitCode, _ = s.runBinaryWithNoLogging(t, "add", "--name", setName, "--transformer", transformer,
 				"--path", path, "--metadata", setMetadata)
 
 			So(exitCode, ShouldEqual, 1)
@@ -1287,16 +1301,13 @@ Local Path	Status	Size	Attempts	Date	Error`+"\n"+
 			setName = "invalidMetadataTest6"
 			setMetadata = "ibackup:user:mykey:mysubKey=value"
 
-			exitCode, _ = s.runBinary(t, "add", "--name", setName, "--transformer", transformer,
+			exitCode, _ = s.runBinaryWithNoLogging(t, "add", "--name", setName, "--transformer", transformer,
 				"--path", path, "--metadata", setMetadata)
 
 			So(exitCode, ShouldEqual, 1)
 		})
 
-		Convey("Putting metadata on a set adds that metadata to every file in the set", func() {
-			attributePrefix := "attribute: ibackup:user:"
-			valuePrefix := "\nvalue: "
-
+		Convey("Given a set of files", func() {
 			file1 := filepath.Join(path, "file1")
 			file2 := filepath.Join(path, "file2")
 			file3 := filepath.Join(path, "file3")
@@ -1307,114 +1318,164 @@ Local Path	Status	Size	Attempts	Date	Error`+"\n"+
 
 			setName := "metadataTest"
 			fileNames := []string{"file1", "file2", "file3"}
-			setMetadata := "testKey1=testValue1;testKey2=testValue2"
+			now := time.Now()
 
-			s.addSetForTestingWithMetadata(t, setName, transformer, path, setMetadata)
+			Convey("Add will apply default reason/review/remove metadata", func() {
+				s.addSetForTesting(t, setName, transformer, path)
 
-			s.waitForStatus(setName, "\nStatus: complete", 60*time.Second)
+				s.waitForStatus(setName, "\nStatus: complete", 5*time.Second)
 
-			for _, fileName := range fileNames {
-				output := getRemoteMeta(filepath.Join(remotePath, fileName))
-				So(output, ShouldContainSubstring, attributePrefix+"testKey1\n")
-				So(output, ShouldContainSubstring, valuePrefix+"testValue1\n")
-				So(output, ShouldContainSubstring, attributePrefix+"testKey2\n")
-				So(output, ShouldContainSubstring, valuePrefix+"testValue2\n")
-			}
+				testRemoteReviewRemove(t, filepath.Join(remotePath, "file1"),
+					"backup", now.AddDate(0, 6, 0), now.AddDate(1, 0, 0))
+			})
+			Convey("Add with --reason will apply different review/remove metadata", func() {
+				s.addSetForTestingWithFlag(t, setName, transformer, path, "--reason", "backup")
 
-			newName := setName + ".v2"
-			setMetadata = "testKey2=testValue2Updated"
+				testRemoteReviewRemove(t, filepath.Join(remotePath, "file1"),
+					"backup", now.AddDate(0, 6, 0), now.AddDate(1, 0, 0))
 
-			s.addSetForTestingWithMetadata(t, newName, transformer, path, setMetadata)
+				setName += ".archive"
 
-			s.waitForStatus(newName, "\nStatus: complete", 60*time.Second)
+				s.addSetForTestingWithFlag(t, setName, transformer, path, "--reason", "archive")
 
-			for _, fileName := range fileNames {
-				output := getRemoteMeta(filepath.Join(remotePath, fileName))
-				So(output, ShouldContainSubstring, attributePrefix+"testKey1\n")
-				So(output, ShouldContainSubstring, valuePrefix+"testValue1\n")
-				So(output, ShouldContainSubstring, attributePrefix+"testKey2\n")
-				So(output, ShouldContainSubstring, valuePrefix+"testValue2Updated\n")
+				testRemoteReviewRemove(t, filepath.Join(remotePath, "file1"),
+					"archive", now.AddDate(1, 0, 0), now.AddDate(2, 0, 0))
 
-				So(output, ShouldNotContainSubstring, "testValue2\n")
-			}
+				setName += ".quarantine"
 
-			newName = setName + ".v3"
-			setMetadata = "ibackup:user:testKey1=testValue1Updated"
+				s.addSetForTestingWithFlag(t, setName, transformer, path, "--reason", "quarantine")
 
-			s.addSetForTestingWithMetadata(t, newName, transformer, path, setMetadata)
+				testRemoteReviewRemove(t, filepath.Join(remotePath, "file1"),
+					"quarantine", now.AddDate(0, 2, 0), now.AddDate(0, 3, 0))
+			})
 
-			s.waitForStatus(newName, "\nStatus: complete", 60*time.Second)
+			Convey("Add with --review will apply custom review metadata", func() {
+				s.addSetForTestingWithFlag(t, setName, transformer, path, "--review", "4m")
 
-			for _, fileName := range fileNames {
-				output := getRemoteMeta(filepath.Join(remotePath, fileName))
-				So(output, ShouldContainSubstring, attributePrefix+"testKey1\n")
-				So(output, ShouldContainSubstring, valuePrefix+"testValue1Updated\n")
-				So(output, ShouldContainSubstring, attributePrefix+"testKey2\n")
-				So(output, ShouldContainSubstring, valuePrefix+"testValue2Updated\n")
+				testRemoteReviewRemove(t, filepath.Join(remotePath, "file1"),
+					"backup", now.AddDate(0, 4, 0), now.AddDate(1, 0, 0))
+			})
 
-				So(output, ShouldNotContainSubstring, "testValue1\n")
-			}
-		})
+			Convey("Add with --removal will apply custom removal metadata", func() {
+				s.addSetForTestingWithFlag(t, setName, transformer, path, "--remove", "3y")
 
-		Convey("Repeatedly uploading files that are changed or not changes status details", func() {
-			file1 := filepath.Join(path, "file1")
-			file2 := filepath.Join(path, "file2")
-			file3 := filepath.Join(path, "file3")
+				testRemoteReviewRemove(t, filepath.Join(remotePath, "file1"),
+					"backup", now.AddDate(0, 6, 0), now.AddDate(3, 0, 0))
+			})
 
-			internal.CreateTestFile(t, file1, "some data1")
-			internal.CreateTestFile(t, file2, "some data2")
-			internal.CreateTestFile(t, file3, "some data3")
+			Convey("Add with invalid --reason/--review/--remove inputs throws an error", func() {
+				checkExitCode := func(reason, review, removal string, expectedCode int) {
+					exitCode, _ := s.runBinaryWithNoLogging(t, "add", "--name", setName, "--transformer", transformer,
+						"--path", path, "--reason", reason, "--review", review, "--remove", removal)
+					So(exitCode, ShouldEqual, expectedCode)
+				}
 
-			setName := "changingFilesTest"
-			s.addSetForTesting(t, setName, transformer, path)
+				checkExitCode("backup", "4m", "11m", 0)
+				checkExitCode("invalidbackupreason", "1y", "1y", 1)
+				checkExitCode("backup", "1 year", "2y", 1)
+				checkExitCode("backup", "1y", "2 years", 1)
+				checkExitCode("backup", "5y", "1y", 1)
+				checkExitCode("backup", "1y", "1y", 1)
+				checkExitCode("backup", "1d", "1y", 1)
+				checkExitCode("backup", "1", "1", 1)
+				checkExitCode("backup", "oney", "1y", 1)
+			})
 
-			statusCmd := []string{"status", "--name", setName}
+			Convey("Add with --metadata adds that metadata to every file in the set", func() {
+				attributePrefix := "attribute: ibackup:user:"
+				valuePrefix := "\nvalue: "
+				setMetadata := "testKey1=testValue1;testKey2=testValue2"
 
-			s.waitForStatus(setName, "\nStatus: uploading", 60*time.Second)
-			s.confirmOutputContains(t, statusCmd, 0,
-				`Global put queue status: 3 queued; 3 reserved to be worked on; 0 failed
-			Global put client status (/10): 6 iRODS connections`)
+				s.addSetForTestingWithFlag(t, setName, transformer, path, "--metadata", setMetadata)
 
-			s.waitForStatus(setName, "\nStatus: complete", 60*time.Second)
+				for _, fileName := range fileNames {
+					output := getRemoteMeta(filepath.Join(remotePath, fileName))
+					So(output, ShouldContainSubstring, attributePrefix+"testKey1\n")
+					So(output, ShouldContainSubstring, valuePrefix+"testValue1\n")
+					So(output, ShouldContainSubstring, attributePrefix+"testKey2\n")
+					So(output, ShouldContainSubstring, valuePrefix+"testValue2\n")
+				}
 
-			s.confirmOutputContains(t, statusCmd, 0,
-				"Uploaded: 3; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0")
-			s.confirmOutputContains(t, statusCmd, 0,
-				"Num files: 3; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 30 B / 30 B")
+				newName := setName + ".v2"
+				setMetadata = "testKey2=testValue2Updated"
 
-			s.confirmOutputContains(t, statusCmd, 0, "")
+				s.addSetForTestingWithFlag(t, newName, transformer, path, "--metadata", setMetadata)
 
-			newName := setName + ".v2"
-			statusCmd[2] = newName
+				for _, fileName := range fileNames {
+					output := getRemoteMeta(filepath.Join(remotePath, fileName))
+					So(output, ShouldContainSubstring, attributePrefix+"testKey1\n")
+					So(output, ShouldContainSubstring, valuePrefix+"testValue1\n")
+					So(output, ShouldContainSubstring, attributePrefix+"testKey2\n")
+					So(output, ShouldContainSubstring, valuePrefix+"testValue2Updated\n")
+					So(output, ShouldNotContainSubstring, "testValue2\n")
+				}
 
-			s.addSetForTesting(t, newName, transformer, path)
-			s.waitForStatus(newName, "\nStatus: complete", 60*time.Second)
-			s.confirmOutputContains(t, statusCmd, 0,
-				"Uploaded: 0; Replaced: 0; Skipped: 3; Failed: 0; Missing: 0; Abnormal: 0")
-			s.confirmOutputContains(t, statusCmd, 0,
-				"Num files: 3; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 30 B / 0 B")
+				newName = setName + ".v3"
+				setMetadata = "ibackup:user:testKey1=testValue1Updated"
 
-			newName = setName + ".v3"
-			statusCmd[2] = newName
+				s.addSetForTestingWithFlag(t, newName, transformer, path, "--metadata", setMetadata)
 
-			internal.CreateTestFile(t, file2, "some data2 updated")
+				for _, fileName := range fileNames {
+					output := getRemoteMeta(filepath.Join(remotePath, fileName))
+					So(output, ShouldContainSubstring, attributePrefix+"testKey1\n")
+					So(output, ShouldContainSubstring, valuePrefix+"testValue1Updated\n")
+					So(output, ShouldContainSubstring, attributePrefix+"testKey2\n")
+					So(output, ShouldContainSubstring, valuePrefix+"testValue2Updated\n")
+					So(output, ShouldNotContainSubstring, "testValue1\n")
+				}
+			})
+			Convey("Repeatedly uploading files that are changed or not changes status details", func() {
+				setName = "changingFilesTest"
+				s.addSetForTesting(t, setName, transformer, path)
 
-			s.addSetForTesting(t, newName, transformer, path)
-			s.waitForStatus(newName, "\nStatus: complete", 60*time.Second)
-			s.confirmOutputContains(t, statusCmd, 0,
-				"Uploaded: 0; Replaced: 1; Skipped: 2; Failed: 0; Missing: 0; Abnormal: 0")
-			s.confirmOutputContains(t, statusCmd, 0,
-				"Num files: 3; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 38 B / 18 B")
+				statusCmd := []string{"status", "--name", setName}
 
-			internal.CreateTestFile(t, file2, "less data")
-			exitCode, _ := s.runBinary(t, "retry", "--name", newName, "-a")
-			So(exitCode, ShouldEqual, 0)
+				s.waitForStatus(setName, "\nStatus: uploading", 60*time.Second)
+				s.confirmOutputContains(t, statusCmd, 0,
+					`Global put queue status: 3 queued; 3 reserved to be worked on; 0 failed
+				Global put client status (/10): 6 iRODS connections`)
 
-			s.waitForStatus(newName, "\nStatus: complete", 60*time.Second)
-			s.confirmOutputContains(t, statusCmd, 0,
-				"Uploaded: 0; Replaced: 1; Skipped: 2; Failed: 0; Missing: 0; Abnormal: 0")
-			s.confirmOutputContains(t, statusCmd, 0,
-				"Num files: 3; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 29 B / 9 B")
+				s.waitForStatus(setName, "\nStatus: complete", 60*time.Second)
+
+				s.confirmOutputContains(t, statusCmd, 0,
+					"Uploaded: 3; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0")
+				s.confirmOutputContains(t, statusCmd, 0,
+					"Num files: 3; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 30 B / 30 B")
+
+				s.confirmOutputContains(t, statusCmd, 0, "")
+
+				newName := setName + ".v2"
+				statusCmd[2] = newName
+
+				s.addSetForTesting(t, newName, transformer, path)
+				s.waitForStatus(newName, "\nStatus: complete", 60*time.Second)
+				s.confirmOutputContains(t, statusCmd, 0,
+					"Uploaded: 0; Replaced: 0; Skipped: 3; Failed: 0; Missing: 0; Abnormal: 0")
+				s.confirmOutputContains(t, statusCmd, 0,
+					"Num files: 3; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 30 B / 0 B")
+
+				newName = setName + ".v3"
+				statusCmd[2] = newName
+
+				internal.CreateTestFile(t, file2, "some data2 updated")
+
+				s.addSetForTesting(t, newName, transformer, path)
+				s.waitForStatus(newName, "\nStatus: complete", 60*time.Second)
+				s.confirmOutputContains(t, statusCmd, 0,
+					"Uploaded: 0; Replaced: 1; Skipped: 2; Failed: 0; Missing: 0; Abnormal: 0")
+				s.confirmOutputContains(t, statusCmd, 0,
+					"Num files: 3; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 38 B / 18 B")
+
+				internal.CreateTestFile(t, file2, "less data")
+				exitCode, _ := s.runBinary(t, "retry", "--name", newName, "-a")
+				So(exitCode, ShouldEqual, 0)
+
+				s.waitForStatus(newName, "\nStatus: complete", 60*time.Second)
+				s.confirmOutputContains(t, statusCmd, 0,
+					"Uploaded: 0; Replaced: 1; Skipped: 2; Failed: 0; Missing: 0; Abnormal: 0")
+				s.confirmOutputContains(t, statusCmd, 0,
+					"Num files: 3; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 29 B / 9 B")
+			})
 		})
 
 		// TODO: re-enable once hardlinks metamod bug fixed
@@ -1511,6 +1572,36 @@ no backup sets`
 				0, "initated retry of 1 failed entries")
 		})
 	})
+}
+
+func testRemoteReviewRemove(t *testing.T, filepath, reason string, review, remove time.Time) {
+	t.Helper()
+
+	reviewStr, removeStr := testTimesToMeta(t, review, remove)
+
+	output := getRemoteMeta(filepath)
+	So(output, ShouldContainSubstring, `
+attribute: ibackup:reason
+value: `+reason+`
+`)
+	So(output, ShouldContainSubstring, `
+attribute: ibackup:review
+value: `+reviewStr[:10])
+	So(output, ShouldContainSubstring, `
+attribute: ibackup:removal
+value: `+removeStr[:10])
+}
+
+func testTimesToMeta(t *testing.T, reviewDate, removalDate time.Time) (string, string) {
+	t.Helper()
+
+	reviewStr, err := reviewDate.UTC().Truncate(time.Second).MarshalText()
+	So(err, ShouldBeNil)
+
+	removalStr, err := removalDate.UTC().Truncate(time.Second).MarshalText()
+	So(err, ShouldBeNil)
+
+	return string(reviewStr), string(removalStr)
 }
 
 func getRemoteMeta(path string) string {

@@ -349,17 +349,17 @@ func (s *Server) entryToRequest(entry *set.Entry, transformer put.PathTransforme
 
 	if entry.Type == set.Symlink {
 		r.Symlink = entry.Dest
-		r.Meta[put.MetaKeySymlink] = entry.Dest
+		r.Meta.SetLocal(put.MetaKeySymlink, entry.Dest)
 	}
 
 	for k, v := range given.Metadata {
-		r.Meta[k] = v
+		r.Meta.SetLocal(k, v)
 	}
 
 	if entry.Type == set.Hardlink && s.remoteHardlinkLocation != "" {
 		r.Hardlink = filepath.Join(s.remoteHardlinkLocation,
 			entry.InodeStoragePath())
-		r.Meta[put.MetaKeyHardlink] = entry.Dest
+		r.Meta.SetLocal(put.MetaKeyHardlink, entry.Dest)
 	}
 
 	return r, nil

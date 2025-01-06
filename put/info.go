@@ -33,21 +33,7 @@ import (
 	"time"
 )
 
-const (
-	MetaNamespace     = "ibackup:"
-	MetaUserNamespace = MetaNamespace + "user:"
-	MetaKeyMtime      = MetaNamespace + "mtime" // mtime of source file, 1sec truncated UTC RFC 3339
-	MetaKeyOwner      = MetaNamespace + "owner" // a username
-	MetaKeyGroup      = MetaNamespace + "group" // a unix group name
-	MetaKeyDate       = MetaNamespace + "date"  // date upload initiated, 1sec truncated UTC RFC 3339
-	// a comma sep list of usernames of the people who reqested the backup.
-	MetaKeyRequester      = MetaNamespace + "requesters"
-	MetaKeySets           = MetaNamespace + "sets"           // a comma sep list of backup set names this file belongs to
-	MetaKeySymlink        = MetaNamespace + "symlink"        // symlink destination if file is a symlink
-	MetaKeyHardlink       = MetaNamespace + "hardlink"       // the first path seen with this inode if file is a hardlink
-	MetaKeyRemoteHardlink = MetaNamespace + "remotehardlink" // iRODS path that contains the data for this hardlink
-	ErrStatFailed         = "stat of local path returned strange results"
-)
+const ErrStatFailed = "stat of local path returned strange results"
 
 type ObjectInfo struct {
 	Exists bool
@@ -82,18 +68,6 @@ func Stat(localPath string) (*ObjectInfo, error) {
 			MetaKeyGroup: group,
 		},
 	}, nil
-}
-
-// TimeToMeta converts a time to a string suitable for storing as metadata, in
-// a way that ObjectInfo.ModTime() will understand and be able to convert back
-// again.
-func TimeToMeta(t time.Time) (string, error) {
-	b, err := t.UTC().Truncate(time.Second).MarshalText()
-	if err != nil {
-		return "", err
-	}
-
-	return string(b), nil
 }
 
 // getUserAndGroupFromFileInfo returns the username and group name from the

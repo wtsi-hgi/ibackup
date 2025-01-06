@@ -27,6 +27,7 @@ package put
 
 import (
 	"io"
+	"maps"
 	"os"
 	"sync"
 	"time"
@@ -114,7 +115,7 @@ func (l *LocalHandler) Stat(request *Request) (*ObjectInfo, error) {
 	if !exists {
 		meta = make(map[string]string)
 	} else {
-		meta = cloneMap(meta)
+		meta = maps.Clone(meta)
 	}
 
 	return &ObjectInfo{Exists: true, Meta: meta}, nil

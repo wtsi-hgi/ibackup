@@ -1161,6 +1161,7 @@ func (d *DB) doRemoteBackup() (err error) {
 	putter, err := put.New(d.remoteBackupHandler, []*put.Request{{
 		Local:  d.backupPath,
 		Remote: d.remoteBackupPath,
+		Meta:   put.NewMeta(),
 	}})
 	if err != nil {
 		return err
