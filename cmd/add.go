@@ -121,9 +121,9 @@ You can also provide:
             deletion is not yet implemented, but you can at least record the
 		    fact you wanted deletion now, so they can be deleted in the future.)
 --reason  : the reason you are storing the set, which can be 'backup', 'archive' 
-			or 'quarantine'. The default is 'backup' which will set review date 
-			to 6 months and removal date to 1 year. 'archive' sets review date 
-			to 1 year and removal date to 2 years, while 'quarantine' sets 
+			or 'quarantine'. The default is 'backup' which will default review 
+			date to 6 months and removal date to 1 year. 'archive' sets review 
+			date to 1 year and removal date to 2 years, while 'quarantine' sets 
 			review date to 2 months and removal date to 3 months.
 --review  : the time until the set should be reviewed, provided in months or
 			years. This duration must be shorter than the time until removal.

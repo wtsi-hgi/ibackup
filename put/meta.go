@@ -114,13 +114,13 @@ var (
 )
 
 type Meta struct {
-	localMeta  map[string]string
+	LocalMeta  map[string]string
 	remoteMeta map[string]string
 }
 
 func NewMeta() *Meta {
 	return &Meta{
-		localMeta:  make(map[string]string),
+		LocalMeta:  make(map[string]string),
 		remoteMeta: make(map[string]string),
 	}
 }
@@ -155,7 +155,7 @@ func ParseMetaString(meta string) (*Meta, error) {
 		mm[key] = value
 	}
 
-	return &Meta{localMeta: mm}, nil
+	return &Meta{LocalMeta: mm}, nil
 }
 
 // ValidateAndCreateUserMetadata takes a key=value string, validates it as a
@@ -210,11 +210,27 @@ func createBackupMetadata(reason Reason, review, removal string, mm *Meta) error
 		return ErrInvalidReviewRemoveDate
 	}
 
-	mm.localMeta[MetaKeyReason] = Reasons[reason]
-	mm.localMeta[MetaKeyReview] = reviewDate.Format("2006-01-02")
-	mm.localMeta[MetaKeyRemoval] = removalDate.Format("2006-01-02")
+	reviewStr, removalStr, err := reviewRemovalDatesToMeta(reviewDate, removalDate)
+	if err != nil {
+		return err
+	}
+
+	mm.LocalMeta[MetaKeyReason] = Reasons[reason]
+	mm.LocalMeta[MetaKeyReview] = reviewStr
+	mm.LocalMeta[MetaKeyRemoval] = removalStr
 
 	return nil
+}
+
+func reviewRemovalDatesToMeta(review, removal time.Time) (string, string, error) {
+	reviewStr, err := TimeToMeta(review)
+	if err != nil {
+		return "", "", err
+	}
+
+	removalStr, err := TimeToMeta(removal)
+
+	return reviewStr, removalStr, err
 }
 
 // setReviewAndRemovalDurations returns the review and removal durations for a
@@ -278,7 +294,7 @@ func (m *Meta) addStandardMeta(diskMeta, remoteMeta map[string]string, requester
 	m.uniquify()
 
 	for k, v := range diskMeta {
-		m.localMeta[k] = v
+		m.LocalMeta[k] = v
 	}
 
 	m.remoteMeta = remoteMeta
@@ -292,7 +308,7 @@ func (m *Meta) addStandardMeta(diskMeta, remoteMeta map[string]string, requester
 // uniquify is used to ensure that our Meta is unique to us, so that if we
 // alter it, we don't alter any other Request's Meta.
 func (m *Meta) uniquify() {
-	m.localMeta = cloneMap(m.localMeta)
+	m.LocalMeta = cloneMap(m.LocalMeta)
 	m.remoteMeta = cloneMap(m.remoteMeta)
 }
 
@@ -311,7 +327,7 @@ func cloneMap(m map[string]string) map[string]string {
 // Meta.
 func (m *Meta) clone() *Meta {
 	newMeta := Meta{}
-	newMeta.localMeta = cloneMap(m.localMeta)
+	newMeta.LocalMeta = cloneMap(m.LocalMeta)
 	newMeta.remoteMeta = cloneMap(m.remoteMeta)
 
 	return &newMeta
@@ -321,7 +337,7 @@ func (m *Meta) clone() *Meta {
 func (m *Meta) addDate() {
 	date, _ := TimeToMeta(time.Now()) //nolint:errcheck
 
-	m.localMeta[MetaKeyDate] = date
+	m.LocalMeta[MetaKeyDate] = date
 }
 
 // TimeToMeta converts a time to a string suitable for storing as metadata, in
@@ -350,7 +366,7 @@ func (m *Meta) appendMeta(key, val string) {
 		appended = appendValIfNotInList(val, rvals)
 	}
 
-	m.localMeta[key] = appended
+	m.LocalMeta[key] = appended
 }
 
 // appendValIfNotInList appends val to list if not already in list. Returns the
@@ -379,7 +395,7 @@ func appendValIfNotInList(val string, list []string) string {
 // sets our date metadata to the remote value, since we're not uploading now.
 func (m *Meta) needsMetadataUpdate() bool {
 	defer func() {
-		m.localMeta[MetaKeyDate] = m.remoteMeta[MetaKeyDate]
+		m.LocalMeta[MetaKeyDate] = m.remoteMeta[MetaKeyDate]
 	}()
 
 	need := m.valForMetaKeyDifferentOnRemote(MetaKeyRequester)
@@ -394,7 +410,7 @@ func (m *Meta) needsMetadataUpdate() bool {
 // Returns true if the remote value is different to ours.
 func (m *Meta) valForMetaKeyDifferentOnRemote(key string) bool {
 	if rval, defined := m.remoteMeta[key]; defined {
-		if rval != m.localMeta[key] {
+		if rval != m.LocalMeta[key] {
 			return true
 		}
 	}
@@ -410,7 +426,7 @@ func (m *Meta) determineMetadataToRemoveAndAdd() (map[string]string, map[string]
 	toRemove := make(map[string]string)
 	toAdd := make(map[string]string)
 
-	for attr, wanted := range m.localMeta {
+	for attr, wanted := range m.LocalMeta {
 		if remote, exists := m.remoteMeta[attr]; exists { //nolint:nestif
 			if wanted != remote {
 				toRemove[attr] = remote
@@ -426,16 +442,16 @@ func (m *Meta) determineMetadataToRemoveAndAdd() (map[string]string, map[string]
 
 // setHardlinks takes the local and remote hardlinks and sets them in localMeta.
 func (m *Meta) setHardlinks(local, remote string) {
-	m.localMeta[MetaKeyHardlink] = local
-	m.localMeta[MetaKeyRemoteHardlink] = remote
+	m.LocalMeta[MetaKeyHardlink] = local
+	m.LocalMeta[MetaKeyRemoteHardlink] = remote
 }
 
 // Metadata returns a clone of a Meta's localMeta.
 func (m *Meta) Metadata() map[string]string {
-	return cloneMap(m.localMeta)
+	return cloneMap(m.LocalMeta)
 }
 
 // SetLocal sets a Meta's localMeta given a key and a value.
 func (m *Meta) SetLocal(key, value string) {
-	m.localMeta[key] = value
+	m.LocalMeta[key] = value
 }

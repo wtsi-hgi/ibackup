@@ -1325,60 +1325,42 @@ Local Path	Status	Size	Attempts	Date	Error`+"\n"+
 
 				s.waitForStatus(setName, "\nStatus: complete", 5*time.Second)
 
-				defaultReview := now.AddDate(0, 6, 0).Format("2006-01-02")
-				defaultRemoval := now.AddDate(1, 0, 0).Format("2006-01-02")
-
 				testRemoteReviewRemove(t, filepath.Join(remotePath, "file1"),
-					"backup", defaultReview, defaultRemoval)
+					"backup", now.AddDate(0, 6, 0), now.AddDate(1, 0, 0))
 			})
 			Convey("Add with --reason will apply different review/remove metadata", func() {
 				s.addSetForTestingWithFlag(t, setName, transformer, path, "--reason", "backup")
 
-				defaultReview := now.AddDate(0, 6, 0).Format("2006-01-02")
-				defaultRemoval := now.AddDate(1, 0, 0).Format("2006-01-02")
-
 				testRemoteReviewRemove(t, filepath.Join(remotePath, "file1"),
-					"backup", defaultReview, defaultRemoval)
+					"backup", now.AddDate(0, 6, 0), now.AddDate(1, 0, 0))
 
 				setName += ".archive"
 
 				s.addSetForTestingWithFlag(t, setName, transformer, path, "--reason", "archive")
 
-				defaultReview = now.AddDate(1, 0, 0).Format("2006-01-02")
-				defaultRemoval = now.AddDate(2, 0, 0).Format("2006-01-02")
-
 				testRemoteReviewRemove(t, filepath.Join(remotePath, "file1"),
-					"archive", defaultReview, defaultRemoval)
+					"archive", now.AddDate(1, 0, 0), now.AddDate(2, 0, 0))
 
 				setName += ".quarantine"
 
 				s.addSetForTestingWithFlag(t, setName, transformer, path, "--reason", "quarantine")
 
-				defaultReview = now.AddDate(0, 2, 0).Format("2006-01-02")
-				defaultRemoval = now.AddDate(0, 3, 0).Format("2006-01-02")
-
 				testRemoteReviewRemove(t, filepath.Join(remotePath, "file1"),
-					"quarantine", defaultReview, defaultRemoval)
+					"quarantine", now.AddDate(0, 2, 0), now.AddDate(0, 3, 0))
 			})
 
 			Convey("Add with --review will apply custom review metadata", func() {
 				s.addSetForTestingWithFlag(t, setName, transformer, path, "--review", "4m")
 
-				customReview := now.AddDate(0, 4, 0).Format("2006-01-02")
-				defaultRemoval := now.AddDate(1, 0, 0).Format("2006-01-02")
-
 				testRemoteReviewRemove(t, filepath.Join(remotePath, "file1"),
-					"backup", customReview, defaultRemoval)
+					"backup", now.AddDate(0, 4, 0), now.AddDate(1, 0, 0))
 			})
 
 			Convey("Add with --removal will apply custom removal metadata", func() {
 				s.addSetForTestingWithFlag(t, setName, transformer, path, "--remove", "3y")
 
-				defaultReview := now.AddDate(0, 6, 0).Format("2006-01-02")
-				customRemoval := now.AddDate(3, 0, 0).Format("2006-01-02")
-
 				testRemoteReviewRemove(t, filepath.Join(remotePath, "file1"),
-					"backup", defaultReview, customRemoval)
+					"backup", now.AddDate(0, 6, 0), now.AddDate(3, 0, 0))
 			})
 
 			Convey("Add with invalid --reason/--review/--remove inputs throws an error", func() {
@@ -1442,7 +1424,7 @@ Local Path	Status	Size	Attempts	Date	Error`+"\n"+
 					So(output, ShouldNotContainSubstring, "testValue1\n")
 				}
 			})
-			SkipConvey("Repeatedly uploading files that are changed or not changes status details", func() {
+			Convey("Repeatedly uploading files that are changed or not changes status details", func() {
 				setName = "changingFilesTest"
 				s.addSetForTesting(t, setName, transformer, path)
 
@@ -1592,22 +1574,34 @@ no backup sets`
 	})
 }
 
-func testRemoteReviewRemove(t *testing.T, filepath, remote, review, remove string) {
+func testRemoteReviewRemove(t *testing.T, filepath, reason string, review, remove time.Time) {
 	t.Helper()
+
+	reviewStr, removeStr := testTimesToMeta(t, review, remove)
 
 	output := getRemoteMeta(filepath)
 	So(output, ShouldContainSubstring, `
 attribute: ibackup:reason
-value: `+remote+`
+value: `+reason+`
 `)
 	So(output, ShouldContainSubstring, `
 attribute: ibackup:review
-value: `+review+`
-`)
+value: `+reviewStr[:10])
 	So(output, ShouldContainSubstring, `
 attribute: ibackup:removal
-value: `+remove+`
-`)
+value: `+removeStr[:10])
+}
+
+func testTimesToMeta(t *testing.T, reviewDate, removalDate time.Time) (string, string) {
+	t.Helper()
+
+	reviewStr, err := reviewDate.UTC().Truncate(time.Second).MarshalText()
+	So(err, ShouldBeNil)
+
+	removalStr, err := removalDate.UTC().Truncate(time.Second).MarshalText()
+	So(err, ShouldBeNil)
+
+	return string(reviewStr), string(removalStr)
 }
 
 func getRemoteMeta(path string) string {

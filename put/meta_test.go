@@ -34,6 +34,8 @@ import (
 )
 
 func TestMeta(t *testing.T) {
+	now := time.Now()
+
 	Convey("Given meta strings", t, func() {
 		validMetaStr1 := "ibackup:user:testKey1=testValue1"
 		validMetaStr2 := "testKey2=testValue2"
@@ -74,27 +76,22 @@ func TestMeta(t *testing.T) {
 	Convey("Given a Meta", t, func() {
 		meta := NewMeta()
 
-		now := time.Now()
-
 		Convey("And a reason, default review and removal dates are set", func() {
-			defaultReview := now.AddDate(0, 6, 0).Format("2006-01-02")
-			defaultRemoval := now.AddDate(1, 0, 0).Format("2006-01-02")
+			defaultReview, defaultRemoval := testTimesToMeta(t, now.AddDate(0, 6, 0), now.AddDate(1, 0, 0))
 
 			err := createBackupMetadata(Backup, "", "", meta)
 			So(err, ShouldBeNil)
 			So(meta.Metadata()[MetaKeyReview], ShouldEqual, defaultReview)
 			So(meta.Metadata()[MetaKeyRemoval], ShouldEqual, defaultRemoval)
 
-			defaultReview = now.AddDate(1, 0, 0).Format("2006-01-02")
-			defaultRemoval = now.AddDate(2, 0, 0).Format("2006-01-02")
+			defaultReview, defaultRemoval = testTimesToMeta(t, now.AddDate(1, 0, 0), now.AddDate(2, 0, 0))
 
 			err = createBackupMetadata(Archive, "", "", meta)
 			So(err, ShouldBeNil)
 			So(meta.Metadata()[MetaKeyReview], ShouldEqual, defaultReview)
 			So(meta.Metadata()[MetaKeyRemoval], ShouldEqual, defaultRemoval)
 
-			defaultReview = now.AddDate(0, 2, 0).Format("2006-01-02")
-			defaultRemoval = now.AddDate(0, 3, 0).Format("2006-01-02")
+			defaultReview, defaultRemoval = testTimesToMeta(t, now.AddDate(0, 2, 0), now.AddDate(0, 3, 0))
 
 			err = createBackupMetadata(Quarantine, "", "", meta)
 			So(err, ShouldBeNil)
@@ -133,11 +130,13 @@ func TestMeta(t *testing.T) {
 			meta, err := HandleMeta(metaString, reason, review, remove)
 			So(err, ShouldBeNil)
 
+			reviewDate, removalDate := testTimesToMeta(t, now.AddDate(1, 0, 0), now.AddDate(2, 0, 0))
+
 			So(meta.Metadata(), ShouldResemble, map[string]string{
 				"ibackup:user:testKey": "testValue",
 				"ibackup:reason":       "backup",
-				"ibackup:review":       time.Now().AddDate(1, 0, 0).Format("2006-01-02"),
-				"ibackup:removal":      time.Now().AddDate(2, 0, 0).Format("2006-01-02"),
+				"ibackup:review":       reviewDate,
+				"ibackup:removal":      removalDate,
 			})
 
 			Convey("Which you can append metadata to", func() {
@@ -145,11 +144,23 @@ func TestMeta(t *testing.T) {
 				So(meta.Metadata(), ShouldResemble, map[string]string{
 					"ibackup:user:testKey":  "testValue",
 					"ibackup:reason":        "backup",
-					"ibackup:review":        time.Now().AddDate(1, 0, 0).Format("2006-01-02"),
-					"ibackup:removal":       time.Now().AddDate(2, 0, 0).Format("2006-01-02"),
+					"ibackup:review":        reviewDate,
+					"ibackup:removal":       removalDate,
 					"ibackup:user:testKey2": "testValue2",
 				})
 			})
 		})
 	})
+}
+
+func testTimesToMeta(t *testing.T, reviewDate, removalDate time.Time) (string, string) {
+	t.Helper()
+
+	reviewStr, err := TimeToMeta(reviewDate)
+	So(err, ShouldBeNil)
+
+	removalStr, err := TimeToMeta(removalDate)
+	So(err, ShouldBeNil)
+
+	return reviewStr, removalStr
 }

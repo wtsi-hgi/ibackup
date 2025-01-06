@@ -201,7 +201,7 @@ func TestRequest(t *testing.T) {
 			Requester: "someRequester",
 			Set:       "testSet",
 			Meta: &Meta{
-				localMeta: map[string]string{
+				LocalMeta: map[string]string{
 					"metaKey": "metaValue",
 				},
 				remoteMeta: map[string]string{
@@ -240,7 +240,7 @@ func TestRequest(t *testing.T) {
 		r.Requester = "someOtherRequester"
 		So(r.Requester, ShouldNotEqual, clone.Requester)
 
-		r.Meta.localMeta["metaKey"] = "anotherMetaValue"
+		r.Meta.LocalMeta["metaKey"] = "anotherMetaValue"
 		So(r.Meta, ShouldNotResemble, clone.Meta)
 	})
 }
