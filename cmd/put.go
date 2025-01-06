@@ -326,7 +326,7 @@ func getRequestsFromFile(file, meta string, base64Encoded bool) ([]*put.Request,
 func parsePutFile(path, meta, requester string, splitter bufio.SplitFunc, base64Encoded bool) []*put.Request {
 	defaultMeta, err := put.ParseMetaString(meta)
 	if err != nil {
-		die(err.Error())
+		die("metadata error: %s", err)
 	}
 
 	scanner, df := createScannerForFile(path, splitter)
@@ -436,7 +436,7 @@ func parsePutFileLine(line string, base64Encoded bool, lineNum int,
 	if colsn == putFileCols && cols[2] != "" {
 		parsedMeta, err := put.ParseMetaString(cols[2])
 		if err != nil {
-			die(err.Error())
+			die("metadata error: %s", err)
 		}
 
 		meta = parsedMeta

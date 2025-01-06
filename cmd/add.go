@@ -43,9 +43,8 @@ import (
 )
 
 const (
-	hoursInDay      = 24
-	hoursInWeek     = hoursInDay * 7
-	numOfBackupMeta = 3
+	hoursInDay  = 24
+	hoursInWeek = hoursInDay * 7
 )
 
 // options for this cmd.
@@ -122,15 +121,18 @@ You can also provide:
 		    fact you wanted deletion now, so they can be deleted in the future.)
 --reason  : the reason you are storing the set, which can be 'backup', 'archive' 
 			or 'quarantine'. The default is 'backup' which will default review 
-			date to 6 months and removal date to 1 year. 'archive' sets review 
-			date to 1 year and removal date to 2 years, while 'quarantine' sets 
-			review date to 2 months and removal date to 3 months.
+			date to 6 months and removal date to 1 year. 'archive' defaults 
+			review date to 1 year and removal date to 2 years, while 
+			'quarantine' defaults review date to 2 months and removal date to 3 
+			months.
 --review  : the date when the set should be reviewed, provided as a duration in 
-			months or years or the date itself. This date must be before the 
-			removal date.
+			months or years or the date itself. E.g. '6m' for a review date 6 
+			months from now, '2y' for a review date 2 years from now, 
+			'2030-04-21' for the review date to be as provided. This date must 
+			be before the removal date.
 --remove  : the date when the set should be removed, provided as a duration in 
-			months or years or the date itself. This date must be after the 
-			review date.
+			months or years or the date itself. Input format is the same as for 
+			--review. This date must be after the review date.
 
 Having added a set, you can use 'ibackup status' to monitor the backup progress
 of your sets. If you add a set with the same --name again, you will overwrite
@@ -198,7 +200,7 @@ option to add sets on behalf of other users.
 
 		meta, err := put.HandleMeta(setMetadata, setReason, setReview, setRemoval)
 		if err != nil {
-			die(err.Error())
+			die("metadata error: %s", err)
 		}
 
 		err = add(client, setName, setUser, setTransformer, setDescription, monitorDuration, setArchive, files, dirs, meta)
@@ -240,11 +242,9 @@ func init() {
 	addCmd.Flags().Var(&setReason, "reason",
 		"storage reason: 'backup' | 'archive' | 'quarantine'")
 	addCmd.Flags().StringVar(&setReview, "review", "",
-		"months/years until review date, provided in format: <number><unit>, e.g. 1y for 1 year. "+
-			"Or exact date for review, provided in format YYYY-MM-DD")
+		"time until review date (<number><y|m>, eg. 1y for 1 year), or exact review date in the format YYYY-MM-DD")
 	addCmd.Flags().StringVar(&setRemoval, "remove", "",
-		"months/years until removal date, provided in format: <number><unit>, e.g. 1y for 1 year. "+
-			"Or exact date for removal, provided in format YYYY-MM-DD")
+		"time until removal date (<number><y|m>, eg. 1y for 1 year), or exact removal date in the format YYYY-MM-DD")
 
 	if err := addCmd.MarkFlagRequired("name"); err != nil {
 		die(err.Error())

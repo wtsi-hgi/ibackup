@@ -29,50 +29,12 @@ package put
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
 )
-
-type MetaError struct {
-	err    error
-	keyVal string
-}
-
-func (e MetaError) Error() string {
-	return fmt.Sprintf("invalid meta: '%s' %v", e.keyVal, e.err)
-}
-
-func (e MetaError) Is(err error) bool {
-	var metaErr *MetaError
-	if errors.As(err, &metaErr) {
-		return metaErr.err.Error() == e.err.Error()
-	}
-
-	return false
-}
-
-type Reason int
-
-func (r *Reason) Set(value string) error {
-	index := slices.Index(Reasons, value)
-	if index != -1 {
-		*r = Reason(index)
-
-		return nil
-	}
-
-	return ErrInvalidReason
-}
-
-func (r Reason) String() string {
-	return Reasons[r]
-}
-
-func (r Reason) Type() string {
-	return "Reason"
-}
 
 const (
 	MetaNamespace     = "ibackup:"
@@ -96,6 +58,12 @@ const (
 	validMetaParts        = 2
 	validMetaKeyDividers  = 2
 	metaListSeparator     = ","
+
+	errInvalidMetaNamespace    = "namespace is incorrect, must be 'ibackup:user:' or empty"
+	errInvalidMetaLength       = "meta must be provided in the form key=value"
+	ErrInvalidReason           = "reason must be 'backup', 'archive', 'quarantine'"
+	ErrInvalidDurationFormat   = "duration must be in the form <number><unit>"
+	ErrInvalidReviewRemoveDate = "--review duration must be smaller than --removal duration"
 )
 
 const (
@@ -104,14 +72,46 @@ const (
 	Quarantine
 )
 
-var (
-	Reasons                    = []string{"backup", "archive", "quarantine"} //nolint:gochecknoglobals
-	errInvalidMetaNamespace    = errors.New("namespace is incorrect, must be 'ibackup:user:' or empty")
-	errInvalidMetaLength       = errors.New("meta must be provided in the form key=value")
-	ErrInvalidReason           = errors.New("reason must be 'backup', 'archive', 'quarantine'")
-	ErrInvalidDurationFormat   = errors.New("duration must be in the form <number><unit>")
-	ErrInvalidReviewRemoveDate = errors.New("--review duration must be smaller than --removal duration")
-)
+type MetaError struct {
+	err    string
+	keyVal string
+}
+
+func (e MetaError) Error() string {
+	return fmt.Sprintf("invalid meta: '%s' %v", e.keyVal, e.err)
+}
+
+func (e MetaError) Is(err error) bool {
+	var metaErr *MetaError
+	if errors.As(err, &metaErr) {
+		return metaErr.err == e.err
+	}
+
+	return false
+}
+
+type Reason int
+
+func (r *Reason) Set(value string) error {
+	index := slices.Index(Reasons, value)
+	if index != -1 {
+		*r = Reason(index)
+
+		return nil
+	}
+
+	return MetaError{ErrInvalidReason, value}
+}
+
+func (r Reason) String() string {
+	return Reasons[r]
+}
+
+func (r Reason) Type() string {
+	return "Reason"
+}
+
+var Reasons = []string{"backup", "archive", "quarantine"} //nolint:gochecknoglobals
 
 type Meta struct {
 	LocalMeta  map[string]string
@@ -149,7 +149,7 @@ func ParseMetaString(meta string) (*Meta, error) {
 	for _, kv := range kvs {
 		key, value, err := ValidateAndCreateUserMetadata(kv)
 		if err != nil {
-			return nil, MetaError{err: err, keyVal: kv}
+			return nil, MetaError{err: err.Error(), keyVal: kv}
 		}
 
 		mm[key] = value
@@ -164,7 +164,7 @@ func ParseMetaString(meta string) (*Meta, error) {
 func ValidateAndCreateUserMetadata(kv string) (string, string, error) {
 	parts := strings.Split(kv, "=")
 	if len(parts) != validMetaParts {
-		return "", "", errInvalidMetaLength
+		return "", "", MetaError{errInvalidMetaLength, kv}
 	}
 
 	key, err := handleNamespace(parts[0])
@@ -183,11 +183,11 @@ func handleNamespace(key string) (string, error) {
 	case keyDividers == 0:
 		return MetaUserNamespace + key, nil
 	case keyDividers != validMetaKeyDividers:
-		return "", errInvalidMetaNamespace
+		return "", MetaError{errInvalidMetaNamespace, key}
 	case strings.HasPrefix(key, MetaUserNamespace):
 		return key, nil
 	default:
-		return "", errInvalidMetaNamespace
+		return "", MetaError{errInvalidMetaNamespace, key}
 	}
 }
 
@@ -207,7 +207,7 @@ func createBackupMetadata(reason Reason, review, removal string, mm *Meta) error
 	}
 
 	if reviewDate.After(removalDate) {
-		return ErrInvalidReviewRemoveDate
+		return MetaError{ErrInvalidReviewRemoveDate, fmt.Sprintf("%s is after %s", review, removal)}
 	}
 
 	reviewStr, removalStr, err := reviewRemovalDatesToMeta(reviewDate, removalDate)
@@ -215,7 +215,7 @@ func createBackupMetadata(reason Reason, review, removal string, mm *Meta) error
 		return err
 	}
 
-	mm.LocalMeta[MetaKeyReason] = Reasons[reason]
+	mm.LocalMeta[MetaKeyReason] = reason.String()
 	mm.LocalMeta[MetaKeyReview] = reviewStr
 	mm.LocalMeta[MetaKeyRemoval] = removalStr
 
@@ -271,7 +271,7 @@ func getFutureDateFromDurationOrDate(t string) (time.Time, error) {
 
 	num, err := strconv.Atoi(t[:len(t)-1])
 	if err != nil {
-		return time.Time{}, ErrInvalidDurationFormat
+		return time.Time{}, MetaError{ErrInvalidDurationFormat, t}
 	}
 
 	switch t[len(t)-1] {
@@ -280,7 +280,7 @@ func getFutureDateFromDurationOrDate(t string) (time.Time, error) {
 	case 'm':
 		return time.Now().AddDate(0, num, 0), nil
 	default:
-		return time.Time{}, ErrInvalidDurationFormat
+		return time.Time{}, MetaError{ErrInvalidDurationFormat, t}
 	}
 }
 
@@ -313,27 +313,16 @@ func (m *Meta) addStandardMeta(diskMeta, remoteMeta map[string]string, requester
 // uniquify is used to ensure that our Meta is unique to us, so that if we
 // alter it, we don't alter any other Request's Meta.
 func (m *Meta) uniquify() {
-	m.LocalMeta = cloneMap(m.LocalMeta)
-	m.remoteMeta = cloneMap(m.remoteMeta)
+	m.LocalMeta = maps.Clone(m.LocalMeta)
+	m.remoteMeta = maps.Clone(m.remoteMeta)
 }
 
-// cloneMap makes a copy of the given map.
-func cloneMap(m map[string]string) map[string]string {
-	clone := make(map[string]string, len(m))
-
-	for k, v := range m {
-		clone[k] = v
-	}
-
-	return clone
-}
-
-// clone returns a new Meta containing a clone of the maps inside the provided
+// clone returns a new Meta containing a clone of our maps inside the provided
 // Meta.
 func (m *Meta) clone() *Meta {
 	newMeta := Meta{}
-	newMeta.LocalMeta = cloneMap(m.LocalMeta)
-	newMeta.remoteMeta = cloneMap(m.remoteMeta)
+	newMeta.LocalMeta = maps.Clone(m.LocalMeta)
+	newMeta.remoteMeta = maps.Clone(m.remoteMeta)
 
 	return &newMeta
 }
@@ -453,7 +442,7 @@ func (m *Meta) setHardlinks(local, remote string) {
 
 // Metadata returns a clone of a Meta's localMeta.
 func (m *Meta) Metadata() map[string]string {
-	return cloneMap(m.LocalMeta)
+	return maps.Clone(m.LocalMeta)
 }
 
 // SetLocal sets a Meta's localMeta given a key and a value.

@@ -118,19 +118,19 @@ func TestMeta(t *testing.T) {
 
 		Convey("Invalid review/removal inputs return an error", func() {
 			err := createBackupMetadata(Backup, "2y", "1y", meta)
-			So(err, ShouldEqual, ErrInvalidReviewRemoveDate)
+			So(err.Error(), ShouldContainSubstring, ErrInvalidReviewRemoveDate)
 
 			err = createBackupMetadata(Backup, "2y", "", meta)
-			So(err, ShouldEqual, ErrInvalidReviewRemoveDate)
+			So(err.Error(), ShouldContainSubstring, ErrInvalidReviewRemoveDate)
 
 			err = createBackupMetadata(Backup, "", "1m", meta)
-			So(err, ShouldEqual, ErrInvalidReviewRemoveDate)
+			So(err.Error(), ShouldContainSubstring, ErrInvalidReviewRemoveDate)
 
 			err = createBackupMetadata(Backup, "1m", "1m", meta)
-			So(err, ShouldEqual, ErrInvalidReviewRemoveDate)
+			So(err.Error(), ShouldContainSubstring, ErrInvalidReviewRemoveDate)
 
 			err = createBackupMetadata(Backup, "2", "1", meta)
-			So(err, ShouldEqual, ErrInvalidDurationFormat)
+			So(err.Error(), ShouldContainSubstring, ErrInvalidDurationFormat)
 		})
 	})
 
