@@ -202,10 +202,12 @@ option to add sets on behalf of other users.
 		if err != nil {
 			die("%s", err.Error())
 		}
+
 		var prevMeta map[string]string
 		if set != nil {
 			prevMeta = set.Metadata
 		}
+
 		meta, err := put.HandleMeta(setMetadata, setReason, setReview, setRemoval, prevMeta)
 		if err != nil {
 			die("metadata error: %s", err)
