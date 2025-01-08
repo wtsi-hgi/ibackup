@@ -638,6 +638,7 @@ func (s *Set) UserMetadata() string {
 		if !strings.HasPrefix(k, put.MetaUserNamespace) {
 			continue
 		}
+
 		keyArr = append(keyArr, k)
 	}
 
