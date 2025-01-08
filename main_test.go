@@ -516,6 +516,9 @@ func TestStatus(t *testing.T) {
 		s := NewTestServer(t)
 		So(s, ShouldNotBeNil)
 
+		reviewDate := time.Now().AddDate(0, 6, 0).Format("2006-01-02")
+		removalDate := time.Now().AddDate(1, 0, 0).Format("2006-01-02")
+
 		Convey("With no sets defined, status returns no sets", func() {
 			s.confirmOutput(t, []string{"status"}, 0, noBackupSets)
 		})
@@ -530,6 +533,114 @@ Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 c
 
 Name: testAdd
 Transformer: `+transformer+`
+Reason: backup
+Review date: `+reviewDate+`
+Removal date: `+removalDate+`
+Monitored: false; Archive: false
+Status: complete
+Discovery:
+Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 0 B / 0 B
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
+Completed in: 0s
+Directories:
+  `+localDir+" => "+remoteDir)
+			})
+		})
+		Convey("Given an added set defined with a directory and user metadata", func() {
+			meta := "testKey2=testVal2;ibackup:user:testKey=testVal"
+
+			transformer, localDir, remoteDir := prepareForSetWithEmptyDir(t)
+			exitCode, _ := s.runBinary(t, "add", "--name", "testMeta", "--transformer",
+				transformer, "--path", localDir, "--metadata", meta)
+			So(exitCode, ShouldEqual, 0)
+			s.waitForStatus("testMeta", "\nDiscovery: completed", 5*time.Second)
+
+			Convey("Status tells you the user metadata", func() {
+				s.confirmOutput(t, []string{"status"}, 0, `Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
+Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
+
+Name: testMeta
+Transformer: `+transformer+`
+Reason: backup
+Review date: `+reviewDate+`
+Removal date: `+removalDate+`
+User metadata: testKey=testVal;testKey2=testVal2
+Monitored: false; Archive: false
+Status: complete
+Discovery:
+Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 0 B / 0 B
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
+Completed in: 0s
+Directories:
+  `+localDir+" => "+remoteDir)
+
+				meta = "testKey=testValNew;testKey2=testVal2;testKey3=testVal3"
+
+				cmd := s.clientCmd([]string{"add", "--name", "testMeta", "--transformer", transformer,
+					"--path", localDir, "--metadata", meta, "--reason", "archive", "--remove", "2999-01-01"})
+				cmd.Stdin = strings.NewReader("y\n")
+				err := cmd.Run()
+				So(err, ShouldBeNil)
+
+				s.confirmOutput(t, []string{"status"}, 0, `Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
+Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
+
+Name: testMeta
+Transformer: `+transformer+`
+Reason: archive
+Review date: `+time.Now().AddDate(1, 0, 0).Format("2006-01-02")+`
+Removal date: 2999-01-01
+User metadata: `+meta+`
+Monitored: false; Archive: false
+Status: complete
+Discovery:
+Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 0 B / 0 B
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
+Completed in: 0s
+Directories:
+  `+localDir+" => "+remoteDir)
+
+				meta = "testKey=testValNew;testKey2=testVal2;testKey3=testVal3"
+
+				cmd = s.clientCmd([]string{"add", "--name", "testMeta", "--transformer", transformer,
+					"--path", localDir})
+				cmd.Stdin = strings.NewReader("y\n")
+				err = cmd.Run()
+				So(err, ShouldBeNil)
+
+				s.confirmOutput(t, []string{"status"}, 0, `Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
+Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
+
+Name: testMeta
+Transformer: `+transformer+`
+Reason: archive
+Review date: `+time.Now().AddDate(1, 0, 0).Format("2006-01-02")+`
+Removal date: 2999-01-01
+User metadata: `+meta+`
+Monitored: false; Archive: false
+Status: complete
+Discovery:
+Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 0 B / 0 B
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
+Completed in: 0s
+Directories:
+  `+localDir+" => "+remoteDir)
+
+				cmd = s.clientCmd([]string{"add", "--name", "testMeta", "--transformer", transformer,
+					"--path", localDir, "--reason", "backup"})
+				cmd.Stdin = strings.NewReader("y\n")
+				err = cmd.Run()
+				So(err, ShouldBeNil)
+
+				s.confirmOutput(t, []string{"status"}, 0, `Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
+Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
+
+Name: testMeta
+Transformer: `+transformer+`
+Reason: backup
+Review date: `+time.Now().AddDate(0, 6, 0).Format("2006-01-02")+`
+Removal date: `+time.Now().AddDate(1, 0, 0).Format("2006-01-02")+`
+User metadata: `+meta+`
 Monitored: false; Archive: false
 Status: complete
 Discovery:
@@ -553,6 +664,9 @@ Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 c
 
 Name: a
 Transformer: `+transformer+`
+Reason: backup
+Review date: `+reviewDate+`
+Removal date: `+removalDate+`
 Monitored: false; Archive: false
 Status: complete
 Discovery:
@@ -566,6 +680,9 @@ Directories:
 
 Name: b
 Transformer: `+transformer+`
+Reason: backup
+Review date: `+reviewDate+`
+Removal date: `+removalDate+`
 Monitored: false; Archive: false
 Status: complete
 Discovery:
@@ -579,6 +696,9 @@ Directories:
 
 Name: c
 Transformer: `+transformer+`
+Reason: backup
+Review date: `+reviewDate+`
+Removal date: `+removalDate+`
 Monitored: false; Archive: false
 Status: complete
 Discovery:
@@ -596,6 +716,9 @@ Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 c
 
 Name: b
 Transformer: `+transformer+`
+Reason: backup
+Review date: `+reviewDate+`
+Removal date: `+removalDate+`
 Monitored: false; Archive: false
 Status: complete
 Discovery:
@@ -609,6 +732,9 @@ Directories:
 
 Name: a
 Transformer: `+transformer+`
+Reason: backup
+Review date: `+reviewDate+`
+Removal date: `+removalDate+`
 Monitored: false; Archive: false
 Status: complete
 Discovery:
@@ -622,6 +748,9 @@ Directories:
 
 Name: c
 Transformer: `+transformer+`
+Reason: backup
+Review date: `+reviewDate+`
+Removal date: `+removalDate+`
 Monitored: false; Archive: false
 Status: complete
 Discovery:
@@ -655,6 +784,9 @@ Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 c
 
 Name: testAddFiles
 Transformer: prefix=`+dir+`:/remote
+Reason: backup
+Review date: `+reviewDate+`
+Removal date: `+removalDate+`
 Monitored: false; Archive: false
 Status: complete
 Discovery:
@@ -672,6 +804,9 @@ Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 c
 
 Name: testAddFiles
 Transformer: prefix=`+dir+`:/remote
+Reason: backup
+Review date: `+reviewDate+`
+Removal date: `+removalDate+`
 Monitored: false; Archive: false
 Status: complete
 Discovery:
@@ -695,6 +830,9 @@ Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 c
 
 Name: badHumgen
 Transformer: humgen
+Reason: backup
+Review date: ` + reviewDate + `
+Removal date: ` + removalDate + `
 Monitored: false; Archive: false
 Status: complete
 Discovery:
@@ -729,6 +867,9 @@ Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 c
 
 Name: oddPrefix
 Transformer: `+transformer+`
+Reason: backup
+Review date: `+reviewDate+`
+Removal date: `+removalDate+`
 Monitored: false; Archive: false
 Status: complete
 Discovery:
@@ -761,6 +902,9 @@ Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 c
 
 Name: badPerms
 Transformer: `+transformer+`
+Reason: backup
+Review date: `+reviewDate+`
+Removal date: `+removalDate+`
 Monitored: false; Archive: false
 Status: complete
 Warning: open `+badPermDir+`/: permission denied
@@ -790,6 +934,9 @@ Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 c
 
 Name: humgenSet
 Transformer: humgen
+Reason: backup
+Review date: `+reviewDate+`
+Removal date: `+removalDate+`
 Monitored: false; Archive: false
 Status: pending upload
 Discovery:
@@ -816,6 +963,9 @@ Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 c
 
 Name: gengenSet
 Transformer: gengen
+Reason: backup
+Review date: `+reviewDate+`
+Removal date: `+removalDate+`
 Monitored: false; Archive: false
 Status: pending upload
 Discovery:
@@ -853,6 +1003,9 @@ Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 c
 
 Name: testLinks
 Transformer: prefix=`+dir+`:/remote
+Reason: backup
+Review date: `+reviewDate+`
+Removal date: `+removalDate+`
 Monitored: false; Archive: false
 Status: pending upload
 Discovery:
@@ -900,6 +1053,9 @@ Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 c
 Name: setForRequesterPrinting
 Requester: `+currentUserName+`
 Transformer: `+transformer+`
+Reason: backup
+Review date: `+reviewDate+`
+Removal date: `+removalDate+`
 Monitored: false; Archive: false
 Status: complete
 Discovery:
@@ -929,6 +1085,9 @@ Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 c
 
 Name: testAddFifo
 Transformer: prefix=`+dir+`:/remote
+Reason: backup
+Review date: `+reviewDate+`
+Removal date: `+removalDate+`
 Monitored: false; Archive: false
 Status: complete
 Discovery:
@@ -954,6 +1113,9 @@ Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 c
 
 Name: testAddFifoDir
 Transformer: prefix=`+dir+`:/remote
+Reason: backup
+Review date: `+reviewDate+`
+Removal date: `+removalDate+`
 Monitored: false; Archive: false
 Status: complete
 Discovery:

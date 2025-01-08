@@ -169,7 +169,7 @@ option to add sets on behalf of other users.
 
 		client, err := newServerClient(serverURL, serverCert)
 		if err != nil {
-			die(err.Error())
+			die("%s", err.Error())
 		}
 
 		files := readPaths(setFiles, fofnLineSplitter(setNull))
@@ -183,12 +183,12 @@ option to add sets on behalf of other users.
 		if setPath != "" {
 			setPath, err = filepath.Abs(setPath)
 			if err != nil {
-				die(err.Error())
+				die("%s", err.Error())
 			}
 
 			info, errs := os.Stat(setPath)
 			if errs != nil {
-				die(errs.Error())
+				die("%s", errs.Error())
 			}
 
 			if info.IsDir() {
@@ -198,14 +198,24 @@ option to add sets on behalf of other users.
 			}
 		}
 
-		meta, err := put.HandleMeta(setMetadata, setReason, setReview, setRemoval)
+		set, err := checkExistingSet(client, setName, setUser)
+		if err != nil {
+			die("%s", err.Error())
+		}
+
+		var prevMeta map[string]string
+		if set != nil {
+			prevMeta = set.Metadata
+		}
+
+		meta, err := put.HandleMeta(setMetadata, setReason, setReview, setRemoval, prevMeta)
 		if err != nil {
 			die("metadata error: %s", err)
 		}
 
 		err = add(client, setName, setUser, setTransformer, setDescription, monitorDuration, setArchive, files, dirs, meta)
 		if err != nil {
-			die(err.Error())
+			die("%s", err.Error())
 		}
 
 		info("your backup set has been saved and will now be processed")
@@ -326,10 +336,6 @@ func fileDirIsInDirs(file string, dirSet map[string]bool) bool {
 // add does the main job of sending the backup set details to the server.
 func add(client *server.Client, name, requester, transformer, description string,
 	monitor time.Duration, archive bool, files, dirs []string, meta *put.Meta) error {
-	if err := checkExistingSet(client, name, requester); err != nil {
-		return err
-	}
-
 	set := &set.Set{
 		Name:        name,
 		Requester:   requester,
@@ -355,24 +361,24 @@ func add(client *server.Client, name, requester, transformer, description string
 	return client.TriggerDiscovery(set.ID())
 }
 
-func checkExistingSet(client *server.Client, name, requester string) error {
-	_, err := client.GetSetByName(requester, name)
+func checkExistingSet(client *server.Client, name, requester string) (*set.Set, error) {
+	set, err := client.GetSetByName(requester, name)
 	if errors.Is(err, server.ErrBadSet) {
-		return nil
+		return set, nil
 	} else if err != nil {
-		return err
+		return nil, err
 	}
 
 	resp, err := askYesNo(fmt.Sprintf("Set with name %s already exists, are you sure you wish to overwrite (y/N)? ", name))
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if !resp {
-		return ErrCancel
+		return nil, ErrCancel
 	}
 
-	return nil
+	return set, nil
 }
 
 func askYesNo(prompt string) (bool, error) {

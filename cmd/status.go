@@ -376,6 +376,15 @@ func displaySet(s *set.Set, showRequesters bool) { //nolint:funlen,gocyclo
 
 	cliPrint("Transformer: %s\n", s.Transformer)
 
+	cliPrint("Reason: %s\n", s.Metadata["ibackup:reason"])
+	cliPrint("Review date: %.10s\n", s.Metadata["ibackup:review"])
+	cliPrint("Removal date: %.10s\n", s.Metadata["ibackup:removal"])
+
+	userMeta := s.UserMetadata()
+	if userMeta != "" {
+		cliPrint("User metadata: %s\n", userMeta)
+	}
+
 	monitored := "false"
 	if s.MonitorTime > 0 {
 		monitored = formatDuration(s.MonitorTime)

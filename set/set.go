@@ -27,6 +27,7 @@ package set
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -608,6 +609,7 @@ func (s *Set) copyUserProperties(copySet *Set) {
 	s.Description = copySet.Description
 	s.Error = copySet.Error
 	s.Warning = copySet.Warning
+	s.Metadata = copySet.Metadata
 }
 
 // reset puts the Set data back to zero/initial/empty values.
@@ -627,4 +629,26 @@ func (s *Set) reset() {
 	s.Status = PendingDiscovery
 	s.Error = ""
 	s.Warning = ""
+}
+
+func (s *Set) UserMetadata() string {
+	var keyArr []string //nolint:prealloc
+
+	for k := range s.Metadata {
+		if !strings.HasPrefix(k, put.MetaUserNamespace) {
+			continue
+		}
+
+		keyArr = append(keyArr, k)
+	}
+
+	slices.Sort(keyArr)
+
+	metaArr := make([]string, 0, len(keyArr))
+
+	for _, k := range keyArr {
+		metaArr = append(metaArr, fmt.Sprintf("%s=%s", k[len(put.MetaUserNamespace):], s.Metadata[k]))
+	}
+
+	return strings.Join(metaArr, ";")
 }
