@@ -67,7 +67,8 @@ const (
 )
 
 const (
-	Backup Reason = iota
+	Unset Reason = iota
+	Backup
 	Archive
 	Quarantine
 )
@@ -111,7 +112,7 @@ func (r Reason) Type() string {
 	return "Reason"
 }
 
-var Reasons = []string{"backup", "archive", "quarantine"} //nolint:gochecknoglobals
+var Reasons = []string{"unset", "backup", "archive", "quarantine"} //nolint:gochecknoglobals
 
 type Meta struct {
 	LocalMeta  map[string]string
@@ -127,10 +128,17 @@ func NewMeta() *Meta {
 
 // handleMeta takes the user provided meta and the backup meta inputs and
 // returns a Meta containing all valid metadata.
-func HandleMeta(meta string, reason Reason, review, removal string) (*Meta, error) {
-	mm, err := ParseMetaString(meta)
+func HandleMeta(meta string, reason Reason, review, removal string, existingMeta map[string]string) (*Meta, error) {
+	mm, err := ParseMetaString(meta, existingMeta)
 	if err != nil {
 		return nil, err
+	}
+
+	if areBackupInputsAllBlank(reason, review, removal) && existingMeta != nil {
+		mm.setBackupMeta(existingMeta[MetaKeyReason], existingMeta[MetaKeyReview],
+			existingMeta[MetaKeyRemoval])
+
+		return mm, nil
 	}
 
 	err = createBackupMetadata(reason, review, removal, mm)
@@ -138,12 +146,15 @@ func HandleMeta(meta string, reason Reason, review, removal string) (*Meta, erro
 	return mm, err
 }
 
-func ParseMetaString(meta string) (*Meta, error) {
+// ParseMetaString takes a string of key=value pairs and map of existing
+// metadata and returns a Meta. If the metadata string is nonblank and valid, it
+// will be used to populate the Meta, otherwise the existing meta will be used.
+func ParseMetaString(meta string, existingMetadata map[string]string) (*Meta, error) {
 	kvs := strings.Split(meta, ";")
 	mm := make(map[string]string, len(kvs))
 
 	if meta == "" {
-		return NewMeta(), nil
+		return applyExistingMetadata(mm, existingMetadata), nil
 	}
 
 	for _, kv := range kvs {
@@ -156,6 +167,16 @@ func ParseMetaString(meta string) (*Meta, error) {
 	}
 
 	return &Meta{LocalMeta: mm}, nil
+}
+
+func applyExistingMetadata(mm map[string]string, existingMetadata map[string]string) *Meta {
+	for k, v := range existingMetadata {
+		if strings.HasPrefix(k, MetaUserNamespace) {
+			mm[k] = v
+		}
+	}
+
+	return &Meta{LocalMeta: mm, remoteMeta: make(map[string]string)}
 }
 
 // ValidateAndCreateUserMetadata takes a key=value string, validates it as a
@@ -191,9 +212,22 @@ func handleNamespace(key string) (string, error) {
 	}
 }
 
+func areBackupInputsAllBlank(reason Reason, review, removal string) bool {
+	return reason == Unset && review == "" && removal == ""
+}
+func (m *Meta) setBackupMeta(reason, review, removal string) {
+	m.LocalMeta[MetaKeyReason] = reason
+	m.LocalMeta[MetaKeyReview] = review
+	m.LocalMeta[MetaKeyRemoval] = removal
+}
+
 // createBackupMetadata adds the backup metadata values to the local meta map if
 // the provided inputs are valid.
 func createBackupMetadata(reason Reason, review, removal string, mm *Meta) error {
+	if reason == Unset {
+		reason = Backup
+	}
+
 	review, removal = setReviewAndRemovalDurations(reason, review, removal)
 
 	removalDate, err := getFutureDateFromDurationOrDate(removal)
@@ -215,9 +249,7 @@ func createBackupMetadata(reason Reason, review, removal string, mm *Meta) error
 		return err
 	}
 
-	mm.LocalMeta[MetaKeyReason] = reason.String()
-	mm.LocalMeta[MetaKeyReview] = reviewStr
-	mm.LocalMeta[MetaKeyRemoval] = removalStr
+	mm.setBackupMeta(reason.String(), reviewStr, removalStr)
 
 	return nil
 }

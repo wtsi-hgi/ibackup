@@ -1858,3 +1858,18 @@ func TestCountsValid(t *testing.T) {
 		So(s.countsValid(), ShouldBeFalse)
 	})
 }
+
+func TestUserMetadata(t *testing.T) {
+	Convey("Given a metadata map, you can get a string of user data", t, func() {
+		s := new(Set)
+
+		s.Metadata = map[string]string{
+			"ibackup:user:testKey":  "testVal",
+			"ibackup:user:testKey2": "testVal2",
+			"ibackup:reason":        "backup",
+		}
+
+		userMeta := s.UserMetadata()
+		So(userMeta, ShouldResemble, "testKey=testVal;testKey2=testVal2")
+	})
+}

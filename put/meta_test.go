@@ -41,34 +41,43 @@ func TestMeta(t *testing.T) {
 		validMetaStr2 := "testKey2=testValue2"
 		validMetaStr3 := "testKey3=testValue3;ibackup:user:testKey4=testValue4"
 		validMetaStr4 := ""
+		validPrevMetaMap := map[string]string{
+			"ibackup:user:testKeyPrev1": "testValuePrev1",
+			"ibackup:user:testKeyPrev2": "testValuePrev2",
+		}
 
 		invalidMetaStr1 := "ibackup:testKey=testValue"
 		invalidMetaStr2 := "testKey:testValue"
 
 		Convey("You can get a Meta populated with the values", func() {
-			meta, err := ParseMetaString(validMetaStr1)
+			meta, err := ParseMetaString(validMetaStr1, nil)
 			So(err, ShouldBeNil)
 			So(meta.Metadata()["ibackup:user:testKey1"], ShouldEqual, "testValue1")
 
-			meta, err = ParseMetaString(validMetaStr2)
+			meta, err = ParseMetaString(validMetaStr2, nil)
 			So(err, ShouldBeNil)
 			So(meta.Metadata()["ibackup:user:testKey2"], ShouldEqual, "testValue2")
 
-			meta, err = ParseMetaString(validMetaStr3)
+			meta, err = ParseMetaString(validMetaStr3, validPrevMetaMap)
 			So(err, ShouldBeNil)
 			So(meta.Metadata()["ibackup:user:testKey3"], ShouldEqual, "testValue3")
 			So(meta.Metadata()["ibackup:user:testKey4"], ShouldEqual, "testValue4")
 
-			meta, err = ParseMetaString(validMetaStr4)
+			meta, err = ParseMetaString(validMetaStr4, nil)
 			So(err, ShouldBeNil)
 			So(meta, ShouldNotBeNil)
+
+			meta, err = ParseMetaString(validMetaStr4, validPrevMetaMap)
+			So(err, ShouldBeNil)
+			So(meta.Metadata()["ibackup:user:testKeyPrev1"], ShouldEqual, "testValuePrev1")
+			So(meta.Metadata()["ibackup:user:testKeyPrev2"], ShouldEqual, "testValuePrev2")
 		})
 
 		Convey("Invalid strings will be caught and an error returned", func() {
-			_, err := ParseMetaString(invalidMetaStr1)
+			_, err := ParseMetaString(invalidMetaStr1, nil)
 			So(err.Error(), ShouldContainSubstring, invalidMetaStr1)
 
-			_, err = ParseMetaString(invalidMetaStr2)
+			_, err = ParseMetaString(invalidMetaStr2, validPrevMetaMap)
 			So(err.Error(), ShouldContainSubstring, invalidMetaStr2)
 		})
 	})
@@ -141,7 +150,7 @@ func TestMeta(t *testing.T) {
 		remove := "2y"
 
 		Convey("You can create a Meta containing all the provided metadata", func() {
-			meta, err := HandleMeta(metaString, reason, review, remove)
+			meta, err := HandleMeta(metaString, reason, review, remove, nil)
 			So(err, ShouldBeNil)
 
 			reviewDate, removalDate := testTimesToMeta(t, now.AddDate(1, 0, 0), now.AddDate(2, 0, 0))
