@@ -85,6 +85,8 @@ type Config struct {
 	// result in slack restricting messages itself.
 	SlackMessageDebounce time.Duration
 
+	// IRODSConnectionsTimeout is the time after which we assume iRODS
+	// connections have been closed, and remove them from our tracking.
 	IRODSConnectionsTimeout time.Duration
 }
 
@@ -113,7 +115,6 @@ type Server struct {
 	mapMu               sync.RWMutex
 	creatingCollections map[string]bool
 	iRODSTracker        *iRODSTracker
-	iRODSTimeout        time.Duration
 }
 
 // New creates a Server which can serve a REST API and website.
@@ -135,7 +136,6 @@ func New(conf Config) (*Server, error) {
 		stillRunningMsgFreq: conf.StillRunningMsgFreq,
 		uploadTracker:       newUploadTracker(conf.Slacker, conf.SlackMessageDebounce),
 		iRODSTracker:        newiRODSTracker(conf.Slacker, conf.SlackMessageDebounce, conf.IRODSConnectionsTimeout),
-		iRODSTimeout:        conf.IRODSConnectionsTimeout,
 	}
 
 	s.Server.Router().Use(gas.IncludeAbortErrorsInBody)
