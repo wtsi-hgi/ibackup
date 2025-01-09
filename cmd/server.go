@@ -52,7 +52,7 @@ const numPutClients = 10
 const deadlockTimeout = 30 * time.Minute
 const dbBackupParamPosition = 2
 const defaultDebounceSeconds = 600
-const iRODSConnectionsTimeout = 30 * time.Second
+const iRODSConnectionsTimeout = 5 * time.Minute
 
 // options for this cmd.
 var serverLogPath string

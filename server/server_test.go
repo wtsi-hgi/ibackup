@@ -92,7 +92,7 @@ func TestServer(t *testing.T) {
 	minMBperSecondUploadSpeed := float64(10)
 	maxStuckTime := 1 * time.Hour
 
-	FocusConvey("Given a test cert and db location", t, func() {
+	Convey("Given a test cert and db location", t, func() {
 		certPath, keyPath, err := gas.CreateTestCert(t)
 		So(err, ShouldBeNil)
 
@@ -233,7 +233,7 @@ func TestServer(t *testing.T) {
 			So(slackWriter.String(), ShouldEqual, expectedMsg+expectedMsg+slack.BoxPrefixWarn+"server stopped")
 		})
 
-		FocusConvey("You can make a Server with a logger configured and setup Auth, MakeQueueEndPoints and LoadSetDB", func() {
+		Convey("You can make a Server with a logger configured and setup Auth, MakeQueueEndPoints and LoadSetDB", func() {
 			s, addr, dfunc := makeAndStartServer()
 
 			serverStopped := false
@@ -1563,7 +1563,7 @@ func TestServer(t *testing.T) {
 				})
 			})
 
-			FocusConvey("Which lets you login as admin", func() {
+			Convey("Which lets you login as admin", func() {
 				token, errl := gas.Login(gas.NewClientRequest(addr, certPath), admin, "pass")
 				So(errl, ShouldBeNil)
 
@@ -1575,7 +1575,7 @@ func TestServer(t *testing.T) {
 
 				backupPath := dbPath + ".bk"
 
-				FocusConvey("and add a set", func() {
+				Convey("and add a set", func() {
 					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldBeNil)
 
@@ -1638,7 +1638,7 @@ func TestServer(t *testing.T) {
 						So(got[1].Name, ShouldResemble, exampleSet2.Name)
 					})
 
-					FocusConvey("Then you can use a Putter to automatically deal with upload requests", func() {
+					Convey("Then you can use a Putter to automatically deal with upload requests", func() {
 						requests, errg := client.GetSomeUploadRequests()
 						So(errg, ShouldBeNil)
 						So(len(requests), ShouldEqual, len(discovers))
@@ -1699,7 +1699,7 @@ func TestServer(t *testing.T) {
 
 						So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"0 iRODS connections open")
 
-						FocusConvey("IRODS connections are assumed closed after a period of no contact", func() {
+						Convey("IRODS connections are assumed closed after a period of no contact", func() {
 							s.Stop()
 
 							serverStopped = true
