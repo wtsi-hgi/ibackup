@@ -84,6 +84,8 @@ type Config struct {
 	// messages. Default value means send unlimited messages, which will likely
 	// result in slack restricting messages itself.
 	SlackMessageDebounce time.Duration
+
+	IRODSConnectionsTimeout time.Duration
 }
 
 // Server is used to start a web server that provides a REST API to the setdb
@@ -111,6 +113,7 @@ type Server struct {
 	mapMu               sync.RWMutex
 	creatingCollections map[string]bool
 	iRODSTracker        *iRODSTracker
+	iRODSTimeout        time.Duration
 }
 
 // New creates a Server which can serve a REST API and website.
@@ -131,7 +134,8 @@ func New(conf Config) (*Server, error) {
 		slacker:             conf.Slacker,
 		stillRunningMsgFreq: conf.StillRunningMsgFreq,
 		uploadTracker:       newUploadTracker(conf.Slacker, conf.SlackMessageDebounce),
-		iRODSTracker:        newiRODSTracker(conf.Slacker, conf.SlackMessageDebounce),
+		iRODSTracker:        newiRODSTracker(conf.Slacker, conf.SlackMessageDebounce, conf.IRODSConnectionsTimeout),
+		iRODSTimeout:        conf.IRODSConnectionsTimeout,
 	}
 
 	s.Server.Router().Use(gas.IncludeAbortErrorsInBody)

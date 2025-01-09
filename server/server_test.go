@@ -92,7 +92,7 @@ func TestServer(t *testing.T) {
 	minMBperSecondUploadSpeed := float64(10)
 	maxStuckTime := 1 * time.Hour
 
-	Convey("Given a test cert and db location", t, func() {
+	FocusConvey("Given a test cert and db location", t, func() {
 		certPath, keyPath, err := gas.CreateTestCert(t)
 		So(err, ShouldBeNil)
 
@@ -180,6 +180,9 @@ func TestServer(t *testing.T) {
 
 		conf.Slacker = slack.NewMock(slackWriter)
 
+		iRODsTimeout := 1000 * time.Millisecond
+		conf.IRODSConnectionsTimeout = iRODsTimeout
+
 		const serverStartMessage = slack.BoxPrefixInfo + "server starting, loading database" +
 			slack.BoxPrefixSuccess + "server loaded database"
 
@@ -230,7 +233,7 @@ func TestServer(t *testing.T) {
 			So(slackWriter.String(), ShouldEqual, expectedMsg+expectedMsg+slack.BoxPrefixWarn+"server stopped")
 		})
 
-		Convey("You can make a Server with a logger configured and setup Auth, MakeQueueEndPoints and LoadSetDB", func() {
+		FocusConvey("You can make a Server with a logger configured and setup Auth, MakeQueueEndPoints and LoadSetDB", func() {
 			s, addr, dfunc := makeAndStartServer()
 
 			serverStopped := false
@@ -1560,7 +1563,7 @@ func TestServer(t *testing.T) {
 				})
 			})
 
-			Convey("Which lets you login as admin", func() {
+			FocusConvey("Which lets you login as admin", func() {
 				token, errl := gas.Login(gas.NewClientRequest(addr, certPath), admin, "pass")
 				So(errl, ShouldBeNil)
 
@@ -1572,7 +1575,7 @@ func TestServer(t *testing.T) {
 
 				backupPath := dbPath + ".bk"
 
-				Convey("and add a set", func() {
+				FocusConvey("and add a set", func() {
 					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldBeNil)
 
@@ -1635,7 +1638,7 @@ func TestServer(t *testing.T) {
 						So(got[1].Name, ShouldResemble, exampleSet2.Name)
 					})
 
-					Convey("Then you can use a Putter to automatically deal with upload requests", func() {
+					FocusConvey("Then you can use a Putter to automatically deal with upload requests", func() {
 						requests, errg := client.GetSomeUploadRequests()
 						So(errg, ShouldBeNil)
 						So(len(requests), ShouldEqual, len(discovers))
@@ -1695,6 +1698,32 @@ func TestServer(t *testing.T) {
 						So(qs.IRODSConnections, ShouldEqual, 0)
 
 						So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"0 iRODS connections open")
+
+						FocusConvey("IRODS connections are assumed closed after a period of no contact", func() {
+							s.Stop()
+
+							serverStopped = true
+
+							_, addr2, dfunc2 := makeAndStartServer()
+							defer dfunc2() //nolint:errcheck
+
+							token, errl = gas.Login(gas.NewClientRequest(addr2, certPath), admin, "pass")
+							So(errl, ShouldBeNil)
+
+							client = NewClient(addr2, certPath, token)
+
+							slackWriter.Reset()
+
+							err = client.MakingIRODSConnections(2)
+							So(err, ShouldBeNil)
+
+							So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"2 iRODS connections open")
+							slackWriter.Reset()
+
+							<-time.After(iRODsTimeout * 2)
+
+							So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"0 iRODS connections open")
+						})
 
 						Convey("iRODS messages are debounced if desired", func() {
 							s.Stop()

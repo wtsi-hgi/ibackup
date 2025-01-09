@@ -80,17 +80,56 @@ const (
 type iRODSTracker struct {
 	sync.RWMutex
 	iRODSConnections map[string]int
+	lastHeartbeat    map[string]time.Time
 
 	highestNumDebouncer *slack.HighestNumDebouncer
 }
 
-func newiRODSTracker(slacker slack.Slacker, debounce time.Duration) *iRODSTracker {
+func newiRODSTracker(slacker slack.Slacker, debounce time.Duration, iRODSConnectionsTimeout time.Duration) *iRODSTracker {
 	irt := &iRODSTracker{
 		iRODSConnections:    make(map[string]int),
 		highestNumDebouncer: slack.NewHighestNumDebouncer(slacker, debounce, "iRODS connections open"),
+		lastHeartbeat:       make(map[string]time.Time),
 	}
 
+	go irt.periodicCheckStaleConnections(iRODSConnectionsTimeout)
+
 	return irt
+}
+
+func (irt *iRODSTracker) updateHeartbeat(hostPID string) {
+	irt.Lock()
+	defer irt.Unlock()
+	irt.lastHeartbeat[hostPID] = time.Now()
+}
+
+func (irt *iRODSTracker) removeHeartbeat(hostPID string) {
+	irt.Lock()
+	defer irt.Unlock()
+	delete(irt.lastHeartbeat, hostPID)
+}
+
+func (irt *iRODSTracker) checkStaleConnections(timeout time.Duration) {
+	irt.Lock()
+	defer irt.Unlock()
+
+	now := time.Now()
+	for hostPID, lastTime := range irt.lastHeartbeat {
+		if now.Sub(lastTime) > timeout {
+			irt.Unlock()
+			irt.deleteIRODSConnections(hostPID)
+			irt.Lock()
+		}
+	}
+}
+
+func (irt *iRODSTracker) periodicCheckStaleConnections(timeout time.Duration) {
+	ticker := time.NewTicker(timeout)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		irt.checkStaleConnections(timeout)
+	}
 }
 
 // MakeQueueEndPoints adds a number of endpoints to the REST API for working
@@ -634,6 +673,8 @@ func (irt *iRODSTracker) addIRODSConnections(hostPID string, numberOfConnections
 
 	irt.Unlock()
 
+	irt.updateHeartbeat(hostPID)
+
 	irt.highestNumDebouncer.SendDebounceMsg(irt.totalIRODSConnections())
 }
 
@@ -656,6 +697,8 @@ func (irt *iRODSTracker) deleteIRODSConnections(hostPID string) {
 	delete(irt.iRODSConnections, hostPID)
 
 	irt.Unlock()
+
+	irt.removeHeartbeat(hostPID)
 
 	irt.highestNumDebouncer.SendDebounceMsg(irt.totalIRODSConnections())
 }
