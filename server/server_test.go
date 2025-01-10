@@ -116,7 +116,8 @@ func TestServer(t *testing.T) {
 		logWriter := gas.NewStringLogger()
 		slackWriter := gas.NewStringLogger()
 		conf := Config{
-			HTTPLogger: logWriter,
+			HTTPLogger:              logWriter,
+			IRODSConnectionsTimeout: 5 * time.Minute,
 		}
 
 		Convey("You can make a Server with a logger configured and no slacker", func() {
@@ -179,9 +180,6 @@ func TestServer(t *testing.T) {
 		})
 
 		conf.Slacker = slack.NewMock(slackWriter)
-
-		iRODsTimeout := 1000 * time.Millisecond
-		conf.IRODSConnectionsTimeout = iRODsTimeout
 
 		const serverStartMessage = slack.BoxPrefixInfo + "server starting, loading database" +
 			slack.BoxPrefixSuccess + "server loaded database"
@@ -1701,6 +1699,9 @@ func TestServer(t *testing.T) {
 
 						Convey("IRODS connections are assumed closed after a period of no contact", func() {
 							s.Stop()
+
+							iRODsTimeout := 1000 * time.Millisecond
+							conf.IRODSConnectionsTimeout = iRODsTimeout
 
 							serverStopped = true
 

@@ -79,11 +79,12 @@ const (
 
 type iRODSTracker struct {
 	sync.RWMutex
-	iRODSConnections map[string]int
+	iRODSConnections    map[string]int
+	highestNumDebouncer *slack.HighestNumDebouncer
+
+	ctMu             sync.RWMutex
 	connectionTimers map[string]*time.Timer
 	iRODSTimeout     time.Duration
-
-	highestNumDebouncer *slack.HighestNumDebouncer
 }
 
 func newiRODSTracker(slacker slack.Slacker, debounce time.Duration, iRODSTimeout time.Duration) *iRODSTracker {
@@ -640,9 +641,11 @@ func (irt *iRODSTracker) addIRODSConnections(hostPID string, numberOfConnections
 
 	irt.highestNumDebouncer.SendDebounceMsg(irt.totalIRODSConnections())
 
+	irt.ctMu.Lock()
 	irt.connectionTimers[hostPID] = time.AfterFunc(irt.iRODSTimeout, func() {
 		irt.deleteIRODSConnections(hostPID)
 	})
+	irt.ctMu.Unlock()
 }
 
 func (s *Server) clientClosedIRODSConnections(c *gin.Context) {
@@ -667,8 +670,10 @@ func (irt *iRODSTracker) deleteIRODSConnections(hostPID string) {
 
 	irt.highestNumDebouncer.SendDebounceMsg(irt.totalIRODSConnections())
 
+	irt.ctMu.Lock()
 	if timer, exists := irt.connectionTimers[hostPID]; exists {
 		timer.Stop()
 		delete(irt.connectionTimers, hostPID)
 	}
+	irt.ctMu.Unlock()
 }
