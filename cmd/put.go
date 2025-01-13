@@ -187,7 +187,7 @@ func handleServerMode(started time.Time) {
 
 	err = client.MakingIRODSConnections(numIRODSConnections)
 	if err != nil {
-		die(err.Error())
+		die("%s", err.Error())
 	}
 
 	uploadStarts, uploadResults, skipResults, dfunc := handlePut(client, requests)
@@ -199,7 +199,7 @@ func handleServerMode(started time.Time) {
 
 	errm := client.ClosedIRODSConnections()
 	if errm != nil {
-		warn(errm.Error())
+		warn("%s", errm.Error())
 	}
 
 	if err != nil {

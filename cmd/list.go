@@ -73,7 +73,7 @@ own. You can specify the user as "all" to see all user's sets.
 
 		client, err := newServerClient(serverURL, serverCert)
 		if err != nil {
-			die(err.Error())
+			die("%s", err.Error())
 		}
 
 		getRemote(client, lstLocal, lstRemote, lstUser, lstName)
@@ -109,7 +109,7 @@ func getRemote(client *server.Client, local, remote bool, user, name string) {
 func displayPaths(client *server.Client, given *set.Set, local, remote bool) {
 	entries, err := client.GetFiles(given.ID())
 	if err != nil {
-		die(err.Error())
+		die("%s", err.Error())
 	}
 
 	if local {
@@ -131,7 +131,7 @@ func displayPaths(client *server.Client, given *set.Set, local, remote bool) {
 
 func displayLocalPaths(entries []*set.Entry) {
 	for _, entry := range entries {
-		cliPrint(entry.Path + "\n")
+		cliPrint("%s \n", entry.Path)
 	}
 }
 
@@ -139,7 +139,7 @@ func displayRemotePaths(entries []*set.Entry, transformer put.PathTransformer) {
 	for _, entry := range entries {
 		remotePath := getRemotePath(entry.Path, transformer)
 
-		cliPrint(remotePath + "\n")
+		cliPrint("%s \n", remotePath)
 	}
 }
 
@@ -147,6 +147,6 @@ func displayLocalAndRemotePaths(entries []*set.Entry, transformer put.PathTransf
 	for _, entry := range entries {
 		remotePath := getRemotePath(entry.Path, transformer)
 
-		cliPrint(entry.Path + "\t" + remotePath + "\n")
+		cliPrint("%s \t %s \n", entry.Path, remotePath)
 	}
 }

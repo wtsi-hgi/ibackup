@@ -272,7 +272,7 @@ func (s *Server) clientTtrc(data interface{}) queue.SubQueue {
 // stop is called when the server is Stop()ped, cleaning up our additional
 // properties.
 func (s *Server) stop() {
-	s.sendSlackMessage(slack.Warn, "server stopped") //nolint:errcheck
+	s.sendSlackMessage(slack.Warn, "server stopped")
 
 	if s.serverAliveCh != nil {
 		close(s.serverAliveCh)
