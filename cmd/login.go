@@ -43,7 +43,7 @@ func newServerClient(url, cert string) (*server.Client, error) {
 		return nil, err
 	}
 
-	return server.NewClient(url, cert, token), nil
+	return server.NewClient(url, cert, token)
 }
 
 func gasClientCLI(url, cert string) *gas.ClientCLI {

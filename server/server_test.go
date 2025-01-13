@@ -116,8 +116,7 @@ func TestServer(t *testing.T) {
 		logWriter := gas.NewStringLogger()
 		slackWriter := gas.NewStringLogger()
 		conf := Config{
-			HTTPLogger:              logWriter,
-			IRODSConnectionsTimeout: 5 * time.Minute,
+			HTTPLogger: logWriter,
 		}
 
 		Convey("You can make a Server with a logger configured and no slacker", func() {
@@ -148,7 +147,8 @@ func TestServer(t *testing.T) {
 			So(errl, ShouldBeNil)
 			So(token, ShouldNotBeBlank)
 
-			client := NewClient(addr, certPath, token)
+			client, err := NewClient(addr, certPath, token)
+			So(err, ShouldBeNil)
 
 			err = client.AddOrUpdateSet(exampleSet)
 			So(err, ShouldBeNil)
@@ -300,7 +300,8 @@ func TestServer(t *testing.T) {
 
 					slackWriter.Reset()
 
-					client := NewClient(addr, certPath, token)
+					client, err := NewClient(addr, certPath, token)
+					So(err, ShouldBeNil)
 
 					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldBeNil)
@@ -485,7 +486,8 @@ func TestServer(t *testing.T) {
 							token, errl = gas.Login(gas.NewClientRequest(addr, certPath), admin, "pass")
 							So(errl, ShouldBeNil)
 
-							client = NewClient(addr, certPath, token)
+							client, err = NewClient(addr, certPath, token)
+							So(err, ShouldBeNil)
 
 							requests, errg := client.GetSomeUploadRequests()
 							So(errg, ShouldBeNil)
@@ -634,7 +636,8 @@ func TestServer(t *testing.T) {
 							token, errl = gas.Login(gas.NewClientRequest(addr, certPath), admin, "pass")
 							So(errl, ShouldBeNil)
 
-							client = NewClient(addr, certPath, token)
+							client, err = NewClient(addr, certPath, token)
+							So(err, ShouldBeNil)
 
 							requests, errg := client.GetSomeUploadRequests()
 							So(errg, ShouldBeNil)
@@ -714,7 +717,8 @@ func TestServer(t *testing.T) {
 							token, errl = gas.Login(gas.NewClientRequest(addr2, certPath), admin, "pass")
 							So(errl, ShouldBeNil)
 
-							client = NewClient(addr2, certPath, token)
+							client, err = NewClient(addr2, certPath, token)
+							So(err, ShouldBeNil)
 
 							requests, errg := client.GetSomeUploadRequests()
 							So(errg, ShouldBeNil)
@@ -811,7 +815,8 @@ func TestServer(t *testing.T) {
 							token, errl = gas.Login(gas.NewClientRequest(addr, certPath), admin, "pass")
 							So(errl, ShouldBeNil)
 
-							client = NewClient(addr, certPath, token)
+							client, err = NewClient(addr, certPath, token)
+							So(err, ShouldBeNil)
 
 							makeSetComplete := func(numExpectedRequests int) {
 								requests, errg := client.GetSomeUploadRequests()
@@ -1004,7 +1009,8 @@ func TestServer(t *testing.T) {
 							token, errl = gas.Login(gas.NewClientRequest(addr, certPath), admin, "pass")
 							So(errl, ShouldBeNil)
 
-							client = NewClient(addr, certPath, token)
+							client, err = NewClient(addr, certPath, token)
+							So(err, ShouldBeNil)
 
 							qs := s.QueueStatus()
 							So(qs, ShouldNotBeNil)
@@ -1067,7 +1073,8 @@ func TestServer(t *testing.T) {
 							token, errl = gas.Login(gas.NewClientRequest(addr, certPath), admin, "pass")
 							So(errl, ShouldBeNil)
 
-							client = NewClient(addr, certPath, token)
+							client, err = NewClient(addr, certPath, token)
+							So(err, ShouldBeNil)
 
 							buried := s.BuriedRequests()
 							So(buried, ShouldBeNil)
@@ -1204,7 +1211,8 @@ func TestServer(t *testing.T) {
 							token, errl = gas.Login(gas.NewClientRequest(addr, certPath), admin, "pass")
 							So(errl, ShouldBeNil)
 
-							client = NewClient(addr, certPath, token)
+							client, err = NewClient(addr, certPath, token)
+							So(err, ShouldBeNil)
 
 							uploading, errc := client.UploadingRequests()
 							So(errc, ShouldBeNil)
@@ -1238,7 +1246,8 @@ func TestServer(t *testing.T) {
 							token, errl = gas.Login(gas.NewClientRequest(addr, certPath), admin, "pass")
 							So(errl, ShouldBeNil)
 
-							client = NewClient(addr, certPath, token)
+							client, err = NewClient(addr, certPath, token)
+							So(err, ShouldBeNil)
 
 							all, errc := client.AllRequests()
 							So(errc, ShouldBeNil)
@@ -1286,7 +1295,9 @@ func TestServer(t *testing.T) {
 						Convey("Once logged in and with a client", func() {
 							token, errl = gas.Login(gas.NewClientRequest(addr, certPath), admin, "pass")
 							So(errl, ShouldBeNil)
-							client = NewClient(addr, certPath, token)
+
+							client, err = NewClient(addr, certPath, token)
+							So(err, ShouldBeNil)
 
 							Convey("Client can automatically update server given Putter-style output using SendPutResultsToServer", func() {
 								uploadStartsCh := make(chan *put.Request)
@@ -1543,7 +1554,8 @@ func TestServer(t *testing.T) {
 						Transformer: exampleSet.Transformer,
 					}
 
-					client := NewClient(addr, certPath, token)
+					client, err := NewClient(addr, certPath, token)
+					So(err, ShouldBeNil)
 
 					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldBeNil)
@@ -1565,7 +1577,8 @@ func TestServer(t *testing.T) {
 				token, errl := gas.Login(gas.NewClientRequest(addr, certPath), admin, "pass")
 				So(errl, ShouldBeNil)
 
-				client := NewClient(addr, certPath, token)
+				client, err := NewClient(addr, certPath, token)
+				So(err, ShouldBeNil)
 
 				handler := put.GetLocalHandler()
 
@@ -1700,30 +1713,47 @@ func TestServer(t *testing.T) {
 						Convey("IRODS connections are assumed closed after a period of no contact", func() {
 							s.Stop()
 
-							iRODsTimeout := 1000 * time.Millisecond
-							conf.IRODSConnectionsTimeout = iRODsTimeout
+							iRODsTimeout := 100 * time.Millisecond
 
 							serverStopped = true
 
-							_, addr2, dfunc2 := makeAndStartServer()
+							s2, addr2, dfunc2 := makeAndStartServer()
 							defer dfunc2() //nolint:errcheck
 
 							token, errl = gas.Login(gas.NewClientRequest(addr2, certPath), admin, "pass")
 							So(errl, ShouldBeNil)
 
-							client = NewClient(addr2, certPath, token)
+							client = &Client{
+								url:  addr2,
+								cert: certPath,
+								jwt:  token,
+							}
+
+							heartbeatCh, errh := client.startHeartbeat(iRODsTimeout)
+							So(errh, ShouldBeNil)
 
 							slackWriter.Reset()
 
 							err = client.MakingIRODSConnections(2)
 							So(err, ShouldBeNil)
 
+							So(s2.iRODSTracker.totalIRODSConnections(), ShouldEqual, 2)
+
 							So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"2 iRODS connections open")
+
 							slackWriter.Reset()
 
-							<-time.After(iRODsTimeout * 2)
+							<-time.After(6 * iRODsTimeout)
 
-							So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"0 iRODS connections open")
+							So(s2.iRODSTracker.totalIRODSConnections(), ShouldEqual, 2)
+
+							close(heartbeatCh)
+
+							<-time.After(6 * iRODsTimeout)
+
+							So(s2.iRODSTracker.totalIRODSConnections(), ShouldEqual, 0)
+
+							So(slackWriter.String(), ShouldContainSubstring, slack.BoxPrefixInfo+"0 iRODS connections open")
 						})
 
 						Convey("iRODS messages are debounced if desired", func() {
@@ -1740,7 +1770,8 @@ func TestServer(t *testing.T) {
 							token, errl = gas.Login(gas.NewClientRequest(addr2, certPath), admin, "pass")
 							So(errl, ShouldBeNil)
 
-							client = NewClient(addr2, certPath, token)
+							client, err = NewClient(addr2, certPath, token)
+							So(err, ShouldBeNil)
 
 							slackWriter.Reset()
 

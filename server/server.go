@@ -84,10 +84,6 @@ type Config struct {
 	// messages. Default value means send unlimited messages, which will likely
 	// result in slack restricting messages itself.
 	SlackMessageDebounce time.Duration
-
-	// IRODSConnectionsTimeout is the time after which we assume iRODS
-	// connections have been closed, and remove them from our tracking.
-	IRODSConnectionsTimeout time.Duration
 }
 
 // Server is used to start a web server that provides a REST API to the setdb
@@ -115,6 +111,7 @@ type Server struct {
 	mapMu               sync.RWMutex
 	creatingCollections map[string]bool
 	iRODSTracker        *iRODSTracker
+	clientQueue         *queue.Queue
 }
 
 // New creates a Server which can serve a REST API and website.
@@ -135,8 +132,11 @@ func New(conf Config) (*Server, error) {
 		slacker:             conf.Slacker,
 		stillRunningMsgFreq: conf.StillRunningMsgFreq,
 		uploadTracker:       newUploadTracker(conf.Slacker, conf.SlackMessageDebounce),
-		iRODSTracker:        newiRODSTracker(conf.Slacker, conf.SlackMessageDebounce, conf.IRODSConnectionsTimeout),
+		iRODSTracker:        newiRODSTracker(conf.Slacker, conf.SlackMessageDebounce),
+		clientQueue:         queue.New(context.Background(), "client"),
 	}
+
+	s.clientQueue.SetTTRCallback(s.clientTtrc)
 
 	s.Server.Router().Use(gas.IncludeAbortErrorsInBody)
 
@@ -254,6 +254,19 @@ func (s *Server) ttrc(data interface{}) queue.SubQueue {
 	s.uploadTracker.uploadFinished(r)
 
 	return queue.SubQueueReady
+}
+
+func (s *Server) clientTtrc(data interface{}) queue.SubQueue {
+	hostPID, ok := data.(string)
+	if !ok {
+		s.Logger.Printf("item data not a hostPID")
+	}
+
+	s.slacker.SendMessage(slack.Warn, fmt.Sprintf("client host pid %s assumed killed", hostPID))
+
+	s.iRODSTracker.deleteIRODSConnections(hostPID)
+
+	return queue.SubQueueRemoved
 }
 
 // stop is called when the server is Stop()ped, cleaning up our additional

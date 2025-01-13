@@ -47,6 +47,7 @@ const (
 	bytesInMiB           = 1024 * 1024
 	numHandlers          = 2
 	millisecondsInSecond = 1000
+	heartbeatFreq        = time.Minute
 
 	ErrKilledDueToStuck = gas.Error(put.ErrStuckTimeout)
 )
@@ -75,12 +76,46 @@ type Client struct {
 // certificate, eg. if the server was started with a self-signed certificate.
 //
 // You must first gas.GetJWT() to get a JWT that you must supply here.
-func NewClient(url, cert, jwt string) *Client {
-	return &Client{
+func NewClient(url, cert, jwt string) (*Client, error) {
+	client := &Client{
 		url:  url,
 		cert: cert,
 		jwt:  jwt,
 	}
+
+	_, err := client.startHeartbeat(heartbeatFreq)
+
+	return client, err
+}
+
+func (c *Client) startHeartbeat(freq time.Duration) (chan bool, error) {
+	ticker := time.NewTicker(freq)
+	quit := make(chan bool)
+
+	hostPID, err := hostPID()
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = c.request().Post(EndPointAuthClientStarted + "/" + hostPID + "?heartbeatfreq=" + freq.String())
+	if err != nil {
+		return nil, err
+	}
+
+	go func() {
+		for {
+			select {
+			case <-ticker.C:
+				c.request().Post(EndPointAuthClientHeartbeat + "/" + hostPID) //nolint:errcheck
+			case <-quit:
+				ticker.Stop()
+
+				return
+			}
+		}
+	}()
+
+	return quit, nil
 }
 
 func (c *Client) request() *resty.Request {

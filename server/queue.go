@@ -49,9 +49,14 @@ const (
 	queueAllPath          = "/allrequests"
 	queueCollCreationPath = "/collcreation"
 	iRODSConnectionPath   = "/irodsconnection"
+	clientHeartbeat       = "/clientheartbeat"
+	clientStarted         = "/clientstarted"
 	paramHostPID          = "hostpid"
 
+	numAllowedMissedHeartbeats = 5
+
 	ErrNoConnectionsNumber = gas.Error("nconnections must be provided")
+	ErrNoHeartbeatFreq     = gas.Error("heartbeatfreq must be valid")
 
 	// EndPointAuthQueueStatus is the endpoint for getting queue status.
 	EndPointAuthQueueStatus = gas.EndPointAuth + queueStatusPath
@@ -75,23 +80,25 @@ const (
 	// EndPointAuthIRODSConnection is the endpoint for telling the server
 	// that a client created or closed its connections.
 	EndPointAuthIRODSConnection = gas.EndPointAuth + iRODSConnectionPath
+
+	// EndPointAuthClientStarted is the endpoint for telling the server
+	// that a client has started.
+	EndPointAuthClientStarted = gas.EndPointAuth + clientStarted
+
+	// EndPointAuthClientHeartbeat is the endpoint for telling the server
+	// that a client is still alive.
+	EndPointAuthClientHeartbeat = gas.EndPointAuth + clientHeartbeat
 )
 
 type iRODSTracker struct {
 	sync.RWMutex
 	iRODSConnections    map[string]int
 	highestNumDebouncer *slack.HighestNumDebouncer
-
-	ctMu             sync.RWMutex
-	connectionTimers map[string]*time.Timer
-	iRODSTimeout     time.Duration
 }
 
-func newiRODSTracker(slacker slack.Slacker, debounce time.Duration, iRODSTimeout time.Duration) *iRODSTracker {
+func newiRODSTracker(slacker slack.Slacker, debounce time.Duration) *iRODSTracker {
 	irt := &iRODSTracker{
 		iRODSConnections:    make(map[string]int),
-		connectionTimers:    make(map[string]*time.Timer),
-		iRODSTimeout:        iRODSTimeout,
 		highestNumDebouncer: slack.NewHighestNumDebouncer(slacker, debounce, "iRODS connections open"),
 	}
 
@@ -150,6 +157,10 @@ func (s *Server) MakeQueueEndPoints() error {
 
 	authGroup.POST(iRODSConnectionPath+hostPIDParam, s.clientMadeIRODSConnections)
 	authGroup.DELETE(iRODSConnectionPath+hostPIDParam, s.clientClosedIRODSConnections)
+
+	authGroup.POST(clientHeartbeat+hostPIDParam, s.clientSentHeartbeat)
+
+	authGroup.POST(clientStarted+hostPIDParam, s.clientStarted)
 
 	return nil
 }
@@ -640,12 +651,6 @@ func (irt *iRODSTracker) addIRODSConnections(hostPID string, numberOfConnections
 	irt.Unlock()
 
 	irt.highestNumDebouncer.SendDebounceMsg(irt.totalIRODSConnections())
-
-	irt.ctMu.Lock()
-	irt.connectionTimers[hostPID] = time.AfterFunc(irt.iRODSTimeout, func() {
-		irt.deleteIRODSConnections(hostPID)
-	})
-	irt.ctMu.Unlock()
 }
 
 func (s *Server) clientClosedIRODSConnections(c *gin.Context) {
@@ -669,11 +674,42 @@ func (irt *iRODSTracker) deleteIRODSConnections(hostPID string) {
 	irt.Unlock()
 
 	irt.highestNumDebouncer.SendDebounceMsg(irt.totalIRODSConnections())
+}
 
-	irt.ctMu.Lock()
-	if timer, exists := irt.connectionTimers[hostPID]; exists {
-		timer.Stop()
-		delete(irt.connectionTimers, hostPID)
+func (s *Server) clientStarted(c *gin.Context) {
+	hostPID, status, err := s.extractHostPIDForCreatingCollectionsEndpoints(c)
+	if err != nil {
+		c.AbortWithError(status, err) //nolint:errcheck
+
+		return
 	}
-	irt.ctMu.Unlock()
+
+	heartbeatFreqStr := c.Query("heartbeatfreq")
+
+	freq, err := time.ParseDuration(heartbeatFreqStr)
+	if err != nil {
+		c.AbortWithError(http.StatusBadRequest, ErrNoHeartbeatFreq) //nolint:errcheck
+
+		return
+	}
+
+	_, err = s.clientQueue.Add(context.Background(), hostPID, "", hostPID, 0, 0,
+		numAllowedMissedHeartbeats*freq, queue.SubQueueRun)
+	if err != nil {
+		c.AbortWithError(status, err) //nolint:errcheck
+	}
+}
+
+func (s *Server) clientSentHeartbeat(c *gin.Context) {
+	hostPID, status, err := s.extractHostPIDForCreatingCollectionsEndpoints(c)
+	if err != nil {
+		c.AbortWithError(status, err) //nolint:errcheck
+
+		return
+	}
+
+	err = s.clientQueue.Touch(hostPID)
+	if err != nil {
+		c.AbortWithError(status, err) //nolint:errcheck
+	}
 }
