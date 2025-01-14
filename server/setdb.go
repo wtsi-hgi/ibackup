@@ -934,6 +934,8 @@ func (s *Server) recoverQueue() error {
 		}
 	}
 
+	s.sendSlackMessage(slack.Success, "recovery completed.")
+
 	return nil
 }
 
@@ -962,6 +964,11 @@ func (s *Server) recoverSet(given *set.Set) error {
 	}
 
 	return err
+}
+
+// sends a slack message to say the server has started.
+func (s *Server) SlackStarted() {
+	s.sendSlackMessage(slack.Success, "server started")
 }
 
 // retryFailedEntries adds failed entires in the set with the id specified in
