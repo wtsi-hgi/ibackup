@@ -47,7 +47,6 @@ const (
 	bytesInMiB           = 1024 * 1024
 	numHandlers          = 2
 	millisecondsInSecond = 1000
-	heartbeatFreq        = time.Minute
 
 	ErrKilledDueToStuck = gas.Error(put.ErrStuckTimeout)
 )
@@ -76,19 +75,17 @@ type Client struct {
 // certificate, eg. if the server was started with a self-signed certificate.
 //
 // You must first gas.GetJWT() to get a JWT that you must supply here.
-func NewClient(url, cert, jwt string) (*Client, error) {
+func NewClient(url, cert, jwt string) *Client {
 	client := &Client{
 		url:  url,
 		cert: cert,
 		jwt:  jwt,
 	}
 
-	_, err := client.startHeartbeat(heartbeatFreq)
-
-	return client, err
+	return client
 }
 
-func (c *Client) startHeartbeat(freq time.Duration) (chan bool, error) {
+func (c *Client) StartHeartbeat(freq time.Duration) (chan bool, error) {
 	ticker := time.NewTicker(freq)
 	quit := make(chan bool)
 

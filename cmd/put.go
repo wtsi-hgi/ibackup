@@ -52,6 +52,7 @@ const (
 	putSet         = "manual"
 
 	numIRODSConnections = 2
+	heartbeatFreq       = 1 * time.Minute
 
 	// minMBperSecondUploadSpeed is the slowest MB/s we think an upload should
 	// take; if it drops below this and is still uploading, we'll report to the
@@ -175,7 +176,12 @@ func serverMode() bool {
 func handleServerMode(started time.Time) {
 	client, err := newServerClient(serverURL, serverCert)
 	if err != nil {
-		die(err.Error())
+		die("%s", err.Error())
+	}
+
+	_, err = client.StartHeartbeat(heartbeatFreq)
+	if err != nil {
+		die("%s", err.Error())
 	}
 
 	requests, err := client.GetSomeUploadRequests()

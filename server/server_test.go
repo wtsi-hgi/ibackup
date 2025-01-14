@@ -147,8 +147,7 @@ func TestServer(t *testing.T) {
 			So(errl, ShouldBeNil)
 			So(token, ShouldNotBeBlank)
 
-			client, err := NewClient(addr, certPath, token)
-			So(err, ShouldBeNil)
+			client := NewClient(addr, certPath, token)
 
 			err = client.AddOrUpdateSet(exampleSet)
 			So(err, ShouldBeNil)
@@ -300,8 +299,7 @@ func TestServer(t *testing.T) {
 
 					slackWriter.Reset()
 
-					client, err := NewClient(addr, certPath, token)
-					So(err, ShouldBeNil)
+					client := NewClient(addr, certPath, token)
 
 					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldBeNil)
@@ -486,8 +484,7 @@ func TestServer(t *testing.T) {
 							token, errl = gas.Login(gas.NewClientRequest(addr, certPath), admin, "pass")
 							So(errl, ShouldBeNil)
 
-							client, err = NewClient(addr, certPath, token)
-							So(err, ShouldBeNil)
+							client = NewClient(addr, certPath, token)
 
 							requests, errg := client.GetSomeUploadRequests()
 							So(errg, ShouldBeNil)
@@ -636,8 +633,7 @@ func TestServer(t *testing.T) {
 							token, errl = gas.Login(gas.NewClientRequest(addr, certPath), admin, "pass")
 							So(errl, ShouldBeNil)
 
-							client, err = NewClient(addr, certPath, token)
-							So(err, ShouldBeNil)
+							client = NewClient(addr, certPath, token)
 
 							requests, errg := client.GetSomeUploadRequests()
 							So(errg, ShouldBeNil)
@@ -717,8 +713,7 @@ func TestServer(t *testing.T) {
 							token, errl = gas.Login(gas.NewClientRequest(addr2, certPath), admin, "pass")
 							So(errl, ShouldBeNil)
 
-							client, err = NewClient(addr2, certPath, token)
-							So(err, ShouldBeNil)
+							client = NewClient(addr2, certPath, token)
 
 							requests, errg := client.GetSomeUploadRequests()
 							So(errg, ShouldBeNil)
@@ -815,8 +810,7 @@ func TestServer(t *testing.T) {
 							token, errl = gas.Login(gas.NewClientRequest(addr, certPath), admin, "pass")
 							So(errl, ShouldBeNil)
 
-							client, err = NewClient(addr, certPath, token)
-							So(err, ShouldBeNil)
+							client = NewClient(addr, certPath, token)
 
 							makeSetComplete := func(numExpectedRequests int) {
 								requests, errg := client.GetSomeUploadRequests()
@@ -1009,8 +1003,7 @@ func TestServer(t *testing.T) {
 							token, errl = gas.Login(gas.NewClientRequest(addr, certPath), admin, "pass")
 							So(errl, ShouldBeNil)
 
-							client, err = NewClient(addr, certPath, token)
-							So(err, ShouldBeNil)
+							client = NewClient(addr, certPath, token)
 
 							qs := s.QueueStatus()
 							So(qs, ShouldNotBeNil)
@@ -1073,8 +1066,7 @@ func TestServer(t *testing.T) {
 							token, errl = gas.Login(gas.NewClientRequest(addr, certPath), admin, "pass")
 							So(errl, ShouldBeNil)
 
-							client, err = NewClient(addr, certPath, token)
-							So(err, ShouldBeNil)
+							client = NewClient(addr, certPath, token)
 
 							buried := s.BuriedRequests()
 							So(buried, ShouldBeNil)
@@ -1211,8 +1203,7 @@ func TestServer(t *testing.T) {
 							token, errl = gas.Login(gas.NewClientRequest(addr, certPath), admin, "pass")
 							So(errl, ShouldBeNil)
 
-							client, err = NewClient(addr, certPath, token)
-							So(err, ShouldBeNil)
+							client = NewClient(addr, certPath, token)
 
 							uploading, errc := client.UploadingRequests()
 							So(errc, ShouldBeNil)
@@ -1246,8 +1237,7 @@ func TestServer(t *testing.T) {
 							token, errl = gas.Login(gas.NewClientRequest(addr, certPath), admin, "pass")
 							So(errl, ShouldBeNil)
 
-							client, err = NewClient(addr, certPath, token)
-							So(err, ShouldBeNil)
+							client = NewClient(addr, certPath, token)
 
 							all, errc := client.AllRequests()
 							So(errc, ShouldBeNil)
@@ -1296,8 +1286,7 @@ func TestServer(t *testing.T) {
 							token, errl = gas.Login(gas.NewClientRequest(addr, certPath), admin, "pass")
 							So(errl, ShouldBeNil)
 
-							client, err = NewClient(addr, certPath, token)
-							So(err, ShouldBeNil)
+							client = NewClient(addr, certPath, token)
 
 							Convey("Client can automatically update server given Putter-style output using SendPutResultsToServer", func() {
 								uploadStartsCh := make(chan *put.Request)
@@ -1554,8 +1543,7 @@ func TestServer(t *testing.T) {
 						Transformer: exampleSet.Transformer,
 					}
 
-					client, err := NewClient(addr, certPath, token)
-					So(err, ShouldBeNil)
+					client := NewClient(addr, certPath, token)
 
 					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldBeNil)
@@ -1577,8 +1565,7 @@ func TestServer(t *testing.T) {
 				token, errl := gas.Login(gas.NewClientRequest(addr, certPath), admin, "pass")
 				So(errl, ShouldBeNil)
 
-				client, err := NewClient(addr, certPath, token)
-				So(err, ShouldBeNil)
+				client := NewClient(addr, certPath, token)
 
 				handler := put.GetLocalHandler()
 
@@ -1710,26 +1697,29 @@ func TestServer(t *testing.T) {
 
 						So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"0 iRODS connections open")
 
+						iRODsTimeout := 100 * time.Millisecond
+
+						Convey("Client is removed from server client queue after being closed", func() {
+							client = NewClient(addr, certPath, token)
+
+							_, errh := client.StartHeartbeat(iRODsTimeout)
+							So(errh, ShouldBeNil)
+
+							hostPID, errh := hostPID()
+							So(errh, ShouldBeNil)
+
+							So(s.clientQueue.Touch(hostPID), ShouldBeNil)
+
+							err = client.ClosedIRODSConnections()
+							So(err, ShouldBeNil)
+
+							So(s.clientQueue.Touch(hostPID), ShouldNotBeNil)
+						})
+
 						Convey("IRODS connections are assumed closed after a period of no contact", func() {
-							s.Stop()
+							client = NewClient(addr, certPath, token)
 
-							iRODsTimeout := 100 * time.Millisecond
-
-							serverStopped = true
-
-							s2, addr2, dfunc2 := makeAndStartServer()
-							defer dfunc2() //nolint:errcheck
-
-							token, errl = gas.Login(gas.NewClientRequest(addr2, certPath), admin, "pass")
-							So(errl, ShouldBeNil)
-
-							client = &Client{
-								url:  addr2,
-								cert: certPath,
-								jwt:  token,
-							}
-
-							heartbeatCh, errh := client.startHeartbeat(iRODsTimeout)
+							heartbeatCh, errh := client.StartHeartbeat(iRODsTimeout)
 							So(errh, ShouldBeNil)
 
 							slackWriter.Reset()
@@ -1737,7 +1727,7 @@ func TestServer(t *testing.T) {
 							err = client.MakingIRODSConnections(2)
 							So(err, ShouldBeNil)
 
-							So(s2.iRODSTracker.totalIRODSConnections(), ShouldEqual, 2)
+							So(s.iRODSTracker.totalIRODSConnections(), ShouldEqual, 2)
 
 							So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"2 iRODS connections open")
 
@@ -1745,13 +1735,13 @@ func TestServer(t *testing.T) {
 
 							<-time.After(6 * iRODsTimeout)
 
-							So(s2.iRODSTracker.totalIRODSConnections(), ShouldEqual, 2)
+							So(s.iRODSTracker.totalIRODSConnections(), ShouldEqual, 2)
 
 							close(heartbeatCh)
 
 							<-time.After(6 * iRODsTimeout)
 
-							So(s2.iRODSTracker.totalIRODSConnections(), ShouldEqual, 0)
+							So(s.iRODSTracker.totalIRODSConnections(), ShouldEqual, 0)
 
 							So(slackWriter.String(), ShouldContainSubstring, slack.BoxPrefixInfo+"0 iRODS connections open")
 						})
@@ -1770,8 +1760,7 @@ func TestServer(t *testing.T) {
 							token, errl = gas.Login(gas.NewClientRequest(addr2, certPath), admin, "pass")
 							So(errl, ShouldBeNil)
 
-							client, err = NewClient(addr2, certPath, token)
-							So(err, ShouldBeNil)
+							client = NewClient(addr2, certPath, token)
 
 							slackWriter.Reset()
 

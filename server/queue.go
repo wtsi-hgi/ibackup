@@ -663,6 +663,13 @@ func (s *Server) clientClosedIRODSConnections(c *gin.Context) {
 
 	s.iRODSTracker.deleteIRODSConnections(hostPID)
 
+	err = s.clientClosed(hostPID)
+	if err != nil {
+		c.AbortWithError(status, err) //nolint:errcheck
+
+		return
+	}
+
 	c.Status(http.StatusOK)
 }
 
@@ -712,4 +719,8 @@ func (s *Server) clientSentHeartbeat(c *gin.Context) {
 	if err != nil {
 		c.AbortWithError(status, err) //nolint:errcheck
 	}
+}
+
+func (s *Server) clientClosed(hostPID string) error {
+	return s.clientQueue.Remove(context.Background(), hostPID)
 }
