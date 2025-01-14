@@ -136,7 +136,7 @@ func New(conf Config) (*Server, error) {
 		clientQueue:         queue.New(context.Background(), "client"),
 	}
 
-	s.clientQueue.SetTTRCallback(s.ClientTtrc)
+	s.clientQueue.SetTTRCallback(s.clientTTRC)
 
 	s.Server.Router().Use(gas.IncludeAbortErrorsInBody)
 
@@ -186,7 +186,7 @@ func (s *Server) EnableJobSubmission(putCmd, deployment, cwd, queue string, numC
 	s.putCmd = putCmd
 
 	s.queue.SetReadyAddedCallback(s.rac)
-	s.queue.SetTTRCallback(s.Ttrc)
+	s.queue.SetTTRCallback(s.ttrc)
 	s.numClients = numClients
 
 	return nil
@@ -243,9 +243,9 @@ func (s *Server) estimateJobsNeeded(numReady int) int {
 	return s.numClients
 }
 
-// Ttrc is called when reserved items in our queue are abandoned due to a put
+// ttrc is called when reserved items in our queue are abandoned due to a put
 // client dying, and so we cleanup and send it back to the ready subqueue.
-func (s *Server) Ttrc(data interface{}) queue.SubQueue {
+func (s *Server) ttrc(data interface{}) queue.SubQueue {
 	r, ok := data.(*put.Request)
 	if !ok {
 		s.Logger.Printf("item data not a Request")
@@ -256,9 +256,9 @@ func (s *Server) Ttrc(data interface{}) queue.SubQueue {
 	return queue.SubQueueReady
 }
 
-// ClientTtrc is called when clients are assumed to be killed due to not sending
+// clientTTRC is called when clients are assumed to be killed due to not sending
 // a heartbeat 5 times consecutively, and removes the iRODS connections.
-func (s *Server) ClientTtrc(data interface{}) queue.SubQueue {
+func (s *Server) clientTTRC(data interface{}) queue.SubQueue {
 	hostPID, ok := data.(string)
 	if !ok {
 		s.Logger.Printf("item data not a hostPID")
