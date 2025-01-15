@@ -966,8 +966,8 @@ func (s *Server) recoverSet(given *set.Set) error {
 	return err
 }
 
-// sends a slack message to say the server has started.
-func (s *Server) SlackStarted() {
+// SayStartedToSlack sends a slack message to say the server has started.
+func (s *Server) SayStartedToSlack() {
 	s.sendSlackMessage(slack.Success, "server started")
 }
 
