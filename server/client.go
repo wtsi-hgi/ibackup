@@ -66,6 +66,7 @@ type Client struct {
 	maxStuckTime              time.Duration
 	uploadsErrCh              chan error
 	logger                    log15.Logger
+	heartbeatQuitCh           chan bool
 }
 
 // NewClient returns a Client you can use to call methods on a Server listening
@@ -76,11 +77,13 @@ type Client struct {
 //
 // You must first gas.GetJWT() to get a JWT that you must supply here.
 func NewClient(url, cert, jwt string) *Client {
-	return &Client{
+	client := &Client{
 		url:  url,
 		cert: cert,
 		jwt:  jwt,
 	}
+
+	return client
 }
 
 func (c *Client) request() *resty.Request {

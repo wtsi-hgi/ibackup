@@ -111,6 +111,7 @@ type Server struct {
 	mapMu               sync.RWMutex
 	creatingCollections map[string]bool
 	iRODSTracker        *iRODSTracker
+	clientQueue         *queue.Queue
 }
 
 // New creates a Server which can serve a REST API and website.
@@ -132,7 +133,10 @@ func New(conf Config) (*Server, error) {
 		stillRunningMsgFreq: conf.StillRunningMsgFreq,
 		uploadTracker:       newUploadTracker(conf.Slacker, conf.SlackMessageDebounce),
 		iRODSTracker:        newiRODSTracker(conf.Slacker, conf.SlackMessageDebounce),
+		clientQueue:         queue.New(context.Background(), "client"),
 	}
+
+	s.clientQueue.SetTTRCallback(s.clientTTRC)
 
 	s.Server.Router().Use(gas.IncludeAbortErrorsInBody)
 
@@ -252,10 +256,25 @@ func (s *Server) ttrc(data interface{}) queue.SubQueue {
 	return queue.SubQueueReady
 }
 
+// clientTTRC is called when clients are assumed to be killed due to not sending
+// a heartbeat 5 times consecutively, and removes the iRODS connections.
+func (s *Server) clientTTRC(data interface{}) queue.SubQueue {
+	hostPID, ok := data.(string)
+	if !ok {
+		s.Logger.Printf("item data not a hostPID")
+	}
+
+	s.slacker.SendMessage(slack.Warn, fmt.Sprintf("client host pid %s assumed killed", hostPID))
+
+	s.iRODSTracker.deleteIRODSConnections(hostPID)
+
+	return queue.SubQueueRemoved
+}
+
 // stop is called when the server is Stop()ped, cleaning up our additional
 // properties.
 func (s *Server) stop() {
-	s.sendSlackMessage(slack.Warn, "server stopped") //nolint:errcheck
+	s.sendSlackMessage(slack.Warn, "server stopped")
 
 	if s.serverAliveCh != nil {
 		close(s.serverAliveCh)
