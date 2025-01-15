@@ -54,6 +54,8 @@ const (
 	workingPath      = "/working"
 	fileStatusPath   = "/file_status"
 	fileRetryPath    = "/retry"
+	removeFilesPath  = "/remove_files"
+	removeDirsPath   = "/remove_dirs"
 
 	// EndPointAuthSet is the endpoint for getting and setting sets.
 	EndPointAuthSet = gas.EndPointAuth + setPath
@@ -89,6 +91,12 @@ const (
 
 	// EndPointAuthRetryEntries is the endpoint for retrying file uploads.
 	EndPointAuthRetryEntries = gas.EndPointAuth + fileRetryPath
+
+	//
+	EndPointAuthRemoveFiles = gas.EndPointAuth + removeFilesPath
+
+	//
+	EndPointAuthRemoveDirs = gas.EndPointAuth + removeDirsPath
 
 	ErrNoAuth          = gas.Error("auth must be enabled")
 	ErrNoSetDBDirFound = gas.Error("set database directory not found")
@@ -268,6 +276,9 @@ func (s *Server) addDBEndpoints(authGroup *gin.RouterGroup) {
 	authGroup.PUT(fileStatusPath, s.putFileStatus)
 
 	authGroup.GET(fileRetryPath+idParam, s.retryFailedEntries)
+
+	authGroup.PUT(removeFilesPath+idParam, s.removeFiles)
+	authGroup.PUT(removeDirsPath+idParam, s.removeDirs)
 }
 
 // putSet interprets the body as a JSON encoding of a set.Set and stores it in
@@ -359,6 +370,38 @@ func (s *Server) putFiles(c *gin.Context) {
 	}
 
 	err := s.db.SetFileEntries(sid, paths)
+	if err != nil {
+		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+
+		return
+	}
+
+	c.Status(http.StatusOK)
+}
+
+func (s *Server) removeFiles(c *gin.Context) {
+	sid, paths, ok := s.bindPathsAndValidateSet(c)
+	if !ok {
+		return
+	}
+
+	err := s.db.RemoveFileEntries(sid, paths)
+	if err != nil {
+		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+
+		return
+	}
+
+	c.Status(http.StatusOK)
+}
+
+func (s *Server) removeDirs(c *gin.Context) {
+	sid, paths, ok := s.bindPathsAndValidateSet(c)
+	if !ok {
+		return
+	}
+
+	err := s.db.RemoveDirEntries(sid, paths)
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
