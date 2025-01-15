@@ -614,3 +614,11 @@ func (c *Client) RetryFailedSetUploads(id string) (int, error) {
 
 	return retried, err
 }
+
+func (c *Client) RemoveFiles(setID string, files []string) error {
+	return c.putThing(EndPointAuthRemoveFiles+"/"+setID, stringsToBytes(files))
+}
+
+func (c *Client) RemoveDirs(setID string, dirs []string) error {
+	return c.putThing(EndPointAuthRemoveDirs+"/"+setID, stringsToBytes(dirs))
+}
