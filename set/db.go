@@ -259,6 +259,41 @@ func (d *DB) encodeToBytes(thing interface{}) []byte {
 	return encoded
 }
 
+// RemoveFileEntries removes the provided files from a given set.
+func (d *DB) RemoveFileEntries(setID string, paths []string) error {
+	err := d.removeEntries(setID, paths, fileBucket)
+	if err != nil {
+		return err
+	}
+
+	return d.removeEntries(setID, paths, discoveredBucket)
+}
+
+// removeEntries removes the entries with the provided entry keys from a given
+// bucket of a given set.
+func (d *DB) removeEntries(setID string, entryKeys []string, bucketName string) error {
+	return d.db.Update(func(tx *bolt.Tx) error {
+		subBucketName := []byte(bucketName + separator + setID)
+		setsBucket := tx.Bucket([]byte(setsBucket))
+
+		entriesBucket := setsBucket.Bucket(subBucketName)
+
+		for _, v := range entryKeys {
+			err := entriesBucket.Delete([]byte(v))
+			if err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
+}
+
+// RemoveDirEntries removes the provided directories from a given set.
+func (d *DB) RemoveDirEntries(setID string, paths []string) error {
+	return d.removeEntries(setID, paths, dirBucket)
+}
+
 // SetFileEntries sets the file paths for the given backup set. Only supply
 // absolute paths to files.
 func (d *DB) SetFileEntries(setID string, paths []string) error {

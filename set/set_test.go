@@ -357,6 +357,23 @@ func TestSetDB(t *testing.T) {
 				err = db.SetFileEntries(set2.ID(), []string{"/a/b.txt", "/c/k.txt"})
 				So(err, ShouldBeNil)
 
+				Convey("Then remove files and dirs from the sets", func() {
+					db.RemoveFileEntries(set.ID(), []string{"/a/b.txt"})
+
+					fEntries, errg := db.GetFileEntries(set.ID())
+					So(errg, ShouldBeNil)
+					So(len(fEntries), ShouldEqual, 2)
+					So(fEntries[0], ShouldResemble, &Entry{Path: "/c/d.txt"})
+					So(fEntries[1], ShouldResemble, &Entry{Path: "/e/f.txt"})
+
+					db.RemoveDirEntries(set.ID(), []string{"/g/h"})
+
+					dEntries, errg := db.GetDirEntries(set.ID())
+					So(errg, ShouldBeNil)
+					So(len(dEntries), ShouldEqual, 1)
+					So(dEntries[0], ShouldResemble, &Entry{Path: "/g/i"})
+				})
+
 				Convey("Then get a particular Set", func() {
 					retrieved := db.GetByID(set.ID())
 					So(retrieved, ShouldNotBeNil)

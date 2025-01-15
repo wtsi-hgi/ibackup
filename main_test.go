@@ -275,6 +275,16 @@ func (s *TestServer) confirmOutputContains(t *testing.T, args []string, expected
 	So(actual, ShouldContainSubstring, expected)
 }
 
+func (s *TestServer) confirmOutputDoesNotContain(t *testing.T, args []string, expectedCode int,
+	expected string) {
+	t.Helper()
+
+	exitCode, actual := s.runBinary(t, args...)
+
+	So(exitCode, ShouldEqual, expectedCode)
+	So(actual, ShouldNotContainSubstring, expected)
+}
+
 var ErrStatusNotFound = errors.New("status not found")
 
 func (s *TestServer) addSetForTesting(t *testing.T, name, transformer, path string) {
@@ -1871,4 +1881,91 @@ func confirmFileContents(file, expectedContents string) {
 	So(err, ShouldBeNil)
 
 	So(string(data), ShouldEqual, expectedContents)
+}
+
+func TestRemove(t *testing.T) {
+	Convey("Given a server", t, func() {
+		remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
+		if remotePath == "" {
+			SkipConvey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
+
+			return
+		}
+
+		schedulerDeployment := os.Getenv("IBACKUP_TEST_SCHEDULER")
+		if schedulerDeployment == "" {
+			SkipConvey("skipping iRODS backup test since IBACKUP_TEST_SCHEDULER not set", func() {})
+
+			return
+		}
+
+		dir := t.TempDir()
+		s := new(TestServer)
+		s.prepareFilePaths(dir)
+		s.prepareConfig()
+
+		s.schedulerDeployment = schedulerDeployment
+		s.backupFile = filepath.Join(dir, "db.bak")
+
+		s.startServer()
+
+		path := t.TempDir()
+		transformer := "prefix=" + path + ":" + remotePath
+
+		Convey("And an added set with files and folders", func() {
+			dir1 := filepath.Join(path, "path/to/some/dir/")
+			dir2 := filepath.Join(path, "path/to/other/dir/")
+
+			tempTestFileOfPaths, err := os.CreateTemp(dir, "testFileSet")
+			So(err, ShouldBeNil)
+
+			err = os.MkdirAll(dir1, 0755)
+			So(err, ShouldBeNil)
+
+			err = os.MkdirAll(dir2, 0755)
+			So(err, ShouldBeNil)
+
+			file1 := filepath.Join(path, "file1")
+			file2 := filepath.Join(path, "file2")
+
+			internal.CreateTestFile(t, file1, "some data1")
+			internal.CreateTestFile(t, file2, "some data2")
+
+			_, err = io.WriteString(tempTestFileOfPaths,
+				fmt.Sprintf("%s\n%s\n%s\n%s", file1, file2, dir1, dir2))
+			So(err, ShouldBeNil)
+
+			setName := "testRemoveFiles"
+
+			exitCode, _ := s.runBinary(t, "add", "--items", tempTestFileOfPaths.Name(),
+				"--name", setName, "--transformer", transformer)
+			So(exitCode, ShouldEqual, 0)
+
+			Convey("Remove removes the file from the set", func() {
+				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", file1)
+
+				So(exitCode, ShouldEqual, 0)
+
+				s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
+					0, file2)
+
+				s.confirmOutputDoesNotContain(t, []string{"status", "--name", setName, "-d"},
+					0, file1)
+			})
+
+			Convey("Remove removes the dir from the set", func() {
+				exitCode, _ = s.runBinary(t, "remove", "--name", setName, "--path", dir1)
+
+				So(exitCode, ShouldEqual, 0)
+
+				s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
+					0, dir2)
+
+				s.confirmOutputDoesNotContain(t, []string{"status", "--name", setName, "-d"},
+					0, dir1)
+			})
+
+		})
+		//TODO add tests for failed files
+	})
 }
