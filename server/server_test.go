@@ -91,6 +91,7 @@ func TestServer(t *testing.T) {
 	admin := u.Username
 	minMBperSecondUploadSpeed := float64(10)
 	maxStuckTime := 1 * time.Hour
+	defaultHeartbeatFreq := 1 * time.Minute
 
 	Convey("Given a test cert and db location", t, func() {
 		certPath, keyPath, err := gas.CreateTestCert(t)
@@ -1654,7 +1655,7 @@ func TestServer(t *testing.T) {
 
 						slackWriter.Reset()
 
-						err = client.MakingIRODSConnections(2)
+						err = client.MakingIRODSConnections(2, defaultHeartbeatFreq)
 						So(err, ShouldBeNil)
 
 						So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"2 iRODS connections open")
@@ -1681,7 +1682,7 @@ func TestServer(t *testing.T) {
 
 						slackWriter.Reset()
 
-						err = client.MakingIRODSConnections(2)
+						err = client.MakingIRODSConnections(2, defaultHeartbeatFreq)
 						So(err, ShouldBeNil)
 
 						So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"4 iRODS connections open")
@@ -1702,7 +1703,7 @@ func TestServer(t *testing.T) {
 						Convey("Client is removed from server client queue after being closed", func() {
 							client = NewClient(addr, certPath, token)
 
-							_, errh := client.StartHeartbeat(iRODsTimeout)
+							errh := client.MakingIRODSConnections(2, iRODsTimeout)
 							So(errh, ShouldBeNil)
 
 							hostPID, errh := hostPID()
@@ -1719,13 +1720,10 @@ func TestServer(t *testing.T) {
 						Convey("IRODS connections are assumed closed after a period of no contact", func() {
 							client = NewClient(addr, certPath, token)
 
-							heartbeatCh, errh := client.StartHeartbeat(iRODsTimeout)
-							So(errh, ShouldBeNil)
-
 							slackWriter.Reset()
 
-							err = client.MakingIRODSConnections(2)
-							So(err, ShouldBeNil)
+							errh := client.MakingIRODSConnections(2, iRODsTimeout)
+							So(errh, ShouldBeNil)
 
 							So(s.iRODSTracker.totalIRODSConnections(), ShouldEqual, 2)
 
@@ -1737,7 +1735,7 @@ func TestServer(t *testing.T) {
 
 							So(s.iRODSTracker.totalIRODSConnections(), ShouldEqual, 2)
 
-							close(heartbeatCh)
+							close(client.heartbeatQuitCh)
 
 							<-time.After(6 * iRODsTimeout)
 
@@ -1764,13 +1762,13 @@ func TestServer(t *testing.T) {
 
 							slackWriter.Reset()
 
-							err = client.MakingIRODSConnections(2)
+							err = client.MakingIRODSConnections(2, defaultHeartbeatFreq)
 							So(err, ShouldBeNil)
 
 							So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"2 iRODS connections open")
 							slackWriter.Reset()
 
-							err = client.MakingIRODSConnections(2)
+							err = client.MakingIRODSConnections(2, defaultHeartbeatFreq)
 							So(err, ShouldBeNil)
 
 							So(slackWriter.String(), ShouldBeBlank)
@@ -1780,7 +1778,7 @@ func TestServer(t *testing.T) {
 							So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"4 iRODS connections open")
 							slackWriter.Reset()
 
-							err = client.MakingIRODSConnections(2)
+							err = client.MakingIRODSConnections(2, defaultHeartbeatFreq)
 							So(err, ShouldBeNil)
 
 							So(slackWriter.String(), ShouldBeBlank)

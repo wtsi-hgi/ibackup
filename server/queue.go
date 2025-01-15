@@ -582,8 +582,13 @@ func (c *Client) FinishedCreatingCollections() error {
 
 // MakingIRODSConnections tells the server you've started to create iRODS
 // connections. Be sure to defer ClosedIRODSConnections().
-func (c *Client) MakingIRODSConnections(number int) error {
+func (c *Client) MakingIRODSConnections(number int, freq time.Duration) error {
 	hostPID, err := hostPID()
+	if err != nil {
+		return err
+	}
+
+	err = c.startHeartbeat(freq)
 	if err != nil {
 		return err
 	}
@@ -594,6 +599,38 @@ func (c *Client) MakingIRODSConnections(number int) error {
 	}
 
 	return responseToErr(resp)
+}
+
+func (c *Client) startHeartbeat(freq time.Duration) error {
+	ticker := time.NewTicker(freq)
+	quit := make(chan bool)
+
+	hostPID, err := hostPID()
+	if err != nil {
+		return err
+	}
+
+	_, err = c.request().Post(EndPointAuthClientStarted + "/" + hostPID + "?heartbeatfreq=" + freq.String())
+	if err != nil {
+		return err
+	}
+
+	go func() {
+		for {
+			select {
+			case <-ticker.C:
+				c.request().Post(EndPointAuthClientHeartbeat + "/" + hostPID) //nolint:errcheck
+			case <-quit:
+				ticker.Stop()
+
+				return
+			}
+		}
+	}()
+
+	c.heartbeatQuitCh = quit
+
+	return nil
 }
 
 // ClosedIRODSConnections tells the server you've closed some iRODS connections
@@ -608,6 +645,8 @@ func (c *Client) ClosedIRODSConnections() error {
 	if err != nil {
 		return err
 	}
+
+	close(c.heartbeatQuitCh)
 
 	return responseToErr(resp)
 }

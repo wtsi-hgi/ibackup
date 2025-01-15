@@ -179,11 +179,6 @@ func handleServerMode(started time.Time) {
 		die("%s", err.Error())
 	}
 
-	_, err = client.StartHeartbeat(heartbeatFreq)
-	if err != nil {
-		die("%s", err.Error())
-	}
-
 	requests, err := client.GetSomeUploadRequests()
 	if err != nil {
 		warn("%s", err)
@@ -191,7 +186,7 @@ func handleServerMode(started time.Time) {
 		os.Exit(0)
 	}
 
-	err = client.MakingIRODSConnections(numIRODSConnections)
+	err = client.MakingIRODSConnections(numIRODSConnections, heartbeatFreq)
 	if err != nil {
 		die("%s", err.Error())
 	}

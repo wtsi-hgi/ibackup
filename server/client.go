@@ -66,6 +66,8 @@ type Client struct {
 	maxStuckTime              time.Duration
 	uploadsErrCh              chan error
 	logger                    log15.Logger
+	heartbeatQuitCh           chan bool
+	heartbeatFreq             time.Duration
 }
 
 // NewClient returns a Client you can use to call methods on a Server listening
@@ -83,36 +85,6 @@ func NewClient(url, cert, jwt string) *Client {
 	}
 
 	return client
-}
-
-func (c *Client) StartHeartbeat(freq time.Duration) (chan bool, error) {
-	ticker := time.NewTicker(freq)
-	quit := make(chan bool)
-
-	hostPID, err := hostPID()
-	if err != nil {
-		return nil, err
-	}
-
-	_, err = c.request().Post(EndPointAuthClientStarted + "/" + hostPID + "?heartbeatfreq=" + freq.String())
-	if err != nil {
-		return nil, err
-	}
-
-	go func() {
-		for {
-			select {
-			case <-ticker.C:
-				c.request().Post(EndPointAuthClientHeartbeat + "/" + hostPID) //nolint:errcheck
-			case <-quit:
-				ticker.Stop()
-
-				return
-			}
-		}
-	}()
-
-	return quit, nil
 }
 
 func (c *Client) request() *resty.Request {
