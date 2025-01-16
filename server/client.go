@@ -66,6 +66,7 @@ type Client struct {
 	maxStuckTime              time.Duration
 	uploadsErrCh              chan error
 	logger                    log15.Logger
+	heartbeatQuitCh           chan bool
 }
 
 // NewClient returns a Client you can use to call methods on a Server listening

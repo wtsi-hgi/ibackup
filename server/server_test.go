@@ -91,6 +91,7 @@ func TestServer(t *testing.T) {
 	admin := u.Username
 	minMBperSecondUploadSpeed := float64(10)
 	maxStuckTime := 1 * time.Hour
+	defaultHeartbeatFreq := 1 * time.Minute
 
 	Convey("Given a test cert and db location", t, func() {
 		certPath, keyPath, err := gas.CreateTestCert(t)
@@ -1285,6 +1286,7 @@ func TestServer(t *testing.T) {
 						Convey("Once logged in and with a client", func() {
 							token, errl = gas.Login(gas.NewClientRequest(addr, certPath), admin, "pass")
 							So(errl, ShouldBeNil)
+
 							client = NewClient(addr, certPath, token)
 
 							Convey("Client can automatically update server given Putter-style output using SendPutResultsToServer", func() {
@@ -1653,7 +1655,7 @@ func TestServer(t *testing.T) {
 
 						slackWriter.Reset()
 
-						err = client.MakingIRODSConnections(2)
+						err = client.MakingIRODSConnections(2, defaultHeartbeatFreq)
 						So(err, ShouldBeNil)
 
 						So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"2 iRODS connections open")
@@ -1680,7 +1682,7 @@ func TestServer(t *testing.T) {
 
 						slackWriter.Reset()
 
-						err = client.MakingIRODSConnections(2)
+						err = client.MakingIRODSConnections(2, defaultHeartbeatFreq)
 						So(err, ShouldBeNil)
 
 						So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"4 iRODS connections open")
@@ -1695,6 +1697,52 @@ func TestServer(t *testing.T) {
 						So(qs.IRODSConnections, ShouldEqual, 0)
 
 						So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"0 iRODS connections open")
+
+						iRODSTimeout := 100 * time.Millisecond
+
+						Convey("Client is removed from server client queue after being closed", func() {
+							client = NewClient(addr, certPath, token)
+
+							errh := client.MakingIRODSConnections(2, iRODSTimeout)
+							So(errh, ShouldBeNil)
+
+							hostPID, errh := hostPID()
+							So(errh, ShouldBeNil)
+
+							So(s.clientQueue.Touch(hostPID), ShouldBeNil)
+
+							err = client.ClosedIRODSConnections()
+							So(err, ShouldBeNil)
+
+							So(s.clientQueue.Touch(hostPID), ShouldNotBeNil)
+						})
+
+						Convey("IRODS connections are assumed closed after a period of no contact", func() {
+							client = NewClient(addr, certPath, token)
+
+							slackWriter.Reset()
+
+							errh := client.MakingIRODSConnections(2, iRODSTimeout)
+							So(errh, ShouldBeNil)
+
+							So(s.iRODSTracker.totalIRODSConnections(), ShouldEqual, 2)
+
+							So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"2 iRODS connections open")
+
+							slackWriter.Reset()
+
+							<-time.After(6 * iRODSTimeout)
+
+							So(s.iRODSTracker.totalIRODSConnections(), ShouldEqual, 2)
+
+							close(client.heartbeatQuitCh)
+
+							<-time.After(6 * iRODSTimeout)
+
+							So(s.iRODSTracker.totalIRODSConnections(), ShouldEqual, 0)
+
+							So(slackWriter.String(), ShouldContainSubstring, slack.BoxPrefixInfo+"0 iRODS connections open")
+						})
 
 						Convey("iRODS messages are debounced if desired", func() {
 							s.Stop()
@@ -1714,13 +1762,13 @@ func TestServer(t *testing.T) {
 
 							slackWriter.Reset()
 
-							err = client.MakingIRODSConnections(2)
+							err = client.MakingIRODSConnections(2, defaultHeartbeatFreq)
 							So(err, ShouldBeNil)
 
 							So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"2 iRODS connections open")
 							slackWriter.Reset()
 
-							err = client.MakingIRODSConnections(2)
+							err = client.MakingIRODSConnections(2, defaultHeartbeatFreq)
 							So(err, ShouldBeNil)
 
 							So(slackWriter.String(), ShouldBeBlank)
@@ -1730,7 +1778,7 @@ func TestServer(t *testing.T) {
 							So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"4 iRODS connections open")
 							slackWriter.Reset()
 
-							err = client.MakingIRODSConnections(2)
+							err = client.MakingIRODSConnections(2, defaultHeartbeatFreq)
 							So(err, ShouldBeNil)
 
 							So(slackWriter.String(), ShouldBeBlank)

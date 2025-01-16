@@ -669,7 +669,7 @@ func displayHeader(showRemotePath bool) {
 // the output of entry details.
 func printEntriesHeader(cols []string) {
 	cliPrint("\n")
-	cliPrint(strings.Join(cols, "\t"))
+	cliPrint("%s", strings.Join(cols, "\t"))
 	cliPrint("\n")
 }
 
