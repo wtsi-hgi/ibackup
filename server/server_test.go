@@ -1698,12 +1698,12 @@ func TestServer(t *testing.T) {
 
 						So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"0 iRODS connections open")
 
-						iRODsTimeout := 100 * time.Millisecond
+						iRODSTimeout := 100 * time.Millisecond
 
 						Convey("Client is removed from server client queue after being closed", func() {
 							client = NewClient(addr, certPath, token)
 
-							errh := client.MakingIRODSConnections(2, iRODsTimeout)
+							errh := client.MakingIRODSConnections(2, iRODSTimeout)
 							So(errh, ShouldBeNil)
 
 							hostPID, errh := hostPID()
@@ -1722,7 +1722,7 @@ func TestServer(t *testing.T) {
 
 							slackWriter.Reset()
 
-							errh := client.MakingIRODSConnections(2, iRODsTimeout)
+							errh := client.MakingIRODSConnections(2, iRODSTimeout)
 							So(errh, ShouldBeNil)
 
 							So(s.iRODSTracker.totalIRODSConnections(), ShouldEqual, 2)
@@ -1731,13 +1731,13 @@ func TestServer(t *testing.T) {
 
 							slackWriter.Reset()
 
-							<-time.After(6 * iRODsTimeout)
+							<-time.After(6 * iRODSTimeout)
 
 							So(s.iRODSTracker.totalIRODSConnections(), ShouldEqual, 2)
 
 							close(client.heartbeatQuitCh)
 
-							<-time.After(6 * iRODsTimeout)
+							<-time.After(6 * iRODSTimeout)
 
 							So(s.iRODSTracker.totalIRODSConnections(), ShouldEqual, 0)
 

@@ -77,13 +77,11 @@ type Client struct {
 //
 // You must first gas.GetJWT() to get a JWT that you must supply here.
 func NewClient(url, cert, jwt string) *Client {
-	client := &Client{
+	return &Client{
 		url:  url,
 		cert: cert,
 		jwt:  jwt,
 	}
-
-	return client
 }
 
 func (c *Client) request() *resty.Request {
