@@ -184,7 +184,8 @@ func TestServer(t *testing.T) {
 		const serverStartMessage = slack.BoxPrefixInfo + "server starting, loading database" +
 			slack.BoxPrefixSuccess + "server loaded database"
 
-		const serverStartTailMessage = slack.BoxPrefixSuccess + "recovery completed."
+		const serverStartTailMessage = slack.BoxPrefixSuccess + "recovery completed" +
+			slack.BoxPrefixSuccess + "server started"
 
 		makeAndStartServer := func() (*Server, string, func() error) {
 			s, errn := New(conf)

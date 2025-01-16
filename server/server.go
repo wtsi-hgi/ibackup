@@ -151,6 +151,14 @@ func New(conf Config) (*Server, error) {
 	return s, nil
 }
 
+// Start logs to slack that the server has been started and then calls
+// gas.Server.Start().
+func (s *Server) Start(addr, certFile, keyFile string) error {
+	s.sendSlackMessage(slack.Success, "server started")
+
+	return s.Server.Start(addr, certFile, keyFile)
+}
+
 func (s *Server) SetRemoteHardlinkLocation(path string) {
 	s.remoteHardlinkLocation = path
 }

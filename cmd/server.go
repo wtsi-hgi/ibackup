@@ -267,7 +267,6 @@ database that you've made, to investigate.
 		defer s.Stop()
 
 		sayStarted()
-		s.SayStartedToSlack()
 
 		err = s.Start(serverURL, serverCert, serverKey)
 		if err != nil {
