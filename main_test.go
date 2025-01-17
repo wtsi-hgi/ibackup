@@ -1337,7 +1337,7 @@ func remoteDBBackupPath() string {
 }
 
 func TestPuts(t *testing.T) {
-	Convey("Given a server configured with a remote hardlink location", t, func() {
+	FocusConvey("Given a server configured with a remote hardlink location", t, func() {
 		remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
 		if remotePath == "" {
 			SkipConvey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
@@ -1380,7 +1380,7 @@ func TestPuts(t *testing.T) {
 			s.waitForStatus(setName, "\nStatus: complete (but with failures - try a retry)", 60*time.Second)
 		})
 
-		Convey("Given a file containing directory and file paths", func() {
+		FocusConvey("Given a file containing directory and file paths", func() {
 			dir1 := filepath.Join(path, "path/to/some/dir/")
 			dir2 := filepath.Join(path, "path/to/other/dir/")
 			subdir1 := filepath.Join(dir1, "subdir/")
@@ -1661,7 +1661,7 @@ Local Path	Status	Size	Attempts	Date	Error`+"\n"+
 		})
 
 		// TODO: re-enable once hardlinks metamod bug fixed
-		SkipConvey("Putting a set with hardlinks uploads an empty file and special inode file", func() {
+		FocusConvey("Putting a set with hardlinks uploads an empty file and special inode file", func() {
 			file := filepath.Join(path, "file")
 			link1 := filepath.Join(path, "hardlink1")
 			link2 := filepath.Join(path, "hardlink2")
@@ -1894,7 +1894,7 @@ func confirmFileContents(file, expectedContents string) {
 }
 
 func TestRemove(t *testing.T) {
-	Convey("Given a server", t, func() {
+	FocusConvey("Given a server", t, func() {
 		remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
 		if remotePath == "" {
 			SkipConvey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
@@ -1915,6 +1915,7 @@ func TestRemove(t *testing.T) {
 		s.prepareConfig()
 
 		s.schedulerDeployment = schedulerDeployment
+		s.remoteHardlinkPrefix = filepath.Join(remotePath, "hardlinks")
 		s.backupFile = filepath.Join(dir, "db.bak")
 
 		s.startServer()
@@ -1922,7 +1923,7 @@ func TestRemove(t *testing.T) {
 		path := t.TempDir()
 		transformer := "prefix=" + path + ":" + remotePath
 
-		Convey("And an added set with files and folders", func() {
+		FocusConvey("And an added set with files and folders", func() {
 			dir := t.TempDir()
 
 			linkPath := filepath.Join(path, "link")
@@ -1948,10 +1949,13 @@ func TestRemove(t *testing.T) {
 			//internal.CreateTestFile(t, file3, "some data3")
 
 			err = os.Link(file1, linkPath)
+			So(err, ShouldBeNil)
+
 			err = os.Symlink(file2, symPath)
+			So(err, ShouldBeNil)
 
 			_, err = io.WriteString(tempTestFileOfPaths,
-				fmt.Sprintf("%s\n%s\n%s\n%s\n%s\n%s\n", file1, file2, dir1, dir2, linkPath, symPath))
+				fmt.Sprintf("%s\n%s\n%s\n%s\n%s\n%s", file1, file2, dir1, dir2, linkPath, symPath))
 			So(err, ShouldBeNil)
 
 			setName := "testRemoveFiles1"
@@ -2018,6 +2022,31 @@ func TestRemove(t *testing.T) {
 				output, err = exec.Command("ils", remotePath).CombinedOutput()
 				So(err, ShouldBeNil)
 				So(string(output), ShouldNotContainSubstring, "file1")
+			})
+
+			FocusConvey("Remove with a hardlink removes both the hardlink file and inode file", func() {
+				output := getRemoteMeta(filepath.Join(remotePath, "link"))
+				attrFind := "attribute: ibackup:remotehardlink\nvalue: "
+				attrPos := strings.Index(output, attrFind)
+				So(attrPos, ShouldNotEqual, -1)
+
+				remoteInode := output[attrPos+len(attrFind):]
+				nlPos := strings.Index(remoteInode, "\n")
+				So(nlPos, ShouldNotEqual, -1)
+
+				remoteInode = remoteInode[:nlPos]
+
+				_, err := exec.Command("ils", remoteInode).CombinedOutput()
+				So(err, ShouldBeNil)
+
+				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", linkPath)
+				So(exitCode, ShouldEqual, 0)
+
+				_, err = exec.Command("ils", filepath.Join(remotePath, "link")).CombinedOutput()
+				So(err, ShouldNotBeNil)
+
+				_, err = exec.Command("ils", remoteInode).CombinedOutput()
+				So(err, ShouldNotBeNil)
 			})
 
 			SkipConvey("Remove removes the provided dir from iRODS", func() {
