@@ -415,7 +415,43 @@ func (s *Server) removeFiles(c *gin.Context) {
 		return
 	}
 
+	// s.removeQueue.Add(context.Background(), "key", "", "data", 0, 0, 1*time.Hour, queue.SubQueueReady, []string{})
+	s.removeFilesFromIRODS(sid, paths)
+
 	c.Status(http.StatusOK)
+}
+
+func (s *Server) removeFilesFromIRODS(sid string, paths []string) error {
+	set := s.db.GetByID(sid)
+
+	baton, err := put.GetBatonHandlerWithMetaClient()
+	if err != nil {
+		return err
+	}
+
+	tranformer, err := set.MakeTransformer()
+	if err != nil {
+		return err
+	}
+
+	for _, path := range paths {
+		rpath, err := tranformer(path)
+		if err != nil {
+			return err
+		}
+
+		remoteMeta, err := baton.GetMeta(rpath)
+		if err != nil {
+			return err
+		}
+
+		err = baton.RemoveSetFromIRODSMetadata(rpath, set.Name, remoteMeta)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (s *Server) removeDirs(c *gin.Context) {

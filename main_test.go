@@ -297,6 +297,16 @@ func (s *TestServer) addSetForTesting(t *testing.T, name, transformer, path stri
 	s.waitForStatus(name, "\nDiscovery: completed", 5*time.Second)
 }
 
+func (s *TestServer) addSetForTestingWithItems(t *testing.T, name, transformer, path string) {
+	t.Helper()
+
+	exitCode, _ := s.runBinary(t, "add", "--name", name, "--transformer", transformer, "--items", path)
+
+	So(exitCode, ShouldEqual, 0)
+
+	s.waitForStatus(name, "\nStatus: complete", 5*time.Second)
+}
+
 func (s *TestServer) addSetForTestingWithFlag(t *testing.T, name, transformer, path, flag, data string) {
 	t.Helper()
 
@@ -1913,6 +1923,10 @@ func TestRemove(t *testing.T) {
 		transformer := "prefix=" + path + ":" + remotePath
 
 		Convey("And an added set with files and folders", func() {
+			dir := t.TempDir()
+
+			linkPath := filepath.Join(path, "link")
+			symPath := filepath.Join(path, "sym")
 			dir1 := filepath.Join(path, "path/to/some/dir/")
 			dir2 := filepath.Join(path, "path/to/other/dir/")
 
@@ -1927,19 +1941,22 @@ func TestRemove(t *testing.T) {
 
 			file1 := filepath.Join(path, "file1")
 			file2 := filepath.Join(path, "file2")
+			//file3 := filepath.Join(dir1, "file3")
 
 			internal.CreateTestFile(t, file1, "some data1")
 			internal.CreateTestFile(t, file2, "some data2")
+			//internal.CreateTestFile(t, file3, "some data3")
+
+			err = os.Link(file1, linkPath)
+			err = os.Symlink(file2, symPath)
 
 			_, err = io.WriteString(tempTestFileOfPaths,
-				fmt.Sprintf("%s\n%s\n%s\n%s", file1, file2, dir1, dir2))
+				fmt.Sprintf("%s\n%s\n%s\n%s\n%s\n%s\n", file1, file2, dir1, dir2, linkPath, symPath))
 			So(err, ShouldBeNil)
 
-			setName := "testRemoveFiles"
+			setName := "testRemoveFiles1"
 
-			exitCode, _ := s.runBinary(t, "add", "--items", tempTestFileOfPaths.Name(),
-				"--name", setName, "--transformer", transformer)
-			So(exitCode, ShouldEqual, 0)
+			s.addSetForTestingWithItems(t, setName, transformer, tempTestFileOfPaths.Name())
 
 			Convey("Remove removes the file from the set", func() {
 				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", file1)
@@ -1954,7 +1971,7 @@ func TestRemove(t *testing.T) {
 			})
 
 			Convey("Remove removes the dir from the set", func() {
-				exitCode, _ = s.runBinary(t, "remove", "--name", setName, "--path", dir1)
+				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", dir1)
 
 				So(exitCode, ShouldEqual, 0)
 
@@ -1965,6 +1982,87 @@ func TestRemove(t *testing.T) {
 					0, dir1)
 			})
 
+			Convey("Remove takes a flag --items and removes all provided files and dirs from the set", func() {
+				tempTestFileOfPathsToRemove, err := os.CreateTemp(dir, "testFileSet")
+				So(err, ShouldBeNil)
+
+				_, err = io.WriteString(tempTestFileOfPathsToRemove,
+					fmt.Sprintf("%s\n%s", file1, dir1))
+				So(err, ShouldBeNil)
+
+				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--items", tempTestFileOfPathsToRemove.Name())
+
+				So(exitCode, ShouldEqual, 0)
+
+				s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
+					0, file2)
+
+				s.confirmOutputDoesNotContain(t, []string{"status", "--name", setName, "-d"},
+					0, file1)
+
+				s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
+					0, dir2)
+
+				s.confirmOutputDoesNotContain(t, []string{"status", "--name", setName, "-d"},
+					0, dir1)
+			})
+
+			Convey("Remove removes the provided file from iRODS", func() {
+				output, err := exec.Command("ils", remotePath).CombinedOutput()
+				So(err, ShouldBeNil)
+				So(string(output), ShouldContainSubstring, "file1")
+
+				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", file1)
+				So(exitCode, ShouldEqual, 0)
+
+				output, err = exec.Command("ils", remotePath).CombinedOutput()
+				So(err, ShouldBeNil)
+				So(string(output), ShouldNotContainSubstring, "file1")
+			})
+
+			SkipConvey("Remove removes the provided dir from iRODS", func() {
+				output, err := exec.Command("ils", remotePath).CombinedOutput()
+				So(err, ShouldBeNil)
+				So(string(output), ShouldContainSubstring, "dir1")
+
+				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", dir1)
+				So(exitCode, ShouldEqual, 0)
+
+				output, err = exec.Command("ils", remotePath).CombinedOutput()
+				So(err, ShouldBeNil)
+				So(string(output), ShouldNotContainSubstring, "dir1")
+			})
+
+			Convey("And another added set with the same files and dirs", func() {
+				setName2 := "testRemoveFiles2"
+
+				s.addSetForTestingWithItems(t, setName2, transformer, tempTestFileOfPaths.Name())
+
+				Convey("Remove removes the metadata related to the set", func() {
+					output := getRemoteMeta(filepath.Join(remotePath, "file1"))
+					So(output, ShouldContainSubstring, setName)
+					So(output, ShouldContainSubstring, setName2)
+
+					exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", file1)
+
+					So(exitCode, ShouldEqual, 0)
+
+					output = getRemoteMeta(filepath.Join(remotePath, "file1"))
+					So(output, ShouldNotContainSubstring, setName)
+					So(output, ShouldContainSubstring, setName2)
+				})
+
+				Convey("Remove does not remove the provided file from iRODS", func() {
+					exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", file1)
+					So(exitCode, ShouldEqual, 0)
+
+					output, err := exec.Command("ils", remotePath).CombinedOutput()
+					So(err, ShouldBeNil)
+					So(string(output), ShouldContainSubstring, "file1")
+				})
+
+				// add something about requesters
+			})
 		})
 		//TODO add tests for failed files
 	})

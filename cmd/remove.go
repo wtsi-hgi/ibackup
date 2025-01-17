@@ -122,4 +122,5 @@ func handleRemove(client *server.Client, user, name string, files, dirs []string
 	if err != nil {
 		dief("%s", err)
 	}
+
 }
