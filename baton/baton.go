@@ -32,6 +32,7 @@ package baton
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -88,6 +89,34 @@ func GetBatonHandler() (*Baton, error) {
 	_, err := ex.FindBaton()
 
 	return &Baton{}, err
+}
+
+// GetBatonHandlerWithMetaClient returns a Handler that uses Baton to interact
+// with iRODS and contains a meta client for interacting with metadata. If you
+// don't have baton-do in your PATH, you'll get an error.
+func GetBatonHandlerWithMetaClient() (*Baton, error) {
+	setupExtendoLogger()
+
+	_, err := ex.FindBaton()
+	if err != nil {
+		return nil, err
+	}
+
+	params := ex.DefaultClientPoolParams
+	params.MaxSize = 1
+	pool := ex.NewClientPool(params, "")
+
+	metaClient, err := pool.Get()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get metaClient: %w", err)
+	}
+
+	baton := &Baton{
+		collPool:   pool,
+		metaClient: metaClient,
+	}
+
+	return baton, nil
 }
 
 // setupExtendoLogger sets up a STDERR logger that the extendo library will use.

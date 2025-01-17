@@ -160,6 +160,7 @@ func New(conf Config) (*Server, error) {
 	s.clientQueue.SetTTRCallback(s.clientTTRC)
 	s.SetStopCallBack(s.stop)
 	s.Server.Router().Use(gas.IncludeAbortErrorsInBody)
+	// s.removeQueue.SetReadyAddedCallback(s.removeCallback)
 
 	if conf.ReadOnly {
 		return s, nil
