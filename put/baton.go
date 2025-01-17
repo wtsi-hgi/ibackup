@@ -30,8 +30,10 @@ package put
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -83,6 +85,34 @@ func GetBatonHandler() (*Baton, error) {
 	_, err := ex.FindBaton()
 
 	return &Baton{}, err
+}
+
+// GetBatonHandlerWithMetaClient returns a Handler that uses Baton to interact
+// with iRODS and contains a meta client for interacting with metadata. If you
+// don't have baton-do in your PATH, you'll get an error.
+func GetBatonHandlerWithMetaClient() (*Baton, error) {
+	setupExtendoLogger()
+
+	_, err := ex.FindBaton()
+	if err != nil {
+		return nil, err
+	}
+
+	params := ex.DefaultClientPoolParams
+	params.MaxSize = 1
+	pool := ex.NewClientPool(params, "")
+
+	metaClient, err := pool.Get()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get metaClient: %w", err)
+	}
+
+	baton := &Baton{
+		putMetaPool: pool,
+		metaClient:  metaClient,
+	}
+
+	return baton, nil
 }
 
 // setupExtendoLogger sets up a STDERR logger that the extendo library will use.
@@ -473,6 +503,50 @@ func metaToAVUs(meta map[string]string) []ex.AVU {
 	return avus
 }
 
+func (b *Baton) RemoveSetFromIRODSMetadata(path, setName string, meta map[string]string) error {
+	sets := strings.Split(meta[MetaKeySets], ",")
+
+	sets, err := removeElementFromSlice(sets, setName)
+	if err != nil {
+		return err
+	}
+
+	if len(sets) == 0 {
+		return b.removeFileFromIRODS(path)
+	}
+
+	err = b.RemoveMeta(path, map[string]string{MetaKeySets: meta[MetaKeySets]})
+	if err != nil {
+		return err
+	}
+
+	return b.AddMeta(path, map[string]string{MetaKeySets: strings.Join(sets, ",")})
+}
+
+func (b *Baton) removeFileFromIRODS(path string) error {
+	it := remotePathToRodsItem(path)
+
+	err := timeoutOp(func() error {
+		_, errl := b.metaClient.RemObj(ex.Args{}, *it)
+
+		return errl
+	}, "remove meta error: "+path)
+
+	return err
+}
+
+func removeElementFromSlice(slice []string, element string) ([]string, error) {
+	index := slices.Index(slice, element)
+	if index < 0 {
+		return nil, fmt.Errorf("Element %s not in slice", element)
+	}
+
+	slice[index] = slice[len(slice)-1]
+	slice[len(slice)-1] = ""
+
+	return slice[:len(slice)-1], nil
+}
+
 func (b *Baton) RemoveMeta(path string, meta map[string]string) error {
 	it := remotePathToRodsItem(path)
 	it.IAVUs = metaToAVUs(meta)
@@ -484,6 +558,16 @@ func (b *Baton) RemoveMeta(path string, meta map[string]string) error {
 	}, "remove meta error: "+path)
 
 	return err
+}
+
+func (b *Baton) GetMeta(path string) (map[string]string, error) {
+	//it := remotePathToRodsItem(path)
+	it, err := b.metaClient.ListItem(ex.Args{AVU: true, Timestamp: true, Size: true}, ex.RodsItem{
+		IPath: filepath.Dir(path),
+		IName: filepath.Base(path),
+	})
+
+	return rodsItemToMeta(it), err
 }
 
 // remotePathToRodsItem converts a path in to an extendo RodsItem.

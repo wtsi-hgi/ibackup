@@ -96,6 +96,7 @@ type Server struct {
 	cacheMu                sync.Mutex
 	dirPool                *workerpool.WorkerPool
 	queue                  *queue.Queue
+	// removeQueue            *queue.Queue
 	sched                  *scheduler.Scheduler
 	putCmd                 string
 	req                    *jqs.Requirements
@@ -127,6 +128,7 @@ func New(conf Config) (*Server, error) {
 		numClients:          1,
 		dirPool:             workerpool.New(workerPoolSizeDir),
 		queue:               queue.New(context.Background(), "put"),
+		// removeQueue:         queue.New(context.Background(), "remove"),
 		creatingCollections: make(map[string]bool),
 		slacker:             conf.Slacker,
 		stillRunningMsgFreq: conf.StillRunningMsgFreq,
@@ -135,6 +137,7 @@ func New(conf Config) (*Server, error) {
 	}
 
 	s.Server.Router().Use(gas.IncludeAbortErrorsInBody)
+	// s.removeQueue.SetReadyAddedCallback(s.removeCallback)
 
 	s.monitor = NewMonitor(func(given *set.Set) {
 		if err := s.discoverSet(given); err != nil {
@@ -187,6 +190,10 @@ func (s *Server) EnableJobSubmission(putCmd, deployment, cwd, queue string, numC
 
 	return nil
 }
+
+// func (s *Server) removeCallback(_ string, item []interface{}) {
+// 	fmt.Println("removeQueue callback called")
+// }
 
 // rac is our queue's ready added callback which will get all ready put Requests
 // and ensure there are enough put jobs added to wr.
