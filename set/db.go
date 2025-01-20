@@ -294,6 +294,23 @@ func (d *DB) RemoveDirEntries(setID string, paths []string) error {
 	return d.removeEntries(setID, paths, dirBucket)
 }
 
+func (d *DB) GetFilesInDir(setID string, dirpath string, filepaths []string) ([]string, error) {
+	entries, err := d.getEntries(setID, discoveredBucket)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, entry := range entries {
+		path := entry.Path
+
+		if strings.HasPrefix(path, dirpath) {
+			filepaths = append(filepaths, path)
+		}
+	}
+
+	return filepaths, nil
+}
+
 // SetFileEntries sets the file paths for the given backup set. Only supply
 // absolute paths to files.
 func (d *DB) SetFileEntries(setID string, paths []string) error {

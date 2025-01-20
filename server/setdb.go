@@ -416,7 +416,12 @@ func (s *Server) removeFiles(c *gin.Context) {
 	}
 
 	// s.removeQueue.Add(context.Background(), "key", "", "data", 0, 0, 1*time.Hour, queue.SubQueueReady, []string{})
-	s.removeFilesFromIRODS(sid, paths)
+	err = s.removeFilesFromIRODS(sid, paths)
+	if err != nil {
+		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+
+		return
+	}
 
 	c.Status(http.StatusOK)
 }
@@ -445,7 +450,36 @@ func (s *Server) removeFilesFromIRODS(sid string, paths []string) error {
 			return err
 		}
 
-		err = baton.RemoveSetFromIRODSMetadata(rpath, set.Name, remoteMeta)
+		err = baton.RemovePathFromSetInIRODS(rpath, set.Name, remoteMeta)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// deduplicates pre-loop linesbased on RemoveFilesFromIRODS
+func (s *Server) removeDirsFromIRODS(sid string, paths []string) error {
+	set := s.db.GetByID(sid)
+
+	baton, err := put.GetBatonHandlerWithMetaClient()
+	if err != nil {
+		return err
+	}
+
+	tranformer, err := set.MakeTransformer()
+	if err != nil {
+		return err
+	}
+
+	for _, path := range paths {
+		rpath, err := tranformer(path)
+		if err != nil {
+			return err
+		}
+
+		err = baton.RemoveDirFromIRODS(rpath)
 		if err != nil {
 			return err
 		}
@@ -460,7 +494,28 @@ func (s *Server) removeDirs(c *gin.Context) {
 		return
 	}
 
-	err := s.db.RemoveDirEntries(sid, paths)
+	var filepaths []string
+
+	var err error
+
+	for _, path := range paths {
+		filepaths, err = s.db.GetFilesInDir(sid, path, filepaths)
+		if err != nil {
+			c.AbortWithError(http.StatusBadRequest, err)
+		}
+	}
+
+	err = s.removeFilesFromIRODS(sid, filepaths)
+	if err != nil {
+		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+	}
+
+	err = s.removeDirsFromIRODS(sid, paths)
+	if err != nil {
+		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+	}
+
+	err = s.db.RemoveDirEntries(sid, paths)
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 

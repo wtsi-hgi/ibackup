@@ -39,6 +39,7 @@ var removeUser string
 var removeName string
 var removeItems string
 var removePath string
+var removeNull bool
 
 // removeCmd represents the add command.
 var removeCmd = &cobra.Command{
@@ -50,24 +51,44 @@ var removeCmd = &cobra.Command{
  removed. This will remove files from the set and from iRODS if it is not found
  in any other sets.
  
+ You also need to supply the ibackup server's URL in the form domain:port (using
+ the IBACKUP_SERVER_URL environment variable, or overriding that with the --url
+ argument) and if necessary, the certificate (using the IBACKUP_SERVER_CERT
+ environment variable, or overriding that with the --cert argument).
+
+ --name is a required flag used to describe which set you want to remove files 
+ from.
+
+ You must also provide at least one of:
+ --items: the path to a file containing the paths of files/directories you want
+		  to remove from the set. Each path should be on its own line. Because 
+		  filenames can contain new line characters in them, it's safer to 
+		  null-terminate them instead and use the optional --null argument.
+ --path: if you want to remove a single file or directory, provide its absolute
+		 path.
  `,
 	Run: func(cmd *cobra.Command, args []string) {
 		ensureURLandCert()
 
 		if (removeItems == "") == (removePath == "") {
-			dief("only one of --items or --path can be provided")
+			dief("exactly one of --items or --path must be provided")
 		}
 
 		var files []string
 		var dirs []string
 
+		client, err := newServerClient(serverURL, serverCert)
+		if err != nil {
+			die(err)
+		}
+
 		if removeItems != "" {
-			filesAndDirs := readPaths(removeItems, fofnLineSplitter(setNull))
+			filesAndDirs := readPaths(removeItems, fofnLineSplitter(removeNull))
 			files, dirs = categorisePaths(filesAndDirs, files, dirs)
 		}
 
 		if removePath != "" {
-			removePath, err := filepath.Abs(removePath)
+			removePath, err = filepath.Abs(removePath)
 			if err != nil {
 				dief("%s", err)
 			}
@@ -79,12 +100,7 @@ var removeCmd = &cobra.Command{
 			}
 		}
 
-		client, err := newServerClient(serverURL, serverCert)
-		if err != nil {
-			dief("%s", err)
-		}
-
-		handleRemove(client, removeUser, removeName, files, dirs)
+		remove(client, removeUser, removeName, files, dirs)
 	},
 }
 
@@ -99,13 +115,16 @@ func init() {
 		"path to file with one absolute local directory or file path per line")
 	removeCmd.Flags().StringVarP(&removePath, "path", "p", "",
 		"path to a single file or directory you wish to remove")
+	removeCmd.Flags().BoolVarP(&removeNull, "null", "0", false,
+		"input paths are terminated by a null character instead of a new line")
 
 	if err := removeCmd.MarkFlagRequired("name"); err != nil {
 		dief("%s", err)
 	}
 }
 
-func handleRemove(client *server.Client, user, name string, files, dirs []string) {
+// remove does the main job of sending the set, files and dirs to the server.
+func remove(client *server.Client, user, name string, files, dirs []string) {
 	sets := getSetByName(client, user, name)
 	if len(sets) == 0 {
 		warn("No backup sets found with name %s", name)
@@ -122,5 +141,4 @@ func handleRemove(client *server.Client, user, name string, files, dirs []string
 	if err != nil {
 		dief("%s", err)
 	}
-
 }
