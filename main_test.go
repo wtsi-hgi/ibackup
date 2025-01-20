@@ -304,6 +304,7 @@ func (s *TestServer) addSetForTestingWithItems(t *testing.T, name, transformer, 
 
 	So(exitCode, ShouldEqual, 0)
 
+	s.waitForStatus(name, "\nDiscovery: completed", 5*time.Second)
 	s.waitForStatus(name, "\nStatus: complete", 5*time.Second)
 }
 
@@ -1942,11 +1943,11 @@ func TestRemove(t *testing.T) {
 
 			file1 := filepath.Join(path, "file1")
 			file2 := filepath.Join(path, "file2")
-			//file3 := filepath.Join(dir1, "file3")
+			file3 := filepath.Join(dir1, "file3")
 
 			internal.CreateTestFile(t, file1, "some data1")
 			internal.CreateTestFile(t, file2, "some data2")
-			//internal.CreateTestFile(t, file3, "some data3")
+			internal.CreateTestFile(t, file3, "some data3")
 
 			err = os.Link(file1, linkPath)
 			So(err, ShouldBeNil)
@@ -2024,7 +2025,7 @@ func TestRemove(t *testing.T) {
 				So(string(output), ShouldNotContainSubstring, "file1")
 			})
 
-			FocusConvey("Remove with a hardlink removes both the hardlink file and inode file", func() {
+			Convey("Remove with a hardlink removes both the hardlink file and inode file", func() {
 				output := getRemoteMeta(filepath.Join(remotePath, "link"))
 				attrFind := "attribute: ibackup:remotehardlink\nvalue: "
 				attrPos := strings.Index(output, attrFind)
@@ -2049,18 +2050,22 @@ func TestRemove(t *testing.T) {
 				So(err, ShouldNotBeNil)
 			})
 
-			SkipConvey("Remove removes the provided dir from iRODS", func() {
-				output, err := exec.Command("ils", remotePath).CombinedOutput()
+			FocusConvey("Remove removes the provided dir from iRODS", func() {
+				output, err := exec.Command("ils", "-r", remotePath).CombinedOutput()
 				So(err, ShouldBeNil)
-				So(string(output), ShouldContainSubstring, "dir1")
+				So(string(output), ShouldContainSubstring, "path/to/some/dir")
+				So(string(output), ShouldContainSubstring, "file3\n")
 
 				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", dir1)
 				So(exitCode, ShouldEqual, 0)
 
-				output, err = exec.Command("ils", remotePath).CombinedOutput()
+				output, err = exec.Command("ils", "-r", remotePath).CombinedOutput()
 				So(err, ShouldBeNil)
-				So(string(output), ShouldNotContainSubstring, "dir1")
+				So(string(output), ShouldNotContainSubstring, "path/to/some/dir")
+				So(string(output), ShouldNotContainSubstring, "file3\n")
 			})
+
+			//TODO: add test about removing a dir with non-irods uploaded files in it
 
 			Convey("And another added set with the same files and dirs", func() {
 				setName2 := "testRemoveFiles2"
@@ -2088,6 +2093,15 @@ func TestRemove(t *testing.T) {
 					output, err := exec.Command("ils", remotePath).CombinedOutput()
 					So(err, ShouldBeNil)
 					So(string(output), ShouldContainSubstring, "file1")
+				})
+
+				FocusConvey("...", func() {
+					exitCode, _ := s.runBinary(t, "add", "--name", "different_user_set", "--transformer",
+						transformer, "--items", tempTestFileOfPaths.Name(), "--user", "rk18")
+
+					So(exitCode, ShouldEqual, 0)
+
+					s.waitForStatus("different_user_set", "\nStatus: complete", 20*time.Second)
 				})
 
 				// add something about requesters

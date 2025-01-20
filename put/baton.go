@@ -503,7 +503,10 @@ func metaToAVUs(meta map[string]string) []ex.AVU {
 	return avus
 }
 
-func (b *Baton) RemoveSetFromIRODSMetadata(path, setName string, meta map[string]string) error {
+// RemovePathFromSetInIRODS removes the given path from iRODS if the path is not
+// associated with any other sets. Otherwise it updates the iRODS metadata for
+// the path to not include the given set.
+func (b *Baton) RemovePathFromSetInIRODS(path, setName string, meta map[string]string) error {
 	sets := strings.Split(meta[MetaKeySets], ",")
 
 	sets, err := removeElementFromSlice(sets, setName)
@@ -512,7 +515,7 @@ func (b *Baton) RemoveSetFromIRODSMetadata(path, setName string, meta map[string
 	}
 
 	if len(sets) == 0 {
-		return b.removeFileFromIRODS(path)
+		return b.handleHardlinkAndRemoveFromIRODS(path, meta)
 	}
 
 	err = b.RemoveMeta(path, map[string]string{MetaKeySets: meta[MetaKeySets]})
@@ -521,6 +524,31 @@ func (b *Baton) RemoveSetFromIRODSMetadata(path, setName string, meta map[string
 	}
 
 	return b.AddMeta(path, map[string]string{MetaKeySets: strings.Join(sets, ",")})
+}
+
+func removeElementFromSlice(slice []string, element string) ([]string, error) {
+	index := slices.Index(slice, element)
+	if index < 0 {
+		return nil, fmt.Errorf("Element %s not in slice", element)
+	}
+
+	slice[index] = slice[len(slice)-1]
+	slice[len(slice)-1] = ""
+
+	return slice[:len(slice)-1], nil
+}
+
+func (b *Baton) handleHardlinkAndRemoveFromIRODS(path string, meta map[string]string) error {
+	err := b.removeFileFromIRODS(path)
+	if err != nil {
+		return err
+	}
+
+	if meta[MetaKeyHardlink] == "" {
+		return nil
+	}
+
+	return b.removeFileFromIRODS(meta[MetaKeyRemoteHardlink])
 }
 
 func (b *Baton) removeFileFromIRODS(path string) error {
@@ -535,16 +563,18 @@ func (b *Baton) removeFileFromIRODS(path string) error {
 	return err
 }
 
-func removeElementFromSlice(slice []string, element string) ([]string, error) {
-	index := slices.Index(slice, element)
-	if index < 0 {
-		return nil, fmt.Errorf("Element %s not in slice", element)
+func (b *Baton) RemoveDirFromIRODS(path string) error {
+	it := &ex.RodsItem{
+		IPath: path,
 	}
 
-	slice[index] = slice[len(slice)-1]
-	slice[len(slice)-1] = ""
+	err := timeoutOp(func() error {
+		_, errl := b.metaClient.RemDir(ex.Args{}, *it)
 
-	return slice[:len(slice)-1], nil
+		return errl
+	}, "remove meta error: "+path)
+
+	return err
 }
 
 func (b *Baton) RemoveMeta(path string, meta map[string]string) error {
@@ -561,7 +591,6 @@ func (b *Baton) RemoveMeta(path string, meta map[string]string) error {
 }
 
 func (b *Baton) GetMeta(path string) (map[string]string, error) {
-	//it := remotePathToRodsItem(path)
 	it, err := b.metaClient.ListItem(ex.Args{AVU: true, Timestamp: true, Size: true}, ex.RodsItem{
 		IPath: filepath.Dir(path),
 		IName: filepath.Base(path),
