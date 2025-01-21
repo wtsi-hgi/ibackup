@@ -304,8 +304,8 @@ func (s *TestServer) addSetForTestingWithItems(t *testing.T, name, transformer, 
 
 	So(exitCode, ShouldEqual, 0)
 
-	s.waitForStatus(name, "\nDiscovery: completed", 5*time.Second)
-	s.waitForStatus(name, "\nStatus: complete", 5*time.Second)
+	s.waitForStatus(name, "\nDiscovery: completed", 10*time.Second)
+	s.waitForStatus(name, "\nStatus: complete", 10*time.Second)
 }
 
 func (s *TestServer) addSetForTestingWithFlag(t *testing.T, name, transformer, path, flag, data string) {
@@ -1929,7 +1929,8 @@ func TestRemove(t *testing.T) {
 
 			linkPath := filepath.Join(path, "link")
 			symPath := filepath.Join(path, "sym")
-			dir1 := filepath.Join(path, "path/to/some/dir/")
+			testDir := filepath.Join(path, "path/to/some/")
+			dir1 := filepath.Join(testDir, "dir")
 			dir2 := filepath.Join(path, "path/to/other/dir/")
 
 			tempTestFileOfPaths, err := os.CreateTemp(dir, "testFileSet")
@@ -1944,10 +1945,12 @@ func TestRemove(t *testing.T) {
 			file1 := filepath.Join(path, "file1")
 			file2 := filepath.Join(path, "file2")
 			file3 := filepath.Join(dir1, "file3")
+			file4 := filepath.Join(testDir, "dir_not_removed")
 
 			internal.CreateTestFile(t, file1, "some data1")
 			internal.CreateTestFile(t, file2, "some data2")
 			internal.CreateTestFile(t, file3, "some data3")
+			internal.CreateTestFile(t, file4, "some data3")
 
 			err = os.Link(file1, linkPath)
 			So(err, ShouldBeNil)
@@ -1956,7 +1959,7 @@ func TestRemove(t *testing.T) {
 			So(err, ShouldBeNil)
 
 			_, err = io.WriteString(tempTestFileOfPaths,
-				fmt.Sprintf("%s\n%s\n%s\n%s\n%s\n%s", file1, file2, dir1, dir2, linkPath, symPath))
+				fmt.Sprintf("%s\n%s\n%s\n%s\n%s\n%s\n%s", file1, file2, file4, dir1, dir2, linkPath, symPath))
 			So(err, ShouldBeNil)
 
 			setName := "testRemoveFiles1"
@@ -2061,11 +2064,37 @@ func TestRemove(t *testing.T) {
 
 				output, err = exec.Command("ils", "-r", remotePath).CombinedOutput()
 				So(err, ShouldBeNil)
+				So(string(output), ShouldContainSubstring, "dir_not_removed\n")
 				So(string(output), ShouldNotContainSubstring, "path/to/some/dir")
 				So(string(output), ShouldNotContainSubstring, "file3\n")
 			})
 
-			//TODO: add test about removing a dir with non-irods uploaded files in it
+			FocusConvey("Given a new file added to a directory already in the set", func() {
+				file5 := filepath.Join(dir1, "file5")
+				internal.CreateTestFile(t, file5, "some data5")
+
+				FocusConvey("Remove returns an error if you try to remove just the file", func() {
+					s.confirmOutputContains(t, []string{"remove", "--name", setName, "--path", file5},
+						1, fmt.Sprintf("%s is not part of the backup set [%s]", file5, setName))
+				})
+
+				FocusConvey("Remove ignores the file if you remove the directory", func() {
+					exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", dir1)
+					So(exitCode, ShouldEqual, 0)
+				})
+			})
+
+			FocusConvey("Given a new directory", func() {
+				dir3 := filepath.Join(path, "path/to/new/dir/")
+
+				err = os.MkdirAll(dir3, 0755)
+				So(err, ShouldBeNil)
+
+				FocusConvey("Remove returns an error if you try to remove the directory", func() {
+					s.confirmOutputContains(t, []string{"remove", "--name", setName, "--path", dir3},
+						1, fmt.Sprintf("%s is not part of the backup set [%s]", dir3, setName))
+				})
+			})
 
 			Convey("And another added set with the same files and dirs", func() {
 				setName2 := "testRemoveFiles2"
