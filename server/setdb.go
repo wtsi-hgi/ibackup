@@ -408,7 +408,14 @@ func (s *Server) removeFiles(c *gin.Context) {
 		return
 	}
 
-	err := s.db.RemoveFileEntries(sid, paths)
+	err := s.db.ValidateFilePaths(sid, paths)
+	if err != nil {
+		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+
+		return
+	}
+
+	err = s.db.RemoveFileEntries(sid, paths)
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
@@ -460,7 +467,7 @@ func (s *Server) removeFilesFromIRODS(sid string, paths []string) error {
 }
 
 // deduplicates pre-loop linesbased on RemoveFilesFromIRODS
-func (s *Server) removeDirsFromIRODS(sid string, paths []string) error {
+func (s *Server) removeDirsFromIRODS(sid string, dirpaths, filepaths []string) error {
 	set := s.db.GetByID(sid)
 
 	baton, err := put.GetBatonHandlerWithMetaClient()
@@ -473,7 +480,24 @@ func (s *Server) removeDirsFromIRODS(sid string, paths []string) error {
 		return err
 	}
 
-	for _, path := range paths {
+	for _, path := range filepaths {
+		rpath, err := tranformer(path)
+		if err != nil {
+			return err
+		}
+
+		remoteMeta, err := baton.GetMeta(rpath)
+		if err != nil {
+			return err
+		}
+
+		err = baton.RemovePathFromSetInIRODS(rpath, set.Name, remoteMeta)
+		if err != nil {
+			return err
+		}
+	}
+
+	for _, path := range dirpaths {
 		rpath, err := tranformer(path)
 		if err != nil {
 			return err
@@ -494,23 +518,23 @@ func (s *Server) removeDirs(c *gin.Context) {
 		return
 	}
 
-	var filepaths []string
+	err := s.db.ValidateDirPaths(sid, paths)
+	if err != nil {
+		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
-	var err error
+		return
+	}
+
+	var filepaths []string
 
 	for _, path := range paths {
 		filepaths, err = s.db.GetFilesInDir(sid, path, filepaths)
 		if err != nil {
-			c.AbortWithError(http.StatusBadRequest, err)
+			c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 		}
 	}
 
-	err = s.removeFilesFromIRODS(sid, filepaths)
-	if err != nil {
-		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
-	}
-
-	err = s.removeDirsFromIRODS(sid, paths)
+	err = s.removeDirsFromIRODS(sid, paths, filepaths)
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 	}

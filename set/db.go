@@ -259,6 +259,39 @@ func (d *DB) encodeToBytes(thing interface{}) []byte {
 	return encoded
 }
 
+func (d *DB) ValidateFilePaths(setID string, paths []string) error {
+	return d.validatePaths(setID, fileBucket, discoveredBucket, paths)
+}
+
+func (d *DB) validatePaths(setID, bucket1, bucket2 string, paths []string) error {
+	entriesMap := make(map[string]bool)
+
+	set := d.GetByID(setID)
+
+	for _, bucket := range []string{bucket1, bucket2} {
+		entries, err := d.getEntries(setID, bucket)
+		if err != nil {
+			return err
+		}
+
+		for _, entry := range entries {
+			entriesMap[entry.Path] = true
+		}
+	}
+
+	for _, path := range paths {
+		if _, ok := entriesMap[path]; !ok {
+			return Error{fmt.Sprintf("%s is not part of the backup set", path), set.Name}
+		}
+	}
+
+	return nil
+}
+
+func (d *DB) ValidateDirPaths(setID string, paths []string) error {
+	return d.validatePaths(setID, dirBucket, discoveredBucket, paths)
+}
+
 // RemoveFileEntries removes the provided files from a given set.
 func (d *DB) RemoveFileEntries(setID string, paths []string) error {
 	err := d.removeEntries(setID, paths, fileBucket)
@@ -300,8 +333,12 @@ func (d *DB) GetFilesInDir(setID string, dirpath string, filepaths []string) ([]
 		return nil, err
 	}
 
+	//dirpath = filepath.Clean(dirpath) + "/"
+
 	for _, entry := range entries {
 		path := entry.Path
+
+		//path = filepath.Clean(path)
 
 		if strings.HasPrefix(path, dirpath) {
 			filepaths = append(filepaths, path)
