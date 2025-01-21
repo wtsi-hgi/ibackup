@@ -259,17 +259,15 @@ func (d *DB) encodeToBytes(thing interface{}) []byte {
 	return encoded
 }
 
-func (d *DB) ValidateFilePaths(setID string, paths []string) error {
-	return d.validatePaths(setID, fileBucket, discoveredBucket, paths)
+func (d *DB) ValidateFilePaths(set *Set, paths []string) error {
+	return d.validatePaths(set, fileBucket, discoveredBucket, paths)
 }
 
-func (d *DB) validatePaths(setID, bucket1, bucket2 string, paths []string) error {
+func (d *DB) validatePaths(set *Set, bucket1, bucket2 string, paths []string) error {
 	entriesMap := make(map[string]bool)
 
-	set := d.GetByID(setID)
-
 	for _, bucket := range []string{bucket1, bucket2} {
-		entries, err := d.getEntries(setID, bucket)
+		entries, err := d.getEntries(set.ID(), bucket)
 		if err != nil {
 			return err
 		}
@@ -288,8 +286,8 @@ func (d *DB) validatePaths(setID, bucket1, bucket2 string, paths []string) error
 	return nil
 }
 
-func (d *DB) ValidateDirPaths(setID string, paths []string) error {
-	return d.validatePaths(setID, dirBucket, discoveredBucket, paths)
+func (d *DB) ValidateDirPaths(set *Set, paths []string) error {
+	return d.validatePaths(set, dirBucket, discoveredBucket, paths)
 }
 
 // RemoveFileEntries removes the provided files from a given set.

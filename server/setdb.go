@@ -408,7 +408,9 @@ func (s *Server) removeFiles(c *gin.Context) {
 		return
 	}
 
-	err := s.db.ValidateFilePaths(sid, paths)
+	set := s.db.GetByID(sid)
+
+	err := s.db.ValidateFilePaths(set, paths)
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
@@ -422,8 +424,15 @@ func (s *Server) removeFiles(c *gin.Context) {
 		return
 	}
 
+	baton, transformer, err := s.getBatonAndTransformer(set)
+	if err != nil {
+		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+
+		return
+	}
+
 	// s.removeQueue.Add(context.Background(), "key", "", "data", 0, 0, 1*time.Hour, queue.SubQueueReady, []string{})
-	err = s.removeFilesFromIRODS(sid, paths)
+	err = s.removeFilesFromIRODS(set, paths, baton, transformer)
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
@@ -433,21 +442,21 @@ func (s *Server) removeFiles(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
-func (s *Server) removeFilesFromIRODS(sid string, paths []string) error {
-	set := s.db.GetByID(sid)
-
+func (s *Server) getBatonAndTransformer(set *set.Set) (*put.Baton, put.PathTransformer, error) {
 	baton, err := put.GetBatonHandlerWithMetaClient()
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 
 	tranformer, err := set.MakeTransformer()
-	if err != nil {
-		return err
-	}
 
+	return baton, tranformer, err
+}
+
+func (s *Server) removeFilesFromIRODS(set *set.Set, paths []string,
+	baton *put.Baton, transformer put.PathTransformer) error {
 	for _, path := range paths {
-		rpath, err := tranformer(path)
+		rpath, err := transformer(path)
 		if err != nil {
 			return err
 		}
@@ -466,39 +475,10 @@ func (s *Server) removeFilesFromIRODS(sid string, paths []string) error {
 	return nil
 }
 
-// deduplicates pre-loop linesbased on RemoveFilesFromIRODS
-func (s *Server) removeDirsFromIRODS(sid string, dirpaths, filepaths []string) error {
-	set := s.db.GetByID(sid)
-
-	baton, err := put.GetBatonHandlerWithMetaClient()
-	if err != nil {
-		return err
-	}
-
-	tranformer, err := set.MakeTransformer()
-	if err != nil {
-		return err
-	}
-
-	for _, path := range filepaths {
-		rpath, err := tranformer(path)
-		if err != nil {
-			return err
-		}
-
-		remoteMeta, err := baton.GetMeta(rpath)
-		if err != nil {
-			return err
-		}
-
-		err = baton.RemovePathFromSetInIRODS(rpath, set.Name, remoteMeta)
-		if err != nil {
-			return err
-		}
-	}
-
+func (s *Server) removeDirsFromIRODS(set *set.Set, dirpaths []string,
+	baton *put.Baton, transformer put.PathTransformer) error {
 	for _, path := range dirpaths {
-		rpath, err := tranformer(path)
+		rpath, err := transformer(path)
 		if err != nil {
 			return err
 		}
@@ -518,25 +498,20 @@ func (s *Server) removeDirs(c *gin.Context) {
 		return
 	}
 
-	err := s.db.ValidateDirPaths(sid, paths)
+	set := s.db.GetByID(sid)
+
+	err := s.db.ValidateDirPaths(set, paths)
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
 		return
 	}
 
-	var filepaths []string
-
-	for _, path := range paths {
-		filepaths, err = s.db.GetFilesInDir(sid, path, filepaths)
-		if err != nil {
-			c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
-		}
-	}
-
-	err = s.removeDirsFromIRODS(sid, paths, filepaths)
+	err = s.handleRemovalOfDirsFromIRODS(set, paths)
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+
+		return
 	}
 
 	err = s.db.RemoveDirEntries(sid, paths)
@@ -547,6 +522,30 @@ func (s *Server) removeDirs(c *gin.Context) {
 	}
 
 	c.Status(http.StatusOK)
+}
+
+func (s *Server) handleRemovalOfDirsFromIRODS(set *set.Set, paths []string) error {
+	var filepaths []string
+	var err error
+
+	for _, path := range paths {
+		filepaths, err = s.db.GetFilesInDir(set.ID(), path, filepaths)
+		if err != nil {
+			return err
+		}
+	}
+
+	baton, transformer, err := s.getBatonAndTransformer(set)
+	if err != nil {
+		return err
+	}
+
+	err = s.removeFilesFromIRODS(set, filepaths, baton, transformer)
+	if err != nil {
+		return err
+	}
+
+	return s.removeDirsFromIRODS(set, paths, baton, transformer)
 }
 
 // bindPathsAndValidateSet gets the paths out of the JSON body, and the set id
