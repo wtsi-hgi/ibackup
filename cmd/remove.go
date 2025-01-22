@@ -90,7 +90,7 @@ var removeCmd = &cobra.Command{
 		if removePath != "" {
 			removePath, err = filepath.Abs(removePath)
 			if err != nil {
-				dief("%s", err)
+				die(err)
 			}
 
 			if pathIsDir(removePath) {
@@ -119,7 +119,7 @@ func init() {
 		"input paths are terminated by a null character instead of a new line")
 
 	if err := removeCmd.MarkFlagRequired("name"); err != nil {
-		dief("%s", err)
+		die(err)
 	}
 }
 
@@ -134,11 +134,11 @@ func remove(client *server.Client, user, name string, files, dirs []string) {
 
 	err := client.RemoveFiles(sets[0].ID(), files)
 	if err != nil {
-		dief("%s", err)
+		die(err)
 	}
 
 	err = client.RemoveDirs(sets[0].ID(), dirs)
 	if err != nil {
-		dief("%s", err)
+		die(err)
 	}
 }
