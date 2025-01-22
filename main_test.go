@@ -2209,6 +2209,44 @@ func TestRemove(t *testing.T) {
 					})
 				})
 			})
+
+			Convey("And a set with the same files and name added by a different user", func() {
+				user, err := user.Current()
+				So(err, ShouldBeNil)
+
+				setName2 := setName
+
+				exitCode, _ := s.runBinary(t, "add", "--name", setName2, "--transformer",
+					transformer, "--items", tempTestFileOfPaths.Name(), "--user", "testUser")
+
+				So(exitCode, ShouldEqual, 0)
+
+				s.waitForStatusWithUser(setName2, "\nStatus: complete", "testUser", 20*time.Second)
+
+				Convey("Remove on a file removes the user as a requester but not the file", func() {
+					exitCode, _ = s.runBinary(t, "remove", "--name", setName, "--path", file1)
+					So(exitCode, ShouldEqual, 0)
+
+					requesters := getMetaValue(getRemoteMeta(filepath.Join(remotePath, "file1")), "ibackup:requesters")
+
+					So(requesters, ShouldNotContainSubstring, user.Username)
+				})
+
+				Convey("And a second set with the same files added by the same user", func() {
+					setName3 := "same_user_set"
+
+					s.addSetForTestingWithItems(t, setName3, transformer, tempTestFileOfPaths.Name())
+
+					Convey("Remove keeps the user as a requester", func() {
+						exitCode, _ = s.runBinary(t, "remove", "--name", setName, "--path", file1)
+						So(exitCode, ShouldEqual, 0)
+
+						requesters := getMetaValue(getRemoteMeta(filepath.Join(remotePath, "file1")), "ibackup:requesters")
+
+						So(requesters, ShouldContainSubstring, user.Username)
+					})
+				})
+			})
 		})
 		//TODO add tests for failed files
 	})

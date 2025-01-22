@@ -473,28 +473,40 @@ func (s *Server) removeFilesFromIRODS(set *set.Set, paths []string,
 
 func (s *Server) handleSetsAndRequesters(set *set.Set, meta map[string]string) ([]string, []string, error) {
 	sets := strings.Split(meta[put.MetaKeySets], ",")
-
-	sets, err := removeElementFromSlice(sets, set.Name)
-	if err != nil {
-		return nil, nil, err
-	}
+	requesters := strings.Split(meta[put.MetaKeyRequester], ",")
 
 	userSets, err := s.db.GetByRequester(set.Requester)
+
+	lessRequesters, err := removeElementFromSlice(requesters, set.Requester)
+
+	var otherUserSets []string
+	for _, requester := range lessRequesters {
+		otherSets, err := s.db.GetByRequester(requester)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, otherSet := range otherSets {
+			otherUserSets = append(otherUserSets, otherSet.Name)
+		}
+
+	}
+
+	sets, err = removeElementFromSlice(sets, set.Name)
 	if err != nil {
 		return nil, nil, err
 	}
-
-	requesters := strings.Split(meta[put.MetaKeyRequester], ",")
 
 	for _, userSet := range userSets {
 		if slices.Contains(sets, userSet.Name) {
-			return sets, requesters, nil
+			lessRequesters = requesters
 		}
 	}
 
-	requesters, err = removeElementFromSlice(requesters, set.Requester)
+	if slices.Contains(otherUserSets, set.Name) {
+		sets = append(sets, set.Name)
+	}
 
-	return sets, requesters, err
+	return sets, lessRequesters, err
 }
 
 func removeElementFromSlice(slice []string, element string) ([]string, error) {

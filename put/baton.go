@@ -505,7 +505,8 @@ func metaToAVUs(meta map[string]string) []ex.AVU {
 // RemovePathFromSetInIRODS removes the given path from iRODS if the path is not
 // associated with any other sets. Otherwise it updates the iRODS metadata for
 // the path to not include the given set.
-func (b *Baton) RemovePathFromSetInIRODS(transformer PathTransformer, path string, sets, requesters []string, meta map[string]string) error {
+func (b *Baton) RemovePathFromSetInIRODS(transformer PathTransformer, path string,
+	sets, requesters []string, meta map[string]string) error {
 	if len(sets) == 0 {
 		return b.handleHardlinkAndRemoveFromIRODS(path, transformer, meta)
 	}
