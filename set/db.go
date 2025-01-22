@@ -331,12 +331,8 @@ func (d *DB) GetFilesInDir(setID string, dirpath string, filepaths []string) ([]
 		return nil, err
 	}
 
-	//dirpath = filepath.Clean(dirpath) + "/"
-
 	for _, entry := range entries {
 		path := entry.Path
-
-		//path = filepath.Clean(path)
 
 		if strings.HasPrefix(path, dirpath) {
 			filepaths = append(filepaths, path)

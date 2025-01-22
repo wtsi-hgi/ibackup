@@ -28,9 +28,11 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -417,14 +419,7 @@ func (s *Server) removeFiles(c *gin.Context) {
 		return
 	}
 
-	err = s.db.RemoveFileEntries(sid, paths)
-	if err != nil {
-		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
-
-		return
-	}
-
-	baton, transformer, err := s.getBatonAndTransformer(set)
+	err = s.removeFromIRODSandDB(set, []string{}, paths)
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
@@ -432,16 +427,12 @@ func (s *Server) removeFiles(c *gin.Context) {
 	}
 
 	// s.removeQueue.Add(context.Background(), "key", "", "data", 0, 0, 1*time.Hour, queue.SubQueueReady, []string{})
-	err = s.removeFilesFromIRODS(set, paths, baton, transformer)
-	if err != nil {
-		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
-
-		return
-	}
 
 	c.Status(http.StatusOK)
 }
 
+// getBatonAndTransformer returns a baton with a meta client and a transformer
+// for the given set.
 func (s *Server) getBatonAndTransformer(set *set.Set) (*put.Baton, put.PathTransformer, error) {
 	baton, err := put.GetBatonHandlerWithMetaClient()
 	if err != nil {
@@ -466,13 +457,56 @@ func (s *Server) removeFilesFromIRODS(set *set.Set, paths []string,
 			return err
 		}
 
-		err = baton.RemovePathFromSetInIRODS(transformer, rpath, set.Name, remoteMeta)
+		sets, requesters, err := s.handleSetsAndRequesters(set, remoteMeta)
+		if err != nil {
+			return err
+		}
+
+		err = baton.RemovePathFromSetInIRODS(transformer, rpath, sets, requesters, remoteMeta)
 		if err != nil {
 			return err
 		}
 	}
 
 	return nil
+}
+
+func (s *Server) handleSetsAndRequesters(set *set.Set, meta map[string]string) ([]string, []string, error) {
+	sets := strings.Split(meta[put.MetaKeySets], ",")
+
+	sets, err := removeElementFromSlice(sets, set.Name)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	userSets, err := s.db.GetByRequester(set.Requester)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	requesters := strings.Split(meta[put.MetaKeyRequester], ",")
+
+	for _, userSet := range userSets {
+		if slices.Contains(sets, userSet.Name) {
+			return sets, requesters, nil
+		}
+	}
+
+	requesters, err = removeElementFromSlice(requesters, set.Requester)
+
+	return sets, requesters, err
+}
+
+func removeElementFromSlice(slice []string, element string) ([]string, error) {
+	index := slices.Index(slice, element)
+	if index < 0 {
+		return nil, fmt.Errorf("Element %s not in slice", element)
+	}
+
+	slice[index] = slice[len(slice)-1]
+	slice[len(slice)-1] = ""
+
+	return slice[:len(slice)-1], nil
 }
 
 func (s *Server) removeDirsFromIRODS(set *set.Set, dirpaths []string,
@@ -518,21 +552,7 @@ func (s *Server) removeDirs(c *gin.Context) {
 		}
 	}
 
-	err = s.handleRemovalOfDirsFromIRODS(set, paths, filepaths)
-	if err != nil {
-		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
-
-		return
-	}
-
-	err = s.db.RemoveDirEntries(sid, paths)
-	if err != nil {
-		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
-
-		return
-	}
-
-	err = s.db.RemoveFileEntries(sid, filepaths)
+	err = s.removeFromIRODSandDB(set, paths, filepaths)
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
@@ -542,7 +562,16 @@ func (s *Server) removeDirs(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
-func (s *Server) handleRemovalOfDirsFromIRODS(set *set.Set, paths, filepaths []string) error {
+func (s *Server) removeFromIRODSandDB(set *set.Set, dirpaths, filepaths []string) error {
+	err := s.removePathsFromIRODS(set, dirpaths, filepaths)
+	if err != nil {
+		return err
+	}
+
+	return s.removePathsFromDB(set, dirpaths, filepaths)
+}
+
+func (s *Server) removePathsFromIRODS(set *set.Set, dirpaths, filepaths []string) error {
 	baton, transformer, err := s.getBatonAndTransformer(set)
 	if err != nil {
 		return err
@@ -553,7 +582,16 @@ func (s *Server) handleRemovalOfDirsFromIRODS(set *set.Set, paths, filepaths []s
 		return err
 	}
 
-	return s.removeDirsFromIRODS(set, paths, baton, transformer)
+	return s.removeDirsFromIRODS(set, dirpaths, baton, transformer)
+}
+
+func (s *Server) removePathsFromDB(set *set.Set, dirpaths, filepaths []string) error {
+	err := s.db.RemoveDirEntries(set.ID(), dirpaths)
+	if err != nil {
+		return err
+	}
+
+	return s.db.RemoveFileEntries(set.ID(), filepaths)
 }
 
 // bindPathsAndValidateSet gets the paths out of the JSON body, and the set id

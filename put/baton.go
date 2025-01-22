@@ -33,7 +33,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -506,38 +505,32 @@ func metaToAVUs(meta map[string]string) []ex.AVU {
 // RemovePathFromSetInIRODS removes the given path from iRODS if the path is not
 // associated with any other sets. Otherwise it updates the iRODS metadata for
 // the path to not include the given set.
-func (b *Baton) RemovePathFromSetInIRODS(transformer PathTransformer, path, setName string, meta map[string]string) error {
-	sets := strings.Split(meta[MetaKeySets], ",")
-
-	sets, err := removeElementFromSlice(sets, setName)
-	if err != nil {
-		return err
-	}
-
+func (b *Baton) RemovePathFromSetInIRODS(transformer PathTransformer, path string, sets, requesters []string, meta map[string]string) error {
 	if len(sets) == 0 {
 		return b.handleHardlinkAndRemoveFromIRODS(path, transformer, meta)
 	}
 
-	err = b.RemoveMeta(path, map[string]string{MetaKeySets: meta[MetaKeySets]})
+	metaToRemove := map[string]string{
+		MetaKeySets:      meta[MetaKeySets],
+		MetaKeyRequester: meta[MetaKeyRequester],
+	}
+
+	newMeta := map[string]string{
+		MetaKeySets:      strings.Join(sets, ","),
+		MetaKeyRequester: strings.Join(requesters, ","),
+	}
+
+	err := b.RemoveMeta(path, metaToRemove)
 	if err != nil {
 		return err
 	}
 
-	return b.AddMeta(path, map[string]string{MetaKeySets: strings.Join(sets, ",")})
+	return b.AddMeta(path, newMeta)
 }
 
-func removeElementFromSlice(slice []string, element string) ([]string, error) {
-	index := slices.Index(slice, element)
-	if index < 0 {
-		return nil, fmt.Errorf("Element %s not in slice", element)
-	}
-
-	slice[index] = slice[len(slice)-1]
-	slice[len(slice)-1] = ""
-
-	return slice[:len(slice)-1], nil
-}
-
+// handleHardLinkAndRemoveFromIRODS removes the given path from iRODS. If the
+// path is found to be a hardlink, it checks if there are other hardlinks to the
+// same file, if not, it removes the file.
 func (b *Baton) handleHardlinkAndRemoveFromIRODS(path string, transformer PathTransformer,
 	meta map[string]string) error {
 	err := b.removeFileFromIRODS(path)

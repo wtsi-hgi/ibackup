@@ -349,6 +349,35 @@ func (s *TestServer) waitForStatus(name, statusToFind string, timeout time.Durat
 	So(status.Err, ShouldBeNil)
 }
 
+func (s *TestServer) waitForStatusWithUser(name, statusToFind, user string, timeout time.Duration) {
+	ctx, cancelFn := context.WithTimeout(context.Background(), timeout)
+	defer cancelFn()
+
+	cmd := []string{"status", "--name", name, "--url", s.url, "--cert", s.cert, "--user", user}
+
+	status := retry.Do(ctx, func() error {
+		clientCmd := exec.Command("./"+app, cmd...)
+		clientCmd.Env = s.env
+
+		output, err := clientCmd.CombinedOutput()
+		if err != nil {
+			return err
+		}
+
+		if strings.Contains(string(output), statusToFind) {
+			return nil
+		}
+
+		return ErrStatusNotFound
+	}, &retry.UntilNoError{}, btime.SecondsRangeBackoff(), "waiting for matching status")
+
+	if status.Err != nil {
+		fmt.Printf("\nfailed to see set %s get status: %s\n", name, statusToFind) //nolint:forbidigo
+	}
+
+	So(status.Err, ShouldBeNil)
+}
+
 func (s *TestServer) Shutdown() error {
 	if s.stopped {
 		return nil
@@ -2035,7 +2064,7 @@ func TestRemove(t *testing.T) {
 			})
 
 			Convey("Remove with a hardlink removes both the hardlink file and inode file", func() {
-				remoteInode := getRemoteInodePath(filepath.Join(remotePath, "link"))
+				remoteInode := getMetaValue(getRemoteMeta(filepath.Join(remotePath, "link")), "ibackup:remotehardlink")
 
 				_, err := exec.Command("ils", remoteInode).CombinedOutput()
 				So(err, ShouldBeNil)
@@ -2050,7 +2079,7 @@ func TestRemove(t *testing.T) {
 				So(err, ShouldNotBeNil)
 			})
 
-			Convey("Given another set with a hardlink to the same file", func() {
+			Convey("And another set with a hardlink to the same file", func() {
 				linkPath2 := filepath.Join(path, "link2")
 
 				err = os.Link(file1, linkPath2)
@@ -2061,7 +2090,7 @@ func TestRemove(t *testing.T) {
 				s.waitForStatus("testHardlinks", "\nStatus: complete", 10*time.Second)
 
 				Convey("Removing a hardlink does not remove the inode file", func() {
-					remoteInode := getRemoteInodePath(filepath.Join(remotePath, "link2"))
+					remoteInode := getMetaValue(getRemoteMeta(filepath.Join(remotePath, "link2")), "ibackup:remotehardlink")
 
 					_, err := exec.Command("ils", remoteInode).CombinedOutput()
 					So(err, ShouldBeNil)
@@ -2093,7 +2122,7 @@ func TestRemove(t *testing.T) {
 				So(string(output), ShouldNotContainSubstring, "file3\n")
 			})
 
-			Convey("Given a new file added to a directory already in the set", func() {
+			Convey("And a new file added to a directory already in the set", func() {
 				file5 := filepath.Join(dir1, "file5")
 				internal.CreateTestFile(t, file5, "some data5")
 
@@ -2108,7 +2137,7 @@ func TestRemove(t *testing.T) {
 				})
 			})
 
-			Convey("Given a new directory", func() {
+			Convey("And a new directory", func() {
 				dir3 := filepath.Join(path, "path/to/new/dir/")
 
 				err = os.MkdirAll(dir3, 0755)
@@ -2120,10 +2149,18 @@ func TestRemove(t *testing.T) {
 				})
 			})
 
-			Convey("And another added set with the same files and dirs", func() {
-				setName2 := "testRemoveFiles2"
+			Convey("And a set with the same files added by a different user", func() {
+				user, err := user.Current()
+				So(err, ShouldBeNil)
 
-				s.addSetForTestingWithItems(t, setName2, transformer, tempTestFileOfPaths.Name())
+				setName2 := "different_user_set"
+
+				exitCode, _ := s.runBinary(t, "add", "--name", setName2, "--transformer",
+					transformer, "--items", tempTestFileOfPaths.Name(), "--user", "testUser")
+
+				So(exitCode, ShouldEqual, 0)
+
+				s.waitForStatusWithUser(setName2, "\nStatus: complete", "testUser", 20*time.Second)
 
 				Convey("Remove removes the metadata related to the set", func() {
 					output := getRemoteMeta(filepath.Join(remotePath, "file1"))
@@ -2148,32 +2185,43 @@ func TestRemove(t *testing.T) {
 					So(string(output), ShouldContainSubstring, "file1")
 				})
 
-				Convey("...", func() {
-					exitCode, _ := s.runBinary(t, "add", "--name", "different_user_set", "--transformer",
-						transformer, "--items", tempTestFileOfPaths.Name(), "--user", "rk18")
-
+				Convey("Remove on a file removes the user as a requester", func() {
+					exitCode, _ = s.runBinary(t, "remove", "--name", setName, "--path", file1)
 					So(exitCode, ShouldEqual, 0)
 
-					s.waitForStatus("different_user_set", "\nStatus: complete", 20*time.Second)
+					requesters := getMetaValue(getRemoteMeta(filepath.Join(remotePath, "file1")), "ibackup:requesters")
+
+					So(requesters, ShouldNotContainSubstring, user.Username)
 				})
 
-				// add something about requesters
+				Convey("And a second set with the same files added by the same user", func() {
+					setName3 := "same_user_set"
+
+					s.addSetForTestingWithItems(t, setName3, transformer, tempTestFileOfPaths.Name())
+
+					Convey("Remove keeps the user as a requester", func() {
+						exitCode, _ = s.runBinary(t, "remove", "--name", setName, "--path", file1)
+						So(exitCode, ShouldEqual, 0)
+
+						requesters := getMetaValue(getRemoteMeta(filepath.Join(remotePath, "file1")), "ibackup:requesters")
+
+						So(requesters, ShouldContainSubstring, user.Username)
+					})
+				})
 			})
 		})
 		//TODO add tests for failed files
 	})
 }
 
-func getRemoteInodePath(linkPath string) string {
-	output := getRemoteMeta(linkPath)
-
-	attrFind := "attribute: ibackup:remotehardlink\nvalue: "
-	attrPos := strings.Index(output, attrFind)
+func getMetaValue(meta, key string) string {
+	attrFind := "attribute: " + key + "\nvalue: "
+	attrPos := strings.Index(meta, attrFind)
 	So(attrPos, ShouldNotEqual, -1)
 
-	remoteInode := output[attrPos+len(attrFind):]
-	nlPos := strings.Index(remoteInode, "\n")
+	value := meta[attrPos+len(attrFind):]
+	nlPos := strings.Index(value, "\n")
 	So(nlPos, ShouldNotEqual, -1)
 
-	return remoteInode[:nlPos]
+	return value[:nlPos]
 }
