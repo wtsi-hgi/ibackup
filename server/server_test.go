@@ -181,8 +181,12 @@ func TestServer(t *testing.T) {
 
 		conf.Slacker = slack.NewMock(slackWriter)
 
-		const serverStartMessage = slack.BoxPrefixInfo + "server starting, loading database" +
-			slack.BoxPrefixSuccess + "server loaded database"
+		const (
+			serverStartMessage = slack.BoxPrefixInfo + "server starting, loading database" +
+				slack.BoxPrefixSuccess + "server loaded database"
+			serverRecoveryMessage = slack.BoxPrefixSuccess + "recovery completed"
+			serverStartedMessage  = slack.BoxPrefixSuccess + "server started"
+		)
 
 		makeAndStartServer := func() (*Server, string, func() error) {
 			s, errn := New(conf)
@@ -204,6 +208,8 @@ func TestServer(t *testing.T) {
 			addr, dfunc, errs := gas.StartTestServer(s, certPath, keyPath)
 			So(errs, ShouldBeNil)
 			So(slackWriter.String(), ShouldStartWith, serverStartMessage)
+			So(slackWriter.String(), ShouldContainSubstring, serverRecoveryMessage)
+			So(slackWriter.String(), ShouldContainSubstring, serverStartedMessage)
 
 			return s, addr, dfunc
 		}
@@ -1532,7 +1538,7 @@ func TestServer(t *testing.T) {
 							"not a valid humgen lustre path [%s]\n", expected[0]))
 						So(slackWriter.String(), ShouldEqual, fmt.Sprintf(serverStartMessage+
 							slack.BoxPrefixError+"`jim.setbad` could not be recovered: "+
-							"not a valid humgen lustre path [%s]", expected[0]))
+							"not a valid humgen lustre path [%s]"+serverRecoveryMessage+serverStartedMessage, expected[0]))
 					})
 				})
 

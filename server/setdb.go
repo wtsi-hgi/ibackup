@@ -934,6 +934,8 @@ func (s *Server) recoverQueue() error {
 		}
 	}
 
+	s.sendSlackMessage(slack.Success, "recovery completed")
+
 	return nil
 }
 
