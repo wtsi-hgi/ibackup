@@ -1338,7 +1338,7 @@ func remoteDBBackupPath() string {
 }
 
 func TestPuts(t *testing.T) {
-	FocusConvey("Given a server configured with a remote hardlink location", t, func() {
+	Convey("Given a server configured with a remote hardlink location", t, func() {
 		remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
 		if remotePath == "" {
 			SkipConvey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
@@ -1381,7 +1381,7 @@ func TestPuts(t *testing.T) {
 			s.waitForStatus(setName, "\nStatus: complete (but with failures - try a retry)", 60*time.Second)
 		})
 
-		FocusConvey("Given a file containing directory and file paths", func() {
+		Convey("Given a file containing directory and file paths", func() {
 			dir1 := filepath.Join(path, "path/to/some/dir/")
 			dir2 := filepath.Join(path, "path/to/other/dir/")
 			subdir1 := filepath.Join(dir1, "subdir/")
@@ -1662,7 +1662,7 @@ Local Path	Status	Size	Attempts	Date	Error`+"\n"+
 		})
 
 		// TODO: re-enable once hardlinks metamod bug fixed
-		FocusConvey("Putting a set with hardlinks uploads an empty file and special inode file", func() {
+		Convey("Putting a set with hardlinks uploads an empty file and special inode file", func() {
 			file := filepath.Join(path, "file")
 			link1 := filepath.Join(path, "hardlink1")
 			link2 := filepath.Join(path, "hardlink2")
@@ -1895,7 +1895,7 @@ func confirmFileContents(file, expectedContents string) {
 }
 
 func TestRemove(t *testing.T) {
-	FocusConvey("Given a server", t, func() {
+	Convey("Given a server", t, func() {
 		remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
 		if remotePath == "" {
 			SkipConvey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
@@ -1924,7 +1924,7 @@ func TestRemove(t *testing.T) {
 		path := t.TempDir()
 		transformer := "prefix=" + path + ":" + remotePath
 
-		FocusConvey("And an added set with files and folders", func() {
+		Convey("And an added set with files and folders", func() {
 			dir := t.TempDir()
 
 			linkPath := filepath.Join(path, "link")
@@ -1987,7 +1987,10 @@ func TestRemove(t *testing.T) {
 					0, dir2)
 
 				s.confirmOutputDoesNotContain(t, []string{"status", "--name", setName, "-d"},
-					0, dir1)
+					0, dir1+"/")
+
+				s.confirmOutputDoesNotContain(t, []string{"status", "--name", setName, "-d"},
+					0, dir1+" => ")
 			})
 
 			Convey("Remove takes a flag --items and removes all provided files and dirs from the set", func() {
@@ -2012,7 +2015,10 @@ func TestRemove(t *testing.T) {
 					0, dir2)
 
 				s.confirmOutputDoesNotContain(t, []string{"status", "--name", setName, "-d"},
-					0, dir1)
+					0, dir1+"/")
+
+				s.confirmOutputDoesNotContain(t, []string{"status", "--name", setName, "-d"},
+					0, dir1+" => ")
 			})
 
 			Convey("Remove removes the provided file from iRODS", func() {
@@ -2029,16 +2035,7 @@ func TestRemove(t *testing.T) {
 			})
 
 			Convey("Remove with a hardlink removes both the hardlink file and inode file", func() {
-				output := getRemoteMeta(filepath.Join(remotePath, "link"))
-				attrFind := "attribute: ibackup:remotehardlink\nvalue: "
-				attrPos := strings.Index(output, attrFind)
-				So(attrPos, ShouldNotEqual, -1)
-
-				remoteInode := output[attrPos+len(attrFind):]
-				nlPos := strings.Index(remoteInode, "\n")
-				So(nlPos, ShouldNotEqual, -1)
-
-				remoteInode = remoteInode[:nlPos]
+				remoteInode := getRemoteInodePath(filepath.Join(remotePath, "link"))
 
 				_, err := exec.Command("ils", remoteInode).CombinedOutput()
 				So(err, ShouldBeNil)
@@ -2053,7 +2050,34 @@ func TestRemove(t *testing.T) {
 				So(err, ShouldNotBeNil)
 			})
 
-			FocusConvey("Remove removes the provided dir from iRODS", func() {
+			Convey("Given another set with a hardlink to the same file", func() {
+				linkPath2 := filepath.Join(path, "link2")
+
+				err = os.Link(file1, linkPath2)
+				So(err, ShouldBeNil)
+
+				s.addSetForTesting(t, "testHardlinks", transformer, linkPath2)
+
+				s.waitForStatus("testHardlinks", "\nStatus: complete", 10*time.Second)
+
+				Convey("Removing a hardlink does not remove the inode file", func() {
+					remoteInode := getRemoteInodePath(filepath.Join(remotePath, "link2"))
+
+					_, err := exec.Command("ils", remoteInode).CombinedOutput()
+					So(err, ShouldBeNil)
+
+					exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", linkPath)
+					So(exitCode, ShouldEqual, 0)
+
+					_, err = exec.Command("ils", filepath.Join(remotePath, "link")).CombinedOutput()
+					So(err, ShouldNotBeNil)
+
+					_, err = exec.Command("ils", remoteInode).CombinedOutput()
+					So(err, ShouldBeNil)
+				})
+			})
+
+			Convey("Remove removes the provided dir from iRODS", func() {
 				output, err := exec.Command("ils", "-r", remotePath).CombinedOutput()
 				So(err, ShouldBeNil)
 				So(string(output), ShouldContainSubstring, "path/to/some/dir")
@@ -2069,28 +2093,28 @@ func TestRemove(t *testing.T) {
 				So(string(output), ShouldNotContainSubstring, "file3\n")
 			})
 
-			FocusConvey("Given a new file added to a directory already in the set", func() {
+			Convey("Given a new file added to a directory already in the set", func() {
 				file5 := filepath.Join(dir1, "file5")
 				internal.CreateTestFile(t, file5, "some data5")
 
-				FocusConvey("Remove returns an error if you try to remove just the file", func() {
+				Convey("Remove returns an error if you try to remove just the file", func() {
 					s.confirmOutputContains(t, []string{"remove", "--name", setName, "--path", file5},
 						1, fmt.Sprintf("%s is not part of the backup set [%s]", file5, setName))
 				})
 
-				FocusConvey("Remove ignores the file if you remove the directory", func() {
+				Convey("Remove ignores the file if you remove the directory", func() {
 					exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", dir1)
 					So(exitCode, ShouldEqual, 0)
 				})
 			})
 
-			FocusConvey("Given a new directory", func() {
+			Convey("Given a new directory", func() {
 				dir3 := filepath.Join(path, "path/to/new/dir/")
 
 				err = os.MkdirAll(dir3, 0755)
 				So(err, ShouldBeNil)
 
-				FocusConvey("Remove returns an error if you try to remove the directory", func() {
+				Convey("Remove returns an error if you try to remove the directory", func() {
 					s.confirmOutputContains(t, []string{"remove", "--name", setName, "--path", dir3},
 						1, fmt.Sprintf("%s is not part of the backup set [%s]", dir3, setName))
 				})
@@ -2124,7 +2148,7 @@ func TestRemove(t *testing.T) {
 					So(string(output), ShouldContainSubstring, "file1")
 				})
 
-				FocusConvey("...", func() {
+				Convey("...", func() {
 					exitCode, _ := s.runBinary(t, "add", "--name", "different_user_set", "--transformer",
 						transformer, "--items", tempTestFileOfPaths.Name(), "--user", "rk18")
 
@@ -2138,4 +2162,18 @@ func TestRemove(t *testing.T) {
 		})
 		//TODO add tests for failed files
 	})
+}
+
+func getRemoteInodePath(linkPath string) string {
+	output := getRemoteMeta(linkPath)
+
+	attrFind := "attribute: ibackup:remotehardlink\nvalue: "
+	attrPos := strings.Index(output, attrFind)
+	So(attrPos, ShouldNotEqual, -1)
+
+	remoteInode := output[attrPos+len(attrFind):]
+	nlPos := strings.Index(remoteInode, "\n")
+	So(nlPos, ShouldNotEqual, -1)
+
+	return remoteInode[:nlPos]
 }

@@ -466,7 +466,7 @@ func (s *Server) removeFilesFromIRODS(set *set.Set, paths []string,
 			return err
 		}
 
-		err = baton.RemovePathFromSetInIRODS(rpath, set.Name, remoteMeta)
+		err = baton.RemovePathFromSetInIRODS(transformer, rpath, set.Name, remoteMeta)
 		if err != nil {
 			return err
 		}
@@ -507,7 +507,18 @@ func (s *Server) removeDirs(c *gin.Context) {
 		return
 	}
 
-	err = s.handleRemovalOfDirsFromIRODS(set, paths)
+	var filepaths []string
+
+	for _, path := range paths {
+		filepaths, err = s.db.GetFilesInDir(set.ID(), path, filepaths)
+		if err != nil {
+			c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+
+			return
+		}
+	}
+
+	err = s.handleRemovalOfDirsFromIRODS(set, paths, filepaths)
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
@@ -521,20 +532,17 @@ func (s *Server) removeDirs(c *gin.Context) {
 		return
 	}
 
+	err = s.db.RemoveFileEntries(sid, filepaths)
+	if err != nil {
+		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+
+		return
+	}
+
 	c.Status(http.StatusOK)
 }
 
-func (s *Server) handleRemovalOfDirsFromIRODS(set *set.Set, paths []string) error {
-	var filepaths []string
-	var err error
-
-	for _, path := range paths {
-		filepaths, err = s.db.GetFilesInDir(set.ID(), path, filepaths)
-		if err != nil {
-			return err
-		}
-	}
-
+func (s *Server) handleRemovalOfDirsFromIRODS(set *set.Set, paths, filepaths []string) error {
 	baton, transformer, err := s.getBatonAndTransformer(set)
 	if err != nil {
 		return err
