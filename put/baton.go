@@ -506,7 +506,7 @@ func metaToAVUs(meta map[string]string) []ex.AVU {
 // RemovePathFromSetInIRODS removes the given path from iRODS if the path is not
 // associated with any other sets. Otherwise it updates the iRODS metadata for
 // the path to not include the given set.
-func (b *Baton) RemovePathFromSetInIRODS(path, setName string, meta map[string]string) error {
+func (b *Baton) RemovePathFromSetInIRODS(transformer PathTransformer, path, setName string, meta map[string]string) error {
 	sets := strings.Split(meta[MetaKeySets], ",")
 
 	sets, err := removeElementFromSlice(sets, setName)
@@ -515,7 +515,7 @@ func (b *Baton) RemovePathFromSetInIRODS(path, setName string, meta map[string]s
 	}
 
 	if len(sets) == 0 {
-		return b.handleHardlinkAndRemoveFromIRODS(path, meta)
+		return b.handleHardlinkAndRemoveFromIRODS(path, transformer, meta)
 	}
 
 	err = b.RemoveMeta(path, map[string]string{MetaKeySets: meta[MetaKeySets]})
@@ -538,13 +538,23 @@ func removeElementFromSlice(slice []string, element string) ([]string, error) {
 	return slice[:len(slice)-1], nil
 }
 
-func (b *Baton) handleHardlinkAndRemoveFromIRODS(path string, meta map[string]string) error {
+func (b *Baton) handleHardlinkAndRemoveFromIRODS(path string, transformer PathTransformer,
+	meta map[string]string) error {
 	err := b.removeFileFromIRODS(path)
 	if err != nil {
 		return err
 	}
 
 	if meta[MetaKeyHardlink] == "" {
+		return nil
+	}
+
+	items, err := b.queryIRODSMeta(transformer, map[string]string{MetaKeyRemoteHardlink: meta[MetaKeyRemoteHardlink]})
+	if err != nil {
+		return err
+	}
+
+	if len(items) != 0 {
 		return nil
 	}
 
@@ -561,6 +571,28 @@ func (b *Baton) removeFileFromIRODS(path string) error {
 	}, "remove meta error: "+path)
 
 	return err
+}
+
+func (b *Baton) queryIRODSMeta(transformer PathTransformer, meta map[string]string) ([]ex.RodsItem, error) {
+	path, err := transformer("/")
+	if err != nil {
+		return nil, err
+	}
+
+	it := &ex.RodsItem{
+		IPath: path,
+		IAVUs: metaToAVUs(meta),
+	}
+
+	var items []ex.RodsItem
+
+	err = timeoutOp(func() error {
+		items, err = b.metaClient.MetaQuery(ex.Args{Object: true}, *it)
+
+		return err
+	}, "remove meta error: "+path)
+
+	return items, err
 }
 
 func (b *Baton) RemoveDirFromIRODS(path string) error {
