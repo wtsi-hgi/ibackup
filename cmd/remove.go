@@ -71,7 +71,7 @@ var removeCmd = &cobra.Command{
 		ensureURLandCert()
 
 		if (removeItems == "") == (removePath == "") {
-			die("exactly one of --items or --path must be provided")
+			dief("exactly one of --items or --path must be provided")
 		}
 
 		var files []string
@@ -79,7 +79,7 @@ var removeCmd = &cobra.Command{
 
 		client, err := newServerClient(serverURL, serverCert)
 		if err != nil {
-			die("%s", err.Error())
+			die(err)
 		}
 
 		if removeItems != "" {
@@ -90,7 +90,7 @@ var removeCmd = &cobra.Command{
 		if removePath != "" {
 			removePath, err = filepath.Abs(removePath)
 			if err != nil {
-				die("%s", err.Error())
+				die(err)
 			}
 
 			if pathIsDir(removePath) {
@@ -119,7 +119,7 @@ func init() {
 		"input paths are terminated by a null character instead of a new line")
 
 	if err := removeCmd.MarkFlagRequired("name"); err != nil {
-		die("%s", err.Error())
+		dief("%s", err.Error())
 	}
 }
 
@@ -134,11 +134,11 @@ func remove(client *server.Client, user, name string, files, dirs []string) {
 
 	err := client.RemoveFiles(sets[0].ID(), files)
 	if err != nil {
-		die("%s", err.Error())
+		dief("%s", err.Error())
 	}
 
 	err = client.RemoveDirs(sets[0].ID(), dirs)
 	if err != nil {
-		die("%s", err.Error())
+		dief("%s", err.Error())
 	}
 }
