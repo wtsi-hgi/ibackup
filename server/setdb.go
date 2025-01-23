@@ -475,38 +475,59 @@ func (s *Server) handleSetsAndRequesters(set *set.Set, meta map[string]string) (
 	sets := strings.Split(meta[put.MetaKeySets], ",")
 	requesters := strings.Split(meta[put.MetaKeyRequester], ",")
 
-	userSets, err := s.db.GetByRequester(set.Requester)
-
-	lessRequesters, err := removeElementFromSlice(requesters, set.Requester)
-
-	var otherUserSets []string
-	for _, requester := range lessRequesters {
-		otherSets, err := s.db.GetByRequester(requester)
-		if err != nil {
-			return nil, nil, err
-		}
-		for _, otherSet := range otherSets {
-			otherUserSets = append(otherUserSets, otherSet.Name)
-		}
-
-	}
-
-	sets, err = removeElementFromSlice(sets, set.Name)
+	otherUserSets, userSets, err := s.getSetNamesByRequesters(requesters, set.Requester)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	for _, userSet := range userSets {
-		if slices.Contains(sets, userSet.Name) {
-			lessRequesters = requesters
+	if len(userSets) == 1 && userSets[0] == set.Name {
+		requesters, err = removeElementFromSlice(requesters, set.Requester)
+		if err != nil {
+			return nil, nil, err
 		}
 	}
 
 	if slices.Contains(otherUserSets, set.Name) {
-		sets = append(sets, set.Name)
+		return sets, requesters, nil
 	}
 
-	return sets, lessRequesters, err
+	sets, err = removeElementFromSlice(sets, set.Name)
+
+	return sets, requesters, err
+}
+
+func (s *Server) getSetNamesByRequesters(requesters []string, user string) ([]string, []string, error) {
+	var (
+		otherUserSets []string
+		curUserSets   []string
+	)
+
+	for _, requester := range requesters {
+		requesterSets, err := s.db.GetByRequester(requester)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		if requester == user {
+			curUserSets = append(curUserSets, getNamesFromSets(requesterSets)...)
+
+			continue
+		}
+
+		otherUserSets = append(otherUserSets, getNamesFromSets(requesterSets)...)
+	}
+
+	return otherUserSets, curUserSets, nil
+}
+
+func getNamesFromSets(sets []*set.Set) []string {
+	names := make([]string, len(sets))
+
+	for i, set := range sets {
+		names[i] = set.Name
+	}
+
+	return names
 }
 
 func removeElementFromSlice(slice []string, element string) ([]string, error) {
