@@ -521,6 +521,11 @@ func (b *Baton) RemovePathFromSetInIRODS(transformer PathTransformer, path strin
 		MetaKeyRequester: strings.Join(requesters, ","),
 	}
 
+	if metaToRemove[MetaKeySets] == newMeta[MetaKeySets] &&
+		metaToRemove[MetaKeyRequester] == newMeta[MetaKeyRequester] {
+		return nil
+	}
+
 	err := b.RemoveMeta(path, metaToRemove)
 	if err != nil {
 		return err
