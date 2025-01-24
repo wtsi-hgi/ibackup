@@ -1163,6 +1163,17 @@ func (d *DB) SetError(setID, errMsg string) error {
 	})
 }
 
+func (d *DB) SetNewCounts(setID string, numFiles uint64) error {
+	return d.updateSetProperties(setID, func(got *Set) {
+		got.NumFiles = numFiles
+
+		err := got.FixCounts(&Entry{}, d.GetFileEntries)
+		if err != nil {
+			//
+		}
+	})
+}
+
 // updateSetProperties retrives a set from the database and gives it to your
 // callback, allowing you to change properties on it. The altered set will then
 // be stored back in the database.

@@ -503,7 +503,7 @@ func (s *Set) UpdateBasedOnEntry(entry *Entry, getFileEntries func(string) ([]*E
 
 	s.adjustBasedOnEntry(entry)
 
-	err := s.fixCounts(entry, getFileEntries)
+	err := s.FixCounts(entry, getFileEntries)
 	if err != nil {
 		return err
 	}
@@ -538,10 +538,10 @@ func (s *Set) checkIfComplete() {
 		s.Uploaded, s.Replaced, s.Skipped, s.Failed, s.Missing, s.Abnormal, s.UploadedSize()))
 }
 
-// fixCounts resets the set counts to 0 and goes through all the entries for
+// FixCounts resets the set counts to 0 and goes through all the entries for
 // the set in the db to recaluclate them. The supplied entry should be one you
 // newly updated and that wasn't in the db before the transaction we're in.
-func (s *Set) fixCounts(entry *Entry, getFileEntries func(string) ([]*Entry, error)) error {
+func (s *Set) FixCounts(entry *Entry, getFileEntries func(string) ([]*Entry, error)) error {
 	if s.countsValid() {
 		return nil
 	}
@@ -579,6 +579,15 @@ func (s *Set) updateAllCounts(entries []*Entry, entry *Entry) {
 		}
 
 		s.entryToSetCounts(e)
+	}
+}
+
+// updateAllCounts should be called after setting all counts to 0 (because they
+// had become invalid), and then recalculates the counts. Also marks the given
+// entry as newFail if any entry in entries is Failed.
+func (s *Set) updateSetSize(entries []*Entry) {
+	for _, e := range entries {
+		s.SizeTotal += e.Size
 	}
 }
 

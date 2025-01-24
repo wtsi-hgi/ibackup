@@ -599,13 +599,19 @@ func (s *Server) removeDirs(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
-func (s *Server) removeFromIRODSandDB(set *set.Set, dirpaths, filepaths []string) error {
-	err := s.removePathsFromIRODS(set, dirpaths, filepaths)
+func (s *Server) removeFromIRODSandDB(userSet *set.Set, dirpaths, filepaths []string) error {
+	err := s.removePathsFromIRODS(userSet, dirpaths, filepaths)
 	if err != nil {
 		return err
 	}
 
-	return s.removePathsFromDB(set, dirpaths, filepaths)
+	err = s.removePathsFromDB(userSet, dirpaths, filepaths)
+	if err != nil {
+		return err
+	}
+
+	return s.db.SetNewCounts(userSet.ID(), userSet.NumFiles-uint64(len(filepaths)))
+
 }
 
 func (s *Server) removePathsFromIRODS(set *set.Set, dirpaths, filepaths []string) error {
