@@ -475,6 +475,10 @@ func (s *Server) handleSetsAndRequesters(set *set.Set, meta map[string]string) (
 	sets := strings.Split(meta[put.MetaKeySets], ",")
 	requesters := strings.Split(meta[put.MetaKeyRequester], ",")
 
+	if !slices.Contains(sets, set.Name) {
+		return sets, requesters, nil
+	}
+
 	otherUserSets, userSets, err := s.getSetNamesByRequesters(requesters, set.Requester)
 	if err != nil {
 		return nil, nil, err
