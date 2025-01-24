@@ -1924,7 +1924,7 @@ func confirmFileContents(file, expectedContents string) {
 }
 
 func TestRemove(t *testing.T) {
-	Convey("Given a server", t, func() {
+	FocusConvey("Given a server", t, func() {
 		remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
 		if remotePath == "" {
 			SkipConvey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
@@ -1953,7 +1953,7 @@ func TestRemove(t *testing.T) {
 		path := t.TempDir()
 		transformer := "prefix=" + path + ":" + remotePath
 
-		Convey("And an added set with files and folders", func() {
+		FocusConvey("And an added set with files and folders", func() {
 			dir := t.TempDir()
 
 			linkPath := filepath.Join(path, "link")
@@ -1995,7 +1995,7 @@ func TestRemove(t *testing.T) {
 
 			s.addSetForTestingWithItems(t, setName, transformer, tempTestFileOfPaths.Name())
 
-			Convey("Remove removes the file from the set", func() {
+			FocusConvey("Remove removes the file from the set", func() {
 				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", file1)
 
 				So(exitCode, ShouldEqual, 0)
@@ -2005,6 +2005,10 @@ func TestRemove(t *testing.T) {
 
 				s.confirmOutputDoesNotContain(t, []string{"status", "--name", setName, "-d"},
 					0, file1)
+
+				s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
+					0, "Num files: 5; Symlinks: 1; Hardlinks: 1; Size (total/recently uploaded): 30 B / 30 B\n"+
+						"Uploaded: 5; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0")
 			})
 
 			Convey("Remove removes the dir from the set", func() {
