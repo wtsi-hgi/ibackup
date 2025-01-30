@@ -40,7 +40,6 @@ import (
 	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/set"
 	"github.com/wtsi-hgi/ibackup/slack"
-	"github.com/wtsi-ssg/wrstat/v6/walk"
 )
 
 const (
@@ -434,12 +433,12 @@ func (s *Server) putDirs(c *gin.Context) {
 		return
 	}
 
-	entries := make([]*walk.Dirent, len(paths))
+	entries := make([]*set.Dirent, len(paths))
 
 	for n, path := range paths {
-		entries[n] = &walk.Dirent{
-			Path: walk.NewFilePath(path),
-			Type: os.ModeDir,
+		entries[n] = &set.Dirent{
+			Path: path,
+			Typ:  os.ModeDir,
 		}
 	}
 

@@ -26,12 +26,12 @@
 package set
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
 	"time"
 
-	"github.com/wtsi-ssg/wrstat/v6/walk"
 	bolt "go.etcd.io/bbolt"
 )
 
@@ -160,12 +160,12 @@ func (e *Entry) InodeStoragePath() string {
 
 // setTypeForNoInode sets our type based on the given dirent's Type, for the
 // case that the the dirent has no Inode (is missing or is a directory).
-func (e *Entry) setTypeForNoInode(dirent *walk.Dirent) {
-	if dirent.Type == os.ModeIrregular {
+func (e *Entry) setTypeForNoInode(dirent *Dirent) {
+	if dirent.Typ == os.ModeIrregular {
 		e.Status = Missing
 	}
 
-	if dirent.Type.IsDir() {
+	if dirent.Typ.IsDir() {
 		e.Type = Directory
 	}
 }
@@ -257,7 +257,7 @@ func (c *entryCreator) setTransformer() error {
 // UpdateOrCreateEntries creates or updates (if already in the existing map)
 // entries in the database based on properties of each given dirent. It handles
 // associating hard and symlink info on the resulting entries.
-func (c *entryCreator) UpdateOrCreateEntries(dirents []*walk.Dirent) error {
+func (c *entryCreator) UpdateOrCreateEntries(dirents []*Dirent) error {
 	for _, dirent := range dirents {
 		err := c.updateOrCreateEntryFromDirent(dirent)
 		if err != nil {
@@ -268,13 +268,13 @@ func (c *entryCreator) UpdateOrCreateEntries(dirents []*walk.Dirent) error {
 	return c.setBucket.Put(c.setID, c.db.encodeToBytes(c.set))
 }
 
-func (c *entryCreator) updateOrCreateEntryFromDirent(dirent *walk.Dirent) error {
+func (c *entryCreator) updateOrCreateEntryFromDirent(dirent *Dirent) error {
 	entry, err := c.existingOrNewEncodedEntry(dirent)
 	if err != nil {
 		return err
 	}
 
-	return c.bucket.Put(dirent.Path.Bytes(), entry)
+	return c.bucket.Put([]byte(dirent.Path), entry)
 }
 
 func (e *Entry) setTypeAndDetermineDest(eType EntryType) error {
@@ -295,9 +295,9 @@ func (e *Entry) setTypeAndDetermineDest(eType EntryType) error {
 	return err
 }
 
-func (c *entryCreator) newEntryFromDirent(dirent *walk.Dirent) (*Entry, error) {
+func (c *entryCreator) newEntryFromDirent(dirent *Dirent) (*Entry, error) {
 	entry := &Entry{
-		Path:  string(dirent.Path.Bytes()),
+		Path:  dirent.Path,
 		Inode: dirent.Inode,
 	}
 
@@ -322,7 +322,7 @@ func (c *entryCreator) newEntryFromDirent(dirent *walk.Dirent) (*Entry, error) {
 	return entry, nil
 }
 
-func (c *entryCreator) existingOrNewEncodedEntry(dirent *walk.Dirent) ([]byte, error) {
+func (c *entryCreator) existingOrNewEncodedEntry(dirent *Dirent) ([]byte, error) {
 	entry, err := c.newEntryFromDirent(dirent)
 	if err != nil {
 		return nil, err
@@ -330,7 +330,7 @@ func (c *entryCreator) existingOrNewEncodedEntry(dirent *walk.Dirent) ([]byte, e
 
 	c.set.entryToSetCounts(entry)
 
-	e := c.existingEntries[string(dirent.Path.Bytes())]
+	e := c.existingEntries[dirent.Path]
 	if e != nil {
 		dbEntry := c.db.decodeEntry(e)
 		if !dbEntry.updateTypeDestAndInode(entry) {
@@ -345,23 +345,23 @@ func (c *entryCreator) existingOrNewEncodedEntry(dirent *walk.Dirent) ([]byte, e
 	return e, nil
 }
 
-func (c *entryCreator) determineEntryType(dirent *walk.Dirent) (EntryType, string, error) {
-	if dirent.IsDir() {
+func (c *entryCreator) determineEntryType(dirent *Dirent) (EntryType, string, error) {
+	if dirent.Typ.IsDir() {
 		return Directory, "", nil
 	}
 
 	return c.direntToEntryType(dirent)
 }
 
-func (c *entryCreator) direntToEntryType(de *walk.Dirent) (EntryType, string, error) {
+func (c *entryCreator) direntToEntryType(de *Dirent) (EntryType, string, error) {
 	eType := Regular
 
 	switch {
 	case de.Inode == 0:
 		eType = Unknown
-	case de.IsSymlink():
+	case de.Typ == fs.ModeSymlink:
 		eType = Symlink
-	case !(de.IsRegular() || de.IsDir()):
+	case !(de.Typ.IsRegular() || de.Typ.IsDir()):
 		eType = Abnormal
 	default:
 		hardLink, err := c.db.handleInode(c.tx, de, c.transformerID)

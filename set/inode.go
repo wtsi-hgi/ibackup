@@ -35,7 +35,6 @@ import (
 
 	"github.com/moby/sys/mountinfo"
 	"github.com/ugorji/go/codec"
-	"github.com/wtsi-ssg/wrstat/v6/walk"
 	bolt "go.etcd.io/bbolt"
 )
 
@@ -75,10 +74,10 @@ func (d *DB) getMountPoints() error {
 // handleInode records the inode of the given Dirent in the database, and
 // returns the path to the first local file with that inode if we've seen if
 // before.
-func (d *DB) handleInode(tx *bolt.Tx, de *walk.Dirent, transformerID string) (string, error) {
+func (d *DB) handleInode(tx *bolt.Tx, de *Dirent, transformerID string) (string, error) {
 	key := d.inodeMountPointKeyFromDirent(de)
 	b := tx.Bucket([]byte(inodeBucket))
-	transformerPath := transformerID + transformerInodeSeparator + string(de.Path.Bytes())
+	transformerPath := transformerID + transformerInodeSeparator + de.Path
 
 	v := b.Get(key)
 	if v == nil {
@@ -136,8 +135,8 @@ func alreadyInFiles(path string, existing []string) (bool, bool) {
 
 // inodeMountPointKeyFromDirent returns the inodeBucket key for the Dirent's
 // inode and the Dirent's mount point for its path.
-func (d *DB) inodeMountPointKeyFromDirent(de *walk.Dirent) []byte {
-	return append(strconv.AppendUint([]byte{}, de.Inode, hexBase), d.GetMountPointFromPath(string(de.Path.Bytes()))...)
+func (d *DB) inodeMountPointKeyFromDirent(de *Dirent) []byte {
+	return append(strconv.AppendUint([]byte{}, de.Inode, hexBase), d.GetMountPointFromPath(de.Path)...)
 }
 
 func (d *DB) inodeMountPointKeyFromEntry(e *Entry) []byte {
