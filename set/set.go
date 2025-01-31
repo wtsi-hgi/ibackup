@@ -551,6 +551,13 @@ func (s *Set) FixCounts(entry *Entry, getFileEntries func(string) ([]*Entry, err
 		return err
 	}
 
+	s.resetCounts()
+	s.updateAllCounts(entries, entry)
+
+	return nil
+}
+
+func (s *Set) resetCounts() {
 	s.Uploaded = 0
 	s.Replaced = 0
 	s.Skipped = 0
@@ -559,10 +566,6 @@ func (s *Set) FixCounts(entry *Entry, getFileEntries func(string) ([]*Entry, err
 	s.Abnormal = 0
 	s.Symlinks = 0
 	s.Hardlinks = 0
-
-	s.updateAllCounts(entries, entry)
-
-	return nil
 }
 
 // updateAllCounts should be called after setting all counts to 0 (because they
@@ -582,12 +585,10 @@ func (s *Set) updateAllCounts(entries []*Entry, entry *Entry) {
 	}
 }
 
-// updateAllCounts should be called after setting all counts to 0 (because they
-// had become invalid), and then recalculates the counts. Also marks the given
-// entry as newFail if any entry in entries is Failed.
 func (s *Set) updateSetSize(entries []*Entry) {
 	for _, e := range entries {
 		s.SizeTotal += e.Size
+		// s.SizeUploaded
 	}
 }
 
@@ -627,17 +628,10 @@ func (s *Set) reset() {
 	s.NumFiles = 0
 	s.SizeTotal = 0
 	s.SizeUploaded = 0
-	s.Uploaded = 0
-	s.Replaced = 0
-	s.Skipped = 0
-	s.Failed = 0
-	s.Missing = 0
-	s.Abnormal = 0
-	s.Symlinks = 0
-	s.Hardlinks = 0
 	s.Status = PendingDiscovery
 	s.Error = ""
 	s.Warning = ""
+	s.resetCounts()
 }
 
 func (s *Set) UserMetadata() string {
