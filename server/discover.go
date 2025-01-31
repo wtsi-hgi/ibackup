@@ -28,6 +28,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"os"
@@ -100,8 +101,8 @@ func (s *Server) discoverThenEnqueue(given *set.Set, transformer put.PathTransfo
 }
 
 func (s *Server) doDiscovery(given *set.Set) (*set.Set, error) {
-	return s.db.Discover(given.ID(), func(entries []*set.Entry) ([]*walk.Dirent, error) {
-		entriesCh := make(chan *walk.Dirent)
+	return s.db.Discover(given.ID(), func(entries []*set.Entry) ([]*set.Dirent, error) {
+		entriesCh := make(chan *set.Dirent)
 		doneCh := make(chan error)
 		warnCh := make(chan error)
 
@@ -111,11 +112,11 @@ func (s *Server) doDiscovery(given *set.Set) (*set.Set, error) {
 	})
 }
 
-func (s *Server) processSetDirWalkOutput(given *set.Set, entriesCh chan *walk.Dirent,
-	doneCh, warnCh chan error) ([]*walk.Dirent, error) {
+func (s *Server) processSetDirWalkOutput(given *set.Set, entriesCh chan *set.Dirent,
+	doneCh, warnCh chan error) ([]*set.Dirent, error) {
 	warnDoneCh := s.processSetDirWalkWarnings(given, warnCh)
 
-	var fileEntries []*walk.Dirent //nolint:prealloc
+	var fileEntries []*set.Dirent //nolint:prealloc
 
 	for entry := range entriesCh {
 		fileEntries = append(fileEntries, entry)
@@ -180,7 +181,7 @@ func (s *Server) handleNewlyDefinedSets(given *set.Set) {
 // sending discovered file paths to the entriesCh. Closes the entriesCh when
 // done, then sends any error on the doneCh. Non-critical warnings during the
 // walk are sent to the warnChan.
-func (s *Server) doSetDirWalks(entries []*set.Entry, given *set.Set, entriesCh chan *walk.Dirent,
+func (s *Server) doSetDirWalks(entries []*set.Entry, given *set.Set, entriesCh chan *set.Dirent,
 	doneCh, warnChan chan error) {
 	errCh := make(chan error, len(entries))
 
@@ -223,7 +224,7 @@ func (s *Server) checkAndWalkDir(dir string, cb walk.PathCallback, warnChan chan
 		s.Logger.Printf("walk found %s, but had error: %s", path, err)
 
 		if errors.Is(err, fs.ErrPermission) {
-			warnChan <- err
+			warnChan <- fmt.Errorf("%s: %w", path, err)
 		}
 	})
 }
@@ -231,13 +232,13 @@ func (s *Server) checkAndWalkDir(dir string, cb walk.PathCallback, warnChan chan
 // onlyRegularAndSymlinks sends every entry found on the walk to the given
 // entriesCh, except for entries that are not regular files or symlinks, which
 // are silently skipped.
-func onlyRegularAndSymlinks(entriesCh chan *walk.Dirent) func(entry *walk.Dirent) error {
+func onlyRegularAndSymlinks(entriesCh chan *set.Dirent) func(entry *walk.Dirent) error {
 	return func(entry *walk.Dirent) error {
 		if !(entry.IsRegular() || entry.IsSymlink()) {
 			return nil
 		}
 
-		entriesCh <- entry
+		entriesCh <- set.DirEntFromWalk(entry)
 
 		return nil
 	}

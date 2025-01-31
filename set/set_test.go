@@ -42,7 +42,6 @@ import (
 	"github.com/wtsi-hgi/ibackup/internal"
 	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/slack"
-	"github.com/wtsi-ssg/wrstat/v6/walk"
 	bolt "go.etcd.io/bbolt"
 )
 
@@ -491,7 +490,7 @@ func TestSetDB(t *testing.T) {
 
 						slackWriter.Reset()
 
-						discoverASet(db, sets[0], func() ([]*walk.Dirent, error) {
+						discoverASet(db, sets[0], func() ([]*Dirent, error) {
 							return createFileEnts([]string{"/g/h/l.txt", "/g/i/m.txt"}), nil
 						}, func() {
 							sets, err = db.GetByRequester("jim")
@@ -852,7 +851,7 @@ func TestSetDB(t *testing.T) {
 							oldStart := sets[0].StartedDiscovery
 							oldDisc := sets[0].LastDiscovery
 
-							discoverASet(db, sets[0], func() ([]*walk.Dirent, error) {
+							discoverASet(db, sets[0], func() ([]*Dirent, error) {
 								return createFileEnts([]string{"/g/h/l.txt", "/g/i/m.txt", "/g/i/n.txt"}), nil
 							}, func() {
 								sets, err = db.GetByRequester("jim")
@@ -985,11 +984,11 @@ func TestSetDB(t *testing.T) {
 
 							oldDisc := sets[0].LastDiscovery
 
-							discoverASet(db, sets[0], func() ([]*walk.Dirent, error) {
+							discoverASet(db, sets[0], func() ([]*Dirent, error) {
 								dirents := createFileEnts([]string{"/g/h/l.txt", "/g/i/m.txt", "/g/i/n.txt"})
 								for _, dirent := range dirents {
 									dirent.Inode = 0
-									dirent.Type = os.ModeIrregular
+									dirent.Mode = os.ModeIrregular
 								}
 
 								return dirents, nil
@@ -1018,7 +1017,7 @@ func TestSetDB(t *testing.T) {
 
 							oldDisc := sets[0].LastDiscovery
 
-							discoverASet(db, sets[0], func() ([]*walk.Dirent, error) {
+							discoverASet(db, sets[0], func() ([]*Dirent, error) {
 								return nil, nil
 							}, func() {})
 
@@ -1304,26 +1303,26 @@ func TestSetDB(t *testing.T) {
 				err = db.AddOrUpdate(setl1)
 				So(err, ShouldBeNil)
 
-				dirents := []*walk.Dirent{
+				dirents := []*Dirent{
 					{
-						Path:  walk.NewFilePath(local),
+						Path:  local,
 						Inode: stat.Ino,
 					},
 					{
-						Path:  walk.NewFilePath(link1),
+						Path:  link1,
 						Inode: stat.Ino,
 					},
 					{
-						Path:  walk.NewFilePath(link2),
+						Path:  link2,
 						Inode: stat.Ino,
 					},
 					{
-						Path:  walk.NewFilePath(unlinked),
+						Path:  unlinked,
 						Inode: statUnlinked.Ino,
 					},
 				}
 
-				discoverCB := func(_ []*Entry) ([]*walk.Dirent, error) { //nolint:unparam
+				discoverCB := func(_ []*Entry) ([]*Dirent, error) { //nolint:unparam
 					return dirents, nil
 				}
 
@@ -1354,7 +1353,7 @@ func TestSetDB(t *testing.T) {
 				So(entries[3].InodeStoragePath(), ShouldEqual, entries[1].InodeStoragePath())
 
 				Convey("then rediscover the set and still know about the hardlinks", func() {
-					got, errd = db.Discover(setl1.ID(), func(dirEntries []*Entry) ([]*walk.Dirent, error) {
+					got, errd = db.Discover(setl1.ID(), func(dirEntries []*Entry) ([]*Dirent, error) {
 						return dirents, nil
 					})
 					So(errd, ShouldBeNil)
@@ -1369,11 +1368,11 @@ func TestSetDB(t *testing.T) {
 				Convey("then get back all known local paths for the hardlink", func() {
 					paths, errh := db.HardlinkPaths(entries[1])
 					So(errh, ShouldBeNil)
-					So(paths, ShouldResemble, []string{string(dirents[0].Path.Bytes()), string(dirents[3].Path.Bytes())})
+					So(paths, ShouldResemble, []string{dirents[0].Path, dirents[3].Path})
 
 					paths, errh = db.HardlinkPaths(entries[0])
 					So(errh, ShouldBeNil)
-					So(paths, ShouldResemble, []string{string(dirents[1].Path.Bytes()), string(dirents[3].Path.Bytes())})
+					So(paths, ShouldResemble, []string{dirents[1].Path, dirents[3].Path})
 				})
 
 				Convey("then get a remote path for the hardlink", func() {
@@ -1387,7 +1386,7 @@ func TestSetDB(t *testing.T) {
 					err = os.Rename(unlinked, moved)
 					So(err, ShouldBeNil)
 
-					dirents[2].Path = walk.NewFilePath(moved)
+					dirents[2].Path = moved
 
 					got, errd = db.Discover(setl1.ID(), discoverCB)
 					So(errd, ShouldBeNil)
@@ -1427,15 +1426,15 @@ func TestSetDB(t *testing.T) {
 				err = os.Symlink(path1, path2)
 				So(err, ShouldBeNil)
 
-				got, errb := db.Discover(setl1.ID(), func(_ []*Entry) ([]*walk.Dirent, error) {
-					return []*walk.Dirent{
+				got, errb := db.Discover(setl1.ID(), func(_ []*Entry) ([]*Dirent, error) {
+					return []*Dirent{
 						{
-							Path:  walk.NewFilePath(path1),
+							Path:  path1,
 							Inode: 1,
 						},
 						{
-							Path:  walk.NewFilePath(path2),
-							Type:  os.ModeSymlink,
+							Path:  path2,
+							Mode:  os.ModeSymlink,
 							Inode: 2,
 						},
 					}, nil
@@ -1507,9 +1506,9 @@ func TestSetDB(t *testing.T) {
 
 				missing := "/non/existent/dir"
 
-				err = db.SetDirEntries(setl1.ID(), []*walk.Dirent{{
-					Path: walk.NewFilePath(missing),
-					Type: os.ModeDir,
+				err = db.SetDirEntries(setl1.ID(), []*Dirent{{
+					Path: missing,
+					Mode: os.ModeDir,
 				}})
 				So(err, ShouldBeNil)
 
@@ -1573,12 +1572,12 @@ func TestSetDB(t *testing.T) {
 	})
 }
 
-func discoverASet(db *DB, set *Set, discoveryFunc func() ([]*walk.Dirent, error), pendingTestsFunc func()) {
+func discoverASet(db *DB, set *Set, discoveryFunc func() ([]*Dirent, error), pendingTestsFunc func()) {
 	errCh := make(chan error, 1)
 	waitCh := make(chan struct{})
 
 	go func() {
-		_, errd := db.Discover(set.ID(), func(e []*Entry) ([]*walk.Dirent, error) {
+		_, errd := db.Discover(set.ID(), func(e []*Entry) ([]*Dirent, error) {
 			waitCh <- struct{}{}
 			<-waitCh
 
@@ -1810,12 +1809,12 @@ func TestBackup(t *testing.T) {
 	})
 }
 
-func createFileEnts(paths []string) []*walk.Dirent {
-	entries := make([]*walk.Dirent, len(paths))
+func createFileEnts(paths []string) []*Dirent {
+	entries := make([]*Dirent, len(paths))
 
 	for n, path := range paths {
-		entries[n] = &walk.Dirent{
-			Path: walk.NewFilePath(path),
+		entries[n] = &Dirent{
+			Path: path,
 		}
 	}
 

@@ -40,7 +40,6 @@ import (
 	"github.com/gammazero/workerpool"
 	"github.com/ugorji/go/codec"
 	"github.com/wtsi-hgi/ibackup/put"
-	"github.com/wtsi-ssg/wrstat/v6/walk"
 	bolt "go.etcd.io/bbolt"
 )
 
@@ -257,11 +256,11 @@ func (d *DB) encodeToBytes(thing interface{}) []byte {
 // SetFileEntries sets the file paths for the given backup set. Only supply
 // absolute paths to files.
 func (d *DB) SetFileEntries(setID string, paths []string) error {
-	entries := make([]*walk.Dirent, len(paths))
+	entries := make([]*Dirent, len(paths))
 
 	for n, path := range paths {
-		entries[n] = &walk.Dirent{
-			Path: walk.NewFilePath(path),
+		entries[n] = &Dirent{
+			Path: path,
 		}
 	}
 
@@ -272,7 +271,7 @@ func (d *DB) SetFileEntries(setID string, paths []string) error {
 // given prefix. Only supply absolute paths.
 //
 // *** Currently ignores old entries that are not in the given paths.
-func (d *DB) setEntries(setID string, dirents []*walk.Dirent, bucketName string) error {
+func (d *DB) setEntries(setID string, dirents []*Dirent, bucketName string) error {
 	return d.db.Update(func(tx *bolt.Tx) error {
 		b, existing, err := d.getAndDeleteExistingEntries(tx, bucketName, setID)
 		if err != nil {
@@ -281,7 +280,7 @@ func (d *DB) setEntries(setID string, dirents []*walk.Dirent, bucketName string)
 
 		// this sort is critical to database write speed.
 		sort.Slice(dirents, func(i, j int) bool {
-			return bytes.Compare(dirents[i].Path.Bytes(), dirents[j].Path.Bytes()) == -1
+			return strings.Compare(dirents[i].Path, dirents[j].Path) == -1
 		})
 
 		ec, err := newEntryCreator(d, tx, b, existing, setID)
@@ -361,10 +360,10 @@ func (d *DB) newSetFileBucket(tx *bolt.Tx, kindOfFileBucket, setID string) (*set
 
 // newDirentFromPath returns a Dirent for the path. If it doesn't exist, returns
 // a fake one with no Inode and Type of ModeIrregular.
-func newDirentFromPath(path string) *walk.Dirent {
-	dirent := &walk.Dirent{
-		Path: walk.NewFilePath(path),
-		Type: os.ModeIrregular,
+func newDirentFromPath(path string) *Dirent {
+	dirent := &Dirent{
+		Path: path,
+		Mode: os.ModeIrregular,
 	}
 
 	info, err := os.Lstat(path)
@@ -372,7 +371,7 @@ func newDirentFromPath(path string) *walk.Dirent {
 		return dirent
 	}
 
-	dirent.Type = info.Mode().Type()
+	dirent.Mode = info.Mode().Type()
 
 	statt, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {
@@ -386,7 +385,7 @@ func newDirentFromPath(path string) *walk.Dirent {
 
 // SetDirEntries sets the directory paths for the given backup set. Only supply
 // absolute paths to directories.
-func (d *DB) SetDirEntries(setID string, entries []*walk.Dirent) error {
+func (d *DB) SetDirEntries(setID string, entries []*Dirent) error {
 	return d.setEntries(setID, entries, dirBucket)
 }
 
@@ -410,7 +409,7 @@ func (d *DBRO) getSetByID(tx *bolt.Tx, setID string) (*Set, []byte, *bolt.Bucket
 
 // DiscoverCallback will receive the sets directory entries and return a list of
 // the files discovered in those directories.
-type DiscoverCallback func([]*Entry) ([]*walk.Dirent, error)
+type DiscoverCallback func([]*Entry) ([]*Dirent, error)
 
 // Discover discovers and stores file entry details for the given set.
 // Immediately tries to record in the db that discovery has started and returns
@@ -459,7 +458,7 @@ func (d *DB) discover(setID string, cb DiscoverCallback) (*Set, error) {
 		return nil, err
 	}
 
-	var fileEntries []*walk.Dirent
+	var fileEntries []*Dirent
 
 	if cb != nil {
 		fileEntries, err = cb(entries)
@@ -480,7 +479,7 @@ func (d *DB) statPureFileEntries(setID string) error {
 			return err
 		}
 
-		direntCh := make(chan *walk.Dirent)
+		direntCh := make(chan *Dirent)
 		entryCh := make(chan []byte)
 		numEntries := 0
 
@@ -501,19 +500,19 @@ func (d *DB) statPureFileEntries(setID string) error {
 }
 
 func (d *DB) handleFilePoolResults(tx *bolt.Tx, sfsb *setFileSubBucket, setID string,
-	direntCh chan *walk.Dirent, entryCh chan []byte,
+	direntCh chan *Dirent, entryCh chan []byte,
 	numEntries int) error {
-	dirents := make([]*walk.Dirent, numEntries)
+	dirents := make([]*Dirent, numEntries)
 	existing := make(map[string][]byte, numEntries)
 
 	for n := range dirents {
 		dirent := <-direntCh
 		dirents[n] = dirent
-		existing[string(dirent.Path.Bytes())] = <-entryCh
+		existing[dirent.Path] = <-entryCh
 	}
 
 	sort.Slice(dirents, func(i, j int) bool {
-		return bytes.Compare(dirents[i].Path.Bytes(), dirents[j].Path.Bytes()) == -1
+		return strings.Compare(dirents[i].Path, dirents[j].Path) == -1
 	})
 
 	ec, err := newEntryCreator(d, tx, sfsb.Bucket, existing, setID)
@@ -532,7 +531,7 @@ func (d *DB) handleFilePoolResults(tx *bolt.Tx, sfsb *setFileSubBucket, setID st
 // to Complete.
 //
 // Returns the updated set and an error if the setID isn't in the database.
-func (d *DB) setDiscoveredEntries(setID string, dirents []*walk.Dirent) (*Set, error) {
+func (d *DB) setDiscoveredEntries(setID string, dirents []*Dirent) (*Set, error) {
 	if err := d.setEntries(setID, dirents, discoveredBucket); err != nil {
 		return nil, err
 	}
