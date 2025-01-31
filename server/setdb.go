@@ -610,7 +610,7 @@ func (s *Server) removeFromIRODSandDB(userSet *set.Set, dirpaths, filepaths []st
 		return err
 	}
 
-	return s.db.SetNewCounts(userSet.ID(), userSet.NumFiles-uint64(len(filepaths)))
+	return s.db.SetNewCounts(userSet.ID())
 
 }
 

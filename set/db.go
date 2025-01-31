@@ -1163,14 +1163,19 @@ func (d *DB) SetError(setID, errMsg string) error {
 	})
 }
 
-func (d *DB) SetNewCounts(setID string, numFiles uint64) error {
-	return d.updateSetProperties(setID, func(got *Set) {
-		got.NumFiles = numFiles
+func (d *DB) SetNewCounts(setID string) error {
+	entries, err := d.GetFileEntries(setID)
+	if err != nil {
+		return err
+	}
 
-		err := got.FixCounts(&Entry{}, d.GetFileEntries)
-		if err != nil {
-			//
-		}
+	return d.updateSetProperties(setID, func(got *Set) {
+		got.resetCounts()
+		got.NumFiles = uint64(len(entries))
+		got.updateAllCounts(entries, &Entry{})
+
+		got.SizeTotal = 0
+		got.updateSetSize(entries)
 	})
 }
 
