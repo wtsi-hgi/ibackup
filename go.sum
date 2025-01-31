@@ -413,8 +413,8 @@ github.com/wtsi-npg/logshim-zerolog v1.4.0 h1:y5Gz5KuKM4jrUyB5fr+pgtw1B1eEKBAiSB
 github.com/wtsi-npg/logshim-zerolog v1.4.0/go.mod h1:UvSMVsS8F3amYbWwnf1QNOly2A9/joMREuLPZar1zl0=
 github.com/wtsi-ssg/wr v0.5.12 h1:d5us++CvScwkEyPyEv6L1Ty0IpetFjgw+wxOL0bi1MU=
 github.com/wtsi-ssg/wr v0.5.12/go.mod h1:QUqhVemSMBnVCcFUwy01H3ISFjbHg9gjRviM8diI9P0=
-github.com/wtsi-ssg/wrstat/v6 v6.0.10 h1:zR1USJ1wGbIIQb10YjXOo65D0AiTGaujCT7FR1N2vAw=
-github.com/wtsi-ssg/wrstat/v6 v6.0.10/go.mod h1:MOnsWuLJGZZtrYM7T46oAL6ww2+ecEDmVzOgE90qX8Q=
+github.com/wtsi-ssg/wrstat/v6 v6.1.0 h1:SNiipESYONpvru7KxttV9/nOI8OOaK7QUnlbsZ2BM90=
+github.com/wtsi-ssg/wrstat/v6 v6.1.0/go.mod h1:l3jB2L62C9mApX0WxxDpfS7RFD6L3QsspFoCUu8Ny/U=
 github.com/yuin/goldmark v1.1.27/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
 github.com/yuin/goldmark v1.2.1/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
 github.com/yuin/goldmark v1.4.13/go.mod h1:6yULJ656Px+3vBD8DxQVa3kxgyrAnzto9xy5taEt/CY=
