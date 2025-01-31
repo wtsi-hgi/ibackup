@@ -988,7 +988,7 @@ func TestSetDB(t *testing.T) {
 								dirents := createFileEnts([]string{"/g/h/l.txt", "/g/i/m.txt", "/g/i/n.txt"})
 								for _, dirent := range dirents {
 									dirent.Inode = 0
-									dirent.Typ = os.ModeIrregular
+									dirent.Mode = os.ModeIrregular
 								}
 
 								return dirents, nil
@@ -1434,7 +1434,7 @@ func TestSetDB(t *testing.T) {
 						},
 						{
 							Path:  path2,
-							Typ:   os.ModeSymlink,
+							Mode:  os.ModeSymlink,
 							Inode: 2,
 						},
 					}, nil
@@ -1508,7 +1508,7 @@ func TestSetDB(t *testing.T) {
 
 				err = db.SetDirEntries(setl1.ID(), []*Dirent{{
 					Path: missing,
-					Typ:  os.ModeDir,
+					Mode: os.ModeDir,
 				}})
 				So(err, ShouldBeNil)
 

@@ -438,7 +438,7 @@ func (s *Server) putDirs(c *gin.Context) {
 	for n, path := range paths {
 		entries[n] = &set.Dirent{
 			Path: path,
-			Typ:  os.ModeDir,
+			Mode: os.ModeDir,
 		}
 	}
 

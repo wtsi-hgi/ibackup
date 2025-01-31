@@ -161,11 +161,11 @@ func (e *Entry) InodeStoragePath() string {
 // setTypeForNoInode sets our type based on the given dirent's Type, for the
 // case that the the dirent has no Inode (is missing or is a directory).
 func (e *Entry) setTypeForNoInode(dirent *Dirent) {
-	if dirent.Typ == os.ModeIrregular {
+	if dirent.Mode == os.ModeIrregular {
 		e.Status = Missing
 	}
 
-	if dirent.Typ.IsDir() {
+	if dirent.IsDir() {
 		e.Type = Directory
 	}
 }
@@ -346,7 +346,7 @@ func (c *entryCreator) existingOrNewEncodedEntry(dirent *Dirent) ([]byte, error)
 }
 
 func (c *entryCreator) determineEntryType(dirent *Dirent) (EntryType, string, error) {
-	if dirent.Typ.IsDir() {
+	if dirent.IsDir() {
 		return Directory, "", nil
 	}
 
@@ -359,9 +359,9 @@ func (c *entryCreator) direntToEntryType(de *Dirent) (EntryType, string, error) 
 	switch {
 	case de.Inode == 0:
 		eType = Unknown
-	case de.Typ == fs.ModeSymlink:
+	case de.Mode == fs.ModeSymlink:
 		eType = Symlink
-	case !(de.Typ.IsRegular() || de.Typ.IsDir()):
+	case !(de.Mode.IsRegular() || de.IsDir()):
 		eType = Abnormal
 	default:
 		hardLink, err := c.db.handleInode(c.tx, de, c.transformerID)

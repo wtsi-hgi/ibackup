@@ -363,7 +363,7 @@ func (d *DB) newSetFileBucket(tx *bolt.Tx, kindOfFileBucket, setID string) (*set
 func newDirentFromPath(path string) *Dirent {
 	dirent := &Dirent{
 		Path: path,
-		Typ:  os.ModeIrregular,
+		Mode: os.ModeIrregular,
 	}
 
 	info, err := os.Lstat(path)
@@ -371,7 +371,7 @@ func newDirentFromPath(path string) *Dirent {
 		return dirent
 	}
 
-	dirent.Typ = info.Mode().Type()
+	dirent.Mode = info.Mode().Type()
 
 	statt, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {
