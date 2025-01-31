@@ -30,12 +30,14 @@ import (
 	"github.com/wtsi-ssg/wrstat/v6/walk"
 )
 
+// Dirent represents and entry produced from a walk of a specified directory.
 type Dirent struct {
 	Path  string
 	Mode  fs.FileMode
 	Inode uint64
 }
 
+// DirEntFromWalk converts a walk.Dirent to an easier to use local Dirent type.
 func DirEntFromWalk(de *walk.Dirent) *Dirent {
 	return &Dirent{
 		Path:  string(de.Bytes()),
@@ -44,6 +46,42 @@ func DirEntFromWalk(de *walk.Dirent) *Dirent {
 	}
 }
 
+// IsRegular returns true if the entry refers to a regular file.
+func (d *Dirent) IsRegular() bool {
+	return d.Mode.IsRegular()
+}
+
+// IsDir returns true if the entry refers to a directory.
 func (d *Dirent) IsDir() bool {
 	return d.Mode.IsDir()
+}
+
+// IsIrregular returns true if the entry refers to an irregular file.
+func (d *Dirent) IsIrregular() bool {
+	return d.Mode == fs.ModeIrregular
+}
+
+// IsSymlink returns true if the entry refers to a symlink.
+func (d *Dirent) IsSymlink() bool {
+	return d.Mode == fs.ModeSymlink
+}
+
+// IsSocket returns true if the entry refers to a socket.
+func (d *Dirent) IsSocket() bool {
+	return d.Mode == fs.ModeSocket
+}
+
+// IsDevice returns true if the entry refers to a device node.
+func (d *Dirent) IsDevice() bool {
+	return d.Mode == fs.ModeDevice
+}
+
+// IsCharDevice returns true if the entry refers to a character device node.
+func (d *Dirent) IsCharDevice() bool {
+	return d.Mode == fs.ModeCharDevice
+}
+
+// IsPipe returns true if the entry refers to a named (FIFO) pipe.
+func (d *Dirent) IsPipe() bool {
+	return d.Mode == fs.ModeNamedPipe
 }

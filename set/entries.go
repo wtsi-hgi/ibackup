@@ -26,7 +26,6 @@
 package set
 
 import (
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -161,7 +160,7 @@ func (e *Entry) InodeStoragePath() string {
 // setTypeForNoInode sets our type based on the given dirent's Type, for the
 // case that the the dirent has no Inode (is missing or is a directory).
 func (e *Entry) setTypeForNoInode(dirent *Dirent) {
-	if dirent.Mode == os.ModeIrregular {
+	if dirent.IsIrregular() {
 		e.Status = Missing
 	}
 
@@ -359,9 +358,9 @@ func (c *entryCreator) direntToEntryType(de *Dirent) (EntryType, string, error) 
 	switch {
 	case de.Inode == 0:
 		eType = Unknown
-	case de.Mode == fs.ModeSymlink:
+	case de.IsSymlink():
 		eType = Symlink
-	case !(de.Mode.IsRegular() || de.IsDir()):
+	case !(de.IsRegular() || de.IsDir()):
 		eType = Abnormal
 	default:
 		hardLink, err := c.db.handleInode(c.tx, de, c.transformerID)
