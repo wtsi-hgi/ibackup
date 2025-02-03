@@ -438,15 +438,38 @@ func (s *Server) removePaths(c *gin.Context) {
 	s.removeDirs(set, dirPaths)
 }
 
+type removeReq struct {
+	path  string
+	set   *set.Set
+	isDir bool
+}
+
 func (s *Server) removeFiles(set *set.Set, paths []string) error {
-	err := s.removeFileFromIRODSandDB(set, paths)
-	if err != nil {
-		return err
+	// err := s.removeFileFromIRODSandDB(set, paths)
+	// if err != nil {
+	// 	return err
+	// }
+	if len(paths) == 0 {
+		return nil
 	}
 
-	// s.removeQueue.Add(context.Background(), "key", "", "data", 0, 0, 1*time.Hour, queue.SubQueueReady, []string{})
+	defs := make([]*queue.ItemDef, len(paths))
 
-	return nil
+	for i, path := range paths {
+		defs[i] = &queue.ItemDef{
+			Key:  strings.Join([]string{set.ID(), path}, ":"),
+			Data: removeReq{path: path, set: set, isDir: false},
+			TTR:  ttr,
+		}
+		//s.removeQueue.Add(context.Background(), "key", "", "data", 0, 0, 1*time.Hour, queue.SubQueueReady, []string{})
+	}
+
+	_, dups, err := s.removeQueue.AddMany(context.Background(), defs)
+	if dups != 0 {
+		return fmt.Errorf("dups??")
+	}
+
+	return err
 }
 
 // getBatonAndTransformer returns a baton with a meta client and a transformer
@@ -611,7 +634,7 @@ func (s *Server) removeDirs(set *set.Set, paths []string) error {
 		}
 	}
 
-	err = s.removeFileFromIRODSandDB(set, filepaths)
+	//err = s.removeFileFromIRODSandDB(set, filepaths)
 	if err != nil {
 		return err
 	}
@@ -619,35 +642,28 @@ func (s *Server) removeDirs(set *set.Set, paths []string) error {
 	return s.removeDirFromIRODSandDB(set, paths)
 }
 
-func (s *Server) removeFileFromIRODSandDB(userSet *set.Set, paths []string) error {
-	for _, path := range paths {
-		entry, err := s.db.GetFileEntryForSet(userSet.ID(), path)
-		if err != nil {
-			return err
-		}
-
-		baton, transformer, err := s.getBatonAndTransformer(userSet)
-		if err != nil {
-			return err
-		}
-
-		err = s.removeFileFromIRODS(userSet, path, baton, transformer)
-		if err != nil {
-			return err
-		}
-
-		err = s.db.RemoveFileEntries(userSet.ID(), path)
-		if err != nil {
-			return err
-		}
-
-		err = s.db.UpdateBasedOnRemovedEntry(userSet.ID(), entry)
-		if err != nil {
-			return err
-		}
+func (s *Server) removeFileFromIRODSandDB(userSet *set.Set, path string) error {
+	entry, err := s.db.GetFileEntryForSet(userSet.ID(), path)
+	if err != nil {
+		return err
 	}
 
-	return nil
+	baton, transformer, err := s.getBatonAndTransformer(userSet)
+	if err != nil {
+		return err
+	}
+
+	err = s.removeFileFromIRODS(userSet, path, baton, transformer)
+	if err != nil {
+		return err
+	}
+
+	err = s.db.RemoveFileEntries(userSet.ID(), path)
+	if err != nil {
+		return err
+	}
+
+	return s.db.UpdateBasedOnRemovedEntry(userSet.ID(), entry)
 }
 
 func (s *Server) removeDirFromIRODSandDB(userSet *set.Set, paths []string) error {
