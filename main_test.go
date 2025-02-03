@@ -2068,6 +2068,11 @@ func TestRemove(t *testing.T) {
 
 				So(exitCode, ShouldEqual, 0)
 
+				time.Sleep(2 * time.Second)
+
+				// s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
+				// 	0, "Removal status: 0 / 100 files removed")
+
 				s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
 					0, "Removal status: 0 / 1 objects removed")
 
