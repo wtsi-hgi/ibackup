@@ -410,8 +410,8 @@ func displaySet(s *set.Set, showRequesters bool) { //nolint:funlen,gocyclo
 	}
 
 	cliPrint("Discovery: %s\n", s.Discovered())
-	cliPrint("Num files: %s; Symlinks: %d; Hardlinks: %d; Size (total/recently uploaded): %s / %s\n",
-		s.Count(), s.Symlinks, s.Hardlinks, s.Size(), s.UploadedSize())
+	cliPrint("Num files: %s; Symlinks: %d; Hardlinks: %d; Size (total/recently uploaded/recently removed): %s / %s / %s\n",
+		s.Count(), s.Symlinks, s.Hardlinks, s.Size(), s.UploadedSize(), s.RemovedSize())
 	cliPrint("Uploaded: %d; Replaced: %d; Skipped: %d; Failed: %d; Missing: %d; Abnormal: %d\n",
 		s.Uploaded, s.Replaced, s.Skipped, s.Failed, s.Missing, s.Abnormal)
 
