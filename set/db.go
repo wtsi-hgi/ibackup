@@ -291,29 +291,27 @@ func (d *DB) ValidateDirPaths(set *Set, paths []string) error {
 }
 
 // RemoveFileEntries removes the provided files from a given set.
-func (d *DB) RemoveFileEntries(setID string, paths []string) error {
-	err := d.removeEntries(setID, paths, fileBucket)
+func (d *DB) RemoveFileEntries(setID string, path string) error {
+	err := d.removeEntries(setID, path, fileBucket)
 	if err != nil {
 		return err
 	}
 
-	return d.removeEntries(setID, paths, discoveredBucket)
+	return d.removeEntries(setID, path, discoveredBucket)
 }
 
 // removeEntries removes the entries with the provided entry keys from a given
 // bucket of a given set.
-func (d *DB) removeEntries(setID string, entryKeys []string, bucketName string) error {
+func (d *DB) removeEntries(setID string, entryKey string, bucketName string) error {
 	return d.db.Update(func(tx *bolt.Tx) error {
 		subBucketName := []byte(bucketName + separator + setID)
 		setsBucket := tx.Bucket([]byte(setsBucket))
 
 		entriesBucket := setsBucket.Bucket(subBucketName)
 
-		for _, v := range entryKeys {
-			err := entriesBucket.Delete([]byte(v))
-			if err != nil {
-				return err
-			}
+		err := entriesBucket.Delete([]byte(entryKey))
+		if err != nil {
+			return err
 		}
 
 		return nil
@@ -321,8 +319,8 @@ func (d *DB) removeEntries(setID string, entryKeys []string, bucketName string) 
 }
 
 // RemoveDirEntries removes the provided directories from a given set.
-func (d *DB) RemoveDirEntries(setID string, paths []string) error {
-	return d.removeEntries(setID, paths, dirBucket)
+func (d *DB) RemoveDirEntries(setID string, path string) error {
+	return d.removeEntries(setID, path, dirBucket)
 }
 
 func (d *DB) GetFilesInDir(setID string, dirpath string, filepaths []string) ([]string, error) {
@@ -1163,19 +1161,20 @@ func (d *DB) SetError(setID, errMsg string) error {
 	})
 }
 
-func (d *DB) SetNewCounts(setID string) error {
-	entries, err := d.GetFileEntries(setID)
-	if err != nil {
-		return err
-	}
-
+func (d *DB) UpdateBasedOnRemovedEntry(setID string, entry *Entry) error {
 	return d.updateSetProperties(setID, func(got *Set) {
-		got.resetCounts()
-		got.NumFiles = uint64(len(entries))
-		got.updateAllCounts(entries, &Entry{})
+		got.SizeRemoved += entry.Size
+		got.SizeTotal -= entry.Size
 
-		got.SizeTotal = 0
-		got.updateSetSize(entries)
+		got.NumFiles -= 1
+
+		got.removedEntryToSetCounts(entry)
+	})
+}
+
+func (d *DB) ResetRemoveSize(setID string) error {
+	return d.updateSetProperties(setID, func(got *Set) {
+		got.SizeRemoved = 0
 	})
 }
 

@@ -48,6 +48,9 @@ const (
 	numHandlers          = 2
 	millisecondsInSecond = 1000
 
+	fileKeyForJSON = "files"
+	dirKeyForJSON  = "dirs"
+
 	ErrKilledDueToStuck = gas.Error(put.ErrStuckTimeout)
 )
 
@@ -615,8 +618,16 @@ func (c *Client) RetryFailedSetUploads(id string) (int, error) {
 	return retried, err
 }
 
-func (c *Client) RemoveFiles(setID string, files []string) error {
-	return c.putThing(EndPointAuthRemoveFiles+"/"+setID, stringsToBytes(files))
+func (c *Client) RemoveFiles(setID string, files, dirs []string) error {
+	return c.putThing(EndPointAuthRemovePaths+"/"+setID, mapToBytes(files, dirs))
+}
+
+func mapToBytes(files, dirs []string) map[string][][]byte {
+	newMap := make(map[string][][]byte)
+	newMap[fileKeyForJSON] = stringsToBytes(files)
+	newMap[dirKeyForJSON] = stringsToBytes(dirs)
+
+	return newMap
 }
 
 func (c *Client) RemoveDirs(setID string, dirs []string) error {

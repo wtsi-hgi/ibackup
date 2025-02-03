@@ -57,7 +57,7 @@ const (
 	workingPath      = "/working"
 	fileStatusPath   = "/file_status"
 	fileRetryPath    = "/retry"
-	removeFilesPath  = "/remove_files"
+	removePathsPath  = "/remove_paths"
 	removeDirsPath   = "/remove_dirs"
 
 	// EndPointAuthSet is the endpoint for getting and setting sets.
@@ -96,7 +96,7 @@ const (
 	EndPointAuthRetryEntries = gas.EndPointAuth + fileRetryPath
 
 	//
-	EndPointAuthRemoveFiles = gas.EndPointAuth + removeFilesPath
+	EndPointAuthRemovePaths = gas.EndPointAuth + removePathsPath
 
 	//
 	EndPointAuthRemoveDirs = gas.EndPointAuth + removeDirsPath
@@ -404,31 +404,49 @@ func (s *Server) putFiles(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
-func (s *Server) removeFiles(c *gin.Context) {
-	sid, paths, ok := s.bindPathsAndValidateSet(c)
+func (s *Server) removePaths(c *gin.Context) {
+	sid, filePaths, dirPaths, ok := s.parseRemoveParamsAndValidateSet(c)
 	if !ok {
 		return
 	}
 
 	set := s.db.GetByID(sid)
 
-	err := s.db.ValidateFilePaths(set, paths)
+	err := s.db.ValidateFilePaths(set, filePaths)
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
 		return
 	}
 
-	err = s.removeFromIRODSandDB(set, []string{}, paths)
+	err = s.db.ValidateDirPaths(set, dirPaths)
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
 		return
+	}
+
+	err = s.db.ResetRemoveSize(sid)
+	if err != nil {
+		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+
+		return
+	}
+
+	s.removeFiles(set, filePaths)
+
+	s.removeDirs(set, dirPaths)
+}
+
+func (s *Server) removeFiles(set *set.Set, paths []string) error {
+	err := s.removeFileFromIRODSandDB(set, paths)
+	if err != nil {
+		return err
 	}
 
 	// s.removeQueue.Add(context.Background(), "key", "", "data", 0, 0, 1*time.Hour, queue.SubQueueReady, []string{})
 
-	c.Status(http.StatusOK)
+	return nil
 }
 
 // getBatonAndTransformer returns a baton with a meta client and a transformer
@@ -469,6 +487,26 @@ func (s *Server) removeFilesFromIRODS(set *set.Set, paths []string,
 	}
 
 	return nil
+}
+
+func (s *Server) removeFileFromIRODS(set *set.Set, path string,
+	baton *put.Baton, transformer put.PathTransformer) error {
+	rpath, err := transformer(path)
+	if err != nil {
+		return err
+	}
+
+	remoteMeta, err := baton.GetMeta(rpath)
+	if err != nil {
+		return err
+	}
+
+	sets, requesters, err := s.handleSetsAndRequesters(set, remoteMeta)
+	if err != nil {
+		return err
+	}
+
+	return baton.RemovePathFromSetInIRODS(transformer, rpath, sets, requesters, remoteMeta)
 }
 
 func (s *Server) handleSetsAndRequesters(set *set.Set, meta map[string]string) ([]string, []string, error) {
@@ -546,15 +584,64 @@ func removeElementFromSlice(slice []string, element string) ([]string, error) {
 	return slice[:len(slice)-1], nil
 }
 
-func (s *Server) removeDirsFromIRODS(set *set.Set, dirpaths []string,
+func (s *Server) removeDirFromIRODS(set *set.Set, path string,
 	baton *put.Baton, transformer put.PathTransformer) error {
-	for _, path := range dirpaths {
-		rpath, err := transformer(path)
+
+	rpath, err := transformer(path)
+	if err != nil {
+		return err
+	}
+
+	err = baton.RemoveDirFromIRODS(rpath)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (s *Server) removeDirs(set *set.Set, paths []string) error {
+	var filepaths []string
+	var err error
+
+	for _, path := range paths {
+		filepaths, err = s.db.GetFilesInDir(set.ID(), path, filepaths)
+		if err != nil {
+			return err
+		}
+	}
+
+	err = s.removeFileFromIRODSandDB(set, filepaths)
+	if err != nil {
+		return err
+	}
+
+	return s.removeDirFromIRODSandDB(set, paths)
+}
+
+func (s *Server) removeFileFromIRODSandDB(userSet *set.Set, paths []string) error {
+	for _, path := range paths {
+		entry, err := s.db.GetFileEntryForSet(userSet.ID(), path)
 		if err != nil {
 			return err
 		}
 
-		err = baton.RemoveDirFromIRODS(rpath)
+		baton, transformer, err := s.getBatonAndTransformer(userSet)
+		if err != nil {
+			return err
+		}
+
+		err = s.removeFileFromIRODS(userSet, path, baton, transformer)
+		if err != nil {
+			return err
+		}
+
+		err = s.db.RemoveFileEntries(userSet.ID(), path)
+		if err != nil {
+			return err
+		}
+
+		err = s.db.UpdateBasedOnRemovedEntry(userSet.ID(), entry)
 		if err != nil {
 			return err
 		}
@@ -563,79 +650,64 @@ func (s *Server) removeDirsFromIRODS(set *set.Set, dirpaths []string,
 	return nil
 }
 
-func (s *Server) removeDirs(c *gin.Context) {
-	sid, paths, ok := s.bindPathsAndValidateSet(c)
-	if !ok {
-		return
-	}
-
-	set := s.db.GetByID(sid)
-
-	err := s.db.ValidateDirPaths(set, paths)
-	if err != nil {
-		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
-
-		return
-	}
-
-	var filepaths []string
-
+func (s *Server) removeDirFromIRODSandDB(userSet *set.Set, paths []string) error {
 	for _, path := range paths {
-		filepaths, err = s.db.GetFilesInDir(set.ID(), path, filepaths)
+		baton, transformer, err := s.getBatonAndTransformer(userSet)
 		if err != nil {
-			c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+			return err
+		}
 
-			return
+		err = s.removeDirFromIRODS(userSet, path, baton, transformer)
+		if err != nil {
+			return err
+		}
+
+		err = s.db.RemoveDirEntries(userSet.ID(), path)
+		if err != nil {
+			return err
 		}
 	}
 
-	err = s.removeFromIRODSandDB(set, paths, filepaths)
-	if err != nil {
-		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
-
-		return
-	}
-
-	c.Status(http.StatusOK)
+	return nil
 }
 
-func (s *Server) removeFromIRODSandDB(userSet *set.Set, dirpaths, filepaths []string) error {
-	err := s.removePathsFromIRODS(userSet, dirpaths, filepaths)
-	if err != nil {
-		return err
-	}
+// func (s *Server) removeFromIRODSandDB(userSet *set.Set, dirpaths, filepaths []string) error {
+// 	err := s.removePathsFromIRODS(userSet, dirpaths, filepaths)
+// 	if err != nil {
+// 		return err
+// 	}
 
-	err = s.removePathsFromDB(userSet, dirpaths, filepaths)
-	if err != nil {
-		return err
-	}
+// 	err = s.removePathsFromDB(userSet, dirpaths, filepaths)
+// 	if err != nil {
+// 		return err
+// 	}
 
-	return s.db.SetNewCounts(userSet.ID())
+// 	return s.db.SetNewCounts(userSet.ID())
 
-}
+// }
 
-func (s *Server) removePathsFromIRODS(set *set.Set, dirpaths, filepaths []string) error {
-	baton, transformer, err := s.getBatonAndTransformer(set)
-	if err != nil {
-		return err
-	}
+// func (s *Server) removePathsFromIRODS(set *set.Set, dirpaths, filepaths []string) error {
+// 	baton, transformer, err := s.getBatonAndTransformer(set)
+// 	if err != nil {
+// 		return err
+// 	}
 
-	err = s.removeFilesFromIRODS(set, filepaths, baton, transformer)
-	if err != nil {
-		return err
-	}
+// 	err = s.removeFilesFromIRODS(set, filepaths, baton, transformer)
+// 	if err != nil {
+// 		return err
+// 	}
 
-	return s.removeDirsFromIRODS(set, dirpaths, baton, transformer)
-}
+// 	return s.removeDirsFromIRODS(set, dirpaths, baton, transformer)
+// }
 
-func (s *Server) removePathsFromDB(set *set.Set, dirpaths, filepaths []string) error {
-	err := s.db.RemoveDirEntries(set.ID(), dirpaths)
-	if err != nil {
-		return err
-	}
+// func (s *Server) removePathsFromDB(set *set.Set, dirpaths, filepaths []string) error {
+// 	err := s.db.RemoveDirEntries(set.ID(), dirpaths)
+// 	if err != nil {
+// 		return err
+// 	}
 
-	return s.db.RemoveFileEntries(set.ID(), filepaths)
-}
+// 	return s.db.RemoveFileEntries(set.ID(), filepaths)
+// }
 
 // bindPathsAndValidateSet gets the paths out of the JSON body, and the set id
 // from the URL parameter if Requester matches logged-in username.
@@ -654,6 +726,26 @@ func (s *Server) bindPathsAndValidateSet(c *gin.Context) (string, []string, bool
 	}
 
 	return set.ID(), bytesToStrings(bpaths), true
+}
+
+// parseRemoveParamsAndValidateSet gets the file paths and dir paths out of the
+// JSON body, and the set id from the URL parameter if Requester matches
+// logged-in username.
+func (s *Server) parseRemoveParamsAndValidateSet(c *gin.Context) (string, []string, []string, bool) {
+	bmap := make(map[string][][]byte)
+
+	if err := c.BindJSON(&bmap); err != nil {
+		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+
+		return "", nil, nil, false
+	}
+
+	set, ok := s.validateSet(c)
+	if !ok {
+		return "", nil, nil, false
+	}
+
+	return set.ID(), bytesToStrings(bmap[fileKeyForJSON]), bytesToStrings(bmap[dirKeyForJSON]), true
 }
 
 // validateSet gets the id parameter from the given context and checks a
