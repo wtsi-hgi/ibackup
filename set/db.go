@@ -1652,8 +1652,6 @@ func (d *DB) SetError(setID, errMsg string) error {
 	})
 }
 
-// UpdateBasedOnRemovedEntry updates set counts based on the given entry that's
-// been removed.
 func (d *DB) UpdateBasedOnRemovedEntry(setID string, entry *Entry) error {
 	return d.updateSetProperties(setID, func(got *Set) {
 		got.SizeRemoved += entry.Size

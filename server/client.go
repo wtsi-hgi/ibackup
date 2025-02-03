@@ -48,6 +48,9 @@ const (
 	numHandlers          = 2
 	millisecondsInSecond = 1000
 
+	fileKeyForJSON = "files"
+	dirKeyForJSON  = "dirs"
+
 	ErrKilledDueToStuck = gas.Error(put.ErrStuckTimeout)
 )
 
