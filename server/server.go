@@ -213,29 +213,34 @@ func (s *Server) EnableJobSubmission(putCmd, deployment, cwd, queue string, numC
 func (s *Server) removeCallback(queueName string, allitemdata []interface{}) {
 	baton, err := put.GetBatonHandlerWithMetaClient()
 	if err != nil {
-		fmt.Println("error: ", err.Error())
-		//
+		s.Logger.Printf("%s", err.Error())
+
+		return
 	}
 
 	for _, item := range allitemdata {
 		removeReq, _ := item.(removeReq)
+
 		var err error
 
 		if removeReq.isDir {
-			err = s.removeDirFromIRODSandDB(removeReq.set, removeReq.path, baton)
+			err = s.removeDirFromIRODSandDB(removeReq, baton)
 		} else {
-			err = s.removeFileFromIRODSandDB(removeReq.set, removeReq.path, baton)
+			err = s.removeFileFromIRODSandDB(removeReq, baton)
 		}
 
 		if err != nil {
-			fmt.Println("error: ", err.Error())
-			//
+			s.db.SetError(removeReq.set.ID(), fmt.Sprintf("Error when removing: %s", err.Error()))
+
+			// TODO if not max attempts
+			// continue
 		}
 
 		err = s.removeQueue.Remove(context.Background(), removeReq.key())
 		if err != nil {
-			fmt.Println("error: ", err.Error())
-			//
+			s.Logger.Printf("%s", err.Error())
+
+			continue
 		}
 	}
 }
