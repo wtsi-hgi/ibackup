@@ -1995,7 +1995,7 @@ func TestRemove(t *testing.T) {
 
 			s.addSetForTestingWithItems(t, setName, transformer, tempTestFileOfPaths.Name())
 
-			FocusConvey("Remove removes the file from the set", func() {
+			Convey("Remove removes the file from the set", func() {
 				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", file1)
 
 				So(exitCode, ShouldEqual, 0)
@@ -2020,6 +2020,8 @@ func TestRemove(t *testing.T) {
 
 					So(exitCode, ShouldEqual, 0)
 
+					time.Sleep(10 * time.Second)
+
 					s.confirmOutputDoesNotContain(t, []string{"status", "--name", setName, "-d"},
 						0, file2)
 
@@ -2034,6 +2036,8 @@ func TestRemove(t *testing.T) {
 
 				So(exitCode, ShouldEqual, 0)
 
+				time.Sleep(2 * time.Second)
+
 				s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
 					0, dir2)
 
@@ -2042,6 +2046,23 @@ func TestRemove(t *testing.T) {
 
 				s.confirmOutputDoesNotContain(t, []string{"status", "--name", setName, "-d"},
 					0, dir1+" => ")
+			})
+
+			FocusConvey("Remove removes an empty dir from the set", func() {
+				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", dir2)
+
+				So(exitCode, ShouldEqual, 0)
+
+				time.Sleep(2 * time.Second)
+
+				s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
+					0, dir1)
+
+				s.confirmOutputDoesNotContain(t, []string{"status", "--name", setName, "-d"},
+					0, dir2+"/")
+
+				s.confirmOutputDoesNotContain(t, []string{"status", "--name", setName, "-d"},
+					0, dir2+" => ")
 			})
 
 			Convey("Remove takes a flag --items and removes all provided files and dirs from the set", func() {
@@ -2055,6 +2076,8 @@ func TestRemove(t *testing.T) {
 				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--items", tempTestFileOfPathsToRemove.Name())
 
 				So(exitCode, ShouldEqual, 0)
+
+				time.Sleep(2 * time.Second)
 
 				s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
 					0, file2)
@@ -2080,6 +2103,8 @@ func TestRemove(t *testing.T) {
 				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", file1)
 				So(exitCode, ShouldEqual, 0)
 
+				time.Sleep(2 * time.Second)
+
 				output, err = exec.Command("ils", remotePath).CombinedOutput()
 				So(err, ShouldBeNil)
 				So(string(output), ShouldNotContainSubstring, "file1")
@@ -2093,6 +2118,8 @@ func TestRemove(t *testing.T) {
 
 				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", linkPath)
 				So(exitCode, ShouldEqual, 0)
+
+				time.Sleep(2 * time.Second)
 
 				_, err = exec.Command("ils", filepath.Join(remotePath, "link")).CombinedOutput()
 				So(err, ShouldNotBeNil)
@@ -2120,6 +2147,8 @@ func TestRemove(t *testing.T) {
 					exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", linkPath)
 					So(exitCode, ShouldEqual, 0)
 
+					time.Sleep(2 * time.Second)
+
 					_, err = exec.Command("ils", filepath.Join(remotePath, "link")).CombinedOutput()
 					So(err, ShouldNotBeNil)
 
@@ -2136,6 +2165,8 @@ func TestRemove(t *testing.T) {
 
 				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", dir1)
 				So(exitCode, ShouldEqual, 0)
+
+				time.Sleep(2 * time.Second)
 
 				output, err = exec.Command("ils", "-r", remotePath).CombinedOutput()
 				So(err, ShouldBeNil)
@@ -2193,6 +2224,8 @@ func TestRemove(t *testing.T) {
 
 					So(exitCode, ShouldEqual, 0)
 
+					time.Sleep(2 * time.Second)
+
 					output = getRemoteMeta(filepath.Join(remotePath, "file1"))
 					So(output, ShouldNotContainSubstring, setName)
 					So(output, ShouldContainSubstring, setName2)
@@ -2202,6 +2235,8 @@ func TestRemove(t *testing.T) {
 					exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", file1)
 					So(exitCode, ShouldEqual, 0)
 
+					time.Sleep(2 * time.Second)
+
 					output, err := exec.Command("ils", remotePath).CombinedOutput()
 					So(err, ShouldBeNil)
 					So(string(output), ShouldContainSubstring, "file1")
@@ -2210,6 +2245,8 @@ func TestRemove(t *testing.T) {
 				Convey("Remove on a file removes the user as a requester", func() {
 					exitCode, _ = s.runBinary(t, "remove", "--name", setName, "--path", file1)
 					So(exitCode, ShouldEqual, 0)
+
+					time.Sleep(2 * time.Second)
 
 					requesters := getMetaValue(getRemoteMeta(filepath.Join(remotePath, "file1")), "ibackup:requesters")
 
@@ -2224,6 +2261,8 @@ func TestRemove(t *testing.T) {
 					Convey("Remove keeps the user as a requester", func() {
 						exitCode, _ = s.runBinary(t, "remove", "--name", setName, "--path", file1)
 						So(exitCode, ShouldEqual, 0)
+
+						time.Sleep(2 * time.Second)
 
 						requesters := getMetaValue(getRemoteMeta(filepath.Join(remotePath, "file1")), "ibackup:requesters")
 
@@ -2249,6 +2288,8 @@ func TestRemove(t *testing.T) {
 					exitCode, _ = s.runBinary(t, "remove", "--name", setName, "--path", file1)
 					So(exitCode, ShouldEqual, 0)
 
+					time.Sleep(2 * time.Second)
+
 					requesters := getMetaValue(getRemoteMeta(filepath.Join(remotePath, "file1")), "ibackup:requesters")
 
 					So(requesters, ShouldNotContainSubstring, user.Username)
@@ -2262,6 +2303,8 @@ func TestRemove(t *testing.T) {
 					Convey("Remove keeps the user as a requester", func() {
 						exitCode, _ = s.runBinary(t, "remove", "--name", setName, "--path", file1)
 						So(exitCode, ShouldEqual, 0)
+
+						time.Sleep(2 * time.Second)
 
 						requesters := getMetaValue(getRemoteMeta(filepath.Join(remotePath, "file1")), "ibackup:requesters")
 

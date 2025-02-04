@@ -210,25 +210,34 @@ func (s *Server) EnableJobSubmission(putCmd, deployment, cwd, queue string, numC
 	return nil
 }
 
-func (s *Server) removeCallback(_ string, allitemdata []interface{}) {
-	fmt.Println("removeQueue callback called")
-
-	item := allitemdata[0]
-	removeReq, _ := item.(removeReq)
-
-	fmt.Println(removeReq)
-
-	if removeReq.isDir {
-		// handle dir
-		return
-	}
-
-	err := s.removeFileFromIRODSandDB(removeReq.set, removeReq.path)
+func (s *Server) removeCallback(queueName string, allitemdata []interface{}) {
+	baton, err := put.GetBatonHandlerWithMetaClient()
 	if err != nil {
+		fmt.Println("error: ", err.Error())
 		//
 	}
 
-	// handle file
+	for _, item := range allitemdata {
+		removeReq, _ := item.(removeReq)
+		var err error
+
+		if removeReq.isDir {
+			err = s.removeDirFromIRODSandDB(removeReq.set, removeReq.path, baton)
+		} else {
+			err = s.removeFileFromIRODSandDB(removeReq.set, removeReq.path, baton)
+		}
+
+		if err != nil {
+			fmt.Println("error: ", err.Error())
+			//
+		}
+
+		err = s.removeQueue.Remove(context.Background(), removeReq.key())
+		if err != nil {
+			fmt.Println("error: ", err.Error())
+			//
+		}
+	}
 }
 
 // rac is our queue's ready added callback which will get all ready put Requests

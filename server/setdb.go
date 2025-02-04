@@ -444,11 +444,11 @@ type removeReq struct {
 	isDir bool
 }
 
+func (rq removeReq) key() string {
+	return strings.Join([]string{rq.set.ID(), rq.path}, ":")
+}
+
 func (s *Server) removeFiles(set *set.Set, paths []string) error {
-	// err := s.removeFileFromIRODSandDB(set, paths)
-	// if err != nil {
-	// 	return err
-	// }
 	if len(paths) == 0 {
 		return nil
 	}
@@ -456,12 +456,13 @@ func (s *Server) removeFiles(set *set.Set, paths []string) error {
 	defs := make([]*queue.ItemDef, len(paths))
 
 	for i, path := range paths {
+		rq := removeReq{path: path, set: set, isDir: false}
+
 		defs[i] = &queue.ItemDef{
-			Key:  strings.Join([]string{set.ID(), path}, ":"),
-			Data: removeReq{path: path, set: set, isDir: false},
+			Key:  rq.key(),
+			Data: rq,
 			TTR:  ttr,
 		}
-		//s.removeQueue.Add(context.Background(), "key", "", "data", 0, 0, 1*time.Hour, queue.SubQueueReady, []string{})
 	}
 
 	_, dups, err := s.removeQueue.AddMany(context.Background(), defs)
@@ -470,19 +471,6 @@ func (s *Server) removeFiles(set *set.Set, paths []string) error {
 	}
 
 	return err
-}
-
-// getBatonAndTransformer returns a baton with a meta client and a transformer
-// for the given set.
-func (s *Server) getBatonAndTransformer(set *set.Set) (*put.Baton, put.PathTransformer, error) {
-	baton, err := put.GetBatonHandlerWithMetaClient()
-	if err != nil {
-		return nil, nil, err
-	}
-
-	tranformer, err := set.MakeTransformer()
-
-	return baton, tranformer, err
 }
 
 func (s *Server) removeFilesFromIRODS(set *set.Set, paths []string,
@@ -627,28 +615,60 @@ func (s *Server) removeDirs(set *set.Set, paths []string) error {
 	var filepaths []string
 	var err error
 
-	for _, path := range paths {
+	if len(paths) == 0 {
+		return nil
+	}
+
+	dirDefs := make([]*queue.ItemDef, len(paths))
+
+	for i, path := range paths {
+		rq := removeReq{path: path, set: set, isDir: true}
+
+		dirDefs[i] = &queue.ItemDef{
+			Key:  rq.key(),
+			Data: rq,
+			TTR:  ttr,
+		}
+
 		filepaths, err = s.db.GetFilesInDir(set.ID(), path, filepaths)
 		if err != nil {
 			return err
 		}
 	}
 
-	//err = s.removeFileFromIRODSandDB(set, filepaths)
+	if len(filepaths) == 0 {
+		return nil
+	}
+
+	fileDefs := make([]*queue.ItemDef, len(filepaths))
+
+	for i, path := range filepaths {
+		rq := removeReq{path: path, set: set, isDir: false}
+
+		fileDefs[i] = &queue.ItemDef{
+			Key:  rq.key(),
+			Data: rq,
+			TTR:  ttr,
+		}
+	}
+
+	_, _, err = s.removeQueue.AddMany(context.Background(), fileDefs)
 	if err != nil {
 		return err
 	}
 
-	return s.removeDirFromIRODSandDB(set, paths)
+	_, _, err = s.removeQueue.AddMany(context.Background(), dirDefs)
+
+	return err
 }
 
-func (s *Server) removeFileFromIRODSandDB(userSet *set.Set, path string) error {
+func (s *Server) removeFileFromIRODSandDB(userSet *set.Set, path string, baton *put.Baton) error {
 	entry, err := s.db.GetFileEntryForSet(userSet.ID(), path)
 	if err != nil {
 		return err
 	}
 
-	baton, transformer, err := s.getBatonAndTransformer(userSet)
+	transformer, err := userSet.MakeTransformer()
 	if err != nil {
 		return err
 	}
@@ -666,25 +686,18 @@ func (s *Server) removeFileFromIRODSandDB(userSet *set.Set, path string) error {
 	return s.db.UpdateBasedOnRemovedEntry(userSet.ID(), entry)
 }
 
-func (s *Server) removeDirFromIRODSandDB(userSet *set.Set, paths []string) error {
-	for _, path := range paths {
-		baton, transformer, err := s.getBatonAndTransformer(userSet)
-		if err != nil {
-			return err
-		}
-
-		err = s.removeDirFromIRODS(userSet, path, baton, transformer)
-		if err != nil {
-			return err
-		}
-
-		err = s.db.RemoveDirEntries(userSet.ID(), path)
-		if err != nil {
-			return err
-		}
+func (s *Server) removeDirFromIRODSandDB(userSet *set.Set, path string, baton *put.Baton) error {
+	transformer, err := userSet.MakeTransformer()
+	if err != nil {
+		return err
 	}
 
-	return nil
+	err = s.removeDirFromIRODS(userSet, path, baton, transformer)
+	if err != nil {
+		return err
+	}
+
+	return s.db.RemoveDirEntries(userSet.ID(), path)
 }
 
 // func (s *Server) removeFromIRODSandDB(userSet *set.Set, dirpaths, filepaths []string) error {
