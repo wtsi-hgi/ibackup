@@ -201,6 +201,10 @@ type Set struct {
 	// remove. This is a read-only value.
 	SizeRemoved uint64
 
+	NumObjectsToBeRemoved uint64
+
+	NumObjectsRemoved uint64
+
 	// Error holds any error that applies to the whole set, such as an issue
 	// with the Transformer. This is a read-only value.
 	Error string
