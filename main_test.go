@@ -1824,6 +1824,11 @@ func getRemoteMeta(path string) string {
 	return string(output)
 }
 
+func removeFileFromIRODS(path string) {
+	_, err := exec.Command("irm", "-f", path).CombinedOutput()
+	So(err, ShouldBeNil)
+}
+
 func TestManualMode(t *testing.T) {
 	resetIRODS()
 
@@ -1924,7 +1929,7 @@ func confirmFileContents(file, expectedContents string) {
 }
 
 func TestRemove(t *testing.T) {
-	FocusConvey("Given a server", t, func() {
+	Convey("Given a server", t, func() {
 		remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
 		if remotePath == "" {
 			SkipConvey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
@@ -1953,7 +1958,7 @@ func TestRemove(t *testing.T) {
 		path := t.TempDir()
 		transformer := "prefix=" + path + ":" + remotePath
 
-		FocusConvey("And an added set with files and folders", func() {
+		Convey("And an added set with files and folders", func() {
 			dir := t.TempDir()
 
 			linkPath := filepath.Join(path, "link")
@@ -2048,7 +2053,7 @@ func TestRemove(t *testing.T) {
 					0, dir1+" => ")
 			})
 
-			FocusConvey("Remove removes an empty dir from the set", func() {
+			Convey("Remove removes an empty dir from the set", func() {
 				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", dir2)
 
 				So(exitCode, ShouldEqual, 0)
@@ -2311,6 +2316,18 @@ func TestRemove(t *testing.T) {
 						So(requesters, ShouldContainSubstring, user.Username)
 					})
 				})
+			})
+
+			Convey("Failing to remove from iRODS displays the error in status", func() {
+				removeFileFromIRODS(filepath.Join(remotePath, "file1"))
+				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", file1)
+
+				So(exitCode, ShouldEqual, 0)
+
+				time.Sleep(2 * time.Second)
+
+				s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
+					0, fmt.Sprintf("list operation failed: Path '%s'", filepath.Join(remotePath, "file1")))
 			})
 		})
 		//TODO add tests for failed files
