@@ -1178,10 +1178,23 @@ func (d *DB) UpdateBasedOnRemovedEntry(setID string, entry *Entry) error {
 	return d.updateSetProperties(setID, func(got *Set) {
 		got.SizeRemoved += entry.Size
 		got.SizeTotal -= entry.Size
-
-		got.NumFiles -= 1
+		got.NumFiles--
+		got.NumObjectsRemoved++
 
 		got.removedEntryToSetCounts(entry)
+	})
+}
+
+func (d *DB) UpdateSetTotalToRemove(setID string, num uint64) error {
+	return d.updateSetProperties(setID, func(got *Set) {
+		got.NumObjectsToBeRemoved = num
+		got.NumObjectsRemoved = 0
+	})
+}
+
+func (d *DB) IncrementSetTotalRemoved(setID string) error {
+	return d.updateSetProperties(setID, func(got *Set) {
+		got.NumObjectsRemoved++
 	})
 }
 

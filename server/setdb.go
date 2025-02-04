@@ -433,9 +433,21 @@ func (s *Server) removePaths(c *gin.Context) {
 		return
 	}
 
-	s.removeFiles(set, filePaths)
+	err = s.removeFiles(set, filePaths)
+	if err != nil {
+		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
-	s.removeDirs(set, dirPaths)
+		return
+	}
+
+	dirFilePaths, err := s.removeDirs(set, dirPaths)
+	if err != nil {
+		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+
+		return
+	}
+
+	s.db.UpdateSetTotalToRemove(set.ID(), uint64(len(filePaths)+len(dirPaths)+len(dirFilePaths)))
 }
 
 type removeReq struct {
@@ -612,12 +624,12 @@ func (s *Server) removeDirFromIRODS(set *set.Set, path string,
 	return nil
 }
 
-func (s *Server) removeDirs(set *set.Set, paths []string) error {
+func (s *Server) removeDirs(set *set.Set, paths []string) ([]string, error) {
 	var filepaths []string
 	var err error
 
 	if len(paths) == 0 {
-		return nil
+		return filepaths, nil
 	}
 
 	dirDefs := make([]*queue.ItemDef, len(paths))
@@ -627,7 +639,7 @@ func (s *Server) removeDirs(set *set.Set, paths []string) error {
 
 		dirFilepaths, err := s.db.GetFilesInDir(set.ID(), path)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		if len(dirFilepaths) == 0 {
@@ -657,12 +669,12 @@ func (s *Server) removeDirs(set *set.Set, paths []string) error {
 
 	_, _, err = s.removeQueue.AddMany(context.Background(), fileDefs)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	_, _, err = s.removeQueue.AddMany(context.Background(), dirDefs)
 
-	return err
+	return filepaths, err
 }
 
 func (s *Server) removeFileFromIRODSandDB(removeReq removeReq, baton *put.Baton) error {
@@ -710,7 +722,12 @@ func (s *Server) removeDirFromIRODSandDB(removeReq removeReq, baton *put.Baton) 
 		}
 	}
 
-	return s.db.RemoveDirEntries(removeReq.set.ID(), removeReq.path)
+	err = s.db.RemoveDirEntries(removeReq.set.ID(), removeReq.path)
+	if err != nil {
+		return err
+	}
+
+	return s.db.IncrementSetTotalRemoved(removeReq.set.ID())
 }
 
 // func (s *Server) removeFromIRODSandDB(userSet *set.Set, dirpaths, filepaths []string) error {
