@@ -243,6 +243,17 @@ func updateDatabaseSetWithUserSetDetails(dbSet, userSet *Set) error {
 	return nil
 }
 
+func (d *DB) UploadEntry(sid, key string, entry *Entry) error {
+	return d.db.Update(func(tx *bolt.Tx) error {
+		_, b, err := d.getEntry(tx, sid, key)
+		if err != nil {
+			return err
+		}
+
+		return b.Put([]byte(key), d.encodeToBytes(entry))
+	})
+}
+
 // encodeToBytes encodes the given thing as a byte slice, suitable for storing
 // in a database.
 func (d *DB) encodeToBytes(thing interface{}) []byte {
@@ -317,7 +328,9 @@ func (d *DB) RemoveDirEntries(setID string, path string) error {
 	return d.removeEntries(setID, path, dirBucket)
 }
 
-func (d *DB) GetFilesInDir(setID string, dirpath string, filepaths []string) ([]string, error) {
+func (d *DB) GetFilesInDir(setID string, dirpath string) ([]string, error) {
+	var filepaths []string
+
 	entries, err := d.getEntries(setID, discoveredBucket)
 	if err != nil {
 		return nil, err
@@ -1003,7 +1016,7 @@ func (d *DBRO) GetFileEntries(setID string) ([]*Entry, error) {
 func (d *DBRO) GetFileEntryForSet(setID, filePath string) (*Entry, error) {
 	var entry *Entry
 
-	if err := d.db.View(func(tx *bolt.Tx) error {
+	if err := d.db.Update(func(tx *bolt.Tx) error {
 		var err error
 
 		entry, _, err = d.getEntry(tx, setID, filePath)
