@@ -148,7 +148,7 @@ func New(conf Config) (*Server, error) {
 	s.clientQueue.SetTTRCallback(s.clientTTRC)
 	s.SetStopCallBack(s.stop)
 	s.Server.Router().Use(gas.IncludeAbortErrorsInBody)
-	s.removeQueue.SetReadyAddedCallback(s.removeCallback)
+	// s.removeQueue.SetReadyAddedCallback(s.removeCallback)
 
 	if conf.ReadOnly {
 		return s, nil
@@ -212,7 +212,7 @@ func (s *Server) EnableJobSubmission(putCmd, deployment, cwd, queue string, numC
 	return nil
 }
 
-func (s *Server) removeCallback(queueName string, allitemdata []interface{}) {
+func (s *Server) handleRemoveRequests(reserveGroup string) {
 	baton, err := put.GetBatonHandlerWithMetaClient()
 	if err != nil {
 		s.Logger.Printf("%s", err.Error())
@@ -220,10 +220,13 @@ func (s *Server) removeCallback(queueName string, allitemdata []interface{}) {
 		return
 	}
 
-	for _, item := range allitemdata {
-		removeReq, _ := item.(removeReq)
+	for {
+		item, err := s.removeQueue.Reserve(reserveGroup, 6*time.Second)
+		if item == nil {
+			break
+		}
 
-		var err error
+		removeReq := item.Data().(removeReq)
 
 		if removeReq.isDir {
 			err = s.removeDirFromIRODSandDB(removeReq, baton)
@@ -231,26 +234,26 @@ func (s *Server) removeCallback(queueName string, allitemdata []interface{}) {
 			err = s.removeFileFromIRODSandDB(removeReq, baton)
 		}
 
+		if err != nil {
+			if uint8(item.Stats().Releases) < jobRetries {
+				s.removeQueue.SetDelay(removeReq.key(), retryDelay)
+
+				err := s.removeQueue.Release(context.Background(), removeReq.key())
+				if err != nil {
+					s.Logger.Printf("%s", err.Error())
+				}
+
+				continue
+			}
+
+			s.db.SetError(removeReq.set.ID(), fmt.Sprintf("Error when removing: %s", err.Error()))
+		}
+
 		errr := s.removeQueue.Remove(context.Background(), removeReq.key())
 		if errr != nil {
 			s.Logger.Printf("%s", err.Error())
 
 			continue
-		}
-
-		if err != nil {
-			removeReq.attempts++
-			if removeReq.attempts == jobRetries {
-				s.db.SetError(removeReq.set.ID(), fmt.Sprintf("Error when removing: %s", err.Error()))
-
-				continue
-			}
-
-			_, err = s.removeQueue.Add(context.Background(), removeReq.key(), "",
-				removeReq, 0, retryDelay, ttr, queue.SubQueueDelay, nil)
-			if err != nil {
-				s.Logger.Printf("%s", err.Error())
-			}
 		}
 	}
 }
