@@ -2350,7 +2350,6 @@ func TestRemove(t *testing.T) {
 				})
 			})
 		})
-		//TODO add tests for failed files
 	})
 }
 
