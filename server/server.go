@@ -66,6 +66,8 @@ const (
 	jobLimitGroup           = "irods"
 	maxJobsToSubmit         = 100
 	racRetriggerDelay       = 1 * time.Minute
+
+	retryDelay = 5 * time.Second
 )
 
 // Config configures the server.
@@ -229,18 +231,26 @@ func (s *Server) removeCallback(queueName string, allitemdata []interface{}) {
 			err = s.removeFileFromIRODSandDB(removeReq, baton)
 		}
 
-		if err != nil {
-			s.db.SetError(removeReq.set.ID(), fmt.Sprintf("Error when removing: %s", err.Error()))
-
-			// TODO if not max attempts
-			// continue
-		}
-
-		err = s.removeQueue.Remove(context.Background(), removeReq.key())
-		if err != nil {
+		errr := s.removeQueue.Remove(context.Background(), removeReq.key())
+		if errr != nil {
 			s.Logger.Printf("%s", err.Error())
 
 			continue
+		}
+
+		if err != nil {
+			removeReq.attempts++
+			if removeReq.attempts == jobRetries {
+				s.db.SetError(removeReq.set.ID(), fmt.Sprintf("Error when removing: %s", err.Error()))
+
+				continue
+			}
+
+			_, err = s.removeQueue.Add(context.Background(), removeReq.key(), "",
+				removeReq, 0, retryDelay, ttr, queue.SubQueueDelay, nil)
+			if err != nil {
+				s.Logger.Printf("%s", err.Error())
+			}
 		}
 	}
 }

@@ -1829,6 +1829,11 @@ func removeFileFromIRODS(path string) {
 	So(err, ShouldBeNil)
 }
 
+func addFileToIRODS(localPath, remotePath string) {
+	_, err := exec.Command("iput", localPath, remotePath).CombinedOutput()
+	So(err, ShouldBeNil)
+}
+
 func TestManualMode(t *testing.T) {
 	resetIRODS()
 
@@ -1929,7 +1934,7 @@ func confirmFileContents(file, expectedContents string) {
 }
 
 func TestRemove(t *testing.T) {
-	FocusConvey("Given a server", t, func() {
+	Convey("Given a server", t, func() {
 		remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
 		if remotePath == "" {
 			SkipConvey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
@@ -1958,7 +1963,7 @@ func TestRemove(t *testing.T) {
 		path := t.TempDir()
 		transformer := "prefix=" + path + ":" + remotePath
 
-		FocusConvey("And an added set with files and folders", func() {
+		Convey("And an added set with files and folders", func() {
 			dir := t.TempDir()
 
 			linkPath := filepath.Join(path, "link")
@@ -2000,7 +2005,7 @@ func TestRemove(t *testing.T) {
 
 			s.addSetForTestingWithItems(t, setName, transformer, tempTestFileOfPaths.Name())
 
-			FocusConvey("Remove removes the file from the set", func() {
+			Convey("Remove removes the file from the set", func() {
 				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", file1)
 
 				So(exitCode, ShouldEqual, 0)
@@ -2020,7 +2025,7 @@ func TestRemove(t *testing.T) {
 					0, "Num files: 5; Symlinks: 1; Hardlinks: 1; Size (total/recently uploaded/recently removed): 30 B / 40 B / 10 B\n"+
 						"Uploaded: 5; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0")
 
-				FocusConvey("Remove again will remove another file", func() {
+				Convey("Remove again will remove another file", func() {
 					exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", file2)
 
 					So(exitCode, ShouldEqual, 0)
@@ -2321,8 +2326,9 @@ func TestRemove(t *testing.T) {
 				})
 			})
 
-			Convey("Failing to remove from iRODS displays the error in status", func() {
+			Convey("Remove on a failing file displays the error on the file", func() {
 				removeFileFromIRODS(filepath.Join(remotePath, "file1"))
+
 				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", file1)
 
 				So(exitCode, ShouldEqual, 0)
@@ -2331,6 +2337,17 @@ func TestRemove(t *testing.T) {
 
 				s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
 					0, fmt.Sprintf("list operation failed: Path '%s'", filepath.Join(remotePath, "file1")))
+
+				Convey("And displays the error in set status if not fixed", func() {
+					s.waitForStatus(setName, fmt.Sprintf("Error: Error when removing: list operation failed: Path '%s'",
+						filepath.Join(remotePath, "file1")), 30*time.Second)
+				})
+
+				Convey("And succeeds if issue is fixed during retries", func() {
+					addFileToIRODS(file1, filepath.Join(remotePath, "file1"))
+
+					s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 30*time.Second)
+				})
 			})
 		})
 		//TODO add tests for failed files
