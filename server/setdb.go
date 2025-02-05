@@ -434,6 +434,7 @@ type removeReq struct {
 	set        *set.Set
 	isDir      bool
 	isDirEmpty bool
+	attempts   uint8
 }
 
 func (rq removeReq) key() string {
@@ -457,10 +458,7 @@ func (s *Server) removeFiles(set *set.Set, paths []string) error {
 		}
 	}
 
-	_, dups, err := s.removeQueue.AddMany(context.Background(), defs)
-	if dups != 0 {
-		return fmt.Errorf("dups??")
-	}
+	_, _, err := s.removeQueue.AddMany(context.Background(), defs)
 
 	return err
 }
@@ -671,9 +669,9 @@ func (s *Server) removeFileFromIRODSandDB(removeReq removeReq, baton *put.Baton)
 	if err != nil {
 		entry.LastError = err.Error()
 
-		err := s.db.UploadEntry(removeReq.set.ID(), removeReq.path, entry)
-		if err != nil {
-			fmt.Println("!! error: ", err.Error())
+		erru := s.db.UploadEntry(removeReq.set.ID(), removeReq.path, entry)
+		if erru != nil {
+			s.Logger.Printf("%s", erru.Error())
 		}
 
 		return err
