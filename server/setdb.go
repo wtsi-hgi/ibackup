@@ -412,19 +412,23 @@ func (s *Server) removePaths(c *gin.Context) {
 		return
 	}
 
-	err = s.removeFiles(set, filePaths)
+	reserveGroup := set.ID() + time.Now().String()
+
+	err = s.removeFiles(set, filePaths, reserveGroup)
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
 		return
 	}
 
-	dirFilePaths, err := s.removeDirs(set, dirPaths)
+	dirFilePaths, err := s.removeDirs(set, dirPaths, reserveGroup)
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
 		return
 	}
+
+	go s.handleRemoveRequests(reserveGroup)
 
 	s.db.UpdateSetTotalToRemove(set.ID(), uint64(len(filePaths)+len(dirPaths)+len(dirFilePaths)))
 }
@@ -434,14 +438,13 @@ type removeReq struct {
 	set        *set.Set
 	isDir      bool
 	isDirEmpty bool
-	attempts   uint8
 }
 
 func (rq removeReq) key() string {
 	return strings.Join([]string{rq.set.ID(), rq.path}, ":")
 }
 
-func (s *Server) removeFiles(set *set.Set, paths []string) error {
+func (s *Server) removeFiles(set *set.Set, paths []string, reserveGroup string) error {
 	if len(paths) == 0 {
 		return nil
 	}
@@ -452,9 +455,10 @@ func (s *Server) removeFiles(set *set.Set, paths []string) error {
 		rq := removeReq{path: path, set: set, isDir: false}
 
 		defs[i] = &queue.ItemDef{
-			Key:  rq.key(),
-			Data: rq,
-			TTR:  ttr,
+			Key:          rq.key(),
+			Data:         rq,
+			TTR:          ttr,
+			ReserveGroup: reserveGroup,
 		}
 	}
 
@@ -601,7 +605,7 @@ func (s *Server) removeDirFromIRODS(set *set.Set, path string,
 	return nil
 }
 
-func (s *Server) removeDirs(set *set.Set, paths []string) ([]string, error) {
+func (s *Server) removeDirs(set *set.Set, paths []string, reserveGroup string) ([]string, error) {
 	var filepaths []string
 	var err error
 
@@ -626,9 +630,10 @@ func (s *Server) removeDirs(set *set.Set, paths []string) ([]string, error) {
 		filepaths = append(filepaths, dirFilepaths...)
 
 		dirDefs[i] = &queue.ItemDef{
-			Key:  rq.key(),
-			Data: rq,
-			TTR:  ttr,
+			Key:          rq.key(),
+			Data:         rq,
+			TTR:          ttr,
+			ReserveGroup: reserveGroup,
 		}
 	}
 
@@ -638,9 +643,10 @@ func (s *Server) removeDirs(set *set.Set, paths []string) ([]string, error) {
 		rq := removeReq{path: path, set: set, isDir: false}
 
 		fileDefs[i] = &queue.ItemDef{
-			Key:  rq.key(),
-			Data: rq,
-			TTR:  ttr,
+			Key:          rq.key(),
+			Data:         rq,
+			TTR:          ttr,
+			ReserveGroup: reserveGroup,
 		}
 	}
 
