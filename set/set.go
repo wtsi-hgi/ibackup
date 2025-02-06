@@ -630,13 +630,6 @@ func (s *Set) updateAllCounts(entries []*Entry, entry *Entry) {
 	}
 }
 
-func (s *Set) updateSetSize(entries []*Entry) {
-	for _, e := range entries {
-		s.SizeTotal += e.Size
-		// s.SizeUploaded
-	}
-}
-
 // SetError records the given error against the set, indicating it wont work.
 func (s *Set) SetError(errMsg string) {
 	s.Error = errMsg
