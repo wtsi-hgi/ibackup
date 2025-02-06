@@ -358,7 +358,7 @@ func TestSetDB(t *testing.T) {
 				So(err, ShouldBeNil)
 
 				Convey("Then remove files and dirs from the sets", func() {
-					err := db.removeEntries(set.ID(), "/a/b.txt", fileBucket)
+					err = db.removeEntries(set.ID(), "/a/b.txt", fileBucket)
 					So(err, ShouldBeNil)
 
 					fEntries, errg := db.GetFileEntries(set.ID())
@@ -367,7 +367,8 @@ func TestSetDB(t *testing.T) {
 					So(fEntries[0], ShouldResemble, &Entry{Path: "/c/d.txt"})
 					So(fEntries[1], ShouldResemble, &Entry{Path: "/e/f.txt"})
 
-					db.RemoveDirEntries(set.ID(), "/g/h")
+					err = db.RemoveDirEntries(set.ID(), "/g/h")
+					So(err, ShouldBeNil)
 
 					dEntries, errg := db.GetDirEntries(set.ID())
 					So(errg, ShouldBeNil)

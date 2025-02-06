@@ -270,7 +270,16 @@ func (d *DB) encodeToBytes(thing interface{}) []byte {
 	return encoded
 }
 
-func (d *DB) ValidateFilePaths(set *Set, paths []string) error {
+func (d *DB) ValidateFileAndDirPaths(set *Set, filePaths, dirPaths []string) error {
+	err := d.validateFilePaths(set, filePaths)
+	if err != nil {
+		return err
+	}
+
+	return d.validateDirPaths(set, dirPaths)
+}
+
+func (d *DB) validateFilePaths(set *Set, paths []string) error {
 	return d.validatePaths(set, fileBucket, discoveredBucket, paths)
 }
 
@@ -290,14 +299,14 @@ func (d *DB) validatePaths(set *Set, bucket1, bucket2 string, paths []string) er
 
 	for _, path := range paths {
 		if _, ok := entriesMap[path]; !ok {
-			return Error{fmt.Sprintf("%s is not part of the backup set", path), set.Name}
+			return Error{path + " is not part of the backup set", set.Name}
 		}
 	}
 
 	return nil
 }
 
-func (d *DB) ValidateDirPaths(set *Set, paths []string) error {
+func (d *DB) validateDirPaths(set *Set, paths []string) error {
 	return d.validatePaths(set, dirBucket, discoveredBucket, paths)
 }
 

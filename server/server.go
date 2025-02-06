@@ -29,6 +29,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -221,41 +222,79 @@ func (s *Server) handleRemoveRequests(reserveGroup string) {
 	}
 
 	for {
-		item, err := s.removeQueue.Reserve(reserveGroup, 6*time.Second)
-		if item == nil {
+		item, removeReq, err := s.reserveRemoveRequest(reserveGroup)
+		if err != nil {
 			break
 		}
 
-		removeReq := item.Data().(removeReq)
-
-		if removeReq.isDir {
-			err = s.removeDirFromIRODSandDB(removeReq, baton)
-		} else {
-			err = s.removeFileFromIRODSandDB(removeReq, baton)
-		}
-
+		err = s.removeRequestFromIRODSandDB(&removeReq, baton)
 		if err != nil {
-			if uint8(item.Stats().Releases) < jobRetries {
-				s.removeQueue.SetDelay(removeReq.key(), retryDelay)
-
-				err := s.removeQueue.Release(context.Background(), removeReq.key())
-				if err != nil {
-					s.Logger.Printf("%s", err.Error())
-				}
-
+			beenReleased := s.setErrorOrReleaseItem(item, removeReq, err)
+			if beenReleased {
 				continue
 			}
-
-			s.db.SetError(removeReq.set.ID(), fmt.Sprintf("Error when removing: %s", err.Error()))
 		}
 
 		errr := s.removeQueue.Remove(context.Background(), removeReq.key())
 		if errr != nil {
 			s.Logger.Printf("%s", err.Error())
-
-			continue
 		}
 	}
+}
+
+func (s *Server) removeRequestFromIRODSandDB(removeReq *removeReq, baton *put.Baton) error {
+	if removeReq.isDir {
+		return s.removeDirFromIRODSandDB(removeReq, baton)
+	}
+
+	return s.removeFileFromIRODSandDB(removeReq, baton)
+}
+
+func (s *Server) setErrorOrReleaseItem(item *queue.Item, removeReq removeReq, err error) bool {
+	if uint8(item.Stats().Releases) < jobRetries {
+		item.SetData(removeReq)
+
+		err = s.removeQueue.SetDelay(removeReq.key(), retryDelay)
+		if err != nil {
+			s.Logger.Printf("%s", err.Error())
+		}
+
+		err = s.removeQueue.Release(context.Background(), removeReq.key())
+		if err != nil {
+			s.Logger.Printf("%s", err.Error())
+		}
+
+		return true
+	}
+
+	errs := s.db.SetError(removeReq.set.ID(), "Error when removing: "+err.Error())
+	if errs != nil {
+		s.Logger.Printf("Could not put error on set due to: %s\nError was: %s\n", errs.Error(), err.Error())
+	}
+
+	return false
+}
+
+// reserveRemoveRequest reserves an item from the given reserve group from the
+// remove queue and converts it to a removeRequest. Returns nil and no error if
+// the queue is empty.
+func (s *Server) reserveRemoveRequest(reserveGroup string) (*queue.Item, removeReq, error) {
+	item, err := s.removeQueue.Reserve(reserveGroup, retryDelay+2*time.Second)
+	if err != nil {
+		qerr, ok := err.(queue.Error) //nolint:errorlint
+		if ok && errors.Is(qerr.Err, queue.ErrNothingReady) {
+			return nil, removeReq{}, err
+		}
+
+		s.Logger.Printf("%s", err.Error())
+	}
+
+	removeReq, ok := item.Data().(removeReq)
+	if !ok {
+		s.Logger.Printf("Invalid data type in remove queue")
+	}
+
+	return item, removeReq, nil
 }
 
 // rac is our queue's ready added callback which will get all ready put Requests
