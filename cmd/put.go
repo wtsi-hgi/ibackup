@@ -175,7 +175,7 @@ func serverMode() bool {
 func handleServerMode(started time.Time) {
 	client, err := newServerClient(serverURL, serverCert)
 	if err != nil {
-		die(err.Error())
+		die("%s", err.Error())
 	}
 
 	requests, err := client.GetSomeUploadRequests()
@@ -187,7 +187,7 @@ func handleServerMode(started time.Time) {
 
 	err = client.MakingIRODSConnections(numIRODSConnections)
 	if err != nil {
-		die(err.Error())
+		die("%s", err.Error())
 	}
 
 	uploadStarts, uploadResults, skipResults, dfunc := handlePut(client, requests)
@@ -199,7 +199,7 @@ func handleServerMode(started time.Time) {
 
 	errm := client.ClosedIRODSConnections()
 	if errm != nil {
-		warn(errm.Error())
+		warn("%s", errm.Error())
 	}
 
 	if err != nil {
@@ -300,7 +300,7 @@ func createCollection(p *put.Putter) {
 func handleManualMode() {
 	requests, err := getRequestsFromFile(putFile, putMeta, putBase64)
 	if err != nil {
-		die(err.Error())
+		die("%s", err.Error())
 	}
 
 	_, uploadResults, skipResults, dfunc := handlePut(nil, requests)

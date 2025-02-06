@@ -136,9 +136,4 @@ func remove(client *server.Client, user, name string, files, dirs []string) {
 	if err != nil {
 		die("%s", err.Error())
 	}
-
-	// err = client.RemoveDirs(sets[0].ID(), dirs)
-	// if err != nil {
-	// 	die("%s", err.Error())
-	// }
 }

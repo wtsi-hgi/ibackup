@@ -320,6 +320,15 @@ func (s *TestServer) addSetForTestingWithFlag(t *testing.T, name, transformer, p
 	s.waitForStatus(name, "\nStatus: complete", 5*time.Second)
 }
 
+func (s *TestServer) removePath(t *testing.T, name, path string, numFiles int) {
+	t.Helper()
+
+	exitCode, _ := s.runBinary(t, "remove", "--name", name, "--path", path)
+	So(exitCode, ShouldEqual, 0)
+
+	s.waitForStatus(name, fmt.Sprintf("Removal status: %d / %d objects removed", numFiles, numFiles), 10*time.Second)
+}
+
 func (s *TestServer) waitForStatus(name, statusToFind string, timeout time.Duration) {
 	ctx, cancelFn := context.WithTimeout(context.Background(), timeout)
 	defer cancelFn()
@@ -2022,11 +2031,12 @@ func TestRemove(t *testing.T) {
 					0, file1)
 
 				s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
-					0, "Num files: 5; Symlinks: 1; Hardlinks: 1; Size (total/recently uploaded/recently removed): 30 B / 40 B / 10 B\n"+
+					0, "Num files: 5; Symlinks: 1; Hardlinks: 1; Size "+
+						"(total/recently uploaded/recently removed): 30 B / 40 B / 10 B\n"+
 						"Uploaded: 5; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0")
 
 				Convey("Remove again will remove another file", func() {
-					exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", file2)
+					exitCode, _ = s.runBinary(t, "remove", "--name", setName, "--path", file2)
 
 					So(exitCode, ShouldEqual, 0)
 
@@ -2039,17 +2049,14 @@ func TestRemove(t *testing.T) {
 						0, file2)
 
 					s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
-						0, "Num files: 4; Symlinks: 1; Hardlinks: 1; Size (total/recently uploaded/recently removed): 20 B / 40 B / 10 B\n"+
+						0, "Num files: 4; Symlinks: 1; Hardlinks: 1; Size "+
+							"(total/recently uploaded/recently removed): 20 B / 40 B / 10 B\n"+
 							"Uploaded: 4; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0")
 				})
 			})
 
 			Convey("Remove removes the dir from the set", func() {
-				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", dir1)
-
-				So(exitCode, ShouldEqual, 0)
-
-				s.waitForStatus(setName, "Removal status: 2 / 2 objects removed", 5*time.Second)
+				s.removePath(t, setName, dir1, 2)
 
 				s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
 					0, dir2)
@@ -2062,11 +2069,7 @@ func TestRemove(t *testing.T) {
 			})
 
 			Convey("Remove removes an empty dir from the set", func() {
-				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", dir2)
-
-				So(exitCode, ShouldEqual, 0)
-
-				s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 5*time.Second)
+				s.removePath(t, setName, dir2, 1)
 
 				s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
 					0, dir1)
@@ -2079,8 +2082,8 @@ func TestRemove(t *testing.T) {
 			})
 
 			Convey("Remove takes a flag --items and removes all provided files and dirs from the set", func() {
-				tempTestFileOfPathsToRemove, err := os.CreateTemp(dir, "testFileSet")
-				So(err, ShouldBeNil)
+				tempTestFileOfPathsToRemove, errt := os.CreateTemp(dir, "testFileSet")
+				So(errt, ShouldBeNil)
 
 				_, err = io.WriteString(tempTestFileOfPathsToRemove,
 					fmt.Sprintf("%s\n%s", file1, dir1))
@@ -2109,14 +2112,11 @@ func TestRemove(t *testing.T) {
 			})
 
 			Convey("Remove removes the provided file from iRODS", func() {
-				output, err := exec.Command("ils", remotePath).CombinedOutput()
-				So(err, ShouldBeNil)
+				output, erro := exec.Command("ils", remotePath).CombinedOutput()
+				So(erro, ShouldBeNil)
 				So(string(output), ShouldContainSubstring, "file1")
 
-				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", file1)
-				So(exitCode, ShouldEqual, 0)
-
-				s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 5*time.Second)
+				s.removePath(t, setName, file1, 1)
 
 				output, err = exec.Command("ils", remotePath).CombinedOutput()
 				So(err, ShouldBeNil)
@@ -2126,13 +2126,10 @@ func TestRemove(t *testing.T) {
 			Convey("Remove with a hardlink removes both the hardlink file and inode file", func() {
 				remoteInode := getMetaValue(getRemoteMeta(filepath.Join(remotePath, "link")), "ibackup:remotehardlink")
 
-				_, err := exec.Command("ils", remoteInode).CombinedOutput()
+				_, err = exec.Command("ils", remoteInode).CombinedOutput()
 				So(err, ShouldBeNil)
 
-				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", linkPath)
-				So(exitCode, ShouldEqual, 0)
-
-				s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 5*time.Second)
+				s.removePath(t, setName, linkPath, 1)
 
 				_, err = exec.Command("ils", filepath.Join(remotePath, "link")).CombinedOutput()
 				So(err, ShouldNotBeNil)
@@ -2152,15 +2149,12 @@ func TestRemove(t *testing.T) {
 				s.waitForStatus("testHardlinks", "\nStatus: complete", 10*time.Second)
 
 				Convey("Removing a hardlink does not remove the inode file", func() {
-					remoteInode := getMetaValue(getRemoteMeta(filepath.Join(remotePath, "link2")), "ibackup:remotehardlink")
+					remoteInode := getMetaValue(getRemoteMeta(filepath.Join(remotePath, "link")), "ibackup:remotehardlink")
 
-					_, err := exec.Command("ils", remoteInode).CombinedOutput()
+					_, err = exec.Command("ils", remoteInode).CombinedOutput()
 					So(err, ShouldBeNil)
 
-					exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", linkPath)
-					So(exitCode, ShouldEqual, 0)
-
-					s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 5*time.Second)
+					s.removePath(t, setName, linkPath, 1)
 
 					_, err = exec.Command("ils", filepath.Join(remotePath, "link")).CombinedOutput()
 					So(err, ShouldNotBeNil)
@@ -2171,15 +2165,12 @@ func TestRemove(t *testing.T) {
 			})
 
 			Convey("Remove removes the provided dir from iRODS", func() {
-				output, err := exec.Command("ils", "-r", remotePath).CombinedOutput()
-				So(err, ShouldBeNil)
+				output, errc := exec.Command("ils", "-r", remotePath).CombinedOutput()
+				So(errc, ShouldBeNil)
 				So(string(output), ShouldContainSubstring, "path/to/some/dir")
 				So(string(output), ShouldContainSubstring, "file3\n")
 
-				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", dir1)
-				So(exitCode, ShouldEqual, 0)
-
-				s.waitForStatus(setName, "Removal status: 2 / 2 objects removed", 5*time.Second)
+				s.removePath(t, setName, dir1, 2)
 
 				output, err = exec.Command("ils", "-r", remotePath).CombinedOutput()
 				So(err, ShouldBeNil)
@@ -2216,8 +2207,8 @@ func TestRemove(t *testing.T) {
 			})
 
 			Convey("And a set with the same files added by a different user", func() {
-				user, err := user.Current()
-				So(err, ShouldBeNil)
+				user, erru := user.Current()
+				So(erru, ShouldBeNil)
 
 				setName2 := "different_user_set"
 
@@ -2233,11 +2224,7 @@ func TestRemove(t *testing.T) {
 					So(output, ShouldContainSubstring, setName)
 					So(output, ShouldContainSubstring, setName2)
 
-					exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", file1)
-
-					So(exitCode, ShouldEqual, 0)
-
-					s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 5*time.Second)
+					s.removePath(t, setName, file1, 1)
 
 					output = getRemoteMeta(filepath.Join(remotePath, "file1"))
 					So(output, ShouldNotContainSubstring, setName)
@@ -2245,21 +2232,15 @@ func TestRemove(t *testing.T) {
 				})
 
 				Convey("Remove does not remove the provided file from iRODS", func() {
-					exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", file1)
-					So(exitCode, ShouldEqual, 0)
+					s.removePath(t, setName, file1, 1)
 
-					s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 5*time.Second)
-
-					output, err := exec.Command("ils", remotePath).CombinedOutput()
-					So(err, ShouldBeNil)
+					output, errc := exec.Command("ils", remotePath).CombinedOutput()
+					So(errc, ShouldBeNil)
 					So(string(output), ShouldContainSubstring, "file1")
 				})
 
 				Convey("Remove on a file removes the user as a requester", func() {
-					exitCode, _ = s.runBinary(t, "remove", "--name", setName, "--path", file1)
-					So(exitCode, ShouldEqual, 0)
-
-					s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 5*time.Second)
+					s.removePath(t, setName, file1, 1)
 
 					requesters := getMetaValue(getRemoteMeta(filepath.Join(remotePath, "file1")), "ibackup:requesters")
 
@@ -2272,10 +2253,7 @@ func TestRemove(t *testing.T) {
 					s.addSetForTestingWithItems(t, setName3, transformer, tempTestFileOfPaths.Name())
 
 					Convey("Remove keeps the user as a requester", func() {
-						exitCode, _ = s.runBinary(t, "remove", "--name", setName, "--path", file1)
-						So(exitCode, ShouldEqual, 0)
-
-						s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 5*time.Second)
+						s.removePath(t, setName, file1, 1)
 
 						requesters := getMetaValue(getRemoteMeta(filepath.Join(remotePath, "file1")), "ibackup:requesters")
 
@@ -2285,8 +2263,8 @@ func TestRemove(t *testing.T) {
 			})
 
 			Convey("And a set with the same files and name added by a different user", func() {
-				user, err := user.Current()
-				So(err, ShouldBeNil)
+				user, erru := user.Current()
+				So(erru, ShouldBeNil)
 
 				setName2 := setName
 
@@ -2298,10 +2276,7 @@ func TestRemove(t *testing.T) {
 				s.waitForStatusWithUser(setName2, "\nStatus: complete", "testUser", 20*time.Second)
 
 				Convey("Remove on a file removes the user as a requester but not the file", func() {
-					exitCode, _ = s.runBinary(t, "remove", "--name", setName, "--path", file1)
-					So(exitCode, ShouldEqual, 0)
-
-					s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 5*time.Second)
+					s.removePath(t, setName, file1, 1)
 
 					requesters := getMetaValue(getRemoteMeta(filepath.Join(remotePath, "file1")), "ibackup:requesters")
 
@@ -2314,10 +2289,7 @@ func TestRemove(t *testing.T) {
 					s.addSetForTestingWithItems(t, setName3, transformer, tempTestFileOfPaths.Name())
 
 					Convey("Remove keeps the user as a requester", func() {
-						exitCode, _ = s.runBinary(t, "remove", "--name", setName, "--path", file1)
-						So(exitCode, ShouldEqual, 0)
-
-						s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 5*time.Second)
+						s.removePath(t, setName, file1, 1)
 
 						requesters := getMetaValue(getRemoteMeta(filepath.Join(remotePath, "file1")), "ibackup:requesters")
 
