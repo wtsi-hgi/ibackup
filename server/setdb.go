@@ -774,26 +774,6 @@ func (s *Server) bindPathsAndValidateSet(c *gin.Context) (string, []string, bool
 	return set.ID(), bytesToStrings(bpaths), true
 }
 
-// parseRemoveParamsAndValidateSet gets the file paths and dir paths out of the
-// JSON body, and the set id from the URL parameter if Requester matches
-// logged-in username.
-func (s *Server) parseRemoveParamsAndValidateSet(c *gin.Context) (string, []string, []string, bool) {
-	bmap := make(map[string][][]byte)
-
-	if err := c.BindJSON(&bmap); err != nil {
-		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
-
-		return "", nil, nil, false
-	}
-
-	set, ok := s.validateSet(c)
-	if !ok {
-		return "", nil, nil, false
-	}
-
-	return set.ID(), bytesToStrings(bmap[fileKeyForJSON]), bytesToStrings(bmap[dirKeyForJSON]), true
-}
-
 // validateSet gets the id parameter from the given context and checks a
 // corresponding set exists and the logged-in user is the same as the set's
 // Requester. If so, returns the set and true. If not, Aborts with an error
