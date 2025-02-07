@@ -67,7 +67,7 @@ var removeCmd = &cobra.Command{
  --path: if you want to remove a single file or directory, provide its absolute
 		 path.
  `,
-	Run: func(cmd *cobra.Command, args []string) {
+	Run: func(_ *cobra.Command, _ []string) {
 		ensureURLandCert()
 
 		if (removeItems == "") == (removePath == "") {
@@ -93,6 +93,7 @@ var removeCmd = &cobra.Command{
 				die(err)
 			}
 
+			//TODO if dir does not exist then we will add it as a file
 			if pathIsDir(removePath) {
 				dirs = append(dirs, removePath)
 			} else {
