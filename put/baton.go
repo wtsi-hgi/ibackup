@@ -33,6 +33,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -521,8 +522,7 @@ func (b *Baton) RemovePathFromSetInIRODS(transformer PathTransformer, path strin
 		MetaKeyRequester: strings.Join(requesters, ","),
 	}
 
-	if metaToRemove[MetaKeySets] == newMeta[MetaKeySets] &&
-		metaToRemove[MetaKeyRequester] == newMeta[MetaKeyRequester] {
+	if reflect.DeepEqual(metaToRemove, newMeta) {
 		return nil
 	}
 
