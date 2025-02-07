@@ -101,16 +101,17 @@ const (
 	//
 	EndPointAuthRemoveDirs = gas.EndPointAuth + removeDirsPath
 
-	ErrNoAuth          = gas.Error("auth must be enabled")
-	ErrNoSetDBDirFound = gas.Error("set database directory not found")
-	ErrNoRequester     = gas.Error("requester not supplied")
-	ErrBadRequester    = gas.Error("you are not the set requester")
-	ErrEmptyName       = gas.Error("set name cannot be empty")
-	ErrInvalidName     = gas.Error("set name contains invalid characters")
-	ErrNotAdmin        = gas.Error("you are not the server admin")
-	ErrBadSet          = gas.Error("set with that id does not exist")
-	ErrInvalidInput    = gas.Error("invalid input")
-	ErrInternal        = gas.Error("internal server error")
+	ErrNoAuth            = gas.Error("auth must be enabled")
+	ErrNoSetDBDirFound   = gas.Error("set database directory not found")
+	ErrNoRequester       = gas.Error("requester not supplied")
+	ErrBadRequester      = gas.Error("you are not the set requester")
+	ErrEmptyName         = gas.Error("set name cannot be empty")
+	ErrInvalidName       = gas.Error("set name contains invalid characters")
+	ErrNotAdmin          = gas.Error("you are not the server admin")
+	ErrBadSet            = gas.Error("set with that id does not exist")
+	ErrInvalidInput      = gas.Error("invalid input")
+	ErrInternal          = gas.Error("internal server error")
+	ErrElementNotInSlice = gas.Error("element not in slice")
 
 	paramRequester = "requester"
 	paramSetID     = "id"
@@ -449,7 +450,7 @@ func (s *Server) removeFilesAndDirs(set *set.Set, filePaths, dirPaths []string) 
 
 	go s.handleRemoveRequests(reserveGroup)
 
-	return s.db.UpdateSetTotalToRemove(set.ID(), uint64(len(filePaths)+len(dirPaths)+len(dirFilePaths)))
+	return s.db.UpdateSetTotalToRemove(set.ID(), uint64(len(filePaths)+len(dirPaths)+len(dirFilePaths))) //nolint:gosec
 }
 
 type removeReq struct {
@@ -579,7 +580,7 @@ func getNamesFromSets(sets []*set.Set) []string {
 func removeElementFromSlice(slice []string, element string) ([]string, error) {
 	index := slices.Index(slice, element)
 	if index < 0 {
-		return nil, fmt.Errorf("Element %s not in slice", element)
+		return nil, fmt.Errorf("%w: %s", ErrElementNotInSlice, element)
 	}
 
 	slice[index] = slice[len(slice)-1]
@@ -625,7 +626,8 @@ func (s *Server) submitDirsForRemoval(set *set.Set, paths []string, reserveGroup
 	return filepaths, err
 }
 
-func (s *Server) makeItemsDefsAndFilePathsFromDirPaths(set *set.Set, reserveGroup string, paths []string) ([]string, []*queue.ItemDef, error) {
+func (s *Server) makeItemsDefsAndFilePathsFromDirPaths(set *set.Set,
+	reserveGroup string, paths []string) ([]string, []*queue.ItemDef, error) {
 	var filepaths []string
 
 	defs := make([]*queue.ItemDef, len(paths))
@@ -669,12 +671,7 @@ func (s *Server) removeFileFromIRODSandDB(removeReq *removeReq, baton *put.Baton
 	if !removeReq.isRemovedFromIRODS {
 		err = s.removeFileFromIRODS(removeReq.set, removeReq.path, baton, transformer)
 		if err != nil {
-			entry.LastError = err.Error()
-
-			erru := s.db.UploadEntry(removeReq.set.ID(), removeReq.path, entry)
-			if erru != nil {
-				s.Logger.Printf("%s", erru.Error())
-			}
+			s.setErrorOnEntry(entry, removeReq.set.ID(), removeReq.path, err)
 
 			return err
 		}
@@ -688,6 +685,15 @@ func (s *Server) removeFileFromIRODSandDB(removeReq *removeReq, baton *put.Baton
 	}
 
 	return s.db.UpdateBasedOnRemovedEntry(removeReq.set.ID(), entry)
+}
+
+func (s *Server) setErrorOnEntry(entry *set.Entry, sid, path string, err error) {
+	entry.LastError = err.Error()
+
+	erru := s.db.UploadEntry(sid, path, entry)
+	if erru != nil {
+		s.Logger.Printf("%s", erru.Error())
+	}
 }
 
 func (s *Server) removeDirFromIRODSandDB(removeReq *removeReq, baton *put.Baton) error {
@@ -712,44 +718,6 @@ func (s *Server) removeDirFromIRODSandDB(removeReq *removeReq, baton *put.Baton)
 
 	return s.db.IncrementSetTotalRemoved(removeReq.set.ID())
 }
-
-// func (s *Server) removeFromIRODSandDB(userSet *set.Set, dirpaths, filepaths []string) error {
-// 	err := s.removePathsFromIRODS(userSet, dirpaths, filepaths)
-// 	if err != nil {
-// 		return err
-// 	}
-
-// 	err = s.removePathsFromDB(userSet, dirpaths, filepaths)
-// 	if err != nil {
-// 		return err
-// 	}
-
-// 	return s.db.SetNewCounts(userSet.ID())
-
-// }
-
-// func (s *Server) removePathsFromIRODS(set *set.Set, dirpaths, filepaths []string) error {
-// 	baton, transformer, err := s.getBatonAndTransformer(set)
-// 	if err != nil {
-// 		return err
-// 	}
-
-// 	err = s.removeFilesFromIRODS(set, filepaths, baton, transformer)
-// 	if err != nil {
-// 		return err
-// 	}
-
-// 	return s.removeDirsFromIRODS(set, dirpaths, baton, transformer)
-// }
-
-// func (s *Server) removePathsFromDB(set *set.Set, dirpaths, filepaths []string) error {
-// 	err := s.db.RemoveDirEntries(set.ID(), dirpaths)
-// 	if err != nil {
-// 		return err
-// 	}
-
-// 	return s.db.RemoveFileEntries(set.ID(), filepaths)
-// }
 
 // bindPathsAndValidateSet gets the paths out of the JSON body, and the set id
 // from the URL parameter if Requester matches logged-in username.

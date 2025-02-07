@@ -275,7 +275,7 @@ func (s *TestServer) confirmOutputContains(t *testing.T, args []string, expected
 	So(actual, ShouldContainSubstring, expected)
 }
 
-func (s *TestServer) confirmOutputDoesNotContain(t *testing.T, args []string, expectedCode int,
+func (s *TestServer) confirmOutputDoesNotContain(t *testing.T, args []string, expectedCode int, //nolint:unparam
 	expected string) {
 	t.Helper()
 
@@ -598,7 +598,7 @@ Removal date: `+removalDate+`
 Monitored: false; Archive: false
 Status: complete
 Discovery:
-Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 0 B / 0 B
+Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
 Completed in: 0s
 Directories:
@@ -627,7 +627,7 @@ User metadata: testKey=testVal;testKey2=testVal2
 Monitored: false; Archive: false
 Status: complete
 Discovery:
-Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 0 B / 0 B
+Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
 Completed in: 0s
 Directories:
@@ -653,7 +653,7 @@ User metadata: `+meta+`
 Monitored: false; Archive: false
 Status: complete
 Discovery:
-Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 0 B / 0 B
+Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
 Completed in: 0s
 Directories:
@@ -679,7 +679,7 @@ User metadata: `+meta+`
 Monitored: false; Archive: false
 Status: complete
 Discovery:
-Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 0 B / 0 B
+Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
 Completed in: 0s
 Directories:
@@ -703,7 +703,7 @@ User metadata: `+meta+`
 Monitored: false; Archive: false
 Status: complete
 Discovery:
-Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 0 B / 0 B
+Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
 Completed in: 0s
 Directories:
@@ -729,7 +729,7 @@ Removal date: `+removalDate+`
 Monitored: false; Archive: false
 Status: complete
 Discovery:
-Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 0 B / 0 B
+Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
 Completed in: 0s
 Directories:
@@ -745,7 +745,7 @@ Removal date: `+removalDate+`
 Monitored: false; Archive: false
 Status: complete
 Discovery:
-Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 0 B / 0 B
+Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
 Completed in: 0s
 Directories:
@@ -761,7 +761,7 @@ Removal date: `+removalDate+`
 Monitored: false; Archive: false
 Status: complete
 Discovery:
-Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 0 B / 0 B
+Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
 Completed in: 0s
 Directories:
@@ -781,7 +781,7 @@ Removal date: `+removalDate+`
 Monitored: false; Archive: false
 Status: complete
 Discovery:
-Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 0 B / 0 B
+Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
 Completed in: 0s
 Directories:
@@ -797,7 +797,7 @@ Removal date: `+removalDate+`
 Monitored: false; Archive: false
 Status: complete
 Discovery:
-Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 0 B / 0 B
+Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
 Completed in: 0s
 Directories:
@@ -813,7 +813,7 @@ Removal date: `+removalDate+`
 Monitored: false; Archive: false
 Status: complete
 Discovery:
-Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 0 B / 0 B
+Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
 Completed in: 0s
 Directories:
@@ -849,7 +849,7 @@ Removal date: `+removalDate+`
 Monitored: false; Archive: false
 Status: complete
 Discovery:
-Num files: 2; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 0 B / 0 B
+Num files: 2; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 2; Abnormal: 0
 Completed in: 0s
 Example File: `+dir+`/path/to/other/file => /remote/path/to/other/file`)
@@ -869,7 +869,7 @@ Removal date: `+removalDate+`
 Monitored: false; Archive: false
 Status: complete
 Discovery:
-Num files: 2; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 0 B / 0 B
+Num files: 2; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 2; Abnormal: 0
 Completed in: 0s
 Example File: `+dir+`/path/to/other/file => /remote/path/to/other/file
@@ -895,7 +895,7 @@ Removal date: ` + removalDate + `
 Monitored: false; Archive: false
 Status: complete
 Discovery:
-Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 0 B / 0 B
+Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
 Completed in: 0s
 Directories:
@@ -932,7 +932,7 @@ Removal date: `+removalDate+`
 Monitored: false; Archive: false
 Status: complete
 Discovery:
-Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 0 B / 0 B
+Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
 Completed in: 0s
 Directories:
@@ -968,7 +968,7 @@ Monitored: false; Archive: false
 Status: complete
 Warning: `+badPermDir+`/: permission denied
 Discovery:
-Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 0 B / 0 B
+Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
 Completed in: 0s
 Directories:
@@ -999,7 +999,7 @@ Removal date: `+removalDate+`
 Monitored: false; Archive: false
 Status: pending upload
 Discovery:
-Num files: 1; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 0 B (and counting) / 0 B
+Num files: 1; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B (and counting) / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
 Example File: `+humgenFile+" => /humgen/teams/hgi/scratch125/mercury/ibackup/file_for_testsuite.do_not_delete")
 		})
@@ -1028,7 +1028,7 @@ Removal date: `+removalDate+`
 Monitored: false; Archive: false
 Status: pending upload
 Discovery:
-Num files: 1; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 0 B (and counting) / 0 B
+Num files: 1; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B (and counting) / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
 Example File: `+gengenFile+" => /humgen/gengen/teams/hgi/scratch126/mercury/ibackup/file_for_testsuite.do_not_delete")
 		})
@@ -1068,7 +1068,7 @@ Removal date: `+removalDate+`
 Monitored: false; Archive: false
 Status: pending upload
 Discovery:
-Num files: 4; Symlinks: 2; Hardlinks: 1; Size (total/recently uploaded): 0 B (and counting) / 0 B
+Num files: 4; Symlinks: 2; Hardlinks: 1; Size (total/recently uploaded/recently removed): 0 B (and counting) / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
 Directories:
   `+dir+toRemote)
@@ -1118,7 +1118,7 @@ Removal date: `+removalDate+`
 Monitored: false; Archive: false
 Status: complete
 Discovery:
-Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 0 B / 0 B
+Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
 Completed in: 0s
 Directories:
@@ -1150,7 +1150,7 @@ Removal date: `+removalDate+`
 Monitored: false; Archive: false
 Status: complete
 Discovery:
-Num files: 1; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 0 B / 0 B
+Num files: 1; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 1
 Completed in: 0s
 Example File: `+dir+`/fifo => /remote/fifo
@@ -1178,7 +1178,7 @@ Removal date: `+removalDate+`
 Monitored: false; Archive: false
 Status: complete
 Discovery:
-Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 0 B / 0 B
+Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
 Completed in: 0s
 Directories:
@@ -1251,6 +1251,9 @@ func TestBackup(t *testing.T) {
 
 			return
 		}
+
+		reviewDate := time.Now().AddDate(0, 6, 0).Format("2006-01-02")
+		removalDate := time.Now().AddDate(1, 0, 0).Format("2006-01-02")
 
 		dir := t.TempDir()
 		s := new(TestServer)
@@ -1354,10 +1357,13 @@ Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 c
 
 Name: testForBackup
 Transformer: `+transformer+`
+Reason: backup
+Review date: `+reviewDate+`
+Removal date: `+removalDate+`
 Monitored: false; Archive: false
 Status: complete
 Discovery:
-Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 0 B / 0 B
+Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
 Completed in: 0s
 Directories:
@@ -1641,12 +1647,16 @@ Local Path	Status	Size	Attempts	Date	Error`+"\n"+
 					So(output, ShouldContainSubstring, attributePrefix+"testKey1\n")
 					So(output, ShouldContainSubstring, valuePrefix+"testValue1Updated\n")
 					So(output, ShouldContainSubstring, attributePrefix+"testKey2\n")
+
 					So(output, ShouldContainSubstring, valuePrefix+"testValue2Updated\n")
 					So(output, ShouldNotContainSubstring, "testValue1\n")
 				}
 			})
 			Convey("Repeatedly uploading files that are changed or not changes status details", func() {
+				resetIRODS()
+
 				setName = "changingFilesTest"
+
 				s.addSetForTesting(t, setName, transformer, path)
 
 				statusCmd := []string{"status", "--name", setName}
@@ -1654,14 +1664,14 @@ Local Path	Status	Size	Attempts	Date	Error`+"\n"+
 				s.waitForStatus(setName, "\nStatus: uploading", 60*time.Second)
 				s.confirmOutputContains(t, statusCmd, 0,
 					`Global put queue status: 3 queued; 3 reserved to be worked on; 0 failed
-				Global put client status (/10): 6 iRODS connections`)
+Global put client status (/10): 6 iRODS connections`)
 
 				s.waitForStatus(setName, "\nStatus: complete", 60*time.Second)
 
 				s.confirmOutputContains(t, statusCmd, 0,
 					"Uploaded: 3; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0")
 				s.confirmOutputContains(t, statusCmd, 0,
-					"Num files: 3; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 30 B / 30 B")
+					"Num files: 3; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 30 B / 30 B / 0 B")
 
 				s.confirmOutputContains(t, statusCmd, 0, "")
 
@@ -1673,7 +1683,7 @@ Local Path	Status	Size	Attempts	Date	Error`+"\n"+
 				s.confirmOutputContains(t, statusCmd, 0,
 					"Uploaded: 0; Replaced: 0; Skipped: 3; Failed: 0; Missing: 0; Abnormal: 0")
 				s.confirmOutputContains(t, statusCmd, 0,
-					"Num files: 3; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 30 B / 0 B")
+					"Num files: 3; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 30 B / 0 B / 0 B")
 
 				newName = setName + ".v3"
 				statusCmd[2] = newName
@@ -1685,7 +1695,7 @@ Local Path	Status	Size	Attempts	Date	Error`+"\n"+
 				s.confirmOutputContains(t, statusCmd, 0,
 					"Uploaded: 0; Replaced: 1; Skipped: 2; Failed: 0; Missing: 0; Abnormal: 0")
 				s.confirmOutputContains(t, statusCmd, 0,
-					"Num files: 3; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 38 B / 18 B")
+					"Num files: 3; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 38 B / 18 B / 0 B")
 
 				internal.CreateTestFile(t, file2, "less data")
 				exitCode, _ := s.runBinary(t, "retry", "--name", newName, "-a")
@@ -1695,7 +1705,7 @@ Local Path	Status	Size	Attempts	Date	Error`+"\n"+
 				s.confirmOutputContains(t, statusCmd, 0,
 					"Uploaded: 0; Replaced: 1; Skipped: 2; Failed: 0; Missing: 0; Abnormal: 0")
 				s.confirmOutputContains(t, statusCmd, 0,
-					"Num files: 3; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded): 29 B / 9 B")
+					"Num files: 3; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 29 B / 9 B / 0 B")
 			})
 		})
 
@@ -1951,6 +1961,8 @@ func TestRemove(t *testing.T) {
 			return
 		}
 
+		remotePath = filepath.Join(remotePath, "test_remove")
+
 		schedulerDeployment := os.Getenv("IBACKUP_TEST_SCHEDULER")
 		if schedulerDeployment == "" {
 			SkipConvey("skipping iRODS backup test since IBACKUP_TEST_SCHEDULER not set", func() {})
@@ -2002,6 +2014,8 @@ func TestRemove(t *testing.T) {
 
 			err = os.Link(file1, linkPath)
 			So(err, ShouldBeNil)
+
+			remoteLink := filepath.Join(remotePath, "link")
 
 			err = os.Symlink(file2, symPath)
 			So(err, ShouldBeNil)
@@ -2131,7 +2145,7 @@ func TestRemove(t *testing.T) {
 
 				s.removePath(t, setName, linkPath, 1)
 
-				_, err = exec.Command("ils", filepath.Join(remotePath, "link")).CombinedOutput()
+				_, err = exec.Command("ils", remoteLink).CombinedOutput()
 				So(err, ShouldNotBeNil)
 
 				_, err = exec.Command("ils", remoteInode).CombinedOutput()
@@ -2156,7 +2170,7 @@ func TestRemove(t *testing.T) {
 
 					s.removePath(t, setName, linkPath, 1)
 
-					_, err = exec.Command("ils", filepath.Join(remotePath, "link")).CombinedOutput()
+					_, err = exec.Command("ils", remoteLink).CombinedOutput()
 					So(err, ShouldNotBeNil)
 
 					_, err = exec.Command("ils", remoteInode).CombinedOutput()

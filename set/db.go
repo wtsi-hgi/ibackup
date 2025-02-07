@@ -1039,7 +1039,7 @@ func (d *DBRO) GetFileEntries(setID string) ([]*Entry, error) {
 func (d *DBRO) GetFileEntryForSet(setID, filePath string) (*Entry, error) {
 	var entry *Entry
 
-	if err := d.db.Update(func(tx *bolt.Tx) error {
+	if err := d.db.View(func(tx *bolt.Tx) error {
 		var err error
 
 		entry, _, err = d.getEntry(tx, setID, filePath)

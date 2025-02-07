@@ -461,7 +461,7 @@ func (s *Set) entryStatusToSetCounts(entry *Entry) { //nolint:gocyclo
 	}
 }
 
-func (s *Set) removedEntryStatusToSetCounts(entry *Entry) { //nolint:gocyclo
+func (s *Set) removedEntryStatusToSetCounts(entry *Entry) {
 	switch entry.Status { //nolint:exhaustive
 	case Uploaded:
 		s.Uploaded--

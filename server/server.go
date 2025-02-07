@@ -213,6 +213,9 @@ func (s *Server) EnableJobSubmission(putCmd, deployment, cwd, queue string, numC
 	return nil
 }
 
+// handleRemoveRequests removes objects belonging to the provided reserveGroup
+// inside removeQueue from iRODS and data base. This function should be called
+// inside a go routine, so the user API request is not locked.
 func (s *Server) handleRemoveRequests(reserveGroup string) {
 	baton, err := put.GetBatonHandlerWithMetaClient()
 	if err != nil {
@@ -228,11 +231,10 @@ func (s *Server) handleRemoveRequests(reserveGroup string) {
 		}
 
 		err = s.removeRequestFromIRODSandDB(&removeReq, baton)
-		if err != nil {
-			beenReleased := s.setErrorOrReleaseItem(item, removeReq, err)
-			if beenReleased {
-				continue
-			}
+
+		beenReleased := s.handleErrorOrReleaseItem(item, removeReq, err)
+		if beenReleased {
+			continue
 		}
 
 		errr := s.removeQueue.Remove(context.Background(), removeReq.key())
@@ -250,29 +252,36 @@ func (s *Server) removeRequestFromIRODSandDB(removeReq *removeReq, baton *put.Ba
 	return s.removeFileFromIRODSandDB(removeReq, baton)
 }
 
-func (s *Server) setErrorOrReleaseItem(item *queue.Item, removeReq removeReq, err error) bool {
-	if uint8(item.Stats().Releases) < jobRetries {
-		item.SetData(removeReq)
-
-		err = s.removeQueue.SetDelay(removeReq.key(), retryDelay)
-		if err != nil {
-			s.Logger.Printf("%s", err.Error())
-		}
-
-		err = s.removeQueue.Release(context.Background(), removeReq.key())
-		if err != nil {
-			s.Logger.Printf("%s", err.Error())
-		}
-
-		return true
+// handleErrorOrReleaseItem returns immediately if there was no error. Otherwise
+// it releases the item with updated data from a queue, provided it has attempts
+// left, or sets the error on the set. Returns whether the item was released.
+func (s *Server) handleErrorOrReleaseItem(item *queue.Item, removeReq removeReq, err error) bool {
+	if err == nil {
+		return false
 	}
 
-	errs := s.db.SetError(removeReq.set.ID(), "Error when removing: "+err.Error())
-	if errs != nil {
-		s.Logger.Printf("Could not put error on set due to: %s\nError was: %s\n", errs.Error(), err.Error())
+	if uint8(item.Stats().Releases) >= jobRetries { //nolint:gosec
+		errs := s.db.SetError(removeReq.set.ID(), "Error when removing: "+err.Error())
+		if errs != nil {
+			s.Logger.Printf("Could not put error on set due to: %s\nError was: %s\n", errs.Error(), err.Error())
+		}
+
+		return false
 	}
 
-	return false
+	item.SetData(removeReq)
+
+	err = s.removeQueue.SetDelay(removeReq.key(), retryDelay)
+	if err != nil {
+		s.Logger.Printf("%s", err.Error())
+	}
+
+	err = s.removeQueue.Release(context.Background(), removeReq.key())
+	if err != nil {
+		s.Logger.Printf("%s", err.Error())
+	}
+
+	return true
 }
 
 // reserveRemoveRequest reserves an item from the given reserve group from the
@@ -289,12 +298,12 @@ func (s *Server) reserveRemoveRequest(reserveGroup string) (*queue.Item, removeR
 		s.Logger.Printf("%s", err.Error())
 	}
 
-	removeReq, ok := item.Data().(removeReq)
+	remReq, ok := item.Data().(removeReq)
 	if !ok {
 		s.Logger.Printf("Invalid data type in remove queue")
 	}
 
-	return item, removeReq, nil
+	return item, remReq, nil
 }
 
 // rac is our queue's ready added callback which will get all ready put Requests
