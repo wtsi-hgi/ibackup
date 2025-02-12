@@ -61,13 +61,11 @@ func init() {
 func fileSummary(dbPath, filePath string, useIrods bool) error {
 	db, err := set.NewRO(dbPath)
 	if err != nil {
-		println("fail 1")
 		return err
 	}
 
 	sets, err := db.GetAll()
 	if err != nil {
-		println("fail 2")
 		return err
 	}
 
@@ -78,7 +76,6 @@ func fileSummary(dbPath, filePath string, useIrods bool) error {
 	}
 
 	if err := fsg.printFileStatuses(sets); err != nil {
-		println("fail 3")
 		return err
 	}
 
