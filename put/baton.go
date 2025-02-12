@@ -594,6 +594,7 @@ func (b *Baton) queryIRODSMeta(transformer PathTransformer, meta map[string]stri
 	return items, err
 }
 
+// RemoveDirFromIRODS removes the given directory from iRODS given it is empty.
 func (b *Baton) RemoveDirFromIRODS(path string) error {
 	it := &ex.RodsItem{
 		IPath: path,
@@ -608,6 +609,7 @@ func (b *Baton) RemoveDirFromIRODS(path string) error {
 	return err
 }
 
+// RemoveMeta removes the given metadata from a given object in iRODS.
 func (b *Baton) RemoveMeta(path string, meta map[string]string) error {
 	it := remotePathToRodsItem(path)
 	it.IAVUs = metaToAVUs(meta)
@@ -621,6 +623,7 @@ func (b *Baton) RemoveMeta(path string, meta map[string]string) error {
 	return err
 }
 
+// GetMeta gets all the metadata for the given object in iRODS.
 func (b *Baton) GetMeta(path string) (map[string]string, error) {
 	it, err := b.metaClient.ListItem(ex.Args{AVU: true, Timestamp: true, Size: true}, ex.RodsItem{
 		IPath: filepath.Dir(path),
@@ -638,6 +641,7 @@ func remotePathToRodsItem(path string) *ex.RodsItem {
 	}
 }
 
+// AddMeta adds the given metadata to a given object in iRODS.
 func (b *Baton) AddMeta(path string, meta map[string]string) error {
 	it := remotePathToRodsItem(path)
 	it.IAVUs = metaToAVUs(meta)

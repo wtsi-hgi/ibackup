@@ -201,8 +201,12 @@ type Set struct {
 	// remove. This is a read-only value.
 	SizeRemoved uint64
 
+	// NumObjectsToBeRemoved provides the number of objects to be removed in the
+	// current remove process.
 	NumObjectsToBeRemoved uint64
 
+	// numObjectsRemoved provides the number of objects already removed in the
+	// current remove process.
 	NumObjectsRemoved uint64
 
 	// Error holds any error that applies to the whole set, such as an issue
@@ -548,7 +552,7 @@ func (s *Set) UpdateBasedOnEntry(entry *Entry, getFileEntries func(string) ([]*E
 
 	s.adjustBasedOnEntry(entry)
 
-	err := s.FixCounts(entry, getFileEntries)
+	err := s.fixCounts(entry, getFileEntries)
 	if err != nil {
 		return err
 	}
@@ -583,10 +587,10 @@ func (s *Set) checkIfComplete() {
 		s.Uploaded, s.Replaced, s.Skipped, s.Failed, s.Missing, s.Abnormal, s.UploadedSize()))
 }
 
-// FixCounts resets the set counts to 0 and goes through all the entries for
+// fixCounts resets the set counts to 0 and goes through all the entries for
 // the set in the db to recaluclate them. The supplied entry should be one you
 // newly updated and that wasn't in the db before the transaction we're in.
-func (s *Set) FixCounts(entry *Entry, getFileEntries func(string) ([]*Entry, error)) error {
+func (s *Set) fixCounts(entry *Entry, getFileEntries func(string) ([]*Entry, error)) error {
 	if s.countsValid() {
 		return nil
 	}
