@@ -44,12 +44,12 @@ var removeNull bool
 // removeCmd represents the add command.
 var removeCmd = &cobra.Command{
 	Use:   "remove",
-	Short: "Remove files from backed up set",
-	Long: `Remove files from backed up set.
+	Short: "Remove objects from backed up set",
+	Long: `Remove objects from backed up set.
 
- Remove files from a backed up set by providing the files or directories to be
- removed. This will remove files from the set and from iRODS if it is not found
- in any other sets.
+ Remove objects from a backed up set by providing the files and/or directories 
+ to be removed. This will remove objects from the set and from iRODS if it is 
+ not found in any other sets.
  
  You also need to supply the ibackup server's URL in the form domain:port (using
  the IBACKUP_SERVER_URL environment variable, or overriding that with the --url
@@ -104,7 +104,7 @@ func init() {
 	// flags specific to this sub-command
 	removeCmd.Flags().StringVar(&removeUser, "user", currentUsername(),
 		"pretend to be this user (only works if you started the server)")
-	removeCmd.Flags().StringVarP(&removeName, "name", "n", "", "remove files from the set with this name")
+	removeCmd.Flags().StringVarP(&removeName, "name", "n", "", "remove objects from the set with this name")
 	removeCmd.Flags().StringVarP(&removeItems, "items", "i", "",
 		"path to file with one absolute local directory or file path per line")
 	removeCmd.Flags().StringVarP(&removePath, "path", "p", "",
