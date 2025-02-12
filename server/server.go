@@ -149,7 +149,6 @@ func New(conf Config) (*Server, error) {
 	s.clientQueue.SetTTRCallback(s.clientTTRC)
 	s.SetStopCallBack(s.stop)
 	s.Server.Router().Use(gas.IncludeAbortErrorsInBody)
-	// s.removeQueue.SetReadyAddedCallback(s.removeCallback)
 
 	if conf.ReadOnly {
 		return s, nil
@@ -244,6 +243,28 @@ func (s *Server) handleRemoveRequests(reserveGroup string) {
 	}
 }
 
+// reserveRemoveRequest reserves an item from the given reserve group from the
+// remove queue and converts it to a removeRequest. Returns nil and no error if
+// the queue is empty.
+func (s *Server) reserveRemoveRequest(reserveGroup string) (*queue.Item, removeReq, error) {
+	item, err := s.removeQueue.Reserve(reserveGroup, retryDelay+2*time.Second)
+	if err != nil {
+		qerr, ok := err.(queue.Error) //nolint:errorlint
+		if ok && errors.Is(qerr.Err, queue.ErrNothingReady) {
+			return nil, removeReq{}, err
+		}
+
+		s.Logger.Printf("%s", err.Error())
+	}
+
+	remReq, ok := item.Data().(removeReq)
+	if !ok {
+		s.Logger.Printf("Invalid data type in remove queue")
+	}
+
+	return item, remReq, nil
+}
+
 func (s *Server) removeRequestFromIRODSandDB(removeReq *removeReq, baton *put.Baton) error {
 	if removeReq.isDir {
 		return s.removeDirFromIRODSandDB(removeReq, baton)
@@ -282,28 +303,6 @@ func (s *Server) handleErrorOrReleaseItem(item *queue.Item, removeReq removeReq,
 	}
 
 	return true
-}
-
-// reserveRemoveRequest reserves an item from the given reserve group from the
-// remove queue and converts it to a removeRequest. Returns nil and no error if
-// the queue is empty.
-func (s *Server) reserveRemoveRequest(reserveGroup string) (*queue.Item, removeReq, error) {
-	item, err := s.removeQueue.Reserve(reserveGroup, retryDelay+2*time.Second)
-	if err != nil {
-		qerr, ok := err.(queue.Error) //nolint:errorlint
-		if ok && errors.Is(qerr.Err, queue.ErrNothingReady) {
-			return nil, removeReq{}, err
-		}
-
-		s.Logger.Printf("%s", err.Error())
-	}
-
-	remReq, ok := item.Data().(removeReq)
-	if !ok {
-		s.Logger.Printf("Invalid data type in remove queue")
-	}
-
-	return item, remReq, nil
 }
 
 // rac is our queue's ready added callback which will get all ready put Requests

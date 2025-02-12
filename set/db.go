@@ -271,6 +271,9 @@ func (d *DB) encodeToBytes(thing interface{}) []byte {
 	return encoded
 }
 
+// ValidateFileAndDirPaths returns an error if any provided path is not in the
+// given set. Also classifies the valid paths into a slice of filepaths or
+// dirpaths.
 func (d *DB) ValidateFileAndDirPaths(set *Set, paths []string) ([]string, []string, error) {
 	filePaths, notFilePaths, err := d.validateFilePaths(set, paths)
 	if err != nil {
@@ -293,6 +296,9 @@ func (d *DB) validateFilePaths(set *Set, paths []string) ([]string, []string, er
 	return d.validatePaths(set, fileBucket, discoveredBucket, paths)
 }
 
+// validatePaths checks if the provided paths are in atleast one of the given
+// buckets for the set. Returns a slice of all valid paths and a slice of all
+// invalid paths.
 func (d *DB) validatePaths(set *Set, bucket1, bucket2 string, paths []string) ([]string, []string, error) {
 	entriesMap := make(map[string]bool)
 
@@ -329,19 +335,19 @@ func (d *DB) validateDirPaths(set *Set, paths []string) ([]string, []string, err
 	return d.validatePaths(set, dirBucket, discoveredBucket, paths)
 }
 
-// RemoveFileEntries removes the provided files from a given set.
-func (d *DB) RemoveFileEntries(setID string, path string) error {
-	err := d.removeEntries(setID, path, fileBucket)
+// RemoveFileEntry removes the provided file from a given set.
+func (d *DB) RemoveFileEntry(setID string, path string) error {
+	err := d.removeEntry(setID, path, fileBucket)
 	if err != nil {
 		return err
 	}
 
-	return d.removeEntries(setID, path, discoveredBucket)
+	return d.removeEntry(setID, path, discoveredBucket)
 }
 
-// removeEntries removes the entries with the provided entry keys from a given
+// removeEntry removes the entry with the provided entry key from a given
 // bucket of a given set.
-func (d *DB) removeEntries(setID string, entryKey string, bucketName string) error {
+func (d *DB) removeEntry(setID string, entryKey string, bucketName string) error {
 	return d.db.Update(func(tx *bolt.Tx) error {
 		subBucketName := []byte(bucketName + separator + setID)
 		setsBucket := tx.Bucket([]byte(setsBucket))
@@ -357,9 +363,9 @@ func (d *DB) removeEntries(setID string, entryKey string, bucketName string) err
 	})
 }
 
-// RemoveDirEntries removes the provided directories from a given set.
-func (d *DB) RemoveDirEntries(setID string, path string) error {
-	return d.removeEntries(setID, path, dirBucket)
+// RemoveDirEntry removes the provided directory from a given set.
+func (d *DB) RemoveDirEntry(setID string, path string) error {
+	return d.removeEntry(setID, path, dirBucket)
 }
 
 func (d *DB) GetFilesInDir(setID string, dirpath string) ([]string, error) {
@@ -1202,6 +1208,8 @@ func (d *DB) SetError(setID, errMsg string) error {
 	})
 }
 
+// UpdateBasedOnRemovedEntry updates set counts based on the given entry that's
+// been removed.
 func (d *DB) UpdateBasedOnRemovedEntry(setID string, entry *Entry) error {
 	return d.updateSetProperties(setID, func(got *Set) {
 		got.SizeRemoved += entry.Size
@@ -1213,19 +1221,31 @@ func (d *DB) UpdateBasedOnRemovedEntry(setID string, entry *Entry) error {
 	})
 }
 
+// UpdateSetTotalToRemove sets num of objects to be removed to provided value
+// and resets num of objects removed if the previous removal was successful
+// otherwise just increases number to be removed with provided value.
 func (d *DB) UpdateSetTotalToRemove(setID string, num uint64) error {
 	return d.updateSetProperties(setID, func(got *Set) {
-		got.NumObjectsToBeRemoved = num
-		got.NumObjectsRemoved = 0
+		if got.NumObjectsToBeRemoved == got.NumObjectsRemoved {
+			got.NumObjectsToBeRemoved = num
+			got.NumObjectsRemoved = 0
+
+			return
+		}
+
+		got.NumObjectsToBeRemoved += num
 	})
 }
 
+// IncrementSetTotalRemoved increments the number of objects removed for the
+// set.
 func (d *DB) IncrementSetTotalRemoved(setID string) error {
 	return d.updateSetProperties(setID, func(got *Set) {
 		got.NumObjectsRemoved++
 	})
 }
 
+// ResetRemoveSize resets the size removed for the set.
 func (d *DB) ResetRemoveSize(setID string) error {
 	return d.updateSetProperties(setID, func(got *Set) {
 		got.SizeRemoved = 0
