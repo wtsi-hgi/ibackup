@@ -62,6 +62,7 @@ const (
 	ErrInvalidEntry           = "invalid set entry"
 	ErrInvalidTransformerPath = "invalid transformer path concatenation"
 	ErrNoAddDuringDiscovery   = "can't add set while set is being discovered"
+	ErrPathNotInSet           = "path(s) do not belong to the backup set"
 
 	setsBucket                    = "sets"
 	userToSetBucket               = "userLookup"
@@ -270,26 +271,35 @@ func (d *DB) encodeToBytes(thing interface{}) []byte {
 	return encoded
 }
 
-func (d *DB) ValidateFileAndDirPaths(set *Set, filePaths, dirPaths []string) error {
-	err := d.validateFilePaths(set, filePaths)
+func (d *DB) ValidateFileAndDirPaths(set *Set, paths []string) ([]string, []string, error) {
+	filePaths, notFilePaths, err := d.validateFilePaths(set, paths)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 
-	return d.validateDirPaths(set, dirPaths)
+	dirPaths, invalidPaths, err := d.validateDirPaths(set, notFilePaths)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if len(invalidPaths) > 0 {
+		err = Error{Msg: fmt.Sprintf("%s : %v", ErrPathNotInSet, invalidPaths), id: set.Name}
+	}
+
+	return filePaths, dirPaths, err
 }
 
-func (d *DB) validateFilePaths(set *Set, paths []string) error {
+func (d *DB) validateFilePaths(set *Set, paths []string) ([]string, []string, error) {
 	return d.validatePaths(set, fileBucket, discoveredBucket, paths)
 }
 
-func (d *DB) validatePaths(set *Set, bucket1, bucket2 string, paths []string) error {
+func (d *DB) validatePaths(set *Set, bucket1, bucket2 string, paths []string) ([]string, []string, error) {
 	entriesMap := make(map[string]bool)
 
 	for _, bucket := range []string{bucket1, bucket2} {
 		entries, err := d.getEntries(set.ID(), bucket)
 		if err != nil {
-			return err
+			return nil, nil, err
 		}
 
 		for _, entry := range entries {
@@ -297,16 +307,25 @@ func (d *DB) validatePaths(set *Set, bucket1, bucket2 string, paths []string) er
 		}
 	}
 
+	var ( //nolint:prealloc
+		validPaths   []string
+		invalidPaths []string
+	)
+
 	for _, path := range paths {
 		if _, ok := entriesMap[path]; !ok {
-			return Error{path + " is not part of the backup set", set.Name}
+			invalidPaths = append(invalidPaths, path)
+
+			continue
 		}
+
+		validPaths = append(validPaths, path)
 	}
 
-	return nil
+	return validPaths, invalidPaths, nil
 }
 
-func (d *DB) validateDirPaths(set *Set, paths []string) error {
+func (d *DB) validateDirPaths(set *Set, paths []string) ([]string, []string, error) {
 	return d.validatePaths(set, dirBucket, discoveredBucket, paths)
 }
 

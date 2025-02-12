@@ -2082,6 +2082,22 @@ func TestRemove(t *testing.T) {
 					0, dir1+" => ")
 			})
 
+			Convey("Remove removes the dir from the set even if it no longer exists", func() {
+				err = os.RemoveAll(dir1)
+				So(err, ShouldBeNil)
+
+				s.removePath(t, setName, dir1, 2)
+
+				s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
+					0, dir2)
+
+				s.confirmOutputDoesNotContain(t, []string{"status", "--name", setName, "-d"},
+					0, dir1+"/")
+
+				s.confirmOutputDoesNotContain(t, []string{"status", "--name", setName, "-d"},
+					0, dir1+" => ")
+			})
+
 			Convey("Remove removes an empty dir from the set", func() {
 				s.removePath(t, setName, dir2, 1)
 
@@ -2199,7 +2215,7 @@ func TestRemove(t *testing.T) {
 
 				Convey("Remove returns an error if you try to remove just the file", func() {
 					s.confirmOutputContains(t, []string{"remove", "--name", setName, "--path", file5},
-						1, fmt.Sprintf("%s is not part of the backup set [%s]", file5, setName))
+						1, fmt.Sprintf("path(s) do not belong to the backup set : [%s] [%s]", file5, setName))
 				})
 
 				Convey("Remove ignores the file if you remove the directory", func() {
@@ -2211,12 +2227,17 @@ func TestRemove(t *testing.T) {
 			Convey("And a new directory", func() {
 				dir3 := filepath.Join(path, "path/to/new/dir/")
 
+				Convey("Remove returns an error if you try to remove the directory that doesn't exist", func() {
+					s.confirmOutputContains(t, []string{"remove", "--name", setName, "--path", dir3},
+						1, fmt.Sprintf("path(s) do not belong to the backup set : [%s] [%s]", dir3, setName))
+				})
+
 				err = os.MkdirAll(dir3, 0755)
 				So(err, ShouldBeNil)
 
 				Convey("Remove returns an error if you try to remove the directory", func() {
 					s.confirmOutputContains(t, []string{"remove", "--name", setName, "--path", dir3},
-						1, fmt.Sprintf("%s is not part of the backup set [%s]", dir3, setName))
+						1, fmt.Sprintf("path(s) do not belong to the backup set : [%s] [%s]", dir3, setName))
 				})
 			})
 

@@ -74,8 +74,7 @@ var removeCmd = &cobra.Command{
 			dief("exactly one of --items or --path must be provided")
 		}
 
-		var files []string
-		var dirs []string
+		var paths []string
 
 		client, err := newServerClient(serverURL, serverCert)
 		if err != nil {
@@ -83,8 +82,7 @@ var removeCmd = &cobra.Command{
 		}
 
 		if removeItems != "" {
-			filesAndDirs := readPaths(removeItems, fofnLineSplitter(removeNull))
-			files, dirs = categorisePaths(filesAndDirs, files, dirs)
+			paths = append(paths, readPaths(removeItems, fofnLineSplitter(removeNull))...)
 		}
 
 		if removePath != "" {
@@ -93,15 +91,10 @@ var removeCmd = &cobra.Command{
 				die(err)
 			}
 
-			//TODO if dir does not exist then we will add it as a file
-			if pathIsDir(removePath) {
-				dirs = append(dirs, removePath)
-			} else {
-				files = append(files, removePath)
-			}
+			paths = append(paths, removePath)
 		}
 
-		remove(client, removeUser, removeName, files, dirs)
+		remove(client, removeUser, removeName, paths)
 	},
 }
 
@@ -125,7 +118,7 @@ func init() {
 }
 
 // remove does the main job of sending the set, files and dirs to the server.
-func remove(client *server.Client, user, name string, files, dirs []string) {
+func remove(client *server.Client, user, name string, paths []string) {
 	sets := getSetByName(client, user, name)
 	if len(sets) == 0 {
 		warn("No backup sets found with name %s", name)
@@ -133,7 +126,7 @@ func remove(client *server.Client, user, name string, files, dirs []string) {
 		return
 	}
 
-	err := client.RemoveFiles(sets[0].ID(), files, dirs)
+	err := client.RemoveFilesAndDirs(sets[0].ID(), paths)
 	if err != nil {
 		die(err)
 	}

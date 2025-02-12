@@ -406,14 +406,14 @@ func (s *Server) putFiles(c *gin.Context) {
 }
 
 func (s *Server) removePaths(c *gin.Context) {
-	sid, filePaths, dirPaths, ok := s.parseRemoveParamsAndValidateSet(c)
+	sid, paths, ok := s.bindPathsAndValidateSet(c)
 	if !ok {
 		return
 	}
 
 	set := s.db.GetByID(sid)
 
-	err := s.db.ValidateFileAndDirPaths(set, filePaths, dirPaths)
+	filePaths, dirPaths, err := s.db.ValidateFileAndDirPaths(set, paths)
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
@@ -736,26 +736,6 @@ func (s *Server) bindPathsAndValidateSet(c *gin.Context) (string, []string, bool
 	}
 
 	return set.ID(), bytesToStrings(bpaths), true
-}
-
-// parseRemoveParamsAndValidateSet gets the file paths and dir paths out of the
-// JSON body, and the set id from the URL parameter if Requester matches
-// logged-in username.
-func (s *Server) parseRemoveParamsAndValidateSet(c *gin.Context) (string, []string, []string, bool) {
-	bmap := make(map[string][][]byte)
-
-	if err := c.BindJSON(&bmap); err != nil {
-		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
-
-		return "", nil, nil, false
-	}
-
-	set, ok := s.validateSet(c)
-	if !ok {
-		return "", nil, nil, false
-	}
-
-	return set.ID(), bytesToStrings(bmap[fileKeyForJSON]), bytesToStrings(bmap[dirKeyForJSON]), true
 }
 
 // validateSet gets the id parameter from the given context and checks a

@@ -618,8 +618,10 @@ func (c *Client) RetryFailedSetUploads(id string) (int, error) {
 	return retried, err
 }
 
-func (c *Client) RemoveFiles(setID string, files, dirs []string) error {
-	return c.putThing(EndPointAuthRemovePaths+"/"+setID, mapToBytes(files, dirs))
+// RemoveFilesAndDirs removes the given paths from the backup set with the given
+// ID.
+func (c *Client) RemoveFilesAndDirs(setID string, paths []string) error {
+	return c.putThing(EndPointAuthRemovePaths+"/"+setID, stringsToBytes(paths))
 }
 
 func mapToBytes(files, dirs []string) map[string][][]byte {
@@ -630,6 +632,6 @@ func mapToBytes(files, dirs []string) map[string][][]byte {
 	return newMap
 }
 
-func (c *Client) RemoveDirs(setID string, dirs []string) error {
-	return c.putThing(EndPointAuthRemoveDirs+"/"+setID, stringsToBytes(dirs))
-}
+// func (c *Client) RemoveDirs(setID string, dirs []string) error {
+// 	return c.putThing(EndPointAuthRemoveDirs+"/"+setID, stringsToBytes(dirs))
+// }
