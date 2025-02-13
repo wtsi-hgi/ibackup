@@ -1984,6 +1984,13 @@ func TestRemove(t *testing.T) {
 		path := t.TempDir()
 		transformer := "prefix=" + path + ":" + remotePath
 
+		Convey("And an invalid set name, remove returns an error", func() {
+			invalidSetName := "invalid_set"
+
+			s.confirmOutputContains(t, []string{"remove", "--name", invalidSetName, "--path", path},
+				1, fmt.Sprintf("set with that id does not exist [%s]", invalidSetName))
+		})
+
 		Convey("And an added set with files and folders", func() {
 			dir := t.TempDir()
 
