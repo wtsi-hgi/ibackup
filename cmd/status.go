@@ -406,7 +406,7 @@ func displaySet(s *set.Set, showRequesters bool) { //nolint:funlen,gocyclo
 	}
 
 	if s.NumObjectsToBeRemoved > 0 {
-		cliPrint("Removal status: %d / %d objects removed\n", s.NumObjectsRemoved, s.NumObjectsToBeRemoved)
+		cliPrintf("Removal status: %d / %d objects removed\n", s.NumObjectsRemoved, s.NumObjectsToBeRemoved)
 	}
 
 	if s.Warning != "" {
