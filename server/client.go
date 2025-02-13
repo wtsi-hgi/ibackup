@@ -614,3 +614,9 @@ func (c *Client) RetryFailedSetUploads(id string) (int, error) {
 
 	return retried, err
 }
+
+// RemoveFilesAndDirs removes the given paths from the backup set with the given
+// ID.
+func (c *Client) RemoveFilesAndDirs(setID string, paths []string) error {
+	return c.putThing(EndPointAuthRemovePaths+"/"+setID, stringsToBytes(paths))
+}

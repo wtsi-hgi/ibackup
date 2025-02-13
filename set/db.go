@@ -62,6 +62,7 @@ const (
 	ErrInvalidEntry           = "invalid set entry"
 	ErrInvalidTransformerPath = "invalid transformer path concatenation"
 	ErrNoAddDuringDiscovery   = "can't add set while set is being discovered"
+	ErrPathNotInSet           = "path(s) do not belong to the backup set"
 
 	setsBucket                    = "sets"
 	userToSetBucket               = "userLookup"
@@ -243,6 +244,17 @@ func updateDatabaseSetWithUserSetDetails(dbSet, userSet *Set) error {
 	return nil
 }
 
+func (d *DB) UploadEntry(sid, key string, entry *Entry) error {
+	return d.db.Update(func(tx *bolt.Tx) error {
+		_, b, err := d.getEntry(tx, sid, key)
+		if err != nil {
+			return err
+		}
+
+		return b.Put([]byte(key), d.encodeToBytes(entry))
+	})
+}
+
 // encodeToBytes encodes the given thing as a byte slice, suitable for storing
 // in a database.
 func (d *DB) encodeToBytes(thing interface{}) []byte {
@@ -251,6 +263,124 @@ func (d *DB) encodeToBytes(thing interface{}) []byte {
 	enc.MustEncode(thing)
 
 	return encoded
+}
+
+// ValidateFileAndDirPaths returns an error if any provided path is not in the
+// given set. Also classifies the valid paths into a slice of filepaths or
+// dirpaths.
+func (d *DB) ValidateFileAndDirPaths(set *Set, paths []string) ([]string, []string, error) {
+	filePaths, notFilePaths, err := d.validateFilePaths(set, paths)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	dirPaths, invalidPaths, err := d.validateDirPaths(set, notFilePaths)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if len(invalidPaths) > 0 {
+		err = Error{Msg: fmt.Sprintf("%s : %v", ErrPathNotInSet, invalidPaths), id: set.Name}
+	}
+
+	return filePaths, dirPaths, err
+}
+
+func (d *DB) validateFilePaths(set *Set, paths []string) ([]string, []string, error) {
+	return d.validatePaths(set, fileBucket, discoveredBucket, paths)
+}
+
+// validatePaths checks if the provided paths are in atleast one of the given
+// buckets for the set. Returns a slice of all valid paths and a slice of all
+// invalid paths.
+func (d *DB) validatePaths(set *Set, bucket1, bucket2 string, paths []string) ([]string, []string, error) {
+	entriesMap := make(map[string]bool)
+
+	for _, bucket := range []string{bucket1, bucket2} {
+		entries, err := d.getEntries(set.ID(), bucket)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		for _, entry := range entries {
+			entriesMap[entry.Path] = true
+		}
+	}
+
+	var ( //nolint:prealloc
+		validPaths   []string
+		invalidPaths []string
+	)
+
+	for _, path := range paths {
+		if _, ok := entriesMap[path]; !ok {
+			invalidPaths = append(invalidPaths, path)
+
+			continue
+		}
+
+		validPaths = append(validPaths, path)
+	}
+
+	return validPaths, invalidPaths, nil
+}
+
+func (d *DB) validateDirPaths(set *Set, paths []string) ([]string, []string, error) {
+	return d.validatePaths(set, dirBucket, discoveredBucket, paths)
+}
+
+// RemoveFileEntry removes the provided file from a given set.
+func (d *DB) RemoveFileEntry(setID string, path string) error {
+	err := d.removeEntry(setID, path, fileBucket)
+	if err != nil {
+		return err
+	}
+
+	return d.removeEntry(setID, path, discoveredBucket)
+}
+
+// removeEntry removes the entry with the provided entry key from a given
+// bucket of a given set.
+func (d *DB) removeEntry(setID string, entryKey string, bucketName string) error {
+	return d.db.Update(func(tx *bolt.Tx) error {
+		subBucketName := []byte(bucketName + separator + setID)
+		setsBucket := tx.Bucket([]byte(setsBucket))
+
+		entriesBucket := setsBucket.Bucket(subBucketName)
+
+		err := entriesBucket.Delete([]byte(entryKey))
+		if err != nil {
+			return err
+		}
+
+		return nil
+	})
+}
+
+// RemoveDirEntry removes the provided directory from a given set.
+func (d *DB) RemoveDirEntry(setID string, path string) error {
+	return d.removeEntry(setID, path, dirBucket)
+}
+
+// GetFilesInDir returns all file paths from inside the given directory (and all
+// nested inside) for the given set using the db.
+func (d *DB) GetFilesInDir(setID string, dirpath string) ([]string, error) {
+	var filepaths []string
+
+	entries, err := d.getEntries(setID, discoveredBucket)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, entry := range entries {
+		path := entry.Path
+
+		if strings.HasPrefix(path, dirpath) {
+			filepaths = append(filepaths, path)
+		}
+	}
+
+	return filepaths, nil
 }
 
 // SetFileEntries sets the file paths for the given backup set. Only supply
@@ -1063,6 +1193,50 @@ func (d *DBRO) GetDirEntries(setID string) ([]*Entry, error) {
 func (d *DB) SetError(setID, errMsg string) error {
 	return d.updateSetProperties(setID, func(got *Set) {
 		got.SetError(errMsg)
+	})
+}
+
+// UpdateBasedOnRemovedEntry updates set counts based on the given entry that's
+// been removed.
+func (d *DB) UpdateBasedOnRemovedEntry(setID string, entry *Entry) error {
+	return d.updateSetProperties(setID, func(got *Set) {
+		got.SizeRemoved += entry.Size
+		got.SizeTotal -= entry.Size
+		got.NumFiles--
+		got.NumObjectsRemoved++
+
+		got.removedEntryToSetCounts(entry)
+	})
+}
+
+// UpdateSetTotalToRemove sets num of objects to be removed to provided value
+// and resets num of objects removed if the previous removal was successful
+// otherwise just increases number to be removed with provided value.
+func (d *DB) UpdateSetTotalToRemove(setID string, num uint64) error {
+	return d.updateSetProperties(setID, func(got *Set) {
+		if got.NumObjectsToBeRemoved == got.NumObjectsRemoved {
+			got.NumObjectsToBeRemoved = num
+			got.NumObjectsRemoved = 0
+
+			return
+		}
+
+		got.NumObjectsToBeRemoved += num
+	})
+}
+
+// IncrementSetTotalRemoved increments the number of objects removed for the
+// set.
+func (d *DB) IncrementSetTotalRemoved(setID string) error {
+	return d.updateSetProperties(setID, func(got *Set) {
+		got.NumObjectsRemoved++
+	})
+}
+
+// ResetRemoveSize resets the size removed for the set.
+func (d *DB) ResetRemoveSize(setID string) error {
+	return d.updateSetProperties(setID, func(got *Set) {
+		got.SizeRemoved = 0
 	})
 }
 

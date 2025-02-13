@@ -28,9 +28,12 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"net/http"
 	"os"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/VertebrateResequencing/wr/queue"
@@ -54,6 +57,7 @@ const (
 	workingPath      = "/working"
 	fileStatusPath   = "/file_status"
 	fileRetryPath    = "/retry"
+	removePathsPath  = "/remove_paths"
 
 	// EndPointAuthSet is the endpoint for getting and setting sets.
 	EndPointAuthSet = gas.EndPointAuth + setPath
@@ -90,14 +94,18 @@ const (
 	// EndPointAuthRetryEntries is the endpoint for retrying file uploads.
 	EndPointAuthRetryEntries = gas.EndPointAuth + fileRetryPath
 
-	ErrNoAuth          = gas.Error("auth must be enabled")
-	ErrNoSetDBDirFound = gas.Error("set database directory not found")
-	ErrNoRequester     = gas.Error("requester not supplied")
-	ErrBadRequester    = gas.Error("you are not the set requester")
-	ErrNotAdmin        = gas.Error("you are not the server admin")
-	ErrBadSet          = gas.Error("set with that id does not exist")
-	ErrInvalidInput    = gas.Error("invalid input")
-	ErrInternal        = gas.Error("internal server error")
+	// EndPointAuthRemovePaths is the endpoint for removing objects from sets.
+	EndPointAuthRemovePaths = gas.EndPointAuth + removePathsPath
+
+	ErrNoAuth            = gas.Error("auth must be enabled")
+	ErrNoSetDBDirFound   = gas.Error("set database directory not found")
+	ErrNoRequester       = gas.Error("requester not supplied")
+	ErrBadRequester      = gas.Error("you are not the set requester")
+	ErrNotAdmin          = gas.Error("you are not the server admin")
+	ErrBadSet            = gas.Error("set with that id does not exist")
+	ErrInvalidInput      = gas.Error("invalid input")
+	ErrInternal          = gas.Error("internal server error")
+	ErrElementNotInSlice = gas.Error("element not in slice")
 
 	paramRequester = "requester"
 	paramSetID     = "id"
@@ -268,6 +276,8 @@ func (s *Server) addDBEndpoints(authGroup *gin.RouterGroup) {
 	authGroup.PUT(fileStatusPath, s.putFileStatus)
 
 	authGroup.GET(fileRetryPath+idParam, s.retryFailedEntries)
+
+	authGroup.PUT(removePathsPath+idParam, s.removePaths)
 }
 
 // putSet interprets the body as a JSON encoding of a set.Set and stores it in
@@ -366,6 +376,317 @@ func (s *Server) putFiles(c *gin.Context) {
 	}
 
 	c.Status(http.StatusOK)
+}
+
+func (s *Server) removePaths(c *gin.Context) {
+	sid, paths, ok := s.bindPathsAndValidateSet(c)
+	if !ok {
+		return
+	}
+
+	set := s.db.GetByID(sid)
+
+	filePaths, dirPaths, err := s.db.ValidateFileAndDirPaths(set, paths)
+	if err != nil {
+		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+
+		return
+	}
+
+	err = s.db.ResetRemoveSize(sid)
+	if err != nil {
+		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+
+		return
+	}
+
+	err = s.removeFilesAndDirs(set, filePaths, dirPaths)
+	if err != nil {
+		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+
+		return
+	}
+}
+
+func (s *Server) removeFilesAndDirs(set *set.Set, filePaths, dirPaths []string) error {
+	reserveGroup := set.ID() + time.Now().String()
+
+	err := s.submitFilesForRemoval(set, filePaths, reserveGroup)
+	if err != nil {
+		return err
+	}
+
+	dirFilePaths, err := s.submitDirsForRemoval(set, dirPaths, reserveGroup)
+	if err != nil {
+		return err
+	}
+
+	go s.handleRemoveRequests(reserveGroup)
+
+	return s.db.UpdateSetTotalToRemove(set.ID(), uint64(len(filePaths)+len(dirPaths)+len(dirFilePaths))) //nolint:gosec
+}
+
+func (s *Server) submitFilesForRemoval(set *set.Set, paths []string, reserveGroup string) error {
+	if len(paths) == 0 {
+		return nil
+	}
+
+	defs := makeItemsDefsFromFilePaths(set, reserveGroup, paths)
+
+	_, _, err := s.removeQueue.AddMany(context.Background(), defs)
+
+	return err
+}
+
+type removeReq struct {
+	path               string
+	set                *set.Set
+	isDir              bool
+	isDirEmpty         bool
+	isRemovedFromIRODS bool
+}
+
+func (rq removeReq) key() string {
+	return strings.Join([]string{rq.set.ID(), rq.path}, ":")
+}
+
+func makeItemsDefsFromFilePaths(set *set.Set, reserveGroup string, paths []string) []*queue.ItemDef {
+	defs := make([]*queue.ItemDef, len(paths))
+
+	for i, path := range paths {
+		rq := removeReq{path: path, set: set, isDir: false}
+
+		defs[i] = &queue.ItemDef{
+			Key:          rq.key(),
+			Data:         rq,
+			TTR:          ttr,
+			ReserveGroup: reserveGroup,
+		}
+	}
+
+	return defs
+}
+
+func (s *Server) submitDirsForRemoval(set *set.Set, paths []string, reserveGroup string) ([]string, error) {
+	if len(paths) == 0 {
+		return nil, nil
+	}
+
+	filepaths, dirDefs, err := s.makeItemsDefsAndFilePathsFromDirPaths(set, reserveGroup, paths)
+	if err != nil {
+		return nil, err
+	}
+
+	fileDefs := makeItemsDefsFromFilePaths(set, reserveGroup, filepaths)
+
+	_, _, err = s.removeQueue.AddMany(context.Background(), fileDefs)
+	if err != nil {
+		return nil, err
+	}
+
+	_, _, err = s.removeQueue.AddMany(context.Background(), dirDefs)
+
+	return filepaths, err
+}
+
+func (s *Server) makeItemsDefsAndFilePathsFromDirPaths(set *set.Set,
+	reserveGroup string, paths []string) ([]string, []*queue.ItemDef, error) {
+	var filepaths []string
+
+	defs := make([]*queue.ItemDef, len(paths))
+
+	for i, path := range paths {
+		rq := removeReq{path: path, set: set, isDir: true}
+
+		dirFilepaths, err := s.db.GetFilesInDir(set.ID(), path)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		if len(dirFilepaths) == 0 {
+			rq.isDirEmpty = true
+		}
+
+		filepaths = append(filepaths, dirFilepaths...)
+
+		defs[i] = &queue.ItemDef{
+			Key:          rq.key(),
+			Data:         rq,
+			TTR:          ttr,
+			ReserveGroup: reserveGroup,
+		}
+	}
+
+	return filepaths, defs, nil
+}
+
+func (s *Server) removeFileFromIRODSandDB(removeReq *removeReq, baton *put.Baton) error {
+	entry, err := s.db.GetFileEntryForSet(removeReq.set.ID(), removeReq.path)
+	if err != nil {
+		return err
+	}
+
+	transformer, err := removeReq.set.MakeTransformer()
+	if err != nil {
+		return err
+	}
+
+	if !removeReq.isRemovedFromIRODS {
+		err = s.removeFileFromIRODS(removeReq.set, removeReq.path, baton, transformer)
+		if err != nil {
+			s.setErrorOnEntry(entry, removeReq.set.ID(), removeReq.path, err)
+
+			return err
+		}
+
+		removeReq.isRemovedFromIRODS = true
+	}
+
+	err = s.db.RemoveFileEntry(removeReq.set.ID(), removeReq.path)
+	if err != nil {
+		return err
+	}
+
+	return s.db.UpdateBasedOnRemovedEntry(removeReq.set.ID(), entry)
+}
+
+func (s *Server) removeFileFromIRODS(set *set.Set, path string,
+	baton *put.Baton, transformer put.PathTransformer) error {
+	rpath, err := transformer(path)
+	if err != nil {
+		return err
+	}
+
+	remoteMeta, err := baton.GetMeta(rpath)
+	if err != nil {
+		return err
+	}
+
+	sets, requesters, err := s.handleSetsAndRequesters(set, remoteMeta)
+	if err != nil {
+		return err
+	}
+
+	return baton.RemovePathFromSetInIRODS(transformer, rpath, sets, requesters, remoteMeta)
+}
+
+func (s *Server) handleSetsAndRequesters(set *set.Set, meta map[string]string) ([]string, []string, error) {
+	sets := strings.Split(meta[put.MetaKeySets], ",")
+	requesters := strings.Split(meta[put.MetaKeyRequester], ",")
+
+	if !slices.Contains(sets, set.Name) {
+		return sets, requesters, nil
+	}
+
+	otherUserSets, userSets, err := s.getSetNamesByRequesters(requesters, set.Requester)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if len(userSets) == 1 && userSets[0] == set.Name {
+		requesters, err = removeElementFromSlice(requesters, set.Requester)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
+	if slices.Contains(otherUserSets, set.Name) {
+		return sets, requesters, nil
+	}
+
+	sets, err = removeElementFromSlice(sets, set.Name)
+
+	return sets, requesters, err
+}
+
+func (s *Server) getSetNamesByRequesters(requesters []string, user string) ([]string, []string, error) {
+	var (
+		otherUserSets []string
+		curUserSets   []string
+	)
+
+	for _, requester := range requesters {
+		requesterSets, err := s.db.GetByRequester(requester)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		if requester == user {
+			curUserSets = append(curUserSets, getNamesFromSets(requesterSets)...)
+
+			continue
+		}
+
+		otherUserSets = append(otherUserSets, getNamesFromSets(requesterSets)...)
+	}
+
+	return otherUserSets, curUserSets, nil
+}
+
+func getNamesFromSets(sets []*set.Set) []string {
+	names := make([]string, len(sets))
+
+	for i, set := range sets {
+		names[i] = set.Name
+	}
+
+	return names
+}
+
+func removeElementFromSlice(slice []string, element string) ([]string, error) {
+	index := slices.Index(slice, element)
+	if index < 0 {
+		return nil, fmt.Errorf("%w: %s", ErrElementNotInSlice, element)
+	}
+
+	return slices.Delete(slice, index, index+1), nil
+}
+
+func (s *Server) setErrorOnEntry(entry *set.Entry, sid, path string, err error) {
+	entry.LastError = err.Error()
+
+	erru := s.db.UploadEntry(sid, path, entry)
+	if erru != nil {
+		s.Logger.Printf("%s", erru.Error())
+	}
+}
+
+func (s *Server) removeDirFromIRODSandDB(removeReq *removeReq, baton *put.Baton) error {
+	transformer, err := removeReq.set.MakeTransformer()
+	if err != nil {
+		return err
+	}
+
+	if !removeReq.isDirEmpty && !removeReq.isRemovedFromIRODS {
+		err = s.removeDirFromIRODS(removeReq.path, baton, transformer)
+		if err != nil {
+			return err
+		}
+
+		removeReq.isRemovedFromIRODS = true
+	}
+
+	err = s.db.RemoveDirEntry(removeReq.set.ID(), removeReq.path)
+	if err != nil {
+		return err
+	}
+
+	return s.db.IncrementSetTotalRemoved(removeReq.set.ID())
+}
+
+func (s *Server) removeDirFromIRODS(path string, baton *put.Baton,
+	transformer put.PathTransformer) error {
+	rpath, err := transformer(path)
+	if err != nil {
+		return err
+	}
+
+	err = baton.RemoveDirFromIRODS(rpath)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // bindPathsAndValidateSet gets the paths out of the JSON body, and the set id

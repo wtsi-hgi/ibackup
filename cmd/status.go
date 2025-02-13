@@ -263,7 +263,7 @@ func displayQueueStatus(qs *server.QStatus) {
 func getSetByName(client *server.Client, user, name string) []*set.Set {
 	got, err := client.GetSetByName(user, name)
 	if err != nil {
-		die(err.Error())
+		die("%s [%s]", err.Error(), name)
 	}
 
 	return []*set.Set{got}
@@ -405,13 +405,17 @@ func displaySet(s *set.Set, showRequesters bool) { //nolint:funlen,gocyclo
 		cliPrint("Status: %s\n", s.Status)
 	}
 
+	if s.NumObjectsToBeRemoved > 0 {
+		cliPrint("Removal status: %d / %d objects removed\n", s.NumObjectsRemoved, s.NumObjectsToBeRemoved)
+	}
+
 	if s.Warning != "" {
 		cliPrint("Warning: %s\n", s.Warning)
 	}
 
 	cliPrint("Discovery: %s\n", s.Discovered())
-	cliPrint("Num files: %s; Symlinks: %d; Hardlinks: %d; Size (total/recently uploaded): %s / %s\n",
-		s.Count(), s.Symlinks, s.Hardlinks, s.Size(), s.UploadedSize())
+	cliPrint("Num files: %s; Symlinks: %d; Hardlinks: %d; Size (total/recently uploaded/recently removed): %s / %s / %s\n",
+		s.Count(), s.Symlinks, s.Hardlinks, s.Size(), s.UploadedSize(), s.RemovedSize())
 	cliPrint("Uploaded: %d; Replaced: %d; Skipped: %d; Failed: %d; Missing: %d; Abnormal: %d\n",
 		s.Uploaded, s.Replaced, s.Skipped, s.Failed, s.Missing, s.Abnormal)
 

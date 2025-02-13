@@ -197,6 +197,18 @@ type Set struct {
 	// skipped) since the last discovery. This is a read-only value.
 	SizeUploaded uint64
 
+	// SizeRemoved provides the size of files (bytes) part of the most recent
+	// remove. This is a read-only value.
+	SizeRemoved uint64
+
+	// NumObjectsToBeRemoved provides the number of objects to be removed in the
+	// current remove process.
+	NumObjectsToBeRemoved uint64
+
+	// numObjectsRemoved provides the number of objects already removed in the
+	// current remove process.
+	NumObjectsRemoved uint64
+
 	// Error holds any error that applies to the whole set, such as an issue
 	// with the Transformer. This is a read-only value.
 	Error string
@@ -277,6 +289,12 @@ func (s *Set) Size() string {
 // unlike Size()) since the last discovery.
 func (s *Set) UploadedSize() string {
 	return humanize.IBytes(s.SizeUploaded) //nolint:misspell
+}
+
+// RemovedSize provides a string representation of SizeRemoved in a human
+// readable format. This is the size of files part of the most recent remove.
+func (s *Set) RemovedSize() string {
+	return humanize.IBytes(s.SizeRemoved) //nolint:misspell
 }
 
 func (s *Set) TransformPath(path string) (string, error) {
@@ -418,6 +436,11 @@ func (s *Set) entryToSetCounts(entry *Entry) {
 	s.entryTypeToSetCounts(entry)
 }
 
+func (s *Set) removedEntryToSetCounts(entry *Entry) {
+	s.removedEntryStatusToSetCounts(entry)
+	s.removedEntryTypeToSetCounts(entry)
+}
+
 func (s *Set) entryStatusToSetCounts(entry *Entry) { //nolint:gocyclo
 	switch entry.Status { //nolint:exhaustive
 	case Uploaded:
@@ -442,6 +465,23 @@ func (s *Set) entryStatusToSetCounts(entry *Entry) { //nolint:gocyclo
 	}
 }
 
+func (s *Set) removedEntryStatusToSetCounts(entry *Entry) {
+	switch entry.Status { //nolint:exhaustive
+	case Uploaded:
+		s.Uploaded--
+	case Replaced:
+		s.Replaced--
+	case Skipped:
+		s.Skipped--
+	case Failed:
+		s.Failed--
+	case Missing:
+		s.Missing--
+	case AbnormalEntry:
+		s.Abnormal--
+	}
+}
+
 func (s *Set) sendSlackMessage(level slack.Level, msg string) {
 	if s.slacker == nil {
 		return
@@ -460,6 +500,15 @@ func (s *Set) entryTypeToSetCounts(entry *Entry) {
 		s.Symlinks++
 	case Hardlink:
 		s.Hardlinks++
+	}
+}
+
+func (s *Set) removedEntryTypeToSetCounts(entry *Entry) {
+	switch entry.Type { //nolint:exhaustive
+	case Symlink:
+		s.Symlinks--
+	case Hardlink:
+		s.Hardlinks--
 	}
 }
 
@@ -551,6 +600,13 @@ func (s *Set) fixCounts(entry *Entry, getFileEntries func(string) ([]*Entry, err
 		return err
 	}
 
+	s.resetCounts()
+	s.updateAllCounts(entries, entry)
+
+	return nil
+}
+
+func (s *Set) resetCounts() {
 	s.Uploaded = 0
 	s.Replaced = 0
 	s.Skipped = 0
@@ -559,10 +615,6 @@ func (s *Set) fixCounts(entry *Entry, getFileEntries func(string) ([]*Entry, err
 	s.Abnormal = 0
 	s.Symlinks = 0
 	s.Hardlinks = 0
-
-	s.updateAllCounts(entries, entry)
-
-	return nil
 }
 
 // updateAllCounts should be called after setting all counts to 0 (because they
@@ -618,17 +670,10 @@ func (s *Set) reset() {
 	s.NumFiles = 0
 	s.SizeTotal = 0
 	s.SizeUploaded = 0
-	s.Uploaded = 0
-	s.Replaced = 0
-	s.Skipped = 0
-	s.Failed = 0
-	s.Missing = 0
-	s.Abnormal = 0
-	s.Symlinks = 0
-	s.Hardlinks = 0
 	s.Status = PendingDiscovery
 	s.Error = ""
 	s.Warning = ""
+	s.resetCounts()
 }
 
 func (s *Set) UserMetadata() string {

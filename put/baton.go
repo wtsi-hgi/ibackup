@@ -30,8 +30,10 @@ package put
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -83,6 +85,34 @@ func GetBatonHandler() (*Baton, error) {
 	_, err := ex.FindBaton()
 
 	return &Baton{}, err
+}
+
+// GetBatonHandlerWithMetaClient returns a Handler that uses Baton to interact
+// with iRODS and contains a meta client for interacting with metadata. If you
+// don't have baton-do in your PATH, you'll get an error.
+func GetBatonHandlerWithMetaClient() (*Baton, error) {
+	setupExtendoLogger()
+
+	_, err := ex.FindBaton()
+	if err != nil {
+		return nil, err
+	}
+
+	params := ex.DefaultClientPoolParams
+	params.MaxSize = 1
+	pool := ex.NewClientPool(params, "")
+
+	metaClient, err := pool.Get()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get metaClient: %w", err)
+	}
+
+	baton := &Baton{
+		putMetaPool: pool,
+		metaClient:  metaClient,
+	}
+
+	return baton, nil
 }
 
 // setupExtendoLogger sets up a STDERR logger that the extendo library will use.
@@ -473,6 +503,113 @@ func metaToAVUs(meta map[string]string) []ex.AVU {
 	return avus
 }
 
+// RemovePathFromSetInIRODS removes the given path from iRODS if the path is not
+// associated with any other sets. Otherwise it updates the iRODS metadata for
+// the path to not include the given set.
+func (b *Baton) RemovePathFromSetInIRODS(transformer PathTransformer, path string,
+	sets, requesters []string, meta map[string]string) error {
+	if len(sets) == 0 {
+		return b.handleHardlinkAndRemoveFromIRODS(path, transformer, meta)
+	}
+
+	metaToRemove := map[string]string{
+		MetaKeySets:      meta[MetaKeySets],
+		MetaKeyRequester: meta[MetaKeyRequester],
+	}
+
+	newMeta := map[string]string{
+		MetaKeySets:      strings.Join(sets, ","),
+		MetaKeyRequester: strings.Join(requesters, ","),
+	}
+
+	if reflect.DeepEqual(metaToRemove, newMeta) {
+		return nil
+	}
+
+	err := b.RemoveMeta(path, metaToRemove)
+	if err != nil {
+		return err
+	}
+
+	return b.AddMeta(path, newMeta)
+}
+
+// handleHardLinkAndRemoveFromIRODS removes the given path from iRODS. If the
+// path is found to be a hardlink, it checks if there are other hardlinks to the
+// same file, if not, it removes the file.
+func (b *Baton) handleHardlinkAndRemoveFromIRODS(path string, transformer PathTransformer,
+	meta map[string]string) error {
+	err := b.removeFileFromIRODS(path)
+	if err != nil {
+		return err
+	}
+
+	if meta[MetaKeyHardlink] == "" {
+		return nil
+	}
+
+	items, err := b.queryIRODSMeta(transformer, map[string]string{MetaKeyRemoteHardlink: meta[MetaKeyRemoteHardlink]})
+	if err != nil {
+		return err
+	}
+
+	if len(items) != 0 {
+		return nil
+	}
+
+	return b.removeFileFromIRODS(meta[MetaKeyRemoteHardlink])
+}
+
+func (b *Baton) removeFileFromIRODS(path string) error {
+	it := remotePathToRodsItem(path)
+
+	err := timeoutOp(func() error {
+		_, errl := b.metaClient.RemObj(ex.Args{}, *it)
+
+		return errl
+	}, "remove meta error: "+path)
+
+	return err
+}
+
+func (b *Baton) queryIRODSMeta(transformer PathTransformer, meta map[string]string) ([]ex.RodsItem, error) {
+	path, err := transformer("/")
+	if err != nil {
+		return nil, err
+	}
+
+	it := &ex.RodsItem{
+		IPath: path,
+		IAVUs: metaToAVUs(meta),
+	}
+
+	var items []ex.RodsItem
+
+	err = timeoutOp(func() error {
+		items, err = b.metaClient.MetaQuery(ex.Args{Object: true}, *it)
+
+		return err
+	}, "remove meta error: "+path)
+
+	return items, err
+}
+
+// RemoveDirFromIRODS removes the given directory from iRODS given it is empty.
+func (b *Baton) RemoveDirFromIRODS(path string) error {
+	it := &ex.RodsItem{
+		IPath: path,
+	}
+
+	err := timeoutOp(func() error {
+		_, errl := b.metaClient.RemDir(ex.Args{}, *it)
+
+		return errl
+	}, "remove meta error: "+path)
+
+	return err
+}
+
+// RemoveMeta removes the given metadata from a given object in iRODS.
 func (b *Baton) RemoveMeta(path string, meta map[string]string) error {
 	it := remotePathToRodsItem(path)
 	it.IAVUs = metaToAVUs(meta)
@@ -486,6 +623,16 @@ func (b *Baton) RemoveMeta(path string, meta map[string]string) error {
 	return err
 }
 
+// GetMeta gets all the metadata for the given object in iRODS.
+func (b *Baton) GetMeta(path string) (map[string]string, error) {
+	it, err := b.metaClient.ListItem(ex.Args{AVU: true, Timestamp: true, Size: true}, ex.RodsItem{
+		IPath: filepath.Dir(path),
+		IName: filepath.Base(path),
+	})
+
+	return rodsItemToMeta(it), err
+}
+
 // remotePathToRodsItem converts a path in to an extendo RodsItem.
 func remotePathToRodsItem(path string) *ex.RodsItem {
 	return &ex.RodsItem{
@@ -494,6 +641,7 @@ func remotePathToRodsItem(path string) *ex.RodsItem {
 	}
 }
 
+// AddMeta adds the given metadata to a given object in iRODS.
 func (b *Baton) AddMeta(path string, meta map[string]string) error {
 	it := remotePathToRodsItem(path)
 	it.IAVUs = metaToAVUs(meta)
