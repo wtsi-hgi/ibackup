@@ -263,7 +263,7 @@ func displayQueueStatus(qs *server.QStatus) {
 func getSetByName(client *server.Client, user, name string) []*set.Set {
 	got, err := client.GetSetByName(user, name)
 	if err != nil {
-		die(err.Error())
+		die("%s [%s]", err.Error(), name)
 	}
 
 	return []*set.Set{got}
