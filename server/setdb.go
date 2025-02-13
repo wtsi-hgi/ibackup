@@ -492,7 +492,7 @@ func makeItemsDefsFromFilePaths(set *set.Set, reserveGroup string, paths []strin
 
 func (s *Server) submitDirsForRemoval(set *set.Set, paths []string, reserveGroup string) ([]string, error) {
 	if len(paths) == 0 {
-		return []string{}, nil
+		return nil, nil
 	}
 
 	filepaths, dirDefs, err := s.makeItemsDefsAndFilePathsFromDirPaths(set, reserveGroup, paths)
@@ -662,10 +662,7 @@ func removeElementFromSlice(slice []string, element string) ([]string, error) {
 		return nil, fmt.Errorf("%w: %s", ErrElementNotInSlice, element)
 	}
 
-	slice[index] = slice[len(slice)-1]
-	slice[len(slice)-1] = ""
-
-	return slice[:len(slice)-1], nil
+	return slices.Delete(slice, index, index+1), nil
 }
 
 func (s *Server) setErrorOnEntry(entry *set.Entry, sid, path string, err error) {

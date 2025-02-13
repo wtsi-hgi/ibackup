@@ -120,11 +120,6 @@ func init() {
 // remove does the main job of sending the set, files and dirs to the server.
 func remove(client *server.Client, user, name string, paths []string) {
 	sets := getSetByName(client, user, name)
-	if len(sets) == 0 {
-		warn("No backup sets found with name %s", name)
-
-		return
-	}
 
 	err := client.RemoveFilesAndDirs(sets[0].ID(), paths)
 	if err != nil {

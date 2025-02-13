@@ -368,6 +368,8 @@ func (d *DB) RemoveDirEntry(setID string, path string) error {
 	return d.removeEntry(setID, path, dirBucket)
 }
 
+// GetFilesInDir returns all file paths from inside the given directory (and all
+// nested inside) for the given set using the db.
 func (d *DB) GetFilesInDir(setID string, dirpath string) ([]string, error) {
 	var filepaths []string
 

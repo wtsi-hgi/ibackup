@@ -281,7 +281,7 @@ func (s *Server) handleErrorOrReleaseItem(item *queue.Item, removeReq removeReq,
 		return false
 	}
 
-	if uint8(item.Stats().Releases) >= jobRetries { //nolint:gosec
+	if item.Stats().Releases >= uint32(jobRetries) {
 		errs := s.db.SetError(removeReq.set.ID(), "Error when removing: "+err.Error())
 		if errs != nil {
 			s.Logger.Printf("Could not put error on set due to: %s\nError was: %s\n", errs.Error(), err.Error())
