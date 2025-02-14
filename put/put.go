@@ -23,7 +23,7 @@
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  ******************************************************************************/
 
-// package put is used to put files in iRODS.
+// package put is used to interact with iRODS.
 
 package put
 
@@ -118,6 +118,17 @@ type Handler interface {
 	// Cleanup stops any connections created earlier and does any other cleanup
 	// needed.
 	Cleanup() error
+
+	GetMeta(path string) (map[string]string, error)
+
+	// RemoveDir deletes a given empty folder
+	RemoveDir(path string) error
+
+	// removeFile deletes a given file
+	removeFile(path string) error
+
+	// queryMeta return paths to all objects with given metadata
+	queryMeta(dirToSearch string, meta map[string]string) ([]string, error)
 }
 
 // FileReadTester is a function that attempts to open and read the given path,

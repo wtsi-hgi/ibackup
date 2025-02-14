@@ -1878,7 +1878,8 @@ func TestServer(t *testing.T) {
 								expectedSetSize += r.UploadedSize()
 
 								if r.Symlink != "" {
-									remoteMeta := handler.GetMeta(remote)
+									remoteMeta, errr := handler.GetMeta(remote)
+									So(errr, ShouldBeNil)
 									So(remoteMeta, ShouldNotBeNil)
 									So(remoteMeta[put.MetaKeySymlink], ShouldEqual, entries[3].Dest)
 								}
@@ -1981,7 +1982,8 @@ func TestServer(t *testing.T) {
 								So(err, ShouldBeNil)
 
 								if n == 3 {
-									remoteMeta := handler.GetMeta(remote)
+									remoteMeta, errr := handler.GetMeta(remote)
+									So(errr, ShouldBeNil)
 									So(remoteMeta, ShouldNotBeNil)
 									So(remoteMeta[put.MetaKeySymlink], ShouldEqual, entries[2].Dest)
 
@@ -2873,7 +2875,8 @@ func TestServer(t *testing.T) {
 							remote1, errg := transformer(path2)
 							So(errg, ShouldBeNil)
 
-							remoteMeta := handler.GetMeta(remote1)
+							remoteMeta, errr := handler.GetMeta(remote1)
+							So(errr, ShouldBeNil)
 							So(remoteMeta, ShouldNotBeNil)
 							So(remoteMeta[put.MetaKeyHardlink], ShouldEqual, path2)
 							So(remoteMeta[put.MetaKeyRemoteHardlink], ShouldEqual, inodeFile)
@@ -2885,7 +2888,8 @@ func TestServer(t *testing.T) {
 							remote2, errg := transformer(path3)
 							So(errg, ShouldBeNil)
 
-							remoteMeta = handler.GetMeta(remote2)
+							remoteMeta, err = handler.GetMeta(remote2)
+							So(err, ShouldBeNil)
 							So(remoteMeta, ShouldNotBeNil)
 							So(remoteMeta[put.MetaKeyHardlink], ShouldEqual, path3)
 							So(remoteMeta[put.MetaKeyRemoteHardlink], ShouldEqual, inodeFile)
@@ -2898,7 +2902,8 @@ func TestServer(t *testing.T) {
 							So(errs, ShouldBeNil)
 							So(info.Size(), ShouldEqual, 1)
 
-							inodeMeta := handler.GetMeta(inodeFile)
+							inodeMeta, errm := handler.GetMeta(inodeFile)
+							So(errm, ShouldBeNil)
 							So(inodeMeta, ShouldNotBeNil)
 							So(inodeMeta[put.MetaKeyHardlink], ShouldEqual, path1)
 							So(inodeMeta[put.MetaKeyRemoteHardlink], ShouldBeBlank)

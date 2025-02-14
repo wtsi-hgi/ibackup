@@ -543,7 +543,7 @@ func (s *Server) makeItemsDefsAndFilePathsFromDirPaths(set *set.Set,
 	return filepaths, defs, nil
 }
 
-func (s *Server) removeFileFromIRODSandDB(removeReq *removeReq, baton *put.Baton) error {
+func (s *Server) removeFileFromIRODSandDB(removeReq *removeReq) error {
 	entry, err := s.db.GetFileEntryForSet(removeReq.set.ID(), removeReq.path)
 	if err != nil {
 		return err
@@ -555,7 +555,7 @@ func (s *Server) removeFileFromIRODSandDB(removeReq *removeReq, baton *put.Baton
 	}
 
 	if !removeReq.isRemovedFromIRODS {
-		err = s.removeFileFromIRODS(removeReq.set, removeReq.path, baton, transformer)
+		err = s.removeFileFromIRODS(removeReq.set, removeReq.path, transformer)
 		if err != nil {
 			s.setErrorOnEntry(entry, removeReq.set.ID(), removeReq.path, err)
 
@@ -573,14 +573,13 @@ func (s *Server) removeFileFromIRODSandDB(removeReq *removeReq, baton *put.Baton
 	return s.db.UpdateBasedOnRemovedEntry(removeReq.set.ID(), entry)
 }
 
-func (s *Server) removeFileFromIRODS(set *set.Set, path string,
-	baton *put.Baton, transformer put.PathTransformer) error {
+func (s *Server) removeFileFromIRODS(set *set.Set, path string, transformer put.PathTransformer) error {
 	rpath, err := transformer(path)
 	if err != nil {
 		return err
 	}
 
-	remoteMeta, err := baton.GetMeta(rpath)
+	remoteMeta, err := s.storageHandler.GetMeta(rpath)
 	if err != nil {
 		return err
 	}
@@ -590,7 +589,7 @@ func (s *Server) removeFileFromIRODS(set *set.Set, path string,
 		return err
 	}
 
-	return baton.RemovePathFromSetInIRODS(transformer, rpath, sets, requesters, remoteMeta)
+	return put.RemovePathFromSetInIRODS(s.storageHandler, transformer, rpath, sets, requesters, remoteMeta)
 }
 
 func (s *Server) handleSetsAndRequesters(set *set.Set, meta map[string]string) ([]string, []string, error) {
@@ -674,14 +673,14 @@ func (s *Server) setErrorOnEntry(entry *set.Entry, sid, path string, err error) 
 	}
 }
 
-func (s *Server) removeDirFromIRODSandDB(removeReq *removeReq, baton *put.Baton) error {
+func (s *Server) removeDirFromIRODSandDB(removeReq *removeReq) error {
 	transformer, err := removeReq.set.MakeTransformer()
 	if err != nil {
 		return err
 	}
 
 	if !removeReq.isDirEmpty && !removeReq.isRemovedFromIRODS {
-		err = s.removeDirFromIRODS(removeReq.path, baton, transformer)
+		err = put.RemoveDirFromIRODS(s.storageHandler, removeReq.path, transformer)
 		if err != nil {
 			return err
 		}
@@ -695,21 +694,6 @@ func (s *Server) removeDirFromIRODSandDB(removeReq *removeReq, baton *put.Baton)
 	}
 
 	return s.db.IncrementSetTotalRemoved(removeReq.set.ID())
-}
-
-func (s *Server) removeDirFromIRODS(path string, baton *put.Baton,
-	transformer put.PathTransformer) error {
-	rpath, err := transformer(path)
-	if err != nil {
-		return err
-	}
-
-	err = baton.RemoveDirFromIRODS(rpath)
-	if err != nil {
-		return err
-	}
-
-	return nil
 }
 
 // bindPathsAndValidateSet gets the paths out of the JSON body, and the set id

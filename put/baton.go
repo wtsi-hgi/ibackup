@@ -33,7 +33,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -503,64 +502,7 @@ func metaToAVUs(meta map[string]string) []ex.AVU {
 	return avus
 }
 
-// RemovePathFromSetInIRODS removes the given path from iRODS if the path is not
-// associated with any other sets. Otherwise it updates the iRODS metadata for
-// the path to not include the given set.
-func (b *Baton) RemovePathFromSetInIRODS(transformer PathTransformer, path string,
-	sets, requesters []string, meta map[string]string) error {
-	if len(sets) == 0 {
-		return b.handleHardlinkAndRemoveFromIRODS(path, transformer, meta)
-	}
-
-	metaToRemove := map[string]string{
-		MetaKeySets:      meta[MetaKeySets],
-		MetaKeyRequester: meta[MetaKeyRequester],
-	}
-
-	newMeta := map[string]string{
-		MetaKeySets:      strings.Join(sets, ","),
-		MetaKeyRequester: strings.Join(requesters, ","),
-	}
-
-	if reflect.DeepEqual(metaToRemove, newMeta) {
-		return nil
-	}
-
-	err := b.RemoveMeta(path, metaToRemove)
-	if err != nil {
-		return err
-	}
-
-	return b.AddMeta(path, newMeta)
-}
-
-// handleHardLinkAndRemoveFromIRODS removes the given path from iRODS. If the
-// path is found to be a hardlink, it checks if there are other hardlinks to the
-// same file, if not, it removes the file.
-func (b *Baton) handleHardlinkAndRemoveFromIRODS(path string, transformer PathTransformer,
-	meta map[string]string) error {
-	err := b.removeFileFromIRODS(path)
-	if err != nil {
-		return err
-	}
-
-	if meta[MetaKeyHardlink] == "" {
-		return nil
-	}
-
-	items, err := b.queryIRODSMeta(transformer, map[string]string{MetaKeyRemoteHardlink: meta[MetaKeyRemoteHardlink]})
-	if err != nil {
-		return err
-	}
-
-	if len(items) != 0 {
-		return nil
-	}
-
-	return b.removeFileFromIRODS(meta[MetaKeyRemoteHardlink])
-}
-
-func (b *Baton) removeFileFromIRODS(path string) error {
+func (b *Baton) removeFile(path string) error {
 	it := remotePathToRodsItem(path)
 
 	err := timeoutOp(func() error {
@@ -572,30 +514,33 @@ func (b *Baton) removeFileFromIRODS(path string) error {
 	return err
 }
 
-func (b *Baton) queryIRODSMeta(transformer PathTransformer, meta map[string]string) ([]ex.RodsItem, error) {
-	path, err := transformer("/")
-	if err != nil {
-		return nil, err
-	}
-
+func (b *Baton) queryMeta(dirToSearch string, meta map[string]string) ([]string, error) {
 	it := &ex.RodsItem{
-		IPath: path,
+		IPath: dirToSearch,
 		IAVUs: metaToAVUs(meta),
 	}
 
 	var items []ex.RodsItem
 
+	var err error
+
 	err = timeoutOp(func() error {
 		items, err = b.metaClient.MetaQuery(ex.Args{Object: true}, *it)
 
 		return err
-	}, "remove meta error: "+path)
+	}, "remove meta error: "+dirToSearch)
 
-	return items, err
+	paths := make([]string, len(items))
+
+	for i, item := range items {
+		paths[i] = item.IPath
+	}
+
+	return paths, err
 }
 
 // RemoveDirFromIRODS removes the given directory from iRODS given it is empty.
-func (b *Baton) RemoveDirFromIRODS(path string) error {
+func (b *Baton) RemoveDir(path string) error {
 	it := &ex.RodsItem{
 		IPath: path,
 	}
