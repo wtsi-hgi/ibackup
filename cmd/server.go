@@ -193,11 +193,17 @@ database that you've made, to investigate.
 			die("slack_debounce period must be positive, not: %d", serverSlackDebouncePeriod)
 		}
 
+		handler, errb := put.GetBatonHandlerWithMetaClient()
+		if errb != nil {
+			die("failed to get baton handler: %s", errb)
+		}
+
 		conf := server.Config{
 			HTTPLogger:           logWriter,
 			Slacker:              slacker,
 			SlackMessageDebounce: time.Duration(serverSlackDebouncePeriod) * time.Second,
 			StillRunningMsgFreq:  stillRunningMsgFreq,
+			StorageHandler:       handler,
 		}
 
 		s, err := server.New(conf)
@@ -250,11 +256,6 @@ database that you've made, to investigate.
 		if serverRemoteBackupPath != "" {
 			if dbBackupPath == "" {
 				die("remote backup path defined when no local backup path provided")
-			}
-
-			handler, errb := put.GetBatonHandler()
-			if errb != nil {
-				die("failed to get baton handler: %s", errb)
 			}
 
 			s.EnableRemoteDBBackups(serverRemoteBackupPath, handler)
