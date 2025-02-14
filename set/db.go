@@ -92,6 +92,8 @@ const (
 	// workerPoolSizeFiles is the max number of concurrent file stats we'll do
 	// during discovery.
 	workerPoolSizeFiles = 16
+
+	RemoveReserveGroup = "removeRecovery"
 )
 
 // DBRO is the read-only component of the DB struct.
@@ -1591,6 +1593,16 @@ func (d *DBRO) decodeEntry(v []byte) *Entry {
 	dec.MustDecode(&entry)
 
 	return entry
+}
+
+func (d *DBRO) decodeRemoveReq(v []byte) *queue.ItemDef {
+	dec := codec.NewDecoderBytes(v, d.ch)
+
+	var def *queue.ItemDef
+
+	dec.MustDecode(&def)
+
+	return def
 }
 
 // GetFailedEntries returns up to 10 of the file entries for the given set (both
