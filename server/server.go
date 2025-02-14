@@ -87,6 +87,9 @@ type Config struct {
 	// messages. Default value means send unlimited messages, which will likely
 	// result in slack restricting messages itself.
 	SlackMessageDebounce time.Duration
+
+	// StorageHandler is used to interact with the storage system, e.g. iRODS.
+	StorageHandler put.Handler
 }
 
 // Server is used to start a web server that provides a REST API to the setdb
@@ -111,6 +114,7 @@ type Server struct {
 	stillRunningMsgFreq    time.Duration
 	serverAliveCh          chan bool
 	uploadTracker          *uploadTracker
+	storageHandler         put.Handler
 
 	mapMu               sync.RWMutex
 	creatingCollections map[string]bool
@@ -137,6 +141,7 @@ func New(conf Config) (*Server, error) {
 		stillRunningMsgFreq: conf.StillRunningMsgFreq,
 		uploadTracker:       newUploadTracker(conf.Slacker, conf.SlackMessageDebounce),
 		iRODSTracker:        newiRODSTracker(conf.Slacker, conf.SlackMessageDebounce),
+		storageHandler:      conf.StorageHandler,
 	}
 
 	s.Server.Router().Use(gas.IncludeAbortErrorsInBody)
@@ -197,20 +202,13 @@ func (s *Server) EnableJobSubmission(putCmd, deployment, cwd, queue string, numC
 // inside removeQueue from iRODS and data base. This function should be called
 // inside a go routine, so the user API request is not locked.
 func (s *Server) handleRemoveRequests(reserveGroup string) {
-	baton, err := put.GetBatonHandlerWithMetaClient()
-	if err != nil {
-		s.Logger.Printf("%s", err.Error())
-
-		return
-	}
-
 	for {
 		item, removeReq, err := s.reserveRemoveRequest(reserveGroup)
 		if err != nil {
 			break
 		}
 
-		err = s.removeRequestFromIRODSandDB(&removeReq, baton)
+		err = s.removeRequestFromIRODSandDB(&removeReq)
 
 		beenReleased := s.handleErrorOrReleaseItem(item, removeReq, err)
 		if beenReleased {
@@ -246,12 +244,12 @@ func (s *Server) reserveRemoveRequest(reserveGroup string) (*queue.Item, removeR
 	return item, remReq, nil
 }
 
-func (s *Server) removeRequestFromIRODSandDB(removeReq *removeReq, baton *put.Baton) error {
+func (s *Server) removeRequestFromIRODSandDB(removeReq *removeReq) error {
 	if removeReq.isDir {
-		return s.removeDirFromIRODSandDB(removeReq, baton)
+		return s.removeDirFromIRODSandDB(removeReq)
 	}
 
-	return s.removeFileFromIRODSandDB(removeReq, baton)
+	return s.removeFileFromIRODSandDB(removeReq)
 }
 
 // handleErrorOrReleaseItem returns immediately if there was no error. Otherwise

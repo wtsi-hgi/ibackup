@@ -1970,6 +1970,8 @@ func TestRemove(t *testing.T) {
 			return
 		}
 
+		resetIRODS()
+
 		dir := t.TempDir()
 		s := new(TestServer)
 		s.prepareFilePaths(dir)
@@ -2056,18 +2058,15 @@ func TestRemove(t *testing.T) {
 						"(total/recently uploaded/recently removed): 30 B / 40 B / 10 B\n"+
 						"Uploaded: 5; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0")
 
-				Convey("Remove again will remove another file", func() {
-					exitCode, _ = s.runBinary(t, "remove", "--name", setName, "--path", file2)
+				Convey("Remove again will remove another object", func() {
+					exitCode, _ = s.runBinary(t, "remove", "--name", setName, "--path", dir1)
 
 					So(exitCode, ShouldEqual, 0)
 
-					s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
-						0, "Removal status: 0 / 1 objects removed")
-
-					s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 5*time.Second)
+					s.waitForStatus(setName, "Removal status: 2 / 2 objects removed", 5*time.Second)
 
 					s.confirmOutputDoesNotContain(t, []string{"status", "--name", setName, "-d"},
-						0, file2)
+						0, file3)
 
 					s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
 						0, "Num files: 4; Symlinks: 1; Hardlinks: 1; Size "+
