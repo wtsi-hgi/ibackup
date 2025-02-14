@@ -29,6 +29,7 @@ import (
 	"io"
 	"maps"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -231,14 +232,12 @@ func (l *LocalHandler) AddMeta(path string, meta map[string]string) error {
 
 // GetMeta gets the metadata stored for the given path (returns an empty map if
 // path is not known about or has no metadata).
-//
-// (Currently this is just for testing and not part of the Handler interface.)
-func (l *LocalHandler) GetMeta(path string) map[string]string {
+func (l *LocalHandler) GetMeta(path string) (map[string]string, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
 	if l.meta == nil {
-		return make(map[string]string)
+		return make(map[string]string), nil
 	}
 
 	currentMeta, exists := l.meta[path]
@@ -252,5 +251,45 @@ func (l *LocalHandler) GetMeta(path string) map[string]string {
 		meta[k] = v
 	}
 
-	return meta
+	return meta, nil
+}
+
+func (l *LocalHandler) RemoveDir(path string) error {
+	return os.Remove(path)
+}
+
+func (l *LocalHandler) removeFile(path string) error {
+	delete(l.meta, path)
+
+	return os.Remove(path)
+}
+
+func (l *LocalHandler) queryMeta(dirToSearch string, meta map[string]string) ([]string, error) {
+	var objects []string
+
+	for path, pathMeta := range l.meta {
+		if !strings.HasPrefix(path, dirToSearch) {
+			continue
+		}
+
+		if doesMetaContainMeta(pathMeta, meta) {
+			objects = append(objects, path)
+		}
+	}
+
+	return objects, nil
+}
+
+func doesMetaContainMeta(sourceMeta, targetMeta map[string]string) bool {
+	valid := true
+
+	for k, v := range targetMeta {
+		if sourceMeta[k] != v {
+			valid = false
+
+			break
+		}
+	}
+
+	return valid
 }
