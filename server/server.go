@@ -226,6 +226,8 @@ func (s *Server) handleRemoveRequests(reserveGroup string) {
 			break
 		}
 
+		fmt.Println(removeReq, removeReq.set)
+
 		err = s.removeRequestFromIRODSandDB(&removeReq)
 
 		beenReleased := s.handleErrorOrReleaseItem(item, removeReq, err)
@@ -233,8 +235,13 @@ func (s *Server) handleRemoveRequests(reserveGroup string) {
 			continue
 		}
 
-		errr := s.removeQueue.Remove(context.Background(), removeReq.key())
-		if errr != nil {
+		err = s.db.DeleteRemoveEntry(removeReq.key())
+		if err != nil {
+			s.Logger.Printf("%s", err.Error())
+		}
+
+		err = s.removeQueue.Remove(context.Background(), removeReq.key())
+		if err != nil {
 			s.Logger.Printf("%s", err.Error())
 		}
 	}
@@ -243,18 +250,18 @@ func (s *Server) handleRemoveRequests(reserveGroup string) {
 // reserveRemoveRequest reserves an item from the given reserve group from the
 // remove queue and converts it to a removeRequest. Returns nil and no error if
 // the queue is empty.
-func (s *Server) reserveRemoveRequest(reserveGroup string) (*queue.Item, removeReq, error) {
+func (s *Server) reserveRemoveRequest(reserveGroup string) (*queue.Item, RemoveReq, error) {
 	item, err := s.removeQueue.Reserve(reserveGroup, retryDelay+2*time.Second)
 	if err != nil {
 		qerr, ok := err.(queue.Error) //nolint:errorlint
 		if ok && errors.Is(qerr.Err, queue.ErrNothingReady) {
-			return nil, removeReq{}, err
+			return nil, RemoveReq{}, err
 		}
 
 		s.Logger.Printf("%s", err.Error())
 	}
 
-	remReq, ok := item.Data().(removeReq)
+	remReq, ok := item.Data().(RemoveReq)
 	if !ok {
 		s.Logger.Printf("Invalid data type in remove queue")
 	}
@@ -262,7 +269,7 @@ func (s *Server) reserveRemoveRequest(reserveGroup string) (*queue.Item, removeR
 	return item, remReq, nil
 }
 
-func (s *Server) removeRequestFromIRODSandDB(removeReq *removeReq) error {
+func (s *Server) removeRequestFromIRODSandDB(removeReq *RemoveReq) error {
 	if removeReq.isDir {
 		return s.removeDirFromIRODSandDB(removeReq)
 	}
@@ -273,7 +280,7 @@ func (s *Server) removeRequestFromIRODSandDB(removeReq *removeReq) error {
 // handleErrorOrReleaseItem returns immediately if there was no error. Otherwise
 // it releases the item with updated data from a queue, provided it has attempts
 // left, or sets the error on the set. Returns whether the item was released.
-func (s *Server) handleErrorOrReleaseItem(item *queue.Item, removeReq removeReq, err error) bool {
+func (s *Server) handleErrorOrReleaseItem(item *queue.Item, removeReq RemoveReq, err error) bool {
 	if err == nil {
 		return false
 	}

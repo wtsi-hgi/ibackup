@@ -37,6 +37,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/VertebrateResequencing/wr/queue"
 	"github.com/gammazero/workerpool"
 	"github.com/ugorji/go/codec"
 	"github.com/wtsi-hgi/ibackup/put"
@@ -73,6 +74,7 @@ const (
 	fileBucket                    = subBucketPrefix + "files"
 	dirBucket                     = subBucketPrefix + "dirs"
 	discoveredBucket              = subBucketPrefix + "discovered"
+	removeBucket                  = "remove"
 	failedBucket                  = "failed"
 	dbOpenMode                    = 0600
 	separator                     = ":!:"
@@ -85,6 +87,8 @@ const (
 	// workerPoolSizeFiles is the max number of concurrent file stats we'll do
 	// during discovery.
 	workerPoolSizeFiles = 16
+
+	RemoveReserveGroup = "removeRecovery"
 )
 
 // DBRO is the read-only component of the DB struct.
@@ -426,6 +430,51 @@ func (d *DB) setEntries(setID string, dirents []*Dirent, bucketName string) erro
 
 		return ec.UpdateOrCreateEntries(dirents)
 	})
+}
+
+// TODO: we cant use itemDef cuz it doesnt encode the data. we cant use removereq cuz it cant be imported.
+
+func (d *DB) SetRemoveEntries(entries []*queue.ItemDef) error {
+	return d.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(removeBucket))
+
+		for _, entry := range entries {
+			err := b.Put([]byte(entry.Key), d.encodeToBytes(entry.Data))
+			if err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
+}
+
+func (d *DB) DeleteRemoveEntry(key string) error {
+	return d.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(removeBucket))
+
+		return b.Delete([]byte(key))
+	})
+}
+
+func (d *DB) GetRemoveEntries() ([]*queue.ItemDef, error) {
+	var entries []*queue.ItemDef
+
+	err := d.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(removeBucket))
+
+		return b.ForEach(func(k, v []byte) error {
+			def := d.decodeRemoveReq(v)
+
+			def.ReserveGroup = RemoveReserveGroup
+
+			entries = append(entries, def)
+
+			return nil
+		})
+	})
+
+	return entries, err
 }
 
 // getAndDeleteExistingEntries gets existing entries in the given sub bucket
@@ -1164,6 +1213,16 @@ func (d *DBRO) decodeEntry(v []byte) *Entry {
 	dec.MustDecode(&entry)
 
 	return entry
+}
+
+func (d *DBRO) decodeRemoveReq(v []byte) *queue.ItemDef {
+	dec := codec.NewDecoderBytes(v, d.ch)
+
+	var def *queue.ItemDef
+
+	dec.MustDecode(&def)
+
+	return def
 }
 
 // GetFailedEntries returns up to 10 of the file entries for the given set (both
