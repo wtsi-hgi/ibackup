@@ -434,12 +434,17 @@ func (s *Server) submitFilesForRemoval(set *set.Set, paths []string, reserveGrou
 
 	defs := makeItemsDefsFromFilePaths(set, reserveGroup, paths)
 
-	_, _, err := s.removeQueue.AddMany(context.Background(), defs)
+	err := s.db.SetRemoveEntries(defs)
+	if err != nil {
+		return err
+	}
+
+	_, _, err = s.removeQueue.AddMany(context.Background(), defs)
 
 	return err
 }
 
-type removeReq struct {
+type RemoveReq struct {
 	path               string
 	set                *set.Set
 	isDir              bool
@@ -447,7 +452,7 @@ type removeReq struct {
 	isRemovedFromIRODS bool
 }
 
-func (rq removeReq) key() string {
+func (rq RemoveReq) key() string {
 	return strings.Join([]string{rq.set.ID(), rq.path}, ":")
 }
 
@@ -455,7 +460,7 @@ func makeItemsDefsFromFilePaths(set *set.Set, reserveGroup string, paths []strin
 	defs := make([]*queue.ItemDef, len(paths))
 
 	for i, path := range paths {
-		rq := removeReq{path: path, set: set, isDir: false}
+		rq := RemoveReq{path: path, set: set, isDir: false}
 
 		defs[i] = &queue.ItemDef{
 			Key:          rq.key(),
@@ -480,12 +485,14 @@ func (s *Server) submitDirsForRemoval(set *set.Set, paths []string, reserveGroup
 
 	fileDefs := makeItemsDefsFromFilePaths(set, reserveGroup, filepaths)
 
-	_, _, err = s.removeQueue.AddMany(context.Background(), fileDefs)
+	defs := append(fileDefs, dirDefs...) //nolint:gocritic
+
+	err = s.db.SetRemoveEntries(defs)
 	if err != nil {
 		return nil, err
 	}
 
-	_, _, err = s.removeQueue.AddMany(context.Background(), dirDefs)
+	_, _, err = s.removeQueue.AddMany(context.Background(), defs)
 
 	return filepaths, err
 }
@@ -497,7 +504,7 @@ func (s *Server) makeItemsDefsAndFilePathsFromDirPaths(set *set.Set,
 	defs := make([]*queue.ItemDef, len(paths))
 
 	for i, path := range paths {
-		rq := removeReq{path: path, set: set, isDir: true}
+		rq := RemoveReq{path: path, set: set, isDir: true}
 
 		dirFilepaths, err := s.db.GetFilesInDir(set.ID(), path)
 		if err != nil {
@@ -521,7 +528,7 @@ func (s *Server) makeItemsDefsAndFilePathsFromDirPaths(set *set.Set,
 	return filepaths, defs, nil
 }
 
-func (s *Server) removeFileFromIRODSandDB(removeReq *removeReq) error {
+func (s *Server) removeFileFromIRODSandDB(removeReq *RemoveReq) error {
 	entry, err := s.db.GetFileEntryForSet(removeReq.set.ID(), removeReq.path)
 	if err != nil {
 		return err
@@ -651,7 +658,7 @@ func (s *Server) setErrorOnEntry(entry *set.Entry, sid, path string, err error) 
 	}
 }
 
-func (s *Server) removeDirFromIRODSandDB(removeReq *removeReq) error {
+func (s *Server) removeDirFromIRODSandDB(removeReq *RemoveReq) error {
 	transformer, err := removeReq.set.MakeTransformer()
 	if err != nil {
 		return err
@@ -1238,6 +1245,27 @@ func (s *Server) recoverQueue() error {
 			s.Logger.Printf("failed to recover set %s for %s: %s", given.Name, given.Requester, err)
 		}
 	}
+
+	err = s.recoverRemoveQueue()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (s *Server) recoverRemoveQueue() error {
+	defs, err := s.db.GetRemoveEntries()
+	if err != nil {
+		return err
+	}
+
+	_, _, err = s.removeQueue.AddMany(context.Background(), defs)
+	if err != nil {
+		return err
+	}
+
+	go s.handleRemoveRequests(set.RemoveReserveGroup)
 
 	return nil
 }
