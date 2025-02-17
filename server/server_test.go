@@ -63,6 +63,7 @@ const (
 
 var errNotDiscovered = errors.New("not discovered")
 var errNotFinishedRemoving = errors.New("remove not finished")
+var errNotAllRemoved = errors.New("not all removals finished")
 
 func TestClient(t *testing.T) {
 	Convey("maxTimeForUpload works with small and large requests", t, func() {
@@ -1232,6 +1233,72 @@ func TestServer(t *testing.T) {
 								return errNotDiscovered
 							}, given.MonitorTime*2, given.MonitorTime/10)
 						}
+
+						waitForRemovals := func(given *set.Set) {
+							internal.RetryUntilWorksCustom(t, func() error { //nolint:errcheck
+								tickerSet, errg := client.GetSetByID(given.Requester, given.ID())
+								So(errg, ShouldBeNil)
+
+								if tickerSet.NumObjectsRemoved == tickerSet.NumObjectsToBeRemoved {
+									return nil
+								}
+
+								return errNotAllRemoved
+							}, time.Second*10, time.Millisecond*100)
+						}
+
+						token, errl = gas.Login(gas.NewClientRequest(addr, certPath), admin, "pass")
+						So(errl, ShouldBeNil)
+
+						client2 := NewClient(addr, certPath, token)
+
+						makeSetComplete := func(numExpectedRequests int) {
+							requests, errg := client2.GetSomeUploadRequests()
+							So(errg, ShouldBeNil)
+							So(len(requests), ShouldEqual, numExpectedRequests)
+
+							for _, request := range requests {
+								if request.Set != exampleSet2.Name || request.Local == entries[1].Path {
+									continue
+								}
+
+								request.Status = put.RequestStatusUploading
+								err = client2.UpdateFileStatus(request)
+								So(err, ShouldBeNil)
+
+								request.Status = put.RequestStatusUploaded
+								err = client2.UpdateFileStatus(request)
+								So(err, ShouldBeNil)
+							}
+						}
+
+						Convey("If set is monitored with MonitorRemovals option, it can detect locally removed files of the set", func() {
+							exampleSet2.MonitorTime = 500 * time.Millisecond
+							exampleSet2.MonitorRemovals = true
+
+							err = client.AddOrUpdateSet(exampleSet2)
+							So(err, ShouldBeNil)
+
+							gotSet, err = client.GetSetByID(exampleSet2.Requester, exampleSet2.ID())
+							So(err, ShouldBeNil)
+
+							err = client.TriggerDiscovery(gotSet.ID())
+							So(err, ShouldBeNil)
+
+							makeSetComplete(expectedRequests)
+
+							gotSet, err = client.GetSetByID(exampleSet2.Requester, exampleSet2.ID())
+							So(err, ShouldBeNil)
+							So(gotSet.NumFiles, ShouldEqual, len(set2Files))
+
+							waitForDiscovery(gotSet)
+
+							waitForRemovals(gotSet)
+
+							gotSet, err = client.GetSetByID(exampleSet2.Requester, exampleSet2.ID())
+							So(err, ShouldBeNil)
+							So(gotSet.NumFiles, ShouldEqual, len(set2Files)-1)
+						})
 
 						Convey("After discovery, monitored sets get discovered again after completion", func() {
 							exampleSet2.MonitorTime = 500 * time.Millisecond

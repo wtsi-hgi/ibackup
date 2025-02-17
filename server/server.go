@@ -174,6 +174,14 @@ func (s *Server) monitorCB(given *set.Set) {
 	if err := s.discoverSet(given); err != nil {
 		s.Logger.Printf("error discovering set during monitoring: %s", err)
 	}
+
+	if !given.MonitorRemovals {
+		return
+	}
+
+	if err := s.discoverSetRemovals(given); err != nil {
+		s.Logger.Printf("error discovering set removals during monitoring: %s", err)
+	}
 }
 
 // Start logs to slack that the server has been started and then calls

@@ -1700,7 +1700,9 @@ func (d *DB) IncrementSetTotalRemoved(setID string) error {
 // ResetRemoveSize resets the size removed for the set.
 func (d *DB) ResetRemoveSize(setID string) error {
 	return d.updateSetProperties(setID, func(got *Set) {
-		got.SizeRemoved = 0
+		if got.NumObjectsToBeRemoved == got.NumObjectsRemoved {
+			got.SizeRemoved = 0
+		}
 	})
 }
 
