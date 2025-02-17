@@ -1953,7 +1953,7 @@ func confirmFileContents(file, expectedContents string) {
 }
 
 func TestRemove(t *testing.T) {
-	FocusConvey("Given a server", t, func() {
+	Convey("Given a server", t, func() {
 		remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
 		if remotePath == "" {
 			SkipConvey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
@@ -1993,7 +1993,7 @@ func TestRemove(t *testing.T) {
 				1, fmt.Sprintf("set with that id does not exist [%s]", invalidSetName))
 		})
 
-		FocusConvey("And an added set with files and folders", func() {
+		Convey("And an added set with files and folders", func() {
 			dir := t.TempDir()
 
 			linkPath := filepath.Join(path, "link")
@@ -2147,8 +2147,26 @@ func TestRemove(t *testing.T) {
 					0, dir1+" => ")
 			})
 
-			FocusConvey("if the server dies during removal, the removal will continue upon server startup", func() {
-				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--items", tempTestFileOfPaths.Name())
+			Convey("if the server dies during removal, the removal will continue upon server startup", func() {
+				tempTestFileOfPathsToRemove1, errt := os.CreateTemp(dir, "testFileSet")
+				So(errt, ShouldBeNil)
+
+				_, err = io.WriteString(tempTestFileOfPathsToRemove1,
+					fmt.Sprintf("%s\n%s", file1, dir1))
+				So(err, ShouldBeNil)
+
+				tempTestFileOfPathsToRemove2, errt := os.CreateTemp(dir, "testFileSet")
+				So(errt, ShouldBeNil)
+
+				_, err = io.WriteString(tempTestFileOfPathsToRemove2,
+					fmt.Sprintf("%s\n%s\n%s\n%s\n%s", file2, file4, dir2, linkPath, symPath))
+				So(err, ShouldBeNil)
+
+				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--items", tempTestFileOfPathsToRemove1.Name())
+
+				So(exitCode, ShouldEqual, 0)
+
+				exitCode, _ = s.runBinary(t, "remove", "--name", setName, "--items", tempTestFileOfPathsToRemove2.Name())
 
 				So(exitCode, ShouldEqual, 0)
 

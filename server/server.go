@@ -40,6 +40,7 @@ import (
 	jqs "github.com/VertebrateResequencing/wr/jobqueue/scheduler"
 	"github.com/VertebrateResequencing/wr/queue"
 	"github.com/gammazero/workerpool"
+	"github.com/goccy/go-json"
 	"github.com/inconshreveable/log15"
 	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/ibackup/put"
@@ -49,7 +50,8 @@ import (
 )
 
 const (
-	ErrNoLogger = gas.Error("a http logger must be configured")
+	ErrNoLogger             = gas.Error("a http logger must be configured")
+	ErrFailedByteConversion = gas.Error("could not convert data type to []byte")
 
 	// workerPoolSizeDir is the max number of directory walks we'll do
 	// concurrently during discovery; each of those walks in turn operate on 16
@@ -226,8 +228,6 @@ func (s *Server) handleRemoveRequests(reserveGroup string) {
 			break
 		}
 
-		fmt.Println(removeReq, removeReq.set)
-
 		err = s.removeRequestFromIRODSandDB(&removeReq)
 
 		beenReleased := s.handleErrorOrReleaseItem(item, removeReq, err)
@@ -261,16 +261,25 @@ func (s *Server) reserveRemoveRequest(reserveGroup string) (*queue.Item, RemoveR
 		s.Logger.Printf("%s", err.Error())
 	}
 
-	remReq, ok := item.Data().(RemoveReq)
+	var remReq RemoveReq
+
+	data, ok := item.Data().([]byte)
 	if !ok {
 		s.Logger.Printf("Invalid data type in remove queue")
+
+		return nil, RemoveReq{}, ErrFailedByteConversion
 	}
 
-	return item, remReq, nil
+	err = json.Unmarshal(data, &remReq)
+	if err != nil {
+		s.Logger.Printf("%s", err.Error())
+	}
+
+	return item, remReq, err
 }
 
 func (s *Server) removeRequestFromIRODSandDB(removeReq *RemoveReq) error {
-	if removeReq.isDir {
+	if removeReq.IsDir {
 		return s.removeDirFromIRODSandDB(removeReq)
 	}
 
@@ -286,7 +295,7 @@ func (s *Server) handleErrorOrReleaseItem(item *queue.Item, removeReq RemoveReq,
 	}
 
 	if item.Stats().Releases >= uint32(jobRetries) {
-		errs := s.db.SetError(removeReq.set.ID(), "Error when removing: "+err.Error())
+		errs := s.db.SetError(removeReq.Set.ID(), "Error when removing: "+err.Error())
 		if errs != nil {
 			s.Logger.Printf("Could not put error on set due to: %s\nError was: %s\n", errs.Error(), err.Error())
 		}
@@ -294,7 +303,7 @@ func (s *Server) handleErrorOrReleaseItem(item *queue.Item, removeReq RemoveReq,
 		return false
 	}
 
-	item.SetData(removeReq)
+	s.setRemoveReqOnItemDef(item, removeReq)
 
 	err = s.removeQueue.SetDelay(removeReq.key(), retryDelay)
 	if err != nil {
@@ -307,6 +316,15 @@ func (s *Server) handleErrorOrReleaseItem(item *queue.Item, removeReq RemoveReq,
 	}
 
 	return true
+}
+
+func (s *Server) setRemoveReqOnItemDef(item *queue.Item, removeReq RemoveReq) {
+	rqStr, err := json.Marshal(removeReq)
+	if err != nil {
+		s.Logger.Printf("%s", err.Error())
+	}
+
+	item.SetData(rqStr)
 }
 
 // rac is our queue's ready added callback which will get all ready put Requests

@@ -27,6 +27,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -454,9 +455,12 @@ func (s *Server) submitFilesForRemoval(set *set.Set, paths []string, reserveGrou
 		return nil
 	}
 
-	defs := makeItemsDefsFromFilePaths(set, reserveGroup, paths)
+	defs, err := makeItemsDefsFromFilePaths(set, reserveGroup, paths)
+	if err != nil {
+		return err
+	}
 
-	err := s.db.SetRemoveEntries(defs)
+	err = s.db.SetRemoveEntries(defs)
 	if err != nil {
 		return err
 	}
@@ -467,32 +471,46 @@ func (s *Server) submitFilesForRemoval(set *set.Set, paths []string, reserveGrou
 }
 
 type RemoveReq struct {
-	path               string
-	set                *set.Set
-	isDir              bool
-	isDirEmpty         bool
-	isRemovedFromIRODS bool
+	Path               string
+	Set                *set.Set
+	IsDir              bool
+	IsDirEmpty         bool
+	IsRemovedFromIRODS bool
 }
 
 func (rq RemoveReq) key() string {
-	return strings.Join([]string{rq.set.ID(), rq.path}, ":")
+	return strings.Join([]string{rq.Set.ID(), rq.Path}, ":")
 }
 
-func makeItemsDefsFromFilePaths(set *set.Set, reserveGroup string, paths []string) []*queue.ItemDef {
+func makeItemsDefsFromFilePaths(set *set.Set, reserveGroup string, paths []string) ([]*queue.ItemDef, error) {
 	defs := make([]*queue.ItemDef, len(paths))
 
 	for i, path := range paths {
-		rq := RemoveReq{path: path, set: set, isDir: false}
+		rq := RemoveReq{Path: path, Set: set, IsDir: false}
 
-		defs[i] = &queue.ItemDef{
-			Key:          rq.key(),
-			Data:         rq,
-			TTR:          ttr,
-			ReserveGroup: reserveGroup,
+		def, err := buildRemoveItemDef(rq, reserveGroup)
+		if err != nil {
+			return nil, err
 		}
+
+		defs[i] = def
 	}
 
-	return defs
+	return defs, nil
+}
+
+func buildRemoveItemDef(rq RemoveReq, reserveGroup string) (*queue.ItemDef, error) {
+	rqStr, err := json.Marshal(rq)
+	if err != nil {
+		return nil, err
+	}
+
+	return &queue.ItemDef{
+		Key:          rq.key(),
+		Data:         rqStr,
+		TTR:          ttr,
+		ReserveGroup: reserveGroup,
+	}, nil
 }
 
 func (s *Server) submitDirsForRemoval(set *set.Set, paths []string, reserveGroup string) ([]string, error) {
@@ -505,7 +523,10 @@ func (s *Server) submitDirsForRemoval(set *set.Set, paths []string, reserveGroup
 		return nil, err
 	}
 
-	fileDefs := makeItemsDefsFromFilePaths(set, reserveGroup, filepaths)
+	fileDefs, err := makeItemsDefsFromFilePaths(set, reserveGroup, filepaths)
+	if err != nil {
+		return nil, err
+	}
 
 	defs := append(fileDefs, dirDefs...) //nolint:gocritic
 
@@ -526,7 +547,7 @@ func (s *Server) makeItemsDefsAndFilePathsFromDirPaths(set *set.Set,
 	defs := make([]*queue.ItemDef, len(paths))
 
 	for i, path := range paths {
-		rq := RemoveReq{path: path, set: set, isDir: true}
+		rq := RemoveReq{Path: path, Set: set, IsDir: true}
 
 		dirFilepaths, err := s.db.GetFilesInDir(set.ID(), path)
 		if err != nil {
@@ -534,50 +555,50 @@ func (s *Server) makeItemsDefsAndFilePathsFromDirPaths(set *set.Set,
 		}
 
 		if len(dirFilepaths) == 0 {
-			rq.isDirEmpty = true
+			rq.IsDirEmpty = true
 		}
 
 		filepaths = append(filepaths, dirFilepaths...)
 
-		defs[i] = &queue.ItemDef{
-			Key:          rq.key(),
-			Data:         rq,
-			TTR:          ttr,
-			ReserveGroup: reserveGroup,
+		def, err := buildRemoveItemDef(rq, reserveGroup)
+		if err != nil {
+			return nil, nil, err
 		}
+
+		defs[i] = def
 	}
 
 	return filepaths, defs, nil
 }
 
 func (s *Server) removeFileFromIRODSandDB(removeReq *RemoveReq) error {
-	entry, err := s.db.GetFileEntryForSet(removeReq.set.ID(), removeReq.path)
+	entry, err := s.db.GetFileEntryForSet(removeReq.Set.ID(), removeReq.Path)
 	if err != nil {
 		return err
 	}
 
-	transformer, err := removeReq.set.MakeTransformer()
+	transformer, err := removeReq.Set.MakeTransformer()
 	if err != nil {
 		return err
 	}
 
-	if !removeReq.isRemovedFromIRODS {
-		err = s.removeFileFromIRODS(removeReq.set, removeReq.path, transformer)
+	if !removeReq.IsRemovedFromIRODS {
+		err = s.removeFileFromIRODS(removeReq.Set, removeReq.Path, transformer)
 		if err != nil {
-			s.setErrorOnEntry(entry, removeReq.set.ID(), removeReq.path, err)
+			s.setErrorOnEntry(entry, removeReq.Set.ID(), removeReq.Path, err)
 
 			return err
 		}
 
-		removeReq.isRemovedFromIRODS = true
+		removeReq.IsRemovedFromIRODS = true
 	}
 
-	err = s.db.RemoveFileEntry(removeReq.set.ID(), removeReq.path)
+	err = s.db.RemoveFileEntry(removeReq.Set.ID(), removeReq.Path)
 	if err != nil {
 		return err
 	}
 
-	return s.db.UpdateBasedOnRemovedEntry(removeReq.set.ID(), entry)
+	return s.db.UpdateBasedOnRemovedEntry(removeReq.Set.ID(), entry)
 }
 
 func (s *Server) removeFileFromIRODS(set *set.Set, path string, transformer put.PathTransformer) error {
@@ -681,26 +702,26 @@ func (s *Server) setErrorOnEntry(entry *set.Entry, sid, path string, err error) 
 }
 
 func (s *Server) removeDirFromIRODSandDB(removeReq *RemoveReq) error {
-	transformer, err := removeReq.set.MakeTransformer()
+	transformer, err := removeReq.Set.MakeTransformer()
 	if err != nil {
 		return err
 	}
 
-	if !removeReq.isDirEmpty && !removeReq.isRemovedFromIRODS {
-		err = put.RemoveDirFromIRODS(s.storageHandler, removeReq.path, transformer)
+	if !removeReq.IsDirEmpty && !removeReq.IsRemovedFromIRODS {
+		err = put.RemoveDirFromIRODS(s.storageHandler, removeReq.Path, transformer)
 		if err != nil {
 			return err
 		}
 
-		removeReq.isRemovedFromIRODS = true
+		removeReq.IsRemovedFromIRODS = true
 	}
 
-	err = s.db.RemoveDirEntry(removeReq.set.ID(), removeReq.path)
+	err = s.db.RemoveDirEntry(removeReq.Set.ID(), removeReq.Path)
 	if err != nil {
 		return err
 	}
 
-	return s.db.IncrementSetTotalRemoved(removeReq.set.ID())
+	return s.db.IncrementSetTotalRemoved(removeReq.Set.ID())
 }
 
 // bindPathsAndValidateSet gets the paths out of the JSON body, and the set id
