@@ -234,7 +234,46 @@ func (s *Server) doDiscovery(given *set.Set) (*set.Set, error) {
 		}
 	}
 
-	return s.db.Discover(given.ID(), func(entries []*set.Entry) ([]*set.Dirent, []*set.Dirent, error) {
+	return s.db.Discover(given.ID(), s.walkDirEntries(given, excludeTree))
+}
+
+func (s *Server) discoverSetRemovals(given *set.Set) error {
+	filesToRemove, err := s.findFilesToRemove(given)
+	if err != nil {
+		return err
+	}
+
+	if filesToRemove == nil {
+		return nil
+	}
+
+	return s.removeFilesAndDirs(given, filesToRemove, nil)
+}
+
+func (s *Server) findFilesToRemove(given *set.Set) ([]string, error) {
+	fileEntriesInSet, err := s.db.GetFileEntries(given.ID())
+	if err != nil {
+		return nil, err
+	}
+
+	var filesToRemove []string
+
+	for _, file := range fileEntriesInSet {
+		_, err := os.Stat(file.Path)
+
+		if errors.Is(err, os.ErrNotExist) {
+			filesToRemove = append(filesToRemove, file.Path)
+		} else if err != nil {
+			return nil, err
+		}
+
+	}
+
+	return filesToRemove, nil
+}
+
+func (s *Server) walkDirEntries(given *set.Set, excludeTree ptrie.Trie[bool]) func([]*set.Entry) ([]*set.Dirent, []*set.Dirent, error) {
+	return func(entries []*set.Entry) ([]*set.Dirent, []*set.Dirent, error) {
 		entriesCh := make(chan *set.Dirent)
 		doneCh := make(chan error)
 		warnCh := make(chan error)
@@ -242,7 +281,7 @@ func (s *Server) doDiscovery(given *set.Set) (*set.Set, error) {
 		go s.doSetDirWalks(entries, excludeTree, given, entriesCh, doneCh, warnCh)
 
 		return s.processSetDirWalkOutput(given, entriesCh, doneCh, warnCh)
-	})
+	}
 }
 
 func (s *Server) processSetDirWalkOutput(given *set.Set, entriesCh chan *set.Dirent,

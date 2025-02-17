@@ -103,6 +103,9 @@ type Set struct {
 	// defaults to unmonitored (a one time upload of Entries).
 	MonitorTime time.Duration
 
+	// TODO
+	MonitorRemovals bool
+
 	// An optional longer free-text description of this backup set.
 	Description string
 
@@ -657,6 +660,7 @@ func (s *Set) RecoveryError(err error) {
 func (s *Set) copyUserProperties(copySet *Set) {
 	s.Transformer = copySet.Transformer
 	s.MonitorTime = copySet.MonitorTime
+	s.MonitorRemovals = copySet.MonitorRemovals
 	s.DeleteLocal = copySet.DeleteLocal
 	s.Description = copySet.Description
 	s.Error = copySet.Error
