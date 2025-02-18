@@ -67,7 +67,7 @@ func RemovePathFromSetInIRODS(handler Handler, transformer PathTransformer, path
 // same file, if not, it removes the file.
 func handleHardlinkAndRemoveFromIRODS(handler Handler, path string, transformer PathTransformer,
 	meta map[string]string) error {
-	err := handler.removeFile(path)
+	err := handler.RemoveFile(path)
 	if err != nil {
 		return err
 	}
@@ -81,7 +81,7 @@ func handleHardlinkAndRemoveFromIRODS(handler Handler, path string, transformer 
 		return err
 	}
 
-	items, err := handler.queryMeta(dirToSearch, map[string]string{MetaKeyRemoteHardlink: meta[MetaKeyRemoteHardlink]})
+	items, err := handler.QueryMeta(dirToSearch, map[string]string{MetaKeyRemoteHardlink: meta[MetaKeyRemoteHardlink]})
 	if err != nil {
 		return err
 	}
@@ -90,7 +90,7 @@ func handleHardlinkAndRemoveFromIRODS(handler Handler, path string, transformer 
 		return nil
 	}
 
-	return handler.removeFile(meta[MetaKeyRemoteHardlink])
+	return handler.RemoveFile(meta[MetaKeyRemoteHardlink])
 }
 
 // RemoveDirFromIRODS removes the remote path of a given directory from iRODS.

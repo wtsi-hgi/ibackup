@@ -258,13 +258,13 @@ func (l *LocalHandler) RemoveDir(path string) error {
 	return os.Remove(path)
 }
 
-func (l *LocalHandler) removeFile(path string) error {
+func (l *LocalHandler) RemoveFile(path string) error {
 	delete(l.meta, path)
 
 	return os.Remove(path)
 }
 
-func (l *LocalHandler) queryMeta(dirToSearch string, meta map[string]string) ([]string, error) {
+func (l *LocalHandler) QueryMeta(dirToSearch string, meta map[string]string) ([]string, error) {
 	var objects []string
 
 	for path, pathMeta := range l.meta {

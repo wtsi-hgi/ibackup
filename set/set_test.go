@@ -357,6 +357,19 @@ func TestSetDB(t *testing.T) {
 				err = db.SetFileEntries(set2.ID(), []string{"/a/b.txt", "/c/k.txt"})
 				So(err, ShouldBeNil)
 
+				Convey("You can get all paths containing a prefix", func() {
+					err = db.SetFileEntries(set2.ID(), []string{"/a/a/j.txt", "/a/b/c/k.txt",
+						"/a/b/c/l.txt", "/a/b/d/m.txt", "/c/n.txt"})
+					So(err, ShouldBeNil)
+
+					files, errp := db.getPathsWithPrefix(set2.ID(), fileBucket, "/a/b/c/")
+					So(errp, ShouldBeNil)
+
+					So(len(files), ShouldEqual, 2)
+					So(files, ShouldContain, "/a/b/c/k.txt")
+					So(files, ShouldContain, "/a/b/c/l.txt")
+				})
+
 				Convey("Then remove files and dirs from the sets", func() {
 					err = db.removeEntry(set.ID(), "/a/b.txt", fileBucket)
 					So(err, ShouldBeNil)
