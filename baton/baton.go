@@ -259,7 +259,7 @@ func (b *Baton) ensureCollection(clientIndex int, ri ex.RodsItem) error {
 	return b.createCollectionWithTimeoutAndRetries(clientIndex, ri)
 }
 
-// timeoutOp carries out op, returning any error from it. Has a 10s timeout on
+// TimeoutOp carries out op, returning any error from it. Has a 10s timeout on
 // running op, and will return a timeout error instead if exceeded.
 func timeoutOp(op retry.Operation, path string) error {
 	errCh := make(chan error, 1)
