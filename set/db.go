@@ -374,23 +374,41 @@ func (d *DB) RemoveDirEntry(setID string, path string) error {
 
 // GetFilesInDir returns all file paths from inside the given directory (and all
 // nested inside) for the given set using the db.
-func (d *DB) GetFilesInDir(setID string, dirpath string) ([]string, error) {
-	var filepaths []string
-
-	entries, err := d.getEntries(setID, discoveredBucket)
+func (d *DBRO) GetFilesInDir(setID string, dirpath string) ([]string, error) {
+	filepaths, err := d.getPathsWithPrefix(setID, discoveredBucket, dirpath)
 	if err != nil {
 		return nil, err
 	}
 
-	for _, entry := range entries {
-		path := entry.Path
-
-		if strings.HasPrefix(path, dirpath) {
-			filepaths = append(filepaths, path)
-		}
-	}
-
 	return filepaths, nil
+}
+
+// getPathsWithPrefix returns all the filepaths for the given set from the given sub
+// bucket prefix, that have the given prefix.
+func (d *DBRO) getPathsWithPrefix(setID, bucketName, prefix string) ([]string, error) {
+	var entries []string
+
+	err := d.db.View(func(tx *bolt.Tx) error {
+		subBucketName := []byte(bucketName + separator + setID)
+		setsBucket := tx.Bucket([]byte(setsBucket))
+
+		entriesBucket := setsBucket.Bucket(subBucketName)
+		if entriesBucket == nil {
+			return nil
+		}
+
+		c := entriesBucket.Cursor()
+
+		prefix := []byte(prefix)
+
+		for k, _ := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, _ = c.Next() {
+			entries = append(entries, string(k))
+		}
+
+		return nil
+	})
+
+	return entries, err
 }
 
 // SetFileEntries sets the file paths for the given backup set. Only supply

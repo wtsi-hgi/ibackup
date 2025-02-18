@@ -124,11 +124,11 @@ type Handler interface {
 	// RemoveDir deletes a given empty folder
 	RemoveDir(path string) error
 
-	// removeFile deletes a given file
-	removeFile(path string) error
+	// RemoveFile deletes a given file
+	RemoveFile(path string) error
 
-	// queryMeta return paths to all objects with given metadata
-	queryMeta(dirToSearch string, meta map[string]string) ([]string, error)
+	// QueryMeta return paths to all objects with given metadata
+	QueryMeta(dirToSearch string, meta map[string]string) ([]string, error)
 }
 
 // FileReadTester is a function that attempts to open and read the given path,

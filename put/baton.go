@@ -502,7 +502,7 @@ func metaToAVUs(meta map[string]string) []ex.AVU {
 	return avus
 }
 
-func (b *Baton) removeFile(path string) error {
+func (b *Baton) RemoveFile(path string) error {
 	it := remotePathToRodsItem(path)
 
 	err := timeoutOp(func() error {
@@ -514,7 +514,7 @@ func (b *Baton) removeFile(path string) error {
 	return err
 }
 
-func (b *Baton) queryMeta(dirToSearch string, meta map[string]string) ([]string, error) {
+func (b *Baton) QueryMeta(dirToSearch string, meta map[string]string) ([]string, error) {
 	it := &ex.RodsItem{
 		IPath: dirToSearch,
 		IAVUs: metaToAVUs(meta),
@@ -539,7 +539,7 @@ func (b *Baton) queryMeta(dirToSearch string, meta map[string]string) ([]string,
 	return paths, err
 }
 
-// RemoveDirFromIRODS removes the given directory from iRODS given it is empty.
+// RemoveDir removes the given directory from iRODS given it is empty.
 func (b *Baton) RemoveDir(path string) error {
 	it := &ex.RodsItem{
 		IPath: path,
