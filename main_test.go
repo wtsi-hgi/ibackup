@@ -1953,6 +1953,8 @@ func confirmFileContents(file, expectedContents string) {
 }
 
 func TestRemove(t *testing.T) {
+	resetIRODS()
+
 	Convey("Given a server", t, func() {
 		remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
 		if remotePath == "" {
@@ -1969,8 +1971,6 @@ func TestRemove(t *testing.T) {
 
 			return
 		}
-
-		resetIRODS()
 
 		dir := t.TempDir()
 		s := new(TestServer)
