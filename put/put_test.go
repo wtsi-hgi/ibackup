@@ -173,7 +173,7 @@ func TestPutMock(t *testing.T) {
 				Convey("RemoveFile removes a file", func() {
 					filePath := requests[0].Remote
 
-					err = lh.removeFile(filePath)
+					err = lh.RemoveFile(filePath)
 					So(err, ShouldBeNil)
 
 					_, err = os.Stat(filePath)
@@ -193,18 +193,18 @@ func TestPutMock(t *testing.T) {
 				})
 
 				Convey("queryMeta returns all paths with matching metadata", func() {
-					paths, errq := lh.queryMeta("", map[string]string{"a": "1"})
+					paths, errq := lh.QueryMeta("", map[string]string{"a": "1"})
 					So(errq, ShouldBeNil)
 
 					So(len(paths), ShouldEqual, 5)
 
-					paths, err = lh.queryMeta("", map[string]string{MetaKeyRequester: requests[0].Requester})
+					paths, err = lh.QueryMeta("", map[string]string{MetaKeyRequester: requests[0].Requester})
 					So(err, ShouldBeNil)
 
 					So(len(paths), ShouldEqual, 1)
 
 					Convey("queryMeta only returns paths in the provided scope", func() {
-						paths, errq := lh.queryMeta(expectedCollections[1], map[string]string{"a": "1"})
+						paths, errq := lh.QueryMeta(expectedCollections[1], map[string]string{"a": "1"})
 						So(errq, ShouldBeNil)
 
 						So(len(paths), ShouldEqual, 2)
