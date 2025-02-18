@@ -44,6 +44,7 @@ import (
 	"github.com/inconshreveable/log15"
 	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/ibackup/put"
+	"github.com/wtsi-hgi/ibackup/remove"
 	"github.com/wtsi-hgi/ibackup/set"
 	"github.com/wtsi-hgi/ibackup/slack"
 	"github.com/wtsi-ssg/wrstat/v6/scheduler"
@@ -91,7 +92,7 @@ type Config struct {
 	SlackMessageDebounce time.Duration
 
 	// StorageHandler is used to interact with the storage system, e.g. iRODS.
-	StorageHandler put.Handler
+	StorageHandler remove.RemoveHandler
 }
 
 // Server is used to start a web server that provides a REST API to the setdb
@@ -116,7 +117,7 @@ type Server struct {
 	stillRunningMsgFreq    time.Duration
 	serverAliveCh          chan bool
 	uploadTracker          *uploadTracker
-	storageHandler         put.Handler
+	storageHandler         remove.RemoveHandler
 
 	mapMu               sync.RWMutex
 	creatingCollections map[string]bool
@@ -152,15 +153,17 @@ func New(conf Config) (*Server, error) {
 
 	s.Server.Router().Use(gas.IncludeAbortErrorsInBody)
 
-	s.monitor = NewMonitor(func(given *set.Set) {
-		if err := s.discoverSet(given); err != nil {
-			s.Logger.Printf("error discovering set during monitoring: %s", err)
-		}
-	})
+	s.monitor = NewMonitor(s.monitorCB)
 
 	s.SetStopCallBack(s.stop)
 
 	return s, nil
+}
+
+func (s *Server) monitorCB(given *set.Set) {
+	if err := s.discoverSet(given); err != nil {
+		s.Logger.Printf("error discovering set during monitoring: %s", err)
+	}
 }
 
 // Start logs to slack that the server has been started and then calls

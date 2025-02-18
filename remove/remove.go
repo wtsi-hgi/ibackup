@@ -24,30 +24,47 @@
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  ******************************************************************************/
 
-package put
+// package remove is used to interact with iRODS.
+
+package remove
 
 import (
 	"reflect"
 	"strings"
+
+	"github.com/wtsi-hgi/ibackup/put"
 )
+
+type RemoveHandler interface {
+	put.Handler
+
+	// RemoveDir deletes a given empty folder
+	RemoveDir(path string) error
+
+	// RemoveFile deletes a given file
+	RemoveFile(path string) error
+
+	// QueryMeta return paths to all objects with given metadata
+	QueryMeta(dirToSearch string, meta map[string]string) ([]string, error)
+}
 
 // RemovePathFromSetInIRODS removes the given path from iRODS if the path is not
 // associated with any other sets. Otherwise it updates the iRODS metadata for
 // the path to not include the given set.
-func RemovePathFromSetInIRODS(handler Handler, transformer PathTransformer, path string,
+func RemovePathFromSetInIRODS(handler RemoveHandler, transformer put.PathTransformer, path string,
 	sets, requesters []string, meta map[string]string) error {
 	if len(sets) == 0 {
 		return handleHardlinkAndRemoveFromIRODS(handler, path, transformer, meta)
 	}
 
 	metaToRemove := map[string]string{
-		MetaKeySets:      meta[MetaKeySets],
-		MetaKeyRequester: meta[MetaKeyRequester],
+		put.MetaKeySets:      meta[put.MetaKeySets],
+		put.MetaKeyRequester: meta[put.MetaKeyRequester],
 	}
 
 	newMeta := map[string]string{
-		MetaKeySets:      strings.Join(sets, ","),
-		MetaKeyRequester: strings.Join(requesters, ","),
+		put.MetaKeySets:      strings.Join(sets, ","),
+		put.MetaKeyRequester: strings.Join(requesters, ","),
 	}
 
 	if reflect.DeepEqual(metaToRemove, newMeta) {
@@ -65,14 +82,14 @@ func RemovePathFromSetInIRODS(handler Handler, transformer PathTransformer, path
 // handleHardLinkAndRemoveFromIRODS removes the given path from iRODS. If the
 // path is found to be a hardlink, it checks if there are other hardlinks to the
 // same file, if not, it removes the file.
-func handleHardlinkAndRemoveFromIRODS(handler Handler, path string, transformer PathTransformer,
+func handleHardlinkAndRemoveFromIRODS(handler RemoveHandler, path string, transformer put.PathTransformer,
 	meta map[string]string) error {
 	err := handler.RemoveFile(path)
 	if err != nil {
 		return err
 	}
 
-	if meta[MetaKeyHardlink] == "" {
+	if meta[put.MetaKeyHardlink] == "" {
 		return nil
 	}
 
@@ -81,7 +98,7 @@ func handleHardlinkAndRemoveFromIRODS(handler Handler, path string, transformer 
 		return err
 	}
 
-	items, err := handler.QueryMeta(dirToSearch, map[string]string{MetaKeyRemoteHardlink: meta[MetaKeyRemoteHardlink]})
+	items, err := handler.QueryMeta(dirToSearch, map[string]string{put.MetaKeyRemoteHardlink: meta[put.MetaKeyRemoteHardlink]})
 	if err != nil {
 		return err
 	}
@@ -90,11 +107,11 @@ func handleHardlinkAndRemoveFromIRODS(handler Handler, path string, transformer 
 		return nil
 	}
 
-	return handler.RemoveFile(meta[MetaKeyRemoteHardlink])
+	return handler.RemoveFile(meta[put.MetaKeyRemoteHardlink])
 }
 
 // RemoveDirFromIRODS removes the remote path of a given directory from iRODS.
-func RemoveDirFromIRODS(handler Handler, path string, transformer PathTransformer) error {
+func RemoveDirFromIRODS(handler RemoveHandler, path string, transformer put.PathTransformer) error {
 	rpath, err := transformer(path)
 	if err != nil {
 		return err
