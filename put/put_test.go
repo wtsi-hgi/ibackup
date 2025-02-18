@@ -79,8 +79,8 @@ func TestPutMock(t *testing.T) {
 					So(err, ShouldBeNil)
 
 					lh.mu.RLock()
-					So(lh.meta[request.Remote], ShouldResemble, request.Meta.LocalMeta)
-					checkAddedMeta(lh.meta[request.Remote])
+					So(lh.Meta[request.Remote], ShouldResemble, request.Meta.LocalMeta)
+					checkAddedMeta(lh.Meta[request.Remote])
 					lh.mu.RUnlock()
 				}
 
@@ -111,10 +111,10 @@ func TestPutMock(t *testing.T) {
 						case RequestStatusReplaced:
 							replaced++
 							lh.mu.RLock()
-							So(lh.meta[request.Remote], ShouldResemble, requests[0].Meta.LocalMeta)
-							So(lh.meta[request.Remote][MetaKeyRequester], ShouldEqual, "John,Sam")
-							So(lh.meta[request.Remote][MetaKeySets], ShouldEqual, "setA,setB")
-							date = lh.meta[request.Remote][MetaKeyDate]
+							So(lh.Meta[request.Remote], ShouldResemble, requests[0].Meta.LocalMeta)
+							So(lh.Meta[request.Remote][MetaKeyRequester], ShouldEqual, "John,Sam")
+							So(lh.Meta[request.Remote][MetaKeySets], ShouldEqual, "setA,setB")
+							date = lh.Meta[request.Remote][MetaKeyDate]
 							lh.mu.RUnlock()
 						default:
 							other++
@@ -157,9 +157,9 @@ func TestPutMock(t *testing.T) {
 						request = <-srCh
 						So(request.Status, ShouldEqual, RequestStatusUnmodified)
 						lh.mu.RLock()
-						So(lh.meta[request.Remote][MetaKeyRequester], ShouldEqual, "John,Sam")
-						So(lh.meta[request.Remote][MetaKeySets], ShouldEqual, "setA,setB,setC")
-						So(lh.meta[request.Remote][MetaKeyDate], ShouldEqual, date)
+						So(lh.Meta[request.Remote][MetaKeyRequester], ShouldEqual, "John,Sam")
+						So(lh.Meta[request.Remote][MetaKeySets], ShouldEqual, "setA,setB,setC")
+						So(lh.Meta[request.Remote][MetaKeyDate], ShouldEqual, date)
 						lh.mu.RUnlock()
 					})
 				})
@@ -170,46 +170,6 @@ func TestPutMock(t *testing.T) {
 					So(lh.cleaned, ShouldBeTrue)
 				})
 
-				Convey("RemoveFile removes a file", func() {
-					filePath := requests[0].Remote
-
-					err = lh.RemoveFile(filePath)
-					So(err, ShouldBeNil)
-
-					_, err = os.Stat(filePath)
-					So(err, ShouldNotBeNil)
-
-					So(lh.meta[filePath], ShouldBeNil)
-
-					Convey("RemoveDir removes an empty directory", func() {
-						dirPath := filepath.Dir(filePath)
-
-						err = lh.RemoveDir(dirPath)
-						So(err, ShouldBeNil)
-
-						_, err = os.Stat(dirPath)
-						So(err, ShouldNotBeNil)
-					})
-				})
-
-				Convey("queryMeta returns all paths with matching metadata", func() {
-					paths, errq := lh.QueryMeta("", map[string]string{"a": "1"})
-					So(errq, ShouldBeNil)
-
-					So(len(paths), ShouldEqual, 5)
-
-					paths, err = lh.QueryMeta("", map[string]string{MetaKeyRequester: requests[0].Requester})
-					So(err, ShouldBeNil)
-
-					So(len(paths), ShouldEqual, 1)
-
-					Convey("queryMeta only returns paths in the provided scope", func() {
-						paths, errq := lh.QueryMeta(expectedCollections[1], map[string]string{"a": "1"})
-						So(errq, ShouldBeNil)
-
-						So(len(paths), ShouldEqual, 2)
-					})
-				})
 			})
 
 			Convey("Put() fails if the local files don't exist", func() {
@@ -287,15 +247,15 @@ func TestPutMock(t *testing.T) {
 				So(errs, ShouldBeNil)
 				So(info.Size(), ShouldEqual, 2)
 
-				So(lh.meta[requests[2].Remote][setMetaKey], ShouldEqual, "a")
-				So(lh.meta[requests[2].Hardlink][setMetaKey], ShouldNotBeBlank)
-				So(lh.meta[requests[2].Remote][MetaKeyRemoteHardlink], ShouldEqual, requests[2].Hardlink)
-				So(lh.meta[requests[2].Remote][MetaKeyHardlink], ShouldEqual, requests[2].Local)
+				So(lh.Meta[requests[2].Remote][setMetaKey], ShouldEqual, "a")
+				So(lh.Meta[requests[2].Hardlink][setMetaKey], ShouldNotBeBlank)
+				So(lh.Meta[requests[2].Remote][MetaKeyRemoteHardlink], ShouldEqual, requests[2].Hardlink)
+				So(lh.Meta[requests[2].Remote][MetaKeyHardlink], ShouldEqual, requests[2].Local)
 
-				So(lh.meta[requests[4].Remote][setMetaKey], ShouldEqual, "b")
-				So(lh.meta[requests[4].Hardlink][setMetaKey], ShouldNotBeBlank)
-				So(lh.meta[requests[4].Remote][MetaKeyRemoteHardlink], ShouldEqual, requests[2].Hardlink)
-				So(lh.meta[requests[4].Remote][MetaKeyHardlink], ShouldEqual, requests[4].Local)
+				So(lh.Meta[requests[4].Remote][setMetaKey], ShouldEqual, "b")
+				So(lh.Meta[requests[4].Hardlink][setMetaKey], ShouldNotBeBlank)
+				So(lh.Meta[requests[4].Remote][MetaKeyRemoteHardlink], ShouldEqual, requests[2].Hardlink)
+				So(lh.Meta[requests[4].Remote][MetaKeyHardlink], ShouldEqual, requests[4].Local)
 
 				Convey("re-uploading an unmodified hardlink does not replace remote files", func() {
 					hardlinkMTime := info.ModTime()
@@ -463,9 +423,9 @@ func TestPutMock(t *testing.T) {
 			So(statusCounts[RequestStatusUploaded], ShouldEqual, 1)
 			So(statusCounts[RequestStatusUnmodified], ShouldEqual, 0)
 
-			So(lh.meta[remotePath][MetaKeySets], ShouldEqual, "aSet,bSet,cSet")
-			So(lh.meta[remotePath]["aKey"], ShouldEqual, "cValue")
-			So(lh.meta[remotePath]["bKey"], ShouldEqual, "yetAnotherValue")
+			So(lh.Meta[remotePath][MetaKeySets], ShouldEqual, "aSet,bSet,cSet")
+			So(lh.Meta[remotePath]["aKey"], ShouldEqual, "cValue")
+			So(lh.Meta[remotePath]["bKey"], ShouldEqual, "yetAnotherValue")
 		})
 	})
 

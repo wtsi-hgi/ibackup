@@ -94,7 +94,7 @@ var removeCmd = &cobra.Command{
 			paths = append(paths, removePath)
 		}
 
-		remove(client, removeUser, removeName, paths)
+		handleRemove(client, removeUser, removeName, paths)
 	},
 }
 
@@ -117,8 +117,8 @@ func init() {
 	}
 }
 
-// remove does the main job of sending the set, files and dirs to the server.
-func remove(client *server.Client, user, name string, paths []string) {
+// handleRemove does the main job of sending the set, files and dirs to the server.
+func handleRemove(client *server.Client, user, name string, paths []string) {
 	sets := getSetByName(client, user, name)
 
 	err := client.RemoveFilesAndDirs(sets[0].ID(), paths)

@@ -29,7 +29,6 @@ import (
 	"io"
 	"maps"
 	"os"
-	"strings"
 	"sync"
 	"time"
 )
@@ -45,7 +44,7 @@ type LocalHandler struct {
 	connected   bool
 	cleaned     bool
 	collections []string
-	meta        map[string]map[string]string
+	Meta        map[string]map[string]string
 	statFail    string
 	putFail     string
 	putSlow     string
@@ -59,7 +58,7 @@ type LocalHandler struct {
 // Remote for any Put()s. For use during tests.
 func GetLocalHandler() *LocalHandler {
 	return &LocalHandler{
-		meta: make(map[string]map[string]string),
+		Meta: make(map[string]map[string]string),
 	}
 }
 
@@ -112,7 +111,7 @@ func (l *LocalHandler) Stat(request *Request) (*ObjectInfo, error) {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 
-	meta, exists := l.meta[request.Remote]
+	meta, exists := l.Meta[request.Remote]
 	if !exists {
 		meta = make(map[string]string)
 	} else {
@@ -191,7 +190,7 @@ func (l *LocalHandler) RemoveMeta(path string, meta map[string]string) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	pathMeta, exists := l.meta[path]
+	pathMeta, exists := l.Meta[path]
 	if !exists {
 		return nil
 	}
@@ -213,10 +212,10 @@ func (l *LocalHandler) AddMeta(path string, meta map[string]string) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	pathMeta, exists := l.meta[path]
+	pathMeta, exists := l.Meta[path]
 	if !exists {
 		pathMeta = make(map[string]string)
-		l.meta[path] = pathMeta
+		l.Meta[path] = pathMeta
 	}
 
 	for key, val := range meta {
@@ -236,11 +235,11 @@ func (l *LocalHandler) GetMeta(path string) (map[string]string, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	if l.meta == nil {
+	if l.Meta == nil {
 		return make(map[string]string), nil
 	}
 
-	currentMeta, exists := l.meta[path]
+	currentMeta, exists := l.Meta[path]
 	if !exists {
 		currentMeta = make(map[string]string)
 	}
@@ -252,44 +251,4 @@ func (l *LocalHandler) GetMeta(path string) (map[string]string, error) {
 	}
 
 	return meta, nil
-}
-
-func (l *LocalHandler) RemoveDir(path string) error {
-	return os.Remove(path)
-}
-
-func (l *LocalHandler) RemoveFile(path string) error {
-	delete(l.meta, path)
-
-	return os.Remove(path)
-}
-
-func (l *LocalHandler) QueryMeta(dirToSearch string, meta map[string]string) ([]string, error) {
-	var objects []string
-
-	for path, pathMeta := range l.meta {
-		if !strings.HasPrefix(path, dirToSearch) {
-			continue
-		}
-
-		if doesMetaContainMeta(pathMeta, meta) {
-			objects = append(objects, path)
-		}
-	}
-
-	return objects, nil
-}
-
-func doesMetaContainMeta(sourceMeta, targetMeta map[string]string) bool {
-	valid := true
-
-	for k, v := range targetMeta {
-		if sourceMeta[k] != v {
-			valid = false
-
-			break
-		}
-	}
-
-	return valid
 }

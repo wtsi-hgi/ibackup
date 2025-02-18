@@ -42,6 +42,7 @@ import (
 	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/grand"
 	"github.com/wtsi-hgi/ibackup/put"
+	"github.com/wtsi-hgi/ibackup/remove"
 	"github.com/wtsi-hgi/ibackup/set"
 	"github.com/wtsi-hgi/ibackup/slack"
 )
@@ -617,7 +618,7 @@ func (s *Server) removeFileFromIRODS(set *set.Set, path string, transformer put.
 		return err
 	}
 
-	return put.RemovePathFromSetInIRODS(s.storageHandler, transformer, rpath, sets, requesters, remoteMeta)
+	return remove.RemovePathFromSetInIRODS(s.storageHandler, transformer, rpath, sets, requesters, remoteMeta)
 }
 
 func (s *Server) handleSetsAndRequesters(set *set.Set, meta map[string]string) ([]string, []string, error) {
@@ -708,7 +709,7 @@ func (s *Server) removeDirFromIRODSandDB(removeReq *RemoveReq) error {
 	}
 
 	if !removeReq.IsDirEmpty && !removeReq.IsRemovedFromIRODS {
-		err = put.RemoveDirFromIRODS(s.storageHandler, removeReq.Path, transformer)
+		err = remove.RemoveDirFromIRODS(s.storageHandler, removeReq.Path, transformer)
 		if err != nil {
 			return err
 		}

@@ -148,9 +148,9 @@ func TestPutBaton(t *testing.T) {
 						err = p.Cleanup()
 						So(err, ShouldBeNil)
 
-						So(h.putMetaPool.IsOpen(), ShouldBeFalse)
+						So(h.PutMetaPool.IsOpen(), ShouldBeFalse)
 						So(h.putClient.IsRunning(), ShouldBeFalse)
-						So(h.metaClient.IsRunning(), ShouldBeFalse)
+						So(h.MetaClient.IsRunning(), ShouldBeFalse)
 						So(h.collClients, ShouldBeNil)
 					})
 				})

@@ -30,7 +30,6 @@ package put
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -71,9 +70,9 @@ type Baton struct {
 	collCh      chan string
 	collErrCh   chan error
 	collMu      sync.Mutex
-	putMetaPool *ex.ClientPool
+	PutMetaPool *ex.ClientPool
 	putClient   *ex.Client
-	metaClient  *ex.Client
+	MetaClient  *ex.Client
 }
 
 // GetBatonHandler returns a Handler that uses Baton to interact with iRODS. If
@@ -84,34 +83,6 @@ func GetBatonHandler() (*Baton, error) {
 	_, err := ex.FindBaton()
 
 	return &Baton{}, err
-}
-
-// GetBatonHandlerWithMetaClient returns a Handler that uses Baton to interact
-// with iRODS and contains a meta client for interacting with metadata. If you
-// don't have baton-do in your PATH, you'll get an error.
-func GetBatonHandlerWithMetaClient() (*Baton, error) {
-	setupExtendoLogger()
-
-	_, err := ex.FindBaton()
-	if err != nil {
-		return nil, err
-	}
-
-	params := ex.DefaultClientPoolParams
-	params.MaxSize = 1
-	pool := ex.NewClientPool(params, "")
-
-	metaClient, err := pool.Get()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get metaClient: %w", err)
-	}
-
-	baton := &Baton{
-		putMetaPool: pool,
-		metaClient:  metaClient,
-	}
-
-	return baton, nil
 }
 
 // setupExtendoLogger sets up a STDERR logger that the extendo library will use.
@@ -238,7 +209,7 @@ func (b *Baton) getClientsFromPoolConcurrently(pool *ex.ClientPool, numClients u
 }
 
 func (b *Baton) ensureCollection(clientIndex int, ri ex.RodsItem) error {
-	err := timeoutOp(func() error {
+	err := TimeoutOp(func() error {
 		_, errl := b.collClients[clientIndex].ListItem(ex.Args{}, ri)
 
 		return errl
@@ -254,9 +225,9 @@ func (b *Baton) ensureCollection(clientIndex int, ri ex.RodsItem) error {
 	return b.createCollectionWithTimeoutAndRetries(clientIndex, ri)
 }
 
-// timeoutOp carries out op, returning any error from it. Has a 10s timeout on
+// TimeoutOp carries out op, returning any error from it. Has a 10s timeout on
 // running op, and will return a timeout error instead if exceeded.
-func timeoutOp(op retry.Operation, path string) error {
+func TimeoutOp(op retry.Operation, path string) error {
 	errCh := make(chan error, 1)
 
 	go func() {
@@ -316,14 +287,14 @@ func (b *Baton) doWithTimeoutAndRetries(op retry.Operation, clientIndex int, pat
 // makes a new client on timeout or error.
 func (b *Baton) timeoutOpAndMakeNewClientOnError(op retry.Operation, clientIndex int, path string) retry.Operation {
 	return func() error {
-		err := timeoutOp(op, path)
+		err := TimeoutOp(op, path)
 		if err != nil {
 			pool := ex.NewClientPool(ex.DefaultClientPoolParams, "")
 
 			client, errp := pool.Get()
 			if errp == nil {
 				go func(oldClient *ex.Client) {
-					timeoutOp(func() error { //nolint:errcheck
+					TimeoutOp(func() error { //nolint:errcheck
 						oldClient.StopIgnoreError()
 
 						return nil
@@ -344,7 +315,7 @@ func (b *Baton) getClientByIndex(clientIndex int) *ex.Client {
 	case putClientIndex:
 		return b.putClient
 	case metaClientIndex:
-		return b.metaClient
+		return b.MetaClient
 	default:
 		return b.collClients[clientIndex]
 	}
@@ -355,7 +326,7 @@ func (b *Baton) setClientByIndex(clientIndex int, client *ex.Client) {
 	case putClientIndex:
 		b.putClient = client
 	case metaClientIndex:
-		b.metaClient = client
+		b.MetaClient = client
 	default:
 		b.collClients[clientIndex] = client
 	}
@@ -382,9 +353,9 @@ func (b *Baton) CollectionsDone() error {
 		return err
 	}
 
-	b.putMetaPool = pool
+	b.PutMetaPool = pool
 	b.putClient = <-clientCh
-	b.metaClient = <-clientCh
+	b.MetaClient = <-clientCh
 
 	return nil
 }
@@ -393,7 +364,7 @@ func (b *Baton) CollectionsDone() error {
 // errors.
 func (b *Baton) closeConnections(clients []*ex.Client) {
 	for _, client := range clients {
-		timeoutOp(func() error { //nolint:errcheck
+		TimeoutOp(func() error { //nolint:errcheck
 			client.StopIgnoreError()
 
 			return nil
@@ -405,9 +376,9 @@ func (b *Baton) closeConnections(clients []*ex.Client) {
 func (b *Baton) Stat(request *Request) (*ObjectInfo, error) {
 	var it ex.RodsItem
 
-	err := timeoutOp(func() error {
+	err := TimeoutOp(func() error {
 		var errl error
-		it, errl = b.metaClient.ListItem(ex.Args{Timestamp: true, AVU: true}, *requestToRodsItem(request))
+		it, errl = b.MetaClient.ListItem(ex.Args{Timestamp: true, AVU: true}, *requestToRodsItem(request))
 
 		return errl
 	}, "stat failed: "+request.Remote)
@@ -485,12 +456,12 @@ func (b *Baton) Put(request *Request) error {
 // AVUs.
 func requestToRodsItemWithAVUs(request *Request) *ex.RodsItem {
 	item := requestToRodsItem(request)
-	item.IAVUs = metaToAVUs(request.Meta.Metadata())
+	item.IAVUs = MetaToAVUs(request.Meta.Metadata())
 
 	return item
 }
 
-func metaToAVUs(meta map[string]string) []ex.AVU {
+func MetaToAVUs(meta map[string]string) []ex.AVU {
 	avus := make([]ex.AVU, len(meta))
 	i := 0
 
@@ -502,65 +473,13 @@ func metaToAVUs(meta map[string]string) []ex.AVU {
 	return avus
 }
 
-func (b *Baton) RemoveFile(path string) error {
-	it := remotePathToRodsItem(path)
-
-	err := timeoutOp(func() error {
-		_, errl := b.metaClient.RemObj(ex.Args{}, *it)
-
-		return errl
-	}, "remove meta error: "+path)
-
-	return err
-}
-
-func (b *Baton) QueryMeta(dirToSearch string, meta map[string]string) ([]string, error) {
-	it := &ex.RodsItem{
-		IPath: dirToSearch,
-		IAVUs: metaToAVUs(meta),
-	}
-
-	var items []ex.RodsItem
-
-	var err error
-
-	err = timeoutOp(func() error {
-		items, err = b.metaClient.MetaQuery(ex.Args{Object: true}, *it)
-
-		return err
-	}, "remove meta error: "+dirToSearch)
-
-	paths := make([]string, len(items))
-
-	for i, item := range items {
-		paths[i] = item.IPath
-	}
-
-	return paths, err
-}
-
-// RemoveDir removes the given directory from iRODS given it is empty.
-func (b *Baton) RemoveDir(path string) error {
-	it := &ex.RodsItem{
-		IPath: path,
-	}
-
-	err := timeoutOp(func() error {
-		_, errl := b.metaClient.RemDir(ex.Args{}, *it)
-
-		return errl
-	}, "remove meta error: "+path)
-
-	return err
-}
-
 // RemoveMeta removes the given metadata from a given object in iRODS.
 func (b *Baton) RemoveMeta(path string, meta map[string]string) error {
-	it := remotePathToRodsItem(path)
-	it.IAVUs = metaToAVUs(meta)
+	it := RemotePathToRodsItem(path)
+	it.IAVUs = MetaToAVUs(meta)
 
-	err := timeoutOp(func() error {
-		_, errl := b.metaClient.MetaRem(ex.Args{}, *it)
+	err := TimeoutOp(func() error {
+		_, errl := b.MetaClient.MetaRem(ex.Args{}, *it)
 
 		return errl
 	}, "remove meta error: "+path)
@@ -570,7 +489,7 @@ func (b *Baton) RemoveMeta(path string, meta map[string]string) error {
 
 // GetMeta gets all the metadata for the given object in iRODS.
 func (b *Baton) GetMeta(path string) (map[string]string, error) {
-	it, err := b.metaClient.ListItem(ex.Args{AVU: true, Timestamp: true, Size: true}, ex.RodsItem{
+	it, err := b.MetaClient.ListItem(ex.Args{AVU: true, Timestamp: true, Size: true}, ex.RodsItem{
 		IPath: filepath.Dir(path),
 		IName: filepath.Base(path),
 	})
@@ -578,8 +497,8 @@ func (b *Baton) GetMeta(path string) (map[string]string, error) {
 	return rodsItemToMeta(it), err
 }
 
-// remotePathToRodsItem converts a path in to an extendo RodsItem.
-func remotePathToRodsItem(path string) *ex.RodsItem {
+// RemotePathToRodsItem converts a path in to an extendo RodsItem.
+func RemotePathToRodsItem(path string) *ex.RodsItem {
 	return &ex.RodsItem{
 		IPath: filepath.Dir(path),
 		IName: filepath.Base(path),
@@ -588,11 +507,11 @@ func remotePathToRodsItem(path string) *ex.RodsItem {
 
 // AddMeta adds the given metadata to a given object in iRODS.
 func (b *Baton) AddMeta(path string, meta map[string]string) error {
-	it := remotePathToRodsItem(path)
-	it.IAVUs = metaToAVUs(meta)
+	it := RemotePathToRodsItem(path)
+	it.IAVUs = MetaToAVUs(meta)
 
-	err := timeoutOp(func() error {
-		_, errl := b.metaClient.MetaAdd(ex.Args{}, *it)
+	err := TimeoutOp(func() error {
+		_, errl := b.MetaClient.MetaAdd(ex.Args{}, *it)
 
 		return errl
 	}, "add meta error: "+path)
@@ -602,9 +521,9 @@ func (b *Baton) AddMeta(path string, meta map[string]string) error {
 
 // Cleanup stops our clients and closes our client pool.
 func (b *Baton) Cleanup() error {
-	b.closeConnections(append(b.collClients, b.putClient, b.metaClient))
+	b.closeConnections(append(b.collClients, b.putClient, b.MetaClient))
 
-	b.putMetaPool.Close()
+	b.PutMetaPool.Close()
 
 	b.collMu.Lock()
 	defer b.collMu.Unlock()
