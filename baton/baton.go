@@ -243,7 +243,7 @@ func (b *Baton) GetClientsFromPoolConcurrently(pool *ex.ClientPool, numClients u
 }
 
 func (b *Baton) ensureCollection(clientIndex int, ri ex.RodsItem) error {
-	err := timeoutOp(func() error {
+	err := TimeoutOp(func() error {
 		_, errl := b.collClients[clientIndex].ListItem(ex.Args{}, ri)
 
 		return errl
@@ -261,7 +261,7 @@ func (b *Baton) ensureCollection(clientIndex int, ri ex.RodsItem) error {
 
 // TimeoutOp carries out op, returning any error from it. Has a 10s timeout on
 // running op, and will return a timeout error instead if exceeded.
-func timeoutOp(op retry.Operation, path string) error {
+func TimeoutOp(op retry.Operation, path string) error {
 	errCh := make(chan error, 1)
 
 	go func() {
@@ -321,14 +321,14 @@ func (b *Baton) doWithTimeoutAndRetries(op retry.Operation, clientIndex int, pat
 // makes a new client on timeout or error.
 func (b *Baton) timeoutOpAndMakeNewClientOnError(op retry.Operation, clientIndex int, path string) retry.Operation {
 	return func() error {
-		err := timeoutOp(op, path)
+		err := TimeoutOp(op, path)
 		if err != nil {
 			pool := ex.NewClientPool(ex.DefaultClientPoolParams, "")
 
 			client, errp := pool.Get()
 			if errp == nil {
 				go func(oldClient *ex.Client) {
-					timeoutOp(func() error { //nolint:errcheck
+					TimeoutOp(func() error { //nolint:errcheck
 						oldClient.StopIgnoreError()
 
 						return nil
@@ -425,7 +425,7 @@ func (b *Baton) closeConnections(clients []*ex.Client) {
 			continue
 		}
 
-		timeoutOp(func() error { //nolint:errcheck
+		TimeoutOp(func() error { //nolint:errcheck
 			client.StopIgnoreError()
 
 			return nil
@@ -444,7 +444,7 @@ func (b *Baton) Stat(remote string) (bool, map[string]string, error) {
 
 	var it ex.RodsItem
 
-	err = timeoutOp(func() error {
+	err = TimeoutOp(func() error {
 		var errl error
 		it, errl = b.metaClient.ListItem(ex.Args{Timestamp: true, AVU: true}, *requestToRodsItem("", remote))
 
@@ -537,7 +537,7 @@ func getTempFile() (string, error) {
 	return file.Name(), nil
 }
 
-func metaToAVUs(meta map[string]string) []ex.AVU {
+func MetaToAVUs(meta map[string]string) []ex.AVU {
 	avus := make([]ex.AVU, len(meta))
 	i := 0
 
@@ -559,9 +559,9 @@ func (b *Baton) RemoveMeta(path string, meta map[string]string) error {
 	}
 
 	it := RemotePathToRodsItem(path)
-	it.IAVUs = metaToAVUs(meta)
+	it.IAVUs = MetaToAVUs(meta)
 
-	err = timeoutOp(func() error {
+	err = TimeoutOp(func() error {
 		_, errl := b.metaClient.MetaRem(ex.Args{}, *it)
 
 		return errl
@@ -605,9 +605,9 @@ func (b *Baton) AddMeta(path string, meta map[string]string) error {
 	}
 
 	it := RemotePathToRodsItem(path)
-	it.IAVUs = metaToAVUs(meta)
+	it.IAVUs = MetaToAVUs(meta)
 
-	err = timeoutOp(func() error {
+	err = TimeoutOp(func() error {
 		_, errl := b.metaClient.MetaAdd(ex.Args{}, *it)
 
 		return errl
@@ -642,7 +642,7 @@ func (b *Baton) RemoveFile(path string) error {
 
 	it := RemotePathToRodsItem(path)
 
-	err = timeoutOp(func() error {
+	err = TimeoutOp(func() error {
 		_, errl := b.removeClient.RemObj(ex.Args{}, *it)
 
 		return errl
@@ -668,7 +668,7 @@ func (b *Baton) RemoveDir(path string) error {
 		IPath: path,
 	}
 
-	err = timeoutOp(func() error {
+	err = TimeoutOp(func() error {
 		_, errl := b.removeClient.RemDir(ex.Args{}, *it)
 
 		return errl
@@ -703,12 +703,12 @@ func (b *Baton) QueryMeta(dirToSearch string, meta map[string]string) ([]string,
 
 	it := &ex.RodsItem{
 		IPath: dirToSearch,
-		IAVUs: metaToAVUs(meta),
+		IAVUs: MetaToAVUs(meta),
 	}
 
 	var items []ex.RodsItem
 
-	err = timeoutOp(func() error {
+	err = TimeoutOp(func() error {
 		items, err = b.metaClient.MetaQuery(ex.Args{Object: true}, *it)
 
 		return err

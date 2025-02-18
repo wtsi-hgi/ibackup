@@ -1998,8 +1998,6 @@ func TestRemove(t *testing.T) {
 			return
 		}
 
-		resetIRODS()
-
 		dir := t.TempDir()
 		s := new(TestServer)
 		s.prepareFilePaths(dir)

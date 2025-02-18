@@ -23,7 +23,7 @@
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  ******************************************************************************/
 
-// package put is used to interact with iRODS.
+// package put is used to put files in iRODS.
 
 package put
 
