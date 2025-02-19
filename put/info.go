@@ -31,6 +31,8 @@ import (
 	"strconv"
 	"syscall"
 	"time"
+
+	"github.com/wtsi-hgi/ibackup/internal"
 )
 
 const ErrStatFailed = "stat of local path returned strange results"
@@ -75,7 +77,7 @@ func Stat(localPath string) (*ObjectInfo, error) {
 func getUserAndGroupFromFileInfo(fi os.FileInfo, localPath string) (string, string, error) {
 	stat, ok := fi.Sys().(*syscall.Stat_t)
 	if !ok {
-		return "", "", Error{ErrStatFailed, localPath}
+		return "", "", internal.Error{ErrStatFailed, localPath}
 	}
 
 	u, err := user.LookupId(strconv.Itoa(int(stat.Uid)))

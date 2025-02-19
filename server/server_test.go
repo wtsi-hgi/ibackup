@@ -1574,7 +1574,7 @@ func TestServer(t *testing.T) {
 
 				client := NewClient(addr, certPath, token)
 
-				handler := put.GetLocalHandler()
+				handler := internal.GetLocalHandler()
 
 				logger := log15.New()
 
@@ -2044,11 +2044,11 @@ func TestServer(t *testing.T) {
 
 								switch j {
 								case 0:
-									So(entry.LastError, ShouldEqual, put.ErrMockStatFail)
+									So(entry.LastError, ShouldEqual, internal.ErrMockStatFail)
 								case 1:
-									So(entry.LastError, ShouldEqual, put.ErrMockPutFail)
+									So(entry.LastError, ShouldEqual, internal.ErrMockPutFail)
 								case 3:
-									So(entry.LastError, ShouldEqual, put.ErrMockMetaFail)
+									So(entry.LastError, ShouldEqual, internal.ErrMockMetaFail)
 								}
 							}
 
@@ -2233,12 +2233,12 @@ func TestServer(t *testing.T) {
 					})
 
 					Convey("The system warns of possibly stuck uploads", func() {
-						slowDur := 1200 * time.Millisecond
-						handler.MakePutSlow(discovers[0], slowDur)
-
 						requests, errg := client.GetSomeUploadRequests()
 						So(errg, ShouldBeNil)
 						So(len(requests), ShouldEqual, len(discovers))
+
+						slowDur := 1200 * time.Millisecond
+						handler.MakePutSlow(requests[0].Remote, slowDur)
 
 						p, d := makePutter(t, handler, requests, client)
 						defer d()
@@ -2293,12 +2293,13 @@ func TestServer(t *testing.T) {
 
 					Convey("...but if it is beyond the max stuck time, it is killed", func() {
 						testStart := time.Now()
-						slowDur := 10 * time.Second
-						handler.MakePutSlow(discovers[0], slowDur)
 
 						requests, errg := client.GetSomeUploadRequests()
 						So(errg, ShouldBeNil)
 						So(len(requests), ShouldEqual, len(discovers))
+
+						slowDur := 10 * time.Second
+						handler.MakePutSlow(requests[0].Remote, slowDur)
 
 						p, d := makePutter(t, handler, requests, client)
 						defer d()
@@ -2670,7 +2671,7 @@ func TestServer(t *testing.T) {
 
 					remoteBackupPath := filepath.Join(remoteBackupDir, "remoteDB")
 
-					handler = put.GetLocalHandler()
+					handler = internal.GetLocalHandler()
 
 					s.EnableRemoteDBBackups(remoteBackupPath, handler)
 

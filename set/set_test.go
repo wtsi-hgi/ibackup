@@ -39,6 +39,7 @@ import (
 	"github.com/shirou/gopsutil/process"
 	. "github.com/smartystreets/goconvey/convey"
 	gas "github.com/wtsi-hgi/go-authserver"
+	"github.com/wtsi-hgi/ibackup/baton"
 	"github.com/wtsi-hgi/ibackup/internal"
 	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/slack"
@@ -1774,7 +1775,7 @@ func TestBackup(t *testing.T) {
 			So(err, ShouldBeNil)
 			remotePath := filepath.Join(remoteDir, "db")
 
-			handler := put.GetLocalHandler()
+			handler := internal.GetLocalHandler()
 
 			db.EnableRemoteBackups(remotePath, handler)
 
@@ -1797,7 +1798,7 @@ func TestBackup(t *testing.T) {
 
 			remotePath := filepath.Join(remoteDir, "db")
 
-			handler, err := put.GetBatonHandler()
+			handler, err := baton.GetBatonHandler()
 			So(err, ShouldBeNil)
 
 			db.EnableRemoteBackups(remotePath, handler)

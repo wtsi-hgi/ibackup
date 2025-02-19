@@ -39,7 +39,7 @@ import (
 	"github.com/inconshreveable/log15"
 	"github.com/spf13/cobra"
 	gas "github.com/wtsi-hgi/go-authserver"
-	"github.com/wtsi-hgi/ibackup/remove"
+	"github.com/wtsi-hgi/ibackup/baton"
 	"github.com/wtsi-hgi/ibackup/server"
 	"github.com/wtsi-hgi/ibackup/set"
 	"github.com/wtsi-hgi/ibackup/slack"
@@ -193,7 +193,7 @@ database that you've made, to investigate.
 			dief("slack_debounce period must be positive, not: %d", serverSlackDebouncePeriod)
 		}
 
-		handler, errb := remove.GetBatonHandlerWithMetaClient()
+		handler, errb := baton.GetBatonHandler()
 		if errb != nil {
 			dief("failed to get baton handler: %s", errb)
 		}

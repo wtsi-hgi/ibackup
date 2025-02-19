@@ -43,7 +43,7 @@ func TestRemoveMock(t *testing.T) {
 	Convey("Given a mock RemoveHandler", t, func() {
 		requests, expectedCollections := makeMockRequests(t)
 
-		lh := GetLocalHandler()
+		lh := internal.GetLocalHandler()
 
 		requests[0].Requester = "John"
 
@@ -94,11 +94,11 @@ func TestRemoveMock(t *testing.T) {
 	})
 }
 
-func uploadRequest(t *testing.T, lh *LocalHandler, request *put.Request) {
+func uploadRequest(t *testing.T, lh *internal.LocalHandler, request *put.Request) {
 	err := os.MkdirAll(filepath.Dir(request.Remote), userPerms)
 	So(err, ShouldBeNil)
 
-	err = lh.Put(request)
+	err = lh.Put(request.LocalDataPath(), request.Remote, request.Meta.Metadata())
 	So(err, ShouldBeNil)
 
 	request.Meta.LocalMeta[put.MetaKeyRequester] = request.Requester

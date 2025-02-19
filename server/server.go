@@ -92,7 +92,7 @@ type Config struct {
 	SlackMessageDebounce time.Duration
 
 	// StorageHandler is used to interact with the storage system, e.g. iRODS.
-	StorageHandler remove.RemoveHandler
+	StorageHandler remove.Handler
 }
 
 // Server is used to start a web server that provides a REST API to the setdb
@@ -117,7 +117,7 @@ type Server struct {
 	stillRunningMsgFreq    time.Duration
 	serverAliveCh          chan bool
 	uploadTracker          *uploadTracker
-	storageHandler         remove.RemoveHandler
+	storageHandler         remove.Handler
 
 	mapMu               sync.RWMutex
 	creatingCollections map[string]bool
