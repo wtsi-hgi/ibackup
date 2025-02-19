@@ -52,7 +52,7 @@ const (
 	extendoLogLevel           = logs.ErrorLevel
 	workerPoolSizeCollections = 2
 	numCollClients            = workerPoolSizeCollections
-	numPutMetaClients         = 2
+	numPutRemoveMetaClients   = 3
 	collClientMaxIndex        = numCollClients - 1
 	putClientIndex            = collClientMaxIndex + 1
 	metaClientIndex           = putClientIndex + 1
@@ -72,9 +72,10 @@ type Baton struct {
 	collCh      chan string
 	collErrCh   chan error
 	collMu      sync.Mutex
-	PutMetaPool *ex.ClientPool
-	putClient   *ex.Client
-	MetaClient  *ex.Client
+	//PutMetaPool  *ex.ClientPool
+	putClient    *ex.Client
+	MetaClient   *ex.Client
+	removeClient *ex.Client
 }
 
 // GetBatonHandler returns a Handler that uses Baton to interact with iRODS. If
@@ -348,18 +349,46 @@ func (b *Baton) CollectionsDone() error {
 	close(b.collErrCh)
 	b.collRunning = false
 
-	pool, clientCh, err := b.connect(numPutMetaClients)
+	return b.createPutRemoveMetaClients()
+}
+
+func (b *Baton) createPutRemoveMetaClients() error {
+	pool, clientCh, err := b.connect(numPutRemoveMetaClients)
 	if err != nil {
 		b.collMu.Unlock()
 
 		return err
 	}
 
-	b.PutMetaPool = pool
 	b.putClient = <-clientCh
 	b.MetaClient = <-clientCh
+	b.removeClient = <-clientCh
+
+	pool.Close()
 
 	return nil
+}
+
+// TODO
+func (b *Baton) InitClients() error {
+	if b.putClient == nil && b.MetaClient == nil && b.removeClient == nil {
+		return b.createPutRemoveMetaClients()
+	}
+
+	if b.putClient != nil && b.MetaClient != nil && b.removeClient != nil {
+		return nil
+	}
+
+	return internal.Error{"Clients are not in the same state", ""}
+}
+
+func (b *Baton) CloseClients() {
+	var openClients []*ex.Client
+	for _, client := range []*ex.Client{b.removeClient, b.putClient, b.MetaClient} {
+		openClients = append(openClients, client)
+	}
+
+	b.closeConnections(openClients)
 }
 
 // closeConnections closes the given connections, with a timeout, ignoring
@@ -523,9 +552,9 @@ func (b *Baton) AddMeta(path string, meta map[string]string) error {
 
 // Cleanup stops our clients and closes our client pool.
 func (b *Baton) Cleanup() error {
-	b.closeConnections(append(b.collClients, b.putClient, b.MetaClient))
+	b.closeConnections(append(b.collClients, b.putClient, b.removeClient, b.MetaClient))
 
-	b.PutMetaPool.Close()
+	// b.PutMetaPool.Close()
 
 	b.collMu.Lock()
 	defer b.collMu.Unlock()
@@ -623,5 +652,5 @@ func (b *Baton) QueryMeta(dirToSearch string, meta map[string]string) ([]string,
 }
 
 func (b *Baton) AllClientsStopped() bool {
-	return !b.PutMetaPool.IsOpen() && !b.putClient.IsRunning() && !b.MetaClient.IsRunning() && b.collClients == nil
+	return !b.putClient.IsRunning() && !b.MetaClient.IsRunning() && b.collClients == nil
 }

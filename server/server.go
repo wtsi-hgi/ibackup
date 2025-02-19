@@ -226,9 +226,17 @@ func (s *Server) EnableJobSubmission(putCmd, deployment, cwd, queue string, numC
 // inside removeQueue from iRODS and data base. This function should be called
 // inside a go routine, so the user API request is not locked.
 func (s *Server) handleRemoveRequests(reserveGroup string) {
+	err := s.storageHandler.InitClients()
+	if err != nil {
+		s.Logger.Printf("Failed to init lients: %s", err.Error())
+	}
+
 	for {
 		item, removeReq, err := s.reserveRemoveRequest(reserveGroup)
 		if err != nil {
+			if s.removeQueue.Stats().Items == 0 {
+				s.storageHandler.CloseClients()
+			}
 			break
 		}
 

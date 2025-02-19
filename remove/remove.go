@@ -55,6 +55,11 @@ type Handler interface {
 
 	// QueryMeta return paths to all objects with given metadata
 	QueryMeta(dirToSearch string, meta map[string]string) ([]string, error)
+
+	// TODO
+	InitClients() error
+
+	CloseClients()
 }
 
 // RemovePathFromSetInIRODS removes the given path from iRODS if the path is not
