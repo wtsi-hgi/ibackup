@@ -1,7 +1,8 @@
 /*******************************************************************************
- * Copyright (c) 2022, 2023 Genome Research Ltd.
+ * Copyright (c) 2025 Genome Research Ltd.
  *
- * Author: Sendu Bala <sb10@sanger.ac.uk>
+ * Author: Rosie Kern <rk18@sanger.ac.uk>
+ * Author: Iaroslav Popov <ip13@sanger.ac.uk>
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -23,17 +24,17 @@
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  ******************************************************************************/
 
-package put
+package internal
 
 import (
 	"io"
 	"maps"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
 
-const userPerms = 0700
 const ErrMockStatFail = "stat fail"
 const ErrMockPutFail = "put fail"
 const ErrMockMetaFail = "meta fail"
@@ -41,16 +42,16 @@ const ErrMockMetaFail = "meta fail"
 // LocalHandler satisfies the Handler interface, treating "Remote" as local
 // paths and moving from Local to Remote for the Put().
 type LocalHandler struct {
-	connected   bool
-	cleaned     bool
-	collections []string
+	Connected   bool
+	Cleaned     bool
+	Collections []string
 	Meta        map[string]map[string]string
 	statFail    string
 	putFail     string
 	putSlow     string
 	putDur      time.Duration
 	metaFail    string
-	mu          sync.RWMutex
+	Mu          sync.RWMutex
 }
 
 // GetLocalHandler returns a Handler that doesn't actually interact with iRODS,
@@ -64,24 +65,24 @@ func GetLocalHandler() *LocalHandler {
 
 // Cleanup just records this was called.
 func (l *LocalHandler) Cleanup() error {
-	l.cleaned = true
+	l.Cleaned = true
 
 	return nil
 }
 
 // EnsureCollection creates the given dir locally and records that we did this.
 func (l *LocalHandler) EnsureCollection(dir string) error {
-	l.mu.Lock()
-	defer l.mu.Unlock()
+	l.Mu.Lock()
+	defer l.Mu.Unlock()
 
-	l.collections = append(l.collections, dir)
+	l.Collections = append(l.Collections, dir)
 
-	return os.MkdirAll(dir, userPerms)
+	return os.MkdirAll(dir, UserPerms)
 }
 
 // CollectionsDone says we connected and prepares us for metadata handling.
 func (l *LocalHandler) CollectionsDone() error {
-	l.connected = true
+	l.Connected = true
 
 	return nil
 }
@@ -94,31 +95,31 @@ func (l *LocalHandler) MakeStatFail(remote string) {
 
 // Stat returns info about the Remote file, which is a local file on disk.
 // Returns an error if statFail == Remote.
-func (l *LocalHandler) Stat(request *Request) (*ObjectInfo, error) {
-	if l.statFail == request.Remote {
-		return nil, Error{ErrMockStatFail, ""}
+func (l *LocalHandler) Stat(_, remote string) (bool, map[string]string, error) {
+	if l.statFail == remote {
+		return false, nil, Error{ErrMockStatFail, ""}
 	}
 
-	_, err := os.Stat(request.Remote)
+	_, err := os.Stat(remote)
 	if os.IsNotExist(err) {
-		return &ObjectInfo{Exists: false}, nil
+		return false, map[string]string{}, nil
 	}
 
 	if err != nil {
-		return nil, err
+		return false, nil, err
 	}
 
-	l.mu.RLock()
-	defer l.mu.RUnlock()
+	l.Mu.RLock()
+	defer l.Mu.RUnlock()
 
-	meta, exists := l.Meta[request.Remote]
+	meta, exists := l.Meta[remote]
 	if !exists {
 		meta = make(map[string]string)
 	} else {
 		meta = maps.Clone(meta)
 	}
 
-	return &ObjectInfo{Exists: true, Meta: meta}, nil
+	return true, meta, nil
 }
 
 // MakePutFail will result in any subsequent Put()s for a Request with the
@@ -129,22 +130,22 @@ func (l *LocalHandler) MakePutFail(remote string) {
 
 // MakePutSlow will result in any subsequent Put()s for a Request with the
 // given local path taking the given amount of time.
-func (l *LocalHandler) MakePutSlow(local string, dur time.Duration) {
-	l.putSlow = local
+func (l *LocalHandler) MakePutSlow(remote string, dur time.Duration) {
+	l.putSlow = remote
 	l.putDur = dur
 }
 
 // Put just copies from Local to Remote. Returns an error if putFail == Remote.
-func (l *LocalHandler) Put(request *Request) error {
-	if l.putFail == request.Remote {
+func (l *LocalHandler) Put(local, remote string, meta map[string]string) error {
+	if l.putFail == remote {
 		return Error{ErrMockPutFail, ""}
 	}
 
-	if l.putSlow == request.Local {
+	if l.putSlow == remote {
 		<-time.After(l.putDur)
 	}
 
-	return copyFile(request.LocalDataPath(), request.Remote)
+	return copyFile(local, remote)
 }
 
 // copyFile copies source to dest.
@@ -187,8 +188,8 @@ func (l *LocalHandler) RemoveMeta(path string, meta map[string]string) error {
 		return Error{ErrMockMetaFail, ""}
 	}
 
-	l.mu.Lock()
-	defer l.mu.Unlock()
+	l.Mu.Lock()
+	defer l.Mu.Unlock()
 
 	pathMeta, exists := l.Meta[path]
 	if !exists {
@@ -209,8 +210,8 @@ func (l *LocalHandler) AddMeta(path string, meta map[string]string) error {
 		return Error{ErrMockMetaFail, ""}
 	}
 
-	l.mu.Lock()
-	defer l.mu.Unlock()
+	l.Mu.Lock()
+	defer l.Mu.Unlock()
 
 	pathMeta, exists := l.Meta[path]
 	if !exists {
@@ -232,8 +233,8 @@ func (l *LocalHandler) AddMeta(path string, meta map[string]string) error {
 // GetMeta gets the metadata stored for the given path (returns an empty map if
 // path is not known about or has no metadata).
 func (l *LocalHandler) GetMeta(path string) (map[string]string, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
+	l.Mu.Lock()
+	defer l.Mu.Unlock()
 
 	if l.Meta == nil {
 		return make(map[string]string), nil
@@ -251,4 +252,44 @@ func (l *LocalHandler) GetMeta(path string) (map[string]string, error) {
 	}
 
 	return meta, nil
+}
+
+func (l *LocalHandler) RemoveDir(path string) error {
+	return os.Remove(path)
+}
+
+func (l *LocalHandler) RemoveFile(path string) error {
+	delete(l.Meta, path)
+
+	return os.Remove(path)
+}
+
+func (l *LocalHandler) QueryMeta(dirToSearch string, meta map[string]string) ([]string, error) {
+	var objects []string
+
+	for path, pathMeta := range l.Meta {
+		if !strings.HasPrefix(path, dirToSearch) {
+			continue
+		}
+
+		if doesMetaContainMeta(pathMeta, meta) {
+			objects = append(objects, path)
+		}
+	}
+
+	return objects, nil
+}
+
+func doesMetaContainMeta(sourceMeta, targetMeta map[string]string) bool {
+	valid := true
+
+	for k, v := range targetMeta {
+		if sourceMeta[k] != v {
+			valid = false
+
+			break
+		}
+	}
+
+	return valid
 }

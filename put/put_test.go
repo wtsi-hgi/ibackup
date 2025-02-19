@@ -41,7 +41,7 @@ func TestPutMock(t *testing.T) {
 	Convey("Given Requests and a mock Handler, you can make a new Putter", t, func() {
 		requests, expectedCollections := makeMockRequests(t)
 
-		lh := GetLocalHandler()
+		lh := internal.GetLocalHandler()
 
 		p, err := New(lh, requests)
 		So(err, ShouldBeNil)
@@ -50,16 +50,16 @@ func TestPutMock(t *testing.T) {
 		Convey("CreateCollections() creates the minimal number of collections", func() {
 			err = p.CreateCollections()
 			So(err, ShouldBeNil)
-			So(lh.connected, ShouldBeTrue)
+			So(lh.Connected, ShouldBeTrue)
 
 			for _, request := range requests {
 				_, err = os.Stat(filepath.Dir(request.Remote))
 				So(err, ShouldBeNil)
 			}
 
-			sort.Strings(lh.collections)
+			sort.Strings(lh.Collections)
 
-			So(lh.collections, ShouldResemble, expectedCollections)
+			So(lh.Collections, ShouldResemble, expectedCollections)
 
 			Convey("Put() then puts the files, and adds the metadata", func() {
 				requests[0].Requester = "John"
@@ -78,10 +78,10 @@ func TestPutMock(t *testing.T) {
 					_, err = os.Stat(request.Remote)
 					So(err, ShouldBeNil)
 
-					lh.mu.RLock()
+					lh.Mu.RLock()
 					So(lh.Meta[request.Remote], ShouldResemble, request.Meta.LocalMeta)
 					checkAddedMeta(lh.Meta[request.Remote])
-					lh.mu.RUnlock()
+					lh.Mu.RUnlock()
 				}
 
 				skipped := 0
@@ -110,12 +110,12 @@ func TestPutMock(t *testing.T) {
 						switch request.Status {
 						case RequestStatusReplaced:
 							replaced++
-							lh.mu.RLock()
+							lh.Mu.RLock()
 							So(lh.Meta[request.Remote], ShouldResemble, requests[0].Meta.LocalMeta)
 							So(lh.Meta[request.Remote][MetaKeyRequester], ShouldEqual, "John,Sam")
 							So(lh.Meta[request.Remote][MetaKeySets], ShouldEqual, "setA,setB")
 							date = lh.Meta[request.Remote][MetaKeyDate]
-							lh.mu.RUnlock()
+							lh.Mu.RUnlock()
 						default:
 							other++
 						}
@@ -156,18 +156,18 @@ func TestPutMock(t *testing.T) {
 
 						request = <-srCh
 						So(request.Status, ShouldEqual, RequestStatusUnmodified)
-						lh.mu.RLock()
+						lh.Mu.RLock()
 						So(lh.Meta[request.Remote][MetaKeyRequester], ShouldEqual, "John,Sam")
 						So(lh.Meta[request.Remote][MetaKeySets], ShouldEqual, "setA,setB,setC")
 						So(lh.Meta[request.Remote][MetaKeyDate], ShouldEqual, date)
-						lh.mu.RUnlock()
+						lh.Mu.RUnlock()
 					})
 				})
 
 				Convey("Finally, Cleanup() defers to the handler", func() {
 					err = p.Cleanup()
 					So(err, ShouldBeNil)
-					So(lh.cleaned, ShouldBeTrue)
+					So(lh.Cleaned, ShouldBeTrue)
 				})
 
 			})
@@ -340,10 +340,10 @@ func TestPutMock(t *testing.T) {
 
 						switch r.Remote {
 						case requests[1].Remote:
-							So(r.Error, ShouldContainSubstring, ErrMockPutFail)
+							So(r.Error, ShouldContainSubstring, internal.ErrMockPutFail)
 							cases++
 						case requests[2].Remote:
-							So(r.Error, ShouldContainSubstring, ErrMockMetaFail)
+							So(r.Error, ShouldContainSubstring, internal.ErrMockMetaFail)
 							cases++
 						}
 					case RequestStatusUploaded:
@@ -359,7 +359,7 @@ func TestPutMock(t *testing.T) {
 						fails++
 
 						if r.Remote == requests[0].Remote {
-							So(r.Error, ShouldContainSubstring, ErrMockStatFail)
+							So(r.Error, ShouldContainSubstring, internal.ErrMockStatFail)
 							cases++
 						}
 					default:
@@ -430,7 +430,7 @@ func TestPutMock(t *testing.T) {
 	})
 
 	Convey("CreateCollections() also works with 0 or 1 requests", t, func() {
-		lh := &LocalHandler{}
+		lh := &internal.LocalHandler{}
 
 		var requests []*Request
 
@@ -441,7 +441,7 @@ func TestPutMock(t *testing.T) {
 		err = p.CreateCollections()
 		So(err, ShouldBeNil)
 
-		So(lh.collections, ShouldBeNil)
+		So(lh.Collections, ShouldBeNil)
 
 		ddir := t.TempDir()
 		col := filepath.Join(ddir, "bar")
@@ -455,11 +455,11 @@ func TestPutMock(t *testing.T) {
 		err = p.CreateCollections()
 		So(err, ShouldBeNil)
 
-		So(lh.collections, ShouldResemble, []string{col})
+		So(lh.Collections, ShouldResemble, []string{col})
 	})
 
 	Convey("Relative local paths are made absolute", t, func() {
-		lh := &LocalHandler{}
+		lh := &internal.LocalHandler{}
 		p, err := New(lh, []*Request{{Local: "foo", Remote: "/bar"}})
 		So(err, ShouldBeNil)
 
@@ -490,7 +490,7 @@ func TestPutMock(t *testing.T) {
 	})
 
 	Convey("You can't make a Putter with relative remote paths", t, func() {
-		lh := &LocalHandler{}
+		lh := &internal.LocalHandler{}
 		_, err := New(lh, []*Request{{Local: "/foo", Remote: "bar"}})
 		So(err, ShouldNotBeNil)
 		So(err.Error(), ShouldContainSubstring, ErrRemoteNotAbs)
@@ -539,7 +539,7 @@ func createTestRequests(t *testing.T, sourceDir, destDir string, sourcePaths []s
 	for i, path := range sourcePaths {
 		dir := filepath.Dir(path)
 
-		err := os.MkdirAll(dir, userPerms)
+		err := os.MkdirAll(dir, internal.UserPerms)
 		if err != nil {
 			t.Fatal(err)
 		}

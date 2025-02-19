@@ -94,7 +94,7 @@ type Config struct {
 	// ReadOnly disables monitoring, discovery, and database modifications.
 	ReadOnly bool
 	// StorageHandler is used to interact with the storage system, e.g. iRODS.
-	StorageHandler remove.RemoveHandler
+	StorageHandler remove.Handler
 }
 
 // Server is used to start a web server that provides a REST API to the setdb
@@ -119,8 +119,9 @@ type Server struct {
 	stillRunningMsgFreq    time.Duration
 	serverAliveCh          chan bool
 	uploadTracker          *uploadTracker
-	readOnly               bool
-	storageHandler         put.Handler
+
+	readOnly       bool
+	storageHandler remove.Handler
 
 	mapMu               sync.RWMutex
 	creatingCollections map[string]bool

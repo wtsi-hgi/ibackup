@@ -42,7 +42,7 @@ import (
 const (
 	fileCheckFrequency = 10 * time.Millisecond
 	retryTimeout       = 5 * time.Second
-	userPerms          = 0700
+	UserPerms          = 0700
 )
 
 var ErrFileUnchanged = errors.New("file did not change")
@@ -123,7 +123,7 @@ func CreateTestFile(t *testing.T, path, contents string) {
 
 	dir := filepath.Dir(path)
 
-	err := os.MkdirAll(dir, userPerms)
+	err := os.MkdirAll(dir, UserPerms)
 	if err != nil {
 		t.Fatalf("mkdir failed: %s", err)
 	}

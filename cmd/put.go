@@ -37,6 +37,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/wtsi-hgi/ibackup/baton"
 	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/server"
 )
@@ -250,7 +251,7 @@ func handlePut(client *server.Client, requests []*put.Request) (chan *put.Reques
 }
 
 func getPutter(requests []*put.Request) (*put.Putter, func()) {
-	handler, err := put.GetBatonHandler()
+	handler, err := baton.GetBatonHandler()
 	if err != nil {
 		die(err)
 	}
