@@ -24,66 +24,31 @@
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  ******************************************************************************/
 
-package remove
+package internal
 
 import (
-	"os"
-	"strings"
-
-	"github.com/wtsi-hgi/ibackup/put"
+	"errors"
+	"fmt"
 )
 
-type LocalHandler struct {
-	put.LocalHandler
+type Error struct {
+	Msg  string
+	Path string
 }
 
-// GetLocalHandler returns a Handler that doesn't actually interact with iRODS,
-// but instead simply treats "Remote" as local paths and copies from Local to
-// Remote for any Put()s. For use during tests.
-func GetLocalHandler() *LocalHandler {
-	return &LocalHandler{
-		LocalHandler: put.LocalHandler{
-			Meta: make(map[string]map[string]string),
-		},
-	}
-}
-
-func (l *LocalHandler) RemoveDir(path string) error {
-	return os.Remove(path)
-}
-
-func (l *LocalHandler) RemoveFile(path string) error {
-	delete(l.Meta, path)
-
-	return os.Remove(path)
-}
-
-func (l *LocalHandler) QueryMeta(dirToSearch string, meta map[string]string) ([]string, error) {
-	var objects []string
-
-	for path, pathMeta := range l.Meta {
-		if !strings.HasPrefix(path, dirToSearch) {
-			continue
-		}
-
-		if doesMetaContainMeta(pathMeta, meta) {
-			objects = append(objects, path)
-		}
+func (e Error) Error() string {
+	if e.Path != "" {
+		return fmt.Sprintf("%s [%s]", e.Msg, e.Path)
 	}
 
-	return objects, nil
+	return e.Msg
 }
 
-func doesMetaContainMeta(sourceMeta, targetMeta map[string]string) bool {
-	valid := true
-
-	for k, v := range targetMeta {
-		if sourceMeta[k] != v {
-			valid = false
-
-			break
-		}
+func (e Error) Is(err error) bool {
+	var putErr *Error
+	if errors.As(err, &putErr) {
+		return putErr.Msg == e.Msg
 	}
 
-	return valid
+	return false
 }

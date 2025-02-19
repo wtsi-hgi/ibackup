@@ -37,12 +37,13 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/wtsi-hgi/ibackup/baton"
 	"github.com/wtsi-hgi/ibackup/internal"
 	ex "github.com/wtsi-npg/extendo/v2"
 )
 
 func TestPutBaton(t *testing.T) {
-	h, errgbh := GetBatonHandler()
+	h, errgbh := baton.GetBatonHandler()
 	if errgbh != nil {
 		t.Logf("GetBatonHandler error: %s", errgbh)
 		SkipConvey("Skipping baton tests since couldn't find baton", t, func() {})
@@ -66,7 +67,7 @@ func TestPutBaton(t *testing.T) {
 
 		Convey("CreateCollections() creates the needed collections", func() {
 			testPool := ex.NewClientPool(ex.DefaultClientPoolParams, "")
-			testClientCh, err := h.getClientsFromPoolConcurrently(testPool, 1)
+			testClientCh, err := h.GetClientsFromPoolConcurrently(testPool, 1)
 			So(err, ShouldBeNil)
 			testClient := <-testClientCh
 			defer testClient.StopIgnoreError()
@@ -158,10 +159,7 @@ func TestPutBaton(t *testing.T) {
 						err = p.Cleanup()
 						So(err, ShouldBeNil)
 
-						So(h.PutMetaPool.IsOpen(), ShouldBeFalse)
-						So(h.putClient.IsRunning(), ShouldBeFalse)
-						So(h.MetaClient.IsRunning(), ShouldBeFalse)
-						So(h.collClients, ShouldBeNil)
+						So(h.AllClientsStopped(), ShouldBeTrue)
 					})
 				})
 
@@ -216,7 +214,7 @@ func TestPutBaton(t *testing.T) {
 				it, err = getItemWithBaton(testClient, requests[2].Remote)
 				So(err, ShouldBeNil)
 				So(it.ISize, ShouldEqual, 0)
-				meta := rodsItemToMeta(it)
+				meta := baton.RodsItemToMeta(it)
 				So(meta[MetaKeyRemoteHardlink], ShouldEqual, requests[2].Hardlink)
 				So(meta[MetaKeyHardlink], ShouldEqual, requests[2].Local)
 
@@ -413,10 +411,10 @@ func getObjectMetadataWithBaton(client *ex.Client, path string) map[string]strin
 	it, err := getItemWithBaton(client, path)
 	So(err, ShouldBeNil)
 
-	return rodsItemToMeta(it)
+	return baton.RodsItemToMeta(it)
 }
 
-func testPreparePutFile(t *testing.T, h *Baton, basename, rootCollection string) (string, *Putter) {
+func testPreparePutFile(t *testing.T, h *baton.Baton, basename, rootCollection string) (string, *Putter) {
 	t.Helper()
 
 	path, sourceDir := testCreateLocalFile(t, basename)
@@ -441,7 +439,7 @@ func testCreateLocalFile(t *testing.T, basename string) (string, string) {
 	return path, sourceDir
 }
 
-func testPreparePutter(t *testing.T, h *Baton, req *Request, rootCollection string) *Putter {
+func testPreparePutter(t *testing.T, h *baton.Baton, req *Request, rootCollection string) *Putter {
 	t.Helper()
 
 	p, err := New(h, []*Request{req})
@@ -456,11 +454,11 @@ func testPreparePutter(t *testing.T, h *Baton, req *Request, rootCollection stri
 	return p
 }
 
-func testDeleteCollection(t *testing.T, h *Baton, collection string) {
+func testDeleteCollection(t *testing.T, h *baton.Baton, collection string) {
 	t.Helper()
 
 	testPool := ex.NewClientPool(ex.DefaultClientPoolParams, "")
-	testClientCh, err := h.getClientsFromPoolConcurrently(testPool, 1)
+	testClientCh, err := h.GetClientsFromPoolConcurrently(testPool, 1)
 	So(err, ShouldBeNil)
 
 	testClient := <-testClientCh

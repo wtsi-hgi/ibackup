@@ -35,8 +35,17 @@ import (
 	"github.com/wtsi-hgi/ibackup/put"
 )
 
-type RemoveHandler interface {
-	put.Handler
+type Handler interface {
+	// RemoveMeta deletes the given metadata from the given object.
+	RemoveMeta(path string, meta map[string]string) error
+
+	// AddMeta adds the given metadata to the given object. Given metadata keys
+	// should already have been removed with RemoveMeta() from the remote
+	// object.
+	AddMeta(path string, meta map[string]string) error
+
+	// TODO
+	GetMeta(path string) (map[string]string, error)
 
 	// RemoveDir deletes a given empty folder
 	RemoveDir(path string) error
@@ -51,7 +60,7 @@ type RemoveHandler interface {
 // RemovePathFromSetInIRODS removes the given path from iRODS if the path is not
 // associated with any other sets. Otherwise it updates the iRODS metadata for
 // the path to not include the given set.
-func RemovePathFromSetInIRODS(handler RemoveHandler, transformer put.PathTransformer, path string,
+func RemovePathFromSetInIRODS(handler Handler, transformer put.PathTransformer, path string,
 	sets, requesters []string, meta map[string]string) error {
 	if len(sets) == 0 {
 		return handleHardlinkAndRemoveFromIRODS(handler, path, transformer, meta)
@@ -82,7 +91,7 @@ func RemovePathFromSetInIRODS(handler RemoveHandler, transformer put.PathTransfo
 // handleHardLinkAndRemoveFromIRODS removes the given path from iRODS. If the
 // path is found to be a hardlink, it checks if there are other hardlinks to the
 // same file, if not, it removes the file.
-func handleHardlinkAndRemoveFromIRODS(handler RemoveHandler, path string, transformer put.PathTransformer,
+func handleHardlinkAndRemoveFromIRODS(handler Handler, path string, transformer put.PathTransformer,
 	meta map[string]string) error {
 	err := handler.RemoveFile(path)
 	if err != nil {
@@ -111,7 +120,7 @@ func handleHardlinkAndRemoveFromIRODS(handler RemoveHandler, path string, transf
 }
 
 // RemoveDirFromIRODS removes the remote path of a given directory from iRODS.
-func RemoveDirFromIRODS(handler RemoveHandler, path string, transformer put.PathTransformer) error {
+func RemoveDirFromIRODS(handler Handler, path string, transformer put.PathTransformer) error {
 	rpath, err := transformer(path)
 	if err != nil {
 		return err
