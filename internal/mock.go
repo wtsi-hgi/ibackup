@@ -80,10 +80,8 @@ func (l *LocalHandler) EnsureCollection(dir string) error {
 	return os.MkdirAll(dir, UserPerms)
 }
 
-// CollectionsDone says we connected and prepares us for metadata handling.
+// CollectionsDone TODO
 func (l *LocalHandler) CollectionsDone() error {
-	l.Connected = true
-
 	return nil
 }
 
@@ -95,7 +93,7 @@ func (l *LocalHandler) MakeStatFail(remote string) {
 
 // Stat returns info about the Remote file, which is a local file on disk.
 // Returns an error if statFail == Remote.
-func (l *LocalHandler) Stat(_, remote string) (bool, map[string]string, error) {
+func (l *LocalHandler) Stat(remote string) (bool, map[string]string, error) {
 	if l.statFail == remote {
 		return false, nil, Error{ErrMockStatFail, ""}
 	}
@@ -136,7 +134,7 @@ func (l *LocalHandler) MakePutSlow(remote string, dur time.Duration) {
 }
 
 // Put just copies from Local to Remote. Returns an error if putFail == Remote.
-func (l *LocalHandler) Put(local, remote string, meta map[string]string) error {
+func (l *LocalHandler) Put(local, remote string) error {
 	if l.putFail == remote {
 		return Error{ErrMockPutFail, ""}
 	}
@@ -292,4 +290,16 @@ func doesMetaContainMeta(sourceMeta, targetMeta map[string]string) bool {
 	}
 
 	return valid
+}
+
+// InitClients says we connected.
+func (l *LocalHandler) InitClients() error {
+	l.Connected = true
+
+	return nil
+}
+
+// CloseClients says we closed connections.
+func (l *LocalHandler) CloseClients() {
+	l.Connected = false
 }

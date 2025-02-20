@@ -279,7 +279,7 @@ func (r *Request) StatAndAssociateStandardMetadata(lInfo *ObjectInfo, handler Ha
 
 func statAndAssociateStandardMetadata(request *Request, diskMeta map[string]string,
 	handler Handler) (*ObjectInfo, error) {
-	exists, meta, err := handler.Stat(request.LocalDataPath(), request.Remote)
+	exists, meta, err := handler.Stat(request.Remote)
 	if err != nil {
 		return nil, err
 	}
@@ -346,16 +346,16 @@ func (r *Request) addMeta(handler Handler, toAdd map[string]string) error {
 // to Remote, with linking metadata.
 func (r *Request) Put(handler Handler) error {
 	if r.Hardlink == "" {
-		return handler.Put(r.LocalDataPath(), r.Remote, r.Meta.Metadata())
+		return handler.Put(r.LocalDataPath(), r.Remote)
 	}
 
 	if !r.onlyUploadEmptyFile {
-		if err := handler.Put(r.inodeRequest.LocalDataPath(), r.inodeRequest.Remote, r.inodeRequest.Meta.Metadata()); err != nil {
+		if err := handler.Put(r.inodeRequest.LocalDataPath(), r.inodeRequest.Remote); err != nil {
 			return err
 		}
 	}
 
-	return handler.Put(r.emptyFileRequest.LocalDataPath(), r.emptyFileRequest.Remote, r.emptyFileRequest.Meta.Metadata())
+	return handler.Put(r.emptyFileRequest.LocalDataPath(), r.emptyFileRequest.Remote)
 }
 
 // PathTransformer is a function that given a local path, returns the
