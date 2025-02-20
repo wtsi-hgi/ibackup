@@ -98,7 +98,7 @@ func uploadRequest(t *testing.T, lh *internal.LocalHandler, request *put.Request
 	err := os.MkdirAll(filepath.Dir(request.Remote), userPerms)
 	So(err, ShouldBeNil)
 
-	err = lh.Put(request.LocalDataPath(), request.Remote, request.Meta.Metadata())
+	err = lh.Put(request.LocalDataPath(), request.Remote)
 	So(err, ShouldBeNil)
 
 	request.Meta.LocalMeta[put.MetaKeyRequester] = request.Requester

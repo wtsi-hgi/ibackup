@@ -44,21 +44,23 @@ type Handler interface {
 	// object.
 	AddMeta(path string, meta map[string]string) error
 
-	// TODO
+	// GetMeta returns the meta for a given path in iRODS.
 	GetMeta(path string) (map[string]string, error)
 
-	// RemoveDir deletes a given empty folder
+	// RemoveDir deletes a given empty folder.
 	RemoveDir(path string) error
 
-	// RemoveFile deletes a given file
+	// RemoveFile deletes a given file.
 	RemoveFile(path string) error
 
-	// QueryMeta return paths to all objects with given metadata
+	// QueryMeta return paths to all objects with given metadata.
 	QueryMeta(dirToSearch string, meta map[string]string) ([]string, error)
 
-	// TODO
+	// InitClients creates new connections for subsequent remove and meta
+	// commands.
 	InitClients() error
 
+	// CloseClients closes all open connections.
 	CloseClients()
 }
 

@@ -70,19 +70,22 @@ type Handler interface {
 
 	// CollectionsDone is called after all collections have been created. This
 	// method can do things like cleaning up connections created for collection
-	// creation. It can also create new connections for subsequent Put() and
-	// *Meta calls that are likely to occur.
+	// creation.
 	CollectionsDone() error
 
-	// Stat checks if the Request's Remote object exists. If it does, records
-	// its metadata in the returned ObjectInfo. Returns an error if there was a
-	// problem finding out information (but not if the object does not exist).
-	Stat(local, remote string) (bool, map[string]string, error)
+	// InitClients creates new connections for subsequent remove and meta
+	// commands.
+	InitClients() error
 
-	// Put uploads the Request's Local file to the Remote location, overwriting
-	// any existing object, and ensuring that a locally calculated and remotely
+	// Stat checks if the provided Remote object exists. If it does, records its
+	// metadata and returns it. Returns an error if there was a problem finding
+	// out information (but not if the object does not exist).
+	Stat(remote string) (bool, map[string]string, error)
+
+	// Put uploads the Local file to the Remote location, overwriting any
+	// existing object, and ensuring that a locally calculated and remotely
 	// calculated md5 checksum match.
-	Put(local, remote string, meta map[string]string) error
+	Put(local, remote string) error
 
 	// RemoveMeta deletes the given metadata from the given object.
 	RemoveMeta(path string, meta map[string]string) error
@@ -96,6 +99,7 @@ type Handler interface {
 	// needed.
 	Cleanup() error
 
+	// GetMeta returns the meta for a given path in iRODS.
 	GetMeta(path string) (map[string]string, error)
 }
 
@@ -238,6 +242,11 @@ func (p *Putter) CreateCollections() error {
 	cdErr := p.handler.CollectionsDone()
 	if cdErr != nil {
 		merr = multierror.Append(merr, cdErr)
+	}
+
+	err := p.handler.InitClients()
+	if err != nil {
+		merr = multierror.Append(merr, err)
 	}
 
 	return merr.ErrorOrNil()

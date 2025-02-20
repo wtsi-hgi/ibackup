@@ -335,6 +335,8 @@ func (b *Baton) setClientByIndex(clientIndex int, client *ex.Client) {
 	}
 }
 
+//TODO
+
 // CollectionsDone closes the connections used for connection creation, and
 // creates new ones for doing puts and metadata operations.
 func (b *Baton) CollectionsDone() error {
@@ -349,7 +351,9 @@ func (b *Baton) CollectionsDone() error {
 	close(b.collErrCh)
 	b.collRunning = false
 
-	return b.createPutRemoveMetaClients()
+	return nil
+
+	// return b.createPutRemoveMetaClients()
 }
 
 func (b *Baton) createPutRemoveMetaClients() error {
@@ -369,23 +373,32 @@ func (b *Baton) createPutRemoveMetaClients() error {
 	return nil
 }
 
-// TODO
+// InitClients sets three clients if they do not currently exist. Returns error
+// if some exist and some do not.
 func (b *Baton) InitClients() error {
 	if b.putClient == nil && b.MetaClient == nil && b.removeClient == nil {
 		return b.createPutRemoveMetaClients()
 	}
 
 	if b.putClient != nil && b.MetaClient != nil && b.removeClient != nil {
+		if !b.putClient.IsRunning() && !b.MetaClient.IsRunning() && !b.removeClient.IsRunning() {
+			return b.createPutRemoveMetaClients()
+		}
+
 		return nil
 	}
 
 	return internal.Error{"Clients are not in the same state", ""}
 }
 
+// CloseClients closes remove, put and meta clients.
 func (b *Baton) CloseClients() {
 	var openClients []*ex.Client
+
 	for _, client := range []*ex.Client{b.removeClient, b.putClient, b.MetaClient} {
-		openClients = append(openClients, client)
+		if client != nil {
+			openClients = append(openClients, client)
+		}
 	}
 
 	b.closeConnections(openClients)
@@ -403,15 +416,13 @@ func (b *Baton) closeConnections(clients []*ex.Client) {
 	}
 }
 
-// TODO only take remote
-
 // Stat gets mtime and metadata info for the request Remote object.
-func (b *Baton) Stat(local, remote string) (bool, map[string]string, error) {
+func (b *Baton) Stat(remote string) (bool, map[string]string, error) {
 	var it ex.RodsItem
 
 	err := TimeoutOp(func() error {
 		var errl error
-		it, errl = b.MetaClient.ListItem(ex.Args{Timestamp: true, AVU: true}, *requestToRodsItem(local, remote))
+		it, errl = b.MetaClient.ListItem(ex.Args{Timestamp: true, AVU: true}, *requestToRodsItem("", remote))
 
 		return errl
 	}, "stat failed: "+remote)
@@ -428,13 +439,19 @@ func (b *Baton) Stat(local, remote string) (bool, map[string]string, error) {
 }
 
 // requestToRodsItem converts a Request in to an extendo RodsItem without AVUs.
+// If you provide an empty local path, it will not be set.
 func requestToRodsItem(local, remote string) *ex.RodsItem {
-	return &ex.RodsItem{
-		IDirectory: filepath.Dir(local),
-		IFile:      filepath.Base(local),
-		IPath:      filepath.Dir(remote),
-		IName:      filepath.Base(remote),
+	item := &ex.RodsItem{
+		IPath: filepath.Dir(remote),
+		IName: filepath.Base(remote),
 	}
+
+	if local != "" {
+		item.IDirectory = filepath.Dir(local)
+		item.IFile = filepath.Base(local)
+	}
+
+	return item
 }
 
 // RodsItemToMeta pulls out the AVUs from a RodsItem and returns them as a map.
@@ -451,8 +468,8 @@ func RodsItemToMeta(it ex.RodsItem) map[string]string {
 // Put uploads request Local to the Remote object, overwriting it if it already
 // exists. It calculates and stores the md5 checksum remotely, comparing to the
 // local checksum.
-func (b *Baton) Put(local, remote string, meta map[string]string) error {
-	item := requestToRodsItemWithAVUs(local, remote, meta)
+func (b *Baton) Put(local, remote string) error {
+	item := requestToRodsItem(local, remote)
 
 	// iRODS treats /dev/null specially, so unless that changes we have to check
 	// for it and create a temporary empty file in its place.
@@ -481,15 +498,6 @@ func (b *Baton) Put(local, remote string, meta map[string]string) error {
 	)
 
 	return err
-}
-
-// requestToRodsItemWithAVUs converts a Request in to an extendo RodsItem with
-// AVUs.
-func requestToRodsItemWithAVUs(local, remote string, meta map[string]string) *ex.RodsItem {
-	item := requestToRodsItem(local, remote)
-	item.IAVUs = MetaToAVUs(meta)
-
-	return item
 }
 
 func MetaToAVUs(meta map[string]string) []ex.AVU {
@@ -645,7 +653,7 @@ func (b *Baton) QueryMeta(dirToSearch string, meta map[string]string) ([]string,
 	paths := make([]string, len(items))
 
 	for i, item := range items {
-		paths[i] = item.IPath
+		paths[i] = filepath.Join(item.IPath, item.IName)
 	}
 
 	return paths, err
