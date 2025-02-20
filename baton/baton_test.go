@@ -83,7 +83,7 @@ func TestBaton(t *testing.T) {
 				So(exists, ShouldBeFalse)
 			})
 
-			Convey("You can put the file and its metadata in iRODS", func() {
+			Convey("You can put the file in iRODS", func() {
 				err = h.Put(file1local, file1remote)
 				So(err, ShouldBeNil)
 

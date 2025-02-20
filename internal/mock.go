@@ -82,6 +82,8 @@ func (l *LocalHandler) EnsureCollection(dir string) error {
 
 // CollectionsDone TODO
 func (l *LocalHandler) CollectionsDone() error {
+	l.Collections = nil
+
 	return nil
 }
 

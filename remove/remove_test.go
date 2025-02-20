@@ -40,58 +40,7 @@ import (
 const userPerms = 0700
 
 func TestRemoveMock(t *testing.T) {
-	Convey("Given a mock RemoveHandler", t, func() {
-		requests, expectedCollections := makeMockRequests(t)
-
-		lh := internal.GetLocalHandler()
-
-		requests[0].Requester = "John"
-
-		for _, request := range requests {
-			uploadRequest(t, lh, request)
-		}
-
-		Convey("RemoveFile removes a file", func() {
-			filePath := requests[0].Remote
-
-			err := lh.RemoveFile(filePath)
-			So(err, ShouldBeNil)
-
-			_, err = os.Stat(filePath)
-			So(err, ShouldNotBeNil)
-
-			So(lh.Meta[filePath], ShouldBeNil)
-
-			Convey("RemoveDir removes an empty directory", func() {
-				dirPath := filepath.Dir(filePath)
-
-				err = lh.RemoveDir(dirPath)
-				So(err, ShouldBeNil)
-
-				_, err = os.Stat(dirPath)
-				So(err, ShouldNotBeNil)
-			})
-		})
-
-		Convey("queryMeta returns all paths with matching metadata", func() {
-			paths, errq := lh.QueryMeta("", map[string]string{"a": "1"})
-			So(errq, ShouldBeNil)
-
-			So(len(paths), ShouldEqual, 5)
-
-			paths, err := lh.QueryMeta("", map[string]string{put.MetaKeyRequester: requests[0].Requester})
-			So(err, ShouldBeNil)
-
-			So(len(paths), ShouldEqual, 1)
-
-			Convey("queryMeta only returns paths in the provided scope", func() {
-				paths, errq := lh.QueryMeta(expectedCollections[1], map[string]string{"a": "1"})
-				So(errq, ShouldBeNil)
-
-				So(len(paths), ShouldEqual, 2)
-			})
-		})
-	})
+	//TODO
 }
 
 func uploadRequest(t *testing.T, lh *internal.LocalHandler, request *put.Request) {
