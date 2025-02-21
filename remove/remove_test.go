@@ -29,7 +29,6 @@ package remove
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -40,69 +39,110 @@ import (
 const userPerms = 0700
 
 func TestRemoveMock(t *testing.T) {
-	//TODO
-}
+	Convey("Given a connected local handler", t, func() {
+		lh := internal.GetLocalHandler()
 
-func uploadRequest(t *testing.T, lh *internal.LocalHandler, request *put.Request) {
-	err := os.MkdirAll(filepath.Dir(request.Remote), userPerms)
-	So(err, ShouldBeNil)
+		sourceDir := t.TempDir()
+		destDir := t.TempDir()
 
-	err = lh.Put(request.LocalDataPath(), request.Remote)
-	So(err, ShouldBeNil)
+		transformer := put.PrefixTransformer(sourceDir, destDir)
 
-	request.Meta.LocalMeta[put.MetaKeyRequester] = request.Requester
-	err = lh.AddMeta(request.Remote, request.Meta.LocalMeta)
-	So(err, ShouldBeNil)
-}
+		dirToSearch, err := transformer("/")
+		So(err, ShouldBeNil)
 
-// makeMockRequests creates some local directories and files, and returns
-// requests that all share the same metadata, with remotes pointing to another
-// local temp directory (but the remote sub-directories are not created).
-// Also returns the execpted remote directories that would have to be created.
-func makeMockRequests(t *testing.T) ([]*put.Request, []string) {
-	t.Helper()
+		Convey("Given an uploaded empty dir", func() {
+			dir1local := filepath.Join(sourceDir, "dir")
+			dir1remote := filepath.Join(destDir, "dir")
 
-	sourceDir := t.TempDir()
-	destDir := t.TempDir()
+			err = os.MkdirAll(dir1remote, userPerms)
+			So(err, ShouldBeNil)
 
-	requests := makeTestRequests(t, sourceDir, destDir)
+			Convey("You can remove a remote folder using the local path", func() {
+				err = RemoveRemoteDir(lh, dir1local, transformer)
+				So(err, ShouldBeNil)
 
-	return requests, []string{
-		filepath.Join(destDir, "a", "b", "c"),
-		filepath.Join(destDir, "a", "b", "d", "e"),
-	}
-}
+				_, err = os.Stat(dir1remote)
+				So(err.Error(), ShouldContainSubstring, "no such file or directory")
+			})
+		})
 
-func makeTestRequests(t *testing.T, sourceDir, destDir string) []*put.Request {
-	t.Helper()
+		Convey("Given a file in two sets", func() {
+			file1remote := filepath.Join(destDir, "file1")
 
-	sourcePaths := []string{
-		filepath.Join(sourceDir, "a", "b", "c", "file.1"),
-		filepath.Join(sourceDir, "a", "b", "file.2"),
-		filepath.Join(sourceDir, "a", "b", "d", "file.3"),
-		filepath.Join(sourceDir, "a", "b", "d", "e", "file.4"),
-		filepath.Join(sourceDir, "a", "b", "d", "e", "file.5"),
-	}
+			internal.CreateTestFileOfLength(t, file1remote, 1)
 
-	requests := make([]*put.Request, len(sourcePaths))
-	localMeta := map[string]string{"a": "1", "b": "2"}
+			meta := map[string]string{
+				put.MetaKeyRequester: "testUser1,testUser2",
+				put.MetaKeySets:      "set1,set2",
+			}
 
-	for i, path := range sourcePaths {
-		dir := filepath.Dir(path)
+			err = lh.AddMeta(file1remote, meta)
+			So(err, ShouldBeNil)
 
-		err := os.MkdirAll(dir, userPerms)
-		if err != nil {
-			t.Fatal(err)
-		}
+			Convey("You can update the metadata for sets and requesters on the remote file", func() {
+				err = UpdateSetsAndRequestersOnRemoteFile(lh, file1remote, []string{"set2"}, []string{"testUser2"}, meta)
+				So(err, ShouldBeNil)
 
-		internal.CreateTestFile(t, path, "1\n")
+				fileMeta, errg := lh.GetMeta(file1remote)
+				So(errg, ShouldBeNil)
 
-		requests[i] = &put.Request{
-			Local:  path,
-			Remote: strings.Replace(path, sourceDir, destDir, 1),
-			Meta:   &put.Meta{LocalMeta: localMeta},
-		}
-	}
+				So(fileMeta, ShouldResemble,
+					map[string]string{
+						put.MetaKeyRequester: "testUser2",
+						put.MetaKeySets:      "set2",
+					})
+			})
 
-	return requests
+			Convey("You can remove the file from remote", func() {
+				err = RemoveRemoteFileAndHandleHardlink(lh, file1remote, dirToSearch, meta)
+				So(err, ShouldBeNil)
+
+				_, err = os.Stat(file1remote)
+				So(err.Error(), ShouldContainSubstring, "no such file or directory")
+			})
+
+			Convey("And given two hardlinks to the same file", func() {
+				link1remote := filepath.Join(destDir, "link1")
+				link2remote := filepath.Join(destDir, "link2")
+				inodeRemote := filepath.Join(destDir, "inode")
+
+				internal.CreateTestFileOfLength(t, link1remote, 1)
+				internal.CreateTestFileOfLength(t, link2remote, 1)
+				internal.CreateTestFileOfLength(t, inodeRemote, 1)
+
+				hardlinkMeta := map[string]string{
+					put.MetaKeyHardlink:       "hardlink",
+					put.MetaKeyRemoteHardlink: inodeRemote,
+				}
+
+				err = lh.AddMeta(link1remote, hardlinkMeta)
+				So(err, ShouldBeNil)
+
+				err = lh.AddMeta(link2remote, hardlinkMeta)
+				So(err, ShouldBeNil)
+
+				Convey("You can remove the first hardlink and the inode file will stay", func() {
+					err = RemoveRemoteFileAndHandleHardlink(lh, link1remote, dirToSearch, hardlinkMeta)
+					So(err, ShouldBeNil)
+
+					_, err = os.Stat(link1remote)
+					So(err.Error(), ShouldContainSubstring, "no such file or directory")
+
+					_, err = os.Stat(inodeRemote)
+					So(err, ShouldBeNil)
+
+					Convey("Then you can remove the second hardlink and the inode file will also get removed", func() {
+						err = RemoveRemoteFileAndHandleHardlink(lh, link2remote, dirToSearch, hardlinkMeta)
+						So(err, ShouldBeNil)
+
+						_, err = os.Stat(link2remote)
+						So(err.Error(), ShouldContainSubstring, "no such file or directory")
+
+						_, err = os.Stat(inodeRemote)
+						So(err.Error(), ShouldContainSubstring, "no such file or directory")
+					})
+				})
+			})
+		})
+	})
 }
