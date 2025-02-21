@@ -254,7 +254,8 @@ func updateDatabaseSetWithUserSetDetails(dbSet, userSet *Set) error {
 	return nil
 }
 
-func (d *DB) UploadEntry(sid, key string, entry *Entry) error {
+// UpdateEntry puts the updated entry into the database for the given set.
+func (d *DB) UpdateEntry(sid, key string, entry *Entry) error {
 	return d.db.Update(func(tx *bolt.Tx) error {
 		_, b, err := d.getEntry(tx, sid, key)
 		if err != nil {

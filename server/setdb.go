@@ -584,7 +584,7 @@ func (s *Server) removeFileFromIRODSandDB(removeReq *RemoveReq) error {
 	}
 
 	if !removeReq.IsRemovedFromIRODS {
-		err = s.removeFileFromIRODS(removeReq.Set, removeReq.Path, transformer)
+		err = s.updateOrRemoveRemoteFile(removeReq.Set, removeReq.Path, transformer)
 		if err != nil {
 			s.setErrorOnEntry(entry, removeReq.Set.ID(), removeReq.Path, err)
 
@@ -602,7 +602,7 @@ func (s *Server) removeFileFromIRODSandDB(removeReq *RemoveReq) error {
 	return s.db.UpdateBasedOnRemovedEntry(removeReq.Set.ID(), entry)
 }
 
-func (s *Server) removeFileFromIRODS(set *set.Set, path string, transformer put.PathTransformer) error {
+func (s *Server) updateOrRemoveRemoteFile(set *set.Set, path string, transformer put.PathTransformer) error {
 	rpath, err := transformer(path)
 	if err != nil {
 		return err
@@ -618,7 +618,16 @@ func (s *Server) removeFileFromIRODS(set *set.Set, path string, transformer put.
 		return err
 	}
 
-	return remove.RemovePathFromSetInIRODS(s.storageHandler, transformer, rpath, sets, requesters, remoteMeta)
+	if len(sets) == 0 {
+		dirToSearch, err := transformer("/")
+		if err != nil {
+			return err
+		}
+
+		return remove.RemoveRemoteFileAndHandleHardlink(s.storageHandler, rpath, dirToSearch, remoteMeta)
+	}
+
+	return remove.UpdateSetsAndRequestersOnRemoteFile(s.storageHandler, rpath, sets, requesters, remoteMeta)
 }
 
 func (s *Server) handleSetsAndRequesters(set *set.Set, meta map[string]string) ([]string, []string, error) {
@@ -696,7 +705,7 @@ func removeElementFromSlice(slice []string, element string) ([]string, error) {
 func (s *Server) setErrorOnEntry(entry *set.Entry, sid, path string, err error) {
 	entry.LastError = err.Error()
 
-	erru := s.db.UploadEntry(sid, path, entry)
+	erru := s.db.UpdateEntry(sid, path, entry)
 	if erru != nil {
 		s.Logger.Printf("%s", erru.Error())
 	}
@@ -709,7 +718,7 @@ func (s *Server) removeDirFromIRODSandDB(removeReq *RemoveReq) error {
 	}
 
 	if !removeReq.IsDirEmpty && !removeReq.IsRemovedFromIRODS {
-		err = remove.RemoveDirFromIRODS(s.storageHandler, removeReq.Path, transformer)
+		err = remove.RemoveRemoteDir(s.storageHandler, removeReq.Path, transformer)
 		if err != nil {
 			return err
 		}

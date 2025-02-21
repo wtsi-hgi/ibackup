@@ -63,7 +63,7 @@ func TestBaton(t *testing.T) {
 		So(err, ShouldBeNil)
 
 		So(h.removeClient.IsRunning(), ShouldBeTrue)
-		So(h.MetaClient.IsRunning(), ShouldBeTrue)
+		So(h.metaClient.IsRunning(), ShouldBeTrue)
 		So(h.putClient.IsRunning(), ShouldBeTrue)
 
 		meta := map[string]string{

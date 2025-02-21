@@ -74,7 +74,7 @@ type Baton struct {
 	collMu      sync.Mutex
 	//PutMetaPool  *ex.ClientPool
 	putClient    *ex.Client
-	MetaClient   *ex.Client
+	metaClient   *ex.Client
 	removeClient *ex.Client
 }
 
@@ -318,7 +318,7 @@ func (b *Baton) getClientByIndex(clientIndex int) *ex.Client {
 	case putClientIndex:
 		return b.putClient
 	case metaClientIndex:
-		return b.MetaClient
+		return b.metaClient
 	default:
 		return b.collClients[clientIndex]
 	}
@@ -329,7 +329,7 @@ func (b *Baton) setClientByIndex(clientIndex int, client *ex.Client) {
 	case putClientIndex:
 		b.putClient = client
 	case metaClientIndex:
-		b.MetaClient = client
+		b.metaClient = client
 	default:
 		b.collClients[clientIndex] = client
 	}
@@ -365,7 +365,7 @@ func (b *Baton) createPutRemoveMetaClients() error {
 	}
 
 	b.putClient = <-clientCh
-	b.MetaClient = <-clientCh
+	b.metaClient = <-clientCh
 	b.removeClient = <-clientCh
 
 	pool.Close()
@@ -376,12 +376,12 @@ func (b *Baton) createPutRemoveMetaClients() error {
 // InitClients sets three clients if they do not currently exist. Returns error
 // if some exist and some do not.
 func (b *Baton) InitClients() error {
-	if b.putClient == nil && b.MetaClient == nil && b.removeClient == nil {
+	if b.putClient == nil && b.metaClient == nil && b.removeClient == nil {
 		return b.createPutRemoveMetaClients()
 	}
 
-	if b.putClient != nil && b.MetaClient != nil && b.removeClient != nil {
-		if !b.putClient.IsRunning() && !b.MetaClient.IsRunning() && !b.removeClient.IsRunning() {
+	if b.putClient != nil && b.metaClient != nil && b.removeClient != nil {
+		if !b.putClient.IsRunning() && !b.metaClient.IsRunning() && !b.removeClient.IsRunning() {
 			return b.createPutRemoveMetaClients()
 		}
 
@@ -395,7 +395,7 @@ func (b *Baton) InitClients() error {
 func (b *Baton) CloseClients() {
 	var openClients []*ex.Client
 
-	for _, client := range []*ex.Client{b.removeClient, b.putClient, b.MetaClient} {
+	for _, client := range []*ex.Client{b.removeClient, b.putClient, b.metaClient} {
 		if client != nil {
 			openClients = append(openClients, client)
 		}
@@ -422,7 +422,7 @@ func (b *Baton) Stat(remote string) (bool, map[string]string, error) {
 
 	err := TimeoutOp(func() error {
 		var errl error
-		it, errl = b.MetaClient.ListItem(ex.Args{Timestamp: true, AVU: true}, *requestToRodsItem("", remote))
+		it, errl = b.metaClient.ListItem(ex.Args{Timestamp: true, AVU: true}, *requestToRodsItem("", remote))
 
 		return errl
 	}, "stat failed: "+remote)
@@ -518,7 +518,7 @@ func (b *Baton) RemoveMeta(path string, meta map[string]string) error {
 	it.IAVUs = MetaToAVUs(meta)
 
 	err := TimeoutOp(func() error {
-		_, errl := b.MetaClient.MetaRem(ex.Args{}, *it)
+		_, errl := b.metaClient.MetaRem(ex.Args{}, *it)
 
 		return errl
 	}, "remove meta error: "+path)
@@ -528,7 +528,7 @@ func (b *Baton) RemoveMeta(path string, meta map[string]string) error {
 
 // GetMeta gets all the metadata for the given object in iRODS.
 func (b *Baton) GetMeta(path string) (map[string]string, error) {
-	it, err := b.MetaClient.ListItem(ex.Args{AVU: true, Timestamp: true, Size: true}, ex.RodsItem{
+	it, err := b.metaClient.ListItem(ex.Args{AVU: true, Timestamp: true, Size: true}, ex.RodsItem{
 		IPath: filepath.Dir(path),
 		IName: filepath.Base(path),
 	})
@@ -550,7 +550,7 @@ func (b *Baton) AddMeta(path string, meta map[string]string) error {
 	it.IAVUs = MetaToAVUs(meta)
 
 	err := TimeoutOp(func() error {
-		_, errl := b.MetaClient.MetaAdd(ex.Args{}, *it)
+		_, errl := b.metaClient.MetaAdd(ex.Args{}, *it)
 
 		return errl
 	}, "add meta error: "+path)
@@ -560,7 +560,7 @@ func (b *Baton) AddMeta(path string, meta map[string]string) error {
 
 // Cleanup stops our clients and closes our client pool.
 func (b *Baton) Cleanup() error {
-	b.closeConnections(append(b.collClients, b.putClient, b.removeClient, b.MetaClient))
+	b.closeConnections(append(b.collClients, b.putClient, b.removeClient, b.metaClient))
 
 	// b.PutMetaPool.Close()
 
@@ -577,41 +577,11 @@ func (b *Baton) Cleanup() error {
 	return nil
 }
 
-// GetBatonHandlerWithMetaClient returns a Handler that uses Baton to interact
-// with iRODS and contains a meta client for interacting with metadata. If you
-// don't have baton-do in your PATH, you'll get an error.
-// func GetBatonHandlerWithMetaClient() (*Baton, error) {
-// 	setupExtendoLogger()
-
-// 	_, err := ex.FindBaton()
-// 	if err != nil {
-// 		return nil, err
-// 	}
-
-// 	params := ex.DefaultClientPoolParams
-// 	params.MaxSize = 1
-// 	pool := ex.NewClientPool(params, "")
-
-// 	metaClient, err := pool.Get()
-// 	if err != nil {
-// 		return nil, fmt.Errorf("failed to get metaClient: %w", err)
-// 	}
-
-// 	baton := &Baton{
-// 		Baton: put.Baton{
-// 			PutMetaPool: pool,
-// 			MetaClient:  metaClient,
-// 		},
-// 	}
-
-// 	return baton, nil
-// }
-
 func (b *Baton) RemoveFile(path string) error {
 	it := RemotePathToRodsItem(path)
 
 	err := TimeoutOp(func() error {
-		_, errl := b.MetaClient.RemObj(ex.Args{}, *it)
+		_, errl := b.removeClient.RemObj(ex.Args{}, *it)
 
 		return errl
 	}, "remove file error: "+path)
@@ -626,7 +596,7 @@ func (b *Baton) RemoveDir(path string) error {
 	}
 
 	err := TimeoutOp(func() error {
-		_, errl := b.MetaClient.RemDir(ex.Args{}, *it)
+		_, errl := b.removeClient.RemDir(ex.Args{}, *it)
 
 		return errl
 	}, "remove meta error: "+path)
@@ -634,6 +604,8 @@ func (b *Baton) RemoveDir(path string) error {
 	return err
 }
 
+// QueryMeta return paths to all objects with given metadata inside the provided
+// scope.
 func (b *Baton) QueryMeta(dirToSearch string, meta map[string]string) ([]string, error) {
 	it := &ex.RodsItem{
 		IPath: dirToSearch,
@@ -645,7 +617,7 @@ func (b *Baton) QueryMeta(dirToSearch string, meta map[string]string) ([]string,
 	var err error
 
 	err = TimeoutOp(func() error {
-		items, err = b.MetaClient.MetaQuery(ex.Args{Object: true}, *it)
+		items, err = b.metaClient.MetaQuery(ex.Args{Object: true}, *it)
 
 		return err
 	}, "query meta error: "+dirToSearch)
@@ -660,5 +632,5 @@ func (b *Baton) QueryMeta(dirToSearch string, meta map[string]string) ([]string,
 }
 
 func (b *Baton) AllClientsStopped() bool {
-	return !b.putClient.IsRunning() && !b.MetaClient.IsRunning() && b.collClients == nil
+	return !b.putClient.IsRunning() && !b.metaClient.IsRunning() && b.collClients == nil
 }

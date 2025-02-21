@@ -254,16 +254,20 @@ func (l *LocalHandler) GetMeta(path string) (map[string]string, error) {
 	return meta, nil
 }
 
+// RemoveDir removes the empty dir.
 func (l *LocalHandler) RemoveDir(path string) error {
 	return os.Remove(path)
 }
 
+// RemoveFile removes the file and its metadata.
 func (l *LocalHandler) RemoveFile(path string) error {
 	delete(l.Meta, path)
 
 	return os.Remove(path)
 }
 
+// QueryMeta return paths to all objects with given metadata inside the provided
+// scope.
 func (l *LocalHandler) QueryMeta(dirToSearch string, meta map[string]string) ([]string, error) {
 	var objects []string
 
