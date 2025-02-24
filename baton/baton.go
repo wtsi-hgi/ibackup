@@ -1,7 +1,9 @@
 /*******************************************************************************
- * Copyright (c) 2022, 2023 Genome Research Ltd.
+ * Copyright (c) 2022, 2023, 2025 Genome Research Ltd.
  *
  * Author: Sendu Bala <sb10@sanger.ac.uk>
+ * Author: Rosie Kern <rk18@sanger.ac.uk>
+ * Author: Iaroslav Popov <ip13@sanger.ac.uk>
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -23,7 +25,7 @@
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  ******************************************************************************/
 
-// this file implements a Handler using baton, via extendo.
+// this file lets you use baton, via extendo.
 
 package baton
 
@@ -72,7 +74,6 @@ type Baton struct {
 	collCh      chan string
 	collErrCh   chan error
 	collMu      sync.Mutex
-	//PutMetaPool  *ex.ClientPool
 	putClient    *ex.Client
 	metaClient   *ex.Client
 	removeClient *ex.Client
@@ -189,7 +190,7 @@ func (b *Baton) GetClientsFromPoolConcurrently(pool *ex.ClientPool, numClients u
 
 	var wg sync.WaitGroup
 
-	for i := 0; i < int(numClients); i++ {
+	for range numClients {
 		wg.Add(1)
 
 		go func() {
@@ -212,7 +213,7 @@ func (b *Baton) GetClientsFromPoolConcurrently(pool *ex.ClientPool, numClients u
 }
 
 func (b *Baton) ensureCollection(clientIndex int, ri ex.RodsItem) error {
-	err := TimeoutOp(func() error {
+	err := timeoutOp(func() error {
 		_, errl := b.collClients[clientIndex].ListItem(ex.Args{}, ri)
 
 		return errl
@@ -221,16 +222,16 @@ func (b *Baton) ensureCollection(clientIndex int, ri ex.RodsItem) error {
 		return nil
 	}
 
-	if errors.Is(err, internal.Error{ErrOperationTimeout, ri.IPath}) {
+	if errors.Is(err, internal.Error{Msg: ErrOperationTimeout, Path: ri.IPath}) {
 		return err
 	}
 
 	return b.createCollectionWithTimeoutAndRetries(clientIndex, ri)
 }
 
-// TimeoutOp carries out op, returning any error from it. Has a 10s timeout on
+// timeoutOp carries out op, returning any error from it. Has a 10s timeout on
 // running op, and will return a timeout error instead if exceeded.
-func TimeoutOp(op retry.Operation, path string) error {
+func timeoutOp(op retry.Operation, path string) error {
 	errCh := make(chan error, 1)
 
 	go func() {
@@ -245,7 +246,7 @@ func TimeoutOp(op retry.Operation, path string) error {
 	case err = <-errCh:
 		timer.Stop()
 	case <-timer.C:
-		err = internal.Error{ErrOperationTimeout, path}
+		err = internal.Error{Msg: ErrOperationTimeout, Path: path}
 	}
 
 	return err
@@ -290,14 +291,14 @@ func (b *Baton) doWithTimeoutAndRetries(op retry.Operation, clientIndex int, pat
 // makes a new client on timeout or error.
 func (b *Baton) timeoutOpAndMakeNewClientOnError(op retry.Operation, clientIndex int, path string) retry.Operation {
 	return func() error {
-		err := TimeoutOp(op, path)
+		err := timeoutOp(op, path)
 		if err != nil {
 			pool := ex.NewClientPool(ex.DefaultClientPoolParams, "")
 
 			client, errp := pool.Get()
 			if errp == nil {
 				go func(oldClient *ex.Client) {
-					TimeoutOp(func() error { //nolint:errcheck
+					timeoutOp(func() error { //nolint:errcheck
 						oldClient.StopIgnoreError()
 
 						return nil
@@ -388,7 +389,7 @@ func (b *Baton) InitClients() error {
 		return nil
 	}
 
-	return internal.Error{"Clients are not in the same state", ""}
+	return internal.Error{Msg: "Clients are not in the same state", Path: ""}
 }
 
 // CloseClients closes remove, put and meta clients.
@@ -408,7 +409,7 @@ func (b *Baton) CloseClients() {
 // errors.
 func (b *Baton) closeConnections(clients []*ex.Client) {
 	for _, client := range clients {
-		TimeoutOp(func() error { //nolint:errcheck
+		timeoutOp(func() error { //nolint:errcheck
 			client.StopIgnoreError()
 
 			return nil
@@ -420,7 +421,7 @@ func (b *Baton) closeConnections(clients []*ex.Client) {
 func (b *Baton) Stat(remote string) (bool, map[string]string, error) {
 	var it ex.RodsItem
 
-	err := TimeoutOp(func() error {
+	err := timeoutOp(func() error {
 		var errl error
 		it, errl = b.metaClient.ListItem(ex.Args{Timestamp: true, AVU: true}, *requestToRodsItem("", remote))
 
@@ -517,7 +518,7 @@ func (b *Baton) RemoveMeta(path string, meta map[string]string) error {
 	it := RemotePathToRodsItem(path)
 	it.IAVUs = MetaToAVUs(meta)
 
-	err := TimeoutOp(func() error {
+	err := timeoutOp(func() error {
 		_, errl := b.metaClient.MetaRem(ex.Args{}, *it)
 
 		return errl
@@ -549,7 +550,7 @@ func (b *Baton) AddMeta(path string, meta map[string]string) error {
 	it := RemotePathToRodsItem(path)
 	it.IAVUs = MetaToAVUs(meta)
 
-	err := TimeoutOp(func() error {
+	err := timeoutOp(func() error {
 		_, errl := b.metaClient.MetaAdd(ex.Args{}, *it)
 
 		return errl
@@ -580,7 +581,7 @@ func (b *Baton) Cleanup() error {
 func (b *Baton) RemoveFile(path string) error {
 	it := RemotePathToRodsItem(path)
 
-	err := TimeoutOp(func() error {
+	err := timeoutOp(func() error {
 		_, errl := b.removeClient.RemObj(ex.Args{}, *it)
 
 		return errl
@@ -595,7 +596,7 @@ func (b *Baton) RemoveDir(path string) error {
 		IPath: path,
 	}
 
-	err := TimeoutOp(func() error {
+	err := timeoutOp(func() error {
 		_, errl := b.removeClient.RemDir(ex.Args{}, *it)
 
 		return errl
@@ -616,7 +617,7 @@ func (b *Baton) QueryMeta(dirToSearch string, meta map[string]string) ([]string,
 
 	var err error
 
-	err = TimeoutOp(func() error {
+	err = timeoutOp(func() error {
 		items, err = b.metaClient.MetaQuery(ex.Args{Object: true}, *it)
 
 		return err
