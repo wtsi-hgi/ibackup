@@ -2002,7 +2002,7 @@ func TestRemove(t *testing.T) {
 			dir1 := filepath.Join(testDir, "dir")
 			dir2 := filepath.Join(path, "path/to/other/dir/")
 
-			//dir3 := filepath.Join(dir1, "dir")
+			// dir3 := filepath.Join(dir1, "dir")
 
 			tempTestFileOfPaths, err := os.CreateTemp(dir, "testFileSet")
 			So(err, ShouldBeNil)

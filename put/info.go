@@ -77,7 +77,7 @@ func Stat(localPath string) (*ObjectInfo, error) {
 func getUserAndGroupFromFileInfo(fi os.FileInfo, localPath string) (string, string, error) {
 	stat, ok := fi.Sys().(*syscall.Stat_t)
 	if !ok {
-		return "", "", internal.Error{ErrStatFailed, localPath}
+		return "", "", internal.Error{Msg: ErrStatFailed, Path: localPath}
 	}
 
 	u, err := user.LookupId(strconv.Itoa(int(stat.Uid)))

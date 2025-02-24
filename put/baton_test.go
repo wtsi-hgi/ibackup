@@ -146,8 +146,7 @@ func TestPutBaton(t *testing.T) {
 					So(meta[MetaKeySets], ShouldEqual, "setA,setB")
 
 					Convey("Finally, Cleanup() stops the clients", func() {
-						err = p.Cleanup()
-						So(err, ShouldBeNil)
+						p.Cleanup()
 
 						So(h.AllClientsStopped(), ShouldBeTrue)
 					})

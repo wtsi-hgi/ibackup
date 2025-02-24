@@ -3123,9 +3123,7 @@ func makePutter(t *testing.T, handler put.Handler, requests []*put.Request, clie
 	So(errp, ShouldBeNil)
 
 	d := func() {
-		if errc := p.Cleanup(); errc != nil {
-			t.Logf("putter cleanup gave errors: %s", errc)
-		}
+		p.Cleanup()
 	}
 
 	err := client.StartingToCreateCollections()
