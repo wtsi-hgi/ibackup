@@ -69,13 +69,8 @@ type Handler interface {
 	EnsureCollection(collection string) error
 
 	// CollectionsDone is called after all collections have been created. This
-	// method can do things like cleaning up connections created for collection
-	// creation.
+	// method cleans up connections created for collection creation.
 	CollectionsDone() error
-
-	// InitClients creates new connections for subsequent remove and meta
-	// commands.
-	InitClients() error
 
 	// Stat checks if the provided Remote object exists. If it does, records its
 	// metadata and returns it. Returns an error if there was a problem finding
@@ -97,7 +92,7 @@ type Handler interface {
 
 	// Cleanup stops any connections created earlier and does any other cleanup
 	// needed.
-	Cleanup() error
+	Cleanup()
 
 	// GetMeta returns the meta for a given path in iRODS.
 	GetMeta(path string) (map[string]string, error)
@@ -202,8 +197,8 @@ func (p *Putter) SetFileReadTester(tester FileReadTester) {
 
 // Cleanup should be deferred after making a New Putter. It handles things like
 // disconnecting.
-func (p *Putter) Cleanup() error {
-	return p.handler.Cleanup()
+func (p *Putter) Cleanup() {
+	p.handler.Cleanup()
 }
 
 // CreateCollections will determine the minimal set of collections that need to
@@ -242,11 +237,6 @@ func (p *Putter) CreateCollections() error {
 	cdErr := p.handler.CollectionsDone()
 	if cdErr != nil {
 		merr = multierror.Append(merr, cdErr)
-	}
-
-	err := p.handler.InitClients()
-	if err != nil {
-		merr = multierror.Append(merr, err)
 	}
 
 	return merr.ErrorOrNil()
@@ -596,7 +586,7 @@ func (p *Putter) testRead(request *Request) error {
 	go func() {
 		select {
 		case <-timer.C:
-			errCh <- internal.Error{ErrReadTimeout, request.Local}
+			errCh <- internal.Error{Msg: ErrReadTimeout, Path: request.Local}
 		case err := <-readCh:
 			timer.Stop()
 			errCh <- err

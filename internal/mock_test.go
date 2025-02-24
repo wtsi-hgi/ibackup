@@ -34,14 +34,9 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-func TestRemoveMock(t *testing.T) {
-	Convey("Given a mock RemoveHandler", t, func() {
+func TestMock(t *testing.T) {
+	Convey("Given a local handler", t, func() {
 		lh := GetLocalHandler()
-
-		err := lh.InitClients()
-		So(err, ShouldBeNil)
-
-		So(lh.Connected, ShouldBeTrue)
 
 		sourceDir := t.TempDir()
 		destDir := t.TempDir()
@@ -64,7 +59,7 @@ func TestRemoveMock(t *testing.T) {
 			})
 
 			Convey("You can upload the file", func() {
-				err = lh.Put(file1local, file1remote)
+				err := lh.Put(file1local, file1remote)
 				So(err, ShouldBeNil)
 
 				_, err = os.Stat(file1remote)
@@ -144,7 +139,7 @@ func TestRemoveMock(t *testing.T) {
 
 		Convey("You can open collection clients and upload an empty dir", func() {
 			dir1remote := filepath.Join(destDir, "dir1")
-			err = lh.EnsureCollection(dir1remote)
+			err := lh.EnsureCollection(dir1remote)
 			So(err, ShouldBeNil)
 
 			So(len(lh.Collections), ShouldEqual, 1)
@@ -156,8 +151,6 @@ func TestRemoveMock(t *testing.T) {
 				err = lh.CollectionsDone()
 				So(err, ShouldBeNil)
 
-				So(len(lh.Collections), ShouldEqual, 0)
-
 				Convey("And then you can remove the uploaded dir", func() {
 					err = lh.RemoveDir(dir1remote)
 					So(err, ShouldBeNil)
@@ -168,8 +161,8 @@ func TestRemoveMock(t *testing.T) {
 			})
 		})
 
-		Convey("You can close those clients", func() {
-			lh.CloseClients()
+		Convey("You can close all clients", func() {
+			lh.Cleanup()
 
 			So(lh.Connected, ShouldBeFalse)
 		})

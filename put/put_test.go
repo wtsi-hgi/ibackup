@@ -110,6 +110,7 @@ func TestPutMock(t *testing.T) {
 						switch request.Status {
 						case RequestStatusReplaced:
 							replaced++
+
 							lh.Mu.RLock()
 							So(lh.Meta[request.Remote], ShouldResemble, requests[0].Meta.LocalMeta)
 							So(lh.Meta[request.Remote][MetaKeyRequester], ShouldEqual, "John,Sam")
@@ -165,8 +166,7 @@ func TestPutMock(t *testing.T) {
 				})
 
 				Convey("Finally, Cleanup() defers to the handler", func() {
-					err = p.Cleanup()
-					So(err, ShouldBeNil)
+					p.Cleanup()
 					So(lh.Cleaned, ShouldBeTrue)
 				})
 

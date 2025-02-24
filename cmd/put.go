@@ -262,9 +262,7 @@ func getPutter(requests []*put.Request) (*put.Putter, func()) {
 	}
 
 	dfunc := func() {
-		if errc := p.Cleanup(); errc != nil {
-			warn("cleanup gave errors: %s", errc)
-		}
+		p.Cleanup()
 	}
 
 	return p, dfunc

@@ -64,10 +64,9 @@ func GetLocalHandler() *LocalHandler {
 }
 
 // Cleanup just records this was called.
-func (l *LocalHandler) Cleanup() error {
+func (l *LocalHandler) Cleanup() {
 	l.Cleaned = true
-
-	return nil
+	l.Connected = false
 }
 
 // EnsureCollection creates the given dir locally and records that we did this.
@@ -80,9 +79,9 @@ func (l *LocalHandler) EnsureCollection(dir string) error {
 	return os.MkdirAll(dir, UserPerms)
 }
 
-// CollectionsDone TODO
+// CollectionsDone just records this was called.
 func (l *LocalHandler) CollectionsDone() error {
-	l.Collections = nil
+	l.Connected = true
 
 	return nil
 }
@@ -268,7 +267,7 @@ func (l *LocalHandler) RemoveFile(path string) error {
 
 // QueryMeta return paths to all objects with given metadata inside the provided
 // scope.
-func (l *LocalHandler) QueryMeta(dirToSearch string, meta map[string]string) ([]string, error) {
+func (l *LocalHandler) QueryMeta(dirToSearch string, meta map[string]string) ([]string, error) { //nolint:unparam
 	var objects []string
 
 	for path, pathMeta := range l.Meta {
@@ -296,16 +295,4 @@ func doesMetaContainMeta(sourceMeta, targetMeta map[string]string) bool {
 	}
 
 	return valid
-}
-
-// InitClients says we connected.
-func (l *LocalHandler) InitClients() error {
-	l.Connected = true
-
-	return nil
-}
-
-// CloseClients says we closed connections.
-func (l *LocalHandler) CloseClients() {
-	l.Connected = false
 }

@@ -1436,9 +1436,7 @@ func (d *DB) doRemoteBackup() (err error) {
 	}
 
 	defer func() {
-		if errc := putter.Cleanup(); err == nil {
-			err = errc
-		}
+		putter.Cleanup()
 	}()
 
 	if err = putter.CreateCollections(); err != nil {

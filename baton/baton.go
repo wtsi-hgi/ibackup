@@ -68,12 +68,12 @@ const (
 
 // Baton is a Handler that uses Baton (via extendo) to interact with iRODS.
 type Baton struct {
-	collPool    *ex.ClientPool
-	collClients []*ex.Client
-	collRunning bool
-	collCh      chan string
-	collErrCh   chan error
-	collMu      sync.Mutex
+	collPool     *ex.ClientPool
+	collClients  []*ex.Client
+	collRunning  bool
+	collCh       chan string
+	collErrCh    chan error
+	collMu       sync.Mutex
 	putClient    *ex.Client
 	metaClient   *ex.Client
 	removeClient *ex.Client
@@ -336,10 +336,7 @@ func (b *Baton) setClientByIndex(clientIndex int, client *ex.Client) {
 	}
 }
 
-//TODO
-
-// CollectionsDone closes the connections used for connection creation, and
-// creates new ones for doing puts and metadata operations.
+// CollectionsDone closes the connections used for connection creation.
 func (b *Baton) CollectionsDone() error {
 	b.collMu.Lock()
 	defer b.collMu.Unlock()
@@ -352,63 +349,52 @@ func (b *Baton) CollectionsDone() error {
 	close(b.collErrCh)
 	b.collRunning = false
 
-	return nil
-
-	// return b.createPutRemoveMetaClients()
-}
-
-func (b *Baton) createPutRemoveMetaClients() error {
-	pool, clientCh, err := b.connect(numPutRemoveMetaClients)
+	err := b.setClientIfNotExists(&b.putClient)
 	if err != nil {
-		b.collMu.Unlock()
-
 		return err
 	}
 
-	b.putClient = <-clientCh
-	b.metaClient = <-clientCh
-	b.removeClient = <-clientCh
+	return b.setClientIfNotExists(&b.metaClient)
+}
 
-	pool.Close()
+func (b *Baton) setClientIfNotExists(client **ex.Client) error {
+	if *client != nil && (*client).IsRunning() {
+		return nil
+	}
+
+	newClient, err := b.getNewClient()
+	if err != nil {
+		return err
+	}
+
+	*client = newClient
 
 	return nil
 }
 
-// InitClients sets three clients if they do not currently exist. Returns error
-// if some exist and some do not.
-func (b *Baton) InitClients() error {
-	if b.putClient == nil && b.metaClient == nil && b.removeClient == nil {
-		return b.createPutRemoveMetaClients()
+func (b *Baton) getNewClient() (*ex.Client, error) {
+	pool, clientCh, err := b.connect(1)
+	if err != nil {
+		b.collMu.Unlock()
+
+		return nil, err
 	}
 
-	if b.putClient != nil && b.metaClient != nil && b.removeClient != nil {
-		if !b.putClient.IsRunning() && !b.metaClient.IsRunning() && !b.removeClient.IsRunning() {
-			return b.createPutRemoveMetaClients()
-		}
+	client := <-clientCh
 
-		return nil
-	}
+	pool.Close()
 
-	return internal.Error{Msg: "Clients are not in the same state", Path: ""}
-}
-
-// CloseClients closes remove, put and meta clients.
-func (b *Baton) CloseClients() {
-	var openClients []*ex.Client
-
-	for _, client := range []*ex.Client{b.removeClient, b.putClient, b.metaClient} {
-		if client != nil {
-			openClients = append(openClients, client)
-		}
-	}
-
-	b.closeConnections(openClients)
+	return client, err
 }
 
 // closeConnections closes the given connections, with a timeout, ignoring
 // errors.
 func (b *Baton) closeConnections(clients []*ex.Client) {
 	for _, client := range clients {
+		if client == nil {
+			continue
+		}
+
 		timeoutOp(func() error { //nolint:errcheck
 			client.StopIgnoreError()
 
@@ -417,11 +403,18 @@ func (b *Baton) closeConnections(clients []*ex.Client) {
 	}
 }
 
-// Stat gets mtime and metadata info for the request Remote object.
+// Stat gets mtime and metadata info for the request Remote object. It creates a
+// new meta client if necessary so after calling this function you must
+// eventually call Cleanup().
 func (b *Baton) Stat(remote string) (bool, map[string]string, error) {
+	err := b.setClientIfNotExists(&b.metaClient)
+	if err != nil {
+		return false, nil, err
+	}
+
 	var it ex.RodsItem
 
-	err := timeoutOp(func() error {
+	err = timeoutOp(func() error {
 		var errl error
 		it, errl = b.metaClient.ListItem(ex.Args{Timestamp: true, AVU: true}, *requestToRodsItem("", remote))
 
@@ -468,29 +461,31 @@ func RodsItemToMeta(it ex.RodsItem) map[string]string {
 
 // Put uploads request Local to the Remote object, overwriting it if it already
 // exists. It calculates and stores the md5 checksum remotely, comparing to the
-// local checksum.
+// local checksum. It creates a new put client if necessary so after calling
+// this function you must eventually call Cleanup().
 func (b *Baton) Put(local, remote string) error {
+	err := b.setClientIfNotExists(&b.putClient)
+	if err != nil {
+		return err
+	}
+
 	item := requestToRodsItem(local, remote)
 
 	// iRODS treats /dev/null specially, so unless that changes we have to check
 	// for it and create a temporary empty file in its place.
 	if filepath.Join(item.IDirectory, item.IFile) == os.DevNull {
-		file, err := os.CreateTemp("", "ibackup-put-empty-*")
-		if err != nil {
-			return err
+		fileName, errt := getTempFile()
+		if errt != nil {
+			return errt
 		}
 
-		file.Close()
+		item.IDirectory = filepath.Dir(fileName)
+		item.IFile = filepath.Base(fileName)
 
-		name := file.Name()
-
-		item.IDirectory = filepath.Dir(name)
-		item.IFile = filepath.Base(name)
-
-		defer os.Remove(name)
+		defer os.Remove(fileName)
 	}
 
-	_, err := b.putClient.Put(
+	_, err = b.putClient.Put(
 		ex.Args{
 			Force:  true,
 			Verify: true,
@@ -499,6 +494,17 @@ func (b *Baton) Put(local, remote string) error {
 	)
 
 	return err
+}
+
+func getTempFile() (string, error) {
+	file, err := os.CreateTemp("", "ibackup-put-empty-*")
+	if err != nil {
+		return "", err
+	}
+
+	file.Close()
+
+	return file.Name(), nil
 }
 
 func MetaToAVUs(meta map[string]string) []ex.AVU {
@@ -513,12 +519,19 @@ func MetaToAVUs(meta map[string]string) []ex.AVU {
 	return avus
 }
 
-// RemoveMeta removes the given metadata from a given object in iRODS.
+// RemoveMeta removes the given metadata from a given object in iRODS. It
+// creates a new meta client if necessary so after calling this function you
+// must eventually call Cleanup().
 func (b *Baton) RemoveMeta(path string, meta map[string]string) error {
+	err := b.setClientIfNotExists(&b.metaClient)
+	if err != nil {
+		return err
+	}
+
 	it := RemotePathToRodsItem(path)
 	it.IAVUs = MetaToAVUs(meta)
 
-	err := timeoutOp(func() error {
+	err = timeoutOp(func() error {
 		_, errl := b.metaClient.MetaRem(ex.Args{}, *it)
 
 		return errl
@@ -527,8 +540,15 @@ func (b *Baton) RemoveMeta(path string, meta map[string]string) error {
 	return err
 }
 
-// GetMeta gets all the metadata for the given object in iRODS.
+// GetMeta gets all the metadata for the given object in iRODS. It creates a new
+// meta client if necessary so after calling this function you must eventually
+// call Cleanup().
 func (b *Baton) GetMeta(path string) (map[string]string, error) {
+	err := b.setClientIfNotExists(&b.metaClient)
+	if err != nil {
+		return nil, err
+	}
+
 	it, err := b.metaClient.ListItem(ex.Args{AVU: true, Timestamp: true, Size: true}, ex.RodsItem{
 		IPath: filepath.Dir(path),
 		IName: filepath.Base(path),
@@ -545,12 +565,19 @@ func RemotePathToRodsItem(path string) *ex.RodsItem {
 	}
 }
 
-// AddMeta adds the given metadata to a given object in iRODS.
+// AddMeta adds the given metadata to a given object in iRODS. It
+// creates a new meta client if necessary so after calling this function you
+// must eventually call Cleanup().
 func (b *Baton) AddMeta(path string, meta map[string]string) error {
+	err := b.setClientIfNotExists(&b.metaClient)
+	if err != nil {
+		return err
+	}
+
 	it := RemotePathToRodsItem(path)
 	it.IAVUs = MetaToAVUs(meta)
 
-	err := timeoutOp(func() error {
+	err = timeoutOp(func() error {
 		_, errl := b.metaClient.MetaAdd(ex.Args{}, *it)
 
 		return errl
@@ -560,10 +587,8 @@ func (b *Baton) AddMeta(path string, meta map[string]string) error {
 }
 
 // Cleanup stops our clients and closes our client pool.
-func (b *Baton) Cleanup() error {
+func (b *Baton) Cleanup() {
 	b.closeConnections(append(b.collClients, b.putClient, b.removeClient, b.metaClient))
-
-	// b.PutMetaPool.Close()
 
 	b.collMu.Lock()
 	defer b.collMu.Unlock()
@@ -574,14 +599,20 @@ func (b *Baton) Cleanup() error {
 		b.collPool.Close()
 		b.collRunning = false
 	}
-
-	return nil
 }
 
+// RemoveFile removes the given file from iRODS. It creates a new remove client
+// if necessary so after calling this function you must eventually call
+// Cleanup().
 func (b *Baton) RemoveFile(path string) error {
+	err := b.setClientIfNotExists(&b.removeClient)
+	if err != nil {
+		return err
+	}
+
 	it := RemotePathToRodsItem(path)
 
-	err := timeoutOp(func() error {
+	err = timeoutOp(func() error {
 		_, errl := b.removeClient.RemObj(ex.Args{}, *it)
 
 		return errl
@@ -590,13 +621,20 @@ func (b *Baton) RemoveFile(path string) error {
 	return err
 }
 
-// RemoveDir removes the given directory from iRODS given it is empty.
+// RemoveDir removes the given directory from iRODS given it is empty. It
+// creates a new remove client if necessary so after calling this function you
+// must eventually call Cleanup().
 func (b *Baton) RemoveDir(path string) error {
+	err := b.setClientIfNotExists(&b.removeClient)
+	if err != nil {
+		return err
+	}
+
 	it := &ex.RodsItem{
 		IPath: path,
 	}
 
-	err := timeoutOp(func() error {
+	err = timeoutOp(func() error {
 		_, errl := b.removeClient.RemDir(ex.Args{}, *it)
 
 		return errl
@@ -606,16 +644,20 @@ func (b *Baton) RemoveDir(path string) error {
 }
 
 // QueryMeta return paths to all objects with given metadata inside the provided
-// scope.
+// scope. It creates a new meta client if necessary so after calling this
+// function you must eventually call Cleanup().
 func (b *Baton) QueryMeta(dirToSearch string, meta map[string]string) ([]string, error) {
+	err := b.setClientIfNotExists(&b.metaClient)
+	if err != nil {
+		return nil, err
+	}
+
 	it := &ex.RodsItem{
 		IPath: dirToSearch,
 		IAVUs: MetaToAVUs(meta),
 	}
 
 	var items []ex.RodsItem
-
-	var err error
 
 	err = timeoutOp(func() error {
 		items, err = b.metaClient.MetaQuery(ex.Args{Object: true}, *it)
@@ -633,5 +675,11 @@ func (b *Baton) QueryMeta(dirToSearch string, meta map[string]string) ([]string,
 }
 
 func (b *Baton) AllClientsStopped() bool {
-	return !b.putClient.IsRunning() && !b.metaClient.IsRunning() && b.collClients == nil
+	for _, client := range append(b.collClients, b.putClient, b.metaClient, b.removeClient) {
+		if client != nil && client.IsRunning() {
+			return false
+		}
+	}
+
+	return true
 }
