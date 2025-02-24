@@ -57,12 +57,9 @@ type Handler interface {
 	// provided scope.
 	QueryMeta(dirToSearch string, meta map[string]string) ([]string, error)
 
-	// InitClients creates new connections for subsequent remove and meta
-	// commands.
-	InitClients() error
-
-	// CloseClients closes all open connections.
-	CloseClients()
+	// Cleanup stops any connections created earlier and does any other cleanup
+	// needed.
+	Cleanup()
 }
 
 // UpdateSetsAndRequestersOnRemoteFile updates the given file's metadata in

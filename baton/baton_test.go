@@ -58,14 +58,7 @@ func TestBaton(t *testing.T) {
 
 	localPath := t.TempDir()
 
-	Convey("Given clients on a baton handler", t, func() {
-		err := h.InitClients()
-		So(err, ShouldBeNil)
-
-		So(h.removeClient.IsRunning(), ShouldBeTrue)
-		So(h.metaClient.IsRunning(), ShouldBeTrue)
-		So(h.putClient.IsRunning(), ShouldBeTrue)
-
+	Convey("Given a baton handler", t, func() {
 		meta := map[string]string{
 			"ibackup:test:a": "1",
 			"ibackup:test:b": "2",
@@ -84,7 +77,7 @@ func TestBaton(t *testing.T) {
 			})
 
 			Convey("You can put the file in iRODS", func() {
-				err = h.Put(file1local, file1remote)
+				err := h.Put(file1local, file1remote)
 				So(err, ShouldBeNil)
 
 				So(isObjectInIRODS(remotePath, "file1"), ShouldBeTrue)
@@ -119,6 +112,12 @@ func TestBaton(t *testing.T) {
 						So(errm, ShouldBeNil)
 
 						So(fileMeta, ShouldResemble, meta)
+
+						Convey("And you can close the put and meta clients", func() {
+							h.Cleanup()
+
+							So(h.AllClientsStopped(), ShouldBeTrue)
+						})
 					})
 
 					Convey("You can stat a file and get its metadata", func() {
@@ -157,13 +156,19 @@ func TestBaton(t *testing.T) {
 					So(err, ShouldBeNil)
 
 					So(isObjectInIRODS(remotePath, "file1"), ShouldBeFalse)
+
+					Convey("And you can close the put and remove clients", func() {
+						h.Cleanup()
+
+						So(h.AllClientsStopped(), ShouldBeTrue)
+					})
 				})
 			})
 		})
 
 		Convey("You can open collection clients and put an empty dir in iRODS", func() {
 			dir1remote := filepath.Join(remotePath, "dir1")
-			err = h.EnsureCollection(dir1remote)
+			err := h.EnsureCollection(dir1remote)
 			So(err, ShouldBeNil)
 
 			So(h.collPool.IsOpen(), ShouldBeTrue)
@@ -186,14 +191,14 @@ func TestBaton(t *testing.T) {
 					So(err, ShouldBeNil)
 
 					So(isObjectInIRODS(remotePath, "dir1"), ShouldBeFalse)
+
+					Convey("And you can close the remove and collections clients", func() {
+						h.Cleanup()
+
+						So(h.AllClientsStopped(), ShouldBeTrue)
+					})
 				})
 			})
-		})
-
-		Convey("You can close those clients", func() {
-			h.CloseClients()
-
-			So(h.AllClientsStopped(), ShouldBeTrue)
 		})
 	})
 }
