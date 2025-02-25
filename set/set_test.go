@@ -28,6 +28,7 @@ package set
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -475,7 +476,7 @@ func TestSetDB(t *testing.T) {
 					So(len(dEntries), ShouldEqual, 0)
 				})
 
-				Convey("The get an particular entry from a set", func() {
+				Convey("Then get an particular entry from a set", func() {
 					entry, errr := db.GetFileEntryForSet(set2.ID(), "/a/b.txt")
 					So(errr, ShouldBeNil)
 					So(entry, ShouldResemble, &Entry{Path: "/a/b.txt"})
@@ -523,8 +524,8 @@ func TestSetDB(t *testing.T) {
 
 						slackWriter.Reset()
 
-						discoverASet(db, sets[0], func() ([]*Dirent, error) {
-							return createFileEnts([]string{"/g/h/l.txt", "/g/i/m.txt"}), nil
+						discoverASet(db, sets[0], func() ([]*Dirent, []*Dirent, error) {
+							return createFileEnts([]string{"/g/h/l.txt", "/g/i/m.txt"}), []*Dirent{}, nil
 						}, func() {
 							sets, err = db.GetByRequester("jim")
 							So(err, ShouldBeNil)
@@ -884,8 +885,8 @@ func TestSetDB(t *testing.T) {
 							oldStart := sets[0].StartedDiscovery
 							oldDisc := sets[0].LastDiscovery
 
-							discoverASet(db, sets[0], func() ([]*Dirent, error) {
-								return createFileEnts([]string{"/g/h/l.txt", "/g/i/m.txt", "/g/i/n.txt"}), nil
+							discoverASet(db, sets[0], func() ([]*Dirent, []*Dirent, error) {
+								return createFileEnts([]string{"/g/h/l.txt", "/g/i/m.txt", "/g/i/n.txt"}), []*Dirent{}, nil
 							}, func() {
 								sets, err = db.GetByRequester("jim")
 								So(err, ShouldBeNil)
@@ -1017,14 +1018,14 @@ func TestSetDB(t *testing.T) {
 
 							oldDisc := sets[0].LastDiscovery
 
-							discoverASet(db, sets[0], func() ([]*Dirent, error) {
+							discoverASet(db, sets[0], func() ([]*Dirent, []*Dirent, error) {
 								dirents := createFileEnts([]string{"/g/h/l.txt", "/g/i/m.txt", "/g/i/n.txt"})
 								for _, dirent := range dirents {
 									dirent.Inode = 0
 									dirent.Mode = os.ModeIrregular
 								}
 
-								return dirents, nil
+								return dirents, []*Dirent{}, nil
 							}, func() {})
 
 							sets, err = db.GetByRequester("jim")
@@ -1050,8 +1051,8 @@ func TestSetDB(t *testing.T) {
 
 							oldDisc := sets[0].LastDiscovery
 
-							discoverASet(db, sets[0], func() ([]*Dirent, error) {
-								return nil, nil
+							discoverASet(db, sets[0], func() ([]*Dirent, []*Dirent, error) {
+								return nil, nil, nil
 							}, func() {})
 
 							sets, err = db.GetByRequester("jim")
@@ -1336,7 +1337,7 @@ func TestSetDB(t *testing.T) {
 				err = db.AddOrUpdate(setl1)
 				So(err, ShouldBeNil)
 
-				dirents := []*Dirent{
+				fileDirents := []*Dirent{
 					{
 						Path:  local,
 						Inode: stat.Ino,
@@ -1355,8 +1356,21 @@ func TestSetDB(t *testing.T) {
 					},
 				}
 
-				discoverCB := func(_ []*Entry) ([]*Dirent, error) { //nolint:unparam
-					return dirents, nil
+				dirDirents := []*Dirent{
+					{
+						Path:  dir,
+						Mode:  fs.ModeDir,
+						Inode: stat.Ino,
+					},
+					{
+						Path:  dir2,
+						Mode:  fs.ModeDir,
+						Inode: stat.Ino,
+					},
+				}
+
+				discoverCB := func(_ []*Entry) ([]*Dirent, []*Dirent, error) { //nolint:unparam
+					return fileDirents, dirDirents, nil
 				}
 
 				got, errd := db.Discover(setl1.ID(), discoverCB)
@@ -1385,9 +1399,13 @@ func TestSetDB(t *testing.T) {
 				So(entries[1].InodeStoragePath(), ShouldEndWith, fmt.Sprintf("/%d", entries[1].Inode))
 				So(entries[3].InodeStoragePath(), ShouldEqual, entries[1].InodeStoragePath())
 
+				dirEntries, errd := db.GetAllDirEntries(setl1.ID())
+				So(errd, ShouldBeNil)
+				So(len(dirEntries), ShouldEqual, 2)
+
 				Convey("then rediscover the set and still know about the hardlinks", func() {
-					got, errd = db.Discover(setl1.ID(), func(dirEntries []*Entry) ([]*Dirent, error) {
-						return dirents, nil
+					got, errd = db.Discover(setl1.ID(), func(dirEntries []*Entry) ([]*Dirent, []*Dirent, error) {
+						return fileDirents, dirDirents, nil
 					})
 					So(errd, ShouldBeNil)
 					So(got.Hardlinks, ShouldEqual, 2)
@@ -1396,16 +1414,20 @@ func TestSetDB(t *testing.T) {
 					So(got, ShouldNotBeNil)
 					So(err, ShouldBeNil)
 					So(got.Hardlinks, ShouldEqual, 2)
+
+					dirEntries, errd := db.GetAllDirEntries(setl1.ID())
+					So(errd, ShouldBeNil)
+					So(len(dirEntries), ShouldEqual, 2)
 				})
 
 				Convey("then get back all known local paths for the hardlink", func() {
 					paths, errh := db.HardlinkPaths(entries[1])
 					So(errh, ShouldBeNil)
-					So(paths, ShouldResemble, []string{dirents[0].Path, dirents[3].Path})
+					So(paths, ShouldResemble, []string{fileDirents[0].Path, fileDirents[3].Path})
 
 					paths, errh = db.HardlinkPaths(entries[0])
 					So(errh, ShouldBeNil)
-					So(paths, ShouldResemble, []string{dirents[1].Path, dirents[3].Path})
+					So(paths, ShouldResemble, []string{fileDirents[1].Path, fileDirents[3].Path})
 				})
 
 				Convey("then get a remote path for the hardlink", func() {
@@ -1419,7 +1441,7 @@ func TestSetDB(t *testing.T) {
 					err = os.Rename(unlinked, moved)
 					So(err, ShouldBeNil)
 
-					dirents[2].Path = moved
+					fileDirents[2].Path = moved
 
 					got, errd = db.Discover(setl1.ID(), discoverCB)
 					So(errd, ShouldBeNil)
@@ -1459,7 +1481,7 @@ func TestSetDB(t *testing.T) {
 				err = os.Symlink(path1, path2)
 				So(err, ShouldBeNil)
 
-				got, errb := db.Discover(setl1.ID(), func(_ []*Entry) ([]*Dirent, error) {
+				got, errb := db.Discover(setl1.ID(), func(_ []*Entry) ([]*Dirent, []*Dirent, error) {
 					return []*Dirent{
 						{
 							Path:  path1,
@@ -1470,7 +1492,7 @@ func TestSetDB(t *testing.T) {
 							Mode:  os.ModeSymlink,
 							Inode: 2,
 						},
-					}, nil
+					}, []*Dirent{}, nil
 				})
 				So(errb, ShouldBeNil)
 				So(got, ShouldNotBeNil)
@@ -1605,12 +1627,12 @@ func TestSetDB(t *testing.T) {
 	})
 }
 
-func discoverASet(db *DB, set *Set, discoveryFunc func() ([]*Dirent, error), pendingTestsFunc func()) {
+func discoverASet(db *DB, set *Set, discoveryFunc func() ([]*Dirent, []*Dirent, error), pendingTestsFunc func()) {
 	errCh := make(chan error, 1)
 	waitCh := make(chan struct{})
 
 	go func() {
-		_, errd := db.Discover(set.ID(), func(e []*Entry) ([]*Dirent, error) {
+		_, errd := db.Discover(set.ID(), func(e []*Entry) ([]*Dirent, []*Dirent, error) {
 			waitCh <- struct{}{}
 			<-waitCh
 

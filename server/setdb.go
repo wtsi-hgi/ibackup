@@ -448,6 +448,7 @@ func (s *Server) submitFilesForRemoval(set *set.Set, paths []string, reserveGrou
 	return err
 }
 
+// RemoveReq contains information about a remove request for a path.
 type RemoveReq struct {
 	Path               string
 	Set                *set.Set
@@ -856,7 +857,7 @@ func (s *Server) getDirs(c *gin.Context) {
 		return
 	}
 
-	entries, err := s.db.GetDirEntries(set.ID())
+	entries, err := s.db.GetAllDirEntries(set.ID())
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
