@@ -74,6 +74,7 @@ const (
 	fileBucket                    = subBucketPrefix + "files"
 	dirBucket                     = subBucketPrefix + "dirs"
 	discoveredBucket              = subBucketPrefix + "discovered"
+	discoveredFoldersBucket       = subBucketPrefix + "discoveredFolders"
 	removeBucket                  = "remove"
 	failedBucket                  = "failed"
 	dbOpenMode                    = 0600
@@ -337,7 +338,7 @@ func (d *DB) validatePaths(set *Set, bucket1, bucket2 string, paths []string) ([
 }
 
 func (d *DB) validateDirPaths(set *Set, paths []string) ([]string, []string, error) {
-	return d.validatePaths(set, dirBucket, discoveredBucket, paths)
+	return d.validatePaths(set, dirBucket, discoveredFoldersBucket, paths)
 }
 
 // RemoveFileEntry removes the provided file from a given set.
@@ -370,7 +371,12 @@ func (d *DB) removeEntry(setID string, entryKey string, bucketName string) error
 
 // RemoveDirEntry removes the provided directory from a given set.
 func (d *DB) RemoveDirEntry(setID string, path string) error {
-	return d.removeEntry(setID, path, dirBucket)
+	err := d.removeEntry(setID, path, dirBucket)
+	if err != nil {
+		return err
+	}
+
+	return d.removeEntry(setID, path, discoveredFoldersBucket)
 }
 
 // GetFilesInDir returns all file paths from inside the given directory (and all
@@ -627,7 +633,7 @@ func (d *DBRO) getSetByID(tx *bolt.Tx, setID string) (*Set, []byte, *bolt.Bucket
 
 // DiscoverCallback will receive the sets directory entries and return a list of
 // the files discovered in those directories.
-type DiscoverCallback func([]*Entry) ([]*Dirent, error)
+type DiscoverCallback func([]*Entry) ([]*Dirent, []*Dirent, error)
 
 // Discover discovers and stores file entry details for the given set.
 // Immediately tries to record in the db that discovery has started and returns
@@ -678,8 +684,10 @@ func (d *DB) discover(setID string, cb DiscoverCallback) (*Set, error) {
 
 	var fileEntries []*Dirent
 
+	var dirEntries []*Dirent
+
 	if cb != nil {
-		fileEntries, err = cb(entries)
+		fileEntries, dirEntries, err = cb(entries)
 	}
 
 	err = errors.Join(err, <-errCh)
@@ -687,7 +695,7 @@ func (d *DB) discover(setID string, cb DiscoverCallback) (*Set, error) {
 		return nil, err
 	}
 
-	return d.setDiscoveredEntries(setID, fileEntries)
+	return d.setDiscoveredEntries(setID, fileEntries, dirEntries)
 }
 
 func (d *DB) statPureFileEntries(setID string) error {
@@ -751,8 +759,12 @@ func (d *DB) handleFilePoolResults(tx *bolt.Tx, sfsb *setFileSubBucket, setID st
 // to Complete.
 //
 // Returns the updated set and an error if the setID isn't in the database.
-func (d *DB) setDiscoveredEntries(setID string, dirents []*Dirent) (*Set, error) {
-	if err := d.setEntries(setID, dirents, discoveredBucket); err != nil {
+func (d *DB) setDiscoveredEntries(setID string, fileDirents, dirDirents []*Dirent) (*Set, error) {
+	if err := d.setEntries(setID, fileDirents, discoveredBucket); err != nil {
+		return nil, err
+	}
+
+	if err := d.setEntries(setID, dirDirents, discoveredFoldersBucket); err != nil {
 		return nil, err
 	}
 
@@ -1281,6 +1293,21 @@ func (d *DBRO) GetPureFileEntries(setID string) ([]*Entry, error) {
 // GetDirEntries returns all the dir entries for the given set.
 func (d *DBRO) GetDirEntries(setID string) ([]*Entry, error) {
 	return d.getEntries(setID, dirBucket)
+}
+
+// GetDirEntries returns all the dir entries for the given set.
+func (d *DBRO) GetAllDirEntries(setID string) ([]*Entry, error) {
+	entries, err := d.getEntries(setID, dirBucket)
+	if err != nil {
+		return nil, err
+	}
+
+	entries2, err := d.getEntries(setID, discoveredFoldersBucket)
+	if err != nil {
+		return nil, err
+	}
+
+	return append(entries, entries2...), nil
 }
 
 // SetError updates a set with the given error message. Returns an error if the

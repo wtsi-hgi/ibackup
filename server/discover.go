@@ -101,38 +101,49 @@ func (s *Server) discoverThenEnqueue(given *set.Set, transformer put.PathTransfo
 }
 
 func (s *Server) doDiscovery(given *set.Set) (*set.Set, error) {
-	return s.db.Discover(given.ID(), func(entries []*set.Entry) ([]*set.Dirent, error) {
+	return s.db.Discover(given.ID(), func(entries []*set.Entry) ([]*set.Dirent, []*set.Dirent, error) {
 		entriesCh := make(chan *set.Dirent)
+		dirCh := make(chan *set.Dirent)
 		doneCh := make(chan error)
 		warnCh := make(chan error)
 
-		go s.doSetDirWalks(entries, given, entriesCh, doneCh, warnCh)
+		go s.doSetDirWalks(entries, given, entriesCh, dirCh, doneCh, warnCh)
 
-		return s.processSetDirWalkOutput(given, entriesCh, doneCh, warnCh)
+		return s.processSetDirWalkOutput(given, entriesCh, dirCh, doneCh, warnCh)
 	})
 }
 
-func (s *Server) processSetDirWalkOutput(given *set.Set, entriesCh chan *set.Dirent,
-	doneCh, warnCh chan error) ([]*set.Dirent, error) {
+func (s *Server) processSetDirWalkOutput(given *set.Set, entriesCh, dirCh chan *set.Dirent,
+	doneCh, warnCh chan error) ([]*set.Dirent, []*set.Dirent, error) {
 	warnDoneCh := s.processSetDirWalkWarnings(given, warnCh)
 
-	var fileEntries []*set.Dirent //nolint:prealloc
+	var (
+		fileEntries []*set.Dirent
+		dirEntries  []*set.Dirent
+		err         error
+	)
 
-	for entry := range entriesCh {
-		fileEntries = append(fileEntries, entry)
+L:
+	for {
+		select {
+		case entry := <-entriesCh:
+			fileEntries = append(fileEntries, entry)
+		case dir := <-dirCh:
+			dirEntries = append(dirEntries, dir)
+		case err = <-doneCh:
+			break L
+		}
 	}
-
-	err := <-doneCh
 
 	close(warnCh)
 
 	if err != nil {
 		<-warnDoneCh
 
-		return nil, err
+		return nil, nil, err
 	}
 
-	return fileEntries, <-warnDoneCh
+	return fileEntries, dirEntries, <-warnDoneCh
 }
 
 func (s *Server) processSetDirWalkWarnings(given *set.Set, warnCh chan error) chan error {
@@ -181,7 +192,7 @@ func (s *Server) handleNewlyDefinedSets(given *set.Set) {
 // sending discovered file paths to the entriesCh. Closes the entriesCh when
 // done, then sends any error on the doneCh. Non-critical warnings during the
 // walk are sent to the warnChan.
-func (s *Server) doSetDirWalks(entries []*set.Entry, given *set.Set, entriesCh chan *set.Dirent,
+func (s *Server) doSetDirWalks(entries []*set.Entry, given *set.Set, entriesCh, dirCh chan *set.Dirent,
 	doneCh, warnChan chan error) {
 	errCh := make(chan error, len(entries))
 
@@ -190,7 +201,7 @@ func (s *Server) doSetDirWalks(entries []*set.Entry, given *set.Set, entriesCh c
 		thisEntry := entry
 
 		s.dirPool.Submit(func() {
-			err := s.checkAndWalkDir(dir, onlyRegularAndSymlinks(entriesCh), warnChan)
+			err := s.checkAndWalkDir(dir, onlyRegularAndSymlinks(entriesCh, dirCh, dir), warnChan)
 			errCh <- s.handleMissingDirectories(err, thisEntry, given)
 		})
 	}
@@ -204,9 +215,10 @@ func (s *Server) doSetDirWalks(entries []*set.Entry, given *set.Set, entriesCh c
 		}
 	}
 
-	close(entriesCh)
-
 	doneCh <- err
+
+	close(entriesCh)
+	close(dirCh)
 }
 
 // checkAndWalkDir checks if the given dir exists, and if it does, walks the
@@ -218,7 +230,7 @@ func (s *Server) checkAndWalkDir(dir string, cb walk.PathCallback, warnChan chan
 		return err
 	}
 
-	walker := walk.New(cb, false, false)
+	walker := walk.New(cb, true, false)
 
 	return walker.Walk(dir, func(path string, err error) {
 		s.Logger.Printf("walk found %s, but had error: %s", path, err)
@@ -229,16 +241,27 @@ func (s *Server) checkAndWalkDir(dir string, cb walk.PathCallback, warnChan chan
 	})
 }
 
+//TODO rename fix docs
+
 // onlyRegularAndSymlinks sends every entry found on the walk to the given
 // entriesCh, except for entries that are not regular files or symlinks, which
 // are silently skipped.
-func onlyRegularAndSymlinks(entriesCh chan *set.Dirent) func(entry *walk.Dirent) error {
+func onlyRegularAndSymlinks(entriesCh, dirCh chan *set.Dirent, parentDir string) func(entry *walk.Dirent) error {
 	return func(entry *walk.Dirent) error {
-		if !(entry.IsRegular() || entry.IsSymlink()) {
+		dirent := set.DirEntFromWalk(entry)
+
+		if !(entry.IsRegular() || entry.IsSymlink() || entry.IsDir()) ||
+			dirent.Path == filepath.Clean(parentDir) {
 			return nil
 		}
 
-		entriesCh <- set.DirEntFromWalk(entry)
+		if entry.IsDir() {
+			dirCh <- dirent
+
+			return nil
+		}
+
+		entriesCh <- dirent
 
 		return nil
 	}
