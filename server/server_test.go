@@ -117,7 +117,8 @@ func TestServer(t *testing.T) {
 		logWriter := gas.NewStringLogger()
 		slackWriter := gas.NewStringLogger()
 		conf := Config{
-			HTTPLogger: logWriter,
+			HTTPLogger:     logWriter,
+			StorageHandler: internal.GetLocalHandler(),
 		}
 
 		Convey("You can make a Server with a logger configured and no slacker", func() {
@@ -332,7 +333,7 @@ func TestServer(t *testing.T) {
 					So(err, ShouldBeNil)
 
 					Convey("And then you can set file and directory entries, trigger discovery and get all file statuses", func() {
-						files, dirs, discovers, symlinkPath := createTestBackupFiles(t, localDir)
+						files, dirs, discovers, discoveredFolders, symlinkPath := createTestBackupFiles(t, localDir)
 						dirs = append(dirs, filepath.Join(localDir, "missing"))
 
 						err = client.SetFiles(exampleSet.ID(), files)
@@ -392,7 +393,7 @@ func TestServer(t *testing.T) {
 
 						entries, err = client.GetDirs(exampleSet.ID())
 						So(err, ShouldBeNil)
-						So(len(entries), ShouldEqual, len(dirs))
+						So(len(entries), ShouldEqual, len(dirs)+len(discoveredFolders))
 						So(entries[2].Status, ShouldEqual, set.Missing)
 
 						gotSet, errg = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
@@ -1479,7 +1480,7 @@ func TestServer(t *testing.T) {
 							MonitorTime: 0,
 						}
 
-						_, dirs, expected, _ := createTestBackupFiles(t, localDir)
+						_, dirs, expected, _, _ := createTestBackupFiles(t, localDir)
 
 						err = client.AddOrUpdateSet(badSet)
 						So(err, ShouldBeNil)
@@ -1584,7 +1585,7 @@ func TestServer(t *testing.T) {
 					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldBeNil)
 
-					_, dirs, discovers, _ := createTestBackupFiles(t, localDir)
+					_, dirs, discovers, _, _ := createTestBackupFiles(t, localDir)
 
 					err = client.SetDirs(exampleSet.ID(), dirs)
 					So(err, ShouldBeNil)
@@ -2394,7 +2395,7 @@ func TestServer(t *testing.T) {
 					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldBeNil)
 
-					files, dirs, _, _ := createTestBackupFiles(t, localDir)
+					files, dirs, _, _, _ := createTestBackupFiles(t, localDir)
 					files = []string{files[0], dirs[0]}
 
 					err = client.SetFiles(exampleSet.ID(), files)
@@ -3062,7 +3063,7 @@ func createDBLocation(t *testing.T) string {
 // createTestBackupFiles creates and returns files, dirs and the files we're
 // expecting to discover in the dirs. Also created is a symlink in one of the
 // directories; the path to this is returned separately.
-func createTestBackupFiles(t *testing.T, dir string) ([]string, []string, []string, string) {
+func createTestBackupFiles(t *testing.T, dir string) ([]string, []string, []string, []string, string) {
 	t.Helper()
 
 	files := []string{
@@ -3081,6 +3082,12 @@ func createTestBackupFiles(t *testing.T, dir string) ([]string, []string, []stri
 		filepath.Join(dir, "e/f/i/j/k/l"),
 	}
 
+	discoveredFolders := []string{
+		filepath.Join(dir, "e/f/i/"),
+		filepath.Join(dir, "e/f/i/j"),
+		filepath.Join(dir, "e/f/i/j/k"),
+	}
+
 	for i, path := range files {
 		internal.CreateTestFileOfLength(t, path, i+1)
 	}
@@ -3096,7 +3103,7 @@ func createTestBackupFiles(t *testing.T, dir string) ([]string, []string, []stri
 
 	discovers = append(discovers, symlinkPath)
 
-	return files, dirs, discovers, symlinkPath
+	return files, dirs, discovers, discoveredFolders, symlinkPath
 }
 
 // createManyTestBackupFiles creates and returns the paths to many files in a

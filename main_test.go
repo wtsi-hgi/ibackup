@@ -972,7 +972,8 @@ Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently 
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
 Completed in: 0s
 Directories:
-  `+localDir+" => "+remote)
+  `+localDir+" => "+remote+`
+  `+badPermDir+" => "+filepath.Join(remote, "bad-perms-dir"))
 		})
 
 		Convey("Given an added set defined with a humgen transformer, the remote directory is correct", func() {
@@ -2002,8 +2003,6 @@ func TestRemove(t *testing.T) {
 			dir1 := filepath.Join(testDir, "dir")
 			dir2 := filepath.Join(path, "path/to/other/dir/")
 
-			// dir3 := filepath.Join(dir1, "dir")
-
 			tempTestFileOfPaths, err := os.CreateTemp(dir, "testFileSet")
 			So(err, ShouldBeNil)
 
@@ -2013,21 +2012,15 @@ func TestRemove(t *testing.T) {
 			err = os.MkdirAll(dir2, 0755)
 			So(err, ShouldBeNil)
 
-			// err = os.MkdirAll(dir3, 0755)
-			// So(err, ShouldBeNil)
-
 			file1 := filepath.Join(path, "file1")
 			file2 := filepath.Join(path, "file2")
 			file3 := filepath.Join(dir1, "file3")
 			file4 := filepath.Join(testDir, "dir_not_removed")
 
-			// file5 := filepath.Join(dir3, "file5")
-
 			internal.CreateTestFile(t, file1, "some data1")
 			internal.CreateTestFile(t, file2, "some data2")
 			internal.CreateTestFile(t, file3, "some data3")
 			internal.CreateTestFile(t, file4, "some data3")
-			// internal.CreateTestFile(t, file5, "some data3")
 
 			err = os.Link(file1, linkPath)
 			So(err, ShouldBeNil)
@@ -2125,19 +2118,31 @@ func TestRemove(t *testing.T) {
 					0, dir2+" => ")
 			})
 
-			// TODO test fails
-			// SkipConvey("Remove removes the dir even if it is not specified in the set but is part of it", func() {
-			// 	s.removePath(t, setName, dir3, 2)
+			Convey("Remove removes the dir even if it is not specified in the set but is part of it", func() {
+				dir3 := filepath.Join(dir1, "dir")
+				err = os.MkdirAll(dir3, 0755)
+				So(err, ShouldBeNil)
 
-			// 	s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
-			// 		0, dir2)
+				file5 := filepath.Join(dir3, "file5")
+				internal.CreateTestFile(t, file5, "some data3")
 
-			// 	s.confirmOutputDoesNotContain(t, []string{"status", "--name", setName, "-d"},
-			// 		0, dir3+"/")
+				setName = "nestedDirSet"
 
-			// 	s.confirmOutputDoesNotContain(t, []string{"status", "--name", setName, "-d"},
-			// 		0, dir3+" => ")
-			// })
+				s.addSetForTesting(t, setName, transformer, dir1)
+
+				s.removePath(t, setName, dir3, 2)
+
+				s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
+					0, dir1)
+
+				s.confirmOutputDoesNotContain(t, []string{"status", "--name", setName, "-d"},
+					0, dir3+"/")
+
+				s.confirmOutputDoesNotContain(t, []string{"status", "--name", setName, "-d"},
+					0, dir3+" => ")
+
+				resetIRODS()
+			})
 
 			Convey("Remove takes a flag --items and removes all provided files and dirs from the set", func() {
 				tempTestFileOfPathsToRemove, errt := os.CreateTemp(dir, "testFileSet")
