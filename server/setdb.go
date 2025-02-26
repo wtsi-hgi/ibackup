@@ -453,7 +453,7 @@ type RemoveReq struct {
 	Path               string
 	Set                *set.Set
 	IsDir              bool
-	IsDirEmpty         bool
+	IsDirUploaded      bool
 	IsRemovedFromIRODS bool
 }
 
@@ -534,7 +534,7 @@ func (s *Server) makeItemsDefsAndFilePathsFromDirPaths(set *set.Set,
 		}
 
 		if len(dirFilepaths) == 0 {
-			rq.IsDirEmpty = true
+			rq.IsDirUploaded = true
 		}
 
 		filepaths = append(filepaths, dirFilepaths...)
@@ -690,21 +690,7 @@ func (s *Server) setErrorOnEntry(entry *set.Entry, sid, path string, err error) 
 }
 
 func (s *Server) removeDirFromIRODSandDB(removeReq *RemoveReq) error {
-	transformer, err := removeReq.Set.MakeTransformer()
-	if err != nil {
-		return err
-	}
-
-	if !removeReq.IsDirEmpty && !removeReq.IsRemovedFromIRODS {
-		err = remove.RemoveRemoteDir(s.storageHandler, removeReq.Path, transformer)
-		if err != nil {
-			return err
-		}
-
-		removeReq.IsRemovedFromIRODS = true
-	}
-
-	err = s.db.RemoveDirEntry(removeReq.Set.ID(), removeReq.Path)
+	err := s.db.RemoveDirEntry(removeReq.Set.ID(), removeReq.Path)
 	if err != nil {
 		return err
 	}

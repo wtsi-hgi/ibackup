@@ -2273,6 +2273,28 @@ func TestRemove(t *testing.T) {
 				So(string(output), ShouldNotContainSubstring, "file3\n")
 			})
 
+			Convey("And if you remove a file nested in an otherwise empty dir", func() {
+				s.removePath(t, setName, file3, 1)
+
+				output, errc := exec.Command("ils", "-r", remotePath).CombinedOutput()
+				So(errc, ShouldBeNil)
+				So(string(output), ShouldNotContainSubstring, "path/to/some/dir")
+				So(string(output), ShouldNotContainSubstring, "file3\n")
+
+				Convey("You can remove its parent folder from the db", func() {
+					s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
+						0, dir1)
+
+					s.removePath(t, setName, dir1, 1)
+
+					s.confirmOutputDoesNotContain(t, []string{"status", "--name", setName, "-d"},
+						0, dir1+"/")
+
+					s.confirmOutputDoesNotContain(t, []string{"status", "--name", setName, "-d"},
+						0, dir1+" => ")
+				})
+			})
+
 			Convey("And a new file added to a directory already in the set", func() {
 				file5 := filepath.Join(dir1, "file5")
 				internal.CreateTestFile(t, file5, "some data5")
@@ -2328,6 +2350,18 @@ func TestRemove(t *testing.T) {
 					output = getRemoteMeta(filepath.Join(remotePath, "file1"))
 					So(output, ShouldNotContainSubstring, setName)
 					So(output, ShouldContainSubstring, setName2)
+				})
+
+				Convey("Remove does not try and fail to remove the provided dir from iRODS", func() {
+					output, errc := exec.Command("ils", "-r", remotePath).CombinedOutput()
+					So(errc, ShouldBeNil)
+					So(string(output), ShouldContainSubstring, "path/to/some/dir")
+
+					s.removePath(t, setName, dir1, 2)
+
+					output, errc = exec.Command("ils", "-r", remotePath).CombinedOutput()
+					So(errc, ShouldBeNil)
+					So(string(output), ShouldContainSubstring, "path/to/some/dir")
 				})
 
 				Convey("Remove does not remove the provided file from iRODS", func() {

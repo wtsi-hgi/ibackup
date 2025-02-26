@@ -29,6 +29,7 @@
 package remove
 
 import (
+	"path/filepath"
 	"reflect"
 	"strings"
 
@@ -56,6 +57,9 @@ type Handler interface {
 	// QueryMeta return paths to all objects with given metadata inside the
 	// provided scope.
 	QueryMeta(dirToSearch string, meta map[string]string) ([]string, error)
+
+	// ListDir returns the name of every object inside the given dir.
+	ListDir(path string) ([]string, error)
 
 	// Cleanup stops any connections created earlier and does any other cleanup
 	// needed.
@@ -94,7 +98,7 @@ func UpdateSetsAndRequestersOnRemoteFile(handler Handler, path string,
 // file.
 func RemoveRemoteFileAndHandleHardlink(handler Handler, path string, dirToSearch string, //nolint:revive
 	meta map[string]string) error {
-	err := handler.RemoveFile(path)
+	err := removeFileAndParentFoldersIfEmpty(handler, path)
 	if err != nil {
 		return err
 	}
@@ -115,6 +119,33 @@ func RemoveRemoteFileAndHandleHardlink(handler Handler, path string, dirToSearch
 	}
 
 	return handler.RemoveFile(meta[put.MetaKeyRemoteHardlink])
+}
+
+func removeFileAndParentFoldersIfEmpty(handler Handler, path string) error {
+	err := handler.RemoveFile(path)
+	if err != nil {
+		return err
+	}
+
+	return removeEmptyFoldersRecursively(handler, filepath.Dir(path))
+}
+
+func removeEmptyFoldersRecursively(handler Handler, path string) error {
+	objectNames, err := handler.ListDir(path)
+	if err != nil {
+		return err
+	}
+
+	if len(objectNames) > 0 {
+		return nil
+	}
+
+	err = handler.RemoveDir(path)
+	if err != nil {
+		return err
+	}
+
+	return removeEmptyFoldersRecursively(handler, filepath.Dir(path))
 }
 
 // RemoveRemoteDir removes the remote path of a given directory from the remote
