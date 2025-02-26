@@ -64,6 +64,36 @@ func TestRemoveMock(t *testing.T) {
 				_, err = os.Stat(dir1remote)
 				So(err.Error(), ShouldContainSubstring, "no such file or directory")
 			})
+
+			Convey("And a nested file", func() {
+				file1remote := filepath.Join(dir1remote, "file1")
+				internal.CreateTestFileOfLength(t, file1remote, 1)
+
+				Convey("Removing the file will remove the dir", func() {
+					err = removeFileAndParentFoldersIfEmpty(lh, file1remote)
+
+					_, err = os.Stat(file1remote)
+					So(err.Error(), ShouldContainSubstring, "no such file or directory")
+
+					_, err = os.Stat(dir1remote)
+					So(err.Error(), ShouldContainSubstring, "no such file or directory")
+				})
+
+				Convey("And a second nested file", func() {
+					file2remote := filepath.Join(dir1remote, "file2")
+					internal.CreateTestFileOfLength(t, file2remote, 1)
+
+					Convey("Removing one file will not remove the dir", func() {
+						err = removeFileAndParentFoldersIfEmpty(lh, file1remote)
+
+						_, err = os.Stat(file1remote)
+						So(err.Error(), ShouldContainSubstring, "no such file or directory")
+
+						_, err = os.Stat(dir1remote)
+						So(err, ShouldBeNil)
+					})
+				})
+			})
 		})
 
 		Convey("Given a file in two sets", func() {

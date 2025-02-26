@@ -265,6 +265,22 @@ func (l *LocalHandler) RemoveFile(path string) error {
 	return os.Remove(path)
 }
 
+// ListDir returns the name of every object inside the given dir.
+func (l *LocalHandler) ListDir(path string) ([]string, error) {
+	items, err := os.ReadDir(path)
+	if err != nil {
+		return nil, err
+	}
+
+	itemNames := make([]string, len(items))
+
+	for i, item := range items {
+		itemNames[i] = item.Name()
+	}
+
+	return itemNames, nil
+}
+
 // QueryMeta return paths to all objects with given metadata inside the provided
 // scope.
 func (l *LocalHandler) QueryMeta(dirToSearch string, meta map[string]string) ([]string, error) { //nolint:unparam
