@@ -1415,7 +1415,7 @@ func TestSetDB(t *testing.T) {
 					So(err, ShouldBeNil)
 					So(got.Hardlinks, ShouldEqual, 2)
 
-					dirEntries, errd := db.GetAllDirEntries(setl1.ID())
+					dirEntries, errd = db.GetAllDirEntries(setl1.ID())
 					So(errd, ShouldBeNil)
 					So(len(dirEntries), ShouldEqual, 2)
 				})

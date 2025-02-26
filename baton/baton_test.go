@@ -82,6 +82,13 @@ func TestBaton(t *testing.T) {
 
 				So(isObjectInIRODS(remotePath, "file1"), ShouldBeTrue)
 
+				Convey("And you can see the parent directory contains that file", func() {
+					objectNames, errl := h.ListDir(remotePath)
+					So(errl, ShouldBeNil)
+					So(len(objectNames), ShouldEqual, 1)
+					So(objectNames, ShouldContain, "file1")
+				})
+
 				Convey("And putting a new file in the same location will overwrite existing object", func() {
 					file2local := filepath.Join(localPath, "file2")
 					sizeOfFile2 := 10

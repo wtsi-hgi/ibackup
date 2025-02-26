@@ -65,6 +65,13 @@ func TestMock(t *testing.T) {
 				_, err = os.Stat(file1remote)
 				So(err, ShouldBeNil)
 
+				Convey("You can see the parent directory contains that file", func() {
+					objectNames, errl := lh.ListDir(destDir)
+					So(errl, ShouldBeNil)
+					So(len(objectNames), ShouldEqual, 1)
+					So(objectNames, ShouldContain, "file1")
+				})
+
 				Convey("And putting a new file in the same location will overwrite existing object", func() {
 					file2local := filepath.Join(sourceDir, "file2")
 					sizeOfFile2 := 10

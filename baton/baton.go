@@ -615,10 +615,41 @@ func (b *Baton) RemoveFile(path string) error {
 	err = timeoutOp(func() error {
 		_, errl := b.removeClient.RemObj(ex.Args{}, *it)
 
+		filepath.Dir(path)
+
 		return errl
 	}, "remove file error: "+path)
 
 	return err
+}
+
+// TODO remove client? a new one?
+
+// ListDir returns the name of every object inside the given dir.
+func (b *Baton) ListDir(path string) ([]string, error) {
+	err := b.setClientIfNotExists(&b.removeClient)
+	if err != nil {
+		return nil, err
+	}
+
+	it := RemotePathToRodsItem(path)
+
+	var itemNames []string
+
+	err = timeoutOp(func() error {
+		items, errl := b.removeClient.List(ex.Args{Contents: true}, *it)
+		if errl != nil {
+			return errl
+		}
+
+		for _, item := range items[0].IContents {
+			itemNames = append(itemNames, item.IName)
+		}
+
+		return nil
+	}, "remove file error: "+path)
+
+	return itemNames, err
 }
 
 // RemoveDir removes the given directory from iRODS given it is empty. It
