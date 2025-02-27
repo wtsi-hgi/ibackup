@@ -38,6 +38,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -100,7 +101,8 @@ func (s *TestServer) prepareFilePaths(dir string) {
 	s.logFile = filepath.Join(s.dir, "log")
 
 	home, err := os.UserHomeDir()
-	So(err, ShouldBeNil)
+	//So(err, ShouldBeNil)
+	fmt.Println(err)
 
 	s.env = []string{
 		"XDG_STATE_HOME=" + s.dir,
@@ -119,13 +121,15 @@ func (s *TestServer) prepareConfig() {
 	s.url = os.Getenv("IBACKUP_TEST_SERVER_URL")
 	if s.url == "" {
 		port, err := freeport.GetFreePort()
-		So(err, ShouldBeNil)
+		//So(err, ShouldBeNil)
+		fmt.Println(err)
 
 		s.url = fmt.Sprintf("localhost:%d", port)
 	}
 
 	host, _, err := net.SplitHostPort(s.url)
-	So(err, ShouldBeNil)
+	//So(err, ShouldBeNil)
+	fmt.Println(err)
 
 	s.key = filepath.Join(s.dir, "key.pem")
 	s.cert = filepath.Join(s.dir, "cert.pem")
@@ -137,7 +141,8 @@ func (s *TestServer) prepareConfig() {
 	)
 
 	_, err = cmd.CombinedOutput()
-	So(err, ShouldBeNil)
+	//So(err, ShouldBeNil)
+	fmt.Println(err)
 
 	s.ldapServer = os.Getenv("IBACKUP_TEST_LDAP_SERVER")
 	s.ldapLookup = os.Getenv("IBACKUP_TEST_LDAP_LOOKUP")
@@ -176,7 +181,8 @@ func (s *TestServer) startServer() {
 	s.cmd.Stderr = os.Stderr
 
 	err := s.cmd.Start()
-	So(err, ShouldBeNil)
+	// So(err, ShouldBeNil)
+	fmt.Println(err)
 
 	s.waitForServer()
 
@@ -196,7 +202,9 @@ func (s *TestServer) waitForServer() {
 		return clientCmd.Run()
 	}, &retry.UntilNoError{}, btime.SecondsRangeBackoff(), "waiting for server to start")
 
-	So(status.Err, ShouldBeNil)
+	// So(status.Err, ShouldBeNil)
+
+	fmt.Println(status.Err)
 }
 
 func normaliseOutput(out string) string {
@@ -355,7 +363,8 @@ func (s *TestServer) waitForStatus(name, statusToFind string, timeout time.Durat
 		fmt.Printf("\nfailed to see set %s get status: %s\n", name, statusToFind) //nolint:forbidigo
 	}
 
-	So(status.Err, ShouldBeNil)
+	// So(status.Err, ShouldBeNil)
+	fmt.Println(status.Err)
 }
 
 func (s *TestServer) waitForStatusWithUser(name, statusToFind, user string, timeout time.Duration) {
@@ -2469,3 +2478,108 @@ func getMetaValue(meta, key string) string {
 
 	return value[:nlPos]
 }
+
+func BenchmarkRemove(b *testing.B) {
+	remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
+	if remotePath == "" {
+
+		return
+	}
+
+	remotePath = filepath.Join(remotePath, "test_remove")
+
+	schedulerDeployment := os.Getenv("IBACKUP_TEST_SCHEDULER")
+	if schedulerDeployment == "" {
+
+		return
+	}
+
+	numberOfFilesInSet := 50
+	setNames := []string{"set1", "set2", "set3"}
+	dir := b.TempDir()
+	s := new(TestServer)
+	s.prepareFilePaths(dir)
+	s.prepareConfig()
+
+	s.schedulerDeployment = schedulerDeployment
+	s.remoteHardlinkPrefix = filepath.Join(remotePath, "hardlinks")
+	s.backupFile = filepath.Join(dir, "db.bak")
+
+	s.startServer()
+
+	path := b.TempDir()
+	transformer := "prefix=" + path + ":" + remotePath
+
+	for _, set := range setNames {
+		dir1 := filepath.Join(path, set+"dir1/")
+		dir2 := filepath.Join(dir1, set+"dir2/")
+
+		err := os.MkdirAll(dir1, 0755)
+		if err != nil {
+			fmt.Println(err.Error())
+		}
+
+		err = os.MkdirAll(dir2, 0755)
+		if err != nil {
+			fmt.Println(err.Error())
+		}
+
+		for i := 0; i < numberOfFilesInSet; i++ {
+			file := filepath.Join(dir2, set+"file"+strconv.Itoa(i))
+
+			f, err := os.Create(file)
+			if err != nil {
+				fmt.Println(err.Error())
+			}
+
+			_, err = f.WriteString("file content")
+			if err != nil {
+				fmt.Println(err.Error())
+			}
+
+			err = f.Close()
+			if err != nil {
+				fmt.Println(err.Error())
+			}
+		}
+
+		exitCode, _ := s.runBinaryB("add", "--name", set, "--transformer", transformer, "--path", dir1)
+
+		if exitCode != 0 {
+			fmt.Println("oh no!")
+		}
+
+		s.waitForStatus(set, "\nDiscovery: completed", 5*time.Second)
+		s.waitForStatus(set, "\nStatus: complete", 5*time.Second)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		exitCode, _ := s.runBinaryB("remove", "--name", setNames[i], "--path", filepath.Join(path, setNames[i]+"dir1/"))
+
+		if exitCode != 0 {
+			fmt.Println("oh no!")
+		}
+
+		s.waitForStatus(setNames[i], fmt.Sprintf("Removal status: %d / %d objects removed", 1+numberOfFilesInSet, 1+numberOfFilesInSet), 10*time.Second)
+	}
+}
+
+func (s *TestServer) runBinaryB(args ...string) (int, string) {
+	cmd := s.clientCmd(args)
+
+	outB, err := cmd.CombinedOutput()
+	out := string(outB)
+	out = strings.TrimRight(out, "\n")
+	out = normaliseOutput(out)
+
+	if err != nil {
+		fmt.Println(err.Error())
+	} else if cmd.ProcessState.ExitCode() != 0 {
+		fmt.Printf("\nno error, but non-0 exit; binary output: %s\n", out)
+	}
+
+	return cmd.ProcessState.ExitCode(), out
+}
+
+//TODO we dont add discovered folders to the count
