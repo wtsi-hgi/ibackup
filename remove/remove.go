@@ -48,7 +48,8 @@ type Handler interface {
 	// GetMeta returns the meta for a given remote path.
 	GetMeta(path string) (map[string]string, error)
 
-	// RemoveDir deletes a given empty folder.
+	// RemoveDir deletes a given empty folder. If folder is not empty, returns
+	// an error containing substring "directory not empty".
 	RemoveDir(path string) error
 
 	// RemoveFile deletes a given file.
@@ -57,9 +58,6 @@ type Handler interface {
 	// QueryMeta return paths to all objects with given metadata inside the
 	// provided scope.
 	QueryMeta(dirToSearch string, meta map[string]string) ([]string, error)
-
-	// ListDir returns the name of every object inside the given dir.
-	ListDir(path string) ([]string, error)
 
 	// Cleanup stops any connections created earlier and does any other cleanup
 	// needed.
@@ -131,17 +129,12 @@ func removeFileAndParentFoldersIfEmpty(handler Handler, path string) error {
 }
 
 func removeEmptyFoldersRecursively(handler Handler, path string) error {
-	objectNames, err := handler.ListDir(path)
+	err := handler.RemoveDir(path)
 	if err != nil {
-		return err
-	}
+		if strings.Contains(err.Error(), "directory not empty") {
+			return nil
+		}
 
-	if len(objectNames) > 0 {
-		return nil
-	}
-
-	err = handler.RemoveDir(path)
-	if err != nil {
 		return err
 	}
 
