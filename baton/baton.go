@@ -623,9 +623,9 @@ func (b *Baton) RemoveFile(path string) error {
 	return err
 }
 
-// TODO remove client? a new one?
-
-// ListDir returns the name of every object inside the given dir.
+// ListDir returns the name of every object inside the given dir. This is not
+// currently in use, before using consider creating new client instead of using
+// b.removeClient.
 func (b *Baton) ListDir(path string) ([]string, error) {
 	err := b.setClientIfNotExists(&b.removeClient)
 	if err != nil {
@@ -670,6 +670,10 @@ func (b *Baton) RemoveDir(path string) error {
 
 		return errl
 	}, "remove meta error: "+path)
+
+	if err != nil && strings.Contains(err.Error(), "CAT_COLLECTION_NOT_EMPTY") {
+		return internal.Error{Msg: "directory not empty", Path: path}
+	}
 
 	return err
 }
