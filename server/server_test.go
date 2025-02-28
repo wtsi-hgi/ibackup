@@ -93,7 +93,7 @@ func TestServer(t *testing.T) {
 	maxStuckTime := 1 * time.Hour
 	defaultHeartbeatFreq := 1 * time.Minute
 
-	Convey("Given a test cert and db location", t, func() {
+	FocusConvey("Given a test cert and db location", t, func() {
 		certPath, keyPath, err := gas.CreateTestCert(t)
 		So(err, ShouldBeNil)
 
@@ -114,11 +114,14 @@ func TestServer(t *testing.T) {
 			MonitorTime: 0,
 		}
 
+		handler := internal.GetLocalHandler()
+		handler.MakeRemoveSlow()
+
 		logWriter := gas.NewStringLogger()
 		slackWriter := gas.NewStringLogger()
 		conf := Config{
 			HTTPLogger:     logWriter,
-			StorageHandler: internal.GetLocalHandler(),
+			StorageHandler: handler,
 		}
 
 		Convey("You can make a Server with a logger configured and no slacker", func() {
@@ -238,7 +241,7 @@ func TestServer(t *testing.T) {
 			So(slackWriter.String(), ShouldEqual, expectedMsg+expectedMsg+slack.BoxPrefixWarn+"server stopped")
 		})
 
-		Convey("You can make a Server with a logger configured and setup Auth, MakeQueueEndPoints and LoadSetDB", func() {
+		FocusConvey("You can make a Server with a logger configured and setup Auth, MakeQueueEndPoints and LoadSetDB", func() {
 			s, addr, dfunc := makeAndStartServer()
 
 			serverStopped := false
@@ -263,6 +266,8 @@ func TestServer(t *testing.T) {
 			racCalled := make(chan bool, 1)
 
 			s.queue.SetReadyAddedCallback(func(queuename string, allitemdata []interface{}) {
+				fmt.Println("in RAC")
+
 				racRequests = make([]*put.Request, len(allitemdata))
 
 				for i, item := range allitemdata {
@@ -281,7 +286,7 @@ func TestServer(t *testing.T) {
 				racCalled <- true
 			})
 
-			Convey("Which lets you login", func() {
+			FocusConvey("Which lets you login", func() {
 				So(logWriter.String(), ShouldBeBlank)
 
 				token, errl := gas.Login(gas.NewClientRequest(addr, certPath), "jim", "pass")
@@ -290,7 +295,7 @@ func TestServer(t *testing.T) {
 
 				So(strings.Count(logWriter.String(), "STATUS=200"), ShouldEqual, 1)
 
-				Convey("And then you use client methods AddOrUpdateSet (which logs to slack) and GetSets", func() {
+				FocusConvey("And then you use client methods AddOrUpdateSet (which logs to slack) and GetSets", func() {
 					exampleSet2 := &set.Set{
 						Name:        "set2",
 						Requester:   exampleSet.Requester,
@@ -331,6 +336,113 @@ func TestServer(t *testing.T) {
 
 					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldBeNil)
+
+					// dir1
+					// dir1/dir11/ <- 100 files
+
+					// add set -p dir1
+
+					// dir1/dir12/ <- 100 files
+
+					// test1: remove -p /dir1/dir2
+					// test2: remove -p /dir1
+
+					// trigerrDiscovery
+
+					FocusConvey("Given a set with 100 files in one nested folder", func() {
+						dir1 := filepath.Join(localDir, "dir1/")
+						dir2 := filepath.Join(dir1, "dir2/")
+
+						err := os.MkdirAll(dir1, 0755)
+						if err != nil {
+							fmt.Println(err.Error())
+						}
+
+						err = os.MkdirAll(dir2, 0755)
+						if err != nil {
+							fmt.Println(err.Error())
+						}
+
+						dirs := []string{dir1, dir2}
+
+						var files []string
+
+						for i := 0; i < 100; i++ {
+							file := filepath.Join(dir2, "file"+strconv.Itoa(i))
+							internal.CreateTestFile(t, file, "file content")
+
+							files = append(files, file)
+						}
+
+						// err = client.SetFiles(exampleSet.ID(), files)
+						// So(err, ShouldBeNil)
+
+						err = client.SetDirs(exampleSet.ID(), dirs)
+						So(err, ShouldBeNil)
+
+						gotSet, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+						So(errg, ShouldBeNil)
+
+						fmt.Println(gotSet.NumFiles, gotSet.Uploaded)
+
+						err = client.TriggerDiscovery(exampleSet.ID())
+						So(err, ShouldBeNil)
+
+						ok := <-racCalled
+						So(ok, ShouldBeTrue)
+
+						gotSet, errg = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+						So(errg, ShouldBeNil)
+
+						fmt.Println(gotSet.NumFiles, gotSet.Uploaded)
+
+						gotSet.Status = set.Complete
+
+						err = client.AddOrUpdateSet(gotSet)
+						So(err, ShouldBeNil)
+
+						err = client.RemoveFilesAndDirs(exampleSet.ID(), []string{dir2})
+						So(err, ShouldBeNil)
+
+						gotSet, errg = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+						So(errg, ShouldBeNil)
+
+						fmt.Printf("Removal status: %d / %d objects removed. Num files: %d\n", gotSet.NumObjectsRemoved, gotSet.NumObjectsToBeRemoved, gotSet.NumFiles)
+
+						file := filepath.Join(dir1, "file101")
+						internal.CreateTestFile(t, file, "file content")
+
+						fmt.Println("num files: ", gotSet.NumFiles)
+
+						err = client.TriggerDiscovery(exampleSet.ID())
+						So(err, ShouldBeNil)
+
+						ok = <-racCalled
+						So(ok, ShouldBeTrue)
+
+						gotSet, errg = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+						So(errg, ShouldBeNil)
+
+						fmt.Printf("Removal status: %d / %d objects removed. Num files: %d\n", gotSet.NumObjectsRemoved, gotSet.NumObjectsToBeRemoved, gotSet.NumFiles)
+						time.Sleep(100 * time.Millisecond)
+						fmt.Println("num files: ", gotSet.NumFiles)
+
+						gotSet, errg = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+						So(errg, ShouldBeNil)
+
+						fmt.Printf("Removal status: %d / %d objects removed. Num files: %d\n", gotSet.NumObjectsRemoved, gotSet.NumObjectsToBeRemoved, gotSet.NumFiles)
+						time.Sleep(100 * time.Millisecond)
+						fmt.Println("num files: ", gotSet.NumFiles)
+
+						gotSet, errg = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+						So(errg, ShouldBeNil)
+						fmt.Printf("Removal status: %d / %d objects removed. Num files: %d\n", gotSet.NumObjectsRemoved, gotSet.NumObjectsToBeRemoved, gotSet.NumFiles)
+						time.Sleep(100 * time.Millisecond)
+
+						gotSet, errg = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+						So(errg, ShouldBeNil)
+						fmt.Printf("Removal status: %d / %d objects removed. Num files: %d\n", gotSet.NumObjectsRemoved, gotSet.NumObjectsToBeRemoved, gotSet.NumFiles)
+					})
 
 					Convey("And then you can set file and directory entries, trigger discovery and get all file statuses", func() {
 						files, dirs, discovers, discoveredFolders, symlinkPath := createTestBackupFiles(t, localDir)

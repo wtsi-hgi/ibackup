@@ -75,6 +75,7 @@ const (
 	dirBucket                     = subBucketPrefix + "dirs"
 	discoveredBucket              = subBucketPrefix + "discovered"
 	discoveredFoldersBucket       = subBucketPrefix + "discoveredFolders"
+	excludeBucket                 = subBucketPrefix + "exclude"
 	removeBucket                  = "remove"
 	failedBucket                  = "failed"
 	dbOpenMode                    = 0600
@@ -485,7 +486,7 @@ func (d *DB) DeleteRemoveEntry(key string) error {
 
 // GetRemoveEntries returns all objects from the remove bucket in the database.
 // It redefines the reserve group on each object to be the same.
-func (d *DB) GetRemoveEntries() ([]*queue.ItemDef, error) {
+func (d *DBRO) GetRemoveEntries() ([]*queue.ItemDef, error) {
 	var defs []*queue.ItemDef
 
 	err := d.db.View(func(tx *bolt.Tx) error {
@@ -771,6 +772,54 @@ func (d *DB) setDiscoveredEntries(setID string, fileDirents, dirDirents []*Diren
 	return d.updateSetAfterDiscovery(setID)
 }
 
+//TODO before new entries are set, any entries we can now remove should be removed.
+// e.g. files inside a dir are now represented by that dir.
+
+func (d *DB) SetExcludedEntries(setID string, filePaths, dirPaths []string) error {
+	dirents := make([]*Dirent, len(filePaths)+len(dirPaths))
+
+	for i, path := range filePaths {
+		dirents[i] = &Dirent{
+			Path: path,
+		}
+	}
+
+	for i, path := range dirPaths {
+		if !strings.HasSuffix(path, "/") {
+			path = path + "/"
+		}
+
+		dirents[len(filePaths)+i] = &Dirent{
+			Path: path,
+			Mode: os.ModeDir,
+		}
+	}
+
+	return d.setEntries(setID, dirents, excludeBucket)
+}
+
+func (d *DB) GetExcludedPaths(setID string) ([]string, []string, error) {
+	entries, err := d.getEntries(setID, excludeBucket)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	filePaths := make([]string, 0, len(entries))
+	dirPaths := make([]string, 0, len(entries))
+
+	for _, entry := range entries {
+		if entry.isDir {
+			dirPaths = append(dirPaths, entry.Path)
+
+			continue
+		}
+
+		filePaths = append(filePaths, entry.Path)
+	}
+
+	return filePaths, dirPaths, nil
+}
+
 // updateSetAfterDiscovery updates LastDiscovery, sets NumFiles and sets status
 // to PendingUpload unless the set contains no files, in which case it sets
 // status to Complete.
@@ -788,7 +837,13 @@ func (d *DB) updateSetAfterDiscovery(setID string) (*Set, error) {
 			return err
 		}
 
+		fmt.Println("here")
+
+		fmt.Println("numfiles!!!!!!", set.NumFiles)
+
 		set.DiscoveryCompleted(d.countAllFilesInSet(tx, setID))
+
+		fmt.Println("numfiles!!!!!!", set.NumFiles)
 
 		updatedSet = set
 

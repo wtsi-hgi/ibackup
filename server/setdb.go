@@ -418,6 +418,13 @@ func (s *Server) removePaths(c *gin.Context) {
 		return
 	}
 
+	err = s.db.SetExcludedEntries(sid, filePaths, dirPaths)
+	if err != nil {
+		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+
+		return
+	}
+
 	err = s.db.ResetRemoveSize(sid)
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck

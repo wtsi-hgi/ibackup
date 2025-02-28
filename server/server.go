@@ -168,6 +168,8 @@ func New(conf Config) (*Server, error) {
 }
 
 func (s *Server) monitorCB(given *set.Set) {
+	// if removing, set duration to 1 hr, return
+
 	if err := s.discoverSet(given); err != nil {
 		s.Logger.Printf("error discovering set during monitoring: %s", err)
 	}
@@ -227,9 +229,19 @@ func (s *Server) EnableJobSubmission(putCmd, deployment, cwd, queue string, numC
 // inside a go routine, so the user API request is not locked.
 func (s *Server) handleRemoveRequests(reserveGroup string) {
 	for {
+		fmt.Println("...")
 		item, removeReq, err := s.reserveRemoveRequest(reserveGroup)
 		if err != nil {
 			break
+		}
+
+		for {
+			givenSet := s.db.GetByID(removeReq.Set.ID())
+			if givenSet.Status == set.Failing || givenSet.Status == set.Complete || givenSet.Status == set.PendingUpload {
+				break
+			}
+
+			time.Sleep(100 * time.Millisecond)
 		}
 
 		err = s.removeRequestFromIRODSandDB(&removeReq)
@@ -271,21 +283,27 @@ func (s *Server) reserveRemoveRequest(reserveGroup string) (*queue.Item, RemoveR
 		s.Logger.Printf("%s", err.Error())
 	}
 
-	var remReq RemoveReq
-
-	data, ok := item.Data().([]byte)
-	if !ok {
+	remReq, err := s.convertQueueItemToRemoveRequest(item.Data())
+	if err != nil {
 		s.Logger.Printf("Invalid data type in remove queue")
 
-		return nil, RemoveReq{}, ErrFailedByteConversion
-	}
-
-	err = json.Unmarshal(data, &remReq)
-	if err != nil {
-		s.Logger.Printf("%s", err.Error())
+		return nil, RemoveReq{}, err
 	}
 
 	return item, remReq, err
+}
+
+func (s *Server) convertQueueItemToRemoveRequest(data interface{}) (RemoveReq, error) {
+	var remReq RemoveReq
+
+	byteData, ok := data.([]byte)
+	if !ok {
+		return RemoveReq{}, ErrFailedByteConversion
+	}
+
+	err := json.Unmarshal(byteData, &remReq)
+
+	return remReq, err
 }
 
 func (s *Server) removeRequestFromIRODSandDB(removeReq *RemoveReq) error {

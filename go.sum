@@ -403,6 +403,8 @@ github.com/twitchyliquid64/golang-asm v0.15.1 h1:SU5vSMR7hnwNxj24w34ZyCi/FmDZTkS
 github.com/twitchyliquid64/golang-asm v0.15.1/go.mod h1:a1lVb/DtPvCB8fslRZhAngC2+aY1QWCk3Cedj/Gdt08=
 github.com/ugorji/go/codec v1.2.12 h1:9LC83zGrHhuUA9l16C9AHXAqEV/2wBQ4nkvumAE65EE=
 github.com/ugorji/go/codec v1.2.12/go.mod h1:UNopzCgEMSXjBc6AOMqYvWC1ktqTAfzJZUZgYf6w6lg=
+github.com/viant/ptrie v1.0.1 h1:3fFC8XqCSchf11sCSS5sbb8eGDNEP2g2Hj96lNdHlZY=
+github.com/viant/ptrie v1.0.1/go.mod h1:Y+mwwNCIUgFrCZcrG4/QChfi4ubvnNBsyrENBIgigu0=
 github.com/wtsi-hgi/go-authserver v1.3.0 h1:pEqBt0+lPl5tH+aq5eQD+0DNiB5K7Owa5ZuO59NZl0k=
 github.com/wtsi-hgi/go-authserver v1.3.0/go.mod h1:itSUjEbYvkhkWkE0OVnZCuEmcmZjtqoDvkhi7b2sTjc=
 github.com/wtsi-hgi/grand v1.0.0 h1:TNrcRcmXSOevZ2Ex/HQ5QCtcGnA7AmlsnhFyre0M5XE=

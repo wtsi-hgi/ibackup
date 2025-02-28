@@ -33,10 +33,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/VertebrateResequencing/wr/queue"
 	"github.com/gin-gonic/gin"
+	"github.com/viant/ptrie"
 	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/set"
 	"github.com/wtsi-ssg/wrstat/v6/walk"
@@ -82,10 +84,36 @@ func (s *Server) discoverSet(given *set.Set) error {
 	return nil
 }
 
+// TODO fix docs / change sleep time.
+
 // discoverThenEnqueue updates file existence, discovers dir contents, then
 // queues the set's files for uploading. Call this in a go-routine, but don't
 // call it multiple times at once for the same set!
 func (s *Server) discoverThenEnqueue(given *set.Set, transformer put.PathTransformer) {
+	fmt.Println("discovery triggered.")
+
+	for {
+		givenSet := s.db.GetByID(given.ID())
+		if givenSet.NumObjectsToBeRemoved == givenSet.NumObjectsRemoved {
+			break
+		}
+
+		isPresenetInRemoveBucket, err := s.isSetPresentInRemoveBucket(given.ID())
+		if err != nil {
+			s.Logger.Printf("discovery error %s: %s", given.ID(), err)
+
+			return
+		}
+
+		if !isPresenetInRemoveBucket {
+			break
+		}
+
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	fmt.Println("we think removal stopped, we are now discovering.")
+
 	updated, err := s.doDiscovery(given)
 	if err != nil {
 		s.Logger.Printf("discovery error %s: %s", given.ID(), err)
@@ -100,13 +128,51 @@ func (s *Server) discoverThenEnqueue(given *set.Set, transformer put.PathTransfo
 	}
 }
 
+func (s *Server) isSetPresentInRemoveBucket(sid string) (bool, error) {
+	entries, err := s.db.GetRemoveEntries()
+	if err != nil {
+		return false, err
+	}
+
+	for _, entry := range entries {
+		remReq, err := s.convertQueueItemToRemoveRequest(entry.Data)
+		if err != nil {
+			return false, err
+		}
+
+		if remReq.Set.ID() == sid {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
 func (s *Server) doDiscovery(given *set.Set) (*set.Set, error) {
+	excludedFilePaths, excludedDirPaths, err := s.db.GetExcludedPaths(given.ID())
+	if err != nil {
+		return nil, err
+	}
+
+	excludeDirTree := ptrie.New[bool]()
+	for _, path := range append(excludedDirPaths, excludedFilePaths...) {
+		err = excludeDirTree.Put([]byte(path), true)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	excludeFileMap := make(map[string]bool, len(excludedFilePaths))
+	for _, path := range excludedFilePaths {
+		excludeFileMap[path] = true
+	}
+
 	return s.db.Discover(given.ID(), func(entries []*set.Entry) ([]*set.Dirent, []*set.Dirent, error) {
 		entriesCh := make(chan *set.Dirent)
 		doneCh := make(chan error)
 		warnCh := make(chan error)
 
-		go s.doSetDirWalks(entries, given, entriesCh, doneCh, warnCh)
+		go s.doSetDirWalks(entries, excludeFileMap, excludeDirTree, given, entriesCh, doneCh, warnCh)
 
 		return s.processSetDirWalkOutput(given, entriesCh, doneCh, warnCh)
 	})
@@ -190,7 +256,8 @@ func (s *Server) handleNewlyDefinedSets(given *set.Set) {
 // sending discovered file paths to the entriesCh. Closes the entriesCh when
 // done, then sends any error on the doneCh. Non-critical warnings during the
 // walk are sent to the warnChan.
-func (s *Server) doSetDirWalks(entries []*set.Entry, given *set.Set, entriesCh chan *set.Dirent,
+func (s *Server) doSetDirWalks(entries []*set.Entry, excludeFileMap map[string]bool,
+	excludeDirTree ptrie.Trie[bool], given *set.Set, entriesCh chan *set.Dirent,
 	doneCh, warnChan chan error) {
 	errCh := make(chan error, len(entries))
 
@@ -199,7 +266,7 @@ func (s *Server) doSetDirWalks(entries []*set.Entry, given *set.Set, entriesCh c
 		thisEntry := entry
 
 		s.dirPool.Submit(func() {
-			err := s.checkAndWalkDir(dir, filterEntries(entriesCh, dir), warnChan)
+			err := s.checkAndWalkDir(dir, filterEntries(entriesCh, excludeFileMap, excludeDirTree, dir), warnChan)
 			errCh <- s.handleMissingDirectories(err, thisEntry, given)
 		})
 	}
@@ -241,9 +308,40 @@ func (s *Server) checkAndWalkDir(dir string, cb walk.PathCallback, warnChan chan
 // filterEntries sends every entry found on the walk to the given entriesCh,
 // except for entries that are not regular files or symlinks or dirs, which are
 // silently skipped.
-func filterEntries(entriesCh chan *set.Dirent, parentDir string) func(entry *walk.Dirent) error {
+func filterEntries(entriesCh chan *set.Dirent, excludeFileMap map[string]bool,
+	excludeDirTree ptrie.Trie[bool], parentDir string) func(entry *walk.Dirent) error {
 	return func(entry *walk.Dirent) error {
 		dirent := set.DirEntFromWalk(entry)
+
+		// excluded
+		// /dir1/dir2/file
+		// /dir1/dir3/
+
+		// discovered
+		// /dir1/dir2/file2
+		// /dir1/dir3/file2
+
+		// file12
+
+		// file1, file12
+
+		// PATH := file12
+
+		shouldBeExcluded := excludeDirTree.MatchPrefix([]byte(dirent.Path), func(key []byte, value bool) bool {
+			if strings.HasSuffix(string(key), "/") {
+				return false
+			}
+
+			if string(key) == dirent.Path {
+				return false
+			}
+
+			return true
+		})
+
+		if shouldBeExcluded {
+			return nil
+		}
 
 		if !(entry.IsRegular() || entry.IsSymlink() || entry.IsDir()) ||
 			dirent.Path == filepath.Clean(parentDir) {
@@ -335,9 +433,12 @@ func (s *Server) enqueueEntries(entries []*set.Entry, given *set.Set, transforme
 		return nil
 	}
 
+	fmt.Println("im adding defs to the queue:", len(defs))
+
 	_, dups, err := s.queue.AddMany(context.Background(), defs)
 
 	if dups > 0 {
+		fmt.Println("dups: ", dups)
 		s.markFailedEntries(given)
 	}
 

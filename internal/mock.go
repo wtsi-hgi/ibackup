@@ -51,6 +51,7 @@ type LocalHandler struct {
 	putSlow     string
 	putDur      time.Duration
 	metaFail    string
+	removeSlow  bool
 	Mu          sync.RWMutex
 }
 
@@ -132,6 +133,12 @@ func (l *LocalHandler) MakePutFail(remote string) {
 func (l *LocalHandler) MakePutSlow(remote string, dur time.Duration) {
 	l.putSlow = remote
 	l.putDur = dur
+}
+
+// MakePutSlow will result in any subsequent Put()s for a Request with the
+// given local path taking the given amount of time.
+func (l *LocalHandler) MakeRemoveSlow() {
+	l.removeSlow = true
 }
 
 // Put just copies from Local to Remote. Returns an error if putFail == Remote.
@@ -255,11 +262,19 @@ func (l *LocalHandler) GetMeta(path string) (map[string]string, error) {
 
 // RemoveDir removes the empty dir.
 func (l *LocalHandler) RemoveDir(path string) error {
+	if l.removeSlow {
+		time.Sleep(1 * time.Second)
+	}
+
 	return os.Remove(path)
 }
 
 // RemoveFile removes the file and its metadata.
 func (l *LocalHandler) RemoveFile(path string) error {
+	if l.removeSlow {
+		time.Sleep(1 * time.Second)
+	}
+
 	delete(l.Meta, path)
 
 	return os.Remove(path)
