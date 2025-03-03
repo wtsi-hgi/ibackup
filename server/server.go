@@ -127,6 +127,10 @@ type Server struct {
 	creatingCollections map[string]bool
 	iRODSTracker        *iRODSTracker
 	clientQueue         *queue.Queue
+
+	remMuMap   map[string]*sync.Mutex
+	remChMap   map[string]chan bool
+	remBoolMap map[string]bool
 }
 
 // New creates a Server which can serve a REST API and website.
@@ -152,6 +156,10 @@ func New(conf Config) (*Server, error) {
 		clientQueue:         queue.New(context.Background(), "client"),
 		readOnly:            conf.ReadOnly,
 		storageHandler:      conf.StorageHandler,
+
+		remMuMap:   make(map[string]*sync.Mutex),
+		remChMap:   make(map[string]chan bool),
+		remBoolMap: make(map[string]bool),
 	}
 
 	s.clientQueue.SetTTRCallback(s.clientTTRC)
@@ -224,36 +232,64 @@ func (s *Server) EnableJobSubmission(putCmd, deployment, cwd, queue string, numC
 	return nil
 }
 
+// TODO this should only recieve removereqs from the set provided!! not multiple!
+
 // handleRemoveRequests removes objects belonging to the provided reserveGroup
 // inside removeQueue from iRODS and data base. This function should be called
 // inside a go routine, so the user API request is not locked.
-func (s *Server) handleRemoveRequests(reserveGroup string) {
+func (s *Server) handleRemoveRequests(sid string) {
+	var hasDiscoveryHappened bool
+
+	s.remBoolMap[sid] = true
+
 	for {
-		fmt.Println("...")
-		item, removeReq, err := s.reserveRemoveRequest(reserveGroup)
+		item, removeReq, err := s.reserveRemoveRequest(sid)
 		if err != nil {
 			break
 		}
 
-		for {
-			givenSet := s.db.GetByID(removeReq.Set.ID())
-			if givenSet.Status == set.Failing || givenSet.Status == set.Complete || givenSet.Status == set.PendingUpload {
-				break
-			}
+		fmt.Println("started to remove:", removeReq)
 
-			time.Sleep(100 * time.Millisecond)
+		fmt.Println("1, hasDiscoveryHappened:", hasDiscoveryHappened)
+
+		discoveryHappened := <-s.remChMap[sid]
+
+		if discoveryHappened {
+			hasDiscoveryHappened = discoveryHappened
 		}
+		fmt.Println("2, hasDiscoveryHappened:", hasDiscoveryHappened)
 
-		err = s.removeRequestFromIRODSandDB(&removeReq)
+		// TODO maybe improve?
+		if _, exists := s.remMuMap[sid]; !exists {
+			s.remMuMap[sid] = &sync.Mutex{}
+		}
+		fmt.Println("3")
+
+		s.remMuMap[sid].Lock()
+		fmt.Println("4")
+
+		err = s.removeRequestFromIRODSandDB(&removeReq, hasDiscoveryHappened)
 		if beenReleased := s.handleErrorOrReleaseItem(item, removeReq, err); beenReleased {
+			s.remMuMap[sid].Unlock()
+
+			fmt.Println("finished removing")
+
 			continue
 		}
+		fmt.Println("5")
 
 		err = s.finalizeRemoveReq(removeReq.key())
 		if err != nil {
 			s.Logger.Printf("%s", err.Error())
 		}
+		fmt.Println("6")
+
+		s.remMuMap[sid].Unlock()
+
+		fmt.Println("finished removing")
 	}
+
+	s.remBoolMap[sid] = false
 
 	if s.removeQueue.Stats().Items == 0 {
 		s.storageHandler.Cleanup()
@@ -306,12 +342,12 @@ func (s *Server) convertQueueItemToRemoveRequest(data interface{}) (RemoveReq, e
 	return remReq, err
 }
 
-func (s *Server) removeRequestFromIRODSandDB(removeReq *RemoveReq) error {
+func (s *Server) removeRequestFromIRODSandDB(removeReq *RemoveReq, hasDiscoveryHappened bool) error {
 	if removeReq.IsDir {
-		return s.removeDirFromIRODSandDB(removeReq)
+		return s.removeDirFromDB(removeReq, hasDiscoveryHappened)
 	}
 
-	return s.removeFileFromIRODSandDB(removeReq)
+	return s.removeFileFromIRODSandDB(removeReq, hasDiscoveryHappened)
 }
 
 // handleErrorOrReleaseItem returns immediately if there was no error. Otherwise

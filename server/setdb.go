@@ -441,7 +441,7 @@ func (s *Server) removePaths(c *gin.Context) {
 }
 
 func (s *Server) removeFilesAndDirs(set *set.Set, filePaths, dirPaths []string) error {
-	reserveGroup := set.ID() + time.Now().String()
+	reserveGroup := set.ID()
 
 	err := s.submitFilesForRemoval(set, filePaths, reserveGroup)
 	if err != nil {
@@ -580,9 +580,10 @@ func (s *Server) makeItemsDefsAndFilePathsFromDirPaths(set *set.Set,
 	return filepaths, defs, nil
 }
 
-func (s *Server) removeFileFromIRODSandDB(removeReq *RemoveReq) error {
+func (s *Server) removeFileFromIRODSandDB(removeReq *RemoveReq, hasDiscoveryHappened bool) error {
+	fmt.Println("Removing file: ", removeReq.Path)
 	entry, err := s.db.GetFileEntryForSet(removeReq.Set.ID(), removeReq.Path)
-	if err != nil {
+	if err != nil && !hasDiscoveryHappened {
 		return err
 	}
 
@@ -590,10 +591,13 @@ func (s *Server) removeFileFromIRODSandDB(removeReq *RemoveReq) error {
 	if err != nil {
 		return err
 	}
+	fmt.Println("..made transformer")
 
 	if !removeReq.IsRemovedFromIRODS {
+		fmt.Println("..removing from irods")
 		err = s.updateOrRemoveRemoteFile(removeReq.Set, removeReq.Path, transformer)
 		if err != nil {
+			fmt.Println("irods error:", err.Error())
 			s.setErrorOnEntry(entry, removeReq.Set.ID(), removeReq.Path, err)
 
 			return err
@@ -601,11 +605,21 @@ func (s *Server) removeFileFromIRODSandDB(removeReq *RemoveReq) error {
 
 		removeReq.IsRemovedFromIRODS = true
 	}
+	fmt.Println("..irods done")
+
+	if hasDiscoveryHappened {
+		fmt.Println("no db stuff, returning early.")
+		return s.db.IncrementNumObjectRemoved(removeReq.Set.ID())
+	}
+
+	fmt.Println("removing from database:")
 
 	err = s.db.RemoveFileEntry(removeReq.Set.ID(), removeReq.Path)
 	if err != nil {
 		return err
 	}
+
+	fmt.Println("about to update numbers")
 
 	return s.db.UpdateBasedOnRemovedEntry(removeReq.Set.ID(), entry)
 }
@@ -719,10 +733,12 @@ func (s *Server) setErrorOnEntry(entry *set.Entry, sid, path string, err error) 
 	}
 }
 
-func (s *Server) removeDirFromIRODSandDB(removeReq *RemoveReq) error {
-	err := s.db.RemoveDirEntry(removeReq.Set.ID(), removeReq.Path)
-	if err != nil {
-		return err
+func (s *Server) removeDirFromDB(removeReq *RemoveReq, hasDiscoveryHappened bool) error {
+	if !hasDiscoveryHappened {
+		err := s.db.RemoveDirEntry(removeReq.Set.ID(), removeReq.Path)
+		if err != nil {
+			return err
+		}
 	}
 
 	return s.db.IncrementSetTotalRemoved(removeReq.Set.ID())

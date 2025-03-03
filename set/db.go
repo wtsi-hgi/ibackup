@@ -837,13 +837,7 @@ func (d *DB) updateSetAfterDiscovery(setID string) (*Set, error) {
 			return err
 		}
 
-		fmt.Println("here")
-
-		fmt.Println("numfiles!!!!!!", set.NumFiles)
-
 		set.DiscoveryCompleted(d.countAllFilesInSet(tx, setID))
-
-		fmt.Println("numfiles!!!!!!", set.NumFiles)
 
 		updatedSet = set
 
@@ -1383,6 +1377,12 @@ func (d *DB) UpdateBasedOnRemovedEntry(setID string, entry *Entry) error {
 		got.NumObjectsRemoved++
 
 		got.removedEntryToSetCounts(entry)
+	})
+}
+
+func (d *DB) IncrementNumObjectRemoved(setID string) error {
+	return d.updateSetProperties(setID, func(got *Set) {
+		got.NumObjectsRemoved++
 	})
 }
 

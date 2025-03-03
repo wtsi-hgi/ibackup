@@ -34,6 +34,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/VertebrateResequencing/wr/queue"
@@ -90,29 +91,15 @@ func (s *Server) discoverSet(given *set.Set) error {
 // queues the set's files for uploading. Call this in a go-routine, but don't
 // call it multiple times at once for the same set!
 func (s *Server) discoverThenEnqueue(given *set.Set, transformer put.PathTransformer) {
-	fmt.Println("discovery triggered.")
-
-	for {
-		givenSet := s.db.GetByID(given.ID())
-		if givenSet.NumObjectsToBeRemoved == givenSet.NumObjectsRemoved {
-			break
-		}
-
-		isPresenetInRemoveBucket, err := s.isSetPresentInRemoveBucket(given.ID())
-		if err != nil {
-			s.Logger.Printf("discovery error %s: %s", given.ID(), err)
-
-			return
-		}
-
-		if !isPresenetInRemoveBucket {
-			break
-		}
-
-		time.Sleep(100 * time.Millisecond)
+	if _, exists := s.remMuMap[given.ID()]; !exists {
+		s.remMuMap[given.ID()] = &sync.Mutex{}
 	}
 
-	fmt.Println("we think removal stopped, we are now discovering.")
+	s.remMuMap[given.ID()].Lock()
+
+	defer s.remMuMap[given.ID()].Unlock()
+
+	s.remChMap[given.ID()] = make(chan bool)
 
 	updated, err := s.doDiscovery(given)
 	if err != nil {
@@ -126,6 +113,12 @@ func (s *Server) discoverThenEnqueue(given *set.Set, transformer put.PathTransfo
 	if err := s.enqueueSetFiles(updated, transformer); err != nil {
 		s.recordSetError("queuing files for %s failed: %s", updated.ID(), err)
 	}
+
+	if s.remBoolMap[given.ID()] {
+		s.remChMap[given.ID()] <- true
+	}
+
+	close(s.remChMap[given.ID()])
 }
 
 func (s *Server) isSetPresentInRemoveBucket(sid string) (bool, error) {
@@ -433,12 +426,9 @@ func (s *Server) enqueueEntries(entries []*set.Entry, given *set.Set, transforme
 		return nil
 	}
 
-	fmt.Println("im adding defs to the queue:", len(defs))
-
 	_, dups, err := s.queue.AddMany(context.Background(), defs)
 
 	if dups > 0 {
-		fmt.Println("dups: ", dups)
 		s.markFailedEntries(given)
 	}
 
