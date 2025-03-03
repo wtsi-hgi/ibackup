@@ -225,6 +225,8 @@ func (s *Server) EnableJobSubmission(putCmd, deployment, cwd, queue string, numC
 	return nil
 }
 
+// TODO this should only recieve removereqs from the set provided!! not multiple!
+
 // handleRemoveRequests removes objects belonging to the provided reserveGroup
 // inside removeQueue from iRODS and data base. This function should be called
 // inside a go routine, so the user API request is not locked.
