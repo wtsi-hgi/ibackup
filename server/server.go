@@ -176,8 +176,6 @@ func New(conf Config) (*Server, error) {
 }
 
 func (s *Server) monitorCB(given *set.Set) {
-	// if removing, set duration to 1 hr, return
-
 	if err := s.discoverSet(given); err != nil {
 		s.Logger.Printf("error discovering set during monitoring: %s", err)
 	}
@@ -232,8 +230,6 @@ func (s *Server) EnableJobSubmission(putCmd, deployment, cwd, queue string, numC
 	return nil
 }
 
-// TODO this should only recieve removereqs from the set provided!! not multiple!
-
 // handleRemoveRequests removes objects belonging to the provided reserveGroup
 // inside removeQueue from iRODS and data base. This function should be called
 // inside a go routine, so the user API request is not locked.
@@ -248,45 +244,34 @@ func (s *Server) handleRemoveRequests(sid string) {
 			break
 		}
 
-		fmt.Println("started to remove:", removeReq)
+		if s.remChMap[sid] != nil {
+			discoveryHappened := <-s.remChMap[sid]
 
-		fmt.Println("1, hasDiscoveryHappened:", hasDiscoveryHappened)
-
-		discoveryHappened := <-s.remChMap[sid]
-
-		if discoveryHappened {
-			hasDiscoveryHappened = discoveryHappened
+			if discoveryHappened {
+				hasDiscoveryHappened = discoveryHappened
+			}
 		}
-		fmt.Println("2, hasDiscoveryHappened:", hasDiscoveryHappened)
 
-		// TODO maybe improve?
+		// TODO maybe improve? (discuss)
 		if _, exists := s.remMuMap[sid]; !exists {
 			s.remMuMap[sid] = &sync.Mutex{}
 		}
-		fmt.Println("3")
 
 		s.remMuMap[sid].Lock()
-		fmt.Println("4")
 
 		err = s.removeRequestFromIRODSandDB(&removeReq, hasDiscoveryHappened)
 		if beenReleased := s.handleErrorOrReleaseItem(item, removeReq, err); beenReleased {
 			s.remMuMap[sid].Unlock()
 
-			fmt.Println("finished removing")
-
 			continue
 		}
-		fmt.Println("5")
 
 		err = s.finalizeRemoveReq(removeReq.key())
 		if err != nil {
 			s.Logger.Printf("%s", err.Error())
 		}
-		fmt.Println("6")
 
 		s.remMuMap[sid].Unlock()
-
-		fmt.Println("finished removing")
 	}
 
 	s.remBoolMap[sid] = false

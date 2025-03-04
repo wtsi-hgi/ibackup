@@ -382,7 +382,7 @@ func TestSetDB(t *testing.T) {
 					So(fEntries[0], ShouldResemble, &Entry{Path: "/c/d.txt"})
 					So(fEntries[1], ShouldResemble, &Entry{Path: "/e/f.txt"})
 
-					err = db.RemoveDirEntry(set.ID(), "/g/h")
+					err = db.removeEntry(set.ID(), "/g/h", dirBucket)
 					So(err, ShouldBeNil)
 
 					dEntries, errg := db.GetDirEntries(set.ID())

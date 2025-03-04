@@ -581,7 +581,6 @@ func (s *Server) makeItemsDefsAndFilePathsFromDirPaths(set *set.Set,
 }
 
 func (s *Server) removeFileFromIRODSandDB(removeReq *RemoveReq, hasDiscoveryHappened bool) error {
-	fmt.Println("Removing file: ", removeReq.Path)
 	entry, err := s.db.GetFileEntryForSet(removeReq.Set.ID(), removeReq.Path)
 	if err != nil && !hasDiscoveryHappened {
 		return err
@@ -591,13 +590,10 @@ func (s *Server) removeFileFromIRODSandDB(removeReq *RemoveReq, hasDiscoveryHapp
 	if err != nil {
 		return err
 	}
-	fmt.Println("..made transformer")
 
 	if !removeReq.IsRemovedFromIRODS {
-		fmt.Println("..removing from irods")
 		err = s.updateOrRemoveRemoteFile(removeReq.Set, removeReq.Path, transformer)
 		if err != nil {
-			fmt.Println("irods error:", err.Error())
 			s.setErrorOnEntry(entry, removeReq.Set.ID(), removeReq.Path, err)
 
 			return err
@@ -605,21 +601,15 @@ func (s *Server) removeFileFromIRODSandDB(removeReq *RemoveReq, hasDiscoveryHapp
 
 		removeReq.IsRemovedFromIRODS = true
 	}
-	fmt.Println("..irods done")
 
 	if hasDiscoveryHappened {
-		fmt.Println("no db stuff, returning early.")
 		return s.db.IncrementNumObjectRemoved(removeReq.Set.ID())
 	}
-
-	fmt.Println("removing from database:")
 
 	err = s.db.RemoveFileEntry(removeReq.Set.ID(), removeReq.Path)
 	if err != nil {
 		return err
 	}
-
-	fmt.Println("about to update numbers")
 
 	return s.db.UpdateBasedOnRemovedEntry(removeReq.Set.ID(), entry)
 }
@@ -1325,12 +1315,27 @@ func (s *Server) recoverRemoveQueue() error {
 		return err
 	}
 
+	var sids []string
+
+	for _, def := range defs {
+		rr, errc := s.convertQueueItemToRemoveRequest(def.Data)
+		if errc != nil {
+			return err
+		}
+
+		if !slices.Contains(sids, rr.Set.ID()) {
+			sids = append(sids, rr.Set.ID())
+		}
+	}
+
 	_, _, err = s.removeQueue.AddMany(context.Background(), defs)
 	if err != nil {
 		return err
 	}
 
-	go s.handleRemoveRequests(set.RemoveReserveGroup)
+	for _, sid := range sids {
+		go s.handleRemoveRequests(sid)
+	}
 
 	return nil
 }

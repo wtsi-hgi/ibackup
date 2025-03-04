@@ -495,8 +495,6 @@ func (d *DBRO) GetRemoveEntries() ([]*queue.ItemDef, error) {
 		return b.ForEach(func(_, v []byte) error {
 			def := d.decodeItemDef(v)
 
-			def.ReserveGroup = RemoveReserveGroup
-
 			defs = append(defs, def)
 
 			return nil
@@ -772,8 +770,10 @@ func (d *DB) setDiscoveredEntries(setID string, fileDirents, dirDirents []*Diren
 	return d.updateSetAfterDiscovery(setID)
 }
 
-//TODO before new entries are set, any entries we can now remove should be removed.
-// e.g. files inside a dir are now represented by that dir.
+// TODO once a request has been removed (boolean set to removed) check if it
+// needs to be stored in the bucket. e.g. is its parent folder in the bucket?
+
+// discuss
 
 func (d *DB) SetExcludedEntries(setID string, filePaths, dirPaths []string) error {
 	dirents := make([]*Dirent, len(filePaths)+len(dirPaths))
@@ -786,7 +786,7 @@ func (d *DB) SetExcludedEntries(setID string, filePaths, dirPaths []string) erro
 
 	for i, path := range dirPaths {
 		if !strings.HasSuffix(path, "/") {
-			path = path + "/"
+			path += "/"
 		}
 
 		dirents[len(filePaths)+i] = &Dirent{

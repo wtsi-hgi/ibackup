@@ -339,20 +339,16 @@ func TestServer(t *testing.T) {
 						dir1 := filepath.Join(localDir, "dir1/")
 						dir2 := filepath.Join(dir1, "dir2/")
 
-						err := os.MkdirAll(dir1, 0755)
+						err = os.MkdirAll(dir1, 0755)
 						So(err, ShouldBeNil)
 
 						err = os.MkdirAll(dir2, 0755)
 						So(err, ShouldBeNil)
 
-						var files []string
-
 						filesInSet := 100
-						for i := 0; i < filesInSet; i++ {
+						for i := range filesInSet {
 							file := filepath.Join(dir2, "file"+strconv.Itoa(i))
 							internal.CreateTestFile(t, file, "file content")
-
-							files = append(files, file)
 						}
 
 						err = client.SetDirs(exampleSet.ID(), []string{dir1})

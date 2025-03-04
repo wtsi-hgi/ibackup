@@ -1956,7 +1956,7 @@ func confirmFileContents(file, expectedContents string) {
 func TestRemove(t *testing.T) {
 	resetIRODS()
 
-	FocusConvey("Given a server", t, func() {
+	Convey("Given a server", t, func() {
 		remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
 		if remotePath == "" {
 			SkipConvey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
@@ -1994,7 +1994,7 @@ func TestRemove(t *testing.T) {
 				1, fmt.Sprintf("set with that id does not exist [%s]", invalidSetName))
 		})
 
-		FocusConvey("And an added set with files and folders", func() {
+		Convey("And an added set with files and folders", func() {
 			dir := t.TempDir()
 
 			linkPath := filepath.Join(path, "link")
@@ -2174,7 +2174,7 @@ func TestRemove(t *testing.T) {
 					0, dir1+" => ")
 			})
 
-			FocusConvey("if the server dies during removal, the removal will continue upon server startup", func() {
+			Convey("if the server dies during removal, the removal will continue upon server startup", func() {
 				tempTestFileOfPathsToRemove1, errt := os.CreateTemp(dir, "testFileSet")
 				So(errt, ShouldBeNil)
 
