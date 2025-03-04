@@ -37,7 +37,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/VertebrateResequencing/wr/queue"
 	"github.com/gammazero/workerpool"
 	"github.com/ugorji/go/codec"
 	"github.com/wtsi-hgi/ibackup/put"
@@ -75,8 +74,7 @@ const (
 	dirBucket                     = subBucketPrefix + "dirs"
 	discoveredBucket              = subBucketPrefix + "discovered"
 	discoveredFoldersBucket       = subBucketPrefix + "discoveredFolders"
-	excludeBucket                 = subBucketPrefix + "exclude"
-	removeBucket                  = "remove"
+	removedBucket                 = subBucketPrefix + "removed"
 	failedBucket                  = "failed"
 	dbOpenMode                    = 0600
 	separator                     = ":!:"
@@ -100,6 +98,30 @@ type DBRO struct {
 	ch codec.Handle
 
 	slacker Slacker
+}
+
+// RemoveReq contains information about a remove request for a path.
+type RemoveReq struct {
+	Path               string
+	Set                *Set
+	IsDir              bool
+	IsDirUploaded      bool
+	IsRemovedFromIRODS bool
+	IsComplete         bool
+}
+
+func (rq RemoveReq) Key() string {
+	return strings.Join([]string{rq.Set.ID(), rq.Path}, ":")
+}
+
+func NewRemoveRequest(path string, set *Set, isDir, isDirUploaded, isRemovedFromIRODS bool) RemoveReq {
+	return RemoveReq{
+		Path:               path,
+		Set:                set,
+		IsDir:              isDir,
+		IsDirUploaded:      isDirUploaded,
+		IsRemovedFromIRODS: isRemovedFromIRODS,
+	}
 }
 
 // NewRO returns a *DBRO that can be used to query a set database. Provide
@@ -458,14 +480,16 @@ func (d *DB) setEntries(setID string, dirents []*Dirent, bucketName string) erro
 	})
 }
 
-// SetRemoveEntries writes a list of itemDefs containing remove requests into
-// the database.
-func (d *DB) SetRemoveEntries(entries []*queue.ItemDef) error {
+// SetRemoveRequests writes a list of remove requests into the database.
+func (d *DB) SetRemoveRequests(sid string, removeReqs []RemoveReq) error {
 	return d.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte(removeBucket))
+		sfsb, err := d.newSetFileBucket(tx, removedBucket, sid)
+		if err != nil {
+			return err
+		}
 
-		for _, entry := range entries {
-			err := b.Put([]byte(entry.Key), d.encodeToBytes(entry))
+		for _, remReq := range removeReqs {
+			err := sfsb.Bucket.Put([]byte(remReq.Path), d.encodeToBytes(remReq))
 			if err != nil {
 				return err
 			}
@@ -475,43 +499,96 @@ func (d *DB) SetRemoveEntries(entries []*queue.ItemDef) error {
 	})
 }
 
-// DeleteRemoveEntry removes the itemDef for a remove request from the database.
-func (d *DB) DeleteRemoveEntry(key string) error {
+// UpdateRemoveRequest replaces the given removeReq in the db.
+func (d *DB) UpdateRemoveRequest(removeReq RemoveReq) error {
 	return d.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte(removeBucket))
+		b := getSubBucket(tx, removeReq.Set.ID(), removedBucket)
+		if b == nil {
+			return nil
+		}
+
+		return b.Put([]byte(removeReq.Path), d.encodeToBytes(removeReq))
+	})
+}
+
+// DeleteObjectFromSubBucket deletes the object with the given key from the db.
+func (d *DB) DeleteObjectFromSubBucket(key, setID, subBucket string) error {
+	return d.db.Update(func(tx *bolt.Tx) error {
+		b := getSubBucket(tx, setID, subBucket)
+		if b == nil {
+			return nil
+		}
 
 		return b.Delete([]byte(key))
 	})
 }
 
-// GetRemoveEntries returns all objects from the remove bucket in the database.
-// It redefines the reserve group on each object to be the same.
-func (d *DBRO) GetRemoveEntries() ([]*queue.ItemDef, error) {
-	var defs []*queue.ItemDef
+// getSubBucket returns a given subBucket for a given set.
+func getSubBucket(tx *bolt.Tx, setID, subBucket string) *bolt.Bucket {
+	subBucketName := []byte(subBucket + separator + setID)
+	setsBucket := tx.Bucket([]byte(setsBucket))
+
+	return setsBucket.Bucket(subBucketName)
+}
+
+func (d *DBRO) GetAllRemoveRequests() ([]RemoveReq, error) {
+	var allRemReqs []RemoveReq
+
+	sets, err := d.GetAll()
+	if err != nil {
+		return nil, err
+	}
+
+	for _, set := range sets {
+		remReqs, err := d.GetRemoveRequests(set.ID())
+		if err != nil {
+			return nil, err
+		}
+
+		for _, remReq := range remReqs {
+			if !remReq.IsComplete {
+				allRemReqs = append(allRemReqs, remReq)
+			}
+		}
+	}
+
+	return allRemReqs, nil
+}
+
+// GetRemoveRequests returns all objects from the remove bucket in the database.
+func (d *DBRO) GetRemoveRequests(sid string) ([]RemoveReq, error) {
+	var remReqs []RemoveReq
 
 	err := d.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte(removeBucket))
+		b := getSubBucket(tx, sid, removedBucket)
+		if b == nil {
+			return nil
+		}
 
 		return b.ForEach(func(_, v []byte) error {
-			def := d.decodeItemDef(v)
+			remReq := d.decodeRemoveRequest(v)
 
-			defs = append(defs, def)
+			if remReq.IsDir {
+				remReq.Path += "/"
+			}
+
+			remReqs = append(remReqs, remReq)
 
 			return nil
 		})
 	})
 
-	return defs, err
+	return remReqs, err
 }
 
-func (d *DBRO) decodeItemDef(v []byte) *queue.ItemDef {
+func (d *DBRO) decodeRemoveRequest(v []byte) RemoveReq {
 	dec := codec.NewDecoderBytes(v, d.ch)
 
-	var def *queue.ItemDef
+	var remReq RemoveReq
 
-	dec.MustDecode(&def)
+	dec.MustDecode(&remReq)
 
-	return def
+	return remReq
 }
 
 // getAndDeleteExistingEntries gets existing entries in the given sub bucket
@@ -775,49 +852,49 @@ func (d *DB) setDiscoveredEntries(setID string, fileDirents, dirDirents []*Diren
 
 // discuss
 
-func (d *DB) SetExcludedEntries(setID string, filePaths, dirPaths []string) error {
-	dirents := make([]*Dirent, len(filePaths)+len(dirPaths))
-
-	for i, path := range filePaths {
-		dirents[i] = &Dirent{
-			Path: path,
-		}
+func (d *DB) GetExcludedPaths(setID string) ([]string, error) {
+	remReqs, err := d.GetRemoveRequests(setID)
+	if err != nil {
+		return nil, err
 	}
 
-	for i, path := range dirPaths {
-		if !strings.HasSuffix(path, "/") {
-			path += "/"
-		}
+	paths := make([]string, len(remReqs))
 
-		dirents[len(filePaths)+i] = &Dirent{
-			Path: path,
-			Mode: os.ModeDir,
-		}
+	for i, remReq := range remReqs {
+		paths[i] = remReq.Path
 	}
 
-	return d.setEntries(setID, dirents, excludeBucket)
+	return paths, nil
 }
 
-func (d *DB) GetExcludedPaths(setID string) ([]string, []string, error) {
-	entries, err := d.getEntries(setID, excludeBucket)
+func (d *DB) OptimiseRemoveBucket(setID string) error {
+	remReqs, err := d.GetRemoveRequests(setID)
 	if err != nil {
-		return nil, nil, err
+		return err
 	}
 
-	filePaths := make([]string, 0, len(entries))
-	dirPaths := make([]string, 0, len(entries))
+	var curDir string
 
-	for _, entry := range entries {
-		if entry.isDir {
-			dirPaths = append(dirPaths, entry.Path)
+	for _, remReq := range remReqs {
+		if !remReq.IsComplete {
+			continue
+		}
+
+		if strings.HasSuffix(remReq.Path, "/") {
+			curDir = remReq.Path
 
 			continue
 		}
 
-		filePaths = append(filePaths, entry.Path)
+		if strings.HasPrefix(remReq.Path, curDir) {
+			err = d.DeleteObjectFromSubBucket(remReq.Path, setID, removedBucket)
+			if err != nil {
+				return err
+			}
+		}
 	}
 
-	return filePaths, dirPaths, nil
+	return nil
 }
 
 // updateSetAfterDiscovery updates LastDiscovery, sets NumFiles and sets status

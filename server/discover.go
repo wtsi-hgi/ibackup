@@ -120,35 +120,35 @@ func (s *Server) discoverThenEnqueue(given *set.Set, transformer put.PathTransfo
 	close(s.remChMap[given.ID()])
 }
 
-func (s *Server) isSetPresentInRemoveBucket(sid string) (bool, error) {
-	entries, err := s.db.GetRemoveEntries()
-	if err != nil {
-		return false, err
-	}
+// func (s *Server) isSetPresentInRemoveBucket(sid string) (bool, error) {
+// 	entries, err := s.db.GetRemoveRequests()
+// 	if err != nil {
+// 		return false, err
+// 	}
 
-	for _, entry := range entries {
-		remReq, err := s.convertQueueItemToRemoveRequest(entry.Data)
-		if err != nil {
-			return false, err
-		}
+// 	for _, entry := range entries {
+// 		remReq, err := s.convertQueueItemToRemoveRequest(entry.Data)
+// 		if err != nil {
+// 			return false, err
+// 		}
 
-		if remReq.Set.ID() == sid {
-			return true, nil
-		}
-	}
+// 		if remReq.Set.ID() == sid {
+// 			return true, nil
+// 		}
+// 	}
 
-	return false, nil
-}
+// 	return false, nil
+// }
 
 func (s *Server) doDiscovery(given *set.Set) (*set.Set, error) {
-	excludedFilePaths, excludedDirPaths, err := s.db.GetExcludedPaths(given.ID())
+	excludedPaths, err := s.db.GetExcludedPaths(given.ID())
 	if err != nil {
 		return nil, err
 	}
 
-	excludeDirTree := ptrie.New[bool]()
-	for _, path := range append(excludedDirPaths, excludedFilePaths...) {
-		err = excludeDirTree.Put([]byte(path), true)
+	excludeTree := ptrie.New[bool]()
+	for _, path := range excludedPaths {
+		err = excludeTree.Put([]byte(path), true)
 		if err != nil {
 			return nil, err
 		}
@@ -159,7 +159,7 @@ func (s *Server) doDiscovery(given *set.Set) (*set.Set, error) {
 		doneCh := make(chan error)
 		warnCh := make(chan error)
 
-		go s.doSetDirWalks(entries, excludeDirTree, given, entriesCh, doneCh, warnCh)
+		go s.doSetDirWalks(entries, excludeTree, given, entriesCh, doneCh, warnCh)
 
 		return s.processSetDirWalkOutput(given, entriesCh, doneCh, warnCh)
 	})
@@ -243,7 +243,7 @@ func (s *Server) handleNewlyDefinedSets(given *set.Set) {
 // sending discovered file paths to the entriesCh. Closes the entriesCh when
 // done, then sends any error on the doneCh. Non-critical warnings during the
 // walk are sent to the warnChan.
-func (s *Server) doSetDirWalks(entries []*set.Entry, excludeDirTree ptrie.Trie[bool], given *set.Set,
+func (s *Server) doSetDirWalks(entries []*set.Entry, excludeTree ptrie.Trie[bool], given *set.Set,
 	entriesCh chan *set.Dirent, doneCh, warnChan chan error) {
 	errCh := make(chan error, len(entries))
 
@@ -252,7 +252,7 @@ func (s *Server) doSetDirWalks(entries []*set.Entry, excludeDirTree ptrie.Trie[b
 		thisEntry := entry
 
 		s.dirPool.Submit(func() {
-			err := s.checkAndWalkDir(dir, filterEntries(entriesCh, excludeDirTree, dir), warnChan)
+			err := s.checkAndWalkDir(dir, filterEntries(entriesCh, excludeTree, dir), warnChan)
 			errCh <- s.handleMissingDirectories(err, thisEntry, given)
 		})
 	}
@@ -294,12 +294,12 @@ func (s *Server) checkAndWalkDir(dir string, cb walk.PathCallback, warnChan chan
 // filterEntries sends every entry found on the walk to the given entriesCh,
 // except for entries that are not regular files or symlinks or dirs, which are
 // silently skipped.
-func filterEntries(entriesCh chan *set.Dirent, excludeDirTree ptrie.Trie[bool],
+func filterEntries(entriesCh chan *set.Dirent, excludeTree ptrie.Trie[bool],
 	parentDir string) func(entry *walk.Dirent) error {
 	return func(entry *walk.Dirent) error {
 		dirent := set.DirEntFromWalk(entry)
 
-		shouldBeExcluded := excludeDirTree.MatchPrefix([]byte(dirent.Path), func(key []byte, _ bool) bool {
+		shouldBeExcluded := excludeTree.MatchPrefix([]byte(dirent.Path), func(key []byte, _ bool) bool {
 			if strings.HasSuffix(string(key), "/") {
 				return false
 			}

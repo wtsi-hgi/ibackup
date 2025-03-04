@@ -52,7 +52,7 @@ import (
 
 const (
 	ErrNoLogger             = gas.Error("a http logger must be configured")
-	ErrFailedByteConversion = gas.Error("could not convert data type to []byte")
+	ErrIncorrectTypeInQueue = gas.Error("incorrect data type in queue")
 
 	// workerPoolSizeDir is the max number of directory walks we'll do
 	// concurrently during discovery; each of those walks in turn operate on 16
@@ -266,7 +266,7 @@ func (s *Server) handleRemoveRequests(sid string) {
 			continue
 		}
 
-		err = s.finalizeRemoveReq(removeReq.key())
+		err = s.finalizeRemoveReq(removeReq)
 		if err != nil {
 			s.Logger.Printf("%s", err.Error())
 		}
@@ -276,29 +276,33 @@ func (s *Server) handleRemoveRequests(sid string) {
 
 	s.remBoolMap[sid] = false
 
+	s.db.OptimiseRemoveBucket(sid)
+
 	if s.removeQueue.Stats().Items == 0 {
 		s.storageHandler.Cleanup()
 	}
 }
 
-func (s *Server) finalizeRemoveReq(removeReqKey string) error {
-	err := s.db.DeleteRemoveEntry(removeReqKey)
+func (s *Server) finalizeRemoveReq(removeReq set.RemoveReq) error {
+	removeReq.IsComplete = true
+
+	err := s.db.UpdateRemoveRequest(removeReq)
 	if err != nil {
 		return err
 	}
 
-	return s.removeQueue.Remove(context.Background(), removeReqKey)
+	return s.removeQueue.Remove(context.Background(), removeReq.Key())
 }
 
 // reserveRemoveRequest reserves an item from the given reserve group from the
 // remove queue and converts it to a removeRequest. Returns nil and no error if
 // the queue is empty.
-func (s *Server) reserveRemoveRequest(reserveGroup string) (*queue.Item, RemoveReq, error) {
+func (s *Server) reserveRemoveRequest(reserveGroup string) (*queue.Item, set.RemoveReq, error) {
 	item, err := s.removeQueue.Reserve(reserveGroup, retryDelay+2*time.Second)
 	if err != nil {
 		qerr, ok := err.(queue.Error) //nolint:errorlint
 		if ok && errors.Is(qerr.Err, queue.ErrNothingReady) {
-			return nil, RemoveReq{}, err
+			return nil, set.RemoveReq{}, err
 		}
 
 		s.Logger.Printf("%s", err.Error())
@@ -308,26 +312,22 @@ func (s *Server) reserveRemoveRequest(reserveGroup string) (*queue.Item, RemoveR
 	if err != nil {
 		s.Logger.Printf("Invalid data type in remove queue")
 
-		return nil, RemoveReq{}, err
+		return nil, set.RemoveReq{}, err
 	}
 
 	return item, remReq, err
 }
 
-func (s *Server) convertQueueItemToRemoveRequest(data interface{}) (RemoveReq, error) {
-	var remReq RemoveReq
-
-	byteData, ok := data.([]byte)
+func (s *Server) convertQueueItemToRemoveRequest(data interface{}) (set.RemoveReq, error) {
+	remReq, ok := data.(set.RemoveReq)
 	if !ok {
-		return RemoveReq{}, ErrFailedByteConversion
+		return set.RemoveReq{}, ErrIncorrectTypeInQueue
 	}
 
-	err := json.Unmarshal(byteData, &remReq)
-
-	return remReq, err
+	return remReq, nil
 }
 
-func (s *Server) removeRequestFromIRODSandDB(removeReq *RemoveReq, hasDiscoveryHappened bool) error {
+func (s *Server) removeRequestFromIRODSandDB(removeReq *set.RemoveReq, hasDiscoveryHappened bool) error {
 	if removeReq.IsDir {
 		return s.removeDirFromDB(removeReq, hasDiscoveryHappened)
 	}
@@ -338,7 +338,7 @@ func (s *Server) removeRequestFromIRODSandDB(removeReq *RemoveReq, hasDiscoveryH
 // handleErrorOrReleaseItem returns immediately if there was no error. Otherwise
 // it releases the item with updated data from a queue, provided it has attempts
 // left, or sets the error on the set. Returns whether the item was released.
-func (s *Server) handleErrorOrReleaseItem(item *queue.Item, removeReq RemoveReq, err error) bool {
+func (s *Server) handleErrorOrReleaseItem(item *queue.Item, removeReq set.RemoveReq, err error) bool {
 	if err == nil {
 		return false
 	}
@@ -354,12 +354,12 @@ func (s *Server) handleErrorOrReleaseItem(item *queue.Item, removeReq RemoveReq,
 
 	s.setRemoveReqOnItemDef(item, removeReq)
 
-	err = s.removeQueue.SetDelay(removeReq.key(), retryDelay)
+	err = s.removeQueue.SetDelay(removeReq.Key(), retryDelay)
 	if err != nil {
 		s.Logger.Printf("%s", err.Error())
 	}
 
-	err = s.removeQueue.Release(context.Background(), removeReq.key())
+	err = s.removeQueue.Release(context.Background(), removeReq.Key())
 	if err != nil {
 		s.Logger.Printf("%s", err.Error())
 	}
@@ -367,7 +367,7 @@ func (s *Server) handleErrorOrReleaseItem(item *queue.Item, removeReq RemoveReq,
 	return true
 }
 
-func (s *Server) setRemoveReqOnItemDef(item *queue.Item, removeReq RemoveReq) {
+func (s *Server) setRemoveReqOnItemDef(item *queue.Item, removeReq set.RemoveReq) {
 	rqStr, err := json.Marshal(removeReq)
 	if err != nil {
 		s.Logger.Printf("%s", err.Error())
