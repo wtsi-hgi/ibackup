@@ -1595,16 +1595,6 @@ func (d *DBRO) decodeEntry(v []byte) *Entry {
 	return entry
 }
 
-func (d *DBRO) decodeRemoveReq(v []byte) *queue.ItemDef {
-	dec := codec.NewDecoderBytes(v, d.ch)
-
-	var def *queue.ItemDef
-
-	dec.MustDecode(&def)
-
-	return def
-}
-
 // GetFailedEntries returns up to 10 of the file entries for the given set (both
 // SetFileEntries and SetDiscoveredEntries) that have a failed status. Also
 // returns the number of failed entries that were not returned.
