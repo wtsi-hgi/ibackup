@@ -393,13 +393,17 @@ func (d *DB) removeEntry(setID string, entryKey string, bucketName string) error
 }
 
 // RemoveDirEntry removes the provided directory from a given set.
-func (d *DB) RemoveDirEntry(setID string, path string) error {
+func (d *DB) RemoveDirEntry(setID string, path string, deleteFromDiscoverBucket bool) error {
 	err := d.removeEntry(setID, path, dirBucket)
 	if err != nil {
 		return err
 	}
 
-	return d.removeEntry(setID, path, discoveredFoldersBucket)
+	if deleteFromDiscoverBucket {
+		return d.removeEntry(setID, path, discoveredFoldersBucket)
+	}
+
+	return nil
 }
 
 // GetFilesInDir returns all file paths from inside the given directory (and all
@@ -489,6 +493,10 @@ func (d *DB) SetRemoveRequests(sid string, removeReqs []RemoveReq) error {
 		}
 
 		for _, remReq := range removeReqs {
+			if remReq.IsDir {
+				remReq.Path += "/"
+			}
+
 			err := sfsb.Bucket.Put([]byte(remReq.Path), d.encodeToBytes(remReq))
 			if err != nil {
 				return err
@@ -567,10 +575,6 @@ func (d *DBRO) GetRemoveRequests(sid string) ([]RemoveReq, error) {
 
 		return b.ForEach(func(_, v []byte) error {
 			remReq := d.decodeRemoveRequest(v)
-
-			if remReq.IsDir {
-				remReq.Path += "/"
-			}
 
 			remReqs = append(remReqs, remReq)
 
@@ -875,14 +879,10 @@ func (d *DB) OptimiseRemoveBucket(setID string) error {
 
 	var curDir string
 
+	curDir = "!!!!!!"
+
 	for _, remReq := range remReqs {
 		if !remReq.IsComplete {
-			continue
-		}
-
-		if strings.HasSuffix(remReq.Path, "/") {
-			curDir = remReq.Path
-
 			continue
 		}
 
@@ -891,6 +891,12 @@ func (d *DB) OptimiseRemoveBucket(setID string) error {
 			if err != nil {
 				return err
 			}
+
+			continue
+		}
+
+		if strings.HasSuffix(remReq.Path, "/") {
+			curDir = remReq.Path
 		}
 	}
 

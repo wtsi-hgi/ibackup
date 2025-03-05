@@ -335,11 +335,15 @@ func (s *TestServer) waitForStatus(name, statusToFind string, timeout time.Durat
 
 	cmd := []string{"status", "--name", name, "--url", s.url, "--cert", s.cert}
 
+	var output []byte
+
+	var err error
+
 	status := retry.Do(ctx, func() error {
 		clientCmd := exec.Command("./"+app, cmd...)
 		clientCmd.Env = s.env
 
-		output, err := clientCmd.CombinedOutput()
+		output, err = clientCmd.CombinedOutput()
 		if err != nil {
 			return err
 		}
@@ -353,6 +357,7 @@ func (s *TestServer) waitForStatus(name, statusToFind string, timeout time.Durat
 
 	if status.Err != nil {
 		fmt.Printf("\nfailed to see set %s get status: %s\n", name, statusToFind) //nolint:forbidigo
+		fmt.Println(string(output))
 	}
 
 	So(status.Err, ShouldBeNil)
@@ -2129,6 +2134,7 @@ func TestRemove(t *testing.T) {
 				setName = "nestedDirSet"
 
 				s.addSetForTesting(t, setName, transformer, dir1)
+				s.waitForStatus(setName, "\nStatus: complete", 5*time.Second)
 
 				s.removePath(t, setName, dir3, 2)
 

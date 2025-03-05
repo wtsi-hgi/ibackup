@@ -557,9 +557,9 @@ func (s *Server) makeItemsDefsAndFilePathsFromDirPaths(givenSet *set.Set,
 	return filepaths, defs, remReqs, nil
 }
 
-func (s *Server) removeFileFromIRODSandDB(removeReq *set.RemoveReq, hasDiscoveryHappened bool) error {
+func (s *Server) removeFileFromIRODSandDB(removeReq *set.RemoveReq, mayMissInDiscoverBucket bool) error {
 	entry, err := s.db.GetFileEntryForSet(removeReq.Set.ID(), removeReq.Path)
-	if err != nil && !hasDiscoveryHappened {
+	if err != nil && !mayMissInDiscoverBucket {
 		return err
 	}
 
@@ -572,14 +572,13 @@ func (s *Server) removeFileFromIRODSandDB(removeReq *set.RemoveReq, hasDiscovery
 		err = s.updateOrRemoveRemoteFile(removeReq.Set, removeReq.Path, transformer)
 		if err != nil {
 			s.setErrorOnEntry(entry, removeReq.Set.ID(), removeReq.Path, err)
-
 			return err
 		}
 
 		removeReq.IsRemovedFromIRODS = true
 	}
 
-	if hasDiscoveryHappened {
+	if entry == nil && mayMissInDiscoverBucket {
 		return s.db.IncrementNumObjectRemoved(removeReq.Set.ID())
 	}
 
@@ -700,12 +699,10 @@ func (s *Server) setErrorOnEntry(entry *set.Entry, sid, path string, err error) 
 	}
 }
 
-func (s *Server) removeDirFromDB(removeReq *set.RemoveReq, hasDiscoveryHappened bool) error {
-	if !hasDiscoveryHappened {
-		err := s.db.RemoveDirEntry(removeReq.Set.ID(), removeReq.Path)
-		if err != nil {
-			return err
-		}
+func (s *Server) removeDirFromDB(removeReq *set.RemoveReq, removedFromDiscoverBuckets bool) error {
+	err := s.db.RemoveDirEntry(removeReq.Set.ID(), removeReq.Path, !removedFromDiscoverBuckets)
+	if err != nil {
+		return err
 	}
 
 	return s.db.IncrementSetTotalRemoved(removeReq.Set.ID())
