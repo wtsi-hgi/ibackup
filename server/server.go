@@ -149,12 +149,7 @@ func New(conf Config) (*Server, error) {
 		clientQueue:         queue.New(context.Background(), "client"),
 		storageHandler:      conf.StorageHandler,
 
-		RDLinker: removeDiscoverLinker{
-			Mutex:                &sync.Mutex{},
-			hasDiscoveryHappened: make(map[string]bool),
-			numRunningRemovals:   make(map[string]uint8),
-			muMap:                make(map[string]*sync.Mutex),
-		},
+		RDLinker: newRemoveDiscoverLinker(),
 	}
 
 	s.clientQueue.SetTTRCallback(s.clientTTRC)
@@ -252,24 +247,7 @@ func (s *Server) handleRemoveRequests(sid string) {
 		s.RDLinker.allowDiscovery(sid)
 	}
 
-	s.RDLinker.removalDone(sid)
-
-	s.db.OptimiseRemoveBucket(sid)
-
-	if s.removeQueue.Stats().Items == 0 {
-		s.storageHandler.Cleanup()
-	}
-}
-
-func (s *Server) finalizeRemoveReq(removeReq set.RemoveReq) error {
-	removeReq.IsComplete = true
-
-	err := s.db.UpdateRemoveRequest(removeReq)
-	if err != nil {
-		return err
-	}
-
-	return s.removeQueue.Remove(context.Background(), removeReq.Key())
+	s.finalizeRemoval(sid)
 }
 
 // reserveRemoveRequest reserves an item from the given reserve group from the
@@ -343,6 +321,30 @@ func (s *Server) handleErrorOrReleaseItem(item *queue.Item, removeReq set.Remove
 	}
 
 	return true
+}
+
+func (s *Server) finalizeRemoveReq(removeReq set.RemoveReq) error {
+	removeReq.IsComplete = true
+
+	err := s.db.UpdateRemoveRequest(removeReq)
+	if err != nil {
+		return err
+	}
+
+	return s.removeQueue.Remove(context.Background(), removeReq.Key())
+}
+
+func (s *Server) finalizeRemoval(sid string) {
+	s.RDLinker.removalDone(sid)
+
+	err := s.db.OptimiseRemoveBucket(sid)
+	if err != nil {
+		s.Logger.Printf("%s", err.Error())
+	}
+
+	if s.removeQueue.Stats().Items == 0 {
+		s.storageHandler.Cleanup()
+	}
 }
 
 // rac is our queue's ready added callback which will get all ready put Requests

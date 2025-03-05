@@ -57,6 +57,15 @@ type removeDiscoverLinker struct {
 	muMap                map[string]*sync.Mutex
 }
 
+func newRemoveDiscoverLinker() removeDiscoverLinker {
+	return removeDiscoverLinker{
+		Mutex:                &sync.Mutex{},
+		hasDiscoveryHappened: make(map[string]bool),
+		numRunningRemovals:   make(map[string]uint8),
+		muMap:                make(map[string]*sync.Mutex),
+	}
+}
+
 // startDiscovery will wait until any individual removals are complete and then
 // block any future removals until the discovery is done.
 func (link removeDiscoverLinker) startDiscovery(sid string) {
@@ -96,7 +105,7 @@ func (link removeDiscoverLinker) willRemove(sid string) {
 	if _, exists := link.numRunningRemovals[sid]; !exists {
 		link.numRunningRemovals[sid] = 1
 	} else {
-		link.numRunningRemovals[sid] += 1
+		link.numRunningRemovals[sid]++
 	}
 
 	link.Unlock()
@@ -136,7 +145,7 @@ func (link removeDiscoverLinker) removalDone(sid string) {
 		delete(link.numRunningRemovals, sid)
 		delete(link.hasDiscoveryHappened, sid)
 	} else {
-		link.numRunningRemovals[sid] -= 1
+		link.numRunningRemovals[sid]--
 	}
 
 	link.Unlock()
@@ -379,7 +388,8 @@ func filterEntries(entriesCh chan *set.Dirent, excludeTree ptrie.Trie[bool],
 		}
 
 		if !(entry.IsRegular() || entry.IsSymlink() || entry.IsDir()) ||
-			dirent.Path == filepath.Clean(parentDir) {
+			dirent.Path == filepath.Clean(parentDir) { //nolint:wsl
+
 			return nil
 		}
 
