@@ -453,12 +453,9 @@ func (s *Server) submitFilesForRemoval(set *set.Set, paths []string) error {
 		return nil
 	}
 
-	defs, remReqs, err := buildRemovalStructsFromFilePaths(set, paths)
-	if err != nil {
-		return err
-	}
+	defs, remReqs := buildRemovalStructsFromFilePaths(set, paths)
 
-	err = s.db.SetRemoveRequests(set.ID(), remReqs)
+	err := s.db.SetRemoveRequests(set.ID(), remReqs)
 	if err != nil {
 		return err
 	}
@@ -468,32 +465,27 @@ func (s *Server) submitFilesForRemoval(set *set.Set, paths []string) error {
 	return err
 }
 
-func buildRemovalStructsFromFilePaths(givenSet *set.Set, paths []string) ([]*queue.ItemDef, []set.RemoveReq, error) {
+func buildRemovalStructsFromFilePaths(givenSet *set.Set, paths []string) ([]*queue.ItemDef, []set.RemoveReq) {
 	remReqs := make([]set.RemoveReq, len(paths))
 	defs := make([]*queue.ItemDef, len(paths))
 
 	for i, path := range paths {
 		rq := set.NewRemoveRequest(path, givenSet, false, false, false)
 
-		def, err := buildRemoveItemDef(rq)
-		if err != nil {
-			return nil, nil, err
-		}
-
 		remReqs[i] = rq
-		defs[i] = def
+		defs[i] = buildRemoveItemDef(rq)
 	}
 
-	return defs, remReqs, nil
+	return defs, remReqs
 }
 
-func buildRemoveItemDef(rq set.RemoveReq) (*queue.ItemDef, error) {
+func buildRemoveItemDef(rq set.RemoveReq) *queue.ItemDef {
 	return &queue.ItemDef{
 		Key:          rq.Key(),
 		Data:         rq,
 		TTR:          ttr,
 		ReserveGroup: rq.Set.ID(),
-	}, nil
+	}
 }
 
 func (s *Server) submitDirsForRemoval(set *set.Set, paths []string) ([]string, error) {
@@ -506,13 +498,10 @@ func (s *Server) submitDirsForRemoval(set *set.Set, paths []string) ([]string, e
 		return nil, err
 	}
 
-	fileDefs, fileRemoveReqs, err := buildRemovalStructsFromFilePaths(set, filepaths)
-	if err != nil {
-		return nil, err
-	}
+	fileDefs, fileRemoveReqs := buildRemovalStructsFromFilePaths(set, filepaths)
 
-	defs := append(fileDefs, dirDefs...) //nolint:gocritic
-	remReqs := append(fileRemoveReqs, dirRemoveReqs...)
+	defs := append(fileDefs, dirDefs...)                //nolint:gocritic
+	remReqs := append(fileRemoveReqs, dirRemoveReqs...) //nolint:gocritic
 
 	err = s.db.SetRemoveRequests(set.ID(), remReqs)
 	if err != nil {
@@ -545,13 +534,8 @@ func (s *Server) makeItemsDefsAndFilePathsFromDirPaths(givenSet *set.Set,
 
 		filepaths = append(filepaths, dirFilepaths...)
 
-		def, err := buildRemoveItemDef(rq)
-		if err != nil {
-			return nil, nil, nil, err
-		}
-
 		remReqs[i] = rq
-		defs[i] = def
+		defs[i] = buildRemoveItemDef(rq)
 	}
 
 	return filepaths, defs, remReqs, nil
@@ -563,26 +547,42 @@ func (s *Server) removeFileFromIRODSandDB(removeReq *set.RemoveReq, mayMissInDis
 		return err
 	}
 
+	err = s.processRemoteFileRemoval(removeReq, entry)
+	if err != nil {
+		return err
+	}
+
+	return s.processDBFileRemoval(removeReq, entry, mayMissInDiscoverBucket)
+}
+
+func (s *Server) processRemoteFileRemoval(removeReq *set.RemoveReq, entry *set.Entry) error {
+	if removeReq.IsRemovedFromIRODS {
+		return nil
+	}
+
 	transformer, err := removeReq.Set.MakeTransformer()
 	if err != nil {
 		return err
 	}
 
-	if !removeReq.IsRemovedFromIRODS {
-		err = s.updateOrRemoveRemoteFile(removeReq.Set, removeReq.Path, transformer)
-		if err != nil {
-			s.setErrorOnEntry(entry, removeReq.Set.ID(), removeReq.Path, err)
-			return err
-		}
+	err = s.updateOrRemoveRemoteFile(removeReq.Set, removeReq.Path, transformer)
+	if err != nil {
+		s.setErrorOnEntry(entry, removeReq.Set.ID(), removeReq.Path, err)
 
-		removeReq.IsRemovedFromIRODS = true
+		return err
 	}
 
+	removeReq.IsRemovedFromIRODS = true
+
+	return nil
+}
+
+func (s *Server) processDBFileRemoval(removeReq *set.RemoveReq, entry *set.Entry, mayMissInDiscoverBucket bool) error {
 	if entry == nil && mayMissInDiscoverBucket {
 		return s.db.IncrementNumObjectRemoved(removeReq.Set.ID())
 	}
 
-	err = s.db.RemoveFileEntry(removeReq.Set.ID(), removeReq.Path)
+	err := s.db.RemoveFileEntry(removeReq.Set.ID(), removeReq.Path)
 	if err != nil {
 		return err
 	}
@@ -1290,15 +1290,11 @@ func (s *Server) recoverRemoveQueue() error {
 	}
 
 	var sids []string
-	var defs []*queue.ItemDef
 
-	for _, remReq := range remReqs {
-		def, errb := buildRemoveItemDef(remReq)
-		if errb != nil {
-			return errb
-		}
+	defs := make([]*queue.ItemDef, len(remReqs))
 
-		defs = append(defs, def)
+	for i, remReq := range remReqs {
+		defs[i] = buildRemoveItemDef(remReq)
 
 		if !slices.Contains(sids, remReq.Set.ID()) {
 			sids = append(sids, remReq.Set.ID())

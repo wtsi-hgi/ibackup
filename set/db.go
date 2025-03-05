@@ -492,19 +492,23 @@ func (d *DB) SetRemoveRequests(sid string, removeReqs []RemoveReq) error {
 			return err
 		}
 
-		for _, remReq := range removeReqs {
-			if remReq.IsDir {
-				remReq.Path += "/"
-			}
+		return d.putRemoveRequestsInBucket(removeReqs, sfsb.Bucket)
+	})
+}
 
-			err := sfsb.Bucket.Put([]byte(remReq.Path), d.encodeToBytes(remReq))
-			if err != nil {
-				return err
-			}
+func (d *DB) putRemoveRequestsInBucket(remReqs []RemoveReq, b *bolt.Bucket) error {
+	for _, remReq := range remReqs {
+		if remReq.IsDir {
+			remReq.Path += "/"
 		}
 
-		return nil
-	})
+		err := b.Put([]byte(remReq.Path), d.encodeToBytes(remReq))
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // UpdateRemoveRequest replaces the given removeReq in the db.
@@ -850,11 +854,6 @@ func (d *DB) setDiscoveredEntries(setID string, fileDirents, dirDirents []*Diren
 
 	return d.updateSetAfterDiscovery(setID)
 }
-
-// TODO once a request has been removed (boolean set to removed) check if it
-// needs to be stored in the bucket. e.g. is its parent folder in the bucket?
-
-// discuss
 
 func (d *DB) GetExcludedPaths(setID string) ([]string, error) {
 	remReqs, err := d.GetRemoveRequests(setID)

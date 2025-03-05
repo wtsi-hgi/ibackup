@@ -402,8 +402,8 @@ func TestSetDB(t *testing.T) {
 					err = db.SetRemoveRequests(set.ID(), remReqs)
 					So(err, ShouldBeNil)
 
-					rrs, err := db.GetRemoveRequests(set.ID())
-					So(err, ShouldBeNil)
+					rrs, errg := db.GetRemoveRequests(set.ID())
+					So(errg, ShouldBeNil)
 					So(len(rrs), ShouldEqual, len(remReqs))
 
 					err = db.OptimiseRemoveBucket(set.ID())
