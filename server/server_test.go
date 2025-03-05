@@ -338,6 +338,7 @@ func TestServer(t *testing.T) {
 					Convey("And given a set with 100 files in one nested folder", func() {
 						dir1 := filepath.Join(localDir, "dir1/")
 						dir2 := filepath.Join(dir1, "dir2/")
+						dir3 := filepath.Join(dir1, "dir3/")
 
 						err = os.MkdirAll(dir1, 0755)
 						So(err, ShouldBeNil)
@@ -345,9 +346,16 @@ func TestServer(t *testing.T) {
 						err = os.MkdirAll(dir2, 0755)
 						So(err, ShouldBeNil)
 
-						filesInSet := 100
+						err = os.MkdirAll(dir3, 0755)
+						So(err, ShouldBeNil)
+
+						dirs := []string{dir2, dir3}
+
+						filesInSet := 200
 						for i := range filesInSet {
-							file := filepath.Join(dir2, "file"+strconv.Itoa(i))
+							index := i / 100
+
+							file := filepath.Join(dirs[index], "file"+strconv.Itoa(i))
 							internal.CreateTestFile(t, file, "file content")
 						}
 
@@ -365,8 +373,11 @@ func TestServer(t *testing.T) {
 
 						So(gotSet.NumFiles, ShouldEqual, filesInSet)
 
-						Convey("You can trigger removal", func() {
+						Convey("You can trigger removals", func() {
 							err = client.RemoveFilesAndDirs(exampleSet.ID(), []string{dir2})
+							So(err, ShouldBeNil)
+
+							err = client.RemoveFilesAndDirs(exampleSet.ID(), []string{dir3})
 							So(err, ShouldBeNil)
 
 							time.Sleep(50 * time.Millisecond)
@@ -375,9 +386,9 @@ func TestServer(t *testing.T) {
 							So(errg, ShouldBeNil)
 
 							So(gotSet.NumObjectsRemoved, ShouldBeGreaterThan, 0)
-							So(gotSet.NumObjectsToBeRemoved, ShouldEqual, filesInSet+1)
+							So(gotSet.NumObjectsToBeRemoved, ShouldEqual, filesInSet+2)
 
-							Convey("And you can trigger and complete discovery of the extra file while removal is running", func() {
+							Convey("And you can trigger and complete discovery of the extra file while removals are running", func() {
 								fileToBeDiscovered := filepath.Join(dir1, "file"+strconv.Itoa(filesInSet+1))
 								internal.CreateTestFile(t, fileToBeDiscovered, "file content")
 
@@ -392,8 +403,8 @@ func TestServer(t *testing.T) {
 								So(gotSet.NumFiles, ShouldEqual, 1)
 								So(gotSet.NumObjectsRemoved, ShouldBeLessThan, gotSet.NumObjectsToBeRemoved)
 
-								Convey("And then removal will still complete", func() {
-									time.Sleep(200 * time.Millisecond)
+								Convey("And then the removals will still complete", func() {
+									time.Sleep(300 * time.Millisecond)
 
 									gotSet, errg = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
 									So(errg, ShouldBeNil)
