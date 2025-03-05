@@ -28,7 +28,6 @@ package server
 import (
 	"context"
 	"errors"
-	"fmt"
 	"math"
 	"net/http"
 	"os"
@@ -603,8 +602,6 @@ func (s *Server) processDBFileRemoval(removeReq *set.RemoveReq, entry *set.Entry
 	if err != nil {
 		return err
 	}
-
-	fmt.Println("about to update numbers")
 
 	return s.db.UpdateBasedOnRemovedEntry(removeReq.Set.ID(), entry)
 }
