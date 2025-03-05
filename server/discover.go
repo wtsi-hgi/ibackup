@@ -47,6 +47,101 @@ import (
 
 const ttr = 6 * time.Minute
 
+// removeDiscoveryLinker is used to ensure removals and discoveries cannot
+// happen at the same time on the same set. Discoveries have priority and will
+// pause any removal that's already running until the discovery has finished.
+type removeDiscoverLinker struct {
+	*sync.Mutex
+	hasDiscoveryHappened map[string]bool
+	numRunningRemovals   map[string]uint8
+	muMap                map[string]*sync.Mutex
+}
+
+// startDiscovery will wait until any individual removals are complete and then
+// block any future removals until the discovery is done.
+func (link removeDiscoverLinker) startDiscovery(sid string) {
+	link.Lock()
+	if _, exists := link.muMap[sid]; !exists {
+		link.muMap[sid] = &sync.Mutex{}
+	}
+	link.Unlock()
+
+	link.muMap[sid].Lock()
+}
+
+// discoveryHappened tells any running removals that a discovery happened during
+// their execution, then stops blocking removals.
+func (link removeDiscoverLinker) discoveryHappened(sid string) {
+	link.Lock()
+	if link.isRemovalRunning(sid) {
+		link.hasDiscoveryHappened[sid] = true
+	}
+	link.Unlock()
+
+	link.muMap[sid].Unlock()
+}
+
+func (link removeDiscoverLinker) isRemovalRunning(sid string) bool {
+	_, exists := link.numRunningRemovals[sid]
+
+	return exists
+}
+
+// willRemove indicates that a removal is running on the provided set id.
+func (link removeDiscoverLinker) willRemove(sid string) {
+	link.Lock()
+
+	link.hasDiscoveryHappened[sid] = false
+
+	if _, exists := link.numRunningRemovals[sid]; !exists {
+		link.numRunningRemovals[sid] = 1
+	} else {
+		link.numRunningRemovals[sid] += 1
+	}
+
+	link.Unlock()
+}
+
+// waitForDiscovery will block while a discovery on the provided set is running,
+// and it will return an indication if discovery has happened since removal
+// started.
+func (link removeDiscoverLinker) waitForDiscovery(sid string) bool {
+	link.Lock()
+	if _, exists := link.muMap[sid]; !exists {
+		link.muMap[sid] = &sync.Mutex{}
+	}
+	link.Unlock()
+
+	link.muMap[sid].Lock()
+
+	link.Lock()
+	hasDiscoveryHappened := link.hasDiscoveryHappened[sid]
+	link.Unlock()
+
+	return hasDiscoveryHappened
+}
+
+// allowDiscovery indicates we finished our individual removal and a discovery
+// can now start.
+func (link removeDiscoverLinker) allowDiscovery(sid string) {
+	link.muMap[sid].Unlock()
+}
+
+// removalDone indicates this set is no longer removing only if all remove
+// commands containing this set have finished.
+func (link removeDiscoverLinker) removalDone(sid string) {
+	link.Lock()
+
+	if link.numRunningRemovals[sid] == 1 {
+		delete(link.numRunningRemovals, sid)
+		delete(link.hasDiscoveryHappened, sid)
+	} else {
+		link.numRunningRemovals[sid] -= 1
+	}
+
+	link.Unlock()
+}
+
 // triggerDiscovery triggers the file discovery process for the set with the id
 // specified in the URL parameter.
 //
@@ -90,15 +185,7 @@ func (s *Server) discoverSet(given *set.Set) error {
 // call it multiple times at once for the same set! This will block removals on
 // the same set.
 func (s *Server) discoverThenEnqueue(given *set.Set, transformer put.PathTransformer) {
-	if _, exists := s.remMuMap[given.ID()]; !exists {
-		s.remMuMap[given.ID()] = &sync.Mutex{}
-	}
-
-	s.remMuMap[given.ID()].Lock()
-
-	defer s.remMuMap[given.ID()].Unlock()
-
-	s.remChMap[given.ID()] = make(chan bool)
+	s.RDLinker.startDiscovery(given.ID())
 
 	updated, err := s.doDiscovery(given)
 	if err != nil {
@@ -113,32 +200,8 @@ func (s *Server) discoverThenEnqueue(given *set.Set, transformer put.PathTransfo
 		s.recordSetError("queuing files for %s failed: %s", updated.ID(), err)
 	}
 
-	if s.remBoolMap[given.ID()] {
-		s.remChMap[given.ID()] <- true
-	}
-
-	close(s.remChMap[given.ID()])
+	s.RDLinker.discoveryHappened(given.ID())
 }
-
-// func (s *Server) isSetPresentInRemoveBucket(sid string) (bool, error) {
-// 	entries, err := s.db.GetRemoveRequests()
-// 	if err != nil {
-// 		return false, err
-// 	}
-
-// 	for _, entry := range entries {
-// 		remReq, err := s.convertQueueItemToRemoveRequest(entry.Data)
-// 		if err != nil {
-// 			return false, err
-// 		}
-
-// 		if remReq.Set.ID() == sid {
-// 			return true, nil
-// 		}
-// 	}
-
-// 	return false, nil
-// }
 
 func (s *Server) doDiscovery(given *set.Set) (*set.Set, error) {
 	excludedPaths, err := s.db.GetExcludedPaths(given.ID())

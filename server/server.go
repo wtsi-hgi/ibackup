@@ -29,7 +29,6 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -124,9 +123,7 @@ type Server struct {
 	iRODSTracker        *iRODSTracker
 	clientQueue         *queue.Queue
 
-	remMuMap   map[string]*sync.Mutex
-	remChMap   map[string]chan bool
-	remBoolMap map[string]bool
+	RDLinker removeDiscoverLinker
 }
 
 // New creates a Server which can serve a REST API and website.
@@ -152,9 +149,12 @@ func New(conf Config) (*Server, error) {
 		clientQueue:         queue.New(context.Background(), "client"),
 		storageHandler:      conf.StorageHandler,
 
-		remMuMap:   make(map[string]*sync.Mutex),
-		remChMap:   make(map[string]chan bool),
-		remBoolMap: make(map[string]bool),
+		RDLinker: removeDiscoverLinker{
+			Mutex:                &sync.Mutex{},
+			hasDiscoveryHappened: make(map[string]bool),
+			numRunningRemovals:   make(map[string]uint8),
+			muMap:                make(map[string]*sync.Mutex),
+		},
 	}
 
 	s.clientQueue.SetTTRCallback(s.clientTTRC)
@@ -227,9 +227,7 @@ func (s *Server) EnableJobSubmission(putCmd, deployment, cwd, queue string, numC
 // inside removeQueue from iRODS and data base. This function should be called
 // inside a go routine, so the user API request is not locked.
 func (s *Server) handleRemoveRequests(sid string) {
-	var hasDiscoveryHappened bool
-
-	s.remBoolMap[sid] = true
+	s.RDLinker.willRemove(sid)
 
 	for {
 		item, removeReq, err := s.reserveRemoveRequest(sid)
@@ -237,24 +235,11 @@ func (s *Server) handleRemoveRequests(sid string) {
 			break
 		}
 
-		if s.remChMap[sid] != nil {
-			discoveryHappened := <-s.remChMap[sid]
+		removedFromDiscoverBuckets := s.RDLinker.waitForDiscovery(sid)
 
-			if discoveryHappened {
-				hasDiscoveryHappened = discoveryHappened
-			}
-		}
-
-		// TODO maybe improve? (discuss)
-		if _, exists := s.remMuMap[sid]; !exists {
-			s.remMuMap[sid] = &sync.Mutex{}
-		}
-
-		s.remMuMap[sid].Lock()
-
-		err = s.removeRequestFromIRODSandDB(&removeReq, hasDiscoveryHappened)
+		err = s.removeRequestFromIRODSandDB(&removeReq, removedFromDiscoverBuckets)
 		if beenReleased := s.handleErrorOrReleaseItem(item, removeReq, err); beenReleased {
-			s.remMuMap[sid].Unlock()
+			s.RDLinker.allowDiscovery(sid)
 
 			continue
 		}
@@ -264,10 +249,10 @@ func (s *Server) handleRemoveRequests(sid string) {
 			s.Logger.Printf("%s", err.Error())
 		}
 
-		s.remMuMap[sid].Unlock()
+		s.RDLinker.allowDiscovery(sid)
 	}
 
-	s.remBoolMap[sid] = false
+	s.RDLinker.removalDone(sid)
 
 	s.db.OptimiseRemoveBucket(sid)
 
@@ -320,12 +305,12 @@ func (s *Server) convertQueueItemToRemoveRequest(data interface{}) (set.RemoveRe
 	return remReq, nil
 }
 
-func (s *Server) removeRequestFromIRODSandDB(removeReq *set.RemoveReq, hasDiscoveryHappened bool) error {
+func (s *Server) removeRequestFromIRODSandDB(removeReq *set.RemoveReq, removedFromDiscoverBuckets bool) error {
 	if removeReq.IsDir {
-		return s.removeDirFromDB(removeReq, hasDiscoveryHappened)
+		return s.removeDirFromDB(removeReq, removedFromDiscoverBuckets)
 	}
 
-	return s.removeFileFromIRODSandDB(removeReq, hasDiscoveryHappened)
+	return s.removeFileFromIRODSandDB(removeReq, removedFromDiscoverBuckets)
 }
 
 // handleErrorOrReleaseItem returns immediately if there was no error. Otherwise
@@ -345,7 +330,7 @@ func (s *Server) handleErrorOrReleaseItem(item *queue.Item, removeReq set.Remove
 		return false
 	}
 
-	s.setRemoveReqOnItemDef(item, removeReq)
+	item.SetData(removeReq)
 
 	err = s.removeQueue.SetDelay(removeReq.Key(), retryDelay)
 	if err != nil {
@@ -358,15 +343,6 @@ func (s *Server) handleErrorOrReleaseItem(item *queue.Item, removeReq set.Remove
 	}
 
 	return true
-}
-
-func (s *Server) setRemoveReqOnItemDef(item *queue.Item, removeReq set.RemoveReq) {
-	rqStr, err := json.Marshal(removeReq)
-	if err != nil {
-		s.Logger.Printf("%s", err.Error())
-	}
-
-	item.SetData(rqStr)
 }
 
 // rac is our queue's ready added callback which will get all ready put Requests
