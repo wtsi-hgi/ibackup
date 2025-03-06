@@ -127,7 +127,7 @@ type Server struct {
 	iRODSTracker        *iRODSTracker
 	clientQueue         *queue.Queue
 
-	RDLinker removeDiscoverLinker
+	RDLinker *removeDiscoverLinker
 }
 
 // New creates a Server which can serve a REST API and website.

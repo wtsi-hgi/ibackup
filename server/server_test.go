@@ -50,6 +50,8 @@ import (
 	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/set"
 	"github.com/wtsi-hgi/ibackup/slack"
+	btime "github.com/wtsi-ssg/wr/backoff/time"
+	"github.com/wtsi-ssg/wr/retry"
 )
 
 const (
@@ -58,6 +60,7 @@ const (
 )
 
 var errNotDiscovered = errors.New("not discovered")
+var errNotFinishedRemoving = errors.New("remove not finished")
 
 func TestClient(t *testing.T) {
 	Convey("maxTimeForUpload works with small and large requests", t, func() {
@@ -404,13 +407,44 @@ func TestServer(t *testing.T) {
 								So(gotSet.NumObjectsRemoved, ShouldBeLessThan, gotSet.NumObjectsToBeRemoved)
 
 								Convey("And then the removals will still complete", func() {
-									time.Sleep(300 * time.Millisecond)
+									time.Sleep(1000 * time.Millisecond)
 
 									gotSet, errg = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
 									So(errg, ShouldBeNil)
 
+									func() {
+										ctx, cancelFn := context.WithTimeout(context.Background(), 5*time.Second)
+										defer cancelFn()
+
+										status := retry.Do(ctx, func() error {
+											gotSet, errg = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+											So(errg, ShouldBeNil)
+
+											if gotSet.NumObjectsRemoved == gotSet.NumObjectsToBeRemoved {
+												return nil
+											}
+
+											return errNotFinishedRemoving
+										}, &retry.UntilNoError{}, btime.SecondsRangeBackoff(), "waiting for matching status")
+
+										if status.Err != nil {
+											fmt.Printf("\nfailed to see remove finished. %d removed out of %d", //nolint:forbidigo
+												gotSet.NumObjectsRemoved, gotSet.NumObjectsToBeRemoved)
+										}
+
+										So(status.Err, ShouldBeNil)
+									}()
+
 									So(gotSet.NumObjectsRemoved, ShouldEqual, gotSet.NumObjectsToBeRemoved)
 									So(gotSet.NumFiles, ShouldEqual, 1)
+
+									files, errgf := client.GetFiles(gotSet.ID())
+									So(errgf, ShouldBeNil)
+									So(len(files), ShouldEqual, 1)
+
+									dirs, errgd := client.GetDirs(gotSet.ID())
+									So(errgd, ShouldBeNil)
+									So(len(dirs), ShouldEqual, 1)
 								})
 							})
 						})

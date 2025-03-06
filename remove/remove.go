@@ -29,8 +29,8 @@
 package remove
 
 import (
+	"maps"
 	"path/filepath"
-	"reflect"
 	"strings"
 
 	"github.com/wtsi-hgi/ibackup/put"
@@ -78,7 +78,7 @@ func UpdateSetsAndRequestersOnRemoteFile(handler Handler, path string,
 		put.MetaKeyRequester: strings.Join(requesters, ","),
 	}
 
-	if reflect.DeepEqual(metaToRemove, newMeta) {
+	if maps.Equal(metaToRemove, newMeta) {
 		return nil
 	}
 

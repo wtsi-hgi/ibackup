@@ -87,8 +87,6 @@ const (
 	// workerPoolSizeFiles is the max number of concurrent file stats we'll do
 	// during discovery.
 	workerPoolSizeFiles = 16
-
-	RemoveReserveGroup = "removeRecovery"
 )
 
 // DBRO is the read-only component of the DB struct.
@@ -114,6 +112,7 @@ func (rq RemoveReq) Key() string {
 	return strings.Join([]string{rq.Set.ID(), rq.Path}, ":")
 }
 
+// NewRemoveRequest creates a remove requests using the provided information.
 func NewRemoveRequest(path string, set *Set, isDir, isDirUploaded, isRemovedFromIRODS bool) RemoveReq {
 	return RemoveReq{
 		Path:               path,
@@ -383,12 +382,7 @@ func (d *DB) removeEntry(setID string, entryKey string, bucketName string) error
 
 		entriesBucket := setsBucket.Bucket(subBucketName)
 
-		err := entriesBucket.Delete([]byte(entryKey))
-		if err != nil {
-			return err
-		}
-
-		return nil
+		return entriesBucket.Delete([]byte(entryKey))
 	})
 }
 
@@ -485,6 +479,7 @@ func (d *DB) setEntries(setID string, dirents []*Dirent, bucketName string) erro
 }
 
 // SetRemoveRequests writes a list of remove requests into the database.
+// Directory paths will be put into the database with a trailing slash.
 func (d *DB) SetRemoveRequests(sid string, removeReqs []RemoveReq) error {
 	return d.db.Update(func(tx *bolt.Tx) error {
 		sfsb, err := d.newSetFileBucket(tx, removedBucket, sid)
@@ -543,6 +538,7 @@ func getSubBucket(tx *bolt.Tx, setID, subBucket string) *bolt.Bucket {
 	return setsBucket.Bucket(subBucketName)
 }
 
+// GetAllRemoveRequests returns all incomplete removeReqs from every set.
 func (d *DBRO) GetAllRemoveRequests() ([]RemoveReq, error) {
 	var allRemReqs []RemoveReq
 
@@ -597,6 +593,64 @@ func (d *DBRO) decodeRemoveRequest(v []byte) RemoveReq {
 	dec.MustDecode(&remReq)
 
 	return remReq
+}
+
+// GetExcludedPaths returns the paths for all files and dirs that should not be
+// included in any discoveries on the given set.
+func (d *DB) GetExcludedPaths(setID string) ([]string, error) {
+	remReqs, err := d.GetRemoveRequests(setID)
+	if err != nil {
+		return nil, err
+	}
+
+	paths := make([]string, len(remReqs))
+
+	for i, remReq := range remReqs {
+		paths[i] = remReq.Path
+	}
+
+	return paths, nil
+}
+
+// OptimiseRemoveBucket removes all redundant entries from the remove bucket for
+// a given set.
+func (d *DB) OptimiseRemoveBucket(setID string) error {
+	remReqs, err := d.GetRemoveRequests(setID)
+	if err != nil {
+		return err
+	}
+
+	curDir := "this is an impossible path prefix"
+
+	for _, remReq := range remReqs {
+		curDir, err = d.removeEntryIfRedundant(remReq, curDir)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (d *DB) removeEntryIfRedundant(remReq RemoveReq, curDir string) (string, error) {
+	if !remReq.IsComplete {
+		return curDir, nil
+	}
+
+	if strings.HasPrefix(remReq.Path, curDir) {
+		err := d.DeleteObjectFromSubBucket(remReq.Path, remReq.Set.ID(), removedBucket)
+		if err != nil {
+			return "", err
+		}
+
+		return curDir, nil
+	}
+
+	if strings.HasSuffix(remReq.Path, "/") {
+		return remReq.Path, nil
+	}
+
+	return curDir, nil
 }
 
 // getAndDeleteExistingEntries gets existing entries in the given sub bucket
@@ -853,53 +907,6 @@ func (d *DB) setDiscoveredEntries(setID string, fileDirents, dirDirents []*Diren
 	}
 
 	return d.updateSetAfterDiscovery(setID)
-}
-
-func (d *DB) GetExcludedPaths(setID string) ([]string, error) {
-	remReqs, err := d.GetRemoveRequests(setID)
-	if err != nil {
-		return nil, err
-	}
-
-	paths := make([]string, len(remReqs))
-
-	for i, remReq := range remReqs {
-		paths[i] = remReq.Path
-	}
-
-	return paths, nil
-}
-
-func (d *DB) OptimiseRemoveBucket(setID string) error {
-	remReqs, err := d.GetRemoveRequests(setID)
-	if err != nil {
-		return err
-	}
-
-	var curDir string
-
-	curDir = "!!!!!!"
-
-	for _, remReq := range remReqs {
-		if !remReq.IsComplete {
-			continue
-		}
-
-		if strings.HasPrefix(remReq.Path, curDir) {
-			err = d.DeleteObjectFromSubBucket(remReq.Path, setID, removedBucket)
-			if err != nil {
-				return err
-			}
-
-			continue
-		}
-
-		if strings.HasSuffix(remReq.Path, "/") {
-			curDir = remReq.Path
-		}
-	}
-
-	return nil
 }
 
 // updateSetAfterDiscovery updates LastDiscovery, sets NumFiles and sets status

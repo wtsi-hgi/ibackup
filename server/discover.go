@@ -26,6 +26,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -51,53 +52,56 @@ const ttr = 6 * time.Minute
 // happen at the same time on the same set. Discoveries have priority and will
 // pause any removal that's already running until the discovery has finished.
 type removeDiscoverLinker struct {
-	*sync.Mutex
+	*sync.RWMutex
 	hasDiscoveryHappened map[string]bool
 	numRunningRemovals   map[string]uint8
-	muMap                map[string]*sync.Mutex
+	muMap                sync.Map
 }
 
-func newRemoveDiscoverLinker() removeDiscoverLinker {
-	return removeDiscoverLinker{
-		Mutex:                &sync.Mutex{},
+func newRemoveDiscoverLinker() *removeDiscoverLinker {
+	return &removeDiscoverLinker{
+		RWMutex:              &sync.RWMutex{},
 		hasDiscoveryHappened: make(map[string]bool),
 		numRunningRemovals:   make(map[string]uint8),
-		muMap:                make(map[string]*sync.Mutex),
+		muMap:                sync.Map{},
 	}
 }
 
 // startDiscovery will wait until any individual removals are complete and then
 // block any future removals until the discovery is done.
-func (link removeDiscoverLinker) startDiscovery(sid string) {
-	link.Lock()
-	if _, exists := link.muMap[sid]; !exists {
-		link.muMap[sid] = &sync.Mutex{}
-	}
-	link.Unlock()
-
-	link.muMap[sid].Lock()
+func (link *removeDiscoverLinker) startDiscovery(sid string) {
+	mu, _ := link.muMap.LoadOrStore(sid, &sync.Mutex{})
+	mu.(*sync.Mutex).Lock() //nolint:errcheck,forcetypeassert
 }
 
 // discoveryHappened tells any running removals that a discovery happened during
 // their execution, then stops blocking removals.
-func (link removeDiscoverLinker) discoveryHappened(sid string) {
+func (link *removeDiscoverLinker) discoveryHappened(sid string) {
 	link.Lock()
 	if link.isRemovalRunning(sid) {
 		link.hasDiscoveryHappened[sid] = true
 	}
 	link.Unlock()
 
-	link.muMap[sid].Unlock()
+	if mu, ok := link.muMap.Load(sid); ok {
+		mu.(*sync.Mutex).Unlock() //nolint:errcheck,forcetypeassert
+
+		link.Lock()
+		if !link.isRemovalRunning(sid) {
+			link.muMap.Delete(sid)
+		}
+		link.Unlock()
+	}
 }
 
-func (link removeDiscoverLinker) isRemovalRunning(sid string) bool {
+func (link *removeDiscoverLinker) isRemovalRunning(sid string) bool {
 	_, exists := link.numRunningRemovals[sid]
 
 	return exists
 }
 
 // willRemove indicates that a removal is running on the provided set id.
-func (link removeDiscoverLinker) willRemove(sid string) {
+func (link *removeDiscoverLinker) willRemove(sid string) {
 	link.Lock()
 
 	link.hasDiscoveryHappened[sid] = false
@@ -114,14 +118,9 @@ func (link removeDiscoverLinker) willRemove(sid string) {
 // waitForDiscovery will block while a discovery on the provided set is running,
 // and it will return an indication if discovery has happened since removal
 // started.
-func (link removeDiscoverLinker) waitForDiscovery(sid string) bool {
-	link.Lock()
-	if _, exists := link.muMap[sid]; !exists {
-		link.muMap[sid] = &sync.Mutex{}
-	}
-	link.Unlock()
-
-	link.muMap[sid].Lock()
+func (link *removeDiscoverLinker) waitForDiscovery(sid string) bool {
+	mu, _ := link.muMap.LoadOrStore(sid, &sync.Mutex{})
+	mu.(*sync.Mutex).Lock() //nolint:errcheck,forcetypeassert
 
 	link.Lock()
 	hasDiscoveryHappened := link.hasDiscoveryHappened[sid]
@@ -132,18 +131,21 @@ func (link removeDiscoverLinker) waitForDiscovery(sid string) bool {
 
 // allowDiscovery indicates we finished our individual removal and a discovery
 // can now start.
-func (link removeDiscoverLinker) allowDiscovery(sid string) {
-	link.muMap[sid].Unlock()
+func (link *removeDiscoverLinker) allowDiscovery(sid string) {
+	if mu, ok := link.muMap.Load(sid); ok {
+		mu.(*sync.Mutex).Unlock() //nolint:errcheck,forcetypeassert
+	}
 }
 
 // removalDone indicates this set is no longer removing only if all remove
 // commands containing this set have finished.
-func (link removeDiscoverLinker) removalDone(sid string) {
+func (link *removeDiscoverLinker) removalDone(sid string) {
 	link.Lock()
 
 	if link.numRunningRemovals[sid] == 1 {
 		delete(link.numRunningRemovals, sid)
 		delete(link.hasDiscoveryHappened, sid)
+		link.muMap.Delete(sid)
 	} else {
 		link.numRunningRemovals[sid]--
 	}
@@ -371,19 +373,7 @@ func filterEntries(entriesCh chan *set.Dirent, excludeTree ptrie.Trie[bool],
 	return func(entry *walk.Dirent) error {
 		dirent := set.DirEntFromWalk(entry)
 
-		shouldBeExcluded := excludeTree.MatchPrefix([]byte(dirent.Path), func(key []byte, _ bool) bool {
-			if strings.HasSuffix(string(key), "/") {
-				return false
-			}
-
-			if string(key) == dirent.Path {
-				return false
-			}
-
-			return true
-		})
-
-		if shouldBeExcluded {
+		if isDirentRemovedFromSet(dirent, excludeTree) {
 			return nil
 		}
 
@@ -397,6 +387,21 @@ func filterEntries(entriesCh chan *set.Dirent, excludeTree ptrie.Trie[bool],
 
 		return nil
 	}
+}
+
+func isDirentRemovedFromSet(dirent *set.Dirent, excludeTree ptrie.Trie[bool]) bool {
+	path := dirent.Path
+	if dirent.IsDir() && !strings.HasSuffix(path, "/") {
+		path += "/"
+	}
+
+	return excludeTree.MatchPrefix([]byte(path), func(match []byte, _ bool) bool {
+		if bytes.HasSuffix(match, []byte{'/'}) {
+			return false
+		}
+
+		return string(match) != path
+	})
 }
 
 // handleMissingDirectories checks if the given error is not nil, and if so
