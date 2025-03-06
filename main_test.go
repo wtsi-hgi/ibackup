@@ -45,6 +45,7 @@ import (
 
 	"github.com/phayes/freeport"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/wtsi-hgi/ibackup/baton"
 	"github.com/wtsi-hgi/ibackup/internal"
 	btime "github.com/wtsi-ssg/wr/backoff/time"
 	"github.com/wtsi-ssg/wr/retry"
@@ -102,15 +103,36 @@ func (s *TestServer) prepareFilePaths(dir string) {
 	home, err := os.UserHomeDir()
 	So(err, ShouldBeNil)
 
+	path := os.Getenv("PATH")
+
+	if _, err = baton.GetBatonHandler(); err != nil {
+		path = path + ":" + getFakeBaton(dir)
+	}
+
 	s.env = []string{
 		"XDG_STATE_HOME=" + s.dir,
-		"PATH=" + os.Getenv("PATH"),
+		"PATH=" + path,
 		"HOME=" + home,
 		"IRODS_ENVIRONMENT_FILE=" + os.Getenv("IRODS_ENVIRONMENT_FILE"),
 		"GEM_HOME=" + os.Getenv("GEM_HOME"),
 		"IBACKUP_SLACK_TOKEN=" + os.Getenv("IBACKUP_SLACK_TOKEN"),
 		"IBACKUP_SLACK_CHANNEL=" + os.Getenv("IBACKUP_SLACK_CHANNEL"),
 	}
+}
+
+func getFakeBaton(dir string) string {
+	fakeBatonDir := filepath.Join(dir, "baton")
+	err := os.Mkdir(fakeBatonDir, 0755)
+	So(err, ShouldBeNil)
+
+	fakeBatonFile := filepath.Join(fakeBatonDir, "baton-do")
+	f, errc := os.Create(fakeBatonFile)
+	So(errc, ShouldBeNil)
+
+	err = f.Close()
+	So(err, ShouldBeNil)
+
+	return fakeBatonDir
 }
 
 // prepareConfig creates a key and cert to use with a server and looks at

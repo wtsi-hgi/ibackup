@@ -66,6 +66,9 @@ func GetLocalHandler() *LocalHandler {
 
 // Cleanup just records this was called.
 func (l *LocalHandler) Cleanup() {
+	l.Mu.Lock()
+	defer l.Mu.Unlock()
+
 	l.Cleaned = true
 	l.Connected = false
 }
