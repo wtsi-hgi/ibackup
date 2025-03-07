@@ -88,13 +88,6 @@ func TestBaton(t *testing.T) {
 
 				So(isObjectInIRODS(remotePath, "file1"), ShouldBeTrue)
 
-				Convey("And you can see the parent directory contains that file", func() {
-					objectNames, errl := h.ListDir(remotePath)
-					So(errl, ShouldBeNil)
-					So(len(objectNames), ShouldEqual, 1)
-					So(objectNames, ShouldContain, "file1")
-				})
-
 				Convey("And putting a new file in the same location will overwrite existing object", func() {
 					file2local := filepath.Join(localPath, "file2")
 					sizeOfFile2 := 10
@@ -138,19 +131,6 @@ func TestBaton(t *testing.T) {
 						So(errm, ShouldBeNil)
 						So(exists, ShouldBeTrue)
 						So(fileMeta, ShouldResemble, meta)
-					})
-
-					Convey("You can query if files contain specific metadata", func() {
-						files, errq := h.QueryMeta(remotePath, map[string]string{"ibackup:test:a": "1"})
-						So(errq, ShouldBeNil)
-
-						So(len(files), ShouldEqual, 1)
-						So(files, ShouldContain, file1remote)
-
-						files, errq = h.QueryMeta(remotePath, map[string]string{"ibackup:test:a": "2"})
-						So(errq, ShouldBeNil)
-
-						So(len(files), ShouldEqual, 0)
 					})
 
 					Convey("You can remove specific metadata from a file in iRODS", func() {

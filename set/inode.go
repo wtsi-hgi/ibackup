@@ -35,6 +35,7 @@ import (
 
 	"github.com/moby/sys/mountinfo"
 	"github.com/ugorji/go/codec"
+	"github.com/wtsi-hgi/ibackup/internal"
 	bolt "go.etcd.io/bbolt"
 )
 
@@ -105,6 +106,28 @@ func (d *DB) handleInode(tx *bolt.Tx, de *Dirent, transformerID string) (string,
 	}
 
 	return hardlinkDest, b.Put(key, d.encodeToBytes(append(files, transformerPath)))
+}
+
+func (d *DB) GetFilesFromInode(path string) ([]string, error) {
+	de := newDirentFromPath(path)
+	key := d.inodeMountPointKeyFromDirent(de)
+
+	var files []string
+
+	err := d.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(inodeBucket))
+
+		v := b.Get(key)
+		if v == nil {
+			return internal.Error{Msg: "key not found in inode bucket", Path: path}
+		}
+
+		files = d.decodeIMPValue(v, de.Inode)
+
+		return nil
+	})
+
+	return files, err
 }
 
 func splitTransformerPath(tp string) (string, string, error) {
