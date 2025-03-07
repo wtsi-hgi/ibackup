@@ -507,7 +507,7 @@ func getTempFile() (string, error) {
 	return file.Name(), nil
 }
 
-func MetaToAVUs(meta map[string]string) []ex.AVU {
+func metaToAVUs(meta map[string]string) []ex.AVU {
 	avus := make([]ex.AVU, len(meta))
 	i := 0
 
@@ -529,7 +529,7 @@ func (b *Baton) RemoveMeta(path string, meta map[string]string) error {
 	}
 
 	it := RemotePathToRodsItem(path)
-	it.IAVUs = MetaToAVUs(meta)
+	it.IAVUs = metaToAVUs(meta)
 
 	err = timeoutOp(func() error {
 		_, errl := b.metaClient.MetaRem(ex.Args{}, *it)
@@ -575,7 +575,7 @@ func (b *Baton) AddMeta(path string, meta map[string]string) error {
 	}
 
 	it := RemotePathToRodsItem(path)
-	it.IAVUs = MetaToAVUs(meta)
+	it.IAVUs = metaToAVUs(meta)
 
 	err = timeoutOp(func() error {
 		_, errl := b.metaClient.MetaAdd(ex.Args{}, *it)
@@ -627,35 +627,6 @@ func (b *Baton) RemoveFile(path string) error {
 	return err
 }
 
-// ListDir returns the name of every object inside the given dir. This is not
-// currently in use, before using consider creating new client instead of using
-// b.removeClient.
-func (b *Baton) ListDir(path string) ([]string, error) {
-	err := b.setClientIfNotExists(&b.removeClient)
-	if err != nil {
-		return nil, err
-	}
-
-	it := RemotePathToRodsItem(path)
-
-	var itemNames []string
-
-	err = timeoutOp(func() error {
-		items, errl := b.removeClient.List(ex.Args{Contents: true}, *it)
-		if errl != nil {
-			return errl
-		}
-
-		for _, item := range items[0].IContents {
-			itemNames = append(itemNames, item.IName)
-		}
-
-		return nil
-	}, "remove file error: "+path)
-
-	return itemNames, err
-}
-
 // RemoveDir removes the given directory from iRODS given it is empty. It
 // creates a new remove client if necessary so after calling this function you
 // must eventually call Cleanup().
@@ -682,37 +653,7 @@ func (b *Baton) RemoveDir(path string) error {
 	return err
 }
 
-// QueryMeta return paths to all objects with given metadata inside the provided
-// scope. It creates a new meta client if necessary so after calling this
-// function you must eventually call Cleanup().
-func (b *Baton) QueryMeta(dirToSearch string, meta map[string]string) ([]string, error) {
-	err := b.setClientIfNotExists(&b.metaClient)
-	if err != nil {
-		return nil, err
-	}
-
-	it := &ex.RodsItem{
-		IPath: dirToSearch,
-		IAVUs: MetaToAVUs(meta),
-	}
-
-	var items []ex.RodsItem
-
-	err = timeoutOp(func() error {
-		items, err = b.metaClient.MetaQuery(ex.Args{Object: true}, *it)
-
-		return err
-	}, "query meta error: "+dirToSearch)
-
-	paths := make([]string, len(items))
-
-	for i, item := range items {
-		paths[i] = filepath.Join(item.IPath, item.IName)
-	}
-
-	return paths, err
-}
-
+// AllClientsStopped returns true if all our clients are stopped.
 func (b *Baton) AllClientsStopped() bool {
 	for _, client := range append(b.collClients, b.putClient, b.metaClient, b.removeClient) {
 		if client != nil && client.IsRunning() {
