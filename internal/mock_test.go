@@ -58,6 +58,12 @@ func TestMock(t *testing.T) {
 				So(exists, ShouldBeFalse)
 			})
 
+			Convey("You can try to remove the file from iRODS and receive an error", func() {
+				err := lh.RemoveFile(file1remote)
+				So(err, ShouldNotBeNil)
+				So(err.Error(), ShouldContainSubstring, "does not exist")
+			})
+
 			Convey("You can upload the file", func() {
 				err := lh.Put(file1local, file1remote)
 				So(err, ShouldBeNil)
