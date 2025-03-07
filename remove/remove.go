@@ -56,10 +56,6 @@ type Handler interface {
 	// returns an error containing substring "file does not exist".
 	RemoveFile(path string) error
 
-	// QueryMeta return paths to all objects with given metadata inside the
-	// provided scope.
-	QueryMeta(dirToSearch string, meta map[string]string) ([]string, error)
-
 	// Cleanup stops any connections created earlier and does any other cleanup
 	// needed.
 	Cleanup()
@@ -91,36 +87,7 @@ func UpdateSetsAndRequestersOnRemoteFile(handler Handler, path string,
 	return handler.AddMeta(path, newMeta)
 }
 
-// RemoveRemoteFileAndHandleHardlink removes the given path from remote storage.
-// If the path is found to be a hardlink, it checks if there are other hardlinks
-// (inside the provided dir to search) to the same file, if not, it removes the
-// file.
-func RemoveRemoteFileAndHandleHardlink(handler Handler, path string, dirToSearch string, //nolint:revive
-	meta map[string]string) error {
-	err := removeFileAndParentFoldersIfEmpty(handler, path)
-	if err != nil {
-		return err
-	}
-
-	if meta[put.MetaKeyHardlink] == "" {
-		return nil
-	}
-
-	items, err := handler.QueryMeta(dirToSearch, map[string]string{
-		put.MetaKeyRemoteHardlink: meta[put.MetaKeyRemoteHardlink],
-	})
-	if err != nil {
-		return err
-	}
-
-	if len(items) != 0 {
-		return nil
-	}
-
-	return handler.RemoveFile(meta[put.MetaKeyRemoteHardlink])
-}
-
-func removeFileAndParentFoldersIfEmpty(handler Handler, path string) error {
+func RemoveFileAndParentFoldersIfEmpty(handler Handler, path string) error {
 	err := handler.RemoveFile(path)
 	if err != nil {
 		return err

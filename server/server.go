@@ -50,7 +50,7 @@ import (
 )
 
 const (
-	ErrNoLogger             = gas.Error("a http logger must be configured")
+	ErrNoLogger             = gas.Error("an http logger must be configured")
 	ErrIncorrectTypeInQueue = gas.Error("incorrect data type in queue")
 
 	// workerPoolSizeDir is the max number of directory walks we'll do

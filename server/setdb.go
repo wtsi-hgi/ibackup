@@ -620,15 +620,32 @@ func (s *Server) updateOrRemoveRemoteFile(set *set.Set, path string, transformer
 	}
 
 	if len(sets) == 0 {
-		dirToSearch, err := transformer("/")
-		if err != nil {
-			return err
-		}
-
-		return remove.RemoveRemoteFileAndHandleHardlink(s.storageHandler, rpath, dirToSearch, remoteMeta)
+		return s.removeRemoteFileAndHandleHardlink(path, rpath, remoteMeta)
 	}
 
 	return remove.UpdateSetsAndRequestersOnRemoteFile(s.storageHandler, rpath, sets, requesters, remoteMeta)
+}
+
+func (s *Server) removeRemoteFileAndHandleHardlink(lpath, rpath string, meta map[string]string) error {
+	err := remove.RemoveFileAndParentFoldersIfEmpty(s.storageHandler, rpath)
+	if err != nil {
+		return err
+	}
+
+	if meta[put.MetaKeyHardlink] == "" {
+		return nil
+	}
+
+	files, err := s.db.GetFilesFromInode(lpath)
+	if err != nil {
+		return err
+	}
+
+	if len(files) > 2 {
+		return nil
+	}
+
+	return s.storageHandler.RemoveFile(meta[put.MetaKeyRemoteHardlink])
 }
 
 func (s *Server) handleSetsAndRequesters(set *set.Set, meta map[string]string) ([]string, []string, error) {
