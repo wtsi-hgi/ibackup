@@ -76,6 +76,12 @@ func TestBaton(t *testing.T) {
 				So(exists, ShouldBeFalse)
 			})
 
+			Convey("You can try to remove the file from iRODS and receive an error", func() {
+				err := h.RemoveFile(file1remote)
+				So(err, ShouldNotBeNil)
+				So(err.Error(), ShouldContainSubstring, "does not exist")
+			})
+
 			Convey("You can put the file in iRODS", func() {
 				err := h.Put(file1local, file1remote)
 				So(err, ShouldBeNil)

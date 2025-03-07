@@ -620,6 +620,10 @@ func (b *Baton) RemoveFile(path string) error {
 		return errl
 	}, "remove file error: "+path)
 
+	if err != nil && strings.Contains(err.Error(), "CAT_NO_ROWS_FOUND") {
+		return internal.Error{Msg: internal.ErrFileDoesNotExist, Path: path}
+	}
+
 	return err
 }
 

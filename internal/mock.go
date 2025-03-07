@@ -38,6 +38,7 @@ import (
 const ErrMockStatFail = "stat fail"
 const ErrMockPutFail = "put fail"
 const ErrMockMetaFail = "meta fail"
+const ErrFileDoesNotExist = "file does not exist"
 
 // LocalHandler satisfies the Handler interface, treating "Remote" as local
 // paths and moving from Local to Remote for the Put().
@@ -280,7 +281,12 @@ func (l *LocalHandler) RemoveFile(path string) error {
 
 	delete(l.Meta, path)
 
-	return os.Remove(path)
+	err := os.Remove(path)
+	if err != nil && strings.Contains(err.Error(), "no such file or directory") {
+		return Error{Msg: ErrFileDoesNotExist, Path: path}
+	}
+
+	return err
 }
 
 // ListDir returns the name of every object inside the given dir.
