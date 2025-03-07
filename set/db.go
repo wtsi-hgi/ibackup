@@ -89,6 +89,12 @@ const (
 	workerPoolSizeFiles = 16
 )
 
+const (
+	NotRemoved       = iota // 0
+	AboutToBeRemoved        // 1
+	Removed                 // 2
+)
+
 // DBRO is the read-only component of the DB struct.
 type DBRO struct {
 	db *bolt.DB
@@ -100,12 +106,12 @@ type DBRO struct {
 
 // RemoveReq contains information about a remove request for a path.
 type RemoveReq struct {
-	Path               string
-	Set                *Set
-	IsDir              bool
-	IsDirUploaded      bool
-	IsRemovedFromIRODS bool
-	IsComplete         bool
+	Path                string
+	Set                 *Set
+	IsDir               bool
+	IsDirUploaded       bool
+	RemoteRemovalStatus int8
+	IsComplete          bool
 }
 
 func (rq RemoveReq) Key() string {
@@ -113,13 +119,13 @@ func (rq RemoveReq) Key() string {
 }
 
 // NewRemoveRequest creates a remove requests using the provided information.
-func NewRemoveRequest(path string, set *Set, isDir, isDirUploaded, isRemovedFromIRODS bool) RemoveReq {
+func NewRemoveRequest(path string, set *Set, isDir bool) RemoveReq {
 	return RemoveReq{
-		Path:               path,
-		Set:                set,
-		IsDir:              isDir,
-		IsDirUploaded:      isDirUploaded,
-		IsRemovedFromIRODS: isRemovedFromIRODS,
+		Path:                path,
+		Set:                 set,
+		IsDir:               isDir,
+		IsDirUploaded:       false,
+		RemoteRemovalStatus: NotRemoved,
 	}
 }
 

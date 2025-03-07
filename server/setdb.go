@@ -40,6 +40,7 @@ import (
 	"github.com/gin-gonic/gin"
 	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/grand"
+	"github.com/wtsi-hgi/ibackup/internal"
 	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/remove"
 	"github.com/wtsi-hgi/ibackup/set"
@@ -470,7 +471,7 @@ func buildRemovalStructsFromFilePaths(givenSet *set.Set, paths []string) ([]*que
 	defs := make([]*queue.ItemDef, len(paths))
 
 	for i, path := range paths {
-		rq := set.NewRemoveRequest(path, givenSet, false, false, false)
+		rq := set.NewRemoveRequest(path, givenSet, false)
 
 		remReqs[i] = rq
 		defs[i] = buildRemoveItemDef(rq)
@@ -521,7 +522,7 @@ func (s *Server) makeItemsDefsAndFilePathsFromDirPaths(givenSet *set.Set,
 	defs := make([]*queue.ItemDef, len(paths))
 
 	for i, path := range paths {
-		rq := set.NewRemoveRequest(path, givenSet, true, false, false)
+		rq := set.NewRemoveRequest(path, givenSet, true)
 
 		dirFilepaths, err := s.db.GetFilesInDir(givenSet.ID(), path)
 		if err != nil {
@@ -556,7 +557,7 @@ func (s *Server) removeFileFromIRODSandDB(removeReq *set.RemoveReq, mayMissInDis
 }
 
 func (s *Server) processRemoteFileRemoval(removeReq *set.RemoveReq, entry *set.Entry) error {
-	if removeReq.IsRemovedFromIRODS {
+	if removeReq.RemoteRemovalStatus == set.Removed {
 		return nil
 	}
 
@@ -565,16 +566,28 @@ func (s *Server) processRemoteFileRemoval(removeReq *set.RemoveReq, entry *set.E
 		return err
 	}
 
-	err = s.updateOrRemoveRemoteFile(removeReq.Set, removeReq.Path, transformer)
+	mayMissInRemote := removeReq.RemoteRemovalStatus == set.AboutToBeRemoved
+	removeReq.RemoteRemovalStatus = set.AboutToBeRemoved
+
+	err = s.db.UpdateRemoveRequest(*removeReq)
 	if err != nil {
+		return err
+	}
+
+	err = s.updateOrRemoveRemoteFile(removeReq.Set, removeReq.Path, transformer)
+	if err != nil && fileErrorCannotBeIgnored(err, mayMissInRemote) {
 		s.setErrorOnEntry(entry, removeReq.Set.ID(), removeReq.Path, err)
 
 		return err
 	}
 
-	removeReq.IsRemovedFromIRODS = true
+	removeReq.RemoteRemovalStatus = set.Removed
 
-	return nil
+	return s.db.UpdateRemoveRequest(*removeReq)
+}
+
+func fileErrorCannotBeIgnored(err error, mayMissInRemote bool) bool {
+	return !(mayMissInRemote && strings.Contains(err.Error(), internal.ErrFileDoesNotExist))
 }
 
 func (s *Server) processDBFileRemoval(removeReq *set.RemoveReq, entry *set.Entry, mayMissInDiscoverBucket bool) error {

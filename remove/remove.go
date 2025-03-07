@@ -52,7 +52,8 @@ type Handler interface {
 	// an error containing substring "directory not empty".
 	RemoveDir(path string) error
 
-	// RemoveFile deletes a given file.
+	// RemoveFile deletes a given file. If file is not found in remote storage,
+	// returns an error containing substring "file does not exist".
 	RemoveFile(path string) error
 
 	// QueryMeta return paths to all objects with given metadata inside the
