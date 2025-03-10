@@ -28,6 +28,7 @@ package set
 
 import (
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -40,6 +41,7 @@ import (
 )
 
 const transformerInodeSeparator = ":"
+const ErrElementNotInSlice = "element not in slice"
 
 // getMountPoints retrieves a list of mount point paths to be used when
 // determining hardlinks. The list is sorted longest first and stored on the
@@ -108,6 +110,8 @@ func (d *DB) handleInode(tx *bolt.Tx, de *Dirent, transformerID string) (string,
 	return hardlinkDest, b.Put(key, d.encodeToBytes(append(files, transformerPath)))
 }
 
+// GetFilesFromInode returns all the paths that share the same inode as the
+// provided path.
 func (d *DB) GetFilesFromInode(path string) ([]string, error) {
 	de := newDirentFromPath(path)
 	key := d.inodeMountPointKeyFromDirent(de)
@@ -128,6 +132,66 @@ func (d *DB) GetFilesFromInode(path string) ([]string, error) {
 	})
 
 	return files, err
+}
+
+// RemoveFileFromInode removes entry for the given path from inode bucket if it
+// is the last file with that inode. Otherwise just removes itself from the list
+// (if the path is the original file 'removal' is setting it to be blank).
+func (d *DB) RemoveFileFromInode(path string) error {
+	de := newDirentFromPath(path)
+	key := d.inodeMountPointKeyFromDirent(de)
+
+	err := d.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(inodeBucket))
+
+		v := b.Get(key)
+		if v == nil {
+			return internal.Error{Msg: "key not found in inode bucket", Path: path}
+		}
+
+		files := d.decodeIMPValue(v, de.Inode)
+
+		if len(files) == 1 || (len(files) == 2 && files[0] == "") {
+			return b.Delete(key)
+		}
+
+		files, err := removePathFromInodeFiles(de.Path, files)
+		if err != nil {
+			return err
+		}
+
+		return b.Put(key, d.encodeToBytes(files))
+	})
+
+	return err
+}
+
+func removePathFromInodeFiles(path string, files []string) ([]string, error) {
+	transformerID, _, err := splitTransformerPath(files[0])
+	if err != nil {
+		return nil, err
+	}
+
+	transformerPath := transformerID + transformerInodeSeparator + path
+
+	isHardlink := files[0] != transformerPath
+	if isHardlink {
+		return RemoveElementFromSlice(files, transformerPath)
+	}
+
+	files[0] = ""
+
+	return files, nil
+}
+
+// RemoveElementFromSlice returns the given slice without the given element.
+func RemoveElementFromSlice(slice []string, element string) ([]string, error) {
+	index := slices.Index(slice, element)
+	if index < 0 {
+		return nil, internal.Error{Msg: ErrElementNotInSlice, Path: element}
+	}
+
+	return slices.Delete(slice, index, index+1), nil
 }
 
 func splitTransformerPath(tp string) (string, string, error) {

@@ -124,51 +124,6 @@ func TestRemoveMock(t *testing.T) {
 						put.MetaKeySets:      "set2",
 					})
 			})
-
-			// TODO
-
-			// Convey("And given two hardlinks to the same file", func() {
-			// 	link1remote := filepath.Join(destDir, "link1")
-			// 	link2remote := filepath.Join(destDir, "link2")
-			// 	inodeRemote := filepath.Join(destDir, "inode")
-
-			// 	internal.CreateTestFileOfLength(t, link1remote, 1)
-			// 	internal.CreateTestFileOfLength(t, link2remote, 1)
-			// 	internal.CreateTestFileOfLength(t, inodeRemote, 1)
-
-			// 	hardlinkMeta := map[string]string{
-			// 		put.MetaKeyHardlink:       "hardlink",
-			// 		put.MetaKeyRemoteHardlink: inodeRemote,
-			// 	}
-
-			// 	err = lh.AddMeta(link1remote, hardlinkMeta)
-			// 	So(err, ShouldBeNil)
-
-			// 	err = lh.AddMeta(link2remote, hardlinkMeta)
-			// 	So(err, ShouldBeNil)
-
-			// 	Convey("You can remove the first hardlink and the inode file will stay", func() {
-			// 		err = RemoveRemoteFile(lh, link1remote, dirToSearch, hardlinkMeta)
-			// 		So(err, ShouldBeNil)
-
-			// 		_, err = os.Stat(link1remote)
-			// 		So(err.Error(), ShouldContainSubstring, "no such file or directory")
-
-			// 		_, err = os.Stat(inodeRemote)
-			// 		So(err, ShouldBeNil)
-
-			// 		Convey("Then you can remove the second hardlink and the inode file will also get removed", func() {
-			// 			err = RemoveRemoteFile(lh, link2remote, dirToSearch, hardlinkMeta)
-			// 			So(err, ShouldBeNil)
-
-			// 			_, err = os.Stat(link2remote)
-			// 			So(err.Error(), ShouldContainSubstring, "no such file or directory")
-
-			// 			_, err = os.Stat(inodeRemote)
-			// 			So(err.Error(), ShouldContainSubstring, "no such file or directory")
-			// 		})
-			// 	})
-			// })
 		})
 	})
 }

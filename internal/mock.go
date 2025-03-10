@@ -288,17 +288,3 @@ func (l *LocalHandler) RemoveFile(path string) error {
 
 	return err
 }
-
-func doesMetaContainMeta(sourceMeta, targetMeta map[string]string) bool {
-	valid := true
-
-	for k, v := range targetMeta {
-		if sourceMeta[k] != v {
-			valid = false
-
-			break
-		}
-	}
-
-	return valid
-}
