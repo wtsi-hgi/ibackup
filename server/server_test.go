@@ -48,6 +48,7 @@ import (
 	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/ibackup/internal"
 	"github.com/wtsi-hgi/ibackup/put"
+	"github.com/wtsi-hgi/ibackup/remove"
 	"github.com/wtsi-hgi/ibackup/set"
 	"github.com/wtsi-hgi/ibackup/slack"
 	btime "github.com/wtsi-ssg/wr/backoff/time"
@@ -337,6 +338,68 @@ func TestServer(t *testing.T) {
 
 					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldBeNil)
+
+					Convey("And given two hardlinks to the same file", func() {
+						file1local := filepath.Join(localDir, "file1")
+						hardlink1local := filepath.Join(localDir, "hardlink1")
+						hardlink1Remote := filepath.Join(remoteDir, "hardlink1")
+						hardlink2local := filepath.Join(localDir, "hardlink2")
+						hardlink2Remote := filepath.Join(remoteDir, "hardlink2")
+						inodeRemote := filepath.Join(remoteDir, "inode")
+
+						internal.CreateTestFileOfLength(t, file1local, 1)
+						internal.CreateTestFileOfLength(t, inodeRemote, 1)
+
+						createRemoteHardlink(t, s.storageHandler, hardlink1local, hardlink1Remote, file1local, inodeRemote, exampleSet)
+						createRemoteHardlink(t, s.storageHandler, hardlink2local, hardlink2Remote, file1local, inodeRemote, exampleSet)
+
+						err = client.SetFiles(exampleSet.ID(), []string{file1local, hardlink1local, hardlink2local})
+						So(err, ShouldBeNil)
+
+						err = client.AddOrUpdateSet(exampleSet)
+						So(err, ShouldBeNil)
+
+						err = client.TriggerDiscovery(exampleSet.ID())
+						So(err, ShouldBeNil)
+
+						ok := <-racCalled
+						So(ok, ShouldBeTrue)
+
+						Convey("You can remove the first hardlink and the inode file will stay", func() {
+							remReq := set.RemoveReq{
+								Path: hardlink1local,
+								Set:  exampleSet,
+							}
+
+							err = s.removeFileFromIRODSandDB(&remReq, false)
+							So(err, ShouldBeNil)
+
+							_, err = os.Stat(hardlink1Remote)
+							So(err, ShouldNotBeNil)
+							So(err.Error(), ShouldContainSubstring, "no such file or directory")
+
+							_, err = os.Stat(inodeRemote)
+							So(err, ShouldBeNil)
+
+							Convey("Then you can remove the second hardlink and the inode file will also get removed", func() {
+								remReq = set.RemoveReq{
+									Path: hardlink2local,
+									Set:  exampleSet,
+								}
+
+								err = s.removeFileFromIRODSandDB(&remReq, false)
+								So(err, ShouldBeNil)
+
+								_, err = os.Stat(hardlink2Remote)
+								So(err, ShouldNotBeNil)
+								So(err.Error(), ShouldContainSubstring, "no such file or directory")
+
+								_, err = os.Stat(inodeRemote)
+								So(err, ShouldNotBeNil)
+								So(err.Error(), ShouldContainSubstring, "no such file or directory")
+							})
+						})
+					})
 
 					Convey("And given a set with 100 files in one nested folder", func() {
 						dir1 := filepath.Join(localDir, "dir1/")
@@ -3300,4 +3363,24 @@ func putSetWithOneFile(t *testing.T, handler put.Handler, client *Client,
 	So(gotSet.Status, ShouldEqual, set.Complete)
 	So(gotSet.NumFiles, ShouldEqual, 1)
 	So(gotSet.Uploaded, ShouldEqual, 1)
+}
+
+func createRemoteHardlink(t *testing.T, handler remove.Handler, lPath, rPath,
+	filePath, inodePath string, set *set.Set) {
+	t.Helper()
+
+	hardlinkMeta := map[string]string{
+		put.MetaKeySets:           set.Name,
+		put.MetaKeyRequester:      set.Requester,
+		put.MetaKeyHardlink:       "hardlink",
+		put.MetaKeyRemoteHardlink: inodePath,
+	}
+
+	internal.CreateTestFileOfLength(t, rPath, 1)
+
+	err := handler.AddMeta(rPath, hardlinkMeta)
+	So(err, ShouldBeNil)
+
+	err = os.Link(filePath, lPath)
+	So(err, ShouldBeNil)
 }

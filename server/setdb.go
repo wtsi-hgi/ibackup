@@ -28,7 +28,6 @@ package server
 import (
 	"context"
 	"errors"
-	"fmt"
 	"math"
 	"net/http"
 	"os"
@@ -113,6 +112,8 @@ const (
 
 	paramRequester = "requester"
 	paramSetID     = "id"
+
+	numberOfFilesForOneHardlink = 2
 
 	// maxRequestsToReserve is the maximum number of requests that
 	// reserveRequests returns.
@@ -600,6 +601,11 @@ func (s *Server) processDBFileRemoval(removeReq *set.RemoveReq, entry *set.Entry
 		return err
 	}
 
+	err = s.db.RemoveFileFromInode(removeReq.Path)
+	if err != nil {
+		return err
+	}
+
 	return s.db.UpdateBasedOnRemovedEntry(removeReq.Set.ID(), entry)
 }
 
@@ -641,38 +647,38 @@ func (s *Server) removeRemoteFileAndHandleHardlink(lpath, rpath string, meta map
 		return err
 	}
 
-	if len(files) > 2 {
+	if len(files) > numberOfFilesForOneHardlink {
 		return nil
 	}
 
 	return s.storageHandler.RemoveFile(meta[put.MetaKeyRemoteHardlink])
 }
 
-func (s *Server) handleSetsAndRequesters(set *set.Set, meta map[string]string) ([]string, []string, error) {
+func (s *Server) handleSetsAndRequesters(givenSet *set.Set, meta map[string]string) ([]string, []string, error) {
 	sets := strings.Split(meta[put.MetaKeySets], ",")
 	requesters := strings.Split(meta[put.MetaKeyRequester], ",")
 
-	if !slices.Contains(sets, set.Name) {
+	if !slices.Contains(sets, givenSet.Name) {
 		return sets, requesters, nil
 	}
 
-	otherUserSets, userSets, err := s.getSetNamesByRequesters(requesters, set.Requester)
+	otherUserSets, userSets, err := s.getSetNamesByRequesters(requesters, givenSet.Requester)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	if len(userSets) == 1 && userSets[0] == set.Name {
-		requesters, err = removeElementFromSlice(requesters, set.Requester)
+	if len(userSets) == 1 && userSets[0] == givenSet.Name {
+		requesters, err = set.RemoveElementFromSlice(requesters, givenSet.Requester)
 		if err != nil {
 			return nil, nil, err
 		}
 	}
 
-	if slices.Contains(otherUserSets, set.Name) {
+	if slices.Contains(otherUserSets, givenSet.Name) {
 		return sets, requesters, nil
 	}
 
-	sets, err = removeElementFromSlice(sets, set.Name)
+	sets, err = set.RemoveElementFromSlice(sets, givenSet.Name)
 
 	return sets, requesters, err
 }
@@ -709,15 +715,6 @@ func getNamesFromSets(sets []*set.Set) []string {
 	}
 
 	return names
-}
-
-func removeElementFromSlice(slice []string, element string) ([]string, error) {
-	index := slices.Index(slice, element)
-	if index < 0 {
-		return nil, fmt.Errorf("%w: %s", ErrElementNotInSlice, element)
-	}
-
-	return slices.Delete(slice, index, index+1), nil
 }
 
 func (s *Server) setErrorOnEntry(entry *set.Entry, sid, path string, err error) {
