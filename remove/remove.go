@@ -87,7 +87,7 @@ func UpdateSetsAndRequestersOnRemoteFile(handler Handler, path string,
 	return handler.AddMeta(path, newMeta)
 }
 
-func RemoveFileAndParentFoldersIfEmpty(handler Handler, path string) error {
+func RemoveFileAndParentFoldersIfEmpty(handler Handler, path string) error { //nolint:revive
 	err := handler.RemoveFile(path)
 	if err != nil {
 		return err
