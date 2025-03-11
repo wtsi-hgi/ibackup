@@ -601,7 +601,7 @@ func (s *Server) processDBFileRemoval(removeReq *set.RemoveReq, entry *set.Entry
 		return err
 	}
 
-	err = s.db.RemoveFileFromInode(removeReq.Path)
+	err = s.db.RemoveFileFromInode(removeReq.Path, entry.Inode)
 	if err != nil {
 		return err
 	}
