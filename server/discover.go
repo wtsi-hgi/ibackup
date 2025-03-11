@@ -48,18 +48,18 @@ import (
 
 const ttr = 6 * time.Minute
 
-// removeDiscoveryLinker is used to ensure removals and discoveries cannot
+// discoveryCoordinator is used to ensure removals and discoveries cannot
 // happen at the same time on the same set. Discoveries have priority and will
 // pause any removal that's already running until the discovery has finished.
-type removeDiscoverLinker struct {
+type discoveryCoordinator struct {
 	*sync.RWMutex
 	hasDiscoveryHappened map[string]bool
 	numRunningRemovals   map[string]uint8
 	muMap                sync.Map
 }
 
-func newRemoveDiscoverLinker() *removeDiscoverLinker {
-	return &removeDiscoverLinker{
+func newDiscoveryCoordinator() *discoveryCoordinator {
+	return &discoveryCoordinator{
 		RWMutex:              &sync.RWMutex{},
 		hasDiscoveryHappened: make(map[string]bool),
 		numRunningRemovals:   make(map[string]uint8),
@@ -67,90 +67,87 @@ func newRemoveDiscoverLinker() *removeDiscoverLinker {
 	}
 }
 
-// startDiscovery will wait until any individual removals are complete and then
+// StartDiscovery will wait until any individual removals are complete and then
 // block any future removals until the discovery is done.
-func (link *removeDiscoverLinker) startDiscovery(sid string) {
-	mu, _ := link.muMap.LoadOrStore(sid, &sync.Mutex{})
+func (dc *discoveryCoordinator) StartDiscovery(sid string) {
+	mu, _ := dc.muMap.LoadOrStore(sid, &sync.Mutex{})
 	mu.(*sync.Mutex).Lock() //nolint:errcheck,forcetypeassert
 }
 
-// discoveryHappened tells any running removals that a discovery happened during
+// DiscoveryHappened tells any running removals that a discovery happened during
 // their execution, then stops blocking removals.
-func (link *removeDiscoverLinker) discoveryHappened(sid string) {
-	link.Lock()
-	if link.isRemovalRunning(sid) {
-		link.hasDiscoveryHappened[sid] = true
+func (dc *discoveryCoordinator) DiscoveryHappened(sid string) {
+	dc.Lock()
+	if dc.isRemovalRunning(sid) {
+		dc.hasDiscoveryHappened[sid] = true
 	}
-	link.Unlock()
+	dc.Unlock()
 
-	if mu, ok := link.muMap.Load(sid); ok {
+	if mu, ok := dc.muMap.Load(sid); ok {
 		mu.(*sync.Mutex).Unlock() //nolint:errcheck,forcetypeassert
 
-		link.Lock()
-		if !link.isRemovalRunning(sid) {
-			link.muMap.Delete(sid)
+		dc.Lock()
+		if !dc.isRemovalRunning(sid) {
+			dc.muMap.Delete(sid)
 		}
-		link.Unlock()
+		dc.Unlock()
 	}
 }
 
-func (link *removeDiscoverLinker) isRemovalRunning(sid string) bool {
-	_, exists := link.numRunningRemovals[sid]
+// isRemovalRunning requires a lock to be held before calling.
+func (dc *discoveryCoordinator) isRemovalRunning(sid string) bool {
+	_, exists := dc.numRunningRemovals[sid]
 
 	return exists
 }
 
-// willRemove indicates that a removal is running on the provided set id.
-func (link *removeDiscoverLinker) willRemove(sid string) {
-	link.Lock()
+// WillRemove indicates that a removal is running on the provided set id.
+func (dc *discoveryCoordinator) WillRemove(sid string) {
+	dc.Lock()
+	defer dc.Unlock()
 
-	link.hasDiscoveryHappened[sid] = false
-
-	if _, exists := link.numRunningRemovals[sid]; !exists {
-		link.numRunningRemovals[sid] = 1
+	if _, exists := dc.numRunningRemovals[sid]; !exists {
+		dc.numRunningRemovals[sid] = 1
 	} else {
-		link.numRunningRemovals[sid]++
+		dc.numRunningRemovals[sid]++
 	}
-
-	link.Unlock()
 }
 
-// waitForDiscovery will block while a discovery on the provided set is running,
+// WaitForDiscovery will block while a discovery on the provided set is running,
 // and it will return an indication if discovery has happened since removal
 // started.
-func (link *removeDiscoverLinker) waitForDiscovery(sid string) bool {
-	mu, _ := link.muMap.LoadOrStore(sid, &sync.Mutex{})
+func (dc *discoveryCoordinator) WaitForDiscovery(sid string) bool {
+	mu, _ := dc.muMap.LoadOrStore(sid, &sync.Mutex{})
 	mu.(*sync.Mutex).Lock() //nolint:errcheck,forcetypeassert
 
-	link.Lock()
-	hasDiscoveryHappened := link.hasDiscoveryHappened[sid]
-	link.Unlock()
+	dc.Lock()
+	_, hasDiscoveryHappened := dc.hasDiscoveryHappened[sid]
+	dc.Unlock()
 
 	return hasDiscoveryHappened
 }
 
-// allowDiscovery indicates we finished our individual removal and a discovery
+// AllowDiscovery indicates we finished our individual removal and a discovery
 // can now start.
-func (link *removeDiscoverLinker) allowDiscovery(sid string) {
-	if mu, ok := link.muMap.Load(sid); ok {
+func (dc *discoveryCoordinator) AllowDiscovery(sid string) {
+	if mu, ok := dc.muMap.Load(sid); ok {
 		mu.(*sync.Mutex).Unlock() //nolint:errcheck,forcetypeassert
 	}
 }
 
-// removalDone indicates this set is no longer removing only if all remove
+// RemovalDone indicates this set is no longer removing only if all remove
 // commands containing this set have finished.
-func (link *removeDiscoverLinker) removalDone(sid string) {
-	link.Lock()
+func (dc *discoveryCoordinator) RemovalDone(sid string) {
+	dc.Lock()
+	defer dc.Unlock()
 
-	if link.numRunningRemovals[sid] == 1 {
-		delete(link.numRunningRemovals, sid)
-		delete(link.hasDiscoveryHappened, sid)
-		link.muMap.Delete(sid)
+	if dc.numRunningRemovals[sid] == 1 {
+		delete(dc.numRunningRemovals, sid)
+		delete(dc.hasDiscoveryHappened, sid)
+		dc.muMap.Delete(sid)
 	} else {
-		link.numRunningRemovals[sid]--
+		dc.numRunningRemovals[sid]--
 	}
-
-	link.Unlock()
 }
 
 // triggerDiscovery triggers the file discovery process for the set with the id
@@ -196,7 +193,8 @@ func (s *Server) discoverSet(given *set.Set) error {
 // call it multiple times at once for the same set! This will block removals on
 // the same set.
 func (s *Server) discoverThenEnqueue(given *set.Set, transformer put.PathTransformer) {
-	s.RDLinker.startDiscovery(given.ID())
+	s.discoveryCoordinator.StartDiscovery(given.ID())
+	defer s.discoveryCoordinator.DiscoveryHappened(given.ID())
 
 	updated, err := s.doDiscovery(given)
 	if err != nil {
@@ -210,8 +208,6 @@ func (s *Server) discoverThenEnqueue(given *set.Set, transformer put.PathTransfo
 	if err := s.enqueueSetFiles(updated, transformer); err != nil {
 		s.recordSetError("queuing files for %s failed: %s", updated.ID(), err)
 	}
-
-	s.RDLinker.discoveryHappened(given.ID())
 }
 
 func (s *Server) doDiscovery(given *set.Set) (*set.Set, error) {

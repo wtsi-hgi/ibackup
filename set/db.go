@@ -776,7 +776,7 @@ func (d *DBRO) getSetByID(tx *bolt.Tx, setID string) (*Set, []byte, *bolt.Bucket
 }
 
 // DiscoverCallback will receive the sets directory entries and return a list of
-// the files discovered in those directories.
+// the files and a list of the dirs discovered in those directories.
 type DiscoverCallback func([]*Entry) ([]*Dirent, []*Dirent, error)
 
 // Discover discovers and stores file entry details for the given set.
@@ -1475,6 +1475,8 @@ func (d *DB) UpdateBasedOnRemovedEntry(setID string, entry *Entry) error {
 	})
 }
 
+// IncrementNumObjectRemoved increments the number of objects removed for the
+// given set.
 func (d *DB) IncrementNumObjectRemoved(setID string) error {
 	return d.updateSetProperties(setID, func(got *Set) {
 		got.NumObjectsRemoved++
