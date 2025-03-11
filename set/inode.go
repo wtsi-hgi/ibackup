@@ -74,9 +74,11 @@ func (d *DB) getMountPoints() error {
 	return nil
 }
 
-// TODO: incredibly specific bug potential: you have file1, hardlink1 hardlink2. you remove all 3 from file system (not db or irods).
+// TODO: incredibly specific bug potential: you have file1, hardlink1 hardlink2. you remove all 3
+// from file system (not db or irods).
 // you then create a new file2 which has the same inode file1 had, file2 is added to the set by monitor.
-// you then try to remove hardlink2 from the set. it will check whats inside the inode bucket and see there's only 1 file, file2. so it will remove inode from irods.
+// you then try to remove hardlink2 from the set. it will check whats inside the inode bucket
+//and see there's only 1 file, file2. so it will remove inode from irods.
 // this is of course an issue, as hardlink1 is still in irods, now with no inode file.
 
 // handleInode records the inode of the given Dirent in the database, and

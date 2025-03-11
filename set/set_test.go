@@ -359,39 +359,39 @@ func TestSetDB(t *testing.T) {
 				err = db.SetFileEntries(set2.ID(), []string{"/a/b.txt", "/c/k.txt"})
 				So(err, ShouldBeNil)
 
-				Convey("", func() {
+				Convey("And given a mixture of complete and incomplete remove requests", func() {
 					remReqs := []RemoveReq{
-						RemoveReq{
+						{
 							Path:       "a/file1.txt",
 							Set:        set,
 							IsDir:      false,
 							IsComplete: true,
 						},
-						RemoveReq{
+						{
 							Path:       "a/b",
 							Set:        set,
 							IsDir:      true,
 							IsComplete: true,
 						},
-						RemoveReq{
+						{
 							Path:       "a/b/c",
 							Set:        set,
 							IsDir:      true,
 							IsComplete: true,
 						},
-						RemoveReq{
+						{
 							Path:       "a/b/c/file2.txt",
 							Set:        set,
 							IsDir:      false,
 							IsComplete: true,
 						},
-						RemoveReq{
+						{
 							Path:       "a/b/c/file3.txt",
 							Set:        set,
 							IsDir:      false,
 							IsComplete: true,
 						},
-						RemoveReq{
+						{
 							Path:       "a/b/c/file4.txt",
 							Set:        set,
 							IsDir:      false,
@@ -399,34 +399,40 @@ func TestSetDB(t *testing.T) {
 						},
 					}
 
-					err = db.SetRemoveRequests(set.ID(), remReqs)
-					So(err, ShouldBeNil)
+					Convey("You can put them into the sets remove bucket and get them back", func() {
+						err = db.SetRemoveRequests(set.ID(), remReqs)
+						So(err, ShouldBeNil)
 
-					rrs, errg := db.GetRemoveRequests(set.ID())
-					So(errg, ShouldBeNil)
-					So(len(rrs), ShouldEqual, len(remReqs))
+						rrs, errg := db.GetRemoveRequests(set.ID())
+						So(errg, ShouldBeNil)
+						So(len(rrs), ShouldEqual, len(remReqs))
 
-					err = db.OptimiseRemoveBucket(set.ID())
-					So(err, ShouldBeNil)
+						Convey("And you can optimise the bucket", func() {
+							err = db.OptimiseRemoveBucket(set.ID())
+							So(err, ShouldBeNil)
 
-					rrs, err = db.GetRemoveRequests(set.ID())
-					So(err, ShouldBeNil)
+							rrs, err = db.GetRemoveRequests(set.ID())
+							So(err, ShouldBeNil)
 
-					So(len(rrs), ShouldEqual, 3)
+							So(len(rrs), ShouldEqual, 3)
 
-					remReqs[5].IsComplete = true
+							Convey("And you can update a remove request and optimise again", func() {
+								remReqs[5].IsComplete = true
 
-					err = db.UpdateRemoveRequest(remReqs[5])
-					So(err, ShouldBeNil)
+								err = db.UpdateRemoveRequest(remReqs[5])
+								So(err, ShouldBeNil)
 
-					err = db.OptimiseRemoveBucket(set.ID())
-					So(err, ShouldBeNil)
+								err = db.OptimiseRemoveBucket(set.ID())
+								So(err, ShouldBeNil)
 
-					rrs, err = db.GetRemoveRequests(set.ID())
-					So(err, ShouldBeNil)
-					So(len(rrs), ShouldEqual, 2)
-					So(rrs[1].Path, ShouldEqual, remReqs[0].Path)
-					So(rrs[0].Path, ShouldEqual, remReqs[1].Path+"/")
+								rrs, err = db.GetRemoveRequests(set.ID())
+								So(err, ShouldBeNil)
+								So(len(rrs), ShouldEqual, 2)
+								So(rrs[1].Path, ShouldEqual, remReqs[0].Path)
+								So(rrs[0].Path, ShouldEqual, remReqs[1].Path+"/")
+							})
+						})
+					})
 				})
 
 				Convey("You can get all paths containing a prefix", func() {

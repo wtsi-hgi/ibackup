@@ -123,7 +123,7 @@ type Server struct {
 	iRODSTracker        *iRODSTracker
 	clientQueue         *queue.Queue
 
-	RDLinker *removeDiscoverLinker
+	discoveryCoordinator *discoveryCoordinator
 }
 
 // New creates a Server which can serve a REST API and website.
@@ -149,7 +149,7 @@ func New(conf Config) (*Server, error) {
 		clientQueue:         queue.New(context.Background(), "client"),
 		storageHandler:      conf.StorageHandler,
 
-		RDLinker: newRemoveDiscoverLinker(),
+		discoveryCoordinator: newDiscoveryCoordinator(),
 	}
 
 	s.clientQueue.SetTTRCallback(s.clientTTRC)
@@ -222,7 +222,7 @@ func (s *Server) EnableJobSubmission(putCmd, deployment, cwd, queue string, numC
 // inside removeQueue from iRODS and data base. This function should be called
 // inside a go routine, so the user API request is not locked.
 func (s *Server) handleRemoveRequests(sid string) {
-	s.RDLinker.willRemove(sid)
+	s.discoveryCoordinator.WillRemove(sid)
 
 	for {
 		item, removeReq, err := s.reserveRemoveRequest(sid)
@@ -230,11 +230,11 @@ func (s *Server) handleRemoveRequests(sid string) {
 			break
 		}
 
-		removedFromDiscoverBuckets := s.RDLinker.waitForDiscovery(sid)
+		removedFromDiscoverBuckets := s.discoveryCoordinator.WaitForDiscovery(sid)
 
 		err = s.removeRequestFromIRODSandDB(&removeReq, removedFromDiscoverBuckets)
 		if beenReleased := s.handleErrorOrReleaseItem(item, removeReq, err); beenReleased {
-			s.RDLinker.allowDiscovery(sid)
+			s.discoveryCoordinator.AllowDiscovery(sid)
 
 			continue
 		}
@@ -244,7 +244,7 @@ func (s *Server) handleRemoveRequests(sid string) {
 			s.Logger.Printf("%s", err.Error())
 		}
 
-		s.RDLinker.allowDiscovery(sid)
+		s.discoveryCoordinator.AllowDiscovery(sid)
 	}
 
 	s.finalizeRemoval(sid)
@@ -266,7 +266,7 @@ func (s *Server) reserveRemoveRequest(reserveGroup string) (*queue.Item, set.Rem
 
 	remReq, err := s.convertQueueItemToRemoveRequest(item.Data())
 	if err != nil {
-		s.Logger.Printf("Invalid data type in remove queue")
+		s.Logger.Printf("%s", err.Error())
 
 		return nil, set.RemoveReq{}, err
 	}
@@ -320,7 +320,7 @@ func (s *Server) handleErrorOrReleaseItem(item *queue.Item, removeReq set.Remove
 		s.Logger.Printf("%s", err.Error())
 	}
 
-	return true
+	return err == nil
 }
 
 func (s *Server) finalizeRemoveReq(removeReq set.RemoveReq) error {
@@ -335,7 +335,7 @@ func (s *Server) finalizeRemoveReq(removeReq set.RemoveReq) error {
 }
 
 func (s *Server) finalizeRemoval(sid string) {
-	s.RDLinker.removalDone(sid)
+	s.discoveryCoordinator.RemovalDone(sid)
 
 	err := s.db.OptimiseRemoveBucket(sid)
 	if err != nil {
