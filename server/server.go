@@ -268,12 +268,12 @@ func (s *Server) reserveRemoveRequest(reserveGroup string) (*queue.Item, set.Rem
 			return nil, set.RemoveReq{}, err
 		}
 
-		s.Logger.Printf("%s", err)
+		s.Logger.Print(err)
 	}
 
 	remReq, err := s.convertQueueItemToRemoveRequest(item.Data())
 	if err != nil {
-		s.Logger.Printf("%s", err)
+		s.Logger.Print(err)
 
 		return nil, set.RemoveReq{}, err
 	}
