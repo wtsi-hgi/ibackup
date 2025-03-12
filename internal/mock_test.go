@@ -109,6 +109,19 @@ func TestMock(t *testing.T) {
 						So(fileMeta, ShouldResemble, meta)
 					})
 
+					Convey("You can query if files contain specific metadata", func() {
+						files, errq := lh.QueryMeta(destDir, map[string]string{"ibackup:test:a": "1"})
+						So(errq, ShouldBeNil)
+
+						So(len(files), ShouldEqual, 1)
+						So(files, ShouldContain, file1remote)
+
+						files, errq = lh.QueryMeta(destDir, map[string]string{"ibackup:test:a": "2"})
+						So(errq, ShouldBeNil)
+
+						So(len(files), ShouldEqual, 0)
+					})
+
 					Convey("You can remove specific metadata from an uploaded file", func() {
 						errm := lh.RemoveMeta(file1remote, map[string]string{"ibackup:test:a": "1"})
 						So(errm, ShouldBeNil)

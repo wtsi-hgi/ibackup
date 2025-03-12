@@ -78,8 +78,10 @@ func (d *DB) getMountPoints() error {
 // from file system (not db or irods).
 // you then create a new file2 which has the same inode file1 had, file2 is added to the set by monitor.
 // you then try to remove hardlink2 from the set. it will check whats inside the inode bucket
-//and see there's only 1 file, file2. so it will remove inode from irods.
+// and see there's only 1 file, file2. so it will remove inode from irods.
 // this is of course an issue, as hardlink1 is still in irods, now with no inode file.
+
+// TODO ttr will be too short for query meta stuff.
 
 // handleInode records the inode of the given Dirent in the database, and
 // returns the path to the first local file with that inode if we've seen if
@@ -94,17 +96,22 @@ func (d *DB) handleInode(tx *bolt.Tx, de *Dirent, transformerID string) (string,
 		return "", b.Put(key, d.encodeToBytes([]string{transformerPath}))
 	}
 
-	existingFiles, _ := d.decodeIMPValue(v, de.Inode)
+	existingFiles, allFiles := d.decodeIMPValue(v, de.Inode)
 	if len(existingFiles) == 0 {
 		return "", b.Put(key, d.encodeToBytes([]string{transformerPath}))
 	}
 
-	_, hardlinkDest, err := splitTransformerPath(existingFiles[0])
+	firstNonBlank := allFiles[0]
+	if firstNonBlank == "" {
+		firstNonBlank = allFiles[1]
+	}
+
+	_, hardlinkDest, err := splitTransformerPath(firstNonBlank)
 	if err != nil {
 		return "", err
 	}
 
-	isExistingPath, isOriginalPath := alreadyInFiles(transformerPath, existingFiles)
+	isExistingPath, isOriginalPath := alreadyInFiles(transformerPath, allFiles)
 
 	if isOriginalPath {
 		return "", nil
@@ -114,13 +121,16 @@ func (d *DB) handleInode(tx *bolt.Tx, de *Dirent, transformerID string) (string,
 		return hardlinkDest, nil
 	}
 
-	return hardlinkDest, b.Put(key, d.encodeToBytes(append(existingFiles, transformerPath)))
+	return hardlinkDest, b.Put(key, d.encodeToBytes(append(allFiles, transformerPath)))
 }
+
+// TODO maybe refactor this
 
 // GetFilesFromInode returns all the paths that share the same inode as the
 // provided path.
-func (d *DB) GetFilesFromInode(path string) ([]string, error) {
+func (d *DB) GetFilesFromInode(path string, inode uint64) ([]string, error) {
 	de := newDirentFromPath(path)
+	de.Inode = inode
 	key := d.inodeMountPointKeyFromDirent(de)
 
 	var files []string
@@ -137,6 +147,13 @@ func (d *DB) GetFilesFromInode(path string) ([]string, error) {
 
 		return nil
 	})
+
+	for i, file := range files {
+		_, files[i], err = splitTransformerPath(file)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	return files, err
 }
@@ -159,19 +176,47 @@ func (d *DB) RemoveFileFromInode(path string, inode uint64) error {
 
 		_, files := d.decodeIMPValue(v, de.Inode)
 
-		if len(files) == 1 || (len(files) == 2 && files[0] == "") {
-			return b.Delete(key)
-		}
-
-		files, err := removePathFromInodeFiles(de.Path, files)
-		if err != nil {
-			return err
-		}
-
-		return b.Put(key, d.encodeToBytes(files))
+		return d.updateInodeEntryBasedOnFiles(b, key, path, files)
 	})
 
 	return err
+}
+
+func isPathInTransformerPaths(path string, files []string) (bool, error) {
+	for _, file := range files {
+		_, pathFromSplit, err := splitTransformerPath(file)
+		if err != nil {
+			return false, err
+		}
+
+		if pathFromSplit == path {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+func (d *DB) updateInodeEntryBasedOnFiles(b *bolt.Bucket, key []byte, path string, files []string) error {
+	isInFiles, err := isPathInTransformerPaths(path, files)
+	if err != nil {
+		return err
+	}
+
+	if !isInFiles {
+		return nil
+	}
+
+	if len(files) == 1 || (len(files) == 2 && files[0] == "") {
+		return b.Delete(key)
+	}
+
+	files, err = removePathFromInodeFiles(path, files)
+	if err != nil {
+		return err
+	}
+
+	return b.Put(key, d.encodeToBytes(files))
 }
 
 func removePathFromInodeFiles(path string, files []string) ([]string, error) {

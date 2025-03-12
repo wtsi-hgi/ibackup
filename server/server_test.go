@@ -399,6 +399,80 @@ func TestServer(t *testing.T) {
 								So(err.Error(), ShouldContainSubstring, "no such file or directory")
 							})
 						})
+
+						Convey("And given an inode bucket that's out of sync with iRODS", func() {
+							info, errls := os.Lstat(hardlink1local)
+							So(errls, ShouldBeNil)
+
+							statt, ok := info.Sys().(*syscall.Stat_t)
+							So(ok, ShouldBeTrue)
+
+							files, errg := s.db.GetFilesFromInode(hardlink1local, statt.Ino)
+							So(errg, ShouldBeNil)
+							So(files, ShouldContain, hardlink1local)
+
+							err = s.db.RemoveFileFromInode(hardlink1local, statt.Ino)
+							So(err, ShouldBeNil)
+
+							files, err = s.db.GetFilesFromInode(hardlink1local, statt.Ino)
+							So(err, ShouldBeNil)
+							So(files, ShouldNotContain, hardlink1local)
+
+							Convey("You can remove the first hardlink and the inode file will stay", func() {
+								remReq := set.RemoveReq{
+									Path: hardlink1local,
+									Set:  exampleSet,
+								}
+
+								err = s.removeFileFromIRODSandDB(&remReq, false)
+								So(err, ShouldBeNil)
+
+								_, err = os.Stat(hardlink1Remote)
+								So(err, ShouldNotBeNil)
+								So(err.Error(), ShouldContainSubstring, "no such file or directory")
+
+								_, err = os.Stat(inodeRemote)
+								So(err, ShouldBeNil)
+							})
+						})
+
+						Convey("And if you remove the original file and the first hardlink locally and add a third hardlink", func() {
+							hardlink3local := filepath.Join(localDir, "hardlink3")
+							hardlink3Remote := filepath.Join(remoteDir, "hardlink3")
+							createRemoteHardlink(t, s.storageHandler, hardlink3local, hardlink3Remote, file1local, inodeRemote, exampleSet)
+
+							os.Remove(file1local)
+							os.Remove(hardlink1local)
+
+							err = client.SetFiles(exampleSet.ID(), []string{hardlink3local})
+							So(err, ShouldBeNil)
+
+							err = client.AddOrUpdateSet(exampleSet)
+							So(err, ShouldBeNil)
+
+							err = client.TriggerDiscovery(exampleSet.ID())
+							So(err, ShouldBeNil)
+
+							ok := <-racCalled
+							So(ok, ShouldBeTrue)
+
+							Convey("Removing the third hardlink does not remove the inode as the database is still in sync with iRODS", func() { //nolint::lll
+								remReq := set.RemoveReq{
+									Path: hardlink3local,
+									Set:  exampleSet,
+								}
+
+								err = s.removeFileFromIRODSandDB(&remReq, false)
+								So(err, ShouldBeNil)
+
+								_, err = os.Stat(hardlink3Remote)
+								So(err, ShouldNotBeNil)
+								So(err.Error(), ShouldContainSubstring, "no such file or directory")
+
+								_, err = os.Stat(inodeRemote)
+								So(err, ShouldBeNil)
+							})
+						})
 					})
 
 					Convey("And given a set with 100 files in one nested folder", func() {

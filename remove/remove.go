@@ -56,6 +56,10 @@ type Handler interface {
 	// returns an error containing substring "file does not exist".
 	RemoveFile(path string) error
 
+	// QueryMeta return paths to all objects with given metadata inside the
+	// provided scope.
+	QueryMeta(dirToSearch string, meta map[string]string) ([]string, error)
+
 	// Cleanup stops any connections created earlier and does any other cleanup
 	// needed.
 	Cleanup()
