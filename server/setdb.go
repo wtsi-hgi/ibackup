@@ -575,7 +575,7 @@ func (s *Server) processRemoteFileRemoval(removeReq *set.RemoveReq, entry *set.E
 		return err
 	}
 
-	err = s.updateOrRemoveRemoteFile(removeReq.Set, removeReq.Path, transformer)
+	err = s.updateOrRemoveRemoteFile(removeReq.Set, removeReq.Path, transformer, entry)
 	if err != nil && fileErrorCannotBeIgnored(err, mayMissInRemote) {
 		s.setErrorOnEntry(entry, removeReq.Set.ID(), removeReq.Path, err)
 
@@ -609,7 +609,8 @@ func (s *Server) processDBFileRemoval(removeReq *set.RemoveReq, entry *set.Entry
 	return s.db.UpdateBasedOnRemovedEntry(removeReq.Set.ID(), entry)
 }
 
-func (s *Server) updateOrRemoveRemoteFile(set *set.Set, path string, transformer put.PathTransformer) error {
+func (s *Server) updateOrRemoveRemoteFile(set *set.Set, path string, 
+	transformer put.PathTransformer, entry *set.Entry) error {
 	rpath, err := transformer(path)
 	if err != nil {
 		return err
@@ -626,13 +627,13 @@ func (s *Server) updateOrRemoveRemoteFile(set *set.Set, path string, transformer
 	}
 
 	if len(sets) == 0 {
-		return s.removeRemoteFileAndHandleHardlink(path, rpath, remoteMeta)
+		return s.removeRemoteFileAndHandleHardlink(path, rpath, remoteMeta, transformer, entry)
 	}
 
 	return remove.UpdateSetsAndRequestersOnRemoteFile(s.storageHandler, rpath, sets, requesters, remoteMeta)
 }
 
-func (s *Server) removeRemoteFileAndHandleHardlink(lpath, rpath string, meta map[string]string) error {
+func (s *Server) removeRemoteFileAndHandleHardlink(lpath, rpath string, meta map[string]string, transformer put.PathTransformer, entry *set.Entry) error {
 	err := remove.RemoveFileAndParentFoldersIfEmpty(s.storageHandler, rpath)
 	if err != nil {
 		return err
@@ -642,13 +643,30 @@ func (s *Server) removeRemoteFileAndHandleHardlink(lpath, rpath string, meta map
 		return nil
 	}
 
-	files, err := s.db.GetFilesFromInode(lpath)
+	files, err := s.db.GetFilesFromInode(lpath, entry.Inode)
 	if err != nil {
 		return err
 	}
 
-	if len(files) > numberOfFilesForOneHardlink {
-		return nil
+	if slices.Contains(files, lpath) {
+		if len(files) > numberOfFilesForOneHardlink {
+			return nil
+		}
+	} else {
+		dirToSearch, err := transformer("/")
+		if err != nil {
+			return err
+		}
+
+		files, err := s.storageHandler.QueryMeta(dirToSearch, 
+			map[string]string{put.MetaKeyRemoteHardlink: meta[put.MetaKeyRemoteHardlink]})
+		if(err != nil) {
+			return err
+		}
+
+		if len(files) > 0 {
+			return nil
+		}
 	}
 
 	return s.storageHandler.RemoveFile(meta[put.MetaKeyRemoteHardlink])

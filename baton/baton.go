@@ -663,3 +663,34 @@ func (b *Baton) AllClientsStopped() bool {
 
 	return true
 }
+
+// QueryMeta return paths to all objects with given metadata inside the provided
+// scope. It creates a new meta client if necessary so after calling this
+// function you must eventually call Cleanup().
+func (b *Baton) QueryMeta(dirToSearch string, meta map[string]string) ([]string, error) {
+	err := b.setClientIfNotExists(&b.metaClient)
+	if err != nil {
+		return nil, err
+	}
+
+	it := &ex.RodsItem{
+		IPath: dirToSearch,
+		IAVUs: metaToAVUs(meta),
+	}
+
+	var items []ex.RodsItem
+
+	err = timeoutOp(func() error {
+		items, err = b.metaClient.MetaQuery(ex.Args{Object: true}, *it)
+
+		return err
+	}, "query meta error: "+dirToSearch)
+
+	paths := make([]string, len(items))
+
+	for i, item := range items {
+		paths[i] = filepath.Join(item.IPath, item.IName)
+	}
+
+	return paths, err
+}
