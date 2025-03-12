@@ -264,6 +264,38 @@ func (l *LocalHandler) GetMeta(path string) (map[string]string, error) {
 	return meta, nil
 }
 
+// QueryMeta return paths to all objects with given metadata inside the provided
+// scope.
+func (l *LocalHandler) QueryMeta(dirToSearch string, meta map[string]string) ([]string, error) { //nolint:unparam
+	var objects []string
+
+	for path, pathMeta := range l.Meta {
+		if !strings.HasPrefix(path, dirToSearch) {
+			continue
+		}
+
+		if doesMetaContainMeta(pathMeta, meta) {
+			objects = append(objects, path)
+		}
+	}
+
+	return objects, nil
+}
+
+func doesMetaContainMeta(sourceMeta, targetMeta map[string]string) bool {
+	valid := true
+
+	for k, v := range targetMeta {
+		if sourceMeta[k] != v {
+			valid = false
+
+			break
+		}
+	}
+
+	return valid
+}
+
 // RemoveDir removes the empty dir.
 func (l *LocalHandler) RemoveDir(path string) error {
 	if l.removeSlow {
