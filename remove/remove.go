@@ -128,3 +128,14 @@ func RemoveRemoteDir(handler Handler, path string, transformer put.PathTransform
 
 	return nil
 }
+
+// FindHardlinksWithInode returns paths to all hardlinks that point to the
+// provided inode path.
+func FindHardlinksWithInode(rInodePath string, transformer put.PathTransformer, handler Handler) ([]string, error) {
+	dir, err := transformer("/")
+	if err != nil {
+		return nil, err
+	}
+
+	return handler.QueryMeta(dir, map[string]string{put.MetaKeyRemoteHardlink: rInodePath})
+}

@@ -74,15 +74,6 @@ func (d *DB) getMountPoints() error {
 	return nil
 }
 
-// TODO: incredibly specific bug potential: you have file1, hardlink1 hardlink2. you remove all 3
-// from file system (not db or irods).
-// you then create a new file2 which has the same inode file1 had, file2 is added to the set by monitor.
-// you then try to remove hardlink2 from the set. it will check whats inside the inode bucket
-// and see there's only 1 file, file2. so it will remove inode from irods.
-// this is of course an issue, as hardlink1 is still in irods, now with no inode file.
-
-// TODO ttr will be too short for query meta stuff.
-
 // handleInode records the inode of the given Dirent in the database, and
 // returns the path to the first local file with that inode if we've seen if
 // before.
@@ -101,12 +92,7 @@ func (d *DB) handleInode(tx *bolt.Tx, de *Dirent, transformerID string) (string,
 		return "", b.Put(key, d.encodeToBytes([]string{transformerPath}))
 	}
 
-	firstNonBlank := allFiles[0]
-	if firstNonBlank == "" {
-		firstNonBlank = allFiles[1]
-	}
-
-	_, hardlinkDest, err := splitTransformerPath(firstNonBlank)
+	_, hardlinkDest, err := splitTransformerPath(getFirstNonBlankValue(allFiles))
 	if err != nil {
 		return "", err
 	}
@@ -124,13 +110,20 @@ func (d *DB) handleInode(tx *bolt.Tx, de *Dirent, transformerID string) (string,
 	return hardlinkDest, b.Put(key, d.encodeToBytes(append(allFiles, transformerPath)))
 }
 
-// TODO maybe refactor this
+func getFirstNonBlankValue(arr []string) string {
+	for _, str := range arr {
+		if str != "" {
+			return str
+		}
+	}
 
-// GetFilesFromInode returns all the paths that share the same inode as the
-// provided path.
-func (d *DB) GetFilesFromInode(path string, inode uint64) ([]string, error) {
-	de := newDirentFromPath(path)
-	de.Inode = inode
+	return ""
+}
+
+// GetFilesFromInode returns all the paths that share the provided inode on the
+// given mount point.
+func (d *DB) GetFilesFromInode(inode uint64, mountPoint string) ([]string, error) {
+	de := &Dirent{Inode: inode, Path: mountPoint}
 	key := d.inodeMountPointKeyFromDirent(de)
 
 	var files []string
@@ -140,7 +133,7 @@ func (d *DB) GetFilesFromInode(path string, inode uint64) ([]string, error) {
 
 		v := b.Get(key)
 		if v == nil {
-			return internal.Error{Msg: "key not found in inode bucket", Path: path}
+			return internal.Error{Msg: "key not found in inode bucket", Path: string(key)}
 		}
 
 		_, files = d.decodeIMPValue(v, de.Inode)
@@ -149,6 +142,10 @@ func (d *DB) GetFilesFromInode(path string, inode uint64) ([]string, error) {
 	})
 
 	for i, file := range files {
+		if file == "" {
+			continue
+		}
+
 		_, files[i], err = splitTransformerPath(file)
 		if err != nil {
 			return nil, err
@@ -171,7 +168,7 @@ func (d *DB) RemoveFileFromInode(path string, inode uint64) error {
 
 		v := b.Get(key)
 		if v == nil {
-			return internal.Error{Msg: "key not found in inode bucket", Path: path}
+			return internal.Error{Msg: "key not found in inode bucket", Path: string(key)}
 		}
 
 		_, files := d.decodeIMPValue(v, de.Inode)
@@ -184,6 +181,10 @@ func (d *DB) RemoveFileFromInode(path string, inode uint64) error {
 
 func isPathInTransformerPaths(path string, files []string) (bool, error) {
 	for _, file := range files {
+		if file == "" {
+			continue
+		}
+
 		_, pathFromSplit, err := splitTransformerPath(file)
 		if err != nil {
 			return false, err
@@ -300,8 +301,9 @@ func (d *DB) GetMountPointFromPath(path string) string {
 // (a []string) as stored in the db by AddInodeMountPoint(), and converts it
 // back in to []string.
 //
-// Before returning the slice, checks that at least one path still exists and
-// has the given inode; if not, will return an empty slice.
+// Before returning the slice of existingFiles, checks that at least one path
+// still exists and has the given inode; if not, will return an empty slice.
+// Also returns a slice of all decoded files.
 func (d *DB) decodeIMPValue(v []byte, inode uint64) ([]string, []string) {
 	dec := codec.NewDecoderBytes(v, d.ch)
 
