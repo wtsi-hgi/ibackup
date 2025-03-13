@@ -248,7 +248,7 @@ func (s *Server) handleRemoveRequests(sid string) {
 
 		err = s.finalizeRemoveReq(removeReq)
 		if err != nil {
-			s.Logger.Printf("%s", err.Error())
+			s.Logger.Printf("%s", err)
 		}
 
 		s.discoveryCoordinator.AllowDiscovery(sid)
@@ -268,12 +268,12 @@ func (s *Server) reserveRemoveRequest(reserveGroup string) (*queue.Item, set.Rem
 			return nil, set.RemoveReq{}, err
 		}
 
-		s.Logger.Printf("%s", err.Error())
+		s.Logger.Printf("%s", err)
 	}
 
 	remReq, err := s.convertQueueItemToRemoveRequest(item.Data())
 	if err != nil {
-		s.Logger.Printf("%s", err.Error())
+		s.Logger.Printf("%s", err)
 
 		return nil, set.RemoveReq{}, err
 	}

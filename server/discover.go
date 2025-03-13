@@ -52,7 +52,7 @@ const ttr = 6 * time.Minute
 // happen at the same time on the same set. Discoveries have priority and will
 // pause any removal that's already running until the discovery has finished.
 type discoveryCoordinator struct {
-	*sync.RWMutex
+	sync.RWMutex
 	hasDiscoveryHappened map[string]bool
 	numRunningRemovals   map[string]uint8
 	muMap                sync.Map
@@ -60,7 +60,6 @@ type discoveryCoordinator struct {
 
 func newDiscoveryCoordinator() *discoveryCoordinator {
 	return &discoveryCoordinator{
-		RWMutex:              &sync.RWMutex{},
 		hasDiscoveryHappened: make(map[string]bool),
 		numRunningRemovals:   make(map[string]uint8),
 		muMap:                sync.Map{},
@@ -106,11 +105,7 @@ func (dc *discoveryCoordinator) WillRemove(sid string) {
 	dc.Lock()
 	defer dc.Unlock()
 
-	if _, exists := dc.numRunningRemovals[sid]; !exists {
-		dc.numRunningRemovals[sid] = 1
-	} else {
-		dc.numRunningRemovals[sid]++
-	}
+	dc.numRunningRemovals[sid]++
 }
 
 // WaitForDiscovery will block while a discovery on the provided set is running,

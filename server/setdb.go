@@ -601,16 +601,18 @@ func (s *Server) processDBFileRemoval(removeReq *set.RemoveReq, entry *set.Entry
 		return err
 	}
 
-	err = s.db.RemoveFileFromInode(removeReq.Path, entry.Inode)
-	if err != nil {
-		return err
+	if entry.Type != set.Symlink {
+		err = s.db.RemoveFileFromInode(removeReq.Path, entry.Inode)
+		if err != nil {
+			return err
+		}
 	}
 
 	return s.db.UpdateBasedOnRemovedEntry(removeReq.Set.ID(), entry)
 }
 
-func (s *Server) updateOrRemoveRemoteFile(set *set.Set, path string, 
-	transformer put.PathTransformer, entry *set.Entry) error {
+func (s *Server) updateOrRemoveRemoteFile(set *set.Set, path string, transformer put.PathTransformer,
+	entry *set.Entry) error {
 	rpath, err := transformer(path)
 	if err != nil {
 		return err
@@ -633,7 +635,8 @@ func (s *Server) updateOrRemoveRemoteFile(set *set.Set, path string,
 	return remove.UpdateSetsAndRequestersOnRemoteFile(s.storageHandler, rpath, sets, requesters, remoteMeta)
 }
 
-func (s *Server) removeRemoteFileAndHandleHardlink(lpath, rpath string, meta map[string]string, transformer put.PathTransformer, entry *set.Entry) error {
+func (s *Server) removeRemoteFileAndHandleHardlink(lpath, rpath string, meta map[string]string,
+	transformer put.PathTransformer, entry *set.Entry) error {
 	err := remove.RemoveFileAndParentFoldersIfEmpty(s.storageHandler, rpath)
 	if err != nil {
 		return err
@@ -643,33 +646,32 @@ func (s *Server) removeRemoteFileAndHandleHardlink(lpath, rpath string, meta map
 		return nil
 	}
 
-	files, err := s.db.GetFilesFromInode(lpath, entry.Inode)
+	files, thresh, err := s.getFilesWithSameInode(lpath, entry.Inode, transformer, meta[put.MetaKeyRemoteHardlink])
 	if err != nil {
 		return err
 	}
 
-	if slices.Contains(files, lpath) {
-		if len(files) > numberOfFilesForOneHardlink {
-			return nil
-		}
-	} else {
-		dirToSearch, err := transformer("/")
-		if err != nil {
-			return err
-		}
-
-		files, err := s.storageHandler.QueryMeta(dirToSearch, 
-			map[string]string{put.MetaKeyRemoteHardlink: meta[put.MetaKeyRemoteHardlink]})
-		if(err != nil) {
-			return err
-		}
-
-		if len(files) > 0 {
-			return nil
-		}
+	if len(files) > thresh {
+		return nil
 	}
 
 	return s.storageHandler.RemoveFile(meta[put.MetaKeyRemoteHardlink])
+}
+
+func (s *Server) getFilesWithSameInode(path string, inode uint64, transformer put.PathTransformer,
+	rInodePath string) ([]string, int, error) {
+	files, err := s.db.GetFilesFromInode(inode, s.db.GetMountPointFromPath(path))
+	if err != nil {
+		return nil, 0, err
+	}
+
+	if slices.Contains(files, path) {
+		return files, numberOfFilesForOneHardlink, nil
+	}
+
+	files, err = remove.FindHardlinksWithInode(rInodePath, transformer, s.storageHandler)
+
+	return files, 0, err
 }
 
 func (s *Server) handleSetsAndRequesters(givenSet *set.Set, meta map[string]string) ([]string, []string, error) {

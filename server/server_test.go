@@ -407,14 +407,14 @@ func TestServer(t *testing.T) {
 							statt, ok := info.Sys().(*syscall.Stat_t)
 							So(ok, ShouldBeTrue)
 
-							files, errg := s.db.GetFilesFromInode(hardlink1local, statt.Ino)
+							files, errg := s.db.GetFilesFromInode(statt.Ino, s.db.GetMountPointFromPath(hardlink1local))
 							So(errg, ShouldBeNil)
 							So(files, ShouldContain, hardlink1local)
 
 							err = s.db.RemoveFileFromInode(hardlink1local, statt.Ino)
 							So(err, ShouldBeNil)
 
-							files, err = s.db.GetFilesFromInode(hardlink1local, statt.Ino)
+							files, err = s.db.GetFilesFromInode(statt.Ino, s.db.GetMountPointFromPath(hardlink1local))
 							So(err, ShouldBeNil)
 							So(files, ShouldNotContain, hardlink1local)
 
@@ -456,7 +456,7 @@ func TestServer(t *testing.T) {
 							ok := <-racCalled
 							So(ok, ShouldBeTrue)
 
-							Convey("Removing the third hardlink does not remove the inode as the database is still in sync with iRODS", func() { //nolint::lll
+							Convey("Removing the third hardlink does not remove the inode as the database is still in sync with iRODS", func() { //nolint:lll
 								remReq := set.RemoveReq{
 									Path: hardlink3local,
 									Set:  exampleSet,
