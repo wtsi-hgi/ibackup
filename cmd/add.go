@@ -48,23 +48,23 @@ const (
 )
 
 // options for this cmd.
-var (
-	setName        string
-	setTransformer string
-	setDescription string
-	setFiles       string
-	setDirs        string
-	setItems       string
-	setPath        string
-	setNull        bool
-	setMonitor     string
-	setArchive     bool
-	setUser        string
-	setMetadata    string
-	setReason      put.Reason
-	setReview      string
-	setRemoval     string
-)
+
+var setName string
+var setTransformer string
+var setDescription string
+var setFiles string
+var setDirs string
+var setItems string
+var setPath string
+var setNull bool
+var setMonitor string
+var setMonitorRemovals bool
+var setArchive bool
+var setUser string
+var setMetadata string
+var setReason put.Reason
+var setReview string
+var setRemoval string
 
 var ErrCancel = errors.New("cancelled add")
 
@@ -118,6 +118,10 @@ You can also provide:
 --monitor : recheck the saved file and directory paths after the given time
             period (minimum 1hr) after last completion, and backup any new or
             altered files in the set.
+--monitor-removals : after providing --monitor, you can provide this to also
+					 monitor if file and directory paths have been removed 
+					 locally. If any paths are found to be removed, the monitor 
+					 will remove them from the set.
 --archive : delete local files after successfully uploading them. (The actual
             deletion is not yet implemented, but you can at least record the
 		    fact you wanted deletion now, so they can be deleted in the future.)
@@ -149,6 +153,10 @@ option to add sets on behalf of other users.
 
 		if setFiles == "" && setDirs == "" && setPath == "" && setItems == "" {
 			dief("at least one of --files or --dirs or --items or --path must be provided")
+		}
+
+		if setMonitor == "" && setMonitorRemovals {
+			dief("cannot use --monitor-removals without --monitor")
 		}
 
 		if setTransformer == "" {
@@ -215,7 +223,8 @@ option to add sets on behalf of other users.
 			dief("metadata error: %s", err)
 		}
 
-		err = add(client, setName, setUser, setTransformer, setDescription, monitorDuration, setArchive, files, dirs, meta)
+		err = add(client, setName, setUser, setTransformer, setDescription, monitorDuration,
+			setMonitorRemovals, setArchive, files, dirs, meta)
 		if err != nil {
 			die(err)
 		}
@@ -245,6 +254,8 @@ func init() {
 	addCmd.Flags().StringVarP(&setMonitor, "monitor", "m", "",
 		"monitor the paths for changes and new files to upload the given time period "+
 			"(eg. 1d for 1 day, or 2w for 2 weeks, min 1h) after completion")
+	addCmd.Flags().BoolVar(&setMonitorRemovals, "monitor-removals", false,
+		"also monitor and update the set for files removed locally")
 	addCmd.Flags().BoolVarP(&setArchive, "archive", "a", false,
 		"delete local files after successfully uploading them (deletions not yet implemented)")
 	addCmd.Flags().StringVar(&setUser, "user", currentUsername(),
@@ -337,16 +348,16 @@ func fileDirIsInDirs(file string, dirSet map[string]bool) bool {
 
 // add does the main job of sending the backup set details to the server.
 func add(client *server.Client, name, requester, transformer, description string,
-	monitor time.Duration, archive bool, files, dirs []string, meta *put.Meta,
-) error {
+	monitor time.Duration, monitorRemovals, archive bool, files, dirs []string, meta *put.Meta) error {
 	set := &set.Set{
-		Name:        name,
-		Requester:   requester,
-		Transformer: transformer,
-		Description: description,
-		MonitorTime: monitor,
-		DeleteLocal: archive,
-		Metadata:    meta.Metadata(),
+		Name:            name,
+		Requester:       requester,
+		Transformer:     transformer,
+		Description:     description,
+		MonitorTime:     monitor,
+		MonitorRemovals: monitorRemovals,
+		DeleteLocal:     archive,
+		Metadata:        meta.Metadata(),
 	}
 
 	if err := client.AddOrUpdateSet(set); err != nil {

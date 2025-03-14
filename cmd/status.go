@@ -390,7 +390,12 @@ func displaySet(s *set.Set, showRequesters bool) { //nolint:funlen,gocyclo
 		monitored = formatDuration(s.MonitorTime)
 	}
 
-	cliPrintf("Monitored: %s; Archive: %v\n", monitored, s.DeleteLocal)
+	monitorStr := "Monitored"
+	if s.MonitorRemovals {
+		monitorStr += " (with removals)"
+	}
+
+	cliPrintf("%s: %s; Archive: %v\n", monitorStr, monitored, s.DeleteLocal)
 
 	if s.Description != "" {
 		cliPrintf("Description: %s\n", s.Description)
