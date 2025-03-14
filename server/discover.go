@@ -77,11 +77,13 @@ func (dc *discoveryCoordinator) LoadOrStore(sid string) *sync.Mutex {
 	dc.Lock()
 	defer dc.Unlock()
 
-	if _, exists := dc.muMap[sid]; !exists {
-		dc.muMap[sid] = &sync.Mutex{}
+	v, exists := dc.muMap[sid]
+	if !exists {
+		v = &sync.Mutex{}
+		dc.muMap[sid] = v
 	}
 
-	return dc.muMap[sid]
+	return v
 }
 
 // DiscoveryHappened tells any running removals that a discovery happened during
