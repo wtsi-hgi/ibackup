@@ -63,7 +63,6 @@ const (
 
 var errNotDiscovered = errors.New("not discovered")
 var errNotFinishedRemoving = errors.New("remove not finished")
-var errNotAllRemoved = errors.New("not all removals finished")
 
 func TestClient(t *testing.T) {
 	Convey("maxTimeForUpload works with small and large requests", t, func() {
@@ -1219,87 +1218,6 @@ func TestServer(t *testing.T) {
 							slackWriter.Reset()
 						})
 
-						waitForDiscovery := func(given *set.Set) {
-							discovered := given.LastDiscovery
-
-							internal.RetryUntilWorksCustom(t, func() error { //nolint:errcheck
-								tickerSet, errg := client.GetSetByID(given.Requester, given.ID())
-								So(errg, ShouldBeNil)
-
-								if tickerSet.LastDiscovery.After(discovered) {
-									return nil
-								}
-
-								return errNotDiscovered
-							}, given.MonitorTime*2, given.MonitorTime/10)
-						}
-
-						waitForRemovals := func(given *set.Set) {
-							internal.RetryUntilWorksCustom(t, func() error { //nolint:errcheck
-								tickerSet, errg := client.GetSetByID(given.Requester, given.ID())
-								So(errg, ShouldBeNil)
-
-								if tickerSet.NumObjectsRemoved == tickerSet.NumObjectsToBeRemoved {
-									return nil
-								}
-
-								return errNotAllRemoved
-							}, time.Second*10, time.Millisecond*100)
-						}
-
-						token, errl = gas.Login(gas.NewClientRequest(addr, certPath), admin, "pass")
-						So(errl, ShouldBeNil)
-
-						client2 := NewClient(addr, certPath, token)
-
-						makeSetComplete := func(numExpectedRequests int) {
-							requests, errg := client2.GetSomeUploadRequests()
-							So(errg, ShouldBeNil)
-							So(len(requests), ShouldEqual, numExpectedRequests)
-
-							for _, request := range requests {
-								if request.Set != exampleSet2.Name || request.Local == entries[1].Path {
-									continue
-								}
-
-								request.Status = put.RequestStatusUploading
-								err = client2.UpdateFileStatus(request)
-								So(err, ShouldBeNil)
-
-								request.Status = put.RequestStatusUploaded
-								err = client2.UpdateFileStatus(request)
-								So(err, ShouldBeNil)
-							}
-						}
-
-						Convey("If set is monitored with MonitorRemovals option, it can detect locally removed files of the set", func() {
-							exampleSet2.MonitorTime = 500 * time.Millisecond
-							exampleSet2.MonitorRemovals = true
-
-							err = client.AddOrUpdateSet(exampleSet2)
-							So(err, ShouldBeNil)
-
-							gotSet, err = client.GetSetByID(exampleSet2.Requester, exampleSet2.ID())
-							So(err, ShouldBeNil)
-
-							err = client.TriggerDiscovery(gotSet.ID())
-							So(err, ShouldBeNil)
-
-							makeSetComplete(expectedRequests)
-
-							gotSet, err = client.GetSetByID(exampleSet2.Requester, exampleSet2.ID())
-							So(err, ShouldBeNil)
-							So(gotSet.NumFiles, ShouldEqual, len(set2Files))
-
-							waitForDiscovery(gotSet)
-
-							waitForRemovals(gotSet)
-
-							gotSet, err = client.GetSetByID(exampleSet2.Requester, exampleSet2.ID())
-							So(err, ShouldBeNil)
-							So(gotSet.NumFiles, ShouldEqual, len(set2Files)-1)
-						})
-
 						Convey("After discovery, monitored sets get discovered again after completion", func() {
 							exampleSet2.MonitorTime = 500 * time.Millisecond
 							err = client.AddOrUpdateSet(exampleSet2)
@@ -1309,7 +1227,7 @@ func TestServer(t *testing.T) {
 							So(err, ShouldBeNil)
 							discovered := gotSet.LastDiscovery
 
-							waitForDiscovery(gotSet)
+							waitForDiscovery(t, client, gotSet)
 
 							gotSet, err = client.GetSetByID(exampleSet2.Requester, exampleSet2.ID())
 							So(err, ShouldBeNil)
@@ -1353,7 +1271,7 @@ func TestServer(t *testing.T) {
 							So(gotSet.Status, ShouldEqual, set.Complete)
 							So(gotSet.LastDiscovery, ShouldEqual, discovered)
 
-							waitForDiscovery(gotSet)
+							waitForDiscovery(t, client, gotSet)
 
 							gotSet, err = client.GetSetByID(exampleSet2.Requester, exampleSet2.ID())
 							So(err, ShouldBeNil)
@@ -1361,7 +1279,7 @@ func TestServer(t *testing.T) {
 							So(gotSet.LastDiscovery, ShouldHappenAfter, discovered)
 							discovered = gotSet.LastDiscovery
 
-							waitForDiscovery(gotSet)
+							waitForDiscovery(t, client, gotSet)
 
 							gotSet, err = client.GetSetByID(exampleSet2.Requester, exampleSet2.ID())
 							So(err, ShouldBeNil)
@@ -1375,7 +1293,7 @@ func TestServer(t *testing.T) {
 							So(gotSet.Status, ShouldEqual, set.Complete)
 							So(gotSet.LastDiscovery, ShouldEqual, discovered)
 
-							waitForDiscovery(gotSet)
+							waitForDiscovery(t, client, gotSet)
 
 							gotSet, err = client.GetSetByID(exampleSet2.Requester, exampleSet2.ID())
 							So(err, ShouldBeNil)
@@ -1411,7 +1329,7 @@ func TestServer(t *testing.T) {
 							So(gotSet.Status, ShouldEqual, set.Complete)
 							discovered := gotSet.LastDiscovery
 
-							waitForDiscovery(gotSet)
+							waitForDiscovery(t, client, gotSet)
 
 							gotSet, err = client.GetSetByID(emptySet.Requester, emptySet.ID())
 							So(err, ShouldBeNil)
@@ -1496,7 +1414,7 @@ func TestServer(t *testing.T) {
 								addedFile := filepath.Join(emptyDir, "file.txt")
 								internal.CreateTestFile(t, addedFile, "")
 
-								waitForDiscovery(gotSet)
+								waitForDiscovery(t, client, gotSet)
 
 								gotSet, err = client.GetSetByID(emptySet.Requester, emptySet.ID())
 								So(err, ShouldBeNil)
@@ -1504,7 +1422,7 @@ func TestServer(t *testing.T) {
 								So(gotSet.LastDiscovery, ShouldHappenAfter, discovered)
 								discovered = gotSet.LastDiscovery
 
-								waitForDiscovery(gotSet)
+								waitForDiscovery(t, client, gotSet)
 
 								gotSet, err = client.GetSetByID(emptySet.Requester, emptySet.ID())
 								So(err, ShouldBeNil)
@@ -1975,6 +1893,107 @@ func TestServer(t *testing.T) {
 							So(err, ShouldBeNil)
 							ts := <-tsCh
 							So(ts, ShouldHappenBefore, tr)
+						})
+					})
+
+					Convey("And given a monitored set with MonitorRemovals option", func() {
+						file1 := filepath.Join(localDir, "file1")
+						file2 := filepath.Join(localDir, "file2")
+						dir1 := filepath.Join(localDir, "dir1")
+						file3 := filepath.Join(dir1, "file3")
+						dir2 := filepath.Join(localDir, "dir2")
+						dir3 := filepath.Join(dir2, "dir3")
+
+						err = os.Mkdir(dir1, 0755)
+						So(err, ShouldBeNil)
+
+						err = os.Mkdir(dir2, 0755)
+						So(err, ShouldBeNil)
+
+						err = os.Mkdir(dir3, 0755)
+						So(err, ShouldBeNil)
+
+						internal.CreateTestFileOfLength(t, file1, 1)
+						internal.CreateTestFileOfLength(t, file2, 1)
+						internal.CreateTestFileOfLength(t, file3, 1)
+
+						listOfFiles := []string{file1, file2, file3}
+
+						err = client.SetFiles(exampleSet.ID(), []string{file1, file2})
+						So(err, ShouldBeNil)
+
+						err = client.SetDirs(exampleSet.ID(), []string{dir1, dir2})
+						So(err, ShouldBeNil)
+
+						exampleSet.MonitorTime = 500 * time.Millisecond
+						exampleSet.MonitorRemovals = true
+
+						err = client.AddOrUpdateSet(exampleSet)
+						So(err, ShouldBeNil)
+
+						err = client.TriggerDiscovery(exampleSet.ID())
+						So(err, ShouldBeNil)
+
+						ok := <-racCalled
+						So(ok, ShouldBeTrue)
+
+						files, errg := client.GetFiles(exampleSet.ID())
+						So(errg, ShouldBeNil)
+
+						So(len(files), ShouldEqual, len(listOfFiles))
+
+						Convey("The monitor can detect locally removed files and remove them from the set", func() {
+							err = os.Remove(file1)
+							So(err, ShouldBeNil)
+
+							err = os.Remove(file3)
+							So(err, ShouldBeNil)
+
+							exampleSet.Status = set.Complete
+
+							err = client.AddOrUpdateSet(exampleSet)
+							So(err, ShouldBeNil)
+
+							waitForDiscovery(t, client, exampleSet)
+
+							files, errg := client.GetFiles(exampleSet.ID())
+							So(errg, ShouldBeNil)
+
+							So(len(files), ShouldEqual, len(listOfFiles)-2)
+							So(files[0].Path, ShouldEqual, file2)
+
+							gotSet, errgs := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+							So(errgs, ShouldBeNil)
+							So(gotSet.NumFiles, ShouldEqual, len(listOfFiles)-2)
+						})
+
+						Convey("The monitor can detect locally removed dirs and remove them and their nested files from the set", func() {
+							err = os.RemoveAll(dir1)
+							So(err, ShouldBeNil)
+
+							err = os.RemoveAll(dir3)
+							So(err, ShouldBeNil)
+
+							exampleSet.Status = set.Complete
+
+							err = client.AddOrUpdateSet(exampleSet)
+							So(err, ShouldBeNil)
+
+							waitForDiscovery(t, client, exampleSet)
+
+							files, errg := client.GetFiles(exampleSet.ID())
+							So(errg, ShouldBeNil)
+
+							So(len(files), ShouldEqual, len(listOfFiles)-1)
+
+							dirs, errg := client.GetDirs(exampleSet.ID())
+							So(errg, ShouldBeNil)
+							So(len(dirs), ShouldEqual, 1)
+							So(dirs[0].Path, ShouldEqual, dir2)
+
+							gotSet, errgs := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+							So(errgs, ShouldBeNil)
+							So(gotSet.NumFiles, ShouldEqual, len(listOfFiles)-1)
 						})
 					})
 
@@ -3812,6 +3831,23 @@ func createRemoteHardlink(t *testing.T, handler remove.Handler, lPath, rPath,
 
 	err = os.Link(filePath, lPath)
 	So(err, ShouldBeNil)
+}
+
+func waitForDiscovery(t *testing.T, client *Client, given *set.Set) {
+	t.Helper()
+
+	discovered := given.LastDiscovery
+
+	internal.RetryUntilWorksCustom(t, func() error { //nolint:errcheck
+		tickerSet, errg := client.GetSetByID(given.Requester, given.ID())
+		So(errg, ShouldBeNil)
+
+		if tickerSet.LastDiscovery.After(discovered) {
+			return nil
+		}
+
+		return errNotDiscovered
+	}, given.MonitorTime*2, given.MonitorTime/10)
 }
 
 func waitForRemovals(t *testing.T, client *Client, given *set.Set) {

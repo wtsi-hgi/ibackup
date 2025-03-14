@@ -243,11 +243,16 @@ func (s *Server) discoverSetRemovals(given *set.Set) error {
 		return err
 	}
 
-	if filesToRemove == nil {
+	dirsToRemove, err := s.findDirsToRemove(given)
+	if err != nil {
+		return err
+	}
+
+	if filesToRemove == nil && dirsToRemove == nil {
 		return nil
 	}
 
-	return s.removeFilesAndDirs(given, filesToRemove, nil)
+	return s.removeFilesAndDirs(given, filesToRemove, dirsToRemove)
 }
 
 func (s *Server) findFilesToRemove(given *set.Set) ([]string, error) {
@@ -256,23 +261,35 @@ func (s *Server) findFilesToRemove(given *set.Set) ([]string, error) {
 		return nil, err
 	}
 
-	var filesToRemove []string
+	return findNotExistingEntries(fileEntriesInSet)
+}
 
-	for _, file := range fileEntriesInSet {
-		_, err := os.Stat(file.Path)
+func findNotExistingEntries(entries []*set.Entry) ([]string, error) {
+	var missingPaths []string
 
+	for _, entry := range entries {
+		_, err := os.Stat(entry.Path)
 		if errors.Is(err, os.ErrNotExist) {
-			filesToRemove = append(filesToRemove, file.Path)
+			missingPaths = append(missingPaths, entry.Path)
 		} else if err != nil {
 			return nil, err
 		}
-
 	}
 
-	return filesToRemove, nil
+	return missingPaths, nil
 }
 
-func (s *Server) walkDirEntries(given *set.Set, excludeTree ptrie.Trie[bool]) func([]*set.Entry) ([]*set.Dirent, []*set.Dirent, error) {
+func (s *Server) findDirsToRemove(given *set.Set) ([]string, error) {
+	dirEntriesInSet, err := s.db.GetAllDirEntries(given.ID())
+	if err != nil {
+		return nil, err
+	}
+
+	return findNotExistingEntries(dirEntriesInSet)
+}
+
+func (s *Server) walkDirEntries(given *set.Set,
+	excludeTree ptrie.Trie[bool]) func([]*set.Entry) ([]*set.Dirent, []*set.Dirent, error) {
 	return func(entries []*set.Entry) ([]*set.Dirent, []*set.Dirent, error) {
 		entriesCh := make(chan *set.Dirent)
 		doneCh := make(chan error)

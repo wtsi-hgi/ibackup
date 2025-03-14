@@ -2598,3 +2598,6 @@ func getMetaValue(meta, key string) string {
 
 	return value[:nlPos]
 }
+
+// TODO add new flag to add
+// Test should say u can set monitor removals and see the status displays it.
