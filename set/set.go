@@ -103,7 +103,8 @@ type Set struct {
 	// defaults to unmonitored (a one time upload of Entries).
 	MonitorTime time.Duration
 
-	// TODO
+	// Tells the monitor if it should remove any files from the set that have
+	// been locally deleted.
 	MonitorRemovals bool
 
 	// An optional longer free-text description of this backup set.

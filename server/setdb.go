@@ -562,16 +562,13 @@ func (s *Server) processDBFileRemoval(removeReq *set.RemoveReq, entry *set.Entry
 	if entry == nil && mayMissInDiscoverBucket {
 		return s.db.IncrementNumObjectRemoved(removeReq.Set.ID())
 	}
-	//
 
 	err := s.db.RemoveFileEntry(removeReq.Set.ID(), removeReq.Path)
 	if err != nil {
 		return err
 	}
 
-	//
-
-	if entry.Type != set.Symlink {
+	if entry.Type != set.Symlink && entry.Status != set.Missing {
 		err = s.db.RemoveFileFromInode(removeReq.Path, entry.Inode)
 		if err != nil {
 			return err

@@ -164,16 +164,14 @@ func New(conf Config) (*Server, error) {
 }
 
 func (s *Server) monitorCB(given *set.Set) {
+	if given.MonitorRemovals {
+		if err := s.discoverSetRemovals(given); err != nil {
+			s.Logger.Printf("error discovering set removals during monitoring: %s", err)
+		}
+	}
+
 	if err := s.discoverSet(given); err != nil {
 		s.Logger.Printf("error discovering set during monitoring: %s", err)
-	}
-
-	if !given.MonitorRemovals {
-		return
-	}
-
-	if err := s.discoverSetRemovals(given); err != nil {
-		s.Logger.Printf("error discovering set removals during monitoring: %s", err)
 	}
 }
 
