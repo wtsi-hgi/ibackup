@@ -78,10 +78,11 @@ func TestPutMock(t *testing.T) {
 					_, err = os.Stat(request.Remote)
 					So(err, ShouldBeNil)
 
-					lh.Mu.RLock()
-					So(lh.Meta[request.Remote], ShouldResemble, request.Meta.LocalMeta)
-					checkAddedMeta(lh.Meta[request.Remote])
-					lh.Mu.RUnlock()
+					meta, errm := lh.GetMeta(request.Remote)
+					So(errm, ShouldBeNil)
+
+					So(meta, ShouldResemble, request.Meta.LocalMeta)
+					checkAddedMeta(meta)
 				}
 
 				skipped := 0
@@ -111,12 +112,13 @@ func TestPutMock(t *testing.T) {
 						case RequestStatusReplaced:
 							replaced++
 
-							lh.Mu.RLock()
-							So(lh.Meta[request.Remote], ShouldResemble, requests[0].Meta.LocalMeta)
-							So(lh.Meta[request.Remote][MetaKeyRequester], ShouldEqual, "John,Sam")
-							So(lh.Meta[request.Remote][MetaKeySets], ShouldEqual, "setA,setB")
-							date = lh.Meta[request.Remote][MetaKeyDate]
-							lh.Mu.RUnlock()
+							meta, errm := lh.GetMeta(request.Remote)
+							So(errm, ShouldBeNil)
+
+							So(meta, ShouldResemble, requests[0].Meta.LocalMeta)
+							So(meta[MetaKeyRequester], ShouldEqual, "John,Sam")
+							So(meta[MetaKeySets], ShouldEqual, "setA,setB")
+							date = meta[MetaKeyDate]
 						default:
 							other++
 						}
@@ -157,11 +159,13 @@ func TestPutMock(t *testing.T) {
 
 						request = <-srCh
 						So(request.Status, ShouldEqual, RequestStatusUnmodified)
-						lh.Mu.RLock()
-						So(lh.Meta[request.Remote][MetaKeyRequester], ShouldEqual, "John,Sam")
-						So(lh.Meta[request.Remote][MetaKeySets], ShouldEqual, "setA,setB,setC")
-						So(lh.Meta[request.Remote][MetaKeyDate], ShouldEqual, date)
-						lh.Mu.RUnlock()
+
+						meta, errm := lh.GetMeta(request.Remote)
+						So(errm, ShouldBeNil)
+
+						So(meta[MetaKeyRequester], ShouldEqual, "John,Sam")
+						So(meta[MetaKeySets], ShouldEqual, "setA,setB,setC")
+						So(meta[MetaKeyDate], ShouldEqual, date)
 					})
 				})
 

@@ -37,6 +37,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/VertebrateResequencing/wr/queue"
 	"github.com/gammazero/workerpool"
 	"github.com/ugorji/go/codec"
 	"github.com/wtsi-hgi/ibackup/put"
@@ -89,12 +90,6 @@ const (
 	workerPoolSizeFiles = 16
 )
 
-const (
-	NotRemoved       = iota // 0
-	AboutToBeRemoved        // 1
-	Removed                 // 2
-)
-
 // DBRO is the read-only component of the DB struct.
 type DBRO struct {
 	db *bolt.DB
@@ -104,18 +99,36 @@ type DBRO struct {
 	slacker Slacker
 }
 
+type RemovalStatus int8
+
+const (
+	NotRemoved       RemovalStatus = iota // 0
+	AboutToBeRemoved                      // 1
+	Removed                               // 2
+)
+
 // RemoveReq contains information about a remove request for a path.
 type RemoveReq struct {
 	Path                string
 	Set                 *Set
 	IsDir               bool
 	IsDirUploaded       bool
-	RemoteRemovalStatus int8
+	RemoteRemovalStatus RemovalStatus
 	IsComplete          bool
 }
 
 func (rq RemoveReq) Key() string {
 	return strings.Join([]string{rq.Set.ID(), rq.Path}, ":")
+}
+
+// ItemDef returns a queue.ItemDef for the remove request.
+func (rq RemoveReq) ItemDef(ttr time.Duration) *queue.ItemDef {
+	return &queue.ItemDef{
+		Key:          rq.Key(),
+		Data:         rq,
+		TTR:          ttr,
+		ReserveGroup: rq.Set.ID(),
+	}
 }
 
 // NewRemoveRequest creates a remove requests using the provided information.
