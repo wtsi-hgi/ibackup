@@ -121,7 +121,9 @@ You can also provide:
 --monitor-removals : after providing --monitor, you can provide this to also
 					 monitor if file and directory paths have been removed 
 					 locally. If any paths are found to be removed, the monitor 
-					 will remove them from the set.
+					 will remove them from the set as well as from iRODS. This
+					 option means your set is not longer a proper back up, and
+					 you cannot restore locally removed files. 
 --archive : delete local files after successfully uploading them. (The actual
             deletion is not yet implemented, but you can at least record the
 		    fact you wanted deletion now, so they can be deleted in the future.)
