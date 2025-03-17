@@ -451,19 +451,10 @@ func buildRemovalStructsFromFilePaths(givenSet *set.Set, paths []string) ([]*que
 		rq := set.NewRemoveRequest(path, givenSet, false)
 
 		remReqs[i] = rq
-		defs[i] = buildRemoveItemDef(rq)
+		defs[i] = rq.ItemDef(ttr)
 	}
 
 	return defs, remReqs
-}
-
-func buildRemoveItemDef(rq set.RemoveReq) *queue.ItemDef {
-	return &queue.ItemDef{
-		Key:          rq.Key(),
-		Data:         rq,
-		TTR:          ttr,
-		ReserveGroup: rq.Set.ID(),
-	}
 }
 
 func (s *Server) submitDirsForRemoval(set *set.Set, paths []string) ([]string, error) {
@@ -513,7 +504,7 @@ func (s *Server) makeItemsDefsAndFilePathsFromDirPaths(givenSet *set.Set,
 		filepaths = append(filepaths, dirFilepaths...)
 
 		remReqs[i] = rq
-		defs[i] = buildRemoveItemDef(rq)
+		defs[i] = rq.ItemDef(ttr)
 	}
 
 	return filepaths, defs, remReqs, nil
@@ -1317,7 +1308,7 @@ func (s *Server) recoverRemoveQueue() error {
 	defs := make([]*queue.ItemDef, len(remReqs))
 
 	for i, remReq := range remReqs {
-		defs[i] = buildRemoveItemDef(remReq)
+		defs[i] = remReq.ItemDef(ttr)
 
 		if !slices.Contains(sids, remReq.Set.ID()) {
 			sids = append(sids, remReq.Set.ID())

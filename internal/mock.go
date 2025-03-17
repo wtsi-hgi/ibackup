@@ -53,7 +53,7 @@ type LocalHandler struct {
 	putDur      time.Duration
 	metaFail    string
 	removeSlow  bool
-	Mu          sync.RWMutex
+	mu          sync.RWMutex
 }
 
 // GetLocalHandler returns a Handler that doesn't actually interact with iRODS,
@@ -67,8 +67,8 @@ func GetLocalHandler() *LocalHandler {
 
 // Cleanup just records this was called.
 func (l *LocalHandler) Cleanup() {
-	l.Mu.Lock()
-	defer l.Mu.Unlock()
+	l.mu.Lock()
+	defer l.mu.Unlock()
 
 	l.Cleaned = true
 	l.Connected = false
@@ -76,8 +76,8 @@ func (l *LocalHandler) Cleanup() {
 
 // EnsureCollection creates the given dir locally and records that we did this.
 func (l *LocalHandler) EnsureCollection(dir string) error {
-	l.Mu.Lock()
-	defer l.Mu.Unlock()
+	l.mu.Lock()
+	defer l.mu.Unlock()
 
 	l.Collections = append(l.Collections, dir)
 
@@ -113,8 +113,8 @@ func (l *LocalHandler) Stat(remote string) (bool, map[string]string, error) {
 		return false, nil, err
 	}
 
-	l.Mu.RLock()
-	defer l.Mu.RUnlock()
+	l.mu.RLock()
+	defer l.mu.RUnlock()
 
 	meta, exists := l.Meta[remote]
 	if !exists {
@@ -198,8 +198,8 @@ func (l *LocalHandler) RemoveMeta(path string, meta map[string]string) error {
 		return Error{ErrMockMetaFail, ""}
 	}
 
-	l.Mu.Lock()
-	defer l.Mu.Unlock()
+	l.mu.Lock()
+	defer l.mu.Unlock()
 
 	pathMeta, exists := l.Meta[path]
 	if !exists {
@@ -220,8 +220,8 @@ func (l *LocalHandler) AddMeta(path string, meta map[string]string) error {
 		return Error{ErrMockMetaFail, ""}
 	}
 
-	l.Mu.Lock()
-	defer l.Mu.Unlock()
+	l.mu.Lock()
+	defer l.mu.Unlock()
 
 	pathMeta, exists := l.Meta[path]
 	if !exists {
@@ -243,8 +243,8 @@ func (l *LocalHandler) AddMeta(path string, meta map[string]string) error {
 // GetMeta gets the metadata stored for the given path (returns an empty map if
 // path is not known about or has no metadata).
 func (l *LocalHandler) GetMeta(path string) (map[string]string, error) {
-	l.Mu.Lock()
-	defer l.Mu.Unlock()
+	l.mu.Lock()
+	defer l.mu.Unlock()
 
 	if l.Meta == nil {
 		return make(map[string]string), nil
