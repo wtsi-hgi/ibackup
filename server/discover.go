@@ -90,24 +90,20 @@ func (dc *discoveryCoordinator) getOrCreateSetMutex(sid string) *sync.Mutex {
 // their execution, then stops blocking removals.
 func (dc *discoveryCoordinator) DiscoveryHappened(sid string) {
 	dc.Lock()
+	defer dc.Unlock()
+
 	if dc.isRemovalRunning(sid) {
 		dc.hasDiscoveryHappened[sid] = true
 	}
-	dc.Unlock()
 
 	dc.unlockSetMutex(sid)
 
-	dc.Lock()
 	if !dc.isRemovalRunning(sid) {
 		delete(dc.muMap, sid)
 	}
-	dc.Unlock()
 }
 
 func (dc *discoveryCoordinator) unlockSetMutex(sid string) {
-	dc.Lock()
-	defer dc.Unlock()
-
 	dc.muMap[sid].Unlock()
 }
 
@@ -143,6 +139,9 @@ func (dc *discoveryCoordinator) WaitForDiscovery(sid string) bool {
 // AllowDiscovery indicates we finished our individual removal and a discovery
 // can now start.
 func (dc *discoveryCoordinator) AllowDiscovery(sid string) {
+	dc.Lock()
+	defer dc.Unlock()
+
 	dc.unlockSetMutex(sid)
 }
 

@@ -106,7 +106,7 @@ func (l *LocalHandler) Stat(remote string) (bool, map[string]string, error) {
 
 	_, err := os.Stat(remote)
 	if os.IsNotExist(err) {
-		return false, map[string]string{}, nil
+		return false, nil, nil
 	}
 
 	if err != nil {

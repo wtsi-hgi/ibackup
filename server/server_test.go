@@ -3304,6 +3304,109 @@ func TestServer(t *testing.T) {
 	})
 }
 
+func TestDiscoveryCoordinator(t *testing.T) {
+	Convey("With a new DiscoveryCoordinator", t, func() {
+		dc := newDiscoveryCoordinator()
+
+		sid := "1"
+
+		remCount := 0
+		numberOfRemovals := 10
+		removals := make(chan bool, numberOfRemovals)
+
+		discoveryFinished := false
+		discoveryStarted := make(chan bool)
+
+		// ctx, cancel := context.WithCancel(context.Background())
+
+		finished := make(chan bool)
+
+		mockDiscovery := func(sid string) {
+			dc.StartDiscovery(sid)
+			close(discoveryStarted)
+
+			time.Sleep(500 * time.Millisecond)
+
+			discoveryFinished = true
+
+			dc.DiscoveryHappened(sid)
+		}
+
+		mockRemoval := func(sid string) {
+			dc.WillRemove(sid)
+
+			for range numberOfRemovals {
+				_ = dc.WaitForDiscovery(sid)
+
+				time.Sleep(10 * time.Millisecond)
+
+				select {
+				case <-finished:
+					return
+				default:
+					remCount++
+					removals <- true
+
+					dc.AllowDiscovery(sid)
+				}
+			}
+
+			dc.RemovalDone(sid)
+		}
+
+		Convey("You can start discovery and then run a removal before discovery finishes", func() {
+			go mockDiscovery(sid)
+
+			<-discoveryStarted
+
+			go mockRemoval(sid)
+
+			for {
+				if discoveryFinished {
+					break
+				}
+
+				So(remCount, ShouldEqual, 0)
+				time.Sleep(100 * time.Millisecond)
+			}
+
+			<-removals
+
+			So(remCount, ShouldNotEqual, 0)
+
+			close(finished)
+		})
+
+		Convey("You can start removals and then trigger discovery which will get priority", func() {
+			go mockRemoval(sid)
+
+			<-removals
+
+			go mockDiscovery(sid)
+
+			<-discoveryStarted
+
+			removalsCompletedBeforeDiscovery := remCount
+			removals = make(chan bool)
+
+			for {
+				if discoveryFinished {
+					break
+				}
+
+				So(remCount, ShouldEqual, removalsCompletedBeforeDiscovery)
+				time.Sleep(100 * time.Millisecond)
+			}
+
+			<-removals
+
+			So(remCount, ShouldBeGreaterThan, removalsCompletedBeforeDiscovery)
+
+			close(finished)
+		})
+	})
+}
+
 // createDBLocation creates a temporary location for to store a database and
 // returns the path to the (non-existent) database file.
 func createDBLocation(t *testing.T) string {
