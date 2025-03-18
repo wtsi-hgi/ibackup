@@ -47,9 +47,6 @@ func TestRemoveMock(t *testing.T) {
 
 		transformer := put.PrefixTransformer(sourceDir, destDir)
 
-		// dirToSearch, err := transformer("/")
-		// So(err, ShouldBeNil)
-
 		var err error
 
 		Convey("Given an uploaded empty dir", func() {
