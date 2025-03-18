@@ -423,7 +423,7 @@ func (b *Baton) Stat(remote string) (bool, map[string]string, error) {
 
 	if err != nil {
 		if strings.Contains(err.Error(), extendoNotExist) {
-			return false, map[string]string{}, nil
+			return false, nil, nil
 		}
 
 		return false, nil, err
@@ -614,8 +614,6 @@ func (b *Baton) RemoveFile(path string) error {
 
 	err = timeoutOp(func() error {
 		_, errl := b.removeClient.RemObj(ex.Args{}, *it)
-
-		filepath.Dir(path)
 
 		return errl
 	}, "remove file error: "+path)
