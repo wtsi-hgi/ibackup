@@ -48,23 +48,24 @@ const (
 )
 
 // options for this cmd.
-
-var setName string
-var setTransformer string
-var setDescription string
-var setFiles string
-var setDirs string
-var setItems string
-var setPath string
-var setNull bool
-var setMonitor string
-var setMonitorRemovals bool
-var setArchive bool
-var setUser string
-var setMetadata string
-var setReason put.Reason
-var setReview string
-var setRemoval string
+var (
+	setName            string
+	setTransformer     string
+	setDescription     string
+	setFiles           string
+	setDirs            string
+	setItems           string
+	setPath            string
+	setNull            bool
+	setMonitor         string
+	setMonitorRemovals bool
+	setArchive         bool
+	setUser            string
+	setMetadata        string
+	setReason          put.Reason
+	setReview          string
+	setRemoval         string
+)
 
 var ErrCancel = errors.New("cancelled add")
 
@@ -119,11 +120,11 @@ You can also provide:
             period (minimum 1hr) after last completion, and backup any new or
             altered files in the set.
 --monitor-removals : after providing --monitor, you can provide this to also
-					 monitor if file and directory paths have been removed 
-					 locally. If any paths are found to be removed, the monitor 
+					 monitor if file and directory paths have been removed
+					 locally. If any paths are found to be removed, the monitor
 					 will remove them from the set as well as from iRODS. This
-					 option means your set is not longer a proper back up, and
-					 you cannot restore locally removed files. 
+					 option means your set is no longer a proper back up, and
+					 you cannot restore locally removed files.
 --archive : delete local files after successfully uploading them. (The actual
             deletion is not yet implemented, but you can at least record the
 		    fact you wanted deletion now, so they can be deleted in the future.)

@@ -32,7 +32,6 @@ package baton
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -89,34 +88,6 @@ func GetBatonHandler() (*Baton, error) {
 	_, err := ex.FindBaton()
 
 	return &Baton{}, err
-}
-
-// GetBatonHandlerWithMetaClient returns a Handler that uses Baton to interact
-// with iRODS and contains a meta client for interacting with metadata. If you
-// don't have baton-do in your PATH, you'll get an error.
-func GetBatonHandlerWithMetaClient() (*Baton, error) {
-	setupExtendoLogger()
-
-	_, err := ex.FindBaton()
-	if err != nil {
-		return nil, err
-	}
-
-	params := ex.DefaultClientPoolParams
-	params.MaxSize = 1
-	pool := ex.NewClientPool(params, "")
-
-	metaClient, err := pool.Get()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get metaClient: %w", err)
-	}
-
-	baton := &Baton{
-		collPool:   pool,
-		metaClient: metaClient,
-	}
-
-	return baton, nil
 }
 
 // setupExtendoLogger sets up a STDERR logger that the extendo library will use.
@@ -243,7 +214,7 @@ func (b *Baton) GetClientsFromPoolConcurrently(pool *ex.ClientPool, numClients u
 }
 
 func (b *Baton) ensureCollection(clientIndex int, ri ex.RodsItem) error {
-	err := TimeoutOp(func() error {
+	err := timeoutOp(func() error {
 		_, errl := b.collClients[clientIndex].ListItem(ex.Args{}, ri)
 
 		return errl
@@ -259,9 +230,9 @@ func (b *Baton) ensureCollection(clientIndex int, ri ex.RodsItem) error {
 	return b.createCollectionWithTimeoutAndRetries(clientIndex, ri)
 }
 
-// TimeoutOp carries out op, returning any error from it. Has a 10s timeout on
+// timeoutOp carries out op, returning any error from it. Has a 10s timeout on
 // running op, and will return a timeout error instead if exceeded.
-func TimeoutOp(op retry.Operation, path string) error {
+func timeoutOp(op retry.Operation, path string) error {
 	errCh := make(chan error, 1)
 
 	go func() {
@@ -321,14 +292,14 @@ func (b *Baton) doWithTimeoutAndRetries(op retry.Operation, clientIndex int, pat
 // makes a new client on timeout or error.
 func (b *Baton) timeoutOpAndMakeNewClientOnError(op retry.Operation, clientIndex int, path string) retry.Operation {
 	return func() error {
-		err := TimeoutOp(op, path)
+		err := timeoutOp(op, path)
 		if err != nil {
 			pool := ex.NewClientPool(ex.DefaultClientPoolParams, "")
 
 			client, errp := pool.Get()
 			if errp == nil {
 				go func(oldClient *ex.Client) {
-					TimeoutOp(func() error { //nolint:errcheck
+					timeoutOp(func() error { //nolint:errcheck
 						oldClient.StopIgnoreError()
 
 						return nil
@@ -425,7 +396,7 @@ func (b *Baton) closeConnections(clients []*ex.Client) {
 			continue
 		}
 
-		TimeoutOp(func() error { //nolint:errcheck
+		timeoutOp(func() error { //nolint:errcheck
 			client.StopIgnoreError()
 
 			return nil
@@ -444,7 +415,7 @@ func (b *Baton) Stat(remote string) (bool, map[string]string, error) {
 
 	var it ex.RodsItem
 
-	err = TimeoutOp(func() error {
+	err = timeoutOp(func() error {
 		var errl error
 		it, errl = b.metaClient.ListItem(ex.Args{Timestamp: true, AVU: true}, *requestToRodsItem("", remote))
 
@@ -537,7 +508,7 @@ func getTempFile() (string, error) {
 	return file.Name(), nil
 }
 
-func MetaToAVUs(meta map[string]string) []ex.AVU {
+func metaToAVUs(meta map[string]string) []ex.AVU {
 	avus := make([]ex.AVU, len(meta))
 	i := 0
 
@@ -559,9 +530,9 @@ func (b *Baton) RemoveMeta(path string, meta map[string]string) error {
 	}
 
 	it := RemotePathToRodsItem(path)
-	it.IAVUs = MetaToAVUs(meta)
+	it.IAVUs = metaToAVUs(meta)
 
-	err = TimeoutOp(func() error {
+	err = timeoutOp(func() error {
 		_, errl := b.metaClient.MetaRem(ex.Args{}, *it)
 
 		return errl
@@ -605,9 +576,9 @@ func (b *Baton) AddMeta(path string, meta map[string]string) error {
 	}
 
 	it := RemotePathToRodsItem(path)
-	it.IAVUs = MetaToAVUs(meta)
+	it.IAVUs = metaToAVUs(meta)
 
-	err = TimeoutOp(func() error {
+	err = timeoutOp(func() error {
 		_, errl := b.metaClient.MetaAdd(ex.Args{}, *it)
 
 		return errl
@@ -642,7 +613,7 @@ func (b *Baton) RemoveFile(path string) error {
 
 	it := RemotePathToRodsItem(path)
 
-	err = TimeoutOp(func() error {
+	err = timeoutOp(func() error {
 		_, errl := b.removeClient.RemObj(ex.Args{}, *it)
 
 		return errl
@@ -668,7 +639,7 @@ func (b *Baton) RemoveDir(path string) error {
 		IPath: path,
 	}
 
-	err = TimeoutOp(func() error {
+	err = timeoutOp(func() error {
 		_, errl := b.removeClient.RemDir(ex.Args{}, *it)
 
 		return errl
@@ -703,12 +674,12 @@ func (b *Baton) QueryMeta(dirToSearch string, meta map[string]string) ([]string,
 
 	it := &ex.RodsItem{
 		IPath: dirToSearch,
-		IAVUs: MetaToAVUs(meta),
+		IAVUs: metaToAVUs(meta),
 	}
 
 	var items []ex.RodsItem
 
-	err = TimeoutOp(func() error {
+	err = timeoutOp(func() error {
 		items, err = b.metaClient.MetaQuery(ex.Args{Object: true}, *it)
 
 		return err
@@ -722,33 +693,3 @@ func (b *Baton) QueryMeta(dirToSearch string, meta map[string]string) ([]string,
 
 	return paths, err
 }
-
-// GetBatonHandlerWithMetaClient returns a Handler that uses Baton to interact
-// with iRODS and contains a meta client for interacting with metadata. If you
-// don't have baton-do in your PATH, you'll get an error.
-// func GetBatonHandlerWithMetaClient() (*Baton, error) {
-// 	setupExtendoLogger()
-
-// 	_, err := ex.FindBaton()
-// 	if err != nil {
-// 		return nil, err
-// 	}
-
-// 	params := ex.DefaultClientPoolParams
-// 	params.MaxSize = 1
-// 	pool := ex.NewClientPool(params, "")
-
-// 	metaClient, err := pool.Get()
-// 	if err != nil {
-// 		return nil, fmt.Errorf("failed to get metaClient: %w", err)
-// 	}
-
-// 	baton := &Baton{
-// 		Baton: put.Baton{
-// 			PutMetaPool: pool,
-// 			MetaClient:  metaClient,
-// 		},
-// 	}
-
-// 	return baton, nil
-// }

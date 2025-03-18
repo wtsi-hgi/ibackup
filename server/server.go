@@ -349,6 +349,15 @@ func (s *Server) finalizeRemoveReq(removeReq set.RemoveReq) error {
 
 func (s *Server) finalizeRemoval(sid string) {
 	s.discoveryCoordinator.RemovalDone(sid)
+
+	err := s.db.OptimiseRemoveBucket(sid)
+	if err != nil {
+		s.Logger.Printf("%s", err.Error())
+	}
+
+	if s.removeQueue.Stats().Items == 0 {
+		s.storageHandler.Cleanup()
+	}
 }
 
 // rac is our queue's ready added callback which will get all ready put Requests

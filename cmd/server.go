@@ -267,10 +267,12 @@ database that you've made, to investigate.
 			}
 
 			info("enabling remote backups...")
+
 			handler, errb := baton.GetBatonHandler()
 			if errb != nil {
 				dief("failed to get baton handler: %s", errb)
 			}
+
 			s.EnableRemoteDBBackups(serverRemoteBackupPath, handler)
 			info("enabled remote backups...")
 		}

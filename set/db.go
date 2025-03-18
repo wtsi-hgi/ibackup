@@ -98,10 +98,8 @@ const (
 
 // DBRO is the read-only component of the DB struct.
 type DBRO struct {
-	db *bolt.DB
-
-	ch codec.Handle
-
+	db      *bolt.DB
+	ch      codec.Handle
 	slacker Slacker
 }
 
@@ -1654,6 +1652,8 @@ func (d *DB) SetError(setID, errMsg string) error {
 	})
 }
 
+// UpdateBasedOnRemovedEntry updates set counts based on the given entry that's
+// been removed.
 func (d *DB) UpdateBasedOnRemovedEntry(setID string, entry *Entry) error {
 	return d.updateSetProperties(setID, func(got *Set) {
 		got.SizeRemoved += entry.Size
