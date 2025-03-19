@@ -476,6 +476,88 @@ func TestServer(t *testing.T) {
 						})
 					})
 
+					Convey("And given a set with a folder and 2 nested files", func() {
+						dir0local := filepath.Join(localDir, "dir0/")
+						dir0remote := filepath.Join(remoteDir, "dir0/")
+
+						dir1local := filepath.Join(dir0local, "dir1/")
+						dir1remote := filepath.Join(dir0remote, "dir1/")
+
+						err = os.MkdirAll(dir1local, 0755)
+						So(err, ShouldBeNil)
+
+						err = os.MkdirAll(dir1remote, 0755)
+						So(err, ShouldBeNil)
+
+						file1local := filepath.Join(dir1local, "file1")
+						internal.CreateTestFile(t, file1local, "file content")
+
+						file1remote := filepath.Join(dir1remote, "file1")
+						internal.CreateTestFile(t, file1remote, "file content")
+
+						file2remote := filepath.Join(dir1remote, "file2")
+						internal.CreateTestFile(t, file2remote, "file content")
+
+						hardlinkMeta := map[string]string{
+							put.MetaKeySets:      exampleSet.Name,
+							put.MetaKeyRequester: exampleSet.Requester,
+						}
+
+						err = handler.AddMeta(file1remote, hardlinkMeta)
+						So(err, ShouldBeNil)
+
+						err = client.SetDirs(exampleSet.ID(), []string{dir1local})
+						So(err, ShouldBeNil)
+
+						err = client.TriggerDiscovery(exampleSet.ID())
+						So(err, ShouldBeNil)
+
+						ok := <-racCalled
+						So(ok, ShouldBeTrue)
+
+						Convey("Removal on a file doesn't remove the dir and doesn't log anything", func() {
+							logWriter.Reset()
+
+							err = client.RemoveFilesAndDirs(exampleSet.ID(), []string{file1local})
+							So(err, ShouldBeNil)
+
+							waitForRemovals(t, client, exampleSet)
+
+							_, err = os.Stat(file1remote)
+							So(err, ShouldNotBeNil)
+
+							_, err = os.Stat(dir1remote)
+							So(err, ShouldBeNil)
+
+							So(logWriter.String(), ShouldNotContainSubstring, "dir removal error")
+						})
+
+						Convey("If the folder has no access permissions, removal on a file will log the error", func() {
+							err = os.Chmod(dir0remote, 0555)
+							So(err, ShouldBeNil)
+
+							logWriter.Reset()
+
+							_, err = os.Stat(file1remote)
+							So(err, ShouldBeNil)
+
+							err = client.RemoveFilesAndDirs(exampleSet.ID(), []string{file1local})
+							So(err, ShouldBeNil)
+
+							waitForRemovals(t, client, exampleSet)
+
+							_, err = os.Stat(file1remote)
+							So(err, ShouldNotBeNil)
+
+							_, err = os.Stat(dir1remote)
+							So(err, ShouldBeNil)
+
+							So(logWriter.String(), ShouldContainSubstring, "dir removal error")
+
+							os.Chmod(dir0remote, 0755) //nolint:errcheck
+						})
+					})
+
 					Convey("And given a set with 100 files in one nested folder", func() {
 						dir1 := filepath.Join(localDir, "dir1/")
 						dir2 := filepath.Join(dir1, "dir2/")
@@ -3568,4 +3650,19 @@ func createRemoteHardlink(t *testing.T, handler remove.Handler, lPath, rPath,
 
 	err = os.Link(filePath, lPath)
 	So(err, ShouldBeNil)
+}
+
+func waitForRemovals(t *testing.T, client *Client, given *set.Set) {
+	t.Helper()
+
+	internal.RetryUntilWorksCustom(t, func() error { //nolint:errcheck
+		tickerSet, errg := client.GetSetByID(given.Requester, given.ID())
+		So(errg, ShouldBeNil)
+
+		if tickerSet.NumObjectsRemoved == tickerSet.NumObjectsToBeRemoved {
+			return nil
+		}
+
+		return errNotFinishedRemoving
+	}, time.Second*10, time.Millisecond*100)
 }
