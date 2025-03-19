@@ -37,6 +37,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -3310,15 +3311,13 @@ func TestDiscoveryCoordinator(t *testing.T) {
 
 		sid := "1"
 
-		remCount := 0
+		var remCount atomic.Int32
+
+		var discoveryFinished atomic.Bool
+
 		numberOfRemovals := 10
 		removals := make(chan bool, numberOfRemovals)
-
-		discoveryFinished := false
 		discoveryStarted := make(chan bool)
-
-		// ctx, cancel := context.WithCancel(context.Background())
-
 		finished := make(chan bool)
 
 		mockDiscovery := func(sid string) {
@@ -3327,7 +3326,7 @@ func TestDiscoveryCoordinator(t *testing.T) {
 
 			time.Sleep(500 * time.Millisecond)
 
-			discoveryFinished = true
+			discoveryFinished.Store(true)
 
 			dc.DiscoveryHappened(sid)
 		}
@@ -3344,7 +3343,7 @@ func TestDiscoveryCoordinator(t *testing.T) {
 				case <-finished:
 					return
 				default:
-					remCount++
+					remCount.Add(1)
 					removals <- true
 
 					dc.AllowDiscovery(sid)
@@ -3362,19 +3361,20 @@ func TestDiscoveryCoordinator(t *testing.T) {
 			go mockRemoval(sid)
 
 			for {
-				if discoveryFinished {
+				if discoveryFinished.Load() {
 					break
 				}
 
-				So(remCount, ShouldEqual, 0)
+				So(remCount.Load(), ShouldEqual, 0)
 				time.Sleep(100 * time.Millisecond)
 			}
 
 			<-removals
 
-			So(remCount, ShouldNotEqual, 0)
+			So(remCount.Load(), ShouldNotEqual, 0)
 
 			close(finished)
+			clearChannel(removals)
 		})
 
 		Convey("You can start removals and then trigger discovery which will get priority", func() {
@@ -3386,25 +3386,33 @@ func TestDiscoveryCoordinator(t *testing.T) {
 
 			<-discoveryStarted
 
-			removalsCompletedBeforeDiscovery := remCount
-			removals = make(chan bool)
+			removalsCompletedBeforeDiscovery := remCount.Load()
+
+			clearChannel(removals)
 
 			for {
-				if discoveryFinished {
+				if discoveryFinished.Load() {
 					break
 				}
 
-				So(remCount, ShouldEqual, removalsCompletedBeforeDiscovery)
+				So(remCount.Load(), ShouldEqual, removalsCompletedBeforeDiscovery)
 				time.Sleep(100 * time.Millisecond)
 			}
 
 			<-removals
 
-			So(remCount, ShouldBeGreaterThan, removalsCompletedBeforeDiscovery)
+			So(remCount.Load(), ShouldBeGreaterThan, removalsCompletedBeforeDiscovery)
 
 			close(finished)
+			clearChannel(removals)
 		})
 	})
+}
+
+func clearChannel(ch chan bool) {
+	for len(ch) > 0 {
+		<-ch
+	}
 }
 
 // createDBLocation creates a temporary location for to store a database and
