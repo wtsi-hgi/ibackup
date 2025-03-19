@@ -435,8 +435,8 @@ func (s *TestServer) Shutdown() error {
 
 // interactiveAdd does an add for sets that already exist, where a question
 // will be asked: provide the answer 'y' to do the add.
-func (s *TestServer) interactiveAdd(setName, answer, transformer, path string) error {
-	cmd := s.clientCmd([]string{"add", "--name", setName, "--transformer", transformer, "--path", path})
+func (s *TestServer) interactiveAdd(setName, answer, transformer, argName, path string) error {
+	cmd := s.clientCmd([]string{"add", "--name", setName, "--transformer", transformer, "--" + argName, path})
 
 	wc, err := cmd.StdinPipe()
 	So(err, ShouldBeNil)
@@ -1821,7 +1821,7 @@ no backup sets`
 
 			s.waitForStatus(setName, statusLine, 30*time.Second)
 
-			err = s.interactiveAdd(setName, "y", transformer, path)
+			err = s.interactiveAdd(setName, "y", transformer, "path", path)
 			So(err, ShouldBeNil)
 
 			s.waitForStatus(setName, statusLine, 30*time.Second)
@@ -1944,13 +1944,13 @@ func TestReAdd(t *testing.T) {
 
 			firstDiscovery := s.getDiscoveryLineFromStatus(name)
 
-			err := s.interactiveAdd(name, "n", transformer, localDir)
+			err := s.interactiveAdd(name, "n", transformer, "path", localDir)
 			So(err, ShouldNotBeNil)
 
 			secondDiscovery := s.getDiscoveryLineFromStatus(name)
 			So(secondDiscovery, ShouldEqual, firstDiscovery)
 
-			err = s.interactiveAdd(name, "y", transformer, localDir)
+			err = s.interactiveAdd(name, "y", transformer, "path", localDir)
 			So(err, ShouldBeNil)
 
 			s.waitForStatus(name, "\nDiscovery: completed", 5*time.Second)
@@ -2099,6 +2099,17 @@ func TestRemove(t *testing.T) {
 						0, "Num files: 4; Symlinks: 1; Hardlinks: 1; Size "+
 							"(total/recently uploaded/recently removed): 20 B / 40 B / 10 B\n"+
 							"Uploaded: 4; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0")
+				})
+
+				Convey("And you can re-add the set again", func() {
+					err = s.interactiveAdd(setName, "y", transformer, "items", tempTestFileOfPaths.Name())
+					So(err, ShouldBeNil)
+
+					s.waitForStatus(setName, "\nStatus: complete", 10*time.Second)
+
+					statusCmd := []string{"status", "--name", setName, "-d"}
+					s.confirmOutputContains(t, statusCmd, 0, file1)
+					s.confirmOutputDoesNotContain(t, statusCmd, 0, "Removal status")
 				})
 			})
 

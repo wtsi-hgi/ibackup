@@ -267,6 +267,13 @@ func (d *DB) AddOrUpdate(set *Set) error {
 			}
 
 			set = eset
+
+			subBucketName := []byte(removedBucket + separator + set.ID())
+
+			err := b.DeleteBucket(subBucketName)
+			if err != nil {
+				return err
+			}
 		}
 
 		errp := b.Put(bid, d.encodeToBytes(set))
