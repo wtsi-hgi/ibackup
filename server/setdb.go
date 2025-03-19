@@ -630,7 +630,11 @@ func (s *Server) removeRemoteFileAndHandleHardlink(lpath, rpath string, meta map
 	transformer put.PathTransformer, entry *set.Entry) error {
 	err := remove.RemoveFileAndParentFoldersIfEmpty(s.storageHandler, rpath)
 	if err != nil {
-		return err
+		if !strings.Contains(err.Error(), "dir removal error:") {
+			return err
+		}
+
+		s.Logger.Print(err.Error())
 	}
 
 	if meta[put.MetaKeyHardlink] == "" {

@@ -33,6 +33,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/wtsi-hgi/ibackup/internal"
 	"github.com/wtsi-hgi/ibackup/put"
 )
 
@@ -107,7 +108,7 @@ func removeEmptyFoldersRecursively(handler Handler, path string) error {
 			return nil
 		}
 
-		return err
+		return internal.Error{Msg: "dir removal error: " + err.Error(), Path: path}
 	}
 
 	return removeEmptyFoldersRecursively(handler, filepath.Dir(path))
