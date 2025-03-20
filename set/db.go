@@ -264,9 +264,7 @@ func (d *DB) AddOrUpdate(set *Set) error {
 
 			set = eset
 
-			subBucketName := []byte(removedBucket + separator + set.ID())
-
-			err := b.DeleteBucket(subBucketName)
+			err := d.deleteSubBucket(tx, set.ID(), removedBucket)
 			if err != nil {
 				return err
 			}
@@ -297,6 +295,17 @@ func updateDatabaseSetWithUserSetDetails(dbSet, userSet *Set) error {
 	dbSet.copyUserProperties(userSet)
 
 	return nil
+}
+
+func (d *DB) deleteSubBucket(tx *bolt.Tx, setID, subBucket string) error {
+	setsBucket := tx.Bucket([]byte(setsBucket))
+	subBucketName := []byte(subBucket + separator + setID)
+
+	if setsBucket.Bucket(subBucketName) == nil {
+		return nil
+	}
+
+	return setsBucket.DeleteBucket(subBucketName)
 }
 
 // UpdateEntry puts the updated entry into the database for the given set.
