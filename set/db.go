@@ -416,6 +416,9 @@ func (d *DB) removeEntry(setID string, entryKey string, bucketName string) error
 		setsBucket := tx.Bucket([]byte(setsBucket))
 
 		entriesBucket := setsBucket.Bucket(subBucketName)
+		if entriesBucket == nil {
+			return nil
+		}
 
 		return entriesBucket.Delete([]byte(entryKey))
 	})
