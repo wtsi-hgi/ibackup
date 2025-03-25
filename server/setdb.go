@@ -435,36 +435,36 @@ func (s *Server) removePaths(c *gin.Context) {
 }
 
 func (s *Server) removeFilesAndDirs(set *set.Set, filePaths, dirPaths []string) error {
-	err := s.submitFilesForRemoval(set, filePaths)
+	numFilesSubmitted, err := s.submitFilesForRemoval(set, filePaths)
 	if err != nil {
 		return err
 	}
 
-	numSubmitted, err := s.submitDirsForRemoval(set, dirPaths)
+	numObjsSubmitted, err := s.submitDirsForRemoval(set, dirPaths)
 	if err != nil {
 		return err
 	}
 
 	go s.handleRemoveRequests(set.ID())
 
-	return s.db.UpdateSetTotalToRemove(set.ID(), uint64(len(filePaths)+numSubmitted)) //nolint:gosec
+	return s.db.UpdateSetTotalToRemove(set.ID(), uint64(numFilesSubmitted+numObjsSubmitted)) //nolint:gosec
 }
 
-func (s *Server) submitFilesForRemoval(set *set.Set, paths []string) error {
+func (s *Server) submitFilesForRemoval(set *set.Set, paths []string) (int, error) {
 	if len(paths) == 0 {
-		return nil
+		return 0, nil
 	}
 
 	defs, remReqs := buildRemovalStructsFromPaths(set, paths, false)
 
 	err := s.db.SetRemoveRequests(set.ID(), remReqs)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
-	_, _, err = s.removeQueue.AddMany(context.Background(), defs)
+	added, _, err := s.removeQueue.AddMany(context.Background(), defs)
 
-	return err
+	return added, err
 }
 
 func buildRemovalStructsFromPaths(givenSet *set.Set, paths []string, isDir bool) ([]*queue.ItemDef, []set.RemoveReq) {
@@ -486,7 +486,7 @@ func (s *Server) submitDirsForRemoval(set *set.Set, paths []string) (int, error)
 		return 0, nil
 	}
 
-	defs, remReqs, err := s.makeItemsDefsAndFilePathsFromDirPaths(set, paths)
+	defs, remReqs, err := s.makeItemsDefsFromDirPaths(set, paths)
 	if err != nil {
 		return 0, err
 	}
@@ -501,7 +501,7 @@ func (s *Server) submitDirsForRemoval(set *set.Set, paths []string) (int, error)
 	return added, err
 }
 
-func (s *Server) makeItemsDefsAndFilePathsFromDirPaths(givenSet *set.Set,
+func (s *Server) makeItemsDefsFromDirPaths(givenSet *set.Set,
 	paths []string) ([]*queue.ItemDef, []set.RemoveReq, error) {
 	remReqs := make([]set.RemoveReq, 0, len(paths))
 	defs := make([]*queue.ItemDef, 0, len(paths))
