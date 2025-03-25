@@ -2525,7 +2525,7 @@ func TestRemove(t *testing.T) {
 				})
 			})
 
-			Convey("Remove on a failing file displays the error on the file", func() {
+			Convey("If a file fails to be removed, the error is displayed on the file", func() {
 				removeFileFromIRODS(filepath.Join(remotePath, "file1"))
 
 				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", file1)
@@ -2547,6 +2547,36 @@ func TestRemove(t *testing.T) {
 
 					s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 30*time.Second)
 				})
+			})
+		})
+
+		Convey("Given a set with a file that failed to upload", func() {
+			dir3 := filepath.Join(path, "dir3")
+
+			err := os.MkdirAll(dir3, 0755)
+			So(err, ShouldBeNil)
+
+			file5 := filepath.Join(dir3, "file5")
+			internal.CreateTestFile(t, file5, "some data1")
+
+			err = os.Chmod(file5, 0000)
+			So(err, ShouldBeNil)
+
+			setName := "setWithFailures"
+
+			s.addSetForTesting(t, setName, transformer, dir3)
+
+			s.waitForStatus(setName, "\nStatus: complete (but with failures", 10*time.Second)
+
+			Convey("Remove will still work", func() {
+				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", file5)
+
+				So(exitCode, ShouldEqual, 0)
+
+				s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
+					0, "Removal status: 0 / 1 objects removed")
+
+				s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 10*time.Second)
 			})
 		})
 	})
