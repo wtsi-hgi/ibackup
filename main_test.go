@@ -2182,6 +2182,47 @@ func TestRemove(t *testing.T) {
 				resetIRODS()
 			})
 
+			Convey("Given an added set with a folder containing a nested folder", func() {
+				dir3 := filepath.Join(dir1, "dir")
+				err = os.MkdirAll(dir3, 0755)
+				So(err, ShouldBeNil)
+
+				file5 := filepath.Join(dir3, "file5")
+				internal.CreateTestFile(t, file5, "some data3")
+
+				setName = "nestedDirSet"
+
+				s.addSetForTesting(t, setName, transformer, dir1)
+				s.waitForStatus(setName, "\nStatus: complete", 5*time.Second)
+
+				Convey("Remove removes the nested dir even though it wasnt specified in the set", func() {
+					s.removePath(t, setName, dir3, 2)
+
+					s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
+						0, dir1)
+
+					s.confirmOutputDoesNotContain(t, []string{"status", "--name", setName, "-d"},
+						0, dir3+"/")
+
+					s.confirmOutputDoesNotContain(t, []string{"status", "--name", setName, "-d"},
+						0, dir3+" => ")
+				})
+
+				Convey("Remove on the parent folder removes the nested folder from the db", func() {
+					exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", dir1)
+
+					So(exitCode, ShouldEqual, 0)
+
+					s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
+						0, "Removal status: 0 / 4 objects removed")
+
+					s.waitForStatus(setName, "Removal status: 4 / 4 objects removed", 5*time.Second)
+
+					s.confirmOutputDoesNotContain(t, []string{"status", "--name", setName, "-d"},
+						0, dir3+" => ")
+				})
+			})
+
 			Convey("Remove takes a flag --items and removes all provided files and dirs from the set", func() {
 				tempTestFileOfPathsToRemove, errt := os.CreateTemp(dir, "testFileSet")
 				So(errt, ShouldBeNil)

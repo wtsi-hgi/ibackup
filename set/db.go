@@ -112,7 +112,6 @@ type RemoveReq struct {
 	Path                string
 	Set                 *Set
 	IsDir               bool
-	IsDirUploaded       bool
 	RemoteRemovalStatus RemovalStatus
 	IsComplete          bool
 }
@@ -137,7 +136,6 @@ func NewRemoveRequest(path string, set *Set, isDir bool) RemoveReq {
 		Path:                path,
 		Set:                 set,
 		IsDir:               isDir,
-		IsDirUploaded:       false,
 		RemoteRemovalStatus: NotRemoved,
 	}
 }
@@ -441,12 +439,13 @@ func (d *DB) RemoveDirEntry(setID string, path string, deleteFromDiscoverBucket 
 // GetFilesInDir returns all file paths from inside the given directory (and all
 // nested inside) for the given set using the db.
 func (d *DBRO) GetFilesInDir(setID string, dirpath string) ([]string, error) {
-	filepaths, err := d.getPathsWithPrefix(setID, discoveredBucket, dirpath)
-	if err != nil {
-		return nil, err
-	}
+	return d.getPathsWithPrefix(setID, discoveredBucket, dirpath)
+}
 
-	return filepaths, nil
+// GetFoldersInDir returns all folder paths from inside the given directory (and all
+// nested inside) for the given set using the db.
+func (d *DBRO) GetFoldersInDir(setID string, dirpath string) ([]string, error) {
+	return d.getPathsWithPrefix(setID, discoveredFoldersBucket, dirpath)
 }
 
 // getPathsWithPrefix returns all the filepaths for the given set from the given sub

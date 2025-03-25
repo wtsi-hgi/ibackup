@@ -440,14 +440,14 @@ func (s *Server) removeFilesAndDirs(set *set.Set, filePaths, dirPaths []string) 
 		return err
 	}
 
-	dirFilePaths, err := s.submitDirsForRemoval(set, dirPaths)
+	numSubmitted, err := s.submitDirsForRemoval(set, dirPaths)
 	if err != nil {
 		return err
 	}
 
 	go s.handleRemoveRequests(set.ID())
 
-	return s.db.UpdateSetTotalToRemove(set.ID(), uint64(len(filePaths)+len(dirPaths)+len(dirFilePaths))) //nolint:gosec
+	return s.db.UpdateSetTotalToRemove(set.ID(), uint64(len(filePaths)+numSubmitted)) //nolint:gosec
 }
 
 func (s *Server) submitFilesForRemoval(set *set.Set, paths []string) error {
@@ -455,7 +455,7 @@ func (s *Server) submitFilesForRemoval(set *set.Set, paths []string) error {
 		return nil
 	}
 
-	defs, remReqs := buildRemovalStructsFromFilePaths(set, paths)
+	defs, remReqs := buildRemovalStructsFromPaths(set, paths, false)
 
 	err := s.db.SetRemoveRequests(set.ID(), remReqs)
 	if err != nil {
@@ -467,12 +467,12 @@ func (s *Server) submitFilesForRemoval(set *set.Set, paths []string) error {
 	return err
 }
 
-func buildRemovalStructsFromFilePaths(givenSet *set.Set, paths []string) ([]*queue.ItemDef, []set.RemoveReq) {
+func buildRemovalStructsFromPaths(givenSet *set.Set, paths []string, isDir bool) ([]*queue.ItemDef, []set.RemoveReq) {
 	remReqs := make([]set.RemoveReq, len(paths))
 	defs := make([]*queue.ItemDef, len(paths))
 
 	for i, path := range paths {
-		rq := set.NewRemoveRequest(path, givenSet, false)
+		rq := set.NewRemoveRequest(path, givenSet, isDir)
 
 		remReqs[i] = rq
 		defs[i] = rq.ItemDef(ttr)
@@ -481,57 +481,55 @@ func buildRemovalStructsFromFilePaths(givenSet *set.Set, paths []string) ([]*que
 	return defs, remReqs
 }
 
-func (s *Server) submitDirsForRemoval(set *set.Set, paths []string) ([]string, error) {
+func (s *Server) submitDirsForRemoval(set *set.Set, paths []string) (int, error) {
 	if len(paths) == 0 {
-		return nil, nil
+		return 0, nil
 	}
 
-	filepaths, dirDefs, dirRemoveReqs, err := s.makeItemsDefsAndFilePathsFromDirPaths(set, paths)
+	defs, remReqs, err := s.makeItemsDefsAndFilePathsFromDirPaths(set, paths)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
-
-	fileDefs, fileRemoveReqs := buildRemovalStructsFromFilePaths(set, filepaths)
-
-	defs := append(fileDefs, dirDefs...)                //nolint:gocritic
-	remReqs := append(fileRemoveReqs, dirRemoveReqs...) //nolint:gocritic
 
 	err = s.db.SetRemoveRequests(set.ID(), remReqs)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 
-	_, _, err = s.removeQueue.AddMany(context.Background(), defs)
+	added, _, err := s.removeQueue.AddMany(context.Background(), defs)
 
-	return filepaths, err
+	return added, err
 }
 
 func (s *Server) makeItemsDefsAndFilePathsFromDirPaths(givenSet *set.Set,
-	paths []string) ([]string, []*queue.ItemDef, []set.RemoveReq, error) {
-	var filepaths []string
+	paths []string) ([]*queue.ItemDef, []set.RemoveReq, error) {
+	remReqs := make([]set.RemoveReq, 0, len(paths))
+	defs := make([]*queue.ItemDef, 0, len(paths))
 
-	remReqs := make([]set.RemoveReq, len(paths))
-	defs := make([]*queue.ItemDef, len(paths))
-
-	for i, path := range paths {
+	for _, path := range paths {
 		rq := set.NewRemoveRequest(path, givenSet, true)
 
 		dirFilepaths, err := s.db.GetFilesInDir(givenSet.ID(), path)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, err
 		}
 
-		if len(dirFilepaths) == 0 {
-			rq.IsDirUploaded = true
+		dirFolderPaths, err := s.db.GetFoldersInDir(givenSet.ID(), path)
+		if err != nil {
+			return nil, nil, err
 		}
 
-		filepaths = append(filepaths, dirFilepaths...)
+		fileDefs, fileRemoveReqs := buildRemovalStructsFromPaths(givenSet, dirFilepaths, false)
+		folderDefs, folderRemoveReqs := buildRemovalStructsFromPaths(givenSet, dirFolderPaths, true)
 
-		remReqs[i] = rq
-		defs[i] = rq.ItemDef(ttr)
+		remReqs = slices.Concat(remReqs, fileRemoveReqs, folderRemoveReqs)
+		defs = slices.Concat(defs, fileDefs, folderDefs)
+
+		remReqs = append(remReqs, rq)
+		defs = append(defs, rq.ItemDef(ttr))
 	}
 
-	return filepaths, defs, remReqs, nil
+	return defs, remReqs, nil
 }
 
 func (s *Server) removeFileFromIRODSandDB(removeReq *set.RemoveReq, mayMissInDiscoverBucket bool) error {
