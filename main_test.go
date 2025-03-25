@@ -2253,6 +2253,21 @@ func TestRemove(t *testing.T) {
 					0, dir1+" => ")
 			})
 
+			Convey("Remove with --items still works as expected with duplicates", func() {
+				tempTestFileOfPathsToRemove, errt := os.CreateTemp(dir, "testFileSet")
+				So(errt, ShouldBeNil)
+
+				_, err = io.WriteString(tempTestFileOfPathsToRemove,
+					fmt.Sprintf("%s\n%s\n%s\n%s", file1, file1, dir1, dir1))
+				So(err, ShouldBeNil)
+
+				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--items", tempTestFileOfPathsToRemove.Name())
+
+				So(exitCode, ShouldEqual, 0)
+
+				s.waitForStatus(setName, "Removal status: 3 / 3 objects removed", 5*time.Second)
+			})
+
 			Convey("if the server dies during removal, the removal will continue upon server startup", func() {
 				tempTestFileOfPathsToRemove1, errt := os.CreateTemp(dir, "testFileSet")
 				So(errt, ShouldBeNil)
