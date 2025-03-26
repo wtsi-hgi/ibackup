@@ -575,6 +575,11 @@ func (s *Server) processDBFileRemoval(removeReq *set.RemoveReq, entry *set.Entry
 		}
 	}
 
+	err = s.db.RemovePathFromFailedBucket(removeReq.Set.ID(), removeReq.Path)
+	if err != nil {
+		return err
+	}
+
 	return s.db.UpdateBasedOnRemovedEntry(removeReq.Set.ID(), entry)
 }
 
