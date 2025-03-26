@@ -266,6 +266,11 @@ func TestServer(t *testing.T) {
 				slackWriter.Reset()
 			}()
 
+			token, errl := gas.Login(gas.NewClientRequest(addr, certPath), admin, "pass")
+			So(errl, ShouldBeNil)
+
+			adminClient := NewClient(addr, certPath, token)
+
 			var racRequests []*put.Request
 			racCalls := 0
 			racCalled := make(chan bool, 1)
@@ -290,7 +295,7 @@ func TestServer(t *testing.T) {
 			})
 
 			Convey("Which lets you login", func() {
-				So(logWriter.String(), ShouldBeBlank)
+				logWriter.Reset()
 
 				token, errl := gas.Login(gas.NewClientRequest(addr, certPath), "jim", "pass")
 				So(errl, ShouldBeNil)
@@ -515,6 +520,14 @@ func TestServer(t *testing.T) {
 						ok := <-racCalled
 						So(ok, ShouldBeTrue)
 
+						Convey("Removal on a pending file returns an error", func() {
+							err = client.RemoveFilesAndDirs(exampleSet.ID(), []string{file1local, dir1local})
+							So(err, ShouldNotBeNil)
+							So(err.Error(), ShouldContainSubstring, set.ErrPathIsPending)
+						})
+
+						makeGivenSetComplete(1, exampleSet.Name, adminClient)
+
 						Convey("Removal on a file doesn't remove the dir and doesn't log anything", func() {
 							logWriter.Reset()
 
@@ -595,6 +608,8 @@ func TestServer(t *testing.T) {
 						So(errg, ShouldBeNil)
 
 						So(gotSet.NumFiles, ShouldEqual, filesInSet)
+
+						makeGivenSetComplete(100, exampleSet.Name, adminClient)
 
 						Convey("You can trigger removals", func() {
 							err = client.RemoveFilesAndDirs(exampleSet.ID(), []string{dir2})
@@ -1153,13 +1168,8 @@ func TestServer(t *testing.T) {
 							So(entries[1].Status, ShouldEqual, set.Missing)
 							So(entries[2].Type, ShouldEqual, set.Symlink)
 
-							token, errl = gas.Login(gas.NewClientRequest(addr, certPath), admin, "pass")
-							So(errl, ShouldBeNil)
-
-							client = NewClient(addr, certPath, token)
-
 							makeSetComplete := func(numExpectedRequests int) {
-								requests, errg := client.GetSomeUploadRequests()
+								requests, errg := adminClient.GetSomeUploadRequests()
 								So(errg, ShouldBeNil)
 								So(len(requests), ShouldEqual, numExpectedRequests)
 
@@ -1169,11 +1179,11 @@ func TestServer(t *testing.T) {
 									}
 
 									request.Status = put.RequestStatusUploading
-									err = client.UpdateFileStatus(request)
+									err = adminClient.UpdateFileStatus(request)
 									So(err, ShouldBeNil)
 
 									request.Status = put.RequestStatusUploaded
-									err = client.UpdateFileStatus(request)
+									err = adminClient.UpdateFileStatus(request)
 									So(err, ShouldBeNil)
 								}
 							}
@@ -3665,4 +3675,24 @@ func waitForRemovals(t *testing.T, client *Client, given *set.Set) {
 
 		return errNotFinishedRemoving
 	}, time.Second*10, time.Millisecond*100)
+}
+
+func makeGivenSetComplete(numExpectedRequests int, setName string, client *Client) {
+	requests, errg := client.GetSomeUploadRequests()
+	So(errg, ShouldBeNil)
+	So(len(requests), ShouldEqual, numExpectedRequests)
+
+	for _, request := range requests {
+		if request.Set != setName {
+			continue
+		}
+
+		request.Status = put.RequestStatusUploading
+		err := client.UpdateFileStatus(request)
+		So(err, ShouldBeNil)
+
+		request.Status = put.RequestStatusUploaded
+		err = client.UpdateFileStatus(request)
+		So(err, ShouldBeNil)
+	}
 }

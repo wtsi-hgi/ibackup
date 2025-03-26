@@ -538,7 +538,7 @@ func (s *Server) removeFileFromIRODSandDB(removeReq *set.RemoveReq, mayMissInDis
 		return err
 	}
 
-	fileMayNotBeUploaded := entry.Status == set.Failed
+	fileMayNotBeUploaded := entry != nil && entry.Status == set.Failed
 
 	err = s.processRemoteFileRemoval(removeReq, entry)
 	if err != nil && !fileMayNotBeUploaded {

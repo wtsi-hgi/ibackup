@@ -30,6 +30,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -64,6 +65,7 @@ const (
 	ErrInvalidTransformerPath = "invalid transformer path concatenation"
 	ErrNoAddDuringDiscovery   = "can't add set while set is being discovered"
 	ErrPathNotInSet           = "path(s) do not belong to the backup set"
+	ErrPathIsPending          = "path(s) are still pending, wait until complete"
 
 	setsBucket                    = "sets"
 	userToSetBucket               = "userLookup"
@@ -336,7 +338,7 @@ func (d *DB) encodeToBytes(thing interface{}) []byte {
 // given set. Also classifies the valid paths into a slice of filepaths or
 // dirpaths.
 func (d *DB) ValidateFileAndDirPaths(set *Set, paths []string) ([]string, []string, error) {
-	filePaths, notFilePaths, err := d.validateFilePaths(set, paths)
+	filePaths, notFilePaths, pendingFilePaths, err := d.validateFilePaths(set, paths)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -348,40 +350,46 @@ func (d *DB) ValidateFileAndDirPaths(set *Set, paths []string) ([]string, []stri
 
 	if len(invalidPaths) > 0 {
 		err = Error{Msg: fmt.Sprintf("%s : %v", ErrPathNotInSet, invalidPaths), id: set.Name}
+
+		return nil, nil, err
+	}
+
+	if len(pendingFilePaths) > 0 {
+		err = Error{Msg: fmt.Sprintf("%s : %v", ErrPathIsPending, pendingFilePaths), id: set.Name}
 	}
 
 	return filePaths, dirPaths, err
 }
 
-func (d *DB) validateFilePaths(set *Set, paths []string) ([]string, []string, error) {
+func (d *DB) validateFilePaths(set *Set, paths []string) ([]string, []string, []string, error) {
 	return d.validatePaths(set, fileBucket, discoveredBucket, paths)
 }
 
 // validatePaths checks if the provided paths are in atleast one of the given
 // buckets for the set. Returns a slice of all valid paths and a slice of all
 // invalid paths.
-func (d *DB) validatePaths(set *Set, bucket1, bucket2 string, paths []string) ([]string, []string, error) {
-	entriesMap := make(map[string]bool)
-
-	for _, bucket := range []string{bucket1, bucket2} {
-		entries, err := d.getEntries(set.ID(), bucket)
-		if err != nil {
-			return nil, nil, err
-		}
-
-		for _, entry := range entries {
-			entriesMap[entry.Path] = true
-		}
+func (d *DB) validatePaths(set *Set, bucket1, bucket2 string, paths []string) ([]string, []string, []string, error) {
+	entriesMap, err := d.getPathToEntryMapFromBuckets([]string{bucket1, bucket2}, set.ID())
+	if err != nil {
+		return nil, nil, nil, err
 	}
 
 	var ( //nolint:prealloc
 		validPaths   []string
 		invalidPaths []string
+		pendingPaths []string
 	)
 
 	for _, path := range paths {
-		if _, ok := entriesMap[path]; !ok {
+		entry, ok := entriesMap[path]
+		if !ok {
 			invalidPaths = append(invalidPaths, path)
+
+			continue
+		}
+
+		if entry.Status == Pending {
+			pendingPaths = append(pendingPaths, path)
 
 			continue
 		}
@@ -389,11 +397,30 @@ func (d *DB) validatePaths(set *Set, bucket1, bucket2 string, paths []string) ([
 		validPaths = append(validPaths, path)
 	}
 
-	return validPaths, invalidPaths, nil
+	return validPaths, invalidPaths, pendingPaths, nil
+}
+
+func (d *DB) getPathToEntryMapFromBuckets(buckets []string, sid string) (map[string]*Entry, error) {
+	entriesMap := make(map[string]*Entry)
+
+	for _, bucket := range buckets {
+		entries, err := d.getEntries(sid, bucket)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, entry := range entries {
+			entriesMap[entry.Path] = entry
+		}
+	}
+
+	return entriesMap, nil
 }
 
 func (d *DB) validateDirPaths(set *Set, paths []string) ([]string, []string, error) {
-	return d.validatePaths(set, dirBucket, discoveredFoldersBucket, paths)
+	validPaths, invalidPaths, pendingPaths, err := d.validatePaths(set, dirBucket, discoveredFoldersBucket, paths)
+
+	return slices.Concat(validPaths, pendingPaths), invalidPaths, err
 }
 
 // RemoveFileEntry removes the provided file from a given set.
@@ -1125,7 +1152,7 @@ func (d *DBRO) getEntryFromSubbucket(kind, setID, path string, setsBucket *bolt.
 	}
 
 	entry := d.decodeEntry(v)
-	entry.isDir = kind == dirBucket
+	entry.isDir = kind == dirBucket || kind == discoveredFoldersBucket
 
 	return entry, b
 }
