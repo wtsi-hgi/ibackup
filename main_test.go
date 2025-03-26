@@ -2080,12 +2080,12 @@ func TestRemove(t *testing.T) {
 				s.confirmOutputDoesNotContain(t, []string{"status", "--name", setName, "-d"},
 					0, file1)
 
-				s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
-					0, "Num files: 5; Symlinks: 1; Hardlinks: 1; Size "+
-						"(total/recently uploaded/recently removed): 30 B / 40 B / 10 B\n"+
-						"Uploaded: 5; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0")
+				Convey("Remove again will remove another object and status will update accordingly", func() {
+					s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
+						0, "Num files: 5; Symlinks: 1; Hardlinks: 1; Size "+
+							"(total/recently uploaded/recently removed): 30 B / 40 B / 10 B\n"+
+							"Uploaded: 5; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0")
 
-				Convey("Remove again will remove another object", func() {
 					exitCode, _ = s.runBinary(t, "remove", "--name", setName, "--path", dir1)
 
 					So(exitCode, ShouldEqual, 0)
