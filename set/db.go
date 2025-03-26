@@ -1222,6 +1222,14 @@ func (d *DBRO) getBucketAndKeyForFailedLookup(tx *bolt.Tx, setID, path string) (
 	return tx.Bucket([]byte(failedBucket)), []byte(setID + separator + path)
 }
 
+// RemovePathFromFailedBucket removes the entry with the given setID and path
+// from the failed bucket.
+func (d *DB) RemovePathFromFailedBucket(setID, path string) error {
+	return d.db.Update(func(tx *bolt.Tx) error {
+		return d.removeFailedLookup(tx, setID, path)
+	})
+}
+
 // addFailedLookup adds the given path for the given set from our failed lookup
 // bucket. For speed of retrieval, it's not actually just a lookup, but we
 // duplicate the entry data in the failedBucket.

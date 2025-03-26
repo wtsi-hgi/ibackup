@@ -442,6 +442,13 @@ func TestServer(t *testing.T) {
 							})
 						})
 
+						// s.db.SetFileEntries()
+						// fakeRequest := put.Request{
+						// 	Local:
+						// 	Status: put.RequestStatusFailed,
+						// }
+						// s.db.SetEntryStatus(&fakeRequest)
+
 						Convey("And if you remove the original file and the first hardlink locally and add a third hardlink", func() {
 							hardlink3local := filepath.Join(localDir, "hardlink3")
 							hardlink3Remote := filepath.Join(remoteDir, "hardlink3")
@@ -526,48 +533,67 @@ func TestServer(t *testing.T) {
 							So(err.Error(), ShouldContainSubstring, set.ErrPathIsPending)
 						})
 
-						makeGivenSetComplete(1, exampleSet.Name, adminClient)
+						Convey("Removal of failed files removes entries from Failed bucket", func() {
+							changeSetFilesStatus(1, exampleSet.Name, adminClient, put.RequestStatusFailed)
 
-						Convey("Removal on a file doesn't remove the dir and doesn't log anything", func() {
-							logWriter.Reset()
+							failedEntries, _, errg := s.db.GetFailedEntries(exampleSet.ID())
+							So(errg, ShouldBeNil)
+							So(len(failedEntries), ShouldEqual, 1)
 
 							err = client.RemoveFilesAndDirs(exampleSet.ID(), []string{file1local})
 							So(err, ShouldBeNil)
 
 							waitForRemovals(t, client, exampleSet)
 
-							_, err = os.Stat(file1remote)
-							So(err, ShouldNotBeNil)
-
-							_, err = os.Stat(dir1remote)
+							failedEntries, _, err = s.db.GetFailedEntries(exampleSet.ID())
 							So(err, ShouldBeNil)
-
-							So(logWriter.String(), ShouldNotContainSubstring, "dir removal error")
+							So(len(failedEntries), ShouldEqual, 0)
 						})
 
-						Convey("If the folder has no access permissions, removal on a file will log the error", func() {
-							err = os.Chmod(dir0remote, 0555)
-							So(err, ShouldBeNil)
+						Convey("And given all files are uploaded", func() {
+							makeGivenSetComplete(1, exampleSet.Name, adminClient)
 
-							logWriter.Reset()
+							Convey("Removal on a file doesn't remove the dir and doesn't log anything", func() {
+								logWriter.Reset()
 
-							_, err = os.Stat(file1remote)
-							So(err, ShouldBeNil)
+								err = client.RemoveFilesAndDirs(exampleSet.ID(), []string{file1local})
+								So(err, ShouldBeNil)
 
-							err = client.RemoveFilesAndDirs(exampleSet.ID(), []string{file1local})
-							So(err, ShouldBeNil)
+								waitForRemovals(t, client, exampleSet)
 
-							waitForRemovals(t, client, exampleSet)
+								_, err = os.Stat(file1remote)
+								So(err, ShouldNotBeNil)
 
-							_, err = os.Stat(file1remote)
-							So(err, ShouldNotBeNil)
+								_, err = os.Stat(dir1remote)
+								So(err, ShouldBeNil)
 
-							_, err = os.Stat(dir1remote)
-							So(err, ShouldBeNil)
+								So(logWriter.String(), ShouldNotContainSubstring, "dir removal error")
+							})
 
-							So(logWriter.String(), ShouldContainSubstring, "dir removal error")
+							Convey("If the folder has no access permissions, removal on a file will log the error", func() {
+								err = os.Chmod(dir0remote, 0555)
+								So(err, ShouldBeNil)
 
-							os.Chmod(dir0remote, 0755) //nolint:errcheck
+								logWriter.Reset()
+
+								_, err = os.Stat(file1remote)
+								So(err, ShouldBeNil)
+
+								err = client.RemoveFilesAndDirs(exampleSet.ID(), []string{file1local})
+								So(err, ShouldBeNil)
+
+								waitForRemovals(t, client, exampleSet)
+
+								_, err = os.Stat(file1remote)
+								So(err, ShouldNotBeNil)
+
+								_, err = os.Stat(dir1remote)
+								So(err, ShouldBeNil)
+
+								So(logWriter.String(), ShouldContainSubstring, "dir removal error")
+
+								os.Chmod(dir0remote, 0755) //nolint:errcheck
+							})
 						})
 					})
 
@@ -3678,6 +3704,10 @@ func waitForRemovals(t *testing.T, client *Client, given *set.Set) {
 }
 
 func makeGivenSetComplete(numExpectedRequests int, setName string, client *Client) {
+	changeSetFilesStatus(numExpectedRequests, setName, client, put.RequestStatusUploaded)
+}
+
+func changeSetFilesStatus(numExpectedRequests int, setName string, client *Client, status put.RequestStatus) {
 	requests, errg := client.GetSomeUploadRequests()
 	So(errg, ShouldBeNil)
 	So(len(requests), ShouldEqual, numExpectedRequests)
@@ -3687,12 +3717,12 @@ func makeGivenSetComplete(numExpectedRequests int, setName string, client *Clien
 			continue
 		}
 
-		request.Status = put.RequestStatusUploading
-		err := client.UpdateFileStatus(request)
-		So(err, ShouldBeNil)
+		// request.Status = put.RequestStatusUploading
+		// err := client.UpdateFileStatus(request)
+		// So(err, ShouldBeNil)
 
-		request.Status = put.RequestStatusUploaded
-		err = client.UpdateFileStatus(request)
+		request.Status = status
+		err := client.UpdateFileStatus(request)
 		So(err, ShouldBeNil)
 	}
 }
