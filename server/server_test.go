@@ -597,6 +597,44 @@ func TestServer(t *testing.T) {
 						})
 					})
 
+					Convey("And given a set created without a discovered folders bucket", func() {
+						dir1 := filepath.Join(localDir, "dir1/")
+						dir2 := filepath.Join(dir1, "dir2/")
+
+						err = os.MkdirAll(dir2, 0755)
+						So(err, ShouldBeNil)
+
+						file := filepath.Join(dir2, "file")
+						internal.CreateTestFile(t, file, "file content")
+
+						err = client.SetDirs(exampleSet.ID(), []string{dir1})
+						So(err, ShouldBeNil)
+
+						err = client.TriggerDiscovery(exampleSet.ID())
+						So(err, ShouldBeNil)
+
+						ok := <-racCalled
+						So(ok, ShouldBeTrue)
+
+						err = s.db.DeleteDiscoveredFoldersBucket(exampleSet.ID())
+						So(err, ShouldBeNil)
+
+						Convey("Remove on a folder not specified should still work", func() {
+							makeGivenSetComplete(1, exampleSet.Name, adminClient)
+
+							err = client.RemoveFilesAndDirs(exampleSet.ID(), []string{dir2})
+							So(err, ShouldBeNil)
+
+							files, errgf := client.GetFiles(exampleSet.ID())
+							So(errgf, ShouldBeNil)
+							So(len(files), ShouldEqual, 0)
+
+							dirs, errgd := client.GetDirs(exampleSet.ID())
+							So(errgd, ShouldBeNil)
+							So(len(dirs), ShouldEqual, 1)
+						})
+					})
+
 					Convey("And given a set with 100 files in one nested folder", func() {
 						dir1 := filepath.Join(localDir, "dir1/")
 						dir2 := filepath.Join(dir1, "dir2/")
