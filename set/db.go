@@ -30,6 +30,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -312,6 +313,14 @@ func (d *DB) deleteSubBucket(tx *bolt.Tx, setID, subBucket string) error {
 	return setsBucket.DeleteBucket(subBucketName)
 }
 
+// DeleteSubBucket deletes the provided sub bucket from the set with the
+// provided id.
+func (d *DB) DeleteDiscoveredFoldersBucket(setID string) error {
+	return d.db.Update(func(tx *bolt.Tx) error {
+		return d.deleteSubBucket(tx, setID, discoveredFoldersBucket)
+	})
+}
+
 // UpdateEntry puts the updated entry into the database for the given set.
 func (d *DB) UpdateEntry(sid, key string, entry *Entry) error {
 	return d.db.Update(func(tx *bolt.Tx) error {
@@ -343,9 +352,17 @@ func (d *DB) ValidateFileAndDirPaths(set *Set, paths []string) ([]string, []stri
 		return nil, nil, err
 	}
 
+	// TODO we should check status == Pending for each file in a provided
+	// folders. e.g. a non specified file can be pending. Or make dirs status
+	// actually relevant.
+
 	dirPaths, invalidPaths, err := d.validateDirPaths(set, notFilePaths)
 	if err != nil {
 		return nil, nil, err
+	}
+
+	if len(invalidPaths) > 0 {
+		dirPaths, invalidPaths, err = d.processSetIfOld(set.ID(), dirPaths, invalidPaths)
 	}
 
 	if len(invalidPaths) > 0 {
@@ -359,6 +376,76 @@ func (d *DB) ValidateFileAndDirPaths(set *Set, paths []string) ([]string, []stri
 	}
 
 	return filePaths, dirPaths, err
+}
+
+func (d *DB) processSetIfOld(sid string, dirPaths, pathsToCheck []string) ([]string, []string, error) {
+	discoveredFoldersBucketExists, err := d.checkIfDiscoveredFoldersBucketExists(sid)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if discoveredFoldersBucketExists {
+		return dirPaths, pathsToCheck, nil
+	}
+
+	discoveredFolderPaths, invalidPaths, errc := d.checkForDiscoveredFolders(pathsToCheck, sid)
+	if errc != nil {
+		return nil, nil, errc
+	}
+
+	dirPaths = slices.Concat(dirPaths, discoveredFolderPaths)
+
+	return dirPaths, invalidPaths, nil
+}
+
+func (d *DB) checkIfDiscoveredFoldersBucketExists(sid string) (bool, error) {
+	var exists bool
+
+	err := d.db.View(func(tx *bolt.Tx) error {
+		subBucketName := []byte(discoveredFoldersBucket + separator + sid)
+		setsBucket := tx.Bucket([]byte(setsBucket))
+
+		entriesBucket := setsBucket.Bucket(subBucketName)
+
+		exists = entriesBucket != nil
+
+		return nil
+	})
+
+	return exists, err
+}
+
+func (d *DB) checkForDiscoveredFolders(paths []string, sid string) ([]string, []string, error) {
+	fileEntries, err := d.getEntries(sid, discoveredBucket)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	discoveredFolders := make(map[string]bool)
+
+	for _, file := range fileEntries {
+		dir := filepath.Dir(file.Path)
+		discoveredFolders[dir] = false
+	}
+
+	validPaths := make([]string, 0, len(paths))
+	invalidPaths := make([]string, 0, len(paths))
+
+	for _, path := range paths {
+		seenBefore, ok := discoveredFolders[path]
+		if !ok {
+			invalidPaths = append(invalidPaths, path)
+		}
+
+		if seenBefore {
+			continue
+		}
+
+		validPaths = append(validPaths, path)
+		discoveredFolders[path] = true
+	}
+
+	return validPaths, invalidPaths, nil
 }
 
 func (d *DB) validateFilePaths(set *Set, paths []string) ([]string, []string, []string, error) {
@@ -582,8 +669,8 @@ func (d *DB) UpdateRemoveRequest(removeReq RemoveReq) error {
 	})
 }
 
-// DeleteObjectFromSubBucket deletes the object with the given key from the db.
-func (d *DB) DeleteObjectFromSubBucket(key, setID, subBucket string) error {
+// deleteObjectFromSubBucket deletes the object with the given key from the db.
+func (d *DB) deleteObjectFromSubBucket(key, setID, subBucket string) error {
 	return d.db.Update(func(tx *bolt.Tx) error {
 		b := getSubBucket(tx, setID, subBucket)
 		if b == nil {
@@ -702,7 +789,7 @@ func (d *DB) removeEntryIfRedundant(remReq RemoveReq, curDir string) (string, er
 	}
 
 	if strings.HasPrefix(remReq.Path, curDir) {
-		err := d.DeleteObjectFromSubBucket(remReq.Path, remReq.Set.ID(), removedBucket)
+		err := d.deleteObjectFromSubBucket(remReq.Path, remReq.Set.ID(), removedBucket)
 		if err != nil {
 			return "", err
 		}
