@@ -60,13 +60,14 @@ func (e Error) Error() string {
 }
 
 const (
-	ErrInvalidSetID           = "invalid set ID"
-	ErrInvalidRequest         = "request lacks Requester or Set"
-	ErrInvalidEntry           = "invalid set entry"
-	ErrInvalidTransformerPath = "invalid transformer path concatenation"
-	ErrNoAddDuringDiscovery   = "can't add set while set is being discovered"
-	ErrPathNotInSet           = "path(s) do not belong to the backup set"
-	ErrPathIsPending          = "path(s) are still pending, wait until complete"
+	ErrInvalidSetID              = "invalid set ID"
+	ErrInvalidRequest            = "request lacks Requester or Set"
+	ErrInvalidEntry              = "invalid set entry"
+	ErrInvalidTransformerPath    = "invalid transformer path concatenation"
+	ErrNoAddDuringDiscovery      = "can't add set while set is being discovered"
+	ErrPathNotInSet              = "path(s) do not belong to the backup set"
+	ErrPathIsPending             = "path(s) are still pending, wait until complete"
+	ErrRemovalWhenSetNotComplete = "you can only remove from completed sets"
 
 	setsBucket                    = "sets"
 	userToSetBucket               = "userLookup"
@@ -343,10 +344,30 @@ func (d *DB) encodeToBytes(thing interface{}) []byte {
 	return encoded
 }
 
-// ValidateFileAndDirPaths returns an error if any provided path is not in the
+// ValidateRemoveInputs returns an error if the provided set is not complete or
+// if any provided path is not in the given set. Also returns the valid paths
+// classified into a slice of filepaths or dirpaths.
+func (d *DB) ValidateRemoveInputs(set *Set, paths []string) ([]string, []string, error) {
+	err := d.validateSet(set)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return d.validateFileAndDirPaths(set, paths)
+}
+
+func (d *DB) validateSet(set *Set) error {
+	if set.Status == Complete {
+		return nil
+	}
+
+	return Error{Msg: ErrRemovalWhenSetNotComplete, id: set.Name}
+}
+
+// validateFileAndDirPaths returns an error if any provided path is not in the
 // given set. Also classifies the valid paths into a slice of filepaths or
 // dirpaths.
-func (d *DB) ValidateFileAndDirPaths(set *Set, paths []string) ([]string, []string, error) {
+func (d *DB) validateFileAndDirPaths(set *Set, paths []string) ([]string, []string, error) {
 	filePaths, notFilePaths, err := d.validateFilePaths(set, paths)
 	if err != nil {
 		return nil, nil, err
