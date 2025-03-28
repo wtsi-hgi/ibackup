@@ -98,17 +98,17 @@ const (
 	// EndPointAuthRemovePaths is the endpoint for removing objects from sets.
 	EndPointAuthRemovePaths = gas.EndPointAuth + removePathsPath
 
-	ErrNoAuth            = gas.Error("auth must be enabled")
-	ErrNoSetDBDirFound   = gas.Error("set database directory not found")
-	ErrNoRequester       = gas.Error("requester not supplied")
-	ErrBadRequester      = gas.Error("you are not the set requester")
-	ErrEmptyName         = gas.Error("set name cannot be empty")
-	ErrInvalidName       = gas.Error("set name contains invalid characters")
-	ErrNotAdmin          = gas.Error("you are not the server admin")
-	ErrBadSet            = gas.Error("set with that id does not exist")
-	ErrInvalidInput      = gas.Error("invalid input")
-	ErrInternal          = gas.Error("internal server error")
-	ErrElementNotInSlice = gas.Error("element not in slice")
+	ErrNoAuth                    = gas.Error("auth must be enabled")
+	ErrNoSetDBDirFound           = gas.Error("set database directory not found")
+	ErrNoRequester               = gas.Error("requester not supplied")
+	ErrBadRequester              = gas.Error("you are not the set requester")
+	ErrEmptyName                 = gas.Error("set name cannot be empty")
+	ErrInvalidName               = gas.Error("set name contains invalid characters")
+	ErrNotAdmin                  = gas.Error("you are not the server admin")
+	ErrBadSet                    = gas.Error("set with that id does not exist")
+	ErrInvalidInput              = gas.Error("invalid input")
+	ErrInternal                  = gas.Error("internal server error")
+	ErrRemovalWhenSetNotComplete = gas.Error("you can only remove from completed sets")
 
 	paramRequester = "requester"
 	paramSetID     = "id"
@@ -410,9 +410,15 @@ func (s *Server) removePaths(c *gin.Context) {
 		return
 	}
 
-	set := s.db.GetByID(sid)
+	givenSet := s.db.GetByID(sid)
 
-	filePaths, dirPaths, err := s.db.ValidateFileAndDirPaths(set, paths)
+	if givenSet.Status != set.Complete {
+		c.AbortWithError(http.StatusBadRequest, ErrRemovalWhenSetNotComplete) //nolint:errcheck
+
+		return
+	}
+
+	filePaths, dirPaths, err := s.db.ValidateFileAndDirPaths(givenSet, paths)
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
@@ -426,7 +432,7 @@ func (s *Server) removePaths(c *gin.Context) {
 		return
 	}
 
-	err = s.removeFilesAndDirs(set, filePaths, dirPaths)
+	err = s.removeFilesAndDirs(givenSet, filePaths, dirPaths)
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 

@@ -347,32 +347,26 @@ func (d *DB) encodeToBytes(thing interface{}) []byte {
 // given set. Also classifies the valid paths into a slice of filepaths or
 // dirpaths.
 func (d *DB) ValidateFileAndDirPaths(set *Set, paths []string) ([]string, []string, error) {
-	filePaths, notFilePaths, pendingFilePaths, err := d.validateFilePaths(set, paths)
+	filePaths, notFilePaths, err := d.validateFilePaths(set, paths)
 	if err != nil {
 		return nil, nil, err
 	}
-
-	// TODO we should check status == Pending for each file in a provided
-	// folders. e.g. a non specified file can be pending. Or make dirs status
-	// actually relevant.
 
 	dirPaths, invalidPaths, err := d.validateDirPaths(set, notFilePaths)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	if len(invalidPaths) > 0 {
-		dirPaths, invalidPaths, err = d.processSetIfOld(set.ID(), dirPaths, invalidPaths)
+	if len(invalidPaths) == 0 {
+		return filePaths, dirPaths, err
 	}
+
+	dirPaths, invalidPaths, err = d.processSetIfOld(set.ID(), dirPaths, invalidPaths)
 
 	if len(invalidPaths) > 0 {
 		err = Error{Msg: fmt.Sprintf("%s : %v", ErrPathNotInSet, invalidPaths), id: set.Name}
 
 		return nil, nil, err
-	}
-
-	if len(pendingFilePaths) > 0 {
-		err = Error{Msg: fmt.Sprintf("%s : %v", ErrPathIsPending, pendingFilePaths), id: set.Name}
 	}
 
 	return filePaths, dirPaths, err
@@ -416,16 +410,9 @@ func (d *DB) checkIfDiscoveredFoldersBucketExists(sid string) (bool, error) {
 }
 
 func (d *DB) checkForDiscoveredFolders(paths []string, sid string) ([]string, []string, error) {
-	fileEntries, err := d.getEntries(sid, discoveredBucket)
+	discoveredFolders, err := d.getDiscoveredFoldersForOldSets(sid)
 	if err != nil {
 		return nil, nil, err
-	}
-
-	discoveredFolders := make(map[string]bool)
-
-	for _, file := range fileEntries {
-		dir := filepath.Dir(file.Path)
-		discoveredFolders[dir] = false
 	}
 
 	validPaths := make([]string, 0, len(paths))
@@ -448,47 +435,78 @@ func (d *DB) checkForDiscoveredFolders(paths []string, sid string) ([]string, []
 	return validPaths, invalidPaths, nil
 }
 
-func (d *DB) validateFilePaths(set *Set, paths []string) ([]string, []string, []string, error) {
+func (d *DB) getDiscoveredFoldersForOldSets(sid string) (map[string]bool, error) {
+	dirEntries, err := d.GetDirEntries(sid)
+	if err != nil {
+		return nil, err
+	}
+
+	baseFolders := make(map[string]bool, len(dirEntries))
+
+	for _, dirEntry := range dirEntries {
+		baseFolders[dirEntry.Path] = true
+	}
+
+	discoveredFolders := make(map[string]bool)
+
+	fileEntries, err := d.getEntries(sid, discoveredBucket)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, file := range fileEntries {
+		discoveredFolders = d.getAllDiscoveredFoldersFromFile(file.Path, baseFolders, discoveredFolders)
+	}
+
+	return discoveredFolders, nil
+}
+
+func (d *DB) getAllDiscoveredFoldersFromFile(path string, baseFolders,
+	discoveredFolders map[string]bool) map[string]bool {
+	dir := filepath.Dir(path)
+
+	if _, ok := baseFolders[dir]; ok {
+		return discoveredFolders
+	}
+
+	discoveredFolders[dir] = false
+
+	return d.getAllDiscoveredFoldersFromFile(dir, baseFolders, discoveredFolders)
+}
+
+func (d *DB) validateFilePaths(set *Set, paths []string) ([]string, []string, error) {
 	return d.validatePaths(set, fileBucket, discoveredBucket, paths)
 }
 
 // validatePaths checks if the provided paths are in atleast one of the given
 // buckets for the set. Returns a slice of all valid paths and a slice of all
 // invalid paths.
-func (d *DB) validatePaths(set *Set, bucket1, bucket2 string, paths []string) ([]string, []string, []string, error) {
+func (d *DB) validatePaths(set *Set, bucket1, bucket2 string, paths []string) ([]string, []string, error) {
 	entriesMap, err := d.getPathToEntryMapFromBuckets([]string{bucket1, bucket2}, set.ID())
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 
 	var ( //nolint:prealloc
 		validPaths   []string
 		invalidPaths []string
-		pendingPaths []string
 	)
 
 	for _, path := range paths {
-		entry, ok := entriesMap[path]
-		if !ok {
-			invalidPaths = append(invalidPaths, path)
+		if _, ok := entriesMap[path]; ok {
+			validPaths = append(validPaths, path)
 
 			continue
 		}
 
-		if entry.Status == Pending {
-			pendingPaths = append(pendingPaths, path)
-
-			continue
-		}
-
-		validPaths = append(validPaths, path)
+		invalidPaths = append(invalidPaths, path)
 	}
 
-	return validPaths, invalidPaths, pendingPaths, nil
+	return validPaths, invalidPaths, nil
 }
 
-func (d *DB) getPathToEntryMapFromBuckets(buckets []string, sid string) (map[string]*Entry, error) {
-	entriesMap := make(map[string]*Entry)
+func (d *DB) getPathToEntryMapFromBuckets(buckets []string, sid string) (map[string]bool, error) {
+	entriesMap := make(map[string]bool)
 
 	for _, bucket := range buckets {
 		entries, err := d.getEntries(sid, bucket)
@@ -497,7 +515,7 @@ func (d *DB) getPathToEntryMapFromBuckets(buckets []string, sid string) (map[str
 		}
 
 		for _, entry := range entries {
-			entriesMap[entry.Path] = entry
+			entriesMap[entry.Path] = false
 		}
 	}
 
@@ -505,9 +523,7 @@ func (d *DB) getPathToEntryMapFromBuckets(buckets []string, sid string) (map[str
 }
 
 func (d *DB) validateDirPaths(set *Set, paths []string) ([]string, []string, error) {
-	validPaths, invalidPaths, pendingPaths, err := d.validatePaths(set, dirBucket, discoveredFoldersBucket, paths)
-
-	return slices.Concat(validPaths, pendingPaths), invalidPaths, err
+	return d.validatePaths(set, dirBucket, discoveredFoldersBucket, paths)
 }
 
 // RemoveFileEntry removes the provided file from a given set.
