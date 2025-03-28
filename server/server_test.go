@@ -442,13 +442,6 @@ func TestServer(t *testing.T) {
 							})
 						})
 
-						// s.db.SetFileEntries()
-						// fakeRequest := put.Request{
-						// 	Local:
-						// 	Status: put.RequestStatusFailed,
-						// }
-						// s.db.SetEntryStatus(&fakeRequest)
-
 						Convey("And if you remove the original file and the first hardlink locally and add a third hardlink", func() {
 							hardlink3local := filepath.Join(localDir, "hardlink3")
 							hardlink3Remote := filepath.Join(remoteDir, "hardlink3")
@@ -528,9 +521,15 @@ func TestServer(t *testing.T) {
 						So(ok, ShouldBeTrue)
 
 						Convey("Removal on a pending file returns an error", func() {
-							err = client.RemoveFilesAndDirs(exampleSet.ID(), []string{file1local, dir1local})
+							err = client.RemoveFilesAndDirs(exampleSet.ID(), []string{file1local})
 							So(err, ShouldNotBeNil)
-							So(err.Error(), ShouldContainSubstring, set.ErrPathIsPending)
+							So(err.Error(), ShouldContainSubstring, ErrRemovalWhenSetNotComplete.Error())
+						})
+
+						Convey("Removal on a folder with pending files in it returns an error", func() {
+							err = client.RemoveFilesAndDirs(exampleSet.ID(), []string{dir1local})
+							So(err, ShouldNotBeNil)
+							So(err.Error(), ShouldContainSubstring, ErrRemovalWhenSetNotComplete.Error())
 						})
 
 						Convey("Removal of failed files removes entries from Failed bucket", func() {
@@ -600,11 +599,12 @@ func TestServer(t *testing.T) {
 					Convey("And given a set created without a discovered folders bucket", func() {
 						dir1 := filepath.Join(localDir, "dir1/")
 						dir2 := filepath.Join(dir1, "dir2/")
+						dir3 := filepath.Join(dir2, "dir3/")
 
-						err = os.MkdirAll(dir2, 0755)
+						err = os.MkdirAll(dir3, 0755)
 						So(err, ShouldBeNil)
 
-						file := filepath.Join(dir2, "file")
+						file := filepath.Join(dir3, "file")
 						internal.CreateTestFile(t, file, "file content")
 
 						err = client.SetDirs(exampleSet.ID(), []string{dir1})
@@ -673,7 +673,7 @@ func TestServer(t *testing.T) {
 
 						So(gotSet.NumFiles, ShouldEqual, filesInSet)
 
-						makeGivenSetComplete(100, exampleSet.Name, adminClient)
+						makeGivenSetComplete(200, exampleSet.Name, adminClient)
 
 						Convey("You can trigger removals", func() {
 							err = client.RemoveFilesAndDirs(exampleSet.ID(), []string{dir2})
@@ -3742,7 +3742,9 @@ func waitForRemovals(t *testing.T, client *Client, given *set.Set) {
 }
 
 func makeGivenSetComplete(numExpectedRequests int, setName string, client *Client) {
-	changeSetFilesStatus(numExpectedRequests, setName, client, put.RequestStatusUploaded)
+	for i := range numExpectedRequests/100 + 1 {
+		changeSetFilesStatus(min(100, numExpectedRequests-100*i), setName, client, put.RequestStatusUploaded)
+	}
 }
 
 func changeSetFilesStatus(numExpectedRequests int, setName string, client *Client, status put.RequestStatus) {
@@ -3754,10 +3756,6 @@ func changeSetFilesStatus(numExpectedRequests int, setName string, client *Clien
 		if request.Set != setName {
 			continue
 		}
-
-		// request.Status = put.RequestStatusUploading
-		// err := client.UpdateFileStatus(request)
-		// So(err, ShouldBeNil)
 
 		request.Status = status
 		err := client.UpdateFileStatus(request)
