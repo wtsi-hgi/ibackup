@@ -552,6 +552,17 @@ func TestServer(t *testing.T) {
 						Convey("And given all files are uploaded", func() {
 							makeGivenSetComplete(1, exampleSet.Name, adminClient)
 
+							Convey("Removal on a file and a dir sets them as complete in the remove bucket", func() {
+								err = client.RemoveFilesAndDirs(exampleSet.ID(), []string{file1local, dir1local})
+								So(err, ShouldBeNil)
+
+								waitForRemovals(t, client, exampleSet)
+
+								incompleteRemReqs, errg := s.db.GetAllRemoveRequests()
+								So(errg, ShouldBeNil)
+								So(incompleteRemReqs, ShouldBeEmpty)
+							})
+
 							Convey("Removal on a file doesn't remove the dir and doesn't log anything", func() {
 								logWriter.Reset()
 

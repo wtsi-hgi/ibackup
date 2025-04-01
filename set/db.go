@@ -702,7 +702,7 @@ func (d *DB) UpdateRemoveRequest(removeReq RemoveReq) error {
 			return nil
 		}
 
-		return b.Put([]byte(removeReq.Path), d.encodeToBytes(removeReq))
+		return d.putRemoveRequestsInBucket([]RemoveReq{removeReq}, b)
 	})
 }
 
