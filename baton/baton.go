@@ -222,7 +222,7 @@ func (b *Baton) ensureCollection(clientIndex int, ri ex.RodsItem) error {
 		return nil
 	}
 
-	if errors.Is(err, internal.Error{Msg: ErrOperationTimeout, Path: ri.IPath}) {
+	if errors.Is(err, internal.PathError{Msg: ErrOperationTimeout, Path: ri.IPath}) {
 		return err
 	}
 
@@ -246,7 +246,7 @@ func timeoutOp(op retry.Operation, path string) error {
 	case err = <-errCh:
 		timer.Stop()
 	case <-timer.C:
-		err = internal.Error{Msg: ErrOperationTimeout, Path: path}
+		err = internal.PathError{Msg: ErrOperationTimeout, Path: path}
 	}
 
 	return err
@@ -619,7 +619,7 @@ func (b *Baton) RemoveFile(path string) error {
 	}, "remove file error: "+path)
 
 	if err != nil && strings.Contains(err.Error(), "CAT_NO_ROWS_FOUND") {
-		return internal.Error{Msg: internal.ErrFileDoesNotExist, Path: path}
+		return internal.PathError{Msg: internal.ErrFileDoesNotExist, Path: path}
 	}
 
 	return err
@@ -645,7 +645,7 @@ func (b *Baton) RemoveDir(path string) error {
 	}, "remove meta error: "+path)
 
 	if err != nil && strings.Contains(err.Error(), "CAT_COLLECTION_NOT_EMPTY") {
-		return internal.Error{Msg: "directory not empty", Path: path}
+		return internal.PathError{Msg: "directory not empty", Path: path}
 	}
 
 	return err

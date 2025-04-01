@@ -108,7 +108,7 @@ type FileReadTester func(ctx context.Context, path string) error
 func headRead(ctx context.Context, path string) error {
 	out, err := exec.CommandContext(ctx, "head", "-c", "1", path).CombinedOutput()
 	if err != nil && len(out) > 0 {
-		err = internal.Error{Msg: string(out)}
+		err = internal.PathError{Msg: string(out)}
 	}
 
 	return err
@@ -586,7 +586,7 @@ func (p *Putter) testRead(request *Request) error {
 	go func() {
 		select {
 		case <-timer.C:
-			errCh <- internal.Error{Msg: ErrReadTimeout, Path: request.Local}
+			errCh <- internal.PathError{Msg: ErrReadTimeout, Path: request.Local}
 		case err := <-readCh:
 			timer.Stop()
 			errCh <- err
