@@ -133,7 +133,7 @@ func (d *DB) GetFilesFromInode(inode uint64, mountPoint string) ([]string, error
 
 		v := b.Get(key)
 		if v == nil {
-			return internal.Error{Msg: "key not found in inode bucket", Path: string(key)}
+			return internal.PathError{Msg: "key not found in inode bucket", Path: string(key)}
 		}
 
 		_, files = d.decodeIMPValue(v, de.Inode)
@@ -168,7 +168,7 @@ func (d *DB) RemoveFileFromInode(path string, inode uint64) error {
 
 		v := b.Get(key)
 		if v == nil {
-			return internal.Error{Msg: "key not found in inode bucket", Path: string(key)}
+			return internal.PathError{Msg: "key not found in inode bucket", Path: string(key)}
 		}
 
 		_, files := d.decodeIMPValue(v, de.Inode)
@@ -242,7 +242,7 @@ func removePathFromInodeFiles(path string, files []string) ([]string, error) {
 func RemoveElementFromSlice(slice []string, element string) ([]string, error) {
 	index := slices.Index(slice, element)
 	if index < 0 {
-		return nil, internal.Error{Msg: ErrElementNotInSlice, Path: element}
+		return nil, internal.PathError{Msg: ErrElementNotInSlice, Path: element}
 	}
 
 	return slices.Delete(slice, index, index+1), nil

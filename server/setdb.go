@@ -634,7 +634,8 @@ func (s *Server) removeRemoteFileAndHandleHardlink(lpath, rpath string, meta map
 	transformer put.PathTransformer, entry *set.Entry) error {
 	err := remove.RemoveFileAndParentFoldersIfEmpty(s.storageHandler, rpath)
 	if err != nil {
-		if !strings.Contains(err.Error(), "dir removal error:") {
+		var dirRemovalError remove.DirRemovalError
+		if !errors.As(err, &dirRemovalError) {
 			return err
 		}
 

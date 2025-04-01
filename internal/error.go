@@ -31,12 +31,12 @@ import (
 	"fmt"
 )
 
-type Error struct {
+type PathError struct {
 	Msg  string
 	Path string
 }
 
-func (e Error) Error() string {
+func (e PathError) Error() string {
 	if e.Path != "" {
 		return fmt.Sprintf("%s [%s]", e.Msg, e.Path)
 	}
@@ -44,8 +44,8 @@ func (e Error) Error() string {
 	return e.Msg
 }
 
-func (e Error) Is(err error) bool {
-	var putErr *Error
+func (e PathError) Is(err error) bool {
+	var putErr *PathError
 	if errors.As(err, &putErr) {
 		return putErr.Msg == e.Msg
 	}

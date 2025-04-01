@@ -37,6 +37,14 @@ import (
 	"github.com/wtsi-hgi/ibackup/put"
 )
 
+type DirRemovalError struct {
+	internal.PathError
+}
+
+func newDirError(msg, path string) DirRemovalError {
+	return DirRemovalError{internal.PathError{Msg: "dir removal error: " + msg, Path: path}}
+}
+
 type Handler interface {
 	// RemoveMeta deletes the given metadata from the given object.
 	RemoveMeta(path string, meta map[string]string) error
@@ -92,6 +100,8 @@ func UpdateSetsAndRequestersOnRemoteFile(handler Handler, path string,
 	return handler.AddMeta(path, newMeta)
 }
 
+// RemoveFileAndParentFoldersIfEmpty removes the provided path from iRODS and
+// any now empty parent folders.
 func RemoveFileAndParentFoldersIfEmpty(handler Handler, path string) error { //nolint:revive
 	err := handler.RemoveFile(path)
 	if err != nil {
@@ -108,7 +118,7 @@ func removeEmptyFoldersRecursively(handler Handler, path string) error {
 			return nil
 		}
 
-		return internal.Error{Msg: "dir removal error: " + err.Error(), Path: path}
+		return newDirError(err.Error(), path)
 	}
 
 	return removeEmptyFoldersRecursively(handler, filepath.Dir(path))
@@ -122,12 +132,7 @@ func RemoveRemoteDir(handler Handler, path string, transformer put.PathTransform
 		return err
 	}
 
-	err = handler.RemoveDir(rpath)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return handler.RemoveDir(rpath)
 }
 
 // FindHardlinksWithInode returns paths to all hardlinks that point to the
