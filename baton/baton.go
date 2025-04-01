@@ -645,7 +645,7 @@ func (b *Baton) RemoveDir(path string) error {
 	}, "remove meta error: "+path)
 
 	if err != nil && strings.Contains(err.Error(), "CAT_COLLECTION_NOT_EMPTY") {
-		return internal.PathError{Msg: "directory not empty", Path: path}
+		return internal.NewDirNotEmpty(path)
 	}
 
 	return err
