@@ -29,6 +29,7 @@
 package remove
 
 import (
+	"errors"
 	"maps"
 	"path/filepath"
 	"strings"
@@ -58,7 +59,7 @@ type Handler interface {
 	GetMeta(path string) (map[string]string, error)
 
 	// RemoveDir deletes a given empty folder. If folder is not empty, returns
-	// an error containing substring "directory not empty".
+	// error of type DirNotEmptyError.
 	RemoveDir(path string) error
 
 	// RemoveFile deletes a given file. If file is not found in remote storage,
@@ -114,7 +115,8 @@ func RemoveFileAndParentFoldersIfEmpty(handler Handler, path string) error { //n
 func removeEmptyFoldersRecursively(handler Handler, path string) error {
 	err := handler.RemoveDir(path)
 	if err != nil {
-		if strings.Contains(err.Error(), "directory not empty") {
+		var dirNotEmpty internal.DirNotEmptyError
+		if errors.As(err, &dirNotEmpty) {
 			return nil
 		}
 

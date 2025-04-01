@@ -302,7 +302,12 @@ func (l *LocalHandler) RemoveDir(path string) error {
 		time.Sleep(1 * time.Second)
 	}
 
-	return os.Remove(path)
+	err := os.Remove(path)
+	if err != nil && strings.Contains(err.Error(), "directory not empty") {
+		return NewDirNotEmpty(path)
+	}
+
+	return err
 }
 
 // RemoveFile removes the file and its metadata.

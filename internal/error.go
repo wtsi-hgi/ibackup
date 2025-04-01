@@ -52,3 +52,11 @@ func (e PathError) Is(err error) bool {
 
 	return false
 }
+
+type DirNotEmptyError struct {
+	PathError
+}
+
+func NewDirNotEmpty(path string) DirNotEmptyError {
+	return DirNotEmptyError{PathError{Msg: "directory not empty", Path: path}}
+}
