@@ -2065,7 +2065,7 @@ func TestRemove(t *testing.T) {
 			s.addSetForTestingWithItems(t, setName, transformer, tempTestFileOfPaths.Name())
 
 			Convey("Remove removes the file from the set", func() {
-				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", file1)
+				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", file2)
 
 				So(exitCode, ShouldEqual, 0)
 
@@ -2075,10 +2075,10 @@ func TestRemove(t *testing.T) {
 				s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 5*time.Second)
 
 				s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
-					0, file2)
+					0, file1)
 
 				s.confirmOutputDoesNotContain(t, []string{"status", "--name", setName, "-d"},
-					0, file1)
+					0, file2)
 
 				Convey("Remove again will remove another object and status will update accordingly", func() {
 					s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
@@ -2108,8 +2108,10 @@ func TestRemove(t *testing.T) {
 					s.waitForStatus(setName, "\nStatus: complete", 10*time.Second)
 
 					statusCmd := []string{"status", "--name", setName, "-d"}
-					s.confirmOutputContains(t, statusCmd, 0, file1)
+					s.confirmOutputContains(t, statusCmd, 0, file2)
 					s.confirmOutputDoesNotContain(t, statusCmd, 0, "Removal status")
+					s.confirmOutputContains(t, statusCmd, 0,
+						"(total/recently uploaded/recently removed): 40 B / 10 B / 0 B\n")
 				})
 			})
 

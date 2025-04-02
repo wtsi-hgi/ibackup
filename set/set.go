@@ -664,6 +664,7 @@ func (s *Set) copyUserProperties(copySet *Set) {
 	s.Metadata = copySet.Metadata
 	s.NumObjectsRemoved = copySet.NumObjectsRemoved
 	s.NumObjectsToBeRemoved = copySet.NumObjectsToBeRemoved
+	s.SizeRemoved = copySet.SizeRemoved
 }
 
 // reset puts the Set data back to zero/initial/empty values.
