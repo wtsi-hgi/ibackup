@@ -1203,31 +1203,6 @@ func TestServer(t *testing.T) {
 							slackWriter.Reset()
 						})
 
-						token, errl = gas.Login(gas.NewClientRequest(addr, certPath), admin, "pass")
-						So(errl, ShouldBeNil)
-
-						client2 := NewClient(addr, certPath, token)
-
-						makeSetComplete := func(numExpectedRequests int) {
-							requests, errg := client2.GetSomeUploadRequests()
-							So(errg, ShouldBeNil)
-							So(len(requests), ShouldEqual, numExpectedRequests)
-
-							for _, request := range requests {
-								if request.Set != exampleSet2.Name || request.Local == entries[1].Path {
-									continue
-								}
-
-								request.Status = put.RequestStatusUploading
-								err = client2.UpdateFileStatus(request)
-								So(err, ShouldBeNil)
-
-								request.Status = put.RequestStatusUploaded
-								err = client2.UpdateFileStatus(request)
-								So(err, ShouldBeNil)
-							}
-						}
-
 						Convey("After discovery, monitored sets get discovered again after completion", func() {
 							exampleSet2.MonitorTime = 500 * time.Millisecond
 							err = client.AddOrUpdateSet(exampleSet2)
