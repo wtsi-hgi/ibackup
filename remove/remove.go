@@ -34,17 +34,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/wtsi-hgi/ibackup/internal"
+	"github.com/wtsi-hgi/ibackup/errs"
 	"github.com/wtsi-hgi/ibackup/put"
 )
-
-type DirRemovalError struct {
-	internal.PathError
-}
-
-func newDirError(msg, path string) DirRemovalError {
-	return DirRemovalError{internal.PathError{Msg: "dir removal error: " + msg, Path: path}}
-}
 
 type Handler interface {
 	// RemoveMeta deletes the given metadata from the given object.
@@ -115,12 +107,12 @@ func RemoveFileAndParentFoldersIfEmpty(handler Handler, path string) error { //n
 func removeEmptyFoldersRecursively(handler Handler, path string) error {
 	err := handler.RemoveDir(path)
 	if err != nil {
-		var dirNotEmpty internal.DirNotEmptyError
+		var dirNotEmpty errs.DirNotEmptyError
 		if errors.As(err, &dirNotEmpty) {
 			return nil
 		}
 
-		return newDirError(err.Error(), path)
+		return errs.NewDirError(err.Error(), path)
 	}
 
 	return removeEmptyFoldersRecursively(handler, filepath.Dir(path))

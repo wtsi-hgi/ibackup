@@ -24,7 +24,7 @@
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  ******************************************************************************/
 
-package internal
+package errs
 
 import (
 	"errors"
@@ -53,10 +53,28 @@ func (e PathError) Is(err error) bool {
 	return false
 }
 
+type DirRemovalError struct {
+	PathError
+}
+
+func NewDirError(msg, path string) DirRemovalError {
+	return DirRemovalError{
+		PathError{
+			Msg:  "dir removal error: " + msg,
+			Path: path,
+		},
+	}
+}
+
 type DirNotEmptyError struct {
 	PathError
 }
 
-func NewDirNotEmpty(path string) DirNotEmptyError {
-	return DirNotEmptyError{PathError{Msg: "directory not empty", Path: path}}
+func NewDirNotEmptyError(path string) DirNotEmptyError {
+	return DirNotEmptyError{
+		PathError{
+			Msg:  "directory not empty",
+			Path: path,
+		},
+	}
 }
