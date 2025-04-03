@@ -39,6 +39,7 @@ import (
 	"github.com/gin-gonic/gin"
 	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/grand"
+	"github.com/wtsi-hgi/ibackup/errs"
 	"github.com/wtsi-hgi/ibackup/internal"
 	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/remove"
@@ -637,7 +638,7 @@ func (s *Server) removeRemoteFileAndHandleHardlink(lpath, rpath string, meta map
 	transformer put.PathTransformer, entry *set.Entry) error {
 	err := remove.RemoveFileAndParentFoldersIfEmpty(s.storageHandler, rpath)
 	if err != nil {
-		var dirRemovalError remove.DirRemovalError
+		var dirRemovalError errs.DirRemovalError
 		if !errors.As(err, &dirRemovalError) {
 			return err
 		}

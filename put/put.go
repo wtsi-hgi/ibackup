@@ -39,7 +39,7 @@ import (
 
 	"github.com/gammazero/workerpool"
 	"github.com/hashicorp/go-multierror"
-	"github.com/wtsi-hgi/ibackup/internal"
+	"github.com/wtsi-hgi/ibackup/errs"
 )
 
 const (
@@ -108,7 +108,7 @@ type FileReadTester func(ctx context.Context, path string) error
 func headRead(ctx context.Context, path string) error {
 	out, err := exec.CommandContext(ctx, "head", "-c", "1", path).CombinedOutput()
 	if err != nil && len(out) > 0 {
-		err = internal.PathError{Msg: string(out)}
+		err = errs.PathError{Msg: string(out)}
 	}
 
 	return err
@@ -586,7 +586,7 @@ func (p *Putter) testRead(request *Request) error {
 	go func() {
 		select {
 		case <-timer.C:
-			errCh <- internal.PathError{Msg: ErrReadTimeout, Path: request.Local}
+			errCh <- errs.PathError{Msg: ErrReadTimeout, Path: request.Local}
 		case err := <-readCh:
 			timer.Stop()
 			errCh <- err
