@@ -234,7 +234,63 @@ func (s *Server) doDiscovery(given *set.Set) (*set.Set, error) {
 		}
 	}
 
-	return s.db.Discover(given.ID(), func(entries []*set.Entry) ([]*set.Dirent, []*set.Dirent, error) {
+	return s.db.Discover(given.ID(), s.walkDirEntries(given, excludeTree))
+}
+
+func (s *Server) discoverSetRemovals(given *set.Set) error {
+	filesToRemove, err := s.findFilesToRemove(given)
+	if err != nil {
+		return err
+	}
+
+	dirsToRemove, err := s.findDirsToRemove(given)
+	if err != nil {
+		return err
+	}
+
+	if filesToRemove == nil && dirsToRemove == nil {
+		return nil
+	}
+
+	return s.removeFilesAndDirs(given, filesToRemove, dirsToRemove)
+}
+
+func (s *Server) findFilesToRemove(given *set.Set) ([]string, error) {
+	fileEntriesInSet, err := s.db.GetFileEntries(given.ID())
+	if err != nil {
+		return nil, err
+	}
+
+	return findNotExistingEntries(fileEntriesInSet)
+}
+
+func findNotExistingEntries(entries []*set.Entry) ([]string, error) {
+	var missingPaths []string
+
+	for _, entry := range entries {
+		_, err := os.Stat(entry.Path)
+		if errors.Is(err, os.ErrNotExist) {
+			missingPaths = append(missingPaths, entry.Path)
+		} else if err != nil {
+			return nil, err
+		}
+	}
+
+	return missingPaths, nil
+}
+
+func (s *Server) findDirsToRemove(given *set.Set) ([]string, error) {
+	dirEntriesInSet, err := s.db.GetAllDirEntries(given.ID())
+	if err != nil {
+		return nil, err
+	}
+
+	return findNotExistingEntries(dirEntriesInSet)
+}
+
+func (s *Server) walkDirEntries(given *set.Set,
+	excludeTree ptrie.Trie[bool]) func([]*set.Entry) ([]*set.Dirent, []*set.Dirent, error) {
+	return func(entries []*set.Entry) ([]*set.Dirent, []*set.Dirent, error) {
 		entriesCh := make(chan *set.Dirent)
 		doneCh := make(chan error)
 		warnCh := make(chan error)
@@ -242,7 +298,7 @@ func (s *Server) doDiscovery(given *set.Set) (*set.Set, error) {
 		go s.doSetDirWalks(entries, excludeTree, given, entriesCh, doneCh, warnCh)
 
 		return s.processSetDirWalkOutput(given, entriesCh, doneCh, warnCh)
-	})
+	}
 }
 
 func (s *Server) processSetDirWalkOutput(given *set.Set, entriesCh chan *set.Dirent,
