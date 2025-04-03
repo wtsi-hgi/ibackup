@@ -33,6 +33,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/wtsi-hgi/ibackup/errs"
 )
 
 const ErrMockStatFail = "stat fail"
@@ -101,7 +103,7 @@ func (l *LocalHandler) MakeStatFail(remote string) {
 // Returns an error if statFail == Remote.
 func (l *LocalHandler) Stat(remote string) (bool, map[string]string, error) {
 	if l.statFail == remote {
-		return false, nil, PathError{ErrMockStatFail, ""}
+		return false, nil, errs.PathError{Msg: ErrMockStatFail, Path: ""}
 	}
 
 	_, err := os.Stat(remote)
@@ -148,7 +150,7 @@ func (l *LocalHandler) MakeRemoveSlow() {
 // Put just copies from Local to Remote. Returns an error if putFail == Remote.
 func (l *LocalHandler) Put(local, remote string) error {
 	if l.putFail == remote {
-		return PathError{ErrMockPutFail, ""}
+		return errs.PathError{Msg: ErrMockPutFail, Path: ""}
 	}
 
 	if l.putSlow == remote {
@@ -195,7 +197,7 @@ func (l *LocalHandler) MakeMetaFail(remote string) {
 // error if metaFail == path.
 func (l *LocalHandler) RemoveMeta(path string, meta map[string]string) error {
 	if l.metaFail == path {
-		return PathError{ErrMockMetaFail, ""}
+		return errs.PathError{Msg: ErrMockMetaFail, Path: ""}
 	}
 
 	l.mu.Lock()
@@ -217,7 +219,7 @@ func (l *LocalHandler) RemoveMeta(path string, meta map[string]string) error {
 // if metafail == path, or if keys were already defined in the map.
 func (l *LocalHandler) AddMeta(path string, meta map[string]string) error {
 	if l.metaFail == path {
-		return PathError{ErrMockMetaFail, ""}
+		return errs.PathError{Msg: ErrMockMetaFail, Path: ""}
 	}
 
 	l.mu.Lock()
@@ -231,7 +233,7 @@ func (l *LocalHandler) AddMeta(path string, meta map[string]string) error {
 
 	for key, val := range meta {
 		if _, exists := pathMeta[key]; exists {
-			return PathError{ErrMockMetaFail, key}
+			return errs.PathError{Msg: ErrMockMetaFail, Path: key}
 		}
 
 		pathMeta[key] = val
@@ -304,7 +306,7 @@ func (l *LocalHandler) RemoveDir(path string) error {
 
 	err := os.Remove(path)
 	if err != nil && strings.Contains(err.Error(), "directory not empty") {
-		return NewDirNotEmpty(path)
+		return errs.NewDirNotEmptyError(path)
 	}
 
 	return err
@@ -320,7 +322,7 @@ func (l *LocalHandler) RemoveFile(path string) error {
 
 	err := os.Remove(path)
 	if err != nil && strings.Contains(err.Error(), "no such file or directory") {
-		return PathError{Msg: ErrFileDoesNotExist, Path: path}
+		return errs.PathError{Msg: ErrFileDoesNotExist, Path: path}
 	}
 
 	return err

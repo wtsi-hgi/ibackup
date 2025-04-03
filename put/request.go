@@ -33,7 +33,7 @@ import (
 	"time"
 
 	"github.com/dgryski/go-farm"
-	"github.com/wtsi-hgi/ibackup/internal"
+	"github.com/wtsi-hgi/ibackup/errs"
 )
 
 type RequestStatus string
@@ -164,13 +164,13 @@ func (r *Request) Prepare() error {
 func (r *Request) ValidatePaths() error {
 	local, err := filepath.Abs(r.Local)
 	if err != nil {
-		return internal.PathError{Msg: ErrLocalNotAbs, Path: r.Local}
+		return errs.PathError{Msg: ErrLocalNotAbs, Path: r.Local}
 	}
 
 	r.Local = local
 
 	if !filepath.IsAbs(r.Remote) {
-		return internal.PathError{Msg: ErrRemoteNotAbs, Path: r.Remote}
+		return errs.PathError{Msg: ErrRemoteNotAbs, Path: r.Remote}
 	}
 
 	return nil
@@ -407,7 +407,7 @@ func HumgenTransformer(local string) (string, error) {
 	}
 
 	if !dirIsLustreWithPTUSubDir(parts[1], ptuPart, len(parts)) {
-		return "", internal.PathError{Msg: ErrNotHumgenLustre, Path: local}
+		return "", errs.PathError{Msg: ErrNotHumgenLustre, Path: local}
 	}
 
 	return fmt.Sprintf("/humgen/%s/%s/%s/%s", parts[ptuPart], parts[ptuPart+1], parts[2],
