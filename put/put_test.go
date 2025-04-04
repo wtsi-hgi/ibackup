@@ -529,6 +529,8 @@ func makeTestRequests(t *testing.T, sourceDir, destDir string) []*Request {
 }
 
 func createTestRequests(t *testing.T, sourceDir, destDir string, sourcePaths []string) []*Request {
+	t.Helper()
+
 	requests := make([]*Request, len(sourcePaths))
 	localMeta := map[string]string{"a": "1", "b": "2"}
 
