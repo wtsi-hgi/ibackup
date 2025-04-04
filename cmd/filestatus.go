@@ -166,7 +166,7 @@ func (fsg *fileStatusGetter) printFileStatus(set *set.Set, f *set.Entry) error {
 
 	cliPrintf("file found in set: %s\n", set.Name)
 	cliPrintf("           status: %s\n", f.Status)
-	cliPrintf("             size: %s\n", humanize.IBytes(f.Size))
+	cliPrintf("             size: %s\n", humanize.IBytes(f.Size)) //nolint:misspell
 	cliPrintf("      destination: %s\n", dest)
 	cliPrintf("   last attempted: %s\n", lastAttemptTime)
 

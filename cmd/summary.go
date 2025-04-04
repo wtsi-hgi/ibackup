@@ -29,8 +29,7 @@ import (
 	"fmt"
 	"os"
 
-	//nolint:misspell
-	"github.com/dustin/go-humanize"
+	"github.com/dustin/go-humanize" //nolint:misspell
 	"github.com/spf13/cobra"
 	"github.com/wtsi-hgi/ibackup/set"
 	"github.com/wtsi-hgi/ibackup/tplot"
@@ -86,7 +85,7 @@ func summary(dbPath string) error {
 	usage := set.UsageSummary(sets)
 
 	cliPrintf("Total size: %s\nTotal files: %s\n",
-		humanize.IBytes(usage.Total.Size), humanize.Comma(int64(usage.Total.Number)))
+		humanize.IBytes(usage.Total.Size), humanize.Comma(int64(usage.Total.Number))) //nolint:misspell,gosec
 
 	tp := tplot.New()
 
