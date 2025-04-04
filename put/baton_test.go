@@ -40,7 +40,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/wtsi-hgi/ibackup/internal"
 
-	"github.com/wtsi-npg/extendo/v2"
+	ex "github.com/wtsi-npg/extendo/v2"
 )
 
 func TestPutBaton(t *testing.T) {
@@ -417,16 +417,16 @@ func TestPutBaton(t *testing.T) {
 	})
 }
 
-func clearTestCollection(t *testing.T, h *Baton, rootCollection string) (*extendo.Client, func()) {
+func clearTestCollection(t *testing.T, h *Baton, rootCollection string) (*ex.Client, func()) {
 	t.Helper()
 
-	testPool := extendo.NewClientPool(extendo.DefaultClientPoolParams, "")
+	testPool := ex.NewClientPool(ex.DefaultClientPoolParams, "")
 	testClientCh, err := h.getClientsFromPoolConcurrently(testPool, 1)
 	So(err, ShouldBeNil)
 
 	testClient := <-testClientCh
 
-	_, err = testClient.RemDir(extendo.Args{Force: true, Recurse: true}, extendo.RodsItem{
+	_, err = testClient.RemDir(ex.Args{Force: true, Recurse: true}, ex.RodsItem{
 		IPath: rootCollection,
 	})
 	if err != nil && !strings.Contains(err.Error(), "-816000") && !strings.Contains(err.Error(), "-310000") {
@@ -469,20 +469,20 @@ func makeXTestRequests(t *testing.T, remoteCollection string, x int) []*Request 
 	return createTestRequests(t, sourceDir, remoteCollection, sourcePaths)
 }
 
-func checkPathExistsWithBaton(client *extendo.Client, path string) bool {
+func checkPathExistsWithBaton(client *ex.Client, path string) bool {
 	_, err := getItemWithBaton(client, path)
 
 	return err == nil
 }
 
-func getItemWithBaton(client *extendo.Client, path string) (extendo.RodsItem, error) {
-	return client.ListItem(extendo.Args{AVU: true, Timestamp: true, Size: true}, extendo.RodsItem{
+func getItemWithBaton(client *ex.Client, path string) (ex.RodsItem, error) {
+	return client.ListItem(ex.Args{AVU: true, Timestamp: true, Size: true}, ex.RodsItem{
 		IPath: filepath.Dir(path),
 		IName: filepath.Base(path),
 	})
 }
 
-func getObjectMetadataWithBaton(client *extendo.Client, path string) map[string]string {
+func getObjectMetadataWithBaton(client *ex.Client, path string) map[string]string {
 	it, err := getItemWithBaton(client, path)
 	So(err, ShouldBeNil)
 
@@ -532,7 +532,7 @@ func testPreparePutter(t *testing.T, h *Baton, req *Request, rootCollection stri
 func testDeleteCollection(t *testing.T, h *Baton, collection string) {
 	t.Helper()
 
-	testPool := extendo.NewClientPool(extendo.DefaultClientPoolParams, "")
+	testPool := ex.NewClientPool(ex.DefaultClientPoolParams, "")
 	testClientCh, err := h.getClientsFromPoolConcurrently(testPool, 1)
 	So(err, ShouldBeNil)
 
@@ -541,7 +541,7 @@ func testDeleteCollection(t *testing.T, h *Baton, collection string) {
 	defer testClient.StopIgnoreError()
 	defer testPool.Close()
 
-	_, err = testClient.RemDir(extendo.Args{Force: true, Recurse: true}, extendo.RodsItem{
+	_, err = testClient.RemDir(ex.Args{Force: true, Recurse: true}, ex.RodsItem{
 		IPath: collection,
 	})
 	if err != nil && !strings.Contains(err.Error(), "-816000") && !strings.Contains(err.Error(), "-310000") {
