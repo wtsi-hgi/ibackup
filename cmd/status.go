@@ -124,26 +124,26 @@ own. You can specify the user as "all" to see all user's sets.
 		ensureURLandCert()
 
 		if statusDetails && statusName == "" {
-			die("--details can only be used with --name")
+			dief("--details can only be used with --name")
 		}
 
 		if statusRemotePaths && !statusDetails {
-			die("--remote can only be used with --details and --name")
+			dief("--remote can only be used with --details and --name")
 		}
 
 		if statusOrder != alphabetic && statusOrder != recent {
-			die("--order can only be 'alphabetic' or 'recent'")
+			dief("--order can only be 'alphabetic' or 'recent'")
 		}
 
 		sf := newStatusFilterer(statusIncomplete, statusComplete, statusFailed, statusQueued)
 
 		if statusName != "" && sf != nil {
-			die("--name can't be used together with the status filtering options")
+			dief("--name can't be used together with the status filtering options")
 		}
 
 		client, err := newServerClient(serverURL, serverCert)
 		if err != nil {
-			die(err.Error())
+			die(err)
 		}
 
 		status(client, sf, statusUser, statusOrder, statusName, statusDetails, statusRemotePaths)
@@ -207,7 +207,7 @@ func checkOnlyOneStatusFlagSet(incomplete, complete, failed, queued bool) {
 	for _, flag := range []bool{incomplete, complete, failed, queued} {
 		if flag {
 			if flagSeen {
-				die("--incomplete, --complete, --failed and --queued are mutually exclusive")
+				dief("--incomplete, --complete, --failed and --queued are mutually exclusive")
 			}
 
 			flagSeen = true
@@ -219,7 +219,7 @@ func checkOnlyOneStatusFlagSet(incomplete, complete, failed, queued bool) {
 func status(client *server.Client, sf statusFilterer, user, order, name string, details, remote bool) {
 	qs, err := client.GetQueueStatus()
 	if err != nil {
-		die("unable to get server queue status: %s", err)
+		dief("unable to get server queue status: %s", err)
 	}
 
 	displayQueueStatus(qs)
@@ -263,7 +263,7 @@ func displayQueueStatus(qs *server.QStatus) {
 func getSetByName(client *server.Client, user, name string) []*set.Set {
 	got, err := client.GetSetByName(user, name)
 	if err != nil {
-		die(err.Error())
+		dief("%s [%s]", err, name)
 	}
 
 	return []*set.Set{got}
@@ -273,7 +273,7 @@ func getSetByName(client *server.Client, user, name string) []*set.Set {
 func getSets(client *server.Client, sf statusFilterer, user string) []*set.Set {
 	sets, err := client.GetSets(user)
 	if err != nil {
-		die(err.Error())
+		die(err)
 	}
 
 	if sf != nil {
@@ -368,21 +368,21 @@ func sortSetsAlphabetically(sets []*set.Set) {
 
 // displaySet prints info about the given set to STDOUT.
 func displaySet(s *set.Set, showRequesters bool) { //nolint:funlen,gocyclo
-	cliPrint("Name: %s\n", s.Name)
+	cliPrintf("Name: %s\n", s.Name)
 
 	if showRequesters {
-		cliPrint("Requester: %s\n", s.Requester)
+		cliPrintf("Requester: %s\n", s.Requester)
 	}
 
-	cliPrint("Transformer: %s\n", s.Transformer)
+	cliPrintf("Transformer: %s\n", s.Transformer)
 
-	cliPrint("Reason: %s\n", s.Metadata["ibackup:reason"])
-	cliPrint("Review date: %.10s\n", s.Metadata["ibackup:review"])
-	cliPrint("Removal date: %.10s\n", s.Metadata["ibackup:removal"])
+	cliPrintf("Reason: %s\n", s.Metadata["ibackup:reason"])
+	cliPrintf("Review date: %.10s\n", s.Metadata["ibackup:review"])
+	cliPrintf("Removal date: %.10s\n", s.Metadata["ibackup:removal"])
 
 	userMeta := s.UserMetadata()
 	if userMeta != "" {
-		cliPrint("User metadata: %s\n", userMeta)
+		cliPrintf("User metadata: %s\n", userMeta)
 	}
 
 	monitored := "false"
@@ -390,34 +390,34 @@ func displaySet(s *set.Set, showRequesters bool) { //nolint:funlen,gocyclo
 		monitored = formatDuration(s.MonitorTime)
 	}
 
-	cliPrint("Monitored: %s; Archive: %v\n", monitored, s.DeleteLocal)
+	cliPrintf("Monitored: %s; Archive: %v\n", monitored, s.DeleteLocal)
 
 	if s.Description != "" {
-		cliPrint("Description: %s\n", s.Description)
+		cliPrintf("Description: %s\n", s.Description)
 	}
 
 	if s.Error != "" {
-		cliPrint("Status: unable to proceed\n")
-		cliPrint("Error: %s\n", s.Error)
+		cliPrintf("Status: unable to proceed\n")
+		cliPrintf("Error: %s\n", s.Error)
 	} else if s.Status == set.Complete && s.Failed != 0 {
-		cliPrint("Status: %s (but with failures - try a retry)\n", s.Status)
+		cliPrintf("Status: %s (but with failures - try a retry)\n", s.Status)
 	} else {
-		cliPrint("Status: %s\n", s.Status)
+		cliPrintf("Status: %s\n", s.Status)
 	}
 
 	if s.Warning != "" {
-		cliPrint("Warning: %s\n", s.Warning)
+		cliPrintf("Warning: %s\n", s.Warning)
 	}
 
-	cliPrint("Discovery: %s\n", s.Discovered())
-	cliPrint("Num files: %s; Symlinks: %d; Hardlinks: %d; Size (total/recently uploaded): %s / %s\n",
+	cliPrintf("Discovery: %s\n", s.Discovered())
+	cliPrintf("Num files: %s; Symlinks: %d; Hardlinks: %d; Size (total/recently uploaded): %s / %s\n",
 		s.Count(), s.Symlinks, s.Hardlinks, s.Size(), s.UploadedSize())
-	cliPrint("Uploaded: %d; Replaced: %d; Skipped: %d; Failed: %d; Missing: %d; Abnormal: %d\n",
+	cliPrintf("Uploaded: %d; Replaced: %d; Skipped: %d; Failed: %d; Missing: %d; Abnormal: %d\n",
 		s.Uploaded, s.Replaced, s.Skipped, s.Failed, s.Missing, s.Abnormal)
 
 	switch s.Status {
 	case set.Complete:
-		cliPrint("Completed in: %s\n", s.LastCompleted.Sub(s.StartedDiscovery).Truncate(time.Second))
+		cliPrintf("Completed in: %s\n", s.LastCompleted.Sub(s.StartedDiscovery).Truncate(time.Second))
 	case set.Uploading:
 		displayETA(s)
 	default:
@@ -472,7 +472,7 @@ func displayETA(s *set.Set) {
 	percentComplete := (hundredForPercentCalc / float64(total)) * float64(done)
 	eta := time.Duration((remaining / speed) * float64(timeUnit))
 
-	cliPrint("%.2f%% complete (based on %s); %.2f %s; ETA: %s\n",
+	cliPrintf("%.2f%% complete (based on %s); %.2f %s; ETA: %s\n",
 		percentComplete, basedOn, speed, unit, eta.Round(time.Second))
 }
 
@@ -521,7 +521,7 @@ func bytesToMB(bytes uint64) float64 {
 func getSetTransformer(given *set.Set) put.PathTransformer {
 	transformer, err := given.MakeTransformer()
 	if err != nil {
-		die("your transformer didn't work: %s", err)
+		dief("your transformer didn't work: %s", err)
 	}
 
 	return transformer
@@ -532,7 +532,7 @@ func getSetTransformer(given *set.Set) put.PathTransformer {
 func getDirs(client *server.Client, setID string) []string {
 	got, err := client.GetDirs(setID)
 	if err != nil {
-		die(err.Error())
+		die(err)
 	}
 
 	paths := make([]string, len(got))
@@ -570,12 +570,12 @@ func displayDirs(dirs []string, transformer put.PathTransformer) {
 				warnedAboutTransformer = true
 			}
 
-			cliPrint("  %s\n", dir)
+			cliPrintf("  %s\n", dir)
 
 			continue
 		}
 
-		cliPrint("  %s => %s\n", dir, filepath.Dir(transformedPath))
+		cliPrintf("  %s => %s\n", dir, filepath.Dir(transformedPath))
 	}
 }
 
@@ -583,7 +583,7 @@ func displayDirs(dirs []string, transformer put.PathTransformer) {
 func getExampleFile(client *server.Client, setID string) string {
 	exampleFile, err := client.GetExampleFile(setID)
 	if err != nil {
-		die(err.Error())
+		die(err)
 	}
 
 	if exampleFile == nil {
@@ -605,7 +605,7 @@ func displayExampleFile(path string, transformer put.PathTransformer) {
 		return
 	}
 
-	cliPrint("Example File: %s => %s\n", path, transformedPath)
+	cliPrintf("Example File: %s => %s\n", path, transformedPath)
 }
 
 // displayFailedEntries prints out details about up to 10 failed entries in the
@@ -613,13 +613,13 @@ func displayExampleFile(path string, transformer put.PathTransformer) {
 func displayFailedEntries(client *server.Client, given *set.Set) {
 	failed, skipped, err := client.GetFailedFiles(given.ID())
 	if err != nil {
-		die(err.Error())
+		die(err)
 	}
 
 	displayEntries(failed, false, nil)
 
 	if skipped > 0 {
-		cliPrint("[... and %d others]\n", skipped)
+		cliPrintf("[... and %d others]\n", skipped)
 	}
 }
 
@@ -628,7 +628,7 @@ func displayFailedEntries(client *server.Client, given *set.Set) {
 func displayAllEntries(client *server.Client, given *set.Set, showRemotePaths bool, transformer put.PathTransformer) {
 	all, err := client.GetFiles(given.ID())
 	if err != nil {
-		die(err.Error())
+		die(err)
 	}
 
 	displayEntries(all, showRemotePaths, transformer)
@@ -669,7 +669,7 @@ func displayHeader(showRemotePath bool) {
 // the output of entry details.
 func printEntriesHeader(cols []string) {
 	cliPrint("\n")
-	cliPrint("%s", strings.Join(cols, "\t"))
+	cliPrintf("%s", strings.Join(cols, "\t"))
 	cliPrint("\n")
 }
 
@@ -677,7 +677,7 @@ func printEntriesHeader(cols []string) {
 func getRemotePath(path string, transformer put.PathTransformer) string {
 	remotePath, err := transformer(path)
 	if err != nil {
-		die("your transformer didn't work: %s", err)
+		dief("your transformer didn't work: %s", err)
 	}
 
 	return remotePath

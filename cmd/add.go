@@ -146,11 +146,11 @@ option to add sets on behalf of other users.
 		ensureURLandCert()
 
 		if setFiles == "" && setDirs == "" && setPath == "" && setItems == "" {
-			die("at least one of --files or --dirs or --items or --path must be provided")
+			dief("at least one of --files or --dirs or --items or --path must be provided")
 		}
 
 		if setTransformer == "" {
-			die("-t must be provided")
+			dief("-t must be provided")
 		}
 
 		var monitorDuration time.Duration
@@ -159,17 +159,17 @@ option to add sets on behalf of other users.
 
 			monitorDuration, err = parseDuration(setMonitor)
 			if err != nil {
-				die("invalid monitor duration: %s", err)
+				dief("invalid monitor duration: %s", err)
 			}
 
 			if monitorDuration < 1*time.Hour {
-				die("monitor duration must be 1h or more, not %s", monitorDuration)
+				dief("monitor duration must be 1h or more, not %s", monitorDuration)
 			}
 		}
 
 		client, err := newServerClient(serverURL, serverCert)
 		if err != nil {
-			die("%s", err.Error())
+			die(err)
 		}
 
 		files := readPaths(setFiles, fofnLineSplitter(setNull))
@@ -183,12 +183,12 @@ option to add sets on behalf of other users.
 		if setPath != "" {
 			setPath, err = filepath.Abs(setPath)
 			if err != nil {
-				die("%s", err.Error())
+				die(err)
 			}
 
 			info, errs := os.Stat(setPath)
 			if errs != nil {
-				die("%s", errs.Error())
+				die(errs)
 			}
 
 			if info.IsDir() {
@@ -200,7 +200,7 @@ option to add sets on behalf of other users.
 
 		set, err := checkExistingSet(client, setName, setUser)
 		if err != nil {
-			die("%s", err.Error())
+			die(err)
 		}
 
 		var prevMeta map[string]string
@@ -210,12 +210,12 @@ option to add sets on behalf of other users.
 
 		meta, err := put.HandleMeta(setMetadata, setReason, setReview, setRemoval, prevMeta)
 		if err != nil {
-			die("metadata error: %s", err)
+			dief("metadata error: %s", err)
 		}
 
 		err = add(client, setName, setUser, setTransformer, setDescription, monitorDuration, setArchive, files, dirs, meta)
 		if err != nil {
-			die("%s", err.Error())
+			die(err)
 		}
 
 		info("your backup set has been saved and will now be processed")
@@ -257,7 +257,7 @@ func init() {
 		"time until removal date (<number><y|m>, eg. 1y for 1 year), or exact removal date in the format YYYY-MM-DD")
 
 	if err := addCmd.MarkFlagRequired("name"); err != nil {
-		die(err.Error())
+		die(err)
 	}
 }
 
@@ -279,7 +279,7 @@ func readPaths(file string, splitter bufio.SplitFunc) []string {
 
 	serr := scanner.Err()
 	if serr != nil {
-		die("failed to read whole file: %s", serr.Error())
+		dief("failed to read whole file: %s", serr.Error())
 	}
 
 	return paths

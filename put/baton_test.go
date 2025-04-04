@@ -31,6 +31,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -65,19 +66,8 @@ func TestPutBaton(t *testing.T) {
 		So(p, ShouldNotBeNil)
 
 		Convey("CreateCollections() creates the needed collections", func() {
-			testPool := ex.NewClientPool(ex.DefaultClientPoolParams, "")
-			testClientCh, err := h.getClientsFromPoolConcurrently(testPool, 1)
-			So(err, ShouldBeNil)
-			testClient := <-testClientCh
-			defer testClient.StopIgnoreError()
-			defer testPool.Close()
-
-			_, err = testClient.RemDir(ex.Args{Force: true, Recurse: true}, ex.RodsItem{
-				IPath: rootCollection,
-			})
-			if err != nil && !strings.Contains(err.Error(), "-816000") && !strings.Contains(err.Error(), "-310000") {
-				So(err, ShouldBeNil)
-			}
+			testClient, clearup := clearTestCollection(t, h, rootCollection)
+			defer clearup()
 
 			for _, col := range expectedCollections {
 				So(checkPathExistsWithBaton(testClient, col), ShouldBeFalse)
@@ -227,6 +217,53 @@ func TestPutBaton(t *testing.T) {
 		})
 	})
 
+	Convey("Putting multiple files, in parallel, gets and sets the correct metadata", t, func() {
+		_, clearup := clearTestCollection(t, h, rootCollection)
+		defer clearup()
+
+		requests := makeXTestRequests(t, rootCollection, 100)
+
+		for n, r := range requests {
+			r.Meta.LocalMeta = map[string]string{}
+			tm := time.Unix(int64(n), 0)
+
+			err := os.Chtimes(r.Local, tm, tm)
+			So(err, ShouldBeNil)
+		}
+
+		p, err := New(h, requests)
+		So(err, ShouldBeNil)
+
+		err = p.CreateCollections()
+		So(err, ShouldBeNil)
+
+		_, returnCh, skipCh := p.Put()
+
+		for x := range returnCh {
+			So(x.Error, ShouldBeEmpty)
+		}
+
+		for x := range skipCh {
+			So(x.Error, ShouldBeEmpty)
+		}
+
+		p, err = New(h, requests)
+		So(err, ShouldBeNil)
+
+		err = p.CreateCollections()
+		So(err, ShouldBeNil)
+
+		_, returnCh, skipCh = p.Put()
+
+		for x := range returnCh {
+			So(x.Error, ShouldBeEmpty)
+		}
+
+		for x := range skipCh {
+			So(x.Error, ShouldBeEmpty)
+		}
+	})
+
 	Convey("Uploading a strange path works", t, func() {
 		strangePath, p := testPreparePutFile(t, h, "%s.txt", rootCollection)
 		urCh := testPutFile(p)
@@ -241,7 +278,7 @@ func TestPutBaton(t *testing.T) {
 
 	Convey("Uploading a file with no read permission gives a useful error", t, func() {
 		permsPath, p := testPreparePutFile(t, h, "my.txt", rootCollection)
-		err := os.Chmod(permsPath, 0200)
+		err := os.Chmod(permsPath, 0o200)
 		So(err, ShouldBeNil)
 		urCh := testPutFile(p)
 
@@ -379,6 +416,28 @@ func TestPutBaton(t *testing.T) {
 	})
 }
 
+func clearTestCollection(t *testing.T, h *Baton, rootCollection string) (*ex.Client, func()) {
+	t.Helper()
+
+	testPool := ex.NewClientPool(ex.DefaultClientPoolParams, "")
+	testClientCh, err := h.getClientsFromPoolConcurrently(testPool, 1)
+	So(err, ShouldBeNil)
+
+	testClient := <-testClientCh
+
+	_, err = testClient.RemDir(ex.Args{Force: true, Recurse: true}, ex.RodsItem{
+		IPath: rootCollection,
+	})
+	if err != nil && !strings.Contains(err.Error(), "-816000") && !strings.Contains(err.Error(), "-310000") {
+		So(err, ShouldBeNil)
+	}
+
+	return testClient, func() {
+		testPool.Close()
+		testClient.StopIgnoreError()
+	}
+}
+
 // makeRequests creates some local directories and files, and returns requests
 // that all share the same metadata, with remotes pointing to corresponding
 // paths within remoteCollection. Also returns the expected remote directories
@@ -394,6 +453,19 @@ func makeRequests(t *testing.T, remoteCollection string) ([]*Request, []string) 
 		filepath.Join(remoteCollection, "a", "b", "c"),
 		filepath.Join(remoteCollection, "a", "b", "d", "e"),
 	}
+}
+
+func makeXTestRequests(t *testing.T, remoteCollection string, x int) []*Request {
+	t.Helper()
+
+	sourceDir := t.TempDir()
+	sourcePaths := make([]string, x)
+
+	for n := range sourcePaths {
+		sourcePaths[n] = filepath.Join(sourceDir, "x", "file."+strconv.Itoa(n))
+	}
+
+	return createTestRequests(t, sourceDir, remoteCollection, sourcePaths)
 }
 
 func checkPathExistsWithBaton(client *ex.Client, path string) bool {

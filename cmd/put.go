@@ -176,7 +176,7 @@ func serverMode() bool {
 func handleServerMode(started time.Time) {
 	client, err := newServerClient(serverURL, serverCert)
 	if err != nil {
-		die("%s", err.Error())
+		die(err)
 	}
 
 	requests, err := client.GetSomeUploadRequests()
@@ -188,7 +188,7 @@ func handleServerMode(started time.Time) {
 
 	err = client.MakingIRODSConnections(numIRODSConnections, heartbeatFreq)
 	if err != nil {
-		die("%s", err.Error())
+		die(err)
 	}
 
 	uploadStarts, uploadResults, skipResults, dfunc := handlePut(client, requests)
@@ -200,7 +200,7 @@ func handleServerMode(started time.Time) {
 
 	errm := client.ClosedIRODSConnections()
 	if errm != nil {
-		warn("%s", errm.Error())
+		warn("%s", errm)
 	}
 
 	if err != nil {
@@ -221,7 +221,7 @@ func handlePut(client *server.Client, requests []*put.Request) (chan *put.Reques
 	if putVerbose {
 		host, errh := os.Hostname()
 		if errh != nil {
-			die("%s", errh)
+			die(errh)
 		}
 
 		info("client starting on host %s, pid %d", host, os.Getpid())
@@ -249,12 +249,12 @@ func handlePut(client *server.Client, requests []*put.Request) (chan *put.Reques
 func getPutter(requests []*put.Request) (*put.Putter, func()) {
 	handler, err := put.GetBatonHandler()
 	if err != nil {
-		die("%s", err)
+		die(err)
 	}
 
 	p, err := put.New(handler, requests)
 	if err != nil {
-		die("%s", err)
+		die(err)
 	}
 
 	dfunc := func() {
@@ -301,7 +301,7 @@ func createCollection(p *put.Putter) {
 func handleManualMode() {
 	requests, err := getRequestsFromFile(putFile, putMeta, putBase64)
 	if err != nil {
-		die(err.Error())
+		die(err)
 	}
 
 	_, uploadResults, skipResults, dfunc := handlePut(nil, requests)
@@ -327,7 +327,7 @@ func getRequestsFromFile(file, meta string, base64Encoded bool) ([]*put.Request,
 func parsePutFile(path, meta, requester string, splitter bufio.SplitFunc, base64Encoded bool) []*put.Request {
 	defaultMeta, err := put.ParseMetaString(meta, nil)
 	if err != nil {
-		die("metadata error: %s", err)
+		dief("metadata error: %s", err)
 	}
 
 	scanner, df := createScannerForFile(path, splitter)
@@ -350,7 +350,7 @@ func parsePutFile(path, meta, requester string, splitter bufio.SplitFunc, base64
 
 	serr := scanner.Err()
 	if serr != nil {
-		die("failed to read whole file: %s", serr.Error())
+		dief("failed to read whole file: %s", serr)
 	}
 
 	return prs
@@ -413,7 +413,7 @@ func createScannerForFile(path string, splitter bufio.SplitFunc) (*bufio.Scanner
 func openFile(path string) (io.Reader, func()) {
 	file, err := os.Open(path)
 	if err != nil {
-		die("could not open file '%s': %s", path, err)
+		dief("could not open file '%s': %s", path, err)
 	}
 
 	return file, func() {
@@ -437,7 +437,7 @@ func parsePutFileLine(line string, base64Encoded bool, lineNum int,
 	if colsn == putFileCols && cols[2] != "" {
 		parsedMeta, err := put.ParseMetaString(cols[2], nil)
 		if err != nil {
-			die("metadata error: %s", err)
+			dief("metadata error: %s", err)
 		}
 
 		meta = parsedMeta
@@ -454,7 +454,7 @@ func parsePutFileLine(line string, base64Encoded bool, lineNum int,
 
 func checkPutFileCols(cols int, lineNum int) {
 	if cols > putFileCols {
-		die("line %d has too many columns; check `ibackup put -h`", lineNum)
+		dief("line %d has too many columns; check `ibackup put -h`", lineNum)
 	}
 }
 
@@ -467,7 +467,7 @@ func decodeBase64(path string, isEncoded bool) string {
 
 	b, err := b64.StdEncoding.DecodeString(path)
 	if err != nil {
-		die("%s", err)
+		die(err)
 	}
 
 	return string(b)

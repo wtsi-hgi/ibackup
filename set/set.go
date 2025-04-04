@@ -260,7 +260,7 @@ func (s *Set) Size() string {
 	}
 
 	if s.NumFiles == 0 && s.LastCompletedCount != 0 {
-		return fmt.Sprintf("%s (as of last completion)", humanize.IBytes(s.LastCompletedSize))
+		return humanize.IBytes(s.LastCompletedSize) + " (as of last completion)" //nolint:misspell
 	}
 
 	sfiles := humanize.IBytes(s.SizeTotal) //nolint:misspell

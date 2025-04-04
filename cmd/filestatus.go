@@ -38,12 +38,12 @@ the local and remote checksums.
 `,
 	Run: func(cmd *cobra.Command, args []string) {
 		if len(args) < 1 {
-			die("you must supply the file to be checked")
+			dief("you must supply the file to be checked")
 		}
 
 		err := fileSummary(filestatusDB, args[0], filestatusIrods)
 		if err != nil {
-			die(err.Error())
+			die(err)
 		}
 	},
 }
@@ -164,14 +164,14 @@ func (fsg *fileStatusGetter) printFileStatus(set *set.Set, f *set.Entry) error {
 		return err
 	}
 
-	cliPrint("file found in set: %s\n", set.Name)
-	cliPrint("           status: %s\n", f.Status)
-	cliPrint("             size: %s\n", humanize.IBytes(f.Size))
-	cliPrint("      destination: %s\n", dest)
-	cliPrint("   last attempted: %s\n", lastAttemptTime)
+	cliPrintf("file found in set: %s\n", set.Name)
+	cliPrintf("           status: %s\n", f.Status)
+	cliPrintf("             size: %s\n", humanize.IBytes(f.Size)) //nolint:misspell
+	cliPrintf("      destination: %s\n", dest)
+	cliPrintf("   last attempted: %s\n", lastAttemptTime)
 
 	if f.LastError != "" {
-		cliPrint("       last error: %s\n", f.LastError)
+		cliPrintf("       last error: %s\n", f.LastError)
 	}
 
 	if fsg.useIRods {
@@ -193,7 +193,7 @@ func (fsg *fileStatusGetter) printIRodsStatus(local, remote string) error {
 	uploadDate, remoteMTime := fsg.getIrodsTimesFromAVUs(file.IAVUs)
 
 	if uploadDate != "" {
-		cliPrint("iRods upload date: %s\n", uploadDate)
+		cliPrintf("iRods upload date: %s\n", uploadDate)
 	}
 
 	if remoteMTime != "" {
@@ -202,12 +202,12 @@ func (fsg *fileStatusGetter) printIRodsStatus(local, remote string) error {
 			return err
 		}
 
-		cliPrint("      local mTime: %s\n", localTime)
-		cliPrint("      iRods mTime: %s\n", remoteMTime)
+		cliPrintf("      local mTime: %s\n", localTime)
+		cliPrintf("      iRods mTime: %s\n", remoteMTime)
 	}
 
-	cliPrint("   iRods checksum: %s\n", file.IChecksum)
-	cliPrint("   local checksum: %s\n", fsg.calcMD5Sum(local))
+	cliPrintf("   iRods checksum: %s\n", file.IChecksum)
+	cliPrintf("   local checksum: %s\n", fsg.calcMD5Sum(local))
 
 	return nil
 }

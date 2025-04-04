@@ -29,8 +29,7 @@ import (
 	"fmt"
 	"os"
 
-	//nolint:misspell
-	"github.com/dustin/go-humanize"
+	"github.com/dustin/go-humanize" //nolint:misspell
 	"github.com/spf13/cobra"
 	"github.com/wtsi-hgi/ibackup/set"
 	"github.com/wtsi-hgi/ibackup/tplot"
@@ -60,7 +59,7 @@ installed.
 	Run: func(cmd *cobra.Command, args []string) {
 		err := summary(summaryDB)
 		if err != nil {
-			die(err.Error())
+			die(err)
 		}
 	},
 }
@@ -85,8 +84,8 @@ func summary(dbPath string) error {
 
 	usage := set.UsageSummary(sets)
 
-	cliPrint("Total size: %s\nTotal files: %s\n",
-		humanize.IBytes(usage.Total.Size), humanize.Comma(int64(usage.Total.Number)))
+	cliPrintf("Total size: %s\nTotal files: %s\n",
+		humanize.IBytes(usage.Total.Size), humanize.Comma(int64(usage.Total.Number))) //nolint:misspell,gosec
 
 	tp := tplot.New()
 
