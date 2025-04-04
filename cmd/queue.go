@@ -69,34 +69,34 @@ the queue.
 		ensureURLandCert()
 
 		if !gasClientCLI(serverURL, serverCert).CanReadServerToken() {
-			die("Only the user who started the server can use this sub-command.")
+			dief("Only the user who started the server can use this sub-command.")
 		}
 
 		if queueDelete && queueKick {
-			die("-d and -r are mutually exclusive")
+			dief("-d and -r are mutually exclusive")
 		}
 
 		client, err := newServerClient(serverURL, serverCert)
 		if err != nil {
-			die("%s", err.Error())
+			die(err)
 		}
 
 		switch {
 		case queueDelete || queueKick:
 			if queuePath != "" && (queueUser == "" || queueSet == "") {
-				die("--path needs --user and --name")
+				dief("--path needs --user and --name")
 			}
 
 			if queueSet != "" && queueUser == "" {
-				die("--name needs --user")
+				dief("--name needs --user")
 			}
 
 			if queueAll && queueUser != "" {
-				die("--all is mutually exclusive from --user, --name and --path")
+				dief("--all is mutually exclusive from --user, --name and --path")
 			}
 
 			if queueUser == "" && !queueAll {
-				die("at least one of --all or --user must be provided")
+				dief("at least one of --all or --user must be provided")
 			}
 
 			bf := &server.BuriedFilter{
@@ -109,21 +109,21 @@ the queue.
 		case queueUploading:
 			rs, err := client.UploadingRequests()
 			if err != nil {
-				die("unable to get uploading requests: %s", err)
+				dief("unable to get uploading requests: %s", err)
 			}
 
 			displayRequests(rs, "uploading")
 		case queueAll:
 			rs, err := client.AllRequests()
 			if err != nil {
-				die("unable to get all requests: %s", err)
+				dief("unable to get all requests: %s", err)
 			}
 
 			displayRequests(rs, "(0)")
 		default:
 			rs, err := client.BuriedRequests()
 			if err != nil {
-				die("unable to get buried requests: %s", err)
+				dief("unable to get buried requests: %s", err)
 			}
 
 			displayRequests(rs, "buried")
@@ -179,7 +179,7 @@ func handleBuried(client *server.Client, remove, retry bool, bf *server.BuriedFi
 	}
 
 	if err != nil {
-		die("unable to process buried requests: %s", err)
+		dief("unable to process buried requests: %s", err)
 	}
 
 	info("%d requests %s", n, action)

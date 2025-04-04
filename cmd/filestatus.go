@@ -38,12 +38,12 @@ the local and remote checksums.
 `,
 	Run: func(cmd *cobra.Command, args []string) {
 		if len(args) < 1 {
-			die("you must supply the file to be checked")
+			dief("you must supply the file to be checked")
 		}
 
 		err := fileSummary(filestatusDB, args[0], filestatusIrods)
 		if err != nil {
-			die("%s", err.Error())
+			die(err)
 		}
 	},
 }

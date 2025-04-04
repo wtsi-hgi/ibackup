@@ -66,20 +66,20 @@ option to retry the given requestor's backup sets, instead of your own.
 		ensureURLandCert()
 
 		if retrySet == "" {
-			die("--name is required")
+			dief("--name is required")
 		}
 
 		if retryAll && retryFailed {
-			die("--all and --failed are mutually exclusive")
+			dief("--all and --failed are mutually exclusive")
 		}
 
 		if !retryAll && !retryFailed {
-			die("at least one of --all and --failed are required")
+			dief("at least one of --all and --failed are required")
 		}
 
 		client, err := newServerClient(serverURL, serverCert)
 		if err != nil {
-			die("%s", err.Error())
+			die(err)
 		}
 
 		retrySetUploads(client, retryUser, retrySet, retryAll)
@@ -101,12 +101,12 @@ func init() {
 func retrySetUploads(client *server.Client, requester, setName string, all bool) {
 	set, err := client.GetSetByName(requester, setName)
 	if err != nil {
-		die("%s", err.Error())
+		die(err)
 	}
 
 	if all {
 		if errt := client.TriggerDiscovery(set.ID()); err != nil {
-			die("%s", errt.Error())
+			die(errt)
 		}
 
 		info("initiated retry of set %s", setName)
@@ -116,7 +116,7 @@ func retrySetUploads(client *server.Client, requester, setName string, all bool)
 
 	retried, err := client.RetryFailedSetUploads(set.ID())
 	if err != nil {
-		die("%s", err.Error())
+		die(err)
 	}
 
 	if retried == 0 {

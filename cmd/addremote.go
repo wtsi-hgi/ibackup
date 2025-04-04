@@ -85,19 +85,19 @@ local "lustre" paths to the "canonical" iRODS path in the humgen zone.
 `,
 	Run: func(cmd *cobra.Command, args []string) {
 		if arHumgen && arPrefix != "" {
-			die("--humgen and --prefix are mutually exclusive")
+			dief("--humgen and --prefix are mutually exclusive")
 		}
 
 		if arGengen && arPrefix != "" {
-			die("--gengen and --prefix are mutually exclusive")
+			dief("--gengen and --prefix are mutually exclusive")
 		}
 
 		if arHumgen && arGengen {
-			die("--humgen and --gengen are mutually exclusive")
+			dief("--humgen and --gengen are mutually exclusive")
 		}
 
 		if !arHumgen && !arGengen && arPrefix == "" {
-			die("you must specify one of --prefix, --humgen or --gengen")
+			dief("you must specify one of --prefix, --humgen or --gengen")
 		}
 
 		pt := put.HumgenTransformer
@@ -132,7 +132,7 @@ func init() {
 func makePrefixTransformer(def string) put.PathTransformer {
 	parts := strings.Split(def, ":")
 	if len(parts) != arPrefixParts {
-		die("'%s' wrong format, must be like '/local/prefix:/remote/prefix'", def)
+		dief("'%s' wrong format, must be like '/local/prefix:/remote/prefix'", def)
 	}
 
 	return put.PrefixTransformer(parts[0], parts[1])
@@ -147,12 +147,12 @@ func transformARFile(path string, pt put.PathTransformer, splitter bufio.SplitFu
 
 		r, err := put.NewRequestWithTransformedLocal(local, pt)
 		if err != nil {
-			die("%s", err)
+			die(err)
 		}
 
 		err = r.ValidatePaths()
 		if err != nil {
-			die("%s", err)
+			die(err)
 		}
 
 		fmt.Printf("%s\t%s\n", encodeBase64(r.Local, encode), encodeBase64(r.Remote, encode))
@@ -160,7 +160,7 @@ func transformARFile(path string, pt put.PathTransformer, splitter bufio.SplitFu
 
 	serr := scanner.Err()
 	if serr != nil {
-		die("failed to read whole file: %s", serr.Error())
+		dief("failed to read whole file: %s", serr.Error())
 	}
 }
 

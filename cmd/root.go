@@ -78,7 +78,7 @@ find /abs/path/to/dir -type f -print0 | ibackup addremote --humgen -0 -b | iback
 // the rootCmd.
 func Execute() {
 	if err := RootCmd.Execute(); err != nil {
-		die("%s", err.Error())
+		die(err)
 	}
 }
 
@@ -96,11 +96,11 @@ func init() {
 // ensureURLandCert dies if --url or --cert have not been set.
 func ensureURLandCert() {
 	if serverURL == "" {
-		die("you must supply --url")
+		dief("you must supply --url")
 	}
 
 	if serverCert == "" {
-		die("you must supply --cert")
+		dief("you must supply --cert")
 	}
 }
 
@@ -138,7 +138,13 @@ func warn(msg string, a ...interface{}) {
 }
 
 // die is a convenience to log a message at the Error level and exit non zero.
-func die(msg string, a ...interface{}) {
+func die(err error) {
+	appLogger.Error("%s", err)
+	os.Exit(1)
+}
+
+// die is a convenience to log a message at the Error level and exit non zero.
+func dief(msg string, a ...interface{}) {
 	appLogger.Error(fmt.Sprintf(msg, a...))
 	os.Exit(1)
 }

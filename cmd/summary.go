@@ -60,7 +60,7 @@ installed.
 	Run: func(cmd *cobra.Command, args []string) {
 		err := summary(summaryDB)
 		if err != nil {
-			die("%s", err.Error())
+			die(err)
 		}
 	},
 }

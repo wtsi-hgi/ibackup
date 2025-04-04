@@ -64,16 +64,16 @@ own. You can specify the user as "all" to see all user's sets.
 `,
 	Run: func(_ *cobra.Command, _ []string) {
 		if lstName == "" {
-			die("--name must be set")
+			dief("--name must be set")
 		}
 
 		if lstLocal && lstRemote {
-			die("--local and --remote are mutually exclusive")
+			dief("--local and --remote are mutually exclusive")
 		}
 
 		client, err := newServerClient(serverURL, serverCert)
 		if err != nil {
-			die("%s", err.Error())
+			die(err)
 		}
 
 		getRemote(client, lstLocal, lstRemote, lstUser, lstName)
@@ -109,7 +109,7 @@ func getRemote(client *server.Client, local, remote bool, user, name string) {
 func displayPaths(client *server.Client, given *set.Set, local, remote bool) {
 	entries, err := client.GetFiles(given.ID())
 	if err != nil {
-		die("%s", err.Error())
+		die(err)
 	}
 
 	if local {

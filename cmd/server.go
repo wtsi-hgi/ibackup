@@ -144,13 +144,13 @@ database that you've made, to investigate.
 `,
 	Run: func(cmd *cobra.Command, args []string) {
 		if len(args) != 1 && len(args) != 2 {
-			die("you must supply the path to your set database file")
+			dief("you must supply the path to your set database file")
 		}
 
 		ensureURLandCert()
 
 		if serverKey == "" {
-			die("you must supply --key")
+			dief("you must supply --key")
 		}
 
 		if serverLDAPFQDN == "" || serverLDAPBindDN == "" {
@@ -171,7 +171,7 @@ database that you've made, to investigate.
 			})
 		} else {
 			if serverStillRunningMsgFreq != "" {
-				die("--still_running requires slack variables")
+				dief("--still_running requires slack variables")
 			}
 		}
 
@@ -181,16 +181,16 @@ database that you've made, to investigate.
 
 			stillRunningMsgFreq, err = parseDuration(serverStillRunningMsgFreq)
 			if err != nil {
-				die("invalid still_running message frequency: %s", err)
+				dief("invalid still_running message frequency: %s", err)
 			}
 
 			if stillRunningMsgFreq < 1*time.Minute {
-				die("message frequency must be 1m or more, not %s", stillRunningMsgFreq)
+				dief("message frequency must be 1m or more, not %s", stillRunningMsgFreq)
 			}
 		}
 
 		if serverSlackDebouncePeriod < 0 {
-			die("slack_debounce period must be positive, not: %d", serverSlackDebouncePeriod)
+			dief("slack_debounce period must be positive, not: %d", serverSlackDebouncePeriod)
 		}
 
 		conf := server.Config{
@@ -202,17 +202,17 @@ database that you've made, to investigate.
 
 		s, err := server.New(conf)
 		if err != nil {
-			die("%s", err)
+			die(err)
 		}
 
 		err = s.EnableAuthWithServerToken(serverCert, serverKey, serverTokenBasename, checkPassword)
 		if err != nil {
-			die("failed to enable authentication: %s", err)
+			dief("failed to enable authentication: %s", err)
 		}
 
 		err = s.MakeQueueEndPoints()
 		if err != nil {
-			die("failed to make queue endpoints: %s", err)
+			dief("failed to make queue endpoints: %s", err)
 		}
 
 		if serverDebug {
@@ -220,7 +220,7 @@ database that you've made, to investigate.
 		} else {
 			exe, erre := os.Executable()
 			if erre != nil {
-				die("failed to get own exe: %s", erre)
+				dief("failed to get own exe: %s", erre)
 			}
 
 			putCmd := fmt.Sprintf("%s put -s --url '%s' --cert '%s' ", exe, serverURL, serverCert)
@@ -231,7 +231,7 @@ database that you've made, to investigate.
 
 			err = s.EnableJobSubmission(putCmd, serverWRDeployment, "", "", numPutClients, appLogger)
 			if err != nil {
-				die("failed to enable job submission: %s", err)
+				dief("failed to enable job submission: %s", err)
 			}
 		}
 
@@ -244,17 +244,17 @@ database that you've made, to investigate.
 
 		err = s.LoadSetDB(args[0], dbBackupPath)
 		if err != nil {
-			die("failed to load database: %s", err)
+			dief("failed to load database: %s", err)
 		}
 
 		if serverRemoteBackupPath != "" {
 			if dbBackupPath == "" {
-				die("remote backup path defined when no local backup path provided")
+				dief("remote backup path defined when no local backup path provided")
 			}
 
 			handler, errb := put.GetBatonHandler()
 			if errb != nil {
-				die("failed to get baton handler: %s", errb)
+				dief("failed to get baton handler: %s", errb)
 			}
 
 			s.EnableRemoteDBBackups(serverRemoteBackupPath, handler)
@@ -270,7 +270,7 @@ database that you've made, to investigate.
 
 		err = s.Start(serverURL, serverCert, serverKey)
 		if err != nil {
-			die("non-graceful stop: %s", err)
+			dief("non-graceful stop: %s", err)
 		}
 	},
 }
@@ -324,7 +324,7 @@ func setServerLogger(path string) io.Writer {
 func logToSyslog() {
 	fh, err := log15.SyslogHandler(syslog.LOG_INFO|syslog.LOG_DAEMON, "ibackup-server", log15.LogfmtFormat())
 	if err != nil {
-		die("failed to log to syslog: %s", err)
+		dief("failed to log to syslog: %s", err)
 	}
 
 	appLogger.SetHandler(fh)

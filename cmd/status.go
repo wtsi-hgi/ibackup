@@ -124,26 +124,26 @@ own. You can specify the user as "all" to see all user's sets.
 		ensureURLandCert()
 
 		if statusDetails && statusName == "" {
-			die("--details can only be used with --name")
+			dief("--details can only be used with --name")
 		}
 
 		if statusRemotePaths && !statusDetails {
-			die("--remote can only be used with --details and --name")
+			dief("--remote can only be used with --details and --name")
 		}
 
 		if statusOrder != alphabetic && statusOrder != recent {
-			die("--order can only be 'alphabetic' or 'recent'")
+			dief("--order can only be 'alphabetic' or 'recent'")
 		}
 
 		sf := newStatusFilterer(statusIncomplete, statusComplete, statusFailed, statusQueued)
 
 		if statusName != "" && sf != nil {
-			die("--name can't be used together with the status filtering options")
+			dief("--name can't be used together with the status filtering options")
 		}
 
 		client, err := newServerClient(serverURL, serverCert)
 		if err != nil {
-			die("%s", err.Error())
+			die(err)
 		}
 
 		status(client, sf, statusUser, statusOrder, statusName, statusDetails, statusRemotePaths)
@@ -207,7 +207,7 @@ func checkOnlyOneStatusFlagSet(incomplete, complete, failed, queued bool) {
 	for _, flag := range []bool{incomplete, complete, failed, queued} {
 		if flag {
 			if flagSeen {
-				die("--incomplete, --complete, --failed and --queued are mutually exclusive")
+				dief("--incomplete, --complete, --failed and --queued are mutually exclusive")
 			}
 
 			flagSeen = true
@@ -219,7 +219,7 @@ func checkOnlyOneStatusFlagSet(incomplete, complete, failed, queued bool) {
 func status(client *server.Client, sf statusFilterer, user, order, name string, details, remote bool) {
 	qs, err := client.GetQueueStatus()
 	if err != nil {
-		die("unable to get server queue status: %s", err)
+		dief("unable to get server queue status: %s", err)
 	}
 
 	displayQueueStatus(qs)
@@ -263,7 +263,7 @@ func displayQueueStatus(qs *server.QStatus) {
 func getSetByName(client *server.Client, user, name string) []*set.Set {
 	got, err := client.GetSetByName(user, name)
 	if err != nil {
-		die("%s", err.Error())
+		dief("%s [%s]", err, name)
 	}
 
 	return []*set.Set{got}
@@ -273,7 +273,7 @@ func getSetByName(client *server.Client, user, name string) []*set.Set {
 func getSets(client *server.Client, sf statusFilterer, user string) []*set.Set {
 	sets, err := client.GetSets(user)
 	if err != nil {
-		die("%s", err.Error())
+		die(err)
 	}
 
 	if sf != nil {
@@ -521,7 +521,7 @@ func bytesToMB(bytes uint64) float64 {
 func getSetTransformer(given *set.Set) put.PathTransformer {
 	transformer, err := given.MakeTransformer()
 	if err != nil {
-		die("your transformer didn't work: %s", err)
+		dief("your transformer didn't work: %s", err)
 	}
 
 	return transformer
@@ -532,7 +532,7 @@ func getSetTransformer(given *set.Set) put.PathTransformer {
 func getDirs(client *server.Client, setID string) []string {
 	got, err := client.GetDirs(setID)
 	if err != nil {
-		die("%s", err.Error())
+		die(err)
 	}
 
 	paths := make([]string, len(got))
@@ -583,7 +583,7 @@ func displayDirs(dirs []string, transformer put.PathTransformer) {
 func getExampleFile(client *server.Client, setID string) string {
 	exampleFile, err := client.GetExampleFile(setID)
 	if err != nil {
-		die("%s", err.Error())
+		dief(err.Error())
 	}
 
 	if exampleFile == nil {
@@ -613,7 +613,7 @@ func displayExampleFile(path string, transformer put.PathTransformer) {
 func displayFailedEntries(client *server.Client, given *set.Set) {
 	failed, skipped, err := client.GetFailedFiles(given.ID())
 	if err != nil {
-		die("%s", err.Error())
+		die(err)
 	}
 
 	displayEntries(failed, false, nil)
@@ -628,7 +628,7 @@ func displayFailedEntries(client *server.Client, given *set.Set) {
 func displayAllEntries(client *server.Client, given *set.Set, showRemotePaths bool, transformer put.PathTransformer) {
 	all, err := client.GetFiles(given.ID())
 	if err != nil {
-		die("%s", err.Error())
+		die(err)
 	}
 
 	displayEntries(all, showRemotePaths, transformer)
@@ -677,7 +677,7 @@ func printEntriesHeader(cols []string) {
 func getRemotePath(path string, transformer put.PathTransformer) string {
 	remotePath, err := transformer(path)
 	if err != nil {
-		die("your transformer didn't work: %s", err)
+		dief("your transformer didn't work: %s", err)
 	}
 
 	return remotePath
