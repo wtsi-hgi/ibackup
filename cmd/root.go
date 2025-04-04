@@ -78,7 +78,7 @@ find /abs/path/to/dir -type f -print0 | ibackup addremote --humgen -0 -b | iback
 // the rootCmd.
 func Execute() {
 	if err := RootCmd.Execute(); err != nil {
-		die(err.Error())
+		die("%s", err.Error())
 	}
 }
 

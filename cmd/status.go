@@ -143,7 +143,7 @@ own. You can specify the user as "all" to see all user's sets.
 
 		client, err := newServerClient(serverURL, serverCert)
 		if err != nil {
-			die(err.Error())
+			die("%s", err.Error())
 		}
 
 		status(client, sf, statusUser, statusOrder, statusName, statusDetails, statusRemotePaths)
@@ -263,7 +263,7 @@ func displayQueueStatus(qs *server.QStatus) {
 func getSetByName(client *server.Client, user, name string) []*set.Set {
 	got, err := client.GetSetByName(user, name)
 	if err != nil {
-		die(err.Error())
+		die("%s", err.Error())
 	}
 
 	return []*set.Set{got}
@@ -273,7 +273,7 @@ func getSetByName(client *server.Client, user, name string) []*set.Set {
 func getSets(client *server.Client, sf statusFilterer, user string) []*set.Set {
 	sets, err := client.GetSets(user)
 	if err != nil {
-		die(err.Error())
+		die("%s", err.Error())
 	}
 
 	if sf != nil {
@@ -532,7 +532,7 @@ func getSetTransformer(given *set.Set) put.PathTransformer {
 func getDirs(client *server.Client, setID string) []string {
 	got, err := client.GetDirs(setID)
 	if err != nil {
-		die(err.Error())
+		die("%s", err.Error())
 	}
 
 	paths := make([]string, len(got))
@@ -583,7 +583,7 @@ func displayDirs(dirs []string, transformer put.PathTransformer) {
 func getExampleFile(client *server.Client, setID string) string {
 	exampleFile, err := client.GetExampleFile(setID)
 	if err != nil {
-		die(err.Error())
+		die("%s", err.Error())
 	}
 
 	if exampleFile == nil {
@@ -613,7 +613,7 @@ func displayExampleFile(path string, transformer put.PathTransformer) {
 func displayFailedEntries(client *server.Client, given *set.Set) {
 	failed, skipped, err := client.GetFailedFiles(given.ID())
 	if err != nil {
-		die(err.Error())
+		die("%s", err.Error())
 	}
 
 	displayEntries(failed, false, nil)
@@ -628,7 +628,7 @@ func displayFailedEntries(client *server.Client, given *set.Set) {
 func displayAllEntries(client *server.Client, given *set.Set, showRemotePaths bool, transformer put.PathTransformer) {
 	all, err := client.GetFiles(given.ID())
 	if err != nil {
-		die(err.Error())
+		die("%s", err.Error())
 	}
 
 	displayEntries(all, showRemotePaths, transformer)

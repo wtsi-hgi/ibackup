@@ -39,7 +39,6 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/wtsi-hgi/ibackup/internal"
-
 	ex "github.com/wtsi-npg/extendo/v2"
 )
 

@@ -79,7 +79,7 @@ option to retry the given requestor's backup sets, instead of your own.
 
 		client, err := newServerClient(serverURL, serverCert)
 		if err != nil {
-			die(err.Error())
+			die("%s", err.Error())
 		}
 
 		retrySetUploads(client, retryUser, retrySet, retryAll)
@@ -101,12 +101,12 @@ func init() {
 func retrySetUploads(client *server.Client, requester, setName string, all bool) {
 	set, err := client.GetSetByName(requester, setName)
 	if err != nil {
-		die(err.Error())
+		die("%s", err.Error())
 	}
 
 	if all {
 		if errt := client.TriggerDiscovery(set.ID()); err != nil {
-			die(errt.Error())
+			die("%s", errt.Error())
 		}
 
 		info("initiated retry of set %s", setName)
@@ -116,7 +116,7 @@ func retrySetUploads(client *server.Client, requester, setName string, all bool)
 
 	retried, err := client.RetryFailedSetUploads(set.ID())
 	if err != nil {
-		die(err.Error())
+		die("%s", err.Error())
 	}
 
 	if retried == 0 {

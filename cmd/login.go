@@ -49,7 +49,7 @@ func newServerClient(url, cert string) (*server.Client, error) {
 func gasClientCLI(url, cert string) *gas.ClientCLI {
 	c, err := gas.NewClientCLI(jwtBasename, serverTokenBasename, url, cert, false)
 	if err != nil {
-		die(err.Error())
+		die("%s", err.Error())
 	}
 
 	return c

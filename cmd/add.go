@@ -257,7 +257,7 @@ func init() {
 		"time until removal date (<number><y|m>, eg. 1y for 1 year), or exact removal date in the format YYYY-MM-DD")
 
 	if err := addCmd.MarkFlagRequired("name"); err != nil {
-		die(err.Error())
+		die("%s", err.Error())
 	}
 }
 
@@ -384,7 +384,7 @@ func checkExistingSet(client *server.Client, name, requester string) (*set.Set, 
 func askYesNo(prompt string) (bool, error) {
 	b := bufio.NewReader(os.Stdin)
 
-	cliPrint(prompt)
+	cliPrint("%s", prompt)
 
 	input, _, err := b.ReadLine()
 	if err != nil {

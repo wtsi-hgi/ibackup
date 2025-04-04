@@ -301,7 +301,7 @@ func createCollection(p *put.Putter) {
 func handleManualMode() {
 	requests, err := getRequestsFromFile(putFile, putMeta, putBase64)
 	if err != nil {
-		die(err.Error())
+		die("%s", err.Error())
 	}
 
 	_, uploadResults, skipResults, dfunc := handlePut(nil, requests)

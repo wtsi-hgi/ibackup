@@ -43,7 +43,7 @@ the local and remote checksums.
 
 		err := fileSummary(filestatusDB, args[0], filestatusIrods)
 		if err != nil {
-			die(err.Error())
+			die("%s", err.Error())
 		}
 	},
 }

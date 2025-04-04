@@ -78,7 +78,7 @@ the queue.
 
 		client, err := newServerClient(serverURL, serverCert)
 		if err != nil {
-			die(err.Error())
+			die("%s", err.Error())
 		}
 
 		switch {
