@@ -131,7 +131,7 @@ func displayPaths(client *server.Client, given *set.Set, local, remote bool) {
 
 func displayLocalPaths(entries []*set.Entry) {
 	for _, entry := range entries {
-		cliPrint("%s\n", entry.Path)
+		cliPrintf("%s\n", entry.Path)
 	}
 }
 
@@ -139,7 +139,7 @@ func displayRemotePaths(entries []*set.Entry, transformer put.PathTransformer) {
 	for _, entry := range entries {
 		remotePath := getRemotePath(entry.Path, transformer)
 
-		cliPrint("%s\n", remotePath)
+		cliPrintf("%s\n", remotePath)
 	}
 }
 
@@ -147,6 +147,6 @@ func displayLocalAndRemotePaths(entries []*set.Entry, transformer put.PathTransf
 	for _, entry := range entries {
 		remotePath := getRemotePath(entry.Path, transformer)
 
-		cliPrint("%s\t%s\n", entry.Path, remotePath)
+		cliPrintf("%s\t%s\n", entry.Path, remotePath)
 	}
 }

@@ -159,7 +159,7 @@ func displayRequests(rs []*put.Request, kind string) {
 	cliPrint("Requester\tSet\tLocal\tRemote\tStatus\tError\n")
 
 	for _, r := range rs {
-		cliPrint("%s\t%s\t%s\t%s\t%s\t%s\n", r.Requester, r.Set, r.Local, r.Remote, r.Status, r.Error)
+		cliPrintf("%s\t%s\t%s\t%s\t%s\t%s\n", r.Requester, r.Set, r.Local, r.Remote, r.Status, r.Error)
 	}
 }
 

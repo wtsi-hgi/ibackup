@@ -85,7 +85,7 @@ func summary(dbPath string) error {
 
 	usage := set.UsageSummary(sets)
 
-	cliPrint("Total size: %s\nTotal files: %s\n",
+	cliPrintf("Total size: %s\nTotal files: %s\n",
 		humanize.IBytes(usage.Total.Size), humanize.Comma(int64(usage.Total.Number)))
 
 	tp := tplot.New()

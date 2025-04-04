@@ -116,8 +116,12 @@ func logToFile(path string) {
 	appLogger.SetHandler(fh)
 }
 
-// cliPrint outputs the message to STDOUT.
-func cliPrint(msg string, a ...interface{}) {
+func cliPrint(msg string) {
+	fmt.Fprint(os.Stdout, msg)
+}
+
+// cliPrintf outputs the message to STDOUT.
+func cliPrintf(msg string, a ...interface{}) {
 	fmt.Fprintf(os.Stdout, msg, a...)
 }
 

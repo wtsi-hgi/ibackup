@@ -368,21 +368,21 @@ func sortSetsAlphabetically(sets []*set.Set) {
 
 // displaySet prints info about the given set to STDOUT.
 func displaySet(s *set.Set, showRequesters bool) { //nolint:funlen,gocyclo
-	cliPrint("Name: %s\n", s.Name)
+	cliPrintf("Name: %s\n", s.Name)
 
 	if showRequesters {
-		cliPrint("Requester: %s\n", s.Requester)
+		cliPrintf("Requester: %s\n", s.Requester)
 	}
 
-	cliPrint("Transformer: %s\n", s.Transformer)
+	cliPrintf("Transformer: %s\n", s.Transformer)
 
-	cliPrint("Reason: %s\n", s.Metadata["ibackup:reason"])
-	cliPrint("Review date: %.10s\n", s.Metadata["ibackup:review"])
-	cliPrint("Removal date: %.10s\n", s.Metadata["ibackup:removal"])
+	cliPrintf("Reason: %s\n", s.Metadata["ibackup:reason"])
+	cliPrintf("Review date: %.10s\n", s.Metadata["ibackup:review"])
+	cliPrintf("Removal date: %.10s\n", s.Metadata["ibackup:removal"])
 
 	userMeta := s.UserMetadata()
 	if userMeta != "" {
-		cliPrint("User metadata: %s\n", userMeta)
+		cliPrintf("User metadata: %s\n", userMeta)
 	}
 
 	monitored := "false"
@@ -390,34 +390,34 @@ func displaySet(s *set.Set, showRequesters bool) { //nolint:funlen,gocyclo
 		monitored = formatDuration(s.MonitorTime)
 	}
 
-	cliPrint("Monitored: %s; Archive: %v\n", monitored, s.DeleteLocal)
+	cliPrintf("Monitored: %s; Archive: %v\n", monitored, s.DeleteLocal)
 
 	if s.Description != "" {
-		cliPrint("Description: %s\n", s.Description)
+		cliPrintf("Description: %s\n", s.Description)
 	}
 
 	if s.Error != "" {
-		cliPrint("Status: unable to proceed\n")
-		cliPrint("Error: %s\n", s.Error)
+		cliPrintf("Status: unable to proceed\n")
+		cliPrintf("Error: %s\n", s.Error)
 	} else if s.Status == set.Complete && s.Failed != 0 {
-		cliPrint("Status: %s (but with failures - try a retry)\n", s.Status)
+		cliPrintf("Status: %s (but with failures - try a retry)\n", s.Status)
 	} else {
-		cliPrint("Status: %s\n", s.Status)
+		cliPrintf("Status: %s\n", s.Status)
 	}
 
 	if s.Warning != "" {
-		cliPrint("Warning: %s\n", s.Warning)
+		cliPrintf("Warning: %s\n", s.Warning)
 	}
 
-	cliPrint("Discovery: %s\n", s.Discovered())
-	cliPrint("Num files: %s; Symlinks: %d; Hardlinks: %d; Size (total/recently uploaded): %s / %s\n",
+	cliPrintf("Discovery: %s\n", s.Discovered())
+	cliPrintf("Num files: %s; Symlinks: %d; Hardlinks: %d; Size (total/recently uploaded): %s / %s\n",
 		s.Count(), s.Symlinks, s.Hardlinks, s.Size(), s.UploadedSize())
-	cliPrint("Uploaded: %d; Replaced: %d; Skipped: %d; Failed: %d; Missing: %d; Abnormal: %d\n",
+	cliPrintf("Uploaded: %d; Replaced: %d; Skipped: %d; Failed: %d; Missing: %d; Abnormal: %d\n",
 		s.Uploaded, s.Replaced, s.Skipped, s.Failed, s.Missing, s.Abnormal)
 
 	switch s.Status {
 	case set.Complete:
-		cliPrint("Completed in: %s\n", s.LastCompleted.Sub(s.StartedDiscovery).Truncate(time.Second))
+		cliPrintf("Completed in: %s\n", s.LastCompleted.Sub(s.StartedDiscovery).Truncate(time.Second))
 	case set.Uploading:
 		displayETA(s)
 	default:
@@ -472,7 +472,7 @@ func displayETA(s *set.Set) {
 	percentComplete := (hundredForPercentCalc / float64(total)) * float64(done)
 	eta := time.Duration((remaining / speed) * float64(timeUnit))
 
-	cliPrint("%.2f%% complete (based on %s); %.2f %s; ETA: %s\n",
+	cliPrintf("%.2f%% complete (based on %s); %.2f %s; ETA: %s\n",
 		percentComplete, basedOn, speed, unit, eta.Round(time.Second))
 }
 
@@ -570,12 +570,12 @@ func displayDirs(dirs []string, transformer put.PathTransformer) {
 				warnedAboutTransformer = true
 			}
 
-			cliPrint("  %s\n", dir)
+			cliPrintf("  %s\n", dir)
 
 			continue
 		}
 
-		cliPrint("  %s => %s\n", dir, filepath.Dir(transformedPath))
+		cliPrintf("  %s => %s\n", dir, filepath.Dir(transformedPath))
 	}
 }
 
@@ -605,7 +605,7 @@ func displayExampleFile(path string, transformer put.PathTransformer) {
 		return
 	}
 
-	cliPrint("Example File: %s => %s\n", path, transformedPath)
+	cliPrintf("Example File: %s => %s\n", path, transformedPath)
 }
 
 // displayFailedEntries prints out details about up to 10 failed entries in the
@@ -619,7 +619,7 @@ func displayFailedEntries(client *server.Client, given *set.Set) {
 	displayEntries(failed, false, nil)
 
 	if skipped > 0 {
-		cliPrint("[... and %d others]\n", skipped)
+		cliPrintf("[... and %d others]\n", skipped)
 	}
 }
 
@@ -669,7 +669,7 @@ func displayHeader(showRemotePath bool) {
 // the output of entry details.
 func printEntriesHeader(cols []string) {
 	cliPrint("\n")
-	cliPrint("%s", strings.Join(cols, "\t"))
+	cliPrintf("%s", strings.Join(cols, "\t"))
 	cliPrint("\n")
 }
 
