@@ -525,6 +525,10 @@ func makeTestRequests(t *testing.T, sourceDir, destDir string) []*Request {
 		filepath.Join(sourceDir, "a", "b", "d", "e", "file.5"),
 	}
 
+	return createTestRequests(t, sourceDir, destDir, sourcePaths)
+}
+
+func createTestRequests(t *testing.T, sourceDir, destDir string, sourcePaths []string) []*Request {
 	requests := make([]*Request, len(sourcePaths))
 	localMeta := map[string]string{"a": "1", "b": "2"}
 

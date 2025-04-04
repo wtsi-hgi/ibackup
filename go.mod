@@ -1,6 +1,8 @@
 module github.com/wtsi-hgi/ibackup
 
-go 1.23.5
+go 1.24
+
+toolchain go1.24.1
 
 require (
 	github.com/VertebrateResequencing/wr v0.34.0
@@ -24,8 +26,8 @@ require (
 	github.com/wtsi-hgi/go-authserver v1.3.0
 	github.com/wtsi-hgi/grand v1.0.0
 	github.com/wtsi-npg/extendo/v2 v2.7.0
-	github.com/wtsi-npg/logshim v1.4.0
-	github.com/wtsi-npg/logshim-zerolog v1.4.0
+	github.com/wtsi-npg/logshim v1.5.0
+	github.com/wtsi-npg/logshim-zerolog v1.5.0
 	github.com/wtsi-ssg/wr v0.5.12
 	github.com/wtsi-ssg/wrstat/v6 v6.1.0
 	go.etcd.io/bbolt v1.3.11
@@ -140,13 +142,13 @@ require (
 	go.opentelemetry.io/otel/metric v1.34.0 // indirect
 	go.opentelemetry.io/otel/trace v1.34.0 // indirect
 	golang.org/x/arch v0.13.0 // indirect
-	golang.org/x/crypto v0.32.0 // indirect
-	golang.org/x/net v0.34.0 // indirect
+	golang.org/x/crypto v0.33.0 // indirect
+	golang.org/x/net v0.35.0 // indirect
 	golang.org/x/oauth2 v0.25.0 // indirect
-	golang.org/x/sync v0.10.0 // indirect
-	golang.org/x/sys v0.29.0 // indirect
-	golang.org/x/term v0.28.0 // indirect
-	golang.org/x/text v0.21.0 // indirect
+	golang.org/x/sync v0.11.0 // indirect
+	golang.org/x/sys v0.31.0 // indirect
+	golang.org/x/term v0.29.0 // indirect
+	golang.org/x/text v0.22.0 // indirect
 	golang.org/x/time v0.9.0 // indirect
 	google.golang.org/protobuf v1.36.4 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
@@ -174,3 +176,5 @@ replace github.com/docker/spdystream => github.com/docker/spdystream v0.1.0
 
 // mergo moved to a vanity URL in v1.0.0
 replace github.com/imdario/mergo => github.com/imdario/mergo v0.3.16
+
+replace github.com/wtsi-npg/extendo/v2 => github.com/mjkw31/extendo/v2 v2.7.1-beta
