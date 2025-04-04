@@ -583,7 +583,7 @@ func displayDirs(dirs []string, transformer put.PathTransformer) {
 func getExampleFile(client *server.Client, setID string) string {
 	exampleFile, err := client.GetExampleFile(setID)
 	if err != nil {
-		dief(err.Error())
+		die(err)
 	}
 
 	if exampleFile == nil {
