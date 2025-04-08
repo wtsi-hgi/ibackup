@@ -234,7 +234,7 @@ func (s *Server) tellSlackStillRunning() {
 }
 
 func (s *Server) serverStillRunning() {
-	s.slacker.SendMessage(slack.Info, "server is still running")
+	s.sendSlackMessage(slack.Info, "server is still running")
 }
 
 // EnableRemoteDBBackups causes the database backup file to also be backed up to

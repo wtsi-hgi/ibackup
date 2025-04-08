@@ -272,7 +272,7 @@ func (s *Server) clientTTRC(data interface{}) queue.SubQueue {
 		s.Logger.Printf("item data not a hostPID")
 	}
 
-	s.slacker.SendMessage(slack.Warn, fmt.Sprintf("client host pid %s assumed killed", hostPID))
+	s.sendSlackMessage(slack.Warn, fmt.Sprintf("client host pid %s assumed killed", hostPID))
 
 	s.iRODSTracker.deleteIRODSConnections(hostPID)
 
