@@ -177,8 +177,10 @@ func initDB(path string) (*bolt.DB, error) {
 	}
 
 	err = boltDB.Update(func(tx *bolt.Tx) error {
-		for _, bucket := range [...]string{setsBucket, failedBucket, inodeBucket,
-			userToSetBucket, userToSetBucket, transformerToIDBucket, transformerFromIDBucket} {
+		for _, bucket := range [...]string{
+			setsBucket, failedBucket, inodeBucket,
+			userToSetBucket, userToSetBucket, transformerToIDBucket, transformerFromIDBucket,
+		} {
 			if _, errc := tx.CreateBucketIfNotExists([]byte(bucket)); errc != nil {
 				return errc
 			}
@@ -296,7 +298,8 @@ func (d *DB) setEntries(setID string, dirents []*Dirent, bucketName string) erro
 // of the setsBucket, then deletes and recreates the sub bucket. Returns the
 // empty sub bucket and any old values.
 func (d *DB) getAndDeleteExistingEntries(tx *bolt.Tx, subBucketName string, setID string) (*bolt.Bucket,
-	map[string][]byte, error) {
+	map[string][]byte, error,
+) {
 	existing := make(map[string][]byte)
 
 	sfsb, err := d.newSetFileBucket(tx, subBucketName, setID)
@@ -501,7 +504,8 @@ func (d *DB) statPureFileEntries(setID string) error {
 
 func (d *DB) handleFilePoolResults(tx *bolt.Tx, sfsb *setFileSubBucket, setID string,
 	direntCh chan *Dirent, entryCh chan []byte,
-	numEntries int) error {
+	numEntries int,
+) error {
 	dirents := make([]*Dirent, numEntries)
 	existing := make(map[string][]byte, numEntries)
 
@@ -830,13 +834,18 @@ func (d *DBRO) GetAll() ([]*Set, error) {
 func (d *DBRO) decodeSet(v []byte) *Set {
 	dec := codec.NewDecoderBytes(v, d.ch)
 
-	var set *Set
+	set := struct {
+		Set
+		SizeFiles *uint64
+	}{}
+
+	set.SizeFiles = &set.SizeTotal
 
 	dec.MustDecode(&set)
 
 	set.LogChangesToSlack(d.slacker)
 
-	return set
+	return &set.Set
 }
 
 // GetByRequester returns all the Sets previously added to the database by the
