@@ -28,6 +28,7 @@ package set
 
 import (
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -35,10 +36,12 @@ import (
 
 	"github.com/moby/sys/mountinfo"
 	"github.com/ugorji/go/codec"
+	"github.com/wtsi-hgi/ibackup/errs"
 	bolt "go.etcd.io/bbolt"
 )
 
 const transformerInodeSeparator = ":"
+const ErrElementNotInSlice = "element not in slice"
 
 // getMountPoints retrieves a list of mount point paths to be used when
 // determining hardlinks. The list is sorted longest first and stored on the
@@ -84,17 +87,17 @@ func (d *DB) handleInode(tx *bolt.Tx, de *Dirent, transformerID string) (string,
 		return "", b.Put(key, d.encodeToBytes([]string{transformerPath}))
 	}
 
-	files := d.decodeIMPValue(v, de.Inode)
-	if len(files) == 0 {
+	existingFiles, allFiles := d.decodeIMPValue(v, de.Inode)
+	if len(existingFiles) == 0 {
 		return "", b.Put(key, d.encodeToBytes([]string{transformerPath}))
 	}
 
-	_, hardlinkDest, err := splitTransformerPath(files[0])
+	_, hardlinkDest, err := splitTransformerPath(getFirstNonBlankValue(allFiles))
 	if err != nil {
 		return "", err
 	}
 
-	isExistingPath, isOriginalPath := alreadyInFiles(transformerPath, files)
+	isExistingPath, isOriginalPath := alreadyInFiles(transformerPath, allFiles)
 
 	if isOriginalPath {
 		return "", nil
@@ -104,7 +107,145 @@ func (d *DB) handleInode(tx *bolt.Tx, de *Dirent, transformerID string) (string,
 		return hardlinkDest, nil
 	}
 
-	return hardlinkDest, b.Put(key, d.encodeToBytes(append(files, transformerPath)))
+	return hardlinkDest, b.Put(key, d.encodeToBytes(append(allFiles, transformerPath)))
+}
+
+func getFirstNonBlankValue(arr []string) string {
+	for _, str := range arr {
+		if str != "" {
+			return str
+		}
+	}
+
+	return ""
+}
+
+// GetFilesFromInode returns all the paths that share the provided inode on the
+// given mount point.
+func (d *DB) GetFilesFromInode(inode uint64, mountPoint string) ([]string, error) {
+	de := &Dirent{Inode: inode, Path: mountPoint}
+	key := d.inodeMountPointKeyFromDirent(de)
+
+	var files []string
+
+	err := d.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(inodeBucket))
+
+		v := b.Get(key)
+		if v == nil {
+			return errs.PathError{Msg: "key not found in inode bucket", Path: string(key)}
+		}
+
+		_, files = d.decodeIMPValue(v, de.Inode)
+
+		return nil
+	})
+
+	for i, file := range files {
+		if file == "" {
+			continue
+		}
+
+		_, files[i], err = splitTransformerPath(file)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return files, err
+}
+
+// RemoveFileFromInode removes entry for the given path from inode bucket if it
+// is the last file with that inode. Otherwise just removes itself from the list
+// (if the path is the original file 'removal' is setting it to be blank).
+func (d *DB) RemoveFileFromInode(path string, inode uint64) error {
+	de := newDirentFromPath(path)
+	de.Inode = inode
+	key := d.inodeMountPointKeyFromDirent(de)
+
+	err := d.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(inodeBucket))
+
+		v := b.Get(key)
+		if v == nil {
+			return errs.PathError{Msg: "key not found in inode bucket", Path: string(key)}
+		}
+
+		_, files := d.decodeIMPValue(v, de.Inode)
+
+		return d.updateInodeEntryBasedOnFiles(b, key, path, files)
+	})
+
+	return err
+}
+
+func isPathInTransformerPaths(path string, files []string) (bool, error) {
+	for _, file := range files {
+		if file == "" {
+			continue
+		}
+
+		_, pathFromSplit, err := splitTransformerPath(file)
+		if err != nil {
+			return false, err
+		}
+
+		if pathFromSplit == path {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+func (d *DB) updateInodeEntryBasedOnFiles(b *bolt.Bucket, key []byte, path string, files []string) error {
+	isInFiles, err := isPathInTransformerPaths(path, files)
+	if err != nil {
+		return err
+	}
+
+	if !isInFiles {
+		return nil
+	}
+
+	if len(files) == 1 || (len(files) == 2 && files[0] == "") {
+		return b.Delete(key)
+	}
+
+	files, err = removePathFromInodeFiles(path, files)
+	if err != nil {
+		return err
+	}
+
+	return b.Put(key, d.encodeToBytes(files))
+}
+
+func removePathFromInodeFiles(path string, files []string) ([]string, error) {
+	transformerID, _, err := splitTransformerPath(files[0])
+	if err != nil {
+		return nil, err
+	}
+
+	transformerPath := transformerID + transformerInodeSeparator + path
+
+	isHardlink := files[0] != transformerPath
+	if isHardlink {
+		return RemoveElementFromSlice(files, transformerPath)
+	}
+
+	files[0] = ""
+
+	return files, nil
+}
+
+// RemoveElementFromSlice returns the given slice without the given element.
+func RemoveElementFromSlice(slice []string, element string) ([]string, error) {
+	index := slices.Index(slice, element)
+	if index < 0 {
+		return nil, errs.PathError{Msg: ErrElementNotInSlice, Path: element}
+	}
+
+	return slices.Delete(slice, index, index+1), nil
 }
 
 func splitTransformerPath(tp string) (string, string, error) {
@@ -160,9 +301,10 @@ func (d *DB) GetMountPointFromPath(path string) string {
 // (a []string) as stored in the db by AddInodeMountPoint(), and converts it
 // back in to []string.
 //
-// Before returning the slice, checks that at least one path still exists and
-// has the given inode; if not, will return an empty slice.
-func (d *DB) decodeIMPValue(v []byte, inode uint64) []string {
+// Before returning the slice of existingFiles, checks that at least one path
+// still exists and has the given inode; if not, will return an empty slice.
+// Also returns a slice of all decoded files.
+func (d *DB) decodeIMPValue(v []byte, inode uint64) ([]string, []string) {
 	dec := codec.NewDecoderBytes(v, d.ch)
 
 	var files []string
@@ -185,7 +327,7 @@ func (d *DB) decodeIMPValue(v []byte, inode uint64) []string {
 		existingFiles = append(existingFiles, file)
 	}
 
-	return existingFiles
+	return existingFiles, files
 }
 
 func impFileIsValid(file string, inode uint64) bool {
@@ -245,7 +387,7 @@ func (d *DB) getTransformerPaths(tx *bolt.Tx, e *Entry) []string {
 		return nil
 	}
 
-	transformerPaths := d.decodeIMPValue(v, e.Inode)
+	transformerPaths, _ := d.decodeIMPValue(v, e.Inode)
 
 	if len(transformerPaths) == 0 {
 		return nil

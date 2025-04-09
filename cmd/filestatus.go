@@ -11,6 +11,7 @@ import (
 
 	"github.com/dustin/go-humanize" //nolint:misspell
 	"github.com/spf13/cobra"
+	"github.com/wtsi-hgi/ibackup/baton"
 	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/set"
 	"github.com/wtsi-npg/extendo/v2"
@@ -107,7 +108,7 @@ func newFSG(db *set.DBRO, filePath string, useIRods bool) *fileStatusGetter {
 		return fsg
 	}
 
-	put.GetBatonHandler() //nolint:errcheck
+	baton.GetBatonHandler() //nolint:errcheck
 
 	if client, err := extendo.FindAndStart("--unbuffered", "--no-error"); err != nil {
 		warn("error occurred invoking baton; disabling irods mode: %s", err)

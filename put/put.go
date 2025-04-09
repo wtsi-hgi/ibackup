@@ -29,8 +29,6 @@ package put
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -41,29 +39,8 @@ import (
 
 	"github.com/gammazero/workerpool"
 	"github.com/hashicorp/go-multierror"
+	"github.com/wtsi-hgi/ibackup/errs"
 )
-
-type Error struct {
-	msg  string
-	path string
-}
-
-func (e Error) Error() string {
-	if e.path != "" {
-		return fmt.Sprintf("%s [%s]", e.msg, e.path)
-	}
-
-	return e.msg
-}
-
-func (e Error) Is(err error) bool {
-	var putErr *Error
-	if errors.As(err, &putErr) {
-		return putErr.msg == e.msg
-	}
-
-	return false
-}
 
 const (
 	ErrLocalNotAbs         = "local path could not be made absolute"
@@ -78,9 +55,9 @@ const (
 	// during Put().
 	workerPoolSizeStats = 16
 
-	// workerPoolSizeCollections is the max number of concurrent collection
+	// WorkerPoolSizeCollections is the max number of concurrent collection
 	// creations we'll do during CreateCollections().
-	workerPoolSizeCollections = 2
+	WorkerPoolSizeCollections = 2
 )
 
 // Handler is something that knows how to communicate with iRODS and carry out
@@ -92,20 +69,18 @@ type Handler interface {
 	EnsureCollection(collection string) error
 
 	// CollectionsDone is called after all collections have been created. This
-	// method can do things like cleaning up connections created for collection
-	// creation. It can also create new connections for subsequent Put() and
-	// *Meta calls that are likely to occur.
+	// method cleans up connections created for collection creation.
 	CollectionsDone() error
 
-	// Stat checks if the Request's Remote object exists. If it does, records
-	// its metadata in the returned ObjectInfo. Returns an error if there was a
-	// problem finding out information (but not if the object does not exist).
-	Stat(request *Request) (*ObjectInfo, error)
+	// Stat checks if the provided Remote object exists. If it does, records its
+	// metadata and returns it. Returns an error if there was a problem finding
+	// out information (but not if the object does not exist).
+	Stat(remote string) (bool, map[string]string, error)
 
-	// Put uploads the Request's Local file to the Remote location, overwriting
-	// any existing object, and ensuring that a locally calculated and remotely
+	// Put uploads the Local file to the Remote location, overwriting any
+	// existing object, and ensuring that a locally calculated and remotely
 	// calculated md5 checksum match.
-	Put(request *Request) error
+	Put(local, remote string) error
 
 	// RemoveMeta deletes the given metadata from the given object.
 	RemoveMeta(path string, meta map[string]string) error
@@ -117,7 +92,10 @@ type Handler interface {
 
 	// Cleanup stops any connections created earlier and does any other cleanup
 	// needed.
-	Cleanup() error
+	Cleanup()
+
+	// GetMeta returns the meta for a given path in iRODS.
+	GetMeta(path string) (map[string]string, error)
 }
 
 // FileReadTester is a function that attempts to open and read the given path,
@@ -130,7 +108,7 @@ type FileReadTester func(ctx context.Context, path string) error
 func headRead(ctx context.Context, path string) error {
 	out, err := exec.CommandContext(ctx, "head", "-c", "1", path).CombinedOutput()
 	if err != nil && len(out) > 0 {
-		err = Error{msg: string(out)}
+		err = errs.PathError{Msg: string(out)}
 	}
 
 	return err
@@ -219,8 +197,8 @@ func (p *Putter) SetFileReadTester(tester FileReadTester) {
 
 // Cleanup should be deferred after making a New Putter. It handles things like
 // disconnecting.
-func (p *Putter) Cleanup() error {
-	return p.handler.Cleanup()
+func (p *Putter) Cleanup() {
+	p.handler.Cleanup()
 }
 
 // CreateCollections will determine the minimal set of collections that need to
@@ -234,7 +212,7 @@ func (p *Putter) Cleanup() error {
 // wrapped in to one.
 func (p *Putter) CreateCollections() error {
 	dirs := p.getUniqueRequestLeafCollections()
-	pool := workerpool.New(workerPoolSizeCollections)
+	pool := workerpool.New(WorkerPoolSizeCollections)
 	errCh := make(chan error, len(dirs))
 
 	for _, dir := range dirs {
@@ -608,7 +586,7 @@ func (p *Putter) testRead(request *Request) error {
 	go func() {
 		select {
 		case <-timer.C:
-			errCh <- Error{ErrReadTimeout, request.Local}
+			errCh <- errs.PathError{Msg: ErrReadTimeout, Path: request.Local}
 		case err := <-readCh:
 			timer.Stop()
 			errCh <- err

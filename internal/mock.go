@@ -1,7 +1,8 @@
 /*******************************************************************************
- * Copyright (c) 2022, 2023 Genome Research Ltd.
+ * Copyright (c) 2025 Genome Research Ltd.
  *
- * Author: Sendu Bala <sb10@sanger.ac.uk>
+ * Author: Rosie Kern <rk18@sanger.ac.uk>
+ * Author: Iaroslav Popov <ip13@sanger.ac.uk>
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -23,33 +24,37 @@
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  ******************************************************************************/
 
-package put
+package internal
 
 import (
 	"io"
 	"maps"
 	"os"
+	"strings"
 	"sync"
 	"time"
+
+	"github.com/wtsi-hgi/ibackup/errs"
 )
 
-const userPerms = 0700
 const ErrMockStatFail = "stat fail"
 const ErrMockPutFail = "put fail"
 const ErrMockMetaFail = "meta fail"
+const ErrFileDoesNotExist = "file does not exist"
 
 // LocalHandler satisfies the Handler interface, treating "Remote" as local
 // paths and moving from Local to Remote for the Put().
 type LocalHandler struct {
-	connected   bool
-	cleaned     bool
-	collections []string
-	meta        map[string]map[string]string
+	Connected   bool
+	Cleaned     bool
+	Collections []string
+	Meta        map[string]map[string]string
 	statFail    string
 	putFail     string
 	putSlow     string
 	putDur      time.Duration
 	metaFail    string
+	removeSlow  bool
 	mu          sync.RWMutex
 }
 
@@ -58,15 +63,17 @@ type LocalHandler struct {
 // Remote for any Put()s. For use during tests.
 func GetLocalHandler() *LocalHandler {
 	return &LocalHandler{
-		meta: make(map[string]map[string]string),
+		Meta: make(map[string]map[string]string),
 	}
 }
 
 // Cleanup just records this was called.
-func (l *LocalHandler) Cleanup() error {
-	l.cleaned = true
+func (l *LocalHandler) Cleanup() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 
-	return nil
+	l.Cleaned = true
+	l.Connected = false
 }
 
 // EnsureCollection creates the given dir locally and records that we did this.
@@ -74,14 +81,14 @@ func (l *LocalHandler) EnsureCollection(dir string) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	l.collections = append(l.collections, dir)
+	l.Collections = append(l.Collections, dir)
 
-	return os.MkdirAll(dir, userPerms)
+	return os.MkdirAll(dir, UserPerms)
 }
 
-// CollectionsDone says we connected and prepares us for metadata handling.
+// CollectionsDone just records this was called.
 func (l *LocalHandler) CollectionsDone() error {
-	l.connected = true
+	l.Connected = true
 
 	return nil
 }
@@ -94,31 +101,31 @@ func (l *LocalHandler) MakeStatFail(remote string) {
 
 // Stat returns info about the Remote file, which is a local file on disk.
 // Returns an error if statFail == Remote.
-func (l *LocalHandler) Stat(request *Request) (*ObjectInfo, error) {
-	if l.statFail == request.Remote {
-		return nil, Error{ErrMockStatFail, ""}
+func (l *LocalHandler) Stat(remote string) (bool, map[string]string, error) {
+	if l.statFail == remote {
+		return false, nil, errs.PathError{Msg: ErrMockStatFail, Path: ""}
 	}
 
-	_, err := os.Stat(request.Remote)
+	_, err := os.Stat(remote)
 	if os.IsNotExist(err) {
-		return &ObjectInfo{Exists: false}, nil
+		return false, nil, nil
 	}
 
 	if err != nil {
-		return nil, err
+		return false, nil, err
 	}
 
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 
-	meta, exists := l.meta[request.Remote]
+	meta, exists := l.Meta[remote]
 	if !exists {
 		meta = make(map[string]string)
 	} else {
 		meta = maps.Clone(meta)
 	}
 
-	return &ObjectInfo{Exists: true, Meta: meta}, nil
+	return true, meta, nil
 }
 
 // MakePutFail will result in any subsequent Put()s for a Request with the
@@ -129,22 +136,28 @@ func (l *LocalHandler) MakePutFail(remote string) {
 
 // MakePutSlow will result in any subsequent Put()s for a Request with the
 // given local path taking the given amount of time.
-func (l *LocalHandler) MakePutSlow(local string, dur time.Duration) {
-	l.putSlow = local
+func (l *LocalHandler) MakePutSlow(remote string, dur time.Duration) {
+	l.putSlow = remote
 	l.putDur = dur
 }
 
+// MakeRemoveSlow will result in any subsequent RemoveFile() or RemoveDir()
+// calls taking 1s to complete.
+func (l *LocalHandler) MakeRemoveSlow() {
+	l.removeSlow = true
+}
+
 // Put just copies from Local to Remote. Returns an error if putFail == Remote.
-func (l *LocalHandler) Put(request *Request) error {
-	if l.putFail == request.Remote {
-		return Error{ErrMockPutFail, ""}
+func (l *LocalHandler) Put(local, remote string) error {
+	if l.putFail == remote {
+		return errs.PathError{Msg: ErrMockPutFail, Path: ""}
 	}
 
-	if l.putSlow == request.Local {
+	if l.putSlow == remote {
 		<-time.After(l.putDur)
 	}
 
-	return copyFile(request.LocalDataPath(), request.Remote)
+	return copyFile(local, remote)
 }
 
 // copyFile copies source to dest.
@@ -184,13 +197,13 @@ func (l *LocalHandler) MakeMetaFail(remote string) {
 // error if metaFail == path.
 func (l *LocalHandler) RemoveMeta(path string, meta map[string]string) error {
 	if l.metaFail == path {
-		return Error{ErrMockMetaFail, ""}
+		return errs.PathError{Msg: ErrMockMetaFail, Path: ""}
 	}
 
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	pathMeta, exists := l.meta[path]
+	pathMeta, exists := l.Meta[path]
 	if !exists {
 		return nil
 	}
@@ -206,21 +219,21 @@ func (l *LocalHandler) RemoveMeta(path string, meta map[string]string) error {
 // if metafail == path, or if keys were already defined in the map.
 func (l *LocalHandler) AddMeta(path string, meta map[string]string) error {
 	if l.metaFail == path {
-		return Error{ErrMockMetaFail, ""}
+		return errs.PathError{Msg: ErrMockMetaFail, Path: ""}
 	}
 
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	pathMeta, exists := l.meta[path]
+	pathMeta, exists := l.Meta[path]
 	if !exists {
 		pathMeta = make(map[string]string)
-		l.meta[path] = pathMeta
+		l.Meta[path] = pathMeta
 	}
 
 	for key, val := range meta {
 		if _, exists := pathMeta[key]; exists {
-			return Error{ErrMockMetaFail, key}
+			return errs.PathError{Msg: ErrMockMetaFail, Path: key}
 		}
 
 		pathMeta[key] = val
@@ -231,17 +244,15 @@ func (l *LocalHandler) AddMeta(path string, meta map[string]string) error {
 
 // GetMeta gets the metadata stored for the given path (returns an empty map if
 // path is not known about or has no metadata).
-//
-// (Currently this is just for testing and not part of the Handler interface.)
-func (l *LocalHandler) GetMeta(path string) map[string]string {
+func (l *LocalHandler) GetMeta(path string) (map[string]string, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	if l.meta == nil {
-		return make(map[string]string)
+	if l.Meta == nil {
+		return make(map[string]string), nil
 	}
 
-	currentMeta, exists := l.meta[path]
+	currentMeta, exists := l.Meta[path]
 	if !exists {
 		currentMeta = make(map[string]string)
 	}
@@ -252,5 +263,67 @@ func (l *LocalHandler) GetMeta(path string) map[string]string {
 		meta[k] = v
 	}
 
-	return meta
+	return meta, nil
+}
+
+// QueryMeta return paths to all objects with given metadata inside the provided
+// scope.
+func (l *LocalHandler) QueryMeta(dirToSearch string, meta map[string]string) ([]string, error) { //nolint:unparam
+	var objects []string
+
+	for path, pathMeta := range l.Meta {
+		if !strings.HasPrefix(path, dirToSearch) {
+			continue
+		}
+
+		if doesMetaContainMeta(pathMeta, meta) {
+			objects = append(objects, path)
+		}
+	}
+
+	return objects, nil
+}
+
+func doesMetaContainMeta(sourceMeta, targetMeta map[string]string) bool {
+	valid := true
+
+	for k, v := range targetMeta {
+		if sourceMeta[k] != v {
+			valid = false
+
+			break
+		}
+	}
+
+	return valid
+}
+
+// RemoveDir removes the empty dir.
+func (l *LocalHandler) RemoveDir(path string) error {
+	if l.removeSlow {
+		time.Sleep(1 * time.Second)
+	}
+
+	err := os.Remove(path)
+	if err != nil && strings.Contains(err.Error(), "directory not empty") {
+		return errs.NewDirNotEmptyError(path)
+	}
+
+	return err
+}
+
+// RemoveFile removes the file and its metadata.
+func (l *LocalHandler) RemoveFile(path string) error {
+	if l.removeSlow {
+		time.Sleep(1 * time.Second)
+	}
+
+	delete(l.Meta, path)
+
+	err := os.Remove(path)
+	if err != nil && strings.Contains(err.Error(), "no such file or directory") {
+		return errs.PathError{Msg: ErrFileDoesNotExist, Path: path}
+	}
+
+	return err
 }
