@@ -904,7 +904,7 @@ func (s *Server) getDirs(c *gin.Context) {
 		return
 	}
 
-	entries, err := s.db.GetAllDirEntries(set.ID())
+	entries, err := s.db.GetDirEntries(set.ID())
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 

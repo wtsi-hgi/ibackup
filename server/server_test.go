@@ -481,12 +481,15 @@ func TestServer(t *testing.T) {
 						})
 					})
 
-					Convey("And given a set with a folder and 2 nested files", func() {
+					Convey("And given a set with a folder and a nested folder with 2 files", func() {
 						dir0local := filepath.Join(localDir, "dir0/")
 						dir0remote := filepath.Join(remoteDir, "dir0/")
 
 						dir1local := filepath.Join(dir0local, "dir1/")
 						dir1remote := filepath.Join(dir0remote, "dir1/")
+
+						dir2local := filepath.Join(dir1local, "dir1/")
+						dir2remote := filepath.Join(dir1remote, "dir1/")
 
 						err = os.MkdirAll(dir1local, 0755)
 						So(err, ShouldBeNil)
@@ -494,13 +497,13 @@ func TestServer(t *testing.T) {
 						err = os.MkdirAll(dir1remote, 0755)
 						So(err, ShouldBeNil)
 
-						file1local := filepath.Join(dir1local, "file1")
+						file1local := filepath.Join(dir2local, "file1")
 						internal.CreateTestFile(t, file1local, "file content")
 
-						file1remote := filepath.Join(dir1remote, "file1")
+						file1remote := filepath.Join(dir2remote, "file1")
 						internal.CreateTestFile(t, file1remote, "file content")
 
-						file2remote := filepath.Join(dir1remote, "file2")
+						file2remote := filepath.Join(dir2remote, "file2")
 						internal.CreateTestFile(t, file2remote, "file content")
 
 						hardlinkMeta := map[string]string{
@@ -527,7 +530,7 @@ func TestServer(t *testing.T) {
 						})
 
 						Convey("Removal on a folder with pending files in it returns an error", func() {
-							err = client.RemoveFilesAndDirs(exampleSet.ID(), []string{dir1local})
+							err = client.RemoveFilesAndDirs(exampleSet.ID(), []string{dir2local})
 							So(err, ShouldNotBeNil)
 							So(err.Error(), ShouldContainSubstring, set.ErrRemovalWhenSetNotComplete)
 						})
@@ -553,7 +556,7 @@ func TestServer(t *testing.T) {
 							makeGivenSetComplete(1, exampleSet.Name, adminClient)
 
 							Convey("Removal on a file and a dir sets them as complete in the remove bucket", func() {
-								err = client.RemoveFilesAndDirs(exampleSet.ID(), []string{file1local, dir1local})
+								err = client.RemoveFilesAndDirs(exampleSet.ID(), []string{file1local, dir2local})
 								So(err, ShouldBeNil)
 
 								waitForRemovals(t, client, exampleSet)
@@ -580,8 +583,19 @@ func TestServer(t *testing.T) {
 								So(logWriter.String(), ShouldNotContainSubstring, "dir removal error")
 							})
 
+							Convey("Remove on the parent folder removes the nested folder from the db", func() {
+								err = client.RemoveFilesAndDirs(exampleSet.ID(), []string{dir1local})
+								So(err, ShouldBeNil)
+
+								waitForRemovals(t, client, exampleSet)
+
+								entries, errg := s.db.GetAllDirEntries(exampleSet.ID())
+								So(errg, ShouldBeNil)
+								So(len(entries), ShouldEqual, 0)
+							})
+
 							Convey("If the folder has no access permissions, removal on a file will log the error", func() {
-								err = os.Chmod(dir0remote, 0555)
+								err = os.Chmod(dir1remote, 0555)
 								So(err, ShouldBeNil)
 
 								logWriter.Reset()
@@ -597,12 +611,12 @@ func TestServer(t *testing.T) {
 								_, err = os.Stat(file1remote)
 								So(err, ShouldNotBeNil)
 
-								_, err = os.Stat(dir1remote)
+								_, err = os.Stat(dir2remote)
 								So(err, ShouldBeNil)
 
 								So(logWriter.String(), ShouldContainSubstring, "dir removal error")
 
-								os.Chmod(dir0remote, 0755) //nolint:errcheck
+								os.Chmod(dir1remote, 0755) //nolint:errcheck
 							})
 						})
 					})
@@ -635,6 +649,8 @@ func TestServer(t *testing.T) {
 
 							err = client.RemoveFilesAndDirs(exampleSet.ID(), []string{dir2})
 							So(err, ShouldBeNil)
+
+							waitForRemovals(t, client, exampleSet)
 
 							files, errgf := client.GetFiles(exampleSet.ID())
 							So(errgf, ShouldBeNil)
@@ -761,7 +777,7 @@ func TestServer(t *testing.T) {
 					})
 
 					Convey("And then you can set file and directory entries, trigger discovery and get all file statuses", func() {
-						files, dirs, discovers, discoveredFolders, symlinkPath := createTestBackupFiles(t, localDir)
+						files, dirs, discovers, symlinkPath := createTestBackupFiles(t, localDir)
 						dirs = append(dirs, filepath.Join(localDir, "missing"))
 
 						err = client.SetFiles(exampleSet.ID(), files)
@@ -821,7 +837,7 @@ func TestServer(t *testing.T) {
 
 						entries, err = client.GetDirs(exampleSet.ID())
 						So(err, ShouldBeNil)
-						So(len(entries), ShouldEqual, len(dirs)+len(discoveredFolders))
+						So(len(entries), ShouldEqual, len(dirs))
 						So(entries[2].Status, ShouldEqual, set.Missing)
 
 						gotSet, errg = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
@@ -1903,7 +1919,7 @@ func TestServer(t *testing.T) {
 							MonitorTime: 0,
 						}
 
-						_, dirs, expected, _, _ := createTestBackupFiles(t, localDir)
+						_, dirs, expected, _ := createTestBackupFiles(t, localDir)
 
 						err = client.AddOrUpdateSet(badSet)
 						So(err, ShouldBeNil)
@@ -2008,7 +2024,7 @@ func TestServer(t *testing.T) {
 					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldBeNil)
 
-					_, dirs, discovers, _, _ := createTestBackupFiles(t, localDir)
+					_, dirs, discovers, _ := createTestBackupFiles(t, localDir)
 
 					err = client.SetDirs(exampleSet.ID(), dirs)
 					So(err, ShouldBeNil)
@@ -2818,7 +2834,7 @@ func TestServer(t *testing.T) {
 					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldBeNil)
 
-					files, dirs, _, _, _ := createTestBackupFiles(t, localDir)
+					files, dirs, _, _ := createTestBackupFiles(t, localDir)
 					files = []string{files[0], dirs[0]}
 
 					err = client.SetFiles(exampleSet.ID(), files)
@@ -3596,7 +3612,7 @@ func createDBLocation(t *testing.T) string {
 // createTestBackupFiles creates and returns files, dirs and the files we're
 // expecting to discover in the dirs. Also created is a symlink in one of the
 // directories; the path to this is returned separately.
-func createTestBackupFiles(t *testing.T, dir string) ([]string, []string, []string, []string, string) {
+func createTestBackupFiles(t *testing.T, dir string) ([]string, []string, []string, string) {
 	t.Helper()
 
 	files := []string{
@@ -3615,12 +3631,6 @@ func createTestBackupFiles(t *testing.T, dir string) ([]string, []string, []stri
 		filepath.Join(dir, "e/f/i/j/k/l"),
 	}
 
-	discoveredFolders := []string{
-		filepath.Join(dir, "e/f/i/"),
-		filepath.Join(dir, "e/f/i/j"),
-		filepath.Join(dir, "e/f/i/j/k"),
-	}
-
 	for i, path := range files {
 		internal.CreateTestFileOfLength(t, path, i+1)
 	}
@@ -3636,7 +3646,7 @@ func createTestBackupFiles(t *testing.T, dir string) ([]string, []string, []stri
 
 	discovers = append(discovers, symlinkPath)
 
-	return files, dirs, discovers, discoveredFolders, symlinkPath
+	return files, dirs, discovers, symlinkPath
 }
 
 // createManyTestBackupFiles creates and returns the paths to many files in a
