@@ -40,11 +40,15 @@ import (
 var appLogger = log15.New()
 
 // global options.
-var serverURL string
-var serverCert string
+var (
+	serverURL  string
+	serverCert string
+)
 
-const serverURLEnvKey = "IBACKUP_SERVER_URL"
-const serverCertEnvKey = "IBACKUP_SERVER_CERT"
+const (
+	serverURLEnvKey  = "IBACKUP_SERVER_URL"
+	serverCertEnvKey = "IBACKUP_SERVER_CERT"
+)
 
 // RootCmd represents the base command when called without any subcommands.
 var RootCmd = &cobra.Command{
@@ -143,7 +147,7 @@ func warn(msg string, a ...interface{}) {
 
 // die is a convenience to log a message at the Error level and exit non zero.
 func die(err error) {
-	appLogger.Error("%s", err)
+	appLogger.Error(err.Error())
 	os.Exit(1)
 }
 
