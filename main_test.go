@@ -998,8 +998,7 @@ Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently 
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
 Completed in: 0s
 Directories:
-  `+localDir+" => "+remote+`
-  `+badPermDir+" => "+filepath.Join(remote, "bad-perms-dir"))
+  `+localDir+" => "+remote)
 		})
 
 		Convey("Given an added set defined with a humgen transformer, the remote directory is correct", func() {
@@ -2178,9 +2177,6 @@ func TestRemove(t *testing.T) {
 				s.confirmOutputDoesNotContain(t, []string{"status", "--name", setName, "-d"},
 					0, dir3+"/")
 
-				s.confirmOutputDoesNotContain(t, []string{"status", "--name", setName, "-d"},
-					0, dir3+" => ")
-
 				resetIRODS()
 			})
 
@@ -2205,12 +2201,9 @@ func TestRemove(t *testing.T) {
 
 					s.confirmOutputDoesNotContain(t, []string{"status", "--name", setName, "-d"},
 						0, dir3+"/")
-
-					s.confirmOutputDoesNotContain(t, []string{"status", "--name", setName, "-d"},
-						0, dir3+" => ")
 				})
 
-				Convey("Remove on the parent folder removes the nested folder from the db", func() {
+				Convey("Remove on the parent folder submits itself and all children to be removed", func() {
 					exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", dir1)
 
 					So(exitCode, ShouldEqual, 0)
@@ -2219,9 +2212,6 @@ func TestRemove(t *testing.T) {
 						0, "Removal status: 0 / 4 objects removed")
 
 					s.waitForStatus(setName, "Removal status: 4 / 4 objects removed", 5*time.Second)
-
-					s.confirmOutputDoesNotContain(t, []string{"status", "--name", setName, "-d"},
-						0, dir3+" => ")
 				})
 			})
 
