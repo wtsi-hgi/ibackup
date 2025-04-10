@@ -421,7 +421,9 @@ func appendValIfNotInList(val string, list []string) string {
 // sets our date metadata to the remote value, since we're not uploading now.
 func (m *Meta) needsMetadataUpdate() bool {
 	defer func() {
-		m.LocalMeta[MetaKeyDate] = m.remoteMeta[MetaKeyDate]
+		if remoteDate, ok := m.remoteMeta[MetaKeyDate]; ok {
+			m.LocalMeta[MetaKeyDate] = remoteDate
+		}
 	}()
 
 	need := m.valForMetaKeyDifferentOnRemote(MetaKeyRequester)
