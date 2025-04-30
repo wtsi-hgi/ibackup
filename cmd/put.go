@@ -73,13 +73,15 @@ const (
 )
 
 // options for this cmd.
-var putFile string
-var putMeta string
-var putVerbose bool
-var putBase64 bool
-var putServerMode bool
-var putLog string
-var maxStuckTime time.Duration
+var (
+	putFile       string
+	putMeta       string
+	putVerbose    bool
+	putBase64     bool
+	putServerMode bool
+	putLog        string
+	maxStuckTime  time.Duration
+)
 
 // putCmd represents the put command.
 var putCmd = &cobra.Command{
@@ -217,7 +219,8 @@ func handleServerMode(started time.Time) {
 }
 
 func handlePut(client *server.Client, requests []*put.Request) (chan *put.Request,
-	chan *put.Request, chan *put.Request, func()) {
+	chan *put.Request, chan *put.Request, func(),
+) {
 	if putVerbose {
 		host, errh := os.Hostname()
 		if errh != nil {
@@ -422,7 +425,8 @@ func openFile(path string) (io.Reader, func()) {
 }
 
 func parsePutFileLine(line string, base64Encoded bool, lineNum int,
-	defaultMeta *put.Meta, requester string) *put.Request {
+	defaultMeta *put.Meta, requester string,
+) *put.Request {
 	cols := strings.Split(line, "\t")
 	colsn := len(cols)
 
@@ -432,7 +436,7 @@ func parsePutFileLine(line string, base64Encoded bool, lineNum int,
 
 	checkPutFileCols(colsn, lineNum)
 
-	meta := defaultMeta
+	var meta *put.Meta
 
 	if colsn == putFileCols && cols[2] != "" {
 		parsedMeta, err := put.ParseMetaString(cols[2], nil)
@@ -441,6 +445,8 @@ func parsePutFileLine(line string, base64Encoded bool, lineNum int,
 		}
 
 		meta = parsedMeta
+	} else {
+		meta = defaultMeta.Clone()
 	}
 
 	return &put.Request{

@@ -215,6 +215,7 @@ func handleNamespace(key string) (string, error) {
 func areBackupInputsAllBlank(reason Reason, review, removal string) bool {
 	return reason == Unset && review == "" && removal == ""
 }
+
 func (m *Meta) setBackupMeta(reason, review, removal string) {
 	m.LocalMeta[MetaKeyReason] = reason
 	m.LocalMeta[MetaKeyReview] = review
@@ -349,9 +350,9 @@ func (m *Meta) uniquify() {
 	m.remoteMeta = maps.Clone(m.remoteMeta)
 }
 
-// clone returns a new Meta containing a clone of our maps inside the provided
+// Clone returns a new Meta containing a Clone of our maps inside the provided
 // Meta.
-func (m *Meta) clone() *Meta {
+func (m *Meta) Clone() *Meta {
 	newMeta := Meta{}
 	newMeta.LocalMeta = maps.Clone(m.LocalMeta)
 	newMeta.remoteMeta = maps.Clone(m.remoteMeta)
