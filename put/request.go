@@ -239,7 +239,7 @@ func (r *Request) Clone() *Request {
 		skipPut:   r.skipPut,
 	}
 
-	clone.Meta = r.Meta.clone()
+	clone.Meta = r.Meta.Clone()
 
 	return clone
 }
@@ -266,7 +266,7 @@ func (r *Request) StatAndAssociateStandardMetadata(lInfo *ObjectInfo, handler Ha
 		return nil, err
 	}
 
-	r.Meta = r.inodeRequest.Meta.clone()
+	r.Meta = r.inodeRequest.Meta.Clone()
 
 	if lInfo.HasSameModTime(rInfo) && !rInfoEmpty.Exists {
 		rInfo = rInfoEmpty
@@ -277,7 +277,8 @@ func (r *Request) StatAndAssociateStandardMetadata(lInfo *ObjectInfo, handler Ha
 }
 
 func statAndAssociateStandardMetadata(request *Request, diskMeta map[string]string,
-	handler Handler) (*ObjectInfo, error) {
+	handler Handler,
+) (*ObjectInfo, error) {
 	rInfo, err := handler.Stat(request)
 	if err != nil {
 		return nil, err
