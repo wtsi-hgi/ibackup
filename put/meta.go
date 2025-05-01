@@ -421,16 +421,12 @@ func appendValIfNotInList(val string, list []string) string {
 // by comparing mtimes; request.skipPut should be set to the return value. Also
 // sets our date metadata to the remote value, since we're not uploading now.
 func (m *Meta) needsMetadataUpdate() bool {
-	defer func() {
-		m.LocalMeta[MetaKeyDate] = m.remoteMeta[MetaKeyDate]
-	}()
-
-	need := m.valForMetaKeyDifferentOnRemote(MetaKeyRequester)
-	if need {
-		return need
+	if remoteDate := m.remoteMeta[MetaKeyDate]; remoteDate != "" {
+		m.LocalMeta[MetaKeyDate] = remoteDate
 	}
 
-	return m.valForMetaKeyDifferentOnRemote(MetaKeySets)
+	return m.valForMetaKeyDifferentOnRemote(MetaKeyRequester) ||
+		m.valForMetaKeyDifferentOnRemote(MetaKeySets)
 }
 
 // valForMetaKeyDifferentOnRemote returns false if key has no remote value.
