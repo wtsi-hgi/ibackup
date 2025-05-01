@@ -311,7 +311,7 @@ func (d *DB) getAndDeleteExistingEntries(tx *bolt.Tx, subBucketName string, setI
 
 	err = sfsb.Bucket.ForEach(func(k, v []byte) error {
 		path := string(k)
-		existing[path] = v
+		existing[path] = bytes.Clone(v)
 
 		return bFailed.Delete([]byte(setID + separator + path))
 	})
@@ -488,11 +488,12 @@ func (d *DB) statPureFileEntries(setID string) error {
 
 		sfsb.Bucket.ForEach(func(k, v []byte) error { //nolint:errcheck
 			numEntries++
+			path := string(k)
+			value := bytes.Clone(v)
 
 			d.filePool.Submit(func() {
-				path := string(k)
 				direntCh <- newDirentFromPath(path)
-				entryCh <- v
+				entryCh <- value
 			})
 
 			return nil

@@ -242,6 +242,10 @@ database that you've made, to investigate.
 			dbBackupPath = args[dbBackupParamPosition-1]
 		}
 
+		if serverHardlinksCollection != "" {
+			s.SetRemoteHardlinkLocation(serverHardlinksCollection)
+		}
+
 		err = s.LoadSetDB(args[0], dbBackupPath)
 		if err != nil {
 			dief("failed to load database: %s", err)
@@ -258,10 +262,6 @@ database that you've made, to investigate.
 			}
 
 			s.EnableRemoteDBBackups(serverRemoteBackupPath, handler)
-		}
-
-		if serverHardlinksCollection != "" {
-			s.SetRemoteHardlinkLocation(serverHardlinksCollection)
 		}
 
 		defer s.Stop()
