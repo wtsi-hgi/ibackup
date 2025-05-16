@@ -52,7 +52,7 @@ const ttr = 6 * time.Minute
 // happen at the same time on the same set. Discoveries have priority and will
 // pause any removal that's already running until the discovery has finished.
 type discoveryCoordinator struct {
-	sync.RWMutex
+	sync.Mutex
 	hasDiscoveryHappened map[string]bool
 	numRunningRemovals   map[string]uint8
 	muMap                map[string]*sync.Mutex

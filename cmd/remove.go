@@ -125,9 +125,4 @@ func handleRemove(client *server.Client, user, name string, paths []string) {
 	if err != nil {
 		die(err)
 	}
-
-	// err = client.RemoveDirs(sets[0].ID(), dirs)
-	// if err != nil {
-	// 	die(err)
-	// }
 }

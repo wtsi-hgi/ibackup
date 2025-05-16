@@ -291,7 +291,6 @@ func (s *Server) addDBEndpoints(authGroup *gin.RouterGroup) {
 	authGroup.PUT(fileStatusPath, s.putFileStatus)
 
 	authGroup.PUT(removePathsPath+idParam, s.removePaths)
-	//authGroup.PUT(removeDirsPath+idParam, s.removeDirs)
 }
 
 // putSet interprets the body as a JSON encoding of a set.Set and stores it in
@@ -586,14 +585,11 @@ func (s *Server) processDBFileRemoval(removeReq *set.RemoveReq, entry *set.Entry
 	if entry == nil && mayMissInDiscoverBucket {
 		return s.db.IncrementNumObjectRemoved(removeReq.Set.ID())
 	}
-	//
 
 	err := s.db.RemoveFileEntry(removeReq.Set.ID(), removeReq.Path)
 	if err != nil {
 		return err
 	}
-
-	//
 
 	if entry.Type != set.Symlink {
 		err = s.db.RemoveFileFromInode(removeReq.Path, entry.Inode)
