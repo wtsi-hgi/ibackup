@@ -48,21 +48,23 @@ const (
 )
 
 // options for this cmd.
-var setName string
-var setTransformer string
-var setDescription string
-var setFiles string
-var setDirs string
-var setItems string
-var setPath string
-var setNull bool
-var setMonitor string
-var setArchive bool
-var setUser string
-var setMetadata string
-var setReason put.Reason
-var setReview string
-var setRemoval string
+var (
+	setName        string
+	setTransformer string
+	setDescription string
+	setFiles       string
+	setDirs        string
+	setItems       string
+	setPath        string
+	setNull        bool
+	setMonitor     string
+	setArchive     bool
+	setUser        string
+	setMetadata    string
+	setReason      put.Reason
+	setReview      string
+	setRemoval     string
+)
 
 var ErrCancel = errors.New("cancelled add")
 
@@ -81,7 +83,7 @@ argument) and if necessary, the certificate (using the IBACKUP_SERVER_CERT
 environment variable, or overriding that with the --cert argument).
 
 To describe the backup set you must provide:
---name : a short unique name for this backup set.
+--name : a short unique name for this backup set; must not contain comma.
 --transformer : define where your local files should be backed up to by defining
   a conversion of local path to a remote iRODS path:
     'humgen' : for files stored on the Sanger Institute's lustre filesystem in a
@@ -335,7 +337,8 @@ func fileDirIsInDirs(file string, dirSet map[string]bool) bool {
 
 // add does the main job of sending the backup set details to the server.
 func add(client *server.Client, name, requester, transformer, description string,
-	monitor time.Duration, archive bool, files, dirs []string, meta *put.Meta) error {
+	monitor time.Duration, archive bool, files, dirs []string, meta *put.Meta,
+) error {
 	set := &set.Set{
 		Name:        name,
 		Requester:   requester,

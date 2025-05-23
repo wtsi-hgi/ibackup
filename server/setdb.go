@@ -31,6 +31,7 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/VertebrateResequencing/wr/queue"
@@ -94,6 +95,8 @@ const (
 	ErrNoSetDBDirFound = gas.Error("set database directory not found")
 	ErrNoRequester     = gas.Error("requester not supplied")
 	ErrBadRequester    = gas.Error("you are not the set requester")
+	ErrEmptyName       = gas.Error("set name cannot be empty")
+	ErrInvalidName     = gas.Error("set name contains invalid characters")
 	ErrNotAdmin        = gas.Error("you are not the server admin")
 	ErrBadSet          = gas.Error("set with that id does not exist")
 	ErrInvalidInput    = gas.Error("invalid input")
@@ -286,6 +289,18 @@ func (s *Server) putSet(c *gin.Context) {
 
 	if !s.AllowedAccess(c, given.Requester) {
 		c.AbortWithError(http.StatusUnauthorized, ErrBadRequester) //nolint:errcheck
+
+		return
+	}
+
+	if given.Name == "" {
+		c.AbortWithError(http.StatusBadRequest, ErrEmptyName) //nolint:errcheck
+
+		return
+	}
+
+	if strings.ContainsRune(given.Name, ',') {
+		c.AbortWithError(http.StatusBadRequest, ErrInvalidName) //nolint:errcheck
 
 		return
 	}
