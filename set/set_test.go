@@ -305,7 +305,7 @@ func TestSetDB(t *testing.T) {
 			slackWriter := gas.NewStringLogger()
 			slacker := slack.NewMock(slackWriter)
 
-			db, err := New(dbPath, "")
+			db, err := New(dbPath, "", false)
 			So(err, ShouldBeNil)
 			So(db, ShouldNotBeNil)
 
@@ -1630,7 +1630,7 @@ func TestBackup(t *testing.T) {
 
 		backupFile := filepath.Join(dir, "backup")
 
-		db, err := New(filepath.Join(dir, "db"), backupFile)
+		db, err := New(filepath.Join(dir, "db"), backupFile, false)
 		So(err, ShouldBeNil)
 		So(db, ShouldNotBeNil)
 

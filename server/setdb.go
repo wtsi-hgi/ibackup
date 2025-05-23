@@ -193,7 +193,7 @@ func (s *Server) LoadSetDB(path, backupPath string) error {
 func (s *Server) setupDB(path, backupPath string, authGroup *gin.RouterGroup) error {
 	s.sendSlackMessage(slack.Info, "server starting, loading database")
 
-	db, err := set.New(path, backupPath)
+	db, err := set.New(path, backupPath, s.serverDebug)
 	if err != nil {
 		return err
 	}
