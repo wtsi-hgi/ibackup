@@ -277,15 +277,12 @@ func (s *Server) handleMissingDirectories(dirStatErr error, entry *set.Entry, gi
 // Skips entries that are missing or that have failed or uploaded since the
 // last discovery.
 func (s *Server) enqueueSetFiles(given *set.Set, transformer put.PathTransformer) error {
-	s.Logger.Printf("enqueueSetFiles will GetFileEntries")
 	entries, err := s.db.GetFileEntries(given.ID())
-	s.Logger.Printf("enqueueSetFiles got %d FileEntries", len(entries))
 	if err != nil {
 		return err
 	}
 
 	entries = uploadableEntries(entries, given)
-	s.Logger.Printf("%d are uploadable", len(entries))
 
 	return s.enqueueEntries(entries, given, transformer)
 }
@@ -326,9 +323,7 @@ func (s *Server) enqueueEntries(entries []*set.Entry, given *set.Set, transforme
 		return nil
 	}
 
-	s.Logger.Printf("will AddMany")
 	_, dups, err := s.queue.AddMany(context.Background(), defs)
-	s.Logger.Printf("added Many (%d dups, %s)", dups, err)
 
 	if dups > 0 {
 		s.markFailedEntries(given)

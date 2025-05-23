@@ -166,17 +166,14 @@ func New(path, backupPath string) (*DB, error) {
 }
 
 func initDB(path string) (*bolt.DB, error) {
-	fmt.Printf("will bolt open...\n")
 	boltDB, err := bolt.Open(path, dbOpenMode, &bolt.Options{
 		NoFreelistSync: true,
 		NoGrowSync:     true,
 		FreelistType:   bolt.FreelistMapType,
-		// MmapFlags:      syscall.MAP_POPULATE,
 	})
 	if err != nil {
 		return nil, err
 	}
-	fmt.Printf("opened, will update...\n")
 
 	err = boltDB.Update(func(tx *bolt.Tx) error {
 		for _, bucket := range [...]string{
@@ -190,8 +187,6 @@ func initDB(path string) (*bolt.DB, error) {
 
 		return nil
 	})
-
-	fmt.Printf("updated\n")
 
 	return boltDB, err
 }

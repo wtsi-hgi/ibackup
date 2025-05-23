@@ -180,7 +180,6 @@ func (s *Server) monitorSet(given *set.Set) {
 		return
 	}
 
-	s.Logger.Printf("will monitor.Add")
 	s.monitor.Add(given)
 }
 

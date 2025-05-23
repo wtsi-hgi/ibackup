@@ -28,7 +28,6 @@ package server
 import (
 	"context"
 	"errors"
-	"fmt"
 	"math"
 	"net/http"
 	"os"
@@ -171,7 +170,6 @@ const (
 // logged-in username, or if the logged-in user is the same as the user who
 // started the Server.
 func (s *Server) LoadSetDB(path, backupPath string) error {
-	fmt.Printf("a\n")
 	authGroup := s.AuthRouter()
 	if authGroup == nil {
 		return ErrNoAuth
@@ -204,7 +202,6 @@ func (s *Server) setupDB(path, backupPath string, authGroup *gin.RouterGroup) er
 
 	s.db = db
 
-	fmt.Printf("c\n")
 	s.addDBEndpoints(authGroup)
 
 	return nil
@@ -938,13 +935,11 @@ func (s *Server) updateQueueItemData(r *put.Request) {
 // recoverQueue is used at startup to fill the in-memory queue with requests for
 // sets we were in the middle of working on before.
 func (s *Server) recoverQueue() error {
-	fmt.Printf("e\n")
 	sets, err := s.db.GetAll()
 	if err != nil {
 		return err
 	}
 
-	fmt.Printf("f\n")
 	for _, given := range sets {
 		err = s.recoverSet(given)
 		if err != nil {
@@ -963,10 +958,7 @@ func (s *Server) recoverQueue() error {
 // discovered; adds its remaining upload requests if it was previously in the
 // middle of uploading; otherwise do nothing.
 func (s *Server) recoverSet(given *set.Set) error {
-	s.Logger.Printf("recoverSet starting for set %s:%s", given.Name, given.Requester)
-
 	if given.StartedDiscovery.After(given.LastDiscovery) {
-		s.Logger.Printf("was mid-discovery")
 		return s.discoverSet(given)
 	}
 
@@ -982,11 +974,8 @@ func (s *Server) recoverSet(given *set.Set) error {
 			return err
 		}
 
-		s.Logger.Printf("will enqueueSetFiles")
 		err = s.enqueueSetFiles(given, transformer)
 	}
-
-	s.Logger.Printf("recoverSet done")
 
 	return err
 }
