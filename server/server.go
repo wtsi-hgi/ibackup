@@ -84,6 +84,9 @@ type Config struct {
 	// messages. Default value means send unlimited messages, which will likely
 	// result in slack restricting messages itself.
 	SlackMessageDebounce time.Duration
+
+	// ServerDebug disables monitoring, discovery, and database modifications.
+	ServerDebug bool
 }
 
 // Server is used to start a web server that provides a REST API to the setdb
@@ -107,6 +110,7 @@ type Server struct {
 	stillRunningMsgFreq    time.Duration
 	serverAliveCh          chan bool
 	uploadTracker          *uploadTracker
+	serverDebug            bool
 
 	mapMu               sync.RWMutex
 	creatingCollections map[string]bool
@@ -134,19 +138,22 @@ func New(conf Config) (*Server, error) {
 		uploadTracker:       newUploadTracker(conf.Slacker, conf.SlackMessageDebounce),
 		iRODSTracker:        newiRODSTracker(conf.Slacker, conf.SlackMessageDebounce),
 		clientQueue:         queue.New(context.Background(), "client"),
+		serverDebug:         conf.ServerDebug,
 	}
 
 	s.clientQueue.SetTTRCallback(s.clientTTRC)
-
+	s.SetStopCallBack(s.stop)
 	s.Server.Router().Use(gas.IncludeAbortErrorsInBody)
+
+	if conf.ServerDebug {
+		return s, nil
+	}
 
 	s.monitor = NewMonitor(func(given *set.Set) {
 		if err := s.discoverSet(given); err != nil {
 			s.Logger.Printf("error discovering set during monitoring: %s", err)
 		}
 	})
-
-	s.SetStopCallBack(s.stop)
 
 	return s, nil
 }

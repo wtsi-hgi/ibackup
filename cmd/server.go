@@ -198,6 +198,7 @@ database that you've made, to investigate.
 			Slacker:              slacker,
 			SlackMessageDebounce: time.Duration(serverSlackDebouncePeriod) * time.Second,
 			StillRunningMsgFreq:  stillRunningMsgFreq,
+			ServerDebug:          serverDebug,
 		}
 
 		s, err := server.New(conf)
@@ -249,7 +250,7 @@ database that you've made, to investigate.
 
 		info("loaded database...")
 
-		if serverRemoteBackupPath != "" {
+		if serverRemoteBackupPath != "" && !serverDebug {
 			if dbBackupPath == "" {
 				dief("remote backup path defined when no local backup path provided")
 			}
