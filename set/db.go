@@ -170,7 +170,6 @@ func initDB(path string) (*bolt.DB, error) {
 		NoFreelistSync: true,
 		NoGrowSync:     true,
 		FreelistType:   bolt.FreelistMapType,
-		MmapFlags:      syscall.MAP_POPULATE,
 	})
 	if err != nil {
 		return nil, err
