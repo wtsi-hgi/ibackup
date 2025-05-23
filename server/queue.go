@@ -148,7 +148,7 @@ func (s *Server) MakeQueueEndPoints() error {
 	authGroup.GET(queueAllPath, s.getAllRequests)
 	authGroup.GET(queueBuriedPath, s.getBuried)
 
-	if s.serverDebug {
+	if s.readOnly {
 		return nil
 	}
 

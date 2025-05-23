@@ -180,7 +180,7 @@ func (s *Server) LoadSetDB(path, backupPath string) error {
 		return err
 	}
 
-	if s.serverDebug {
+	if s.readOnly {
 		return nil
 	}
 
@@ -193,7 +193,7 @@ func (s *Server) LoadSetDB(path, backupPath string) error {
 func (s *Server) setupDB(path, backupPath string, authGroup *gin.RouterGroup) error {
 	s.sendSlackMessage(slack.Info, "server starting, loading database")
 
-	db, err := set.New(path, backupPath, s.serverDebug)
+	db, err := set.New(path, backupPath, s.readOnly)
 	if err != nil {
 		return err
 	}
@@ -267,7 +267,7 @@ func (s *Server) addDBEndpoints(authGroup *gin.RouterGroup) {
 	authGroup.GET(requestsPath, s.getRequests)
 	authGroup.GET(fileRetryPath+idParam, s.retryFailedEntries)
 
-	if s.serverDebug {
+	if s.readOnly {
 		return
 	}
 
