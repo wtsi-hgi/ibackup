@@ -170,11 +170,14 @@ func initDB(path string, readonly bool) (*bolt.DB, error) {
 		NoFreelistSync: true,
 		NoGrowSync:     true,
 		FreelistType:   bolt.FreelistMapType,
-		MmapFlags:      syscall.MAP_POPULATE,
 		ReadOnly:       readonly,
 	})
 	if err != nil {
 		return nil, err
+	}
+
+	if readonly {
+		return boltDB, nil
 	}
 
 	err = boltDB.Update(func(tx *bolt.Tx) error {
