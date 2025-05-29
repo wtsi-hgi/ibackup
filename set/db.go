@@ -140,8 +140,8 @@ type DB struct {
 //
 // Returns an error if path exists but can't be opened, or if it doesn't exist
 // and can't be created.
-func New(path, backupPath string) (*DB, error) {
-	boltDB, err := initDB(path)
+func New(path, backupPath string, readonly bool) (*DB, error) {
+	boltDB, err := initDB(path, readonly)
 	if err != nil {
 		return nil, err
 	}
@@ -165,14 +165,19 @@ func New(path, backupPath string) (*DB, error) {
 	return db, nil
 }
 
-func initDB(path string) (*bolt.DB, error) {
+func initDB(path string, readonly bool) (*bolt.DB, error) {
 	boltDB, err := bolt.Open(path, dbOpenMode, &bolt.Options{
 		NoFreelistSync: true,
 		NoGrowSync:     true,
 		FreelistType:   bolt.FreelistMapType,
+		ReadOnly:       readonly,
 	})
 	if err != nil {
 		return nil, err
+	}
+
+	if readonly {
+		return boltDB, nil
 	}
 
 	err = boltDB.Update(func(tx *bolt.Tx) error {

@@ -59,6 +59,7 @@ var serverKey string
 var serverLDAPFQDN string
 var serverLDAPBindDN string
 var serverDebug bool
+var readonly bool
 var serverRemoteBackupPath string
 var serverWRDeployment string
 var serverHardlinksCollection string
@@ -198,6 +199,7 @@ database that you've made, to investigate.
 			Slacker:              slacker,
 			SlackMessageDebounce: time.Duration(serverSlackDebouncePeriod) * time.Second,
 			StillRunningMsgFreq:  stillRunningMsgFreq,
+			ReadOnly:             readonly,
 		}
 
 		s, err := server.New(conf)
@@ -215,7 +217,7 @@ database that you've made, to investigate.
 			dief("failed to make queue endpoints: %s", err)
 		}
 
-		if serverDebug {
+		if serverDebug || readonly {
 			warn("job submission has been disabled")
 		} else {
 			exe, erre := os.Executable()
@@ -253,7 +255,7 @@ database that you've made, to investigate.
 
 		info("loaded database...")
 
-		if serverRemoteBackupPath != "" {
+		if serverRemoteBackupPath != "" && !readonly {
 			if dbBackupPath == "" {
 				dief("remote backup path defined when no local backup path provided")
 			}
@@ -298,6 +300,8 @@ func init() {
 		"use this deployment of wr for your job submission")
 	serverCmd.Flags().BoolVar(&serverDebug, "debug", false,
 		"disable job submissions for debugging purposes")
+	serverCmd.Flags().BoolVar(&readonly, "readonly", false,
+		"disable discovery, job submissions, and endpoints that change the database")
 	serverCmd.Flags().StringVar(&serverHardlinksCollection, "hardlinks_collection", "",
 		"deduplicate hardlinks by storing them by inode in this iRODS collection")
 	serverCmd.Flags().StringVar(&serverRemoteBackupPath, "remote_backup", os.Getenv("IBACKUP_REMOTE_DB_BACKUP_PATH"),

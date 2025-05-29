@@ -180,6 +180,10 @@ func (s *Server) LoadSetDB(path, backupPath string) error {
 		return err
 	}
 
+	if s.readOnly {
+		return nil
+	}
+
 	s.statusUpdateCh = make(chan *fileStatusPacket)
 	go s.handleFileStatusUpdates()
 
@@ -189,7 +193,7 @@ func (s *Server) LoadSetDB(path, backupPath string) error {
 func (s *Server) setupDB(path, backupPath string, authGroup *gin.RouterGroup) error {
 	s.sendSlackMessage(slack.Info, "server starting, loading database")
 
-	db, err := set.New(path, backupPath)
+	db, err := set.New(path, backupPath, s.readOnly)
 	if err != nil {
 		return err
 	}
@@ -248,13 +252,9 @@ func (s *Server) EnableRemoteDBBackups(remotePath string, handler put.Handler) {
 
 // addDBEndpoints adds all the REST API endpoints to the given router group.
 func (s *Server) addDBEndpoints(authGroup *gin.RouterGroup) {
-	authGroup.PUT(setPath, s.putSet)
 	authGroup.GET(setPath+"/:"+paramRequester, s.getSets)
 
 	idParam := "/:" + paramSetID
-
-	authGroup.PUT(filePath+idParam, s.putFiles)
-	authGroup.PUT(dirPath+idParam, s.putDirs)
 
 	authGroup.GET(discoveryPath+idParam, s.triggerDiscovery)
 
@@ -265,12 +265,21 @@ func (s *Server) addDBEndpoints(authGroup *gin.RouterGroup) {
 	authGroup.GET(failedEntryPath+idParam, s.getFailedEntries)
 
 	authGroup.GET(requestsPath, s.getRequests)
+	authGroup.GET(fileRetryPath+idParam, s.retryFailedEntries)
+
+	if s.readOnly {
+		return
+	}
+
+	authGroup.PUT(setPath, s.putSet)
+
+	authGroup.PUT(filePath+idParam, s.putFiles)
+	authGroup.PUT(dirPath+idParam, s.putDirs)
 
 	authGroup.PUT(workingPath, s.putWorking)
 
 	authGroup.PUT(fileStatusPath, s.putFileStatus)
 
-	authGroup.GET(fileRetryPath+idParam, s.retryFailedEntries)
 }
 
 // putSet interprets the body as a JSON encoding of a set.Set and stores it in

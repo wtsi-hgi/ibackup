@@ -143,13 +143,17 @@ func (s *Server) MakeQueueEndPoints() error {
 
 	authGroup.GET(queueStatusPath, s.getQueueStatus)
 
-	authGroup.GET(queueBuriedPath, s.getBuried)
-	authGroup.DELETE(queueBuriedPath, s.removeBuried)
-	authGroup.PUT(queueBuriedPath, s.retryBuried)
-
 	authGroup.GET(queueUploadingPath, s.getUploading)
 
 	authGroup.GET(queueAllPath, s.getAllRequests)
+	authGroup.GET(queueBuriedPath, s.getBuried)
+
+	if s.readOnly {
+		return nil
+	}
+
+	authGroup.DELETE(queueBuriedPath, s.removeBuried)
+	authGroup.PUT(queueBuriedPath, s.retryBuried)
 
 	hostPIDParam := "/:" + paramHostPID
 	authGroup.POST(queueCollCreationPath+hostPIDParam, s.clientStartedCreatingCollections)
