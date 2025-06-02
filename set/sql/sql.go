@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+
+	_ "github.com/go-sql-driver/mysql" //
 )
 
 type DB struct {
@@ -41,7 +43,7 @@ func (t *Tx) CreateBucketIfNotExists(key []byte) (*Bucket, error) {
 }
 
 func (t *Tx) get(table, sub, id []byte) []byte {
-	query := fmt.Sprintf("SELECT value FROOM [%s] WHERE id = ?;", table) //nolint:gosec
+	query := fmt.Sprintf("SELECT value FROM [%s] WHERE id = ? AND sub = ?;", table) //nolint:gosec
 
 	var (
 		value sql.RawBytes
@@ -49,9 +51,9 @@ func (t *Tx) get(table, sub, id []byte) []byte {
 	)
 
 	if t.db != nil {
-		err = t.db.QueryRow(query, id).Scan(value)
+		err = t.db.QueryRow(query, id, sub).Scan(value)
 	} else if t.tx != nil {
-		err = t.tx.QueryRow(query, id).Scan(value)
+		err = t.tx.QueryRow(query, id, sub).Scan(value)
 	}
 
 	if err != nil {
