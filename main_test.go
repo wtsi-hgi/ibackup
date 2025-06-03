@@ -327,7 +327,8 @@ func (s *TestServer) addSetForTesting(t *testing.T, name, transformer, path stri
 func (s *TestServer) addSetForTestingWithItems(t *testing.T, name, transformer, path string) {
 	t.Helper()
 
-	exitCode, _ := s.runBinary(t, "add", "--name", name, "--transformer", transformer, "--items", path, "--monitor", "1h", "--monitor-removals")
+	exitCode, _ := s.runBinary(t, "add", "--name", name, "--transformer",
+		transformer, "--items", path, "--monitor", "1h", "--monitor-removals")
 
 	So(exitCode, ShouldEqual, 0)
 
