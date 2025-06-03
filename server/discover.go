@@ -203,6 +203,14 @@ func (s *Server) discoverSet(given *set.Set) error {
 // call it multiple times at once for the same set! This will block removals on
 // the same set.
 func (s *Server) discoverThenEnqueue(given *set.Set, transformer put.PathTransformer) {
+	if given.MonitorRemovals {
+		if err := s.discoverSetRemovals(given); err != nil {
+			s.recordSetError("error discovering set (%s) removals: %s", given.ID(), err)
+
+			return
+		}
+	}
+
 	s.discoveryCoordinator.StartDiscovery(given.ID())
 	defer s.discoveryCoordinator.DiscoveryHappened(given.ID())
 
