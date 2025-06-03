@@ -66,7 +66,6 @@ const (
 	ErrInvalidTransformerPath    = "invalid transformer path concatenation"
 	ErrNoAddDuringDiscovery      = "can't add set while set is being discovered"
 	ErrPathNotInSet              = "path(s) do not belong to the backup set"
-	ErrPathIsPending             = "path(s) are still pending, wait until complete"
 	ErrRemovalWhenSetNotComplete = "you can only remove from completed sets"
 
 	setsBucket                    = "sets"
@@ -92,8 +91,6 @@ const (
 	// workerPoolSizeFiles is the max number of concurrent file stats we'll do
 	// during discovery.
 	workerPoolSizeFiles = 16
-
-	RemoveReserveGroup = "removeRecovery"
 )
 
 // DBRO is the read-only component of the DB struct.

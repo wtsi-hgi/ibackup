@@ -99,16 +99,14 @@ const (
 	// EndPointAuthRemovePaths is the endpoint for removing objects from sets.
 	EndPointAuthRemovePaths = gas.EndPointAuth + removePathsPath
 
-	ErrNoAuth          = gas.Error("auth must be enabled")
-	ErrNoSetDBDirFound = gas.Error("set database directory not found")
-	ErrNoRequester     = gas.Error("requester not supplied")
-	ErrBadRequester    = gas.Error("you are not the set requester")
-	ErrEmptyName       = gas.Error("set name cannot be empty")
-	ErrInvalidName     = gas.Error("set name contains invalid characters")
-	ErrNotAdmin        = gas.Error("you are not the server admin")
-	ErrBadSet          = gas.Error("set with that id does not exist")
-	ErrInvalidInput    = gas.Error("invalid input")
-	ErrInternal        = gas.Error("internal server error")
+	ErrNoAuth       = gas.Error("auth must be enabled")
+	ErrBadRequester = gas.Error("you are not the set requester")
+	ErrEmptyName    = gas.Error("set name cannot be empty")
+	ErrInvalidName  = gas.Error("set name contains invalid characters")
+	ErrNotAdmin     = gas.Error("you are not the server admin")
+	ErrBadSet       = gas.Error("set with that id does not exist")
+	ErrInvalidInput = gas.Error("invalid input")
+	ErrInternal     = gas.Error("internal server error")
 
 	paramRequester = "requester"
 	paramSetID     = "id"

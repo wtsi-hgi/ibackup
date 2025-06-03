@@ -110,7 +110,6 @@ type Server struct {
 	sched                  *scheduler.Scheduler
 	putCmd                 string
 	req                    *jqs.Requirements
-	username               string
 	remoteHardlinkLocation string
 	statusUpdateCh         chan *fileStatusPacket
 	monitor                *Monitor
