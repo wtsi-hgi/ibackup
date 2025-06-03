@@ -108,6 +108,8 @@ func (b *Baton) EnsureCollection(collection string) error {
 
 	if !b.collRunning {
 		if err := b.makeCollConnections(); err != nil {
+			b.collMu.Unlock()
+
 			return err
 		}
 
@@ -151,8 +153,6 @@ func (b *Baton) makeCollConnections() error {
 
 	pool, clientCh, err := b.connect(numCollClients)
 	if err != nil {
-		b.collMu.Unlock()
-
 		return err
 	}
 
@@ -374,8 +374,6 @@ func (b *Baton) setClientIfNotExists(client **ex.Client) error {
 func (b *Baton) getNewClient() (*ex.Client, error) {
 	pool, clientCh, err := b.connect(1)
 	if err != nil {
-		b.collMu.Unlock()
-
 		return nil, err
 	}
 
