@@ -66,7 +66,6 @@ const (
 	ErrInvalidTransformerPath    = "invalid transformer path concatenation"
 	ErrNoAddDuringDiscovery      = "can't add set while set is being discovered"
 	ErrPathNotInSet              = "path(s) do not belong to the backup set"
-	ErrPathIsPending             = "path(s) are still pending, wait until complete"
 	ErrRemovalWhenSetNotComplete = "you can only remove from completed sets"
 
 	setsBucket                    = "sets"
@@ -96,10 +95,8 @@ const (
 
 // DBRO is the read-only component of the DB struct.
 type DBRO struct {
-	db *bolt.DB
-
-	ch codec.Handle
-
+	db      *bolt.DB
+	ch      codec.Handle
 	slacker Slacker
 }
 
@@ -1700,7 +1697,9 @@ func (d *DB) IncrementSetTotalRemoved(setID string) error {
 // ResetRemoveSize resets the size removed for the set.
 func (d *DB) ResetRemoveSize(setID string) error {
 	return d.updateSetProperties(setID, func(got *Set) {
-		got.SizeRemoved = 0
+		if got.NumObjectsToBeRemoved == got.NumObjectsRemoved {
+			got.SizeRemoved = 0
+		}
 	})
 }
 

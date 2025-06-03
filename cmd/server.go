@@ -32,7 +32,6 @@ import (
 	"log/syslog"
 	"net"
 	"os"
-	"path/filepath"
 	"time"
 
 	ldap "github.com/go-ldap/ldap/v3"
@@ -49,7 +48,6 @@ import (
 
 const serverTokenBasename = ".ibackup.token"
 const numPutClients = 10
-const deadlockTimeout = 30 * time.Minute
 const dbBackupParamPosition = 2
 const defaultDebounceSeconds = 600
 
@@ -267,10 +265,12 @@ database that you've made, to investigate.
 			}
 
 			info("enabling remote backups...")
+
 			handler, errb := baton.GetBatonHandler()
 			if errb != nil {
 				dief("failed to get baton handler: %s", errb)
 			}
+
 			s.EnableRemoteDBBackups(serverRemoteBackupPath, handler)
 			info("enabled remote backups...")
 		}
@@ -356,22 +356,6 @@ func (w *log15Writer) Write(p []byte) (n int, err error) {
 	w.logger.Info(string(p))
 
 	return len(p), nil
-}
-
-// tokenStoragePath returns the path where we store our token for self-clients
-// to use.
-func tokenStoragePath() (string, error) {
-	dir := os.Getenv("XDG_STATE_HOME")
-	if dir == "" {
-		var err error
-
-		dir, err = os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-	}
-
-	return filepath.Join(dir, serverTokenBasename), nil
 }
 
 // checkPassword defers to checkLDAPPassword(). Warns if we don't have the ldap

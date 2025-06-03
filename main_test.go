@@ -1122,6 +1122,19 @@ Directories:
 			s.waitForStatus(setName, "Monitored: 2w", 5*time.Second)
 		})
 
+		Convey("Sets added with a monitor that monitors removals displays this", func() {
+			dir := t.TempDir()
+
+			setName := "testAddMonitor"
+			exitCode, _ := s.runBinary(t, "add", "--path", dir,
+				"--name", setName, "--transformer", "prefix="+dir+":/remote",
+				"--monitor", "4d", "--monitor-removals")
+
+			So(exitCode, ShouldEqual, 0)
+
+			s.waitForStatus(setName, "Monitored (with removals): 4d", 5*time.Second)
+		})
+
 		Convey("When requesting statuses for all users, requesters are shown in output", func() {
 			transformer, local, remote := prepareForSetWithEmptyDir(t)
 			s.addSetForTesting(t, "setForRequesterPrinting", transformer, local)

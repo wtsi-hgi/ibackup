@@ -52,19 +52,17 @@ import (
 const (
 	ErrOperationTimeout = "iRODS operation timed out"
 
-	extendoLogLevel           = logs.ErrorLevel
-	workerPoolSizeCollections = 2
-	numCollClients            = workerPoolSizeCollections
-	numPutRemoveMetaClients   = 3
-	collClientMaxIndex        = numCollClients - 1
-	putClientIndex            = collClientMaxIndex + 1
-	metaClientIndex           = putClientIndex + 1
-	extendoNotExist           = "does not exist"
-	operationMinBackoff       = 5 * time.Second
-	operationMaxBackoff       = 30 * time.Second
-	operationBackoffFactor    = 1.1
-	operationTimeout          = 15 * time.Second
-	operationRetries          = 6
+	extendoLogLevel        = logs.ErrorLevel
+	numCollClients         = 2
+	collClientMaxIndex     = numCollClients - 1
+	putClientIndex         = collClientMaxIndex + 1
+	metaClientIndex        = putClientIndex + 1
+	extendoNotExist        = "does not exist"
+	operationMinBackoff    = 5 * time.Second
+	operationMaxBackoff    = 30 * time.Second
+	operationBackoffFactor = 1.1
+	operationTimeout       = 15 * time.Second
+	operationRetries       = 6
 )
 
 // Baton is a Handler that uses Baton (via extendo) to interact with iRODS.

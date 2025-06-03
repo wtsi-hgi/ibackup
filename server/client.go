@@ -60,7 +60,6 @@ type Client struct {
 	toTouch                   map[string]bool
 	touchMu                   sync.Mutex
 	touching                  bool
-	touchErr                  error
 	minMBperSecondUploadSpeed float64
 	minTimeForUpload          time.Duration
 	maxStuckTime              time.Duration
@@ -364,7 +363,6 @@ func (c *Client) touchRegularly() {
 	defer func() {
 		ticker.Stop()
 		c.touchMu.Lock()
-		c.touchErr = err
 		c.touching = false
 		c.touchMu.Unlock()
 	}()

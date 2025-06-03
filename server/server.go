@@ -110,7 +110,6 @@ type Server struct {
 	sched                  *scheduler.Scheduler
 	putCmd                 string
 	req                    *jqs.Requirements
-	username               string
 	remoteHardlinkLocation string
 	statusUpdateCh         chan *fileStatusPacket
 	monitor                *Monitor
@@ -171,6 +170,12 @@ func New(conf Config) (*Server, error) {
 }
 
 func (s *Server) monitorCB(given *set.Set) {
+	if given.MonitorRemovals {
+		if err := s.discoverSetRemovals(given); err != nil {
+			s.Logger.Printf("error discovering set removals during monitoring: %s", err)
+		}
+	}
+
 	if err := s.discoverSet(given); err != nil {
 		s.Logger.Printf("error discovering set during monitoring: %s", err)
 	}
@@ -268,12 +273,12 @@ func (s *Server) reserveRemoveRequest(reserveGroup string) (*queue.Item, set.Rem
 			return nil, set.RemoveReq{}, err
 		}
 
-		s.Logger.Printf("%s", err)
+		s.Logger.Print(err)
 	}
 
 	remReq, err := s.convertQueueItemToRemoveRequest(item.Data())
 	if err != nil {
-		s.Logger.Printf("%s", err)
+		s.Logger.Print(err)
 
 		return nil, set.RemoveReq{}, err
 	}

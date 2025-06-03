@@ -40,9 +40,8 @@ import (
 )
 
 const (
-	fileCheckFrequency = 10 * time.Millisecond
-	retryTimeout       = 5 * time.Second
-	UserPerms          = 0700
+	retryTimeout = 5 * time.Second
+	UserPerms    = 0700
 )
 
 var ErrFileUnchanged = errors.New("file did not change")
