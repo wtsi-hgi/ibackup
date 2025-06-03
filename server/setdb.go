@@ -416,13 +416,6 @@ func (s *Server) removePaths(c *gin.Context) {
 		return
 	}
 
-	err = s.db.ResetRemoveSize(sid)
-	if err != nil {
-		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
-
-		return
-	}
-
 	err = s.removeFilesAndDirs(givenSet, filePaths, dirPaths)
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
@@ -432,6 +425,10 @@ func (s *Server) removePaths(c *gin.Context) {
 }
 
 func (s *Server) removeFilesAndDirs(set *set.Set, filePaths, dirPaths []string) error {
+	if err := s.db.ResetRemoveSize(set.ID()); err != nil {
+		return err
+	}
+
 	numFilesSubmitted, err := s.submitFilesForRemoval(set, filePaths)
 	if err != nil {
 		return err
