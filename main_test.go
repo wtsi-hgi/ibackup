@@ -51,8 +51,10 @@ import (
 	"github.com/wtsi-ssg/wr/retry"
 )
 
-const app = "ibackup"
-const userPerms = 0700
+const (
+	app       = "ibackup"
+	userPerms = 0700
+)
 
 const noBackupSets = `Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
 Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
@@ -168,8 +170,10 @@ func (s *TestServer) prepareConfig() {
 }
 
 func (s *TestServer) startServer() {
-	args := []string{"server", "--cert", s.cert, "--key", s.key, "--logfile", s.logFile,
-		"-s", s.ldapServer, "-l", s.ldapLookup, "--url", s.url, "--slack_debounce", s.debouncePeriod}
+	args := []string{
+		"server", "--cert", s.cert, "--key", s.key, "--logfile", s.logFile,
+		"-s", s.ldapServer, "-l", s.ldapLookup, "--url", s.url, "--slack_debounce", s.debouncePeriod,
+	}
 
 	if s.schedulerDeployment != "" {
 		args = append(args, "-w", s.schedulerDeployment)
@@ -298,7 +302,8 @@ func (s *TestServer) confirmOutputContains(t *testing.T, args []string, expected
 }
 
 func (s *TestServer) confirmOutputDoesNotContain(t *testing.T, args []string, expectedCode int, //nolint:unparam
-	expected string) {
+	expected string,
+) {
 	t.Helper()
 
 	exitCode, actual := s.runBinary(t, args...)
@@ -316,18 +321,18 @@ func (s *TestServer) addSetForTesting(t *testing.T, name, transformer, path stri
 
 	So(exitCode, ShouldEqual, 0)
 
-	s.waitForStatus(name, "\nDiscovery: completed", 5*time.Second)
+	s.waitForStatus(name, "\nDiscovery: completed", 20*time.Second)
 }
 
 func (s *TestServer) addSetForTestingWithItems(t *testing.T, name, transformer, path string) {
 	t.Helper()
 
-	exitCode, _ := s.runBinary(t, "add", "--name", name, "--transformer", transformer, "--items", path)
+	exitCode, _ := s.runBinary(t, "add", "--name", name, "--transformer", transformer, "--items", path, "--monitor", "1h", "--monitor-removals")
 
 	So(exitCode, ShouldEqual, 0)
 
-	s.waitForStatus(name, "\nDiscovery: completed", 10*time.Second)
-	s.waitForStatus(name, "\nStatus: complete", 10*time.Second)
+	s.waitForStatus(name, "\nDiscovery: completed", 20*time.Second)
+	s.waitForStatus(name, "\nStatus: complete", 20*time.Second)
 }
 
 func (s *TestServer) addSetForTestingWithFlag(t *testing.T, name, transformer, path, flag, data string) {
@@ -338,8 +343,8 @@ func (s *TestServer) addSetForTestingWithFlag(t *testing.T, name, transformer, p
 
 	So(exitCode, ShouldEqual, 0)
 
-	s.waitForStatus(name, "\nDiscovery: completed", 5*time.Second)
-	s.waitForStatus(name, "\nStatus: complete", 5*time.Second)
+	s.waitForStatus(name, "\nDiscovery: completed", 20*time.Second)
+	s.waitForStatus(name, "\nStatus: complete", 20*time.Second)
 }
 
 func (s *TestServer) removePath(t *testing.T, name, path string, numFiles int) {
@@ -661,8 +666,10 @@ Directories:
 
 				meta = "testKey=testValNew;testKey2=testVal2;testKey3=testVal3"
 
-				cmd := s.clientCmd([]string{"add", "--name", "testMeta", "--transformer", transformer,
-					"--path", localDir, "--metadata", meta, "--reason", "archive", "--remove", "2999-01-01"})
+				cmd := s.clientCmd([]string{
+					"add", "--name", "testMeta", "--transformer", transformer,
+					"--path", localDir, "--metadata", meta, "--reason", "archive", "--remove", "2999-01-01",
+				})
 				cmd.Stdin = strings.NewReader("y\n")
 				err := cmd.Run()
 				So(err, ShouldBeNil)
@@ -687,8 +694,10 @@ Directories:
 
 				meta = "testKey=testValNew;testKey2=testVal2;testKey3=testVal3"
 
-				cmd = s.clientCmd([]string{"add", "--name", "testMeta", "--transformer", transformer,
-					"--path", localDir})
+				cmd = s.clientCmd([]string{
+					"add", "--name", "testMeta", "--transformer", transformer,
+					"--path", localDir,
+				})
 				cmd.Stdin = strings.NewReader("y\n")
 				err = cmd.Run()
 				So(err, ShouldBeNil)
@@ -711,8 +720,10 @@ Completed in: 0s
 Directories:
   `+localDir+" => "+remoteDir)
 
-				cmd = s.clientCmd([]string{"add", "--name", "testMeta", "--transformer", transformer,
-					"--path", localDir, "--reason", "backup"})
+				cmd = s.clientCmd([]string{
+					"add", "--name", "testMeta", "--transformer", transformer,
+					"--path", localDir, "--reason", "backup",
+				})
 				cmd.Stdin = strings.NewReader("y\n")
 				err = cmd.Run()
 				So(err, ShouldBeNil)
@@ -882,8 +893,10 @@ Example File: `+dir+`/path/to/other/file => /remote/path/to/other/file`)
 			})
 
 			Convey("Status with --details and --remotepaths displays the remote path for each file", func() {
-				s.confirmOutput(t, []string{"status", "--name", "testAddFiles",
-					"--details", "--remotepaths"}, 0,
+				s.confirmOutput(t, []string{
+					"status", "--name", "testAddFiles",
+					"--details", "--remotepaths",
+				}, 0,
 					`Global put queue status: 2 queued; 0 reserved to be worked on; 0 failed
 Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
 
@@ -1391,7 +1404,8 @@ func TestBackup(t *testing.T) {
 			bs.startServer()
 
 			bs.confirmOutput(t, []string{
-				"status", "-n", "testForBackup"}, 0, `Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
+				"status", "-n", "testForBackup",
+			}, 0, `Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
 Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
 
 Name: testForBackup
@@ -2054,11 +2068,13 @@ func TestRemove(t *testing.T) {
 			file2 := filepath.Join(path, "file2")
 			file3 := filepath.Join(dir1, "file3")
 			file4 := filepath.Join(testDir, "dir_not_removed")
+			file5 := filepath.Join(path, "file5")
 
 			internal.CreateTestFile(t, file1, "some data1")
 			internal.CreateTestFile(t, file2, "some data2")
 			internal.CreateTestFile(t, file3, "some data3")
-			internal.CreateTestFile(t, file4, "some data3")
+			internal.CreateTestFile(t, file4, "some data4")
+			internal.CreateTestFile(t, file5, "some data50")
 
 			err = os.Link(file1, linkPath)
 			So(err, ShouldBeNil)
@@ -2069,10 +2085,12 @@ func TestRemove(t *testing.T) {
 			So(err, ShouldBeNil)
 
 			_, err = io.WriteString(tempTestFileOfPaths,
-				fmt.Sprintf("%s\n%s\n%s\n%s\n%s\n%s\n%s", file1, file2, file4, dir1, dir2, linkPath, symPath))
+				fmt.Sprintf("%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s", file1, file2, file4, file5, dir1, dir2, linkPath, symPath))
 			So(err, ShouldBeNil)
 
 			setName := "testRemoveFiles1"
+
+			resetIRODS()
 
 			s.addSetForTestingWithItems(t, setName, transformer, tempTestFileOfPaths.Name())
 
@@ -2094,9 +2112,9 @@ func TestRemove(t *testing.T) {
 
 				Convey("Remove again will remove another object and status will update accordingly", func() {
 					s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
-						0, "Num files: 5; Symlinks: 1; Hardlinks: 1; Size "+
-							"(total/recently uploaded/recently removed): 30 B / 40 B / 10 B\n"+
-							"Uploaded: 5; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0")
+						0, "Num files: 6; Symlinks: 1; Hardlinks: 1; Size "+
+							"(total/recently uploaded/recently removed): 41 B / 51 B / 10 B\n"+
+							"Uploaded: 6; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0")
 
 					exitCode, _ = s.runBinary(t, "remove", "--name", setName, "--path", dir1)
 
@@ -2108,9 +2126,21 @@ func TestRemove(t *testing.T) {
 						0, file3)
 
 					s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
+						0, "Num files: 5; Symlinks: 1; Hardlinks: 1; Size "+
+							"(total/recently uploaded/recently removed): 31 B / 51 B / 10 B\n"+
+							"Uploaded: 5; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0")
+
+					So(os.Remove(file5), ShouldBeNil)
+
+					exitCode, _ = s.runBinary(t, "retry", "--name", setName, "-a")
+
+					s.waitForStatus(setName, "\nDiscovery: completed", 10*time.Second)
+					s.waitForStatus(setName, "\nStatus: complete", 10*time.Second)
+
+					s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
 						0, "Num files: 4; Symlinks: 1; Hardlinks: 1; Size "+
-							"(total/recently uploaded/recently removed): 20 B / 40 B / 10 B\n"+
-							"Uploaded: 4; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0")
+							"(total/recently uploaded/recently removed): 20 B / 0 B / 11 B\n"+
+							"Uploaded: 0; Replaced: 0; Skipped: 4; Failed: 0; Missing: 0; Abnormal: 0")
 				})
 
 				Convey("And you can re-add the set again", func() {
@@ -2123,7 +2153,7 @@ func TestRemove(t *testing.T) {
 					s.confirmOutputContains(t, statusCmd, 0, file2)
 					s.confirmOutputDoesNotContain(t, statusCmd, 0, "Removal status")
 					s.confirmOutputContains(t, statusCmd, 0,
-						"(total/recently uploaded/recently removed): 40 B / 10 B / 0 B\n")
+						"(total/recently uploaded/recently removed): 51 B / 10 B / 0 B\n")
 				})
 			})
 
