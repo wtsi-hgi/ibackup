@@ -97,10 +97,6 @@ func (dc *discoveryCoordinator) DiscoveryHappened(sid string) {
 	}
 
 	dc.unlockSetMutex(sid)
-
-	if !dc.isRemovalRunning(sid) {
-		delete(dc.muMap, sid)
-	}
 }
 
 func (dc *discoveryCoordinator) unlockSetMutex(sid string) {
@@ -154,7 +150,6 @@ func (dc *discoveryCoordinator) RemovalDone(sid string) {
 	if dc.numRunningRemovals[sid] == 1 {
 		delete(dc.numRunningRemovals, sid)
 		delete(dc.hasDiscoveryHappened, sid)
-		delete(dc.muMap, sid)
 	} else {
 		dc.numRunningRemovals[sid]--
 	}
