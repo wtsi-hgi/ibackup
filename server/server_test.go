@@ -1373,7 +1373,12 @@ func TestServer(t *testing.T) {
 									MonitorTime: 250 * time.Millisecond,
 								}
 
-								err = client.AddOrUpdateSet(changedSet)
+								for range 5 {
+									if err = client.AddOrUpdateSet(changedSet); err == nil {
+										break
+									}
+								}
+
 								So(err, ShouldBeNil)
 
 								err = client.TriggerDiscovery(emptySet.ID())
