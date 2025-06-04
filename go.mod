@@ -13,8 +13,10 @@ require (
 	github.com/gin-gonic/gin v1.10.1
 	github.com/go-ldap/ldap/v3 v3.4.11
 	github.com/go-resty/resty/v2 v2.16.5
+	github.com/go-sql-driver/mysql v1.9.2
 	github.com/hashicorp/go-multierror v1.1.1
 	github.com/inconshreveable/log15 v3.0.0-testing.5+incompatible
+	github.com/mattn/go-sqlite3 v1.14.28
 	github.com/moby/sys/mountinfo v0.7.2
 	github.com/phayes/freeport v0.0.0-20220201140144-74d24b5ae9f5
 	github.com/rs/zerolog v1.34.0
@@ -38,6 +40,7 @@ require (
 require (
 	cloud.google.com/go/compute/metadata v0.7.0 // indirect
 	code.cloudfoundry.org/bytefmt v0.41.0 // indirect
+	filippo.io/edwards25519 v1.1.0 // indirect
 	github.com/Azure/go-ntlmssp v0.0.0-20221128193559-754e69321358 // indirect
 	github.com/BurntSushi/toml v1.5.0 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
