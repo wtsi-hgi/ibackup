@@ -82,7 +82,7 @@ func (t *Tx) put(table, sub, id, value []byte) error {
 }
 
 func (t *Tx) forEach(table []byte, fn func([]byte, []byte) error) error {
-	query := fmt.Sprintf("SELECT id, value FROM [%s];", table) //nolint:gosec
+	query := fmt.Sprintf("SELECT id, value FROM [%s] WHERE sub = '';", table) //nolint:gosec
 
 	var (
 		rows *sql.Rows
@@ -211,6 +211,14 @@ func (b *Bucket) CreateBucketIfNotExists(key []byte) (db.Bucket, error) { //noli
 		table: b.table,
 		sub:   key,
 	}, nil
+}
+
+func (b *Bucket) Bucket(key []byte) db.Bucket { //nolint:ireturn
+	return &Bucket{
+		tx:    b.tx,
+		table: b.table,
+		sub:   key,
+	}
 }
 
 func (b *Bucket) ForEach(fn func([]byte, []byte) error) error {

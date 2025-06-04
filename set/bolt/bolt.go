@@ -7,8 +7,10 @@ import (
 	"go.etcd.io/bbolt"
 )
 
+type d = bbolt.DB
+
 type DB struct {
-	*bbolt.DB
+	*d
 }
 
 func Open(path string, mode os.FileMode, options *bbolt.Options) (db.DB, error) { //nolint:ireturn
@@ -21,23 +23,25 @@ func Open(path string, mode os.FileMode, options *bbolt.Options) (db.DB, error) 
 }
 
 func (d DB) Update(fn func(db.Tx) error) error {
-	return d.DB.Update(func(tx *bbolt.Tx) error {
+	return d.d.Update(func(tx *bbolt.Tx) error {
 		return fn(Tx{tx})
 	})
 }
 
 func (d DB) View(fn func(db.Tx) error) error {
-	return d.DB.View(func(tx *bbolt.Tx) error {
+	return d.d.View(func(tx *bbolt.Tx) error {
 		return fn(Tx{tx})
 	})
 }
 
+type tx = bbolt.Tx
+
 type Tx struct {
-	*bbolt.Tx
+	*tx
 }
 
 func (t Tx) Bucket(bucket []byte) db.Bucket { //nolint:ireturn
-	b := t.Tx.Bucket(bucket)
+	b := t.tx.Bucket(bucket)
 	if b == nil {
 		return nil
 	}
@@ -46,7 +50,7 @@ func (t Tx) Bucket(bucket []byte) db.Bucket { //nolint:ireturn
 }
 
 func (t Tx) CreateBucketIfNotExists(bucket []byte) (db.Bucket, error) { //nolint:ireturn
-	b, err := t.Tx.CreateBucketIfNotExists(bucket)
+	b, err := t.tx.CreateBucketIfNotExists(bucket)
 	if err != nil {
 		return nil, err
 	}
@@ -54,15 +58,26 @@ func (t Tx) CreateBucketIfNotExists(bucket []byte) (db.Bucket, error) { //nolint
 	return Bucket{b}, nil
 }
 
+type bucket = bbolt.Bucket
+
 type Bucket struct {
-	*bbolt.Bucket
+	*bucket
 }
 
 func (b Bucket) CreateBucketIfNotExists(bucket []byte) (db.Bucket, error) { //nolint:ireturn
-	bb, err := b.Bucket.CreateBucketIfNotExists(bucket)
+	bb, err := b.bucket.CreateBucketIfNotExists(bucket)
 	if err != nil {
 		return nil, err
 	}
 
 	return Bucket{bb}, nil
+}
+
+func (b Bucket) Bucket(bucket []byte) db.Bucket { //nolint:ireturn
+	bb := b.bucket.Bucket(bucket)
+	if bb == nil {
+		return nil
+	}
+
+	return Bucket{bb}
 }
