@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
+	"unsafe"
 
 	_ "github.com/go-sql-driver/mysql" //
 	"github.com/wtsi-hgi/ibackup/set/db"
@@ -111,6 +113,38 @@ func (t *Tx) put(table, sub, id, value []byte) error {
 	return ErrTxClosed
 }
 
+func (t *Tx) delete(table, sub, id []byte) error {
+	if t.tx != nil {
+		return t.exec(
+			fmt.Sprintf(
+				"DELETE FROM [%s] WHERE sub = ? AND id = ?;",
+				table,
+			),
+			sub, id,
+		)
+	} else if t.db != nil {
+		return ErrTxNotWritable
+	}
+
+	return ErrTxClosed
+}
+
+func (t *Tx) deleteSub(table, sub []byte) error {
+	if t.tx != nil {
+		return t.exec(
+			fmt.Sprintf(
+				"DELETE FROM [%s] WHERE sub = ?;",
+				table,
+			),
+			sub,
+		)
+	} else if t.db != nil {
+		return ErrTxNotWritable
+	}
+
+	return ErrTxClosed
+}
+
 func (t *Tx) forEach(table []byte, fn func([]byte, []byte) error) error {
 	query := fmt.Sprintf("SELECT id, value FROM [%s] WHERE sub = '';", table) //nolint:gosec
 
@@ -175,7 +209,38 @@ func forEach(rows *sql.Rows, fn func([]byte, []byte) error) error {
 	return nil
 }
 
-func (t *Tx) WriteTo(w io.Writer) (int64, error) {
+func (t *Tx) nextSequence(table []byte) (uint64, error) {
+	query := fmt.Sprintf( //nolint:gosec
+		"SELECT id FROM [%[1]s] WHERE LEN(id) == ( SELECT MAX(LEN(id)) FROM [%[1]s] ) ORDER BY id DESC LIMIT 1",
+		table,
+	)
+
+	var row *sql.Row
+
+	if t.db != nil { //nolint:gocritic,nestif
+		row = t.db.QueryRow(query)
+	} else if t.tx != nil {
+		row = t.tx.QueryRow(query)
+	} else {
+		return 0, ErrTxClosed
+	}
+
+	var curr []byte
+
+	err := row.Scan(&curr)
+	if err != nil {
+		return 0, err
+	}
+
+	c, err := strconv.ParseUint(unsafe.String(unsafe.SliceData(curr), len(curr)), 10, 64)
+	if err != nil {
+		return 0, err
+	}
+
+	return c + 1, nil
+}
+
+func (t *Tx) WriteTo(_ io.Writer) (int64, error) {
 	return 0, nil
 }
 
@@ -238,16 +303,16 @@ func (b *Bucket) Bucket(key []byte) db.Bucket { //nolint:ireturn
 	}
 }
 
-func (b *Bucket) Delete(key []byte) error { //nolint:ireturn
-	return nil
+func (b *Bucket) Delete(id []byte) error {
+	return b.tx.delete(b.table, b.sub, id)
 }
 
-func (b *Bucket) DeleteBucket(key []byte) error { //nolint:ireturn
-	return nil
+func (b *Bucket) DeleteBucket(sub []byte) error {
+	return b.tx.deleteSub(b.table, sub)
 }
 
-func (b *Bucket) NextSequence() (uint64, error) { //nolint:ireturn
-	return 0, nil
+func (b *Bucket) NextSequence() (uint64, error) {
+	return b.tx.nextSequence(b.table)
 }
 
 func (b *Bucket) ForEach(fn func([]byte, []byte) error) error {
