@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 
 	_ "github.com/go-sql-driver/mysql" //
 	"github.com/wtsi-hgi/ibackup/set/db"
@@ -22,6 +23,35 @@ func New(path string) (db.DB, error) { //nolint:ireturn
 	}
 
 	return &DB{db: db}, nil
+}
+
+func (d *DB) View(fn func(db.Tx) error) error {
+	t := Tx{db: d.db}
+	err := fn(&t)
+	t.db = nil
+
+	return err
+}
+
+func (d *DB) Update(fn func(db.Tx) error) error {
+	tx, err := d.db.Begin()
+	if err != nil {
+		return err
+	}
+
+	t := Tx{tx: tx}
+
+	if err := fn(&t); err != nil {
+		return tx.Rollback()
+	}
+
+	t.tx = nil
+
+	return tx.Commit()
+}
+
+func (DB) Close() error {
+	return nil
 }
 
 type Tx struct {
@@ -145,29 +175,8 @@ func forEach(rows *sql.Rows, fn func([]byte, []byte) error) error {
 	return nil
 }
 
-func (d *DB) View(fn func(db.Tx) error) error {
-	t := Tx{db: d.db}
-	err := fn(&t)
-	t.db = nil
-
-	return err
-}
-
-func (d *DB) Update(fn func(db.Tx) error) error {
-	tx, err := d.db.Begin()
-	if err != nil {
-		return err
-	}
-
-	t := Tx{tx: tx}
-
-	if err := fn(&t); err != nil {
-		return tx.Rollback()
-	}
-
-	t.tx = nil
-
-	return tx.Commit()
+func (t *Tx) WriteTo(w io.Writer) (int64, error) {
+	return 0, nil
 }
 
 type Bucket struct {
@@ -213,6 +222,14 @@ func (b *Bucket) CreateBucketIfNotExists(key []byte) (db.Bucket, error) { //noli
 	}, nil
 }
 
+func (b *Bucket) CreateBucket(key []byte) (db.Bucket, error) { //nolint:ireturn
+	return &Bucket{
+		tx:    b.tx,
+		table: b.table,
+		sub:   key,
+	}, nil
+}
+
 func (b *Bucket) Bucket(key []byte) db.Bucket { //nolint:ireturn
 	return &Bucket{
 		tx:    b.tx,
@@ -221,12 +238,28 @@ func (b *Bucket) Bucket(key []byte) db.Bucket { //nolint:ireturn
 	}
 }
 
+func (b *Bucket) Delete(key []byte) error { //nolint:ireturn
+	return nil
+}
+
+func (b *Bucket) DeleteBucket(key []byte) error { //nolint:ireturn
+	return nil
+}
+
+func (b *Bucket) NextSequence() (uint64, error) { //nolint:ireturn
+	return 0, nil
+}
+
 func (b *Bucket) ForEach(fn func([]byte, []byte) error) error {
 	if len(b.sub) == 0 {
 		return b.tx.forEach(b.table, fn)
 	}
 
 	return b.tx.forEachSub(b.table, b.sub, fn)
+}
+
+func (b *Bucket) Cursor() db.Cursor { //nolint:ireturn
+	return nil
 }
 
 var (

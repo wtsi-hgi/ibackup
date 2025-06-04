@@ -73,6 +73,15 @@ func (b Bucket) CreateBucketIfNotExists(bucket []byte) (db.Bucket, error) { //no
 	return Bucket{bb}, nil
 }
 
+func (b Bucket) CreateBucket(bucket []byte) (db.Bucket, error) { //nolint:ireturn
+	bb, err := b.bucket.CreateBucket(bucket)
+	if err != nil {
+		return nil, err
+	}
+
+	return Bucket{bb}, nil
+}
+
 func (b Bucket) Bucket(bucket []byte) db.Bucket { //nolint:ireturn
 	bb := b.bucket.Bucket(bucket)
 	if bb == nil {
@@ -80,4 +89,8 @@ func (b Bucket) Bucket(bucket []byte) db.Bucket { //nolint:ireturn
 	}
 
 	return Bucket{bb}
+}
+
+func (b Bucket) Cursor() db.Cursor { //nolint:ireturn
+	return b.bucket.Cursor()
 }
