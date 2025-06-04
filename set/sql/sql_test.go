@@ -17,10 +17,13 @@ func TestSQL(t *testing.T) {
 	Convey("", t, func() {
 		var (
 			setBucket = []byte("set")
+			subBucket = []byte("sub-bucket")
 			key1      = []byte("key1")
 			key2      = []byte("key2")
 			valueA    = []byte("valueA")
 			valueB    = []byte("valueB")
+			valueC    = []byte("valueC")
+			valueD    = []byte("valueD")
 		)
 
 		d, err := New(connStr)
@@ -33,6 +36,12 @@ func TestSQL(t *testing.T) {
 			So(b.Put(key1, valueA), ShouldBeNil)
 			So(b.Put(key2, valueB), ShouldBeNil)
 
+			s, errr := b.CreateBucketIfNotExists(subBucket)
+			So(errr, ShouldBeNil)
+
+			So(s.Put(key1, valueC), ShouldBeNil)
+			So(s.Put(key2, valueD), ShouldBeNil)
+
 			return nil
 		})
 		So(err, ShouldBeNil)
@@ -43,6 +52,12 @@ func TestSQL(t *testing.T) {
 
 			So(b.Get(key1), ShouldResemble, valueA)
 			So(b.Get(key2), ShouldResemble, valueB)
+
+			s := b.Bucket(subBucket)
+			So(s, ShouldNotBeNil)
+
+			So(s.Get(key1), ShouldResemble, valueC)
+			So(s.Get(key2), ShouldResemble, valueD)
 
 			values := [][2][]byte{
 				{key1, valueA},
