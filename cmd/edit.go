@@ -29,6 +29,14 @@ package cmd
 import (
 	"github.com/spf13/cobra"
 	"github.com/wtsi-hgi/ibackup/server"
+	"github.com/wtsi-hgi/ibackup/set"
+)
+
+// options for this cmd.
+var (
+	editSetName     string
+	editUser        string
+	editStopMonitor bool
 )
 
 // editCmd represents the edit command.
@@ -42,19 +50,34 @@ This subcommand is under active development.
 	Run: func(cmd *cobra.Command, args []string) {
 		ensureURLandCert()
 
+		client, err := newServerClient(serverURL, serverCert)
+		if err != nil {
+			die(err)
+		}
+
+		set, err := client.GetSetByName(editUser, editSetName)
+		if err != nil {
+			die(err)
+		}
+
+		edit(client, set)
+
 	},
 }
 
 func init() {
 	RootCmd.AddCommand(editCmd)
 
-	editCmd.Flags().StringVarP(&setName, "name", "n", "", "a short name for this backup set")
+	editCmd.Flags().StringVarP(&editSetName, "name", "n", "", "a short name for this backup set")
+	editCmd.Flags().StringVar(&editUser, "user", currentUsername(),
+		"pretend to be the this user (only works if you started the server)")
+	editCmd.Flags().BoolVar(&editStopMonitor, "stop-monitor", false, "stop monitoring the set for changes")
 
 	if err := editCmd.MarkFlagRequired("name"); err != nil {
 		die(err)
 	}
 }
 
-func edit(client *server.Client, name string) error {
+func edit(client *server.Client, givenSet *set.Set) error {
 	return nil
 }
