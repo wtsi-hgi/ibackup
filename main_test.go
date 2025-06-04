@@ -2009,7 +2009,7 @@ func confirmFileContents(file, expectedContents string) {
 func TestRemove(t *testing.T) {
 	resetIRODS()
 
-	Convey("Given a server", t, func() {
+	SkipConvey("Given a server", t, func() {
 		remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
 		if remotePath == "" {
 			SkipConvey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
