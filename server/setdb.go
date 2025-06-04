@@ -429,6 +429,10 @@ func (s *Server) removeFilesAndDirs(set *set.Set, filePaths, dirPaths []string) 
 		return err
 	}
 
+	if filePaths == nil && dirPaths == nil {
+		return nil
+	}
+
 	numFilesSubmitted, err := s.submitFilesForRemoval(set, filePaths)
 	if err != nil {
 		return err

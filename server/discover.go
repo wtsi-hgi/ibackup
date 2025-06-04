@@ -251,10 +251,6 @@ func (s *Server) discoverSetRemovals(given *set.Set) error {
 		return err
 	}
 
-	if filesToRemove == nil && dirsToRemove == nil {
-		return nil
-	}
-
 	return s.removeFilesAndDirs(given, filesToRemove, dirsToRemove)
 }
 
@@ -292,7 +288,8 @@ func (s *Server) findDirsToRemove(given *set.Set) ([]string, error) {
 }
 
 func (s *Server) walkDirEntries(given *set.Set,
-	excludeTree ptrie.Trie[bool]) func([]*set.Entry) ([]*set.Dirent, []*set.Dirent, error) {
+	excludeTree ptrie.Trie[bool],
+) func([]*set.Entry) ([]*set.Dirent, []*set.Dirent, error) {
 	return func(entries []*set.Entry) ([]*set.Dirent, []*set.Dirent, error) {
 		entriesCh := make(chan *set.Dirent)
 		doneCh := make(chan error)
@@ -305,7 +302,8 @@ func (s *Server) walkDirEntries(given *set.Set,
 }
 
 func (s *Server) processSetDirWalkOutput(given *set.Set, entriesCh chan *set.Dirent,
-	doneCh, warnCh chan error) ([]*set.Dirent, []*set.Dirent, error) {
+	doneCh, warnCh chan error,
+) ([]*set.Dirent, []*set.Dirent, error) {
 	warnDoneCh := s.processSetDirWalkWarnings(given, warnCh)
 
 	var ( //nolint:prealloc
@@ -383,7 +381,8 @@ func (s *Server) handleNewlyDefinedSets(given *set.Set) {
 // done, then sends any error on the doneCh. Non-critical warnings during the
 // walk are sent to the warnChan.
 func (s *Server) doSetDirWalks(entries []*set.Entry, excludeTree ptrie.Trie[bool], given *set.Set,
-	entriesCh chan *set.Dirent, doneCh, warnChan chan error) {
+	entriesCh chan *set.Dirent, doneCh, warnChan chan error,
+) {
 	errCh := make(chan error, len(entries))
 
 	for _, entry := range entries {
@@ -434,7 +433,8 @@ func (s *Server) checkAndWalkDir(dir string, cb walk.PathCallback, warnChan chan
 // except for entries that are not regular files or symlinks or dirs, which are
 // silently skipped.
 func filterEntries(entriesCh chan *set.Dirent, excludeTree ptrie.Trie[bool],
-	parentDir string) func(entry *walk.Dirent) error {
+	parentDir string,
+) func(entry *walk.Dirent) error {
 	return func(entry *walk.Dirent) error {
 		dirent := set.DirEntFromWalk(entry)
 
@@ -560,7 +560,8 @@ func (s *Server) enqueueEntries(entries []*set.Entry, given *set.Set, transforme
 // entryToRequest converts an Entry to a Request containing details of the given
 // set.
 func (s *Server) entryToRequest(entry *set.Entry, transformer put.PathTransformer,
-	given *set.Set) (*put.Request, error) {
+	given *set.Set,
+) (*put.Request, error) {
 	r, err := put.NewRequestWithTransformedLocal(entry.Path, transformer)
 	if err != nil {
 		return nil, err

@@ -2142,6 +2142,16 @@ func TestRemove(t *testing.T) {
 						0, "Num files: 4; Symlinks: 1; Hardlinks: 1; Size "+
 							"(total/recently uploaded/recently removed): 20 B / 0 B / 11 B\n"+
 							"Uploaded: 0; Replaced: 0; Skipped: 4; Failed: 0; Missing: 0; Abnormal: 0")
+
+					exitCode, _ = s.runBinary(t, "retry", "--name", setName, "-a")
+
+					s.waitForStatus(setName, "\nDiscovery: completed", 10*time.Second)
+					s.waitForStatus(setName, "\nStatus: complete", 10*time.Second)
+
+					s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
+						0, "Num files: 4; Symlinks: 1; Hardlinks: 1; Size "+
+							"(total/recently uploaded/recently removed): 20 B / 0 B / 0 B\n"+
+							"Uploaded: 0; Replaced: 0; Skipped: 4; Failed: 0; Missing: 0; Abnormal: 0")
 				})
 
 				Convey("And you can re-add the set again", func() {
