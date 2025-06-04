@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"github.com/dgryski/go-farm"
+	"github.com/wtsi-hgi/ibackup/errs"
 )
 
 type RequestStatus string
@@ -163,13 +164,13 @@ func (r *Request) Prepare() error {
 func (r *Request) ValidatePaths() error {
 	local, err := filepath.Abs(r.Local)
 	if err != nil {
-		return Error{ErrLocalNotAbs, r.Local}
+		return errs.PathError{Msg: ErrLocalNotAbs, Path: r.Local}
 	}
 
 	r.Local = local
 
 	if !filepath.IsAbs(r.Remote) {
-		return Error{ErrRemoteNotAbs, r.Remote}
+		return errs.PathError{Msg: ErrRemoteNotAbs, Path: r.Remote}
 	}
 
 	return nil
@@ -277,16 +278,17 @@ func (r *Request) StatAndAssociateStandardMetadata(lInfo *ObjectInfo, handler Ha
 }
 
 func statAndAssociateStandardMetadata(request *Request, diskMeta map[string]string,
-	handler Handler,
-) (*ObjectInfo, error) {
-	rInfo, err := handler.Stat(request)
+	handler Handler) (*ObjectInfo, error) {
+	exists, meta, err := handler.Stat(request.Remote)
 	if err != nil {
 		return nil, err
 	}
 
+	rInfo := ObjectInfo{Exists: exists, Meta: meta}
+
 	request.Meta.addStandardMeta(diskMeta, rInfo.Meta, request.Requester, request.Set)
 
-	return rInfo, nil
+	return &rInfo, nil
 }
 
 // RemoveAndAddMetadata removes and adds metadata on our Remote based on the
@@ -344,16 +346,16 @@ func (r *Request) addMeta(handler Handler, toAdd map[string]string) error {
 // to Remote, with linking metadata.
 func (r *Request) Put(handler Handler) error {
 	if r.Hardlink == "" {
-		return handler.Put(r)
+		return handler.Put(r.LocalDataPath(), r.Remote)
 	}
 
 	if !r.onlyUploadEmptyFile {
-		if err := handler.Put(r.inodeRequest); err != nil {
+		if err := handler.Put(r.inodeRequest.LocalDataPath(), r.inodeRequest.Remote); err != nil {
 			return err
 		}
 	}
 
-	return handler.Put(r.emptyFileRequest)
+	return handler.Put(r.emptyFileRequest.LocalDataPath(), r.emptyFileRequest.Remote)
 }
 
 // PathTransformer is a function that given a local path, returns the
@@ -405,7 +407,7 @@ func HumgenTransformer(local string) (string, error) {
 	}
 
 	if !dirIsLustreWithPTUSubDir(parts[1], ptuPart, len(parts)) {
-		return "", Error{ErrNotHumgenLustre, local}
+		return "", errs.PathError{Msg: ErrNotHumgenLustre, Path: local}
 	}
 
 	return fmt.Sprintf("/humgen/%s/%s/%s/%s", parts[ptuPart], parts[ptuPart+1], parts[2],

@@ -26,6 +26,7 @@ package set
 
 import (
 	"io/fs"
+	"path/filepath"
 
 	"github.com/wtsi-ssg/wrstat/v6/walk"
 )
@@ -40,7 +41,7 @@ type Dirent struct {
 // DirEntFromWalk converts a walk.Dirent to an easier to use local Dirent type.
 func DirEntFromWalk(de *walk.Dirent) *Dirent {
 	return &Dirent{
-		Path:  string(de.Bytes()),
+		Path:  filepath.Clean(string(de.Bytes())),
 		Mode:  de.Type(),
 		Inode: de.Inode,
 	}

@@ -390,7 +390,12 @@ func displaySet(s *set.Set, showRequesters bool) { //nolint:funlen,gocyclo
 		monitored = formatDuration(s.MonitorTime)
 	}
 
-	cliPrintf("Monitored: %s; Archive: %v\n", monitored, s.DeleteLocal)
+	monitorStr := "Monitored"
+	if s.MonitorRemovals {
+		monitorStr += " (with removals)"
+	}
+
+	cliPrintf("%s: %s; Archive: %v\n", monitorStr, monitored, s.DeleteLocal)
 
 	if s.Description != "" {
 		cliPrintf("Description: %s\n", s.Description)
@@ -405,13 +410,17 @@ func displaySet(s *set.Set, showRequesters bool) { //nolint:funlen,gocyclo
 		cliPrintf("Status: %s\n", s.Status)
 	}
 
+	if s.NumObjectsToBeRemoved > 0 {
+		cliPrintf("Removal status: %d / %d objects removed\n", s.NumObjectsRemoved, s.NumObjectsToBeRemoved)
+	}
+
 	if s.Warning != "" {
 		cliPrintf("Warning: %s\n", s.Warning)
 	}
 
 	cliPrintf("Discovery: %s\n", s.Discovered())
-	cliPrintf("Num files: %s; Symlinks: %d; Hardlinks: %d; Size (total/recently uploaded): %s / %s\n",
-		s.Count(), s.Symlinks, s.Hardlinks, s.Size(), s.UploadedSize())
+	cliPrintf("Num files: %s; Symlinks: %d; Hardlinks: %d; Size (total/recently uploaded/recently removed): %s / %s / %s\n", //nolint:lll
+		s.Count(), s.Symlinks, s.Hardlinks, s.Size(), s.UploadedSize(), s.RemovedSize())
 	cliPrintf("Uploaded: %d; Replaced: %d; Skipped: %d; Failed: %d; Missing: %d; Abnormal: %d\n",
 		s.Uploaded, s.Replaced, s.Skipped, s.Failed, s.Missing, s.Abnormal)
 

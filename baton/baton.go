@@ -1,7 +1,9 @@
 /*******************************************************************************
- * Copyright (c) 2022, 2023 Genome Research Ltd.
+ * Copyright (c) 2022, 2023, 2025 Genome Research Ltd.
  *
  * Author: Sendu Bala <sb10@sanger.ac.uk>
+ * Author: Rosie Kern <rk18@sanger.ac.uk>
+ * Author: Iaroslav Popov <ip13@sanger.ac.uk>
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -23,9 +25,9 @@
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  ******************************************************************************/
 
-// this file implements a Handler using baton, via extendo.
+// this file lets you use baton, via extendo.
 
-package put
+package baton
 
 import (
 	"context"
@@ -37,6 +39,8 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
+	"github.com/wtsi-hgi/ibackup/errs"
+	"github.com/wtsi-hgi/ibackup/internal"
 	ex "github.com/wtsi-npg/extendo/v2"
 	logs "github.com/wtsi-npg/logshim"
 	"github.com/wtsi-npg/logshim-zerolog/zlog"
@@ -49,8 +53,7 @@ const (
 	ErrOperationTimeout = "iRODS operation timed out"
 
 	extendoLogLevel        = logs.ErrorLevel
-	numCollClients         = workerPoolSizeCollections
-	numPutMetaClients      = 2
+	numCollClients         = 2
 	collClientMaxIndex     = numCollClients - 1
 	putClientIndex         = collClientMaxIndex + 1
 	metaClientIndex        = putClientIndex + 1
@@ -64,15 +67,15 @@ const (
 
 // Baton is a Handler that uses Baton (via extendo) to interact with iRODS.
 type Baton struct {
-	collPool    *ex.ClientPool
-	collClients []*ex.Client
-	collRunning bool
-	collCh      chan string
-	collErrCh   chan error
-	collMu      sync.Mutex
-	putMetaPool *ex.ClientPool
-	putClient   *ex.Client
-	metaClient  *ex.Client
+	collPool     *ex.ClientPool
+	collClients  []*ex.Client
+	collRunning  bool
+	collCh       chan string
+	collErrCh    chan error
+	collMu       sync.Mutex
+	putClient    *ex.Client
+	metaClient   *ex.Client
+	removeClient *ex.Client
 }
 
 // GetBatonHandler returns a Handler that uses Baton to interact with iRODS. If
@@ -105,6 +108,8 @@ func (b *Baton) EnsureCollection(collection string) error {
 
 	if !b.collRunning {
 		if err := b.makeCollConnections(); err != nil {
+			b.collMu.Unlock()
+
 			return err
 		}
 
@@ -148,8 +153,6 @@ func (b *Baton) makeCollConnections() error {
 
 	pool, clientCh, err := b.connect(numCollClients)
 	if err != nil {
-		b.collMu.Unlock()
-
 		return err
 	}
 
@@ -173,20 +176,20 @@ func (b *Baton) connect(numClients uint8) (*ex.ClientPool, chan *ex.Client, erro
 	params.MaxSize = numClients
 	pool := ex.NewClientPool(params, "")
 
-	clientCh, err := b.getClientsFromPoolConcurrently(pool, numClients)
+	clientCh, err := b.GetClientsFromPoolConcurrently(pool, numClients)
 
 	return pool, clientCh, err
 }
 
-// getClientsFromPoolConcurrently gets numClients clients from the pool
+// GetClientsFromPoolConcurrently gets numClients clients from the pool
 // concurrently.
-func (b *Baton) getClientsFromPoolConcurrently(pool *ex.ClientPool, numClients uint8) (chan *ex.Client, error) {
+func (b *Baton) GetClientsFromPoolConcurrently(pool *ex.ClientPool, numClients uint8) (chan *ex.Client, error) {
 	clientCh := make(chan *ex.Client, numClients)
 	errCh := make(chan error, numClients)
 
 	var wg sync.WaitGroup
 
-	for i := 0; i < int(numClients); i++ {
+	for range numClients {
 		wg.Add(1)
 
 		go func() {
@@ -218,7 +221,7 @@ func (b *Baton) ensureCollection(clientIndex int, ri ex.RodsItem) error {
 		return nil
 	}
 
-	if errors.Is(err, Error{ErrOperationTimeout, ri.IPath}) {
+	if errors.Is(err, errs.PathError{Msg: ErrOperationTimeout, Path: ri.IPath}) {
 		return err
 	}
 
@@ -242,7 +245,7 @@ func timeoutOp(op retry.Operation, path string) error {
 	case err = <-errCh:
 		timer.Stop()
 	case <-timer.C:
-		err = Error{ErrOperationTimeout, path}
+		err = errs.PathError{Msg: ErrOperationTimeout, Path: path}
 	}
 
 	return err
@@ -332,8 +335,7 @@ func (b *Baton) setClientByIndex(clientIndex int, client *ex.Client) {
 	}
 }
 
-// CollectionsDone closes the connections used for connection creation, and
-// creates new ones for doing puts and metadata operations.
+// CollectionsDone closes the connections used for connection creation.
 func (b *Baton) CollectionsDone() error {
 	b.collMu.Lock()
 	defer b.collMu.Unlock()
@@ -346,24 +348,50 @@ func (b *Baton) CollectionsDone() error {
 	close(b.collErrCh)
 	b.collRunning = false
 
-	pool, clientCh, err := b.connect(numPutMetaClients)
+	err := b.setClientIfNotExists(&b.putClient)
 	if err != nil {
-		b.collMu.Unlock()
-
 		return err
 	}
 
-	b.putMetaPool = pool
-	b.putClient = <-clientCh
-	b.metaClient = <-clientCh
+	return b.setClientIfNotExists(&b.metaClient)
+}
+
+func (b *Baton) setClientIfNotExists(client **ex.Client) error {
+	if *client != nil && (*client).IsRunning() {
+		return nil
+	}
+
+	newClient, err := b.getNewClient()
+	if err != nil {
+		return err
+	}
+
+	*client = newClient
 
 	return nil
+}
+
+func (b *Baton) getNewClient() (*ex.Client, error) {
+	pool, clientCh, err := b.connect(1)
+	if err != nil {
+		return nil, err
+	}
+
+	client := <-clientCh
+
+	pool.Close()
+
+	return client, err
 }
 
 // closeConnections closes the given connections, with a timeout, ignoring
 // errors.
 func (b *Baton) closeConnections(clients []*ex.Client) {
 	for _, client := range clients {
+		if client == nil {
+			continue
+		}
+
 		timeoutOp(func() error { //nolint:errcheck
 			client.StopIgnoreError()
 
@@ -372,42 +400,53 @@ func (b *Baton) closeConnections(clients []*ex.Client) {
 	}
 }
 
-// Stat gets mtime and metadata info for the request Remote object.
-func (b *Baton) Stat(request *Request) (*ObjectInfo, error) {
+// Stat gets mtime and metadata info for the request Remote object. It creates a
+// new meta client if necessary so after calling this function you must
+// eventually call Cleanup().
+func (b *Baton) Stat(remote string) (bool, map[string]string, error) {
+	err := b.setClientIfNotExists(&b.metaClient)
+	if err != nil {
+		return false, nil, err
+	}
+
 	var it ex.RodsItem
 
-	err := timeoutOp(func() error {
+	err = timeoutOp(func() error {
 		var errl error
-		it, errl = b.metaClient.ListItem(ex.Args{Timestamp: true, AVU: true}, *requestToRodsItem(request))
+		it, errl = b.metaClient.ListItem(ex.Args{Timestamp: true, AVU: true}, *requestToRodsItem("", remote))
 
 		return errl
-	}, "stat failed: "+request.Remote)
+	}, "stat failed: "+remote)
 
 	if err != nil {
 		if strings.Contains(err.Error(), extendoNotExist) {
-			return &ObjectInfo{Exists: false}, nil
+			return false, nil, nil
 		}
 
-		return nil, err
+		return false, nil, err
 	}
 
-	return &ObjectInfo{Exists: true, Meta: rodsItemToMeta(it)}, nil
+	return true, RodsItemToMeta(it), nil
 }
 
 // requestToRodsItem converts a Request in to an extendo RodsItem without AVUs.
-func requestToRodsItem(request *Request) *ex.RodsItem {
-	local := request.LocalDataPath()
-
-	return &ex.RodsItem{
-		IDirectory: filepath.Dir(local),
-		IFile:      filepath.Base(local),
-		IPath:      filepath.Dir(request.Remote),
-		IName:      filepath.Base(request.Remote),
+// If you provide an empty local path, it will not be set.
+func requestToRodsItem(local, remote string) *ex.RodsItem {
+	item := &ex.RodsItem{
+		IPath: filepath.Dir(remote),
+		IName: filepath.Base(remote),
 	}
+
+	if local != "" {
+		item.IDirectory = filepath.Dir(local)
+		item.IFile = filepath.Base(local)
+	}
+
+	return item
 }
 
-// rodsItemToMeta pulls out the AVUs from a RodsItem and returns them as a map.
-func rodsItemToMeta(it ex.RodsItem) map[string]string {
+// RodsItemToMeta pulls out the AVUs from a RodsItem and returns them as a map.
+func RodsItemToMeta(it ex.RodsItem) map[string]string {
 	meta := make(map[string]string, len(it.IAVUs))
 
 	for _, iavu := range it.IAVUs {
@@ -419,29 +458,31 @@ func rodsItemToMeta(it ex.RodsItem) map[string]string {
 
 // Put uploads request Local to the Remote object, overwriting it if it already
 // exists. It calculates and stores the md5 checksum remotely, comparing to the
-// local checksum.
-func (b *Baton) Put(request *Request) error {
-	item := requestToRodsItemWithAVUs(request)
+// local checksum. It creates a new put client if necessary so after calling
+// this function you must eventually call Cleanup().
+func (b *Baton) Put(local, remote string) error {
+	err := b.setClientIfNotExists(&b.putClient)
+	if err != nil {
+		return err
+	}
+
+	item := requestToRodsItem(local, remote)
 
 	// iRODS treats /dev/null specially, so unless that changes we have to check
 	// for it and create a temporary empty file in its place.
 	if filepath.Join(item.IDirectory, item.IFile) == os.DevNull {
-		file, err := os.CreateTemp("", "ibackup-put-empty-*")
-		if err != nil {
-			return err
+		fileName, errt := getTempFile()
+		if errt != nil {
+			return errt
 		}
 
-		file.Close()
+		item.IDirectory = filepath.Dir(fileName)
+		item.IFile = filepath.Base(fileName)
 
-		name := file.Name()
-
-		item.IDirectory = filepath.Dir(name)
-		item.IFile = filepath.Base(name)
-
-		defer os.Remove(name)
+		defer os.Remove(fileName)
 	}
 
-	_, err := b.putClient.Put(
+	_, err = b.putClient.Put(
 		ex.Args{
 			Force:  true,
 			Verify: true,
@@ -452,13 +493,15 @@ func (b *Baton) Put(request *Request) error {
 	return err
 }
 
-// requestToRodsItemWithAVUs converts a Request in to an extendo RodsItem with
-// AVUs.
-func requestToRodsItemWithAVUs(request *Request) *ex.RodsItem {
-	item := requestToRodsItem(request)
-	item.IAVUs = metaToAVUs(request.Meta.Metadata())
+func getTempFile() (string, error) {
+	file, err := os.CreateTemp("", "ibackup-put-empty-*")
+	if err != nil {
+		return "", err
+	}
 
-	return item
+	file.Close()
+
+	return file.Name(), nil
 }
 
 func metaToAVUs(meta map[string]string) []ex.AVU {
@@ -473,11 +516,19 @@ func metaToAVUs(meta map[string]string) []ex.AVU {
 	return avus
 }
 
+// RemoveMeta removes the given metadata from a given object in iRODS. It
+// creates a new meta client if necessary so after calling this function you
+// must eventually call Cleanup().
 func (b *Baton) RemoveMeta(path string, meta map[string]string) error {
-	it := remotePathToRodsItem(path)
+	err := b.setClientIfNotExists(&b.metaClient)
+	if err != nil {
+		return err
+	}
+
+	it := RemotePathToRodsItem(path)
 	it.IAVUs = metaToAVUs(meta)
 
-	err := timeoutOp(func() error {
+	err = timeoutOp(func() error {
 		_, errl := b.metaClient.MetaRem(ex.Args{}, *it)
 
 		return errl
@@ -486,19 +537,44 @@ func (b *Baton) RemoveMeta(path string, meta map[string]string) error {
 	return err
 }
 
-// remotePathToRodsItem converts a path in to an extendo RodsItem.
-func remotePathToRodsItem(path string) *ex.RodsItem {
+// GetMeta gets all the metadata for the given object in iRODS. It creates a new
+// meta client if necessary so after calling this function you must eventually
+// call Cleanup().
+func (b *Baton) GetMeta(path string) (map[string]string, error) {
+	err := b.setClientIfNotExists(&b.metaClient)
+	if err != nil {
+		return nil, err
+	}
+
+	it, err := b.metaClient.ListItem(ex.Args{AVU: true, Timestamp: true, Size: true}, ex.RodsItem{
+		IPath: filepath.Dir(path),
+		IName: filepath.Base(path),
+	})
+
+	return RodsItemToMeta(it), err
+}
+
+// RemotePathToRodsItem converts a path in to an extendo RodsItem.
+func RemotePathToRodsItem(path string) *ex.RodsItem {
 	return &ex.RodsItem{
 		IPath: filepath.Dir(path),
 		IName: filepath.Base(path),
 	}
 }
 
+// AddMeta adds the given metadata to a given object in iRODS. It
+// creates a new meta client if necessary so after calling this function you
+// must eventually call Cleanup().
 func (b *Baton) AddMeta(path string, meta map[string]string) error {
-	it := remotePathToRodsItem(path)
+	err := b.setClientIfNotExists(&b.metaClient)
+	if err != nil {
+		return err
+	}
+
+	it := RemotePathToRodsItem(path)
 	it.IAVUs = metaToAVUs(meta)
 
-	err := timeoutOp(func() error {
+	err = timeoutOp(func() error {
 		_, errl := b.metaClient.MetaAdd(ex.Args{}, *it)
 
 		return errl
@@ -508,10 +584,8 @@ func (b *Baton) AddMeta(path string, meta map[string]string) error {
 }
 
 // Cleanup stops our clients and closes our client pool.
-func (b *Baton) Cleanup() error {
-	b.closeConnections(append(b.collClients, b.putClient, b.metaClient))
-
-	b.putMetaPool.Close()
+func (b *Baton) Cleanup() {
+	b.closeConnections(append(b.collClients, b.putClient, b.removeClient, b.metaClient))
 
 	b.collMu.Lock()
 	defer b.collMu.Unlock()
@@ -522,6 +596,96 @@ func (b *Baton) Cleanup() error {
 		b.collPool.Close()
 		b.collRunning = false
 	}
+}
 
-	return nil
+// RemoveFile removes the given file from iRODS. It creates a new remove client
+// if necessary so after calling this function you must eventually call
+// Cleanup().
+func (b *Baton) RemoveFile(path string) error {
+	err := b.setClientIfNotExists(&b.removeClient)
+	if err != nil {
+		return err
+	}
+
+	it := RemotePathToRodsItem(path)
+
+	err = timeoutOp(func() error {
+		_, errl := b.removeClient.RemObj(ex.Args{}, *it)
+
+		return errl
+	}, "remove file error: "+path)
+
+	if err != nil && strings.Contains(err.Error(), "CAT_NO_ROWS_FOUND") {
+		return errs.PathError{Msg: internal.ErrFileDoesNotExist, Path: path}
+	}
+
+	return err
+}
+
+// RemoveDir removes the given directory from iRODS given it is empty. It
+// creates a new remove client if necessary so after calling this function you
+// must eventually call Cleanup().
+func (b *Baton) RemoveDir(path string) error {
+	err := b.setClientIfNotExists(&b.removeClient)
+	if err != nil {
+		return err
+	}
+
+	it := &ex.RodsItem{
+		IPath: path,
+	}
+
+	err = timeoutOp(func() error {
+		_, errl := b.removeClient.RemDir(ex.Args{}, *it)
+
+		return errl
+	}, "remove meta error: "+path)
+
+	if err != nil && strings.Contains(err.Error(), "CAT_COLLECTION_NOT_EMPTY") {
+		return errs.NewDirNotEmptyError(path)
+	}
+
+	return err
+}
+
+// AllClientsStopped returns true if all our clients are stopped.
+func (b *Baton) AllClientsStopped() bool {
+	for _, client := range append(b.collClients, b.putClient, b.metaClient, b.removeClient) {
+		if client != nil && client.IsRunning() {
+			return false
+		}
+	}
+
+	return true
+}
+
+// QueryMeta return paths to all objects with given metadata inside the provided
+// scope. It creates a new meta client if necessary so after calling this
+// function you must eventually call Cleanup().
+func (b *Baton) QueryMeta(dirToSearch string, meta map[string]string) ([]string, error) {
+	err := b.setClientIfNotExists(&b.metaClient)
+	if err != nil {
+		return nil, err
+	}
+
+	it := &ex.RodsItem{
+		IPath: dirToSearch,
+		IAVUs: metaToAVUs(meta),
+	}
+
+	var items []ex.RodsItem
+
+	err = timeoutOp(func() error {
+		items, err = b.metaClient.MetaQuery(ex.Args{Object: true}, *it)
+
+		return err
+	}, "query meta error: "+dirToSearch)
+
+	paths := make([]string, len(items))
+
+	for i, item := range items {
+		paths[i] = filepath.Join(item.IPath, item.IName)
+	}
+
+	return paths, err
 }

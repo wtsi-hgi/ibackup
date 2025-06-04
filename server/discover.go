@@ -26,6 +26,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -33,16 +34,126 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/VertebrateResequencing/wr/queue"
 	"github.com/gin-gonic/gin"
+	"github.com/viant/ptrie"
 	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/set"
 	"github.com/wtsi-ssg/wrstat/v6/walk"
 )
 
 const ttr = 6 * time.Minute
+
+// discoveryCoordinator is used to ensure removals and discoveries cannot
+// happen at the same time on the same set. Discoveries have priority and will
+// pause any removal that's already running until the discovery has finished.
+type discoveryCoordinator struct {
+	sync.Mutex
+	hasDiscoveryHappened map[string]bool
+	numRunningRemovals   map[string]uint8
+	muMap                map[string]*sync.Mutex
+}
+
+func newDiscoveryCoordinator() *discoveryCoordinator {
+	return &discoveryCoordinator{
+		hasDiscoveryHappened: make(map[string]bool),
+		numRunningRemovals:   make(map[string]uint8),
+		muMap:                make(map[string]*sync.Mutex),
+	}
+}
+
+// StartDiscovery will wait until any individual removals are complete and then
+// block any future removals until the discovery is done.
+func (dc *discoveryCoordinator) StartDiscovery(sid string) {
+	mu := dc.getOrCreateSetMutex(sid)
+	mu.Lock()
+}
+
+func (dc *discoveryCoordinator) getOrCreateSetMutex(sid string) *sync.Mutex {
+	dc.Lock()
+	defer dc.Unlock()
+
+	v, exists := dc.muMap[sid]
+	if !exists {
+		v = &sync.Mutex{}
+		dc.muMap[sid] = v
+	}
+
+	return v
+}
+
+// DiscoveryHappened tells any running removals that a discovery happened during
+// their execution, then stops blocking removals.
+func (dc *discoveryCoordinator) DiscoveryHappened(sid string) {
+	dc.Lock()
+	defer dc.Unlock()
+
+	if dc.isRemovalRunning(sid) {
+		dc.hasDiscoveryHappened[sid] = true
+	}
+
+	dc.unlockSetMutex(sid)
+}
+
+func (dc *discoveryCoordinator) unlockSetMutex(sid string) {
+	dc.muMap[sid].Unlock()
+}
+
+// isRemovalRunning requires a lock to be held before calling.
+func (dc *discoveryCoordinator) isRemovalRunning(sid string) bool {
+	_, exists := dc.numRunningRemovals[sid]
+
+	return exists
+}
+
+// WillRemove indicates that a removal is running on the provided set id.
+func (dc *discoveryCoordinator) WillRemove(sid string) {
+	dc.Lock()
+	defer dc.Unlock()
+
+	dc.numRunningRemovals[sid]++
+}
+
+// WaitForDiscovery will block while a discovery on the provided set is running,
+// and it will return an indication if discovery has happened since removal
+// started.
+func (dc *discoveryCoordinator) WaitForDiscovery(sid string) bool {
+	mu := dc.getOrCreateSetMutex(sid)
+	mu.Lock()
+
+	dc.Lock()
+	_, hasDiscoveryHappened := dc.hasDiscoveryHappened[sid]
+	dc.Unlock()
+
+	return hasDiscoveryHappened
+}
+
+// AllowDiscovery indicates we finished our individual removal and a discovery
+// can now start.
+func (dc *discoveryCoordinator) AllowDiscovery(sid string) {
+	dc.Lock()
+	defer dc.Unlock()
+
+	dc.unlockSetMutex(sid)
+}
+
+// RemovalDone indicates this set is no longer removing only if all remove
+// commands containing this set have finished.
+func (dc *discoveryCoordinator) RemovalDone(sid string) {
+	dc.Lock()
+	defer dc.Unlock()
+
+	if dc.numRunningRemovals[sid] == 1 {
+		delete(dc.numRunningRemovals, sid)
+		delete(dc.hasDiscoveryHappened, sid)
+	} else {
+		dc.numRunningRemovals[sid]--
+	}
+}
 
 // triggerDiscovery triggers the file discovery process for the set with the id
 // specified in the URL parameter.
@@ -84,8 +195,20 @@ func (s *Server) discoverSet(given *set.Set) error {
 
 // discoverThenEnqueue updates file existence, discovers dir contents, then
 // queues the set's files for uploading. Call this in a go-routine, but don't
-// call it multiple times at once for the same set!
+// call it multiple times at once for the same set! This will block removals on
+// the same set.
 func (s *Server) discoverThenEnqueue(given *set.Set, transformer put.PathTransformer) {
+	if given.MonitorRemovals {
+		if err := s.discoverSetRemovals(given); err != nil {
+			s.recordSetError("error discovering set (%s) removals: %s", given.ID(), err)
+
+			return
+		}
+	}
+
+	s.discoveryCoordinator.StartDiscovery(given.ID())
+	defer s.discoveryCoordinator.DiscoveryHappened(given.ID())
+
 	updated, err := s.doDiscovery(given)
 	if err != nil {
 		s.Logger.Printf("discovery error %s: %s", given.ID(), err)
@@ -101,24 +224,100 @@ func (s *Server) discoverThenEnqueue(given *set.Set, transformer put.PathTransfo
 }
 
 func (s *Server) doDiscovery(given *set.Set) (*set.Set, error) {
-	return s.db.Discover(given.ID(), func(entries []*set.Entry) ([]*set.Dirent, error) {
+	excludedPaths, err := s.db.GetExcludedPaths(given.ID())
+	if err != nil {
+		return nil, err
+	}
+
+	excludeTree := ptrie.New[bool]()
+	for _, path := range excludedPaths {
+		err = excludeTree.Put([]byte(path), true)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return s.db.Discover(given.ID(), s.walkDirEntries(given, excludeTree))
+}
+
+func (s *Server) discoverSetRemovals(given *set.Set) error {
+	filesToRemove, err := s.findFilesToRemove(given)
+	if err != nil {
+		return err
+	}
+
+	dirsToRemove, err := s.findDirsToRemove(given)
+	if err != nil {
+		return err
+	}
+
+	return s.removeFilesAndDirs(given, filesToRemove, dirsToRemove)
+}
+
+func (s *Server) findFilesToRemove(given *set.Set) ([]string, error) {
+	fileEntriesInSet, err := s.db.GetFileEntries(given.ID())
+	if err != nil {
+		return nil, err
+	}
+
+	return findNotExistingEntries(fileEntriesInSet)
+}
+
+func findNotExistingEntries(entries []*set.Entry) ([]string, error) {
+	var missingPaths []string
+
+	for _, entry := range entries {
+		_, err := os.Stat(entry.Path)
+		if errors.Is(err, os.ErrNotExist) {
+			missingPaths = append(missingPaths, entry.Path)
+		} else if err != nil {
+			return nil, err
+		}
+	}
+
+	return missingPaths, nil
+}
+
+func (s *Server) findDirsToRemove(given *set.Set) ([]string, error) {
+	dirEntriesInSet, err := s.db.GetAllDirEntries(given.ID())
+	if err != nil {
+		return nil, err
+	}
+
+	return findNotExistingEntries(dirEntriesInSet)
+}
+
+func (s *Server) walkDirEntries(given *set.Set,
+	excludeTree ptrie.Trie[bool],
+) func([]*set.Entry) ([]*set.Dirent, []*set.Dirent, error) {
+	return func(entries []*set.Entry) ([]*set.Dirent, []*set.Dirent, error) {
 		entriesCh := make(chan *set.Dirent)
 		doneCh := make(chan error)
 		warnCh := make(chan error)
 
-		go s.doSetDirWalks(entries, given, entriesCh, doneCh, warnCh)
+		go s.doSetDirWalks(entries, excludeTree, given, entriesCh, doneCh, warnCh)
 
 		return s.processSetDirWalkOutput(given, entriesCh, doneCh, warnCh)
-	})
+	}
 }
 
 func (s *Server) processSetDirWalkOutput(given *set.Set, entriesCh chan *set.Dirent,
-	doneCh, warnCh chan error) ([]*set.Dirent, error) {
+	doneCh, warnCh chan error,
+) ([]*set.Dirent, []*set.Dirent, error) {
 	warnDoneCh := s.processSetDirWalkWarnings(given, warnCh)
 
-	var fileEntries []*set.Dirent //nolint:prealloc
+	var ( //nolint:prealloc
+		fileEntries []*set.Dirent
+		dirEntries  []*set.Dirent
+	)
 
 	for entry := range entriesCh {
+		if entry.IsDir() {
+			dirEntries = append(dirEntries, entry)
+
+			continue
+		}
+
 		fileEntries = append(fileEntries, entry)
 	}
 
@@ -129,10 +328,10 @@ func (s *Server) processSetDirWalkOutput(given *set.Set, entriesCh chan *set.Dir
 	if err != nil {
 		<-warnDoneCh
 
-		return nil, err
+		return nil, nil, err
 	}
 
-	return fileEntries, <-warnDoneCh
+	return fileEntries, dirEntries, <-warnDoneCh
 }
 
 func (s *Server) processSetDirWalkWarnings(given *set.Set, warnCh chan error) chan error {
@@ -181,8 +380,9 @@ func (s *Server) handleNewlyDefinedSets(given *set.Set) {
 // sending discovered file paths to the entriesCh. Closes the entriesCh when
 // done, then sends any error on the doneCh. Non-critical warnings during the
 // walk are sent to the warnChan.
-func (s *Server) doSetDirWalks(entries []*set.Entry, given *set.Set, entriesCh chan *set.Dirent,
-	doneCh, warnChan chan error) {
+func (s *Server) doSetDirWalks(entries []*set.Entry, excludeTree ptrie.Trie[bool], given *set.Set,
+	entriesCh chan *set.Dirent, doneCh, warnChan chan error,
+) {
 	errCh := make(chan error, len(entries))
 
 	for _, entry := range entries {
@@ -190,7 +390,7 @@ func (s *Server) doSetDirWalks(entries []*set.Entry, given *set.Set, entriesCh c
 		thisEntry := entry
 
 		s.dirPool.Submit(func() {
-			err := s.checkAndWalkDir(dir, onlyRegularAndSymlinks(entriesCh), warnChan)
+			err := s.checkAndWalkDir(dir, filterEntries(entriesCh, excludeTree, dir), warnChan)
 			errCh <- s.handleMissingDirectories(err, thisEntry, given)
 		})
 	}
@@ -218,7 +418,7 @@ func (s *Server) checkAndWalkDir(dir string, cb walk.PathCallback, warnChan chan
 		return err
 	}
 
-	walker := walk.New(cb, false, false)
+	walker := walk.New(cb, true, false)
 
 	return walker.Walk(dir, func(path string, err error) {
 		s.Logger.Printf("walk found %s, but had error: %s", path, err)
@@ -229,19 +429,44 @@ func (s *Server) checkAndWalkDir(dir string, cb walk.PathCallback, warnChan chan
 	})
 }
 
-// onlyRegularAndSymlinks sends every entry found on the walk to the given
-// entriesCh, except for entries that are not regular files or symlinks, which
-// are silently skipped.
-func onlyRegularAndSymlinks(entriesCh chan *set.Dirent) func(entry *walk.Dirent) error {
+// filterEntries sends every entry found on the walk to the given entriesCh,
+// except for entries that are not regular files or symlinks or dirs, which are
+// silently skipped.
+func filterEntries(entriesCh chan *set.Dirent, excludeTree ptrie.Trie[bool],
+	parentDir string,
+) func(entry *walk.Dirent) error {
 	return func(entry *walk.Dirent) error {
-		if !(entry.IsRegular() || entry.IsSymlink()) {
+		dirent := set.DirEntFromWalk(entry)
+
+		if isDirentRemovedFromSet(dirent, excludeTree) {
 			return nil
 		}
 
-		entriesCh <- set.DirEntFromWalk(entry)
+		if !(entry.IsRegular() || entry.IsSymlink() || entry.IsDir()) ||
+			dirent.Path == filepath.Clean(parentDir) { //nolint:wsl
+
+			return nil
+		}
+
+		entriesCh <- dirent
 
 		return nil
 	}
+}
+
+func isDirentRemovedFromSet(dirent *set.Dirent, excludeTree ptrie.Trie[bool]) bool {
+	path := dirent.Path
+	if dirent.IsDir() && !strings.HasSuffix(path, "/") {
+		path += "/"
+	}
+
+	return excludeTree.MatchPrefix([]byte(path), func(match []byte, _ bool) bool {
+		if bytes.HasSuffix(match, []byte{'/'}) {
+			return false
+		}
+
+		return string(match) != path
+	})
 }
 
 // handleMissingDirectories checks if the given error is not nil, and if so
@@ -335,7 +560,8 @@ func (s *Server) enqueueEntries(entries []*set.Entry, given *set.Set, transforme
 // entryToRequest converts an Entry to a Request containing details of the given
 // set.
 func (s *Server) entryToRequest(entry *set.Entry, transformer put.PathTransformer,
-	given *set.Set) (*put.Request, error) {
+	given *set.Set,
+) (*put.Request, error) {
 	r, err := put.NewRequestWithTransformedLocal(entry.Path, transformer)
 	if err != nil {
 		return nil, err

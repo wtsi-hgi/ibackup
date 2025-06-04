@@ -41,7 +41,7 @@ func TestPutMock(t *testing.T) {
 	Convey("Given Requests and a mock Handler, you can make a new Putter", t, func() {
 		requests, expectedCollections := makeMockRequests(t)
 
-		lh := GetLocalHandler()
+		lh := internal.GetLocalHandler()
 
 		p, err := New(lh, requests)
 		So(err, ShouldBeNil)
@@ -50,16 +50,16 @@ func TestPutMock(t *testing.T) {
 		Convey("CreateCollections() creates the minimal number of collections", func() {
 			err = p.CreateCollections()
 			So(err, ShouldBeNil)
-			So(lh.connected, ShouldBeTrue)
+			So(lh.Connected, ShouldBeTrue)
 
 			for _, request := range requests {
 				_, err = os.Stat(filepath.Dir(request.Remote))
 				So(err, ShouldBeNil)
 			}
 
-			sort.Strings(lh.collections)
+			sort.Strings(lh.Collections)
 
-			So(lh.collections, ShouldResemble, expectedCollections)
+			So(lh.Collections, ShouldResemble, expectedCollections)
 
 			Convey("Put() then puts the files, and adds the metadata", func() {
 				requests[0].Requester = "John"
@@ -78,10 +78,11 @@ func TestPutMock(t *testing.T) {
 					_, err = os.Stat(request.Remote)
 					So(err, ShouldBeNil)
 
-					lh.mu.RLock()
-					So(lh.meta[request.Remote], ShouldResemble, request.Meta.LocalMeta)
-					checkAddedMeta(lh.meta[request.Remote])
-					lh.mu.RUnlock()
+					meta, errm := lh.GetMeta(request.Remote)
+					So(errm, ShouldBeNil)
+
+					So(meta, ShouldResemble, request.Meta.LocalMeta)
+					checkAddedMeta(meta)
 				}
 
 				skipped := 0
@@ -110,18 +111,21 @@ func TestPutMock(t *testing.T) {
 						switch request.Status {
 						case RequestStatusReplaced:
 							replaced++
-							lh.mu.RLock()
-							So(lh.meta[request.Remote], ShouldResemble, requests[0].Meta.LocalMeta)
-							So(lh.meta[request.Remote][MetaKeyRequester], ShouldEqual, "John,Sam")
-							So(lh.meta[request.Remote][MetaKeySets], ShouldEqual, "setA,setB")
-							date = lh.meta[request.Remote][MetaKeyDate]
-							lh.mu.RUnlock()
+
+							meta, errm := lh.GetMeta(request.Remote)
+							So(errm, ShouldBeNil)
+
+							So(meta, ShouldResemble, requests[0].Meta.LocalMeta)
+							So(meta[MetaKeyRequester], ShouldEqual, "John,Sam")
+							So(meta[MetaKeySets], ShouldEqual, "setA,setB")
+							date = meta[MetaKeyDate]
 						default:
 							other++
 						}
 					}
 
-					metadata := lh.GetMeta(requests[0].Remote)
+					metadata, errm := lh.GetMeta(requests[0].Remote)
+					So(errm, ShouldBeNil)
 					So(metadata, ShouldResemble, requests[0].Meta.LocalMeta)
 
 					for request := range srCh {
@@ -155,19 +159,21 @@ func TestPutMock(t *testing.T) {
 
 						request = <-srCh
 						So(request.Status, ShouldEqual, RequestStatusUnmodified)
-						lh.mu.RLock()
-						So(lh.meta[request.Remote][MetaKeyRequester], ShouldEqual, "John,Sam")
-						So(lh.meta[request.Remote][MetaKeySets], ShouldEqual, "setA,setB,setC")
-						So(lh.meta[request.Remote][MetaKeyDate], ShouldEqual, date)
-						lh.mu.RUnlock()
+
+						meta, errm := lh.GetMeta(request.Remote)
+						So(errm, ShouldBeNil)
+
+						So(meta[MetaKeyRequester], ShouldEqual, "John,Sam")
+						So(meta[MetaKeySets], ShouldEqual, "setA,setB,setC")
+						So(meta[MetaKeyDate], ShouldEqual, date)
 					})
 				})
 
 				Convey("Finally, Cleanup() defers to the handler", func() {
-					err = p.Cleanup()
-					So(err, ShouldBeNil)
-					So(lh.cleaned, ShouldBeTrue)
+					p.Cleanup()
+					So(lh.Cleaned, ShouldBeTrue)
 				})
+
 			})
 
 			Convey("Put() fails if the local files don't exist", func() {
@@ -245,15 +251,15 @@ func TestPutMock(t *testing.T) {
 				So(errs, ShouldBeNil)
 				So(info.Size(), ShouldEqual, 2)
 
-				So(lh.meta[requests[2].Remote][setMetaKey], ShouldEqual, "a")
-				So(lh.meta[requests[2].Hardlink][setMetaKey], ShouldNotBeBlank)
-				So(lh.meta[requests[2].Remote][MetaKeyRemoteHardlink], ShouldEqual, requests[2].Hardlink)
-				So(lh.meta[requests[2].Remote][MetaKeyHardlink], ShouldEqual, requests[2].Local)
+				So(lh.Meta[requests[2].Remote][setMetaKey], ShouldEqual, "a")
+				So(lh.Meta[requests[2].Hardlink][setMetaKey], ShouldNotBeBlank)
+				So(lh.Meta[requests[2].Remote][MetaKeyRemoteHardlink], ShouldEqual, requests[2].Hardlink)
+				So(lh.Meta[requests[2].Remote][MetaKeyHardlink], ShouldEqual, requests[2].Local)
 
-				So(lh.meta[requests[4].Remote][setMetaKey], ShouldEqual, "b")
-				So(lh.meta[requests[4].Hardlink][setMetaKey], ShouldNotBeBlank)
-				So(lh.meta[requests[4].Remote][MetaKeyRemoteHardlink], ShouldEqual, requests[2].Hardlink)
-				So(lh.meta[requests[4].Remote][MetaKeyHardlink], ShouldEqual, requests[4].Local)
+				So(lh.Meta[requests[4].Remote][setMetaKey], ShouldEqual, "b")
+				So(lh.Meta[requests[4].Hardlink][setMetaKey], ShouldNotBeBlank)
+				So(lh.Meta[requests[4].Remote][MetaKeyRemoteHardlink], ShouldEqual, requests[2].Hardlink)
+				So(lh.Meta[requests[4].Remote][MetaKeyHardlink], ShouldEqual, requests[4].Local)
 
 				Convey("re-uploading an unmodified hardlink does not replace remote files", func() {
 					hardlinkMTime := info.ModTime()
@@ -338,10 +344,10 @@ func TestPutMock(t *testing.T) {
 
 						switch r.Remote {
 						case requests[1].Remote:
-							So(r.Error, ShouldContainSubstring, ErrMockPutFail)
+							So(r.Error, ShouldContainSubstring, internal.ErrMockPutFail)
 							cases++
 						case requests[2].Remote:
-							So(r.Error, ShouldContainSubstring, ErrMockMetaFail)
+							So(r.Error, ShouldContainSubstring, internal.ErrMockMetaFail)
 							cases++
 						}
 					case RequestStatusUploaded:
@@ -357,7 +363,7 @@ func TestPutMock(t *testing.T) {
 						fails++
 
 						if r.Remote == requests[0].Remote {
-							So(r.Error, ShouldContainSubstring, ErrMockStatFail)
+							So(r.Error, ShouldContainSubstring, internal.ErrMockStatFail)
 							cases++
 						}
 					default:
@@ -421,14 +427,14 @@ func TestPutMock(t *testing.T) {
 			So(statusCounts[RequestStatusUploaded], ShouldEqual, 1)
 			So(statusCounts[RequestStatusUnmodified], ShouldEqual, 0)
 
-			So(lh.meta[remotePath][MetaKeySets], ShouldEqual, "aSet,bSet,cSet")
-			So(lh.meta[remotePath]["aKey"], ShouldEqual, "cValue")
-			So(lh.meta[remotePath]["bKey"], ShouldEqual, "yetAnotherValue")
+			So(lh.Meta[remotePath][MetaKeySets], ShouldEqual, "aSet,bSet,cSet")
+			So(lh.Meta[remotePath]["aKey"], ShouldEqual, "cValue")
+			So(lh.Meta[remotePath]["bKey"], ShouldEqual, "yetAnotherValue")
 		})
 	})
 
 	Convey("CreateCollections() also works with 0 or 1 requests", t, func() {
-		lh := &LocalHandler{}
+		lh := &internal.LocalHandler{}
 
 		var requests []*Request
 
@@ -439,7 +445,7 @@ func TestPutMock(t *testing.T) {
 		err = p.CreateCollections()
 		So(err, ShouldBeNil)
 
-		So(lh.collections, ShouldBeNil)
+		So(lh.Collections, ShouldBeNil)
 
 		ddir := t.TempDir()
 		col := filepath.Join(ddir, "bar")
@@ -453,11 +459,11 @@ func TestPutMock(t *testing.T) {
 		err = p.CreateCollections()
 		So(err, ShouldBeNil)
 
-		So(lh.collections, ShouldResemble, []string{col})
+		So(lh.Collections, ShouldResemble, []string{col})
 	})
 
 	Convey("Relative local paths are made absolute", t, func() {
-		lh := &LocalHandler{}
+		lh := &internal.LocalHandler{}
 		p, err := New(lh, []*Request{{Local: "foo", Remote: "/bar"}})
 		So(err, ShouldBeNil)
 
@@ -488,7 +494,7 @@ func TestPutMock(t *testing.T) {
 	})
 
 	Convey("You can't make a Putter with relative remote paths", t, func() {
-		lh := &LocalHandler{}
+		lh := &internal.LocalHandler{}
 		_, err := New(lh, []*Request{{Local: "/foo", Remote: "bar"}})
 		So(err, ShouldNotBeNil)
 		So(err.Error(), ShouldContainSubstring, ErrRemoteNotAbs)
@@ -537,7 +543,7 @@ func createTestRequests(t *testing.T, sourceDir, destDir string, sourcePaths []s
 	for i, path := range sourcePaths {
 		dir := filepath.Dir(path)
 
-		err := os.MkdirAll(dir, userPerms)
+		err := os.MkdirAll(dir, internal.UserPerms)
 		if err != nil {
 			t.Fatal(err)
 		}

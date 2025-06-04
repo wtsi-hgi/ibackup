@@ -28,6 +28,7 @@ package set
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -39,6 +40,7 @@ import (
 	"github.com/shirou/gopsutil/process"
 	. "github.com/smartystreets/goconvey/convey"
 	gas "github.com/wtsi-hgi/go-authserver"
+	"github.com/wtsi-hgi/ibackup/baton"
 	"github.com/wtsi-hgi/ibackup/internal"
 	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/slack"
@@ -357,6 +359,114 @@ func TestSetDB(t *testing.T) {
 				err = db.SetFileEntries(set2.ID(), []string{"/a/b.txt", "/c/k.txt"})
 				So(err, ShouldBeNil)
 
+				Convey("And given a mixture of complete and incomplete remove requests", func() {
+					remReqs := []RemoveReq{
+						{
+							Path:       "a/file1.txt",
+							Set:        set,
+							IsDir:      false,
+							IsComplete: true,
+						},
+						{
+							Path:       "a/b",
+							Set:        set,
+							IsDir:      true,
+							IsComplete: true,
+						},
+						{
+							Path:       "a/b/c",
+							Set:        set,
+							IsDir:      true,
+							IsComplete: true,
+						},
+						{
+							Path:       "a/b/c/file2.txt",
+							Set:        set,
+							IsDir:      false,
+							IsComplete: true,
+						},
+						{
+							Path:       "a/b/c/file3.txt",
+							Set:        set,
+							IsDir:      false,
+							IsComplete: true,
+						},
+						{
+							Path:       "a/b/c/file4.txt",
+							Set:        set,
+							IsDir:      false,
+							IsComplete: false,
+						},
+					}
+
+					Convey("You can put them into the sets remove bucket and get them back", func() {
+						err = db.SetRemoveRequests(set.ID(), remReqs)
+						So(err, ShouldBeNil)
+
+						rrs, errg := db.GetRemoveRequests(set.ID())
+						So(errg, ShouldBeNil)
+						So(len(rrs), ShouldEqual, len(remReqs))
+
+						Convey("And you can optimise the bucket", func() {
+							err = db.OptimiseRemoveBucket(set.ID())
+							So(err, ShouldBeNil)
+
+							rrs, err = db.GetRemoveRequests(set.ID())
+							So(err, ShouldBeNil)
+
+							So(len(rrs), ShouldEqual, 3)
+
+							Convey("And you can update a remove request and optimise again", func() {
+								remReqs[5].IsComplete = true
+
+								err = db.UpdateRemoveRequest(remReqs[5])
+								So(err, ShouldBeNil)
+
+								err = db.OptimiseRemoveBucket(set.ID())
+								So(err, ShouldBeNil)
+
+								rrs, err = db.GetRemoveRequests(set.ID())
+								So(err, ShouldBeNil)
+								So(len(rrs), ShouldEqual, 2)
+								So(rrs[1].Path, ShouldEqual, remReqs[0].Path)
+								So(rrs[0].Path, ShouldEqual, remReqs[1].Path+"/")
+							})
+						})
+					})
+				})
+
+				Convey("You can get all paths containing a prefix", func() {
+					err = db.SetFileEntries(set2.ID(), []string{"/a/a/j.txt", "/a/b/c/k.txt",
+						"/a/b/c/l.txt", "/a/b/d/m.txt", "/c/n.txt"})
+					So(err, ShouldBeNil)
+
+					files, errp := db.getPathsWithPrefix(set2.ID(), fileBucket, "/a/b/c/")
+					So(errp, ShouldBeNil)
+
+					So(len(files), ShouldEqual, 2)
+					So(files, ShouldContain, "/a/b/c/k.txt")
+					So(files, ShouldContain, "/a/b/c/l.txt")
+				})
+
+				Convey("Then remove files and dirs from the sets", func() {
+					err = db.removeEntry(set.ID(), "/a/b.txt", fileBucket)
+					So(err, ShouldBeNil)
+
+					fEntries, errg := db.GetFileEntries(set.ID())
+					So(errg, ShouldBeNil)
+					So(len(fEntries), ShouldEqual, 2)
+					So(fEntries[0], ShouldResemble, &Entry{Path: "/c/d.txt"})
+					So(fEntries[1], ShouldResemble, &Entry{Path: "/e/f.txt"})
+
+					err = db.removeEntry(set.ID(), "/g/h", dirBucket)
+					So(err, ShouldBeNil)
+
+					dEntries, errg := db.GetDirEntries(set.ID())
+					So(errg, ShouldBeNil)
+					So(len(dEntries), ShouldEqual, 1)
+					So(dEntries[0], ShouldResemble, &Entry{Path: "/g/i"})
+				})
+
 				Convey("Then get a particular Set", func() {
 					retrieved := db.GetByID(set.ID())
 					So(retrieved, ShouldNotBeNil)
@@ -442,7 +552,7 @@ func TestSetDB(t *testing.T) {
 					So(len(dEntries), ShouldEqual, 0)
 				})
 
-				Convey("The get an particular entry from a set", func() {
+				Convey("Then get an particular entry from a set", func() {
 					entry, errr := db.GetFileEntryForSet(set2.ID(), "/a/b.txt")
 					So(errr, ShouldBeNil)
 					So(entry, ShouldResemble, &Entry{Path: "/a/b.txt"})
@@ -490,8 +600,8 @@ func TestSetDB(t *testing.T) {
 
 						slackWriter.Reset()
 
-						discoverASet(db, sets[0], func() ([]*Dirent, error) {
-							return createFileEnts([]string{"/g/h/l.txt", "/g/i/m.txt"}), nil
+						discoverASet(db, sets[0], func() ([]*Dirent, []*Dirent, error) {
+							return createFileEnts([]string{"/g/h/l.txt", "/g/i/m.txt"}), []*Dirent{}, nil
 						}, func() {
 							sets, err = db.GetByRequester("jim")
 							So(err, ShouldBeNil)
@@ -851,8 +961,8 @@ func TestSetDB(t *testing.T) {
 							oldStart := sets[0].StartedDiscovery
 							oldDisc := sets[0].LastDiscovery
 
-							discoverASet(db, sets[0], func() ([]*Dirent, error) {
-								return createFileEnts([]string{"/g/h/l.txt", "/g/i/m.txt", "/g/i/n.txt"}), nil
+							discoverASet(db, sets[0], func() ([]*Dirent, []*Dirent, error) {
+								return createFileEnts([]string{"/g/h/l.txt", "/g/i/m.txt", "/g/i/n.txt"}), []*Dirent{}, nil
 							}, func() {
 								sets, err = db.GetByRequester("jim")
 								So(err, ShouldBeNil)
@@ -984,14 +1094,14 @@ func TestSetDB(t *testing.T) {
 
 							oldDisc := sets[0].LastDiscovery
 
-							discoverASet(db, sets[0], func() ([]*Dirent, error) {
+							discoverASet(db, sets[0], func() ([]*Dirent, []*Dirent, error) {
 								dirents := createFileEnts([]string{"/g/h/l.txt", "/g/i/m.txt", "/g/i/n.txt"})
 								for _, dirent := range dirents {
 									dirent.Inode = 0
 									dirent.Mode = os.ModeIrregular
 								}
 
-								return dirents, nil
+								return dirents, []*Dirent{}, nil
 							}, func() {})
 
 							sets, err = db.GetByRequester("jim")
@@ -1017,8 +1127,8 @@ func TestSetDB(t *testing.T) {
 
 							oldDisc := sets[0].LastDiscovery
 
-							discoverASet(db, sets[0], func() ([]*Dirent, error) {
-								return nil, nil
+							discoverASet(db, sets[0], func() ([]*Dirent, []*Dirent, error) {
+								return nil, nil, nil
 							}, func() {})
 
 							sets, err = db.GetByRequester("jim")
@@ -1303,7 +1413,7 @@ func TestSetDB(t *testing.T) {
 				err = db.AddOrUpdate(setl1)
 				So(err, ShouldBeNil)
 
-				dirents := []*Dirent{
+				fileDirents := []*Dirent{
 					{
 						Path:  local,
 						Inode: stat.Ino,
@@ -1322,8 +1432,21 @@ func TestSetDB(t *testing.T) {
 					},
 				}
 
-				discoverCB := func(_ []*Entry) ([]*Dirent, error) { //nolint:unparam
-					return dirents, nil
+				dirDirents := []*Dirent{
+					{
+						Path:  dir,
+						Mode:  fs.ModeDir,
+						Inode: stat.Ino,
+					},
+					{
+						Path:  dir2,
+						Mode:  fs.ModeDir,
+						Inode: stat.Ino,
+					},
+				}
+
+				discoverCB := func(_ []*Entry) ([]*Dirent, []*Dirent, error) { //nolint:unparam
+					return fileDirents, dirDirents, nil
 				}
 
 				got, errd := db.Discover(setl1.ID(), discoverCB)
@@ -1352,9 +1475,13 @@ func TestSetDB(t *testing.T) {
 				So(entries[1].InodeStoragePath(), ShouldEndWith, fmt.Sprintf("/%d", entries[1].Inode))
 				So(entries[3].InodeStoragePath(), ShouldEqual, entries[1].InodeStoragePath())
 
+				dirEntries, errd := db.GetAllDirEntries(setl1.ID())
+				So(errd, ShouldBeNil)
+				So(len(dirEntries), ShouldEqual, 2)
+
 				Convey("then rediscover the set and still know about the hardlinks", func() {
-					got, errd = db.Discover(setl1.ID(), func(dirEntries []*Entry) ([]*Dirent, error) {
-						return dirents, nil
+					got, errd = db.Discover(setl1.ID(), func(dirEntries []*Entry) ([]*Dirent, []*Dirent, error) {
+						return fileDirents, dirDirents, nil
 					})
 					So(errd, ShouldBeNil)
 					So(got.Hardlinks, ShouldEqual, 2)
@@ -1363,16 +1490,20 @@ func TestSetDB(t *testing.T) {
 					So(got, ShouldNotBeNil)
 					So(err, ShouldBeNil)
 					So(got.Hardlinks, ShouldEqual, 2)
+
+					dirEntries, errd = db.GetAllDirEntries(setl1.ID())
+					So(errd, ShouldBeNil)
+					So(len(dirEntries), ShouldEqual, 2)
 				})
 
 				Convey("then get back all known local paths for the hardlink", func() {
 					paths, errh := db.HardlinkPaths(entries[1])
 					So(errh, ShouldBeNil)
-					So(paths, ShouldResemble, []string{dirents[0].Path, dirents[3].Path})
+					So(paths, ShouldResemble, []string{fileDirents[0].Path, fileDirents[3].Path})
 
 					paths, errh = db.HardlinkPaths(entries[0])
 					So(errh, ShouldBeNil)
-					So(paths, ShouldResemble, []string{dirents[1].Path, dirents[3].Path})
+					So(paths, ShouldResemble, []string{fileDirents[1].Path, fileDirents[3].Path})
 				})
 
 				Convey("then get a remote path for the hardlink", func() {
@@ -1386,7 +1517,7 @@ func TestSetDB(t *testing.T) {
 					err = os.Rename(unlinked, moved)
 					So(err, ShouldBeNil)
 
-					dirents[2].Path = moved
+					fileDirents[2].Path = moved
 
 					got, errd = db.Discover(setl1.ID(), discoverCB)
 					So(errd, ShouldBeNil)
@@ -1426,7 +1557,7 @@ func TestSetDB(t *testing.T) {
 				err = os.Symlink(path1, path2)
 				So(err, ShouldBeNil)
 
-				got, errb := db.Discover(setl1.ID(), func(_ []*Entry) ([]*Dirent, error) {
+				got, errb := db.Discover(setl1.ID(), func(_ []*Entry) ([]*Dirent, []*Dirent, error) {
 					return []*Dirent{
 						{
 							Path:  path1,
@@ -1437,7 +1568,7 @@ func TestSetDB(t *testing.T) {
 							Mode:  os.ModeSymlink,
 							Inode: 2,
 						},
-					}, nil
+					}, []*Dirent{}, nil
 				})
 				So(errb, ShouldBeNil)
 				So(got, ShouldNotBeNil)
@@ -1572,12 +1703,12 @@ func TestSetDB(t *testing.T) {
 	})
 }
 
-func discoverASet(db *DB, set *Set, discoveryFunc func() ([]*Dirent, error), pendingTestsFunc func()) {
+func discoverASet(db *DB, set *Set, discoveryFunc func() ([]*Dirent, []*Dirent, error), pendingTestsFunc func()) {
 	errCh := make(chan error, 1)
 	waitCh := make(chan struct{})
 
 	go func() {
-		_, errd := db.Discover(set.ID(), func(e []*Entry) ([]*Dirent, error) {
+		_, errd := db.Discover(set.ID(), func(e []*Entry) ([]*Dirent, []*Dirent, error) {
 			waitCh <- struct{}{}
 			<-waitCh
 
@@ -1742,7 +1873,7 @@ func TestBackup(t *testing.T) {
 			So(err, ShouldBeNil)
 			remotePath := filepath.Join(remoteDir, "db")
 
-			handler := put.GetLocalHandler()
+			handler := internal.GetLocalHandler()
 
 			db.EnableRemoteBackups(remotePath, handler)
 
@@ -1765,7 +1896,7 @@ func TestBackup(t *testing.T) {
 
 			remotePath := filepath.Join(remoteDir, "db")
 
-			handler, err := put.GetBatonHandler()
+			handler, err := baton.GetBatonHandler()
 			So(err, ShouldBeNil)
 
 			db.EnableRemoteBackups(remotePath, handler)

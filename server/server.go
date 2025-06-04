@@ -29,6 +29,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -42,13 +43,15 @@ import (
 	"github.com/inconshreveable/log15"
 	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/ibackup/put"
+	"github.com/wtsi-hgi/ibackup/remove"
 	"github.com/wtsi-hgi/ibackup/set"
 	"github.com/wtsi-hgi/ibackup/slack"
 	"github.com/wtsi-ssg/wrstat/v6/scheduler"
 )
 
 const (
-	ErrNoLogger = gas.Error("a http logger must be configured")
+	ErrNoLogger             = gas.Error("an http logger must be configured")
+	ErrIncorrectTypeInQueue = gas.Error("incorrect data type in queue")
 
 	// workerPoolSizeDir is the max number of directory walks we'll do
 	// concurrently during discovery; each of those walks in turn operate on 16
@@ -66,6 +69,8 @@ const (
 	jobLimitGroup           = "irods"
 	maxJobsToSubmit         = 100
 	racRetriggerDelay       = 1 * time.Minute
+
+	retryDelay = 5 * time.Second
 )
 
 // Config configures the server.
@@ -87,6 +92,8 @@ type Config struct {
 
 	// ReadOnly disables monitoring, discovery, and database modifications.
 	ReadOnly bool
+	// StorageHandler is used to interact with the storage system, e.g. iRODS.
+	StorageHandler remove.Handler
 }
 
 // Server is used to start a web server that provides a REST API to the setdb
@@ -99,10 +106,10 @@ type Server struct {
 	cacheMu                sync.Mutex
 	dirPool                *workerpool.WorkerPool
 	queue                  *queue.Queue
+	removeQueue            *queue.Queue
 	sched                  *scheduler.Scheduler
 	putCmd                 string
 	req                    *jqs.Requirements
-	username               string
 	remoteHardlinkLocation string
 	statusUpdateCh         chan *fileStatusPacket
 	monitor                *Monitor
@@ -110,12 +117,16 @@ type Server struct {
 	stillRunningMsgFreq    time.Duration
 	serverAliveCh          chan bool
 	uploadTracker          *uploadTracker
-	readOnly               bool
+
+	readOnly       bool
+	storageHandler remove.Handler
 
 	mapMu               sync.RWMutex
 	creatingCollections map[string]bool
 	iRODSTracker        *iRODSTracker
 	clientQueue         *queue.Queue
+
+	discoveryCoordinator *discoveryCoordinator
 }
 
 // New creates a Server which can serve a REST API and website.
@@ -132,6 +143,7 @@ func New(conf Config) (*Server, error) {
 		numClients:          1,
 		dirPool:             workerpool.New(workerPoolSizeDir),
 		queue:               queue.New(context.Background(), "put"),
+		removeQueue:         queue.New(context.Background(), "remove"),
 		creatingCollections: make(map[string]bool),
 		slacker:             conf.Slacker,
 		stillRunningMsgFreq: conf.StillRunningMsgFreq,
@@ -139,6 +151,9 @@ func New(conf Config) (*Server, error) {
 		iRODSTracker:        newiRODSTracker(conf.Slacker, conf.SlackMessageDebounce),
 		clientQueue:         queue.New(context.Background(), "client"),
 		readOnly:            conf.ReadOnly,
+		storageHandler:      conf.StorageHandler,
+
+		discoveryCoordinator: newDiscoveryCoordinator(),
 	}
 
 	s.clientQueue.SetTTRCallback(s.clientTTRC)
@@ -149,13 +164,15 @@ func New(conf Config) (*Server, error) {
 		return s, nil
 	}
 
-	s.monitor = NewMonitor(func(given *set.Set) {
-		if err := s.discoverSet(given); err != nil {
-			s.Logger.Printf("error discovering set during monitoring: %s", err)
-		}
-	})
+	s.monitor = NewMonitor(s.monitorCB)
 
 	return s, nil
+}
+
+func (s *Server) monitorCB(given *set.Set) {
+	if err := s.discoverSet(given); err != nil {
+		s.Logger.Printf("error discovering set during monitoring: %s", err)
+	}
 }
 
 // Start logs to slack that the server has been started and then calls
@@ -205,6 +222,135 @@ func (s *Server) EnableJobSubmission(putCmd, deployment, cwd, queue string, numC
 	s.numClients = numClients
 
 	return nil
+}
+
+// handleRemoveRequests removes objects belonging to the provided reserveGroup
+// inside removeQueue from iRODS and data base. This function should be called
+// inside a go routine, so the user API request is not locked.
+func (s *Server) handleRemoveRequests(sid string) {
+	s.discoveryCoordinator.WillRemove(sid)
+
+	for {
+		item, removeReq, err := s.reserveRemoveRequest(sid)
+		if err != nil {
+			break
+		}
+
+		removedFromDiscoverBuckets := s.discoveryCoordinator.WaitForDiscovery(sid)
+
+		err = s.removeRequestFromIRODSandDB(&removeReq, removedFromDiscoverBuckets)
+		if beenReleased := s.handleErrorOrReleaseItem(item, removeReq, err); beenReleased {
+			s.discoveryCoordinator.AllowDiscovery(sid)
+
+			continue
+		}
+
+		err = s.finalizeRemoveReq(removeReq)
+		if err != nil {
+			s.Logger.Printf("%s", err)
+		}
+
+		s.discoveryCoordinator.AllowDiscovery(sid)
+	}
+
+	s.finalizeRemoval(sid)
+}
+
+// reserveRemoveRequest reserves an item from the given reserve group from the
+// remove queue and converts it to a removeRequest. Returns nil and no error if
+// the queue is empty.
+func (s *Server) reserveRemoveRequest(reserveGroup string) (*queue.Item, set.RemoveReq, error) {
+	item, err := s.removeQueue.Reserve(reserveGroup, retryDelay+2*time.Second)
+	if err != nil {
+		qerr, ok := err.(queue.Error) //nolint:errorlint
+		if ok && errors.Is(qerr.Err, queue.ErrNothingReady) {
+			return nil, set.RemoveReq{}, err
+		}
+
+		s.Logger.Print(err)
+	}
+
+	remReq, err := s.convertQueueItemToRemoveRequest(item.Data())
+	if err != nil {
+		s.Logger.Print(err)
+
+		return nil, set.RemoveReq{}, err
+	}
+
+	return item, remReq, err
+}
+
+func (s *Server) convertQueueItemToRemoveRequest(data interface{}) (set.RemoveReq, error) {
+	remReq, ok := data.(set.RemoveReq)
+	if !ok {
+		return set.RemoveReq{}, ErrIncorrectTypeInQueue
+	}
+
+	return remReq, nil
+}
+
+func (s *Server) removeRequestFromIRODSandDB(removeReq *set.RemoveReq, removedFromDiscoverBuckets bool) error {
+	if removeReq.IsDir {
+		return s.removeDirFromDB(removeReq, removedFromDiscoverBuckets)
+	}
+
+	return s.removeFileFromIRODSandDB(removeReq, removedFromDiscoverBuckets)
+}
+
+// handleErrorOrReleaseItem returns immediately if there was no error. Otherwise
+// it releases the item with updated data from a queue, provided it has attempts
+// left, or sets the error on the set. Returns whether the item was released.
+func (s *Server) handleErrorOrReleaseItem(item *queue.Item, removeReq set.RemoveReq, err error) bool {
+	if err == nil {
+		return false
+	}
+
+	if item.Stats().Releases >= uint32(jobRetries) {
+		errs := s.db.SetError(removeReq.Set.ID(), "Error when removing: "+err.Error())
+		if errs != nil {
+			s.Logger.Printf("Could not put error on set due to: %s\nError was: %s\n", errs.Error(), err.Error())
+		}
+
+		return false
+	}
+
+	item.SetData(removeReq)
+
+	err = s.removeQueue.SetDelay(removeReq.Key(), retryDelay)
+	if err != nil {
+		s.Logger.Printf("%s", err.Error())
+	}
+
+	err = s.removeQueue.Release(context.Background(), removeReq.Key())
+	if err != nil {
+		s.Logger.Printf("%s", err.Error())
+	}
+
+	return err == nil
+}
+
+func (s *Server) finalizeRemoveReq(removeReq set.RemoveReq) error {
+	removeReq.IsComplete = true
+
+	err := s.db.UpdateRemoveRequest(removeReq)
+	if err != nil {
+		return err
+	}
+
+	return s.removeQueue.Remove(context.Background(), removeReq.Key())
+}
+
+func (s *Server) finalizeRemoval(sid string) {
+	s.discoveryCoordinator.RemovalDone(sid)
+
+	err := s.db.OptimiseRemoveBucket(sid)
+	if err != nil {
+		s.Logger.Printf("%s", err.Error())
+	}
+
+	if s.removeQueue.Stats().Items == 0 {
+		s.storageHandler.Cleanup()
+	}
 }
 
 // rac is our queue's ready added callback which will get all ready put Requests
