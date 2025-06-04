@@ -2969,3 +2969,14 @@ func getMetaValue(meta, key string) string {
 
 	return value[:nlPos]
 }
+
+func TestEdit(t *testing.T) {
+	Convey("With a started server", t, func() {
+		s := NewTestServer(t)
+		So(s, ShouldNotBeNil)
+
+		Convey("With no --name given, edit returns an error", func() {
+			s.confirmOutputContains(t, []string{"edit"}, 1, "Error: required flag(s) \"name\" not set")
+		})
+	})
+}
