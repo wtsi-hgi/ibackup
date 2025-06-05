@@ -36,6 +36,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/VertebrateResequencing/wr/client"
 	"github.com/VertebrateResequencing/wr/jobqueue"
 	jqs "github.com/VertebrateResequencing/wr/jobqueue/scheduler"
 	"github.com/VertebrateResequencing/wr/queue"
@@ -46,7 +47,6 @@ import (
 	"github.com/wtsi-hgi/ibackup/remove"
 	"github.com/wtsi-hgi/ibackup/set"
 	"github.com/wtsi-hgi/ibackup/slack"
-	"github.com/wtsi-ssg/wrstat/v6/scheduler"
 )
 
 const (
@@ -107,7 +107,7 @@ type Server struct {
 	dirPool                *workerpool.WorkerPool
 	queue                  *queue.Queue
 	removeQueue            *queue.Queue
-	sched                  *scheduler.Scheduler
+	sched                  *client.Scheduler
 	putCmd                 string
 	req                    *jqs.Requirements
 	remoteHardlinkLocation string
@@ -204,14 +204,21 @@ func (s *Server) SetRemoteHardlinkLocation(path string) {
 // Provide a hint as the the maximum number of put job clients you'll run at
 // once, so that reservations can be balanced between them.
 func (s *Server) EnableJobSubmission(putCmd, deployment, cwd, queue string, numClients int, logger log15.Logger) error {
-	sched, err := scheduler.New(deployment, cwd, queue, "", connectTimeout, logger)
+	sched, err := client.New(client.SchedulerSettings{
+		Deployment: deployment,
+		Cwd:        cwd,
+		Queue:      queue,
+		Timeout:    connectTimeout,
+		Logger:     logger,
+	})
+
 	if err != nil {
 		return err
 	}
 
 	s.sched = sched
 
-	req := scheduler.DefaultRequirements()
+	req := client.DefaultRequirements()
 	req.RAM = reqRAM
 	req.Time = reqTime
 	s.req = req
