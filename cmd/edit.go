@@ -37,6 +37,7 @@ var (
 	editSetName     string
 	editUser        string
 	editStopMonitor bool
+	editStopArchive bool
 )
 
 // editCmd represents the edit command.
@@ -64,6 +65,10 @@ Edit an existing backup set.
 			userSet.MonitorTime = 0
 		}
 
+		if editStopArchive {
+			userSet.DeleteLocal = false
+		}
+
 		err = edit(client, userSet)
 		if err != nil {
 			die(err)
@@ -79,7 +84,7 @@ func init() {
 	editCmd.Flags().StringVar(&editUser, "user", currentUsername(),
 		"pretend to be the this user (only works if you started the server)")
 	editCmd.Flags().BoolVar(&editStopMonitor, "stop-monitor", false, "stop monitoring the set for changes")
-	editCmd.Flags().BoolVar(&editStopMonitor, "stop-archiving", false, "disable archive mode")
+	editCmd.Flags().BoolVar(&editStopArchive, "stop-archiving", false, "disable archive mode")
 
 	if err := editCmd.MarkFlagRequired("name"); err != nil {
 		die(err)
