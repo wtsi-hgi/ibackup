@@ -60,7 +60,7 @@ type Monitor struct {
 	callback          MonitorCallback
 }
 
-var ErrSetNotFound = errors.New("set not found in monitor heap")
+var ErrSetNotMonitored = errors.New("set not monitored by server")
 
 // NewMonitor returns a Monitor which will call your callback every time a set
 // you add to this monitor needs to be discovered.
@@ -230,7 +230,7 @@ func (m *Monitor) Remove(sid string) error {
 
 	index, found := m.monitorHeap.byID[sid]
 	if !found {
-		return fmt.Errorf("%w: %s", ErrSetNotFound, sid)
+		return fmt.Errorf("%w: %s", ErrSetNotMonitored, sid)
 	}
 
 	heap.Remove(&m.monitorHeap, index)

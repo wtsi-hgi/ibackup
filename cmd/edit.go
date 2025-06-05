@@ -45,7 +45,7 @@ var editCmd = &cobra.Command{
 	Short: "Edit a backup set",
 	Long: `Edit a backup set.
  
-This subcommand is under active development.
+Edit an existing backup set. 
  `,
 	Run: func(_ *cobra.Command, _ []string) {
 		ensureURLandCert()
@@ -75,7 +75,7 @@ This subcommand is under active development.
 func init() {
 	RootCmd.AddCommand(editCmd)
 
-	editCmd.Flags().StringVarP(&editSetName, "name", "n", "", "a short name for this backup set")
+	editCmd.Flags().StringVarP(&editSetName, "name", "n", "", "a name of the backup set you want to edit")
 	editCmd.Flags().StringVar(&editUser, "user", currentUsername(),
 		"pretend to be the this user (only works if you started the server)")
 	editCmd.Flags().BoolVar(&editStopMonitor, "stop-monitor", false, "stop monitoring the set for changes")
