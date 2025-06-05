@@ -79,6 +79,7 @@ func init() {
 	editCmd.Flags().StringVar(&editUser, "user", currentUsername(),
 		"pretend to be the this user (only works if you started the server)")
 	editCmd.Flags().BoolVar(&editStopMonitor, "stop-monitor", false, "stop monitoring the set for changes")
+	editCmd.Flags().BoolVar(&editStopMonitor, "stop-archiving", false, "disable archive mode")
 
 	if err := editCmd.MarkFlagRequired("name"); err != nil {
 		die(err)

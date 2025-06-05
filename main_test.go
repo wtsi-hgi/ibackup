@@ -2653,7 +2653,7 @@ func TestEdit(t *testing.T) {
 			s.confirmOutputContains(t, []string{"edit", "--name", "badSet"}, 1, "set with that id does not exist")
 		})
 
-		Convey("Given the monitored set", func() {
+		Convey("Given a transformer", func() {
 			remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
 			if remotePath == "" {
 				SkipConvey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
@@ -2664,16 +2664,32 @@ func TestEdit(t *testing.T) {
 			path := t.TempDir()
 			transformer := "prefix=" + path + ":" + remotePath
 
-			setName := "monitoredSet"
-			s.addSetForTestingWithFlag(t, setName, transformer, path, "--monitor", "1d")
+			Convey("And the monitored set", func() {
+				setName := "monitoredSet"
+				s.addSetForTestingWithFlag(t, setName, transformer, path, "--monitor", "1d")
 
-			s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Monitored: 1d;")
+				s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Monitored: 1d;")
 
-			Convey("You can disable monitoring", func() {
-				exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--stop-monitor")
-				So(exitCode, ShouldEqual, 0)
+				Convey("You can disable monitoring", func() {
+					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--stop-monitor")
+					So(exitCode, ShouldEqual, 0)
 
-				s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Monitored: false;")
+					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Monitored: false;")
+				})
+			})
+
+			Convey("And a set marked as archive", func() {
+				setName := "archiveSet"
+				s.addSetForTestingWithFlag(t, setName, transformer, path, "--archive", "")
+
+				s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Archive: true\n")
+
+				Convey("You can disable archive mode", func() {
+					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--stop-archiving")
+					So(exitCode, ShouldEqual, 0)
+
+					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Archive: false\n")
+				})
 			})
 		})
 	})
