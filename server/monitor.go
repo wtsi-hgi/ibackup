@@ -178,7 +178,7 @@ func (m *Monitor) NextSet() *set.Set {
 }
 
 // monitorSet sets up discovery monitoring on the passed set if set Monitor
-// duration is defined. Otherwise, it removes the set from the monitor
+// duration is defined. Otherwise, it removes the set from the monitor.
 func (s *Server) monitorSet(given *set.Set) {
 	if given.MonitorTime == 0 {
 		s.monitor.Remove(given.ID()) //nolint:errcheck

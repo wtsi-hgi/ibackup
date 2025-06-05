@@ -47,7 +47,7 @@ var editCmd = &cobra.Command{
  
 This subcommand is under active development.
  `,
-	Run: func(cmd *cobra.Command, args []string) {
+	Run: func(_ *cobra.Command, _ []string) {
 		ensureURLandCert()
 
 		client, err := newServerClient(serverURL, serverCert)
