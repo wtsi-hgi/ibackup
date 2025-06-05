@@ -55,12 +55,19 @@ This subcommand is under active development.
 			die(err)
 		}
 
-		set, err := client.GetSetByName(editUser, editSetName)
+		userSet, err := client.GetSetByName(editUser, editSetName)
 		if err != nil {
 			die(err)
 		}
 
-		edit(client, set)
+		if editStopMonitor {
+			userSet.MonitorTime = 0
+		}
+
+		err = edit(client, userSet)
+		if err != nil {
+			die(err)
+		}
 
 	},
 }
@@ -79,5 +86,10 @@ func init() {
 }
 
 func edit(client *server.Client, givenSet *set.Set) error {
+	err := client.AddOrUpdateSet(givenSet)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }

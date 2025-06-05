@@ -2653,7 +2653,7 @@ func TestEdit(t *testing.T) {
 			s.confirmOutputContains(t, []string{"edit", "--name", "badSet"}, 1, "set with that id does not exist")
 		})
 
-		FocusConvey("Given the monitored set", func() {
+		Convey("Given the monitored set", func() {
 			remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
 			if remotePath == "" {
 				SkipConvey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
@@ -2669,7 +2669,7 @@ func TestEdit(t *testing.T) {
 
 			s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Monitored: 1d;")
 
-			FocusConvey("You can disable monitoring", func() {
+			Convey("You can disable monitoring", func() {
 				exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--stop-monitor")
 				So(exitCode, ShouldEqual, 0)
 
