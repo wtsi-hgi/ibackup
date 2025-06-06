@@ -48,15 +48,21 @@ columns:
 Because local and remote paths could contain tabs and newlines in their names,
 you can base64 encode them and use the --base64 option.
 
-get will then efficiently copy all column 1 paths in iRODS to column 2
+get will then efficiently copy all column 2 paths in iRODS to column 1
 locations, using a single connection, sequentially. (This makes it orders of
-magnitude faster than running 'iput' for each of many small files.)
+magnitude faster than running 'iget' for each of many small files.)
 
 get will always confirm the checksum stored on the server side in flight, but
 will not confirm the data stored on disk.
 
 It will not overwrite existing local files unless the -o/--overwrite flag is
-provided.
+provided. Remote files with the same mtime as a local file will always be
+skipped so it should be safe to run get multiple times without redownloading
+files many times.
+
+Remote files that are denoted as hardlinks will be skipped with a warning
+containing the intended local path and the remote path that contains the actual
+hardlink data.
 
 If remote file paths are missing, warnings about them will be logged, but this
 cmd will still exit 0. It only exits non-zero on failure to download an existing
