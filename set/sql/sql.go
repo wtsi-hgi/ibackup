@@ -77,7 +77,7 @@ func (t *Tx) CreateBucketIfNotExists(key []byte) (db.Bucket, error) { //nolint:i
 }
 
 func (t *Tx) get(table, sub, id []byte) []byte {
-	query := fmt.Sprintf("SELECT value FROM [%s] WHERE sub = ? AND id = ?;", table) //nolint:gosec
+	query := fmt.Sprintf("SELECT value FROM [%s] WHERE sub = ? AND id = ? ORDER BY id ASC;", table) //nolint:gosec
 
 	var (
 		value []byte
@@ -145,68 +145,30 @@ func (t *Tx) deleteSub(table, sub []byte) error {
 	return ErrTxClosed
 }
 
-func (t *Tx) forEach(table []byte, fn func([]byte, []byte) error) error {
-	query := fmt.Sprintf("SELECT id, value FROM [%s] WHERE sub = '';", table) //nolint:gosec
+func (t *Tx) forEach(table, sub []byte) (*sql.Rows, error) {
+	query := fmt.Sprintf("SELECT id, value FROM [%s] WHERE sub = ? ORDER BY id ASC;", table)
 
-	var (
-		rows *sql.Rows
-		err  error
-	)
-
-	if t.db != nil { //nolint:gocritic,nestif
-		rows, err = t.db.Query(query)
+	if t.db != nil {
+		return t.db.Query(query, sub)
 	} else if t.tx != nil {
-		rows, err = t.db.Query(query)
-	} else {
-		return ErrTxClosed
+		return t.db.Query(query, sub)
 	}
 
-	if err != nil {
-		return err
-	}
+	return nil, ErrTxClosed
 
-	return forEach(rows, fn)
 }
 
-func (t *Tx) forEachSub(table, sub []byte, fn func([]byte, []byte) error) error {
-	query := fmt.Sprintf("SELECT id, value FROM [%s] WHERE sub = ?;", table) //nolint:gosec
+func (t *Tx) forEachStarting(table, sub, starting []byte) (*sql.Rows, error) {
+	query := fmt.Sprintf("SELECT id, value FROM [%s] WHERE sub = ? AND id >= ? ORDER BY id ASC;", table)
 
-	var (
-		rows *sql.Rows
-		err  error
-	)
-
-	if t.db != nil { //nolint:gocritic,nestif
-		rows, err = t.db.Query(query, sub)
+	if t.db != nil {
+		return t.db.Query(query, sub, starting)
 	} else if t.tx != nil {
-		rows, err = t.db.Query(query, sub)
-	} else {
-		return ErrTxClosed
+		return t.db.Query(query, sub, starting)
 	}
 
-	if err != nil {
-		return err
-	}
+	return nil, ErrTxClosed
 
-	return forEach(rows, fn)
-}
-
-func forEach(rows *sql.Rows, fn func([]byte, []byte) error) error {
-	defer rows.Close()
-
-	for rows.Next() {
-		var key, value sql.RawBytes
-
-		if err := rows.Scan(&key, &value); err != nil {
-			return err
-		}
-
-		if err := fn(key, value); err != nil {
-			return err
-		}
-	}
-
-	return nil
 }
 
 func (t *Tx) nextSequence(table []byte) (uint64, error) {
@@ -316,15 +278,79 @@ func (b *Bucket) NextSequence() (uint64, error) {
 }
 
 func (b *Bucket) ForEach(fn func([]byte, []byte) error) error {
-	if len(b.sub) == 0 {
-		return b.tx.forEach(b.table, fn)
+	rows, err := b.tx.forEach(b.table, b.sub)
+	if err != nil {
+		return err
 	}
 
-	return b.tx.forEachSub(b.table, b.sub, fn)
+	defer rows.Close()
+
+	for rows.Next() {
+		var key, value sql.RawBytes
+
+		if err := rows.Scan(&key, &value); err != nil {
+			return err
+		}
+
+		if err := fn(key, value); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (b *Bucket) Cursor() db.Cursor { //nolint:ireturn
-	return nil
+	return &Cursor{bucket: b}
+}
+
+func (b *Bucket) getAll(starting []byte) *sql.Rows {
+	var rows *sql.Rows
+
+	if starting == nil {
+		rows, _ = b.tx.forEach(b.table, b.sub) //nolint:errcheck
+	} else {
+		rows, _ = b.tx.forEachStarting(b.table, b.sub, starting) //nolint:errcheck
+	}
+
+	return rows
+}
+
+type Cursor struct {
+	bucket *Bucket
+	rows   *sql.Rows
+}
+
+func (c *Cursor) First() ([]byte, []byte) {
+	return c.resetRows(nil)
+}
+
+func (c *Cursor) resetRows(key []byte) ([]byte, []byte) {
+	if c.rows == nil || c.rows.Close() != nil {
+		return nil, nil
+	}
+
+	c.rows = c.bucket.getAll(key)
+
+	return c.Next()
+}
+
+func (c *Cursor) Next() ([]byte, []byte) {
+	if c.rows == nil || !c.rows.Next() {
+		return nil, nil
+	}
+
+	var key, value []byte
+
+	if c.rows.Scan(&key, &value) != nil {
+		return nil, nil
+	}
+
+	return key, value
+}
+
+func (c *Cursor) Seek(key []byte) ([]byte, []byte) {
+	return c.resetRows(key)
 }
 
 var (
