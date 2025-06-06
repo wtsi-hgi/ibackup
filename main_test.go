@@ -2015,6 +2015,15 @@ func TestManualMode(t *testing.T) {
 
 			So(int(s.Sys().(*syscall.Stat_t).Gid), ShouldEqual, gidB) //nolint:errcheck,forcetypeassert
 
+			restoreFiles(t, file1+"\t"+remote1+"\n", "0 downloaded (0 replaced); 1 skipped; 0 failed; 0 missing\n")
+			restoreFiles(t, file1+"\t"+remote1+"\n", "0 downloaded (0 replaced); 1 skipped; 0 failed; 0 missing\n", "-o")
+
+			timeB := time.Unix(100, 0)
+
+			So(os.Chtimes(file1, timeB, timeB), ShouldBeNil)
+
+			restoreFiles(t, file1+"\t"+remote1+"\n", "1 downloaded (1 replaced); 0 skipped; 0 failed; 0 missing\n", "-o")
+
 			So(exec.Command("imeta", "add", "-d", remote2, put.MetaKeySymlink, file1).Run(), ShouldBeNil)
 
 			restoreFiles(t, file3+"\t"+remote2+"\n", "1 downloaded (0 replaced); 0 skipped; 0 failed; 0 missing\n")
@@ -2035,10 +2044,10 @@ func TestManualMode(t *testing.T) {
 	})
 }
 
-func restoreFiles(t *testing.T, files, expectedOutput string) {
+func restoreFiles(t *testing.T, files, expectedOutput string, args ...string) {
 	t.Helper()
 
-	cmd := exec.Command("./"+app, "get")
+	cmd := exec.Command("./"+app, append([]string{"get"}, args...)...) //nolint:gosec
 	cmd.Stdin = strings.NewReader(files)
 
 	output, err := cmd.CombinedOutput()

@@ -133,7 +133,7 @@ type Putter struct {
 	stat              func(p *Putter, request *Request, putCh chan *Request, skipReturnCh chan *Request)
 	transfer          func(r *Request, handler Handler) error
 	applyMetadata     func(r *Request, handler Handler) error
-	clobber           bool
+	overwrite         bool
 }
 
 // New returns a *Putter that will use the given Handler to Put() all the
@@ -161,7 +161,7 @@ func New(handler Handler, requests []*Request) (*Putter, error) {
 	}, nil
 }
 
-func NewGetter(handler Handler, requests []*Request, clobber bool) (*Putter, error) {
+func NewGetter(handler Handler, requests []*Request, overwrite bool) (*Putter, error) {
 	rs, dups, err := dedupAndPrepareRequests(requests)
 	if err != nil {
 		return nil, err
@@ -176,7 +176,7 @@ func NewGetter(handler Handler, requests []*Request, clobber bool) (*Putter, err
 		stat:              (*Putter).getMetadataAndReturnOrPut,
 		transfer:          (*Request).Get,
 		applyMetadata:     (*Request).SetMeta,
-		clobber:           clobber,
+		overwrite:         overwrite,
 	}, nil
 }
 
@@ -481,7 +481,7 @@ func (p *Putter) statPathsAndReturnOrPut(request *Request, putCh chan *Request, 
 
 func (p *Putter) getMetadataAndReturnOrPut(request *Request, putCh chan *Request, skipReturnCh chan *Request) {
 	lInfo, err := Stat(request.Local)
-	if err == nil && !p.clobber {
+	if err == nil && !p.overwrite {
 		sendRequest(request, RequestStatusUnmodified, err, skipReturnCh)
 
 		return
@@ -514,8 +514,8 @@ func sendGetRequest(request *Request, lInfo, rInfo *ObjectInfo, putCh chan *Requ
 
 	if lInfo == nil {
 		sendRequest(request, RequestStatusUploaded, nil, putCh)
-	} else {
-		sendForUploadOrUnmodified(request, lInfo, rInfo, putCh, skipReturnCh)
+	} else if !sendForUploadOrUnmodified(request, lInfo, rInfo, putCh, skipReturnCh) {
+		sendRequest(request, RequestStatusReplaced, nil, putCh)
 	}
 }
 
