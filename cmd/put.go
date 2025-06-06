@@ -523,7 +523,7 @@ func (r *results) update(req *put.Request) {
 		r.missing++
 	case put.RequestStatusReplaced:
 		r.replaced++
-	case put.RequestStatusUnmodified:
+	case put.RequestStatusUnmodified, put.RequestStatusHardlinkSkipped:
 		r.skipped++
 	case put.RequestStatusUploaded:
 		r.uploads++
@@ -566,6 +566,8 @@ func warnIfBad(r *put.Request, i, total int, verbose bool) {
 	switch r.Status {
 	case put.RequestStatusFailed, put.RequestStatusMissing:
 		warn("[%d/%d] %s %s: %s", i, total, r.Local, r.Status, r.Error)
+	case put.RequestStatusHardlinkSkipped:
+		warn("[%d/%d] Hardlink skipped: %s\t%s", i, total, r.Local, r.Hardlink)
 	default:
 		if verbose {
 			info("[%d/%d] %s %s", i, total, r.Local, r.Status)

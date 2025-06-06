@@ -496,6 +496,18 @@ func (p *Putter) getMetadataAndReturnOrPut(request *Request, putCh chan *Request
 
 	request.Meta.LocalMeta = request.Meta.remoteMeta
 
+	sendGetRequest(request, lInfo, rInfo, putCh, skipReturnCh)
+}
+
+func sendGetRequest(request *Request, lInfo, rInfo *ObjectInfo, putCh chan *Request, skipReturnCh chan *Request) {
+	if hardlink, ok := request.Meta.remoteMeta[MetaKeyRemoteHardlink]; ok {
+		request.Hardlink = hardlink
+
+		sendRequest(request, RequestStatusHardlinkSkipped, nil, skipReturnCh)
+
+		return
+	}
+
 	if symlink, ok := request.Meta.remoteMeta[MetaKeySymlink]; ok {
 		request.Symlink = symlink
 	}

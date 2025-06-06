@@ -1993,19 +1993,12 @@ func TestManualMode(t *testing.T) {
 			file1 := filepath.Join(restoreDir, "file1")
 			file2 := filepath.Join(restoreDir, "file2")
 			file3 := filepath.Join(restoreDir, "file3")
+			file4 := filepath.Join(restoreDir, "file4")
 
 			files := file1 + "\t" + remote1 + "\n"
 			files += file2 + "\t" + remote2 + "\n"
 
-			cmd := exec.Command("./"+app, "get")
-			cmd.Stdin = strings.NewReader(files)
-
-			output, err := cmd.CombinedOutput()
-			So(err, ShouldBeNil)
-			So(cmd.ProcessState.ExitCode(), ShouldEqual, 0)
-
-			out := normaliseOutput(string(output))
-			So(out, ShouldEqual, "2 downloaded (0 replaced); 0 skipped; 0 failed; 0 missing\n")
+			restoreFiles(t, files, "2 downloaded (0 replaced); 0 skipped; 0 failed; 0 missing\n")
 
 			confirmFileContents(t, file1, fileContents1)
 			confirmFileContents(t, file2, fileContents2)
@@ -2024,23 +2017,36 @@ func TestManualMode(t *testing.T) {
 
 			So(exec.Command("imeta", "add", "-d", remote2, put.MetaKeySymlink, file1).Run(), ShouldBeNil)
 
-			files = file3 + "\t" + remote2 + "\n"
-
-			cmd = exec.Command("./"+app, "get")
-			cmd.Stdin = strings.NewReader(files)
-
-			output, err = cmd.CombinedOutput()
-			So(err, ShouldBeNil)
-			So(cmd.ProcessState.ExitCode(), ShouldEqual, 0)
-
-			out = normaliseOutput(string(output))
-			So(out, ShouldEqual, "1 downloaded (0 replaced); 0 skipped; 0 failed; 0 missing\n")
+			restoreFiles(t, file3+"\t"+remote2+"\n", "1 downloaded (0 replaced); 0 skipped; 0 failed; 0 missing\n")
 
 			link, err := os.Readlink(file3)
 			So(err, ShouldBeNil)
 			So(link, ShouldEqual, file1)
+
+			So(exec.Command("imeta", "add", "-d", remote1, put.MetaKeyRemoteHardlink, remote2).Run(), ShouldBeNil)
+
+			restoreFiles(
+				t,
+				file4+"\t"+remote1+"\n",
+				fmt.Sprintf("[1/1] Hardlink skipped: %s\\t%s\n0 downloaded (0 replaced); 1 skipped; 0 failed; 0 missing\n",
+					file4, remote2),
+			)
 		})
 	})
+}
+
+func restoreFiles(t *testing.T, files, expectedOutput string) {
+	t.Helper()
+
+	cmd := exec.Command("./"+app, "get")
+	cmd.Stdin = strings.NewReader(files)
+
+	output, err := cmd.CombinedOutput()
+	So(err, ShouldBeNil)
+	So(cmd.ProcessState.ExitCode(), ShouldEqual, 0)
+
+	out := normaliseOutput(string(output))
+	So(out, ShouldEqual, expectedOutput)
 }
 
 func TestReAdd(t *testing.T) {

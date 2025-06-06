@@ -41,16 +41,17 @@ import (
 type RequestStatus string
 
 const (
-	RequestStatusPending    RequestStatus = "pending"
-	RequestStatusReserved   RequestStatus = "reserved"
-	RequestStatusUploading  RequestStatus = "uploading"
-	RequestStatusUploaded   RequestStatus = "uploaded"
-	RequestStatusReplaced   RequestStatus = "replaced"
-	RequestStatusUnmodified RequestStatus = "unmodified"
-	RequestStatusMissing    RequestStatus = "missing"
-	RequestStatusFailed     RequestStatus = "failed"
-	ErrNotHumgenLustre                    = "not a valid humgen lustre path"
-	stuckTimeFormat                       = "02/01/06 15:04 MST"
+	RequestStatusPending         RequestStatus = "pending"
+	RequestStatusReserved        RequestStatus = "reserved"
+	RequestStatusUploading       RequestStatus = "uploading"
+	RequestStatusUploaded        RequestStatus = "uploaded"
+	RequestStatusReplaced        RequestStatus = "replaced"
+	RequestStatusUnmodified      RequestStatus = "unmodified"
+	RequestStatusMissing         RequestStatus = "missing"
+	RequestStatusFailed          RequestStatus = "failed"
+	RequestStatusHardlinkSkipped RequestStatus = "hardlink"
+	ErrNotHumgenLustre                         = "not a valid humgen lustre path"
+	stuckTimeFormat                            = "02/01/06 15:04 MST"
 )
 
 // Stuck is used to provide details of a potentially "stuck" upload Request.
