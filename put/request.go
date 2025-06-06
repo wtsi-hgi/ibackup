@@ -54,6 +54,8 @@ const (
 	stuckTimeFormat                            = "02/01/06 15:04 MST"
 )
 
+const defaultDirPerms = 0750
+
 // Stuck is used to provide details of a potentially "stuck" upload Request.
 type Stuck struct {
 	UploadStarted time.Time
@@ -420,6 +422,10 @@ func (r *Request) Put(handler Handler) error {
 // special handling for symlinks; it creates the symlink without consulting
 // the handler.
 func (r *Request) Get(handler Handler) error {
+	if err := os.MkdirAll(filepath.Dir(r.Local), defaultDirPerms); err != nil {
+		return err
+	}
+
 	if r.Symlink != "" {
 		return os.Symlink(r.Symlink, r.Local)
 	}

@@ -1994,6 +1994,7 @@ func TestManualMode(t *testing.T) {
 			file2 := filepath.Join(restoreDir, "file2")
 			file3 := filepath.Join(restoreDir, "file3")
 			file4 := filepath.Join(restoreDir, "file4")
+			file5 := filepath.Join(restoreDir, "anotherDir", "file5")
 
 			files := file1 + "\t" + remote1 + "\n"
 			files += file2 + "\t" + remote2 + "\n"
@@ -2023,6 +2024,10 @@ func TestManualMode(t *testing.T) {
 			So(os.Chtimes(file1, timeB, timeB), ShouldBeNil)
 
 			restoreFiles(t, file1+"\t"+remote1+"\n", "1 downloaded (1 replaced); 0 skipped; 0 failed; 0 missing\n", "-o")
+
+			restoreFiles(t, file5+"\t"+remote1+"\n", "1 downloaded (0 replaced); 0 skipped; 0 failed; 0 missing\n", "-o")
+
+			confirmFileContents(t, file5, fileContents1)
 
 			So(exec.Command("imeta", "add", "-d", remote2, put.MetaKeySymlink, file1).Run(), ShouldBeNil)
 
