@@ -327,20 +327,21 @@ func (s *TestServer) addSetForTesting(t *testing.T, name, transformer, path stri
 func (s *TestServer) addSetForTestingWithItems(t *testing.T, name, transformer, path string) {
 	t.Helper()
 
-	exitCode, _ := s.runBinary(t, "add", "--name", name, "--transformer",
-		transformer, "--items", path, "--monitor", "1h", "--monitor-removals")
-
-	So(exitCode, ShouldEqual, 0)
-
-	s.waitForStatus(name, "\nDiscovery: completed", 20*time.Second)
-	s.waitForStatus(name, "\nStatus: complete", 20*time.Second)
+	s.addSetForTestingWithFlags(t, name, transformer, "--items", path, "--monitor", "1h", "--monitor-removals")
 }
 
 func (s *TestServer) addSetForTestingWithFlag(t *testing.T, name, transformer, path, flag, data string) {
 	t.Helper()
 
-	exitCode, _ := s.runBinary(t, "add", "--name", name, "--transformer", transformer,
-		"--path", path, flag, data)
+	s.addSetForTestingWithFlags(t, name, transformer, "--path", path, flag, data)
+}
+
+func (s *TestServer) addSetForTestingWithFlags(t *testing.T, name, transformer string, flags ...string) {
+	t.Helper()
+
+	args := []string{"add", "--name", name, "--transformer", transformer}
+	args = append(args, flags...)
+	exitCode, _ := s.runBinary(t, args...)
 
 	So(exitCode, ShouldEqual, 0)
 
@@ -2678,9 +2679,23 @@ func TestEdit(t *testing.T) {
 				})
 			})
 
+			Convey("And a set with monitored removals", func() {
+				setName := "monitoredRemovalsSet"
+				s.addSetForTestingWithFlags(t, setName, transformer, "--path", path, "--monitor", "1d", "--monitor-removals")
+
+				s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Monitored (with removals): 1d;")
+
+				Convey("You can disable monitoring removals", func() {
+					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--stop-monitor-removals")
+					So(exitCode, ShouldEqual, 0)
+
+					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Monitored: 1d;")
+				})
+			})
+
 			Convey("And a set marked as archive", func() {
 				setName := "archiveSet"
-				s.addSetForTestingWithFlag(t, setName, transformer, path, "--archive", "")
+				s.addSetForTestingWithFlags(t, setName, transformer, "--path", path, "--archive")
 
 				s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Archive: true\n")
 

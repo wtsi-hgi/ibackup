@@ -34,10 +34,11 @@ import (
 
 // options for this cmd.
 var (
-	editSetName     string
-	editUser        string
-	editStopMonitor bool
-	editStopArchive bool
+	editSetName             string
+	editUser                string
+	editStopMonitor         bool
+	editStopMonitorRemovals bool
+	editStopArchive         bool
 )
 
 // editCmd represents the edit command.
@@ -65,6 +66,10 @@ Edit an existing backup set.
 			userSet.MonitorTime = 0
 		}
 
+		if editStopMonitorRemovals {
+			userSet.MonitorRemovals = false
+		}
+
 		if editStopArchive {
 			userSet.DeleteLocal = false
 		}
@@ -84,6 +89,8 @@ func init() {
 	editCmd.Flags().StringVar(&editUser, "user", currentUsername(),
 		"pretend to be the this user (only works if you started the server)")
 	editCmd.Flags().BoolVar(&editStopMonitor, "stop-monitor", false, "stop monitoring the set for changes")
+	editCmd.Flags().BoolVar(&editStopMonitorRemovals, "stop-monitor-removals", false,
+		"stop monitoring the set for locally removed files")
 	editCmd.Flags().BoolVar(&editStopArchive, "stop-archiving", false, "disable archive mode")
 
 	if err := editCmd.MarkFlagRequired("name"); err != nil {
