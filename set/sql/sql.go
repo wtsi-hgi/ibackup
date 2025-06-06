@@ -155,7 +155,6 @@ func (t *Tx) forEach(table, sub []byte) (*sql.Rows, error) {
 	}
 
 	return nil, ErrTxClosed
-
 }
 
 func (t *Tx) forEachStarting(table, sub, starting []byte) (*sql.Rows, error) {
@@ -168,7 +167,6 @@ func (t *Tx) forEachStarting(table, sub, starting []byte) (*sql.Rows, error) {
 	}
 
 	return nil, ErrTxClosed
-
 }
 
 func (t *Tx) nextSequence(table []byte) (uint64, error) {

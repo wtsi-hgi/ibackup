@@ -214,7 +214,7 @@ func New(path, backupPath string, readonly bool) (*DB, error) {
 	return db, nil
 }
 
-func initDB(path string, readonly bool) (db.DB, error) {
+func initDB(path string, readonly bool) (db.DB, error) { //nolint:ireturn
 	boltDB, err := bolt.Open(path, dbOpenMode, &bbolt.Options{
 		NoFreelistSync: true,
 		NoGrowSync:     true,
@@ -723,7 +723,7 @@ func (d *DB) deleteObjectFromSubBucket(key, setID, subBucket string) error {
 }
 
 // getSubBucket returns a given subBucket for a given set.
-func getSubBucket(tx db.Tx, setID, subBucket string) db.Bucket {
+func getSubBucket(tx db.Tx, setID, subBucket string) db.Bucket { //nolint:ireturn
 	subBucketName := []byte(subBucket + separator + setID)
 	setsBucket := tx.Bucket([]byte(setsBucket))
 
@@ -848,7 +848,7 @@ func (d *DB) removeEntryIfRedundant(remReq RemoveReq, curDir string) (string, er
 // getAndDeleteExistingEntries gets existing entries in the given sub bucket
 // of the setsBucket, then deletes and recreates the sub bucket. Returns the
 // empty sub bucket and any old values.
-func (d *DB) getAndDeleteExistingEntries(tx db.Tx, subBucketName string, setID string) (db.Bucket,
+func (d *DB) getAndDeleteExistingEntries(tx db.Tx, subBucketName string, setID string) (db.Bucket, //nolint:ireturn
 	map[string][]byte, error,
 ) {
 	existing := make(map[string][]byte)
@@ -947,7 +947,7 @@ func (d *DB) SetDirEntries(setID string, entries []*Dirent) error {
 // the byte slice version of the set id and the sets bucket so you can easily
 // put the set back again after making changes. Returns an error of setID isn't
 // in the database.
-func (d *DBRO) getSetByID(tx db.Tx, setID string) (*Set, []byte, db.Bucket, error) {
+func (d *DBRO) getSetByID(tx db.Tx, setID string) (*Set, []byte, db.Bucket, error) { //nolint:ireturn
 	b := tx.Bucket([]byte(setsBucket))
 	bid := []byte(setID)
 
@@ -1239,7 +1239,7 @@ func (d *DB) updateFileEntry(tx db.Tx, setID string, r *transfer.Request,
 // getEntry finds the Entry for the given path in the given set. Returns it
 // along with the bucket it was in, so you can alter the Entry and put it back.
 // Returns an error if the entry can't be found.
-func (d *DBRO) getEntry(tx db.Tx, setID, path string) (*Entry, db.Bucket, error) {
+func (d *DBRO) getEntry(tx db.Tx, setID, path string) (*Entry, db.Bucket, error) { //nolint:ireturn
 	setsBucket := tx.Bucket([]byte(setsBucket))
 
 	var (
@@ -1265,7 +1265,8 @@ func (d *DBRO) getEntry(tx db.Tx, setID, path string) (*Entry, db.Bucket, error)
 // the setsBucket for the kind (fileBucket, discoveredBucket or dirBucket) and
 // set ID. If it doesn't exist, just returns nil. Also returns the subbucket it
 // was in. The entry will have isDir true if kind is dirBucket.
-func (d *DBRO) getEntryFromSubbucket(kind, setID, path string, setsBucket db.Bucket) (*Entry, db.Bucket) {
+func (d *DBRO) getEntryFromSubbucket(kind, setID, path string, //nolint:ireturn
+	setsBucket db.Bucket) (*Entry, db.Bucket) {
 	subBucketName := []byte(kind + separator + setID)
 
 	b := setsBucket.Bucket(subBucketName)
@@ -1345,7 +1346,7 @@ func (d *DB) removeFailedLookup(tx db.Tx, setID, path string) error {
 }
 
 // getBucketAndKeyForFailedLookup returns our failedBucket and a lookup key.
-func (d *DBRO) getBucketAndKeyForFailedLookup(tx db.Tx, setID, path string) (db.Bucket, []byte) {
+func (d *DBRO) getBucketAndKeyForFailedLookup(tx db.Tx, setID, path string) (db.Bucket, []byte) { //nolint:ireturn
 	return tx.Bucket([]byte(failedBucket)), []byte(setID + separator + path)
 }
 
