@@ -38,6 +38,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -47,6 +48,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/wtsi-hgi/ibackup/baton"
 	"github.com/wtsi-hgi/ibackup/internal"
+	"github.com/wtsi-hgi/ibackup/put"
 	btime "github.com/wtsi-ssg/wr/backoff/time"
 	"github.com/wtsi-ssg/wr/retry"
 )
@@ -1935,8 +1937,34 @@ func TestManualMode(t *testing.T) {
 		internal.CreateTestFile(t, file1, fileContents1)
 		internal.CreateTestFile(t, file2, fileContents2)
 
-		files := file1 + "	" + remote1 + "\n"
-		files += file2 + "	" + remote2 + "\n"
+		u, err := user.Current()
+		So(err, ShouldBeNil)
+
+		uid, err := strconv.ParseUint(u.Uid, 10, 64)
+
+		gids, err := u.GroupIds()
+		So(err, ShouldBeNil)
+
+		gidA, err := strconv.ParseUint(gids[0], 10, 64)
+		So(err, ShouldBeNil)
+
+		var gidB uint64
+
+		if len(gids) == 1 {
+			gidB = gidA
+		} else {
+			gidB, err = strconv.ParseUint(gids[1], 10, 64)
+			So(err, ShouldBeNil)
+		}
+
+		So(os.Chown(file2, int(uid), int(gidB)), ShouldBeNil)
+
+		timeA := time.Unix(987654321, 0)
+
+		So(os.Chtimes(file1, timeA, timeA), ShouldBeNil)
+
+		files := file1 + "\t" + remote1 + "\n"
+		files += file2 + "\t" + remote2 + "\n"
 
 		cmd := exec.Command("./"+app, "put")
 		cmd.Stdin = strings.NewReader(files)
@@ -1954,8 +1982,62 @@ func TestManualMode(t *testing.T) {
 		getFileFromIRODS(remote1, got1)
 		getFileFromIRODS(remote2, got2)
 
-		confirmFileContents(got1, fileContents1)
-		confirmFileContents(got2, fileContents2)
+		confirmFileContents(t, got1, fileContents1)
+		confirmFileContents(t, got2, fileContents2)
+
+		Convey("and then you can get them again", func() {
+			restoreDir := t.TempDir()
+
+			file1 := filepath.Join(restoreDir, "file1")
+			file2 := filepath.Join(restoreDir, "file2")
+			file3 := filepath.Join(restoreDir, "file3")
+
+			files := file1 + "\t" + remote1 + "\n"
+			files += file2 + "\t" + remote2 + "\n"
+
+			cmd := exec.Command("./"+app, "get")
+			cmd.Stdin = strings.NewReader(files)
+
+			output, err := cmd.CombinedOutput()
+			So(err, ShouldBeNil)
+			So(cmd.ProcessState.ExitCode(), ShouldEqual, 0)
+
+			out := normaliseOutput(string(output))
+			So(out, ShouldEqual, "2 downloaded (0 replaced); 0 skipped; 0 failed; 0 missing\n")
+
+			confirmFileContents(t, file1, fileContents1)
+			confirmFileContents(t, file2, fileContents2)
+
+			s, err := os.Stat(file1)
+			So(err, ShouldBeNil)
+
+			So(int(s.Sys().(*syscall.Stat_t).Gid), ShouldEqual, gidA)
+
+			So(s.ModTime(), ShouldEqual, timeA)
+
+			s, err = os.Stat(file2)
+			So(err, ShouldBeNil)
+
+			So(int(s.Sys().(*syscall.Stat_t).Gid), ShouldEqual, gidB)
+
+			So(exec.Command("imeta", "add", "-d", remote2, put.MetaKeySymlink, file1).Run(), ShouldBeNil)
+
+			files = file3 + "\t" + remote2 + "\n"
+
+			cmd = exec.Command("./"+app, "get")
+			cmd.Stdin = strings.NewReader(files)
+
+			output, err = cmd.CombinedOutput()
+			So(err, ShouldBeNil)
+			So(cmd.ProcessState.ExitCode(), ShouldEqual, 0)
+
+			out = normaliseOutput(string(output))
+			So(out, ShouldEqual, "1 downloaded (0 replaced); 0 skipped; 0 failed; 0 missing\n")
+
+			link, err := os.Readlink(file3)
+			So(err, ShouldBeNil)
+			So(link, ShouldEqual, file1)
+		})
 	})
 }
 
@@ -1987,7 +2069,9 @@ func getFileFromIRODS(remotePath, localPath string) {
 	So(cmd.ProcessState.ExitCode(), ShouldEqual, 0)
 }
 
-func confirmFileContents(file, expectedContents string) {
+func confirmFileContents(t *testing.T, file, expectedContents string) {
+	t.Helper()
+
 	f, err := os.Open(file)
 	So(err, ShouldBeNil)
 

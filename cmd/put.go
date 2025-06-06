@@ -36,6 +36,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/inconshreveable/log15"
 	"github.com/spf13/cobra"
 	"github.com/wtsi-hgi/ibackup/baton"
 	"github.com/wtsi-hgi/ibackup/put"
@@ -145,9 +146,9 @@ you, so should this.`,
 		}
 
 		if serverMode() {
-			handleServerMode(time.Now())
+			handlePutServerMode(time.Now())
 		} else {
-			handleManualMode()
+			handlePutManualMode()
 		}
 	},
 }
@@ -176,52 +177,63 @@ func serverMode() bool {
 	return putServerMode && serverURL != ""
 }
 
-func handleServerMode(started time.Time) {
-	client, err := newServerClient(serverURL, serverCert)
-	if err != nil {
-		die(err)
+func handlePutServerMode(started time.Time) {
+	handleServerMode(started, (*server.Client).GetSomeUploadRequests, handlePut, (*server.Client).SendPutResultsToServer)
+}
+
+func handleServerMode(
+	started time.Time,
+	getReq func(*server.Client) ([]*put.Request, error),
+	handleReq func(*server.Client, []*put.Request) (chan *put.Request, chan *put.Request, chan *put.Request, func()),
+	sendReq func(*server.Client, chan *put.Request, chan *put.Request, chan *put.Request,
+		float64, time.Duration, time.Duration, log15.Logger) error,
+) {
+	for time.Since(started) < runFor {
+		client, err := newServerClient(serverURL, serverCert)
+		if err != nil {
+			die(err)
+		}
+
+		requests, err := getReq(client)
+		if err != nil {
+			warn("%s", err)
+
+			os.Exit(0)
+		}
+
+		err = client.MakingIRODSConnections(numIRODSConnections, heartbeatFreq)
+		if err != nil {
+			die(err)
+		}
+
+		uploadStarts, uploadResults, skipResults, dfunc := handleReq(client, requests)
+
+		err = sendReq(client, uploadStarts, uploadResults, skipResults,
+			minMBperSecondUploadSpeed, minTimeForUpload, maxStuckTime, appLogger)
+
+		dfunc()
+
+		errm := client.ClosedIRODSConnections()
+		if errm != nil {
+			warn("%s", errm)
+		}
+
+		if err != nil {
+			warn("%s", err)
+
+			os.Exit(0)
+		}
 	}
 
-	requests, err := client.GetSomeUploadRequests()
-	if err != nil {
-		warn("%s", err)
-
-		os.Exit(0)
-	}
-
-	err = client.MakingIRODSConnections(numIRODSConnections, heartbeatFreq)
-	if err != nil {
-		die(err)
-	}
-
-	uploadStarts, uploadResults, skipResults, dfunc := handlePut(client, requests)
-
-	err = client.SendPutResultsToServer(uploadStarts, uploadResults, skipResults,
-		minMBperSecondUploadSpeed, minTimeForUpload, maxStuckTime, appLogger)
-
-	dfunc()
-
-	errm := client.ClosedIRODSConnections()
-	if errm != nil {
-		warn("%s", errm)
-	}
-
-	if err != nil {
-		warn("%s", err)
-
-		os.Exit(0)
-	}
-
-	if time.Since(started) < runFor {
-		handleServerMode(started)
-	} else if putVerbose {
+	if putVerbose {
 		info("all done, exiting")
 	}
 }
 
-func handlePut(client *server.Client, requests []*put.Request) (chan *put.Request,
-	chan *put.Request, chan *put.Request, func(),
-) {
+func handleGetPut(
+	requests []*put.Request,
+	get func([]*put.Request) *put.Putter,
+) (chan *put.Request, chan *put.Request, chan *put.Request, func()) {
 	if putVerbose {
 		host, errh := os.Hostname()
 		if errh != nil {
@@ -241,16 +253,26 @@ func handlePut(client *server.Client, requests []*put.Request) (chan *put.Reques
 		info("got %d requests to work on", len(requests))
 	}
 
-	p, dfunc := getPutter(requests)
+	p := get(requests)
 
-	handleCollections(client, p)
+	transferStarts, transferResults, skipResults := p.Put()
 
-	uploadStarts, uploadResults, skipResults := p.Put()
-
-	return uploadStarts, uploadResults, skipResults, dfunc
+	return transferStarts, transferResults, skipResults, p.Cleanup
 }
 
-func getPutter(requests []*put.Request) (*put.Putter, func()) {
+func handlePut(client *server.Client, requests []*put.Request) (chan *put.Request,
+	chan *put.Request, chan *put.Request, func(),
+) {
+	return handleGetPut(requests, func(requests []*put.Request) *put.Putter {
+		p := getPutter(requests)
+
+		handleCollections(client, p)
+
+		return p
+	})
+}
+
+func getPutter(requests []*put.Request) *put.Putter {
 	handler, err := baton.GetBatonHandler()
 	if err != nil {
 		die(err)
@@ -261,11 +283,7 @@ func getPutter(requests []*put.Request) (*put.Putter, func()) {
 		die(err)
 	}
 
-	dfunc := func() {
-		p.Cleanup()
-	}
-
-	return p, dfunc
+	return p
 }
 
 func handleCollections(client *server.Client, p *put.Putter) {
@@ -300,7 +318,7 @@ func createCollection(p *put.Putter) {
 	}
 }
 
-func handleManualMode() {
+func handlePutManualMode() {
 	requests, err := getRequestsFromFile(putFile, putMeta, putBase64)
 	if err != nil {
 		die(err)
@@ -310,7 +328,7 @@ func handleManualMode() {
 
 	defer dfunc()
 
-	printResults(uploadResults, skipResults, len(requests), putVerbose)
+	printResults("up", uploadResults, skipResults, len(requests), putVerbose)
 }
 
 // getRequestsFromFile reads our 3 column file format from a file or STDIN and
@@ -515,12 +533,12 @@ func (r *results) update(req *put.Request) {
 // printResults reads from the given channels, outputs info about them to STDOUT
 // and STDERR, then emits summary numbers. Supply the total number of requests
 // made. Exits 1 if there were upload errors.
-func printResults(uploadResults, skipResults chan *put.Request, total int, verbose bool) {
+func printResults(upDown string, transferResults, skipResults chan *put.Request, total int, verbose bool) {
 	r := &results{total: total, verbose: verbose}
 
 	var wg sync.WaitGroup
 
-	for _, ch := range []chan *put.Request{skipResults, uploadResults} {
+	for _, ch := range []chan *put.Request{skipResults, transferResults} {
 		wg.Add(1)
 
 		go func(ch chan *put.Request) {
@@ -534,8 +552,8 @@ func printResults(uploadResults, skipResults chan *put.Request, total int, verbo
 
 	wg.Wait()
 
-	info("%d uploaded (%d replaced); %d skipped; %d failed; %d missing",
-		r.uploads+r.replaced, r.replaced, r.skipped, r.fails, r.missing)
+	info("%d %sloaded (%d replaced); %d skipped; %d failed; %d missing",
+		r.uploads+r.replaced, upDown, r.replaced, r.skipped, r.fails, r.missing)
 
 	if r.fails > 0 {
 		os.Exit(1)
