@@ -2,8 +2,8 @@ package cmd
 
 import (
 	"crypto/md5" //nolint:gosec
+	"encoding/hex"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -37,7 +37,7 @@ environmental variable.
 The --irods options will gather additional information about the file, such as
 the local and remote checksums.
 `,
-	Run: func(cmd *cobra.Command, args []string) {
+	Run: func(_ *cobra.Command, args []string) {
 		if len(args) < 1 {
 			dief("you must supply the file to be checked")
 		}
@@ -255,7 +255,7 @@ func (fsg *fileStatusGetter) calcMD5Sum(path string) string {
 		if err != nil {
 			fsg.md5sum = err.Error()
 		} else {
-			fsg.md5sum = fmt.Sprintf("%x", m.Sum(nil))
+			fsg.md5sum = hex.EncodeToString(m.Sum(nil))
 		}
 	})
 

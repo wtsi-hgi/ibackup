@@ -56,7 +56,7 @@ environmental variable.
 The output will look nicer if you have https://github.com/red-data-tools/YouPlot
 installed.
  `,
-	Run: func(cmd *cobra.Command, args []string) {
+	Run: func(_ *cobra.Command, _ []string) {
 		err := summary(summaryDB)
 		if err != nil {
 			die(err)
@@ -102,13 +102,13 @@ func summary(dbPath string) error {
 	return plotSANs(tp, usage.ByMonth, 0, "Backed up (TB) each month")
 }
 
-func plotSANs(tp *tplot.TPlotter, sans []*set.SizeAndNumber, max int, title string) error {
+func plotSANs(tp *tplot.TPlotter, sans []*set.SizeAndNumber, maxB int, title string) error {
 	data := tplot.NewData(title)
 
 	for i, san := range sans {
 		data.Add(san.For, san.SizeTiB())
 
-		if max > 0 && i == max-1 {
+		if maxB > 0 && i == maxB-1 {
 			break
 		}
 	}

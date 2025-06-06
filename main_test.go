@@ -29,6 +29,7 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -1371,6 +1372,7 @@ func TestBackup(t *testing.T) {
 			if err != nil {
 				return err
 			}
+
 			ri, err := os.Stat(gotPath)
 			if err != nil {
 				return err
@@ -1395,7 +1397,7 @@ func TestBackup(t *testing.T) {
 			_, err = io.Copy(s, f)
 			So(err, ShouldBeNil)
 
-			return fmt.Sprintf("%x", s.Sum(nil))
+			return hex.EncodeToString(s.Sum(nil))
 		}
 
 		bh := hashFile(s.backupFile)
@@ -1769,7 +1771,6 @@ Global put client status (/10): 6 iRODS connections`)
 			})
 		})
 
-		// TODO: re-enable once hardlinks metamod bug fixed
 		Convey("Putting a set with hardlinks uploads an empty file and special inode file", func() {
 			file := filepath.Join(path, "file")
 			link1 := filepath.Join(path, "hardlink1")
@@ -1941,6 +1942,7 @@ func TestManualMode(t *testing.T) {
 		So(err, ShouldBeNil)
 
 		uid, err := strconv.ParseUint(u.Uid, 10, 64)
+		So(err, ShouldBeNil)
 
 		gids, err := u.GroupIds()
 		So(err, ShouldBeNil)
@@ -1957,7 +1959,7 @@ func TestManualMode(t *testing.T) {
 			So(err, ShouldBeNil)
 		}
 
-		So(os.Chown(file2, int(uid), int(gidB)), ShouldBeNil)
+		So(os.Chown(file2, int(uid), int(gidB)), ShouldBeNil) //nolint:gosec
 
 		timeA := time.Unix(987654321, 0)
 
@@ -2011,14 +2013,14 @@ func TestManualMode(t *testing.T) {
 			s, err := os.Stat(file1)
 			So(err, ShouldBeNil)
 
-			So(int(s.Sys().(*syscall.Stat_t).Gid), ShouldEqual, gidA)
+			So(int(s.Sys().(*syscall.Stat_t).Gid), ShouldEqual, gidA) //nolint:errcheck,forcetypeassert
 
 			So(s.ModTime(), ShouldEqual, timeA)
 
 			s, err = os.Stat(file2)
 			So(err, ShouldBeNil)
 
-			So(int(s.Sys().(*syscall.Stat_t).Gid), ShouldEqual, gidB)
+			So(int(s.Sys().(*syscall.Stat_t).Gid), ShouldEqual, gidB) //nolint:errcheck,forcetypeassert
 
 			So(exec.Command("imeta", "add", "-d", remote2, put.MetaKeySymlink, file1).Run(), ShouldBeNil)
 

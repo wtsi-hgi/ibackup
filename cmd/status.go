@@ -367,7 +367,7 @@ func sortSetsAlphabetically(sets []*set.Set) {
 }
 
 // displaySet prints info about the given set to STDOUT.
-func displaySet(s *set.Set, showRequesters bool) { //nolint:funlen,gocyclo
+func displaySet(s *set.Set, showRequesters bool) { //nolint:funlen,gocyclo,gocognit,cyclop
 	cliPrintf("Name: %s\n", s.Name)
 
 	if showRequesters {

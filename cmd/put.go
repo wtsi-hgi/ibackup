@@ -181,7 +181,7 @@ func handlePutServerMode(started time.Time) {
 	handleServerMode(started, (*server.Client).GetSomeUploadRequests, handlePut, (*server.Client).SendPutResultsToServer)
 }
 
-func handleServerMode(
+func handleServerMode( //nolint:gocognit,gocyclo,funlen
 	started time.Time,
 	getReq func(*server.Client) ([]*put.Request, error),
 	handleReq func(*server.Client, []*put.Request) (chan *put.Request, chan *put.Request, chan *put.Request, func()),

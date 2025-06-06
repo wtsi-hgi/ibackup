@@ -184,6 +184,7 @@ func TestSet(t *testing.T) {
 		dddLocalPath := "/lustre/scratch118/humgen/projects/ddd/file.txt"
 		remote, err := trans(dddLocalPath)
 		So(err, ShouldBeNil)
+
 		dddRemotePath := "/humgen/projects/ddd/scratch118/file.txt"
 		So(remote, ShouldEqual, dddRemotePath)
 
@@ -649,6 +650,7 @@ func TestSetDB(t *testing.T) {
 						}
 
 						So(slackWriter.String(), ShouldBeBlank)
+
 						e, errs := db.SetEntryStatus(r)
 						So(errs, ShouldBeNil)
 						So(e, ShouldNotBeNil)
@@ -1395,12 +1397,14 @@ func TestSetDB(t *testing.T) {
 
 				info, errs := os.Stat(local)
 				So(errs, ShouldBeNil)
+
 				stat, ok := info.Sys().(*syscall.Stat_t)
 				So(ok, ShouldBeTrue)
 
 				internal.CreateTestFile(t, unlinked, "a")
 				info, errs = os.Stat(unlinked)
 				So(errs, ShouldBeNil)
+
 				statUnlinked, ok := info.Sys().(*syscall.Stat_t)
 				So(ok, ShouldBeTrue)
 
@@ -1913,7 +1917,7 @@ func TestBackup(t *testing.T) {
 			testBackupOK(localDB)
 
 			Convey("and child baton-do processes end after upload", func() {
-				p, err := process.NewProcess(int32(os.Getpid()))
+				p, err := process.NewProcess(int32(os.Getpid())) //nolint:gosec
 				So(err, ShouldBeNil)
 
 				children, err := p.Children()

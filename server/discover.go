@@ -601,7 +601,7 @@ func (s *Server) markFailedEntries(given *set.Set) {
 	}, func(item *queue.Item) {
 		request := item.Data().(*put.Request) //nolint:errcheck,forcetypeassert
 
-		for i := 0; i < int(jobRetries); i++ {
+		for range jobRetries {
 			_, err := s.db.SetEntryStatus(request)
 			if err != nil {
 				s.Logger.Printf("failed to mark entry as failed for buried item for set %s for %s: %s\n",

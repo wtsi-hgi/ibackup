@@ -3391,8 +3391,10 @@ func TestServer(t *testing.T) {
 
 						info, errs := os.Stat(path1)
 						So(errs, ShouldBeNil)
+
 						statt, ok := info.Sys().(*syscall.Stat_t)
 						So(ok, ShouldBeTrue)
+
 						inoStr := strconv.FormatUint(statt.Ino, 10)
 
 						So(requests[0].Local, ShouldEqual, path1)

@@ -133,7 +133,7 @@ type Server struct {
 //
 // It logs to the required configured io.Writer, which could for example be
 // syslog using the log/syslog pkg with syslog.new(syslog.LOG_INFO, "tag").
-func New(conf Config) (*Server, error) {
+func New(conf Config) (*Server, error) { //nolint:funlen
 	if conf.HTTPLogger == nil {
 		return nil, ErrNoLogger
 	}

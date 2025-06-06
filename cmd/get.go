@@ -109,8 +109,10 @@ func init() {
 		"overwrite local files")
 }
 
-func handleGetServerMode(started time.Time) {
-	//handleServerMode(started, (*server.Client).GetSomeDownloadRequests, handleGet, (*server.Client).SendGetResultsToServer)
+func handleGetServerMode(_ time.Time) {
+	// handleServerMode(started, (*server.Client).GetSomeDownloadRequests,
+	// handleGet, (*server.Client).SendGetResultsToServer)
+	dief("server mode is not currently implemented")
 }
 
 func handleGetManualMode() {

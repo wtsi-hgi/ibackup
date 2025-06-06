@@ -368,7 +368,7 @@ func setGroup(file, group string) error {
 		return err
 	}
 
-	return os.Chown(file, int(uid), int(gid))
+	return os.Chown(file, int(uid), int(gid)) //nolint:gosec
 }
 
 func removeAndAddMetadata(r *Request, handler Handler) error {
