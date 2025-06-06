@@ -28,6 +28,8 @@ package server
 
 import (
 	"container/heap"
+	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -57,6 +59,8 @@ type Monitor struct {
 	monitorCh         chan struct{}
 	callback          MonitorCallback
 }
+
+var ErrSetNotMonitored = errors.New("set not monitored by server")
 
 // NewMonitor returns a Monitor which will call your callback every time a set
 // you add to this monitor needs to be discovered.
@@ -173,10 +177,16 @@ func (m *Monitor) NextSet() *set.Set {
 	return m.monitorHeap.nextSet()
 }
 
-// monitorSet sets up up discovery monitoring on the passed set if set Monitor
-// duration is defined.
+// monitorSet sets up discovery monitoring on the passed set if set Monitor
+// duration is defined. Otherwise, it removes the set from the monitor.
 func (s *Server) monitorSet(given *set.Set) {
-	if given.MonitorTime == 0 || given.Status != set.Complete {
+	if given.MonitorTime == 0 {
+		s.monitor.Remove(given.ID()) //nolint:errcheck
+
+		return
+	}
+
+	if given.Status != set.Complete {
 		return
 	}
 
@@ -211,4 +221,19 @@ func (m *Monitor) monitorSets(nextDiscovery time.Time) {
 			timer.Reset(time.Until(nextDiscovery))
 		}
 	}
+}
+
+// Remove removes a set from the Monitor Heap by its ID.
+func (m *Monitor) Remove(sid string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	index, found := m.monitorHeap.byID[sid]
+	if !found {
+		return fmt.Errorf("%w: %s", ErrSetNotMonitored, sid)
+	}
+
+	heap.Remove(&m.monitorHeap, index)
+
+	return nil
 }

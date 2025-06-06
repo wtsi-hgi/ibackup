@@ -29,6 +29,14 @@ package cmd
 import (
 	"github.com/spf13/cobra"
 	"github.com/wtsi-hgi/ibackup/server"
+	"github.com/wtsi-hgi/ibackup/set"
+)
+
+// options for this cmd.
+var (
+	editSetName     string
+	editUser        string
+	editStopMonitor bool
 )
 
 // editCmd represents the edit command.
@@ -37,10 +45,29 @@ var editCmd = &cobra.Command{
 	Short: "Edit a backup set",
 	Long: `Edit a backup set.
  
-This subcommand is under active development.
+Edit an existing backup set. 
  `,
-	Run: func(cmd *cobra.Command, args []string) {
+	Run: func(_ *cobra.Command, _ []string) {
 		ensureURLandCert()
+
+		client, err := newServerClient(serverURL, serverCert)
+		if err != nil {
+			die(err)
+		}
+
+		userSet, err := client.GetSetByName(editUser, editSetName)
+		if err != nil {
+			die(err)
+		}
+
+		if editStopMonitor {
+			userSet.MonitorTime = 0
+		}
+
+		err = edit(client, userSet)
+		if err != nil {
+			die(err)
+		}
 
 	},
 }
@@ -48,13 +75,21 @@ This subcommand is under active development.
 func init() {
 	RootCmd.AddCommand(editCmd)
 
-	editCmd.Flags().StringVarP(&setName, "name", "n", "", "a short name for this backup set")
+	editCmd.Flags().StringVarP(&editSetName, "name", "n", "", "a name of the backup set you want to edit")
+	editCmd.Flags().StringVar(&editUser, "user", currentUsername(),
+		"pretend to be the this user (only works if you started the server)")
+	editCmd.Flags().BoolVar(&editStopMonitor, "stop-monitor", false, "stop monitoring the set for changes")
 
 	if err := editCmd.MarkFlagRequired("name"); err != nil {
 		die(err)
 	}
 }
 
-func edit(client *server.Client, name string) error {
+func edit(client *server.Client, givenSet *set.Set) error {
+	err := client.AddOrUpdateSet(givenSet)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }

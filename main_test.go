@@ -2648,5 +2648,33 @@ func TestEdit(t *testing.T) {
 		Convey("With no --name given, edit returns an error", func() {
 			s.confirmOutputContains(t, []string{"edit"}, 1, "Error: required flag(s) \"name\" not set")
 		})
+
+		Convey("Edit on nonexisting set produces an error", func() {
+			s.confirmOutputContains(t, []string{"edit", "--name", "badSet"}, 1, "set with that id does not exist")
+		})
+
+		Convey("Given the monitored set", func() {
+			remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
+			if remotePath == "" {
+				SkipConvey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
+
+				return
+			}
+
+			path := t.TempDir()
+			transformer := "prefix=" + path + ":" + remotePath
+
+			setName := "monitoredSet"
+			s.addSetForTestingWithFlag(t, setName, transformer, path, "--monitor", "1d")
+
+			s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Monitored: 1d;")
+
+			Convey("You can disable monitoring", func() {
+				exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--stop-monitor")
+				So(exitCode, ShouldEqual, 0)
+
+				s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Monitored: false;")
+			})
+		})
 	})
 }
