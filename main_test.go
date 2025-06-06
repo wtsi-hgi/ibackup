@@ -48,6 +48,7 @@ import (
 	"github.com/phayes/freeport"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/wtsi-hgi/ibackup/baton"
+	"github.com/wtsi-hgi/ibackup/cmd"
 	"github.com/wtsi-hgi/ibackup/internal"
 	"github.com/wtsi-hgi/ibackup/transfer"
 	btime "github.com/wtsi-ssg/wr/backoff/time"
@@ -298,7 +299,7 @@ func (s *TestServer) confirmOutput(t *testing.T, args []string, expectedCode int
 func (s *TestServer) confirmOutputContains(t *testing.T, args []string, expectedCode int, expected string) {
 	t.Helper()
 
-	exitCode, actual := s.runBinary(t, args...)
+	exitCode, actual := s.runBinaryWithNoLogging(t, args...)
 
 	So(exitCode, ShouldEqual, expectedCode)
 	So(actual, ShouldContainSubstring, expected)
@@ -2730,6 +2731,10 @@ func TestEdit(t *testing.T) {
 			s.confirmOutputContains(t, []string{"edit", "--name", "badSet"}, 1, "set with that id does not exist")
 		})
 
+		Convey("You can specify either --make-readonly or --disable-readonly", func() {
+			s.confirmOutputContains(t, []string{"edit", "--make-readonly", "--disable-readonly"}, 1, cmd.ErrInvalidEdit.Error())
+		})
+
 		Convey("Given a transformer", func() {
 			remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
 			if remotePath == "" {
@@ -2780,6 +2785,33 @@ func TestEdit(t *testing.T) {
 					So(exitCode, ShouldEqual, 0)
 
 					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Archive: false\n")
+				})
+			})
+
+			Convey("And a set", func() {
+				setName := "readOnlySet"
+				s.addSetForTesting(t, setName, transformer, path)
+
+				Convey("You can make it readonly", func() {
+					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--make-readonly")
+					So(exitCode, ShouldEqual, 0)
+
+					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Read-only: true\n")
+
+					Convey("And you can no longer edit it", func() {
+						s.confirmOutputContains(t, []string{"edit", "--name", setName}, 1,
+							"Error: the set is read-only, you cannot edit it")
+					})
+
+					SkipConvey("And you cannot make it writable", func() {
+						s.confirmOutputContains(t, []string{"edit", "--name", setName, "--disable-readonly"}, 1,
+							"Error: only admin can disable readonly mode")
+					})
+
+					SkipConvey("And admin can make it writable", func() {
+						exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--disable-readonly", "--admin")
+						So(exitCode, ShouldEqual, 0)
+					})
 				})
 			})
 		})
