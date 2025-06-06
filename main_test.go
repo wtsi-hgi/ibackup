@@ -637,20 +637,22 @@ Directories:
   `+localDir+" => "+remoteDir)
 			})
 		})
+
 		Convey("Given an added set defined with a directory and user metadata", func() {
 			meta := "testKey2=testVal2;ibackup:user:testKey=testVal"
+			setName := "testMeta"
 
 			transformer, localDir, remoteDir := prepareForSetWithEmptyDir(t)
-			exitCode, _ := s.runBinary(t, "add", "--name", "testMeta", "--transformer",
+			exitCode, _ := s.runBinary(t, "add", "--name", setName, "--transformer",
 				transformer, "--path", localDir, "--metadata", meta)
 			So(exitCode, ShouldEqual, 0)
-			s.waitForStatus("testMeta", "\nDiscovery: completed", 5*time.Second)
+			s.waitForStatus(setName, "\nDiscovery: completed", 5*time.Second)
 
 			Convey("Status tells you the user metadata", func() {
 				s.confirmOutput(t, []string{"status"}, 0, `Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
 Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
 
-Name: testMeta
+Name: `+setName+`
 Transformer: `+transformer+`
 Reason: backup
 Review date: `+reviewDate+`
@@ -666,19 +668,20 @@ Directories:
   `+localDir+" => "+remoteDir)
 
 				meta = "testKey=testValNew;testKey2=testVal2;testKey3=testVal3"
+				setName := "testMeta2"
 
 				cmd := s.clientCmd([]string{
-					"add", "--name", "testMeta", "--transformer", transformer,
+					"add", "--name", setName, "--transformer", transformer,
 					"--path", localDir, "--metadata", meta, "--reason", "archive", "--remove", "2999-01-01",
 				})
-				cmd.Stdin = strings.NewReader("y\n")
 				err := cmd.Run()
 				So(err, ShouldBeNil)
 
-				s.confirmOutput(t, []string{"status"}, 0, `Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
+				s.confirmOutput(t, []string{"status", "-n", setName}, 0,
+					`Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
 Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
 
-Name: testMeta
+Name: `+setName+`
 Transformer: `+transformer+`
 Reason: archive
 Review date: `+time.Now().AddDate(1, 0, 0).Format("2006-01-02")+`
@@ -694,24 +697,24 @@ Directories:
   `+localDir+" => "+remoteDir)
 
 				meta = "testKey=testValNew;testKey2=testVal2;testKey3=testVal3"
+				setName = "testMeta3"
 
 				cmd = s.clientCmd([]string{
-					"add", "--name", "testMeta", "--transformer", transformer,
+					"add", "--name", setName, "--transformer", transformer,
 					"--path", localDir,
 				})
-				cmd.Stdin = strings.NewReader("y\n")
 				err = cmd.Run()
 				So(err, ShouldBeNil)
 
-				s.confirmOutput(t, []string{"status"}, 0, `Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
+				s.confirmOutput(t, []string{"status", "-n", setName}, 0,
+					`Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
 Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
 
-Name: testMeta
+Name: `+setName+`
 Transformer: `+transformer+`
-Reason: archive
-Review date: `+time.Now().AddDate(1, 0, 0).Format("2006-01-02")+`
-Removal date: 2999-01-01
-User metadata: `+meta+`
+Reason: backup
+Review date: `+reviewDate+`
+Removal date: `+removalDate+`
 Monitored: false; Archive: false
 Status: complete
 Discovery:
@@ -721,23 +724,24 @@ Completed in: 0s
 Directories:
   `+localDir+" => "+remoteDir)
 
+				setName = "testMeta4"
+
 				cmd = s.clientCmd([]string{
-					"add", "--name", "testMeta", "--transformer", transformer,
+					"add", "--name", setName, "--transformer", transformer,
 					"--path", localDir, "--reason", "backup",
 				})
-				cmd.Stdin = strings.NewReader("y\n")
 				err = cmd.Run()
 				So(err, ShouldBeNil)
 
-				s.confirmOutput(t, []string{"status"}, 0, `Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
+				s.confirmOutput(t, []string{"status", "-n", setName}, 0,
+					`Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
 Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
 
-Name: testMeta
+Name: `+setName+`
 Transformer: `+transformer+`
 Reason: backup
-Review date: `+time.Now().AddDate(0, 6, 0).Format("2006-01-02")+`
-Removal date: `+time.Now().AddDate(1, 0, 0).Format("2006-01-02")+`
-User metadata: `+meta+`
+Review date: `+reviewDate+`
+Removal date: `+removalDate+`
 Monitored: false; Archive: false
 Status: complete
 Discovery:
@@ -1964,26 +1968,13 @@ func TestReAdd(t *testing.T) {
 
 		name := "aSet"
 
-		Convey("Re-adding a set asks for confirmation", func() {
+		Convey("Re-adding a set with the same name fails", func() {
 			s.addSetForTesting(t, name, transformer, localDir)
 
 			<-time.After(time.Second)
 
-			firstDiscovery := s.getDiscoveryLineFromStatus(name)
-
-			err := s.interactiveAdd(name, "n", transformer, "path", localDir)
-			So(err, ShouldNotBeNil)
-
-			secondDiscovery := s.getDiscoveryLineFromStatus(name)
-			So(secondDiscovery, ShouldEqual, firstDiscovery)
-
-			err = s.interactiveAdd(name, "y", transformer, "path", localDir)
-			So(err, ShouldBeNil)
-
-			s.waitForStatus(name, "\nDiscovery: completed", 5*time.Second)
-
-			thirdDiscovery := s.getDiscoveryLineFromStatus(name)
-			So(thirdDiscovery, ShouldNotEqual, firstDiscovery)
+			s.confirmOutputContains(t, []string{"add", "--name", name, "--transformer", transformer, "--path", localDir}, 1,
+				"set with this name already exists")
 		})
 	})
 }
