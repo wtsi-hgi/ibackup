@@ -50,17 +50,19 @@ func TestMonitorHeap(t *testing.T) {
 		Convey("You can add sets to it", func() {
 			ld := time.Now()
 
+			set1 := set.Set{
+				Name:          "first",
+				MonitorTime:   1 * time.Second,
+				LastDiscovery: ld,
+			}
+
 			mh.Add(&set.Set{
 				Name:          "third",
 				MonitorTime:   3 * time.Second,
 				LastDiscovery: ld,
 			})
 
-			mh.Add(&set.Set{
-				Name:          "first",
-				MonitorTime:   1 * time.Second,
-				LastDiscovery: ld,
-			})
+			mh.Add(&set1)
 
 			mh.Add(&set.Set{
 				Name:          "second",
@@ -85,10 +87,24 @@ func TestMonitorHeap(t *testing.T) {
 				next = mh.NextSet()
 				So(next, ShouldBeNil)
 			})
+
+			Convey("And then you can remove sets from it", func() {
+				err := mh.Remove(set1.ID())
+				So(err, ShouldBeNil)
+
+				next := mh.NextSet()
+				So(next.Name, ShouldEqual, "second")
+			})
 		})
 
-		Convey("You can add sets to it which get automatically sent to the callback at the right time", func() {
+		Convey("You can add another sets to it", func() {
 			ld := time.Now()
+
+			set1 := set.Set{
+				Name:          "first",
+				MonitorTime:   10 * time.Millisecond,
+				LastDiscovery: ld,
+			}
 
 			mh.Add(&set.Set{
 				Name:          "third",
@@ -96,11 +112,7 @@ func TestMonitorHeap(t *testing.T) {
 				LastDiscovery: ld,
 			})
 
-			mh.Add(&set.Set{
-				Name:          "first",
-				MonitorTime:   10 * time.Millisecond,
-				LastDiscovery: ld,
-			})
+			mh.Add(&set1)
 
 			mh.Add(&set.Set{
 				Name:          "second",
@@ -108,15 +120,28 @@ func TestMonitorHeap(t *testing.T) {
 				LastDiscovery: ld,
 			})
 
-			<-time.After(100 * time.Millisecond)
+			Convey("Which get automatically sent to the callback at the right time", func() {
+				<-time.After(100 * time.Millisecond)
 
-			mu.Lock()
-			defer mu.Unlock()
-			So(names, ShouldEqual, "firstsecondthird")
+				mu.Lock()
+				defer mu.Unlock()
+				So(names, ShouldEqual, "firstsecondthird")
 
-			So(mh.NextDiscovery().IsZero(), ShouldBeTrue)
-			next := mh.NextSet()
-			So(next, ShouldBeNil)
+				So(mh.NextDiscovery().IsZero(), ShouldBeTrue)
+				next := mh.NextSet()
+				So(next, ShouldBeNil)
+			})
+
+			Convey("And you can remove sets from it", func() {
+				err := mh.Remove(set1.ID())
+				So(err, ShouldBeNil)
+
+				<-time.After(100 * time.Millisecond)
+
+				mu.Lock()
+				defer mu.Unlock()
+				So(names, ShouldEqual, "secondthird")
+			})
 		})
 	})
 }
