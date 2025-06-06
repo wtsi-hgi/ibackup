@@ -417,9 +417,9 @@ func (s *Server) ttrc(data interface{}) queue.SubQueue {
 	r, ok := data.(*transfer.Request)
 	if !ok {
 		s.Logger.Printf("item data not a Request")
+	} else {
+		s.uploadTracker.uploadFinished(r)
 	}
-
-	s.uploadTracker.uploadFinished(r)
 
 	return queue.SubQueueReady
 }

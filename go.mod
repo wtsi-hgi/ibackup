@@ -35,6 +35,34 @@ require (
 )
 
 require (
+	cloud.google.com/go/compute/metadata v0.7.0 // indirect
+	code.cloudfoundry.org/bytefmt v0.41.0 // indirect
+	github.com/Azure/go-ntlmssp v0.0.0-20221128193559-754e69321358 // indirect
+	github.com/BurntSushi/toml v1.5.0 // indirect
+	github.com/Microsoft/go-winio v0.6.2 // indirect
+	github.com/VertebrateResequencing/muxfys/v4 v4.0.3 // indirect
+	github.com/VividCortex/ewma v1.2.0 // indirect
+	github.com/alexflint/go-filemutex v1.3.0 // indirect
+	github.com/appleboy/gin-jwt/v2 v2.10.2 // indirect
+	github.com/bytedance/sonic v1.13.3 // indirect
+	github.com/bytedance/sonic/loader v0.2.4 // indirect
+	github.com/cloudwego/base64x v0.1.5 // indirect
+	github.com/containerd/errdefs v1.0.0 // indirect
+	github.com/containerd/errdefs/pkg v0.3.0 // indirect
+	github.com/creasty/defaults v1.8.0 // indirect
+	github.com/davecgh/go-spew v1.1.1 // indirect
+	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.0 // indirect
+	github.com/distribution/reference v0.6.0 // indirect
+	github.com/docker/docker v28.2.2+incompatible // indirect
+	github.com/docker/go-connections v0.5.0 // indirect
+	github.com/docker/go-units v0.5.0 // indirect
+	github.com/docker/spdystream v0.5.0 // indirect
+	github.com/fanatic/go-infoblox v0.0.0-20190709161059-e25f3820238c // indirect
+	github.com/felixge/httpsnoop v1.0.4 // indirect
+	github.com/gabriel-vasile/mimetype v1.4.9 // indirect
+	github.com/gammazero/deque v1.0.0 // indirect
+	github.com/ghodss/yaml v1.0.0 // indirect
+	github.com/gin-contrib/secure v1.1.2 // indirect
 	github.com/gin-contrib/sse v1.0.0 // indirect
 	github.com/go-asn1-ber/asn1-ber v1.5.8-0.20250403174932-29230038a667 // indirect
 	github.com/go-ini/ini v1.67.0 // indirect
@@ -139,37 +167,6 @@ require (
 	gopkg.in/tylerb/graceful.v1 v1.2.15 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
-)
-
-require (
-	cloud.google.com/go/compute/metadata v0.7.0 // indirect
-	code.cloudfoundry.org/bytefmt v0.41.0 // indirect
-	github.com/Azure/go-ntlmssp v0.0.0-20221128193559-754e69321358 // indirect
-	github.com/BurntSushi/toml v1.5.0 // indirect
-	github.com/Microsoft/go-winio v0.6.2 // indirect
-	github.com/VertebrateResequencing/muxfys/v4 v4.0.3 // indirect
-	github.com/VividCortex/ewma v1.2.0 // indirect
-	github.com/alexflint/go-filemutex v1.3.0 // indirect
-	github.com/appleboy/gin-jwt/v2 v2.10.2 // indirect
-	github.com/bytedance/sonic v1.13.3 // indirect
-	github.com/bytedance/sonic/loader v0.2.4 // indirect
-	github.com/cloudwego/base64x v0.1.5 // indirect
-	github.com/containerd/errdefs v1.0.0 // indirect
-	github.com/containerd/errdefs/pkg v0.3.0 // indirect
-	github.com/creasty/defaults v1.8.0 // indirect
-	github.com/davecgh/go-spew v1.1.1 // indirect
-	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.0 // indirect
-	github.com/distribution/reference v0.6.0 // indirect
-	github.com/docker/docker v28.2.2+incompatible // indirect
-	github.com/docker/go-connections v0.5.0 // indirect
-	github.com/docker/go-units v0.5.0 // indirect
-	github.com/docker/spdystream v0.5.0 // indirect
-	github.com/fanatic/go-infoblox v0.0.0-20190709161059-e25f3820238c // indirect
-	github.com/felixge/httpsnoop v1.0.4 // indirect
-	github.com/gabriel-vasile/mimetype v1.4.9 // indirect
-	github.com/gammazero/deque v1.0.0 // indirect
-	github.com/ghodss/yaml v1.0.0 // indirect
-	github.com/gin-contrib/secure v1.1.2 // indirect
 	k8s.io/api v0.33.1 // indirect
 	k8s.io/apimachinery v0.33.1 // indirect
 	k8s.io/client-go v11.0.0+incompatible // indirect
