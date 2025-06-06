@@ -1860,6 +1860,7 @@ func TestServer(t *testing.T) {
 								So(gotSet.NumFiles, ShouldEqual, len(set2Files))
 								So(gotSet.Uploaded, ShouldEqual, 0)
 								So(gotSet.Error, ShouldBeBlank)
+
 								entries, err = client.GetFiles(exampleSet2.ID())
 								So(err, ShouldBeNil)
 								So(entries[0].Status, ShouldEqual, set.UploadingEntry)
@@ -1879,6 +1880,7 @@ func TestServer(t *testing.T) {
 
 							tsCh := make(chan time.Time, 1)
 							errCh := make(chan error, 1)
+
 							go func() {
 								exampleSet4 := &set.Set{
 									Name:        "set4",
@@ -1893,10 +1895,11 @@ func TestServer(t *testing.T) {
 
 							ok := <-racCalled
 							So(ok, ShouldBeTrue)
-							tr := time.Now()
 
+							tr := time.Now()
 							err = <-errCh
 							So(err, ShouldBeNil)
+
 							ts := <-tsCh
 							So(ts, ShouldHappenBefore, tr)
 						})
