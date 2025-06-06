@@ -493,6 +493,24 @@ func (b *Baton) Put(local, remote string) error {
 	return err
 }
 
+func (b *Baton) Get(local, remote string) error {
+	err := b.setClientIfNotExists(&b.putClient)
+	if err != nil {
+		return err
+	}
+
+	_, err = b.putClient.Get(
+		ex.Args{
+			Force:  true,
+			Verify: true,
+			Save:   true,
+		},
+		*requestToRodsItem(local, remote),
+	)
+
+	return err
+}
+
 func getTempFile() (string, error) {
 	file, err := os.CreateTemp("", "ibackup-put-empty-*")
 	if err != nil {

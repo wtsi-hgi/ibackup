@@ -23,12 +23,14 @@
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  ******************************************************************************/
 
-package put
+package transfer
 
 import (
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -39,17 +41,20 @@ import (
 type RequestStatus string
 
 const (
-	RequestStatusPending    RequestStatus = "pending"
-	RequestStatusReserved   RequestStatus = "reserved"
-	RequestStatusUploading  RequestStatus = "uploading"
-	RequestStatusUploaded   RequestStatus = "uploaded"
-	RequestStatusReplaced   RequestStatus = "replaced"
-	RequestStatusUnmodified RequestStatus = "unmodified"
-	RequestStatusMissing    RequestStatus = "missing"
-	RequestStatusFailed     RequestStatus = "failed"
-	ErrNotHumgenLustre                    = "not a valid humgen lustre path"
-	stuckTimeFormat                       = "02/01/06 15:04 MST"
+	RequestStatusPending         RequestStatus = "pending"
+	RequestStatusReserved        RequestStatus = "reserved"
+	RequestStatusUploading       RequestStatus = "uploading"
+	RequestStatusUploaded        RequestStatus = "uploaded"
+	RequestStatusReplaced        RequestStatus = "replaced"
+	RequestStatusUnmodified      RequestStatus = "unmodified"
+	RequestStatusMissing         RequestStatus = "missing"
+	RequestStatusFailed          RequestStatus = "failed"
+	RequestStatusHardlinkSkipped RequestStatus = "hardlink"
+	ErrNotHumgenLustre                         = "not a valid humgen lustre path"
+	stuckTimeFormat                            = "02/01/06 15:04 MST"
 )
+
+const defaultDirPerms = 0750
 
 // Stuck is used to provide details of a potentially "stuck" upload Request.
 type Stuck struct {
@@ -291,6 +296,10 @@ func statAndAssociateStandardMetadata(request *Request, diskMeta map[string]stri
 	return &rInfo, nil
 }
 
+func (r *Request) GetRemoteMetadata(handler Handler) (*ObjectInfo, error) {
+	return statAndAssociateStandardMetadata(r, nil, handler)
+}
+
 // RemoveAndAddMetadata removes and adds metadata on our Remote based on the
 // disk and remote metadata discovered during
 // StatAndAssociateStandardMetadata().
@@ -313,6 +322,57 @@ func (r *Request) RemoveAndAddMetadata(handler Handler) error {
 	}
 
 	return removeAndAddMetadata(r.inodeRequest, handler)
+}
+
+// SetMeta will set the MTime and GID on a locally restored file.
+func (r *Request) SetMeta(_ Handler) error {
+	mtime, ok := r.Meta.remoteMeta[MetaKeyMtime]
+	if ok {
+		if err := setTimes(r.Local, mtime); err != nil {
+			return err
+		}
+	}
+
+	group, ok := r.Meta.remoteMeta[MetaKeyGroup]
+	if ok {
+		return setGroup(r.Local, group)
+	}
+
+	return nil
+}
+
+func setTimes(file, mtime string) error {
+	var t time.Time
+
+	if err := t.UnmarshalText([]byte(mtime)); err != nil {
+		return err
+	}
+
+	return os.Chtimes(file, t, t)
+}
+
+func setGroup(file, group string) error {
+	u, err := user.Current()
+	if err != nil {
+		return err
+	}
+
+	uid, err := strconv.ParseUint(u.Uid, 10, 64)
+	if err != nil {
+		return err
+	}
+
+	g, err := user.LookupGroup(group)
+	if err != nil {
+		g = &user.Group{Gid: u.Gid}
+	}
+
+	gid, err := strconv.ParseUint(g.Gid, 10, 64)
+	if err != nil {
+		return err
+	}
+
+	return os.Chown(file, int(uid), int(gid)) //nolint:gosec
 }
 
 func removeAndAddMetadata(r *Request, handler Handler) error {
@@ -356,6 +416,21 @@ func (r *Request) Put(handler Handler) error {
 	}
 
 	return handler.Put(r.emptyFileRequest.LocalDataPath(), r.emptyFileRequest.Remote)
+}
+
+// Get uses the given handler to download our Remote file to Local. This has
+// special handling for symlinks; it creates the symlink without consulting
+// the handler.
+func (r *Request) Get(handler Handler) error {
+	if err := os.MkdirAll(filepath.Dir(r.Local), defaultDirPerms); err != nil {
+		return err
+	}
+
+	if r.Symlink != "" {
+		return os.Symlink(r.Symlink, r.Local)
+	}
+
+	return handler.Get(r.Local, r.Remote)
 }
 
 // PathTransformer is a function that given a local path, returns the

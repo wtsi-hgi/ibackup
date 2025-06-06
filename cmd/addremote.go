@@ -32,7 +32,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/wtsi-hgi/ibackup/put"
+	"github.com/wtsi-hgi/ibackup/transfer"
 )
 
 // options for this cmd.
@@ -100,11 +100,11 @@ local "lustre" paths to the "canonical" iRODS path in the humgen zone.
 			dief("you must specify one of --prefix, --humgen or --gengen")
 		}
 
-		pt := put.HumgenTransformer
+		pt := transfer.HumgenTransformer
 		if arPrefix != "" {
 			pt = makePrefixTransformer(arPrefix)
 		} else if arGengen {
-			pt = put.GengenTransformer
+			pt = transfer.GengenTransformer
 		}
 
 		transformARFile(arFile, pt, fofnLineSplitter(arNull), arBase64)
@@ -129,23 +129,23 @@ func init() {
 		"output paths base64 encoded")
 }
 
-func makePrefixTransformer(def string) put.PathTransformer {
+func makePrefixTransformer(def string) transfer.PathTransformer {
 	parts := strings.Split(def, ":")
 	if len(parts) != arPrefixParts {
 		dief("'%s' wrong format, must be like '/local/prefix:/remote/prefix'", def)
 	}
 
-	return put.PrefixTransformer(parts[0], parts[1])
+	return transfer.PrefixTransformer(parts[0], parts[1])
 }
 
-func transformARFile(path string, pt put.PathTransformer, splitter bufio.SplitFunc, encode bool) {
+func transformARFile(path string, pt transfer.PathTransformer, splitter bufio.SplitFunc, encode bool) {
 	scanner, df := createScannerForFile(path, splitter)
 	defer df()
 
 	for scanner.Scan() {
 		local := scanner.Text()
 
-		r, err := put.NewRequestWithTransformedLocal(local, pt)
+		r, err := transfer.NewRequestWithTransformedLocal(local, pt)
 		if err != nil {
 			die(err)
 		}

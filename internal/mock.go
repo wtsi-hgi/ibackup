@@ -160,6 +160,18 @@ func (l *LocalHandler) Put(local, remote string) error {
 	return copyFile(local, remote)
 }
 
+func (l *LocalHandler) Get(local, remote string) error {
+	if l.putFail == remote {
+		return errs.PathError{Msg: ErrMockPutFail, Path: ""}
+	}
+
+	if l.putSlow == remote {
+		<-time.After(l.putDur)
+	}
+
+	return copyFile(remote, local)
+}
+
 // copyFile copies source to dest.
 func copyFile(source, dest string) error {
 	in, err := os.Open(source)

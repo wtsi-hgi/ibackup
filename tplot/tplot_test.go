@@ -56,6 +56,7 @@ func TestTPlot(t *testing.T) {
 
 				err = tp.Plot(data)
 				So(err, ShouldBeNil)
+
 				expected := `
 
 				Title
@@ -80,6 +81,7 @@ D ┤■■■■■■■■■■■■■■■■■■■■■■■■■
 		}
 
 		tp.youPlotExe = ""
+
 		Convey("Without YouPlot you can just print the data to the terminal", func() {
 			err = tp.Plot(data)
 			So(err, ShouldBeNil)

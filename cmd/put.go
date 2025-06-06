@@ -36,10 +36,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/inconshreveable/log15"
 	"github.com/spf13/cobra"
 	"github.com/wtsi-hgi/ibackup/baton"
-	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/server"
+	"github.com/wtsi-hgi/ibackup/transfer"
 )
 
 const (
@@ -145,9 +146,9 @@ you, so should this.`,
 		}
 
 		if serverMode() {
-			handleServerMode(time.Now())
+			handlePutServerMode(time.Now())
 		} else {
-			handleManualMode()
+			handlePutManualMode()
 		}
 	},
 }
@@ -176,52 +177,64 @@ func serverMode() bool {
 	return putServerMode && serverURL != ""
 }
 
-func handleServerMode(started time.Time) {
-	client, err := newServerClient(serverURL, serverCert)
-	if err != nil {
-		die(err)
+func handlePutServerMode(started time.Time) {
+	handleServerMode(started, (*server.Client).GetSomeUploadRequests, handlePut, (*server.Client).SendPutResultsToServer)
+}
+
+func handleServerMode( //nolint:gocognit,gocyclo,funlen
+	started time.Time,
+	getReq func(*server.Client) ([]*transfer.Request, error),
+	handleReq func(*server.Client, []*transfer.Request) (chan *transfer.Request, chan *transfer.Request,
+		chan *transfer.Request, func()),
+	sendReq func(*server.Client, chan *transfer.Request, chan *transfer.Request, chan *transfer.Request,
+		float64, time.Duration, time.Duration, log15.Logger) error,
+) {
+	for time.Since(started) < runFor {
+		client, err := newServerClient(serverURL, serverCert)
+		if err != nil {
+			die(err)
+		}
+
+		requests, err := getReq(client)
+		if err != nil {
+			warn("%s", err)
+
+			os.Exit(0)
+		}
+
+		err = client.MakingIRODSConnections(numIRODSConnections, heartbeatFreq)
+		if err != nil {
+			die(err)
+		}
+
+		uploadStarts, uploadResults, skipResults, dfunc := handleReq(client, requests)
+
+		err = sendReq(client, uploadStarts, uploadResults, skipResults,
+			minMBperSecondUploadSpeed, minTimeForUpload, maxStuckTime, appLogger)
+
+		dfunc()
+
+		errm := client.ClosedIRODSConnections()
+		if errm != nil {
+			warn("%s", errm)
+		}
+
+		if err != nil {
+			warn("%s", err)
+
+			os.Exit(0)
+		}
 	}
 
-	requests, err := client.GetSomeUploadRequests()
-	if err != nil {
-		warn("%s", err)
-
-		os.Exit(0)
-	}
-
-	err = client.MakingIRODSConnections(numIRODSConnections, heartbeatFreq)
-	if err != nil {
-		die(err)
-	}
-
-	uploadStarts, uploadResults, skipResults, dfunc := handlePut(client, requests)
-
-	err = client.SendPutResultsToServer(uploadStarts, uploadResults, skipResults,
-		minMBperSecondUploadSpeed, minTimeForUpload, maxStuckTime, appLogger)
-
-	dfunc()
-
-	errm := client.ClosedIRODSConnections()
-	if errm != nil {
-		warn("%s", errm)
-	}
-
-	if err != nil {
-		warn("%s", err)
-
-		os.Exit(0)
-	}
-
-	if time.Since(started) < runFor {
-		handleServerMode(started)
-	} else if putVerbose {
+	if putVerbose {
 		info("all done, exiting")
 	}
 }
 
-func handlePut(client *server.Client, requests []*put.Request) (chan *put.Request,
-	chan *put.Request, chan *put.Request, func(),
-) {
+func handleGetPut(
+	requests []*transfer.Request,
+	get func([]*transfer.Request) *transfer.Putter,
+) (chan *transfer.Request, chan *transfer.Request, chan *transfer.Request, func()) {
 	if putVerbose {
 		host, errh := os.Hostname()
 		if errh != nil {
@@ -241,34 +254,40 @@ func handlePut(client *server.Client, requests []*put.Request) (chan *put.Reques
 		info("got %d requests to work on", len(requests))
 	}
 
-	p, dfunc := getPutter(requests)
+	p := get(requests)
 
-	handleCollections(client, p)
+	transferStarts, transferResults, skipResults := p.Put()
 
-	uploadStarts, uploadResults, skipResults := p.Put()
-
-	return uploadStarts, uploadResults, skipResults, dfunc
+	return transferStarts, transferResults, skipResults, p.Cleanup
 }
 
-func getPutter(requests []*put.Request) (*put.Putter, func()) {
+func handlePut(client *server.Client, requests []*transfer.Request) (chan *transfer.Request,
+	chan *transfer.Request, chan *transfer.Request, func(),
+) {
+	return handleGetPut(requests, func(requests []*transfer.Request) *transfer.Putter {
+		p := getPutter(requests)
+
+		handleCollections(client, p)
+
+		return p
+	})
+}
+
+func getPutter(requests []*transfer.Request) *transfer.Putter {
 	handler, err := baton.GetBatonHandler()
 	if err != nil {
 		die(err)
 	}
 
-	p, err := put.New(handler, requests)
+	p, err := transfer.New(handler, requests)
 	if err != nil {
 		die(err)
 	}
 
-	dfunc := func() {
-		p.Cleanup()
-	}
-
-	return p, dfunc
+	return p
 }
 
-func handleCollections(client *server.Client, p *put.Putter) {
+func handleCollections(client *server.Client, p *transfer.Putter) {
 	if putVerbose {
 		info("will create collections")
 	}
@@ -291,7 +310,7 @@ func handleCollections(client *server.Client, p *put.Putter) {
 	}
 }
 
-func createCollection(p *put.Putter) {
+func createCollection(p *transfer.Putter) {
 	err := p.CreateCollections()
 	if err != nil {
 		warn("collection creation failed: %s", err)
@@ -300,7 +319,7 @@ func createCollection(p *put.Putter) {
 	}
 }
 
-func handleManualMode() {
+func handlePutManualMode() {
 	requests, err := getRequestsFromFile(putFile, putMeta, putBase64)
 	if err != nil {
 		die(err)
@@ -310,12 +329,12 @@ func handleManualMode() {
 
 	defer dfunc()
 
-	printResults(uploadResults, skipResults, len(requests), putVerbose)
+	printResults("up", uploadResults, skipResults, len(requests), putVerbose)
 }
 
 // getRequestsFromFile reads our 3 column file format from a file or STDIN and
 // turns the info in to put Requests.
-func getRequestsFromFile(file, meta string, base64Encoded bool) ([]*put.Request, error) {
+func getRequestsFromFile(file, meta string, base64Encoded bool) ([]*transfer.Request, error) {
 	user, err := user.Current()
 	if err != nil {
 		return nil, err
@@ -326,8 +345,8 @@ func getRequestsFromFile(file, meta string, base64Encoded bool) ([]*put.Request,
 	return requests, nil
 }
 
-func parsePutFile(path, meta, requester string, splitter bufio.SplitFunc, base64Encoded bool) []*put.Request {
-	defaultMeta, err := put.ParseMetaString(meta, nil)
+func parsePutFile(path, meta, requester string, splitter bufio.SplitFunc, base64Encoded bool) []*transfer.Request {
+	defaultMeta, err := transfer.ParseMetaString(meta, nil)
 	if err != nil {
 		dief("metadata error: %s", err)
 	}
@@ -336,7 +355,7 @@ func parsePutFile(path, meta, requester string, splitter bufio.SplitFunc, base64
 
 	defer df()
 
-	var prs []*put.Request //nolint:prealloc
+	var prs []*transfer.Request //nolint:prealloc
 
 	lineNum := 0
 	for scanner.Scan() {
@@ -424,8 +443,8 @@ func openFile(path string) (io.Reader, func()) {
 }
 
 func parsePutFileLine(line string, base64Encoded bool, lineNum int,
-	defaultMeta *put.Meta, requester string,
-) *put.Request {
+	defaultMeta *transfer.Meta, requester string,
+) *transfer.Request {
 	cols := strings.Split(line, "\t")
 	colsn := len(cols)
 
@@ -435,10 +454,10 @@ func parsePutFileLine(line string, base64Encoded bool, lineNum int,
 
 	checkPutFileCols(colsn, lineNum)
 
-	var meta *put.Meta
+	var meta *transfer.Meta
 
 	if colsn == putFileCols && cols[2] != "" {
-		parsedMeta, err := put.ParseMetaString(cols[2], nil)
+		parsedMeta, err := transfer.ParseMetaString(cols[2], nil)
 		if err != nil {
 			dief("metadata error: %s", err)
 		}
@@ -448,7 +467,7 @@ func parsePutFileLine(line string, base64Encoded bool, lineNum int,
 		meta = defaultMeta.Clone()
 	}
 
-	return &put.Request{
+	return &transfer.Request{
 		Local:     decodeBase64(cols[0], base64Encoded),
 		Remote:    decodeBase64(cols[1], base64Encoded),
 		Requester: requester,
@@ -490,7 +509,7 @@ type results struct {
 	mu       sync.Mutex
 }
 
-func (r *results) update(req *put.Request) {
+func (r *results) update(req *transfer.Request) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -499,15 +518,15 @@ func (r *results) update(req *put.Request) {
 	warnIfBad(req, r.i, r.total, r.verbose)
 
 	switch req.Status { //nolint:exhaustive
-	case put.RequestStatusFailed, put.RequestStatusUploading:
+	case transfer.RequestStatusFailed, transfer.RequestStatusUploading:
 		r.fails++
-	case put.RequestStatusMissing:
+	case transfer.RequestStatusMissing:
 		r.missing++
-	case put.RequestStatusReplaced:
+	case transfer.RequestStatusReplaced:
 		r.replaced++
-	case put.RequestStatusUnmodified:
+	case transfer.RequestStatusUnmodified, transfer.RequestStatusHardlinkSkipped:
 		r.skipped++
-	case put.RequestStatusUploaded:
+	case transfer.RequestStatusUploaded:
 		r.uploads++
 	}
 }
@@ -515,15 +534,15 @@ func (r *results) update(req *put.Request) {
 // printResults reads from the given channels, outputs info about them to STDOUT
 // and STDERR, then emits summary numbers. Supply the total number of requests
 // made. Exits 1 if there were upload errors.
-func printResults(uploadResults, skipResults chan *put.Request, total int, verbose bool) {
+func printResults(upDown string, transferResults, skipResults chan *transfer.Request, total int, verbose bool) {
 	r := &results{total: total, verbose: verbose}
 
 	var wg sync.WaitGroup
 
-	for _, ch := range []chan *put.Request{skipResults, uploadResults} {
+	for _, ch := range []chan *transfer.Request{skipResults, transferResults} {
 		wg.Add(1)
 
-		go func(ch chan *put.Request) {
+		go func(ch chan *transfer.Request) {
 			defer wg.Done()
 
 			for req := range ch {
@@ -534,8 +553,8 @@ func printResults(uploadResults, skipResults chan *put.Request, total int, verbo
 
 	wg.Wait()
 
-	info("%d uploaded (%d replaced); %d skipped; %d failed; %d missing",
-		r.uploads+r.replaced, r.replaced, r.skipped, r.fails, r.missing)
+	info("%d %sloaded (%d replaced); %d skipped; %d failed; %d missing",
+		r.uploads+r.replaced, upDown, r.replaced, r.skipped, r.fails, r.missing)
 
 	if r.fails > 0 {
 		os.Exit(1)
@@ -544,10 +563,12 @@ func printResults(uploadResults, skipResults chan *put.Request, total int, verbo
 
 // warnIfBad warns if this Request failed or is missing. If verbose, logs at
 // info level the Request details.
-func warnIfBad(r *put.Request, i, total int, verbose bool) {
+func warnIfBad(r *transfer.Request, i, total int, verbose bool) {
 	switch r.Status {
-	case put.RequestStatusFailed, put.RequestStatusMissing:
+	case transfer.RequestStatusFailed, transfer.RequestStatusMissing:
 		warn("[%d/%d] %s %s: %s", i, total, r.Local, r.Status, r.Error)
+	case transfer.RequestStatusHardlinkSkipped:
+		warn("[%d/%d] Hardlink skipped: %s\t%s", i, total, r.Local, r.Hardlink)
 	default:
 		if verbose {
 			info("[%d/%d] %s %s", i, total, r.Local, r.Status)

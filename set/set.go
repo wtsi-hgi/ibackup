@@ -33,8 +33,8 @@ import (
 
 	"github.com/dgryski/go-farm"
 	"github.com/dustin/go-humanize" //nolint:misspell
-	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/slack"
+	"github.com/wtsi-hgi/ibackup/transfer"
 )
 
 type Status int
@@ -317,13 +317,13 @@ func (s *Set) TransformPath(path string) (string, error) {
 
 // MakeTransformer turns our Transformer string in to a put.HumgenTransformer or
 // a put.PrefixTransformer as appropriate.
-func (s *Set) MakeTransformer() (put.PathTransformer, error) {
+func (s *Set) MakeTransformer() (transfer.PathTransformer, error) {
 	if s.Transformer == "humgen" {
-		return put.HumgenTransformer, nil
+		return transfer.HumgenTransformer, nil
 	}
 
 	if s.Transformer == "gengen" {
-		return put.GengenTransformer, nil
+		return transfer.GengenTransformer, nil
 	}
 
 	if !strings.HasPrefix(s.Transformer, prefixTransformerKey) {
@@ -337,7 +337,7 @@ func (s *Set) MakeTransformer() (put.PathTransformer, error) {
 		return nil, Error{ErrInvalidTransformer, ""}
 	}
 
-	return put.PrefixTransformer(parts[0], parts[1]), nil
+	return transfer.PrefixTransformer(parts[0], parts[1]), nil
 }
 
 // Incomplete returns true if our Status is not Complete, or if we
@@ -688,7 +688,7 @@ func (s *Set) UserMetadata() string {
 	var keyArr []string //nolint:prealloc
 
 	for k := range s.Metadata {
-		if !strings.HasPrefix(k, put.MetaUserNamespace) {
+		if !strings.HasPrefix(k, transfer.MetaUserNamespace) {
 			continue
 		}
 
@@ -700,7 +700,7 @@ func (s *Set) UserMetadata() string {
 	metaArr := make([]string, 0, len(keyArr))
 
 	for _, k := range keyArr {
-		metaArr = append(metaArr, fmt.Sprintf("%s=%s", k[len(put.MetaUserNamespace):], s.Metadata[k]))
+		metaArr = append(metaArr, fmt.Sprintf("%s=%s", k[len(transfer.MetaUserNamespace):], s.Metadata[k]))
 	}
 
 	return strings.Join(metaArr, ";")

@@ -36,9 +36,9 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/server"
 	"github.com/wtsi-hgi/ibackup/set"
+	"github.com/wtsi-hgi/ibackup/transfer"
 )
 
 const (
@@ -61,7 +61,7 @@ var (
 	setArchive         bool
 	setUser            string
 	setMetadata        string
-	setReason          put.Reason
+	setReason          transfer.Reason
 	setReview          string
 	setRemoval         string
 )
@@ -224,7 +224,7 @@ option to add sets on behalf of other users.
 			prevMeta = set.Metadata
 		}
 
-		meta, err := put.HandleMeta(setMetadata, setReason, setReview, setRemoval, prevMeta)
+		meta, err := transfer.HandleMeta(setMetadata, setReason, setReview, setRemoval, prevMeta)
 		if err != nil {
 			dief("metadata error: %s", err)
 		}
@@ -354,7 +354,7 @@ func fileDirIsInDirs(file string, dirSet map[string]bool) bool {
 
 // add does the main job of sending the backup set details to the server.
 func add(client *server.Client, name, requester, transformer, description string,
-	monitor time.Duration, monitorRemovals, archive bool, files, dirs []string, meta *put.Meta) error {
+	monitor time.Duration, monitorRemovals, archive bool, files, dirs []string, meta *transfer.Meta) error {
 	set := &set.Set{
 		Name:            name,
 		Requester:       requester,

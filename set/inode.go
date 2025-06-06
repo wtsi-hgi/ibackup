@@ -341,7 +341,7 @@ func impFileIsValid(file string, inode uint64) bool {
 		return false
 	}
 
-	ino := info.Sys().(*syscall.Stat_t).Ino //nolint:forcetypeassert
+	ino := info.Sys().(*syscall.Stat_t).Ino //nolint:forcetypeassert,errcheck
 
 	return ino == inode
 }

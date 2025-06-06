@@ -31,29 +31,29 @@ import (
 	"sync"
 	"time"
 
-	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/slack"
+	"github.com/wtsi-hgi/ibackup/transfer"
 )
 
 type uploadTracker struct {
 	sync.RWMutex
-	uploading     map[string]*put.Request
-	stuckRequests map[string]*put.Request
+	uploading     map[string]*transfer.Request
+	stuckRequests map[string]*transfer.Request
 
 	highestNumDebouncer *slack.HighestNumDebouncer
 }
 
 func newUploadTracker(slacker slack.Slacker, debounce time.Duration) *uploadTracker {
 	ut := &uploadTracker{
-		uploading:           make(map[string]*put.Request),
-		stuckRequests:       make(map[string]*put.Request),
+		uploading:           make(map[string]*transfer.Request),
+		stuckRequests:       make(map[string]*transfer.Request),
 		highestNumDebouncer: slack.NewHighestNumDebouncer(slacker, debounce, "clients uploading"),
 	}
 
 	return ut
 }
 
-func (ut *uploadTracker) uploadStarting(r *put.Request) {
+func (ut *uploadTracker) uploadStarting(r *transfer.Request) {
 	ut.Lock()
 	defer ut.Unlock()
 
@@ -70,7 +70,7 @@ func (ut *uploadTracker) uploadStarting(r *put.Request) {
 	ut.highestNumDebouncer.SendDebounceMsg(len(ut.uploading))
 }
 
-func (ut *uploadTracker) uploadFinished(r *put.Request) {
+func (ut *uploadTracker) uploadFinished(r *transfer.Request) {
 	ut.Lock()
 	defer ut.Unlock()
 
@@ -80,11 +80,11 @@ func (ut *uploadTracker) uploadFinished(r *put.Request) {
 	ut.highestNumDebouncer.SendDebounceMsg(len(ut.uploading))
 }
 
-func (ut *uploadTracker) currentlyUploading() []*put.Request {
+func (ut *uploadTracker) currentlyUploading() []*transfer.Request {
 	ut.RLock()
 	defer ut.RUnlock()
 
-	uploading := make([]*put.Request, len(ut.uploading))
+	uploading := make([]*transfer.Request, len(ut.uploading))
 	i := 0
 
 	for _, r := range ut.uploading {
@@ -95,7 +95,7 @@ func (ut *uploadTracker) currentlyUploading() []*put.Request {
 	return uploading
 }
 
-func (ut *uploadTracker) isUploading(r *put.Request) bool {
+func (ut *uploadTracker) isUploading(r *transfer.Request) bool {
 	ut.RLock()
 	defer ut.RUnlock()
 
@@ -111,10 +111,10 @@ func (ut *uploadTracker) numUploading() int {
 	return len(ut.uploading)
 }
 
-func (ut *uploadTracker) currentlyStuck() []*put.Request {
+func (ut *uploadTracker) currentlyStuck() []*transfer.Request {
 	ut.RLock()
 	defer ut.RUnlock()
-	stuck := make([]*put.Request, len(ut.stuckRequests))
+	stuck := make([]*transfer.Request, len(ut.stuckRequests))
 	i := 0
 
 	for _, r := range ut.stuckRequests {

@@ -2,8 +2,8 @@ package cmd
 
 import (
 	"crypto/md5" //nolint:gosec
+	"encoding/hex"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -12,8 +12,8 @@ import (
 	"github.com/dustin/go-humanize" //nolint:misspell
 	"github.com/spf13/cobra"
 	"github.com/wtsi-hgi/ibackup/baton"
-	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/set"
+	"github.com/wtsi-hgi/ibackup/transfer"
 	"github.com/wtsi-npg/extendo/v2"
 )
 
@@ -37,7 +37,7 @@ environmental variable.
 The --irods options will gather additional information about the file, such as
 the local and remote checksums.
 `,
-	Run: func(cmd *cobra.Command, args []string) {
+	Run: func(_ *cobra.Command, args []string) {
 		if len(args) < 1 {
 			dief("you must supply the file to be checked")
 		}
@@ -160,7 +160,7 @@ func (fsg *fileStatusGetter) printFileStatus(set *set.Set, f *set.Entry) error {
 		return err
 	}
 
-	lastAttemptTime, err := put.TimeToMeta(f.LastAttempt)
+	lastAttemptTime, err := transfer.TimeToMeta(f.LastAttempt)
 	if err != nil {
 		return err
 	}
@@ -217,11 +217,11 @@ func (fsg *fileStatusGetter) getIrodsTimesFromAVUs(avus []extendo.AVU) (string, 
 	var uploadDate, remoteMTime string
 
 	for _, avu := range avus {
-		if avu.Attr == put.MetaKeyDate {
+		if avu.Attr == transfer.MetaKeyDate {
 			uploadDate = avu.Value
 		}
 
-		if avu.Attr == put.MetaKeyMtime {
+		if avu.Attr == transfer.MetaKeyMtime {
 			remoteMTime = avu.Value
 		}
 	}
@@ -235,7 +235,7 @@ func getMTime(local string) (string, error) {
 		return "", err
 	}
 
-	return put.TimeToMeta(stat.ModTime())
+	return transfer.TimeToMeta(stat.ModTime())
 }
 
 func (fsg *fileStatusGetter) calcMD5Sum(path string) string {
@@ -255,7 +255,7 @@ func (fsg *fileStatusGetter) calcMD5Sum(path string) string {
 		if err != nil {
 			fsg.md5sum = err.Error()
 		} else {
-			fsg.md5sum = fmt.Sprintf("%x", m.Sum(nil))
+			fsg.md5sum = hex.EncodeToString(m.Sum(nil))
 		}
 	})
 

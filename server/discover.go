@@ -41,8 +41,8 @@ import (
 	"github.com/VertebrateResequencing/wr/queue"
 	"github.com/gin-gonic/gin"
 	"github.com/viant/ptrie"
-	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/set"
+	"github.com/wtsi-hgi/ibackup/transfer"
 	"github.com/wtsi-ssg/wrstat/v6/walk"
 )
 
@@ -197,7 +197,7 @@ func (s *Server) discoverSet(given *set.Set) error {
 // queues the set's files for uploading. Call this in a go-routine, but don't
 // call it multiple times at once for the same set! This will block removals on
 // the same set.
-func (s *Server) discoverThenEnqueue(given *set.Set, transformer put.PathTransformer) {
+func (s *Server) discoverThenEnqueue(given *set.Set, transformer transfer.PathTransformer) {
 	if given.MonitorRemovals {
 		if err := s.discoverSetRemovals(given); err != nil {
 			s.recordSetError("error discovering set (%s) removals: %s", given.ID(), err)
@@ -476,12 +476,12 @@ func (s *Server) handleMissingDirectories(dirStatErr error, entry *set.Entry, gi
 		return nil
 	}
 
-	r := &put.Request{
+	r := &transfer.Request{
 		Local:     entry.Path,
 		Requester: given.Requester,
 		Set:       given.Name,
 		Size:      0,
-		Status:    put.RequestStatusMissing,
+		Status:    transfer.RequestStatusMissing,
 		Error:     dirStatErr.Error(),
 	}
 
@@ -501,7 +501,7 @@ func (s *Server) handleMissingDirectories(dirStatErr error, entry *set.Entry, gi
 // put requests for them and adds them to the global put queue for uploading.
 // Skips entries that are missing or that have failed or uploaded since the
 // last discovery.
-func (s *Server) enqueueSetFiles(given *set.Set, transformer put.PathTransformer) error {
+func (s *Server) enqueueSetFiles(given *set.Set, transformer transfer.PathTransformer) error {
 	entries, err := s.db.GetFileEntries(given.ID())
 	if err != nil {
 		return err
@@ -528,7 +528,7 @@ func uploadableEntries(entries []*set.Entry, given *set.Set) []*set.Entry {
 
 // enqueueEntries converts the given entries to requests, stores those in items
 // and adds them the in-memory queue.
-func (s *Server) enqueueEntries(entries []*set.Entry, given *set.Set, transformer put.PathTransformer) error {
+func (s *Server) enqueueEntries(entries []*set.Entry, given *set.Set, transformer transfer.PathTransformer) error {
 	defs := make([]*queue.ItemDef, len(entries))
 
 	for i, entry := range entries {
@@ -559,10 +559,10 @@ func (s *Server) enqueueEntries(entries []*set.Entry, given *set.Set, transforme
 
 // entryToRequest converts an Entry to a Request containing details of the given
 // set.
-func (s *Server) entryToRequest(entry *set.Entry, transformer put.PathTransformer,
+func (s *Server) entryToRequest(entry *set.Entry, transformer transfer.PathTransformer,
 	given *set.Set,
-) (*put.Request, error) {
-	r, err := put.NewRequestWithTransformedLocal(entry.Path, transformer)
+) (*transfer.Request, error) {
+	r, err := transfer.NewRequestWithTransformedLocal(entry.Path, transformer)
 	if err != nil {
 		return nil, err
 	}
@@ -576,7 +576,7 @@ func (s *Server) entryToRequest(entry *set.Entry, transformer put.PathTransforme
 
 	if entry.Type == set.Symlink {
 		r.Symlink = entry.Dest
-		r.Meta.SetLocal(put.MetaKeySymlink, entry.Dest)
+		r.Meta.SetLocal(transfer.MetaKeySymlink, entry.Dest)
 	}
 
 	for k, v := range given.Metadata {
@@ -586,7 +586,7 @@ func (s *Server) entryToRequest(entry *set.Entry, transformer put.PathTransforme
 	if entry.Type == set.Hardlink && s.remoteHardlinkLocation != "" {
 		r.Hardlink = filepath.Join(s.remoteHardlinkLocation,
 			entry.InodeStoragePath())
-		r.Meta.SetLocal(put.MetaKeyHardlink, entry.Dest)
+		r.Meta.SetLocal(transfer.MetaKeyHardlink, entry.Dest)
 	}
 
 	return r, nil
@@ -599,9 +599,9 @@ func (s *Server) markFailedEntries(given *set.Set) {
 		User: given.Requester,
 		Set:  given.Name,
 	}, func(item *queue.Item) {
-		request := item.Data().(*put.Request) //nolint:errcheck,forcetypeassert
+		request := item.Data().(*transfer.Request) //nolint:errcheck,forcetypeassert
 
-		for i := 0; i < int(jobRetries); i++ {
+		for range jobRetries {
 			_, err := s.db.SetEntryStatus(request)
 			if err != nil {
 				s.Logger.Printf("failed to mark entry as failed for buried item for set %s for %s: %s\n",

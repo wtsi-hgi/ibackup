@@ -29,6 +29,7 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -38,6 +39,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -47,6 +49,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/wtsi-hgi/ibackup/baton"
 	"github.com/wtsi-hgi/ibackup/internal"
+	"github.com/wtsi-hgi/ibackup/transfer"
 	btime "github.com/wtsi-ssg/wr/backoff/time"
 	"github.com/wtsi-ssg/wr/retry"
 )
@@ -454,27 +457,6 @@ func (s *TestServer) interactiveAdd(setName, answer, transformer, argName, path 
 	So(err, ShouldBeNil)
 
 	return cmd.Wait()
-}
-
-func (s *TestServer) getDiscoveryLineFromStatus(setName string) string {
-	cmd := s.clientCmd([]string{"status", "--name", setName})
-
-	outB, err := cmd.CombinedOutput()
-	So(err, ShouldBeNil)
-
-	var discovery string
-
-	for _, line := range strings.Split(string(outB), "\n") {
-		if strings.HasPrefix(line, "Discovery:") {
-			discovery = line
-
-			break
-		}
-	}
-
-	So(discovery, ShouldNotBeBlank)
-
-	return discovery
 }
 
 var servers []*TestServer //nolint:gochecknoglobals
@@ -1369,6 +1351,7 @@ func TestBackup(t *testing.T) {
 			if err != nil {
 				return err
 			}
+
 			ri, err := os.Stat(gotPath)
 			if err != nil {
 				return err
@@ -1393,7 +1376,7 @@ func TestBackup(t *testing.T) {
 			_, err = io.Copy(s, f)
 			So(err, ShouldBeNil)
 
-			return fmt.Sprintf("%x", s.Sum(nil))
+			return hex.EncodeToString(s.Sum(nil))
 		}
 
 		bh := hashFile(s.backupFile)
@@ -1767,7 +1750,6 @@ Global put client status (/10): 6 iRODS connections`)
 			})
 		})
 
-		// TODO: re-enable once hardlinks metamod bug fixed
 		Convey("Putting a set with hardlinks uploads an empty file and special inode file", func() {
 			file := filepath.Join(path, "file")
 			link1 := filepath.Join(path, "hardlink1")
@@ -1935,8 +1917,35 @@ func TestManualMode(t *testing.T) {
 		internal.CreateTestFile(t, file1, fileContents1)
 		internal.CreateTestFile(t, file2, fileContents2)
 
-		files := file1 + "	" + remote1 + "\n"
-		files += file2 + "	" + remote2 + "\n"
+		u, err := user.Current()
+		So(err, ShouldBeNil)
+
+		uid, err := strconv.ParseUint(u.Uid, 10, 64)
+		So(err, ShouldBeNil)
+
+		gids, err := u.GroupIds()
+		So(err, ShouldBeNil)
+
+		gidA, err := strconv.ParseUint(gids[0], 10, 64)
+		So(err, ShouldBeNil)
+
+		var gidB uint64
+
+		if len(gids) == 1 {
+			gidB = gidA
+		} else {
+			gidB, err = strconv.ParseUint(gids[1], 10, 64)
+			So(err, ShouldBeNil)
+		}
+
+		So(os.Chown(file2, int(uid), int(gidB)), ShouldBeNil) //nolint:gosec
+
+		timeA := time.Unix(987654321, 0)
+
+		So(os.Chtimes(file1, timeA, timeA), ShouldBeNil)
+
+		files := file1 + "\t" + remote1 + "\n"
+		files += file2 + "\t" + remote2 + "\n"
 
 		cmd := exec.Command("./"+app, "put")
 		cmd.Stdin = strings.NewReader(files)
@@ -1954,9 +1963,83 @@ func TestManualMode(t *testing.T) {
 		getFileFromIRODS(remote1, got1)
 		getFileFromIRODS(remote2, got2)
 
-		confirmFileContents(got1, fileContents1)
-		confirmFileContents(got2, fileContents2)
+		confirmFileContents(t, got1, fileContents1)
+		confirmFileContents(t, got2, fileContents2)
+
+		Convey("and then you can get them again", func() {
+			restoreDir := t.TempDir()
+
+			file1 := filepath.Join(restoreDir, "file1")
+			file2 := filepath.Join(restoreDir, "file2")
+			file3 := filepath.Join(restoreDir, "file3")
+			file4 := filepath.Join(restoreDir, "file4")
+			file5 := filepath.Join(restoreDir, "anotherDir", "file5")
+
+			files := file1 + "\t" + remote1 + "\n"
+			files += file2 + "\t" + remote2 + "\n"
+
+			restoreFiles(t, files, "2 downloaded (0 replaced); 0 skipped; 0 failed; 0 missing\n")
+
+			confirmFileContents(t, file1, fileContents1)
+			confirmFileContents(t, file2, fileContents2)
+
+			s, err := os.Stat(file1)
+			So(err, ShouldBeNil)
+
+			So(int(s.Sys().(*syscall.Stat_t).Gid), ShouldEqual, gidA) //nolint:errcheck,forcetypeassert
+
+			So(s.ModTime(), ShouldEqual, timeA)
+
+			s, err = os.Stat(file2)
+			So(err, ShouldBeNil)
+
+			So(int(s.Sys().(*syscall.Stat_t).Gid), ShouldEqual, gidB) //nolint:errcheck,forcetypeassert
+
+			restoreFiles(t, file1+"\t"+remote1+"\n", "0 downloaded (0 replaced); 1 skipped; 0 failed; 0 missing\n")
+			restoreFiles(t, file1+"\t"+remote1+"\n", "0 downloaded (0 replaced); 1 skipped; 0 failed; 0 missing\n", "-o")
+
+			timeB := time.Unix(100, 0)
+
+			So(os.Chtimes(file1, timeB, timeB), ShouldBeNil)
+
+			restoreFiles(t, file1+"\t"+remote1+"\n", "1 downloaded (1 replaced); 0 skipped; 0 failed; 0 missing\n", "-o")
+
+			restoreFiles(t, file5+"\t"+remote1+"\n", "1 downloaded (0 replaced); 0 skipped; 0 failed; 0 missing\n", "-o")
+
+			confirmFileContents(t, file5, fileContents1)
+
+			So(exec.Command("imeta", "add", "-d", remote2, transfer.MetaKeySymlink, file1).Run(), ShouldBeNil)
+
+			restoreFiles(t, file3+"\t"+remote2+"\n", "1 downloaded (0 replaced); 0 skipped; 0 failed; 0 missing\n")
+
+			link, err := os.Readlink(file3)
+			So(err, ShouldBeNil)
+			So(link, ShouldEqual, file1)
+
+			So(exec.Command("imeta", "add", "-d", remote1, transfer.MetaKeyRemoteHardlink, remote2).Run(), ShouldBeNil)
+
+			restoreFiles(
+				t,
+				file4+"\t"+remote1+"\n",
+				fmt.Sprintf("[1/1] Hardlink skipped: %s\\t%s\n0 downloaded (0 replaced); 1 skipped; 0 failed; 0 missing\n",
+					file4, remote2),
+			)
+		})
 	})
+}
+
+func restoreFiles(t *testing.T, files, expectedOutput string, args ...string) {
+	t.Helper()
+
+	cmd := exec.Command("./"+app, append([]string{"get"}, args...)...) //nolint:gosec
+	cmd.Stdin = strings.NewReader(files)
+
+	output, err := cmd.CombinedOutput()
+	So(err, ShouldBeNil)
+	So(cmd.ProcessState.ExitCode(), ShouldEqual, 0)
+
+	out := normaliseOutput(string(output))
+	So(out, ShouldEqual, expectedOutput)
 }
 
 func TestReAdd(t *testing.T) {
@@ -1987,7 +2070,9 @@ func getFileFromIRODS(remotePath, localPath string) {
 	So(cmd.ProcessState.ExitCode(), ShouldEqual, 0)
 }
 
-func confirmFileContents(file, expectedContents string) {
+func confirmFileContents(t *testing.T, file, expectedContents string) {
+	t.Helper()
+
 	f, err := os.Open(file)
 	So(err, ShouldBeNil)
 

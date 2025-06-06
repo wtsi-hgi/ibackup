@@ -37,8 +37,8 @@ import (
 	"github.com/hashicorp/go-multierror"
 	"github.com/inconshreveable/log15"
 	gas "github.com/wtsi-hgi/go-authserver"
-	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/set"
+	"github.com/wtsi-hgi/ibackup/transfer"
 )
 
 const (
@@ -48,7 +48,7 @@ const (
 	numHandlers          = 2
 	millisecondsInSecond = 1000
 
-	ErrKilledDueToStuck = gas.Error(put.ErrStuckTimeout)
+	ErrKilledDueToStuck = gas.Error(transfer.ErrStuckTimeout)
 )
 
 // Client is used to interact with the Server over the network, with
@@ -314,8 +314,8 @@ func (c *Client) GetFailedFiles(setID string) ([]*set.Entry, int, error) {
 // working on them, stopping when you UpdateFileStatus().
 //
 // Only the user who started the server has permission to call this.
-func (c *Client) GetSomeUploadRequests() ([]*put.Request, error) {
-	var requests []*put.Request
+func (c *Client) GetSomeUploadRequests() ([]*transfer.Request, error) {
+	var requests []*transfer.Request
 
 	err := c.getThing(EndPointAuthRequests, &requests)
 
@@ -330,7 +330,7 @@ func (c *Client) GetSomeUploadRequests() ([]*put.Request, error) {
 
 // startTouching adds the given request's IDs to our touch map, and starts a
 // goroutine to regularly do the touching if not already started.
-func (c *Client) startTouching(requests []*put.Request) {
+func (c *Client) startTouching(requests []*transfer.Request) {
 	c.touchMu.Lock()
 	defer c.touchMu.Unlock()
 
@@ -421,7 +421,7 @@ func (c *Client) stillWorkingOnRequests(rids []string) error {
 // server; you should exit your process to stop the uploads.)
 //
 // Do not call this concurrently!
-func (c *Client) SendPutResultsToServer(uploadStarts, uploadResults, skipResults chan *put.Request,
+func (c *Client) SendPutResultsToServer(uploadStarts, uploadResults, skipResults chan *transfer.Request,
 	minMBperSecondUploadSpeed float64, minTimeForUpload, maxStuckTime time.Duration, logger log15.Logger) error {
 	c.minMBperSecondUploadSpeed = minMBperSecondUploadSpeed
 	c.minTimeForUpload = minTimeForUpload
@@ -451,7 +451,7 @@ func (c *Client) SendPutResultsToServer(uploadStarts, uploadResults, skipResults
 // handleUploadTracking starts timing uploads and sends stuck message to server
 // if they take too long (and errors if they take super long). When uploads
 // complete and are sent on the results chan, updates server again.
-func (c *Client) handleUploadTracking(wg *sync.WaitGroup, uploadStarts, uploadResults chan *put.Request) {
+func (c *Client) handleUploadTracking(wg *sync.WaitGroup, uploadStarts, uploadResults chan *transfer.Request) {
 	defer wg.Done()
 
 	for ru := range uploadStarts {
@@ -481,7 +481,7 @@ func (c *Client) handleUploadTracking(wg *sync.WaitGroup, uploadStarts, uploadRe
 // stuckIfUploadTakesTooLong will send stuck info to the server after some time
 // based on the size of the request, unless the returned channel is closed to
 // indicate the upload completed.
-func (c *Client) stuckIfUploadTakesTooLong(request *put.Request) chan bool {
+func (c *Client) stuckIfUploadTakesTooLong(request *transfer.Request) chan bool {
 	started := time.Now()
 	stuckTimer := time.NewTimer(c.maxTimeForUpload(request))
 
@@ -494,7 +494,7 @@ func (c *Client) stuckIfUploadTakesTooLong(request *put.Request) chan bool {
 		case <-doneCh:
 			return
 		case <-stuckTimer.C:
-			request.Stuck = put.NewStuck(started)
+			request.Stuck = transfer.NewStuck(started)
 			c.logger.Warn("upload stuck?", "path", request.Local)
 
 			if err := c.UpdateFileStatus(request); err != nil {
@@ -511,7 +511,7 @@ func (c *Client) stuckIfUploadTakesTooLong(request *put.Request) chan bool {
 // maxTimeForUpload assumes uploads happen in at least our
 // minMBperSecondUploadSpeed, and returns a duration based on that and the
 // request Size. The minimum duration returned is 1 second.
-func (c *Client) maxTimeForUpload(r *put.Request) time.Duration {
+func (c *Client) maxTimeForUpload(r *transfer.Request) time.Duration {
 	mb := bytesToMB(r.Size)
 	seconds := mb / c.minMBperSecondUploadSpeed
 	d := time.Duration(seconds*millisecondsInSecond) * time.Millisecond
@@ -531,14 +531,14 @@ func bytesToMB(bytes uint64) float64 {
 // killStuckIfTakesTooLong logs that a stuck upload has breached the
 // maxStuckTime, sets the requests status to failed in the db, and signals that
 // we should stop sending put results to the server.
-func (c *Client) killStuckIfTakesTooLong(request *put.Request, doneCh chan bool) {
+func (c *Client) killStuckIfTakesTooLong(request *transfer.Request, doneCh chan bool) {
 	timeout := time.NewTimer(c.maxStuckTime)
 
 	select {
 	case <-timeout.C:
 		c.logger.Warn("upload stuck for a long time, giving up", "path", request.Local)
-		request.Status = put.RequestStatusFailed
-		request.Error = put.ErrStuckTimeout
+		request.Status = transfer.RequestStatusFailed
+		request.Error = transfer.ErrStuckTimeout
 
 		if err := c.UpdateFileStatus(request); err != nil {
 			c.uploadsErrCh <- err
@@ -552,7 +552,7 @@ func (c *Client) killStuckIfTakesTooLong(request *put.Request, doneCh chan bool)
 
 // handleSendingSkipResults updates file status for each completed request that
 // didn't need to start uploading first.
-func (c *Client) handleSendingSkipResults(wg *sync.WaitGroup, results chan *put.Request) {
+func (c *Client) handleSendingSkipResults(wg *sync.WaitGroup, results chan *transfer.Request) {
 	defer wg.Done()
 
 	for r := range results {
@@ -588,8 +588,8 @@ func (c *Client) combineUploadErrors() *multierror.Error {
 // GetSomeUploadRequests().
 //
 // Only the user who started the server has permission to call this.
-func (c *Client) UpdateFileStatus(r *put.Request) error {
-	if r.Status != put.RequestStatusUploading {
+func (c *Client) UpdateFileStatus(r *transfer.Request) error {
+	if r.Status != transfer.RequestStatusUploading {
 		c.touchMu.Lock()
 		delete(c.toTouch, r.ID())
 		c.touchMu.Unlock()

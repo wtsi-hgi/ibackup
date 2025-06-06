@@ -28,8 +28,8 @@ package cmd
 
 import (
 	"github.com/spf13/cobra"
-	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/server"
+	"github.com/wtsi-hgi/ibackup/transfer"
 )
 
 // options for this cmd.
@@ -149,7 +149,7 @@ func init() {
 
 // displayRequests prints out details of each request. If there are none, warns
 // that there aren't the given kind of request.
-func displayRequests(rs []*put.Request, kind string) {
+func displayRequests(rs []*transfer.Request, kind string) {
 	if len(rs) == 0 {
 		warn("no %s requests", kind)
 
