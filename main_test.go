@@ -1964,26 +1964,13 @@ func TestReAdd(t *testing.T) {
 
 		name := "aSet"
 
-		Convey("Re-adding a set asks for confirmation", func() {
+		Convey("Re-adding a set with the same name fails", func() {
 			s.addSetForTesting(t, name, transformer, localDir)
 
 			<-time.After(time.Second)
 
-			firstDiscovery := s.getDiscoveryLineFromStatus(name)
-
-			err := s.interactiveAdd(name, "n", transformer, "path", localDir)
-			So(err, ShouldNotBeNil)
-
-			secondDiscovery := s.getDiscoveryLineFromStatus(name)
-			So(secondDiscovery, ShouldEqual, firstDiscovery)
-
-			err = s.interactiveAdd(name, "y", transformer, "path", localDir)
-			So(err, ShouldBeNil)
-
-			s.waitForStatus(name, "\nDiscovery: completed", 5*time.Second)
-
-			thirdDiscovery := s.getDiscoveryLineFromStatus(name)
-			So(thirdDiscovery, ShouldNotEqual, firstDiscovery)
+			s.confirmOutputContains(t, []string{"add", "--name", name, "--transformer", transformer, "--path", localDir}, 1,
+				"set with this name already exists")
 		})
 	})
 }

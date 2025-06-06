@@ -29,7 +29,6 @@ package cmd
 import (
 	"bufio"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -68,6 +67,10 @@ var (
 )
 
 var ErrCancel = errors.New("cancelled add")
+var ErrDuplicateSet = errors.New(
+	"set with this name already exists, please choose a different name " +
+		"or use ibackup edit to update it",
+)
 
 // addCmd represents the add command.
 var addCmd = &cobra.Command{
@@ -386,34 +389,7 @@ func checkExistingSet(client *server.Client, name, requester string) (*set.Set, 
 		return nil, err
 	}
 
-	resp, err := askYesNo(fmt.Sprintf("Set with name %s already exists, are you sure you wish to overwrite (y/N)? ", name))
-	if err != nil {
-		return nil, err
-	}
-
-	if !resp {
-		return nil, ErrCancel
-	}
-
-	return set, nil
-}
-
-func askYesNo(prompt string) (bool, error) {
-	b := bufio.NewReader(os.Stdin)
-
-	cliPrint(prompt)
-
-	input, _, err := b.ReadLine()
-	if err != nil {
-		return false, err
-	}
-
-	switch string(input) {
-	case "y", "Y":
-		return true, nil
-	default:
-		return false, nil
-	}
+	return set, ErrDuplicateSet
 }
 
 func parseDuration(s string) (time.Duration, error) {
