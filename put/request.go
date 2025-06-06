@@ -322,6 +322,7 @@ func (r *Request) RemoveAndAddMetadata(handler Handler) error {
 	return removeAndAddMetadata(r.inodeRequest, handler)
 }
 
+// SetMeta will set the MTime and GID on a locally restored file.
 func (r *Request) SetMeta(_ Handler) error {
 	mtime, ok := r.Meta.remoteMeta[MetaKeyMtime]
 	if ok {
@@ -415,6 +416,9 @@ func (r *Request) Put(handler Handler) error {
 	return handler.Put(r.emptyFileRequest.LocalDataPath(), r.emptyFileRequest.Remote)
 }
 
+// Get uses the given handler to download our Remote file to Local. This has
+// special handling for symlinks; it creates the symlink without consulting
+// the handler.
 func (r *Request) Get(handler Handler) error {
 	if r.Symlink != "" {
 		return os.Symlink(r.Symlink, r.Local)

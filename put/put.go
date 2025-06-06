@@ -161,6 +161,10 @@ func New(handler Handler, requests []*Request) (*Putter, error) {
 	}, nil
 }
 
+// NewGetter returns a *Putter that will use the given Handler to Put() all the
+// requests from iRODS to the local hisk. You should defer Cleanup() on the
+// return value. All the incoming requests will have their paths validated (they
+// must be absolute).
 func NewGetter(handler Handler, requests []*Request, overwrite bool) (*Putter, error) {
 	rs, dups, err := dedupAndPrepareRequests(requests)
 	if err != nil {
