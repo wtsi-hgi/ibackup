@@ -48,10 +48,10 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/ibackup/internal"
-	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/remove"
 	"github.com/wtsi-hgi/ibackup/set"
 	"github.com/wtsi-hgi/ibackup/slack"
+	"github.com/wtsi-hgi/ibackup/transfer"
 	btime "github.com/wtsi-ssg/wr/backoff/time"
 	"github.com/wtsi-ssg/wr/retry"
 )
@@ -74,16 +74,16 @@ func TestClient(t *testing.T) {
 			minTimeForUpload:          min,
 		}
 
-		d := c.maxTimeForUpload(&put.Request{Size: 10 * bytesInMiB})
+		d := c.maxTimeForUpload(&transfer.Request{Size: 10 * bytesInMiB})
 		So(d, ShouldEqual, 1*time.Second)
 
-		d = c.maxTimeForUpload(&put.Request{Size: 1000 * bytesInMiB})
+		d = c.maxTimeForUpload(&transfer.Request{Size: 1000 * bytesInMiB})
 		So(d, ShouldEqual, 100*time.Second)
 
-		d = c.maxTimeForUpload(&put.Request{Size: 1 * bytesInMiB})
+		d = c.maxTimeForUpload(&transfer.Request{Size: 1 * bytesInMiB})
 		So(d, ShouldEqual, 100*time.Millisecond)
 
-		d = c.maxTimeForUpload(&put.Request{Size: 1})
+		d = c.maxTimeForUpload(&transfer.Request{Size: 1})
 		So(d, ShouldEqual, min)
 	})
 }
@@ -272,15 +272,15 @@ func TestServer(t *testing.T) {
 
 			adminClient := NewClient(addr, certPath, token)
 
-			var racRequests []*put.Request
+			var racRequests []*transfer.Request
 			racCalls := 0
 			racCalled := make(chan bool, 1)
 
 			s.queue.SetReadyAddedCallback(func(queuename string, allitemdata []interface{}) {
-				racRequests = make([]*put.Request, len(allitemdata))
+				racRequests = make([]*transfer.Request, len(allitemdata))
 
 				for i, item := range allitemdata {
-					r, ok := item.(*put.Request)
+					r, ok := item.(*transfer.Request)
 
 					if !ok {
 						racCalled <- false
@@ -508,8 +508,8 @@ func TestServer(t *testing.T) {
 						internal.CreateTestFile(t, file2remote, "file content")
 
 						hardlinkMeta := map[string]string{
-							put.MetaKeySets:      exampleSet.Name,
-							put.MetaKeyRequester: exampleSet.Requester,
+							transfer.MetaKeySets:      exampleSet.Name,
+							transfer.MetaKeyRequester: exampleSet.Requester,
 						}
 
 						err = handler.AddMeta(file1remote, hardlinkMeta)
@@ -537,7 +537,7 @@ func TestServer(t *testing.T) {
 						})
 
 						Convey("Removal of failed files removes entries from Failed bucket", func() {
-							changeSetFilesStatus(1, exampleSet.Name, adminClient, put.RequestStatusFailed)
+							changeSetFilesStatus(1, exampleSet.Name, adminClient, transfer.RequestStatusFailed)
 
 							failedEntries, _, errg := s.db.GetFailedEntries(exampleSet.ID())
 							So(errg, ShouldBeNil)
@@ -813,12 +813,12 @@ func TestServer(t *testing.T) {
 						ok := <-racCalled
 						So(ok, ShouldBeTrue)
 						So(len(racRequests), ShouldEqual, numFiles+len(discovers))
-						So(racRequests[0], ShouldResemble, &put.Request{
+						So(racRequests[0], ShouldResemble, &transfer.Request{
 							Local:     files[0],
 							Remote:    filepath.Join(remoteDir, "a"),
 							Requester: exampleSet.Requester,
 							Set:       exampleSet.Name,
-							Meta:      put.NewMeta(),
+							Meta:      transfer.NewMeta(),
 						})
 
 						entries, errg := client.GetFiles(exampleSet.ID())
@@ -944,7 +944,7 @@ func TestServer(t *testing.T) {
 							So(len(requests), ShouldEqual, expectedRequests)
 							So(requests[0].Local, ShouldEqual, entries[0].Path)
 
-							requests[0].Status = put.RequestStatusUploading
+							requests[0].Status = transfer.RequestStatusUploading
 							err = client.UpdateFileStatus(requests[0])
 							So(err, ShouldBeNil)
 
@@ -958,8 +958,8 @@ func TestServer(t *testing.T) {
 							So(gotSet.Uploaded, ShouldEqual, 0)
 							So(gotSet.NumFiles, ShouldEqual, 6)
 
-							requests[0].Status = put.RequestStatusUploading
-							requests[0].Stuck = put.NewStuck(time.Now())
+							requests[0].Status = transfer.RequestStatusUploading
+							requests[0].Stuck = transfer.NewStuck(time.Now())
 							err = client.UpdateFileStatus(requests[0])
 							So(err, ShouldBeNil)
 
@@ -976,7 +976,7 @@ func TestServer(t *testing.T) {
 							So(gotSet.Failed, ShouldEqual, 0)
 							So(gotSet.Error, ShouldBeBlank)
 
-							requests[0].Status = put.RequestStatusUploaded
+							requests[0].Status = transfer.RequestStatusUploaded
 							err = client.UpdateFileStatus(requests[0])
 							So(err, ShouldBeNil)
 
@@ -995,11 +995,11 @@ func TestServer(t *testing.T) {
 							stats := s.queue.Stats()
 							So(stats.Items, ShouldEqual, expectedRequests-1)
 
-							requests[1].Status = put.RequestStatusUploading
+							requests[1].Status = transfer.RequestStatusUploading
 							err = client.UpdateFileStatus(requests[1])
 							So(err, ShouldBeNil)
 
-							requests[1].Status = put.RequestStatusFailed
+							requests[1].Status = transfer.RequestStatusFailed
 							err = client.UpdateFileStatus(requests[1])
 							So(err, ShouldBeNil)
 
@@ -1026,11 +1026,11 @@ func TestServer(t *testing.T) {
 							So(errg, ShouldBeNil)
 							So(len(frequests), ShouldEqual, 1)
 
-							frequests[0].Status = put.RequestStatusUploading
+							frequests[0].Status = transfer.RequestStatusUploading
 							err = client.UpdateFileStatus(frequests[0])
 							So(err, ShouldBeNil)
 
-							frequests[0].Status = put.RequestStatusFailed
+							frequests[0].Status = transfer.RequestStatusFailed
 							err = client.UpdateFileStatus(frequests[0])
 							So(err, ShouldBeNil)
 
@@ -1049,11 +1049,11 @@ func TestServer(t *testing.T) {
 							So(err, ShouldBeNil)
 							So(len(frequests), ShouldEqual, 1)
 
-							frequests[0].Status = put.RequestStatusUploading
+							frequests[0].Status = transfer.RequestStatusUploading
 							err = client.UpdateFileStatus(frequests[0])
 							So(err, ShouldBeNil)
 
-							frequests[0].Status = put.RequestStatusFailed
+							frequests[0].Status = transfer.RequestStatusFailed
 							err = client.UpdateFileStatus(frequests[0])
 							So(err, ShouldBeNil)
 
@@ -1094,7 +1094,7 @@ func TestServer(t *testing.T) {
 
 							slackWriter.Reset()
 
-							requests[0].Status = put.RequestStatusUploading
+							requests[0].Status = transfer.RequestStatusUploading
 							err = client.UpdateFileStatus(requests[0])
 							So(err, ShouldBeNil)
 
@@ -1102,49 +1102,49 @@ func TestServer(t *testing.T) {
 								slack.BoxPrefixInfo+"1 clients uploading")
 							slackWriter.Reset()
 
-							requests[1].Status = put.RequestStatusUploading
+							requests[1].Status = transfer.RequestStatusUploading
 							err = client.UpdateFileStatus(requests[1])
 							So(err, ShouldBeNil)
 
 							So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"2 clients uploading")
 							slackWriter.Reset()
 
-							requests[1].Status = put.RequestStatusUploading
-							requests[1].Stuck = &put.Stuck{Host: "host"}
+							requests[1].Status = transfer.RequestStatusUploading
+							requests[1].Stuck = &transfer.Stuck{Host: "host"}
 							err = client.UpdateFileStatus(requests[1])
 							So(err, ShouldBeNil)
 
 							So(slackWriter.String(), ShouldBeBlank)
 							So(s.uploadTracker.numStuck(), ShouldEqual, 1)
 
-							requests[2].Status = put.RequestStatusUploading
+							requests[2].Status = transfer.RequestStatusUploading
 							err = client.UpdateFileStatus(requests[2])
 							So(err, ShouldBeNil)
 
 							So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"3 clients uploading")
 							slackWriter.Reset()
 
-							requests[1].Status = put.RequestStatusUploaded
+							requests[1].Status = transfer.RequestStatusUploaded
 							err = client.UpdateFileStatus(requests[1])
 							So(err, ShouldBeNil)
 
 							So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"2 clients uploading")
 							slackWriter.Reset()
 
-							requests[0].Status = put.RequestStatusFailed
+							requests[0].Status = transfer.RequestStatusFailed
 							err = client.UpdateFileStatus(requests[0])
 							So(err, ShouldBeNil)
 
 							So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"1 clients uploading")
 							slackWriter.Reset()
 
-							requests[0].Status = put.RequestStatusFailed
+							requests[0].Status = transfer.RequestStatusFailed
 							err = client.UpdateFileStatus(requests[0])
 							So(err.Error(), ShouldContainSubstring, "not running")
 
 							So(slackWriter.String(), ShouldBeBlank)
 
-							requests[2].Status = put.RequestStatusUploaded
+							requests[2].Status = transfer.RequestStatusUploaded
 							err = client.UpdateFileStatus(requests[2])
 							So(err, ShouldBeNil)
 
@@ -1171,22 +1171,22 @@ func TestServer(t *testing.T) {
 							requests, errg := client.GetSomeUploadRequests()
 							So(errg, ShouldBeNil)
 
-							requests[3].Status = put.RequestStatusUploading
+							requests[3].Status = transfer.RequestStatusUploading
 							err = client.UpdateFileStatus(requests[3])
 							So(err, ShouldBeNil)
 
 							So(slackWriter.String(), ShouldContainSubstring, slack.BoxPrefixInfo+"1 clients uploading")
 							slackWriter.Reset()
 
-							requests[3].Status = put.RequestStatusFailed
+							requests[3].Status = transfer.RequestStatusFailed
 							err = client.UpdateFileStatus(requests[3])
 							So(err, ShouldBeNil)
 
-							requests[9].Status = put.RequestStatusUploading
+							requests[9].Status = transfer.RequestStatusUploading
 							err = client.UpdateFileStatus(requests[9])
 							So(err, ShouldBeNil)
 
-							requests[9].Status = put.RequestStatusUploaded
+							requests[9].Status = transfer.RequestStatusUploaded
 							err = client.UpdateFileStatus(requests[9])
 							So(err, ShouldBeNil)
 
@@ -1198,13 +1198,13 @@ func TestServer(t *testing.T) {
 							So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"0 clients uploading")
 							slackWriter.Reset()
 
-							requests[12].Status = put.RequestStatusUploading
+							requests[12].Status = transfer.RequestStatusUploading
 							err = client.UpdateFileStatus(requests[12])
 							So(err, ShouldBeNil)
 
 							So(slackWriter.String(), ShouldBeBlank)
 
-							requests[12].Status = put.RequestStatusFailed
+							requests[12].Status = transfer.RequestStatusFailed
 							err = client.UpdateFileStatus(requests[12])
 							So(err, ShouldBeNil)
 
@@ -1255,11 +1255,11 @@ func TestServer(t *testing.T) {
 										continue
 									}
 
-									request.Status = put.RequestStatusUploading
+									request.Status = transfer.RequestStatusUploading
 									err = adminClient.UpdateFileStatus(request)
 									So(err, ShouldBeNil)
 
-									request.Status = put.RequestStatusUploaded
+									request.Status = transfer.RequestStatusUploaded
 									err = adminClient.UpdateFileStatus(request)
 									So(err, ShouldBeNil)
 								}
@@ -1457,7 +1457,7 @@ func TestServer(t *testing.T) {
 							requests, errg := client.GetSomeUploadRequests()
 							So(errg, ShouldBeNil)
 
-							requests[0].Status = put.RequestStatusUploading
+							requests[0].Status = transfer.RequestStatusUploading
 
 							err = client.UpdateFileStatus(requests[0])
 							So(err, ShouldBeNil)
@@ -1469,7 +1469,7 @@ func TestServer(t *testing.T) {
 
 							So(s.uploadTracker.numStuck(), ShouldEqual, 0)
 
-							requests[0].Stuck = put.NewStuck(time.Now())
+							requests[0].Stuck = transfer.NewStuck(time.Now())
 							err = client.UpdateFileStatus(requests[0])
 							So(err, ShouldBeNil)
 
@@ -1487,7 +1487,7 @@ func TestServer(t *testing.T) {
 							So(qs.Reserved, ShouldEqual, expectedRequests)
 							So(qs.Uploading, ShouldEqual, 1)
 
-							requests[0].Status = put.RequestStatusUploaded
+							requests[0].Status = transfer.RequestStatusUploaded
 
 							err = client.UpdateFileStatus(requests[0])
 							So(err, ShouldBeNil)
@@ -1509,7 +1509,7 @@ func TestServer(t *testing.T) {
 							buried := s.BuriedRequests()
 							So(buried, ShouldBeNil)
 
-							var failedRequest *put.Request
+							var failedRequest *transfer.Request
 
 							failARequest := func() {
 								for i := 0; i < set.AttemptsToBeConsideredFailing; i++ {
@@ -1519,11 +1519,11 @@ func TestServer(t *testing.T) {
 
 									failedRequest = requests[0].Clone()
 
-									failedRequest.Status = put.RequestStatusUploading
+									failedRequest.Status = transfer.RequestStatusUploading
 									err = client.UpdateFileStatus(failedRequest)
 									So(err, ShouldBeNil)
 
-									failedRequest.Status = put.RequestStatusFailed
+									failedRequest.Status = transfer.RequestStatusFailed
 									failedRequest.Error = "an error"
 									err = client.UpdateFileStatus(failedRequest)
 									So(err, ShouldBeNil)
@@ -1653,7 +1653,7 @@ func TestServer(t *testing.T) {
 
 							uploadRequest := requests[0].Clone()
 
-							uploadRequest.Status = put.RequestStatusUploading
+							uploadRequest.Status = transfer.RequestStatusUploading
 							err = client.UpdateFileStatus(uploadRequest)
 							So(err, ShouldBeNil)
 
@@ -1662,7 +1662,7 @@ func TestServer(t *testing.T) {
 							So(len(uploading), ShouldEqual, 1)
 							So(uploading[0].ID(), ShouldEqual, uploadRequest.ID())
 
-							uploadRequest.Status = put.RequestStatusUploaded
+							uploadRequest.Status = transfer.RequestStatusUploaded
 							err = client.UpdateFileStatus(uploadRequest)
 							So(err, ShouldBeNil)
 
@@ -1682,7 +1682,7 @@ func TestServer(t *testing.T) {
 							So(len(all), ShouldBeGreaterThan, 0)
 
 							for _, r := range all {
-								So(r.Status, ShouldEqual, put.RequestStatusPending)
+								So(r.Status, ShouldEqual, transfer.RequestStatusPending)
 							}
 
 							requests, errg := client.GetSomeUploadRequests()
@@ -1691,7 +1691,7 @@ func TestServer(t *testing.T) {
 
 							uploadRequest := requests[0].Clone()
 
-							uploadRequest.Status = put.RequestStatusUploading
+							uploadRequest.Status = transfer.RequestStatusUploading
 							err = client.UpdateFileStatus(uploadRequest)
 							So(err, ShouldBeNil)
 
@@ -1703,11 +1703,11 @@ func TestServer(t *testing.T) {
 
 							for _, r := range all2 {
 								switch r.Status {
-								case put.RequestStatusUploading:
+								case transfer.RequestStatusUploading:
 									uploading++
-								case put.RequestStatusPending:
+								case transfer.RequestStatusPending:
 									pending++
-								case put.RequestStatusReserved:
+								case transfer.RequestStatusReserved:
 									reserved++
 								default:
 									other++
@@ -1727,9 +1727,9 @@ func TestServer(t *testing.T) {
 							client = NewClient(addr, certPath, token)
 
 							Convey("Client can automatically update server given Putter-style output using SendPutResultsToServer", func() {
-								uploadStartsCh := make(chan *put.Request)
-								uploadResultsCh := make(chan *put.Request)
-								skippedResultsCh := make(chan *put.Request)
+								uploadStartsCh := make(chan *transfer.Request)
+								uploadResultsCh := make(chan *transfer.Request)
+								skippedResultsCh := make(chan *transfer.Request)
 								errCh := make(chan error)
 								logger := log15.New()
 
@@ -1751,15 +1751,15 @@ func TestServer(t *testing.T) {
 								So(gotSet.Uploaded, ShouldEqual, 0)
 								So(gotSet.Symlinks, ShouldEqual, 1)
 
-								updateRequestStatus := func(origReq *put.Request,
-									firstStatus, secondStatus put.RequestStatus,
-									size uint64, startCh, endCh chan *put.Request) {
+								updateRequestStatus := func(origReq *transfer.Request,
+									firstStatus, secondStatus transfer.RequestStatus,
+									size uint64, startCh, endCh chan *transfer.Request) {
 									r := origReq.Clone()
 									r.Status = firstStatus
 									r.Size = size
 									startCh <- r
 
-									if firstStatus != put.RequestStatusUploading {
+									if firstStatus != transfer.RequestStatusUploading {
 										return
 									}
 
@@ -1770,8 +1770,8 @@ func TestServer(t *testing.T) {
 
 								updateRequestStatus(
 									requests[0],
-									put.RequestStatusUploading,
-									put.RequestStatusUploaded,
+									transfer.RequestStatusUploading,
+									transfer.RequestStatusUploaded,
 									1,
 									uploadStartsCh,
 									uploadResultsCh,
@@ -1779,7 +1779,7 @@ func TestServer(t *testing.T) {
 
 								updateRequestStatus(
 									requests[1],
-									put.RequestStatusUnmodified,
+									transfer.RequestStatusUnmodified,
 									"",
 									2,
 									skippedResultsCh,
@@ -1788,8 +1788,8 @@ func TestServer(t *testing.T) {
 
 								updateRequestStatus(
 									requests[2],
-									put.RequestStatusUploading,
-									put.RequestStatusReplaced,
+									transfer.RequestStatusUploading,
+									transfer.RequestStatusReplaced,
 									3,
 									uploadStartsCh,
 									uploadResultsCh,
@@ -1797,8 +1797,8 @@ func TestServer(t *testing.T) {
 
 								updateRequestStatus(
 									requests[3],
-									put.RequestStatusUploading,
-									put.RequestStatusFailed,
+									transfer.RequestStatusUploading,
+									transfer.RequestStatusFailed,
 									4,
 									uploadStartsCh,
 									uploadResultsCh,
@@ -1806,16 +1806,16 @@ func TestServer(t *testing.T) {
 
 								r := requests[4].Clone()
 								r.Symlink = "/path/to/dest"
-								r.Status = put.RequestStatusUploading
+								r.Status = transfer.RequestStatusUploading
 								uploadStartsCh <- r
 								r = r.Clone()
-								r.Status = put.RequestStatusUploaded
+								r.Status = transfer.RequestStatusUploaded
 								uploadResultsCh <- r
 
 								updateRequestStatus(
 									requests[5],
-									put.RequestStatusUploading,
-									put.RequestStatusUploaded,
+									transfer.RequestStatusUploading,
+									transfer.RequestStatusUploaded,
 									5,
 									uploadStartsCh,
 									uploadResultsCh,
@@ -1828,11 +1828,11 @@ func TestServer(t *testing.T) {
 								So(gotSet.Uploaded, ShouldEqual, 0)
 
 								r = requests[6].Clone()
-								r.Status = put.RequestStatusUploading
+								r.Status = transfer.RequestStatusUploading
 								r.Size = 6
 								uploadStartsCh <- r
 								r = r.Clone()
-								r.Stuck = put.NewStuck(time.Now())
+								r.Stuck = transfer.NewStuck(time.Now())
 								uploadResultsCh <- r
 
 								close(uploadStartsCh)
@@ -1907,8 +1907,8 @@ func TestServer(t *testing.T) {
 
 					Convey("And given a monitored set with MonitorRemovals option", func() {
 						fileMeta := map[string]string{
-							put.MetaKeySets:      exampleSet.Name,
-							put.MetaKeyRequester: exampleSet.Requester,
+							transfer.MetaKeySets:      exampleSet.Name,
+							transfer.MetaKeyRequester: exampleSet.Requester,
 						}
 
 						file1local := filepath.Join(localDir, "file1")
@@ -2461,7 +2461,7 @@ func TestServer(t *testing.T) {
 									remoteMeta, errr := handler.GetMeta(remote)
 									So(errr, ShouldBeNil)
 									So(remoteMeta, ShouldNotBeNil)
-									So(remoteMeta[put.MetaKeySymlink], ShouldEqual, entries[3].Dest)
+									So(remoteMeta[transfer.MetaKeySymlink], ShouldEqual, entries[3].Dest)
 								}
 							}
 
@@ -2565,7 +2565,7 @@ func TestServer(t *testing.T) {
 									remoteMeta, errr := handler.GetMeta(remote)
 									So(errr, ShouldBeNil)
 									So(remoteMeta, ShouldNotBeNil)
-									So(remoteMeta[put.MetaKeySymlink], ShouldEqual, entries[2].Dest)
+									So(remoteMeta[transfer.MetaKeySymlink], ShouldEqual, entries[2].Dest)
 
 									info, errs := os.Stat(remote)
 									So(errs, ShouldBeNil)
@@ -2656,7 +2656,7 @@ func TestServer(t *testing.T) {
 						p, d := makePutter(t, handler, requests, client)
 						defer d()
 
-						var forceSlowRead put.FileReadTester = func(ctx context.Context, path string) error {
+						var forceSlowRead transfer.FileReadTester = func(ctx context.Context, path string) error {
 							if path == discovers[0] {
 								<-time.After(100 * time.Millisecond)
 							}
@@ -2697,7 +2697,7 @@ func TestServer(t *testing.T) {
 							switch i {
 							case 0:
 								So(entry.Status, ShouldEqual, set.Failed)
-								So(entry.LastError, ShouldContainSubstring, put.ErrReadTimeout)
+								So(entry.LastError, ShouldContainSubstring, transfer.ErrReadTimeout)
 							case 2:
 								So(entry.Type, ShouldEqual, set.Symlink)
 								So(entry.Status, ShouldEqual, set.Uploaded)
@@ -2804,7 +2804,7 @@ func TestServer(t *testing.T) {
 								So(len(entries), ShouldEqual, len(discovers))
 								So(entries[0].Status, ShouldEqual, set.Failed)
 								So(entries[0].Attempts, ShouldEqual, jobRetries)
-								So(entries[0].LastError, ShouldContainSubstring, put.ErrReadTimeout)
+								So(entries[0].LastError, ShouldContainSubstring, transfer.ErrReadTimeout)
 								So(entries[0].LastError, ShouldContainSubstring, entries[0].Path)
 
 								manualRetry()
@@ -2905,7 +2905,7 @@ func TestServer(t *testing.T) {
 						firstEntry := entries[0]
 						So(firstEntry.Status, ShouldEqual, set.Failed)
 						So(firstEntry.Attempts, ShouldEqual, 1)
-						So(firstEntry.LastError, ShouldEqual, put.ErrStuckTimeout)
+						So(firstEntry.LastError, ShouldEqual, transfer.ErrStuckTimeout)
 					})
 
 					Convey("numRequestsToReserve returns appropriate numbers", func() {
@@ -2924,7 +2924,7 @@ func TestServer(t *testing.T) {
 							key := fmt.Sprintf("%d", i)
 							ids[i] = &queue.ItemDef{
 								Key:  key,
-								Data: &put.Request{Set: key},
+								Data: &transfer.Request{Set: key},
 								TTR:  ttr,
 							}
 						}
@@ -2942,7 +2942,7 @@ func TestServer(t *testing.T) {
 							key := fmt.Sprintf("%d.extra", i)
 							ids[i] = &queue.ItemDef{
 								Key:  key,
-								Data: &put.Request{Set: key},
+								Data: &transfer.Request{Set: key},
 								TTR:  ttr,
 							}
 						}
@@ -3461,8 +3461,8 @@ func TestServer(t *testing.T) {
 							remoteMeta, errr := handler.GetMeta(remote1)
 							So(errr, ShouldBeNil)
 							So(remoteMeta, ShouldNotBeNil)
-							So(remoteMeta[put.MetaKeyHardlink], ShouldEqual, path2)
-							So(remoteMeta[put.MetaKeyRemoteHardlink], ShouldEqual, inodeFile)
+							So(remoteMeta[transfer.MetaKeyHardlink], ShouldEqual, path2)
+							So(remoteMeta[transfer.MetaKeyRemoteHardlink], ShouldEqual, inodeFile)
 
 							info, errs := os.Stat(remote1)
 							So(errs, ShouldBeNil)
@@ -3474,8 +3474,8 @@ func TestServer(t *testing.T) {
 							remoteMeta, err = handler.GetMeta(remote2)
 							So(err, ShouldBeNil)
 							So(remoteMeta, ShouldNotBeNil)
-							So(remoteMeta[put.MetaKeyHardlink], ShouldEqual, path3)
-							So(remoteMeta[put.MetaKeyRemoteHardlink], ShouldEqual, inodeFile)
+							So(remoteMeta[transfer.MetaKeyHardlink], ShouldEqual, path3)
+							So(remoteMeta[transfer.MetaKeyRemoteHardlink], ShouldEqual, inodeFile)
 
 							info, errs = os.Stat(remote2)
 							So(errs, ShouldBeNil)
@@ -3488,8 +3488,8 @@ func TestServer(t *testing.T) {
 							inodeMeta, errm := handler.GetMeta(inodeFile)
 							So(errm, ShouldBeNil)
 							So(inodeMeta, ShouldNotBeNil)
-							So(inodeMeta[put.MetaKeyHardlink], ShouldEqual, path1)
-							So(inodeMeta[put.MetaKeyRemoteHardlink], ShouldBeBlank)
+							So(inodeMeta[transfer.MetaKeyHardlink], ShouldEqual, path1)
+							So(inodeMeta[transfer.MetaKeyRemoteHardlink], ShouldBeBlank)
 
 							gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
 							So(err, ShouldBeNil)
@@ -3808,10 +3808,10 @@ func createManyTestBackupFiles(t *testing.T) []string {
 	return paths
 }
 
-func makePutter(t *testing.T, handler put.Handler, requests []*put.Request, client *Client) (*put.Putter, func()) {
+func makePutter(t *testing.T, handler transfer.Handler, requests []*transfer.Request, client *Client) (*transfer.Putter, func()) {
 	t.Helper()
 
-	p, errp := put.New(handler, requests)
+	p, errp := transfer.New(handler, requests)
 	So(errp, ShouldBeNil)
 
 	d := func() {
@@ -3839,7 +3839,7 @@ func makePutter(t *testing.T, handler put.Handler, requests []*put.Request, clie
 
 // putSetWithOneFile tests that we can successfully upload a set with 1 file in
 // it.
-func putSetWithOneFile(t *testing.T, handler put.Handler, client *Client,
+func putSetWithOneFile(t *testing.T, handler transfer.Handler, client *Client,
 	exampleSet *set.Set, minMBperSecondUploadSpeed float64, logger log15.Logger) {
 	t.Helper()
 
@@ -3874,10 +3874,10 @@ func createRemoteHardlink(t *testing.T, handler remove.Handler, lPath, rPath,
 	t.Helper()
 
 	hardlinkMeta := map[string]string{
-		put.MetaKeySets:           set.Name,
-		put.MetaKeyRequester:      set.Requester,
-		put.MetaKeyHardlink:       "hardlink",
-		put.MetaKeyRemoteHardlink: inodePath,
+		transfer.MetaKeySets:           set.Name,
+		transfer.MetaKeyRequester:      set.Requester,
+		transfer.MetaKeyHardlink:       "hardlink",
+		transfer.MetaKeyRemoteHardlink: inodePath,
 	}
 
 	createRemoteObject(t, handler, hardlinkMeta, rPath)
@@ -3929,11 +3929,11 @@ func waitForRemovals(t *testing.T, client *Client, given *set.Set) {
 
 func makeGivenSetComplete(numExpectedRequests int, setName string, client *Client) {
 	for i := range numExpectedRequests/100 + 1 {
-		changeSetFilesStatus(min(100, numExpectedRequests-100*i), setName, client, put.RequestStatusUploaded)
+		changeSetFilesStatus(min(100, numExpectedRequests-100*i), setName, client, transfer.RequestStatusUploaded)
 	}
 }
 
-func changeSetFilesStatus(numExpectedRequests int, setName string, client *Client, status put.RequestStatus) {
+func changeSetFilesStatus(numExpectedRequests int, setName string, client *Client, status transfer.RequestStatus) {
 	requests, errg := client.GetSomeUploadRequests()
 	So(errg, ShouldBeNil)
 	So(len(requests), ShouldEqual, numExpectedRequests)

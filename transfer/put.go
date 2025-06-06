@@ -25,7 +25,7 @@
 
 // package put is used to put files in iRODS.
 
-package put
+package transfer
 
 import (
 	"context"

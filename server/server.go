@@ -43,10 +43,10 @@ import (
 	"github.com/gammazero/workerpool"
 	"github.com/inconshreveable/log15"
 	gas "github.com/wtsi-hgi/go-authserver"
-	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/remove"
 	"github.com/wtsi-hgi/ibackup/set"
 	"github.com/wtsi-hgi/ibackup/slack"
+	"github.com/wtsi-hgi/ibackup/transfer"
 )
 
 const (
@@ -414,7 +414,7 @@ func (s *Server) estimateJobsNeeded(numReady int) int {
 // ttrc is called when reserved items in our queue are abandoned due to a put
 // client dying, and so we cleanup and send it back to the ready subqueue.
 func (s *Server) ttrc(data interface{}) queue.SubQueue {
-	r, ok := data.(*put.Request)
+	r, ok := data.(*transfer.Request)
 	if !ok {
 		s.Logger.Printf("item data not a Request")
 	}

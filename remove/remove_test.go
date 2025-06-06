@@ -33,7 +33,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/wtsi-hgi/ibackup/internal"
-	"github.com/wtsi-hgi/ibackup/put"
+	"github.com/wtsi-hgi/ibackup/transfer"
 )
 
 const userPerms = 0700
@@ -45,7 +45,7 @@ func TestRemoveMock(t *testing.T) {
 		sourceDir := t.TempDir()
 		destDir := t.TempDir()
 
-		transformer := put.PrefixTransformer(sourceDir, destDir)
+		transformer := transfer.PrefixTransformer(sourceDir, destDir)
 
 		var err error
 
@@ -101,8 +101,8 @@ func TestRemoveMock(t *testing.T) {
 			internal.CreateTestFileOfLength(t, file1remote, 1)
 
 			meta := map[string]string{
-				put.MetaKeyRequester: "testUser1,testUser2",
-				put.MetaKeySets:      "set1,set2",
+				transfer.MetaKeyRequester: "testUser1,testUser2",
+				transfer.MetaKeySets:      "set1,set2",
 			}
 
 			err = lh.AddMeta(file1remote, meta)
@@ -117,8 +117,8 @@ func TestRemoveMock(t *testing.T) {
 
 				So(fileMeta, ShouldResemble,
 					map[string]string{
-						put.MetaKeyRequester: "testUser2",
-						put.MetaKeySets:      "set2",
+						transfer.MetaKeyRequester: "testUser2",
+						transfer.MetaKeySets:      "set2",
 					})
 			})
 		})

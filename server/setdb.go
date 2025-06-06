@@ -41,10 +41,10 @@ import (
 	"github.com/wtsi-hgi/grand"
 	"github.com/wtsi-hgi/ibackup/errs"
 	"github.com/wtsi-hgi/ibackup/internal"
-	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/remove"
 	"github.com/wtsi-hgi/ibackup/set"
 	"github.com/wtsi-hgi/ibackup/slack"
+	"github.com/wtsi-hgi/ibackup/transfer"
 )
 
 const (
@@ -254,7 +254,7 @@ func (s *Server) serverStillRunning() {
 
 // EnableRemoteDBBackups causes the database backup file to also be backed up to
 // the remote path.
-func (s *Server) EnableRemoteDBBackups(remotePath string, handler put.Handler) {
+func (s *Server) EnableRemoteDBBackups(remotePath string, handler transfer.Handler) {
 	s.db.EnableRemoteBackups(remotePath, handler)
 }
 
@@ -605,7 +605,7 @@ func (s *Server) processDBFileRemoval(removeReq *set.RemoveReq, entry *set.Entry
 	return s.db.UpdateBasedOnRemovedEntry(removeReq.Set.ID(), entry)
 }
 
-func (s *Server) updateOrRemoveRemoteFile(set *set.Set, path string, transformer put.PathTransformer,
+func (s *Server) updateOrRemoveRemoteFile(set *set.Set, path string, transformer transfer.PathTransformer,
 	entry *set.Entry) error {
 	rpath, err := transformer(path)
 	if err != nil {
@@ -630,7 +630,7 @@ func (s *Server) updateOrRemoveRemoteFile(set *set.Set, path string, transformer
 }
 
 func (s *Server) removeRemoteFileAndHandleHardlink(lpath, rpath string, meta map[string]string,
-	transformer put.PathTransformer, entry *set.Entry) error {
+	transformer transfer.PathTransformer, entry *set.Entry) error {
 	err := remove.RemoveFileAndParentFoldersIfEmpty(s.storageHandler, rpath)
 	if err != nil {
 		var dirRemovalError errs.DirRemovalError
@@ -641,11 +641,11 @@ func (s *Server) removeRemoteFileAndHandleHardlink(lpath, rpath string, meta map
 		s.Logger.Print(err.Error())
 	}
 
-	if meta[put.MetaKeyHardlink] == "" {
+	if meta[transfer.MetaKeyHardlink] == "" {
 		return nil
 	}
 
-	files, thresh, err := s.getFilesWithSameInode(lpath, entry.Inode, transformer, meta[put.MetaKeyRemoteHardlink])
+	files, thresh, err := s.getFilesWithSameInode(lpath, entry.Inode, transformer, meta[transfer.MetaKeyRemoteHardlink])
 	if err != nil {
 		return err
 	}
@@ -654,10 +654,10 @@ func (s *Server) removeRemoteFileAndHandleHardlink(lpath, rpath string, meta map
 		return nil
 	}
 
-	return s.storageHandler.RemoveFile(meta[put.MetaKeyRemoteHardlink])
+	return s.storageHandler.RemoveFile(meta[transfer.MetaKeyRemoteHardlink])
 }
 
-func (s *Server) getFilesWithSameInode(path string, inode uint64, transformer put.PathTransformer,
+func (s *Server) getFilesWithSameInode(path string, inode uint64, transformer transfer.PathTransformer,
 	rInodePath string) ([]string, int, error) {
 	files, err := s.db.GetFilesFromInode(inode, s.db.GetMountPointFromPath(path))
 	if err != nil {
@@ -674,8 +674,8 @@ func (s *Server) getFilesWithSameInode(path string, inode uint64, transformer pu
 }
 
 func (s *Server) handleSetsAndRequesters(givenSet *set.Set, meta map[string]string) ([]string, []string, error) {
-	sets := strings.Split(meta[put.MetaKeySets], ",")
-	requesters := strings.Split(meta[put.MetaKeyRequester], ",")
+	sets := strings.Split(meta[transfer.MetaKeySets], ",")
+	requesters := strings.Split(meta[transfer.MetaKeyRequester], ",")
 
 	if !slices.Contains(sets, givenSet.Name) {
 		return sets, requesters, nil
@@ -969,9 +969,9 @@ func (s *Server) getRequests(c *gin.Context) {
 // requests/s.numClients (but max 100) of them, or the queue is empty.
 //
 // Returns the Requests in the items.
-func (s *Server) reserveRequests() ([]*put.Request, error) {
+func (s *Server) reserveRequests() ([]*transfer.Request, error) {
 	n := s.getCachedNumRequestsToReserve()
-	requests := make([]*put.Request, 0, n)
+	requests := make([]*transfer.Request, 0, n)
 	count := 0
 
 	for {
@@ -1045,7 +1045,7 @@ func (s *Server) numRequestsToReserve() int {
 
 // reserveRequest reserves an item from our queue and converts it to a Request.
 // Returns nil and no error if the queue is empty.
-func (s *Server) reserveRequest() (*put.Request, error) {
+func (s *Server) reserveRequest() (*transfer.Request, error) {
 	item, err := s.queue.Reserve("", 0)
 	if err != nil {
 		qerr, ok := err.(queue.Error) //nolint:errorlint
@@ -1056,7 +1056,7 @@ func (s *Server) reserveRequest() (*put.Request, error) {
 		return nil, err
 	}
 
-	r, ok := item.Data().(*put.Request)
+	r, ok := item.Data().(*transfer.Request)
 	if !ok {
 		return nil, ErrInvalidInput
 	}
@@ -1134,7 +1134,7 @@ type codeAndError struct {
 // on /rest/v1/auth/file_status. Only the user who started the Server has
 // permission to call this.
 func (s *Server) putFileStatus(c *gin.Context) {
-	r := &put.Request{}
+	r := &transfer.Request{}
 
 	s.Logger.Printf("got a putFileStatus")
 
@@ -1169,13 +1169,13 @@ func (s *Server) putFileStatus(c *gin.Context) {
 // fileStatusPacket contains a Request and codeAndError channel for sending over
 // a channel.
 type fileStatusPacket struct {
-	r    *put.Request
+	r    *transfer.Request
 	ceCh chan *codeAndError
 }
 
 // queueFileStatusUpdate queues a file status update request from a client,
 // sending it to the channel handleFileStatusUpdates() reads from.
-func (s *Server) queueFileStatusUpdate(r *put.Request) chan *codeAndError {
+func (s *Server) queueFileStatusUpdate(r *transfer.Request) chan *codeAndError {
 	ceCh := make(chan *codeAndError)
 
 	go func() {
@@ -1222,7 +1222,7 @@ func (s *Server) handleFileStatusUpdates() {
 // stuck requests.
 //
 // The supplied trace string is used in logging output.
-func (s *Server) updateFileStatus(r *put.Request, trace string) error {
+func (s *Server) updateFileStatus(r *transfer.Request, trace string) error {
 	entry, err := s.db.SetEntryStatus(r)
 	if err != nil {
 		var errr error
@@ -1245,7 +1245,7 @@ func (s *Server) updateFileStatus(r *put.Request, trace string) error {
 // handleNewlyCompletedSets gets the set the given request is for, and if it
 // has completed, carries out actions needed for newly completed sets: trigger
 // the monitoring countdown, and do a database backup.
-func (s *Server) handleNewlyCompletedSets(r *put.Request) error {
+func (s *Server) handleNewlyCompletedSets(r *transfer.Request) error {
 	completed, err := s.db.GetByNameAndRequester(r.Set, r.Requester)
 	if err != nil {
 		return err
@@ -1261,8 +1261,8 @@ func (s *Server) handleNewlyCompletedSets(r *put.Request) error {
 	return nil
 }
 
-func (s *Server) trackUploadingAndStuckRequests(r *put.Request, trace string, entry *set.Entry) error {
-	if r.Status == put.RequestStatusUploading {
+func (s *Server) trackUploadingAndStuckRequests(r *transfer.Request, trace string, entry *set.Entry) error {
+	if r.Status == transfer.RequestStatusUploading {
 		s.uploadTracker.uploadStarting(r)
 
 		s.Logger.Printf("[%s] uploading, called uploadStarting()", trace)
@@ -1280,8 +1280,8 @@ func (s *Server) trackUploadingAndStuckRequests(r *put.Request, trace string, en
 // removeOrReleaseRequestFromQueue removes the given Request from our queue
 // unless it has failed. < 3 failures results in it being released, 3 results in
 // it being buried.
-func (s *Server) removeOrReleaseRequestFromQueue(r *put.Request, entry *set.Entry) error {
-	if r.Status == put.RequestStatusFailed {
+func (s *Server) removeOrReleaseRequestFromQueue(r *transfer.Request, entry *set.Entry) error {
+	if r.Status == transfer.RequestStatusFailed {
 		s.updateQueueItemData(r)
 
 		if entry.Attempts%set.AttemptsToBeConsideredFailing == 0 {
@@ -1296,7 +1296,7 @@ func (s *Server) removeOrReleaseRequestFromQueue(r *put.Request, entry *set.Entr
 
 // updateQueueItemData updates the item in our queue corresponding to the
 // given request, with the request's latest properties.
-func (s *Server) updateQueueItemData(r *put.Request) {
+func (s *Server) updateQueueItemData(r *transfer.Request) {
 	if item, err := s.queue.Get(r.ID()); err == nil {
 		stats := item.Stats()
 		s.queue.Update(context.Background(), item.Key, "", r, stats.Priority, stats.Delay, stats.TTR) //nolint:errcheck
@@ -1370,7 +1370,7 @@ func (s *Server) recoverSet(given *set.Set) error {
 
 	s.monitorSet(given)
 
-	var transformer put.PathTransformer
+	var transformer transfer.PathTransformer
 
 	var err error
 

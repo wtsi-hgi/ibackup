@@ -35,7 +35,7 @@ import (
 	"strings"
 
 	"github.com/wtsi-hgi/ibackup/errs"
-	"github.com/wtsi-hgi/ibackup/put"
+	"github.com/wtsi-hgi/ibackup/transfer"
 )
 
 type Handler interface {
@@ -72,13 +72,13 @@ type Handler interface {
 func UpdateSetsAndRequestersOnRemoteFile(handler Handler, path string,
 	sets, requesters []string, meta map[string]string) error {
 	metaToRemove := map[string]string{
-		put.MetaKeySets:      meta[put.MetaKeySets],
-		put.MetaKeyRequester: meta[put.MetaKeyRequester],
+		transfer.MetaKeySets:      meta[transfer.MetaKeySets],
+		transfer.MetaKeyRequester: meta[transfer.MetaKeyRequester],
 	}
 
 	newMeta := map[string]string{
-		put.MetaKeySets:      strings.Join(sets, ","),
-		put.MetaKeyRequester: strings.Join(requesters, ","),
+		transfer.MetaKeySets:      strings.Join(sets, ","),
+		transfer.MetaKeyRequester: strings.Join(requesters, ","),
 	}
 
 	if maps.Equal(metaToRemove, newMeta) {
@@ -120,7 +120,7 @@ func removeEmptyFoldersRecursively(handler Handler, path string) error {
 
 // RemoveRemoteDir removes the remote path of a given directory from the remote
 // storage.
-func RemoveRemoteDir(handler Handler, path string, transformer put.PathTransformer) error { //nolint:revive
+func RemoveRemoteDir(handler Handler, path string, transformer transfer.PathTransformer) error { //nolint:revive
 	rpath, err := transformer(path)
 	if err != nil {
 		return err
@@ -131,11 +131,11 @@ func RemoveRemoteDir(handler Handler, path string, transformer put.PathTransform
 
 // FindHardlinksWithInode returns paths to all hardlinks that point to the
 // provided inode path.
-func FindHardlinksWithInode(rInodePath string, transformer put.PathTransformer, handler Handler) ([]string, error) {
+func FindHardlinksWithInode(rInodePath string, transformer transfer.PathTransformer, handler Handler) ([]string, error) {
 	dir, err := transformer("/")
 	if err != nil {
 		return nil, err
 	}
 
-	return handler.QueryMeta(dir, map[string]string{put.MetaKeyRemoteHardlink: rInodePath})
+	return handler.QueryMeta(dir, map[string]string{transfer.MetaKeyRemoteHardlink: rInodePath})
 }

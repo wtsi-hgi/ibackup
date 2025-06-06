@@ -42,7 +42,7 @@ import (
 	"github.com/VertebrateResequencing/wr/queue"
 	"github.com/gammazero/workerpool"
 	"github.com/ugorji/go/codec"
-	"github.com/wtsi-hgi/ibackup/put"
+	"github.com/wtsi-hgi/ibackup/transfer"
 	bolt "go.etcd.io/bbolt"
 )
 
@@ -174,7 +174,7 @@ type DB struct {
 	backupPath            string
 	minTimeBetweenBackups time.Duration
 	remoteBackupPath      string
-	remoteBackupHandler   put.Handler
+	remoteBackupHandler   transfer.Handler
 
 	rebackup atomic.Bool
 }
@@ -1144,7 +1144,7 @@ func (d *DBRO) countAllFilesInSet(tx *bolt.Tx, setID string) uint64 {
 //
 // Returns an error if a set or entry corresponding to the Request can't be
 // found.
-func (d *DB) SetEntryStatus(r *put.Request) (*Entry, error) {
+func (d *DB) SetEntryStatus(r *transfer.Request) (*Entry, error) {
 	setID, err := requestToSetID(r)
 	if err != nil {
 		return nil, err
@@ -1180,7 +1180,7 @@ func (d *DB) SetEntryStatus(r *put.Request) (*Entry, error) {
 
 // requestToSetID returns a setID for the Request. Returns an error if the
 // Request doesn't have a Requester and Set defined.
-func requestToSetID(r *put.Request) (string, error) {
+func requestToSetID(r *transfer.Request) (string, error) {
 	if r.Requester == "" || r.Set == "" {
 		return "", Error{ErrInvalidRequest, r.Local}
 	}
@@ -1200,7 +1200,7 @@ func requestToSetID(r *put.Request) (string, error) {
 //
 // If setDiscoveryTime is later than the entry's last attempt, resets the
 // entries Attempts to 0.
-func (d *DB) updateFileEntry(tx *bolt.Tx, setID string, r *put.Request, setDiscoveryTime time.Time) (*Entry, error) {
+func (d *DB) updateFileEntry(tx *bolt.Tx, setID string, r *transfer.Request, setDiscoveryTime time.Time) (*Entry, error) {
 	entry, b, err := d.getEntry(tx, setID, r.Local)
 	if err != nil {
 		return nil, err
@@ -1280,29 +1280,29 @@ func (d *DBRO) getEntryFromSubbucket(kind, setID, path string, setsBucket *bolt.
 
 // requestStatusToEntryStatus converts Request.Status and stores it as a Status
 // on the entry. Also sets entry.Attempts, unFailed and newFail as appropriate.
-func requestStatusToEntryStatus(r *put.Request, entry *Entry) {
+func requestStatusToEntryStatus(r *transfer.Request, entry *Entry) {
 	entry.newFail = false
 	entry.unFailed = false
 
 	switch r.Status { //nolint:exhaustive
-	case put.RequestStatusUploading:
+	case transfer.RequestStatusUploading:
 		entry.Status = UploadingEntry
 
 		if r.Stuck != nil {
 			entry.LastError = r.Stuck.String()
 		}
-	case put.RequestStatusUploaded:
+	case transfer.RequestStatusUploaded:
 		entry.Status = Uploaded
 		entry.unFailed = entry.Attempts > 1
 		entry.LastError = ""
-	case put.RequestStatusReplaced:
+	case transfer.RequestStatusReplaced:
 		entry.Status = Replaced
 		entry.unFailed = entry.Attempts > 1
 		entry.LastError = ""
-	case put.RequestStatusUnmodified:
+	case transfer.RequestStatusUnmodified:
 		entry.Status = Skipped
 		entry.LastError = ""
-	case put.RequestStatusFailed:
+	case transfer.RequestStatusFailed:
 		entry.Status = Failed
 
 		if r.Error != "" {
@@ -1310,7 +1310,7 @@ func requestStatusToEntryStatus(r *put.Request, entry *Entry) {
 		}
 
 		entry.newFail = entry.Attempts == 1
-	case put.RequestStatusMissing:
+	case transfer.RequestStatusMissing:
 		entry.Status = Missing
 		entry.unFailed = entry.Attempts > 1
 	}
@@ -1794,10 +1794,10 @@ func (d *DB) doRemoteBackup() (err error) {
 		return nil
 	}
 
-	putter, err := put.New(d.remoteBackupHandler, []*put.Request{{
+	putter, err := transfer.New(d.remoteBackupHandler, []*transfer.Request{{
 		Local:  d.backupPath,
 		Remote: d.remoteBackupPath,
-		Meta:   put.NewMeta(),
+		Meta:   transfer.NewMeta(),
 	}})
 	if err != nil {
 		return err
@@ -1820,7 +1820,7 @@ func (d *DB) doRemoteBackup() (err error) {
 	return err
 }
 
-func drainChannel(ch chan *put.Request) {
+func drainChannel(ch chan *transfer.Request) {
 	for range ch { //nolint:revive
 	}
 }
@@ -1845,7 +1845,7 @@ func (d *DB) SetBackupPath(path string) {
 
 // EnableRemoteBackups causes the backup file to also be backed up to the
 // remote path.
-func (d *DB) EnableRemoteBackups(remotePath string, handler put.Handler) {
+func (d *DB) EnableRemoteBackups(remotePath string, handler transfer.Handler) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 

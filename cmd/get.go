@@ -30,7 +30,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/wtsi-hgi/ibackup/baton"
-	"github.com/wtsi-hgi/ibackup/put"
+	"github.com/wtsi-hgi/ibackup/transfer"
 )
 
 var overwrite bool
@@ -134,17 +134,17 @@ func handleGetManualMode() {
 	printResults("down", downloadResults, skipResults, len(requests), putVerbose)
 }
 
-func handleGet(requests []*put.Request) (chan *put.Request, chan *put.Request, chan *put.Request, func()) {
+func handleGet(requests []*transfer.Request) (chan *transfer.Request, chan *transfer.Request, chan *transfer.Request, func()) {
 	return handleGetPut(requests, getGetter)
 }
 
-func getGetter(requests []*put.Request) *put.Putter {
+func getGetter(requests []*transfer.Request) *transfer.Putter {
 	handler, err := baton.GetBatonHandler()
 	if err != nil {
 		die(err)
 	}
 
-	p, err := put.NewGetter(handler, requests, overwrite)
+	p, err := transfer.NewGetter(handler, requests, overwrite)
 	if err != nil {
 		die(err)
 	}

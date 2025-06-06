@@ -38,8 +38,8 @@ import (
 	"github.com/VertebrateResequencing/wr/queue"
 	"github.com/gin-gonic/gin"
 	gas "github.com/wtsi-hgi/go-authserver"
-	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/slack"
+	"github.com/wtsi-hgi/ibackup/transfer"
 )
 
 const (
@@ -185,7 +185,7 @@ type QStatus struct {
 	CreatingCollections int
 	Uploading           int
 	Failed              int
-	Stuck               []*put.Request
+	Stuck               []*transfer.Request
 }
 
 // GetQueueStatus gets information about the server's queue.
@@ -244,8 +244,8 @@ func (s *Server) getBuried(c *gin.Context) {
 
 // BuriedRequests gets the details of put requests that have failed multiple
 // times and will no longer be retried.
-func (c *Client) BuriedRequests() ([]*put.Request, error) {
-	var rs []*put.Request
+func (c *Client) BuriedRequests() ([]*transfer.Request, error) {
+	var rs []*transfer.Request
 
 	err := c.getThing(EndPointAuthQueueBuried, &rs)
 
@@ -254,11 +254,11 @@ func (c *Client) BuriedRequests() ([]*put.Request, error) {
 
 // BuriedRequests returns the put requests that are currently buried in the
 // global put queue.
-func (s *Server) BuriedRequests() []*put.Request {
-	var buried []*put.Request
+func (s *Server) BuriedRequests() []*transfer.Request {
+	var buried []*transfer.Request
 
 	s.forEachBuriedItem(nil, func(item *queue.Item) {
-		buried = append(buried, item.Data().(*put.Request)) //nolint:forcetypeassert
+		buried = append(buried, item.Data().(*transfer.Request)) //nolint:forcetypeassert
 	})
 
 	return buried
@@ -274,7 +274,7 @@ type BuriedFilter struct {
 
 // RequestPasses returns true if the given Request matches our filter details.
 // Also returns true if User isn't set.
-func (b *BuriedFilter) RequestPasses(r *put.Request) bool {
+func (b *BuriedFilter) RequestPasses(r *transfer.Request) bool {
 	if b.User == "" {
 		return true
 	}
@@ -297,7 +297,7 @@ func (s *Server) forEachBuriedItem(bf *BuriedFilter, cb func(*queue.Item)) {
 
 	for _, item := range items {
 		if bf != nil {
-			if !bf.RequestPasses(item.Data().(*put.Request)) { //nolint:forcetypeassert
+			if !bf.RequestPasses(item.Data().(*transfer.Request)) { //nolint:forcetypeassert
 				continue
 			}
 		}
@@ -426,8 +426,8 @@ func (s *Server) getUploading(c *gin.Context) {
 
 // UploadingRequests gets the details of put requests that are currently
 // uploading.
-func (c *Client) UploadingRequests() ([]*put.Request, error) {
-	var rs []*put.Request
+func (c *Client) UploadingRequests() ([]*transfer.Request, error) {
+	var rs []*transfer.Request
 
 	err := c.getThing(EndPointAuthQueueUploading, &rs)
 
@@ -436,7 +436,7 @@ func (c *Client) UploadingRequests() ([]*put.Request, error) {
 
 // UploadingRequests returns the put requests that are currently uploading from
 // the global put queue.
-func (s *Server) UploadingRequests() []*put.Request {
+func (s *Server) UploadingRequests() []*transfer.Request {
 	return s.uploadTracker.currentlyUploading()
 }
 
@@ -449,8 +449,8 @@ func (s *Server) getAllRequests(c *gin.Context) {
 }
 
 // AllRequests gets the details of all put requests in the queue.
-func (c *Client) AllRequests() ([]*put.Request, error) {
-	var rs []*put.Request
+func (c *Client) AllRequests() ([]*transfer.Request, error) {
+	var rs []*transfer.Request
 
 	err := c.getThing(EndPointAuthQueueAll, &rs)
 
@@ -458,25 +458,25 @@ func (c *Client) AllRequests() ([]*put.Request, error) {
 }
 
 // AllRequests returns all the put requests in the global put queue.
-func (s *Server) AllRequests() []*put.Request {
+func (s *Server) AllRequests() []*transfer.Request {
 	items := s.queue.AllItems()
-	all := make([]*put.Request, len(items))
+	all := make([]*transfer.Request, len(items))
 
 	for i, item := range items {
-		r := item.Data().(*put.Request) //nolint:forcetypeassert,errcheck
+		r := item.Data().(*transfer.Request) //nolint:forcetypeassert,errcheck
 		r = r.Clone()
 
 		switch item.State() {
 		case queue.ItemStateRun:
 			if s.uploadTracker.isUploading(r) {
-				r.Status = put.RequestStatusUploading
+				r.Status = transfer.RequestStatusUploading
 			} else {
-				r.Status = put.RequestStatusReserved
+				r.Status = transfer.RequestStatusReserved
 			}
 		case queue.ItemStateBury:
-			r.Status = put.RequestStatusFailed
+			r.Status = transfer.RequestStatusFailed
 		default:
-			r.Status = put.RequestStatusPending
+			r.Status = transfer.RequestStatusPending
 		}
 
 		all[i] = r

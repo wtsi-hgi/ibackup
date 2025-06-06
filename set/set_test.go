@@ -42,8 +42,8 @@ import (
 	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/ibackup/baton"
 	"github.com/wtsi-hgi/ibackup/internal"
-	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/slack"
+	"github.com/wtsi-hgi/ibackup/transfer"
 	bolt "go.etcd.io/bbolt"
 )
 
@@ -640,12 +640,12 @@ func TestSetDB(t *testing.T) {
 						So(setsAll, ShouldNotBeNil)
 						So(len(setsAll), ShouldEqual, 2)
 
-						r := &put.Request{
+						r := &transfer.Request{
 							Local:     pureFiles[0],
 							Requester: set.Requester,
 							Set:       set.Name,
 							Size:      3,
-							Status:    put.RequestStatusUploading,
+							Status:    transfer.RequestStatusUploading,
 							Error:     "",
 						}
 
@@ -669,12 +669,12 @@ func TestSetDB(t *testing.T) {
 						So(sets[0].Uploaded, ShouldEqual, 0)
 						So(sets[0].LastCompletedSize, ShouldEqual, 0)
 
-						r = &put.Request{
+						r = &transfer.Request{
 							Local:     pureFiles[0],
 							Requester: set.Requester,
 							Set:       set.Name,
 							Size:      3,
-							Status:    put.RequestStatusUploaded,
+							Status:    transfer.RequestStatusUploaded,
 							Error:     "",
 						}
 
@@ -711,12 +711,12 @@ func TestSetDB(t *testing.T) {
 						So(fEntries[0].Status, ShouldEqual, Uploaded)
 						So(fEntries[0].LastAttempt.IsZero(), ShouldBeFalse)
 
-						r = &put.Request{
+						r = &transfer.Request{
 							Local:     pureFiles[1],
 							Requester: set.Requester,
 							Set:       set.Name,
 							Size:      2,
-							Status:    put.RequestStatusUnmodified,
+							Status:    transfer.RequestStatusUnmodified,
 							Error:     "",
 						}
 
@@ -739,19 +739,19 @@ func TestSetDB(t *testing.T) {
 						So(fEntries[1].Status, ShouldEqual, Skipped)
 						So(fEntries[1].LastAttempt.IsZero(), ShouldBeFalse)
 
-						r = &put.Request{
+						r = &transfer.Request{
 							Local:     pureFiles[2],
 							Requester: set.Requester,
 							Set:       set.Name,
 							Size:      4,
-							Status:    put.RequestStatusUploading,
+							Status:    transfer.RequestStatusUploading,
 							Error:     "",
 						}
 
 						_, err = db.SetEntryStatus(r)
 						So(err, ShouldBeNil)
 
-						r.Status = put.RequestStatusReplaced
+						r.Status = transfer.RequestStatusReplaced
 						_, err = db.SetEntryStatus(r)
 						So(err, ShouldBeNil)
 
@@ -772,12 +772,12 @@ func TestSetDB(t *testing.T) {
 						So(fEntries[2].Status, ShouldEqual, Replaced)
 						So(fEntries[2].LastAttempt.IsZero(), ShouldBeFalse)
 
-						r = &put.Request{
+						r = &transfer.Request{
 							Local:     "/g/h/l.txt",
 							Requester: set.Requester,
 							Set:       set.Name,
 							Size:      6,
-							Status:    put.RequestStatusUploading,
+							Status:    transfer.RequestStatusUploading,
 							Error:     "",
 						}
 
@@ -789,7 +789,7 @@ func TestSetDB(t *testing.T) {
 						So(len(fEntries), ShouldEqual, 0)
 						So(failSkips, ShouldEqual, 0)
 
-						r.Status = put.RequestStatusFailed
+						r.Status = transfer.RequestStatusFailed
 						errMsg := "upload failed"
 						r.Error = errMsg
 						_, err = db.SetEntryStatus(r)
@@ -819,10 +819,10 @@ func TestSetDB(t *testing.T) {
 						So(len(fEntries), ShouldEqual, 1)
 						So(failSkips, ShouldEqual, 0)
 
-						r.Status = put.RequestStatusUploading
+						r.Status = transfer.RequestStatusUploading
 						_, err = db.SetEntryStatus(r)
 						So(err, ShouldBeNil)
-						r.Status = put.RequestStatusFailed
+						r.Status = transfer.RequestStatusFailed
 						r.Error = errMsg
 						_, err = db.SetEntryStatus(r)
 						So(err, ShouldBeNil)
@@ -846,10 +846,10 @@ func TestSetDB(t *testing.T) {
 						So(fEntries[3].LastAttempt.IsZero(), ShouldBeFalse)
 						So(fEntries[3].LastError, ShouldEqual, errMsg)
 
-						r.Status = put.RequestStatusUploading
+						r.Status = transfer.RequestStatusUploading
 						_, err = db.SetEntryStatus(r)
 						So(err, ShouldBeNil)
-						r.Status = put.RequestStatusFailed
+						r.Status = transfer.RequestStatusFailed
 						r.Error = errMsg
 						_, err = db.SetEntryStatus(r)
 						So(err, ShouldBeNil)
@@ -875,12 +875,12 @@ func TestSetDB(t *testing.T) {
 						So(fEntries[3].LastAttempt.IsZero(), ShouldBeFalse)
 						So(fEntries[3].LastError, ShouldEqual, errMsg)
 
-						r = &put.Request{
+						r = &transfer.Request{
 							Local:     "/g/i/m.txt",
 							Requester: set.Requester,
 							Set:       set.Name,
 							Size:      0,
-							Status:    put.RequestStatusMissing,
+							Status:    transfer.RequestStatusMissing,
 							Error:     "",
 						}
 
@@ -916,18 +916,18 @@ func TestSetDB(t *testing.T) {
 						So(fEntries[4].LastAttempt.IsZero(), ShouldBeFalse)
 						So(fEntries[4].LastError, ShouldBeBlank)
 
-						r = &put.Request{
+						r = &transfer.Request{
 							Local:     "/g/h/l.txt",
 							Requester: set.Requester,
 							Set:       set.Name,
 							Size:      6,
-							Status:    put.RequestStatusUploading,
+							Status:    transfer.RequestStatusUploading,
 							Error:     "",
 						}
 
 						_, err = db.SetEntryStatus(r)
 						So(err, ShouldBeNil)
-						r.Status = put.RequestStatusUploaded
+						r.Status = transfer.RequestStatusUploaded
 						_, err = db.SetEntryStatus(r)
 						So(err, ShouldBeNil)
 
@@ -995,18 +995,18 @@ func TestSetDB(t *testing.T) {
 							So(sets[0].NumFiles, ShouldEqual, 6)
 							So(sets[0].SizeTotal, ShouldEqual, 0)
 
-							r = &put.Request{
+							r = &transfer.Request{
 								Local:     "/g/h/l.txt",
 								Requester: set.Requester,
 								Set:       set.Name,
 								Size:      7,
-								Status:    put.RequestStatusUploading,
+								Status:    transfer.RequestStatusUploading,
 								Error:     "",
 							}
 
 							_, err = db.SetEntryStatus(r)
 							So(err, ShouldBeNil)
-							r.Status = put.RequestStatusUploaded
+							r.Status = transfer.RequestStatusUploaded
 							_, err = db.SetEntryStatus(r)
 							So(err, ShouldBeNil)
 
@@ -1033,19 +1033,19 @@ func TestSetDB(t *testing.T) {
 							So(err, ShouldBeNil)
 							So(len(fEntries), ShouldEqual, 3)
 
-							r = &put.Request{
+							r = &transfer.Request{
 								Local:     "/g/i/m.txt",
 								Requester: set.Requester,
 								Set:       set.Name,
 								Size:      6,
-								Status:    put.RequestStatusUploading,
+								Status:    transfer.RequestStatusUploading,
 								Error:     "",
 							}
 
 							_, err = db.SetEntryStatus(r)
 							So(err, ShouldBeNil)
 
-							r.Status = put.RequestStatusReplaced
+							r.Status = transfer.RequestStatusReplaced
 							_, err = db.SetEntryStatus(r)
 							So(err, ShouldBeNil)
 
@@ -1060,19 +1060,19 @@ func TestSetDB(t *testing.T) {
 							So(sets[0].Failed, ShouldEqual, 0)
 							So(sets[0].SizeUploaded, ShouldEqual, 13)
 
-							r = &put.Request{
+							r = &transfer.Request{
 								Local:     "/g/i/n.txt",
 								Requester: set.Requester,
 								Set:       set.Name,
 								Size:      5,
-								Status:    put.RequestStatusUploading,
+								Status:    transfer.RequestStatusUploading,
 								Error:     "",
 							}
 
 							_, err = db.SetEntryStatus(r)
 							So(err, ShouldBeNil)
 
-							r.Status = put.RequestStatusUnmodified
+							r.Status = transfer.RequestStatusUnmodified
 							_, err = db.SetEntryStatus(r)
 							So(err, ShouldBeNil)
 
@@ -1253,9 +1253,9 @@ func TestSetDB(t *testing.T) {
 							continue
 						}
 
-						r := &put.Request{
+						r := &transfer.Request{
 							Local:     entry.Path,
-							Status:    put.RequestStatusUploading,
+							Status:    transfer.RequestStatusUploading,
 							Requester: setl1.Requester,
 							Set:       setl1.Name,
 						}
@@ -1271,7 +1271,7 @@ func TestSetDB(t *testing.T) {
 						_, err = db.SetEntryStatus(r)
 						So(err, ShouldBeNil)
 
-						r.Status = put.RequestStatusUploaded
+						r.Status = transfer.RequestStatusUploaded
 
 						_, err = db.SetEntryStatus(r)
 						So(err, ShouldBeNil)
@@ -1736,7 +1736,7 @@ func setEntryToUploaded(entry *Entry, given *Set, db *DB) {
 	transformer, err := given.MakeTransformer()
 	So(err, ShouldBeNil)
 
-	r, err := put.NewRequestWithTransformedLocal(entry.Path, transformer)
+	r, err := transfer.NewRequestWithTransformedLocal(entry.Path, transformer)
 	So(err, ShouldBeNil)
 
 	r.Set = given.Name
@@ -1750,11 +1750,11 @@ func setEntryToUploaded(entry *Entry, given *Set, db *DB) {
 		r.Symlink = entry.Dest
 	}
 
-	r.Status = put.RequestStatusUploading
+	r.Status = transfer.RequestStatusUploading
 	_, err = db.SetEntryStatus(r)
 	So(err, ShouldBeNil)
 
-	r.Status = put.RequestStatusUploaded
+	r.Status = transfer.RequestStatusUploaded
 	_, err = db.SetEntryStatus(r)
 	So(err, ShouldBeNil)
 }

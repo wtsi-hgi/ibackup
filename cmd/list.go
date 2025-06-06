@@ -27,9 +27,9 @@ package cmd
 
 import (
 	"github.com/spf13/cobra"
-	"github.com/wtsi-hgi/ibackup/put"
 	"github.com/wtsi-hgi/ibackup/server"
 	"github.com/wtsi-hgi/ibackup/set"
+	"github.com/wtsi-hgi/ibackup/transfer"
 )
 
 // options for this cmd.
@@ -135,7 +135,7 @@ func displayLocalPaths(entries []*set.Entry) {
 	}
 }
 
-func displayRemotePaths(entries []*set.Entry, transformer put.PathTransformer) {
+func displayRemotePaths(entries []*set.Entry, transformer transfer.PathTransformer) {
 	for _, entry := range entries {
 		remotePath := getRemotePath(entry.Path, transformer)
 
@@ -143,7 +143,7 @@ func displayRemotePaths(entries []*set.Entry, transformer put.PathTransformer) {
 	}
 }
 
-func displayLocalAndRemotePaths(entries []*set.Entry, transformer put.PathTransformer) {
+func displayLocalAndRemotePaths(entries []*set.Entry, transformer transfer.PathTransformer) {
 	for _, entry := range entries {
 		remotePath := getRemotePath(entry.Path, transformer)
 
