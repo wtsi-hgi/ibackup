@@ -134,7 +134,8 @@ func handleGetManualMode() {
 	printResults("down", downloadResults, skipResults, len(requests), putVerbose)
 }
 
-func handleGet(requests []*transfer.Request) (chan *transfer.Request, chan *transfer.Request, chan *transfer.Request, func()) {
+func handleGet(requests []*transfer.Request) (chan *transfer.Request, chan *transfer.Request,
+	chan *transfer.Request, func()) {
 	return handleGetPut(requests, getGetter)
 }
 

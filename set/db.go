@@ -1161,9 +1161,7 @@ func (d *DB) SetEntryStatus(r *transfer.Request) (*Entry, error) {
 		entry, errt = d.updateFileEntry(tx, setID, r, got.LastDiscovery)
 		if errt != nil {
 			return errt
-		}
-
-		if entry.isDir {
+		} else if entry.isDir {
 			return nil
 		}
 
@@ -1200,7 +1198,8 @@ func requestToSetID(r *transfer.Request) (string, error) {
 //
 // If setDiscoveryTime is later than the entry's last attempt, resets the
 // entries Attempts to 0.
-func (d *DB) updateFileEntry(tx *bolt.Tx, setID string, r *transfer.Request, setDiscoveryTime time.Time) (*Entry, error) {
+func (d *DB) updateFileEntry(tx *bolt.Tx, setID string, r *transfer.Request,
+	setDiscoveryTime time.Time) (*Entry, error) {
 	entry, b, err := d.getEntry(tx, setID, r.Local)
 	if err != nil {
 		return nil, err
@@ -1280,7 +1279,7 @@ func (d *DBRO) getEntryFromSubbucket(kind, setID, path string, setsBucket *bolt.
 
 // requestStatusToEntryStatus converts Request.Status and stores it as a Status
 // on the entry. Also sets entry.Attempts, unFailed and newFail as appropriate.
-func requestStatusToEntryStatus(r *transfer.Request, entry *Entry) {
+func requestStatusToEntryStatus(r *transfer.Request, entry *Entry) { //nolint:gocyclo,funlen
 	entry.newFail = false
 	entry.unFailed = false
 

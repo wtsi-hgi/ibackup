@@ -634,7 +634,8 @@ func displayFailedEntries(client *server.Client, given *set.Set) {
 
 // displayAllEntries prints out details about all entries in the given
 // set.
-func displayAllEntries(client *server.Client, given *set.Set, showRemotePaths bool, transformer transfer.PathTransformer) {
+func displayAllEntries(client *server.Client, given *set.Set, showRemotePaths bool,
+	transformer transfer.PathTransformer) {
 	all, err := client.GetFiles(given.ID())
 	if err != nil {
 		die(err)

@@ -258,7 +258,7 @@ func (s *Server) BuriedRequests() []*transfer.Request {
 	var buried []*transfer.Request
 
 	s.forEachBuriedItem(nil, func(item *queue.Item) {
-		buried = append(buried, item.Data().(*transfer.Request)) //nolint:forcetypeassert
+		buried = append(buried, item.Data().(*transfer.Request)) //nolint:forcetypeassert,errcheck
 	})
 
 	return buried
@@ -297,7 +297,7 @@ func (s *Server) forEachBuriedItem(bf *BuriedFilter, cb func(*queue.Item)) {
 
 	for _, item := range items {
 		if bf != nil {
-			if !bf.RequestPasses(item.Data().(*transfer.Request)) { //nolint:forcetypeassert
+			if !bf.RequestPasses(item.Data().(*transfer.Request)) { //nolint:forcetypeassert,errcheck
 				continue
 			}
 		}

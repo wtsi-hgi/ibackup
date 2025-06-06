@@ -822,6 +822,7 @@ func TestSetDB(t *testing.T) {
 						r.Status = transfer.RequestStatusUploading
 						_, err = db.SetEntryStatus(r)
 						So(err, ShouldBeNil)
+
 						r.Status = transfer.RequestStatusFailed
 						r.Error = errMsg
 						_, err = db.SetEntryStatus(r)
@@ -847,8 +848,10 @@ func TestSetDB(t *testing.T) {
 						So(fEntries[3].LastError, ShouldEqual, errMsg)
 
 						r.Status = transfer.RequestStatusUploading
+
 						_, err = db.SetEntryStatus(r)
 						So(err, ShouldBeNil)
+
 						r.Status = transfer.RequestStatusFailed
 						r.Error = errMsg
 						_, err = db.SetEntryStatus(r)
@@ -927,6 +930,7 @@ func TestSetDB(t *testing.T) {
 
 						_, err = db.SetEntryStatus(r)
 						So(err, ShouldBeNil)
+
 						r.Status = transfer.RequestStatusUploaded
 						_, err = db.SetEntryStatus(r)
 						So(err, ShouldBeNil)
@@ -1006,6 +1010,7 @@ func TestSetDB(t *testing.T) {
 
 							_, err = db.SetEntryStatus(r)
 							So(err, ShouldBeNil)
+
 							r.Status = transfer.RequestStatusUploaded
 							_, err = db.SetEntryStatus(r)
 							So(err, ShouldBeNil)

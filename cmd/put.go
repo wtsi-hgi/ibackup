@@ -184,7 +184,8 @@ func handlePutServerMode(started time.Time) {
 func handleServerMode( //nolint:gocognit,gocyclo,funlen
 	started time.Time,
 	getReq func(*server.Client) ([]*transfer.Request, error),
-	handleReq func(*server.Client, []*transfer.Request) (chan *transfer.Request, chan *transfer.Request, chan *transfer.Request, func()),
+	handleReq func(*server.Client, []*transfer.Request) (chan *transfer.Request, chan *transfer.Request,
+		chan *transfer.Request, func()),
 	sendReq func(*server.Client, chan *transfer.Request, chan *transfer.Request, chan *transfer.Request,
 		float64, time.Duration, time.Duration, log15.Logger) error,
 ) {

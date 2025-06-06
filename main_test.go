@@ -459,27 +459,6 @@ func (s *TestServer) interactiveAdd(setName, answer, transformer, argName, path 
 	return cmd.Wait()
 }
 
-func (s *TestServer) getDiscoveryLineFromStatus(setName string) string {
-	cmd := s.clientCmd([]string{"status", "--name", setName})
-
-	outB, err := cmd.CombinedOutput()
-	So(err, ShouldBeNil)
-
-	var discovery string
-
-	for _, line := range strings.Split(string(outB), "\n") {
-		if strings.HasPrefix(line, "Discovery:") {
-			discovery = line
-
-			break
-		}
-	}
-
-	So(discovery, ShouldNotBeBlank)
-
-	return discovery
-}
-
 var servers []*TestServer //nolint:gochecknoglobals
 
 // TestMain builds ourself, starts a test server, runs client tests against the

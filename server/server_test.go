@@ -3808,7 +3808,8 @@ func createManyTestBackupFiles(t *testing.T) []string {
 	return paths
 }
 
-func makePutter(t *testing.T, handler transfer.Handler, requests []*transfer.Request, client *Client) (*transfer.Putter, func()) {
+func makePutter(t *testing.T, handler transfer.Handler, requests []*transfer.Request,
+	client *Client) (*transfer.Putter, func()) {
 	t.Helper()
 
 	p, errp := transfer.New(handler, requests)
