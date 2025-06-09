@@ -175,12 +175,18 @@ func (s *Server) triggerDiscovery(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
-// discoverSet discovers and stores file entry details for the given set.
+// discoverSet discovers and stores file entry details for the given set if it is not read-only.
 // Immediately tries to record in the db that discovery has started, and create
 // a transformer for local->remote paths and returns any error from doing that.
 // Actual discovery will then proceed asynchronously, followed by adding all
 // upload requests for the set to the global put queue.
 func (s *Server) discoverSet(given *set.Set) error {
+	if given.ReadOnly {
+		s.Logger.Printf("Ignore discovery on a read-only set %s [%s:%s]", given.ID(), given.Requester, given.Name)
+
+		return nil
+	}
+
 	transformer, err := given.MakeTransformer()
 	if err != nil {
 		s.recordSetError("making transformer for %s failed: %s", given.ID(), err)
