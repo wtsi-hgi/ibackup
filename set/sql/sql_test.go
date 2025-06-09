@@ -10,8 +10,6 @@ import (
 )
 
 func TestSQL(t *testing.T) {
-	SQLDriver = "sqlite3"
-
 	Convey("With an SQL-based DB", t, func() {
 		connStr := filepath.Join(t.TempDir(), "db")
 
@@ -27,7 +25,7 @@ func TestSQL(t *testing.T) {
 			valueD      = []byte("valueD")
 		)
 
-		d, err := New(connStr, false)
+		d, err := New("sqlite3", connStr, false)
 		So(err, ShouldBeNil)
 
 		Convey("You can set and get values", func() {
@@ -112,7 +110,7 @@ func TestSQL(t *testing.T) {
 			So(err, ShouldBeNil)
 
 			Convey("Readonly prevents Updates", func() {
-				dr, errr := New(connStr, true)
+				dr, errr := New("sqlite3", connStr, true)
 				So(errr, ShouldBeNil)
 
 				So(dr.Update(func(_ db.Tx) error { return nil }), ShouldEqual, ErrReadOnly)

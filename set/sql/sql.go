@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"unsafe"
 
-	_ "github.com/go-sql-driver/mysql" //
 	"github.com/wtsi-hgi/ibackup/set/db"
 )
 
@@ -17,10 +16,8 @@ type DB struct {
 	readonly bool
 }
 
-var SQLDriver = "mysql" //nolint:gochecknoglobals
-
-func New(path string, readonly bool) (db.DB, error) { //nolint:ireturn
-	db, err := sql.Open(SQLDriver, path)
+func New(driver, path string, readonly bool) (db.DB, error) { //nolint:ireturn
+	db, err := sql.Open(driver, path)
 	if err != nil {
 		return nil, err
 	}
