@@ -104,6 +104,7 @@ type Server struct {
 	numClients             int
 	numRequestsCache       []int
 	cacheMu                sync.Mutex
+	dirPoolMu              sync.Mutex
 	dirPool                *workerpool.WorkerPool
 	queue                  *queue.Queue
 	removeQueue            *queue.Queue
@@ -448,7 +449,10 @@ func (s *Server) stop() {
 		close(s.serverAliveCh)
 	}
 
+	s.dirPoolMu.Lock()
 	s.dirPool.StopWait()
+	s.dirPool = nil
+	s.dirPoolMu.Unlock()
 
 	if s.statusUpdateCh != nil {
 		close(s.statusUpdateCh)

@@ -26,6 +26,8 @@
 package cmd
 
 import (
+	"os"
+
 	"github.com/spf13/cobra"
 	"github.com/wtsi-hgi/ibackup/server"
 	"github.com/wtsi-hgi/ibackup/set"
@@ -33,10 +35,16 @@ import (
 )
 
 // options for this cmd.
-var lstName string
-var lstUser string
-var lstLocal bool
-var lstRemote bool
+var (
+	lstName     string
+	lstUser     string
+	lstLocal    bool
+	lstRemote   bool
+	lstAll      bool
+	lstDB       string
+	lstUploaded bool
+	lstSize     bool
+)
 
 // listCmd represents the list command.
 var listCmd = &cobra.Command{
@@ -53,6 +61,10 @@ Provide --local or --remote to see all the local/remote file paths for the set
 provided, each line will contain the local path and the corresponding remote 
 path, tab separated.
 
+Provide --uploaded to only show paths that were successfully uploaded.
+If you provide --size, the size of each file in bytes will be shown in an extra
+tab separated column at the end.
+
 You need to supply the ibackup server's URL in the form domain:port (using the
 IBACKUP_SERVER_URL environment variable, or overriding that with the --url
 argument) and if necessary, the certificate (using the IBACKUP_SERVER_CERT
@@ -61,9 +73,23 @@ environment variable, or overriding that with the --cert argument).
 If you are the user who started the ibackup server, you can use the --user
 option to get the status of a given requestor's backup sets, instead of your
 own. You can specify the user as "all" to see all user's sets.
+
+Alternatively, the user who started the server can use this sub-command to list
+all successfully uploaded paths for all sets for all users by specifying both
+--all and the --database option which should be the path to the local backup of
+the ibackup database, defaulting to the value of the
+IBACKUP_LOCAL_DB_BACKUP_PATH environmental variable.
 `,
 	Run: func(_ *cobra.Command, _ []string) {
-		if lstName == "" {
+		if lstAll && lstDB == "" {
+			dief("--all requires --database to be set")
+		}
+
+		if lstAll && lstName != "" {
+			dief("--name and --all are mutually exclusive")
+		}
+
+		if lstName == "" && !lstAll {
 			dief("--name must be set")
 		}
 
@@ -71,12 +97,18 @@ own. You can specify the user as "all" to see all user's sets.
 			dief("--local and --remote are mutually exclusive")
 		}
 
+		if lstAll {
+			getAllSetsFromDBAndDisplayPaths(lstDB, lstLocal, lstRemote, lstUploaded, lstSize)
+
+			return
+		}
+
 		client, err := newServerClient(serverURL, serverCert)
 		if err != nil {
 			die(err)
 		}
 
-		getRemote(client, lstLocal, lstRemote, lstUser, lstName)
+		getSetFromServerAndDisplayPaths(client, lstLocal, lstRemote, lstUploaded, lstSize, lstUser, lstName)
 	},
 }
 
@@ -92,61 +124,106 @@ func init() {
 		"only get local paths for the --name'd set")
 	listCmd.Flags().BoolVarP(&lstRemote, "remote", "r", false,
 		"only get remote paths for the --name'd set")
+	listCmd.Flags().BoolVarP(&lstAll, "all", "a", false,
+		"get all paths for all sets for all users, requires --database and only works if you started the server")
+	listCmd.Flags().StringVarP(&lstDB, "database", "d",
+		os.Getenv("IBACKUP_LOCAL_DB_BACKUP_PATH"), "path to ibackup database file, required with --all")
+	listCmd.Flags().BoolVarP(&lstUploaded, "uploaded", "u", false,
+		"only show paths that were successfully uploaded")
+	listCmd.Flags().BoolVarP(&lstSize, "size", "s", false,
+		"show the size of each file in bytes")
 }
 
-// getRemote gets the set from the provided name and displays its remote paths.
-func getRemote(client *server.Client, local, remote bool, user, name string) {
-	sets := getSetByName(client, user, name)
+func getAllSetsFromDBAndDisplayPaths(dbPath string, local, remote, uploaded, size bool) {
+	db, err := set.NewRO(dbPath)
+	if err != nil {
+		die(err)
+	}
+
+	sets, err := db.GetAll()
+	if err != nil {
+		die(err)
+	}
+
 	if len(sets) == 0 {
 		warn("no backup sets")
 
 		return
 	}
 
-	displayPaths(client, sets[0], local, remote)
+	for _, s := range sets {
+		info("getting paths for set %s.%s", s.Requester, s.Name)
+
+		entries, err := db.GetFileEntries(s.ID())
+		if err != nil {
+			die(err)
+		}
+
+		transformer := getSetTransformerIfNeeded(s, !local)
+
+		displayEntryPaths(entries, transformer, local, remote, uploaded, size)
+	}
 }
 
-func displayPaths(client *server.Client, given *set.Set, local, remote bool) {
-	entries, err := client.GetFiles(given.ID())
+func getSetTransformerIfNeeded(s *set.Set, needed bool) transfer.PathTransformer {
+	if !needed {
+		return nil
+	}
+
+	return getSetTransformer(s)
+}
+
+func displayEntryPaths(entries []*set.Entry, transformer transfer.PathTransformer, local, remote, uploaded, size bool) {
+	if uploaded {
+		entries = filterForUploaded(entries)
+	}
+
+	format := "%[1]s\t%[2]s"
+
+	if local {
+		format = "%[1]s"
+	} else if remote {
+		format = "%[2]s"
+	}
+
+	if size {
+		format += "\t%[3]d"
+	}
+
+	format += "\n"
+
+	for _, entry := range entries {
+		remotePath := getRemotePath(entry.Path, transformer, !local)
+		cliPrintf(format, entry.Path, remotePath, entry.Size)
+	}
+}
+
+func filterForUploaded(entries []*set.Entry) []*set.Entry {
+	uploadedEntries := make([]*set.Entry, 0, len(entries))
+
+	for _, entry := range entries {
+		if entry.Status == set.Uploaded {
+			uploadedEntries = append(uploadedEntries, entry)
+		}
+	}
+
+	return uploadedEntries
+}
+
+func getSetFromServerAndDisplayPaths(client *server.Client, local, remote, uploaded, size bool, user, name string) {
+	sets := getSetByName(client, user, name)
+	if len(sets) == 0 {
+		warn("backup set not found")
+
+		return
+	}
+
+	entries, err := client.GetFiles(sets[0].ID())
 	if err != nil {
 		die(err)
 	}
 
-	if local {
-		displayLocalPaths(entries)
+	transformer := getSetTransformerIfNeeded(sets[0], !local)
 
-		return
-	}
-
-	transformer := getSetTransformer(given)
-
-	if remote {
-		displayRemotePaths(entries, transformer)
-
-		return
-	}
-
-	displayLocalAndRemotePaths(entries, transformer)
-}
-
-func displayLocalPaths(entries []*set.Entry) {
-	for _, entry := range entries {
-		cliPrintf("%s\n", entry.Path)
-	}
-}
-
-func displayRemotePaths(entries []*set.Entry, transformer transfer.PathTransformer) {
-	for _, entry := range entries {
-		remotePath := getRemotePath(entry.Path, transformer)
-
-		cliPrintf("%s\n", remotePath)
-	}
-}
-
-func displayLocalAndRemotePaths(entries []*set.Entry, transformer transfer.PathTransformer) {
-	for _, entry := range entries {
-		remotePath := getRemotePath(entry.Path, transformer)
-
-		cliPrintf("%s\t%s\n", entry.Path, remotePath)
-	}
+	displayEntryPaths(entries, transformer, local, remote, uploaded, size)
 }

@@ -380,10 +380,20 @@ func (s *Server) handleNewlyDefinedSets(given *set.Set) {
 // sending discovered file paths to the entriesCh. Closes the entriesCh when
 // done, then sends any error on the doneCh. Non-critical warnings during the
 // walk are sent to the warnChan.
-func (s *Server) doSetDirWalks(entries []*set.Entry, excludeTree ptrie.Trie[bool], given *set.Set,
+func (s *Server) doSetDirWalks(entries []*set.Entry, excludeTree ptrie.Trie[bool], given *set.Set, //nolint:funlen
 	entriesCh chan *set.Dirent, doneCh, warnChan chan error,
 ) {
 	errCh := make(chan error, len(entries))
+
+	s.dirPoolMu.Lock()
+
+	if s.dirPool == nil {
+		close(entriesCh)
+
+		doneCh <- fs.ErrClosed
+
+		return
+	}
 
 	for _, entry := range entries {
 		dir := entry.Path
@@ -394,6 +404,8 @@ func (s *Server) doSetDirWalks(entries []*set.Entry, excludeTree ptrie.Trie[bool
 			errCh <- s.handleMissingDirectories(err, thisEntry, given)
 		})
 	}
+
+	s.dirPoolMu.Unlock()
 
 	var err error
 

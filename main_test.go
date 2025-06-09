@@ -565,6 +565,24 @@ func TestList(t *testing.T) {
 						"/remote/path/to/other/file\n"+
 							"/remote/path/to/some/file")
 				})
+
+				Convey("list and --size shows the file size for each file in the set", func() {
+					s.confirmOutput(t, []string{"list", "--name", "testAddFiles", "--size"}, 0,
+						dir+"/path/to/other/file\t"+"/remote/path/to/other/file\t0\n"+
+							dir+"/path/to/some/file\t"+"/remote/path/to/some/file\t0")
+				})
+
+				Convey("list with --local and --size shows the local path and size for each file", func() {
+					s.confirmOutput(t, []string{"list", "--name", "testAddFiles", "--local", "--size"}, 0,
+						dir+"/path/to/other/file\t0\n"+
+							dir+"/path/to/some/file\t0")
+				})
+
+				Convey("list with --remote and --size shows the remote path and size for each file", func() {
+					s.confirmOutput(t, []string{"list", "--name", "testAddFiles", "--remote", "--size"}, 0,
+						"/remote/path/to/other/file\t0\n"+
+							"/remote/path/to/some/file\t0")
+				})
 			})
 
 			Convey("And an invalid transformer for the path", func() {
@@ -578,6 +596,129 @@ func TestList(t *testing.T) {
 							dir+"/path/to/other/file]")
 				})
 			})
+		})
+	})
+
+	Convey("Given a server configured with a upload location and scheduler", t, func() {
+		remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
+		if remotePath == "" {
+			SkipConvey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
+
+			return
+		}
+
+		schedulerDeployment := os.Getenv("IBACKUP_TEST_SCHEDULER")
+		if schedulerDeployment == "" {
+			SkipConvey("skipping iRODS backup test since IBACKUP_TEST_SCHEDULER not set", func() {})
+
+			return
+		}
+
+		serverDir := t.TempDir()
+		s := new(TestServer)
+		s.prepareFilePaths(serverDir)
+		s.prepareConfig()
+
+		s.schedulerDeployment = schedulerDeployment
+		s.backupFile = filepath.Join(serverDir, "db.bak")
+
+		s.startServer()
+
+		Convey("Given a set with files of different sizes that were uploaded", func() {
+			dir := t.TempDir()
+			file1 := filepath.Join(dir, "file1")
+			file2 := filepath.Join(dir, "file2")
+			fofn := filepath.Join(dir, "fofn")
+
+			internal.CreateTestFile(t, file1, "1")
+			internal.CreateTestFile(t, file2, "22")
+			internal.CreateTestFile(t, fofn, fmt.Sprintf("%s\n%s\n/non/existant.file\n", file1, file2))
+
+			file1Size := "1"
+			file2Size := "2"
+			setName := "testUploadedDiffSizeFiles"
+
+			exitCode, _ := s.runBinary(t, "add", "-f", fofn,
+				"--name", setName, "--transformer", "prefix="+dir+":"+remotePath)
+			So(exitCode, ShouldEqual, 0)
+			s.waitForStatus(setName, "Status: complete", 5*time.Second)
+
+			Convey("list with --uploaded and --size only shows uploaded file sizes", func() {
+				s.confirmOutputContains(t, []string{"list", "--name", setName, "--uploaded"}, 0,
+					file1+"\t"+remotePath+"/file1\n")
+				s.confirmOutputContains(t, []string{"list", "--name", setName, "--uploaded"}, 0,
+					file2+"\t"+remotePath+"/file2")
+				s.confirmOutputDoesNotContain(t, []string{"list", "--name", setName, "--uploaded"}, 0,
+					"/non/existant.file")
+				s.confirmOutputContains(t, []string{"list", "--name", setName}, 0,
+					"/non/existant.file")
+
+				s.confirmOutputContains(t, []string{"list", "--name", setName, "--uploaded", "--size"}, 0,
+					file1+"\t"+remotePath+"/file1\t"+file1Size)
+				s.confirmOutputContains(t, []string{"list", "--name", setName, "--uploaded", "--size"}, 0,
+					file2+"\t"+remotePath+"/file2\t"+file2Size)
+
+				s.confirmOutputContains(t, []string{"list", "--name", setName, "--uploaded", "--local", "--size"}, 0,
+					file1+"\t"+file1Size)
+				s.confirmOutputContains(t, []string{"list", "--name", setName, "--uploaded", "--local", "--size"}, 0,
+					file2+"\t"+file2Size)
+
+				s.confirmOutputContains(t, []string{"list", "--name", setName, "--uploaded", "--remote", "--size"}, 0,
+					remotePath+"/file1\t"+file1Size)
+				s.confirmOutputContains(t, []string{"list", "--name", setName, "--uploaded", "--remote", "--size"}, 0,
+					remotePath+"/file2\t"+file2Size)
+
+				Convey("With the server stopped, list with --all and --database works correctly", func() {
+					dir2 := t.TempDir()
+					file3 := filepath.Join(dir2, "file3")
+					internal.CreateTestFile(t, file3, "333")
+
+					setName2 := "testAnotherSet"
+					exitCode, _ := s.runBinary(t, "add", "-p", dir2,
+						"--name", setName2, "--transformer", "prefix="+dir2+":"+remotePath)
+					So(exitCode, ShouldEqual, 0)
+					s.waitForStatus(setName2, "Status: complete", 5*time.Second)
+
+					err := s.Shutdown()
+					So(err, ShouldBeNil)
+
+					exitCode, output := s.runBinary(t, "list", "--all", "--database", s.dbFile)
+					So(exitCode, ShouldEqual, 0)
+
+					So(output, ShouldContainSubstring, file1)
+					So(output, ShouldContainSubstring, file2)
+					So(output, ShouldContainSubstring, file3)
+
+					exitCode, output = s.runBinary(t, "list", "--all", "--database", s.dbFile, "--uploaded", "--size")
+					So(exitCode, ShouldEqual, 0)
+
+					So(output, ShouldContainSubstring, file1+"\t"+remotePath+"/file1\t"+file1Size)
+					So(output, ShouldContainSubstring, file2+"\t"+remotePath+"/file2\t"+file2Size)
+					So(output, ShouldContainSubstring, file3+"\t"+remotePath+"/file3")
+
+					exitCode, output = s.runBinary(t, "list", "--all", "--database", s.dbFile, "--uploaded", "--local", "--size")
+					So(exitCode, ShouldEqual, 0)
+
+					So(output, ShouldContainSubstring, file1+"\t"+file1Size)
+					So(output, ShouldContainSubstring, file2+"\t"+file2Size)
+					So(output, ShouldContainSubstring, file3)
+					So(output, ShouldNotContainSubstring, remotePath)
+
+					exitCode, output = s.runBinary(t, "list", "--all", "--database", s.dbFile, "--remote")
+					So(exitCode, ShouldEqual, 0)
+
+					So(output, ShouldContainSubstring, remotePath+"/file1")
+					So(output, ShouldContainSubstring, remotePath+"/file2")
+					So(output, ShouldContainSubstring, remotePath+"/file3")
+					So(output, ShouldNotContainSubstring, file1)
+				})
+			})
+		})
+
+		Convey("list with invalid option combinations returns an error", func() {
+			s.confirmOutput(t, []string{"list", "--all"}, 1, "--all requires --database to be set")
+			s.confirmOutput(t, []string{"list", "--name", "testSet", "--all", "--database", "db.file"}, 1,
+				"--name and --all are mutually exclusive")
 		})
 	})
 }
