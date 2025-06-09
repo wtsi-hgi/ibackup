@@ -56,8 +56,8 @@ func (d *DB) Update(fn func(db.Tx) error) error {
 	return tx.Commit()
 }
 
-func (DB) Close() error {
-	return nil
+func (d *DB) Close() error {
+	return d.db.Close()
 }
 
 type Tx struct {
