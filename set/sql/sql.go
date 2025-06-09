@@ -13,18 +13,19 @@ import (
 )
 
 type DB struct {
-	db *sql.DB
+	db       *sql.DB
+	readonly bool
 }
 
 var SQLDriver = "mysql" //nolint:gochecknoglobals
 
-func New(path string) (db.DB, error) { //nolint:ireturn
+func New(path string, readonly bool) (db.DB, error) { //nolint:ireturn
 	db, err := sql.Open(SQLDriver, path)
 	if err != nil {
 		return nil, err
 	}
 
-	return &DB{db: db}, nil
+	return &DB{db: db, readonly: readonly}, nil
 }
 
 func (d *DB) View(fn func(db.Tx) error) error {
@@ -36,6 +37,10 @@ func (d *DB) View(fn func(db.Tx) error) error {
 }
 
 func (d *DB) Update(fn func(db.Tx) error) error {
+	if d.readonly {
+		return ErrReadOnly
+	}
+
 	tx, err := d.db.Begin()
 	if err != nil {
 		return err
@@ -359,4 +364,5 @@ var (
 	ErrTxClosed           = errors.New("tx closed")
 	ErrTxNotWritable      = errors.New("tx not writable")
 	ErrBucketNameRequired = errors.New("bucket name required")
+	ErrReadOnly           = errors.New("readonly database")
 )
