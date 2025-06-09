@@ -80,6 +80,16 @@ func (t *Tx) CreateBucketIfNotExists(key []byte) (db.Bucket, error) { //nolint:i
 	return t.Bucket(key), nil
 }
 
+func (t *Tx) queryRows(sql string, args ...any) (*sql.Rows, error) {
+	if t.db != nil {
+		return t.db.Query(sql, args...)
+	} else if t.tx != nil {
+		return t.tx.Query(sql, args...)
+	}
+
+	return nil, ErrTxClosed
+}
+
 func (t *Tx) get(table, sub, id []byte) []byte {
 	query := fmt.Sprintf("SELECT value FROM [%s] WHERE sub = ? AND id = ? ORDER BY id ASC;", table) //nolint:gosec
 
@@ -150,27 +160,17 @@ func (t *Tx) deleteSub(table, sub []byte) error {
 }
 
 func (t *Tx) forEach(table, sub []byte) (*sql.Rows, error) {
-	query := fmt.Sprintf("SELECT id, value FROM [%s] WHERE sub = ? ORDER BY id ASC;", table)
-
-	if t.db != nil {
-		return t.db.Query(query, sub)
-	} else if t.tx != nil {
-		return t.tx.Query(query, sub)
-	}
-
-	return nil, ErrTxClosed
+	return t.queryRows(
+		fmt.Sprintf("SELECT id, value FROM [%s] WHERE sub = ? ORDER BY id ASC;", table),
+		sub,
+	)
 }
 
 func (t *Tx) forEachStarting(table, sub, starting []byte) (*sql.Rows, error) {
-	query := fmt.Sprintf("SELECT id, value FROM [%s] WHERE sub = ? AND id >= ? ORDER BY id ASC;", table)
-
-	if t.db != nil {
-		return t.db.Query(query, sub, starting)
-	} else if t.tx != nil {
-		return t.tx.Query(query, sub, starting)
-	}
-
-	return nil, ErrTxClosed
+	return t.queryRows(
+		fmt.Sprintf("SELECT id, value FROM [%s] WHERE sub = ? AND id >= ? ORDER BY id ASC;", table),
+		sub, starting,
+	)
 }
 
 func (t *Tx) nextSequence(table []byte) (uint64, error) {
@@ -208,7 +208,7 @@ func (t *Tx) nextSequence(table []byte) (uint64, error) {
 	return c + 1, nil
 }
 
-func (t *Tx) WriteTo(_ io.Writer) (int64, error) {
+func (t *Tx) WriteTo(w io.Writer) (int64, error) {
 	return 0, nil
 }
 
