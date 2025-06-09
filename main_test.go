@@ -2672,6 +2672,16 @@ func TestRemove(t *testing.T) {
 					s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 30*time.Second)
 				})
 			})
+
+			Convey("And if you make this set read-only", func() {
+				exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--make-readonly")
+				So(exitCode, ShouldEqual, 0)
+
+				Convey("You can no longer remove files from it", func() {
+					s.confirmOutputContains(t, []string{"remove", "--name", setName, "--path", file1}, 1,
+						cmd.ErrSetIsNotWritable.Error())
+				})
+			})
 		})
 
 		Convey("Given a set with a file that failed to upload", func() {
@@ -2800,7 +2810,7 @@ func TestEdit(t *testing.T) {
 
 					Convey("And you can no longer edit it", func() {
 						s.confirmOutputContains(t, []string{"edit", "--name", setName}, 1,
-							"Error: the set is read-only, you cannot edit it")
+							cmd.ErrSetIsNotWritable.Error())
 					})
 
 					SkipConvey("And you cannot make it writable", func() {
