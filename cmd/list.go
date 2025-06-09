@@ -26,7 +26,6 @@
 package cmd
 
 import (
-	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -153,35 +152,50 @@ func getAllSetsFromDBAndDisplayPaths(dbPath string, local, remote, uploaded, siz
 	}
 
 	for _, s := range sets {
+		info("getting paths for set %s.%s", s.Requester, s.Name)
+
 		entries, err := db.GetFileEntries(s.ID())
 		if err != nil {
 			die(err)
 		}
 
-		displayEntryPaths(entries, s, local, remote, uploaded, size)
+		transformer := getSetTransformerIfNeeded(s, !local)
+
+		displayEntryPaths(entries, transformer, local, remote, uploaded, size)
 	}
 }
 
-func displayEntryPaths(entries []*set.Entry, given *set.Set, local, remote, uploaded, size bool) {
+func getSetTransformerIfNeeded(s *set.Set, needed bool) transfer.PathTransformer {
+	if !needed {
+		return nil
+	}
+
+	return getSetTransformer(s)
+}
+
+func displayEntryPaths(entries []*set.Entry, transformer transfer.PathTransformer, local, remote, uploaded, size bool) {
 	if uploaded {
 		entries = filterForUploaded(entries)
 	}
 
+	format := "%[1]s\t%[2]s"
+
 	if local {
-		displayLocalPaths(entries, size)
-
-		return
+		format = "%[1]s"
+	} else if remote {
+		format = "%[2]s"
 	}
 
-	transformer := getSetTransformer(given)
-
-	if remote {
-		displayRemotePaths(entries, transformer, size)
-
-		return
+	if size {
+		format += "\t%[3]d"
 	}
 
-	displayLocalAndRemotePaths(entries, transformer, size)
+	format += "\n"
+
+	for _, entry := range entries {
+		remotePath := getRemotePath(entry.Path, transformer, !local)
+		cliPrintf(format, entry.Path, remotePath, entry.Size)
+	}
 }
 
 func filterForUploaded(entries []*set.Entry) []*set.Entry {
@@ -196,43 +210,10 @@ func filterForUploaded(entries []*set.Entry) []*set.Entry {
 	return uploadedEntries
 }
 
-func displayLocalPaths(entries []*set.Entry, size bool) {
-	for _, entry := range entries {
-		sizeStr := entryToSizeStr(entry, size)
-		cliPrintf("%s%s\n", entry.Path, sizeStr)
-	}
-}
-
-func entryToSizeStr(entry *set.Entry, size bool) string {
-	if !size {
-		return ""
-	}
-
-	return fmt.Sprintf("\t%d", entry.Size)
-}
-
-func displayRemotePaths(entries []*set.Entry, transformer transfer.PathTransformer, size bool) {
-	for _, entry := range entries {
-		remotePath := getRemotePath(entry.Path, transformer)
-		sizeStr := entryToSizeStr(entry, size)
-
-		cliPrintf("%s%s\n", remotePath, sizeStr)
-	}
-}
-
-func displayLocalAndRemotePaths(entries []*set.Entry, transformer transfer.PathTransformer, size bool) {
-	for _, entry := range entries {
-		remotePath := getRemotePath(entry.Path, transformer)
-		sizeStr := entryToSizeStr(entry, size)
-
-		cliPrintf("%s\t%s%s\n", entry.Path, remotePath, sizeStr)
-	}
-}
-
 func getSetFromServerAndDisplayPaths(client *server.Client, local, remote, uploaded, size bool, user, name string) {
 	sets := getSetByName(client, user, name)
 	if len(sets) == 0 {
-		warn("no backup sets")
+		warn("backup set not found")
 
 		return
 	}
@@ -242,5 +223,7 @@ func getSetFromServerAndDisplayPaths(client *server.Client, local, remote, uploa
 		die(err)
 	}
 
-	displayEntryPaths(entries, sets[0], local, remote, uploaded, size)
+	transformer := getSetTransformerIfNeeded(sets[0], !local)
+
+	displayEntryPaths(entries, transformer, local, remote, uploaded, size)
 }
