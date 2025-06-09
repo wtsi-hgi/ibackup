@@ -519,7 +519,7 @@ func TestNoServer(t *testing.T) {
 }
 
 func TestList(t *testing.T) {
-	SkipConvey("With a started server", t, func() {
+	Convey("With a started server", t, func() {
 		s := NewTestServer(t)
 		So(s, ShouldNotBeNil)
 
