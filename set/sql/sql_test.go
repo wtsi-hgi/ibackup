@@ -52,6 +52,8 @@ func TestSQL(t *testing.T) {
 				b := tx.Bucket(setBucket)
 				So(b, ShouldNotBeNil)
 
+				So(b.Put(key1, valueD), ShouldEqual, ErrTxNotWritable)
+
 				So(b.Get(key1), ShouldResemble, valueA)
 				So(b.Get(key2), ShouldResemble, valueB)
 
