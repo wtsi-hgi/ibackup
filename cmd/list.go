@@ -44,6 +44,7 @@ var (
 	lstDB       string
 	lstUploaded bool
 	lstSize     bool
+	lstBase64   bool
 )
 
 // listCmd represents the list command.
@@ -64,6 +65,9 @@ path, tab separated.
 Provide --uploaded to only show paths that were successfully uploaded.
 If you provide --size, the size of each file in bytes will be shown in an extra
 tab separated column at the end.
+
+To avoid issues with paths having tabs and newlines in them, you can use the
+--base64 option to output the paths base64 encoded.
 
 You need to supply the ibackup server's URL in the form domain:port (using the
 IBACKUP_SERVER_URL environment variable, or overriding that with the --url
@@ -98,7 +102,7 @@ IBACKUP_LOCAL_DB_BACKUP_PATH environmental variable.
 		}
 
 		if lstAll {
-			getAllSetsFromDBAndDisplayPaths(lstDB, lstLocal, lstRemote, lstUploaded, lstSize)
+			getAllSetsFromDBAndDisplayPaths(lstDB, lstLocal, lstRemote, lstUploaded, lstSize, lstBase64)
 
 			return
 		}
@@ -108,7 +112,7 @@ IBACKUP_LOCAL_DB_BACKUP_PATH environmental variable.
 			die(err)
 		}
 
-		getSetFromServerAndDisplayPaths(client, lstLocal, lstRemote, lstUploaded, lstSize, lstUser, lstName)
+		getSetFromServerAndDisplayPaths(client, lstLocal, lstRemote, lstUploaded, lstSize, lstBase64, lstUser, lstName)
 	},
 }
 
@@ -132,9 +136,11 @@ func init() {
 		"only show paths that were successfully uploaded")
 	listCmd.Flags().BoolVarP(&lstSize, "size", "s", false,
 		"show the size of each file in bytes")
+	listCmd.Flags().BoolVarP(&lstBase64, "base64", "b", false,
+		"output paths base64 encoded")
 }
 
-func getAllSetsFromDBAndDisplayPaths(dbPath string, local, remote, uploaded, size bool) {
+func getAllSetsFromDBAndDisplayPaths(dbPath string, local, remote, uploaded, size, encode bool) {
 	db, err := set.NewRO(dbPath)
 	if err != nil {
 		die(err)
@@ -161,7 +167,7 @@ func getAllSetsFromDBAndDisplayPaths(dbPath string, local, remote, uploaded, siz
 
 		transformer := getSetTransformerIfNeeded(s, !local)
 
-		displayEntryPaths(entries, transformer, local, remote, uploaded, size)
+		displayEntryPaths(entries, transformer, local, remote, uploaded, size, encode)
 	}
 }
 
@@ -173,7 +179,8 @@ func getSetTransformerIfNeeded(s *set.Set, needed bool) transfer.PathTransformer
 	return getSetTransformer(s)
 }
 
-func displayEntryPaths(entries []*set.Entry, transformer transfer.PathTransformer, local, remote, uploaded, size bool) {
+func displayEntryPaths(entries []*set.Entry, transformer transfer.PathTransformer,
+	local, remote, uploaded, size, encode bool) {
 	if uploaded {
 		entries = filterForUploaded(entries)
 	}
@@ -194,7 +201,10 @@ func displayEntryPaths(entries []*set.Entry, transformer transfer.PathTransforme
 
 	for _, entry := range entries {
 		remotePath := getRemotePath(entry.Path, transformer, !local)
-		cliPrintf(format, entry.Path, remotePath, entry.Size)
+		localPath := encodeBase64(entry.Path, encode)
+		remotePath = encodeBase64(remotePath, encode)
+
+		cliPrintf(format, localPath, remotePath, entry.Size)
 	}
 }
 
@@ -210,7 +220,8 @@ func filterForUploaded(entries []*set.Entry) []*set.Entry {
 	return uploadedEntries
 }
 
-func getSetFromServerAndDisplayPaths(client *server.Client, local, remote, uploaded, size bool, user, name string) {
+func getSetFromServerAndDisplayPaths(client *server.Client,
+	local, remote, uploaded, size, encode bool, user, name string) {
 	sets := getSetByName(client, user, name)
 	if len(sets) == 0 {
 		warn("backup set not found")
@@ -225,5 +236,5 @@ func getSetFromServerAndDisplayPaths(client *server.Client, local, remote, uploa
 
 	transformer := getSetTransformerIfNeeded(sets[0], !local)
 
-	displayEntryPaths(entries, transformer, local, remote, uploaded, size)
+	displayEntryPaths(entries, transformer, local, remote, uploaded, size, encode)
 }

@@ -29,6 +29,7 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	b64 "encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -582,6 +583,50 @@ func TestList(t *testing.T) {
 					s.confirmOutput(t, []string{"list", "--name", "testAddFiles", "--remote", "--size"}, 0,
 						"/remote/path/to/other/file\t0\n"+
 							"/remote/path/to/some/file\t0")
+				})
+
+				Convey("list with --base64 encodes all paths", func() {
+					exitCode, output := s.runBinary(t, "list", "--name", "testAddFiles", "--base64")
+					So(exitCode, ShouldEqual, 0)
+
+					localPath1 := b64.StdEncoding.EncodeToString([]byte(dir + `/path/to/other/file`))
+					remotePath1 := b64.StdEncoding.EncodeToString([]byte(`/remote/path/to/other/file`))
+					localPath2 := b64.StdEncoding.EncodeToString([]byte(dir + `/path/to/some/file`))
+					remotePath2 := b64.StdEncoding.EncodeToString([]byte(`/remote/path/to/some/file`))
+
+					So(output, ShouldEqual, localPath1+"\t"+remotePath1+"\n"+localPath2+"\t"+remotePath2)
+				})
+
+				Convey("list with --base64 and --local encodes only local paths", func() {
+					exitCode, output := s.runBinary(t, "list", "--name", "testAddFiles", "--base64", "--local")
+					So(exitCode, ShouldEqual, 0)
+
+					localPath1 := b64.StdEncoding.EncodeToString([]byte(dir + `/path/to/other/file`))
+					localPath2 := b64.StdEncoding.EncodeToString([]byte(dir + `/path/to/some/file`))
+
+					So(output, ShouldEqual, localPath1+"\n"+localPath2)
+				})
+
+				Convey("list with --base64 and --remote encodes only remote paths", func() {
+					exitCode, output := s.runBinary(t, "list", "--name", "testAddFiles", "--base64", "--remote")
+					So(exitCode, ShouldEqual, 0)
+
+					remotePath1 := b64.StdEncoding.EncodeToString([]byte(`/remote/path/to/other/file`))
+					remotePath2 := b64.StdEncoding.EncodeToString([]byte(`/remote/path/to/some/file`))
+
+					So(output, ShouldEqual, remotePath1+"\n"+remotePath2)
+				})
+
+				Convey("list with --base64 and --size encodes paths and shows size", func() {
+					exitCode, output := s.runBinary(t, "list", "--name", "testAddFiles", "--base64", "--size")
+					So(exitCode, ShouldEqual, 0)
+
+					localPath1 := b64.StdEncoding.EncodeToString([]byte(dir + `/path/to/other/file`))
+					remotePath1 := b64.StdEncoding.EncodeToString([]byte(`/remote/path/to/other/file`))
+					localPath2 := b64.StdEncoding.EncodeToString([]byte(dir + `/path/to/some/file`))
+					remotePath2 := b64.StdEncoding.EncodeToString([]byte(`/remote/path/to/some/file`))
+
+					So(output, ShouldEqual, localPath1+"\t"+remotePath1+"\t0\n"+localPath2+"\t"+remotePath2+"\t0")
 				})
 			})
 
