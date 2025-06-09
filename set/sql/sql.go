@@ -43,11 +43,11 @@ func (d *DB) Update(fn func(db.Tx) error) error {
 		return err
 	}
 
+	defer tx.Rollback() //nolint:errcheck
+
 	t := Tx{tx: tx}
 
 	if err := fn(&t); err != nil {
-		tx.Rollback() //nolint:errcheck
-
 		return err
 	}
 
