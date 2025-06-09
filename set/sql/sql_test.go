@@ -27,11 +27,10 @@ func TestSQL(t *testing.T) {
 			valueD      = []byte("valueD")
 		)
 
-		d, err := New(connStr)
+		d, err := New(connStr, false)
 		So(err, ShouldBeNil)
 
 		Convey("You can set and get values", func() {
-
 			err = d.Update(func(tx db.Tx) error {
 				b, errr := tx.CreateBucketIfNotExists(setBucket)
 				So(errr, ShouldBeNil)
@@ -109,6 +108,20 @@ func TestSQL(t *testing.T) {
 				return nil
 			})
 			So(err, ShouldBeNil)
+
+			Convey("Readonly prevents Updates", func() {
+				dr, errr := New(connStr, true)
+				So(errr, ShouldBeNil)
+
+				So(dr.Update(func(_ db.Tx) error { return nil }), ShouldEqual, ErrReadOnly)
+				err = dr.View(func(tx db.Tx) error {
+					b := tx.Bucket(setBucket)
+
+					So(b.Get(key1), ShouldResemble, valueB)
+
+					return nil
+				})
+			})
 		})
 
 		Convey("You can get the next ID", func() {
