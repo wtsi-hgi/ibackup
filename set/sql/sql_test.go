@@ -173,5 +173,46 @@ func TestSQL(t *testing.T) {
 			})
 			So(err, ShouldBeNil)
 		})
+
+		Convey("You can use a Cursor to navigate", func() {
+			err = d.Update(func(tx db.Tx) error {
+				b, errr := tx.CreateBucketIfNotExists([]byte("something"))
+				So(errr, ShouldBeNil)
+
+				table := [...][2]string{
+					{"ABC", "1"},
+					{"ABE", "2"},
+					{"BCD", "3"},
+					{"CDE", "4"},
+				}
+
+				for _, row := range table {
+					So(b.Put([]byte(row[0]), []byte(row[1])), ShouldBeNil)
+				}
+
+				testCursor := func(table [][2]string, first func(db.Cursor) ([]byte, []byte)) {
+					c := b.Cursor()
+
+					for k, v := first(c); k != nil; k, v = c.Next() {
+						So(len(table), ShouldBeGreaterThan, 0)
+						So(string(k), ShouldEqual, table[0][0])
+						So(string(v), ShouldEqual, table[0][1])
+
+						table = table[1:]
+					}
+
+					So(len(table), ShouldEqual, 0)
+				}
+
+				testCursor(table[:], func(c db.Cursor) ([]byte, []byte) { return c.First() })
+				testCursor(table[1:], func(c db.Cursor) ([]byte, []byte) { return c.Seek([]byte("ABD")) })
+				testCursor(table[1:], func(c db.Cursor) ([]byte, []byte) { return c.Seek([]byte("ABE")) })
+				testCursor(table[2:], func(c db.Cursor) ([]byte, []byte) { return c.Seek([]byte("B")) })
+				testCursor(table[4:], func(c db.Cursor) ([]byte, []byte) { return c.Seek([]byte("Z")) })
+
+				return nil
+			})
+			So(err, ShouldBeNil)
+		})
 	})
 }
