@@ -234,6 +234,7 @@ func (m *Monitor) Remove(sid string) error {
 	}
 
 	heap.Remove(&m.monitorHeap, index)
+	// m.monitorCh <- struct{}{}
 
 	return nil
 }
