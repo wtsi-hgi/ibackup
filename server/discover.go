@@ -386,7 +386,6 @@ func (s *Server) doSetDirWalks(entries []*set.Entry, excludeTree ptrie.Trie[bool
 	errCh := make(chan error, len(entries))
 
 	s.dirPoolMu.Lock()
-
 	if s.dirPool == nil {
 		close(entriesCh)
 
@@ -404,7 +403,6 @@ func (s *Server) doSetDirWalks(entries []*set.Entry, excludeTree ptrie.Trie[bool
 			errCh <- s.handleMissingDirectories(err, thisEntry, given)
 		})
 	}
-
 	s.dirPoolMu.Unlock()
 
 	var err error
