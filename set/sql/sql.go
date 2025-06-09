@@ -8,12 +8,14 @@ import (
 	"strconv"
 	"unsafe"
 
+	"github.com/klauspost/pgzip"
 	"github.com/wtsi-hgi/ibackup/set/db"
 )
 
 type DB struct {
 	db       *sql.DB
 	readonly bool
+	tables   map[string]struct{}
 }
 
 func New(driver, path string, readonly bool) (db.DB, error) { //nolint:ireturn
@@ -22,11 +24,11 @@ func New(driver, path string, readonly bool) (db.DB, error) { //nolint:ireturn
 		return nil, err
 	}
 
-	return &DB{db: db, readonly: readonly}, nil
+	return &DB{db: db, readonly: readonly, tables: make(map[string]struct{})}, nil
 }
 
 func (d *DB) View(fn func(db.Tx) error) error {
-	t := Tx{db: d.db}
+	t := Tx{db: d.db, tables: d.tables}
 	err := fn(&t)
 	t.db = nil
 
@@ -45,7 +47,7 @@ func (d *DB) Update(fn func(db.Tx) error) error {
 
 	defer tx.Rollback() //nolint:errcheck
 
-	t := Tx{tx: tx}
+	t := Tx{tx: tx, tables: d.tables}
 
 	if err := fn(&t); err != nil {
 		return err
@@ -61,8 +63,9 @@ func (d *DB) Close() error {
 }
 
 type Tx struct {
-	tx *sql.Tx
-	db *sql.DB
+	tx     *sql.Tx
+	db     *sql.DB
+	tables map[string]struct{}
 }
 
 func (t *Tx) CreateBucketIfNotExists(key []byte) (db.Bucket, error) { //nolint:ireturn
@@ -71,6 +74,8 @@ func (t *Tx) CreateBucketIfNotExists(key []byte) (db.Bucket, error) { //nolint:i
 	} else if len(key) == 0 {
 		return nil, ErrBucketNameRequired
 	}
+
+	t.tables[string(key)] = struct{}{}
 
 	if err := t.exec(fmt.Sprintf("CREATE TABLE IF NOT EXISTS [%s]"+
 		" (id string, sub string, value string, UNIQUE(id, sub));", key)); err != nil {
@@ -208,8 +213,87 @@ func (t *Tx) nextSequence(table []byte) (uint64, error) {
 	return c + 1, nil
 }
 
+type stickyWriter struct {
+	Writer io.Writer
+	n      int64
+	err    error
+}
+
+func (s *stickyWriter) Write(p []byte) (int, error) {
+	if s.err != nil {
+		return 0, s.err
+	}
+
+	n, err := s.Writer.Write(p)
+	s.n += int64(n)
+	s.err = err
+
+	return n, err
+}
+
 func (t *Tx) WriteTo(w io.Writer) (int64, error) {
-	return 0, nil
+	sw := stickyWriter{Writer: w}
+
+	gw := pgzip.NewWriter(&sw)
+	defer gw.Close()
+
+	for table := range t.tables {
+		if err := t.writeTable(gw, table); err != nil {
+			return sw.n, err
+		}
+	}
+
+	return sw.n, sw.err
+}
+
+const rowsPerInsert = 1000
+
+func (t *Tx) writeTable(w io.Writer, table string) error {
+	rows, err := t.queryRows(fmt.Sprintf("SELECT sub, id, value FROM [%s]", table))
+	if err != nil {
+		return err
+	}
+
+	fmt.Fprintf(w, "DROP TABLE [%[1]s]; CREATE TABLE [%[1]s]"+
+		" (id string, sub string, value string, UNIQUE(id, sub));\n", table)
+
+	if err := printRows(w, table, rows); err != nil {
+		return err
+	}
+
+	return rows.Close()
+}
+
+func printRows(w io.Writer, table string, rows *sql.Rows) error { //nolint:gocognit
+	n := 0
+
+	for rows.Next() {
+		if n%rowsPerInsert == 0 { //nolint:nestif
+			if n > 0 {
+				io.WriteString(w, ";\n") //nolint:errcheck
+			}
+
+			fmt.Fprintf(w, "INSERT INTO [%s] (sub, id, value) VALUES\n", table)
+		} else {
+			io.WriteString(w, ",\n") //nolint:errcheck
+		}
+
+		n++
+
+		var id, sub, value []byte
+
+		if err := rows.Scan(&sub, &id, &value); err != nil {
+			return err
+		}
+
+		fmt.Fprintf(w, "(%q, %q, %q)", sub, id, value)
+	}
+
+	if n > 0 {
+		io.WriteString(w, ";") //nolint:errcheck
+	}
+
+	return nil
 }
 
 type Bucket struct {
