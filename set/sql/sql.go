@@ -171,7 +171,7 @@ func (t *Tx) forEachStarting(table, sub, starting []byte) (*sql.Rows, error) {
 
 func (t *Tx) nextSequence(table []byte) (uint64, error) {
 	query := fmt.Sprintf( //nolint:gosec
-		"SELECT id FROM [%[1]s] WHERE LEN(id) == ( SELECT MAX(LEN(id)) FROM [%[1]s] ) ORDER BY id DESC LIMIT 1",
+		"SELECT id FROM [%[1]s] WHERE LENGTH(id) == ( SELECT MAX(LENGTH(id)) FROM [%[1]s] ) ORDER BY id DESC LIMIT 1",
 		table,
 	)
 
@@ -189,6 +189,10 @@ func (t *Tx) nextSequence(table []byte) (uint64, error) {
 
 	err := row.Scan(&curr)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			err = nil
+		}
+
 		return 0, err
 	}
 
