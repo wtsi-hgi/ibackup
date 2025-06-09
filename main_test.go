@@ -2813,6 +2813,11 @@ func TestEdit(t *testing.T) {
 							cmd.ErrSetIsNotWritable.Error())
 					})
 
+					Convey("And you can no longer retry it", func() {
+						s.confirmOutputContains(t, []string{"retry", "--name", setName, "--all"}, 1,
+							cmd.ErrSetIsNotWritable.Error())
+					})
+
 					SkipConvey("And you cannot make it writable", func() {
 						s.confirmOutputContains(t, []string{"edit", "--name", setName, "--disable-readonly"}, 1,
 							"Error: only admin can disable readonly mode")

@@ -46,7 +46,7 @@ var (
 )
 
 var ErrInvalidEdit = errors.New("you can either make a set read-only or writable, not both")
-var ErrSetIsNotWritable = errors.New("the set is read-only, you cannot edit it")
+var ErrSetIsNotWritable = errors.New("the set is read-only, you cannot change it")
 
 // editCmd represents the edit command.
 var editCmd = &cobra.Command{
