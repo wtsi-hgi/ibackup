@@ -26,6 +26,8 @@
 package cmd
 
 import (
+	"os"
+
 	"github.com/spf13/cobra"
 	"github.com/wtsi-hgi/ibackup/server"
 	"github.com/wtsi-hgi/ibackup/set"
@@ -33,10 +35,14 @@ import (
 )
 
 // options for this cmd.
-var lstName string
-var lstUser string
-var lstLocal bool
-var lstRemote bool
+var (
+	lstName   string
+	lstUser   string
+	lstLocal  bool
+	lstRemote bool
+	lstAll    bool
+	lstDB     string
+)
 
 // listCmd represents the list command.
 var listCmd = &cobra.Command{
@@ -61,9 +67,23 @@ environment variable, or overriding that with the --cert argument).
 If you are the user who started the ibackup server, you can use the --user
 option to get the status of a given requestor's backup sets, instead of your
 own. You can specify the user as "all" to see all user's sets.
+
+Alternatively, the user who started the server can use this sub-command to list
+all successfully uploaded paths for all sets for all users by specifying both
+--all and the --database option which should be the path to the local backup of
+the ibackup database, defaulting to the value of the
+IBACKUP_LOCAL_DB_BACKUP_PATH environmental variable.
 `,
 	Run: func(_ *cobra.Command, _ []string) {
-		if lstName == "" {
+		if lstAll && lstDB == "" {
+			dief("--all requires --database to be set")
+		}
+
+		if lstAll && lstName != "" {
+			dief("--name and --all are mutually exclusive")
+		}
+
+		if lstName == "" && !lstAll {
 			dief("--name must be set")
 		}
 
@@ -71,12 +91,18 @@ own. You can specify the user as "all" to see all user's sets.
 			dief("--local and --remote are mutually exclusive")
 		}
 
+		if lstAll {
+			getAllSetsFromDBAndDisplayPaths(lstDB, lstLocal, lstRemote)
+
+			return
+		}
+
 		client, err := newServerClient(serverURL, serverCert)
 		if err != nil {
 			die(err)
 		}
 
-		getRemote(client, lstLocal, lstRemote, lstUser, lstName)
+		getSetFromServerAndDisplayPaths(client, lstLocal, lstRemote, lstUser, lstName)
 	},
 }
 
@@ -92,26 +118,40 @@ func init() {
 		"only get local paths for the --name'd set")
 	listCmd.Flags().BoolVarP(&lstRemote, "remote", "r", false,
 		"only get remote paths for the --name'd set")
+	listCmd.Flags().BoolVarP(&lstAll, "all", "a", false,
+		"get all paths for all sets for all users, requires --database and only works if you started the server")
+	listCmd.Flags().StringVarP(&lstDB, "database", "d",
+		os.Getenv("IBACKUP_LOCAL_DB_BACKUP_PATH"), "path to ibackup database file, required with --all")
 }
 
-// getRemote gets the set from the provided name and displays its remote paths.
-func getRemote(client *server.Client, local, remote bool, user, name string) {
-	sets := getSetByName(client, user, name)
+func getAllSetsFromDBAndDisplayPaths(dbPath string, local, remote bool) {
+	db, err := set.NewRO(dbPath)
+	if err != nil {
+		die(err)
+	}
+
+	sets, err := db.GetAll()
+	if err != nil {
+		die(err)
+	}
+
 	if len(sets) == 0 {
 		warn("no backup sets")
 
 		return
 	}
 
-	displayPaths(client, sets[0], local, remote)
+	for _, s := range sets {
+		entries, err := db.GetFileEntries(s.ID())
+		if err != nil {
+			die(err)
+		}
+
+		displayEntryPaths(entries, s, local, remote)
+	}
 }
 
-func displayPaths(client *server.Client, given *set.Set, local, remote bool) {
-	entries, err := client.GetFiles(given.ID())
-	if err != nil {
-		die(err)
-	}
-
+func displayEntryPaths(entries []*set.Entry, given *set.Set, local, remote bool) {
 	if local {
 		displayLocalPaths(entries)
 
@@ -149,4 +189,20 @@ func displayLocalAndRemotePaths(entries []*set.Entry, transformer transfer.PathT
 
 		cliPrintf("%s\t%s\n", entry.Path, remotePath)
 	}
+}
+
+func getSetFromServerAndDisplayPaths(client *server.Client, local, remote bool, user, name string) {
+	sets := getSetByName(client, user, name)
+	if len(sets) == 0 {
+		warn("no backup sets")
+
+		return
+	}
+
+	entries, err := client.GetFiles(sets[0].ID())
+	if err != nil {
+		die(err)
+	}
+
+	displayEntryPaths(entries, sets[0], local, remote)
 }
