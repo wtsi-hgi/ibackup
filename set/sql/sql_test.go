@@ -64,7 +64,22 @@ func TestSQL(t *testing.T) {
 				{key2, valueB},
 			}
 
-			return b.ForEach(func(key, value []byte) error {
+			So(b.ForEach(func(key, value []byte) error {
+				So(values, ShouldNotBeEmpty)
+				So(key, ShouldResemble, values[0][0])
+				So(value, ShouldResemble, values[0][1])
+
+				values = values[1:]
+
+				return nil
+			}), ShouldBeNil)
+
+			values = [][2][]byte{
+				{key1, valueC},
+				{key2, valueD},
+			}
+
+			return s.ForEach(func(key, value []byte) error {
 				So(values, ShouldNotBeEmpty)
 				So(key, ShouldResemble, values[0][0])
 				So(value, ShouldResemble, values[0][1])
@@ -82,6 +97,11 @@ func TestSQL(t *testing.T) {
 
 			So(b.Put(key1, valueB), ShouldBeNil)
 			So(b.Get(key1), ShouldResemble, valueB)
+
+			sb := b.Bucket(key1)
+
+			So(sb.Put(key1, valueC), ShouldBeNil)
+			So(sb.Put(key2, valueD), ShouldBeNil)
 
 			return nil
 		})
