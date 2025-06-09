@@ -333,7 +333,7 @@ func (c *Cursor) First() ([]byte, []byte) {
 }
 
 func (c *Cursor) resetRows(key []byte) ([]byte, []byte) {
-	if c.rows == nil || c.rows.Close() != nil {
+	if c.rows != nil && c.rows.Close() != nil {
 		return nil, nil
 	}
 
