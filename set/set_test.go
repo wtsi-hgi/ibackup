@@ -37,6 +37,7 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	_ "github.com/mattn/go-sqlite3" //
 	"github.com/shirou/gopsutil/process"
 	. "github.com/smartystreets/goconvey/convey"
 	gas "github.com/wtsi-hgi/go-authserver"
@@ -307,10 +308,20 @@ func TestSet(t *testing.T) {
 	})
 }
 
-func TestSetDB(t *testing.T) {
+func TestSetDBBolt(t *testing.T) {
+	testSetDB(t, "")
+}
+
+func TestSetDBSQL(t *testing.T) {
+	testSetDB(t, "sqlite3://")
+}
+
+func testSetDB(t *testing.T, driver string) {
+	t.Helper()
+
 	Convey("Given a path", t, func() {
 		tDir := t.TempDir()
-		dbPath := filepath.Join(tDir, "set.db")
+		dbPath := driver + filepath.Join(tDir, "set.db")
 
 		Convey("You can create a new database", func() {
 			slackWriter := gas.NewStringLogger()
