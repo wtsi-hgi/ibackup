@@ -41,9 +41,11 @@ import (
 
 	"github.com/VertebrateResequencing/wr/queue"
 	"github.com/gammazero/workerpool"
+	_ "github.com/go-sql-driver/mysql" //
 	"github.com/ugorji/go/codec"
 	"github.com/wtsi-hgi/ibackup/set/bolt"
 	"github.com/wtsi-hgi/ibackup/set/db"
+	"github.com/wtsi-hgi/ibackup/set/sql"
 	"github.com/wtsi-hgi/ibackup/transfer"
 	"go.etcd.io/bbolt"
 )
@@ -149,20 +151,38 @@ func NewRemoveRequest(path string, set *Set, isDir bool) RemoveReq {
 //
 // Returns an error if database can't be opened.
 func NewRO(path string) (*DBRO, error) {
-	boltDB, err := bolt.Open(path, dbOpenMode, &bbolt.Options{
-		ReadOnly: true,
-		OpenFile: func(name string, _ int, _ os.FileMode) (*os.File, error) {
-			return os.Open(name)
-		},
-	})
+	var (
+		d   db.DB
+		err error
+	)
+
+	if driver, url := splitDriverURL(path); driver != "bolt" {
+		d, err = sql.New(driver, url, true)
+	} else {
+		d, err = bolt.Open(url, dbOpenMode, &bbolt.Options{
+			ReadOnly: true,
+			OpenFile: func(name string, _ int, _ os.FileMode) (*os.File, error) {
+				return os.Open(name)
+			},
+		})
+	}
 	if err != nil {
 		return nil, err
 	}
 
 	return &DBRO{
-		db: boltDB,
+		db: d,
 		ch: new(codec.BincHandle),
 	}, nil
+}
+
+func splitDriverURL(path string) (string, string) {
+	driver, url, ok := strings.Cut(path, "://")
+	if !ok {
+		return "bolt", path
+	}
+
+	return driver, url
 }
 
 // DB is used to create and query a database for storing backup sets (lists of
@@ -215,21 +235,34 @@ func New(path, backupPath string, readonly bool) (*DB, error) {
 }
 
 func initDB(path string, readonly bool) (db.DB, error) { //nolint:ireturn
-	boltDB, err := bolt.Open(path, dbOpenMode, &bbolt.Options{
-		NoFreelistSync: true,
-		NoGrowSync:     true,
-		FreelistType:   bbolt.FreelistMapType,
-		ReadOnly:       readonly,
-	})
+	var d db.DB
+
+	var err error
+
+	if driver, url := splitDriverURL(path); driver != "bolt" {
+		d, err = sql.New(driver, url, false)
+	} else {
+		d, err = bolt.Open(url, dbOpenMode, &bbolt.Options{
+			NoFreelistSync: true,
+			NoGrowSync:     true,
+			FreelistType:   bbolt.FreelistMapType,
+			ReadOnly:       readonly,
+		})
+	}
+
 	if err != nil {
 		return nil, err
 	}
 
 	if readonly {
-		return boltDB, nil
+		return d, nil
 	}
 
-	err = boltDB.Update(func(tx db.Tx) error {
+	return d, createInitialBuckets(d)
+}
+
+func createInitialBuckets(d db.DB) error {
+	return d.Update(func(tx db.Tx) error {
 		for _, bucket := range [...]string{
 			setsBucket, failedBucket, inodeBucket,
 			userToSetBucket, userToSetBucket, transformerToIDBucket, transformerFromIDBucket,
@@ -241,8 +274,6 @@ func initDB(path string, readonly bool) (db.DB, error) { //nolint:ireturn
 
 		return nil
 	})
-
-	return boltDB, err
 }
 
 // Close closes the database. Be sure to call this to finalise any writes to
