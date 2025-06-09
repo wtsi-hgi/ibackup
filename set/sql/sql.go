@@ -151,7 +151,7 @@ func (t *Tx) forEach(table, sub []byte) (*sql.Rows, error) {
 	if t.db != nil {
 		return t.db.Query(query, sub)
 	} else if t.tx != nil {
-		return t.db.Query(query, sub)
+		return t.tx.Query(query, sub)
 	}
 
 	return nil, ErrTxClosed
@@ -163,7 +163,7 @@ func (t *Tx) forEachStarting(table, sub, starting []byte) (*sql.Rows, error) {
 	if t.db != nil {
 		return t.db.Query(query, sub, starting)
 	} else if t.tx != nil {
-		return t.db.Query(query, sub, starting)
+		return t.tx.Query(query, sub, starting)
 	}
 
 	return nil, ErrTxClosed
