@@ -57,6 +57,8 @@ func TestSQL(t *testing.T) {
 				So(b.Get(key1), ShouldResemble, valueA)
 				So(b.Get(key2), ShouldResemble, valueB)
 
+				So(b.Bucket([]byte("NONE")), ShouldBeNil)
+
 				s := b.Bucket(subBucket)
 				So(s, ShouldNotBeNil)
 
@@ -102,7 +104,8 @@ func TestSQL(t *testing.T) {
 				So(b.Put(key1, valueB), ShouldBeNil)
 				So(b.Get(key1), ShouldResemble, valueB)
 
-				sb := b.Bucket(key1)
+				sb, errr := b.CreateBucket(key1)
+				So(errr, ShouldBeNil)
 
 				So(sb.Put(key1, valueC), ShouldBeNil)
 				So(sb.Put(key2, valueD), ShouldBeNil)
