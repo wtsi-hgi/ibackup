@@ -1,6 +1,7 @@
 package sql
 
 import (
+	"bufio"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -78,7 +79,7 @@ func (t *Tx) CreateBucketIfNotExists(key []byte) (db.Bucket, error) { //nolint:i
 	t.tables[string(key)] = struct{}{}
 
 	if err := t.exec(fmt.Sprintf("CREATE TABLE IF NOT EXISTS [%s]"+
-		" (id string, sub string, value string, UNIQUE(id, sub));", key)); err != nil {
+		" (sub string, id string, value string, UNIQUE(sub, id));", key)); err != nil {
 		return nil, err
 	}
 
@@ -254,8 +255,8 @@ func (t *Tx) writeTable(w io.Writer, table string) error {
 		return err
 	}
 
-	fmt.Fprintf(w, "DROP TABLE [%[1]s]; CREATE TABLE [%[1]s]"+
-		" (id string, sub string, value string, UNIQUE(id, sub));\n", table)
+	fmt.Fprintf(w, "DROP TABLE IF EXISTS [%[1]s]; CREATE TABLE [%[1]s]"+
+		" (sub string, id string, value string, UNIQUE(sub, id));\n", table)
 
 	if err := printRows(w, table, rows); err != nil {
 		return err
@@ -273,9 +274,9 @@ func printRows(w io.Writer, table string, rows *sql.Rows) error { //nolint:gocog
 				io.WriteString(w, ";\n") //nolint:errcheck
 			}
 
-			fmt.Fprintf(w, "INSERT INTO [%s] (sub, id, value) VALUES\n", table)
+			fmt.Fprintf(w, "INSERT INTO [%s] (sub, id, value) VALUES ", table)
 		} else {
-			io.WriteString(w, ",\n") //nolint:errcheck
+			io.WriteString(w, ", ") //nolint:errcheck
 		}
 
 		n++
@@ -286,14 +287,64 @@ func printRows(w io.Writer, table string, rows *sql.Rows) error { //nolint:gocog
 			return err
 		}
 
-		fmt.Fprintf(w, "(%q, %q, %q)", sub, id, value)
+		fmt.Fprintf(w, "(X'%X', X'%X', X'%X')", sub, id, value)
 	}
 
 	if n > 0 {
-		io.WriteString(w, ";") //nolint:errcheck
+		io.WriteString(w, ";\n") //nolint:errcheck
 	}
 
 	return nil
+}
+
+type stickyReader struct {
+	Reader io.Reader
+	n      int64
+	err    error
+}
+
+func (s *stickyReader) Read(p []byte) (int, error) {
+	if s.err != nil {
+		return 0, s.err
+	}
+
+	n, err := s.Reader.Read(p)
+	s.n += int64(n)
+	s.err = err
+
+	return n, err
+}
+
+func (t *Tx) ReadFrom(r io.Reader) (int64, error) {
+	if t.tx == nil {
+		return 0, ErrTxNotWritable
+	}
+
+	sr := stickyReader{Reader: r}
+
+	gr, err := pgzip.NewReader(&sr)
+	if err != nil {
+		return sr.n, err
+	}
+
+	defer gr.Close()
+
+	br := bufio.NewReader(gr)
+
+	for {
+		line, err := br.ReadBytes('\n')
+		if len(line) != 0 {
+			err = t.exec(string(line))
+		}
+
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				err = nil
+			}
+
+			return sr.n, err
+		}
+	}
 }
 
 type Bucket struct {
