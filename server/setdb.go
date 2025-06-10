@@ -108,8 +108,9 @@ const (
 	ErrInvalidInput = gas.Error("invalid input")
 	ErrInternal     = gas.Error("internal server error")
 
-	paramRequester = "requester"
-	paramSetID     = "id"
+	paramRequester    = "requester"
+	paramSetID        = "id"
+	paramRequireAdmin = "requireAdmin"
 
 	numberOfFilesForOneHardlink = 2
 
@@ -297,6 +298,8 @@ func (s *Server) addDBEndpoints(authGroup *gin.RouterGroup) {
 // LoadSetDB() must already have been called. This is called when there is a PUT
 // on /rest/v1/auth/set.
 func (s *Server) putSet(c *gin.Context) {
+	requireAdmin := c.DefaultQuery(paramRequireAdmin, "false") == "true"
+
 	given := &set.Set{}
 
 	if err := c.BindJSON(given); err != nil {
@@ -305,7 +308,12 @@ func (s *Server) putSet(c *gin.Context) {
 		return
 	}
 
-	if !s.AllowedAccess(c, given.Requester) {
+	setUser := given.Requester
+	if requireAdmin {
+		setUser = ""
+	}
+
+	if !s.AllowedAccess(c, setUser) {
 		c.AbortWithError(http.StatusUnauthorized, ErrBadRequester) //nolint:errcheck
 
 		return

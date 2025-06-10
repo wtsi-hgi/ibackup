@@ -47,6 +47,7 @@ var (
 
 var ErrInvalidEdit = errors.New("you can either make a set read-only or writable, not both")
 var ErrSetIsNotWritable = errors.New("the set is read-only, you cannot change it")
+var ErrNotAdmin = errors.New("only admin can do that")
 
 // editCmd represents the edit command.
 var editCmd = &cobra.Command{
@@ -75,6 +76,12 @@ Edit an existing backup set.`,
 			return err
 		}
 
+		requireAdmin := false
+		if editMakeWritable {
+			userSet.ReadOnly = false
+			requireAdmin = true
+		}
+
 		if userSet.ReadOnly {
 			return ErrSetIsNotWritable
 		}
@@ -95,7 +102,7 @@ Edit an existing backup set.`,
 			userSet.ReadOnly = true
 		}
 
-		return edit(client, userSet)
+		return edit(client, userSet, requireAdmin)
 	},
 }
 
@@ -114,21 +121,22 @@ func init() {
 	editCmd.Flags().BoolVar(&editMakeWritable, "disable-readonly", false,
 		"disable read-only mode (only admins can do this)")
 
-	err := editCmd.Flags().MarkHidden("disable-readonly") // this option is not implemented yet
-	if err != nil {
-		die(err)
-	}
-
 	if err := editCmd.MarkFlagRequired("name"); err != nil {
 		die(err)
 	}
 }
 
-func edit(client *server.Client, givenSet *set.Set) error {
-	err := client.AddOrUpdateSet(givenSet)
-	if err != nil {
+func edit(client *server.Client, givenSet *set.Set, requireAdmin bool) error {
+	var err error
+
+	if requireAdmin {
+		err = client.AddOrUpdateSetRequireAdmin(givenSet)
+		if errors.Is(err, server.ErrBadRequester) {
+			err = ErrNotAdmin
+		}
+
 		return err
 	}
 
-	return nil
+	return client.AddOrUpdateSet(givenSet)
 }

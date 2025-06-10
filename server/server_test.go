@@ -2176,6 +2176,25 @@ func TestServer(t *testing.T) {
 							slack.BoxPrefixError+"`jim.setbad` could not be recovered: "+
 							"not a valid humgen lustre path [%s]"+serverRecoveryMessage+serverStartedMessage, expected[0]))
 					})
+
+					Convey("And if you make the set read-only", func() {
+						exampleSet.ReadOnly = true
+						err = client.AddOrUpdateSet(exampleSet)
+						So(err, ShouldBeNil)
+
+						Convey("You cannot make it writable again", func() {
+							exampleSet.ReadOnly = false
+							err = client.AddOrUpdateSetRequireAdmin(exampleSet)
+							So(err, ShouldNotBeNil)
+							So(err.Error(), ShouldContainSubstring, ErrBadRequester.Error())
+						})
+
+						Convey("Admin can make it writable again", func() {
+							exampleSet.ReadOnly = false
+							err = adminClient.AddOrUpdateSetRequireAdmin(exampleSet)
+							So(err, ShouldBeNil)
+						})
+					})
 				})
 
 				Convey("But you can't add sets as other users and can only retrieve your own", func() {
