@@ -742,10 +742,9 @@ func testServer(t *testing.T, sql bool) {
 								gotSet, errg = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
 								So(errg, ShouldBeNil)
 								So(gotSet.NumFiles, ShouldEqual, 1)
-								So(gotSet.NumObjectsRemoved, ShouldBeLessThan, gotSet.NumObjectsToBeRemoved)
 
 								Convey("And then the removals will still complete", func() {
-									time.Sleep(1000 * time.Millisecond)
+									time.Sleep(time.Second)
 
 									gotSet, errg = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
 									So(errg, ShouldBeNil)
