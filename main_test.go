@@ -39,12 +39,14 @@ import (
 	"os/user"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v4"
 	"github.com/phayes/freeport"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/wtsi-hgi/ibackup/baton"
@@ -2824,6 +2826,75 @@ func TestEdit(t *testing.T) {
 					})
 				})
 			})
+
+			SkipConvey("And a read-only set made by a different user", func() {
+				user := "john"
+				setName := "johnSet"
+				exitCode, _ := s.runBinary(t, "add", "--name", setName, "--transformer", transformer,
+					"--path", path, "--user", user)
+				So(exitCode, ShouldEqual, 0)
+
+				s.waitForStatusWithUser(setName, "\nDiscovery: completed", user, 10*time.Second)
+
+				exitCode, _ = s.runBinary(t, "edit", "--name", setName, "--make-readonly", "--user", user)
+				So(exitCode, ShouldEqual, 0)
+
+				s.confirmOutputContains(t, []string{"status", "--name", setName, "--user", user}, 0, "Read-only: true\n")
+
+				Convey("And that user cannot make it writable", func() {
+					args := []string{"edit", "--name", setName, "--user", user, "--disable-readonly"}
+					disableCmd := s.clientCmd(args)
+					idx := slices.IndexFunc(disableCmd.Env, func(str string) bool {
+						return strings.HasPrefix(str, "XDG_STATE_HOME")
+					})
+					disableCmd.Env = slices.Delete(disableCmd.Env, idx, idx+1)
+
+					fakeDir := generateFakeJWT(t, s.key)
+
+					disableCmd.Env = append(disableCmd.Env, "XDG_STATE_HOME="+fakeDir)
+
+					output, err := disableCmd.CombinedOutput()
+					if output != nil {
+						t.Fatalf("%s", output)
+					}
+
+					So(err, ShouldNotBeNil)
+
+					s.confirmOutputContains(t, []string{"edit", "--name", setName, "--user", user, "--disable-readonly"}, 0,
+						cmd.ErrNotAdmin.Error())
+				})
+
+				Convey("Admin can make it writable", func() {
+					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--user", user, "--disable-readonly")
+					So(exitCode, ShouldEqual, 0)
+
+					s.confirmOutputDoesNotContain(t, []string{"status", "--name", setName, "--user", user}, 0, "Read-only: true")
+				})
+			})
 		})
 	})
+}
+
+func generateFakeJWT(t *testing.T, keyPath string) string {
+	t.Helper()
+
+	token := jwt.New(jwt.GetSigningMethod("RS512"))
+	keyData, err := os.ReadFile(keyPath)
+	So(err, ShouldBeNil)
+
+	key, err := jwt.ParseRSAPrivateKeyFromPEM(keyData)
+	So(err, ShouldBeNil)
+
+	fakeToken, err := token.SignedString(key)
+	So(err, ShouldBeNil)
+
+	fakeDir := t.TempDir()
+	fakeFile := filepath.Join(fakeDir, ".ibackup.jwt")
+
+	internal.CreateTestFile(t, fakeFile, fakeToken)
+
+	err = os.Chmod(fakeFile, 384)
+	So(err, ShouldBeNil)
+
+	return fakeDir
 }
