@@ -2169,7 +2169,7 @@ func testServer(t *testing.T, sql bool) {
 
 				logger := log15.New()
 
-				backupPath := dbPath + ".bk"
+				backupPath := filepath.Join(t.TempDir(), "db.bk")
 
 				Convey("and add a set", func() {
 					err = client.AddOrUpdateSet(exampleSet)
@@ -3213,7 +3213,6 @@ func testServer(t *testing.T, sql bool) {
 				})
 
 				Convey("and enable database backups which trigger at appropriate times", func() {
-
 					s.db.SetBackupPath(backupPath)
 					s.db.SetMinimumTimeBetweenBackups(0)
 
