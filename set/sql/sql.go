@@ -361,9 +361,7 @@ func (t *Tx) exec(stmnt string, params ...any) error {
 
 		return err
 	} else if t.db != nil {
-		_, err := t.db.Exec(stmnt, params...)
-
-		return err
+		return ErrReadOnly
 	}
 
 	return ErrTxClosed
