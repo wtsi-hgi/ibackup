@@ -485,7 +485,7 @@ func (p *Putter) statPathsAndReturnOrPut(request *Request, putCh chan *Request, 
 
 func (p *Putter) getMetadataAndReturnOrPut(request *Request, putCh chan *Request, skipReturnCh chan *Request) {
 	lInfo, err := Stat(request.Local)
-	if err == nil && !p.overwrite {
+	if err == nil && lInfo.Size != 0 && !p.overwrite {
 		sendRequest(request, RequestStatusUnmodified, err, skipReturnCh)
 
 		return
