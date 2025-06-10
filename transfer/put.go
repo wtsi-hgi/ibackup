@@ -485,7 +485,7 @@ func (p *Putter) statPathsAndReturnOrPut(request *Request, putCh chan *Request, 
 
 func (p *Putter) getMetadataAndReturnOrPut(request *Request, putCh chan *Request, skipReturnCh chan *Request) {
 	lInfo, err := Stat(request.Local)
-	if err == nil && !p.overwrite {
+	if skipIfLocalFileIsNotEmptyAndNotOverwriting(lInfo, err, p.overwrite) {
 		sendRequest(request, RequestStatusUnmodified, err, skipReturnCh)
 
 		return
@@ -501,6 +501,10 @@ func (p *Putter) getMetadataAndReturnOrPut(request *Request, putCh chan *Request
 	request.Meta.LocalMeta = request.Meta.remoteMeta
 
 	sendGetRequest(request, lInfo, rInfo, putCh, skipReturnCh)
+}
+
+func skipIfLocalFileIsNotEmptyAndNotOverwriting(lInfo *ObjectInfo, err error, overwrite bool) bool {
+	return err == nil && lInfo.Size != 0 && !overwrite
 }
 
 func sendGetRequest(request *Request, lInfo, rInfo *ObjectInfo, putCh chan *Request, skipReturnCh chan *Request) {

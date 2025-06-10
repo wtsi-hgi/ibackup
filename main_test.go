@@ -2097,7 +2097,7 @@ func TestManualMode(t *testing.T) {
 		remote1 := remotePath + "/" + "file1"
 		remote2 := remotePath + "/" + "file2"
 
-		fileContents1 := "abc"
+		fileContents1 := "123"
 		fileContents2 := "1234"
 
 		internal.CreateTestFile(t, file1, fileContents1)
@@ -2193,6 +2193,13 @@ func TestManualMode(t *testing.T) {
 			restoreFiles(t, file5+"\t"+remote1+"\n", "1 downloaded (0 replaced); 0 skipped; 0 failed; 0 missing\n", "-o")
 
 			confirmFileContents(t, file5, fileContents1)
+
+			err = os.Remove(file1)
+			So(err, ShouldBeNil)
+
+			internal.CreateTestFile(t, file1, "")
+			restoreFiles(t, file1+"\t"+remote1+"\n", "1 downloaded (1 replaced); 0 skipped; 0 failed; 0 missing\n")
+			confirmFileContents(t, file1, fileContents1)
 
 			So(exec.Command("imeta", "add", "-d", remote2, transfer.MetaKeySymlink, file1).Run(), ShouldBeNil)
 
