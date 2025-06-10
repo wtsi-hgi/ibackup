@@ -2199,6 +2199,7 @@ func TestManualMode(t *testing.T) {
 
 			internal.CreateTestFile(t, file1, "")
 			restoreFiles(t, file1+"\t"+remote1+"\n", "1 downloaded (1 replaced); 0 skipped; 0 failed; 0 missing\n")
+			confirmFileContents(t, file1, fileContents1)
 
 			So(exec.Command("imeta", "add", "-d", remote2, transfer.MetaKeySymlink, file1).Run(), ShouldBeNil)
 
