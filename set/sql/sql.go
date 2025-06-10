@@ -97,6 +97,16 @@ func (t *Tx) queryRows(sql string, args ...any) (*sql.Rows, error) {
 	return nil, ErrTxClosed
 }
 
+func (t *Tx) queryRow(sql string, args ...any) (*sql.Row, error) {
+	if t.db != nil {
+		return t.db.QueryRow(sql, args...), nil
+	} else if t.tx != nil {
+		return t.tx.QueryRow(sql, args...), nil
+	}
+
+	return nil, ErrTxClosed
+}
+
 func (t *Tx) get(table, sub, id []byte) []byte {
 	query := fmt.Sprintf("SELECT value FROM [%s] WHERE sub = ? AND id = ? ORDER BY id ASC;", table) //nolint:gosec
 
@@ -105,13 +115,8 @@ func (t *Tx) get(table, sub, id []byte) []byte {
 		err   error
 	)
 
-	if t.db != nil {
-		err = t.db.QueryRow(query, sub, id).Scan(&value)
-	} else if t.tx != nil {
-		err = t.tx.QueryRow(query, sub, id).Scan(&value)
-	}
-
-	if err != nil {
+	row, err := t.queryRow(query, sub, id)
+	if err != nil || row.Scan(&value) != nil {
 		return nil
 	}
 
@@ -168,14 +173,14 @@ func (t *Tx) deleteSub(table, sub []byte) error {
 
 func (t *Tx) forEach(table, sub []byte) (*sql.Rows, error) {
 	return t.queryRows(
-		fmt.Sprintf("SELECT id, value FROM [%s] WHERE sub = ? ORDER BY id ASC;", table),
+		fmt.Sprintf("SELECT id, value FROM [%s] WHERE sub = ? AND id != '' ORDER BY id ASC;", table),
 		sub,
 	)
 }
 
 func (t *Tx) forEachStarting(table, sub, starting []byte) (*sql.Rows, error) {
 	return t.queryRows(
-		fmt.Sprintf("SELECT id, value FROM [%s] WHERE sub = ? AND id >= ? ORDER BY id ASC;", table),
+		fmt.Sprintf("SELECT id, value FROM [%s] WHERE sub = ? AND id >= ? AND id != '' ORDER BY id ASC;", table),
 		sub, starting,
 	)
 }
@@ -384,6 +389,10 @@ func (b *Bucket) Put(id, value []byte) error {
 }
 
 func (b *Bucket) CreateBucketIfNotExists(key []byte) (db.Bucket, error) { //nolint:ireturn
+	if err := b.tx.exec(fmt.Sprintf("REPLACE INTO [%s] (sub) VALUES (?)", b.table), key); err != nil {
+		return nil, err
+	}
+
 	return &Bucket{
 		tx:    b.tx,
 		table: b.table,
@@ -392,6 +401,10 @@ func (b *Bucket) CreateBucketIfNotExists(key []byte) (db.Bucket, error) { //noli
 }
 
 func (b *Bucket) CreateBucket(key []byte) (db.Bucket, error) { //nolint:ireturn
+	if err := b.tx.exec(fmt.Sprintf("INSERT INTO [%s] (sub) VALUES (?)", b.table), key); err != nil {
+		return nil, err
+	}
+
 	return &Bucket{
 		tx:    b.tx,
 		table: b.table,
@@ -400,6 +413,19 @@ func (b *Bucket) CreateBucket(key []byte) (db.Bucket, error) { //nolint:ireturn
 }
 
 func (b *Bucket) Bucket(key []byte) db.Bucket { //nolint:ireturn
+	var count int
+
+	if row, err := b.tx.queryRow( //nolint:nestif
+		fmt.Sprintf("SELECT COUNT(1) FROM [%s] WHERE sub = ?", b.table),
+		key,
+	); err != nil {
+		return nil
+	} else if row.Scan(&count) != nil {
+		return nil
+	} else if count == 0 {
+		return nil
+	}
+
 	return &Bucket{
 		tx:    b.tx,
 		table: b.table,
