@@ -78,8 +78,9 @@ func (t *Tx) CreateBucketIfNotExists(key []byte) (db.Bucket, error) { //nolint:i
 
 	t.tables[string(key)] = struct{}{}
 
-	if err := t.exec(fmt.Sprintf("CREATE TABLE IF NOT EXISTS [%s]"+
-		" (sub string, id string, value string, UNIQUE(sub, id));", key)); err != nil {
+	if err := t.exec(fmt.Sprintf("CREATE TABLE IF NOT EXISTS [%[1]s]"+
+		" (sub string, id string, value string);"+
+		"CREATE UNIQUE INDEX IF NOT EXISTS [%[1]s_index] ON [%[1]s] (sub, id);", key)); err != nil {
 		return nil, err
 	}
 
@@ -255,8 +256,10 @@ func (t *Tx) writeTable(w io.Writer, table string) error {
 		return err
 	}
 
-	fmt.Fprintf(w, "DROP TABLE IF EXISTS [%[1]s]; CREATE TABLE [%[1]s]"+
-		" (sub string, id string, value string, UNIQUE(sub, id));\n", table)
+	fmt.Fprintf(w, "DROP INDEX IF EXISTS [%[1]s_index]; "+
+		"DROP TABLE IF EXISTS [%[1]s];"+
+		"CREATE TABLE [%[1]s] (sub string, id string, value string); "+
+		"CREATE UNIQUE INDEX [%[1]s_index] ON [%[1]s] (sub, id);\n", table)
 
 	if err := printRows(w, table, rows); err != nil {
 		return err
@@ -315,7 +318,7 @@ func (s *stickyReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-func (t *Tx) ReadFrom(r io.Reader) (int64, error) {
+func (t *Tx) ReadFrom(r io.Reader) (int64, error) { //nolint:gocognit
 	if t.tx == nil {
 		return 0, ErrTxNotWritable
 	}
