@@ -1806,7 +1806,7 @@ Global put client status (/10): 6 iRODS connections`)
 			})
 		})
 
-		Convey("Adding a failing set then re-adding it still allows retrying the failures", func() {
+		Convey("Adding a failing set then re-adding it is not possible", func() {
 			path := t.TempDir()
 			file := filepath.Join(path, "file")
 			internal.CreateTestFile(t, file, "some data")
@@ -1836,13 +1836,8 @@ no backup sets`
 
 			s.waitForStatus(setName, statusLine, 30*time.Second)
 
-			err = s.interactiveAdd(setName, "y", transformer, "path", path)
-			So(err, ShouldBeNil)
-
-			s.waitForStatus(setName, statusLine, 30*time.Second)
-
-			s.confirmOutput(t, []string{"retry", "--name", setName, "--failed"},
-				0, "initated retry of 1 failed entries")
+			s.confirmOutputContains(t, []string{"add", "--name", setName, "--transformer", transformer, "--path", path},
+				1, cmd.ErrDuplicateSet.Error())
 		})
 	})
 }
