@@ -111,6 +111,30 @@ func TestSQL(t *testing.T) {
 			})
 			So(err, ShouldBeNil)
 
+			Convey("You can delete from a bucket", func() {
+				err = d.Update(func(tx db.Tx) error {
+					b := tx.Bucket(setBucket)
+					So(b, ShouldNotBeNil)
+
+					So(b.Get(key1), ShouldResemble, valueB)
+					So(b.Delete(key1), ShouldBeNil)
+					So(b.Get(key1), ShouldResemble, []byte(nil))
+
+					sb := b.Bucket(key1)
+
+					So(sb.Get(key1), ShouldResemble, valueC)
+					So(sb.Delete(key1), ShouldBeNil)
+					So(sb.Get(key1), ShouldResemble, []byte(nil))
+
+					So(sb.Get(key2), ShouldResemble, valueD)
+					So(b.DeleteBucket(key1), ShouldBeNil)
+					So(sb.Get(key2), ShouldResemble, []byte(nil))
+
+					return nil
+				})
+				So(err, ShouldBeNil)
+			})
+
 			Convey("Readonly prevents Updates", func() {
 				dr, errr := New("sqlite3", connStr, true)
 				So(errr, ShouldBeNil)
