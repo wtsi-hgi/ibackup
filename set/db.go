@@ -155,7 +155,7 @@ func NewRO(path string) (*DBRO, error) {
 		err error
 	)
 
-	if driver, url := splitDriverURL(path); driver != "bolt" {
+	if driver, url := splitDriverURL(path); driver != "" {
 		d, err = sql.New(driver, url, true)
 	} else {
 		d, err = bolt.Open(url, dbOpenMode, &bbolt.Options{
@@ -178,7 +178,7 @@ func NewRO(path string) (*DBRO, error) {
 func splitDriverURL(path string) (string, string) {
 	driver, url, ok := strings.Cut(path, "://")
 	if !ok {
-		return "bolt", path
+		return "", path
 	}
 
 	return driver, url
@@ -238,7 +238,7 @@ func initDB(path string, readonly bool) (db.DB, error) { //nolint:ireturn
 
 	var err error
 
-	if driver, url := splitDriverURL(path); driver != "bolt" {
+	if driver, url := splitDriverURL(path); driver != "" {
 		d, err = sql.New(driver, url, false)
 	} else {
 		d, err = bolt.Open(url, dbOpenMode, &bbolt.Options{

@@ -108,14 +108,13 @@ func (t *Tx) queryRow(sql string, args ...any) (*sql.Row, error) {
 }
 
 func (t *Tx) get(table, sub, id []byte) []byte {
-	query := fmt.Sprintf("SELECT value FROM [%s] WHERE sub = ? AND id = ? ORDER BY id ASC;", table) //nolint:gosec
+	var value []byte
 
-	var (
-		value []byte
-		err   error
+	row, err := t.queryRow(
+		fmt.Sprintf("SELECT value FROM [%s] WHERE sub = ? AND id = ? ORDER BY id ASC;", table),
+		sub,
+		id,
 	)
-
-	row, err := t.queryRow(query, sub, id)
 	if err != nil || row.Scan(&value) != nil {
 		return nil
 	}
