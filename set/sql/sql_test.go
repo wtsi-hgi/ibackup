@@ -1,6 +1,8 @@
 package sql
 
 import (
+	"bytes"
+	"io"
 	"path/filepath"
 	"testing"
 
@@ -121,6 +123,44 @@ func TestSQL(t *testing.T) {
 
 					return nil
 				})
+			})
+
+			Convey("You can backup the database", func() {
+				var buf bytes.Buffer
+
+				err = d.View(func(tx db.Tx) error {
+					_, err = tx.WriteTo(&buf)
+
+					return err
+				})
+				So(err, ShouldBeNil)
+
+				d2, errr := New("sqlite3", "file::memory:?cache=shared", false)
+				So(errr, ShouldBeNil)
+
+				err = d2.Update(func(tx db.Tx) error {
+					_, errr := tx.(io.ReaderFrom).ReadFrom(&buf) //nolint:errcheck,forcetypeassert
+
+					return errr
+				})
+				So(err, ShouldBeNil)
+
+				err = d2.View(func(tx db.Tx) error {
+					b := tx.Bucket(setBucket)
+					So(b, ShouldNotBeNil)
+
+					So(b.Get(key1), ShouldResemble, valueB)
+					So(b.Get(key2), ShouldResemble, valueB)
+
+					s := b.Bucket(subBucket)
+					So(s, ShouldNotBeNil)
+
+					So(s.Get(key1), ShouldResemble, valueC)
+					So(s.Get(key2), ShouldResemble, valueD)
+
+					return nil
+				})
+				So(err, ShouldBeNil)
 			})
 		})
 

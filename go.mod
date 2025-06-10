@@ -16,6 +16,7 @@ require (
 	github.com/go-sql-driver/mysql v1.9.2
 	github.com/hashicorp/go-multierror v1.1.1
 	github.com/inconshreveable/log15 v3.0.0-testing.5+incompatible
+	github.com/klauspost/pgzip v1.2.6
 	github.com/mattn/go-sqlite3 v1.14.28
 	github.com/moby/sys/mountinfo v0.7.2
 	github.com/phayes/freeport v0.0.0-20220201140144-74d24b5ae9f5
