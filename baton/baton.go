@@ -31,7 +31,9 @@ package baton
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -499,14 +501,8 @@ func (b *Baton) Get(local, remote string) error {
 		return err
 	}
 
-	tmpLocalFile, err := os.CreateTemp(filepath.Dir(local), ".ibackup.get.*")
-	if err != nil {
-		return err
-	}
-
-	tmpLocalFile.Close()
-
-	tmpLocal := tmpLocalFile.Name()
+	localDir, localFile := filepath.Split(local)
+	tmpLocal := filepath.Join(localDir, fmt.Sprintf(".ibackup.get.%X", sha256.Sum256([]byte(localFile))))
 
 	_, err = b.putClient.Get(
 		ex.Args{
