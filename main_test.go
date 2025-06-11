@@ -46,12 +46,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/golang-jwt/jwt/v4"
 	"github.com/phayes/freeport"
 	. "github.com/smartystreets/goconvey/convey"
+	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/ibackup/baton"
 	"github.com/wtsi-hgi/ibackup/cmd"
 	"github.com/wtsi-hgi/ibackup/internal"
+	"github.com/wtsi-hgi/ibackup/server"
 	"github.com/wtsi-hgi/ibackup/transfer"
 	btime "github.com/wtsi-ssg/wr/backoff/time"
 	"github.com/wtsi-ssg/wr/retry"
@@ -2732,6 +2733,9 @@ func getMetaValue(meta, key string) string {
 
 func TestEdit(t *testing.T) {
 	Convey("With a started server", t, func() {
+		t.Setenv("IBACKUP_TEST_LDAP_SERVER", "")
+		t.Setenv("IBACKUP_TEST_LDAP_LOOKUP", "")
+
 		s := NewTestServer(t)
 		So(s, ShouldNotBeNil)
 
@@ -2827,44 +2831,33 @@ func TestEdit(t *testing.T) {
 				})
 			})
 
-			SkipConvey("And a read-only set made by a different user", func() {
-				user := "john"
-				setName := "johnSet"
+			Convey("And a read-only set made by a different user", func() {
+				user := "root"
+				setName := "rootSet"
+				fakeDir := generateFakeJWT(t, s, user)
+				originalEnv := slices.Clone(s.env)
+				s.env = append(slices.DeleteFunc(s.env, func(str string) bool {
+					return strings.HasPrefix(str, "XDG_STATE_HOME")
+				}), "XDG_STATE_HOME="+fakeDir)
+
 				exitCode, _ := s.runBinary(t, "add", "--name", setName, "--transformer", transformer,
 					"--path", path, "--user", user)
 				So(exitCode, ShouldEqual, 0)
 
 				s.waitForStatusWithUser(setName, "\nDiscovery: completed", user, 10*time.Second)
 
-				exitCode, _ = s.runBinary(t, "edit", "--name", setName, "--make-readonly", "--user", user)
+				exitCode, _ = s.runBinary(t, "edit", "--name", setName, "--user", user, "--make-readonly")
 				So(exitCode, ShouldEqual, 0)
 
 				s.confirmOutputContains(t, []string{"status", "--name", setName, "--user", user}, 0, "Read-only: true\n")
 
 				Convey("And that user cannot make it writable", func() {
-					args := []string{"edit", "--name", setName, "--user", user, "--disable-readonly"}
-					disableCmd := s.clientCmd(args)
-					idx := slices.IndexFunc(disableCmd.Env, func(str string) bool {
-						return strings.HasPrefix(str, "XDG_STATE_HOME")
-					})
-					disableCmd.Env = slices.Delete(disableCmd.Env, idx, idx+1)
-
-					fakeDir := generateFakeJWT(t, s.key)
-
-					disableCmd.Env = append(disableCmd.Env, "XDG_STATE_HOME="+fakeDir)
-
-					output, err := disableCmd.CombinedOutput()
-					if output != nil {
-						t.Fatalf("%s", output)
-					}
-
-					So(err, ShouldNotBeNil)
-
-					s.confirmOutputContains(t, []string{"edit", "--name", setName, "--user", user, "--disable-readonly"}, 0,
-						cmd.ErrNotAdmin.Error())
+					s.confirmOutputContains(t, []string{"edit", "--name", setName, "--user", user, "--disable-readonly"}, 1,
+						server.ErrNotAdmin.Error())
 				})
 
 				Convey("Admin can make it writable", func() {
+					s.env = originalEnv
 					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--user", user, "--disable-readonly")
 					So(exitCode, ShouldEqual, 0)
 
@@ -2875,26 +2868,18 @@ func TestEdit(t *testing.T) {
 	})
 }
 
-func generateFakeJWT(t *testing.T, keyPath string) string {
+func generateFakeJWT(t *testing.T, s *TestServer, user string) string {
 	t.Helper()
 
-	token := jwt.New(jwt.GetSigningMethod("RS512"))
-	keyData, err := os.ReadFile(keyPath)
-	So(err, ShouldBeNil)
-
-	key, err := jwt.ParseRSAPrivateKeyFromPEM(keyData)
-	So(err, ShouldBeNil)
-
-	fakeToken, err := token.SignedString(key)
-	So(err, ShouldBeNil)
+	defer t.Setenv("XDG_STATE_HOME", os.Getenv("XDG_STATE_HOME"))
 
 	fakeDir := t.TempDir()
-	fakeFile := filepath.Join(fakeDir, ".ibackup.jwt")
 
-	internal.CreateTestFile(t, fakeFile, fakeToken)
+	t.Setenv("XDG_STATE_HOME", fakeDir)
 
-	err = os.Chmod(fakeFile, 384)
+	c, err := gas.NewClientCLI(".ibackup.jwt", ".ibackup.token", s.url, s.cert, false)
 	So(err, ShouldBeNil)
+	So(c.Login(user, "password"), ShouldBeNil)
 
 	return fakeDir
 }
