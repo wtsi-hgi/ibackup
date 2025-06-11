@@ -499,16 +499,30 @@ func (b *Baton) Get(local, remote string) error {
 		return err
 	}
 
+	tmpLocalFile, err := os.CreateTemp(filepath.Dir(local), ".ibackup.get.*")
+	if err != nil {
+		return err
+	}
+
+	tmpLocalFile.Close()
+
+	tmpLocal := tmpLocalFile.Name()
+
 	_, err = b.putClient.Get(
 		ex.Args{
 			Force:  true,
 			Verify: true,
 			Save:   true,
 		},
-		*requestToRodsItem(local, remote),
+		*requestToRodsItem(tmpLocal, remote),
 	)
+	if err != nil {
+		os.Remove(tmpLocal)
 
-	return err
+		return err
+	}
+
+	return os.Rename(tmpLocal, local)
 }
 
 func getTempFile() (string, error) {
