@@ -2160,6 +2160,17 @@ func TestManualMode(t *testing.T) {
 			file3 := filepath.Join(restoreDir, "file3")
 			file4 := filepath.Join(restoreDir, "file4")
 			file5 := filepath.Join(restoreDir, "anotherDir", "file5")
+			tmpFile := filepath.Join(restoreDir, fmt.Sprintf(".ibackup.get.%X", sha256.Sum256([]byte("file2"))))
+
+			err = os.WriteFile(
+				tmpFile,
+				[]byte("bad data"),
+				0600,
+			)
+			So(err, ShouldBeNil)
+
+			_, err = os.Stat(tmpFile)
+			So(err, ShouldBeNil)
 
 			files := file1 + "\t" + remote1 + "\n"
 			files += file2 + "\t" + remote2 + "\n"
@@ -2168,6 +2179,9 @@ func TestManualMode(t *testing.T) {
 
 			confirmFileContents(t, file1, fileContents1)
 			confirmFileContents(t, file2, fileContents2)
+
+			_, err = os.Stat(tmpFile)
+			So(err, ShouldNotBeNil)
 
 			s, err := os.Stat(file1)
 			So(err, ShouldBeNil)

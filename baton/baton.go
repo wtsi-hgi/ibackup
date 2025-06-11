@@ -31,7 +31,9 @@ package baton
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -499,16 +501,24 @@ func (b *Baton) Get(local, remote string) error {
 		return err
 	}
 
+	localDir, localFile := filepath.Split(local)
+	tmpLocal := filepath.Join(localDir, fmt.Sprintf(".ibackup.get.%X", sha256.Sum256([]byte(localFile))))
+
 	_, err = b.putClient.Get(
 		ex.Args{
 			Force:  true,
 			Verify: true,
 			Save:   true,
 		},
-		*requestToRodsItem(local, remote),
+		*requestToRodsItem(tmpLocal, remote),
 	)
+	if err != nil {
+		os.Remove(tmpLocal)
 
-	return err
+		return err
+	}
+
+	return os.Rename(tmpLocal, local)
 }
 
 func getTempFile() (string, error) {
