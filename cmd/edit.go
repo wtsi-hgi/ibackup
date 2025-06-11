@@ -47,7 +47,6 @@ var (
 
 var ErrInvalidEdit = errors.New("you can either make a set read-only or writable, not both")
 var ErrSetIsNotWritable = errors.New("the set is read-only, you cannot change it")
-var ErrNotAdmin = errors.New("only admin can do that")
 
 // editCmd represents the edit command.
 var editCmd = &cobra.Command{
@@ -127,15 +126,8 @@ func init() {
 }
 
 func edit(client *server.Client, givenSet *set.Set, requireAdmin bool) error {
-	var err error
-
 	if requireAdmin {
-		err = client.AddOrUpdateSetRequireAdmin(givenSet)
-		if errors.Is(err, server.ErrBadRequester) {
-			err = ErrNotAdmin
-		}
-
-		return err
+		return client.AddOrUpdateSetRequireAdmin(givenSet)
 	}
 
 	return client.AddOrUpdateSet(givenSet)

@@ -314,7 +314,11 @@ func (s *Server) putSet(c *gin.Context) {
 	}
 
 	if !s.AllowedAccess(c, setUser) {
-		c.AbortWithError(http.StatusUnauthorized, ErrBadRequester) //nolint:errcheck
+		if requireAdmin {
+			c.AbortWithError(http.StatusUnauthorized, ErrNotAdmin) //nolint:errcheck
+		} else {
+			c.AbortWithError(http.StatusUnauthorized, ErrBadRequester) //nolint:errcheck
+		}
 
 		return
 	}
