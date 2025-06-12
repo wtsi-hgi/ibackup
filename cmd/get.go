@@ -68,7 +68,7 @@ If remote file paths are missing, warnings about them will be logged, but this
 cmd will still exit 0. It only exits non-zero on failure to download an existing
 remote file.
 
-Directories for your local paths in column 2 will be automatically created if
+Directories for your local paths in column 1 will be automatically created if
 necessary.
 
 (The ibackup server also calls this command with the --server and --url options
