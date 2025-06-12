@@ -29,6 +29,8 @@ package transfer
 
 import (
 	"context"
+	"errors"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -597,8 +599,12 @@ func (p *Putter) applyMetadataConcurrently(metaCh, uploadReturnCh, skipReturnCh 
 			returnCh = skipReturnCh
 		}
 
-		if err := p.applyMetadata(request, p.handler); err != nil {
-			p.sendFailedRequest(request, err, returnCh)
+		if err := p.applyMetadata(request, p.handler); err != nil { //nolint:nestif
+			if pe := new(fs.PathError); errors.As(err, &pe) && pe.Op == "lchown" {
+				sendRequest(request, RequestStatusWarning, err, returnCh)
+			} else {
+				p.sendFailedRequest(request, err, returnCh)
+			}
 
 			continue
 		}

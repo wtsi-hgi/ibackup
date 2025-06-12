@@ -2115,6 +2115,9 @@ func TestManualMode(t *testing.T) {
 		gidA, err := strconv.ParseUint(gids[0], 10, 64)
 		So(err, ShouldBeNil)
 
+		groupA, err := user.LookupGroupId(gids[0])
+		So(err, ShouldBeNil)
+
 		var gidB uint64
 
 		if len(gids) == 1 {
@@ -2160,6 +2163,7 @@ func TestManualMode(t *testing.T) {
 			file3 := filepath.Join(restoreDir, "file3")
 			file4 := filepath.Join(restoreDir, "file4")
 			file5 := filepath.Join(restoreDir, "anotherDir", "file5")
+			file6 := filepath.Join(restoreDir, "file6")
 			tmpFile := filepath.Join(restoreDir, fmt.Sprintf(".ibackup.get.%X", sha256.Sum256([]byte("file2"))))
 
 			err = os.WriteFile(
@@ -2255,7 +2259,18 @@ func TestManualMode(t *testing.T) {
 				fmt.Sprintf("[1/1] Hardlink skipped: %s\\t%s\n0 downloaded (0 replaced); 1 skipped; 0 failed; 0 missing\n",
 					file4, remote2),
 			)
+
+			So(exec.Command("imeta", "rm", "-d", remote1, transfer.MetaKeyRemoteHardlink, remote2).Run(), ShouldBeNil)
+			So(
+				exec.Command("imeta", "mod", "-d", remote1, transfer.MetaKeyGroup, groupA.Name, "v:root").Run(),
+				ShouldBeNil,
+			)
+
+			restoreFiles(t, file6+"\t"+remote1+"\n",
+				"[1/1] "+file6+" warning: lchown "+file6+": operation not permitted\n"+
+					"1 downloaded (0 replaced); 0 skipped; 0 failed; 0 missing\n")
 		})
+
 	})
 }
 
