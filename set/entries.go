@@ -31,7 +31,7 @@ import (
 	"strconv"
 	"time"
 
-	bolt "go.etcd.io/bbolt"
+	"github.com/wtsi-hgi/ibackup/set/db"
 )
 
 type EntryStatus int
@@ -188,11 +188,11 @@ func (e *Entry) hasSameCoreProperties(other *Entry) bool {
 
 type entryCreator struct {
 	db              *DB
-	tx              *bolt.Tx
-	bucket          *bolt.Bucket
+	tx              db.Tx
+	bucket          db.Bucket
 	existingEntries map[string][]byte
 	setID           []byte
-	setBucket       *bolt.Bucket
+	setBucket       db.Bucket
 	set             *Set
 	transformerID   string
 }
@@ -201,7 +201,7 @@ type entryCreator struct {
 // given bucket from dirents passed to UpdateOrCreateEntries(), basing them on
 // the supplied existing ones. The bucket is expected to be empty (so get
 // existing ones and then delete the bucket before calling this).
-func newEntryCreator(db *DB, tx *bolt.Tx, bucket *bolt.Bucket, existing map[string][]byte,
+func newEntryCreator(db *DB, tx db.Tx, bucket db.Bucket, existing map[string][]byte,
 	setID string) (*entryCreator, error) {
 	got, setIDb, setBucket, err := db.getSetByID(tx, setID)
 	if err != nil {
