@@ -2223,6 +2223,30 @@ func TestManualMode(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(link, ShouldEqual, file1)
 
+			So(os.Remove(file3), ShouldBeNil)
+			So(os.Symlink("bad", file3), ShouldBeNil)
+
+			restoreFiles(t, file3+"\t"+remote2+"\n", "0 downloaded (0 replaced); 1 skipped; 0 failed; 0 missing\n")
+
+			link, err = os.Readlink(file3)
+			So(err, ShouldBeNil)
+			So(link, ShouldEqual, "bad")
+
+			restoreFiles(t, file3+"\t"+remote2+"\n", "1 downloaded (1 replaced); 0 skipped; 0 failed; 0 missing\n", "-o")
+
+			link, err = os.Readlink(file3)
+			So(err, ShouldBeNil)
+			So(link, ShouldEqual, file1)
+
+			So(os.Remove(file3), ShouldBeNil)
+			So(os.WriteFile(file3, nil, 0600), ShouldBeNil)
+
+			restoreFiles(t, file3+"\t"+remote2+"\n", "1 downloaded (1 replaced); 0 skipped; 0 failed; 0 missing\n", "-o")
+
+			link, err = os.Readlink(file3)
+			So(err, ShouldBeNil)
+			So(link, ShouldEqual, file1)
+
 			So(exec.Command("imeta", "add", "-d", remote1, transfer.MetaKeyRemoteHardlink, remote2).Run(), ShouldBeNil)
 
 			restoreFiles(
