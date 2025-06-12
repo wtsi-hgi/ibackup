@@ -38,6 +38,7 @@ import (
 
 	"github.com/dgryski/go-farm"
 	"github.com/wtsi-hgi/ibackup/errs"
+	"golang.org/x/sys/unix"
 )
 
 type RequestStatus string
@@ -51,6 +52,7 @@ const (
 	RequestStatusUnmodified      RequestStatus = "unmodified"
 	RequestStatusMissing         RequestStatus = "missing"
 	RequestStatusFailed          RequestStatus = "failed"
+	RequestStatusWarning         RequestStatus = "warning"
 	RequestStatusHardlinkSkipped RequestStatus = "hardlink"
 	ErrNotHumgenLustre                         = "not a valid humgen lustre path"
 	stuckTimeFormat                            = "02/01/06 15:04 MST"
@@ -350,7 +352,9 @@ func setTimes(file, mtime string) error {
 		return err
 	}
 
-	return os.Chtimes(file, t, t)
+	tv := unix.Timeval{Sec: t.Unix()}
+
+	return unix.Lutimes(file, []unix.Timeval{tv, tv})
 }
 
 func setGroup(file, group string) error {
@@ -374,7 +378,7 @@ func setGroup(file, group string) error {
 		return err
 	}
 
-	return os.Chown(file, int(uid), int(gid)) //nolint:gosec
+	return os.Lchown(file, int(uid), int(gid)) //nolint:gosec
 }
 
 func removeAndAddMetadata(r *Request, handler Handler) error {
