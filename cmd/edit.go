@@ -28,6 +28,9 @@ package cmd
 
 import (
 	"errors"
+
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -46,6 +49,7 @@ var (
 	editReview              string
 	editRemovalDate         string
 	editTransformer         string
+	editAddPath             string
 	editStopMonitor         bool
 	editStopMonitorRemovals bool
 	editStopArchive         bool
@@ -132,7 +136,16 @@ Edit an existing backup set.`,
 			userSet.Transformer = editTransformer
 		}
 
-		return edit(client, userSet, editMakeWritable)
+		err = editSet(client, userSet, editMakeWritable)
+		if err != nil {
+			return err
+		}
+
+		if editAddPath != "" {
+			err = updateSet(client, userSet.ID(), editAddPath)
+		}
+
+		return err
 	},
 }
 
@@ -147,6 +160,7 @@ func init() {
 	editCmd.Flags().StringVar(&editReview, "review", "", helpTextReview)
 	editCmd.Flags().StringVar(&editRemovalDate, "removal-date", "", helpTextRemoval)
 	editCmd.Flags().StringVar(&editTransformer, "transformer", "", helpTextTransformer)
+	editCmd.Flags().StringVar(&editAddPath, "add", "", helpTextPath)
 	editCmd.Flags().BoolVar(&editStopMonitor, "stop-monitor", false, "stop monitoring the set for changes")
 	editCmd.Flags().BoolVar(&editStopMonitorRemovals, "stop-monitor-removals", false,
 		"stop monitoring the set for locally removed files")
@@ -239,10 +253,40 @@ func givenOrExistingDate(input, existing string) (string, error) {
 	return t.Format(time.DateOnly), err
 }
 
-func edit(client *server.Client, givenSet *set.Set, makeWritable bool) error {
+// editSet updates properties of the given set.
+func editSet(client *server.Client, givenSet *set.Set, makeWritable bool) error {
 	if makeWritable {
 		return client.AddOrUpdateSetMakingWritable(givenSet)
 	}
 
 	return client.AddOrUpdateSet(givenSet)
+}
+
+// updateSet updates the files in the set.
+func updateSet(client *server.Client, sid string, path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+
+	if info.IsDir() {
+		err = nil
+	} else {
+		files, err := client.GetFiles(sid)
+		if err != nil {
+			return err
+		}
+
+		for _, file := range files {
+			print(file)
+		}
+		err = client.SetFiles(sid, []string{absPath})
+	}
+
+	return err
 }

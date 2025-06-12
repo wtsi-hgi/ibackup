@@ -3239,8 +3239,22 @@ func TestEdit(t *testing.T) {
 			})
 
 			Convey("And a set", func() {
-				setName := "readOnlySet"
-				s.addSetForTesting(t, setName, transformer, path)
+				schedulerDeployment := os.Getenv("IBACKUP_TEST_SCHEDULER")
+				if schedulerDeployment == "" {
+					SkipConvey("skipping iRODS backup test since IBACKUP_TEST_SCHEDULER not set", func() {})
+
+					return
+				}
+
+				setName := "testSet"
+				setDir := filepath.Join(path, "dir")
+				err := os.Mkdir(setDir, userPerms)
+				So(err, ShouldBeNil)
+
+				setFile1 := filepath.Join(setDir, "file1")
+				internal.CreateTestFileOfLength(t, setFile1, 1)
+
+				s.addSetForTesting(t, setName, transformer, setFile1)
 
 				Convey("You can make it readonly", func() {
 					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--make-readonly")
@@ -3262,6 +3276,17 @@ func TestEdit(t *testing.T) {
 						exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--disable-readonly")
 						So(exitCode, ShouldEqual, 0)
 					})
+				})
+
+				SkipConvey("You can add a file to this set", func() {
+					setFile2 := filepath.Join(setDir, "file2")
+					internal.CreateTestFileOfLength(t, setFile2, 1)
+
+					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--add", setFile2)
+					So(exitCode, ShouldEqual, 0)
+
+					s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"}, 0, setFile1)
+					s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"}, 0, setFile2)
 				})
 			})
 
