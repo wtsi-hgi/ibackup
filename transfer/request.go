@@ -38,6 +38,7 @@ import (
 
 	"github.com/dgryski/go-farm"
 	"github.com/wtsi-hgi/ibackup/errs"
+	"golang.org/x/sys/unix"
 )
 
 type RequestStatus string
@@ -350,7 +351,9 @@ func setTimes(file, mtime string) error {
 		return err
 	}
 
-	return os.Chtimes(file, t, t)
+	tv := unix.Timeval{Sec: t.Unix()}
+
+	return unix.Lutimes(file, []unix.Timeval{tv, tv})
 }
 
 func setGroup(file, group string) error {
@@ -374,7 +377,7 @@ func setGroup(file, group string) error {
 		return err
 	}
 
-	return os.Chown(file, int(uid), int(gid)) //nolint:gosec
+	return os.Lchown(file, int(uid), int(gid)) //nolint:gosec
 }
 
 func removeAndAddMetadata(r *Request, handler Handler) error {
