@@ -26,7 +26,9 @@
 package transfer
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -427,10 +429,23 @@ func (r *Request) Get(handler Handler) error {
 	}
 
 	if r.Symlink != "" {
-		return os.Symlink(r.Symlink, r.Local)
+		return r.createSymlinkIfRequired()
 	}
 
 	return handler.Get(r.Local, r.Remote)
+}
+
+func (r *Request) createSymlinkIfRequired() error {
+	symlink, err := os.Readlink(r.Local)
+	if symlink == r.Symlink { //nolint:nestif
+		return nil
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		if err = os.Remove(r.Local); err != nil {
+			return err
+		}
+	}
+
+	return os.Symlink(r.Symlink, r.Local)
 }
 
 // PathTransformer is a function that given a local path, returns the
