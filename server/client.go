@@ -92,9 +92,9 @@ func (c *Client) AddOrUpdateSet(set *set.Set) error {
 	return c.putThing(EndPointAuthSet, set)
 }
 
-// AddOrUpdateSet adds details about a backup set to the Server's database.
-func (c *Client) AddOrUpdateSetRequireAdmin(set *set.Set) error {
-	return c.putThing(EndPointAuthSet+"?"+paramRequireAdmin+"=true", set)
+// AddOrUpdateSetMakingWritable adds details about a backup set to the Server's database and makes the set writable.
+func (c *Client) AddOrUpdateSetMakingWritable(set *set.Set) error {
+	return c.putThing(EndPointAuthSet+"?"+paramMakeWritable+"=true", set)
 }
 
 // putThing sends thing encoded as JSON in the body via a PUT to the given url.

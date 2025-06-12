@@ -29,6 +29,7 @@ package cmd
 import (
 	"github.com/spf13/cobra"
 	"github.com/wtsi-hgi/ibackup/server"
+	"github.com/wtsi-hgi/ibackup/set"
 )
 
 // options for this cmd.
@@ -100,17 +101,17 @@ func init() {
 }
 
 func retrySetUploads(client *server.Client, requester, setName string, all bool) error {
-	set, err := client.GetSetByName(requester, setName)
+	givenSet, err := client.GetSetByName(requester, setName)
 	if err != nil {
 		return err
 	}
 
-	if set.ReadOnly {
-		return ErrSetIsNotWritable
+	if givenSet.ReadOnly {
+		return set.Error{Msg: set.ErrSetIsNotWritable}
 	}
 
 	if all {
-		if errt := client.TriggerDiscovery(set.ID()); err != nil {
+		if errt := client.TriggerDiscovery(givenSet.ID()); errt != nil {
 			return errt
 		}
 
@@ -119,7 +120,7 @@ func retrySetUploads(client *server.Client, requester, setName string, all bool)
 		return nil
 	}
 
-	return retryFailedSetUploads(client, set.ID())
+	return retryFailedSetUploads(client, givenSet.ID())
 }
 
 func retryFailedSetUploads(client *server.Client, sid string) error {

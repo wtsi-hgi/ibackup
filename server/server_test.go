@@ -2182,16 +2182,22 @@ func TestServer(t *testing.T) {
 						err = client.AddOrUpdateSet(exampleSet)
 						So(err, ShouldBeNil)
 
-						Convey("You cannot make it writable again", func() {
-							exampleSet.ReadOnly = false
-							err = client.AddOrUpdateSetRequireAdmin(exampleSet)
+						Convey("You cannot make it writable", func() {
+							err = client.AddOrUpdateSetMakingWritable(exampleSet)
 							So(err, ShouldNotBeNil)
-							So(err.Error(), ShouldContainSubstring, ErrBadRequester.Error())
+							So(err.Error(), ShouldContainSubstring, ErrNotAdmin.Error())
 						})
 
-						Convey("Admin can make it writable again", func() {
+						Convey("You cannot make it writable using the update call", func() {
 							exampleSet.ReadOnly = false
-							err = adminClient.AddOrUpdateSetRequireAdmin(exampleSet)
+							err = client.AddOrUpdateSet(exampleSet)
+							So(err, ShouldNotBeNil)
+							So(err.Error(), ShouldContainSubstring, set.ErrSetIsNotWritable)
+						})
+
+						Convey("Admin can make it writable ", func() {
+							exampleSet.ReadOnly = false
+							err = adminClient.AddOrUpdateSetMakingWritable(exampleSet)
 							So(err, ShouldBeNil)
 						})
 					})

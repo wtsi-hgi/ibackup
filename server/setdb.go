@@ -110,7 +110,7 @@ const (
 
 	paramRequester    = "requester"
 	paramSetID        = "id"
-	paramRequireAdmin = "requireAdmin"
+	paramMakeWritable = "makeWritable"
 
 	numberOfFilesForOneHardlink = 2
 
@@ -298,27 +298,24 @@ func (s *Server) addDBEndpoints(authGroup *gin.RouterGroup) {
 // LoadSetDB() must already have been called. This is called when there is a PUT
 // on /rest/v1/auth/set.
 func (s *Server) putSet(c *gin.Context) {
-	requireAdmin := c.DefaultQuery(paramRequireAdmin, "false") == "true"
-
 	given := &set.Set{}
-
 	if err := c.BindJSON(given); err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
 		return
 	}
 
-	setUser := given.Requester
-	if requireAdmin {
-		setUser = ""
+	if c.DefaultQuery(paramMakeWritable, "false") == "true" {
+		given.ReadOnly = false
+
+		err := s.makeSetWritable(c, given.ID())
+		if err != nil {
+			return
+		}
 	}
 
-	if !s.AllowedAccess(c, setUser) {
-		if requireAdmin {
-			c.AbortWithError(http.StatusUnauthorized, ErrNotAdmin) //nolint:errcheck
-		} else {
-			c.AbortWithError(http.StatusUnauthorized, ErrBadRequester) //nolint:errcheck
-		}
+	if !s.AllowedAccess(c, given.Requester) {
+		c.AbortWithError(http.StatusUnauthorized, ErrBadRequester) //nolint:errcheck
 
 		return
 	}
@@ -345,6 +342,21 @@ func (s *Server) putSet(c *gin.Context) {
 	s.handleNewlyDefinedSets(given)
 
 	c.Status(http.StatusOK)
+}
+
+func (s *Server) makeSetWritable(c *gin.Context, sid string) error {
+	if !s.AllowedAccess(c, "") {
+		c.AbortWithError(http.StatusUnauthorized, ErrNotAdmin) //nolint:errcheck
+
+		return ErrNotAdmin
+	}
+
+	err := s.db.MakeSetWritable(sid)
+	if err != nil {
+		c.AbortWithError(http.StatusInternalServerError, err) //nolint:errcheck
+	}
+
+	return err
 }
 
 // tryBackup will backup the database if a backup path was specified by

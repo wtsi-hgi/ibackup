@@ -53,6 +53,7 @@ import (
 	"github.com/wtsi-hgi/ibackup/cmd"
 	"github.com/wtsi-hgi/ibackup/internal"
 	"github.com/wtsi-hgi/ibackup/server"
+	"github.com/wtsi-hgi/ibackup/set"
 	"github.com/wtsi-hgi/ibackup/transfer"
 	btime "github.com/wtsi-ssg/wr/backoff/time"
 	"github.com/wtsi-ssg/wr/retry"
@@ -2677,7 +2678,7 @@ func TestRemove(t *testing.T) {
 
 				Convey("You can no longer remove files from it", func() {
 					s.confirmOutputContains(t, []string{"remove", "--name", setName, "--path", file1}, 1,
-						cmd.ErrSetIsNotWritable.Error())
+						set.ErrSetIsNotWritable)
 				})
 			})
 		})
@@ -2757,7 +2758,7 @@ func TestEdit(t *testing.T) {
 			path := t.TempDir()
 			transformer := "prefix=" + path + ":" + remotePath
 
-			Convey("And the monitored set", func() {
+			Convey("And a monitored set", func() {
 				setName := "monitoredSet"
 				s.addSetForTestingWithFlag(t, setName, transformer, path, "--monitor", "1d")
 
@@ -2811,12 +2812,12 @@ func TestEdit(t *testing.T) {
 
 					Convey("And you can no longer edit it", func() {
 						s.confirmOutputContains(t, []string{"edit", "--name", setName}, 1,
-							cmd.ErrSetIsNotWritable.Error())
+							set.ErrSetIsNotWritable)
 					})
 
 					Convey("And you can no longer retry it", func() {
 						s.confirmOutputContains(t, []string{"retry", "--name", setName, "--all"}, 1,
-							cmd.ErrSetIsNotWritable.Error())
+							set.ErrSetIsNotWritable)
 					})
 
 					Convey("And admin can make it writable", func() {
