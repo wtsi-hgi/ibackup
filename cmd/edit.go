@@ -29,6 +29,9 @@ package cmd
 import (
 	"errors"
 
+	"os"
+	"path/filepath"
+
 	"github.com/spf13/cobra"
 	"github.com/wtsi-hgi/ibackup/server"
 	"github.com/wtsi-hgi/ibackup/set"
@@ -38,6 +41,7 @@ import (
 var (
 	editSetName             string
 	editUser                string
+	editAddPath             string
 	editStopMonitor         bool
 	editStopMonitorRemovals bool
 	editStopArchive         bool
@@ -90,7 +94,16 @@ Edit an existing backup set.`,
 			userSet.ReadOnly = true
 		}
 
-		return edit(client, userSet, editMakeWritable)
+		err = editSet(client, userSet, editMakeWritable)
+		if err != nil {
+			return err
+		}
+
+		if editAddPath != "" {
+			err = updateSet(client, userSet.ID(), editAddPath)
+		}
+
+		return err
 	},
 }
 
@@ -100,6 +113,7 @@ func init() {
 	editCmd.Flags().StringVarP(&editSetName, "name", "n", "", "a name of the backup set you want to edit")
 	editCmd.Flags().StringVar(&editUser, "user", currentUsername(),
 		"pretend to be this user (only works if you started the server)")
+	editCmd.Flags().StringVar(&editAddPath, "add", "", "path to a file or directory to add to the set")
 	editCmd.Flags().BoolVar(&editStopMonitor, "stop-monitor", false, "stop monitoring the set for changes")
 	editCmd.Flags().BoolVar(&editStopMonitorRemovals, "stop-monitor-removals", false,
 		"stop monitoring the set for locally removed files")
@@ -114,10 +128,40 @@ func init() {
 	}
 }
 
-func edit(client *server.Client, givenSet *set.Set, makeWritable bool) error {
+// editSet updates properties of the given set.
+func editSet(client *server.Client, givenSet *set.Set, makeWritable bool) error {
 	if makeWritable {
 		return client.AddOrUpdateSetMakingWritable(givenSet)
 	}
 
 	return client.AddOrUpdateSet(givenSet)
+}
+
+// updateSet updates the files in the set.
+func updateSet(client *server.Client, sid string, path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+
+	if info.IsDir() {
+		err = nil
+	} else {
+		files, err := client.GetFiles(sid)
+		if err != nil {
+			return err
+		}
+
+		for _, file := range files {
+			print(file)
+		}
+		err = client.SetFiles(sid, []string{absPath})
+	}
+
+	return err
 }
