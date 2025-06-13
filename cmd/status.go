@@ -374,6 +374,10 @@ func displaySet(s *set.Set, showRequesters bool) { //nolint:funlen,gocyclo,gocog
 		cliPrintf("Requester: %s\n", s.Requester)
 	}
 
+	if s.ReadOnly {
+		cliPrintf("Read-only: true\n")
+	}
+
 	cliPrintf("Transformer: %s\n", s.Transformer)
 
 	cliPrintf("Reason: %s\n", s.Metadata["ibackup:reason"])

@@ -2049,6 +2049,62 @@ func TestServer(t *testing.T) {
 							_, err = os.Stat(dir1remote)
 							So(err, ShouldNotBeNil)
 						})
+
+						Convey("The monitor won't detect removed files for a read-only set", func() {
+							gotSet, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+							So(errg, ShouldBeNil)
+
+							err = os.Remove(file1local)
+							So(err, ShouldBeNil)
+
+							gotSet.Status = set.Complete
+							gotSet.MonitorTime = 100 * time.Millisecond
+							gotSet.MonitorRemovals = true
+							gotSet.ReadOnly = true
+
+							err = client.AddOrUpdateSet(gotSet)
+							So(err, ShouldBeNil)
+
+							logWriter.Reset()
+
+							time.Sleep(exampleSet.MonitorTime * 5)
+
+							So(logWriter.String(), ShouldContainSubstring, "Ignore discovery")
+
+							files, errg := client.GetFiles(exampleSet.ID())
+							So(errg, ShouldBeNil)
+							So(len(files), ShouldEqual, len(listOfFiles))
+							So(files[0].Path, ShouldEqual, file1local)
+						})
+					})
+
+					Convey("Making set read-only stops discovery", func() {
+						gotSet, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+						So(errg, ShouldBeNil)
+
+						discovered := gotSet.LastDiscovery
+
+						err = client.TriggerDiscovery(gotSet.ID())
+						So(err, ShouldBeNil)
+
+						gotSet, err = client.GetSetByID(gotSet.Requester, gotSet.ID())
+						So(err, ShouldBeNil)
+						So(gotSet.LastDiscovery, ShouldHappenAfter, discovered)
+						discovered = gotSet.LastDiscovery
+
+						gotSet.ReadOnly = true
+						err = client.AddOrUpdateSet(gotSet)
+						So(err, ShouldBeNil)
+
+						logWriter.Reset()
+
+						err = client.TriggerDiscovery(gotSet.ID())
+						So(err, ShouldBeNil)
+						So(logWriter.String(), ShouldContainSubstring, "Ignore discovery")
+
+						gotSet, err = client.GetSetByID(gotSet.Requester, gotSet.ID())
+						So(err, ShouldBeNil)
+						So(gotSet.LastDiscovery, ShouldEqual, discovered)
 					})
 
 					Convey("If you have an invalid transformer, discovery fails", func() {
@@ -2119,6 +2175,31 @@ func TestServer(t *testing.T) {
 						So(slackWriter.String(), ShouldEqual, fmt.Sprintf(serverStartMessage+
 							slack.BoxPrefixError+"`jim.setbad` could not be recovered: "+
 							"not a valid humgen lustre path [%s]"+serverRecoveryMessage+serverStartedMessage, expected[0]))
+					})
+
+					Convey("And if you make the set read-only", func() {
+						exampleSet.ReadOnly = true
+						err = client.AddOrUpdateSet(exampleSet)
+						So(err, ShouldBeNil)
+
+						Convey("You cannot make it writable", func() {
+							err = client.AddOrUpdateSetMakingWritable(exampleSet)
+							So(err, ShouldNotBeNil)
+							So(err.Error(), ShouldContainSubstring, ErrNotAdmin.Error())
+						})
+
+						Convey("You cannot make it writable using the update call", func() {
+							exampleSet.ReadOnly = false
+							err = client.AddOrUpdateSet(exampleSet)
+							So(err, ShouldNotBeNil)
+							So(err.Error(), ShouldContainSubstring, set.ErrSetIsNotWritable)
+						})
+
+						Convey("Admin can make it writable ", func() {
+							exampleSet.ReadOnly = false
+							err = adminClient.AddOrUpdateSetMakingWritable(exampleSet)
+							So(err, ShouldBeNil)
+						})
 					})
 				})
 
