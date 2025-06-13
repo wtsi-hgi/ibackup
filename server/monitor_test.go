@@ -37,7 +37,10 @@ import (
 
 func TestMonitorHeap(t *testing.T) {
 	Convey("Given a new Monitor Heap", t, func() {
-		var mu sync.Mutex
+		var (
+			mu    sync.Mutex
+			calls []time.Time
+		)
 		names := ""
 
 		mh := NewMonitor(func(given *set.Set) {
@@ -45,6 +48,8 @@ func TestMonitorHeap(t *testing.T) {
 			defer mu.Unlock()
 
 			names += given.Name
+
+			calls = append(calls, time.Now())
 		})
 
 		Convey("You can add sets to it", func() {
@@ -121,7 +126,7 @@ func TestMonitorHeap(t *testing.T) {
 			})
 
 			Convey("Which get automatically sent to the callback at the right time", func() {
-				<-time.After(100 * time.Millisecond)
+				<-time.After(50 * time.Millisecond)
 
 				mu.Lock()
 				defer mu.Unlock()
@@ -136,11 +141,14 @@ func TestMonitorHeap(t *testing.T) {
 				err := mh.Remove(set1.ID())
 				So(err, ShouldBeNil)
 
-				<-time.After(100 * time.Millisecond)
+				<-time.After(50 * time.Millisecond)
 
 				mu.Lock()
 				defer mu.Unlock()
 				So(names, ShouldEqual, "secondthird")
+				So(calls, ShouldHaveLength, 2)
+				So(calls[0].After(ld.Add(20*time.Millisecond)), ShouldBeTrue)
+				So(calls[1].After(ld.Add(30*time.Millisecond)), ShouldBeTrue)
 			})
 		})
 	})

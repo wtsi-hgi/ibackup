@@ -29,6 +29,7 @@ package cmd
 import (
 	"github.com/spf13/cobra"
 	"github.com/wtsi-hgi/ibackup/server"
+	"github.com/wtsi-hgi/ibackup/set"
 )
 
 // options for this cmd.
@@ -62,13 +63,7 @@ environment variable, or overriding that with the --cert argument).
 If you are the user who started the ibackup server, you can use the --user
 option to retry the given requestor's backup sets, instead of your own.
 `,
-	Run: func(cmd *cobra.Command, args []string) {
-		ensureURLandCert()
-
-		if retrySet == "" {
-			dief("--name is required")
-		}
-
+	PreRun: func(_ *cobra.Command, _ []string) {
 		if retryAll && retryFailed {
 			dief("--all and --failed are mutually exclusive")
 		}
@@ -76,13 +71,16 @@ option to retry the given requestor's backup sets, instead of your own.
 		if !retryAll && !retryFailed {
 			dief("at least one of --all and --failed are required")
 		}
+	},
+	RunE: func(_ *cobra.Command, _ []string) error {
+		ensureURLandCert()
 
 		client, err := newServerClient(serverURL, serverCert)
 		if err != nil {
-			die(err)
+			return err
 		}
 
-		retrySetUploads(client, retryUser, retrySet, retryAll)
+		return retrySetUploads(client, retryUser, retrySet, retryAll)
 	},
 }
 
@@ -96,27 +94,39 @@ func init() {
 		"retry all uploads in the --name'd set")
 	retryCmd.Flags().BoolVarP(&retryFailed, "failed", "f", false,
 		"retry only failed uploads in the --name'd set")
+
+	if err := retryCmd.MarkFlagRequired("name"); err != nil {
+		die(err)
+	}
 }
 
-func retrySetUploads(client *server.Client, requester, setName string, all bool) {
-	set, err := client.GetSetByName(requester, setName)
+func retrySetUploads(client *server.Client, requester, setName string, all bool) error {
+	givenSet, err := client.GetSetByName(requester, setName)
 	if err != nil {
-		die(err)
+		return err
+	}
+
+	if givenSet.ReadOnly {
+		return set.Error{Msg: set.ErrSetIsNotWritable}
 	}
 
 	if all {
-		if errt := client.TriggerDiscovery(set.ID()); err != nil {
-			die(errt)
+		if errt := client.TriggerDiscovery(givenSet.ID()); errt != nil {
+			return errt
 		}
 
 		info("initiated retry of set %s", setName)
 
-		return
+		return nil
 	}
 
-	retried, err := client.RetryFailedSetUploads(set.ID())
+	return retryFailedSetUploads(client, givenSet.ID())
+}
+
+func retryFailedSetUploads(client *server.Client, sid string) error {
+	retried, err := client.RetryFailedSetUploads(sid)
 	if err != nil {
-		die(err)
+		return err
 	}
 
 	if retried == 0 {
@@ -124,4 +134,6 @@ func retrySetUploads(client *server.Client, requester, setName string, all bool)
 	} else {
 		info("initated retry of %d failed entries", retried)
 	}
+
+	return nil
 }
