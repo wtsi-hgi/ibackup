@@ -27,6 +27,8 @@
 package cmd
 
 import (
+	"errors"
+
 	"github.com/spf13/cobra"
 	"github.com/wtsi-hgi/ibackup/server"
 	"github.com/wtsi-hgi/ibackup/set"
@@ -39,7 +41,11 @@ var (
 	editStopMonitor         bool
 	editStopMonitorRemovals bool
 	editStopArchive         bool
+	editMakeReadOnly        bool
+	editMakeWritable        bool
 )
+
+var ErrInvalidEdit = errors.New("you can either make a set read-only or writable, not both")
 
 // editCmd represents the edit command.
 var editCmd = &cobra.Command{
@@ -47,19 +53,25 @@ var editCmd = &cobra.Command{
 	Short: "Edit a backup set",
 	Long: `Edit a backup set.
  
-Edit an existing backup set. 
- `,
-	Run: func(_ *cobra.Command, _ []string) {
+Edit an existing backup set.`,
+	PreRunE: func(_ *cobra.Command, _ []string) error {
+		if editMakeReadOnly && editMakeWritable {
+			return ErrInvalidEdit
+		}
+
+		return nil
+	},
+	RunE: func(_ *cobra.Command, _ []string) error {
 		ensureURLandCert()
 
 		client, err := newServerClient(serverURL, serverCert)
 		if err != nil {
-			die(err)
+			return err
 		}
 
 		userSet, err := client.GetSetByName(editUser, editSetName)
 		if err != nil {
-			die(err)
+			return err
 		}
 
 		if editStopMonitor {
@@ -74,11 +86,11 @@ Edit an existing backup set.
 			userSet.DeleteLocal = false
 		}
 
-		err = edit(client, userSet)
-		if err != nil {
-			die(err)
+		if editMakeReadOnly {
+			userSet.ReadOnly = true
 		}
 
+		return edit(client, userSet, editMakeWritable)
 	},
 }
 
@@ -87,22 +99,25 @@ func init() {
 
 	editCmd.Flags().StringVarP(&editSetName, "name", "n", "", "a name of the backup set you want to edit")
 	editCmd.Flags().StringVar(&editUser, "user", currentUsername(),
-		"pretend to be the this user (only works if you started the server)")
+		"pretend to be this user (only works if you started the server)")
 	editCmd.Flags().BoolVar(&editStopMonitor, "stop-monitor", false, "stop monitoring the set for changes")
 	editCmd.Flags().BoolVar(&editStopMonitorRemovals, "stop-monitor-removals", false,
 		"stop monitoring the set for locally removed files")
 	editCmd.Flags().BoolVar(&editStopArchive, "stop-archiving", false, "disable archive mode")
+	editCmd.Flags().BoolVar(&editMakeReadOnly, "make-readonly", false,
+		"make the set read-only (backup set will be preserved at the current state)")
+	editCmd.Flags().BoolVar(&editMakeWritable, "disable-readonly", false,
+		"disable read-only mode (only admins can do this)")
 
 	if err := editCmd.MarkFlagRequired("name"); err != nil {
 		die(err)
 	}
 }
 
-func edit(client *server.Client, givenSet *set.Set) error {
-	err := client.AddOrUpdateSet(givenSet)
-	if err != nil {
-		return err
+func edit(client *server.Client, givenSet *set.Set, makeWritable bool) error {
+	if makeWritable {
+		return client.AddOrUpdateSetMakingWritable(givenSet)
 	}
 
-	return nil
+	return client.AddOrUpdateSet(givenSet)
 }

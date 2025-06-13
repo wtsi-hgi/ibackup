@@ -121,6 +121,10 @@ func init() {
 func handleRemove(client *server.Client, user, name string, paths []string) {
 	sets := getSetByName(client, user, name)
 
+	if sets[0].ReadOnly {
+		die(ErrSetIsNotWritable)
+	}
+
 	err := client.RemoveFilesAndDirs(sets[0].ID(), paths)
 	if err != nil {
 		die(err)
