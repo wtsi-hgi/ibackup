@@ -33,13 +33,18 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/wtsi-hgi/ibackup/baton/meta"
 	"github.com/wtsi-hgi/ibackup/internal"
 )
 
+var testStartTime time.Time
+
 func TestBaton(t *testing.T) {
+	testStartTime = time.Now()
+
 	h, errgbh := GetBatonHandler()
 	if errgbh != nil {
 		t.Logf("GetBatonHandler error: %s", errgbh)
@@ -256,6 +261,15 @@ func getSizeOfObject(path string) int {
 
 func compareMetasWithSize(t *testing.T, remote, expected map[string]string, size int64) {
 	t.Helper()
+
+	now := time.Now()
+
+	var mtime, ctime time.Time
+
+	So(ctime.UnmarshalText([]byte(remote[meta.MetaKeyRemoteCtime])), ShouldBeNil)
+	So(mtime.UnmarshalText([]byte(remote[meta.MetaKeyRemoteMtime])), ShouldBeNil)
+	So(mtime, ShouldHappenBetween, testStartTime, now)
+	So(ctime, ShouldHappenBetween, testStartTime, now)
 
 	delete(remote, meta.MetaKeyRemoteCtime)
 	delete(remote, meta.MetaKeyRemoteMtime)

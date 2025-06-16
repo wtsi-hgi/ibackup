@@ -45,6 +45,7 @@ import (
 	"github.com/wtsi-hgi/ibackup/baton/meta"
 	"github.com/wtsi-hgi/ibackup/errs"
 	"github.com/wtsi-hgi/ibackup/internal"
+	"github.com/wtsi-hgi/ibackup/transfer"
 	ex "github.com/wtsi-npg/extendo/v2"
 	logs "github.com/wtsi-npg/logshim"
 	"github.com/wtsi-npg/logshim-zerolog/zlog"
@@ -471,8 +472,8 @@ func RodsItemToMeta(it ex.RodsItem) map[string]string {
 		}
 	}
 
-	m[meta.MetaKeyRemoteMtime] = modified.String()
-	m[meta.MetaKeyRemoteCtime] = created.String()
+	m[meta.MetaKeyRemoteMtime], _ = transfer.TimeToMeta(modified) //nolint:errcheck
+	m[meta.MetaKeyRemoteCtime], _ = transfer.TimeToMeta(created)  //nolint:errcheck
 
 	return m
 }
