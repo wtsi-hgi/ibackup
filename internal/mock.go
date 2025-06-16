@@ -345,3 +345,15 @@ func (l *LocalHandler) RemoveFile(path string) error {
 
 	return err
 }
+
+// TimeToMeta converts a time to a string suitable for storing as metadata, in
+// a way that ObjectInfo.ModTime() will understand and be able to convert back
+// again.
+func TimeToMeta(t time.Time) (string, error) {
+	b, err := t.UTC().Truncate(time.Second).MarshalText()
+	if err != nil {
+		return "", err
+	}
+
+	return string(b), nil
+}
