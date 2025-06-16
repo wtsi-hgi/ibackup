@@ -524,10 +524,10 @@ func sendGetRequest(request *Request, lInfo, rInfo *ObjectInfo, putCh chan *Requ
 	}
 
 	_, hasMtime := request.Meta.remoteMeta[MetaKeyMtime]
-	_, hasRemoteMtime := request.Meta.remoteMeta[meta.MetaKeyRemoteMtime]
+	remoteMtime, hasRemoteMtime := request.Meta.remoteMeta[meta.MetaKeyRemoteMtime]
 
 	if !hasMtime && hasRemoteMtime {
-		request.Meta.remoteMeta[MetaKeyMtime] = request.Meta.remoteMeta[meta.MetaKeyRemoteMtime]
+		request.Meta.remoteMeta[MetaKeyMtime] = remoteMtime
 	}
 
 	if lInfo == nil {
