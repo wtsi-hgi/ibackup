@@ -41,6 +41,7 @@ import (
 
 	"github.com/gammazero/workerpool"
 	"github.com/hashicorp/go-multierror"
+	"github.com/wtsi-hgi/ibackup/baton/meta"
 	"github.com/wtsi-hgi/ibackup/errs"
 )
 
@@ -520,6 +521,13 @@ func sendGetRequest(request *Request, lInfo, rInfo *ObjectInfo, putCh chan *Requ
 
 	if symlink, ok := request.Meta.remoteMeta[MetaKeySymlink]; ok {
 		request.Symlink = symlink
+	}
+
+	_, hasMtime := request.Meta.remoteMeta[MetaKeyMtime]
+	_, hasRemoteMtime := request.Meta.remoteMeta[meta.MetaKeyRemoteMtime]
+
+	if !hasMtime && hasRemoteMtime {
+		request.Meta.remoteMeta[MetaKeyMtime] = request.Meta.remoteMeta[meta.MetaKeyRemoteMtime]
 	}
 
 	if lInfo == nil {

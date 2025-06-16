@@ -39,6 +39,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/wtsi-hgi/ibackup/baton"
+	"github.com/wtsi-hgi/ibackup/baton/meta"
 	"github.com/wtsi-hgi/ibackup/internal"
 	ex "github.com/wtsi-npg/extendo/v2"
 )
@@ -97,8 +98,10 @@ func TestPutBaton(t *testing.T) {
 					So(request.Error, ShouldBeBlank)
 					So(request.Status, ShouldEqual, RequestStatusUploaded)
 					So(request.Size, ShouldEqual, 2)
+
 					meta := getObjectMetadataWithBaton(testClient, request.Remote)
-					So(meta, ShouldResemble, request.Meta.LocalMeta)
+					compareMetasWithSize(t, meta, request.Meta.LocalMeta, 2)
+
 					checkAddedMeta(meta)
 
 					it, errg := getItemWithBaton(testClient, request.Remote)
@@ -140,10 +143,9 @@ func TestPutBaton(t *testing.T) {
 					got = <-urCh
 					So(got.Error, ShouldBeBlank)
 					So(got.Status, ShouldEqual, RequestStatusReplaced)
+
 					meta := getObjectMetadataWithBaton(testClient, request.Remote)
-					So(meta, ShouldResemble, request.Meta.LocalMeta)
-					So(meta[MetaKeyRequester], ShouldEqual, requester)
-					So(meta[MetaKeySets], ShouldEqual, "setA,setB")
+					compareMetasWithSize(t, meta, request.Meta.LocalMeta, 2)
 
 					Convey("Finally, Cleanup() stops the clients", func() {
 						p.Cleanup()
@@ -277,6 +279,7 @@ func TestPutBaton(t *testing.T) {
 		permsPath, p := testPreparePutFile(t, h, "my.txt", rootCollection)
 		err := os.Chmod(permsPath, 0o200)
 		So(err, ShouldBeNil)
+
 		urCh := testPutFile(p)
 
 		for request := range urCh {
@@ -337,6 +340,7 @@ func TestPutBaton(t *testing.T) {
 		}
 
 		allUploadsCh := make(chan *ri, numFiles)
+
 		var wg sync.WaitGroup
 
 		for i, putter := range putters {
@@ -378,12 +382,14 @@ func TestPutBaton(t *testing.T) {
 		if err != nil {
 			t.Logf("iget failed with output: %s", string(outB))
 		}
+
 		So(err, ShouldBeNil)
 
 		f, err := os.Open(gotPath)
 		So(err, ShouldBeNil)
 
 		b := make([]byte, 1)
+
 		n, err := f.Read(b)
 		So(err, ShouldBeNil)
 		So(n, ShouldEqual, 1)
@@ -555,4 +561,15 @@ func testPutFile(p *Putter) chan *Request {
 	So(<-srCh, ShouldBeNil)
 
 	return urCh
+}
+
+func compareMetasWithSize(t *testing.T, remote, expected map[string]string, size int64) {
+	t.Helper()
+
+	delete(remote, meta.MetaKeyRemoteCtime)
+	delete(remote, meta.MetaKeyRemoteMtime)
+
+	expected[meta.MetaKeyRemoteSize] = strconv.FormatInt(size, 10)
+
+	So(remote, ShouldResemble, expected)
 }

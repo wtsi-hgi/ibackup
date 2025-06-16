@@ -331,9 +331,7 @@ func getFutureDateFromDurationOrDate(t string) (time.Time, error) {
 func (m *Meta) addStandardMeta(diskMeta, remoteMeta map[string]string, requester, set string) {
 	m.uniquify()
 
-	for k, v := range diskMeta {
-		m.LocalMeta[k] = v
-	}
+	maps.Copy(m.LocalMeta, diskMeta)
 
 	m.remoteMeta = remoteMeta
 
