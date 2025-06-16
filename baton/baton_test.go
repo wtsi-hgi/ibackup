@@ -40,7 +40,7 @@ import (
 	"github.com/wtsi-hgi/ibackup/internal"
 )
 
-var testStartTime time.Time
+var testStartTime time.Time //nolint:gochecknoglobals
 
 func TestBaton(t *testing.T) {
 	testStartTime = time.Now()
