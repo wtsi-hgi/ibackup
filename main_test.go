@@ -2278,7 +2278,6 @@ func TestManualMode(t *testing.T) {
 
 			restoreFiles(t, file7+"\t"+remote2+"\n",
 				"0 downloaded (0 replaced); 1 skipped; 0 failed; 0 missing\n")
-
 		})
 	})
 }
