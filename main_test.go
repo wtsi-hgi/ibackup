@@ -2164,6 +2164,7 @@ func TestManualMode(t *testing.T) {
 			file4 := filepath.Join(restoreDir, "file4")
 			file5 := filepath.Join(restoreDir, "anotherDir", "file5")
 			file6 := filepath.Join(restoreDir, "file6")
+			file7 := filepath.Join(restoreDir, "file7")
 			tmpFile := filepath.Join(restoreDir, fmt.Sprintf(".ibackup.get.%X", sha256.Sum256([]byte("file2"))))
 
 			err = os.WriteFile(
@@ -2269,8 +2270,16 @@ func TestManualMode(t *testing.T) {
 			restoreFiles(t, file6+"\t"+remote1+"\n",
 				"[1/1] "+file6+" warning: lchown "+file6+": operation not permitted\n"+
 					"1 downloaded (0 replaced); 0 skipped; 0 failed; 0 missing\n")
-		})
 
+			So(exec.Command("imeta", "rm", "-d", remote2, transfer.MetaKeyMtime).Run(), ShouldBeNil)
+
+			restoreFiles(t, file7+"\t"+remote2+"\n",
+				"1 downloaded (0 replaced); 0 skipped; 0 failed; 0 missing\n")
+
+			restoreFiles(t, file7+"\t"+remote2+"\n",
+				"0 downloaded (0 replaced); 1 skipped; 0 failed; 0 missing\n")
+
+		})
 	})
 }
 
