@@ -35,6 +35,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/wtsi-hgi/ibackup/baton/meta"
 	"github.com/wtsi-hgi/ibackup/internal"
 )
 
@@ -117,7 +118,7 @@ func TestBaton(t *testing.T) {
 						fileMeta, errm := h.GetMeta(file1remote)
 						So(errm, ShouldBeNil)
 
-						So(fileMeta, ShouldResemble, meta)
+						compareMetasWithSize(t, fileMeta, meta, 1)
 
 						Convey("And you can close the put and meta clients", func() {
 							h.Cleanup()
@@ -130,7 +131,7 @@ func TestBaton(t *testing.T) {
 						exists, fileMeta, errm := h.Stat(file1remote)
 						So(errm, ShouldBeNil)
 						So(exists, ShouldBeTrue)
-						So(fileMeta, ShouldResemble, meta)
+						compareMetasWithSize(t, fileMeta, meta, 0)
 					})
 
 					Convey("You can query if files contain specific metadata", func() {
@@ -153,7 +154,7 @@ func TestBaton(t *testing.T) {
 						fileMeta, errm := h.GetMeta(file1remote)
 						So(errm, ShouldBeNil)
 
-						So(fileMeta, ShouldResemble, map[string]string{"ibackup:test:b": "2"})
+						compareMetasWithSize(t, fileMeta, map[string]string{"ibackup:test:b": "2"}, 1)
 					})
 				})
 
@@ -251,4 +252,15 @@ func getSizeOfObject(path string) int {
 	So(err, ShouldBeNil)
 
 	return size
+}
+
+func compareMetasWithSize(t *testing.T, remote, expected map[string]string, size int64) {
+	t.Helper()
+
+	delete(remote, meta.MetaKeyRemoteCtime)
+	delete(remote, meta.MetaKeyRemoteMtime)
+
+	expected[meta.MetaKeyRemoteSize] = strconv.FormatInt(size, 10)
+
+	So(remote, ShouldResemble, expected)
 }
