@@ -578,3 +578,17 @@ func GengenTransformer(local string) (string, error) {
 
 	return strings.Replace(humgenPath, "/humgen", "/humgen/gengen", 1), nil
 }
+
+// GengenV2Transformer is a PathTransformer that will convert a local "lustre"
+// path containing projects_v2 or teams_v2 to a "canonical" path in the
+// humgen/gengen iRODS zone, with "_v2" appended to the scratch directory name.
+//
+// This transform is specific to the "gengen" group at the Sanger Institute.
+func GengenV2Transformer(local string) (string, error) {
+	humgenV2Path, err := HumgenV2Transformer(local)
+	if err != nil {
+		return "", err
+	}
+
+	return strings.Replace(humgenV2Path, "/humgen", "/humgen/gengen", 1), nil
+}
