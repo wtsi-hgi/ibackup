@@ -322,8 +322,8 @@ func (s *Set) TransformPath(path string) (string, error) {
 	return dest, nil
 }
 
-// MakeTransformer turns our Transformer string in to a transfer.*Transformer as
-// appropriate.
+// MakeTransformer turns our Transformer string in to one of the
+// transfer.*Transformers as appropriate.
 func (s *Set) MakeTransformer() (transfer.PathTransformer, error) {
 	switch s.Transformer {
 	case "humgen":
