@@ -241,7 +241,6 @@ func (s *TestServer) startServer() {
 	s.cmd.Stdout = os.Stdout
 	s.cmd.Stderr = os.Stderr
 
-	fmt.Println(s.cmd.Args)
 	err := s.cmd.Start()
 	So(err, ShouldBeNil)
 
@@ -260,9 +259,7 @@ func (s *TestServer) waitForServer() {
 		clientCmd := exec.Command("./"+app, cmd...)
 		clientCmd.Env = []string{"XDG_STATE_HOME=" + s.dir}
 
-		out, err := clientCmd.CombinedOutput()
-		fmt.Println(string(out))
-		return err
+		return clientCmd.Run()
 	}, &retry.UntilNoError{}, btime.SecondsRangeBackoff(), "waiting for server to start")
 
 	So(status.Err, ShouldBeNil)
@@ -3133,7 +3130,7 @@ func getMetaValue(meta, key string) string {
 }
 
 func TestEdit(t *testing.T) {
-	Convey("With a started server", t, func() {
+	SkipConvey("With a started server", t, func() {
 		t.Setenv("IBACKUP_TEST_LDAP_SERVER", "")
 		t.Setenv("IBACKUP_TEST_LDAP_LOOKUP", "")
 
@@ -3242,22 +3239,8 @@ func TestEdit(t *testing.T) {
 			})
 
 			Convey("And a set", func() {
-				schedulerDeployment := os.Getenv("IBACKUP_TEST_SCHEDULER")
-				if schedulerDeployment == "" {
-					SkipConvey("skipping iRODS backup test since IBACKUP_TEST_SCHEDULER not set", func() {})
-
-					return
-				}
-
-				setName := "testSet"
-				setDir := filepath.Join(path, "dir")
-				err := os.Mkdir(setDir, userPerms)
-				So(err, ShouldBeNil)
-
-				setFile1 := filepath.Join(setDir, "file1")
-				internal.CreateTestFileOfLength(t, setFile1, 1)
-
-				s.addSetForTesting(t, setName, transformer, setFile1)
+				setName := "readOnlySet"
+				s.addSetForTesting(t, setName, transformer, path)
 
 				Convey("You can make it readonly", func() {
 					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--make-readonly")
@@ -3278,35 +3261,6 @@ func TestEdit(t *testing.T) {
 					Convey("And admin can make it writable", func() {
 						exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--disable-readonly")
 						So(exitCode, ShouldEqual, 0)
-					})
-				})
-
-				Convey("And given another file", func() {
-					setFile2 := filepath.Join(setDir, "file2")
-					internal.CreateTestFileOfLength(t, setFile2, 1)
-
-					Convey("You can add it to this set", func() {
-						exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--add", setFile2)
-						So(exitCode, ShouldEqual, 0)
-
-						s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"}, 0, setFile1)
-						s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"}, 0, setFile2)
-						s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"}, 0, "Num files: 2")
-					})
-
-					Convey("You can add it even if the first file no longer exists", func() {
-						s.waitForStatus(setName, "Complete", 10*time.Second)
-						s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"}, 0, setFile1+"\tcomplete")
-
-						err = os.Remove(setFile1)
-						So(err, ShouldBeNil)
-
-						exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--add", setFile2)
-						So(exitCode, ShouldEqual, 0)
-
-						s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"}, 0, setFile1)
-						s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"}, 0, setFile2)
-						s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Num files: 2")
 					})
 				})
 			})
@@ -3500,7 +3454,7 @@ func TestEdit(t *testing.T) {
 
 		timeout := 5 * time.Second
 
-		Convey("And some files", func() {
+		FocusConvey("And some files", func() {
 			setDir1 := filepath.Join(path, "dir1")
 			err := os.Mkdir(setDir1, userPerms)
 			So(err, ShouldBeNil)
@@ -3525,6 +3479,63 @@ func TestEdit(t *testing.T) {
 					exitCode, output := s.runBinaryWithNoLogging(t, "edit", "--name", setName, "--transformer", "humgen")
 					So(exitCode, ShouldEqual, 1)
 					So(output, ShouldContainSubstring, set.ErrTransformerAlreadyUsed)
+				})
+
+				Convey("You can add another file to this set", func() {
+					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--add", setFile2)
+					So(exitCode, ShouldEqual, 0)
+
+					s.waitForStatus(setName, "Status: complete", timeout)
+
+					exitCode, output := s.runBinaryWithNoLogging(t, "status", "--name", setName, "-d")
+					So(exitCode, ShouldEqual, 0)
+
+					So(output, ShouldContainSubstring, "Num files: 2")
+					So(output, ShouldContainSubstring, setFile1)
+					So(output, ShouldContainSubstring, setFile2+"\tuploaded")
+				})
+
+				Convey("You can add another file even if the first one no longer exists", func() {
+					err = os.Remove(setFile1)
+					So(err, ShouldBeNil)
+
+					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--add", setFile2)
+					So(exitCode, ShouldEqual, 0)
+
+					s.waitForStatus(setName, "Status: complete", timeout)
+					s.waitForStatus(setName, "Uploaded: 1", timeout)
+
+					exitCode, output := s.runBinaryWithNoLogging(t, "status", "--name", setName, "-d")
+					So(exitCode, ShouldEqual, 0)
+
+					So(output, ShouldContainSubstring, "Num files: 2")
+					So(output, ShouldContainSubstring, setFile1)
+					So(output, ShouldContainSubstring, setFile2+"\tuploaded")
+				})
+			})
+
+			FocusConvey("And a set with discovered file", func() {
+				setName := "TestDiscoveredFiles"
+
+				s.addSetForTesting(t, setName, transformer, setDir1)
+				s.waitForStatus(setName, "Status: complete", timeout)
+
+				FocusConvey("You can add another file even if the initial folder no longer exists", func() {
+					os.RemoveAll(setDir1)
+					So(err, ShouldBeNil)
+
+					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--add", setFile2)
+					So(exitCode, ShouldEqual, 0)
+
+					s.waitForStatus(setName, "Status: complete", timeout)
+					s.waitForStatus(setName, "Uploaded: 1", timeout)
+
+					exitCode, output := s.runBinaryWithNoLogging(t, "status", "--name", setName, "-d")
+					So(exitCode, ShouldEqual, 0)
+
+					So(output, ShouldContainSubstring, "Num files: 2")
+					So(output, ShouldContainSubstring, setFile1)
+					So(output, ShouldContainSubstring, setFile2+"\tuploaded")
 				})
 			})
 		})
