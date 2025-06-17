@@ -106,6 +106,41 @@ func NewTestServer(t *testing.T) *TestServer {
 	return s
 }
 
+func NewUploadingTestServer(t *testing.T) *TestServer {
+	t.Helper()
+
+	dir := t.TempDir()
+
+	s := new(TestServer)
+
+	s.prepareFilePaths(dir)
+	s.prepareConfig()
+
+	remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
+	if remotePath == "" {
+		SkipConvey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
+
+		return nil
+	}
+
+	remotePath = filepath.Join(remotePath, "test_remove")
+
+	schedulerDeployment := os.Getenv("IBACKUP_TEST_SCHEDULER")
+	if schedulerDeployment == "" {
+		SkipConvey("skipping iRODS backup test since IBACKUP_TEST_SCHEDULER not set", func() {})
+
+		return nil
+	}
+
+	s.schedulerDeployment = os.Getenv("IBACKUP_TEST_SCHEDULER")
+	s.remoteHardlinkPrefix = filepath.Join(remotePath, "hardlinks")
+	s.backupFile = filepath.Join(dir, "db.bak")
+
+	s.startServer()
+
+	return s
+}
+
 func (s *TestServer) prepareFilePaths(dir string) {
 	s.dir = dir
 	s.dbFile = filepath.Join(s.dir, "db")
@@ -210,6 +245,7 @@ func (s *TestServer) startServer() {
 	s.cmd.Stdout = os.Stdout
 	s.cmd.Stderr = os.Stderr
 
+	fmt.Println(s.cmd.Args)
 	err := s.cmd.Start()
 	So(err, ShouldBeNil)
 
@@ -228,7 +264,9 @@ func (s *TestServer) waitForServer() {
 		clientCmd := exec.Command("./"+app, cmd...)
 		clientCmd.Env = []string{"XDG_STATE_HOME=" + s.dir}
 
-		return clientCmd.Run()
+		out, err := clientCmd.CombinedOutput()
+		fmt.Println(string(out))
+		return err
 	}, &retry.UntilNoError{}, btime.SecondsRangeBackoff(), "waiting for server to start")
 
 	So(status.Err, ShouldBeNil)
@@ -3094,16 +3132,36 @@ func TestEdit(t *testing.T) {
 					})
 				})
 
-				SkipConvey("You can add a file to this set", func() {
+				Convey("And given another file", func() {
 					setFile2 := filepath.Join(setDir, "file2")
 					internal.CreateTestFileOfLength(t, setFile2, 1)
 
-					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--add", setFile2)
-					So(exitCode, ShouldEqual, 0)
+					Convey("You can add it to this set", func() {
+						exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--add", setFile2)
+						So(exitCode, ShouldEqual, 0)
 
-					s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"}, 0, setFile1)
-					s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"}, 0, setFile2)
+						s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"}, 0, setFile1)
+						s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"}, 0, setFile2)
+						s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"}, 0, "Num files: 2")
+					})
+
+					Convey("You can add it even if the first file no longer exists", func() {
+						s.waitForStatus(setName, "Complete", 10*time.Second)
+						s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"}, 0, setFile1+"\tcomplete")
+
+						err = os.Remove(setFile1)
+						So(err, ShouldBeNil)
+
+						exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--add", setFile2)
+						So(exitCode, ShouldEqual, 0)
+
+						s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"}, 0, setFile1)
+						s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"}, 0, setFile2)
+						s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Num files: 2")
+					})
+
 				})
+
 			})
 
 			Convey("And a read-only set made by a different user", func() {
@@ -3138,6 +3196,24 @@ func TestEdit(t *testing.T) {
 
 					s.confirmOutputDoesNotContain(t, []string{"status", "--name", setName, "--user", user}, 0, "Read-only: true")
 				})
+			})
+		})
+	})
+
+	SkipConvey("With a started uploading server", t, func() {
+		s := NewUploadingTestServer(t)
+		So(s, ShouldNotBeNil)
+
+		Convey("Given a transformer", func() {
+			remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
+			if remotePath == "" {
+				SkipConvey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
+
+				return
+			}
+
+			Convey("And a set", func() {
+				
 			})
 		})
 	})
