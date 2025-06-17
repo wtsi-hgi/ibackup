@@ -30,10 +30,12 @@ import (
 	"io"
 	"maps"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/wtsi-hgi/ibackup/baton/meta"
 	"github.com/wtsi-hgi/ibackup/errs"
 )
 
@@ -87,7 +89,7 @@ func (l *LocalHandler) EnsureCollection(dir string) error {
 }
 
 // CollectionsDone just records this was called.
-func (l *LocalHandler) CollectionsDone() error {
+func (l *LocalHandler) CollectionsDone() error { //nolint:unparam
 	l.Connected = true
 
 	return nil
@@ -106,7 +108,7 @@ func (l *LocalHandler) Stat(remote string) (bool, map[string]string, error) {
 		return false, nil, errs.PathError{Msg: ErrMockStatFail, Path: ""}
 	}
 
-	_, err := os.Stat(remote)
+	fi, err := os.Stat(remote)
 	if os.IsNotExist(err) {
 		return false, nil, nil
 	}
@@ -118,14 +120,18 @@ func (l *LocalHandler) Stat(remote string) (bool, map[string]string, error) {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 
-	meta, exists := l.Meta[remote]
+	m, exists := l.Meta[remote]
 	if !exists {
-		meta = make(map[string]string)
+		m = make(map[string]string)
 	} else {
-		meta = maps.Clone(meta)
+		m = maps.Clone(m)
 	}
 
-	return true, meta, nil
+	m[meta.MetaKeyRemoteCtime] = fi.ModTime().String()
+	m[meta.MetaKeyRemoteMtime] = fi.ModTime().String()
+	m[meta.MetaKeyRemoteSize] = strconv.FormatInt(fi.Size(), 10)
+
+	return true, m, nil
 }
 
 // MakePutFail will result in any subsequent Put()s for a Request with the
@@ -338,4 +344,16 @@ func (l *LocalHandler) RemoveFile(path string) error {
 	}
 
 	return err
+}
+
+// TimeToMeta converts a time to a string suitable for storing as metadata, in
+// a way that ObjectInfo.ModTime() will understand and be able to convert back
+// again.
+func TimeToMeta(t time.Time) (string, error) {
+	b, err := t.UTC().Truncate(time.Second).MarshalText()
+	if err != nil {
+		return "", err
+	}
+
+	return string(b), nil
 }

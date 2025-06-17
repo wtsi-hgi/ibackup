@@ -29,9 +29,11 @@ package internal
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/wtsi-hgi/ibackup/baton/meta"
 )
 
 func TestMock(t *testing.T) {
@@ -106,7 +108,7 @@ func TestMock(t *testing.T) {
 						exists, fileMeta, errm := lh.Stat(file1remote)
 						So(errm, ShouldBeNil)
 						So(exists, ShouldBeTrue)
-						So(fileMeta, ShouldResemble, meta)
+						compareMetasWithSize(t, fileMeta, meta, 1)
 					})
 
 					Convey("You can query if files contain specific metadata", func() {
@@ -173,4 +175,15 @@ func TestMock(t *testing.T) {
 			So(lh.Connected, ShouldBeFalse)
 		})
 	})
+}
+
+func compareMetasWithSize(t *testing.T, remote, expected map[string]string, size int64) {
+	t.Helper()
+
+	delete(remote, meta.MetaKeyRemoteCtime)
+	delete(remote, meta.MetaKeyRemoteMtime)
+
+	expected[meta.MetaKeyRemoteSize] = strconv.FormatInt(size, 10)
+
+	So(remote, ShouldResemble, expected)
 }

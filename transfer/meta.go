@@ -34,6 +34,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/wtsi-hgi/ibackup/internal"
 )
 
 const (
@@ -256,12 +258,12 @@ func createBackupMetadata(reason Reason, review, removal string, mm *Meta) error
 }
 
 func reviewRemovalDatesToMeta(review, removal time.Time) (string, string, error) {
-	reviewStr, err := TimeToMeta(review)
+	reviewStr, err := internal.TimeToMeta(review)
 	if err != nil {
 		return "", "", err
 	}
 
-	removalStr, err := TimeToMeta(removal)
+	removalStr, err := internal.TimeToMeta(removal)
 
 	return reviewStr, removalStr, err
 }
@@ -331,9 +333,7 @@ func getFutureDateFromDurationOrDate(t string) (time.Time, error) {
 func (m *Meta) addStandardMeta(diskMeta, remoteMeta map[string]string, requester, set string) {
 	m.uniquify()
 
-	for k, v := range diskMeta {
-		m.LocalMeta[k] = v
-	}
+	maps.Copy(m.LocalMeta, diskMeta)
 
 	m.remoteMeta = remoteMeta
 
@@ -362,21 +362,9 @@ func (m *Meta) Clone() *Meta {
 
 // addDate adds the current date to localMeta, replacing any exisiting value.
 func (m *Meta) addDate() {
-	date, _ := TimeToMeta(time.Now()) //nolint:errcheck
+	date, _ := internal.TimeToMeta(time.Now()) //nolint:errcheck
 
 	m.LocalMeta[MetaKeyDate] = date
-}
-
-// TimeToMeta converts a time to a string suitable for storing as metadata, in
-// a way that ObjectInfo.ModTime() will understand and be able to convert back
-// again.
-func TimeToMeta(t time.Time) (string, error) {
-	b, err := t.UTC().Truncate(time.Second).MarshalText()
-	if err != nil {
-		return "", err
-	}
-
-	return string(b), nil
 }
 
 // appendMeta appends the given value to the given key value in our remoteMeta,

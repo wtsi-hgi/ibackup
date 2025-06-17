@@ -36,11 +36,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/rs/zerolog"
+	"github.com/wtsi-hgi/ibackup/baton/meta"
 	"github.com/wtsi-hgi/ibackup/errs"
 	"github.com/wtsi-hgi/ibackup/internal"
 	ex "github.com/wtsi-npg/extendo/v2"
@@ -449,13 +451,30 @@ func requestToRodsItem(local, remote string) *ex.RodsItem {
 
 // RodsItemToMeta pulls out the AVUs from a RodsItem and returns them as a map.
 func RodsItemToMeta(it ex.RodsItem) map[string]string {
-	meta := make(map[string]string, len(it.IAVUs))
+	m := make(map[string]string, len(it.IAVUs))
 
 	for _, iavu := range it.IAVUs {
-		meta[iavu.Attr] = iavu.Value
+		m[iavu.Attr] = iavu.Value
 	}
 
-	return meta
+	m[meta.MetaKeyRemoteSize] = strconv.FormatUint(it.ISize, 10)
+
+	var created, modified time.Time
+
+	for _, ts := range it.ITimestamps {
+		if ts.Created.After(created) {
+			created = ts.Created
+		}
+
+		if ts.Modified.After(modified) {
+			modified = ts.Modified
+		}
+	}
+
+	m[meta.MetaKeyRemoteMtime], _ = internal.TimeToMeta(modified) //nolint:errcheck
+	m[meta.MetaKeyRemoteCtime], _ = internal.TimeToMeta(created)  //nolint:errcheck
+
+	return m
 }
 
 // Put uploads request Local to the Remote object, overwriting it if it already

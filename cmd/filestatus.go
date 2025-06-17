@@ -12,6 +12,7 @@ import (
 	"github.com/dustin/go-humanize" //nolint:misspell
 	"github.com/spf13/cobra"
 	"github.com/wtsi-hgi/ibackup/baton"
+	"github.com/wtsi-hgi/ibackup/internal"
 	"github.com/wtsi-hgi/ibackup/set"
 	"github.com/wtsi-hgi/ibackup/transfer"
 	"github.com/wtsi-npg/extendo/v2"
@@ -160,7 +161,7 @@ func (fsg *fileStatusGetter) printFileStatus(set *set.Set, f *set.Entry) error {
 		return err
 	}
 
-	lastAttemptTime, err := transfer.TimeToMeta(f.LastAttempt)
+	lastAttemptTime, err := internal.TimeToMeta(f.LastAttempt)
 	if err != nil {
 		return err
 	}
@@ -235,7 +236,7 @@ func getMTime(local string) (string, error) {
 		return "", err
 	}
 
-	return transfer.TimeToMeta(stat.ModTime())
+	return internal.TimeToMeta(stat.ModTime())
 }
 
 func (fsg *fileStatusGetter) calcMD5Sum(path string) string {

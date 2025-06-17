@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"github.com/wtsi-hgi/ibackup/errs"
+	"github.com/wtsi-hgi/ibackup/internal"
 )
 
 const ErrStatFailed = "stat of local path returned strange results"
@@ -51,7 +52,7 @@ func Stat(localPath string) (*ObjectInfo, error) {
 		return nil, err
 	}
 
-	mtime, err := TimeToMeta(fi.ModTime())
+	mtime, err := internal.TimeToMeta(fi.ModTime())
 	if err != nil {
 		return nil, err
 	}

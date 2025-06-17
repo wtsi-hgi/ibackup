@@ -31,6 +31,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/wtsi-hgi/ibackup/internal"
 )
 
 func TestMeta(t *testing.T) {
@@ -179,10 +180,10 @@ func TestMeta(t *testing.T) {
 func testTimesToMeta(t *testing.T, reviewDate, removalDate time.Time) (string, string) {
 	t.Helper()
 
-	reviewStr, err := TimeToMeta(reviewDate)
+	reviewStr, err := internal.TimeToMeta(reviewDate)
 	So(err, ShouldBeNil)
 
-	removalStr, err := TimeToMeta(removalDate)
+	removalStr, err := internal.TimeToMeta(removalDate)
 	So(err, ShouldBeNil)
 
 	return reviewStr, removalStr
