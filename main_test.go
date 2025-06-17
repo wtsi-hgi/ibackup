@@ -40,6 +40,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -48,8 +49,12 @@ import (
 
 	"github.com/phayes/freeport"
 	. "github.com/smartystreets/goconvey/convey"
+	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/ibackup/baton"
+	"github.com/wtsi-hgi/ibackup/cmd"
 	"github.com/wtsi-hgi/ibackup/internal"
+	"github.com/wtsi-hgi/ibackup/server"
+	"github.com/wtsi-hgi/ibackup/set"
 	"github.com/wtsi-hgi/ibackup/transfer"
 	btime "github.com/wtsi-ssg/wr/backoff/time"
 	"github.com/wtsi-ssg/wr/retry"
@@ -299,7 +304,7 @@ func (s *TestServer) confirmOutput(t *testing.T, args []string, expectedCode int
 func (s *TestServer) confirmOutputContains(t *testing.T, args []string, expectedCode int, expected string) {
 	t.Helper()
 
-	exitCode, actual := s.runBinary(t, args...)
+	exitCode, actual := s.runBinaryWithNoLogging(t, args...)
 
 	So(exitCode, ShouldEqual, expectedCode)
 	So(actual, ShouldContainSubstring, expected)
@@ -331,20 +336,21 @@ func (s *TestServer) addSetForTesting(t *testing.T, name, transformer, path stri
 func (s *TestServer) addSetForTestingWithItems(t *testing.T, name, transformer, path string) {
 	t.Helper()
 
-	exitCode, _ := s.runBinary(t, "add", "--name", name, "--transformer",
-		transformer, "--items", path, "--monitor", "1h", "--monitor-removals")
-
-	So(exitCode, ShouldEqual, 0)
-
-	s.waitForStatus(name, "\nDiscovery: completed", 20*time.Second)
-	s.waitForStatus(name, "\nStatus: complete", 20*time.Second)
+	s.addSetForTestingWithFlags(t, name, transformer, "--items", path, "--monitor", "1h", "--monitor-removals")
 }
 
 func (s *TestServer) addSetForTestingWithFlag(t *testing.T, name, transformer, path, flag, data string) {
 	t.Helper()
 
-	exitCode, _ := s.runBinary(t, "add", "--name", name, "--transformer", transformer,
-		"--path", path, flag, data)
+	s.addSetForTestingWithFlags(t, name, transformer, "--path", path, flag, data)
+}
+
+func (s *TestServer) addSetForTestingWithFlags(t *testing.T, name, transformer string, flags ...string) {
+	t.Helper()
+
+	args := []string{"add", "--name", name, "--transformer", transformer}
+	args = append(args, flags...)
+	exitCode, _ := s.runBinary(t, args...)
 
 	So(exitCode, ShouldEqual, 0)
 
@@ -1990,7 +1996,7 @@ Global put client status (/10): 6 iRODS connections`)
 			})
 		})
 
-		Convey("Adding a failing set then re-adding it still allows retrying the failures", func() {
+		Convey("Adding a failing set then re-adding it is not possible", func() {
 			path := t.TempDir()
 			file := filepath.Join(path, "file")
 			internal.CreateTestFile(t, file, "some data")
@@ -2020,13 +2026,8 @@ no backup sets`
 
 			s.waitForStatus(setName, statusLine, 30*time.Second)
 
-			err = s.interactiveAdd(setName, "y", transformer, "path", path)
-			So(err, ShouldBeNil)
-
-			s.waitForStatus(setName, statusLine, 30*time.Second)
-
-			s.confirmOutput(t, []string{"retry", "--name", setName, "--failed"},
-				0, "initated retry of 1 failed entries")
+			s.confirmOutputContains(t, []string{"add", "--name", setName, "--transformer", transformer, "--path", path},
+				1, cmd.ErrDuplicateSet.Error())
 		})
 	})
 }
@@ -2924,6 +2925,16 @@ func TestRemove(t *testing.T) {
 					s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 30*time.Second)
 				})
 			})
+
+			Convey("And if you make this set read-only", func() {
+				exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--make-readonly")
+				So(exitCode, ShouldEqual, 0)
+
+				Convey("You can no longer remove files from it", func() {
+					s.confirmOutputContains(t, []string{"remove", "--name", setName, "--path", file1}, 1,
+						set.ErrSetIsNotWritable)
+				})
+			})
 		})
 
 		Convey("Given a set with a file that failed to upload", func() {
@@ -2968,4 +2979,157 @@ func getMetaValue(meta, key string) string {
 	So(nlPos, ShouldNotEqual, -1)
 
 	return value[:nlPos]
+}
+
+func TestEdit(t *testing.T) {
+	Convey("With a started server", t, func() {
+		t.Setenv("IBACKUP_TEST_LDAP_SERVER", "")
+		t.Setenv("IBACKUP_TEST_LDAP_LOOKUP", "")
+
+		s := NewTestServer(t)
+		So(s, ShouldNotBeNil)
+
+		Convey("With no --name given, edit returns an error", func() {
+			s.confirmOutputContains(t, []string{"edit"}, 1, "Error: required flag(s) \"name\" not set")
+		})
+
+		Convey("Edit on nonexisting set produces an error", func() {
+			s.confirmOutputContains(t, []string{"edit", "--name", "badSet"}, 1, "set with that id does not exist")
+		})
+
+		Convey("You can specify either --make-readonly or --disable-readonly", func() {
+			s.confirmOutputContains(t, []string{"edit", "--make-readonly", "--disable-readonly"}, 1, cmd.ErrInvalidEdit.Error())
+		})
+
+		Convey("Given a transformer", func() {
+			remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
+			if remotePath == "" {
+				SkipConvey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
+
+				return
+			}
+
+			path := t.TempDir()
+			transformer := "prefix=" + path + ":" + remotePath
+
+			Convey("And a monitored set", func() {
+				setName := "monitoredSet"
+				s.addSetForTestingWithFlag(t, setName, transformer, path, "--monitor", "1d")
+
+				s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Monitored: 1d;")
+
+				Convey("You can disable monitoring", func() {
+					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--stop-monitor")
+					So(exitCode, ShouldEqual, 0)
+
+					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Monitored: false;")
+				})
+			})
+
+			Convey("And a set with monitored removals", func() {
+				setName := "monitoredRemovalsSet"
+				s.addSetForTestingWithFlags(t, setName, transformer, "--path", path, "--monitor", "1d", "--monitor-removals")
+
+				s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Monitored (with removals): 1d;")
+
+				Convey("You can disable monitoring removals", func() {
+					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--stop-monitor-removals")
+					So(exitCode, ShouldEqual, 0)
+
+					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Monitored: 1d;")
+				})
+			})
+
+			Convey("And a set marked as archive", func() {
+				setName := "archiveSet"
+				s.addSetForTestingWithFlags(t, setName, transformer, "--path", path, "--archive")
+
+				s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Archive: true\n")
+
+				Convey("You can disable archive mode", func() {
+					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--stop-archiving")
+					So(exitCode, ShouldEqual, 0)
+
+					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Archive: false\n")
+				})
+			})
+
+			Convey("And a set", func() {
+				setName := "readOnlySet"
+				s.addSetForTesting(t, setName, transformer, path)
+
+				Convey("You can make it readonly", func() {
+					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--make-readonly")
+					So(exitCode, ShouldEqual, 0)
+
+					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Read-only: true\n")
+
+					Convey("And you can no longer edit it", func() {
+						s.confirmOutputContains(t, []string{"edit", "--name", setName}, 1,
+							set.ErrSetIsNotWritable)
+					})
+
+					Convey("And you can no longer retry it", func() {
+						s.confirmOutputContains(t, []string{"retry", "--name", setName, "--all"}, 1,
+							set.ErrSetIsNotWritable)
+					})
+
+					Convey("And admin can make it writable", func() {
+						exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--disable-readonly")
+						So(exitCode, ShouldEqual, 0)
+					})
+				})
+			})
+
+			Convey("And a read-only set made by a different user", func() {
+				user := "root"
+				setName := "rootSet"
+				fakeDir := generateFakeJWT(t, s, user)
+				originalEnv := slices.Clone(s.env)
+				s.env = append(slices.DeleteFunc(s.env, func(str string) bool {
+					return strings.HasPrefix(str, "XDG_STATE_HOME")
+				}), "XDG_STATE_HOME="+fakeDir)
+
+				exitCode, _ := s.runBinary(t, "add", "--name", setName, "--transformer", transformer,
+					"--path", path, "--user", user)
+				So(exitCode, ShouldEqual, 0)
+
+				s.waitForStatusWithUser(setName, "\nDiscovery: completed", user, 10*time.Second)
+
+				exitCode, _ = s.runBinary(t, "edit", "--name", setName, "--user", user, "--make-readonly")
+				So(exitCode, ShouldEqual, 0)
+
+				s.confirmOutputContains(t, []string{"status", "--name", setName, "--user", user}, 0, "Read-only: true\n")
+
+				Convey("And that user cannot make it writable", func() {
+					s.confirmOutputContains(t, []string{"edit", "--name", setName, "--user", user, "--disable-readonly"}, 1,
+						server.ErrNotAdmin.Error())
+				})
+
+				Convey("Admin can make it writable", func() {
+					s.env = originalEnv
+					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--user", user, "--disable-readonly")
+					So(exitCode, ShouldEqual, 0)
+
+					s.confirmOutputDoesNotContain(t, []string{"status", "--name", setName, "--user", user}, 0, "Read-only: true")
+				})
+			})
+		})
+	})
+}
+
+func generateFakeJWT(t *testing.T, s *TestServer, user string) string {
+	t.Helper()
+
+	defer t.Setenv("XDG_STATE_HOME", os.Getenv("XDG_STATE_HOME"))
+
+	fakeDir := t.TempDir()
+
+	t.Setenv("XDG_STATE_HOME", fakeDir)
+
+	c, err := gas.NewClientCLI(".ibackup.jwt", ".ibackup.token", s.url, s.cert, false)
+	So(err, ShouldBeNil)
+	So(c.Login(user, "password"), ShouldBeNil)
+
+	return fakeDir
 }

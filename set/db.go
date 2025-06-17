@@ -67,6 +67,7 @@ const (
 	ErrNoAddDuringDiscovery      = "can't add set while set is being discovered"
 	ErrPathNotInSet              = "path(s) do not belong to the backup set"
 	ErrRemovalWhenSetNotComplete = "you can only remove from completed sets"
+	ErrSetIsNotWritable          = "the set is read-only, you cannot change it"
 
 	setsBucket                    = "sets"
 	userToSetBucket               = "userLookup"
@@ -260,6 +261,10 @@ func (d *DB) AddOrUpdate(set *Set) error {
 
 		if existing := b.Get(bid); existing != nil {
 			eset := d.decodeSet(existing)
+
+			if eset.ReadOnly {
+				return Error{Msg: ErrSetIsNotWritable, id: id}
+			}
 
 			if err := updateDatabaseSetWithUserSetDetails(eset, set); err != nil {
 				return err
@@ -1854,4 +1859,12 @@ func (d *DB) EnableRemoteBackups(remotePath string, handler transfer.Handler) {
 
 func (d *DBRO) LogSetChangesToSlack(slacker Slacker) {
 	d.slacker = slacker
+}
+
+// MakeSetWritable sets ReadOnly to false on a given set.
+// This is the only way to change the ReadOnly set.
+func (d *DB) MakeSetWritable(sid string) error {
+	return d.updateSetProperties(sid, func(s *Set) {
+		s.ReadOnly = false
+	})
 }
