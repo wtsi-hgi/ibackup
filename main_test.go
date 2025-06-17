@@ -56,6 +56,7 @@ import (
 	"github.com/wtsi-hgi/ibackup/server"
 	"github.com/wtsi-hgi/ibackup/set"
 	"github.com/wtsi-hgi/ibackup/transfer"
+	"github.com/wtsi-ssg/wr/backoff"
 	btime "github.com/wtsi-ssg/wr/backoff/time"
 	"github.com/wtsi-ssg/wr/retry"
 )
@@ -391,7 +392,12 @@ func (s *TestServer) waitForStatus(name, statusToFind string, timeout time.Durat
 		}
 
 		return ErrStatusNotFound
-	}, &retry.UntilNoError{}, btime.SecondsRangeBackoff(), "waiting for matching status")
+	}, &retry.UntilNoError{}, &backoff.Backoff{
+		Min:     10 * time.Millisecond,
+		Max:     100 * time.Millisecond,
+		Factor:  2,
+		Sleeper: &btime.Sleeper{},
+	}, "waiting for matching status")
 
 	if status.Err != nil {
 		fmt.Printf("\nfailed to see set %s get status: %s\n%s\n", name, statusToFind, string(output)) //nolint:forbidigo
