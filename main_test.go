@@ -1281,8 +1281,8 @@ Example File: `+gengenFile+" => /humgen/gengen/teams/hgi/scratch126/mercury/ibac
 		})
 
 		Convey("Given an added set defined with a gengen_v2 transformer, the remote directory is correct", func() {
-			gengenFile := "/lustre/scratch126/gengen/teams_v2/hgi/mercury/ibackup/file_for_testsuite.do_not_delete"
-			gengenDir := filepath.Dir(gengenFile)
+			gFile := "/lustre/scratch126/gengen/teams_v2/hgi/mercury/ibackup/file_for_testsuite.do_not_delete"
+			gengenDir := filepath.Dir(gFile)
 
 			if _, err := os.Stat(gengenDir); err != nil {
 				SkipConvey("skip gengen transformer test since not in gengen", func() {})
@@ -1290,7 +1290,7 @@ Example File: `+gengenFile+" => /humgen/gengen/teams/hgi/scratch126/mercury/ibac
 				return
 			}
 
-			s.addSetForTesting(t, "gengenV2Set", "gengen_v2", gengenFile)
+			s.addSetForTesting(t, "gengenV2Set", "gengen_v2", gFile)
 
 			s.confirmOutput(t, []string{"status", "-n", "gengenV2Set"}, 0,
 				`Global put queue status: 1 queued; 0 reserved to be worked on; 0 failed
@@ -1306,7 +1306,7 @@ Status: pending upload
 Discovery:
 Num files: 1; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B (and counting) / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
-Example File: `+gengenFile+" => /humgen/gengen/teams/hgi/scratch126_v2/mercury/ibackup/file_for_testsuite.do_not_delete")
+Example File: `+gFile+" => /humgen/gengen/teams/hgi/scratch126_v2/mercury/ibackup/file_for_testsuite.do_not_delete")
 		})
 
 		Convey("You can add a set with links and their counts show correctly", func() {
