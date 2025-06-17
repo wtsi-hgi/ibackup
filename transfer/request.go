@@ -530,7 +530,7 @@ func HumgenV2Transformer(local string) (string, error) {
 		}
 	}
 
-	if !dirIsLustreWithPTUV2SubDir(parts[1], ptuPart, len(parts)) {
+	if !dirIsLustreWithPTUSubDir(parts[1], ptuPart, len(parts)) {
 		return "", errs.PathError{Msg: ErrNotHumgenLustre, Path: local}
 	}
 
@@ -557,13 +557,6 @@ func dirIsLustreWithPTUSubDir(dir string, ptuPart, numParts int) bool {
 // or teams_v2.
 func dirIsProjectsV2OrTeamsV2(dir string) bool {
 	return dir == "projects_v2" || dir == "teams_v2"
-}
-
-// dirIsLustreWithPTUV2SubDir returns true if the given dir is lustre, and you
-// found the projects_v2|teams_v2 directory at subdirectory 4 or higher, but not
-// at the leaf or its parent.
-func dirIsLustreWithPTUV2SubDir(dir string, ptuPart, numParts int) bool {
-	return dir == "lustre" && ptuPart >= 4 && ptuPart+2 <= numParts-1
 }
 
 // GengenTransformer is a PathTransformer that will convert a local "lustre"
