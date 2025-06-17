@@ -241,6 +241,7 @@ func (s *TestServer) startServer() {
 	s.cmd.Stdout = os.Stdout
 	s.cmd.Stderr = os.Stderr
 
+	fmt.Println(s.cmd.Args)
 	err := s.cmd.Start()
 	So(err, ShouldBeNil)
 
@@ -259,7 +260,9 @@ func (s *TestServer) waitForServer() {
 		clientCmd := exec.Command("./"+app, cmd...)
 		clientCmd.Env = []string{"XDG_STATE_HOME=" + s.dir}
 
-		return clientCmd.Run()
+		out, err := clientCmd.CombinedOutput()
+		fmt.Println(string(out))
+		return err
 	}, &retry.UntilNoError{}, btime.SecondsRangeBackoff(), "waiting for server to start")
 
 	So(status.Err, ShouldBeNil)
@@ -3278,15 +3281,33 @@ func TestEdit(t *testing.T) {
 					})
 				})
 
-				SkipConvey("You can add a file to this set", func() {
+				Convey("And given another file", func() {
 					setFile2 := filepath.Join(setDir, "file2")
 					internal.CreateTestFileOfLength(t, setFile2, 1)
 
-					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--add", setFile2)
-					So(exitCode, ShouldEqual, 0)
+					Convey("You can add it to this set", func() {
+						exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--add", setFile2)
+						So(exitCode, ShouldEqual, 0)
 
-					s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"}, 0, setFile1)
-					s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"}, 0, setFile2)
+						s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"}, 0, setFile1)
+						s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"}, 0, setFile2)
+						s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"}, 0, "Num files: 2")
+					})
+
+					Convey("You can add it even if the first file no longer exists", func() {
+						s.waitForStatus(setName, "Complete", 10*time.Second)
+						s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"}, 0, setFile1+"\tcomplete")
+
+						err = os.Remove(setFile1)
+						So(err, ShouldBeNil)
+
+						exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--add", setFile2)
+						So(exitCode, ShouldEqual, 0)
+
+						s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"}, 0, setFile1)
+						s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"}, 0, setFile2)
+						s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Num files: 2")
+					})
 				})
 			})
 

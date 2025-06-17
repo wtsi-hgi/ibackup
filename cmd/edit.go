@@ -275,18 +275,13 @@ func updateSet(client *server.Client, sid string, path string) error {
 	}
 
 	if info.IsDir() {
-		err = nil
-	} else {
-		files, err := client.GetFiles(sid)
-		if err != nil {
-			return err
-		}
-
-		for _, file := range files {
-			print(file)
-		}
-		err = client.SetFiles(sid, []string{absPath})
+		return nil
 	}
 
-	return err
+	err = client.UpdateFiles(sid, []string{absPath})
+	if err != nil {
+		return err
+	}
+
+	return client.TriggerDiscovery(sid)
 }
