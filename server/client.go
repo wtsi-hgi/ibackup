@@ -148,6 +148,26 @@ func responseToErr(resp *resty.Response) error {
 	return err
 }
 
+// UpdateFiles adds the given paths as the file paths for the backup set with the
+// given ID.
+func (c *Client) UpdateFiles(setID string, paths []string) error {
+	return c.patchThing(EndPointAuthFiles+"/"+setID, stringsToBytes(paths))
+}
+
+// patchThing sends thing encoded as JSON in the body via a PATCH to the given url.
+// If optionalResponseThing is defined, gets that decoded from the JSON
+// response.
+func (c *Client) patchThing(url string, thing interface{}, optionalResponseThing ...interface{}) error {
+	req := c.setBodyAndOptionalResult(thing, optionalResponseThing...)
+
+	resp, err := req.Patch(url)
+	if err != nil {
+		return err
+	}
+
+	return responseToErr(resp)
+}
+
 // GetSets gets details about a given requester's backup sets from the
 // Server's database. If you started the server, the user "all" will return
 // all sets in the system.

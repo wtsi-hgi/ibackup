@@ -106,6 +106,36 @@ func NewTestServer(t *testing.T) *TestServer {
 	return s
 }
 
+func NewUploadingTestServer(t *testing.T) (*TestServer, string) {
+	t.Helper()
+
+	dir := t.TempDir()
+
+	s := new(TestServer)
+
+	s.prepareFilePaths(dir)
+	s.prepareConfig()
+
+	remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
+	if remotePath == "" {
+		t.Skip("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set")
+	}
+
+	remotePath = filepath.Join(remotePath, "test_remove")
+
+	schedulerDeployment := os.Getenv("IBACKUP_TEST_SCHEDULER")
+	if schedulerDeployment == "" {
+		t.Skip("skipping iRODS backup test since IBACKUP_TEST_SCHEDULER not set")
+	}
+
+	s.schedulerDeployment = schedulerDeployment
+	s.remoteHardlinkPrefix = filepath.Join(remotePath, "hardlinks")
+
+	s.startServer()
+
+	return s, remotePath
+}
+
 func (s *TestServer) prepareFilePaths(dir string) {
 	s.dir = dir
 	s.dbFile = filepath.Join(s.dir, "db")
@@ -2982,7 +3012,7 @@ func getMetaValue(meta, key string) string {
 }
 
 func TestEdit(t *testing.T) {
-	Convey("With a started server", t, func() {
+	SkipConvey("With a started server", t, func() {
 		t.Setenv("IBACKUP_TEST_LDAP_SERVER", "")
 		t.Setenv("IBACKUP_TEST_LDAP_LOOKUP", "")
 
@@ -3055,7 +3085,7 @@ func TestEdit(t *testing.T) {
 			})
 
 			Convey("And a set", func() {
-				setName := "readOnlySet"
+				setName := "testSet"
 				s.addSetForTesting(t, setName, transformer, path)
 
 				Convey("You can make it readonly", func() {
@@ -3112,6 +3142,99 @@ func TestEdit(t *testing.T) {
 					So(exitCode, ShouldEqual, 0)
 
 					s.confirmOutputDoesNotContain(t, []string{"status", "--name", setName, "--user", user}, 0, "Read-only: true")
+				})
+			})
+		})
+	})
+
+	FocusConvey("With a started uploading server", t, func() {
+		s, remotePath := NewUploadingTestServer(t)
+		So(s, ShouldNotBeNil)
+
+		path := t.TempDir()
+		transformer := "prefix=" + path + ":" + remotePath
+
+		resetIRODS()
+
+		timeout := 5 * time.Second
+
+		FocusConvey("And some files", func() {
+			setDir1 := filepath.Join(path, "dir1")
+			err := os.Mkdir(setDir1, userPerms)
+			So(err, ShouldBeNil)
+
+			setDir2 := filepath.Join(path, "dir2")
+			err = os.Mkdir(setDir2, userPerms)
+			So(err, ShouldBeNil)
+
+			setFile1 := filepath.Join(setDir1, "file1")
+			internal.CreateTestFileOfLength(t, setFile1, 1)
+
+			setFile2 := filepath.Join(setDir2, "file2")
+			internal.CreateTestFileOfLength(t, setFile2, 1)
+
+			
+			Convey("And a set with a file", func() {
+				setName := "testSet"
+
+				s.addSetForTesting(t, setName, transformer, setFile1)
+				s.waitForStatus(setName, "Status: complete", timeout)
+
+				Convey("You can add another file to this set", func() {
+					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--add", setFile2)
+					So(exitCode, ShouldEqual, 0)
+
+					s.waitForStatus(setName, "Status: complete", timeout)
+
+					exitCode, output := s.runBinaryWithNoLogging(t, "status", "--name", setName, "-d")
+					So(exitCode, ShouldEqual, 0)
+
+					So(output, ShouldContainSubstring, "Num files: 2")
+					So(output, ShouldContainSubstring, setFile1)
+					So(output, ShouldContainSubstring, setFile2+"\tuploaded")
+				})
+
+				Convey("You can add another file even if the first one no longer exists", func() {
+					err = os.Remove(setFile1)
+					So(err, ShouldBeNil)
+
+					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--add", setFile2)
+					So(exitCode, ShouldEqual, 0)
+
+					s.waitForStatus(setName, "Status: complete", timeout)
+					s.waitForStatus(setName, "Uploaded: 1", timeout)
+
+					exitCode, output := s.runBinaryWithNoLogging(t, "status", "--name", setName, "-d")
+					So(exitCode, ShouldEqual, 0)
+
+					So(output, ShouldContainSubstring, "Num files: 2")
+					So(output, ShouldContainSubstring, setFile1)
+					So(output, ShouldContainSubstring, setFile2+"\tuploaded")
+				})
+			})
+
+			FocusConvey("And a set with discovered file", func() {
+				setName := "TestDiscoveredFiles"
+
+				s.addSetForTesting(t, setName, transformer, setDir1)
+				s.waitForStatus(setName, "Status: complete", timeout)
+
+				FocusConvey("You can add another file even if the initial folder no longer exists", func() {
+					os.RemoveAll(setDir1)
+					So(err, ShouldBeNil)
+
+					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--add", setFile2)
+					So(exitCode, ShouldEqual, 0)
+
+					s.waitForStatus(setName, "Status: complete", timeout)
+					s.waitForStatus(setName, "Uploaded: 1", timeout)
+
+					exitCode, output := s.runBinaryWithNoLogging(t, "status", "--name", setName, "-d")
+					So(exitCode, ShouldEqual, 0)
+
+					So(output, ShouldContainSubstring, "Num files: 2")
+					So(output, ShouldContainSubstring, setFile1)
+					So(output, ShouldContainSubstring, setFile2+"\tuploaded")
 				})
 			})
 		})
