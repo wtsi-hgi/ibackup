@@ -508,17 +508,36 @@ func HumgenTransformer(local string) (string, error) {
 		strings.Join(parts[ptuPart+2:], "/")), nil
 }
 
-// GengenTransformer is a PathTransformer that will convert a local "lustre"
-// path to a "canonical" path in the humgen iRODS zone, for the gengen BoM.
+// HumgenV2Transformer is a PathTransformer that will convert a local "lustre"
+// path containing projects_v2 or teams_v2 to a "canonical" path in the humgen
+// iRODS zone, with "_v2" appended to the scratch directory name.
 //
-// This transform is specific to the "gengen" group at the Sanger Institute.
-func GengenTransformer(local string) (string, error) {
-	humgenPath, err := HumgenTransformer(local)
+// This transform is specific to the "humgen" group at the Sanger Institute.
+func HumgenV2Transformer(local string) (string, error) {
+	local, err := filepath.Abs(local)
 	if err != nil {
 		return "", err
 	}
 
-	return strings.Replace(humgenPath, "/humgen", "/humgen/gengen", 1), nil
+	parts := strings.Split(local, "/")
+	ptuPart := -1
+
+	for i, part := range parts {
+		if dirIsProjectsV2OrTeamsV2(part) {
+			ptuPart = i
+
+			break
+		}
+	}
+
+	if !dirIsLustreWithPTUV2SubDir(parts[1], ptuPart, len(parts)) {
+		return "", errs.PathError{Msg: ErrNotHumgenLustre, Path: local}
+	}
+
+	ptuType := strings.TrimSuffix(parts[ptuPart], "_v2")
+
+	return fmt.Sprintf("/humgen/%s/%s/%s_v2/%s", ptuType, parts[ptuPart+1], parts[2],
+		strings.Join(parts[ptuPart+2:], "/")), nil
 }
 
 // dirIsProjectOrTeamOrUsers returns true if the given directory is projects,
@@ -532,4 +551,30 @@ func dirIsProjectOrTeamOrUsers(dir string) bool {
 // at the leaf or its parent.
 func dirIsLustreWithPTUSubDir(dir string, ptuPart, numParts int) bool {
 	return dir == "lustre" && ptuPart >= 4 && ptuPart+2 <= numParts-1
+}
+
+// dirIsProjectsV2OrTeamsV2 returns true if the given directory is projects_v2
+// or teams_v2.
+func dirIsProjectsV2OrTeamsV2(dir string) bool {
+	return dir == "projects_v2" || dir == "teams_v2"
+}
+
+// dirIsLustreWithPTUV2SubDir returns true if the given dir is lustre, and you
+// found the projects_v2|teams_v2 directory at subdirectory 4 or higher, but not
+// at the leaf or its parent.
+func dirIsLustreWithPTUV2SubDir(dir string, ptuPart, numParts int) bool {
+	return dir == "lustre" && ptuPart >= 4 && ptuPart+2 <= numParts-1
+}
+
+// GengenTransformer is a PathTransformer that will convert a local "lustre"
+// path to a "canonical" path in the humgen iRODS zone, for the gengen BoM.
+//
+// This transform is specific to the "gengen" group at the Sanger Institute.
+func GengenTransformer(local string) (string, error) {
+	humgenPath, err := HumgenTransformer(local)
+	if err != nil {
+		return "", err
+	}
+
+	return strings.Replace(humgenPath, "/humgen", "/humgen/gengen", 1), nil
 }

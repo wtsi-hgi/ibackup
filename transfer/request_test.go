@@ -142,6 +142,38 @@ func TestRequest(t *testing.T) {
 		}
 	})
 
+	Convey("You can make new requests using the humgenV2 transform", t, func() {
+		r, err := NewRequestWithTransformedLocal("/lustre/scratch117/casm/team78/so11/file.txt", HumgenV2Transformer)
+		So(err, ShouldNotBeNil)
+		So(r, ShouldBeNil)
+
+		r, err = NewRequestWithTransformedLocal("file.txt", HumgenV2Transformer)
+		So(err, ShouldNotBeNil)
+		So(r, ShouldBeNil)
+
+		r, err = NewRequestWithTransformedLocal("/lustre/scratch125/humgen/projects/ddd/file.txt", HumgenV2Transformer)
+		So(err, ShouldNotBeNil)
+		So(r, ShouldBeNil)
+
+		locals := []string{
+			"/lustre/scratch125/humgen/projects_v2/ddd/file.txt",
+			"/lustre/scratch127/hgi/mdt1/teams_v2/martin/dm22/file.txt",
+			"/lustre/scratch127/hgi/mdt1/teams_v2/martin/dm22/sub/folder/file.txt",
+		}
+
+		expected := []string{
+			"/humgen/projects/ddd/scratch125_v2/file.txt",
+			"/humgen/teams/martin/scratch127_v2/dm22/file.txt",
+			"/humgen/teams/martin/scratch127_v2/dm22/sub/folder/file.txt",
+		}
+
+		for i, local := range locals {
+			r, err = NewRequestWithTransformedLocal(local, HumgenV2Transformer)
+			So(err, ShouldBeNil)
+			So(r.Remote, ShouldEqual, expected[i])
+		}
+	})
+
 	Convey("You can make new requests using the gengen transform", t, func() {
 		r, err := NewRequestWithTransformedLocal("/lustre/scratch117/casm/team78/so11/file.txt", GengenTransformer)
 		So(err, ShouldNotBeNil)
