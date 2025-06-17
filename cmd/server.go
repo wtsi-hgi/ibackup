@@ -31,7 +31,9 @@ import (
 	"io"
 	"log/syslog"
 	"net"
+	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	ldap "github.com/go-ldap/ldap/v3"
@@ -91,6 +93,17 @@ significant changes to the database.
 If you also set --remote_backup or the IBACKUP_REMOTE_DB_BACKUP_PATH env var,
 and the second database path, the database backup files will also be put in to
 iRODS.
+
+Instead of a database path, which creates and uses a bolt database, you can
+supply a URI to a mysql database:
+
+mysql://username:password@host:port/database
+
+As credentials should not be supplied on the command line, you can omit them and
+provide them via the environmental variables IBACKUP_MYSQL_USER and
+IBACKUP_MYSQL_PASSWORD. Indeed, you can also omit the host:port and database
+parts (leaving only mysql://) and provide those via the IBACKUP_MYSQL_HOST and
+IBACKUP_MYSQL_DB environmental variables.
 
 Your --url (in this context, think of it as the bind address) should include the
 port, and for it to work with your --cert, you probably need to specify it as
@@ -168,10 +181,8 @@ database that you've made, to investigate.
 				Channel:     channel,
 				ErrorLogger: logWriter,
 			})
-		} else {
-			if serverStillRunningMsgFreq != "" {
-				dief("--still_running requires slack variables")
-			}
+		} else if serverStillRunningMsgFreq != "" {
+			dief("--still_running requires slack variables")
 		}
 
 		var stillRunningMsgFreq time.Duration
@@ -252,6 +263,10 @@ database that you've made, to investigate.
 			s.SetRemoteHardlinkLocation(serverHardlinksCollection)
 		}
 
+		if strings.HasPrefix(args[0], "mysql://") {
+			args[0] = fillInMissingSQLURIPartsFromEnv(args[0])
+		}
+
 		err = s.LoadSetDB(args[0], dbBackupPath)
 		if err != nil {
 			dief("failed to load database: %s", err)
@@ -317,6 +332,38 @@ func init() {
 	serverCmd.Flags().StringVarP(&serverStillRunningMsgFreq, "still_running", "r", "",
 		"send a slack message every this period of time to say the server is still running"+
 			"(eg. 10m for 10 minutes, or 6h for 6 hours, minimum 1m), defaults to nothing")
+}
+
+func fillInMissingSQLURIPartsFromEnv(uri string) string { //nolint:gocyclo
+	u, err := url.Parse(uri)
+	if err != nil {
+		dief("unable to parse mysql URI: %s", err)
+	}
+
+	username := u.User.Username()
+	password, _ := u.User.Password()
+
+	if username == "" {
+		username = os.Getenv("IBACKUP_MYSQL_USER")
+	}
+
+	if password == "" {
+		password = os.Getenv("IBACKUP_MYSQL_PASSWORD")
+	}
+
+	if username != "" || password != "" {
+		u.User = url.UserPassword(username, password)
+	}
+
+	if u.Host == "" {
+		u.Host = os.Getenv("IBACKUP_MYSQL_HOST")
+	}
+
+	if u.Path == "" {
+		u.Path = os.Getenv("IBACKUP_MYSQL_DB")
+	}
+
+	return u.String()
 }
 
 // setServerLogger makes our appLogger log to the given path if non-blank,
