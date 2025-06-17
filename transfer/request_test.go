@@ -122,6 +122,9 @@ func TestRequest(t *testing.T) {
 			"/lustre/scratch123/hgi/mdt2/projects/chromo_ndd/file.txt",
 			"/lustre/scratch123/hgi/mdt1/teams/martin/dm22/file.txt",
 			"/lustre/scratch123/hgi/mdt1/teams/martin/dm22/sub/folder/file.txt",
+			"/lustre/scratch125/humgen/projects_v2/ddd/file.txt",
+			"/lustre/scratch127/hgi/mdt1/teams_v2/martin/dm22/file.txt",
+			"/lustre/scratch127/hgi/mdt1/teams_v2/martin/dm22/sub/folder/file.txt",
 		}
 
 		expected := []string{
@@ -133,42 +136,13 @@ func TestRequest(t *testing.T) {
 			"/humgen/projects/chromo_ndd/scratch123/file.txt",
 			"/humgen/teams/martin/scratch123/dm22/file.txt",
 			"/humgen/teams/martin/scratch123/dm22/sub/folder/file.txt",
-		}
-
-		for i, local := range locals {
-			r, err = NewRequestWithTransformedLocal(local, HumgenTransformer)
-			So(err, ShouldBeNil)
-			So(r.Remote, ShouldEqual, expected[i])
-		}
-	})
-
-	Convey("You can make new requests using the humgenV2 transform", t, func() {
-		r, err := NewRequestWithTransformedLocal("/lustre/scratch117/casm/team78/so11/file.txt", HumgenV2Transformer)
-		So(err, ShouldNotBeNil)
-		So(r, ShouldBeNil)
-
-		r, err = NewRequestWithTransformedLocal("file.txt", HumgenV2Transformer)
-		So(err, ShouldNotBeNil)
-		So(r, ShouldBeNil)
-
-		r, err = NewRequestWithTransformedLocal("/lustre/scratch125/humgen/projects/ddd/file.txt", HumgenV2Transformer)
-		So(err, ShouldNotBeNil)
-		So(r, ShouldBeNil)
-
-		locals := []string{
-			"/lustre/scratch125/humgen/projects_v2/ddd/file.txt",
-			"/lustre/scratch127/hgi/mdt1/teams_v2/martin/dm22/file.txt",
-			"/lustre/scratch127/hgi/mdt1/teams_v2/martin/dm22/sub/folder/file.txt",
-		}
-
-		expected := []string{
 			"/humgen/projects/ddd/scratch125_v2/file.txt",
 			"/humgen/teams/martin/scratch127_v2/dm22/file.txt",
 			"/humgen/teams/martin/scratch127_v2/dm22/sub/folder/file.txt",
 		}
 
 		for i, local := range locals {
-			r, err = NewRequestWithTransformedLocal(local, HumgenV2Transformer)
+			r, err = NewRequestWithTransformedLocal(local, HumgenTransformer)
 			So(err, ShouldBeNil)
 			So(r.Remote, ShouldEqual, expected[i])
 		}
@@ -187,46 +161,20 @@ func TestRequest(t *testing.T) {
 			"/lustre/scratch126/gengen/teams/lehner/file.txt",
 			"/lustre/scratch126/gengen/projects/alpha-allostery-global/file.txt",
 			"/lustre/scratch126/gengen/teams/parts/sequencing/file.txt",
+			"/lustre/scratch125/gengen/projects_v2/ddd/file.txt",
+			"/lustre/scratch127/gengen/teams_v2/parts/sequencing/file.txt",
 		}
 
 		expected := []string{
 			"/humgen/gengen/teams/lehner/scratch126/file.txt",
 			"/humgen/gengen/projects/alpha-allostery-global/scratch126/file.txt",
 			"/humgen/gengen/teams/parts/scratch126/sequencing/file.txt",
-		}
-
-		for i, local := range locals {
-			r, err = NewRequestWithTransformedLocal(local, GengenTransformer)
-			So(err, ShouldBeNil)
-			So(r.Remote, ShouldEqual, expected[i])
-		}
-	})
-
-	Convey("You can make new requests using the gengenV2 transform", t, func() {
-		r, err := NewRequestWithTransformedLocal("/lustre/scratch117/casm/team78/so11/file.txt", GengenV2Transformer)
-		So(err, ShouldNotBeNil)
-		So(r, ShouldBeNil)
-
-		r, err = NewRequestWithTransformedLocal("file.txt", GengenV2Transformer)
-		So(err, ShouldNotBeNil)
-		So(r, ShouldBeNil)
-
-		r, err = NewRequestWithTransformedLocal("/lustre/scratch125/gengen/projects/ddd/file.txt", GengenV2Transformer)
-		So(err, ShouldNotBeNil)
-		So(r, ShouldBeNil)
-
-		locals := []string{
-			"/lustre/scratch125/gengen/projects_v2/ddd/file.txt",
-			"/lustre/scratch127/gengen/teams_v2/parts/sequencing/file.txt",
-		}
-
-		expected := []string{
 			"/humgen/gengen/projects/ddd/scratch125_v2/file.txt",
 			"/humgen/gengen/teams/parts/scratch127_v2/sequencing/file.txt",
 		}
 
 		for i, local := range locals {
-			r, err = NewRequestWithTransformedLocal(local, GengenV2Transformer)
+			r, err = NewRequestWithTransformedLocal(local, GengenTransformer)
 			So(err, ShouldBeNil)
 			So(r.Remote, ShouldEqual, expected[i])
 		}

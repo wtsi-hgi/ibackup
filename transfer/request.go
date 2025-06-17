@@ -32,6 +32,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -56,9 +57,10 @@ const (
 	RequestStatusHardlinkSkipped RequestStatus = "hardlink"
 	ErrNotHumgenLustre                         = "not a valid humgen lustre path"
 	stuckTimeFormat                            = "02/01/06 15:04 MST"
+	defaultDirPerms                            = 0777
 )
 
-const defaultDirPerms = 0777
+var genTransformerRegex = regexp.MustCompile(`^/lustre/(scratch[^/]+)(/[^/]*)+?/(projects|teams|users)(_v2)?/([^/]+)/`)
 
 // Stuck is used to provide details of a potentially "stuck" upload Request.
 type Stuck struct {
@@ -489,74 +491,11 @@ func HumgenTransformer(local string) (string, error) {
 		return "", err
 	}
 
-	parts := strings.Split(local, "/")
-	ptuPart := -1
-
-	for i, part := range parts {
-		if dirIsProjectOrTeamOrUsers(part) {
-			ptuPart = i
-
-			break
-		}
-	}
-
-	if !dirIsLustreWithPTUSubDir(parts[1], ptuPart, len(parts)) {
+	if !genTransformerRegex.MatchString(local) {
 		return "", errs.PathError{Msg: ErrNotHumgenLustre, Path: local}
 	}
 
-	return fmt.Sprintf("/humgen/%s/%s/%s/%s", parts[ptuPart], parts[ptuPart+1], parts[2],
-		strings.Join(parts[ptuPart+2:], "/")), nil
-}
-
-// HumgenV2Transformer is a PathTransformer that will convert a local "lustre"
-// path containing projects_v2 or teams_v2 to a "canonical" path in the humgen
-// iRODS zone, with "_v2" appended to the scratch directory name.
-//
-// This transform is specific to the "humgen" group at the Sanger Institute.
-func HumgenV2Transformer(local string) (string, error) {
-	local, err := filepath.Abs(local)
-	if err != nil {
-		return "", err
-	}
-
-	parts := strings.Split(local, "/")
-	ptuPart := -1
-
-	for i, part := range parts {
-		if dirIsProjectsV2OrTeamsV2(part) {
-			ptuPart = i
-
-			break
-		}
-	}
-
-	if !dirIsLustreWithPTUSubDir(parts[1], ptuPart, len(parts)) {
-		return "", errs.PathError{Msg: ErrNotHumgenLustre, Path: local}
-	}
-
-	ptuType := strings.TrimSuffix(parts[ptuPart], "_v2")
-
-	return fmt.Sprintf("/humgen/%s/%s/%s_v2/%s", ptuType, parts[ptuPart+1], parts[2],
-		strings.Join(parts[ptuPart+2:], "/")), nil
-}
-
-// dirIsProjectOrTeamOrUsers returns true if the given directory is projects,
-// teams or users.
-func dirIsProjectOrTeamOrUsers(dir string) bool {
-	return dir == "projects" || dir == "teams" || dir == "users"
-}
-
-// dirIsLustreWithPTUSubDir returns true if the given dir is lustre, and you
-// found the project|team|users directory at subdirectory 4 or higher, but not
-// at the leaf or its parent.
-func dirIsLustreWithPTUSubDir(dir string, ptuPart, numParts int) bool {
-	return dir == "lustre" && ptuPart >= 4 && ptuPart+2 <= numParts-1
-}
-
-// dirIsProjectsV2OrTeamsV2 returns true if the given directory is projects_v2
-// or teams_v2.
-func dirIsProjectsV2OrTeamsV2(dir string) bool {
-	return dir == "projects_v2" || dir == "teams_v2"
+	return genTransformerRegex.ReplaceAllString(local, "/humgen/$3/$5/$1$4/"), nil
 }
 
 // GengenTransformer is a PathTransformer that will convert a local "lustre"
@@ -570,18 +509,4 @@ func GengenTransformer(local string) (string, error) {
 	}
 
 	return strings.Replace(humgenPath, "/humgen", "/humgen/gengen", 1), nil
-}
-
-// GengenV2Transformer is a PathTransformer that will convert a local "lustre"
-// path containing projects_v2 or teams_v2 to a "canonical" path in the
-// humgen/gengen iRODS zone, with "_v2" appended to the scratch directory name.
-//
-// This transform is specific to the "gengen" group at the Sanger Institute.
-func GengenV2Transformer(local string) (string, error) {
-	humgenV2Path, err := HumgenV2Transformer(local)
-	if err != nil {
-		return "", err
-	}
-
-	return strings.Replace(humgenV2Path, "/humgen", "/humgen/gengen", 1), nil
 }

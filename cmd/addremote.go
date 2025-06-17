@@ -40,8 +40,6 @@ var arFile string
 var arPrefix string
 var arHumgen bool
 var arGengen bool
-var arHumgenV2 bool
-var arGengenV2 bool
 var arNull bool
 var arBase64 bool
 
@@ -82,9 +80,8 @@ Which you can pipe to the 'put' subcommand.
 relative to the local prefix, and will end up relative to the remote prefix.)
 
 Specific to the "humgen" and "gengen" groups at the Sanger Institute, you can
-use the --humgen, --humgen_v2, --gengen or --gengen_v2 options to do a more
-complex transformation from local "lustre" paths to the "canonical" iRODS path
-in the humgen zone.
+use the --humgen or --gengen options to do a more complex transformation from
+local "lustre" paths to the "canonical" iRODS path in the humgen zone.
 `,
 	Run: func(cmd *cobra.Command, args []string) {
 		if arHumgen && arPrefix != "" {
@@ -95,37 +92,23 @@ in the humgen zone.
 			dief("--gengen and --prefix are mutually exclusive")
 		}
 
-		arFlags := boolToInt(arHumgen) + boolToInt(arGengen) + boolToInt(arHumgenV2) + boolToInt(arGengenV2)
-
-		if arFlags > 1 {
-			dief("Only one of --humgen, --gengen, --humgen_v2, or --gengen_v2 can be specified")
+		if arHumgen && arGengen {
+			dief("--humgen and --gengen are mutually exclusive")
 		}
 
-		if arFlags == 0 && arPrefix == "" {
-			dief("you must specify one of --prefix, --humgen, --humgen_v2, --gengen or --gengen_v2")
+		if !arHumgen && !arGengen && arPrefix == "" {
+			dief("you must specify one of --prefix, --humgen or --gengen")
 		}
 
-		pt := transfer.HumgenV2Transformer
+		pt := transfer.HumgenTransformer
 		if arPrefix != "" {
 			pt = makePrefixTransformer(arPrefix)
-		} else if arHumgen {
-			pt = transfer.HumgenTransformer
 		} else if arGengen {
 			pt = transfer.GengenTransformer
-		} else if arGengenV2 {
-			pt = transfer.GengenV2Transformer
 		}
 
 		transformARFile(arFile, pt, fofnLineSplitter(arNull), arBase64)
 	},
-}
-
-func boolToInt(b bool) int {
-	if b {
-		return 1
-	}
-
-	return 0
 }
 
 func init() {
@@ -140,10 +123,6 @@ func init() {
 		"generate the humgen zone canonical path for humgen lustre paths")
 	addremoteCmd.Flags().BoolVar(&arGengen, "gengen", false,
 		"generate the humgen zone canonical path for gengen lustre paths")
-	addremoteCmd.Flags().BoolVar(&arHumgenV2, "humgen_v2", false,
-		"generate the humgen zone canonical path for humgen _v2 lustre paths")
-	addremoteCmd.Flags().BoolVar(&arGengenV2, "gengen_v2", false,
-		"generate the humgen zone canonical path for gengen _v2 lustre paths")
 	addremoteCmd.Flags().BoolVarP(&arNull, "null", "0", false,
 		"input paths are terminated by a null character instead of a new line")
 	addremoteCmd.Flags().BoolVarP(&arBase64, "base64", "b", false,

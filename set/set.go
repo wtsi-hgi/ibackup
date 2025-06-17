@@ -94,12 +94,8 @@ type Set struct {
 	Requester string
 
 	// The method of transforming local Entries paths in to remote paths, to
-	// determine the upload location. "humgen" to use the
-	// transfer.HumgenTransformer, "humgen_v2" to use the
-	// transfer.HumgenV2Transformer, "gengen" to use the
-	// transfer.GengenTransformer, "gengen_v2" to use the
-	// transfer.GengenV2Transformer, or "prefix=local:remote" to use the
-	// transfer.PrefixTransformer.
+	// determine the upload location. "humgen" to use the put.HumgenTransformer,
+	// or "prefix=local:remote" to use the put.PrefixTransformer.
 	Transformer string
 
 	// Monitor the files and directories and re-upload them whenever they
@@ -322,18 +318,15 @@ func (s *Set) TransformPath(path string) (string, error) {
 	return dest, nil
 }
 
-// MakeTransformer turns our Transformer string in to one of the
-// transfer.*Transformers as appropriate.
+// MakeTransformer turns our Transformer string in to a put.HumgenTransformer or
+// a put.PrefixTransformer as appropriate.
 func (s *Set) MakeTransformer() (transfer.PathTransformer, error) {
-	switch s.Transformer {
-	case "humgen":
+	if s.Transformer == "humgen" {
 		return transfer.HumgenTransformer, nil
-	case "humgen_v2":
-		return transfer.HumgenV2Transformer, nil
-	case "gengen":
+	}
+
+	if s.Transformer == "gengen" {
 		return transfer.GengenTransformer, nil
-	case "gengen_v2":
-		return transfer.GengenV2Transformer, nil
 	}
 
 	if !strings.HasPrefix(s.Transformer, prefixTransformerKey) {
