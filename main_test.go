@@ -1222,6 +1222,35 @@ Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
 Example File: `+humgenFile+" => /humgen/teams/hgi/scratch125/mercury/ibackup/file_for_testsuite.do_not_delete")
 		})
 
+		Convey("Given an added set defined with a humgen_v2 transformer, the remote directory is correct", func() {
+			humgenFile := "/lustre/scratch125/humgen/teams_v2/hgi/mercury/ibackup/file_for_testsuite.do_not_delete"
+			humgenDir := filepath.Dir(humgenFile)
+
+			if _, err := os.Stat(humgenDir); err != nil {
+				SkipConvey("skip humgen transformer test since not in humgen", func() {})
+
+				return
+			}
+
+			s.addSetForTesting(t, "humgenV2Set", "humgen_v2", humgenFile)
+
+			s.confirmOutput(t, []string{"status", "-n", "humgenV2Set"}, 0,
+				`Global put queue status: 1 queued; 0 reserved to be worked on; 0 failed
+Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
+
+Name: humgenV2Set
+Transformer: humgen_v2
+Reason: backup
+Review date: `+reviewDate+`
+Removal date: `+removalDate+`
+Monitored: false; Archive: false
+Status: pending upload
+Discovery:
+Num files: 1; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B (and counting) / 0 B / 0 B
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
+Example File: `+humgenFile+" => /humgen/teams/hgi/scratch125_v2/mercury/ibackup/file_for_testsuite.do_not_delete")
+		})
+
 		Convey("Given an added set defined with a gengen transformer, the remote directory is correct", func() {
 			gengenFile := "/lustre/scratch126/gengen/teams/hgi/mercury/ibackup/file_for_testsuite.do_not_delete"
 			gengenDir := filepath.Dir(gengenFile)
@@ -1249,6 +1278,35 @@ Discovery:
 Num files: 1; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B (and counting) / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
 Example File: `+gengenFile+" => /humgen/gengen/teams/hgi/scratch126/mercury/ibackup/file_for_testsuite.do_not_delete")
+		})
+
+		Convey("Given an added set defined with a gengen_v2 transformer, the remote directory is correct", func() {
+			gengenFile := "/lustre/scratch126/gengen/teams_v2/hgi/mercury/ibackup/file_for_testsuite.do_not_delete"
+			gengenDir := filepath.Dir(gengenFile)
+
+			if _, err := os.Stat(gengenDir); err != nil {
+				SkipConvey("skip gengen transformer test since not in gengen", func() {})
+
+				return
+			}
+
+			s.addSetForTesting(t, "gengenV2Set", "gengen_v2", gengenFile)
+
+			s.confirmOutput(t, []string{"status", "-n", "gengenV2Set"}, 0,
+				`Global put queue status: 1 queued; 0 reserved to be worked on; 0 failed
+Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
+
+Name: gengenV2Set
+Transformer: gengen_v2
+Reason: backup
+Review date: `+reviewDate+`
+Removal date: `+removalDate+`
+Monitored: false; Archive: false
+Status: pending upload
+Discovery:
+Num files: 1; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B (and counting) / 0 B / 0 B
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
+Example File: `+gengenFile+" => /humgen/gengen/teams/hgi/scratch126_v2/mercury/ibackup/file_for_testsuite.do_not_delete")
 		})
 
 		Convey("You can add a set with links and their counts show correctly", func() {

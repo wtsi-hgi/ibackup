@@ -93,7 +93,11 @@ To describe the backup set you must provide:
     'humgen' : for files stored on the Sanger Institute's lustre filesystem in a
       Human Genetics project or team folder, use this transformer to backup
 	  files to the canonical path in the iRODS humgen zone.
+	'humgen_v2' : like 'humgen', but for files stored in a projects_v2 or
+	  teams_v2 directory.
     'gengen' : like 'humgen', but for Generative Genomics data.
+	'gengen_v2' : like 'gengen', but for files stored in a projects_v2 or
+	  teams_v2 directory.
     'prefix=local:remote' : replace 'local' with a local path prefix, and
 	  'remote' with a remote one, eg. 'prefix=/mnt/diska:/zone1' would backup
 	  /mnt/diska/subdir/file.txt to /zone1/subdir/file.txt.
@@ -245,7 +249,7 @@ func init() {
 	// flags specific to this sub-command
 	addCmd.Flags().StringVarP(&setName, "name", "n", "", "a short name for this backup set")
 	addCmd.Flags().StringVarP(&setTransformer, "transformer", "t",
-		os.Getenv("IBACKUP_TRANSFORMER"), "'humgen' | 'gengen' | 'prefix=local:remote'")
+		os.Getenv("IBACKUP_TRANSFORMER"), "'humgen[_v2]' | 'gengen[_v2]' | 'prefix=local:remote'")
 	addCmd.Flags().StringVarP(&setFiles, "files", "f", "",
 		"path to file with one absolute local file path per line")
 	addCmd.Flags().StringVarP(&setDirs, "dirs", "d", "",
