@@ -195,6 +195,10 @@ func TestSet(t *testing.T) {
 		_, err = s.TransformPath("/invalid/path.txt")
 		So(err, ShouldNotBeNil)
 
+		dest, err = s.TransformPath("/lustre/scratch118/humgen/projects_v2/ddd/file.txt")
+		So(err, ShouldBeNil)
+		So(dest, ShouldEqual, "/humgen/projects/ddd/scratch118_v2/file.txt")
+
 		s = &Set{Transformer: "gengen"}
 		trans, err = s.MakeTransformer()
 		So(err, ShouldBeNil)
@@ -215,6 +219,10 @@ func TestSet(t *testing.T) {
 
 		dir, err := os.Getwd()
 		So(err, ShouldBeNil)
+
+		dest, err = s.TransformPath("/lustre/scratch126/gengen/teams_v2/parts/sequencing/file.txt")
+		So(err, ShouldBeNil)
+		So(dest, ShouldEqual, "/humgen/gengen/teams/parts/scratch126_v2/sequencing/file.txt")
 
 		s = &Set{Transformer: "prefix=" + dir + ":/zone"}
 		trans, err = s.MakeTransformer()
