@@ -1336,6 +1336,10 @@ func (s *Server) recoverQueue() error {
 	}
 
 	for _, given := range sets {
+		if given.ReadOnly {
+			continue
+		}
+
 		err = s.recoverSet(given)
 		if err != nil {
 			given.RecoveryError(err)
