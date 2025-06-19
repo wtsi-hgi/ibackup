@@ -628,21 +628,43 @@ func TestServer(t *testing.T) {
 							err = client.TriggerDiscovery(exampleSet.ID())
 							So(err, ShouldBeNil)
 
+							files, errg := client.GetFiles(exampleSet.ID())
+							So(errg, ShouldBeNil)
+							So(files, ShouldHaveLength, 2)
+
 							Convey("And if you remove one file", func() {
 								err = os.Remove(file1local)
 								So(err, ShouldBeNil)
 
 								Convey("You can still see both files after rediscovery", func() {
-									files, err := client.GetFiles(exampleSet.ID())
-									So(err, ShouldBeNil)
-									So(files, ShouldHaveLength, 2)
-
 									err = client.TriggerDiscovery(exampleSet.ID())
 									So(err, ShouldBeNil)
 
 									files, err = client.GetFiles(exampleSet.ID())
 									So(err, ShouldBeNil)
 									So(files, ShouldHaveLength, 2)
+								})
+							})
+
+							Convey("And if you remove one folder", func() {
+								err = os.RemoveAll(dir2local)
+								So(err, ShouldBeNil)
+
+								dirs, errg := s.db.GetAllDirEntries(exampleSet.ID())
+								So(errg, ShouldBeNil)
+								So(dirs, ShouldHaveLength, 2)
+
+								Convey("You can still see original files and folders after rediscovery", func() {
+									err = client.TriggerDiscovery(exampleSet.ID())
+									So(err, ShouldBeNil)
+
+									files, err = client.GetFiles(exampleSet.ID())
+									So(err, ShouldBeNil)
+									So(files, ShouldHaveLength, 2)
+
+									dirs, err = s.db.GetAllDirEntries(exampleSet.ID())
+									So(err, ShouldBeNil)
+									So(dirs, ShouldHaveLength, 2)
 								})
 							})
 						})
