@@ -1134,7 +1134,7 @@ func (d *DB) setDiscoveredEntries(setID string, fileDirents, dirDirents []*Diren
 		return nil, err
 	}
 
-	if err := d.setEntries(setID, dirDirents, discoveredFoldersBucket); err != nil {
+	if err := d.addEntries(setID, dirDirents, discoveredFoldersBucket); err != nil {
 		return nil, err
 	}
 
