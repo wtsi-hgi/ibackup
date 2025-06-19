@@ -32,6 +32,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/wtsi-hgi/ibackup/server"
+	"github.com/wtsi-hgi/ibackup/set"
 )
 
 // options for this cmd.
@@ -122,7 +123,7 @@ func handleRemove(client *server.Client, user, name string, paths []string) {
 	sets := getSetByName(client, user, name)
 
 	if sets[0].ReadOnly {
-		die(ErrSetIsNotWritable)
+		die(set.Error{Msg: set.ErrSetIsNotWritable})
 	}
 
 	err := client.RemoveFilesAndDirs(sets[0].ID(), paths)
