@@ -38,6 +38,7 @@ import (
 var (
 	editSetName             string
 	editUser                string
+	editDescription         string
 	editStopMonitor         bool
 	editStopMonitorRemovals bool
 	editStopArchive         bool
@@ -74,6 +75,10 @@ Edit an existing backup set.`,
 			return err
 		}
 
+		if editDescription != "" {
+			userSet.Description = editDescription
+		}
+
 		if editStopMonitor {
 			userSet.MonitorTime = 0
 		}
@@ -100,6 +105,7 @@ func init() {
 	editCmd.Flags().StringVarP(&editSetName, "name", "n", "", "a name of the backup set you want to edit")
 	editCmd.Flags().StringVar(&editUser, "user", currentUsername(),
 		"pretend to be this user (only works if you started the server)")
+	editCmd.Flags().StringVar(&editDescription, "description", "", "a long description of the set")
 	editCmd.Flags().BoolVar(&editStopMonitor, "stop-monitor", false, "stop monitoring the set for changes")
 	editCmd.Flags().BoolVar(&editStopMonitorRemovals, "stop-monitor-removals", false,
 		"stop monitoring the set for locally removed files")

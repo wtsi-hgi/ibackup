@@ -3178,6 +3178,20 @@ func TestEdit(t *testing.T) {
 					s.confirmOutputDoesNotContain(t, []string{"status", "--name", setName, "--user", user}, 0, "Read-only: true")
 				})
 			})
+
+			Convey("And a set with a description", func() {
+				setName := "descSet"
+				s.addSetForTestingWithFlags(t, setName, transformer, "--path", path, "--description", "desc1")
+
+				s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Description: desc1\n")
+
+				Convey("You can edit the description", func() {
+					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--description", "desc2")
+					So(exitCode, ShouldEqual, 0)
+
+					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Description: desc2\n")
+				})
+			})
 		})
 	})
 }
