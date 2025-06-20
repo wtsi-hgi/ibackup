@@ -533,6 +533,20 @@ func sendGetRequest(request *Request, lInfo, rInfo *ObjectInfo, putCh chan *Requ
 		return
 	}
 
+	addRemoteMetaForGetRequest(request)
+
+	if lInfo == nil || !lInfo.Exists {
+		sendRequest(request, RequestStatusUploaded, nil, putCh)
+
+		return
+	}
+
+	if !sendForUploadOrUnmodified(request, lInfo, rInfo, putCh, skipReturnCh) {
+		sendRequest(request, RequestStatusReplaced, nil, putCh)
+	}
+}
+
+func addRemoteMetaForGetRequest(request *Request) {
 	if symlink, ok := request.Meta.remoteMeta[MetaKeySymlink]; ok {
 		request.Symlink = symlink
 	}
@@ -542,12 +556,6 @@ func sendGetRequest(request *Request, lInfo, rInfo *ObjectInfo, putCh chan *Requ
 
 	if !hasMtime && hasRemoteMtime {
 		request.Meta.remoteMeta[MetaKeyMtime] = remoteMtime
-	}
-
-	if lInfo == nil {
-		sendRequest(request, RequestStatusUploaded, nil, putCh)
-	} else if !sendForUploadOrUnmodified(request, lInfo, rInfo, putCh, skipReturnCh) {
-		sendRequest(request, RequestStatusReplaced, nil, putCh)
 	}
 }
 
