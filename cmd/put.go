@@ -520,7 +520,7 @@ func (r *results) update(req *transfer.Request) {
 	switch req.Status { //nolint:exhaustive
 	case transfer.RequestStatusFailed, transfer.RequestStatusUploading:
 		r.fails++
-	case transfer.RequestStatusMissing:
+	case transfer.RequestStatusMissing, transfer.RequestStatusOrphaned:
 		r.missing++
 	case transfer.RequestStatusReplaced:
 		r.replaced++
@@ -565,7 +565,8 @@ func printResults(upDown string, transferResults, skipResults chan *transfer.Req
 // info level the Request details.
 func warnIfBad(r *transfer.Request, i, total int, verbose bool) {
 	switch r.Status {
-	case transfer.RequestStatusFailed, transfer.RequestStatusMissing, transfer.RequestStatusWarning:
+	case transfer.RequestStatusFailed, transfer.RequestStatusMissing, transfer.RequestStatusOrphaned,
+		transfer.RequestStatusWarning:
 		warn("[%d/%d] %s %s: %s", i, total, r.Local, r.Status, r.Error)
 	case transfer.RequestStatusHardlinkSkipped:
 		warn("[%d/%d] Hardlink skipped: %s\t%s", i, total, r.Local, r.Hardlink)

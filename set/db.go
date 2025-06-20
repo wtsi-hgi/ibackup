@@ -648,10 +648,21 @@ func (d *DB) SetFileEntries(setID string, paths []string) error {
 //
 // *** Currently ignores old entries that are not in the given paths.
 func (d *DB) setEntries(setID string, dirents []*Dirent, bucketName string) error {
+	return d.createEntries(setID, dirents, bucketName, false)
+}
+
+// createEntries sets the paths for the given backup set in a sub bucket with the
+// given prefix. If keepExisting is on, it won't remove old entries but will reset
+// them instead. Only supply absolute paths.
+func (d *DB) createEntries(setID string, dirents []*Dirent, bucketName string, keepExisting bool) error {
 	return d.db.Update(func(tx *bolt.Tx) error {
 		b, existing, err := d.getAndDeleteExistingEntries(tx, bucketName, setID)
 		if err != nil {
 			return err
+		}
+
+		if keepExisting {
+			dirents = d.mergeDirentSets(dirents, existing)
 		}
 
 		// this sort is critical to database write speed.
@@ -666,6 +677,37 @@ func (d *DB) setEntries(setID string, dirents []*Dirent, bucketName string) erro
 
 		return ec.UpdateOrCreateEntries(dirents)
 	})
+}
+
+// mergeDirentSets adds to the input slice of Dirents all missing existing Dirents.
+func (d *DB) mergeDirentSets(a []*Dirent, b map[string][]byte) []*Dirent {
+	dirents := make([]*Dirent, len(a), len(a)+len(b))
+	direntMap := make(map[string]struct{}, len(a))
+
+	for i, dirent := range a {
+		dirents[i] = dirent
+		direntMap[dirent.Path] = struct{}{}
+	}
+
+	for direntPath, direntBytes := range b {
+		_, exist := direntMap[direntPath]
+		if !exist {
+			entry := d.decodeEntry(direntBytes)
+			dirEntry := &Dirent{
+				Path:  direntPath,
+				Inode: entry.Inode,
+			}
+			dirents = append(dirents, dirEntry)
+		}
+	}
+
+	return slices.Clip(dirents)
+}
+
+// addEntries adds the paths for the given backup set in a sub bucket with the
+// given prefix. If entries exist they will be updated. Only supply absolute paths.
+func (d *DB) addEntries(setID string, dirents []*Dirent, bucketName string) error {
+	return d.createEntries(setID, dirents, bucketName, true)
 }
 
 // SetRemoveRequests writes a list of remove requests into the database.
@@ -1079,7 +1121,7 @@ func (d *DB) handleFilePoolResults(tx *bolt.Tx, sfsb *setFileSubBucket, setID st
 	return ec.UpdateOrCreateEntries(dirents)
 }
 
-// setDiscoveredEntries sets discovered file paths for the given backup set's
+// setDiscoveredEntries adds discovered file paths for the given backup set's
 // directory entries. Only supply absolute paths to files.
 //
 // It also updates LastDiscovery, sets NumFiles and sets status to
@@ -1088,11 +1130,11 @@ func (d *DB) handleFilePoolResults(tx *bolt.Tx, sfsb *setFileSubBucket, setID st
 //
 // Returns the updated set and an error if the setID isn't in the database.
 func (d *DB) setDiscoveredEntries(setID string, fileDirents, dirDirents []*Dirent) (*Set, error) {
-	if err := d.setEntries(setID, fileDirents, discoveredBucket); err != nil {
+	if err := d.addEntries(setID, fileDirents, discoveredBucket); err != nil {
 		return nil, err
 	}
 
-	if err := d.setEntries(setID, dirDirents, discoveredFoldersBucket); err != nil {
+	if err := d.addEntries(setID, dirDirents, discoveredFoldersBucket); err != nil {
 		return nil, err
 	}
 
@@ -1316,6 +1358,9 @@ func requestStatusToEntryStatus(r *transfer.Request, entry *Entry) { //nolint:go
 		entry.newFail = entry.Attempts == 1
 	case transfer.RequestStatusMissing:
 		entry.Status = Missing
+		entry.unFailed = entry.Attempts > 1
+	case transfer.RequestStatusOrphaned:
+		entry.Status = Orphaned
 		entry.unFailed = entry.Attempts > 1
 	}
 }

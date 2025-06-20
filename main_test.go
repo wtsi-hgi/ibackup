@@ -2004,6 +2004,34 @@ Global put client status (/10): 6 iRODS connections`)
 				s.confirmOutputContains(t, statusCmd, 0,
 					"Num files: 3; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 29 B / 9 B / 0 B")
 			})
+
+			Convey("Retrying a set with locally removed files will show orphaned status", func() {
+				setName := "setWithOrphanedFiles"
+				s.addSetForTesting(t, setName, transformer, path)
+
+				s.waitForStatus(setName, "\nStatus: complete", 10*time.Second)
+
+				statusCmd := []string{"status", "--name", setName, "-d"}
+
+				exitCode, output := s.runBinary(t, statusCmd...)
+				So(exitCode, ShouldEqual, 0)
+				So(output, ShouldContainSubstring, file1+"\tuploaded\t10 B\t")
+				So(output, ShouldContainSubstring, file2+"\tuploaded\t")
+
+				err := os.Remove(file1)
+				So(err, ShouldBeNil)
+
+				exitCode, _ = s.runBinary(t, "retry", "--name", setName, "-a")
+				So(exitCode, ShouldEqual, 0)
+
+				s.waitForStatus(setName, "\nStatus: complete", 10*time.Second)
+
+				exitCode, output = s.runBinary(t, statusCmd...)
+				So(exitCode, ShouldEqual, 0)
+				So(output, ShouldContainSubstring, "Missing: 1;")
+				So(output, ShouldContainSubstring, file1+"\torphaned\t0 B\t")
+				So(output, ShouldContainSubstring, file2+"\tskipped\t")
+			})
 		})
 
 		Convey("Putting a set with hardlinks uploads an empty file and special inode file", func() {

@@ -1138,6 +1138,9 @@ func TestSetDB(t *testing.T) {
 							err = db.SetDirEntries(sets[0].ID(), nil)
 							So(err, ShouldBeNil)
 
+							err = db.setEntries(sets[0].ID(), []*Dirent{}, discoveredBucket)
+							So(err, ShouldBeNil)
+
 							slackWriter.Reset()
 
 							oldDisc := sets[0].LastDiscovery
@@ -1516,11 +1519,11 @@ func TestSetDB(t *testing.T) {
 				Convey("then get back all known local paths for the hardlink", func() {
 					paths, errh := db.HardlinkPaths(entries[1])
 					So(errh, ShouldBeNil)
-					So(paths, ShouldResemble, []string{fileDirents[0].Path, fileDirents[3].Path})
+					So(paths, ShouldResemble, []string{local, link2})
 
 					paths, errh = db.HardlinkPaths(entries[0])
 					So(errh, ShouldBeNil)
-					So(paths, ShouldResemble, []string{fileDirents[1].Path, fileDirents[3].Path})
+					So(paths, ShouldResemble, []string{link1, link2})
 				})
 
 				Convey("then get a remote path for the hardlink", func() {
@@ -1529,7 +1532,7 @@ func TestSetDB(t *testing.T) {
 					So(path, ShouldEqual, "/remote/sub1/file")
 				})
 
-				Convey("then previously seen moved files don't get treated as hardlinks", func() {
+				Convey("then previously seen moved files get treated as hardlinks", func() {
 					moved := filepath.Join(dir, "moved")
 					err = os.Rename(unlinked, moved)
 					So(err, ShouldBeNil)
@@ -1541,17 +1544,19 @@ func TestSetDB(t *testing.T) {
 
 					entries, errg = db.GetFileEntries(setl1.ID())
 					So(errg, ShouldBeNil)
-					So(len(entries), ShouldEqual, 4)
+					So(len(entries), ShouldEqual, 5)
 					So(entries[0].Type, ShouldEqual, Regular)
 					So(entries[1].Type, ShouldEqual, Hardlink)
 					So(entries[1].Inode, ShouldEqual, stat.Ino)
-					So(entries[2].Type, ShouldEqual, Regular)
-					So(entries[3].Type, ShouldEqual, Hardlink)
-					So(entries[3].Inode, ShouldEqual, stat.Ino)
+					So(entries[2].Type, ShouldEqual, Hardlink)
+					So(entries[3].Type, ShouldEqual, Regular)
+					So(entries[3].Inode, ShouldEqual, statUnlinked.Ino)
+					So(entries[4].Type, ShouldEqual, Hardlink)
+					So(entries[4].Inode, ShouldEqual, stat.Ino)
 
 					So(got, ShouldNotBeNil)
-					So(got.Hardlinks, ShouldEqual, 2)
-					So(got.NumFiles, ShouldEqual, 4)
+					So(got.Hardlinks, ShouldEqual, 3)
+					So(got.NumFiles, ShouldEqual, 5)
 				})
 			})
 
@@ -1715,6 +1720,18 @@ func TestSetDB(t *testing.T) {
 					So(errb, ShouldBeNil)
 					So(got.Abnormal, ShouldEqual, 1)
 				})
+			})
+
+			Convey("And merge dirent slices correctly", func() {
+				dirents := createFileEnts([]string{"a", "b", "c"})
+
+				entries := make(map[string][]byte)
+				for _, path := range []string{"c", "d"} {
+					entries[path] = db.encodeToBytes(Entry{Path: path})
+				}
+
+				merged := db.mergeDirentSets(dirents, entries)
+				So(merged, ShouldHaveLength, 4)
 			})
 		})
 	})

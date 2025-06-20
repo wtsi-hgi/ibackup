@@ -620,6 +620,54 @@ func TestServer(t *testing.T) {
 								os.Chmod(dir1remote, 0755) //nolint:errcheck
 							})
 						})
+
+						Convey("And having both files in a set", func() {
+							file2local := filepath.Join(dir2local, "file2")
+							internal.CreateTestFile(t, file2local, "file content")
+
+							err = client.TriggerDiscovery(exampleSet.ID())
+							So(err, ShouldBeNil)
+
+							files, errg := client.GetFiles(exampleSet.ID())
+							So(errg, ShouldBeNil)
+							So(files, ShouldHaveLength, 2)
+
+							Convey("And if you remove one file", func() {
+								err = os.Remove(file1local)
+								So(err, ShouldBeNil)
+
+								Convey("You can still see both files after rediscovery", func() {
+									err = client.TriggerDiscovery(exampleSet.ID())
+									So(err, ShouldBeNil)
+
+									files, err = client.GetFiles(exampleSet.ID())
+									So(err, ShouldBeNil)
+									So(files, ShouldHaveLength, 2)
+								})
+							})
+
+							Convey("And if you remove one folder", func() {
+								err = os.RemoveAll(dir2local)
+								So(err, ShouldBeNil)
+
+								dirs, errg := s.db.GetAllDirEntries(exampleSet.ID())
+								So(errg, ShouldBeNil)
+								So(dirs, ShouldHaveLength, 2)
+
+								Convey("You can still see original files and folders after rediscovery", func() {
+									err = client.TriggerDiscovery(exampleSet.ID())
+									So(err, ShouldBeNil)
+
+									files, err = client.GetFiles(exampleSet.ID())
+									So(err, ShouldBeNil)
+									So(files, ShouldHaveLength, 2)
+
+									dirs, err = s.db.GetAllDirEntries(exampleSet.ID())
+									So(err, ShouldBeNil)
+									So(dirs, ShouldHaveLength, 2)
+								})
+							})
+						})
 					})
 
 					Convey("And given a set created without a discovered folders bucket", func() {
@@ -730,7 +778,7 @@ func TestServer(t *testing.T) {
 
 								gotSet, errg = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
 								So(errg, ShouldBeNil)
-								So(gotSet.NumFiles, ShouldEqual, 1)
+								So(gotSet.NumFiles, ShouldBeBetween, 1, filesInSet)
 								So(gotSet.NumObjectsRemoved, ShouldBeLessThan, gotSet.NumObjectsToBeRemoved)
 
 								Convey("And then the removals will still complete", func() {
@@ -3702,7 +3750,7 @@ func TestServer(t *testing.T) {
 					gotSet, err := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
 					So(err, ShouldBeNil)
 					So(gotSet.Status, ShouldEqual, set.PendingUpload)
-					So(gotSet.NumFiles, ShouldEqual, 1)
+					So(gotSet.NumFiles, ShouldEqual, 2)
 					So(gotSet.Uploaded, ShouldEqual, 0)
 					So(gotSet.Hardlinks, ShouldEqual, 0)
 				})

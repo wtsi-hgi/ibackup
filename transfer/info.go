@@ -26,6 +26,7 @@
 package transfer
 
 import (
+	"errors"
 	"os"
 	"os/user"
 	"strconv"
@@ -48,6 +49,12 @@ type ObjectInfo struct {
 // file in ObjectInfo Meta (mtime, owner and group information).
 func Stat(localPath string) (*ObjectInfo, error) {
 	fi, err := os.Lstat(localPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return &ObjectInfo{
+			Exists: false,
+		}, nil
+	}
+
 	if err != nil {
 		return nil, err
 	}
