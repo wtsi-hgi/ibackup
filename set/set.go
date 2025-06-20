@@ -468,7 +468,7 @@ func (s *Set) entryStatusToSetCounts(entry *Entry) { //nolint:gocyclo
 			s.Status = Failing
 			s.sendSlackMessage(slack.Error, "has failed uploads")
 		}
-	case Missing:
+	case Missing, Orphaned:
 		s.Missing++
 	case AbnormalEntry:
 		s.Abnormal++
@@ -485,7 +485,7 @@ func (s *Set) removedEntryStatusToSetCounts(entry *Entry) {
 		s.Skipped--
 	case Failed:
 		s.Failed--
-	case Missing:
+	case Missing, Orphaned:
 		s.Missing--
 	case AbnormalEntry:
 		s.Abnormal--
