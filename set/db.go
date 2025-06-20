@@ -1359,6 +1359,9 @@ func requestStatusToEntryStatus(r *transfer.Request, entry *Entry) { //nolint:go
 	case transfer.RequestStatusMissing:
 		entry.Status = Missing
 		entry.unFailed = entry.Attempts > 1
+	case transfer.RequestStatusOrphaned:
+		entry.Status = Orphaned
+		entry.unFailed = entry.Attempts > 1
 	}
 }
 

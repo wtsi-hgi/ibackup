@@ -68,6 +68,10 @@ const (
 	// Skipped is an Entry status meaning the file was not uploaded because it
 	// was uploaded previously and hasn't changed since.
 	Skipped
+
+	// Orphaned is an Entry status meaning the file was uploaded previously but
+	// the local file has been deleted, so can't be uploaded again.
+	Orphaned
 )
 
 type EntryType int

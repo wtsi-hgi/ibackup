@@ -466,7 +466,7 @@ func (p *Putter) pickFilesToPut(wg *sync.WaitGroup, requests []*Request,
 func (p *Putter) statPathsAndReturnOrPut(request *Request, putCh chan *Request, skipReturnCh chan *Request) {
 	lInfo, err := Stat(request.Local)
 	if err != nil {
-		sendRequest(request, RequestStatusMissing, err, skipReturnCh)
+		sendRequest(request, RequestStatusFailed, err, skipReturnCh)
 
 		return
 	}
@@ -480,11 +480,25 @@ func (p *Putter) statPathsAndReturnOrPut(request *Request, putCh chan *Request, 
 		return
 	}
 
+	if !lInfo.Exists {
+		sendRequest(request, getStatusBasedOnInfo(rInfo.Exists), nil, skipReturnCh)
+
+		return
+	}
+
 	if sendForUploadOrUnmodified(request, lInfo, rInfo, putCh, skipReturnCh) {
 		return
 	}
 
 	sendRequest(request, RequestStatusReplaced, nil, putCh)
+}
+
+func getStatusBasedOnInfo(remoteExists bool) RequestStatus {
+	if remoteExists {
+		return RequestStatusOrphaned
+	}
+
+	return RequestStatusMissing
 }
 
 func (p *Putter) getMetadataAndReturnOrPut(request *Request, putCh chan *Request, skipReturnCh chan *Request) {

@@ -52,6 +52,7 @@ const (
 	RequestStatusReplaced        RequestStatus = "replaced"
 	RequestStatusUnmodified      RequestStatus = "unmodified"
 	RequestStatusMissing         RequestStatus = "missing"
+	RequestStatusOrphaned        RequestStatus = "orphaned"
 	RequestStatusFailed          RequestStatus = "failed"
 	RequestStatusWarning         RequestStatus = "warning"
 	RequestStatusHardlinkSkipped RequestStatus = "hardlink"
