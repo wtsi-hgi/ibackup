@@ -32,6 +32,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/wtsi-hgi/ibackup/server"
 	"github.com/wtsi-hgi/ibackup/set"
+	"github.com/wtsi-hgi/ibackup/transfer"
 )
 
 // options for this cmd.
@@ -39,6 +40,7 @@ var (
 	editSetName             string
 	editUser                string
 	editDescription         string
+	editReason              transfer.Reason
 	editStopMonitor         bool
 	editStopMonitorRemovals bool
 	editStopArchive         bool
@@ -79,6 +81,15 @@ Edit an existing backup set.`,
 			userSet.Description = editDescription
 		}
 
+		if editReason != transfer.Unset {
+			meta, err := transfer.HandleMeta("", editReason, "", "", userSet.Metadata)
+			if err != nil {
+				dief("metadata error: %s", err)
+			}
+
+			userSet.Metadata = meta.Metadata()
+		}
+
 		if editStopMonitor {
 			userSet.MonitorTime = 0
 		}
@@ -106,6 +117,8 @@ func init() {
 	editCmd.Flags().StringVar(&editUser, "user", currentUsername(),
 		"pretend to be this user (only works if you started the server)")
 	editCmd.Flags().StringVar(&editDescription, "description", "", "a long description of the set")
+	editCmd.Flags().Var(&editReason, "reason",
+		"storage reason: 'backup' | 'archive' | 'quarantine'")
 	editCmd.Flags().BoolVar(&editStopMonitor, "stop-monitor", false, "stop monitoring the set for changes")
 	editCmd.Flags().BoolVar(&editStopMonitorRemovals, "stop-monitor-removals", false,
 		"stop monitoring the set for locally removed files")
