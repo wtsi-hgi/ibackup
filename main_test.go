@@ -3201,6 +3201,20 @@ func TestEdit(t *testing.T) {
 					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Description: desc2\n")
 				})
 			})
+
+			Convey("And a set with a reason", func() {
+				setName := "reasonSet"
+				s.addSetForTestingWithFlags(t, setName, transformer, "--path", path, "--reason", "backup")
+
+				s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Reason: backup\n")
+
+				Convey("You can edit the reason", func() {
+					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--reason", "archive")
+					So(exitCode, ShouldEqual, 0)
+
+					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Reason: archive\n")
+				})
+			})
 		})
 	})
 }
