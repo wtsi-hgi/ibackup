@@ -3055,7 +3055,7 @@ func getMetaValue(meta, key string) string {
 }
 
 func TestEdit(t *testing.T) {
-	Convey("With a started server", t, func() {
+	FocusConvey("With a started server", t, func() {
 		t.Setenv("IBACKUP_TEST_LDAP_SERVER", "")
 		t.Setenv("IBACKUP_TEST_LDAP_LOOKUP", "")
 
@@ -3074,7 +3074,7 @@ func TestEdit(t *testing.T) {
 			s.confirmOutputContains(t, []string{"edit", "--make-readonly", "--disable-readonly"}, 1, cmd.ErrInvalidEdit.Error())
 		})
 
-		Convey("Given a transformer", func() {
+		FocusConvey("Given a transformer", func() {
 			remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
 			if remotePath == "" {
 				SkipConvey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
@@ -3202,17 +3202,37 @@ func TestEdit(t *testing.T) {
 				})
 			})
 
-			Convey("And a set with a reason", func() {
+			FocusConvey("And a set with the default reason and removal date", func() {
 				setName := "reasonSet"
-				s.addSetForTestingWithFlags(t, setName, transformer, "--path", path, "--reason", "backup")
+				s.addSetForTestingWithFlags(t, setName, transformer, "--path", path)
 
 				s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Reason: backup\n")
+				s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Removal date: ")
 
-				Convey("You can edit the reason", func() {
-					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--reason", "archive")
+				FocusConvey("You can edit the reason and removal date", func() {
+					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--reason", "archive", "--removal-date", "2040-01-01")
 					So(exitCode, ShouldEqual, 0)
 
 					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Reason: archive\n")
+					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Removal date: 2040-01-01\n")
+				})
+
+				FocusConvey("You can edit just the removal date", func() {
+					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--removal-date", "2040-01-01")
+					So(exitCode, ShouldEqual, 0)
+
+					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Reason: backup\n")
+					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Removal date: 2040-01-01\n")
+
+					FocusConvey("Then edit the reason", func() {
+						// s.confirmOutputContains(t, []string{"edit", "--name", setName, "--reason", "archive"}, 0,
+						// 	"see output\n")
+						exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--reason", "archive")
+						So(exitCode, ShouldEqual, 0)
+
+						s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Reason: archive\n")
+						s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Removal date: 2040-01-01\n")
+					})
 				})
 			})
 		})

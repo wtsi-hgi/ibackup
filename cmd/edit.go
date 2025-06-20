@@ -41,6 +41,7 @@ var (
 	editUser                string
 	editDescription         string
 	editReason              transfer.Reason
+	editRemovalDate         string
 	editStopMonitor         bool
 	editStopMonitorRemovals bool
 	editStopArchive         bool
@@ -81,8 +82,14 @@ Edit an existing backup set.`,
 			userSet.Description = editDescription
 		}
 
-		if editReason != transfer.Unset {
-			meta, err := transfer.HandleMeta("", editReason, "", "", userSet.Metadata)
+		existingMeta := userSet.Metadata
+		if editReason != transfer.Unset && editRemovalDate == "" {
+			cliPrintf("Current metadata: %+v\n", existingMeta)
+		}
+		existingRemovalDate := existingMeta[transfer.MetaKeyRemoval]
+
+		if editReason != transfer.Unset || editRemovalDate != "" { //if user doesn't provide any value we're setting it to dfult
+			meta, err := transfer.HandleMeta("", editReason, "", editRemovalDate, userSet.Metadata)
 			if err != nil {
 				dief("metadata error: %s", err)
 			}
@@ -119,6 +126,8 @@ func init() {
 	editCmd.Flags().StringVar(&editDescription, "description", "", "a long description of the set")
 	editCmd.Flags().Var(&editReason, "reason",
 		"storage reason: 'backup' | 'archive' | 'quarantine'")
+	editCmd.Flags().StringVar(&editRemovalDate, "removal-date", "",
+		"time until removal date (<number><y|m>, eg. 1y for 1 year), or exact removal date in the format YYYY-MM-DD")
 	editCmd.Flags().BoolVar(&editStopMonitor, "stop-monitor", false, "stop monitoring the set for changes")
 	editCmd.Flags().BoolVar(&editStopMonitorRemovals, "stop-monitor-removals", false,
 		"stop monitoring the set for locally removed files")
