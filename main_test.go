@@ -2230,6 +2230,7 @@ func TestManualMode(t *testing.T) {
 			file5 := filepath.Join(restoreDir, "anotherDir", "file5")
 			file6 := filepath.Join(restoreDir, "file6")
 			file7 := filepath.Join(restoreDir, "file7")
+			file8 := filepath.Join(restoreDir, "file8")
 			tmpFile := filepath.Join(restoreDir, fmt.Sprintf(".ibackup.get.%X", sha256.Sum256([]byte("file2"))))
 
 			err = os.WriteFile(
@@ -2325,6 +2326,14 @@ func TestManualMode(t *testing.T) {
 				fmt.Sprintf("[1/1] Hardlink skipped: %s\\t%s\n0 downloaded (0 replaced); 1 skipped; 0 failed; 0 missing\n",
 					file4, remote2),
 			)
+
+			restoreFiles(
+				t,
+				file8+"\t"+remote1+"\n",
+				"1 downloaded (0 replaced); 0 skipped; 0 failed; 0 missing\n",
+				"--hardlinks_as_normal",
+			)
+			confirmFileContents(t, file8, fileContents2)
 
 			So(exec.Command("imeta", "rm", "-d", remote1, transfer.MetaKeyRemoteHardlink, remote2).Run(), ShouldBeNil)
 			So(

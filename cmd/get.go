@@ -33,7 +33,10 @@ import (
 	"github.com/wtsi-hgi/ibackup/transfer"
 )
 
-var overwrite bool
+var (
+	overwrite       bool
+	hardlinksNormal bool
+)
 
 // putCmd represents the put command.
 var getCmd = &cobra.Command{
@@ -113,6 +116,8 @@ func init() {
 		"override the default stuck wait time (1h)")
 	getCmd.Flags().BoolVarP(&overwrite, "overwrite", "o", false,
 		"overwrite local files")
+	getCmd.Flags().BoolVar(&hardlinksNormal, "hardlinks_as_normal", false,
+		"download hardlinked files") //nolint:misspell
 }
 
 func handleGetServerMode(_ time.Time) {
@@ -145,7 +150,7 @@ func getGetter(requests []*transfer.Request) *transfer.Putter {
 		die(err)
 	}
 
-	p, err := transfer.NewGetter(handler, requests, overwrite)
+	p, err := transfer.NewGetter(handler, requests, overwrite, hardlinksNormal)
 	if err != nil {
 		die(err)
 	}

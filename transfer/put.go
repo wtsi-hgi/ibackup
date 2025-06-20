@@ -128,15 +128,15 @@ type FileStatusCallback func(absPath string, fi os.FileInfo) RequestStatus
 
 // Putter is used to Put() files in iRODS.
 type Putter struct {
-	handler           Handler
-	fileReadTimeout   time.Duration
-	fileReadTester    FileReadTester
-	requests          []*Request
-	duplicateRequests []*Request
-	stat              func(p *Putter, request *Request, putCh chan *Request, skipReturnCh chan *Request)
-	transfer          func(r *Request, handler Handler) error
-	applyMetadata     func(r *Request, handler Handler) error
-	overwrite         bool
+	handler                    Handler
+	fileReadTimeout            time.Duration
+	fileReadTester             FileReadTester
+	requests                   []*Request
+	duplicateRequests          []*Request
+	stat                       func(p *Putter, request *Request, putCh chan *Request, skipReturnCh chan *Request)
+	transfer                   func(r *Request, handler Handler) error
+	applyMetadata              func(r *Request, handler Handler) error
+	overwrite, hardlinksNormal bool
 }
 
 // New returns a *Putter that will use the given Handler to Put() all the
@@ -168,7 +168,7 @@ func New(handler Handler, requests []*Request) (*Putter, error) {
 // requests from iRODS to the local hisk. You should defer Cleanup() on the
 // return value. All the incoming requests will have their paths validated (they
 // must be absolute).
-func NewGetter(handler Handler, requests []*Request, overwrite bool) (*Putter, error) {
+func NewGetter(handler Handler, requests []*Request, overwrite, hardlinksNormal bool) (*Putter, error) {
 	rs, dups, err := dedupAndPrepareRequests(requests)
 	if err != nil {
 		return nil, err
@@ -184,6 +184,7 @@ func NewGetter(handler Handler, requests []*Request, overwrite bool) (*Putter, e
 		transfer:          (*Request).Get,
 		applyMetadata:     (*Request).SetMeta,
 		overwrite:         overwrite,
+		hardlinksNormal:   hardlinksNormal,
 	}, nil
 }
 
@@ -503,20 +504,25 @@ func (p *Putter) getMetadataAndReturnOrPut(request *Request, putCh chan *Request
 
 	request.Meta.LocalMeta = request.Meta.remoteMeta
 
-	sendGetRequest(request, lInfo, rInfo, putCh, skipReturnCh)
+	sendGetRequest(request, lInfo, rInfo, putCh, skipReturnCh, p.hardlinksNormal)
 }
 
 func skipIfLocalFileIsNotEmptyAndNotOverwriting(lInfo *ObjectInfo, err error, overwrite bool) bool {
 	return err == nil && lInfo.Size != 0 && !overwrite
 }
 
-func sendGetRequest(request *Request, lInfo, rInfo *ObjectInfo, putCh chan *Request, skipReturnCh chan *Request) {
+func sendGetRequest(request *Request, lInfo, rInfo *ObjectInfo, //nolint:gocyclo
+	putCh, skipReturnCh chan *Request, hardlinksNormal bool) {
 	if hardlink, ok := request.Meta.remoteMeta[MetaKeyRemoteHardlink]; ok {
 		request.Hardlink = hardlink
 
-		sendRequest(request, RequestStatusHardlinkSkipped, nil, skipReturnCh)
+		if !hardlinksNormal {
+			sendRequest(request, RequestStatusHardlinkSkipped, nil, skipReturnCh)
 
-		return
+			return
+		}
+
+		request.Remote = hardlink
 	}
 
 	if symlink, ok := request.Meta.remoteMeta[MetaKeySymlink]; ok {
