@@ -99,6 +99,7 @@ func (e EntryStatus) String() string {
 		"abnormal",
 		"replaced",
 		"skipped",
+		"orphaned",
 	}[e]
 }
 
