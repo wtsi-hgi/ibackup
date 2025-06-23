@@ -172,15 +172,7 @@ func givenOrExistingReviewDate(reviewDate string, existingMeta map[string]string
 		return reviewDate
 	}
 
-	reviewDate = existingMeta[transfer.MetaKeyReview]
-	t := time.Time{}
-
-	err := t.UnmarshalText([]byte(reviewDate))
-	if err != nil {
-		dief("invalid removal date: %s", err)
-	}
-
-	return t.Format(timeFormat)
+	return formatDate(reviewDate, existingMeta[transfer.MetaKeyReview])
 }
 
 func givenOrExistingRemovalDate(removalDate string, existingMeta map[string]string) string {
@@ -188,10 +180,17 @@ func givenOrExistingRemovalDate(removalDate string, existingMeta map[string]stri
 		return removalDate
 	}
 
-	removalDate = existingMeta[transfer.MetaKeyRemoval]
+	return formatDate(removalDate, existingMeta[transfer.MetaKeyRemoval])
+}
+
+func formatDate(input string, existing string) string {
+	if input != "" {
+		return input
+	}
+
 	t := time.Time{}
 
-	err := t.UnmarshalText([]byte(removalDate))
+	err := t.UnmarshalText([]byte(existing))
 	if err != nil {
 		dief("invalid removal date: %s", err)
 	}
