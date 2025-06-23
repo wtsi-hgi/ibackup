@@ -150,7 +150,7 @@ func editSetMetaData(userSet *set.Set, metaData string, reason transfer.Reason, 
 
 	meta, err := transfer.HandleMeta(metaData, reason, reviewDate, removalDate, existingMeta)
 	if err != nil {
-		dief("metadata error: %s", err)
+		die(err)
 	}
 
 	userSet.Metadata = meta.Metadata()
@@ -163,7 +163,7 @@ func givenOrExistingReason(reason transfer.Reason, existingMeta map[string]strin
 
 	err := reason.Set(existingMeta[transfer.MetaKeyReason])
 	if err != nil {
-		dief("invalid error: %s", err)
+		die(err)
 	}
 
 	return reason
@@ -194,7 +194,7 @@ func givenOrExistingDate(input string, existing string) string {
 
 	err := t.UnmarshalText([]byte(existing))
 	if err != nil {
-		dief("invalid removal date: %s", err)
+		die(err)
 	}
 
 	return t.Format(time.DateOnly)
