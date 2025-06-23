@@ -3210,14 +3210,16 @@ func TestEdit(t *testing.T) {
 				s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Review date: ")
 				s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Removal date: ")
 
-				FocusConvey("You can edit the reason, review and removal date", func() {
+				FocusConvey("You can edit the reason, review and removal date along with arbitrary metadata", func() {
 					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--reason", "archive",
-						"--review", "2039-01-01", "--removal-date", "2040-01-01")
+						"--review", "2039-01-01", "--removal-date", "2040-01-01",
+						"--metadata", "foo=bar;baz=qux")
 					So(exitCode, ShouldEqual, 0)
 
 					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Reason: archive\n")
 					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Review date: 2039-01-01\n")
 					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Removal date: 2040-01-01\n")
+					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "User metadata: baz=qux;foo=bar\n")
 				})
 
 				FocusConvey("You can edit just the removal date", func() {

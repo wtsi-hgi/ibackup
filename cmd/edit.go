@@ -43,6 +43,7 @@ var (
 	editSetName             string
 	editUser                string
 	editDescription         string
+	editMetaData            string
 	editReason              transfer.Reason
 	editReview              string
 	editRemovalDate         string
@@ -82,7 +83,7 @@ Edit an existing backup set.`,
 			return err
 		}
 
-		editMetaData(userSet, editReason, editReview, editRemovalDate)
+		editSetMetaData(userSet, editMetaData, editReason, editReview, editRemovalDate)
 
 		if editDescription != "" {
 			userSet.Description = editDescription
@@ -115,6 +116,8 @@ func init() {
 	editCmd.Flags().StringVar(&editUser, "user", currentUsername(),
 		"pretend to be this user (only works if you started the server)")
 	editCmd.Flags().StringVar(&editDescription, "description", "", "a long description of the set")
+	editCmd.Flags().StringVar(&editMetaData, "metadata", "",
+		"key=val;key=val metadata to apply to all files in the set")
 	editCmd.Flags().Var(&editReason, "reason",
 		"storage reason: 'backup' | 'archive' | 'quarantine'")
 	editCmd.Flags().StringVar(&editReview, "review", "",
@@ -135,8 +138,8 @@ func init() {
 	}
 }
 
-func editMetaData(userSet *set.Set, reason transfer.Reason, reviewDate, removalDate string) {
-	if reason == transfer.Unset && reviewDate == "" && removalDate == "" {
+func editSetMetaData(userSet *set.Set, metaData string, reason transfer.Reason, reviewDate, removalDate string) {
+	if reason == transfer.Unset && reviewDate == "" && removalDate == "" && metaData == "" {
 		return
 	}
 
@@ -145,8 +148,9 @@ func editMetaData(userSet *set.Set, reason transfer.Reason, reviewDate, removalD
 	reason = givenOrExistingReason(reason, existingMeta)
 	reviewDate = givenOrExistingReviewDate(reviewDate, existingMeta)
 	removalDate = givenOrExistingRemovalDate(removalDate, existingMeta)
+	metaData = givenOrExistingMetaData(metaData, userSet)
 
-	meta, err := transfer.HandleMeta("", reason, reviewDate, removalDate, existingMeta)
+	meta, err := transfer.HandleMeta(metaData, reason, reviewDate, removalDate, existingMeta)
 	if err != nil {
 		dief("metadata error: %s", err)
 	}
@@ -173,6 +177,14 @@ func givenOrExistingReviewDate(reviewDate string, existingMeta map[string]string
 
 func givenOrExistingRemovalDate(removalDate string, existingMeta map[string]string) string {
 	return givenOrExistingDate(removalDate, existingMeta[transfer.MetaKeyRemoval])
+}
+
+func givenOrExistingMetaData(metaData string, userSet *set.Set) string {
+	if metaData != "" {
+		return metaData
+	}
+
+	return userSet.UserMetadata()
 }
 
 func givenOrExistingDate(input string, existing string) string {
