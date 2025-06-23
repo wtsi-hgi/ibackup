@@ -36,8 +36,6 @@ import (
 	"github.com/wtsi-hgi/ibackup/transfer"
 )
 
-const timeFormat = "2006-01-02"
-
 // options for this cmd.
 var (
 	editSetName             string
@@ -199,7 +197,7 @@ func givenOrExistingDate(input string, existing string) string {
 		dief("invalid removal date: %s", err)
 	}
 
-	return t.Format(timeFormat)
+	return t.Format(time.DateOnly)
 }
 
 func edit(client *server.Client, givenSet *set.Set, makeWritable bool) error {
