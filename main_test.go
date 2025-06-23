@@ -3062,6 +3062,8 @@ func TestEdit(t *testing.T) {
 		s := NewTestServer(t)
 		So(s, ShouldNotBeNil)
 
+		removalDate := fmt.Sprintf("%d-01-01", time.Now().Year()+10)
+
 		Convey("With no --name given, edit returns an error", func() {
 			s.confirmOutputContains(t, []string{"edit"}, 1, "Error: required flag(s) \"name\" not set")
 		})
@@ -3223,18 +3225,18 @@ func TestEdit(t *testing.T) {
 				})
 
 				Convey("You can edit just the removal date", func() {
-					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--removal-date", "2040-01-01")
+					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--removal-date", removalDate)
 					So(exitCode, ShouldEqual, 0)
 
 					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Reason: backup\n")
-					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Removal date: 2040-01-01\n")
+					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Removal date: "+removalDate+"\n")
 
 					Convey("Then edit the reason", func() {
 						exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--reason", "archive")
 						So(exitCode, ShouldEqual, 0)
 
 						s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Reason: archive\n")
-						s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Removal date: 2040-01-01\n")
+						s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Removal date: "+removalDate+"\n")
 					})
 				})
 
@@ -3245,11 +3247,11 @@ func TestEdit(t *testing.T) {
 					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Reason: quarantine\n")
 
 					Convey("Then edit the removal date", func() {
-						exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--removal-date", "2040-01-01")
+						exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--removal-date", removalDate)
 						So(exitCode, ShouldEqual, 0)
 
 						s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Reason: quarantine\n")
-						s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Removal date: 2040-01-01\n")
+						s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Removal date: "+removalDate+"\n")
 					})
 				})
 			})
