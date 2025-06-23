@@ -3062,8 +3062,6 @@ func TestEdit(t *testing.T) {
 		s := NewTestServer(t)
 		So(s, ShouldNotBeNil)
 
-		removalDate := fmt.Sprintf("%d-01-01", time.Now().Year()+10)
-
 		Convey("With no --name given, edit returns an error", func() {
 			s.confirmOutputContains(t, []string{"edit"}, 1, "Error: required flag(s) \"name\" not set")
 		})
@@ -3206,6 +3204,8 @@ func TestEdit(t *testing.T) {
 
 			Convey("And a set with the default reason, review and removal date", func() {
 				setName := "reasonSet"
+				removalDate := fmt.Sprintf("%d-01-01", time.Now().Year()+10)
+
 				s.addSetForTestingWithFlags(t, setName, transformer, "--path", path)
 
 				s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Reason: backup\n")
