@@ -28,12 +28,15 @@ package cmd
 
 import (
 	"errors"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/wtsi-hgi/ibackup/server"
 	"github.com/wtsi-hgi/ibackup/set"
 	"github.com/wtsi-hgi/ibackup/transfer"
 )
+
+const timeFormat = "2006-01-02"
 
 // options for this cmd.
 var (
@@ -83,19 +86,20 @@ Edit an existing backup set.`,
 		}
 
 		existingMeta := userSet.Metadata
-		if editReason != transfer.Unset && editRemovalDate == "" {
-			cliPrintf("Current metadata: %+v\n", existingMeta)
-		}
-		// existingRemovalDate := existingMeta[transfer.MetaKeyRemoval]
+		removalDate := editRemovalDate
 
-		existingRemovalDate := editRemovalDate
-		if existingRemovalDate == "" {
-			existingRemovalDate = existingMeta[transfer.MetaKeyRemoval]
-			cliPrintf("Current metadata: %+v\n", existingRemovalDate)
-
+		if removalDate == "" {
+			removalDate = existingMeta[transfer.MetaKeyRemoval]
+			t := time.Time{}
+			err = t.UnmarshalText([]byte(removalDate))
+			if err != nil {
+				dief("invalid removal date: %s", err)
+			}
+			removalDate = t.Format(timeFormat)
 		}
-		if editReason != transfer.Unset || existingRemovalDate != "" {
-			meta, err := transfer.HandleMeta("", editReason, "", existingRemovalDate, existingMeta)
+
+		if editReason != transfer.Unset || removalDate != "" {
+			meta, err := transfer.HandleMeta("", editReason, "", removalDate, existingMeta)
 			if err != nil {
 				dief("metadata error: %s", err)
 			}
