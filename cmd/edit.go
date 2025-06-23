@@ -168,22 +168,14 @@ func givenOrExistingReason(reason transfer.Reason, existingMeta map[string]strin
 }
 
 func givenOrExistingReviewDate(reviewDate string, existingMeta map[string]string) string {
-	if reviewDate != "" {
-		return reviewDate
-	}
-
-	return formatDate(reviewDate, existingMeta[transfer.MetaKeyReview])
+	return givenOrExistingDate(reviewDate, existingMeta[transfer.MetaKeyReview])
 }
 
 func givenOrExistingRemovalDate(removalDate string, existingMeta map[string]string) string {
-	if removalDate != "" {
-		return removalDate
-	}
-
-	return formatDate(removalDate, existingMeta[transfer.MetaKeyRemoval])
+	return givenOrExistingDate(removalDate, existingMeta[transfer.MetaKeyRemoval])
 }
 
-func formatDate(input string, existing string) string {
+func givenOrExistingDate(input string, existing string) string {
 	if input != "" {
 		return input
 	}
