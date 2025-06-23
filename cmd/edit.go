@@ -86,10 +86,16 @@ Edit an existing backup set.`,
 		if editReason != transfer.Unset && editRemovalDate == "" {
 			cliPrintf("Current metadata: %+v\n", existingMeta)
 		}
-		existingRemovalDate := existingMeta[transfer.MetaKeyRemoval]
+		// existingRemovalDate := existingMeta[transfer.MetaKeyRemoval]
 
-		if editReason != transfer.Unset || editRemovalDate != "" { //if user doesn't provide any value we're setting it to dfult
-			meta, err := transfer.HandleMeta("", editReason, "", editRemovalDate, userSet.Metadata)
+		existingRemovalDate := editRemovalDate
+		if existingRemovalDate == "" {
+			existingRemovalDate = existingMeta[transfer.MetaKeyRemoval]
+			cliPrintf("Current metadata: %+v\n", existingRemovalDate)
+
+		}
+		if editReason != transfer.Unset || existingRemovalDate != "" {
+			meta, err := transfer.HandleMeta("", editReason, "", existingRemovalDate, existingMeta)
 			if err != nil {
 				dief("metadata error: %s", err)
 			}
