@@ -44,6 +44,7 @@ var (
 	editUser                string
 	editDescription         string
 	editReason              transfer.Reason
+	editReview              string
 	editRemovalDate         string
 	editStopMonitor         bool
 	editStopMonitorRemovals bool
@@ -81,7 +82,7 @@ Edit an existing backup set.`,
 			return err
 		}
 
-		editMetaData(userSet, editReason, editRemovalDate)
+		editMetaData(userSet, editReason, editReview, editRemovalDate)
 
 		if editDescription != "" {
 			userSet.Description = editDescription
@@ -116,6 +117,8 @@ func init() {
 	editCmd.Flags().StringVar(&editDescription, "description", "", "a long description of the set")
 	editCmd.Flags().Var(&editReason, "reason",
 		"storage reason: 'backup' | 'archive' | 'quarantine'")
+	editCmd.Flags().StringVar(&editReview, "review", "",
+		"time until review date (<number><y|m>, eg. 1y for 1 year), or exact review date in the format YYYY-MM-DD")
 	editCmd.Flags().StringVar(&editRemovalDate, "removal-date", "",
 		"time until removal date (<number><y|m>, eg. 1y for 1 year), or exact removal date in the format YYYY-MM-DD")
 	editCmd.Flags().BoolVar(&editStopMonitor, "stop-monitor", false, "stop monitoring the set for changes")
@@ -132,17 +135,18 @@ func init() {
 	}
 }
 
-func editMetaData(userSet *set.Set, reason transfer.Reason, removalDate string) {
-	if reason == transfer.Unset && removalDate == "" {
+func editMetaData(userSet *set.Set, reason transfer.Reason, reviewDate, removalDate string) {
+	if reason == transfer.Unset && reviewDate == "" && removalDate == "" {
 		return
 	}
 
 	existingMeta := userSet.Metadata
 
 	reason = givenOrExistingReason(reason, existingMeta)
+	reviewDate = givenOrExistingReviewDate(reviewDate, existingMeta)
 	removalDate = givenOrExistingRemovalDate(removalDate, existingMeta)
 
-	meta, err := transfer.HandleMeta("", reason, "", removalDate, existingMeta)
+	meta, err := transfer.HandleMeta("", reason, reviewDate, removalDate, existingMeta)
 	if err != nil {
 		dief("metadata error: %s", err)
 	}
@@ -161,6 +165,22 @@ func givenOrExistingReason(reason transfer.Reason, existingMeta map[string]strin
 	}
 
 	return reason
+}
+
+func givenOrExistingReviewDate(reviewDate string, existingMeta map[string]string) string {
+	if reviewDate != "" {
+		return reviewDate
+	}
+
+	reviewDate = existingMeta[transfer.MetaKeyReview]
+	t := time.Time{}
+
+	err := t.UnmarshalText([]byte(reviewDate))
+	if err != nil {
+		dief("invalid removal date: %s", err)
+	}
+
+	return t.Format(timeFormat)
 }
 
 func givenOrExistingRemovalDate(removalDate string, existingMeta map[string]string) string {

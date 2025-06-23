@@ -3202,18 +3202,21 @@ func TestEdit(t *testing.T) {
 				})
 			})
 
-			FocusConvey("And a set with the default reason and removal date", func() {
+			FocusConvey("And a set with the default reason, review and removal date", func() {
 				setName := "reasonSet"
 				s.addSetForTestingWithFlags(t, setName, transformer, "--path", path)
 
 				s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Reason: backup\n")
+				s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Review date: ")
 				s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Removal date: ")
 
-				FocusConvey("You can edit the reason and removal date", func() {
-					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--reason", "archive", "--removal-date", "2040-01-01")
+				FocusConvey("You can edit the reason, review and removal date", func() {
+					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--reason", "archive",
+						"--review", "2039-01-01", "--removal-date", "2040-01-01")
 					So(exitCode, ShouldEqual, 0)
 
 					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Reason: archive\n")
+					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Review date: 2039-01-01\n")
 					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Removal date: 2040-01-01\n")
 				})
 
