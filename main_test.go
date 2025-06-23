@@ -3225,12 +3225,25 @@ func TestEdit(t *testing.T) {
 					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Removal date: 2040-01-01\n")
 
 					FocusConvey("Then edit the reason", func() {
-						// s.confirmOutputContains(t, []string{"edit", "--name", setName, "--reason", "archive"}, 0,
-						// 	"see output\n")
 						exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--reason", "archive")
 						So(exitCode, ShouldEqual, 0)
 
 						s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Reason: archive\n")
+						s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Removal date: 2040-01-01\n")
+					})
+				})
+
+				FocusConvey("You can edit just the reason", func() {
+					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--reason", "quarantine")
+					So(exitCode, ShouldEqual, 0)
+
+					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Reason: quarantine\n")
+
+					FocusConvey("Then edit the removal date", func() {
+						exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--removal-date", "2040-01-01")
+						So(exitCode, ShouldEqual, 0)
+
+						s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Reason: quarantine\n")
 						s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Removal date: 2040-01-01\n")
 					})
 				})

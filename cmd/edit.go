@@ -81,30 +81,10 @@ Edit an existing backup set.`,
 			return err
 		}
 
+		editMetaData(userSet, editReason, editRemovalDate)
+
 		if editDescription != "" {
 			userSet.Description = editDescription
-		}
-
-		existingMeta := userSet.Metadata
-		removalDate := editRemovalDate
-
-		if removalDate == "" {
-			removalDate = existingMeta[transfer.MetaKeyRemoval]
-			t := time.Time{}
-			err = t.UnmarshalText([]byte(removalDate))
-			if err != nil {
-				dief("invalid removal date: %s", err)
-			}
-			removalDate = t.Format(timeFormat)
-		}
-
-		if editReason != transfer.Unset || removalDate != "" {
-			meta, err := transfer.HandleMeta("", editReason, "", removalDate, existingMeta)
-			if err != nil {
-				dief("metadata error: %s", err)
-			}
-
-			userSet.Metadata = meta.Metadata()
 		}
 
 		if editStopMonitor {
@@ -150,6 +130,53 @@ func init() {
 	if err := editCmd.MarkFlagRequired("name"); err != nil {
 		die(err)
 	}
+}
+
+func editMetaData(userSet *set.Set, reason transfer.Reason, removalDate string) {
+	if reason == transfer.Unset && removalDate == "" {
+		return
+	}
+
+	existingMeta := userSet.Metadata
+
+	reason = givenOrExistingReason(reason, existingMeta)
+	removalDate = givenOrExistingRemovalDate(removalDate, existingMeta)
+
+	meta, err := transfer.HandleMeta("", reason, "", removalDate, existingMeta)
+	if err != nil {
+		dief("metadata error: %s", err)
+	}
+
+	userSet.Metadata = meta.Metadata()
+}
+
+func givenOrExistingReason(reason transfer.Reason, existingMeta map[string]string) transfer.Reason {
+	if reason != transfer.Unset {
+		return reason
+	}
+
+	err := reason.Set(existingMeta[transfer.MetaKeyReason])
+	if err != nil {
+		dief("invalid error: %s", err)
+	}
+
+	return reason
+}
+
+func givenOrExistingRemovalDate(removalDate string, existingMeta map[string]string) string {
+	if removalDate != "" {
+		return removalDate
+	}
+
+	removalDate = existingMeta[transfer.MetaKeyRemoval]
+	t := time.Time{}
+
+	err := t.UnmarshalText([]byte(removalDate))
+	if err != nil {
+		dief("invalid removal date: %s", err)
+	}
+
+	return t.Format(timeFormat)
 }
 
 func edit(client *server.Client, givenSet *set.Set, makeWritable bool) error {
