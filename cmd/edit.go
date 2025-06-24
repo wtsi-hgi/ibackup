@@ -81,7 +81,10 @@ Edit an existing backup set.`,
 			return err
 		}
 
-		editSetMetaData(userSet, editMetaData, editReason, editReview, editRemovalDate)
+		err = editSetMetaData(userSet, editMetaData, editReason, editReview, editRemovalDate)
+		if err != nil {
+			return err
+		}
 
 		if editDescription != "" {
 			userSet.Description = editDescription
@@ -136,44 +139,55 @@ func init() {
 	}
 }
 
-func editSetMetaData(userSet *set.Set, metaData string, reason transfer.Reason, reviewDate, removalDate string) {
+func editSetMetaData(userSet *set.Set, metaData string, reason transfer.Reason, reviewDate, removalDate string) error { //nolint:gocyclo
 	if reason == transfer.Unset && reviewDate == "" && removalDate == "" && metaData == "" {
-		return
+		return nil
 	}
 
 	existingMeta := userSet.Metadata
 
-	reason = givenOrExistingReason(reason, existingMeta)
-	reviewDate = givenOrExistingReviewDate(reviewDate, existingMeta)
-	removalDate = givenOrExistingRemovalDate(removalDate, existingMeta)
+	reason, err := givenOrExistingReason(reason, existingMeta)
+	if err != nil {
+		return err
+	}
+
+	reviewDate, err = givenOrExistingReviewDate(reviewDate, existingMeta)
+	if err != nil {
+		return err
+	}
+
+	removalDate, err = givenOrExistingRemovalDate(removalDate, existingMeta)
+	if err != nil {
+		return err
+	}
+
 	metaData = givenOrExistingMetaData(metaData, userSet)
 
 	meta, err := transfer.HandleMeta(metaData, reason, reviewDate, removalDate, existingMeta)
 	if err != nil {
-		die(err)
+		return err
 	}
 
 	userSet.Metadata = meta.Metadata()
+
+	return nil
 }
 
-func givenOrExistingReason(reason transfer.Reason, existingMeta map[string]string) transfer.Reason {
+func givenOrExistingReason(reason transfer.Reason, existingMeta map[string]string) (transfer.Reason, error) {
 	if reason != transfer.Unset {
-		return reason
+		return reason, nil
 	}
 
 	err := reason.Set(existingMeta[transfer.MetaKeyReason])
-	if err != nil {
-		die(err)
-	}
 
-	return reason
+	return reason, err
 }
 
-func givenOrExistingReviewDate(reviewDate string, existingMeta map[string]string) string {
+func givenOrExistingReviewDate(reviewDate string, existingMeta map[string]string) (string, error) {
 	return givenOrExistingDate(reviewDate, existingMeta[transfer.MetaKeyReview])
 }
 
-func givenOrExistingRemovalDate(removalDate string, existingMeta map[string]string) string {
+func givenOrExistingRemovalDate(removalDate string, existingMeta map[string]string) (string, error) {
 	return givenOrExistingDate(removalDate, existingMeta[transfer.MetaKeyRemoval])
 }
 
@@ -185,19 +199,16 @@ func givenOrExistingMetaData(metaData string, userSet *set.Set) string {
 	return userSet.UserMetadata()
 }
 
-func givenOrExistingDate(input, existing string) string {
+func givenOrExistingDate(input, existing string) (string, error) {
 	if input != "" {
-		return input
+		return input, nil
 	}
 
 	t := time.Time{}
 
 	err := t.UnmarshalText([]byte(existing))
-	if err != nil {
-		die(err)
-	}
 
-	return t.Format(time.DateOnly)
+	return t.Format(time.DateOnly), err
 }
 
 func edit(client *server.Client, givenSet *set.Set, makeWritable bool) error {

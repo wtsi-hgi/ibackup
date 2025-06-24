@@ -64,7 +64,7 @@ const (
 	errInvalidMetaNamespace    = "namespace is incorrect, must be 'ibackup:user:' or empty"
 	errInvalidMetaLength       = "meta must be provided in the form key=value"
 	ErrInvalidReason           = "reason must be 'backup', 'archive', 'quarantine'"
-	ErrInvalidDurationFormat   = "duration must be in the form <number><unit>"
+	ErrInvalidDurationFormat   = "duration must be in the form <number><unit>, or YYYY-MM-DD"
 	ErrInvalidReviewRemoveDate = "--review duration must be smaller than --removal duration"
 )
 
