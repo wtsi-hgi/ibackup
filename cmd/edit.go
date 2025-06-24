@@ -113,18 +113,13 @@ Edit an existing backup set.`,
 func init() {
 	RootCmd.AddCommand(editCmd)
 
-	editCmd.Flags().StringVarP(&editSetName, "name", "n", "", "a name of the backup set you want to edit")
-	editCmd.Flags().StringVar(&editUser, "user", currentUsername(),
-		"pretend to be this user (only works if you started the server)")
-	editCmd.Flags().StringVar(&editDescription, "description", "", "a long description of the set")
-	editCmd.Flags().StringVar(&editMetaData, "metadata", "",
-		"key=val;key=val metadata to apply to all files in the set")
-	editCmd.Flags().Var(&editReason, "reason",
-		"storage reason: 'backup' | 'archive' | 'quarantine'")
-	editCmd.Flags().StringVar(&editReview, "review", "",
-		"time until review date (<number><y|m>, eg. 1y for 1 year), or exact review date in the format YYYY-MM-DD")
-	editCmd.Flags().StringVar(&editRemovalDate, "removal-date", "",
-		"time until removal date (<number><y|m>, eg. 1y for 1 year), or exact removal date in the format YYYY-MM-DD")
+	editCmd.Flags().StringVarP(&editSetName, "name", "n", "", helpTextName)
+	editCmd.Flags().StringVar(&editUser, "user", currentUsername(), helpTextuser)
+	editCmd.Flags().StringVar(&editDescription, "description", "", helpTextDescription)
+	editCmd.Flags().StringVar(&editMetaData, "metadata", "", helpTextMetaData)
+	editCmd.Flags().Var(&editReason, "reason", helpTextReason)
+	editCmd.Flags().StringVar(&editReview, "review", "", helpTextReview)
+	editCmd.Flags().StringVar(&editRemovalDate, "removal-date", "", helpTextRemoval)
 	editCmd.Flags().BoolVar(&editStopMonitor, "stop-monitor", false, "stop monitoring the set for changes")
 	editCmd.Flags().BoolVar(&editStopMonitorRemovals, "stop-monitor-removals", false,
 		"stop monitoring the set for locally removed files")
@@ -139,7 +134,8 @@ func init() {
 	}
 }
 
-func editSetMetaData(userSet *set.Set, metaData string, reason transfer.Reason, reviewDate, removalDate string) error { //nolint:gocyclo
+func editSetMetaData(userSet *set.Set, metaData string, //nolint:gocyclo,funlen
+	reason transfer.Reason, reviewDate, removalDate string) error {
 	if reason == transfer.Unset && reviewDate == "" && removalDate == "" && metaData == "" {
 		return nil
 	}

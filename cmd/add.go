@@ -42,8 +42,27 @@ import (
 )
 
 const (
-	hoursInDay  = 24
-	hoursInWeek = hoursInDay * 7
+	hoursInDay          = 24
+	hoursInWeek         = hoursInDay * 7
+	helpTextName        = "a short name for this backup set"
+	helpTextTransformer = "'humgen' | 'gengen' | 'prefix=local:remote'"
+	helpTextDescription = "a long description of this backup set"
+	helpTextFiles       = "path to file with one absolute local file path per line"
+	helpTextDirs        = "path to file with one absolute local directory path per line"
+	helpTextItems       = "path to file with one absolute local directory or file path per line"
+	helpTextPath        = "path to a single file or directory you wish to backup"
+	helpTextNull        = "input paths are terminated by a null character instead of a new line"
+	helpTextMonitor     = "monitor the paths for changes and new files to upload the given time period " +
+		"(eg. 1d for 1 day, or 2w for 2 weeks, min 1h) after completion"
+	helpTextMonitorRemovals = "also monitor and update the set for files removed locally"
+	helpTextArchive         = "delete local files after successfully uploading them (deletions not yet implemented)"
+	helpTextuser            = "pretend to be the this user (only works if you started the server)"
+	helpTextMetaData        = "key=val;key=val metadata to apply to all files in the set"
+	helpTextReason          = "storage reason: 'backup' | 'archive' | 'quarantine'"
+	helpTextReview          = "time until review date (<number><y|m>, eg. 1y for 1 year), " +
+		"or exact review date in the format YYYY-MM-DD"
+	helpTextRemoval = "time until removal date (<number><y|m>, eg. 1y for 1 year), " +
+		"or exact removal date in the format YYYY-MM-DD"
 )
 
 // options for this cmd.
@@ -243,37 +262,23 @@ func init() {
 	RootCmd.AddCommand(addCmd)
 
 	// flags specific to this sub-command
-	addCmd.Flags().StringVarP(&setName, "name", "n", "", "a short name for this backup set")
+	addCmd.Flags().StringVarP(&setName, "name", "n", "", helpTextName)
 	addCmd.Flags().StringVarP(&setTransformer, "transformer", "t",
-		os.Getenv("IBACKUP_TRANSFORMER"), "'humgen' | 'gengen' | 'prefix=local:remote'")
-	addCmd.Flags().StringVarP(&setFiles, "files", "f", "",
-		"path to file with one absolute local file path per line")
-	addCmd.Flags().StringVarP(&setDirs, "dirs", "d", "",
-		"path to file with one absolute local directory path per line")
-	addCmd.Flags().StringVarP(&setItems, "items", "i", "",
-		"path to file with one absolute local directory or file path per line")
-	addCmd.Flags().StringVarP(&setPath, "path", "p", "",
-		"path to a single file or directory you wish to backup")
-	addCmd.Flags().BoolVarP(&setNull, "null", "0", false,
-		"input paths are terminated by a null character instead of a new line")
-	addCmd.Flags().StringVar(&setDescription, "description", "", "a long description of this backup set")
-	addCmd.Flags().StringVarP(&setMonitor, "monitor", "m", "",
-		"monitor the paths for changes and new files to upload the given time period "+
-			"(eg. 1d for 1 day, or 2w for 2 weeks, min 1h) after completion")
-	addCmd.Flags().BoolVar(&setMonitorRemovals, "monitor-removals", false,
-		"also monitor and update the set for files removed locally")
-	addCmd.Flags().BoolVarP(&setArchive, "archive", "a", false,
-		"delete local files after successfully uploading them (deletions not yet implemented)")
-	addCmd.Flags().StringVar(&setUser, "user", currentUsername(),
-		"pretend to be the this user (only works if you started the server)")
-	addCmd.Flags().StringVar(&setMetadata, "metadata", "",
-		"key=val;key=val metadata to apply to all files in the set")
-	addCmd.Flags().Var(&setReason, "reason",
-		"storage reason: 'backup' | 'archive' | 'quarantine'")
-	addCmd.Flags().StringVar(&setReview, "review", "",
-		"time until review date (<number><y|m>, eg. 1y for 1 year), or exact review date in the format YYYY-MM-DD")
-	addCmd.Flags().StringVar(&setRemoval, "remove", "",
-		"time until removal date (<number><y|m>, eg. 1y for 1 year), or exact removal date in the format YYYY-MM-DD")
+		os.Getenv("IBACKUP_TRANSFORMER"), helpTextTransformer)
+	addCmd.Flags().StringVarP(&setFiles, "files", "f", "", helpTextFiles)
+	addCmd.Flags().StringVarP(&setDirs, "dirs", "d", "", helpTextDirs)
+	addCmd.Flags().StringVarP(&setItems, "items", "i", "", helpTextItems)
+	addCmd.Flags().StringVarP(&setPath, "path", "p", "", helpTextPath)
+	addCmd.Flags().BoolVarP(&setNull, "null", "0", false, helpTextNull)
+	addCmd.Flags().StringVar(&setDescription, "description", "", helpTextDescription)
+	addCmd.Flags().StringVarP(&setMonitor, "monitor", "m", "", helpTextMonitor)
+	addCmd.Flags().BoolVar(&setMonitorRemovals, "monitor-removals", false, helpTextMonitorRemovals)
+	addCmd.Flags().BoolVarP(&setArchive, "archive", "a", false, helpTextArchive)
+	addCmd.Flags().StringVar(&setUser, "user", currentUsername(), helpTextuser)
+	addCmd.Flags().StringVar(&setMetadata, "metadata", "", helpTextMetaData)
+	addCmd.Flags().Var(&setReason, "reason", helpTextReason)
+	addCmd.Flags().StringVar(&setReview, "review", "", helpTextReview)
+	addCmd.Flags().StringVar(&setRemoval, "remove", "", helpTextRemoval)
 
 	if err := addCmd.MarkFlagRequired("name"); err != nil {
 		die(err)
