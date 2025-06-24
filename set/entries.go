@@ -116,7 +116,7 @@ type Entry struct {
 	Inode       uint64
 	Dest        string
 
-	newSize  bool
+	newSize  bool // is this the first attempt
 	newFail  bool
 	unFailed bool
 	isDir    bool
@@ -332,8 +332,6 @@ func (c *entryCreator) existingOrNewEncodedEntry(dirent *Dirent) ([]byte, error)
 		return nil, err
 	}
 
-	c.set.entryToSetCounts(entry)
-
 	e := c.existingEntries[dirent.Path]
 	if e != nil {
 		dbEntry := c.db.decodeEntry(e)
@@ -342,6 +340,8 @@ func (c *entryCreator) existingOrNewEncodedEntry(dirent *Dirent) ([]byte, error)
 		}
 
 		entry = dbEntry
+	} else {
+		c.set.entryToSetCounts(entry)
 	}
 
 	e = c.db.encodeToBytes(entry)

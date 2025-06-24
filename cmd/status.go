@@ -575,8 +575,12 @@ func getDirs(client *server.Client, setID string) []string {
 	for i, entry := range got {
 		paths[i] = entry.Path
 
-		if entry.Status == set.Missing || entry.Status == set.Orphaned {
+		if entry.Status == set.Missing {
 			paths[i] += " (missing)"
+		}
+
+		if entry.Status == set.Orphaned {
+			paths[i] += " (orphaned)"
 		}
 	}
 

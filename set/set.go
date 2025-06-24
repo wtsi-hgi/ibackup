@@ -424,7 +424,7 @@ func (s *Set) adjustBasedOnEntry(entry *Entry) {
 		s.SizeUploaded += entry.Size
 	}
 
-	if entry.Status == Skipped {
+	if entry.Status == Skipped || entry.Status == Orphaned {
 		s.SizeUploaded -= entry.Size
 	}
 
@@ -617,12 +617,20 @@ func (s *Set) fixCounts(entry *Entry, getFileEntries func(string) ([]*Entry, err
 }
 
 func (s *Set) resetCounts() {
+	s.resetStatusCounts()
+	s.resetTypeCounts()
+}
+
+func (s *Set) resetStatusCounts() {
 	s.Uploaded = 0
 	s.Replaced = 0
 	s.Skipped = 0
 	s.Failed = 0
 	s.Missing = 0
 	s.Abnormal = 0
+}
+
+func (s *Set) resetTypeCounts() {
 	s.Symlinks = 0
 	s.Hardlinks = 0
 }
@@ -689,7 +697,7 @@ func (s *Set) reset() {
 	s.Status = PendingDiscovery
 	s.Error = ""
 	s.Warning = ""
-	s.resetCounts()
+	s.resetStatusCounts()
 }
 
 func (s *Set) UserMetadata() string {

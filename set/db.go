@@ -656,13 +656,9 @@ func (d *DB) setEntries(setID string, dirents []*Dirent, bucketName string) erro
 // them instead. Only supply absolute paths.
 func (d *DB) createEntries(setID string, dirents []*Dirent, bucketName string, keepExisting bool) error {
 	return d.db.Update(func(tx *bolt.Tx) error {
-		b, existing, err := d.getAndDeleteExistingEntries(tx, bucketName, setID)
+		b, existing, err := d.getExistingEntries(tx, bucketName, setID)
 		if err != nil {
 			return err
-		}
-
-		if keepExisting {
-			dirents = d.mergeDirentSets(dirents, existing)
 		}
 
 		// this sort is critical to database write speed.
@@ -885,10 +881,9 @@ func (d *DB) removeEntryIfRedundant(remReq RemoveReq, curDir string) (string, er
 	return curDir, nil
 }
 
-// getAndDeleteExistingEntries gets existing entries in the given sub bucket
-// of the setsBucket, then deletes and recreates the sub bucket. Returns the
-// empty sub bucket and any old values.
-func (d *DB) getAndDeleteExistingEntries(tx *bolt.Tx, subBucketName string, setID string) (*bolt.Bucket,
+// getExistingEntries returns all existing entries in the given sub bucket of
+// the setsBucket.
+func (d *DB) getExistingEntries(tx *bolt.Tx, subBucketName string, setID string) (*bolt.Bucket,
 	map[string][]byte, error,
 ) {
 	existing := make(map[string][]byte)
@@ -898,24 +893,14 @@ func (d *DB) getAndDeleteExistingEntries(tx *bolt.Tx, subBucketName string, setI
 		return nil, existing, err
 	}
 
-	bFailed := tx.Bucket([]byte(failedBucket))
-
 	err = sfsb.Bucket.ForEach(func(k, v []byte) error {
 		path := string(k)
 		existing[path] = bytes.Clone(v)
 
-		return bFailed.Delete([]byte(setID + separator + path))
+		return nil
 	})
 	if err != nil {
 		return sfsb.Bucket, existing, err
-	}
-
-	if len(existing) > 0 {
-		if err = sfsb.DeleteBucket(); err != nil {
-			return sfsb.Bucket, existing, err
-		}
-
-		err = sfsb.CreateBucket()
 	}
 
 	return sfsb.Bucket, existing, err
@@ -1259,7 +1244,6 @@ func (d *DB) updateFileEntry(tx *bolt.Tx, setID string, r *transfer.Request,
 	}
 
 	entry.LastAttempt = time.Now()
-	entry.Size = r.UploadedSize()
 
 	if entry.Status == Pending || entry.Status == Failed {
 		entry.Attempts++
@@ -1267,6 +1251,10 @@ func (d *DB) updateFileEntry(tx *bolt.Tx, setID string, r *transfer.Request,
 	}
 
 	requestStatusToEntryStatus(r, entry)
+
+	if entry.Status != Orphaned {
+		entry.Size = r.UploadedSize()
+	}
 
 	err = d.updateFailedLookup(tx, setID, r.Local, entry)
 	if err != nil {
@@ -1668,6 +1656,12 @@ func (d *DBRO) GetFailedEntries(setID string) ([]*Entry, int, error) {
 // SetFileEntries, not SetDiscoveredEntries).
 func (d *DBRO) GetPureFileEntries(setID string) ([]*Entry, error) {
 	return d.getEntries(setID, fileBucket)
+}
+
+// GetDiscoveredFileEntries returns all the discovered file entries for the given set (only
+// SetDiscoveredEntries, not SetFileEntries).
+func (d *DBRO) GetDiscoveredFileEntries(setID string) ([]*Entry, error) {
+	return d.getEntries(setID, discoveredBucket)
 }
 
 // GetDirEntries returns all the dir entries for the given set.

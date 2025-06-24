@@ -2006,7 +2006,14 @@ Global put client status (/10): 6 iRODS connections`)
 			})
 
 			Convey("Retrying a set with locally removed files will show orphaned status", func() {
+				resetIRODS()
+
 				setName := "setWithOrphanedFiles"
+
+				file4 := filepath.Join(path, "file4")
+				err := os.Link(file1, file4)
+				So(err, ShouldBeNil)
+
 				s.addSetForTesting(t, setName, transformer, path)
 
 				s.waitForStatus(setName, "\nStatus: complete", 10*time.Second)
@@ -2015,10 +2022,14 @@ Global put client status (/10): 6 iRODS connections`)
 
 				exitCode, output := s.runBinary(t, statusCmd...)
 				So(exitCode, ShouldEqual, 0)
+				So(output, ShouldContainSubstring, "Hardlinks: 1;")
 				So(output, ShouldContainSubstring, file1+"\tuploaded\t10 B\t")
 				So(output, ShouldContainSubstring, file2+"\tuploaded\t")
 
-				err := os.Remove(file1)
+				err = os.Remove(file1)
+				So(err, ShouldBeNil)
+
+				err = os.Remove(file4)
 				So(err, ShouldBeNil)
 
 				exitCode, _ = s.runBinary(t, "retry", "--name", setName, "-a")
@@ -2028,9 +2039,39 @@ Global put client status (/10): 6 iRODS connections`)
 
 				exitCode, output = s.runBinary(t, statusCmd...)
 				So(exitCode, ShouldEqual, 0)
-				So(output, ShouldContainSubstring, "Missing: 1;")
-				So(output, ShouldContainSubstring, file1+"\torphaned\t0 B\t")
+
+				So(output, ShouldContainSubstring, "Hardlinks: 1;")
+				So(output, ShouldContainSubstring, "Missing: 2;")
+				So(output, ShouldContainSubstring, "(total/recently uploaded/recently removed): 30 B / 0 B / 0 B")
+
+				So(output, ShouldContainSubstring, file1+"\torphaned\t10 B\t")
 				So(output, ShouldContainSubstring, file2+"\tskipped\t")
+				So(output, ShouldContainSubstring, file4+"\torphaned\t0 B\t")
+			})
+
+			SkipConvey("Retrying a set with locally removed dirs will show orphaned status", func() {
+				setName := "setWithOrphanedDirs"
+				s.addSetForTesting(t, setName, transformer, path)
+
+				s.waitForStatus(setName, "\nStatus: complete", 10*time.Second)
+
+				statusCmd := []string{"status", "--name", setName}
+
+				exitCode, output := s.runBinary(t, statusCmd...)
+				So(exitCode, ShouldEqual, 0)
+				So(output, ShouldContainSubstring, path+" => "+remotePath)
+
+				err := os.RemoveAll(path)
+				So(err, ShouldBeNil)
+
+				exitCode, _ = s.runBinary(t, "retry", "--name", setName, "-a")
+				So(exitCode, ShouldEqual, 0)
+
+				s.waitForStatus(setName, "\nStatus: complete", 10*time.Second)
+
+				exitCode, output = s.runBinary(t, statusCmd...)
+				So(exitCode, ShouldEqual, 0)
+				So(output, ShouldContainSubstring, path+" (missing)"+" => "+remotePath+" (orphaned)")
 			})
 		})
 
