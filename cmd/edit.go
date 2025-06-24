@@ -48,11 +48,13 @@ var (
 	editStopMonitor         bool
 	editStopMonitorRemovals bool
 	editStopArchive         bool
+	editArchive             bool
 	editMakeReadOnly        bool
 	editMakeWritable        bool
-)
 
-var ErrInvalidEdit = errors.New("you can either make a set read-only or writable, not both")
+	ErrInvalidEditRO      = errors.New("you can either make a set read-only or writable, not both")
+	ErrInvalidEditArchive = errors.New("you can either archive a set or stop archiving, not both")
+)
 
 // editCmd represents the edit command.
 var editCmd = &cobra.Command{
@@ -63,7 +65,11 @@ var editCmd = &cobra.Command{
 Edit an existing backup set.`,
 	PreRunE: func(_ *cobra.Command, _ []string) error {
 		if editMakeReadOnly && editMakeWritable {
-			return ErrInvalidEdit
+			return ErrInvalidEditRO
+		}
+
+		if editArchive && editStopArchive {
+			return ErrInvalidEditArchive
 		}
 
 		return nil
@@ -98,7 +104,9 @@ Edit an existing backup set.`,
 			userSet.MonitorRemovals = false
 		}
 
-		if editStopArchive {
+		if editArchive {
+			userSet.DeleteLocal = true
+		} else if editStopArchive {
 			userSet.DeleteLocal = false
 		}
 
@@ -123,6 +131,8 @@ func init() {
 	editCmd.Flags().BoolVar(&editStopMonitor, "stop-monitor", false, "stop monitoring the set for changes")
 	editCmd.Flags().BoolVar(&editStopMonitorRemovals, "stop-monitor-removals", false,
 		"stop monitoring the set for locally removed files")
+	editCmd.Flags().BoolVarP(&editArchive, "archive", "a", false,
+		"delete local files after successfully uploading them (deletions not yet implemented)")
 	editCmd.Flags().BoolVar(&editStopArchive, "stop-archiving", false, "disable archive mode")
 	editCmd.Flags().BoolVar(&editMakeReadOnly, "make-readonly", false,
 		"make the set read-only (backup set will be preserved at the current state)")
