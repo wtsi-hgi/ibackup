@@ -3208,10 +3208,12 @@ func TestEdit(t *testing.T) {
 				removalDate := fmt.Sprintf("%d-01-01", time.Now().Year()+10)
 
 				s.addSetForTestingWithFlags(t, setName, transformer, "--path", path)
+				exitCode, statusOutput := s.runBinary(t, "status", "--name", setName)
+				So(exitCode, ShouldEqual, 0)
 
-				s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Reason: backup\n")
-				s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Review date: ")
-				s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Removal date: ")
+				So(statusOutput, ShouldContainSubstring, "Reason: backup\n")
+				So(statusOutput, ShouldContainSubstring, "Review date: ")
+				So(statusOutput, ShouldContainSubstring, "Removal date: ")
 
 				Convey("You can edit the reason, review and removal date along with arbitrary metadata", func() {
 					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--reason", "archive",
@@ -3219,25 +3221,34 @@ func TestEdit(t *testing.T) {
 						"--metadata", "foo=bar;baz=qux")
 					So(exitCode, ShouldEqual, 0)
 
-					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Reason: archive\n")
-					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Review date: "+reviewDate+"\n")
-					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Removal date: "+removalDate+"\n")
-					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "User metadata: baz=qux;foo=bar\n")
+					exitCode, statusOutput := s.runBinary(t, "status", "--name", setName)
+					So(exitCode, ShouldEqual, 0)
+
+					So(statusOutput, ShouldContainSubstring, "Reason: archive\n")
+					So(statusOutput, ShouldContainSubstring, "Review date: "+reviewDate+"\n")
+					So(statusOutput, ShouldContainSubstring, "Removal date: "+removalDate+"\n")
+					So(statusOutput, ShouldContainSubstring, "User metadata: baz=qux;foo=bar\n")
 				})
 
 				Convey("You can edit just the removal date", func() {
 					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--removal-date", removalDate)
 					So(exitCode, ShouldEqual, 0)
 
-					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Reason: backup\n")
-					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Removal date: "+removalDate+"\n")
+					exitCode, statusOutput := s.runBinary(t, "status", "--name", setName)
+					So(exitCode, ShouldEqual, 0)
+
+					So(statusOutput, ShouldContainSubstring, "Reason: backup\n")
+					So(statusOutput, ShouldContainSubstring, fmt.Sprintf("Removal date: %s\n", removalDate))
 
 					Convey("Then edit the reason", func() {
 						exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--reason", "archive")
 						So(exitCode, ShouldEqual, 0)
 
-						s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Reason: archive\n")
-						s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Removal date: "+removalDate+"\n")
+						exitCode, statusOutput := s.runBinary(t, "status", "--name", setName)
+						So(exitCode, ShouldEqual, 0)
+
+						So(statusOutput, ShouldContainSubstring, "Reason: archive\n")
+						So(statusOutput, ShouldContainSubstring, "Removal date: "+removalDate+"\n")
 					})
 				})
 
@@ -3251,8 +3262,11 @@ func TestEdit(t *testing.T) {
 						exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--removal-date", removalDate)
 						So(exitCode, ShouldEqual, 0)
 
-						s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Reason: quarantine\n")
-						s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Removal date: "+removalDate+"\n")
+						exitCode, statusOutput := s.runBinary(t, "status", "--name", setName)
+						So(exitCode, ShouldEqual, 0)
+
+						So(statusOutput, ShouldContainSubstring, "Reason: quarantine\n")
+						So(statusOutput, ShouldContainSubstring, "Removal date: "+removalDate+"\n")
 					})
 				})
 			})
