@@ -185,7 +185,7 @@ func givenOrExistingMetaData(metaData string, userSet *set.Set) string {
 	return userSet.UserMetadata()
 }
 
-func givenOrExistingDate(input string, existing string) string {
+func givenOrExistingDate(input, existing string) string {
 	if input != "" {
 		return input
 	}

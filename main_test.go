@@ -3204,6 +3204,7 @@ func TestEdit(t *testing.T) {
 
 			Convey("And a set with the default reason, review and removal date", func() {
 				setName := "reasonSet"
+				reviewDate := fmt.Sprintf("%d-01-01", time.Now().Year()+9)
 				removalDate := fmt.Sprintf("%d-01-01", time.Now().Year()+10)
 
 				s.addSetForTestingWithFlags(t, setName, transformer, "--path", path)
@@ -3214,13 +3215,13 @@ func TestEdit(t *testing.T) {
 
 				Convey("You can edit the reason, review and removal date along with arbitrary metadata", func() {
 					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--reason", "archive",
-						"--review", "2039-01-01", "--removal-date", "2040-01-01",
+						"--review", reviewDate, "--removal-date", removalDate,
 						"--metadata", "foo=bar;baz=qux")
 					So(exitCode, ShouldEqual, 0)
 
 					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Reason: archive\n")
-					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Review date: 2039-01-01\n")
-					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Removal date: 2040-01-01\n")
+					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Review date: "+reviewDate+"\n")
+					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Removal date: "+removalDate+"\n")
 					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "User metadata: baz=qux;foo=bar\n")
 				})
 
