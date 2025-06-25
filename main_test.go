@@ -3071,7 +3071,8 @@ func TestEdit(t *testing.T) {
 		})
 
 		Convey("You can specify either --make-readonly or --disable-readonly", func() {
-			s.confirmOutputContains(t, []string{"edit", "--make-readonly", "--disable-readonly"}, 1, cmd.ErrInvalidEditRO.Error())
+			s.confirmOutputContains(t, []string{"edit", "--make-readonly", "--disable-readonly"},
+				1, cmd.ErrInvalidEditRO.Error())
 		})
 
 		Convey("Given a transformer", func() {

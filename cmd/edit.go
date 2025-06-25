@@ -131,8 +131,7 @@ func init() {
 	editCmd.Flags().BoolVar(&editStopMonitor, "stop-monitor", false, "stop monitoring the set for changes")
 	editCmd.Flags().BoolVar(&editStopMonitorRemovals, "stop-monitor-removals", false,
 		"stop monitoring the set for locally removed files")
-	editCmd.Flags().BoolVarP(&editArchive, "archive", "a", false,
-		"delete local files after successfully uploading them (deletions not yet implemented)")
+	editCmd.Flags().BoolVarP(&editArchive, "archive", "a", false, helpTextArchive)
 	editCmd.Flags().BoolVar(&editStopArchive, "stop-archiving", false, "disable archive mode")
 	editCmd.Flags().BoolVar(&editMakeReadOnly, "make-readonly", false,
 		"make the set read-only (backup set will be preserved at the current state)")
