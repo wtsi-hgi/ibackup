@@ -645,16 +645,7 @@ func (d *DB) SetFileEntries(setID string, paths []string) error {
 
 // setEntries sets the paths for the given backup set in a sub bucket with the
 // given prefix. Only supply absolute paths.
-//
-// *** Currently ignores old entries that are not in the given paths.
 func (d *DB) setEntries(setID string, dirents []*Dirent, bucketName string) error {
-	return d.createEntries(setID, dirents, bucketName, false)
-}
-
-// createEntries sets the paths for the given backup set in a sub bucket with the
-// given prefix. If keepExisting is on, it won't remove old entries but will reset
-// them instead. Only supply absolute paths.
-func (d *DB) createEntries(setID string, dirents []*Dirent, bucketName string, keepExisting bool) error {
 	return d.db.Update(func(tx *bolt.Tx) error {
 		b, existing, err := d.getExistingEntries(tx, bucketName, setID)
 		if err != nil {
@@ -698,12 +689,6 @@ func (d *DB) mergeDirentSets(a []*Dirent, b map[string][]byte) []*Dirent {
 	}
 
 	return slices.Clip(dirents)
-}
-
-// addEntries adds the paths for the given backup set in a sub bucket with the
-// given prefix. If entries exist they will be updated. Only supply absolute paths.
-func (d *DB) addEntries(setID string, dirents []*Dirent, bucketName string) error {
-	return d.createEntries(setID, dirents, bucketName, true)
 }
 
 // SetRemoveRequests writes a list of remove requests into the database.
@@ -895,7 +880,10 @@ func (d *DB) getExistingEntries(tx *bolt.Tx, subBucketName string, setID string)
 
 	err = sfsb.Bucket.ForEach(func(k, v []byte) error {
 		path := string(k)
-		existing[path] = bytes.Clone(v)
+		entry := d.decodeEntry(v)
+		if entry.Status != Pending { // TODO check if this helps distinguish fresh files and old files (files that were in the db before vs files that were just add via putFiles)
+			existing[path] = bytes.Clone(v)
+		}
 
 		return nil
 	})
@@ -1061,37 +1049,37 @@ func (d *DB) statPureFileEntries(setID string) error {
 		}
 
 		direntCh := make(chan *Dirent)
-		entryCh := make(chan []byte)
 		numEntries := 0
 
 		sfsb.Bucket.ForEach(func(k, v []byte) error { //nolint:errcheck
 			numEntries++
 			path := string(k)
-			value := bytes.Clone(v)
 
 			d.filePool.Submit(func() {
 				direntCh <- newDirentFromPath(path)
-				entryCh <- value
 			})
 
 			return nil
 		})
 
-		return d.handleFilePoolResults(tx, sfsb, setID, direntCh, entryCh, numEntries)
+		return d.handleFilePoolResults(tx, sfsb, setID, direntCh, numEntries)
 	})
 }
 
 func (d *DB) handleFilePoolResults(tx *bolt.Tx, sfsb *setFileSubBucket, setID string,
-	direntCh chan *Dirent, entryCh chan []byte,
-	numEntries int,
+	direntCh chan *Dirent, numEntries int,
 ) error {
 	dirents := make([]*Dirent, numEntries)
-	existing := make(map[string][]byte, numEntries)
+	// existing := make(map[string][]byte, numEntries)
+
+	_, existing, err := d.getExistingEntries(tx, fileBucket, setID)
+	if err != nil {
+		return err
+	}
 
 	for n := range dirents {
 		dirent := <-direntCh
 		dirents[n] = dirent
-		existing[dirent.Path] = <-entryCh
 	}
 
 	sort.Slice(dirents, func(i, j int) bool {
@@ -1115,11 +1103,11 @@ func (d *DB) handleFilePoolResults(tx *bolt.Tx, sfsb *setFileSubBucket, setID st
 //
 // Returns the updated set and an error if the setID isn't in the database.
 func (d *DB) setDiscoveredEntries(setID string, fileDirents, dirDirents []*Dirent) (*Set, error) {
-	if err := d.addEntries(setID, fileDirents, discoveredBucket); err != nil {
+	if err := d.setEntries(setID, fileDirents, discoveredBucket); err != nil {
 		return nil, err
 	}
 
-	if err := d.addEntries(setID, dirDirents, discoveredFoldersBucket); err != nil {
+	if err := d.setEntries(setID, dirDirents, discoveredFoldersBucket); err != nil {
 		return nil, err
 	}
 

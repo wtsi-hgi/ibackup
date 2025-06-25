@@ -413,11 +413,11 @@ func (s *Set) countsValid() bool {
 }
 
 func (s *Set) adjustBasedOnEntry(entry *Entry) {
-	if entry.Type == Symlink {
-		s.Symlinks--
-	} else if entry.Type == Hardlink {
-		s.Hardlinks--
-	}
+	// if entry.Type == Symlink {
+	// 	s.Symlinks--
+	// } else if entry.Type == Hardlink {
+	// 	s.Hardlinks--
+	// }
 
 	if entry.newSize {
 		s.SizeTotal += entry.Size
@@ -436,7 +436,7 @@ func (s *Set) adjustBasedOnEntry(entry *Entry) {
 		}
 	}
 
-	s.entryToSetCounts(entry)
+	s.entryStatusToSetCounts(entry)
 }
 
 // entryToSetCounts increases set Uploaded, Failed or Missing based on
