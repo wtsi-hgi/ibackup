@@ -3133,7 +3133,7 @@ func TestEdit(t *testing.T) {
 						s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Archive: true\n")
 
 						s.confirmOutputContains(t, []string{"edit", "--name", setName, "--archive", "--stop-archiving"}, 1,
-							"you can either archive a set or stop archiving, not both")
+							cmd.ErrInvalidEditArchive.Error())
 					})
 				})
 			})
