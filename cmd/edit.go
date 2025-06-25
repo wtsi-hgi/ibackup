@@ -28,10 +28,12 @@ package cmd
 
 import (
 	"errors"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/wtsi-hgi/ibackup/server"
 	"github.com/wtsi-hgi/ibackup/set"
+	"github.com/wtsi-hgi/ibackup/transfer"
 )
 
 // options for this cmd.
@@ -39,6 +41,10 @@ var (
 	editSetName             string
 	editUser                string
 	editDescription         string
+	editMetaData            string
+	editReason              transfer.Reason
+	editReview              string
+	editRemovalDate         string
 	editStopMonitor         bool
 	editStopMonitorRemovals bool
 	editStopArchive         bool
@@ -75,6 +81,11 @@ Edit an existing backup set.`,
 			return err
 		}
 
+		err = editSetMetaData(userSet, editMetaData, editReason, editReview, editRemovalDate)
+		if err != nil {
+			return err
+		}
+
 		if editDescription != "" {
 			userSet.Description = editDescription
 		}
@@ -102,10 +113,13 @@ Edit an existing backup set.`,
 func init() {
 	RootCmd.AddCommand(editCmd)
 
-	editCmd.Flags().StringVarP(&editSetName, "name", "n", "", "a name of the backup set you want to edit")
-	editCmd.Flags().StringVar(&editUser, "user", currentUsername(),
-		"pretend to be this user (only works if you started the server)")
-	editCmd.Flags().StringVar(&editDescription, "description", "", "a long description of the set")
+	editCmd.Flags().StringVarP(&editSetName, "name", "n", "", helpTextName)
+	editCmd.Flags().StringVar(&editUser, "user", currentUsername(), helpTextuser)
+	editCmd.Flags().StringVar(&editDescription, "description", "", helpTextDescription)
+	editCmd.Flags().StringVar(&editMetaData, "metadata", "", helpTextMetaData)
+	editCmd.Flags().Var(&editReason, "reason", helpTextReason)
+	editCmd.Flags().StringVar(&editReview, "review", "", helpTextReview)
+	editCmd.Flags().StringVar(&editRemovalDate, "removal-date", "", helpTextRemoval)
 	editCmd.Flags().BoolVar(&editStopMonitor, "stop-monitor", false, "stop monitoring the set for changes")
 	editCmd.Flags().BoolVar(&editStopMonitorRemovals, "stop-monitor-removals", false,
 		"stop monitoring the set for locally removed files")
@@ -118,6 +132,79 @@ func init() {
 	if err := editCmd.MarkFlagRequired("name"); err != nil {
 		die(err)
 	}
+}
+
+func editSetMetaData(userSet *set.Set, metaData string, //nolint:gocyclo,funlen
+	reason transfer.Reason, reviewDate, removalDate string) error {
+	if reason == transfer.Unset && reviewDate == "" && removalDate == "" && metaData == "" {
+		return nil
+	}
+
+	existingMeta := userSet.Metadata
+
+	reason, err := givenOrExistingReason(reason, existingMeta)
+	if err != nil {
+		return err
+	}
+
+	reviewDate, err = givenOrExistingReviewDate(reviewDate, existingMeta)
+	if err != nil {
+		return err
+	}
+
+	removalDate, err = givenOrExistingRemovalDate(removalDate, existingMeta)
+	if err != nil {
+		return err
+	}
+
+	metaData = givenOrExistingMetaData(metaData, userSet)
+
+	meta, err := transfer.HandleMeta(metaData, reason, reviewDate, removalDate, existingMeta)
+	if err != nil {
+		return err
+	}
+
+	userSet.Metadata = meta.Metadata()
+
+	return nil
+}
+
+func givenOrExistingReason(reason transfer.Reason, existingMeta map[string]string) (transfer.Reason, error) {
+	if reason != transfer.Unset {
+		return reason, nil
+	}
+
+	err := reason.Set(existingMeta[transfer.MetaKeyReason])
+
+	return reason, err
+}
+
+func givenOrExistingReviewDate(reviewDate string, existingMeta map[string]string) (string, error) {
+	return givenOrExistingDate(reviewDate, existingMeta[transfer.MetaKeyReview])
+}
+
+func givenOrExistingRemovalDate(removalDate string, existingMeta map[string]string) (string, error) {
+	return givenOrExistingDate(removalDate, existingMeta[transfer.MetaKeyRemoval])
+}
+
+func givenOrExistingMetaData(metaData string, userSet *set.Set) string {
+	if metaData != "" {
+		return metaData
+	}
+
+	return userSet.UserMetadata()
+}
+
+func givenOrExistingDate(input, existing string) (string, error) {
+	if input != "" {
+		return input, nil
+	}
+
+	t := time.Time{}
+
+	err := t.UnmarshalText([]byte(existing))
+
+	return t.Format(time.DateOnly), err
 }
 
 func edit(client *server.Client, givenSet *set.Set, makeWritable bool) error {
