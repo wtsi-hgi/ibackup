@@ -72,6 +72,10 @@ const (
 	// Orphaned is an Entry status meaning the file was uploaded previously but
 	// the local file has been deleted, so can't be uploaded again.
 	Orphaned
+
+	// Registered is an Entry status meaning the file has been set in the
+	// database but with no information.
+	Registered
 )
 
 type EntryType int
@@ -100,6 +104,7 @@ func (e EntryStatus) String() string {
 		"replaced",
 		"skipped",
 		"orphaned",
+		"registered",
 	}[e]
 }
 
@@ -182,7 +187,12 @@ func (e *Entry) updateTypeDestAndInode(newEntry *Entry) bool {
 	e.Type = newEntry.Type
 	e.Dest = newEntry.Dest
 	e.Inode = newEntry.Inode
-	e.Status = newEntry.Status
+
+	if e.Status == Uploaded && newEntry.Status == Missing {
+		e.Status = Orphaned
+	} else {
+		e.Status = newEntry.Status
+	}
 
 	return true
 }
@@ -200,6 +210,7 @@ type entryCreator struct {
 	setBucket       *bolt.Bucket
 	set             *Set
 	transformerID   string
+	intialStatus    EntryStatus
 }
 
 // newEntryCreator returns an entryCreator that will create new entries in the
@@ -207,7 +218,7 @@ type entryCreator struct {
 // the supplied existing ones. The bucket is expected to be empty (so get
 // existing ones and then delete the bucket before calling this).
 func newEntryCreator(db *DB, tx *bolt.Tx, bucket *bolt.Bucket, existing map[string][]byte,
-	setID string) (*entryCreator, error) {
+	setID string, initialStatus EntryStatus) (*entryCreator, error) {
 	got, setIDb, setBucket, err := db.getSetByID(tx, setID)
 	if err != nil {
 		return nil, err
@@ -221,6 +232,7 @@ func newEntryCreator(db *DB, tx *bolt.Tx, bucket *bolt.Bucket, existing map[stri
 		setID:           setIDb,
 		setBucket:       setBucket,
 		set:             got,
+		intialStatus:    initialStatus,
 	}
 
 	err = c.setTransformer()
@@ -301,8 +313,9 @@ func (e *Entry) setTypeAndDetermineDest(eType EntryType) error {
 
 func (c *entryCreator) newEntryFromDirent(dirent *Dirent) (*Entry, error) {
 	entry := &Entry{
-		Path:  dirent.Path,
-		Inode: dirent.Inode,
+		Path:   dirent.Path,
+		Inode:  dirent.Inode,
+		Status: c.intialStatus,
 	}
 
 	if dirent.Inode == 0 {
@@ -335,7 +348,13 @@ func (c *entryCreator) existingOrNewEncodedEntry(dirent *Dirent) ([]byte, error)
 	e := c.existingEntries[dirent.Path]
 	if e != nil {
 		dbEntry := c.db.decodeEntry(e)
-		if !dbEntry.updateTypeDestAndInode(entry) {
+		isIdentical := dbEntry.updateTypeDestAndInode(entry)
+
+		if entry.Status == Missing || entry.Status == Orphaned {
+			c.set.entryStatusToSetCounts(dbEntry)
+		}
+
+		if !isIdentical {
 			return e, nil
 		}
 

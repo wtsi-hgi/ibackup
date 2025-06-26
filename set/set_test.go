@@ -1138,7 +1138,7 @@ func TestSetDB(t *testing.T) {
 							err = db.SetDirEntries(sets[0].ID(), nil)
 							So(err, ShouldBeNil)
 
-							err = db.setEntries(sets[0].ID(), []*Dirent{}, discoveredBucket)
+							err = db.setEntries(sets[0].ID(), []*Dirent{}, discoveredBucket, Pending)
 							So(err, ShouldBeNil)
 
 							slackWriter.Reset()

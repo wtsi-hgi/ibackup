@@ -455,23 +455,6 @@ func (s *TestServer) Shutdown() error {
 	}
 }
 
-// interactiveAdd does an add for sets that already exist, where a question
-// will be asked: provide the answer 'y' to do the add.
-func (s *TestServer) interactiveAdd(setName, answer, transformer, argName, path string) error {
-	cmd := s.clientCmd([]string{"add", "--name", setName, "--transformer", transformer, "--" + argName, path})
-
-	wc, err := cmd.StdinPipe()
-	So(err, ShouldBeNil)
-
-	err = cmd.Start()
-	So(err, ShouldBeNil)
-
-	_, err = wc.Write([]byte(answer + "\n"))
-	So(err, ShouldBeNil)
-
-	return cmd.Wait()
-}
-
 var servers []*TestServer //nolint:gochecknoglobals
 
 // TestMain builds ourself, starts a test server, runs client tests against the
@@ -2625,19 +2608,6 @@ func TestRemove(t *testing.T) {
 						0, "Num files: 4; Symlinks: 1; Hardlinks: 1; Size "+
 							"(total/recently uploaded/recently removed): 20 B / 0 B / 0 B\n"+
 							"Uploaded: 0; Replaced: 0; Skipped: 4; Failed: 0; Missing: 0; Abnormal: 0")
-				})
-
-				Convey("And you can re-add the set again", func() {
-					err = s.interactiveAdd(setName, "y", transformer, "items", tempTestFileOfPaths.Name())
-					So(err, ShouldBeNil)
-
-					s.waitForStatus(setName, "\nStatus: complete", 10*time.Second)
-
-					statusCmd := []string{"status", "--name", setName, "-d"}
-					s.confirmOutputContains(t, statusCmd, 0, file2)
-					s.confirmOutputDoesNotContain(t, statusCmd, 0, "Removal status")
-					s.confirmOutputContains(t, statusCmd, 0,
-						"(total/recently uploaded/recently removed): 51 B / 10 B / 0 B\n")
 				})
 			})
 

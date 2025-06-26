@@ -640,12 +640,12 @@ func (d *DB) SetFileEntries(setID string, paths []string) error {
 		}
 	}
 
-	return d.setEntries(setID, entries, fileBucket)
+	return d.setEntries(setID, entries, fileBucket, Registered)
 }
 
 // setEntries sets the paths for the given backup set in a sub bucket with the
 // given prefix. Only supply absolute paths.
-func (d *DB) setEntries(setID string, dirents []*Dirent, bucketName string) error {
+func (d *DB) setEntries(setID string, dirents []*Dirent, bucketName string, initialStatus EntryStatus) error {
 	return d.db.Update(func(tx *bolt.Tx) error {
 		b, existing, err := d.getExistingEntries(tx, bucketName, setID)
 		if err != nil {
@@ -657,7 +657,7 @@ func (d *DB) setEntries(setID string, dirents []*Dirent, bucketName string) erro
 			return strings.Compare(dirents[i].Path, dirents[j].Path) == -1
 		})
 
-		ec, err := newEntryCreator(d, tx, b, existing, setID)
+		ec, err := newEntryCreator(d, tx, b, existing, setID, initialStatus)
 		if err != nil {
 			return err
 		}
@@ -866,8 +866,27 @@ func (d *DB) removeEntryIfRedundant(remReq RemoveReq, curDir string) (string, er
 	return curDir, nil
 }
 
+// GetExistingDirs returns all existing dir paths.
+func (d *DB) GetExistingDirs(setID string) (map[string]struct{}, error) {
+	existing, err := d.GetDirEntries(setID)
+	if err != nil {
+		return nil, err
+	}
+
+	existingMap := make(map[string]struct{}, len(existing))
+
+	for _, entry := range existing {
+		if entry.Status != Registered {
+			existingMap[entry.Path] = struct{}{}
+		}
+	}
+
+	return existingMap, err
+}
+
 // getExistingEntries returns all existing entries in the given sub bucket of
-// the setsBucket.
+// the setsBucket. If an entry has recently been added (has the status
+// 'Registered'), it will not be returned.
 func (d *DB) getExistingEntries(tx *bolt.Tx, subBucketName string, setID string) (*bolt.Bucket,
 	map[string][]byte, error,
 ) {
@@ -881,7 +900,8 @@ func (d *DB) getExistingEntries(tx *bolt.Tx, subBucketName string, setID string)
 	err = sfsb.Bucket.ForEach(func(k, v []byte) error {
 		path := string(k)
 		entry := d.decodeEntry(v)
-		if entry.Status != Pending { // TODO check if this helps distinguish fresh files and old files (files that were in the db before vs files that were just add via putFiles)
+
+		if entry.Status != Registered {
 			existing[path] = bytes.Clone(v)
 		}
 
@@ -953,7 +973,7 @@ func newDirentFromPath(path string) *Dirent {
 // SetDirEntries sets the directory paths for the given backup set. Only supply
 // absolute paths to directories.
 func (d *DB) SetDirEntries(setID string, entries []*Dirent) error {
-	return d.setEntries(setID, entries, dirBucket)
+	return d.setEntries(setID, entries, dirBucket, Pending)
 }
 
 // getSetByID returns the Set with the given ID from the database, along with
@@ -1086,7 +1106,7 @@ func (d *DB) handleFilePoolResults(tx *bolt.Tx, sfsb *setFileSubBucket, setID st
 		return strings.Compare(dirents[i].Path, dirents[j].Path) == -1
 	})
 
-	ec, err := newEntryCreator(d, tx, sfsb.Bucket, existing, setID)
+	ec, err := newEntryCreator(d, tx, sfsb.Bucket, existing, setID, Pending)
 	if err != nil {
 		return err
 	}
@@ -1103,11 +1123,11 @@ func (d *DB) handleFilePoolResults(tx *bolt.Tx, sfsb *setFileSubBucket, setID st
 //
 // Returns the updated set and an error if the setID isn't in the database.
 func (d *DB) setDiscoveredEntries(setID string, fileDirents, dirDirents []*Dirent) (*Set, error) {
-	if err := d.setEntries(setID, fileDirents, discoveredBucket); err != nil {
+	if err := d.setEntries(setID, fileDirents, discoveredBucket, Pending); err != nil {
 		return nil, err
 	}
 
-	if err := d.setEntries(setID, dirDirents, discoveredFoldersBucket); err != nil {
+	if err := d.setEntries(setID, dirDirents, discoveredFoldersBucket, Pending); err != nil {
 		return nil, err
 	}
 
@@ -1244,8 +1264,7 @@ func (d *DB) updateFileEntry(tx *bolt.Tx, setID string, r *transfer.Request,
 		entry.Size = r.UploadedSize()
 	}
 
-	err = d.updateFailedLookup(tx, setID, r.Local, entry)
-	if err != nil {
+	if err = d.updateFailedLookup(tx, setID, r.Local, entry); err != nil {
 		return nil, err
 	}
 

@@ -562,26 +562,18 @@ func getSetTransformer(given *set.Set) transfer.PathTransformer {
 	return transformer
 }
 
-// getDirs gets the dir entries for a set and returns their paths. If the dir is
-// missing, the path is appended with some text mentioning that.
-func getDirs(client *server.Client, setID string) []string {
+// getDirs gets the dir entries for a set and returns their paths along with
+// their status.
+func getDirs(client *server.Client, setID string) map[string]set.EntryStatus {
 	got, err := client.GetDirs(setID)
 	if err != nil {
 		die(err)
 	}
 
-	paths := make([]string, len(got))
+	paths := make(map[string]set.EntryStatus, len(got))
 
-	for i, entry := range got {
-		paths[i] = entry.Path
-
-		if entry.Status == set.Missing {
-			paths[i] += " (missing)"
-		}
-
-		if entry.Status == set.Orphaned {
-			paths[i] += " (orphaned)"
-		}
+	for _, entry := range got {
+		paths[entry.Path] = entry.Status
 	}
 
 	return paths
@@ -589,7 +581,7 @@ func getDirs(client *server.Client, setID string) []string {
 
 // displayDirs prints out directories one per line with a header, if dirs is not
 // empty.
-func displayDirs(dirs []string, transformer transfer.PathTransformer) {
+func displayDirs(dirs map[string]set.EntryStatus, transformer transfer.PathTransformer) {
 	if len(dirs) == 0 {
 		return
 	}
@@ -598,9 +590,10 @@ func displayDirs(dirs []string, transformer transfer.PathTransformer) {
 
 	warnedAboutTransformer := false
 
-	for _, dir := range dirs {
-		pretendFile := filepath.Join(dir, "file.txt")
+	for dir, dirStatus := range dirs {
+		statusStr, remoteStatusStr := generateDirStatusStrings(dirStatus)
 
+		pretendFile := filepath.Join(dir, "file.txt")
 		transformedPath, err := transformer(pretendFile)
 		if err != nil {
 			if !warnedAboutTransformer {
@@ -609,13 +602,25 @@ func displayDirs(dirs []string, transformer transfer.PathTransformer) {
 				warnedAboutTransformer = true
 			}
 
-			cliPrintf("  %s\n", dir)
+			cliPrintf("  %s%s\n", dir, statusStr)
 
 			continue
 		}
 
-		cliPrintf("  %s => %s\n", dir, filepath.Dir(transformedPath))
+		cliPrintf("  %s%s => %s%s\n", dir, statusStr, filepath.Dir(transformedPath), remoteStatusStr)
 	}
+}
+
+func generateDirStatusStrings(dirStatus set.EntryStatus) (string, string) {
+	statusStr := ""
+	remoteStatusStr := ""
+
+	if dirStatus == set.Missing || dirStatus == set.Orphaned {
+		statusStr = " (missing)"
+		remoteStatusStr = fmt.Sprintf(" (%s)", dirStatus.String())
+	}
+
+	return statusStr, remoteStatusStr
 }
 
 // getExampleFile gets an example file entry for a set and returns its path.
