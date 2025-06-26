@@ -3071,7 +3071,8 @@ func TestEdit(t *testing.T) {
 		})
 
 		Convey("You can specify either --make-readonly or --disable-readonly", func() {
-			s.confirmOutputContains(t, []string{"edit", "--make-readonly", "--disable-readonly"}, 1, cmd.ErrInvalidEdit.Error())
+			s.confirmOutputContains(t, []string{"edit", "--make-readonly", "--disable-readonly"},
+				1, cmd.ErrInvalidEditRO.Error())
 		})
 
 		Convey("Given a transformer", func() {
@@ -3124,6 +3125,16 @@ func TestEdit(t *testing.T) {
 					So(exitCode, ShouldEqual, 0)
 
 					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Archive: false\n")
+
+					Convey("You can re-enable archive mode", func() {
+						exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--archive")
+						So(exitCode, ShouldEqual, 0)
+
+						s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Archive: true\n")
+
+						s.confirmOutputContains(t, []string{"edit", "--name", setName, "--archive", "--stop-archiving"}, 1,
+							cmd.ErrInvalidEditArchive.Error())
+					})
 				})
 			})
 
