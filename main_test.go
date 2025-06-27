@@ -794,7 +794,7 @@ Monitored: false; Archive: false
 Status: complete
 Discovery:
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
-Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Completed in: 0s
 Directories:
   `+localDir+" => "+remoteDir)
@@ -825,7 +825,7 @@ Monitored: false; Archive: false
 Status: complete
 Discovery:
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
-Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Completed in: 0s
 Directories:
   `+localDir+" => "+remoteDir)
@@ -854,7 +854,7 @@ Monitored: false; Archive: false
 Status: complete
 Discovery:
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
-Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Completed in: 0s
 Directories:
   `+localDir+" => "+remoteDir)
@@ -882,7 +882,7 @@ Monitored: false; Archive: false
 Status: complete
 Discovery:
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
-Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Completed in: 0s
 Directories:
   `+localDir+" => "+remoteDir)
@@ -909,7 +909,7 @@ Monitored: false; Archive: false
 Status: complete
 Discovery:
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
-Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Completed in: 0s
 Directories:
   `+localDir+" => "+remoteDir)
@@ -935,7 +935,7 @@ Monitored: false; Archive: false
 Status: complete
 Discovery:
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
-Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Completed in: 0s
 Directories:
   `+localDir+" => "+remoteDir+`
@@ -951,7 +951,7 @@ Monitored: false; Archive: false
 Status: complete
 Discovery:
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
-Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Completed in: 0s
 Directories:
   `+localDir+" => "+remoteDir+`
@@ -967,7 +967,7 @@ Monitored: false; Archive: false
 Status: complete
 Discovery:
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
-Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Completed in: 0s
 Directories:
   `+localDir+" => "+remoteDir)
@@ -987,7 +987,7 @@ Monitored: false; Archive: false
 Status: complete
 Discovery:
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
-Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Completed in: 0s
 Directories:
   `+localDir+" => "+remoteDir+`
@@ -1003,7 +1003,7 @@ Monitored: false; Archive: false
 Status: complete
 Discovery:
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
-Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Completed in: 0s
 Directories:
   `+localDir+" => "+remoteDir+`
@@ -1019,7 +1019,7 @@ Monitored: false; Archive: false
 Status: complete
 Discovery:
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
-Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Completed in: 0s
 Directories:
   `+localDir+" => "+remoteDir)
@@ -1055,7 +1055,7 @@ Monitored: false; Archive: false
 Status: complete
 Discovery:
 Num files: 2; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
-Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 2; Abnormal: 0
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 2; Orphaned: 0; Abnormal: 0
 Completed in: 0s
 Example File: `+dir+`/path/to/other/file => /remote/path/to/other/file`)
 			})
@@ -1077,7 +1077,7 @@ Monitored: false; Archive: false
 Status: complete
 Discovery:
 Num files: 2; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
-Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 2; Abnormal: 0
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 2; Orphaned: 0; Abnormal: 0
 Completed in: 0s
 Example File: `+dir+`/path/to/other/file => /remote/path/to/other/file
 
@@ -1103,7 +1103,7 @@ Monitored: false; Archive: false
 Status: complete
 Discovery:
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
-Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Completed in: 0s
 Directories:
 your transformer didn't work: not a valid humgen lustre path [` + localDir + `/file.txt]
@@ -1140,7 +1140,7 @@ Monitored: false; Archive: false
 Status: complete
 Discovery:
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
-Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Completed in: 0s
 Directories:
   `+localDir+toRemote+localDir)
@@ -1176,7 +1176,7 @@ Status: complete
 Warning: `+badPermDir+`/: permission denied
 Discovery:
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
-Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Completed in: 0s
 Directories:
   `+localDir+" => "+remote)
@@ -1207,7 +1207,7 @@ Monitored: false; Archive: false
 Status: pending upload
 Discovery:
 Num files: 1; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B (and counting) / 0 B / 0 B
-Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Example File: `+humgenFile+" => /humgen/teams/hgi/scratch125/mercury/ibackup/file_for_testsuite.do_not_delete")
 		})
 
@@ -1236,7 +1236,7 @@ Monitored: false; Archive: false
 Status: pending upload
 Discovery:
 Num files: 1; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B (and counting) / 0 B / 0 B
-Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Example File: `+humgenFile+" => /humgen/teams/hgi/scratch125_v2/mercury/ibackup/file_for_testsuite.do_not_delete")
 		})
 
@@ -1265,7 +1265,7 @@ Monitored: false; Archive: false
 Status: pending upload
 Discovery:
 Num files: 1; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B (and counting) / 0 B / 0 B
-Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Example File: `+gengenFile+" => /humgen/gengen/teams/hgi/scratch126/mercury/ibackup/file_for_testsuite.do_not_delete")
 		})
 
@@ -1294,7 +1294,7 @@ Monitored: false; Archive: false
 Status: pending upload
 Discovery:
 Num files: 1; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B (and counting) / 0 B / 0 B
-Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Example File: `+gFile+" => /humgen/gengen/teams/hgi/scratch126_v2/mercury/ibackup/file_for_testsuite.do_not_delete")
 		})
 
@@ -1334,7 +1334,7 @@ Monitored: false; Archive: false
 Status: pending upload
 Discovery:
 Num files: 4; Symlinks: 2; Hardlinks: 1; Size (total/recently uploaded/recently removed): 0 B (and counting) / 0 B / 0 B
-Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Directories:
   `+dir+toRemote)
 		})
@@ -1397,7 +1397,7 @@ Monitored: false; Archive: false
 Status: complete
 Discovery:
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
-Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Completed in: 0s
 Directories:
   `+local+" => "+remote)
@@ -1429,7 +1429,7 @@ Monitored: false; Archive: false
 Status: complete
 Discovery:
 Num files: 1; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
-Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 1
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 1
 Completed in: 0s
 Example File: `+dir+`/fifo => /remote/fifo
 
@@ -1457,7 +1457,7 @@ Monitored: false; Archive: false
 Status: complete
 Discovery:
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
-Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Completed in: 0s
 Directories:
   `+dir+toRemote)
@@ -1644,7 +1644,7 @@ Monitored: false; Archive: false
 Status: complete
 Discovery:
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
-Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0
+Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Completed in: 0s
 Directories:
   `+localDir+` => `+remoteDir)
@@ -1949,7 +1949,7 @@ Global put client status (/10): 6 iRODS connections`)
 				s.waitForStatus(setName, "\nStatus: complete", 60*time.Second)
 
 				s.confirmOutputContains(t, statusCmd, 0,
-					"Uploaded: 3; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0")
+					"Uploaded: 3; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0")
 				s.confirmOutputContains(t, statusCmd, 0,
 					"Num files: 3; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 30 B / 30 B / 0 B")
 
@@ -1961,7 +1961,7 @@ Global put client status (/10): 6 iRODS connections`)
 				s.addSetForTesting(t, newName, transformer, path)
 				s.waitForStatus(newName, "\nStatus: complete", 60*time.Second)
 				s.confirmOutputContains(t, statusCmd, 0,
-					"Uploaded: 0; Replaced: 0; Skipped: 3; Failed: 0; Missing: 0; Abnormal: 0")
+					"Uploaded: 0; Replaced: 0; Skipped: 3; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0")
 				s.confirmOutputContains(t, statusCmd, 0,
 					"Num files: 3; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 30 B / 0 B / 0 B")
 
@@ -1973,7 +1973,7 @@ Global put client status (/10): 6 iRODS connections`)
 				s.addSetForTesting(t, newName, transformer, path)
 				s.waitForStatus(newName, "\nStatus: complete", 60*time.Second)
 				s.confirmOutputContains(t, statusCmd, 0,
-					"Uploaded: 0; Replaced: 1; Skipped: 2; Failed: 0; Missing: 0; Abnormal: 0")
+					"Uploaded: 0; Replaced: 1; Skipped: 2; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0")
 				s.confirmOutputContains(t, statusCmd, 0,
 					"Num files: 3; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 38 B / 18 B / 0 B")
 
@@ -1983,7 +1983,7 @@ Global put client status (/10): 6 iRODS connections`)
 
 				s.waitForStatus(newName, "\nStatus: complete", 60*time.Second)
 				s.confirmOutputContains(t, statusCmd, 0,
-					"Uploaded: 0; Replaced: 1; Skipped: 2; Failed: 0; Missing: 0; Abnormal: 0")
+					"Uploaded: 0; Replaced: 1; Skipped: 2; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0")
 				s.confirmOutputContains(t, statusCmd, 0,
 					"Num files: 3; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 29 B / 9 B / 0 B")
 			})
@@ -2024,7 +2024,8 @@ Global put client status (/10): 6 iRODS connections`)
 				So(exitCode, ShouldEqual, 0)
 
 				So(output, ShouldContainSubstring, "Hardlinks: 1;")
-				So(output, ShouldContainSubstring, "Missing: 2;")
+				So(output, ShouldContainSubstring, "Missing: 0;")
+				So(output, ShouldContainSubstring, "Orphaned: 2;")
 				So(output, ShouldContainSubstring, "(total/recently uploaded/recently removed): 30 B / 0 B / 0 B")
 
 				So(output, ShouldContainSubstring, file1+"\torphaned\t10 B\t")
@@ -2032,13 +2033,13 @@ Global put client status (/10): 6 iRODS connections`)
 				So(output, ShouldContainSubstring, file4+"\torphaned\t0 B\t")
 			})
 
-			SkipConvey("Retrying a set with locally removed dirs will show orphaned status", func() {
+			Convey("Retrying a set with locally removed dirs will show orphaned status", func() {
 				setName := "setWithOrphanedDirs"
 				s.addSetForTesting(t, setName, transformer, path)
 
 				s.waitForStatus(setName, "\nStatus: complete", 10*time.Second)
 
-				statusCmd := []string{"status", "--name", setName}
+				statusCmd := []string{"status", "--name", setName, "-d"}
 
 				exitCode, output := s.runBinary(t, statusCmd...)
 				So(exitCode, ShouldEqual, 0)
@@ -2055,6 +2056,11 @@ Global put client status (/10): 6 iRODS connections`)
 				exitCode, output = s.runBinary(t, statusCmd...)
 				So(exitCode, ShouldEqual, 0)
 				So(output, ShouldContainSubstring, path+" (missing)"+" => "+remotePath+" (orphaned)")
+
+				exitCode, output = s.runBinary(t, statusCmd...)
+				So(exitCode, ShouldEqual, 0)
+				So(output, ShouldContainSubstring, "Orphaned: 3;")
+				So(output, ShouldContainSubstring, file1+"\torphaned\t10 B\t")
 			})
 		})
 
@@ -2571,7 +2577,7 @@ func TestRemove(t *testing.T) {
 					s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
 						0, "Num files: 6; Symlinks: 1; Hardlinks: 1; Size "+
 							"(total/recently uploaded/recently removed): 41 B / 51 B / 10 B\n"+
-							"Uploaded: 6; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0")
+							"Uploaded: 6; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0")
 
 					exitCode, _ = s.runBinary(t, "remove", "--name", setName, "--path", dir1)
 
@@ -2585,7 +2591,7 @@ func TestRemove(t *testing.T) {
 					s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
 						0, "Num files: 5; Symlinks: 1; Hardlinks: 1; Size "+
 							"(total/recently uploaded/recently removed): 31 B / 51 B / 10 B\n"+
-							"Uploaded: 5; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Abnormal: 0")
+							"Uploaded: 5; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0")
 
 					So(os.Remove(file5), ShouldBeNil)
 
@@ -2597,7 +2603,7 @@ func TestRemove(t *testing.T) {
 					s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
 						0, "Num files: 4; Symlinks: 1; Hardlinks: 1; Size "+
 							"(total/recently uploaded/recently removed): 20 B / 0 B / 11 B\n"+
-							"Uploaded: 0; Replaced: 0; Skipped: 4; Failed: 0; Missing: 0; Abnormal: 0")
+							"Uploaded: 0; Replaced: 0; Skipped: 4; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0")
 
 					exitCode, _ = s.runBinary(t, "retry", "--name", setName, "-a")
 
@@ -2607,7 +2613,7 @@ func TestRemove(t *testing.T) {
 					s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
 						0, "Num files: 4; Symlinks: 1; Hardlinks: 1; Size "+
 							"(total/recently uploaded/recently removed): 20 B / 0 B / 0 B\n"+
-							"Uploaded: 0; Replaced: 0; Skipped: 4; Failed: 0; Missing: 0; Abnormal: 0")
+							"Uploaded: 0; Replaced: 0; Skipped: 4; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0")
 				})
 			})
 

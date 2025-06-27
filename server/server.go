@@ -244,7 +244,9 @@ func (s *Server) handleRemoveRequests(sid string) {
 			break
 		}
 
-		removedFromDiscoverBuckets := s.discoveryCoordinator.WaitForDiscovery(sid)
+		_ = s.discoveryCoordinator.WaitForDiscovery(sid)
+
+		removedFromDiscoverBuckets := false
 
 		err = s.removeRequestFromIRODSandDB(&removeReq, removedFromDiscoverBuckets)
 		if beenReleased := s.handleErrorOrReleaseItem(item, removeReq, err); beenReleased {

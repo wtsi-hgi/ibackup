@@ -647,7 +647,7 @@ func TestServer(t *testing.T) {
 							})
 
 							Convey("And if you remove one folder", func() {
-								err = os.RemoveAll(dir2local)
+								err = os.RemoveAll(dir1local)
 								So(err, ShouldBeNil)
 
 								dirs, errg := s.db.GetAllDirEntries(exampleSet.ID())
@@ -665,6 +665,7 @@ func TestServer(t *testing.T) {
 									dirs, err = s.db.GetAllDirEntries(exampleSet.ID())
 									So(err, ShouldBeNil)
 									So(dirs, ShouldHaveLength, 2)
+									So(dirs[0].Status, ShouldEqual, set.Orphaned)
 								})
 							})
 						})

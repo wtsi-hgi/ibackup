@@ -163,8 +163,8 @@ type Set struct {
 	Failed uint64
 
 	// Missing provides the total number of set and discovered files in this set
-	// that no longer exist locally since the last discovery. This is a
-	// read-only value.
+	// that no longer exist locall and remotely since the last discovery. This
+	// is a read-only value.
 	Missing uint64
 
 	// Abnormal provides the total number of set files in this set that were
@@ -228,6 +228,11 @@ type Set struct {
 
 	// Hide allows user to hide the set when viewing the status.
 	Hide bool
+
+	// Orphaned provides the total number of set and discovered files in this
+	// set that no longer exist locally since the last discovery but do exist
+	// remotely. This is a read-only value.
+	Orphaned uint64
 }
 
 // ID returns an ID for this set, generated deterministiclly from its Name and
@@ -397,6 +402,10 @@ func (s *Set) countsValid() bool {
 		return false
 	}
 
+	if s.Orphaned > s.NumFiles {
+		return false
+	}
+
 	if s.Abnormal > s.NumFiles {
 		return false
 	}
@@ -409,7 +418,7 @@ func (s *Set) countsValid() bool {
 		return false
 	}
 
-	return s.Uploaded+s.Replaced+s.Skipped+s.Failed+s.Missing+s.Abnormal <= s.NumFiles
+	return s.Uploaded+s.Replaced+s.Skipped+s.Failed+s.Missing+s.Orphaned+s.Abnormal <= s.NumFiles
 }
 
 func (s *Set) adjustBasedOnEntry(entry *Entry) {
@@ -468,14 +477,16 @@ func (s *Set) entryStatusToSetCounts(entry *Entry) { //nolint:gocyclo
 			s.Status = Failing
 			s.sendSlackMessage(slack.Error, "has failed uploads")
 		}
-	case Missing, Orphaned:
+	case Missing:
 		s.Missing++
+	case Orphaned:
+		s.Orphaned++
 	case AbnormalEntry:
 		s.Abnormal++
 	}
 }
 
-func (s *Set) removedEntryStatusToSetCounts(entry *Entry) {
+func (s *Set) removedEntryStatusToSetCounts(entry *Entry) { //nolint:gocyclo
 	switch entry.Status { //nolint:exhaustive
 	case Uploaded:
 		s.Uploaded--
@@ -485,8 +496,10 @@ func (s *Set) removedEntryStatusToSetCounts(entry *Entry) {
 		s.Skipped--
 	case Failed:
 		s.Failed--
-	case Missing, Orphaned:
+	case Missing:
 		s.Missing--
+	case Orphaned:
+		s.Orphaned--
 	case AbnormalEntry:
 		s.Abnormal--
 	}
@@ -540,7 +553,7 @@ func (s *Set) DiscoveryCompleted(numFiles uint64) {
 	s.LastDiscovery = time.Now()
 	s.NumFiles = numFiles
 
-	if s.NumFiles == 0 || (s.Missing+s.Abnormal == s.NumFiles) {
+	if s.NumFiles == 0 || (s.Missing+s.Orphaned+s.Abnormal == s.NumFiles) {
 		s.Status = Complete
 		s.LastCompleted = time.Now()
 
@@ -583,7 +596,7 @@ func (s *Set) checkIfUploading() {
 }
 
 func (s *Set) checkIfComplete() {
-	if !(s.Uploaded+s.Replaced+s.Skipped+s.Failed+s.Missing+s.Abnormal == s.NumFiles) {
+	if !(s.Uploaded+s.Replaced+s.Skipped+s.Failed+s.Missing+s.Orphaned+s.Abnormal == s.NumFiles) {
 		return
 	}
 
@@ -593,8 +606,8 @@ func (s *Set) checkIfComplete() {
 	s.LastCompletedSize = s.SizeTotal
 
 	s.sendSlackMessage(slack.Success, fmt.Sprintf("completed backup "+
-		"(%d newly uploaded; %d replaced; %d skipped; %d failed; %d missing; %d abnormal; %s data uploaded)",
-		s.Uploaded, s.Replaced, s.Skipped, s.Failed, s.Missing, s.Abnormal, s.UploadedSize()))
+		"(%d newly uploaded; %d replaced; %d skipped; %d failed; %d missing; %d orphaned; %d abnormal; %s data uploaded)",
+		s.Uploaded, s.Replaced, s.Skipped, s.Failed, s.Missing, s.Orphaned, s.Abnormal, s.UploadedSize()))
 }
 
 // fixCounts resets the set counts to 0 and goes through all the entries for
@@ -627,6 +640,7 @@ func (s *Set) resetStatusCounts() {
 	s.Skipped = 0
 	s.Failed = 0
 	s.Missing = 0
+	s.Orphaned = 0
 	s.Abnormal = 0
 }
 

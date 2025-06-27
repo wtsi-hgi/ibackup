@@ -912,10 +912,10 @@ func TestSetDB(t *testing.T) {
 						So(sets[0].Failed, ShouldEqual, 1)
 						So(sets[0].Missing, ShouldEqual, 1)
 						So(slackWriter.String(), ShouldEqual,
-							fmt.Sprintf("%s`jim.set1` completed backup "+
-								"(%d newly uploaded; %d replaced; %d skipped; %d failed; %d missing; %d abnormal; %s data uploaded)",
+							fmt.Sprintf("%s`jim.set1` completed backup (%d newly uploaded; %d replaced; "+
+								"%d skipped; %d failed; %d missing; %d orphaned; %d abnormal; %s data uploaded)",
 								slack.BoxPrefixSuccess, sets[0].Uploaded, sets[0].Replaced, sets[0].Skipped, sets[0].Failed,
-								sets[0].Missing, sets[0].Abnormal, sets[0].UploadedSize()))
+								sets[0].Missing, sets[0].Orphaned, sets[0].Abnormal, sets[0].UploadedSize()))
 						lastCompleted := sets[0].LastCompleted
 						So(lastCompleted.IsZero(), ShouldBeFalse)
 						So(sets[0].LastCompletedSize, ShouldEqual, 15)
@@ -1106,6 +1106,7 @@ func TestSetDB(t *testing.T) {
 
 						Convey("Set status becomes complete on new discovery with all missing files", func() {
 							clearFileBucket(t, db, sets[0].ID())
+							clearDiscoveredFilesBucket(t, db, sets[0].ID())
 
 							slackWriter.Reset()
 
