@@ -678,7 +678,6 @@ func (s *Set) copyUserProperties(copySet *Set) {
 	s.SizeRemoved = copySet.SizeRemoved
 	s.ReadOnly = copySet.ReadOnly
 	s.Hide = copySet.Hide
-
 }
 
 // reset puts the Set data back to zero/initial/empty values.
