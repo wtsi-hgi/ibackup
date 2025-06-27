@@ -60,6 +60,7 @@ var statusIncomplete bool
 var statusComplete bool
 var statusFailed bool
 var statusQueued bool
+var statusShowHidden bool
 
 // statusCmd represents the status command.
 var statusCmd = &cobra.Command{
@@ -146,7 +147,7 @@ own. You can specify the user as "all" to see all user's sets.
 			die(err)
 		}
 
-		status(client, sf, statusUser, statusOrder, statusName, statusDetails, statusRemotePaths)
+		status(client, sf, statusUser, statusOrder, statusName, statusDetails, statusRemotePaths, statusShowHidden)
 	},
 }
 
@@ -172,6 +173,8 @@ func init() {
 		"only show sets with failed uploads")
 	statusCmd.Flags().BoolVarP(&statusQueued, "queued", "q", false,
 		"only show queued sets (added but hasn't started to upload yet)")
+	statusCmd.Flags().BoolVar(&statusShowHidden, "show-hidden", false,
+		"show hidden sets")
 }
 
 type statusFilterer func(*set.Set) bool
@@ -216,7 +219,7 @@ func checkOnlyOneStatusFlagSet(incomplete, complete, failed, queued bool) {
 }
 
 // status does the main job of getting backup set status from the server.
-func status(client *server.Client, sf statusFilterer, user, order, name string, details, remote bool) {
+func status(client *server.Client, sf statusFilterer, user, order, name string, details, remote, showHidden bool) {
 	qs, err := client.GetQueueStatus()
 	if err != nil {
 		dief("unable to get server queue status: %s", err)
@@ -229,7 +232,7 @@ func status(client *server.Client, sf statusFilterer, user, order, name string, 
 	if name != "" {
 		sets = getSetByName(client, user, name)
 	} else {
-		sets = getSets(client, sf, user)
+		sets = getSets(client, sf, user, showHidden)
 	}
 
 	if len(sets) == 0 {
@@ -270,10 +273,14 @@ func getSetByName(client *server.Client, user, name string) []*set.Set {
 }
 
 // getSets gets all or filtered sets belonging to the given user. Dies on error.
-func getSets(client *server.Client, sf statusFilterer, user string) []*set.Set {
+func getSets(client *server.Client, sf statusFilterer, user string, showHidden bool) []*set.Set {
 	sets, err := client.GetSets(user)
 	if err != nil {
 		die(err)
+	}
+
+	if !showHidden {
+		sets = filterHidden(sets)
 	}
 
 	if sf != nil {
@@ -303,6 +310,20 @@ func filter(sf statusFilterer, sets []*set.Set) []*set.Set {
 	return filtered
 }
 
+func filterHidden(sets []*set.Set) []*set.Set {
+	filtered := make([]*set.Set, 0, len(sets))
+
+	for _, s := range sets {
+		if s.Hide {
+			continue
+		}
+
+		filtered = append(filtered, s)
+	}
+
+	return filtered
+}
+
 // displaySets prints info about the given sets to STDOUT. Failed entry details
 // will also be printed, and optionally non-failed.
 func displaySets(client *server.Client, sets []*set.Set,
@@ -313,6 +334,7 @@ func displaySets(client *server.Client, sets []*set.Set,
 
 	for i, forDisplay := range sets {
 		cliPrint("\n")
+
 		displaySet(forDisplay, showRequesters)
 
 		transformer := getSetTransformer(forDisplay)

@@ -3055,7 +3055,7 @@ func getMetaValue(meta, key string) string {
 }
 
 func TestEdit(t *testing.T) {
-	Convey("With a started server", t, func() {
+	FocusConvey("With a started server", t, func() {
 		t.Setenv("IBACKUP_TEST_LDAP_SERVER", "")
 		t.Setenv("IBACKUP_TEST_LDAP_LOOKUP", "")
 
@@ -3075,7 +3075,7 @@ func TestEdit(t *testing.T) {
 				1, cmd.ErrInvalidEditRO.Error())
 		})
 
-		Convey("Given a transformer", func() {
+		FocusConvey("Given a transformer", func() {
 			remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
 			if remotePath == "" {
 				SkipConvey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
@@ -3161,6 +3161,31 @@ func TestEdit(t *testing.T) {
 					Convey("And admin can make it writable", func() {
 						exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--disable-readonly")
 						So(exitCode, ShouldEqual, 0)
+					})
+				})
+			})
+
+			FocusConvey("And a set", func() {
+				setName := "hideSet"
+				s.addSetForTesting(t, setName, transformer, path)
+
+				FocusConvey("You can make it hidden", func() {
+					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--hide")
+					So(exitCode, ShouldEqual, 0)
+
+					exitCode, statusOutput := s.runBinary(t, "status")
+					So(exitCode, ShouldEqual, 0)
+
+					So(statusOutput, ShouldNotContainSubstring, setName)
+					So(statusOutput, ShouldContainSubstring, "no backup sets")
+
+					FocusConvey("And you can make it visible again", func() {
+						s.confirmOutputContains(t, []string{"status", "--show-hidden"}, 0, setName)
+
+						exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--unhide")
+						So(exitCode, ShouldEqual, 0)
+
+						s.confirmOutputContains(t, []string{"status"}, 0, setName)
 					})
 				})
 			})

@@ -223,8 +223,11 @@ type Set struct {
 
 	slacker Slacker
 
-	// ReadOnly flag prevents user of changing the set, blocks monitor and discovery
+	// ReadOnly prevents user changing the set and blocks monitor and discovery.
 	ReadOnly bool
+
+	// Hide allows user to hide the set when viewing the status.
+	Hide bool
 }
 
 // ID returns an ID for this set, generated deterministiclly from its Name and
@@ -674,6 +677,8 @@ func (s *Set) copyUserProperties(copySet *Set) {
 	s.NumObjectsToBeRemoved = copySet.NumObjectsToBeRemoved
 	s.SizeRemoved = copySet.SizeRemoved
 	s.ReadOnly = copySet.ReadOnly
+	s.Hide = copySet.Hide
+
 }
 
 // reset puts the Set data back to zero/initial/empty values.
