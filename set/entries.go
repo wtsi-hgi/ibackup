@@ -350,7 +350,7 @@ func (c *entryCreator) existingOrNewEncodedEntry(dirent *Dirent) ([]byte, error)
 		dbEntry := c.db.decodeEntry(e)
 		isIdentical := dbEntry.updateTypeDestAndInode(entry)
 
-		if entry.Status == Missing || entry.Status == Orphaned {
+		if entry.Status == Missing || entry.Status == Orphaned || entry.Status == AbnormalEntry {
 			c.set.entryStatusToSetCounts(dbEntry)
 		}
 

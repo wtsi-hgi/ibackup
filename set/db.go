@@ -973,7 +973,7 @@ func newDirentFromPath(path string) *Dirent {
 // SetDirEntries sets the directory paths for the given backup set. Only supply
 // absolute paths to directories.
 func (d *DB) SetDirEntries(setID string, entries []*Dirent) error {
-	return d.setEntries(setID, entries, dirBucket, Pending)
+	return d.setEntries(setID, entries, dirBucket, Registered)
 }
 
 // getSetByID returns the Set with the given ID from the database, along with
@@ -1321,7 +1321,7 @@ func (d *DBRO) getEntryFromSubbucket(kind, setID, path string, setsBucket *bolt.
 
 // requestStatusToEntryStatus converts Request.Status and stores it as a Status
 // on the entry. Also sets entry.Attempts, unFailed and newFail as appropriate.
-func requestStatusToEntryStatus(r *transfer.Request, entry *Entry) { //nolint:gocyclo,funlen
+func requestStatusToEntryStatus(r *transfer.Request, entry *Entry) { //nolint:gocyclo,funlen,cyclop
 	entry.newFail = false
 	entry.unFailed = false
 
@@ -1357,6 +1357,8 @@ func requestStatusToEntryStatus(r *transfer.Request, entry *Entry) { //nolint:go
 	case transfer.RequestStatusOrphaned:
 		entry.Status = Orphaned
 		entry.unFailed = entry.Attempts > 1
+	case transfer.RequestStatusPending:
+		entry.Status = Pending
 	}
 }
 

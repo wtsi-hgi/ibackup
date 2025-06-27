@@ -499,15 +499,7 @@ func isDirentRemovedFromSet(dirent *set.Dirent, excludeTree ptrie.Trie[bool]) bo
 // orphaned.
 func (s *Server) handleMissingDirectories(dirStatErr error, entry *set.Entry,
 	given *set.Set, existing map[string]struct{}) error {
-	if dirStatErr == nil {
-		return nil
-	}
-
-	status := transfer.RequestStatusMissing
-
-	if _, ok := existing[entry.Path]; ok {
-		status = transfer.RequestStatusOrphaned
-	}
+	status, errStr := determineDirStatus(dirStatErr, entry, existing)
 
 	r := &transfer.Request{
 		Local:     entry.Path,
@@ -515,7 +507,7 @@ func (s *Server) handleMissingDirectories(dirStatErr error, entry *set.Entry,
 		Set:       given.Name,
 		Size:      0,
 		Status:    status,
-		Error:     dirStatErr.Error(),
+		Error:     errStr,
 	}
 
 	_, err := s.db.SetEntryStatus(r)
@@ -528,6 +520,21 @@ func (s *Server) handleMissingDirectories(dirStatErr error, entry *set.Entry,
 	}
 
 	return dirStatErr
+}
+
+func determineDirStatus(dirStatErr error, entry *set.Entry,
+	existing map[string]struct{}) (transfer.RequestStatus, string) {
+	if dirStatErr == nil {
+		return transfer.RequestStatusPending, ""
+	}
+
+	status := transfer.RequestStatusMissing
+
+	if _, ok := existing[entry.Path]; ok {
+		status = transfer.RequestStatusOrphaned
+	}
+
+	return status, dirStatErr.Error()
 }
 
 // enqueueSetFiles gets all the set's file entries (set and discovered), creates
