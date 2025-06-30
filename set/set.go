@@ -689,7 +689,6 @@ func (s *Set) reset() {
 	s.Status = PendingDiscovery
 	s.Error = ""
 	s.Warning = ""
-	s.Hide = false
 	s.resetCounts()
 }
 
