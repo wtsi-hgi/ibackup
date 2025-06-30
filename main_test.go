@@ -3203,6 +3203,11 @@ func TestEdit(t *testing.T) {
 					So(exitCode, ShouldEqual, 0)
 					So(statusOutput, ShouldContainSubstring, setName)
 				})
+
+				Convey("You cannot both --hide and --unhide a set", func() {
+					s.confirmOutputContains(t, []string{"edit", "--name", setName, "--hide", "--unhide"}, 1,
+						cmd.ErrInvalidEditHide.Error())
+				})
 			})
 
 			Convey("And a read-only set made by a different user", func() {
