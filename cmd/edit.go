@@ -51,9 +51,12 @@ var (
 	editArchive             bool
 	editMakeReadOnly        bool
 	editMakeWritable        bool
+	editHide                bool
+	editUnHide              bool
 
 	ErrInvalidEditRO      = errors.New("you can either make a set read-only or writable, not both")
 	ErrInvalidEditArchive = errors.New("you can either archive a set or stop archiving, not both")
+	ErrInvalidEditHide    = errors.New("you can either hide or unhide a set, not both")
 )
 
 // editCmd represents the edit command.
@@ -70,6 +73,10 @@ Edit an existing backup set.`,
 
 		if editArchive && editStopArchive {
 			return ErrInvalidEditArchive
+		}
+
+		if editHide && editUnHide {
+			return ErrInvalidEditHide
 		}
 
 		return nil
@@ -114,6 +121,12 @@ Edit an existing backup set.`,
 			userSet.ReadOnly = true
 		}
 
+		if editHide {
+			userSet.Hide = true
+		} else if editUnHide {
+			userSet.Hide = false
+		}
+
 		return edit(client, userSet, editMakeWritable)
 	},
 }
@@ -137,7 +150,10 @@ func init() {
 		"make the set read-only (backup set will be preserved at the current state)")
 	editCmd.Flags().BoolVar(&editMakeWritable, "disable-readonly", false,
 		"disable read-only mode (only admins can do this)")
-
+	editCmd.Flags().BoolVar(&editHide, "hide", false,
+		"hide set when viewing status")
+	editCmd.Flags().BoolVar(&editUnHide, "unhide", false,
+		"unhide set when viewing status")
 	if err := editCmd.MarkFlagRequired("name"); err != nil {
 		die(err)
 	}

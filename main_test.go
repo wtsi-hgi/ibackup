@@ -3165,6 +3165,51 @@ func TestEdit(t *testing.T) {
 				})
 			})
 
+			Convey("And with multiple sets", func() {
+				setName := "hideSet"
+				visibleSet1 := "visibleSet1"
+				visibleSet2 := "visibleSet2"
+
+				s.addSetForTesting(t, setName, transformer, path)
+				s.addSetForTesting(t, visibleSet1, transformer, path)
+				s.addSetForTesting(t, visibleSet2, transformer, path)
+
+				exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--hide")
+				So(exitCode, ShouldEqual, 0)
+
+				Convey("`status` shows only visible sets", func() {
+					exitCode, statusOutput := s.runBinary(t, "status")
+					So(exitCode, ShouldEqual, 0)
+
+					So(statusOutput, ShouldNotContainSubstring, setName)
+					So(statusOutput, ShouldContainSubstring, visibleSet1)
+					So(statusOutput, ShouldContainSubstring, visibleSet2)
+				})
+
+				Convey("`status --show-hidden` shows all sets", func() {
+					exitCode, statusOutput := s.runBinary(t, "status", "--show-hidden")
+					So(exitCode, ShouldEqual, 0)
+
+					So(statusOutput, ShouldContainSubstring, visibleSet1)
+					So(statusOutput, ShouldContainSubstring, visibleSet2)
+					So(statusOutput, ShouldContainSubstring, setName)
+				})
+
+				Convey("Unhiding brings it back to normal view", func() {
+					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--unhide")
+					So(exitCode, ShouldEqual, 0)
+
+					exitCode, statusOutput := s.runBinary(t, "status")
+					So(exitCode, ShouldEqual, 0)
+					So(statusOutput, ShouldContainSubstring, setName)
+				})
+
+				Convey("You cannot both --hide and --unhide a set", func() {
+					s.confirmOutputContains(t, []string{"edit", "--name", setName, "--hide", "--unhide"}, 1,
+						cmd.ErrInvalidEditHide.Error())
+				})
+			})
+
 			Convey("And a read-only set made by a different user", func() {
 				user := "root"
 				setName := "rootSet"
