@@ -275,10 +275,11 @@ func updateSet(client *server.Client, sid string, path string) error {
 	}
 
 	if info.IsDir() {
-		return nil
+		err = client.SetDirs(sid, []string{absPath})
+	} else {
+		err = client.SetFiles(sid, []string{absPath})
 	}
 
-	err = client.SetFiles(sid, []string{absPath})
 	if err != nil {
 		return err
 	}

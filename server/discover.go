@@ -230,17 +230,9 @@ func (s *Server) discoverThenEnqueue(given *set.Set, transformer transfer.PathTr
 }
 
 func (s *Server) doDiscovery(given *set.Set) (*set.Set, error) {
-	excludedPaths, err := s.db.GetExcludedPaths(given.ID())
+	excludeTree, err := s.buildExclusionTree(given.ID())
 	if err != nil {
 		return nil, err
-	}
-
-	excludeTree := ptrie.New[bool]()
-	for _, path := range excludedPaths {
-		err = excludeTree.Put([]byte(path), true)
-		if err != nil {
-			return nil, err
-		}
 	}
 
 	return s.db.Discover(given.ID(), s.walkDirEntries(given, excludeTree))
@@ -412,8 +404,19 @@ func (s *Server) doSetDirWalks(entries []*set.Entry, excludeTree ptrie.Trie[bool
 		dir := entry.Path
 		thisEntry := entry
 
+		// dirent := set.Dirent{
+		// 	Path: entry.Path,
+		// 	Mode: fs.ModeDir,
+		// }
+
+		excludeTreeToUse := excludeTree
+
+		// if isDirentRemovedFromSet(&dirent, excludeTree) {
+		// 	excludeTreeToUse = ptrie.New[bool]()
+		// }
+
 		s.dirPool.Submit(func() {
-			err := s.checkAndWalkDir(dir, filterEntries(entriesCh, excludeTree, dir), warnChan)
+			err := s.checkAndWalkDir(dir, filterEntries(entriesCh, excludeTreeToUse, dir), warnChan)
 			errCh <- s.handleMissingDirectories(err, thisEntry, given, existing)
 		})
 	}
@@ -463,7 +466,9 @@ func filterEntries(entriesCh chan *set.Dirent, excludeTree ptrie.Trie[bool],
 	return func(entry *walk.Dirent) error {
 		dirent := set.DirEntFromWalk(entry)
 
-		if isDirentRemovedFromSet(dirent, excludeTree) {
+		isRemoved, _ := isDirentRemovedFromSet(dirent, excludeTree)
+
+		if isRemoved {
 			return nil
 		}
 
@@ -479,19 +484,25 @@ func filterEntries(entriesCh chan *set.Dirent, excludeTree ptrie.Trie[bool],
 	}
 }
 
-func isDirentRemovedFromSet(dirent *set.Dirent, excludeTree ptrie.Trie[bool]) bool {
+// isDirentRemovedFromSet checks if the dirent has previously been removed from
+// the set by using the provided prefix tree. Also returns the matched prefix.
+func isDirentRemovedFromSet(dirent *set.Dirent, excludeTree ptrie.Trie[bool]) (bool, string) {
 	path := dirent.Path
 	if dirent.IsDir() && !strings.HasSuffix(path, "/") {
 		path += "/"
 	}
 
+	var finalMatch string
+
 	return excludeTree.MatchPrefix([]byte(path), func(match []byte, _ bool) bool {
+		finalMatch = string(match)
+
 		if bytes.HasSuffix(match, []byte{'/'}) {
 			return false
 		}
 
-		return string(match) != path
-	})
+		return finalMatch != path
+	}), finalMatch
 }
 
 // handleMissingDirectories checks if the given error is not nil, and if so

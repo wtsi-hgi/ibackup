@@ -285,10 +285,10 @@ func (d *DB) AddOrUpdate(set *Set) error {
 
 			set = eset
 
-			err := d.deleteSubBucket(tx, set.ID(), removedBucket)
-			if err != nil {
-				return err
-			}
+			// err := d.deleteSubBucket(tx, set.ID(), removedBucket)
+			// if err != nil {
+			// 	return err
+			// }
 		}
 
 		errp := b.Put(bid, d.encodeToBytes(set))
@@ -877,6 +877,10 @@ func (d *DB) removeEntryIfRedundant(remReq RemoveReq, curDir string) (string, er
 	}
 
 	return curDir, nil
+}
+
+func (d *DB) RemoveFromRemoveBucket(path, sid string) error {
+	return d.deleteObjectFromSubBucket(path, sid, removedBucket)
 }
 
 // GetExistingDirs returns all existing dir paths.

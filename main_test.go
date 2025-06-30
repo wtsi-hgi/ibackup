@@ -3443,7 +3443,7 @@ func TestEdit(t *testing.T) {
 		})
 	})
 
-	Convey("With a started uploading server", t, func() {
+	FocusConvey("With a started uploading server", t, func() {
 		s, remotePath := NewUploadingTestServer(t)
 		So(s, ShouldNotBeNil)
 
@@ -3454,7 +3454,7 @@ func TestEdit(t *testing.T) {
 
 		timeout := 5 * time.Second
 
-		Convey("And some files", func() {
+		FocusConvey("And some files", func() {
 			setDir1 := filepath.Join(path, "dir1")
 			err := os.Mkdir(setDir1, userPerms)
 			So(err, ShouldBeNil)
@@ -3479,6 +3479,76 @@ func TestEdit(t *testing.T) {
 					exitCode, output := s.runBinaryWithNoLogging(t, "edit", "--name", setName, "--transformer", "humgen")
 					So(exitCode, ShouldEqual, 1)
 					So(output, ShouldContainSubstring, set.ErrTransformerAlreadyUsed)
+				})
+
+				Convey("You cannot add a non-existing file to a set", func() {
+					exitCode, output := s.runBinaryWithNoLogging(t, "edit", "--name", setName, "--add", "badFile")
+					So(exitCode, ShouldEqual, 1)
+					So(output, ShouldContainSubstring, "badFile: no such file or directory")
+				})
+
+				Convey("You can add a file that is already in the set", func() {
+					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--add", setFile1)
+					So(exitCode, ShouldEqual, 0)
+
+					s.waitForStatus(setName, "Status: complete", timeout)
+
+					exitCode, output := s.runBinaryWithNoLogging(t, "status", "--name", setName, "-d")
+					So(exitCode, ShouldEqual, 0)
+
+					So(output, ShouldContainSubstring, "Num files: 1")
+					So(output, ShouldContainSubstring, setFile1+"\tskipped")
+				})
+
+				Convey("You can add a file back to the set after removing it", func() {
+					exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", setFile1)
+					So(exitCode, ShouldEqual, 0)
+
+					s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 5*time.Second)
+
+					exitCode, _ = s.runBinary(t, "edit", "--name", setName, "--add", setFile1)
+					So(exitCode, ShouldEqual, 0)
+
+					s.waitForStatus(setName, "Status: complete", timeout)
+
+					exitCode, output := s.runBinaryWithNoLogging(t, "status", "--name", setName, "-d")
+					So(exitCode, ShouldEqual, 0)
+
+					So(output, ShouldContainSubstring, "Num files: 1")
+					So(output, ShouldContainSubstring, setFile1+"\tuploaded")
+
+					// -/a/b/
+
+					// +/a/b/c/d/file2
+
+					// a/b
+					// a/b/c
+					// a/b/c/d
+
+					// -/a/b/c/d/e/x/
+
+					// +/a/b/c/d/e/x/
+					// /a/b/c/d/e/f/
+					// +/a/b/c/d/e/z/
+
+					// ./results/
+					// ./output/study1/data/
+					// ./output/study2/data/
+					// ./output/study3/data/
+
+					// - ./output/
+
+					// + ./
+					// + ./output/study2/
+
+					// - ./output/study1, ./output/study3
+
+					// ./
+					// ./results
+					// ./output/
+					// ./output/study1
+					// ./output/study1/data
+					// ./output/study2
 				})
 
 				Convey("You can add another file to this set", func() {
@@ -3515,13 +3585,106 @@ func TestEdit(t *testing.T) {
 					So(output, ShouldContainSubstring, setFile1+"\torphaned\t1 B")
 					So(output, ShouldContainSubstring, setFile2+"\tuploaded")
 				})
+
+				Convey("You can add a folder to this set", func() {
+					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--add", setDir2)
+					So(exitCode, ShouldEqual, 0)
+
+					s.waitForStatus(setName, "Status: complete", timeout)
+
+					exitCode, output := s.runBinaryWithNoLogging(t, "status", "--name", setName, "-d")
+					So(exitCode, ShouldEqual, 0)
+
+					So(output, ShouldContainSubstring, "Num files: 2")
+					So(output, ShouldContainSubstring, setFile1)
+					So(output, ShouldContainSubstring, setFile2+"\tuploaded")
+					So(output, ShouldContainSubstring, setDir2+" =>")
+				})
+
+				Convey("If you remove a file from a set, it won't be added when you add it's parent folder to a set", func() {
+					exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", setFile1)
+					So(exitCode, ShouldEqual, 0)
+
+					s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 5*time.Second)
+
+					exitCode, _ = s.runBinary(t, "edit", "--name", setName, "--add", setDir1)
+					So(exitCode, ShouldEqual, 0)
+
+					s.waitForStatus(setName, "Status: complete", timeout)
+
+					exitCode, output := s.runBinaryWithNoLogging(t, "status", "--name", setName, "-d")
+					So(exitCode, ShouldEqual, 0)
+
+					So(output, ShouldNotContainSubstring, setFile1)
+				})
 			})
 
-			Convey("And a set with discovered file", func() {
+			FocusConvey("And a set with discovered file", func() {
 				setName := "TestDiscoveredFiles"
 
 				s.addSetForTesting(t, setName, transformer, setDir1)
 				s.waitForStatus(setName, "Status: complete", timeout)
+
+				// another test when you remove a file and want to add its parent folder
+				Convey("You can add a file back to the set after removing its parent folder", func() {
+					exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", setDir1)
+					So(exitCode, ShouldEqual, 0)
+
+					s.waitForStatus(setName, "Removal status: 2 / 2 objects removed", 5*time.Second)
+
+					exitCode, _ = s.runBinary(t, "edit", "--name", setName, "--add", setDir1)
+					So(exitCode, ShouldEqual, 0)
+
+					s.waitForStatus(setName, "Status: complete", timeout)
+
+					exitCode, output := s.runBinaryWithNoLogging(t, "status", "--name", setName, "-d")
+					So(exitCode, ShouldEqual, 0)
+
+					So(output, ShouldContainSubstring, "Num files: 1")
+					So(output, ShouldContainSubstring, setFile1+"\tuploaded")
+				})
+
+				FocusConvey("If you remove a folder but then add it back, and then remove a child folder, you will not discover files inside that folder ", func() {
+					exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", setDir1)
+					So(exitCode, ShouldEqual, 0)
+
+					s.waitForStatus(setName, "Removal status: 2 / 2 objects removed", 5*time.Second)
+
+					setDir3 := filepath.Join(setDir1, "dir3")
+					err := os.Mkdir(setDir3, userPerms)
+					So(err, ShouldBeNil)
+
+					setFile3 := filepath.Join(setDir3, "file3")
+					internal.CreateTestFileOfLength(t, setFile3, 3)
+
+					setFile4 := filepath.Join(setDir3, "file4")
+					internal.CreateTestFileOfLength(t, setFile4, 3)
+
+					exitCode, _ = s.runBinary(t, "edit", "--name", setName, "--add", setDir1)
+					So(exitCode, ShouldEqual, 0)
+
+					s.waitForStatus(setName, "Status: complete", timeout)
+
+					exitCode, output := s.runBinaryWithNoLogging(t, "status", "--name", setName, "-d")
+					So(exitCode, ShouldEqual, 0)
+
+					So(output, ShouldContainSubstring, "Num files: 3")
+
+					exitCode, _ = s.runBinary(t, "remove", "--name", setName, "--path", setDir3)
+					So(exitCode, ShouldEqual, 0)
+
+					s.waitForStatus(setName, "Removal status: 3 / 3 objects removed", 5*time.Second)
+
+					exitCode, _ = s.runBinary(t, "edit", "--name", setName, "--add", setDir1)
+					So(exitCode, ShouldEqual, 0)
+
+					s.waitForStatus(setName, "Status: complete", timeout)
+
+					exitCode, output = s.runBinaryWithNoLogging(t, "status", "--name", setName, "-d")
+					So(exitCode, ShouldEqual, 0)
+
+					So(output, ShouldNotContainSubstring, setFile3)
+				})
 
 				Convey("You can add another file even if the initial folder no longer exists", func() {
 					os.RemoveAll(setDir1)

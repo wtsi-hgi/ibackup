@@ -31,12 +31,14 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/VertebrateResequencing/wr/queue"
 	"github.com/gin-gonic/gin"
+	"github.com/viant/ptrie"
 	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/grand"
 	"github.com/wtsi-hgi/ibackup/errs"
@@ -867,7 +869,120 @@ func (s *Server) putDirs(c *gin.Context) {
 		return
 	}
 
+	err = s.updateRemoveBucket(entries, sid)
+	if err != nil {
+		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+
+		return
+	}
+
 	c.Status(http.StatusOK)
+}
+
+func (s *Server) updateRemoveBucket(entries []*set.Dirent, sid string) error {
+	for _, entry := range entries {
+		excludeTree, err := s.buildExclusionTree(sid)
+		if err != nil {
+			return err
+		}
+
+		isRemoved, match := isDirentRemovedFromSet(entry, excludeTree)
+		if isRemoved {
+			err = s.removeFromRemoveBucket(entry, match, excludeTree, sid)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func (s *Server) buildExclusionTree(sid string) (ptrie.Trie[bool], error) {
+	excludedPaths, err := s.db.GetExcludedPaths(sid)
+	if err != nil {
+		return nil, err
+	}
+
+	excludeTree := ptrie.New[bool]()
+	for _, path := range excludedPaths {
+		err = excludeTree.Put([]byte(path), true)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return excludeTree, nil
+}
+
+func (s *Server) removeFromRemoveBucket(entry *set.Dirent, match string, excludeTree ptrie.Trie[bool], sid string) error {
+	err := s.removeChildEntriesFromRemoveBucket(entry, excludeTree, sid)
+	if err != nil {
+		return err
+	}
+
+	if filepath.Clean(entry.Path) != filepath.Clean(match) {
+		err = s.excludeAllOtherPaths(entry, match, sid)
+		if err != nil {
+			return err
+		}
+	}
+
+	return s.db.RemoveFromRemoveBucket(match, sid)
+}
+
+// excludeAllOtherPaths finds every path that should be excluded but isn't due
+// to match being removed from removed bucket TODO.
+func (s *Server) excludeAllOtherPaths(entry *set.Dirent, match, sid string) error {
+	var pathsToAdd []set.RemoveReq
+
+	path := filepath.Dir(entry.Path)
+
+	for {
+		entries, err := os.ReadDir(path)
+		if err != nil {
+			return err
+		}
+
+		for _, dirEntry := range entries {
+			if !strings.HasPrefix(entry.Path, filepath.Join(path, dirEntry.Name())) {
+				removeReq := set.RemoveReq{
+					Path:       filepath.Join(path, dirEntry.Name()),
+					IsDir:      dirEntry.IsDir(),
+					IsComplete: true,
+				}
+
+				pathsToAdd = append(pathsToAdd, removeReq)
+			}
+		}
+
+		if path == match {
+			break
+		}
+
+		path = filepath.Dir(path)
+	}
+
+	return s.db.SetRemoveRequests(sid, pathsToAdd)
+}
+
+func (s *Server) removeChildEntriesFromRemoveBucket(entry *set.Dirent, excludeTree ptrie.Trie[bool], sid string) error {
+	var err error
+
+	excludeTree.Walk(func(key []byte, value bool) bool {
+		path := string(key)
+
+		if strings.HasPrefix(path, entry.Path) {
+			err = s.db.RemoveFromRemoveBucket(path, sid)
+			if err != nil {
+				return false
+			}
+		}
+
+		return true
+	})
+
+	return err
 }
 
 // getEntries gets the defined and discovered file entries for the set with the
