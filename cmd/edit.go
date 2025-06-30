@@ -148,7 +148,7 @@ func init() {
 	editCmd.Flags().BoolVar(&editHide, "hide", false,
 		"hide set when viewing status")
 	editCmd.Flags().BoolVar(&editUnHide, "unhide", false,
-		"Unhide set when viewing status")
+		"unhide set when viewing status")
 	if err := editCmd.MarkFlagRequired("name"); err != nil {
 		die(err)
 	}

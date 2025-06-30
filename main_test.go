@@ -3185,6 +3185,7 @@ func TestEdit(t *testing.T) {
 					So(statusOutput, ShouldContainSubstring, visibleSet1)
 					So(statusOutput, ShouldContainSubstring, visibleSet2)
 				})
+
 				Convey("`status --show-hidden` shows all sets", func() {
 					exitCode, statusOutput := s.runBinary(t, "status", "--show-hidden")
 					So(exitCode, ShouldEqual, 0)
@@ -3193,6 +3194,7 @@ func TestEdit(t *testing.T) {
 					So(statusOutput, ShouldContainSubstring, visibleSet2)
 					So(statusOutput, ShouldContainSubstring, setName)
 				})
+
 				Convey("Unhiding brings it back to normal view", func() {
 					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--unhide")
 					So(exitCode, ShouldEqual, 0)
