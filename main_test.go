@@ -3055,7 +3055,7 @@ func getMetaValue(meta, key string) string {
 }
 
 func TestEdit(t *testing.T) {
-	FocusConvey("With a started server", t, func() {
+	Convey("With a started server", t, func() {
 		t.Setenv("IBACKUP_TEST_LDAP_SERVER", "")
 		t.Setenv("IBACKUP_TEST_LDAP_LOOKUP", "")
 
@@ -3075,7 +3075,7 @@ func TestEdit(t *testing.T) {
 				1, cmd.ErrInvalidEditRO.Error())
 		})
 
-		FocusConvey("Given a transformer", func() {
+		Convey("Given a transformer", func() {
 			remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
 			if remotePath == "" {
 				SkipConvey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
@@ -3165,28 +3165,41 @@ func TestEdit(t *testing.T) {
 				})
 			})
 
-			FocusConvey("And a set", func() {
+			Convey("And with multiple sets", func() {
 				setName := "hideSet"
+				visibleSet1 := "visibleSet1"
+				visibleSet2 := "visibleSet2"
+
 				s.addSetForTesting(t, setName, transformer, path)
+				s.addSetForTesting(t, visibleSet1, transformer, path)
+				s.addSetForTesting(t, visibleSet2, transformer, path)
 
-				FocusConvey("You can make it hidden", func() {
-					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--hide")
-					So(exitCode, ShouldEqual, 0)
+				exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--hide")
+				So(exitCode, ShouldEqual, 0)
 
+				Convey("`status` shows only visible sets", func() {
 					exitCode, statusOutput := s.runBinary(t, "status")
 					So(exitCode, ShouldEqual, 0)
 
 					So(statusOutput, ShouldNotContainSubstring, setName)
-					So(statusOutput, ShouldContainSubstring, "no backup sets")
+					So(statusOutput, ShouldContainSubstring, visibleSet1)
+					So(statusOutput, ShouldContainSubstring, visibleSet2)
+				})
+				Convey("`status --show-hidden` shows all sets", func() {
+					exitCode, statusOutput := s.runBinary(t, "status", "--show-hidden")
+					So(exitCode, ShouldEqual, 0)
 
-					FocusConvey("And you can make it visible again", func() {
-						s.confirmOutputContains(t, []string{"status", "--show-hidden"}, 0, setName)
+					So(statusOutput, ShouldContainSubstring, visibleSet1)
+					So(statusOutput, ShouldContainSubstring, visibleSet2)
+					So(statusOutput, ShouldContainSubstring, setName)
+				})
+				Convey("Unhiding brings it back to normal view", func() {
+					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--unhide")
+					So(exitCode, ShouldEqual, 0)
 
-						exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--unhide")
-						So(exitCode, ShouldEqual, 0)
-
-						s.confirmOutputContains(t, []string{"status"}, 0, setName)
-					})
+					exitCode, statusOutput := s.runBinary(t, "status")
+					So(exitCode, ShouldEqual, 0)
+					So(statusOutput, ShouldContainSubstring, setName)
 				})
 			})
 
