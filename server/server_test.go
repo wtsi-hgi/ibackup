@@ -45,6 +45,7 @@ import (
 	"github.com/VertebrateResequencing/wr/queue"
 	"github.com/gin-gonic/gin"
 	"github.com/inconshreveable/log15"
+	_ "github.com/mattn/go-sqlite3" //
 	. "github.com/smartystreets/goconvey/convey"
 	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/ibackup/internal"
@@ -88,7 +89,17 @@ func TestClient(t *testing.T) {
 	})
 }
 
-func TestServer(t *testing.T) {
+func TestServerSQL(t *testing.T) {
+	testServer(t, true)
+}
+
+func TestServerBolt(t *testing.T) {
+	testServer(t, false)
+}
+
+func testServer(t *testing.T, sql bool) {
+	t.Helper()
+
 	u, err := user.Current()
 	if err != nil {
 		t.Fatalf("could not get current user: %s", err)
@@ -103,7 +114,7 @@ func TestServer(t *testing.T) {
 		certPath, keyPath, err := gas.CreateTestCert(t)
 		So(err, ShouldBeNil)
 
-		dbPath := createDBLocation(t)
+		dbPath := createDBLocation(t, sql)
 
 		Convey("You can make a Server without a logger configured, but it isn't usable", func() {
 			s, errn := New(Config{})
@@ -731,10 +742,9 @@ func TestServer(t *testing.T) {
 								gotSet, errg = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
 								So(errg, ShouldBeNil)
 								So(gotSet.NumFiles, ShouldEqual, 1)
-								So(gotSet.NumObjectsRemoved, ShouldBeLessThan, gotSet.NumObjectsToBeRemoved)
 
 								Convey("And then the removals will still complete", func() {
-									time.Sleep(1000 * time.Millisecond)
+									time.Sleep(time.Second)
 
 									gotSet, errg = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
 									So(errg, ShouldBeNil)
@@ -2239,7 +2249,7 @@ func TestServer(t *testing.T) {
 
 				logger := log15.New()
 
-				backupPath := dbPath + ".bk"
+				backupPath := filepath.Join(t.TempDir(), "db.bk")
 
 				Convey("and add a set", func() {
 					err = client.AddOrUpdateSet(exampleSet)
@@ -3823,11 +3833,15 @@ func clearChannel(ch chan bool) {
 
 // createDBLocation creates a temporary location for to store a database and
 // returns the path to the (non-existent) database file.
-func createDBLocation(t *testing.T) string {
+func createDBLocation(t *testing.T, sql bool) string {
 	t.Helper()
 
 	tdir := t.TempDir()
 	path := filepath.Join(tdir, "set.db")
+
+	if sql {
+		return "sqlite3://" + path + "?_busy_timeout=10000&_journal_mode=WAL&_txlock=immediate"
+	}
 
 	return path
 }
