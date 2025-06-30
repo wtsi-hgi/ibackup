@@ -278,7 +278,7 @@ func updateSet(client *server.Client, sid string, path string) error {
 		return nil
 	}
 
-	err = client.UpdateFiles(sid, []string{absPath})
+	err = client.SetFiles(sid, []string{absPath})
 	if err != nil {
 		return err
 	}

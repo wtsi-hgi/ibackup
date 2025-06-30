@@ -283,7 +283,6 @@ func (s *Server) addDBEndpoints(authGroup *gin.RouterGroup) {
 	authGroup.PUT(setPath, s.putSet)
 
 	authGroup.PUT(filePath+idParam, s.putFiles)
-	authGroup.PATCH(filePath+idParam, s.updateFiles)
 
 	authGroup.PUT(dirPath+idParam, s.putDirs)
 
@@ -427,41 +426,6 @@ func (s *Server) putFiles(c *gin.Context) {
 	err := s.db.SetFileEntries(sid, paths)
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
-
-		return
-	}
-
-	c.Status(http.StatusOK)
-}
-
-// updateFiles adds the file paths encoded in the body as JSON to the files
-// to be backed up for the set with the id specified in the URL parameter.
-//
-// LoadSetDB() must already have been called. This is called when there is a PATCH
-// on /rest/v1/auth/files/[id].
-func (s *Server) updateFiles(c *gin.Context) {
-	sid, filePaths, ok := s.bindPathsAndValidateSet(c)
-	if !ok {
-		return
-	}
-
-	entries, err := s.db.GetPureFileEntries(sid)
-	if err != nil {
-		c.AbortWithError(http.StatusInternalServerError, err) //nolint:errcheck
-
-		return
-	}
-
-	paths := make([]string, len(entries), len(entries)+1)
-	for i, entry := range entries {
-		paths[i] = entry.Path
-	}
-
-	paths = append(paths, filePaths...)
-
-	err = s.db.SetFileEntries(sid, paths)
-	if err != nil {
-		c.AbortWithError(http.StatusInternalServerError, err) //nolint:errcheck
 
 		return
 	}

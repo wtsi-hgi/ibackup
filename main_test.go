@@ -3454,7 +3454,7 @@ func TestEdit(t *testing.T) {
 
 		timeout := 5 * time.Second
 
-		FocusConvey("And some files", func() {
+		Convey("And some files", func() {
 			setDir1 := filepath.Join(path, "dir1")
 			err := os.Mkdir(setDir1, userPerms)
 			So(err, ShouldBeNil)
@@ -3509,18 +3509,21 @@ func TestEdit(t *testing.T) {
 					So(exitCode, ShouldEqual, 0)
 
 					So(output, ShouldContainSubstring, "Num files: 2")
-					So(output, ShouldContainSubstring, setFile1)
+					So(output, ShouldContainSubstring, "Uploaded: 1;")
+					So(output, ShouldContainSubstring, "Orphaned: 1;")
+					So(output, ShouldContainSubstring, "Size (total/recently uploaded/recently removed): 2 B / 1 B / 0 B")
+					So(output, ShouldContainSubstring, setFile1+"\torphaned\t1 B")
 					So(output, ShouldContainSubstring, setFile2+"\tuploaded")
 				})
 			})
 
-			FocusConvey("And a set with discovered file", func() {
+			Convey("And a set with discovered file", func() {
 				setName := "TestDiscoveredFiles"
 
 				s.addSetForTesting(t, setName, transformer, setDir1)
 				s.waitForStatus(setName, "Status: complete", timeout)
 
-				FocusConvey("You can add another file even if the initial folder no longer exists", func() {
+				Convey("You can add another file even if the initial folder no longer exists", func() {
 					os.RemoveAll(setDir1)
 					So(err, ShouldBeNil)
 
@@ -3534,7 +3537,10 @@ func TestEdit(t *testing.T) {
 					So(exitCode, ShouldEqual, 0)
 
 					So(output, ShouldContainSubstring, "Num files: 2")
-					So(output, ShouldContainSubstring, setFile1)
+					So(output, ShouldContainSubstring, "Uploaded: 1;")
+					So(output, ShouldContainSubstring, "Orphaned: 1;")
+					So(output, ShouldContainSubstring, "Size (total/recently uploaded/recently removed): 2 B / 1 B / 0 B")
+					So(output, ShouldContainSubstring, setFile1+"\torphaned\t1 B")
 					So(output, ShouldContainSubstring, setFile2+"\tuploaded")
 				})
 			})
