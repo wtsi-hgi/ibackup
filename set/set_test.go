@@ -1721,18 +1721,6 @@ func TestSetDB(t *testing.T) {
 					So(got.Abnormal, ShouldEqual, 1)
 				})
 			})
-
-			Convey("And merge dirent slices correctly", func() {
-				dirents := createFileEnts([]string{"a", "b", "c"})
-
-				entries := make(map[string][]byte)
-				for _, path := range []string{"c", "d"} {
-					entries[path] = db.encodeToBytes(Entry{Path: path})
-				}
-
-				merged := db.mergeDirentSets(dirents, entries)
-				So(merged, ShouldHaveLength, 4)
-			})
 		})
 	})
 }

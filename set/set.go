@@ -163,7 +163,7 @@ type Set struct {
 	Failed uint64
 
 	// Missing provides the total number of set and discovered files in this set
-	// that no longer exist locall and remotely since the last discovery. This
+	// that no longer exist locally and remotely since the last discovery. This
 	// is a read-only value.
 	Missing uint64
 
@@ -422,12 +422,6 @@ func (s *Set) countsValid() bool {
 }
 
 func (s *Set) adjustBasedOnEntry(entry *Entry) {
-	// if entry.Type == Symlink {
-	// 	s.Symlinks--
-	// } else if entry.Type == Hardlink {
-	// 	s.Hardlinks--
-	// }
-
 	if entry.newSize {
 		s.SizeTotal += entry.Size
 		s.SizeUploaded += entry.Size

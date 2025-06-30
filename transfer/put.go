@@ -525,7 +525,7 @@ func skipIfLocalFileIsNotEmptyAndNotOverwriting(lInfo *ObjectInfo, err error, ov
 	return err == nil && lInfo.Size != 0 && !overwrite
 }
 
-func sendGetRequest(request *Request, lInfo, rInfo *ObjectInfo, //nolint:gocyclo
+func sendGetRequest(request *Request, lInfo, rInfo *ObjectInfo,
 	putCh, skipReturnCh chan *Request, hardlinksNormal bool) {
 	if hardlink, ok := request.Meta.remoteMeta[MetaKeyRemoteHardlink]; ok {
 		request.Hardlink = hardlink

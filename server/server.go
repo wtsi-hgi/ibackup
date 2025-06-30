@@ -244,7 +244,7 @@ func (s *Server) handleRemoveRequests(sid string) {
 			break
 		}
 
-		_ = s.discoveryCoordinator.WaitForDiscovery(sid)
+		s.discoveryCoordinator.WaitForDiscovery(sid)
 
 		removedFromDiscoverBuckets := false
 

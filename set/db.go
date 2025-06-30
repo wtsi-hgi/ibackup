@@ -666,31 +666,6 @@ func (d *DB) setEntries(setID string, dirents []*Dirent, bucketName string, init
 	})
 }
 
-// mergeDirentSets adds to the input slice of Dirents all missing existing Dirents.
-func (d *DB) mergeDirentSets(a []*Dirent, b map[string][]byte) []*Dirent {
-	dirents := make([]*Dirent, len(a), len(a)+len(b))
-	direntMap := make(map[string]struct{}, len(a))
-
-	for i, dirent := range a {
-		dirents[i] = dirent
-		direntMap[dirent.Path] = struct{}{}
-	}
-
-	for direntPath, direntBytes := range b {
-		_, exist := direntMap[direntPath]
-		if !exist {
-			entry := d.decodeEntry(direntBytes)
-			dirEntry := &Dirent{
-				Path:  direntPath,
-				Inode: entry.Inode,
-			}
-			dirents = append(dirents, dirEntry)
-		}
-	}
-
-	return slices.Clip(dirents)
-}
-
 // SetRemoveRequests writes a list of remove requests into the database.
 // Directory paths will be put into the database with a trailing slash.
 func (d *DB) SetRemoveRequests(sid string, removeReqs []RemoveReq) error {
@@ -1090,7 +1065,6 @@ func (d *DB) handleFilePoolResults(tx *bolt.Tx, sfsb *setFileSubBucket, setID st
 	direntCh chan *Dirent, numEntries int,
 ) error {
 	dirents := make([]*Dirent, numEntries)
-	// existing := make(map[string][]byte, numEntries)
 
 	_, existing, err := d.getExistingEntries(tx, fileBucket, setID)
 	if err != nil {
