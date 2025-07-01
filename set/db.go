@@ -879,7 +879,7 @@ func (d *DB) removeEntryIfRedundant(remReq RemoveReq, curDir string) (string, er
 	return curDir, nil
 }
 
-func (d *DB) RemoveFromRemoveBucket(path, sid string) error {
+func (d *DB) RemoveFromRemovedBucket(path, sid string) error {
 	return d.deleteObjectFromSubBucket(path, sid, removedBucket)
 }
 

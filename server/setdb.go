@@ -869,7 +869,7 @@ func (s *Server) putDirs(c *gin.Context) {
 		return
 	}
 
-	err = s.updateRemoveBucket(entries, sid)
+	err = s.updateRemovedBucket(entries, sid)
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
@@ -879,7 +879,10 @@ func (s *Server) putDirs(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
-func (s *Server) updateRemoveBucket(entries []*set.Dirent, sid string) error {
+// updateRemovedBucket removes the entry from the removed bucket if it was
+// previously removed from the given set, as it should no longer be excluded
+// from discovery.
+func (s *Server) updateRemovedBucket(entries []*set.Dirent, sid string) error {
 	for _, entry := range entries {
 		excludeTree, err := s.buildExclusionTree(sid)
 		if err != nil {
@@ -888,7 +891,7 @@ func (s *Server) updateRemoveBucket(entries []*set.Dirent, sid string) error {
 
 		isRemoved, match := isDirentRemovedFromSet(entry, excludeTree)
 		if isRemoved {
-			err = s.removeFromRemoveBucket(entry, match, excludeTree, sid)
+			err = s.excludeFromRemovedBucket(entry, match, excludeTree, sid)
 			if err != nil {
 				return err
 			}
@@ -915,46 +918,47 @@ func (s *Server) buildExclusionTree(sid string) (ptrie.Trie[bool], error) {
 	return excludeTree, nil
 }
 
-func (s *Server) removeFromRemoveBucket(entry *set.Dirent, match string, excludeTree ptrie.Trie[bool], sid string) error {
-	err := s.removeChildEntriesFromRemoveBucket(entry, excludeTree, sid)
+// excludeFromRemovedBucket removes the given entry from the removed bucket. If
+// the entry's path is not equal to the given match (from exclude tree), the
+// bucket is repopulated with the other paths represented by the match.
+func (s *Server) excludeFromRemovedBucket(entry *set.Dirent, match string,
+	excludeTree ptrie.Trie[bool], sid string) error {
+	err := s.removeChildEntriesFromRemovedBucket(entry, excludeTree, sid)
 	if err != nil {
 		return err
 	}
 
-	if filepath.Clean(entry.Path) != filepath.Clean(match) {
-		err = s.excludeAllOtherPaths(entry, match, sid)
-		if err != nil {
-			return err
-		}
+	if filepath.Clean(entry.Path) == filepath.Clean(match) {
+		return s.db.RemoveFromRemovedBucket(match, sid)
 	}
 
-	return s.db.RemoveFromRemoveBucket(match, sid)
+	allOtherPaths, err := s.findAllOtherPathsToExclude(entry, match)
+	if err != nil {
+		return err
+	}
+
+	err = s.db.SetRemoveRequests(sid, allOtherPaths)
+	if err != nil {
+		return err
+	}
+
+	return s.db.RemoveFromRemovedBucket(match, sid)
 }
 
-// excludeAllOtherPaths finds every path that should be excluded but isn't due
-// to match being removed from removed bucket TODO.
-func (s *Server) excludeAllOtherPaths(entry *set.Dirent, match, sid string) error {
-	var pathsToAdd []set.RemoveReq
+// findAllOtherPathsToExclude finds every path that should be excluded but isn't due
+// to match being removed from removed bucket.
+func (s *Server) findAllOtherPathsToExclude(entry *set.Dirent, match string) ([]set.RemoveReq, error) {
+	var paths []set.RemoveReq
 
 	path := filepath.Dir(entry.Path)
 
 	for {
-		entries, err := os.ReadDir(path)
+		childPaths, err := findChildPathsToExclude(path, entry)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
-		for _, dirEntry := range entries {
-			if !strings.HasPrefix(entry.Path, filepath.Join(path, dirEntry.Name())) {
-				removeReq := set.RemoveReq{
-					Path:       filepath.Join(path, dirEntry.Name()),
-					IsDir:      dirEntry.IsDir(),
-					IsComplete: true,
-				}
-
-				pathsToAdd = append(pathsToAdd, removeReq)
-			}
-		}
+		paths = append(paths, childPaths...)
 
 		if path == match {
 			break
@@ -963,17 +967,43 @@ func (s *Server) excludeAllOtherPaths(entry *set.Dirent, match, sid string) erro
 		path = filepath.Dir(path)
 	}
 
-	return s.db.SetRemoveRequests(sid, pathsToAdd)
+	return paths, nil
 }
 
-func (s *Server) removeChildEntriesFromRemoveBucket(entry *set.Dirent, excludeTree ptrie.Trie[bool], sid string) error {
+func findChildPathsToExclude(path string, entry *set.Dirent) ([]set.RemoveReq, error) {
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return nil, err
+	}
+
+	paths := make([]set.RemoveReq, 0, len(entries))
+
+	for _, dirEntry := range entries {
+		if strings.HasPrefix(entry.Path, filepath.Join(path, dirEntry.Name())) {
+			continue
+		}
+
+		removeReq := set.RemoveReq{
+			Path:       filepath.Join(path, dirEntry.Name()),
+			IsDir:      dirEntry.IsDir(),
+			IsComplete: true,
+		}
+
+		paths = append(paths, removeReq)
+	}
+
+	return paths, nil
+}
+
+func (s *Server) removeChildEntriesFromRemovedBucket(entry *set.Dirent,
+	excludeTree ptrie.Trie[bool], sid string) error {
 	var err error
 
-	excludeTree.Walk(func(key []byte, value bool) bool {
+	excludeTree.Walk(func(key []byte, _ bool) bool {
 		path := string(key)
 
 		if strings.HasPrefix(path, entry.Path) {
-			err = s.db.RemoveFromRemoveBucket(path, sid)
+			err = s.db.RemoveFromRemovedBucket(path, sid)
 			if err != nil {
 				return false
 			}

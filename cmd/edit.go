@@ -28,7 +28,6 @@ package cmd
 
 import (
 	"errors"
-
 	"os"
 	"path/filepath"
 	"time"
@@ -264,6 +263,7 @@ func editSet(client *server.Client, givenSet *set.Set, makeWritable bool) error 
 
 // updateSet updates the files in the set.
 func updateSet(client *server.Client, sid string, path string) error {
+	// TODO add a check that removals are not running
 	info, err := os.Stat(path)
 	if err != nil {
 		return err
