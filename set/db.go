@@ -70,6 +70,7 @@ const (
 	ErrSetIsNotWritable          = "the set is read-only, you cannot change it"
 	ErrTransformerAlreadyUsed    = "you cannot edit the transformer on a set with uploaded files"
 	ErrTransformerInUse          = "you cannot edit the transformer on a set with unfinished uploads"
+	ErrPendingRemovals           = "the set has unfinished removals, you cannot change it"
 
 	setsBucket                    = "sets"
 	userToSetBucket               = "userLookup"
@@ -402,6 +403,19 @@ func (d *DB) validateSet(set *Set) error {
 	}
 
 	return Error{Msg: ErrRemovalWhenSetNotComplete, id: set.Name}
+}
+
+// IsSetReadyToAddFiles checks if the set is ready to have files/dirs added to it.
+func (d *DB) IsSetReadyToAddFiles(set *Set) error {
+	if set.ReadOnly {
+		return Error{Msg: ErrSetIsNotWritable, id: set.ID()}
+	}
+
+	if set.NumObjectsRemoved < set.NumObjectsToBeRemoved {
+		return Error{Msg: ErrPendingRemovals, id: set.ID()}
+	}
+
+	return nil
 }
 
 // validateFileAndDirPaths returns an error if any provided path is not in the

@@ -420,12 +420,17 @@ func (s *Server) getSets(c *gin.Context) {
 // LoadSetDB() must already have been called. This is called when there is a PUT
 // on /rest/v1/auth/files/[id].
 func (s *Server) putFiles(c *gin.Context) {
-	sid, paths, ok := s.bindPathsAndValidateSet(c)
+	givenSet, paths, ok := s.bindPathsAndValidateSet(c)
 	if !ok {
 		return
 	}
 
-	err := s.db.SetFileEntries(sid, paths)
+	err := s.db.IsSetReadyToAddFiles(givenSet)
+	if err != nil {
+		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+	}
+
+	err = s.db.SetFileEntries(givenSet.ID(), paths)
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
@@ -436,12 +441,10 @@ func (s *Server) putFiles(c *gin.Context) {
 }
 
 func (s *Server) removePaths(c *gin.Context) {
-	sid, paths, ok := s.bindPathsAndValidateSet(c)
+	givenSet, paths, ok := s.bindPathsAndValidateSet(c)
 	if !ok {
 		return
 	}
-
-	givenSet := s.db.GetByID(sid)
 
 	filePaths, dirPaths, err := s.db.ValidateRemoveInputs(givenSet, paths)
 	if err != nil {
@@ -790,21 +793,21 @@ func (s *Server) removeDirFromDB(removeReq *set.RemoveReq, removedFromDiscoverBu
 
 // bindPathsAndValidateSet gets the paths out of the JSON body, and the set id
 // from the URL parameter if Requester matches logged-in username.
-func (s *Server) bindPathsAndValidateSet(c *gin.Context) (string, []string, bool) {
+func (s *Server) bindPathsAndValidateSet(c *gin.Context) (*set.Set, []string, bool) {
 	var bpaths [][]byte
 
 	if err := c.BindJSON(&bpaths); err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
-		return "", nil, false
+		return nil, nil, false
 	}
 
 	set, ok := s.validateSet(c)
 	if !ok {
-		return "", nil, false
+		return nil, nil, false
 	}
 
-	return set.ID(), bytesToStrings(bpaths), true
+	return set, bytesToStrings(bpaths), true
 }
 
 // validateSet gets the id parameter from the given context and checks a
@@ -848,9 +851,14 @@ func bytesToStrings(b [][]byte) []string {
 // LoadSetDB() must already have been called. This is called when there is a PUT
 // on /rest/v1/auth/dirs/[id].
 func (s *Server) putDirs(c *gin.Context) {
-	sid, paths, ok := s.bindPathsAndValidateSet(c)
+	givenSet, paths, ok := s.bindPathsAndValidateSet(c)
 	if !ok {
 		return
+	}
+
+	err := s.db.IsSetReadyToAddFiles(givenSet)
+	if err != nil {
+		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 	}
 
 	entries := make([]*set.Dirent, len(paths))
@@ -862,14 +870,14 @@ func (s *Server) putDirs(c *gin.Context) {
 		}
 	}
 
-	err := s.db.SetDirEntries(sid, entries)
+	err = s.db.SetDirEntries(givenSet.ID(), entries)
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
 		return
 	}
 
-	err = s.updateRemovedBucket(entries, sid)
+	err = s.updateRemovedBucket(entries, givenSet.ID())
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
