@@ -411,7 +411,12 @@ func (d *DB) IsSetReadyToAddFiles(set *Set) error {
 		return Error{Msg: ErrSetIsNotWritable, id: set.ID()}
 	}
 
-	if set.NumObjectsRemoved < set.NumObjectsToBeRemoved {
+	incompleteRemReqs, err := d.GetIncompleteRemoveRequests()
+	if err != nil {
+		return err
+	}
+
+	if len(incompleteRemReqs) != 0 {
 		return Error{Msg: ErrPendingRemovals, id: set.ID()}
 	}
 
@@ -778,8 +783,8 @@ func getSubBucket(tx *bolt.Tx, setID, subBucket string) *bolt.Bucket {
 	return setsBucket.Bucket(subBucketName)
 }
 
-// GetAllRemoveRequests returns all incomplete removeReqs from every set.
-func (d *DBRO) GetAllRemoveRequests() ([]RemoveReq, error) {
+// GetIncompleteRemoveRequests returns all incomplete removeReqs from every set.
+func (d *DBRO) GetIncompleteRemoveRequests() ([]RemoveReq, error) {
 	var allRemReqs []RemoveReq
 
 	sets, err := d.GetAll()

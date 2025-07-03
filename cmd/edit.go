@@ -69,7 +69,11 @@ var editCmd = &cobra.Command{
 	Short: "Edit a backup set",
 	Long: `Edit a backup set.
  
-Edit an existing backup set.`,
+Edit an existing backup set. You cannot edit readonly sets and you cannot use 
+--add on sets that are in the process of a removal.
+
+To edit the backup set you must provide --name, which should be the name of a 
+prexisting backup set.`,
 	PreRunE: func(_ *cobra.Command, _ []string) error {
 		if editMakeReadOnly && editMakeWritable {
 			return ErrInvalidEditRO
@@ -263,7 +267,6 @@ func editSet(client *server.Client, givenSet *set.Set, makeWritable bool) error 
 
 // updateSet updates the files in the set.
 func updateSet(client *server.Client, sid string, path string) error {
-	// TODO add a check that removals are not running
 	info, err := os.Stat(path)
 	if err != nil {
 		return err

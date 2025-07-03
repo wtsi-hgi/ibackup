@@ -562,7 +562,7 @@ func TestServer(t *testing.T) {
 
 								waitForRemovals(t, client, exampleSet)
 
-								incompleteRemReqs, errg := s.db.GetAllRemoveRequests()
+								incompleteRemReqs, errg := s.db.GetIncompleteRemoveRequests()
 								So(errg, ShouldBeNil)
 								So(incompleteRemReqs, ShouldBeEmpty)
 							})

@@ -1519,7 +1519,7 @@ func (s *Server) recoverQueue() error {
 }
 
 func (s *Server) recoverRemoveQueue() error {
-	remReqs, err := s.db.GetAllRemoveRequests()
+	remReqs, err := s.db.GetIncompleteRemoveRequests()
 	if err != nil {
 		return err
 	}

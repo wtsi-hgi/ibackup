@@ -3454,7 +3454,7 @@ func TestEdit(t *testing.T) {
 
 		timeout := 5 * time.Second
 
-		SkipConvey("And some files", func() {
+		Convey("And some files", func() {
 			setDir1 := filepath.Join(path, "dir1")
 			err := os.Mkdir(setDir1, userPerms)
 			So(err, ShouldBeNil)
@@ -3583,6 +3583,23 @@ func TestEdit(t *testing.T) {
 					So(exitCode, ShouldEqual, 0)
 
 					So(output, ShouldNotContainSubstring, setFile1)
+				})
+
+				Convey("If the set has failed removals, you can still add new files to the set", func() {
+					removeFileFromIRODS(filepath.Join(filepath.Join(remotePath, "dir1"), "file1"))
+
+					exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", setFile1)
+
+					So(exitCode, ShouldEqual, 0)
+
+					s.waitForStatus(setName, "Error: Error when removing:", 30*time.Second)
+
+					exitCode, _ = s.runBinary(t, "edit", "--name", setName, "--add", setFile2)
+					So(exitCode, ShouldEqual, 0)
+
+					s.waitForStatus(setName, "Status: complete", timeout)
+
+					s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"}, 0, setFile2)
 				})
 			})
 
