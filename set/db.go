@@ -68,6 +68,8 @@ const (
 	ErrPathNotInSet              = "path(s) do not belong to the backup set"
 	ErrRemovalWhenSetNotComplete = "you can only remove from completed sets"
 	ErrSetIsNotWritable          = "the set is read-only, you cannot change it"
+	ErrTransformerAlreadyUsed    = "you cannot edit transformer on a set with uploaded files"
+	ErrTransformerInUse          = "you cannot edit transformer on a set with unfinished uploads"
 
 	setsBucket                    = "sets"
 	userToSetBucket               = "userLookup"
@@ -265,6 +267,16 @@ func (d *DB) AddOrUpdate(set *Set) error {
 
 			if eset.ReadOnly {
 				return Error{Msg: ErrSetIsNotWritable, id: id}
+			}
+
+			if set.Transformer != eset.Transformer {
+				if eset.Uploaded+eset.Skipped+eset.Replaced > 0 { // TODO add Orphaned later
+					return Error{Msg: ErrTransformerAlreadyUsed, id: id}
+				}
+
+				if eset.Status != Complete && eset.Error == "" {
+					return Error{Msg: ErrTransformerInUse, id: id}
+				}
 			}
 
 			if err := updateDatabaseSetWithUserSetDetails(eset, set); err != nil {
