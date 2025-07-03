@@ -404,16 +404,7 @@ func (s *Server) doSetDirWalks(entries []*set.Entry, excludeTree ptrie.Trie[bool
 		dir := entry.Path
 		thisEntry := entry
 
-		// dirent := set.Dirent{
-		// 	Path: entry.Path,
-		// 	Mode: fs.ModeDir,
-		// }
-
 		excludeTreeToUse := excludeTree
-
-		// if isDirentRemovedFromSet(&dirent, excludeTree) {
-		// 	excludeTreeToUse = ptrie.New[bool]()
-		// }
 
 		s.dirPool.Submit(func() {
 			err := s.checkAndWalkDir(dir, filterEntries(entriesCh, excludeTreeToUse, dir), warnChan)
