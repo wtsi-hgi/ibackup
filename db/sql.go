@@ -15,7 +15,7 @@ var (
 			"`transformerID` INTEGER NOT NULL, " +
 			"`monitorTime` INTEGER NOT NULL, " +
 			"`description` TEXT NOT NULL, " +
-			"`numFiles INTEGER DEFAULT 0, " +
+			"`numFiles` INTEGER DEFAULT 0, " +
 			"`sizeFiles` INTEGER DEFAULT 0, " +
 			"`startedDiscovery` DATETIME DEFAULT \"0001-01-01 00:00:00\", " +
 			"`lastDiscovery` DATETIME DEFAULT \"0001-01-01 00:00:00\", " +
@@ -28,8 +28,8 @@ var (
 			"`metadata` TEXT  DEFAULT \"{}\", " +
 			"`deleteLocal` BOOLEAN DEFAULT FALSE, " +
 			"`readonly` BOOLEAN DEFAULT FALSE, " +
-			"UNIQUE(`name`, `requester`), " +
-			"FOREIGN KEY(`transformer`) REFERENCES `transformers`(`id`) ON UPDATE RESTRICT ON DELETE CASCADE" +
+			"UNIQUE(`requester`, `name`), " +
+			"FOREIGN KEY(`transformerID`) REFERENCES `transformers`(`id`) ON UPDATE RESTRICT ON DELETE RESTRICT" +
 			");",
 		"CREATE TABLE IF NOT EXISTS `toDiscover` (" +
 			"`id` INTEGER PRIMARY KEY /*! AUTO_INCREMENT */, " +
@@ -46,7 +46,7 @@ var (
 			"`size` INTEGER NOT NULL, " +
 			"`fileType` TINYINT NOT NULL, " +
 			"`dest` TEXT NOT NULL, " +
-			"`remote` TEXT NOT NULL " +
+			"`remote` TEXT NOT NULL, " +
 			"UNIQUE(`mountpoint`, `inode`, `btime`)" +
 			");",
 		"CREATE TABLE IF NOT EXISTS `remoteFiles` (" +
@@ -57,7 +57,7 @@ var (
 			"`lastError` TEXT DEFAULT \"\", " +
 			"`hardlinkID` INTEGER NOT NULL, " +
 			"UNIQUE(`remotePath`), " +
-			"FOREIGN KEY(`hardlinkID`) REFERENCES `hardlinks`(`id`) ON UPDATE RESTRICT ON DELETE CASCADE" +
+			"FOREIGN KEY(`hardlinkID`) REFERENCES `hardlinks`(`id`) ON UPDATE RESTRICT ON DELETE RESTRICT" +
 			");",
 		"CREATE TABLE IF NOT EXISTS `localFiles` (" +
 			"`id` INTEGER PRIMARY KEY /*! AUTO_INCREMENT */, " +
@@ -66,7 +66,7 @@ var (
 			"`remoteFileID` INTEGER NOT NULL, " +
 			"UNIQUE(`localPath`, `setID`), " +
 			"FOREIGN KEY(`setID`) REFERENCES `sets`(`id`) ON DELETE CASCADE, " +
-			"FOREIGN KEY(`remoteFileID`) REFERENCES `remoteFiles`(`id`) ON UPDATE RESTRICT ON DELETE CASCADE" +
+			"FOREIGN KEY(`remoteFileID`) REFERENCES `remoteFiles`(`id`) ON UPDATE RESTRICT ON DELETE RESTRICT" +
 			");",
 		"CREATE TABLE IF NOT EXISTS `uploads` (" +
 			"`id` INTEGER PRIMARY KEY /*! AUTO_INCREMENT */, " +
@@ -74,34 +74,35 @@ var (
 			"`attempts` INTEGER DEFAULT 0, " +
 			"`lastAttempt` DATETIME DEFAULT \"0001-01-01 00:00:00\", " +
 			"`lastError` TEXT DEFAULT \"\", " +
-			"FOREIGN KEY(`localFileID`) REFERENCES `localFiles`(`id`) ON UPDATE RESTRICT ON DELETE CASCADE" +
+			"FOREIGN KEY(`localFileID`) REFERENCES `localFiles`(`id`) ON UPDATE RESTRICT ON DELETE RESTRICT" +
 			");",
-		"CREATE TRIGGER IF NOT EXISTS `insert_file_count_size` ON `localFiles` AFTER INSERT FOR EACH ROW BEGIN " +
-			"UPDATE `sets` SET `sets`.`numFiles` = `sets`.`numFiles` + 1, `sizeFile` = `sizeFiles` + (" +
-			"SELECT `hardlinks`.`size` FROM `hardlinks` WHERE `hardlinks`.`id` = (" +
-			"SELECT `remoteFile`.`hardlinkID` FROM `remoteFile` WHERE `remoteFile`.`id` = `NEW`.`remoteID`)) " +
-			"WHERE `sets`.`id` = `NEW`.`setID`;" +
-			"DONE;",
-		"CREATE TRIGGER IF NOT EXISTS `delete_file_count_size` ON `localFiles` AFTER DELETE FOR EACH ROW BEGIN " +
-			"UPDATE `sets` SET `numFiles` = `numFiles` - 1, `sizeFile` = `sizeFiles` - (" +
-			"SELECT `hardlinks`.`size` FROM `hardlinks` WHERE `hardlinks`.`id` = (" +
-			"SELECT `remoteFile`.`hardlinkID` FROM `remoteFile` WHERE `remoteFile`.`id` = `OLD`.`remoteID`)) " +
-			"WHERE `sets`.`id` = `OLD`.`setID`;" +
-			"DONE;",
-		"CREATE TRIGGER IF NOT EXISTS `update_file_size` ON `hardlinks` AFTER UPDATE FOR EACH ROW BEGIN " +
-			"UPDATE `sets` SET `sets`.`sizeFiles` = `sets`.`sizeFiles` - `OLD`.`size` + `NEW`.`size` WHERE `sets`.`id` IN (" +
-			"SELECT `localFiles`.`setID` FROM `localFiles` WHERE `remoteID` IN (" +
-			"SELECT `remoteFiles`.`id` FROM `remoteFiles` WHERE `hardlinkID` = `NEW`.`id`));" +
-			"DONE;",
+		"CREATE TRIGGER IF NOT EXISTS `insert_file_count_size` AFTER INSERT ON `localFiles` FOR EACH ROW BEGIN " +
+			"UPDATE `sets` SET `numFiles` = `numFiles` + 1, `sizeFiles` = `sizeFiles` + (" +
+			"SELECT `hardlinks`.`size` FROM `hardlinks` JOIN `remoteFiles` ON `remoteFiles`.`hardlinkID` = `hardlinks`.`id` " +
+			"WHERE `remoteFiles`.`id` = `NEW`.`remoteID`) " +
+			"WHERE `id` = `NEW`.`setID`; END;",
+		"CREATE TRIGGER IF NOT EXISTS `delete_file_count_size` AFTER DELETE ON `localFiles` FOR EACH ROW BEGIN " +
+			"UPDATE `sets` SET `numFiles` = `numFiles` - 1, `sizeFiles` = `sizeFiles` - (" +
+			"SELECT `hardlinks`.`size` FROM `hardlinks` JOIN `remoteFiles` ON `remoteFiles`.`hardlinkID` = `hardlinks`.`id` " +
+			"WHERE `remoteFiles`.`id` = `NEW`.`remoteID`) " +
+			"WHERE `id` = `OLD`.`setID`;" +
+			"END;",
+		"CREATE TRIGGER IF NOT EXISTS `update_file_size` AFTER UPDATE ON `hardlinks` FOR EACH ROW BEGIN " +
+			"UPDATE `sets` SET `sizeFiles` = `sizeFiles` - `OLD`.`size` + `NEW`.`size` WHERE `id` IN (" +
+			"SELECT `localFiles`.`setID` FROM `localFiles` " +
+			"JOIN `remoteFiles` ON `remoteFiles`.`id` = `localFiles`.`remoteID` WHERE " +
+			"`remoteFiles`.`hardlinkID` = `NEW`.`id`);" +
+			"END;",
 	}
 )
 
 const (
-	onConflict        = "ON /*! DUPLICATE KEY --*/ CONFLICT DO\nUPDATE "
-	onConflictInPlace = onConflict + "`id` = `id`;"
+	onConflictUpdate   = "ON /*! DUPLICATE KEY UPDATE --*/ CONFLICT DO UPDATE SET\n"
+	onConflictReturnID = "ON /*! DUPLICATE KEY UPDATE DO NOTHING; SELECT LAST_INSERT_ID();--*/ " +
+		"CONFLICT DO UPDATE SET `id` = `id` RETURNING `id`\n;"
 	createTransformer = "INSERT INTO `transformers` (" +
 		"`transformer`" +
-		") VALUES (?) " + onConflictInPlace
+		") VALUES (?) " + onConflictReturnID
 	createSet = "INSERT INTO `sets` (" +
 		"`name`, " +
 		"`requester`, " +
@@ -118,44 +119,44 @@ const (
 		"`size`, " +
 		"`fileType`, " +
 		"`dest`, " +
-		") VALUES (?, ?, ?, ?, ?, ?, ?, ?) " + onConflict + "`remote` = ?, `mtime` = ?, `dest` = ?;"
+		") VALUES (?, ?, ?, ?, ?, ?, ?, ?) " + onConflictUpdate + "`remote` = ?, `mtime` = ?, `dest` = ?;"
 	createRemoteFile = "INSERT INTO `remoteFiles` (" +
 		"`remotePath`, " +
 		"`hardlinkID`" +
-		") VALUES (?, ?) " + onConflict
+		") VALUES (?, ?) " + onConflictReturnID
 	createSetFile = "INSERT INTO `setFiles` (" +
 		"`localPath`, " +
 		"`setID`, " +
 		"`remoteFilesID`" +
-		") VALUES (?, ?, ?) " + onConflict
+		") VALUES (?, ?, ?) " + onConflictReturnID
 	createDiscover = "INSERT INTO `toDiscover` (" +
 		"`setID`, " +
 		"`path`, " +
 		"`type`" +
-		") VALUES (?, ?, ?) " + onConflict
+		") VALUES (?, ?, ?) " + onConflictReturnID
 	getSetsStart = "SELECT " +
-		"`set`.`id`, " +
-		"`set`.`name`, " +
-		"`set`.`requester`, " +
-		"`set`.`description`, " +
-		"`set`.`monitorTime`, " +
-		"`set`.`numFiles`," +
-		"`set`.`sizeFiles`," +
-		"`set`.`startedDiscovery`, " +
-		"`set`.`lastDiscovery`, " +
-		"`set`.`state`, " +
-		"`set`.`lastCompletedCount`, " +
-		"`set`.`lastCompletedSize`, " +
-		"`set`.`error`, " +
-		"`set`.`warning`, " +
-		"`set`.`readonly`, " +
-		"`transformer`.`transformer` " +
-		"FROM `set` JOIN `transformer` ON `set`.`transformerID` = `transformers`.`id`"
+		"`sets`.`id`, " +
+		"`sets`.`name`, " +
+		"`sets`.`requester`, " +
+		"`sets`.`description`, " +
+		"`sets`.`monitorTime`, " +
+		"`sets`.`numFiles`," +
+		"`sets`.`sizeFiles`," +
+		"`sets`.`startedDiscovery`, " +
+		"`sets`.`lastDiscovery`, " +
+		"`sets`.`status`, " +
+		"`sets`.`lastCompletedCount`, " +
+		"`sets`.`lastCompletedSize`, " +
+		"`sets`.`error`, " +
+		"`sets`.`warning`, " +
+		"`sets`.`readonly`, " +
+		"`transformers`.`transformer` " +
+		"FROM `sets` JOIN `transformers` ON `sets`.`transformerID` = `transformers`.`id`"
 	getAllSets            = getSetsStart + ";"
 	getSetByNameRequester = getSetsStart +
-		" WHERE `name` = ? and `requester` = ?`"
+		" WHERE `sets`.`name` = ? and `sets`.`requester` = ?;"
 	getSetsByRequester = getSetsStart +
-		" WHERE `requester` = ?`"
+		" WHERE `requester` = ?;"
 	getSetsFiles = "SELECT " +
 		"`localFiles`.`id`, " +
 		"`localFiles`.`localPath`, " +
@@ -166,8 +167,8 @@ const (
 		"`hardlinks`.`inode`" +
 		"`hardlinks`.`mountPoint`" +
 		"`hardlinks`.`btime`" +
-		"`hardlinks`.`remote`" +
-		" FROM `localFiles` " +
+		"`hardlinks`.`remote` " +
+		"FROM `localFiles` " +
 		"JOIN `remoteFiles` ON `localFiles`.`remoteFileID` = `remoteFiles`.`id` " +
 		"JOIN `hardlinks` ON `remoteFiles`.`hardlinkID` = `hardlinks`.`id` " +
 		"WHERE `localFiles`.`setID` = ?"

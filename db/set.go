@@ -1,6 +1,8 @@
 package db
 
-import "time"
+import (
+	"time"
+)
 
 type Status int
 
@@ -176,22 +178,19 @@ func (d *DB) CreateSet(set *Set) error {
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	res, err := tx.Exec(createTransformer, set.Transformer)
+	var tID int
+
+	err = tx.QueryRow(createTransformer, set.Transformer).Scan(&tID)
 	if err != nil {
 		return err
 	}
 
-	tID, err := res.LastInsertId()
+	res, err := tx.Exec(createSet, set.Name, set.Requester, tID, set.MonitorTime, set.Description)
 	if err != nil {
 		return err
 	}
 
-	if res, err = tx.Exec(createSet, set.Name, set.Requester, tID, set.MonitorTime, set.Description); err != nil {
-		return err
-	}
-
-	set.id, err = res.LastInsertId()
-	if err != nil {
+	if set.id, err = res.LastInsertId(); err != nil {
 		return err
 	}
 
@@ -215,7 +214,6 @@ func scanSet(scanner scanner) (*Set, error) {
 		&set.SizeTotal,
 		&set.StartedDiscovery,
 		&set.LastDiscovery,
-		&set.Error,
 		&set.Status,
 		&set.LastCompletedCount,
 		&set.LastCompletedSize,
@@ -234,8 +232,8 @@ func (d *DBRO) GetSetsByRequester(requester string) *IterErr[*Set] {
 	return iterRows(d, scanSet, getSetsByRequester, requester)
 }
 
-func (d *DBRO) GetAllSets(requester string) *IterErr[*Set] {
-	return iterRows(d, scanSet, getAllSets, requester)
+func (d *DBRO) GetAllSets() *IterErr[*Set] {
+	return iterRows(d, scanSet, getAllSets)
 }
 
 func (d *DB) SetSetWarning(set *Set) error {
