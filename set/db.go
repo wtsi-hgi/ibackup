@@ -270,7 +270,7 @@ func (d *DB) AddOrUpdate(set *Set) error {
 			}
 
 			if set.Transformer != eset.Transformer {
-				if eset.Uploaded+eset.Skipped+eset.Replaced > 0 { // TODO add Orphaned later
+				if eset.Uploaded+eset.Skipped+eset.Replaced+eset.Orphaned > 0 {
 					return Error{Msg: ErrTransformerAlreadyUsed, id: id}
 				}
 
