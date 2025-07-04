@@ -144,11 +144,11 @@ prexisting backup set.`,
 			return err
 		}
 
-		if editAddPath != "" {
-			err = updateSet(client, userSet.ID(), editAddPath)
+		if editAddPath == "" {
+			return nil
 		}
 
-		return err
+		return updateSet(client, userSet.ID(), editAddPath)
 	},
 }
 

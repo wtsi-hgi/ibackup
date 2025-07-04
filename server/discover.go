@@ -403,11 +403,9 @@ func (s *Server) doSetDirWalks(entries []*set.Entry, excludeTree ptrie.Trie[bool
 	for _, entry := range entries {
 		dir := entry.Path
 		thisEntry := entry
-
-		excludeTreeToUse := excludeTree
-
+		
 		s.dirPool.Submit(func() {
-			err := s.checkAndWalkDir(dir, filterEntries(entriesCh, excludeTreeToUse, dir), warnChan)
+			err := s.checkAndWalkDir(dir, filterEntries(entriesCh, excludeTree, dir), warnChan)
 			errCh <- s.handleMissingDirectories(err, thisEntry, given, existing)
 		})
 	}
@@ -491,6 +489,8 @@ func isDirentRemovedFromSet(dirent *set.Dirent, excludeTree ptrie.Trie[bool]) (b
 		if bytes.HasSuffix(match, []byte{'/'}) {
 			return false
 		}
+
+		fmt.Println(finalMatch,path, finalMatch != path)
 
 		return finalMatch != path
 	}), finalMatch

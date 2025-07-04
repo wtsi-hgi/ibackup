@@ -864,6 +864,7 @@ func (s *Server) putDirs(c *gin.Context) {
 	entries := make([]*set.Dirent, len(paths))
 
 	for n, path := range paths {
+
 		entries[n] = &set.Dirent{
 			Path: path,
 			Mode: os.ModeDir,
@@ -1005,22 +1006,38 @@ func findChildPathsToExclude(path string, entry *set.Dirent) ([]set.RemoveReq, e
 
 func (s *Server) removeChildEntriesFromRemovedBucket(entry *set.Dirent,
 	excludeTree ptrie.Trie[bool], sid string) error {
-	var err error
+	paths := getChildPathsFromPTrie(entry.Path, excludeTree)
 
-	excludeTree.Walk(func(key []byte, _ bool) bool {
+	for _, path := range paths {
+		err := s.db.RemoveFromRemovedBucket(path, sid)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// getChildPathsFromPTrie expects a Path to a folder. It accept both paths
+// ending with "/" and without it. Folders in PTrie should have a trailing "/".
+func getChildPathsFromPTrie(entryPath string, tree ptrie.Trie[bool]) []string {
+	var paths []string
+
+	if !strings.HasSuffix(entryPath, "/") {
+		entryPath += "/"
+	}
+
+	tree.Walk(func(key []byte, _ bool) bool {
 		path := string(key)
 
-		if strings.HasPrefix(path, entry.Path) {
-			err = s.db.RemoveFromRemovedBucket(path, sid)
-			if err != nil {
-				return false
-			}
+		if strings.HasPrefix(path, entryPath) {
+			paths = append(paths, path)
 		}
 
 		return true
 	})
 
-	return err
+	return paths
 }
 
 // getEntries gets the defined and discovered file entries for the set with the
