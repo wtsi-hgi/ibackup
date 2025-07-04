@@ -33,6 +33,7 @@ require (
 	github.com/wtsi-ssg/wrstat/v6 v6.4.2
 	go.etcd.io/bbolt v1.4.0
 	golang.org/x/sys v0.33.0
+	modernc.org/sqlite v1.38.0
 )
 
 require (
@@ -176,7 +177,6 @@ require (
 	modernc.org/libc v1.65.10 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
-	modernc.org/sqlite v1.38.0 // indirect
 	nanomsg.org/go-mangos v1.4.0 // indirect
 	vimagination.zapto.org/parser v1.2.2 // indirect
 )
