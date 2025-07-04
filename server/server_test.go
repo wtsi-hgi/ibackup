@@ -2156,7 +2156,20 @@ func TestServer(t *testing.T) {
 						So(gotSet.LastDiscovery, ShouldEqual, discovered)
 					})
 
-					Convey("If you have an invalid transformer, discovery fails", func() {
+					Convey("If you have an invalid transformer, you cannot add the set", func() {
+						badSet := &set.Set{
+							Name:        "setbad",
+							Requester:   "jim",
+							Transformer: "invalid",
+							MonitorTime: 0,
+						}
+
+						err = client.AddOrUpdateSet(badSet)
+						So(err, ShouldNotBeNil)
+						So(err.Error(), ShouldContainSubstring, "invalid transformer")
+					})
+
+					Convey("If you have the wrong transformer for a set, discovery fails", func() {
 						badSet := &set.Set{
 							Name:        "setbad",
 							Requester:   "jim",
@@ -2171,24 +2184,6 @@ func TestServer(t *testing.T) {
 
 						err = client.SetDirs(badSet.ID(), dirs)
 						So(err, ShouldBeNil)
-
-						slackWriter.Reset()
-
-						badSet2 := &set.Set{
-							Name:        "setbad2",
-							Requester:   "jim",
-							Transformer: "invalid",
-							MonitorTime: 0,
-						}
-
-						err = client.AddOrUpdateSet(badSet2)
-						So(err, ShouldBeNil)
-
-						So(racCalls, ShouldEqual, 0)
-
-						err = client.TriggerDiscovery(badSet2.ID())
-						So(err, ShouldNotBeNil)
-						So(slackWriter.String(), ShouldEqual, slack.BoxPrefixError+"`jim.setbad2` is invalid: invalid transformer")
 
 						slackWriter.Reset()
 
