@@ -401,13 +401,20 @@ func (s *Server) doSetDirWalks(entries []*set.Entry, excludeTree ptrie.Trie[bool
 		return
 	}
 
+	existing, errg := s.db.GetExistingDirs(given.ID())
+	if errg != nil {
+		doneCh <- errg
+
+		return
+	}
+
 	for _, entry := range entries {
 		dir := entry.Path
 		thisEntry := entry
 
 		s.dirPool.Submit(func() {
 			err := s.checkAndWalkDir(dir, filterEntries(entriesCh, excludeTree, dir), warnChan)
-			errCh <- s.handleMissingDirectories(err, thisEntry, given)
+			errCh <- s.handleMissingDirectories(err, thisEntry, given, existing)
 		})
 	}
 
@@ -488,19 +495,19 @@ func isDirentRemovedFromSet(dirent *set.Dirent, excludeTree ptrie.Trie[bool]) bo
 }
 
 // handleMissingDirectories checks if the given error is not nil, and if so
-// records in the database that the entry has problems or is missing.
-func (s *Server) handleMissingDirectories(dirStatErr error, entry *set.Entry, given *set.Set) error {
-	if dirStatErr == nil {
-		return nil
-	}
+// records in the database that the entry has problems, is missing or is
+// orphaned.
+func (s *Server) handleMissingDirectories(dirStatErr error, entry *set.Entry,
+	given *set.Set, existing map[string]struct{}) error {
+	status, errStr := determineDirStatus(dirStatErr, entry, existing)
 
 	r := &transfer.Request{
 		Local:     entry.Path,
 		Requester: given.Requester,
 		Set:       given.Name,
 		Size:      0,
-		Status:    transfer.RequestStatusMissing,
-		Error:     dirStatErr.Error(),
+		Status:    status,
+		Error:     errStr,
 	}
 
 	_, err := s.db.SetEntryStatus(r)
@@ -513,6 +520,21 @@ func (s *Server) handleMissingDirectories(dirStatErr error, entry *set.Entry, gi
 	}
 
 	return dirStatErr
+}
+
+func determineDirStatus(dirStatErr error, entry *set.Entry,
+	existing map[string]struct{}) (transfer.RequestStatus, string) {
+	if dirStatErr == nil {
+		return transfer.RequestStatusPending, ""
+	}
+
+	status := transfer.RequestStatusMissing
+
+	if _, ok := existing[entry.Path]; ok {
+		status = transfer.RequestStatusOrphaned
+	}
+
+	return status, dirStatErr.Error()
 }
 
 // enqueueSetFiles gets all the set's file entries (set and discovered), creates

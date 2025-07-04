@@ -466,7 +466,7 @@ func (p *Putter) pickFilesToPut(wg *sync.WaitGroup, requests []*Request,
 func (p *Putter) statPathsAndReturnOrPut(request *Request, putCh chan *Request, skipReturnCh chan *Request) {
 	lInfo, err := Stat(request.Local)
 	if err != nil {
-		sendRequest(request, RequestStatusMissing, err, skipReturnCh)
+		sendRequest(request, RequestStatusFailed, err, skipReturnCh)
 
 		return
 	}
@@ -480,11 +480,25 @@ func (p *Putter) statPathsAndReturnOrPut(request *Request, putCh chan *Request, 
 		return
 	}
 
+	if !lInfo.Exists {
+		sendRequest(request, getStatusBasedOnInfo(rInfo.Exists), nil, skipReturnCh)
+
+		return
+	}
+
 	if sendForUploadOrUnmodified(request, lInfo, rInfo, putCh, skipReturnCh) {
 		return
 	}
 
 	sendRequest(request, RequestStatusReplaced, nil, putCh)
+}
+
+func getStatusBasedOnInfo(remoteExists bool) RequestStatus {
+	if remoteExists {
+		return RequestStatusOrphaned
+	}
+
+	return RequestStatusMissing
 }
 
 func (p *Putter) getMetadataAndReturnOrPut(request *Request, putCh chan *Request, skipReturnCh chan *Request) {
@@ -511,7 +525,7 @@ func skipIfLocalFileIsNotEmptyAndNotOverwriting(lInfo *ObjectInfo, err error, ov
 	return err == nil && lInfo.Size != 0 && !overwrite
 }
 
-func sendGetRequest(request *Request, lInfo, rInfo *ObjectInfo, //nolint:gocyclo
+func sendGetRequest(request *Request, lInfo, rInfo *ObjectInfo,
 	putCh, skipReturnCh chan *Request, hardlinksNormal bool) {
 	if hardlink, ok := request.Meta.remoteMeta[MetaKeyRemoteHardlink]; ok {
 		request.Hardlink = hardlink
@@ -525,6 +539,20 @@ func sendGetRequest(request *Request, lInfo, rInfo *ObjectInfo, //nolint:gocyclo
 		request.Remote = hardlink
 	}
 
+	addRemoteMetaForGetRequest(request)
+
+	if lInfo == nil || !lInfo.Exists {
+		sendRequest(request, RequestStatusUploaded, nil, putCh)
+
+		return
+	}
+
+	if !sendForUploadOrUnmodified(request, lInfo, rInfo, putCh, skipReturnCh) {
+		sendRequest(request, RequestStatusReplaced, nil, putCh)
+	}
+}
+
+func addRemoteMetaForGetRequest(request *Request) {
 	if symlink, ok := request.Meta.remoteMeta[MetaKeySymlink]; ok {
 		request.Symlink = symlink
 	}
@@ -534,12 +562,6 @@ func sendGetRequest(request *Request, lInfo, rInfo *ObjectInfo, //nolint:gocyclo
 
 	if !hasMtime && hasRemoteMtime {
 		request.Meta.remoteMeta[MetaKeyMtime] = remoteMtime
-	}
-
-	if lInfo == nil {
-		sendRequest(request, RequestStatusUploaded, nil, putCh)
-	} else if !sendForUploadOrUnmodified(request, lInfo, rInfo, putCh, skipReturnCh) {
-		sendRequest(request, RequestStatusReplaced, nil, putCh)
 	}
 }
 

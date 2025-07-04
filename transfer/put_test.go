@@ -169,6 +169,18 @@ func TestPutMock(t *testing.T) {
 					})
 				})
 
+				Convey("A second put on the same file that was removed skips them with orphaned status", func() {
+					p.requests = []*Request{requests[0]}
+
+					err = os.Remove(requests[0].Local)
+					So(err, ShouldBeNil)
+
+					uCh, urCh, srCh = p.Put()
+
+					request := <-srCh
+					So(request.Status, ShouldEqual, RequestStatusOrphaned)
+				})
+
 				Convey("Finally, Cleanup() defers to the handler", func() {
 					p.Cleanup()
 					So(lh.Cleaned, ShouldBeTrue)
