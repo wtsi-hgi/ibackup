@@ -3088,7 +3088,7 @@ func TestRemove(t *testing.T) {
 		Convey("Given a set with a file that failed to upload", func() {
 			dir3 := filepath.Join(path, "dir3")
 
-			err := os.MkdirAll(dir3, 0755)
+			err := os.MkdirAll(dir3, userPerms)
 			So(err, ShouldBeNil)
 
 			file5 := filepath.Join(dir3, "file5")
@@ -3106,6 +3106,52 @@ func TestRemove(t *testing.T) {
 			Convey("Remove will still work", func() {
 				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", file5)
 
+				So(exitCode, ShouldEqual, 0)
+
+				s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
+					0, "Removal status: 0 / 1 objects removed")
+
+				s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 10*time.Second)
+			})
+		})
+
+		Convey("Given a set with a missing file", func() {
+			file := filepath.Join(path, "missing-file")
+			internal.CreateTestFileOfLength(t, file, 1)
+
+			setName := "setWithMissingFile"
+			s.addSetForTesting(t, setName, transformer, path)
+
+			err := os.Remove(file)
+			So(err, ShouldBeNil)
+
+			s.waitForStatus(setName, "\nStatus: complete", 10*time.Second)
+			s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"}, 0, file+"\tmissing")
+
+			Convey("Remove will still work", func() {
+				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", file)
+				So(exitCode, ShouldEqual, 0)
+
+				s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
+					0, "Removal status: 0 / 1 objects removed")
+
+				s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 10*time.Second)
+			})
+		})
+
+		Convey("Given a set with an abnormal file", func() {
+			file := filepath.Join(path, "abnormal-file")
+			err := syscall.Mkfifo(file, userPerms)
+			So(err, ShouldBeNil)
+
+			setName := "setWithAbnormalFile"
+			s.addSetForTesting(t, setName, transformer, file)
+
+			s.waitForStatus(setName, "\nStatus: complete", 10*time.Second)
+			s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"}, 0, file+"\tabnormal")
+
+			Convey("Remove will still work", func() {
+				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", file)
 				So(exitCode, ShouldEqual, 0)
 
 				s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},

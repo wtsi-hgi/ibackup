@@ -569,20 +569,18 @@ func (s *Server) makeItemsDefsFromDirPaths(givenSet *set.Set,
 	return defs, remReqs, nil
 }
 
-func (s *Server) removeFileFromIRODSandDB(removeReq *set.RemoveReq, mayMissInDiscoverBucket bool) error {
+func (s *Server) removeFileFromIRODSandDB(removeReq *set.RemoveReq) error {
 	entry, err := s.db.GetFileEntryForSet(removeReq.Set.ID(), removeReq.Path)
-	if err != nil && !mayMissInDiscoverBucket {
+	if err != nil {
 		return err
 	}
-
-	fileMayNotBeUploaded := entry != nil && entry.Status == set.Failed
 
 	err = s.processRemoteFileRemoval(removeReq, entry)
-	if err != nil && !fileMayNotBeUploaded {
+	if err != nil && !entry.WasNotUploaded() {
 		return err
 	}
 
-	return s.processDBFileRemoval(removeReq, entry, mayMissInDiscoverBucket)
+	return s.processDBFileRemoval(removeReq, entry)
 }
 
 func (s *Server) processRemoteFileRemoval(removeReq *set.RemoveReq, entry *set.Entry) error {
@@ -619,17 +617,13 @@ func fileErrorCannotBeIgnored(err error, mayMissInRemote bool) bool {
 	return !(mayMissInRemote && strings.Contains(err.Error(), internal.ErrFileDoesNotExist))
 }
 
-func (s *Server) processDBFileRemoval(removeReq *set.RemoveReq, entry *set.Entry, mayMissInDiscoverBucket bool) error {
-	if entry == nil && mayMissInDiscoverBucket {
-		return s.db.IncrementNumObjectRemoved(removeReq.Set.ID())
-	}
-
+func (s *Server) processDBFileRemoval(removeReq *set.RemoveReq, entry *set.Entry) error {
 	err := s.db.RemoveFileEntry(removeReq.Set.ID(), removeReq.Path)
 	if err != nil {
 		return err
 	}
 
-	if entry.Type != set.Symlink {
+	if entry.Type != set.Symlink && entry.Type != set.Abnormal {
 		err = s.db.RemoveFileFromInode(removeReq.Path, entry.Inode)
 		if err != nil {
 			return err
@@ -784,8 +778,8 @@ func (s *Server) setErrorOnEntry(entry *set.Entry, sid, path string, err error) 
 	}
 }
 
-func (s *Server) removeDirFromDB(removeReq *set.RemoveReq, removedFromDiscoverBuckets bool) error {
-	err := s.db.RemoveDirEntry(removeReq.Set.ID(), removeReq.Path, !removedFromDiscoverBuckets)
+func (s *Server) removeDirFromDB(removeReq *set.RemoveReq) error {
+	err := s.db.RemoveDirEntry(removeReq.Set.ID(), removeReq.Path)
 	if err != nil {
 		return err
 	}

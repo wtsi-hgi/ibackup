@@ -197,6 +197,15 @@ func (e *Entry) updateTypeDestAndInode(newEntry *Entry) bool {
 	return true
 }
 
+func (e *Entry) WasNotUploaded() bool {
+	switch e.Status {
+	case Failed, Missing, AbnormalEntry:
+		return true
+	default:
+		return false
+	}
+}
+
 func (e *Entry) hasSameCoreProperties(other *Entry) bool {
 	return e.Type == other.Type && e.Dest == other.Dest && e.Inode == other.Inode && e.Status == other.Status
 }

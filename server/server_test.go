@@ -379,7 +379,7 @@ func TestServer(t *testing.T) {
 								Set:  exampleSet,
 							}
 
-							err = s.removeFileFromIRODSandDB(&remReq, false)
+							err = s.removeFileFromIRODSandDB(&remReq)
 							So(err, ShouldBeNil)
 
 							_, err = os.Stat(hardlink1Remote)
@@ -395,7 +395,7 @@ func TestServer(t *testing.T) {
 									Set:  exampleSet,
 								}
 
-								err = s.removeFileFromIRODSandDB(&remReq, false)
+								err = s.removeFileFromIRODSandDB(&remReq)
 								So(err, ShouldBeNil)
 
 								_, err = os.Stat(hardlink2Remote)
@@ -432,7 +432,7 @@ func TestServer(t *testing.T) {
 									Set:  exampleSet,
 								}
 
-								err = s.removeFileFromIRODSandDB(&remReq, false)
+								err = s.removeFileFromIRODSandDB(&remReq)
 								So(err, ShouldBeNil)
 
 								_, err = os.Stat(hardlink1Remote)
@@ -470,7 +470,7 @@ func TestServer(t *testing.T) {
 									Set:  exampleSet,
 								}
 
-								err = s.removeFileFromIRODSandDB(&remReq, false)
+								err = s.removeFileFromIRODSandDB(&remReq)
 								So(err, ShouldBeNil)
 
 								_, err = os.Stat(hardlink3Remote)
