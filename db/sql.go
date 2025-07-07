@@ -6,13 +6,16 @@ var (
 		"CREATE TABLE IF NOT EXISTS `transformers` (" +
 			"`id` INTEGER PRIMARY KEY /*! AUTO_INCREMENT */, " +
 			"`transformer` TEXT NOT NULL, " +
-			"UNIQUE(`transformer`)" +
+			"`transformerHash` VARBINARY(32) NOT NULL, " +
+			"UNIQUE(`transformerHash`)" +
 			");",
 		"CREATE TABLE IF NOT EXISTS `sets` (" +
 			"`id` INTEGER PRIMARY KEY /*! AUTO_INCREMENT */, " +
 			"`name` TEXT NOT NULL, " +
+			"`nameHash` VARBINARY(32) NOT NULL, " +
 			"`requester` TEXT NOT NULL, " +
-			"`transformerID` INTEGER NOT NULL, " +
+			"`requesterHash` VARBINARY(32) NOT NULL, " +
+			"`transformerID` INTEGER, " +
 			"`monitorTime` INTEGER NOT NULL, " +
 			"`description` TEXT NOT NULL, " +
 			"`numFiles` INTEGER DEFAULT 0, " +
@@ -23,12 +26,12 @@ var (
 			"`status` TINYINT DEFAULT 0, " +
 			"`lastCompletedCount` INTEGER DEFAULT 0, " +
 			"`lastCompletedSize` INTEGER DEFAULT 0, " +
-			"`error` TEXT DEFAULT \"\", " +
-			"`warning` TEXT  DEFAULT \"\", " +
-			"`metadata` TEXT  DEFAULT \"{}\", " +
+			"`error` TEXT, " +
+			"`warning` TEXT, " +
+			"`metadata` TEXT, " +
 			"`deleteLocal` BOOLEAN DEFAULT FALSE, " +
 			"`readonly` BOOLEAN DEFAULT FALSE, " +
-			"UNIQUE(`requester`, `name`), " +
+			"UNIQUE(`requesterHash`, `nameHash`), " +
 			"FOREIGN KEY(`transformerID`) REFERENCES `transformers`(`id`) ON UPDATE RESTRICT ON DELETE RESTRICT" +
 			");",
 		"CREATE TABLE IF NOT EXISTS `toDiscover` (" +
@@ -42,29 +45,32 @@ var (
 			"`id` INTEGER PRIMARY KEY /*! AUTO_INCREMENT */, " +
 			"`inode` INTEGER NOT NULL, " +
 			"`mountpoint` TEXT NOT NULL, " +
+			"`mountpointHash` VARBINARY(32) NOT NULL, " +
 			"`btime` INTEGER, " +
 			"`size` INTEGER NOT NULL, " +
 			"`fileType` TINYINT NOT NULL, " +
 			"`dest` TEXT NOT NULL, " +
 			"`remote` TEXT NOT NULL, " +
-			"UNIQUE(`mountpoint`, `inode`, `btime`)" +
+			"UNIQUE(`mountpointHash`, `inode`, `btime`)" +
 			");",
 		"CREATE TABLE IF NOT EXISTS `remoteFiles` (" +
 			"`id` INTEGER PRIMARY KEY /*! AUTO_INCREMENT */, " +
 			"`remotePath` TEXT NOT NULL, " +
+			"`remotePathHash` VARBINARY(32) NOT NULL, " +
 			"`status` TINYINT NOT NULL, " +
 			"`lastUploaded` DATETIME DEFAULT \"0001-01-01 00:00:00\", " +
-			"`lastError` TEXT DEFAULT \"\", " +
+			"`lastError` TEXT, " +
 			"`hardlinkID` INTEGER NOT NULL, " +
-			"UNIQUE(`remotePath`), " +
+			"UNIQUE(`remotePathHash`), " +
 			"FOREIGN KEY(`hardlinkID`) REFERENCES `hardlinks`(`id`) ON UPDATE RESTRICT ON DELETE RESTRICT" +
 			");",
 		"CREATE TABLE IF NOT EXISTS `localFiles` (" +
 			"`id` INTEGER PRIMARY KEY /*! AUTO_INCREMENT */, " +
 			"`localPath` TEXT NOT NULL, " +
+			"`localPathHash` VARBINARY(32) NOT NULL, " +
 			"`setID` INTEGER NOT NULL, " +
 			"`remoteFileID` INTEGER NOT NULL, " +
-			"UNIQUE(`localPath`, `setID`), " +
+			"UNIQUE(`localPathHash`, `setID`), " +
 			"FOREIGN KEY(`setID`) REFERENCES `sets`(`id`) ON DELETE CASCADE, " +
 			"FOREIGN KEY(`remoteFileID`) REFERENCES `remoteFiles`(`id`) ON UPDATE RESTRICT ON DELETE RESTRICT" +
 			");",
@@ -73,24 +79,24 @@ var (
 			"`localFileID` INTEGER, " +
 			"`attempts` INTEGER DEFAULT 0, " +
 			"`lastAttempt` DATETIME DEFAULT \"0001-01-01 00:00:00\", " +
-			"`lastError` TEXT DEFAULT \"\", " +
+			"`lastError` TEXT, " +
 			"FOREIGN KEY(`localFileID`) REFERENCES `localFiles`(`id`) ON UPDATE RESTRICT ON DELETE RESTRICT" +
 			");",
 		"CREATE TRIGGER IF NOT EXISTS `insert_file_count_size` AFTER INSERT ON `localFiles` FOR EACH ROW BEGIN " +
 			"UPDATE `sets` SET `numFiles` = `numFiles` + 1, `sizeFiles` = `sizeFiles` + (" +
 			"SELECT `hardlinks`.`size` FROM `hardlinks` JOIN `remoteFiles` ON `remoteFiles`.`hardlinkID` = `hardlinks`.`id` " +
-			"WHERE `remoteFiles`.`id` = `NEW`.`remoteID`) " +
+			"WHERE `remoteFiles`.`id` = `NEW`.`remoteFileID`) " +
 			"WHERE `id` = `NEW`.`setID`; END;",
 		"CREATE TRIGGER IF NOT EXISTS `delete_file_count_size` AFTER DELETE ON `localFiles` FOR EACH ROW BEGIN " +
 			"UPDATE `sets` SET `numFiles` = `numFiles` - 1, `sizeFiles` = `sizeFiles` - (" +
 			"SELECT `hardlinks`.`size` FROM `hardlinks` JOIN `remoteFiles` ON `remoteFiles`.`hardlinkID` = `hardlinks`.`id` " +
-			"WHERE `remoteFiles`.`id` = `NEW`.`remoteID`) " +
+			"WHERE `remoteFiles`.`id` = `OLD`.`remoteFileID`) " +
 			"WHERE `id` = `OLD`.`setID`;" +
 			"END;",
 		"CREATE TRIGGER IF NOT EXISTS `update_file_size` AFTER UPDATE ON `hardlinks` FOR EACH ROW BEGIN " +
 			"UPDATE `sets` SET `sizeFiles` = `sizeFiles` - `OLD`.`size` + `NEW`.`size` WHERE `id` IN (" +
 			"SELECT `localFiles`.`setID` FROM `localFiles` " +
-			"JOIN `remoteFiles` ON `remoteFiles`.`id` = `localFiles`.`remoteID` WHERE " +
+			"JOIN `remoteFiles` ON `remoteFiles`.`id` = `localFiles`.`remoteFileID` WHERE " +
 			"`remoteFiles`.`hardlinkID` = `NEW`.`id`);" +
 			"END;",
 	}
@@ -98,34 +104,43 @@ var (
 
 const (
 	onConflictUpdate   = "ON /*! DUPLICATE KEY UPDATE --*/ CONFLICT DO UPDATE SET\n"
-	onConflictReturnID = "ON /*! DUPLICATE KEY UPDATE DO NOTHING; SELECT LAST_INSERT_ID();--*/ " +
-		"CONFLICT DO UPDATE SET `id` = `id` RETURNING `id`\n;"
+	onConflictReturnID = "ON /*! DUPLICATE KEY UPDATE `id` = LAST_INSERT_ID(`id`); -- */ " +
+		"CONFLICT DO UPDATE SET `id` = `id` RETURNING `id`;\n/*! */"
 	createTransformer = "INSERT INTO `transformers` (" +
-		"`transformer`" +
-		") VALUES (?) " + onConflictReturnID
+		"`transformer`, " +
+		"`transformerHash`" +
+		") VALUES (?, unhex(SHA2(?, 0))) " + onConflictReturnID
 	createSet = "INSERT INTO `sets` (" +
 		"`name`, " +
+		"`nameHash`, " +
 		"`requester`, " +
+		"`requesterHash`, " +
 		"`transformerID`, " +
 		"`monitorTime`, " +
-		"`description`" +
-		") VALUES (?, ?, ?, ?, ?);"
+		"`description`, " +
+		"`error`, " +
+		"`warning`, " +
+		"`metadata` " +
+		") VALUES (?, unhex(SHA2(?, 0)), ?, unhex(SHA2(?, 0)), ?, ?, ?, '', '', '');"
 	createHardlink = "INSERT INTO `hardlinks` (" +
 		"`inode`, " +
 		"`mountpoint`, " +
+		"`mountpointHash`, " +
 		"`btime`, " +
 		"`remote`" +
 		"`mtime`, " +
 		"`size`, " +
 		"`fileType`, " +
 		"`dest`, " +
-		") VALUES (?, ?, ?, ?, ?, ?, ?, ?) " + onConflictUpdate + "`remote` = ?, `mtime` = ?, `dest` = ?;"
+		") VALUES (?, ?, unhex(SHA2(?, 0)), ?, ?, ?, ?, ?) " + onConflictUpdate + "`remote` = ?, `mtime` = ?, `dest` = ?;"
 	createRemoteFile = "INSERT INTO `remoteFiles` (" +
 		"`remotePath`, " +
+		"`remotePathHash`, " +
 		"`hardlinkID`" +
 		") VALUES (?, ?) " + onConflictReturnID
-	createSetFile = "INSERT INTO `setFiles` (" +
+	createSetFile = "INSERT INTO `localFiles` (" +
 		"`localPath`, " +
+		"`localPathHash`, " +
 		"`setID`, " +
 		"`remoteFilesID`" +
 		") VALUES (?, ?, ?) " + onConflictReturnID
@@ -152,11 +167,11 @@ const (
 		"`sets`.`readonly`, " +
 		"`transformers`.`transformer` " +
 		"FROM `sets` JOIN `transformers` ON `sets`.`transformerID` = `transformers`.`id`"
-	getAllSets            = getSetsStart + " ORDER BY `requester` ASC, `name` ASC;"
+	getAllSets            = getSetsStart + " ORDER BY `sets`.`id` ASC;"
 	getSetByNameRequester = getSetsStart +
-		" WHERE `sets`.`name` = ? and `sets`.`requester` = ?;"
+		" WHERE `sets`.`nameHash` = unhex(SHA2(?, 0)) and `sets`.`requesterHash` = unhex(SHA2(?, 0));"
 	getSetsByRequester = getSetsStart +
-		" WHERE `requester` = ? ORDER BY `name` ASC;"
+		" WHERE `sets`.`requesterHash` = unhex(SHA2(?, 0)) ORDER BY `sets`.`id` ASC;"
 	getSetsFiles = "SELECT " +
 		"`localFiles`.`id`, " +
 		"`localFiles`.`localPath`, " +
@@ -178,7 +193,7 @@ const (
 		") FROM `toDiscover` WHERE `setID` = ?;"
 	updateSetWarning             = "UPDATE `set` SET `warning` = ? WHERE `id` = ?;"
 	updateSetError               = "UPDATE `set` SET `warning` = ? WHERE `id` = ?;"
-	updateDiscoveryStarted       = "UPDATE `set` SET `startedDiscovery` = ? WHERE `is` = ?;"
+	updateDiscoveryStarted       = "UPDATE `set` SET `startedDiscovery` = ? WHERE `id` = ?;"
 	updateLastDiscoveryCompleted = "UPDATE `set` SET " +
 		"`lastDiscovery` = `startedDiscovery`, " +
 		"`lastCompleted` = ?, " +

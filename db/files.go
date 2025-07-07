@@ -1,9 +1,12 @@
 package db
 
-import "iter"
+import (
+	"database/sql"
+	"iter"
+)
 
 type File struct {
-	id                    uint64
+	id                    int64
 	LocalPath, RemotePath string
 	Size                  int64
 	Inode                 int64
@@ -14,15 +17,21 @@ type File struct {
 	SymlinkDest           string
 }
 
-func (d *DB) SetSetFiles(set *Set, toAdd, toRemove iter.Seq[File]) error {
+func (d *DB) SetSetFiles(set *Set, toAdd, toRemove iter.Seq[*File]) error {
+	tx, err := d.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck
+
 	for file := range toRemove {
-		if err := d.removeSetFile(set.id, file); err != nil {
+		if err := d.removeSetFile(tx, set.id, file); err != nil {
 			return err
 		}
 	}
 
 	for file := range toAdd {
-		if err := d.addSetFile(set.id, file); err != nil {
+		if err := d.addSetFile(tx, set.id, file); err != nil {
 			return err
 		}
 	}
@@ -30,52 +39,28 @@ func (d *DB) SetSetFiles(set *Set, toAdd, toRemove iter.Seq[File]) error {
 	return nil
 }
 
-func (d *DB) addSetFile(setID int64, file File) error {
-	tx, err := d.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback() //nolint:errcheck
-
-	res, err := tx.Exec(createHardlink, file.Inode, file.MountPount, file.InodeRemote,
-		file.Btime, file.Mtime, file.Size, file.Type, file.SymlinkDest, file.Mtime, file.SymlinkDest)
+func (d *DB) addSetFile(tx *sql.Tx, setID int64, file *File) error {
+	hlID, err := d.execReturningRowID(tx, createHardlink, file.Inode, file.MountPount, file.MountPount,
+		file.InodeRemote, file.Btime, file.Mtime, file.Size, file.Type, file.SymlinkDest,
+		file.Mtime, file.SymlinkDest)
 	if err != nil {
 		return err
 	}
 
-	hlID, err := res.LastInsertId()
+	rfID, err := d.execReturningRowID(tx, createRemoteFile, file.RemotePath, file.RemotePath, hlID)
 	if err != nil {
 		return err
 	}
 
-	if res, err = tx.Exec(createRemoteFile, file.RemotePath, hlID); err != nil {
-		return err
-	}
+	file.id, err = d.execReturningRowID(tx, createSetFile, file.LocalPath, file.LocalPath, setID, rfID)
 
-	rfID, err := res.LastInsertId()
-	if err != nil {
-		return err
-	}
-
-	if _, err = tx.Exec(createSetFile, file.LocalPath, setID, rfID); err != nil {
-		return err
-	}
-
-	return tx.Commit()
+	return err
 }
 
-func (d *DB) removeSetFile(setID int64, file File) error {
-	tx, err := d.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback() //nolint:errcheck
+func (d *DB) removeSetFile(tx *sql.Tx, setID int64, file *File) error {
+	_, err := tx.Exec(deleteSetFile, setID, file.id)
 
-	if _, err = tx.Exec(deleteSetFile, setID, file.id); err != nil {
-		return err
-	}
-
-	return tx.Commit()
+	return err
 }
 
 func (d *DBRO) GetSetFiles(set *Set) *IterErr[*File] {
