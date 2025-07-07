@@ -406,13 +406,15 @@ func (d *DB) IsSetReadyToAddFiles(set *Set) error {
 		return Error{Msg: ErrSetIsNotWritable, id: set.ID()}
 	}
 
-	incompleteRemReqs, err := d.GetIncompleteRemoveRequests()
+	remReqs, err := d.GetRemoveRequests(set.ID())
 	if err != nil {
 		return err
 	}
 
-	if len(incompleteRemReqs) != 0 {
-		return Error{Msg: ErrPendingRemovals, id: set.ID()}
+	for _, r := range remReqs {
+		if !r.IsComplete {
+			return Error{Msg: ErrPendingRemovals, id: set.ID()}
+		}
 	}
 
 	return nil

@@ -428,6 +428,8 @@ func (s *Server) putFiles(c *gin.Context) {
 	err := s.db.IsSetReadyToAddFiles(givenSet)
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+
+		return
 	}
 
 	err = s.db.SetFileEntries(givenSet.ID(), paths)
@@ -859,12 +861,13 @@ func (s *Server) putDirs(c *gin.Context) {
 	err := s.db.IsSetReadyToAddFiles(givenSet)
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+
+		return
 	}
 
 	entries := make([]*set.Dirent, len(paths))
 
 	for n, path := range paths {
-
 		entries[n] = &set.Dirent{
 			Path: path,
 			Mode: os.ModeDir,
@@ -892,18 +895,25 @@ func (s *Server) putDirs(c *gin.Context) {
 // previously removed from the given set, as it should no longer be excluded
 // from discovery.
 func (s *Server) updateRemovedBucket(entries []*set.Dirent, sid string) error {
+	excludeTree, err := s.buildExclusionTree(sid)
+	if err != nil {
+		return err
+	}
+
 	for _, entry := range entries {
-		excludeTree, err := s.buildExclusionTree(sid)
+		isRemoved, match := isDirentRemovedFromSet(entry, excludeTree)
+		if !isRemoved {
+			continue
+		}
+
+		err = s.excludeFromRemovedBucket(entry, match, excludeTree, sid)
 		if err != nil {
 			return err
 		}
 
-		isRemoved, match := isDirentRemovedFromSet(entry, excludeTree)
-		if isRemoved {
-			err = s.excludeFromRemovedBucket(entry, match, excludeTree, sid)
-			if err != nil {
-				return err
-			}
+		excludeTree, err = s.buildExclusionTree(sid)
+		if err != nil {
+			return err
 		}
 	}
 
