@@ -251,7 +251,8 @@ func (d *DB) Close() error {
 	return d.db.Close()
 }
 
-// AddOrUpdate adds or updates the given Set to the database.
+// AddOrUpdate adds or updates the given Set to the database. Errors if the set
+// is read-only, or if the set is being discovered.
 func (d *DB) AddOrUpdate(set *Set) error {
 	err := d.db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(setsBucket))
@@ -314,6 +315,31 @@ func (d *DB) deleteSubBucket(tx *bolt.Tx, setID, subBucket string) error {
 	}
 
 	return setsBucket.DeleteBucket(subBucketName)
+}
+
+// Hide marks the given Set as hidden in the database. This bypasses the normal
+// AddOrUpdate method, working on read-only sets.
+func (d *DB) Hide(set *Set) error {
+	return d.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(setsBucket))
+
+		id := set.ID()
+		bid := []byte(id)
+
+		existing := b.Get(bid)
+		if existing == nil {
+			return Error{Msg: ErrInvalidSetID, id: id}
+		}
+
+		eset := d.decodeSet(existing)
+		if eset.Hide {
+			return nil
+		}
+
+		eset.Hide = true
+
+		return b.Put(bid, d.encodeToBytes(eset))
+	})
 }
 
 // DeleteSubBucket deletes the provided sub bucket from the set with the

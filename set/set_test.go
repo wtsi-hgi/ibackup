@@ -525,6 +525,44 @@ func TestSetDB(t *testing.T) {
 					})
 				})
 
+				Convey("Then hide even read-only sets", func() {
+					set.ReadOnly = true
+					err = db.AddOrUpdate(set)
+					So(err, ShouldBeNil)
+
+					set.Hide = true
+					err = db.AddOrUpdate(set)
+					So(err, ShouldNotBeNil)
+					So(err.Error(), ShouldStartWith, ErrSetIsNotWritable)
+
+					set.Hide = false
+
+					err = db.Hide(set)
+					So(err, ShouldBeNil)
+
+					retrieved := db.GetByID(set.ID())
+					So(retrieved, ShouldNotBeNil)
+					So(retrieved.ReadOnly, ShouldBeTrue)
+					So(retrieved.Hide, ShouldBeTrue)
+
+					err = db.Hide(set)
+					So(err, ShouldBeNil)
+
+					err = db.Close()
+					So(err, ShouldBeNil)
+
+					db2, errn := New(dbPath, "", false)
+					So(errn, ShouldBeNil)
+					So(db2, ShouldNotBeNil)
+
+					defer db2.Close()
+
+					retrieved = db2.GetByID(set.ID())
+					So(retrieved, ShouldNotBeNil)
+					So(retrieved.ReadOnly, ShouldBeTrue)
+					So(retrieved.Hide, ShouldBeTrue)
+				})
+
 				Convey("Then get all the Sets and their entries", func() {
 					sets, errg := db.GetAll()
 					So(errg, ShouldBeNil)
