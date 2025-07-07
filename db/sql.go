@@ -152,11 +152,11 @@ const (
 		"`sets`.`readonly`, " +
 		"`transformers`.`transformer` " +
 		"FROM `sets` JOIN `transformers` ON `sets`.`transformerID` = `transformers`.`id`"
-	getAllSets            = getSetsStart + ";"
+	getAllSets            = getSetsStart + " ORDER BY `requester` ASC, `name` ASC;"
 	getSetByNameRequester = getSetsStart +
 		" WHERE `sets`.`name` = ? and `sets`.`requester` = ?;"
 	getSetsByRequester = getSetsStart +
-		" WHERE `requester` = ?;"
+		" WHERE `requester` = ? ORDER BY `name` ASC;"
 	getSetsFiles = "SELECT " +
 		"`localFiles`.`id`, " +
 		"`localFiles`.`localPath`, " +
