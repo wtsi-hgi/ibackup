@@ -1,6 +1,7 @@
 package db
 
 import (
+	"database/sql"
 	"time"
 )
 
@@ -178,14 +179,13 @@ func (d *DB) CreateSet(set *Set) error {
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	var tID int
-
-	err = tx.QueryRow(createTransformer, set.Transformer).Scan(&tID)
+	tID, err := d.execReturningRowID(tx, createTransformer, set.Transformer, set.Transformer)
 	if err != nil {
 		return err
 	}
 
-	res, err := tx.Exec(createSet, set.Name, set.Requester, tID, set.MonitorTime, set.Description)
+	res, err := tx.Exec(createSet, set.Name, set.Name,
+		set.Requester, set.Requester, tID, set.MonitorTime, set.Description)
 	if err != nil {
 		return err
 	}
@@ -195,6 +195,15 @@ func (d *DB) CreateSet(set *Set) error {
 	}
 
 	return tx.Commit()
+}
+
+func execReturningRowID(tx *sql.Tx, sql string, params ...any) (int64, error) {
+	res, err := tx.Exec(sql, params...)
+	if err != nil {
+		return 0, err
+	}
+
+	return res.LastInsertId()
 }
 
 func (d *DBRO) GetSet(name, requester string) (*Set, error) {

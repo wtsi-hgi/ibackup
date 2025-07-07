@@ -1,20 +1,15 @@
 package db
 
 import (
-	"path/filepath"
 	"slices"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	_ "modernc.org/sqlite" //
 )
 
 func TestSet(t *testing.T) {
 	Convey("With a new database", t, func() {
-		dbPath := filepath.Join(t.TempDir(), "db")
-
-		d, err := Init("sqlite", dbPath)
-		So(err, ShouldBeNil)
+		d := createTestDatabase(t)
 
 		Convey("You can add and retrieve Sets", func() {
 			setA := &Set{
@@ -55,16 +50,16 @@ func TestSet(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(got, ShouldResemble, setC)
 
-			So(slices.Collect(d.GetSetsByRequester("me").Iter), ShouldResemble, []*Set{setB, setA})
+			So(slices.Collect(d.GetSetsByRequester("me").Iter), ShouldResemble, []*Set{setA, setB})
 			So(slices.Collect(d.GetSetsByRequester("you").Iter), ShouldResemble, []*Set{setC})
-			So(slices.Collect(d.GetAllSets().Iter), ShouldResemble, []*Set{setB, setA, setC})
+			So(slices.Collect(d.GetAllSets().Iter), ShouldResemble, []*Set{setA, setB, setC})
 
-			So(d.DeleteSet(setB), ShouldBeNil)
+			So(d.DeleteSet(setA), ShouldBeNil)
 
-			So(slices.Collect(d.GetAllSets().Iter), ShouldResemble, []*Set{setA, setC})
+			So(slices.Collect(d.GetAllSets().Iter), ShouldResemble, []*Set{setB, setC})
 
 			So(d.DeleteSet(setC), ShouldBeNil)
-			So(slices.Collect(d.GetAllSets().Iter), ShouldResemble, []*Set{setA})
+			So(slices.Collect(d.GetAllSets().Iter), ShouldResemble, []*Set{setB})
 		})
 	})
 }

@@ -2,6 +2,8 @@ package db
 
 import (
 	"database/sql"
+
+	_ "github.com/go-sql-driver/mysql" //
 )
 
 type DBRO struct { //nolint:revive
@@ -10,6 +12,8 @@ type DBRO struct { //nolint:revive
 
 type DB struct {
 	DBRO
+
+	execReturningRowID func(tx *sql.Tx, sql string, params ...any) (int64, error)
 }
 
 func InitRO(driver, connection string) (*DBRO, error) {
@@ -27,7 +31,7 @@ func Init(driver, connection string) (*DB, error) {
 		return nil, err
 	}
 
-	d := &DB{DBRO: DBRO{db: db}}
+	d := &DB{DBRO: DBRO{db: db}, execReturningRowID: execReturningRowID}
 
 	if err = d.initTables(); err != nil {
 		return nil, err
