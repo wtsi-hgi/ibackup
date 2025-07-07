@@ -549,8 +549,8 @@ func TestSetDB(t *testing.T) {
 					err = db.Close()
 					So(err, ShouldBeNil)
 
-					db2, err := New(dbPath, "", false)
-					So(err, ShouldBeNil)
+					db2, errn := New(dbPath, "", false)
+					So(errn, ShouldBeNil)
 					So(db2, ShouldNotBeNil)
 
 					defer db2.Close()
