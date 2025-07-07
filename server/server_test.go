@@ -3777,20 +3777,20 @@ func TestServerHelperFunctions(t *testing.T) {
 	Convey("With a PTrie and a path", t, func() {
 		entryPath := "/path/to"
 
-		pathsForTree := []string{"/path/", "/some/other/path/to/myF", "/path/toFile", "/path/to/file"}
+		pathsForTree := []string{"/path/", "/some/path/to/myF", "/path/toFile", "/path/to/file"}
 
-		excludeTree := ptrie.New[bool]()
+		tree := ptrie.New[bool]()
 		for _, path := range pathsForTree {
-			err := excludeTree.Put([]byte(path), true)
+			err := tree.Put([]byte(path), true)
 			So(err, ShouldBeNil)
 		}
 
 		Convey("getChildEntriesFromPTrie returns only children paths", func() {
-			paths := getChildPathsFromPTrie(entryPath, excludeTree)
+			paths := getChildPathsFromPTrie(entryPath, tree)
 			So(paths, ShouldHaveLength, 1)
 			So(paths[0], ShouldEqual, "/path/to/file")
 
-			paths = getChildPathsFromPTrie(entryPath+"/", excludeTree)
+			paths = getChildPathsFromPTrie(entryPath+"/", tree)
 			So(paths, ShouldHaveLength, 1)
 		})
 
@@ -3800,17 +3800,17 @@ func TestServerHelperFunctions(t *testing.T) {
 				Mode: os.ModeDir,
 			}
 
-			isRemoved, match := isDirentRemovedFromSet(&dirent, excludeTree)
+			isRemoved, match := isDirentRemovedFromSet(&dirent, tree)
 			So(isRemoved, ShouldBeTrue)
 			So(match, ShouldEqual, "/path/")
 		})
 
 		Convey("isDirentRemovedFromSet works for files", func() {
 			dirent := set.Dirent{
-				Path: "/some/other/path/to/myFile",
+				Path: "/some/path/to/myFile",
 			}
 
-			isRemoved, _ := isDirentRemovedFromSet(&dirent, excludeTree)
+			isRemoved, _ := isDirentRemovedFromSet(&dirent, tree)
 			So(isRemoved, ShouldBeFalse)
 		})
 	})

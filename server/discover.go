@@ -403,7 +403,7 @@ func (s *Server) doSetDirWalks(entries []*set.Entry, excludeTree ptrie.Trie[bool
 	for _, entry := range entries {
 		dir := entry.Path
 		thisEntry := entry
-		
+
 		s.dirPool.Submit(func() {
 			err := s.checkAndWalkDir(dir, filterEntries(entriesCh, excludeTree, dir), warnChan)
 			errCh <- s.handleMissingDirectories(err, thisEntry, given, existing)
@@ -481,19 +481,26 @@ func isDirentRemovedFromSet(dirent *set.Dirent, excludeTree ptrie.Trie[bool]) (b
 		path += "/"
 	}
 
-	var finalMatch string
+	var prefixMatch string
 
-	return excludeTree.MatchPrefix([]byte(path), func(match []byte, _ bool) bool {
-		finalMatch = string(match)
-
+	pathBytes := []byte(path)
+	excludeTree.MatchPrefix(pathBytes, func(match []byte, _ bool) bool {
 		if bytes.HasSuffix(match, []byte{'/'}) {
+			prefixMatch = string(match)
+
 			return false
 		}
 
-		fmt.Println(finalMatch,path, finalMatch != path)
+		if bytes.Equal(match, pathBytes) {
+			prefixMatch = string(match)
 
-		return finalMatch != path
-	}), finalMatch
+			return false
+		}
+
+		return true
+	})
+
+	return prefixMatch != "", prefixMatch
 }
 
 // handleMissingDirectories checks if the given error is not nil, and if so
