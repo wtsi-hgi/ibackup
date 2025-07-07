@@ -530,10 +530,12 @@ func TestSetDB(t *testing.T) {
 					err = db.AddOrUpdate(set)
 					So(err, ShouldBeNil)
 
-					set.Description = "this update should fail"
+					set.Hide = true
 					err = db.AddOrUpdate(set)
 					So(err, ShouldNotBeNil)
 					So(err.Error(), ShouldStartWith, ErrSetIsNotWritable)
+
+					set.Hide = false
 
 					err = db.Hide(set)
 					So(err, ShouldBeNil)
