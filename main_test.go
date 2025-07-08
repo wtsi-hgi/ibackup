@@ -3469,6 +3469,24 @@ func TestEdit(t *testing.T) {
 			setFile2 := filepath.Join(setDir2, "file2")
 			internal.CreateTestFileOfLength(t, setFile2, 1)
 
+			addFileAndCheckOrphan := func(setName, addFile, orphanFile string) {
+				exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--add", addFile)
+				So(exitCode, ShouldEqual, 0)
+
+				s.waitForStatus(setName, "Status: complete", timeout)
+				s.waitForStatus(setName, "Uploaded: 1", timeout)
+
+				exitCode, output := s.runBinaryWithNoLogging(t, "status", "--name", setName, "-d")
+				So(exitCode, ShouldEqual, 0)
+
+				So(output, ShouldContainSubstring, "Num files: 2")
+				So(output, ShouldContainSubstring, "Uploaded: 1;")
+				So(output, ShouldContainSubstring, "Orphaned: 1;")
+				So(output, ShouldContainSubstring, "Size (total/recently uploaded/recently removed): 2 B / 1 B / 0 B")
+				So(output, ShouldContainSubstring, orphanFile+"\torphaned\t1 B")
+				So(output, ShouldContainSubstring, addFile+"\tuploaded")
+			}
+
 			Convey("And a set with a file", func() {
 				setName := "testSet"
 
@@ -3536,21 +3554,7 @@ func TestEdit(t *testing.T) {
 					err = os.Remove(setFile1)
 					So(err, ShouldBeNil)
 
-					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--add", setFile2)
-					So(exitCode, ShouldEqual, 0)
-
-					s.waitForStatus(setName, "Status: complete", timeout)
-					s.waitForStatus(setName, "Uploaded: 1", timeout)
-
-					exitCode, output := s.runBinaryWithNoLogging(t, "status", "--name", setName, "-d")
-					So(exitCode, ShouldEqual, 0)
-
-					So(output, ShouldContainSubstring, "Num files: 2")
-					So(output, ShouldContainSubstring, "Uploaded: 1;")
-					So(output, ShouldContainSubstring, "Orphaned: 1;")
-					So(output, ShouldContainSubstring, "Size (total/recently uploaded/recently removed): 2 B / 1 B / 0 B")
-					So(output, ShouldContainSubstring, setFile1+"\torphaned\t1 B")
-					So(output, ShouldContainSubstring, setFile2+"\tuploaded")
+					addFileAndCheckOrphan(setName, setFile2, setFile1)
 				})
 
 				Convey("You can add a folder to this set", func() {
@@ -3672,24 +3676,10 @@ func TestEdit(t *testing.T) {
 				})
 
 				Convey("You can add another file even if the initial folder no longer exists", func() {
-					os.RemoveAll(setDir1)
+					err = os.RemoveAll(setDir1)
 					So(err, ShouldBeNil)
 
-					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--add", setFile2)
-					So(exitCode, ShouldEqual, 0)
-
-					s.waitForStatus(setName, "Status: complete", timeout)
-					s.waitForStatus(setName, "Uploaded: 1", timeout)
-
-					exitCode, output := s.runBinaryWithNoLogging(t, "status", "--name", setName, "-d")
-					So(exitCode, ShouldEqual, 0)
-
-					So(output, ShouldContainSubstring, "Num files: 2")
-					So(output, ShouldContainSubstring, "Uploaded: 1;")
-					So(output, ShouldContainSubstring, "Orphaned: 1;")
-					So(output, ShouldContainSubstring, "Size (total/recently uploaded/recently removed): 2 B / 1 B / 0 B")
-					So(output, ShouldContainSubstring, setFile1+"\torphaned\t1 B")
-					So(output, ShouldContainSubstring, setFile2+"\tuploaded")
+					addFileAndCheckOrphan(setName, setFile2, setFile1)
 				})
 			})
 		})
