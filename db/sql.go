@@ -6,15 +6,15 @@ var (
 		"CREATE TABLE IF NOT EXISTS `transformers` (" +
 			"`id` INTEGER PRIMARY KEY /*! AUTO_INCREMENT */, " +
 			"`transformer` TEXT NOT NULL, " +
-			"`transformerHash` VARBINARY(32) GENERATED ALWAYS AS (" + virtStart + "`transformer`" + virtEnd + ") VIRTUAL, " +
+			"`transformerHash` " + hashColumnStart + "`transformer`" + hashColumnEnd + ", " +
 			"UNIQUE(`transformerHash`)" +
 			");",
 		"CREATE TABLE IF NOT EXISTS `sets` (" +
 			"`id` INTEGER PRIMARY KEY /*! AUTO_INCREMENT */, " +
 			"`name` TEXT NOT NULL, " +
-			"`nameHash` VARBINARY(32) GENERATED ALWAYS AS (" + virtStart + "`name`" + virtEnd + ") VIRTUAL, " +
+			"`nameHash` " + hashColumnStart + "`name`" + hashColumnEnd + ", " +
 			"`requester` TEXT NOT NULL, " +
-			"`requesterHash` VARBINARY(32) GENERATED ALWAYS AS (" + virtStart + "`requester`" + virtEnd + ") VIRTUAL, " +
+			"`requesterHash` " + hashColumnStart + "`requester`" + hashColumnEnd + ", " +
 			"`transformerID` INTEGER, " +
 			"`monitorTime` INTEGER NOT NULL, " +
 			"`description` TEXT NOT NULL, " +
@@ -45,8 +45,9 @@ var (
 			"`id` INTEGER PRIMARY KEY /*! AUTO_INCREMENT */, " +
 			"`inode` INTEGER NOT NULL, " +
 			"`mountpoint` TEXT NOT NULL, " +
-			"`mountpointHash` VARBINARY(32) GENERATED ALWAYS AS (" + virtStart + "`mountpoint`" + virtEnd + ") VIRTUAL, " +
+			"`mountpointHash` " + hashColumnStart + "`mountpoint`" + hashColumnEnd + ", " +
 			"`btime` INTEGER, " +
+			"`mtime` INTEGER, " +
 			"`size` INTEGER NOT NULL, " +
 			"`fileType` TINYINT NOT NULL, " +
 			"`dest` TEXT NOT NULL, " +
@@ -56,10 +57,10 @@ var (
 		"CREATE TABLE IF NOT EXISTS `remoteFiles` (" +
 			"`id` INTEGER PRIMARY KEY /*! AUTO_INCREMENT */, " +
 			"`remotePath` TEXT NOT NULL, " +
-			"`remotePathHash` VARBINARY(32) GENERATED ALWAYS AS (" + virtStart + "`remotePath`" + virtEnd + ") VIRTUAL, " +
-			"`status` TINYINT NOT NULL, " +
+			"`remotePathHash` " + hashColumnStart + "`remotePath`" + hashColumnEnd + ", " +
+			//"`status` TINYINT NOT NULL, " +
 			"`lastUploaded` DATETIME DEFAULT \"0001-01-01 00:00:00\", " +
-			"`lastError` TEXT, " +
+			"`lastError` TEXT NOT NULL, " +
 			"`hardlinkID` INTEGER NOT NULL, " +
 			"UNIQUE(`remotePathHash`), " +
 			"FOREIGN KEY(`hardlinkID`) REFERENCES `hardlinks`(`id`) ON UPDATE RESTRICT ON DELETE RESTRICT" +
@@ -67,7 +68,7 @@ var (
 		"CREATE TABLE IF NOT EXISTS `localFiles` (" +
 			"`id` INTEGER PRIMARY KEY /*! AUTO_INCREMENT */, " +
 			"`localPath` TEXT NOT NULL, " +
-			"`localPathHash` VARBINARY(32) GENERATED ALWAYS AS (" + virtStart + "`localPath`" + virtEnd + ") VIRTUAL, " +
+			"`localPathHash` " + hashColumnStart + "`localPath`" + hashColumnEnd + ", " +
 			"`setID` INTEGER NOT NULL, " +
 			"`remoteFileID` INTEGER NOT NULL, " +
 			"UNIQUE(`localPathHash`, `setID`), " +
@@ -103,13 +104,17 @@ var (
 )
 
 const (
-	virtStart    = "/*! UNHEX(SHA2(*/"
-	virtEnd      = "/*!, 0))*/"
-	virtPosition = virtStart + "?" + virtEnd
+	virtStart       = "/*! UNHEX(SHA2(*/"
+	virtEnd         = "/*!, 0))*/"
+	virtPosition    = virtStart + "?" + virtEnd
+	hashColumnStart = "/*! VARBINARY(32) -- */ TEXT\n/* */GENERATED ALWAYS AS (" + virtStart
+	hashColumnEnd   = virtEnd + ") VIRTUAL"
 
-	onConflictUpdate   = "ON /*! DUPLICATE KEY UPDATE --*/ CONFLICT DO UPDATE SET\n"
+	onConflictUpdate   = "ON /*! DUPLICATE KEY UPDATE -- */ CONFLICT DO UPDATE SET\n/*! */ "
 	onConflictReturnID = "ON /*! DUPLICATE KEY UPDATE `id` = LAST_INSERT_ID(`id`); -- */ " +
 		"CONFLICT DO UPDATE SET `id` = `id` RETURNING `id`;\n/*! */"
+	returnOrSetID = "/*! `id` = LAST_INSERT_ID(`id`); -- */ `id` = `id` RETURNING `id`;\n/*! */"
+
 	createTransformer = "INSERT INTO `transformers` (" +
 		"`transformer`" +
 		") VALUES (?) " + onConflictReturnID
@@ -127,26 +132,29 @@ const (
 		"`inode`, " +
 		"`mountpoint`, " +
 		"`btime`, " +
-		"`remote`" +
+		"`remote`, " +
 		"`mtime`, " +
 		"`size`, " +
 		"`fileType`, " +
-		"`dest`, " +
-		") VALUES (?, ?, ?, ?, ?, ?, ?) " + onConflictUpdate + "`remote` = ?, `mtime` = ?, `dest` = ?;"
+		"`dest`" +
+		") VALUES (?, ?, ?, ?, ?, ?, ?, ?) " +
+		onConflictUpdate + "`remote` = ?, `mtime` = ?, `dest` = ?, `size` = ?, " + returnOrSetID
 	createRemoteFile = "INSERT INTO `remoteFiles` (" +
 		"`remotePath`, " +
-		"`hardlinkID`" +
-		") VALUES (?, ?) " + onConflictReturnID
+		"`hardlinkID`, " +
+		"`lastError`" +
+		") VALUES (?, ?, '') " + onConflictReturnID
 	createSetFile = "INSERT INTO `localFiles` (" +
 		"`localPath`, " +
 		"`setID`, " +
-		"`remoteFilesID`" +
+		"`remoteFileID`" +
 		") VALUES (?, ?, ?) " + onConflictReturnID
 	createDiscover = "INSERT INTO `toDiscover` (" +
 		"`setID`, " +
 		"`path`, " +
 		"`type`" +
 		") VALUES (?, ?, ?) " + onConflictReturnID
+
 	getSetsStart = "SELECT " +
 		"`sets`.`id`, " +
 		"`sets`.`name`, " +
@@ -173,22 +181,25 @@ const (
 	getSetsFiles = "SELECT " +
 		"`localFiles`.`id`, " +
 		"`localFiles`.`localPath`, " +
-		"`remoteFiles`.`remotePath`" +
-		"`hardlinks`.`size`" +
-		"`hardlinks`.`fileType`" +
-		"`hardlinks`.`dest`" +
-		"`hardlinks`.`inode`" +
-		"`hardlinks`.`mountPoint`" +
-		"`hardlinks`.`btime`" +
-		"`hardlinks`.`remote` " +
+		"`remoteFiles`.`remotePath`, " +
+		"`hardlinks`.`size`, " +
+		"`hardlinks`.`fileType`, " +
+		"`hardlinks`.`dest`, " +
+		"`hardlinks`.`inode`, " +
+		"`hardlinks`.`mountPoint`, " +
+		"`hardlinks`.`btime`, " +
+		"`hardlinks`.`mtime`, " +
+		"`hardlinks`.`remote`, " +
+		"`hardlinks`.`dest` " +
 		"FROM `localFiles` " +
 		"JOIN `remoteFiles` ON `localFiles`.`remoteFileID` = `remoteFiles`.`id` " +
 		"JOIN `hardlinks` ON `remoteFiles`.`hardlinkID` = `hardlinks`.`id` " +
-		"WHERE `localFiles`.`setID` = ?"
+		"WHERE `localFiles`.`setID` = ? ORDER BY `localFiles`.`id` ASC;"
 	getSetDiscovery = "SELECT " +
 		"`path`, " +
 		"`type`" +
 		") FROM `toDiscover` WHERE `setID` = ?;"
+
 	updateSetWarning             = "UPDATE `set` SET `warning` = ? WHERE `id` = ?;"
 	updateSetError               = "UPDATE `set` SET `warning` = ? WHERE `id` = ?;"
 	updateDiscoveryStarted       = "UPDATE `set` SET `startedDiscovery` = ? WHERE `id` = ?;"
@@ -198,8 +209,9 @@ const (
 		"`lastCompletedCount` = ?, " +
 		"`lastCompletedSize` = ? " +
 		"WHERE `id` = ?;"
+
 	deleteSet      = "DELETE FROM `sets` WHERE `id` = ?;"
-	deleteSetFiles = "DELETE FROM `setFiles` WHERE `setID` = ?;"
-	deleteSetFile  = "DELETE FROM `setFiles` WHERE `id` = ? AND `setID` = ?;"
+	deleteSetFiles = "DELETE FROM `localFiles` WHERE `setID` = ?;"
+	deleteSetFile  = "DELETE FROM `localFiles` WHERE `id` = ?;"
 	deleteDiscover = "DELETE FROM `toDiscover` WHERE `setID` = ? AND `path` = ?;"
 )
