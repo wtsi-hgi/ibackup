@@ -107,6 +107,36 @@ func NewTestServer(t *testing.T) *TestServer {
 	return s
 }
 
+func NewUploadingTestServer(t *testing.T) (*TestServer, string) {
+	t.Helper()
+
+	dir := t.TempDir()
+
+	s := new(TestServer)
+
+	s.prepareFilePaths(dir)
+	s.prepareConfig()
+
+	remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
+	if remotePath == "" {
+		t.Skip("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set")
+	}
+
+	remotePath = filepath.Join(remotePath, "test_remove")
+
+	schedulerDeployment := os.Getenv("IBACKUP_TEST_SCHEDULER")
+	if schedulerDeployment == "" {
+		t.Skip("skipping iRODS backup test since IBACKUP_TEST_SCHEDULER not set")
+	}
+
+	s.schedulerDeployment = schedulerDeployment
+	s.remoteHardlinkPrefix = filepath.Join(remotePath, "hardlinks")
+
+	s.startServer()
+
+	return s, remotePath
+}
+
 func (s *TestServer) prepareFilePaths(dir string) {
 	s.dir = dir
 	s.dbFile = filepath.Join(s.dir, "db")
@@ -3131,6 +3161,31 @@ func TestEdit(t *testing.T) {
 			path := t.TempDir()
 			transformer := "prefix=" + path + ":" + remotePath
 
+			Convey("And a set with the wrong transformer for the path", func() {
+				setName := "testEditInvalidTransformer"
+				file1 := filepath.Join(path, "file1")
+				internal.CreateTestFileOfLength(t, file1, 1)
+
+				exitCode, _ := s.runBinary(t, "add", "--path", file1,
+					"--name", setName, "--transformer", "humgen")
+				So(exitCode, ShouldEqual, 0)
+
+				s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "your transformer didn't work")
+
+				Convey("You can edit the set to fix the transformer", func() {
+					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--transformer", transformer)
+					So(exitCode, ShouldEqual, 0)
+
+					s.confirmOutputDoesNotContain(t, []string{"status", "--name", setName}, 0, "your transformer didn't work")
+				})
+
+				Convey("You cannot edit the set to have an invalid transformer", func() {
+					exitCode, output := s.runBinaryWithNoLogging(t, "edit", "--name", setName, "--transformer", "badTransformer")
+					So(exitCode, ShouldEqual, 1)
+					So(output, ShouldContainSubstring, "invalid transformer")
+				})
+			})
+
 			Convey("And a monitored set", func() {
 				setName := "monitoredSet"
 				s.addSetForTestingWithFlag(t, setName, transformer, path, "--monitor", "1d")
@@ -3207,6 +3262,20 @@ func TestEdit(t *testing.T) {
 						exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--disable-readonly")
 						So(exitCode, ShouldEqual, 0)
 					})
+				})
+			})
+
+			Convey("And a set with a file", func() {
+				file1 := filepath.Join(path, "file1")
+				internal.CreateTestFileOfLength(t, file1, 1)
+
+				setName := "setWithAFile"
+				s.addSetForTesting(t, setName, transformer, path)
+
+				Convey("If the set is not complete, you cannot change the transformer", func() {
+					exitCode, output := s.runBinaryWithNoLogging(t, "edit", "--name", setName, "--transformer", "humgen")
+					So(exitCode, ShouldEqual, 1)
+					So(output, ShouldContainSubstring, set.ErrTransformerInUse)
 				})
 			})
 
@@ -3369,6 +3438,47 @@ func TestEdit(t *testing.T) {
 						So(statusOutput, ShouldContainSubstring, "Reason: quarantine\n")
 						So(statusOutput, ShouldContainSubstring, "Removal date: "+removalDate+"\n")
 					})
+				})
+			})
+		})
+	})
+
+	Convey("With a started uploading server", t, func() {
+		s, remotePath := NewUploadingTestServer(t)
+		So(s, ShouldNotBeNil)
+
+		path := t.TempDir()
+		transformer := "prefix=" + path + ":" + remotePath
+
+		resetIRODS()
+
+		timeout := 5 * time.Second
+
+		Convey("And some files", func() {
+			setDir1 := filepath.Join(path, "dir1")
+			err := os.Mkdir(setDir1, userPerms)
+			So(err, ShouldBeNil)
+
+			setDir2 := filepath.Join(path, "dir2")
+			err = os.Mkdir(setDir2, userPerms)
+			So(err, ShouldBeNil)
+
+			setFile1 := filepath.Join(setDir1, "file1")
+			internal.CreateTestFileOfLength(t, setFile1, 1)
+
+			setFile2 := filepath.Join(setDir2, "file2")
+			internal.CreateTestFileOfLength(t, setFile2, 1)
+
+			Convey("And a set with a file", func() {
+				setName := "testSet"
+
+				s.addSetForTesting(t, setName, transformer, setFile1)
+				s.waitForStatus(setName, "Status: complete", timeout)
+
+				Convey("If there are uploaded files, you cannot change the transformer", func() {
+					exitCode, output := s.runBinaryWithNoLogging(t, "edit", "--name", setName, "--transformer", "humgen")
+					So(exitCode, ShouldEqual, 1)
+					So(output, ShouldContainSubstring, set.ErrTransformerAlreadyUsed)
 				})
 			})
 		})

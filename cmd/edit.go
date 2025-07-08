@@ -45,6 +45,7 @@ var (
 	editReason              transfer.Reason
 	editReview              string
 	editRemovalDate         string
+	editTransformer         string
 	editStopMonitor         bool
 	editStopMonitorRemovals bool
 	editStopArchive         bool
@@ -127,6 +128,10 @@ Edit an existing backup set.`,
 			userSet.Hide = false
 		}
 
+		if editTransformer != "" {
+			userSet.Transformer = editTransformer
+		}
+
 		return edit(client, userSet, editMakeWritable)
 	},
 }
@@ -141,6 +146,7 @@ func init() {
 	editCmd.Flags().Var(&editReason, "reason", helpTextReason)
 	editCmd.Flags().StringVar(&editReview, "review", "", helpTextReview)
 	editCmd.Flags().StringVar(&editRemovalDate, "removal-date", "", helpTextRemoval)
+	editCmd.Flags().StringVar(&editTransformer, "transformer", "", helpTextTransformer)
 	editCmd.Flags().BoolVar(&editStopMonitor, "stop-monitor", false, "stop monitoring the set for changes")
 	editCmd.Flags().BoolVar(&editStopMonitorRemovals, "stop-monitor-removals", false,
 		"stop monitoring the set for locally removed files")
@@ -154,6 +160,7 @@ func init() {
 		"hide set when viewing status")
 	editCmd.Flags().BoolVar(&editUnHide, "unhide", false,
 		"unhide set when viewing status")
+
 	if err := editCmd.MarkFlagRequired("name"); err != nil {
 		die(err)
 	}

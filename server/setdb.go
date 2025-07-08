@@ -332,7 +332,14 @@ func (s *Server) putSet(c *gin.Context) {
 		return
 	}
 
-	err := s.db.AddOrUpdate(given)
+	_, err := given.MakeTransformer()
+	if err != nil {
+		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+
+		return
+	}
+
+	err = s.db.AddOrUpdate(given)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, err) //nolint:errcheck
 
