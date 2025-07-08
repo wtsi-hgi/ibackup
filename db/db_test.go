@@ -1,25 +1,13 @@
 package db
 
 import (
-	"crypto/sha256"
 	"database/sql"
-	"database/sql/driver"
-	"fmt"
 	"os"
 	"testing"
-	"unsafe"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"modernc.org/sqlite"
+	_ "modernc.org/sqlite"
 )
-
-func init() { //nolint:gochecknoinits
-	sqlite.MustRegisterScalarFunction("SHA2", 2, func(_ *sqlite.FunctionContext, a []driver.Value) (driver.Value, error) {
-		v := a[0].(string) //nolint:errcheck,forcetypeassert
-
-		return fmt.Sprintf("%X", sha256.Sum256(unsafe.Slice(unsafe.StringData(v), len(v)))), nil
-	})
-}
 
 func createTestDatabase(t *testing.T) *DB {
 	t.Helper()

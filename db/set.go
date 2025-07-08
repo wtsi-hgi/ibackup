@@ -179,13 +179,12 @@ func (d *DB) CreateSet(set *Set) error {
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	tID, err := d.execReturningRowID(tx, createTransformer, set.Transformer, set.Transformer)
+	tID, err := d.execReturningRowID(tx, createTransformer, set.Transformer)
 	if err != nil {
 		return err
 	}
 
-	res, err := tx.Exec(createSet, set.Name, set.Name,
-		set.Requester, set.Requester, tID, set.MonitorTime, set.Description)
+	res, err := tx.Exec(createSet, set.Name, set.Requester, tID, set.MonitorTime, set.Description)
 	if err != nil {
 		return err
 	}
