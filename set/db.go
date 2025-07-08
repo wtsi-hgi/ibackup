@@ -68,8 +68,8 @@ const (
 	ErrPathNotInSet              = "path(s) do not belong to the backup set"
 	ErrRemovalWhenSetNotComplete = "you can only remove from completed sets"
 	ErrSetIsNotWritable          = "the set is read-only, you cannot change it"
-	ErrTransformerAlreadyUsed    = "you cannot edit transformer on a set with uploaded files"
-	ErrTransformerInUse          = "you cannot edit transformer on a set with unfinished uploads"
+	ErrTransformerAlreadyUsed    = "you cannot edit the transformer on a set with uploaded files"
+	ErrTransformerInUse          = "you cannot edit the transformer on a set with unfinished uploads"
 
 	setsBucket                    = "sets"
 	userToSetBucket               = "userLookup"
