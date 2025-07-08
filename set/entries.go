@@ -197,6 +197,7 @@ func (e *Entry) updateTypeDestAndInode(newEntry *Entry) bool {
 	return true
 }
 
+// WasNotUploaded checks whether the entry's status corresponds to a status in which the entry could not be uploaded.
 func (e *Entry) WasNotUploaded() bool {
 	switch e.Status {
 	case Failed, Missing, AbnormalEntry:
