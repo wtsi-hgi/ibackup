@@ -6,15 +6,15 @@ var (
 		"CREATE TABLE IF NOT EXISTS `transformers` (" +
 			"`id` INTEGER PRIMARY KEY /*! AUTO_INCREMENT */, " +
 			"`transformer` TEXT NOT NULL, " +
-			"`transformerHash` VARBINARY(32) NOT NULL, " +
+			"`transformerHash` VARBINARY(32) GENERATED ALWAYS AS (" + virtStart + "`transformer`" + virtEnd + ") VIRTUAL, " +
 			"UNIQUE(`transformerHash`)" +
 			");",
 		"CREATE TABLE IF NOT EXISTS `sets` (" +
 			"`id` INTEGER PRIMARY KEY /*! AUTO_INCREMENT */, " +
 			"`name` TEXT NOT NULL, " +
-			"`nameHash` VARBINARY(32) NOT NULL, " +
+			"`nameHash` VARBINARY(32) GENERATED ALWAYS AS (" + virtStart + "`name`" + virtEnd + ") VIRTUAL, " +
 			"`requester` TEXT NOT NULL, " +
-			"`requesterHash` VARBINARY(32) NOT NULL, " +
+			"`requesterHash` VARBINARY(32) GENERATED ALWAYS AS (" + virtStart + "`requester`" + virtEnd + ") VIRTUAL, " +
 			"`transformerID` INTEGER, " +
 			"`monitorTime` INTEGER NOT NULL, " +
 			"`description` TEXT NOT NULL, " +
@@ -45,7 +45,7 @@ var (
 			"`id` INTEGER PRIMARY KEY /*! AUTO_INCREMENT */, " +
 			"`inode` INTEGER NOT NULL, " +
 			"`mountpoint` TEXT NOT NULL, " +
-			"`mountpointHash` VARBINARY(32) NOT NULL, " +
+			"`mountpointHash` VARBINARY(32) GENERATED ALWAYS AS (" + virtStart + "`mountpoint`" + virtEnd + ") VIRTUAL, " +
 			"`btime` INTEGER, " +
 			"`size` INTEGER NOT NULL, " +
 			"`fileType` TINYINT NOT NULL, " +
@@ -56,7 +56,7 @@ var (
 		"CREATE TABLE IF NOT EXISTS `remoteFiles` (" +
 			"`id` INTEGER PRIMARY KEY /*! AUTO_INCREMENT */, " +
 			"`remotePath` TEXT NOT NULL, " +
-			"`remotePathHash` VARBINARY(32) NOT NULL, " +
+			"`remotePathHash` VARBINARY(32) GENERATED ALWAYS AS (" + virtStart + "`remotePath`" + virtEnd + ") VIRTUAL, " +
 			"`status` TINYINT NOT NULL, " +
 			"`lastUploaded` DATETIME DEFAULT \"0001-01-01 00:00:00\", " +
 			"`lastError` TEXT, " +
@@ -67,7 +67,7 @@ var (
 		"CREATE TABLE IF NOT EXISTS `localFiles` (" +
 			"`id` INTEGER PRIMARY KEY /*! AUTO_INCREMENT */, " +
 			"`localPath` TEXT NOT NULL, " +
-			"`localPathHash` VARBINARY(32) NOT NULL, " +
+			"`localPathHash` VARBINARY(32) GENERATED ALWAYS AS (" + virtStart + "`localPath`" + virtEnd + ") VIRTUAL, " +
 			"`setID` INTEGER NOT NULL, " +
 			"`remoteFileID` INTEGER NOT NULL, " +
 			"UNIQUE(`localPathHash`, `setID`), " +
@@ -103,44 +103,42 @@ var (
 )
 
 const (
+	virtStart    = "/*! UNHEX(SHA2(*/"
+	virtEnd      = "/*!, 0))*/"
+	virtPosition = virtStart + "?" + virtEnd
+
 	onConflictUpdate   = "ON /*! DUPLICATE KEY UPDATE --*/ CONFLICT DO UPDATE SET\n"
 	onConflictReturnID = "ON /*! DUPLICATE KEY UPDATE `id` = LAST_INSERT_ID(`id`); -- */ " +
 		"CONFLICT DO UPDATE SET `id` = `id` RETURNING `id`;\n/*! */"
 	createTransformer = "INSERT INTO `transformers` (" +
-		"`transformer`, " +
-		"`transformerHash`" +
-		") VALUES (?, unhex(SHA2(?, 0))) " + onConflictReturnID
+		"`transformer`" +
+		") VALUES (?) " + onConflictReturnID
 	createSet = "INSERT INTO `sets` (" +
 		"`name`, " +
-		"`nameHash`, " +
 		"`requester`, " +
-		"`requesterHash`, " +
 		"`transformerID`, " +
 		"`monitorTime`, " +
 		"`description`, " +
 		"`error`, " +
 		"`warning`, " +
 		"`metadata` " +
-		") VALUES (?, unhex(SHA2(?, 0)), ?, unhex(SHA2(?, 0)), ?, ?, ?, '', '', '');"
+		") VALUES (?, ?, ?, ?, ?, '', '', '');"
 	createHardlink = "INSERT INTO `hardlinks` (" +
 		"`inode`, " +
 		"`mountpoint`, " +
-		"`mountpointHash`, " +
 		"`btime`, " +
 		"`remote`" +
 		"`mtime`, " +
 		"`size`, " +
 		"`fileType`, " +
 		"`dest`, " +
-		") VALUES (?, ?, unhex(SHA2(?, 0)), ?, ?, ?, ?, ?) " + onConflictUpdate + "`remote` = ?, `mtime` = ?, `dest` = ?;"
+		") VALUES (?, ?, ?, ?, ?, ?, ?) " + onConflictUpdate + "`remote` = ?, `mtime` = ?, `dest` = ?;"
 	createRemoteFile = "INSERT INTO `remoteFiles` (" +
 		"`remotePath`, " +
-		"`remotePathHash`, " +
 		"`hardlinkID`" +
 		") VALUES (?, ?) " + onConflictReturnID
 	createSetFile = "INSERT INTO `localFiles` (" +
 		"`localPath`, " +
-		"`localPathHash`, " +
 		"`setID`, " +
 		"`remoteFilesID`" +
 		") VALUES (?, ?, ?) " + onConflictReturnID
@@ -169,9 +167,9 @@ const (
 		"FROM `sets` JOIN `transformers` ON `sets`.`transformerID` = `transformers`.`id`"
 	getAllSets            = getSetsStart + " ORDER BY `sets`.`id` ASC;"
 	getSetByNameRequester = getSetsStart +
-		" WHERE `sets`.`nameHash` = unhex(SHA2(?, 0)) and `sets`.`requesterHash` = unhex(SHA2(?, 0));"
+		" WHERE `sets`.`nameHash` = " + virtPosition + " and `sets`.`requesterHash` = " + virtPosition + ";"
 	getSetsByRequester = getSetsStart +
-		" WHERE `sets`.`requesterHash` = unhex(SHA2(?, 0)) ORDER BY `sets`.`id` ASC;"
+		" WHERE `sets`.`requesterHash` = " + virtPosition + " ORDER BY `sets`.`id` ASC;"
 	getSetsFiles = "SELECT " +
 		"`localFiles`.`id`, " +
 		"`localFiles`.`localPath`, " +

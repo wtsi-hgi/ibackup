@@ -47,12 +47,12 @@ func (d *DB) addSetFile(tx *sql.Tx, setID int64, file *File) error {
 		return err
 	}
 
-	rfID, err := d.execReturningRowID(tx, createRemoteFile, file.RemotePath, file.RemotePath, hlID)
+	rfID, err := d.execReturningRowID(tx, createRemoteFile, file.RemotePath, hlID)
 	if err != nil {
 		return err
 	}
 
-	file.id, err = d.execReturningRowID(tx, createSetFile, file.LocalPath, file.LocalPath, setID, rfID)
+	file.id, err = d.execReturningRowID(tx, createSetFile, file.LocalPath, setID, rfID)
 
 	return err
 }
