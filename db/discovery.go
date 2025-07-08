@@ -1,12 +1,20 @@
 package db
 
+type DiscoveryType uint8
+
+const (
+	DiscoverDirectory DiscoveryType = iota
+	DiscoverFOFN
+	DiscoverFODN
+)
+
 type Discover struct {
 	Path string
-	Type uint8
+	Type DiscoveryType
 }
 
 func (d *DB) AddSetDiscovery(set *Set, dr *Discover) error {
-	return d.exec(createDiscover, dr.Path, dr.Type, set.id)
+	return d.exec(createDiscover, set.id, dr.Path, dr.Type, dr.Type)
 }
 
 func (d *DBRO) GetSetDiscovery(set *Set) *IterErr[*Discover] {
@@ -23,6 +31,6 @@ func scanDiscover(scanner scanner) (*Discover, error) {
 	return d, nil
 }
 
-func (d *DB) DeleteDiscover(set *Set, path string) error {
+func (d *DB) DeleteSetDiscovery(set *Set, path string) error {
 	return d.exec(deleteDiscover, set.id, path)
 }

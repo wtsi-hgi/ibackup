@@ -26,9 +26,9 @@ var (
 			"`status` TINYINT DEFAULT 0, " +
 			"`lastCompletedCount` INTEGER DEFAULT 0, " +
 			"`lastCompletedSize` INTEGER DEFAULT 0, " +
-			"`error` TEXT, " +
-			"`warning` TEXT, " +
-			"`metadata` TEXT, " +
+			"`error` TEXT NOT NULL, " +
+			"`warning` TEXT NOT NULL, " +
+			"`metadata` TEXT NOT NULL, " +
 			"`deleteLocal` BOOLEAN DEFAULT FALSE, " +
 			"`readonly` BOOLEAN DEFAULT FALSE, " +
 			"UNIQUE(`requesterHash`, `nameHash`), " +
@@ -38,7 +38,9 @@ var (
 			"`id` INTEGER PRIMARY KEY /*! AUTO_INCREMENT */, " +
 			"`setID` INTEGER NOT NULL, " +
 			"`path` TEXT NOT NULL, " +
+			"`pathHash` " + hashColumnStart + "`path`" + hashColumnEnd + ", " +
 			"`type` TINYINT NOT NULL, " +
+			"UNIQUE(`setID`, `pathHash`), " +
 			"FOREIGN KEY(`setID`) REFERENCES `sets`(`id`) ON UPDATE RESTRICT ON DELETE CASCADE" +
 			");",
 		"CREATE TABLE IF NOT EXISTS `hardlinks` (" +
@@ -153,7 +155,7 @@ const (
 		"`setID`, " +
 		"`path`, " +
 		"`type`" +
-		") VALUES (?, ?, ?) " + onConflictReturnID
+		") VALUES (?, ?, ?) " + onConflictUpdate + "`type` = ?;"
 
 	getSetsStart = "SELECT " +
 		"`sets`.`id`, " +
@@ -198,7 +200,7 @@ const (
 	getSetDiscovery = "SELECT " +
 		"`path`, " +
 		"`type`" +
-		") FROM `toDiscover` WHERE `setID` = ?;"
+		" FROM `toDiscover` WHERE `setID` = ? ORDER BY `id` ASC;"
 
 	updateSetWarning             = "UPDATE `set` SET `warning` = ? WHERE `id` = ?;"
 	updateSetError               = "UPDATE `set` SET `warning` = ? WHERE `id` = ?;"
