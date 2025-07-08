@@ -278,9 +278,9 @@ func updateSet(client *server.Client, sid string, path string) error {
 	}
 
 	if info.IsDir() {
-		err = client.SetDirs(sid, []string{absPath})
+		err = client.MergeDirs(sid, []string{absPath})
 	} else {
-		err = client.SetFiles(sid, []string{absPath})
+		err = client.MergeFiles(sid, []string{absPath})
 	}
 
 	if err != nil {

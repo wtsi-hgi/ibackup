@@ -208,9 +208,9 @@ func (c *Client) GetSetByName(requester, setName string) (*set.Set, error) {
 	})
 }
 
-// SetFiles sets the given paths as the file paths for the backup set with the
-// given ID.
-func (c *Client) SetFiles(setID string, paths []string) error {
+// MergeFiles sets the given paths as the file paths for the backup set with the
+// given ID. It preserves the existing files in the set and handles duplicates.
+func (c *Client) MergeFiles(setID string, paths []string) error {
 	return c.putThing(EndPointAuthFiles+"/"+setID, stringsToBytes(paths))
 }
 
@@ -226,13 +226,13 @@ func stringsToBytes(s []string) [][]byte {
 	return b
 }
 
-// SetDirs sets the given paths as the directory paths for the backup set with
-// the given ID.
-func (c *Client) SetDirs(setID string, paths []string) error {
+// MergeDirs sets the given paths as the directory paths for the backup set with
+// the given ID. It preserves the existing dirs in the set and handles duplicates.
+func (c *Client) MergeDirs(setID string, paths []string) error {
 	return c.putThing(EndPointAuthDirs+"/"+setID, stringsToBytes(paths))
 }
 
-// TriggerDiscovery tells the server that you've called SetFiles() and SetDirs()
+// TriggerDiscovery tells the server that you've called MergeFiles() and MergeDirs()
 // for the given set, and now want it to discover the files that exist and
 // discover the contents of the directories, and start the process of backing up
 // the files.

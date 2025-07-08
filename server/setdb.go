@@ -432,7 +432,7 @@ func (s *Server) putFiles(c *gin.Context) {
 		return
 	}
 
-	err = s.db.SetFileEntries(givenSet.ID(), paths)
+	err = s.db.MergeFileEntries(givenSet.ID(), paths)
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
@@ -874,7 +874,7 @@ func (s *Server) putDirs(c *gin.Context) {
 		}
 	}
 
-	err = s.db.SetDirEntries(givenSet.ID(), entries)
+	err = s.db.MergeDirEntries(givenSet.ID(), entries)
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
