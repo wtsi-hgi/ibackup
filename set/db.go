@@ -70,6 +70,7 @@ const (
 	ErrSetIsNotWritable          = "the set is read-only, you cannot change it"
 	ErrTransformerAlreadyUsed    = "you cannot edit the transformer on a set with uploaded files"
 	ErrTransformerInUse          = "you cannot edit the transformer on a set with unfinished uploads"
+	ErrPendingRemovals           = "the set has unfinished removals, you cannot change it"
 
 	setsBucket                    = "sets"
 	userToSetBucket               = "userLookup"
@@ -284,11 +285,6 @@ func (d *DB) AddOrUpdate(set *Set) error {
 			}
 
 			set = eset
-
-			err := d.deleteSubBucket(tx, set.ID(), removedBucket)
-			if err != nil {
-				return err
-			}
 		}
 
 		errp := b.Put(bid, d.encodeToBytes(set))
@@ -402,6 +398,26 @@ func (d *DB) validateSet(set *Set) error {
 	}
 
 	return Error{Msg: ErrRemovalWhenSetNotComplete, id: set.Name}
+}
+
+// IsSetReadyToAddFiles checks if the set is ready to have files/dirs added to it.
+func (d *DB) IsSetReadyToAddFiles(set *Set) error {
+	if set.ReadOnly {
+		return Error{Msg: ErrSetIsNotWritable, id: set.ID()}
+	}
+
+	remReqs, err := d.GetRemoveRequests(set.ID())
+	if err != nil {
+		return err
+	}
+
+	for _, r := range remReqs {
+		if !r.IsComplete {
+			return Error{Msg: ErrPendingRemovals, id: set.ID()}
+		}
+	}
+
+	return nil
 }
 
 // validateFileAndDirPaths returns an error if any provided path is not in the
@@ -667,9 +683,11 @@ func (d *DBRO) getPathsWithPrefix(setID, bucketName, prefix string) ([]string, e
 	return entries, err
 }
 
-// SetFileEntries sets the file paths for the given backup set. Only supply
-// absolute paths to files.
-func (d *DB) SetFileEntries(setID string, paths []string) error {
+// MergeFileEntries sets the file paths for the given backup set. Only supply
+// absolute paths to files. It keeps the existing entries in the set and
+// handles duplicates by updating the existing entries. If the file is not
+// already in the set, it will be added with the status Registered.
+func (d *DB) MergeFileEntries(setID string, paths []string) error {
 	entries := make([]*Dirent, len(paths))
 
 	for n, path := range paths {
@@ -678,12 +696,14 @@ func (d *DB) SetFileEntries(setID string, paths []string) error {
 		}
 	}
 
-	return d.setEntries(setID, entries, fileBucket, Registered)
+	return d.mergeEntries(setID, entries, fileBucket, Registered)
 }
 
-// setEntries sets the paths for the given backup set in a sub bucket with the
-// given prefix. Only supply absolute paths.
-func (d *DB) setEntries(setID string, dirents []*Dirent, bucketName string, initialStatus EntryStatus) error {
+// mergeEntries sets the paths for the given backup set in a sub bucket with the
+// given prefix. Only supply absolute paths. It keeps the existing entries in the set and
+// handles duplicates by updating the existing entries.
+// If the file is not already in the set, it will be added with the given status.
+func (d *DB) mergeEntries(setID string, dirents []*Dirent, bucketName string, initialStatus EntryStatus) error {
 	return d.db.Update(func(tx *bolt.Tx) error {
 		b, existing, err := d.getExistingEntries(tx, bucketName, setID)
 		if err != nil {
@@ -764,8 +784,8 @@ func getSubBucket(tx *bolt.Tx, setID, subBucket string) *bolt.Bucket {
 	return setsBucket.Bucket(subBucketName)
 }
 
-// GetAllRemoveRequests returns all incomplete removeReqs from every set.
-func (d *DBRO) GetAllRemoveRequests() ([]RemoveReq, error) {
+// GetIncompleteRemoveRequests returns all incomplete removeReqs from every set.
+func (d *DBRO) GetIncompleteRemoveRequests() ([]RemoveReq, error) {
 	var allRemReqs []RemoveReq
 
 	sets, err := d.GetAll()
@@ -879,6 +899,11 @@ func (d *DB) removeEntryIfRedundant(remReq RemoveReq, curDir string) (string, er
 	return curDir, nil
 }
 
+// RemoveFromRemovedBucket removes the given path from the removed bucket of the given set.
+func (d *DB) RemoveFromRemovedBucket(path, sid string) error {
+	return d.deleteObjectFromSubBucket(path, sid, removedBucket)
+}
+
 // GetExistingDirs returns all existing dir paths.
 func (d *DB) GetExistingDirs(setID string) (map[string]struct{}, error) {
 	existing, err := d.GetDirEntries(setID)
@@ -983,10 +1008,12 @@ func newDirentFromPath(path string) *Dirent {
 	return dirent
 }
 
-// SetDirEntries sets the directory paths for the given backup set. Only supply
-// absolute paths to directories.
-func (d *DB) SetDirEntries(setID string, entries []*Dirent) error {
-	return d.setEntries(setID, entries, dirBucket, Registered)
+// MergeDirEntries sets the directory paths for the given backup set. Only supply
+// absolute paths to directories. It keeps the existing entries in the set and
+// handles duplicates by updating the existing entries. If the dir is not
+// already in the set, it will be added with the status Registered.
+func (d *DB) MergeDirEntries(setID string, entries []*Dirent) error {
+	return d.mergeEntries(setID, entries, dirBucket, Registered)
 }
 
 // getSetByID returns the Set with the given ID from the database, along with
@@ -1135,11 +1162,11 @@ func (d *DB) handleFilePoolResults(tx *bolt.Tx, sfsb *setFileSubBucket, setID st
 //
 // Returns the updated set and an error if the setID isn't in the database.
 func (d *DB) setDiscoveredEntries(setID string, fileDirents, dirDirents []*Dirent) (*Set, error) {
-	if err := d.setEntries(setID, fileDirents, discoveredBucket, Pending); err != nil {
+	if err := d.mergeEntries(setID, fileDirents, discoveredBucket, Pending); err != nil {
 		return nil, err
 	}
 
-	if err := d.setEntries(setID, dirDirents, discoveredFoldersBucket, Pending); err != nil {
+	if err := d.mergeEntries(setID, dirDirents, discoveredFoldersBucket, Pending); err != nil {
 		return nil, err
 	}
 

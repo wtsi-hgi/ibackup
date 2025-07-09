@@ -31,12 +31,14 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/VertebrateResequencing/wr/queue"
 	"github.com/gin-gonic/gin"
+	"github.com/viant/ptrie"
 	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/grand"
 	"github.com/wtsi-hgi/ibackup/errs"
@@ -283,6 +285,7 @@ func (s *Server) addDBEndpoints(authGroup *gin.RouterGroup) {
 	authGroup.PUT(setPath, s.putSet)
 
 	authGroup.PUT(filePath+idParam, s.putFiles)
+
 	authGroup.PUT(dirPath+idParam, s.putDirs)
 
 	authGroup.PUT(workingPath, s.putWorking)
@@ -417,12 +420,19 @@ func (s *Server) getSets(c *gin.Context) {
 // LoadSetDB() must already have been called. This is called when there is a PUT
 // on /rest/v1/auth/files/[id].
 func (s *Server) putFiles(c *gin.Context) {
-	sid, paths, ok := s.bindPathsAndValidateSet(c)
+	givenSet, paths, ok := s.bindPathsAndValidateSet(c)
 	if !ok {
 		return
 	}
 
-	err := s.db.SetFileEntries(sid, paths)
+	err := s.db.IsSetReadyToAddFiles(givenSet)
+	if err != nil {
+		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+
+		return
+	}
+
+	err = s.db.MergeFileEntries(givenSet.ID(), paths)
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
@@ -433,12 +443,10 @@ func (s *Server) putFiles(c *gin.Context) {
 }
 
 func (s *Server) removePaths(c *gin.Context) {
-	sid, paths, ok := s.bindPathsAndValidateSet(c)
+	givenSet, paths, ok := s.bindPathsAndValidateSet(c)
 	if !ok {
 		return
 	}
-
-	givenSet := s.db.GetByID(sid)
 
 	filePaths, dirPaths, err := s.db.ValidateRemoveInputs(givenSet, paths)
 	if err != nil {
@@ -787,21 +795,21 @@ func (s *Server) removeDirFromDB(removeReq *set.RemoveReq, removedFromDiscoverBu
 
 // bindPathsAndValidateSet gets the paths out of the JSON body, and the set id
 // from the URL parameter if Requester matches logged-in username.
-func (s *Server) bindPathsAndValidateSet(c *gin.Context) (string, []string, bool) {
+func (s *Server) bindPathsAndValidateSet(c *gin.Context) (*set.Set, []string, bool) {
 	var bpaths [][]byte
 
 	if err := c.BindJSON(&bpaths); err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
-		return "", nil, false
+		return nil, nil, false
 	}
 
 	set, ok := s.validateSet(c)
 	if !ok {
-		return "", nil, false
+		return nil, nil, false
 	}
 
-	return set.ID(), bytesToStrings(bpaths), true
+	return set, bytesToStrings(bpaths), true
 }
 
 // validateSet gets the id parameter from the given context and checks a
@@ -845,8 +853,15 @@ func bytesToStrings(b [][]byte) []string {
 // LoadSetDB() must already have been called. This is called when there is a PUT
 // on /rest/v1/auth/dirs/[id].
 func (s *Server) putDirs(c *gin.Context) {
-	sid, paths, ok := s.bindPathsAndValidateSet(c)
+	givenSet, paths, ok := s.bindPathsAndValidateSet(c)
 	if !ok {
+		return
+	}
+
+	err := s.db.IsSetReadyToAddFiles(givenSet)
+	if err != nil {
+		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+
 		return
 	}
 
@@ -859,7 +874,14 @@ func (s *Server) putDirs(c *gin.Context) {
 		}
 	}
 
-	err := s.db.SetDirEntries(sid, entries)
+	err = s.db.MergeDirEntries(givenSet.ID(), entries)
+	if err != nil {
+		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+
+		return
+	}
+
+	err = s.updateRemovedBucket(entries, givenSet.ID())
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
@@ -867,6 +889,165 @@ func (s *Server) putDirs(c *gin.Context) {
 	}
 
 	c.Status(http.StatusOK)
+}
+
+// updateRemovedBucket removes the entry from the removed bucket if it was
+// previously removed from the given set, as it should no longer be excluded
+// from discovery.
+func (s *Server) updateRemovedBucket(entries []*set.Dirent, sid string) error {
+	excludeTree, err := s.buildExclusionTree(sid)
+	if err != nil {
+		return err
+	}
+
+	for _, entry := range entries {
+		isRemoved, match := isDirentRemovedFromSet(entry, excludeTree)
+		if !isRemoved {
+			continue
+		}
+
+		err = s.excludeFromRemovedBucket(entry, match, excludeTree, sid)
+		if err != nil {
+			return err
+		}
+
+		excludeTree, err = s.buildExclusionTree(sid)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (s *Server) buildExclusionTree(sid string) (ptrie.Trie[bool], error) {
+	excludedPaths, err := s.db.GetExcludedPaths(sid)
+	if err != nil {
+		return nil, err
+	}
+
+	excludeTree := ptrie.New[bool]()
+	for _, path := range excludedPaths {
+		err = excludeTree.Put([]byte(path), true)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return excludeTree, nil
+}
+
+// excludeFromRemovedBucket removes the given entry from the removed bucket. If
+// the entry's path is not equal to the given match (from exclude tree), the
+// bucket is repopulated with the other paths represented by the match.
+func (s *Server) excludeFromRemovedBucket(entry *set.Dirent, match string,
+	excludeTree ptrie.Trie[bool], sid string) error {
+	err := s.removeChildEntriesFromRemovedBucket(entry, excludeTree, sid)
+	if err != nil {
+		return err
+	}
+
+	if filepath.Clean(entry.Path) == filepath.Clean(match) {
+		return s.db.RemoveFromRemovedBucket(match, sid)
+	}
+
+	allOtherPaths, err := s.findAllOtherPathsToExclude(entry, match)
+	if err != nil {
+		return err
+	}
+
+	err = s.db.SetRemoveRequests(sid, allOtherPaths)
+	if err != nil {
+		return err
+	}
+
+	return s.db.RemoveFromRemovedBucket(match, sid)
+}
+
+// findAllOtherPathsToExclude finds every path that should be excluded but isn't due
+// to match being removed from removed bucket.
+func (s *Server) findAllOtherPathsToExclude(entry *set.Dirent, match string) ([]set.RemoveReq, error) {
+	var paths []set.RemoveReq
+
+	path := filepath.Dir(entry.Path)
+
+	for {
+		childPaths, err := findChildPathsToExclude(path, entry)
+		if err != nil {
+			return nil, err
+		}
+
+		paths = append(paths, childPaths...)
+
+		if path == match {
+			break
+		}
+
+		path = filepath.Dir(path)
+	}
+
+	return paths, nil
+}
+
+func findChildPathsToExclude(path string, entry *set.Dirent) ([]set.RemoveReq, error) {
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return nil, err
+	}
+
+	paths := make([]set.RemoveReq, 0, len(entries))
+
+	for _, dirEntry := range entries {
+		if strings.HasPrefix(entry.Path, filepath.Join(path, dirEntry.Name())) {
+			continue
+		}
+
+		removeReq := set.RemoveReq{
+			Path:       filepath.Join(path, dirEntry.Name()),
+			IsDir:      dirEntry.IsDir(),
+			IsComplete: true,
+		}
+
+		paths = append(paths, removeReq)
+	}
+
+	return paths, nil
+}
+
+func (s *Server) removeChildEntriesFromRemovedBucket(entry *set.Dirent,
+	excludeTree ptrie.Trie[bool], sid string) error {
+	paths := getChildPathsFromPTrie(entry.Path, excludeTree)
+
+	for _, path := range paths {
+		err := s.db.RemoveFromRemovedBucket(path, sid)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// getChildPathsFromPTrie expects a Path to a folder. It accept both paths
+// ending with "/" and without it. Folders in PTrie should have a trailing "/".
+func getChildPathsFromPTrie(entryPath string, tree ptrie.Trie[bool]) []string {
+	var paths []string
+
+	if !strings.HasSuffix(entryPath, "/") {
+		entryPath += "/"
+	}
+
+	tree.Walk(func(key []byte, _ bool) bool {
+		path := string(key)
+
+		if strings.HasPrefix(path, entryPath) {
+			paths = append(paths, path)
+		}
+
+		return true
+	})
+
+	return paths
 }
 
 // getEntries gets the defined and discovered file entries for the set with the
@@ -1365,7 +1546,7 @@ func (s *Server) recoverQueue() error {
 }
 
 func (s *Server) recoverRemoveQueue() error {
-	remReqs, err := s.db.GetAllRemoveRequests()
+	remReqs, err := s.db.GetIncompleteRemoveRequests()
 	if err != nil {
 		return err
 	}

@@ -46,6 +46,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/inconshreveable/log15"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/viant/ptrie"
 	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/ibackup/internal"
 	"github.com/wtsi-hgi/ibackup/remove"
@@ -360,7 +361,7 @@ func TestServer(t *testing.T) {
 						createRemoteHardlink(t, s.storageHandler, hardlink1local, hardlink1Remote, file1local, inodeRemote, exampleSet)
 						createRemoteHardlink(t, s.storageHandler, hardlink2local, hardlink2Remote, file1local, inodeRemote, exampleSet)
 
-						err = client.SetFiles(exampleSet.ID(), []string{file1local, hardlink1local, hardlink2local})
+						err = client.MergeFiles(exampleSet.ID(), []string{file1local, hardlink1local, hardlink2local})
 						So(err, ShouldBeNil)
 
 						err = client.AddOrUpdateSet(exampleSet)
@@ -451,7 +452,7 @@ func TestServer(t *testing.T) {
 							os.Remove(file1local)
 							os.Remove(hardlink1local)
 
-							err = client.SetFiles(exampleSet.ID(), []string{hardlink3local})
+							err = client.MergeFiles(exampleSet.ID(), []string{hardlink3local})
 							So(err, ShouldBeNil)
 
 							err = client.AddOrUpdateSet(exampleSet)
@@ -515,7 +516,7 @@ func TestServer(t *testing.T) {
 						err = handler.AddMeta(file1remote, hardlinkMeta)
 						So(err, ShouldBeNil)
 
-						err = client.SetDirs(exampleSet.ID(), []string{dir1local})
+						err = client.MergeDirs(exampleSet.ID(), []string{dir1local})
 						So(err, ShouldBeNil)
 
 						err = client.TriggerDiscovery(exampleSet.ID())
@@ -562,7 +563,7 @@ func TestServer(t *testing.T) {
 
 								waitForRemovals(t, client, exampleSet)
 
-								incompleteRemReqs, errg := s.db.GetAllRemoveRequests()
+								incompleteRemReqs, errg := s.db.GetIncompleteRemoveRequests()
 								So(errg, ShouldBeNil)
 								So(incompleteRemReqs, ShouldBeEmpty)
 							})
@@ -682,7 +683,7 @@ func TestServer(t *testing.T) {
 						file := filepath.Join(dir3, "file")
 						internal.CreateTestFile(t, file, "file content")
 
-						err = client.SetDirs(exampleSet.ID(), []string{dir1})
+						err = client.MergeDirs(exampleSet.ID(), []string{dir1})
 						So(err, ShouldBeNil)
 
 						err = client.TriggerDiscovery(exampleSet.ID())
@@ -736,7 +737,7 @@ func TestServer(t *testing.T) {
 							internal.CreateTestFile(t, file, "file content")
 						}
 
-						err = client.SetDirs(exampleSet.ID(), []string{dir1})
+						err = client.MergeDirs(exampleSet.ID(), []string{dir1})
 						So(err, ShouldBeNil)
 
 						err = client.TriggerDiscovery(exampleSet.ID())
@@ -830,10 +831,10 @@ func TestServer(t *testing.T) {
 						files, dirs, discovers, symlinkPath := createTestBackupFiles(t, localDir)
 						dirs = append(dirs, filepath.Join(localDir, "missing"))
 
-						err = client.SetFiles(exampleSet.ID(), files)
+						err = client.MergeFiles(exampleSet.ID(), files)
 						So(err, ShouldBeNil)
 
-						err = client.SetDirs(exampleSet.ID(), dirs)
+						err = client.MergeDirs(exampleSet.ID(), dirs)
 						So(err, ShouldBeNil)
 
 						gotDirs, errg := client.GetDirs(exampleSet.ID())
@@ -906,10 +907,10 @@ func TestServer(t *testing.T) {
 						So(err, ShouldBeNil)
 
 						set2Files := append(append([]string{}, files...), symlinkPath)
-						err = client.SetFiles(exampleSet2.ID(), set2Files)
+						err = client.MergeFiles(exampleSet2.ID(), set2Files)
 						So(err, ShouldBeNil)
 
-						err = client.SetDirs(exampleSet2.ID(), nil)
+						err = client.MergeDirs(exampleSet2.ID(), nil)
 						So(err, ShouldBeNil)
 
 						tn = time.Now()
@@ -935,10 +936,10 @@ func TestServer(t *testing.T) {
 						err = client.AddOrUpdateSet(exampleSet3)
 						So(err, ShouldBeNil)
 
-						err = client.SetFiles(exampleSet3.ID(), nil)
+						err = client.MergeFiles(exampleSet3.ID(), nil)
 						So(err, ShouldBeNil)
 
-						err = client.SetDirs(exampleSet3.ID(), dirs)
+						err = client.MergeDirs(exampleSet3.ID(), dirs)
 						So(err, ShouldBeNil)
 
 						tn = time.Now()
@@ -1366,7 +1367,7 @@ func TestServer(t *testing.T) {
 							err = os.Mkdir(emptyDir, userPerms)
 							So(err, ShouldBeNil)
 
-							err = client.SetDirs(emptySet.ID(), []string{emptyDir})
+							err = client.MergeDirs(emptySet.ID(), []string{emptyDir})
 							So(err, ShouldBeNil)
 
 							err = client.TriggerDiscovery(emptySet.ID())
@@ -1921,7 +1922,7 @@ func TestServer(t *testing.T) {
 							files := createManyTestBackupFiles(t)
 							dir := filepath.Dir(files[0])
 
-							err = client.SetDirs(exampleSet.ID(), []string{dir})
+							err = client.MergeDirs(exampleSet.ID(), []string{dir})
 							So(err, ShouldBeNil)
 
 							err = client.TriggerDiscovery(exampleSet.ID())
@@ -1996,10 +1997,10 @@ func TestServer(t *testing.T) {
 
 						listOfFiles := []string{file1local, file2, file3local}
 
-						err = client.SetFiles(exampleSet.ID(), []string{file1local, file2})
+						err = client.MergeFiles(exampleSet.ID(), []string{file1local, file2})
 						So(err, ShouldBeNil)
 
-						err = client.SetDirs(exampleSet.ID(), []string{dir1local, dir2})
+						err = client.MergeDirs(exampleSet.ID(), []string{dir1local, dir2})
 						So(err, ShouldBeNil)
 
 						exampleSet.MonitorTime = 500 * time.Millisecond
@@ -2182,7 +2183,7 @@ func TestServer(t *testing.T) {
 						err = client.AddOrUpdateSet(badSet)
 						So(err, ShouldBeNil)
 
-						err = client.SetDirs(badSet.ID(), dirs)
+						err = client.MergeDirs(badSet.ID(), dirs)
 						So(err, ShouldBeNil)
 
 						slackWriter.Reset()
@@ -2291,7 +2292,7 @@ func TestServer(t *testing.T) {
 
 					_, dirs, discovers, _ := createTestBackupFiles(t, localDir)
 
-					err = client.SetDirs(exampleSet.ID(), dirs)
+					err = client.MergeDirs(exampleSet.ID(), dirs)
 					So(err, ShouldBeNil)
 
 					gotSet, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
@@ -3102,7 +3103,7 @@ func TestServer(t *testing.T) {
 					files, dirs, _, _ := createTestBackupFiles(t, localDir)
 					files = []string{files[0], dirs[0]}
 
-					err = client.SetFiles(exampleSet.ID(), files)
+					err = client.MergeFiles(exampleSet.ID(), files)
 					So(err, ShouldBeNil)
 
 					err = client.TriggerDiscovery(exampleSet.ID())
@@ -3167,7 +3168,7 @@ func TestServer(t *testing.T) {
 					path := filepath.Join(localDir, "F_G\xe9o.frm")
 					internal.CreateTestFileOfLength(t, path, 1)
 
-					err = client.SetFiles(exampleSet.ID(), []string{path})
+					err = client.MergeFiles(exampleSet.ID(), []string{path})
 					So(err, ShouldBeNil)
 
 					entries, errg := s.db.GetPureFileEntries(exampleSet.ID())
@@ -3195,7 +3196,7 @@ func TestServer(t *testing.T) {
 					regPath := filepath.Join(localDir, "regular")
 					internal.CreateTestFileOfLength(t, regPath, 1)
 
-					err = client.SetFiles(exampleSet.ID(), []string{fifoPath, regPath})
+					err = client.MergeFiles(exampleSet.ID(), []string{fifoPath, regPath})
 					So(err, ShouldBeNil)
 
 					entries, errg := s.db.GetPureFileEntries(exampleSet.ID())
@@ -3254,7 +3255,7 @@ func TestServer(t *testing.T) {
 					regPath := filepath.Join(setDir, "regular")
 					internal.CreateTestFileOfLength(t, regPath, 1)
 
-					err = client.SetDirs(exampleSet.ID(), []string{setDir})
+					err = client.MergeDirs(exampleSet.ID(), []string{setDir})
 					So(err, ShouldBeNil)
 
 					err = client.TriggerDiscovery(exampleSet.ID())
@@ -3283,7 +3284,7 @@ func TestServer(t *testing.T) {
 					path := filepath.Join(dir, "\xe9o.frm")
 					internal.CreateTestFileOfLength(t, path, 1)
 
-					err = client.SetDirs(exampleSet.ID(), []string{dir})
+					err = client.MergeDirs(exampleSet.ID(), []string{dir})
 					So(err, ShouldBeNil)
 
 					err = client.TriggerDiscovery(exampleSet.ID())
@@ -3314,7 +3315,7 @@ func TestServer(t *testing.T) {
 					pathOther := filepath.Join(localDir, "file2.txt")
 					internal.CreateTestFileOfLength(t, pathOther, 1)
 
-					err = client.SetFiles(exampleSet.ID(), []string{pathExpected, pathOther})
+					err = client.MergeFiles(exampleSet.ID(), []string{pathExpected, pathOther})
 					So(err, ShouldBeNil)
 
 					entries, errg := s.db.GetPureFileEntries(exampleSet.ID())
@@ -3348,7 +3349,7 @@ func TestServer(t *testing.T) {
 					pathToBackup := filepath.Join(localDir, "a.file")
 					internal.CreateTestFileOfLength(t, pathToBackup, 1)
 
-					err = client.SetFiles(exampleSet.ID(), []string{pathToBackup})
+					err = client.MergeFiles(exampleSet.ID(), []string{pathToBackup})
 					So(err, ShouldBeNil)
 
 					err = client.TriggerDiscovery(exampleSet.ID())
@@ -3413,7 +3414,7 @@ func TestServer(t *testing.T) {
 						So(err, ShouldBeNil)
 					}()
 
-					err = client.SetDirs(exampleSet.ID(), []string{setDir})
+					err = client.MergeDirs(exampleSet.ID(), []string{setDir})
 					So(err, ShouldBeNil)
 
 					err = client.TriggerDiscovery(exampleSet.ID())
@@ -3448,7 +3449,7 @@ func TestServer(t *testing.T) {
 					err = os.Link(path1, path3)
 					So(err, ShouldBeNil)
 
-					err = client.SetFiles(exampleSet.ID(), []string{path1, path2, path3})
+					err = client.MergeFiles(exampleSet.ID(), []string{path1, path2, path3})
 					So(err, ShouldBeNil)
 
 					Convey("without remote hardlink location set, hardlinks upload multiple times", func() {
@@ -3654,7 +3655,7 @@ func TestServer(t *testing.T) {
 									So(err, ShouldBeNil)
 								}
 
-								err = client.SetFiles(exampleSet.ID(), []string{path4, path5, path6})
+								err = client.MergeFiles(exampleSet.ID(), []string{path4, path5, path6})
 								So(err, ShouldBeNil)
 
 								err = client.TriggerDiscovery(exampleSet.ID())
@@ -3710,7 +3711,7 @@ func TestServer(t *testing.T) {
 					err = os.Link(path1, path2)
 					So(err, ShouldBeNil)
 
-					err = client.SetDirs(exampleSet.ID(), []string{hdir})
+					err = client.MergeDirs(exampleSet.ID(), []string{hdir})
 					So(err, ShouldBeNil)
 
 					err = client.TriggerDiscovery(exampleSet.ID())
@@ -3738,7 +3739,7 @@ func TestServer(t *testing.T) {
 					path1 := filepath.Join(dir, "file1")
 					internal.CreateTestFileOfLength(t, path1, 1)
 
-					err = client.SetDirs(exampleSet.ID(), []string{dir})
+					err = client.MergeDirs(exampleSet.ID(), []string{dir})
 					So(err, ShouldBeNil)
 
 					err = client.TriggerDiscovery(exampleSet.ID())
@@ -3768,6 +3769,49 @@ func TestServer(t *testing.T) {
 					So(gotSet.Hardlinks, ShouldEqual, 0)
 				})
 			})
+		})
+	})
+}
+
+func TestServerHelperFunctions(t *testing.T) {
+	Convey("With a PTrie and a path", t, func() {
+		entryPath := "/path/to"
+
+		pathsForTree := []string{"/path/", "/some/path/to/myF", "/path/toFile", "/path/to/file"}
+
+		tree := ptrie.New[bool]()
+		for _, path := range pathsForTree {
+			err := tree.Put([]byte(path), true)
+			So(err, ShouldBeNil)
+		}
+
+		Convey("getChildEntriesFromPTrie returns only children paths", func() {
+			paths := getChildPathsFromPTrie(entryPath, tree)
+			So(paths, ShouldHaveLength, 1)
+			So(paths[0], ShouldEqual, "/path/to/file")
+
+			paths = getChildPathsFromPTrie(entryPath+"/", tree)
+			So(paths, ShouldHaveLength, 1)
+		})
+
+		Convey("isDirentRemovedFromSet works for dirs", func() {
+			dirent := set.Dirent{
+				Path: entryPath,
+				Mode: os.ModeDir,
+			}
+
+			isRemoved, match := isDirentRemovedFromSet(&dirent, tree)
+			So(isRemoved, ShouldBeTrue)
+			So(match, ShouldEqual, "/path/")
+		})
+
+		Convey("isDirentRemovedFromSet works for files", func() {
+			dirent := set.Dirent{
+				Path: "/some/path/to/myFile",
+			}
+
+			isRemoved, _ := isDirentRemovedFromSet(&dirent, tree)
+			So(isRemoved, ShouldBeFalse)
 		})
 	})
 }

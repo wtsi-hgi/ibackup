@@ -375,11 +375,11 @@ func add(client *server.Client, name, requester, transformer, description string
 		return err
 	}
 
-	if err := client.SetFiles(set.ID(), files); err != nil {
+	if err := client.MergeFiles(set.ID(), files); err != nil {
 		return err
 	}
 
-	if err := client.SetDirs(set.ID(), dirs); err != nil {
+	if err := client.MergeDirs(set.ID(), dirs); err != nil {
 		return err
 	}
 

@@ -339,10 +339,10 @@ func TestSetDB(t *testing.T) {
 				So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"`jim.set1` stored in db")
 				slackWriter.Reset()
 
-				err = db.SetFileEntries(set.ID(), []string{"/a/b.txt", "/c/d.txt", "/e/f.txt"})
+				err = db.MergeFileEntries(set.ID(), []string{"/a/b.txt", "/c/d.txt", "/e/f.txt"})
 				So(err, ShouldBeNil)
 
-				err = db.SetDirEntries(set.ID(), createFileEnts([]string{"/g/h", "/g/i"}))
+				err = db.MergeDirEntries(set.ID(), createFileEnts([]string{"/g/h", "/g/i"}))
 				So(err, ShouldBeNil)
 
 				set.MonitorTime = 1 * time.Hour
@@ -362,10 +362,10 @@ func TestSetDB(t *testing.T) {
 				err = db.AddOrUpdate(set2)
 				So(err, ShouldBeNil)
 
-				err = db.SetFileEntries(set2.ID(), []string{"/a/b.txt", "/c/j.txt"})
+				err = db.MergeFileEntries(set2.ID(), []string{"/a/b.txt", "/c/j.txt"})
 				So(err, ShouldBeNil)
 
-				err = db.SetFileEntries(set2.ID(), []string{"/a/b.txt", "/c/k.txt"})
+				err = db.MergeFileEntries(set2.ID(), []string{"/a/b.txt", "/c/k.txt"})
 				So(err, ShouldBeNil)
 
 				Convey("And given a mixture of complete and incomplete remove requests", func() {
@@ -445,7 +445,7 @@ func TestSetDB(t *testing.T) {
 				})
 
 				Convey("You can get all paths containing a prefix", func() {
-					err = db.SetFileEntries(set2.ID(), []string{"/a/a/j.txt", "/a/b/c/k.txt",
+					err = db.MergeFileEntries(set2.ID(), []string{"/a/a/j.txt", "/a/b/c/k.txt",
 						"/a/b/c/l.txt", "/a/b/d/m.txt", "/c/n.txt"})
 					So(err, ShouldBeNil)
 
@@ -645,7 +645,7 @@ func TestSetDB(t *testing.T) {
 
 						clearFileBucket(t, db, set.ID())
 
-						err = db.SetFileEntries(set.ID(), pureFiles)
+						err = db.MergeFileEntries(set.ID(), pureFiles)
 						So(err, ShouldBeNil)
 
 						slackWriter.Reset()
@@ -1253,7 +1253,7 @@ func TestSetDB(t *testing.T) {
 				So(ok, ShouldBeTrue)
 
 				confirmHardLinks := func(setID string) {
-					err = db.SetFileEntries(setID, []string{path1, path2, "/zmissing"})
+					err = db.MergeFileEntries(setID, []string{path1, path2, "/zmissing"})
 					So(err, ShouldBeNil)
 
 					entries, errg := db.GetPureFileEntries(setID)
@@ -1370,7 +1370,7 @@ func TestSetDB(t *testing.T) {
 				err = os.Symlink(path1, path2)
 				So(err, ShouldBeNil)
 
-				err = db.SetFileEntries(setl1.ID(), []string{path1, path2, "/zmissing"})
+				err = db.MergeFileEntries(setl1.ID(), []string{path1, path2, "/zmissing"})
 				So(err, ShouldBeNil)
 
 				entries, errg := db.GetPureFileEntries(setl1.ID())
@@ -1657,7 +1657,7 @@ func TestSetDB(t *testing.T) {
 
 				missing := "/non/existent/file"
 
-				err = db.SetFileEntries(setl1.ID(), []string{missing})
+				err = db.MergeFileEntries(setl1.ID(), []string{missing})
 				So(err, ShouldBeNil)
 
 				entries, errg := db.GetPureFileEntries(setl1.ID())
@@ -1697,7 +1697,7 @@ func TestSetDB(t *testing.T) {
 
 				missing := "/non/existent/dir"
 
-				err = db.SetDirEntries(setl1.ID(), []*Dirent{{
+				err = db.MergeDirEntries(setl1.ID(), []*Dirent{{
 					Path: missing,
 					Mode: os.ModeDir,
 				}})
@@ -1731,7 +1731,7 @@ func TestSetDB(t *testing.T) {
 				err = syscall.Mkfifo(fifoPath, userPerms)
 				So(err, ShouldBeNil)
 
-				err = db.SetFileEntries(setl1.ID(), []string{fifoPath})
+				err = db.MergeFileEntries(setl1.ID(), []string{fifoPath})
 				So(err, ShouldBeNil)
 
 				entries, errg := db.GetPureFileEntries(setl1.ID())

@@ -28,6 +28,8 @@ package cmd
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -46,6 +48,7 @@ var (
 	editReview              string
 	editRemovalDate         string
 	editTransformer         string
+	editAddPath             string
 	editStopMonitor         bool
 	editStopMonitorRemovals bool
 	editStopArchive         bool
@@ -66,7 +69,11 @@ var editCmd = &cobra.Command{
 	Short: "Edit a backup set",
 	Long: `Edit a backup set.
  
-Edit an existing backup set.`,
+Edit an existing backup set. You cannot edit readonly sets and you cannot use 
+--add on sets that are in the process of a removal.
+
+To edit the backup set you must provide --name, which should be the name of a 
+preexisting backup set.`,
 	PreRunE: func(_ *cobra.Command, _ []string) error {
 		if editMakeReadOnly && editMakeWritable {
 			return ErrInvalidEditRO
@@ -132,7 +139,16 @@ Edit an existing backup set.`,
 			userSet.Transformer = editTransformer
 		}
 
-		return edit(client, userSet, editMakeWritable)
+		err = editSet(client, userSet, editMakeWritable)
+		if err != nil {
+			return err
+		}
+
+		if editAddPath == "" {
+			return nil
+		}
+
+		return updateSet(client, userSet.ID(), editAddPath)
 	},
 }
 
@@ -147,6 +163,7 @@ func init() {
 	editCmd.Flags().StringVar(&editReview, "review", "", helpTextReview)
 	editCmd.Flags().StringVar(&editRemovalDate, "removal-date", "", helpTextRemoval)
 	editCmd.Flags().StringVar(&editTransformer, "transformer", "", helpTextTransformer)
+	editCmd.Flags().StringVar(&editAddPath, "add", "", helpTextPath)
 	editCmd.Flags().BoolVar(&editStopMonitor, "stop-monitor", false, "stop monitoring the set for changes")
 	editCmd.Flags().BoolVar(&editStopMonitorRemovals, "stop-monitor-removals", false,
 		"stop monitoring the set for locally removed files")
@@ -239,10 +256,36 @@ func givenOrExistingDate(input, existing string) (string, error) {
 	return t.Format(time.DateOnly), err
 }
 
-func edit(client *server.Client, givenSet *set.Set, makeWritable bool) error {
+// editSet updates properties of the given set.
+func editSet(client *server.Client, givenSet *set.Set, makeWritable bool) error {
 	if makeWritable {
 		return client.AddOrUpdateSetMakingWritable(givenSet)
 	}
 
 	return client.AddOrUpdateSet(givenSet)
+}
+
+// updateSet updates the files in the set.
+func updateSet(client *server.Client, sid string, path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+
+	if info.IsDir() {
+		err = client.MergeDirs(sid, []string{absPath})
+	} else {
+		err = client.MergeFiles(sid, []string{absPath})
+	}
+
+	if err != nil {
+		return err
+	}
+
+	return client.TriggerDiscovery(sid)
 }
