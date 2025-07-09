@@ -630,17 +630,13 @@ func (d *DB) removeEntry(setID string, entryKey string, bucketName string) error
 }
 
 // RemoveDirEntry removes the provided directory from a given set.
-func (d *DB) RemoveDirEntry(setID string, path string, deleteFromDiscoverBucket bool) error {
+func (d *DB) RemoveDirEntry(setID string, path string) error {
 	err := d.removeEntry(setID, path, dirBucket)
 	if err != nil {
 		return err
 	}
 
-	if deleteFromDiscoverBucket {
-		return d.removeEntry(setID, path, discoveredFoldersBucket)
-	}
-
-	return nil
+	return d.removeEntry(setID, path, discoveredFoldersBucket)
 }
 
 // GetFilesInDir returns all file paths from inside the given directory (and all

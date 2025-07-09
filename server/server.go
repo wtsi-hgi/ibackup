@@ -246,9 +246,7 @@ func (s *Server) handleRemoveRequests(sid string) {
 
 		s.discoveryCoordinator.WaitForDiscovery(sid)
 
-		removedFromDiscoverBuckets := false
-
-		err = s.removeRequestFromIRODSandDB(&removeReq, removedFromDiscoverBuckets)
+		err = s.removeRequestFromIRODSandDB(&removeReq)
 		if beenReleased := s.handleErrorOrReleaseItem(item, removeReq, err); beenReleased {
 			s.discoveryCoordinator.AllowDiscovery(sid)
 
@@ -299,12 +297,12 @@ func (s *Server) convertQueueItemToRemoveRequest(data interface{}) (set.RemoveRe
 	return remReq, nil
 }
 
-func (s *Server) removeRequestFromIRODSandDB(removeReq *set.RemoveReq, removedFromDiscoverBuckets bool) error {
+func (s *Server) removeRequestFromIRODSandDB(removeReq *set.RemoveReq) error {
 	if removeReq.IsDir {
-		return s.removeDirFromDB(removeReq, removedFromDiscoverBuckets)
+		return s.removeDirFromDB(removeReq)
 	}
 
-	return s.removeFileFromIRODSandDB(removeReq, removedFromDiscoverBuckets)
+	return s.removeFileFromIRODSandDB(removeReq)
 }
 
 // handleErrorOrReleaseItem returns immediately if there was no error. Otherwise
