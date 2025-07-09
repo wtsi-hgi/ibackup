@@ -299,7 +299,11 @@ func (s *Server) convertQueueItemToRemoveRequest(data interface{}) (set.RemoveRe
 
 func (s *Server) removeRequestFromIRODSandDB(removeReq *set.RemoveReq) error {
 	if removeReq.IsDir {
-		return s.removeDirFromDB(removeReq)
+		if removeReq.Action == set.ToTrash {
+			return s.trashDirFromDB(removeReq.Set, removeReq.Path)
+		}
+
+		return s.removeDirFromDB(removeReq.Set.ID(), removeReq.Path)
 	}
 
 	return s.removeFileFromIRODSandDB(removeReq)

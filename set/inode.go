@@ -179,6 +179,31 @@ func (d *DB) RemoveFileFromInode(path string, inode uint64) error {
 	return err
 }
 
+func (d *DBRO) GetAllSetsForPath(path string) ([]string, error) {
+	pathBytes := []byte(path)
+	var sets []string
+
+	err := d.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(setsBucket))
+		return b.ForEach(func(k, _ []byte) error {
+			keyString := string(k)
+			if strings.HasPrefix(keyString, fileBucket) || strings.HasPrefix(keyString, discoveredBucket) {
+
+				sb := b.Bucket(k)
+
+				v := sb.Get(pathBytes)
+				if v != nil {
+					setid := strings.Split(keyString, separator)[1]
+					sets = append(sets, setid)
+				}
+			}
+			return nil
+		})
+	})
+
+	return sets, err
+}
+
 func isPathInTransformerPaths(path string, files []string) (bool, error) {
 	for _, file := range files {
 		if file == "" {
@@ -199,6 +224,9 @@ func isPathInTransformerPaths(path string, files []string) (bool, error) {
 }
 
 func (d *DB) updateInodeEntryBasedOnFiles(b *bolt.Bucket, key []byte, path string, files []string) error {
+
+	//
+
 	isInFiles, err := isPathInTransformerPaths(path, files)
 	if err != nil {
 		return err

@@ -249,7 +249,7 @@ func (s *Server) discoverSetRemovals(given *set.Set) error {
 		return err
 	}
 
-	return s.removeFilesAndDirs(given, filesToRemove, dirsToRemove)
+	return s.removeFilesAndDirs(given, filesToRemove, dirsToRemove, set.ToRemove)
 }
 
 func (s *Server) findFilesToRemove(given *set.Set) ([]string, error) {

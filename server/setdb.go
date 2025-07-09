@@ -28,6 +28,8 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io/fs"
 	"math"
 	"net/http"
 	"os"
@@ -292,7 +294,7 @@ func (s *Server) addDBEndpoints(authGroup *gin.RouterGroup) {
 
 	authGroup.PUT(fileStatusPath, s.putFileStatus)
 
-	authGroup.PUT(removePathsPath+idParam, s.removePaths)
+	authGroup.PUT(removePathsPath+idParam, s.trashPaths)
 }
 
 // putSet interprets the body as a JSON encoding of a set.Set and stores it in
@@ -455,7 +457,7 @@ func (s *Server) removePaths(c *gin.Context) {
 		return
 	}
 
-	err = s.removeFilesAndDirs(givenSet, filePaths, dirPaths)
+	err = s.removeFilesAndDirs(givenSet, filePaths, dirPaths, set.ToRemove)
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
@@ -463,7 +465,37 @@ func (s *Server) removePaths(c *gin.Context) {
 	}
 }
 
-func (s *Server) removeFilesAndDirs(set *set.Set, filePaths, dirPaths []string) error {
+func (s *Server) trashPaths(c *gin.Context) {
+	givenSet, paths, ok := s.bindPathsAndValidateSet(c)
+	if !ok {
+		return
+	}
+
+	filePaths, dirPaths, err := s.db.ValidateRemoveInputs(givenSet, paths)
+	if err != nil {
+		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+
+		return
+	}
+
+	trashSet := buildTrashSetFromSet(givenSet)
+
+	err = s.db.AddOrUpdate(&trashSet)
+	if err != nil {
+		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+
+		return
+	}
+
+	err = s.removeFilesAndDirs(givenSet, filePaths, dirPaths, set.ToTrash)
+	if err != nil {
+		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+
+		return
+	}
+}
+
+func (s *Server) removeFilesAndDirs(set *set.Set, filePaths, dirPaths []string, action set.RemoveAction) error {
 	if err := s.db.ResetRemoveSize(set.ID()); err != nil {
 		return err
 	}
@@ -472,12 +504,12 @@ func (s *Server) removeFilesAndDirs(set *set.Set, filePaths, dirPaths []string) 
 		return nil
 	}
 
-	numFilesSubmitted, err := s.submitFilesForRemoval(set, filePaths)
+	numFilesSubmitted, err := s.submitFilesForRemoval(set, filePaths, action)
 	if err != nil {
 		return err
 	}
 
-	numObjsSubmitted, err := s.submitDirsForRemoval(set, dirPaths)
+	numObjsSubmitted, err := s.submitDirsForRemoval(set, dirPaths, action)
 	if err != nil {
 		return err
 	}
@@ -487,12 +519,12 @@ func (s *Server) removeFilesAndDirs(set *set.Set, filePaths, dirPaths []string) 
 	return s.db.UpdateSetTotalToRemove(set.ID(), uint64(numFilesSubmitted+numObjsSubmitted)) //nolint:gosec
 }
 
-func (s *Server) submitFilesForRemoval(set *set.Set, paths []string) (int, error) {
+func (s *Server) submitFilesForRemoval(set *set.Set, paths []string, action set.RemoveAction) (int, error) {
 	if len(paths) == 0 {
 		return 0, nil
 	}
 
-	defs, remReqs := buildRemovalStructsFromPaths(set, paths, false)
+	defs, remReqs := buildRemovalStructsFromPaths(set, paths, false, action)
 
 	err := s.db.SetRemoveRequests(set.ID(), remReqs)
 	if err != nil {
@@ -504,12 +536,12 @@ func (s *Server) submitFilesForRemoval(set *set.Set, paths []string) (int, error
 	return added, err
 }
 
-func buildRemovalStructsFromPaths(givenSet *set.Set, paths []string, isDir bool) ([]*queue.ItemDef, []set.RemoveReq) {
+func buildRemovalStructsFromPaths(givenSet *set.Set, paths []string, isDir bool, action set.RemoveAction) ([]*queue.ItemDef, []set.RemoveReq) {
 	remReqs := make([]set.RemoveReq, len(paths))
 	defs := make([]*queue.ItemDef, len(paths))
 
 	for i, path := range paths {
-		rq := set.NewRemoveRequest(path, givenSet, isDir)
+		rq := set.NewRemoveRequest(path, givenSet, isDir, action)
 
 		remReqs[i] = rq
 		defs[i] = rq.ItemDef(ttr)
@@ -518,12 +550,12 @@ func buildRemovalStructsFromPaths(givenSet *set.Set, paths []string, isDir bool)
 	return defs, remReqs
 }
 
-func (s *Server) submitDirsForRemoval(set *set.Set, paths []string) (int, error) {
+func (s *Server) submitDirsForRemoval(set *set.Set, paths []string, action set.RemoveAction) (int, error) {
 	if len(paths) == 0 {
 		return 0, nil
 	}
 
-	defs, remReqs, err := s.makeItemsDefsFromDirPaths(set, paths)
+	defs, remReqs, err := s.makeItemsDefsFromDirPaths(set, paths, action)
 	if err != nil {
 		return 0, err
 	}
@@ -539,12 +571,12 @@ func (s *Server) submitDirsForRemoval(set *set.Set, paths []string) (int, error)
 }
 
 func (s *Server) makeItemsDefsFromDirPaths(givenSet *set.Set,
-	paths []string) ([]*queue.ItemDef, []set.RemoveReq, error) {
+	paths []string, action set.RemoveAction) ([]*queue.ItemDef, []set.RemoveReq, error) {
 	remReqs := make([]set.RemoveReq, 0, len(paths))
 	defs := make([]*queue.ItemDef, 0, len(paths))
 
 	for _, path := range paths {
-		rq := set.NewRemoveRequest(path, givenSet, true)
+		rq := set.NewRemoveRequest(path, givenSet, true, action)
 
 		dirFilepaths, err := s.db.GetFilesInDir(givenSet.ID(), path)
 		if err != nil {
@@ -556,8 +588,8 @@ func (s *Server) makeItemsDefsFromDirPaths(givenSet *set.Set,
 			return nil, nil, err
 		}
 
-		fileDefs, fileRemoveReqs := buildRemovalStructsFromPaths(givenSet, dirFilepaths, false)
-		folderDefs, folderRemoveReqs := buildRemovalStructsFromPaths(givenSet, dirFolderPaths, true)
+		fileDefs, fileRemoveReqs := buildRemovalStructsFromPaths(givenSet, dirFilepaths, false, action)
+		folderDefs, folderRemoveReqs := buildRemovalStructsFromPaths(givenSet, dirFolderPaths, true, action)
 
 		remReqs = slices.Concat(remReqs, fileRemoveReqs, folderRemoveReqs)
 		defs = slices.Concat(defs, fileDefs, folderDefs)
@@ -617,16 +649,36 @@ func fileErrorCannotBeIgnored(err error, mayMissInRemote bool) bool {
 	return !(mayMissInRemote && strings.Contains(err.Error(), internal.ErrFileDoesNotExist))
 }
 
+// TODO consider splittig in two functions for trash/remove
 func (s *Server) processDBFileRemoval(removeReq *set.RemoveReq, entry *set.Entry) error {
+	if removeReq.Action == set.ToTrash {
+		destSet := buildTrashSetFromSet(removeReq.Set)
+
+		err := s.db.MergeFileEntries(destSet.ID(), []string{entry.Path})
+		if err != nil {
+			return err
+		}
+	}
+
 	err := s.db.RemoveFileEntry(removeReq.Set.ID(), removeReq.Path)
 	if err != nil {
 		return err
 	}
 
 	if entry.Type != set.Symlink && entry.Type != set.Abnormal {
-		err = s.db.RemoveFileFromInode(removeReq.Path, entry.Inode)
+		setsWithFile, err := s.db.GetAllSetsForPath(removeReq.Path)
 		if err != nil {
 			return err
+		}
+
+		fmt.Println("checking if i can remove")
+
+		if len(setsWithFile) == 0 {
+			fmt.Println("I can")
+			err = s.db.RemoveFileFromInode(removeReq.Path, entry.Inode)
+			if err != nil {
+				return err
+			}
 		}
 	}
 
@@ -778,13 +830,34 @@ func (s *Server) setErrorOnEntry(entry *set.Entry, sid, path string, err error) 
 	}
 }
 
-func (s *Server) removeDirFromDB(removeReq *set.RemoveReq) error {
-	err := s.db.RemoveDirEntry(removeReq.Set.ID(), removeReq.Path)
+func (s *Server) removeDirFromDB(setID, path string) error {
+	err := s.db.RemoveDirEntry(setID, path)
 	if err != nil {
 		return err
 	}
 
-	return s.db.IncrementSetTotalRemoved(removeReq.Set.ID())
+	return s.db.IncrementSetTotalRemoved(setID)
+}
+
+func (s *Server) trashDirFromDB(givenSet *set.Set, path string) error {
+	destSet := buildTrashSetFromSet(givenSet)
+
+	dirent := &set.Dirent{Path: path, Mode: fs.ModeDir}
+
+	err := s.db.MergeDirEntries(destSet.ID(), []*set.Dirent{dirent})
+	if err != nil {
+		return err
+	}
+
+	return s.removeDirFromDB(givenSet.ID(), path)
+}
+
+func buildTrashSetFromSet(givenSet *set.Set) set.Set {
+	return set.Set{
+		Name:        ".trash-" + givenSet.Name,
+		Requester:   givenSet.Requester,
+		Transformer: givenSet.Transformer,
+	}
 }
 
 // bindPathsAndValidateSet gets the paths out of the JSON body, and the set id

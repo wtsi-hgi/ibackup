@@ -112,6 +112,13 @@ const (
 	Removed                               // 2
 )
 
+type RemoveAction int8
+
+const (
+	ToTrash  RemoveAction = iota // 0
+	ToRemove                     // 1
+)
+
 // RemoveReq contains information about a remove request for a path.
 type RemoveReq struct {
 	Path                string
@@ -119,6 +126,7 @@ type RemoveReq struct {
 	IsDir               bool
 	RemoteRemovalStatus RemovalStatus
 	IsComplete          bool
+	Action              RemoveAction
 }
 
 func (rq RemoveReq) Key() string {
@@ -136,12 +144,13 @@ func (rq RemoveReq) ItemDef(ttr time.Duration) *queue.ItemDef {
 }
 
 // NewRemoveRequest creates a remove requests using the provided information.
-func NewRemoveRequest(path string, set *Set, isDir bool) RemoveReq {
+func NewRemoveRequest(path string, set *Set, isDir bool, action RemoveAction) RemoveReq {
 	return RemoveReq{
 		Path:                path,
 		Set:                 set,
 		IsDir:               isDir,
 		RemoteRemovalStatus: NotRemoved,
+		Action:              action,
 	}
 }
 
@@ -638,6 +647,20 @@ func (d *DB) RemoveDirEntry(setID string, path string) error {
 
 	return d.removeEntry(setID, path, discoveredFoldersBucket)
 }
+
+// TrashDirEntry trashes the provided directory.
+// func (d *DB) TrashDirEntry(sourceSet *Set, path string) error {
+// 	destSet := BuildTrashSetFromSet(sourceSet)
+
+// 	dirent := &Dirent{Path: path, Mode: fs.ModeDir}
+
+// 	err := d.MergeDirEntries(destSet.ID(), []*Dirent{dirent})
+// 	if err != nil {
+// 		return err
+// 	}
+
+// 	return d.RemoveDirEntry(sourceSet.ID(), path)
+// }
 
 // GetFilesInDir returns all file paths from inside the given directory (and all
 // nested inside) for the given set using the db.
