@@ -123,6 +123,8 @@ const (
 
 	logTraceIDLen = 8
 	allUsers      = "all"
+
+	TrashPrefix = ".trash-"
 )
 
 // LoadSetDB loads the given set.db or creates it if it doesn't exist.
@@ -637,7 +639,7 @@ func (s *Server) processRemoteFileRemoval(removeReq *set.RemoveReq, entry *set.E
 		return err
 	}
 
-	err = s.updateOrRemoveRemoteFile(removeReq.Set, removeReq.Path, transformer, entry)
+	err = s.updateOrRemoveRemoteFile(removeReq, transformer, entry)
 	if err != nil && fileErrorCannotBeIgnored(err, mayMissInRemote) {
 		s.setErrorOnEntry(entry, removeReq.Set.ID(), removeReq.Path, err)
 
@@ -704,9 +706,9 @@ func (s *Server) processDBInodeRemoval(entry *set.Entry) error {
 	return s.db.RemoveFileFromInode(entry.Path, entry.Inode)
 }
 
-func (s *Server) updateOrRemoveRemoteFile(set *set.Set, path string, transformer transfer.PathTransformer,
+func (s *Server) updateOrRemoveRemoteFile(removeReq *set.RemoveReq, transformer transfer.PathTransformer,
 	entry *set.Entry) error {
-	rpath, err := transformer(path)
+	rpath, err := transformer(removeReq.Path)
 	if err != nil {
 		return err
 	}
@@ -716,13 +718,20 @@ func (s *Server) updateOrRemoveRemoteFile(set *set.Set, path string, transformer
 		return err
 	}
 
-	sets, requesters, err := s.handleSetsAndRequesters(set, remoteMeta)
+	var sets, requesters []string
+
+	if removeReq.Action == set.ToRemove {
+		sets, requesters, err = s.handleSetsAndRequesters(removeReq.Set, remoteMeta)
+	} else {
+		sets, requesters, err = s.handleSetMetadataForTrash(removeReq.Set, remoteMeta)
+	}
+
 	if err != nil {
 		return err
 	}
 
 	if len(sets) == 0 {
-		return s.removeRemoteFileAndHandleHardlink(path, rpath, remoteMeta, transformer, entry)
+		return s.removeRemoteFileAndHandleHardlink(removeReq.Path, rpath, remoteMeta, transformer, entry)
 	}
 
 	return remove.UpdateSetsAndRequestersOnRemoteFile(s.storageHandler, rpath, sets, requesters, remoteMeta)
@@ -801,6 +810,28 @@ func (s *Server) handleSetsAndRequesters(givenSet *set.Set, meta map[string]stri
 	return sets, requesters, err
 }
 
+func (s *Server) handleSetMetadataForTrash(givenSet *set.Set, meta map[string]string) ([]string, []string, error) {
+	sets := strings.Split(meta[transfer.MetaKeySets], ",")
+	requesters := strings.Split(meta[transfer.MetaKeyRequester], ",")
+
+	sets = append(sets, TrashPrefix+givenSet.Name)
+
+	otherUserSets, _, err := s.getSetNamesByRequesters(requesters, givenSet.Requester)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if slices.Contains(otherUserSets, givenSet.Name) {
+		return sets, requesters, nil
+	}
+
+	if slices.Contains(sets, givenSet.Name) {
+		sets, err = set.RemoveElementFromSlice(sets, givenSet.Name)
+	}
+
+	return sets, requesters, err
+}
+
 func (s *Server) getSetNamesByRequesters(requesters []string, user string) ([]string, []string, error) {
 	var (
 		otherUserSets []string
@@ -868,7 +899,7 @@ func (s *Server) trashDirFromDB(givenSet *set.Set, path string) error {
 
 func buildTrashSetFromSet(givenSet *set.Set) set.Set {
 	return set.Set{
-		Name:        ".trash-" + givenSet.Name,
+		Name:        TrashPrefix + givenSet.Name,
 		Requester:   givenSet.Requester,
 		Transformer: givenSet.Transformer,
 	}
