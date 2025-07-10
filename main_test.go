@@ -2499,7 +2499,7 @@ func confirmFileContents(t *testing.T, file, expectedContents string) {
 }
 
 func TestTrash(t *testing.T) {
-	FocusConvey("Given a server", t, func() {
+	Convey("Given a server", t, func() {
 		s, remotePath := NewUploadingTestServer(t)
 
 		path := t.TempDir()
@@ -2512,7 +2512,7 @@ func TestTrash(t *testing.T) {
 				1, fmt.Sprintf("set with that id does not exist [%s]", invalidSetName))
 		})
 
-		FocusConvey("And an added set with files and folders", func() {
+		Convey("And an added set with files and folders", func() {
 			dir := t.TempDir()
 
 			linkPath := filepath.Join(path, "link")
@@ -2579,7 +2579,7 @@ func TestTrash(t *testing.T) {
 				s.confirmOutputContains(t, []string{"status", "--name", ".trash-" + setName, "-d"},
 					0, file2)
 
-				FocusConvey("Remove again will remove another object and status will update accordingly", func() {
+				Convey("Remove again will remove another object and status will update accordingly", func() {
 					s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
 						0, "Num files: 6; Symlinks: 1; Hardlinks: 1; Size "+
 							"(total/recently uploaded/recently removed): 41 B / 51 B / 10 B\n"+
@@ -2599,8 +2599,7 @@ func TestTrash(t *testing.T) {
 							"(total/recently uploaded/recently removed): 31 B / 51 B / 10 B\n"+
 							"Uploaded: 5; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0")
 
-					FocusConvey("And status will remain correct after two-way sync is triggered", func() {
-
+					Convey("And status will remain correct after two-way sync is triggered", func() {
 						So(os.Remove(file5), ShouldBeNil)
 
 						exitCode, _ = s.runBinary(t, "retry", "--name", setName, "-a")
@@ -2705,7 +2704,7 @@ func TestTrash(t *testing.T) {
 				s.addSetForTesting(t, setName, transformer, dir1)
 				s.waitForStatus(setName, "\nStatus: complete", 5*time.Second)
 
-				FocusConvey("Remove removes the nested dir even though it wasnt specified in the set", func() {
+				Convey("Remove removes the nested dir even though it wasnt specified in the set", func() {
 					s.removePath(t, setName, dir3, 2)
 
 					exitCode, output := s.runBinary(t, "status", "--name", setName, "-d")
@@ -2717,7 +2716,7 @@ func TestTrash(t *testing.T) {
 						0, dir3)
 				})
 
-				FocusConvey("Remove on the parent folder submits itself and all children to be removed", func() {
+				Convey("Remove on the parent folder submits itself and all children to be removed", func() {
 					exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", dir1)
 
 					So(exitCode, ShouldEqual, 0)
@@ -2774,7 +2773,7 @@ func TestTrash(t *testing.T) {
 				s.waitForStatus(setName, "Removal status: 3 / 3 objects removed", 5*time.Second)
 			})
 
-			FocusConvey("if the server dies during removal, the removal will continue upon server startup", func() {
+			Convey("if the server dies during removal, the removal will continue upon server startup", func() {
 				tempTestFileOfPathsToRemove1, errt := os.CreateTemp(dir, "testFileSet")
 				So(errt, ShouldBeNil)
 
@@ -2849,7 +2848,7 @@ func TestRemove(t *testing.T) {
 				1, fmt.Sprintf("set with that id does not exist [%s]", invalidSetName))
 		})
 
-		FocusConvey("And an added set with files and folders", func() {
+		Convey("And an added set with files and folders", func() {
 			dir := t.TempDir()
 
 			linkPath := filepath.Join(path, "link")
@@ -3256,7 +3255,7 @@ func TestRemove(t *testing.T) {
 				})
 			})
 
-			FocusConvey("And a set with the same files added by a different user", func() {
+			Convey("And a set with the same files added by a different user", func() {
 				user, erru := user.Current()
 				So(erru, ShouldBeNil)
 
@@ -3269,7 +3268,7 @@ func TestRemove(t *testing.T) {
 
 				s.waitForStatusWithUser(setName2, "\nStatus: complete", "testUser", 20*time.Second)
 
-				FocusConvey("Remove removes the metadata related to the set", func() {
+				Convey("Remove removes the metadata related to the set", func() {
 					output := getRemoteMeta(filepath.Join(remotePath, "file1"))
 					So(output, ShouldContainSubstring, setName)
 					So(output, ShouldContainSubstring, setName2)

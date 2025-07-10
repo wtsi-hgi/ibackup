@@ -28,7 +28,6 @@ package server
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io/fs"
 	"math"
 	"net/http"
@@ -536,7 +535,8 @@ func (s *Server) submitFilesForRemoval(set *set.Set, paths []string, action set.
 	return added, err
 }
 
-func buildRemovalStructsFromPaths(givenSet *set.Set, paths []string, isDir bool, action set.RemoveAction) ([]*queue.ItemDef, []set.RemoveReq) {
+func buildRemovalStructsFromPaths(givenSet *set.Set, paths []string, isDir bool,
+	action set.RemoveAction) ([]*queue.ItemDef, []set.RemoveReq) {
 	remReqs := make([]set.RemoveReq, len(paths))
 	defs := make([]*queue.ItemDef, len(paths))
 
@@ -612,7 +612,11 @@ func (s *Server) removeFileFromIRODSandDB(removeReq *set.RemoveReq) error {
 		return err
 	}
 
-	return s.processDBFileRemoval(removeReq, entry)
+	if removeReq.Action == set.ToTrash {
+		return s.processDBFileTrash(removeReq.Set, entry)
+	}
+
+	return s.processDBFileRemoval(removeReq.Set.ID(), entry, true)
 }
 
 func (s *Server) processRemoteFileRemoval(removeReq *set.RemoveReq, entry *set.Entry) error {
@@ -649,45 +653,55 @@ func fileErrorCannotBeIgnored(err error, mayMissInRemote bool) bool {
 	return !(mayMissInRemote && strings.Contains(err.Error(), internal.ErrFileDoesNotExist))
 }
 
-// TODO consider splittig in two functions for trash/remove
-func (s *Server) processDBFileRemoval(removeReq *set.RemoveReq, entry *set.Entry) error {
-	if removeReq.Action == set.ToTrash {
-		destSet := buildTrashSetFromSet(removeReq.Set)
+func (s *Server) processDBFileTrash(set *set.Set, entry *set.Entry) error {
+	destSet := buildTrashSetFromSet(set)
 
-		err := s.db.MergeFileEntries(destSet.ID(), []string{entry.Path})
+	err := s.db.MergeFileEntries(destSet.ID(), []string{entry.Path})
+	if err != nil {
+		return err
+	}
+
+	return s.processDBFileRemoval(set.ID(), entry, false)
+}
+
+func (s *Server) processDBFileRemoval(setID string, entry *set.Entry, checkInode bool) error {
+	err := s.db.RemoveFileEntry(setID, entry.Path)
+	if err != nil {
+		return err
+	}
+
+	if checkInode {
+		err = s.processDBInodeRemoval(entry)
 		if err != nil {
 			return err
 		}
 	}
 
-	err := s.db.RemoveFileEntry(removeReq.Set.ID(), removeReq.Path)
+	err = s.db.RemovePathFromFailedBucket(setID, entry.Path)
 	if err != nil {
 		return err
 	}
 
-	if entry.Type != set.Symlink && entry.Type != set.Abnormal {
-		setsWithFile, err := s.db.GetAllSetsForPath(removeReq.Path)
-		if err != nil {
-			return err
-		}
+	return s.db.UpdateBasedOnRemovedEntry(setID, entry)
+}
 
-		fmt.Println("checking if i can remove")
-
-		if len(setsWithFile) == 0 {
-			fmt.Println("I can")
-			err = s.db.RemoveFileFromInode(removeReq.Path, entry.Inode)
-			if err != nil {
-				return err
-			}
-		}
+// processDBInodeRemoval checks if the inode for the entry should be removed and
+// removes it. It expects that the entry has already been removed from db.
+func (s *Server) processDBInodeRemoval(entry *set.Entry) error {
+	if entry.Type == set.Symlink || entry.Type == set.Abnormal {
+		return nil
 	}
 
-	err = s.db.RemovePathFromFailedBucket(removeReq.Set.ID(), removeReq.Path)
+	setsWithFile, err := s.db.GetAllSetsForPath(entry.Path)
 	if err != nil {
 		return err
 	}
 
-	return s.db.UpdateBasedOnRemovedEntry(removeReq.Set.ID(), entry)
+	if len(setsWithFile) > 0 {
+		return nil
+	}
+
+	return s.db.RemoveFileFromInode(entry.Path, entry.Inode)
 }
 
 func (s *Server) updateOrRemoveRemoteFile(set *set.Set, path string, transformer transfer.PathTransformer,
