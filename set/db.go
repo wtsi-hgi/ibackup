@@ -92,6 +92,8 @@ const (
 
 	backupExt = ".backingup"
 
+	TrashPrefix = ".trash-"
+
 	// workerPoolSizeFiles is the max number of concurrent file stats we'll do
 	// during discovery.
 	workerPoolSizeFiles = 16
@@ -648,20 +650,6 @@ func (d *DB) RemoveDirEntry(setID string, path string) error {
 	return d.removeEntry(setID, path, discoveredFoldersBucket)
 }
 
-// TrashDirEntry trashes the provided directory.
-// func (d *DB) TrashDirEntry(sourceSet *Set, path string) error {
-// 	destSet := BuildTrashSetFromSet(sourceSet)
-
-// 	dirent := &Dirent{Path: path, Mode: fs.ModeDir}
-
-// 	err := d.MergeDirEntries(destSet.ID(), []*Dirent{dirent})
-// 	if err != nil {
-// 		return err
-// 	}
-
-// 	return d.RemoveDirEntry(sourceSet.ID(), path)
-// }
-
 // GetFilesInDir returns all file paths from inside the given directory (and all
 // nested inside) for the given set using the db.
 func (d *DBRO) GetFilesInDir(setID string, dirpath string) ([]string, error) {
@@ -741,6 +729,33 @@ func (d *DB) mergeEntries(setID string, dirents []*Dirent, bucketName string, in
 
 		return ec.UpdateOrCreateEntries(dirents)
 	})
+}
+
+// PutEntryInTrash puts the given entry into the trash set for the given set.
+func (d *DB) PutEntryInTrash(set *Set, entry *Entry) error {
+	destSet := BuildTrashSetFromSet(set)
+
+	bucketName := fileBucket
+	if entry.isDir {
+		bucketName = dirBucket
+	}
+
+	return d.db.Update(func(tx *bolt.Tx) error {
+		sfsb, err := d.newSetFileBucket(tx, bucketName, destSet.ID())
+		if err != nil {
+			return err
+		}
+
+		return sfsb.Bucket.Put([]byte(entry.Path), d.encodeToBytes(entry))
+	})
+}
+
+func BuildTrashSetFromSet(givenSet *Set) Set {
+	return Set{
+		Name:        TrashPrefix + givenSet.Name,
+		Requester:   givenSet.Requester,
+		Transformer: givenSet.Transformer,
+	}
 }
 
 // SetRemoveRequests writes a list of remove requests into the database.
@@ -1340,7 +1355,7 @@ func (d *DBRO) getEntry(tx *bolt.Tx, setID, path string) (*Entry, *bolt.Bucket, 
 		b     *bolt.Bucket
 	)
 
-	for _, kind := range []string{fileBucket, discoveredBucket, dirBucket} {
+	for _, kind := range []string{fileBucket, discoveredBucket, dirBucket, discoveredFoldersBucket} {
 		entry, b = d.getEntryFromSubbucket(kind, setID, path, setsBucket)
 		if entry != nil {
 			break
@@ -1598,6 +1613,26 @@ func (d *DBRO) GetFileEntryForSet(setID, filePath string) (*Entry, error) {
 		var err error
 
 		entry, _, err = d.getEntry(tx, setID, filePath)
+
+		return err
+	}); err != nil {
+		return nil, err
+	}
+
+	return entry, nil
+}
+
+// GetDirEntryForSet returns the dir entry for the given path in the given
+// set.
+func (d *DBRO) GetDirEntryForSet(setID, dirPath string) (*Entry, error) {
+	var entry *Entry
+
+	dirPath = strings.TrimSuffix(dirPath, "/")
+
+	if err := d.db.View(func(tx *bolt.Tx) error {
+		var err error
+
+		entry, _, err = d.getEntry(tx, setID, dirPath)
 
 		return err
 	}); err != nil {

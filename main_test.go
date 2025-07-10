@@ -399,10 +399,19 @@ func (s *TestServer) removePath(t *testing.T, name, path string, numFiles int) {
 }
 
 func (s *TestServer) waitForStatus(name, statusToFind string, timeout time.Duration) {
+	s.waitForStatusWithFlags(name, statusToFind, timeout)
+}
+
+func (s *TestServer) waitForStatusWithUser(name, statusToFind, user string, timeout time.Duration) {
+	s.waitForStatusWithFlags(name, statusToFind, timeout, "--user", user)
+}
+
+func (s *TestServer) waitForStatusWithFlags(name, statusToFind string, timeout time.Duration, args ...string) {
 	ctx, cancelFn := context.WithTimeout(context.Background(), timeout)
 	defer cancelFn()
 
 	cmd := []string{"status", "--name", name, "--url", s.url, "--cert", s.cert}
+	cmd = append(cmd, args...)
 
 	var output []byte
 
@@ -431,35 +440,6 @@ func (s *TestServer) waitForStatus(name, statusToFind string, timeout time.Durat
 
 	if status.Err != nil {
 		fmt.Printf("\nfailed to see set %s get status: %s\n%s\n", name, statusToFind, string(output)) //nolint:forbidigo
-	}
-
-	So(status.Err, ShouldBeNil)
-}
-
-func (s *TestServer) waitForStatusWithUser(name, statusToFind, user string, timeout time.Duration) {
-	ctx, cancelFn := context.WithTimeout(context.Background(), timeout)
-	defer cancelFn()
-
-	cmd := []string{"status", "--name", name, "--url", s.url, "--cert", s.cert, "--user", user}
-
-	status := retry.Do(ctx, func() error {
-		clientCmd := exec.Command("./"+app, cmd...)
-		clientCmd.Env = s.env
-
-		output, err := clientCmd.CombinedOutput()
-		if err != nil {
-			return err
-		}
-
-		if strings.Contains(string(output), statusToFind) {
-			return nil
-		}
-
-		return ErrStatusNotFound
-	}, &retry.UntilNoError{}, btime.SecondsRangeBackoff(), "waiting for matching status")
-
-	if status.Err != nil {
-		fmt.Printf("\nfailed to see set %s get status: %s\n", name, statusToFind) //nolint:forbidigo
 	}
 
 	So(status.Err, ShouldBeNil)
@@ -2232,6 +2212,11 @@ func addFileToIRODS(localPath, remotePath string) {
 	So(err, ShouldBeNil)
 }
 
+func addRemoteMeta(remotePath, key, value string) {
+	_, err := exec.Command("imeta", "add", "-d", remotePath, key, value).CombinedOutput()
+	So(err, ShouldBeNil)
+}
+
 func TestManualMode(t *testing.T) {
 	resetIRODS()
 
@@ -2567,15 +2552,16 @@ func TestTrash(t *testing.T) {
 					So(output, ShouldContainSubstring, file1)
 					So(output, ShouldNotContainSubstring, file2)
 
-					s.confirmOutputContains(t, []string{"status", "--name", server.TrashPrefix + setName, "-d"},
-						0, file2)
+					exitCode, output = s.runBinary(t, "status", "--name", set.TrashPrefix+setName, "-d")
+					So(exitCode, ShouldEqual, 0)
+					So(output, ShouldContainSubstring, file2+"\tuploaded\t10 B")
 				})
 
 				Convey("And changes the set metadata in iRODS to a .trash set", func() {
 					sets := getMetaValue(getRemoteMeta(filepath.Join(remotePath, "file2")), transfer.MetaKeySets)
 					setsSlice := strings.Split(sets, ",")
 
-					So(setsSlice, ShouldContain, server.TrashPrefix+setName)
+					So(setsSlice, ShouldContain, set.TrashPrefix+setName)
 					So(setsSlice, ShouldNotContain, setName)
 				})
 
@@ -2642,7 +2628,7 @@ func TestTrash(t *testing.T) {
 					sets := getMetaValue(getRemoteMeta(remoteFile), transfer.MetaKeySets)
 					setsSlice := strings.Split(sets, ",")
 					So(setsSlice, ShouldContain, setName)
-					So(setsSlice, ShouldContain, server.TrashPrefix+setName)
+					So(setsSlice, ShouldContain, set.TrashPrefix+setName)
 				})
 			})
 
@@ -2656,7 +2642,7 @@ func TestTrash(t *testing.T) {
 					So(output, ShouldNotContainSubstring, dir1+"/")
 					So(output, ShouldNotContainSubstring, dir1+" => ")
 
-					s.confirmOutputContains(t, []string{"status", "--name", server.TrashPrefix + setName, "-d"},
+					s.confirmOutputContains(t, []string{"status", "--name", set.TrashPrefix + setName, "-d"},
 						0, dir1)
 				})
 
@@ -2667,7 +2653,7 @@ func TestTrash(t *testing.T) {
 
 					setsSlice := strings.Split(sets, ",")
 					So(setsSlice, ShouldNotContain, setName)
-					So(setsSlice, ShouldContain, server.TrashPrefix+setName)
+					So(setsSlice, ShouldContain, set.TrashPrefix+setName)
 				})
 			})
 
@@ -2683,7 +2669,7 @@ func TestTrash(t *testing.T) {
 				So(output, ShouldNotContainSubstring, dir1+"/")
 				So(output, ShouldNotContainSubstring, dir1+" => ")
 
-				s.confirmOutputContains(t, []string{"status", "--name", server.TrashPrefix + setName, "-d"},
+				s.confirmOutputContains(t, []string{"status", "--name", set.TrashPrefix + setName, "-d"},
 					0, dir1)
 			})
 
@@ -2696,32 +2682,8 @@ func TestTrash(t *testing.T) {
 				So(output, ShouldNotContainSubstring, dir2+"/")
 				So(output, ShouldNotContainSubstring, dir2+" => ")
 
-				s.confirmOutputContains(t, []string{"status", "--name", server.TrashPrefix + setName, "-d"},
+				s.confirmOutputContains(t, []string{"status", "--name", set.TrashPrefix + setName, "-d"},
 					0, dir2)
-			})
-
-			Convey("Remove removes the dir even if it is not specified in the set but is part of it", func() {
-				dir3 := filepath.Join(dir1, "dir")
-				err = os.MkdirAll(dir3, 0755)
-				So(err, ShouldBeNil)
-
-				file5 := filepath.Join(dir3, "file5")
-				internal.CreateTestFile(t, file5, "some data3")
-
-				setName = "nestedDirSet"
-
-				s.addSetForTesting(t, setName, transformer, dir1)
-				s.waitForStatus(setName, "\nStatus: complete", 5*time.Second)
-
-				s.removePath(t, setName, dir3, 2)
-
-				exitCode, output := s.runBinary(t, "status", "--name", setName, "-d")
-				So(exitCode, ShouldEqual, 0)
-				So(output, ShouldContainSubstring, dir1)
-				So(output, ShouldNotContainSubstring, dir3+"/")
-
-				s.confirmOutputContains(t, []string{"status", "--name", server.TrashPrefix + setName, "-d"},
-					0, dir3)
 			})
 
 			Convey("Given an added set with a folder containing a nested folder", func() {
@@ -2729,7 +2691,7 @@ func TestTrash(t *testing.T) {
 				err = os.MkdirAll(dir3, 0755)
 				So(err, ShouldBeNil)
 
-				file5 := filepath.Join(dir3, "file5")
+				file5 = filepath.Join(dir3, "file5")
 				internal.CreateTestFile(t, file5, "some data3")
 
 				setName = "nestedDirSet"
@@ -2745,7 +2707,7 @@ func TestTrash(t *testing.T) {
 					So(output, ShouldContainSubstring, dir1)
 					So(output, ShouldNotContainSubstring, dir3+"/")
 
-					s.confirmOutputContains(t, []string{"status", "--name", server.TrashPrefix + setName, "-d"},
+					s.confirmOutputContains(t, []string{"status", "--name", set.TrashPrefix + setName, "-d"},
 						0, dir3)
 				})
 
@@ -2784,7 +2746,7 @@ func TestTrash(t *testing.T) {
 				So(output, ShouldNotContainSubstring, dir1+"/")
 				So(output, ShouldNotContainSubstring, dir1+" => ")
 
-				exitCode, output = s.runBinary(t, "status", "--name", server.TrashPrefix+setName, "-d")
+				exitCode, output = s.runBinary(t, "status", "--name", set.TrashPrefix+setName, "-d")
 				So(exitCode, ShouldEqual, 0)
 
 				So(output, ShouldContainSubstring, file1)
@@ -2836,6 +2798,142 @@ func TestTrash(t *testing.T) {
 
 				s.waitForStatus(setName, "Removal status: 6 / 6 objects removed", 5*time.Second)
 			})
+
+			Convey("And a new file added to a directory already in the set", func() {
+				file5 = filepath.Join(dir1, "file5")
+				internal.CreateTestFile(t, file5, "some data5")
+
+				Convey("Remove returns an error if you try to remove just the file", func() {
+					s.confirmOutputContains(t, []string{"remove", "--name", setName, "--path", file5},
+						1, fmt.Sprintf("path(s) do not belong to the backup set : [%s] [%s]", file5, setName))
+				})
+
+				Convey("Remove ignores the file if you remove the directory", func() {
+					exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", dir1)
+					So(exitCode, ShouldEqual, 0)
+				})
+			})
+
+			Convey("And a new directory", func() {
+				dir3 := filepath.Join(path, "path/to/new/dir/")
+
+				Convey("Remove returns an error if you try to remove the directory that doesn't exist", func() {
+					s.confirmOutputContains(t, []string{"remove", "--name", setName, "--path", dir3},
+						1, fmt.Sprintf("path(s) do not belong to the backup set : [%s] [%s]", dir3, setName))
+				})
+
+				err = os.MkdirAll(dir3, 0755)
+				So(err, ShouldBeNil)
+
+				Convey("Remove returns an error if you try to remove the directory", func() {
+					s.confirmOutputContains(t, []string{"remove", "--name", setName, "--path", dir3},
+						1, fmt.Sprintf("path(s) do not belong to the backup set : [%s] [%s]", dir3, setName))
+				})
+			})
+
+			Convey("If a file fails to be removed, the error is displayed on the file", func() {
+				file1remote := filepath.Join(remotePath, "file1")
+
+				removeFileFromIRODS(file1remote)
+
+				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", file1)
+				So(exitCode, ShouldEqual, 0)
+
+				errorMsg := fmt.Sprintf("list operation failed: Path '%s'", file1remote)
+
+				s.waitForStatusWithFlags(setName, errorMsg, 2*time.Second, "-d")
+
+				Convey("And displays the error in set status if not fixed", func() {
+					s.waitForStatus(setName, fmt.Sprintf("Error: Error when removing: list operation failed: Path '%s'",
+						filepath.Join(remotePath, "file1")), 20*time.Second)
+				})
+
+				Convey("And succeeds if issue is fixed during retries", func() {
+					user, err := user.Current()
+					So(err, ShouldBeNil)
+
+					addFileToIRODS(file1, file1remote)
+					addRemoteMeta(file1remote, transfer.MetaKeySets, setName)
+					addRemoteMeta(file1remote, transfer.MetaKeyRequester, user.Username)
+
+					s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 10*time.Second)
+				})
+			})
+
+			Convey("And if you make this set read-only", func() {
+				exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--make-readonly")
+				So(exitCode, ShouldEqual, 0)
+
+				Convey("You can no longer remove files from it", func() {
+					s.confirmOutputContains(t, []string{"remove", "--name", setName, "--path", file1}, 1,
+						set.ErrSetIsNotWritable)
+				})
+			})
+
+			checkIfRemoveFullyCompleted := func(setName, fileName string) {
+				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", fileName)
+				So(exitCode, ShouldEqual, 0)
+				s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
+					0, "Removal status: 0 / 1 objects removed")
+				s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 10*time.Second)
+
+				s.confirmOutputDoesNotContain(t, []string{"status", "--name", set.TrashPrefix + setName, "-d"},
+					0, fileName)
+			}
+
+			Convey("Given a set with a file that failed to upload", func() {
+				dir3 := filepath.Join(path, "dir3")
+				err := os.MkdirAll(dir3, userPerms)
+				So(err, ShouldBeNil)
+
+				file := filepath.Join(dir3, "file")
+				internal.CreateTestFile(t, file, "some data1")
+
+				err = os.Chmod(file, 0000)
+				So(err, ShouldBeNil)
+
+				setName := "setWithFailures"
+				s.addSetForTesting(t, setName, transformer, dir3)
+				s.waitForStatus(setName, "\nStatus: complete (but with failures", 10*time.Second)
+
+				Convey("Remove will still work", func() {
+					checkIfRemoveFullyCompleted(setName, file)
+				})
+			})
+
+			Convey("Given a set with a missing file", func() {
+				file := filepath.Join(path, "missing-file")
+				internal.CreateTestFileOfLength(t, file, 1)
+
+				setName := "setWithMissingFile"
+				s.addSetForTesting(t, setName, transformer, path)
+
+				err := os.Remove(file)
+				So(err, ShouldBeNil)
+
+				s.waitForStatus(setName, "\nStatus: complete", 10*time.Second)
+				s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"}, 0, file+"\tmissing")
+
+				Convey("Remove will still work", func() {
+					checkIfRemoveFullyCompleted(setName, file)
+				})
+			})
+
+			Convey("Given a set with an abnormal file", func() {
+				file := filepath.Join(path, "abnormal-file")
+				err := syscall.Mkfifo(file, userPerms)
+				So(err, ShouldBeNil)
+
+				setName := "setWithAbnormalFile"
+				s.addSetForTesting(t, setName, transformer, file)
+
+				s.waitForStatus(setName, "\nStatus: complete", 10*time.Second)
+				s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"}, 0, file+"\tabnormal")
+
+				Convey("Remove will still work", func() {
+					checkIfRemoveFullyCompleted(setName, file)
+				})
+			})
 		})
 	})
 }
@@ -2844,32 +2942,7 @@ func TestRemove(t *testing.T) {
 	resetIRODS()
 
 	Convey("Given a server", t, func() {
-		remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
-		if remotePath == "" {
-			SkipConvey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
-
-			return
-		}
-
-		remotePath = filepath.Join(remotePath, "test_remove")
-
-		schedulerDeployment := os.Getenv("IBACKUP_TEST_SCHEDULER")
-		if schedulerDeployment == "" {
-			SkipConvey("skipping iRODS backup test since IBACKUP_TEST_SCHEDULER not set", func() {})
-
-			return
-		}
-
-		dir := t.TempDir()
-		s := new(TestServer)
-		s.prepareFilePaths(dir)
-		s.prepareConfig()
-
-		s.schedulerDeployment = schedulerDeployment
-		s.remoteHardlinkPrefix = filepath.Join(remotePath, "hardlinks")
-		s.backupFile = filepath.Join(dir, "db.bak")
-
-		s.startServer()
+		s, remotePath := NewUploadingTestServer(t)
 
 		path := t.TempDir()
 		transformer := "prefix=" + path + ":" + remotePath
@@ -2964,28 +3037,6 @@ func TestRemove(t *testing.T) {
 						0, "Num files: 5; Symlinks: 1; Hardlinks: 1; Size "+
 							"(total/recently uploaded/recently removed): 31 B / 51 B / 10 B\n"+
 							"Uploaded: 5; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0")
-
-					So(os.Remove(file5), ShouldBeNil)
-
-					exitCode, _ = s.runBinary(t, "retry", "--name", setName, "-a")
-
-					s.waitForStatus(setName, "\nDiscovery: completed", 10*time.Second)
-					s.waitForStatus(setName, "\nStatus: complete", 10*time.Second)
-
-					s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
-						0, "Num files: 4; Symlinks: 1; Hardlinks: 1; Size "+
-							"(total/recently uploaded/recently removed): 20 B / 0 B / 11 B\n"+
-							"Uploaded: 0; Replaced: 0; Skipped: 4; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0")
-
-					exitCode, _ = s.runBinary(t, "retry", "--name", setName, "-a")
-
-					s.waitForStatus(setName, "\nDiscovery: completed", 10*time.Second)
-					s.waitForStatus(setName, "\nStatus: complete", 10*time.Second)
-
-					s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
-						0, "Num files: 4; Symlinks: 1; Hardlinks: 1; Size "+
-							"(total/recently uploaded/recently removed): 20 B / 0 B / 0 B\n"+
-							"Uploaded: 0; Replaced: 0; Skipped: 4; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0")
 				})
 			})
 
@@ -3031,30 +3082,6 @@ func TestRemove(t *testing.T) {
 					0, dir2+" => ")
 			})
 
-			Convey("Remove removes the dir even if it is not specified in the set but is part of it", func() {
-				dir3 := filepath.Join(dir1, "dir")
-				err = os.MkdirAll(dir3, 0755)
-				So(err, ShouldBeNil)
-
-				file5 := filepath.Join(dir3, "file5")
-				internal.CreateTestFile(t, file5, "some data3")
-
-				setName = "nestedDirSet"
-
-				s.addSetForTesting(t, setName, transformer, dir1)
-				s.waitForStatus(setName, "\nStatus: complete", 5*time.Second)
-
-				s.removePath(t, setName, dir3, 2)
-
-				s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
-					0, dir1)
-
-				s.confirmOutputDoesNotContain(t, []string{"status", "--name", setName, "-d"},
-					0, dir3+"/")
-
-				resetIRODS()
-			})
-
 			Convey("Given an added set with a folder containing a nested folder", func() {
 				dir3 := filepath.Join(dir1, "dir")
 				err = os.MkdirAll(dir3, 0755)
@@ -3067,16 +3094,6 @@ func TestRemove(t *testing.T) {
 
 				s.addSetForTesting(t, setName, transformer, dir1)
 				s.waitForStatus(setName, "\nStatus: complete", 5*time.Second)
-
-				Convey("Remove removes the nested dir even though it wasnt specified in the set", func() {
-					s.removePath(t, setName, dir3, 2)
-
-					s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
-						0, dir1)
-
-					s.confirmOutputDoesNotContain(t, []string{"status", "--name", setName, "-d"},
-						0, dir3+"/")
-				})
 
 				Convey("Remove on the parent folder submits itself and all children to be removed", func() {
 					exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", dir1)
@@ -3256,38 +3273,6 @@ func TestRemove(t *testing.T) {
 				})
 			})
 
-			Convey("And a new file added to a directory already in the set", func() {
-				file5 := filepath.Join(dir1, "file5")
-				internal.CreateTestFile(t, file5, "some data5")
-
-				Convey("Remove returns an error if you try to remove just the file", func() {
-					s.confirmOutputContains(t, []string{"remove", "--name", setName, "--path", file5},
-						1, fmt.Sprintf("path(s) do not belong to the backup set : [%s] [%s]", file5, setName))
-				})
-
-				Convey("Remove ignores the file if you remove the directory", func() {
-					exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", dir1)
-					So(exitCode, ShouldEqual, 0)
-				})
-			})
-
-			Convey("And a new directory", func() {
-				dir3 := filepath.Join(path, "path/to/new/dir/")
-
-				Convey("Remove returns an error if you try to remove the directory that doesn't exist", func() {
-					s.confirmOutputContains(t, []string{"remove", "--name", setName, "--path", dir3},
-						1, fmt.Sprintf("path(s) do not belong to the backup set : [%s] [%s]", dir3, setName))
-				})
-
-				err = os.MkdirAll(dir3, 0755)
-				So(err, ShouldBeNil)
-
-				Convey("Remove returns an error if you try to remove the directory", func() {
-					s.confirmOutputContains(t, []string{"remove", "--name", setName, "--path", dir3},
-						1, fmt.Sprintf("path(s) do not belong to the backup set : [%s] [%s]", dir3, setName))
-				})
-			})
-
 			Convey("And a set with the same files added by a different user", func() {
 				user, erru := user.Current()
 				So(erru, ShouldBeNil)
@@ -3396,13 +3381,11 @@ func TestRemove(t *testing.T) {
 				removeFileFromIRODS(filepath.Join(remotePath, "file1"))
 
 				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", file1)
-
 				So(exitCode, ShouldEqual, 0)
 
-				time.Sleep(2 * time.Second)
+				errorMsg := fmt.Sprintf("list operation failed: Path '%s'", filepath.Join(remotePath, "file1"))
 
-				s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
-					0, fmt.Sprintf("list operation failed: Path '%s'", filepath.Join(remotePath, "file1")))
+				s.waitForStatusWithFlags(setName, errorMsg, 2*time.Second, "-d")
 
 				Convey("And displays the error in set status if not fixed", func() {
 					s.waitForStatus(setName, fmt.Sprintf("Error: Error when removing: list operation failed: Path '%s'",
@@ -3415,19 +3398,9 @@ func TestRemove(t *testing.T) {
 					s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 30*time.Second)
 				})
 			})
-
-			Convey("And if you make this set read-only", func() {
-				exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--make-readonly")
-				So(exitCode, ShouldEqual, 0)
-
-				Convey("You can no longer remove files from it", func() {
-					s.confirmOutputContains(t, []string{"remove", "--name", setName, "--path", file1}, 1,
-						set.ErrSetIsNotWritable)
-				})
-			})
 		})
 
-		Convey("Given a set with a file that failed to upload", func() {
+		Convey("Given a set with a file that failed to trash", func() {
 			dir3 := filepath.Join(path, "dir3")
 
 			err := os.MkdirAll(dir3, userPerms)
@@ -3448,52 +3421,6 @@ func TestRemove(t *testing.T) {
 			Convey("Remove will still work", func() {
 				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", file5)
 
-				So(exitCode, ShouldEqual, 0)
-
-				s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
-					0, "Removal status: 0 / 1 objects removed")
-
-				s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 10*time.Second)
-			})
-		})
-
-		Convey("Given a set with a missing file", func() {
-			file := filepath.Join(path, "missing-file")
-			internal.CreateTestFileOfLength(t, file, 1)
-
-			setName := "setWithMissingFile"
-			s.addSetForTesting(t, setName, transformer, path)
-
-			err := os.Remove(file)
-			So(err, ShouldBeNil)
-
-			s.waitForStatus(setName, "\nStatus: complete", 10*time.Second)
-			s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"}, 0, file+"\tmissing")
-
-			Convey("Remove will still work", func() {
-				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", file)
-				So(exitCode, ShouldEqual, 0)
-
-				s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
-					0, "Removal status: 0 / 1 objects removed")
-
-				s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 10*time.Second)
-			})
-		})
-
-		Convey("Given a set with an abnormal file", func() {
-			file := filepath.Join(path, "abnormal-file")
-			err := syscall.Mkfifo(file, userPerms)
-			So(err, ShouldBeNil)
-
-			setName := "setWithAbnormalFile"
-			s.addSetForTesting(t, setName, transformer, file)
-
-			s.waitForStatus(setName, "\nStatus: complete", 10*time.Second)
-			s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"}, 0, file+"\tabnormal")
-
-			Convey("Remove will still work", func() {
-				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", file)
 				So(exitCode, ShouldEqual, 0)
 
 				s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},

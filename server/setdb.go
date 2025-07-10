@@ -28,7 +28,6 @@ package server
 import (
 	"context"
 	"errors"
-	"io/fs"
 	"math"
 	"net/http"
 	"os"
@@ -123,8 +122,6 @@ const (
 
 	logTraceIDLen = 8
 	allUsers      = "all"
-
-	TrashPrefix = ".trash-"
 )
 
 // LoadSetDB loads the given set.db or creates it if it doesn't exist.
@@ -445,7 +442,7 @@ func (s *Server) putFiles(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
-func (s *Server) removePaths(c *gin.Context) {
+func (s *Server) removePaths(c *gin.Context) { //nolint:unused
 	givenSet, paths, ok := s.bindPathsAndValidateSet(c)
 	if !ok {
 		return
@@ -479,7 +476,7 @@ func (s *Server) trashPaths(c *gin.Context) {
 		return
 	}
 
-	trashSet := buildTrashSetFromSet(givenSet)
+	trashSet := set.BuildTrashSetFromSet(givenSet)
 
 	err = s.db.AddOrUpdate(&trashSet)
 	if err != nil {
@@ -656,9 +653,11 @@ func fileErrorCannotBeIgnored(err error, mayMissInRemote bool) bool {
 }
 
 func (s *Server) processDBFileTrash(set *set.Set, entry *set.Entry) error {
-	destSet := buildTrashSetFromSet(set)
+	if entry.WasNotUploaded() {
+		return s.processDBFileRemoval(set.ID(), entry, false)
+	}
 
-	err := s.db.MergeFileEntries(destSet.ID(), []string{entry.Path})
+	err := s.db.PutEntryInTrash(set, entry)
 	if err != nil {
 		return err
 	}
@@ -814,7 +813,7 @@ func (s *Server) handleSetMetadataForTrash(givenSet *set.Set, meta map[string]st
 	sets := strings.Split(meta[transfer.MetaKeySets], ",")
 	requesters := strings.Split(meta[transfer.MetaKeyRequester], ",")
 
-	sets = append(sets, TrashPrefix+givenSet.Name)
+	sets = append(sets, set.TrashPrefix+givenSet.Name)
 
 	otherUserSets, _, err := s.getSetNamesByRequesters(requesters, givenSet.Requester)
 	if err != nil {
@@ -885,24 +884,17 @@ func (s *Server) removeDirFromDB(setID, path string) error {
 }
 
 func (s *Server) trashDirFromDB(givenSet *set.Set, path string) error {
-	destSet := buildTrashSetFromSet(givenSet)
+	entry, err := s.db.GetDirEntryForSet(givenSet.ID(), path)
+	if err != nil {
+		return err
+	}
 
-	dirent := &set.Dirent{Path: path, Mode: fs.ModeDir}
-
-	err := s.db.MergeDirEntries(destSet.ID(), []*set.Dirent{dirent})
+	err = s.db.PutEntryInTrash(givenSet, entry)
 	if err != nil {
 		return err
 	}
 
 	return s.removeDirFromDB(givenSet.ID(), path)
-}
-
-func buildTrashSetFromSet(givenSet *set.Set) set.Set {
-	return set.Set{
-		Name:        TrashPrefix + givenSet.Name,
-		Requester:   givenSet.Requester,
-		Transformer: givenSet.Transformer,
-	}
 }
 
 // bindPathsAndValidateSet gets the paths out of the JSON body, and the set id
