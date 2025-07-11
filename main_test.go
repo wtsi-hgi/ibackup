@@ -1720,6 +1720,14 @@ func TestPuts(t *testing.T) {
 		path := t.TempDir()
 		transformer := "prefix=" + path + ":" + remotePath
 
+		Convey("You cannot add sets starting with a trash prefix", func() {
+			setName := set.TrashPrefix + "mySet"
+			exitCode, output := s.runBinaryWithNoLogging(t, "add", "--name", setName,
+				"--transformer", transformer, "--path", path)
+			So(exitCode, ShouldEqual, 1)
+			So(output, ShouldContainSubstring, server.ErrTrashSetName.Error())
+		})
+
 		Convey("Status on an added set describes if a complete set has failures", func() {
 			file1 := filepath.Join(path, "file1")
 
@@ -2503,7 +2511,7 @@ func confirmFileContents(t *testing.T, file, expectedContents string) {
 }
 
 func TestTrash(t *testing.T) {
-	Convey("Given a server", t, func() {
+	FocusConvey("Given a server", t, func() {
 		s, remotePath := NewUploadingTestServer(t)
 
 		path := t.TempDir()
@@ -2516,7 +2524,7 @@ func TestTrash(t *testing.T) {
 				1, fmt.Sprintf("set with that id does not exist [%s]", invalidSetName))
 		})
 
-		Convey("And an added set with files and folders", func() {
+		FocusConvey("And an added set with files and folders", func() {
 			dir := t.TempDir()
 
 			testDir := filepath.Join(path, "path/to/some/")
@@ -2554,7 +2562,7 @@ func TestTrash(t *testing.T) {
 
 			s.addSetForTestingWithItems(t, setName, transformer, tempTestFileOfPaths.Name())
 
-			Convey("Remove removes the file from the set", func() {
+			FocusConvey("Remove removes the file from the set and moves it to the trash set", func() {
 				exitCode, output := s.runBinary(t, "remove", "--name", setName, "--path", file2)
 
 				So(exitCode, ShouldEqual, 0)
@@ -2564,6 +2572,8 @@ func TestTrash(t *testing.T) {
 
 				s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 5*time.Second)
 
+				trashSetName := set.TrashPrefix + setName
+
 				Convey("And status will update accordingly", func() {
 					exitCode, output = s.runBinary(t, "status", "--name", setName, "-d")
 
@@ -2571,7 +2581,7 @@ func TestTrash(t *testing.T) {
 					So(output, ShouldContainSubstring, file1)
 					So(output, ShouldNotContainSubstring, file2)
 
-					exitCode, output = s.runBinary(t, "status", "--name", set.TrashPrefix+setName, "-d")
+					exitCode, output = s.runBinary(t, "status", "--name", trashSetName, "-d")
 					So(exitCode, ShouldEqual, 0)
 					So(output, ShouldContainSubstring, file2+"\tuploaded\t10 B")
 				})
@@ -2580,8 +2590,34 @@ func TestTrash(t *testing.T) {
 					sets := getMetaValue(getRemoteMeta(filepath.Join(remotePath, "file2")), transfer.MetaKeySets)
 					setsSlice := strings.Split(sets, ",")
 
-					So(setsSlice, ShouldContain, set.TrashPrefix+setName)
+					So(setsSlice, ShouldContain, trashSetName)
 					So(setsSlice, ShouldNotContain, setName)
+				})
+
+				Convey("And you cannot remove from the trash set", func() {
+					s.confirmOutputContains(t, []string{"remove", "--name", trashSetName, "--path", path},
+						1, server.ErrTrashSetName.Error())
+				})
+
+				Convey("And you cannot edit the trash set", func() {
+					s.confirmOutputContains(t, []string{"edit", "--name", trashSetName, "--add", path},
+						1, server.ErrTrashSetName.Error())
+
+					s.confirmOutputContains(t, []string{"edit", "--name", trashSetName, "--make-readonly"},
+						1, server.ErrTrashSetName.Error())
+				})
+
+				Convey("And you cannot retry the trash set", func() {
+					s.confirmOutputContains(t, []string{"retry", "--name", trashSetName, "--all"},
+						1, server.ErrTrashSetName.Error())
+
+					s.confirmOutputContains(t, []string{"retry", "--name", trashSetName, "--failed"},
+						1, server.ErrTrashSetName.Error())
+				})
+				
+				FocusConvey("And you cannot list from the trash set", func() {
+					s.confirmOutputContains(t, []string{"list", "--name", trashSetName},
+						1, server.ErrTrashSetName.Error())
 				})
 
 				Convey("Remove again will remove another object and status will update accordingly", func() {

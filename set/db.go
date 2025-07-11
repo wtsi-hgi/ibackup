@@ -66,7 +66,6 @@ const (
 	ErrInvalidTransformerPath    = "invalid transformer path concatenation"
 	ErrNoAddDuringDiscovery      = "can't add set while set is being discovered"
 	ErrPathNotInSet              = "path(s) do not belong to the backup set"
-	ErrRemovalWhenSetNotComplete = "you can only remove from completed sets"
 	ErrSetIsNotWritable          = "the set is read-only, you cannot change it"
 	ErrTransformerAlreadyUsed    = "you cannot edit the transformer on a set with uploaded files"
 	ErrTransformerInUse          = "you cannot edit the transformer on a set with unfinished uploads"
@@ -391,26 +390,6 @@ func (d *DB) encodeToBytes(thing interface{}) []byte {
 	return encoded
 }
 
-// ValidateRemoveInputs returns an error if the provided set is not complete or
-// if any provided path is not in the given set. Also returns the valid paths
-// classified into a slice of filepaths or dirpaths.
-func (d *DB) ValidateRemoveInputs(set *Set, paths []string) ([]string, []string, error) {
-	err := d.validateSet(set)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	return d.validateFileAndDirPaths(set, paths)
-}
-
-func (d *DB) validateSet(set *Set) error {
-	if set.Status == Complete {
-		return nil
-	}
-
-	return Error{Msg: ErrRemovalWhenSetNotComplete, id: set.Name}
-}
-
 // IsSetReadyToAddFiles checks if the set is ready to have files/dirs added to it.
 func (d *DB) IsSetReadyToAddFiles(set *Set) error {
 	if set.ReadOnly {
@@ -431,10 +410,10 @@ func (d *DB) IsSetReadyToAddFiles(set *Set) error {
 	return nil
 }
 
-// validateFileAndDirPaths returns an error if any provided path is not in the
+// ValidateFileAndDirPaths returns an error if any provided path is not in the
 // given set. Also classifies the valid paths into a slice of filepaths or
 // dirpaths.
-func (d *DB) validateFileAndDirPaths(set *Set, paths []string) ([]string, []string, error) {
+func (d *DB) ValidateFileAndDirPaths(set *Set, paths []string) ([]string, []string, error) {
 	filePaths, notFilePaths, err := d.validateFilePaths(set, paths)
 	if err != nil {
 		return nil, nil, err

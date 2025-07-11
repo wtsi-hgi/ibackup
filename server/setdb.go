@@ -101,14 +101,16 @@ const (
 	// EndPointAuthRemovePaths is the endpoint for removing objects from sets.
 	EndPointAuthRemovePaths = gas.EndPointAuth + removePathsPath
 
-	ErrNoAuth       = gas.Error("auth must be enabled")
-	ErrBadRequester = gas.Error("you are not the set requester")
-	ErrEmptyName    = gas.Error("set name cannot be empty")
-	ErrInvalidName  = gas.Error("set name contains invalid characters")
-	ErrNotAdmin     = gas.Error("you are not the server admin")
-	ErrBadSet       = gas.Error("set with that id does not exist")
-	ErrInvalidInput = gas.Error("invalid input")
-	ErrInternal     = gas.Error("internal server error")
+	ErrNoAuth         = gas.Error("auth must be enabled")
+	ErrBadRequester   = gas.Error("you are not the set requester")
+	ErrEmptyName      = gas.Error("set name cannot be empty")
+	ErrTrashSetName   = gas.Error("set name cannot have the " + set.TrashPrefix + " prefix")
+	ErrInvalidName    = gas.Error("set name contains invalid characters")
+	ErrSetNotComplete = gas.Error("set should be complete for this operation")
+	ErrNotAdmin       = gas.Error("you are not the server admin")
+	ErrBadSet         = gas.Error("set with that id does not exist")
+	ErrInvalidInput   = gas.Error("invalid input")
+	ErrInternal       = gas.Error("internal server error")
 
 	paramRequester    = "requester"
 	paramSetID        = "id"
@@ -345,6 +347,10 @@ func (s *Server) validatePutSetInputs(c *gin.Context, givenSet *set.Set) (int, e
 		return http.StatusBadRequest, ErrEmptyName
 	}
 
+	if isTrashSet(givenSet.Name) {
+		return http.StatusBadRequest, ErrTrashSetName
+	}
+
 	if strings.ContainsRune(givenSet.Name, ',') {
 		return http.StatusBadRequest, ErrInvalidName
 	}
@@ -352,6 +358,10 @@ func (s *Server) validatePutSetInputs(c *gin.Context, givenSet *set.Set) (int, e
 	_, err := givenSet.MakeTransformer()
 
 	return http.StatusBadRequest, err
+}
+
+func isTrashSet(name string) bool {
+	return strings.HasPrefix(name, set.TrashPrefix)
 }
 
 func (s *Server) makeSetWritable(c *gin.Context, sid string) error {
@@ -466,7 +476,7 @@ func (s *Server) removePaths(c *gin.Context) { //nolint:unused
 		return
 	}
 
-	filePaths, dirPaths, err := s.db.ValidateRemoveInputs(givenSet, paths)
+	filePaths, dirPaths, err := s.validateRemoveInputs(givenSet, paths)
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
@@ -487,7 +497,7 @@ func (s *Server) trashPaths(c *gin.Context) {
 		return
 	}
 
-	filePaths, dirPaths, err := s.db.ValidateRemoveInputs(givenSet, paths)
+	filePaths, dirPaths, err := s.validateRemoveInputs(givenSet, paths)
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
@@ -509,6 +519,21 @@ func (s *Server) trashPaths(c *gin.Context) {
 
 		return
 	}
+}
+
+// validateRemoveInputs returns an error if the provided set is not complete or
+// if any provided path is not in the given set. Also returns the valid paths
+// classified into a slice of filepaths or dirpaths.
+func (s *Server) validateRemoveInputs(givenSet *set.Set, paths []string) ([]string, []string, error) {
+	if isTrashSet(givenSet.Name) {
+		return nil, nil, ErrTrashSetName
+	}
+
+	if givenSet.Status != set.Complete {
+		return nil, nil, ErrSetNotComplete
+	}
+
+	return s.db.ValidateFileAndDirPaths(givenSet, paths)
 }
 
 func (s *Server) removeFilesAndDirs(set *set.Set, filePaths, dirPaths []string, action set.RemoveAction) error {
@@ -1732,6 +1757,12 @@ func (s *Server) recoverSet(given *set.Set) error {
 func (s *Server) retryFailedEntries(c *gin.Context) {
 	got, ok := s.validateSet(c)
 	if !ok {
+		return
+	}
+
+	if isTrashSet(got.Name) {
+		c.AbortWithError(http.StatusBadRequest, ErrTrashSetName) //nolint:errcheck
+
 		return
 	}
 

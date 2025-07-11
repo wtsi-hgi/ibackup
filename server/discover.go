@@ -166,6 +166,12 @@ func (s *Server) triggerDiscovery(c *gin.Context) {
 		return
 	}
 
+	if isTrashSet(set.Name) {
+		c.AbortWithError(http.StatusBadRequest, ErrTrashSetName) //nolint:errcheck
+		
+		return
+	}
+
 	if err := s.discoverSet(set); err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
