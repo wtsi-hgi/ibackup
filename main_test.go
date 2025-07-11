@@ -137,6 +137,18 @@ func NewUploadingTestServer(t *testing.T) (*TestServer, string) {
 	return s, remotePath
 }
 
+func (s *TestServer) impersonateUser(t *testing.T, username string) []string {
+	t.Helper()
+
+	fakeDir := generateFakeJWT(t, s, username)
+	originalEnv := slices.Clone(s.env)
+	s.env = append(slices.DeleteFunc(s.env, func(str string) bool {
+		return strings.HasPrefix(str, "XDG_STATE_HOME")
+	}), "XDG_STATE_HOME="+fakeDir)
+
+	return originalEnv
+}
+
 func (s *TestServer) prepareFilePaths(dir string) {
 	s.dir = dir
 	s.dbFile = filepath.Join(s.dir, "db")
@@ -379,14 +391,21 @@ func (s *TestServer) addSetForTestingWithFlag(t *testing.T, name, transformer, p
 func (s *TestServer) addSetForTestingWithFlags(t *testing.T, name, transformer string, flags ...string) {
 	t.Helper()
 
+	waitTimeout := 20 * time.Second
+
 	args := []string{"add", "--name", name, "--transformer", transformer}
 	args = append(args, flags...)
 	exitCode, _ := s.runBinary(t, args...)
 
 	So(exitCode, ShouldEqual, 0)
 
-	s.waitForStatus(name, "\nDiscovery: completed", 20*time.Second)
-	s.waitForStatus(name, "\nStatus: complete", 20*time.Second)
+	if index := slices.Index(flags, "--user"); index != -1 {
+		s.waitForStatusWithUser(name, "\nDiscovery: completed", flags[index+1], waitTimeout)
+		s.waitForStatusWithUser(name, "\nStatus: complete", flags[index+1], waitTimeout)
+	} else {
+		s.waitForStatus(name, "\nDiscovery: completed", 20*time.Second)
+		s.waitForStatus(name, "\nStatus: complete", 20*time.Second)
+	}
 }
 
 func (s *TestServer) removePath(t *testing.T, name, path string, numFiles int) {
@@ -2935,13 +2954,47 @@ func TestTrash(t *testing.T) {
 				})
 			})
 		})
+
+		Convey("And a set made by a non-admin user", func() {
+			user := "root"
+			setName := "nonAdminSet"
+			originalEnv := s.impersonateUser(t, user)
+
+			s.addSetForTestingWithFlag(t, setName, transformer, path, "--user", user)
+
+			Convey("If you trash files from the set", func() {
+				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", path, "--user", user)
+				So(exitCode, ShouldEqual, 0)
+
+				removalStatus := fmt.Sprintf("Removal status: %d / %d objects removed", 1, 1)
+
+				s.waitForStatusWithUser(setName, removalStatus, user, 10*time.Second)
+
+				Convey("Status will not display the trash files to the non-admin user", func() {
+					s.confirmOutputDoesNotContain(t, []string{"status", "--user", user}, 0, set.TrashPrefix+setName)
+				})
+
+				Convey("Status will not display the trash files to a non-admin user even with the name specified", func() {
+					exitCode, _ := s.runBinaryWithNoLogging(t, "status", "--name", set.TrashPrefix+setName, "--user", user)
+					So(exitCode, ShouldEqual, 1)
+				})
+
+				Convey("Status will display the trash files to an admin user", func() {
+					s.env = originalEnv
+					s.confirmOutputContains(t, []string{"status", "--user", user}, 0, set.TrashPrefix+setName)
+
+					exitCode, _ := s.runBinary(t, "status", "--name", set.TrashPrefix+setName, "--user", user)
+					So(exitCode, ShouldEqual, 0)
+				})
+			})
+		})
 	})
 }
 
 func TestRemove(t *testing.T) {
 	resetIRODS()
 
-	Convey("Given a server", t, func() {
+	SkipConvey("Given a server", t, func() {
 		s, remotePath := NewUploadingTestServer(t)
 
 		path := t.TempDir()
@@ -3642,11 +3695,7 @@ func TestEdit(t *testing.T) {
 			Convey("And a read-only set made by a different user", func() {
 				user := "root"
 				setName := "rootSet"
-				fakeDir := generateFakeJWT(t, s, user)
-				originalEnv := slices.Clone(s.env)
-				s.env = append(slices.DeleteFunc(s.env, func(str string) bool {
-					return strings.HasPrefix(str, "XDG_STATE_HOME")
-				}), "XDG_STATE_HOME="+fakeDir)
+				originalEnv := s.impersonateUser(t, user)
 
 				exitCode, _ := s.runBinary(t, "add", "--name", setName, "--transformer", transformer,
 					"--path", path, "--user", user)

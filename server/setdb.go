@@ -317,27 +317,9 @@ func (s *Server) putSet(c *gin.Context) {
 		}
 	}
 
-	if !s.AllowedAccess(c, given.Requester) {
-		c.AbortWithError(http.StatusUnauthorized, ErrBadRequester) //nolint:errcheck
-
-		return
-	}
-
-	if given.Name == "" {
-		c.AbortWithError(http.StatusBadRequest, ErrEmptyName) //nolint:errcheck
-
-		return
-	}
-
-	if strings.ContainsRune(given.Name, ',') {
-		c.AbortWithError(http.StatusBadRequest, ErrInvalidName) //nolint:errcheck
-
-		return
-	}
-
-	_, err := given.MakeTransformer()
+	statusCode, err := s.validatePutSetInputs(c, given)
 	if err != nil {
-		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+		c.AbortWithError(statusCode, err) //nolint:errcheck
 
 		return
 	}
@@ -352,6 +334,24 @@ func (s *Server) putSet(c *gin.Context) {
 	s.handleNewlyDefinedSets(given)
 
 	c.Status(http.StatusOK)
+}
+
+func (s *Server) validatePutSetInputs(c *gin.Context, givenSet *set.Set) (int, error) {
+	if !s.AllowedAccess(c, givenSet.Requester) {
+		return http.StatusUnauthorized, ErrBadRequester
+	}
+
+	if givenSet.Name == "" {
+		return http.StatusBadRequest, ErrEmptyName
+	}
+
+	if strings.ContainsRune(givenSet.Name, ',') {
+		return http.StatusBadRequest, ErrInvalidName
+	}
+
+	_, err := givenSet.MakeTransformer()
+
+	return http.StatusBadRequest, err
 }
 
 func (s *Server) makeSetWritable(c *gin.Context, sid string) error {
@@ -405,6 +405,10 @@ func (s *Server) getSets(c *gin.Context) {
 		sets, err = s.db.GetByRequester(requester)
 	}
 
+	if !s.AllowedAccess(c, "") {
+		sets = filterTrashed(sets)
+	}
+
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
@@ -412,6 +416,20 @@ func (s *Server) getSets(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, sets)
+}
+
+func filterTrashed(sets []*set.Set) []*set.Set {
+	filtered := make([]*set.Set, 0, len(sets))
+
+	for _, s := range sets {
+		if strings.HasPrefix(s.Name, set.TrashPrefix) {
+			continue
+		}
+
+		filtered = append(filtered, s)
+	}
+
+	return filtered
 }
 
 // putFiles sets the file paths encoded in to the body as JSON as the files
