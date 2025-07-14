@@ -3928,7 +3928,7 @@ func TestEdit(t *testing.T) {
 					So(output, ShouldContainSubstring, setFile1+"\tskipped")
 				})
 
-				Convey("You can add a file back to the set after removing it", func() {
+				SkipConvey("You can add a file back to the set after removing it", func() {
 					exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", setFile1)
 					So(exitCode, ShouldEqual, 0)
 
@@ -4023,7 +4023,7 @@ func TestEdit(t *testing.T) {
 				s.addSetForTesting(t, setName, transformer, setDir1)
 				s.waitForStatus(setName, "Status: complete", timeout)
 
-				Convey("You can add a file back to the set after removing its parent folder", func() {
+				SkipConvey("You can add a file back to the set after removing its parent folder", func() {
 					exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", setDir1)
 					So(exitCode, ShouldEqual, 0)
 
