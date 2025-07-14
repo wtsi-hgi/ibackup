@@ -41,7 +41,7 @@ var (
 			"`pathHash` " + hashColumnStart + "`path`" + hashColumnEnd + ", " +
 			"`type` TINYINT NOT NULL, " +
 			"UNIQUE(`setID`, `pathHash`), " +
-			"FOREIGN KEY(`setID`) REFERENCES `sets`(`id`) ON UPDATE RESTRICT ON DELETE CASCADE" +
+			"FOREIGN KEY(`setID`) REFERENCES `sets`(`id`) ON DELETE CASCADE" +
 			");",
 		"CREATE TABLE IF NOT EXISTS `hardlinks` (" +
 			"`id` INTEGER PRIMARY KEY /*! AUTO_INCREMENT */, " +
@@ -54,18 +54,19 @@ var (
 			"`fileType` TINYINT NOT NULL, " +
 			"`dest` TEXT NOT NULL, " +
 			"`remote` TEXT NOT NULL, " +
+			"`firstRemote` TEXT NOT NULL, " +
+			updateCol +
 			"UNIQUE(`mountpointHash`, `inode`, `btime`)" +
 			");",
 		"CREATE TABLE IF NOT EXISTS `remoteFiles` (" +
 			"`id` INTEGER PRIMARY KEY /*! AUTO_INCREMENT */, " +
 			"`remotePath` TEXT NOT NULL, " +
 			"`remotePathHash` " + hashColumnStart + "`remotePath`" + hashColumnEnd + ", " +
-			//"`status` TINYINT NOT NULL, " +
 			"`lastUploaded` DATETIME DEFAULT \"0001-01-01 00:00:00\", " +
 			"`lastError` TEXT NOT NULL, " +
 			"`hardlinkID` INTEGER NOT NULL, " +
 			"UNIQUE(`remotePathHash`), " +
-			"FOREIGN KEY(`hardlinkID`) REFERENCES `hardlinks`(`id`) ON UPDATE RESTRICT ON DELETE RESTRICT" +
+			"FOREIGN KEY(`hardlinkID`) REFERENCES `hardlinks`(`id`) ON DELETE RESTRICT" +
 			");",
 		"CREATE TABLE IF NOT EXISTS `localFiles` (" +
 			"`id` INTEGER PRIMARY KEY /*! AUTO_INCREMENT */, " +
@@ -73,18 +74,28 @@ var (
 			"`localPathHash` " + hashColumnStart + "`localPath`" + hashColumnEnd + ", " +
 			"`setID` INTEGER NOT NULL, " +
 			"`remoteFileID` INTEGER NOT NULL, " +
+			"`lastUpload` DATETIME DEFAULT \"0001-01-01 00:00:00\", " +
 			"UNIQUE(`localPathHash`, `setID`), " +
 			"FOREIGN KEY(`setID`) REFERENCES `sets`(`id`) ON DELETE CASCADE, " +
-			"FOREIGN KEY(`remoteFileID`) REFERENCES `remoteFiles`(`id`) ON UPDATE RESTRICT ON DELETE RESTRICT" +
+			"FOREIGN KEY(`remoteFileID`) REFERENCES `remoteFiles`(`id`) ON DELETE RESTRICT" +
 			");",
-		"CREATE TABLE IF NOT EXISTS `uploads` (" +
+		"CREATE TABLE IF NOT EXISTS `processes` (" +
+			"`id` INTEGER PRIMARY KEY /*! AUTO_INCREMENT */, " +
+			"`lastPing` DATETIME DEFAULT \"0001-01-01 00:00:00\"" +
+			");",
+		"CREATE TABLE IF NOT EXISTS `queue` (" +
 			"`id` INTEGER PRIMARY KEY /*! AUTO_INCREMENT */, " +
 			"`localFileID` INTEGER, " +
+			"`type` TINYINT DEFAULT 0," +
 			"`attempts` INTEGER DEFAULT 0, " +
 			"`lastAttempt` DATETIME DEFAULT \"0001-01-01 00:00:00\", " +
 			"`lastError` TEXT, " +
-			"FOREIGN KEY(`localFileID`) REFERENCES `localFiles`(`id`) ON UPDATE RESTRICT ON DELETE RESTRICT" +
+			"`heldBy` INTEGER DEFAULT 0, " +
+			"UNIQUE(`localFileID`), " +
+			"/*! INDEX(`heldBy`), */" +
+			"FOREIGN KEY(`localFileID`) REFERENCES `localFiles`(`id`) ON DELETE RESTRICT" +
 			");",
+		"/*! -- */ CREATE INDEX IF NOT EXISTS `queueHeldBy` ON `queue`(`heldBy`);\n/*! */",
 		"CREATE TRIGGER IF NOT EXISTS `insert_file_count_size` AFTER INSERT ON `localFiles` FOR EACH ROW BEGIN " +
 			"UPDATE `sets` SET `numFiles` = `numFiles` + 1, `sizeFiles` = `sizeFiles` + (" +
 			"SELECT `hardlinks`.`size` FROM `hardlinks` JOIN `remoteFiles` ON `remoteFiles`.`hardlinkID` = `hardlinks`.`id` " +
@@ -102,6 +113,21 @@ var (
 			"JOIN `remoteFiles` ON `remoteFiles`.`id` = `localFiles`.`remoteFileID` WHERE " +
 			"`remoteFiles`.`hardlinkID` = `NEW`.`id`);" +
 			"END;",
+		"CREATE TRIGGER IF NOT EXISTS `upload_local_file` AFTER INSERT ON `localFiles` FOR EACH ROW BEGIN " +
+			"INSERT INTO `queue` (`localFileID`, `type`) VALUES (`NEW`.`id`, " + string('0'+QueueUpload) + ") " +
+			onConflictUpdate + "`type` = " + string('0'+QueueUpload) + ", `attempts` = 0, " +
+			"`lastAttempt` = '0001-01-01 00:00:00', `lastError` = '';" +
+			"END;",
+		"CREATE TRIGGER IF NOT EXISTS `update_file_after_queued_action` AFTER DELETE ON `queue` FOR EACH ROW BEGIN " +
+			"DELETE FROM `localFiles` WHERE " +
+			"`OLD`.`type` = " + string('0'+QueueRemoval) + " AND `localFiles`.`id` = `OLD`.`localFileID`;" +
+			"UPDATE `remoteFiles` SET `lastUploaded` = " + now + " " +
+			"WHERE `OLD`.`type` = " + string('0'+QueueUpload) + " AND " +
+			"`remoteFiles`.`id` IN (SELECT `remoteFileID` from `localFiles` WHERE `localFiles`.`id` = `OLD`.`localFileID`);" +
+			"END;",
+		"CREATE TRIGGER IF NOT EXISTS `relase_held_jobs` AFTER DELETE ON `processes` FOR EACH ROW BEGIN " +
+			"UPDATE `queue` SET `heldBy` = 0 WHERE `heldBy` = `OLD`.`id`;" +
+			"END;",
 	}
 )
 
@@ -111,11 +137,15 @@ const (
 	virtPosition    = virtStart + "?" + virtEnd
 	hashColumnStart = "/*! VARBINARY(32) -- */ TEXT\n/* */GENERATED ALWAYS AS (" + virtStart
 	hashColumnEnd   = virtEnd + ") VIRTUAL"
+	now             = "/*! NOW() -- */ DATETIME('now')\n/*! */"
+	setRef          = "/*! AS `EXCLUDED` */ "
+	updateCol       = "/*! `updated` BOOLEAN DEFAULT FALSE, */"
+	colUpdate       = "/*!, `updated` = ! `updated`*/ "
 
 	onConflictUpdate   = "ON /*! DUPLICATE KEY UPDATE -- */ CONFLICT DO UPDATE SET\n/*! */ "
 	onConflictReturnID = "ON /*! DUPLICATE KEY UPDATE `id` = LAST_INSERT_ID(`id`); -- */ " +
 		"CONFLICT DO UPDATE SET `id` = `id` RETURNING `id`;\n/*! */"
-	returnOrSetID = "/*! `id` = LAST_INSERT_ID(`id`); -- */ `id` = `id` RETURNING `id`;\n/*! */"
+	returnOrSetID = "/*! `id` = LAST_INSERT_ID(`id`); -- */ RETURNING `id`;\n/*! */"
 
 	createTransformer = "INSERT INTO `transformers` (" +
 		"`transformer`" +
@@ -138,9 +168,11 @@ const (
 		"`mtime`, " +
 		"`size`, " +
 		"`fileType`, " +
-		"`dest`" +
-		") VALUES (?, ?, ?, ?, ?, ?, ?, ?) " +
-		onConflictUpdate + "`remote` = ?, `mtime` = ?, `dest` = ?, `size` = ?, " + returnOrSetID
+		"`dest`, " +
+		"`firstRemote`" +
+		") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) " + setRef +
+		onConflictUpdate + "`mtime` = `EXCLUDED`.`mtime`, `dest` = `EXCLUDED`.`dest`, `size` = `EXCLUDED`.`size` " + colUpdate +
+		"/*! , */" + returnOrSetID
 	createRemoteFile = "INSERT INTO `remoteFiles` (" +
 		"`remotePath`, " +
 		"`hardlinkID`, " +
@@ -156,6 +188,12 @@ const (
 		"`path`, " +
 		"`type`" +
 		") VALUES (?, ?, ?) " + onConflictUpdate + "`type` = ?;"
+	createQueuedRemoval = "INSERT INTO `queue` (" +
+		"`localFileID`, " +
+		"`type`" +
+		") VALUES (?, " + string('0'+QueueRemoval) + ") " + onConflictUpdate +
+		"`type` = " + string('0'+QueueRemoval) + ", `attempts` = 0, `lastAttempt` = '0001-01-01 00:00:00', `lastError` = '';"
+	createProcess = "INSERT INTO `processes` (`lastPing`) VALUES (" + now + ");"
 
 	getSetsStart = "SELECT " +
 		"`sets`.`id`, " +
@@ -201,6 +239,17 @@ const (
 		"`path`, " +
 		"`type`" +
 		" FROM `toDiscover` WHERE `setID` = ? ORDER BY `id` ASC;"
+	getQueuedTasks = "SELECT " +
+		"`queue`.`id`, " +
+		"`queue`.`type`, " +
+		"`localFiles`.`localPath`, " +
+		"`remoteFiles`.`remotePath`, " +
+		"`hardlinks`.`firstRemote` " +
+		"FROM `queue` " +
+		"JOIN `localFiles` ON `localFiles`.`id` = `queue`.`localFileID` " +
+		"JOIN `remoteFiles` ON `remoteFiles`.`id` = `localFiles`.`remoteFileID` " +
+		"JOIN `hardlinks` ON `hardlinks`.`id` = `remoteFiles`.`hardlinkID` " +
+		"WHERE `queue`.`heldBy` = ?;"
 
 	updateSetWarning             = "UPDATE `set` SET `warning` = ? WHERE `id` = ?;"
 	updateSetError               = "UPDATE `set` SET `warning` = ? WHERE `id` = ?;"
@@ -211,9 +260,26 @@ const (
 		"`lastCompletedCount` = ?, " +
 		"`lastCompletedSize` = ? " +
 		"WHERE `id` = ?;"
+	updateQueueReset   = "UPDATE `queue` set `heldBy` = 0;"
+	updateQueuedFailed = "UPDATE `queue` SET " +
+		"`attempts` = `attempts` + 1, " +
+		"`lastError` = ?, " +
+		"`lastAttempt` = " + now + ", " +
+		"`heldBy` = 0 " +
+		"WHERE `id` = ? AND `type` = ?;"
+	updateProcessPing = "UPDATE `processes SET `lastPing` = " + now + " WHERE `id` = ?;"
 
-	deleteSet      = "DELETE FROM `sets` WHERE `id` = ?;"
-	deleteSetFiles = "DELETE FROM `localFiles` WHERE `setID` = ?;"
-	deleteSetFile  = "DELETE FROM `localFiles` WHERE `id` = ?;"
-	deleteDiscover = "DELETE FROM `toDiscover` WHERE `setID` = ? AND `path` = ?;"
+	holdQueuedTask = "UPDATE `queue` SET `heldBy` = ? WHERE " +
+		"/*! `heldBy` = 0 ORDER BY `attempts` ASC, `id` ASC LIMIT ?; -- */ " +
+		"`id` IN (" +
+		"SELECT `id` FROM `queue` WHERE `heldBy` = 0 ORDER BY `attempts` ASC, `id` ASC LIMIT ?" +
+		");\n/*! */"
+	releaseQueuedTask = "UPDATE `queue` SET `heldBy` = 0 WHERE `heldBy` = ?;"
+
+	deleteSet            = "DELETE FROM `sets` WHERE `id` = ?;"
+	deleteDiscover       = "DELETE FROM `toDiscover` WHERE `setID` = ? AND `path` = ?;"
+	deleteQueued         = "DELETE FROM `queue` WHERE `localFileID` = ? AND `type` = ?;"
+	deleteAllQueued      = "DELETE FROM `queue`;"
+	deleteStaleProcesses = "DELETE FROM `processes` WHERE `lastPing` < /* NOW() - 10 MINUTE -- */ " +
+		"DATETIME('now', '-10 MINUTE')\n/*! */;"
 )

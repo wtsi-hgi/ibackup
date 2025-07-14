@@ -31,18 +31,12 @@ type File struct {
 	SymlinkDest  string
 }
 
-func (d *DB) SetSetFiles(set *Set, toAdd, toRemove iter.Seq[*File]) error {
+func (d *DB) AddSetFiles(set *Set, toAdd iter.Seq[*File]) error {
 	tx, err := d.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback() //nolint:errcheck
-
-	for file := range toRemove {
-		if err := d.removeSetFile(tx, set.id, file); err != nil {
-			return err
-		}
-	}
 
 	for file := range toAdd {
 		if err := d.addSetFile(tx, set.id, file); err != nil {
@@ -56,7 +50,7 @@ func (d *DB) SetSetFiles(set *Set, toAdd, toRemove iter.Seq[*File]) error {
 func (d *DB) addSetFile(tx *sql.Tx, setID int64, file *File) error {
 	hlID, err := d.execReturningRowID(tx, createHardlink, file.Inode, file.MountPount,
 		file.Btime, file.InodeRemote, file.Mtime, file.Size, file.Type, file.SymlinkDest,
-		file.InodeRemote, file.Mtime, file.SymlinkDest, file.Size)
+		file.RemotePath)
 	if err != nil {
 		return err
 	}
@@ -71,10 +65,22 @@ func (d *DB) addSetFile(tx *sql.Tx, setID int64, file *File) error {
 	return err
 }
 
-func (d *DB) removeSetFile(tx *sql.Tx, setID int64, file *File) error {
-	_, err := tx.Exec(deleteSetFile, file.id)
+func (d *DB) RemoveSetFiles(toRemove iter.Seq[*File]) error {
+	tx, err := d.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck
 
-	return err
+	// Add to trash set.
+
+	for file := range toRemove {
+		if _, err := tx.Exec(createQueuedRemoval, file.id); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
 }
 
 func (d *DBRO) GetSetFiles(set *Set) *IterErr[*File] {
@@ -102,8 +108,4 @@ func scanFile(scanner scanner) (*File, error) {
 	}
 
 	return file, nil
-}
-
-func (d *DB) ClearSetFiles(set *Set) error {
-	return d.exec(deleteSetFiles, set.id)
 }

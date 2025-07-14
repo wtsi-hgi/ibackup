@@ -44,11 +44,11 @@ func TestFiles(t *testing.T) {
 				},
 			}
 
-			So(d.SetSetFiles(setA, slices.Values(files), slices.Values(files[:0])), ShouldBeNil)
+			So(d.AddSetFiles(setA, slices.Values(files)), ShouldBeNil)
 			So(slices.Collect(d.GetSetFiles(setA).Iter), ShouldResemble, files)
 			So(slices.Collect(d.GetSetFiles(setB).Iter), ShouldBeNil)
 
-			So(d.SetSetFiles(setA, slices.Values(files), slices.Values(files[:0])), ShouldBeNil)
+			So(d.AddSetFiles(setA, slices.Values(files)), ShouldBeNil)
 			So(slices.Collect(d.GetSetFiles(setA).Iter), ShouldResemble, files)
 
 			setA, err = d.GetSet(setA.Name, setA.Requester)
@@ -78,7 +78,7 @@ func TestFiles(t *testing.T) {
 
 			files[0].Size = 120
 
-			So(d.SetSetFiles(setA, slices.Values(files[1:]), slices.Values(files[:0])), ShouldBeNil)
+			So(d.AddSetFiles(setA, slices.Values(files[1:])), ShouldBeNil)
 			So(slices.Collect(d.GetSetFiles(setA).Iter), ShouldResemble, files)
 
 			setA, err = d.GetSet(setA.Name, setA.Requester)
@@ -98,8 +98,22 @@ func TestFiles(t *testing.T) {
 				SymlinkDest: "/path/to/target",
 			})
 
-			So(d.SetSetFiles(setA, slices.Values(files[3:]), slices.Values(files[:1])), ShouldBeNil)
-			So(slices.Collect(d.GetSetFiles(setA).Iter), ShouldResemble, files[1:])
+			So(d.AddSetFiles(setA, slices.Values(files[3:])), ShouldBeNil)
+			So(slices.Collect(d.GetSetFiles(setA).Iter), ShouldResemble, files)
+
+			setA, err = d.GetSet(setA.Name, setA.Requester)
+			So(err, ShouldBeNil)
+			So(setA.NumFiles, ShouldEqual, 4)
+			So(setA.SizeTotal, ShouldEqual, 500)
+
+			So(d.RemoveSetFiles(slices.Values(files[:1])), ShouldBeNil)
+
+			setA, err = d.GetSet(setA.Name, setA.Requester)
+			So(err, ShouldBeNil)
+			So(setA.NumFiles, ShouldEqual, 4)
+			So(setA.SizeTotal, ShouldEqual, 500)
+
+			So(d.clearQueue(), ShouldBeNil)
 
 			setA, err = d.GetSet(setA.Name, setA.Requester)
 			So(err, ShouldBeNil)
