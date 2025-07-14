@@ -729,6 +729,8 @@ func (d *DB) PutEntryInTrash(set *Set, entry *Entry) error {
 	})
 }
 
+// BuildTrashSetFromSet builds a brand new set which copies the given set's
+// Requester and Transformer. Use this set to move trashed files to.
 func BuildTrashSetFromSet(givenSet *Set) Set {
 	return Set{
 		Name:        TrashPrefix + givenSet.Name,
@@ -1588,13 +1590,14 @@ func (d *DBRO) GetFileEntries(setID string) ([]*Entry, error) {
 func (d *DBRO) GetFileEntryForSet(setID, filePath string) (*Entry, error) {
 	var entry *Entry
 
-	if err := d.db.View(func(tx *bolt.Tx) error {
+	err := d.db.View(func(tx *bolt.Tx) error {
 		var err error
 
 		entry, _, err = d.getEntry(tx, setID, filePath)
 
 		return err
-	}); err != nil {
+	})
+	if err != nil {
 		return nil, err
 	}
 
@@ -1608,13 +1611,14 @@ func (d *DBRO) GetDirEntryForSet(setID, dirPath string) (*Entry, error) {
 
 	dirPath = strings.TrimSuffix(dirPath, "/")
 
-	if err := d.db.View(func(tx *bolt.Tx) error {
+	err := d.db.View(func(tx *bolt.Tx) error {
 		var err error
 
 		entry, _, err = d.getEntry(tx, setID, dirPath)
 
 		return err
-	}); err != nil {
+	})
+	if err != nil {
 		return nil, err
 	}
 

@@ -521,9 +521,9 @@ func (s *Server) trashPaths(c *gin.Context) {
 	}
 }
 
-// validateRemoveInputs returns an error if the provided set is not complete or
-// if any provided path is not in the given set. Also returns the valid paths
-// classified into a slice of filepaths or dirpaths.
+// validateRemoveInputs returns an error if the provided set is a trashed set,
+// not complete or if any provided path is not in the given set. Also returns
+// the valid paths classified into a slice of filepaths or dirpaths.
 func (s *Server) validateRemoveInputs(givenSet *set.Set, paths []string) ([]string, []string, error) {
 	if isTrashSet(givenSet.Name) {
 		return nil, nil, ErrTrashSetName
@@ -736,7 +736,7 @@ func (s *Server) processDBInodeRemoval(entry *set.Entry) error {
 		return nil
 	}
 
-	setsWithFile, err := s.db.GetAllSetsForPath(entry.Path)
+	setsWithFile, err := s.db.GetAllSetsForFile(entry.Path)
 	if err != nil {
 		return err
 	}

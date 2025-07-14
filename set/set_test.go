@@ -308,11 +308,11 @@ func TestSet(t *testing.T) {
 }
 
 func TestSetDB(t *testing.T) {
-	FocusConvey("Given a path", t, func() {
+	Convey("Given a path", t, func() {
 		tDir := t.TempDir()
 		dbPath := filepath.Join(tDir, "set.db")
 
-		FocusConvey("You can create a new database", func() {
+		Convey("You can create a new database", func() {
 			slackWriter := gas.NewStringLogger()
 			slacker := slack.NewMock(slackWriter)
 
@@ -322,7 +322,7 @@ func TestSetDB(t *testing.T) {
 
 			db.LogSetChangesToSlack(slacker)
 
-			FocusConvey("And add Sets to it", func() {
+			Convey("And add Sets to it", func() {
 				set := &Set{
 					Name:        "set1",
 					Requester:   "jim",
@@ -1228,14 +1228,14 @@ func TestSetDB(t *testing.T) {
 					So(err.Error(), ShouldStartWith, "can't add set while set is being discovered")
 				})
 
-				FocusConvey("You can get sets with a particular file", func() {
-					sets, errg := db.GetAllSetsForPath("/a/b.txt")
+				Convey("You can get sets with a particular file", func() {
+					sets, errg := db.GetAllSetsForFile("/a/b.txt")
 					So(errg, ShouldBeNil)
 					So(sets, ShouldHaveLength, 2)
 					So(sets, ShouldContain, set.ID())
 					So(sets, ShouldContain, set2.ID())
 
-					sets, err = db.GetAllSetsForPath("/c/k.txt")
+					sets, err = db.GetAllSetsForFile("/c/k.txt")
 					So(err, ShouldBeNil)
 					So(sets, ShouldHaveLength, 1)
 					So(sets, ShouldContain, set2.ID())
