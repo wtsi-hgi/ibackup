@@ -253,6 +253,10 @@ const (
 		"JOIN `remoteFiles` ON `remoteFiles`.`id` = `localFiles`.`remoteFileID` " +
 		"JOIN `hardlinks` ON `hardlinks`.`id` = `remoteFiles`.`hardlinkID` " +
 		"WHERE `queue`.`heldBy` = ?;"
+	getRemoteFileRefs = "SELECT COUNT(1) FROM `localFiles` WHERE `remoteFileID` = (" +
+		"SELECT `remoteFileID` FROM `localFiles` WHERE `localPathHash` = " + virtStart +
+		"(SELECT `localPath` FROM `localFiles` WHERE `id` = ? LIMIT 1)" +
+		virtEnd + ");"
 
 	updateSetWarning             = "UPDATE `set` SET `warning` = ? WHERE `id` = ?;"
 	updateSetError               = "UPDATE `set` SET `warning` = ? WHERE `id` = ?;"

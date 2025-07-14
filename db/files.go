@@ -110,3 +110,11 @@ func scanFile(scanner scanner) (*File, error) {
 
 	return file, nil
 }
+
+func (d *DBRO) CountRemoteFileRefs(file *File) (int64, error) {
+	var count int64
+
+	err := d.db.QueryRow(getRemoteFileRefs, file.id).Scan(&count)
+
+	return count, err
+}

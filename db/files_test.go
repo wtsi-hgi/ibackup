@@ -109,6 +109,18 @@ func TestFiles(t *testing.T) {
 			So(setA.NumFiles, ShouldEqual, 4)
 			So(setA.SizeTotal, ShouldEqual, 500)
 
+			refs, err := d.CountRemoteFileRefs(files[0])
+			So(err, ShouldBeNil)
+			So(refs, ShouldEqual, 2)
+
+			refs, err = d.CountRemoteFileRefs(files[1])
+			So(err, ShouldBeNil)
+			So(refs, ShouldEqual, 1)
+
+			refs, err = d.CountRemoteFileRefs(files[2])
+			So(err, ShouldBeNil)
+			So(refs, ShouldEqual, 2)
+
 			So(d.RemoveSetFiles(slices.Values(files[:1])), ShouldBeNil)
 
 			setA, err = d.GetSet(setA.Name, setA.Requester)
@@ -122,6 +134,18 @@ func TestFiles(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(setA.NumFiles, ShouldEqual, 3)
 			So(setA.SizeTotal, ShouldEqual, 380)
+
+			refs, err = d.CountRemoteFileRefs(files[0])
+			So(err, ShouldBeNil)
+			So(refs, ShouldEqual, 0)
+
+			refs, err = d.CountRemoteFileRefs(files[1])
+			So(err, ShouldBeNil)
+			So(refs, ShouldEqual, 1)
+
+			refs, err = d.CountRemoteFileRefs(files[2])
+			So(err, ShouldBeNil)
+			So(refs, ShouldEqual, 1)
 		})
 	})
 }
