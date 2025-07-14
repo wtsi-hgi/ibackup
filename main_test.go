@@ -2583,7 +2583,7 @@ func TestTrash(t *testing.T) {
 
 					exitCode, output = s.runBinary(t, "status", "--name", trashSetName, "-d")
 					So(exitCode, ShouldEqual, 0)
-					So(output, ShouldContainSubstring, file2+"\tuploaded\t10 B")
+					So(output, ShouldContainSubstring, file2+"\t"+time.Now().Format("06/01/02")+"\tuploaded\t10 B")
 				})
 
 				Convey("And changes the set metadata in iRODS to a .trash set", func() {
@@ -2997,7 +2997,7 @@ func TestTrash(t *testing.T) {
 				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", path, "--user", user)
 				So(exitCode, ShouldEqual, 0)
 
-				removalStatus := fmt.Sprintf("Removal status: %d / %d objects removed", 1, 1)
+				removalStatus := fmt.Sprintf("Removal status: %d / %d objects removed", 2, 2)
 
 				s.waitForStatusWithUser(setName, removalStatus, user, 10*time.Second)
 
@@ -3016,7 +3016,7 @@ func TestTrash(t *testing.T) {
 					s.env = originalEnv
 					s.confirmOutputContains(t, []string{"status", "--user", user}, 0, trashSetName)
 
-					exitCode, output := s.runBinary(t, "status", "--name", trashSetName, "--user", user)
+					exitCode, output := s.runBinary(t, "status", "--name", trashSetName, "--user", user, "-d")
 					So(exitCode, ShouldEqual, 0)
 					So(output, ShouldContainSubstring, path)
 				})

@@ -725,6 +725,8 @@ func (d *DB) PutEntryInTrash(set *Set, entry *Entry) error {
 			return err
 		}
 
+		entry.TrashDate = time.Now()
+
 		return sfsb.Bucket.Put([]byte(entry.Path), d.encodeToBytes(entry))
 	})
 }

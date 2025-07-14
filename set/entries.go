@@ -125,6 +125,8 @@ type Entry struct {
 	newFail  bool
 	unFailed bool
 	isDir    bool
+
+	TrashDate time.Time
 }
 
 // MakeSafeForJSON copies Path to PathForJSON, so that if this Entry struct is
