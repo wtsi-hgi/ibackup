@@ -2511,7 +2511,7 @@ func confirmFileContents(t *testing.T, file, expectedContents string) {
 }
 
 func TestTrash(t *testing.T) {
-	FocusConvey("Given a server", t, func() {
+	Convey("Given a server", t, func() {
 		s, remotePath := NewUploadingTestServer(t)
 
 		path := t.TempDir()
@@ -2524,7 +2524,7 @@ func TestTrash(t *testing.T) {
 				1, fmt.Sprintf("set with that id does not exist [%s]", invalidSetName))
 		})
 
-		FocusConvey("And an added set with files and folders", func() {
+		Convey("And an added set with files and folders", func() {
 			dir := t.TempDir()
 
 			testDir := filepath.Join(path, "path/to/some/")
@@ -2562,7 +2562,7 @@ func TestTrash(t *testing.T) {
 
 			s.addSetForTestingWithItems(t, setName, transformer, tempTestFileOfPaths.Name())
 
-			FocusConvey("Remove removes the file from the set and moves it to the trash set", func() {
+			Convey("Remove removes the file from the set and moves it to the trash set", func() {
 				exitCode, output := s.runBinary(t, "remove", "--name", setName, "--path", file2)
 
 				So(exitCode, ShouldEqual, 0)
@@ -2612,11 +2612,6 @@ func TestTrash(t *testing.T) {
 						1, server.ErrTrashSetName.Error())
 
 					s.confirmOutputContains(t, []string{"retry", "--name", trashSetName, "--failed"},
-						1, server.ErrTrashSetName.Error())
-				})
-				
-				FocusConvey("And you cannot list from the trash set", func() {
-					s.confirmOutputContains(t, []string{"list", "--name", trashSetName},
 						1, server.ErrTrashSetName.Error())
 				})
 
@@ -3006,21 +3001,36 @@ func TestTrash(t *testing.T) {
 
 				s.waitForStatusWithUser(setName, removalStatus, user, 10*time.Second)
 
+				trashSetName := set.TrashPrefix + setName
+
 				Convey("Status will not display the trash files to the non-admin user", func() {
-					s.confirmOutputDoesNotContain(t, []string{"status", "--user", user}, 0, set.TrashPrefix+setName)
+					s.confirmOutputDoesNotContain(t, []string{"status", "--user", user}, 0, trashSetName)
 				})
 
 				Convey("Status will not display the trash files to a non-admin user even with the name specified", func() {
-					exitCode, _ := s.runBinaryWithNoLogging(t, "status", "--name", set.TrashPrefix+setName, "--user", user)
+					exitCode, _ := s.runBinaryWithNoLogging(t, "status", "--name", trashSetName, "--user", user)
 					So(exitCode, ShouldEqual, 1)
 				})
 
 				Convey("Status will display the trash files to an admin user", func() {
 					s.env = originalEnv
-					s.confirmOutputContains(t, []string{"status", "--user", user}, 0, set.TrashPrefix+setName)
+					s.confirmOutputContains(t, []string{"status", "--user", user}, 0, trashSetName)
 
-					exitCode, _ := s.runBinary(t, "status", "--name", set.TrashPrefix+setName, "--user", user)
+					exitCode, output := s.runBinary(t, "status", "--name", trashSetName, "--user", user)
 					So(exitCode, ShouldEqual, 0)
+					So(output, ShouldContainSubstring, path)
+				})
+
+				Convey("List will work on the trash set for an admin", func() {
+					s.env = originalEnv
+
+					exitCode, _ := s.runBinary(t, "list", "--name", trashSetName, "--user", user)
+					So(exitCode, ShouldEqual, 0)
+				})
+
+				Convey("List will not work on the trash set for a non-admin", func() {
+					s.confirmOutputContains(t, []string{"list", "--name", trashSetName, "--user", user},
+						1, server.ErrBadSet.Error())
 				})
 			})
 		})

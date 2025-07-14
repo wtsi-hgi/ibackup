@@ -60,16 +60,16 @@ func (e Error) Error() string {
 }
 
 const (
-	ErrInvalidSetID              = "invalid set ID"
-	ErrInvalidRequest            = "request lacks Requester or Set"
-	ErrInvalidEntry              = "invalid set entry"
-	ErrInvalidTransformerPath    = "invalid transformer path concatenation"
-	ErrNoAddDuringDiscovery      = "can't add set while set is being discovered"
-	ErrPathNotInSet              = "path(s) do not belong to the backup set"
-	ErrSetIsNotWritable          = "the set is read-only, you cannot change it"
-	ErrTransformerAlreadyUsed    = "you cannot edit the transformer on a set with uploaded files"
-	ErrTransformerInUse          = "you cannot edit the transformer on a set with unfinished uploads"
-	ErrPendingRemovals           = "the set has unfinished removals, you cannot change it"
+	ErrInvalidSetID           = "invalid set ID"
+	ErrInvalidRequest         = "request lacks Requester or Set"
+	ErrInvalidEntry           = "invalid set entry"
+	ErrInvalidTransformerPath = "invalid transformer path concatenation"
+	ErrNoAddDuringDiscovery   = "can't add set while set is being discovered"
+	ErrPathNotInSet           = "path(s) do not belong to the backup set"
+	ErrSetIsNotWritable       = "the set is read-only, you cannot change it"
+	ErrTransformerAlreadyUsed = "you cannot edit the transformer on a set with uploaded files"
+	ErrTransformerInUse       = "you cannot edit the transformer on a set with unfinished uploads"
+	ErrPendingRemovals        = "the set has unfinished removals, you cannot change it"
 
 	setsBucket                    = "sets"
 	userToSetBucket               = "userLookup"

@@ -528,13 +528,13 @@ func TestServer(t *testing.T) {
 						Convey("Removal on a pending file returns an error", func() {
 							err = client.RemoveFilesAndDirs(exampleSet.ID(), []string{file1local})
 							So(err, ShouldNotBeNil)
-							So(err.Error(), ShouldContainSubstring, set.ErrRemovalWhenSetNotComplete)
+							So(err.Error(), ShouldContainSubstring, ErrSetNotComplete)
 						})
 
 						Convey("Removal on a folder with pending files in it returns an error", func() {
 							err = client.RemoveFilesAndDirs(exampleSet.ID(), []string{dir2local})
 							So(err, ShouldNotBeNil)
-							So(err.Error(), ShouldContainSubstring, set.ErrRemovalWhenSetNotComplete)
+							So(err.Error(), ShouldContainSubstring, ErrSetNotComplete)
 						})
 
 						Convey("Removal of failed files removes entries from Failed bucket", func() {
