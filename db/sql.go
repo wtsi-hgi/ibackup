@@ -52,6 +52,7 @@ var (
 			"`mtime` INTEGER, " +
 			"`size` INTEGER NOT NULL, " +
 			"`fileType` TINYINT NOT NULL, " +
+			"`owner` TEXT NOT NULL, " +
 			"`dest` TEXT NOT NULL, " +
 			"`remote` TEXT NOT NULL, " +
 			"`firstRemote` TEXT NOT NULL, " +
@@ -168,10 +169,12 @@ const (
 		"`mtime`, " +
 		"`size`, " +
 		"`fileType`, " +
+		"`owner`, " +
 		"`dest`, " +
 		"`firstRemote`" +
-		") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) " + setRef +
-		onConflictUpdate + "`mtime` = `EXCLUDED`.`mtime`, `dest` = `EXCLUDED`.`dest`, `size` = `EXCLUDED`.`size` " + colUpdate +
+		") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " + setRef +
+		onConflictUpdate + "`mtime` = `EXCLUDED`.`mtime`, `dest` = `EXCLUDED`.`dest`, " +
+		"`size` = `EXCLUDED`.`size`, `owner` = `EXCLUDED`.`owner` " + colUpdate +
 		"/*! , */" + returnOrSetID
 	createRemoteFile = "INSERT INTO `remoteFiles` (" +
 		"`remotePath`, " +
@@ -224,7 +227,7 @@ const (
 		"`remoteFiles`.`remotePath`, " +
 		"`hardlinks`.`size`, " +
 		"`hardlinks`.`fileType`, " +
-		"`hardlinks`.`dest`, " +
+		"`hardlinks`.`owner`, " +
 		"`hardlinks`.`inode`, " +
 		"`hardlinks`.`mountPoint`, " +
 		"`hardlinks`.`btime`, " +

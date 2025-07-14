@@ -28,6 +28,7 @@ type File struct {
 	InodeRemote  string
 	Btime, Mtime int64
 	Type         FileType
+	Owner        string
 	SymlinkDest  string
 }
 
@@ -49,8 +50,8 @@ func (d *DB) AddSetFiles(set *Set, toAdd iter.Seq[*File]) error {
 
 func (d *DB) addSetFile(tx *sql.Tx, setID int64, file *File) error {
 	hlID, err := d.execReturningRowID(tx, createHardlink, file.Inode, file.MountPount,
-		file.Btime, file.InodeRemote, file.Mtime, file.Size, file.Type, file.SymlinkDest,
-		file.RemotePath)
+		file.Btime, file.InodeRemote, file.Mtime, file.Size, file.Type, file.Owner,
+		file.SymlinkDest, file.RemotePath)
 	if err != nil {
 		return err
 	}
@@ -96,7 +97,7 @@ func scanFile(scanner scanner) (*File, error) {
 		&file.RemotePath,
 		&file.Size,
 		&file.Type,
-		&file.SymlinkDest,
+		&file.Owner,
 		&file.Inode,
 		&file.MountPount,
 		&file.Btime,

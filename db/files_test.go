@@ -40,6 +40,7 @@ func TestFiles(t *testing.T) {
 					Btime:       100,
 					Mtime:       200,
 					Type:        Regular,
+					Owner:       "joe",
 					SymlinkDest: "",
 				},
 			}
@@ -65,6 +66,7 @@ func TestFiles(t *testing.T) {
 				Btime:      100,
 				Mtime:      200,
 				Type:       Regular,
+				Owner:      "bob",
 			}, &File{
 				LocalPath:  "/some/local/file/hardlink",
 				RemotePath: "/remote/file",
@@ -74,6 +76,7 @@ func TestFiles(t *testing.T) {
 				Btime:      100,
 				Mtime:      200,
 				Type:       Regular,
+				Owner:      "joe",
 			})
 
 			files[0].Size = 120
