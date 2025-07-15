@@ -43,6 +43,8 @@ var removePath string
 var removeNull bool
 var removeSet bool
 
+const ErrRemoveItems = "exactly one of --items or --path or --set must be provided"
+
 // removeCmd represents the add command.
 var removeCmd = &cobra.Command{
 	Use:   "remove",
@@ -74,7 +76,7 @@ var removeCmd = &cobra.Command{
 		ensureURLandCert()
 
 		if (removeItems == "") == (removePath == "") == !removeSet {
-			dief("exactly one of --items or --path or --set must be provided")
+			dief(ErrRemoveItems)
 		}
 
 		var paths []string
@@ -100,7 +102,7 @@ var removeCmd = &cobra.Command{
 		setID := getSetID(client, removeUser, removeName)
 
 		if !removeSet {
-			err = client.RemoveFilesAndDirs(setID, paths)
+			err = client.TrashFilesAndDirs(setID, paths, false)
 		} else {
 			err = client.RemoveSet(setID)
 		}

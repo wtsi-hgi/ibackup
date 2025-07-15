@@ -634,13 +634,35 @@ func (d *DB) RemoveDirEntry(setID string, path string) error {
 // GetFilesInDir returns all file paths from inside the given directory (and all
 // nested inside) for the given set using the db.
 func (d *DBRO) GetFilesInDir(setID string, dirpath string) ([]string, error) {
-	return d.getPathsWithPrefix(setID, discoveredBucket, dirpath)
+	if !strings.HasSuffix(dirpath, "/") {
+		dirpath += "/"
+	}
+
+	paths, err := d.getPathsWithPrefix(setID, discoveredBucket, dirpath)
+	if err != nil {
+		return nil, err
+	}
+
+	morePaths, err := d.getPathsWithPrefix(setID, fileBucket, dirpath)
+
+	return slices.Concat(paths, morePaths), err
 }
 
 // GetFoldersInDir returns all folder paths from inside the given directory (and all
 // nested inside) for the given set using the db.
 func (d *DBRO) GetFoldersInDir(setID string, dirpath string) ([]string, error) {
-	return d.getPathsWithPrefix(setID, discoveredFoldersBucket, dirpath)
+	if !strings.HasSuffix(dirpath, "/") {
+		dirpath += "/"
+	}
+
+	paths, err := d.getPathsWithPrefix(setID, discoveredFoldersBucket, dirpath)
+	if err != nil {
+		return nil, err
+	}
+
+	morePaths, err := d.getPathsWithPrefix(setID, dirBucket, dirpath)
+
+	return slices.Concat(paths, morePaths), err
 }
 
 // getPathsWithPrefix returns all the filepaths for the given set from the given sub
