@@ -161,6 +161,26 @@ const (
 		"`warning`, " +
 		"`metadata` " +
 		") VALUES (?, ?, ?, ?, ?, '', '', '');"
+	createTrashSetForFile = "INSERT INTO `sets` (" +
+		"`name`, " +
+		"`requester`, " +
+		"`transformerID`, " +
+		"`monitorTime`, " +
+		"`description`, " +
+		"`error`, " +
+		"`warning`, " +
+		"`metadata` " +
+		") " +
+		"SELECT " +
+		"CONCAT(CHAR(0), `oldSet`.`name`), " +
+		"`oldSet`.`requester`, " +
+		"`oldSet`.`transformerID`, " +
+		"/*!LAST_INSERT_ID(*/0/*!)*/, " +
+		"'', '', '', '' " +
+		"FROM `localFiles` JOIN `sets` AS `oldSet` ON `localFiles`.`setID` = `oldSet`.`id` " +
+		"WHERE `localFiles`.`id` = ? AND `oldSet`.`name` NOT LIKE CONCAT(CHAR(0), '%') " +
+		"ON /*! DUPLICATE KEY UPDATE `sets`.`id` = LAST_INSERT_ID(`sets`.`id`); -- */ " +
+		"CONFLICT DO UPDATE SET `id` = `sets`.`id` RETURNING `sets`.`id`;\n/*! */"
 	createHardlink = "INSERT INTO `hardlinks` (" +
 		"`inode`, " +
 		"`mountpoint`, " +
@@ -186,6 +206,14 @@ const (
 		"`setID`, " +
 		"`remoteFileID`" +
 		") VALUES (?, ?, ?) " + onConflictReturnID
+	createTrashFile = "INSERT INTO `localFiles` (" +
+		"`localPath`, " +
+		"`setID`, " +
+		"`remoteFileID`" +
+		") " +
+		"SELECT `localPath`, ?, `remoteFileID` FROM `localFiles` AS `oldFile` WHERE `oldFile`.`id` = ? " +
+		"ON /*! DUPLICATE KEY UPDATE `localFiles`.`id` = LAST_INSERT_ID(`localFiles`.`id`); -- */ " +
+		"CONFLICT DO UPDATE SET `id` = `localFiles`.`id` RETURNING `localFiles`.`id`;\n/*! */"
 	createDiscover = "INSERT INTO `toDiscover` (" +
 		"`setID`, " +
 		"`path`, " +
@@ -275,6 +303,7 @@ const (
 		"`lastAttempt` = " + now + ", " +
 		"`heldBy` = 0 " +
 		"WHERE `id` = ? AND `type` = ?;"
+
 	updateProcessPing = "UPDATE `processes SET `lastPing` = " + now + " WHERE `id` = ?;"
 
 	holdQueuedTask = "WITH " +
@@ -294,6 +323,10 @@ const (
 		"UPDATE `queue` SET `heldBy` = ? WHERE " +
 		"`queue`.`id` IN (SELECT `id` FROM `available`);"
 	releaseQueuedTask = "UPDATE `queue` SET `heldBy` = 0 WHERE `heldBy` = ?;"
+
+	disableTrashFileRemoveTask = "UPDATE `queue` SET " +
+		"`type` = " + string('0'+QueueDisabled) + " " +
+		"WHERE `localFileID` = ? AND `type` = " + string('0'+QueueRemoval) + ";"
 
 	deleteSet            = "DELETE FROM `sets` WHERE `id` = ?;"
 	deleteDiscover       = "DELETE FROM `toDiscover` WHERE `setID` = ? AND `path` = ?;"

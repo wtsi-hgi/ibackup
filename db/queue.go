@@ -3,7 +3,8 @@ package db
 type QueueType uint8
 
 const (
-	QueueUpload QueueType = iota
+	QueueDisabled QueueType = iota
+	QueueUpload
 	QueueRemoval
 )
 

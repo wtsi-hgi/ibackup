@@ -76,12 +76,35 @@ func (d *DB) RemoveSetFiles(toRemove iter.Seq[*File]) error {
 	defer tx.Rollback() //nolint:errcheck
 
 	for file := range toRemove {
+		if err := d.trashFile(tx, file); err != nil {
+			return err
+		}
+
 		if _, err := tx.Exec(createQueuedRemoval, file.id); err != nil {
 			return err
 		}
 	}
 
 	return tx.Commit()
+}
+
+func (d *DB) trashFile(tx *sql.Tx, file *File) error {
+	trashID, err := d.execReturningRowID(tx, createTrashSetForFile, file.id)
+	if err != nil {
+		return err
+	}
+
+	if trashID == 0 {
+		return nil
+	}
+
+	if _, err = tx.Exec(createTrashFile, trashID, file.id); err != nil {
+		return err
+	}
+
+	_, err = tx.Exec(disableTrashFileRemoveTask, trashID)
+
+	return err
 }
 
 func (d *DBRO) GetSetFiles(set *Set) *IterErr[*File] {

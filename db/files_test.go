@@ -3,6 +3,7 @@ package db
 import (
 	"slices"
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
@@ -121,6 +122,8 @@ func TestFiles(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(refs, ShouldEqual, 2)
 
+			now := time.Now().Truncate(time.Second)
+
 			So(d.RemoveSetFiles(slices.Values(files[:1])), ShouldBeNil)
 
 			setA, err = d.GetSet(setA.Name, setA.Requester)
@@ -142,6 +145,26 @@ func TestFiles(t *testing.T) {
 			refs, err = d.CountRemoteFileRefs(files[1])
 			So(err, ShouldBeNil)
 			So(refs, ShouldEqual, 1)
+
+			refs, err = d.CountRemoteFileRefs(files[2])
+			So(err, ShouldBeNil)
+			So(refs, ShouldEqual, 2)
+
+			setTrashA, err := d.GetSet("\x00"+setA.Name, setA.Requester)
+			So(err, ShouldBeNil)
+
+			trashed := slices.Collect(d.GetSetFiles(setTrashA).Iter)
+			So(len(trashed), ShouldEqual, 1)
+			So(trashed[0].LocalPath, ShouldEqual, files[0].LocalPath)
+			So(trashed[0].LastUpload, ShouldHappenOnOrAfter, now)
+
+			So(d.RemoveSetFiles(slices.Values(trashed)), ShouldBeNil)
+
+			refs, err = d.CountRemoteFileRefs(files[2])
+			So(err, ShouldBeNil)
+			So(refs, ShouldEqual, 2)
+
+			So(d.clearQueue(), ShouldBeNil)
 
 			refs, err = d.CountRemoteFileRefs(files[2])
 			So(err, ShouldBeNil)

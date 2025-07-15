@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"errors"
 	"os"
 	"testing"
 
@@ -28,10 +29,13 @@ func createTestDatabase(t *testing.T) *DB {
 	So(err, ShouldBeNil)
 
 	if sdriver == "sqlite" {
-		d.execReturningRowID = func(tx *sql.Tx, sql string, params ...any) (int64, error) {
+		d.execReturningRowID = func(tx *sql.Tx, sqlstr string, params ...any) (int64, error) {
 			var id int64
 
-			err := tx.QueryRow(sql, params...).Scan(&id)
+			err := tx.QueryRow(sqlstr, params...).Scan(&id)
+			if errors.Is(err, sql.ErrNoRows) {
+				return 0, nil
+			}
 
 			return id, err
 		}
