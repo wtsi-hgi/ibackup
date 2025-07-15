@@ -57,10 +57,10 @@ func TestQueue(t *testing.T) {
 					Type:       QueueUpload,
 				},
 				{
-					id:         3,
-					LocalPath:  "/some/file/1_2",
-					RemotePath: "/remote/file/1_2",
-					UploadPath: "/remote/file/1_1",
+					id:         4,
+					LocalPath:  "/some/file/1_3",
+					RemotePath: "/remote/file/1_3",
+					UploadPath: "/remote/file/1_3",
 					Type:       QueueUpload,
 				},
 			})
@@ -68,13 +68,6 @@ func TestQueue(t *testing.T) {
 			tasks = d.ReserveTasks(pidB, 5)
 			So(tasks.Error, ShouldBeNil)
 			So(slices.Collect(tasks.Iter), ShouldResemble, []*Task{
-				{
-					id:         4,
-					LocalPath:  "/some/file/1_3",
-					RemotePath: "/remote/file/1_3",
-					UploadPath: "/remote/file/1_3",
-					Type:       QueueUpload,
-				},
 				{
 					id:         5,
 					LocalPath:  "/some/file/1_4",
@@ -97,10 +90,17 @@ func TestQueue(t *testing.T) {
 					Type:       QueueUpload,
 				},
 				{
-					id:         8,
-					LocalPath:  "/some/file/2_2",
-					RemotePath: "/remote/file/2_2",
-					UploadPath: "/remote/file/2_1",
+					id:         9,
+					LocalPath:  "/some/file/2_3",
+					RemotePath: "/remote/file/2_3",
+					UploadPath: "/remote/file/2_3",
+					Type:       QueueUpload,
+				},
+				{
+					id:         10,
+					LocalPath:  "/some/file/2_4",
+					RemotePath: "/remote/file/2_4",
+					UploadPath: "/remote/file/2_4",
 					Type:       QueueUpload,
 				},
 			})
@@ -155,6 +155,26 @@ func TestQueue(t *testing.T) {
 			So(len(tasks), ShouldEqual, 1)
 			So(tasks[0].id, ShouldEqual, 2)
 		})
+
+		Convey("A task for a remote file already being operated on cannot be reserved", func() {
+			files := slices.Collect(genFiles(1))
+
+			So(d.AddSetFiles(setA, slices.Values(files)), ShouldBeNil)
+			So(d.AddSetFiles(setB, slices.Values(files)), ShouldBeNil)
+
+			tasks := slices.Collect(d.ReserveTasks(pidA, 2).Iter)
+			So(len(tasks), ShouldEqual, 1)
+			So(tasks[0].id, ShouldEqual, 1)
+
+			tasksB := slices.Collect(d.ReserveTasks(pidB, 2).Iter)
+			So(len(tasksB), ShouldEqual, 0)
+
+			So(d.TaskComplete(tasks[0]), ShouldBeNil)
+
+			tasks = slices.Collect(d.ReserveTasks(pidB, 2).Iter)
+			So(len(tasks), ShouldEqual, 1)
+			So(tasks[0].id, ShouldEqual, 2)
+		})
 	})
 }
 
@@ -181,7 +201,7 @@ func genFiles(n int) iter.Seq[*File] {
 				Mtime:       200,
 				Type:        Regular,
 				SymlinkDest: "",
-			}) {
+			}) { //nolint:whitespace
 				break
 			}
 		}

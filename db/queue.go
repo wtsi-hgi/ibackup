@@ -61,7 +61,7 @@ func (d *DB) PingProcess(process *Process) error {
 
 func (d *DB) ReserveTasks(process *Process, n int) *IterErr[*Task] {
 	if err := d.reserveQueuedTasks(process, n); err != nil {
-		return &IterErr[*Task]{Error: err}
+		return &IterErr[*Task]{Iter: noSeq[*Task], Error: err}
 	}
 
 	return d.getReservedTasks(process)
@@ -89,9 +89,11 @@ func (d *DB) reserveQueuedTasks(process *Process, n int) error {
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	_, err = tx.Exec(holdQueuedTask, process.id, n)
-	if err != nil {
-		return err
+	for range n {
+		_, err = tx.Exec(holdQueuedTask, process.id)
+		if err != nil {
+			return err
+		}
 	}
 
 	return tx.Commit()

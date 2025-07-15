@@ -276,11 +276,22 @@ const (
 		"WHERE `id` = ? AND `type` = ?;"
 	updateProcessPing = "UPDATE `processes SET `lastPing` = " + now + " WHERE `id` = ?;"
 
-	holdQueuedTask = "UPDATE `queue` SET `heldBy` = ? WHERE " +
-		"/*! `heldBy` = 0 ORDER BY `attempts` ASC, `id` ASC LIMIT ?; -- */ " +
-		"`id` IN (" +
-		"SELECT `id` FROM `queue` WHERE `heldBy` = 0 ORDER BY `attempts` ASC, `id` ASC LIMIT ?" +
-		");\n/*! */"
+	holdQueuedTask = "WITH " +
+		"`heldHardlinks` AS (" +
+		"SELECT `remoteFiles`.`hardlinkID` FROM `queue` " +
+		"JOIN `localFiles` ON `queue`.`localFileID` = `localFiles`.`id` " +
+		"JOIN `remoteFiles` ON `localFiles`.`remoteFileID` = `remoteFiles`.`id` " +
+		"WHERE `queue`.`heldBy` != 0" +
+		"), " +
+		"`available` AS (" +
+		"SELECT `queue`.`id` FROM `queue` " +
+		"JOIN `localFiles` ON `queue`.`localFileID` = `localFiles`.`id` " +
+		"JOIN `remoteFiles` ON `localFiles`.`remoteFileID` = `remoteFiles`.`id` " +
+		"WHERE `remoteFiles`.`hardlinkID` NOT IN (SELECT `hardlinkID` FROM `heldHardlinks`) " +
+		"ORDER BY `queue`.`attempts` ASC, `queue`.`id` ASC LIMIT 1" +
+		") " +
+		"UPDATE `queue` SET `heldBy` = ? WHERE " +
+		"`queue`.`id` IN (SELECT `id` FROM `available`);"
 	releaseQueuedTask = "UPDATE `queue` SET `heldBy` = 0 WHERE `heldBy` = ?;"
 
 	deleteSet            = "DELETE FROM `sets` WHERE `id` = ?;"
