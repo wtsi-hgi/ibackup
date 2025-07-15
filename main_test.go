@@ -3664,6 +3664,42 @@ func TestEdit(t *testing.T) {
 				})
 			})
 
+			Convey("And a non-monitored set", func() {
+				setName := "nonMonitoredSet"
+				s.addSetForTesting(t, setName, transformer, path)
+
+				s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Monitored: false;")
+
+				Convey("You can enable monitoring via edit", func() {
+					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--monitor", "2w")
+					So(exitCode, ShouldEqual, 0)
+
+					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Monitored: 2w;")
+				})
+
+				Convey("You can update monitoring duration via edit", func() {
+					s.runBinary(t, "edit", "--name", setName, "--monitor", "1d")
+					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Monitored: 1d;")
+
+					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--monitor", "3d")
+					So(exitCode, ShouldEqual, 0)
+
+					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Monitored: 3d;")
+				})
+
+				Convey("You can't set monitor duration below 1h", func() {
+					exitCode, stderr := s.runBinary(t, "edit", "--name", setName, "--monitor", "30m")
+					So(exitCode, ShouldNotEqual, 0)
+					So(stderr, ShouldContainSubstring, "monitor duration must be 1h or more")
+				})
+
+				Convey("You can't set monitor duration to an invalid string", func() {
+					exitCode, stderr := s.runBinary(t, "edit", "--name", setName, "--monitor", "foobar")
+					So(exitCode, ShouldNotEqual, 0)
+					So(stderr, ShouldContainSubstring, "invalid monitor duration")
+				})
+			})
+
 			Convey("And a set marked as archive", func() {
 				setName := "archiveSet"
 				s.addSetForTestingWithFlags(t, setName, transformer, "--path", path, "--archive")
