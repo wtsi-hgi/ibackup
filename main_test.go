@@ -3580,7 +3580,7 @@ func getMetaValue(meta, key string) string {
 }
 
 func TestEdit(t *testing.T) {
-	Convey("With a started server", t, func() {
+	FocusConvey("With a started server", t, func() {
 		t.Setenv("IBACKUP_TEST_LDAP_SERVER", "")
 		t.Setenv("IBACKUP_TEST_LDAP_LOOKUP", "")
 
@@ -3600,7 +3600,7 @@ func TestEdit(t *testing.T) {
 				1, cmd.ErrInvalidEditRO.Error())
 		})
 
-		Convey("Given a transformer", func() {
+		FocusConvey("Given a transformer", func() {
 			remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
 			if remotePath == "" {
 				SkipConvey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
@@ -3664,11 +3664,16 @@ func TestEdit(t *testing.T) {
 				})
 			})
 
-			Convey("And a non-monitored set", func() {
+			FocusConvey("And a non-monitored set", func() {
 				setName := "nonMonitoredSet"
 				s.addSetForTesting(t, setName, transformer, path)
 
 				s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Monitored: false;")
+
+				FocusConvey("You cannot use both --monitor and --stop-monitor together", func() {
+					s.confirmOutputContains(t, []string{"edit", "--name", setName, "--monitor", "1h", "--stop-monitor"}, 1,
+						cmd.ErrInvalidEditMonitor.Error())
+				})
 
 				Convey("You can enable monitoring via edit", func() {
 					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--monitor", "2w")
@@ -3685,6 +3690,7 @@ func TestEdit(t *testing.T) {
 					So(exitCode, ShouldEqual, 0)
 
 					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Monitored: 3d;")
+
 				})
 
 				Convey("You can't set monitor duration below 1h", func() {
@@ -3698,6 +3704,7 @@ func TestEdit(t *testing.T) {
 					So(exitCode, ShouldNotEqual, 0)
 					So(stderr, ShouldContainSubstring, "invalid monitor duration")
 				})
+
 			})
 
 			Convey("And a set marked as archive", func() {

@@ -62,6 +62,7 @@ var (
 	ErrInvalidEditRO      = errors.New("you can either make a set read-only or writable, not both")
 	ErrInvalidEditArchive = errors.New("you can either archive a set or stop archiving, not both")
 	ErrInvalidEditHide    = errors.New("you can either hide or unhide a set, not both")
+	ErrInvalidEditMonitor = errors.New("you can either monitor or stop-monitor a set, not both")
 )
 
 // editCmd represents the edit command.
@@ -86,6 +87,10 @@ preexisting backup set.`,
 
 		if editHide && editUnHide {
 			return ErrInvalidEditHide
+		}
+
+		if editMonitor != "" && editStopMonitor {
+			return ErrInvalidEditMonitor
 		}
 
 		return nil
