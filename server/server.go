@@ -244,6 +244,8 @@ func (s *Server) handleRemoveRequests(sid string) {
 			break
 		}
 
+		fmt.Println("removing:", removeReq.Path)
+
 		s.discoveryCoordinator.WaitForDiscovery(sid)
 
 		err = s.removeRequestFromIRODSandDB(&removeReq)

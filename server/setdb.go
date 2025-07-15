@@ -28,6 +28,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"net/http"
 	"os"
@@ -63,6 +64,7 @@ const (
 	fileStatusPath    = "/file_status"
 	fileRetryPath     = "/retry"
 	removePathsPath   = "/remove_paths"
+	trashPathsPath    = "/trash_paths"
 
 	// EndPointAuthSet is the endpoint for getting and setting sets.
 	EndPointAuthSet = gas.EndPointAuth + setPath
@@ -106,10 +108,14 @@ const (
 	// EndPointAuthRemovePaths is the endpoint for removing objects from sets.
 	EndPointAuthRemovePaths = gas.EndPointAuth + removePathsPath
 
+	// EndPointAuthTrashPaths is the endpoint for trashing objects from sets.
+	EndPointAuthTrashPaths = gas.EndPointAuth + trashPathsPath
+
 	ErrNoAuth         = gas.Error("auth must be enabled")
 	ErrBadRequester   = gas.Error("you are not the set requester")
 	ErrEmptyName      = gas.Error("set name cannot be empty")
 	ErrTrashSetName   = gas.Error("set name cannot be prefixed with " + set.TrashPrefix)
+	ErrNotTrashed     = gas.Error("you cannot permanently remove from non trashed sets")
 	ErrInvalidName    = gas.Error("set name contains invalid characters")
 	ErrSetNotComplete = gas.Error("set should be complete for this operation")
 	ErrNotAdmin       = gas.Error("you are not the server admin")
@@ -120,6 +126,7 @@ const (
 	paramRequester    = "requester"
 	paramSetID        = "id"
 	paramMakeWritable = "makeWritable"
+	paramFromTrash    = "fromTrash"
 
 	numberOfFilesForOneHardlink = 2
 
@@ -300,7 +307,9 @@ func (s *Server) addDBEndpoints(authGroup *gin.RouterGroup) {
 
 	authGroup.PUT(fileStatusPath, s.putFileStatus)
 
-	authGroup.PUT(removePathsPath+idParam, s.trashPaths)
+	authGroup.PUT(removePathsPath+idParam, s.removePaths)
+
+	authGroup.PUT(trashPathsPath+idParam, s.trashPaths)
 }
 
 // putSet interprets the body as a JSON encoding of a set.Set and stores it in
@@ -476,15 +485,15 @@ func (s *Server) putFiles(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
-func (s *Server) removePaths(c *gin.Context) { //nolint:unused
+func (s *Server) removePaths(c *gin.Context) {
 	givenSet, paths, ok := s.bindPathsAndValidateSet(c)
 	if !ok {
 		return
 	}
 
-	filePaths, dirPaths, err := s.validateRemoveInputs(givenSet, paths)
+	filePaths, dirPaths, httpStatus, err := s.validateInputsForRemovals(givenSet, paths, c)
 	if err != nil {
-		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+		c.AbortWithError(httpStatus, err) //nolint:errcheck
 
 		return
 	}
@@ -497,13 +506,30 @@ func (s *Server) removePaths(c *gin.Context) { //nolint:unused
 	}
 }
 
+// validateInputsForRemovals returns an error if the provided set is not a
+// trashed set, the user is not an admin or if any provided path is not in the
+// given set. Also returns the valid paths classified into a slice of filepaths
+// or dirpaths.
+func (s *Server) validateInputsForRemovals(givenSet *set.Set, paths []string, c *gin.Context) ([]string, []string, int, error) {
+	if !isTrashSet(givenSet.Name) {
+		return nil, nil, http.StatusBadRequest, ErrNotTrashed
+	}
+
+	if !s.AllowedAccess(c, "") {
+		return nil, nil, http.StatusUnauthorized, ErrNotAdmin
+	}
+
+	files, dirs, err := s.db.ValidateFileAndDirPaths(givenSet, paths)
+	return files, dirs, http.StatusBadRequest, err
+}
+
 func (s *Server) trashPaths(c *gin.Context) {
 	givenSet, paths, ok := s.bindPathsAndValidateSet(c)
 	if !ok {
 		return
 	}
 
-	filePaths, dirPaths, err := s.validateRemoveInputs(givenSet, paths)
+	filePaths, dirPaths, err := s.validateInputsForTrashing(givenSet, paths)
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
@@ -527,10 +553,10 @@ func (s *Server) trashPaths(c *gin.Context) {
 	}
 }
 
-// validateRemoveInputs returns an error if the provided set is a trashed set,
+// validateInputsForTrashing returns an error if the provided set is a trashed set,
 // not complete or if any provided path is not in the given set. Also returns
 // the valid paths classified into a slice of filepaths or dirpaths.
-func (s *Server) validateRemoveInputs(givenSet *set.Set, paths []string) ([]string, []string, error) {
+func (s *Server) validateInputsForTrashing(givenSet *set.Set, paths []string) ([]string, []string, error) {
 	if isTrashSet(givenSet.Name) {
 		return nil, nil, ErrTrashSetName
 	}
@@ -687,12 +713,16 @@ func (s *Server) processRemoteFileRemoval(removeReq *set.RemoveReq, entry *set.E
 		return err
 	}
 
+	fmt.Println("not started")
+
 	err = s.updateOrRemoveRemoteFile(removeReq, transformer, entry)
 	if err != nil && fileErrorCannotBeIgnored(err, mayMissInRemote) {
 		s.setErrorOnEntry(entry, removeReq.Set.ID(), removeReq.Path, err)
 
 		return err
 	}
+
+	fmt.Println("just finished")
 
 	removeReq.RemoteRemovalStatus = set.Removed
 
@@ -764,8 +794,11 @@ func (s *Server) updateOrRemoveRemoteFile(removeReq *set.RemoveReq, transformer 
 		return err
 	}
 
+	// TODO this should return a better err message or something - we don't know if it doesnt exist or has no permissions.
+
 	remoteMeta, err := s.storageHandler.GetMeta(rpath)
 	if err != nil {
+		fmt.Println("Got error here: ", err)
 		return err
 	}
 

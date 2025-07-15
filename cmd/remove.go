@@ -42,6 +42,8 @@ var removeItems string
 var removePath string
 var removeNull bool
 
+const ErrRemoveItems = "exactly one of --items or --path must be provided"
+
 // removeCmd represents the add command.
 var removeCmd = &cobra.Command{
 	Use:   "remove",
@@ -72,7 +74,7 @@ var removeCmd = &cobra.Command{
 		ensureURLandCert()
 
 		if (removeItems == "") == (removePath == "") {
-			dief("exactly one of --items or --path must be provided")
+			dief(ErrRemoveItems)
 		}
 
 		var paths []string
@@ -126,7 +128,7 @@ func handleRemove(client *server.Client, user, name string, paths []string) {
 		die(set.Error{Msg: set.ErrSetIsNotWritable})
 	}
 
-	err := client.RemoveFilesAndDirs(sets[0].ID(), paths)
+	err := client.TrashFilesAndDirs(sets[0].ID(), paths, false)
 	if err != nil {
 		die(err)
 	}
