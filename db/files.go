@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"iter"
+	"time"
 )
 
 type FileType uint8
@@ -30,6 +31,7 @@ type File struct {
 	Type         FileType
 	Owner        string
 	SymlinkDest  string
+	LastUpload   time.Time
 }
 
 func (d *DB) AddSetFiles(set *Set, toAdd iter.Seq[*File]) error {
@@ -73,8 +75,6 @@ func (d *DB) RemoveSetFiles(toRemove iter.Seq[*File]) error {
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	// Add to trash set.
-
 	for file := range toRemove {
 		if _, err := tx.Exec(createQueuedRemoval, file.id); err != nil {
 			return err
@@ -95,6 +95,7 @@ func scanFile(scanner scanner) (*File, error) {
 		&file.id,
 		&file.LocalPath,
 		&file.RemotePath,
+		&file.LastUpload,
 		&file.Size,
 		&file.Type,
 		&file.Owner,

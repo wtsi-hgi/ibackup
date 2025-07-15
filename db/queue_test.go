@@ -5,6 +5,7 @@ import (
 	"iter"
 	"slices"
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
@@ -174,6 +175,59 @@ func TestQueue(t *testing.T) {
 			tasks = slices.Collect(d.ReserveTasks(pidB, 2).Iter)
 			So(len(tasks), ShouldEqual, 1)
 			So(tasks[0].id, ShouldEqual, 2)
+		})
+
+		Convey("Completing an upload tasks sets the upload date on the file", func() {
+			files := slices.Collect(genFiles(1))
+
+			So(d.AddSetFiles(setA, slices.Values(files)), ShouldBeNil)
+
+			now := time.Now().Truncate(time.Second)
+
+			setFiles := slices.Collect(d.GetSetFiles(setA).Iter)
+			So(len(setFiles), ShouldEqual, 1)
+			So(setFiles[0].LastUpload, ShouldHappenBefore, now)
+
+			So(d.TaskComplete(slices.Collect(d.ReserveTasks(pidA, 1).Iter)[0]), ShouldBeNil)
+
+			setFiles = slices.Collect(d.GetSetFiles(setA).Iter)
+			So(len(setFiles), ShouldEqual, 1)
+			So(setFiles[0].LastUpload, ShouldHappenOnOrAfter, now)
+		})
+
+		Convey("Completing an removal task removes the file from the set", func() {
+			files := slices.Collect(genFiles(1))
+
+			So(d.AddSetFiles(setA, slices.Values(files)), ShouldBeNil)
+
+			setFiles := slices.Collect(d.GetSetFiles(setA).Iter)
+			So(len(setFiles), ShouldEqual, 1)
+
+			tasks := slices.Collect(d.ReserveTasks(pidA, 1).Iter)
+			So(len(tasks), ShouldEqual, 1)
+
+			uploadTask := tasks[0]
+
+			So(d.RemoveSetFiles(slices.Values(setFiles)), ShouldBeNil)
+
+			tasks = slices.Collect(d.ReserveTasks(pidB, 1).Iter)
+			So(len(tasks), ShouldEqual, 0)
+
+			now := time.Now()
+
+			So(d.TaskComplete(uploadTask), ShouldBeNil)
+
+			setFiles = slices.Collect(d.GetSetFiles(setA).Iter)
+			So(len(setFiles), ShouldEqual, 1)
+			So(setFiles[0].LastUpload, ShouldHappenBefore, now)
+
+			tasks = slices.Collect(d.ReserveTasks(pidA, 1).Iter)
+			So(len(tasks), ShouldEqual, 1)
+
+			So(d.TaskComplete(tasks[0]), ShouldBeNil)
+
+			setFiles = slices.Collect(d.GetSetFiles(setA).Iter)
+			So(len(setFiles), ShouldEqual, 0)
 		})
 	})
 }

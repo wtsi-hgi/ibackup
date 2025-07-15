@@ -225,6 +225,7 @@ const (
 		"`localFiles`.`id`, " +
 		"`localFiles`.`localPath`, " +
 		"`remoteFiles`.`remotePath`, " +
+		"`remoteFiles`.`lastUploaded`, " +
 		"`hardlinks`.`size`, " +
 		"`hardlinks`.`fileType`, " +
 		"`hardlinks`.`owner`, " +
