@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"fmt"
 	"iter"
 	"time"
 )
@@ -55,6 +56,7 @@ func (d *DB) addSetFile(tx *sql.Tx, setID int64, file *File) error {
 		file.Btime, file.InodeRemote, file.Mtime, file.Size, file.Type, file.Owner,
 		file.SymlinkDest, file.RemotePath)
 	if err != nil {
+		fmt.Println(createHardlink)
 		return err
 	}
 

@@ -195,6 +195,30 @@ func TestQueue(t *testing.T) {
 			So(setFiles[0].LastUpload, ShouldHappenOnOrAfter, now)
 		})
 
+		Convey("Re-inserting a file into a set causes a re-upload", func() {
+			files := slices.Collect(genFiles(1))
+
+			So(d.AddSetFiles(setA, slices.Values(files)), ShouldBeNil)
+
+			setFiles := slices.Collect(d.GetSetFiles(setA).Iter)
+			So(len(setFiles), ShouldEqual, 1)
+
+			tasks := slices.Collect(d.ReserveTasks(pidA, 1).Iter)
+			So(len(tasks), ShouldEqual, 1)
+			So(d.TaskComplete(tasks[0]), ShouldBeNil)
+
+			tasks = slices.Collect(d.ReserveTasks(pidA, 1).Iter)
+			So(len(tasks), ShouldEqual, 0)
+
+			So(d.AddSetFiles(setA, slices.Values(files)), ShouldBeNil)
+
+			setFiles = slices.Collect(d.GetSetFiles(setA).Iter)
+			So(len(setFiles), ShouldEqual, 1)
+
+			tasks = slices.Collect(d.ReserveTasks(pidA, 1).Iter)
+			So(len(tasks), ShouldEqual, 1)
+		})
+
 		Convey("Completing an removal task removes the file from the set", func() {
 			files := slices.Collect(genFiles(1))
 

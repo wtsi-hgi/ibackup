@@ -76,6 +76,7 @@ var (
 			"`setID` INTEGER NOT NULL, " +
 			"`remoteFileID` INTEGER NOT NULL, " +
 			"`lastUpload` DATETIME DEFAULT \"0001-01-01 00:00:00\", " +
+			"`updated` BOOLEAN DEFAULT FALSE, " +
 			"UNIQUE(`localPathHash`, `setID`), " +
 			"FOREIGN KEY(`setID`) REFERENCES `sets`(`id`) ON DELETE CASCADE, " +
 			"FOREIGN KEY(`remoteFileID`) REFERENCES `remoteFiles`(`id`) ON DELETE RESTRICT" +
@@ -119,6 +120,12 @@ var (
 			onConflictUpdate + "`type` = " + string('0'+QueueUpload) + ", `attempts` = 0, " +
 			"`lastAttempt` = '0001-01-01 00:00:00', `lastError` = '';" +
 			"END;",
+		"CREATE TRIGGER IF NOT EXISTS `reupload_local_file` AFTER UPDATE ON `localFiles` FOR EACH ROW BEGIN " +
+			"INSERT INTO `queue` (`localFileID`, `type`) SELECT `NEW`.`id`, " + string('0'+QueueUpload) + " " +
+			"WHERE NOT `OLD`.`updated` = `NEW`.`updated` " +
+			onConflictUpdate + "`type` = " + string('0'+QueueUpload) + ", `attempts` = 0, " +
+			"`lastAttempt` = '0001-01-01 00:00:00', `lastError` = '';" +
+			"END;",
 		"CREATE TRIGGER IF NOT EXISTS `update_file_after_queued_action` AFTER DELETE ON `queue` FOR EACH ROW BEGIN " +
 			"DELETE FROM `localFiles` WHERE " +
 			"`OLD`.`type` = " + string('0'+QueueRemoval) + " AND `localFiles`.`id` = `OLD`.`localFileID`;" +
@@ -141,12 +148,12 @@ const (
 	now             = "/*! NOW() -- */ DATETIME('now')\n/*! */"
 	setRef          = "/*! AS `EXCLUDED` */ "
 	updateCol       = "/*! `updated` BOOLEAN DEFAULT FALSE, */"
-	colUpdate       = "/*!, `updated` = ! `updated`*/ "
+	colUpdate       = " /*!`updated` = ! `updated`, */ "
 
 	onConflictUpdate   = "ON /*! DUPLICATE KEY UPDATE -- */ CONFLICT DO UPDATE SET\n/*! */ "
 	onConflictReturnID = "ON /*! DUPLICATE KEY UPDATE `id` = LAST_INSERT_ID(`id`); -- */ " +
 		"CONFLICT DO UPDATE SET `id` = `id` RETURNING `id`;\n/*! */"
-	returnOrSetID = "/*! `id` = LAST_INSERT_ID(`id`); -- */ RETURNING `id`;\n/*! */"
+	returnOrSetID = " /*! `id` = LAST_INSERT_ID(`id`); -- */ `id` = `id` RETURNING `id`;\n/*! */"
 
 	createTransformer = "INSERT INTO `transformers` (" +
 		"`transformer`" +
@@ -193,9 +200,9 @@ const (
 		"`dest`, " +
 		"`firstRemote`" +
 		") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " + setRef +
-		onConflictUpdate + "`mtime` = `EXCLUDED`.`mtime`, `dest` = `EXCLUDED`.`dest`, " +
-		"`size` = `EXCLUDED`.`size`, `owner` = `EXCLUDED`.`owner` " + colUpdate +
-		"/*! , */" + returnOrSetID
+		onConflictUpdate + colUpdate + "`mtime` = `EXCLUDED`.`mtime`, `dest` = `EXCLUDED`.`dest`, " +
+		"`size` = `EXCLUDED`.`size`, `owner` = `EXCLUDED`.`owner`, " +
+		returnOrSetID
 	createRemoteFile = "INSERT INTO `remoteFiles` (" +
 		"`remotePath`, " +
 		"`hardlinkID`, " +
@@ -205,7 +212,7 @@ const (
 		"`localPath`, " +
 		"`setID`, " +
 		"`remoteFileID`" +
-		") VALUES (?, ?, ?) " + onConflictReturnID
+		") VALUES (?, ?, ?) " + onConflictUpdate + "`updated` = NOT `updated`, " + returnOrSetID
 	createTrashFile = "INSERT INTO `localFiles` (" +
 		"`localPath`, " +
 		"`setID`, " +
