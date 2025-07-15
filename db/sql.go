@@ -30,7 +30,8 @@ var (
 			"`warning` TEXT NOT NULL, " +
 			"`metadata` TEXT NOT NULL, " +
 			"`deleteLocal` BOOLEAN DEFAULT FALSE, " +
-			"`readonly` BOOLEAN DEFAULT FALSE, " +
+			"`modifiable` BOOLEAN DEFAULT TRUE, " +
+			"`hidden` BOOLEAN DEFAULT FALSE, " +
 			"UNIQUE(`requesterHash`, `nameHash`), " +
 			"FOREIGN KEY(`transformerID`) REFERENCES `transformers`(`id`) ON UPDATE RESTRICT ON DELETE RESTRICT" +
 			");",
@@ -248,7 +249,8 @@ const (
 		"`sets`.`lastCompletedSize`, " +
 		"`sets`.`error`, " +
 		"`sets`.`warning`, " +
-		"`sets`.`readonly`, " +
+		"`sets`.`modifiable`, " +
+		"`sets`.`hidden`, " +
 		"`transformers`.`transformer` " +
 		"FROM `sets` JOIN `transformers` ON `sets`.`transformerID` = `transformers`.`id`"
 	getAllSets            = getSetsStart + " ORDER BY `sets`.`id` ASC;"
@@ -294,10 +296,14 @@ const (
 		"(SELECT `localPath` FROM `localFiles` WHERE `id` = ? LIMIT 1)" +
 		virtEnd + ");"
 
-	updateSetWarning             = "UPDATE `set` SET `warning` = ? WHERE `id` = ?;"
-	updateSetError               = "UPDATE `set` SET `warning` = ? WHERE `id` = ?;"
-	updateDiscoveryStarted       = "UPDATE `set` SET `startedDiscovery` = ? WHERE `id` = ?;"
-	updateLastDiscoveryCompleted = "UPDATE `set` SET " +
+	updateSetWarning             = "UPDATE `sets` SET `warning` = ? WHERE `id` = ?;"
+	updateSetError               = "UPDATE `sets` SET `warning` = ? WHERE `id` = ?;"
+	updateSetReadonly            = "UPDATE `sets` SET `modifiable` = FALSE WHERE `id` = ?;"
+	updateSetModifiable          = "UPDATE `sets` SET `modifiable` = TRUE WHERE `id` = ?;"
+	updateSetHidden              = "UPDATE `sets` SET `hidden` = TRUE WHERE `id` = ?;"
+	updateSetVisible             = "UPDATE `sets` SET `hidden` = FALSE WHERE `id` = ?;"
+	updateDiscoveryStarted       = "UPDATE `sets` SET `startedDiscovery` = ? WHERE `id` = ?;"
+	updateLastDiscoveryCompleted = "UPDATE `sets` SET " +
 		"`lastDiscovery` = `startedDiscovery`, " +
 		"`lastCompleted` = ?, " +
 		"`lastCompletedCount` = ?, " +

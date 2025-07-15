@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"errors"
 	"time"
 )
 
@@ -169,8 +170,16 @@ type Set struct {
 	// value.
 	Warning string
 
-	readonly bool
+	modifiable bool
+
+	Hidden bool
 }
+
+func (s *Set) IsReadonly() bool {
+	return !s.modifiable
+}
+
+var ErrReadonlySet = errors.New("cannot modify readonly set")
 
 func (d *DB) CreateSet(set *Set) error {
 	tx, err := d.db.Begin()
@@ -192,6 +201,8 @@ func (d *DB) CreateSet(set *Set) error {
 	if set.id, err = res.LastInsertId(); err != nil {
 		return err
 	}
+
+	set.modifiable = true
 
 	return tx.Commit()
 }
@@ -227,7 +238,8 @@ func scanSet(scanner scanner) (*Set, error) {
 		&set.LastCompletedSize,
 		&set.Error,
 		&set.Warning,
-		&set.readonly,
+		&set.modifiable,
+		&set.Hidden,
 		&set.Transformer,
 	); err != nil {
 		return nil, err
@@ -245,18 +257,34 @@ func (d *DBRO) GetAllSets() *IterErr[*Set] {
 }
 
 func (d *DB) SetSetWarning(set *Set) error {
+	if !set.modifiable {
+		return ErrReadonlySet
+	}
+
 	return d.exec(updateSetError, set.Warning, set.id)
 }
 
 func (d *DB) SetSetError(set *Set) error {
+	if !set.modifiable {
+		return ErrReadonlySet
+	}
+
 	return d.exec(updateSetError, set.Error, set.id)
 }
 
 func (d *DB) SetSetDicoveryStarted(set *Set) error {
+	if !set.modifiable {
+		return ErrReadonlySet
+	}
+
 	return d.exec(updateDiscoveryStarted, set.id, set.StartedDiscovery)
 }
 
 func (d *DB) SetSetDicoveryCompleted(set *Set) error {
+	if !set.modifiable {
+		return ErrReadonlySet
+	}
+
 	return d.exec(updateDiscoveryStarted,
 		set.LastCompleted,
 		set.LastCompletedCount,
@@ -266,5 +294,61 @@ func (d *DB) SetSetDicoveryCompleted(set *Set) error {
 }
 
 func (d *DB) DeleteSet(set *Set) error {
+	if !set.modifiable {
+		return ErrReadonlySet
+	}
+
 	return d.exec(deleteSet, set.id)
+}
+
+func (d *DB) SetSetReadonly(set *Set) error {
+	if !set.modifiable {
+		return ErrReadonlySet
+	}
+
+	if err := d.exec(updateSetReadonly, set.id); err != nil {
+		return err
+	}
+
+	set.modifiable = false
+
+	return nil
+}
+
+func (d *DB) SetSetModifiable(set *Set) error {
+	if err := d.exec(updateSetModifiable, set.id); err != nil {
+		return err
+	}
+
+	set.modifiable = true
+
+	return nil
+}
+
+func (d *DB) SetSetHidden(set *Set) error {
+	if !set.modifiable {
+		return ErrReadonlySet
+	}
+
+	if err := d.exec(updateSetHidden, set.id); err != nil {
+		return err
+	}
+
+	set.Hidden = true
+
+	return nil
+}
+
+func (d *DB) SetSetVisible(set *Set) error {
+	if !set.modifiable {
+		return ErrReadonlySet
+	}
+
+	if err := d.exec(updateSetVisible, set.id); err != nil {
+		return err
+	}
+
+	set.Hidden = false
+
+	return nil
 }

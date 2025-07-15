@@ -60,6 +60,50 @@ func TestSet(t *testing.T) {
 
 			So(d.DeleteSet(setC), ShouldBeNil)
 			So(slices.Collect(d.GetAllSets().Iter), ShouldResemble, []*Set{setB})
+
+			Convey("A set can be hidden and unhidden", func() {
+				So(setB.Hidden, ShouldBeFalse)
+				So(d.SetSetHidden(setB), ShouldBeNil)
+				So(setB.Hidden, ShouldBeTrue)
+
+				got, err = d.GetSet("my2ndSet", "me")
+				So(err, ShouldBeNil)
+				So(got.Hidden, ShouldBeTrue)
+
+				So(d.SetSetVisible(setB), ShouldBeNil)
+				So(setB.Hidden, ShouldBeFalse)
+
+				got, err = d.GetSet("my2ndSet", "me")
+				So(err, ShouldBeNil)
+				So(got.Hidden, ShouldBeFalse)
+			})
+
+			Convey("A set can be made readonly", func() {
+				So(setB.IsReadonly(), ShouldBeFalse)
+				So(d.SetSetReadonly(setB), ShouldBeNil)
+				So(setB.IsReadonly(), ShouldBeTrue)
+
+				got, err = d.GetSet("my2ndSet", "me")
+				So(err, ShouldBeNil)
+				So(got.IsReadonly(), ShouldBeTrue)
+
+				Convey("A readonly set cannot be changed", func() {
+					So(d.SetSetHidden(setB), ShouldEqual, ErrReadonlySet)
+					So(d.SetSetWarning(setB), ShouldEqual, ErrReadonlySet)
+					So(d.SetSetError(setB), ShouldEqual, ErrReadonlySet)
+					So(d.SetSetDicoveryStarted(setB), ShouldEqual, ErrReadonlySet)
+					So(d.SetSetDicoveryCompleted(setB), ShouldEqual, ErrReadonlySet)
+					So(d.DeleteSet(setB), ShouldEqual, ErrReadonlySet)
+					So(d.AddSetFiles(setB, slices.Values([]*File{})), ShouldEqual, ErrReadonlySet)
+				})
+
+				So(d.SetSetModifiable(setB), ShouldBeNil)
+				So(setB.IsReadonly(), ShouldBeFalse)
+
+				got, err = d.GetSet("my2ndSet", "me")
+				So(err, ShouldBeNil)
+				So(got.IsReadonly(), ShouldBeFalse)
+			})
 		})
 	})
 }
