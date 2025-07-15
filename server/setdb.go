@@ -104,7 +104,7 @@ const (
 	ErrNoAuth         = gas.Error("auth must be enabled")
 	ErrBadRequester   = gas.Error("you are not the set requester")
 	ErrEmptyName      = gas.Error("set name cannot be empty")
-	ErrTrashSetName   = gas.Error("set name cannot have the " + set.TrashPrefix + " prefix")
+	ErrTrashSetName   = gas.Error("set name cannot be prefixed with " + set.TrashPrefix)
 	ErrInvalidName    = gas.Error("set name contains invalid characters")
 	ErrSetNotComplete = gas.Error("set should be complete for this operation")
 	ErrNotAdmin       = gas.Error("you are not the server admin")

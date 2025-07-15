@@ -126,7 +126,7 @@ type Entry struct {
 	unFailed bool
 	isDir    bool
 
-	TrashDate time.Time
+	TrashDate time.Time // only set for entries in trashed sets.
 }
 
 // MakeSafeForJSON copies Path to PathForJSON, so that if this Entry struct is

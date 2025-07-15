@@ -179,7 +179,7 @@ func (d *DB) RemoveFileFromInode(path string, inode uint64) error {
 	return err
 }
 
-// GetAllSetsForFile returns a slice of names for sets that contain the given
+// GetAllSetsForFile returns a slice of setIDs for sets that contain the given
 // file.
 func (d *DBRO) GetAllSetsForFile(path string) ([]string, error) {
 	pathBytes := []byte(path)

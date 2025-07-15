@@ -676,10 +676,7 @@ func displayAllEntries(client *server.Client, given *set.Set, showRemotePaths bo
 		die(err)
 	}
 
-	showTrashDate := false
-	if strings.HasPrefix(given.Name, set.TrashPrefix) {
-		showTrashDate = true
-	}
+	showTrashDate := strings.HasPrefix(given.Name, set.TrashPrefix)
 
 	displayEntries(all, showRemotePaths, showTrashDate, transformer)
 }
