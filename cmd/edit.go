@@ -49,6 +49,7 @@ var (
 	editRemovalDate         string
 	editTransformer         string
 	editAddPath             string
+	editMonitor             string
 	editStopMonitor         bool
 	editStopMonitorRemovals bool
 	editStopArchive         bool
@@ -111,6 +112,19 @@ preexisting backup set.`,
 			userSet.Description = editDescription
 		}
 
+		if editMonitor != "" {
+			monitorDuration, err := parseDuration(editMonitor)
+			if err != nil {
+				dief("invalid monitor duration: %s", err)
+			}
+
+			if monitorDuration < 1*time.Hour {
+				dief("monitor duration must be 1h or more, not %s", monitorDuration)
+			}
+
+			userSet.MonitorTime = monitorDuration
+		}
+
 		if editStopMonitor {
 			userSet.MonitorTime = 0
 		}
@@ -164,6 +178,7 @@ func init() {
 	editCmd.Flags().StringVar(&editRemovalDate, "removal-date", "", helpTextRemoval)
 	editCmd.Flags().StringVar(&editTransformer, "transformer", "", helpTextTransformer)
 	editCmd.Flags().StringVar(&editAddPath, "add", "", helpTextPath)
+	editCmd.Flags().StringVarP(&editMonitor, "monitor", "m", "", helpTextMonitor)
 	editCmd.Flags().BoolVar(&editStopMonitor, "stop-monitor", false, "stop monitoring the set for changes")
 	editCmd.Flags().BoolVar(&editStopMonitorRemovals, "stop-monitor-removals", false,
 		"stop monitoring the set for locally removed files")
