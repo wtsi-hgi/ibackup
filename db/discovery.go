@@ -14,7 +14,7 @@ type Discover struct {
 }
 
 func (d *DB) AddSetDiscovery(set *Set, dr *Discover) error {
-	return d.exec(createDiscover, set.id, dr.Path, dr.Type, dr.Type)
+	return d.exec(createDiscover, set.id, dr.Path, dr.Type)
 }
 
 func (d *DBRO) GetSetDiscovery(set *Set) *IterErr[*Discover] {

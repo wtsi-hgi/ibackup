@@ -190,7 +190,7 @@ const (
 		"`setID`, " +
 		"`path`, " +
 		"`type`" +
-		") VALUES (?, ?, ?) " + onConflictUpdate + "`type` = ?;"
+		") VALUES (?, ?, ?) " + setRef + onConflictUpdate + "`type` = `EXCLUDED`.`type`;"
 	createQueuedRemoval = "INSERT INTO `queue` (" +
 		"`localFileID`, " +
 		"`type`" +
