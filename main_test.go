@@ -684,6 +684,10 @@ func TestList(t *testing.T) {
 `+dir+`/path/to/other/file`)
 			So(err, ShouldBeNil)
 
+			exitCode, _ := s.runBinary(t, "add", "--files", tempTestFile.Name(),
+				"--name", "testAddFiles", "--transformer", "prefix="+dir+":/remote")
+			So(exitCode, ShouldEqual, 0)
+
 			Convey("list with --orphaned shows only orphaned files", func() {
 				s.confirmOutput(t, []string{"list", "--name", "testAddFiles", "--orphaned"}, 0, "")
 
@@ -695,13 +699,12 @@ func TestList(t *testing.T) {
 				s.waitForStatus("testAddFiles", "Status: complete", 1*time.Second)
 
 				s.confirmOutput(t, []string{"list", "--name", "testAddFiles", "--orphaned"}, 0,
-					dir+"/path/to/some/file\t"+"/remote/path/to/some/file")
+					dir+"/path/to/other/file\t"+"/remote/path/to/other/file")
 			})
 
 			Convey("list with --deleted shows only files that don't exist locally", func() {
 				s.confirmOutput(t, []string{"list", "--name", "testAddFiles", "--deleted"}, 0,
-					dir+"/path/to/other/file\t/remote/path/to/other/file\n"+
-						dir+"/path/to/some/file\t/remote/path/to/some/file")
+					dir+"/path/to/some/file\t/remote/path/to/some/file")
 
 				So(os.Remove(dir+"/path/to/other/file"), ShouldBeNil)
 
@@ -711,7 +714,8 @@ func TestList(t *testing.T) {
 				s.waitForStatus("testAddFiles", "Status: complete", 1*time.Second)
 
 				s.confirmOutput(t, []string{"list", "--name", "testAddFiles", "--deleted"}, 0,
-					dir+"/path/to/some/file\t/remote/path/to/some/file")
+					dir+"/path/to/other/file\t/remote/path/to/other/file\n"+
+						dir+"/path/to/some/file\t/remote/path/to/some/file")
 			})
 		})
 	})
