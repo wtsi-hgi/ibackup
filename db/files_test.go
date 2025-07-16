@@ -43,6 +43,7 @@ func TestFiles(t *testing.T) {
 					Type:        Regular,
 					Owner:       "joe",
 					SymlinkDest: "",
+					modifiable:  true,
 				},
 			}
 
@@ -68,6 +69,7 @@ func TestFiles(t *testing.T) {
 				Mtime:      200,
 				Type:       Regular,
 				Owner:      "bob",
+				modifiable: true,
 			}, &File{
 				LocalPath:  "/some/local/file/hardlink",
 				RemotePath: "/remote/file",
@@ -78,6 +80,7 @@ func TestFiles(t *testing.T) {
 				Mtime:      200,
 				Type:       Regular,
 				Owner:      "joe",
+				modifiable: true,
 			})
 
 			files[0].Size = 120
@@ -100,6 +103,7 @@ func TestFiles(t *testing.T) {
 				Mtime:       200,
 				Type:        Symlink,
 				SymlinkDest: "/path/to/target",
+				modifiable:  true,
 			})
 
 			So(d.AddSetFiles(setA, slices.Values(files[3:])), ShouldBeNil)

@@ -32,6 +32,7 @@ type File struct {
 	Owner        string
 	SymlinkDest  string
 	LastUpload   time.Time
+	modifiable   bool
 }
 
 func (d *DB) AddSetFiles(set *Set, toAdd iter.Seq[*File]) error {
@@ -80,6 +81,10 @@ func (d *DB) RemoveSetFiles(toRemove iter.Seq[*File]) error {
 	defer tx.Rollback() //nolint:errcheck
 
 	for file := range toRemove {
+		if !file.modifiable {
+			return ErrReadonlySet
+		}
+
 		if err := d.trashFile(tx, file); err != nil {
 			return err
 		}
@@ -112,7 +117,13 @@ func (d *DB) trashFile(tx *sql.Tx, file *File) error {
 }
 
 func (d *DBRO) GetSetFiles(set *Set) *IterErr[*File] {
-	return iterRows(d, scanFile, getSetsFiles, set.id)
+	scanner := scanFile
+
+	if set.modifiable {
+		scanner = scanModifiableFile
+	}
+
+	return iterRows(d, scanner, getSetsFiles, set.id)
 }
 
 func scanFile(scanner scanner) (*File, error) {
@@ -135,6 +146,17 @@ func scanFile(scanner scanner) (*File, error) {
 	); err != nil {
 		return nil, err
 	}
+
+	return file, nil
+}
+
+func scanModifiableFile(scanner scanner) (*File, error) {
+	file, err := scanFile(scanner)
+	if err != nil {
+		return nil, err
+	}
+
+	file.modifiable = true
 
 	return file, nil
 }
