@@ -1241,7 +1241,7 @@ func (s *Server) getFileEntries(c *gin.Context, filter func(*set.Entry) bool) {
 
 func (s *Server) getUploadedEntries(c *gin.Context) {
 	s.getFileEntries(c, func(e *set.Entry) bool {
-		switch e.Status {
+		switch e.Status { //nolint:exhaustive
 		case set.Orphaned, set.Uploaded, set.Replaced:
 			return true
 		}

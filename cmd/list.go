@@ -185,8 +185,7 @@ func getSetTransformerIfNeeded(s *set.Set, needed bool) transfer.PathTransformer
 }
 
 func displayEntryPaths(entries []*set.Entry, transformer transfer.PathTransformer,
-	local, remote, uploaded, size, encode bool,
-) {
+	local, remote, uploaded, size, encode bool) {
 	if uploaded {
 		entries = filterForUploaded(entries)
 	}
@@ -243,8 +242,7 @@ func filterForDeleted(entries []*set.Entry) []*set.Entry {
 }
 
 func getSetFromServerAndDisplayPaths(client *server.Client,
-	local, remote, uploaded, size, encode bool, user, name string,
-) {
+	local, remote, uploaded, size, encode bool, user, name string) {
 	sets := getSetByName(client, user, name)
 	if len(sets) == 0 {
 		warn("backup set not found")
