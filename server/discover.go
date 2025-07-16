@@ -259,7 +259,7 @@ func (s *Server) discoverSetRemovals(given *set.Set) error {
 }
 
 func (s *Server) findFilesToRemove(given *set.Set) ([]string, error) {
-	fileEntriesInSet, err := s.db.GetFileEntries(given.ID())
+	fileEntriesInSet, err := s.db.GetFileEntries(given.ID(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -557,7 +557,7 @@ func determineDirStatus(dirStatErr error, entry *set.Entry,
 // Skips entries that are missing or that have failed or uploaded since the
 // last discovery.
 func (s *Server) enqueueSetFiles(given *set.Set, transformer transfer.PathTransformer) error {
-	entries, err := s.db.GetFileEntries(given.ID())
+	entries, err := s.db.GetFileEntries(given.ID(), nil)
 	if err != nil {
 		return err
 	}

@@ -575,8 +575,8 @@ func TestList(t *testing.T) {
 
 				Convey("list tells the local path and remote path for every file in the set", func() {
 					s.confirmOutput(t, []string{"list", "--name", "testAddFiles"}, 0,
-						dir+"/path/to/other/file\t"+"/remote/path/to/other/file\n"+
-							dir+"/path/to/some/file\t"+"/remote/path/to/some/file")
+						dir+"/path/to/other/file\t/remote/path/to/other/file\n"+
+							dir+"/path/to/some/file\t/remote/path/to/some/file")
 				})
 
 				Convey("list and --local tells the local path for every file in the set", func() {
@@ -593,8 +593,8 @@ func TestList(t *testing.T) {
 
 				Convey("list and --size shows the file size for each file in the set", func() {
 					s.confirmOutput(t, []string{"list", "--name", "testAddFiles", "--size"}, 0,
-						dir+"/path/to/other/file\t"+"/remote/path/to/other/file\t0\n"+
-							dir+"/path/to/some/file\t"+"/remote/path/to/some/file\t0")
+						dir+"/path/to/other/file\t/remote/path/to/other/file\t0\n"+
+							dir+"/path/to/some/file\t/remote/path/to/some/file\t0")
 				})
 
 				Convey("list with --local and --size shows the local path and size for each file", func() {
@@ -664,6 +664,38 @@ func TestList(t *testing.T) {
 						"your transformer didn't work: not a valid humgen lustre path ["+
 							dir+"/path/to/other/file]")
 				})
+			})
+		})
+	})
+
+	Convey("With a started uploading server", t, func() {
+		s, _ := NewUploadingTestServer(t)
+		So(s, ShouldNotBeNil)
+
+		Convey("Given an added set defined with files", func() {
+			dir := t.TempDir()
+			tempTestFile, err := os.CreateTemp(dir, "testFileSet")
+			So(err, ShouldBeNil)
+
+			So(os.MkdirAll(dir+"/path/to/other/", 0700), ShouldBeNil)
+			So(os.WriteFile(dir+"/path/to/other/file", []byte("data"), 0600), ShouldBeNil)
+
+			_, err = io.WriteString(tempTestFile, dir+`/path/to/some/file
+`+dir+`/path/to/other/file`)
+			So(err, ShouldBeNil)
+
+			Convey("list with --orphaned shows only orphaned files", func() {
+				s.confirmOutput(t, []string{"list", "--name", "testAddFiles", "--orphaned"}, 0, "")
+
+				So(os.Remove(dir+"/path/to/other/file"), ShouldBeNil)
+
+				exitCode, _ := s.runBinary(t, "retry", "--all", "--name", "testAddFiles")
+				So(exitCode, ShouldEqual, 0)
+
+				s.waitForStatus("testAddFiles", "Status: complete", 1*time.Second)
+
+				s.confirmOutput(t, []string{"list", "--name", "testAddFiles", "--orphaned"}, 0,
+					dir+"/path/to/some/file\t"+"/remote/path/to/some/file")
 			})
 		})
 	})

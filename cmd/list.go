@@ -36,15 +36,16 @@ import (
 
 // options for this cmd.
 var (
-	lstName     string
-	lstUser     string
-	lstLocal    bool
-	lstRemote   bool
-	lstAll      bool
-	lstDB       string
-	lstUploaded bool
-	lstSize     bool
-	lstBase64   bool
+	lstName      string
+	lstUser      string
+	lstLocal     bool
+	lstRemote    bool
+	lstAll       bool
+	lstDB        string
+	lstUploaded  bool
+	lstSize      bool
+	lstBase64    bool
+	showOrphaned bool
 )
 
 // listCmd represents the list command.
@@ -138,6 +139,8 @@ func init() {
 		"show the size of each file in bytes")
 	listCmd.Flags().BoolVarP(&lstBase64, "base64", "b", false,
 		"output paths base64 encoded")
+	listCmd.Flags().BoolVarP(&showOrphaned, "orphaned", "o", false,
+		"show only orphaned files")
 }
 
 func getAllSetsFromDBAndDisplayPaths(dbPath string, local, remote, uploaded, size, encode bool) {
@@ -160,7 +163,7 @@ func getAllSetsFromDBAndDisplayPaths(dbPath string, local, remote, uploaded, siz
 	for _, s := range sets {
 		info("getting paths for set %s.%s", s.Requester, s.Name)
 
-		entries, err := db.GetFileEntries(s.ID())
+		entries, err := db.GetFileEntries(s.ID(), nil)
 		if err != nil {
 			die(err)
 		}
@@ -229,7 +232,13 @@ func getSetFromServerAndDisplayPaths(client *server.Client,
 		return
 	}
 
-	entries, err := client.GetFiles(sets[0].ID())
+	getFiles := client.GetFiles
+
+	if showOrphaned {
+		getFiles = client.GetOrphanedFiles
+	}
+
+	entries, err := getFiles(sets[0].ID())
 	if err != nil {
 		die(err)
 	}

@@ -50,18 +50,19 @@ import (
 )
 
 const (
-	setPath          = "/set"
-	filePath         = "/files"
-	dirPath          = "/dirs"
-	entryPath        = "/entries"
-	exampleEntryPath = "/example_entries"
-	failedEntryPath  = "/failed_entries"
-	discoveryPath    = "/discover"
-	requestsPath     = "/requests"
-	workingPath      = "/working"
-	fileStatusPath   = "/file_status"
-	fileRetryPath    = "/retry"
-	removePathsPath  = "/remove_paths"
+	setPath           = "/set"
+	filePath          = "/files"
+	dirPath           = "/dirs"
+	entryPath         = "/entries"
+	orphanedEntryPath = "/orphaned_entries"
+	exampleEntryPath  = "/example_entries"
+	failedEntryPath   = "/failed_entries"
+	discoveryPath     = "/discover"
+	requestsPath      = "/requests"
+	workingPath       = "/working"
+	fileStatusPath    = "/file_status"
+	fileRetryPath     = "/retry"
+	removePathsPath   = "/remove_paths"
 
 	// EndPointAuthSet is the endpoint for getting and setting sets.
 	EndPointAuthSet = gas.EndPointAuth + setPath
@@ -74,6 +75,10 @@ const (
 
 	// EndPointAuthEntries is the endpoint for getting set entries.
 	EndPointAuthEntries = gas.EndPointAuth + entryPath
+
+	// EndPointAuthOrphanedEntries is the endpoint for getting set orphaned
+	// entries.
+	EndPointAuthOrphanedEntries = gas.EndPointAuth + orphanedEntryPath
 
 	// EndPointAuthExampleEntry is the endpoint for getting set entries.
 	EndPointAuthExampleEntry = gas.EndPointAuth + exampleEntryPath
@@ -272,6 +277,7 @@ func (s *Server) addDBEndpoints(authGroup *gin.RouterGroup) {
 	authGroup.GET(discoveryPath+idParam, s.triggerDiscovery)
 
 	authGroup.GET(entryPath+idParam, s.getEntries)
+	authGroup.GET(orphanedEntryPath+idParam, s.getOrphanedEntries)
 	authGroup.GET(exampleEntryPath+idParam, s.getExampleEntry)
 
 	authGroup.GET(dirPath+idParam, s.getDirs)
@@ -1203,12 +1209,16 @@ func getChildPathsFromPTrie(entryPath string, tree ptrie.Trie[bool]) []string {
 // LoadSetDB() must already have been called. This is called when there is a GET
 // on /rest/v1/auth/entries/[id].
 func (s *Server) getEntries(c *gin.Context) {
+	s.getFileEntries(c, nil)
+}
+
+func (s *Server) getFileEntries(c *gin.Context, filter func(*set.Entry) bool) {
 	set, ok := s.validateSet(c)
 	if !ok {
 		return
 	}
 
-	entries, err := s.db.GetFileEntries(set.ID())
+	entries, err := s.db.GetFileEntries(set.ID(), filter)
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
@@ -1220,6 +1230,10 @@ func (s *Server) getEntries(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, entries)
+}
+
+func (s *Server) getOrphanedEntries(c *gin.Context) {
+	s.getFileEntries(c, func(e *set.Entry) bool { return e.Status == set.Orphaned })
 }
 
 // getExampleEntry gets the first defined file entry for the set with the
@@ -1789,7 +1803,7 @@ func (s *Server) retryFailedSetFiles(given *set.Set) (int, error) {
 		Set:  given.Name,
 	})
 
-	entries, err := s.db.GetFileEntries(given.ID())
+	entries, err := s.db.GetFileEntries(given.ID(), nil)
 	if err != nil {
 		return 0, err
 	}

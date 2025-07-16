@@ -461,7 +461,7 @@ func TestSetDB(t *testing.T) {
 					err = db.removeEntry(set.ID(), "/a/b.txt", fileBucket)
 					So(err, ShouldBeNil)
 
-					fEntries, errg := db.GetFileEntries(set.ID())
+					fEntries, errg := db.GetFileEntries(set.ID(), nil)
 					So(errg, ShouldBeNil)
 					So(len(fEntries), ShouldEqual, 2)
 					So(fEntries[0], ShouldResemble, newEntry("/c/d.txt"))
@@ -575,7 +575,7 @@ func TestSetDB(t *testing.T) {
 					So(definedEntry, ShouldNotBeNil)
 					So(definedEntry.Path, ShouldEqual, "/a/b.txt")
 
-					fEntries, errg := db.GetFileEntries(sets[1].ID())
+					fEntries, errg := db.GetFileEntries(sets[1].ID(), nil)
 					So(errg, ShouldBeNil)
 					So(len(fEntries), ShouldEqual, 3)
 					So(fEntries[0], ShouldResemble, newEntry("/a/b.txt"))
@@ -588,7 +588,7 @@ func TestSetDB(t *testing.T) {
 					So(dEntries[0], ShouldResemble, newEntry("/g/h"))
 					So(dEntries[1], ShouldResemble, newEntry("/g/i"))
 
-					fEntries, err = db.GetFileEntries(sets[0].ID())
+					fEntries, err = db.GetFileEntries(sets[0].ID(), nil)
 					So(err, ShouldBeNil)
 					So(len(fEntries), ShouldEqual, 3)
 					So(fEntries[0], ShouldResemble, newEntry("/a/b.txt"))
@@ -663,7 +663,7 @@ func TestSetDB(t *testing.T) {
 						So(errg, ShouldBeNil)
 						So(bsets[0].LastDiscovery, ShouldHappenAfter, sets[0].LastDiscovery)
 
-						fEntries, errg := db.GetFileEntries(sets[0].ID())
+						fEntries, errg := db.GetFileEntries(sets[0].ID(), nil)
 						So(errg, ShouldBeNil)
 						So(len(fEntries), ShouldEqual, 5)
 						So(slackWriter.String(), ShouldEqual, fmt.Sprintf("%s`jim.set1` completed discovery: %d files",
@@ -753,7 +753,7 @@ func TestSetDB(t *testing.T) {
 						So(sets[0].Failed, ShouldEqual, 0)
 						So(sets[0].LastCompletedSize, ShouldEqual, 0)
 
-						fEntries, err = db.GetFileEntries(sets[0].ID())
+						fEntries, err = db.GetFileEntries(sets[0].ID(), nil)
 						So(err, ShouldBeNil)
 						So(len(fEntries), ShouldEqual, 5)
 						So(fEntries[0].Size, ShouldEqual, 3)
@@ -781,7 +781,7 @@ func TestSetDB(t *testing.T) {
 						So(sets[0].Replaced, ShouldEqual, 0)
 						So(sets[0].Skipped, ShouldEqual, 1)
 
-						fEntries, err = db.GetFileEntries(sets[0].ID())
+						fEntries, err = db.GetFileEntries(sets[0].ID(), nil)
 						So(err, ShouldBeNil)
 						So(len(fEntries), ShouldEqual, 5)
 						So(fEntries[1].Size, ShouldEqual, 2)
@@ -814,7 +814,7 @@ func TestSetDB(t *testing.T) {
 						So(sets[0].Status, ShouldEqual, Uploading)
 						So(sets[0].SizeTotal, ShouldEqual, 9)
 
-						fEntries, err = db.GetFileEntries(sets[0].ID())
+						fEntries, err = db.GetFileEntries(sets[0].ID(), nil)
 						So(err, ShouldBeNil)
 						So(len(fEntries), ShouldEqual, 5)
 						So(fEntries[2].Size, ShouldEqual, 4)
@@ -854,7 +854,7 @@ func TestSetDB(t *testing.T) {
 						So(sets[0].Skipped, ShouldEqual, 1)
 						So(sets[0].Failed, ShouldEqual, 1)
 
-						fEntries, err = db.GetFileEntries(sets[0].ID())
+						fEntries, err = db.GetFileEntries(sets[0].ID(), nil)
 						So(err, ShouldBeNil)
 						So(len(fEntries), ShouldEqual, 5)
 						So(fEntries[3].Size, ShouldEqual, 6)
@@ -887,7 +887,7 @@ func TestSetDB(t *testing.T) {
 						So(sets[0].Skipped, ShouldEqual, 1)
 						So(sets[0].Failed, ShouldEqual, 1)
 
-						fEntries, err = db.GetFileEntries(sets[0].ID())
+						fEntries, err = db.GetFileEntries(sets[0].ID(), nil)
 						So(err, ShouldBeNil)
 						So(len(fEntries), ShouldEqual, 5)
 						So(fEntries[3].Size, ShouldEqual, 6)
@@ -918,7 +918,7 @@ func TestSetDB(t *testing.T) {
 						So(slackWriter.String(), ShouldEqual, slack.BoxPrefixError+"`jim.set1` has failed uploads")
 						slackWriter.Reset()
 
-						fEntries, err = db.GetFileEntries(sets[0].ID())
+						fEntries, err = db.GetFileEntries(sets[0].ID(), nil)
 						So(err, ShouldBeNil)
 						So(len(fEntries), ShouldEqual, 5)
 						So(fEntries[3].Size, ShouldEqual, 6)
@@ -960,7 +960,7 @@ func TestSetDB(t *testing.T) {
 						So(sets[0].LastCompletedCount, ShouldEqual, 4)
 						So(sets[0].SizeUploaded, ShouldEqual, 13)
 
-						fEntries, err = db.GetFileEntries(sets[0].ID())
+						fEntries, err = db.GetFileEntries(sets[0].ID(), nil)
 						So(err, ShouldBeNil)
 						So(len(fEntries), ShouldEqual, 5)
 						So(fEntries[4].Size, ShouldEqual, 0)
@@ -998,7 +998,7 @@ func TestSetDB(t *testing.T) {
 						So(sets[0].LastCompletedSize, ShouldEqual, 15)
 						So(sets[0].LastCompletedCount, ShouldEqual, 4)
 
-						fEntries, err = db.GetFileEntries(sets[0].ID())
+						fEntries, err = db.GetFileEntries(sets[0].ID(), nil)
 						So(err, ShouldBeNil)
 						So(len(fEntries), ShouldEqual, 5)
 						So(fEntries[3].Size, ShouldEqual, 6)
@@ -1035,7 +1035,7 @@ func TestSetDB(t *testing.T) {
 								So(sets[0].SizeUploaded, ShouldEqual, 0)
 							})
 
-							fEntries, errg := db.GetFileEntries(sets[0].ID())
+							fEntries, errg := db.GetFileEntries(sets[0].ID(), nil)
 							So(errg, ShouldBeNil)
 							So(len(fEntries), ShouldEqual, 6)
 							So(fEntries[5], ShouldResemble, &Entry{Path: "/g/i/n.txt"})
@@ -1075,7 +1075,7 @@ func TestSetDB(t *testing.T) {
 							So(sets[0].Failed, ShouldEqual, 0)
 							So(sets[0].SizeUploaded, ShouldEqual, 7)
 
-							fEntries, err = db.GetFileEntries(sets[0].ID())
+							fEntries, err = db.GetFileEntries(sets[0].ID(), nil)
 							So(err, ShouldBeNil)
 							So(len(fEntries), ShouldEqual, 6)
 							So(fEntries[3].Size, ShouldEqual, 7)
@@ -1526,7 +1526,7 @@ func TestSetDB(t *testing.T) {
 				So(got.Hardlinks, ShouldEqual, 2)
 				So(got.NumFiles, ShouldEqual, 4)
 
-				entries, errg := db.GetFileEntries(setl1.ID())
+				entries, errg := db.GetFileEntries(setl1.ID(), nil)
 				So(errg, ShouldBeNil)
 				So(len(entries), ShouldEqual, 4)
 				So(entries[0].Status, ShouldEqual, Pending)
@@ -1593,7 +1593,7 @@ func TestSetDB(t *testing.T) {
 					got, errd = db.Discover(setl1.ID(), discoverCB)
 					So(errd, ShouldBeNil)
 
-					entries, errg = db.GetFileEntries(setl1.ID())
+					entries, errg = db.GetFileEntries(setl1.ID(), nil)
 					So(errg, ShouldBeNil)
 					So(len(entries), ShouldEqual, 5)
 					So(entries[0].Type, ShouldEqual, Regular)
@@ -1648,7 +1648,7 @@ func TestSetDB(t *testing.T) {
 				So(got.Symlinks, ShouldEqual, 1)
 				So(got.NumFiles, ShouldEqual, 2)
 
-				entries, errG := db.GetFileEntries(setl1.ID())
+				entries, errG := db.GetFileEntries(setl1.ID(), nil)
 				So(errG, ShouldBeNil)
 				So(len(entries), ShouldEqual, 2)
 				So(entries[0].Status, ShouldEqual, Pending)
@@ -1780,10 +1780,11 @@ func newEntry(path string) *Entry {
 	return &Entry{Path: path, Status: Registered}
 }
 
-func clearBucket(t *testing.T, db *DB, setID string, dbGetFun func(string) ([]*Entry, error), bucketName string) {
+func clearBucket(t *testing.T, db *DB, setID string,
+	dbGetFun func(string, func(*Entry) bool) ([]*Entry, error), bucketName string) {
 	t.Helper()
 
-	entries, err := dbGetFun(setID)
+	entries, err := dbGetFun(setID, nil)
 	So(err, ShouldBeNil)
 
 	for _, entry := range entries {
@@ -1798,16 +1799,22 @@ func clearFileBucket(t *testing.T, db *DB, setID string) {
 	clearBucket(t, db, setID, db.GetFileEntries, fileBucket)
 }
 
+func wrapDBGetFun(fn func(string) ([]*Entry, error)) func(string, func(*Entry) bool) ([]*Entry, error) {
+	return func(name string, _ func(*Entry) bool) ([]*Entry, error) {
+		return fn(name)
+	}
+}
+
 func clearDirBucket(t *testing.T, db *DB, setID string) {
 	t.Helper()
 
-	clearBucket(t, db, setID, db.GetDirEntries, dirBucket)
+	clearBucket(t, db, setID, wrapDBGetFun(db.GetDirEntries), dirBucket)
 }
 
 func clearDiscoveredFilesBucket(t *testing.T, db *DB, setID string) {
 	t.Helper()
 
-	clearBucket(t, db, setID, db.GetDiscoveredFileEntries, discoveredBucket)
+	clearBucket(t, db, setID, wrapDBGetFun(db.GetDiscoveredFileEntries), discoveredBucket)
 }
 
 func discoverASet(db *DB, set *Set, discoveryFunc func() ([]*Dirent, []*Dirent, error), pendingTestsFunc func()) {

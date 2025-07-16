@@ -516,7 +516,7 @@ func (d *DB) getDiscoveredFoldersForOldSets(sid string) (map[string]bool, error)
 
 	discoveredFolders := make(map[string]bool)
 
-	fileEntries, err := d.getEntries(sid, discoveredBucket)
+	fileEntries, err := d.getEntries(sid, discoveredBucket, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -576,7 +576,7 @@ func (d *DB) getPathToEntryMapFromBuckets(buckets []string, sid string) (map[str
 	entriesMap := make(map[string]bool)
 
 	for _, bucket := range buckets {
-		entries, err := d.getEntries(sid, bucket)
+		entries, err := d.getEntries(sid, bucket, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -1573,13 +1573,13 @@ func (d *DBRO) GetByID(id string) *Set {
 
 // GetFileEntries returns all the file entries for the given set (both
 // SetFileEntries and SetDiscoveredEntries).
-func (d *DBRO) GetFileEntries(setID string) ([]*Entry, error) {
-	entries, err := d.getEntries(setID, fileBucket)
+func (d *DBRO) GetFileEntries(setID string, filter func(*Entry) bool) ([]*Entry, error) {
+	entries, err := d.getEntries(setID, fileBucket, filter)
 	if err != nil {
 		return nil, err
 	}
 
-	entries2, err := d.getEntries(setID, discoveredBucket)
+	entries2, err := d.getEntries(setID, discoveredBucket, filter)
 	if err != nil {
 		return nil, err
 	}
@@ -1641,11 +1641,15 @@ func (d *DBRO) GetDefinedFileEntry(setID string) (*Entry, error) {
 
 // getEntries returns all the entries for the given set from the given sub
 // bucket prefix.
-func (d *DBRO) getEntries(setID, bucketName string) ([]*Entry, error) {
+func (d *DBRO) getEntries(setID, bucketName string, filter func(*Entry) bool) ([]*Entry, error) {
 	var entries []*Entry
 
 	cb := func(v []byte) {
-		entries = append(entries, d.decodeEntry(v))
+		entry := d.decodeEntry(v)
+
+		if filter == nil || filter(entry) {
+			entries = append(entries, entry)
+		}
 	}
 
 	err := d.db.View(func(tx *bolt.Tx) error {
@@ -1742,28 +1746,28 @@ func (d *DBRO) GetFailedEntries(setID string) ([]*Entry, int, error) {
 // GetPureFileEntries returns all the file entries for the given set (only
 // SetFileEntries, not SetDiscoveredEntries).
 func (d *DBRO) GetPureFileEntries(setID string) ([]*Entry, error) {
-	return d.getEntries(setID, fileBucket)
+	return d.getEntries(setID, fileBucket, nil)
 }
 
 // GetDiscoveredFileEntries returns all the discovered file entries for the given set (only
 // SetDiscoveredEntries, not SetFileEntries).
 func (d *DBRO) GetDiscoveredFileEntries(setID string) ([]*Entry, error) {
-	return d.getEntries(setID, discoveredBucket)
+	return d.getEntries(setID, discoveredBucket, nil)
 }
 
 // GetDirEntries returns all the dir entries for the given set.
 func (d *DBRO) GetDirEntries(setID string) ([]*Entry, error) {
-	return d.getEntries(setID, dirBucket)
+	return d.getEntries(setID, dirBucket, nil)
 }
 
 // GetDirEntries returns all the dir entries for the given set.
 func (d *DBRO) GetAllDirEntries(setID string) ([]*Entry, error) {
-	entries, err := d.getEntries(setID, dirBucket)
+	entries, err := d.getEntries(setID, dirBucket, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	entries2, err := d.getEntries(setID, discoveredFoldersBucket)
+	entries2, err := d.getEntries(setID, discoveredFoldersBucket, nil)
 	if err != nil {
 		return nil, err
 	}

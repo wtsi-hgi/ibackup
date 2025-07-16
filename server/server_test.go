@@ -3280,7 +3280,7 @@ func TestServer(t *testing.T) {
 					So(gotSet.Status, ShouldEqual, set.PendingUpload)
 					So(gotSet.NumFiles, ShouldEqual, 1)
 
-					entries, errg := s.db.GetFileEntries(exampleSet.ID())
+					entries, errg := s.db.GetFileEntries(exampleSet.ID(), nil)
 					So(errg, ShouldBeNil)
 					So(len(entries), ShouldEqual, 1)
 					So(entries[0].Path, ShouldEqual, regPath)
@@ -3304,7 +3304,7 @@ func TestServer(t *testing.T) {
 					ok := <-racCalled
 					So(ok, ShouldBeTrue)
 
-					entries, errg := s.db.GetFileEntries(exampleSet.ID())
+					entries, errg := s.db.GetFileEntries(exampleSet.ID(), nil)
 					So(errg, ShouldBeNil)
 					So(len(entries), ShouldEqual, 1)
 					So([]byte(entries[0].Path), ShouldResemble, []byte(path))

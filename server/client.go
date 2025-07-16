@@ -259,6 +259,20 @@ func (c *Client) GetFiles(setID string) ([]*set.Entry, error) {
 	return entries, err
 }
 
+// GetOrphanedFiles gets the orphaned file paths and their backup status for the
+// given set.
+func (c *Client) GetOrphanedFiles(setID string) ([]*set.Entry, error) {
+	var entries []*set.Entry
+
+	err := c.getThing(EndPointAuthOrphanedEntries+"/"+setID, &entries)
+
+	for _, entry := range entries {
+		entry.CorrectFromJSON()
+	}
+
+	return entries, err
+}
+
 // GetExampleFile gets an example (not discovered) file for the given set that
 // was supplied to SetFiles(). If there are no undiscovered files, returns a
 // nil entry and error.
