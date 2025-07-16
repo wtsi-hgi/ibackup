@@ -1649,7 +1649,7 @@ func (d *DBRO) GetDefinedFileEntry(setID string) (*Entry, error) {
 // getEntries returns all the entries for the given set from the given sub
 // bucket prefix.
 //
-// Accepts an optional  filter func that returns true for the entries to gather.
+// Accepts an optional filter func that returns true for the entries to gather.
 func (d *DBRO) getEntries(setID, bucketName string, filter FileEntryFilter) ([]*Entry, error) {
 	var entries []*Entry
 

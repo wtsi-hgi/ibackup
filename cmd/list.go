@@ -36,16 +36,16 @@ import (
 
 // options for this cmd.
 var (
-	lstName      string
-	lstUser      string
-	lstLocal     bool
-	lstRemote    bool
-	lstAll       bool
-	lstDB        string
-	lstUploaded  bool
-	lstSize      bool
-	lstBase64    bool
-	showOrphaned bool
+	lstName         string
+	lstUser         string
+	lstLocal        bool
+	lstRemote       bool
+	lstAll          bool
+	lstDB           string
+	lstUploaded     bool
+	lstSize         bool
+	lstBase64       bool
+	lstShowOrphaned bool
 )
 
 // listCmd represents the list command.
@@ -139,7 +139,7 @@ func init() {
 		"show the size of each file in bytes")
 	listCmd.Flags().BoolVarP(&lstBase64, "base64", "b", false,
 		"output paths base64 encoded")
-	listCmd.Flags().BoolVarP(&showOrphaned, "orphaned", "o", false,
+	listCmd.Flags().BoolVarP(&lstShowOrphaned, "orphaned", "o", false,
 		"show only orphaned files")
 }
 
@@ -234,7 +234,7 @@ func getSetFromServerAndDisplayPaths(client *server.Client,
 
 	getFiles := client.GetFiles
 
-	if showOrphaned {
+	if lstShowOrphaned {
 		getFiles = client.GetOrphanedFiles
 	}
 
