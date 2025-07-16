@@ -60,17 +60,16 @@ func (e Error) Error() string {
 }
 
 const (
-	ErrInvalidSetID              = "invalid set ID"
-	ErrInvalidRequest            = "request lacks Requester or Set"
-	ErrInvalidEntry              = "invalid set entry"
-	ErrInvalidTransformerPath    = "invalid transformer path concatenation"
-	ErrNoAddDuringDiscovery      = "can't add set while set is being discovered"
-	ErrPathNotInSet              = "path(s) do not belong to the backup set"
-	ErrRemovalWhenSetNotComplete = "you can only remove from completed sets"
-	ErrSetIsNotWritable          = "the set is read-only, you cannot change it"
-	ErrTransformerAlreadyUsed    = "you cannot edit the transformer on a set with uploaded files"
-	ErrTransformerInUse          = "you cannot edit the transformer on a set with unfinished uploads"
-	ErrPendingRemovals           = "the set has unfinished removals, you cannot change it"
+	ErrInvalidSetID           = "invalid set ID"
+	ErrInvalidRequest         = "request lacks Requester or Set"
+	ErrInvalidEntry           = "invalid set entry"
+	ErrInvalidTransformerPath = "invalid transformer path concatenation"
+	ErrNoAddDuringDiscovery   = "can't add set while set is being discovered"
+	ErrPathNotInSet           = "path(s) do not belong to the backup set"
+	ErrSetIsNotWritable       = "the set is read-only, you cannot change it"
+	ErrTransformerAlreadyUsed = "you cannot edit the transformer on a set with uploaded files"
+	ErrTransformerInUse       = "you cannot edit the transformer on a set with unfinished uploads"
+	ErrPendingRemovals        = "the set has unfinished removals, you cannot change it"
 
 	setsBucket                    = "sets"
 	userToSetBucket               = "userLookup"
@@ -92,6 +91,8 @@ const (
 
 	backupExt = ".backingup"
 
+	TrashPrefix = ".trash-"
+
 	// workerPoolSizeFiles is the max number of concurrent file stats we'll do
 	// during discovery.
 	workerPoolSizeFiles = 16
@@ -112,6 +113,13 @@ const (
 	Removed                               // 2
 )
 
+type RemoveAction int8
+
+const (
+	ToTrash  RemoveAction = iota // 0
+	ToRemove                     // 1
+)
+
 // RemoveReq contains information about a remove request for a path.
 type RemoveReq struct {
 	Path                string
@@ -119,6 +127,7 @@ type RemoveReq struct {
 	IsDir               bool
 	RemoteRemovalStatus RemovalStatus
 	IsComplete          bool
+	Action              RemoveAction
 }
 
 func (rq RemoveReq) Key() string {
@@ -136,12 +145,13 @@ func (rq RemoveReq) ItemDef(ttr time.Duration) *queue.ItemDef {
 }
 
 // NewRemoveRequest creates a remove requests using the provided information.
-func NewRemoveRequest(path string, set *Set, isDir bool) RemoveReq {
+func NewRemoveRequest(path string, set *Set, isDir bool, action RemoveAction) RemoveReq {
 	return RemoveReq{
 		Path:                path,
 		Set:                 set,
 		IsDir:               isDir,
 		RemoteRemovalStatus: NotRemoved,
+		Action:              action,
 	}
 }
 
@@ -380,26 +390,6 @@ func (d *DB) encodeToBytes(thing interface{}) []byte {
 	return encoded
 }
 
-// ValidateRemoveInputs returns an error if the provided set is not complete or
-// if any provided path is not in the given set. Also returns the valid paths
-// classified into a slice of filepaths or dirpaths.
-func (d *DB) ValidateRemoveInputs(set *Set, paths []string) ([]string, []string, error) {
-	err := d.validateSet(set)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	return d.validateFileAndDirPaths(set, paths)
-}
-
-func (d *DB) validateSet(set *Set) error {
-	if set.Status == Complete {
-		return nil
-	}
-
-	return Error{Msg: ErrRemovalWhenSetNotComplete, id: set.Name}
-}
-
 // IsSetReadyToAddFiles checks if the set is ready to have files/dirs added to it.
 func (d *DB) IsSetReadyToAddFiles(set *Set) error {
 	if set.ReadOnly {
@@ -420,10 +410,10 @@ func (d *DB) IsSetReadyToAddFiles(set *Set) error {
 	return nil
 }
 
-// validateFileAndDirPaths returns an error if any provided path is not in the
+// ValidateFileAndDirPaths returns an error if any provided path is not in the
 // given set. Also classifies the valid paths into a slice of filepaths or
 // dirpaths.
-func (d *DB) validateFileAndDirPaths(set *Set, paths []string) ([]string, []string, error) {
+func (d *DB) ValidateFileAndDirPaths(set *Set, paths []string) ([]string, []string, error) {
 	filePaths, notFilePaths, err := d.validateFilePaths(set, paths)
 	if err != nil {
 		return nil, nil, err
@@ -718,6 +708,37 @@ func (d *DB) mergeEntries(setID string, dirents []*Dirent, bucketName string, in
 
 		return ec.UpdateOrCreateEntries(dirents)
 	})
+}
+
+// PutEntryInTrash puts the given entry into the trash set for the given set.
+func (d *DB) PutEntryInTrash(set *Set, entry *Entry) error {
+	destSet := BuildTrashSetFromSet(set)
+
+	bucketName := fileBucket
+	if entry.isDir {
+		bucketName = dirBucket
+	}
+
+	return d.db.Update(func(tx *bolt.Tx) error {
+		sfsb, err := d.newSetFileBucket(tx, bucketName, destSet.ID())
+		if err != nil {
+			return err
+		}
+
+		entry.TrashDate = time.Now()
+
+		return sfsb.Bucket.Put([]byte(entry.Path), d.encodeToBytes(entry))
+	})
+}
+
+// BuildTrashSetFromSet builds a brand new set which copies the given set's
+// Requester and Transformer. Use this set to move trashed files to.
+func BuildTrashSetFromSet(givenSet *Set) Set {
+	return Set{
+		Name:        TrashPrefix + givenSet.Name,
+		Requester:   givenSet.Requester,
+		Transformer: givenSet.Transformer,
+	}
 }
 
 // SetRemoveRequests writes a list of remove requests into the database.
@@ -1317,7 +1338,7 @@ func (d *DBRO) getEntry(tx *bolt.Tx, setID, path string) (*Entry, *bolt.Bucket, 
 		b     *bolt.Bucket
 	)
 
-	for _, kind := range []string{fileBucket, discoveredBucket, dirBucket} {
+	for _, kind := range []string{fileBucket, discoveredBucket, dirBucket, discoveredFoldersBucket} {
 		entry, b = d.getEntryFromSubbucket(kind, setID, path, setsBucket)
 		if entry != nil {
 			break
@@ -1571,13 +1592,35 @@ func (d *DBRO) GetFileEntries(setID string) ([]*Entry, error) {
 func (d *DBRO) GetFileEntryForSet(setID, filePath string) (*Entry, error) {
 	var entry *Entry
 
-	if err := d.db.View(func(tx *bolt.Tx) error {
+	err := d.db.View(func(tx *bolt.Tx) error {
 		var err error
 
 		entry, _, err = d.getEntry(tx, setID, filePath)
 
 		return err
-	}); err != nil {
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return entry, nil
+}
+
+// GetDirEntryForSet returns the dir entry for the given path in the given
+// set.
+func (d *DBRO) GetDirEntryForSet(setID, dirPath string) (*Entry, error) {
+	var entry *Entry
+
+	dirPath = strings.TrimSuffix(dirPath, "/")
+
+	err := d.db.View(func(tx *bolt.Tx) error {
+		var err error
+
+		entry, _, err = d.getEntry(tx, setID, dirPath)
+
+		return err
+	})
+	if err != nil {
 		return nil, err
 	}
 

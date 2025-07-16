@@ -166,6 +166,12 @@ func (s *Server) triggerDiscovery(c *gin.Context) {
 		return
 	}
 
+	if isTrashSet(set.Name) {
+		c.AbortWithError(http.StatusBadRequest, ErrTrashSetName) //nolint:errcheck
+
+		return
+	}
+
 	if err := s.discoverSet(set); err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
@@ -249,7 +255,7 @@ func (s *Server) discoverSetRemovals(given *set.Set) error {
 		return err
 	}
 
-	return s.removeFilesAndDirs(given, filesToRemove, dirsToRemove)
+	return s.removeFilesAndDirs(given, filesToRemove, dirsToRemove, set.ToRemove)
 }
 
 func (s *Server) findFilesToRemove(given *set.Set) ([]string, error) {

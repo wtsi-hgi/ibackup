@@ -660,7 +660,7 @@ func displayFailedEntries(client *server.Client, given *set.Set) {
 		die(err)
 	}
 
-	displayEntries(failed, false, nil)
+	displayEntries(failed, false, false, nil)
 
 	if skipped > 0 {
 		cliPrintf("[... and %d others]\n", skipped)
@@ -676,27 +676,33 @@ func displayAllEntries(client *server.Client, given *set.Set, showRemotePaths bo
 		die(err)
 	}
 
-	displayEntries(all, showRemotePaths, transformer)
+	showTrashDate := strings.HasPrefix(given.Name, set.TrashPrefix)
+
+	displayEntries(all, showRemotePaths, showTrashDate, transformer)
 }
 
 // displayEntries prints info about the given file entries to STDOUT.
-func displayEntries(entries []*set.Entry, showRemotePaths bool, transformer transfer.PathTransformer) {
+func displayEntries(entries []*set.Entry, showRemotePaths, showTrashDate bool, transformer transfer.PathTransformer) {
 	if len(entries) == 0 {
 		return
 	}
 
-	displayHeader(showRemotePaths)
+	displayHeader(showRemotePaths, showTrashDate)
 
 	for _, entry := range entries {
 		remotePath := getRemotePath(entry.Path, transformer, showRemotePaths)
-		displayEntry(entry, remotePath)
+		displayEntry(entry, showTrashDate, remotePath)
 	}
 }
 
 // displayHeader adds a column for remote path if showRemotePath is true and
 // prints the header.
-func displayHeader(showRemotePath bool) {
+func displayHeader(showRemotePath, showTrashDate bool) {
 	cols := []string{"Local Path", "Status", "Size", "Attempts", "Date", "Error"}
+
+	if showTrashDate {
+		cols = slices.Insert(cols, 1, "Trash Date")
+	}
 
 	if showRemotePath {
 		cols = slices.Insert(cols, 1, "Remote Path")
@@ -729,7 +735,7 @@ func getRemotePath(path string, transformer transfer.PathTransformer, wantRemote
 
 // displayEntry displays information about a given entry, including its remote path
 // if it's set.
-func displayEntry(entry *set.Entry, remotePath string) {
+func displayEntry(entry *set.Entry, showTrashDate bool, remotePath string) {
 	var date string
 
 	if entry.LastAttempt.IsZero() {
@@ -745,6 +751,10 @@ func displayEntry(entry *set.Entry, remotePath string) {
 		strconv.Itoa(entry.Attempts),
 		date,
 		entry.LastError,
+	}
+
+	if showTrashDate {
+		cols = slices.Insert(cols, 1, entry.TrashDate.Format(dateShort))
 	}
 
 	if remotePath != "" {

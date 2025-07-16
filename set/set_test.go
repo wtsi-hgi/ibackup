@@ -1227,6 +1227,19 @@ func TestSetDB(t *testing.T) {
 					So(err, ShouldNotBeNil)
 					So(err.Error(), ShouldStartWith, "can't add set while set is being discovered")
 				})
+
+				Convey("You can get sets with a particular file", func() {
+					sets, errg := db.GetAllSetsForFile("/a/b.txt")
+					So(errg, ShouldBeNil)
+					So(sets, ShouldHaveLength, 2)
+					So(sets, ShouldContain, set.ID())
+					So(sets, ShouldContain, set2.ID())
+
+					sets, err = db.GetAllSetsForFile("/c/k.txt")
+					So(err, ShouldBeNil)
+					So(sets, ShouldHaveLength, 1)
+					So(sets, ShouldContain, set2.ID())
+				})
 			})
 
 			Convey("And add a set with pure hardlinks to it", func() {
