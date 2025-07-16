@@ -3276,7 +3276,7 @@ func TestTrashRemove(t *testing.T) {
 					s.waitForStatus(trashSetName, "Removal status: 3 / 3 objects removed", timeout)
 				})
 
-				FocusConvey("if the server dies during removal, the removal will continue upon server startup", func() {
+				Convey("if the server dies during removal, the removal will continue upon server startup", func() {
 					tempTestFileOfPathsToRemove1, errt := os.CreateTemp(dir, "testFileSet")
 					So(errt, ShouldBeNil)
 
@@ -3297,7 +3297,6 @@ func TestTrashRemove(t *testing.T) {
 					exitCode, _ = s.runBinary(t, "trash", "--remove", "--name", setName, "--items", tempTestFileOfPathsToRemove2.Name())
 					So(exitCode, ShouldEqual, 0)
 
-					fmt.Println("server shutdown")
 					err = s.Shutdown()
 					So(err, ShouldBeNil)
 
@@ -3306,19 +3305,197 @@ func TestTrashRemove(t *testing.T) {
 					s.waitForStatus(trashSetName, "Removal status: 8 / 8 objects removed", timeout)
 				})
 
-				Convey("Remove with a hardlink removes both the hardlink file and inode file", func() {
+				Convey("Trash remove with a hardlink removes both the hardlink file and inode file", func() {
 					remoteInode := getMetaValue(getRemoteMeta(filepath.Join(remotePath, "link")), "ibackup:remotehardlink")
 
 					_, err = exec.Command("ils", remoteInode).CombinedOutput()
 					So(err, ShouldBeNil)
 
-					s.removePath(t, setName, linkPath, 1)
+					s.trashRemovePath(t, setName, linkPath, 1)
 
 					_, err = exec.Command("ils", remoteLink).CombinedOutput()
 					So(err, ShouldNotBeNil)
 
 					_, err = exec.Command("ils", remoteInode).CombinedOutput()
 					So(err, ShouldNotBeNil)
+				})
+
+				Convey("And another set with a hardlink to the same file", func() {
+					linkPath2 := filepath.Join(path, "link2")
+
+					err = os.Link(file1, linkPath2)
+					So(err, ShouldBeNil)
+
+					s.addSetForTesting(t, "testHardlinks", transformer, linkPath2)
+
+					s.waitForStatus("testHardlinks", "\nStatus: complete", timeout)
+
+					Convey("Removing a hardlink does not remove the inode file", func() {
+						remoteInode := getMetaValue(getRemoteMeta(filepath.Join(remotePath, "link")), "ibackup:remotehardlink")
+
+						_, err = exec.Command("ils", remoteInode).CombinedOutput()
+						So(err, ShouldBeNil)
+
+						s.trashRemovePath(t, setName, linkPath, 1)
+
+						_, err = exec.Command("ils", remoteLink).CombinedOutput()
+						So(err, ShouldNotBeNil)
+
+						_, err = exec.Command("ils", remoteInode).CombinedOutput()
+						So(err, ShouldBeNil)
+					})
+				})
+
+				Convey("And if you trash remove a file nested in an otherwise empty dir", func() {
+					s.trashRemovePath(t, setName, file3, 1)
+
+					output, errc := exec.Command("ils", "-r", remotePath).CombinedOutput()
+					So(errc, ShouldBeNil)
+					So(string(output), ShouldNotContainSubstring, "path/to/some/dir")
+					So(string(output), ShouldNotContainSubstring, "file3\n")
+
+					Convey("You can trash remove its parent folder from the db", func() {
+						s.confirmOutputContains(t, []string{"status", "--name", trashSetName, "-d"},
+							0, dir1)
+
+						s.trashRemovePath(t, setName, dir1, 1)
+
+						exitCode, outputStr := s.runBinary(t, "status", "--name", trashSetName, "-d")
+						So(exitCode, ShouldEqual, 0)
+						So(outputStr, ShouldNotContainSubstring, dir1+"/")
+						So(outputStr, ShouldNotContainSubstring, dir1+" => ")
+					})
+				})
+
+				Convey("And a set with the same files added by a different user", func() {
+					user, erru := user.Current()
+					So(erru, ShouldBeNil)
+
+					setName2 := "different_user_set"
+
+					exitCode, _ := s.runBinary(t, "add", "--name", setName2, "--transformer",
+						transformer, "--items", tempTestFileOfPaths.Name(), "--user", "testUser")
+
+					So(exitCode, ShouldEqual, 0)
+
+					s.waitForStatusWithUser(setName2, "\nStatus: complete", "testUser", 20*time.Second)
+
+					FocusConvey("If you trash remove the file, instead, removes the metadata related to the set", func() {
+						output := getRemoteMeta(filepath.Join(remotePath, "file1"))
+						So(output, ShouldContainSubstring, trashSetName)
+						So(output, ShouldContainSubstring, setName2)
+
+						s.trashRemovePath(t, setName, file1, 1)
+
+						FocusConvey("The file is still in iRODS", func() {
+							outputBytes, errc := exec.Command("ils", remotePath).CombinedOutput()
+							So(errc, ShouldBeNil)
+							So(string(outputBytes), ShouldContainSubstring, "file1")
+
+							FocusConvey("Metadata related to the set is removed", func() {
+								output = getRemoteMeta(filepath.Join(remotePath, "file1"))
+								So(output, ShouldNotContainSubstring, trashSetName)
+								So(output, ShouldContainSubstring, setName2)
+
+								FocusConvey("Metadata related to the set's user is removed", func() {
+									requesters := getMetaValue(getRemoteMeta(filepath.Join(remotePath, "file1")), transfer.MetaKeyRequester)
+									So(requesters, ShouldNotContainSubstring, user.Username)
+								})
+							})
+						})
+					})
+
+					FocusConvey("Trash remove does not try and fail to remove the provided dir from iRODS", func() {
+						output, errc := exec.Command("ils", "-r", remotePath).CombinedOutput()
+						So(errc, ShouldBeNil)
+						So(string(output), ShouldContainSubstring, "path/to/some/dir")
+
+						s.trashRemovePath(t, setName, dir1, 2)
+
+						output, errc = exec.Command("ils", "-r", remotePath).CombinedOutput()
+						So(errc, ShouldBeNil)
+						So(string(output), ShouldContainSubstring, "path/to/some/dir")
+					})
+
+					FocusConvey("Trash remove on a file removes the user as a requester", func() {
+						s.trashRemovePath(t, setName, file1, 1)
+
+						requesters := getMetaValue(getRemoteMeta(filepath.Join(remotePath, "file1")), transfer.MetaKeyRequester)
+
+						So(requesters, ShouldNotContainSubstring, user.Username)
+					})
+
+					FocusConvey("And a second set with the same files added by the same user", func() {
+						setName3 := "same_user_set"
+
+						s.addSetForTestingWithItems(t, setName3, transformer, tempTestFileOfPaths.Name())
+
+						FocusConvey("Trash remove keeps the user as a requester", func() {
+							s.trashRemovePath(t, setName, file1, 1)
+
+							requesters := getMetaValue(getRemoteMeta(filepath.Join(remotePath, "file1")), transfer.MetaKeyRequester)
+
+							So(requesters, ShouldContainSubstring, user.Username)
+						})
+					})
+				})
+
+				Convey("And a set with the same files and name added by a different user", func() {
+					setName2 := setName
+					username := "testUser"
+
+					exitCode, _ := s.runBinary(t, "add", "--name", setName2, "--transformer",
+						transformer, "--items", tempTestFileOfPaths.Name(), "--user", username)
+
+					So(exitCode, ShouldEqual, 0)
+
+					s.waitForStatusWithUser(setName2, "\nStatus: complete", username, 20*time.Second)
+
+					FocusConvey("If the different user also removes files and folders", func() {
+						exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--user", username, "--items", tempTestFileOfPaths.Name())
+						So(exitCode, ShouldEqual, 0)
+
+						s.waitForStatusWithUser(setName, "Removal status: 9 / 9 objects removed", username, timeout)
+
+						FocusConvey("If you trash remove a file from one set", func() {
+							s.trashRemovePath(t, setName, file1, 1)
+
+							FocusConvey("The set name will still appear in the metadata", func() {
+								sets := getMetaValue(getRemoteMeta(filepath.Join(remotePath, "file1")), transfer.MetaKeySets)
+								So(sets, ShouldContainSubstring, trashSetName)
+							})
+						})
+					})
+				})
+
+				FocusConvey("If a file fails to be removed, the error is displayed on the file", func() {
+					file1remote := filepath.Join(remotePath, "file1")
+
+					_, err = exec.Command("ichmod", "read", "rk18", file1remote).CombinedOutput()
+					So(err, ShouldBeNil)
+
+					defer func() {
+						exec.Command("ichmod", "write", "rk18", file1remote).CombinedOutput()
+					}()
+
+					exitCode, _ := s.runBinary(t, "trash", "--remove", "--name", setName, "--path", file1)
+					So(exitCode, ShouldEqual, 0)
+
+					errorMsg := fmt.Sprintf("CAT_NO_ACCESS_PERMISSION")
+
+					s.waitForStatusWithFlags(trashSetName, errorMsg, 2*time.Second, "-d")
+
+					FocusConvey("And displays the error in trashed set status if not fixed", func() {
+						s.waitForStatus(trashSetName, fmt.Sprintf("Error: Error when removing: metamod operation failed: Failed to rm metadata"), 30*time.Second)
+					})
+
+					// TODO - rk18 not in slice when it should be
+					FocusConvey("And succeeds if issue is fixed during retries", func() {
+						_, err = exec.Command("ichmod", "write", "rk18", file1remote).CombinedOutput()
+						So(err, ShouldBeNil)
+
+						s.waitForStatus(trashSetName, "Removal status: 1 / 1 objects removed", 30*time.Second)
+					})
 				})
 			})
 
@@ -3348,195 +3525,6 @@ func TestTrashRemove(t *testing.T) {
 
 						s.waitForStatus(trashSetName, "Removal status: 4 / 4 objects removed", timeout)
 					})
-				})
-			})
-
-			Convey("And another set with a hardlink to the same file", func() {
-				linkPath2 := filepath.Join(path, "link2")
-
-				err = os.Link(file1, linkPath2)
-				So(err, ShouldBeNil)
-
-				s.addSetForTesting(t, "testHardlinks", transformer, linkPath2)
-
-				s.waitForStatus("testHardlinks", "\nStatus: complete", 10*time.Second)
-
-				Convey("Removing a hardlink does not remove the inode file", func() {
-					remoteInode := getMetaValue(getRemoteMeta(filepath.Join(remotePath, "link")), "ibackup:remotehardlink")
-
-					_, err = exec.Command("ils", remoteInode).CombinedOutput()
-					So(err, ShouldBeNil)
-
-					s.removePath(t, setName, linkPath, 1)
-
-					_, err = exec.Command("ils", remoteLink).CombinedOutput()
-					So(err, ShouldNotBeNil)
-
-					_, err = exec.Command("ils", remoteInode).CombinedOutput()
-					So(err, ShouldBeNil)
-				})
-			})
-
-			// Convey("Remove removes the provided dir from iRODS", func() {
-			// 	output, errc := exec.Command("ils", "-r", remotePath).CombinedOutput()
-			// 	So(errc, ShouldBeNil)
-			// 	So(string(output), ShouldContainSubstring, "path/to/some/dir")
-			// 	So(string(output), ShouldContainSubstring, "file3\n")
-
-			// 	s.removePath(t, setName, dir1, 2)
-
-			// 	output, err = exec.Command("ils", "-r", remotePath).CombinedOutput()
-			// 	So(err, ShouldBeNil)
-			// 	So(string(output), ShouldContainSubstring, "dir_not_removed\n")
-			// 	So(string(output), ShouldNotContainSubstring, "path/to/some/dir")
-			// 	So(string(output), ShouldNotContainSubstring, "file3\n")
-			// })
-
-			Convey("And if you remove a file nested in an otherwise empty dir", func() {
-				s.removePath(t, setName, file3, 1)
-
-				output, errc := exec.Command("ils", "-r", remotePath).CombinedOutput()
-				So(errc, ShouldBeNil)
-				So(string(output), ShouldNotContainSubstring, "path/to/some/dir")
-				So(string(output), ShouldNotContainSubstring, "file3\n")
-
-				Convey("You can remove its parent folder from the db", func() {
-					s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
-						0, dir1)
-
-					s.removePath(t, setName, dir1, 1)
-
-					s.confirmOutputDoesNotContain(t, []string{"status", "--name", setName, "-d"},
-						0, dir1+"/")
-
-					s.confirmOutputDoesNotContain(t, []string{"status", "--name", setName, "-d"},
-						0, dir1+" => ")
-				})
-			})
-
-			Convey("And a set with the same files added by a different user", func() {
-				user, erru := user.Current()
-				So(erru, ShouldBeNil)
-
-				setName2 := "different_user_set"
-
-				exitCode, _ := s.runBinary(t, "add", "--name", setName2, "--transformer",
-					transformer, "--items", tempTestFileOfPaths.Name(), "--user", "testUser")
-
-				So(exitCode, ShouldEqual, 0)
-
-				s.waitForStatusWithUser(setName2, "\nStatus: complete", "testUser", 20*time.Second)
-
-				Convey("Remove removes the metadata related to the set", func() {
-					output := getRemoteMeta(filepath.Join(remotePath, "file1"))
-					So(output, ShouldContainSubstring, setName)
-					So(output, ShouldContainSubstring, setName2)
-
-					s.removePath(t, setName, file1, 1)
-
-					output = getRemoteMeta(filepath.Join(remotePath, "file1"))
-					So(output, ShouldNotContainSubstring, setName)
-					So(output, ShouldContainSubstring, setName2)
-				})
-
-				Convey("Remove does not try and fail to remove the provided dir from iRODS", func() {
-					output, errc := exec.Command("ils", "-r", remotePath).CombinedOutput()
-					So(errc, ShouldBeNil)
-					So(string(output), ShouldContainSubstring, "path/to/some/dir")
-
-					s.removePath(t, setName, dir1, 2)
-
-					output, errc = exec.Command("ils", "-r", remotePath).CombinedOutput()
-					So(errc, ShouldBeNil)
-					So(string(output), ShouldContainSubstring, "path/to/some/dir")
-				})
-
-				Convey("Remove does not remove the provided file from iRODS", func() {
-					s.removePath(t, setName, file1, 1)
-
-					output, errc := exec.Command("ils", remotePath).CombinedOutput()
-					So(errc, ShouldBeNil)
-					So(string(output), ShouldContainSubstring, "file1")
-				})
-
-				Convey("Remove on a file removes the user as a requester", func() {
-					s.removePath(t, setName, file1, 1)
-
-					requesters := getMetaValue(getRemoteMeta(filepath.Join(remotePath, "file1")), "ibackup:requesters")
-
-					So(requesters, ShouldNotContainSubstring, user.Username)
-				})
-
-				Convey("And a second set with the same files added by the same user", func() {
-					setName3 := "same_user_set"
-
-					s.addSetForTestingWithItems(t, setName3, transformer, tempTestFileOfPaths.Name())
-
-					Convey("Remove keeps the user as a requester", func() {
-						s.removePath(t, setName, file1, 1)
-
-						requesters := getMetaValue(getRemoteMeta(filepath.Join(remotePath, "file1")), "ibackup:requesters")
-
-						So(requesters, ShouldContainSubstring, user.Username)
-					})
-				})
-			})
-
-			Convey("And a set with the same files and name added by a different user", func() {
-				user, erru := user.Current()
-				So(erru, ShouldBeNil)
-
-				setName2 := setName
-
-				exitCode, _ := s.runBinary(t, "add", "--name", setName2, "--transformer",
-					transformer, "--items", tempTestFileOfPaths.Name(), "--user", "testUser")
-
-				So(exitCode, ShouldEqual, 0)
-
-				s.waitForStatusWithUser(setName2, "\nStatus: complete", "testUser", 20*time.Second)
-
-				Convey("Remove on a file removes the user as a requester but not the file", func() {
-					s.removePath(t, setName, file1, 1)
-
-					requesters := getMetaValue(getRemoteMeta(filepath.Join(remotePath, "file1")), "ibackup:requesters")
-
-					So(requesters, ShouldNotContainSubstring, user.Username)
-				})
-
-				Convey("And a second set with the same files added by the same user", func() {
-					setName3 := "same_user_set"
-
-					s.addSetForTestingWithItems(t, setName3, transformer, tempTestFileOfPaths.Name())
-
-					Convey("Remove keeps the user as a requester", func() {
-						s.removePath(t, setName, file1, 1)
-
-						requesters := getMetaValue(getRemoteMeta(filepath.Join(remotePath, "file1")), "ibackup:requesters")
-
-						So(requesters, ShouldContainSubstring, user.Username)
-					})
-				})
-			})
-
-			Convey("If a file fails to be removed, the error is displayed on the file", func() {
-				removeFileFromIRODS(filepath.Join(remotePath, "file1"))
-
-				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", file1)
-				So(exitCode, ShouldEqual, 0)
-
-				errorMsg := fmt.Sprintf("list operation failed: Path '%s'", filepath.Join(remotePath, "file1"))
-
-				s.waitForStatusWithFlags(setName, errorMsg, 2*time.Second, "-d")
-
-				Convey("And displays the error in set status if not fixed", func() {
-					s.waitForStatus(setName, fmt.Sprintf("Error: Error when removing: list operation failed: Path '%s'",
-						filepath.Join(remotePath, "file1")), 30*time.Second)
-				})
-
-				Convey("And succeeds if issue is fixed during retries", func() {
-					addFileToIRODS(file1, filepath.Join(remotePath, "file1"))
-
-					s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 30*time.Second)
 				})
 			})
 		})

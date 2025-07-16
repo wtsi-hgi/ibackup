@@ -805,7 +805,7 @@ func (s *Server) updateOrRemoveRemoteFile(removeReq *set.RemoveReq, transformer 
 	var sets, requesters []string
 
 	if removeReq.Action == set.ToRemove {
-		sets, requesters, err = s.handleSetsAndRequesters(removeReq.Set, remoteMeta)
+		sets, requesters, err = s.handleSetsAndRequesters(removeReq.Path, removeReq.Set, remoteMeta)
 	} else {
 		sets, requesters, err = s.handleSetMetadataForTrash(removeReq.Set, remoteMeta)
 	}
@@ -867,7 +867,7 @@ func (s *Server) getFilesWithSameInode(path string, inode uint64, transformer tr
 	return files, 0, err
 }
 
-func (s *Server) handleSetsAndRequesters(givenSet *set.Set, meta map[string]string) ([]string, []string, error) {
+func (s *Server) handleSetsAndRequesters(path string, givenSet *set.Set, meta map[string]string) ([]string, []string, error) {
 	sets := strings.Split(meta[transfer.MetaKeySets], ",")
 	requesters := strings.Split(meta[transfer.MetaKeyRequester], ",")
 
@@ -875,19 +875,34 @@ func (s *Server) handleSetsAndRequesters(givenSet *set.Set, meta map[string]stri
 		return sets, requesters, nil
 	}
 
-	otherUserSets, userSets, err := s.getSetNamesByRequesters(requesters, givenSet.Requester)
+	setIDs, err := s.db.GetAllSetsForFile(path)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	if len(userSets) == 1 && userSets[0] == givenSet.Name {
+	numUserSets := 0
+	numSetsWithGivenName := 0
+
+	for _, setID := range setIDs {
+		set := s.db.GetByID(setID)
+
+		if set.Requester == givenSet.Requester {
+			numUserSets++
+		}
+
+		if set.Name == givenSet.Name {
+			numSetsWithGivenName++
+		}
+	}
+
+	if numUserSets == 1 {
 		requesters, err = set.RemoveElementFromSlice(requesters, givenSet.Requester)
 		if err != nil {
 			return nil, nil, err
 		}
 	}
 
-	if slices.Contains(otherUserSets, givenSet.Name) {
+	if numSetsWithGivenName > 1 {
 		return sets, requesters, nil
 	}
 
