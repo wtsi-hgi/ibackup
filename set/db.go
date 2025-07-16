@@ -529,7 +529,8 @@ func (d *DB) getDiscoveredFoldersForOldSets(sid string) (map[string]bool, error)
 }
 
 func (d *DB) getAllDiscoveredFoldersFromFile(path string, baseFolders,
-	discoveredFolders map[string]bool) map[string]bool {
+	discoveredFolders map[string]bool,
+) map[string]bool {
 	dir := filepath.Dir(path)
 
 	if _, ok := baseFolders[dir]; ok {
@@ -1295,7 +1296,8 @@ func requestToSetID(r *transfer.Request) (string, error) {
 // If setDiscoveryTime is later than the entry's last attempt, resets the
 // entries Attempts to 0.
 func (d *DB) updateFileEntry(tx *bolt.Tx, setID string, r *transfer.Request,
-	setDiscoveryTime time.Time) (*Entry, error) {
+	setDiscoveryTime time.Time,
+) (*Entry, error) {
 	entry, b, err := d.getEntry(tx, setID, r.Local)
 	if err != nil {
 		return nil, err
@@ -1577,6 +1579,10 @@ func (d *DBRO) GetByID(id string) *Set {
 // A return value of true will keep the file entry, a return of false will
 // discard it.
 type FileEntryFilter func(*Entry) bool
+
+var FileEntryFilterUploaded FileEntryFilter = func(e *Entry) bool {
+	return e.Status == Uploaded || e.Status == Replaced || e.Status == Orphaned
+}
 
 // GetFileEntries returns all the file entries for the given set (both
 // SetFileEntries and SetDiscoveredEntries).

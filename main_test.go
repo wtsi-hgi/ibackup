@@ -689,12 +689,17 @@ func TestList(t *testing.T) {
 			s.waitForStatus("testAddFiles", "Status: complete", 20*time.Second)
 
 			Convey("list with --deleted shows only files that don't exist locally", func() {
-				s.confirmOutput(t, []string{"list", "--name", "testAddFiles", "--deleted"}, 0, "")
-
-				So(os.Remove(dir+"/path/to/other/file"), ShouldBeNil)
-
 				s.confirmOutput(t, []string{"list", "--name", "testAddFiles", "--deleted"}, 0,
-					dir+"/path/to/other/file\t"+remote+"/path/to/other/file")
+					dir+"/path/to/some/file\t"+remote+"/path/to/some/file")
+
+				Convey("with --uploaded and --deleted shows only files that are stored remotely and not locally", func() {
+					s.confirmOutput(t, []string{"list", "--name", "testAddFiles", "--uploaded", "--deleted"}, 0, "")
+
+					So(os.Remove(dir+"/path/to/other/file"), ShouldBeNil)
+
+					s.confirmOutput(t, []string{"list", "--name", "testAddFiles", "--uploaded", "--deleted"}, 0,
+						dir+"/path/to/other/file\t"+remote+"/path/to/other/file")
+				})
 			})
 		})
 	})

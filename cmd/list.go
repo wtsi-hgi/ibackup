@@ -69,6 +69,10 @@ Provide --uploaded to only show paths that were successfully uploaded.
 If you provide --size, the size of each file in bytes will be shown in an extra
 tab separated column at the end.
 
+Provide --deleted to show only files that no longer exist at the local path;
+this can be combined with the --uploaded flag to show only files that exist
+remotely and not locally.
+
 To avoid issues with paths having tabs and newlines in them, you can use the
 --base64 option to output the paths base64 encoded.
 
@@ -105,7 +109,7 @@ IBACKUP_LOCAL_DB_BACKUP_PATH environmental variable.
 		}
 
 		if lstAll {
-			getAllSetsFromDBAndDisplayPaths(lstDB, lstLocal, lstRemote, lstUploaded, lstSize, lstBase64)
+			getAllSetsFromDBAndDisplayPaths(lstDB, lstLocal, lstRemote, lstUploaded, lstShowDeleted, lstSize, lstBase64)
 
 			return
 		}
@@ -115,7 +119,7 @@ IBACKUP_LOCAL_DB_BACKUP_PATH environmental variable.
 			die(err)
 		}
 
-		getSetFromServerAndDisplayPaths(client, lstLocal, lstRemote, lstUploaded, lstSize, lstBase64, lstUser, lstName)
+		getSetFromServerAndDisplayPaths(client, lstLocal, lstRemote, lstUploaded, lstShowDeleted, lstSize, lstBase64, lstUser, lstName)
 	},
 }
 
@@ -142,10 +146,10 @@ func init() {
 	listCmd.Flags().BoolVarP(&lstBase64, "base64", "b", false,
 		"output paths base64 encoded")
 	listCmd.Flags().BoolVar(&lstShowDeleted, "deleted", false,
-		"show only uploaded files that don't exist locally")
+		"show only files that don't exist locally")
 }
 
-func getAllSetsFromDBAndDisplayPaths(dbPath string, local, remote, uploaded, size, encode bool) {
+func getAllSetsFromDBAndDisplayPaths(dbPath string, local, remote, uploaded, deleted, size, encode bool) {
 	db, err := set.NewRO(dbPath)
 	if err != nil {
 		die(err)
@@ -162,17 +166,23 @@ func getAllSetsFromDBAndDisplayPaths(dbPath string, local, remote, uploaded, siz
 		return
 	}
 
+	var filter set.FileEntryFilter
+
+	if uploaded {
+		filter = set.FileEntryFilterUploaded
+	}
+
 	for _, s := range sets {
 		info("getting paths for set %s.%s", s.Requester, s.Name)
 
-		entries, err := db.GetFileEntries(s.ID(), nil)
+		entries, err := db.GetFileEntries(s.ID(), filter)
 		if err != nil {
 			die(err)
 		}
 
 		transformer := getSetTransformerIfNeeded(s, !local)
 
-		displayEntryPaths(entries, transformer, local, remote, uploaded, size, encode)
+		displayEntryPaths(entries, transformer, local, remote, deleted, size, encode)
 	}
 }
 
@@ -185,12 +195,9 @@ func getSetTransformerIfNeeded(s *set.Set, needed bool) transfer.PathTransformer
 }
 
 func displayEntryPaths(entries []*set.Entry, transformer transfer.PathTransformer,
-	local, remote, uploaded, size, encode bool) {
-	if uploaded {
-		entries = filterForUploaded(entries)
-	}
-
-	if lstShowDeleted {
+	local, remote, deleted, size, encode bool,
+) {
+	if deleted {
 		entries = filterForDeleted(entries)
 	}
 
@@ -217,18 +224,6 @@ func displayEntryPaths(entries []*set.Entry, transformer transfer.PathTransforme
 	}
 }
 
-func filterForUploaded(entries []*set.Entry) []*set.Entry {
-	uploadedEntries := make([]*set.Entry, 0, len(entries))
-
-	for _, entry := range entries {
-		if entry.Status == set.Uploaded {
-			uploadedEntries = append(uploadedEntries, entry)
-		}
-	}
-
-	return uploadedEntries
-}
-
 func filterForDeleted(entries []*set.Entry) []*set.Entry {
 	uploadedEntries := make([]*set.Entry, 0, len(entries))
 
@@ -242,7 +237,8 @@ func filterForDeleted(entries []*set.Entry) []*set.Entry {
 }
 
 func getSetFromServerAndDisplayPaths(client *server.Client,
-	local, remote, uploaded, size, encode bool, user, name string) {
+	local, remote, uploaded, deleted, size, encode bool, user, name string,
+) {
 	sets := getSetByName(client, user, name)
 	if len(sets) == 0 {
 		warn("backup set not found")
@@ -252,7 +248,7 @@ func getSetFromServerAndDisplayPaths(client *server.Client,
 
 	getFiles := client.GetFiles
 
-	if lstShowDeleted {
+	if uploaded {
 		getFiles = client.GetUploadedFiles
 	}
 
@@ -263,5 +259,5 @@ func getSetFromServerAndDisplayPaths(client *server.Client,
 
 	transformer := getSetTransformerIfNeeded(sets[0], !local)
 
-	displayEntryPaths(entries, transformer, local, remote, uploaded, size, encode)
+	displayEntryPaths(entries, transformer, local, remote, deleted, size, encode)
 }
