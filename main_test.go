@@ -3680,28 +3680,29 @@ func TestEdit(t *testing.T) {
 					So(exitCode, ShouldEqual, 0)
 
 					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Monitored: 2w;")
-				})
 
-				Convey("You can update monitoring duration via edit", func() {
-					s.runBinary(t, "edit", "--name", setName, "--monitor", "1d")
-					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Monitored: 1d;")
+					Convey("You can update monitoring duration via edit", func() {
+						exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--monitor", "1d")
+						So(exitCode, ShouldEqual, 0)
 
-					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--monitor", "3d")
-					So(exitCode, ShouldEqual, 0)
+						s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Monitored: 1d;")
+						exitCode2, _ := s.runBinary(t, "edit", "--name", setName, "--monitor", "3d")
+						So(exitCode2, ShouldEqual, 0)
 
-					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Monitored: 3d;")
+						s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Monitored: 3d;")
+					})
 				})
 
 				Convey("You can't set monitor duration below 1h", func() {
 					exitCode, stderr := s.runBinary(t, "edit", "--name", setName, "--monitor", "30m")
 					So(exitCode, ShouldNotEqual, 0)
-					So(stderr, ShouldContainSubstring, "monitor duration must be 1h or more")
+					So(stderr, ShouldContainSubstring, "monitor duration must be 1h0m0s or more, not 30m0s")
 				})
 
 				Convey("You can't set monitor duration to an invalid string", func() {
 					exitCode, stderr := s.runBinary(t, "edit", "--name", setName, "--monitor", "foobar")
 					So(exitCode, ShouldNotEqual, 0)
-					So(stderr, ShouldContainSubstring, "invalid monitor duration")
+					So(stderr, ShouldContainSubstring, "invalid monitor duration: time: invalid duration \"foobar\"")
 				})
 			})
 

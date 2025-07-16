@@ -58,7 +58,9 @@ var (
 	editMakeWritable        bool
 	editHide                bool
 	editUnHide              bool
+)
 
+var (
 	ErrInvalidEditRO      = errors.New("you can either make a set read-only or writable, not both")
 	ErrInvalidEditArchive = errors.New("you can either --archive a set or --stop-archiving, not both")
 	ErrInvalidEditHide    = errors.New("you can either --hide or --unhide a set, not both")
@@ -119,13 +121,9 @@ preexisting backup set.`,
 
 		var monitorDuration time.Duration
 		if editMonitor != "" {
-			monitorDuration, err = parseDuration(editMonitor)
+			monitorDuration, err = parseDuration(editMonitor, 1*time.Hour)
 			if err != nil {
-				dief("invalid monitor duration: %s", err)
-			}
-
-			if monitorDuration < 1*time.Hour {
-				dief("monitor duration must be 1h or more, not %s", monitorDuration)
+				return err
 			}
 
 			userSet.MonitorTime = monitorDuration
