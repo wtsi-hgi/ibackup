@@ -38,17 +38,16 @@ import (
 
 // options for this cmd.
 var (
-	lstName         string
-	lstUser         string
-	lstLocal        bool
-	lstRemote       bool
-	lstAll          bool
-	lstDB           string
-	lstUploaded     bool
-	lstSize         bool
-	lstBase64       bool
-	lstShowOrphaned bool
-	lstShowDeleted  bool
+	lstName        string
+	lstUser        string
+	lstLocal       bool
+	lstRemote      bool
+	lstAll         bool
+	lstDB          string
+	lstUploaded    bool
+	lstSize        bool
+	lstBase64      bool
+	lstShowDeleted bool
 )
 
 // listCmd represents the list command.
@@ -142,10 +141,8 @@ func init() {
 		"show the size of each file in bytes")
 	listCmd.Flags().BoolVarP(&lstBase64, "base64", "b", false,
 		"output paths base64 encoded")
-	listCmd.Flags().BoolVarP(&lstShowOrphaned, "orphaned", "o", false,
-		"show only orphaned files")
 	listCmd.Flags().BoolVar(&lstShowDeleted, "deleted", false,
-		"show only files that don't exist locally")
+		"show only uploaded files that don't exist locally")
 }
 
 func getAllSetsFromDBAndDisplayPaths(dbPath string, local, remote, uploaded, size, encode bool) {
@@ -188,7 +185,8 @@ func getSetTransformerIfNeeded(s *set.Set, needed bool) transfer.PathTransformer
 }
 
 func displayEntryPaths(entries []*set.Entry, transformer transfer.PathTransformer,
-	local, remote, uploaded, size, encode bool) {
+	local, remote, uploaded, size, encode bool,
+) {
 	if uploaded {
 		entries = filterForUploaded(entries)
 	}
@@ -245,7 +243,8 @@ func filterForDeleted(entries []*set.Entry) []*set.Entry {
 }
 
 func getSetFromServerAndDisplayPaths(client *server.Client,
-	local, remote, uploaded, size, encode bool, user, name string) {
+	local, remote, uploaded, size, encode bool, user, name string,
+) {
 	sets := getSetByName(client, user, name)
 	if len(sets) == 0 {
 		warn("backup set not found")
@@ -255,8 +254,8 @@ func getSetFromServerAndDisplayPaths(client *server.Client,
 
 	getFiles := client.GetFiles
 
-	if lstShowOrphaned {
-		getFiles = client.GetOrphanedFiles
+	if lstShowDeleted {
+		getFiles = client.GetUploadedFiles
 	}
 
 	entries, err := getFiles(sets[0].ID())

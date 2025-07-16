@@ -54,7 +54,7 @@ const (
 	filePath          = "/files"
 	dirPath           = "/dirs"
 	entryPath         = "/entries"
-	orphanedEntryPath = "/orphaned_entries"
+	uploadedEntryPath = "/orphaned_entries"
 	exampleEntryPath  = "/example_entries"
 	failedEntryPath   = "/failed_entries"
 	discoveryPath     = "/discover"
@@ -76,9 +76,9 @@ const (
 	// EndPointAuthEntries is the endpoint for getting set entries.
 	EndPointAuthEntries = gas.EndPointAuth + entryPath
 
-	// EndPointAuthOrphanedEntries is the endpoint for getting set orphaned
+	// EndPointAuthUploadedEntries is the endpoint for getting set orphaned
 	// entries.
-	EndPointAuthOrphanedEntries = gas.EndPointAuth + orphanedEntryPath
+	EndPointAuthUploadedEntries = gas.EndPointAuth + uploadedEntryPath
 
 	// EndPointAuthExampleEntry is the endpoint for getting set entries.
 	EndPointAuthExampleEntry = gas.EndPointAuth + exampleEntryPath
@@ -277,7 +277,7 @@ func (s *Server) addDBEndpoints(authGroup *gin.RouterGroup) {
 	authGroup.GET(discoveryPath+idParam, s.triggerDiscovery)
 
 	authGroup.GET(entryPath+idParam, s.getEntries)
-	authGroup.GET(orphanedEntryPath+idParam, s.getOrphanedEntries)
+	authGroup.GET(uploadedEntryPath+idParam, s.getUploadedEntries)
 	authGroup.GET(exampleEntryPath+idParam, s.getExampleEntry)
 
 	authGroup.GET(dirPath+idParam, s.getDirs)
@@ -584,7 +584,8 @@ func (s *Server) submitFilesForRemoval(set *set.Set, paths []string, action set.
 }
 
 func buildRemovalStructsFromPaths(givenSet *set.Set, paths []string, isDir bool,
-	action set.RemoveAction) ([]*queue.ItemDef, []set.RemoveReq) {
+	action set.RemoveAction,
+) ([]*queue.ItemDef, []set.RemoveReq) {
 	remReqs := make([]set.RemoveReq, len(paths))
 	defs := make([]*queue.ItemDef, len(paths))
 
@@ -619,7 +620,8 @@ func (s *Server) submitDirsForRemoval(set *set.Set, paths []string, action set.R
 }
 
 func (s *Server) makeItemsDefsFromDirPaths(givenSet *set.Set,
-	paths []string, action set.RemoveAction) ([]*queue.ItemDef, []set.RemoveReq, error) {
+	paths []string, action set.RemoveAction,
+) ([]*queue.ItemDef, []set.RemoveReq, error) {
 	remReqs := make([]set.RemoveReq, 0, len(paths))
 	defs := make([]*queue.ItemDef, 0, len(paths))
 
@@ -755,7 +757,8 @@ func (s *Server) processDBInodeRemoval(entry *set.Entry) error {
 }
 
 func (s *Server) updateOrRemoveRemoteFile(removeReq *set.RemoveReq, transformer transfer.PathTransformer,
-	entry *set.Entry) error {
+	entry *set.Entry,
+) error {
 	rpath, err := transformer(removeReq.Path)
 	if err != nil {
 		return err
@@ -786,7 +789,8 @@ func (s *Server) updateOrRemoveRemoteFile(removeReq *set.RemoveReq, transformer 
 }
 
 func (s *Server) removeRemoteFileAndHandleHardlink(lpath, rpath string, meta map[string]string,
-	transformer transfer.PathTransformer, entry *set.Entry) error {
+	transformer transfer.PathTransformer, entry *set.Entry,
+) error {
 	err := remove.RemoveFileAndParentFoldersIfEmpty(s.storageHandler, rpath)
 	if err != nil {
 		var dirRemovalError errs.DirRemovalError
@@ -814,7 +818,8 @@ func (s *Server) removeRemoteFileAndHandleHardlink(lpath, rpath string, meta map
 }
 
 func (s *Server) getFilesWithSameInode(path string, inode uint64, transformer transfer.PathTransformer,
-	rInodePath string) ([]string, int, error) {
+	rInodePath string,
+) ([]string, int, error) {
 	files, err := s.db.GetFilesFromInode(inode, s.db.GetMountPointFromPath(path))
 	if err != nil {
 		return nil, 0, err
@@ -1094,7 +1099,8 @@ func (s *Server) buildExclusionTree(sid string) (ptrie.Trie[bool], error) {
 // the entry's path is not equal to the given match (from exclude tree), the
 // bucket is repopulated with the other paths represented by the match.
 func (s *Server) excludeFromRemovedBucket(entry *set.Dirent, match string,
-	excludeTree ptrie.Trie[bool], sid string) error {
+	excludeTree ptrie.Trie[bool], sid string,
+) error {
 	err := s.removeChildEntriesFromRemovedBucket(entry, excludeTree, sid)
 	if err != nil {
 		return err
@@ -1168,7 +1174,8 @@ func findChildPathsToExclude(path string, entry *set.Dirent) ([]set.RemoveReq, e
 }
 
 func (s *Server) removeChildEntriesFromRemovedBucket(entry *set.Dirent,
-	excludeTree ptrie.Trie[bool], sid string) error {
+	excludeTree ptrie.Trie[bool], sid string,
+) error {
 	paths := getChildPathsFromPTrie(entry.Path, excludeTree)
 
 	for _, path := range paths {
@@ -1232,8 +1239,15 @@ func (s *Server) getFileEntries(c *gin.Context, filter func(*set.Entry) bool) {
 	c.JSON(http.StatusOK, entries)
 }
 
-func (s *Server) getOrphanedEntries(c *gin.Context) {
-	s.getFileEntries(c, func(e *set.Entry) bool { return e.Status == set.Orphaned })
+func (s *Server) getUploadedEntries(c *gin.Context) {
+	s.getFileEntries(c, func(e *set.Entry) bool {
+		switch e.Status {
+		case set.Orphaned, set.Uploaded, set.Replaced:
+			return true
+		}
+
+		return false
+	})
 }
 
 // getExampleEntry gets the first defined file entry for the set with the
