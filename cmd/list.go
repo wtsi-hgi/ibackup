@@ -26,6 +26,8 @@
 package cmd
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -46,6 +48,7 @@ var (
 	lstSize         bool
 	lstBase64       bool
 	lstShowOrphaned bool
+	lstShowDeleted  bool
 )
 
 // listCmd represents the list command.
@@ -141,6 +144,8 @@ func init() {
 		"output paths base64 encoded")
 	listCmd.Flags().BoolVarP(&lstShowOrphaned, "orphaned", "o", false,
 		"show only orphaned files")
+	listCmd.Flags().BoolVar(&lstShowDeleted, "deleted", false,
+		"show only files that don't exist locally")
 }
 
 func getAllSetsFromDBAndDisplayPaths(dbPath string, local, remote, uploaded, size, encode bool) {
@@ -188,6 +193,10 @@ func displayEntryPaths(entries []*set.Entry, transformer transfer.PathTransforme
 		entries = filterForUploaded(entries)
 	}
 
+	if lstShowDeleted {
+		entries = filterForDeleted(entries)
+	}
+
 	format := "%[1]s\t%[2]s"
 
 	if local {
@@ -216,6 +225,18 @@ func filterForUploaded(entries []*set.Entry) []*set.Entry {
 
 	for _, entry := range entries {
 		if entry.Status == set.Uploaded {
+			uploadedEntries = append(uploadedEntries, entry)
+		}
+	}
+
+	return uploadedEntries
+}
+
+func filterForDeleted(entries []*set.Entry) []*set.Entry {
+	uploadedEntries := make([]*set.Entry, 0, len(entries))
+
+	for _, entry := range entries {
+		if _, err := os.Stat(entry.Path); errors.Is(err, fs.ErrNotExist) {
 			uploadedEntries = append(uploadedEntries, entry)
 		}
 	}

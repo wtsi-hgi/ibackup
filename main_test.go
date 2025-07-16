@@ -697,6 +697,22 @@ func TestList(t *testing.T) {
 				s.confirmOutput(t, []string{"list", "--name", "testAddFiles", "--orphaned"}, 0,
 					dir+"/path/to/some/file\t"+"/remote/path/to/some/file")
 			})
+
+			Convey("list with --deleted shows only files that don't exist locally", func() {
+				s.confirmOutput(t, []string{"list", "--name", "testAddFiles", "--deleted"}, 0,
+					dir+"/path/to/other/file\t/remote/path/to/other/file\n"+
+						dir+"/path/to/some/file\t/remote/path/to/some/file")
+
+				So(os.Remove(dir+"/path/to/other/file"), ShouldBeNil)
+
+				exitCode, _ := s.runBinary(t, "retry", "--all", "--name", "testAddFiles")
+				So(exitCode, ShouldEqual, 0)
+
+				s.waitForStatus("testAddFiles", "Status: complete", 1*time.Second)
+
+				s.confirmOutput(t, []string{"list", "--name", "testAddFiles", "--deleted"}, 0,
+					dir+"/path/to/some/file\t/remote/path/to/some/file")
+			})
 		})
 	})
 
