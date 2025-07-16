@@ -1781,7 +1781,7 @@ func newEntry(path string) *Entry {
 }
 
 func clearBucket(t *testing.T, db *DB, setID string,
-	dbGetFun func(string, func(*Entry) bool) ([]*Entry, error), bucketName string) {
+	dbGetFun func(string, FileEntryFilter) ([]*Entry, error), bucketName string) {
 	t.Helper()
 
 	entries, err := dbGetFun(setID, nil)
@@ -1799,8 +1799,8 @@ func clearFileBucket(t *testing.T, db *DB, setID string) {
 	clearBucket(t, db, setID, db.GetFileEntries, fileBucket)
 }
 
-func wrapDBGetFun(fn func(string) ([]*Entry, error)) func(string, func(*Entry) bool) ([]*Entry, error) {
-	return func(name string, _ func(*Entry) bool) ([]*Entry, error) {
+func wrapDBGetFun(fn func(string) ([]*Entry, error)) func(string, FileEntryFilter) ([]*Entry, error) {
+	return func(name string, _ FileEntryFilter) ([]*Entry, error) {
 		return fn(name)
 	}
 }

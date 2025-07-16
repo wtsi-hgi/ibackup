@@ -1571,9 +1571,16 @@ func (d *DBRO) GetByID(id string) *Set {
 	return set
 }
 
+// FileEntryFilter is a function used to filter the file entries for a set
+// retrieved from the database.
+//
+// A return value of true will keep the file entry, a return of false will
+// discard it.
+type FileEntryFilter func(*Entry) bool
+
 // GetFileEntries returns all the file entries for the given set (both
 // SetFileEntries and SetDiscoveredEntries).
-func (d *DBRO) GetFileEntries(setID string, filter func(*Entry) bool) ([]*Entry, error) {
+func (d *DBRO) GetFileEntries(setID string, filter FileEntryFilter) ([]*Entry, error) {
 	entries, err := d.getEntries(setID, fileBucket, filter)
 	if err != nil {
 		return nil, err
@@ -1641,7 +1648,9 @@ func (d *DBRO) GetDefinedFileEntry(setID string) (*Entry, error) {
 
 // getEntries returns all the entries for the given set from the given sub
 // bucket prefix.
-func (d *DBRO) getEntries(setID, bucketName string, filter func(*Entry) bool) ([]*Entry, error) {
+//
+// Accepts an optional  filter func that returns true for the entries to gather.
+func (d *DBRO) getEntries(setID, bucketName string, filter FileEntryFilter) ([]*Entry, error) {
 	var entries []*Entry
 
 	cb := func(v []byte) {
