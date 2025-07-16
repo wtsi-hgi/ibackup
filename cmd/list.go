@@ -119,7 +119,8 @@ IBACKUP_LOCAL_DB_BACKUP_PATH environmental variable.
 			die(err)
 		}
 
-		getSetFromServerAndDisplayPaths(client, lstLocal, lstRemote, lstUploaded, lstShowDeleted, lstSize, lstBase64, lstUser, lstName)
+		getSetFromServerAndDisplayPaths(client, lstLocal, lstRemote, lstUploaded,
+			lstShowDeleted, lstSize, lstBase64, lstUser, lstName)
 	},
 }
 
@@ -149,7 +150,9 @@ func init() {
 		"show only files that don't exist locally")
 }
 
-func getAllSetsFromDBAndDisplayPaths(dbPath string, local, remote, uploaded, deleted, size, encode bool) {
+func getAllSetsFromDBAndDisplayPaths(dbPath string, local, remote, uploaded, //nolint:funlen
+	deleted, size, encode bool,
+) {
 	db, err := set.NewRO(dbPath)
 	if err != nil {
 		die(err)

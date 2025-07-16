@@ -266,14 +266,14 @@ func (d *DB) Close() error {
 
 // AddOrUpdate adds or updates the given Set to the database. Errors if the set
 // is read-only, or if the set is being discovered.
-func (d *DB) AddOrUpdate(set *Set) error {
+func (d *DB) AddOrUpdate(set *Set) error { //nolint:funlen,gocognit,gocyclo
 	err := d.db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(setsBucket))
 
 		id := set.ID()
 		bid := []byte(id)
 
-		if existing := b.Get(bid); existing != nil {
+		if existing := b.Get(bid); existing != nil { //nolint:nestif
 			eset := d.decodeSet(existing)
 
 			if eset.ReadOnly {
@@ -1295,7 +1295,7 @@ func requestToSetID(r *transfer.Request) (string, error) {
 //
 // If setDiscoveryTime is later than the entry's last attempt, resets the
 // entries Attempts to 0.
-func (d *DB) updateFileEntry(tx *bolt.Tx, setID string, r *transfer.Request,
+func (d *DB) updateFileEntry(tx *bolt.Tx, setID string, r *transfer.Request, //nolint:funlen
 	setDiscoveryTime time.Time,
 ) (*Entry, error) {
 	entry, b, err := d.getEntry(tx, setID, r.Local)
@@ -1580,7 +1580,8 @@ func (d *DBRO) GetByID(id string) *Set {
 // discard it.
 type FileEntryFilter func(*Entry) bool
 
-var FileEntryFilterUploaded FileEntryFilter = func(e *Entry) bool {
+// FileEntryFilterUploaded is a FileEntryFilter that filters on uploaded files.
+func FileEntryFilterUploaded(e *Entry) bool {
 	return e.Status == Uploaded || e.Status == Replaced || e.Status == Orphaned
 }
 
