@@ -2547,7 +2547,7 @@ func confirmFileContents(t *testing.T, file, expectedContents string) {
 }
 
 func TestTrash(t *testing.T) {
-	Convey("Given a server", t, func() {
+	FocusConvey("Given a server", t, func() {
 		s, remotePath := NewUploadingTestServer(t)
 
 		path := t.TempDir()
@@ -2560,7 +2560,7 @@ func TestTrash(t *testing.T) {
 				1, fmt.Sprintf("set with that id does not exist [%s]", invalidSetName))
 		})
 
-		Convey("And an added set with files and folders", func() {
+		FocusConvey("And an added set with files and folders", func() {
 			dir := t.TempDir()
 
 			testDir := filepath.Join(path, "path/to/some/")
@@ -3018,6 +3018,50 @@ func TestTrash(t *testing.T) {
 
 				Convey("Remove will still work", func() {
 					checkIfRemoveFullyCompleted(setName, file)
+				})
+			})
+
+			FocusConvey("Remove --set removes all the files from the set "+
+				"and moves it to the trash set, then deletes the set itself", func() {
+				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--set")
+				So(exitCode, ShouldEqual, 0)
+
+				ctx, cancelFn := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancelFn()
+
+				cmd := []string{"status", "--name", setName, "--url", s.url, "--cert", s.cert}
+
+				status := retry.Do(ctx, func() error {
+					clientCmd := exec.Command("./"+app, cmd...)
+					clientCmd.Env = s.env
+
+					output, errc := clientCmd.CombinedOutput()
+					if errc != nil {
+						return err
+					}
+
+					if strings.Contains(string(output), "set with that id does not exist") {
+						return nil
+					}
+
+					return fmt.Errorf("set %s still exists", setName)
+				}, &retry.UntilNoError{}, &backoff.Backoff{
+					Min:     10 * time.Millisecond,
+					Max:     100 * time.Millisecond,
+					Factor:  2,
+					Sleeper: &btime.Sleeper{},
+				}, "waiting for matching status")
+
+				So(status.Err, ShouldBeNil)
+
+				trashSetName := set.TrashPrefix + setName
+
+				FocusConvey("And changes the set metadata in iRODS to a .trash set", func() {
+					sets := getMetaValue(getRemoteMeta(filepath.Join(remotePath, "file2")), transfer.MetaKeySets)
+					setsSlice := strings.Split(sets, ",")
+
+					So(setsSlice, ShouldContain, trashSetName)
+					So(setsSlice, ShouldNotContain, setName)
 				})
 			})
 		})

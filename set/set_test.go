@@ -308,11 +308,11 @@ func TestSet(t *testing.T) {
 }
 
 func TestSetDB(t *testing.T) {
-	Convey("Given a path", t, func() {
+	FocusConvey("Given a path", t, func() {
 		tDir := t.TempDir()
 		dbPath := filepath.Join(tDir, "set.db")
 
-		Convey("You can create a new database", func() {
+		FocusConvey("You can create a new database", func() {
 			slackWriter := gas.NewStringLogger()
 			slacker := slack.NewMock(slackWriter)
 
@@ -322,7 +322,7 @@ func TestSetDB(t *testing.T) {
 
 			db.LogSetChangesToSlack(slacker)
 
-			Convey("And add Sets to it", func() {
+			FocusConvey("And add Sets to it", func() {
 				set := &Set{
 					Name:        "set1",
 					Requester:   "jim",
@@ -476,7 +476,7 @@ func TestSetDB(t *testing.T) {
 					So(dEntries[0], ShouldResemble, newEntry("/g/i"))
 				})
 
-				Convey("Then get a particular Set", func() {
+				FocusConvey("Then get a particular Set", func() {
 					retrieved := db.GetByID(set.ID())
 					So(retrieved, ShouldNotBeNil)
 					So(retrieved, ShouldResemble, set)
@@ -522,6 +522,17 @@ func TestSetDB(t *testing.T) {
 
 						retrieved2 = db.GetByID(set2.ID())
 						So(retrieved2.DeleteLocal, ShouldBeFalse)
+					})
+
+					FocusConvey("And delete it", func() {
+						err = db.Delete("invalid")
+						So(err, ShouldNotBeNil)
+
+						err = db.Delete(set.ID())
+						So(err, ShouldBeNil)
+
+						retrieved = db.GetByID(set.ID())
+						So(retrieved, ShouldBeNil)
 					})
 				})
 
