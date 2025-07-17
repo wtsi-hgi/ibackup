@@ -171,6 +171,20 @@ func (c *Client) getThing(url string, thing interface{}) error {
 	return responseToErr(resp)
 }
 
+// postThing sends thing encoded as JSON in the body via a POST to the given url.
+// If optionalResponseThing is defined, gets that decoded from the JSON
+// response.
+func (c *Client) postThing(url string, thing interface{}, optionalResponseThing ...interface{}) error {
+	req := c.setBodyAndOptionalResult(thing, optionalResponseThing...)
+
+	resp, err := req.Post(url)
+	if err != nil {
+		return err
+	}
+
+	return responseToErr(resp)
+}
+
 // GetSetByID gets details about a given requester's backup set from the
 // Server's database. This is a convienience function that calls GetSets() and
 // filters on the given set ID. Returns an error if the requester has no set
@@ -633,14 +647,45 @@ func (c *Client) RetryFailedSetUploads(id string) (int, error) {
 	return retried, err
 }
 
+type removeEndpointAction int8
+
+const (
+	trashAction         removeEndpointAction = iota // 0
+	removeAction                                    // 1
+	removeExpiredAction                             // 2
+)
+
+type RemoveEndpointBody struct {
+	SetID  string `json:"omitempty"`
+	Action removeEndpointAction
+	Paths  []string
+}
+
 // RemoveFilesAndDirs removes the given paths from the backup set with the given
 // ID.
 func (c *Client) RemoveFilesAndDirs(setID string, paths []string) error {
-	return c.putThing(EndPointAuthRemovePaths+"/"+setID, stringsToBytes(paths))
+	endpointBody := RemoveEndpointBody{SetID: setID, Action: removeAction, Paths: paths}
+
+	return c.postThing(EndPointAuthRemovePaths, endpointBody)
 }
 
 // TrashFilesAndDirs trashes the given paths from the backup set with the given
 // ID.
 func (c *Client) TrashFilesAndDirs(setID string, paths []string) error {
-	return c.putThing(EndPointAuthTrashPaths+"/"+setID, stringsToBytes(paths))
+	endpointBody := RemoveEndpointBody{SetID: setID, Action: trashAction, Paths: paths}
+
+	return c.postThing(EndPointAuthRemovePaths, endpointBody)
 }
+
+// RemoveExpiredFilesAndDirs finds the files and dirs in the trash that are due
+// to be removed and permanently removes them.
+// func (c *Client) RemoveExpiredFilesAndDirs(setID string) error {
+// 	return c.getThing(EndPointAuthRemovePaths+"/"+setID, nil)
+// 	{
+// 		action: "removeExpired"
+// 	}
+// 	{
+// 		setID: "",
+// 		action: "removeExpired"
+// 	}
+// }
