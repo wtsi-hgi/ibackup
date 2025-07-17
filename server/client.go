@@ -259,7 +259,7 @@ func (c *Client) GetFiles(setID string) ([]*set.Entry, error) {
 	return entries, err
 }
 
-// GetUploadedFiles gets the orphaned file paths and their backup status for the
+// GetUploadedFiles gets the uploaded file paths and their backup status for the
 // given set.
 func (c *Client) GetUploadedFiles(setID string) ([]*set.Entry, error) {
 	var entries []*set.Entry
