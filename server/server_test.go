@@ -100,7 +100,7 @@ func TestServer(t *testing.T) {
 	maxStuckTime := 1 * time.Hour
 	defaultHeartbeatFreq := 1 * time.Minute
 
-	Convey("Given a test cert and db location", t, func() {
+	FocusConvey("Given a test cert and db location", t, func() {
 		certPath, keyPath, err := gas.CreateTestCert(t)
 		So(err, ShouldBeNil)
 
@@ -248,7 +248,7 @@ func TestServer(t *testing.T) {
 			So(slackWriter.String(), ShouldEqual, expectedMsg+expectedMsg+slack.BoxPrefixWarn+"server stopped")
 		})
 
-		Convey("You can make a Server with a logger configured and setup Auth, MakeQueueEndPoints and LoadSetDB", func() {
+		FocusConvey("You can make a Server with a logger configured and setup Auth, MakeQueueEndPoints and LoadSetDB", func() {
 			s, addr, dfunc := makeAndStartServer()
 
 			serverStopped := false
@@ -296,7 +296,7 @@ func TestServer(t *testing.T) {
 				racCalled <- true
 			})
 
-			Convey("Which lets you login", func() {
+			FocusConvey("Which lets you login", func() {
 				logWriter.Reset()
 
 				token, errl := gas.Login(gas.NewClientRequest(addr, certPath), "jim", "pass")
@@ -305,7 +305,7 @@ func TestServer(t *testing.T) {
 
 				So(strings.Count(logWriter.String(), "STATUS=200"), ShouldEqual, 1)
 
-				Convey("And then you use client methods AddOrUpdateSet (which logs to slack) and GetSets", func() {
+				FocusConvey("And then you use client methods AddOrUpdateSet (which logs to slack) and GetSets", func() {
 					exampleSet2 := &set.Set{
 						Name:        "set2",
 						Requester:   exampleSet.Requester,
@@ -347,7 +347,7 @@ func TestServer(t *testing.T) {
 					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldBeNil)
 
-					Convey("And given two hardlinks to the same file", func() {
+					FocusConvey("And given two hardlinks to the same file", func() {
 						file1local := filepath.Join(localDir, "file1")
 						hardlink1local := filepath.Join(localDir, "hardlink1")
 						hardlink1Remote := filepath.Join(remoteDir, "hardlink1")
@@ -373,7 +373,7 @@ func TestServer(t *testing.T) {
 						ok := <-racCalled
 						So(ok, ShouldBeTrue)
 
-						SkipConvey("You can remove the first hardlink and the inode file will stay", func() {
+						Convey("You can remove the first hardlink and the inode file will stay", func() {
 							remReq := set.RemoveReq{
 								Path: hardlink1local,
 								Set:  exampleSet,
@@ -426,7 +426,7 @@ func TestServer(t *testing.T) {
 							So(err, ShouldBeNil)
 							So(files, ShouldNotContain, hardlink1local)
 
-							SkipConvey("You can remove the first hardlink and the inode file will stay", func() {
+							Convey("You can remove the first hardlink and the inode file will stay", func() {
 								remReq := set.RemoveReq{
 									Path: hardlink1local,
 									Set:  exampleSet,
@@ -464,7 +464,7 @@ func TestServer(t *testing.T) {
 							ok := <-racCalled
 							So(ok, ShouldBeTrue)
 
-							SkipConvey("Removing the third hardlink does not remove the inode as the database is still in sync with iRODS", func() { //nolint:lll
+							Convey("Removing the third hardlink does not remove the inode as the database is still in sync with iRODS", func() { //nolint:lll
 								remReq := set.RemoveReq{
 									Path: hardlink3local,
 									Set:  exampleSet,
@@ -483,7 +483,7 @@ func TestServer(t *testing.T) {
 						})
 					})
 
-					Convey("And given a set with a folder and a nested folder with 2 files", func() {
+					FocusConvey("And given a set with a folder and a nested folder with 2 files", func() {
 						dir0local := filepath.Join(localDir, "dir0/")
 						dir0remote := filepath.Join(remoteDir, "dir0/")
 
@@ -528,13 +528,13 @@ func TestServer(t *testing.T) {
 						Convey("Removal on a pending file returns an error", func() {
 							err = client.RemoveFilesAndDirs(exampleSet.ID(), []string{file1local})
 							So(err, ShouldNotBeNil)
-							So(err.Error(), ShouldContainSubstring, ErrSetNotComplete.Error())
+							So(err.Error(), ShouldContainSubstring, set.ErrRemovalWhenSetNotComplete)
 						})
 
 						Convey("Removal on a folder with pending files in it returns an error", func() {
 							err = client.RemoveFilesAndDirs(exampleSet.ID(), []string{dir2local})
 							So(err, ShouldNotBeNil)
-							So(err.Error(), ShouldContainSubstring, ErrSetNotComplete.Error())
+							So(err.Error(), ShouldContainSubstring, set.ErrRemovalWhenSetNotComplete)
 						})
 
 						Convey("Removal of failed files removes entries from Failed bucket", func() {
@@ -554,7 +554,7 @@ func TestServer(t *testing.T) {
 							So(len(failedEntries), ShouldEqual, 0)
 						})
 
-						Convey("And given all files are uploaded", func() {
+						FocusConvey("And given all files are uploaded", func() {
 							makeGivenSetComplete(1, exampleSet.Name, adminClient)
 
 							Convey("Removal on a file and a dir sets them as complete in the remove bucket", func() {
@@ -568,7 +568,7 @@ func TestServer(t *testing.T) {
 								So(incompleteRemReqs, ShouldBeEmpty)
 							})
 
-							SkipConvey("Removal on a file doesn't remove the dir and doesn't log anything", func() {
+							Convey("Removal on a file doesn't remove the dir and doesn't log anything", func() {
 								logWriter.Reset()
 
 								err = client.RemoveFilesAndDirs(exampleSet.ID(), []string{file1local})
@@ -596,7 +596,7 @@ func TestServer(t *testing.T) {
 								So(len(entries), ShouldEqual, 0)
 							})
 
-							SkipConvey("If the folder has no access permissions, removal on a file will log the error", func() {
+							Convey("If the folder has no access permissions, removal on a file will log the error", func() {
 								err = os.Chmod(dir1remote, 0555)
 								So(err, ShouldBeNil)
 
@@ -620,6 +620,24 @@ func TestServer(t *testing.T) {
 
 								os.Chmod(dir1remote, 0755) //nolint:errcheck
 							})
+
+							FocusConvey("Remove of a whole set removes it from the db along with all its entries", func() {
+								err = client.RemoveSet(exampleSet.ID())
+								So(err, ShouldBeNil)
+
+								internal.RetryUntilWorksCustom(t, func() error { //nolint:errcheck
+									tickerSet, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+									if errg == nil {
+										return errNotFinishedRemoving
+									}
+									
+									return nil
+								}, time.Second*10, time.Millisecond*100)
+
+								entries, errg := s.db.GetAllDirEntries(exampleSet.ID())
+								So(errg, ShouldBeNil)
+								So(len(entries), ShouldEqual, 0)
+							})
 						})
 
 						Convey("And having both files in a set", func() {
@@ -628,9 +646,6 @@ func TestServer(t *testing.T) {
 
 							err = client.TriggerDiscovery(exampleSet.ID())
 							So(err, ShouldBeNil)
-
-							ok := <-racCalled
-							So(ok, ShouldBeTrue)
 
 							files, errg := client.GetFiles(exampleSet.ID())
 							So(errg, ShouldBeNil)
@@ -641,16 +656,8 @@ func TestServer(t *testing.T) {
 								So(err, ShouldBeNil)
 
 								Convey("You can still see both files after rediscovery", func() {
-									for _, item := range s.queue.AllItems() {
-										err = s.queue.Remove(context.Background(), item.Key)
-										So(err, ShouldBeNil)
-									}
-
 									err = client.TriggerDiscovery(exampleSet.ID())
 									So(err, ShouldBeNil)
-
-									ok := <-racCalled
-									So(ok, ShouldBeTrue)
 
 									files, err = client.GetFiles(exampleSet.ID())
 									So(err, ShouldBeNil)
