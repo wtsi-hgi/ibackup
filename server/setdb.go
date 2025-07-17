@@ -301,6 +301,8 @@ func (s *Server) addDBEndpoints(authGroup *gin.RouterGroup) {
 	authGroup.PUT(fileStatusPath, s.putFileStatus)
 
 	authGroup.PUT(removePathsPath+idParam, s.trashPaths)
+
+	authGroup.DELETE(setPath+idParam, s.deleteSet)
 }
 
 // putSet interprets the body as a JSON encoding of a set.Set and stores it in
@@ -510,16 +512,52 @@ func (s *Server) trashPaths(c *gin.Context) {
 		return
 	}
 
+	err = s.removeToTrashSet(givenSet, filePaths, dirPaths)
+	if err != nil {
+		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+
+		return
+	}
+}
+
+func (s *Server) removeToTrashSet(givenSet *set.Set, filePaths []string, dirPaths []string) error {
 	trashSet := set.BuildTrashSetFromSet(givenSet)
 
-	err = s.db.AddOrUpdate(&trashSet)
+	err := s.db.AddOrUpdate(&trashSet)
+	if err != nil {
+		return err
+	}
+
+	err = s.removeFilesAndDirs(givenSet, filePaths, dirPaths, set.ToTrash)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (s *Server) deleteSet(c *gin.Context) {
+	set, ok := s.validateSet(c)
+	if !ok {
+		c.AbortWithStatus(http.StatusBadRequest)
+
+		return
+	}
+
+	entries, err := s.db.GetFileEntries(set.ID(), nil)
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
 		return
 	}
 
-	err = s.removeFilesAndDirs(givenSet, filePaths, dirPaths, set.ToTrash)
+	paths := make([]string, len(entries))
+
+	for i, entry := range entries {
+		paths[i] = entry.Path
+	}
+
+	err = s.removeToTrashSet(set, paths, nil)
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
