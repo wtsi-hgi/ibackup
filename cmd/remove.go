@@ -103,21 +103,31 @@ var removeCmd = &cobra.Command{
 
 		setID := getSetID(client, removeUser, removeName)
 
-		if removeSet {
-			entries, err := client.GetFiles(setID)
-			if err != nil {
-				die(err)
-			}
+		// if removeSet {
+		// 	entries, err := client.GetFiles(setID)
+		// 	if err != nil {
+		// 		die(err)
+		// 	}
 
-			for _, entry := range entries {
-				paths = append(paths, entry.Path)
-			}
-		}
+		// 	for _, entry := range entries {
+		// 		paths = append(paths, entry.Path)
+		// 	}
+		// }
 
 		// pass removeSet to handleRemove, which if that is true, will remove
 		// all the paths as normal, wait server-side for that to complete, then
 		// the server will call our new db.Delete function
-		handleRemove(client, setID, paths)
+		if !removeSet {
+			err := client.RemoveFilesAndDirs(setID, paths)
+			if err != nil {
+				die(err)
+			}
+		} else {
+			err := client.RemoveSet(setID)
+			if err != nil {
+				die(err)
+			}
+		}
 	},
 }
 
@@ -150,12 +160,4 @@ func getSetID(client *server.Client, user, name string) string {
 	}
 
 	return sets[0].ID()
-}
-
-// handleRemove does the main job of sending the set, files and dirs to the server.
-func handleRemove(client *server.Client, setID string, paths []string) {
-	err := client.RemoveFilesAndDirs(setID, paths)
-	if err != nil {
-		die(err)
-	}
 }

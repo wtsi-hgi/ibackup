@@ -638,3 +638,9 @@ func (c *Client) RetryFailedSetUploads(id string) (int, error) {
 func (c *Client) RemoveFilesAndDirs(setID string, paths []string) error {
 	return c.putThing(EndPointAuthRemovePaths+"/"+setID, stringsToBytes(paths))
 }
+
+// RemoveSet removes the set with the given ID from the db along with files from
+// iRODS.
+func (c *Client) RemoveSet(setID string) error {
+	return c.deleteThing(EndPointAuthSet+"/"+setID, nil, nil)
+}
