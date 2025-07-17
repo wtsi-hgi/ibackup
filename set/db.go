@@ -1582,7 +1582,8 @@ type FileEntryFilter func(*Entry) bool
 
 // FileEntryFilterUploaded is a FileEntryFilter that filters on uploaded files.
 func FileEntryFilterUploaded(e *Entry) bool {
-	return e.Status == Uploaded || e.Status == Replaced || e.Status == Orphaned
+	return e.Status == Uploaded || e.Status == Replaced ||
+		e.Status == Orphaned || e.Status == Skipped
 }
 
 // GetFileEntries returns all the file entries for the given set (both
