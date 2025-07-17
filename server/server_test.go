@@ -373,10 +373,11 @@ func TestServer(t *testing.T) {
 						ok := <-racCalled
 						So(ok, ShouldBeTrue)
 
-						SkipConvey("You can remove the first hardlink and the inode file will stay", func() {
+						Convey("You can permanently remove the first hardlink and the inode file will stay", func() {
 							remReq := set.RemoveReq{
-								Path: hardlink1local,
-								Set:  exampleSet,
+								Path:   hardlink1local,
+								Set:    exampleSet,
+								Action: set.ToRemove,
 							}
 
 							err = s.removeFileFromIRODSandDB(&remReq)
@@ -389,10 +390,11 @@ func TestServer(t *testing.T) {
 							_, err = os.Stat(inodeRemote)
 							So(err, ShouldBeNil)
 
-							Convey("Then you can remove the second hardlink and the inode file will also get removed", func() {
+							Convey("Then you can permanently remove the second hardlink and the inode file will also get removed", func() {
 								remReq = set.RemoveReq{
-									Path: hardlink2local,
-									Set:  exampleSet,
+									Path:   hardlink2local,
+									Set:    exampleSet,
+									Action: set.ToRemove,
 								}
 
 								err = s.removeFileFromIRODSandDB(&remReq)
@@ -426,10 +428,11 @@ func TestServer(t *testing.T) {
 							So(err, ShouldBeNil)
 							So(files, ShouldNotContain, hardlink1local)
 
-							SkipConvey("You can remove the first hardlink and the inode file will stay", func() {
+							Convey("You can permanently remove the first hardlink and the inode file will stay", func() {
 								remReq := set.RemoveReq{
-									Path: hardlink1local,
-									Set:  exampleSet,
+									Path:   hardlink1local,
+									Set:    exampleSet,
+									Action: set.ToRemove,
 								}
 
 								err = s.removeFileFromIRODSandDB(&remReq)
@@ -464,10 +467,11 @@ func TestServer(t *testing.T) {
 							ok := <-racCalled
 							So(ok, ShouldBeTrue)
 
-							SkipConvey("Removing the third hardlink does not remove the inode as the database is still in sync with iRODS", func() { //nolint:lll
+							Convey("Permanently removing the third hardlink does not remove the inode as the database is still in sync with iRODS", func() { //nolint:lll
 								remReq := set.RemoveReq{
-									Path: hardlink3local,
-									Set:  exampleSet,
+									Path:   hardlink3local,
+									Set:    exampleSet,
+									Action: set.ToRemove,
 								}
 
 								err = s.removeFileFromIRODSandDB(&remReq)
@@ -525,26 +529,26 @@ func TestServer(t *testing.T) {
 						ok := <-racCalled
 						So(ok, ShouldBeTrue)
 
-						Convey("Removal on a pending file returns an error", func() {
-							err = client.RemoveFilesAndDirs(exampleSet.ID(), []string{file1local})
+						Convey("Trash on a pending file returns an error", func() {
+							err = client.TrashFilesAndDirs(exampleSet.ID(), []string{file1local})
 							So(err, ShouldNotBeNil)
 							So(err.Error(), ShouldContainSubstring, ErrSetNotComplete.Error())
 						})
 
-						Convey("Removal on a folder with pending files in it returns an error", func() {
-							err = client.RemoveFilesAndDirs(exampleSet.ID(), []string{dir2local})
+						Convey("Trash on a folder with pending files in it returns an error", func() {
+							err = client.TrashFilesAndDirs(exampleSet.ID(), []string{dir2local})
 							So(err, ShouldNotBeNil)
 							So(err.Error(), ShouldContainSubstring, ErrSetNotComplete.Error())
 						})
 
-						Convey("Removal of failed files removes entries from Failed bucket", func() {
+						Convey("Trash of failed files removes entries from Failed bucket", func() {
 							changeSetFilesStatus(1, exampleSet.Name, adminClient, transfer.RequestStatusFailed)
 
 							failedEntries, _, errg := s.db.GetFailedEntries(exampleSet.ID())
 							So(errg, ShouldBeNil)
 							So(len(failedEntries), ShouldEqual, 1)
 
-							err = client.RemoveFilesAndDirs(exampleSet.ID(), []string{file1local})
+							err = client.TrashFilesAndDirs(exampleSet.ID(), []string{file1local})
 							So(err, ShouldBeNil)
 
 							waitForRemovals(t, client, exampleSet)
@@ -557,8 +561,8 @@ func TestServer(t *testing.T) {
 						Convey("And given all files are uploaded", func() {
 							makeGivenSetComplete(1, exampleSet.Name, adminClient)
 
-							Convey("Removal on a file and a dir sets them as complete in the remove bucket", func() {
-								err = client.RemoveFilesAndDirs(exampleSet.ID(), []string{file1local, dir2local})
+							Convey("You can trash a file and a dir, which sets them as complete in remove bucket", func() {
+								err = client.TrashFilesAndDirs(exampleSet.ID(), []string{file1local, dir2local})
 								So(err, ShouldBeNil)
 
 								waitForRemovals(t, client, exampleSet)
@@ -566,59 +570,92 @@ func TestServer(t *testing.T) {
 								incompleteRemReqs, errg := s.db.GetIncompleteRemoveRequests()
 								So(errg, ShouldBeNil)
 								So(incompleteRemReqs, ShouldBeEmpty)
-							})
 
-							SkipConvey("Removal on a file doesn't remove the dir and doesn't log anything", func() {
-								logWriter.Reset()
-
-								err = client.RemoveFilesAndDirs(exampleSet.ID(), []string{file1local})
-								So(err, ShouldBeNil)
-
-								waitForRemovals(t, client, exampleSet)
-
-								_, err = os.Stat(file1remote)
-								So(err, ShouldNotBeNil)
-
-								_, err = os.Stat(dir1remote)
-								So(err, ShouldBeNil)
-
-								So(logWriter.String(), ShouldNotContainSubstring, "dir removal error")
-							})
-
-							Convey("Remove on the parent folder removes the nested folder from the db", func() {
-								err = client.RemoveFilesAndDirs(exampleSet.ID(), []string{dir1local})
-								So(err, ShouldBeNil)
-
-								waitForRemovals(t, client, exampleSet)
-
-								entries, errg := s.db.GetAllDirEntries(exampleSet.ID())
+								trashSet, errg := adminClient.GetSetByName(exampleSet.Requester, set.TrashPrefix+exampleSet.Name)
 								So(errg, ShouldBeNil)
-								So(len(entries), ShouldEqual, 0)
-							})
 
-							SkipConvey("If the folder has no access permissions, removal on a file will log the error", func() {
-								err = os.Chmod(dir1remote, 0555)
-								So(err, ShouldBeNil)
+								Convey("And these files appear in a trashed version of the set", func() {
+									files, errg := client.GetFiles(trashSet.ID())
+									So(errg, ShouldBeNil)
+									So(files, ShouldHaveLength, 1)
+									So(files[0].Path, ShouldEqual, file1local)
 
-								logWriter.Reset()
+									dirs, errg := client.GetDirs(trashSet.ID())
+									So(errg, ShouldBeNil)
+									So(dirs, ShouldHaveLength, 1)
+									So(dirs[0].Path, ShouldEqual, dir2local)
+								})
 
-								_, err = os.Stat(file1remote)
-								So(err, ShouldBeNil)
+								Convey("And removal on a file and a dir sets them as complete in the remove bucket", func() {
+									err = adminClient.RemoveFilesAndDirs(trashSet.ID(), []string{file1local, dir2local})
+									So(err, ShouldBeNil)
 
-								err = client.RemoveFilesAndDirs(exampleSet.ID(), []string{file1local})
-								So(err, ShouldBeNil)
+									waitForRemovals(t, adminClient, trashSet)
 
-								waitForRemovals(t, client, exampleSet)
+									incompleteRemReqs, errg := s.db.GetIncompleteRemoveRequests()
+									So(errg, ShouldBeNil)
+									So(incompleteRemReqs, ShouldBeEmpty)
+								})
 
-								_, err = os.Stat(file1remote)
-								So(err, ShouldNotBeNil)
+								Convey("And removal on a file doesn't remove the dir and doesn't log anything", func() {
+									logWriter.Reset()
 
-								_, err = os.Stat(dir2remote)
-								So(err, ShouldBeNil)
+									err = adminClient.RemoveFilesAndDirs(trashSet.ID(), []string{file1local})
+									So(err, ShouldBeNil)
 
-								So(logWriter.String(), ShouldContainSubstring, "dir removal error")
+									waitForRemovals(t, adminClient, trashSet)
 
-								os.Chmod(dir1remote, 0755) //nolint:errcheck
+									_, err = os.Stat(file1remote)
+									So(err, ShouldNotBeNil)
+
+									_, err = os.Stat(dir1remote)
+									So(err, ShouldBeNil)
+
+									So(logWriter.String(), ShouldNotContainSubstring, "dir removal error")
+								})
+
+								Convey("And if you also trash the parent folder", func() {
+									err = client.TrashFilesAndDirs(exampleSet.ID(), []string{dir1local})
+									So(err, ShouldBeNil)
+
+									waitForRemovals(t, client, exampleSet)
+
+									Convey("Remove on the parent folder removes the nested folder from the db", func() {
+										err = adminClient.RemoveFilesAndDirs(trashSet.ID(), []string{dir1local})
+										So(err, ShouldBeNil)
+
+										waitForRemovals(t, adminClient, trashSet)
+
+										entries, errg := s.db.GetAllDirEntries(trashSet.ID())
+										So(errg, ShouldBeNil)
+										So(len(entries), ShouldEqual, 0)
+									})
+
+									Convey("If the folder has no access permissions, removal on a file will log the error", func() {
+										err = os.Chmod(dir1remote, 0555)
+										So(err, ShouldBeNil)
+
+										defer os.Chmod(dir1remote, 0755) //nolint:errcheck
+
+										logWriter.Reset()
+
+										_, err = os.Stat(file1remote)
+										So(err, ShouldBeNil)
+
+										err = adminClient.RemoveFilesAndDirs(trashSet.ID(), []string{file1local})
+										So(err, ShouldBeNil)
+
+										waitForRemovals(t, adminClient, trashSet)
+
+										_, err = os.Stat(file1remote)
+										So(err, ShouldNotBeNil)
+
+										_, err = os.Stat(dir2remote)
+										So(err, ShouldBeNil)
+
+										So(logWriter.String(), ShouldContainSubstring, "dir removal error")
+									})
+								})
 							})
 						})
 
@@ -706,10 +743,10 @@ func TestServer(t *testing.T) {
 						err = s.db.DeleteDiscoveredFoldersBucket(exampleSet.ID())
 						So(err, ShouldBeNil)
 
-						Convey("Remove on a folder not specified should still work", func() {
+						Convey("Trash on a folder not specified should still work", func() {
 							makeGivenSetComplete(1, exampleSet.Name, adminClient)
 
-							err = client.RemoveFilesAndDirs(exampleSet.ID(), []string{dir2})
+							err = client.TrashFilesAndDirs(exampleSet.ID(), []string{dir2})
 							So(err, ShouldBeNil)
 
 							waitForRemovals(t, client, exampleSet)
@@ -764,11 +801,11 @@ func TestServer(t *testing.T) {
 
 						makeGivenSetComplete(200, exampleSet.Name, adminClient)
 
-						Convey("You can trigger removals", func() {
-							err = client.RemoveFilesAndDirs(exampleSet.ID(), []string{dir2})
+						Convey("You can trigger trashing", func() {
+							err = client.TrashFilesAndDirs(exampleSet.ID(), []string{dir2})
 							So(err, ShouldBeNil)
 
-							err = client.RemoveFilesAndDirs(exampleSet.ID(), []string{dir3})
+							err = client.TrashFilesAndDirs(exampleSet.ID(), []string{dir3})
 							So(err, ShouldBeNil)
 
 							time.Sleep(50 * time.Millisecond)
@@ -779,7 +816,7 @@ func TestServer(t *testing.T) {
 							So(gotSet.NumObjectsRemoved, ShouldBeGreaterThan, 0)
 							So(gotSet.NumObjectsToBeRemoved, ShouldEqual, filesInSet+2)
 
-							Convey("And you can trigger and complete discovery of the extra file while removals are running", func() {
+							Convey("And you can trigger and complete discovery of the extra file while trash is still running", func() {
 								fileToBeDiscovered := filepath.Join(dir1, "file"+strconv.Itoa(filesInSet+1))
 								internal.CreateTestFile(t, fileToBeDiscovered, "file content")
 
@@ -794,7 +831,7 @@ func TestServer(t *testing.T) {
 								So(gotSet.NumFiles, ShouldBeBetween, 1, filesInSet)
 								So(gotSet.NumObjectsRemoved, ShouldBeLessThan, gotSet.NumObjectsToBeRemoved)
 
-								Convey("And then the removals will still complete", func() {
+								Convey("And then the trashing will still complete", func() {
 									time.Sleep(1000 * time.Millisecond)
 
 									gotSet, errg = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
