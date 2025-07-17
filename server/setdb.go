@@ -28,7 +28,6 @@ package server
 import (
 	"context"
 	"errors"
-	"fmt"
 	"math"
 	"net/http"
 	"os"
@@ -281,7 +280,7 @@ func (s *Server) EnableRemoteDBBackups(remotePath string, handler transfer.Handl
 }
 
 // addDBEndpoints adds all the REST API endpoints to the given router group.
-func (s *Server) addDBEndpoints(authGroup *gin.RouterGroup) {
+func (s *Server) addDBEndpoints(authGroup *gin.RouterGroup) { //nolint:funlen
 	authGroup.GET(setPath+"/:"+paramRequester, s.getSets)
 
 	idParam := "/:" + paramSetID
@@ -515,7 +514,8 @@ func (s *Server) removePaths(c *gin.Context) {
 // trashed set, the user is not an admin or if any provided path is not in the
 // given set. Also returns the valid paths classified into a slice of filepaths
 // or dirpaths.
-func (s *Server) validateInputsForRemovals(givenSet *set.Set, paths []string, c *gin.Context) ([]string, []string, int, error) {
+func (s *Server) validateInputsForRemovals(givenSet *set.Set, paths []string,
+	c *gin.Context) ([]string, []string, int, error) {
 	if !isTrashSet(givenSet.Name) {
 		return nil, nil, http.StatusBadRequest, ErrNotTrashed
 	}
@@ -525,6 +525,7 @@ func (s *Server) validateInputsForRemovals(givenSet *set.Set, paths []string, c 
 	}
 
 	files, dirs, err := s.db.ValidateFileAndDirPaths(givenSet, paths)
+
 	return files, dirs, http.StatusBadRequest, err
 }
 
@@ -764,7 +765,7 @@ func (s *Server) processRemoteFileRemoval(removeReq *set.RemoveReq, entry *set.E
 		return err
 	}
 
-	mayMissInRemote := removeReq.RemoteRemovalStatus == set.AboutToBeRemoved
+	mayMissInRemote := removeReq.RemoteRemovalStatus == set.AboutToBeRemoved && removeReq.Action == set.ToRemove
 	removeReq.RemoteRemovalStatus = set.AboutToBeRemoved
 
 	err = s.db.UpdateRemoveRequest(*removeReq)
@@ -774,7 +775,8 @@ func (s *Server) processRemoteFileRemoval(removeReq *set.RemoveReq, entry *set.E
 
 	err = s.updateOrRemoveRemoteFile(removeReq, transformer, entry)
 	if err != nil && fileErrorCannotBeIgnored(err, mayMissInRemote) {
-		s.setErrorOnEntry(entry, removeReq.Set.ID(), removeReq.Path, err)
+		errorPrefix := "failed to remove: "
+		s.setErrorOnEntry(entry, removeReq.Set.ID(), removeReq.Path, errorPrefix+err.Error())
 
 		return err
 	}
@@ -849,8 +851,6 @@ func (s *Server) updateOrRemoveRemoteFile(removeReq *set.RemoveReq, transformer 
 		return err
 	}
 
-	// TODO this should return a better err message or something - we don't know if it doesnt exist or has no permissions.
-
 	remoteMeta, err := s.storageHandler.GetMeta(rpath)
 	if err != nil {
 		return err
@@ -921,7 +921,8 @@ func (s *Server) getFilesWithSameInode(path string, inode uint64, transformer tr
 	return files, 0, err
 }
 
-func (s *Server) handleSetsAndRequesters(path string, givenSet *set.Set, meta map[string]string) ([]string, []string, error) {
+func (s *Server) handleSetsAndRequesters(path string, givenSet *set.Set,
+	meta map[string]string) ([]string, []string, error) {
 	sets := strings.Split(meta[transfer.MetaKeySets], ",")
 	requesters := strings.Split(meta[transfer.MetaKeyRequester], ",")
 
@@ -929,24 +930,9 @@ func (s *Server) handleSetsAndRequesters(path string, givenSet *set.Set, meta ma
 		return sets, requesters, nil
 	}
 
-	setIDs, err := s.db.GetAllSetsForFile(path)
+	numUserSets, numSetsWithGivenName, err := s.countSetsForPath(path, givenSet.Name, givenSet.Requester)
 	if err != nil {
 		return nil, nil, err
-	}
-
-	numUserSets := 0
-	numSetsWithGivenName := 0
-
-	for _, setID := range setIDs {
-		set := s.db.GetByID(setID)
-
-		if set.Requester == givenSet.Requester {
-			numUserSets++
-		}
-
-		if set.Name == givenSet.Name {
-			numSetsWithGivenName++
-		}
 	}
 
 	if numUserSets == 1 {
@@ -963,6 +949,35 @@ func (s *Server) handleSetsAndRequesters(path string, givenSet *set.Set, meta ma
 	sets, err = set.RemoveElementFromSlice(sets, givenSet.Name)
 
 	return sets, requesters, err
+}
+
+// countSetsForPath gets all sets that contain the provided path and returns a
+// count for the number of sets with the same set name as given, and the number
+// of sets with the same requester as provided.
+func (s *Server) countSetsForPath(path, givenName, givenRequester string) (uint16, uint16, error) {
+	setIDs, err := s.db.GetAllSetsForFile(path)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	var (
+		numSetsWithRequester uint16
+		numSetsWithSetName   uint16
+	)
+
+	for _, setID := range setIDs {
+		set := s.db.GetByID(setID)
+
+		if set.Requester == givenRequester {
+			numSetsWithRequester++
+		}
+
+		if set.Name == givenName {
+			numSetsWithSetName++
+		}
+	}
+
+	return numSetsWithRequester, numSetsWithSetName, nil
 }
 
 func (s *Server) handleSetMetadataForTrash(givenSet *set.Set, meta map[string]string) ([]string, []string, error) {
@@ -1021,8 +1036,8 @@ func getNamesFromSets(sets []*set.Set) []string {
 	return names
 }
 
-func (s *Server) setErrorOnEntry(entry *set.Entry, sid, path string, err error) {
-	entry.LastError = err.Error()
+func (s *Server) setErrorOnEntry(entry *set.Entry, sid, path string, errMsg string) {
+	entry.LastError = errMsg
 
 	erru := s.db.UpdateEntry(sid, path, entry)
 	if erru != nil {

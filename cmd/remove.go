@@ -28,6 +28,7 @@
 package cmd
 
 import (
+	"errors"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
@@ -43,7 +44,7 @@ var removePath string
 var removeNull bool
 var removeSet bool
 
-const ErrRemoveItems = "exactly one of --items or --path or --set must be provided"
+var ErrRemoveItems = errors.New("exactly one of --items or --path or --set must be provided")
 
 // removeCmd represents the add command.
 var removeCmd = &cobra.Command{
@@ -72,18 +73,18 @@ var removeCmd = &cobra.Command{
 		 path.
  --set: if you want to remove all the files from the set and the set itself.		 
  `,
-	Run: func(_ *cobra.Command, _ []string) {
+	RunE: func(_ *cobra.Command, _ []string) error {
 		ensureURLandCert()
 
 		if (removeItems == "") == (removePath == "") == !removeSet {
-			dief(ErrRemoveItems)
+			return ErrRemoveItems
 		}
 
 		var paths []string
 
 		client, err := newServerClient(serverURL, serverCert)
 		if err != nil {
-			die(err)
+			return err
 		}
 
 		if removeItems != "" {
@@ -93,13 +94,16 @@ var removeCmd = &cobra.Command{
 		if removePath != "" {
 			removePath, err = filepath.Abs(removePath)
 			if err != nil {
-				die(err)
+				return err
 			}
 
 			paths = append(paths, removePath)
 		}
 
-		setID := getSetID(client, removeUser, removeName)
+		setID, err := getSetID(client, removeUser, removeName)
+		if err != nil {
+			return err
+		}
 
 		if !removeSet {
 			err = client.TrashFilesAndDirs(setID, paths, false)
@@ -107,9 +111,7 @@ var removeCmd = &cobra.Command{
 			err = client.RemoveSet(setID)
 		}
 
-		if err != nil {
-			die(err)
-		}
+		return err
 	},
 }
 
@@ -117,15 +119,12 @@ func init() {
 	RootCmd.AddCommand(removeCmd)
 
 	// flags specific to this sub-command
-	removeCmd.Flags().StringVar(&removeUser, "user", currentUsername(),
-		"pretend to be this user (only works if you started the server)")
+	removeCmd.Flags().StringVar(&removeUser, "user", currentUsername(), helpTextuser)
 	removeCmd.Flags().StringVarP(&removeName, "name", "n", "", "remove objects from the set with this name")
-	removeCmd.Flags().StringVarP(&removeItems, "items", "i", "",
-		"path to file with one absolute local directory or file path per line")
+	removeCmd.Flags().StringVarP(&removeItems, "items", "i", "", helpTextItems)
 	removeCmd.Flags().StringVarP(&removePath, "path", "p", "",
 		"path to a single file or directory you wish to remove")
-	removeCmd.Flags().BoolVarP(&removeNull, "null", "0", false,
-		"input paths are terminated by a null character instead of a new line")
+	removeCmd.Flags().BoolVarP(&removeNull, "null", "0", false, helpTextNull)
 	removeCmd.Flags().BoolVarP(&removeSet, "set", "s", false,
 		"remove all files from the set and the set itself")
 
@@ -134,12 +133,12 @@ func init() {
 	}
 }
 
-func getSetID(client *server.Client, user, name string) string {
+func getSetID(client *server.Client, user, name string) (string, error) {
 	sets := getSetByName(client, user, name)
 
 	if sets[0].ReadOnly {
-		die(set.Error{Msg: set.ErrSetIsNotWritable})
+		return "", set.Error{Msg: set.ErrSetIsNotWritable}
 	}
 
-	return sets[0].ID()
+	return sets[0].ID(), nil
 }
