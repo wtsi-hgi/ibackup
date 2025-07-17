@@ -76,7 +76,7 @@ const (
 	// EndPointAuthEntries is the endpoint for getting set entries.
 	EndPointAuthEntries = gas.EndPointAuth + entryPath
 
-	// EndPointAuthUploadedEntries is the endpoint for getting set orphaned
+	// EndPointAuthUploadedEntries is the endpoint for getting set uploaded
 	// entries.
 	EndPointAuthUploadedEntries = gas.EndPointAuth + uploadedEntryPath
 
