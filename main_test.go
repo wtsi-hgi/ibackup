@@ -3664,6 +3664,48 @@ func TestEdit(t *testing.T) {
 				})
 			})
 
+			Convey("And a non-monitored set", func() {
+				setName := "nonMonitoredSet"
+				s.addSetForTesting(t, setName, transformer, path)
+
+				s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Monitored: false;")
+
+				Convey("You cannot use both --monitor and --stop-monitor together", func() {
+					s.confirmOutputContains(t, []string{"edit", "--name", setName, "--monitor", "1h", "--stop-monitor"}, 1,
+						cmd.ErrInvalidEditMonitor.Error())
+				})
+
+				Convey("You can enable monitoring via edit", func() {
+					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--monitor", "2w")
+					So(exitCode, ShouldEqual, 0)
+
+					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Monitored: 2w;")
+
+					Convey("You can update monitoring duration via edit", func() {
+						exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--monitor", "1d")
+						So(exitCode, ShouldEqual, 0)
+
+						s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Monitored: 1d;")
+						exitCode2, _ := s.runBinary(t, "edit", "--name", setName, "--monitor", "3d")
+						So(exitCode2, ShouldEqual, 0)
+
+						s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Monitored: 3d;")
+					})
+				})
+
+				Convey("You can't set monitor duration below 1h", func() {
+					exitCode, stderr := s.runBinary(t, "edit", "--name", setName, "--monitor", "30m")
+					So(exitCode, ShouldNotEqual, 0)
+					So(stderr, ShouldContainSubstring, "monitor duration must be 1h0m0s or more, not 30m0s")
+				})
+
+				Convey("You can't set monitor duration to an invalid string", func() {
+					exitCode, stderr := s.runBinary(t, "edit", "--name", setName, "--monitor", "foobar")
+					So(exitCode, ShouldNotEqual, 0)
+					So(stderr, ShouldContainSubstring, "invalid monitor duration: time: invalid duration \"foobar\"")
+				})
+			})
+
 			Convey("And a set marked as archive", func() {
 				setName := "archiveSet"
 				s.addSetForTestingWithFlags(t, setName, transformer, "--path", path, "--archive")

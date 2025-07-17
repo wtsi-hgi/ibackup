@@ -49,6 +49,7 @@ var (
 	editRemovalDate         string
 	editTransformer         string
 	editAddPath             string
+	editMonitor             string
 	editStopMonitor         bool
 	editStopMonitorRemovals bool
 	editStopArchive         bool
@@ -57,10 +58,13 @@ var (
 	editMakeWritable        bool
 	editHide                bool
 	editUnHide              bool
+)
 
+var (
 	ErrInvalidEditRO      = errors.New("you can either make a set read-only or writable, not both")
-	ErrInvalidEditArchive = errors.New("you can either archive a set or stop archiving, not both")
-	ErrInvalidEditHide    = errors.New("you can either hide or unhide a set, not both")
+	ErrInvalidEditArchive = errors.New("you can either --archive a set or --stop-archiving, not both")
+	ErrInvalidEditHide    = errors.New("you can either --hide or --unhide a set, not both")
+	ErrInvalidEditMonitor = errors.New("you can either --monitor or --stop-monitor a set, not both")
 )
 
 // editCmd represents the edit command.
@@ -87,6 +91,10 @@ preexisting backup set.`,
 			return ErrInvalidEditHide
 		}
 
+		if editMonitor != "" && editStopMonitor {
+			return ErrInvalidEditMonitor
+		}
+
 		return nil
 	},
 	RunE: func(_ *cobra.Command, _ []string) error {
@@ -109,6 +117,15 @@ preexisting backup set.`,
 
 		if editDescription != "" {
 			userSet.Description = editDescription
+		}
+
+		if editMonitor != "" {
+			monitorDuration, errp := parseDuration(editMonitor, 1*time.Hour)
+			if errp != nil {
+				return errp
+			}
+
+			userSet.MonitorTime = monitorDuration
 		}
 
 		if editStopMonitor {
@@ -164,6 +181,7 @@ func init() {
 	editCmd.Flags().StringVar(&editRemovalDate, "removal-date", "", helpTextRemoval)
 	editCmd.Flags().StringVar(&editTransformer, "transformer", "", helpTextTransformer)
 	editCmd.Flags().StringVar(&editAddPath, "add", "", helpTextPath)
+	editCmd.Flags().StringVarP(&editMonitor, "monitor", "m", "", helpTextMonitor)
 	editCmd.Flags().BoolVar(&editStopMonitor, "stop-monitor", false, "stop monitoring the set for changes")
 	editCmd.Flags().BoolVar(&editStopMonitorRemovals, "stop-monitor-removals", false,
 		"stop monitoring the set for locally removed files")

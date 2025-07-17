@@ -29,6 +29,7 @@ package cmd
 import (
 	"bufio"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -85,11 +86,30 @@ var (
 	setRemoval         string
 )
 
-var ErrCancel = errors.New("cancelled add")
-var ErrDuplicateSet = errors.New(
-	"set with this name already exists, please choose a different name " +
-		"or use ibackup edit to update it",
+var (
+	ErrCancel       = errors.New("cancelled add")
+	ErrDuplicateSet = errors.New(
+		"set with this name already exists, please choose a different name " +
+			"or use ibackup edit to update it",
+	)
 )
+
+type InvalidMonitorDurationError struct {
+	Err error
+}
+
+func (e *InvalidMonitorDurationError) Error() string {
+	return fmt.Sprintf("invalid monitor duration: %v", e.Err)
+}
+
+type MonitorDurationTooShortError struct {
+	Duration    time.Duration
+	MinDuration time.Duration
+}
+
+func (e *MonitorDurationTooShortError) Error() string {
+	return fmt.Sprintf("monitor duration must be %s or more, not %s", e.MinDuration, e.Duration)
+}
 
 // addCmd represents the add command.
 var addCmd = &cobra.Command{
@@ -192,13 +212,9 @@ option to add sets on behalf of other users.
 		if setMonitor != "" {
 			var err error
 
-			monitorDuration, err = parseDuration(setMonitor)
+			monitorDuration, err = parseDuration(setMonitor, 1*time.Hour)
 			if err != nil {
-				dief("invalid monitor duration: %s", err)
-			}
-
-			if monitorDuration < 1*time.Hour {
-				dief("monitor duration must be 1h or more, not %s", monitorDuration)
+				die(err)
 			}
 		}
 
@@ -397,26 +413,42 @@ func checkExistingSet(client *server.Client, name, requester string) (*set.Set, 
 	return set, ErrDuplicateSet
 }
 
-func parseDuration(s string) (time.Duration, error) {
-	durationRegex := regexp.MustCompile("[0-9]+[dw]")
+func parseDuration(s string, minDuration time.Duration) (time.Duration, error) {
+	s = convertDurationString(s)
 
-	if durationRegex.MatchString(s) {
-		s = durationRegex.ReplaceAllStringFunc(s, func(d string) string {
-			num, err := strconv.ParseInt(d[:len(d)-1], 10, 64)
-			if err != nil {
-				return d
-			}
-
-			switch d[len(d)-1] {
-			case 'd':
-				num *= hoursInDay
-			case 'w':
-				num *= hoursInWeek
-			}
-
-			return strconv.FormatInt(num, 10) + "h"
-		})
+	monitorDuration, err := time.ParseDuration(s)
+	if err != nil {
+		return 0, &InvalidMonitorDurationError{
+			Err: err,
+		}
 	}
 
-	return time.ParseDuration(s)
+	if monitorDuration < minDuration {
+		return 0, &MonitorDurationTooShortError{
+			Duration:    monitorDuration,
+			MinDuration: minDuration,
+		}
+	}
+
+	return monitorDuration, nil
+}
+
+func convertDurationString(s string) string {
+	durationRegex := regexp.MustCompile("[0-9]+[dw]")
+
+	return durationRegex.ReplaceAllStringFunc(s, func(d string) string {
+		num, err := strconv.ParseInt(d[:len(d)-1], 10, 64)
+		if err != nil {
+			return d
+		}
+
+		switch d[len(d)-1] {
+		case 'd':
+			num *= hoursInDay
+		case 'w':
+			num *= hoursInWeek
+		}
+
+		return strconv.FormatInt(num, 10) + "h"
+	})
 }

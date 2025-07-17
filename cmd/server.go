@@ -178,13 +178,9 @@ database that you've made, to investigate.
 		if serverStillRunningMsgFreq != "" {
 			var err error
 
-			stillRunningMsgFreq, err = parseDuration(serverStillRunningMsgFreq)
+			stillRunningMsgFreq, err = parseDuration(serverStillRunningMsgFreq, 1*time.Minute)
 			if err != nil {
-				dief("invalid still_running message frequency: %s", err)
-			}
-
-			if stillRunningMsgFreq < 1*time.Minute {
-				dief("message frequency must be 1m or more, not %s", stillRunningMsgFreq)
+				die(err)
 			}
 		}
 
