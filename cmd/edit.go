@@ -119,11 +119,10 @@ preexisting backup set.`,
 			userSet.Description = editDescription
 		}
 
-		var monitorDuration time.Duration
 		if editMonitor != "" {
-			monitorDuration, err = parseDuration(editMonitor, 1*time.Hour)
-			if err != nil {
-				return err
+			monitorDuration, errp := parseDuration(editMonitor, 1*time.Hour)
+			if errp != nil {
+				return errp
 			}
 
 			userSet.MonitorTime = monitorDuration
