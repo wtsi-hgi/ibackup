@@ -44,19 +44,19 @@ var trashItems string
 var trashPath string
 var trashNull bool
 
-const ErrTrashRemove = "You must provide --remove"
+var ErrTrashRemove = errors.New("you must provide --remove")
 
 // removeCmd represents the add command.
 var trashCmd = &cobra.Command{
 	Use:   "trash",
 	Short: "Restore or remove objects from trash set",
 	Long: `Restore or remove objects from trash set
-
-	TODO
  
-  Remove objects from a backed up set by providing the files and/or directories 
-  to be removed. This will remove objects from the set and from iRODS if it is 
-  not found in any other sets.
+  Removes or restores objects from a trash set by providing the files and/or 
+  directories. You need to provide a base set name (not trash set name).
+  
+  If you provide --remove, this will remove objects from the trash set and 
+  from iRODS if they are not found in any other sets.
   
   You also need to supply the ibackup server's URL in the form domain:port (using
   the IBACKUP_SERVER_URL environment variable, or overriding that with the --url
@@ -78,11 +78,11 @@ var trashCmd = &cobra.Command{
 		ensureURLandCert()
 
 		if (trashItems == "") == (trashPath == "") {
-			return errors.New(ErrRemoveItems)
+			return ErrRemoveItems
 		}
 
 		if !trashRemove {
-			return errors.New(ErrTrashRemove)
+			return ErrTrashRemove
 		}
 
 		return nil
@@ -135,5 +135,5 @@ func handleTrash(client *server.Client, user, name string, paths []string) error
 
 	sets := getSetByName(client, user, setName)
 
-	return client.RemoveFilesAndDirs(sets[0].ID(), paths, true)
+	return client.RemoveFilesAndDirs(sets[0].ID(), paths)
 }
