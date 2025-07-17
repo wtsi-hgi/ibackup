@@ -564,7 +564,7 @@ func (s *Set) DiscoveryCompleted(numFiles uint64) {
 // UpdateBasedOnEntry updates set status values based on an updated Entry
 // from updateFileEntry(), assuming that request is for one of set's file
 // entries.
-func (s *Set) UpdateBasedOnEntry(entry *Entry, getFileEntries func(string) ([]*Entry, error)) error {
+func (s *Set) UpdateBasedOnEntry(entry *Entry, getFileEntries func(string, FileEntryFilter) ([]*Entry, error)) error {
 	s.checkIfUploading()
 
 	s.adjustBasedOnEntry(entry)
@@ -607,12 +607,12 @@ func (s *Set) checkIfComplete() {
 // fixCounts resets the set counts to 0 and goes through all the entries for
 // the set in the db to recaluclate them. The supplied entry should be one you
 // newly updated and that wasn't in the db before the transaction we're in.
-func (s *Set) fixCounts(entry *Entry, getFileEntries func(string) ([]*Entry, error)) error {
+func (s *Set) fixCounts(entry *Entry, getFileEntries func(string, FileEntryFilter) ([]*Entry, error)) error {
 	if s.countsValid() {
 		return nil
 	}
 
-	entries, err := getFileEntries(s.ID())
+	entries, err := getFileEntries(s.ID(), nil)
 	if err != nil {
 		return err
 	}

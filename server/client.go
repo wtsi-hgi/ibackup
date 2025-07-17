@@ -259,6 +259,20 @@ func (c *Client) GetFiles(setID string) ([]*set.Entry, error) {
 	return entries, err
 }
 
+// GetUploadedFiles gets the uploaded file paths and their backup status for the
+// given set.
+func (c *Client) GetUploadedFiles(setID string) ([]*set.Entry, error) {
+	var entries []*set.Entry
+
+	err := c.getThing(EndPointAuthUploadedEntries+"/"+setID, &entries)
+
+	for _, entry := range entries {
+		entry.CorrectFromJSON()
+	}
+
+	return entries, err
+}
+
 // GetExampleFile gets an example (not discovered) file for the given set that
 // was supplied to SetFiles(). If there are no undiscovered files, returns a
 // nil entry and error.
@@ -427,7 +441,8 @@ func (c *Client) stillWorkingOnRequests(rids []string) error {
 //
 // Do not call this concurrently!
 func (c *Client) SendPutResultsToServer(uploadStarts, uploadResults, skipResults chan *transfer.Request,
-	minMBperSecondUploadSpeed float64, minTimeForUpload, maxStuckTime time.Duration, logger log15.Logger) error {
+	minMBperSecondUploadSpeed float64, minTimeForUpload, maxStuckTime time.Duration, logger log15.Logger,
+) error {
 	c.minMBperSecondUploadSpeed = minMBperSecondUploadSpeed
 	c.minTimeForUpload = minTimeForUpload
 	c.maxStuckTime = maxStuckTime
