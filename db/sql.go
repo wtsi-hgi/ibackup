@@ -76,7 +76,7 @@ var (
 			"`localPathHash` " + hashColumnStart + "`localPath`" + hashColumnEnd + ", " +
 			"`setID` INTEGER NOT NULL, " +
 			"`remoteFileID` INTEGER NOT NULL, " +
-			"`lastUpload` DATETIME DEFAULT \"0001-01-01 00:00:00\", " +
+			"`lastUploaded` DATETIME DEFAULT \"0001-01-01 00:00:00\", " +
 			"`updated` BOOLEAN DEFAULT FALSE, " +
 			"UNIQUE(`localPathHash`, `setID`), " +
 			"FOREIGN KEY(`setID`) REFERENCES `sets`(`id`) ON DELETE CASCADE, " +
@@ -122,14 +122,19 @@ var (
 			"`lastAttempt` = '0001-01-01 00:00:00', `lastError` = '';" +
 			"END;",
 		"CREATE TRIGGER IF NOT EXISTS `reupload_local_file` AFTER UPDATE ON `localFiles` FOR EACH ROW BEGIN " +
+			"/*! IF @noqueue IS NULL THEN */" +
 			"INSERT INTO `queue` (`localFileID`, `type`) SELECT `NEW`.`id`, " + string('0'+QueueUpload) + " " +
 			"WHERE NOT `OLD`.`updated` = `NEW`.`updated` " +
 			onConflictUpdate + "`type` = " + string('0'+QueueUpload) + ", `attempts` = 0, " +
 			"`lastAttempt` = '0001-01-01 00:00:00', `lastError` = '';" +
+			"/*! END IF; SET @noqueue = NULL; */" +
 			"END;",
 		"CREATE TRIGGER IF NOT EXISTS `update_file_after_queued_action` AFTER DELETE ON `queue` FOR EACH ROW BEGIN " +
 			"DELETE FROM `localFiles` WHERE " +
 			"`OLD`.`type` = " + string('0'+QueueRemoval) + " AND `localFiles`.`id` = `OLD`.`localFileID`;" +
+			"/*! SET @noqueue = 1; */" +
+			"UPDATE `localFiles` SET `lastUploaded` = " + now + " " +
+			"WHERE `OLD`.`type` = " + string('0'+QueueUpload) + " AND `localFiles`.`id` = `OLD`.`localFileID`;" +
 			"UPDATE `remoteFiles` SET `lastUploaded` = " + now + " " +
 			"WHERE `OLD`.`type` = " + string('0'+QueueUpload) + " AND " +
 			"`remoteFiles`.`id` IN (SELECT `remoteFileID` from `localFiles` WHERE `localFiles`.`id` = `OLD`.`localFileID`);" +
