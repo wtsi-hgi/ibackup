@@ -41,6 +41,7 @@ var removeName string
 var removeItems string
 var removePath string
 var removeNull bool
+var removeSet bool
 
 // removeCmd represents the add command.
 var removeCmd = &cobra.Command{
@@ -67,12 +68,17 @@ var removeCmd = &cobra.Command{
 		  null-terminate them instead and use the optional --null argument.
  --path: if you want to remove a single file or directory, provide its absolute
 		 path.
+ --set: if you want to remove all the files from the set and the set itself.		 
  `,
 	Run: func(_ *cobra.Command, _ []string) {
 		ensureURLandCert()
 
-		if (removeItems == "") == (removePath == "") {
-			dief("exactly one of --items or --path must be provided")
+		if removeName == "" {
+			dief("--name is required")
+		}
+
+		if (removeItems == "") == (removePath == "") == !removeSet {
+			dief("exactly one of --items or --path or --set must be provided")
 		}
 
 		var paths []string
@@ -95,7 +101,23 @@ var removeCmd = &cobra.Command{
 			paths = append(paths, removePath)
 		}
 
-		handleRemove(client, removeUser, removeName, paths)
+		setID := getSetID(client, removeUser, removeName)
+
+		if removeSet {
+			entries, err := client.GetFiles(setID)
+			if err != nil {
+				die(err)
+			}
+
+			for _, entry := range entries {
+				paths = append(paths, entry.Path)
+			}
+		}
+
+		// pass removeSet to handleRemove, which if that is true, will remove
+		// all the paths as normal, wait server-side for that to complete, then
+		// the server will call our new db.Delete function
+		handleRemove(client, setID, paths)
 	},
 }
 
@@ -112,21 +134,27 @@ func init() {
 		"path to a single file or directory you wish to remove")
 	removeCmd.Flags().BoolVarP(&removeNull, "null", "0", false,
 		"input paths are terminated by a null character instead of a new line")
+	removeCmd.Flags().BoolVarP(&removeSet, "set", "s", false,
+		"remove all files from the set and the set itself")
 
 	if err := removeCmd.MarkFlagRequired("name"); err != nil {
 		die(err)
 	}
 }
 
-// handleRemove does the main job of sending the set, files and dirs to the server.
-func handleRemove(client *server.Client, user, name string, paths []string) {
+func getSetID(client *server.Client, user, name string) string {
 	sets := getSetByName(client, user, name)
 
 	if sets[0].ReadOnly {
 		die(set.Error{Msg: set.ErrSetIsNotWritable})
 	}
 
-	err := client.RemoveFilesAndDirs(sets[0].ID(), paths)
+	return sets[0].ID()
+}
+
+// handleRemove does the main job of sending the set, files and dirs to the server.
+func handleRemove(client *server.Client, setID string, paths []string) {
+	err := client.RemoveFilesAndDirs(setID, paths)
 	if err != nil {
 		die(err)
 	}

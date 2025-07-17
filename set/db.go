@@ -2015,3 +2015,16 @@ func (d *DB) MakeSetWritable(sid string) error {
 		s.ReadOnly = false
 	})
 }
+
+// Delete removes the set from the db. NB: does NOT delete its entries and any
+// sub-buckets; you should deal with those first.
+func (d *DB) Delete(setID string) error {
+	return d.db.Update(func(tx *bolt.Tx) error {
+		_, bid, b, err := d.getSetByID(tx, setID)
+		if err != nil {
+			return err
+		}
+
+		return b.Delete(bid)
+	})
+}
