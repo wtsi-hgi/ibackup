@@ -126,7 +126,6 @@ const (
 	ErrBadSet         = gas.Error("set with that id does not exist")
 	ErrInvalidInput   = gas.Error("invalid input")
 	ErrInternal       = gas.Error("internal server error")
-	ErrInvalidAction  = gas.Error("provided endpoint action is not valid")
 
 	paramRequester    = "requester"
 	paramSetID        = "id"
@@ -314,10 +313,9 @@ func (s *Server) addDBEndpoints(authGroup *gin.RouterGroup) { //nolint:funlen
 
 	authGroup.PUT(fileStatusPath, s.putFileStatus)
 
-	// authGroup.PUT(removePathsPath+idParam, s.removePaths)
-	authGroup.POST(removePathsPath, s.removeEndpointHandler)
+	authGroup.PUT(removePathsPath+idParam, s.removePaths)
 
-	// authGroup.PUT(trashPathsPath+idParam, s.trashPaths)
+	authGroup.PUT(trashPathsPath+idParam, s.trashPaths)
 
 	authGroup.DELETE(setPath+idParam, s.deleteSet)
 }
@@ -491,8 +489,8 @@ func (s *Server) putFiles(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
-func (s *Server) removePaths(c *gin.Context, setID string, paths []string) {
-	givenSet, ok := s.validateSet(c, setID)
+func (s *Server) removePaths(c *gin.Context) {
+	givenSet, paths, ok := s.bindPathsAndValidateSet(c)
 	if !ok {
 		return
 	}
@@ -507,27 +505,6 @@ func (s *Server) removePaths(c *gin.Context, setID string, paths []string) {
 	err = s.removeFilesAndDirs(givenSet, filePaths, dirPaths, set.ToRemove)
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
-
-		return
-	}
-}
-
-func (s *Server) removeEndpointHandler(c *gin.Context) {
-	var body RemoveEndpointBody
-
-	if err := c.BindJSON(&body); err != nil {
-		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
-
-		return
-	}
-
-	switch body.Action {
-	case removeAction:
-		s.removePaths(c, body.SetID, body.Paths)
-	case trashAction:
-		s.trashPaths(c, body.SetID, body.Paths)
-	default:
-		c.AbortWithError(http.StatusBadRequest, ErrInvalidAction)
 
 		return
 	}
@@ -552,8 +529,8 @@ func (s *Server) validateInputsForRemovals(givenSet *set.Set, paths []string,
 	return files, dirs, http.StatusBadRequest, err
 }
 
-func (s *Server) trashPaths(c *gin.Context, setID string, paths []string) {
-	givenSet, ok := s.validateSet(c, setID)
+func (s *Server) trashPaths(c *gin.Context) {
+	givenSet, paths, ok := s.bindPathsAndValidateSet(c)
 	if !ok {
 		return
 	}
@@ -1102,7 +1079,7 @@ func (s *Server) bindPathsAndValidateSet(c *gin.Context) (*set.Set, []string, bo
 		return nil, nil, false
 	}
 
-	set, ok := s.getAndValidateSet(c)
+	set, ok := s.validateSet(c)
 	if !ok {
 		return nil, nil, false
 	}
@@ -1110,18 +1087,13 @@ func (s *Server) bindPathsAndValidateSet(c *gin.Context) (*set.Set, []string, bo
 	return set, bytesToStrings(bpaths), true
 }
 
-// getAndValidateSet gets the id parameter from the given context and passes it
-// to the validator.
-func (s *Server) getAndValidateSet(c *gin.Context) (*set.Set, bool) {
+// validateSet gets the id parameter from the given context and checks a
+// corresponding set exists and the logged-in user is the same as the set's
+// Requester. If so, returns the set and true. If not, Aborts with an error
+// and returns false.
+func (s *Server) validateSet(c *gin.Context) (*set.Set, bool) {
 	sid := c.Param(paramSetID)
 
-	return s.validateSet(c, sid)
-}
-
-// validateSet checks if the given set exists and the logged-in user is the same
-// as the set's Requester. If so, returns the set and true. If not, Aborts with
-// an error and returns false.
-func (s *Server) validateSet(c *gin.Context, sid string) (*set.Set, bool) {
 	set := s.db.GetByID(sid)
 	if set == nil {
 		c.AbortWithError(http.StatusBadRequest, ErrBadSet) //nolint:errcheck
@@ -1365,7 +1337,7 @@ func (s *Server) getEntries(c *gin.Context) {
 }
 
 func (s *Server) getFileEntries(c *gin.Context, filter func(*set.Entry) bool) {
-	set, ok := s.getAndValidateSet(c)
+	set, ok := s.validateSet(c)
 	if !ok {
 		return
 	}
@@ -1398,7 +1370,7 @@ func (s *Server) getLastStateEntries(c *gin.Context) {
 // LoadSetDB() must already have been called. This is called when there is a GET
 // on /rest/v1/auth/example_entry/[id].
 func (s *Server) getExampleEntry(c *gin.Context) {
-	set, ok := s.getAndValidateSet(c)
+	set, ok := s.validateSet(c)
 	if !ok {
 		return
 	}
@@ -1423,7 +1395,7 @@ func (s *Server) getExampleEntry(c *gin.Context) {
 // LoadSetDB() must already have been called. This is called when there is a GET
 // on /rest/v1/auth/dirs/[id].
 func (s *Server) getDirs(c *gin.Context) {
-	set, ok := s.getAndValidateSet(c)
+	set, ok := s.validateSet(c)
 	if !ok {
 		return
 	}
@@ -1449,7 +1421,7 @@ func (s *Server) getDirs(c *gin.Context) {
 // LoadSetDB() must already have been called. This is called when there is a GET
 // on /rest/v1/auth/failed_entries/[id].
 func (s *Server) getFailedEntries(c *gin.Context) {
-	set, ok := s.getAndValidateSet(c)
+	set, ok := s.validateSet(c)
 	if !ok {
 		return
 	}
@@ -1925,7 +1897,7 @@ func (s *Server) recoverSet(given *set.Set) error {
 // LoadSetDB() must already have been called. This is called when there is a GET
 // on /rest/v1/auth/retry/[id].
 func (s *Server) retryFailedEntries(c *gin.Context) {
-	got, ok := s.getAndValidateSet(c)
+	got, ok := s.validateSet(c)
 	if !ok {
 		return
 	}
