@@ -126,6 +126,9 @@ func TestFiles(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(refs, ShouldEqual, 2)
 
+			So(len(slices.Collect(d.listRemoteFiles(t).Iter)), ShouldEqual, 3)
+			So(len(slices.Collect(d.listInodes(t).Iter)), ShouldEqual, 3)
+
 			now := time.Now().Truncate(time.Second)
 
 			So(d.RemoveSetFiles(slices.Values(files[:1])), ShouldBeNil)
@@ -173,6 +176,41 @@ func TestFiles(t *testing.T) {
 			refs, err = d.CountRemoteFileRefs(files[2])
 			So(err, ShouldBeNil)
 			So(refs, ShouldEqual, 1)
+
+			So(len(slices.Collect(d.listRemoteFiles(t).Iter)), ShouldEqual, 3)
+			So(len(slices.Collect(d.listInodes(t).Iter)), ShouldEqual, 3)
+
+			So(d.RemoveSetFiles(slices.Values(files[2:3])), ShouldBeNil)
+			So(d.clearQueue(), ShouldBeNil)
+			So(d.RemoveSetFiles(slices.Values(slices.Collect(d.GetSetFiles(setTrashA).Iter))), ShouldBeNil)
+			So(d.clearQueue(), ShouldBeNil)
+
+			So(len(slices.Collect(d.listRemoteFiles(t).Iter)), ShouldEqual, 2)
+			So(len(slices.Collect(d.listInodes(t).Iter)), ShouldEqual, 2)
 		})
 	})
+}
+
+func (d *DBRO) listRemoteFiles(t *testing.T) *IterErr[string] {
+	t.Helper()
+
+	return iterRows(d, func(s scanner) (string, error) {
+		var path string
+
+		err := s.Scan(&path)
+
+		return path, err
+	}, "SELECT `remotePath` FROM `remoteFiles`")
+}
+
+func (d *DBRO) listInodes(t *testing.T) *IterErr[int] {
+	t.Helper()
+
+	return iterRows(d, func(s scanner) (int, error) {
+		var inode int
+
+		err := s.Scan(&inode)
+
+		return inode, err
+	}, "SELECT `inode` FROM `hardlinks`")
 }

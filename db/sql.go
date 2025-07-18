@@ -142,6 +142,16 @@ var (
 		"CREATE TRIGGER IF NOT EXISTS `relase_held_jobs` AFTER DELETE ON `processes` FOR EACH ROW BEGIN " +
 			"UPDATE `queue` SET `heldBy` = 0 WHERE `heldBy` = `OLD`.`id`;" +
 			"END;",
+		"CREATE TRIGGER IF NOT EXISTS `delete_remote_file_when_not_refd` AFTER DELETE ON `localFiles` FOR EACH ROW BEGIN " +
+			"DELETE FROM `remoteFiles` WHERE (" +
+			"SELECT COUNT(1) AS `count` FROM `localFiles` WHERE `localFiles`.`remoteFileID` = `OLD`.`remoteFileID`" +
+			") = 0 AND `remoteFiles`.`id` = `OLD`.`remoteFileID`;" +
+			"END;",
+		"CREATE TRIGGER IF NOT EXISTS `delete_hardlink_when_not_refd` AFTER DELETE ON `remoteFiles` FOR EACH ROW BEGIN " +
+			"DELETE FROM `hardlinks` WHERE (" +
+			"SELECT COUNT(1) AS `count` FROM `remoteFiles` WHERE `remoteFiles`.`hardlinkID` = `OLD`.`hardlinkID`" +
+			") = 0 AND `hardlinks`.`id` = `OLD`.`hardlinkID`;" +
+			"END;",
 	}
 )
 
