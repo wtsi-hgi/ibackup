@@ -100,7 +100,7 @@ func TestServer(t *testing.T) {
 	maxStuckTime := 1 * time.Hour
 	defaultHeartbeatFreq := 1 * time.Minute
 
-	Convey("Given a test cert and db location", t, func() {
+	FocusConvey("Given a test cert and db location", t, func() {
 		certPath, keyPath, err := gas.CreateTestCert(t)
 		So(err, ShouldBeNil)
 
@@ -248,7 +248,7 @@ func TestServer(t *testing.T) {
 			So(slackWriter.String(), ShouldEqual, expectedMsg+expectedMsg+slack.BoxPrefixWarn+"server stopped")
 		})
 
-		Convey("You can make a Server with a logger configured and setup Auth, MakeQueueEndPoints and LoadSetDB", func() {
+		FocusConvey("You can make a Server with a logger configured and setup Auth, MakeQueueEndPoints and LoadSetDB", func() {
 			s, addr, dfunc := makeAndStartServer()
 
 			serverStopped := false
@@ -296,7 +296,7 @@ func TestServer(t *testing.T) {
 				racCalled <- true
 			})
 
-			Convey("Which lets you login", func() {
+			FocusConvey("Which lets you login", func() {
 				logWriter.Reset()
 
 				token, errl := gas.Login(gas.NewClientRequest(addr, certPath), "jim", "pass")
@@ -305,7 +305,7 @@ func TestServer(t *testing.T) {
 
 				So(strings.Count(logWriter.String(), "STATUS=200"), ShouldEqual, 1)
 
-				Convey("And then you use client methods AddOrUpdateSet (which logs to slack) and GetSets", func() {
+				FocusConvey("And then you use client methods AddOrUpdateSet (which logs to slack) and GetSets", func() {
 					exampleSet2 := &set.Set{
 						Name:        "set2",
 						Requester:   exampleSet.Requester,
@@ -487,7 +487,7 @@ func TestServer(t *testing.T) {
 						})
 					})
 
-					Convey("And given a set with a folder and a nested folder with 2 files", func() {
+					FocusConvey("And given a set with a folder and a nested folder with 2 files", func() {
 						dir0local := filepath.Join(localDir, "dir0/")
 						dir0remote := filepath.Join(remoteDir, "dir0/")
 
@@ -558,10 +558,10 @@ func TestServer(t *testing.T) {
 							So(len(failedEntries), ShouldEqual, 0)
 						})
 
-						Convey("And given all files are uploaded", func() {
+						FocusConvey("And given all files are uploaded", func() {
 							makeGivenSetComplete(1, exampleSet.Name, adminClient)
 
-							Convey("You can trash a file and a dir, which sets them as complete in remove bucket", func() {
+							FocusConvey("You can trash a file and a dir, which sets them as complete in remove bucket", func() {
 								err = client.TrashFilesAndDirs(exampleSet.ID(), []string{file1local, dir2local})
 								So(err, ShouldBeNil)
 
@@ -573,6 +573,45 @@ func TestServer(t *testing.T) {
 
 								trashSet, errg := adminClient.GetSetByName(exampleSet.Requester, set.TrashPrefix+exampleSet.Name)
 								So(errg, ShouldBeNil)
+
+								FocusConvey("And with a very short trash expire time", func() {
+									s.trashLifespan = 200 * time.Millisecond
+
+									time.Sleep(200 * time.Millisecond)
+
+									// TODO add a second batch of trash files and check we do not remove them
+									FocusConvey("You can remove all expired files for a set", func() {
+										err = client.RemoveExpiredEntriesForSet(trashSet.ID())
+										So(err, ShouldBeNil)
+
+										waitForRemovals(t, adminClient, trashSet)
+
+										files, errg := client.GetFiles(trashSet.ID())
+										So(errg, ShouldBeNil)
+										So(files, ShouldHaveLength, 0)
+
+										dirs, errg := client.GetDirs(trashSet.ID())
+										So(errg, ShouldBeNil)
+										So(dirs, ShouldHaveLength, 0)
+									})
+
+									// TODO add the trashlifespan to real server
+									// TODO add another trash set and check it too
+									FocusConvey("You can remove all expired files for all sets", func() {
+										err = client.RemoveAllExpiredEntries()
+										So(err, ShouldBeNil)
+
+										waitForRemovals(t, adminClient, trashSet)
+
+										files, errg := client.GetFiles(trashSet.ID())
+										So(errg, ShouldBeNil)
+										So(files, ShouldHaveLength, 0)
+
+										dirs, errg := client.GetDirs(trashSet.ID())
+										So(errg, ShouldBeNil)
+										So(dirs, ShouldHaveLength, 0)
+									})
+								})
 
 								Convey("And these files appear in a trashed version of the set", func() {
 									files, errg := client.GetFiles(trashSet.ID())

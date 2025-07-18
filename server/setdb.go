@@ -368,7 +368,7 @@ func (s *Server) validatePutSetInputs(c *gin.Context, givenSet *set.Set) (int, e
 		return http.StatusBadRequest, ErrEmptyName
 	}
 
-	if isTrashSet(givenSet.Name) {
+	if set.IsTrashSet(givenSet.Name) {
 		return http.StatusBadRequest, ErrTrashSetName
 	}
 
@@ -379,10 +379,6 @@ func (s *Server) validatePutSetInputs(c *gin.Context, givenSet *set.Set) (int, e
 	_, err := givenSet.MakeTransformer()
 
 	return http.StatusBadRequest, err
-}
-
-func isTrashSet(name string) bool {
-	return strings.HasPrefix(name, set.TrashPrefix)
 }
 
 func (s *Server) makeSetWritable(c *gin.Context, sid string) error {
@@ -518,7 +514,7 @@ func (s *Server) removePaths(c *gin.Context) {
 // or dirpaths.
 func (s *Server) validateInputsForRemovals(givenSet *set.Set, paths []string,
 	c *gin.Context) ([]string, []string, int, error) {
-	if !isTrashSet(givenSet.Name) {
+	if !set.IsTrashSet(givenSet.Name) {
 		return nil, nil, http.StatusBadRequest, ErrNotTrashed
 	}
 
@@ -564,19 +560,74 @@ func (s *Server) trashPaths(c *gin.Context) {
 func (s *Server) removeExpired(c *gin.Context) {
 	sid := c.Param(paramSetID)
 
+	var sets []*set.Set
+	var err error
+
 	if sid != "" {
-		_, ok := s.validateSet(c)
+		givenSet, ok := s.validateSet(c)
 		if !ok {
 			return
 		}
+
+		sets = append(sets, givenSet)
+
+	} else {
+		sets, err = s.db.GetTrashedSets()
+		if err != nil {
+			c.AbortWithError(http.StatusInternalServerError, err) //nolint:errcheck
+
+			return
+		}
 	}
+
+	for _, set := range sets {
+		err = s.removeExpiredEntriesFromSet(set)
+		if err != nil {
+			c.AbortWithError(http.StatusInternalServerError, err) //nolint:errcheck
+
+			return
+		}
+	}
+}
+
+func (s *Server) removeExpiredEntriesFromSet(givenSet *set.Set) error {
+	filter := func(e *set.Entry) bool {
+		entryAge := time.Now().Sub(e.TrashDate)
+		if entryAge < s.trashLifespan {
+			return false
+		}
+
+		return true
+	}
+
+	expiredFiles, err := s.db.GetFileEntries(givenSet.ID(), filter)
+	if err != nil {
+		return err
+	}
+
+	expiredDirs, err := s.db.GetDirEntries(givenSet.ID(), filter)
+	if err != nil {
+		return err
+	}
+
+	filePaths := make([]string, len(expiredFiles))
+	for i, e := range expiredFiles {
+		filePaths[i] = e.Path
+	}
+
+	dirPaths := make([]string, len(expiredDirs))
+	for i, e := range expiredDirs {
+		dirPaths[i] = e.Path
+	}
+
+	return s.removeFilesAndDirs(givenSet, filePaths, dirPaths, set.ToRemove)
 }
 
 // validateInputsForTrashing returns an error if the provided set is a trashed set,
 // not complete or if any provided path is not in the given set. Also returns
 // the valid paths classified into a slice of filepaths or dirpaths.
 func (s *Server) validateInputsForTrashing(givenSet *set.Set, paths []string) ([]string, []string, error) {
-	if isTrashSet(givenSet.Name) {
+	if set.IsTrashSet(givenSet.Name) {
 		return nil, nil, ErrTrashSetName
 	}
 
@@ -1355,7 +1406,7 @@ func (s *Server) getDirs(c *gin.Context) {
 		return
 	}
 
-	entries, err := s.db.GetDirEntries(set.ID())
+	entries, err := s.db.GetDirEntries(set.ID(), nil)
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
@@ -1857,7 +1908,7 @@ func (s *Server) retryFailedEntries(c *gin.Context) {
 		return
 	}
 
-	if isTrashSet(got.Name) {
+	if set.IsTrashSet(got.Name) {
 		c.AbortWithError(http.StatusBadRequest, ErrTrashSetName) //nolint:errcheck
 
 		return

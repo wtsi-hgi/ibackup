@@ -108,6 +108,7 @@ type Server struct {
 	dirPool                *workerpool.WorkerPool
 	queue                  *queue.Queue
 	removeQueue            *queue.Queue
+	trashLifespan          time.Duration // TODO add it to ibackup server
 	sched                  *client.Scheduler
 	putCmd                 string
 	req                    *jqs.Requirements
