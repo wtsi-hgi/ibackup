@@ -1,5 +1,7 @@
 package db
 
+import "errors"
+
 type QueueType uint8
 
 const (
@@ -8,12 +10,15 @@ const (
 	QueueRemoval
 )
 
+var ErrCannotSkip = errors.New("cannot skip non-upload tasks")
+
 type Process struct {
 	id int64
 }
 
 type Task struct {
 	id         int64
+	process    int64
 	LocalPath  string
 	RemotePath string
 	UploadPath string
@@ -46,18 +51,7 @@ func (d *DB) RegisterProcess() (*Process, error) {
 }
 
 func (d *DB) PingProcess(process *Process) error {
-	tx, err := d.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback() //nolint:errcheck
-
-	_, err = tx.Exec(updateProcessPing, process.id)
-	if err != nil {
-		return err
-	}
-
-	return tx.Commit()
+	return d.exec(updateProcessPing, process.id)
 }
 
 func (d *DB) ReserveTasks(process *Process, n int) *IterErr[*Task] {
@@ -69,18 +63,7 @@ func (d *DB) ReserveTasks(process *Process, n int) *IterErr[*Task] {
 }
 
 func (d *DB) ReleaseTasks(process *Process) error {
-	tx, err := d.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback() //nolint:errcheck
-
-	_, err = tx.Exec(releaseQueuedTask, process.id)
-	if err != nil {
-		return err
-	}
-
-	return tx.Commit()
+	return d.exec(releaseQueuedTask, process.id)
 }
 
 func (d *DB) reserveQueuedTasks(process *Process, n int) error {
@@ -101,47 +84,53 @@ func (d *DB) reserveQueuedTasks(process *Process, n int) error {
 }
 
 func (d *DBRO) getReservedTasks(process *Process) *IterErr[*Task] {
-	return iterRows(d, scanTask, getQueuedTasks, process.id)
+	return iterRows(d, scanTask(process.id), getQueuedTasks, process.id)
 }
 
-func scanTask(s scanner) (*Task, error) {
-	t := new(Task)
+func scanTask(process int64) func(scanner) (*Task, error) {
+	return func(s scanner) (*Task, error) {
+		t := new(Task)
 
-	if err := s.Scan(
-		&t.id,
-		&t.Type,
-		&t.LocalPath,
-		&t.RemotePath,
-		&t.UploadPath,
-	); err != nil {
-		return nil, err
+		if err := s.Scan(
+			&t.id,
+			&t.Type,
+			&t.LocalPath,
+			&t.RemotePath,
+			&t.UploadPath,
+		); err != nil {
+			return nil, err
+		}
+
+		t.process = process
+
+		return t, nil
 	}
-
-	return t, nil
 }
 
 func (d *DB) TaskComplete(t *Task) error {
-	tx, err := d.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback() //nolint:errcheck
-
-	if _, err := tx.Exec(deleteQueued, t.id, t.Type); err != nil {
-		return err
-	}
-
-	return tx.Commit()
+	return d.exec(deleteQueued, t.id, t.process, t.Type)
 }
 
 func (d *DB) TaskFailed(t *Task) error {
+	return d.exec(updateQueuedFailed, t.Error, t.id, t.process, t.Type)
+}
+
+func (d *DB) TaskSkipped(t *Task) error {
+	if t.Type != QueueUpload {
+		return ErrCannotSkip
+	}
+
 	tx, err := d.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	if _, err := tx.Exec(updateQueuedFailed, t.Error, t.id, t.Type); err != nil {
+	if _, err = tx.Exec(updateQueuedSkipped, t.id, t.process, t.Type); err != nil {
+		return err
+	}
+
+	if _, err = tx.Exec(deleteQueued, t.id, t.process, t.Type); err != nil {
 		return err
 	}
 

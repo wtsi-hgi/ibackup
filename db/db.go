@@ -57,8 +57,7 @@ func (d *DB) exec(sql string, params ...any) error {
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	_, err = tx.Exec(sql, params...)
-	if err != nil {
+	if _, err = tx.Exec(sql, params...); err != nil {
 		return err
 	}
 

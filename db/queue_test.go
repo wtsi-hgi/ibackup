@@ -45,6 +45,7 @@ func TestQueue(t *testing.T) {
 			So(slices.Collect(tasks.Iter), ShouldResemble, []*Task{
 				{
 					id:         1,
+					process:    1,
 					LocalPath:  "/some/file/1_0",
 					RemotePath: "/remote/file/1_0",
 					UploadPath: "/remote/file/1_0",
@@ -52,6 +53,7 @@ func TestQueue(t *testing.T) {
 				},
 				{
 					id:         2,
+					process:    1,
 					LocalPath:  "/some/file/1_1",
 					RemotePath: "/remote/file/1_1",
 					UploadPath: "/remote/file/1_1",
@@ -59,6 +61,7 @@ func TestQueue(t *testing.T) {
 				},
 				{
 					id:         4,
+					process:    1,
 					LocalPath:  "/some/file/1_3",
 					RemotePath: "/remote/file/1_3",
 					UploadPath: "/remote/file/1_3",
@@ -71,6 +74,7 @@ func TestQueue(t *testing.T) {
 			So(slices.Collect(tasks.Iter), ShouldResemble, []*Task{
 				{
 					id:         5,
+					process:    2,
 					LocalPath:  "/some/file/1_4",
 					RemotePath: "/remote/file/1_4",
 					UploadPath: "/remote/file/1_4",
@@ -78,6 +82,7 @@ func TestQueue(t *testing.T) {
 				},
 				{
 					id:         6,
+					process:    2,
 					LocalPath:  "/some/file/2_0",
 					RemotePath: "/remote/file/2_0",
 					UploadPath: "/remote/file/2_0",
@@ -85,6 +90,7 @@ func TestQueue(t *testing.T) {
 				},
 				{
 					id:         7,
+					process:    2,
 					LocalPath:  "/some/file/2_1",
 					RemotePath: "/remote/file/2_1",
 					UploadPath: "/remote/file/2_1",
@@ -92,6 +98,7 @@ func TestQueue(t *testing.T) {
 				},
 				{
 					id:         9,
+					process:    2,
 					LocalPath:  "/some/file/2_3",
 					RemotePath: "/remote/file/2_3",
 					UploadPath: "/remote/file/2_3",
@@ -99,6 +106,7 @@ func TestQueue(t *testing.T) {
 				},
 				{
 					id:         10,
+					process:    2,
 					LocalPath:  "/some/file/2_4",
 					RemotePath: "/remote/file/2_4",
 					UploadPath: "/remote/file/2_4",
@@ -183,7 +191,6 @@ func TestQueue(t *testing.T) {
 			So(d.AddSetFiles(setA, slices.Values(files)), ShouldBeNil)
 
 			now := time.Now().Truncate(time.Second)
-
 			setFiles := slices.Collect(d.GetSetFiles(setA).Iter)
 			So(len(setFiles), ShouldEqual, 1)
 			So(setFiles[0].LastUpload, ShouldHappenBefore, now)
@@ -253,6 +260,109 @@ func TestQueue(t *testing.T) {
 			setFiles = slices.Collect(d.GetSetFiles(setA).Iter)
 			So(len(setFiles), ShouldEqual, 0)
 		})
+
+		Convey("Skipping an upload, marks the local file as skipped", func() {
+			files := slices.Collect(genFiles(1))
+
+			So(d.AddSetFiles(setA, slices.Values(files)), ShouldBeNil)
+			So(slices.Collect(d.GetSetFiles(setA).Iter), ShouldResemble, files)
+
+			tasks := slices.Collect(d.ReserveTasks(pidA, 2).Iter)
+			So(len(tasks), ShouldEqual, 1)
+
+			So(d.TaskSkipped(tasks[0]), ShouldBeNil)
+
+			files[0].Status = StatusSkipped
+
+			So(slices.Collect(d.GetSetFiles(setA).Iter), ShouldResemble, files)
+
+			tasks = slices.Collect(d.ReserveTasks(pidA, 2).Iter)
+			So(len(tasks), ShouldEqual, 0)
+		})
+
+		Convey("Missing files are not uploaded", func() {
+			files := slices.Collect(genFiles(1))
+
+			files[0].Status = StatusMissing
+
+			So(d.AddSetFiles(setA, slices.Values(files)), ShouldBeNil)
+			So(slices.Collect(d.GetSetFiles(setA).Iter), ShouldResemble, files)
+			So(len(slices.Collect(d.ReserveTasks(pidA, 2).Iter)), ShouldEqual, 0)
+
+			Convey("Orphaned files count as missing when added to a set", func() {
+				files[0].Status = StatusOrphaned
+				So(d.AddSetFiles(setA, slices.Values(files)), ShouldBeNil)
+
+				files[0].Status = StatusMissing
+
+				So(slices.Collect(d.GetSetFiles(setA).Iter), ShouldResemble, files)
+				So(len(slices.Collect(d.ReserveTasks(pidA, 2).Iter)), ShouldEqual, 0)
+			})
+
+			Convey("Files that were missing, but are found are uploaded", func() {
+				files[0].Status = StatusNone
+
+				So(d.AddSetFiles(setA, slices.Values(files)), ShouldBeNil)
+				So(slices.Collect(d.GetSetFiles(setA).Iter), ShouldResemble, files)
+
+				tasks := slices.Collect(d.ReserveTasks(pidA, 2).Iter)
+				So(len(tasks), ShouldEqual, 1)
+			})
+		})
+
+		Convey("Uploading a file marks it as uploaded", func() {
+			files := slices.Collect(genFiles(1))
+
+			So(d.AddSetFiles(setA, slices.Values(files)), ShouldBeNil)
+			So(d.clearQueue(), ShouldBeNil)
+
+			files[0].Status = StatusUploaded
+
+			uploaded := slices.Collect(d.GetSetFiles(setA).Iter)
+			So(len(uploaded), ShouldEqual, 1)
+			So(uploaded[0].LastUpload, ShouldNotBeZeroValue)
+
+			files[0].LastUpload = uploaded[0].LastUpload
+
+			So(uploaded, ShouldResemble, files)
+
+			Convey("Re-uploading a file marks it as replaced", func() {
+				files[0].Status = StatusNone
+
+				So(d.AddSetFiles(setA, slices.Values(files)), ShouldBeNil)
+				So(d.clearQueue(), ShouldBeNil)
+
+				files[0].Status = StatusReplaced
+
+				uploaded = slices.Collect(d.GetSetFiles(setA).Iter)
+				So(len(uploaded), ShouldEqual, 1)
+				So(uploaded[0].LastUpload, ShouldNotBeZeroValue)
+
+				files[0].LastUpload = uploaded[0].LastUpload
+
+				So(uploaded, ShouldResemble, files)
+			})
+		})
+
+		Convey("Uploading a file then deleting it marks it as orphaned", func() {
+			files := slices.Collect(genFiles(1))
+
+			So(d.AddSetFiles(setA, slices.Values(files)), ShouldBeNil)
+			So(d.clearQueue(), ShouldBeNil)
+
+			files[0].Status = StatusMissing
+
+			So(d.AddSetFiles(setA, slices.Values(files)), ShouldBeNil)
+
+			uploadedFiles := slices.Collect(d.GetSetFiles(setA).Iter)
+			So(len(uploadedFiles), ShouldEqual, 1)
+			So(uploadedFiles[0].LastUpload, ShouldNotBeZeroValue)
+
+			files[0].Status = StatusOrphaned
+			files[0].LastUpload = uploadedFiles[0].LastUpload
+
+			So(slices.Collect(d.GetSetFiles(setA).Iter), ShouldResemble, files)
+		})
 	})
 }
 
@@ -279,6 +389,7 @@ func genFiles(n int) iter.Seq[*File] {
 				Mtime:       200,
 				Type:        Regular,
 				SymlinkDest: "",
+				modifiable:  true,
 			}) { //nolint:whitespace
 				break
 			}

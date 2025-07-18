@@ -77,6 +77,7 @@ var (
 			"`setID` INTEGER NOT NULL, " +
 			"`remoteFileID` INTEGER NOT NULL, " +
 			"`lastUploaded` DATETIME DEFAULT \"0001-01-01 00:00:00\", " +
+			"`status` TINYINT NOT NULL DEFAULT 0, " +
 			"`updated` BOOLEAN DEFAULT FALSE, " +
 			"UNIQUE(`localPathHash`, `setID`), " +
 			"FOREIGN KEY(`setID`) REFERENCES `sets`(`id`) ON DELETE CASCADE, " +
@@ -94,6 +95,7 @@ var (
 			"`lastAttempt` DATETIME DEFAULT \"0001-01-01 00:00:00\", " +
 			"`lastError` TEXT, " +
 			"`heldBy` INTEGER DEFAULT 0, " +
+			"`skipped` BOOLEAN DEFAULT FALSE, " +
 			"UNIQUE(`localFileID`), " +
 			"/*! INDEX(`heldBy`), */" +
 			"FOREIGN KEY(`localFileID`) REFERENCES `localFiles`(`id`) ON DELETE RESTRICT" +
@@ -117,14 +119,15 @@ var (
 			"`remoteFiles`.`hardlinkID` = `NEW`.`id`);" +
 			"END;",
 		"CREATE TRIGGER IF NOT EXISTS `upload_local_file` AFTER INSERT ON `localFiles` FOR EACH ROW BEGIN " +
-			"INSERT INTO `queue` (`localFileID`, `type`) VALUES (`NEW`.`id`, " + string('0'+QueueUpload) + ") " +
+			"INSERT INTO `queue` (`localFileID`, `type`) SELECT `NEW`.`id`, " + string('0'+QueueUpload) + " " +
+			"WHERE `NEW`.`status` != " + string('0'+StatusMissing) + " " +
 			onConflictUpdate + "`type` = " + string('0'+QueueUpload) + ", `attempts` = 0, " +
 			"`lastAttempt` = '0001-01-01 00:00:00', `lastError` = '';" +
 			"END;",
 		"CREATE TRIGGER IF NOT EXISTS `reupload_local_file` AFTER UPDATE ON `localFiles` FOR EACH ROW BEGIN " +
 			"/*! IF @noqueue IS NULL THEN */" +
 			"INSERT INTO `queue` (`localFileID`, `type`) SELECT `NEW`.`id`, " + string('0'+QueueUpload) + " " +
-			"WHERE NOT `OLD`.`updated` = `NEW`.`updated` " +
+			"WHERE `OLD`.`updated` != `NEW`.`updated` AND `NEW`.`status` != " + string('0'+StatusMissing) + " " +
 			onConflictUpdate + "`type` = " + string('0'+QueueUpload) + ", `attempts` = 0, " +
 			"`lastAttempt` = '0001-01-01 00:00:00', `lastError` = '';" +
 			"/*! END IF; SET @noqueue = NULL; */" +
@@ -133,10 +136,17 @@ var (
 			"DELETE FROM `localFiles` WHERE " +
 			"`OLD`.`type` = " + string('0'+QueueRemoval) + " AND `localFiles`.`id` = `OLD`.`localFileID`;" +
 			"/*! SET @noqueue = 1; */" +
-			"UPDATE `localFiles` SET `lastUploaded` = " + now + " " +
-			"WHERE `OLD`.`type` = " + string('0'+QueueUpload) + " AND `localFiles`.`id` = `OLD`.`localFileID`;" +
-			"UPDATE `remoteFiles` SET `lastUploaded` = " + now + " " +
+			"UPDATE `localFiles` /*! JOIN `remoteFiles` ON `localFiles`.`remoteFileID` = `remoteFiles`.`id` */ SET " +
+			"/*! `localFiles`.*/`lastUploaded` = IF(`OLD`.`skipped`, `localFiles`.`lastUploaded`, " + now + "), " +
+			"`status` = IF(`OLD`.`skipped`, " + string('0'+StatusSkipped) + ", " +
+			"IF(`remoteFiles`.`lastUploaded` = \"0001-01-01 00:00:00\", " + string('0'+StatusUploaded) + ", " +
+			string('0'+StatusReplaced) + ")) " +
+			"/*! -- */ FROM `localFiles` AS `local` JOIN `remoteFiles` ON `local`.`remoteFileID` = `remoteFiles`.`id`\n/*! */" +
 			"WHERE `OLD`.`type` = " + string('0'+QueueUpload) + " AND " +
+			"`localFiles`.`id` = `OLD`.`localFileID` AND " +
+			"`localFiles`.`status` != " + string('0'+StatusMissing) + ";" +
+			"UPDATE `remoteFiles` SET `lastUploaded` = " + now + " " +
+			"WHERE `OLD`.`skipped` = FALSE AND `OLD`.`type` = " + string('0'+QueueUpload) + " AND " +
 			"`remoteFiles`.`id` IN (SELECT `remoteFileID` from `localFiles` WHERE `localFiles`.`id` = `OLD`.`localFileID`);" +
 			"END;",
 		"CREATE TRIGGER IF NOT EXISTS `relase_held_jobs` AFTER DELETE ON `processes` FOR EACH ROW BEGIN " +
@@ -227,8 +237,14 @@ const (
 	createSetFile = "INSERT INTO `localFiles` (" +
 		"`localPath`, " +
 		"`setID`, " +
-		"`remoteFileID`" +
-		") VALUES (?, ?, ?) " + onConflictUpdate + "`updated` = NOT `updated`, " + returnOrSetID
+		"`remoteFileID`, " +
+		"`status`" +
+		") VALUES (?, ?, ?, IF(? IN (" + string('0'+StatusMissing) + ", " + string('0'+StatusOrphaned) + "), " +
+		string('0'+StatusMissing) + ", 0)) " + setRef +
+		onConflictUpdate +
+		"`status` = IF(`EXCLUDED`.`status` IN (" + string('0'+StatusMissing) + ", " + string('0'+StatusOrphaned) + "), " +
+		string('0'+StatusMissing) + ", 0), " +
+		"`updated` = NOT `updated`, " + returnOrSetID
 	createTrashFile = "INSERT INTO `localFiles` (" +
 		"`localPath`, " +
 		"`setID`, " +
@@ -276,8 +292,11 @@ const (
 	getSetsFiles = "SELECT " +
 		"`localFiles`.`id`, " +
 		"`localFiles`.`localPath`, " +
+		"`localFiles`.`lastUploaded`, " +
+		"IF(`localFiles`.`status` = " + string('0'+StatusMissing) +
+		" AND `remoteFiles`.`lastUploaded` != '0001-01-01 00:00:00', " +
+		string('0'+StatusOrphaned) + ", `localFiles`.`status`), " +
 		"`remoteFiles`.`remotePath`, " +
-		"`remoteFiles`.`lastUploaded`, " +
 		"`hardlinks`.`size`, " +
 		"`hardlinks`.`fileType`, " +
 		"`hardlinks`.`owner`, " +
@@ -330,7 +349,9 @@ const (
 		"`lastError` = ?, " +
 		"`lastAttempt` = " + now + ", " +
 		"`heldBy` = 0 " +
-		"WHERE `id` = ? AND `type` = ?;"
+		"WHERE `id` = ? AND `heldBy` = ? AND `type` = ?;"
+	updateQueuedSkipped = "UPDATE `queue` SET " +
+		"`skipped` = TRUE WHERE `id` = ? AND `heldBy` = ? AND `type` = ?;"
 
 	updateProcessPing = "UPDATE `processes SET `lastPing` = " + now + " WHERE `id` = ?;"
 
@@ -358,7 +379,7 @@ const (
 
 	deleteSet            = "DELETE FROM `sets` WHERE `id` = ?;"
 	deleteDiscover       = "DELETE FROM `toDiscover` WHERE `setID` = ? AND `path` = ?;"
-	deleteQueued         = "DELETE FROM `queue` WHERE `localFileID` = ? AND `type` = ?;"
+	deleteQueued         = "DELETE FROM `queue` WHERE `id` = ? AND `heldBy` = ? AND `type` = ?;"
 	deleteAllQueued      = "DELETE FROM `queue`;"
 	deleteStaleProcesses = "DELETE FROM `processes` WHERE `lastPing` < /* NOW() - 10 MINUTE -- */ " +
 		"DATETIME('now', '-10 MINUTE')\n/*! */;"

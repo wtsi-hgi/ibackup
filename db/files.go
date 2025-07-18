@@ -9,15 +9,26 @@ import (
 type FileType uint8
 
 const (
-	Regular FileType = iota
+	// Unknown is an Entry type meaning the local file is either missing or
+	// there was an error trying to get its type.
+	Unknown FileType = iota
+
+	Regular
 	Hardlink
 	Symlink
 	Directory
 	Abnormal // fifos and sockets etc. that we shouldn't upload
+)
 
-	// Unknown is an Entry type meaning the local file is either missing or
-	// there was an error trying to get its type.
-	Unknown = -1
+type FileStatus uint8
+
+const (
+	StatusNone FileStatus = iota
+	StatusMissing
+	StatusOrphaned
+	StatusUploaded
+	StatusReplaced
+	StatusSkipped
 )
 
 type File struct {
@@ -29,6 +40,7 @@ type File struct {
 	InodeRemote  string
 	Btime, Mtime int64
 	Type         FileType
+	Status       FileStatus
 	Owner        string
 	SymlinkDest  string
 	LastUpload   time.Time
@@ -68,7 +80,7 @@ func (d *DB) addSetFile(tx *sql.Tx, setID int64, file *File) error {
 		return err
 	}
 
-	file.id, err = d.execReturningRowID(tx, createSetFile, file.LocalPath, setID, rfID)
+	file.id, err = d.execReturningRowID(tx, createSetFile, file.LocalPath, setID, rfID, file.Status)
 
 	return err
 }
@@ -132,8 +144,9 @@ func scanFile(scanner scanner) (*File, error) {
 	if err := scanner.Scan(
 		&file.id,
 		&file.LocalPath,
-		&file.RemotePath,
 		&file.LastUpload,
+		&file.Status,
+		&file.RemotePath,
 		&file.Size,
 		&file.Type,
 		&file.Owner,
