@@ -42,9 +42,14 @@ var trashRemove bool
 var trashName string
 var trashItems string
 var trashPath string
+var trashExpired bool
+var trashAllExpired bool
 var trashNull bool
 
 var ErrTrashRemove = errors.New("you must provide --remove")
+var ErrTrashName = errors.New("exactly one of --name or --all-expired must be provided")
+var ErrTrashItems = errors.New("exactly one of --items, --path or --expired must be provided")
+var ErrTrashAllExpired = errors.New("--all-expired does not take any other flags")
 
 // removeCmd represents the add command.
 var trashCmd = &cobra.Command{
@@ -77,12 +82,31 @@ var trashCmd = &cobra.Command{
 	PreRunE: func(_ *cobra.Command, _ []string) error {
 		ensureURLandCert()
 
-		if (trashItems == "") == (trashPath == "") {
-			return ErrRemoveItems
-		}
-
 		if !trashRemove {
 			return ErrTrashRemove
+		}
+
+		if (trashName == "") == !trashAllExpired {
+			return ErrTrashName
+		}
+
+		setCount := 0
+		if trashItems != "" {
+			setCount++
+		}
+		if trashPath != "" {
+			setCount++
+		}
+		if trashExpired {
+			setCount++
+		}
+
+		if !trashAllExpired && setCount != 1 {
+			return ErrTrashItems
+		}
+
+		if trashAllExpired && setCount != 0 {
+			return ErrTrashAllExpired
 		}
 
 		return nil
@@ -94,6 +118,10 @@ var trashCmd = &cobra.Command{
 		client, err := newServerClient(serverURL, serverCert)
 		if err != nil {
 			return err
+		}
+
+		if trashAllExpired || trashExpired {
+			return handleTrashExpired(client, trashUser, trashName)
 		}
 
 		if trashItems != "" {
@@ -122,11 +150,9 @@ func init() {
 	trashCmd.Flags().StringVarP(&trashName, "name", "n", "", "remove objects from the set with this name")
 	trashCmd.Flags().StringVarP(&trashItems, "items", "i", "", helpTextItems)
 	trashCmd.Flags().StringVarP(&trashPath, "path", "p", "", helpTextPath)
+	trashCmd.Flags().BoolVarP(&trashExpired, "expired", "e", false, "remove all expired objects for the set")
+	trashCmd.Flags().BoolVar(&trashAllExpired, "all-expired", false, "remove all expired objects")
 	trashCmd.Flags().BoolVarP(&trashNull, "null", "0", false, helpTextNull)
-
-	if err := trashCmd.MarkFlagRequired("name"); err != nil {
-		die(err)
-	}
 }
 
 // handleRemove does the main job of sending the set, files and dirs to the server.
@@ -136,4 +162,16 @@ func handleTrash(client *server.Client, user, name string, paths []string) error
 	sets := getSetByName(client, user, setName)
 
 	return client.RemoveFilesAndDirs(sets[0].ID(), paths)
+}
+
+func handleTrashExpired(client *server.Client, user, name string) error {
+	if setName == "" {
+		return client.RemoveAllExpiredEntries()
+	}
+
+	setName := set.TrashPrefix + name
+
+	sets := getSetByName(client, user, setName)
+
+	return client.RemoveExpiredEntriesForSet(sets[0].ID())
 }

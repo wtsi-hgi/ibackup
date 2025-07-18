@@ -3175,17 +3175,31 @@ func TestTrashRemove(t *testing.T) {
 		timeout := 5 * time.Second
 
 		Convey("And an invalid set name, trash returns an error", func() {
-			invalidSetName := "invalid_set"
+			invalidSetName := "invalid_name_set"
 
 			s.confirmOutputContains(t, []string{"trash", "--remove", "--name", invalidSetName, "--path", path},
 				1, fmt.Sprintf("set with that id does not exist [%s]", set.TrashPrefix+invalidSetName))
 		})
 
 		Convey("Trash won't work without --remove provided", func() {
-			invalidSetName := "invalid_set"
+			invalidSetName := "invalid_input_set"
 
 			s.confirmOutputContains(t, []string{"trash", "--name", invalidSetName, "--path", path},
-				1, "you must provide --remove")
+				1, cmd.ErrTrashRemove.Error())
+		})
+
+		Convey("Trash won't work with both --expired and --path provided", func() {
+			invalidSetName := "too_many_options_set"
+
+			s.confirmOutputContains(t, []string{"trash", "--remove", "--name", invalidSetName, "--path", path, "--expired"},
+				1, cmd.ErrTrashItems.Error())
+		})
+
+		Convey("Trash won't work with both --all-expired and --name provided", func() {
+			invalidSetName := "too_many_options_set"
+
+			s.confirmOutputContains(t, []string{"trash", "--remove", "--name", invalidSetName, "--all-expired"},
+				1, cmd.ErrTrashName.Error())
 		})
 
 		Convey("And a set with files and folders", func() {

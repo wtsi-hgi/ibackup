@@ -639,6 +639,16 @@ func (c *Client) TrashFilesAndDirs(setID string, paths []string) error {
 	return c.putThing(EndPointAuthTrashPaths+"/"+setID, stringsToBytes(paths))
 }
 
+// RemoveExpiredEntriesForSet removes expired entries for the given set.
+func (c *Client) RemoveExpiredEntriesForSet(setID string) error {
+	return c.putThing(EndPointAuthRemoveExpired+"/"+setID, nil)
+}
+
+// RemoveAllExpiredEntries removes expired paths.
+func (c *Client) RemoveAllExpiredEntries() error {
+	return c.putThing(EndPointAuthRemoveExpired, nil)
+}
+
 // RemoveSet removes the set with the given ID from the db along with files from
 // iRODS.
 func (c *Client) RemoveSet(setID string) error {
