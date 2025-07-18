@@ -64,6 +64,7 @@ const (
 	fileRetryPath     = "/retry"
 	removePathsPath   = "/remove_paths"
 	trashPathsPath    = "/trash_paths"
+	removeExpiredPath = "/remove_expired"
 
 	// EndPointAuthSet is the endpoint for getting and setting sets.
 	EndPointAuthSet = gas.EndPointAuth + setPath
@@ -109,6 +110,9 @@ const (
 
 	// EndPointAuthTrashPaths is the endpoint for trashing objects from sets.
 	EndPointAuthTrashPaths = gas.EndPointAuth + trashPathsPath
+
+	// EndPointAuthTrashPaths is the endpoint for removing expired objects from sets.
+	EndPointAuthRemoveExpired = gas.EndPointAuth + removeExpiredPath
 
 	ErrNoAuth         = gas.Error("auth must be enabled")
 	ErrBadRequester   = gas.Error("you are not the set requester")
@@ -309,6 +313,9 @@ func (s *Server) addDBEndpoints(authGroup *gin.RouterGroup) { //nolint:funlen
 	authGroup.PUT(removePathsPath+idParam, s.removePaths)
 
 	authGroup.PUT(trashPathsPath+idParam, s.trashPaths)
+
+	authGroup.PUT(removeExpiredPath, s.removeExpired)
+	authGroup.PUT(removeExpiredPath+idParam, s.removeExpired)
 }
 
 // putSet interprets the body as a JSON encoding of a set.Set and stores it in
@@ -551,6 +558,17 @@ func (s *Server) trashPaths(c *gin.Context) {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
 		return
+	}
+}
+
+func (s *Server) removeExpired(c *gin.Context) {
+	sid := c.Param(paramSetID)
+
+	if sid != "" {
+		_, ok := s.validateSet(c)
+		if !ok {
+			return
+		}
 	}
 }
 
