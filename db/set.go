@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -179,9 +180,16 @@ func (s *Set) IsReadonly() bool {
 	return !s.modifiable
 }
 
-var ErrReadonlySet = errors.New("cannot modify readonly set")
+var (
+	ErrReadonlySet    = errors.New("cannot modify readonly set")
+	ErrInvalidSetName = errors.New("invalid set name")
+)
 
 func (d *DB) CreateSet(set *Set) error {
+	if strings.HasPrefix(set.Name, "\x00") {
+		return ErrInvalidSetName
+	}
+
 	tx, err := d.db.Begin()
 	if err != nil {
 		return err
