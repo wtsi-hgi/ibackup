@@ -177,18 +177,18 @@ func (dc *discoveryCoordinator) OnRemovalsDone(sid string, fn func()) {
 // LoadSetDB() must already have been called. This is called when there is a GET
 // on /rest/v1/auth/discover/[id].
 func (s *Server) triggerDiscovery(c *gin.Context) {
-	set, ok := s.validateSet(c)
+	givenSet, ok := s.validateSet(c)
 	if !ok {
 		return
 	}
 
-	if set.IsTrash() {
+	if givenSet.IsTrash() {
 		c.AbortWithError(http.StatusBadRequest, ErrTrashSetName) //nolint:errcheck
 
 		return
 	}
 
-	if err := s.discoverSet(set); err != nil {
+	if err := s.discoverSet(givenSet); err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
 		return

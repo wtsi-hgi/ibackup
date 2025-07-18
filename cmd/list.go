@@ -179,7 +179,7 @@ func getAllSetsFromDBAndDisplayPaths(dbPath string, local, remote, uploaded, //n
 		return
 	}
 
-	var filter set.FileEntryFilter
+	var filter set.EntryFilter
 
 	switch {
 	case lastState:

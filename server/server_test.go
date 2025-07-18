@@ -576,6 +576,45 @@ func TestServer(t *testing.T) {
 								trashSet, errg := adminClient.GetSetByName(exampleSet.Requester, set.TrashPrefix+exampleSet.Name)
 								So(errg, ShouldBeNil)
 
+								FocusConvey("And with a very short trash expire time", func() {
+									s.trashLifespan = 200 * time.Millisecond
+
+									time.Sleep(200 * time.Millisecond)
+
+									// TODO add a second batch of trash files and check we do not remove them
+									FocusConvey("You can remove all expired files for a set", func() {
+										err = client.RemoveExpiredEntriesForSet(trashSet.ID())
+										So(err, ShouldBeNil)
+
+										waitForRemovals(t, adminClient, trashSet)
+
+										files, errg := client.GetFiles(trashSet.ID())
+										So(errg, ShouldBeNil)
+										So(files, ShouldHaveLength, 0)
+
+										dirs, errg := client.GetDirs(trashSet.ID())
+										So(errg, ShouldBeNil)
+										So(dirs, ShouldHaveLength, 0)
+									})
+
+									// TODO add the trashlifespan to real server
+									// TODO add another trash set and check it too
+									FocusConvey("You can remove all expired files for all sets", func() {
+										err = client.RemoveAllExpiredEntries()
+										So(err, ShouldBeNil)
+
+										waitForRemovals(t, adminClient, trashSet)
+
+										files, errg := client.GetFiles(trashSet.ID())
+										So(errg, ShouldBeNil)
+										So(files, ShouldHaveLength, 0)
+
+										dirs, errg := client.GetDirs(trashSet.ID())
+										So(errg, ShouldBeNil)
+										So(dirs, ShouldHaveLength, 0)
+									})
+								})
+
 								Convey("And these files appear in a trashed version of the set", func() {
 									files, errg := client.GetFiles(trashSet.ID())
 									So(errg, ShouldBeNil)

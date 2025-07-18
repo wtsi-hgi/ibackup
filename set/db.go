@@ -504,7 +504,7 @@ func (d *DB) checkForDiscoveredFolders(paths []string, sid string) ([]string, []
 }
 
 func (d *DB) getDiscoveredFoldersForOldSets(sid string) (map[string]bool, error) {
-	dirEntries, err := d.GetDirEntries(sid)
+	dirEntries, err := d.GetDirEntries(sid, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -956,7 +956,7 @@ func (d *DB) RemoveFromRemovedBucket(path, sid string) error {
 
 // GetExistingDirs returns all existing dir paths.
 func (d *DB) GetExistingDirs(setID string) (map[string]struct{}, error) {
-	existing, err := d.GetDirEntries(setID)
+	existing, err := d.GetDirEntries(setID, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1130,7 +1130,7 @@ func (d *DB) discover(setID string, cb DiscoverCallback) (*Set, error) {
 		errCh <- d.statPureFileEntries(setID)
 	}()
 
-	entries, err := d.GetDirEntries(setID)
+	entries, err := d.GetDirEntries(setID, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1503,8 +1503,26 @@ func (d *DB) updateSetBasedOnEntry(set *Set, entry *Entry) error {
 	return set.UpdateBasedOnEntry(entry, d.GetFileEntries)
 }
 
+// SetFilter is a function used to filter the sets retrieved from the database.
+//
+// A return value of true will keep the set, a return of false will discard it.
+type SetFilter func(*Set) bool
+
+// SetFilterTrashed is a SetFilter that filters on trashed sets.
+func SetFilterTrashed(set *Set) bool {
+	return IsTrashSet(set.Name)
+}
+
+func IsTrashSet(name string) bool {
+	return strings.HasPrefix(name, TrashPrefix)
+}
+
 // GetAll returns all the Sets previously added to the database.
 func (d *DBRO) GetAll() ([]*Set, error) {
+	return d.GetFilteredSets(nil)
+}
+
+func (d *DBRO) GetFilteredSets(filter SetFilter) ([]*Set, error) {
 	var sets []*Set
 
 	err := d.db.View(func(tx *bolt.Tx) error {
@@ -1515,13 +1533,22 @@ func (d *DBRO) GetAll() ([]*Set, error) {
 				return nil
 			}
 
-			sets = append(sets, d.decodeSet(v))
+			set := d.decodeSet(v)
+
+			if filter == nil || filter(set) {
+				sets = append(sets, set)
+			}
 
 			return nil
 		})
 	})
 
 	return sets, err
+}
+
+// GetTrashedSets returns all the trash Sets previously added to the database.
+func (d *DBRO) GetTrashedSets() ([]*Set, error) {
+	return d.GetFilteredSets(SetFilterTrashed)
 }
 
 // decodeSet takes a byte slice representation of a Set as stored in the db by
@@ -1605,12 +1632,12 @@ func (d *DBRO) GetByID(id string) *Set {
 	return set
 }
 
-// FileEntryFilter is a function used to filter the file entries for a set
-// retrieved from the database.
+// EntryFilter is a function used to filter the entries for a set retrieved from
+// the database.
 //
 // A return value of true will keep the file entry, a return of false will
 // discard it.
-type FileEntryFilter func(*Entry) bool
+type EntryFilter func(*Entry) bool
 
 // FileEntryFilterUploaded is a FileEntryFilter that filters on uploaded files.
 func FileEntryFilterUploaded(e *Entry) bool {
@@ -1626,7 +1653,7 @@ func FileEntryFilterLastState(e *Entry) bool {
 
 // GetFileEntries returns all the file entries for the given set (both
 // SetFileEntries and SetDiscoveredEntries).
-func (d *DBRO) GetFileEntries(setID string, filter FileEntryFilter) ([]*Entry, error) {
+func (d *DBRO) GetFileEntries(setID string, filter EntryFilter) ([]*Entry, error) {
 	entries, err := d.getEntries(setID, fileBucket, filter)
 	if err != nil {
 		return nil, err
@@ -1696,7 +1723,7 @@ func (d *DBRO) GetDefinedFileEntry(setID string) (*Entry, error) {
 // bucket prefix.
 //
 // Accepts an optional filter func that returns true for the entries to gather.
-func (d *DBRO) getEntries(setID, bucketName string, filter FileEntryFilter) ([]*Entry, error) {
+func (d *DBRO) getEntries(setID, bucketName string, filter EntryFilter) ([]*Entry, error) {
 	var entries []*Entry
 
 	cb := func(v []byte) {
@@ -1815,8 +1842,8 @@ func (d *DBRO) GetDiscoveredFileEntries(setID string) ([]*Entry, error) {
 }
 
 // GetDirEntries returns all the dir entries for the given set.
-func (d *DBRO) GetDirEntries(setID string) ([]*Entry, error) {
-	return d.getEntries(setID, dirBucket, nil)
+func (d *DBRO) GetDirEntries(setID string, filter EntryFilter) ([]*Entry, error) {
+	return d.getEntries(setID, dirBucket, filter)
 }
 
 // GetDirEntries returns all the dir entries for the given set.
