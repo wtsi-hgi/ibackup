@@ -350,7 +350,7 @@ const (
 		"SELECT `remoteFileID` FROM `localFiles` WHERE `localPathHash` = " + virtStart +
 		"(SELECT `localPath` FROM `localFiles` WHERE `id` = ? LIMIT 1)" +
 		virtEnd + ");"
-	getTasksCounts  = "SELECT COUNT(1), COUNT(IF(`heldBy` = 0, 0, NULL)) FROM `queue`;"
+	getTasksCounts  = "SELECT COUNT(1), COUNT(`heldBy` AND NULL) FROM `queue`;"
 	getProcessCount = "SELECT COUNT(1) FROM `processes`;"
 
 	updateSetWarning             = "UPDATE `sets` SET `warning` = ? WHERE `id` = ?;"
