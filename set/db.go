@@ -2030,28 +2030,46 @@ func (d *DB) Delete(setID string) error {
 			return err
 		}
 
-		buckets := []string{
-			fileBucket,
-			dirBucket,
-			discoveredBucket,
-			discoveredFoldersBucket,
-			removedBucket,
+		err = deleteSubBuckets(b, setID)
+		if err != nil {
+			return err
 		}
 
-		for _, bucketName := range buckets {
-			errd := b.DeleteBucket(getSubBucketName(setID, bucketName))
-			if errd != nil && !errors.Is(errd, boltErrors.ErrBucketNotFound) {
-				return errd
-			}
-		}
-
-		userToSet := tx.Bucket([]byte(userToSetBucket))
-
-		err = userToSet.Delete([]byte(set.Requester + separator + setID))
+		err = deleteUserMapping(tx, set.Requester, setID)
 		if err != nil {
 			return err
 		}
 
 		return b.Delete(bid)
 	})
+}
+
+func deleteSubBuckets(b *bolt.Bucket, setID string) error {
+	buckets := []string{
+		fileBucket,
+		dirBucket,
+		discoveredBucket,
+		discoveredFoldersBucket,
+		removedBucket,
+	}
+
+	for _, bucketName := range buckets {
+		errd := b.DeleteBucket(getSubBucketName(setID, bucketName))
+		if errd != nil && !errors.Is(errd, boltErrors.ErrBucketNotFound) {
+			return errd
+		}
+	}
+
+	return nil
+}
+
+func deleteUserMapping(tx *bolt.Tx, requester, setID string) error {
+	userToSet := tx.Bucket([]byte(userToSetBucket))
+
+	err := userToSet.Delete([]byte(requester + separator + setID))
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
