@@ -25,14 +25,14 @@ func iterRows[T any](d *DBRO, scanner func(scanner) (T, error), query string, ar
 		defer rows.Close()
 
 		for rows.Next() {
-			set, err := scanner(rows)
+			v, err := scanner(rows)
 			if err != nil {
 				ie.Error = err
 
 				return
 			}
 
-			if !yield(set) {
+			if !yield(v) {
 				break
 			}
 		}
