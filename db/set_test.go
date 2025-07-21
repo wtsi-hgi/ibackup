@@ -109,6 +109,9 @@ func TestSet(t *testing.T) {
 			Convey("You can change the transformer on a set", func() {
 				files := slices.Collect(genFiles(5))
 
+				discovery := &Discover{Path: "/some/path", Type: DiscoverFODN}
+
+				So(d.AddSetDiscovery(setB, discovery), ShouldBeNil)
 				So(d.AddSetFiles(setB, slices.Values(files)), ShouldBeNil)
 				So(d.clearQueue(), ShouldBeNil)
 
@@ -124,6 +127,16 @@ func TestSet(t *testing.T) {
 				}
 
 				So(slices.Collect(d.GetSetFiles(setB).Iter), ShouldResemble, files)
+				So(slices.Collect(d.GetSetDiscovery(setB).Iter), ShouldResemble, []*Discover{discovery})
+
+				Convey("The old set is removed once the queued items are dealt with", func() {
+					_, err := scanSet(d.db.QueryRow(getSetByNameRequester, setB.Name, "\x002\x00"+setB.Requester))
+					So(err, ShouldBeNil)
+					So(d.clearQueue(), ShouldBeNil)
+
+					_, err = scanSet(d.db.QueryRow(getSetByNameRequester, setB.Name, "\x002\x00"+setB.Requester))
+					So(err, ShouldNotBeNil)
+				})
 			})
 		})
 	})

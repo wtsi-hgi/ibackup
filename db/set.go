@@ -382,7 +382,7 @@ func (d *DB) SetSetVisible(set *Set) error {
 	return nil
 }
 
-func (d *DB) SetSetTransformer(set *Set, transformerFn func(string) (string, error)) error {
+func (d *DB) SetSetTransformer(set *Set, transformerFn func(string) (string, error)) error { //nolint:gocyclo
 	if !set.modifiable {
 		return ErrReadonlySet
 	}
@@ -404,7 +404,11 @@ func (d *DB) SetSetTransformer(set *Set, transformerFn func(string) (string, err
 		return err
 	} else if err = d.createSet(tx, eset); err != nil {
 		return err
-	} else if err = d.cloneSetFiles(tx, set.id, eset.id, transformerFn); err != nil {
+	} else if err = d.moveDiscovery(tx, set.id, eset.id); err != nil {
+		return err
+	} else if err = d.moveSetFiles(tx, set.id, eset.id, transformerFn); err != nil {
+		return err
+	} else if err = d.removeSetFiles(tx, set.id); err != nil {
 		return err
 	}
 
@@ -413,7 +417,13 @@ func (d *DB) SetSetTransformer(set *Set, transformerFn func(string) (string, err
 	return tx.Commit()
 }
 
-func (d *DB) cloneSetFiles(tx *sql.Tx, from, to int64, transformerFn func(string) (string, error)) (err error) {
+func (d *DB) moveDiscovery(tx *sql.Tx, from, to int64) error {
+	_, err := tx.Exec(updateDiscoverySet, to, from)
+
+	return err
+}
+
+func (d *DB) moveSetFiles(tx *sql.Tx, from, to int64, transformerFn func(string) (string, error)) (err error) {
 	files := iterRows(&d.DBRO, scanFile, getSetsFiles, from)
 
 	for file := range files.Iter {
@@ -427,4 +437,10 @@ func (d *DB) cloneSetFiles(tx *sql.Tx, from, to int64, transformerFn func(string
 	}
 
 	return files.Error
+}
+
+func (d *DB) removeSetFiles(tx *sql.Tx, setID int64) error {
+	_, err := tx.Exec(createQueuedRemovalForSet, setID)
+
+	return err
 }

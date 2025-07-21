@@ -111,6 +111,9 @@ var (
 			"SELECT `hardlinks`.`size` FROM `hardlinks` JOIN `remoteFiles` ON `remoteFiles`.`hardlinkID` = `hardlinks`.`id` " +
 			"WHERE `remoteFiles`.`id` = `OLD`.`remoteFileID`) " +
 			"WHERE `id` = `OLD`.`setID`;" +
+			"DELETE FROM `sets` WHERE " +
+			"`numFiles` = 0 AND " +
+			"(`name` LIKE CONCAT(CHAR(0), '%') OR `requester` LIKE CONCAT(CHAR(0), '%'));" +
 			"END;",
 		"CREATE TRIGGER IF NOT EXISTS `update_file_size` AFTER UPDATE ON `hardlinks` FOR EACH ROW BEGIN " +
 			"UPDATE `sets` SET `sizeFiles` = `sizeFiles` - `OLD`.`size` + `NEW`.`size` WHERE `id` IN (" +
@@ -263,6 +266,12 @@ const (
 		"`type`" +
 		") VALUES (?, " + string('0'+QueueRemoval) + ") " + onConflictUpdate +
 		"`type` = " + string('0'+QueueRemoval) + ", `attempts` = 0, `lastAttempt` = '0001-01-01 00:00:00', `lastError` = '';"
+	createQueuedRemovalForSet = "INSERT INTO `queue` (" +
+		"`localFileID`, " +
+		"`type`" +
+		") SELECT `localFiles`.`id`, " + string('0'+QueueRemoval) + " FROM `localFiles` WHERE `localFiles`.`id` = ? " +
+		onConflictUpdate +
+		"`type` = " + string('0'+QueueRemoval) + ", `attempts` = 0, `lastAttempt` = '0001-01-01 00:00:00', `lastError` = '';"
 	createProcess = "INSERT INTO `processes` (`lastPing`) VALUES (" + now + ");"
 
 	getSetsStart = "SELECT " +
@@ -356,6 +365,7 @@ const (
 		"`lastCompletedCount` = ?, " +
 		"`lastCompletedSize` = ? " +
 		"WHERE `id` = ?;"
+	updateDiscoverySet = "UPDATE `toDiscover` SET `setID` = ? WHERE `setID` = ?;"
 	updateQueueReset   = "UPDATE `queue` set `heldBy` = 0;"
 	updateQueuedFailed = "UPDATE `queue` SET " +
 		"`attempts` = `attempts` + 1, " +
