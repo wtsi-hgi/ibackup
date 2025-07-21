@@ -111,7 +111,7 @@ var (
 			"SELECT `hardlinks`.`size` FROM `hardlinks` JOIN `remoteFiles` ON `remoteFiles`.`hardlinkID` = `hardlinks`.`id` " +
 			"WHERE `remoteFiles`.`id` = `OLD`.`remoteFileID`) " +
 			"WHERE `id` = `OLD`.`setID`;" +
-			"DELETE FROM `sets` WHERE " +
+			"DELETE FROM `sets` WHERE `id` = `OLD`.`setID` AND " +
 			"`numFiles` = 0 AND " +
 			"(`name` LIKE CONCAT(CHAR(0), '%') OR `requester` LIKE CONCAT(CHAR(0), '%'));" +
 			"END;",
@@ -350,7 +350,8 @@ const (
 		"SELECT `remoteFileID` FROM `localFiles` WHERE `localPathHash` = " + virtStart +
 		"(SELECT `localPath` FROM `localFiles` WHERE `id` = ? LIMIT 1)" +
 		virtEnd + ");"
-	getTasksCounts = "SELECT COUNT(1), COUNT(IF(`heldBy` = 0, 0, NULL)) FROM `queue`;"
+	getTasksCounts  = "SELECT COUNT(1), COUNT(IF(`heldBy` = 0, 0, NULL)) FROM `queue`;"
+	getProcessCount = "SELECT COUNT(1) FROM `processes`;"
 
 	updateSetWarning             = "UPDATE `sets` SET `warning` = ? WHERE `id` = ?;"
 	updateSetError               = "UPDATE `sets` SET `warning` = ? WHERE `id` = ?;"
@@ -415,6 +416,6 @@ const (
 	deleteDiscover       = "DELETE FROM `toDiscover` WHERE `setID` = ? AND `path` = ?;"
 	deleteQueued         = "DELETE FROM `queue` WHERE `id` = ? AND `heldBy` = ? AND `type` = ?;"
 	deleteAllQueued      = "DELETE FROM `queue`;"
-	deleteStaleProcesses = "DELETE FROM `processes` WHERE `lastPing` < /* NOW() - 10 MINUTE -- */ " +
-		"DATETIME('now', '-10 MINUTE')\n/*! */;"
+	deleteStaleProcesses = "DELETE FROM `processes` WHERE `lastPing` < /*! NOW() - INTERVAL 10 MINUTE -- */ " +
+		"DATETIME('now', '-10 MINUTES')\n/*! */;"
 )

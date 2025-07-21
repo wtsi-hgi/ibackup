@@ -423,6 +423,23 @@ func TestQueue(t *testing.T) {
 			So(total, ShouldEqual, 4)
 			So(unreserved, ShouldEqual, 4)
 		})
+
+		Convey("You can get a count of the registered task handling processes", func() {
+			processes, err := d.CountProcesses()
+			So(err, ShouldBeNil)
+			So(processes, ShouldEqual, 2)
+
+			So(d.exec(
+				"UPDATE `processes` SET `lastPing` = ? WHERE `id` =  ?",
+				time.Now().In(time.UTC).Add(-15*time.Minute).Truncate(time.Second),
+				pidA.id,
+			), ShouldBeNil)
+			So(d.RemoveStaleProcesses(), ShouldBeNil)
+
+			processes, err = d.CountProcesses()
+			So(err, ShouldBeNil)
+			So(processes, ShouldEqual, 1)
+		})
 	})
 }
 

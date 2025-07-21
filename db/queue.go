@@ -56,6 +56,20 @@ func (d *DB) PingProcess(process *Process) error {
 	return d.exec(updateProcessPing, process.id)
 }
 
+func (d *DBRO) CountProcesses() (int64, error) {
+	var count int64
+
+	if err := d.db.QueryRow(getProcessCount).Scan(&count); err != nil {
+		return 0, err
+	}
+
+	return count, nil
+}
+
+func (d *DB) RemoveStaleProcesses() error {
+	return d.exec(deleteStaleProcesses)
+}
+
 func (d *DB) ReserveTasks(process *Process, n int) *IterErr[*Task] {
 	if err := d.reserveQueuedTasks(process, n); err != nil {
 		return &IterErr[*Task]{Iter: noSeq[*Task], Error: err}
