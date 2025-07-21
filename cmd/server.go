@@ -63,6 +63,7 @@ var serverWRDeployment string
 var serverHardlinksCollection string
 var serverSlackDebouncePeriod int
 var serverStillRunningMsgFreq string
+var serverTrashLifespan string
 
 // serverCmd represents the server command.
 var serverCmd = &cobra.Command{
@@ -184,6 +185,11 @@ database that you've made, to investigate.
 			}
 		}
 
+		trashLifespan, err := parseDuration(serverTrashLifespan, hoursInDay*time.Hour)
+		if err != nil {
+			die(err)
+		}
+
 		if serverSlackDebouncePeriod < 0 {
 			dief("slack_debounce period must be positive, not: %d", serverSlackDebouncePeriod)
 		}
@@ -200,6 +206,7 @@ database that you've made, to investigate.
 			StillRunningMsgFreq:  stillRunningMsgFreq,
 			ReadOnly:             readonly,
 			StorageHandler:       handler,
+			TrashLifespan:        trashLifespan,
 		}
 
 		s, err := server.New(conf)
@@ -313,6 +320,9 @@ func init() {
 	serverCmd.Flags().StringVarP(&serverStillRunningMsgFreq, "still_running", "r", "",
 		"send a slack message every this period of time to say the server is still running"+
 			"(eg. 10m for 10 minutes, or 6h for 6 hours, minimum 1m), defaults to nothing")
+	serverCmd.Flags().StringVar(&serverTrashLifespan, "trash_lifespan", "30d",
+		"the period of time trash will be kept before being permanently removed"+
+			" (eg. 1d for 1 day or 2w for 2 weeks), defaults to 30 days")
 }
 
 // setServerLogger makes our appLogger log to the given path if non-blank,

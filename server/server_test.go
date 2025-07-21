@@ -713,7 +713,6 @@ func TestServer(t *testing.T) {
 											So(files, ShouldHaveLength, 1)
 										})
 
-										// TODO add the trashlifespan to real server
 										Convey("You can remove all expired files for all sets", func() {
 											err = client.RemoveAllExpiredEntries()
 											So(err, ShouldBeNil)

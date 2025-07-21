@@ -58,7 +58,7 @@ var trashCmd = &cobra.Command{
 	Long: `Restore or remove objects from trash set
  
   Removes or restores objects from a trash set by providing the files and/or 
-  directories. You need to provide a base set name (not trash set name).
+  directories.
   
   If you provide --remove, this will remove objects from the trash set and 
   from iRODS if they are not found in any other sets.
@@ -68,16 +68,18 @@ var trashCmd = &cobra.Command{
   argument) and if necessary, the certificate (using the IBACKUP_SERVER_CERT
   environment variable, or overriding that with the --cert argument).
  
-  --name is a required flag used to describe which set you want to remove files 
-  from.
+  You must provide either --all-expired or --name when removing. --name is used
+  to describe which set you want to remove files from, this should be the base 
+  set name (not with the trash prefix).
  
-  You must also provide at least one of:
+  If providing --name, you must also provide only one of:
   --items: the path to a file containing the paths of files/directories you want
 		   to remove from the set. Each path should be on its own line. Because 
 		   filenames can contain new line characters in them, it's safer to 
 		   null-terminate them instead and use the optional --null argument.
   --path: if you want to remove a single file or directory, provide its absolute
 		  path.
+  --expired: removes all expired paths from the trash of the set.
   `,
 	PreRunE: func(_ *cobra.Command, _ []string) error {
 		ensureURLandCert()
