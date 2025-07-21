@@ -169,7 +169,7 @@ preexisting backup set.`,
 	},
 }
 
-func init() {
+func init() { //nolint:funlen
 	RootCmd.AddCommand(editCmd)
 
 	editCmd.Flags().StringVarP(&editSetName, "name", "n", "", helpTextName)

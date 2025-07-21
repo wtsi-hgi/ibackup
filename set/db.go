@@ -1496,10 +1496,10 @@ func (d *DB) updateSetBasedOnEntry(set *Set, entry *Entry) error {
 // SetFilter is a function used to filter the sets retrieved from the database.
 //
 // A return value of true will keep the set, a return of false will discard it.
-type SetFilter func(*Set) bool
+type SetFilter func(*Set) bool //nolint:revive
 
 // SetFilterTrashed is a SetFilter that filters on trashed sets.
-func SetFilterTrashed(set *Set) bool {
+func SetFilterTrashed(set *Set) bool { //nolint:revive
 	return IsTrashSet(set.Name)
 }
 
