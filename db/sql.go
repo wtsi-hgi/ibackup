@@ -293,7 +293,7 @@ const (
 	getSetByID         = getSetsStart + " WHERE `sets`.`id` = ?;"
 	getSetsByRequester = getSetsStart +
 		" WHERE `sets`.`requesterHash` = " + virtPosition + " ORDER BY `sets`.`id` ASC;"
-	getSetsFiles = "SELECT " +
+	getSetsFilesStart = "SELECT " +
 		"`localFiles`.`id`, " +
 		"`localFiles`.`localPath`, " +
 		"`localFiles`.`lastUploaded`, " +
@@ -309,11 +309,19 @@ const (
 		"`hardlinks`.`btime`, " +
 		"`hardlinks`.`mtime`, " +
 		"`hardlinks`.`remote`, " +
-		"`hardlinks`.`dest` " +
-		"FROM `localFiles` " +
+		"`hardlinks`.`dest` "
+	getSetsFilesFrom = "FROM `localFiles` " +
 		"JOIN `remoteFiles` ON `localFiles`.`remoteFileID` = `remoteFiles`.`id` " +
-		"JOIN `hardlinks` ON `remoteFiles`.`hardlinkID` = `hardlinks`.`id` " +
-		"WHERE `localFiles`.`setID` = ? ORDER BY `localFiles`.`id` ASC;"
+		"JOIN `hardlinks` ON `remoteFiles`.`hardlinkID` = `hardlinks`.`id` "
+	getSetsFilesWhere      = "WHERE `localFiles`.`setID` = ? ORDER BY `localFiles`.`id` ASC;"
+	getSetsFiles           = getSetsFilesStart + getSetsFilesFrom + getSetsFilesWhere
+	getSetsFilesWithErrors = getSetsFilesStart + ", " +
+		"COALESCE(`queue`.`lastError`, ''), " +
+		"`queue`.`lastAttempt`, " +
+		"COALESCE(`queue`.`attempts`, 0) " +
+		getSetsFilesFrom +
+		"LEFT JOIN `queue` ON `localFiles`.`id` = `queue`.`localFileID` " +
+		getSetsFilesWhere
 	getSetDiscovery = "SELECT " +
 		"`path`, " +
 		"`type`" +

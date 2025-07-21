@@ -32,19 +32,22 @@ const (
 )
 
 type File struct {
-	id           int64
-	LocalPath    string
-	RemotePath   string
-	Size, Inode  int64
-	MountPount   string
-	InodeRemote  string
-	Btime, Mtime int64
-	Type         FileType
-	Status       FileStatus
-	Owner        string
-	SymlinkDest  string
-	LastUpload   time.Time
-	modifiable   bool
+	id                int64
+	LocalPath         string
+	RemotePath        string
+	Size, Inode       int64
+	MountPount        string
+	InodeRemote       string
+	Btime, Mtime      int64
+	Type              FileType
+	Status            FileStatus
+	Owner             string
+	SymlinkDest       string
+	LastUpload        time.Time
+	LastError         string
+	LastFailedAttempt time.Time
+	Attempts          int
+	modifiable        bool
 }
 
 func (d *DB) AddSetFiles(set *Set, toAdd iter.Seq[*File]) error {
@@ -129,13 +132,11 @@ func (d *DB) trashFile(tx *sql.Tx, file *File) error {
 }
 
 func (d *DBRO) GetSetFiles(set *Set) *IterErr[*File] {
-	scanner := scanFile
-
 	if set.modifiable {
-		scanner = scanModifiableFile
+		return iterRows(d, scanModifiableFile, getSetsFilesWithErrors, set.id)
 	}
 
-	return iterRows(d, scanner, getSetsFiles, set.id)
+	return iterRows(d, scanFile, getSetsFiles, set.id)
 }
 
 func scanFile(scanner scanner) (*File, error) {
@@ -164,11 +165,33 @@ func scanFile(scanner scanner) (*File, error) {
 }
 
 func scanModifiableFile(scanner scanner) (*File, error) {
-	file, err := scanFile(scanner)
-	if err != nil {
+	file := new(File)
+
+	var lastFailedAttempt sql.NullTime
+
+	if err := scanner.Scan(
+		&file.id,
+		&file.LocalPath,
+		&file.LastUpload,
+		&file.Status,
+		&file.RemotePath,
+		&file.Size,
+		&file.Type,
+		&file.Owner,
+		&file.Inode,
+		&file.MountPount,
+		&file.Btime,
+		&file.Mtime,
+		&file.InodeRemote,
+		&file.SymlinkDest,
+		&file.LastError,
+		&lastFailedAttempt,
+		&file.Attempts,
+	); err != nil {
 		return nil, err
 	}
 
+	file.LastFailedAttempt = lastFailedAttempt.Time
 	file.modifiable = true
 
 	return file, nil
