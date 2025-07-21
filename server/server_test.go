@@ -637,6 +637,7 @@ func TestServer(t *testing.T) {
 								entries, errg := s.db.GetAllDirEntries(exampleSet.ID())
 								So(errg, ShouldBeNil)
 								So(len(entries), ShouldEqual, 0)
+								// test that the metadata in iRODS no longer shows exampleSet.ID
 							})
 						})
 

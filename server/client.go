@@ -642,5 +642,12 @@ func (c *Client) RemoveFilesAndDirs(setID string, paths []string) error {
 // RemoveSet removes the set with the given ID from the db along with files from
 // iRODS.
 func (c *Client) RemoveSet(setID string) error {
-	return c.deleteThing(EndPointAuthSet+"/"+setID, nil, nil)
+	req := c.request()
+
+	resp, err := req.Delete(EndPointAuthSet + "/" + setID)
+	if err != nil {
+		return err
+	}
+
+	return responseToErr(resp)
 }
