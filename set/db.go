@@ -44,6 +44,7 @@ import (
 	"github.com/ugorji/go/codec"
 	"github.com/wtsi-hgi/ibackup/transfer"
 	bolt "go.etcd.io/bbolt"
+	boltErrors "go.etcd.io/bbolt/errors"
 )
 
 type Error struct {
@@ -1708,7 +1709,7 @@ func (d *DBRO) getDefinedFileEntry(setID string) (*Entry, error) {
 type getEntriesViewCallBack func(v []byte)
 
 func getEntriesViewFunc(tx *bolt.Tx, setID, bucketName string, cb getEntriesViewCallBack) {
-	subBucketName := []byte(bucketName + separator + setID)
+	subBucketName := getSubBucketName(setID, bucketName)
 	setsBucket := tx.Bucket([]byte(setsBucket))
 
 	entriesBucket := setsBucket.Bucket(subBucketName)
@@ -1721,6 +1722,10 @@ func getEntriesViewFunc(tx *bolt.Tx, setID, bucketName string, cb getEntriesView
 
 		return nil
 	})
+}
+
+func getSubBucketName(setID, bucketName string) []byte {
+	return []byte(bucketName + separator + setID)
 }
 
 // decodeEntry takes a byte slice representation of an Entry as stored in the db
@@ -2020,7 +2025,29 @@ func (d *DB) MakeSetWritable(sid string) error {
 // sub-buckets; you should deal with those first.
 func (d *DB) Delete(setID string) error {
 	return d.db.Update(func(tx *bolt.Tx) error {
-		_, bid, b, err := d.getSetByID(tx, setID)
+		set, bid, b, err := d.getSetByID(tx, setID)
+		if err != nil {
+			return err
+		}
+
+		buckets := []string{
+			fileBucket,
+			dirBucket,
+			discoveredBucket,
+			discoveredFoldersBucket,
+			removedBucket,
+		}
+
+		for _, bucketName := range buckets {
+			errd := b.DeleteBucket(getSubBucketName(setID, bucketName))
+			if errd != nil && !errors.Is(errd, boltErrors.ErrBucketNotFound) {
+				return errd
+			}
+		}
+
+		userToSet := tx.Bucket([]byte(userToSetBucket))
+
+		err = userToSet.Delete([]byte(set.Requester + separator + setID))
 		if err != nil {
 			return err
 		}
