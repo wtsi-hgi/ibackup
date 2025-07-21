@@ -54,8 +54,10 @@ var ErrTrashAllExpired = errors.New("--all-expired does not take any other flags
 // removeCmd represents the add command.
 var trashCmd = &cobra.Command{
 	Use:   "trash",
-	Short: "Restore or remove objects from trash set",
+	Short: "Restore or remove objects from trash set [admin only]",
 	Long: `Restore or remove objects from trash set
+
+  Only the user who started the server is able to use this command.
  
   Removes or restores objects from a trash set by providing the files and/or 
   directories.

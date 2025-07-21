@@ -560,10 +560,15 @@ func (s *Server) trashPaths(c *gin.Context) {
 func (s *Server) removeExpired(c *gin.Context) {
 	sid := c.Param(paramSetID)
 
-	var (
-		sets []*set.Set
-		err  error
-	)
+	if !s.AllowedAccess(c, "") {
+		c.AbortWithError(http.StatusUnauthorized, ErrNotAdmin) //nolint:errcheck
+
+		return
+	}
+
+	var sets []*set.Set
+
+	var err error
 
 	if sid != "" { //nolint:nestif
 		givenSet, ok := s.validateSet(c)
@@ -581,14 +586,23 @@ func (s *Server) removeExpired(c *gin.Context) {
 		}
 	}
 
-	for _, set := range sets {
-		err = s.removeExpiredEntriesFromSet(set)
-		if err != nil {
-			c.AbortWithError(http.StatusInternalServerError, err) //nolint:errcheck
+	err = s.removeExpiredEntriesFromSets(sets)
+	if err != nil {
+		c.AbortWithError(http.StatusInternalServerError, err) //nolint:errcheck
 
-			return
+		return
+	}
+}
+
+func (s *Server) removeExpiredEntriesFromSets(sets []*set.Set) error {
+	for _, set := range sets {
+		err := s.removeExpiredEntriesFromSet(set)
+		if err != nil {
+			return err
 		}
 	}
+
+	return nil
 }
 
 func (s *Server) removeExpiredEntriesFromSet(givenSet *set.Set) error {
