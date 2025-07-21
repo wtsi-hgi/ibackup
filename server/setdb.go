@@ -564,10 +564,12 @@ func (s *Server) deleteSet(c *gin.Context) {
 		return
 	}
 
-	// files in the set have been requested for removal, but that is now
-	// happening over time asynchronously.
-	// Next we must wait for the removals to complete, then we can can call our
-	// new db delete set method.
+	err = s.db.Delete(set.ID())
+	if err != nil {
+		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+
+		return
+	}
 }
 
 // validateRemoveInputs returns an error if the provided set is a trashed set,
