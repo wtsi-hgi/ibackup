@@ -644,7 +644,7 @@ func (c *Client) RemoveExpiredEntriesForSet(setID string) error {
 	return c.putThing(EndPointAuthRemoveExpired+"/"+setID, nil)
 }
 
-// RemoveAllExpiredEntries removes expired paths.
+// RemoveAllExpiredEntries removes expired entries from all sets.
 func (c *Client) RemoveAllExpiredEntries() error {
 	return c.putThing(EndPointAuthRemoveExpired, nil)
 }

@@ -46,7 +46,7 @@ var removeSet bool
 
 var ErrRemoveItems = errors.New("exactly one of --items or --path or --set must be provided")
 
-// removeCmd represents the add command.
+// removeCmd represents the remove command.
 var removeCmd = &cobra.Command{
 	Use:   "remove",
 	Short: "Remove objects from backed up set",
@@ -119,7 +119,6 @@ func init() {
 	RootCmd.AddCommand(removeCmd)
 
 	// flags specific to this sub-command
-	removeCmd.Flags().StringVar(&removeUser, "user", currentUsername(), helpTextuser)
 	removeCmd.Flags().StringVarP(&removeName, "name", "n", "", "remove objects from the set with this name")
 	removeCmd.Flags().StringVarP(&removeItems, "items", "i", "", helpTextItems)
 	removeCmd.Flags().StringVarP(&removePath, "path", "p", "",
@@ -127,6 +126,12 @@ func init() {
 	removeCmd.Flags().BoolVarP(&removeNull, "null", "0", false, helpTextNull)
 	removeCmd.Flags().BoolVarP(&removeSet, "set", "s", false,
 		"remove all files from the set and the set itself")
+
+	if isAdmin() {
+		removeCmd.Flags().StringVar(&removeUser, "user", currentUsername(), helpTextuser)
+	} else {
+		removeUser = currentUsername()
+	}
 
 	if err := removeCmd.MarkFlagRequired("name"); err != nil {
 		die(err)
