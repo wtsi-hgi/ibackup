@@ -2040,6 +2040,11 @@ func (d *DB) Delete(setID string) error {
 			return err
 		}
 
+		err = deleteFailedMapping(tx, setID)
+		if err != nil {
+			return err
+		}
+
 		return b.Delete(bid)
 	})
 }
@@ -2069,6 +2074,20 @@ func deleteUserMapping(tx *bolt.Tx, requester, setID string) error {
 	err := userToSet.Delete([]byte(requester + separator + setID))
 	if err != nil {
 		return err
+	}
+
+	return nil
+}
+
+func deleteFailedMapping(tx *bolt.Tx, setID string) error {
+	c := tx.Bucket([]byte(failedBucket)).Cursor()
+
+	prefix := []byte(setID)
+	for k, _ := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, _ = c.Next() {
+		err := c.Delete()
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
