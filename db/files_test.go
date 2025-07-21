@@ -157,7 +157,7 @@ func TestFiles(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(refs, ShouldEqual, 2)
 
-			setTrashA, err := d.GetSet("\x00"+setA.Name, setA.Requester)
+			setTrashA, err := scanSet(d.db.QueryRow(getSetByNameRequester, "\x00"+setA.Name, setA.Requester))
 			So(err, ShouldBeNil)
 
 			trashed := slices.Collect(d.GetSetFiles(setTrashA).Iter)

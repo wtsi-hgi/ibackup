@@ -181,13 +181,16 @@ func (s *Set) IsReadonly() bool {
 }
 
 var (
-	ErrReadonlySet    = errors.New("cannot modify readonly set")
-	ErrInvalidSetName = errors.New("invalid set name")
+	ErrReadonlySet          = errors.New("cannot modify readonly set")
+	ErrInvalidSetName       = errors.New("invalid set name")
+	ErrInvalidRequesterName = errors.New("invalid requester name")
 )
 
 func (d *DB) CreateSet(set *Set) error {
 	if strings.HasPrefix(set.Name, "\x00") {
 		return ErrInvalidSetName
+	} else if strings.HasPrefix(set.Requester, "\x00") {
+		return ErrInvalidRequesterName
 	}
 
 	tx, err := d.db.Begin()
@@ -196,6 +199,14 @@ func (d *DB) CreateSet(set *Set) error {
 	}
 	defer tx.Rollback() //nolint:errcheck
 
+	if err := d.createSet(tx, set); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+func (d *DB) createSet(tx *sql.Tx, set *Set) error {
 	tID, err := d.execReturningRowID(tx, createTransformer, set.Transformer)
 	if err != nil {
 		return err
@@ -212,7 +223,7 @@ func (d *DB) CreateSet(set *Set) error {
 
 	set.modifiable = true
 
-	return tx.Commit()
+	return nil
 }
 
 func execReturningRowID(tx *sql.Tx, sql string, params ...any) (int64, error) {
@@ -225,6 +236,12 @@ func execReturningRowID(tx *sql.Tx, sql string, params ...any) (int64, error) {
 }
 
 func (d *DBRO) GetSet(name, requester string) (*Set, error) {
+	if strings.HasPrefix(name, "\x00") {
+		return nil, ErrInvalidSetName
+	} else if strings.HasPrefix(requester, "\x00") {
+		return nil, ErrInvalidRequesterName
+	}
+
 	return scanSet(d.db.QueryRow(getSetByNameRequester, name, requester))
 }
 
@@ -257,6 +274,10 @@ func scanSet(scanner scanner) (*Set, error) {
 }
 
 func (d *DBRO) GetSetsByRequester(requester string) *IterErr[*Set] {
+	if strings.HasPrefix(requester, "\x00") {
+		return iterErr[*Set](ErrInvalidRequesterName)
+	}
+
 	return iterRows(d, scanSet, getSetsByRequester, requester)
 }
 
@@ -359,4 +380,51 @@ func (d *DB) SetSetVisible(set *Set) error {
 	set.Hidden = false
 
 	return nil
+}
+
+func (d *DB) SetSetTransformer(set *Set, transformerFn func(string) (string, error)) error {
+	if !set.modifiable {
+		return ErrReadonlySet
+	}
+
+	eset, err := scanSet(d.db.QueryRow(getSetByID, set.id))
+	if err != nil {
+		return err
+	}
+
+	eset.Transformer = set.Transformer
+
+	tx, err := d.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	if _, err = tx.Exec(shiftSetRequester, set.id); err != nil { //nolint:nestif
+		return err
+	} else if err = d.createSet(tx, eset); err != nil {
+		return err
+	} else if err = d.cloneSetFiles(tx, set.id, eset.id, transformerFn); err != nil {
+		return err
+	}
+
+	set.id = eset.id
+
+	return tx.Commit()
+}
+
+func (d *DB) cloneSetFiles(tx *sql.Tx, from, to int64, transformerFn func(string) (string, error)) (err error) {
+	files := iterRows(&d.DBRO, scanFile, getSetsFiles, from)
+
+	for file := range files.Iter {
+		if file.RemotePath, err = transformerFn(file.LocalPath); err != nil {
+			return err
+		}
+
+		if err := d.addSetFile(tx, to, file); err != nil {
+			return err
+		}
+	}
+
+	return files.Error
 }

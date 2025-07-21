@@ -2,6 +2,7 @@ package db
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -103,6 +104,26 @@ func TestSet(t *testing.T) {
 				got, err = d.GetSet("my2ndSet", "me")
 				So(err, ShouldBeNil)
 				So(got.IsReadonly(), ShouldBeFalse)
+			})
+
+			Convey("You can change the transformer on a set", func() {
+				files := slices.Collect(genFiles(5))
+
+				So(d.AddSetFiles(setB, slices.Values(files)), ShouldBeNil)
+				So(d.clearQueue(), ShouldBeNil)
+
+				setA.Transformer = "prefix=/some/:/other/remote/"
+
+				So(d.SetSetTransformer(setB, func(s string) (string, error) {
+					return "/other/remote/" + strings.TrimPrefix(s, "/some/"), nil
+				}), ShouldBeNil)
+
+				for _, file := range files {
+					file.id += 5
+					file.RemotePath = "/other" + file.RemotePath
+				}
+
+				So(slices.Collect(d.GetSetFiles(setB).Iter), ShouldResemble, files)
 			})
 		})
 	})

@@ -18,10 +18,7 @@ func iterRows[T any](d *DBRO, scanner func(scanner) (T, error), query string, ar
 
 	rows, err := d.db.Query(query, args...)
 	if err != nil {
-		ie.Error = err
-		ie.Iter = noSeq[T]
-
-		return &ie
+		return iterErr[T](err)
 	}
 
 	ie.Iter = func(yield func(T) bool) {
@@ -44,4 +41,11 @@ func iterRows[T any](d *DBRO, scanner func(scanner) (T, error), query string, ar
 	}
 
 	return &ie
+}
+
+func iterErr[T any](err error) *IterErr[T] {
+	return &IterErr[T]{
+		Iter:  noSeq[T],
+		Error: err,
+	}
 }

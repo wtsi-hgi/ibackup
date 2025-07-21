@@ -284,9 +284,13 @@ const (
 		"`sets`.`hidden`, " +
 		"`transformers`.`transformer` " +
 		"FROM `sets` JOIN `transformers` ON `sets`.`transformerID` = `transformers`.`id`"
-	getAllSets            = getSetsStart + " ORDER BY `sets`.`id` ASC;"
+	getAllSets = getSetsStart + " WHERE " +
+		"`sets`.`name` NOT LIKE CONCAT(CHAR(0), '%') AND " +
+		"`sets`.`requester` NOT LIKE CONCAT(CHAR(0), '%') " +
+		"ORDER BY `sets`.`id` ASC;"
 	getSetByNameRequester = getSetsStart +
 		" WHERE `sets`.`nameHash` = " + virtPosition + " and `sets`.`requesterHash` = " + virtPosition + ";"
+	getSetByID         = getSetsStart + " WHERE `sets`.`id` = ?;"
 	getSetsByRequester = getSetsStart +
 		" WHERE `sets`.`requesterHash` = " + virtPosition + " ORDER BY `sets`.`id` ASC;"
 	getSetsFiles = "SELECT " +
@@ -352,8 +356,11 @@ const (
 		"WHERE `id` = ? AND `heldBy` = ? AND `type` = ?;"
 	updateQueuedSkipped = "UPDATE `queue` SET " +
 		"`skipped` = TRUE WHERE `id` = ? AND `heldBy` = ? AND `type` = ?;"
-
 	updateProcessPing = "UPDATE `processes SET `lastPing` = " + now + " WHERE `id` = ?;"
+
+	shiftSetRequester = "UPDATE `sets` SET " +
+		"`requester` = CONCAT(CHAR(0), `id`, CHAR(0), `requester`) " +
+		"WHERE `id` = ? AND `requester` NOT LIKE CONCAT(CHAR(0), '%');"
 
 	holdQueuedTask = "WITH " +
 		"`heldHardlinks` AS (" +
