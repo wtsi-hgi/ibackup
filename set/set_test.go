@@ -308,11 +308,11 @@ func TestSet(t *testing.T) {
 }
 
 func TestSetDB(t *testing.T) {
-	FocusConvey("Given a path", t, func() {
+	Convey("Given a path", t, func() {
 		tDir := t.TempDir()
 		dbPath := filepath.Join(tDir, "set.db")
 
-		FocusConvey("You can create a new database", func() {
+		Convey("You can create a new database", func() {
 			slackWriter := gas.NewStringLogger()
 			slacker := slack.NewMock(slackWriter)
 
@@ -322,7 +322,7 @@ func TestSetDB(t *testing.T) {
 
 			db.LogSetChangesToSlack(slacker)
 
-			FocusConvey("And add Sets to it", func() {
+			Convey("And add Sets to it", func() {
 				set := &Set{
 					Name:        "set1",
 					Requester:   "jim",
@@ -476,7 +476,7 @@ func TestSetDB(t *testing.T) {
 					So(dEntries[0], ShouldResemble, newEntry("/g/i"))
 				})
 
-				FocusConvey("Then get a particular Set", func() {
+				Convey("Then get a particular Set", func() {
 					retrieved := db.GetByID(set.ID())
 					So(retrieved, ShouldNotBeNil)
 					So(retrieved, ShouldResemble, set)
@@ -524,7 +524,7 @@ func TestSetDB(t *testing.T) {
 						So(retrieved2.DeleteLocal, ShouldBeFalse)
 					})
 
-					FocusConvey("And delete it when there's something in all the sub-buckets", func() {
+					Convey("And delete it when there's something in all the sub-buckets", func() {
 						err = db.Delete("invalid")
 						So(err, ShouldNotBeNil)
 
@@ -558,10 +558,6 @@ func TestSetDB(t *testing.T) {
 						So(errg, ShouldBeNil)
 						So(len(entries), ShouldBeGreaterThan, 0)
 
-						// inodeBucket                   = "inodes"
-						// transformerToIDBucket         = "transformerIDs"
-						// transformerFromIDBucket       = "transformers"
-
 						checkUserLookup := func() bool {
 							found := false
 
@@ -578,6 +574,30 @@ func TestSetDB(t *testing.T) {
 						}
 
 						So(checkUserLookup(), ShouldBeTrue)
+
+						failedPath := "/path/failed"
+
+						erru := db.db.Update(func(tx *bolt.Tx) error {
+							return db.addFailedLookup(tx, set.ID(), failedPath, &Entry{Path: failedPath, Status: Failed})
+						})
+						So(erru, ShouldBeNil)
+
+						checkFailedLookup := func() bool {
+							found := false
+
+							errv := db.db.View(func(tx *bolt.Tx) error {
+								b, key := db.getBucketAndKeyForFailedLookup(tx, set.ID(), failedPath)
+								val := b.Get(key)
+								found = val != nil
+
+								return nil
+							})
+							So(errv, ShouldBeNil)
+
+							return found
+						}
+
+						So(checkFailedLookup(), ShouldBeTrue)
 
 						err = db.Delete(set.ID())
 						So(err, ShouldBeNil)
@@ -606,9 +626,10 @@ func TestSetDB(t *testing.T) {
 						So(entries, ShouldBeNil)
 
 						So(checkUserLookup(), ShouldBeFalse)
+						So(checkFailedLookup(), ShouldBeFalse)
 					})
 
-					FocusConvey("And delete it when there isn't something in all the sub-buckets", func() {
+					Convey("And delete it when there isn't something in all the sub-buckets", func() {
 						entries, errg := db.getEntries(set.ID(), fileBucket, nil)
 						So(errg, ShouldBeNil)
 						So(len(entries), ShouldBeGreaterThan, 0)
