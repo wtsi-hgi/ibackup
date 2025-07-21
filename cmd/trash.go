@@ -157,21 +157,21 @@ func init() {
 
 // handleRemove does the main job of sending the set, files and dirs to the server.
 func handleTrash(client *server.Client, user, name string, paths []string) error {
-	setName := set.TrashPrefix + name
+	trashSetName := set.TrashPrefix + name
 
-	sets := getSetByName(client, user, setName)
+	sets := getSetByName(client, user, trashSetName)
 
 	return client.RemoveFilesAndDirs(sets[0].ID(), paths)
 }
 
 func handleTrashExpired(client *server.Client, user, name string) error {
-	if setName == "" {
+	if name == "" {
 		return client.RemoveAllExpiredEntries()
 	}
 
-	setName := set.TrashPrefix + name
+	trashSetName := set.TrashPrefix + name
 
-	sets := getSetByName(client, user, setName)
+	sets := getSetByName(client, user, trashSetName)
 
 	return client.RemoveExpiredEntriesForSet(sets[0].ID())
 }

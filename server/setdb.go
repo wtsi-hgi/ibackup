@@ -599,17 +599,18 @@ func (s *Server) deleteSet(c *gin.Context) {
 func (s *Server) removeExpired(c *gin.Context) {
 	sid := c.Param(paramSetID)
 
-	var sets []*set.Set
-	var err error
+	var (
+		sets []*set.Set
+		err  error
+	)
 
-	if sid != "" {
+	if sid != "" { //nolint:nestif
 		givenSet, ok := s.validateSet(c)
 		if !ok {
 			return
 		}
 
 		sets = append(sets, givenSet)
-
 	} else {
 		sets, err = s.db.GetTrashedSets()
 		if err != nil {
@@ -631,12 +632,9 @@ func (s *Server) removeExpired(c *gin.Context) {
 
 func (s *Server) removeExpiredEntriesFromSet(givenSet *set.Set) error {
 	filter := func(e *set.Entry) bool {
-		entryAge := time.Now().Sub(e.TrashDate)
-		if entryAge < s.trashLifespan {
-			return false
-		}
+		entryAge := time.Since(e.TrashDate)
 
-		return true
+		return entryAge >= s.trashLifespan
 	}
 
 	expiredFiles, err := s.db.GetFileEntries(givenSet.ID(), filter)

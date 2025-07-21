@@ -511,7 +511,10 @@ func TestServer(t *testing.T) {
 						file1remote := filepath.Join(dir2remote, "file1")
 						internal.CreateTestFile(t, file1remote, "file content")
 
-						file2remote := filepath.Join(dir2remote, "file2")
+						file2local := filepath.Join(dir1local, "file2")
+						internal.CreateTestFile(t, file2local, "file content")
+
+						file2remote := filepath.Join(dir1remote, "file2")
 						internal.CreateTestFile(t, file2remote, "file content")
 
 						hardlinkMeta := map[string]string{
@@ -544,11 +547,11 @@ func TestServer(t *testing.T) {
 						})
 
 						Convey("Trash of failed files removes entries from Failed bucket", func() {
-							changeSetFilesStatus(1, exampleSet.Name, adminClient, transfer.RequestStatusFailed)
+							changeSetFilesStatus(2, exampleSet.Name, adminClient, transfer.RequestStatusFailed)
 
 							failedEntries, _, errg := s.db.GetFailedEntries(exampleSet.ID())
 							So(errg, ShouldBeNil)
-							So(len(failedEntries), ShouldEqual, 1)
+							So(len(failedEntries), ShouldEqual, 2)
 
 							err = client.TrashFilesAndDirs(exampleSet.ID(), []string{file1local})
 							So(err, ShouldBeNil)
@@ -557,11 +560,11 @@ func TestServer(t *testing.T) {
 
 							failedEntries, _, err = s.db.GetFailedEntries(exampleSet.ID())
 							So(err, ShouldBeNil)
-							So(len(failedEntries), ShouldEqual, 0)
+							So(len(failedEntries), ShouldEqual, 1)
 						})
 
 						Convey("And given all files are uploaded", func() {
-							makeGivenSetComplete(1, exampleSet.Name, adminClient)
+							makeGivenSetComplete(2, exampleSet.Name, adminClient)
 
 							Convey("You can trash a file and a dir, which sets them as complete in remove bucket", func() {
 								err = client.TrashFilesAndDirs(exampleSet.ID(), []string{file1local, dir2local})
@@ -575,45 +578,6 @@ func TestServer(t *testing.T) {
 
 								trashSet, errg := adminClient.GetSetByName(exampleSet.Requester, set.TrashPrefix+exampleSet.Name)
 								So(errg, ShouldBeNil)
-
-								FocusConvey("And with a very short trash expire time", func() {
-									s.trashLifespan = 200 * time.Millisecond
-
-									time.Sleep(200 * time.Millisecond)
-
-									// TODO add a second batch of trash files and check we do not remove them
-									FocusConvey("You can remove all expired files for a set", func() {
-										err = client.RemoveExpiredEntriesForSet(trashSet.ID())
-										So(err, ShouldBeNil)
-
-										waitForRemovals(t, adminClient, trashSet)
-
-										files, errg := client.GetFiles(trashSet.ID())
-										So(errg, ShouldBeNil)
-										So(files, ShouldHaveLength, 0)
-
-										dirs, errg := client.GetDirs(trashSet.ID())
-										So(errg, ShouldBeNil)
-										So(dirs, ShouldHaveLength, 0)
-									})
-
-									// TODO add the trashlifespan to real server
-									// TODO add another trash set and check it too
-									FocusConvey("You can remove all expired files for all sets", func() {
-										err = client.RemoveAllExpiredEntries()
-										So(err, ShouldBeNil)
-
-										waitForRemovals(t, adminClient, trashSet)
-
-										files, errg := client.GetFiles(trashSet.ID())
-										So(errg, ShouldBeNil)
-										So(files, ShouldHaveLength, 0)
-
-										dirs, errg := client.GetDirs(trashSet.ID())
-										So(errg, ShouldBeNil)
-										So(dirs, ShouldHaveLength, 0)
-									})
-								})
 
 								Convey("And these files appear in a trashed version of the set", func() {
 									files, errg := client.GetFiles(trashSet.ID())
@@ -697,6 +661,82 @@ func TestServer(t *testing.T) {
 										So(logWriter.String(), ShouldContainSubstring, "dir removal error")
 									})
 								})
+
+								Convey("And with the second trashed set", func() {
+									err = client.AddOrUpdateSet(exampleSet2)
+									So(err, ShouldBeNil)
+
+									err = client.MergeDirs(exampleSet2.ID(), []string{dir1local})
+									So(err, ShouldBeNil)
+
+									err = client.TriggerDiscovery(exampleSet2.ID())
+									So(err, ShouldBeNil)
+
+									ok := <-racCalled
+									So(ok, ShouldBeTrue)
+
+									makeGivenSetComplete(2, exampleSet2.Name, adminClient)
+
+									err = client.TrashFilesAndDirs(exampleSet2.ID(), []string{file1local})
+									So(err, ShouldBeNil)
+
+									waitForRemovals(t, client, exampleSet2)
+
+									trashSet2, errg := adminClient.GetSetByName(exampleSet2.Requester, set.TrashPrefix+exampleSet2.Name)
+									So(errg, ShouldBeNil)
+
+									Convey("And with a very short trash expire time", func() {
+										s.trashLifespan = 200 * time.Millisecond
+
+										time.Sleep(200 * time.Millisecond)
+
+										err = client.TrashFilesAndDirs(exampleSet.ID(), []string{file2local})
+										So(err, ShouldBeNil)
+
+										waitForRemovals(t, client, exampleSet)
+
+										Convey("You can remove all expired files for a set", func() {
+											err = client.RemoveExpiredEntriesForSet(trashSet.ID())
+											So(err, ShouldBeNil)
+
+											waitForRemovals(t, adminClient, trashSet)
+
+											files, errg := client.GetFiles(trashSet.ID())
+											So(errg, ShouldBeNil)
+											So(files, ShouldHaveLength, 1)
+											So(files[0].Path, ShouldEqual, file2local)
+
+											dirs, errg := client.GetDirs(trashSet.ID())
+											So(errg, ShouldBeNil)
+											So(dirs, ShouldHaveLength, 0)
+
+											files, errg = client.GetFiles(trashSet2.ID())
+											So(errg, ShouldBeNil)
+											So(files, ShouldHaveLength, 1)
+										})
+
+										// TODO add the trashlifespan to real server
+										Convey("You can remove all expired files for all sets", func() {
+											err = client.RemoveAllExpiredEntries()
+											So(err, ShouldBeNil)
+
+											waitForRemovals(t, adminClient, trashSet)
+
+											files, errg := client.GetFiles(trashSet.ID())
+											So(errg, ShouldBeNil)
+											So(files, ShouldHaveLength, 1)
+											So(files[0].Path, ShouldEqual, file2local)
+
+											dirs, errg := client.GetDirs(trashSet.ID())
+											So(errg, ShouldBeNil)
+											So(dirs, ShouldHaveLength, 0)
+
+											files, errg = client.GetFiles(trashSet2.ID())
+											So(errg, ShouldBeNil)
+											So(files, ShouldHaveLength, 0)
+										})
+									})
+								})
 							})
 
 							Convey("Remove of a whole set removes it from the db along with all its entries", func() {
@@ -758,63 +798,48 @@ func TestServer(t *testing.T) {
 							})
 						})
 
-						Convey("And having both files in a set", func() {
-							file2local := filepath.Join(dir2local, "file2")
-							internal.CreateTestFile(t, file2local, "file content")
-
-							err = client.TriggerDiscovery(exampleSet.ID())
+						Convey("And if you remove one file", func() {
+							err = os.Remove(file1local)
 							So(err, ShouldBeNil)
 
-							ok := <-racCalled
-							So(ok, ShouldBeTrue)
+							Convey("You can still see both files after rediscovery", func() {
+								for _, item := range s.queue.AllItems() {
+									err = s.queue.Remove(context.Background(), item.Key)
+									So(err, ShouldBeNil)
+								}
 
-							files, errg := client.GetFiles(exampleSet.ID())
-							So(errg, ShouldBeNil)
-							So(files, ShouldHaveLength, 2)
-
-							Convey("And if you remove one file", func() {
-								err = os.Remove(file1local)
+								err = client.TriggerDiscovery(exampleSet.ID())
 								So(err, ShouldBeNil)
 
-								Convey("You can still see both files after rediscovery", func() {
-									for _, item := range s.queue.AllItems() {
-										err = s.queue.Remove(context.Background(), item.Key)
-										So(err, ShouldBeNil)
-									}
+								ok := <-racCalled
+								So(ok, ShouldBeTrue)
 
-									err = client.TriggerDiscovery(exampleSet.ID())
-									So(err, ShouldBeNil)
-
-									ok := <-racCalled
-									So(ok, ShouldBeTrue)
-
-									files, err = client.GetFiles(exampleSet.ID())
-									So(err, ShouldBeNil)
-									So(files, ShouldHaveLength, 2)
-								})
-							})
-
-							Convey("And if you remove one folder", func() {
-								err = os.RemoveAll(dir1local)
-								So(err, ShouldBeNil)
-
-								dirs, errg := s.db.GetAllDirEntries(exampleSet.ID())
+								files, errg := client.GetFiles(exampleSet.ID())
 								So(errg, ShouldBeNil)
+								So(files, ShouldHaveLength, 2)
+							})
+						})
+
+						Convey("And if you remove one folder", func() {
+							err = os.RemoveAll(dir1local)
+							So(err, ShouldBeNil)
+
+							dirs, errg := s.db.GetAllDirEntries(exampleSet.ID())
+							So(errg, ShouldBeNil)
+							So(dirs, ShouldHaveLength, 2)
+
+							Convey("You can still see original files and folders after rediscovery", func() {
+								err = client.TriggerDiscovery(exampleSet.ID())
+								So(err, ShouldBeNil)
+
+								files, errg := client.GetFiles(exampleSet.ID())
+								So(errg, ShouldBeNil)
+								So(files, ShouldHaveLength, 2)
+
+								dirs, err = s.db.GetAllDirEntries(exampleSet.ID())
+								So(err, ShouldBeNil)
 								So(dirs, ShouldHaveLength, 2)
-
-								Convey("You can still see original files and folders after rediscovery", func() {
-									err = client.TriggerDiscovery(exampleSet.ID())
-									So(err, ShouldBeNil)
-
-									files, err = client.GetFiles(exampleSet.ID())
-									So(err, ShouldBeNil)
-									So(files, ShouldHaveLength, 2)
-
-									dirs, err = s.db.GetAllDirEntries(exampleSet.ID())
-									So(err, ShouldBeNil)
-									So(dirs, ShouldHaveLength, 2)
-									So(dirs[0].Status, ShouldEqual, set.Orphaned)
-								})
+								So(dirs[0].Status, ShouldEqual, set.Orphaned)
 							})
 						})
 					})
