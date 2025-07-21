@@ -524,15 +524,124 @@ func TestSetDB(t *testing.T) {
 						So(retrieved2.DeleteLocal, ShouldBeFalse)
 					})
 
-					FocusConvey("And delete it", func() {
+					FocusConvey("And delete it when there's something in all the sub-buckets", func() {
 						err = db.Delete("invalid")
 						So(err, ShouldNotBeNil)
+
+						errm := db.mergeEntries(set.ID(), []*Dirent{{Path: "/discovered/file"}}, discoveredBucket, Pending)
+						So(errm, ShouldBeNil)
+
+						errm = db.mergeEntries(set.ID(), []*Dirent{{Path: "/discovered/dir", Mode: fs.ModeDir}},
+							discoveredFoldersBucket, Pending)
+						So(errm, ShouldBeNil)
+
+						errm = db.mergeEntries(set.ID(), []*Dirent{{Path: "/discovered/removedfile"}}, removedBucket, Pending)
+						So(errm, ShouldBeNil)
+
+						entries, errg := db.getEntries(set.ID(), fileBucket, nil)
+						So(errg, ShouldBeNil)
+						So(len(entries), ShouldBeGreaterThan, 0)
+
+						entries, errg = db.getEntries(set.ID(), discoveredBucket, nil)
+						So(errg, ShouldBeNil)
+						So(len(entries), ShouldBeGreaterThan, 0)
+
+						entries, errg = db.getEntries(set.ID(), dirBucket, nil)
+						So(errg, ShouldBeNil)
+						So(len(entries), ShouldBeGreaterThan, 0)
+
+						entries, errg = db.getEntries(set.ID(), discoveredFoldersBucket, nil)
+						So(errg, ShouldBeNil)
+						So(len(entries), ShouldBeGreaterThan, 0)
+
+						entries, errg = db.getEntries(set.ID(), removedBucket, nil)
+						So(errg, ShouldBeNil)
+						So(len(entries), ShouldBeGreaterThan, 0)
+
+						// inodeBucket                   = "inodes"
+						// transformerToIDBucket         = "transformerIDs"
+						// transformerFromIDBucket       = "transformers"
+
+						checkUserLookup := func() bool {
+							found := false
+
+							errv := db.db.View(func(tx *bolt.Tx) error {
+								b := tx.Bucket([]byte(userToSetBucket))
+								val := b.Get([]byte(set.Requester + separator + set.ID()))
+								found = val != nil
+
+								return nil
+							})
+							So(errv, ShouldBeNil)
+
+							return found
+						}
+
+						So(checkUserLookup(), ShouldBeTrue)
 
 						err = db.Delete(set.ID())
 						So(err, ShouldBeNil)
 
 						retrieved = db.GetByID(set.ID())
 						So(retrieved, ShouldBeNil)
+
+						entries, errg = db.getEntries(set.ID(), fileBucket, nil)
+						So(errg, ShouldBeNil)
+						So(entries, ShouldBeNil)
+
+						entries, errg = db.getEntries(set.ID(), discoveredBucket, nil)
+						So(errg, ShouldBeNil)
+						So(entries, ShouldBeNil)
+
+						entries, errg = db.getEntries(set.ID(), dirBucket, nil)
+						So(errg, ShouldBeNil)
+						So(entries, ShouldBeNil)
+
+						entries, errg = db.getEntries(set.ID(), discoveredFoldersBucket, nil)
+						So(errg, ShouldBeNil)
+						So(entries, ShouldBeNil)
+
+						entries, errg = db.getEntries(set.ID(), removedBucket, nil)
+						So(errg, ShouldBeNil)
+						So(entries, ShouldBeNil)
+
+						So(checkUserLookup(), ShouldBeFalse)
+					})
+
+					FocusConvey("And delete it when there isn't something in all the sub-buckets", func() {
+						entries, errg := db.getEntries(set.ID(), fileBucket, nil)
+						So(errg, ShouldBeNil)
+						So(len(entries), ShouldBeGreaterThan, 0)
+
+						entries, errg = db.getEntries(set.ID(), dirBucket, nil)
+						So(errg, ShouldBeNil)
+						So(len(entries), ShouldBeGreaterThan, 0)
+
+						err = db.Delete(set.ID())
+						So(err, ShouldBeNil)
+
+						retrieved = db.GetByID(set.ID())
+						So(retrieved, ShouldBeNil)
+
+						entries, errg = db.getEntries(set.ID(), fileBucket, nil)
+						So(errg, ShouldBeNil)
+						So(entries, ShouldBeNil)
+
+						entries, errg = db.getEntries(set.ID(), discoveredBucket, nil)
+						So(errg, ShouldBeNil)
+						So(entries, ShouldBeNil)
+
+						entries, errg = db.getEntries(set.ID(), dirBucket, nil)
+						So(errg, ShouldBeNil)
+						So(entries, ShouldBeNil)
+
+						entries, errg = db.getEntries(set.ID(), discoveredFoldersBucket, nil)
+						So(errg, ShouldBeNil)
+						So(entries, ShouldBeNil)
+
+						entries, errg = db.getEntries(set.ID(), removedBucket, nil)
+						So(errg, ShouldBeNil)
+						So(entries, ShouldBeNil)
 					})
 				})
 
