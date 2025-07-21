@@ -129,7 +129,6 @@ const (
 	paramRequester    = "requester"
 	paramSetID        = "id"
 	paramMakeWritable = "makeWritable"
-	paramFromTrash    = "fromTrash"
 
 	numberOfFilesForOneHardlink = 2
 

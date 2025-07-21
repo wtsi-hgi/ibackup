@@ -2935,13 +2935,12 @@ func TestRemove(t *testing.T) {
 				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", file1)
 				So(exitCode, ShouldEqual, 0)
 
-				errorMsg := fmt.Sprintf("list operation failed: Path '%s'", file1remote)
+				errorMsg := fmt.Sprintf("file does not exist [%s]", file1remote)
 
-				s.waitForStatusWithFlags(setName, errorMsg, 2*time.Second, "-d")
+				s.waitForStatusWithFlags(setName, "failed to remove: "+errorMsg, 2*time.Second, "-d")
 
 				Convey("And displays the error in set status if not fixed", func() {
-					s.waitForStatus(setName, fmt.Sprintf("Error: Error when removing: list operation failed: Path '%s'",
-						filepath.Join(remotePath, "file1")), 20*time.Second)
+					s.waitForStatus(setName, "Error: Error when removing: "+errorMsg, 20*time.Second)
 				})
 
 				Convey("And succeeds if issue is fixed during retries", func() {
@@ -3043,7 +3042,7 @@ func TestRemove(t *testing.T) {
 				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", path, "--user", user)
 				So(exitCode, ShouldEqual, 0)
 
-				removalStatus := fmt.Sprintf("Removal status: %d / %d objects removed", 2, 2)
+				removalStatus := fmt.Sprintf("Removal status: %d / %d objects removed", 1, 1)
 
 				s.waitForStatusWithUser(setName, removalStatus, user, 10*time.Second)
 

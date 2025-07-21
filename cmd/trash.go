@@ -51,7 +51,7 @@ var ErrTrashName = errors.New("exactly one of --name or --all-expired must be pr
 var ErrTrashItems = errors.New("exactly one of --items, --path or --expired must be provided")
 var ErrTrashAllExpired = errors.New("--all-expired does not take any other flags")
 
-// removeCmd represents the add command.
+// trashCmd represents the trash command.
 var trashCmd = &cobra.Command{
 	Use:   "trash",
 	Short: "Restore or remove objects from trash set [admin only]",
@@ -146,7 +146,9 @@ var trashCmd = &cobra.Command{
 }
 
 func init() {
-	RootCmd.AddCommand(trashCmd)
+	if isAdmin() {
+		RootCmd.AddCommand(trashCmd)
+	}
 
 	// flags specific to this sub-command
 	trashCmd.Flags().StringVar(&trashUser, "user", currentUsername(), helpTextuser)
@@ -159,7 +161,7 @@ func init() {
 	trashCmd.Flags().BoolVarP(&trashNull, "null", "0", false, helpTextNull)
 }
 
-// handleRemove does the main job of sending the set, files and dirs to the server.
+// handleTrash does the main job of sending the set, files and dirs to the server.
 func handleTrash(client *server.Client, user, name string, paths []string) error {
 	trashSetName := set.TrashPrefix + name
 

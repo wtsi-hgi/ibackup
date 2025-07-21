@@ -694,7 +694,7 @@ func TestServer(t *testing.T) {
 										waitForRemovals(t, client, exampleSet)
 
 										Convey("You can remove all expired files for a set", func() {
-											err = client.RemoveExpiredEntriesForSet(trashSet.ID())
+											err = adminClient.RemoveExpiredEntriesForSet(trashSet.ID())
 											So(err, ShouldBeNil)
 
 											waitForRemovals(t, adminClient, trashSet)
@@ -714,7 +714,7 @@ func TestServer(t *testing.T) {
 										})
 
 										Convey("You can remove all expired files for all sets", func() {
-											err = client.RemoveAllExpiredEntries()
+											err = adminClient.RemoveAllExpiredEntries()
 											So(err, ShouldBeNil)
 
 											waitForRemovals(t, adminClient, trashSet)

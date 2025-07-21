@@ -63,3 +63,9 @@ func currentUsername() string {
 
 	return user.Username
 }
+
+func isAdmin() bool {
+	clientCLI := gasClientCLI(serverURL, serverCert)
+
+	return clientCLI.CanReadServerToken()
+}
