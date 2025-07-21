@@ -341,6 +341,7 @@ const (
 		"SELECT `remoteFileID` FROM `localFiles` WHERE `localPathHash` = " + virtStart +
 		"(SELECT `localPath` FROM `localFiles` WHERE `id` = ? LIMIT 1)" +
 		virtEnd + ");"
+	getTasksCounts = "SELECT COUNT(1), COUNT(IF(`heldBy` = 0, 0, NULL)) FROM `queue`;"
 
 	updateSetWarning             = "UPDATE `sets` SET `warning` = ? WHERE `id` = ?;"
 	updateSetError               = "UPDATE `sets` SET `warning` = ? WHERE `id` = ?;"

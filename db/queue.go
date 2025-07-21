@@ -142,3 +142,13 @@ func (d *DB) TaskSkipped(t *Task) error {
 func (d *DB) RetrySetTasks(set *Set) error {
 	return d.exec(queueRetry, set.id)
 }
+
+func (d *DBRO) CountTasks() (int64, int64, error) {
+	var total, held int64
+
+	if err := d.db.QueryRow(getTasksCounts).Scan(&total, &held); err != nil {
+		return 0, 0, err
+	}
+
+	return total, held, nil
+}

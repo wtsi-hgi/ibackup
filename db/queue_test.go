@@ -390,6 +390,39 @@ func TestQueue(t *testing.T) {
 				So(len(tasks), ShouldEqual, 1)
 			})
 		})
+
+		Convey("You can get a count of both the total tasks, and the unreserved tasks", func() {
+			files := slices.Collect(genFiles(5))
+
+			So(d.AddSetFiles(setA, slices.Values(files)), ShouldBeNil)
+
+			total, unreserved, err := d.CountTasks()
+			So(err, ShouldBeNil)
+			So(total, ShouldEqual, 5)
+			So(unreserved, ShouldEqual, 5)
+
+			tasks := slices.Collect(d.ReserveTasks(pidA, 2).Iter)
+			So(len(tasks), ShouldEqual, 2)
+
+			total, unreserved, err = d.CountTasks()
+			So(err, ShouldBeNil)
+			So(total, ShouldEqual, 5)
+			So(unreserved, ShouldEqual, 3)
+
+			So(d.TaskComplete(tasks[0]), ShouldBeNil)
+
+			total, unreserved, err = d.CountTasks()
+			So(err, ShouldBeNil)
+			So(total, ShouldEqual, 4)
+			So(unreserved, ShouldEqual, 3)
+
+			So(d.TaskFailed(tasks[1]), ShouldBeNil)
+
+			total, unreserved, err = d.CountTasks()
+			So(err, ShouldBeNil)
+			So(total, ShouldEqual, 4)
+			So(unreserved, ShouldEqual, 4)
+		})
 	})
 }
 
