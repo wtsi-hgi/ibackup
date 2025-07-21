@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"os"
+	"path/filepath"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -15,14 +16,22 @@ func createTestDatabase(t *testing.T) *DB {
 
 	var sdriver, uri string
 
-	if p := os.Getenv("IBACKUP_MYSQL_URL"); p != "" {
+	if p := os.Getenv("IBACKUP_MYSQL_URL"); p != "" { //nolint:nestif
 		sdriver = "mysql"
 		uri = p + "?parseTime=true"
 
 		So(dropTables(p), ShouldBeNil)
 	} else {
 		sdriver = "sqlite"
-		uri = ":memory:"
+		oldTmp := os.Getenv("TMPDIR")
+
+		if _, err := os.Stat("/dev/shm"); err == nil {
+			os.Setenv("TMPDIR", "/dev/shm")
+		}
+
+		uri = filepath.Join(t.TempDir(), "db?journal_mode=WAL")
+
+		os.Setenv("TMPDIR", oldTmp)
 	}
 
 	d, err := Init(sdriver, uri)

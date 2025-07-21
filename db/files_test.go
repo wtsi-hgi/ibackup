@@ -182,7 +182,7 @@ func TestFiles(t *testing.T) {
 
 			So(d.RemoveSetFiles(slices.Values(files[2:3])), ShouldBeNil)
 			So(d.clearQueue(), ShouldBeNil)
-			So(d.RemoveSetFiles(slices.Values(slices.Collect(d.GetSetFiles(setTrashA).Iter))), ShouldBeNil)
+			So(d.RemoveSetFiles(d.GetSetFiles(setTrashA).Iter), ShouldBeNil)
 			So(d.clearQueue(), ShouldBeNil)
 
 			So(len(slices.Collect(d.listRemoteFiles(t).Iter)), ShouldEqual, 2)
