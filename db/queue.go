@@ -10,6 +10,8 @@ const (
 	QueueRemoval
 )
 
+const maxRetries = 3
+
 var ErrCannotSkip = errors.New("cannot skip non-upload tasks")
 
 type Process struct {
@@ -135,4 +137,8 @@ func (d *DB) TaskSkipped(t *Task) error {
 	}
 
 	return tx.Commit()
+}
+
+func (d *DB) RetrySetTasks(set *Set) error {
+	return d.exec(queueRetry, set.id)
 }

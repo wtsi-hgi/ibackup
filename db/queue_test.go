@@ -363,6 +363,33 @@ func TestQueue(t *testing.T) {
 
 			So(slices.Collect(d.GetSetFiles(setA).Iter), ShouldResemble, files)
 		})
+
+		Convey("Tasks can only be failed "+string('0'+maxRetries)+" times", func() {
+			files := slices.Collect(genFiles(1))
+
+			So(d.AddSetFiles(setA, slices.Values(files)), ShouldBeNil)
+
+			tasks := slices.Collect(d.ReserveTasks(pidA, 2).Iter)
+
+			for range maxRetries {
+				So(len(tasks), ShouldEqual, 1)
+
+				tasks[0].Error = "some error"
+
+				So(d.TaskFailed(tasks[0]), ShouldBeNil)
+
+				tasks = slices.Collect(d.ReserveTasks(pidA, 2).Iter)
+			}
+
+			So(len(tasks), ShouldEqual, 0)
+
+			Convey("Retrying a Sets tasks allows them to be reserved again", func() {
+				So(d.RetrySetTasks(setA), ShouldBeNil)
+
+				tasks := slices.Collect(d.ReserveTasks(pidA, 2).Iter)
+				So(len(tasks), ShouldEqual, 1)
+			})
+		})
 	})
 }
 

@@ -385,8 +385,16 @@ const (
 		"ORDER BY `queue`.`attempts` ASC, `queue`.`id` ASC LIMIT 1" +
 		") " +
 		"UPDATE `queue` SET `heldBy` = ? WHERE " +
-		"`queue`.`id` IN (SELECT `id` FROM `available`);"
+		"`queue`.`id` IN (SELECT `id` FROM `available`) AND `queue`.`attempts` < " + string('0'+maxRetries) + ";"
 	releaseQueuedTask = "UPDATE `queue` SET `heldBy` = 0 WHERE `heldBy` = ?;"
+
+	queueRetry = "WITH " +
+		"`setFiles` AS (" +
+		"SELECT `id` FROM `localFiles` " +
+		"WHERE `setID` = ?" +
+		") " +
+		"UPDATE `queue` SET `attempts` = 0 " +
+		"WHERE `localFileID` IN (SELECT `id` FROM `setFiles`);"
 
 	disableTrashFileRemoveTask = "UPDATE `queue` SET " +
 		"`type` = " + string('0'+QueueDisabled) + " " +
