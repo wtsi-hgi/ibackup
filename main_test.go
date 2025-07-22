@@ -2547,7 +2547,7 @@ func confirmFileContents(t *testing.T, file, expectedContents string) {
 }
 
 func TestTrash(t *testing.T) {
-	Convey("Given a server", t, func() {
+	FocusConvey("Given a server", t, func() {
 		s, remotePath := NewUploadingTestServer(t)
 
 		path := t.TempDir()
@@ -3076,14 +3076,14 @@ func TestTrash(t *testing.T) {
 			})
 		})
 
-		Convey("And a set made by a non-admin user", func() {
+		FocusConvey("And a set made by a non-admin user", func() {
 			user := "root"
 			setName := "nonAdminSet"
 			originalEnv := s.impersonateUser(t, user)
 
 			s.addSetForTestingWithFlag(t, setName, transformer, path, "--user", user)
 
-			Convey("If you trash files from the set", func() {
+			FocusConvey("If you trash files from the set", func() {
 				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", path, "--user", user)
 				So(exitCode, ShouldEqual, 0)
 
@@ -3093,16 +3093,16 @@ func TestTrash(t *testing.T) {
 
 				trashSetName := set.TrashPrefix + setName
 
-				Convey("Status will not display the trash files to the non-admin user", func() {
+				FocusConvey("Status will not display the trash files to the non-admin user", func() {
 					s.confirmOutputDoesNotContain(t, []string{"status", "--user", user}, 0, trashSetName)
 				})
 
-				Convey("Status will not display the trash files to a non-admin user even with the name specified", func() {
-					exitCode, _ := s.runBinaryWithNoLogging(t, "status", "--name", trashSetName, "--user", user)
+				FocusConvey("Status will not display the trash files to a non-admin user even with the name specified", func() {
+					exitCode, _ = s.runBinaryWithNoLogging(t, "status", "--name", trashSetName, "--user", user)
 					So(exitCode, ShouldEqual, 1)
 				})
 
-				Convey("Status with --trashed wil display the trash files to an admin user", func() {
+				FocusConvey("Status with --trashed wil display the trash files to an admin user", func() {
 					s.env = originalEnv
 					s.confirmOutputContains(t, []string{"status", "--trashed", "--user", user}, 0, trashSetName)
 
@@ -3111,16 +3111,22 @@ func TestTrash(t *testing.T) {
 					So(output, ShouldContainSubstring, path)
 				})
 
-				Convey("List will work on the trash set for an admin", func() {
+				FocusConvey("List will work on the trash set for an admin", func() {
 					s.env = originalEnv
 
-					exitCode, _ := s.runBinary(t, "list", "--name", trashSetName, "--user", user)
+					exitCode, _ = s.runBinary(t, "list", "--name", trashSetName, "--user", user)
+					So(exitCode, ShouldEqual, 0)
+
+					exitCode, _ = s.runBinary(t, "list", "--name", setName, "--trashed", "--user", user)
 					So(exitCode, ShouldEqual, 0)
 				})
 
-				Convey("List will not work on the trash set for a non-admin", func() {
+				FocusConvey("List will not work on the trash set for a non-admin", func() {
 					s.confirmOutputContains(t, []string{"list", "--name", trashSetName, "--user", user},
 						1, server.ErrBadSet.Error())
+
+					exitCode, _ = s.runBinaryWithNoLogging(t, "list", "--name", setName, "--trashed", "--user", user)
+					So(exitCode, ShouldEqual, 1)
 				})
 			})
 		})

@@ -181,6 +181,9 @@ func init() {
 	if isAdmin() {
 		statusCmd.Flags().BoolVar(&statusTrashed, "trashed", false,
 			"show trash for a single set or for all sets")
+	} else {
+		statusUser = currentUsername()
+		statusCmd.Flags().MarkHidden("user")
 	}
 }
 
