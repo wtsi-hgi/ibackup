@@ -2611,15 +2611,25 @@ func TestTrash(t *testing.T) {
 				trashSetName := set.TrashPrefix + setName
 
 				Convey("And status will update accordingly", func() {
-					exitCode, output = s.runBinary(t, "status", "--name", setName, "-d")
+					Convey("Status with setname and --trashed will display the trashed set", func() {
+						exitCode, output = s.runBinary(t, "status", "--name", setName, "--trashed", "-d")
+						So(exitCode, ShouldEqual, 0)
+						So(output, ShouldContainSubstring, file2+"\t"+time.Now().Format("06/01/02")+"\tuploaded\t10 B")
+					})
 
-					So(exitCode, ShouldEqual, 0)
-					So(output, ShouldContainSubstring, file1)
-					So(output, ShouldNotContainSubstring, file2)
+					Convey("Status with no name and --trashed will only display trashed sets", func() {
+						exitCode, output = s.runBinary(t, "status", "--trashed")
+						So(exitCode, ShouldEqual, 0)
+						So(output, ShouldContainSubstring, "Name: "+trashSetName)
+						So(output, ShouldNotContainSubstring, "Name: "+setName)
+					})
 
-					exitCode, output = s.runBinary(t, "status", "--name", trashSetName, "-d")
-					So(exitCode, ShouldEqual, 0)
-					So(output, ShouldContainSubstring, file2+"\t"+time.Now().Format("06/01/02")+"\tuploaded\t10 B")
+					Convey("Status with no name and without --trashed will not display the trashed sets", func() {
+						exitCode, output = s.runBinary(t, "status")
+						So(exitCode, ShouldEqual, 0)
+						So(output, ShouldContainSubstring, "Name: "+setName)
+						So(output, ShouldNotContainSubstring, "Name: "+trashSetName)
+					})
 				})
 
 				Convey("And changes the set metadata in iRODS to a .trash set", func() {
@@ -3077,7 +3087,7 @@ func TestTrash(t *testing.T) {
 				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", path, "--user", user)
 				So(exitCode, ShouldEqual, 0)
 
-				removalStatus := fmt.Sprintf("Removal status: %d / %d objects removed", 2, 2)
+				removalStatus := fmt.Sprintf("Removal status: %d / %d objects removed", 1, 1)
 
 				s.waitForStatusWithUser(setName, removalStatus, user, 10*time.Second)
 
@@ -3092,11 +3102,11 @@ func TestTrash(t *testing.T) {
 					So(exitCode, ShouldEqual, 1)
 				})
 
-				Convey("Status will display the trash files to an admin user", func() {
+				Convey("Status with --trashed wil display the trash files to an admin user", func() {
 					s.env = originalEnv
-					s.confirmOutputContains(t, []string{"status", "--user", user}, 0, trashSetName)
+					s.confirmOutputContains(t, []string{"status", "--trashed", "--user", user}, 0, trashSetName)
 
-					exitCode, output := s.runBinary(t, "status", "--name", trashSetName, "--user", user, "-d")
+					exitCode, output := s.runBinary(t, "status", "--name", setName, "--trashed", "--user", user, "-d")
 					So(exitCode, ShouldEqual, 0)
 					So(output, ShouldContainSubstring, path)
 				})
