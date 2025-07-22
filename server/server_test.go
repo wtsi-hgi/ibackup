@@ -248,7 +248,8 @@ func TestServer(t *testing.T) {
 			So(slackWriter.String(), ShouldEqual, expectedMsg+expectedMsg+slack.BoxPrefixWarn+"server stopped")
 		})
 
-		FocusConvey("You can make a Server with a logger configured and setup Auth, MakeQueueEndPoints and LoadSetDB", func() {
+		FocusConvey("You can make a Server with a logger configured and setup Auth, "+
+			"MakeQueueEndPoints and LoadSetDB", func() {
 			s, addr, dfunc := makeAndStartServer()
 
 			serverStopped := false
@@ -622,11 +623,28 @@ func TestServer(t *testing.T) {
 							})
 
 							FocusConvey("Remove of a whole set removes it from the db along with all its entries", func() {
+								entries, errg := s.db.GetFileEntries(exampleSet.ID(), nil)
+								So(errg, ShouldBeNil)
+								So(len(entries), ShouldBeGreaterThan, 0)
+
+								transformer, errg := exampleSet.MakeTransformer()
+								So(errg, ShouldBeNil)
+
+								for _, entry := range entries {
+									remote1, errt := transformer(entry.Path)
+									So(errt, ShouldBeNil)
+
+									remoteMeta, errt := handler.GetMeta(remote1)
+									So(errt, ShouldBeNil)
+									So(remoteMeta, ShouldNotBeNil)
+									So(remoteMeta[transfer.MetaKeySets], ShouldEqual, exampleSet.Name)
+								}
+
 								err = client.RemoveSet(exampleSet.ID())
 								So(err, ShouldBeNil)
 
 								internal.RetryUntilWorksCustom(t, func() error { //nolint:errcheck
-									_, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+									_, errg = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
 									if errg == nil {
 										return errNotFinishedRemoving
 									}
@@ -634,10 +652,19 @@ func TestServer(t *testing.T) {
 									return nil
 								}, time.Second*10, time.Millisecond*100)
 
-								entries, errg := s.db.GetAllDirEntries(exampleSet.ID())
+								entries, errg = s.db.GetFileEntries(exampleSet.ID(), nil)
 								So(errg, ShouldBeNil)
 								So(len(entries), ShouldEqual, 0)
-								// test that the metadata in iRODS no longer shows exampleSet.ID
+
+								for _, entry := range entries {
+									remote1, errt := transformer(entry.Path)
+									So(errt, ShouldBeNil)
+
+									remoteMeta, errg := handler.GetMeta(remote1)
+									So(errg, ShouldBeNil)
+									So(remoteMeta, ShouldBeNil)
+									So(remoteMeta[transfer.MetaKeySets], ShouldEqual, set.TrashPrefix+exampleSet.Name)
+								}
 							})
 						})
 

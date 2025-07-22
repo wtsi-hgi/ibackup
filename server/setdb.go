@@ -566,7 +566,7 @@ func (s *Server) deleteSet(c *gin.Context) {
 
 	err = s.db.Delete(set.ID())
 	if err != nil {
-		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+		c.AbortWithError(http.StatusInternalServerError, err) //nolint:errcheck
 
 		return
 	}
