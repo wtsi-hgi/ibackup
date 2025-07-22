@@ -42,7 +42,7 @@ func TestQueue(t *testing.T) {
 
 			tasks := d.ReserveTasks(pidA, 3)
 			So(tasks.Error, ShouldBeNil)
-			So(slices.Collect(tasks.Iter), ShouldResemble, []*Task{
+			So(collectIter(t, tasks), ShouldResemble, []*Task{
 				{
 					id:         1,
 					process:    1,
@@ -71,7 +71,7 @@ func TestQueue(t *testing.T) {
 
 			tasks = d.ReserveTasks(pidB, 5)
 			So(tasks.Error, ShouldBeNil)
-			So(slices.Collect(tasks.Iter), ShouldResemble, []*Task{
+			So(collectIter(t, tasks), ShouldResemble, []*Task{
 				{
 					id:         5,
 					process:    2,
@@ -118,14 +118,14 @@ func TestQueue(t *testing.T) {
 		Convey("A client can release their jobs", func() {
 			So(d.AddSetFiles(setA, genFiles(2)), ShouldBeNil)
 
-			tasks := slices.Collect(d.ReserveTasks(pidA, 3).Iter)
+			tasks := collectIter(t, d.ReserveTasks(pidA, 3))
 			So(len(tasks), ShouldEqual, 2)
 			So(tasks[0].id, ShouldEqual, 1)
 			So(tasks[1].id, ShouldEqual, 2)
 
 			So(d.ReleaseTasks(pidA), ShouldBeNil)
 
-			tasks = slices.Collect(d.ReserveTasks(pidA, 3).Iter)
+			tasks = collectIter(t, d.ReserveTasks(pidA, 3))
 			So(len(tasks), ShouldEqual, 2)
 			So(tasks[0].id, ShouldEqual, 1)
 			So(tasks[1].id, ShouldEqual, 2)
@@ -134,7 +134,7 @@ func TestQueue(t *testing.T) {
 		Convey("A client can complete their jobs", func() {
 			So(d.AddSetFiles(setA, genFiles(2)), ShouldBeNil)
 
-			tasks := slices.Collect(d.ReserveTasks(pidA, 2).Iter)
+			tasks := collectIter(t, d.ReserveTasks(pidA, 2))
 			So(len(tasks), ShouldEqual, 2)
 			So(tasks[0].id, ShouldEqual, 1)
 			So(tasks[1].id, ShouldEqual, 2)
@@ -142,7 +142,7 @@ func TestQueue(t *testing.T) {
 			So(d.TaskComplete(tasks[0]), ShouldBeNil)
 			So(d.ReleaseTasks(pidA), ShouldBeNil)
 
-			tasks = slices.Collect(d.ReserveTasks(pidA, 2).Iter)
+			tasks = collectIter(t, d.ReserveTasks(pidA, 2))
 			So(len(tasks), ShouldEqual, 1)
 			So(tasks[0].id, ShouldEqual, 2)
 		})
@@ -150,7 +150,7 @@ func TestQueue(t *testing.T) {
 		Convey("A client can fail their jobs", func() {
 			So(d.AddSetFiles(setA, genFiles(2)), ShouldBeNil)
 
-			tasks := slices.Collect(d.ReserveTasks(pidA, 2).Iter)
+			tasks := collectIter(t, d.ReserveTasks(pidA, 2))
 			So(len(tasks), ShouldEqual, 2)
 			So(tasks[0].id, ShouldEqual, 1)
 			So(tasks[1].id, ShouldEqual, 2)
@@ -160,7 +160,7 @@ func TestQueue(t *testing.T) {
 			So(d.TaskFailed(tasks[0]), ShouldBeNil)
 			So(d.ReleaseTasks(pidA), ShouldBeNil)
 
-			tasks = slices.Collect(d.ReserveTasks(pidA, 1).Iter)
+			tasks = collectIter(t, d.ReserveTasks(pidA, 1))
 			So(len(tasks), ShouldEqual, 1)
 			So(tasks[0].id, ShouldEqual, 2)
 		})
@@ -171,16 +171,16 @@ func TestQueue(t *testing.T) {
 			So(d.AddSetFiles(setA, slices.Values(files)), ShouldBeNil)
 			So(d.AddSetFiles(setB, slices.Values(files)), ShouldBeNil)
 
-			tasks := slices.Collect(d.ReserveTasks(pidA, 2).Iter)
+			tasks := collectIter(t, d.ReserveTasks(pidA, 2))
 			So(len(tasks), ShouldEqual, 1)
 			So(tasks[0].id, ShouldEqual, 1)
 
-			tasksB := slices.Collect(d.ReserveTasks(pidB, 2).Iter)
+			tasksB := collectIter(t, d.ReserveTasks(pidB, 2))
 			So(len(tasksB), ShouldEqual, 0)
 
 			So(d.TaskComplete(tasks[0]), ShouldBeNil)
 
-			tasks = slices.Collect(d.ReserveTasks(pidB, 2).Iter)
+			tasks = collectIter(t, d.ReserveTasks(pidB, 2))
 			So(len(tasks), ShouldEqual, 1)
 			So(tasks[0].id, ShouldEqual, 2)
 		})
@@ -191,13 +191,13 @@ func TestQueue(t *testing.T) {
 			So(d.AddSetFiles(setA, slices.Values(files)), ShouldBeNil)
 
 			now := time.Now().Truncate(time.Second)
-			setFiles := slices.Collect(d.GetSetFiles(setA).Iter)
+			setFiles := collectIter(t, d.GetSetFiles(setA))
 			So(len(setFiles), ShouldEqual, 1)
 			So(setFiles[0].LastUpload, ShouldHappenBefore, now)
 
-			So(d.TaskComplete(slices.Collect(d.ReserveTasks(pidA, 1).Iter)[0]), ShouldBeNil)
+			So(d.TaskComplete(collectIter(t, d.ReserveTasks(pidA, 1))[0]), ShouldBeNil)
 
-			setFiles = slices.Collect(d.GetSetFiles(setA).Iter)
+			setFiles = collectIter(t, d.GetSetFiles(setA))
 			So(len(setFiles), ShouldEqual, 1)
 			So(setFiles[0].LastUpload, ShouldHappenOnOrAfter, now)
 		})
@@ -207,22 +207,22 @@ func TestQueue(t *testing.T) {
 
 			So(d.AddSetFiles(setA, slices.Values(files)), ShouldBeNil)
 
-			setFiles := slices.Collect(d.GetSetFiles(setA).Iter)
+			setFiles := collectIter(t, d.GetSetFiles(setA))
 			So(len(setFiles), ShouldEqual, 1)
 
-			tasks := slices.Collect(d.ReserveTasks(pidA, 1).Iter)
+			tasks := collectIter(t, d.ReserveTasks(pidA, 1))
 			So(len(tasks), ShouldEqual, 1)
 			So(d.TaskComplete(tasks[0]), ShouldBeNil)
 
-			tasks = slices.Collect(d.ReserveTasks(pidA, 1).Iter)
+			tasks = collectIter(t, d.ReserveTasks(pidA, 1))
 			So(len(tasks), ShouldEqual, 0)
 
 			So(d.AddSetFiles(setA, slices.Values(files)), ShouldBeNil)
 
-			setFiles = slices.Collect(d.GetSetFiles(setA).Iter)
+			setFiles = collectIter(t, d.GetSetFiles(setA))
 			So(len(setFiles), ShouldEqual, 1)
 
-			tasks = slices.Collect(d.ReserveTasks(pidA, 1).Iter)
+			tasks = collectIter(t, d.ReserveTasks(pidA, 1))
 			So(len(tasks), ShouldEqual, 1)
 		})
 
@@ -231,33 +231,33 @@ func TestQueue(t *testing.T) {
 
 			So(d.AddSetFiles(setA, slices.Values(files)), ShouldBeNil)
 
-			setFiles := slices.Collect(d.GetSetFiles(setA).Iter)
+			setFiles := collectIter(t, d.GetSetFiles(setA))
 			So(len(setFiles), ShouldEqual, 1)
 
-			tasks := slices.Collect(d.ReserveTasks(pidA, 1).Iter)
+			tasks := collectIter(t, d.ReserveTasks(pidA, 1))
 			So(len(tasks), ShouldEqual, 1)
 
 			uploadTask := tasks[0]
 
 			So(d.RemoveSetFiles(slices.Values(setFiles)), ShouldBeNil)
 
-			tasks = slices.Collect(d.ReserveTasks(pidB, 1).Iter)
+			tasks = collectIter(t, d.ReserveTasks(pidB, 1))
 			So(len(tasks), ShouldEqual, 0)
 
 			now := time.Now()
 
 			So(d.TaskComplete(uploadTask), ShouldBeNil)
 
-			setFiles = slices.Collect(d.GetSetFiles(setA).Iter)
+			setFiles = collectIter(t, d.GetSetFiles(setA))
 			So(len(setFiles), ShouldEqual, 1)
 			So(setFiles[0].LastUpload, ShouldHappenBefore, now)
 
-			tasks = slices.Collect(d.ReserveTasks(pidA, 1).Iter)
+			tasks = collectIter(t, d.ReserveTasks(pidA, 1))
 			So(len(tasks), ShouldEqual, 1)
 
 			So(d.TaskComplete(tasks[0]), ShouldBeNil)
 
-			setFiles = slices.Collect(d.GetSetFiles(setA).Iter)
+			setFiles = collectIter(t, d.GetSetFiles(setA))
 			So(len(setFiles), ShouldEqual, 0)
 		})
 
@@ -265,18 +265,18 @@ func TestQueue(t *testing.T) {
 			files := slices.Collect(genFiles(1))
 
 			So(d.AddSetFiles(setA, slices.Values(files)), ShouldBeNil)
-			So(slices.Collect(d.GetSetFiles(setA).Iter), ShouldResemble, files)
+			So(collectIter(t, d.GetSetFiles(setA)), ShouldResemble, files)
 
-			tasks := slices.Collect(d.ReserveTasks(pidA, 2).Iter)
+			tasks := collectIter(t, d.ReserveTasks(pidA, 2))
 			So(len(tasks), ShouldEqual, 1)
 
 			So(d.TaskSkipped(tasks[0]), ShouldBeNil)
 
 			files[0].Status = StatusSkipped
 
-			So(slices.Collect(d.GetSetFiles(setA).Iter), ShouldResemble, files)
+			So(collectIter(t, d.GetSetFiles(setA)), ShouldResemble, files)
 
-			tasks = slices.Collect(d.ReserveTasks(pidA, 2).Iter)
+			tasks = collectIter(t, d.ReserveTasks(pidA, 2))
 			So(len(tasks), ShouldEqual, 0)
 		})
 
@@ -286,8 +286,8 @@ func TestQueue(t *testing.T) {
 			files[0].Status = StatusMissing
 
 			So(d.AddSetFiles(setA, slices.Values(files)), ShouldBeNil)
-			So(slices.Collect(d.GetSetFiles(setA).Iter), ShouldResemble, files)
-			So(len(slices.Collect(d.ReserveTasks(pidA, 2).Iter)), ShouldEqual, 0)
+			So(collectIter(t, d.GetSetFiles(setA)), ShouldResemble, files)
+			So(len(collectIter(t, d.ReserveTasks(pidA, 2))), ShouldEqual, 0)
 
 			Convey("Orphaned files count as missing when added to a set", func() {
 				files[0].Status = StatusOrphaned
@@ -295,17 +295,17 @@ func TestQueue(t *testing.T) {
 
 				files[0].Status = StatusMissing
 
-				So(slices.Collect(d.GetSetFiles(setA).Iter), ShouldResemble, files)
-				So(len(slices.Collect(d.ReserveTasks(pidA, 2).Iter)), ShouldEqual, 0)
+				So(collectIter(t, d.GetSetFiles(setA)), ShouldResemble, files)
+				So(len(collectIter(t, d.ReserveTasks(pidA, 2))), ShouldEqual, 0)
 			})
 
 			Convey("Files that were missing, but are found are uploaded", func() {
 				files[0].Status = StatusNone
 
 				So(d.AddSetFiles(setA, slices.Values(files)), ShouldBeNil)
-				So(slices.Collect(d.GetSetFiles(setA).Iter), ShouldResemble, files)
+				So(collectIter(t, d.GetSetFiles(setA)), ShouldResemble, files)
 
-				tasks := slices.Collect(d.ReserveTasks(pidA, 2).Iter)
+				tasks := collectIter(t, d.ReserveTasks(pidA, 2))
 				So(len(tasks), ShouldEqual, 1)
 			})
 		})
@@ -318,7 +318,7 @@ func TestQueue(t *testing.T) {
 
 			files[0].Status = StatusUploaded
 
-			uploaded := slices.Collect(d.GetSetFiles(setA).Iter)
+			uploaded := collectIter(t, d.GetSetFiles(setA))
 			So(len(uploaded), ShouldEqual, 1)
 			So(uploaded[0].LastUpload, ShouldNotBeZeroValue)
 
@@ -334,7 +334,7 @@ func TestQueue(t *testing.T) {
 
 				files[0].Status = StatusReplaced
 
-				uploaded = slices.Collect(d.GetSetFiles(setA).Iter)
+				uploaded = collectIter(t, d.GetSetFiles(setA))
 				So(len(uploaded), ShouldEqual, 1)
 				So(uploaded[0].LastUpload, ShouldNotBeZeroValue)
 
@@ -354,14 +354,14 @@ func TestQueue(t *testing.T) {
 
 			So(d.AddSetFiles(setA, slices.Values(files)), ShouldBeNil)
 
-			uploadedFiles := slices.Collect(d.GetSetFiles(setA).Iter)
+			uploadedFiles := collectIter(t, d.GetSetFiles(setA))
 			So(len(uploadedFiles), ShouldEqual, 1)
 			So(uploadedFiles[0].LastUpload, ShouldNotBeZeroValue)
 
 			files[0].Status = StatusOrphaned
 			files[0].LastUpload = uploadedFiles[0].LastUpload
 
-			So(slices.Collect(d.GetSetFiles(setA).Iter), ShouldResemble, files)
+			So(collectIter(t, d.GetSetFiles(setA)), ShouldResemble, files)
 		})
 
 		Convey("Tasks can only be failed "+string('0'+maxRetries)+" times", func() {
@@ -369,7 +369,7 @@ func TestQueue(t *testing.T) {
 
 			So(d.AddSetFiles(setA, slices.Values(files)), ShouldBeNil)
 
-			tasks := slices.Collect(d.ReserveTasks(pidA, 2).Iter)
+			tasks := collectIter(t, d.ReserveTasks(pidA, 2))
 
 			for range maxRetries {
 				So(len(tasks), ShouldEqual, 1)
@@ -378,7 +378,7 @@ func TestQueue(t *testing.T) {
 
 				So(d.TaskFailed(tasks[0]), ShouldBeNil)
 
-				tasks = slices.Collect(d.ReserveTasks(pidA, 2).Iter)
+				tasks = collectIter(t, d.ReserveTasks(pidA, 2))
 			}
 
 			So(len(tasks), ShouldEqual, 0)
@@ -386,7 +386,7 @@ func TestQueue(t *testing.T) {
 			Convey("Retrying a Sets tasks allows them to be reserved again", func() {
 				So(d.RetrySetTasks(setA), ShouldBeNil)
 
-				tasks := slices.Collect(d.ReserveTasks(pidA, 2).Iter)
+				tasks := collectIter(t, d.ReserveTasks(pidA, 2))
 				So(len(tasks), ShouldEqual, 1)
 			})
 		})
@@ -401,7 +401,7 @@ func TestQueue(t *testing.T) {
 			So(total, ShouldEqual, 5)
 			So(unreserved, ShouldEqual, 5)
 
-			tasks := slices.Collect(d.ReserveTasks(pidA, 2).Iter)
+			tasks := collectIter(t, d.ReserveTasks(pidA, 2))
 			So(len(tasks), ShouldEqual, 2)
 
 			total, unreserved, err = d.CountTasks()
@@ -475,15 +475,5 @@ func genFiles(n int) iter.Seq[*File] {
 }
 
 func (d *DB) clearQueue() error {
-	tx, err := d.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback() //nolint:errcheck
-
-	if _, err := tx.Exec(deleteAllQueued); err != nil {
-		return err
-	}
-
-	return tx.Commit()
+	return d.exec(deleteAllQueued)
 }

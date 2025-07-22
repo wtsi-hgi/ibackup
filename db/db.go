@@ -63,3 +63,7 @@ func (d *DB) exec(sql string, params ...any) error {
 
 	return tx.Commit()
 }
+
+func (d *DBRO) Close() error {
+	return d.db.Close()
+}

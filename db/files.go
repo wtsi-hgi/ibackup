@@ -100,11 +100,11 @@ func (d *DB) RemoveSetFiles(toRemove iter.Seq[*File]) error {
 			return ErrReadonlySet
 		}
 
-		if err := d.trashFile(tx, file); err != nil {
+		if err = d.trashFile(tx, file); err != nil {
 			return err
 		}
 
-		if _, err := tx.Exec(createQueuedRemoval, file.id); err != nil {
+		if _, err = tx.Exec(createQueuedRemoval, file.id); err != nil {
 			return err
 		}
 	}
@@ -113,16 +113,17 @@ func (d *DB) RemoveSetFiles(toRemove iter.Seq[*File]) error {
 }
 
 func (d *DB) trashFile(tx *sql.Tx, file *File) error {
-	trashID, err := d.execReturningRowID(tx, createTrashSetForFile, file.id)
+	trashSetID, err := d.execReturningRowID(tx, createTrashSetForFile, file.id)
 	if err != nil {
 		return err
 	}
 
-	if trashID == 0 {
+	if trashSetID == 0 {
 		return nil
 	}
 
-	if _, err = tx.Exec(createTrashFile, trashID, file.id); err != nil {
+	trashID, err := d.execReturningRowID(tx, createTrashFile, trashSetID, file.id)
+	if err != nil {
 		return err
 	}
 

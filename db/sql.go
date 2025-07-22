@@ -51,7 +51,7 @@ var (
 			"`mountpointHash` " + hashColumnStart + "`mountpoint`" + hashColumnEnd + ", " +
 			"`btime` INTEGER, " +
 			"`mtime` INTEGER, " +
-			"`size` INTEGER NOT NULL, " +
+			"`size` INTEGER DEFAULT 0, " +
 			"`fileType` TINYINT NOT NULL, " +
 			"`owner` TEXT NOT NULL, " +
 			"`dest` TEXT NOT NULL, " +
@@ -105,15 +105,19 @@ var (
 			"UPDATE `sets` SET `numFiles` = `numFiles` + 1, `sizeFiles` = `sizeFiles` + (" +
 			"SELECT `hardlinks`.`size` FROM `hardlinks` JOIN `remoteFiles` ON `remoteFiles`.`hardlinkID` = `hardlinks`.`id` " +
 			"WHERE `remoteFiles`.`id` = `NEW`.`remoteFileID`) " +
-			"WHERE `id` = `NEW`.`setID`; END;",
+			"WHERE `id` = `NEW`.`setID`;" +
+			"END;",
 		"CREATE TRIGGER IF NOT EXISTS `delete_file_count_size` AFTER DELETE ON `localFiles` FOR EACH ROW BEGIN " +
+			"DELETE FROM `sets` WHERE `id` = `OLD`.`setID` AND " +
+			"`numFiles` = 0 AND " +
+			"(`name` LIKE CONCAT(CHAR(0), '%') OR `requester` LIKE CONCAT(CHAR(0), '%'));" +
+			"DELETE FROM `remoteFiles` WHERE NOT (" +
+			"SELECT COUNT(1) FROM `localFiles` WHERE `localFiles`.`remoteFileID` = `OLD`.`remoteFileID`" +
+			") AND `remoteFiles`.`id` = `OLD`.`remoteFileID`;" +
 			"UPDATE `sets` SET `numFiles` = `numFiles` - 1, `sizeFiles` = `sizeFiles` - (" +
 			"SELECT `hardlinks`.`size` FROM `hardlinks` JOIN `remoteFiles` ON `remoteFiles`.`hardlinkID` = `hardlinks`.`id` " +
 			"WHERE `remoteFiles`.`id` = `OLD`.`remoteFileID`) " +
 			"WHERE `id` = `OLD`.`setID`;" +
-			"DELETE FROM `sets` WHERE `id` = `OLD`.`setID` AND " +
-			"`numFiles` = 0 AND " +
-			"(`name` LIKE CONCAT(CHAR(0), '%') OR `requester` LIKE CONCAT(CHAR(0), '%'));" +
 			"END;",
 		"CREATE TRIGGER IF NOT EXISTS `update_file_size` AFTER UPDATE ON `hardlinks` FOR EACH ROW BEGIN " +
 			"UPDATE `sets` SET `sizeFiles` = `sizeFiles` - `OLD`.`size` + `NEW`.`size` WHERE `id` IN (" +
@@ -142,7 +146,7 @@ var (
 			"UPDATE `localFiles` /*! JOIN `remoteFiles` ON `localFiles`.`remoteFileID` = `remoteFiles`.`id` */ SET " +
 			"/*! `localFiles`.*/`lastUploaded` = IF(`OLD`.`skipped`, `localFiles`.`lastUploaded`, " + now + "), " +
 			"`status` = IF(`OLD`.`skipped`, " + string('0'+StatusSkipped) + ", " +
-			"IF(`remoteFiles`.`lastUploaded` = \"0001-01-01 00:00:00\", " + string('0'+StatusUploaded) + ", " +
+			"IF(`remoteFiles`.`lastUploaded` = '0001-01-01 00:00:00', " + string('0'+StatusUploaded) + ", " +
 			string('0'+StatusReplaced) + ")) " +
 			"/*! -- */ FROM `localFiles` AS `local` JOIN `remoteFiles` ON `local`.`remoteFileID` = `remoteFiles`.`id`\n/*! */" +
 			"WHERE `OLD`.`type` = " + string('0'+QueueUpload) + " AND " +
@@ -155,15 +159,10 @@ var (
 		"CREATE TRIGGER IF NOT EXISTS `relase_held_jobs` AFTER DELETE ON `processes` FOR EACH ROW BEGIN " +
 			"UPDATE `queue` SET `heldBy` = 0 WHERE `heldBy` = `OLD`.`id`;" +
 			"END;",
-		"CREATE TRIGGER IF NOT EXISTS `delete_remote_file_when_not_refd` AFTER DELETE ON `localFiles` FOR EACH ROW BEGIN " +
-			"DELETE FROM `remoteFiles` WHERE (" +
-			"SELECT COUNT(1) AS `count` FROM `localFiles` WHERE `localFiles`.`remoteFileID` = `OLD`.`remoteFileID`" +
-			") = 0 AND `remoteFiles`.`id` = `OLD`.`remoteFileID`;" +
-			"END;",
 		"CREATE TRIGGER IF NOT EXISTS `delete_hardlink_when_not_refd` AFTER DELETE ON `remoteFiles` FOR EACH ROW BEGIN " +
-			"DELETE FROM `hardlinks` WHERE (" +
-			"SELECT COUNT(1) AS `count` FROM `remoteFiles` WHERE `remoteFiles`.`hardlinkID` = `OLD`.`hardlinkID`" +
-			") = 0 AND `hardlinks`.`id` = `OLD`.`hardlinkID`;" +
+			"DELETE FROM `hardlinks` WHERE NOT (" +
+			"SELECT COUNT(1) FROM `remoteFiles` WHERE `remoteFiles`.`hardlinkID` = `OLD`.`hardlinkID`" +
+			") AND `hardlinks`.`id` = `OLD`.`hardlinkID`;" +
 			"END;",
 	}
 )

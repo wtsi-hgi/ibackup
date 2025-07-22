@@ -50,6 +50,8 @@ func createTestDatabase(t *testing.T) *DB {
 		}
 	}
 
+	Reset(func() { d.Close() })
+
 	return d
 }
 

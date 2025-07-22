@@ -48,11 +48,11 @@ func TestFiles(t *testing.T) {
 			var err error
 
 			So(d.AddSetFiles(setA, slices.Values(files)), ShouldBeNil)
-			So(slices.Collect(d.GetSetFiles(setA).Iter), ShouldResemble, files)
-			So(slices.Collect(d.GetSetFiles(setB).Iter), ShouldBeNil)
+			So(collectIter(t, d.GetSetFiles(setA)), ShouldResemble, files)
+			So(collectIter(t, d.GetSetFiles(setB)), ShouldBeNil)
 
 			So(d.AddSetFiles(setA, slices.Values(files)), ShouldBeNil)
-			So(slices.Collect(d.GetSetFiles(setA).Iter), ShouldResemble, files)
+			So(collectIter(t, d.GetSetFiles(setA)), ShouldResemble, files)
 
 			setA, err = d.GetSet(setA.Name, setA.Requester)
 			So(err, ShouldBeNil)
@@ -86,7 +86,7 @@ func TestFiles(t *testing.T) {
 			files[0].Size = 120
 
 			So(d.AddSetFiles(setA, slices.Values(files[1:])), ShouldBeNil)
-			So(slices.Collect(d.GetSetFiles(setA).Iter), ShouldResemble, files)
+			So(collectIter(t, d.GetSetFiles(setA)), ShouldResemble, files)
 
 			setA, err = d.GetSet(setA.Name, setA.Requester)
 			So(err, ShouldBeNil)
@@ -107,7 +107,7 @@ func TestFiles(t *testing.T) {
 			})
 
 			So(d.AddSetFiles(setA, slices.Values(files[3:])), ShouldBeNil)
-			So(slices.Collect(d.GetSetFiles(setA).Iter), ShouldResemble, files)
+			So(collectIter(t, d.GetSetFiles(setA)), ShouldResemble, files)
 
 			setA, err = d.GetSet(setA.Name, setA.Requester)
 			So(err, ShouldBeNil)
@@ -126,8 +126,8 @@ func TestFiles(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(refs, ShouldEqual, 2)
 
-			So(len(slices.Collect(d.listRemoteFiles(t).Iter)), ShouldEqual, 3)
-			So(len(slices.Collect(d.listInodes(t).Iter)), ShouldEqual, 3)
+			So(len(collectIter(t, d.listRemoteFiles(t))), ShouldEqual, 3)
+			So(len(collectIter(t, d.listInodes(t))), ShouldEqual, 3)
 
 			Convey("You can also remove files from a set", func() {
 				now := time.Now().Truncate(time.Second)
@@ -161,7 +161,7 @@ func TestFiles(t *testing.T) {
 				setTrashA, err := scanSet(d.db.QueryRow(getSetByNameRequester, "\x00"+setA.Name, setA.Requester))
 				So(err, ShouldBeNil)
 
-				trashed := slices.Collect(d.GetSetFiles(setTrashA).Iter)
+				trashed := collectIter(t, d.GetSetFiles(setTrashA))
 				So(len(trashed), ShouldEqual, 1)
 				So(trashed[0].LocalPath, ShouldEqual, files[0].LocalPath)
 				So(trashed[0].LastUpload, ShouldHappenOnOrAfter, now)
@@ -178,16 +178,19 @@ func TestFiles(t *testing.T) {
 				So(err, ShouldBeNil)
 				So(refs, ShouldEqual, 1)
 
-				So(len(slices.Collect(d.listRemoteFiles(t).Iter)), ShouldEqual, 3)
-				So(len(slices.Collect(d.listInodes(t).Iter)), ShouldEqual, 3)
+				So(len(collectIter(t, d.listRemoteFiles(t))), ShouldEqual, 3)
+				So(len(collectIter(t, d.listInodes(t))), ShouldEqual, 3)
 
 				So(d.RemoveSetFiles(slices.Values(files[2:3])), ShouldBeNil)
 				So(d.clearQueue(), ShouldBeNil)
-				So(d.RemoveSetFiles(d.GetSetFiles(setTrashA).Iter), ShouldBeNil)
+
+				trashFiles := d.GetSetFiles(setTrashA)
+				So(d.RemoveSetFiles(trashFiles.Iter), ShouldBeNil)
+				So(trashFiles.Error, ShouldBeNil)
 				So(d.clearQueue(), ShouldBeNil)
 
-				So(len(slices.Collect(d.listRemoteFiles(t).Iter)), ShouldEqual, 2)
-				So(len(slices.Collect(d.listInodes(t).Iter)), ShouldEqual, 2)
+				So(len(collectIter(t, d.listRemoteFiles(t))), ShouldEqual, 2)
+				So(len(collectIter(t, d.listInodes(t))), ShouldEqual, 2)
 			})
 		})
 
@@ -197,13 +200,13 @@ func TestFiles(t *testing.T) {
 			process, err := d.RegisterProcess()
 			So(err, ShouldBeNil)
 
-			tasks := slices.Collect(d.ReserveTasks(process, 1).Iter)
+			tasks := collectIter(t, d.ReserveTasks(process, 1))
 			tasks[0].Error = "some error"
 			now := time.Now().Truncate(time.Second)
 
 			So(d.TaskFailed(tasks[0]), ShouldBeNil)
 
-			files := slices.Collect(d.GetSetFiles(setA).Iter)
+			files := collectIter(t, d.GetSetFiles(setA))
 			So(files[0].LastFailedAttempt, ShouldHappenOnOrAfter, now)
 			So(files[0].LastError, ShouldEqual, "some error")
 			So(files[0].Attempts, ShouldEqual, 1)

@@ -1,6 +1,7 @@
 package db
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -51,16 +52,16 @@ func TestSet(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(got, ShouldResemble, setC)
 
-			So(slices.Collect(d.GetSetsByRequester("me").Iter), ShouldResemble, []*Set{setA, setB})
-			So(slices.Collect(d.GetSetsByRequester("you").Iter), ShouldResemble, []*Set{setC})
-			So(slices.Collect(d.GetAllSets().Iter), ShouldResemble, []*Set{setA, setB, setC})
+			So(collectIter(t, d.GetSetsByRequester("me")), ShouldResemble, []*Set{setA, setB})
+			So(collectIter(t, d.GetSetsByRequester("you")), ShouldResemble, []*Set{setC})
+			So(collectIter(t, d.GetAllSets()), ShouldResemble, []*Set{setA, setB, setC})
 
 			So(d.DeleteSet(setA), ShouldBeNil)
 
-			So(slices.Collect(d.GetAllSets().Iter), ShouldResemble, []*Set{setB, setC})
+			So(collectIter(t, d.GetAllSets()), ShouldResemble, []*Set{setB, setC})
 
 			So(d.DeleteSet(setC), ShouldBeNil)
-			So(slices.Collect(d.GetAllSets().Iter), ShouldResemble, []*Set{setB})
+			So(collectIter(t, d.GetAllSets()), ShouldResemble, []*Set{setB})
 
 			Convey("A set can be hidden and unhidden", func() {
 				So(setB.Hidden, ShouldBeFalse)
@@ -116,6 +117,7 @@ func TestSet(t *testing.T) {
 				So(d.clearQueue(), ShouldBeNil)
 
 				setA.Transformer = "prefix=/some/:/other/remote/"
+				oldID := setB.id
 
 				So(d.SetSetTransformer(setB, func(s string) (string, error) {
 					return "/other/remote/" + strings.TrimPrefix(s, "/some/"), nil
@@ -126,18 +128,54 @@ func TestSet(t *testing.T) {
 					file.RemotePath = "/other" + file.RemotePath
 				}
 
-				So(slices.Collect(d.GetSetFiles(setB).Iter), ShouldResemble, files)
-				So(slices.Collect(d.GetSetDiscovery(setB).Iter), ShouldResemble, []*Discover{discovery})
+				So(collectIter(t, d.GetSetFiles(setB)), ShouldResemble, files)
+				So(collectIter(t, d.GetSetDiscovery(setB)), ShouldResemble, []*Discover{discovery})
 
 				Convey("The old set is removed once the queued items are dealt with", func() {
-					_, err := scanSet(d.db.QueryRow(getSetByNameRequester, setB.Name, "\x002\x00"+setB.Requester))
+					requester := fmt.Sprintf("\x00%d\x00%s", oldID, setB.Requester)
+
+					_, err := scanSet(d.db.QueryRow(getSetByNameRequester, setB.Name, requester))
 					So(err, ShouldBeNil)
 					So(d.clearQueue(), ShouldBeNil)
 
-					_, err = scanSet(d.db.QueryRow(getSetByNameRequester, setB.Name, "\x002\x00"+setB.Requester))
+					_, err = scanSet(d.db.QueryRow(getSetByNameRequester, setB.Name, requester))
 					So(err, ShouldNotBeNil)
 				})
 			})
+
+			Convey("Adding files to a set updates the set file numbers", func() {
+				setB, err := d.GetSet("my2ndSet", "me")
+				So(err, ShouldBeNil)
+				So(setB.NumFiles, ShouldEqual, 0)
+				So(d.AddSetFiles(setB, genFiles(5)), ShouldBeNil)
+
+				setB, err = d.GetSet("my2ndSet", "me")
+				So(err, ShouldBeNil)
+				So(setB.NumFiles, ShouldEqual, 5)
+
+				files := d.GetSetFiles(setB)
+				So(d.RemoveSetFiles(files.Iter), ShouldBeNil)
+				So(files.Error, ShouldBeNil)
+
+				setB, err = d.GetSet("my2ndSet", "me")
+				So(err, ShouldBeNil)
+				So(setB.NumFiles, ShouldEqual, 5)
+				So(d.clearQueue(), ShouldBeNil)
+
+				setB, err = d.GetSet("my2ndSet", "me")
+				So(err, ShouldBeNil)
+
+				So(setB.NumFiles, ShouldEqual, 0)
+			})
 		})
 	})
+}
+
+func collectIter[T any](t *testing.T, i *IterErr[T]) []T {
+	t.Helper()
+
+	vs := slices.Collect(i.Iter)
+	So(i.Error, ShouldBeNil)
+
+	return vs
 }

@@ -1,7 +1,6 @@
 package db
 
 import (
-	"slices"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -45,21 +44,21 @@ func TestDiscovery(t *testing.T) {
 			}
 
 			So(d.AddSetDiscovery(setA, discoveries[0]), ShouldBeNil)
-			So(slices.Collect(d.GetSetDiscovery(setA).Iter), ShouldResemble, discoveries[:1])
+			So(collectIter(t, d.GetSetDiscovery(setA)), ShouldResemble, discoveries[:1])
 
 			So(d.AddSetDiscovery(setA, discoveries[1]), ShouldBeNil)
-			So(slices.Collect(d.GetSetDiscovery(setA).Iter), ShouldResemble, discoveries[:2])
+			So(collectIter(t, d.GetSetDiscovery(setA)), ShouldResemble, discoveries[:2])
 
 			discoveries[1].Type = DiscoverFOFN
 
 			So(d.AddSetDiscovery(setA, discoveries[1]), ShouldBeNil)
-			So(slices.Collect(d.GetSetDiscovery(setA).Iter), ShouldResemble, discoveries[:2])
+			So(collectIter(t, d.GetSetDiscovery(setA)), ShouldResemble, discoveries[:2])
 
 			So(d.AddSetDiscovery(setB, discoveries[2]), ShouldBeNil)
-			So(slices.Collect(d.GetSetDiscovery(setB).Iter), ShouldResemble, discoveries[2:])
+			So(collectIter(t, d.GetSetDiscovery(setB)), ShouldResemble, discoveries[2:])
 
 			So(d.DeleteSetDiscovery(setA, discoveries[0].Path), ShouldBeNil)
-			So(slices.Collect(d.GetSetDiscovery(setA).Iter), ShouldResemble, discoveries[1:2])
+			So(collectIter(t, d.GetSetDiscovery(setA)), ShouldResemble, discoveries[1:2])
 		})
 	})
 }
