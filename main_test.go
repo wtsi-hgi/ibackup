@@ -2995,6 +2995,42 @@ func TestTrash(t *testing.T) {
 				})
 			})
 
+			Convey("If you retry to upload one of the existing files again and it fails", func() {
+				exitCode, output := s.runBinary(t, "status", "--name", setName, "-d")
+				So(exitCode, ShouldEqual, 0)
+				So(output, ShouldContainSubstring, "file1\tuploaded")
+
+				err = os.Remove(file1)
+				So(err, ShouldBeNil)
+
+				err := syscall.Mkfifo(file1, userPerms)
+				So(err, ShouldBeNil)
+
+				//err = os.Chmod(file1, 0000)
+				//So(err, ShouldBeNil)
+				//defer os.Chmod(file1, userPerms)
+
+				exitCode, output = s.runBinary(t, "retry", "--name", setName, "--all")
+				So(exitCode, ShouldEqual, 0)
+
+				s.waitForStatus(setName, "\nStatus: complete", 10*time.Second)
+
+				exitCode, output = s.runBinary(t, "status", "--name", setName, "-d")
+				So(exitCode, ShouldEqual, 0)
+				So(output, ShouldContainSubstring, "file1\tabnormal")
+
+				FocusConvey("If you remove the failed file, its metadata in iRODS will be changed", func() {
+					s.removePath(t, setName, file1, 1)
+
+					remoteMeta := getRemoteMeta(filepath.Join(remotePath, "file1"))
+					sets := getMetaValue(remoteMeta, transfer.MetaKeySets)
+					setsSlice := strings.Split(sets, ",")
+
+					So(setsSlice, ShouldNotContain, setName)
+					So(setsSlice, ShouldContain, set.TrashPrefix+setName)
+				})
+			})
+
 			Convey("Given a set with a missing file", func() {
 				file := filepath.Join(path, "missing-file")
 				internal.CreateTestFileOfLength(t, file, 1)
