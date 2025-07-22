@@ -149,9 +149,19 @@ func TestSet(t *testing.T) {
 				So(setB.NumFiles, ShouldEqual, 0)
 				So(d.AddSetFiles(setB, genFiles(5)), ShouldBeNil)
 
+				af := slices.Collect(genFiles(1))
+
+				af[0].Type = Abnormal
+
+				So(d.AddSetFiles(setB, slices.Values(af)), ShouldBeNil)
+
 				setB, err = d.GetSet("my2ndSet", "me")
 				So(err, ShouldBeNil)
-				So(setB.NumFiles, ShouldEqual, 5)
+				So(setB.NumFiles, ShouldEqual, 6)
+				So(setB.SizeTotal, ShouldEqual, 600)
+				So(setB.Symlinks, ShouldEqual, 1)
+				So(setB.Hardlinks, ShouldEqual, 1)
+				So(setB.Abnormal, ShouldEqual, 1)
 
 				files := d.GetSetFiles(setB)
 				So(d.RemoveSetFiles(files.Iter), ShouldBeNil)
@@ -159,13 +169,16 @@ func TestSet(t *testing.T) {
 
 				setB, err = d.GetSet("my2ndSet", "me")
 				So(err, ShouldBeNil)
-				So(setB.NumFiles, ShouldEqual, 5)
+				So(setB.NumFiles, ShouldEqual, 6)
 				So(d.clearQueue(), ShouldBeNil)
 
 				setB, err = d.GetSet("my2ndSet", "me")
 				So(err, ShouldBeNil)
 
 				So(setB.NumFiles, ShouldEqual, 0)
+				So(setB.SizeTotal, ShouldEqual, 0)
+				So(setB.Symlinks, ShouldEqual, 0)
+				So(setB.Hardlinks, ShouldEqual, 0)
 			})
 		})
 	})

@@ -451,9 +451,12 @@ func genFiles(n int) iter.Seq[*File] {
 	return func(yield func(*File) bool) {
 		for i := range n {
 			inode := int64(filePrefix*1000 + i)
+			typ := Regular
 
 			if i == 2 {
 				inode = int64(filePrefix*1000 + i - 1)
+			} else if i == 3 {
+				typ = Symlink
 			}
 
 			if !yield(&File{
@@ -464,7 +467,7 @@ func genFiles(n int) iter.Seq[*File] {
 				MountPount:  "/some/",
 				Btime:       100,
 				Mtime:       200,
-				Type:        Regular,
+				Type:        typ,
 				SymlinkDest: "",
 				modifiable:  true,
 			}) { //nolint:whitespace

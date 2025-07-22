@@ -245,7 +245,7 @@ func (d *DBRO) GetSet(name, requester string) (*Set, error) {
 	return scanSet(d.db.QueryRow(getSetByNameRequester, name, requester))
 }
 
-func scanSet(scanner scanner) (*Set, error) {
+func scanSet(scanner scanner) (*Set, error) { //nolint:funlen
 	set := new(Set)
 
 	if err := scanner.Scan(
@@ -256,6 +256,14 @@ func scanSet(scanner scanner) (*Set, error) {
 		&set.MonitorTime,
 		&set.NumFiles,
 		&set.SizeTotal,
+		&set.Uploaded,
+		&set.Replaced,
+		&set.Skipped,
+		&set.Failed,
+		&set.Missing,
+		&set.Abnormal,
+		&set.Hardlinks,
+		&set.Symlinks,
 		&set.StartedDiscovery,
 		&set.LastDiscovery,
 		&set.Status,
