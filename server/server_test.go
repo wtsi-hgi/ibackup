@@ -623,18 +623,39 @@ func TestServer(t *testing.T) {
 							})
 
 							FocusConvey("Remove of a whole set removes it from the db along with all its entries", func() {
+
+								fileCount := 5
+								filePaths := make([]string, fileCount)
+
+								for i := range fileCount {
+									filePath := filepath.Join(localDir, "remove_file_"+strconv.Itoa(i))
+									internal.CreateTestFileOfLength(t, filePath, 1)
+									filePaths[i] = filePath
+								}
+
+								err = client.MergeFiles(exampleSet.ID(), filePaths)
+								So(err, ShouldBeNil)
+
+								err = client.TriggerDiscovery(exampleSet.ID())
+								So(err, ShouldBeNil)
+
+								ok := <-racCalled
+								So(ok, ShouldBeTrue)
+
+								makeGivenSetComplete(fileCount+1, exampleSet.Name, adminClient)
+
 								entries, errg := s.db.GetFileEntries(exampleSet.ID(), nil)
 								So(errg, ShouldBeNil)
-								So(len(entries), ShouldBeGreaterThan, 0)
+								So(len(entries), ShouldEqual, fileCount+1)
 
 								transformer, errg := exampleSet.MakeTransformer()
 								So(errg, ShouldBeNil)
 
 								for _, entry := range entries {
-									remote1, errt := transformer(entry.Path)
+									remote, errt := transformer(entry.Path)
 									So(errt, ShouldBeNil)
 
-									remoteMeta, errt := handler.GetMeta(remote1)
+									remoteMeta, errt := handler.GetMeta(remote)
 									So(errt, ShouldBeNil)
 									So(remoteMeta, ShouldNotBeNil)
 									So(remoteMeta[transfer.MetaKeySets], ShouldEqual, exampleSet.Name)
