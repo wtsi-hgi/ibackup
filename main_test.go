@@ -3114,7 +3114,7 @@ func TestTrash(t *testing.T) {
 				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", path, "--user", user)
 				So(exitCode, ShouldEqual, 0)
 
-				removalStatus := fmt.Sprintf("Removal status: %d / %d objects removed", 1, 1)
+				removalStatus := "Removal status: 1 / 1 objects removed"
 
 				s.waitForStatusWithUser(setName, removalStatus, user, 10*time.Second)
 
