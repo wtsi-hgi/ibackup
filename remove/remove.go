@@ -90,7 +90,9 @@ func UpdateSetsAndRequestersOnRemoteFile(handler Handler, path string,
 		return err
 	}
 
-	return handler.AddMeta(path, newMeta)
+	err = handler.AddMeta(path, newMeta)
+
+	return err
 }
 
 // RemoveFileAndParentFoldersIfEmpty removes the provided path from iRODS and

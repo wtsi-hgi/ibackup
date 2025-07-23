@@ -348,7 +348,7 @@ func TestServer(t *testing.T) {
 					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldBeNil)
 
-					FocusConvey("And given two hardlinks to the same file", func() {
+					Convey("And given two hardlinks to the same file", func() {
 						file1local := filepath.Join(localDir, "file1")
 						hardlink1local := filepath.Join(localDir, "hardlink1")
 						hardlink1Remote := filepath.Join(remoteDir, "hardlink1")
@@ -623,30 +623,9 @@ func TestServer(t *testing.T) {
 							})
 
 							FocusConvey("Remove of a whole set removes it from the db along with all its entries", func() {
-
-								fileCount := 5
-								filePaths := make([]string, fileCount)
-
-								for i := range fileCount {
-									filePath := filepath.Join(localDir, "remove_file_"+strconv.Itoa(i))
-									internal.CreateTestFileOfLength(t, filePath, 1)
-									filePaths[i] = filePath
-								}
-
-								err = client.MergeFiles(exampleSet.ID(), filePaths)
-								So(err, ShouldBeNil)
-
-								err = client.TriggerDiscovery(exampleSet.ID())
-								So(err, ShouldBeNil)
-
-								ok := <-racCalled
-								So(ok, ShouldBeTrue)
-
-								makeGivenSetComplete(fileCount+1, exampleSet.Name, adminClient)
-
 								entries, errg := s.db.GetFileEntries(exampleSet.ID(), nil)
 								So(errg, ShouldBeNil)
-								So(len(entries), ShouldEqual, fileCount+1)
+								So(len(entries), ShouldBeGreaterThan, 0)
 
 								transformer, errg := exampleSet.MakeTransformer()
 								So(errg, ShouldBeNil)
@@ -661,6 +640,8 @@ func TestServer(t *testing.T) {
 									So(remoteMeta[transfer.MetaKeySets], ShouldEqual, exampleSet.Name)
 								}
 
+								handler.MakeAddMetaSlow()
+
 								err = client.RemoveSet(exampleSet.ID())
 								So(err, ShouldBeNil)
 
@@ -673,19 +654,18 @@ func TestServer(t *testing.T) {
 									return nil
 								}, time.Second*10, time.Millisecond*100)
 
+								for _, entry := range entries {
+									remote, errt := transformer(entry.Path)
+									So(errt, ShouldBeNil)
+
+									remoteMeta, errgm := handler.GetMeta(remote)
+									So(errgm, ShouldBeNil)
+									So(remoteMeta[transfer.MetaKeySets], ShouldEqual, set.TrashPrefix+exampleSet.Name)
+								}
+
 								entries, errg = s.db.GetFileEntries(exampleSet.ID(), nil)
 								So(errg, ShouldBeNil)
 								So(len(entries), ShouldEqual, 0)
-
-								for _, entry := range entries {
-									remote1, errt := transformer(entry.Path)
-									So(errt, ShouldBeNil)
-
-									remoteMeta, errg := handler.GetMeta(remote1)
-									So(errg, ShouldBeNil)
-									So(remoteMeta, ShouldBeNil)
-									So(remoteMeta[transfer.MetaKeySets], ShouldEqual, set.TrashPrefix+exampleSet.Name)
-								}
 							})
 						})
 
@@ -3995,6 +3975,28 @@ func TestDiscoveryCoordinator(t *testing.T) {
 			close(finished)
 			clearChannel(removals)
 		})
+
+		Convey("Registered callback gets triggered after all removals are done", func() {
+			var callbackCalled atomic.Bool
+
+			done := make(chan struct{})
+
+			dc.OnRemovalsDone(sid, func() {
+				callbackCalled.Store(true)
+				close(done)
+			})
+
+			go mockRemoval(sid)
+
+			select {
+			case <-done:
+			case <-time.After(1 * time.Second):
+				t.Error("removalDone callback was not triggered in time")
+			}
+
+			So(callbackCalled.Load(), ShouldBeTrue)
+		})
+
 	})
 }
 
