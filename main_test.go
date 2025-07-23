@@ -2943,12 +2943,12 @@ func TestTrash(t *testing.T) {
 				})
 
 				Convey("And succeeds if issue is fixed during retries", func() {
-					user, errc := user.Current()
-					So(errc, ShouldBeNil)
+					curUser, e := user.Current()
+					So(e, ShouldBeNil)
 
 					addFileToIRODS(file1, file1remote)
 					addRemoteMeta(file1remote, transfer.MetaKeySets, setName)
-					addRemoteMeta(file1remote, transfer.MetaKeyRequester, user.Username)
+					addRemoteMeta(file1remote, transfer.MetaKeyRequester, curUser.Username)
 
 					s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 10*time.Second)
 				})
@@ -2977,14 +2977,14 @@ func TestTrash(t *testing.T) {
 
 			Convey("Given a set with a file that failed to upload", func() {
 				dir3 := filepath.Join(path, "dir3")
-				errp := os.MkdirAll(dir3, userPerms)
-				So(errp, ShouldBeNil)
+				err = os.MkdirAll(dir3, userPerms)
+				So(err, ShouldBeNil)
 
 				file := filepath.Join(dir3, "file")
 				internal.CreateTestFile(t, file, "some data1")
 
-				errp = os.Chmod(file, 0000)
-				So(errp, ShouldBeNil)
+				err = os.Chmod(file, 0000)
+				So(err, ShouldBeNil)
 
 				setNameWithFailures := "setWithFailures"
 				s.addSetForTesting(t, setNameWithFailures, transformer, dir3)
@@ -2995,10 +2995,9 @@ func TestTrash(t *testing.T) {
 				})
 			})
 
-			Convey("If you retry to upload one of the existing files again and it fails", func() {
-				exitCode, output := s.runBinary(t, "status", "--name", setName, "-d")
-				So(exitCode, ShouldEqual, 0)
-				So(output, ShouldContainSubstring, "file1\tuploaded")
+			Convey("If you retry one of the uploaded files and it does not upload", func() {
+				statusCmd := []string{"status", "--name", setName, "-d"}
+				s.confirmOutputContains(t, statusCmd, 0, "file1\tuploaded")
 
 				err = os.Remove(file1)
 				So(err, ShouldBeNil)
@@ -3006,20 +3005,14 @@ func TestTrash(t *testing.T) {
 				err := syscall.Mkfifo(file1, userPerms)
 				So(err, ShouldBeNil)
 
-				//err = os.Chmod(file1, 0000)
-				//So(err, ShouldBeNil)
-				//defer os.Chmod(file1, userPerms)
-
-				exitCode, output = s.runBinary(t, "retry", "--name", setName, "--all")
+				exitCode, _ := s.runBinary(t, "retry", "--name", setName, "--all")
 				So(exitCode, ShouldEqual, 0)
 
 				s.waitForStatus(setName, "\nStatus: complete", 10*time.Second)
 
-				exitCode, output = s.runBinary(t, "status", "--name", setName, "-d")
-				So(exitCode, ShouldEqual, 0)
-				So(output, ShouldContainSubstring, "file1\tabnormal")
+				s.confirmOutputContains(t, statusCmd, 0, "file1\tabnormal")
 
-				FocusConvey("If you remove the failed file, its metadata in iRODS will be changed", func() {
+				Convey("If you remove that file, its metadata in iRODS will be changed", func() {
 					s.removePath(t, setName, file1, 1)
 
 					remoteMeta := getRemoteMeta(filepath.Join(remotePath, "file1"))
@@ -3038,8 +3031,8 @@ func TestTrash(t *testing.T) {
 				setNameWithMissingFile := "setWithMissingFile"
 				s.addSetForTesting(t, setNameWithMissingFile, transformer, path)
 
-				errp := os.Remove(file)
-				So(errp, ShouldBeNil)
+				err := os.Remove(file)
+				So(err, ShouldBeNil)
 
 				s.waitForStatus(setNameWithMissingFile, "\nStatus: complete", 10*time.Second)
 				s.confirmOutputContains(t, []string{"status", "--name", setNameWithMissingFile, "-d"}, 0, file+"\tmissing")
@@ -3051,8 +3044,8 @@ func TestTrash(t *testing.T) {
 
 			Convey("Given a set with an abnormal file", func() {
 				file := filepath.Join(path, "abnormal-file")
-				errp := syscall.Mkfifo(file, userPerms)
-				So(errp, ShouldBeNil)
+				err := syscall.Mkfifo(file, userPerms)
+				So(err, ShouldBeNil)
 
 				setNameWithAbnormalFile := "setWithAbnormalFile"
 				s.addSetForTesting(t, setNameWithAbnormalFile, transformer, file)
