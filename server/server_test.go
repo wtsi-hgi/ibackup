@@ -100,7 +100,7 @@ func TestServer(t *testing.T) {
 	maxStuckTime := 1 * time.Hour
 	defaultHeartbeatFreq := 1 * time.Minute
 
-	FocusConvey("Given a test cert and db location", t, func() {
+	Convey("Given a test cert and db location", t, func() {
 		certPath, keyPath, err := gas.CreateTestCert(t)
 		So(err, ShouldBeNil)
 
@@ -248,7 +248,7 @@ func TestServer(t *testing.T) {
 			So(slackWriter.String(), ShouldEqual, expectedMsg+expectedMsg+slack.BoxPrefixWarn+"server stopped")
 		})
 
-		FocusConvey("You can make a Server with a logger configured and setup Auth, "+
+		Convey("You can make a Server with a logger configured and setup Auth, "+
 			"MakeQueueEndPoints and LoadSetDB", func() {
 			s, addr, dfunc := makeAndStartServer()
 
@@ -297,7 +297,7 @@ func TestServer(t *testing.T) {
 				racCalled <- true
 			})
 
-			FocusConvey("Which lets you login", func() {
+			Convey("Which lets you login", func() {
 				logWriter.Reset()
 
 				token, errl := gas.Login(gas.NewClientRequest(addr, certPath), "jim", "pass")
@@ -306,7 +306,7 @@ func TestServer(t *testing.T) {
 
 				So(strings.Count(logWriter.String(), "STATUS=200"), ShouldEqual, 1)
 
-				FocusConvey("And then you use client methods AddOrUpdateSet (which logs to slack) and GetSets", func() {
+				Convey("And then you use client methods AddOrUpdateSet (which logs to slack) and GetSets", func() {
 					exampleSet2 := &set.Set{
 						Name:        "set2",
 						Requester:   exampleSet.Requester,
@@ -484,7 +484,7 @@ func TestServer(t *testing.T) {
 						})
 					})
 
-					FocusConvey("And given a set with a folder and a nested folder with 2 files", func() {
+					Convey("And given a set with a folder and a nested folder with 2 files", func() {
 						dir0local := filepath.Join(localDir, "dir0/")
 						dir0remote := filepath.Join(remoteDir, "dir0/")
 
@@ -555,7 +555,7 @@ func TestServer(t *testing.T) {
 							So(len(failedEntries), ShouldEqual, 0)
 						})
 
-						FocusConvey("And given all files are uploaded", func() {
+						Convey("And given all files are uploaded", func() {
 							makeGivenSetComplete(1, exampleSet.Name, adminClient)
 
 							Convey("Removal on a file and a dir sets them as complete in the remove bucket", func() {
@@ -622,7 +622,7 @@ func TestServer(t *testing.T) {
 								os.Chmod(dir1remote, 0755) //nolint:errcheck
 							})
 
-							FocusConvey("Remove of a whole set removes it from the db along with all its entries", func() {
+							Convey("Remove of a whole set removes it from the db along with all its entries", func() {
 								entries, errg := s.db.GetFileEntries(exampleSet.ID(), nil)
 								So(errg, ShouldBeNil)
 								So(len(entries), ShouldBeGreaterThan, 0)
