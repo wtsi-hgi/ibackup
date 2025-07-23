@@ -2610,26 +2610,24 @@ func TestTrash(t *testing.T) {
 
 				trashSetName := set.TrashPrefix + setName
 
-				Convey("And status will update accordingly", func() {
-					Convey("Status with setname and --trash will display the trashed set", func() {
-						exitCode, output = s.runBinary(t, "status", "--name", setName, "--trash", "-d")
-						So(exitCode, ShouldEqual, 0)
-						So(output, ShouldContainSubstring, file2+"\t"+time.Now().Format("06/01/02")+"\tuploaded\t10 B")
-					})
+				Convey("Status with setname and --trash will display the trashed set", func() {
+					exitCode, output = s.runBinary(t, "status", "--name", setName, "--trash", "-d")
+					So(exitCode, ShouldEqual, 0)
+					So(output, ShouldContainSubstring, file2+"\t"+time.Now().Format("06/01/02")+"\tuploaded\t10 B")
+				})
 
-					Convey("Status with no name and --trash will only display trashed sets", func() {
-						exitCode, output = s.runBinary(t, "status", "--trash")
-						So(exitCode, ShouldEqual, 0)
-						So(output, ShouldContainSubstring, "Name: "+trashSetName)
-						So(output, ShouldNotContainSubstring, "Name: "+setName)
-					})
+				Convey("Status with no name and --trash will only display trashed sets", func() {
+					exitCode, output = s.runBinary(t, "status", "--trash")
+					So(exitCode, ShouldEqual, 0)
+					So(output, ShouldContainSubstring, "Name: "+trashSetName)
+					So(output, ShouldNotContainSubstring, "Name: "+setName)
+				})
 
-					Convey("Status with no name and without --trash will not display the trashed sets", func() {
-						exitCode, output = s.runBinary(t, "status")
-						So(exitCode, ShouldEqual, 0)
-						So(output, ShouldContainSubstring, "Name: "+setName)
-						So(output, ShouldNotContainSubstring, "Name: "+trashSetName)
-					})
+				Convey("Status with no name and without --trash will not display the trashed sets", func() {
+					exitCode, output = s.runBinary(t, "status")
+					So(exitCode, ShouldEqual, 0)
+					So(output, ShouldContainSubstring, "Name: "+setName)
+					So(output, ShouldNotContainSubstring, "Name: "+trashSetName)
 				})
 
 				Convey("And changes the set metadata in iRODS to a .trash set", func() {
