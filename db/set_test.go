@@ -2,6 +2,7 @@ package db
 
 import (
 	"fmt"
+	"iter"
 	"slices"
 	"strings"
 	"testing"
@@ -148,20 +149,16 @@ func TestSet(t *testing.T) {
 				So(err, ShouldBeNil)
 				So(setB.NumFiles, ShouldEqual, 0)
 				So(d.AddSetFiles(setB, genFiles(5)), ShouldBeNil)
-
-				af := slices.Collect(genFiles(1))
-
-				af[0].Type = Abnormal
-
-				So(d.AddSetFiles(setB, slices.Values(af)), ShouldBeNil)
+				So(d.AddSetFiles(setB, setFileType(genFiles(4), Abnormal)), ShouldBeNil)
+				So(d.AddSetFiles(setB, setFileType(genFiles(2), Symlink)), ShouldBeNil)
 
 				setB, err = d.GetSet("my2ndSet", "me")
 				So(err, ShouldBeNil)
-				So(setB.NumFiles, ShouldEqual, 6)
-				So(setB.SizeTotal, ShouldEqual, 600)
-				So(setB.Symlinks, ShouldEqual, 1)
+				So(setB.NumFiles, ShouldEqual, 11)
+				So(setB.SizeTotal, ShouldEqual, 1100)
+				So(setB.Symlinks, ShouldEqual, 3)
 				So(setB.Hardlinks, ShouldEqual, 1)
-				So(setB.Abnormal, ShouldEqual, 1)
+				So(setB.Abnormal, ShouldEqual, 4)
 
 				files := d.GetSetFiles(setB)
 				So(d.RemoveSetFiles(files.Iter), ShouldBeNil)
@@ -169,7 +166,7 @@ func TestSet(t *testing.T) {
 
 				setB, err = d.GetSet("my2ndSet", "me")
 				So(err, ShouldBeNil)
-				So(setB.NumFiles, ShouldEqual, 6)
+				So(setB.NumFiles, ShouldEqual, 11)
 				So(d.clearQueue(), ShouldBeNil)
 
 				setB, err = d.GetSet("my2ndSet", "me")
@@ -191,4 +188,16 @@ func collectIter[T any](t *testing.T, i *IterErr[T]) []T {
 	So(i.Error, ShouldBeNil)
 
 	return vs
+}
+
+func setFileType(files iter.Seq[*File], ftype FileType) iter.Seq[*File] {
+	return func(yield func(*File) bool) {
+		for file := range files {
+			file.Type = ftype
+
+			if !yield(file) {
+				break
+			}
+		}
+	}
 }
