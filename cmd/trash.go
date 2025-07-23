@@ -29,7 +29,6 @@ package cmd
 
 import (
 	"errors"
-	"path/filepath"
 
 	"github.com/spf13/cobra"
 	"github.com/wtsi-hgi/ibackup/server"
@@ -116,9 +115,6 @@ var trashCmd = &cobra.Command{
 		return nil
 	},
 	RunE: func(_ *cobra.Command, _ []string) error {
-
-		var paths []string
-
 		client, err := newServerClient(serverURL, serverCert)
 		if err != nil {
 			return err
@@ -128,17 +124,9 @@ var trashCmd = &cobra.Command{
 			return handleTrashExpired(client, trashUser, trashName)
 		}
 
-		if trashItems != "" {
-			paths = append(paths, readPaths(trashItems, fofnLineSplitter(trashNull))...)
-		}
-
-		if trashPath != "" {
-			trashPath, err = filepath.Abs(trashPath)
-			if err != nil {
-				return err
-			}
-
-			paths = append(paths, trashPath)
+		paths, err := getPathsFromInput(trashItems, trashPath, trashNull)
+		if err != nil {
+			return err
 		}
 
 		return handleTrash(client, trashUser, trashName, paths)
@@ -165,9 +153,9 @@ func init() {
 func handleTrash(client *server.Client, user, name string, paths []string) error {
 	trashSetName := set.TrashPrefix + name
 
-	sets := getSetByName(client, user, trashSetName)
+	set := getSetByName(client, user, trashSetName)
 
-	return client.RemoveFilesAndDirs(sets[0].ID(), paths)
+	return client.RemoveFilesAndDirs(set.ID(), paths)
 }
 
 func handleTrashExpired(client *server.Client, user, name string) error {
@@ -177,7 +165,7 @@ func handleTrashExpired(client *server.Client, user, name string) error {
 
 	trashSetName := set.TrashPrefix + name
 
-	sets := getSetByName(client, user, trashSetName)
+	set := getSetByName(client, user, trashSetName)
 
-	return client.RemoveExpiredEntriesForSet(sets[0].ID())
+	return client.RemoveExpiredEntriesForSet(set.ID())
 }

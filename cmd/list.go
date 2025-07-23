@@ -239,12 +239,7 @@ func displayEntryPaths(entries []*set.Entry, transformer transfer.PathTransforme
 func getSetFromServerAndDisplayPaths(client *server.Client,
 	local, remote, uploaded, lastState, size, encode bool, user, name string,
 ) {
-	sets := getSetByName(client, user, name)
-	if len(sets) == 0 {
-		warn("backup set not found")
-
-		return
-	}
+	set := getSetByName(client, user, name)
 
 	getFiles := client.GetFiles
 
@@ -255,12 +250,12 @@ func getSetFromServerAndDisplayPaths(client *server.Client,
 		getFiles = client.GetUploadedFiles
 	}
 
-	entries, err := getFiles(sets[0].ID())
+	entries, err := getFiles(set.ID())
 	if err != nil {
 		die(err)
 	}
 
-	transformer := getSetTransformerIfNeeded(sets[0], !local)
+	transformer := getSetTransformerIfNeeded(set, !local)
 
 	displayEntryPaths(entries, transformer, local, remote, size, encode)
 }

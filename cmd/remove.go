@@ -29,7 +29,6 @@ package cmd
 
 import (
 	"errors"
-	"path/filepath"
 
 	"github.com/spf13/cobra"
 	"github.com/wtsi-hgi/ibackup/server"
@@ -80,24 +79,14 @@ var removeCmd = &cobra.Command{
 			return ErrRemoveItems
 		}
 
-		var paths []string
-
 		client, err := newServerClient(serverURL, serverCert)
 		if err != nil {
 			return err
 		}
 
-		if removeItems != "" {
-			paths = append(paths, readPaths(removeItems, fofnLineSplitter(removeNull))...)
-		}
-
-		if removePath != "" {
-			removePath, err = filepath.Abs(removePath)
-			if err != nil {
-				return err
-			}
-
-			paths = append(paths, removePath)
+		paths, err := getPathsFromInput(removeItems, removePath, removeNull)
+		if err != nil {
+			return err
 		}
 
 		setID, err := getSetID(client, removeUser, removeName)
@@ -124,13 +113,14 @@ func init() {
 	removeCmd.Flags().StringVarP(&removePath, "path", "p", "",
 		"path to a single file or directory you wish to remove")
 	removeCmd.Flags().BoolVarP(&removeNull, "null", "0", false, helpTextNull)
+	removeCmd.Flags().StringVar(&removeUser, "user", currentUsername(), helpTextuser)
 	removeCmd.Flags().BoolVarP(&removeSet, "set", "s", false,
 		"remove all files from the set and the set itself")
 
-	if isAdmin() {
-		removeCmd.Flags().StringVar(&removeUser, "user", currentUsername(), helpTextuser)
-	} else {
-		removeUser = currentUsername()
+	if !isAdmin() {
+		if err := removeCmd.Flags().MarkHidden("user"); err != nil {
+			die(err)
+		}
 	}
 
 	if err := removeCmd.MarkFlagRequired("name"); err != nil {
@@ -139,9 +129,9 @@ func init() {
 }
 
 func getSetID(client *server.Client, user, name string) (string, error) {
-	sets := getSetByName(client, user, name)
+	givenSet := getSetByName(client, user, name)
 
-	if sets[0].ReadOnly {
+	if givenSet.ReadOnly {
 		return "", set.Error{Msg: set.ErrSetIsNotWritable}
 	}
 

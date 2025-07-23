@@ -107,7 +107,7 @@ func NewTestServer(t *testing.T) *TestServer {
 	return s
 }
 
-func NewUploadingTestServer(t *testing.T) (*TestServer, string) {
+func NewUploadingTestServer(t *testing.T, withDBBackup bool) (*TestServer, string) {
 	t.Helper()
 
 	dir := t.TempDir()
@@ -122,8 +122,6 @@ func NewUploadingTestServer(t *testing.T) (*TestServer, string) {
 		t.Skip("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set")
 	}
 
-	remotePath = filepath.Join(remotePath, "test_remove")
-
 	schedulerDeployment := os.Getenv("IBACKUP_TEST_SCHEDULER")
 	if schedulerDeployment == "" {
 		t.Skip("skipping iRODS backup test since IBACKUP_TEST_SCHEDULER not set")
@@ -132,9 +130,39 @@ func NewUploadingTestServer(t *testing.T) (*TestServer, string) {
 	s.schedulerDeployment = schedulerDeployment
 	s.remoteHardlinkPrefix = filepath.Join(remotePath, "hardlinks")
 
+	if withDBBackup {
+		s.backupFile = filepath.Join(dir, "db.bak")
+	}
+
 	s.startServer()
 
 	return s, remotePath
+}
+
+func checkICommands(t *testing.T, commands ...string) {
+	t.Helper()
+
+	for _, command := range commands {
+		iCommandsAvailable, err := checkIRODSCommand(command)
+		So(err, ShouldBeNil)
+
+		if !iCommandsAvailable {
+			t.Skipf("skipping iRODS backup tests since the iCommand '%s' is not available", command)
+		}
+	}
+}
+
+func checkIRODSCommand(command string) (bool, error) {
+	_, err := exec.LookPath(command)
+	if err != nil {
+		if errors.Is(err, exec.ErrNotFound) {
+			return false, nil
+		}
+
+		return false, fmt.Errorf("error checking iRODS command %s: %w", command, err)
+	}
+
+	return true, nil
 }
 
 func (s *TestServer) impersonateUser(t *testing.T, username string) []string {
@@ -681,7 +709,7 @@ func TestList(t *testing.T) {
 	Convey("With a started uploading server", t, func() {
 		resetIRODS()
 
-		s, remote := NewUploadingTestServer(t)
+		s, remote := NewUploadingTestServer(t, false)
 		So(s, ShouldNotBeNil)
 
 		Convey("Given an added set defined with files that are uploaded", func() {
@@ -1594,6 +1622,8 @@ func TestBackup(t *testing.T) {
 			return
 		}
 
+		checkICommands(t, "ils")
+
 		reviewDate := time.Now().AddDate(0, 6, 0).Format("2006-01-02")
 		removalDate := time.Now().AddDate(1, 0, 0).Format("2006-01-02")
 
@@ -1727,30 +1757,9 @@ func remoteDBBackupPath() string {
 
 func TestPuts(t *testing.T) {
 	Convey("Given a server configured with a remote hardlink location", t, func() {
-		remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
-		if remotePath == "" {
-			SkipConvey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
+		checkICommands(t, "imeta")
 
-			return
-		}
-
-		schedulerDeployment := os.Getenv("IBACKUP_TEST_SCHEDULER")
-		if schedulerDeployment == "" {
-			SkipConvey("skipping iRODS backup test since IBACKUP_TEST_SCHEDULER not set", func() {})
-
-			return
-		}
-
-		dir := t.TempDir()
-		s := new(TestServer)
-		s.prepareFilePaths(dir)
-		s.prepareConfig()
-
-		s.schedulerDeployment = schedulerDeployment
-		s.remoteHardlinkPrefix = filepath.Join(remotePath, "hardlinks")
-		s.backupFile = filepath.Join(dir, "db.bak")
-
-		s.startServer()
+		s, remotePath := NewUploadingTestServer(t, true)
 
 		path := t.TempDir()
 		transformer := "prefix=" + path + ":" + remotePath
@@ -1778,6 +1787,8 @@ func TestPuts(t *testing.T) {
 		})
 
 		Convey("Given a file containing directory and file paths", func() {
+			dir := t.TempDir()
+
 			dir1 := filepath.Join(path, "path/to/some/dir/")
 			dir2 := filepath.Join(path, "path/to/other/dir/")
 			subdir1 := filepath.Join(dir1, "subdir/")
@@ -2547,7 +2558,9 @@ func confirmFileContents(t *testing.T, file, expectedContents string) {
 
 func TestRemove(t *testing.T) {
 	Convey("Given a server", t, func() {
-		s, remotePath := NewUploadingTestServer(t)
+		checkICommands(t, "imeta")
+
+		s, remotePath := NewUploadingTestServer(t, false)
 
 		path := t.TempDir()
 		transformer := "prefix=" + path + ":" + remotePath
@@ -3167,7 +3180,9 @@ func TestTrashRemove(t *testing.T) {
 	resetIRODS()
 
 	Convey("Given a server", t, func() {
-		s, remotePath := NewUploadingTestServer(t)
+		checkICommands(t, "ils", "imeta", "ichmod")
+
+		s, remotePath := NewUploadingTestServer(t, false)
 
 		path := t.TempDir()
 		transformer := "prefix=" + path + ":" + remotePath
@@ -4012,7 +4027,7 @@ func TestEdit(t *testing.T) {
 	})
 
 	Convey("With a started uploading server", t, func() {
-		s, remotePath := NewUploadingTestServer(t)
+		s, remotePath := NewUploadingTestServer(t, false)
 		So(s, ShouldNotBeNil)
 
 		path := t.TempDir()
