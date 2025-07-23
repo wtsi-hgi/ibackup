@@ -177,13 +177,11 @@ func init() {
 	statusCmd.Flags().BoolVar(&statusShowHidden, "show-hidden", false,
 		"show hidden sets")
 
-	if isAdmin() { //nolint:nestif
+	if isAdmin() {
 		statusCmd.Flags().BoolVar(&statusTrash, "trash", false,
 			"show trash for a single set or for all sets")
-	} else {
-		if err := statusCmd.Flags().MarkHidden("user"); err != nil {
-			die(err)
-		}
+	} else if err := listCmd.Flags().MarkHidden("user"); err != nil {
+		die(err)
 	}
 }
 

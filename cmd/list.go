@@ -120,8 +120,12 @@ IBACKUP_LOCAL_DB_BACKUP_PATH environmental variable.
 			die(err)
 		}
 
+		if lstTrash {
+			lstName = set.TrashPrefix + lstName
+		}
+
 		getSetFromServerAndDisplayPaths(client, lstLocal, lstRemote, lstUploaded,
-			lstShowDeleted, lstSize, lstBase64, lstTrash, lstUser, lstName)
+			lstShowDeleted, lstSize, lstBase64, lstUser, lstName)
 	},
 }
 
@@ -149,13 +153,11 @@ func init() {
 	listCmd.Flags().BoolVar(&lstShowDeleted, "deleted", false,
 		"show only files that don't exist locally")
 
-	if isAdmin() { //nolint:nestif
+	if isAdmin() {
 		listCmd.Flags().BoolVar(&lstTrash, "trash", false,
 			"get paths from the trash version of the set")
-	} else {
-		if err := listCmd.Flags().MarkHidden("user"); err != nil {
-			die(err)
-		}
+	} else if err := listCmd.Flags().MarkHidden("user"); err != nil {
+		die(err)
 	}
 }
 
@@ -249,12 +251,8 @@ func filterForDeleted(entries []*set.Entry) []*set.Entry {
 }
 
 func getSetFromServerAndDisplayPaths(client *server.Client,
-	local, remote, uploaded, deleted, size, encode, trashed bool, user, name string,
+	local, remote, uploaded, deleted, size, encode bool, user, name string,
 ) {
-	if trashed {
-		name = set.TrashPrefix + name
-	}
-
 	sets := getSetByName(client, user, name)
 	if len(sets) == 0 {
 		warn("backup set not found")
