@@ -633,35 +633,34 @@ func (d *DB) RemoveDirEntry(setID string, path string) error {
 // GetFilesInDir returns all file paths from inside the given directory (and all
 // nested inside) for the given set using the db.
 func (d *DBRO) GetFilesInDir(setID string, dirpath string) ([]string, error) {
-	if !strings.HasSuffix(dirpath, "/") {
-		dirpath += "/"
-	}
-
-	paths, err := d.getPathsWithPrefix(setID, discoveredBucket, dirpath)
-	if err != nil {
-		return nil, err
-	}
-
-	morePaths, err := d.getPathsWithPrefix(setID, fileBucket, dirpath)
-
-	return slices.Concat(paths, morePaths), err
+	return d.getPathsInDir(setID, dirpath, discoveredBucket, fileBucket)
 }
 
 // GetFoldersInDir returns all folder paths from inside the given directory (and all
 // nested inside) for the given set using the db.
 func (d *DBRO) GetFoldersInDir(setID string, dirpath string) ([]string, error) {
+	return d.getPathsInDir(setID, dirpath, discoveredFoldersBucket, dirBucket)
+}
+
+// getPathsInDir returns all paths from inside the given directory (and all
+// nested inside) for the given set using the provided buckets in the db.
+func (d *DBRO) getPathsInDir(setID string, dirpath string, buckets ...string) ([]string, error) {
 	if !strings.HasSuffix(dirpath, "/") {
 		dirpath += "/"
 	}
 
-	paths, err := d.getPathsWithPrefix(setID, discoveredFoldersBucket, dirpath)
-	if err != nil {
-		return nil, err
+	var paths []string
+
+	for _, bucket := range buckets {
+		newPaths, err := d.getPathsWithPrefix(setID, bucket, dirpath)
+		if err != nil {
+			return nil, err
+		}
+
+		paths = slices.Concat(paths, newPaths)
 	}
 
-	morePaths, err := d.getPathsWithPrefix(setID, dirBucket, dirpath)
-
-	return slices.Concat(paths, morePaths), err
+	return paths, nil
 }
 
 // getPathsWithPrefix returns all the filepaths for the given set from the given sub
@@ -1500,11 +1499,7 @@ type SetFilter func(*Set) bool //nolint:revive
 
 // SetFilterTrashed is a SetFilter that filters on trashed sets.
 func SetFilterTrashed(set *Set) bool { //nolint:revive
-	return IsTrashSet(set.Name)
-}
-
-func IsTrashSet(name string) bool {
-	return strings.HasPrefix(name, TrashPrefix)
+	return set.IsTrash()
 }
 
 // GetAll returns all the Sets previously added to the database.

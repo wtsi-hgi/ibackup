@@ -166,7 +166,7 @@ func (s *Server) triggerDiscovery(c *gin.Context) {
 		return
 	}
 
-	if set.IsTrashSet(givenSet.Name) {
+	if givenSet.IsTrash() {
 		c.AbortWithError(http.StatusBadRequest, ErrTrashSetName) //nolint:errcheck
 
 		return

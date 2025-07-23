@@ -376,6 +376,11 @@ func (s *Set) Queued() bool {
 	return s.Status == PendingDiscovery || s.Status == PendingUpload
 }
 
+// IsTrash returns true if the set is trashed.
+func (s *Set) IsTrash() bool {
+	return strings.HasPrefix(s.Name, TrashPrefix)
+}
+
 // countsValid tells you if our Uploaded, Replaced, Skipped, Failed and Missing
 // counts are valid (0..NumFiles).
 func (s *Set) countsValid() bool {

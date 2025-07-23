@@ -226,28 +226,12 @@ option to add sets on behalf of other users.
 		files := readPaths(setFiles, fofnLineSplitter(setNull))
 		dirs := readPaths(setDirs, fofnLineSplitter(setNull))
 
-		if setItems != "" {
-			filesAndDirs := readPaths(setItems, fofnLineSplitter(setNull))
-			files, dirs = categorisePaths(filesAndDirs, files, dirs)
+		filesAndDirs, err := getPathsFromInput(setItems, setPath, setNull)
+		if err != nil {
+			die(err)
 		}
 
-		if setPath != "" {
-			setPath, err = filepath.Abs(setPath)
-			if err != nil {
-				die(err)
-			}
-
-			info, errs := os.Stat(setPath)
-			if errs != nil {
-				die(errs)
-			}
-
-			if info.IsDir() {
-				dirs = append(dirs, setPath)
-			} else {
-				files = append(files, setPath)
-			}
-		}
+		files, dirs = categorisePaths(filesAndDirs, files, dirs)
 
 		set, err := checkExistingSet(client, setName, setUser)
 		if err != nil {
@@ -325,6 +309,27 @@ func readPaths(file string, splitter bufio.SplitFunc) []string {
 	return paths
 }
 
+func getPathsFromInput(items, path string, null bool) ([]string, error) {
+	var paths []string
+
+	if items != "" {
+		itemPaths := readPaths(items, fofnLineSplitter(null))
+
+		paths = append(paths, itemPaths...)
+	}
+
+	if path != "" {
+		absPath, err := filepath.Abs(path)
+		if err != nil {
+			return nil, err
+		}
+
+		paths = append(paths, absPath)
+	}
+
+	return paths, nil
+}
+
 // categorisePaths categorises each path in a given slice into either a
 // directory or file and appends the path to the corresponding slice.
 func categorisePaths(filesAndDirs, files, dirs []string) ([]string, []string) {
@@ -349,7 +354,7 @@ func categorisePaths(filesAndDirs, files, dirs []string) ([]string, []string) {
 func pathIsDir(path string) bool {
 	info, err := os.Stat(path)
 	if err != nil {
-		warn("Invalid path: %s", err)
+		dief("Invalid path: %s", err)
 
 		return false
 	}

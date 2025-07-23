@@ -367,7 +367,7 @@ func (s *Server) validatePutSetInputs(c *gin.Context, givenSet *set.Set) (int, e
 		return http.StatusBadRequest, ErrEmptyName
 	}
 
-	if set.IsTrashSet(givenSet.Name) {
+	if givenSet.IsTrash() {
 		return http.StatusBadRequest, ErrTrashSetName
 	}
 
@@ -513,7 +513,7 @@ func (s *Server) removePaths(c *gin.Context) {
 // or dirpaths.
 func (s *Server) validateInputsForRemovals(givenSet *set.Set, paths []string,
 	c *gin.Context) ([]string, []string, int, error) {
-	if !set.IsTrashSet(givenSet.Name) {
+	if !givenSet.IsTrash() {
 		return nil, nil, http.StatusBadRequest, ErrNotTrashed
 	}
 
@@ -638,7 +638,7 @@ func (s *Server) removeExpiredEntriesFromSet(givenSet *set.Set) error {
 // not complete or if any provided path is not in the given set. Also returns
 // the valid paths classified into a slice of filepaths or dirpaths.
 func (s *Server) validateInputsForTrashing(givenSet *set.Set, paths []string) ([]string, []string, error) {
-	if set.IsTrashSet(givenSet.Name) {
+	if givenSet.IsTrash() {
 		return nil, nil, ErrTrashSetName
 	}
 
@@ -1919,7 +1919,7 @@ func (s *Server) retryFailedEntries(c *gin.Context) {
 		return
 	}
 
-	if set.IsTrashSet(got.Name) {
+	if got.IsTrash() {
 		c.AbortWithError(http.StatusBadRequest, ErrTrashSetName) //nolint:errcheck
 
 		return
