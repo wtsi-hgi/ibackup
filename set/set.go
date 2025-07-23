@@ -376,8 +376,8 @@ func (s *Set) Queued() bool {
 	return s.Status == PendingDiscovery || s.Status == PendingUpload
 }
 
-// Trashed returns true if the set is trashed.
-func (s *Set) Trashed() bool {
+// IsTrash returns true if the set is trashed.
+func (s *Set) IsTrash() bool {
 	return strings.HasPrefix(s.Name, TrashPrefix)
 }
 

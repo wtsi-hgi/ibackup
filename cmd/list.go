@@ -129,8 +129,7 @@ func init() {
 	RootCmd.AddCommand(listCmd)
 
 	// flags specific to this sub-command
-	listCmd.Flags().StringVar(&lstUser, "user", currentUsername(),
-		"pretend to be this user (only works if you started the server)")
+	listCmd.Flags().StringVar(&lstUser, "user", currentUsername(), helpTextuser)
 	listCmd.Flags().StringVarP(&lstName, "name", "n", "",
 		"get local and remote paths for the --name'd set")
 	listCmd.Flags().BoolVarP(&lstLocal, "local", "l", false,
@@ -153,6 +152,8 @@ func init() {
 	if isAdmin() {
 		listCmd.Flags().BoolVar(&lstTrashed, "trashed", false,
 			"get paths from the trashed version of the set")
+	} else {
+		listCmd.Flags().MarkHidden("user") //nolint:errcheck
 	}
 }
 
@@ -251,7 +252,7 @@ func getSetFromServerAndDisplayPaths(client *server.Client,
 	if trashed {
 		name = set.TrashPrefix + name
 	}
-	
+
 	sets := getSetByName(client, user, name)
 	if len(sets) == 0 {
 		warn("backup set not found")
