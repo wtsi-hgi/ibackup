@@ -103,20 +103,6 @@ var removeCmd = &cobra.Command{
 
 		setID := getSetID(client, removeUser, removeName)
 
-		// if removeSet {
-		// 	entries, err := client.GetFiles(setID)
-		// 	if err != nil {
-		// 		die(err)
-		// 	}
-
-		// 	for _, entry := range entries {
-		// 		paths = append(paths, entry.Path)
-		// 	}
-		// }
-
-		// pass removeSet to handleRemove, which if that is true, will remove
-		// all the paths as normal, wait server-side for that to complete, then
-		// the server will call our new db.Delete function
 		if !removeSet {
 			err := client.RemoveFilesAndDirs(setID, paths)
 			if err != nil {

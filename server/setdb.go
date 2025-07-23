@@ -544,11 +544,27 @@ func (s *Server) deleteSet(c *gin.Context) {
 		return
 	}
 
-	entries, err := s.db.GetFileEntries(set.ID(), nil)
+	paths, err := s.getSetPaths(set.ID())
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
 		return
+	}
+
+	s.registerDeletionCallback(set.ID())
+
+	err = s.removeToTrashSet(set, paths, nil)
+	if err != nil {
+		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+
+		return
+	}
+}
+
+func (s *Server) getSetPaths(setID string) ([]string, error) {
+	entries, err := s.db.GetFileEntries(setID, nil)
+	if err != nil {
+		return nil, err
 	}
 
 	paths := make([]string, len(entries))
@@ -557,21 +573,16 @@ func (s *Server) deleteSet(c *gin.Context) {
 		paths[i] = entry.Path
 	}
 
-	s.discoveryCoordinator.OnRemovalsDone(set.ID(), func() {
-		err = s.db.Delete(set.ID())
-		if err != nil {
-			c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+	return paths, err
+}
 
-			return
+func (s *Server) registerDeletionCallback(setID string) {
+	s.discoveryCoordinator.OnRemovalsDone(setID, func() {
+		err := s.db.Delete(setID)
+		if err != nil {
+			s.Logger.Print(err.Error())
 		}
 	})
-
-	err = s.removeToTrashSet(set, paths, nil)
-	if err != nil {
-		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
-
-		return
-	}
 }
 
 // validateRemoveInputs returns an error if the provided set is a trashed set,

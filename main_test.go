@@ -2547,7 +2547,7 @@ func confirmFileContents(t *testing.T, file, expectedContents string) {
 }
 
 func TestTrash(t *testing.T) {
-	FocusConvey("Given a server", t, func() {
+	Convey("Given a server", t, func() {
 		s, remotePath := NewUploadingTestServer(t)
 
 		path := t.TempDir()
@@ -2560,7 +2560,7 @@ func TestTrash(t *testing.T) {
 				1, fmt.Sprintf("set with that id does not exist [%s]", invalidSetName))
 		})
 
-		FocusConvey("And an added set with files and folders", func() {
+		Convey("And an added set with files and folders", func() {
 			dir := t.TempDir()
 
 			testDir := filepath.Join(path, "path/to/some/")
@@ -2935,8 +2935,8 @@ func TestTrash(t *testing.T) {
 				})
 
 				Convey("And succeeds if issue is fixed during retries", func() {
-					user, err := user.Current()
-					So(err, ShouldBeNil)
+					user, errc := user.Current()
+					So(errc, ShouldBeNil)
 
 					addFileToIRODS(file1, file1remote)
 					addRemoteMeta(file1remote, transfer.MetaKeySets, setName)
@@ -2969,21 +2969,21 @@ func TestTrash(t *testing.T) {
 
 			Convey("Given a set with a file that failed to upload", func() {
 				dir3 := filepath.Join(path, "dir3")
-				err := os.MkdirAll(dir3, userPerms)
-				So(err, ShouldBeNil)
+				errp := os.MkdirAll(dir3, userPerms)
+				So(errp, ShouldBeNil)
 
 				file := filepath.Join(dir3, "file")
 				internal.CreateTestFile(t, file, "some data1")
 
-				err = os.Chmod(file, 0000)
-				So(err, ShouldBeNil)
+				errp = os.Chmod(file, 0000)
+				So(errp, ShouldBeNil)
 
-				setName := "setWithFailures"
-				s.addSetForTesting(t, setName, transformer, dir3)
-				s.waitForStatus(setName, "\nStatus: complete (but with failures", 10*time.Second)
+				setNameWithFailures := "setWithFailures"
+				s.addSetForTesting(t, setNameWithFailures, transformer, dir3)
+				s.waitForStatus(setNameWithFailures, "\nStatus: complete (but with failures", 10*time.Second)
 
 				Convey("Remove will still work", func() {
-					checkIfRemoveFullyCompleted(setName, file)
+					checkIfRemoveFullyCompleted(setNameWithFailures, file)
 				})
 			})
 
@@ -2991,37 +2991,37 @@ func TestTrash(t *testing.T) {
 				file := filepath.Join(path, "missing-file")
 				internal.CreateTestFileOfLength(t, file, 1)
 
-				setName := "setWithMissingFile"
-				s.addSetForTesting(t, setName, transformer, path)
+				setNameWithMissingFile := "setWithMissingFile"
+				s.addSetForTesting(t, setNameWithMissingFile, transformer, path)
 
-				err := os.Remove(file)
-				So(err, ShouldBeNil)
+				errp := os.Remove(file)
+				So(errp, ShouldBeNil)
 
-				s.waitForStatus(setName, "\nStatus: complete", 10*time.Second)
-				s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"}, 0, file+"\tmissing")
+				s.waitForStatus(setNameWithMissingFile, "\nStatus: complete", 10*time.Second)
+				s.confirmOutputContains(t, []string{"status", "--name", setNameWithMissingFile, "-d"}, 0, file+"\tmissing")
 
 				Convey("Remove will still work", func() {
-					checkIfRemoveFullyCompleted(setName, file)
+					checkIfRemoveFullyCompleted(setNameWithMissingFile, file)
 				})
 			})
 
 			Convey("Given a set with an abnormal file", func() {
 				file := filepath.Join(path, "abnormal-file")
-				err := syscall.Mkfifo(file, userPerms)
-				So(err, ShouldBeNil)
+				errp := syscall.Mkfifo(file, userPerms)
+				So(errp, ShouldBeNil)
 
-				setName := "setWithAbnormalFile"
-				s.addSetForTesting(t, setName, transformer, file)
+				setNameWithAbnormalFile := "setWithAbnormalFile"
+				s.addSetForTesting(t, setNameWithAbnormalFile, transformer, file)
 
-				s.waitForStatus(setName, "\nStatus: complete", 10*time.Second)
-				s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"}, 0, file+"\tabnormal")
+				s.waitForStatus(setNameWithAbnormalFile, "\nStatus: complete", 10*time.Second)
+				s.confirmOutputContains(t, []string{"status", "--name", setNameWithAbnormalFile, "-d"}, 0, file+"\tabnormal")
 
 				Convey("Remove will still work", func() {
-					checkIfRemoveFullyCompleted(setName, file)
+					checkIfRemoveFullyCompleted(setNameWithAbnormalFile, file)
 				})
 			})
 
-			FocusConvey("Remove --set removes all the files from the set "+
+			Convey("Remove --set removes all the files from the set "+
 				"and moves it to the trash set, then deletes the set itself", func() {
 				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--set")
 				So(exitCode, ShouldEqual, 0)
@@ -3044,7 +3044,7 @@ func TestTrash(t *testing.T) {
 						return nil
 					}
 
-					return fmt.Errorf("set %s still exists", setName)
+					return fmt.Errorf("set %s still exists", setName) //nolint:err113
 				}, &retry.UntilNoError{}, &backoff.Backoff{
 					Min:     10 * time.Millisecond,
 					Max:     100 * time.Millisecond,
@@ -3056,7 +3056,7 @@ func TestTrash(t *testing.T) {
 
 				trashSetName := set.TrashPrefix + setName
 
-				FocusConvey("And changes the set metadata in iRODS to a .trash set", func() {
+				Convey("And changes the set metadata in iRODS to a .trash set", func() {
 					sets := getMetaValue(getRemoteMeta(filepath.Join(remotePath, "file2")), transfer.MetaKeySets)
 					setsSlice := strings.Split(sets, ",")
 
