@@ -157,6 +157,7 @@ func init() {
 	RootCmd.AddCommand(statusCmd)
 
 	// flags specific to this sub-command
+	statusCmd.Flags().StringVar(&statusUser, "user", currentUsername(), helpTextuser)
 	statusCmd.Flags().StringVarP(&statusOrder, "order", "o", alphabetic,
 		"show sets in 'alphabetic' or 'recent' order")
 	statusCmd.Flags().StringVarP(&statusName, "name", "n", "",
@@ -175,15 +176,12 @@ func init() {
 		"only show queued sets (added but hasn't started to upload yet)")
 	statusCmd.Flags().BoolVar(&statusShowHidden, "show-hidden", false,
 		"show hidden sets")
-	statusCmd.Flags().StringVar(&statusUser, "user", currentUsername(),
-		"pretend to be this user")
 
 	if isAdmin() {
 		statusCmd.Flags().BoolVar(&statusTrashed, "trashed", false,
 			"show trash for a single set or for all sets")
 	} else {
-		statusUser = currentUsername()
-		statusCmd.Flags().MarkHidden("user")
+		statusCmd.Flags().MarkHidden("user") //nolint:errcheck
 	}
 }
 
@@ -211,7 +209,7 @@ func newStatusFilterer(incomplete, complete, failed, queued, trashed bool) statu
 		}
 	case trashed:
 		return func(given *set.Set) bool {
-			return given.Trashed()
+			return given.IsTrash()
 		}
 	default:
 		return nil
@@ -304,7 +302,7 @@ func getSets(client *server.Client, sf statusFilterer, user string, showHidden, 
 
 	if !showTrashed {
 		sets = filter(func(s *set.Set) bool {
-			return !s.Trashed()
+			return !s.IsTrash()
 		}, sets)
 	}
 
