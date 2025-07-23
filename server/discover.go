@@ -56,6 +56,7 @@ type discoveryCoordinator struct {
 	hasDiscoveryHappened map[string]bool
 	numRunningRemovals   map[string]uint8
 	muMap                map[string]*sync.Mutex
+	onRemovalsDone       map[string][]func()
 }
 
 func newDiscoveryCoordinator() *discoveryCoordinator {
@@ -63,6 +64,7 @@ func newDiscoveryCoordinator() *discoveryCoordinator {
 		hasDiscoveryHappened: make(map[string]bool),
 		numRunningRemovals:   make(map[string]uint8),
 		muMap:                make(map[string]*sync.Mutex),
+		onRemovalsDone:       make(map[string][]func()),
 	}
 }
 
@@ -150,9 +152,23 @@ func (dc *discoveryCoordinator) RemovalDone(sid string) {
 	if dc.numRunningRemovals[sid] == 1 {
 		delete(dc.numRunningRemovals, sid)
 		delete(dc.hasDiscoveryHappened, sid)
+
+		callbacks := dc.onRemovalsDone[sid]
+		delete(dc.onRemovalsDone, sid)
+
+		for _, cb := range callbacks {
+			go cb()
+		}
 	} else {
 		dc.numRunningRemovals[sid]--
 	}
+}
+
+func (dc *discoveryCoordinator) OnRemovalsDone(sid string, fn func()) {
+	dc.Lock()
+	defer dc.Unlock()
+
+	dc.onRemovalsDone[sid] = append(dc.onRemovalsDone[sid], fn)
 }
 
 // triggerDiscovery triggers the file discovery process for the set with the id

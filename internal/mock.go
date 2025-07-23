@@ -57,6 +57,7 @@ type LocalHandler struct {
 	putDur      time.Duration
 	metaFail    string
 	removeSlow  bool
+	addMetaSlow bool
 	mu          sync.RWMutex
 }
 
@@ -153,6 +154,12 @@ func (l *LocalHandler) MakeRemoveSlow() {
 	l.removeSlow = true
 }
 
+// MakeAddMetaSlow will result in any subsequent AddMeta() call taking 1s to
+// complete.
+func (l *LocalHandler) MakeAddMetaSlow() {
+	l.addMetaSlow = true
+}
+
 // Put just copies from Local to Remote. Returns an error if putFail == Remote.
 func (l *LocalHandler) Put(local, remote string) error {
 	if l.putFail == remote {
@@ -238,6 +245,10 @@ func (l *LocalHandler) RemoveMeta(path string, meta map[string]string) error {
 func (l *LocalHandler) AddMeta(path string, meta map[string]string) error {
 	if l.metaFail == path {
 		return errs.PathError{Msg: ErrMockMetaFail, Path: ""}
+	}
+
+	if l.addMetaSlow {
+		time.Sleep(1 * time.Second)
 	}
 
 	l.mu.Lock()

@@ -557,16 +557,18 @@ func (s *Server) deleteSet(c *gin.Context) {
 		paths[i] = entry.Path
 	}
 
+	s.discoveryCoordinator.OnRemovalsDone(set.ID(), func() {
+		err = s.db.Delete(set.ID())
+		if err != nil {
+			c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+
+			return
+		}
+	})
+
 	err = s.removeToTrashSet(set, paths, nil)
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
-
-		return
-	}
-
-	err = s.db.Delete(set.ID())
-	if err != nil {
-		c.AbortWithError(http.StatusInternalServerError, err) //nolint:errcheck
 
 		return
 	}
