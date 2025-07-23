@@ -61,7 +61,7 @@ var statusComplete bool
 var statusFailed bool
 var statusQueued bool
 var statusShowHidden bool
-var statusTrashed bool
+var statusTrash bool
 
 // statusCmd represents the status command.
 var statusCmd = &cobra.Command{
@@ -137,9 +137,9 @@ own. You can specify the user as "all" to see all user's sets.
 			dief("--order can only be 'alphabetic' or 'recent'")
 		}
 
-		sf := newStatusFilterer(statusIncomplete, statusComplete, statusFailed, statusQueued, statusTrashed)
+		sf := newStatusFilterer(statusIncomplete, statusComplete, statusFailed, statusQueued, statusTrash)
 
-		if statusName != "" && sf != nil && !statusTrashed {
+		if statusName != "" && sf != nil && !statusTrash {
 			dief("--name can't be used together with the status filtering options")
 		}
 
@@ -149,7 +149,7 @@ own. You can specify the user as "all" to see all user's sets.
 		}
 
 		status(client, sf, statusUser, statusOrder, statusName, statusDetails,
-			statusRemotePaths, statusShowHidden, statusTrashed)
+			statusRemotePaths, statusShowHidden, statusTrash)
 	},
 }
 
@@ -178,7 +178,7 @@ func init() {
 		"show hidden sets")
 
 	if isAdmin() {
-		statusCmd.Flags().BoolVar(&statusTrashed, "trashed", false,
+		statusCmd.Flags().BoolVar(&statusTrash, "trash", false,
 			"show trash for a single set or for all sets")
 	} else {
 		statusCmd.Flags().MarkHidden("user") //nolint:errcheck
@@ -232,7 +232,7 @@ func checkOnlyOneStatusFlagSet(incomplete, complete, failed, queued, trashed boo
 
 // status does the main job of getting backup set status from the server.
 func status(client *server.Client, sf statusFilterer, user, order, name string,
-	details, remote, showHidden, trashed bool) {
+	details, remote, showHidden, trash bool) {
 	qs, err := client.GetQueueStatus()
 	if err != nil {
 		dief("unable to get server queue status: %s", err)
@@ -243,13 +243,13 @@ func status(client *server.Client, sf statusFilterer, user, order, name string,
 	var sets []*set.Set
 
 	if name != "" {
-		if trashed {
+		if trash {
 			name = set.TrashPrefix + name
 		}
 
 		sets = getSetByName(client, user, name)
 	} else {
-		sets = getSets(client, sf, user, showHidden, trashed)
+		sets = getSets(client, sf, user, showHidden, trash)
 	}
 
 	if len(sets) == 0 {
@@ -290,7 +290,7 @@ func getSetByName(client *server.Client, user, name string) []*set.Set {
 }
 
 // getSets gets all or filtered sets belonging to the given user. Dies on error.
-func getSets(client *server.Client, sf statusFilterer, user string, showHidden, showTrashed bool) []*set.Set {
+func getSets(client *server.Client, sf statusFilterer, user string, showHidden, showTrash bool) []*set.Set {
 	sets, err := client.GetSets(user)
 	if err != nil {
 		die(err)
@@ -300,7 +300,7 @@ func getSets(client *server.Client, sf statusFilterer, user string, showHidden, 
 		sets = filterHidden(sets)
 	}
 
-	if !showTrashed {
+	if !showTrash {
 		sets = filter(func(s *set.Set) bool {
 			return !s.IsTrash()
 		}, sets)
