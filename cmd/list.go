@@ -48,7 +48,7 @@ var (
 	lstSize        bool
 	lstBase64      bool
 	lstShowDeleted bool
-	lstTrashed     bool
+	lstTrash     bool
 )
 
 // listCmd represents the list command.
@@ -121,7 +121,7 @@ IBACKUP_LOCAL_DB_BACKUP_PATH environmental variable.
 		}
 
 		getSetFromServerAndDisplayPaths(client, lstLocal, lstRemote, lstUploaded,
-			lstShowDeleted, lstSize, lstBase64, lstTrashed, lstUser, lstName)
+			lstShowDeleted, lstSize, lstBase64, lstTrash, lstUser, lstName)
 	},
 }
 
@@ -150,8 +150,8 @@ func init() {
 		"show only files that don't exist locally")
 
 	if isAdmin() {
-		listCmd.Flags().BoolVar(&lstTrashed, "trashed", false,
-			"get paths from the trashed version of the set")
+		listCmd.Flags().BoolVar(&lstTrash, "trash", false,
+			"get paths from the trash version of the set")
 	} else {
 		listCmd.Flags().MarkHidden("user") //nolint:errcheck
 	}
