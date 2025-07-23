@@ -48,7 +48,7 @@ var (
 	lstSize        bool
 	lstBase64      bool
 	lstShowDeleted bool
-	lstTrash     bool
+	lstTrash       bool
 )
 
 // listCmd represents the list command.
@@ -149,11 +149,13 @@ func init() {
 	listCmd.Flags().BoolVar(&lstShowDeleted, "deleted", false,
 		"show only files that don't exist locally")
 
-	if isAdmin() {
+	if isAdmin() { //nolint:nestif
 		listCmd.Flags().BoolVar(&lstTrash, "trash", false,
 			"get paths from the trash version of the set")
 	} else {
-		listCmd.Flags().MarkHidden("user") //nolint:errcheck
+		if err := listCmd.Flags().MarkHidden("user"); err != nil {
+			die(err)
+		}
 	}
 }
 
