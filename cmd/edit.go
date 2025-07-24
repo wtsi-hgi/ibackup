@@ -297,30 +297,30 @@ func updateSet(client *server.Client, sid, path string) error {
 
 	if info.IsDir() {
 		err = client.MergeDirs(sid, []string{absPath})
-		if err != nil {
-			return err
-		}
-
-		return client.TriggerDiscovery(sid)
+	} else {
+		err = addFileToSet(sid, absPath, client)
 	}
 
-	return addFileToSet(sid, absPath, client)
+	if err != nil {
+		return err
+	}
+
+	return client.TriggerDiscovery(sid)
 }
 
+// addFileToSet will add the given path to the set if its parent dir is not in
+// the set already.
 func addFileToSet(sid, path string, client *server.Client) error {
 	inSetAlready, err := isParentDirInSet(sid, path, client)
 	if err != nil {
 		return err
 	}
 
-	if !inSetAlready {
-		err = client.MergeFiles(sid, []string{path})
-		if err != nil {
-			return err
-		}
+	if inSetAlready {
+		return nil
 	}
 
-	return client.TriggerDiscovery(sid)
+	return client.MergeFiles(sid, []string{path})
 }
 
 func isParentDirInSet(sid, path string, client *server.Client) (bool, error) {
