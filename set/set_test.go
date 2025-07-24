@@ -538,25 +538,15 @@ func TestSetDB(t *testing.T) {
 						errm = db.mergeEntries(set.ID(), []*Dirent{{Path: "/discovered/removedfile"}}, removedBucket, Pending)
 						So(errm, ShouldBeNil)
 
-						entries, errg := db.getEntries(set.ID(), fileBucket, nil)
-						So(errg, ShouldBeNil)
-						So(len(entries), ShouldBeGreaterThan, 0)
+						bucketList := [...]string{
+							fileBucket, discoveredBucket, dirBucket, discoveredFoldersBucket, removedBucket,
+						}
 
-						entries, errg = db.getEntries(set.ID(), discoveredBucket, nil)
-						So(errg, ShouldBeNil)
-						So(len(entries), ShouldBeGreaterThan, 0)
-
-						entries, errg = db.getEntries(set.ID(), dirBucket, nil)
-						So(errg, ShouldBeNil)
-						So(len(entries), ShouldBeGreaterThan, 0)
-
-						entries, errg = db.getEntries(set.ID(), discoveredFoldersBucket, nil)
-						So(errg, ShouldBeNil)
-						So(len(entries), ShouldBeGreaterThan, 0)
-
-						entries, errg = db.getEntries(set.ID(), removedBucket, nil)
-						So(errg, ShouldBeNil)
-						So(len(entries), ShouldBeGreaterThan, 0)
+						for _, bucketName := range bucketList {
+							entries, errg := db.getEntries(set.ID(), bucketName, nil)
+							So(errg, ShouldBeNil)
+							So(len(entries), ShouldBeGreaterThan, 0)
+						}
 
 						checkUserLookup := func() bool {
 							found := false
@@ -605,25 +595,11 @@ func TestSetDB(t *testing.T) {
 						retrieved = db.GetByID(set.ID())
 						So(retrieved, ShouldBeNil)
 
-						entries, errg = db.getEntries(set.ID(), fileBucket, nil)
-						So(errg, ShouldBeNil)
-						So(entries, ShouldBeNil)
-
-						entries, errg = db.getEntries(set.ID(), discoveredBucket, nil)
-						So(errg, ShouldBeNil)
-						So(entries, ShouldBeNil)
-
-						entries, errg = db.getEntries(set.ID(), dirBucket, nil)
-						So(errg, ShouldBeNil)
-						So(entries, ShouldBeNil)
-
-						entries, errg = db.getEntries(set.ID(), discoveredFoldersBucket, nil)
-						So(errg, ShouldBeNil)
-						So(entries, ShouldBeNil)
-
-						entries, errg = db.getEntries(set.ID(), removedBucket, nil)
-						So(errg, ShouldBeNil)
-						So(entries, ShouldBeNil)
+						for _, bucketName := range bucketList {
+							entries, errg := db.getEntries(set.ID(), bucketName, nil)
+							So(errg, ShouldBeNil)
+							So(entries, ShouldBeNil)
+						}
 
 						So(checkUserLookup(), ShouldBeFalse)
 						So(checkFailedLookup(), ShouldBeFalse)
