@@ -4070,7 +4070,7 @@ func TestEdit(t *testing.T) {
 			Convey("And a set with a file", func() {
 				setName := "testSet"
 
-				s.addSetForTesting(t, setName, transformer, setFile1)
+				s.addSetForTesting(t, setName, transformer, setDir1)
 				s.waitForStatus(setName, "Status: complete", timeout)
 
 				Convey("If there are uploaded files, you cannot change the transformer", func() {
@@ -4128,6 +4128,23 @@ func TestEdit(t *testing.T) {
 					So(output, ShouldContainSubstring, "Num files: 2")
 					So(output, ShouldContainSubstring, setFile1)
 					So(output, ShouldContainSubstring, setFile2+"\tuploaded")
+				})
+
+				Convey("You can add a newly created nested file to this set", func() {
+					setFile3 := filepath.Join(setDir1, "file3")
+					internal.CreateTestFileOfLength(t, setFile3, 1)
+
+					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--add", setFile3)
+					So(exitCode, ShouldEqual, 0)
+
+					s.waitForStatus(setName, "Status: complete", timeout)
+
+					exitCode, output := s.runBinaryWithNoLogging(t, "status", "--name", setName, "-d")
+					So(exitCode, ShouldEqual, 0)
+
+					So(output, ShouldContainSubstring, "Num files: 2")
+					So(output, ShouldContainSubstring, setFile1)
+					So(output, ShouldContainSubstring, setFile3+"\tuploaded")
 				})
 
 				Convey("You can add another file even if the first one no longer exists", func() {

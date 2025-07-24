@@ -284,26 +284,65 @@ func editSet(client *server.Client, givenSet *set.Set, makeWritable bool) error 
 }
 
 // updateSet updates the files in the set.
-func updateSet(client *server.Client, sid string, path string) error {
-	info, err := os.Stat(path)
+func updateSet(client *server.Client, sid, path string) error {
+	absPath, err := filepath.Abs(path)
 	if err != nil {
 		return err
 	}
 
-	absPath, err := filepath.Abs(path)
+	info, err := os.Stat(absPath)
 	if err != nil {
 		return err
 	}
 
 	if info.IsDir() {
 		err = client.MergeDirs(sid, []string{absPath})
-	} else {
-		err = client.MergeFiles(sid, []string{absPath})
+		if err != nil {
+			return err
+		}
+
+		return client.TriggerDiscovery(sid)
 	}
 
+	return addFileToSet(sid, absPath, client)
+}
+
+func addFileToSet(sid, path string, client *server.Client) error {
+	inSetAlready, err := isParentDirInSet(sid, path, client)
 	if err != nil {
 		return err
 	}
 
+	if !inSetAlready {
+		err = client.MergeFiles(sid, []string{path})
+		if err != nil {
+			return err
+		}
+	}
+
 	return client.TriggerDiscovery(sid)
+}
+
+func isParentDirInSet(sid, path string, client *server.Client) (bool, error) {
+	dirEntries, err := client.GetDirs(sid)
+	if err != nil {
+		return false, err
+	}
+
+	dirMap := make(map[string]struct{}, len(dirEntries))
+	for _, dirEntry := range dirEntries {
+		dirMap[dirEntry.Path] = struct{}{}
+	}
+
+	fileDir := filepath.Dir(path)
+
+	for fileDir != filepath.Dir(fileDir) {
+		if _, exists := dirMap[fileDir]; exists {
+			return true, nil
+		}
+
+		fileDir = filepath.Dir(fileDir)
+	}
+
+	return false, nil
 }
