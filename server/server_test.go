@@ -34,6 +34,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -627,6 +628,12 @@ func TestServer(t *testing.T) {
 								So(errg, ShouldBeNil)
 								So(len(entries), ShouldBeGreaterThan, 0)
 
+								sets, errg = s.db.GetByRequester(exampleSet.Requester)
+								So(errg, ShouldBeNil)
+								So(slices.ContainsFunc(sets, func(s *set.Set) bool {
+									return s.Name == set.TrashPrefix+exampleSet.Name
+								}), ShouldBeFalse)
+
 								transformer, errg := exampleSet.MakeTransformer()
 								So(errg, ShouldBeNil)
 
@@ -653,6 +660,12 @@ func TestServer(t *testing.T) {
 
 									return nil
 								}, time.Second*10, time.Millisecond*100)
+
+								sets, errg = s.db.GetByRequester(exampleSet.Requester)
+								So(errg, ShouldBeNil)
+								So(slices.ContainsFunc(sets, func(s *set.Set) bool {
+									return s.Name == set.TrashPrefix+exampleSet.Name
+								}), ShouldBeTrue)
 
 								for _, entry := range entries {
 									remote, errt := transformer(entry.Path)

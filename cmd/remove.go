@@ -73,10 +73,6 @@ var removeCmd = &cobra.Command{
 	Run: func(_ *cobra.Command, _ []string) {
 		ensureURLandCert()
 
-		if removeName == "" {
-			dief("--name is required")
-		}
-
 		if (removeItems == "") == (removePath == "") == !removeSet {
 			dief("exactly one of --items or --path or --set must be provided")
 		}
@@ -104,15 +100,13 @@ var removeCmd = &cobra.Command{
 		setID := getSetID(client, removeUser, removeName)
 
 		if !removeSet {
-			err := client.RemoveFilesAndDirs(setID, paths)
-			if err != nil {
-				die(err)
-			}
+			err = client.RemoveFilesAndDirs(setID, paths)
 		} else {
-			err := client.RemoveSet(setID)
-			if err != nil {
-				die(err)
-			}
+			err = client.RemoveSet(setID)
+		}
+
+		if err != nil {
+			die(err)
 		}
 	},
 }

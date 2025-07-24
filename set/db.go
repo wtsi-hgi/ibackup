@@ -2021,8 +2021,8 @@ func (d *DB) MakeSetWritable(sid string) error {
 	})
 }
 
-// Delete removes the set from the db. NB: does NOT delete its entries and any
-// sub-buckets; you should deal with those first.
+// Delete removes the set from the db. Also it deletes its entries and any
+// sub-buckets.
 func (d *DB) Delete(setID string) error {
 	return d.db.Update(func(tx *bolt.Tx) error {
 		set, bid, b, err := d.getSetByID(tx, setID)

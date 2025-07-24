@@ -539,14 +539,12 @@ func (s *Server) removeToTrashSet(givenSet *set.Set, filePaths []string, dirPath
 func (s *Server) deleteSet(c *gin.Context) {
 	set, ok := s.validateSet(c)
 	if !ok {
-		c.AbortWithStatus(http.StatusBadRequest)
-
 		return
 	}
 
 	paths, err := s.getSetPaths(set.ID())
 	if err != nil {
-		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+		c.AbortWithError(http.StatusInternalServerError, err) //nolint:errcheck
 
 		return
 	}
@@ -555,7 +553,7 @@ func (s *Server) deleteSet(c *gin.Context) {
 
 	err = s.removeToTrashSet(set, paths, nil)
 	if err != nil {
-		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+		c.AbortWithError(http.StatusInternalServerError, err) //nolint:errcheck
 
 		return
 	}
@@ -573,7 +571,7 @@ func (s *Server) getSetPaths(setID string) ([]string, error) {
 		paths[i] = entry.Path
 	}
 
-	return paths, err
+	return paths, nil
 }
 
 func (s *Server) registerDeletionCallback(setID string) {
