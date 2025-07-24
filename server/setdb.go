@@ -478,7 +478,7 @@ func (s *Server) putFiles(c *gin.Context) {
 
 	err = s.db.MergeFileEntries(givenSet.ID(), paths)
 	if err != nil {
-		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+		c.AbortWithError(http.StatusInternalServerError, err) //nolint:errcheck
 
 		return
 	}

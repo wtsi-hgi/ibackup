@@ -4026,16 +4026,25 @@ func TestEdit(t *testing.T) {
 
 					s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 5*time.Second)
 
+					exitCode, output := s.runBinary(t, "status", "--name", set.TrashPrefix+setName, "-d")
+					So(exitCode, ShouldEqual, 0)
+					So(output, ShouldContainSubstring, setFile1)
+
+					internal.CreateTestFile(t, setFile1, "New content")
+
 					exitCode, _ = s.runBinary(t, "edit", "--name", setName, "--add", setFile1)
 					So(exitCode, ShouldEqual, 0)
 
 					s.waitForStatus(setName, "Status: complete", timeout)
 
-					exitCode, output := s.runBinaryWithNoLogging(t, "status", "--name", setName, "-d")
+					exitCode, output = s.runBinaryWithNoLogging(t, "status", "--name", setName, "-d")
 					So(exitCode, ShouldEqual, 0)
-
 					So(output, ShouldContainSubstring, "Num files: 1")
-					So(output, ShouldContainSubstring, setFile1+"\tuploaded")
+					So(output, ShouldContainSubstring, setFile1+"\treplaced")
+
+					exitCode, output = s.runBinary(t, "status", "--name", set.TrashPrefix+setName, "-d")
+					So(exitCode, ShouldEqual, 0)
+					So(output, ShouldNotContainSubstring, setFile1)
 				})
 
 				Convey("You can add another file to this set", func() {
