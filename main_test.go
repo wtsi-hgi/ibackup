@@ -4020,7 +4020,7 @@ func TestEdit(t *testing.T) {
 					So(output, ShouldContainSubstring, setFile1+"\tskipped")
 				})
 
-				SkipConvey("You can add a file back to the set after removing it", func() {
+				Convey("You can add a file back to the set after removing it", func() {
 					exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", setFile1)
 					So(exitCode, ShouldEqual, 0)
 
@@ -4040,7 +4040,7 @@ func TestEdit(t *testing.T) {
 					exitCode, output = s.runBinaryWithNoLogging(t, "status", "--name", setName, "-d")
 					So(exitCode, ShouldEqual, 0)
 					So(output, ShouldContainSubstring, "Num files: 1")
-					So(output, ShouldContainSubstring, setFile1+"\treplaced")
+					So(output, ShouldContainSubstring, setFile1+"\tuploaded")
 
 					exitCode, output = s.runBinary(t, "status", "--name", set.TrashPrefix+setName, "-d")
 					So(exitCode, ShouldEqual, 0)
@@ -4128,7 +4128,7 @@ func TestEdit(t *testing.T) {
 					exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", setDir1)
 					So(exitCode, ShouldEqual, 0)
 
-					s.waitForStatus(setName, "Removal status: 2 / 2 objects removed", 5*time.Second)
+					s.waitForStatus(setName, "Removal status: 2 / 2 objects removed", timeout)
 
 					exitCode, _ = s.runBinary(t, "edit", "--name", setName, "--add", setDir1)
 					So(exitCode, ShouldEqual, 0)
@@ -4137,9 +4137,12 @@ func TestEdit(t *testing.T) {
 
 					exitCode, output := s.runBinaryWithNoLogging(t, "status", "--name", setName, "-d")
 					So(exitCode, ShouldEqual, 0)
-
 					So(output, ShouldContainSubstring, "Num files: 1")
 					So(output, ShouldContainSubstring, setFile1+"\tuploaded")
+
+					exitCode, output = s.runBinaryWithNoLogging(t, "status", "--name", set.TrashPrefix+setName, "-d")
+					So(exitCode, ShouldEqual, 0)
+					So(output, ShouldNotContainSubstring, setFile1)
 				})
 
 				Convey("If you remove a folder and then add it back with children", func() {

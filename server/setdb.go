@@ -476,6 +476,13 @@ func (s *Server) putFiles(c *gin.Context) {
 		return
 	}
 
+	err = s.cleanFromTrash(givenSet, paths)
+	if err != nil {
+		c.AbortWithError(http.StatusInternalServerError, err) //nolint:errcheck
+
+		return
+	}
+
 	err = s.db.MergeFileEntries(givenSet.ID(), paths)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, err) //nolint:errcheck
@@ -484,6 +491,17 @@ func (s *Server) putFiles(c *gin.Context) {
 	}
 
 	c.Status(http.StatusOK)
+}
+
+func (s *Server) cleanFromTrash(givenSet *set.Set, paths []string) error {
+	trashSet := set.BuildTrashSetFromSet(givenSet)
+
+	files, dirs, err := s.db.ValidateFileAndDirPaths(&trashSet, paths)
+	if err != nil && !strings.Contains(err.Error(), set.ErrPathNotInSet) {
+		return err
+	}
+
+	return s.removeFilesAndDirs(&trashSet, files, dirs, set.ToRemove)
 }
 
 func (s *Server) removePaths(c *gin.Context) {
@@ -650,12 +668,12 @@ func (s *Server) validateInputsForTrashing(givenSet *set.Set, paths []string) ([
 }
 
 func (s *Server) removeFilesAndDirs(set *set.Set, filePaths, dirPaths []string, action set.RemoveAction) error {
-	if err := s.db.ResetRemoveSize(set.ID()); err != nil {
-		return err
-	}
-
 	if filePaths == nil && dirPaths == nil {
 		return nil
+	}
+
+	if err := s.db.ResetRemoveSize(set.ID()); err != nil {
+		return err
 	}
 
 	numFilesSubmitted, err := s.submitFilesForRemoval(set, filePaths, action)
@@ -1161,6 +1179,13 @@ func (s *Server) putDirs(c *gin.Context) {
 		return
 	}
 
+	err = s.cleanFromTrash(givenSet, paths)
+	if err != nil {
+		c.AbortWithError(http.StatusInternalServerError, err) //nolint:errcheck
+
+		return
+	}
+
 	entries := make([]*set.Dirent, len(paths))
 
 	for n, path := range paths {
@@ -1172,14 +1197,14 @@ func (s *Server) putDirs(c *gin.Context) {
 
 	err = s.db.MergeDirEntries(givenSet.ID(), entries)
 	if err != nil {
-		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+		c.AbortWithError(http.StatusInternalServerError, err) //nolint:errcheck
 
 		return
 	}
 
 	err = s.updateRemovedBucket(entries, givenSet.ID())
 	if err != nil {
-		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+		c.AbortWithError(http.StatusInternalServerError, err) //nolint:errcheck
 
 		return
 	}
