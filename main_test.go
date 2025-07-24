@@ -3505,11 +3505,18 @@ func TestTrashRemove(t *testing.T) {
 				Convey("If a file fails to be removed, the error is displayed on the file", func() {
 					file1remote := filepath.Join(remotePath, "file1")
 
-					_, err = exec.Command("ichmod", "read", "rk18", file1remote).CombinedOutput()
+					curUser, e := user.Current()
+					So(e, ShouldBeNil)
+
+					if strings.ContainsAny(curUser.Username, ";&|<>") {
+						t.Fatalf("Username contains illegal characters")
+					}
+
+					_, err = exec.Command("ichmod", "read", curUser.Username, file1remote).CombinedOutput() //nolint:gosec
 					So(err, ShouldBeNil)
 
 					defer func() {
-						exec.Command("ichmod", "own", "rk18", file1remote).CombinedOutput() //nolint:errcheck
+						exec.Command("ichmod", "own", curUser.Username, file1remote).CombinedOutput() //nolint:errcheck,gosec
 					}()
 
 					exitCode, _ := s.runBinary(t, "trash", "--remove", "--name", setName, "--path", file1)
@@ -3525,7 +3532,7 @@ func TestTrashRemove(t *testing.T) {
 					})
 
 					Convey("And succeeds if issue is fixed during retries", func() {
-						_, err = exec.Command("ichmod", "own", "rk18", file1remote).CombinedOutput()
+						_, err = exec.Command("ichmod", "own", curUser.Username, file1remote).CombinedOutput() //nolint:gosec
 						So(err, ShouldBeNil)
 
 						s.waitForStatus(trashSetName, "Removal status: 1 / 1 objects removed", 10*time.Second)
@@ -3708,13 +3715,13 @@ func TestEdit(t *testing.T) {
 				})
 
 				Convey("You can't set monitor duration below 1h", func() {
-					exitCode, stderr := s.runBinary(t, "edit", "--name", setName, "--monitor", "30m")
+					exitCode, stderr := s.runBinaryWithNoLogging(t, "edit", "--name", setName, "--monitor", "30m")
 					So(exitCode, ShouldNotEqual, 0)
 					So(stderr, ShouldContainSubstring, "monitor duration must be 1h0m0s or more, not 30m0s")
 				})
 
 				Convey("You can't set monitor duration to an invalid string", func() {
-					exitCode, stderr := s.runBinary(t, "edit", "--name", setName, "--monitor", "foobar")
+					exitCode, stderr := s.runBinaryWithNoLogging(t, "edit", "--name", setName, "--monitor", "foobar")
 					So(exitCode, ShouldNotEqual, 0)
 					So(stderr, ShouldContainSubstring, "invalid monitor duration: time: invalid duration \"foobar\"")
 				})
@@ -4124,7 +4131,7 @@ func TestEdit(t *testing.T) {
 				s.addSetForTesting(t, setName, transformer, setDir1)
 				s.waitForStatus(setName, "Status: complete", timeout)
 
-				SkipConvey("You can add a file back to the set after removing its parent folder", func() {
+				Convey("You can add a file back to the set after removing its parent folder", func() {
 					exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", setDir1)
 					So(exitCode, ShouldEqual, 0)
 

@@ -501,7 +501,11 @@ func (s *Server) cleanFromTrash(givenSet *set.Set, paths []string) error {
 		return err
 	}
 
-	return s.removeFilesAndDirs(&trashSet, files, dirs, set.ToRemove)
+	if len(files)+len(dirs) > 0 {
+		return s.removeFilesAndDirs(&trashSet, files, dirs, set.ToRemove)
+	}
+
+	return nil
 }
 
 func (s *Server) removePaths(c *gin.Context) {
@@ -668,12 +672,12 @@ func (s *Server) validateInputsForTrashing(givenSet *set.Set, paths []string) ([
 }
 
 func (s *Server) removeFilesAndDirs(set *set.Set, filePaths, dirPaths []string, action set.RemoveAction) error {
-	if filePaths == nil && dirPaths == nil {
-		return nil
-	}
-
 	if err := s.db.ResetRemoveSize(set.ID()); err != nil {
 		return err
+	}
+
+	if filePaths == nil && dirPaths == nil {
+		return nil
 	}
 
 	numFilesSubmitted, err := s.submitFilesForRemoval(set, filePaths, action)
