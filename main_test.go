@@ -2547,7 +2547,7 @@ func confirmFileContents(t *testing.T, file, expectedContents string) {
 }
 
 func TestTrash(t *testing.T) {
-	Convey("Given a server", t, func() {
+	FocusConvey("Given a server", t, func() {
 		s, remotePath := NewUploadingTestServer(t)
 
 		path := t.TempDir()
@@ -2560,7 +2560,7 @@ func TestTrash(t *testing.T) {
 				1, fmt.Sprintf("set with that id does not exist [%s]", invalidSetName))
 		})
 
-		Convey("And an added set with files and folders", func() {
+		FocusConvey("And an added set with files and folders", func() {
 			dir := t.TempDir()
 
 			testDir := filepath.Join(path, "path/to/some/")
@@ -3021,7 +3021,7 @@ func TestTrash(t *testing.T) {
 				})
 			})
 
-			Convey("Remove --set removes all the files from the set "+
+			FocusConvey("Remove --set removes all the files from the set "+
 				"and moves it to the trash set, then deletes the set itself", func() {
 				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--set")
 				So(exitCode, ShouldEqual, 0)
@@ -3056,7 +3056,7 @@ func TestTrash(t *testing.T) {
 
 				trashSetName := set.TrashPrefix + setName
 
-				Convey("And changes the set metadata in iRODS to a .trash set", func() {
+				FocusConvey("And changes the set metadata in iRODS to a .trash set", func() {
 					sets := getMetaValue(getRemoteMeta(filepath.Join(remotePath, "file2")), transfer.MetaKeySets)
 					setsSlice := strings.Split(sets, ",")
 
