@@ -336,8 +336,13 @@ func TestSet(t *testing.T) {
 func collectIter[T any](t *testing.T, i *IterErr[T]) []T {
 	t.Helper()
 
-	vs := slices.Collect(i.Iter)
-	So(i.Error, ShouldBeNil)
+	var vs []T
+
+	So(i.ForEach(func(item T) error {
+		vs = append(vs, item)
+
+		return nil
+	}), ShouldBeNil)
 
 	return vs
 }
