@@ -230,7 +230,7 @@ func status(client *server.Client, sf statusFilterer, user, order, name string, 
 	var sets []*set.Set
 
 	if name != "" {
-		sets = getSetByName(client, user, name)
+		sets = append(sets, getSetByName(client, user, name))
 	} else {
 		sets = getSets(client, sf, user, showHidden)
 	}
@@ -263,13 +263,13 @@ func displayQueueStatus(qs *server.QStatus) {
 
 // getSetByName gets a set with the given name owned by the given user. Dies
 // on error.
-func getSetByName(client *server.Client, user, name string) []*set.Set {
+func getSetByName(client *server.Client, user, name string) *set.Set {
 	got, err := client.GetSetByName(user, name)
 	if err != nil {
 		dief("%s [%s]", err, name)
 	}
 
-	return []*set.Set{got}
+	return got
 }
 
 // getSets gets all or filtered sets belonging to the given user. Dies on error.

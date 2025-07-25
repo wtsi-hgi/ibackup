@@ -28,7 +28,7 @@
 package cmd
 
 import (
-	"path/filepath"
+	"errors"
 
 	"github.com/spf13/cobra"
 	"github.com/wtsi-hgi/ibackup/server"
@@ -42,7 +42,9 @@ var removeItems string
 var removePath string
 var removeNull bool
 
-// removeCmd represents the add command.
+var ErrRemoveItems = errors.New("exactly one of --items or --path must be provided")
+
+// removeCmd represents the remove command.
 var removeCmd = &cobra.Command{
 	Use:   "remove",
 	Short: "Remove objects from backed up set",
@@ -68,34 +70,24 @@ var removeCmd = &cobra.Command{
  --path: if you want to remove a single file or directory, provide its absolute
 		 path.
  `,
-	Run: func(_ *cobra.Command, _ []string) {
+	RunE: func(_ *cobra.Command, _ []string) error {
 		ensureURLandCert()
 
 		if (removeItems == "") == (removePath == "") {
-			dief("exactly one of --items or --path must be provided")
+			return ErrRemoveItems
 		}
-
-		var paths []string
 
 		client, err := newServerClient(serverURL, serverCert)
 		if err != nil {
-			die(err)
+			return err
 		}
 
-		if removeItems != "" {
-			paths = append(paths, readPaths(removeItems, fofnLineSplitter(removeNull))...)
+		paths, err := getPathsFromInput(removeItems, removePath, removeNull)
+		if err != nil {
+			return err
 		}
 
-		if removePath != "" {
-			removePath, err = filepath.Abs(removePath)
-			if err != nil {
-				die(err)
-			}
-
-			paths = append(paths, removePath)
-		}
-
-		handleRemove(client, removeUser, removeName, paths)
+		return handleRemove(client, removeUser, removeName, paths)
 	},
 }
 
@@ -103,15 +95,18 @@ func init() {
 	RootCmd.AddCommand(removeCmd)
 
 	// flags specific to this sub-command
-	removeCmd.Flags().StringVar(&removeUser, "user", currentUsername(),
-		"pretend to be this user (only works if you started the server)")
 	removeCmd.Flags().StringVarP(&removeName, "name", "n", "", "remove objects from the set with this name")
-	removeCmd.Flags().StringVarP(&removeItems, "items", "i", "",
-		"path to file with one absolute local directory or file path per line")
+	removeCmd.Flags().StringVarP(&removeItems, "items", "i", "", helpTextItems)
 	removeCmd.Flags().StringVarP(&removePath, "path", "p", "",
 		"path to a single file or directory you wish to remove")
-	removeCmd.Flags().BoolVarP(&removeNull, "null", "0", false,
-		"input paths are terminated by a null character instead of a new line")
+	removeCmd.Flags().BoolVarP(&removeNull, "null", "0", false, helpTextNull)
+	removeCmd.Flags().StringVar(&removeUser, "user", currentUsername(), helpTextuser)
+
+	if !isAdmin() {
+		if err := removeCmd.Flags().MarkHidden("user"); err != nil {
+			die(err)
+		}
+	}
 
 	if err := removeCmd.MarkFlagRequired("name"); err != nil {
 		die(err)
@@ -119,15 +114,12 @@ func init() {
 }
 
 // handleRemove does the main job of sending the set, files and dirs to the server.
-func handleRemove(client *server.Client, user, name string, paths []string) {
-	sets := getSetByName(client, user, name)
+func handleRemove(client *server.Client, user, name string, paths []string) error {
+	givenSet := getSetByName(client, user, name)
 
-	if sets[0].ReadOnly {
-		die(set.Error{Msg: set.ErrSetIsNotWritable})
+	if givenSet.ReadOnly {
+		return set.Error{Msg: set.ErrSetIsNotWritable}
 	}
 
-	err := client.RemoveFilesAndDirs(sets[0].ID(), paths)
-	if err != nil {
-		die(err)
-	}
+	return client.TrashFilesAndDirs(givenSet.ID(), paths)
 }

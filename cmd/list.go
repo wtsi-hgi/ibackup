@@ -169,7 +169,7 @@ func getAllSetsFromDBAndDisplayPaths(dbPath string, local, remote, uploaded, //n
 		return
 	}
 
-	var filter set.FileEntryFilter
+	var filter set.EntryFilter
 
 	if uploaded {
 		filter = set.FileEntryFilterUploaded
@@ -242,12 +242,7 @@ func filterForDeleted(entries []*set.Entry) []*set.Entry {
 func getSetFromServerAndDisplayPaths(client *server.Client,
 	local, remote, uploaded, deleted, size, encode bool, user, name string,
 ) {
-	sets := getSetByName(client, user, name)
-	if len(sets) == 0 {
-		warn("backup set not found")
-
-		return
-	}
+	set := getSetByName(client, user, name)
 
 	getFiles := client.GetFiles
 
@@ -255,12 +250,12 @@ func getSetFromServerAndDisplayPaths(client *server.Client,
 		getFiles = client.GetUploadedFiles
 	}
 
-	entries, err := getFiles(sets[0].ID())
+	entries, err := getFiles(set.ID())
 	if err != nil {
 		die(err)
 	}
 
-	transformer := getSetTransformerIfNeeded(sets[0], !local)
+	transformer := getSetTransformerIfNeeded(set, !local)
 
 	displayEntryPaths(entries, transformer, local, remote, deleted, size, encode)
 }

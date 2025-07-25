@@ -638,3 +638,19 @@ func (c *Client) RetryFailedSetUploads(id string) (int, error) {
 func (c *Client) RemoveFilesAndDirs(setID string, paths []string) error {
 	return c.putThing(EndPointAuthRemovePaths+"/"+setID, stringsToBytes(paths))
 }
+
+// TrashFilesAndDirs trashes the given paths from the backup set with the given
+// ID.
+func (c *Client) TrashFilesAndDirs(setID string, paths []string) error {
+	return c.putThing(EndPointAuthTrashPaths+"/"+setID, stringsToBytes(paths))
+}
+
+// RemoveExpiredEntriesForSet removes expired entries for the given set.
+func (c *Client) RemoveExpiredEntriesForSet(setID string) error {
+	return c.putThing(EndPointAuthRemoveExpired+"/"+setID, nil)
+}
+
+// RemoveAllExpiredEntries removes expired entries from all sets.
+func (c *Client) RemoveAllExpiredEntries() error {
+	return c.putThing(EndPointAuthRemoveExpired, nil)
+}
