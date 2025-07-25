@@ -391,37 +391,37 @@ func TestQueue(t *testing.T) {
 			})
 		})
 
-		Convey("You can get a count of both the total tasks, and the unreserved tasks", func() {
+		Convey("You can get a count of both the total tasks, and the reserved tasks", func() {
 			files := slices.Collect(genFiles(5))
 
 			So(d.AddSetFiles(setA, slices.Values(files)), ShouldBeNil)
 
-			total, unreserved, err := d.CountTasks()
+			total, reserved, err := d.CountTasks()
 			So(err, ShouldBeNil)
 			So(total, ShouldEqual, 5)
-			So(unreserved, ShouldEqual, 5)
+			So(reserved, ShouldEqual, 0)
 
 			tasks := collectIter(t, d.ReserveTasks(pidA, 2))
 			So(len(tasks), ShouldEqual, 2)
 
-			total, unreserved, err = d.CountTasks()
+			total, reserved, err = d.CountTasks()
 			So(err, ShouldBeNil)
 			So(total, ShouldEqual, 5)
-			So(unreserved, ShouldEqual, 3)
+			So(reserved, ShouldEqual, 2)
 
 			So(d.TaskComplete(tasks[0]), ShouldBeNil)
 
-			total, unreserved, err = d.CountTasks()
+			total, reserved, err = d.CountTasks()
 			So(err, ShouldBeNil)
 			So(total, ShouldEqual, 4)
-			So(unreserved, ShouldEqual, 3)
+			So(reserved, ShouldEqual, 1)
 
 			So(d.TaskFailed(tasks[1]), ShouldBeNil)
 
-			total, unreserved, err = d.CountTasks()
+			total, reserved, err = d.CountTasks()
 			So(err, ShouldBeNil)
 			So(total, ShouldEqual, 4)
-			So(unreserved, ShouldEqual, 4)
+			So(reserved, ShouldEqual, 0)
 		})
 
 		Convey("You can get a count of the registered task handling processes", func() {

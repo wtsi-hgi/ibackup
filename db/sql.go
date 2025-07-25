@@ -107,13 +107,12 @@ var (
 			"`attempts` INTEGER DEFAULT 0, " +
 			"`lastAttempt` DATETIME DEFAULT '0001-01-01 00:00:00', " +
 			"`lastError` TEXT, " +
-			"`heldBy` INTEGER DEFAULT 0, " +
+			"`heldBy` INTEGER, " +
 			"`skipped` BOOLEAN DEFAULT FALSE, " +
 			"UNIQUE(`localFileID`), " +
-			"/*! INDEX(`heldBy`), */" +
+			"FOREIGN KEY(`heldBy`) REFERENCES `processes`(`id`) ON DELETE SET NULL, " +
 			"FOREIGN KEY(`localFileID`) REFERENCES `localFiles`(`id`) ON DELETE RESTRICT" +
 			");",
-		"/*! -- */ CREATE INDEX IF NOT EXISTS `queueHeldBy` ON `queue`(`heldBy`);\n/*! */",
 		"CREATE TRIGGER IF NOT EXISTS `delete_remoteFile_when_not_refd` AFTER DELETE ON `localFiles` FOR EACH ROW BEGIN " +
 			"DELETE FROM `remoteFiles` WHERE NOT (" +
 			"SELECT COUNT(1) FROM `localFiles` WHERE `localFiles`.`remoteFileID` = `OLD`.`remoteFileID`" +
@@ -285,9 +284,6 @@ var (
 			"SELECT `remoteFileID` FROM /*! `remoteFilesInfo` -- */`localFiles` WHERE `id`= `OLD`.`localFileID`\n/*! */);" +
 			"/*! END IF; */" +
 			"/*! END IF; */" +
-			"END;",
-		"CREATE TRIGGER IF NOT EXISTS `relase_held_jobs` AFTER DELETE ON `processes` FOR EACH ROW BEGIN " +
-			"UPDATE `queue` SET `heldBy` = 0 WHERE `heldBy` = `OLD`.`id`;" +
 			"END;",
 	}
 )
@@ -505,7 +501,7 @@ const (
 		"SELECT `remoteFileID` FROM `localFiles` WHERE `localPathHash` = " + virtStart +
 		"(SELECT `localPath` FROM `localFiles` WHERE `id` = ? LIMIT 1)" +
 		virtEnd + ");"
-	getTasksCounts  = "SELECT COUNT(1), COUNT(`heldBy` AND NULL) FROM `queue`;"
+	getTasksCounts  = "SELECT COUNT(1), COUNT(`heldBy`) FROM `queue`;"
 	getProcessCount = "SELECT COUNT(1) FROM `processes`;"
 
 	updateSetWarning             = "UPDATE `sets` SET `warning` = ? WHERE `id` = ?;"
@@ -523,12 +519,11 @@ const (
 		"`uploaded` = 0, `uploadedSize` = 0, `replaced` = 0, `skipped` = 0 " +
 		"WHERE `id` = ?;"
 	updateDiscoverySet = "UPDATE `toDiscover` SET `setID` = ? WHERE `setID` = ?;"
-	updateQueueReset   = "UPDATE `queue` set `heldBy` = 0;"
 	updateQueuedFailed = "UPDATE `queue` SET " +
 		"`attempts` = `attempts` + 1, " +
 		"`lastError` = ?, " +
 		"`lastAttempt` = " + now + ", " +
-		"`heldBy` = 0 " +
+		"`heldBy` = NULL " +
 		"WHERE `id` = ? AND `heldBy` = ? AND `type` = ?;"
 	updateQueuedSkipped = "UPDATE `queue` SET " +
 		"`skipped` = TRUE WHERE `id` = ? AND `heldBy` = ? AND `type` = ?;"
@@ -543,7 +538,7 @@ const (
 		"SELECT `remoteFiles`.`hardlinkID` FROM `queue` " +
 		"JOIN `localFiles` ON `queue`.`localFileID` = `localFiles`.`id` " +
 		"JOIN `remoteFiles` ON `localFiles`.`remoteFileID` = `remoteFiles`.`id` " +
-		"WHERE `queue`.`heldBy` != 0" +
+		"WHERE `queue`.`heldBy` IS NOT NULL" +
 		"), " +
 		"`available` AS (" +
 		"SELECT `queue`.`id` FROM `queue` " +
@@ -554,7 +549,7 @@ const (
 		") " +
 		"UPDATE `queue` SET `heldBy` = ? WHERE " +
 		"`queue`.`id` IN (SELECT `id` FROM `available`) AND `queue`.`attempts` < " + string('0'+maxRetries) + ";"
-	releaseQueuedTask = "UPDATE `queue` SET `heldBy` = 0 WHERE `heldBy` = ?;"
+	releaseQueuedTask = "UPDATE `queue` SET `heldBy` = NULL WHERE `heldBy` = ?;"
 
 	queueRetry = "WITH " +
 		"`setFiles` AS (" +

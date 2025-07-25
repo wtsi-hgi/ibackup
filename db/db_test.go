@@ -61,7 +61,7 @@ func dropTables(uri string) error {
 		return err
 	}
 
-	for _, table := range [...]string{"processes", "queue", "localFiles",
+	for _, table := range [...]string{"queue", "processes", "localFiles",
 		"remoteFiles", "hardlinks", "toDiscover",
 		"sets", "transformers"} {
 		if _, err = db.Exec("DROP TABLE IF EXISTS `" + table + "`;"); err != nil {
