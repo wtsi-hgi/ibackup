@@ -185,6 +185,7 @@ func TestSet(t *testing.T) {
 				So(err, ShouldBeNil)
 				So(setB.NumFiles, ShouldEqual, 5)
 				So(setB.SizeTotal, ShouldEqual, 500)
+				So(setB.SizeUploaded, ShouldEqual, 0)
 				So(setB.Symlinks, ShouldEqual, 1)
 				So(setB.Hardlinks, ShouldEqual, 1)
 				So(setB.Missing, ShouldEqual, 5)
@@ -196,10 +197,71 @@ func TestSet(t *testing.T) {
 				So(d.AddSetFiles(setC, genFiles(2)), ShouldBeNil)
 				So(d.clearQueue(), ShouldBeNil)
 
-				setB, err = d.GetSet("my2ndSet", "me")
+				setB, err = d.GetSet(setB.Name, setB.Requester)
 				So(err, ShouldBeNil)
 				So(setB.Missing, ShouldEqual, 3)
 				So(setB.Orphaned, ShouldEqual, 2)
+				So(setB.SizeUploaded, ShouldEqual, 0)
+
+				setC, err = d.GetSet(setC.Name, setC.Requester)
+				So(err, ShouldBeNil)
+				So(setC.SizeUploaded, ShouldEqual, 200)
+
+				So(d.SetSetDicoveryCompleted(setC), ShouldBeNil)
+				So(d.AddSetFiles(setC, genFiles(12)), ShouldBeNil)
+
+				setC, err = d.GetSet(setC.Name, setC.Requester)
+				So(err, ShouldBeNil)
+				So(setC.SizeUploaded, ShouldEqual, 0)
+
+				process, err := d.RegisterProcess()
+				So(err, ShouldBeNil)
+
+				So(d.TaskComplete(collectIter(t, d.ReserveTasks(process, 1))[0]), ShouldBeNil)
+
+				setC, err = d.GetSet(setC.Name, setC.Requester)
+				So(err, ShouldBeNil)
+				So(setC.Uploaded, ShouldEqual, 1)
+				So(setC.Replaced, ShouldEqual, 0)
+				So(setC.Skipped, ShouldEqual, 0)
+				So(setC.SizeUploaded, ShouldEqual, 100)
+
+				So(d.TaskSkipped(collectIter(t, d.ReserveTasks(process, 1))[0]), ShouldBeNil)
+
+				setC, err = d.GetSet(setC.Name, setC.Requester)
+				So(err, ShouldBeNil)
+				So(setC.Uploaded, ShouldEqual, 1)
+				So(setC.Replaced, ShouldEqual, 0)
+				So(setC.Skipped, ShouldEqual, 1)
+				So(setC.SizeUploaded, ShouldEqual, 100)
+
+				So(d.clearQueue(), ShouldBeNil)
+
+				setC, err = d.GetSet(setC.Name, setC.Requester)
+				So(err, ShouldBeNil)
+				So(setC.Uploaded, ShouldEqual, 11)
+				So(setC.Replaced, ShouldEqual, 0)
+				So(setC.Skipped, ShouldEqual, 1)
+				So(setC.SizeUploaded, ShouldEqual, 1100)
+
+				filePrefix -= 2
+
+				So(d.AddSetFiles(setC, genFiles(1)), ShouldBeNil)
+
+				filePrefix++
+
+				setC, err = d.GetSet(setC.Name, setC.Requester)
+				So(err, ShouldBeNil)
+				So(setC.Replaced, ShouldEqual, 0)
+
+				So(d.clearQueue(), ShouldBeNil)
+
+				setC, err = d.GetSet(setC.Name, setC.Requester)
+				So(err, ShouldBeNil)
+				So(setC.Uploaded, ShouldEqual, 10)
+				So(setC.Replaced, ShouldEqual, 1)
+				So(setC.Skipped, ShouldEqual, 1)
+				So(setC.SizeUploaded, ShouldEqual, 1200)
 			})
 		})
 	})

@@ -270,6 +270,7 @@ func scanSet(scanner scanner) (*Set, error) { //nolint:funlen
 		&set.Abnormal,
 		&set.Hardlinks,
 		&set.Symlinks,
+		&set.SizeUploaded,
 		&set.StartedDiscovery,
 		&set.LastDiscovery,
 		&set.Status,
@@ -320,7 +321,7 @@ func (d *DB) SetSetDicoveryStarted(set *Set) error {
 		return ErrReadonlySet
 	}
 
-	return d.exec(updateDiscoveryStarted, set.id, set.StartedDiscovery)
+	return d.exec(updateDiscoveryStarted, set.id)
 }
 
 func (d *DB) SetSetDicoveryCompleted(set *Set) error {
@@ -328,12 +329,7 @@ func (d *DB) SetSetDicoveryCompleted(set *Set) error {
 		return ErrReadonlySet
 	}
 
-	return d.exec(updateDiscoveryStarted,
-		set.LastCompleted,
-		set.LastCompletedCount,
-		set.LastCompletedSize,
-		set.id,
-	)
+	return d.exec(updateLastDiscoveryCompleted, set.id)
 }
 
 func (d *DB) DeleteSet(set *Set) error {

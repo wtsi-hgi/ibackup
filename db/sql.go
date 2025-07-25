@@ -29,6 +29,7 @@ var (
 			"`abnormal` INTEGER DEFAULT 0, " +
 			"`hardlinks` INTEGER DEFAULT 0, " +
 			"`symlinks` INTEGER DEFAULT 0, " +
+			"`uploadedSize` INTEGER DEFAULT 0, " +
 			"`startedDiscovery` DATETIME DEFAULT '0001-01-01 00:00:00', " +
 			"`lastDiscovery` DATETIME DEFAULT '0001-01-01 00:00:00', " +
 			"`lastCompleted` DATETIME DEFAULT '0001-01-01 00:00:00', " +
@@ -204,15 +205,30 @@ var (
 			"/*! END IF; */" +
 			"END;",
 		"CREATE TRIGGER IF NOT EXISTS `update_file_after_queued_action` AFTER DELETE ON `queue` FOR EACH ROW BEGIN " +
+			"/*! IF `OLD`.`lastError` IS NOT NULL THEN */" +
 			"UPDATE `sets` SET " +
 			"`failed` = `failed` - 1 " +
 			"WHERE `OLD`.`lastError` IS NOT NULL AND " +
 			"`sets`.`id` = (SELECT `setID` FROM `localFiles` WHERE `localFiles`.`id` = `OLD`.`localfileID`);" +
+			"/*! END IF; */" +
 			"/*! IF `OLD`.`type` = " + string('0'+QueueRemoval) + " THEN */" +
 			"DELETE FROM `localFiles` WHERE " +
 			"`OLD`.`type` = " + string('0'+QueueRemoval) + " AND `localFiles`.`id` = `OLD`.`localFileID`;" +
 			"/*! END IF; */" +
 			"/*! IF `OLD`.`type` = " + string('0'+QueueUpload) + " THEN */ " +
+			"UPDATE `sets` " +
+			"/*! JOIN `localFiles` ON `OLD`.`localFileID` = `localFiles`.`id` JOIN " +
+			"`remoteFiles` ON `localFiles`.`remoteFileID` = `remoteFiles`.`id` JOIN " +
+			"`hardlinks` ON `remoteFiles`.`hardlinkID` = `hardlinks`.`id` */ " +
+			"SET " +
+			"`uploadedSize` = `uploadedSize` + `hardlinks`.`size` " +
+			"/*! -- */ FROM `localFiles` JOIN " +
+			"`remoteFiles` ON `localFiles`.`remoteFileID` = `remoteFiles`.`id` JOIN " +
+			"`hardlinks` ON `remoteFiles`.`hardlinkID` = `hardlinks`.`id`\n/*! */" +
+			"WHERE `OLD`.`type` = " + string('0'+QueueUpload) + " AND " +
+			"`OLD`.`skipped` = FALSE AND " +
+			"`sets`.`id` = `localFiles`.`setID` AND " +
+			"`localFiles`.`id` = `OLD`.`localFileID`;" +
 			"UPDATE `localFiles` /*! JOIN `remoteFiles` ON `localFiles`.`remoteFileID` = `remoteFiles`.`id` */ SET " +
 			"/*! `localFiles`.*/`lastUploaded` = IF(`OLD`.`skipped`, `localFiles`.`lastUploaded`, " + now + "), " +
 			"`status` = IF(`OLD`.`skipped`, " + string('0'+StatusSkipped) + ", " +
@@ -385,6 +401,7 @@ const (
 		"`sets`.`abnormal`," +
 		"`sets`.`hardlinks`," +
 		"`sets`.`symlinks`," +
+		"`sets`.`uploadedSize`," +
 		"`sets`.`startedDiscovery`, " +
 		"`sets`.`lastDiscovery`, " +
 		"`sets`.`status`, " +
@@ -460,12 +477,13 @@ const (
 	updateSetModifiable          = "UPDATE `sets` SET `modifiable` = TRUE WHERE `id` = ?;"
 	updateSetHidden              = "UPDATE `sets` SET `hidden` = TRUE WHERE `id` = ?;"
 	updateSetVisible             = "UPDATE `sets` SET `hidden` = FALSE WHERE `id` = ?;"
-	updateDiscoveryStarted       = "UPDATE `sets` SET `startedDiscovery` = ? WHERE `id` = ?;"
+	updateDiscoveryStarted       = "UPDATE `sets` SET `startedDiscovery` = " + now + " WHERE `id` = ?;"
 	updateLastDiscoveryCompleted = "UPDATE `sets` SET " +
 		"`lastDiscovery` = `startedDiscovery`, " +
-		"`lastCompleted` = ?, " +
-		"`lastCompletedCount` = ?, " +
-		"`lastCompletedSize` = ? " +
+		"`lastCompleted` = " + now + ", " +
+		"`lastCompletedCount` = `numFiles`, " +
+		"`lastCompletedSize` = `sizeFiles`, " +
+		"`uploaded` = 0, `uploadedSize` = 0, `replaced` = 0, `skipped` = 0 " +
 		"WHERE `id` = ?;"
 	updateDiscoverySet = "UPDATE `toDiscover` SET `setID` = ? WHERE `setID` = ?;"
 	updateQueueReset   = "UPDATE `queue` set `heldBy` = 0;"
