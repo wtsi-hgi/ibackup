@@ -159,6 +159,8 @@ func TestSet(t *testing.T) {
 				So(setB.Symlinks, ShouldEqual, 3)
 				So(setB.Hardlinks, ShouldEqual, 1)
 				So(setB.Abnormal, ShouldEqual, 4)
+				So(setB.Missing, ShouldEqual, 0)
+				So(setB.Orphaned, ShouldEqual, 0)
 
 				files := d.GetSetFiles(setB)
 				So(d.RemoveSetFiles(files.Iter), ShouldBeNil)
@@ -176,6 +178,28 @@ func TestSet(t *testing.T) {
 				So(setB.SizeTotal, ShouldEqual, 0)
 				So(setB.Symlinks, ShouldEqual, 0)
 				So(setB.Hardlinks, ShouldEqual, 0)
+
+				So(d.AddSetFiles(setB, setFileStatus(genFiles(5), StatusMissing)), ShouldBeNil)
+
+				setB, err = d.GetSet("my2ndSet", "me")
+				So(err, ShouldBeNil)
+				So(setB.NumFiles, ShouldEqual, 5)
+				So(setB.SizeTotal, ShouldEqual, 500)
+				So(setB.Symlinks, ShouldEqual, 1)
+				So(setB.Hardlinks, ShouldEqual, 1)
+				So(setB.Missing, ShouldEqual, 5)
+				So(setB.Orphaned, ShouldEqual, 0)
+
+				filePrefix--
+
+				So(d.CreateSet(setC), ShouldBeNil)
+				So(d.AddSetFiles(setC, genFiles(2)), ShouldBeNil)
+				So(d.clearQueue(), ShouldBeNil)
+
+				setB, err = d.GetSet("my2ndSet", "me")
+				So(err, ShouldBeNil)
+				So(setB.Missing, ShouldEqual, 3)
+				So(setB.Orphaned, ShouldEqual, 2)
 			})
 		})
 	})
@@ -194,6 +218,18 @@ func setFileType(files iter.Seq[*File], ftype FileType) iter.Seq[*File] {
 	return func(yield func(*File) bool) {
 		for file := range files {
 			file.Type = ftype
+
+			if !yield(file) {
+				break
+			}
+		}
+	}
+}
+
+func setFileStatus(files iter.Seq[*File], status FileStatus) iter.Seq[*File] {
+	return func(yield func(*File) bool) {
+		for file := range files {
+			file.Status = status
 
 			if !yield(file) {
 				break

@@ -478,5 +478,5 @@ func genFiles(n int) iter.Seq[*File] {
 }
 
 func (d *DB) clearQueue() error {
-	return d.exec(deleteAllQueued)
+	return d.exec("DELETE FROM `queue`;")
 }

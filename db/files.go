@@ -83,7 +83,7 @@ func (d *DB) addSetFile(tx *sql.Tx, setID int64, file *File) error {
 		return err
 	}
 
-	file.id, err = d.execReturningRowID(tx, createSetFile, file.LocalPath, setID, rfID, file.Status)
+	file.id, err = d.execReturningRowID(tx, createSetFile, file.LocalPath, setID, rfID, file.Status, rfID)
 
 	return err
 }

@@ -117,6 +117,11 @@ type Set struct {
 	// read-only value.
 	Missing uint64
 
+	// Orphaned provides the total number of set and discovered files in this
+	// set that no longer exist locally since the last discovery but do exist
+	// remotely. This is a read-only value.
+	Orphaned uint64
+
 	// Abnormal provides the total number of set files in this set that were
 	// neither regular files, nor Symlinks (ie. they were fifo or socket files
 	// etc).
@@ -261,6 +266,7 @@ func scanSet(scanner scanner) (*Set, error) { //nolint:funlen
 		&set.Skipped,
 		&set.Failed,
 		&set.Missing,
+		&set.Orphaned,
 		&set.Abnormal,
 		&set.Hardlinks,
 		&set.Symlinks,

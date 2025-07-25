@@ -44,7 +44,7 @@ func TestFiles(t *testing.T) {
 			},
 		}
 
-		Convey("You can add and retrieve files in that set", func() {
+		FocusConvey("You can add and retrieve files in that set", func() {
 			var err error
 
 			So(d.AddSetFiles(setA, slices.Values(files)), ShouldBeNil)

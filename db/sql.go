@@ -25,6 +25,7 @@ var (
 			"`skipped` INTEGER DEFAULT 0, " +
 			"`failed` INTEGER DEFAULT 0, " +
 			"`missing` INTEGER DEFAULT 0, " +
+			"`orphaned` INTEGER DEFAULT 0, " +
 			"`abnormal` INTEGER DEFAULT 0, " +
 			"`hardlinks` INTEGER DEFAULT 0, " +
 			"`symlinks` INTEGER DEFAULT 0, " +
@@ -127,7 +128,8 @@ var (
 			"`symlinks` = `symlinks` + /*! (SELECT `isSymlink` FROM `hardlinkInfo`) -- */ `hardlinkInfo`.`isSymlink`\n/*! */," +
 			"`hardlinks` = `hardlinks` +/*!(SELECT `isHardlink` FROM `hardlinkInfo`) -- */`hardlinkInfo`.`isHardlink`\n/*! */," +
 			"`abnormal` = `abnormal` + /*! (SELECT `isAbnormal` FROM `hardlinkInfo`) -- */`hardlinkInfo`.`isAbnormal`\n/*! */," +
-			"`missing` = `missing` + IF(`NEW`.`status` = " + string('0'+StatusMissing) + ", 1, 0) " +
+			"`missing` = `missing` + IF(`NEW`.`status` = " + string('0'+StatusMissing) + ", 1, 0), " +
+			"`orphaned` = `orphaned` + IF(`NEW`.`status` = " + string('0'+StatusOrphaned) + ", 1, 0) " +
 			"/*! -- */ " +
 			"FROM (" + newHardlinkInfo + ") AS `hardlinkInfo`" +
 			"\n/*! */ " +
@@ -146,7 +148,8 @@ var (
 			"`symlinks` = `symlinks` - /*! (SELECT `isSymlink` FROM `hardlinkInfo`) -- */ `hardlinkInfo`.`isSymlink`\n/*! */," +
 			"`hardlinks` = `hardlinks` -/*!(SELECT `isHardlink` FROM `hardlinkInfo`) -- */`hardlinkInfo`.`isHardlink`\n/*! */," +
 			"`abnormal` = `abnormal` - /*! (SELECT `isAbnormal` FROM `hardlinkInfo`) -- */`hardlinkInfo`.`isAbnormal`\n/*! */," +
-			"`missing` = `missing` - IF(`OLD`.`status` = " + string('0'+StatusMissing) + ", 1, 0) " +
+			"`missing` = `missing` - IF(`OLD`.`status` = " + string('0'+StatusMissing) + ", 1, 0), " +
+			"`orphaned` = `orphaned` - IF(`OLD`.`status` = " + string('0'+StatusOrphaned) + ", 1, 0) " +
 			"/*! -- */ " +
 			"FROM (" + oldHardlinkInfo + ") AS `hardlinkInfo`" +
 			"\n/*! */ " +
@@ -160,11 +163,11 @@ var (
 			"END;",
 		"CREATE TRIGGER IF NOT EXISTS `upload_local_file` AFTER INSERT ON `localFiles` FOR EACH ROW BEGIN " +
 			"INSERT INTO `queue` (`localFileID`, `type`) SELECT `NEW`.`id`, " + string('0'+QueueUpload) + " " +
-			"WHERE `NEW`.`status` != " + string('0'+StatusMissing) + " " +
+			"WHERE `NEW`.`status` NOT IN (" + string('0'+StatusMissing) + ", " + string('0'+StatusOrphaned) + ") " +
 			onConflictUpdate + "`type` = " + string('0'+QueueUpload) + ", `attempts` = 0, " +
 			"`lastAttempt` = '0001-01-01 00:00:00', `lastError` = '';" +
 			"END;",
-		"CREATE TRIGGER IF NOT EXISTS `reupload_local_file` AFTER UPDATE ON `localFiles` FOR EACH ROW BEGIN " +
+		"CREATE TRIGGER IF NOT EXISTS `update_set_counts_on_file_update` AFTER UPDATE ON `localFiles` FOR EACH ROW BEGIN " +
 			"UPDATE `sets` SET " +
 			"`uploaded` = `uploaded` + IF(`OLD`.`status` = " + string('0'+StatusUploaded) + ", " +
 			"IF(`NEW`.`status` = " + string('0'+StatusUploaded) + ", 0, -1), " +
@@ -174,28 +177,42 @@ var (
 			"IF(`NEW`.`status` = " + string('0'+StatusReplaced) + ", 1, 0)), " +
 			"`skipped` = `skipped` + IF(`OLD`.`status` = " + string('0'+StatusSkipped) + ", " +
 			"IF(`NEW`.`status` = " + string('0'+StatusSkipped) + ", 0, -1), " +
-			"IF(`NEW`.`status` = " + string('0'+StatusSkipped) + ", 1, 0)) " +
+			"IF(`NEW`.`status` = " + string('0'+StatusSkipped) + ", 1, 0)), " +
+			"`missing` = `missing` + IF(`OLD`.`status` = " + string('0'+StatusMissing) + ", " +
+			"IF(`NEW`.`status` = " + string('0'+StatusMissing) + ", 0, -1), " +
+			"IF(`NEW`.`status` = " + string('0'+StatusMissing) + ", 1, 0)), " +
+			"`orphaned` = `orphaned` + IF(`OLD`.`status` = " + string('0'+StatusOrphaned) + ", " +
+			"IF(`NEW`.`status` = " + string('0'+StatusOrphaned) + ", 0, -1), " +
+			"IF(`NEW`.`status` = " + string('0'+StatusOrphaned) + ", 1, 0)) " +
 			"WHERE `sets`.`id` = `NEW`.`setID`;" +
+			"END;",
+		"CREATE TRIGGER IF NOT EXISTS `reupload_local_file` AFTER UPDATE ON `localFiles` FOR EACH ROW BEGIN " +
 			"/*! IF `OLD`.`updated` != `NEW`.`updated` THEN */" +
 			"INSERT INTO `queue` (`localFileID`, `type`) SELECT `NEW`.`id`, " + string('0'+QueueUpload) + " " +
-			"WHERE `OLD`.`updated` != `NEW`.`updated` AND `NEW`.`status` != " + string('0'+StatusMissing) + " " +
+			"WHERE `OLD`.`updated` != `NEW`.`updated` AND " +
+			"`NEW`.`status` NOT IN (" + string('0'+StatusMissing) + ", " + string('0'+StatusOrphaned) + ") " +
 			onConflictUpdate + "`type` = " + string('0'+QueueUpload) + ", `attempts` = 0, " +
 			"`lastAttempt` = '0001-01-01 00:00:00', `lastError` = '';" +
 			"/*! END IF; */" +
 			"END;",
 		"CREATE TRIGGER IF NOT EXISTS `update_set_after_queued_error` AFTER UPDATE ON `queue` FOR EACH ROW BEGIN " +
+			"/*! IF `OLD`.`lastError` IS NULL AND `NEW`.`lastError` IS NOT NULL THEN */" +
 			"UPDATE `sets` SET " +
 			"`failed` = `failed` + 1 " +
 			"WHERE `OLD`.`lastError` IS NULL AND `NEW`.`lastError` IS NOT NULL AND " +
 			"`sets`.`id` = (SELECT `setID` FROM `localFiles` WHERE `localFiles`.`id` = `OLD`.`localfileID`);" +
+			"/*! END IF; */" +
 			"END;",
 		"CREATE TRIGGER IF NOT EXISTS `update_file_after_queued_action` AFTER DELETE ON `queue` FOR EACH ROW BEGIN " +
 			"UPDATE `sets` SET " +
 			"`failed` = `failed` - 1 " +
 			"WHERE `OLD`.`lastError` IS NOT NULL AND " +
 			"`sets`.`id` = (SELECT `setID` FROM `localFiles` WHERE `localFiles`.`id` = `OLD`.`localfileID`);" +
+			"/*! IF `OLD`.`type` = " + string('0'+QueueRemoval) + " THEN */" +
 			"DELETE FROM `localFiles` WHERE " +
 			"`OLD`.`type` = " + string('0'+QueueRemoval) + " AND `localFiles`.`id` = `OLD`.`localFileID`;" +
+			"/*! END IF; */" +
+			"/*! IF `OLD`.`type` = " + string('0'+QueueUpload) + " THEN */ " +
 			"UPDATE `localFiles` /*! JOIN `remoteFiles` ON `localFiles`.`remoteFileID` = `remoteFiles`.`id` */ SET " +
 			"/*! `localFiles`.*/`lastUploaded` = IF(`OLD`.`skipped`, `localFiles`.`lastUploaded`, " + now + "), " +
 			"`status` = IF(`OLD`.`skipped`, " + string('0'+StatusSkipped) + ", " +
@@ -204,10 +221,20 @@ var (
 			"/*! -- */ FROM `localFiles` AS `local` JOIN `remoteFiles` ON `local`.`remoteFileID` = `remoteFiles`.`id`\n/*! */" +
 			"WHERE `OLD`.`type` = " + string('0'+QueueUpload) + " AND " +
 			"`localFiles`.`id` = `OLD`.`localFileID` AND " +
-			"`localFiles`.`status` != " + string('0'+StatusMissing) + ";" +
+			"`localFiles`.`status` NOT IN (" + string('0'+StatusMissing) + ", " + string('0'+StatusOrphaned) + ");" +
+			"/*! IF `OLD`.`skipped` = FALSE THEN */ " +
 			"UPDATE `remoteFiles` SET `lastUploaded` = " + now + " " +
 			"WHERE `OLD`.`skipped` = FALSE AND `OLD`.`type` = " + string('0'+QueueUpload) + " AND " +
-			"`remoteFiles`.`id` IN (SELECT `remoteFileID` from `localFiles` WHERE `localFiles`.`id` = `OLD`.`localFileID`);" +
+			"`remoteFiles`.`id` = (SELECT `remoteFileID` from `localFiles` WHERE `localFiles`.`id` = `OLD`.`localFileID`);" +
+			"/*! WITH `remoteFilesInfo` AS (SELECT `remoteFileID` FROM `localFiles` WHERE `id` = `OLD`.`localFileID`) */" +
+			"UPDATE `localFiles` SET " +
+			"`status` = " + string('0'+StatusOrphaned) + " " +
+			"WHERE `OLD`.`type` = " + string('0'+QueueUpload) + " AND " +
+			"`status` = " + string('0'+StatusMissing) + " AND " +
+			"`remoteFileID` = (" +
+			"SELECT `remoteFileID` FROM /*! `remoteFilesInfo` -- */`localFiles` WHERE `id`= `OLD`.`localFileID`\n/*! */);" +
+			"/*! END IF; */" +
+			"/*! END IF; */" +
 			"END;",
 		"CREATE TRIGGER IF NOT EXISTS `relase_held_jobs` AFTER DELETE ON `processes` FOR EACH ROW BEGIN " +
 			"UPDATE `queue` SET `heldBy` = 0 WHERE `heldBy` = `OLD`.`id`;" +
@@ -220,7 +247,7 @@ const (
 	virtEnd         = "/*!, 0))*/"
 	virtPosition    = virtStart + "?" + virtEnd
 	hashColumnStart = "/*! VARBINARY(32) -- */ TEXT\n/* */GENERATED ALWAYS AS (" + virtStart
-	hashColumnEnd   = virtEnd + ") VIRTUAL"
+	hashColumnEnd   = virtEnd + ") VIRTUAL /*! INVISIBLE */"
 	now             = "/*! NOW() -- */ DATETIME('now')\n/*! */"
 	setRef          = "/*! AS `EXCLUDED` */ "
 	updateCol       = "/*! `updated` BOOLEAN DEFAULT FALSE, */"
@@ -230,11 +257,16 @@ const (
 		"IF(`hardlinks`.`fileType` = " + string('0'+Symlink) + ", 1, 0) AS `isSymlink`, " +
 		"IF(`hardlinks`.`fileType` = " + string('0'+Abnormal) + ", 1, 0) AS `isAbnormal`, " +
 		"IF(`hardlinks`.`fileType` = " + string('0'+Regular) + " AND " +
-		"`remoteFiles`.`remotePath` != `hardlinks`.`firstRemote`, 1, 0) AS `isHardlink` " +
+		"`remoteFiles`.`remotePath` != `hardlinks`.`firstRemote`, 1, 0) AS `isHardlink`, " +
+		"IF(`remoteFiles`.`lastUploaded` = '0001-01-01 00:00:00', 0, 1) AS `isUploaded` " +
 		"FROM `hardlinks` JOIN `remoteFiles` ON `remoteFiles`.`hardlinkID` = `hardlinks`.`id` " +
 		"WHERE `remoteFiles`.`id` = "
 	newHardlinkInfo = hardlinkInfo + "`NEW`.`remoteFileID`"
 	oldHardlinkInfo = hardlinkInfo + "`OLD`.`remoteFileID`"
+	localFileCounts = "SELECT " +
+		"COUNT(1) AS `count`, " +
+		"`setID` " +
+		"FROM `localFiles` WHERE `remoteFileID` = `NEW`.`id` GROUP BY `setID`"
 
 	onConflictUpdate   = "ON /*! DUPLICATE KEY UPDATE -- */ CONFLICT DO UPDATE SET\n/*! */ "
 	onConflictReturnID = "ON /*! DUPLICATE KEY UPDATE `id` = LAST_INSERT_ID(`id`); -- */ " +
@@ -299,18 +331,23 @@ const (
 		"`setID`, " +
 		"`remoteFileID`, " +
 		"`status`" +
-		") VALUES (?, ?, ?, IF(? IN (" + string('0'+StatusMissing) + ", " + string('0'+StatusOrphaned) + "), " +
-		string('0'+StatusMissing) + ", 0)) " + setRef +
+		") VALUES (?, ?, ?, " +
+		"IF(? IN (" + string('0'+StatusMissing) + ", " + string('0'+StatusOrphaned) + "), " +
+		"IF((SELECT `lastUploaded` FROM `remoteFiles` WHERE `id` = ?) != '0001-01-01 00:00:00', " +
+		string('0'+StatusOrphaned) + ", " +
+		string('0'+StatusMissing) + "), " +
+		"0)" +
+		") " + setRef +
 		onConflictUpdate +
-		"`status` = IF(`EXCLUDED`.`status` IN (" + string('0'+StatusMissing) + ", " + string('0'+StatusOrphaned) + "), " +
-		string('0'+StatusMissing) + ", 0), " +
+		"`status` = `EXCLUDED`.`status`, " +
 		"`updated` = NOT `updated`, " + returnOrSetID
 	createTrashFile = "INSERT INTO `localFiles` (" +
 		"`localPath`, " +
 		"`setID`, " +
-		"`remoteFileID`" +
+		"`remoteFileID`, " +
+		"`status`" +
 		") " +
-		"SELECT `localPath`, ?, `remoteFileID` FROM `localFiles` AS `oldFile` WHERE `oldFile`.`id` = ? " +
+		"SELECT `localPath`, ?, `remoteFileID`, `status` FROM `localFiles` AS `oldFile` WHERE `oldFile`.`id` = ? " +
 		"ON /*! DUPLICATE KEY UPDATE `localFiles`.`id` = LAST_INSERT_ID(`localFiles`.`id`); -- */ " +
 		"CONFLICT DO UPDATE SET `id` = `localFiles`.`id` RETURNING `localFiles`.`id`;\n/*! */"
 	createDiscover = "INSERT INTO `toDiscover` (" +
@@ -344,6 +381,7 @@ const (
 		"`sets`.`skipped`," +
 		"`sets`.`failed`," +
 		"`sets`.`missing`," +
+		"`sets`.`orphaned`," +
 		"`sets`.`abnormal`," +
 		"`sets`.`hardlinks`," +
 		"`sets`.`symlinks`," +
@@ -371,9 +409,7 @@ const (
 		"`localFiles`.`id`, " +
 		"`localFiles`.`localPath`, " +
 		"`localFiles`.`lastUploaded`, " +
-		"IF(`localFiles`.`status` = " + string('0'+StatusMissing) +
-		" AND `remoteFiles`.`lastUploaded` != '0001-01-01 00:00:00', " +
-		string('0'+StatusOrphaned) + ", `localFiles`.`status`), " +
+		"`localFiles`.`status`, " +
 		"`remoteFiles`.`remotePath`, " +
 		"`hardlinks`.`size`, " +
 		"`hardlinks`.`fileType`, " +
@@ -480,7 +516,6 @@ const (
 	deleteSet            = "DELETE FROM `sets` WHERE `id` = ?;"
 	deleteDiscover       = "DELETE FROM `toDiscover` WHERE `setID` = ? AND `path` = ?;"
 	deleteQueued         = "DELETE FROM `queue` WHERE `id` = ? AND `heldBy` = ? AND `type` = ?;"
-	deleteAllQueued      = "DELETE FROM `queue`;"
 	deleteStaleProcesses = "DELETE FROM `processes` WHERE `lastPing` < /*! NOW() - INTERVAL 10 MINUTE -- */ " +
 		"DATETIME('now', '-10 MINUTES')\n/*! */;"
 )
