@@ -144,7 +144,7 @@ func TestSet(t *testing.T) {
 				})
 			})
 
-			Convey("Adding files to a set updates the set file numbers", func() {
+			Convey("Adding/Removing files to a set updates the set file numbers", func() {
 				setB, err := d.GetSet("my2ndSet", "me")
 				So(err, ShouldBeNil)
 				So(setB.NumFiles, ShouldEqual, 0)
@@ -208,7 +208,10 @@ func TestSet(t *testing.T) {
 				So(setC.SizeUploaded, ShouldEqual, 200)
 
 				So(d.SetSetDicoveryCompleted(setC), ShouldBeNil)
-				So(d.AddSetFiles(setC, genFiles(12)), ShouldBeNil)
+
+				cFiles := slices.Collect(genFiles(12))
+
+				So(d.AddSetFiles(setC, slices.Values(cFiles)), ShouldBeNil)
 
 				setC, err = d.GetSet(setC.Name, setC.Requester)
 				So(err, ShouldBeNil)
@@ -262,6 +265,69 @@ func TestSet(t *testing.T) {
 				So(setC.Replaced, ShouldEqual, 1)
 				So(setC.Skipped, ShouldEqual, 1)
 				So(setC.SizeUploaded, ShouldEqual, 1200)
+				So(setC.NumObjectsRemoved, ShouldEqual, 0)
+				So(setC.NumObjectsToBeRemoved, ShouldEqual, 0)
+				So(setC.SizeRemoved, ShouldEqual, 0)
+
+				So(d.RemoveSetFiles(slices.Values(cFiles[:1])), ShouldBeNil)
+
+				setC, err = d.GetSet(setC.Name, setC.Requester)
+				So(err, ShouldBeNil)
+				So(setC.NumObjectsRemoved, ShouldEqual, 0)
+				So(setC.NumObjectsToBeRemoved, ShouldEqual, 1)
+				So(setC.SizeRemoved, ShouldEqual, 0)
+				So(d.clearQueue(), ShouldBeNil)
+
+				setC, err = d.GetSet(setC.Name, setC.Requester)
+				So(err, ShouldBeNil)
+				So(setC.NumObjectsRemoved, ShouldEqual, 1)
+				So(setC.NumObjectsToBeRemoved, ShouldEqual, 1)
+				So(setC.SizeRemoved, ShouldEqual, 100)
+
+				So(d.RemoveSetFiles(slices.Values(cFiles[1:7])), ShouldBeNil)
+
+				setC, err = d.GetSet(setC.Name, setC.Requester)
+				So(err, ShouldBeNil)
+				So(setC.NumObjectsRemoved, ShouldEqual, 0)
+				So(setC.NumObjectsToBeRemoved, ShouldEqual, 6)
+				So(setC.SizeRemoved, ShouldEqual, 0)
+
+				for n := range 3 {
+					var task *Task
+
+					for {
+						if task = collectIter(t, d.ReserveTasks(process, 1))[0]; task.Type == QueueRemoval {
+							break
+						}
+
+						So(d.TaskComplete(task), ShouldBeNil)
+					}
+
+					So(task.Type, ShouldEqual, QueueRemoval)
+					So(d.TaskComplete(task), ShouldBeNil)
+
+					setC, err = d.GetSet(setC.Name, setC.Requester)
+					So(err, ShouldBeNil)
+					So(setC.NumObjectsRemoved, ShouldEqual, n+1)
+					So(setC.NumObjectsToBeRemoved, ShouldEqual, 6)
+					So(setC.SizeRemoved, ShouldEqual, (n+1)*100)
+				}
+
+				So(d.AddSetFiles(setC, slices.Values(cFiles[4:5])), ShouldBeNil)
+
+				setC, err = d.GetSet(setC.Name, setC.Requester)
+				So(err, ShouldBeNil)
+				So(setC.NumObjectsRemoved, ShouldEqual, 3)
+				So(setC.NumObjectsToBeRemoved, ShouldEqual, 5)
+				So(setC.SizeRemoved, ShouldEqual, 300)
+
+				So(d.RemoveSetFiles(slices.Values(cFiles[4:5])), ShouldBeNil)
+
+				setC, err = d.GetSet(setC.Name, setC.Requester)
+				So(err, ShouldBeNil)
+				So(setC.NumObjectsRemoved, ShouldEqual, 3)
+				So(setC.NumObjectsToBeRemoved, ShouldEqual, 6)
+				So(setC.SizeRemoved, ShouldEqual, 300)
 			})
 		})
 	})

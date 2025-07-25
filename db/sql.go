@@ -30,6 +30,9 @@ var (
 			"`hardlinks` INTEGER DEFAULT 0, " +
 			"`symlinks` INTEGER DEFAULT 0, " +
 			"`uploadedSize` INTEGER DEFAULT 0, " +
+			"`removed` INTEGER DEFAULT 0, " +
+			"`removedSize` INTEGER DEFAULT 0, " +
+			"`toRemove` INTEGER DEFAULT 0, " +
 			"`startedDiscovery` DATETIME DEFAULT '0001-01-01 00:00:00', " +
 			"`lastDiscovery` DATETIME DEFAULT '0001-01-01 00:00:00', " +
 			"`lastCompleted` DATETIME DEFAULT '0001-01-01 00:00:00', " +
@@ -196,11 +199,33 @@ var (
 			"`lastAttempt` = '0001-01-01 00:00:00', `lastError` = '';" +
 			"/*! END IF; */" +
 			"END;",
+		"CREATE TRIGGER IF NOT EXISTS `update_set_toRemove_when_queued` AFTER INSERT ON `queue` FOR EACH ROW BEGIN " +
+			"/*! IF `NEW`.`type` = " + string('0'+QueueRemoval) + " THEN */" +
+			"UPDATE `sets` SET " +
+			"`removedSize` = IF(`toRemove` = `removed`, 0, `removedSize`), " +
+			"`toRemove` = 1 + IF(`toRemove` = `removed`, 0, `toRemove`), " +
+			"`removed` = IF(`toRemove` = `removed`, 0, `removed`) " +
+			"WHERE `NEW`.`type` = " + string('0'+QueueRemoval) + " AND " +
+			"`id` = (SELECT `setID` FROM `localFiles` WHERE `id` = `NEW`.`localFileID`);" +
+			"/*! END IF; */" +
+			"END;",
 		"CREATE TRIGGER IF NOT EXISTS `update_set_after_queued_error` AFTER UPDATE ON `queue` FOR EACH ROW BEGIN " +
 			"/*! IF `OLD`.`lastError` IS NULL AND `NEW`.`lastError` IS NOT NULL THEN */" +
 			"UPDATE `sets` SET " +
 			"`failed` = `failed` + 1 " +
 			"WHERE `OLD`.`lastError` IS NULL AND `NEW`.`lastError` IS NOT NULL AND " +
+			"`sets`.`id` = (SELECT `setID` FROM `localFiles` WHERE `localFiles`.`id` = `OLD`.`localfileID`);" +
+			"/*! END IF; */" +
+			"/*!IF `OLD`.`type` = " + string('0'+QueueRemoval) + " AND `NEW`.`type` != " + string('0'+QueueRemoval) + " THEN*/" +
+			"UPDATE `sets` SET " +
+			"`toRemove` = `toRemove` - 1 " +
+			"WHERE `OLD`.`type` = " + string('0'+QueueRemoval) + " AND `NEW`.`type` != " + string('0'+QueueRemoval) + " AND " +
+			"`sets`.`id` = (SELECT `setID` FROM `localFiles` WHERE `localFiles`.`id` = `OLD`.`localfileID`);" +
+			"/*! END IF; */" +
+			"/*!IF `OLD`.`type` != " + string('0'+QueueRemoval) + " AND `NEW`.`type` = " + string('0'+QueueRemoval) + " THEN*/" +
+			"UPDATE `sets` SET " +
+			"`toRemove` = `toRemove` + 1 " +
+			"WHERE `OLD`.`type` != " + string('0'+QueueRemoval) + " AND `NEW`.`type` = " + string('0'+QueueRemoval) + " AND " +
 			"`sets`.`id` = (SELECT `setID` FROM `localFiles` WHERE `localFiles`.`id` = `OLD`.`localfileID`);" +
 			"/*! END IF; */" +
 			"END;",
@@ -212,6 +237,15 @@ var (
 			"`sets`.`id` = (SELECT `setID` FROM `localFiles` WHERE `localFiles`.`id` = `OLD`.`localfileID`);" +
 			"/*! END IF; */" +
 			"/*! IF `OLD`.`type` = " + string('0'+QueueRemoval) + " THEN */" +
+			"UPDATE `sets` SET " +
+			"`removed` = `removed` + 1, " +
+			"`removedSize` = `removedSize` + (" +
+			"SELECT `hardlinks`.`size` FROM `localFiles` JOIN " +
+			"`remoteFiles` ON `localFiles`.`remoteFileID` = `remoteFiles`.`id` JOIN " +
+			"`hardlinks` ON `remoteFiles`.`hardlinkID` = `hardlinks`.`id` WHERE " +
+			"`localFiles`.`id` = `OLD`.`localFileID`) " +
+			"WHERE `OLD`.`type` = " + string('0'+QueueRemoval) + " AND " +
+			"`id` = (SELECT `setID` FROM `localFiles` WHERE `id` = `OLD`.`localFileID`);" +
 			"DELETE FROM `localFiles` WHERE " +
 			"`OLD`.`type` = " + string('0'+QueueRemoval) + " AND `localFiles`.`id` = `OLD`.`localFileID`;" +
 			"/*! END IF; */" +
@@ -402,6 +436,9 @@ const (
 		"`sets`.`hardlinks`," +
 		"`sets`.`symlinks`," +
 		"`sets`.`uploadedSize`," +
+		"`sets`.`removed`," +
+		"`sets`.`removedSize`," +
+		"`sets`.`toRemove`," +
 		"`sets`.`startedDiscovery`, " +
 		"`sets`.`lastDiscovery`, " +
 		"`sets`.`status`, " +
