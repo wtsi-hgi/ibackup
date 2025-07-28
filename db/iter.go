@@ -51,10 +51,6 @@ func iterErr[T any](err error) *IterErr[T] {
 }
 
 func (i *IterErr[T]) ForEach(fn func(T) error) error {
-	if i.Error != nil {
-		return i.Error
-	}
-
 	for item := range i.Iter {
 		if err := fn(item); err != nil {
 			return err
