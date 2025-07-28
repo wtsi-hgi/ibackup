@@ -39,11 +39,11 @@ import (
 // options for this cmd.
 var (
 	lstName        string
-	lstUser        string
+	lstUser        = currentUsername()
 	lstLocal       bool
 	lstRemote      bool
 	lstAll         bool
-	lstDB          string
+	lstDB          = os.Getenv("IBACKUP_LOCAL_DB_BACKUP_PATH")
 	lstUploaded    bool
 	lstSize        bool
 	lstBase64      bool
@@ -91,35 +91,24 @@ all successfully uploaded paths for all sets for all users by specifying both
 the ibackup database, defaulting to the value of the
 IBACKUP_LOCAL_DB_BACKUP_PATH environmental variable.
 `,
-	Run: func(_ *cobra.Command, _ []string) {
-		if lstAll && lstDB == "" {
-			dief("--all requires --database to be set")
+	PreRun: func(cmd *cobra.Command, _ []string) {
+		if all, _ := cmd.Flags().GetBool("all"); !all { //nolint:errcheck
+			must(cmd.MarkFlagRequired("name"))
+		} else {
+			must(cmd.MarkFlagRequired("database"))
 		}
-
-		if lstAll && lstName != "" {
-			dief("--name and --all are mutually exclusive")
-		}
-
-		if lstName == "" && !lstAll {
-			dief("--name must be set")
-		}
-
-		if lstLocal && lstRemote {
-			dief("--local and --remote are mutually exclusive")
-		}
-
+	},
+	RunE: func(_ *cobra.Command, _ []string) error {
 		if lstAll {
-			getAllSetsFromDBAndDisplayPaths(lstDB, lstLocal, lstRemote, lstUploaded, lstShowDeleted, lstSize, lstBase64)
-
-			return
+			return getAllSetsFromDBAndDisplayPaths(lstDB, lstLocal, lstRemote, lstUploaded, lstShowDeleted, lstSize, lstBase64)
 		}
 
 		client, err := newServerClient(serverURL, serverCert)
 		if err != nil {
-			die(err)
+			return err
 		}
 
-		getSetFromServerAndDisplayPaths(client, lstLocal, lstRemote, lstUploaded,
+		return getSetFromServerAndDisplayPaths(client, lstLocal, lstRemote, lstUploaded,
 			lstShowDeleted, lstSize, lstBase64, lstUser, lstName)
 	},
 }
@@ -128,9 +117,9 @@ func init() {
 	RootCmd.AddCommand(listCmd)
 
 	// flags specific to this sub-command
-	listCmd.Flags().StringVar(&lstUser, "user", currentUsername(),
+	listCmd.Flags().Var(&stringFlag{&lstUser}, "user",
 		"pretend to be this user (only works if you started the server)")
-	listCmd.Flags().StringVarP(&lstName, "name", "n", "",
+	listCmd.Flags().VarP(&stringFlag{&lstName}, "name", "n",
 		"get local and remote paths for the --name'd set")
 	listCmd.Flags().BoolVarP(&lstLocal, "local", "l", false,
 		"only get local paths for the --name'd set")
@@ -138,8 +127,7 @@ func init() {
 		"only get remote paths for the --name'd set")
 	listCmd.Flags().BoolVarP(&lstAll, "all", "a", false,
 		"get all paths for all sets for all users, requires --database and only works if you started the server")
-	listCmd.Flags().StringVarP(&lstDB, "database", "d",
-		os.Getenv("IBACKUP_LOCAL_DB_BACKUP_PATH"), "path to ibackup database file, required with --all")
+	listCmd.Flags().VarP(&stringFlag{&lstDB}, "database", "d", "path to ibackup database file, required with --all")
 	listCmd.Flags().BoolVarP(&lstUploaded, "uploaded", "u", false,
 		"only show paths that were successfully uploaded")
 	listCmd.Flags().BoolVarP(&lstSize, "size", "s", false,
@@ -148,25 +136,28 @@ func init() {
 		"output paths base64 encoded")
 	listCmd.Flags().BoolVar(&lstShowDeleted, "deleted", false,
 		"show only files that don't exist locally")
+
+	listCmd.MarkFlagsMutuallyExclusive("all", "name")
+	listCmd.MarkFlagsMutuallyExclusive("local", "remote")
 }
 
-func getAllSetsFromDBAndDisplayPaths(dbPath string, local, remote, uploaded, //nolint:funlen
+func getAllSetsFromDBAndDisplayPaths(dbPath string, local, remote, uploaded, //nolint:funlen,gocognit,gocyclo
 	deleted, size, encode bool,
-) {
+) error {
 	db, err := set.NewRO(dbPath)
 	if err != nil {
-		die(err)
+		return err
 	}
 
 	sets, err := db.GetAll()
 	if err != nil {
-		die(err)
+		return err
 	}
 
 	if len(sets) == 0 {
 		warn("no backup sets")
 
-		return
+		return nil
 	}
 
 	var filter set.FileEntryFilter
@@ -180,26 +171,33 @@ func getAllSetsFromDBAndDisplayPaths(dbPath string, local, remote, uploaded, //n
 
 		entries, err := db.GetFileEntries(s.ID(), filter)
 		if err != nil {
-			die(err)
+			return err
 		}
 
-		transformer := getSetTransformerIfNeeded(s, !local)
+		transformer, err := getSetTransformerIfNeeded(s, !local)
+		if err != nil {
+			return err
+		}
 
-		displayEntryPaths(entries, transformer, local, remote, deleted, size, encode)
+		if err = displayEntryPaths(entries, transformer, local, remote, deleted, size, encode); err != nil {
+			return err
+		}
 	}
+
+	return nil
 }
 
-func getSetTransformerIfNeeded(s *set.Set, needed bool) transfer.PathTransformer {
+func getSetTransformerIfNeeded(s *set.Set, needed bool) (transfer.PathTransformer, error) {
 	if !needed {
-		return nil
+		return nil, nil //nolint:nilnil
 	}
 
 	return getSetTransformer(s)
 }
 
-func displayEntryPaths(entries []*set.Entry, transformer transfer.PathTransformer,
+func displayEntryPaths(entries []*set.Entry, transformer transfer.PathTransformer, //nolint:funlen
 	local, remote, deleted, size, encode bool,
-) {
+) error {
 	if deleted {
 		entries = filterForDeleted(entries)
 	}
@@ -219,12 +217,18 @@ func displayEntryPaths(entries []*set.Entry, transformer transfer.PathTransforme
 	format += "\n"
 
 	for _, entry := range entries {
-		remotePath := getRemotePath(entry.Path, transformer, !local)
+		remotePath, err := getRemotePath(entry.Path, transformer, !local)
+		if err != nil {
+			return err
+		}
+
 		localPath := encodeBase64(entry.Path, encode)
 		remotePath = encodeBase64(remotePath, encode)
 
 		cliPrintf(format, localPath, remotePath, entry.Size)
 	}
+
+	return nil
 }
 
 func filterForDeleted(entries []*set.Entry) []*set.Entry {
@@ -241,12 +245,14 @@ func filterForDeleted(entries []*set.Entry) []*set.Entry {
 
 func getSetFromServerAndDisplayPaths(client *server.Client,
 	local, remote, uploaded, deleted, size, encode bool, user, name string,
-) {
-	sets := getSetByName(client, user, name)
-	if len(sets) == 0 {
+) error {
+	sets, err := getSetByName(client, user, name)
+	if err != nil {
+		return err
+	} else if len(sets) == 0 {
 		warn("backup set not found")
 
-		return
+		return nil
 	}
 
 	getFiles := client.GetFiles
@@ -257,10 +263,13 @@ func getSetFromServerAndDisplayPaths(client *server.Client,
 
 	entries, err := getFiles(sets[0].ID())
 	if err != nil {
-		die(err)
+		return err
 	}
 
-	transformer := getSetTransformerIfNeeded(sets[0], !local)
+	transformer, err := getSetTransformerIfNeeded(sets[0], !local)
+	if err != nil {
+		return err
+	}
 
-	displayEntryPaths(entries, transformer, local, remote, deleted, size, encode)
+	return displayEntryPaths(entries, transformer, local, remote, deleted, size, encode)
 }

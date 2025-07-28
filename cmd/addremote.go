@@ -83,31 +83,19 @@ Specific to the "humgen" and "gengen" groups at the Sanger Institute, you can
 use the --humgen or --gengen options to do a more complex transformation from
 local "lustre" paths to the "canonical" iRODS path in the humgen zone.
 `,
-	Run: func(cmd *cobra.Command, args []string) {
-		if arHumgen && arPrefix != "" {
-			dief("--humgen and --prefix are mutually exclusive")
-		}
-
-		if arGengen && arPrefix != "" {
-			dief("--gengen and --prefix are mutually exclusive")
-		}
-
-		if arHumgen && arGengen {
-			dief("--humgen and --gengen are mutually exclusive")
-		}
-
-		if !arHumgen && !arGengen && arPrefix == "" {
-			dief("you must specify one of --prefix, --humgen or --gengen")
-		}
-
+	RunE: func(_ *cobra.Command, _ []string) error {
 		pt := transfer.HumgenTransformer
 		if arPrefix != "" {
-			pt = makePrefixTransformer(arPrefix)
+			var err error
+
+			if pt, err = makePrefixTransformer(arPrefix); err != nil {
+				return err
+			}
 		} else if arGengen {
 			pt = transfer.GengenTransformer
 		}
 
-		transformARFile(arFile, pt, fofnLineSplitter(arNull), arBase64)
+		return transformARFile(arFile, pt, fofnLineSplitter(arNull), arBase64)
 	},
 }
 
@@ -127,19 +115,26 @@ func init() {
 		"input paths are terminated by a null character instead of a new line")
 	addremoteCmd.Flags().BoolVarP(&arBase64, "base64", "b", false,
 		"output paths base64 encoded")
+
+	addremoteCmd.MarkFlagsMutuallyExclusive("humgen", "prefix", "gengen")
+	addremoteCmd.MarkFlagsOneRequired("humgen", "prefix", "gengen")
 }
 
-func makePrefixTransformer(def string) transfer.PathTransformer {
+func makePrefixTransformer(def string) (transfer.PathTransformer, error) {
 	parts := strings.Split(def, ":")
 	if len(parts) != arPrefixParts {
-		dief("'%s' wrong format, must be like '/local/prefix:/remote/prefix'", def)
+		return nil, fmt.Errorf("'%s' wrong format, must be like '/local/prefix:/remote/prefix'", def) //nolint:err113
 	}
 
-	return transfer.PrefixTransformer(parts[0], parts[1])
+	return transfer.PrefixTransformer(parts[0], parts[1]), nil
 }
 
-func transformARFile(path string, pt transfer.PathTransformer, splitter bufio.SplitFunc, encode bool) {
-	scanner, df := createScannerForFile(path, splitter)
+func transformARFile(path string, pt transfer.PathTransformer, splitter bufio.SplitFunc, encode bool) error {
+	scanner, df, err := createScannerForFile(path, splitter)
+	if err != nil {
+		return err
+	}
+
 	defer df()
 
 	for scanner.Scan() {
@@ -147,12 +142,12 @@ func transformARFile(path string, pt transfer.PathTransformer, splitter bufio.Sp
 
 		r, err := transfer.NewRequestWithTransformedLocal(local, pt)
 		if err != nil {
-			die(err)
+			return err
 		}
 
 		err = r.ValidatePaths()
 		if err != nil {
-			die(err)
+			return err
 		}
 
 		fmt.Printf("%s\t%s\n", encodeBase64(r.Local, encode), encodeBase64(r.Remote, encode))
@@ -160,8 +155,10 @@ func transformARFile(path string, pt transfer.PathTransformer, splitter bufio.Sp
 
 	serr := scanner.Err()
 	if serr != nil {
-		dief("failed to read whole file: %s", serr.Error())
+		return fmt.Errorf("failed to read whole file: %w", serr)
 	}
+
+	return nil
 }
 
 // encodeBase64 returns path as-is if encode is false, or after base64 encoding

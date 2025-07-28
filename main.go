@@ -28,9 +28,11 @@
 package main
 
 import (
+	"os"
+
 	"github.com/wtsi-hgi/ibackup/cmd"
 )
 
 func main() {
-	cmd.Execute()
+	os.Exit(cmd.Execute())
 }

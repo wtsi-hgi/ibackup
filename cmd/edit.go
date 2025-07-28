@@ -78,28 +78,7 @@ Edit an existing backup set. You cannot edit readonly sets and you cannot use
 
 To edit the backup set you must provide --name, which should be the name of a 
 preexisting backup set.`,
-	PreRunE: func(_ *cobra.Command, _ []string) error {
-		if editMakeReadOnly && editMakeWritable {
-			return ErrInvalidEditRO
-		}
-
-		if editArchive && editStopArchive {
-			return ErrInvalidEditArchive
-		}
-
-		if editHide && editUnHide {
-			return ErrInvalidEditHide
-		}
-
-		if editMonitor != "" && editStopMonitor {
-			return ErrInvalidEditMonitor
-		}
-
-		return nil
-	},
 	RunE: func(_ *cobra.Command, _ []string) error {
-		ensureURLandCert()
-
 		client, err := newServerClient(serverURL, serverCert)
 		if err != nil {
 			return err
@@ -169,7 +148,7 @@ preexisting backup set.`,
 	},
 }
 
-func init() {
+func init() { //nolint:funlen,gochecknoinits
 	RootCmd.AddCommand(editCmd)
 
 	editCmd.Flags().StringVarP(&editSetName, "name", "n", "", helpTextName)
@@ -196,9 +175,12 @@ func init() {
 	editCmd.Flags().BoolVar(&editUnHide, "unhide", false,
 		"unhide set when viewing status")
 
-	if err := editCmd.MarkFlagRequired("name"); err != nil {
-		die(err)
-	}
+	must(editCmd.MarkFlagRequired("name"))
+
+	editCmd.MarkFlagsMutuallyExclusive("make-readonly", "disable-readonly")
+	editCmd.MarkFlagsMutuallyExclusive("archive", "stop-archiving")
+	editCmd.MarkFlagsMutuallyExclusive("hide", "unhide")
+	editCmd.MarkFlagsMutuallyExclusive("monitor", "stop-monitor")
 }
 
 func editSetMetaData(userSet *set.Set, metaData string, //nolint:gocyclo,funlen

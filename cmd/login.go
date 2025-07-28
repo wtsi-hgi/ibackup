@@ -38,7 +38,12 @@ const jwtBasename = ".ibackup.jwt"
 // newServerClient tries to get a jwt for the given server url, and returns a
 // client that can interact with it.
 func newServerClient(url, cert string) (*server.Client, error) {
-	token, err := gasClientCLI(url, cert).GetJWT()
+	client, err := gasClientCLI(url, cert)
+	if err != nil {
+		return nil, err
+	}
+
+	token, err := client.GetJWT()
 	if err != nil {
 		return nil, err
 	}
@@ -46,13 +51,13 @@ func newServerClient(url, cert string) (*server.Client, error) {
 	return server.NewClient(url, cert, token), nil
 }
 
-func gasClientCLI(url, cert string) *gas.ClientCLI {
+func gasClientCLI(url, cert string) (*gas.ClientCLI, error) {
 	c, err := gas.NewClientCLI(jwtBasename, serverTokenBasename, url, cert, false)
 	if err != nil {
-		die(err)
+		return nil, err
 	}
 
-	return c
+	return c, nil
 }
 
 func currentUsername() string {

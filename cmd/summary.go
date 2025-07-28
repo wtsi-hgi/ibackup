@@ -56,11 +56,8 @@ environmental variable.
 The output will look nicer if you have https://github.com/red-data-tools/YouPlot
 installed.
  `,
-	Run: func(_ *cobra.Command, _ []string) {
-		err := summary(summaryDB)
-		if err != nil {
-			die(err)
-		}
+	RunE: func(_ *cobra.Command, _ []string) error {
+		return summary(summaryDB)
 	},
 }
 

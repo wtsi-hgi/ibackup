@@ -68,38 +68,37 @@ var removeCmd = &cobra.Command{
  --path: if you want to remove a single file or directory, provide its absolute
 		 path.
  `,
-	Run: func(_ *cobra.Command, _ []string) {
-		ensureURLandCert()
-
-		if (removeItems == "") == (removePath == "") {
-			dief("exactly one of --items or --path must be provided")
-		}
-
+	RunE: func(_ *cobra.Command, _ []string) error {
 		var paths []string
 
 		client, err := newServerClient(serverURL, serverCert)
 		if err != nil {
-			die(err)
+			return err
 		}
 
 		if removeItems != "" {
-			paths = append(paths, readPaths(removeItems, fofnLineSplitter(removeNull))...)
+			removePaths, erra := readPaths(removeItems, fofnLineSplitter(removeNull))
+			if erra != nil {
+				return erra
+			}
+
+			paths = append(paths, removePaths...)
 		}
 
 		if removePath != "" {
 			removePath, err = filepath.Abs(removePath)
 			if err != nil {
-				die(err)
+				return err
 			}
 
 			paths = append(paths, removePath)
 		}
 
-		handleRemove(client, removeUser, removeName, paths)
+		return handleRemove(client, removeUser, removeName, paths)
 	},
 }
 
-func init() {
+func init() { //nolint:gochecknoinits
 	RootCmd.AddCommand(removeCmd)
 
 	// flags specific to this sub-command
@@ -113,21 +112,26 @@ func init() {
 	removeCmd.Flags().BoolVarP(&removeNull, "null", "0", false,
 		"input paths are terminated by a null character instead of a new line")
 
-	if err := removeCmd.MarkFlagRequired("name"); err != nil {
-		die(err)
-	}
+	must(removeCmd.MarkFlagRequired("name"))
+
+	removeCmd.MarkFlagsOneRequired("items", "path")
+	removeCmd.MarkFlagsMutuallyExclusive("items", "path")
 }
 
 // handleRemove does the main job of sending the set, files and dirs to the server.
-func handleRemove(client *server.Client, user, name string, paths []string) {
-	sets := getSetByName(client, user, name)
+func handleRemove(client *server.Client, user, name string, paths []string) error {
+	sets, err := getSetByName(client, user, name)
+	if err != nil {
+		return err
+	}
 
 	if sets[0].ReadOnly {
-		die(set.Error{Msg: set.ErrSetIsNotWritable})
+		return set.Error{Msg: set.ErrSetIsNotWritable}
 	}
 
-	err := client.RemoveFilesAndDirs(sets[0].ID(), paths)
-	if err != nil {
-		die(err)
+	if err = client.RemoveFilesAndDirs(sets[0].ID(), paths); err != nil {
+		return err
 	}
+
+	return nil
 }

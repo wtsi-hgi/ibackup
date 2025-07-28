@@ -27,6 +27,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"log/syslog"
@@ -52,17 +53,28 @@ const dbBackupParamPosition = 2
 const defaultDebounceSeconds = 600
 
 // options for this cmd.
-var serverLogPath string
-var serverKey string
-var serverLDAPFQDN string
-var serverLDAPBindDN string
-var serverDebug bool
-var readonly bool
-var serverRemoteBackupPath string
-var serverWRDeployment string
-var serverHardlinksCollection string
-var serverSlackDebouncePeriod int
-var serverStillRunningMsgFreq string
+var (
+	serverLogPath             string
+	serverKey                 string
+	serverLDAPFQDN            string
+	serverLDAPBindDN          string
+	serverDebug               bool
+	readonly                  bool
+	serverRemoteBackupPath    string
+	serverWRDeployment        string
+	serverHardlinksCollection string
+	serverSlackDebouncePeriod int
+	serverStillRunningMsgFreq string
+
+	slackToken   = os.Getenv("IBACKUP_SLACK_TOKEN")
+	slackChannel = os.Getenv("IBACKUP_SLACK_CHANNEL")
+)
+
+var (
+	ErrNoDatabase          = errors.New("you must supply the path to your set database file")
+	ErrNoSlack             = errors.New("--still_running requires slack variables")
+	ErrInvalidRemoteBackup = errors.New("remote backup path defined when no local backup path provided")
+)
 
 // serverCmd represents the server command.
 var serverCmd = &cobra.Command{
@@ -141,37 +153,38 @@ If there's an issue with the database or behaviour of the queue, you can use the
 --debug option to start the server with job submission disabled on a copy of the
 database that you've made, to investigate.
 `,
-	Run: func(cmd *cobra.Command, args []string) {
+	PreRunE: func(cmd *cobra.Command, args []string) error {
 		if len(args) != 1 && len(args) != 2 {
-			dief("you must supply the path to your set database file")
+			return ErrNoDatabase
 		}
 
-		ensureURLandCert()
-
-		if serverKey == "" {
-			dief("you must supply --key")
+		if srmf, _ := cmd.Flags().GetString("still_running"); srmf != "" { //nolint:errcheck
+			if slackToken == "" || slackChannel == "" {
+				return ErrNoSlack
+			}
 		}
+
+		return nil
+	},
+	RunE: func(_ *cobra.Command, args []string) error {
 
 		if serverLDAPFQDN == "" || serverLDAPBindDN == "" {
 			warn("ldap options not supplied, will assume all user passwords are correct!")
 		}
 
-		logWriter := setServerLogger(serverLogPath)
-		token := os.Getenv("IBACKUP_SLACK_TOKEN")
-		channel := os.Getenv("IBACKUP_SLACK_CHANNEL")
+		logWriter, err := setServerLogger(serverLogPath)
+		if err != nil {
+			return err
+		}
 
 		var slacker set.Slacker
 
-		if token != "" && channel != "" {
+		if slackToken != "" && slackChannel != "" {
 			slacker = slack.New(slack.Config{
-				Token:       token,
-				Channel:     channel,
+				Token:       slackToken,
+				Channel:     slackChannel,
 				ErrorLogger: logWriter,
 			})
-		} else {
-			if serverStillRunningMsgFreq != "" {
-				dief("--still_running requires slack variables")
-			}
 		}
 
 		var stillRunningMsgFreq time.Duration
@@ -180,17 +193,17 @@ database that you've made, to investigate.
 
 			stillRunningMsgFreq, err = parseDuration(serverStillRunningMsgFreq, 1*time.Minute)
 			if err != nil {
-				die(err)
+				return err
 			}
 		}
 
 		if serverSlackDebouncePeriod < 0 {
-			dief("slack_debounce period must be positive, not: %d", serverSlackDebouncePeriod)
+			return fmt.Errorf("slack_debounce period must be positive, not: %d", serverSlackDebouncePeriod)
 		}
 
 		handler, errb := baton.GetBatonHandler()
 		if errb != nil {
-			dief("failed to get baton handler: %s", errb)
+			return fmt.Errorf("failed to get baton handler: %w", errb)
 		}
 
 		conf := server.Config{
@@ -204,17 +217,17 @@ database that you've made, to investigate.
 
 		s, err := server.New(conf)
 		if err != nil {
-			die(err)
+			return err
 		}
 
 		err = s.EnableAuthWithServerToken(serverCert, serverKey, serverTokenBasename, checkPassword)
 		if err != nil {
-			dief("failed to enable authentication: %s", err)
+			return fmt.Errorf("failed to enable authentication: %w", err)
 		}
 
 		err = s.MakeQueueEndPoints()
 		if err != nil {
-			dief("failed to make queue endpoints: %s", err)
+			return fmt.Errorf("failed to make queue endpoints: %w", err)
 		}
 
 		if serverDebug || readonly {
@@ -222,7 +235,7 @@ database that you've made, to investigate.
 		} else {
 			exe, erre := os.Executable()
 			if erre != nil {
-				dief("failed to get own exe: %s", erre)
+				return fmt.Errorf("failed to get own exe: %w", erre)
 			}
 
 			putCmd := fmt.Sprintf("%s put -s --url '%s' --cert '%s' ", exe, serverURL, serverCert)
@@ -233,7 +246,7 @@ database that you've made, to investigate.
 
 			err = s.EnableJobSubmission(putCmd, serverWRDeployment, "", "", numPutClients, appLogger)
 			if err != nil {
-				dief("failed to enable job submission: %s", err)
+				return fmt.Errorf("failed to enable job submission: %w", err)
 			}
 		}
 
@@ -250,21 +263,21 @@ database that you've made, to investigate.
 
 		err = s.LoadSetDB(args[0], dbBackupPath)
 		if err != nil {
-			dief("failed to load database: %s", err)
+			return fmt.Errorf("failed to load database: %w", err)
 		}
 
 		info("loaded database...")
 
 		if serverRemoteBackupPath != "" && !readonly {
 			if dbBackupPath == "" {
-				dief("remote backup path defined when no local backup path provided")
+				return ErrInvalidRemoteBackup
 			}
 
 			info("enabling remote backups...")
 
 			handler, errb := baton.GetBatonHandler()
 			if errb != nil {
-				dief("failed to get baton handler: %s", errb)
+				return fmt.Errorf("failed to get baton handler: %w", errb)
 			}
 
 			s.EnableRemoteDBBackups(serverRemoteBackupPath, handler)
@@ -278,10 +291,12 @@ database that you've made, to investigate.
 		info("starting server...")
 		err = s.Start(serverURL, serverCert, serverKey)
 		if err != nil {
-			dief("non-graceful stop: %s", err)
+			return fmt.Errorf("non-graceful stop: %w", err)
 		}
 
 		info("graceful server stop")
+
+		return nil
 	},
 }
 
@@ -313,14 +328,18 @@ func init() {
 	serverCmd.Flags().StringVarP(&serverStillRunningMsgFreq, "still_running", "r", "",
 		"send a slack message every this period of time to say the server is still running"+
 			"(eg. 10m for 10 minutes, or 6h for 6 hours, minimum 1m), defaults to nothing")
+
+	must(serverCmd.MarkFlagRequired("key"))
 }
 
 // setServerLogger makes our appLogger log to the given path if non-blank,
 // otherwise to syslog. Returns an io.Writer version of our appLogger for the
 // server to log to.
-func setServerLogger(path string) io.Writer {
+func setServerLogger(path string) (io.Writer, error) {
 	if path == "" {
-		logToSyslog()
+		if err := logToSyslog(); err != nil {
+			return nil, err
+		}
 	} else {
 		logToFile(path)
 	}
@@ -329,17 +348,19 @@ func setServerLogger(path string) io.Writer {
 
 	logshim.InstallLogger(zlog.New(lw, logshim.ErrorLevel))
 
-	return lw
+	return lw, nil
 }
 
 // logToSyslog sets our applogger to log to syslog, dies if it can't.
-func logToSyslog() {
+func logToSyslog() error {
 	fh, err := log15.SyslogHandler(syslog.LOG_INFO|syslog.LOG_DAEMON, "ibackup-server", log15.LogfmtFormat())
 	if err != nil {
-		dief("failed to log to syslog: %s", err)
+		return fmt.Errorf("failed to log to syslog: %w", err)
 	}
 
 	appLogger.SetHandler(fh)
+
+	return nil
 }
 
 // log15Writer wraps a log15.Logger to make it conform to io.Writer interface.

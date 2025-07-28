@@ -52,7 +52,7 @@ const recent = "recent"
 
 // options for this cmd.
 var statusUser string
-var statusOrder string
+var statusOrder = newEnumFlag([]string{"alphabetic", "recent"}, "alphabetic")
 var statusName string
 var statusDetails bool
 var statusRemotePaths bool
@@ -121,33 +121,25 @@ If you are the user who started the ibackup server, you can use the --user
 option to get the status of a given requestor's backup sets, instead of your
 own. You can specify the user as "all" to see all user's sets.
 `,
-	Run: func(cmd *cobra.Command, args []string) {
-		ensureURLandCert()
-
-		if statusDetails && statusName == "" {
-			dief("--details can only be used with --name")
+	PreRun: func(cmd *cobra.Command, _ []string) {
+		if sd, _ := cmd.Flags().GetBool("details"); sd { //nolint:errcheck
+			must(cmd.MarkFlagRequired("name"))
 		}
 
-		if statusRemotePaths && !statusDetails {
-			dief("--remote can only be used with --details and --name")
+		if remotePaths, _ := cmd.Flags().GetBool("remotepaths"); remotePaths { //nolint:errcheck
+			must(cmd.MarkFlagRequired("details"))
 		}
-
-		if statusOrder != alphabetic && statusOrder != recent {
-			dief("--order can only be 'alphabetic' or 'recent'")
-		}
-
+	},
+	RunE: func(_ *cobra.Command, _ []string) error {
 		sf := newStatusFilterer(statusIncomplete, statusComplete, statusFailed, statusQueued)
-
-		if statusName != "" && sf != nil {
-			dief("--name can't be used together with the status filtering options")
-		}
 
 		client, err := newServerClient(serverURL, serverCert)
 		if err != nil {
-			die(err)
+			return err
 		}
 
-		status(client, sf, statusUser, statusOrder, statusName, statusDetails, statusRemotePaths, statusShowHidden)
+		return status(client, sf, statusUser, statusOrder.String(),
+			statusName, statusDetails, statusRemotePaths, statusShowHidden)
 	},
 }
 
@@ -157,7 +149,7 @@ func init() {
 	// flags specific to this sub-command
 	statusCmd.Flags().StringVar(&statusUser, "user", currentUsername(),
 		"pretend to be this user (only works if you started the server)")
-	statusCmd.Flags().StringVarP(&statusOrder, "order", "o", alphabetic,
+	statusCmd.Flags().VarP(statusOrder, "order", "o",
 		"show sets in 'alphabetic' or 'recent' order")
 	statusCmd.Flags().StringVarP(&statusName, "name", "n", "",
 		"get status for just the set with this name")
@@ -175,13 +167,13 @@ func init() {
 		"only show queued sets (added but hasn't started to upload yet)")
 	statusCmd.Flags().BoolVar(&statusShowHidden, "show-hidden", false,
 		"show hidden sets")
+
+	statusCmd.MarkFlagsMutuallyExclusive("name", "incomplete", "complete", "failed", "queued")
 }
 
 type statusFilterer func(*set.Set) bool
 
 func newStatusFilterer(incomplete, complete, failed, queued bool) statusFilterer {
-	checkOnlyOneStatusFlagSet(incomplete, complete, failed, queued)
-
 	switch {
 	case incomplete:
 		return func(given *set.Set) bool {
@@ -204,79 +196,78 @@ func newStatusFilterer(incomplete, complete, failed, queued bool) statusFilterer
 	}
 }
 
-func checkOnlyOneStatusFlagSet(incomplete, complete, failed, queued bool) {
-	flagSeen := false
-
-	for _, flag := range []bool{incomplete, complete, failed, queued} {
-		if flag {
-			if flagSeen {
-				dief("--incomplete, --complete, --failed and --queued are mutually exclusive")
-			}
-
-			flagSeen = true
-		}
-	}
-}
-
 // status does the main job of getting backup set status from the server.
-func status(client *server.Client, sf statusFilterer, user, order, name string, details, remote, showHidden bool) {
+func status(client *server.Client, sf statusFilterer, user, order, name string,
+	details, remote, showHidden bool) error {
 	qs, err := client.GetQueueStatus()
 	if err != nil {
-		dief("unable to get server queue status: %s", err)
+		return fmt.Errorf("unable to get server queue status: %w", err)
 	}
 
-	displayQueueStatus(qs)
+	if err = displayQueueStatus(qs); err != nil {
+		return err
+	}
 
 	var sets []*set.Set
 
 	if name != "" {
-		sets = getSetByName(client, user, name)
+		sets, err = getSetByName(client, user, name)
 	} else {
-		sets = getSets(client, sf, user, showHidden)
+		sets, err = getSets(client, sf, user, showHidden)
+	}
+
+	if err != nil {
+		return err
 	}
 
 	if len(sets) == 0 {
 		warn("no backup sets")
 
-		return
+		return nil
 	}
 
-	displaySets(client, sets, details, remote, user == "all", order)
+	return displaySets(client, sets, details, remote, user == "all", order)
 }
 
 // displayQueueStatus prints out QStatus in a nice way. If user is admin, also
 // shows details of stuck requests.
-func displayQueueStatus(qs *server.QStatus) {
+func displayQueueStatus(qs *server.QStatus) error {
 	info("Global put queue status: %d queued; %d reserved to be worked on; %d failed",
 		qs.Total, qs.Reserved, qs.Failed)
 	info("Global put client status (/%d): %d iRODS connections; %d creating collections; %d currently uploading",
 		numPutClients, qs.IRODSConnections, qs.CreatingCollections, qs.Uploading)
 
 	if qs.Stuck != nil {
-		if gasClientCLI(serverURL, serverCert).CanReadServerToken() {
+		client, err := gasClientCLI(serverURL, serverCert)
+		if err != nil {
+			return err
+		}
+
+		if client.CanReadServerToken() {
 			for _, r := range qs.Stuck {
 				warn("set '%s' for %s [%s => %s] %s", r.Set, r.Requester, r.Local, r.Remote, r.Stuck)
 			}
 		}
 	}
+
+	return nil
 }
 
-// getSetByName gets a set with the given name owned by the given user. Dies
-// on error.
-func getSetByName(client *server.Client, user, name string) []*set.Set {
+// getSetByName gets a set with the given name owned by the given user.
+func getSetByName(client *server.Client, user, name string) ([]*set.Set, error) {
 	got, err := client.GetSetByName(user, name)
 	if err != nil {
-		dief("%s [%s]", err, name)
+		return nil, err
 	}
 
-	return []*set.Set{got}
+	return []*set.Set{got}, nil
 }
 
-// getSets gets all or filtered sets belonging to the given user. Dies on error.
-func getSets(client *server.Client, sf statusFilterer, user string, showHidden bool) []*set.Set {
+// getSets gets all or filtered sets belonging to the given user.
+func getSets(client *server.Client, sf statusFilterer, user string, showHidden bool) ([]*set.Set, error) {
 	sets, err := client.GetSets(user)
 	if err != nil {
-		die(err)
+		return nil, err
 	}
 
 	if !showHidden {
@@ -287,7 +278,7 @@ func getSets(client *server.Client, sf statusFilterer, user string, showHidden b
 		sets = filter(sf, sets)
 	}
 
-	return sets
+	return sets, nil
 }
 
 // filter returns the desired subset from amongst the given sets.
@@ -327,7 +318,7 @@ func filterHidden(sets []*set.Set) []*set.Set {
 // displaySets prints info about the given sets to STDOUT. Failed entry details
 // will also be printed, and optionally non-failed.
 func displaySets(client *server.Client, sets []*set.Set,
-	showNonFailedEntries, showRemotePaths, showRequesters bool, order string) {
+	showNonFailedEntries, showRemotePaths, showRequesters bool, order string) error {
 	l := len(sets)
 
 	sortSets(order, sets)
@@ -337,21 +328,41 @@ func displaySets(client *server.Client, sets []*set.Set,
 
 		displaySet(forDisplay, showRequesters)
 
-		transformer := getSetTransformer(forDisplay)
+		transformer, err := getSetTransformer(forDisplay)
+		if err != nil {
+			return err
+		}
 
-		displayDirs(getDirs(client, forDisplay.ID()), transformer)
-		displayExampleFile(getExampleFile(client, forDisplay.ID()), transformer)
+		dirs, err := getDirs(client, forDisplay.ID())
+		if err != nil {
+			return err
+		}
+
+		displayDirs(dirs, transformer)
+
+		exampleFile, err := getExampleFile(client, forDisplay.ID())
+		if err != nil {
+			return err
+		}
+
+		displayExampleFile(exampleFile, transformer)
 
 		if showNonFailedEntries {
-			displayAllEntries(client, forDisplay, showRemotePaths, transformer)
+			err = displayAllEntries(client, forDisplay, showRemotePaths, transformer)
 		} else {
-			displayFailedEntries(client, forDisplay)
+			err = displayFailedEntries(client, forDisplay)
+		}
+
+		if err != nil {
+			return err
 		}
 
 		if i != l-1 {
 			cliPrint("\n-----\n")
 		}
 	}
+
+	return nil
 }
 
 // sortSets sorts the slice of sets alphabetically by default or by most
@@ -552,22 +563,22 @@ func bytesToMB(bytes uint64) float64 {
 	return float64(bytes) / bytesInMiB
 }
 
-// getSetTransformer returns the set's tranformer, or dies.
-func getSetTransformer(given *set.Set) transfer.PathTransformer {
+// getSetTransformer returns the set's tranformer.
+func getSetTransformer(given *set.Set) (transfer.PathTransformer, error) {
 	transformer, err := given.MakeTransformer()
 	if err != nil {
-		dief("your transformer didn't work: %s", err)
+		return nil, fmt.Errorf("your transformer didn't work: %w", err)
 	}
 
-	return transformer
+	return transformer, nil
 }
 
 // getDirs gets the dir entries for a set and returns their paths along with
 // their status.
-func getDirs(client *server.Client, setID string) map[string]set.EntryStatus {
+func getDirs(client *server.Client, setID string) (map[string]set.EntryStatus, error) {
 	got, err := client.GetDirs(setID)
 	if err != nil {
-		die(err)
+		return nil, err
 	}
 
 	paths := make(map[string]set.EntryStatus, len(got))
@@ -576,7 +587,7 @@ func getDirs(client *server.Client, setID string) map[string]set.EntryStatus {
 		paths[entry.Path] = entry.Status
 	}
 
-	return paths
+	return paths, nil
 }
 
 // displayDirs prints out directories one per line with a header, if dirs is not
@@ -624,17 +635,17 @@ func generateDirStatusStrings(dirStatus set.EntryStatus) (string, string) {
 }
 
 // getExampleFile gets an example file entry for a set and returns its path.
-func getExampleFile(client *server.Client, setID string) string {
+func getExampleFile(client *server.Client, setID string) (string, error) {
 	exampleFile, err := client.GetExampleFile(setID)
 	if err != nil {
-		die(err)
+		return "", err
 	}
 
 	if exampleFile == nil {
-		return ""
+		return "", nil
 	}
 
-	return exampleFile.Path
+	return exampleFile.Path, nil
 }
 
 func displayExampleFile(path string, transformer transfer.PathTransformer) {
@@ -654,45 +665,56 @@ func displayExampleFile(path string, transformer transfer.PathTransformer) {
 
 // displayFailedEntries prints out details about up to 10 failed entries in the
 // given set.
-func displayFailedEntries(client *server.Client, given *set.Set) {
+func displayFailedEntries(client *server.Client, given *set.Set) error {
 	failed, skipped, err := client.GetFailedFiles(given.ID())
 	if err != nil {
-		die(err)
+		return err
 	}
 
-	displayEntries(failed, false, false, nil)
+	if err := displayEntries(failed, false, false, nil); err != nil {
+		return err
+	}
 
 	if skipped > 0 {
 		cliPrintf("[... and %d others]\n", skipped)
 	}
+
+	return nil
 }
 
 // displayAllEntries prints out details about all entries in the given
 // set.
 func displayAllEntries(client *server.Client, given *set.Set, showRemotePaths bool,
-	transformer transfer.PathTransformer) {
+	transformer transfer.PathTransformer) error {
 	all, err := client.GetFiles(given.ID())
 	if err != nil {
-		die(err)
+		return err
 	}
 
 	showTrashDate := strings.HasPrefix(given.Name, set.TrashPrefix)
 
-	displayEntries(all, showRemotePaths, showTrashDate, transformer)
+	return displayEntries(all, showRemotePaths, showTrashDate, transformer)
 }
 
 // displayEntries prints info about the given file entries to STDOUT.
-func displayEntries(entries []*set.Entry, showRemotePaths, showTrashDate bool, transformer transfer.PathTransformer) {
+func displayEntries(entries []*set.Entry, showRemotePaths, showTrashDate bool,
+	transformer transfer.PathTransformer) error {
 	if len(entries) == 0 {
-		return
+		return nil
 	}
 
 	displayHeader(showRemotePaths, showTrashDate)
 
 	for _, entry := range entries {
-		remotePath := getRemotePath(entry.Path, transformer, showRemotePaths)
+		remotePath, err := getRemotePath(entry.Path, transformer, showRemotePaths)
+		if err != nil {
+			return err
+		}
+
 		displayEntry(entry, showTrashDate, remotePath)
 	}
+
+	return nil
 }
 
 // displayHeader adds a column for remote path if showRemotePath is true and
@@ -720,17 +742,17 @@ func printEntriesHeader(cols []string) {
 }
 
 // getRemotePath returns the remote path for a given path.
-func getRemotePath(path string, transformer transfer.PathTransformer, wantRemote bool) string {
+func getRemotePath(path string, transformer transfer.PathTransformer, wantRemote bool) (string, error) {
 	if !wantRemote {
-		return ""
+		return "", nil
 	}
 
 	remotePath, err := transformer(path)
 	if err != nil {
-		dief("your transformer didn't work: %s", err)
+		return "", fmt.Errorf("your transformer didn't work: %w", err)
 	}
 
-	return remotePath
+	return remotePath, nil
 }
 
 // displayEntry displays information about a given entry, including its remote path

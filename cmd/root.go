@@ -29,8 +29,10 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"slices"
 
 	"github.com/inconshreveable/log15"
 	"github.com/spf13/cobra"
@@ -39,10 +41,17 @@ import (
 // appLogger is used for logging events in our commands.
 var appLogger = log15.New()
 
+var exitCode int
+
 // global options.
 var (
-	serverURL  string
-	serverCert string
+	serverURL  = os.Getenv(serverURLEnvKey)
+	serverCert = os.Getenv(serverCertEnvKey)
+)
+
+var (
+	ErrEmptyFlag     = errors.New("flag cannot be empty")
+	ErrInvalidOption = errors.New("invalid option")
 )
 
 const (
@@ -79,11 +88,70 @@ find /abs/path/to/dir -type f -print0 | ibackup addremote --humgen -0 -b | iback
 
 // Execute adds all child commands to the root command and sets flags
 // appropriately. This is called by main.main(). It only needs to happen once to
-// the rootCmd.
-func Execute() {
+// the RootCmd.
+func Execute() int {
 	if err := RootCmd.Execute(); err != nil {
+		appLogger.Error(err.Error())
+	}
+
+	ec := exitCode
+
+	exitCode = 0
+
+	return ec
+}
+
+func must(err error) {
+	if err != nil {
 		die(err)
 	}
+}
+
+type enumFlag struct {
+	options []string
+	value   string
+}
+
+func newEnumFlag(options []string, def string) *enumFlag {
+	return &enumFlag{options, def}
+}
+
+func (e *enumFlag) Set(val string) error {
+	if !slices.Contains(e.options, val) {
+		return ErrInvalidOption
+	}
+
+	e.value = val
+
+	return nil
+}
+func (*enumFlag) Type() string {
+	return "string"
+}
+
+func (e *enumFlag) String() string {
+	return e.value
+}
+
+type stringFlag struct {
+	str *string
+}
+
+func (s *stringFlag) Set(val string) error {
+	if val == "" {
+		return ErrEmptyFlag
+	}
+
+	*s.str = val
+
+	return nil
+}
+func (*stringFlag) Type() string {
+	return "string"
+}
+
+func (s *stringFlag) String() string {
+	return *s.str
 }
 
 func init() {
@@ -91,21 +159,13 @@ func init() {
 	appLogger.SetHandler(log15.LvlFilterHandler(log15.LvlInfo, log15.StderrHandler))
 
 	// global flags
-	RootCmd.PersistentFlags().StringVar(&serverURL, "url", os.Getenv(serverURLEnvKey),
+	RootCmd.PersistentFlags().Var(&stringFlag{&serverURL}, "url",
 		"ibackup server URL in the form host:port")
-	RootCmd.PersistentFlags().StringVar(&serverCert, "cert", os.Getenv(serverCertEnvKey),
+	RootCmd.PersistentFlags().Var(&stringFlag{&serverCert}, "cert",
 		"path to server certificate file")
-}
 
-// ensureURLandCert dies if --url or --cert have not been set.
-func ensureURLandCert() {
-	if serverURL == "" {
-		dief("you must supply --url")
-	}
-
-	if serverCert == "" {
-		dief("you must supply --cert")
-	}
+	must(RootCmd.MarkPersistentFlagRequired("url"))
+	must(RootCmd.MarkPersistentFlagRequired("cert"))
 }
 
 // logToFile logs to the given file.

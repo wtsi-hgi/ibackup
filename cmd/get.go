@@ -26,6 +26,7 @@
 package cmd
 
 import (
+	"errors"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -83,7 +84,7 @@ You need to have the baton commands in your PATH for this to work.
 You also need to have your iRODS environment set up and must be authenticated
 with iRODS (eg. run 'iinit') before running this command. If 'iget' works for
 you, so should this.`,
-	Run: func(_ *cobra.Command, _ []string) {
+	RunE: func(_ *cobra.Command, _ []string) error {
 		if putLog != "" {
 			putVerbose = true
 
@@ -91,14 +92,14 @@ you, so should this.`,
 		}
 
 		if serverMode() {
-			handleGetServerMode(time.Now())
-		} else {
-			handleGetManualMode()
+			return handleGetServerMode(time.Now())
 		}
+
+		return handleGetManualMode()
 	},
 }
 
-func init() {
+func init() { //nolint:gochecknoinits
 	RootCmd.AddCommand(getCmd)
 
 	// flags specific to this sub-command
@@ -120,40 +121,47 @@ func init() {
 		"download hardlinked files") //nolint:misspell
 }
 
-func handleGetServerMode(_ time.Time) {
+func handleGetServerMode(_ time.Time) error {
 	// handleServerMode(started, (*server.Client).GetSomeDownloadRequests,
 	// handleGet, (*server.Client).SendGetResultsToServer)
-	dief("server mode is not currently implemented")
+	return errors.New("server mode is not currently implemented") //nolint:err113
 }
 
-func handleGetManualMode() {
+func handleGetManualMode() error {
 	requests, err := getRequestsFromFile(putFile, "", putBase64)
 	if err != nil {
-		die(err)
+		return err
 	}
 
-	_, downloadResults, skipResults, dfunc := handleGet(requests)
+	_, downloadResults, skipResults, dfunc, err := handleGet(requests)
+	if err != nil {
+		return err
+	} else if dfunc == nil {
+		return nil
+	}
 
 	defer dfunc()
 
 	printResults("down", downloadResults, skipResults, len(requests), putVerbose)
+
+	return nil
 }
 
 func handleGet(requests []*transfer.Request) (chan *transfer.Request, chan *transfer.Request,
-	chan *transfer.Request, func()) {
+	chan *transfer.Request, func(), error) {
 	return handleGetPut(requests, getGetter)
 }
 
-func getGetter(requests []*transfer.Request) *transfer.Putter {
+func getGetter(requests []*transfer.Request) (*transfer.Putter, error) {
 	handler, err := baton.GetBatonHandler()
 	if err != nil {
-		die(err)
+		return nil, err
 	}
 
 	p, err := transfer.NewGetter(handler, requests, overwrite, hardlinksNormal)
 	if err != nil {
-		die(err)
+		return nil, err
 	}
 
-	return p
+	return p, nil
 }

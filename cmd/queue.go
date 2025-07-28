@@ -27,6 +27,9 @@
 package cmd
 
 import (
+	"errors"
+	"fmt"
+
 	"github.com/spf13/cobra"
 	"github.com/wtsi-hgi/ibackup/server"
 	"github.com/wtsi-hgi/ibackup/transfer"
@@ -40,6 +43,8 @@ var queuePath string
 var queueKick bool
 var queueDelete bool
 var queueUploading bool
+
+var ErrAdminOnly = errors.New("only the user who started the server can use this sub-command.")
 
 // queueCmd represents the queue command.
 var queueCmd = &cobra.Command{
@@ -65,69 +70,73 @@ queue. Specifying --uploading instead shows details about requests that are
 currently uploading. Specifying just --all shows details about all requests in
 the queue.
 `,
-	Run: func(cmd *cobra.Command, args []string) {
-		ensureURLandCert()
+	PreRun: func(cmd *cobra.Command, _ []string) {
+		kick, _ := cmd.Flags().GetBool("kick")     //nolint:errcheck
+		remove, _ := cmd.Flags().GetBool("delete") //nolint:errcheck
 
-		if !gasClientCLI(serverURL, serverCert).CanReadServerToken() {
-			dief("Only the user who started the server can use this sub-command.")
+		if kick || remove {
+			if path, _ := cmd.Flags().GetString("path"); path != "" { //nolint:errcheck
+				must(cmd.MarkFlagRequired("user"))
+				must(cmd.MarkFlagRequired("name"))
+			} else if name, _ := cmd.Flags().GetString("name"); name != "" { //nolint:errcheck
+				must(cmd.MarkFlagRequired("user"))
+			}
+
+			cmd.MarkFlagsMutuallyExclusive("all", "user")
+			cmd.MarkFlagsMutuallyExclusive("all", "name")
+			cmd.MarkFlagsMutuallyExclusive("all", "path")
+
+			cmd.MarkFlagsOneRequired("all", "user")
+		}
+	},
+	RunE: func(_ *cobra.Command, _ []string) error {
+		gclient, err := gasClientCLI(serverURL, serverCert)
+		if err != nil {
+			return err
 		}
 
-		if queueDelete && queueKick {
-			dief("-d and -r are mutually exclusive")
+		if !gclient.CanReadServerToken() {
+			return ErrAdminOnly
 		}
 
 		client, err := newServerClient(serverURL, serverCert)
 		if err != nil {
-			die(err)
+			return err
 		}
 
 		switch {
 		case queueDelete || queueKick:
-			if queuePath != "" && (queueUser == "" || queueSet == "") {
-				dief("--path needs --user and --name")
-			}
-
-			if queueSet != "" && queueUser == "" {
-				dief("--name needs --user")
-			}
-
-			if queueAll && queueUser != "" {
-				dief("--all is mutually exclusive from --user, --name and --path")
-			}
-
-			if queueUser == "" && !queueAll {
-				dief("at least one of --all or --user must be provided")
-			}
-
 			bf := &server.BuriedFilter{
 				User: queueUser,
 				Set:  queueSet,
 				Path: queuePath,
 			}
 
-			handleBuried(client, queueDelete, queueKick, bf)
+			return handleBuried(client, queueDelete, queueKick, bf)
 		case queueUploading:
 			rs, err := client.UploadingRequests()
 			if err != nil {
-				dief("unable to get uploading requests: %s", err)
+				return fmt.Errorf("unable to get uploading requests: %w", err)
 			}
 
 			displayRequests(rs, "uploading")
 		case queueAll:
 			rs, err := client.AllRequests()
 			if err != nil {
-				dief("unable to get all requests: %s", err)
+				return fmt.Errorf("unable to get all requests: %w", err)
 			}
 
 			displayRequests(rs, "(0)")
 		default:
 			rs, err := client.BuriedRequests()
 			if err != nil {
-				dief("unable to get buried requests: %s", err)
+				return fmt.Errorf("unable to get buried requests: %w", err)
 			}
 
 			displayRequests(rs, "buried")
 		}
+
+		return nil
 	},
 }
 
@@ -145,6 +154,8 @@ func init() {
 	queueCmd.Flags().BoolVarP(&queueKick, "retry", "r", false,
 		"retry certain buried items in the queue")
 	queueCmd.Flags().BoolVar(&queueUploading, "uploading", false, "show uploading items in the queue")
+
+	queueCmd.MarkFlagsMutuallyExclusive("retry", "delete")
 }
 
 // displayRequests prints out details of each request. If there are none, warns
@@ -163,7 +174,7 @@ func displayRequests(rs []*transfer.Request, kind string) {
 	}
 }
 
-func handleBuried(client *server.Client, remove, retry bool, bf *server.BuriedFilter) {
+func handleBuried(client *server.Client, remove, retry bool, bf *server.BuriedFilter) error {
 	var (
 		n      int
 		err    error
@@ -179,8 +190,10 @@ func handleBuried(client *server.Client, remove, retry bool, bf *server.BuriedFi
 	}
 
 	if err != nil {
-		dief("unable to process buried requests: %s", err)
+		return fmt.Errorf("unable to process buried requests: %w", err)
 	}
 
 	info("%d requests %s", n, action)
+
+	return nil
 }

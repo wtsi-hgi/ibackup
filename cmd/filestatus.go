@@ -22,6 +22,8 @@ import (
 var filestatusIrods bool
 var filestatusDB string
 
+var ErrNoFile = errors.New("you must supply the file to be checked")
+
 // statusCmd represents the status command.
 var filestatusCmd = &cobra.Command{
 	Use:   "filestatus",
@@ -38,15 +40,12 @@ environmental variable.
 The --irods options will gather additional information about the file, such as
 the local and remote checksums.
 `,
-	Run: func(_ *cobra.Command, args []string) {
+	RunE: func(_ *cobra.Command, args []string) error {
 		if len(args) < 1 {
-			dief("you must supply the file to be checked")
+			return ErrNoFile
 		}
 
-		err := fileSummary(filestatusDB, args[0], filestatusIrods)
-		if err != nil {
-			die(err)
-		}
+		return fileSummary(filestatusDB, args[0], filestatusIrods)
 	},
 }
 

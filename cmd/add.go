@@ -193,53 +193,56 @@ it will backup and monitor the new list of files in future.
 If you are the user who started the ibackup server, you can use the --user
 option to add sets on behalf of other users.
 `,
-	Run: func(cmd *cobra.Command, args []string) {
-		ensureURLandCert()
-
-		if setFiles == "" && setDirs == "" && setPath == "" && setItems == "" {
-			dief("at least one of --files or --dirs or --items or --path must be provided")
+	PreRun: func(cmd *cobra.Command, _ []string) {
+		if mr, _ := cmd.Flags().GetBool("monitor-removals"); mr { //nolint:errcheck
+			must(cmd.MarkFlagRequired("monitor"))
 		}
-
-		if setMonitor == "" && setMonitorRemovals {
-			dief("cannot use --monitor-removals without --monitor")
-		}
-
-		if setTransformer == "" {
-			dief("-t must be provided")
-		}
-
+	},
+	RunE: func(_ *cobra.Command, _ []string) error {
 		var monitorDuration time.Duration
+
 		if setMonitor != "" {
 			var err error
 
 			monitorDuration, err = parseDuration(setMonitor, 1*time.Hour)
 			if err != nil {
-				die(err)
+				return err
 			}
 		}
 
 		client, err := newServerClient(serverURL, serverCert)
 		if err != nil {
-			die(err)
+			return err
 		}
 
-		files := readPaths(setFiles, fofnLineSplitter(setNull))
-		dirs := readPaths(setDirs, fofnLineSplitter(setNull))
+		files, err := readPaths(setFiles, fofnLineSplitter(setNull))
+		if err != nil {
+			return err
+		}
+
+		dirs, err := readPaths(setDirs, fofnLineSplitter(setNull))
+		if err != nil {
+			return err
+		}
 
 		if setItems != "" {
-			filesAndDirs := readPaths(setItems, fofnLineSplitter(setNull))
+			filesAndDirs, erra := readPaths(setItems, fofnLineSplitter(setNull))
+			if erra != nil {
+				return erra
+			}
+
 			files, dirs = categorisePaths(filesAndDirs, files, dirs)
 		}
 
 		if setPath != "" {
 			setPath, err = filepath.Abs(setPath)
 			if err != nil {
-				die(err)
+				return err
 			}
 
 			info, errs := os.Stat(setPath)
 			if errs != nil {
-				die(errs)
+				return err
 			}
 
 			if info.IsDir() {
@@ -251,7 +254,7 @@ option to add sets on behalf of other users.
 
 		set, err := checkExistingSet(client, setName, setUser)
 		if err != nil {
-			die(err)
+			return err
 		}
 
 		var prevMeta map[string]string
@@ -261,16 +264,18 @@ option to add sets on behalf of other users.
 
 		meta, err := transfer.HandleMeta(setMetadata, setReason, setReview, setRemoval, prevMeta)
 		if err != nil {
-			dief("metadata error: %s", err)
+			return fmt.Errorf("metadata error: %w", err)
 		}
 
 		err = add(client, setName, setUser, setTransformer, setDescription, monitorDuration,
 			setMonitorRemovals, setArchive, files, dirs, meta)
 		if err != nil {
-			die(err)
+			return err
 		}
 
 		info("your backup set has been saved and will now be processed")
+
+		return nil
 	},
 }
 
@@ -296,19 +301,24 @@ func init() {
 	addCmd.Flags().StringVar(&setReview, "review", "", helpTextReview)
 	addCmd.Flags().StringVar(&setRemoval, "remove", "", helpTextRemoval)
 
-	if err := addCmd.MarkFlagRequired("name"); err != nil {
-		die(err)
-	}
+	must(addCmd.MarkFlagRequired("name"))
+	must(addCmd.MarkFlagRequired("transformer"))
+
+	addCmd.MarkFlagsOneRequired("files", "dirs", "items", "path")
 }
 
 // readPaths turns the line content (split as per splitter) of the given file.
 // If file is blank, returns nil.
-func readPaths(file string, splitter bufio.SplitFunc) []string {
+func readPaths(file string, splitter bufio.SplitFunc) ([]string, error) {
 	if file == "" {
-		return nil
+		return nil, nil
 	}
 
-	scanner, df := createScannerForFile(file, splitter)
+	scanner, df, err := createScannerForFile(file, splitter)
+	if err != nil {
+		return nil, err
+	}
+
 	defer df()
 
 	var paths []string //nolint:prealloc
@@ -319,10 +329,10 @@ func readPaths(file string, splitter bufio.SplitFunc) []string {
 
 	serr := scanner.Err()
 	if serr != nil {
-		dief("failed to read whole file: %s", serr.Error())
+		return nil, fmt.Errorf("failed to read whole file: %w", serr)
 	}
 
-	return paths
+	return paths, nil
 }
 
 // categorisePaths categorises each path in a given slice into either a

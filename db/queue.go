@@ -1,8 +1,6 @@
 package db
 
-import (
-	"errors"
-)
+import "errors"
 
 type QueueType uint8
 

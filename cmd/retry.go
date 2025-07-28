@@ -63,18 +63,7 @@ environment variable, or overriding that with the --cert argument).
 If you are the user who started the ibackup server, you can use the --user
 option to retry the given requestor's backup sets, instead of your own.
 `,
-	PreRun: func(_ *cobra.Command, _ []string) {
-		if retryAll && retryFailed {
-			dief("--all and --failed are mutually exclusive")
-		}
-
-		if !retryAll && !retryFailed {
-			dief("at least one of --all and --failed are required")
-		}
-	},
 	RunE: func(_ *cobra.Command, _ []string) error {
-		ensureURLandCert()
-
 		client, err := newServerClient(serverURL, serverCert)
 		if err != nil {
 			return err
@@ -95,9 +84,10 @@ func init() {
 	retryCmd.Flags().BoolVarP(&retryFailed, "failed", "f", false,
 		"retry only failed uploads in the --name'd set")
 
-	if err := retryCmd.MarkFlagRequired("name"); err != nil {
-		die(err)
-	}
+	must(retryCmd.MarkFlagRequired("name"))
+
+	retryCmd.MarkFlagsMutuallyExclusive("all", "failed")
+	retryCmd.MarkFlagsOneRequired("all", "failed")
 }
 
 func retrySetUploads(client *server.Client, requester, setName string, all bool) error {

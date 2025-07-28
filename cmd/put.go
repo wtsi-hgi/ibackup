@@ -29,6 +29,7 @@ import (
 	"bufio"
 	"bytes"
 	b64 "encoding/base64"
+	"fmt"
 	"io"
 	"os"
 	"os/user"
@@ -139,17 +140,17 @@ You need to have the baton commands in your PATH for this to work.
 You also need to have your iRODS environment set up and must be authenticated
 with iRODS (eg. run 'iinit') before running this command. If 'iput' works for
 you, so should this.`,
-	Run: func(cmd *cobra.Command, args []string) {
+	RunE: func(_ *cobra.Command, _ []string) error {
 		if putLog != "" {
 			putVerbose = true
 			logToFile(putLog)
 		}
 
 		if serverMode() {
-			handlePutServerMode(time.Now())
-		} else {
-			handlePutManualMode()
+			return handlePutServerMode(time.Now())
 		}
+
+		return handlePutManualMode()
 	},
 }
 
@@ -177,37 +178,43 @@ func serverMode() bool {
 	return putServerMode && serverURL != ""
 }
 
-func handlePutServerMode(started time.Time) {
-	handleServerMode(started, (*server.Client).GetSomeUploadRequests, handlePut, (*server.Client).SendPutResultsToServer)
+func handlePutServerMode(started time.Time) error {
+	return handleServerMode(started, (*server.Client).GetSomeUploadRequests,
+		handlePut, (*server.Client).SendPutResultsToServer)
 }
 
 func handleServerMode( //nolint:gocognit,gocyclo,funlen
 	started time.Time,
 	getReq func(*server.Client) ([]*transfer.Request, error),
 	handleReq func(*server.Client, []*transfer.Request) (chan *transfer.Request, chan *transfer.Request,
-		chan *transfer.Request, func()),
+		chan *transfer.Request, func(), error),
 	sendReq func(*server.Client, chan *transfer.Request, chan *transfer.Request, chan *transfer.Request,
 		float64, time.Duration, time.Duration, log15.Logger) error,
-) {
+) error {
 	for time.Since(started) < runFor {
 		client, err := newServerClient(serverURL, serverCert)
 		if err != nil {
-			die(err)
+			return err
 		}
 
 		requests, err := getReq(client)
 		if err != nil {
 			warn("%s", err)
 
-			os.Exit(0)
+			return nil
 		}
 
 		err = client.MakingIRODSConnections(numIRODSConnections, heartbeatFreq)
 		if err != nil {
-			die(err)
+			return err
 		}
 
-		uploadStarts, uploadResults, skipResults, dfunc := handleReq(client, requests)
+		uploadStarts, uploadResults, skipResults, dfunc, err := handleReq(client, requests)
+		if err != nil {
+			return err
+		} else if dfunc == nil {
+			return nil
+		}
 
 		err = sendReq(client, uploadStarts, uploadResults, skipResults,
 			minMBperSecondUploadSpeed, minTimeForUpload, maxStuckTime, appLogger)
@@ -216,29 +223,31 @@ func handleServerMode( //nolint:gocognit,gocyclo,funlen
 
 		errm := client.ClosedIRODSConnections()
 		if errm != nil {
-			warn("%s", errm)
+			return errm
 		}
 
 		if err != nil {
 			warn("%s", err)
 
-			os.Exit(0)
+			return nil
 		}
 	}
 
 	if putVerbose {
 		info("all done, exiting")
 	}
+
+	return nil
 }
 
 func handleGetPut(
 	requests []*transfer.Request,
-	get func([]*transfer.Request) *transfer.Putter,
-) (chan *transfer.Request, chan *transfer.Request, chan *transfer.Request, func()) {
+	get func([]*transfer.Request) (*transfer.Putter, error),
+) (chan *transfer.Request, chan *transfer.Request, chan *transfer.Request, func(), error) {
 	if putVerbose {
 		host, errh := os.Hostname()
 		if errh != nil {
-			die(errh)
+			return nil, nil, nil, nil, errh
 		}
 
 		info("client starting on host %s, pid %d", host, os.Getpid())
@@ -247,44 +256,50 @@ func handleGetPut(
 	if len(requests) == 0 {
 		warn("no requests to work on")
 
-		os.Exit(0)
+		return nil, nil, nil, nil, nil
 	}
 
 	if putVerbose {
 		info("got %d requests to work on", len(requests))
 	}
 
-	p := get(requests)
+	p, err := get(requests)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
 
 	transferStarts, transferResults, skipResults := p.Put()
 
-	return transferStarts, transferResults, skipResults, p.Cleanup
+	return transferStarts, transferResults, skipResults, p.Cleanup, nil
 }
 
 func handlePut(client *server.Client, requests []*transfer.Request) (chan *transfer.Request,
-	chan *transfer.Request, chan *transfer.Request, func(),
+	chan *transfer.Request, chan *transfer.Request, func(), error,
 ) {
-	return handleGetPut(requests, func(requests []*transfer.Request) *transfer.Putter {
-		p := getPutter(requests)
+	return handleGetPut(requests, func(requests []*transfer.Request) (*transfer.Putter, error) {
+		p, err := getPutter(requests)
+		if err != nil {
+			return nil, err
+		}
 
 		handleCollections(client, p)
 
-		return p
+		return p, nil
 	})
 }
 
-func getPutter(requests []*transfer.Request) *transfer.Putter {
+func getPutter(requests []*transfer.Request) (*transfer.Putter, error) {
 	handler, err := baton.GetBatonHandler()
 	if err != nil {
-		die(err)
+		return nil, err
 	}
 
 	p, err := transfer.New(handler, requests)
 	if err != nil {
-		die(err)
+		return nil, err
 	}
 
-	return p
+	return p, nil
 }
 
 func handleCollections(client *server.Client, p *transfer.Putter) {
@@ -319,17 +334,24 @@ func createCollection(p *transfer.Putter) {
 	}
 }
 
-func handlePutManualMode() {
+func handlePutManualMode() error {
 	requests, err := getRequestsFromFile(putFile, putMeta, putBase64)
 	if err != nil {
-		die(err)
+		return err
 	}
 
-	_, uploadResults, skipResults, dfunc := handlePut(nil, requests)
+	_, uploadResults, skipResults, dfunc, err := handlePut(nil, requests)
+	if err != nil {
+		return err
+	} else if dfunc == nil {
+		return nil
+	}
 
 	defer dfunc()
 
 	printResults("up", uploadResults, skipResults, len(requests), putVerbose)
+
+	return nil
 }
 
 // getRequestsFromFile reads our 3 column file format from a file or STDIN and
@@ -340,18 +362,20 @@ func getRequestsFromFile(file, meta string, base64Encoded bool) ([]*transfer.Req
 		return nil, err
 	}
 
-	requests := parsePutFile(file, meta, user.Username, fofnLineSplitter(false), base64Encoded)
-
-	return requests, nil
+	return parsePutFile(file, meta, user.Username, fofnLineSplitter(false), base64Encoded)
 }
 
-func parsePutFile(path, meta, requester string, splitter bufio.SplitFunc, base64Encoded bool) []*transfer.Request {
+func parsePutFile(path, meta, requester string, splitter bufio.SplitFunc, //nolint:funlen
+	base64Encoded bool) ([]*transfer.Request, error) {
 	defaultMeta, err := transfer.ParseMetaString(meta, nil)
 	if err != nil {
-		dief("metadata error: %s", err)
+		return nil, err
 	}
 
-	scanner, df := createScannerForFile(path, splitter)
+	scanner, df, err := createScannerForFile(path, splitter)
+	if err != nil {
+		return nil, err
+	}
 
 	defer df()
 
@@ -361,8 +385,10 @@ func parsePutFile(path, meta, requester string, splitter bufio.SplitFunc, base64
 	for scanner.Scan() {
 		lineNum++
 
-		pr := parsePutFileLine(scanner.Text(), base64Encoded, lineNum, defaultMeta, requester)
-		if pr == nil {
+		pr, err := parsePutFileLine(scanner.Text(), base64Encoded, lineNum, defaultMeta, requester)
+		if err != nil {
+			return nil, err
+		} else if pr == nil {
 			continue
 		}
 
@@ -371,10 +397,10 @@ func parsePutFile(path, meta, requester string, splitter bufio.SplitFunc, base64
 
 	serr := scanner.Err()
 	if serr != nil {
-		dief("failed to read whole file: %s", serr)
+		return nil, fmt.Errorf("failed to read whole file: %w", serr)
 	}
 
-	return prs
+	return prs, nil
 }
 
 // fofnLineSplitter returns a bufio.SplitFunc that splits on \n be default, or
@@ -407,7 +433,7 @@ func scanNulls(data []byte, atEOF bool) (advance int, token []byte, err error) {
 
 // createScannerForFile creates a bufio.Scanner that will scan the given file,
 // splitting lines using the given splitter (eg. output of fofnLineSplitter()).
-func createScannerForFile(path string, splitter bufio.SplitFunc) (*bufio.Scanner, func()) {
+func createScannerForFile(path string, splitter bufio.SplitFunc) (*bufio.Scanner, func(), error) {
 	var reader io.Reader
 
 	var dfunc func()
@@ -416,7 +442,12 @@ func createScannerForFile(path string, splitter bufio.SplitFunc) (*bufio.Scanner
 		reader = os.Stdin
 		dfunc = func() {}
 	} else {
-		reader, dfunc = openFile(path)
+		var err error
+
+		reader, dfunc, err = openFile(path)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 
 	scanner := bufio.NewScanner(reader)
@@ -426,40 +457,42 @@ func createScannerForFile(path string, splitter bufio.SplitFunc) (*bufio.Scanner
 	buf := make([]byte, maxScanTokenSize)
 	scanner.Buffer(buf, maxScanTokenSize)
 
-	return scanner, dfunc
+	return scanner, dfunc, nil
 }
 
 // openFile opens the given path, and returns it as an io.Reader along with a
 // function you should defer (to close the file).
-func openFile(path string) (io.Reader, func()) {
+func openFile(path string) (io.Reader, func(), error) {
 	file, err := os.Open(path)
 	if err != nil {
-		dief("could not open file '%s': %s", path, err)
+		return nil, nil, fmt.Errorf("could not open file '%s': %w", path, err)
 	}
 
 	return file, func() {
 		file.Close()
-	}
+	}, nil
 }
 
 func parsePutFileLine(line string, base64Encoded bool, lineNum int,
 	defaultMeta *transfer.Meta, requester string,
-) *transfer.Request {
+) (*transfer.Request, error) {
 	cols := strings.Split(line, "\t")
 	colsn := len(cols)
 
 	if colsn < putFileMinCols || cols[0] == "" {
-		return nil
+		return nil, nil //nolint:nilnil
 	}
 
-	checkPutFileCols(colsn, lineNum)
+	if err := checkPutFileCols(colsn, lineNum); err != nil {
+		return nil, err
+	}
 
 	var meta *transfer.Meta
 
 	if colsn == putFileCols && cols[2] != "" {
 		parsedMeta, err := transfer.ParseMetaString(cols[2], nil)
 		if err != nil {
-			dief("metadata error: %s", err)
+			return nil, fmt.Errorf("metadata error: %w", err)
 		}
 
 		meta = parsedMeta
@@ -467,34 +500,46 @@ func parsePutFileLine(line string, base64Encoded bool, lineNum int,
 		meta = defaultMeta.Clone()
 	}
 
+	local, err := decodeBase64(cols[0], base64Encoded)
+	if err != nil {
+		return nil, err
+	}
+
+	remote, err := decodeBase64(cols[0], base64Encoded)
+	if err != nil {
+		return nil, err
+	}
+
 	return &transfer.Request{
-		Local:     decodeBase64(cols[0], base64Encoded),
-		Remote:    decodeBase64(cols[1], base64Encoded),
+		Local:     local,
+		Remote:    remote,
 		Requester: requester,
 		Set:       putSet,
 		Meta:      meta,
-	}
+	}, nil
 }
 
-func checkPutFileCols(cols int, lineNum int) {
+func checkPutFileCols(cols int, lineNum int) error {
 	if cols > putFileCols {
-		dief("line %d has too many columns; check `ibackup put -h`", lineNum)
+		return fmt.Errorf("line %d has too many columns; check `ibackup put -h`", lineNum)
 	}
+
+	return nil
 }
 
 // decodeBase64 returns path as-is if isEncoded is false, or after base64
 // decoding it if true.
-func decodeBase64(path string, isEncoded bool) string {
+func decodeBase64(path string, isEncoded bool) (string, error) {
 	if !isEncoded {
-		return path
+		return path, nil
 	}
 
 	b, err := b64.StdEncoding.DecodeString(path)
 	if err != nil {
-		die(err)
+		return "", err
 	}
 
-	return string(b)
+	return string(b), nil
 }
 
 type results struct {
@@ -557,7 +602,7 @@ func printResults(upDown string, transferResults, skipResults chan *transfer.Req
 		r.uploads+r.replaced, upDown, r.replaced, r.skipped, r.fails, r.missing)
 
 	if r.fails > 0 {
-		os.Exit(1)
+		exitCode = 1
 	}
 }
 

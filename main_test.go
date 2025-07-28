@@ -539,7 +539,7 @@ func TestNoServer(t *testing.T) {
 	Convey("With no server, status fails", t, func() {
 		s := new(TestServer)
 
-		s.confirmOutput(t, []string{"status"}, 1, "you must supply --url")
+		s.confirmOutputContains(t, []string{"status"}, 1, `Error: invalid argument "" for "--url" flag: flag cannot be empty`)
 	})
 }
 
@@ -549,12 +549,12 @@ func TestList(t *testing.T) {
 		So(s, ShouldNotBeNil)
 
 		Convey("With no --name given, list returns an error", func() {
-			s.confirmOutput(t, []string{"list"}, 1, "--name must be set")
+			s.confirmOutputContains(t, []string{"list"}, 1, `Error: required flag(s) "name" not set`)
 		})
 
 		Convey("With --local and --remote given, list returns an error", func() {
-			s.confirmOutput(t, []string{"list", "--name", "test", "--local", "--remote"},
-				1, "--local and --remote are mutually exclusive")
+			s.confirmOutputContains(t, []string{"list", "--name", "test", "--local", "--remote"},
+				1, "Error: if any flags in the group [local remote] are set none of the others can be; [local remote] were all set")
 		})
 
 		Convey("Given an added set defined with files", func() {
@@ -660,7 +660,7 @@ func TestList(t *testing.T) {
 				So(exitCode, ShouldEqual, 0)
 
 				Convey("list returns an error", func() {
-					s.confirmOutput(t, []string{"list", "--name", "testAddFiles"}, 1,
+					s.confirmOutputContains(t, []string{"list", "--name", "testAddFiles"}, 1,
 						"your transformer didn't work: not a valid humgen lustre path ["+
 							dir+"/path/to/other/file]")
 				})
@@ -3596,8 +3596,8 @@ func TestEdit(t *testing.T) {
 		})
 
 		Convey("You can specify either --make-readonly or --disable-readonly", func() {
-			s.confirmOutputContains(t, []string{"edit", "--make-readonly", "--disable-readonly"},
-				1, cmd.ErrInvalidEditRO.Error())
+			s.confirmOutputContains(t, []string{"edit", "--name", "a", "--make-readonly", "--disable-readonly"},
+				1, "Error: if any flags in the group [make-readonly disable-readonly] are set none of the others can be; [disable-readonly make-readonly] were all set")
 		})
 
 		Convey("Given a transformer", func() {
