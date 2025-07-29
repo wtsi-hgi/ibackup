@@ -4009,7 +4009,6 @@ func TestDiscoveryCoordinator(t *testing.T) {
 
 			So(callbackCalled.Load(), ShouldBeTrue)
 		})
-
 	})
 }
 
