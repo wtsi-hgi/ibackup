@@ -54,7 +54,9 @@ const (
 	filePath          = "/files"
 	dirPath           = "/dirs"
 	entryPath         = "/entries"
-	uploadedEntryPath = "/orphaned_entries"
+	uploadedEntryPath = "/uploaded_entries"
+	orphanedEntryPath = "/orphaned_entries"
+	missingEntryPath  = "/missing_entries"
 	exampleEntryPath  = "/example_entries"
 	failedEntryPath   = "/failed_entries"
 	discoveryPath     = "/discover"
@@ -79,6 +81,14 @@ const (
 	// EndPointAuthUploadedEntries is the endpoint for getting set uploaded
 	// entries.
 	EndPointAuthUploadedEntries = gas.EndPointAuth + uploadedEntryPath
+
+	// EndPointAuthOrphanedEntries is the endpoint for getting set orphaned
+	// entries.
+	EndPointAuthOrphanedEntries = gas.EndPointAuth + orphanedEntryPath
+
+	// EndPointAuthMissingEntries is the endpoint for getting set missing
+	// entries.
+	EndPointAuthMissingEntries = gas.EndPointAuth + missingEntryPath
 
 	// EndPointAuthExampleEntry is the endpoint for getting set entries.
 	EndPointAuthExampleEntry = gas.EndPointAuth + exampleEntryPath
@@ -278,6 +288,9 @@ func (s *Server) addDBEndpoints(authGroup *gin.RouterGroup) {
 
 	authGroup.GET(entryPath+idParam, s.getEntries)
 	authGroup.GET(uploadedEntryPath+idParam, s.getUploadedEntries)
+	authGroup.GET(orphanedEntryPath+idParam, s.getOrphanedEntries)
+	authGroup.GET(missingEntryPath+idParam, s.getMissingEntries)
+
 	authGroup.GET(exampleEntryPath+idParam, s.getExampleEntry)
 
 	authGroup.GET(dirPath+idParam, s.getDirs)
@@ -1293,6 +1306,14 @@ func (s *Server) getFileEntries(c *gin.Context, filter func(*set.Entry) bool) {
 
 func (s *Server) getUploadedEntries(c *gin.Context) {
 	s.getFileEntries(c, set.FileEntryFilterUploaded)
+}
+
+func (s *Server) getOrphanedEntries(c *gin.Context) {
+	s.getFileEntries(c, set.FileEntryFilterOrphaned)
+}
+
+func (s *Server) getMissingEntries(c *gin.Context) {
+	s.getFileEntries(c, set.FileEntryFilterMissing)
 }
 
 // getExampleEntry gets the first defined file entry for the set with the

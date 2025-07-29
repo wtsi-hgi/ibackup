@@ -1596,6 +1596,16 @@ func FileEntryFilterUploaded(e *Entry) bool {
 		e.Status == Orphaned || e.Status == Skipped
 }
 
+// FileEntryFilterOrphaned is a FileEntryFilter that filters on orphaned files.
+func FileEntryFilterOrphaned(e *Entry) bool {
+	return e.Status == Orphaned
+}
+
+// FileEntryFilterMissing is a FileEntryFilter that filters on missing files.
+func FileEntryFilterMissing(e *Entry) bool {
+	return e.Status == Missing
+}
+
 // GetFileEntries returns all the file entries for the given set (both
 // SetFileEntries and SetDiscoveredEntries).
 func (d *DBRO) GetFileEntries(setID string, filter FileEntryFilter) ([]*Entry, error) {

@@ -248,23 +248,31 @@ func (c *Client) TriggerDiscovery(setID string) error {
 // GetFiles gets the defined and discovered file paths and their backup status
 // for the given set.
 func (c *Client) GetFiles(setID string) ([]*set.Entry, error) {
-	var entries []*set.Entry
-
-	err := c.getThing(EndPointAuthEntries+"/"+setID, &entries)
-
-	for _, entry := range entries {
-		entry.CorrectFromJSON()
-	}
-
-	return entries, err
+	return c.getEntries(setID, EndPointAuthEntries)
 }
 
 // GetUploadedFiles gets the uploaded file paths and their backup status for the
 // given set.
 func (c *Client) GetUploadedFiles(setID string) ([]*set.Entry, error) {
+	return c.getEntries(setID, EndPointAuthUploadedEntries)
+}
+
+// GetOrphanedFiles gets the orphaned file paths and their backup status for the
+// given set.
+func (c *Client) GetOrphanedFiles(setID string) ([]*set.Entry, error) {
+	return c.getEntries(setID, EndPointAuthOrphanedEntries)
+}
+
+// GetMissingFiles gets the missing file paths and their backup status for the
+// given set.
+func (c *Client) GetMissingFiles(setID string) ([]*set.Entry, error) {
+	return c.getEntries(setID, EndPointAuthMissingEntries)
+}
+
+func (c *Client) getEntries(setID string, endPoint string) ([]*set.Entry, error) {
 	var entries []*set.Entry
 
-	err := c.getThing(EndPointAuthUploadedEntries+"/"+setID, &entries)
+	err := c.getThing(endPoint+"/"+setID, &entries)
 
 	for _, entry := range entries {
 		entry.CorrectFromJSON()
@@ -291,15 +299,7 @@ func (c *Client) GetExampleFile(setID string) (*set.Entry, error) {
 // GetDirs gets the directories for the given set that were supplied to
 // SetDirs().
 func (c *Client) GetDirs(setID string) ([]*set.Entry, error) {
-	var entries []*set.Entry
-
-	err := c.getThing(EndPointAuthDirs+"/"+setID, &entries)
-
-	for _, entry := range entries {
-		entry.CorrectFromJSON()
-	}
-
-	return entries, err
+	return c.getEntries(setID, EndPointAuthDirs)
 }
 
 // FailedEntries holds failed Entries and the number of failed ones that were

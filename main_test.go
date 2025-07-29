@@ -269,6 +269,8 @@ func (s *TestServer) waitForServer() {
 
 	status := retry.Do(ctx, func() error {
 		clientCmd := exec.Command("./"+app, cmd...)
+		clientCmd.Stdout = os.Stdout
+		clientCmd.Stderr = os.Stderr
 		clientCmd.Env = []string{"XDG_STATE_HOME=" + s.dir}
 
 		return clientCmd.Run()

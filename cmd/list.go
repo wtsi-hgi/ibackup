@@ -26,8 +26,6 @@
 package cmd
 
 import (
-	"errors"
-	"io/fs"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -182,7 +180,11 @@ func getAllSetsFromDBAndDisplayPaths(dbPath string, local, remote, uploaded, //n
 
 	var filter set.FileEntryFilter
 
-	if uploaded {
+	if uploaded && deleted {
+		filter = set.FileEntryFilterOrphaned
+	} else if deleted {
+		filter = set.FileEntryFilterMissing
+	} else if uploaded {
 		filter = set.FileEntryFilterUploaded
 	}
 
@@ -196,7 +198,7 @@ func getAllSetsFromDBAndDisplayPaths(dbPath string, local, remote, uploaded, //n
 
 		transformer := getSetTransformerIfNeeded(s, !local)
 
-		displayEntryPaths(entries, transformer, local, remote, deleted, size, encode)
+		displayEntryPaths(entries, transformer, local, remote, size, encode)
 	}
 }
 
@@ -209,12 +211,8 @@ func getSetTransformerIfNeeded(s *set.Set, needed bool) transfer.PathTransformer
 }
 
 func displayEntryPaths(entries []*set.Entry, transformer transfer.PathTransformer,
-	local, remote, deleted, size, encode bool,
+	local, remote, size, encode bool,
 ) {
-	if deleted {
-		entries = filterForDeleted(entries)
-	}
-
 	format := "%[1]s\t%[2]s"
 
 	if local {
@@ -238,18 +236,6 @@ func displayEntryPaths(entries []*set.Entry, transformer transfer.PathTransforme
 	}
 }
 
-func filterForDeleted(entries []*set.Entry) []*set.Entry {
-	uploadedEntries := make([]*set.Entry, 0, len(entries))
-
-	for _, entry := range entries {
-		if _, err := os.Stat(entry.Path); errors.Is(err, fs.ErrNotExist) {
-			uploadedEntries = append(uploadedEntries, entry)
-		}
-	}
-
-	return uploadedEntries
-}
-
 func getSetFromServerAndDisplayPaths(client *server.Client,
 	local, remote, uploaded, deleted, size, encode bool, user, name string,
 ) {
@@ -262,7 +248,11 @@ func getSetFromServerAndDisplayPaths(client *server.Client,
 
 	getFiles := client.GetFiles
 
-	if uploaded {
+	if uploaded && deleted {
+		getFiles = client.GetOrphanedFiles
+	} else if deleted {
+		getFiles = client.GetMissingFiles
+	} else if uploaded {
 		getFiles = client.GetUploadedFiles
 	}
 
@@ -273,5 +263,5 @@ func getSetFromServerAndDisplayPaths(client *server.Client,
 
 	transformer := getSetTransformerIfNeeded(sets[0], !local)
 
-	displayEntryPaths(entries, transformer, local, remote, deleted, size, encode)
+	displayEntryPaths(entries, transformer, local, remote, size, encode)
 }
