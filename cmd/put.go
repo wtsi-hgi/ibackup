@@ -505,7 +505,7 @@ func parsePutFileLine(line string, base64Encoded bool, lineNum int,
 		return nil, err
 	}
 
-	remote, err := decodeBase64(cols[0], base64Encoded)
+	remote, err := decodeBase64(cols[1], base64Encoded)
 	if err != nil {
 		return nil, err
 	}
