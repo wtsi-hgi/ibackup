@@ -821,9 +821,9 @@ func TestList(t *testing.T) {
 		})
 
 		Convey("list with invalid option combinations returns an error", func() {
-			s.confirmOutput(t, []string{"list", "--all"}, 1, "--all requires --database to be set")
-			s.confirmOutput(t, []string{"list", "--name", "testSet", "--all", "--database", "db.file"}, 1,
-				"--name and --all are mutually exclusive")
+			s.confirmOutputContains(t, []string{"list", "--all"}, 1, `Error: required flag(s) "database" not set`)
+			s.confirmOutputContains(t, []string{"list", "--name", "testSet", "--all", "--database", "db.file"}, 1,
+				`Error: if any flags in the group [all name] are set none of the others can be; [all name] were all set`)
 		})
 	})
 }
