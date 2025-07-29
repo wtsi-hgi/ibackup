@@ -153,7 +153,7 @@ If there's an issue with the database or behaviour of the queue, you can use the
 --debug option to start the server with job submission disabled on a copy of the
 database that you've made, to investigate.
 `,
-	PreRunE: func(cmd *cobra.Command, args []string) error {
+	PreRunE: func(cmd *cobra.Command, _ []string) error {
 		if srmf, _ := cmd.Flags().GetString("still_running"); srmf != "" { //nolint:errcheck
 			if slackToken == "" || slackChannel == "" {
 				return ErrNoSlack
