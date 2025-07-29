@@ -868,10 +868,19 @@ func (d *DB) GetExcludedPaths(setID string) ([]string, error) {
 		return nil, err
 	}
 
-	paths := make([]string, len(remReqs))
+	fileEntries, err := d.GetPureFileEntries(setID)
+	if err != nil {
+		return nil, err
+	}
 
-	for i, remReq := range remReqs {
-		paths[i] = remReq.Path
+	paths := make([]string, 0, len(remReqs)+len(fileEntries))
+
+	for _, remReq := range remReqs {
+		paths = append(paths, remReq.Path)
+	}
+
+	for _, entry := range fileEntries {
+		paths = append(paths, entry.Path)
 	}
 
 	return paths, nil

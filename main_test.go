@@ -4067,7 +4067,27 @@ func TestEdit(t *testing.T) {
 				So(output, ShouldContainSubstring, addFile+"\tuploaded")
 			}
 
-			Convey("And a set with a file", func() {
+			Convey("And a set with a specified file", func() {
+				setName := "testSet"
+
+				s.addSetForTesting(t, setName, transformer, setFile1)
+				s.waitForStatus(setName, "Status: complete", timeout)
+
+				Convey("You can add the parent folder for the file and there's no duplication", func() {
+					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--add", setDir1)
+					So(exitCode, ShouldEqual, 0)
+
+					s.waitForStatus(setName, "Status: complete", timeout)
+
+					exitCode, output := s.runBinaryWithNoLogging(t, "status", "--name", setName, "-d")
+					So(exitCode, ShouldEqual, 0)
+
+					So(output, ShouldContainSubstring, "Num files: 1")
+					So(output, ShouldContainSubstring, setFile1)
+				})
+			})
+
+			Convey("And a set with a folder containing a file", func() {
 				setName := "testSet"
 
 				s.addSetForTesting(t, setName, transformer, setDir1)
