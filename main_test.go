@@ -3002,8 +3002,8 @@ func TestTrash(t *testing.T) {
 				err = os.Remove(file1)
 				So(err, ShouldBeNil)
 
-				err := syscall.Mkfifo(file1, userPerms)
-				So(err, ShouldBeNil)
+				e := syscall.Mkfifo(file1, userPerms)
+				So(e, ShouldBeNil)
 
 				exitCode, _ := s.runBinary(t, "retry", "--name", setName, "--all")
 				So(exitCode, ShouldEqual, 0)
@@ -3031,8 +3031,8 @@ func TestTrash(t *testing.T) {
 				setNameWithMissingFile := "setWithMissingFile"
 				s.addSetForTesting(t, setNameWithMissingFile, transformer, path)
 
-				err := os.Remove(file)
-				So(err, ShouldBeNil)
+				e := os.Remove(file)
+				So(e, ShouldBeNil)
 
 				s.waitForStatus(setNameWithMissingFile, "\nStatus: complete", 10*time.Second)
 				s.confirmOutputContains(t, []string{"status", "--name", setNameWithMissingFile, "-d"}, 0, file+"\tmissing")
@@ -3044,8 +3044,8 @@ func TestTrash(t *testing.T) {
 
 			Convey("Given a set with an abnormal file", func() {
 				file := filepath.Join(path, "abnormal-file")
-				err := syscall.Mkfifo(file, userPerms)
-				So(err, ShouldBeNil)
+				e := syscall.Mkfifo(file, userPerms)
+				So(e, ShouldBeNil)
 
 				setNameWithAbnormalFile := "setWithAbnormalFile"
 				s.addSetForTesting(t, setNameWithAbnormalFile, transformer, file)
