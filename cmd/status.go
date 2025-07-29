@@ -260,7 +260,7 @@ func displayQueueStatus(qs *server.QStatus) error {
 func getSetByName(client *server.Client, user, name string) ([]*set.Set, error) {
 	got, err := client.GetSetByName(user, name)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w [%s]", err, name)
 	}
 
 	return []*set.Set{got}, nil
