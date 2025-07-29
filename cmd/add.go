@@ -197,6 +197,9 @@ option to add sets on behalf of other users.
 		if mr, _ := cmd.Flags().GetBool("monitor-removals"); mr { //nolint:errcheck
 			must(cmd.MarkFlagRequired("monitor"))
 		}
+
+		must(RootCmd.MarkPersistentFlagRequired("url"))
+		must(RootCmd.MarkPersistentFlagRequired("cert"))
 	},
 	RunE: func(_ *cobra.Command, _ []string) error {
 		var monitorDuration time.Duration

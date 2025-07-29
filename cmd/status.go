@@ -129,6 +129,9 @@ own. You can specify the user as "all" to see all user's sets.
 		if remotePaths, _ := cmd.Flags().GetBool("remotepaths"); remotePaths { //nolint:errcheck
 			must(cmd.MarkFlagRequired("details"))
 		}
+
+		must(RootCmd.MarkPersistentFlagRequired("url"))
+		must(RootCmd.MarkPersistentFlagRequired("cert"))
 	},
 	RunE: func(_ *cobra.Command, _ []string) error {
 		sf := newStatusFilterer(statusIncomplete, statusComplete, statusFailed, statusQueued)

@@ -88,6 +88,9 @@ the queue.
 
 			cmd.MarkFlagsOneRequired("all", "user")
 		}
+
+		must(RootCmd.MarkPersistentFlagRequired("url"))
+		must(RootCmd.MarkPersistentFlagRequired("cert"))
 	},
 	RunE: func(_ *cobra.Command, _ []string) error {
 		gclient, err := gasClientCLI(serverURL, serverCert)

@@ -63,6 +63,10 @@ environment variable, or overriding that with the --cert argument).
 If you are the user who started the ibackup server, you can use the --user
 option to retry the given requestor's backup sets, instead of your own.
 `,
+	PreRun: func(_ *cobra.Command, _ []string) {
+		must(RootCmd.MarkPersistentFlagRequired("url"))
+		must(RootCmd.MarkPersistentFlagRequired("cert"))
+	},
 	RunE: func(_ *cobra.Command, _ []string) error {
 		client, err := newServerClient(serverURL, serverCert)
 		if err != nil {

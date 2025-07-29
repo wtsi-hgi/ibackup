@@ -97,6 +97,9 @@ IBACKUP_LOCAL_DB_BACKUP_PATH environmental variable.
 		} else {
 			must(cmd.MarkFlagRequired("database"))
 		}
+
+		must(RootCmd.MarkPersistentFlagRequired("url"))
+		must(RootCmd.MarkPersistentFlagRequired("cert"))
 	},
 	RunE: func(_ *cobra.Command, _ []string) error {
 		if lstAll {

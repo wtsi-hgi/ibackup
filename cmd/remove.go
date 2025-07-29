@@ -68,6 +68,10 @@ var removeCmd = &cobra.Command{
  --path: if you want to remove a single file or directory, provide its absolute
 		 path.
  `,
+	PreRun: func(_ *cobra.Command, _ []string) {
+		must(RootCmd.MarkPersistentFlagRequired("url"))
+		must(RootCmd.MarkPersistentFlagRequired("cert"))
+	},
 	RunE: func(_ *cobra.Command, _ []string) error {
 		var paths []string
 

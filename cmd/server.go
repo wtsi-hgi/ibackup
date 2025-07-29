@@ -154,14 +154,20 @@ If there's an issue with the database or behaviour of the queue, you can use the
 database that you've made, to investigate.
 `,
 	PreRunE: func(cmd *cobra.Command, args []string) error {
-		if len(args) != 1 && len(args) != 2 {
-			return ErrNoDatabase
-		}
-
 		if srmf, _ := cmd.Flags().GetString("still_running"); srmf != "" { //nolint:errcheck
 			if slackToken == "" || slackChannel == "" {
 				return ErrNoSlack
 			}
+		}
+
+		must(RootCmd.MarkPersistentFlagRequired("url"))
+		must(RootCmd.MarkPersistentFlagRequired("cert"))
+
+		return nil
+	},
+	Args: func(_ *cobra.Command, args []string) error {
+		if len(args) != 1 && len(args) != 2 {
+			return ErrNoDatabase
 		}
 
 		return nil

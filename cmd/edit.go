@@ -78,6 +78,10 @@ Edit an existing backup set. You cannot edit readonly sets and you cannot use
 
 To edit the backup set you must provide --name, which should be the name of a 
 preexisting backup set.`,
+	PreRun: func(_ *cobra.Command, _ []string) {
+		must(RootCmd.MarkPersistentFlagRequired("url"))
+		must(RootCmd.MarkPersistentFlagRequired("cert"))
+	},
 	RunE: func(_ *cobra.Command, _ []string) error {
 		client, err := newServerClient(serverURL, serverCert)
 		if err != nil {

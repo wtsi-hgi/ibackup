@@ -165,9 +165,6 @@ func init() {
 		"ibackup server URL in the form host:port")
 	RootCmd.PersistentFlags().Var(&stringFlag{&serverCert}, "cert",
 		"path to server certificate file")
-
-	must(RootCmd.MarkPersistentFlagRequired("url"))
-	must(RootCmd.MarkPersistentFlagRequired("cert"))
 }
 
 // logToFile logs to the given file.
