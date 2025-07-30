@@ -1,6 +1,7 @@
 package db
 
 import (
+	"bytes"
 	"database/sql"
 	"database/sql/driver"
 	"encoding/json"
@@ -190,14 +191,17 @@ type Set struct {
 type Metadata map[string]string
 
 func (m *Metadata) Scan(src any) error {
-	str, ok := src.(string)
-	if !ok {
-		return ErrInvalidMetadata
+	if data, ok := src.([]byte); ok {
+		*m = make(Metadata)
+
+		return json.NewDecoder(bytes.NewReader(data)).Decode(m)
+	} else if str, ok := src.(string); ok {
+		*m = make(Metadata)
+
+		return json.NewDecoder(strings.NewReader(str)).Decode(m)
 	}
 
-	*m = make(Metadata)
-
-	return json.NewDecoder(strings.NewReader(str)).Decode(m)
+	return ErrInvalidMetadata
 }
 
 func (m Metadata) Value() (driver.Value, error) { //nolint:unparam
@@ -246,7 +250,7 @@ func (d *DB) createSet(tx *sql.Tx, set *Set) error {
 	}
 
 	res, err := tx.Exec(createSet, set.Name, set.Requester, tID, set.MonitorTime,
-		set.Description, set.Metadata, set.Reason, set.ReviewDate, set.DeleteDate)
+		set.Description, set.Metadata, set.Reason, timeOrNull(set.ReviewDate), timeOrNull(set.DeleteDate))
 	if err != nil {
 		return err
 	}
@@ -258,6 +262,13 @@ func (d *DB) createSet(tx *sql.Tx, set *Set) error {
 	set.modifiable = true
 
 	return nil
+}
+
+func timeOrNull(t time.Time) sql.NullTime {
+	return sql.NullTime{
+		Time:  t,
+		Valid: !t.IsZero(),
+	}
 }
 
 func execReturningRowID(tx *sql.Tx, sql string, params ...any) (int64, error) {
@@ -282,6 +293,8 @@ func (d *DBRO) GetSet(name, requester string) (*Set, error) {
 func scanSet(scanner scanner) (*Set, error) { //nolint:funlen
 	set := new(Set)
 
+	var reviewDate, deleteDate sql.NullTime
+
 	if err := scanner.Scan(
 		&set.id,
 		&set.Name,
@@ -290,8 +303,8 @@ func scanSet(scanner scanner) (*Set, error) { //nolint:funlen
 		&set.MonitorTime,
 		&set.Metadata,
 		&set.Reason,
-		&set.ReviewDate,
-		&set.DeleteDate,
+		&reviewDate,
+		&deleteDate,
 		&set.NumFiles,
 		&set.SizeTotal,
 		&set.Uploaded,
@@ -320,6 +333,9 @@ func scanSet(scanner scanner) (*Set, error) { //nolint:funlen
 	); err != nil {
 		return nil, err
 	}
+
+	set.ReviewDate = reviewDate.Time
+	set.DeleteDate = deleteDate.Time
 
 	return set, nil
 }

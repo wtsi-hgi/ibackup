@@ -1,6 +1,7 @@
 package db
 
 import (
+	"database/sql"
 	"errors"
 	"time"
 )
@@ -116,6 +117,8 @@ func scanTask(process int64) func(scanner) (*Task, error) {
 	return func(s scanner) (*Task, error) {
 		t := new(Task)
 
+		var reviewDate, deleteDate sql.NullTime
+
 		if err := s.Scan(
 			&t.id,
 			&t.Type,
@@ -125,13 +128,15 @@ func scanTask(process int64) func(scanner) (*Task, error) {
 			&t.Requester,
 			&t.SetName,
 			&t.Reason,
-			&t.ReviewDate,
-			&t.DeleteDate,
+			&reviewDate,
+			&deleteDate,
 			&t.Metadata,
 		); err != nil {
 			return nil, err
 		}
 
+		t.ReviewDate = reviewDate.Time
+		t.DeleteDate = deleteDate.Time
 		t.process = process
 
 		return t, nil

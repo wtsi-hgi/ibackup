@@ -36,8 +36,8 @@ func TestSet(t *testing.T) {
 				Transformer: "humgen",
 				Description: "my first set",
 				Reason:      "in case it gets deleted",
-				ReviewDate:  time.Now().Truncate(time.Second),
-				DeleteDate:  time.Now().Truncate(time.Second).Add(time.Hour),
+				ReviewDate:  time.Now().Truncate(time.Second).In(time.UTC),
+				DeleteDate:  time.Now().Truncate(time.Second).In(time.UTC).Add(time.Hour),
 				Metadata: Metadata{
 					"some-extra-meta": "some-value",
 				},

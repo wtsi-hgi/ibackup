@@ -511,7 +511,7 @@ const (
 		"`sets`.`metadata` " +
 		"FROM `queue` " +
 		"JOIN `localFiles` ON `localFiles`.`id` = `queue`.`localFileID` " +
-		"JOIN `sets` ON `sets`.`id` = `localfiles`.`setID` " +
+		"JOIN `sets` ON `sets`.`id` = `localFiles`.`setID` " +
 		"JOIN `remoteFiles` ON `remoteFiles`.`id` = `localFiles`.`remoteFileID` " +
 		"JOIN `hardlinks` ON `hardlinks`.`id` = `remoteFiles`.`hardlinkID` " +
 		"WHERE `queue`.`heldBy` = ?;"
