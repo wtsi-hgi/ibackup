@@ -59,6 +59,7 @@ import (
 	"github.com/wtsi-ssg/wr/backoff"
 	btime "github.com/wtsi-ssg/wr/backoff/time"
 	"github.com/wtsi-ssg/wr/retry"
+	"golang.org/x/sys/unix"
 )
 
 const (
@@ -103,6 +104,10 @@ func NewTestServer(t *testing.T) *TestServer {
 	s.prepareConfig()
 
 	s.startServer()
+
+	Reset(func() {
+		s.Shutdown() //nolint:errcheck
+	})
 
 	return s
 }
@@ -685,7 +690,7 @@ func TestList(t *testing.T) {
 			So(os.MkdirAll(dir+"/path/to/other/", 0700), ShouldBeNil)
 			So(os.WriteFile(dir+"/path/to/other/file", []byte("data"), 0600), ShouldBeNil)
 
-			s.addSetForTestingWithItems(t, "testAddFiles", "prefix="+dir+":"+remote, tempTestFile.Name())
+			s.addSetForTestingWithFlags(t, "testAddFiles", "prefix="+dir+":"+remote, "--items", tempTestFile.Name())
 			s.waitForStatus("testAddFiles", "Status: complete", 20*time.Second)
 
 			Convey("list with --deleted shows only files that don't exist locally", func() {
@@ -2271,8 +2276,7 @@ func removeFileFromIRODS(path string) {
 }
 
 func addFileToIRODS(localPath, remotePath string) {
-	_, err := exec.Command("iput", localPath, remotePath).CombinedOutput()
-	So(err, ShouldBeNil)
+	So(exec.Command("iput", localPath, remotePath).Run(), ShouldBeNil)
 }
 
 func addRemoteMeta(remotePath, key, value string) {
@@ -2439,14 +2443,18 @@ func TestManualMode(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(link, ShouldEqual, "bad")
 
-			restoreFiles(t, file3+"\t"+remote2+"\n", "1 downloaded (1 replaced); 0 skipped; 0 failed; 0 missing\n", "-o")
+			tv := unix.Timeval{Sec: timeA.Unix()}
 
+			So(unix.Lutimes(file3, []unix.Timeval{tv, tv}), ShouldBeNil)
+
+			restoreFiles(t, file3+"\t"+remote2+"\n", "1 downloaded (1 replaced); 0 skipped; 0 failed; 0 missing\n", "-o")
 			link, err = os.Readlink(file3)
 			So(err, ShouldBeNil)
 			So(link, ShouldEqual, file1)
 
 			So(os.Remove(file3), ShouldBeNil)
 			So(os.WriteFile(file3, nil, 0600), ShouldBeNil)
+			So(unix.Lutimes(file3, []unix.Timeval{tv, tv}), ShouldBeNil)
 
 			restoreFiles(t, file3+"\t"+remote2+"\n", "1 downloaded (1 replaced); 0 skipped; 0 failed; 0 missing\n", "-o")
 
@@ -3597,7 +3605,8 @@ func TestEdit(t *testing.T) {
 
 		Convey("You can specify either --make-readonly or --disable-readonly", func() {
 			s.confirmOutputContains(t, []string{"edit", "--name", "a", "--make-readonly", "--disable-readonly"},
-				1, "Error: if any flags in the group [make-readonly disable-readonly] are set none of the others can be; [disable-readonly make-readonly] were all set")
+				1, "Error: if any flags in the group [make-readonly disable-readonly] "+
+					"are set none of the others can be; [disable-readonly make-readonly] were all set")
 		})
 
 		Convey("Given a transformer", func() {
@@ -3672,7 +3681,8 @@ func TestEdit(t *testing.T) {
 
 				Convey("You cannot use both --monitor and --stop-monitor together", func() {
 					s.confirmOutputContains(t, []string{"edit", "--name", setName, "--monitor", "1h", "--stop-monitor"}, 1,
-						cmd.ErrInvalidEditMonitor.Error())
+						"Error: if any flags in the group [monitor stop-monitor] are "+
+							"set none of the others can be; [monitor stop-monitor] were all set")
 				})
 
 				Convey("You can enable monitoring via edit", func() {
@@ -3725,7 +3735,8 @@ func TestEdit(t *testing.T) {
 						s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Archive: true\n")
 
 						s.confirmOutputContains(t, []string{"edit", "--name", setName, "--archive", "--stop-archiving"}, 1,
-							cmd.ErrInvalidEditArchive.Error())
+							"Error: if any flags in the group [archive stop-archiving] are set none of the others can be; "+
+								"[archive stop-archiving] were all set")
 					})
 				})
 			})
@@ -3812,7 +3823,7 @@ func TestEdit(t *testing.T) {
 
 				Convey("You cannot both --hide and --unhide a set", func() {
 					s.confirmOutputContains(t, []string{"edit", "--name", setName, "--hide", "--unhide"}, 1,
-						cmd.ErrInvalidEditHide.Error())
+						"Error: if any flags in the group [hide unhide] are set none of the others can be; [hide unhide] were all set")
 				})
 			})
 

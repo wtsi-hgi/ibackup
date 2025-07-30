@@ -27,7 +27,6 @@
 package cmd
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"time"
@@ -58,13 +57,6 @@ var (
 	editMakeWritable        bool
 	editHide                bool
 	editUnHide              bool
-)
-
-var (
-	ErrInvalidEditRO      = errors.New("you can either make a set read-only or writable, not both")
-	ErrInvalidEditArchive = errors.New("you can either --archive a set or --stop-archiving, not both")
-	ErrInvalidEditHide    = errors.New("you can either --hide or --unhide a set, not both")
-	ErrInvalidEditMonitor = errors.New("you can either --monitor or --stop-monitor a set, not both")
 )
 
 // editCmd represents the edit command.
