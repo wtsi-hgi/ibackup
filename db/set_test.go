@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
@@ -34,6 +35,12 @@ func TestSet(t *testing.T) {
 				Requester:   "you",
 				Transformer: "humgen",
 				Description: "my first set",
+				Reason:      "in case it gets deleted",
+				ReviewDate:  time.Now().Truncate(time.Second),
+				DeleteDate:  time.Now().Truncate(time.Second).Add(time.Hour),
+				Metadata: Metadata{
+					"some-extra-meta": "some-value",
+				},
 			}
 
 			So(d.CreateSet(setA), ShouldBeNil)

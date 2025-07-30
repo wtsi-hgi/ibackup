@@ -42,6 +42,9 @@ var (
 			"`error` TEXT NOT NULL, " +
 			"`warning` TEXT NOT NULL, " +
 			"`metadata` TEXT NOT NULL, " +
+			"`reason` TEXT NOT NULL, " +
+			"`review` DATETIME DEFAULT '0001-01-01 00:00:00', " +
+			"`delete` DATETIME DEFAULT '0001-01-01 00:00:00', " +
 			"`deleteLocal` BOOLEAN DEFAULT FALSE, " +
 			"`modifiable` BOOLEAN DEFAULT TRUE, " +
 			"`hidden` BOOLEAN DEFAULT FALSE, " +
@@ -330,8 +333,11 @@ const (
 		"`description`, " +
 		"`error`, " +
 		"`warning`, " +
-		"`metadata` " +
-		") VALUES (?, ?, ?, ?, ?, '', '', '');"
+		"`metadata`, " +
+		"`reason`, " +
+		"`review`, " +
+		"`delete` " +
+		") VALUES (?, ?, ?, ?, ?, '', '', ?, ?, ?, ?);"
 	createTrashSetForFile = "INSERT INTO `sets` (" +
 		"`name`, " +
 		"`requester`, " +
@@ -340,14 +346,15 @@ const (
 		"`description`, " +
 		"`error`, " +
 		"`warning`, " +
-		"`metadata` " +
+		"`metadata`, " +
+		"`reason` " +
 		") " +
 		"SELECT " +
 		"CONCAT(CHAR(0), `oldSet`.`name`), " +
 		"`oldSet`.`requester`, " +
 		"`oldSet`.`transformerID`, " +
 		"/*!LAST_INSERT_ID(*/0/*!)*/, " +
-		"'', '', '', '' " +
+		"'null', '', '', '', '' " +
 		"FROM `localFiles` JOIN `sets` AS `oldSet` ON `localFiles`.`setID` = `oldSet`.`id` " +
 		"WHERE `localFiles`.`id` = ? AND `oldSet`.`name` NOT LIKE CONCAT(CHAR(0), '%') " +
 		"ON /*! DUPLICATE KEY UPDATE `sets`.`id` = LAST_INSERT_ID(`sets`.`id`); -- */ " +
@@ -420,6 +427,10 @@ const (
 		"`sets`.`requester`, " +
 		"`sets`.`description`, " +
 		"`sets`.`monitorTime`, " +
+		"`sets`.`metadata`, " +
+		"`sets`.`reason`, " +
+		"`sets`.`review`, " +
+		"`sets`.`delete`, " +
 		"`sets`.`numFiles`," +
 		"`sets`.`sizeFiles`," +
 		"`sets`.`uploaded`," +

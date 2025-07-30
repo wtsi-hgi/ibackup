@@ -2,6 +2,8 @@ package db
 
 import (
 	"database/sql"
+	"database/sql/driver"
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -62,7 +64,7 @@ type Set struct {
 
 	// Optional additional metadata which will be applied to every file in the
 	// set.
-	Metadata map[string]string
+	Metadata Metadata
 
 	// Delete local paths after successful upload. Optional, defaults to no
 	// deletions (ie. do a backup, not a move).
@@ -168,6 +170,10 @@ type Set struct {
 	// current remove process.
 	NumObjectsRemoved uint64
 
+	Reason     string
+	ReviewDate time.Time
+	DeleteDate time.Time
+
 	// Error holds any error that applies to the whole set, such as an issue
 	// with the Transformer. This is a read-only value.
 	Error string
@@ -181,6 +187,27 @@ type Set struct {
 	Hidden bool
 }
 
+type Metadata map[string]string
+
+func (m *Metadata) Scan(src any) error {
+	str, ok := src.(string)
+	if !ok {
+		return ErrInvalidMetadata
+	}
+
+	*m = make(Metadata)
+
+	return json.NewDecoder(strings.NewReader(str)).Decode(m)
+}
+
+func (m Metadata) Value() (driver.Value, error) { //nolint:unparam
+	var sb strings.Builder
+
+	json.NewEncoder(&sb).Encode(m) //nolint:errcheck,errchkjson
+
+	return sb.String(), nil
+}
+
 func (s *Set) IsReadonly() bool {
 	return !s.modifiable
 }
@@ -189,6 +216,7 @@ var (
 	ErrReadonlySet          = errors.New("cannot modify readonly set")
 	ErrInvalidSetName       = errors.New("invalid set name")
 	ErrInvalidRequesterName = errors.New("invalid requester name")
+	ErrInvalidMetadata      = errors.New("invalid metadata")
 )
 
 func (d *DB) CreateSet(set *Set) error {
@@ -217,7 +245,8 @@ func (d *DB) createSet(tx *sql.Tx, set *Set) error {
 		return err
 	}
 
-	res, err := tx.Exec(createSet, set.Name, set.Requester, tID, set.MonitorTime, set.Description)
+	res, err := tx.Exec(createSet, set.Name, set.Requester, tID, set.MonitorTime,
+		set.Description, set.Metadata, set.Reason, set.ReviewDate, set.DeleteDate)
 	if err != nil {
 		return err
 	}
@@ -259,6 +288,10 @@ func scanSet(scanner scanner) (*Set, error) { //nolint:funlen
 		&set.Requester,
 		&set.Description,
 		&set.MonitorTime,
+		&set.Metadata,
+		&set.Reason,
+		&set.ReviewDate,
+		&set.DeleteDate,
 		&set.NumFiles,
 		&set.SizeTotal,
 		&set.Uploaded,
