@@ -1,6 +1,9 @@
 package db
 
-import "errors"
+import (
+	"errors"
+	"time"
+)
 
 type QueueType uint8
 
@@ -25,6 +28,12 @@ type Task struct {
 	RemotePath string
 	UploadPath string
 	Type       QueueType
+	Requester  string
+	SetName    string
+	Reason     string
+	ReviewDate time.Time
+	DeleteDate time.Time
+	Metadata   Metadata
 	Error      string
 }
 
@@ -113,6 +122,12 @@ func scanTask(process int64) func(scanner) (*Task, error) {
 			&t.LocalPath,
 			&t.RemotePath,
 			&t.UploadPath,
+			&t.Requester,
+			&t.SetName,
+			&t.Reason,
+			&t.ReviewDate,
+			&t.DeleteDate,
+			&t.Metadata,
 		); err != nil {
 			return nil, err
 		}

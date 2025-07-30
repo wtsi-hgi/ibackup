@@ -50,6 +50,8 @@ func TestQueue(t *testing.T) {
 					RemotePath: "/remote/file/1_0",
 					UploadPath: "/remote/file/1_0",
 					Type:       QueueUpload,
+					Requester:  "me",
+					SetName:    "mySet",
 				},
 				{
 					id:         2,
@@ -58,6 +60,8 @@ func TestQueue(t *testing.T) {
 					RemotePath: "/remote/file/1_1",
 					UploadPath: "/remote/file/1_1",
 					Type:       QueueUpload,
+					Requester:  "me",
+					SetName:    "mySet",
 				},
 				{
 					id:         4,
@@ -66,6 +70,8 @@ func TestQueue(t *testing.T) {
 					RemotePath: "/remote/file/1_3",
 					UploadPath: "/remote/file/1_3",
 					Type:       QueueUpload,
+					Requester:  "me",
+					SetName:    "mySet",
 				},
 			})
 
@@ -79,6 +85,8 @@ func TestQueue(t *testing.T) {
 					RemotePath: "/remote/file/1_4",
 					UploadPath: "/remote/file/1_4",
 					Type:       QueueUpload,
+					Requester:  "me",
+					SetName:    "mySet",
 				},
 				{
 					id:         6,
@@ -87,6 +95,8 @@ func TestQueue(t *testing.T) {
 					RemotePath: "/remote/file/2_0",
 					UploadPath: "/remote/file/2_0",
 					Type:       QueueUpload,
+					Requester:  "me",
+					SetName:    "my2ndSet",
 				},
 				{
 					id:         7,
@@ -95,6 +105,8 @@ func TestQueue(t *testing.T) {
 					RemotePath: "/remote/file/2_1",
 					UploadPath: "/remote/file/2_1",
 					Type:       QueueUpload,
+					Requester:  "me",
+					SetName:    "my2ndSet",
 				},
 				{
 					id:         9,
@@ -103,6 +115,8 @@ func TestQueue(t *testing.T) {
 					RemotePath: "/remote/file/2_3",
 					UploadPath: "/remote/file/2_3",
 					Type:       QueueUpload,
+					Requester:  "me",
+					SetName:    "my2ndSet",
 				},
 				{
 					id:         10,
@@ -111,6 +125,8 @@ func TestQueue(t *testing.T) {
 					RemotePath: "/remote/file/2_4",
 					UploadPath: "/remote/file/2_4",
 					Type:       QueueUpload,
+					Requester:  "me",
+					SetName:    "my2ndSet",
 				},
 			})
 		})

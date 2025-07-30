@@ -354,7 +354,7 @@ const (
 		"`oldSet`.`requester`, " +
 		"`oldSet`.`transformerID`, " +
 		"/*!LAST_INSERT_ID(*/0/*!)*/, " +
-		"'null', '', '', '', '' " +
+		"'', '', '', 'null', '' " +
 		"FROM `localFiles` JOIN `sets` AS `oldSet` ON `localFiles`.`setID` = `oldSet`.`id` " +
 		"WHERE `localFiles`.`id` = ? AND `oldSet`.`name` NOT LIKE CONCAT(CHAR(0), '%') " +
 		"ON /*! DUPLICATE KEY UPDATE `sets`.`id` = LAST_INSERT_ID(`sets`.`id`); -- */ " +
@@ -502,9 +502,16 @@ const (
 		"`queue`.`type`, " +
 		"`localFiles`.`localPath`, " +
 		"`remoteFiles`.`remotePath`, " +
-		"`hardlinks`.`firstRemote` " +
+		"`hardlinks`.`firstRemote`, " +
+		"`sets`.`requester`, " +
+		"`sets`.`name`, " +
+		"`sets`.`reason`, " +
+		"`sets`.`review`, " +
+		"`sets`.`delete`, " +
+		"`sets`.`metadata` " +
 		"FROM `queue` " +
 		"JOIN `localFiles` ON `localFiles`.`id` = `queue`.`localFileID` " +
+		"JOIN `sets` ON `sets`.`id` = `localfiles`.`setID` " +
 		"JOIN `remoteFiles` ON `remoteFiles`.`id` = `localFiles`.`remoteFileID` " +
 		"JOIN `hardlinks` ON `hardlinks`.`id` = `remoteFiles`.`hardlinkID` " +
 		"WHERE `queue`.`heldBy` = ?;"
