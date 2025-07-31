@@ -76,7 +76,7 @@ type File struct {
 	modifiable        bool
 }
 
-func (d *DB) AddSetFiles(set *Set, toAdd iter.Seq[*File]) error {
+func (d *DB) SetSetFiles(set *Set, toAdd, toRemove iter.Seq[*File]) error {
 	if !set.modifiable {
 		return ErrReadonlySet
 	}
@@ -91,6 +91,10 @@ func (d *DB) AddSetFiles(set *Set, toAdd iter.Seq[*File]) error {
 		if err := d.addSetFile(tx, set.id, file); err != nil {
 			return err
 		}
+	}
+
+	if err := d.removeFiles(tx, toRemove, false); err != nil {
+		return err
 	}
 
 	return tx.Commit()

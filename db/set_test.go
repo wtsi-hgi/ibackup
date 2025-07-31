@@ -129,7 +129,7 @@ func TestSet(t *testing.T) {
 					So(d.SetSetDicoveryStarted(setB), ShouldEqual, ErrReadonlySet)
 					So(d.SetSetDicoveryCompleted(setB), ShouldEqual, ErrReadonlySet)
 					So(d.DeleteSet(setB), ShouldEqual, ErrReadonlySet)
-					So(d.AddSetFiles(setB, slices.Values([]*File{})), ShouldEqual, ErrReadonlySet)
+					So(d.SetSetFiles(setB, slices.Values([]*File{}), noSeq[*File]), ShouldEqual, ErrReadonlySet)
 				})
 
 				So(d.SetSetModifiable(setB), ShouldBeNil)
@@ -146,7 +146,7 @@ func TestSet(t *testing.T) {
 				discovery := &Discover{Path: "/some/path", Type: DiscoverFODN}
 
 				So(d.AddSetDiscovery(setB, discovery), ShouldBeNil)
-				So(d.AddSetFiles(setB, slices.Values(files)), ShouldBeNil)
+				So(d.SetSetFiles(setB, slices.Values(files), noSeq[*File]), ShouldBeNil)
 				So(d.clearQueue(), ShouldBeNil)
 
 				setA.Transformer = "prefix=/some/:/other/remote/"
@@ -180,9 +180,9 @@ func TestSet(t *testing.T) {
 				setB, err := d.GetSet("my2ndSet", "me")
 				So(err, ShouldBeNil)
 				So(setB.NumFiles, ShouldEqual, 0)
-				So(d.AddSetFiles(setB, genFiles(5)), ShouldBeNil)
-				So(d.AddSetFiles(setB, setFileType(genFiles(4), Abnormal)), ShouldBeNil)
-				So(d.AddSetFiles(setB, setFileType(genFiles(2), Symlink)), ShouldBeNil)
+				So(d.SetSetFiles(setB, genFiles(5), noSeq[*File]), ShouldBeNil)
+				So(d.SetSetFiles(setB, setFileType(genFiles(4), Abnormal), noSeq[*File]), ShouldBeNil)
+				So(d.SetSetFiles(setB, setFileType(genFiles(2), Symlink), noSeq[*File]), ShouldBeNil)
 
 				setB, err = d.GetSet("my2ndSet", "me")
 				So(err, ShouldBeNil)
@@ -211,7 +211,7 @@ func TestSet(t *testing.T) {
 				So(setB.Symlinks, ShouldEqual, 0)
 				So(setB.Hardlinks, ShouldEqual, 0)
 
-				So(d.AddSetFiles(setB, setFileStatus(genFiles(5), StatusMissing)), ShouldBeNil)
+				So(d.SetSetFiles(setB, setFileStatus(genFiles(5), StatusMissing), noSeq[*File]), ShouldBeNil)
 
 				setB, err = d.GetSet("my2ndSet", "me")
 				So(err, ShouldBeNil)
@@ -226,7 +226,7 @@ func TestSet(t *testing.T) {
 				filePrefix--
 
 				So(d.CreateSet(setC), ShouldBeNil)
-				So(d.AddSetFiles(setC, genFiles(2)), ShouldBeNil)
+				So(d.SetSetFiles(setC, genFiles(2), noSeq[*File]), ShouldBeNil)
 				So(d.clearQueue(), ShouldBeNil)
 
 				setB, err = d.GetSet(setB.Name, setB.Requester)
@@ -243,7 +243,7 @@ func TestSet(t *testing.T) {
 
 				cFiles := slices.Collect(genFiles(12))
 
-				So(d.AddSetFiles(setC, slices.Values(cFiles)), ShouldBeNil)
+				So(d.SetSetFiles(setC, slices.Values(cFiles), noSeq[*File]), ShouldBeNil)
 
 				setC, err = d.GetSet(setC.Name, setC.Requester)
 				So(err, ShouldBeNil)
@@ -281,7 +281,7 @@ func TestSet(t *testing.T) {
 
 				filePrefix -= 2
 
-				So(d.AddSetFiles(setC, genFiles(1)), ShouldBeNil)
+				So(d.SetSetFiles(setC, genFiles(1), noSeq[*File]), ShouldBeNil)
 
 				filePrefix++
 
@@ -345,7 +345,7 @@ func TestSet(t *testing.T) {
 					So(setC.SizeRemoved, ShouldEqual, (n+1)*100)
 				}
 
-				So(d.AddSetFiles(setC, slices.Values(cFiles[4:5])), ShouldBeNil)
+				So(d.SetSetFiles(setC, slices.Values(cFiles[4:5]), noSeq[*File]), ShouldBeNil)
 
 				setC, err = d.GetSet(setC.Name, setC.Requester)
 				So(err, ShouldBeNil)

@@ -72,11 +72,11 @@ func TestFiles(t *testing.T) {
 		Convey("You can add and retrieve files in that set", func() {
 			var err error
 
-			So(d.AddSetFiles(setA, slices.Values(files)), ShouldBeNil)
+			So(d.SetSetFiles(setA, slices.Values(files), noSeq[*File]), ShouldBeNil)
 			So(collectIter(t, d.GetSetFiles(setA)), ShouldResemble, files)
 			So(collectIter(t, d.GetSetFiles(setB)), ShouldBeNil)
 
-			So(d.AddSetFiles(setA, slices.Values(files)), ShouldBeNil)
+			So(d.SetSetFiles(setA, slices.Values(files), noSeq[*File]), ShouldBeNil)
 			So(collectIter(t, d.GetSetFiles(setA)), ShouldResemble, files)
 
 			setA, err = d.GetSet(setA.Name, setA.Requester)
@@ -110,7 +110,7 @@ func TestFiles(t *testing.T) {
 
 			files[0].Size = 120
 
-			So(d.AddSetFiles(setA, slices.Values(files[1:])), ShouldBeNil)
+			So(d.SetSetFiles(setA, slices.Values(files[1:]), noSeq[*File]), ShouldBeNil)
 			So(collectIter(t, d.GetSetFiles(setA)), ShouldResemble, files)
 
 			setA, err = d.GetSet(setA.Name, setA.Requester)
@@ -131,7 +131,7 @@ func TestFiles(t *testing.T) {
 				modifiable:  true,
 			})
 
-			So(d.AddSetFiles(setA, slices.Values(files[3:])), ShouldBeNil)
+			So(d.SetSetFiles(setA, slices.Values(files[3:]), noSeq[*File]), ShouldBeNil)
 			So(collectIter(t, d.GetSetFiles(setA)), ShouldResemble, files)
 
 			setA, err = d.GetSet(setA.Name, setA.Requester)
@@ -233,7 +233,7 @@ func TestFiles(t *testing.T) {
 		})
 
 		Convey("Files that failed to upload/remove have the appropriate data set", func() {
-			So(d.AddSetFiles(setA, slices.Values(files)), ShouldBeNil)
+			So(d.SetSetFiles(setA, slices.Values(files), noSeq[*File]), ShouldBeNil)
 
 			process, err := d.RegisterProcess()
 			So(err, ShouldBeNil)

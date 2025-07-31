@@ -100,7 +100,7 @@ func TestDiscovery(t *testing.T) {
 		Convey("Removing files in a set adds a DiscoverRemovedFile discovery entry for each file", func() {
 			files := slices.Collect(genFiles(5))
 
-			So(d.AddSetFiles(setA, slices.Values(files)), ShouldBeNil)
+			So(d.SetSetFiles(setA, slices.Values(files), noSeq[*File]), ShouldBeNil)
 			So(collectIter(t, d.GetSetDiscovery(setA)), ShouldBeNil)
 
 			So(d.RemoveSetFiles(slices.Values(files[:2])), ShouldBeNil)
