@@ -269,8 +269,6 @@ func (s *TestServer) waitForServer() {
 
 	status := retry.Do(ctx, func() error {
 		clientCmd := exec.Command("./"+app, cmd...)
-		clientCmd.Stdout = os.Stdout
-		clientCmd.Stderr = os.Stderr
 		clientCmd.Env = []string{"XDG_STATE_HOME=" + s.dir}
 
 		return clientCmd.Run()
@@ -686,20 +684,27 @@ func TestList(t *testing.T) {
 
 			So(os.MkdirAll(dir+"/path/to/other/", 0700), ShouldBeNil)
 			So(os.WriteFile(dir+"/path/to/other/file", []byte("data"), 0600), ShouldBeNil)
+			So(os.WriteFile(dir+"/path/to/other/file2", []byte("data"), 0600), ShouldBeNil)
 
-			s.addSetForTestingWithItems(t, "testAddFiles", "prefix="+dir+":"+remote, tempTestFile.Name())
-			s.waitForStatus("testAddFiles", "Status: complete", 20*time.Second)
+			setName := "testAddFiles_" + time.Now().Format("20060102150405")
+
+			s.addSetForTestingWithFlags(t, setName, "prefix="+dir+":"+remote, "--items", tempTestFile.Name())
+			s.waitForStatus(setName, "Status: complete", 20*time.Second)
 
 			Convey("list with --deleted shows only files that don't exist locally", func() {
-				s.confirmOutput(t, []string{"list", "--name", "testAddFiles", "--deleted"}, 0,
+				s.confirmOutput(t, []string{"list", "--name", setName, "--deleted"}, 0,
 					dir+"/path/to/some/file\t"+remote+"/path/to/some/file")
 
-				Convey("with --uploaded and --deleted shows only files that are stored remotely and not locally", func() {
-					s.confirmOutput(t, []string{"list", "--name", "testAddFiles", "--uploaded", "--deleted"}, 0, "")
+				Convey("with --uploaded and --deleted shows only orphaned files", func() {
+					s.confirmOutput(t, []string{"list", "--name", setName, "--uploaded", "--deleted"}, 0, "")
 
 					So(os.Remove(dir+"/path/to/other/file"), ShouldBeNil)
 
-					s.confirmOutput(t, []string{"list", "--name", "testAddFiles", "--uploaded", "--deleted"}, 0,
+					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--add", dir+"/path/to/other/file2")
+					So(exitCode, ShouldEqual, 0)
+					s.waitForStatus(setName, "Status: complete", 20*time.Second)
+
+					s.confirmOutput(t, []string{"list", "--name", setName, "--uploaded", "--deleted"}, 0,
 						dir+"/path/to/other/file\t"+remote+"/path/to/other/file")
 				})
 			})

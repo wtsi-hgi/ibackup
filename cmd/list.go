@@ -159,7 +159,7 @@ func init() {
 	}
 }
 
-func getAllSetsFromDBAndDisplayPaths(dbPath string, local, remote, uploaded, //nolint:funlen
+func getAllSetsFromDBAndDisplayPaths(dbPath string, local, remote, uploaded, //nolint:funlen,gocyclo
 	deleted, size, encode bool,
 ) {
 	db, err := set.NewRO(dbPath)
@@ -180,12 +180,13 @@ func getAllSetsFromDBAndDisplayPaths(dbPath string, local, remote, uploaded, //n
 
 	var filter set.FileEntryFilter
 
-	if uploaded && deleted {
+	switch {
+	case uploaded && deleted:
 		filter = set.FileEntryFilterOrphaned
-	} else if deleted {
-		filter = set.FileEntryFilterMissing
-	} else if uploaded {
+	case uploaded:
 		filter = set.FileEntryFilterUploaded
+	case deleted:
+		filter = set.FileEntryFilterMissing
 	}
 
 	for _, s := range sets {
@@ -248,11 +249,12 @@ func getSetFromServerAndDisplayPaths(client *server.Client,
 
 	getFiles := client.GetFiles
 
-	if uploaded && deleted {
+	switch {
+	case uploaded && deleted:
 		getFiles = client.GetOrphanedFiles
-	} else if deleted {
+	case deleted:
 		getFiles = client.GetMissingFiles
-	} else if uploaded {
+	case uploaded:
 		getFiles = client.GetUploadedFiles
 	}
 
