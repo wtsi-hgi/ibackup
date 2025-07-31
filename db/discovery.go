@@ -3,9 +3,16 @@ package db
 type DiscoveryType uint8
 
 const (
-	DiscoverDirectory DiscoveryType = iota
-	DiscoverFOFN
+	DiscoverFOFN DiscoveryType = iota
+	DiscoverFOFNBase64
+	DiscoverFOFNQuoted
 	DiscoverFODN
+	DiscoverFODNBase64
+	DiscoverFODNQuoted
+	DiscoverFile
+	DiscoverDirectory
+	DiscoverRemovedFile
+	DiscoverRemovedDirectory
 )
 
 type Discover struct {

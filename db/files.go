@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"iter"
+	"strings"
 	"time"
 )
 
@@ -95,21 +96,81 @@ func (d *DB) RemoveSetFiles(toRemove iter.Seq[*File]) error {
 	}
 	defer tx.Rollback() //nolint:errcheck
 
+	if err := d.removeFiles(tx, toRemove, true); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+func (d *DB) removeFiles(tx *sql.Tx, toRemove iter.Seq[*File], updateDiscovery bool) error { //nolint:gocognit
 	for file := range toRemove {
 		if !file.modifiable {
 			return ErrReadonlySet
 		}
 
-		if err = d.trashFile(tx, file); err != nil {
+		if err := d.trashFile(tx, file); err != nil {
 			return err
 		}
 
-		if _, err = tx.Exec(createQueuedRemoval, file.id); err != nil {
+		if updateDiscovery {
+			if _, err := tx.Exec(createDiscoverRemoveFromFile, file.id); err != nil {
+				return err
+			}
+		}
+
+		if _, err := tx.Exec(createQueuedRemoval, file.id); err != nil {
 			return err
 		}
 	}
 
+	return nil
+}
+
+func (d *DB) RemoveSetFilesInDir(set *Set, dir string) error { //nolint:gocyclo
+	if !set.modifiable {
+		return ErrReadonlySet
+	} else if !strings.HasSuffix(dir, "/") {
+		dir += "/"
+	}
+
+	tx, err := d.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	files := iterRows(&d.DBRO, scanFileID, getSetsFilesWithPrefix, set.id, dir)
+
+	if err = d.removeFiles(tx, files.Iter, false); err != nil {
+		return err
+	}
+
+	if files.Error != nil {
+		return err
+	}
+
+	if _, err = tx.Exec(deleteRedundantDiscovers, set.id, dir); err != nil {
+		return err
+	}
+
+	if _, err = tx.Exec(createDiscover, set.id, dir, DiscoverRemovedDirectory); err != nil {
+		return err
+	}
+
 	return tx.Commit()
+}
+
+func scanFileID(scanner scanner) (*File, error) {
+	file := new(File)
+
+	if err := scanner.Scan(&file.id); err != nil {
+		return nil, err
+	}
+
+	file.modifiable = true
+
+	return file, nil
 }
 
 func (d *DB) trashFile(tx *sql.Tx, file *File) error {

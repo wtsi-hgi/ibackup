@@ -44,7 +44,7 @@ func TestFiles(t *testing.T) {
 			},
 		}
 
-		FocusConvey("You can add and retrieve files in that set", func() {
+		Convey("You can add and retrieve files in that set", func() {
 			var err error
 
 			So(d.AddSetFiles(setA, slices.Values(files)), ShouldBeNil)
@@ -191,6 +191,19 @@ func TestFiles(t *testing.T) {
 
 				So(len(collectIter(t, d.listRemoteFiles(t))), ShouldEqual, 2)
 				So(len(collectIter(t, d.listInodes(t))), ShouldEqual, 2)
+			})
+
+			Convey("Files can be removed from a set based on a path prefix", func() {
+				So(d.RemoveSetFilesInDir(setA, "/some/local/"), ShouldBeNil)
+				So(d.clearQueue(), ShouldBeNil)
+
+				got := collectIter(t, d.GetSetFiles(setA))
+				So(len(got), ShouldEqual, 1)
+
+				files[1].Status = StatusUploaded
+				got[0].LastUpload = time.Time{}
+
+				So(got, ShouldResemble, files[1:2])
 			})
 		})
 

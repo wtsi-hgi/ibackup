@@ -57,7 +57,15 @@ var (
 			"`path` TEXT NOT NULL, " +
 			"`pathHash` " + hashColumnStart + "`path`" + hashColumnEnd + ", " +
 			"`type` TINYINT NOT NULL, " +
-			"UNIQUE(`setID`, `pathHash`), " +
+			"`typeIsFons` BOOLEAN GENERATED ALWAYS AS (`type` IN (" +
+			string('0'+DiscoverFOFN) + ", " +
+			string('0'+DiscoverFOFNBase64) + ", " +
+			string('0'+DiscoverFOFNQuoted) + ", " +
+			string('0'+DiscoverFODN) + ", " +
+			string('0'+DiscoverFODNBase64) + ", " +
+			string('0'+DiscoverFODNQuoted) +
+			")) /*! INVISIBLE */, " +
+			"UNIQUE(`setID`, `pathHash`, `typeIsFons`), " +
 			"FOREIGN KEY(`setID`) REFERENCES `sets`(`id`) ON DELETE CASCADE" +
 			");",
 		"CREATE TABLE IF NOT EXISTS `hardlinks` (" +
@@ -408,6 +416,16 @@ const (
 		"`path`, " +
 		"`type`" +
 		") VALUES (?, ?, ?) " + setRef + onConflictUpdate + "`type` = `EXCLUDED`.`type`;"
+	createDiscoverRemoveFromFile = "INSERT INTO `toDiscover` (" +
+		"`setID`, " +
+		"`path`, " +
+		"`type`" +
+		") SELECT " +
+		"`setID`, " +
+		"`localPath`, " +
+		string('0'+DiscoverRemovedFile) +
+		" FROM `localFiles` WHERE `localFiles`.`id` = ? " +
+		onConflictUpdate + "`type` = " + string('0'+DiscoverRemovedFile) + ";"
 	createQueuedRemoval = "INSERT INTO `queue` (" +
 		"`localFileID`, " +
 		"`type`" +
@@ -493,7 +511,8 @@ const (
 		getSetsFilesFrom +
 		"LEFT JOIN `queue` ON `localFiles`.`id` = `queue`.`localFileID` " +
 		getSetsFilesWhere
-	getSetDiscovery = "SELECT " +
+	getSetsFilesWithPrefix = "SELECT `id` FROM `localFiles` WHERE `setID` = ? AND `localPath` LIKE CONCAT(?, '%');"
+	getSetDiscovery        = "SELECT " +
 		"`path`, " +
 		"`type`" +
 		" FROM `toDiscover` WHERE `setID` = ? ORDER BY `id` ASC;"
@@ -581,8 +600,10 @@ const (
 		"`type` = " + string('0'+QueueDisabled) + " " +
 		"WHERE `localFileID` = ? AND `type` = " + string('0'+QueueRemoval) + ";"
 
-	deleteSet            = "DELETE FROM `sets` WHERE `id` = ?;"
-	deleteDiscover       = "DELETE FROM `toDiscover` WHERE `setID` = ? AND `path` = ?;"
+	deleteSet                = "DELETE FROM `sets` WHERE `id` = ?;"
+	deleteDiscover           = "DELETE FROM `toDiscover` WHERE `setID` = ? AND `path` = ?;"
+	deleteRedundantDiscovers = "DELETE FROM `toDiscover` WHERE " +
+		"`setID` = ? AND `typeIsFons` = FALSE AND `path` LIKE CONCAT(?, '%');"
 	deleteQueued         = "DELETE FROM `queue` WHERE `id` = ? AND `heldBy` = ? AND `type` = ?;"
 	deleteStaleProcesses = "DELETE FROM `processes` WHERE `lastPing` < /*! NOW() - INTERVAL 10 MINUTE -- */ " +
 		"DATETIME('now', '-10 MINUTES')\n/*! */;"

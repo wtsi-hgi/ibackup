@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"iter"
 	"slices"
+	"strconv"
 	"testing"
 	"time"
 
@@ -37,6 +38,9 @@ func TestQueue(t *testing.T) {
 		So(err, ShouldBeNil)
 
 		Convey("A client can reserve queued items and set the response", func() {
+			genID1 := strconv.Itoa(filePrefix + 1)
+			genID2 := strconv.Itoa(filePrefix + 2)
+
 			So(d.AddSetFiles(setA, genFiles(5)), ShouldBeNil)
 			So(d.AddSetFiles(setB, genFiles(10)), ShouldBeNil)
 
@@ -46,9 +50,9 @@ func TestQueue(t *testing.T) {
 				{
 					id:         1,
 					process:    1,
-					LocalPath:  "/some/file/1_0",
-					RemotePath: "/remote/file/1_0",
-					UploadPath: "/remote/file/1_0",
+					LocalPath:  "/some/file/" + genID1 + "_0",
+					RemotePath: "/remote/file/" + genID1 + "_0",
+					UploadPath: "/remote/file/" + genID1 + "_0",
 					Type:       QueueUpload,
 					Requester:  "me",
 					SetName:    "mySet",
@@ -56,9 +60,9 @@ func TestQueue(t *testing.T) {
 				{
 					id:         2,
 					process:    1,
-					LocalPath:  "/some/file/1_1",
-					RemotePath: "/remote/file/1_1",
-					UploadPath: "/remote/file/1_1",
+					LocalPath:  "/some/file/" + genID1 + "_1",
+					RemotePath: "/remote/file/" + genID1 + "_1",
+					UploadPath: "/remote/file/" + genID1 + "_1",
 					Type:       QueueUpload,
 					Requester:  "me",
 					SetName:    "mySet",
@@ -66,9 +70,9 @@ func TestQueue(t *testing.T) {
 				{
 					id:         4,
 					process:    1,
-					LocalPath:  "/some/file/1_3",
-					RemotePath: "/remote/file/1_3",
-					UploadPath: "/remote/file/1_3",
+					LocalPath:  "/some/file/" + genID1 + "_3",
+					RemotePath: "/remote/file/" + genID1 + "_3",
+					UploadPath: "/remote/file/" + genID1 + "_3",
 					Type:       QueueUpload,
 					Requester:  "me",
 					SetName:    "mySet",
@@ -81,9 +85,9 @@ func TestQueue(t *testing.T) {
 				{
 					id:         5,
 					process:    2,
-					LocalPath:  "/some/file/1_4",
-					RemotePath: "/remote/file/1_4",
-					UploadPath: "/remote/file/1_4",
+					LocalPath:  "/some/file/" + genID1 + "_4",
+					RemotePath: "/remote/file/" + genID1 + "_4",
+					UploadPath: "/remote/file/" + genID1 + "_4",
 					Type:       QueueUpload,
 					Requester:  "me",
 					SetName:    "mySet",
@@ -91,9 +95,9 @@ func TestQueue(t *testing.T) {
 				{
 					id:         6,
 					process:    2,
-					LocalPath:  "/some/file/2_0",
-					RemotePath: "/remote/file/2_0",
-					UploadPath: "/remote/file/2_0",
+					LocalPath:  "/some/file/" + genID2 + "_0",
+					RemotePath: "/remote/file/" + genID2 + "_0",
+					UploadPath: "/remote/file/" + genID2 + "_0",
 					Type:       QueueUpload,
 					Requester:  "me",
 					SetName:    "my2ndSet",
@@ -101,9 +105,9 @@ func TestQueue(t *testing.T) {
 				{
 					id:         7,
 					process:    2,
-					LocalPath:  "/some/file/2_1",
-					RemotePath: "/remote/file/2_1",
-					UploadPath: "/remote/file/2_1",
+					LocalPath:  "/some/file/" + genID2 + "_1",
+					RemotePath: "/remote/file/" + genID2 + "_1",
+					UploadPath: "/remote/file/" + genID2 + "_1",
 					Type:       QueueUpload,
 					Requester:  "me",
 					SetName:    "my2ndSet",
@@ -111,9 +115,9 @@ func TestQueue(t *testing.T) {
 				{
 					id:         9,
 					process:    2,
-					LocalPath:  "/some/file/2_3",
-					RemotePath: "/remote/file/2_3",
-					UploadPath: "/remote/file/2_3",
+					LocalPath:  "/some/file/" + genID2 + "_3",
+					RemotePath: "/remote/file/" + genID2 + "_3",
+					UploadPath: "/remote/file/" + genID2 + "_3",
 					Type:       QueueUpload,
 					Requester:  "me",
 					SetName:    "my2ndSet",
@@ -121,9 +125,9 @@ func TestQueue(t *testing.T) {
 				{
 					id:         10,
 					process:    2,
-					LocalPath:  "/some/file/2_4",
-					RemotePath: "/remote/file/2_4",
-					UploadPath: "/remote/file/2_4",
+					LocalPath:  "/some/file/" + genID2 + "_4",
+					RemotePath: "/remote/file/" + genID2 + "_4",
+					UploadPath: "/remote/file/" + genID2 + "_4",
 					Type:       QueueUpload,
 					Requester:  "me",
 					SetName:    "my2ndSet",
