@@ -683,8 +683,8 @@ func TestList(t *testing.T) {
 			So(err, ShouldBeNil)
 
 			So(os.MkdirAll(dir+"/path/to/other/", 0700), ShouldBeNil)
-			So(os.WriteFile(dir+"/path/to/other/file", []byte("data"), 0600), ShouldBeNil)
-			So(os.WriteFile(dir+"/path/to/other/file2", []byte("data"), 0600), ShouldBeNil)
+			internal.CreateTestFile(t, filepath.Join(dir, "/path/to/other/file"), "data")
+			internal.CreateTestFile(t, filepath.Join(dir, "/path/to/other/file2"), "data")
 
 			setName := "testAddFiles_" + time.Now().Format("20060102150405")
 
