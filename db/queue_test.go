@@ -43,14 +43,14 @@ func TestQueue(t *testing.T) {
 		setA := &Set{
 			Name:        "mySet",
 			Requester:   "me",
-			Transformer: "humgen",
+			Transformer: complexTransformer,
 			Description: "my first set",
 		}
 
 		setB := &Set{
 			Name:        "my2ndSet",
 			Requester:   "me",
-			Transformer: "humgen",
+			Transformer: complexTransformer,
 		}
 
 		So(d.CreateSet(setA), ShouldBeNil)
@@ -63,8 +63,8 @@ func TestQueue(t *testing.T) {
 		So(err, ShouldBeNil)
 
 		Convey("A client can reserve queued items and set the response", func() {
-			genID1 := strconv.Itoa(filePrefix + 1)
-			genID2 := strconv.Itoa(filePrefix + 2)
+			genID1 := strconv.FormatUint(filePrefix+1, 10)
+			genID2 := strconv.FormatUint(filePrefix+2, 10)
 
 			So(d.SetSetFiles(setA, genFiles(5), noSeq[*File]), ShouldBeNil)
 			So(d.SetSetFiles(setB, genFiles(10), noSeq[*File]), ShouldBeNil)
@@ -488,18 +488,18 @@ func TestQueue(t *testing.T) {
 	})
 }
 
-var filePrefix int //nolint:gochecknoglobals
+var filePrefix uint64 //nolint:gochecknoglobals
 
-func genFiles(n int) iter.Seq[*File] {
+func genFiles(n uint64) iter.Seq[*File] {
 	filePrefix++
 
 	return func(yield func(*File) bool) {
 		for i := range n {
-			inode := int64(filePrefix*1000 + i)
+			inode := filePrefix*1000 + i
 			typ := Regular
 
 			if i == 2 {
-				inode = int64(filePrefix*1000 + i - 1)
+				inode = filePrefix*1000 + i - 1
 			} else if i == 3 {
 				typ = Symlink
 			}

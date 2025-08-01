@@ -40,14 +40,14 @@ func TestFiles(t *testing.T) {
 		setA := &Set{
 			Name:        "mySet",
 			Requester:   "me",
-			Transformer: "humgen",
+			Transformer: complexTransformer,
 			Description: "my first set",
 		}
 
 		setB := &Set{
 			Name:        "my2ndSet",
 			Requester:   "me",
-			Transformer: "humgen",
+			Transformer: complexTransformer,
 		}
 
 		So(d.CreateSet(setA), ShouldBeNil)

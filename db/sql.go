@@ -32,7 +32,11 @@ var (
 			"`id` INTEGER PRIMARY KEY /*! AUTO_INCREMENT */, " +
 			"`transformer` TEXT NOT NULL, " +
 			"`transformerHash` " + hashColumnStart + "`transformer`" + hashColumnEnd + ", " +
-			"UNIQUE(`transformerHash`)" +
+			"`regexp` TEXT NOT NULL, " +
+			"`regexpHash` " + hashColumnStart + "`regexp`" + hashColumnEnd + ", " +
+			"`replace` TEXT NOT NULL, " +
+			"`replaceHash` " + hashColumnStart + "`replace`" + hashColumnEnd + ", " +
+			"UNIQUE(`transformerHash`, `regexpHash`, `replaceHash`)" +
 			");",
 		"CREATE TABLE IF NOT EXISTS `sets` (" +
 			"`id` INTEGER PRIMARY KEY /*! AUTO_INCREMENT */, " +
@@ -356,8 +360,10 @@ const (
 	returnOrSetID = " /*! `id` = LAST_INSERT_ID(`id`); -- */ `id` = `id` RETURNING `id`;\n/*! */"
 
 	createTransformer = "INSERT INTO `transformers` (" +
-		"`transformer`" +
-		") VALUES (?) " + onConflictReturnID
+		"`transformer`, " +
+		"`regexp`, " +
+		"`replace` " +
+		") VALUES (?, ?, ?) " + onConflictReturnID
 	createSet = "INSERT INTO `sets` (" +
 		"`name`, " +
 		"`requester`, " +
@@ -498,7 +504,9 @@ const (
 		"`sets`.`warning`, " +
 		"`sets`.`modifiable`, " +
 		"`sets`.`hidden`, " +
-		"`transformers`.`transformer` " +
+		"`transformers`.`transformer`, " +
+		"`transformers`.`regexp`, " +
+		"`transformers`.`replace` " +
 		"FROM `sets` JOIN `transformers` ON `sets`.`transformerID` = `transformers`.`id`"
 	getAllSets = getSetsStart + " WHERE " +
 		"`sets`.`name` NOT LIKE CONCAT(CHAR(0), '%') AND " +

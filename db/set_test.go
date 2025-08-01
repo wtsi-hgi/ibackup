@@ -29,7 +29,6 @@ import (
 	"fmt"
 	"iter"
 	"slices"
-	"strings"
 	"testing"
 	"time"
 
@@ -44,21 +43,21 @@ func TestSet(t *testing.T) {
 			setA := &Set{
 				Name:        "mySet",
 				Requester:   "me",
-				Transformer: "humgen",
+				Transformer: complexTransformer,
 				Description: "my first set",
 			}
 
 			setB := &Set{
 				Name:        "my2ndSet",
 				Requester:   "me",
-				Transformer: "humgen",
+				Transformer: complexTransformer,
 				Description: "my second set",
 			}
 
 			setC := &Set{
 				Name:        "mySet",
 				Requester:   "you",
-				Transformer: "humgen",
+				Transformer: complexTransformer,
 				Description: "my first set",
 				Reason:      "in case it gets deleted",
 				ReviewDate:  time.Now().Truncate(time.Second).In(time.UTC),
@@ -149,12 +148,12 @@ func TestSet(t *testing.T) {
 				So(d.SetSetFiles(setB, slices.Values(files), noSeq[*File]), ShouldBeNil)
 				So(d.clearQueue(), ShouldBeNil)
 
-				setA.Transformer = "prefix=/some/:/other/remote/"
+				setB.Transformer, err = NewTransformer("prefix=/some/:/other/remote/", `^/some/`, "/other/remote/")
+				So(err, ShouldBeNil)
+
 				oldID := setB.id
 
-				So(d.SetSetTransformer(setB, func(s string) (string, error) {
-					return "/other/remote/" + strings.TrimPrefix(s, "/some/"), nil
-				}), ShouldBeNil)
+				So(d.SetSetTransformer(setB), ShouldBeNil)
 
 				for _, file := range files {
 					file.id += 5

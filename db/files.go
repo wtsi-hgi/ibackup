@@ -61,7 +61,7 @@ type File struct {
 	id                int64
 	LocalPath         string
 	RemotePath        string
-	Size, Inode       int64
+	Size, Inode       uint64
 	MountPount        string
 	InodeRemote       string
 	Btime, Mtime      int64

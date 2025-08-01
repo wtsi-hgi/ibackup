@@ -31,6 +31,7 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -74,7 +75,7 @@ type Set struct {
 	// The method of transforming local Entries paths in to remote paths, to
 	// determine the upload location. "humgen" to use the put.HumgenTransformer,
 	// or "prefix=local:remote" to use the put.PrefixTransformer.
-	Transformer string
+	Transformer *Transformer
 
 	// Monitor the files and directories and re-upload them whenever they
 	// change, checking for changes after the given amount of time. Optional,
@@ -249,10 +250,12 @@ var (
 )
 
 func (d *DB) CreateSet(set *Set) error {
-	if strings.HasPrefix(set.Name, "\x00") {
+	if strings.HasPrefix(set.Name, "\x00") { //nolint:gocritic,nestif
 		return ErrInvalidSetName
 	} else if strings.HasPrefix(set.Requester, "\x00") {
 		return ErrInvalidRequesterName
+	} else if !set.Transformer.isValid() {
+		return ErrInvalidTransformer
 	}
 
 	tx, err := d.db.Begin()
@@ -269,7 +272,8 @@ func (d *DB) CreateSet(set *Set) error {
 }
 
 func (d *DB) createSet(tx *sql.Tx, set *Set) error {
-	tID, err := d.execReturningRowID(tx, createTransformer, set.Transformer)
+	tID, err := d.execReturningRowID(tx, createTransformer, set.Transformer.name,
+		set.Transformer.re.String(), set.Transformer.replace)
 	if err != nil {
 		return err
 	}
@@ -318,7 +322,10 @@ func (d *DBRO) GetSet(name, requester string) (*Set, error) {
 func scanSet(scanner scanner) (*Set, error) { //nolint:funlen
 	set := new(Set)
 
-	var reviewDate, deleteDate sql.NullTime
+	var (
+		reviewDate, deleteDate                                 sql.NullTime
+		transformerName, transformerRegexp, transformerReplace string
+	)
 
 	if err := scanner.Scan(
 		&set.id,
@@ -354,13 +361,22 @@ func scanSet(scanner scanner) (*Set, error) { //nolint:funlen
 		&set.Warning,
 		&set.modifiable,
 		&set.Hidden,
-		&set.Transformer,
+		&transformerName,
+		&transformerRegexp,
+		&transformerReplace,
 	); err != nil {
 		return nil, err
 	}
 
 	set.ReviewDate = reviewDate.Time
 	set.DeleteDate = deleteDate.Time
+
+	transformer, err := NewTransformer(transformerName, transformerRegexp, transformerReplace)
+	if err != nil {
+		return nil, err
+	}
+
+	set.Transformer = transformer
 
 	return set, nil
 }
@@ -469,11 +485,26 @@ func (d *DB) SetSetVisible(set *Set) error {
 	return nil
 }
 
-func (d *DB) SetSetTransformer(set *Set, transformerFn func(string) (string, error)) error { //nolint:gocyclo
+func (d *DB) SetSetTransformer(set *Set) error {
 	if !set.modifiable {
 		return ErrReadonlySet
+	} else if !set.Transformer.isValid() {
+		return ErrInvalidTransformer
 	}
 
+	for disc := range d.GetSetDiscovery(set).Iter {
+		switch disc.Type { //nolint:exhaustive
+		case DiscoverFile, DiscoverDirectory:
+			if !set.Transformer.Match(disc.Path) {
+				return fmt.Errorf("path: %s: %w", disc.Path, ErrInvalidTransformPath)
+			}
+		}
+	}
+
+	return d.changeTransformer(set)
+}
+
+func (d *DB) changeTransformer(set *Set) error { //nolint:gocyclo
 	eset, err := scanSet(d.db.QueryRow(getSetByID, set.id))
 	if err != nil {
 		return err
@@ -493,7 +524,7 @@ func (d *DB) SetSetTransformer(set *Set, transformerFn func(string) (string, err
 		return err
 	} else if err = d.moveDiscovery(tx, set.id, eset.id); err != nil {
 		return err
-	} else if err = d.moveSetFiles(tx, set.id, eset.id, transformerFn); err != nil {
+	} else if err = d.moveSetFiles(tx, set.id, eset); err != nil {
 		return err
 	} else if err = d.removeSetFiles(tx, set.id); err != nil {
 		return err
@@ -510,15 +541,15 @@ func (d *DB) moveDiscovery(tx *sql.Tx, from, to int64) error {
 	return err
 }
 
-func (d *DB) moveSetFiles(tx *sql.Tx, from, to int64, transformerFn func(string) (string, error)) (err error) {
+func (d *DB) moveSetFiles(tx *sql.Tx, from int64, to *Set) (err error) {
 	files := iterRows(&d.DBRO, scanFile, getSetsFiles, from)
 
 	for file := range files.Iter {
-		if file.RemotePath, err = transformerFn(file.LocalPath); err != nil {
+		if file.RemotePath, err = to.Transformer.Transform(file.LocalPath); err != nil {
 			return err
 		}
 
-		if err := d.addSetFile(tx, to, file); err != nil {
+		if err := d.addSetFile(tx, to.id, file); err != nil {
 			return err
 		}
 	}
