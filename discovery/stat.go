@@ -1,0 +1,185 @@
+/*******************************************************************************
+ * Copyright (c) 2025 Genome Research Ltd.
+ *
+ * Author: Michael Woolnough <mw31@sanger.ac.uk>
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining
+ * a copy of this software and associated documentation files (the
+ * "Software"), to deal in the Software without restriction, including
+ * without limitation the rights to use, copy, modify, merge, publish,
+ * distribute, sublicense, and/or sell copies of the Software, and to
+ * permit persons to whom the Software is furnished to do so, subject to
+ * the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included
+ * in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+ * IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+ * CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+ * TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+ * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ ******************************************************************************/
+
+package discovery
+
+import (
+	"errors"
+	"iter"
+	"sync/atomic"
+	"syscall"
+
+	"github.com/moby/sys/mountinfo"
+	"github.com/wtsi-hgi/ibackup/db"
+	"golang.org/x/sys/unix"
+)
+
+const (
+	statFlags = unix.AT_SYMLINK_NOFOLLOW | unix.AT_STATX_SYNC_AS_STAT
+	statMask  = unix.STATX_BTIME | unix.STATX_INO | unix.STATX_MTIME |
+		unix.STATX_SIZE | unix.STATX_TYPE | unix.STATX_MNT_ID
+)
+
+type Statter struct {
+	mountpoints map[uint64]string
+	requests    chan string
+	results     chan *db.File
+	ctx         chan struct{}
+	writers     atomic.Int64
+}
+
+func newStatter() (*Statter, error) {
+	mps, err := getMountPoints()
+	if err != nil {
+		return nil, err
+	}
+
+	return &Statter{
+		mountpoints: mps,
+		requests:    make(chan string),
+		results:     make(chan *db.File),
+		ctx:         make(chan struct{}),
+	}, nil
+}
+
+func (s *Statter) WriterAdd(n int64) {
+	s.writers.Add(n)
+}
+
+func (s *Statter) WriterDone() {
+	if s.writers.Add(-1) == 0 {
+		close(s.ctx)
+	}
+}
+
+func (s *Statter) Launch(n uint8) {
+	for range n {
+		go s.statter()
+	}
+}
+
+func (s *Statter) statter() {
+	for {
+		select {
+		case <-s.ctx:
+			return
+		case req := <-s.requests:
+			s.statFile(req)
+		}
+	}
+}
+
+func (s *Statter) statFile(req string) {
+	var resp unix.Statx_t
+
+	if err := unix.Statx(0, req, statFlags, statMask, &resp); errors.Is(err, syscall.ENOENT) {
+		s.results <- &db.File{LocalPath: req, Status: db.StatusMissing, LastError: err.Error()}
+
+		return
+	} else if err != nil {
+		s.results <- &db.File{LocalPath: req, Status: db.StatusSkipped, LastError: err.Error()}
+
+		return
+	}
+
+	s.results <- &db.File{
+		LocalPath:  req,
+		Btime:      resp.Btime.Sec,
+		Mtime:      resp.Mtime.Sec,
+		Size:       resp.Size,
+		Inode:      resp.Ino,
+		MountPount: s.mountpoints[resp.Mnt_id],
+	}
+}
+
+func (s *Statter) StatFiles(fons ...[]string) {
+	defer s.WriterDone()
+
+	for _, files := range fons {
+		for _, file := range files {
+			select {
+			case <-s.ctx:
+				return
+			case s.requests <- file:
+			}
+		}
+	}
+}
+
+func (s *Statter) StatFile(file string) {
+	select {
+	case <-s.ctx:
+	case s.requests <- file:
+	}
+}
+
+func (s *Statter) PassFile(file *db.File) {
+	select {
+	case <-s.ctx:
+	case s.results <- file:
+	}
+}
+
+func (s *Statter) Iter() iter.Seq[*db.File] {
+	return func(yield func(*db.File) bool) {
+		defer s.done()
+
+		for {
+			select {
+			case <-s.ctx:
+				return
+			case file := <-s.results:
+				if !yield(file) {
+					return
+				}
+			}
+		}
+	}
+}
+
+func (s *Statter) done() {
+	close(s.results)
+	close(s.requests)
+}
+
+func getMountPoints() (map[uint64]string, error) {
+	mountList := make(map[uint64]string)
+
+	if _, err := mountinfo.GetMounts(func(info *mountinfo.Info) (bool, bool) {
+		switch info.FSType {
+		case "devpts", "devtmpfs", "cgroup", "rpc_pipefs", "fusectl",
+			"binfmt_misc", "sysfs", "debugfs", "tracefs", "proc", "securityfs",
+			"pstore", "mqueue", "hugetlbfs", "configfs":
+		default:
+			mountList[uint64(info.ID)] = info.Mountpoint //nolint:gosec
+		}
+
+		return true, false
+	}); err != nil {
+		return nil, err
+	}
+
+	return mountList, nil
+}
