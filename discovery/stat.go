@@ -27,19 +27,12 @@ package discovery
 
 import (
 	"errors"
+	"io/fs"
 	"iter"
 	"sync/atomic"
-	"syscall"
 
 	"github.com/moby/sys/mountinfo"
 	"github.com/wtsi-hgi/ibackup/db"
-	"golang.org/x/sys/unix"
-)
-
-const (
-	statFlags = unix.AT_SYMLINK_NOFOLLOW | unix.AT_STATX_SYNC_AS_STAT
-	statMask  = unix.STATX_BTIME | unix.STATX_INO | unix.STATX_MTIME |
-		unix.STATX_SIZE | unix.STATX_TYPE | unix.STATX_MNT_ID
 )
 
 type Statter struct {
@@ -92,25 +85,14 @@ func (s *Statter) statter() {
 }
 
 func (s *Statter) statFile(req string) {
-	var resp unix.Statx_t
-
-	if err := unix.Statx(0, req, statFlags, statMask, &resp); errors.Is(err, syscall.ENOENT) {
+	if file, err := s.stat(req); errors.Is(err, fs.ErrNotExist) { //nolint:nestif
 		s.results <- &db.File{LocalPath: req, Status: db.StatusMissing, LastError: err.Error()}
-
-		return
-	} else if err != nil {
+	} else if err != nil { //nolint:gocritic
 		s.results <- &db.File{LocalPath: req, Status: db.StatusSkipped, LastError: err.Error()}
-
-		return
-	}
-
-	s.results <- &db.File{
-		LocalPath:  req,
-		Btime:      resp.Btime.Sec,
-		Mtime:      resp.Mtime.Sec,
-		Size:       resp.Size,
-		Inode:      resp.Ino,
-		MountPount: s.mountpoints[resp.Mnt_id],
+	} else if file.Type == db.Directory {
+		s.results <- &db.File{LocalPath: req, Status: db.StatusSkipped, LastError: "is directory"}
+	} else {
+		s.results <- file
 	}
 }
 

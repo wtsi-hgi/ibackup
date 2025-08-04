@@ -47,7 +47,7 @@ func TestStat(t *testing.T) {
 			expectation[0] = &db.File{
 				LocalPath: files[0],
 				Status:    db.StatusMissing,
-				LastError: "no such file or directory",
+				LastError: "file does not exist",
 			}
 
 			for n := range 5 {
