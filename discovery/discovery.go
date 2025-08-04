@@ -26,17 +26,9 @@
 package discovery
 
 import (
-	"bufio"
-	"encoding/base64"
 	"errors"
-	"fmt"
-	"io"
-	"os"
-	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
-	"unsafe"
 
 	"github.com/wtsi-hgi/ibackup/db"
 )
@@ -107,7 +99,7 @@ func readDiscoveryFromDB(d *db.DB, set *db.Set) ( //nolint:gocyclo
 
 func doDiscover(d *db.DB, set *db.Set, cb func(*db.File),
 	files, dirs, removedFiles, removedDirs []string, fofns, fodns []*db.Discover) error {
-	fodnDirs, err := readFons(set.Transformer, fodns, true, nil)
+	fodnDirs, err := readFons(set.Transformer, fodns, nil)
 	if err != nil {
 		return err
 	}
@@ -119,7 +111,7 @@ func doDiscover(d *db.DB, set *db.Set, cb func(*db.File),
 		return err
 	}
 
-	fofnFiles, err := readFons(set.Transformer, fofns, false, filter)
+	fofnFiles, err := readFons(set.Transformer, fofns, filter)
 	if err != nil {
 		return err
 	}
@@ -178,113 +170,6 @@ func addLines(lines []PathGroup[bool], entries []string, value *bool) []PathGrou
 	}
 
 	return lines
-}
-
-func readFons(transformer *db.Transformer,
-	fons []*db.Discover, dirs bool, filter StateMachine[bool]) ([]string, error) {
-	var list []string
-
-	for _, fon := range fons {
-		contents, err := ReadFon(transformer, fon, dirs, filter)
-		if err != nil {
-			return nil, err
-		}
-
-		list = append(list, contents...)
-	}
-
-	return list, nil
-}
-
-func ReadFon(transformer *db.Transformer, d *db.Discover, dirs bool, filter StateMachine[bool]) ([]string, error) {
-	decoder := nullDecoder
-
-	switch d.Type { //nolint:exhaustive
-	case db.DiscoverFODNBase64, db.DiscoverFOFNBase64:
-		decoder = base64Decoder
-	case db.DiscoverFODNQuoted, db.DiscoverFOFNQuoted:
-		decoder = strconv.Unquote
-	}
-
-	f, err := os.Open(d.Path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-
-	return readLines(transformer, f, decoder, dirs, filter)
-}
-
-func nullDecoder(str string) (string, error) {
-	return str, nil
-}
-
-func base64Decoder(str string) (string, error) {
-	fn, err := base64.StdEncoding.DecodeString(str)
-	if err != nil {
-		return "", err
-	}
-
-	return toString(fn), nil
-}
-
-func toString(b []byte) string {
-	return unsafe.String(unsafe.SliceData(b), len(b))
-}
-
-func toBytes(b string) []byte {
-	return unsafe.Slice(unsafe.StringData(b), len(b))
-}
-
-func readLines(trns *db.Transformer, r io.Reader, decoder func(string) (string, error),
-	dirs bool, filter StateMachine[bool]) ([]string, error) {
-	var lines []string
-
-	buf := bufio.NewReader(r)
-
-	for {
-		line, err := buf.ReadBytes('\n')
-		if err != nil && !errors.Is(err, io.EOF) {
-			return nil, err
-		}
-
-		var errl error
-
-		lines, errl = parseLine(lines, line, trns, decoder, dirs, filter)
-		if errl != nil {
-			return nil, err
-		} else if errors.Is(err, io.EOF) {
-			return lines, nil
-		}
-	}
-}
-
-func parseLine(lines []string, line []byte, trns *db.Transformer, //nolint:gocyclo
-	decoder func(string) (string, error), dirs bool, filter StateMachine[bool]) ([]string, error) {
-	decoded, errd := decoder(toString(line))
-	if errd != nil {
-		return nil, errd
-	}
-
-	decoded = filepath.Clean(decoded)
-
-	if dirs && !strings.HasSuffix(decoded, "/") {
-		decoded += "/"
-	}
-
-	if filter != nil {
-		v := filter.Match(toBytes(decoded))
-
-		if v != nil && !*v {
-			return lines, nil
-		}
-	}
-
-	if !trns.Match(decoded) {
-		return nil, fmt.Errorf("path: %s: %w", decoded, db.ErrInvalidTransformPath)
-	}
-
-	return append(lines, decoded), nil
 }
 
 func walkDirs(dirs []string, statter *Statter, filter StateMachine[bool], errCh chan error) {
