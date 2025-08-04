@@ -24,7 +24,7 @@ func TestStat(t *testing.T) {
 
 		Convey("You can stat files", func() {
 			dir := t.TempDir()
-			files := make([]string, 6)
+			files := make([]string, 7)
 
 			dirMP := ""
 
@@ -42,7 +42,7 @@ func TestStat(t *testing.T) {
 				}
 			}
 
-			expectation := make([]*db.File, 6)
+			expectation := make([]*db.File, 7)
 			files[0] = filepath.Join(dir, " ")
 			expectation[0] = &db.File{
 				LocalPath: files[0],
@@ -72,6 +72,21 @@ func TestStat(t *testing.T) {
 					Inode:      stat.Sys().(*syscall.Stat_t).Ino, //nolint:errcheck
 					MountPount: dirMP,
 				}
+			}
+
+			files[6] = files[5] + ".lnk"
+
+			So(os.Symlink(files[5], files[6]), ShouldBeNil)
+			stat, err := os.Lstat(files[6])
+			So(err, ShouldBeNil)
+
+			expectation[6] = &db.File{ //nolint:forcetypeassert
+				LocalPath:  files[6],
+				Size:       uint64(len(files[5])),
+				Btime:      stat.ModTime().Unix(),
+				Mtime:      stat.ModTime().Unix(),
+				Inode:      stat.Sys().(*syscall.Stat_t).Ino, //nolint:errcheck
+				MountPount: dirMP,
 			}
 
 			statter.WriterAdd(1)
