@@ -46,6 +46,7 @@ var (
 			"`requesterHash` " + hashColumnStart + "`requester`" + hashColumnEnd + ", " +
 			"`transformerID` INTEGER, " +
 			"`monitorTime` INTEGER NOT NULL, " +
+			"`monitorRemovals` BOOLEAN DEFAULT FALSE, " +
 			"`description` TEXT NOT NULL, " +
 			"`numFiles` INTEGER DEFAULT 0, " +
 			"`sizeFiles` INTEGER DEFAULT 0, " +
@@ -369,6 +370,7 @@ const (
 		"`requester`, " +
 		"`transformerID`, " +
 		"`monitorTime`, " +
+		"`monitorRemovals`, " +
 		"`description`, " +
 		"`error`, " +
 		"`warning`, " +
@@ -376,7 +378,7 @@ const (
 		"`reason`, " +
 		"`review`, " +
 		"`delete` " +
-		") VALUES (?, ?, ?, ?, ?, '', '', ?, ?, ?, ?);"
+		") VALUES (?, ?, ?, ?, ?, ?, '', '', ?, ?, ?, ?);"
 	createTrashSetForFile = "INSERT INTO `sets` (" +
 		"`name`, " +
 		"`requester`, " +
@@ -476,6 +478,7 @@ const (
 		"`sets`.`requester`, " +
 		"`sets`.`description`, " +
 		"`sets`.`monitorTime`, " +
+		"`sets`.`monitorRemovals`, " +
 		"`sets`.`metadata`, " +
 		"`sets`.`reason`, " +
 		"`sets`.`review`, " +
@@ -580,6 +583,7 @@ const (
 	updateSetModifiable          = "UPDATE `sets` SET `modifiable` = TRUE WHERE `id` = ?;"
 	updateSetHidden              = "UPDATE `sets` SET `hidden` = TRUE WHERE `id` = ?;"
 	updateSetVisible             = "UPDATE `sets` SET `hidden` = FALSE WHERE `id` = ?;"
+	updateSetMonitored           = "UPDATE `sets` SET `monitorTime` = ?, `monitorRemovals` = ? WHERE `id` = ?;"
 	updateDiscoveryStarted       = "UPDATE `sets` SET `startedDiscovery` = " + now + " WHERE `id` = ?;"
 	updateLastDiscoveryCompleted = "UPDATE `sets` SET " +
 		"`lastDiscovery` = `startedDiscovery`, " +

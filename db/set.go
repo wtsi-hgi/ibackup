@@ -278,7 +278,7 @@ func (d *DB) createSet(tx *sql.Tx, set *Set) error {
 		return err
 	}
 
-	res, err := tx.Exec(createSet, set.Name, set.Requester, tID, set.MonitorTime,
+	res, err := tx.Exec(createSet, set.Name, set.Requester, tID, set.MonitorTime, set.MonitorRemovals,
 		set.Description, set.Metadata, set.Reason, timeOrNull(set.ReviewDate), timeOrNull(set.DeleteDate))
 	if err != nil {
 		return err
@@ -333,6 +333,7 @@ func scanSet(scanner scanner) (*Set, error) { //nolint:funlen
 		&set.Requester,
 		&set.Description,
 		&set.MonitorTime,
+		&set.MonitorRemovals,
 		&set.Metadata,
 		&set.Reason,
 		&reviewDate,
@@ -483,6 +484,14 @@ func (d *DB) SetSetVisible(set *Set) error {
 	set.Hidden = false
 
 	return nil
+}
+
+func (d *DB) SetSetMonitored(set *Set) error {
+	if !set.modifiable {
+		return ErrReadonlySet
+	}
+
+	return d.exec(updateSetMonitored, set.MonitorTime, set.MonitorRemovals, set.id)
 }
 
 func (d *DB) SetSetTransformer(set *Set) error {
