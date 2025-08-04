@@ -35,19 +35,23 @@ import (
 
 func TestFiles(t *testing.T) {
 	Convey("With a database containing sets", t, func() {
+
 		d := createTestDatabase(t)
+
+		mapTransformer, err := NewTransformer("mapTransformer", "^/some/(.*?)/([^/]+)(/hardlink)?", "/remote/$2")
+		So(err, ShouldBeNil)
 
 		setA := &Set{
 			Name:        "mySet",
 			Requester:   "me",
-			Transformer: complexTransformer,
+			Transformer: mapTransformer,
 			Description: "my first set",
 		}
 
 		setB := &Set{
 			Name:        "my2ndSet",
 			Requester:   "me",
-			Transformer: complexTransformer,
+			Transformer: simpleTransformer,
 		}
 
 		So(d.CreateSet(setA), ShouldBeNil)
@@ -85,7 +89,7 @@ func TestFiles(t *testing.T) {
 			So(setA.SizeTotal, ShouldEqual, 100)
 
 			files = append(files, &File{
-				LocalPath:  "/some/other/local/file",
+				LocalPath:  "/some/other/local/file2",
 				RemotePath: "/remote/file2",
 				Size:       110,
 				Inode:      11,

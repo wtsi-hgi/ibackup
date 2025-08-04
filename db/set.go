@@ -249,10 +249,10 @@ var (
 	ErrInvalidMetadata      = errors.New("invalid metadata")
 )
 
-func (d *DB) CreateSet(set *Set) error {
-	if strings.HasPrefix(set.Name, "\x00") { //nolint:gocritic,nestif
+func (d *DB) CreateSet(set *Set) error { //nolint:gocyclo
+	if strings.HasPrefix(set.Name, "\x00") || set.Name == "" { //nolint:gocritic,nestif
 		return ErrInvalidSetName
-	} else if strings.HasPrefix(set.Requester, "\x00") {
+	} else if strings.HasPrefix(set.Requester, "\x00") || set.Requester == "" {
 		return ErrInvalidRequesterName
 	} else if !set.Transformer.isValid() {
 		return ErrInvalidTransformer

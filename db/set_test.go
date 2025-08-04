@@ -50,14 +50,14 @@ func TestSet(t *testing.T) {
 			setB := &Set{
 				Name:        "my2ndSet",
 				Requester:   "me",
-				Transformer: complexTransformer,
+				Transformer: simpleTransformer,
 				Description: "my second set",
 			}
 
 			setC := &Set{
 				Name:        "mySet",
 				Requester:   "you",
-				Transformer: complexTransformer,
+				Transformer: simpleTransformer,
 				Description: "my first set",
 				Reason:      "in case it gets deleted",
 				ReviewDate:  time.Now().Truncate(time.Second).In(time.UTC),

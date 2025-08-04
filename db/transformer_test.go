@@ -9,7 +9,7 @@ import (
 
 //nolint:gochecknoglobals
 var (
-	simpleTransformer  = must(NewTransformer("prefix", `^/some/path`, "/remote/path"))
+	simpleTransformer  = must(NewTransformer("prefix", `^/some/`, "/remote/"))
 	complexTransformer = must(NewTransformer(
 		"complex",
 		`^/mount/(point[^/]+)(/[^/]*)+?/(projects|teams|users)(_v2)?/([^/]+)/`,
@@ -44,7 +44,7 @@ func TestTransformers(t *testing.T) {
 			{
 				"A simple path transformation that fails",
 				simpleTransformer,
-				"/some/other/path/some/file",
+				"/dome/path/some/file",
 				false,
 				"",
 			},

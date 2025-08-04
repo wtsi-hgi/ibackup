@@ -43,14 +43,14 @@ func TestQueue(t *testing.T) {
 		setA := &Set{
 			Name:        "mySet",
 			Requester:   "me",
-			Transformer: complexTransformer,
+			Transformer: simpleTransformer,
 			Description: "my first set",
 		}
 
 		setB := &Set{
 			Name:        "my2ndSet",
 			Requester:   "me",
-			Transformer: complexTransformer,
+			Transformer: simpleTransformer,
 		}
 
 		So(d.CreateSet(setA), ShouldBeNil)
