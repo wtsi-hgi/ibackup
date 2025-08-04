@@ -32,6 +32,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -104,156 +105,50 @@ func readDiscoveryFromDB(d *db.DB, set *db.Set) ( //nolint:gocyclo
 	return files, dirs, removedFiles, removedDirs, fofns, fodns, nil
 }
 
-func readAllFons(transformer *db.Transformer, fodns, fofns []*db.Discover) ([]string, []string, error) {
-	fodnDirs, err := readFons(transformer, fodns, true)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	fofnFiles, err := readFons(transformer, fofns, false)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	return fodnDirs, fofnFiles, nil
-}
-
-func readFons(transformer *db.Transformer, fons []*db.Discover, dirs bool) ([]string, error) {
-	var list []string
-
-	for _, fon := range fons {
-		contents, err := ReadFon(transformer, fon, dirs)
-		if err != nil {
-			return nil, err
-		}
-
-		list = append(list, contents...)
-	}
-
-	return list, nil
-}
-
-func ReadFon(transformer *db.Transformer, d *db.Discover, dirs bool) ([]string, error) {
-	decoder := nullDecoder
-
-	switch d.Type { //nolint:exhaustive
-	case db.DiscoverFODNBase64, db.DiscoverFOFNBase64:
-		decoder = base64Decoder
-	case db.DiscoverFODNQuoted, db.DiscoverFOFNQuoted:
-		decoder = strconv.Unquote
-	}
-
-	f, err := os.Open(d.Path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-
-	return readLines(transformer, f, decoder, dirs)
-}
-
-func nullDecoder(str string) (string, error) {
-	return str, nil
-}
-
-func base64Decoder(str string) (string, error) {
-	fn, err := base64.StdEncoding.DecodeString(str)
-	if err != nil {
-		return "", err
-	}
-
-	return toString(fn), nil
-}
-
-func toString(b []byte) string {
-	return unsafe.String(unsafe.SliceData(b), len(b))
-}
-
-func toBytes(b string) []byte {
-	return unsafe.Slice(unsafe.StringData(b), len(b))
-}
-
-//nolint:gocognit,gocyclo
-func readLines(trns *db.Transformer, r io.Reader, decoder func(string) (string, error), dirs bool) ([]string, error) {
-	var lines []string //nolint:prealloc
-
-	buf := bufio.NewReader(r)
-
-	for {
-		line, err := buf.ReadBytes('\n')
-		if errors.Is(err, io.EOF) {
-			return lines, nil
-		} else if err != nil {
-			return nil, err
-		}
-
-		decoded, err := decoder(toString(line))
-		if err != nil {
-			return nil, err
-		}
-
-		if dirs && !strings.HasSuffix(decoded, "/") {
-			decoded += "/"
-		}
-
-		if !trns.Match(decoded) {
-			return nil, fmt.Errorf("path: %s: %w", decoded, db.ErrInvalidTransformPath)
-		}
-
-		lines = append(lines, decoded)
-	}
-}
-
 func doDiscover(d *db.DB, set *db.Set, cb func(*db.File),
 	files, dirs, removedFiles, removedDirs []string, fofns, fodns []*db.Discover) error {
-	fodnDirs, fofnFiles, err := readAllFons(set.Transformer, fodns, fofns)
+	fodnDirs, err := readFons(set.Transformer, fodns, true, nil)
 	if err != nil {
 		return err
 	}
 
 	dirs = append(dirs, fodnDirs...)
-	errCh := make(chan error, 1)
 
-	statter, err := newStatter()
+	filter, err := makeFileFilter(files, dirs, removedFiles, removedDirs)
 	if err != nil {
 		return err
 	}
 
-	statter.WriterAdd(2) //nolint:mnd
-
-	if err = walkDirs(files, dirs, removedFiles, removedDirs, set.MonitorRemovals, statter, errCh); err != nil {
+	fofnFiles, err := readFons(set.Transformer, fofns, false, filter)
+	if err != nil {
 		return err
 	}
+
+	stattedFiles, err := statFiles(files, dirs, fofnFiles, cb, filter)
+	if err != nil {
+		return err
+	}
+
+	return addFilesToSet(d, set, stattedFiles)
+}
+
+func statFiles(files, dirs, fofnFiles []string, cb func(*db.File),
+	filter StateMachine[bool]) ([]*db.File, error) {
+	errCh := make(chan error)
+
+	statter, err := newStatter()
+	if err != nil {
+		return nil, err
+	}
+
+	statter.WriterAdd(1)
+	walkDirs(dirs, statter, filter, errCh)
 
 	go statter.StatFiles(files, fofnFiles)
 
 	statter.Launch(numStatters)
 
-	stattedFiles, excludedFiles, err := collectFiles(statter, cb, errCh)
-	if err != nil {
-		return err
-	}
-
-	return addFilesToSet(d, set, stattedFiles, excludedFiles)
-}
-
-func walkDirs(files, dirs, removedFiles, removedDirs []string,
-	monitorRemovals bool, statter *Statter, errCh chan error) error {
-	defer close(errCh)
-	defer statter.WriterDone()
-
-	if len(dirs) > 0 {
-		filter, err := makeFileFilter(files, dirs, removedFiles, removedDirs)
-		if err != nil {
-			return err
-		}
-
-		go func() {
-			errCh <- walkDirectories(dirs, filter, monitorRemovals, statter)
-		}()
-	}
-
-	return nil
+	return collectFiles(statter, cb, errCh)
 }
 
 func makeFileFilter(files, dirs, removedFiles, removedDirs []string) (StateMachine[bool], error) {
@@ -285,33 +180,148 @@ func addLines(lines []PathGroup[bool], entries []string, value *bool) []PathGrou
 	return lines
 }
 
+func readFons(transformer *db.Transformer,
+	fons []*db.Discover, dirs bool, filter StateMachine[bool]) ([]string, error) {
+	var list []string
+
+	for _, fon := range fons {
+		contents, err := ReadFon(transformer, fon, dirs, filter)
+		if err != nil {
+			return nil, err
+		}
+
+		list = append(list, contents...)
+	}
+
+	return list, nil
+}
+
+func ReadFon(transformer *db.Transformer, d *db.Discover, dirs bool, filter StateMachine[bool]) ([]string, error) {
+	decoder := nullDecoder
+
+	switch d.Type { //nolint:exhaustive
+	case db.DiscoverFODNBase64, db.DiscoverFOFNBase64:
+		decoder = base64Decoder
+	case db.DiscoverFODNQuoted, db.DiscoverFOFNQuoted:
+		decoder = strconv.Unquote
+	}
+
+	f, err := os.Open(d.Path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	return readLines(transformer, f, decoder, dirs, filter)
+}
+
+func nullDecoder(str string) (string, error) {
+	return str, nil
+}
+
+func base64Decoder(str string) (string, error) {
+	fn, err := base64.StdEncoding.DecodeString(str)
+	if err != nil {
+		return "", err
+	}
+
+	return toString(fn), nil
+}
+
+func toString(b []byte) string {
+	return unsafe.String(unsafe.SliceData(b), len(b))
+}
+
+func toBytes(b string) []byte {
+	return unsafe.Slice(unsafe.StringData(b), len(b))
+}
+
+func readLines(trns *db.Transformer, r io.Reader, decoder func(string) (string, error),
+	dirs bool, filter StateMachine[bool]) ([]string, error) {
+	var lines []string
+
+	buf := bufio.NewReader(r)
+
+	for {
+		line, err := buf.ReadBytes('\n')
+		if err != nil && !errors.Is(err, io.EOF) {
+			return nil, err
+		}
+
+		var errl error
+
+		lines, errl = parseLine(lines, line, trns, decoder, dirs, filter)
+		if errl != nil {
+			return nil, err
+		} else if errors.Is(err, io.EOF) {
+			return lines, nil
+		}
+	}
+}
+
+func parseLine(lines []string, line []byte, trns *db.Transformer, //nolint:gocyclo
+	decoder func(string) (string, error), dirs bool, filter StateMachine[bool]) ([]string, error) {
+	decoded, errd := decoder(toString(line))
+	if errd != nil {
+		return nil, errd
+	}
+
+	decoded = filepath.Clean(decoded)
+
+	if dirs && !strings.HasSuffix(decoded, "/") {
+		decoded += "/"
+	}
+
+	if filter != nil {
+		v := filter.Match(toBytes(decoded))
+
+		if v != nil && !*v {
+			return lines, nil
+		}
+	}
+
+	if !trns.Match(decoded) {
+		return nil, fmt.Errorf("path: %s: %w", decoded, db.ErrInvalidTransformPath)
+	}
+
+	return append(lines, decoded), nil
+}
+
+func walkDirs(dirs []string, statter *Statter, filter StateMachine[bool], errCh chan error) {
+	if len(dirs) > 0 {
+		statter.WriterAdd(1)
+
+		go func() {
+			err := walkDirectories(dirs, filter, statter)
+
+			statter.WriterDone()
+
+			errCh <- err
+		}()
+	} else {
+		close(errCh)
+	}
+}
+
 func collectFiles(statter *Statter,
-	cb func(*db.File), errChan chan error) ([]*db.File, []string, error) {
-	var (
-		stattedFiles  []*db.File
-		excludedFiles []string
-	)
+	cb func(*db.File), errChan chan error) ([]*db.File, error) {
+	var stattedFiles []*db.File //nolint:prealloc
 
 	for file := range statter.Iter() {
-		switch file.Status {
-		default:
-			stattedFiles = append(stattedFiles, file)
-		case db.StatusSkipped:
-			excludedFiles = append(excludedFiles, file.LocalPath)
-		}
+		stattedFiles = append(stattedFiles, file)
 
 		cb(file)
 	}
 
-	return stattedFiles, excludedFiles, <-errChan
+	return stattedFiles, <-errChan
 }
 
-func addFilesToSet(d *db.DB, set *db.Set, files []*db.File, excluded []string) error {
+func addFilesToSet(d *db.DB, set *db.Set, files []*db.File) error {
 	if len(files) == 0 {
 		return ErrNoFilesDiscovered
 	}
 
-	sm, err := buildFileStateMachine(files, excluded)
+	sm, err := buildFileStateMachine(files)
 	if err != nil {
 		return err
 	}
@@ -320,10 +330,12 @@ func addFilesToSet(d *db.DB, set *db.Set, files []*db.File, excluded []string) e
 
 	if err := d.GetSetFiles(set).ForEach(func(f *db.File) error {
 		if m := sm.Match(toBytes(f.LocalPath)); m == nil {
-			f.Status = db.StatusMissing
-			files = append(files, f)
-		} else if *m {
-			removedFiles = append(removedFiles, f)
+			if set.MonitorRemovals {
+				removedFiles = append(removedFiles, f)
+			} else {
+				f.Status = db.StatusMissing
+				files = append(files, f)
+			}
 		}
 
 		return nil
@@ -334,18 +346,14 @@ func addFilesToSet(d *db.DB, set *db.Set, files []*db.File, excluded []string) e
 	return d.SetSetFiles(set, slices.Values(files), slices.Values(removedFiles))
 }
 
-func buildFileStateMachine(files []*db.File, excluded []string) (StateMachine[bool], error) {
-	exists := new(bool)
-	removed := new(bool)
-	*removed = true
+func buildFileStateMachine(files []*db.File) (StateMachine[struct{}], error) {
+	exists := new(struct{})
 
-	list := make([]PathGroup[bool], 0, len(files)+len(excluded))
+	list := make([]PathGroup[struct{}], 0, len(files))
 
 	for _, f := range files {
-		list = append(list, PathGroup[bool]{Path: toBytes(f.LocalPath), Group: exists})
+		list = append(list, PathGroup[struct{}]{Path: toBytes(f.LocalPath), Group: exists})
 	}
-
-	list = addLines(list, excluded, removed)
 
 	return NewStatemachine(list)
 }

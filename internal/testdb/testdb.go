@@ -23,34 +23,80 @@
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  ******************************************************************************/
 
-package discovery
+package testdb
 
 import (
+	"database/sql"
 	"errors"
-	"io/fs"
+	"os"
+	"path/filepath"
+	"testing"
+	"unsafe"
 
-	"github.com/wtsi-ssg/wrstat/v6/walk"
+	. "github.com/smartystreets/goconvey/convey" //nolint:revive,stylecheck
+	"github.com/wtsi-hgi/ibackup/db"
+	_ "modernc.org/sqlite" //
 )
 
-func walkDirectories(dirs []string, filter StateMachine[bool], statter *Statter) error {
-	for _, dir := range dirs {
-		err := walkDirectory(dir, filter, statter)
-		if err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return err
-		}
-	}
+type dbe struct {
+	db.DBRO
 
-	return nil
+	execReturningRowID func(tx *sql.Tx, sql string, params ...any) (int64, error)
 }
 
-func walkDirectory(dir string, filter StateMachine[bool], statter *Statter) error {
-	return walk.New(func(entry *walk.Dirent) error {
-		path := entry.Bytes()
+func CreateTestDatabase(t *testing.T) *db.DB {
+	t.Helper()
 
-		if match := filter.Match(path); match != nil && *match {
-			statter.StatFile(toString(path))
+	oldTmp := os.Getenv("TMPDIR")
+
+	if _, err := os.Stat("/dev/shm"); err == nil {
+		os.Setenv("TMPDIR", "/dev/shm")
+	}
+
+	os.Setenv("TMPDIR", oldTmp) //nolint:tenv
+
+	d, err := db.Init("sqlite", filepath.Join(t.TempDir(), "db?journal_mode=WAL"))
+	So(err, ShouldBeNil)
+
+	(*dbe)(unsafe.Pointer(d)).execReturningRowID = func(tx *sql.Tx, sqlstr string, params ...any) (int64, error) {
+		var id int64
+
+		err := tx.QueryRow(sqlstr, params...).Scan(&id)
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, nil
 		}
 
-		return nil
-	}, false, false).Walk(dir, func(string, error) {})
+		return id, err
+	}
+
+	Reset(func() { d.Close() })
+
+	return d
+}
+
+func DoTasks(t *testing.T, d *db.DB) {
+	t.Helper()
+
+	process, err := d.RegisterProcess()
+	So(err, ShouldBeNil)
+
+	const numTasks = 1024
+
+	for {
+		var tasks []*db.Task
+
+		So(d.ReserveTasks(process, numTasks).ForEach(func(task *db.Task) error {
+			tasks = append(tasks, task)
+
+			return nil
+		}), ShouldBeNil)
+
+		if len(tasks) == 0 {
+			break
+		}
+
+		for _, task := range tasks {
+			So(d.TaskComplete(task), ShouldBeNil)
+		}
+	}
 }
