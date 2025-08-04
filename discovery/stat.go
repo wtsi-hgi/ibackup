@@ -36,11 +36,10 @@ import (
 )
 
 type Statter struct {
-	mountpoints map[uint64]string
-	requests    chan string
-	results     chan *db.File
-	ctx         chan struct{}
-	writers     atomic.Int64
+	mountpoints      map[uint64]string
+	requests         chan string
+	results          chan *db.File
+	writers, readers atomic.Int64
 }
 
 func newStatter() (*Statter, error) {
@@ -53,7 +52,6 @@ func newStatter() (*Statter, error) {
 		mountpoints: mps,
 		requests:    make(chan string),
 		results:     make(chan *db.File),
-		ctx:         make(chan struct{}),
 	}, nil
 }
 
@@ -63,36 +61,46 @@ func (s *Statter) WriterAdd(n int64) {
 
 func (s *Statter) WriterDone() {
 	if s.writers.Add(-1) == 0 {
-		close(s.ctx)
+		close(s.requests)
+	}
+}
+
+func (s *Statter) readerDone() {
+	if s.readers.Add(-1) == 0 {
+		close(s.results)
 	}
 }
 
 func (s *Statter) Launch(n uint8) {
+	s.readers.Add(int64(n))
+
 	for range n {
 		go s.statter()
 	}
 }
 
 func (s *Statter) statter() {
+	defer s.readerDone()
+
 	for {
-		select {
-		case <-s.ctx:
-			return
-		case req := <-s.requests:
-			s.statFile(req)
+		req, ok := <-s.requests
+		if !ok {
+			break
 		}
+
+		s.statFile(req)
 	}
 }
 
 func (s *Statter) statFile(req string) {
 	if file, err := s.stat(req); errors.Is(err, fs.ErrNotExist) { //nolint:nestif
-		s.results <- &db.File{LocalPath: req, Status: db.StatusMissing, LastError: err.Error()}
+		s.PassFile(&db.File{LocalPath: req, Status: db.StatusMissing, LastError: err.Error()})
 	} else if err != nil { //nolint:gocritic
-		s.results <- &db.File{LocalPath: req, Status: db.StatusSkipped, LastError: err.Error()}
+		s.PassFile(&db.File{LocalPath: req, Status: db.StatusSkipped, LastError: err.Error()})
 	} else if file.Type == db.Directory {
-		s.results <- &db.File{LocalPath: req, Status: db.StatusSkipped, LastError: "is directory"}
+		s.PassFile(&db.File{LocalPath: req, Status: db.StatusSkipped, LastError: "is directory"})
 	} else {
-		s.results <- file
+		s.PassFile(file)
 	}
 }
 
@@ -101,49 +109,27 @@ func (s *Statter) StatFiles(fons ...[]string) {
 
 	for _, files := range fons {
 		for _, file := range files {
-			select {
-			case <-s.ctx:
-				return
-			case s.requests <- file:
-			}
+			s.StatFile(file)
 		}
 	}
 }
 
 func (s *Statter) StatFile(file string) {
-	select {
-	case <-s.ctx:
-	case s.requests <- file:
-	}
+	s.requests <- file
 }
 
 func (s *Statter) PassFile(file *db.File) {
-	select {
-	case <-s.ctx:
-	case s.results <- file:
-	}
+	s.results <- file
 }
 
 func (s *Statter) Iter() iter.Seq[*db.File] {
 	return func(yield func(*db.File) bool) {
-		defer s.done()
-
-		for {
-			select {
-			case <-s.ctx:
+		for file := range s.results {
+			if !yield(file) {
 				return
-			case file := <-s.results:
-				if !yield(file) {
-					return
-				}
 			}
 		}
 	}
-}
-
-func (s *Statter) done() {
-	close(s.results)
-	close(s.requests)
 }
 
 func getMountPoints() (map[uint64]string, error) {
