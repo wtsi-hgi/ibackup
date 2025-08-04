@@ -31,6 +31,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/wtsi-hgi/ibackup/db"
@@ -52,7 +53,25 @@ func TestDiscover(t *testing.T) {
 		}
 
 		So(d.CreateSet(set), ShouldBeNil)
+
+		set, err = d.GetSet(set.Name, set.Requester)
+		So(err, ShouldBeNil)
+		So(set.LastDiscovery, ShouldBeZeroValue)
+		So(set.LastCompleted, ShouldBeZeroValue)
+
+		var count int
+
+		start := time.Now().Truncate(time.Second)
+
 		So(Discover(d, set, func(f *db.File) {}), ShouldEqual, ErrNoFilesDiscovered)
+
+		end := time.Now().Truncate(time.Second)
+
+		set, err = d.GetSet(set.Name, set.Requester)
+		So(err, ShouldBeNil)
+		So(set.StartedDiscovery, ShouldHappenOnOrAfter, start)
+		So(set.LastDiscovery, ShouldHappenOnOrBefore, end)
+		So(set.StartedDiscovery, ShouldHappenOnOrBefore, set.LastDiscovery)
 
 		dirA := filepath.Join(tmp, "dirA")
 		dirB := filepath.Join(dirA, "dirB")
@@ -73,8 +92,6 @@ func TestDiscover(t *testing.T) {
 			}), ShouldBeNil)
 			So(collectFileStatuses(t, d.GetSetFiles(set)), ShouldResemble, []fileStatus(nil))
 
-			var count int
-
 			So(Discover(d, set, func(f *db.File) { count++ }), ShouldBeNil)
 			So(count, ShouldEqual, 1)
 			So(collectFileStatuses(t, d.GetSetFiles(set)), ShouldResemble, []fileStatus{{fileA, db.StatusNone}})
@@ -85,6 +102,7 @@ func TestDiscover(t *testing.T) {
 				Path: dirA,
 				Type: db.DiscoverDirectory,
 			}), ShouldBeNil)
+
 			So(Discover(d, set, func(f *db.File) { count++ }), ShouldBeNil)
 			So(count, ShouldEqual, 3)
 			So(collectFileStatuses(t, d.GetSetFiles(set)), ShouldResemble, []fileStatus{

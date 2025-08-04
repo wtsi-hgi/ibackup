@@ -586,8 +586,7 @@ const (
 	updateSetMonitored           = "UPDATE `sets` SET `monitorTime` = ?, `monitorRemovals` = ? WHERE `id` = ?;"
 	updateDiscoveryStarted       = "UPDATE `sets` SET `startedDiscovery` = " + now + " WHERE `id` = ?;"
 	updateLastDiscoveryCompleted = "UPDATE `sets` SET " +
-		"`lastDiscovery` = `startedDiscovery`, " +
-		"`lastCompleted` = " + now + ", " +
+		"`lastDiscovery` = " + now + ", " +
 		"`lastCompletedCount` = `numFiles`, " +
 		"`lastCompletedSize` = `sizeFiles`, " +
 		"`uploaded` = 0, `uploadedSize` = 0, `replaced` = 0, `skipped` = 0 " +
