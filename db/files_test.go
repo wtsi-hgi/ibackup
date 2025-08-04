@@ -35,7 +35,6 @@ import (
 
 func TestFiles(t *testing.T) {
 	Convey("With a database containing sets", t, func() {
-
 		d := createTestDatabase(t)
 
 		mapTransformer, err := NewTransformer("mapTransformer", "^/some/(.*?)/([^/]+)(/hardlink)?", "/remote/$2")

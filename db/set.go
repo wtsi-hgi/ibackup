@@ -501,13 +501,17 @@ func (d *DB) SetSetTransformer(set *Set) error {
 		return ErrInvalidTransformer
 	}
 
-	for disc := range d.GetSetDiscovery(set).Iter {
+	if err := d.GetSetDiscovery(set).ForEach(func(disc *Discover) error {
 		switch disc.Type { //nolint:exhaustive
 		case DiscoverFile, DiscoverDirectory:
 			if !set.Transformer.Match(disc.Path) {
 				return fmt.Errorf("path: %s: %w", disc.Path, ErrInvalidTransformPath)
 			}
 		}
+
+		return nil
+	}); err != nil {
+		return err
 	}
 
 	return d.changeTransformer(set)
