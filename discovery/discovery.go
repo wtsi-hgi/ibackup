@@ -229,7 +229,7 @@ func doDiscover(d *db.DB, set *db.Set, cb func(*db.File),
 
 	statter.Launch(numStatters)
 
-	stattedFiles, excludedFiles, err := collectFiles(set.Transformer, statter, cb, errCh)
+	stattedFiles, excludedFiles, err := collectFiles(statter, cb, errCh)
 	if err != nil {
 		return err
 	}
@@ -285,7 +285,7 @@ func addLines(lines []PathGroup[bool], entries []string, value *bool) []PathGrou
 	return lines
 }
 
-func collectFiles(transformer *db.Transformer, statter *Statter,
+func collectFiles(statter *Statter,
 	cb func(*db.File), errChan chan error) ([]*db.File, []string, error) {
 	var (
 		stattedFiles  []*db.File
@@ -297,7 +297,6 @@ func collectFiles(transformer *db.Transformer, statter *Statter,
 		default:
 			stattedFiles = append(stattedFiles, file)
 		case db.StatusSkipped:
-			file.RemotePath, _ = transformer.Transform(file.LocalPath) //nolint:errcheck
 			excludedFiles = append(excludedFiles, file.LocalPath)
 		}
 

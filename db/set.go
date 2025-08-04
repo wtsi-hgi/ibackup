@@ -545,11 +545,7 @@ func (d *DB) moveSetFiles(tx *sql.Tx, from int64, to *Set) (err error) {
 	files := iterRows(&d.DBRO, scanFile, getSetsFiles, from)
 
 	for file := range files.Iter {
-		if file.RemotePath, err = to.Transformer.Transform(file.LocalPath); err != nil {
-			return err
-		}
-
-		if err := d.addSetFile(tx, to.id, file); err != nil {
+		if err := d.addSetFile(tx, to, file); err != nil {
 			return err
 		}
 	}

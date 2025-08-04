@@ -88,7 +88,7 @@ func (d *DB) SetSetFiles(set *Set, toAdd, toRemove iter.Seq[*File]) error {
 	defer tx.Rollback() //nolint:errcheck
 
 	for file := range toAdd {
-		if err := d.addSetFile(tx, set.id, file); err != nil {
+		if err := d.addSetFile(tx, set, file); err != nil {
 			return err
 		}
 	}
@@ -100,7 +100,14 @@ func (d *DB) SetSetFiles(set *Set, toAdd, toRemove iter.Seq[*File]) error {
 	return tx.Commit()
 }
 
-func (d *DB) addSetFile(tx *sql.Tx, setID int64, file *File) error {
+func (d *DB) addSetFile(tx *sql.Tx, set *Set, file *File) error {
+	var err error
+
+	file.RemotePath, err = set.Transformer.Transform(file.LocalPath)
+	if err != nil {
+		return err
+	}
+
 	hlID, err := d.execReturningRowID(tx, createHardlink, file.Inode, file.MountPount,
 		file.Btime, file.InodeRemote, file.Mtime, file.Size, file.Type, file.Owner,
 		file.SymlinkDest, file.RemotePath)
@@ -113,7 +120,7 @@ func (d *DB) addSetFile(tx *sql.Tx, setID int64, file *File) error {
 		return err
 	}
 
-	file.id, err = d.execReturningRowID(tx, createSetFile, file.LocalPath, setID, rfID, file.Status, rfID)
+	file.id, err = d.execReturningRowID(tx, createSetFile, file.LocalPath, set.id, rfID, file.Status, rfID)
 
 	return err
 }
