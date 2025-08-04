@@ -25,6 +25,11 @@
 
 package db
 
+import (
+	"path/filepath"
+	"strings"
+)
+
 type DiscoveryType uint8
 
 const (
@@ -46,6 +51,12 @@ type Discover struct {
 }
 
 func (d *DB) AddSetDiscovery(set *Set, dr *Discover) error {
+	dr.Path = filepath.Clean(dr.Path)
+
+	if (dr.Type == DiscoverDirectory || dr.Type == DiscoverRemovedDirectory) && !strings.HasSuffix(dr.Path, "/") {
+		dr.Path += "/"
+	}
+
 	return d.exec(createDiscover, set.id, dr.Path, dr.Type)
 }
 
