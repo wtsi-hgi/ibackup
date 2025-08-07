@@ -110,7 +110,6 @@ func (m *monitorHeap) Pop() any {
 // Add pushes a set to the Monitor Heap.
 func (m *Monitor) Add(s *set.Set) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	last := s.LastDiscovery
 	if s.LastCompleted.After(last) {
@@ -136,9 +135,14 @@ func (m *Monitor) Add(s *set.Set) {
 		m.monitoringStarted = true
 
 		go m.monitorSets(nextDiscovery)
-	} else {
-		m.monitorCh <- struct{}{}
+
+		m.mu.Unlock()
+
+		return
 	}
+
+	m.mu.Unlock()
+	m.monitorCh <- struct{}{}
 }
 
 func (m *monitorHeap) nextDiscovery() time.Time {
@@ -205,7 +209,6 @@ func (m *Monitor) monitorSets(nextDiscovery time.Time) {
 			timer.Reset(time.Until(nextDiscovery))
 		case <-timer.C:
 			m.mu.Lock()
-
 			given := m.monitorHeap.nextSet()
 			if given == nil {
 				m.monitoringStarted = false
@@ -226,14 +229,16 @@ func (m *Monitor) monitorSets(nextDiscovery time.Time) {
 // Remove removes a set from the Monitor Heap by its ID.
 func (m *Monitor) Remove(sid string) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	index, found := m.monitorHeap.byID[sid]
 	if !found {
+		m.mu.Unlock()
+
 		return fmt.Errorf("%w: %s", ErrSetNotMonitored, sid)
 	}
 
 	heap.Remove(&m.monitorHeap, index)
+	m.mu.Unlock()
 
 	if len(m.monitorCh) == 0 {
 		m.monitorCh <- struct{}{}
