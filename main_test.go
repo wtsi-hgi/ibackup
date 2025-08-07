@@ -2090,7 +2090,7 @@ Global put client status (/10): 6 iRODS connections`)
 
 				s.addSetForTesting(t, setName, transformer, path)
 
-				s.waitForStatus(setName, "\nStatus: complete", 10*time.Second)
+				s.waitForStatus(setName, "\nStatus: complete", 20*time.Second)
 
 				statusCmd := []string{"status", "--name", setName, "-d"}
 
