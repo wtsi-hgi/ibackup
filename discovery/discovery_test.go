@@ -63,15 +63,16 @@ func TestDiscover(t *testing.T) {
 
 		start := time.Now().Truncate(time.Second)
 
-		So(Discover(d, set, func(f *db.File) {}), ShouldEqual, ErrNoFilesDiscovered)
+		So(Discover(d, set, func(f *db.File) {}), ShouldBeNil)
+		So(set.Error, ShouldEqual, ErrNoFilesDiscovered.Error())
 
 		end := time.Now().Truncate(time.Second)
 
 		set, err = d.GetSet(set.Name, set.Requester)
 		So(err, ShouldBeNil)
 		So(set.StartedDiscovery, ShouldHappenOnOrAfter, start)
-		So(set.LastDiscovery, ShouldHappenOnOrBefore, end)
-		So(set.StartedDiscovery, ShouldHappenOnOrBefore, set.LastDiscovery)
+		So(set.StartedDiscovery, ShouldHappenOnOrBefore, end)
+		//So(set.StartedDiscovery, ShouldHappenOnOrBefore, set.LastDiscovery)
 
 		dirA := filepath.Join(tmp, "dirA")
 		dirB := filepath.Join(dirA, "dirB")
@@ -115,7 +116,7 @@ func TestDiscover(t *testing.T) {
 				files := slices.Collect(d.GetSetFiles(set).Iter)
 				count = 0
 
-				So(d.RemoveSetFiles(slices.Values(files[1:2])), ShouldBeNil)
+				So(d.RemoveSetFiles(set, slices.Values(files[1:2])), ShouldBeNil)
 				So(Discover(d, set, func(f *db.File) { count++ }), ShouldBeNil)
 				So(count, ShouldEqual, 2)
 			})

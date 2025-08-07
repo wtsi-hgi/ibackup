@@ -34,6 +34,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/go-sql-driver/mysql"
 )
 
 type Status int
@@ -243,10 +245,11 @@ func (s *Set) IsReadonly() bool {
 }
 
 var (
-	ErrReadonlySet          = errors.New("cannot modify readonly set")
-	ErrInvalidSetName       = errors.New("invalid set name")
-	ErrInvalidRequesterName = errors.New("invalid requester name")
-	ErrInvalidMetadata      = errors.New("invalid metadata")
+	ErrReadonlySet             = errors.New("cannot modify readonly set")
+	ErrInvalidSetName          = errors.New("invalid set name")
+	ErrInvalidRequesterName    = errors.New("invalid requester name")
+	ErrInvalidMetadata         = errors.New("invalid metadata")
+	ErrDiscoveryAlreadyStarted = errors.New("discovery already started")
 )
 
 func (d *DB) CreateSet(set *Set) error { //nolint:gocyclo
@@ -323,7 +326,7 @@ func scanSet(scanner scanner) (*Set, error) { //nolint:funlen
 	set := new(Set)
 
 	var (
-		reviewDate, deleteDate                                 sql.NullTime
+		lastCompleted, reviewDate, deleteDate                  sql.NullTime
 		transformerName, transformerRegexp, transformerReplace string
 	)
 
@@ -356,6 +359,7 @@ func scanSet(scanner scanner) (*Set, error) { //nolint:funlen
 		&set.StartedDiscovery,
 		&set.LastDiscovery,
 		&set.Status,
+		&lastCompleted,
 		&set.LastCompletedCount,
 		&set.LastCompletedSize,
 		&set.Error,
@@ -369,6 +373,7 @@ func scanSet(scanner scanner) (*Set, error) { //nolint:funlen
 		return nil, err
 	}
 
+	set.LastCompleted = lastCompleted.Time
 	set.ReviewDate = reviewDate.Time
 	set.DeleteDate = deleteDate.Time
 
@@ -399,7 +404,7 @@ func (d *DB) SetSetWarning(set *Set) error {
 		return ErrReadonlySet
 	}
 
-	return d.exec(updateSetError, set.Warning, set.id)
+	return d.exec(updateSetWarning, set.Warning, set.id)
 }
 
 func (d *DB) SetSetError(set *Set) error {
@@ -410,20 +415,52 @@ func (d *DB) SetSetError(set *Set) error {
 	return d.exec(updateSetError, set.Error, set.id)
 }
 
+func isAlreadyExists(err error) bool {
+	var sqlerr *mysql.MySQLError
+
+	if errors.As(err, &sqlerr) {
+		return sqlerr.Number == 1062 //nolint:mnd
+	}
+
+	return false
+}
+
 func (d *DB) SetSetDicoveryStarted(set *Set) error {
 	if !set.modifiable {
 		return ErrReadonlySet
 	}
 
-	return d.exec(updateDiscoveryStarted, set.id)
+	if err := d.exec(createDiscovery, set.id); err != nil {
+		if d.isAlreadyExists(err) {
+			return ErrDiscoveryAlreadyStarted
+		}
+
+		return err
+	}
+
+	return nil
 }
 
-func (d *DB) SetSetDicoveryCompleted(set *Set) error {
+func (d *DB) SetSetDiscoveryFailed(set *Set) error {
 	if !set.modifiable {
 		return ErrReadonlySet
 	}
 
-	return d.exec(updateLastDiscoveryCompleted, set.id)
+	tx, err := d.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	if _, err := tx.Exec(updateSetError, set.id, set.Error); err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec(deleteHeldDiscovery, set.id); err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }
 
 func (d *DB) DeleteSet(set *Set) error {
@@ -555,7 +592,7 @@ func (d *DB) moveDiscovery(tx *sql.Tx, from, to int64) error {
 }
 
 func (d *DB) moveSetFiles(tx *sql.Tx, from int64, to *Set) (err error) {
-	files := iterRows(&d.DBRO, scanFile, getSetsFiles, from)
+	files := iterRows(&d.DBRO, scanFile(from), getSetsFiles, from)
 
 	for file := range files.Iter {
 		if err := d.addSetFile(tx, to, file); err != nil {

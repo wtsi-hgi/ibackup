@@ -45,6 +45,8 @@ const (
 	DiscoverRemovedDirectory
 )
 
+const discoveryTimeout = "discovery timed out"
+
 type Discover struct {
 	Path string
 	Type DiscoveryType

@@ -126,9 +126,8 @@ func TestSet(t *testing.T) {
 					So(d.SetSetWarning(setB), ShouldEqual, ErrReadonlySet)
 					So(d.SetSetError(setB), ShouldEqual, ErrReadonlySet)
 					So(d.SetSetDicoveryStarted(setB), ShouldEqual, ErrReadonlySet)
-					So(d.SetSetDicoveryCompleted(setB), ShouldEqual, ErrReadonlySet)
 					So(d.DeleteSet(setB), ShouldEqual, ErrReadonlySet)
-					So(d.SetSetFiles(setB, slices.Values([]*File{}), noSeq[*File]), ShouldEqual, ErrReadonlySet)
+					So(d.CompleteDiscovery(setB, slices.Values([]*File{}), noSeq[*File]), ShouldEqual, ErrReadonlySet)
 				})
 
 				So(d.SetSetModifiable(setB), ShouldBeNil)
@@ -145,7 +144,7 @@ func TestSet(t *testing.T) {
 				discovery := &Discover{Path: "/some/path", Type: DiscoverFODN}
 
 				So(d.AddSetDiscovery(setB, discovery), ShouldBeNil)
-				So(d.SetSetFiles(setB, slices.Values(files), noSeq[*File]), ShouldBeNil)
+				So(d.CompleteDiscovery(setB, slices.Values(files), noSeq[*File]), ShouldBeNil)
 				So(d.clearQueue(), ShouldBeNil)
 
 				setB.Transformer, err = NewTransformer("prefix=/some/:/other/remote/", `^/some/`, "/other/remote/")
@@ -157,6 +156,7 @@ func TestSet(t *testing.T) {
 
 				for _, file := range files {
 					file.id += 5
+					file.setID = setB.id
 					file.RemotePath = "/other" + file.RemotePath
 				}
 
@@ -166,7 +166,7 @@ func TestSet(t *testing.T) {
 				Convey("The old set is removed once the queued items are dealt with", func() {
 					requester := fmt.Sprintf("\x00%d\x00%s", oldID, setB.Requester)
 
-					_, err := scanSet(d.db.QueryRow(getSetByNameRequester, setB.Name, requester))
+					_, err = scanSet(d.db.QueryRow(getSetByNameRequester, setB.Name, requester))
 					So(err, ShouldBeNil)
 					So(d.clearQueue(), ShouldBeNil)
 
@@ -176,12 +176,12 @@ func TestSet(t *testing.T) {
 			})
 
 			Convey("Adding/Removing files to a set updates the set file numbers", func() {
-				setB, err := d.GetSet("my2ndSet", "me")
+				setB, err = d.GetSet("my2ndSet", "me")
 				So(err, ShouldBeNil)
 				So(setB.NumFiles, ShouldEqual, 0)
-				So(d.SetSetFiles(setB, genFiles(5), noSeq[*File]), ShouldBeNil)
-				So(d.SetSetFiles(setB, setFileType(genFiles(4), Abnormal), noSeq[*File]), ShouldBeNil)
-				So(d.SetSetFiles(setB, setFileType(genFiles(2), Symlink), noSeq[*File]), ShouldBeNil)
+				So(d.CompleteDiscovery(setB, genFiles(5), noSeq[*File]), ShouldBeNil)
+				So(d.CompleteDiscovery(setB, setFileType(genFiles(4), Abnormal), noSeq[*File]), ShouldBeNil)
+				So(d.CompleteDiscovery(setB, setFileType(genFiles(2), Symlink), noSeq[*File]), ShouldBeNil)
 
 				setB, err = d.GetSet("my2ndSet", "me")
 				So(err, ShouldBeNil)
@@ -192,10 +192,11 @@ func TestSet(t *testing.T) {
 				So(setB.Abnormal, ShouldEqual, 4)
 				So(setB.Missing, ShouldEqual, 0)
 				So(setB.Orphaned, ShouldEqual, 0)
+				So(setB.Uploaded, ShouldEqual, 0)
+				So(setB.Replaced, ShouldEqual, 0)
 
-				files := d.GetSetFiles(setB)
-				So(d.RemoveSetFiles(files.Iter), ShouldBeNil)
-				So(files.Error, ShouldBeNil)
+				files := collectIter(t, d.GetSetFiles(setB))
+				So(d.RemoveSetFiles(setB, slices.Values(files)), ShouldBeNil)
 
 				setB, err = d.GetSet("my2ndSet", "me")
 				So(err, ShouldBeNil)
@@ -210,7 +211,7 @@ func TestSet(t *testing.T) {
 				So(setB.Symlinks, ShouldEqual, 0)
 				So(setB.Hardlinks, ShouldEqual, 0)
 
-				So(d.SetSetFiles(setB, setFileStatus(genFiles(5), StatusMissing), noSeq[*File]), ShouldBeNil)
+				So(d.CompleteDiscovery(setB, setFileStatus(genFiles(5), StatusMissing), noSeq[*File]), ShouldBeNil)
 
 				setB, err = d.GetSet("my2ndSet", "me")
 				So(err, ShouldBeNil)
@@ -225,7 +226,10 @@ func TestSet(t *testing.T) {
 				filePrefix--
 
 				So(d.CreateSet(setC), ShouldBeNil)
-				So(d.SetSetFiles(setC, genFiles(2), noSeq[*File]), ShouldBeNil)
+
+				cFiles := slices.Collect(genFiles(2))
+
+				So(d.CompleteDiscovery(setC, slices.Values(cFiles), noSeq[*File]), ShouldBeNil)
 				So(d.clearQueue(), ShouldBeNil)
 
 				setB, err = d.GetSet(setB.Name, setB.Requester)
@@ -238,11 +242,11 @@ func TestSet(t *testing.T) {
 				So(err, ShouldBeNil)
 				So(setC.SizeUploaded, ShouldEqual, 200)
 
-				So(d.SetSetDicoveryCompleted(setC), ShouldBeNil)
+				So(d.CompleteDiscovery(setC, noSeq[*File], noSeq[*File]), ShouldBeNil)
 
-				cFiles := slices.Collect(genFiles(12))
+				cFiles = append(cFiles, slices.Collect(genFiles(12))...)
 
-				So(d.SetSetFiles(setC, slices.Values(cFiles), noSeq[*File]), ShouldBeNil)
+				So(d.CompleteDiscovery(setC, slices.Values(cFiles), noSeq[*File]), ShouldBeNil)
 
 				setC, err = d.GetSet(setC.Name, setC.Requester)
 				So(err, ShouldBeNil)
@@ -255,8 +259,8 @@ func TestSet(t *testing.T) {
 
 				setC, err = d.GetSet(setC.Name, setC.Requester)
 				So(err, ShouldBeNil)
-				So(setC.Uploaded, ShouldEqual, 1)
-				So(setC.Replaced, ShouldEqual, 0)
+				So(setC.Uploaded, ShouldEqual, 0)
+				So(setC.Replaced, ShouldEqual, 1)
 				So(setC.Skipped, ShouldEqual, 0)
 				So(setC.SizeUploaded, ShouldEqual, 100)
 
@@ -264,8 +268,8 @@ func TestSet(t *testing.T) {
 
 				setC, err = d.GetSet(setC.Name, setC.Requester)
 				So(err, ShouldBeNil)
-				So(setC.Uploaded, ShouldEqual, 1)
-				So(setC.Replaced, ShouldEqual, 0)
+				So(setC.Uploaded, ShouldEqual, 0)
+				So(setC.Replaced, ShouldEqual, 1)
 				So(setC.Skipped, ShouldEqual, 1)
 				So(setC.SizeUploaded, ShouldEqual, 100)
 
@@ -273,16 +277,12 @@ func TestSet(t *testing.T) {
 
 				setC, err = d.GetSet(setC.Name, setC.Requester)
 				So(err, ShouldBeNil)
-				So(setC.Uploaded, ShouldEqual, 11)
-				So(setC.Replaced, ShouldEqual, 0)
+				So(setC.Uploaded, ShouldEqual, 12)
+				So(setC.Replaced, ShouldEqual, 1)
 				So(setC.Skipped, ShouldEqual, 1)
-				So(setC.SizeUploaded, ShouldEqual, 1100)
+				So(setC.SizeUploaded, ShouldEqual, 1300)
 
-				filePrefix -= 2
-
-				So(d.SetSetFiles(setC, genFiles(1), noSeq[*File]), ShouldBeNil)
-
-				filePrefix++
+				So(d.CompleteDiscovery(setC, slices.Values(cFiles), noSeq[*File]), ShouldBeNil)
 
 				setC, err = d.GetSet(setC.Name, setC.Requester)
 				So(err, ShouldBeNil)
@@ -292,15 +292,15 @@ func TestSet(t *testing.T) {
 
 				setC, err = d.GetSet(setC.Name, setC.Requester)
 				So(err, ShouldBeNil)
-				So(setC.Uploaded, ShouldEqual, 10)
-				So(setC.Replaced, ShouldEqual, 1)
-				So(setC.Skipped, ShouldEqual, 1)
-				So(setC.SizeUploaded, ShouldEqual, 1200)
+				So(setC.Uploaded, ShouldEqual, 0)
+				So(setC.Replaced, ShouldEqual, 14)
+				So(setC.Skipped, ShouldEqual, 0)
+				So(setC.SizeUploaded, ShouldEqual, 1400)
 				So(setC.NumObjectsRemoved, ShouldEqual, 0)
 				So(setC.NumObjectsToBeRemoved, ShouldEqual, 0)
 				So(setC.SizeRemoved, ShouldEqual, 0)
 
-				So(d.RemoveSetFiles(slices.Values(cFiles[:1])), ShouldBeNil)
+				So(d.RemoveSetFiles(setC, slices.Values(cFiles[:1])), ShouldBeNil)
 
 				setC, err = d.GetSet(setC.Name, setC.Requester)
 				So(err, ShouldBeNil)
@@ -315,7 +315,7 @@ func TestSet(t *testing.T) {
 				So(setC.NumObjectsToBeRemoved, ShouldEqual, 1)
 				So(setC.SizeRemoved, ShouldEqual, 100)
 
-				So(d.RemoveSetFiles(slices.Values(cFiles[1:7])), ShouldBeNil)
+				So(d.RemoveSetFiles(setC, slices.Values(cFiles[1:7])), ShouldBeNil)
 
 				setC, err = d.GetSet(setC.Name, setC.Requester)
 				So(err, ShouldBeNil)
@@ -344,7 +344,7 @@ func TestSet(t *testing.T) {
 					So(setC.SizeRemoved, ShouldEqual, (n+1)*100)
 				}
 
-				So(d.SetSetFiles(setC, slices.Values(cFiles[4:5]), noSeq[*File]), ShouldBeNil)
+				So(d.CompleteDiscovery(setC, slices.Values(cFiles[4:5]), noSeq[*File]), ShouldBeNil)
 
 				setC, err = d.GetSet(setC.Name, setC.Requester)
 				So(err, ShouldBeNil)
@@ -352,13 +352,38 @@ func TestSet(t *testing.T) {
 				So(setC.NumObjectsToBeRemoved, ShouldEqual, 5)
 				So(setC.SizeRemoved, ShouldEqual, 300)
 
-				So(d.RemoveSetFiles(slices.Values(cFiles[4:5])), ShouldBeNil)
+				So(d.RemoveSetFiles(setC, slices.Values(cFiles[4:5])), ShouldBeNil)
 
 				setC, err = d.GetSet(setC.Name, setC.Requester)
 				So(err, ShouldBeNil)
 				So(setC.NumObjectsRemoved, ShouldEqual, 3)
 				So(setC.NumObjectsToBeRemoved, ShouldEqual, 6)
 				So(setC.SizeRemoved, ShouldEqual, 300)
+			})
+
+			Convey("Once all upload tasks have been attempted, the Last* fields are set", func() {
+				So(d.CompleteDiscovery(setB, genFiles(2), noSeq[*File]), ShouldBeNil)
+				So(d.CompleteDiscovery(setB, setFileStatus(genFiles(1), StatusMissing), noSeq[*File]), ShouldBeNil)
+
+				process, err := d.RegisterProcess()
+				So(err, ShouldBeNil)
+
+				now := time.Now().Truncate(time.Second)
+
+				for range 2 {
+					setB, err = d.GetSet(setB.Name, setB.Requester)
+					So(err, ShouldBeNil)
+					So(setB.LastCompleted, ShouldBeZeroValue)
+					So(setB.LastCompletedCount, ShouldEqual, 0)
+					So(setB.LastCompletedSize, ShouldEqual, 0)
+					So(d.TaskComplete(collectIter(t, d.ReserveTasks(process, 1))[0]), ShouldBeNil)
+				}
+
+				setB, err = d.GetSet(setB.Name, setB.Requester)
+				So(err, ShouldBeNil)
+				So(setB.LastCompletedCount, ShouldEqual, 3)
+				So(setB.LastCompletedSize, ShouldEqual, 300)
+				So(setB.LastCompleted, ShouldHappenOnOrAfter, now)
 			})
 		})
 	})

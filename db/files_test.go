@@ -68,18 +68,18 @@ func TestFiles(t *testing.T) {
 				Type:        Regular,
 				Owner:       "joe",
 				SymlinkDest: "",
-				modifiable:  true,
+				setID:       1,
 			},
 		}
 
 		Convey("You can add and retrieve files in that set", func() {
 			var err error
 
-			So(d.SetSetFiles(setA, slices.Values(files), noSeq[*File]), ShouldBeNil)
+			So(d.CompleteDiscovery(setA, slices.Values(files), noSeq[*File]), ShouldBeNil)
 			So(collectIter(t, d.GetSetFiles(setA)), ShouldResemble, files)
 			So(collectIter(t, d.GetSetFiles(setB)), ShouldBeNil)
 
-			So(d.SetSetFiles(setA, slices.Values(files), noSeq[*File]), ShouldBeNil)
+			So(d.CompleteDiscovery(setA, slices.Values(files), noSeq[*File]), ShouldBeNil)
 			So(collectIter(t, d.GetSetFiles(setA)), ShouldResemble, files)
 
 			setA, err = d.GetSet(setA.Name, setA.Requester)
@@ -97,7 +97,7 @@ func TestFiles(t *testing.T) {
 				Mtime:      200,
 				Type:       Regular,
 				Owner:      "bob",
-				modifiable: true,
+				setID:      1,
 			}, &File{
 				LocalPath:  "/some/local/file/hardlink",
 				RemotePath: "/remote/file",
@@ -108,12 +108,12 @@ func TestFiles(t *testing.T) {
 				Mtime:      200,
 				Type:       Regular,
 				Owner:      "joe",
-				modifiable: true,
+				setID:      1,
 			})
 
 			files[0].Size = 120
 
-			So(d.SetSetFiles(setA, slices.Values(files[1:]), noSeq[*File]), ShouldBeNil)
+			So(d.CompleteDiscovery(setA, slices.Values(files[1:]), noSeq[*File]), ShouldBeNil)
 			So(collectIter(t, d.GetSetFiles(setA)), ShouldResemble, files)
 
 			setA, err = d.GetSet(setA.Name, setA.Requester)
@@ -131,10 +131,10 @@ func TestFiles(t *testing.T) {
 				Mtime:       200,
 				Type:        Symlink,
 				SymlinkDest: "/path/to/target",
-				modifiable:  true,
+				setID:       1,
 			})
 
-			So(d.SetSetFiles(setA, slices.Values(files[3:]), noSeq[*File]), ShouldBeNil)
+			So(d.CompleteDiscovery(setA, slices.Values(files[3:]), noSeq[*File]), ShouldBeNil)
 			So(collectIter(t, d.GetSetFiles(setA)), ShouldResemble, files)
 
 			setA, err = d.GetSet(setA.Name, setA.Requester)
@@ -142,15 +142,15 @@ func TestFiles(t *testing.T) {
 			So(setA.NumFiles, ShouldEqual, 4)
 			So(setA.SizeTotal, ShouldEqual, 500)
 
-			refs, err := d.CountRemoteFileRefs(files[0])
+			refs, err := d.countRemoteFileRefs(files[0])
 			So(err, ShouldBeNil)
 			So(refs, ShouldEqual, 2)
 
-			refs, err = d.CountRemoteFileRefs(files[1])
+			refs, err = d.countRemoteFileRefs(files[1])
 			So(err, ShouldBeNil)
 			So(refs, ShouldEqual, 1)
 
-			refs, err = d.CountRemoteFileRefs(files[2])
+			refs, err = d.countRemoteFileRefs(files[2])
 			So(err, ShouldBeNil)
 			So(refs, ShouldEqual, 2)
 
@@ -160,7 +160,7 @@ func TestFiles(t *testing.T) {
 			Convey("You can also remove files from a set", func() {
 				now := time.Now().Truncate(time.Second)
 
-				So(d.RemoveSetFiles(slices.Values(files[:1])), ShouldBeNil)
+				So(d.RemoveSetFiles(setA, slices.Values(files[:1])), ShouldBeNil)
 
 				setA, err = d.GetSet(setA.Name, setA.Requester)
 				So(err, ShouldBeNil)
@@ -174,15 +174,15 @@ func TestFiles(t *testing.T) {
 				So(setA.NumFiles, ShouldEqual, 3)
 				So(setA.SizeTotal, ShouldEqual, 380)
 
-				refs, err = d.CountRemoteFileRefs(files[0])
+				refs, err = d.countRemoteFileRefs(files[0])
 				So(err, ShouldBeNil)
-				So(refs, ShouldEqual, 0)
+				So(refs, ShouldEqual, 2)
 
-				refs, err = d.CountRemoteFileRefs(files[1])
+				refs, err = d.countRemoteFileRefs(files[1])
 				So(err, ShouldBeNil)
 				So(refs, ShouldEqual, 1)
 
-				refs, err = d.CountRemoteFileRefs(files[2])
+				refs, err = d.countRemoteFileRefs(files[2])
 				So(err, ShouldBeNil)
 				So(refs, ShouldEqual, 2)
 
@@ -194,28 +194,40 @@ func TestFiles(t *testing.T) {
 				So(trashed[0].LocalPath, ShouldEqual, files[0].LocalPath)
 				So(trashed[0].LastUpload, ShouldHappenOnOrAfter, now)
 
-				So(d.RemoveSetFiles(slices.Values(trashed)), ShouldBeNil)
+				So(d.RemoveSetFiles(setTrashA, slices.Values(trashed)), ShouldBeNil)
 
-				refs, err = d.CountRemoteFileRefs(files[2])
+				refs, err = d.countRemoteFileRefs(files[2])
 				So(err, ShouldBeNil)
 				So(refs, ShouldEqual, 2)
 
 				So(d.clearQueue(), ShouldBeNil)
 
-				refs, err = d.CountRemoteFileRefs(files[2])
+				refs, err = d.countRemoteFileRefs(files[2])
 				So(err, ShouldBeNil)
 				So(refs, ShouldEqual, 1)
 
 				So(len(collectIter(t, d.listRemoteFiles(t))), ShouldEqual, 3)
 				So(len(collectIter(t, d.listInodes(t))), ShouldEqual, 3)
 
-				So(d.RemoveSetFiles(slices.Values(files[2:3])), ShouldBeNil)
+				So(d.RemoveSetFiles(setA, slices.Values(files[2:3])), ShouldBeNil)
 				So(d.clearQueue(), ShouldBeNil)
 
+				setTrashA, err = scanSet(d.db.QueryRow(getSetByNameRequester, "\x00"+setA.Name, setA.Requester))
+				So(err, ShouldBeNil)
+
+				refs, err = d.countRemoteFileRefs(files[2])
+				So(err, ShouldBeNil)
+				So(refs, ShouldEqual, 1)
+
 				trashFiles := d.GetSetFiles(setTrashA)
-				So(d.RemoveSetFiles(trashFiles.Iter), ShouldBeNil)
+				So(d.RemoveSetFiles(setTrashA, trashFiles.Iter), ShouldBeNil)
 				So(trashFiles.Error, ShouldBeNil)
+
 				So(d.clearQueue(), ShouldBeNil)
+
+				refs, err = d.countRemoteFileRefs(files[2])
+				So(err, ShouldBeNil)
+				So(refs, ShouldEqual, 0)
 
 				So(len(collectIter(t, d.listRemoteFiles(t))), ShouldEqual, 2)
 				So(len(collectIter(t, d.listInodes(t))), ShouldEqual, 2)
@@ -236,7 +248,7 @@ func TestFiles(t *testing.T) {
 		})
 
 		Convey("Files that failed to upload/remove have the appropriate data set", func() {
-			So(d.SetSetFiles(setA, slices.Values(files), noSeq[*File]), ShouldBeNil)
+			So(d.CompleteDiscovery(setA, slices.Values(files), noSeq[*File]), ShouldBeNil)
 
 			process, err := d.RegisterProcess()
 			So(err, ShouldBeNil)
@@ -277,4 +289,12 @@ func (d *DBRO) listInodes(t *testing.T) *IterErr[int] {
 
 		return inode, err
 	}, "SELECT `inode` FROM `hardlinks`")
+}
+
+func (d *DBRO) countRemoteFileRefs(file *File) (int64, error) {
+	var count int64
+
+	err := d.db.QueryRow(getRemoteFileRefs, file.LocalPath).Scan(&count)
+
+	return count, err
 }

@@ -25,11 +25,7 @@
 
 package db
 
-import (
-	"database/sql"
-
-	_ "github.com/go-sql-driver/mysql" //
-)
+import "database/sql"
 
 type DBRO struct { //nolint:revive
 	db *sql.DB
@@ -39,6 +35,7 @@ type DB struct {
 	DBRO
 
 	execReturningRowID func(tx *sql.Tx, sql string, params ...any) (int64, error)
+	isAlreadyExists    func(error) bool
 }
 
 func InitRO(driver, connection string) (*DBRO, error) {
@@ -56,7 +53,11 @@ func Init(driver, connection string) (*DB, error) {
 		return nil, err
 	}
 
-	d := &DB{DBRO: DBRO{db: db}, execReturningRowID: execReturningRowID}
+	d := &DB{
+		DBRO:               DBRO{db: db},
+		execReturningRowID: execReturningRowID,
+		isAlreadyExists:    isAlreadyExists,
+	}
 
 	if err = d.initTables(); err != nil {
 		return nil, err

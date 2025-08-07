@@ -66,8 +66,8 @@ func TestQueue(t *testing.T) {
 			genID1 := strconv.FormatUint(filePrefix+1, 10)
 			genID2 := strconv.FormatUint(filePrefix+2, 10)
 
-			So(d.SetSetFiles(setA, genFiles(5), noSeq[*File]), ShouldBeNil)
-			So(d.SetSetFiles(setB, genFiles(10), noSeq[*File]), ShouldBeNil)
+			So(d.CompleteDiscovery(setA, genFiles(5), noSeq[*File]), ShouldBeNil)
+			So(d.CompleteDiscovery(setB, genFiles(10), noSeq[*File]), ShouldBeNil)
 
 			tasks := d.ReserveTasks(pidA, 3)
 			So(tasks.Error, ShouldBeNil)
@@ -161,7 +161,7 @@ func TestQueue(t *testing.T) {
 		})
 
 		Convey("A client can release their jobs", func() {
-			So(d.SetSetFiles(setA, genFiles(2), noSeq[*File]), ShouldBeNil)
+			So(d.CompleteDiscovery(setA, genFiles(2), noSeq[*File]), ShouldBeNil)
 
 			tasks := collectIter(t, d.ReserveTasks(pidA, 3))
 			So(len(tasks), ShouldEqual, 2)
@@ -177,7 +177,7 @@ func TestQueue(t *testing.T) {
 		})
 
 		Convey("A client can complete their jobs", func() {
-			So(d.SetSetFiles(setA, genFiles(2), noSeq[*File]), ShouldBeNil)
+			So(d.CompleteDiscovery(setA, genFiles(2), noSeq[*File]), ShouldBeNil)
 
 			tasks := collectIter(t, d.ReserveTasks(pidA, 2))
 			So(len(tasks), ShouldEqual, 2)
@@ -193,7 +193,7 @@ func TestQueue(t *testing.T) {
 		})
 
 		Convey("A client can fail their jobs", func() {
-			So(d.SetSetFiles(setA, genFiles(2), noSeq[*File]), ShouldBeNil)
+			So(d.CompleteDiscovery(setA, genFiles(2), noSeq[*File]), ShouldBeNil)
 
 			tasks := collectIter(t, d.ReserveTasks(pidA, 2))
 			So(len(tasks), ShouldEqual, 2)
@@ -213,8 +213,8 @@ func TestQueue(t *testing.T) {
 		Convey("A task for a remote file already being operated on cannot be reserved", func() {
 			files := slices.Collect(genFiles(1))
 
-			So(d.SetSetFiles(setA, slices.Values(files), noSeq[*File]), ShouldBeNil)
-			So(d.SetSetFiles(setB, slices.Values(files), noSeq[*File]), ShouldBeNil)
+			So(d.CompleteDiscovery(setA, slices.Values(files), noSeq[*File]), ShouldBeNil)
+			So(d.CompleteDiscovery(setB, slices.Values(files), noSeq[*File]), ShouldBeNil)
 
 			tasks := collectIter(t, d.ReserveTasks(pidA, 2))
 			So(len(tasks), ShouldEqual, 1)
@@ -233,7 +233,7 @@ func TestQueue(t *testing.T) {
 		Convey("Completing an upload tasks sets the upload date on the file", func() {
 			files := slices.Collect(genFiles(1))
 
-			So(d.SetSetFiles(setA, slices.Values(files), noSeq[*File]), ShouldBeNil)
+			So(d.CompleteDiscovery(setA, slices.Values(files), noSeq[*File]), ShouldBeNil)
 
 			now := time.Now().Truncate(time.Second)
 			setFiles := collectIter(t, d.GetSetFiles(setA))
@@ -250,7 +250,7 @@ func TestQueue(t *testing.T) {
 		Convey("Re-inserting a file into a set causes a re-upload", func() {
 			files := slices.Collect(genFiles(1))
 
-			So(d.SetSetFiles(setA, slices.Values(files), noSeq[*File]), ShouldBeNil)
+			So(d.CompleteDiscovery(setA, slices.Values(files), noSeq[*File]), ShouldBeNil)
 
 			setFiles := collectIter(t, d.GetSetFiles(setA))
 			So(len(setFiles), ShouldEqual, 1)
@@ -262,7 +262,7 @@ func TestQueue(t *testing.T) {
 			tasks = collectIter(t, d.ReserveTasks(pidA, 1))
 			So(len(tasks), ShouldEqual, 0)
 
-			So(d.SetSetFiles(setA, slices.Values(files), noSeq[*File]), ShouldBeNil)
+			So(d.CompleteDiscovery(setA, slices.Values(files), noSeq[*File]), ShouldBeNil)
 
 			setFiles = collectIter(t, d.GetSetFiles(setA))
 			So(len(setFiles), ShouldEqual, 1)
@@ -274,7 +274,7 @@ func TestQueue(t *testing.T) {
 		Convey("Completing an removal task removes the file from the set", func() {
 			files := slices.Collect(genFiles(1))
 
-			So(d.SetSetFiles(setA, slices.Values(files), noSeq[*File]), ShouldBeNil)
+			So(d.CompleteDiscovery(setA, slices.Values(files), noSeq[*File]), ShouldBeNil)
 
 			setFiles := collectIter(t, d.GetSetFiles(setA))
 			So(len(setFiles), ShouldEqual, 1)
@@ -284,7 +284,7 @@ func TestQueue(t *testing.T) {
 
 			uploadTask := tasks[0]
 
-			So(d.RemoveSetFiles(slices.Values(setFiles)), ShouldBeNil)
+			So(d.RemoveSetFiles(setA, slices.Values(setFiles)), ShouldBeNil)
 
 			tasks = collectIter(t, d.ReserveTasks(pidB, 1))
 			So(len(tasks), ShouldEqual, 0)
@@ -309,7 +309,7 @@ func TestQueue(t *testing.T) {
 		Convey("Skipping an upload, marks the local file as skipped", func() {
 			files := slices.Collect(genFiles(1))
 
-			So(d.SetSetFiles(setA, slices.Values(files), noSeq[*File]), ShouldBeNil)
+			So(d.CompleteDiscovery(setA, slices.Values(files), noSeq[*File]), ShouldBeNil)
 			So(collectIter(t, d.GetSetFiles(setA)), ShouldResemble, files)
 
 			tasks := collectIter(t, d.ReserveTasks(pidA, 2))
@@ -330,13 +330,13 @@ func TestQueue(t *testing.T) {
 
 			files[0].Status = StatusMissing
 
-			So(d.SetSetFiles(setA, slices.Values(files), noSeq[*File]), ShouldBeNil)
+			So(d.CompleteDiscovery(setA, slices.Values(files), noSeq[*File]), ShouldBeNil)
 			So(collectIter(t, d.GetSetFiles(setA)), ShouldResemble, files)
 			So(len(collectIter(t, d.ReserveTasks(pidA, 2))), ShouldEqual, 0)
 
 			Convey("Orphaned files count as missing when added to a set", func() {
 				files[0].Status = StatusOrphaned
-				So(d.SetSetFiles(setA, slices.Values(files), noSeq[*File]), ShouldBeNil)
+				So(d.CompleteDiscovery(setA, slices.Values(files), noSeq[*File]), ShouldBeNil)
 
 				files[0].Status = StatusMissing
 
@@ -347,7 +347,7 @@ func TestQueue(t *testing.T) {
 			Convey("Files that were missing, but are found are uploaded", func() {
 				files[0].Status = StatusNone
 
-				So(d.SetSetFiles(setA, slices.Values(files), noSeq[*File]), ShouldBeNil)
+				So(d.CompleteDiscovery(setA, slices.Values(files), noSeq[*File]), ShouldBeNil)
 				So(collectIter(t, d.GetSetFiles(setA)), ShouldResemble, files)
 
 				tasks := collectIter(t, d.ReserveTasks(pidA, 2))
@@ -358,7 +358,7 @@ func TestQueue(t *testing.T) {
 		Convey("Uploading a file marks it as uploaded", func() {
 			files := slices.Collect(genFiles(1))
 
-			So(d.SetSetFiles(setA, slices.Values(files), noSeq[*File]), ShouldBeNil)
+			So(d.CompleteDiscovery(setA, slices.Values(files), noSeq[*File]), ShouldBeNil)
 			So(d.clearQueue(), ShouldBeNil)
 
 			files[0].Status = StatusUploaded
@@ -374,7 +374,7 @@ func TestQueue(t *testing.T) {
 			Convey("Re-uploading a file marks it as replaced", func() {
 				files[0].Status = StatusNone
 
-				So(d.SetSetFiles(setA, slices.Values(files), noSeq[*File]), ShouldBeNil)
+				So(d.CompleteDiscovery(setA, slices.Values(files), noSeq[*File]), ShouldBeNil)
 				So(d.clearQueue(), ShouldBeNil)
 
 				files[0].Status = StatusReplaced
@@ -392,12 +392,12 @@ func TestQueue(t *testing.T) {
 		Convey("Uploading a file then deleting it marks it as orphaned", func() {
 			files := slices.Collect(genFiles(1))
 
-			So(d.SetSetFiles(setA, slices.Values(files), noSeq[*File]), ShouldBeNil)
+			So(d.CompleteDiscovery(setA, slices.Values(files), noSeq[*File]), ShouldBeNil)
 			So(d.clearQueue(), ShouldBeNil)
 
 			files[0].Status = StatusMissing
 
-			So(d.SetSetFiles(setA, slices.Values(files), noSeq[*File]), ShouldBeNil)
+			So(d.CompleteDiscovery(setA, slices.Values(files), noSeq[*File]), ShouldBeNil)
 
 			uploadedFiles := collectIter(t, d.GetSetFiles(setA))
 			So(len(uploadedFiles), ShouldEqual, 1)
@@ -412,7 +412,7 @@ func TestQueue(t *testing.T) {
 		Convey("Tasks can only be failed "+string('0'+maxRetries)+" times", func() {
 			files := slices.Collect(genFiles(1))
 
-			So(d.SetSetFiles(setA, slices.Values(files), noSeq[*File]), ShouldBeNil)
+			So(d.CompleteDiscovery(setA, slices.Values(files), noSeq[*File]), ShouldBeNil)
 
 			tasks := collectIter(t, d.ReserveTasks(pidA, 2))
 
@@ -439,7 +439,7 @@ func TestQueue(t *testing.T) {
 		Convey("You can get a count of both the total tasks, and the reserved tasks", func() {
 			files := slices.Collect(genFiles(5))
 
-			So(d.SetSetFiles(setA, slices.Values(files), noSeq[*File]), ShouldBeNil)
+			So(d.CompleteDiscovery(setA, slices.Values(files), noSeq[*File]), ShouldBeNil)
 
 			total, reserved, err := d.CountTasks()
 			So(err, ShouldBeNil)
@@ -514,7 +514,7 @@ func genFiles(n uint64) iter.Seq[*File] {
 				Mtime:       200,
 				Type:        typ,
 				SymlinkDest: "",
-				modifiable:  true,
+				setID:       1,
 			}) { //nolint:whitespace
 				break
 			}
@@ -523,5 +523,9 @@ func genFiles(n uint64) iter.Seq[*File] {
 }
 
 func (d *DB) clearQueue() error {
-	return d.exec("DELETE FROM `queue`;")
+	if err := d.exec("DELETE FROM `queue`;"); err != nil {
+		return err
+	}
+
+	return d.exec(deleteRemoteFileWhenNotRefd)
 }

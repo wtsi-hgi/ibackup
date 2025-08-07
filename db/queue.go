@@ -169,7 +169,21 @@ func scanTask(process int64) func(scanner) (*Task, error) {
 }
 
 func (d *DB) TaskComplete(t *Task) error {
-	return d.exec(deleteQueued, t.id, t.process, t.Type)
+	tx, err := d.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	if _, err := d.db.Exec(deleteQueued, t.id, t.process, t.Type); err != nil {
+		return err
+	}
+
+	if _, err := d.db.Exec(deleteRemoteFileWhenNotRefd); err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }
 
 func (d *DB) TaskFailed(t *Task) error {

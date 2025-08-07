@@ -27,6 +27,7 @@ package db
 
 import (
 	"database/sql"
+	"errors"
 	"iter"
 	"strings"
 	"time"
@@ -59,6 +60,7 @@ const (
 
 type File struct {
 	id                int64
+	setID             int64
 	LocalPath         string
 	RemotePath        string
 	Size, Inode       uint64
@@ -73,10 +75,9 @@ type File struct {
 	LastError         string
 	LastFailedAttempt time.Time
 	Attempts          int
-	modifiable        bool
 }
 
-func (d *DB) SetSetFiles(set *Set, toAdd, toRemove iter.Seq[*File]) error {
+func (d *DB) CompleteDiscovery(set *Set, toAdd, toRemove iter.Seq[*File]) error { //nolint:gocyclo
 	if !set.modifiable {
 		return ErrReadonlySet
 	}
@@ -93,7 +94,15 @@ func (d *DB) SetSetFiles(set *Set, toAdd, toRemove iter.Seq[*File]) error {
 		}
 	}
 
-	if err := d.removeFiles(tx, toRemove, false); err != nil {
+	if err := d.removeFiles(tx, set.id, toRemove, false); err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec(updateLastDiscovery, set.id); err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec(deleteHeldDiscovery, set.id); err != nil {
 		return err
 	}
 
@@ -125,28 +134,39 @@ func (d *DB) addSetFile(tx *sql.Tx, set *Set, file *File) error {
 	return err
 }
 
-func (d *DB) RemoveSetFiles(toRemove iter.Seq[*File]) error {
+func (d *DB) RemoveSetFiles(set *Set, toRemove iter.Seq[*File]) error {
+	if !set.modifiable {
+		return ErrReadonlySet
+	}
+
 	tx, err := d.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	if err := d.removeFiles(tx, toRemove, true); err != nil {
+	if err := d.removeFiles(tx, set.id, toRemove, true); err != nil {
 		return err
 	}
 
 	return tx.Commit()
 }
 
-func (d *DB) removeFiles(tx *sql.Tx, toRemove iter.Seq[*File], updateDiscovery bool) error { //nolint:gocognit
-	for file := range toRemove {
-		if !file.modifiable {
-			return ErrReadonlySet
-		}
+//nolint:gocognit,gocyclo
+func (d *DB) removeFiles(tx *sql.Tx, setID int64, toRemove iter.Seq[*File], updateDiscovery bool) error {
+	trashSetID, err := d.getTrashSetID(tx, setID)
+	if err != nil {
+		return err
+	}
 
-		if err := d.trashFile(tx, file); err != nil {
-			return err
+	trash := trashSetID != setID
+
+	for file := range toRemove {
+		if trash {
+			_, err = tx.Exec(createTrashFile, trashSetID, file.id)
+			if err != nil {
+				return err
+			}
 		}
 
 		if updateDiscovery {
@@ -163,6 +183,22 @@ func (d *DB) removeFiles(tx *sql.Tx, toRemove iter.Seq[*File], updateDiscovery b
 	return nil
 }
 
+func (d *DB) getTrashSetID(tx *sql.Tx, setID int64) (int64, error) {
+	var trashSetID int64
+
+	err := tx.QueryRow(getTrashSetID, setID).Scan(&trashSetID)
+	if errors.Is(err, sql.ErrNoRows) {
+		res, errr := tx.Exec(createTrashSet, setID)
+		if errr != nil {
+			return 0, errr
+		}
+
+		return res.LastInsertId()
+	}
+
+	return trashSetID, err
+}
+
 func (d *DB) RemoveSetFilesInDir(set *Set, dir string) error { //nolint:gocyclo
 	if !set.modifiable {
 		return ErrReadonlySet
@@ -176,9 +212,9 @@ func (d *DB) RemoveSetFilesInDir(set *Set, dir string) error { //nolint:gocyclo
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	files := iterRows(&d.DBRO, scanFileID, getSetsFilesWithPrefix, set.id, dir)
+	files := iterRows(&d.DBRO, scanFileID(set.id), getSetsFilesWithPrefix, set.id, dir)
 
-	if err = d.removeFiles(tx, files.Iter, false); err != nil {
+	if err = d.removeFiles(tx, set.id, files.Iter, false); err != nil {
 		return err
 	}
 
@@ -197,108 +233,88 @@ func (d *DB) RemoveSetFilesInDir(set *Set, dir string) error { //nolint:gocyclo
 	return tx.Commit()
 }
 
-func scanFileID(scanner scanner) (*File, error) {
-	file := new(File)
+func scanFileID(setID int64) func(scanner) (*File, error) {
+	return func(scanner scanner) (*File, error) {
+		file := new(File)
 
-	if err := scanner.Scan(&file.id); err != nil {
-		return nil, err
+		if err := scanner.Scan(&file.id); err != nil {
+			return nil, err
+		}
+
+		file.setID = setID
+
+		return file, nil
 	}
-
-	file.modifiable = true
-
-	return file, nil
-}
-
-func (d *DB) trashFile(tx *sql.Tx, file *File) error {
-	trashSetID, err := d.execReturningRowID(tx, createTrashSetForFile, file.id)
-	if err != nil {
-		return err
-	}
-
-	if trashSetID == 0 {
-		return nil
-	}
-
-	trashID, err := d.execReturningRowID(tx, createTrashFile, trashSetID, file.id)
-	if err != nil {
-		return err
-	}
-
-	_, err = tx.Exec(disableTrashFileRemoveTask, trashID)
-
-	return err
 }
 
 func (d *DBRO) GetSetFiles(set *Set) *IterErr[*File] {
 	if set.modifiable {
-		return iterRows(d, scanModifiableFile, getSetsFilesWithErrors, set.id)
+		return iterRows(d, scanModifiableFile(set.id), getSetsFilesWithErrors, set.id)
 	}
 
-	return iterRows(d, scanFile, getSetsFiles, set.id)
+	return iterRows(d, scanFile(set.id), getSetsFiles, set.id)
 }
 
-func scanFile(scanner scanner) (*File, error) {
-	file := new(File)
+func scanFile(setID int64) func(scanner) (*File, error) {
+	return func(scanner scanner) (*File, error) {
+		file := new(File)
 
-	if err := scanner.Scan(
-		&file.id,
-		&file.LocalPath,
-		&file.LastUpload,
-		&file.Status,
-		&file.RemotePath,
-		&file.Size,
-		&file.Type,
-		&file.Owner,
-		&file.Inode,
-		&file.MountPount,
-		&file.Btime,
-		&file.Mtime,
-		&file.InodeRemote,
-		&file.SymlinkDest,
-	); err != nil {
-		return nil, err
+		if err := scanner.Scan(
+			&file.id,
+			&file.LocalPath,
+			&file.LastUpload,
+			&file.Status,
+			&file.RemotePath,
+			&file.Size,
+			&file.Type,
+			&file.Owner,
+			&file.Inode,
+			&file.MountPount,
+			&file.Btime,
+			&file.Mtime,
+			&file.InodeRemote,
+			&file.SymlinkDest,
+		); err != nil {
+			return nil, err
+		}
+
+		file.setID = setID
+
+		return file, nil
 	}
-
-	return file, nil
 }
 
-func scanModifiableFile(scanner scanner) (*File, error) {
-	file := new(File)
+func scanModifiableFile(setID int64) func(scanner) (*File, error) { //nolint:funlen
+	return func(scanner scanner) (*File, error) {
+		file := new(File)
 
-	var lastFailedAttempt sql.NullTime
+		var lastFailedAttempt sql.NullTime
 
-	if err := scanner.Scan(
-		&file.id,
-		&file.LocalPath,
-		&file.LastUpload,
-		&file.Status,
-		&file.RemotePath,
-		&file.Size,
-		&file.Type,
-		&file.Owner,
-		&file.Inode,
-		&file.MountPount,
-		&file.Btime,
-		&file.Mtime,
-		&file.InodeRemote,
-		&file.SymlinkDest,
-		&file.LastError,
-		&lastFailedAttempt,
-		&file.Attempts,
-	); err != nil {
-		return nil, err
+		if err := scanner.Scan(
+			&file.id,
+			&file.LocalPath,
+			&file.LastUpload,
+			&file.Status,
+			&file.RemotePath,
+			&file.Size,
+			&file.Type,
+			&file.Owner,
+			&file.Inode,
+			&file.MountPount,
+			&file.Btime,
+			&file.Mtime,
+			&file.InodeRemote,
+			&file.SymlinkDest,
+			&file.LastError,
+			&lastFailedAttempt,
+			&file.Attempts,
+		); err != nil {
+			return nil, err
+		}
+
+		file.LastFailedAttempt = lastFailedAttempt.Time
+		file.setID = setID
+
+		return file, nil
 	}
-
-	file.LastFailedAttempt = lastFailedAttempt.Time
-	file.modifiable = true
-
-	return file, nil
-}
-
-func (d *DBRO) CountRemoteFileRefs(file *File) (int64, error) {
-	var count int64
-
-	err := d.db.QueryRow(getRemoteFileRefs, file.id).Scan(&count)
-
-	return count, err
 }

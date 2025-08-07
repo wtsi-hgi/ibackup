@@ -56,13 +56,10 @@ func Discover(d *db.DB, set *db.Set, cb func(*db.File)) error {
 	if err := doDiscover(d, set, cb, files, dirs, removedFiles, removedDirs, fofns, fodns); err != nil {
 		set.Error = err.Error()
 
-		d.SetSetDicoveryCompleted(set) //nolint:errcheck
-		d.SetSetError(set)             //nolint:errcheck
-
-		return err
+		return d.SetSetDiscoveryFailed(set)
 	}
 
-	return d.SetSetDicoveryCompleted(set)
+	return nil
 }
 
 func readDiscoveryFromDB(d *db.DB, set *db.Set) ( //nolint:gocyclo
@@ -228,7 +225,7 @@ func addFilesToSet(d *db.DB, set *db.Set, files []*db.File) error {
 		return err
 	}
 
-	return d.SetSetFiles(set, slices.Values(files), slices.Values(removedFiles))
+	return d.CompleteDiscovery(set, slices.Values(files), slices.Values(removedFiles))
 }
 
 func buildFileStateMachine(files []*db.File) (StateMachine[struct{}], error) {

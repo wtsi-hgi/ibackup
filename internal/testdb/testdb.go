@@ -28,6 +28,7 @@ package testdb
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -35,13 +36,14 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey" //nolint:revive,stylecheck
 	"github.com/wtsi-hgi/ibackup/db"
-	_ "modernc.org/sqlite" //
+	"modernc.org/sqlite"
 )
 
 type dbe struct {
 	db.DBRO
 
 	execReturningRowID func(tx *sql.Tx, sql string, params ...any) (int64, error)
+	isAlreadyExists    func(error) bool
 }
 
 func CreateTestDatabase(t *testing.T) *db.DB {
@@ -67,6 +69,17 @@ func CreateTestDatabase(t *testing.T) *db.DB {
 		}
 
 		return id, err
+	}
+
+	(*dbe)(unsafe.Pointer(d)).isAlreadyExists = func(err error) bool {
+		var sqlerr *sqlite.Error
+
+		if errors.As(err, &sqlerr) {
+			fmt.Println(sqlerr.Code())
+			return sqlerr.Code() == 2067 //nolint:mnd
+		}
+
+		return false
 	}
 
 	Reset(func() { d.Close() })

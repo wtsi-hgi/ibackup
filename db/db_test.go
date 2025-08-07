@@ -33,7 +33,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
 )
 
 func createTestDatabase(t *testing.T) *DB {
@@ -62,7 +62,7 @@ func createTestDatabase(t *testing.T) *DB {
 	d, err := Init(sdriver, uri)
 	So(err, ShouldBeNil)
 
-	if sdriver == "sqlite" {
+	if sdriver == "sqlite" { //nolint:nestif
 		d.execReturningRowID = func(tx *sql.Tx, sqlstr string, params ...any) (int64, error) {
 			var id int64
 
@@ -72,6 +72,16 @@ func createTestDatabase(t *testing.T) *DB {
 			}
 
 			return id, err
+		}
+
+		d.isAlreadyExists = func(err error) bool {
+			var sqlerr *sqlite.Error
+
+			if errors.As(err, &sqlerr) {
+				return sqlerr.Code() == 2067
+			}
+
+			return false
 		}
 	}
 
@@ -86,8 +96,8 @@ func dropTables(uri string) error {
 		return err
 	}
 
-	for _, table := range [...]string{"queue", "processes", "localFiles",
-		"remoteFiles", "hardlinks", "toDiscover",
+	for _, table := range [...]string{"activeDiscoveries", "queue",
+		"processes", "localFiles", "remoteFiles", "hardlinks", "toDiscover",
 		"sets", "transformers"} {
 		if _, err = db.Exec("DROP TABLE IF EXISTS `" + table + "`;"); err != nil {
 			return err
