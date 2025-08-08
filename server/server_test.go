@@ -739,6 +739,13 @@ func TestServer(t *testing.T) {
 							})
 
 							Convey("Remove of a whole set removes it from the db along with all its entries", func() {
+								fileMeta := map[string]string{
+									transfer.MetaKeySets: exampleSet.Name,
+								}
+
+								err = handler.AddMeta(file2remote, fileMeta)
+								So(err, ShouldBeNil)
+
 								entries, errg := s.db.GetFileEntries(exampleSet.ID(), nil)
 								So(errg, ShouldBeNil)
 								So(len(entries), ShouldBeGreaterThan, 0)

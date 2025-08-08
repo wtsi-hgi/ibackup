@@ -316,12 +316,12 @@ func (s *Server) addDBEndpoints(authGroup *gin.RouterGroup) { //nolint:funlen
 
 	authGroup.PUT(fileStatusPath, s.putFileStatus)
 
-	authGroup.PUT(removePathsPath+idParam, s.removePaths)
+	authGroup.DELETE(removePathsPath+idParam, s.removePaths)
 
 	authGroup.PUT(trashPathsPath+idParam, s.trashPaths)
 
-	authGroup.PUT(removeExpiredPath, s.removeExpired)
-	authGroup.PUT(removeExpiredPath+idParam, s.removeExpired)
+	authGroup.DELETE(removeExpiredPath, s.removeExpired)
+	authGroup.DELETE(removeExpiredPath+idParam, s.removeExpired)
 
 	authGroup.DELETE(setPath+idParam, s.deleteSet)
 }

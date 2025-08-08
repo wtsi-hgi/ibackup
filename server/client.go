@@ -630,7 +630,7 @@ func (c *Client) RetryFailedSetUploads(id string) (int, error) {
 // RemoveFilesAndDirs removes the given paths from the backup set with the given
 // ID.
 func (c *Client) RemoveFilesAndDirs(setID string, paths []string) error {
-	return c.putThing(EndPointAuthRemovePaths+"/"+setID, stringsToBytes(paths))
+	return c.deleteThing(EndPointAuthRemovePaths+"/"+setID, stringsToBytes(paths))
 }
 
 // TrashFilesAndDirs trashes the given paths from the backup set with the given
@@ -641,23 +641,16 @@ func (c *Client) TrashFilesAndDirs(setID string, paths []string) error {
 
 // RemoveExpiredEntriesForSet removes expired entries for the given set.
 func (c *Client) RemoveExpiredEntriesForSet(setID string) error {
-	return c.putThing(EndPointAuthRemoveExpired+"/"+setID, nil)
+	return c.deleteThing(EndPointAuthRemoveExpired+"/"+setID, nil)
 }
 
 // RemoveAllExpiredEntries removes expired entries from all sets.
 func (c *Client) RemoveAllExpiredEntries() error {
-	return c.putThing(EndPointAuthRemoveExpired, nil)
+	return c.deleteThing(EndPointAuthRemoveExpired, nil)
 }
 
 // RemoveSet removes the set with the given ID from the db along with files from
 // iRODS.
 func (c *Client) RemoveSet(setID string) error {
-	req := c.request()
-
-	resp, err := req.Delete(EndPointAuthSet + "/" + setID)
-	if err != nil {
-		return err
-	}
-
-	return responseToErr(resp)
+	return c.deleteThing(EndPointAuthSet+"/"+setID, nil)
 }
