@@ -36,17 +36,17 @@ import (
 
 // options for this cmd.
 var (
-	lstName        string
-	lstUser        string
-	lstLocal       bool
-	lstRemote      bool
-	lstAll         bool
-	lstDB          string
-	lstUploaded    bool
-	lstSize        bool
-	lstBase64      bool
-	lstShowDeleted bool
-	lstTrash       bool
+	lstName      string
+	lstUser      string
+	lstLocal     bool
+	lstRemote    bool
+	lstAll       bool
+	lstDB        string
+	lstUploaded  bool
+	lstSize      bool
+	lstBase64    bool
+	lstTrash     bool
+	lstLastState bool
 )
 
 // listCmd represents the list command.
@@ -108,7 +108,8 @@ IBACKUP_LOCAL_DB_BACKUP_PATH environmental variable.
 		}
 
 		if lstAll {
-			getAllSetsFromDBAndDisplayPaths(lstDB, lstLocal, lstRemote, lstUploaded, lstShowDeleted, lstSize, lstBase64)
+			getAllSetsFromDBAndDisplayPaths(lstDB, lstLocal, lstRemote, lstUploaded,
+				lstLastState, lstSize, lstBase64)
 
 			return
 		}
@@ -123,7 +124,7 @@ IBACKUP_LOCAL_DB_BACKUP_PATH environmental variable.
 		}
 
 		getSetFromServerAndDisplayPaths(client, lstLocal, lstRemote, lstUploaded,
-			lstShowDeleted, lstSize, lstBase64, lstUser, lstName)
+			lstLastState, lstSize, lstBase64, lstUser, lstName)
 	},
 }
 
@@ -148,8 +149,8 @@ func init() {
 		"show the size of each file in bytes")
 	listCmd.Flags().BoolVarP(&lstBase64, "base64", "b", false,
 		"output paths base64 encoded")
-	listCmd.Flags().BoolVar(&lstShowDeleted, "deleted", false,
-		"show only files that don't exist locally")
+	listCmd.Flags().BoolVar(&lstLastState, "last-state", false,
+		"show files that were uploaded and still existed locally during the last discovery scan (excludes orphaned files)")
 
 	if isAdmin() {
 		listCmd.Flags().BoolVar(&lstTrash, "trash", false,
@@ -160,7 +161,7 @@ func init() {
 }
 
 func getAllSetsFromDBAndDisplayPaths(dbPath string, local, remote, uploaded, //nolint:funlen,gocyclo
-	deleted, size, encode bool,
+	lastState, size, encode bool,
 ) {
 	db, err := set.NewRO(dbPath)
 	if err != nil {
@@ -181,12 +182,10 @@ func getAllSetsFromDBAndDisplayPaths(dbPath string, local, remote, uploaded, //n
 	var filter set.FileEntryFilter
 
 	switch {
-	case uploaded && deleted:
-		filter = set.FileEntryFilterOrphaned
+	case lastState:
+		filter = set.FileEntryFilterLastState
 	case uploaded:
 		filter = set.FileEntryFilterUploaded
-	case deleted:
-		filter = set.FileEntryFilterMissing
 	}
 
 	for _, s := range sets {
@@ -238,7 +237,7 @@ func displayEntryPaths(entries []*set.Entry, transformer transfer.PathTransforme
 }
 
 func getSetFromServerAndDisplayPaths(client *server.Client,
-	local, remote, uploaded, deleted, size, encode bool, user, name string,
+	local, remote, uploaded, lastState, size, encode bool, user, name string,
 ) {
 	sets := getSetByName(client, user, name)
 	if len(sets) == 0 {
@@ -250,10 +249,8 @@ func getSetFromServerAndDisplayPaths(client *server.Client,
 	getFiles := client.GetFiles
 
 	switch {
-	case uploaded && deleted:
-		getFiles = client.GetOrphanedFiles
-	case deleted:
-		getFiles = client.GetMissingFiles
+	case lastState:
+		getFiles = client.GetLastStateFiles
 	case uploaded:
 		getFiles = client.GetUploadedFiles
 	}

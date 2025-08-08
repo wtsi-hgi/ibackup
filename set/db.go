@@ -1596,14 +1596,10 @@ func FileEntryFilterUploaded(e *Entry) bool {
 		e.Status == Orphaned || e.Status == Skipped
 }
 
-// FileEntryFilterOrphaned is a FileEntryFilter that filters on orphaned files.
-func FileEntryFilterOrphaned(e *Entry) bool {
-	return e.Status == Orphaned
-}
-
-// FileEntryFilterMissing is a FileEntryFilter that filters on missing files.
-func FileEntryFilterMissing(e *Entry) bool {
-	return e.Status == Missing
+// FileEntryFilterLastState is a FileEntryFilter that filters on uploaded
+// files(excluding orphaned files).
+func FileEntryFilterLastState(e *Entry) bool {
+	return e.Status == Uploaded || e.Status == Replaced || e.Status == Skipped
 }
 
 // GetFileEntries returns all the file entries for the given set (both

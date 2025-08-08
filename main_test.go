@@ -674,39 +674,53 @@ func TestList(t *testing.T) {
 		s, remote := NewUploadingTestServer(t)
 		So(s, ShouldNotBeNil)
 
-		Convey("Given an added set defined with files", func() {
+		Convey("Given an added set defined with files that are uploaded", func() {
 			dir := t.TempDir()
 			tempTestFile, err := os.CreateTemp(dir, "testFileSet")
 			So(err, ShouldBeNil)
 
-			_, err = io.WriteString(tempTestFile, dir+`/path/to/some/file`+"\n"+dir+`/path/to/other/file`)
+			uploadFile1Path := filepath.Join(dir, "file1")
+			uploadFile2Path := filepath.Join(dir, "file2")
+
+			_, err = io.WriteString(tempTestFile, uploadFile1Path+"\n"+uploadFile2Path+"\n")
 			So(err, ShouldBeNil)
 
 			So(os.MkdirAll(dir+"/path/to/other/", 0700), ShouldBeNil)
-			internal.CreateTestFile(t, filepath.Join(dir, "/path/to/other/file"), "data")
-			internal.CreateTestFile(t, filepath.Join(dir, "/path/to/other/file2"), "data")
+			internal.CreateTestFile(t, uploadFile1Path, "data")
+			internal.CreateTestFile(t, uploadFile2Path, "data")
 
 			setName := "testAddFiles_" + time.Now().Format("20060102150405")
 
 			s.addSetForTestingWithFlags(t, setName, "prefix="+dir+":"+remote, "--items", tempTestFile.Name())
 			s.waitForStatus(setName, "Status: complete", 20*time.Second)
 
-			Convey("list with --deleted shows only files that don't exist locally", func() {
-				s.confirmOutput(t, []string{"list", "--name", setName, "--deleted"}, 0,
-					dir+"/path/to/some/file\t"+remote+"/path/to/some/file")
+			Convey("You can delete one of the files which doesn't affect list output and re-trigger the discovery", func() {
+				So(os.Remove(uploadFile2Path), ShouldBeNil)
 
-				Convey("with --uploaded and --deleted shows only orphaned files", func() {
-					s.confirmOutput(t, []string{"list", "--name", setName, "--uploaded", "--deleted"}, 0, "")
+				s.confirmOutput(t, []string{"list", "--name", setName, "--local", "--uploaded"}, 0,
+					uploadFile1Path+"\n"+uploadFile2Path)
+				s.confirmOutput(t, []string{"list", "--name", setName, "--local", "--last-state"}, 0,
+					uploadFile1Path+"\n"+uploadFile2Path)
 
-					So(os.Remove(dir+"/path/to/other/file"), ShouldBeNil)
+				uploadFile3Path := filepath.Join(dir, "file3")
+				internal.CreateTestFile(t, uploadFile3Path, "new data")
 
-					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--add", dir+"/path/to/other/file2")
-					So(exitCode, ShouldEqual, 0)
-					s.waitForStatus(setName, "Status: complete", 20*time.Second)
+				exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--add", uploadFile3Path)
+				So(exitCode, ShouldEqual, 0)
+				s.waitForStatus(setName, "Status: complete", 20*time.Second)
 
-					s.confirmOutput(t, []string{"list", "--name", setName, "--uploaded", "--deleted"}, 0,
-						dir+"/path/to/other/file\t"+remote+"/path/to/other/file")
+				Convey("Then list --uploaded shows all uploaded files, including orphans", func() {
+					s.confirmOutput(t, []string{"list", "--name", setName, "--local", "--uploaded"}, 0,
+						uploadFile1Path+"\n"+uploadFile2Path+"\n"+uploadFile3Path)
 				})
+
+				Convey("Then list --last-state shows only uploaded files that still existed locally at last discovery",
+					func() {
+						s.confirmOutput(t, []string{"list", "--name", setName, "--local", "--last-state"}, 0,
+							uploadFile1Path+"\n"+uploadFile3Path)
+						s.confirmOutputDoesNotContain(t, []string{"list", "--name", setName, "--local", "--last-state"}, 0,
+							uploadFile2Path)
+					})
 			})
 		})
 	})
@@ -714,14 +728,14 @@ func TestList(t *testing.T) {
 	Convey("Given a server configured with a upload location and scheduler", t, func() {
 		remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
 		if remotePath == "" {
-			SkipConvey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
+			Convey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
 
 			return
 		}
 
 		schedulerDeployment := os.Getenv("IBACKUP_TEST_SCHEDULER")
 		if schedulerDeployment == "" {
-			SkipConvey("skipping iRODS backup test since IBACKUP_TEST_SCHEDULER not set", func() {})
+			Convey("skipping iRODS backup test since IBACKUP_TEST_SCHEDULER not set", func() {})
 
 			return
 		}

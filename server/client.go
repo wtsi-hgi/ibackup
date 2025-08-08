@@ -257,16 +257,10 @@ func (c *Client) GetUploadedFiles(setID string) ([]*set.Entry, error) {
 	return c.getEntries(setID, EndPointAuthUploadedEntries)
 }
 
-// GetOrphanedFiles gets the orphaned file paths and their backup status for the
-// given set.
-func (c *Client) GetOrphanedFiles(setID string) ([]*set.Entry, error) {
-	return c.getEntries(setID, EndPointAuthOrphanedEntries)
-}
-
-// GetMissingFiles gets the missing file paths and their backup status for the
-// given set.
-func (c *Client) GetMissingFiles(setID string) ([]*set.Entry, error) {
-	return c.getEntries(setID, EndPointAuthMissingEntries)
+// GetLastStateFiles gets the uploaded file paths (excluding orphaned) and their
+// backup status for the given set.
+func (c *Client) GetLastStateFiles(setID string) ([]*set.Entry, error) {
+	return c.getEntries(setID, EndPointAuthLastStateEntries)
 }
 
 func (c *Client) getEntries(setID string, endPoint string) ([]*set.Entry, error) {

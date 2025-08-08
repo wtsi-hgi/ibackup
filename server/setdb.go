@@ -50,21 +50,22 @@ import (
 )
 
 const (
-	setPath           = "/set"
-	filePath          = "/files"
-	dirPath           = "/dirs"
-	entryPath         = "/entries"
-	uploadedEntryPath = "/uploaded_entries"
-	orphanedEntryPath = "/orphaned_entries"
-	missingEntryPath  = "/missing_entries"
-	exampleEntryPath  = "/example_entries"
-	failedEntryPath   = "/failed_entries"
-	discoveryPath     = "/discover"
-	requestsPath      = "/requests"
-	workingPath       = "/working"
-	fileStatusPath    = "/file_status"
-	fileRetryPath     = "/retry"
-	removePathsPath   = "/remove_paths"
+	setPath            = "/set"
+	filePath           = "/files"
+	dirPath            = "/dirs"
+	entryPath          = "/entries"
+	uploadedEntryPath  = "/uploaded_entries"
+	orphanedEntryPath  = "/orphaned_entries"
+	missingEntryPath   = "/missing_entries"
+	lastStateEntryPath = "/laststate_entries"
+	exampleEntryPath   = "/example_entries"
+	failedEntryPath    = "/failed_entries"
+	discoveryPath      = "/discover"
+	requestsPath       = "/requests"
+	workingPath        = "/working"
+	fileStatusPath     = "/file_status"
+	fileRetryPath      = "/retry"
+	removePathsPath    = "/remove_paths"
 
 	// EndPointAuthSet is the endpoint for getting and setting sets.
 	EndPointAuthSet = gas.EndPointAuth + setPath
@@ -82,13 +83,9 @@ const (
 	// entries.
 	EndPointAuthUploadedEntries = gas.EndPointAuth + uploadedEntryPath
 
-	// EndPointAuthOrphanedEntries is the endpoint for getting set orphaned
-	// entries.
-	EndPointAuthOrphanedEntries = gas.EndPointAuth + orphanedEntryPath
-
-	// EndPointAuthMissingEntries is the endpoint for getting set missing
-	// entries.
-	EndPointAuthMissingEntries = gas.EndPointAuth + missingEntryPath
+	// EndPointAuthLastStateEntries is the endpoint for getting uploaded entries
+	// excluding orphaned entries.
+	EndPointAuthLastStateEntries = gas.EndPointAuth + lastStateEntryPath
 
 	// EndPointAuthExampleEntry is the endpoint for getting set entries.
 	EndPointAuthExampleEntry = gas.EndPointAuth + exampleEntryPath
@@ -288,8 +285,7 @@ func (s *Server) addDBEndpoints(authGroup *gin.RouterGroup) {
 
 	authGroup.GET(entryPath+idParam, s.getEntries)
 	authGroup.GET(uploadedEntryPath+idParam, s.getUploadedEntries)
-	authGroup.GET(orphanedEntryPath+idParam, s.getOrphanedEntries)
-	authGroup.GET(missingEntryPath+idParam, s.getMissingEntries)
+	authGroup.GET(lastStateEntryPath+idParam, s.getLastStateEntries)
 
 	authGroup.GET(exampleEntryPath+idParam, s.getExampleEntry)
 
@@ -1308,12 +1304,8 @@ func (s *Server) getUploadedEntries(c *gin.Context) {
 	s.getFileEntries(c, set.FileEntryFilterUploaded)
 }
 
-func (s *Server) getOrphanedEntries(c *gin.Context) {
-	s.getFileEntries(c, set.FileEntryFilterOrphaned)
-}
-
-func (s *Server) getMissingEntries(c *gin.Context) {
-	s.getFileEntries(c, set.FileEntryFilterMissing)
+func (s *Server) getLastStateEntries(c *gin.Context) {
+	s.getFileEntries(c, set.FileEntryFilterLastState)
 }
 
 // getExampleEntry gets the first defined file entry for the set with the
