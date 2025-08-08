@@ -55,8 +55,6 @@ const (
 	dirPath            = "/dirs"
 	entryPath          = "/entries"
 	uploadedEntryPath  = "/uploaded_entries"
-	orphanedEntryPath  = "/orphaned_entries"
-	missingEntryPath   = "/missing_entries"
 	lastStateEntryPath = "/laststate_entries"
 	exampleEntryPath   = "/example_entries"
 	failedEntryPath    = "/failed_entries"
