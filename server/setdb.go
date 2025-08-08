@@ -116,7 +116,7 @@ const (
 	// EndPointAuthTrashPaths is the endpoint for trashing objects from sets.
 	EndPointAuthTrashPaths = gas.EndPointAuth + trashPathsPath
 
-	// EndPointAuthTrashPaths is the endpoint for removing expired objects from sets.
+	// EndPointAuthRemoveExpired is the endpoint for removing expired objects from sets.
 	EndPointAuthRemoveExpired = gas.EndPointAuth + removeExpiredPath
 
 	ErrNoAuth         = gas.Error("auth must be enabled")

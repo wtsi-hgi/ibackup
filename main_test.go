@@ -730,6 +730,7 @@ func TestList(t *testing.T) {
 			setName := "testAddFiles_" + time.Now().Format("20060102150405")
 
 			s.addSetForTestingWithFlags(t, setName, "prefix="+dir+":"+remote, "--items", tempTestFile.Name())
+
 			s.waitForStatus(setName, "Status: complete", 20*time.Second)
 
 			Convey("You can delete one of the files which doesn't affect list output and re-trigger the discovery", func() {
@@ -761,29 +762,7 @@ func TestList(t *testing.T) {
 	})
 
 	Convey("Given a server configured with a upload location and scheduler", t, func() {
-		remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
-		if remotePath == "" {
-			SkipConvey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
-
-			return
-		}
-
-		schedulerDeployment := os.Getenv("IBACKUP_TEST_SCHEDULER")
-		if schedulerDeployment == "" {
-			SkipConvey("skipping iRODS backup test since IBACKUP_TEST_SCHEDULER not set", func() {})
-
-			return
-		}
-
-		serverDir := t.TempDir()
-		s := new(TestServer)
-		s.prepareFilePaths(serverDir)
-		s.prepareConfig()
-
-		s.schedulerDeployment = schedulerDeployment
-		s.backupFile = filepath.Join(serverDir, "db.bak")
-
-		s.startServer()
+		s, remotePath := NewUploadingTestServer(t, true)
 
 		Convey("Given a set with files of different sizes that were uploaded", func() {
 			dir := t.TempDir()
@@ -799,10 +778,7 @@ func TestList(t *testing.T) {
 			file2Size := "2"
 			setName := "testUploadedDiffSizeFiles"
 
-			exitCode, _ := s.runBinary(t, "add", "-f", fofn,
-				"--name", setName, "--transformer", "prefix="+dir+":"+remotePath)
-			So(exitCode, ShouldEqual, 0)
-			s.waitForStatus(setName, "Status: complete", 5*time.Second)
+			s.addSetForTestingWithFlags(t, setName, "prefix="+dir+":"+remotePath, "-f", fofn)
 
 			Convey("list with --uploaded and --size only shows uploaded file sizes", func() {
 				s.confirmOutputContains(t, []string{"list", "--name", setName, "--uploaded"}, 0,
@@ -3586,11 +3562,17 @@ func TestTrashRemove(t *testing.T) {
 				Convey("If a file fails to be removed, the error is displayed on the file", func() {
 					file1remote := filepath.Join(remotePath, "file1")
 
-					_, err = exec.Command("ichmod", "read", "rk18", file1remote).CombinedOutput()
+					curUser, e := user.Current()
+					So(e, ShouldBeNil)
+
+					usernameRE := regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
+					So(usernameRE.MatchString(curUser.Username), ShouldBeTrue)
+
+					_, err = exec.Command("ichmod", "read", curUser.Username, file1remote).CombinedOutput() //nolint:gosec
 					So(err, ShouldBeNil)
 
 					defer func() {
-						exec.Command("ichmod", "own", "rk18", file1remote).CombinedOutput() //nolint:errcheck
+						exec.Command("ichmod", "own", curUser.Username, file1remote).CombinedOutput() //nolint:errcheck,gosec
 					}()
 
 					exitCode, _ := s.runBinary(t, "trash", "--remove", "--name", setName, "--path", file1)
@@ -3606,7 +3588,7 @@ func TestTrashRemove(t *testing.T) {
 					})
 
 					Convey("And succeeds if issue is fixed during retries", func() {
-						_, err = exec.Command("ichmod", "own", "rk18", file1remote).CombinedOutput()
+						_, err = exec.Command("ichmod", "own", curUser.Username, file1remote).CombinedOutput() //nolint:gosec
 						So(err, ShouldBeNil)
 
 						s.waitForStatus(trashSetName, "Removal status: 1 / 1 objects removed", 10*time.Second)

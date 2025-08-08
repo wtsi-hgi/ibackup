@@ -247,7 +247,7 @@ func status(client *server.Client, sf statusFilterer, user, order, name string,
 			name = set.TrashPrefix + name
 		}
 
-		sets = getSetByName(client, user, name)
+		sets = append(sets, getSetByName(client, user, name))
 	} else {
 		sets = getSets(client, sf, user, showHidden, trash)
 	}

@@ -95,7 +95,7 @@ var removeCmd = &cobra.Command{
 		}
 
 		if !removeSet {
-			err = client.TrashFilesAndDirs(setID, paths, false)
+			err = client.TrashFilesAndDirs(setID, paths)
 		} else {
 			err = client.RemoveSet(setID)
 		}
@@ -135,5 +135,5 @@ func getSetID(client *server.Client, user, name string) (string, error) {
 		return "", set.Error{Msg: set.ErrSetIsNotWritable}
 	}
 
-	return sets[0].ID(), nil
+	return givenSet.ID(), nil
 }
