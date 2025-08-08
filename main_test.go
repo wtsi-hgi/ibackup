@@ -702,22 +702,19 @@ func TestList(t *testing.T) {
 				s.confirmOutput(t, []string{"list", "--name", setName, "--local", "--last-state"}, 0,
 					uploadFile1Path+"\n"+uploadFile2Path)
 
-				uploadFile3Path := filepath.Join(dir, "file3")
-				internal.CreateTestFile(t, uploadFile3Path, "new data")
-
-				exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--add", uploadFile3Path)
+				exitCode, _ := s.runBinary(t, "retry", "--all", "--name", setName)
 				So(exitCode, ShouldEqual, 0)
 				s.waitForStatus(setName, "Status: complete", 20*time.Second)
 
 				Convey("Then list --uploaded shows all uploaded files, including orphans", func() {
 					s.confirmOutput(t, []string{"list", "--name", setName, "--local", "--uploaded"}, 0,
-						uploadFile1Path+"\n"+uploadFile2Path+"\n"+uploadFile3Path)
+						uploadFile1Path+"\n"+uploadFile2Path)
 				})
 
 				Convey("Then list --last-state shows only uploaded files that still existed locally at last discovery",
 					func() {
 						s.confirmOutput(t, []string{"list", "--name", setName, "--local", "--last-state"}, 0,
-							uploadFile1Path+"\n"+uploadFile3Path)
+							uploadFile1Path)
 						s.confirmOutputDoesNotContain(t, []string{"list", "--name", setName, "--local", "--last-state"}, 0,
 							uploadFile2Path)
 					})
