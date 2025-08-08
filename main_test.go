@@ -728,14 +728,14 @@ func TestList(t *testing.T) {
 	Convey("Given a server configured with a upload location and scheduler", t, func() {
 		remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
 		if remotePath == "" {
-			Convey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
+			SkipConvey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
 
 			return
 		}
 
 		schedulerDeployment := os.Getenv("IBACKUP_TEST_SCHEDULER")
 		if schedulerDeployment == "" {
-			Convey("skipping iRODS backup test since IBACKUP_TEST_SCHEDULER not set", func() {})
+			SkipConvey("skipping iRODS backup test since IBACKUP_TEST_SCHEDULER not set", func() {})
 
 			return
 		}
