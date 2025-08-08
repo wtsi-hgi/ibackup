@@ -1597,7 +1597,7 @@ func FileEntryFilterUploaded(e *Entry) bool {
 }
 
 // FileEntryFilterLastState is a FileEntryFilter that filters on uploaded
-// files(excluding orphaned files).
+// files (excluding orphaned files).
 func FileEntryFilterLastState(e *Entry) bool {
 	return e.Status == Uploaded || e.Status == Replaced || e.Status == Skipped
 }

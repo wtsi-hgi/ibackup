@@ -150,7 +150,7 @@ func init() {
 	listCmd.Flags().BoolVarP(&lstBase64, "base64", "b", false,
 		"output paths base64 encoded")
 	listCmd.Flags().BoolVar(&lstLastState, "last-state", false,
-		"show files that were uploaded and still existed locally during the last discovery scan (excludes orphaned files)")
+		"show uploaded files excluding orphaned ones")
 
 	if isAdmin() {
 		listCmd.Flags().BoolVar(&lstTrash, "trash", false,
