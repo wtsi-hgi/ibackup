@@ -668,6 +668,8 @@ const (
 		"`hardlinks`.`size`, " +
 		"`hardlinks`.`mtime`, " +
 		"`hardlinks`.`dest`, " +
+		"`hardlinks`.`owner`, " +
+		"`hardlinks`.`group`, " +
 		"`sets`.`requester`, " +
 		"`sets`.`name`, " +
 		"`sets`.`reason`, " +

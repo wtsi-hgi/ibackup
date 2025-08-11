@@ -58,6 +58,8 @@ type Task struct {
 	Type        QueueType
 	Requester   string
 	SetName     string
+	Owner       string
+	Group       string
 	Reason      string
 	ReviewDate  time.Time
 	DeleteDate  time.Time
@@ -165,6 +167,8 @@ func scanTask(process int64) func(scanner) (*Task, error) { //nolint:funlen
 			&t.Size,
 			&t.MTime,
 			&t.SymlinkDest,
+			&t.Owner,
+			&t.Group,
 			&t.Requester,
 			&t.SetName,
 			&t.Reason,
