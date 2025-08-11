@@ -64,8 +64,8 @@ const (
 	fileStatusPath     = "/file_status"
 	fileRetryPath      = "/retry"
 	removePathsPath    = "/remove_paths"
-	trashPathsPath    = "/trash_paths"
-	removeExpiredPath = "/remove_expired"
+	trashPathsPath     = "/trash_paths"
+	removeExpiredPath  = "/remove_expired"
 
 	// EndPointAuthSet is the endpoint for getting and setting sets.
 	EndPointAuthSet = gas.EndPointAuth + setPath
