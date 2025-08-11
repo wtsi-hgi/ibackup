@@ -68,6 +68,8 @@ var (
 	ErrInvalidEditMonitor         = errors.New("you can either --monitor or --stop-monitor a set, not both")
 	ErrInvalidEditMonitorRemovals = errors.New("you can either --monitor-removals or " +
 		"--stop-monitor-removals a set, not both")
+	ErrInvalidEditMonitorRemovalsUnmonitored = errors.New("cannot use --monitor-removals without " +
+		"--monitor or set being monitored")
 )
 
 // editCmd represents the edit command.
@@ -140,6 +142,10 @@ preexisting backup set.`,
 		}
 
 		if editMonitorRemovals {
+			if userSet.MonitorTime == 0 {
+				return ErrInvalidEditMonitorRemovalsUnmonitored
+			}
+
 			userSet.MonitorRemovals = true
 		} else if editStopMonitorRemovals {
 			userSet.MonitorRemovals = false
@@ -193,7 +199,7 @@ func init() { //nolint:funlen
 	editCmd.Flags().StringVarP(&editMonitor, "monitor", "m", "", helpTextMonitor)
 	editCmd.Flags().BoolVar(&editStopMonitor, "stop-monitor", false, "stop monitoring the set for changes")
 	editCmd.Flags().BoolVar(&editMonitorRemovals, "monitor-removals", false,
-		"start monitoring the set for locally removed files")
+		helpTextMonitorRemovals)
 	editCmd.Flags().BoolVar(&editStopMonitorRemovals, "stop-monitor-removals", false,
 		"stop monitoring the set for locally removed files")
 	editCmd.Flags().BoolVarP(&editArchive, "archive", "a", false, helpTextArchive)
