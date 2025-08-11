@@ -67,6 +67,7 @@ func TestFiles(t *testing.T) {
 				Mtime:       200,
 				Type:        Regular,
 				Owner:       "joe",
+				Group:       "my_group",
 				SymlinkDest: "",
 				setID:       1,
 			},
@@ -97,6 +98,7 @@ func TestFiles(t *testing.T) {
 				Mtime:      200,
 				Type:       Regular,
 				Owner:      "bob",
+				Group:      "my_other_group",
 				setID:      1,
 			}, &File{
 				LocalPath:  "/some/local/file/hardlink",
@@ -108,6 +110,7 @@ func TestFiles(t *testing.T) {
 				Mtime:      200,
 				Type:       Regular,
 				Owner:      "joe",
+				Group:      "my_group",
 				setID:      1,
 			})
 

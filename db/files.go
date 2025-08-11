@@ -70,6 +70,7 @@ type File struct {
 	Type              FileType
 	Status            FileStatus
 	Owner             string
+	Group             string
 	SymlinkDest       string
 	LastUpload        time.Time
 	LastError         string
@@ -119,7 +120,7 @@ func (d *DB) addSetFile(tx *sql.Tx, set *Set, file *File) error {
 
 	hlID, err := d.execReturningRowID(tx, createHardlink, file.Inode, file.MountPount,
 		file.Btime, file.InodeRemote, file.Mtime, file.Size, file.Type, file.Owner,
-		file.SymlinkDest, file.RemotePath)
+		file.Group, file.SymlinkDest, file.RemotePath)
 	if err != nil {
 		return err
 	}
@@ -268,11 +269,11 @@ func scanFile(setID int64) func(scanner) (*File, error) {
 			&file.Size,
 			&file.Type,
 			&file.Owner,
+			&file.Group,
 			&file.Inode,
 			&file.MountPount,
 			&file.Btime,
 			&file.Mtime,
-			&file.InodeRemote,
 			&file.SymlinkDest,
 		); err != nil {
 			return nil, err
@@ -299,11 +300,11 @@ func scanModifiableFile(setID int64) func(scanner) (*File, error) { //nolint:fun
 			&file.Size,
 			&file.Type,
 			&file.Owner,
+			&file.Group,
 			&file.Inode,
 			&file.MountPount,
 			&file.Btime,
 			&file.Mtime,
-			&file.InodeRemote,
 			&file.SymlinkDest,
 			&file.LastError,
 			&lastFailedAttempt,

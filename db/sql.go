@@ -111,6 +111,7 @@ var (
 			"`size` INTEGER DEFAULT 0, " +
 			"`fileType` TINYINT NOT NULL, " +
 			"`owner` TEXT NOT NULL, " +
+			"`group` TEXT NOT NULL, " +
 			"`dest` TEXT NOT NULL, " +
 			"`remote` TEXT NOT NULL, " +
 			"`firstRemote` TEXT NOT NULL, " +
@@ -494,11 +495,12 @@ const (
 		"`size`, " +
 		"`fileType`, " +
 		"`owner`, " +
+		"`group`, " +
 		"`dest`, " +
 		"`firstRemote`" +
-		") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)" + setRef +
+		") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)" + setRef +
 		onConflictUpdate + colUpdate + "`mtime` = `EXCLUDED`.`mtime`, `dest` = `EXCLUDED`.`dest`, " +
-		"`size` = `EXCLUDED`.`size`, `owner` = `EXCLUDED`.`owner`, " +
+		"`size` = `EXCLUDED`.`size`, `owner` = `EXCLUDED`.`owner`, `group` = `EXCLUDED`.`group`, " +
 		returnOrSetID
 	createRemoteFile = "INSERT INTO `remoteFiles` (" +
 		"`remotePath`, " +
@@ -632,11 +634,11 @@ const (
 		"`hardlinks`.`size`, " +
 		"`hardlinks`.`fileType`, " +
 		"`hardlinks`.`owner`, " +
+		"`hardlinks`.`group`, " +
 		"`hardlinks`.`inode`, " +
 		"`hardlinks`.`mountPoint`, " +
 		"`hardlinks`.`btime`, " +
 		"`hardlinks`.`mtime`, " +
-		"`hardlinks`.`remote`, " +
 		"`hardlinks`.`dest` "
 	getSetsFilesFrom = "FROM `localFiles` " +
 		"JOIN `remoteFiles` ON `localFiles`.`remoteFileID` = `remoteFiles`.`id` " +
