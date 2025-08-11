@@ -63,21 +63,22 @@ func TestQueue(t *testing.T) {
 		So(err, ShouldBeNil)
 
 		Convey("A client can reserve queued items and set the response", func() {
-			genID1 := strconv.FormatUint(filePrefix+1, 10)
-			genID2 := strconv.FormatUint(filePrefix+2, 10)
+			fp := filePrefix
+			genID1 := strconv.FormatUint(fp+1, 10)
+			genID2 := strconv.FormatUint(fp+2, 10)
 
 			So(d.CompleteDiscovery(setA, genFiles(5), noSeq[*File]), ShouldBeNil)
 			So(d.CompleteDiscovery(setB, genFiles(10), noSeq[*File]), ShouldBeNil)
 
-			tasks := d.ReserveTasks(pidA, 3)
-			So(tasks.Error, ShouldBeNil)
-			So(collectIter(t, tasks), ShouldResemble, []*Task{
+			So(collectIter(t, d.ReserveTasks(pidA, 3)), ShouldResemble, []*Task{
 				{
 					id:         1,
 					process:    1,
 					LocalPath:  "/some/file/" + genID1 + "_0",
 					RemotePath: "/remote/file/" + genID1 + "_0",
-					UploadPath: "/remote/file/" + genID1 + "_0",
+					InodePath:  inodePath("/some/", (fp+1)*1000, 100),
+					MTime:      200,
+					Size:       100,
 					Type:       QueueUpload,
 					Requester:  "me",
 					SetName:    "mySet",
@@ -87,7 +88,9 @@ func TestQueue(t *testing.T) {
 					process:    1,
 					LocalPath:  "/some/file/" + genID1 + "_1",
 					RemotePath: "/remote/file/" + genID1 + "_1",
-					UploadPath: "/remote/file/" + genID1 + "_1",
+					InodePath:  inodePath("/some/", (fp+1)*1000+1, 100),
+					MTime:      200,
+					Size:       100,
 					Type:       QueueUpload,
 					Requester:  "me",
 					SetName:    "mySet",
@@ -97,22 +100,24 @@ func TestQueue(t *testing.T) {
 					process:    1,
 					LocalPath:  "/some/file/" + genID1 + "_3",
 					RemotePath: "/remote/file/" + genID1 + "_3",
-					UploadPath: "/remote/file/" + genID1 + "_3",
+					InodePath:  inodePath("/some/", (fp+1)*1000+3, 100),
+					Size:       100,
+					MTime:      200,
 					Type:       QueueUpload,
 					Requester:  "me",
 					SetName:    "mySet",
 				},
 			})
 
-			tasks = d.ReserveTasks(pidB, 5)
-			So(tasks.Error, ShouldBeNil)
-			So(collectIter(t, tasks), ShouldResemble, []*Task{
+			So(collectIter(t, d.ReserveTasks(pidB, 5)), ShouldResemble, []*Task{
 				{
 					id:         5,
 					process:    2,
 					LocalPath:  "/some/file/" + genID1 + "_4",
 					RemotePath: "/remote/file/" + genID1 + "_4",
-					UploadPath: "/remote/file/" + genID1 + "_4",
+					InodePath:  inodePath("/some/", (fp+1)*1000+4, 100),
+					MTime:      200,
+					Size:       100,
 					Type:       QueueUpload,
 					Requester:  "me",
 					SetName:    "mySet",
@@ -122,7 +127,9 @@ func TestQueue(t *testing.T) {
 					process:    2,
 					LocalPath:  "/some/file/" + genID2 + "_0",
 					RemotePath: "/remote/file/" + genID2 + "_0",
-					UploadPath: "/remote/file/" + genID2 + "_0",
+					InodePath:  inodePath("/some/", (fp+2)*1000, 100),
+					MTime:      200,
+					Size:       100,
 					Type:       QueueUpload,
 					Requester:  "me",
 					SetName:    "my2ndSet",
@@ -132,7 +139,9 @@ func TestQueue(t *testing.T) {
 					process:    2,
 					LocalPath:  "/some/file/" + genID2 + "_1",
 					RemotePath: "/remote/file/" + genID2 + "_1",
-					UploadPath: "/remote/file/" + genID2 + "_1",
+					InodePath:  inodePath("/some/", (fp+2)*1000+1, 100),
+					MTime:      200,
+					Size:       100,
 					Type:       QueueUpload,
 					Requester:  "me",
 					SetName:    "my2ndSet",
@@ -142,7 +151,9 @@ func TestQueue(t *testing.T) {
 					process:    2,
 					LocalPath:  "/some/file/" + genID2 + "_3",
 					RemotePath: "/remote/file/" + genID2 + "_3",
-					UploadPath: "/remote/file/" + genID2 + "_3",
+					InodePath:  inodePath("/some/", (fp+2)*1000+3, 100),
+					MTime:      200,
+					Size:       100,
 					Type:       QueueUpload,
 					Requester:  "me",
 					SetName:    "my2ndSet",
@@ -152,11 +163,93 @@ func TestQueue(t *testing.T) {
 					process:    2,
 					LocalPath:  "/some/file/" + genID2 + "_4",
 					RemotePath: "/remote/file/" + genID2 + "_4",
-					UploadPath: "/remote/file/" + genID2 + "_4",
+					InodePath:  inodePath("/some/", (fp+2)*1000+4, 100),
+					MTime:      200,
+					Size:       100,
 					Type:       QueueUpload,
 					Requester:  "me",
 					SetName:    "my2ndSet",
 				},
+			})
+
+			Convey("Remote tasks include the remote and hardlink ref counts", func() {
+				So(d.clearQueue(), ShouldBeNil)
+
+				files := collectIter(t, d.GetSetFiles(setA))
+				So(d.RemoveSetFiles(setA, slices.Values(files[:2])), ShouldBeNil)
+
+				for _, task := range collectIter(t, d.ReserveTasks(pidA, 2)) {
+					So(d.TaskComplete(task), ShouldBeNil)
+				}
+
+				So(collectIter(t, d.ReserveTasks(pidA, 2)), ShouldResemble, []*Task{ //nolint:dupl
+					{
+						id:         17,
+						process:    1,
+						LocalPath:  "/some/file/" + genID1 + "_0",
+						RemotePath: "/remote/file/" + genID1 + "_0",
+						InodePath:  inodePath("/some/", (fp+1)*1000, 100),
+						MTime:      200,
+						Size:       100,
+						Type:       QueueRemoval,
+						Requester:  "me",
+						SetName:    "mySet",
+						RemoteRefs: 2,
+						InodeRefs:  1,
+					},
+					{
+						id:         19,
+						process:    1,
+						LocalPath:  "/some/file/" + genID1 + "_1",
+						RemotePath: "/remote/file/" + genID1 + "_1",
+						InodePath:  inodePath("/some/", (fp+1)*1000+1, 100),
+						MTime:      200,
+						Size:       100,
+						Type:       QueueRemoval,
+						Requester:  "me",
+						SetName:    "mySet",
+						RemoteRefs: 2,
+						InodeRefs:  2,
+					},
+				})
+
+				So(d.clearQueue(), ShouldBeNil)
+
+				setTrashA, err := scanSet(d.db.QueryRow(getSetByNameRequester, "\x00"+setA.Name, setA.Requester))
+				So(err, ShouldBeNil)
+
+				So(d.RemoveSetFiles(setTrashA, d.GetSetFiles(setTrashA).Iter), ShouldBeNil)
+
+				So(collectIter(t, d.ReserveTasks(pidA, 2)), ShouldResemble, []*Task{ //nolint:dupl
+					{
+						id:         20,
+						process:    1,
+						LocalPath:  "/some/file/" + genID1 + "_0",
+						RemotePath: "/remote/file/" + genID1 + "_0",
+						InodePath:  inodePath("/some/", (fp+1)*1000, 100),
+						MTime:      200,
+						Size:       100,
+						Type:       QueueRemoval,
+						Requester:  "me",
+						SetName:    "\x00mySet",
+						RemoteRefs: 1,
+						InodeRefs:  1,
+					},
+					{
+						id:         21,
+						process:    1,
+						LocalPath:  "/some/file/" + genID1 + "_1",
+						RemotePath: "/remote/file/" + genID1 + "_1",
+						InodePath:  inodePath("/some/", (fp+1)*1000+1, 100),
+						MTime:      200,
+						Size:       100,
+						Type:       QueueRemoval,
+						Requester:  "me",
+						SetName:    "\x00mySet",
+						RemoteRefs: 1,
+						InodeRefs:  2,
+					},
+				})
 			})
 		})
 
@@ -315,7 +408,9 @@ func TestQueue(t *testing.T) {
 			tasks := collectIter(t, d.ReserveTasks(pidA, 2))
 			So(len(tasks), ShouldEqual, 1)
 
-			So(d.TaskSkipped(tasks[0]), ShouldBeNil)
+			tasks[0].Skipped = true
+
+			So(d.TaskComplete(tasks[0]), ShouldBeNil)
 
 			files[0].Status = StatusSkipped
 

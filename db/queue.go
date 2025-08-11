@@ -27,7 +27,8 @@ package db
 
 import (
 	"database/sql"
-	"errors"
+	"path"
+	"strconv"
 	"time"
 )
 
@@ -41,26 +42,30 @@ const (
 
 const maxRetries = 3
 
-var ErrCannotSkip = errors.New("cannot skip non-upload tasks")
-
 type Process struct {
 	id int64
 }
 
 type Task struct {
-	id         int64
-	process    int64
-	LocalPath  string
-	RemotePath string
-	UploadPath string
-	Type       QueueType
-	Requester  string
-	SetName    string
-	Reason     string
-	ReviewDate time.Time
-	DeleteDate time.Time
-	Metadata   Metadata
-	Error      string
+	id          int64
+	process     int64
+	LocalPath   string
+	RemotePath  string
+	InodePath   string
+	Size        uint64
+	MTime       int64
+	SymlinkDest string
+	Type        QueueType
+	Requester   string
+	SetName     string
+	Reason      string
+	ReviewDate  time.Time
+	DeleteDate  time.Time
+	Metadata    Metadata
+	Error       string
+	Skipped     bool
+	RemoteRefs  uint64
+	InodeRefs   uint64
 }
 
 func (d *DB) RegisterProcess() (*Process, error) {
@@ -138,28 +143,41 @@ func (d *DBRO) getReservedTasks(process *Process) *IterErr[*Task] {
 	return iterRows(d, scanTask(process.id), getQueuedTasks, process.id)
 }
 
-func scanTask(process int64) func(scanner) (*Task, error) {
+func scanTask(process int64) func(scanner) (*Task, error) { //nolint:funlen
 	return func(s scanner) (*Task, error) {
 		t := new(Task)
 
-		var reviewDate, deleteDate sql.NullTime
+		var (
+			reviewDate, deleteDate sql.NullTime
+			mountPoint             string
+			inode                  uint64
+			bTime                  int64
+		)
 
 		if err := s.Scan(
 			&t.id,
 			&t.Type,
 			&t.LocalPath,
 			&t.RemotePath,
-			&t.UploadPath,
+			&mountPoint,
+			&inode,
+			&bTime,
+			&t.Size,
+			&t.MTime,
+			&t.SymlinkDest,
 			&t.Requester,
 			&t.SetName,
 			&t.Reason,
 			&reviewDate,
 			&deleteDate,
 			&t.Metadata,
+			&t.RemoteRefs,
+			&t.InodeRefs,
 		); err != nil {
 			return nil, err
 		}
 
+		t.InodePath = inodePath(mountPoint, inode, bTime)
 		t.ReviewDate = reviewDate.Time
 		t.DeleteDate = deleteDate.Time
 		t.process = process
@@ -168,19 +186,31 @@ func scanTask(process int64) func(scanner) (*Task, error) {
 	}
 }
 
-func (d *DB) TaskComplete(t *Task) error {
+func inodePath(mountPoint string, inode uint64, bTime int64) string {
+	return path.Join(mountPoint, strconv.FormatUint(inode, 10), strconv.FormatInt(bTime, 10))
+}
+
+func (d *DB) TaskComplete(t *Task) error { //nolint:gocyclo
 	tx, err := d.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	if _, err := d.db.Exec(deleteQueued, t.id, t.process, t.Type); err != nil {
+	if t.Type == QueueUpload && t.Skipped {
+		if _, err = tx.Exec(updateQueuedSkipped, t.id, t.process, t.Type); err != nil {
+			return err
+		}
+	}
+
+	if _, err := tx.Exec(deleteQueued, t.id, t.process, t.Type); err != nil {
 		return err
 	}
 
-	if _, err := d.db.Exec(deleteRemoteFileWhenNotRefd); err != nil {
-		return err
+	if t.Type == QueueRemoval {
+		if _, err := tx.Exec(deleteRemoteFileWhenNotRefd); err != nil {
+			return err
+		}
 	}
 
 	return tx.Commit()
@@ -188,28 +218,6 @@ func (d *DB) TaskComplete(t *Task) error {
 
 func (d *DB) TaskFailed(t *Task) error {
 	return d.exec(updateQueuedFailed, t.Error, t.id, t.process, t.Type)
-}
-
-func (d *DB) TaskSkipped(t *Task) error {
-	if t.Type != QueueUpload {
-		return ErrCannotSkip
-	}
-
-	tx, err := d.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback() //nolint:errcheck
-
-	if _, err = tx.Exec(updateQueuedSkipped, t.id, t.process, t.Type); err != nil {
-		return err
-	}
-
-	if _, err = tx.Exec(deleteQueued, t.id, t.process, t.Type); err != nil {
-		return err
-	}
-
-	return tx.Commit()
 }
 
 func (d *DB) RetrySetTasks(set *Set) error {

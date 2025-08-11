@@ -294,7 +294,10 @@ func (d *DBRO) listInodes(t *testing.T) *IterErr[int] {
 func (d *DBRO) countRemoteFileRefs(file *File) (int64, error) {
 	var count int64
 
-	err := d.db.QueryRow(getRemoteFileRefs, file.LocalPath).Scan(&count)
+	err := d.db.QueryRow("SELECT COUNT(1) FROM `localFiles` WHERE `remoteFileID` = ("+
+		"SELECT `remoteFileID` FROM `localFiles` WHERE `localPathHash` = "+virtStart+
+		"?"+
+		virtEnd+");", file.LocalPath).Scan(&count)
 
 	return count, err
 }

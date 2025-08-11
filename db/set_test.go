@@ -264,7 +264,10 @@ func TestSet(t *testing.T) {
 				So(setC.Skipped, ShouldEqual, 0)
 				So(setC.SizeUploaded, ShouldEqual, 100)
 
-				So(d.TaskSkipped(collectIter(t, d.ReserveTasks(process, 1))[0]), ShouldBeNil)
+				task := collectIter(t, d.ReserveTasks(process, 1))[0]
+				task.Skipped = true
+
+				So(d.TaskComplete(task), ShouldBeNil)
 
 				setC, err = d.GetSet(setC.Name, setC.Requester)
 				So(err, ShouldBeNil)

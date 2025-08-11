@@ -660,23 +660,30 @@ const (
 		"`queue`.`type`, " +
 		"`localFiles`.`localPath`, " +
 		"`remoteFiles`.`remotePath`, " +
-		"`hardlinks`.`firstRemote`, " +
+		"`hardlinks`.`mountPoint`, " +
+		"`hardlinks`.`inode`, " +
+		"`hardlinks`.`btime`, " +
+		"`hardlinks`.`size`, " +
+		"`hardlinks`.`mtime`, " +
+		"`hardlinks`.`dest`, " +
 		"`sets`.`requester`, " +
 		"`sets`.`name`, " +
 		"`sets`.`reason`, " +
 		"`sets`.`review`, " +
 		"`sets`.`delete`, " +
-		"`sets`.`metadata` " +
+		"`sets`.`metadata`, " +
+		"IF(`queue`.`type` = " + string('0'+QueueRemoval) + ", " +
+		"(SELECT COUNT(1) FROM `localFiles` WHERE `remoteFileID` = `remoteFiles`.`id`), " +
+		"0), " +
+		"IF(`queue`.`type` = " + string('0'+QueueRemoval) + ", " +
+		"(SELECT COUNT(1) FROM `remoteFiles` WHERE `hardlinkID` = `hardlinks`.`id`), " +
+		"0) " +
 		"FROM `queue` " +
 		"JOIN `localFiles` ON `localFiles`.`id` = `queue`.`localFileID` " +
 		"JOIN `sets` ON `sets`.`id` = `localFiles`.`setID` " +
 		"JOIN `remoteFiles` ON `remoteFiles`.`id` = `localFiles`.`remoteFileID` " +
 		"JOIN `hardlinks` ON `hardlinks`.`id` = `remoteFiles`.`hardlinkID` " +
 		"WHERE `queue`.`heldBy` = ? ORDER BY `queue`.`id`;"
-	getRemoteFileRefs = "SELECT COUNT(1) FROM `localFiles` WHERE `remoteFileID` = (" +
-		"SELECT `remoteFileID` FROM `localFiles` WHERE `localPathHash` = " + virtStart +
-		"?" +
-		virtEnd + ");"
 	getTasksCounts  = "SELECT COUNT(1), COUNT(`heldBy`) FROM `queue`;"
 	getProcessCount = "SELECT COUNT(1) FROM `processes`;"
 
