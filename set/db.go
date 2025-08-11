@@ -1596,6 +1596,12 @@ func FileEntryFilterUploaded(e *Entry) bool {
 		e.Status == Orphaned || e.Status == Skipped
 }
 
+// FileEntryFilterLastState is a FileEntryFilter that filters on uploaded
+// files (excluding orphaned files).
+func FileEntryFilterLastState(e *Entry) bool {
+	return e.Status == Uploaded || e.Status == Replaced || e.Status == Skipped
+}
+
 // GetFileEntries returns all the file entries for the given set (both
 // SetFileEntries and SetDiscoveredEntries).
 func (d *DBRO) GetFileEntries(setID string, filter FileEntryFilter) ([]*Entry, error) {

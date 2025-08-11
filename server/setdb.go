@@ -50,19 +50,20 @@ import (
 )
 
 const (
-	setPath           = "/set"
-	filePath          = "/files"
-	dirPath           = "/dirs"
-	entryPath         = "/entries"
-	uploadedEntryPath = "/orphaned_entries"
-	exampleEntryPath  = "/example_entries"
-	failedEntryPath   = "/failed_entries"
-	discoveryPath     = "/discover"
-	requestsPath      = "/requests"
-	workingPath       = "/working"
-	fileStatusPath    = "/file_status"
-	fileRetryPath     = "/retry"
-	removePathsPath   = "/remove_paths"
+	setPath            = "/set"
+	filePath           = "/files"
+	dirPath            = "/dirs"
+	entryPath          = "/entries"
+	uploadedEntryPath  = "/uploaded_entries"
+	lastStateEntryPath = "/laststate_entries"
+	exampleEntryPath   = "/example_entries"
+	failedEntryPath    = "/failed_entries"
+	discoveryPath      = "/discover"
+	requestsPath       = "/requests"
+	workingPath        = "/working"
+	fileStatusPath     = "/file_status"
+	fileRetryPath      = "/retry"
+	removePathsPath    = "/remove_paths"
 
 	// EndPointAuthSet is the endpoint for getting and setting sets.
 	EndPointAuthSet = gas.EndPointAuth + setPath
@@ -79,6 +80,10 @@ const (
 	// EndPointAuthUploadedEntries is the endpoint for getting set uploaded
 	// entries.
 	EndPointAuthUploadedEntries = gas.EndPointAuth + uploadedEntryPath
+
+	// EndPointAuthLastStateEntries is the endpoint for getting uploaded entries
+	// excluding orphaned entries.
+	EndPointAuthLastStateEntries = gas.EndPointAuth + lastStateEntryPath
 
 	// EndPointAuthExampleEntry is the endpoint for getting set entries.
 	EndPointAuthExampleEntry = gas.EndPointAuth + exampleEntryPath
@@ -278,6 +283,8 @@ func (s *Server) addDBEndpoints(authGroup *gin.RouterGroup) {
 
 	authGroup.GET(entryPath+idParam, s.getEntries)
 	authGroup.GET(uploadedEntryPath+idParam, s.getUploadedEntries)
+	authGroup.GET(lastStateEntryPath+idParam, s.getLastStateEntries)
+
 	authGroup.GET(exampleEntryPath+idParam, s.getExampleEntry)
 
 	authGroup.GET(dirPath+idParam, s.getDirs)
@@ -1293,6 +1300,10 @@ func (s *Server) getFileEntries(c *gin.Context, filter func(*set.Entry) bool) {
 
 func (s *Server) getUploadedEntries(c *gin.Context) {
 	s.getFileEntries(c, set.FileEntryFilterUploaded)
+}
+
+func (s *Server) getLastStateEntries(c *gin.Context) {
+	s.getFileEntries(c, set.FileEntryFilterLastState)
 }
 
 // getExampleEntry gets the first defined file entry for the set with the

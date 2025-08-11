@@ -674,32 +674,50 @@ func TestList(t *testing.T) {
 		s, remote := NewUploadingTestServer(t)
 		So(s, ShouldNotBeNil)
 
-		Convey("Given an added set defined with files", func() {
+		Convey("Given an added set defined with files that are uploaded", func() {
 			dir := t.TempDir()
 			tempTestFile, err := os.CreateTemp(dir, "testFileSet")
 			So(err, ShouldBeNil)
 
-			_, err = io.WriteString(tempTestFile, dir+`/path/to/some/file`+"\n"+dir+`/path/to/other/file`)
+			uploadFile1Path := filepath.Join(dir, "file1")
+			uploadFile2Path := filepath.Join(dir, "file2")
+
+			_, err = io.WriteString(tempTestFile, uploadFile1Path+"\n"+uploadFile2Path+"\n")
 			So(err, ShouldBeNil)
 
 			So(os.MkdirAll(dir+"/path/to/other/", 0700), ShouldBeNil)
-			So(os.WriteFile(dir+"/path/to/other/file", []byte("data"), 0600), ShouldBeNil)
+			internal.CreateTestFile(t, uploadFile1Path, "data")
+			internal.CreateTestFile(t, uploadFile2Path, "data")
 
-			s.addSetForTestingWithItems(t, "testAddFiles", "prefix="+dir+":"+remote, tempTestFile.Name())
-			s.waitForStatus("testAddFiles", "Status: complete", 20*time.Second)
+			setName := "testAddFiles_" + time.Now().Format("20060102150405")
 
-			Convey("list with --deleted shows only files that don't exist locally", func() {
-				s.confirmOutput(t, []string{"list", "--name", "testAddFiles", "--deleted"}, 0,
-					dir+"/path/to/some/file\t"+remote+"/path/to/some/file")
+			s.addSetForTestingWithFlags(t, setName, "prefix="+dir+":"+remote, "--items", tempTestFile.Name())
+			s.waitForStatus(setName, "Status: complete", 20*time.Second)
 
-				Convey("with --uploaded and --deleted shows only files that are stored remotely and not locally", func() {
-					s.confirmOutput(t, []string{"list", "--name", "testAddFiles", "--uploaded", "--deleted"}, 0, "")
+			Convey("You can delete one of the files which doesn't affect list output and re-trigger the discovery", func() {
+				So(os.Remove(uploadFile2Path), ShouldBeNil)
 
-					So(os.Remove(dir+"/path/to/other/file"), ShouldBeNil)
+				s.confirmOutput(t, []string{"list", "--name", setName, "--local", "--uploaded"}, 0,
+					uploadFile1Path+"\n"+uploadFile2Path)
+				s.confirmOutput(t, []string{"list", "--name", setName, "--local", "--last-state"}, 0,
+					uploadFile1Path+"\n"+uploadFile2Path)
 
-					s.confirmOutput(t, []string{"list", "--name", "testAddFiles", "--uploaded", "--deleted"}, 0,
-						dir+"/path/to/other/file\t"+remote+"/path/to/other/file")
+				exitCode, _ := s.runBinary(t, "retry", "--all", "--name", setName)
+				So(exitCode, ShouldEqual, 0)
+				s.waitForStatus(setName, "Status: complete", 20*time.Second)
+
+				Convey("Then list --uploaded shows all uploaded files, including orphans", func() {
+					s.confirmOutput(t, []string{"list", "--name", setName, "--local", "--uploaded"}, 0,
+						uploadFile1Path+"\n"+uploadFile2Path)
 				})
+
+				Convey("Then list --last-state shows only uploaded files that still existed locally at last discovery",
+					func() {
+						s.confirmOutput(t, []string{"list", "--name", setName, "--local", "--last-state"}, 0,
+							uploadFile1Path)
+						s.confirmOutputDoesNotContain(t, []string{"list", "--name", setName, "--local", "--last-state"}, 0,
+							uploadFile2Path)
+					})
 			})
 		})
 	})

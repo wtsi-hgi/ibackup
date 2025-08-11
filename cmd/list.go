@@ -26,8 +26,6 @@
 package cmd
 
 import (
-	"errors"
-	"io/fs"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -38,17 +36,17 @@ import (
 
 // options for this cmd.
 var (
-	lstName        string
-	lstUser        string
-	lstLocal       bool
-	lstRemote      bool
-	lstAll         bool
-	lstDB          string
-	lstUploaded    bool
-	lstSize        bool
-	lstBase64      bool
-	lstShowDeleted bool
-	lstTrash       bool
+	lstName      string
+	lstUser      string
+	lstLocal     bool
+	lstRemote    bool
+	lstAll       bool
+	lstDB        string
+	lstUploaded  bool
+	lstSize      bool
+	lstBase64    bool
+	lstTrash     bool
+	lstLastState bool
 )
 
 // listCmd represents the list command.
@@ -110,7 +108,8 @@ IBACKUP_LOCAL_DB_BACKUP_PATH environmental variable.
 		}
 
 		if lstAll {
-			getAllSetsFromDBAndDisplayPaths(lstDB, lstLocal, lstRemote, lstUploaded, lstShowDeleted, lstSize, lstBase64)
+			getAllSetsFromDBAndDisplayPaths(lstDB, lstLocal, lstRemote, lstUploaded,
+				lstLastState, lstSize, lstBase64)
 
 			return
 		}
@@ -125,7 +124,7 @@ IBACKUP_LOCAL_DB_BACKUP_PATH environmental variable.
 		}
 
 		getSetFromServerAndDisplayPaths(client, lstLocal, lstRemote, lstUploaded,
-			lstShowDeleted, lstSize, lstBase64, lstUser, lstName)
+			lstLastState, lstSize, lstBase64, lstUser, lstName)
 	},
 }
 
@@ -150,8 +149,8 @@ func init() {
 		"show the size of each file in bytes")
 	listCmd.Flags().BoolVarP(&lstBase64, "base64", "b", false,
 		"output paths base64 encoded")
-	listCmd.Flags().BoolVar(&lstShowDeleted, "deleted", false,
-		"show only files that don't exist locally")
+	listCmd.Flags().BoolVar(&lstLastState, "last-state", false,
+		"show uploaded files excluding orphaned ones")
 
 	if isAdmin() {
 		listCmd.Flags().BoolVar(&lstTrash, "trash", false,
@@ -161,8 +160,8 @@ func init() {
 	}
 }
 
-func getAllSetsFromDBAndDisplayPaths(dbPath string, local, remote, uploaded, //nolint:funlen
-	deleted, size, encode bool,
+func getAllSetsFromDBAndDisplayPaths(dbPath string, local, remote, uploaded, //nolint:funlen,gocyclo
+	lastState, size, encode bool,
 ) {
 	db, err := set.NewRO(dbPath)
 	if err != nil {
@@ -182,7 +181,10 @@ func getAllSetsFromDBAndDisplayPaths(dbPath string, local, remote, uploaded, //n
 
 	var filter set.FileEntryFilter
 
-	if uploaded {
+	switch {
+	case lastState:
+		filter = set.FileEntryFilterLastState
+	case uploaded:
 		filter = set.FileEntryFilterUploaded
 	}
 
@@ -196,7 +198,7 @@ func getAllSetsFromDBAndDisplayPaths(dbPath string, local, remote, uploaded, //n
 
 		transformer := getSetTransformerIfNeeded(s, !local)
 
-		displayEntryPaths(entries, transformer, local, remote, deleted, size, encode)
+		displayEntryPaths(entries, transformer, local, remote, size, encode)
 	}
 }
 
@@ -209,12 +211,8 @@ func getSetTransformerIfNeeded(s *set.Set, needed bool) transfer.PathTransformer
 }
 
 func displayEntryPaths(entries []*set.Entry, transformer transfer.PathTransformer,
-	local, remote, deleted, size, encode bool,
+	local, remote, size, encode bool,
 ) {
-	if deleted {
-		entries = filterForDeleted(entries)
-	}
-
 	format := "%[1]s\t%[2]s"
 
 	if local {
@@ -238,20 +236,8 @@ func displayEntryPaths(entries []*set.Entry, transformer transfer.PathTransforme
 	}
 }
 
-func filterForDeleted(entries []*set.Entry) []*set.Entry {
-	uploadedEntries := make([]*set.Entry, 0, len(entries))
-
-	for _, entry := range entries {
-		if _, err := os.Stat(entry.Path); errors.Is(err, fs.ErrNotExist) {
-			uploadedEntries = append(uploadedEntries, entry)
-		}
-	}
-
-	return uploadedEntries
-}
-
 func getSetFromServerAndDisplayPaths(client *server.Client,
-	local, remote, uploaded, deleted, size, encode bool, user, name string,
+	local, remote, uploaded, lastState, size, encode bool, user, name string,
 ) {
 	sets := getSetByName(client, user, name)
 	if len(sets) == 0 {
@@ -262,7 +248,10 @@ func getSetFromServerAndDisplayPaths(client *server.Client,
 
 	getFiles := client.GetFiles
 
-	if uploaded {
+	switch {
+	case lastState:
+		getFiles = client.GetLastStateFiles
+	case uploaded:
 		getFiles = client.GetUploadedFiles
 	}
 
@@ -273,5 +262,5 @@ func getSetFromServerAndDisplayPaths(client *server.Client,
 
 	transformer := getSetTransformerIfNeeded(sets[0], !local)
 
-	displayEntryPaths(entries, transformer, local, remote, deleted, size, encode)
+	displayEntryPaths(entries, transformer, local, remote, size, encode)
 }
