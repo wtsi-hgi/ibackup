@@ -64,6 +64,8 @@ const (
 	fileStatusPath     = "/file_status"
 	fileRetryPath      = "/retry"
 	removePathsPath    = "/remove_paths"
+	trashPathsPath     = "/trash_paths"
+	removeExpiredPath  = "/remove_expired"
 
 	// EndPointAuthSet is the endpoint for getting and setting sets.
 	EndPointAuthSet = gas.EndPointAuth + setPath
@@ -111,10 +113,17 @@ const (
 	// EndPointAuthRemovePaths is the endpoint for removing objects from sets.
 	EndPointAuthRemovePaths = gas.EndPointAuth + removePathsPath
 
+	// EndPointAuthTrashPaths is the endpoint for trashing objects from sets.
+	EndPointAuthTrashPaths = gas.EndPointAuth + trashPathsPath
+
+	// EndPointAuthRemoveExpired is the endpoint for removing expired objects from sets.
+	EndPointAuthRemoveExpired = gas.EndPointAuth + removeExpiredPath
+
 	ErrNoAuth         = gas.Error("auth must be enabled")
 	ErrBadRequester   = gas.Error("you are not the set requester")
 	ErrEmptyName      = gas.Error("set name cannot be empty")
 	ErrTrashSetName   = gas.Error("set name cannot be prefixed with " + set.TrashPrefix)
+	ErrNotTrashed     = gas.Error("you cannot permanently remove from non trashed sets")
 	ErrInvalidName    = gas.Error("set name contains invalid characters")
 	ErrSetNotComplete = gas.Error("set should be complete for this operation")
 	ErrNotAdmin       = gas.Error("you are not the server admin")
@@ -274,7 +283,7 @@ func (s *Server) EnableRemoteDBBackups(remotePath string, handler transfer.Handl
 }
 
 // addDBEndpoints adds all the REST API endpoints to the given router group.
-func (s *Server) addDBEndpoints(authGroup *gin.RouterGroup) {
+func (s *Server) addDBEndpoints(authGroup *gin.RouterGroup) { //nolint:funlen
 	authGroup.GET(setPath+"/:"+paramRequester, s.getSets)
 
 	idParam := "/:" + paramSetID
@@ -307,7 +316,12 @@ func (s *Server) addDBEndpoints(authGroup *gin.RouterGroup) {
 
 	authGroup.PUT(fileStatusPath, s.putFileStatus)
 
-	authGroup.PUT(removePathsPath+idParam, s.trashPaths)
+	authGroup.DELETE(removePathsPath+idParam, s.removePaths)
+
+	authGroup.PUT(trashPathsPath+idParam, s.trashPaths)
+
+	authGroup.DELETE(removeExpiredPath, s.removeExpired)
+	authGroup.DELETE(removeExpiredPath+idParam, s.removeExpired)
 
 	authGroup.DELETE(setPath+idParam, s.deleteSet)
 }
@@ -481,15 +495,15 @@ func (s *Server) putFiles(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
-func (s *Server) removePaths(c *gin.Context) { //nolint:unused
+func (s *Server) removePaths(c *gin.Context) {
 	givenSet, paths, ok := s.bindPathsAndValidateSet(c)
 	if !ok {
 		return
 	}
 
-	filePaths, dirPaths, err := s.validateRemoveInputs(givenSet, paths)
+	filePaths, dirPaths, httpStatus, err := s.validateInputsForRemovals(givenSet, paths, c)
 	if err != nil {
-		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+		c.AbortWithError(httpStatus, err) //nolint:errcheck
 
 		return
 	}
@@ -502,13 +516,32 @@ func (s *Server) removePaths(c *gin.Context) { //nolint:unused
 	}
 }
 
+// validateInputsForRemovals returns an error if the provided set is not a
+// trashed set, the user is not an admin or if any provided path is not in the
+// given set. Also returns the valid paths classified into a slice of filepaths
+// or dirpaths.
+func (s *Server) validateInputsForRemovals(givenSet *set.Set, paths []string,
+	c *gin.Context) ([]string, []string, int, error) {
+	if !givenSet.IsTrash() {
+		return nil, nil, http.StatusBadRequest, ErrNotTrashed
+	}
+
+	if !s.AllowedAccess(c, "") {
+		return nil, nil, http.StatusUnauthorized, ErrNotAdmin
+	}
+
+	files, dirs, err := s.db.ValidateFileAndDirPaths(givenSet, paths)
+
+	return files, dirs, http.StatusBadRequest, err
+}
+
 func (s *Server) trashPaths(c *gin.Context) {
 	givenSet, paths, ok := s.bindPathsAndValidateSet(c)
 	if !ok {
 		return
 	}
 
-	filePaths, dirPaths, err := s.validateRemoveInputs(givenSet, paths)
+	filePaths, dirPaths, err := s.validateInputsForTrashing(givenSet, paths)
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
@@ -562,6 +595,84 @@ func (s *Server) deleteSet(c *gin.Context) {
 	}
 }
 
+func (s *Server) removeExpired(c *gin.Context) {
+	sid := c.Param(paramSetID)
+
+	if !s.AllowedAccess(c, "") {
+		c.AbortWithError(http.StatusUnauthorized, ErrNotAdmin) //nolint:errcheck
+
+		return
+	}
+
+	var sets []*set.Set
+
+	var err error
+
+	if sid != "" { //nolint:nestif
+		givenSet, ok := s.validateSet(c)
+		if !ok {
+			return
+		}
+
+		sets = append(sets, givenSet)
+	} else {
+		sets, err = s.db.GetTrashedSets()
+		if err != nil {
+			c.AbortWithError(http.StatusInternalServerError, err) //nolint:errcheck
+
+			return
+		}
+	}
+
+	err = s.removeExpiredEntriesFromSets(sets)
+	if err != nil {
+		c.AbortWithError(http.StatusInternalServerError, err) //nolint:errcheck
+
+		return
+	}
+}
+
+func (s *Server) removeExpiredEntriesFromSets(sets []*set.Set) error {
+	for _, set := range sets {
+		err := s.removeExpiredEntriesFromSet(set)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (s *Server) removeExpiredEntriesFromSet(givenSet *set.Set) error {
+	filter := func(e *set.Entry) bool {
+		entryAge := time.Since(e.TrashDate)
+
+		return entryAge >= s.trashLifespan
+	}
+
+	expiredFiles, err := s.db.GetFileEntries(givenSet.ID(), filter)
+	if err != nil {
+		return err
+	}
+
+	expiredDirs, err := s.db.GetDirEntries(givenSet.ID(), filter)
+	if err != nil {
+		return err
+	}
+
+	filePaths := make([]string, len(expiredFiles))
+	for i, e := range expiredFiles {
+		filePaths[i] = e.Path
+	}
+
+	dirPaths := make([]string, len(expiredDirs))
+	for i, e := range expiredDirs {
+		dirPaths[i] = e.Path
+	}
+
+	return s.removeFilesAndDirs(givenSet, filePaths, dirPaths, set.ToRemove)
+}
+
 func (s *Server) getSetPaths(setID string) ([]string, error) {
 	entries, err := s.db.GetFileEntries(setID, nil)
 	if err != nil {
@@ -586,10 +697,10 @@ func (s *Server) registerDeletionCallback(setID string) {
 	})
 }
 
-// validateRemoveInputs returns an error if the provided set is a trashed set,
+// validateInputsForTrashing returns an error if the provided set is a trashed set,
 // not complete or if any provided path is not in the given set. Also returns
 // the valid paths classified into a slice of filepaths or dirpaths.
-func (s *Server) validateRemoveInputs(givenSet *set.Set, paths []string) ([]string, []string, error) {
+func (s *Server) validateInputsForTrashing(givenSet *set.Set, paths []string) ([]string, []string, error) {
 	if givenSet.IsTrash() {
 		return nil, nil, ErrTrashSetName
 	}
@@ -738,7 +849,7 @@ func (s *Server) processRemoteFileRemoval(removeReq *set.RemoveReq, entry *set.E
 		return err
 	}
 
-	mayMissInRemote := removeReq.RemoteRemovalStatus == set.AboutToBeRemoved
+	mayMissInRemote := removeReq.RemoteRemovalStatus == set.AboutToBeRemoved && removeReq.Action == set.ToRemove
 	removeReq.RemoteRemovalStatus = set.AboutToBeRemoved
 
 	err = s.db.UpdateRemoveRequest(*removeReq)
@@ -748,7 +859,8 @@ func (s *Server) processRemoteFileRemoval(removeReq *set.RemoveReq, entry *set.E
 
 	err = s.updateOrRemoveRemoteFile(removeReq, transformer, entry)
 	if err != nil && fileErrorCannotBeIgnored(err, mayMissInRemote) {
-		s.setErrorOnEntry(entry, removeReq.Set.ID(), removeReq.Path, err)
+		errorPrefix := "failed to remove: "
+		s.setErrorOnEntry(entry, removeReq.Set.ID(), removeReq.Path, errorPrefix+err.Error())
 
 		return err
 	}
@@ -831,7 +943,7 @@ func (s *Server) updateOrRemoveRemoteFile(removeReq *set.RemoveReq, transformer 
 	var sets, requesters []string
 
 	if removeReq.Action == set.ToRemove {
-		sets, requesters, err = s.handleSetsAndRequesters(removeReq.Set, remoteMeta)
+		sets, requesters, err = s.handleSetsAndRequesters(removeReq.Path, removeReq.Set, remoteMeta)
 	} else {
 		sets, requesters, err = s.handleSetMetadataForTrash(removeReq.Set, remoteMeta)
 	}
@@ -893,7 +1005,8 @@ func (s *Server) getFilesWithSameInode(path string, inode uint64, transformer tr
 	return files, 0, err
 }
 
-func (s *Server) handleSetsAndRequesters(givenSet *set.Set, meta map[string]string) ([]string, []string, error) {
+func (s *Server) handleSetsAndRequesters(path string, givenSet *set.Set,
+	meta map[string]string) ([]string, []string, error) {
 	sets := strings.Split(meta[transfer.MetaKeySets], ",")
 	requesters := strings.Split(meta[transfer.MetaKeyRequester], ",")
 
@@ -901,25 +1014,54 @@ func (s *Server) handleSetsAndRequesters(givenSet *set.Set, meta map[string]stri
 		return sets, requesters, nil
 	}
 
-	otherUserSets, userSets, err := s.getSetNamesByRequesters(requesters, givenSet.Requester)
+	numUserSets, numSetsWithGivenName, err := s.countSetsForPath(path, givenSet.Name, givenSet.Requester)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	if len(userSets) == 1 && userSets[0] == givenSet.Name {
+	if numUserSets == 1 {
 		requesters, err = set.RemoveElementFromSlice(requesters, givenSet.Requester)
 		if err != nil {
 			return nil, nil, err
 		}
 	}
 
-	if slices.Contains(otherUserSets, givenSet.Name) {
+	if numSetsWithGivenName > 1 {
 		return sets, requesters, nil
 	}
 
 	sets, err = set.RemoveElementFromSlice(sets, givenSet.Name)
 
 	return sets, requesters, err
+}
+
+// countSetsForPath gets all sets that contain the provided path and returns a
+// count for the number of sets with the same set name as given, and the number
+// of sets with the same requester as provided.
+func (s *Server) countSetsForPath(path, givenName, givenRequester string) (uint16, uint16, error) {
+	setIDs, err := s.db.GetAllSetsForFile(path)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	var (
+		numSetsWithRequester uint16
+		numSetsWithSetName   uint16
+	)
+
+	for _, setID := range setIDs {
+		set := s.db.GetByID(setID)
+
+		if set.Requester == givenRequester {
+			numSetsWithRequester++
+		}
+
+		if set.Name == givenName {
+			numSetsWithSetName++
+		}
+	}
+
+	return numSetsWithRequester, numSetsWithSetName, nil
 }
 
 func (s *Server) handleSetMetadataForTrash(givenSet *set.Set, meta map[string]string) ([]string, []string, error) {
@@ -978,8 +1120,8 @@ func getNamesFromSets(sets []*set.Set) []string {
 	return names
 }
 
-func (s *Server) setErrorOnEntry(entry *set.Entry, sid, path string, err error) {
-	entry.LastError = err.Error()
+func (s *Server) setErrorOnEntry(entry *set.Entry, sid, path string, errMsg string) {
+	entry.LastError = errMsg
 
 	erru := s.db.UpdateEntry(sid, path, entry)
 	if erru != nil {
@@ -1342,7 +1484,7 @@ func (s *Server) getDirs(c *gin.Context) {
 		return
 	}
 
-	entries, err := s.db.GetDirEntries(set.ID())
+	entries, err := s.db.GetDirEntries(set.ID(), nil)
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 

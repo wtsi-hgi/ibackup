@@ -598,6 +598,10 @@ func (b *Baton) GetMeta(path string) (map[string]string, error) {
 		IName: filepath.Base(path),
 	})
 
+	if err != nil && strings.Contains(err.Error(), extendoNotExist) {
+		return nil, errs.PathError{Msg: internal.ErrFileDoesNotExist, Path: path}
+	}
+
 	return RodsItemToMeta(it), err
 }
 

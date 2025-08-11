@@ -470,7 +470,7 @@ func TestSetDB(t *testing.T) {
 					err = db.removeEntry(set.ID(), "/g/h", dirBucket)
 					So(err, ShouldBeNil)
 
-					dEntries, errg := db.GetDirEntries(set.ID())
+					dEntries, errg := db.GetDirEntries(set.ID(), nil)
 					So(errg, ShouldBeNil)
 					So(len(dEntries), ShouldEqual, 1)
 					So(dEntries[0], ShouldResemble, newEntry("/g/i"))
@@ -699,7 +699,7 @@ func TestSetDB(t *testing.T) {
 					So(fEntries[1], ShouldResemble, newEntry("/c/d.txt"))
 					So(fEntries[2], ShouldResemble, newEntry("/e/f.txt"))
 
-					dEntries, errg := db.GetDirEntries(sets[1].ID())
+					dEntries, errg := db.GetDirEntries(sets[1].ID(), nil)
 					So(errg, ShouldBeNil)
 					So(len(dEntries), ShouldEqual, 2)
 					So(dEntries[0], ShouldResemble, newEntry("/g/h"))
@@ -712,7 +712,7 @@ func TestSetDB(t *testing.T) {
 					So(fEntries[1], ShouldResemble, newEntry("/c/j.txt"))
 					So(fEntries[2], ShouldResemble, newEntry("/c/k.txt"))
 
-					dEntries, err = db.GetDirEntries(sets[0].ID())
+					dEntries, err = db.GetDirEntries(sets[0].ID(), nil)
 					So(err, ShouldBeNil)
 					So(len(dEntries), ShouldEqual, 0)
 				})
@@ -1833,7 +1833,7 @@ func TestSetDB(t *testing.T) {
 				}})
 				So(err, ShouldBeNil)
 
-				entries, errg := db.GetDirEntries(setl1.ID())
+				entries, errg := db.GetDirEntries(setl1.ID(), nil)
 				So(errg, ShouldBeNil)
 				So(len(entries), ShouldEqual, 1)
 				So(entries[0].Status, ShouldEqual, Registered)
@@ -1898,7 +1898,7 @@ func newEntry(path string) *Entry {
 }
 
 func clearBucket(t *testing.T, db *DB, setID string,
-	dbGetFun func(string, FileEntryFilter) ([]*Entry, error), bucketName string) {
+	dbGetFun func(string, EntryFilter) ([]*Entry, error), bucketName string) {
 	t.Helper()
 
 	entries, err := dbGetFun(setID, nil)
@@ -1916,8 +1916,8 @@ func clearFileBucket(t *testing.T, db *DB, setID string) {
 	clearBucket(t, db, setID, db.GetFileEntries, fileBucket)
 }
 
-func wrapDBGetFun(fn func(string) ([]*Entry, error)) func(string, FileEntryFilter) ([]*Entry, error) {
-	return func(name string, _ FileEntryFilter) ([]*Entry, error) {
+func wrapDBGetFun(fn func(string) ([]*Entry, error)) func(string, EntryFilter) ([]*Entry, error) {
+	return func(name string, _ EntryFilter) ([]*Entry, error) {
 		return fn(name)
 	}
 }
@@ -1925,7 +1925,7 @@ func wrapDBGetFun(fn func(string) ([]*Entry, error)) func(string, FileEntryFilte
 func clearDirBucket(t *testing.T, db *DB, setID string) {
 	t.Helper()
 
-	clearBucket(t, db, setID, wrapDBGetFun(db.GetDirEntries), dirBucket)
+	clearBucket(t, db, setID, db.GetDirEntries, dirBucket)
 }
 
 func clearDiscoveredFilesBucket(t *testing.T, db *DB, setID string) {

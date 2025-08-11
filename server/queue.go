@@ -391,8 +391,8 @@ func (c *Client) RemoveBuried(bf *BuriedFilter) (int, error) {
 
 // deleteThing sends thing encoded as JSON in the body via a DELETE to the given
 // url. The response JSON is decoded in to responseThing.
-func (c *Client) deleteThing(url string, thing, responseThing interface{}) error {
-	req := c.setBodyAndOptionalResult(thing, responseThing)
+func (c *Client) deleteThing(url string, thing interface{}, optionalResponseThing ...interface{}) error {
+	req := c.setBodyAndOptionalResult(thing, optionalResponseThing...)
 
 	resp, err := req.Delete(url)
 	if err != nil {

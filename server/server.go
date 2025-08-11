@@ -94,6 +94,9 @@ type Config struct {
 	ReadOnly bool
 	// StorageHandler is used to interact with the storage system, e.g. iRODS.
 	StorageHandler remove.Handler
+
+	// TrashLifespan is the duration that trash is kept.
+	TrashLifespan time.Duration
 }
 
 // Server is used to start a web server that provides a REST API to the setdb
@@ -108,6 +111,7 @@ type Server struct {
 	dirPool                *workerpool.WorkerPool
 	queue                  *queue.Queue
 	removeQueue            *queue.Queue
+	trashLifespan          time.Duration
 	sched                  *client.Scheduler
 	putCmd                 string
 	req                    *jqs.Requirements
@@ -145,6 +149,7 @@ func New(conf Config) (*Server, error) { //nolint:funlen
 		dirPool:             workerpool.New(workerPoolSizeDir),
 		queue:               queue.New(context.Background(), "put"),
 		removeQueue:         queue.New(context.Background(), "remove"),
+		trashLifespan:       conf.TrashLifespan,
 		creatingCollections: make(map[string]bool),
 		slacker:             conf.Slacker,
 		stillRunningMsgFreq: conf.StillRunningMsgFreq,
