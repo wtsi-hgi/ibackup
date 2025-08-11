@@ -29,6 +29,9 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"os/user"
+	"strconv"
+	"sync"
 	"syscall"
 
 	"github.com/wtsi-hgi/ibackup/db"
@@ -38,7 +41,8 @@ import (
 const (
 	statFlags = unix.AT_SYMLINK_NOFOLLOW | unix.AT_STATX_SYNC_AS_STAT
 	statMask  = unix.STATX_BTIME | unix.STATX_INO | unix.STATX_MTIME |
-		unix.STATX_SIZE | unix.STATX_TYPE | unix.STATX_MNT_ID
+		unix.STATX_SIZE | unix.STATX_TYPE | unix.STATX_MNT_ID |
+		unix.STATX_UID | unix.STATX_GID
 )
 
 func (s *Statter) stat(path string) (*db.File, error) { //nolint:funlen,gocyclo
@@ -71,6 +75,11 @@ func (s *Statter) stat(path string) (*db.File, error) { //nolint:funlen,gocyclo
 		mode = db.Regular
 	}
 
+	owner, group, err := s.getOwner(resp.Uid, resp.Gid)
+	if err != nil {
+		return nil, err
+	}
+
 	return &db.File{
 		LocalPath:   path,
 		Btime:       resp.Btime.Sec,
@@ -79,6 +88,68 @@ func (s *Statter) stat(path string) (*db.File, error) { //nolint:funlen,gocyclo
 		Inode:       resp.Ino,
 		Type:        mode,
 		SymlinkDest: link,
+		Owner:       owner,
+		Group:       group,
 		MountPount:  s.mountpoints[resp.Mnt_id],
 	}, nil
+}
+
+type idCache struct {
+	sync.RWMutex
+	ids map[uint32]string
+}
+
+func (i *idCache) Get(id uint32) string {
+	i.RLock()
+	defer i.RUnlock()
+
+	return i.ids[id]
+}
+
+func (i *idCache) Set(id uint32, name string) {
+	i.Lock()
+	defer i.Unlock()
+
+	i.ids[id] = name
+}
+
+type ownerCache struct {
+	users, groups idCache
+}
+
+func newOwnerCache() *ownerCache {
+	var o ownerCache
+
+	o.users.ids = make(map[uint32]string)
+	o.groups.ids = make(map[uint32]string)
+
+	return &o
+}
+
+func (o *ownerCache) getOwner(uid, gid uint32) (string, string, error) {
+	username := o.users.Get(uid)
+	if username == "" {
+		u, err := user.LookupId(strconv.FormatUint(uint64(uid), 10))
+		if err != nil {
+			return "", "", err
+		}
+
+		username = u.Username
+
+		o.users.Set(uid, username)
+	}
+
+	group := o.groups.Get(uid)
+	if group == "" {
+		g, err := user.LookupGroupId(strconv.FormatUint(uint64(gid), 10))
+		if err != nil {
+			return "", "", err
+		}
+
+		group = g.Name
+
+		o.groups.Set(uid, group)
+	}
+
+	return username, group, nil
 }

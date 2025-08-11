@@ -40,6 +40,7 @@ type Statter struct {
 	requests         chan string
 	results          chan *db.File
 	writers, readers atomic.Int64
+	*ownerCache
 }
 
 func newStatter() (*Statter, error) {
@@ -52,6 +53,7 @@ func newStatter() (*Statter, error) {
 		mountpoints: mps,
 		requests:    make(chan string),
 		results:     make(chan *db.File),
+		ownerCache:  newOwnerCache(),
 	}, nil
 }
 

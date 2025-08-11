@@ -29,6 +29,7 @@ import (
 	"bytes"
 	"maps"
 	"os"
+	"os/user"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -48,6 +49,12 @@ func TestStat(t *testing.T) {
 		So(len(statter.mountpoints), ShouldNotBeZeroValue)
 
 		Convey("You can stat files", func() {
+			username, err := user.Current()
+			So(err, ShouldBeNil)
+
+			group, err := user.LookupGroupId(username.Gid)
+			So(err, ShouldBeNil)
+
 			dir := t.TempDir()
 			files := make([]string, 7)
 
@@ -96,6 +103,8 @@ func TestStat(t *testing.T) {
 					Mtime:      mtime.Unix(),
 					Inode:      stat.Sys().(*syscall.Stat_t).Ino, //nolint:errcheck
 					MountPount: dirMP,
+					Owner:      username.Username,
+					Group:      group.Name,
 				}
 			}
 
@@ -112,6 +121,8 @@ func TestStat(t *testing.T) {
 				Mtime:      stat.ModTime().Unix(),
 				Inode:      stat.Sys().(*syscall.Stat_t).Ino, //nolint:errcheck
 				MountPount: dirMP,
+				Owner:      username.Username,
+				Group:      group.Name,
 			}
 
 			statter.WriterAdd(1)
