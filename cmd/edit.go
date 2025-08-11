@@ -51,6 +51,7 @@ var (
 	editAddPath             string
 	editMonitor             string
 	editStopMonitor         bool
+	editMonitorRemovals     bool
 	editStopMonitorRemovals bool
 	editStopArchive         bool
 	editArchive             bool
@@ -61,10 +62,14 @@ var (
 )
 
 var (
-	ErrInvalidEditRO      = errors.New("you can either make a set read-only or writable, not both")
-	ErrInvalidEditArchive = errors.New("you can either --archive a set or --stop-archiving, not both")
-	ErrInvalidEditHide    = errors.New("you can either --hide or --unhide a set, not both")
-	ErrInvalidEditMonitor = errors.New("you can either --monitor or --stop-monitor a set, not both")
+	ErrInvalidEditRO              = errors.New("you can either make a set read-only or writable, not both")
+	ErrInvalidEditArchive         = errors.New("you can either --archive a set or --stop-archiving, not both")
+	ErrInvalidEditHide            = errors.New("you can either --hide or --unhide a set, not both")
+	ErrInvalidEditMonitor         = errors.New("you can either --monitor or --stop-monitor a set, not both")
+	ErrInvalidEditMonitorRemovals = errors.New("you can either --monitor-removals or " +
+		"--stop-monitor-removals a set, not both")
+	ErrInvalidEditMonitorRemovalsUnmonitored = errors.New("cannot use --monitor-removals without " +
+		"--monitor or set being monitored")
 )
 
 // editCmd represents the edit command.
@@ -93,6 +98,10 @@ preexisting backup set.`,
 
 		if editMonitor != "" && editStopMonitor {
 			return ErrInvalidEditMonitor
+		}
+
+		if editMonitorRemovals && editStopMonitorRemovals {
+			return ErrInvalidEditMonitorRemovals
 		}
 
 		return nil
@@ -132,7 +141,13 @@ preexisting backup set.`,
 			userSet.MonitorTime = 0
 		}
 
-		if editStopMonitorRemovals {
+		if editMonitorRemovals {
+			if userSet.MonitorTime == 0 {
+				return ErrInvalidEditMonitorRemovalsUnmonitored
+			}
+
+			userSet.MonitorRemovals = true
+		} else if editStopMonitorRemovals {
 			userSet.MonitorRemovals = false
 		}
 
@@ -183,6 +198,8 @@ func init() { //nolint:funlen
 	editCmd.Flags().StringVar(&editAddPath, "add", "", helpTextPath)
 	editCmd.Flags().StringVarP(&editMonitor, "monitor", "m", "", helpTextMonitor)
 	editCmd.Flags().BoolVar(&editStopMonitor, "stop-monitor", false, "stop monitoring the set for changes")
+	editCmd.Flags().BoolVar(&editMonitorRemovals, "monitor-removals", false,
+		helpTextMonitorRemovals)
 	editCmd.Flags().BoolVar(&editStopMonitorRemovals, "stop-monitor-removals", false,
 		"stop monitoring the set for locally removed files")
 	editCmd.Flags().BoolVarP(&editArchive, "archive", "a", false, helpTextArchive)

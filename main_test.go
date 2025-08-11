@@ -3738,6 +3738,34 @@ func TestEdit(t *testing.T) {
 					So(exitCode, ShouldEqual, 0)
 
 					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Monitored: 1d;")
+
+					Convey("You can re-enable monitoring removals", func() {
+						exitCode, _ = s.runBinary(t, "edit", "--name", setName, "--monitor-removals")
+						So(exitCode, ShouldEqual, 0)
+
+						s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Monitored (with removals): 1d;")
+					})
+
+					Convey("You can't re-enable monitoring removal without enabling monitoring", func() {
+						exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--stop-monitor")
+						So(exitCode, ShouldEqual, 0)
+
+						s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Monitored: false;")
+
+						s.confirmOutputContains(t, []string{"edit", "--name", setName, "--monitor-removals"}, 1,
+							cmd.ErrInvalidEditMonitorRemovalsUnmonitored.Error())
+
+						exitCode, _ = s.runBinary(t, "edit", "--name", setName, "--monitor", "1d", "--monitor-removals")
+						So(exitCode, ShouldEqual, 0)
+
+						s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Monitored (with removals): 1d;")
+					})
+				})
+
+				Convey("You cannot use both --monitor-removals and --stop-monitor-removals together", func() {
+					s.confirmOutputContains(t, []string{"edit", "--name", setName, "--monitor-removals", "1h",
+						"--stop-monitor-removals"}, 1,
+						cmd.ErrInvalidEditMonitorRemovals.Error())
 				})
 			})
 
@@ -4017,7 +4045,7 @@ func TestEdit(t *testing.T) {
 
 		resetIRODS()
 
-		timeout := 5 * time.Second
+		timeout := 10 * time.Second
 
 		Convey("And some files", func() {
 			setDir1 := filepath.Join(path, "dir1")
