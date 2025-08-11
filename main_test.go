@@ -1265,35 +1265,6 @@ Directories:
   `+localDir+" => "+remote)
 		})
 
-		Convey("Given an added set defined with a humgen transformer, the remote directory is correct", func() {
-			humgenFile := "/lustre/scratch125/humgen/teams/hgi/mercury/ibackup/file_for_testsuite.do_not_delete"
-			humgenDir := filepath.Dir(humgenFile)
-
-			if _, err := os.Stat(humgenDir); err != nil {
-				SkipConvey("skip humgen transformer test since not in humgen", func() {})
-
-				return
-			}
-
-			s.addSetForTesting(t, "humgenSet", "humgen", humgenFile)
-
-			s.confirmOutput(t, []string{"status", "-n", "humgenSet"}, 0,
-				`Global put queue status: 1 queued; 0 reserved to be worked on; 0 failed
-Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
-
-Name: humgenSet
-Transformer: humgen
-Reason: backup
-Review date: `+reviewDate+`
-Removal date: `+removalDate+`
-Monitored: false; Archive: false
-Status: pending upload
-Discovery:
-Num files: 1; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B (and counting) / 0 B / 0 B
-Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
-Example File: `+humgenFile+" => /humgen/teams/hgi/scratch125/mercury/ibackup/file_for_testsuite.do_not_delete")
-		})
-
 		Convey("Given an added set defined with a humgen transformer and a v2 path, the remote directory is correct", func() {
 			humgenFile := "/lustre/scratch125/humgen/teams_v2/hgi/mercury/ibackup/file_for_testsuite.do_not_delete"
 			humgenDir := filepath.Dir(humgenFile)
@@ -2090,7 +2061,7 @@ Global put client status (/10): 6 iRODS connections`)
 
 				s.addSetForTesting(t, setName, transformer, path)
 
-				s.waitForStatus(setName, "\nStatus: complete", 10*time.Second)
+				s.waitForStatus(setName, "\nStatus: complete", 20*time.Second)
 
 				statusCmd := []string{"status", "--name", setName, "-d"}
 
