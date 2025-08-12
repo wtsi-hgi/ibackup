@@ -68,7 +68,14 @@ var (
 			"`startedDiscovery` DATETIME DEFAULT '0001-01-01 00:00:00', " +
 			"`lastDiscovery` DATETIME DEFAULT '0001-01-01 00:00:00', " +
 			"`lastCompleted` DATETIME DEFAULT '0001-01-01 00:00:00', " +
-			"`status` TINYINT DEFAULT 0, " +
+			"`status` TINYINT GENERATED ALWAYS AS (" +
+			"IF(`numFiles` = 0, " + string('0'+PendingDiscovery) + ", " +
+			"IF(`uploaded` + `replaced` + `skipped` + `failed` + " +
+			"`missing` + `orphaned` + `abnormal` = `numFiles`" + ", " + string('0'+Complete) + ", " +
+			"IF(`failed` != 0, " + string('0'+Failing) + ", " +
+			"IF(`uploaded` + `replaced` + `skipped` + `failed` + " +
+			"`failing` = 0, " + string('0'+PendingUpload) + ", " +
+			string('0'+Uploading) + "))))), " +
 			"`lastCompletedCount` INTEGER DEFAULT 0, " +
 			"`lastCompletedSize` INTEGER DEFAULT 0, " +
 			"`error` TEXT NOT NULL, " +
@@ -176,7 +183,6 @@ var (
 			"`NEW`.`lastCompletedCount` = `NEW`.`numFiles`, " +
 			"`NEW`.`lastCompletedSize` = `NEW`.`sizeFiles`;" +
 			"END IF;" +
-			"SET `NEW`.`status` = " + getSetStatus + ";" +
 			"-- */" +
 			"CREATE TRIGGER IF NOT EXISTS `update_set_last_complete` BEFORE UPDATE ON `sets` FOR EACH ROW BEGIN " +
 			"UPDATE `sets` SET " +
@@ -184,7 +190,6 @@ var (
 			"`lastCompletedCount` = `NEW`.`numFiles`, " +
 			"`lastCompletedSize` = `NEW`.`sizeFiles` " +
 			"WHERE `sets`.`id` = `NEW`.`id` AND " + lastCompletedChangeCondition + ";" +
-			"UPDATE `sets` SET `status` = " + getSetStatus + " WHERE `sets`.`id` = `NEW`.`id`;" +
 			"\n/*! */" +
 			"END;",
 
@@ -420,11 +425,10 @@ const (
 		"IF(`remoteFiles`.`lastUploaded` = '0001-01-01 00:00:00', 0, 1) AS `isUploaded` " +
 		"FROM `hardlinks` JOIN `remoteFiles` ON `remoteFiles`.`hardlinkID` = `hardlinks`.`id` " +
 		"WHERE `remoteFiles`.`id` = "
-	newHardlinkInfo  = hardlinkInfo + "`NEW`.`remoteFileID`"
-	oldHardlinkInfo  = hardlinkInfo + "`OLD`.`remoteFileID`"
-	setFilesComplete = "`NEW`.`uploaded` + `NEW`.`replaced` + `NEW`.`skipped` + `NEW`.`failed` + " +
-		"`NEW`.`missing` + `NEW`.`orphaned` + `NEW`.`abnormal` = `NEW`.`numFiles`"
-	lastCompletedChangeCondition = setFilesComplete + " AND (" +
+	newHardlinkInfo              = hardlinkInfo + "`NEW`.`remoteFileID`"
+	oldHardlinkInfo              = hardlinkInfo + "`OLD`.`remoteFileID`"
+	lastCompletedChangeCondition = "`NEW`.`uploaded` + `NEW`.`replaced` + `NEW`.`skipped` + `NEW`.`failed` + " +
+		"`NEW`.`missing` + `NEW`.`orphaned` + `NEW`.`abnormal` = `NEW`.`numFiles` AND (" +
 		"`NEW`.`uploaded` != `OLD`.`uploaded` OR " +
 		"`NEW`.`replaced` != `OLD`.`replaced` OR " +
 		"`NEW`.`skipped` != `OLD`.`skipped` OR " +
@@ -434,12 +438,6 @@ const (
 		"`NEW`.`abnormal` != `OLD`.`abnormal` OR " +
 		"`NEW`.`numFiles` = `OLD`.`numFiles`" +
 		")"
-	getSetStatus = "IF(`NEW`.`numFiles` = 0, " + string('0'+PendingDiscovery) + ", " +
-		"IF(" + setFilesComplete + ", " + string('0'+Complete) + ", " +
-		"IF(`NEW`.`failed` != 0, " + string('0'+Failing) + ", " +
-		"IF(`NEW`.`uploaded` + `NEW`.`replaced` + `NEW`.`skipped` + `NEW`.`failed` + " +
-		"`NEW`.`failing` = 0, " + string('0'+PendingUpload) + ", " +
-		string('0'+Uploading) + "))))"
 
 	onConflictUpdate   = "ON /*! DUPLICATE KEY UPDATE -- */ CONFLICT DO UPDATE SET\n/*! */ "
 	onConflictReturnID = "ON /*! DUPLICATE KEY UPDATE `id` = LAST_INSERT_ID(`id`); -- */ " +
