@@ -683,3 +683,24 @@ func (s *Server) markFailedEntries(given *set.Set) {
 		}
 	})
 }
+
+func (s *Server) syncWithDeletion(c *gin.Context) {
+	givenSet, ok := s.validateSet(c)
+	if !ok {
+		return
+	}
+
+	if givenSet.IsTrash() {
+		c.AbortWithError(http.StatusBadRequest, ErrTrashSetName) //nolint:errcheck
+
+		return
+	}
+
+	go func() {
+		if err := s.discoverSetRemovals(givenSet); err != nil {
+			s.recordSetError("error discovering set (%s) removals: %s", givenSet.ID(), err)
+		}
+	}()
+
+	c.Status(http.StatusOK)
+}

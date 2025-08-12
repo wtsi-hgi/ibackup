@@ -3657,7 +3657,7 @@ func getMetaValue(meta, key string) string {
 }
 
 func TestEdit(t *testing.T) {
-	SkipConvey("With a started server", t, func() {
+	FocusConvey("With a started server", t, func() {
 		t.Setenv("IBACKUP_TEST_LDAP_SERVER", "")
 		t.Setenv("IBACKUP_TEST_LDAP_LOOKUP", "")
 
@@ -3677,7 +3677,7 @@ func TestEdit(t *testing.T) {
 				1, cmd.ErrInvalidEditRO.Error())
 		})
 
-		Convey("Given a transformer", func() {
+		FocusConvey("Given a transformer", func() {
 			remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
 			if remotePath == "" {
 				SkipConvey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
@@ -3711,6 +3711,17 @@ func TestEdit(t *testing.T) {
 					So(exitCode, ShouldEqual, 1)
 					So(output, ShouldContainSubstring, "invalid transformer")
 				})
+			})
+
+			FocusConvey("--sync-with-deletion is mutually exclusive to all other flags", func() {
+				setName := "testSet"
+				s.addSetForTesting(t, setName, transformer, path)
+
+				exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--sync-with-deletion", "--monitor", "1d")
+				So(exitCode, ShouldEqual, 1)
+
+				exitCode, _ = s.runBinary(t, "edit", "--name", setName, "--sync-with-deletion", "--stop-archiving")
+				So(exitCode, ShouldEqual, 1)
 			})
 
 			Convey("And a monitored set", func() {
@@ -4080,7 +4091,7 @@ func TestEdit(t *testing.T) {
 				So(output, ShouldContainSubstring, addFile+"\tuploaded")
 			}
 
-			FocusConvey("And a set with a directory containing files", func() {
+			FocusConvey("And a set with a directory containing files you can sync with deletion", func() {
 				setName := "discoveredSet"
 
 				setFileToBeDeleted := filepath.Join(setDir1, "file_to_be_deleted")
@@ -4089,21 +4100,30 @@ func TestEdit(t *testing.T) {
 				s.addSetForTesting(t, setName, transformer, setDir1)
 				s.waitForStatus(setName, "Status: complete", timeout)
 
+				exitCode, output := s.runBinaryWithNoLogging(t, "status", "--name", setName, "-d")
+				So(exitCode, ShouldEqual, 0)
+
+				So(output, ShouldContainSubstring, "Num files: 2")
+				So(output, ShouldContainSubstring, "Uploaded: 2;")
+				So(output, ShouldNotContainSubstring, "Orphaned: 1;")
+				So(output, ShouldContainSubstring, "Size (total/recently uploaded/recently removed): 2 B / 2 B / 0 B")
+				So(output, ShouldContainSubstring, setFileToBeDeleted)
+
 				err = os.Remove(setFileToBeDeleted)
 				So(err, ShouldBeNil)
 
-				exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--sync-with-deletion")
+				exitCode, _ = s.runBinary(t, "edit", "--name", setName, "--sync-with-deletion")
 				So(exitCode, ShouldEqual, 0)
 
 				s.waitForStatus(setName, "Status: complete", timeout)
 
-				exitCode, output := s.runBinaryWithNoLogging(t, "status", "--name", setName, "-d")
+				exitCode, output = s.runBinaryWithNoLogging(t, "status", "--name", setName, "-d")
 				So(exitCode, ShouldEqual, 0)
 
 				So(output, ShouldContainSubstring, "Num files: 1")
 				So(output, ShouldContainSubstring, "Uploaded: 1;")
 				So(output, ShouldNotContainSubstring, "Orphaned: 1;")
-				So(output, ShouldContainSubstring, "Size (total/recently uploaded/recently removed): 1 B / 0 B / 1 B")
+				So(output, ShouldContainSubstring, "Size (total/recently uploaded/recently removed): 1 B / 2 B / 1 B")
 				So(output, ShouldNotContainSubstring, setFileToBeDeleted)
 			})
 

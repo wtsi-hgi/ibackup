@@ -245,6 +245,17 @@ func (c *Client) TriggerDiscovery(setID string) error {
 	return responseToErr(resp)
 }
 
+// SyncWithDeletion starts the process of doing a one-time upload of files
+// missing remotely or changed locally and delete remote files missing locally
+func (c *Client) SyncWithDeletion(setID string) error {
+	resp, err := c.request().Get(EndPointAuthSyncWithDeletion + "/" + setID)
+	if err != nil {
+		return err
+	}
+
+	return responseToErr(resp)
+}
+
 // GetFiles gets the defined and discovered file paths and their backup status
 // for the given set.
 func (c *Client) GetFiles(setID string) ([]*set.Entry, error) {

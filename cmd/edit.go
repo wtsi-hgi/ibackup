@@ -120,6 +120,10 @@ preexisting backup set.`,
 			return err
 		}
 
+		if editSyncWithDeletion {
+			return syncWithDeletion(client, userSet)
+		}
+
 		err = editSetMetaData(userSet, editMetaData, editReason, editReview, editRemovalDate)
 		if err != nil {
 			return err
@@ -366,4 +370,8 @@ func isParentDirInSet(sid, path string, client *server.Client) (bool, error) {
 	}
 
 	return false, nil
+}
+
+func syncWithDeletion(client *server.Client, set *set.Set) error {
+	return client.SyncWithDeletion(set.ID())
 }
