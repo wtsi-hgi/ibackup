@@ -54,6 +54,7 @@ var (
 			"`uploaded` INTEGER DEFAULT 0, " +
 			"`replaced` INTEGER DEFAULT 0, " +
 			"`skipped` INTEGER DEFAULT 0, " +
+			"`failing` INTEGER DEFAULT 0, " +
 			"`failed` INTEGER DEFAULT 0, " +
 			"`missing` INTEGER DEFAULT 0, " +
 			"`orphaned` INTEGER DEFAULT 0, " +
@@ -170,38 +171,20 @@ var (
 			");",
 
 		"/*! CREATE TRIGGER IF NOT EXISTS `update_set_last_complete` BEFORE UPDATE ON `sets` FOR EACH ROW BEGIN " +
-			"IF `NEW`.`uploaded` + `NEW`.`replaced` + `NEW`.`skipped` + `NEW`.`failed` + " +
-			"`NEW`.`missing` + `NEW`.`orphaned` + `NEW`.`abnormal` = `NEW`.`numFiles` AND (" +
-			"`NEW`.`uploaded` != `old`.`uploaded` OR " +
-			"`NEW`.`replaced` != `old`.`replaced` OR " +
-			"`NEW`.`skipped` != `old`.`skipped` OR " +
-			"`NEW`.`failed` != `old`.`failed` OR " +
-			"`NEW`.`missing` != `old`.`missing` OR " +
-			"`NEW`.`orphaned` != `old`.`orphaned` OR " +
-			"`NEW`.`abnormal` != `old`.`abnormal` OR " +
-			"`NEW`.`numFiles` = `old`.`numFiles`" +
-			") THEN " +
+			"IF " + lastCompletedChangeCondition + " THEN " +
 			"SET `NEW`.`lastCompleted` = now(), " +
 			"`NEW`.`lastCompletedCount` = `NEW`.`numFiles`, " +
 			"`NEW`.`lastCompletedSize` = `NEW`.`sizeFiles`;" +
 			"END IF;" +
+			"SET `NEW`.`status` = " + getSetStatus + ";" +
 			"-- */" +
-			"CREATE TRIGGER IF NOT EXISTS `update_set_last_complete` AFTER UPDATE ON `sets` FOR EACH ROW BEGIN " +
+			"CREATE TRIGGER IF NOT EXISTS `update_set_last_complete` BEFORE UPDATE ON `sets` FOR EACH ROW BEGIN " +
 			"UPDATE `sets` SET " +
 			"`lastCompleted` = DATETIME('now'), " +
 			"`lastCompletedCount` = `NEW`.`numFiles`, " +
 			"`lastCompletedSize` = `NEW`.`sizeFiles` " +
-			"WHERE `NEW`.`uploaded` + `NEW`.`replaced` + `NEW`.`skipped` + `NEW`.`failed` + " +
-			"`NEW`.`missing` + `NEW`.`orphaned` + `NEW`.`abnormal` = `NEW`.`numFiles` AND `sets`.`id` = `NEW`.`id` AND (" +
-			"`NEW`.`uploaded` != `old`.`uploaded` OR " +
-			"`NEW`.`replaced` != `old`.`replaced` OR " +
-			"`NEW`.`skipped` != `old`.`skipped` OR " +
-			"`NEW`.`failed` != `old`.`failed` OR " +
-			"`NEW`.`missing` != `old`.`missing` OR " +
-			"`NEW`.`orphaned` != `old`.`orphaned` OR " +
-			"`NEW`.`abnormal` != `old`.`abnormal` OR " +
-			"`NEW`.`numFiles` = `old`.`numFiles`" +
-			");" +
+			"WHERE `sets`.`id` = `NEW`.`id` AND " + lastCompletedChangeCondition + ";" +
+			"UPDATE `sets` SET `status` = " + getSetStatus + " WHERE `sets`.`id` = `NEW`.`id`;" +
 			"\n/*! */" +
 			"END;",
 
@@ -322,12 +305,13 @@ var (
 			"END;",
 
 		"CREATE TRIGGER IF NOT EXISTS `update_set_after_queued_error` AFTER UPDATE ON `queue` FOR EACH ROW BEGIN " +
-			"/*! IF `OLD`.`lastError` IS NULL AND `NEW`.`lastError` IS NOT NULL THEN */" +
 			"UPDATE `sets` SET " +
-			"`failed` = `failed` + 1 " +
-			"WHERE `OLD`.`lastError` IS NULL AND `NEW`.`lastError` IS NOT NULL AND " +
-			"`sets`.`id` = (SELECT `setID` FROM `localFiles` WHERE `localFiles`.`id` = `OLD`.`localfileID`);" +
-			"/*! END IF; */" +
+			"`failing` = `failing` + IF(" +
+			"`OLD`.`attempts` = 0 AND `NEW`.`attempts` = 1, 1, " +
+			"IF(`NEW`.`attempts` = 0 AND `OLD`.`attempts` IN (1, 2) OR `NEW`.`attempts` = 3 AND `OLD`.`attempts` = 2, -1, 0)" +
+			"), " +
+			"`failed` = `failed` + IF(`NEW`.`attempts` = 3, 1, IF(`NEW`.`attempts` = 0 AND `OLD`.`attempts` = 3, -1, 0)) " +
+			"WHERE `sets`.`id` = (SELECT `setID` FROM `localFiles` WHERE `localFiles`.`id` = `OLD`.`localfileID`);" +
 			"/*!IF `OLD`.`type` = " + string('0'+QueueRemoval) + " AND `NEW`.`type` != " + string('0'+QueueRemoval) + " THEN*/" +
 			"UPDATE `sets` SET " +
 			"`toRemove` = `toRemove` - 1 " +
@@ -345,7 +329,8 @@ var (
 		"CREATE TRIGGER IF NOT EXISTS `update_file_after_queued_action` AFTER DELETE ON `queue` FOR EACH ROW BEGIN " +
 			"/*! IF `OLD`.`lastError` IS NOT NULL THEN */" +
 			"UPDATE `sets` SET " +
-			"`failed` = `failed` - 1 " +
+			"`failing` = `failing` - IF(`OLD`.`attempts` IN (1, 2), 1, 0), " +
+			"`failed` = `failed` - IF(`OLD`.`attempts` = 3, 1, 0) " +
 			"WHERE `OLD`.`lastError` IS NOT NULL AND " +
 			"`sets`.`id` = (SELECT `setID` FROM `localFiles` WHERE `localFiles`.`id` = `OLD`.`localfileID`);" +
 			"/*! END IF; */" +
@@ -435,8 +420,26 @@ const (
 		"IF(`remoteFiles`.`lastUploaded` = '0001-01-01 00:00:00', 0, 1) AS `isUploaded` " +
 		"FROM `hardlinks` JOIN `remoteFiles` ON `remoteFiles`.`hardlinkID` = `hardlinks`.`id` " +
 		"WHERE `remoteFiles`.`id` = "
-	newHardlinkInfo = hardlinkInfo + "`NEW`.`remoteFileID`"
-	oldHardlinkInfo = hardlinkInfo + "`OLD`.`remoteFileID`"
+	newHardlinkInfo  = hardlinkInfo + "`NEW`.`remoteFileID`"
+	oldHardlinkInfo  = hardlinkInfo + "`OLD`.`remoteFileID`"
+	setFilesComplete = "`NEW`.`uploaded` + `NEW`.`replaced` + `NEW`.`skipped` + `NEW`.`failed` + " +
+		"`NEW`.`missing` + `NEW`.`orphaned` + `NEW`.`abnormal` = `NEW`.`numFiles`"
+	lastCompletedChangeCondition = setFilesComplete + " AND (" +
+		"`NEW`.`uploaded` != `OLD`.`uploaded` OR " +
+		"`NEW`.`replaced` != `OLD`.`replaced` OR " +
+		"`NEW`.`skipped` != `OLD`.`skipped` OR " +
+		"`NEW`.`failed` != `OLD`.`failed` OR " +
+		"`NEW`.`missing` != `OLD`.`missing` OR " +
+		"`NEW`.`orphaned` != `OLD`.`orphaned` OR " +
+		"`NEW`.`abnormal` != `OLD`.`abnormal` OR " +
+		"`NEW`.`numFiles` = `OLD`.`numFiles`" +
+		")"
+	getSetStatus = "IF(`NEW`.`numFiles` = 0, " + string('0'+PendingDiscovery) + ", " +
+		"IF(`NEW`.`failing` != 0, " + string('0'+Failing) + ", " +
+		"IF(" + setFilesComplete + ", " + string('0'+Complete) + ", " +
+		"IF(`NEW`.`uploaded` + `NEW`.`replaced` + `NEW`.`skipped` + `NEW`.`failed` + " +
+		"`NEW`.`failing` = 0, " + string('0'+PendingUpload) + ", " +
+		string('0'+PendingDiscovery) + "))))"
 
 	onConflictUpdate   = "ON /*! DUPLICATE KEY UPDATE -- */ CONFLICT DO UPDATE SET\n/*! */ "
 	onConflictReturnID = "ON /*! DUPLICATE KEY UPDATE `id` = LAST_INSERT_ID(`id`); -- */ " +
@@ -581,6 +584,7 @@ const (
 		"`sets`.`uploaded`," +
 		"`sets`.`replaced`," +
 		"`sets`.`skipped`," +
+		"`sets`.`failing`," +
 		"`sets`.`failed`," +
 		"`sets`.`missing`," +
 		"`sets`.`orphaned`," +

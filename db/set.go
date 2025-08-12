@@ -38,7 +38,7 @@ import (
 	"github.com/go-sql-driver/mysql"
 )
 
-type Status int
+type Status uint8
 
 const (
 	// PendingDiscovery is a Set status meaning the set's entries are pending
@@ -139,8 +139,13 @@ type Set struct {
 	Skipped uint64
 
 	// Failed provides the total number of set and discovered files in this set
-	// that have failed their upload since the last discovery. This is a
-	// read-only value.
+	// that have failed their upload once or twice since the last discovery.
+	// This is a read-only value.
+	Failing uint64
+
+	// Failed provides the total number of set and discovered files in this set
+	// that have failed their upload three times since the last discovery. This
+	// is a read-only value.
 	Failed uint64
 
 	// Missing provides the total number of set and discovered files in this set
@@ -346,6 +351,7 @@ func scanSet(scanner scanner) (*Set, error) { //nolint:funlen
 		&set.Uploaded,
 		&set.Replaced,
 		&set.Skipped,
+		&set.Failing,
 		&set.Failed,
 		&set.Missing,
 		&set.Orphaned,

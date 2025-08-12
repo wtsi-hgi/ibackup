@@ -178,6 +178,7 @@ func TestSet(t *testing.T) {
 			Convey("Adding/Removing files to a set updates the set file numbers", func() {
 				setB, err = d.GetSet("my2ndSet", "me")
 				So(err, ShouldBeNil)
+				So(setB.Status, ShouldEqual, PendingDiscovery)
 				So(setB.NumFiles, ShouldEqual, 0)
 				So(d.CompleteDiscovery(setB, genFiles(5), noSeq[*File]), ShouldBeNil)
 				So(d.CompleteDiscovery(setB, setFileType(genFiles(4), Abnormal), noSeq[*File]), ShouldBeNil)
@@ -185,6 +186,7 @@ func TestSet(t *testing.T) {
 
 				setB, err = d.GetSet("my2ndSet", "me")
 				So(err, ShouldBeNil)
+				So(setB.Status, ShouldEqual, PendingUpload)
 				So(setB.NumFiles, ShouldEqual, 11)
 				So(setB.SizeTotal, ShouldEqual, 1100)
 				So(setB.Symlinks, ShouldEqual, 3)
@@ -205,7 +207,7 @@ func TestSet(t *testing.T) {
 
 				setB, err = d.GetSet("my2ndSet", "me")
 				So(err, ShouldBeNil)
-
+				So(setB.Status, ShouldEqual, PendingDiscovery)
 				So(setB.NumFiles, ShouldEqual, 0)
 				So(setB.SizeTotal, ShouldEqual, 0)
 				So(setB.Symlinks, ShouldEqual, 0)
@@ -215,6 +217,7 @@ func TestSet(t *testing.T) {
 
 				setB, err = d.GetSet("my2ndSet", "me")
 				So(err, ShouldBeNil)
+				So(setB.Status, ShouldEqual, Complete)
 				So(setB.NumFiles, ShouldEqual, 5)
 				So(setB.SizeTotal, ShouldEqual, 500)
 				So(setB.SizeUploaded, ShouldEqual, 0)
@@ -240,6 +243,7 @@ func TestSet(t *testing.T) {
 
 				setC, err = d.GetSet(setC.Name, setC.Requester)
 				So(err, ShouldBeNil)
+				So(setB.Status, ShouldEqual, Complete)
 				So(setC.SizeUploaded, ShouldEqual, 200)
 
 				So(d.CompleteDiscovery(setC, noSeq[*File], noSeq[*File]), ShouldBeNil)
