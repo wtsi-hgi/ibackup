@@ -1,0 +1,319 @@
+#!/bin/bash
+
+set -euo pipefail;
+
+declare base="${IRODS_BASE:-/dev/shm/irods}";
+
+returnJSON() {
+	echo "${1:0:-1},$2}";
+}
+
+returnResult() {
+	returnJSON "$1" "\"result\":$2";
+}
+
+quote() {
+	jq -R -s;
+}
+
+returnError() {
+	returnJSON "$1" "\"error\":{\"message\":$(quote <<< "$2"),\"code\":0}";
+}
+
+encode() {
+	{
+		echo -n "!";
+		base64;
+	} | tr "/+" "_-";
+}
+
+decode() {
+	tr -d '!' | tr "_-" "/+" | base64 -d | tr -d '\n';
+}
+
+doPut() {
+	declare request="$1";
+	declare localFile="$(jq '.target.directory + "/" + .target.file' -r <<< "$request")";
+	declare remoteFile="$(jq '.target.collection + "/" + .target.data_object' -r <<< "$request")";
+	declare err="";
+
+	err="$(cp -f "$localFile" "$base/files/$remoteFile" 2>&1)" || {
+		returnError "$request" "$err";
+
+		return;
+	}
+
+	while read avu; do
+		declare attribute="$(jq ".attribute // empty" -r <<< "$avu" | encode)";
+		declare value="$(jq ".value // empty" -r <<< "$avu" | encode)";
+		declare units="$(jq ".units // empty" -r <<< "$avu" | encode)";
+
+		declare err="$(mkdir -p "$base/metadata/$remoteFile/.meta/$attribute/$value/$units" 2>&1)" || {
+			returnError "$request" "$err";
+
+			return;
+		}
+	done < <(jq ".target.avus // [] | .[]" -c <<< "$request");
+
+	returnResult "$request" "{\"single\":$(jq ".target" -c <<< "$request")}";
+}
+
+doMkdir() {
+	declare request="$1";
+	declare remoteCollection="$(jq '.target.collection' -r <<< "$request")";
+	declare err="";
+
+	err="$(mkdir -p "$base/files/$remoteCollection" 2>&1)" || {
+		returnError "$request" "$err";
+
+		return;
+	}
+
+	returnResult "$request" "{\"single\":$(jq ".target" -c <<< "$request")}";
+}
+
+doGet() {
+	declare request="$1";
+	declare localFile="$(jq '.target.directory + "/" + .target.file' -r <<< "$request")";
+	declare remoteFile="$(jq '.target.collection + "/" + .target.data_object' -r <<< "$request")";
+	declare err="";
+
+	err="$(cp -f "$base/files/$remoteFile" "$localFile" 2>&1)" || {
+		returnError "$request" "$err";
+
+		return;
+	}
+
+	returnResult "$request" "{\"single\":$(jq ".target" -c <<< "$request")}";
+}
+
+doList() {
+	declare request="$1";
+	declare remoteFile="$(jq '.target.collection + "/" + .target.data_object' -r <<< "$request")";
+	declare data="";
+	declare size="";
+	declare mtime="";
+	declare ctime="";
+	declare -a avus=();
+
+	data="$(stat --printf "%s\t%Y\t%Z\n" "$base/files/$remoteFile" 2>&1)" || {
+		returnError "$request" "CAT_NO_ROWS_FOUND: does not exist";
+
+		return;
+	}
+
+	read size mtime ctime <<< "$data";
+
+	mtime="$(date --date="@$mtime" "+%FT%T.%N%:z")";
+	ctime="$(date --date="@$ctime" "+%FT%T.%N%:z")";
+
+	while read avu; do
+		declare attribute="$(cut -d'/' -f1 <<< "$avu" | decode | quote)";
+		declare value="$(cut -d'/' -f2 <<< "$avu" | decode | quote)";
+		declare units="$(cut -d'/' -f3 <<< "$avu" | decode | quote)";
+
+		avus+=( "{\"attribute\":$attribute,\"value\":$value,\"units\":$units}" );
+	done < <(find "$base/metadata/$remoteFile/.meta/" -mindepth 3 2> /dev/null | rev | cut -d'/' -f-3 | rev);
+
+	returnResult "$request" "{\"single\":{\"collection\":$(jq '.target.collection' <<< "$request"),\"data_object\":$(jq '.target.data_object' <<< "$request"),\"size\":$size,\"timestamps\":[{\"created\":\"$ctime\",\"modified\":\"$mtime\"}],\"avus\":$(
+		for avu in "${avus[@]}"; do
+			echo "$avu";
+		done | jq --slurp -c;
+	)}}";
+}
+
+doRemove() {
+	declare remoteFile="$(jq '.target.collection + "/" + .target.data_object' -r <<< "$request")";
+	declare err="";
+
+	err="$(rm -f "$base/files/$remoteFile") 2> /dev/null" || {
+		returnError "$request" "$err";
+
+		return;
+	}
+
+	rm -rf "$base/metadata/$remoteFile" 2> /dev/null || true;
+
+	returnResult "$request" "{\"single\":$(jq ".target" -c <<< "$request")}";
+}
+
+doRmdir() {
+	declare request="$1";
+	declare remoteCollection="$(jq '.target.collection' -r <<< "$request")";
+	declare err="";
+
+	err="$(find "$base/files/$remoteCollection" -type d -empty -delete 2>&1)" || {
+		returnError "$request" "$err";
+
+		return;
+	}
+
+	if [ -d "$base/files/$remoteCollection" ]; then
+		returnError "$request" "CAT_COLLECTION_NOT_EMPTY";
+
+		return;
+	fi;
+
+	rm -rf "$base/metadata/$removeCollection";
+
+	returnResult "$request" "{\"single\":$(jq ".target" -c <<< "$request")}";
+}
+
+doMetaAdd() {
+	declare request="$1";
+	declare remoteFile="$(jq '.target.collection + "/" + .target.data_object' -r <<< "$request")";
+
+	while read avu; do
+		declare attribute="$(jq ".attribute // empty" -r <<< "$avu" | encode)";
+		declare value="$(jq ".value // empty" -r <<< "$avu" | encode)";
+		declare units="$(jq ".units // empty" -r <<< "$avu" | encode)";
+		declare err="";
+
+		err="$(mkdir -p "$base/metadata/$remoteFile/.meta/$attribute/$value/$units" 2>&1)" || {
+			returnError "$request" "$err";
+
+			return;
+		}
+	done < <(jq ".target.avus // [] | .[]" -c <<< "$request");
+
+	returnResult "$request" "{\"single\":$(jq ".target" -c <<< "$request")}";
+}
+
+doMetaQuery() {
+	declare request="$1";
+	read avu < <(jq ".target.avus | .[]" -c <<< "$request" | head -n1);
+	declare attribute="$(jq ".attribute" -r <<< "$avu" | encode)";
+	declare value="$(jq ".value" -r <<< "$avu" | encode)";
+
+	declare -a matches=();
+
+	while read match; do
+		matches+=( "$(sed -e 's@/\.meta/.*@@' -e 's@//*@/' -e 's@/$@@' <<< "/${match:${#base}}")" );
+	done < <(find "$base/metadata/" 2> /dev/null | grep "/.meta/$attribute/$value/.");
+
+	returnResult "$request" "{\"single\":$(jq ".target" -c <<< "$request")}";
+}
+
+doMetaRem() {
+	declare request="$1";
+	declare remoteFile="$(jq '.target.collection + "/" + .target.data_object' -r <<< "$request")";
+
+	while read avu; do
+		declare attribute="$(jq ".attribute // empty" -r <<< "$avu" | encode)";
+		declare value="$(jq ".value // empty" -r <<< "$avu" | encode)";
+		declare units="$(jq ".units // empty" -r <<< "$avu" | encode)";
+
+		rmdir "$base/metadata/$remoteFile/.meta/$attribute/$value/$units" 2> /dev/null || true;
+	done < <(jq ".target.avus // [] | .[]" -c <<< "$request");
+
+	returnResult "$request" "{\"single\":$(jq ".target" -c <<< "$request")}";
+}
+
+batondo() {
+	while read request; do
+		declare op="$(jq ".operation" -r <<< "$request")";
+		case "$op" in
+		"put")
+			doPut "$request";;
+		"mkdir")
+			doMkdir "$request";;
+		"get")
+			doGet "$request";;
+		"list")
+			doList "$request";;
+		"remove")
+			doRemove "$request";;
+		"rmdir")
+			doRmdir "$request";;
+		"metamod")
+			declare metaop="$(jq ".arguments.operation" -r <<< "$request")";
+			case "$metaop" in
+			"add")
+				doMetaAdd "$request";;
+			"metaquery")
+				doMetaQuery "$request";;
+			"rem")
+				doMetaRem "$request";;
+			*)
+				returnError "$request" "unsupported meta operation: $metaop";;
+			esac;;
+		*)
+			returnError "$request" "unsupported operation: $op";;
+		esac;
+	done;
+}
+
+iget() {
+	while [ $# -gt 0 ]; do
+		if [ "${1:0:1}" = "-" ]; then
+			shift;
+		else
+			break;
+		fi;
+	done;
+
+	cp -f "$base/files/$1" "$2";
+}
+
+imeta() {
+	case "$1" in
+	"add")
+		mkdir -p "$base/metadata/$3/.meta/$(encode <<< $4)/$(encode <<< "$5")/$(encode <<< "")";;
+	"ls")
+		declare found=false;
+
+		echo "AVUs defined for dataObj $3:";
+
+		while read file; do
+			if $found; then
+				echo "----";
+			fi;
+
+			declare parts="$(sed -e 's@.*/\.meta/$@@' <<< "$file")";
+
+			echo "attribute: $(cut -d'/' -f1 <<< "$parts" | decode)";
+			echo "value: $(cut -d'/' -f2 <<< "$parts" | decode)";
+			echo "units: $(cut -d'/' -f3 <<< "$parts" | decode)";
+
+			found=true;
+		done < <(find "$base/metadata/$3/.meta/" -mindepth 2 2> /dev/null || true);
+
+		if ! $found; then
+			echo "None";
+		fi;;
+	"mod")
+		rmdir "$base/metadata/$3/.meta/$(encode <<< "$4")/$(encode <<< "$5")/$(encode <<< "")";
+		mkdir "$base/metadata/$3/.meta/$(encode <<< "$4")/$(encode <<< "${6:2}")/$(encode <<< "")";;
+	"rm")
+		if [ -n "${5:-}" ]; then
+			rm -rf "$base/metadata/$3/.meta/$(encode <<< "$4")/$(encode <<< "$5")";
+		else
+			rm -rf "$base/metadata/$3/.meta/$(encode <<< "$4")/";
+		fi;;
+	esac;
+}
+
+iput() {
+	mkdir -p "$(dirname "$base/files/$2")";
+	cp -f "$1" "$base/files/$2";
+}
+
+irm() {
+	rm -rf "$base/";
+}
+
+case "$(basename "$0")" in
+"baton-do")
+	batondo "$@";;
+"iget")
+	iget "$@";;
+"imeta")
+	imeta "$@";;
+"iput")
+	iput "$@";;
+"irm")
+	irm "$@";;
+*)
+	echo "Unknown command" >&2;
+	exit 1;;
+esac;
