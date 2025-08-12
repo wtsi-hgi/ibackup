@@ -44,9 +44,17 @@ var (
 	ErrUnknownTaskType = errors.New("unknown task type")
 )
 
+type queueDB interface {
+	RegisterProcess() (*db.Process, error)
+	PingProcess(process *db.Process) error
+	ReserveTasks(process *db.Process, n int) *db.IterErr[*db.Task]
+	TaskComplete(t *db.Task) error
+	TaskFailed(t *db.Task) error
+}
+
 type Handler struct {
 	handler *baton.Baton
-	db      *db.DB
+	db      queueDB
 	process *db.Process
 	ctx     context.Context //nolint:containedctx
 	stopFn  context.CancelCauseFunc
@@ -57,7 +65,7 @@ type Handler struct {
 	emptyFileClose func()
 }
 
-func New(db *db.DB, remoteHardlinkPath string) (*Handler, error) {
+func New(db queueDB, remoteHardlinkPath string) (*Handler, error) {
 	btn, err := baton.GetBatonHandler()
 	if err != nil {
 		return nil, err

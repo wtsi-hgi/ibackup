@@ -435,7 +435,7 @@ func isAlreadyExists(err error) bool {
 	return false
 }
 
-func (d *DB) SetSetDicoveryStarted(set *Set) error {
+func (d *DB) SetSetDiscoveryStarted(set *Set) error {
 	if !set.modifiable {
 		return ErrReadonlySet
 	}

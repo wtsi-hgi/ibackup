@@ -125,7 +125,7 @@ func TestSet(t *testing.T) {
 					So(d.SetSetHidden(setB), ShouldEqual, ErrReadonlySet)
 					So(d.SetSetWarning(setB), ShouldEqual, ErrReadonlySet)
 					So(d.SetSetError(setB), ShouldEqual, ErrReadonlySet)
-					So(d.SetSetDicoveryStarted(setB), ShouldEqual, ErrReadonlySet)
+					So(d.SetSetDiscoveryStarted(setB), ShouldEqual, ErrReadonlySet)
 					So(d.DeleteSet(setB), ShouldEqual, ErrReadonlySet)
 					So(d.CompleteDiscovery(setB, slices.Values([]*File{}), noSeq[*File]), ShouldEqual, ErrReadonlySet)
 				})

@@ -27,6 +27,7 @@ package discovery
 
 import (
 	"errors"
+	"iter"
 	"slices"
 	"strings"
 
@@ -39,13 +40,21 @@ var ErrNoFilesDiscovered = errors.New("no files discovered during discovery")
 
 func noCB(*db.File) {}
 
-func Discover(d *db.DB, set *db.Set, cb func(*db.File)) error {
+type discoverDB interface {
+	CompleteDiscovery(set *db.Set, toAdd iter.Seq[*db.File], toRemove iter.Seq[*db.File]) error
+	GetSetDiscovery(set *db.Set) *db.IterErr[*db.Discover]
+	GetSetFiles(set *db.Set) *db.IterErr[*db.File]
+	SetSetDiscoveryStarted(set *db.Set) error
+	SetSetDiscoveryFailed(set *db.Set) error
+}
+
+func Discover(d discoverDB, set *db.Set, cb func(*db.File)) error {
 	files, dirs, removedFiles, removedDirs, fofns, fodns, err := readDiscoveryFromDB(d, set)
 	if err != nil {
 		return err
 	}
 
-	if err := d.SetSetDicoveryStarted(set); err != nil {
+	if err := d.SetSetDiscoveryStarted(set); err != nil {
 		return err
 	}
 
@@ -62,7 +71,7 @@ func Discover(d *db.DB, set *db.Set, cb func(*db.File)) error {
 	return nil
 }
 
-func readDiscoveryFromDB(d *db.DB, set *db.Set) ( //nolint:gocyclo
+func readDiscoveryFromDB(d discoverDB, set *db.Set) ( //nolint:gocyclo
 	[]string, []string, []string, []string, []*db.Discover, []*db.Discover, error,
 ) {
 	var (
@@ -94,7 +103,7 @@ func readDiscoveryFromDB(d *db.DB, set *db.Set) ( //nolint:gocyclo
 	return files, dirs, removedFiles, removedDirs, fofns, fodns, nil
 }
 
-func doDiscover(d *db.DB, set *db.Set, cb func(*db.File),
+func doDiscover(d discoverDB, set *db.Set, cb func(*db.File),
 	files, dirs, removedFiles, removedDirs []string, fofns, fodns []*db.Discover) error {
 	fodnDirs, err := readFons(set.Transformer, fodns, nil)
 	if err != nil {
@@ -198,7 +207,7 @@ func collectFiles(statter *Statter,
 	return stattedFiles, <-errChan
 }
 
-func addFilesToSet(d *db.DB, set *db.Set, files []*db.File) error {
+func addFilesToSet(d discoverDB, set *db.Set, files []*db.File) error {
 	if len(files) == 0 {
 		return ErrNoFilesDiscovered
 	}
