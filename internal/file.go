@@ -31,6 +31,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -154,4 +155,19 @@ func CreateTestFileOfLength(t *testing.T, path string, n int) {
 	}
 
 	CreateTestFile(t, path, string(b))
+}
+
+// CreateTestFileWithLineContents creates a file at the given path with the given content.
+func CreateTestFileWithLineContents(t *testing.T, fileName string, lines []string) string {
+	t.Helper()
+
+	dir := t.TempDir()
+	tmpFile := filepath.Join(dir, fileName)
+	content := strings.Join(lines, "\n")
+
+	if err := os.WriteFile(tmpFile, []byte(content), 0600); err != nil { //nolint:mnd
+		t.Fatal(err)
+	}
+
+	return tmpFile
 }
