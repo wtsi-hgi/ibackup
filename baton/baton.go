@@ -34,6 +34,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -45,6 +46,7 @@ import (
 	"github.com/wtsi-hgi/ibackup/baton/meta"
 	"github.com/wtsi-hgi/ibackup/errs"
 	"github.com/wtsi-hgi/ibackup/internal"
+	"github.com/wtsi-npg/extendo/v2"
 	ex "github.com/wtsi-npg/extendo/v2"
 	logs "github.com/wtsi-npg/logshim"
 	"github.com/wtsi-npg/logshim-zerolog/zlog"
@@ -53,9 +55,9 @@ import (
 	"github.com/wtsi-ssg/wr/retry"
 )
 
-const (
-	ErrOperationTimeout = "iRODS operation timed out"
+var ErrOperationTimeout = errors.New("iRODS operation timed out")
 
+const (
 	extendoLogLevel        = logs.ErrorLevel
 	numCollClients         = 2
 	collClientMaxIndex     = numCollClients - 1
@@ -216,7 +218,7 @@ func (b *Baton) GetClientsFromPoolConcurrently(pool *ex.ClientPool, numClients u
 }
 
 func (b *Baton) ensureCollection(clientIndex int, ri ex.RodsItem) error {
-	err := timeoutOp(func() error {
+	err := timeoutOpWithPath(func() error {
 		_, errl := b.collClients[clientIndex].ListItem(ex.Args{}, ri)
 
 		return errl
@@ -225,16 +227,16 @@ func (b *Baton) ensureCollection(clientIndex int, ri ex.RodsItem) error {
 		return nil
 	}
 
-	if errors.Is(err, errs.PathError{Msg: ErrOperationTimeout, Path: ri.IPath}) {
+	if errors.Is(err, errs.PathError{Msg: ErrOperationTimeout.Error(), Path: ri.IPath}) {
 		return err
 	}
 
 	return b.createCollectionWithTimeoutAndRetries(clientIndex, ri)
 }
 
-// timeoutOp carries out op, returning any error from it. Has a 10s timeout on
-// running op, and will return a timeout error instead if exceeded.
-func timeoutOp(op retry.Operation, path string) error {
+// timeoutOpWithPath carries out op, returning any error from it. Has a 10s
+// timeout on running op, and will return a timeout error instead if exceeded.
+func timeoutOpWithPath(op retry.Operation, path string) error {
 	errCh := make(chan error, 1)
 
 	go func() {
@@ -249,7 +251,28 @@ func timeoutOp(op retry.Operation, path string) error {
 	case err = <-errCh:
 		timer.Stop()
 	case <-timer.C:
-		err = errs.PathError{Msg: ErrOperationTimeout, Path: path}
+		err = errs.PathError{Msg: ErrOperationTimeout.Error(), Path: path}
+	}
+
+	return err
+}
+
+func timeoutOp(op retry.Operation) error {
+	errCh := make(chan error, 1)
+
+	go func() {
+		errCh <- op()
+	}()
+
+	timer := time.NewTimer(operationTimeout)
+
+	var err error
+
+	select {
+	case err = <-errCh:
+		timer.Stop()
+	case <-timer.C:
+		err = ErrOperationTimeout
 	}
 
 	return err
@@ -294,14 +317,14 @@ func (b *Baton) doWithTimeoutAndRetries(op retry.Operation, clientIndex int, pat
 // makes a new client on timeout or error.
 func (b *Baton) timeoutOpAndMakeNewClientOnError(op retry.Operation, clientIndex int, path string) retry.Operation {
 	return func() error {
-		err := timeoutOp(op, path)
+		err := timeoutOpWithPath(op, path)
 		if err != nil {
 			pool := ex.NewClientPool(ex.DefaultClientPoolParams, "")
 
 			client, errp := pool.Get()
 			if errp == nil {
 				go func(oldClient *ex.Client) {
-					timeoutOp(func() error { //nolint:errcheck
+					timeoutOpWithPath(func() error { //nolint:errcheck
 						oldClient.StopIgnoreError()
 
 						return nil
@@ -396,7 +419,7 @@ func (b *Baton) closeConnections(clients []*ex.Client) {
 			continue
 		}
 
-		timeoutOp(func() error { //nolint:errcheck
+		timeoutOpWithPath(func() error { //nolint:errcheck
 			client.StopIgnoreError()
 
 			return nil
@@ -415,7 +438,7 @@ func (b *Baton) Stat(remote string) (bool, map[string]string, error) {
 
 	var it ex.RodsItem
 
-	err = timeoutOp(func() error {
+	err = timeoutOpWithPath(func() error {
 		var errl error
 		it, errl = b.metaClient.ListItem(ex.Args{Timestamp: true, AVU: true}, *requestToRodsItem("", remote))
 
@@ -431,6 +454,61 @@ func (b *Baton) Stat(remote string) (bool, map[string]string, error) {
 	}
 
 	return true, RodsItemToMeta(it), nil
+}
+
+type Stat struct {
+	MTime    time.Time
+	Size     uint64
+	Metadata []ex.AVU
+}
+
+func (b *Baton) StatWithMeta(remote string) (*Stat, error) {
+	err := b.setClientIfNotExists(&b.metaClient)
+	if err != nil {
+		return nil, err
+	}
+
+	var it ex.RodsItem
+
+	if err = timeoutOp(func() error {
+		var errl error
+		it, errl = b.metaClient.ListItem(ex.Args{Timestamp: true, AVU: true}, *requestToRodsItem("", remote))
+
+		return errl
+	}); err != nil {
+		if strings.Contains(err.Error(), extendoNotExist) {
+			return nil, fs.ErrNotExist
+		}
+
+		return nil, err
+	}
+
+	var mtime time.Time
+
+	for _, ts := range it.ITimestamps {
+		if ts.Modified.After(mtime) {
+			mtime = ts.Modified
+		}
+	}
+
+	return &Stat{
+		MTime:    mtime,
+		Size:     it.ISize,
+		Metadata: it.IAVUs,
+	}, nil
+}
+
+func (b *Baton) Mkdir(remote string) error {
+	err := b.setClientIfNotExists(&b.metaClient)
+	if err != nil {
+		return err
+	}
+
+	return timeoutOp(func() error {
+		_, err := b.metaClient.MkDir(ex.Args{Recurse: true}, ex.RodsItem{IPath: remote})
+
+		return err
+	})
 }
 
 // requestToRodsItem converts a Request in to an extendo RodsItem without AVUs.
@@ -575,13 +653,29 @@ func (b *Baton) RemoveMeta(path string, meta map[string]string) error {
 	it := RemotePathToRodsItem(path)
 	it.IAVUs = metaToAVUs(meta)
 
-	err = timeoutOp(func() error {
+	err = timeoutOpWithPath(func() error {
 		_, errl := b.metaClient.MetaRem(ex.Args{}, *it)
 
 		return errl
 	}, "remove meta error: "+path)
 
 	return err
+}
+
+func (b *Baton) RemoveAVUs(path string, avus []extendo.AVU) error {
+	err := b.setClientIfNotExists(&b.metaClient)
+	if err != nil {
+		return err
+	}
+
+	it := RemotePathToRodsItem(path)
+	it.IAVUs = avus
+
+	return timeoutOpWithPath(func() error {
+		_, errl := b.metaClient.MetaRem(ex.Args{}, *it)
+
+		return errl
+	}, "remove meta error: "+path)
 }
 
 // GetMeta gets all the metadata for the given object in iRODS. It creates a new
@@ -621,7 +715,25 @@ func (b *Baton) AddMeta(path string, meta map[string]string) error {
 	it := RemotePathToRodsItem(path)
 	it.IAVUs = metaToAVUs(meta)
 
-	err = timeoutOp(func() error {
+	err = timeoutOpWithPath(func() error {
+		_, errl := b.metaClient.MetaAdd(ex.Args{}, *it)
+
+		return errl
+	}, "add meta error: "+path)
+
+	return err
+}
+
+func (b *Baton) AddAVUs(path string, avus []extendo.AVU) error {
+	err := b.setClientIfNotExists(&b.metaClient)
+	if err != nil {
+		return err
+	}
+
+	it := RemotePathToRodsItem(path)
+	it.IAVUs = avus
+
+	err = timeoutOpWithPath(func() error {
 		_, errl := b.metaClient.MetaAdd(ex.Args{}, *it)
 
 		return errl
@@ -656,7 +768,7 @@ func (b *Baton) RemoveFile(path string) error {
 
 	it := RemotePathToRodsItem(path)
 
-	err = timeoutOp(func() error {
+	err = timeoutOpWithPath(func() error {
 		_, errl := b.removeClient.RemObj(ex.Args{}, *it)
 
 		return errl
@@ -682,7 +794,7 @@ func (b *Baton) RemoveDir(path string) error {
 		IPath: path,
 	}
 
-	err = timeoutOp(func() error {
+	err = timeoutOpWithPath(func() error {
 		_, errl := b.removeClient.RemDir(ex.Args{}, *it)
 
 		return errl
@@ -722,7 +834,7 @@ func (b *Baton) QueryMeta(dirToSearch string, meta map[string]string) ([]string,
 
 	var items []ex.RodsItem
 
-	err = timeoutOp(func() error {
+	err = timeoutOpWithPath(func() error {
 		items, err = b.metaClient.MetaQuery(ex.Args{Object: true}, *it)
 
 		return err
