@@ -387,6 +387,16 @@ func scanSet(scanner scanner) (*Set, error) { //nolint:funlen
 	return set, nil
 }
 
+func (d *DBRO) GetTrashSet(name, requester string) (*Set, error) {
+	if strings.HasPrefix(name, "\x00") {
+		return nil, ErrInvalidSetName
+	} else if strings.HasPrefix(requester, "\x00") {
+		return nil, ErrInvalidRequesterName
+	}
+
+	return scanSet(d.db.QueryRow(getSetByNameRequester, "\x00"+name, requester))
+}
+
 func (d *DBRO) GetSetsByRequester(requester string) *IterErr[*Set] {
 	if strings.HasPrefix(requester, "\x00") {
 		return iterErr[*Set](ErrInvalidRequesterName)

@@ -189,7 +189,7 @@ func TestFiles(t *testing.T) {
 				So(err, ShouldBeNil)
 				So(refs, ShouldEqual, 2)
 
-				setTrashA, err := scanSet(d.db.QueryRow(getSetByNameRequester, "\x00"+setA.Name, setA.Requester))
+				setTrashA, err := d.GetTrashSet(setA.Name, setA.Requester)
 				So(err, ShouldBeNil)
 
 				trashed := collectIter(t, d.GetSetFiles(setTrashA))
@@ -215,7 +215,7 @@ func TestFiles(t *testing.T) {
 				So(d.RemoveSetFiles(setA, slices.Values(files[2:3])), ShouldBeNil)
 				So(d.clearQueue(), ShouldBeNil)
 
-				setTrashA, err = scanSet(d.db.QueryRow(getSetByNameRequester, "\x00"+setA.Name, setA.Requester))
+				setTrashA, err = d.GetTrashSet(setA.Name, setA.Requester)
 				So(err, ShouldBeNil)
 
 				refs, err = d.countRemoteFileRefs(files[2])
