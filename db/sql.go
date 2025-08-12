@@ -435,11 +435,11 @@ const (
 		"`NEW`.`numFiles` = `OLD`.`numFiles`" +
 		")"
 	getSetStatus = "IF(`NEW`.`numFiles` = 0, " + string('0'+PendingDiscovery) + ", " +
-		"IF(`NEW`.`failing` != 0, " + string('0'+Failing) + ", " +
 		"IF(" + setFilesComplete + ", " + string('0'+Complete) + ", " +
+		"IF(`NEW`.`failed` != 0, " + string('0'+Failing) + ", " +
 		"IF(`NEW`.`uploaded` + `NEW`.`replaced` + `NEW`.`skipped` + `NEW`.`failed` + " +
 		"`NEW`.`failing` = 0, " + string('0'+PendingUpload) + ", " +
-		string('0'+PendingDiscovery) + "))))"
+		string('0'+Uploading) + "))))"
 
 	onConflictUpdate   = "ON /*! DUPLICATE KEY UPDATE -- */ CONFLICT DO UPDATE SET\n/*! */ "
 	onConflictReturnID = "ON /*! DUPLICATE KEY UPDATE `id` = LAST_INSERT_ID(`id`); -- */ " +
