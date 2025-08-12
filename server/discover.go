@@ -697,8 +697,15 @@ func (s *Server) syncWithDeletion(c *gin.Context) {
 	}
 
 	go func() {
-		if err := s.discoverSetRemovals(givenSet); err != nil {
-			s.recordSetError("error discovering set (%s) removals: %s", givenSet.ID(), err)
+		monitorRemoval := givenSet.MonitorRemovals
+		givenSet.MonitorRemovals = true
+		err := s.discoverSet(givenSet)
+		givenSet.MonitorRemovals = monitorRemoval
+
+		if err != nil {
+			s.Logger.Printf("discovery error %s: %s", givenSet.ID(), err)
+
+			return
 		}
 	}()
 

@@ -59,7 +59,6 @@ var (
 	editMakeWritable        bool
 	editHide                bool
 	editUnHide              bool
-	editSyncWithDeletion    bool
 )
 
 var (
@@ -118,10 +117,6 @@ preexisting backup set.`,
 		userSet, err := client.GetSetByName(editUser, editSetName)
 		if err != nil {
 			return err
-		}
-
-		if editSyncWithDeletion {
-			return syncWithDeletion(client, userSet)
 		}
 
 		err = editSetMetaData(userSet, editMetaData, editReason, editReview, editRemovalDate)
@@ -217,9 +212,6 @@ func init() { //nolint:funlen
 		"hide set when viewing status")
 	editCmd.Flags().BoolVar(&editUnHide, "unhide", false,
 		"unhide set when viewing status")
-	editCmd.Flags().BoolVar(&editSyncWithDeletion, "sync-with-deletion", false,
-		"one-time upload of files missing remotely or changed locally and delete "+
-			"remote files missing locally")
 
 	if err := editCmd.MarkFlagRequired("name"); err != nil {
 		die(err)
@@ -370,8 +362,4 @@ func isParentDirInSet(sid, path string, client *server.Client) (bool, error) {
 	}
 
 	return false, nil
-}
-
-func syncWithDeletion(client *server.Client, set *set.Set) error {
-	return client.SyncWithDeletion(set.ID())
 }
