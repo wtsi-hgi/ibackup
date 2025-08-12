@@ -113,7 +113,6 @@ var (
 			"`owner` TEXT NOT NULL, " +
 			"`group` TEXT NOT NULL, " +
 			"`dest` TEXT NOT NULL, " +
-			"`remote` TEXT NOT NULL, " +
 			"`firstRemote` TEXT NOT NULL, " +
 			updateCol +
 			"UNIQUE(`mountpointHash`, `inode`, `btime`)" +
@@ -490,7 +489,6 @@ const (
 		"`inode`, " +
 		"`mountpoint`, " +
 		"`btime`, " +
-		"`remote`, " +
 		"`mtime`, " +
 		"`size`, " +
 		"`fileType`, " +
@@ -498,7 +496,7 @@ const (
 		"`group`, " +
 		"`dest`, " +
 		"`firstRemote`" +
-		") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)" + setRef +
+		") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)" + setRef +
 		onConflictUpdate + colUpdate + "`mtime` = `EXCLUDED`.`mtime`, `dest` = `EXCLUDED`.`dest`, " +
 		"`size` = `EXCLUDED`.`size`, `owner` = `EXCLUDED`.`owner`, `group` = `EXCLUDED`.`group`, " +
 		returnOrSetID
@@ -615,7 +613,8 @@ const (
 		" WHERE `sets`.`nameHash` = " + virtPosition + " and `sets`.`requesterHash` = " + virtPosition + ";"
 	getSetByID         = getSetsStart + " WHERE `sets`.`id` = ?;"
 	getSetsByRequester = getSetsStart +
-		" WHERE `sets`.`requesterHash` = " + virtPosition + " ORDER BY `sets`.`id` ASC;"
+		" WHERE `sets`.`name` NOT LIKE CONCAT(CHAR(0), '%') AND " +
+		"`sets`.`requesterHash` = " + virtPosition + " ORDER BY `sets`.`id` ASC;"
 	getTrashSetID = "SELECT " +
 		"`sets`.`id` FROM `sets` " +
 		"JOIN `sets` AS `osets` ON (" +

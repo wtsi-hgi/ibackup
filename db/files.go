@@ -65,7 +65,6 @@ type File struct {
 	RemotePath        string
 	Size, Inode       uint64
 	MountPount        string
-	InodeRemote       string
 	Btime, Mtime      int64
 	Type              FileType
 	Status            FileStatus
@@ -119,7 +118,7 @@ func (d *DB) addSetFile(tx *sql.Tx, set *Set, file *File) error {
 	}
 
 	hlID, err := d.execReturningRowID(tx, createHardlink, file.Inode, file.MountPount,
-		file.Btime, file.InodeRemote, file.Mtime, file.Size, file.Type, file.Owner,
+		file.Btime, file.Mtime, file.Size, file.Type, file.Owner,
 		file.Group, file.SymlinkDest, file.RemotePath)
 	if err != nil {
 		return err
