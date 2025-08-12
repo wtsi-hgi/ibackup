@@ -63,6 +63,23 @@ const (
 	Complete
 )
 
+func (s Status) String() string {
+	switch s {
+	case PendingDiscovery:
+		return "pending discovery"
+	case PendingUpload:
+		return "pending upload"
+	case Uploading:
+		return "uploading"
+	case Failing:
+		return "failing"
+	case Complete:
+		return "complete"
+	default:
+		return "unknown"
+	}
+}
+
 // Set describes a backup set; a list of files and directories to backup, plus
 // some metadata. All properties are required unless otherwise noted.
 type Set struct {
