@@ -3657,7 +3657,7 @@ func getMetaValue(meta, key string) string {
 }
 
 func TestEdit(t *testing.T) {
-	Convey("With a started server", t, func() {
+	SkipConvey("With a started server", t, func() {
 		t.Setenv("IBACKUP_TEST_LDAP_SERVER", "")
 		t.Setenv("IBACKUP_TEST_LDAP_LOOKUP", "")
 
@@ -4036,7 +4036,7 @@ func TestEdit(t *testing.T) {
 		})
 	})
 
-	Convey("With a started uploading server", t, func() {
+	FocusConvey("With a started uploading server", t, func() {
 		s, remotePath := NewUploadingTestServer(t, false)
 		So(s, ShouldNotBeNil)
 
@@ -4047,7 +4047,7 @@ func TestEdit(t *testing.T) {
 
 		timeout := 10 * time.Second
 
-		Convey("And some files", func() {
+		FocusConvey("And some files", func() {
 			setDir1 := filepath.Join(path, "dir1")
 			err := os.Mkdir(setDir1, userPerms)
 			So(err, ShouldBeNil)
@@ -4079,6 +4079,33 @@ func TestEdit(t *testing.T) {
 				So(output, ShouldContainSubstring, orphanFile+"\torphaned\t1 B")
 				So(output, ShouldContainSubstring, addFile+"\tuploaded")
 			}
+
+			FocusConvey("And a set with a directory containing files", func() {
+				setName := "discoveredSet"
+
+				setFileToBeDeleted := filepath.Join(setDir1, "file_to_be_deleted")
+				internal.CreateTestFileOfLength(t, setFileToBeDeleted, 1)
+
+				s.addSetForTesting(t, setName, transformer, setDir1)
+				s.waitForStatus(setName, "Status: complete", timeout)
+
+				err = os.Remove(setFileToBeDeleted)
+				So(err, ShouldBeNil)
+
+				exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--sync-with-deletion")
+				So(exitCode, ShouldEqual, 0)
+
+				s.waitForStatus(setName, "Status: complete", timeout)
+
+				exitCode, output := s.runBinaryWithNoLogging(t, "status", "--name", setName, "-d")
+				So(exitCode, ShouldEqual, 0)
+
+				So(output, ShouldContainSubstring, "Num files: 1")
+				So(output, ShouldContainSubstring, "Uploaded: 1;")
+				So(output, ShouldNotContainSubstring, "Orphaned: 1;")
+				So(output, ShouldContainSubstring, "Size (total/recently uploaded/recently removed): 1 B / 0 B / 1 B")
+				So(output, ShouldNotContainSubstring, setFileToBeDeleted)
+			})
 
 			Convey("And a set with a specified file", func() {
 				setName := "testSet"

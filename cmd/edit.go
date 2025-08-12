@@ -59,6 +59,7 @@ var (
 	editMakeWritable        bool
 	editHide                bool
 	editUnHide              bool
+	editSyncWithDeletion    bool
 )
 
 var (
@@ -212,6 +213,9 @@ func init() { //nolint:funlen
 		"hide set when viewing status")
 	editCmd.Flags().BoolVar(&editUnHide, "unhide", false,
 		"unhide set when viewing status")
+	editCmd.Flags().BoolVar(&editSyncWithDeletion, "sync-with-deletion", false,
+		"one-time upload of files missing remotely or changed locally and delete "+
+			"remote files missing locally")
 
 	if err := editCmd.MarkFlagRequired("name"); err != nil {
 		die(err)
