@@ -3,6 +3,7 @@ package db
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -53,5 +54,5 @@ func (t *Transformer) Transform(path string) (string, error) {
 		return "", fmt.Errorf("path: %s: %w", path, ErrInvalidTransformPath)
 	}
 
-	return t.re.ReplaceAllString(path, t.replace), nil
+	return filepath.Clean(t.re.ReplaceAllString(path, t.replace)), nil
 }
