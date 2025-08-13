@@ -37,13 +37,10 @@ func TestFiles(t *testing.T) {
 	Convey("With a database containing sets", t, func() {
 		d := createTestDatabase(t)
 
-		mapTransformer, err := NewTransformer("mapTransformer", "^/some/(.*?)/([^/]+)(/hardlink)?", "/remote/$2")
-		So(err, ShouldBeNil)
-
 		setA := &Set{
 			Name:        "mySet",
 			Requester:   "me",
-			Transformer: mapTransformer,
+			Transformer: simpleTransformer,
 			Description: "my first set",
 		}
 
@@ -56,24 +53,24 @@ func TestFiles(t *testing.T) {
 		So(d.CreateSet(setA), ShouldBeNil)
 		So(d.CreateSet(setB), ShouldBeNil)
 
-		files := []*File{
-			{
-				LocalPath:   "/some/local/file",
-				RemotePath:  "/remote/file",
-				Size:        100,
-				Inode:       10,
-				MountPount:  "/some/",
-				Btime:       100,
-				Mtime:       200,
-				Type:        Regular,
-				Owner:       "joe",
-				Group:       "my_group",
-				SymlinkDest: "",
-				setID:       1,
-			},
+		file1 := &File{
+			LocalPath:   "/some/local/file",
+			RemotePath:  "/remote/file",
+			Size:        100,
+			Inode:       10,
+			MountPount:  "/some/",
+			Btime:       100,
+			Mtime:       200,
+			Type:        Regular,
+			Owner:       "joe",
+			Group:       "my_group",
+			SymlinkDest: "",
+			setID:       1,
 		}
 
-		Convey("You can add and retrieve files in that set", func() {
+		files := []*File{file1}
+
+		Convey("You can add and retrieve files in a set", func() {
 			var err error
 
 			So(d.CompleteDiscovery(setA, slices.Values(files), noSeq[*File]), ShouldBeNil)
@@ -88,7 +85,7 @@ func TestFiles(t *testing.T) {
 			So(setA.NumFiles, ShouldEqual, 1)
 			So(setA.SizeTotal, ShouldEqual, 100)
 
-			files = append(files, &File{
+			file2 := &File{
 				LocalPath:  "/some/other/local/file2",
 				RemotePath: "/remote/file2",
 				Size:       110,
@@ -100,9 +97,11 @@ func TestFiles(t *testing.T) {
 				Owner:      "bob",
 				Group:      "my_other_group",
 				setID:      1,
-			}, &File{
+			}
+
+			hardlink := &File{
 				LocalPath:  "/some/local/file/hardlink",
-				RemotePath: "/remote/file",
+				RemotePath: "/remote/file/hardlink",
 				Size:       120,
 				Inode:      10,
 				MountPount: "/some/",
@@ -112,7 +111,9 @@ func TestFiles(t *testing.T) {
 				Owner:      "joe",
 				Group:      "my_group",
 				setID:      1,
-			})
+			}
+
+			files = append(files, file2, hardlink)
 
 			files[0].Size = 120
 
@@ -123,8 +124,9 @@ func TestFiles(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(setA.NumFiles, ShouldEqual, 3)
 			So(setA.SizeTotal, ShouldEqual, 350)
+			So(setA.Hardlinks, ShouldEqual, 1)
 
-			files = append(files, &File{
+			symlink := &File{
 				LocalPath:   "/some/local/symlink",
 				RemotePath:  "/remote/symlink",
 				Size:        150,
@@ -135,7 +137,9 @@ func TestFiles(t *testing.T) {
 				Type:        Symlink,
 				SymlinkDest: "/path/to/target",
 				setID:       1,
-			})
+			}
+
+			files = append(files, symlink)
 
 			So(d.CompleteDiscovery(setA, slices.Values(files[3:]), noSeq[*File]), ShouldBeNil)
 			So(collectIter(t, d.GetSetFiles(setA)), ShouldResemble, files)
@@ -147,7 +151,7 @@ func TestFiles(t *testing.T) {
 
 			refs, err := d.countRemoteFileRefs(files[0])
 			So(err, ShouldBeNil)
-			So(refs, ShouldEqual, 2)
+			So(refs, ShouldEqual, 1)
 
 			refs, err = d.countRemoteFileRefs(files[1])
 			So(err, ShouldBeNil)
@@ -155,15 +159,63 @@ func TestFiles(t *testing.T) {
 
 			refs, err = d.countRemoteFileRefs(files[2])
 			So(err, ShouldBeNil)
-			So(refs, ShouldEqual, 2)
+			So(refs, ShouldEqual, 1)
 
-			So(len(collectIter(t, d.listRemoteFiles(t))), ShouldEqual, 3)
+			So(len(collectIter(t, d.listRemoteFiles(t))), ShouldEqual, 4)
 			So(len(collectIter(t, d.listInodes(t))), ShouldEqual, 3)
 
-			Convey("You can also remove files from a set", func() {
+			Convey("And with the same file in two sets", func() {
+				file1.setID = 2
+
+				So(d.CompleteDiscovery(setB, slices.Values(files[:1]), noSeq[*File]), ShouldBeNil)
+
+				refs, err = d.countRemoteFileRefs(file1)
+				So(err, ShouldBeNil)
+				So(refs, ShouldEqual, 2)
+
+				Convey("Remove on a file with the wrong setID returns an error", func() {
+					err := d.RemoveSetFiles(setA, slices.Values([]*File{file1}))
+					So(err, ShouldEqual, ErrFileNotInSet)
+				})
+
+				Convey("Trashing the file from one set does not affect the other set, inode table or remote refs", func() {
+					So(d.RemoveSetFiles(setB, slices.Values([]*File{file1})), ShouldBeNil)
+					So(d.clearQueue(), ShouldBeNil)
+
+					setB, err = d.GetSet(setB.Name, setB.Requester)
+					So(err, ShouldBeNil)
+					So(setB.NumFiles, ShouldEqual, 0)
+
+					setA, err = d.GetSet(setA.Name, setA.Requester)
+					So(err, ShouldBeNil)
+					So(setA.NumFiles, ShouldEqual, 4)
+
+					So(len(collectIter(t, d.listInodes(t))), ShouldEqual, 3)
+
+					refs, err = d.countRemoteFileRefs(file1)
+					So(err, ShouldBeNil)
+					So(refs, ShouldEqual, 2)
+
+					Convey("And if you remove the trashed file, it doesn't change the other set but does reduce remote refs", func() {
+						d.removeTrashedFile(t, setB)
+
+						refs, err = d.countRemoteFileRefs(file1)
+						So(err, ShouldBeNil)
+						So(refs, ShouldEqual, 1)
+
+						setA, err = d.GetSet(setA.Name, setA.Requester)
+						So(err, ShouldBeNil)
+						So(setA.NumFiles, ShouldEqual, 4)
+
+						So(len(collectIter(t, d.listInodes(t))), ShouldEqual, 3)
+					})
+				})
+			})
+
+			Convey("And you can trash a file from the set", func() {
 				now := time.Now().Truncate(time.Second)
 
-				So(d.RemoveSetFiles(setA, slices.Values(files[:1])), ShouldBeNil)
+				So(d.RemoveSetFiles(setA, slices.Values([]*File{file2})), ShouldBeNil)
 
 				setA, err = d.GetSet(setA.Name, setA.Requester)
 				So(err, ShouldBeNil)
@@ -175,78 +227,146 @@ func TestFiles(t *testing.T) {
 				setA, err = d.GetSet(setA.Name, setA.Requester)
 				So(err, ShouldBeNil)
 				So(setA.NumFiles, ShouldEqual, 3)
-				So(setA.SizeTotal, ShouldEqual, 380)
+				So(setA.SizeTotal, ShouldEqual, 390)
 
-				refs, err = d.countRemoteFileRefs(files[0])
-				So(err, ShouldBeNil)
-				So(refs, ShouldEqual, 2)
-
-				refs, err = d.countRemoteFileRefs(files[1])
-				So(err, ShouldBeNil)
-				So(refs, ShouldEqual, 1)
-
-				refs, err = d.countRemoteFileRefs(files[2])
-				So(err, ShouldBeNil)
-				So(refs, ShouldEqual, 2)
-
-				setTrashA, err := d.GetTrashSet(setA.Name, setA.Requester)
-				So(err, ShouldBeNil)
+				setTrashA, errg := d.GetTrashSet(setA.Name, setA.Requester)
+				So(errg, ShouldBeNil)
 
 				trashed := collectIter(t, d.GetSetFiles(setTrashA))
 				So(len(trashed), ShouldEqual, 1)
-				So(trashed[0].LocalPath, ShouldEqual, files[0].LocalPath)
+				So(trashed[0].LocalPath, ShouldEqual, file2.LocalPath)
 				So(trashed[0].LastUpload, ShouldHappenOnOrAfter, now)
 
-				So(d.RemoveSetFiles(setTrashA, slices.Values(trashed)), ShouldBeNil)
+				Convey("And you can remove the trashed file from the trash set", func() {
+					So(d.RemoveSetFiles(setTrashA, slices.Values(trashed)), ShouldBeNil)
 
-				refs, err = d.countRemoteFileRefs(files[2])
-				So(err, ShouldBeNil)
-				So(refs, ShouldEqual, 2)
+					So(d.clearQueue(), ShouldBeNil)
 
-				So(d.clearQueue(), ShouldBeNil)
+					trashed := collectIter(t, d.GetSetFiles(setTrashA))
+					So(len(trashed), ShouldEqual, 0)
 
-				refs, err = d.countRemoteFileRefs(files[2])
-				So(err, ShouldBeNil)
-				So(refs, ShouldEqual, 1)
+					Convey("Which also removes the file from the remote and inode tables", func() {
+						remoteFiles := collectIter(t, d.listRemoteFiles(t))
+						So(len(remoteFiles), ShouldEqual, 3)
+						So(remoteFiles, ShouldNotContain, file2.RemotePath)
 
-				So(len(collectIter(t, d.listRemoteFiles(t))), ShouldEqual, 3)
-				So(len(collectIter(t, d.listInodes(t))), ShouldEqual, 3)
+						refs, err = d.countRemoteFileRefs(file2)
+						So(err, ShouldBeNil)
+						So(refs, ShouldEqual, 0)
 
-				So(d.RemoveSetFiles(setA, slices.Values(files[2:3])), ShouldBeNil)
-				So(d.clearQueue(), ShouldBeNil)
-
-				setTrashA, err = d.GetTrashSet(setA.Name, setA.Requester)
-				So(err, ShouldBeNil)
-
-				refs, err = d.countRemoteFileRefs(files[2])
-				So(err, ShouldBeNil)
-				So(refs, ShouldEqual, 1)
-
-				trashFiles := d.GetSetFiles(setTrashA)
-				So(d.RemoveSetFiles(setTrashA, trashFiles.Iter), ShouldBeNil)
-				So(trashFiles.Error, ShouldBeNil)
-
-				So(d.clearQueue(), ShouldBeNil)
-
-				refs, err = d.countRemoteFileRefs(files[2])
-				So(err, ShouldBeNil)
-				So(refs, ShouldEqual, 0)
-
-				So(len(collectIter(t, d.listRemoteFiles(t))), ShouldEqual, 2)
-				So(len(collectIter(t, d.listInodes(t))), ShouldEqual, 2)
+						So(len(collectIter(t, d.listInodes(t))), ShouldEqual, 2)
+					})
+				})
 			})
 
-			Convey("Files can be removed from a set based on a path prefix", func() {
-				So(d.RemoveSetFilesInDir(setA, "/some/local/"), ShouldBeNil)
+			Convey("And you can trash a file with a hardlink", func() {
+				So(d.RemoveSetFiles(setA, slices.Values([]*File{file1})), ShouldBeNil)
+
 				So(d.clearQueue(), ShouldBeNil)
 
+				setA, err = d.GetSet(setA.Name, setA.Requester)
+				So(err, ShouldBeNil)
+				So(setA.NumFiles, ShouldEqual, 3)
+				So(setA.SizeTotal, ShouldEqual, 380)
+				So(setA.Hardlinks, ShouldEqual, 1)
+
+				Convey("And remove the trashed file", func() {
+					So(len(collectIter(t, d.listInodes(t))), ShouldEqual, 3)
+
+					d.removeTrashedFile(t, setA)
+
+					Convey("Which does not remove the inode from db", func() {
+						So(len(collectIter(t, d.listInodes(t))), ShouldEqual, 3)
+					})
+
+					Convey("And trash and remove the hardlink", func() {
+						So(d.RemoveSetFiles(setA, slices.Values([]*File{hardlink})), ShouldBeNil)
+
+						So(d.clearQueue(), ShouldBeNil)
+
+						setA, err = d.GetSet(setA.Name, setA.Requester)
+						So(err, ShouldBeNil)
+						So(setA.NumFiles, ShouldEqual, 2)
+						So(setA.Hardlinks, ShouldEqual, 0)
+
+						d.removeTrashedFile(t, setA)
+
+						Convey("Which removes the inode from db", func() {
+							So(len(collectIter(t, d.listInodes(t))), ShouldEqual, 2)
+						})
+					})
+				})
+			})
+
+			Convey("And you can trash a hardlink and the file", func() {
+				So(d.RemoveSetFiles(setA, slices.Values([]*File{file1, hardlink})), ShouldBeNil)
+
+				So(d.clearQueue(), ShouldBeNil)
+
+				setA, err = d.GetSet(setA.Name, setA.Requester)
+				So(err, ShouldBeNil)
+				So(setA.NumFiles, ShouldEqual, 2)
+				So(setA.SizeTotal, ShouldEqual, 260)
+				So(setA.Hardlinks, ShouldEqual, 0)
+
+				Convey("And remove the trashed file", func() {
+					So(len(collectIter(t, d.listInodes(t))), ShouldEqual, 3)
+
+					d.removeTrashedFile(t, setA)
+
+					Convey("Which does not remove the inode from db", func() {
+						So(len(collectIter(t, d.listInodes(t))), ShouldEqual, 2)
+					})
+				})
+			})
+
+			Convey("And files can be removed from a set based on a path prefix", func() {
 				got := collectIter(t, d.GetSetFiles(setA))
+				So(len(got), ShouldEqual, 4)
+
+				So(d.RemoveSetFilesInDir(setA, "/some/local"), ShouldBeNil)
+				So(d.clearQueue(), ShouldBeNil)
+
+				got = collectIter(t, d.GetSetFiles(setA))
 				So(len(got), ShouldEqual, 1)
 
 				files[1].Status = StatusUploaded
 				got[0].LastUpload = time.Time{}
 
 				So(got, ShouldResemble, files[1:2])
+			})
+
+			Convey("And RemoveSetFilesInDir does nothing if the provided dir is empty", func() {
+				got := collectIter(t, d.GetSetFiles(setA))
+				So(len(got), ShouldEqual, 4)
+
+				So(d.RemoveSetFilesInDir(setA, "/empty/dir/"), ShouldBeNil)
+				So(d.clearQueue(), ShouldBeNil)
+
+				got = collectIter(t, d.GetSetFiles(setA))
+				So(len(got), ShouldEqual, 4)
+			})
+
+			Convey("If the set is made read only", func() {
+				So(d.SetSetReadonly(setA), ShouldBeNil)
+
+				Convey("You can still retrieve files from it", func() {
+					got := collectIter(t, d.GetSetFiles(setA))
+					So(len(got), ShouldEqual, 4)
+				})
+
+				Convey("You cannot add files to it", func() {
+					err := d.CompleteDiscovery(setA, slices.Values(files[1:]), noSeq[*File])
+					So(err, ShouldEqual, ErrReadonlySet)
+				})
+
+				Convey("You cannot remove files from it", func() {
+					err := d.RemoveSetFilesInDir(setA, "/some/local/")
+					So(err, ShouldEqual, ErrReadonlySet)
+
+					err = d.RemoveSetFiles(setA, slices.Values([]*File{file1}))
+					So(err, ShouldEqual, ErrReadonlySet)
+				})
 			})
 		})
 
@@ -268,6 +388,19 @@ func TestFiles(t *testing.T) {
 			So(files[0].Attempts, ShouldEqual, 1)
 		})
 	})
+}
+
+func (d *DB) removeTrashedFile(t *testing.T, set *Set) {
+	t.Helper()
+
+	setTrashB, errg := d.GetTrashSet(set.Name, set.Requester)
+	So(errg, ShouldBeNil)
+
+	trashed := collectIter(t, d.GetSetFiles(setTrashB))
+
+	So(d.RemoveSetFiles(setTrashB, slices.Values(trashed)), ShouldBeNil)
+
+	So(d.clearQueue(), ShouldBeNil)
 }
 
 func (d *DBRO) listRemoteFiles(t *testing.T) *IterErr[string] {

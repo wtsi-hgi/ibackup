@@ -62,6 +62,10 @@ const (
 	StatusSkipped
 )
 
+var (
+	ErrFileNotInSet = errors.New("the provided file does not belong to the given set")
+)
+
 type File struct {
 	id                int64
 	setID             int64
@@ -168,6 +172,10 @@ func (d *DB) removeFiles(tx *sql.Tx, setID int64, toRemove iter.Seq[*File], upda
 	trash := trashSetID != setID
 
 	for file := range toRemove {
+		if file.setID != setID {
+			return ErrFileNotInSet
+		}
+
 		if trash {
 			_, err = tx.Exec(createTrashFile, trashSetID, file.id)
 			if err != nil {
