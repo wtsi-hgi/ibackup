@@ -59,7 +59,7 @@ func TestSet(t *testing.T) {
 				Requester:   "you",
 				Transformer: simpleTransformer,
 				Description: "my first set",
-				Reason:      "in case it gets deleted",
+				Reason:      Quarantine,
 				ReviewDate:  time.Now().Truncate(time.Second).In(time.UTC),
 				DeleteDate:  time.Now().Truncate(time.Second).In(time.UTC).Add(time.Hour),
 				Metadata: Metadata{

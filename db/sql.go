@@ -82,7 +82,7 @@ var (
 			"`error` TEXT NOT NULL, " +
 			"`warning` TEXT NOT NULL, " +
 			"`metadata` TEXT NOT NULL, " +
-			"`reason` TEXT NOT NULL, " +
+			"`reason` TINYINT DEFAULT 0, " +
 			"`review` DATETIME DEFAULT '0001-01-01 00:00:00', " +
 			"`delete` DATETIME DEFAULT '0001-01-01 00:00:00', " +
 			"`deleteLocal` BOOLEAN DEFAULT FALSE, " +
@@ -485,7 +485,7 @@ const (
 		"'' AS `error`, " +
 		"'' AS `warning`, " +
 		"'null' AS `metadata`, " +
-		"'' AS `reason` " +
+		"0 AS `reason` " +
 		"FROM `sets` AS `oldSet` " +
 		"WHERE `oldSet`.`id` = ?;"
 	createHardlink = "INSERT INTO `hardlinks` (" +

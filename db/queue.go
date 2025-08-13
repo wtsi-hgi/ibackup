@@ -60,7 +60,7 @@ type Task struct {
 	SetName     string
 	Owner       string
 	Group       string
-	Reason      string
+	Reason      Reason
 	ReviewDate  time.Time
 	DeleteDate  time.Time
 	Metadata    Metadata

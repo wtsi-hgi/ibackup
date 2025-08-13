@@ -80,6 +80,49 @@ func (s Status) String() string {
 	}
 }
 
+var ErrInvalidReason = errors.New("reason must be 'backup', 'archive', 'quarantine'")
+
+const (
+	Unset Reason = iota
+	Backup
+	Archive
+	Quarantine
+)
+
+type Reason uint8
+
+func (r *Reason) Set(value string) error {
+	switch value {
+	case "unset":
+		*r = Unset
+	case "backup":
+		*r = Backup
+	case "archive":
+		*r = Archive
+	case "quarantine":
+		*r = Quarantine
+	default:
+		return ErrInvalidReason
+	}
+
+	return nil
+}
+
+func (r Reason) String() string {
+	switch r {
+	case Unset:
+		return "unset"
+	case Backup:
+		return "backup"
+	case Archive:
+		return "archive"
+	case Quarantine:
+		return "quarantine"
+	default:
+		return "unknown"
+	}
+}
+
 // Set describes a backup set; a list of files and directories to backup, plus
 // some metadata. All properties are required unless otherwise noted.
 type Set struct {
@@ -209,11 +252,11 @@ type Set struct {
 	// current remove process.
 	NumObjectsToBeRemoved uint64
 
-	// numObjectsRemoved provides the number of objects already removed in the
+	// NumObjectsRemoved provides the number of objects already removed in the
 	// current remove process.
 	NumObjectsRemoved uint64
 
-	Reason     string
+	Reason     Reason
 	ReviewDate time.Time
 	DeleteDate time.Time
 
