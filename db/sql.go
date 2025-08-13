@@ -48,6 +48,7 @@ var (
 			"`transformerID` INTEGER, " +
 			"`monitorTime` INTEGER NOT NULL, " +
 			"`monitorRemovals` BOOLEAN DEFAULT FALSE, " +
+			"`archive` BOOLEAN DEFAULT FALSE, " +
 			"`description` TEXT NOT NULL, " +
 			"`numFiles` INTEGER DEFAULT 0, " +
 			"`sizeFiles` INTEGER DEFAULT 0, " +
@@ -455,6 +456,7 @@ const (
 		"`transformerID`, " +
 		"`monitorTime`, " +
 		"`monitorRemovals`, " +
+		"`archive`, " +
 		"`description`, " +
 		"`error`, " +
 		"`warning`, " +
@@ -462,7 +464,7 @@ const (
 		"`reason`, " +
 		"`review`, " +
 		"`delete`" +
-		") VALUES (?, ?, ?, ?, ?, ?, '', '', ?, ?, ?, ?);"
+		") VALUES (?, ?, ?, ?, ?, ?, ?, '', '', ?, ?, ?, ?);"
 	createTrashSet = "INSERT INTO `sets` (" +
 		"`name`, " +
 		"`requester`, " +
@@ -573,6 +575,7 @@ const (
 		"`sets`.`description`, " +
 		"`sets`.`monitorTime`, " +
 		"`sets`.`monitorRemovals`, " +
+		"`sets`.`archive`, " +
 		"`sets`.`metadata`, " +
 		"`sets`.`reason`, " +
 		"`sets`.`review`, " +

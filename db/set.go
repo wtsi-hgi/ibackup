@@ -116,14 +116,6 @@ type Set struct {
 	// deletions (ie. do a backup, not a move).
 	DeleteLocal bool
 
-	// Delete remote paths if removed from the set. Optional, defaults to no
-	// deletions (ie. keep all uploads and ignore removed Entries).
-	// DeleteRemote bool
-
-	// Receive an optional notification after this date if DeleteRemote is true
-	// and there are still Entries in this set.
-	// Expiry time.Time
-
 	// StartedDiscovery provides the last time that discovery started. This is a
 	// read-only value.
 	StartedDiscovery time.Time
@@ -155,7 +147,7 @@ type Set struct {
 	// disk was the same age.
 	Skipped uint64
 
-	// Failed provides the total number of set and discovered files in this set
+	// Failing provides the total number of set and discovered files in this set
 	// that have failed their upload once or twice since the last discovery.
 	// This is a read-only value.
 	Failing uint64
@@ -303,7 +295,7 @@ func (d *DB) createSet(tx *sql.Tx, set *Set) error {
 		return err
 	}
 
-	res, err := tx.Exec(createSet, set.Name, set.Requester, tID, set.MonitorTime, set.MonitorRemovals,
+	res, err := tx.Exec(createSet, set.Name, set.Requester, tID, set.MonitorTime, set.MonitorRemovals, set.DeleteLocal,
 		set.Description, set.Metadata, set.Reason, timeOrNull(set.ReviewDate), timeOrNull(set.DeleteDate))
 	if err != nil {
 		return err
@@ -359,6 +351,7 @@ func scanSet(scanner scanner) (*Set, error) { //nolint:funlen
 		&set.Description,
 		&set.MonitorTime,
 		&set.MonitorRemovals,
+		&set.DeleteLocal,
 		&set.Metadata,
 		&set.Reason,
 		&reviewDate,
