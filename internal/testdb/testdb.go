@@ -57,7 +57,7 @@ func CreateTestDatabase(t *testing.T) *db.DB {
 
 	os.Setenv("TMPDIR", oldTmp) //nolint:tenv
 
-	d, err := db.Init("sqlite", filepath.Join(t.TempDir(), "db?journal_mode=WAL"))
+	d, err := db.Init("sqlite", filepath.Join(t.TempDir(), "db?journal_mode=WAL&_pragma=foreign_keys(1)"))
 	So(err, ShouldBeNil)
 
 	(*dbe)(unsafe.Pointer(d)).execReturningRowID = func(tx *sql.Tx, sqlstr string, params ...any) (int64, error) {

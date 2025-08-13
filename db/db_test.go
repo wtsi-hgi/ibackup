@@ -54,7 +54,7 @@ func createTestDatabase(t *testing.T) *DB {
 			os.Setenv("TMPDIR", "/dev/shm")
 		}
 
-		uri = filepath.Join(t.TempDir(), "db?journal_mode=WAL")
+		uri = filepath.Join(t.TempDir(), "db?journal_mode=WAL&_pragma=foreign_keys(1)")
 
 		os.Setenv("TMPDIR", oldTmp)
 	}
