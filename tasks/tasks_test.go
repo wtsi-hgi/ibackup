@@ -301,7 +301,12 @@ func hardlinkPath(t *testing.T, irodsPath, local string) string {
 		ShouldBeNil,
 	)
 
-	return filepath.Join(irodsPath, "hardlinks", "i"+strconv.FormatUint(stat.Ino, 10), strconv.FormatInt(stat.Btime.Sec, 10))
+	return filepath.Join(
+		irodsPath,
+		"hardlinks",
+		"i"+strconv.FormatUint(stat.Ino, 10),
+		strconv.FormatInt(stat.Btime.Sec, 10),
+	)
 }
 
 func sortAVUs(a, b extendo.AVU) int {
