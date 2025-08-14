@@ -45,10 +45,13 @@ required --name to choose the set.
 
 This re-triggers discovery of files in any directories specified as part of your
 set. It's like starting over from the beginning, though any files already
-uploaded to iRODS and unchanged locally will not be uploaded again.
+uploaded to iRODS and unchanged locally will not be uploaded again. This is also
+the same as what happens if you had set the --monitor option and the time period
+had elapsed.
 
 If the --delete option is given, then any files that are no longer present
-locally will be deleted from iRODS.
+locally will be deleted from iRODS. This is the same as what happens if you had
+set the --monitor option along with --monitor-removals.
 
 You need to supply the ibackup server's URL in the form domain:port (using the
 IBACKUP_SERVER_URL environment variable, or overriding that with the --url
