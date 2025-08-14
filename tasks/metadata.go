@@ -77,7 +77,7 @@ func getTaskMetadata(task *db.Task) []extendo.AVU {
 
 	avus := append(make([]extendo.AVU, 0, 4+len(task.Metadata)), //nolint:mnd
 		extendo.AVU{Attr: MetaKeySet, Value: task.Requester, Units: task.SetName},
-		extendo.AVU{Attr: MetaKeyReason, Value: task.Reason, Units: requesterSet},
+		extendo.AVU{Attr: MetaKeyReason, Value: task.Reason.String(), Units: requesterSet},
 		extendo.AVU{Attr: MetaKeyReview, Value: task.ReviewDate.Format(time.RFC3339), Units: requesterSet},
 		extendo.AVU{Attr: MetaKeyRemoval, Value: task.DeleteDate.Format(time.RFC3339), Units: requesterSet},
 	)
