@@ -104,80 +104,55 @@ func TestRequest(t *testing.T) {
 		So(r.Remote, ShouldEqual, "/zone/project2/mnt/diska/file.zip")
 	})
 
-	Convey("You can make new requests using the humgen transform", t, func() {
-		r, err := NewRequestWithTransformedLocal("/lustre/scratch117/casm/team78/so11/file.txt", HumgenTransformer)
+	Convey("You can make new requests using regex transformers", t, func() {
+		registry := createTestRegistry()
+		info, ok := registry.Get("humgen")
+		So(ok, ShouldBeTrue)
+
+		humgenTransformer := info.Transformer
+
+		r, err := NewRequestWithTransformedLocal(
+			"/lustre/scratch117/casm/team78/so11/file.txt",
+			humgenTransformer,
+		)
+		So(err, ShouldNotBeNil)
+		So(err.Error(), ShouldContainSubstring, "not a valid humgen path")
+		So(r, ShouldBeNil)
+
+		r, err = NewRequestWithTransformedLocal("file.txt", humgenTransformer)
 		So(err, ShouldNotBeNil)
 		So(r, ShouldBeNil)
 
-		r, err = NewRequestWithTransformedLocal("file.txt", HumgenTransformer)
-		So(err, ShouldNotBeNil)
-		So(r, ShouldBeNil)
-
-		locals := []string{
-			"/lustre/scratch118/humgen/projects/ddd/file.txt",
-			"/lustre/scratch118/humgen/hgi/projects/ibdx10/file.txt",
-			"/lustre/scratch118/humgen/hgi/users/hp3/file.txt",
-			"/lustre/scratch119/realdata/mdt3/projects/interval_rna/file.txt",
-			"/lustre/scratch119/realdata/mdt3/teams/parts/ap32/file.txt",
-			"/lustre/scratch123/hgi/mdt2/projects/chromo_ndd/file.txt",
-			"/lustre/scratch123/hgi/mdt1/teams/martin/dm22/file.txt",
-			"/lustre/scratch123/hgi/mdt1/teams/martin/dm22/sub/folder/file.txt",
-			"/lustre/scratch125/humgen/projects_v2/ddd/file.txt",
+		r, err = NewRequestWithTransformedLocal(
 			"/lustre/scratch127/hgi/mdt1/teams_v2/martin/dm22/file.txt",
-			"/lustre/scratch127/hgi/mdt1/teams_v2/martin/dm22/sub/folder/file.txt",
-		}
+			humgenTransformer,
+		)
+		So(err, ShouldBeNil)
+		So(r.Remote, ShouldEqual, "/humgen/teams/martin/scratch127_v2/dm22/file.txt")
 
-		expected := []string{
-			"/humgen/projects/ddd/scratch118/file.txt",
-			"/humgen/projects/ibdx10/scratch118/file.txt",
-			"/humgen/users/hp3/scratch118/file.txt",
-			"/humgen/projects/interval_rna/scratch119/file.txt",
-			"/humgen/teams/parts/scratch119/ap32/file.txt",
-			"/humgen/projects/chromo_ndd/scratch123/file.txt",
-			"/humgen/teams/martin/scratch123/dm22/file.txt",
-			"/humgen/teams/martin/scratch123/dm22/sub/folder/file.txt",
-			"/humgen/projects/ddd/scratch125_v2/file.txt",
-			"/humgen/teams/martin/scratch127_v2/dm22/file.txt",
-			"/humgen/teams/martin/scratch127_v2/dm22/sub/folder/file.txt",
-		}
+		info, ok = registry.Get("gengen")
+		So(ok, ShouldBeTrue)
 
-		for i, local := range locals {
-			r, err = NewRequestWithTransformedLocal(local, HumgenTransformer)
-			So(err, ShouldBeNil)
-			So(r.Remote, ShouldEqual, expected[i])
-		}
-	})
+		gengenTransformer := info.Transformer
 
-	Convey("You can make new requests using the gengen transform", t, func() {
-		r, err := NewRequestWithTransformedLocal("/lustre/scratch117/casm/team78/so11/file.txt", GengenTransformer)
+		r, err = NewRequestWithTransformedLocal(
+			"/lustre/scratch117/casm/team78/so11/file.txt",
+			gengenTransformer,
+		)
+		So(err, ShouldNotBeNil)
+		So(err.Error(), ShouldContainSubstring, "not a valid gengen path")
+		So(r, ShouldBeNil)
+
+		r, err = NewRequestWithTransformedLocal("file.txt", gengenTransformer)
 		So(err, ShouldNotBeNil)
 		So(r, ShouldBeNil)
 
-		r, err = NewRequestWithTransformedLocal("file.txt", GengenTransformer)
-		So(err, ShouldNotBeNil)
-		So(r, ShouldBeNil)
-
-		locals := []string{
-			"/lustre/scratch126/gengen/teams/lehner/file.txt",
-			"/lustre/scratch126/gengen/projects/alpha-allostery-global/file.txt",
-			"/lustre/scratch126/gengen/teams/parts/sequencing/file.txt",
-			"/lustre/scratch125/gengen/projects_v2/ddd/file.txt",
+		r, err = NewRequestWithTransformedLocal(
 			"/lustre/scratch127/gengen/teams_v2/parts/sequencing/file.txt",
-		}
-
-		expected := []string{
-			"/humgen/gengen/teams/lehner/scratch126/file.txt",
-			"/humgen/gengen/projects/alpha-allostery-global/scratch126/file.txt",
-			"/humgen/gengen/teams/parts/scratch126/sequencing/file.txt",
-			"/humgen/gengen/projects/ddd/scratch125_v2/file.txt",
-			"/humgen/gengen/teams/parts/scratch127_v2/sequencing/file.txt",
-		}
-
-		for i, local := range locals {
-			r, err = NewRequestWithTransformedLocal(local, GengenTransformer)
-			So(err, ShouldBeNil)
-			So(r.Remote, ShouldEqual, expected[i])
-		}
+			gengenTransformer,
+		)
+		So(err, ShouldBeNil)
+		So(r.Remote, ShouldEqual, "/humgen/gengen/teams/parts/scratch127_v2/sequencing/file.txt")
 	})
 
 	Convey("You can create and stringify Stucks", t, func() {
@@ -232,7 +207,7 @@ func TestRequest(t *testing.T) {
 
 		fields := t.NumField()
 
-		for i := 0; i < fields; i++ {
+		for i := range fields {
 			if t.Field(i).Name == "LocalForJSON" || t.Field(i).Name == "RemoteForJSON" ||
 				t.Field(i).Name == "emptyFileRequest" || t.Field(i).Name == "inodeRequest" ||
 				t.Field(i).Name == "onlyUploadEmptyFile" {
@@ -253,4 +228,24 @@ func TestRequest(t *testing.T) {
 		r.Meta.LocalMeta["metaKey"] = "anotherMetaValue"
 		So(r.Meta, ShouldNotResemble, clone.Meta)
 	})
+}
+
+func createTestRegistry() *TransformerRegistry {
+	registry := NewTransformerRegistry()
+
+	registry.Register( //nolint:errcheck
+		"humgen",
+		"Human Genetics path transformer",
+		humgenMatchRegex,
+		humgenReplaceRegex,
+	)
+
+	registry.Register( //nolint:errcheck
+		"gengen",
+		"Genetics and Genomics path transformer",
+		humgenMatchRegex,
+		gengenReplaceRegex,
+	)
+
+	return registry
 }

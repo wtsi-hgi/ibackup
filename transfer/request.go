@@ -32,7 +32,6 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -60,8 +59,6 @@ const (
 	stuckTimeFormat                            = "02/01/06 15:04 MST"
 	defaultDirPerms                            = 0777
 )
-
-var genTransformerRegex = regexp.MustCompile(`^/lustre/(scratch[^/]+)(/[^/]*)+?/(projects|teams|users)(_v2)?/([^/]+)/`)
 
 // Stuck is used to provide details of a potentially "stuck" upload Request.
 type Stuck struct {
@@ -455,10 +452,6 @@ func (r *Request) createSymlinkIfRequired() error {
 	return os.Symlink(r.Symlink, r.Local)
 }
 
-// PathTransformer is a function that given a local path, returns the
-// corresponding remote path.
-type PathTransformer func(local string) (remote string, err error)
-
 // NewRequestWithTransformedLocal takes a local path string, uses the given
 // PathTransformer to generate the corresponding remote path, and returns a
 // Request with Local and Remote set.
@@ -469,45 +462,4 @@ func NewRequestWithTransformedLocal(local string, pt PathTransformer) (*Request,
 	}
 
 	return &Request{Local: local, Remote: remote, Meta: NewMeta()}, nil
-}
-
-// PrefixTransformer returns a PathTransformer that will replace localPrefix
-// in any path given to it with remotePrefix, and return the result.
-//
-// If the given path does not start with localPrefix, returns the path prefixed
-// with remotePrefix (treating the given path as relative to localPrefix).
-func PrefixTransformer(localPrefix, remotePrefix string) PathTransformer {
-	return func(local string) (string, error) {
-		return filepath.Join(remotePrefix, strings.TrimPrefix(local, localPrefix)), nil
-	}
-}
-
-// HumgenTransformer is a PathTransformer that will convert a local "lustre"
-// path to a "canonical" path in the humgen iRODS zone.
-//
-// This transform is specific to the "humgen" group at the Sanger Institute.
-func HumgenTransformer(local string) (string, error) {
-	local, err := filepath.Abs(local)
-	if err != nil {
-		return "", err
-	}
-
-	if !genTransformerRegex.MatchString(local) {
-		return "", errs.PathError{Msg: ErrNotHumgenLustre, Path: local}
-	}
-
-	return genTransformerRegex.ReplaceAllString(local, "/humgen/$3/$5/$1$4/"), nil
-}
-
-// GengenTransformer is a PathTransformer that will convert a local "lustre"
-// path to a "canonical" path in the humgen iRODS zone, for the gengen BoM.
-//
-// This transform is specific to the "gengen" group at the Sanger Institute.
-func GengenTransformer(local string) (string, error) {
-	humgenPath, err := HumgenTransformer(local)
-	if err != nil {
-		return "", err
-	}
-
-	return strings.Replace(humgenPath, "/humgen", "/humgen/gengen", 1), nil
 }
