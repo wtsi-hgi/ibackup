@@ -236,19 +236,19 @@ func (c *Client) MergeDirs(setID string, paths []string) error {
 // for the given set, and now want it to discover the files that exist and
 // discover the contents of the directories, and start the process of backing up
 // the files.
-func (c *Client) TriggerDiscovery(setID string) error {
-	resp, err := c.request().Get(EndPointAuthDiscovery + "/" + setID)
-	if err != nil {
-		return err
+//
+// This will delete remote files missing locally if the set has monitor-removals
+// turned on, or if the force_removals parameter is passed as true.
+func (c *Client) TriggerDiscovery(setID string, forceRemovals ...bool) error {
+	var fr bool
+
+	if len(forceRemovals) == 1 {
+		fr = forceRemovals[0]
 	}
 
-	return responseToErr(resp)
-}
+	endpoint := fmt.Sprintf("%s/%s?force_removals=%t", EndPointAuthDiscovery, setID, fr)
 
-// SyncWithDeletion starts the process of doing a one-time upload of files
-// missing remotely or changed locally and delete remote files missing locally
-func (c *Client) SyncWithDeletion(setID string) error {
-	resp, err := c.request().Get(EndPointAuthSyncWithDeletion + "/" + setID)
+	resp, err := c.request().Get(endpoint)
 	if err != nil {
 		return err
 	}

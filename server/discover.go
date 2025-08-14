@@ -172,7 +172,8 @@ func (dc *discoveryCoordinator) OnRemovalsDone(sid string, fn func()) {
 }
 
 // triggerDiscovery triggers the file discovery process for the set with the id
-// specified in the URL parameter.
+// specified in the URL parameter. Checks a force_removals query parameter and
+// forces removals if it is set to true.
 //
 // LoadSetDB() must already have been called. This is called when there is a GET
 // on /rest/v1/auth/discover/[id].
@@ -188,11 +189,14 @@ func (s *Server) triggerDiscovery(c *gin.Context) {
 		return
 	}
 
-	if err := s.discoverSet(givenSet); err != nil {
-		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+	forceRemovals := c.Query("force_removals") == "true"
 
-		return
-	}
+	go func() {
+		err := s.discoverSet(givenSet, forceRemovals)
+		if err != nil {
+			s.Logger.Printf("discovery error %s: %s", givenSet.ID(), err)
+		}
+	}()
 
 	c.Status(http.StatusOK)
 }
@@ -692,26 +696,4 @@ func (s *Server) markFailedEntries(given *set.Set) {
 			}
 		}
 	})
-}
-
-func (s *Server) syncWithDeletion(c *gin.Context) {
-	givenSet, ok := s.validateSet(c)
-	if !ok {
-		return
-	}
-
-	if givenSet.IsTrash() {
-		c.AbortWithError(http.StatusBadRequest, ErrTrashSetName) //nolint:errcheck
-
-		return
-	}
-
-	go func() {
-		err := s.discoverSet(givenSet, true)
-		if err != nil {
-			s.Logger.Printf("discovery error %s: %s", givenSet.ID(), err)
-		}
-	}()
-
-	c.Status(http.StatusOK)
 }

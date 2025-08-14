@@ -50,23 +50,22 @@ import (
 )
 
 const (
-	setPath              = "/set"
-	filePath             = "/files"
-	dirPath              = "/dirs"
-	entryPath            = "/entries"
-	uploadedEntryPath    = "/uploaded_entries"
-	lastStateEntryPath   = "/laststate_entries"
-	exampleEntryPath     = "/example_entries"
-	failedEntryPath      = "/failed_entries"
-	discoveryPath        = "/discover"
-	syncWithDeletionPath = "/sync_with_deletion"
-	requestsPath         = "/requests"
-	workingPath          = "/working"
-	fileStatusPath       = "/file_status"
-	fileRetryPath        = "/retry"
-	removePathsPath      = "/remove_paths"
-	trashPathsPath       = "/trash_paths"
-	removeExpiredPath    = "/remove_expired"
+	setPath            = "/set"
+	filePath           = "/files"
+	dirPath            = "/dirs"
+	entryPath          = "/entries"
+	uploadedEntryPath  = "/uploaded_entries"
+	lastStateEntryPath = "/laststate_entries"
+	exampleEntryPath   = "/example_entries"
+	failedEntryPath    = "/failed_entries"
+	discoveryPath      = "/discover"
+	requestsPath       = "/requests"
+	workingPath        = "/working"
+	fileStatusPath     = "/file_status"
+	fileRetryPath      = "/retry"
+	removePathsPath    = "/remove_paths"
+	trashPathsPath     = "/trash_paths"
+	removeExpiredPath  = "/remove_expired"
 
 	// EndPointAuthSet is the endpoint for getting and setting sets.
 	EndPointAuthSet = gas.EndPointAuth + setPath
@@ -88,11 +87,6 @@ const (
 	// excluding orphaned entries.
 	EndPointAuthLastStateEntries = gas.EndPointAuth + lastStateEntryPath
 
-	// EndPointSyncWithDeletion is the endpoint for one-time upload of files
-	// missing remotely or changed locally and delete remote files missing
-	// locally
-	EndPointAuthSyncWithDeletion = gas.EndPointAuth + syncWithDeletionPath
-
 	// EndPointAuthExampleEntry is the endpoint for getting set entries.
 	EndPointAuthExampleEntry = gas.EndPointAuth + exampleEntryPath
 
@@ -100,7 +94,11 @@ const (
 	// entries.
 	EndPointAuthFailedEntries = gas.EndPointAuth + failedEntryPath
 
-	// EndPointAuthDiscovery is the endpoint for triggering set discovery.
+	// EndPointAuthDiscovery is the endpoint for triggering set discovery which
+	// will ultimately result in the upload of files missing remotely or changed
+	// locally and will delete remote files missing locally if the set has
+	// monitor-removals turned on, or if the force_removals parameter is passed
+	// as true.
 	EndPointAuthDiscovery = gas.EndPointAuth + discoveryPath
 
 	// EndPointAuthRequests is the endpoint for getting file upload requests.
@@ -295,8 +293,6 @@ func (s *Server) addDBEndpoints(authGroup *gin.RouterGroup) { //nolint:funlen
 	idParam := "/:" + paramSetID
 
 	authGroup.GET(discoveryPath+idParam, s.triggerDiscovery)
-
-	authGroup.GET(syncWithDeletionPath+idParam, s.syncWithDeletion)
 
 	authGroup.GET(entryPath+idParam, s.getEntries)
 	authGroup.GET(uploadedEntryPath+idParam, s.getUploadedEntries)

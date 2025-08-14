@@ -4385,26 +4385,27 @@ func TestSync(t *testing.T) {
 			setFile2 := filepath.Join(setDir, "file2")
 			internal.CreateTestFileOfLength(t, setFile2, 1)
 
-			// Convey("sync requires --name", func() {
-			// 	exitCode, _ = s.runBinary(t, "sync")
-			// 	So(exitCode, ShouldEqual, 1)
-			// })
+			Convey("sync requires --name", func() {
+				s.confirmOutputContains(t, []string{"sync"}, 1,
+					cmd.ErrSyncNoName.Error())
+			})
 
-			// Convey("sync without --delete uploads new files without deleting locally deleted ones", func() {
-			// 	exitCode, _ = s.runBinary(t, "sync", "--name", setName)
-			// 	So(exitCode, ShouldEqual, 0)
+			Convey("sync without --delete uploads new files without deleting locally deleted ones", func() {
+				exitCode, _ = s.runBinary(t, "sync", "--name", setName)
+				So(exitCode, ShouldEqual, 0)
 
-			// 	s.waitForStatus(setName, "Status: complete", timeout)
+				s.waitForStatus(setName, "Status: complete", timeout)
 
-			// 	exitCode, output = s.runBinaryWithNoLogging(t, "status", "--name", setName, "-d")
-			// 	So(exitCode, ShouldEqual, 0)
+				exitCode, output = s.runBinaryWithNoLogging(t, "status", "--name", setName, "-d")
+				So(exitCode, ShouldEqual, 0)
 
-			// 	So(output, ShouldContainSubstring, "Num files: 3")
-			// 	So(output, ShouldContainSubstring, "Uploaded: 2;")
-			// 	So(output, ShouldContainSubstring, "Orphaned: 1;")
-			// 	So(output, ShouldContainSubstring, "Size (total/recently uploaded/recently removed): 3 B / 1 B / 0 B")
-			// 	So(output, ShouldContainSubstring, setFileToBeDeleted)
-			// })
+				So(output, ShouldContainSubstring, "Num files: 3")
+				So(output, ShouldContainSubstring, "Uploaded: 1;")
+				So(output, ShouldContainSubstring, "Skipped: 1;")
+				So(output, ShouldContainSubstring, "Orphaned: 1;")
+				So(output, ShouldContainSubstring, "Size (total/recently uploaded/recently removed): 3 B / 1 B / 0 B")
+				So(output, ShouldContainSubstring, setFileToBeDeleted)
+			})
 
 			Convey("sync with --delete uploads new files and deletes locally deleted ones", func() {
 				exitCode, _ = s.runBinary(t, "sync", "--name", setName, "--delete")

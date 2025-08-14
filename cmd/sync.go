@@ -29,8 +29,6 @@ import (
 	"errors"
 
 	"github.com/spf13/cobra"
-	"github.com/wtsi-hgi/ibackup/server"
-	"github.com/wtsi-hgi/ibackup/set"
 )
 
 var syncUser string
@@ -66,11 +64,7 @@ var syncCmd = &cobra.Command{
 			return err
 		}
 
-		if syncDelete {
-			return syncWithDeletion(client, userSet)
-		}
-
-		return nil
+		return client.TriggerDiscovery(userSet.ID(), syncDelete)
 	},
 }
 
@@ -85,8 +79,4 @@ func init() { //nolint:funlen
 	if err := syncCmd.MarkFlagRequired("name"); err != nil {
 		die(err)
 	}
-}
-
-func syncWithDeletion(client *server.Client, set *set.Set) error {
-	return client.SyncWithDeletion(set.ID())
 }
