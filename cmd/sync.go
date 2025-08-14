@@ -61,13 +61,6 @@ environment variable, or overriding that with the --cert argument).
 If you are the user who started the ibackup server, you can use the --user
 option to retry the given requestor's backup sets, instead of your own.	
 `,
-	PreRunE: func(_ *cobra.Command, _ []string) error {
-		if syncSetName == "" {
-			return ErrSetNoName
-		}
-
-		return nil
-	},
 	RunE: func(_ *cobra.Command, _ []string) error {
 		ensureURLandCert()
 

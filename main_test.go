@@ -4356,7 +4356,7 @@ func TestSync(t *testing.T) {
 
 		Convey("sync requires --name", func() {
 			s.confirmOutputContains(t, []string{"sync"}, 1,
-				cmd.ErrSetNoName.Error())
+				"Error: required flag(s) \"name\" not set")
 		})
 
 		Convey("And a set with some uploaded files, one of which is then deleted locally and "+
@@ -4448,7 +4448,7 @@ func TestRetry(t *testing.T) {
 
 		Convey("retry requires --name", func() {
 			s.confirmOutputContains(t, []string{"retry"}, 1,
-				cmd.ErrSetNoName.Error())
+				"Error: required flag(s) \"name\" not set")
 		})
 
 		Convey("And a set with a file that fails to upload", func() {
