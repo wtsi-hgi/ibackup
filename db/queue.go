@@ -191,7 +191,11 @@ func scanTask(process int64) func(scanner) (*Task, error) { //nolint:funlen
 }
 
 func inodePath(mountPoint string, inode uint64, bTime int64) string {
-	return path.Join(mountPoint, strconv.FormatUint(inode, 10), strconv.FormatInt(bTime, 10))
+	if bTime == 0 {
+		return path.Join(mountPoint, strconv.FormatUint(inode, 10))
+	}
+
+	return path.Join(mountPoint, "i"+strconv.FormatUint(inode, 10), strconv.FormatInt(bTime, 10))
 }
 
 func (d *DB) TaskComplete(t *Task) error { //nolint:gocyclo

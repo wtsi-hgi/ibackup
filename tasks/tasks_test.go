@@ -153,7 +153,7 @@ func TestTasks(t *testing.T) {
 				{Attr: MetaKeyGroup, Value: group.Name},
 				{Attr: MetaKeyMtime, Value: stat.Metadata[2].Value},
 				{Attr: MetaKeyOwner, Value: currentUser.Username},
-				{Attr: MetaKeyReason, Value: "", Units: "me mySet"},
+				{Attr: MetaKeyReason, Value: db.Unset.String(), Units: "me mySet"},
 				{
 					Attr:  MetaKeyRemoteHardlink,
 					Value: hardlinkPath(t, irodsPath, filepath.Join(setADir, string('A'+byte(i))+"File")),
@@ -214,7 +214,7 @@ func TestTasks(t *testing.T) {
 
 		Convey("You can do remove tasks", func() {
 			inodePath := func(file *db.File) string {
-				return path.Join(irodsPath, "hardlinks", strconv.FormatUint(file.Inode, 10), strconv.FormatInt(file.Btime, 10))
+				return path.Join(irodsPath, "hardlinks", "i"+strconv.FormatUint(file.Inode, 10), strconv.FormatInt(file.Btime, 10))
 			}
 
 			var keepFile, removeFile *db.File
@@ -301,7 +301,7 @@ func hardlinkPath(t *testing.T, irodsPath, local string) string {
 		ShouldBeNil,
 	)
 
-	return filepath.Join(irodsPath, "hardlinks", strconv.FormatUint(stat.Ino, 10), strconv.FormatInt(stat.Btime.Sec, 10))
+	return filepath.Join(irodsPath, "hardlinks", "i"+strconv.FormatUint(stat.Ino, 10), strconv.FormatInt(stat.Btime.Sec, 10))
 }
 
 func sortAVUs(a, b extendo.AVU) int {
