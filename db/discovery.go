@@ -36,13 +36,15 @@ const (
 	DiscoverFOFN DiscoveryType = iota
 	DiscoverFOFNBase64
 	DiscoverFOFNQuoted
+	DiscoverFOFNNull
 	DiscoverFODN
 	DiscoverFODNBase64
 	DiscoverFODNQuoted
-	DiscoverFile
-	DiscoverDirectory
+	DiscoverFODNNull
 	DiscoverRemovedFile
 	DiscoverRemovedDirectory
+	DiscoverFile
+	DiscoverDirectory
 )
 
 const discoveryTimeout = "discovery timed out"

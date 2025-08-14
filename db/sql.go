@@ -102,9 +102,11 @@ var (
 			string('0'+DiscoverFOFN) + ", " +
 			string('0'+DiscoverFOFNBase64) + ", " +
 			string('0'+DiscoverFOFNQuoted) + ", " +
+			string('0'+DiscoverFOFNNull) + ", " +
 			string('0'+DiscoverFODN) + ", " +
 			string('0'+DiscoverFODNBase64) + ", " +
-			string('0'+DiscoverFODNQuoted) +
+			string('0'+DiscoverFODNQuoted) + ", " +
+			string('0'+DiscoverFODNNull) +
 			")) /*! INVISIBLE */, " +
 			"UNIQUE(`setID`, `pathHash`, `typeIsFons`), " +
 			"FOREIGN KEY(`setID`) REFERENCES `sets`(`id`) ON DELETE CASCADE" +
