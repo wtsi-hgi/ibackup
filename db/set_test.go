@@ -262,21 +262,24 @@ func TestSet(t *testing.T) {
 					})
 				})
 
-				SkipConvey("You can change the inode and size of a file and set counts will be updated correctly", func() {
+				Convey("You can change the inode, size and type of a file and set counts will be updated correctly", func() {
 					So(d.clearQueue(), ShouldBeNil)
 
 					setB = d.getSetFromDB(setB)
 					So(setB.NumFiles, ShouldEqual, 11)
 					So(setB.SizeTotal, ShouldEqual, 1100)
+					So(setB.Symlinks, ShouldEqual, 3)
 
-					files[0].Size += 200 // check this is fine for the hardlink too :p
-					files[0].Inode = 33333333
+					files[1].Size += 200
+					files[1].Inode = 33333333
+					files[1].Type = Symlink
 
-					So(d.CompleteDiscovery(setB, slices.Values(files), noSeq[*File]), ShouldBeNil)
+					So(d.CompleteDiscovery(setB, slices.Values(files[:2]), noSeq[*File]), ShouldBeNil)
 
 					setB = d.getSetFromDB(setB)
 					So(setB.NumFiles, ShouldEqual, 11)
 					So(setB.SizeTotal, ShouldEqual, 1300)
+					So(setB.Symlinks, ShouldEqual, 4)
 				})
 
 				Convey("If one of the files is found missing before rediscovery", func() {
