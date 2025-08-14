@@ -33,6 +33,8 @@ import (
 	"strings"
 )
 
+const configFileEqualSplitParts = 2
+
 // TransformerRegistry manages a collection of named RegexTransformer.
 type TransformerRegistry struct {
 	transformers map[string]*RegexTransformer
@@ -98,60 +100,10 @@ func (tr *TransformerRegistry) GetAll() []TransformerInfo {
 // ...
 func ParseConfig(config io.Reader) (*TransformerRegistry, error) {
 	registry := NewTransformerRegistry()
-
-	var currentSection, name, description, match, replace string
-
 	scanner := bufio.NewScanner(config)
 
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-
-		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
-			if currentSection == "transformer" && name != "" && match != "" && replace != "" {
-				err := registry.Register(name, description, match, replace)
-				if err != nil {
-					return nil, err
-				}
-
-				name, description, match, replace = "", "", "", ""
-			}
-
-			currentSection = strings.TrimSuffix(strings.TrimPrefix(line, "["), "]")
-
-			continue
-		}
-
-		if currentSection == "transformer" {
-			parts := strings.SplitN(line, "=", 2)
-			if len(parts) != 2 {
-				continue
-			}
-
-			key := strings.TrimSpace(parts[0])
-			value := strings.TrimSpace(parts[1])
-
-			switch key {
-			case "name":
-				name = value
-			case "description":
-				description = value
-			case "match":
-				match = value
-			case "replace":
-				replace = value
-			}
-		}
-	}
-
-	if currentSection == "transformer" && name != "" && match != "" && replace != "" {
-		err := registry.Register(name, description, match, replace)
-		if err != nil {
-			return nil, err
-		}
+	if err := processConfigLines(scanner, registry); err != nil {
+		return nil, err
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -159,4 +111,105 @@ func ParseConfig(config io.Reader) (*TransformerRegistry, error) {
 	}
 
 	return registry, nil
+}
+
+type transformerData struct {
+	name, description, match, replace string
+}
+
+func processConfigLines(scanner *bufio.Scanner, registry *TransformerRegistry) error {
+	transformer := &transformerData{}
+	currentSection := ""
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+
+		if shouldSkipLine(line) {
+			continue
+		}
+
+		if isSectionHeader(line) {
+			if err := handleSectionTransition(registry, currentSection, transformer); err != nil {
+				return err
+			}
+
+			currentSection = extractSectionName(line)
+
+			continue
+		}
+
+		processLineInSection(line, currentSection, transformer)
+	}
+
+	return finalizeConfiguration(registry, currentSection, transformer)
+}
+
+func shouldSkipLine(line string) bool {
+	return line == "" || strings.HasPrefix(line, "#")
+}
+
+func isSectionHeader(line string) bool {
+	return strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]")
+}
+
+func handleSectionTransition(registry *TransformerRegistry, currentSection string, transformer *transformerData) error {
+	if shouldRegisterTransformer(currentSection, transformer) {
+		return registerAndReset(registry, transformer)
+	}
+
+	return nil
+}
+
+func shouldRegisterTransformer(section string, t *transformerData) bool {
+	return section == "transformer" && t.name != "" && t.match != "" && t.replace != ""
+}
+
+func registerAndReset(registry *TransformerRegistry, t *transformerData) error {
+	err := registry.Register(t.name, t.description, t.match, t.replace)
+	if err != nil {
+		return err
+	}
+
+	t.name, t.description, t.match, t.replace = "", "", "", ""
+
+	return nil
+}
+
+func extractSectionName(line string) string {
+	return strings.TrimSuffix(strings.TrimPrefix(line, "["), "]")
+}
+
+func processLineInSection(line, currentSection string, transformer *transformerData) {
+	if currentSection == "transformer" {
+		processTransformerProperty(line, transformer)
+	}
+}
+
+func processTransformerProperty(line string, t *transformerData) {
+	parts := strings.SplitN(line, "=", -1)
+	if len(parts) != configFileEqualSplitParts {
+		return
+	}
+
+	key := strings.TrimSpace(parts[0])
+	value := strings.TrimSpace(parts[1])
+
+	switch key {
+	case "name":
+		t.name = value
+	case "description":
+		t.description = value
+	case "match":
+		t.match = value
+	case "replace":
+		t.replace = value
+	}
+}
+
+func finalizeConfiguration(registry *TransformerRegistry, currentSection string, transformer *transformerData) error {
+	if shouldRegisterTransformer(currentSection, transformer) {
+		return registry.Register(transformer.name, transformer.description, transformer.match, transformer.replace)
+	}
+
+	return nil
 }
