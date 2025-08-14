@@ -217,8 +217,8 @@ func TestSet(t *testing.T) {
 					})
 
 					Convey("The second set will have different counts once the queue is cleared", func() {
-						process, err := d.RegisterProcess()
-						So(err, ShouldBeNil)
+						process, errr := d.RegisterProcess()
+						So(errr, ShouldBeNil)
 
 						So(d.TaskComplete(collectIter(t, d.ReserveTasks(process, 1))[0]), ShouldBeNil)
 
@@ -246,22 +246,37 @@ func TestSet(t *testing.T) {
 					So(setB.SizeTotal, ShouldEqual, 1100)
 
 					files[0].Size += 100
-					files[1].Size += 200
-					files[len(files)-1].Size += 300
+					files[1].Size += 200 // same inode as files[2]
 
-					So(d.CompleteDiscovery(setB, slices.Values(files), noSeq[*File]), ShouldBeNil)
+					So(d.CompleteDiscovery(setB, slices.Values(files[:2]), noSeq[*File]), ShouldBeNil)
 
-					Convey("The set counts are updated", func() {
+					Convey("The size is updated for all files that share the same inode", func() {
 						setB = d.getSetFromDB(setB)
 						So(setB.NumFiles, ShouldEqual, 11)
-						So(setB.SizeTotal, ShouldEqual, 1700)
+						So(setB.SizeTotal, ShouldEqual, 1600)
 
 						So(d.clearQueue(), ShouldBeNil)
 
 						setB = d.getSetFromDB(setB)
-						So(setB.SizeUploaded, ShouldEqual, 1700)
+						So(setB.SizeUploaded, ShouldEqual, 500)
 					})
+				})
 
+				SkipConvey("You can change the inode and size of a file and set counts will be updated correctly", func() {
+					So(d.clearQueue(), ShouldBeNil)
+
+					setB = d.getSetFromDB(setB)
+					So(setB.NumFiles, ShouldEqual, 11)
+					So(setB.SizeTotal, ShouldEqual, 1100)
+
+					files[0].Size += 200 // check this is fine for the hardlink too :p
+					files[0].Inode = 33333333
+
+					So(d.CompleteDiscovery(setB, slices.Values(files), noSeq[*File]), ShouldBeNil)
+
+					setB = d.getSetFromDB(setB)
+					So(setB.NumFiles, ShouldEqual, 11)
+					So(setB.SizeTotal, ShouldEqual, 1300)
 				})
 
 				Convey("If one of the files is found missing before rediscovery", func() {
@@ -322,7 +337,7 @@ func TestSet(t *testing.T) {
 					})
 				})
 
-				Convey("And given a removal on 6 files still running", func() {
+				Convey("And given a removal that's still running", func() {
 					So(d.RemoveSetFiles(setB, slices.Values(files[:6])), ShouldBeNil)
 
 					setB = d.getSetFromDB(setB)
@@ -331,8 +346,8 @@ func TestSet(t *testing.T) {
 					So(setB.SizeRemoved, ShouldEqual, 0)
 					So(setB.NumFiles, ShouldEqual, 11)
 
-					process, err := d.RegisterProcess()
-					So(err, ShouldBeNil)
+					process, errr := d.RegisterProcess()
+					So(errr, ShouldBeNil)
 
 					for n := range 3 {
 						var task *Task
@@ -355,6 +370,7 @@ func TestSet(t *testing.T) {
 					}
 
 					So(setB.NumFiles, ShouldEqual, 8)
+					So(setB.SizeTotal, ShouldEqual, 800)
 
 					Convey("If discovery starts on a different file, removal queue is unaffected", func() {
 						newFileSlice := slices.Collect(genFiles(1))
@@ -366,6 +382,7 @@ func TestSet(t *testing.T) {
 						So(setB.NumObjectsRemoved, ShouldEqual, 3)
 						So(setB.NumObjectsToBeRemoved, ShouldEqual, 6)
 						So(setB.SizeRemoved, ShouldEqual, 300)
+						So(setB.SizeTotal, ShouldEqual, 900)
 						So(setB.NumFiles, ShouldEqual, 9)
 
 						Convey("And when tasks complete, counts are correct", func() {
@@ -377,6 +394,7 @@ func TestSet(t *testing.T) {
 							So(setB.SizeRemoved, ShouldEqual, 600)
 							So(setB.NumFiles, ShouldEqual, 6)
 							So(setB.SizeUploaded, ShouldEqual, 600)
+							So(setB.SizeTotal, ShouldEqual, 600)
 						})
 					})
 
@@ -388,6 +406,7 @@ func TestSet(t *testing.T) {
 						So(setB.NumObjectsToBeRemoved, ShouldEqual, 5)
 						So(setB.SizeRemoved, ShouldEqual, 300)
 						So(setB.NumFiles, ShouldEqual, 8)
+						So(setB.SizeTotal, ShouldEqual, 800)
 
 						Convey("And if you add more files to be removed, the counts are updated", func() {
 							So(d.RemoveSetFiles(setB, slices.Values(files[4:5])), ShouldBeNil)
@@ -397,6 +416,7 @@ func TestSet(t *testing.T) {
 							So(setB.NumObjectsToBeRemoved, ShouldEqual, 6)
 							So(setB.SizeRemoved, ShouldEqual, 300)
 							So(setB.NumFiles, ShouldEqual, 8)
+							So(setB.SizeTotal, ShouldEqual, 800)
 						})
 					})
 				})
@@ -421,8 +441,7 @@ func TestSet(t *testing.T) {
 					Convey("And you can still add files, which updates counts", func() {
 						So(d.CompleteDiscovery(setB, genFiles(5), noSeq[*File]), ShouldBeNil)
 
-						setB, err = d.GetSet("my2ndSet", "me")
-						So(err, ShouldBeNil)
+						setB = d.getSetFromDB(setB)
 						So(setB.Status, ShouldEqual, PendingUpload)
 						So(setB.NumFiles, ShouldEqual, 5)
 						So(setB.SizeTotal, ShouldEqual, 500)
