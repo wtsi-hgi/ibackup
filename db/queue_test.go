@@ -580,6 +580,77 @@ func TestQueue(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(processes, ShouldEqual, 1)
 		})
+
+		Convey("Updating the inode of a file creates a removal task for the original inode", func() {
+			files := slices.Collect(genFiles(1))
+
+			So(d.CompleteDiscovery(setA, slices.Values(files), noSeq[*File]), ShouldBeNil)
+
+			total, reserved, err := d.CountTasks()
+			So(err, ShouldBeNil)
+			So(total, ShouldEqual, 1)
+			So(reserved, ShouldEqual, 0)
+			So(d.clearQueue(), ShouldBeNil)
+
+			files[0].Inode++
+
+			So(d.CompleteDiscovery(setA, slices.Values(files), noSeq[*File]), ShouldBeNil)
+
+			total, reserved, err = d.CountTasks()
+			So(err, ShouldBeNil)
+			So(total, ShouldEqual, 2)
+			So(reserved, ShouldEqual, 0)
+
+			var tasks []*Task
+
+			for {
+				gotTasks := collectIter(t, d.ReserveTasks(pidA, 1))
+				if len(gotTasks) == 0 {
+					break
+				}
+
+				for _, task := range gotTasks {
+					So(d.TaskComplete(task), ShouldBeNil)
+				}
+
+				tasks = append(tasks, gotTasks...)
+			}
+
+			expectedStart := "\x00" + files[0].RemotePath + "\x001\x001"
+
+			So(len(tasks), ShouldEqual, 2)
+			So(tasks[1].RemotePath, ShouldStartWith, expectedStart)
+
+			tasks[1].LocalPath = expectedStart
+			tasks[1].RemotePath = expectedStart
+
+			So(tasks, ShouldResemble, []*Task{
+				{
+					id:         2,
+					process:    pidA.id,
+					LocalPath:  files[0].LocalPath,
+					RemotePath: files[0].RemotePath,
+					InodePath:  inodePath(files[0].MountPount, files[0].Inode, files[0].Btime),
+					Size:       100,
+					MTime:      200,
+					Type:       QueueUpload,
+					Requester:  setA.Requester,
+					SetName:    setA.Name,
+				},
+				{
+					id:         3,
+					process:    pidA.id,
+					LocalPath:  expectedStart,
+					RemotePath: expectedStart,
+					InodePath:  inodePath(files[0].MountPount, files[0].Inode-1, files[0].Btime),
+					Size:       100,
+					MTime:      200,
+					Type:       QueueUpload,
+					Requester:  setA.Requester,
+					SetName:    setA.Name,
+				},
+			})
+		})
 	})
 }
 

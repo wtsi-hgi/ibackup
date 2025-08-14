@@ -94,15 +94,13 @@ func (d *DB) CompleteDiscovery(set *Set, toAdd, toRemove iter.Seq[*File]) error 
 		}
 	}
 
-	if err := d.removeFiles(tx, set.id, toRemove, false); err != nil {
+	if _, err := tx.Exec(deleteChangedInodes); err != nil { //nolint:nestif
 		return err
-	}
-
-	if _, err := tx.Exec(updateLastDiscovery, set.id); err != nil {
+	} else if err = d.removeFiles(tx, set.id, toRemove, false); err != nil {
 		return err
-	}
-
-	if _, err := tx.Exec(deleteHeldDiscovery, set.id); err != nil {
+	} else if _, err = tx.Exec(updateLastDiscovery, set.id); err != nil {
+		return err
+	} else if _, err = tx.Exec(deleteHeldDiscovery, set.id); err != nil {
 		return err
 	}
 

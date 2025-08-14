@@ -25,7 +25,10 @@
 
 package db
 
-import "database/sql"
+import (
+	"database/sql"
+	"fmt"
+)
 
 type DBRO struct { //nolint:revive
 	db *sql.DB
@@ -69,6 +72,7 @@ func Init(driver, connection string) (*DB, error) {
 func (d *DB) initTables() error {
 	for _, table := range tables {
 		if _, err := d.db.Exec(table); err != nil {
+			fmt.Println(table)
 			return err
 		}
 	}
