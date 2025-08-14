@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2022, 2023 Genome Research Ltd.
+ * Copyright (c) 2022, 2023, 2025 Genome Research Ltd.
  *
  * Author: Sendu Bala <sb10@sanger.ac.uk>
  *
@@ -55,7 +55,6 @@ const (
 	RequestStatusFailed          RequestStatus = "failed"
 	RequestStatusWarning         RequestStatus = "warning"
 	RequestStatusHardlinkSkipped RequestStatus = "hardlink"
-	ErrNotHumgenLustre                         = "not a valid humgen lustre path"
 	stuckTimeFormat                            = "02/01/06 15:04 MST"
 	defaultDirPerms                            = 0777
 )
