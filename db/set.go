@@ -80,7 +80,7 @@ func (s Status) String() string {
 	}
 }
 
-var ErrInvalidReason = errors.New("reason must be 'backup', 'archive', 'quarantine'")
+type Reason uint8
 
 const (
 	Unset Reason = iota
@@ -88,25 +88,6 @@ const (
 	Archive
 	Quarantine
 )
-
-type Reason uint8
-
-func (r *Reason) Set(value string) error {
-	switch value {
-	case "unset":
-		*r = Unset
-	case "backup":
-		*r = Backup
-	case "archive":
-		*r = Archive
-	case "quarantine":
-		*r = Quarantine
-	default:
-		return ErrInvalidReason
-	}
-
-	return nil
-}
 
 func (r Reason) String() string {
 	switch r {
