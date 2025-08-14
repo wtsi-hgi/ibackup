@@ -284,15 +284,15 @@ var (
 			"/*! END IF; */" +
 			"END;",
 
-		"CREATE TRIGGER IF NOT EXISTS `update_remote_file_size` BEFORE UPDATE ON `remoteFiles` FOR EACH ROW " +
+		"CREATE TRIGGER IF NOT EXISTS `update_remote_file_size` AFTER UPDATE ON `remoteFiles` FOR EACH ROW " +
 			"/*! BEGIN IF -- */ WHEN\n/*! */ `OLD`.`hardlinkID` != `NEW`.`hardlinkID` /*! THEN -- */ BEGIN\n/*! */ " +
 			"UPDATE `sets` SET " +
 			"`sizeFiles` = `sizeFiles` + ((" +
 			"SELECT `hardlinks`.`size` FROM `hardlinks` WHERE `hardlinks`.`id` = `NEW`.`hardlinkID`" +
-			") + (" +
+			") - (" +
 			"SELECT `hardlinks`.`size` FROM `hardlinks` WHERE `hardlinks`.`id` = `OLD`.`hardlinkID`" +
 			")) * (" +
-			"SELECT COUNT(1) FROM `localFiles` WHERE `localFiles`.`setID` = `id` AND " +
+			"SELECT COUNT(1) FROM `localFiles` WHERE `localFiles`.`setID` = `sets`.`id` AND " +
 			"`localFiles`.`remoteFileID` = `NEW`.`id` AND `localFiles`.`updated` != 2" +
 			") " +
 			"WHERE `id` IN (" +
