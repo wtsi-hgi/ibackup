@@ -838,6 +838,8 @@ func TestServer(t *testing.T) {
 								err = client.TriggerDiscovery(exampleSet.ID(), false)
 								So(err, ShouldBeNil)
 
+								<-time.After(100 * time.Millisecond)
+
 								files, errg := client.GetFiles(exampleSet.ID())
 								So(errg, ShouldBeNil)
 								So(files, ShouldHaveLength, 2)
