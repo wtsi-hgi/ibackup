@@ -1958,7 +1958,7 @@ func (s *Server) recoverRemoveQueue() error {
 // middle of uploading; otherwise do nothing.
 func (s *Server) recoverSet(given *set.Set) error {
 	if given.StartedDiscovery.After(given.LastDiscovery) {
-		return s.discoverSet(given)
+		return s.discoverSet(given, false)
 	}
 
 	s.monitorSet(given)

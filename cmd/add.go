@@ -404,7 +404,7 @@ func add(client *server.Client, name, requester, transformer, description string
 		return err
 	}
 
-	return client.TriggerDiscovery(set.ID())
+	return client.TriggerDiscovery(set.ID(), false)
 }
 
 func checkExistingSet(client *server.Client, name, requester string) (*set.Set, error) {

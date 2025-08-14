@@ -176,7 +176,7 @@ func New(conf Config) (*Server, error) { //nolint:funlen
 }
 
 func (s *Server) monitorCB(given *set.Set) {
-	if err := s.discoverSet(given); err != nil {
+	if err := s.discoverSet(given, false); err != nil {
 		s.Logger.Printf("error discovering set during monitoring: %s", err)
 	}
 }

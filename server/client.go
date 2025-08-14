@@ -239,14 +239,8 @@ func (c *Client) MergeDirs(setID string, paths []string) error {
 //
 // This will delete remote files missing locally if the set has monitor-removals
 // turned on, or if the force_removals parameter is passed as true.
-func (c *Client) TriggerDiscovery(setID string, forceRemovals ...bool) error {
-	var fr bool
-
-	if len(forceRemovals) == 1 {
-		fr = forceRemovals[0]
-	}
-
-	endpoint := fmt.Sprintf("%s/%s?force_removals=%t", EndPointAuthDiscovery, setID, fr)
+func (c *Client) TriggerDiscovery(setID string, forceRemovals bool) error {
+	endpoint := fmt.Sprintf("%s/%s?force_removals=%t", EndPointAuthDiscovery, setID, forceRemovals)
 
 	resp, err := c.request().Get(endpoint)
 	if err != nil {

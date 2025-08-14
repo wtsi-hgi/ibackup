@@ -208,9 +208,9 @@ func (s *Server) triggerDiscovery(c *gin.Context) {
 // followed by adding all upload requests for the set to the global put queue.
 //
 // The optional forceRemovals bool, if true, makes this behave as if the set has
-// MonitorRemovals true, to force deletion of files in iRODS if the corresonding
+// MonitorRemovals true, to force deletion of files in iRODS if the corresponding
 // local file no longer exists.
-func (s *Server) discoverSet(given *set.Set, forceRemovals ...bool) error {
+func (s *Server) discoverSet(given *set.Set, forceRemovals bool) error {
 	if given.ReadOnly {
 		s.Logger.Printf("Ignore discovery on a read-only set %s [%s:%s]", given.ID(), given.Requester, given.Name)
 
@@ -224,13 +224,7 @@ func (s *Server) discoverSet(given *set.Set, forceRemovals ...bool) error {
 		return err
 	}
 
-	var fr bool
-
-	if len(forceRemovals) == 1 {
-		fr = forceRemovals[0]
-	}
-
-	go s.discoverThenEnqueue(given, transformer, fr)
+	go s.discoverThenEnqueue(given, transformer, forceRemovals)
 
 	return nil
 }
