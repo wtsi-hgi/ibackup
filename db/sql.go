@@ -132,8 +132,8 @@ var (
 			"`remotePath` TEXT NOT NULL, " +
 			"`remotePathHash` " + hashColumnStart + "`remotePath`" + hashColumnEnd + ", " +
 			"`lastUploaded` DATETIME DEFAULT '0001-01-01 00:00:00', " +
-			"`lastError` TEXT NOT NULL, " +
 			"`hardlinkID` INTEGER NOT NULL, " +
+			updateCol +
 			"UNIQUE(`remotePathHash`), " +
 			"FOREIGN KEY(`hardlinkID`) REFERENCES `hardlinks`(`id`) ON DELETE RESTRICT" +
 			");",
@@ -255,8 +255,28 @@ var (
 			"WHERE `id` = `OLD`.`setID`;" +
 			"END;",
 
-		"CREATE TRIGGER IF NOT EXISTS `update_file_size` AFTER UPDATE ON `hardlinks` FOR EACH ROW BEGIN " +
-			"UPDATE `sets` SET `sizeFiles` = `sizeFiles` - `OLD`.`size` + `NEW`.`size` WHERE `id` IN (" +
+		"CREATE TRIGGER IF NOT EXISTS `update_remote_file_size` AFTER UPDATE ON `remoteFiles` FOR EACH ROW BEGIN " +
+			"/*! IF `OLD`.`hardlinkID` != `NEW`.`hardlinkID` THEN */" +
+			"UPDATE `sets` SET " +
+			"`sizeFiles` = `sizeFiles` + ((" +
+			"SELECT `hardlinks`.`size` FROM `hardlinks` WHERE `hardlinks`.`id` = `NEW`.`hardlinkID`" +
+			") + (" +
+			"SELECT `hardlinks`.`size` FROM `hardlinks` WHERE `hardlinks`.`id` = `OLD`.`hardlinkID`" +
+			")) * (" +
+			"SELECT COUNT(1) FROM `localFiles` WHERE `localFiles`.`setID` = `id` AND `localFiles`.`remoteFileID` = `NEW`.`id`" +
+			") " +
+			"WHERE `id` IN (" +
+			"SELECT `localFiles`.`setID` FROM `localFiles` WHERE `localFiles`.`remoteFileID` = `NEW`.`id`" +
+			") AND `OLD`.`hardlinkID` != `NEW`.`hardlinkID`;" +
+			"/*! END IF; */" +
+			"END;",
+
+		"CREATE TRIGGER IF NOT EXISTS `update_hardlink_file_size` AFTER UPDATE ON `hardlinks` FOR EACH ROW BEGIN " +
+			"UPDATE `sets` SET `sizeFiles` = `sizeFiles` + " +
+			"(`NEW`.`size` - `OLD`.`size`) * (" +
+			"SELECT COUNT(1) FROM `localFiles` JOIN `remoteFiles` ON `remoteFiles`.`id` = `localFiles`.`remoteFileID` " +
+			"WHERE `remoteFiles`.`hardlinkID` = `NEW`.`id`" +
+			") WHERE `id` IN (" +
 			"SELECT `localFiles`.`setID` FROM `localFiles` " +
 			"JOIN `remoteFiles` ON `remoteFiles`.`id` = `localFiles`.`remoteFileID` WHERE " +
 			"`remoteFiles`.`hardlinkID` = `NEW`.`id`);" +
@@ -505,9 +525,8 @@ const (
 		returnOrSetID
 	createRemoteFile = "INSERT INTO `remoteFiles` (" +
 		"`remotePath`, " +
-		"`hardlinkID`, " +
-		"`lastError`" +
-		") VALUES (?, ?, '') " + onConflictReturnID
+		"`hardlinkID`" +
+		") VALUES (?, ?) " + onConflictUpdate + colUpdate + returnOrSetID
 	createSetFile = "INSERT INTO `localFiles` (" +
 		"`localPath`, " +
 		"`setID`, " +
