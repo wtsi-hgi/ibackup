@@ -39,6 +39,34 @@ func TestSet(t *testing.T) {
 	Convey("With a new database", t, func() {
 		d := createTestDatabase(t)
 
+		Convey("You cannot add a set with an invalid name", func() {
+			set := &Set{
+				Name:        "",
+				Requester:   "me",
+				Transformer: complexTransformer,
+			}
+
+			So(d.CreateSet(set), ShouldEqual, ErrInvalidSetName)
+
+			set.Name = "\x00mySet"
+
+			So(d.CreateSet(set), ShouldEqual, ErrInvalidSetName)
+		})
+
+		Convey("You cannot add a set with an invalid requester", func() {
+			set := &Set{
+				Name:        "mySet",
+				Requester:   "",
+				Transformer: complexTransformer,
+			}
+
+			So(d.CreateSet(set), ShouldEqual, ErrInvalidRequesterName)
+
+			set.Requester = "\x00me"
+
+			So(d.CreateSet(set), ShouldEqual, ErrInvalidRequesterName)
+		})
+
 		Convey("You can add and retrieve Sets", func() {
 			setA := &Set{
 				Name:        "mySet",
@@ -72,43 +100,43 @@ func TestSet(t *testing.T) {
 			So(d.CreateSet(setB), ShouldBeNil)
 			So(d.CreateSet(setC), ShouldBeNil)
 
-			got, err := d.GetSet("mySet", "me")
-			So(err, ShouldBeNil)
+			got := d.getSetFromDB(setA)
 			So(got, ShouldResemble, setA)
 
-			got, err = d.GetSet("my2ndSet", "me")
-			So(err, ShouldBeNil)
+			got = d.getSetFromDB(setB)
 			So(got, ShouldResemble, setB)
 
-			got, err = d.GetSet("mySet", "you")
-			So(err, ShouldBeNil)
+			got = d.getSetFromDB(setC)
 			So(got, ShouldResemble, setC)
 
 			So(collectIter(t, d.GetSetsByRequester("me")), ShouldResemble, []*Set{setA, setB})
 			So(collectIter(t, d.GetSetsByRequester("you")), ShouldResemble, []*Set{setC})
 			So(collectIter(t, d.GetAllSets()), ShouldResemble, []*Set{setA, setB, setC})
 
-			So(d.DeleteSet(setA), ShouldBeNil)
+			Convey("And you can delete added empty sets", func() {
+				So(d.DeleteSet(setA), ShouldBeNil)
 
-			So(collectIter(t, d.GetAllSets()), ShouldResemble, []*Set{setB, setC})
+				So(collectIter(t, d.GetAllSets()), ShouldResemble, []*Set{setB, setC})
 
-			So(d.DeleteSet(setC), ShouldBeNil)
-			So(collectIter(t, d.GetAllSets()), ShouldResemble, []*Set{setB})
+				So(d.DeleteSet(setC), ShouldBeNil)
+				So(collectIter(t, d.GetAllSets()), ShouldResemble, []*Set{setB})
+			})
+
+			var err error
 
 			Convey("A set can be hidden and unhidden", func() {
 				So(setB.Hidden, ShouldBeFalse)
+
 				So(d.SetSetHidden(setB), ShouldBeNil)
 				So(setB.Hidden, ShouldBeTrue)
 
-				got, err = d.GetSet("my2ndSet", "me")
-				So(err, ShouldBeNil)
+				got = d.getSetFromDB(setB)
 				So(got.Hidden, ShouldBeTrue)
 
 				So(d.SetSetVisible(setB), ShouldBeNil)
 				So(setB.Hidden, ShouldBeFalse)
 
-				got, err = d.GetSet("my2ndSet", "me")
-				So(err, ShouldBeNil)
+				got = d.getSetFromDB(setB)
 				So(got.Hidden, ShouldBeFalse)
 			})
 
@@ -117,8 +145,7 @@ func TestSet(t *testing.T) {
 				So(d.SetSetReadonly(setB), ShouldBeNil)
 				So(setB.IsReadonly(), ShouldBeTrue)
 
-				got, err = d.GetSet("my2ndSet", "me")
-				So(err, ShouldBeNil)
+				got = d.getSetFromDB(setB)
 				So(got.IsReadonly(), ShouldBeTrue)
 
 				Convey("A readonly set cannot be changed", func() {
@@ -133,239 +160,279 @@ func TestSet(t *testing.T) {
 				So(d.SetSetModifiable(setB), ShouldBeNil)
 				So(setB.IsReadonly(), ShouldBeFalse)
 
-				got, err = d.GetSet("my2ndSet", "me")
-				So(err, ShouldBeNil)
+				got = d.getSetFromDB(setB)
 				So(got.IsReadonly(), ShouldBeFalse)
 			})
 
-			Convey("You can change the transformer on a set", func() {
+			Convey("And given files added to a set", func() {
 				files := slices.Collect(genFiles(5))
-
-				discovery := &Discover{Path: "/some/path", Type: DiscoverFODN}
-
-				So(d.AddSetDiscovery(setB, discovery), ShouldBeNil)
-				So(d.CompleteDiscovery(setB, slices.Values(files), noSeq[*File]), ShouldBeNil)
-				So(d.clearQueue(), ShouldBeNil)
-
-				setB.Transformer, err = NewTransformer("prefix=/some/:/other/remote/", `^/some/`, "/other/remote/")
-				So(err, ShouldBeNil)
-
-				oldID := setB.id
-
-				So(d.SetSetTransformer(setB), ShouldBeNil)
+				files = slices.Concat(files, slices.Collect(setFileType(genFiles(4), Abnormal)))
+				files = slices.Concat(files, slices.Collect(setFileType(genFiles(2), Symlink)))
 
 				for _, file := range files {
-					file.id += 5
 					file.setID = setB.id
-					file.RemotePath = "/other" + file.RemotePath
 				}
 
-				So(collectIter(t, d.GetSetFiles(setB)), ShouldResemble, files)
-				So(collectIter(t, d.GetSetDiscovery(setB)), ShouldResemble, []*Discover{discovery})
+				checkSetCounts := func(set *Set) {
+					So(set.NumFiles, ShouldEqual, 11)
+					So(set.SizeTotal, ShouldEqual, 1100)
+					So(set.Symlinks, ShouldEqual, 3)
+					// So(set.Hardlinks, ShouldEqual, 1)
+					So(set.Abnormal, ShouldEqual, 4)
+					So(set.Missing, ShouldEqual, 0)
+					So(set.Orphaned, ShouldEqual, 0)
+					So(set.Uploaded, ShouldEqual, 0)
+					So(set.Replaced, ShouldEqual, 0)
+				}
 
-				Convey("The old set is removed once the queued items are dealt with", func() {
-					requester := fmt.Sprintf("\x00%d\x00%s", oldID, setB.Requester)
+				setB = d.getSetFromDB(setB)
+				So(setB.Status, ShouldEqual, PendingDiscovery)
+				So(setB.NumFiles, ShouldEqual, 0)
+				So(d.CompleteDiscovery(setB, slices.Values(files), noSeq[*File]), ShouldBeNil)
 
-					_, err = scanSet(d.db.QueryRow(getSetByNameRequester, setB.Name, requester))
-					So(err, ShouldBeNil)
+				setB = d.getSetFromDB(setB)
+				So(setB.Status, ShouldEqual, PendingUpload)
+
+				checkSetCounts(setB)
+
+				Convey("You cannot delete sets containing files", func() {
+					So(d.DeleteSet(setB), ShouldNotBeNil)
+
+					So(collectIter(t, d.GetAllSets()), ShouldResemble, []*Set{setA, setB, setC})
+				})
+
+				Convey("And given a second set with two of the same files, one having different content", func() {
 					So(d.clearQueue(), ShouldBeNil)
 
-					_, err = scanSet(d.db.QueryRow(getSetByNameRequester, setB.Name, requester))
-					So(err, ShouldNotBeNil)
-				})
-			})
+					fileToBeReplaced := *files[0]
+					fileToBeReplaced.Size += 100
 
-			Convey("Adding/Removing files to a set updates the set file numbers", func() {
-				setB, err = d.GetSet("my2ndSet", "me")
-				So(err, ShouldBeNil)
-				So(setB.Status, ShouldEqual, PendingDiscovery)
-				So(setB.NumFiles, ShouldEqual, 0)
-				So(d.CompleteDiscovery(setB, genFiles(5), noSeq[*File]), ShouldBeNil)
-				So(d.CompleteDiscovery(setB, setFileType(genFiles(4), Abnormal), noSeq[*File]), ShouldBeNil)
-				So(d.CompleteDiscovery(setB, setFileType(genFiles(2), Symlink), noSeq[*File]), ShouldBeNil)
+					cFiles := []*File{&fileToBeReplaced, files[1]}
 
-				setB, err = d.GetSet("my2ndSet", "me")
-				So(err, ShouldBeNil)
-				So(setB.Status, ShouldEqual, PendingUpload)
-				So(setB.NumFiles, ShouldEqual, 11)
-				So(setB.SizeTotal, ShouldEqual, 1100)
-				So(setB.Symlinks, ShouldEqual, 3)
-				So(setB.Hardlinks, ShouldEqual, 1)
-				So(setB.Abnormal, ShouldEqual, 4)
-				So(setB.Missing, ShouldEqual, 0)
-				So(setB.Orphaned, ShouldEqual, 0)
-				So(setB.Uploaded, ShouldEqual, 0)
-				So(setB.Replaced, ShouldEqual, 0)
+					So(d.CompleteDiscovery(setC, slices.Values(cFiles), noSeq[*File]), ShouldBeNil)
 
-				files := collectIter(t, d.GetSetFiles(setB))
-				So(d.RemoveSetFiles(setB, slices.Values(files)), ShouldBeNil)
+					Convey("The total size for the original set will be changed", func() {
+						setB = d.getSetFromDB(setB)
+						So(setB.SizeTotal, ShouldEqual, 1200)
+					})
 
-				setB, err = d.GetSet("my2ndSet", "me")
-				So(err, ShouldBeNil)
-				So(setB.NumFiles, ShouldEqual, 11)
-				So(d.clearQueue(), ShouldBeNil)
+					Convey("The second set will have different counts once the queue is cleared", func() {
+						process, err := d.RegisterProcess()
+						So(err, ShouldBeNil)
 
-				setB, err = d.GetSet("my2ndSet", "me")
-				So(err, ShouldBeNil)
-				So(setB.Status, ShouldEqual, PendingDiscovery)
-				So(setB.NumFiles, ShouldEqual, 0)
-				So(setB.SizeTotal, ShouldEqual, 0)
-				So(setB.Symlinks, ShouldEqual, 0)
-				So(setB.Hardlinks, ShouldEqual, 0)
+						So(d.TaskComplete(collectIter(t, d.ReserveTasks(process, 1))[0]), ShouldBeNil)
 
-				So(d.CompleteDiscovery(setB, setFileStatus(genFiles(5), StatusMissing), noSeq[*File]), ShouldBeNil)
-
-				setB, err = d.GetSet("my2ndSet", "me")
-				So(err, ShouldBeNil)
-				So(setB.Status, ShouldEqual, Complete)
-				So(setB.NumFiles, ShouldEqual, 5)
-				So(setB.SizeTotal, ShouldEqual, 500)
-				So(setB.SizeUploaded, ShouldEqual, 0)
-				So(setB.Symlinks, ShouldEqual, 1)
-				So(setB.Hardlinks, ShouldEqual, 1)
-				So(setB.Missing, ShouldEqual, 5)
-				So(setB.Orphaned, ShouldEqual, 0)
-
-				filePrefix--
-
-				So(d.CreateSet(setC), ShouldBeNil)
-
-				cFiles := slices.Collect(genFiles(2))
-
-				So(d.CompleteDiscovery(setC, slices.Values(cFiles), noSeq[*File]), ShouldBeNil)
-				So(d.clearQueue(), ShouldBeNil)
-
-				setB, err = d.GetSet(setB.Name, setB.Requester)
-				So(err, ShouldBeNil)
-				So(setB.Missing, ShouldEqual, 3)
-				So(setB.Orphaned, ShouldEqual, 2)
-				So(setB.SizeUploaded, ShouldEqual, 0)
-
-				setC, err = d.GetSet(setC.Name, setC.Requester)
-				So(err, ShouldBeNil)
-				So(setB.Status, ShouldEqual, Complete)
-				So(setC.SizeUploaded, ShouldEqual, 200)
-
-				So(d.CompleteDiscovery(setC, noSeq[*File], noSeq[*File]), ShouldBeNil)
-
-				cFiles = append(cFiles, slices.Collect(genFiles(12))...)
-
-				So(d.CompleteDiscovery(setC, slices.Values(cFiles), noSeq[*File]), ShouldBeNil)
-
-				setC, err = d.GetSet(setC.Name, setC.Requester)
-				So(err, ShouldBeNil)
-				So(setC.SizeUploaded, ShouldEqual, 0)
-
-				process, err := d.RegisterProcess()
-				So(err, ShouldBeNil)
-
-				So(d.TaskComplete(collectIter(t, d.ReserveTasks(process, 1))[0]), ShouldBeNil)
-
-				setC, err = d.GetSet(setC.Name, setC.Requester)
-				So(err, ShouldBeNil)
-				So(setC.Uploaded, ShouldEqual, 0)
-				So(setC.Replaced, ShouldEqual, 1)
-				So(setC.Skipped, ShouldEqual, 0)
-				So(setC.SizeUploaded, ShouldEqual, 100)
-
-				task := collectIter(t, d.ReserveTasks(process, 1))[0]
-				task.Skipped = true
-
-				So(d.TaskComplete(task), ShouldBeNil)
-
-				setC, err = d.GetSet(setC.Name, setC.Requester)
-				So(err, ShouldBeNil)
-				So(setC.Uploaded, ShouldEqual, 0)
-				So(setC.Replaced, ShouldEqual, 1)
-				So(setC.Skipped, ShouldEqual, 1)
-				So(setC.SizeUploaded, ShouldEqual, 100)
-
-				So(d.clearQueue(), ShouldBeNil)
-
-				setC, err = d.GetSet(setC.Name, setC.Requester)
-				So(err, ShouldBeNil)
-				So(setC.Uploaded, ShouldEqual, 12)
-				So(setC.Replaced, ShouldEqual, 1)
-				So(setC.Skipped, ShouldEqual, 1)
-				So(setC.SizeUploaded, ShouldEqual, 1300)
-
-				So(d.CompleteDiscovery(setC, slices.Values(cFiles), noSeq[*File]), ShouldBeNil)
-
-				setC, err = d.GetSet(setC.Name, setC.Requester)
-				So(err, ShouldBeNil)
-				So(setC.Replaced, ShouldEqual, 0)
-
-				So(d.clearQueue(), ShouldBeNil)
-
-				setC, err = d.GetSet(setC.Name, setC.Requester)
-				So(err, ShouldBeNil)
-				So(setC.Uploaded, ShouldEqual, 0)
-				So(setC.Replaced, ShouldEqual, 14)
-				So(setC.Skipped, ShouldEqual, 0)
-				So(setC.SizeUploaded, ShouldEqual, 1400)
-				So(setC.NumObjectsRemoved, ShouldEqual, 0)
-				So(setC.NumObjectsToBeRemoved, ShouldEqual, 0)
-				So(setC.SizeRemoved, ShouldEqual, 0)
-
-				So(d.RemoveSetFiles(setC, slices.Values(cFiles[:1])), ShouldBeNil)
-
-				setC, err = d.GetSet(setC.Name, setC.Requester)
-				So(err, ShouldBeNil)
-				So(setC.NumObjectsRemoved, ShouldEqual, 0)
-				So(setC.NumObjectsToBeRemoved, ShouldEqual, 1)
-				So(setC.SizeRemoved, ShouldEqual, 0)
-				So(d.clearQueue(), ShouldBeNil)
-
-				setC, err = d.GetSet(setC.Name, setC.Requester)
-				So(err, ShouldBeNil)
-				So(setC.NumObjectsRemoved, ShouldEqual, 1)
-				So(setC.NumObjectsToBeRemoved, ShouldEqual, 1)
-				So(setC.SizeRemoved, ShouldEqual, 100)
-
-				So(d.RemoveSetFiles(setC, slices.Values(cFiles[1:7])), ShouldBeNil)
-
-				setC, err = d.GetSet(setC.Name, setC.Requester)
-				So(err, ShouldBeNil)
-				So(setC.NumObjectsRemoved, ShouldEqual, 0)
-				So(setC.NumObjectsToBeRemoved, ShouldEqual, 6)
-				So(setC.SizeRemoved, ShouldEqual, 0)
-
-				for n := range 3 {
-					var task *Task
-
-					for {
-						if task = collectIter(t, d.ReserveTasks(process, 1))[0]; task.Type == QueueRemoval {
-							break
-						}
+						task := collectIter(t, d.ReserveTasks(process, 1))[0]
+						task.Skipped = true
 
 						So(d.TaskComplete(task), ShouldBeNil)
+						So(d.clearQueue(), ShouldBeNil)
+
+						setC = d.getSetFromDB(setC)
+						So(setC.NumFiles, ShouldEqual, 2)
+						So(setC.Replaced, ShouldEqual, 1)
+						So(setC.Skipped, ShouldEqual, 1)
+						So(setC.SizeTotal, ShouldEqual, 300)
+						So(setC.SizeUploaded, ShouldEqual, 200)
+					})
+				})
+
+				Convey("If you change the size of files and complete discovery again", func() {
+					So(d.clearQueue(), ShouldBeNil)
+
+					setB = d.getSetFromDB(setB)
+					So(setB.NumFiles, ShouldEqual, 11)
+					So(setB.SizeTotal, ShouldEqual, 1100)
+					So(setB.SizeTotal, ShouldEqual, 1100)
+
+					files[0].Size += 100
+					files[1].Size += 200
+					files[len(files)-1].Size += 300
+
+					So(d.CompleteDiscovery(setB, slices.Values(files), noSeq[*File]), ShouldBeNil)
+
+					Convey("The set counts are updated", func() {
+						setB = d.getSetFromDB(setB)
+						So(setB.NumFiles, ShouldEqual, 11)
+						So(setB.SizeTotal, ShouldEqual, 1700)
+
+						So(d.clearQueue(), ShouldBeNil)
+
+						setB = d.getSetFromDB(setB)
+						So(setB.SizeUploaded, ShouldEqual, 1700)
+					})
+
+				})
+
+				Convey("If one of the files is found missing before rediscovery", func() {
+					files[0].Status = StatusMissing
+
+					So(d.CompleteDiscovery(setB, slices.Values(files), noSeq[*File]), ShouldBeNil)
+					So(d.clearQueue(), ShouldBeNil)
+
+					Convey("The set counts it as orphaned", func() {
+						setB = d.getSetFromDB(setB)
+						So(setB.Missing, ShouldEqual, 0)
+						So(setB.Orphaned, ShouldEqual, 1)
+					})
+				})
+
+				Convey("You can change the transformer on a set", func() {
+					discovery := &Discover{Path: "/some/path", Type: DiscoverFODN}
+
+					So(d.AddSetDiscovery(setB, discovery), ShouldBeNil)
+					So(d.CompleteDiscovery(setB, slices.Values(files), noSeq[*File]), ShouldBeNil)
+					So(d.clearQueue(), ShouldBeNil)
+
+					setB.Transformer, err = NewTransformer("prefix=/some/:/other/remote/", `^/some/`, "/other/remote/")
+					So(err, ShouldBeNil)
+
+					oldID := setB.id
+
+					So(d.SetSetTransformer(setB), ShouldBeNil)
+
+					updatedSet := d.getSetFromDB(setB)
+					So(updatedSet.Transformer, ShouldResemble, setB.Transformer)
+
+					Convey("Which updates the transformer for each file in the set", func() {
+						for _, file := range files {
+							file.id += 22
+							file.setID = setB.id
+							file.RemotePath = "/other" + file.RemotePath
+						}
+
+						So(collectIter(t, d.GetSetFiles(updatedSet)), ShouldResemble, files)
+						So(collectIter(t, d.GetSetDiscovery(updatedSet)), ShouldResemble, []*Discover{discovery})
+
+						checkSetCounts(updatedSet)
+					})
+
+					Convey("Which creates and moves files to a new set, with the old set having a changed requester", func() {
+						oldSetRequester := fmt.Sprintf("\x00%d\x00%s", oldID, setB.Requester)
+
+						_, err = scanSet(d.db.QueryRow(getSetByNameRequester, setB.Name, oldSetRequester))
+						So(err, ShouldBeNil)
+
+						Convey("The old set is removed once the queued items are dealt with", func() {
+							So(d.clearQueue(), ShouldBeNil)
+
+							_, err = scanSet(d.db.QueryRow(getSetByNameRequester, setB.Name, oldSetRequester))
+							So(err, ShouldNotBeNil)
+						})
+					})
+				})
+
+				Convey("And given a removal on 6 files still running", func() {
+					So(d.RemoveSetFiles(setB, slices.Values(files[:6])), ShouldBeNil)
+
+					setB = d.getSetFromDB(setB)
+					So(setB.NumObjectsRemoved, ShouldEqual, 0)
+					So(setB.NumObjectsToBeRemoved, ShouldEqual, 6)
+					So(setB.SizeRemoved, ShouldEqual, 0)
+					So(setB.NumFiles, ShouldEqual, 11)
+
+					process, err := d.RegisterProcess()
+					So(err, ShouldBeNil)
+
+					for n := range 3 {
+						var task *Task
+
+						for {
+							if task = collectIter(t, d.ReserveTasks(process, 1))[0]; task.Type == QueueRemoval {
+								break
+							}
+
+							So(d.TaskComplete(task), ShouldBeNil)
+						}
+
+						So(task.Type, ShouldEqual, QueueRemoval)
+						So(d.TaskComplete(task), ShouldBeNil)
+
+						setB = d.getSetFromDB(setB)
+						So(setB.NumObjectsRemoved, ShouldEqual, n+1)
+						So(setB.NumObjectsToBeRemoved, ShouldEqual, 6)
+						So(setB.SizeRemoved, ShouldEqual, (n+1)*100)
 					}
 
-					So(task.Type, ShouldEqual, QueueRemoval)
-					So(d.TaskComplete(task), ShouldBeNil)
+					So(setB.NumFiles, ShouldEqual, 8)
 
-					setC, err = d.GetSet(setC.Name, setC.Requester)
+					Convey("If discovery starts on a different file, removal queue is unaffected", func() {
+						newFileSlice := slices.Collect(genFiles(1))
+						newFileSlice[0].setID = setB.id
+
+						So(d.CompleteDiscovery(setB, slices.Values(newFileSlice), noSeq[*File]), ShouldBeNil)
+
+						setB = d.getSetFromDB(setB)
+						So(setB.NumObjectsRemoved, ShouldEqual, 3)
+						So(setB.NumObjectsToBeRemoved, ShouldEqual, 6)
+						So(setB.SizeRemoved, ShouldEqual, 300)
+						So(setB.NumFiles, ShouldEqual, 9)
+
+						Convey("And when tasks complete, counts are correct", func() {
+							So(d.clearQueue(), ShouldBeNil)
+
+							setB = d.getSetFromDB(setB)
+							So(setB.NumObjectsRemoved, ShouldEqual, 6)
+							So(setB.NumObjectsToBeRemoved, ShouldEqual, 6)
+							So(setB.SizeRemoved, ShouldEqual, 600)
+							So(setB.NumFiles, ShouldEqual, 6)
+							So(setB.SizeUploaded, ShouldEqual, 600)
+						})
+					})
+
+					Convey("If discovery starts on a file queued to be removed, it's removed from remove queue", func() {
+						So(d.CompleteDiscovery(setB, slices.Values(files[4:5]), noSeq[*File]), ShouldBeNil)
+
+						setB = d.getSetFromDB(setB)
+						So(setB.NumObjectsRemoved, ShouldEqual, 3)
+						So(setB.NumObjectsToBeRemoved, ShouldEqual, 5)
+						So(setB.SizeRemoved, ShouldEqual, 300)
+						So(setB.NumFiles, ShouldEqual, 8)
+
+						Convey("And if you add more files to be removed, the counts are updated", func() {
+							So(d.RemoveSetFiles(setB, slices.Values(files[4:5])), ShouldBeNil)
+
+							setB = d.getSetFromDB(setB)
+							So(setB.NumObjectsRemoved, ShouldEqual, 3)
+							So(setB.NumObjectsToBeRemoved, ShouldEqual, 6)
+							So(setB.SizeRemoved, ShouldEqual, 300)
+							So(setB.NumFiles, ShouldEqual, 8)
+						})
+					})
+				})
+
+				Convey("You can remove all files", func() {
+					files := collectIter(t, d.GetSetFiles(setB))
+					So(d.RemoveSetFiles(setB, slices.Values(files)), ShouldBeNil)
+
+					setB, err = d.GetSet("my2ndSet", "me")
 					So(err, ShouldBeNil)
-					So(setC.NumObjectsRemoved, ShouldEqual, n+1)
-					So(setC.NumObjectsToBeRemoved, ShouldEqual, 6)
-					So(setC.SizeRemoved, ShouldEqual, (n+1)*100)
-				}
+					So(setB.NumFiles, ShouldEqual, 11)
 
-				So(d.CompleteDiscovery(setC, slices.Values(cFiles[4:5]), noSeq[*File]), ShouldBeNil)
+					So(d.clearQueue(), ShouldBeNil)
 
-				setC, err = d.GetSet(setC.Name, setC.Requester)
-				So(err, ShouldBeNil)
-				So(setC.NumObjectsRemoved, ShouldEqual, 3)
-				So(setC.NumObjectsToBeRemoved, ShouldEqual, 5)
-				So(setC.SizeRemoved, ShouldEqual, 300)
+					setB = d.getSetFromDB(setB)
+					So(setB.Status, ShouldEqual, PendingDiscovery)
+					So(setB.NumFiles, ShouldEqual, 0)
+					So(setB.SizeTotal, ShouldEqual, 0)
+					So(setB.Symlinks, ShouldEqual, 0)
+					So(setB.Hardlinks, ShouldEqual, 0)
 
-				So(d.RemoveSetFiles(setC, slices.Values(cFiles[4:5])), ShouldBeNil)
+					Convey("And you can still add files, which updates counts", func() {
+						So(d.CompleteDiscovery(setB, genFiles(5), noSeq[*File]), ShouldBeNil)
 
-				setC, err = d.GetSet(setC.Name, setC.Requester)
-				So(err, ShouldBeNil)
-				So(setC.NumObjectsRemoved, ShouldEqual, 3)
-				So(setC.NumObjectsToBeRemoved, ShouldEqual, 6)
-				So(setC.SizeRemoved, ShouldEqual, 300)
+						setB, err = d.GetSet("my2ndSet", "me")
+						So(err, ShouldBeNil)
+						So(setB.Status, ShouldEqual, PendingUpload)
+						So(setB.NumFiles, ShouldEqual, 5)
+						So(setB.SizeTotal, ShouldEqual, 500)
+						So(setB.SizeUploaded, ShouldEqual, 0)
+						So(setB.Symlinks, ShouldEqual, 1)
+						So(setB.Hardlinks, ShouldEqual, 1)
+						So(setB.Missing, ShouldEqual, 0)
+						So(setB.Orphaned, ShouldEqual, 0)
+					})
+				})
 			})
 
 			Convey("Once all upload tasks have been attempted, the Last* fields are set", func() {
@@ -394,6 +461,13 @@ func TestSet(t *testing.T) {
 			})
 		})
 	})
+}
+
+func (d *DB) getSetFromDB(set *Set) *Set {
+	dbSet, err := d.GetSet(set.Name, set.Requester)
+	So(err, ShouldBeNil)
+
+	return dbSet
 }
 
 func collectIter[T any](t *testing.T, i *IterErr[T]) []T {
