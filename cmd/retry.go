@@ -27,16 +27,20 @@
 package cmd
 
 import (
+	"errors"
+
 	"github.com/spf13/cobra"
 	"github.com/wtsi-hgi/ibackup/server"
 	"github.com/wtsi-hgi/ibackup/set"
 )
 
+var (
+	ErrSetNoName = errors.New("you must specify --name")
+)
+
 // options for this cmd.
 var retryUser string
 var retrySet string
-var retryAll bool
-var retryFailed bool
 
 // retryCmd represents the retry command.
 var retryCmd = &cobra.Command{
@@ -45,15 +49,8 @@ var retryCmd = &cobra.Command{
 	Long: `Retry file uploads in a set.
 
 Having used 'ibackup add' to add the details of a backup sets, use this command
-to retry file uploads in that set. Provide the required --name to choose the
-set.
-
-You can retry --all uploads in the set. This re-triggers discovery of files in
-any directories specified as part of your set. It's like starting over from the
-beginning, though any files already uploaded to iRODS and unchanged locally will
-not be uploaded again.
-
-Alternatively, you can retry just --failed uploads in the set.
+to retry failed file uploads in that set. Provide the required --name to choose
+the set.
 
 You need to supply the ibackup server's URL in the form domain:port (using the
 IBACKUP_SERVER_URL environment variable, or overriding that with the --url
@@ -63,14 +60,12 @@ environment variable, or overriding that with the --cert argument).
 If you are the user who started the ibackup server, you can use the --user
 option to retry the given requestor's backup sets, instead of your own.
 `,
-	PreRun: func(_ *cobra.Command, _ []string) {
-		if retryAll && retryFailed {
-			dief("--all and --failed are mutually exclusive")
+	PreRunE: func(_ *cobra.Command, _ []string) error {
+		if retrySet == "" {
+			return ErrSetNoName
 		}
 
-		if !retryAll && !retryFailed {
-			dief("at least one of --all and --failed are required")
-		}
+		return nil
 	},
 	RunE: func(_ *cobra.Command, _ []string) error {
 		ensureURLandCert()
@@ -80,7 +75,12 @@ option to retry the given requestor's backup sets, instead of your own.
 			return err
 		}
 
-		return retrySetUploads(client, retryUser, retrySet, retryAll)
+		rSet, err := getRequestedSet(client, retryUser, retrySet)
+		if err != nil {
+			return err
+		}
+
+		return retryFailedSetUploads(client, rSet.ID())
 	},
 }
 
@@ -90,37 +90,23 @@ func init() {
 	// flags specific to this sub-command
 	retryCmd.Flags().StringVarP(&retryUser, "user", "u", currentUsername(), "set belongs to this user")
 	retryCmd.Flags().StringVarP(&retrySet, "name", "n", "", "name of set to retry")
-	retryCmd.Flags().BoolVarP(&retryAll, "all", "a", false,
-		"retry all uploads in the --name'd set")
-	retryCmd.Flags().BoolVarP(&retryFailed, "failed", "f", false,
-		"retry only failed uploads in the --name'd set")
 
 	if err := retryCmd.MarkFlagRequired("name"); err != nil {
 		die(err)
 	}
 }
 
-func retrySetUploads(client *server.Client, requester, setName string, all bool) error {
-	givenSet, err := client.GetSetByName(requester, setName)
+func getRequestedSet(client *server.Client, requester, setName string) (*set.Set, error) {
+	requestedSet, err := client.GetSetByName(requester, setName)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	if givenSet.ReadOnly {
-		return set.Error{Msg: set.ErrSetIsNotWritable}
+	if requestedSet.ReadOnly {
+		return nil, set.Error{Msg: set.ErrSetIsNotWritable}
 	}
 
-	if all {
-		if errt := client.TriggerDiscovery(givenSet.ID()); errt != nil {
-			return errt
-		}
-
-		info("initiated retry of set %s", setName)
-
-		return nil
-	}
-
-	return retryFailedSetUploads(client, givenSet.ID())
+	return requestedSet, nil
 }
 
 func retryFailedSetUploads(client *server.Client, sid string) error {

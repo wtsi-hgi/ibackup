@@ -26,8 +26,6 @@
 package cmd
 
 import (
-	"errors"
-
 	"github.com/spf13/cobra"
 )
 
@@ -35,18 +33,34 @@ var syncUser string
 var syncSetName string
 var syncDelete bool
 
-var (
-	ErrSyncNoName = errors.New("you must specify --name")
-)
-
 // syncCmd represents the sync command.
 var syncCmd = &cobra.Command{
 	Use:   "sync",
-	Short: "Perform one-time sync operations on a set",
-	Long:  `Perform one-time sync operations on a set.`,
+	Short: "Sync local files with iRODS",
+	Long: `Sync local files with iRODS.
+
+Having used 'ibackup add' to add the details of a backup sets, use this command
+to check for local changes and do any needed uploads in that set. Provide the
+required --name to choose the set.
+
+This re-triggers discovery of files in any directories specified as part of your
+set. It's like starting over from the beginning, though any files already
+uploaded to iRODS and unchanged locally will not be uploaded again.
+
+If the --delete option is given, then any files that are no longer present
+locally will be deleted from iRODS.
+
+You need to supply the ibackup server's URL in the form domain:port (using the
+IBACKUP_SERVER_URL environment variable, or overriding that with the --url
+argument) and if necessary, the certificate (using the IBACKUP_SERVER_CERT
+environment variable, or overriding that with the --cert argument).
+
+If you are the user who started the ibackup server, you can use the --user
+option to retry the given requestor's backup sets, instead of your own.	
+`,
 	PreRunE: func(_ *cobra.Command, _ []string) error {
 		if syncSetName == "" {
-			return ErrSyncNoName
+			return ErrSetNoName
 		}
 
 		return nil
@@ -59,16 +73,16 @@ var syncCmd = &cobra.Command{
 			return err
 		}
 
-		userSet, err := client.GetSetByName(syncUser, syncSetName)
+		rSet, err := getRequestedSet(client, syncUser, syncSetName)
 		if err != nil {
 			return err
 		}
 
-		return client.TriggerDiscovery(userSet.ID(), syncDelete)
+		return client.TriggerDiscovery(rSet.ID(), syncDelete)
 	},
 }
 
-func init() { //nolint:funlen
+func init() {
 	RootCmd.AddCommand(syncCmd)
 
 	syncCmd.Flags().StringVar(&syncUser, "user", currentUsername(), helpTextuser)

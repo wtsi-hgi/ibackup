@@ -741,7 +741,7 @@ func TestList(t *testing.T) {
 				s.confirmOutput(t, []string{"list", "--name", setName, "--local", "--last-state"}, 0,
 					uploadFile1Path+"\n"+uploadFile2Path)
 
-				exitCode, _ := s.runBinary(t, "retry", "--all", "--name", setName)
+				exitCode, _ := s.runBinary(t, "sync", "--name", setName)
 				So(exitCode, ShouldEqual, 0)
 				s.waitForStatus(setName, "Status: complete", 20*time.Second)
 
@@ -2037,7 +2037,7 @@ Global put client status (/10): 6 iRODS connections`)
 					"Num files: 3; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 38 B / 18 B / 0 B")
 
 				internal.CreateTestFile(t, file2, "less data")
-				exitCode, _ := s.runBinary(t, "retry", "--name", newName, "-a")
+				exitCode, _ := s.runBinary(t, "sync", "--name", newName)
 				So(exitCode, ShouldEqual, 0)
 
 				s.waitForStatus(newName, "\nStatus: complete", 60*time.Second)
@@ -2047,7 +2047,7 @@ Global put client status (/10): 6 iRODS connections`)
 					"Num files: 3; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 29 B / 9 B / 0 B")
 			})
 
-			Convey("Retrying a set with locally removed files will show orphaned status", func() {
+			Convey("Syncing a set with locally removed files will show orphaned status", func() {
 				resetIRODS()
 
 				setName := "setWithOrphanedFiles"
@@ -2074,7 +2074,7 @@ Global put client status (/10): 6 iRODS connections`)
 				err = os.Remove(file4)
 				So(err, ShouldBeNil)
 
-				exitCode, _ = s.runBinary(t, "retry", "--name", setName, "-a")
+				exitCode, _ = s.runBinary(t, "sync", "--name", setName)
 				So(exitCode, ShouldEqual, 0)
 
 				s.waitForStatus(setName, "\nStatus: complete", 10*time.Second)
@@ -2092,7 +2092,7 @@ Global put client status (/10): 6 iRODS connections`)
 				So(output, ShouldContainSubstring, file4+"\torphaned\t0 B\t")
 			})
 
-			Convey("Retrying a set with locally removed dirs will show orphaned status", func() {
+			Convey("Syncing a set with locally removed dirs will show orphaned status", func() {
 				setName := "setWithOrphanedDirs"
 				s.addSetForTesting(t, setName, transformer, path)
 
@@ -2107,7 +2107,7 @@ Global put client status (/10): 6 iRODS connections`)
 				err := os.RemoveAll(path)
 				So(err, ShouldBeNil)
 
-				exitCode, _ = s.runBinary(t, "retry", "--name", setName, "-a")
+				exitCode, _ = s.runBinary(t, "sync", "--name", setName)
 				So(exitCode, ShouldEqual, 0)
 
 				s.waitForStatus(setName, "\nStatus: complete", 10*time.Second)
@@ -2202,7 +2202,7 @@ no backup sets`
 			s.confirmOutputContains(t, []string{"status", "-f"}, 0, expected)
 			s.confirmOutputContains(t, []string{"status", "-i"}, 0, expected)
 
-			s.confirmOutput(t, []string{"retry", "--name", setName, "--failed"},
+			s.confirmOutput(t, []string{"retry", "--name", setName},
 				0, "initated retry of 1 failed entries")
 
 			s.waitForStatus(setName, statusLine, 30*time.Second)
@@ -2639,11 +2639,11 @@ func TestRemove(t *testing.T) {
 						1, server.ErrTrashSetName.Error())
 				})
 
-				Convey("And you cannot retry the trash set", func() {
-					s.confirmOutputContains(t, []string{"retry", "--name", trashSetName, "--all"},
+				Convey("And you cannot sync or retry the trash set", func() {
+					s.confirmOutputContains(t, []string{"sync", "--name", trashSetName},
 						1, server.ErrTrashSetName.Error())
 
-					s.confirmOutputContains(t, []string{"retry", "--name", trashSetName, "--failed"},
+					s.confirmOutputContains(t, []string{"retry", "--name", trashSetName},
 						1, server.ErrTrashSetName.Error())
 				})
 
@@ -2670,7 +2670,7 @@ func TestRemove(t *testing.T) {
 					Convey("And status will remain correct after two-way sync is triggered", func() {
 						So(os.Remove(file5), ShouldBeNil)
 
-						exitCode, _ = s.runBinary(t, "retry", "--name", setName, "-a")
+						exitCode, _ = s.runBinary(t, "sync", "--name", setName)
 
 						s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 5*time.Second)
 
@@ -2682,7 +2682,7 @@ func TestRemove(t *testing.T) {
 								"(total/recently uploaded/recently removed): 20 B / 0 B / 11 B\n"+
 								"Uploaded: 0; Replaced: 0; Skipped: 2; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0")
 
-						exitCode, _ = s.runBinary(t, "retry", "--name", setName, "-a")
+						exitCode, _ = s.runBinary(t, "sync", "--name", setName)
 
 						s.waitForStatus(setName, "\nDiscovery: completed", 10*time.Second)
 						s.waitForStatus(setName, "\nStatus: complete", 10*time.Second)
@@ -2982,7 +2982,7 @@ func TestRemove(t *testing.T) {
 				})
 			})
 
-			Convey("If you retry one of the uploaded files and it does not upload", func() {
+			Convey("If you sync to retry one of the uploaded files and it does not upload", func() {
 				statusCmd := []string{"status", "--name", setName, "-d"}
 				s.confirmOutputContains(t, statusCmd, 0, "file1\tuploaded")
 
@@ -2992,7 +2992,7 @@ func TestRemove(t *testing.T) {
 				e := syscall.Mkfifo(file1, userPerms)
 				So(e, ShouldBeNil)
 
-				exitCode, _ := s.runBinary(t, "retry", "--name", setName, "--all")
+				exitCode, _ := s.runBinary(t, "sync", "--name", setName)
 				So(exitCode, ShouldEqual, 0)
 
 				s.waitForStatus(setName, "\nStatus: complete", 10*time.Second)
@@ -3850,8 +3850,8 @@ func TestEdit(t *testing.T) {
 							set.ErrSetIsNotWritable)
 					})
 
-					Convey("And you can no longer retry it", func() {
-						s.confirmOutputContains(t, []string{"retry", "--name", setName, "--all"}, 1,
+					Convey("And you can no longer sync it", func() {
+						s.confirmOutputContains(t, []string{"sync", "--name", setName}, 1,
 							set.ErrSetIsNotWritable)
 					})
 
@@ -4354,7 +4354,13 @@ func TestSync(t *testing.T) {
 
 		timeout := 10 * time.Second
 
-		Convey("And a set with some uploaded files, one of which is then deleted locally and a new file added locally", func() {
+		Convey("sync requires --name", func() {
+			s.confirmOutputContains(t, []string{"sync"}, 1,
+				cmd.ErrSetNoName.Error())
+		})
+
+		Convey("And a set with some uploaded files, one of which is then deleted locally and "+
+			"a new file added locally", func() {
 			setDir := filepath.Join(path, "dir1")
 			err := os.Mkdir(setDir, userPerms)
 			So(err, ShouldBeNil)
@@ -4385,9 +4391,9 @@ func TestSync(t *testing.T) {
 			setFile2 := filepath.Join(setDir, "file2")
 			internal.CreateTestFileOfLength(t, setFile2, 1)
 
-			Convey("sync requires --name", func() {
-				s.confirmOutputContains(t, []string{"sync"}, 1,
-					cmd.ErrSyncNoName.Error())
+			Convey("sync requires a valid --name", func() {
+				s.confirmOutputContains(t, []string{"sync", "--name", "invalid"}, 1,
+					server.ErrBadSet.Error())
 			})
 
 			Convey("sync without --delete uploads new files without deleting locally deleted ones", func() {
@@ -4423,6 +4429,70 @@ func TestSync(t *testing.T) {
 				So(output, ShouldNotContainSubstring, "Orphaned: 1;")
 				So(output, ShouldContainSubstring, "Size (total/recently uploaded/recently removed): 2 B / 1 B / 1 B")
 				So(output, ShouldNotContainSubstring, setFileToBeDeleted)
+			})
+		})
+	})
+}
+
+func TestRetry(t *testing.T) {
+	Convey("With a started uploading server", t, func() {
+		s, remotePath := NewUploadingTestServer(t, false)
+		So(s, ShouldNotBeNil)
+
+		path := t.TempDir()
+		transformer := "prefix=" + path + ":" + remotePath
+
+		resetIRODS()
+
+		timeout := 30 * time.Second
+
+		Convey("retry requires --name", func() {
+			s.confirmOutputContains(t, []string{"retry"}, 1,
+				cmd.ErrSetNoName.Error())
+		})
+
+		Convey("And a set with a file that fails to upload", func() {
+			setDir := filepath.Join(path, "dir")
+			err := os.Mkdir(setDir, userPerms)
+			So(err, ShouldBeNil)
+
+			setFile1 := filepath.Join(setDir, "file1")
+			internal.CreateTestFileOfLength(t, setFile1, 1)
+
+			setFileToBeRetried := filepath.Join(setDir, "file_to_be_retried")
+			internal.CreateTestFileOfLength(t, setFileToBeRetried, 1)
+
+			err = os.Chmod(setFileToBeRetried, 0)
+			So(err, ShouldBeNil)
+
+			setName := "failTest"
+			s.addSetForTesting(t, setName, transformer, path)
+
+			s.waitForStatus(setName, "0 reserved to be worked on; 1 failed", timeout)
+			s.waitForStatus(setName, "Status: complete", timeout)
+
+			exitCode, output := s.runBinaryWithNoLogging(t, "status", "--name", setName, "-d")
+			So(exitCode, ShouldEqual, 0)
+
+			So(output, ShouldContainSubstring, "Num files: 2")
+			So(output, ShouldContainSubstring, "Uploaded: 1;")
+			So(output, ShouldContainSubstring, "Failed: 1;")
+
+			Convey("retry uploads the previously failed file after fixing the issue", func() {
+				err = os.Chmod(setFileToBeRetried, 0444)
+				So(err, ShouldBeNil)
+
+				exitCode, _ = s.runBinary(t, "retry", "--name", setName)
+				So(exitCode, ShouldEqual, 0)
+
+				s.waitForStatus(setName, "Status: complete\n", timeout)
+
+				exitCode, output = s.runBinaryWithNoLogging(t, "status", "--name", setName, "-d")
+				So(exitCode, ShouldEqual, 0)
+
+				So(output, ShouldContainSubstring, "Num files: 2")
+				So(output, ShouldContainSubstring, "Uploaded: 2;")
+				So(output, ShouldContainSubstring, "Failed: 0;")
 			})
 		})
 	})
