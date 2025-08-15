@@ -135,9 +135,11 @@ var (
 			"`remotePathHash` " + hashColumnStart + "`remotePath`" + hashColumnEnd + ", " +
 			"`lastUploaded` DATETIME DEFAULT '0001-01-01 00:00:00', " +
 			"`hardlinkID` INTEGER NOT NULL, " +
+			"`transformerID` INTEGER NOT NULL, " +
 			"`updated` TINYINT DEFAULT 0 /*! INVISIBLE */," +
 			"UNIQUE(`remotePathHash`), " +
-			"FOREIGN KEY(`hardlinkID`) REFERENCES `hardlinks`(`id`) ON DELETE RESTRICT" +
+			"FOREIGN KEY(`hardlinkID`) REFERENCES `hardlinks`(`id`) ON DELETE RESTRICT, " +
+			"FOREIGN KEY(`transformerID`) REFERENCES `transformers`(`id`) ON UPDATE RESTRICT ON DELETE RESTRICT" +
 			");",
 
 		"CREATE TABLE IF NOT EXISTS `localFiles` (" +
@@ -180,6 +182,30 @@ var (
 			"FOREIGN KEY(`setID`) REFERENCES `sets`(`id`) ON DELETE RESTRICT" +
 			");",
 
+		"CREATE TABLE IF NOT EXISTS `changedInodes` (" +
+			"`remoteFileID` INTEGER NOT NULL, " +
+			"`hardlinkID` INTEGER NOT NULL, " +
+			"`transformerID` INTEGER NOT NULL, " +
+			"`remotePath` TEXT, " +
+			"FOREIGN KEY(`remoteFileID`) REFERENCES `remoteFiles`(`id`) ON DELETE RESTRICT, " +
+			"FOREIGN KEY(`hardlinkID`) REFERENCES `hardlinks`(`id`) ON DELETE RESTRICT, " +
+			"FOREIGN KEY(`transformerID`) REFERENCES `transformers`(`id`) ON DELETE RESTRICT" +
+			");",
+
+		"CREATE TRIGGER IF NOT EXISTS `remove_old_inodes` AFTER DELETE ON `changedInodes` FOR EACH ROW BEGIN " +
+			"INSERT INTO `remoteFiles` " +
+			"(`remotePath`, `hardlinkID`, `transformerID`) VALUES " +
+			"(`OLD`.`remotePath`, `OLD`.`hardlinkID`, `OLD`.`transformerID`);" +
+			"INSERT INTO `localFiles` " +
+			"(`setID`, `localPath`, `remoteFileID`, `updated`) " +
+			"SELECT " +
+			"`setID`, " +
+			"`OLD`.`remotePath`, " +
+			"/*! LAST_INSERT_ID() -- */ LAST_INSERT_ROWID()\n/*! */, " +
+			"2 " +
+			"FROM `localFiles` WHERE `remoteFileID` = `OLD`.`remoteFileID`;" +
+			"END;",
+
 		"/*! CREATE TRIGGER IF NOT EXISTS `update_set_last_complete` BEFORE UPDATE ON `sets` FOR EACH ROW BEGIN " +
 			"IF " + lastCompletedChangeCondition + " THEN " +
 			"SET `NEW`.`lastCompleted` = now(), " +
@@ -199,28 +225,6 @@ var (
 
 		"CREATE TRIGGER IF NOT EXISTS `set_discovery_start_time` AFTER INSERT ON `activeDiscoveries` FOR EACH ROW BEGIN " +
 			"UPDATE `sets` SET `startedDiscovery` = " + now + ", `error` = '' WHERE `id` = `NEW`.`setID`;" +
-			"END;",
-
-		"CREATE TABLE IF NOT EXISTS `changedInodes` (" +
-			"`remoteFileID` INTEGER NOT NULL, " +
-			"`hardlinkID` INTEGER NOT NULL, " +
-			"`remotePath` TEXT, " +
-			"FOREIGN KEY(`remoteFileID`) REFERENCES `remoteFiles`(`id`) ON DELETE RESTRICT, " +
-			"FOREIGN KEY(`hardlinkID`) REFERENCES `hardlinks`(`id`) ON DELETE RESTRICT" +
-			");",
-
-		"CREATE TRIGGER IF NOT EXISTS `remove_old_inodes` AFTER DELETE ON `changedInodes` FOR EACH ROW BEGIN " +
-			"INSERT INTO `remoteFiles` " +
-			"(`remotePath`, `hardlinkID`) VALUES " +
-			"(`OLD`.`remotePath`, `OLD`.`hardlinkID`);" +
-			"INSERT INTO `localFiles` " +
-			"(`setID`, `localPath`, `remoteFileID`, `updated`) " +
-			"SELECT " +
-			"`setID`, " +
-			"`OLD`.`remotePath`, " +
-			"/*! LAST_INSERT_ID() -- */ LAST_INSERT_ROWID()\n/*! */, " +
-			"2 " +
-			"FROM `localFiles` WHERE `remoteFileID` = `OLD`.`remoteFileID`;" +
 			"END;",
 
 		"/*! CREATE TRIGGER IF NOT EXISTS `set_discovery_timeout_error` AFTER UPDATE ON `activeDiscoveries` " +
@@ -308,10 +312,11 @@ var (
 			"WHERE `id` IN (SELECT `setID` FROM `localFiles` WHERE " +
 			"`remoteFileID` = `NEW`.`id` AND `updated` != 2 AND `localFiles`.`setID` = `sets`.`id`);" +
 			"INSERT INTO `changedInodes` " +
-			"(`remoteFileID`, `remotePath`, `hardlinkID`) VALUES (" +
+			"(`remoteFileID`, `remotePath`, `hardlinkID`, `transformerID`) VALUES (" +
 			"`OLD`.`id`, " +
 			"CONCAT(CHAR(0), `OLD`.`remotePath`, CHAR(0), `OLD`.`hardlinkID`, CHAR(0), `OLD`.`id`, CHAR(0), " + now + "), " +
-			"`OLD`.`hardlinkID`" +
+			"`OLD`.`hardlinkID`," +
+			"`OLD`.`transformerID`" +
 			");" +
 			"/*! END IF; */" +
 			"END;",
@@ -599,9 +604,12 @@ const (
 		returnOrSetID
 	createRemoteFile = "INSERT INTO `remoteFiles` (" +
 		"`remotePath`, " +
-		"`hardlinkID`" +
-		") VALUES (?, ?) " + setRef + onConflictUpdate + colUpdate +
-		"`hardlinkID` = `EXCLUDED`.`hardlinkID`, " + returnOrSetID
+		"`hardlinkID`, " +
+		"`transformerID`" +
+		") VALUES (?, ?, ?) " + setRef + onConflictUpdate + colUpdate +
+		"`hardlinkID` = `EXCLUDED`.`hardlinkID`, " +
+		"`transformerID` = IF(`EXCLUDED`.`transformerID` = `remoteFiles`.`transformerID`, `EXCLUDED`.`transformerID`, -1), " +
+		returnOrSetID
 	createSetFile = "INSERT INTO `localFiles` (" +
 		"`localPath`, " +
 		"`setID`, " +
@@ -700,6 +708,7 @@ const (
 		"`sets`.`warning`, " +
 		"`sets`.`modifiable`, " +
 		"`sets`.`hidden`, " +
+		"`transformers`.`id`, " +
 		"`transformers`.`transformer`, " +
 		"`transformers`.`regexp`, " +
 		"`transformers`.`replace` " +

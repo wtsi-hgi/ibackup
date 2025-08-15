@@ -313,14 +313,15 @@ func (d *DB) CreateSet(set *Set) error { //nolint:gocyclo
 }
 
 func (d *DB) createSet(tx *sql.Tx, set *Set) error {
-	tID, err := d.execReturningRowID(tx, createTransformer, set.Transformer.name,
-		set.Transformer.re.String(), set.Transformer.replace)
-	if err != nil {
+	var err error
+
+	if set.Transformer.id, err = d.execReturningRowID(tx, createTransformer, set.Transformer.name,
+		set.Transformer.re.String(), set.Transformer.replace); err != nil {
 		return err
 	}
 
-	res, err := tx.Exec(createSet, set.Name, set.Requester, tID, set.MonitorTime, set.MonitorRemovals, set.DeleteLocal,
-		set.Description, set.Metadata, set.Reason, timeOrNull(set.ReviewDate), timeOrNull(set.DeleteDate))
+	res, err := tx.Exec(createSet, set.Name, set.Requester, set.Transformer.id, set.MonitorTime, set.MonitorRemovals,
+		set.DeleteLocal, set.Description, set.Metadata, set.Reason, timeOrNull(set.ReviewDate), timeOrNull(set.DeleteDate))
 	if err != nil {
 		return err
 	}
@@ -365,6 +366,7 @@ func scanSet(scanner scanner) (*Set, error) { //nolint:funlen
 
 	var (
 		lastCompleted, reviewDate, deleteDate                  sql.NullTime
+		transformerID                                          int64
 		transformerName, transformerRegexp, transformerReplace string
 	)
 
@@ -406,6 +408,7 @@ func scanSet(scanner scanner) (*Set, error) { //nolint:funlen
 		&set.Warning,
 		&set.modifiable,
 		&set.Hidden,
+		&transformerID,
 		&transformerName,
 		&transformerRegexp,
 		&transformerReplace,
@@ -422,6 +425,7 @@ func scanSet(scanner scanner) (*Set, error) { //nolint:funlen
 		return nil, err
 	}
 
+	transformer.id = transformerID
 	set.Transformer = transformer
 
 	return set, nil
@@ -470,6 +474,16 @@ func isAlreadyExists(err error) bool {
 
 	if errors.As(err, &sqlerr) {
 		return sqlerr.Number == 1062 //nolint:mnd
+	}
+
+	return false
+}
+
+func isForeignKeyError(err error) bool {
+	var sqlerr *mysql.MySQLError
+
+	if errors.As(err, &sqlerr) {
+		return sqlerr.Number == 1452 //nolint:mnd
 	}
 
 	return false

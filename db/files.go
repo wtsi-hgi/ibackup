@@ -33,6 +33,10 @@ import (
 	"time"
 )
 
+var (
+	ErrTransformerConflict = errors.New("remote file already exists with different transformer")
+)
+
 type FileType uint8
 
 const (
@@ -122,8 +126,12 @@ func (d *DB) addSetFile(tx *sql.Tx, set *Set, file *File) error {
 		return err
 	}
 
-	rfID, err := d.execReturningRowID(tx, createRemoteFile, file.RemotePath, hlID)
+	rfID, err := d.execReturningRowID(tx, createRemoteFile, file.RemotePath, hlID, set.Transformer.id)
 	if err != nil {
+		if d.isForeignKeyError(err) {
+			return ErrTransformerConflict
+		}
+
 		return err
 	}
 

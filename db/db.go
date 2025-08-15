@@ -25,10 +25,7 @@
 
 package db
 
-import (
-	"database/sql"
-	"fmt"
-)
+import "database/sql"
 
 type DBRO struct { //nolint:revive
 	db *sql.DB
@@ -39,6 +36,7 @@ type DB struct {
 
 	execReturningRowID func(tx *sql.Tx, sql string, params ...any) (int64, error)
 	isAlreadyExists    func(error) bool
+	isForeignKeyError  func(error) bool
 }
 
 func InitRO(driver, connection string) (*DBRO, error) {
@@ -60,6 +58,7 @@ func Init(driver, connection string) (*DB, error) {
 		DBRO:               DBRO{db: db},
 		execReturningRowID: execReturningRowID,
 		isAlreadyExists:    isAlreadyExists,
+		isForeignKeyError:  isForeignKeyError,
 	}
 
 	if err = d.initTables(); err != nil {
@@ -72,7 +71,6 @@ func Init(driver, connection string) (*DB, error) {
 func (d *DB) initTables() error {
 	for _, table := range tables {
 		if _, err := d.db.Exec(table); err != nil {
-			fmt.Println(table)
 			return err
 		}
 	}

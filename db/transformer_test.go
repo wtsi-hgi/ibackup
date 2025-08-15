@@ -1,6 +1,8 @@
 package db
 
 import (
+	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -114,21 +116,71 @@ func TestTransformers(t *testing.T) {
 			So(d.CreateSet(setC), ShouldBeNil)
 
 			transformers := collectIter(t, iterRows(&d.DBRO, scanTransformers,
-				"SELECT `transformer`, `regexp`, `replace` FROM `transformers`;"))
+				"SELECT `id`, `transformer`, `regexp`, `replace` FROM `transformers`;"))
 			So(transformers, ShouldResemble, []*Transformer{
 				complexTransformer,
 				setC.Transformer,
 			})
 		})
+
+		Convey("You cannot have two remote files with different transformers", func() {
+			prefixA, err := NewTransformer("prefix", "^/some/file/", "/some/remote/path/")
+			So(err, ShouldBeNil)
+
+			prefixB, err := NewTransformer("prefix", "^/some/local/file/", "/some/remote/path/")
+			So(err, ShouldBeNil)
+
+			setD := &Set{
+				Name:        "mySet",
+				Requester:   "you",
+				Transformer: prefixA,
+				Description: "my first set",
+			}
+			setE := &Set{
+				Name:        "myOtherSet",
+				Requester:   "you",
+				Transformer: prefixA,
+				Description: "my second set",
+			}
+			setF := &Set{
+				Name:        "myFinalSet",
+				Requester:   "you",
+				Transformer: prefixB,
+				Description: "my third set",
+			}
+
+			So(d.CreateSet(setD), ShouldBeNil)
+			So(d.CreateSet(setE), ShouldBeNil)
+			So(d.CreateSet(setF), ShouldBeNil)
+
+			file := slices.Collect(genFiles(1))
+
+			So(d.CompleteDiscovery(setD, slices.Values(file), noSeq[*File]), ShouldBeNil)
+			So(d.CompleteDiscovery(setE, slices.Values(file), noSeq[*File]), ShouldBeNil)
+
+			file[0].LocalPath = "/some/local/file/" + filepath.Base(file[0].LocalPath)
+
+			So(d.CompleteDiscovery(setF, slices.Values(file), noSeq[*File]), ShouldEqual, ErrTransformerConflict)
+		})
 	})
 }
 
 func scanTransformers(scanner scanner) (*Transformer, error) {
-	var transformerName, transformerRegexp, transformerReplace string
+	var (
+		transformerID                                          int64
+		transformerName, transformerRegexp, transformerReplace string
+	)
 
-	if err := scanner.Scan(&transformerName, &transformerRegexp, &transformerReplace); err != nil {
+	if err := scanner.Scan(&transformerID, &transformerName, &transformerRegexp, &transformerReplace); err != nil {
 		return nil, err
 	}
 
-	return NewTransformer(transformerName, transformerRegexp, transformerReplace)
+	trans, err := NewTransformer(transformerName, transformerRegexp, transformerReplace)
+	if err != nil {
+		return nil, err
+	}
+
+	trans.id = transformerID
+
+	return trans, nil
 }

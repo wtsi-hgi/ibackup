@@ -83,6 +83,16 @@ func createTestDatabase(t *testing.T) *DB {
 
 			return false
 		}
+
+		d.isForeignKeyError = func(err error) bool {
+			var sqlerr *sqlite.Error
+
+			if errors.As(err, &sqlerr) {
+				return sqlerr.Code() == 787
+			}
+
+			return false
+		}
 	}
 
 	Reset(func() { d.Close() })
@@ -96,7 +106,7 @@ func dropTables(uri string) error {
 		return err
 	}
 
-	for _, table := range [...]string{"activeDiscoveries", "queue",
+	for _, table := range [...]string{"changedInodes", "activeDiscoveries", "queue",
 		"processes", "localFiles", "remoteFiles", "hardlinks", "toDiscover",
 		"sets", "transformers"} {
 		if _, err = db.Exec("DROP TABLE IF EXISTS `" + table + "`;"); err != nil {

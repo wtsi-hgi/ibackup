@@ -15,6 +15,7 @@ var (
 )
 
 type Transformer struct {
+	id      int64
 	name    string
 	re      *regexp.Regexp
 	replace string

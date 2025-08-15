@@ -28,7 +28,6 @@ package testdb
 import (
 	"database/sql"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -44,9 +43,10 @@ type dbe struct {
 
 	execReturningRowID func(tx *sql.Tx, sql string, params ...any) (int64, error)
 	isAlreadyExists    func(error) bool
+	isForeignKeyError  func(error) bool
 }
 
-func CreateTestDatabase(t *testing.T) *db.DB {
+func CreateTestDatabase(t *testing.T) *db.DB { //nolint:funlen
 	t.Helper()
 
 	oldTmp := os.Getenv("TMPDIR")
@@ -75,8 +75,17 @@ func CreateTestDatabase(t *testing.T) *db.DB {
 		var sqlerr *sqlite.Error
 
 		if errors.As(err, &sqlerr) {
-			fmt.Println(sqlerr.Code())
 			return sqlerr.Code() == 2067 //nolint:mnd
+		}
+
+		return false
+	}
+
+	(*dbe)(unsafe.Pointer(d)).isForeignKeyError = func(err error) bool {
+		var sqlerr *sqlite.Error
+
+		if errors.As(err, &sqlerr) {
+			return sqlerr.Code() == 787 //nolint:mnd
 		}
 
 		return false
