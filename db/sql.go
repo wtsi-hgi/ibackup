@@ -333,10 +333,10 @@ var (
 			"END;",
 
 		"CREATE TRIGGER IF NOT EXISTS `upload_local_file` AFTER INSERT ON `localFiles` FOR EACH ROW BEGIN " +
-			"INSERT INTO `queue` (`localFileID`, `type`) SELECT `NEW`.`id`, " + string('0'+QueueUpload) + " " +
+			"INSERT INTO `queue` (`localFileID`, `type`) SELECT `NEW`.`id`, " +
+			"IF(`NEW`.`updated` = 2, " + string('0'+QueueRemoval) + ", " + string('0'+QueueUpload) + ") " +
 			"WHERE `NEW`.`status` NOT IN (" + string('0'+StatusMissing) + ", " + string('0'+StatusOrphaned) + ") " +
-			onConflictUpdate + "`type` = IF(`NEW`.`updated` = 2, " + string('0'+QueueRemoval) + ", " +
-			string('0'+QueueUpload) + "), `attempts` = 0, " +
+			onConflictUpdate + "`type` = " + string('0'+QueueUpload) + ", `attempts` = 0, " +
 			"`lastAttempt` = '0001-01-01 00:00:00', `lastError` = '';" +
 			"END;",
 
@@ -362,11 +362,10 @@ var (
 			"/*! END IF; */" +
 			"END;",
 
-		"CREATE TRIGGER IF NOT EXISTS `reupload_local_file` AFTER UPDATE ON `localFiles` FOR EACH ROW BEGIN " +
-			"/*! IF `OLD`.`updated` != `NEW`.`updated` THEN */" +
+		"CREATE TRIGGER IF NOT EXISTS `reupload_local_file` AFTER UPDATE ON `localFiles` FOR EACH ROW " +
+			"/*! BEGIN IF -- */ WHEN\n/*! */ `OLD`.`updated` != `NEW`.`updated` /*! THEN -- */ BEGIN\n/*! */ " +
 			"INSERT INTO `queue` (`localFileID`, `type`) SELECT `NEW`.`id`, " + string('0'+QueueUpload) + " " +
-			"WHERE `OLD`.`updated` != `NEW`.`updated` AND " +
-			"`NEW`.`status` NOT IN (" + string('0'+StatusMissing) + ", " + string('0'+StatusOrphaned) + ") " +
+			"WHERE  `NEW`.`status` NOT IN (" + string('0'+StatusMissing) + ", " + string('0'+StatusOrphaned) + ") " +
 			onConflictUpdate + "`type` = " + string('0'+QueueUpload) + ", `attempts` = 0, " +
 			"`lastAttempt` = '0001-01-01 00:00:00', `lastError` = '';" +
 			"/*! END IF; */" +

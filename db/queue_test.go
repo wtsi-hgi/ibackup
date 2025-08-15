@@ -645,9 +645,11 @@ func TestQueue(t *testing.T) {
 					InodePath:  inodePath(files[0].MountPount, files[0].Inode-1, files[0].Btime),
 					Size:       100,
 					MTime:      200,
-					Type:       QueueUpload,
+					Type:       QueueRemoval,
 					Requester:  setA.Requester,
 					SetName:    setA.Name,
+					RemoteRefs: 1,
+					InodeRefs:  1,
 				},
 			})
 		})
