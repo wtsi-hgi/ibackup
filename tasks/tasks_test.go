@@ -233,7 +233,7 @@ func TestTasks(t *testing.T) {
 
 			doTasks := func() {
 				for {
-					tasks, err := h.GetTasks(1)
+					tasks, err = h.GetTasks(1)
 					So(err, ShouldBeNil)
 
 					if len(tasks) == 0 {
@@ -246,11 +246,11 @@ func TestTasks(t *testing.T) {
 
 			doTasks()
 
-			_, err := h.handler.StatWithMeta(keepFile.RemotePath)
+			_, err = h.handler.StatWithMeta(keepFile.RemotePath)
 			So(err, ShouldBeNil)
 
-			stat, err := h.handler.StatWithMeta(inodePath(keepFile))
-			So(err, ShouldBeNil)
+			stat, errr := h.handler.StatWithMeta(inodePath(keepFile))
+			So(errr, ShouldBeNil)
 			So(stat.Size, ShouldEqual, 1)
 
 			stat, err = h.handler.StatWithMeta(removeFile.RemotePath)
@@ -266,8 +266,8 @@ func TestTasks(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(stat.Size, ShouldEqual, 5)
 
-			trashSetA, err := d.GetTrashSet(setA.Name, setA.Requester)
-			So(err, ShouldBeNil)
+			trashSetA, errr := d.GetTrashSet(setA.Name, setA.Requester)
+			So(errr, ShouldBeNil)
 
 			So(d.RemoveSetFiles(trashSetA, d.GetSetFiles(trashSetA).Iter), ShouldBeNil)
 
@@ -277,6 +277,31 @@ func TestTasks(t *testing.T) {
 			So(err, ShouldEqual, fs.ErrNotExist)
 
 			_, err = h.handler.StatWithMeta(inodePath(removeFile))
+			So(err, ShouldEqual, fs.ErrNotExist)
+		})
+
+		Convey("Old inode files are removed when a local files changes inode", func() {
+			remade := filepath.Join(setADir, "AFile")
+			oldInodePath := hardlinkPath(t, irodsPath, filepath.Join(setADir, "AFile"))
+
+			So(os.WriteFile(remade+".copy", []byte{'A'}, 0600), ShouldBeNil)
+			So(os.Remove(remade), ShouldBeNil)
+			So(os.Rename(remade+".copy", remade), ShouldBeNil)
+
+			So(discovery.Discover(d, setA, nil), ShouldBeNil)
+
+			tasks, err = h.GetTasks(10)
+			So(err, ShouldBeNil)
+			So(len(tasks), ShouldEqual, 6)
+
+			for _, task := range tasks {
+				So(h.HandleTask(task), ShouldBeNil)
+			}
+
+			_, err = h.handler.StatWithMeta(hardlinkPath(t, irodsPath, filepath.Join(setADir, "AFile")))
+			So(err, ShouldBeNil)
+
+			_, err = h.handler.StatWithMeta(oldInodePath)
 			So(err, ShouldEqual, fs.ErrNotExist)
 		})
 	})

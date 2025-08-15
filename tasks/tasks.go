@@ -32,6 +32,7 @@ import (
 	"path"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/wtsi-hgi/ibackup/baton"
@@ -296,6 +297,10 @@ func (h *Handler) removeParentCollections(path string) error {
 func (h *Handler) removeInode(task *db.Task, inode *baton.Stat) error {
 	if inode == nil {
 		return nil
+	}
+
+	if strings.HasPrefix(task.RemotePath, "\x00") {
+		task.InodeRefs--
 	}
 
 	if task.InodeRefs == 0 {
