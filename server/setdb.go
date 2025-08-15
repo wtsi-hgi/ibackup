@@ -94,7 +94,11 @@ const (
 	// entries.
 	EndPointAuthFailedEntries = gas.EndPointAuth + failedEntryPath
 
-	// EndPointAuthDiscovery is the endpoint for triggering set discovery.
+	// EndPointAuthDiscovery is the endpoint for triggering set discovery which
+	// will ultimately result in the upload of files missing remotely or changed
+	// locally and will delete remote files missing locally if the set has
+	// monitor-removals turned on, or if the force_removals parameter is passed
+	// as true.
 	EndPointAuthDiscovery = gas.EndPointAuth + discoveryPath
 
 	// EndPointAuthRequests is the endpoint for getting file upload requests.
@@ -1954,7 +1958,7 @@ func (s *Server) recoverRemoveQueue() error {
 // middle of uploading; otherwise do nothing.
 func (s *Server) recoverSet(given *set.Set) error {
 	if given.StartedDiscovery.After(given.LastDiscovery) {
-		return s.discoverSet(given)
+		return s.discoverSet(given, false)
 	}
 
 	s.monitorSet(given)

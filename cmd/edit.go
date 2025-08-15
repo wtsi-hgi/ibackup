@@ -322,7 +322,7 @@ func updateSet(client *server.Client, sid, path string) error {
 		return err
 	}
 
-	return client.TriggerDiscovery(sid)
+	return client.TriggerDiscovery(sid, false)
 }
 
 // addFileToSet will add the given path to the set if its parent dir is not in

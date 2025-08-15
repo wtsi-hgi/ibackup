@@ -1,8 +1,7 @@
 /*******************************************************************************
- * Copyright (c) 2023 Genome Research Ltd.
+ * Copyright (c) 2025 Genome Research Ltd.
  *
- * Authors:
- *	- Sendu Bala <sb10@sanger.ac.uk>
+ * Author: Sendu Bala <sb10@sanger.ac.uk>
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -28,23 +27,31 @@ package cmd
 
 import (
 	"github.com/spf13/cobra"
-	"github.com/wtsi-hgi/ibackup/server"
-	"github.com/wtsi-hgi/ibackup/set"
 )
 
-// options for this cmd.
-var retryUser string
-var retrySet string
+var syncUser string
+var syncSetName string
+var syncDelete bool
 
-// retryCmd represents the retry command.
-var retryCmd = &cobra.Command{
-	Use:   "retry",
-	Short: "Retry file uploads in a set",
-	Long: `Retry file uploads in a set.
+// syncCmd represents the sync command.
+var syncCmd = &cobra.Command{
+	Use:   "sync",
+	Short: "Sync local files with iRODS",
+	Long: `Sync local files with iRODS.
 
 Having used 'ibackup add' to add the details of a backup sets, use this command
-to retry failed file uploads in that set. Provide the required --name to choose
-the set.
+to check for local changes and do any needed uploads in that set. Provide the
+required --name to choose the set.
+
+This re-triggers discovery of files in any directories specified as part of your
+set. It's like starting over from the beginning, though any files already
+uploaded to iRODS and unchanged locally will not be uploaded again. This is also
+the same as what happens if you had set the --monitor option and the time period
+had elapsed.
+
+If the --delete option is given, then any files that are no longer present
+locally will be deleted from iRODS. This is the same as what happens if you had
+set the --monitor option along with --monitor-removals.
 
 You need to supply the ibackup server's URL in the form domain:port (using the
 IBACKUP_SERVER_URL environment variable, or overriding that with the --url
@@ -52,7 +59,7 @@ argument) and if necessary, the certificate (using the IBACKUP_SERVER_CERT
 environment variable, or overriding that with the --cert argument).
 
 If you are the user who started the ibackup server, you can use the --user
-option to retry the given requestor's backup sets, instead of your own.
+option to retry the given requestor's backup sets, instead of your own.	
 `,
 	RunE: func(_ *cobra.Command, _ []string) error {
 		ensureURLandCert()
@@ -62,51 +69,24 @@ option to retry the given requestor's backup sets, instead of your own.
 			return err
 		}
 
-		rSet, err := getRequestedSet(client, retryUser, retrySet)
+		rSet, err := getRequestedSet(client, syncUser, syncSetName)
 		if err != nil {
 			return err
 		}
 
-		return retryFailedSetUploads(client, rSet.ID())
+		return client.TriggerDiscovery(rSet.ID(), syncDelete)
 	},
 }
 
 func init() {
-	RootCmd.AddCommand(retryCmd)
+	RootCmd.AddCommand(syncCmd)
 
-	// flags specific to this sub-command
-	retryCmd.Flags().StringVarP(&retryUser, "user", "u", currentUsername(), "set belongs to this user")
-	retryCmd.Flags().StringVarP(&retrySet, "name", "n", "", "name of set to retry")
+	syncCmd.Flags().StringVar(&syncUser, "user", currentUsername(), helpTextuser)
+	syncCmd.Flags().StringVarP(&syncSetName, "name", "n", "", helpTextName)
+	syncCmd.Flags().BoolVar(&syncDelete, "delete", false,
+		"delete extraneous files from iRODS")
 
-	if err := retryCmd.MarkFlagRequired("name"); err != nil {
+	if err := syncCmd.MarkFlagRequired("name"); err != nil {
 		die(err)
 	}
-}
-
-func getRequestedSet(client *server.Client, requester, setName string) (*set.Set, error) {
-	requestedSet, err := client.GetSetByName(requester, setName)
-	if err != nil {
-		return nil, err
-	}
-
-	if requestedSet.ReadOnly {
-		return nil, set.Error{Msg: set.ErrSetIsNotWritable}
-	}
-
-	return requestedSet, nil
-}
-
-func retryFailedSetUploads(client *server.Client, sid string) error {
-	retried, err := client.RetryFailedSetUploads(sid)
-	if err != nil {
-		return err
-	}
-
-	if retried == 0 {
-		warn("no failed uploads to retry in set '%s'", setName)
-	} else {
-		info("initated retry of %d failed entries", retried)
-	}
-
-	return nil
 }

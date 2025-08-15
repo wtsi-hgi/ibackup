@@ -172,7 +172,8 @@ func (dc *discoveryCoordinator) OnRemovalsDone(sid string, fn func()) {
 }
 
 // triggerDiscovery triggers the file discovery process for the set with the id
-// specified in the URL parameter.
+// specified in the URL parameter. Checks a force_removals query parameter and
+// forces removals if it is set to true.
 //
 // LoadSetDB() must already have been called. This is called when there is a GET
 // on /rest/v1/auth/discover/[id].
@@ -188,21 +189,28 @@ func (s *Server) triggerDiscovery(c *gin.Context) {
 		return
 	}
 
-	if err := s.discoverSet(givenSet); err != nil {
-		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+	forceRemovals := c.Query("force_removals") == "true"
 
-		return
-	}
+	go func() {
+		err := s.discoverSet(givenSet, forceRemovals)
+		if err != nil {
+			s.Logger.Printf("discovery error %s: %s", givenSet.ID(), err)
+		}
+	}()
 
 	c.Status(http.StatusOK)
 }
 
-// discoverSet discovers and stores file entry details for the given set if it is not read-only.
-// Immediately tries to record in the db that discovery has started, and create
-// a transformer for local->remote paths and returns any error from doing that.
-// Actual discovery will then proceed asynchronously, followed by adding all
-// upload requests for the set to the global put queue.
-func (s *Server) discoverSet(given *set.Set) error {
+// discoverSet discovers and stores file entry details for the given set if it
+// is not read-only. Immediately tries to record in the db that discovery has
+// started, and create a transformer for local->remote paths and returns any
+// error from doing that. Actual discovery will then proceed asynchronously,
+// followed by adding all upload requests for the set to the global put queue.
+//
+// The optional forceRemovals bool, if true, makes this behave as if the set has
+// MonitorRemovals true, to force deletion of files in iRODS if the corresponding
+// local file no longer exists.
+func (s *Server) discoverSet(given *set.Set, forceRemovals bool) error {
 	if given.ReadOnly {
 		s.Logger.Printf("Ignore discovery on a read-only set %s [%s:%s]", given.ID(), given.Requester, given.Name)
 
@@ -216,7 +224,7 @@ func (s *Server) discoverSet(given *set.Set) error {
 		return err
 	}
 
-	go s.discoverThenEnqueue(given, transformer)
+	go s.discoverThenEnqueue(given, transformer, forceRemovals)
 
 	return nil
 }
@@ -225,8 +233,8 @@ func (s *Server) discoverSet(given *set.Set) error {
 // queues the set's files for uploading. Call this in a go-routine, but don't
 // call it multiple times at once for the same set! This will block removals on
 // the same set.
-func (s *Server) discoverThenEnqueue(given *set.Set, transformer transfer.PathTransformer) {
-	if given.MonitorRemovals {
+func (s *Server) discoverThenEnqueue(given *set.Set, transformer transfer.PathTransformer, forceRemovals bool) {
+	if given.MonitorRemovals || forceRemovals {
 		if err := s.discoverSetRemovals(given); err != nil {
 			s.recordSetError("error discovering set (%s) removals: %s", given.ID(), err)
 

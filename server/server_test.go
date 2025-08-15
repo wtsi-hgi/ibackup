@@ -369,7 +369,7 @@ func TestServer(t *testing.T) {
 						err = client.AddOrUpdateSet(exampleSet)
 						So(err, ShouldBeNil)
 
-						err = client.TriggerDiscovery(exampleSet.ID())
+						err = client.TriggerDiscovery(exampleSet.ID(), false)
 						So(err, ShouldBeNil)
 
 						ok := <-racCalled
@@ -463,7 +463,7 @@ func TestServer(t *testing.T) {
 							err = client.AddOrUpdateSet(exampleSet)
 							So(err, ShouldBeNil)
 
-							err = client.TriggerDiscovery(exampleSet.ID())
+							err = client.TriggerDiscovery(exampleSet.ID(), false)
 							So(err, ShouldBeNil)
 
 							ok := <-racCalled
@@ -528,7 +528,7 @@ func TestServer(t *testing.T) {
 						err = client.MergeDirs(exampleSet.ID(), []string{dir1local})
 						So(err, ShouldBeNil)
 
-						err = client.TriggerDiscovery(exampleSet.ID())
+						err = client.TriggerDiscovery(exampleSet.ID(), false)
 						So(err, ShouldBeNil)
 
 						ok := <-racCalled
@@ -669,7 +669,7 @@ func TestServer(t *testing.T) {
 									err = client.MergeDirs(exampleSet2.ID(), []string{dir1local})
 									So(err, ShouldBeNil)
 
-									err = client.TriggerDiscovery(exampleSet2.ID())
+									err = client.TriggerDiscovery(exampleSet2.ID(), false)
 									So(err, ShouldBeNil)
 
 									ok := <-racCalled
@@ -814,7 +814,7 @@ func TestServer(t *testing.T) {
 									So(err, ShouldBeNil)
 								}
 
-								err = client.TriggerDiscovery(exampleSet.ID())
+								err = client.TriggerDiscovery(exampleSet.ID(), false)
 								So(err, ShouldBeNil)
 
 								ok := <-racCalled
@@ -835,8 +835,10 @@ func TestServer(t *testing.T) {
 							So(dirs, ShouldHaveLength, 2)
 
 							Convey("You can still see original files and folders after rediscovery", func() {
-								err = client.TriggerDiscovery(exampleSet.ID())
+								err = client.TriggerDiscovery(exampleSet.ID(), false)
 								So(err, ShouldBeNil)
+
+								<-time.After(100 * time.Millisecond)
 
 								files, errg := client.GetFiles(exampleSet.ID())
 								So(errg, ShouldBeNil)
@@ -864,7 +866,7 @@ func TestServer(t *testing.T) {
 						err = client.MergeDirs(exampleSet.ID(), []string{dir1})
 						So(err, ShouldBeNil)
 
-						err = client.TriggerDiscovery(exampleSet.ID())
+						err = client.TriggerDiscovery(exampleSet.ID(), false)
 						So(err, ShouldBeNil)
 
 						ok := <-racCalled
@@ -918,7 +920,7 @@ func TestServer(t *testing.T) {
 						err = client.MergeDirs(exampleSet.ID(), []string{dir1})
 						So(err, ShouldBeNil)
 
-						err = client.TriggerDiscovery(exampleSet.ID())
+						err = client.TriggerDiscovery(exampleSet.ID(), false)
 						So(err, ShouldBeNil)
 
 						ok := <-racCalled
@@ -950,7 +952,7 @@ func TestServer(t *testing.T) {
 								fileToBeDiscovered := filepath.Join(dir1, "file"+strconv.Itoa(filesInSet+1))
 								internal.CreateTestFile(t, fileToBeDiscovered, "file content")
 
-								err = client.TriggerDiscovery(exampleSet.ID())
+								err = client.TriggerDiscovery(exampleSet.ID(), false)
 								So(err, ShouldBeNil)
 
 								ok = <-racCalled
@@ -1035,7 +1037,7 @@ func TestServer(t *testing.T) {
 						slackWriter.Reset()
 
 						tn := time.Now()
-						err = client.TriggerDiscovery(exampleSet.ID())
+						err = client.TriggerDiscovery(exampleSet.ID(), false)
 						So(err, ShouldBeNil)
 
 						ok := <-racCalled
@@ -1093,7 +1095,7 @@ func TestServer(t *testing.T) {
 
 						tn = time.Now()
 
-						err = client.TriggerDiscovery(exampleSet2.ID())
+						err = client.TriggerDiscovery(exampleSet2.ID(), false)
 						So(err, ShouldBeNil)
 
 						ok = <-racCalled
@@ -1122,7 +1124,7 @@ func TestServer(t *testing.T) {
 
 						tn = time.Now()
 
-						err = client.TriggerDiscovery(exampleSet3.ID())
+						err = client.TriggerDiscovery(exampleSet3.ID(), false)
 						So(err, ShouldBeNil)
 
 						ok = <-racCalled
@@ -1140,7 +1142,8 @@ func TestServer(t *testing.T) {
 						So(gotSet.NumFiles, ShouldEqual, len(discovers))
 
 						So(racCalls, ShouldEqual, 3)
-						err = client.TriggerDiscovery(exampleSet.ID())
+
+						err = client.TriggerDiscovery(exampleSet.ID(), false)
 						So(err, ShouldBeNil)
 
 						<-time.After(100 * time.Millisecond)
@@ -1548,7 +1551,7 @@ func TestServer(t *testing.T) {
 							err = client.MergeDirs(emptySet.ID(), []string{emptyDir})
 							So(err, ShouldBeNil)
 
-							err = client.TriggerDiscovery(emptySet.ID())
+							err = client.TriggerDiscovery(emptySet.ID(), false)
 							So(err, ShouldBeNil)
 
 							<-time.After(100 * time.Millisecond)
@@ -1609,7 +1612,7 @@ func TestServer(t *testing.T) {
 
 								So(err, ShouldBeNil)
 
-								err = client.TriggerDiscovery(emptySet.ID())
+								err = client.TriggerDiscovery(emptySet.ID(), false)
 								So(err, ShouldBeNil)
 
 								gotSet, err = client.GetSetByID(emptySet.Requester, emptySet.ID())
@@ -1634,7 +1637,7 @@ func TestServer(t *testing.T) {
 								err = client.AddOrUpdateSet(changedSet)
 								So(err, ShouldBeNil)
 
-								err = client.TriggerDiscovery(emptySet.ID())
+								err = client.TriggerDiscovery(emptySet.ID(), false)
 								So(err, ShouldBeNil)
 
 								<-time.After(10 * time.Millisecond)
@@ -2103,7 +2106,7 @@ func TestServer(t *testing.T) {
 							err = client.MergeDirs(exampleSet.ID(), []string{dir})
 							So(err, ShouldBeNil)
 
-							err = client.TriggerDiscovery(exampleSet.ID())
+							err = client.TriggerDiscovery(exampleSet.ID(), false)
 							So(err, ShouldBeNil)
 
 							tsCh := make(chan time.Time, 1)
@@ -2187,7 +2190,7 @@ func TestServer(t *testing.T) {
 						err = client.AddOrUpdateSet(exampleSet)
 						So(err, ShouldBeNil)
 
-						err = client.TriggerDiscovery(exampleSet.ID())
+						err = client.TriggerDiscovery(exampleSet.ID(), false)
 						So(err, ShouldBeNil)
 
 						ok := <-racCalled
@@ -2312,7 +2315,7 @@ func TestServer(t *testing.T) {
 
 						discovered := gotSet.LastDiscovery
 
-						err = client.TriggerDiscovery(gotSet.ID())
+						err = client.TriggerDiscovery(gotSet.ID(), false)
 						So(err, ShouldBeNil)
 
 						gotSet, err = client.GetSetByID(gotSet.Requester, gotSet.ID())
@@ -2326,7 +2329,7 @@ func TestServer(t *testing.T) {
 
 						logWriter.Reset()
 
-						err = client.TriggerDiscovery(gotSet.ID())
+						err = client.TriggerDiscovery(gotSet.ID(), false)
 						So(err, ShouldBeNil)
 						So(logWriter.String(), ShouldContainSubstring, "Ignore discovery")
 
@@ -2366,7 +2369,7 @@ func TestServer(t *testing.T) {
 
 						slackWriter.Reset()
 
-						err = client.TriggerDiscovery(badSet.ID())
+						err = client.TriggerDiscovery(badSet.ID(), false)
 						So(err, ShouldBeNil)
 
 						<-time.After(300 * time.Millisecond)
@@ -2478,7 +2481,7 @@ func TestServer(t *testing.T) {
 					So(gotSet.Status, ShouldEqual, set.PendingDiscovery)
 					So(gotSet.NumFiles, ShouldEqual, 0)
 
-					err = client.TriggerDiscovery(exampleSet.ID())
+					err = client.TriggerDiscovery(exampleSet.ID(), false)
 					So(err, ShouldBeNil)
 
 					ok := <-racCalled
@@ -2694,7 +2697,7 @@ func TestServer(t *testing.T) {
 							internal.CreateTestFileOfLength(t, newFile, 2)
 							expectedNumFiles := len(discovers) + 1
 
-							err = client.TriggerDiscovery(exampleSet.ID())
+							err = client.TriggerDiscovery(exampleSet.ID(), false)
 							So(err, ShouldBeNil)
 
 							ok := <-racCalled
@@ -2804,7 +2807,7 @@ func TestServer(t *testing.T) {
 							err = os.Rename(renamed, discovers[0])
 							So(err, ShouldBeNil)
 
-							err = client.TriggerDiscovery(exampleSet.ID())
+							err = client.TriggerDiscovery(exampleSet.ID(), false)
 							So(err, ShouldBeNil)
 
 							ok := <-racCalled
@@ -3097,7 +3100,7 @@ func TestServer(t *testing.T) {
 							})
 
 							Convey("whereupon they can be manually retried even if the set gets re-discovered", func() {
-								err = client.TriggerDiscovery(exampleSet.ID())
+								err = client.TriggerDiscovery(exampleSet.ID(), false)
 								So(err, ShouldBeNil)
 
 								ok := <-racCalled
@@ -3284,7 +3287,7 @@ func TestServer(t *testing.T) {
 					err = client.MergeFiles(exampleSet.ID(), files)
 					So(err, ShouldBeNil)
 
-					err = client.TriggerDiscovery(exampleSet.ID())
+					err = client.TriggerDiscovery(exampleSet.ID(), false)
 					So(err, ShouldBeNil)
 
 					ok := <-racCalled
@@ -3311,7 +3314,7 @@ func TestServer(t *testing.T) {
 					err = s.db.RemoveFileEntry(exampleSet.ID(), dirs[0])
 					So(err, ShouldBeNil)
 
-					err = client.TriggerDiscovery(exampleSet.ID())
+					err = client.TriggerDiscovery(exampleSet.ID(), false)
 					So(err, ShouldBeNil)
 
 					ok = <-racCalled
@@ -3354,7 +3357,7 @@ func TestServer(t *testing.T) {
 					So(len(entries), ShouldEqual, 1)
 					So([]byte(entries[0].Path), ShouldResemble, []byte(path))
 
-					err = client.TriggerDiscovery(exampleSet.ID())
+					err = client.TriggerDiscovery(exampleSet.ID(), false)
 					So(err, ShouldBeNil)
 
 					ok := <-racCalled
@@ -3383,7 +3386,7 @@ func TestServer(t *testing.T) {
 					So(entries[0].Path, ShouldEqual, fifoPath)
 					So(entries[1].Path, ShouldEqual, regPath)
 
-					err = client.TriggerDiscovery(exampleSet.ID())
+					err = client.TriggerDiscovery(exampleSet.ID(), false)
 					So(err, ShouldBeNil)
 
 					ok := <-racCalled
@@ -3436,7 +3439,7 @@ func TestServer(t *testing.T) {
 					err = client.MergeDirs(exampleSet.ID(), []string{setDir})
 					So(err, ShouldBeNil)
 
-					err = client.TriggerDiscovery(exampleSet.ID())
+					err = client.TriggerDiscovery(exampleSet.ID(), false)
 					So(err, ShouldBeNil)
 
 					ok := <-racCalled
@@ -3465,7 +3468,7 @@ func TestServer(t *testing.T) {
 					err = client.MergeDirs(exampleSet.ID(), []string{dir})
 					So(err, ShouldBeNil)
 
-					err = client.TriggerDiscovery(exampleSet.ID())
+					err = client.TriggerDiscovery(exampleSet.ID(), false)
 					So(err, ShouldBeNil)
 
 					ok := <-racCalled
@@ -3530,7 +3533,7 @@ func TestServer(t *testing.T) {
 					err = client.MergeFiles(exampleSet.ID(), []string{pathToBackup})
 					So(err, ShouldBeNil)
 
-					err = client.TriggerDiscovery(exampleSet.ID())
+					err = client.TriggerDiscovery(exampleSet.ID(), false)
 					So(err, ShouldBeNil)
 
 					ok := <-racCalled
@@ -3595,7 +3598,7 @@ func TestServer(t *testing.T) {
 					err = client.MergeDirs(exampleSet.ID(), []string{setDir})
 					So(err, ShouldBeNil)
 
-					err = client.TriggerDiscovery(exampleSet.ID())
+					err = client.TriggerDiscovery(exampleSet.ID(), false)
 					So(err, ShouldBeNil)
 
 					ok := <-racCalled
@@ -3631,7 +3634,7 @@ func TestServer(t *testing.T) {
 					So(err, ShouldBeNil)
 
 					Convey("without remote hardlink location set, hardlinks upload multiple times", func() {
-						err = client.TriggerDiscovery(exampleSet.ID())
+						err = client.TriggerDiscovery(exampleSet.ID(), false)
 						So(err, ShouldBeNil)
 
 						ok := <-racCalled
@@ -3677,7 +3680,7 @@ func TestServer(t *testing.T) {
 						hardlinksDir := filepath.Join(remoteDir, "mountpoints")
 						s.SetRemoteHardlinkLocation(hardlinksDir)
 
-						err = client.TriggerDiscovery(exampleSet.ID())
+						err = client.TriggerDiscovery(exampleSet.ID(), false)
 						So(err, ShouldBeNil)
 
 						ok := <-racCalled
@@ -3727,7 +3730,7 @@ func TestServer(t *testing.T) {
 							So(err, ShouldBeNil)
 						}
 
-						err = client.TriggerDiscovery(exampleSet.ID())
+						err = client.TriggerDiscovery(exampleSet.ID(), false)
 						So(err, ShouldBeNil)
 
 						ok = <-racCalled
@@ -3836,7 +3839,7 @@ func TestServer(t *testing.T) {
 								err = client.MergeFiles(exampleSet.ID(), []string{path4, path5, path6})
 								So(err, ShouldBeNil)
 
-								err = client.TriggerDiscovery(exampleSet.ID())
+								err = client.TriggerDiscovery(exampleSet.ID(), false)
 								So(err, ShouldBeNil)
 
 								ok := <-racCalled
@@ -3892,7 +3895,7 @@ func TestServer(t *testing.T) {
 					err = client.MergeDirs(exampleSet.ID(), []string{hdir})
 					So(err, ShouldBeNil)
 
-					err = client.TriggerDiscovery(exampleSet.ID())
+					err = client.TriggerDiscovery(exampleSet.ID(), false)
 					So(err, ShouldBeNil)
 
 					ok := <-racCalled
@@ -3920,7 +3923,7 @@ func TestServer(t *testing.T) {
 					err = client.MergeDirs(exampleSet.ID(), []string{dir})
 					So(err, ShouldBeNil)
 
-					err = client.TriggerDiscovery(exampleSet.ID())
+					err = client.TriggerDiscovery(exampleSet.ID(), false)
 					So(err, ShouldBeNil)
 
 					ok := <-racCalled
@@ -3933,7 +3936,7 @@ func TestServer(t *testing.T) {
 					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldBeNil)
 
-					err = client.TriggerDiscovery(exampleSet.ID())
+					err = client.TriggerDiscovery(exampleSet.ID(), false)
 					So(err, ShouldBeNil)
 
 					ok = <-racCalled
