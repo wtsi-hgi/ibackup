@@ -35,7 +35,11 @@ import (
 	"sync"
 )
 
-const configFileEqualSplitParts = 2
+const (
+	configFileEqualSplitParts = 2
+	prefixTransformerKey      = "prefix="
+	prefixSeparatorParts      = 2
+)
 
 var (
 	defRegMu        sync.RWMutex         //nolint:gochecknoglobals
@@ -237,8 +241,34 @@ func DefaultRegistry() *TransformerRegistry {
 	return defaultRegistry
 }
 
+// ParsePrefixTransformer parses a string in the format "prefix=local:remote"
+// and returns a PathTransformer that will transform local paths to remote paths.
+// Returns nil and false if the string doesn't start with "prefix=" or doesn't have
+// exactly one colon.
+func ParsePrefixTransformer(transformerSpec string) (PathTransformer, bool) {
+	if !strings.HasPrefix(transformerSpec, prefixTransformerKey) {
+		return nil, false
+	}
+
+	lr := strings.TrimPrefix(transformerSpec, prefixTransformerKey)
+	parts := strings.Split(lr, ":")
+
+	if len(parts) != prefixSeparatorParts {
+		return nil, false
+	}
+
+	return PrefixTransformer(parts[0], parts[1]), true
+}
+
 // LookupTransformer looks up a transformer by name in the default registry.
+// If the name starts with "prefix=", it will create a PrefixTransformer.
 func LookupTransformer(name string) (PathTransformer, bool) {
+	// Check if it's a prefix transformer
+	if transformer, ok := ParsePrefixTransformer(name); ok {
+		return transformer, true
+	}
+
+	// Otherwise look in the registry
 	defRegMu.RLock()
 	r := defaultRegistry
 	defRegMu.RUnlock()

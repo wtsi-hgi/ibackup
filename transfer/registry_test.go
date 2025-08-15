@@ -322,3 +322,57 @@ func TestSetDefaultRegistryFromFile(t *testing.T) {
 		So(failCount, ShouldEqual, 0)
 	})
 }
+
+func TestPrefixTransformer(t *testing.T) {
+	Convey("ParsePrefixTransformer correctly handles prefix transformer strings", t, func() {
+		tr, ok := ParsePrefixTransformer("prefix=/local/path:/remote/path")
+		So(ok, ShouldBeTrue)
+		So(tr, ShouldNotBeNil)
+
+		remote, err := tr("/local/path/file.txt")
+		So(err, ShouldBeNil)
+		So(remote, ShouldEqual, "/remote/path/file.txt")
+
+		remote, err = tr("/other/path/file.txt")
+		So(err, ShouldBeNil)
+		So(remote, ShouldEqual, "/remote/path/other/path/file.txt")
+
+		tr, ok = ParsePrefixTransformer("prefix=/local/path/remote/path")
+		So(ok, ShouldBeFalse)
+		So(tr, ShouldBeNil)
+
+		tr, ok = ParsePrefixTransformer("humgen")
+		So(ok, ShouldBeFalse)
+		So(tr, ShouldBeNil)
+	})
+
+	Convey("LookupTransformer handles prefix transformers", t, func() {
+		registry := NewTransformerRegistry()
+		So(registry.Register("test", "Test transformer", `/path/to/(.+)`, "/new/path/$1"), ShouldBeNil)
+		SetDefaultRegistry(registry)
+
+		tr, ok := LookupTransformer("test")
+		So(ok, ShouldBeTrue)
+		So(tr, ShouldNotBeNil)
+
+		remote, err := tr("/path/to/file.txt")
+		So(err, ShouldBeNil)
+		So(remote, ShouldEqual, "/new/path/file.txt")
+
+		tr, ok = LookupTransformer("prefix=/local/path:/remote/path")
+		So(ok, ShouldBeTrue)
+		So(tr, ShouldNotBeNil)
+
+		remote, err = tr("/local/path/file.txt")
+		So(err, ShouldBeNil)
+		So(remote, ShouldEqual, "/remote/path/file.txt")
+
+		tr, ok = LookupTransformer("nonexistent")
+		So(ok, ShouldBeFalse)
+		So(tr, ShouldBeNil)
+
+		tr, ok = LookupTransformer("prefix=/local/path/remote/path")
+		So(ok, ShouldBeFalse)
+		So(tr, ShouldBeNil)
+	})
+}
