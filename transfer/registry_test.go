@@ -40,13 +40,13 @@ func TestRegistry(t *testing.T) {
 	Convey("You can create and use a transformer registry", t, func() {
 		registry := NewTransformerRegistry()
 
-		err := registry.Register("test", "Test transformer", `/path/to/(.+)`, "/new/path/$1")
+		err := registry.Register("btest", "Test transformer", `/path/to/(.+)`, "/new/path/$1")
 		So(err, ShouldBeNil)
 
-		err = registry.Register("test2", "Test transformer 2", `/path/to/(.+)`, "/new/path/$1")
+		err = registry.Register("atest2", "Test transformer 2", `/path/to/(.+)`, "/new/path/$1")
 		So(err, ShouldBeNil)
 
-		info, exists := registry.Get("test")
+		info, exists := registry.Get("atest2")
 		So(exists, ShouldBeTrue)
 
 		remote, err := info.Transformer("/path/to/file.txt")
@@ -58,10 +58,10 @@ func TestRegistry(t *testing.T) {
 
 		all := registry.GetAll()
 		So(len(all), ShouldEqual, 2)
-		So(all[0].Name, ShouldEqual, "test")
-		So(all[0].Description, ShouldEqual, "Test transformer")
-		So(all[1].Name, ShouldEqual, "test2")
-		So(all[1].Description, ShouldEqual, "Test transformer 2")
+		So(all[0].Name, ShouldEqual, "atest2")
+		So(all[0].Description, ShouldEqual, "Test transformer 2")
+		So(all[1].Name, ShouldEqual, "btest")
+		So(all[1].Description, ShouldEqual, "Test transformer")
 	})
 
 	Convey("RegexTransformer transforms paths correctly", t, func() {

@@ -31,6 +31,7 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -95,6 +96,10 @@ func (tr *TransformerRegistry) GetAll() []TransformerInfo {
 	for _, t := range tr.transformers {
 		result = append(result, t.ToInfo())
 	}
+
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Name < result[j].Name
+	})
 
 	return result
 }
