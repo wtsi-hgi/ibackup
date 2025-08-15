@@ -3658,7 +3658,7 @@ func getMetaValue(meta, key string) string {
 }
 
 func TestEdit(t *testing.T) {
-	SkipConvey("With a started server", t, func() {
+	Convey("With a started server", t, func() {
 		t.Setenv("IBACKUP_TEST_LDAP_SERVER", "")
 		t.Setenv("IBACKUP_TEST_LDAP_LOOKUP", "")
 
@@ -4153,7 +4153,10 @@ func TestEdit(t *testing.T) {
 						So(exitCode, ShouldEqual, 0)
 
 						So(output, ShouldContainSubstring, "Num files: 4")
+						So(output, ShouldContainSubstring, setDir2)
+						So(output, ShouldContainSubstring, setFile2)
 						So(output, ShouldContainSubstring, setFile3)
+						So(output, ShouldContainSubstring, setFile4)
 					})
 
 					Convey("And a set made by a non-admin user", func() {
