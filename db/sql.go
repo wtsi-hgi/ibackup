@@ -236,22 +236,22 @@ var (
 			");" +
 			"END;",
 
-		"CREATE TRIGGER IF NOT EXISTS `insert_file_count_size` AFTER INSERT ON `localFiles` FOR EACH ROW " +
+		"CREATE TRIGGER IF NOT EXISTS `insert_file_count_size` AFTER INSERT ON `localFiles` FOR EACH ROW " + //nolint:dupl
 			"/*! BEGIN IF -- */ WHEN\n/*! */ `NEW`.`updated` != 2 /*! THEN -- */ BEGIN\n/*! */ " +
-			"/*! WITH `hardlinkInfo` AS (" + newHardlinkInfo + ") */" +
+			"/*! WITH `newHardlinkInfo` AS (" + newHardlinkInfo + ") */" +
 			"UPDATE `sets` SET " +
 			"`numFiles` = `numFiles` + 1, " +
-			"`sizeFiles` = `sizeFiles` +/*!(SELECT `size` FROM `hardlinkInfo`) -- */`hardlinkInfo`.`size`\n/*! */, " +
-			"`symlinks` = `symlinks` + /*! (SELECT `isSymlink` FROM `hardlinkInfo`) -- */ `hardlinkInfo`.`isSymlink`\n/*! */," +
-			"`hardlinks` = `hardlinks` +/*!(SELECT `isHardlink` FROM `hardlinkInfo`) -- */`hardlinkInfo`.`isHardlink`\n/*! */," +
-			"`abnormal` = `abnormal` + /*! (SELECT `isAbnormal` FROM `hardlinkInfo`) -- */`hardlinkInfo`.`isAbnormal`\n/*! */," +
+			"`sizeFiles` = `sizeFiles` + " + newHardlinkSize + ", " +
+			"`symlinks` = `symlinks` + " + newHardlinkSymlink + ", " +
+			"`hardlinks` = `hardlinks` + " + newHardlinkHardlink + ", " +
+			"`abnormal` = `abnormal` + " + newHardlinkAbnormal + ", " +
 			"`uploaded` = `uploaded` + IF(`NEW`.`status` = " + string('0'+StatusUploaded) + ", 1, 0), " +
 			"`replaced` = `replaced` + IF(`NEW`.`status` = " + string('0'+StatusReplaced) + ", 1, 0), " +
 			"`skipped` = `skipped` + IF(`NEW`.`status` = " + string('0'+StatusSkipped) + ", 1, 0), " +
 			"`missing` = `missing` + IF(`NEW`.`status` = " + string('0'+StatusMissing) + ", 1, 0), " +
 			"`orphaned` = `orphaned` + IF(`NEW`.`status` = " + string('0'+StatusOrphaned) + ", 1, 0) " +
 			"/*! -- */ " +
-			"FROM (" + newHardlinkInfo + ") AS `hardlinkInfo`" +
+			"FROM (" + newHardlinkInfo + ") AS `newHardlinkInfo`" +
 			"\n/*! */ " +
 			"WHERE `id` = `NEW`.`setID`;" +
 			"/*! END IF; */" +
@@ -263,22 +263,22 @@ var (
 			"(`name` LIKE CONCAT(CHAR(0), '%') OR `requester` LIKE CONCAT(CHAR(0), '%'));" +
 			"END;",
 
-		"CREATE TRIGGER IF NOT EXISTS `delete_file_count_size` BEFORE DELETE ON `localFiles` FOR EACH ROW " +
+		"CREATE TRIGGER IF NOT EXISTS `delete_file_count_size` BEFORE DELETE ON `localFiles` FOR EACH ROW " + //nolint:dupl
 			"/*! BEGIN IF -- */ WHEN\n/*! */ `OLD`.`updated` != 2 /*! THEN -- */ BEGIN\n/*! */ " +
-			"/*! WITH `hardlinkInfo` AS (" + oldHardlinkInfo + ") */" +
+			"/*! WITH `oldHardlinkInfo` AS (" + oldHardlinkInfo + ") */" +
 			"UPDATE `sets` SET " +
 			"`numFiles` = `numFiles` - 1, " +
-			"`sizeFiles` = `sizeFiles` -/*!(SELECT `size` FROM `hardlinkInfo`) -- */`hardlinkInfo`.`size`\n/*! */, " +
-			"`symlinks` = `symlinks` - /*! (SELECT `isSymlink` FROM `hardlinkInfo`) -- */ `hardlinkInfo`.`isSymlink`\n/*! */," +
-			"`hardlinks` = `hardlinks` -/*!(SELECT `isHardlink` FROM `hardlinkInfo`) -- */`hardlinkInfo`.`isHardlink`\n/*! */," +
-			"`abnormal` = `abnormal` - /*! (SELECT `isAbnormal` FROM `hardlinkInfo`) -- */`hardlinkInfo`.`isAbnormal`\n/*! */," +
+			"`sizeFiles` = `sizeFiles` - " + oldHardlinkSize + ", " +
+			"`symlinks` = `symlinks` - " + oldHardlinkSymlink + ", " +
+			"`hardlinks` = `hardlinks` - " + oldHardlinkHardlink + ", " +
+			"`abnormal` = `abnormal` - " + oldHardlinkAbnormal + ", " +
 			"`uploaded` = `uploaded` - IF(`OLD`.`status` = " + string('0'+StatusUploaded) + ", 1, 0), " +
 			"`replaced` = `replaced` - IF(`OLD`.`status` = " + string('0'+StatusReplaced) + ", 1, 0), " +
 			"`skipped` = `skipped` - IF(`OLD`.`status` = " + string('0'+StatusSkipped) + ", 1, 0), " +
 			"`missing` = `missing` - IF(`OLD`.`status` = " + string('0'+StatusMissing) + ", 1, 0), " +
 			"`orphaned` = `orphaned` - IF(`OLD`.`status` = " + string('0'+StatusOrphaned) + ", 1, 0) " +
 			"/*! -- */ " +
-			"FROM (" + oldHardlinkInfo + ") AS `hardlinkInfo`" +
+			"FROM (" + oldHardlinkInfo + ") AS `oldHardlinkInfo`" +
 			"\n/*! */ " +
 			"WHERE `id` = `OLD`.`setID`;" +
 			"/*! END IF; */" +
@@ -286,18 +286,27 @@ var (
 
 		"CREATE TRIGGER IF NOT EXISTS `update_remote_file_size` AFTER UPDATE ON `remoteFiles` FOR EACH ROW " +
 			"/*! BEGIN IF -- */ WHEN\n/*! */ `OLD`.`hardlinkID` != `NEW`.`hardlinkID` /*! THEN -- */ BEGIN\n/*! */ " +
+			"/*! WITH `oldHardlinkInfo` AS (" + selectOldHardlinkInfo + "), " +
+			"`newHardlinkInfo` AS (" + selectNewHardlinkInfo + "), " +
+			"`setFileCounts` AS (" +
+			"SELECT `setID`, COUNT(1) AS `count` FROM `localFiles` WHERE " +
+			"`remoteFileID` = `NEW`.`id` AND `updated` != 2  GROUP BY `setID`" +
+			") */" +
 			"UPDATE `sets` SET " +
-			"`sizeFiles` = `sizeFiles` + ((" +
-			"SELECT `hardlinks`.`size` FROM `hardlinks` WHERE `hardlinks`.`id` = `NEW`.`hardlinkID`" +
-			") - (" +
-			"SELECT `hardlinks`.`size` FROM `hardlinks` WHERE `hardlinks`.`id` = `OLD`.`hardlinkID`" +
-			")) * (" +
-			"SELECT COUNT(1) FROM `localFiles` WHERE `localFiles`.`setID` = `sets`.`id` AND " +
-			"`localFiles`.`remoteFileID` = `NEW`.`id` AND `localFiles`.`updated` != 2" +
-			") " +
-			"WHERE `id` IN (" +
-			"SELECT `localFiles`.`setID` FROM `localFiles` WHERE `localFiles`.`remoteFileID` = `NEW`.`id`" +
-			");" +
+			"`sizeFiles` = `sizeFiles` + (" + newHardlinkSize + " - " + oldHardlinkSize + ") * " + setFileCount + ", " +
+			"`symlinks` = `symlinks` + (" + newHardlinkSymlink + " - " + oldHardlinkSymlink + ") * " + setFileCount + ", " +
+			"`hardlinks` = `hardlinks` + (" + newHardlinkHardlink + " - " + oldHardlinkHardlink + ") * " + setFileCount + ", " +
+			"`abnormal` = `abnormal` + (" + newHardlinkAbnormal + " - " + oldHardlinkAbnormal + ") * " + setFileCount + " " +
+			"/*! -- */ FROM " +
+			"(" + selectOldHardlinkInfo + ") AS `oldHardlinkInfo`, " +
+			"(" + selectNewHardlinkInfo + ") AS `newHardlinkInfo`, " +
+			"(" +
+			"SELECT `setID`, COUNT(1) AS `count` FROM `localFiles` WHERE " +
+			"`remoteFileID` = `NEW`.`id` AND `updated` != 2 GROUP BY `setID`" +
+			") AS `setFileCounts` " +
+			"\n/*! */ " +
+			"WHERE `id` IN (SELECT `setID` FROM `localFiles` WHERE " +
+			"`remoteFileID` = `NEW`.`id` AND `updated` != 2 AND `localFiles`.`setID` = `sets`.`id`);" +
 			"INSERT INTO `changedInodes` " +
 			"(`remoteFileID`, `remotePath`, `hardlinkID`) VALUES (" +
 			"`OLD`.`id`, " +
@@ -483,14 +492,21 @@ const (
 	setRef          = "/*! AS `EXCLUDED` */ "
 	updateCol       = "/*! `updated` BOOLEAN DEFAULT FALSE INVISIBLE, */"
 	colUpdate       = " /*!`updated` = ! `updated`, */ "
-	hardlinkInfo    = "SELECT " +
+
+	selectHardlinkInfoStart = "SELECT " +
 		"`hardlinks`.`size`, " +
 		"IF(`hardlinks`.`fileType` = " + string('0'+Symlink) + ", 1, 0) AS `isSymlink`, " +
 		"IF(`hardlinks`.`fileType` = " + string('0'+Abnormal) + ", 1, 0) AS `isAbnormal`, " +
-		"IF(`hardlinks`.`fileType` = " + string('0'+Regular) + " AND " +
-		"`remoteFiles`.`remotePath` != `hardlinks`.`firstRemote`, 1, 0) AS `isHardlink`, " +
-		"IF(`remoteFiles`.`lastUploaded` = '0001-01-01 00:00:00', 0, 1) AS `isUploaded` " +
-		"FROM `hardlinks` JOIN `remoteFiles` ON `remoteFiles`.`hardlinkID` = `hardlinks`.`id` " +
+		"IF(`hardlinks`.`fileType` = " + string('0'+Regular) + " AND `"
+	selectHardlinkInfoMid = "`.`remotePath` != `hardlinks`.`firstRemote`, 1, 0) AS `isHardlink`, IF(`"
+	selectHardlinkInfoEnd = "`.`lastUploaded` = '0001-01-01 00:00:00', 0, 1) AS `isUploaded` FROM `hardlinks`"
+	selectOldHardlinkInfo = selectHardlinkInfoStart + "OLD" + selectHardlinkInfoMid + "OLD" + selectHardlinkInfoEnd +
+		"WHERE `id` = `OLD`.`hardlinkID`"
+	selectNewHardlinkInfo = selectHardlinkInfoStart + "NEW" + selectHardlinkInfoMid + "NEW" + selectHardlinkInfoEnd +
+		"WHERE `id` = `New`.`hardlinkID`"
+	selectRemoteHardlinkInfo = selectHardlinkInfoStart + "remoteFiles" + selectHardlinkInfoMid +
+		"remoteFiles" + selectHardlinkInfoEnd
+	hardlinkInfo = selectRemoteHardlinkInfo + " JOIN `remoteFiles` ON `remoteFiles`.`hardlinkID` = `hardlinks`.`id` " +
 		"WHERE `remoteFiles`.`id` = "
 	newHardlinkInfo              = hardlinkInfo + "`NEW`.`remoteFileID`"
 	oldHardlinkInfo              = hardlinkInfo + "`OLD`.`remoteFileID`"
@@ -505,7 +521,19 @@ const (
 		"`NEW`.`abnormal` != `OLD`.`abnormal` OR " +
 		"`NEW`.`numFiles` = `OLD`.`numFiles`" +
 		")"
+	oldHardlinkSize     = "/*!(SELECT `size` FROM `oldHardlinkInfo`) -- */`oldHardlinkInfo`.`size`\n/*! */"
+	oldHardlinkSymlink  = "/*!(SELECT `isSymlink` FROM `oldHardlinkInfo`) -- */`oldHardlinkInfo`.`isSymlink`\n/*! */"
+	oldHardlinkHardlink = "/*!(SELECT `isHardlink` FROM `oldHardlinkInfo`) -- */`oldHardlinkInfo`.`isHardlink`\n/*! */"
+	oldHardlinkAbnormal = "/*!(SELECT `isAbnormal` FROM `oldHardlinkInfo`) -- */`oldHardlinkInfo`.`isAbnormal`\n/*! */"
+	newHardlinkSize     = "/*!(SELECT `size` FROM `newHardlinkInfo`) -- */`newHardlinkInfo`.`size`\n/*! */"
+	newHardlinkSymlink  = "/*!(SELECT `isSymlink` FROM `newHardlinkInfo`) -- */`newHardlinkInfo`.`isSymlink`\n/*! */"
+	newHardlinkHardlink = "/*!(SELECT `isHardlink` FROM `newHardlinkInfo`) -- */`newHardlinkInfo`.`isHardlink`\n/*! */"
+	newHardlinkAbnormal = "/*!(SELECT `isAbnormal` FROM `newHardlinkInfo`) -- */`newHardlinkInfo`.`isAbnormal`\n/*! */"
+	setFileCount        = "/*! (SELECT `count` FROM `setFileCounts` WHERE `setFileCounts`.`setID` = `sets`.`id`) -- */" +
+		"`setFileCounts`.`count`\n/*! */"
+)
 
+const (
 	onConflictUpdate   = "ON /*! DUPLICATE KEY UPDATE -- */ CONFLICT DO UPDATE SET\n/*! */ "
 	onConflictReturnID = "ON /*! DUPLICATE KEY UPDATE `id` = LAST_INSERT_ID(`id`); -- */ " +
 		"CONFLICT DO UPDATE SET `id` = `id` RETURNING `id`;\n/*! */"
