@@ -262,17 +262,24 @@ func TestSet(t *testing.T) {
 					})
 				})
 
-				Convey("You can change the inode, size and type of a file and set counts will be updated correctly", func() {
+				Convey("You can change the inode, size, status and type of a file and set counts will be updated correctly", func() {
+					So(d.clearQueue(), ShouldBeNil)
+
+					files[1].Status = StatusMissing
+
+					So(d.CompleteDiscovery(setB, slices.Values(files[:2]), noSeq[*File]), ShouldBeNil)
 					So(d.clearQueue(), ShouldBeNil)
 
 					setB = d.getSetFromDB(setB)
 					So(setB.NumFiles, ShouldEqual, 11)
 					So(setB.SizeTotal, ShouldEqual, 1100)
 					So(setB.Symlinks, ShouldEqual, 3)
+					So(setB.Orphaned, ShouldEqual, 1)
 
 					files[1].Size += 200
 					files[1].Inode = 33333333
 					files[1].Type = Symlink
+					files[1].Status = StatusNone
 
 					So(d.CompleteDiscovery(setB, slices.Values(files[:2]), noSeq[*File]), ShouldBeNil)
 
@@ -280,6 +287,51 @@ func TestSet(t *testing.T) {
 					So(setB.NumFiles, ShouldEqual, 11)
 					So(setB.SizeTotal, ShouldEqual, 1300)
 					So(setB.Symlinks, ShouldEqual, 4)
+					So(setB.Orphaned, ShouldEqual, 0)
+				})
+
+				Convey("You can change the inode for a file and the inode counts will be correct", func() {
+					So(d.clearQueue(), ShouldBeNil)
+
+					setB = d.getSetFromDB(setB)
+					So(setB.NumFiles, ShouldEqual, 11)
+					So(setB.SizeTotal, ShouldEqual, 1100)
+
+					files[0].Size += 200
+					files[0].Inode = 33333333
+
+					So(len(collectIter(t, d.listInodes(t))), ShouldEqual, 9)
+
+					So(d.CompleteDiscovery(setB, slices.Values(files[:1]), noSeq[*File]), ShouldBeNil)
+
+					setB = d.getSetFromDB(setB)
+					So(setB.NumFiles, ShouldEqual, 11)
+					So(setB.SizeTotal, ShouldEqual, 1300)
+
+					So(d.clearQueue(), ShouldBeNil)
+
+					So(len(collectIter(t, d.listInodes(t))), ShouldEqual, 9)
+				})
+
+				Convey("You can change a file's inode to one already in the database, and counts update correctly", func() {
+					So(d.clearQueue(), ShouldBeNil)
+
+					setB = d.getSetFromDB(setB)
+					So(setB.NumFiles, ShouldEqual, 11)
+					So(setB.SizeTotal, ShouldEqual, 1100)
+
+					files[0].Size += 200
+					files[0].Inode = files[4].Inode
+
+					So(len(collectIter(t, d.listInodes(t))), ShouldEqual, 9)
+
+					So(d.CompleteDiscovery(setB, slices.Values(files[:1]), noSeq[*File]), ShouldBeNil)
+
+					setB = d.getSetFromDB(setB)
+					So(setB.NumFiles, ShouldEqual, 11)
+					So(setB.SizeTotal, ShouldEqual, 1500)
+
+					So(len(collectIter(t, d.listInodes(t))), ShouldEqual, 8)
 				})
 
 				Convey("If one of the files is found missing before rediscovery", func() {
