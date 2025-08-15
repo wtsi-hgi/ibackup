@@ -73,6 +73,13 @@ func readFon(transformer *db.Transformer, d *db.Discover, filter StateMachine[bo
 		decoder = strconv.Unquote
 	}
 
+	splitByte := byte('\n')
+
+	switch d.Type { //nolint:exhaustive
+	case db.DiscoverFODNNull, db.DiscoverFOFNNull:
+		splitByte = '\x00'
+	}
+
 	var dirs bool
 
 	switch d.Type { //nolint:exhaustive
@@ -86,7 +93,7 @@ func readFon(transformer *db.Transformer, d *db.Discover, filter StateMachine[bo
 	}
 	defer f.Close()
 
-	return readLines(transformer, f, decoder, dirs, filter)
+	return readLines(transformer, f, decoder, dirs, filter, splitByte)
 }
 
 func nullDecoder(str string) (string, error) {
@@ -111,13 +118,13 @@ func toBytes(b string) []byte {
 }
 
 func readLines(trns *db.Transformer, r io.Reader, decoder func(string) (string, error),
-	dirs bool, filter StateMachine[bool]) ([]string, error) {
+	dirs bool, filter StateMachine[bool], splitByte byte) ([]string, error) {
 	var lines []string
 
 	buf := bufio.NewReader(r)
 
 	for {
-		line, err := buf.ReadBytes('\n')
+		line, err := buf.ReadBytes(splitByte)
 		if err != nil && !errors.Is(err, io.EOF) {
 			return nil, err
 		}
