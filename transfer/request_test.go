@@ -34,6 +34,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/wtsi-hgi/ibackup/internal"
 )
 
 func TestRequest(t *testing.T) {
@@ -236,15 +237,15 @@ func createTestRegistry() *TransformerRegistry {
 	registry.Register( //nolint:errcheck
 		"humgen",
 		"Human Genetics path transformer",
-		humgenMatchRegex,
-		humgenReplaceRegex,
+		internal.HumgenMatchRegex,
+		internal.HumgenReplaceRegex,
 	)
 
 	registry.Register( //nolint:errcheck
 		"gengen",
 		"Genetics and Genomics path transformer",
-		humgenMatchRegex,
-		gengenReplaceRegex,
+		internal.HumgenMatchRegex,
+		internal.GengenReplaceRegex,
 	)
 
 	return registry

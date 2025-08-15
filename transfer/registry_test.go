@@ -33,25 +33,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-)
-
-const (
-	humgenMatchRegex   = `^/lustre/(scratch[^/]+)(/[^/]*)+?/(projects|teams|users)(_v2)?/([^/]+)/`
-	humgenReplaceRegex = `/humgen/$3/$5/$1$4/`
-	gengenReplaceRegex = `/humgen/gengen/$3/$5/$1$4/`
-	testConfig         = `
-[transformer]
-name = humgen
-description = Human Genetics path transformer
-match = ` + humgenMatchRegex + `
-replace = ` + humgenReplaceRegex + `
-
-[transformer]
-name = gengen
-description = Gengen path transformer
-match = ` + humgenMatchRegex + `
-replace = ` + gengenReplaceRegex + `
-`
+	"github.com/wtsi-hgi/ibackup/internal"
 )
 
 func TestRegistry(t *testing.T) {
@@ -98,7 +80,7 @@ func TestRegistry(t *testing.T) {
 	})
 
 	Convey("You can parse a config to create a registry", t, func() {
-		registry, err := ParseConfig(strings.NewReader(testConfig))
+		registry, err := ParseConfig(strings.NewReader(internal.TransformerConfigString))
 		So(err, ShouldBeNil)
 
 		humgen, exists := registry.Get("humgen")
@@ -264,7 +246,7 @@ func TestSetDefaultRegistryFromFile(t *testing.T) {
 
 		defer os.Remove(tmp.Name())
 
-		_, err = tmp.WriteString(testConfig)
+		_, err = tmp.WriteString(internal.TransformerConfigString)
 		So(err, ShouldBeNil)
 		So(tmp.Close(), ShouldBeNil)
 

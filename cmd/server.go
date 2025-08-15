@@ -42,6 +42,7 @@ import (
 	"github.com/wtsi-hgi/ibackup/server"
 	"github.com/wtsi-hgi/ibackup/set"
 	"github.com/wtsi-hgi/ibackup/slack"
+	"github.com/wtsi-hgi/ibackup/transfer"
 	"github.com/wtsi-npg/logshim"
 	"github.com/wtsi-npg/logshim-zerolog/zlog"
 )
@@ -64,6 +65,7 @@ var serverHardlinksCollection string
 var serverSlackDebouncePeriod int
 var serverStillRunningMsgFreq string
 var serverTrashLifespan string
+var serverTransformersConfig string
 
 // serverCmd represents the server command.
 var serverCmd = &cobra.Command{
@@ -104,6 +106,17 @@ supply to eg. 'ldapwhoami -D' to test user credentials, replacing the username
 part with '%s', eg. --ldap_dn 'uid=%s,ou=people,dc=example,dc=com'. If you don't
 supply both of these, you'll get a warning, but the server will work and assume
 all passwords are valid.
+
+To define named path transformers used by the --transformer option (eg. "humgen"),
+provide --transformers_config or set IBACKUP_TRANSFORMERS_CONFIG. The file format is:
+
+[transformer]
+name = transformerName
+description = description text
+match = regex pattern
+replace = replacement pattern
+
+Multiple [transformer] sections can be given.
 
 The server will log all messages (of any severity) to syslog at the INFO level,
 except for non-graceful stops of the server, which are sent at the CRIT level or
@@ -155,6 +168,12 @@ database that you've made, to investigate.
 
 		if serverLDAPFQDN == "" || serverLDAPBindDN == "" {
 			warn("ldap options not supplied, will assume all user passwords are correct!")
+		}
+
+		if serverTransformersConfig != "" {
+			if err := transfer.SetDefaultRegistryFromFile(serverTransformersConfig); err != nil {
+				dief("failed to load transformer config: %s", err)
+			}
 		}
 
 		logWriter := setServerLogger(serverLogPath)
@@ -323,6 +342,9 @@ func init() {
 	serverCmd.Flags().StringVar(&serverTrashLifespan, "trash_lifespan", "30d",
 		"the period of time trash will be kept before being permanently removed"+
 			" (eg. 1d for 1 day or 2w for 2 weeks), defaults to 30 days")
+	serverCmd.Flags().StringVar(&serverTransformersConfig, "transformers_config",
+		os.Getenv("IBACKUP_TRANSFORMERS_CONFIG"),
+		"path to transformer config file")
 }
 
 // setServerLogger makes our appLogger log to the given path if non-blank,

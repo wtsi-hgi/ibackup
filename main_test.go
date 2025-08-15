@@ -247,6 +247,11 @@ func (s *TestServer) prepareConfig() {
 	s.ldapLookup = os.Getenv("IBACKUP_TEST_LDAP_LOOKUP")
 
 	s.debouncePeriod = "5"
+
+	tf := filepath.Join(s.dir, "transformers.ini")
+	So(os.WriteFile(tf, []byte(internal.TransformerConfigString), 0600), ShouldBeNil)
+
+	s.env = append(s.env, "IBACKUP_TRANSFORMERS_CONFIG="+tf)
 }
 
 func (s *TestServer) startServer() {
