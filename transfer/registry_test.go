@@ -26,8 +26,10 @@
 package transfer
 
 import (
+	"os"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -37,6 +39,19 @@ const (
 	humgenMatchRegex   = `^/lustre/(scratch[^/]+)(/[^/]*)+?/(projects|teams|users)(_v2)?/([^/]+)/`
 	humgenReplaceRegex = `/humgen/$3/$5/$1$4/`
 	gengenReplaceRegex = `/humgen/gengen/$3/$5/$1$4/`
+	testConfig         = `
+[transformer]
+name = humgen
+description = Human Genetics path transformer
+match = ` + humgenMatchRegex + `
+replace = ` + humgenReplaceRegex + `
+
+[transformer]
+name = gengen
+description = Gengen path transformer
+match = ` + humgenMatchRegex + `
+replace = ` + gengenReplaceRegex + `
+`
 )
 
 func TestRegistry(t *testing.T) {
@@ -83,21 +98,7 @@ func TestRegistry(t *testing.T) {
 	})
 
 	Convey("You can parse a config to create a registry", t, func() {
-		config := `
-[transformer]
-name = humgen
-description = Human Genetics path transformer
-match = ` + humgenMatchRegex + `
-replace = ` + humgenReplaceRegex + `
-
-[transformer]
-name = gengen
-description = Gengen path transformer
-match = ` + humgenMatchRegex + `
-replace = ` + gengenReplaceRegex + `
-`
-
-		registry, err := ParseConfig(strings.NewReader(config))
+		registry, err := ParseConfig(strings.NewReader(testConfig))
 		So(err, ShouldBeNil)
 
 		humgen, exists := registry.Get("humgen")
@@ -161,5 +162,163 @@ replace = ` + gengenReplaceRegex + `
 			So(err, ShouldBeNil)
 			So(result, ShouldStartWith, expected[i])
 		}
+	})
+}
+
+func TestDefaultRegistry(t *testing.T) {
+	Convey("DefaultRegistry and LookupTransformer work under concurrent access", t, func() {
+		regA := NewTransformerRegistry()
+		So(regA.Register("testA", "A", `/path/to/(.+)`, "/new/path/$1"), ShouldBeNil)
+
+		regB := NewTransformerRegistry()
+		So(regB.Register("testB", "B", `/path/to/(.+)`, "/alt/path/$1"), ShouldBeNil)
+
+		SetDefaultRegistry(regA)
+
+		var wg sync.WaitGroup
+
+		errs := make(chan struct{}, 10000)
+		readers, writers := 50, 10
+
+		for range readers {
+			wg.Add(1)
+
+			go func() {
+				defer wg.Done()
+
+				for range 500 {
+					if r := DefaultRegistry(); r != nil {
+						if info, ok := r.Get("testA"); ok {
+							out, err := info.Transformer("/path/to/file.txt")
+							if err != nil || !strings.HasPrefix(out, "/new/path/") {
+								errs <- struct{}{}
+							}
+						} else if info, ok := r.Get("testB"); ok {
+							out, err := info.Transformer("/path/to/file.txt")
+							if err != nil || !strings.HasPrefix(out, "/alt/path/") {
+								errs <- struct{}{}
+							}
+						} else {
+							errs <- struct{}{}
+						}
+					}
+
+					if tr, ok := LookupTransformer("testA"); ok {
+						out, err := tr("/path/to/file.txt")
+						if err != nil || !strings.HasPrefix(out, "/new/path/") {
+							errs <- struct{}{}
+						}
+					} else if tr, ok := LookupTransformer("testB"); ok {
+						out, err := tr("/path/to/file.txt")
+						if err != nil || !strings.HasPrefix(out, "/alt/path/") {
+							errs <- struct{}{}
+						}
+					}
+				}
+			}()
+		}
+
+		for range writers {
+			wg.Add(1)
+
+			go func() {
+				defer wg.Done()
+
+				for i := range 200 {
+					if i%2 == 0 {
+						SetDefaultRegistry(regB)
+					} else {
+						SetDefaultRegistry(regA)
+					}
+				}
+			}()
+		}
+
+		wg.Wait()
+		close(errs)
+
+		failCount := 0
+
+		for range errs {
+			failCount++
+		}
+
+		So(failCount, ShouldEqual, 0)
+	})
+
+	Convey("LookupTransformer and DefaultRegistry handle nil default", t, func() {
+		SetDefaultRegistry(nil)
+
+		r := DefaultRegistry()
+		So(r, ShouldBeNil)
+
+		_, ok := LookupTransformer("anything")
+		So(ok, ShouldBeFalse)
+	})
+}
+
+func TestSetDefaultRegistryFromFile(t *testing.T) {
+	Convey("SetDefaultRegistryFromFile can be called concurrently with lookups", t, func() {
+		tmp, err := os.CreateTemp("", "ibackup-reg*.ini")
+		So(err, ShouldBeNil)
+
+		defer os.Remove(tmp.Name())
+
+		_, err = tmp.WriteString(testConfig)
+		So(err, ShouldBeNil)
+		So(tmp.Close(), ShouldBeNil)
+
+		So(SetDefaultRegistryFromFile(tmp.Name()), ShouldBeNil)
+
+		local := "/lustre/scratch118/humgen/projects/ddd/file.txt"
+
+		var wg sync.WaitGroup
+
+		errs := make(chan struct{}, 10000)
+		readers, writers := 50, 10
+
+		for range readers {
+			wg.Add(1)
+
+			go func() {
+				defer wg.Done()
+
+				for range 500 {
+					if tr, ok := LookupTransformer("humgen"); ok {
+						out, err := tr(local)
+						if err != nil || !strings.HasPrefix(out, "/humgen/projects/ddd/") {
+							errs <- struct{}{}
+						}
+					} else {
+						errs <- struct{}{}
+					}
+				}
+			}()
+		}
+
+		for range writers {
+			wg.Add(1)
+
+			go func() {
+				defer wg.Done()
+
+				for range 200 {
+					if err := SetDefaultRegistryFromFile(tmp.Name()); err != nil {
+						errs <- struct{}{}
+					}
+				}
+			}()
+		}
+
+		wg.Wait()
+		close(errs)
+
+		failCount := 0
+
+		for range errs {
+			failCount++
+		}
+
+		So(failCount, ShouldEqual, 0)
 	})
 }

@@ -329,26 +329,23 @@ func (s *Set) TransformPath(path string) (string, error) {
 // MakeTransformer turns our Transformer string in to a put.HumgenTransformer or
 // a put.PrefixTransformer as appropriate.
 func (s *Set) MakeTransformer() (transfer.PathTransformer, error) {
-	if s.Transformer == "humgen" {
-		return transfer.HumgenTransformer, nil
+	if strings.HasPrefix(s.Transformer, prefixTransformerKey) {
+		lr := strings.TrimPrefix(s.Transformer, prefixTransformerKey)
+
+		parts := strings.Split(lr, ":")
+		if len(parts) != arPrefixParts {
+			return nil, Error{ErrInvalidTransformer, ""}
+		}
+
+		return transfer.PrefixTransformer(parts[0], parts[1]), nil
 	}
 
-	if s.Transformer == "gengen" {
-		return transfer.GengenTransformer, nil
-	}
-
-	if !strings.HasPrefix(s.Transformer, prefixTransformerKey) {
+	t, ok := transfer.LookupTransformer(s.Transformer)
+	if !ok {
 		return nil, Error{ErrInvalidTransformer, ""}
 	}
 
-	lr := strings.TrimPrefix(s.Transformer, prefixTransformerKey)
-
-	parts := strings.Split(lr, ":")
-	if len(parts) != arPrefixParts {
-		return nil, Error{ErrInvalidTransformer, ""}
-	}
-
-	return transfer.PrefixTransformer(parts[0], parts[1]), nil
+	return t, nil
 }
 
 // Incomplete returns true if our Status is not Complete, or if we

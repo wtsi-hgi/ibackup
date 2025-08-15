@@ -29,11 +29,18 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"os"
 	"regexp"
 	"strings"
+	"sync"
 )
 
 const configFileEqualSplitParts = 2
+
+var (
+	defRegMu        sync.RWMutex         //nolint:gochecknoglobals
+	defaultRegistry *TransformerRegistry //nolint:gochecknoglobals
+)
 
 // TransformerRegistry manages a collection of named RegexTransformer.
 type TransformerRegistry struct {
@@ -210,6 +217,60 @@ func finalizeConfiguration(registry *TransformerRegistry, currentSection string,
 	if shouldRegisterTransformer(currentSection, transformer) {
 		return registry.Register(transformer.name, transformer.description, transformer.match, transformer.replace)
 	}
+
+	return nil
+}
+
+// SetDefaultRegistry sets the default tranformer registry used globally.
+func SetDefaultRegistry(r *TransformerRegistry) {
+	defRegMu.Lock()
+	defer defRegMu.Unlock()
+
+	defaultRegistry = r
+}
+
+// DefaultRegistry returns the default transformer registry used globally.
+func DefaultRegistry() *TransformerRegistry {
+	defRegMu.RLock()
+	defer defRegMu.RUnlock()
+
+	return defaultRegistry
+}
+
+// LookupTransformer looks up a transformer by name in the default registry.
+func LookupTransformer(name string) (PathTransformer, bool) {
+	defRegMu.RLock()
+	r := defaultRegistry
+	defRegMu.RUnlock()
+
+	if r == nil {
+		return nil, false
+	}
+
+	info, ok := r.Get(name)
+	if !ok {
+		return nil, false
+	}
+
+	return info.Transformer, true
+}
+
+// SetDefaultRegistryFromFile sets the default transformer registry used
+// globally from a file using ParseConfig().
+func SetDefaultRegistryFromFile(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+
+	defer f.Close()
+
+	reg, err := ParseConfig(f)
+	if err != nil {
+		return err
+	}
+
+	SetDefaultRegistry(reg)
 
 	return nil
 }
