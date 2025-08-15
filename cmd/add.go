@@ -27,24 +27,18 @@
 package cmd
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
-	"regexp"
-	"strconv"
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/wtsi-hgi/ibackup/server"
-	"github.com/wtsi-hgi/ibackup/set"
-	"github.com/wtsi-hgi/ibackup/transfer"
+	"github.com/wtsi-hgi/ibackup/db"
+	"github.com/wtsi-hgi/ibackup/discovery"
+	"github.com/wtsi-hgi/ibackup/metadata"
 )
 
 const (
-	hoursInDay          = 24
-	hoursInWeek         = hoursInDay * 7
 	helpTextName        = "a short name for this backup set"
 	helpTextTransformer = "'humgen' | 'gengen' | 'prefix=local:remote'"
 	helpTextDescription = "a long description of this backup set"
@@ -67,6 +61,8 @@ const (
 )
 
 // options for this cmd.
+//
+//nolint:gochecknoglobals
 var (
 	setName            string
 	setTransformer     string
@@ -79,11 +75,12 @@ var (
 	setMonitor         string
 	setMonitorRemovals bool
 	setArchive         bool
-	setUser            string
 	setMetadata        string
-	setReason          transfer.Reason
+	setReason          metadata.Reason
 	setReview          string
 	setRemoval         string
+
+	setUser = currentUsername()
 )
 
 var (
@@ -92,24 +89,8 @@ var (
 		"set with this name already exists, please choose a different name " +
 			"or use ibackup edit to update it",
 	)
+	ErrFileNotTransformable = errors.New("could not transform file")
 )
-
-type InvalidMonitorDurationError struct {
-	Err error
-}
-
-func (e *InvalidMonitorDurationError) Error() string {
-	return fmt.Sprintf("invalid monitor duration: %v", e.Err)
-}
-
-type MonitorDurationTooShortError struct {
-	Duration    time.Duration
-	MinDuration time.Duration
-}
-
-func (e *MonitorDurationTooShortError) Error() string {
-	return fmt.Sprintf("monitor duration must be %s or more, not %s", e.MinDuration, e.Duration)
-}
 
 // addCmd represents the add command.
 var addCmd = &cobra.Command{
@@ -198,87 +179,73 @@ option to add sets on behalf of other users.
 			must(cmd.MarkFlagRequired("monitor"))
 		}
 
-		must(RootCmd.MarkPersistentFlagRequired("url"))
-		must(RootCmd.MarkPersistentFlagRequired("cert"))
+		must(RootCmd.MarkPersistentFlagRequired("config"))
 	},
 	RunE: func(_ *cobra.Command, _ []string) error {
+		config, err := newConfig(serverConfig)
+		if err != nil {
+			return err
+		}
+
+		client, err := db.Init(dbDriver, config.DBURI)
+		if err != nil {
+			return err
+		}
+
+		transformer, err := config.Transformers.Compile(setTransformer)
+		if err != nil {
+			return err
+		}
+
 		var monitorDuration time.Duration
 
 		if setMonitor != "" {
-			var err error
-
-			monitorDuration, err = parseDuration(setMonitor, 1*time.Hour)
+			monitorDuration, err = metadata.ParseDuration(setMonitor, 1*time.Hour)
 			if err != nil {
 				return err
 			}
 		}
 
-		client, err := newServerClient(serverURL, serverCert)
+		discoveryItems, err := processDiscovery(transformer, setFiles, setDirs, setItems, setPath, setNull)
 		if err != nil {
 			return err
 		}
 
-		files, err := readPaths(setFiles, fofnLineSplitter(setNull))
+		setReviewDate, setRemovalDate, err := metadata.ParseMetadataDates(setReason.AsReason(), setReview, setRemoval)
 		if err != nil {
 			return err
 		}
 
-		dirs, err := readPaths(setDirs, fofnLineSplitter(setNull))
+		metadata, err := metadata.ParseMetaString(setMetadata)
 		if err != nil {
 			return err
 		}
 
-		if setItems != "" {
-			filesAndDirs, erra := readPaths(setItems, fofnLineSplitter(setNull))
-			if erra != nil {
-				return erra
-			}
-
-			files, dirs = categorisePaths(filesAndDirs, files, dirs)
+		set := &db.Set{
+			Name:            setName,
+			Requester:       setUser,
+			Transformer:     transformer,
+			MonitorTime:     monitorDuration,
+			MonitorRemovals: setMonitorRemovals,
+			Description:     setDescription,
+			Metadata:        metadata,
+			DeleteLocal:     setArchive,
+			Reason:          setReason.AsReason(),
+			ReviewDate:      setReviewDate,
+			DeleteDate:      setRemovalDate,
 		}
 
-		if setPath != "" {
-			setPath, err = filepath.Abs(setPath)
-			if err != nil {
+		if err := client.CreateSet(set); err != nil {
+			return err
+		}
+
+		for _, discovery := range discoveryItems {
+			if err := client.AddSetDiscovery(set, discovery); err != nil {
 				return err
 			}
-
-			info, errs := os.Stat(setPath)
-			if errs != nil {
-				return err
-			}
-
-			if info.IsDir() {
-				dirs = append(dirs, setPath)
-			} else {
-				files = append(files, setPath)
-			}
 		}
 
-		set, err := checkExistingSet(client, setName, setUser)
-		if err != nil {
-			return err
-		}
-
-		var prevMeta map[string]string
-		if set != nil {
-			prevMeta = set.Metadata
-		}
-
-		meta, err := transfer.HandleMeta(setMetadata, setReason, setReview, setRemoval, prevMeta)
-		if err != nil {
-			return fmt.Errorf("metadata error: %w", err)
-		}
-
-		err = add(client, setName, setUser, setTransformer, setDescription, monitorDuration,
-			setMonitorRemovals, setArchive, files, dirs, meta)
-		if err != nil {
-			return err
-		}
-
-		info("your backup set has been saved and will now be processed")
-
-		return nil
+		return discover(client, set)
 	},
 }
 
@@ -298,11 +265,14 @@ func init() {
 	addCmd.Flags().StringVarP(&setMonitor, "monitor", "m", "", helpTextMonitor)
 	addCmd.Flags().BoolVar(&setMonitorRemovals, "monitor-removals", false, helpTextMonitorRemovals)
 	addCmd.Flags().BoolVarP(&setArchive, "archive", "a", false, helpTextArchive)
-	addCmd.Flags().StringVar(&setUser, "user", currentUsername(), helpTextuser)
 	addCmd.Flags().StringVar(&setMetadata, "metadata", "", helpTextMetaData)
 	addCmd.Flags().Var(&setReason, "reason", helpTextReason)
 	addCmd.Flags().StringVar(&setReview, "review", "", helpTextReview)
 	addCmd.Flags().StringVar(&setRemoval, "remove", "", helpTextRemoval)
+
+	if isExeOwner() {
+		addCmd.Flags().StringVar(&setUser, "user", "", helpTextuser)
+	}
 
 	must(addCmd.MarkFlagRequired("name"))
 	must(addCmd.MarkFlagRequired("transformer"))
@@ -310,158 +280,150 @@ func init() {
 	addCmd.MarkFlagsOneRequired("files", "dirs", "items", "path")
 }
 
-// readPaths turns the line content (split as per splitter) of the given file.
-// If file is blank, returns nil.
-func readPaths(file string, splitter bufio.SplitFunc) ([]string, error) {
-	if file == "" {
-		return nil, nil
-	}
+func processDiscovery(transformer *db.Transformer, setFiles, setDirs, setItems, setPath string, nullSep bool) ([]*db.Discover, error) { //nolint:gocognit,gocyclo,lll,funlen
+	var (
+		discoveryItems []*db.Discover
+		err            error
+	)
 
-	scanner, df, err := createScannerForFile(file, splitter)
-	if err != nil {
-		return nil, err
-	}
-
-	defer df()
-
-	var paths []string //nolint:prealloc
-
-	for scanner.Scan() {
-		paths = append(paths, scanner.Text())
-	}
-
-	serr := scanner.Err()
-	if serr != nil {
-		return nil, fmt.Errorf("failed to read whole file: %w", serr)
-	}
-
-	return paths, nil
-}
-
-// categorisePaths categorises each path in a given slice into either a
-// directory or file and appends the path to the corresponding slice.
-func categorisePaths(filesAndDirs, files, dirs []string) ([]string, []string) {
-	dirSet := make(map[string]bool)
-
-	for _, path := range filesAndDirs {
-		if pathIsDir(path) {
-			dirs = append(dirs, path)
-			dirSet[path] = true
+	if setFiles != "" {
+		if discoveryItems, err = ReadFon(discoveryItems, transformer, setFiles, false, nullSep); err != nil {
+			return nil, err
 		}
 	}
 
-	for _, path := range filesAndDirs {
-		if !dirSet[path] && !fileDirIsInDirs(path, dirSet) {
-			files = append(files, path)
+	if setDirs != "" {
+		if discoveryItems, err = ReadFon(discoveryItems, transformer, setDirs, true, nullSep); err != nil {
+			return nil, err
 		}
 	}
 
-	return files, dirs
-}
-
-func pathIsDir(path string) bool {
-	info, err := os.Stat(path)
-	if err != nil {
-		warn("Invalid path: %s", err)
-
-		return false
-	}
-
-	return info.IsDir()
-}
-
-// fileDirIsInDirs returns true if the directory of the provided file (or any of
-// its parents) is present in the provided map of directories.
-func fileDirIsInDirs(file string, dirSet map[string]bool) bool {
-	fileDir := filepath.Dir(file)
-
-	for fileDir != filepath.Dir(fileDir) {
-		if dirSet[fileDir] {
-			return true
-		}
-
-		fileDir = filepath.Dir(fileDir)
-	}
-
-	return false
-}
-
-// add does the main job of sending the backup set details to the server.
-func add(client *server.Client, name, requester, transformer, description string,
-	monitor time.Duration, monitorRemovals, archive bool, files, dirs []string, meta *transfer.Meta) error {
-	set := &set.Set{
-		Name:            name,
-		Requester:       requester,
-		Transformer:     transformer,
-		Description:     description,
-		MonitorTime:     monitor,
-		MonitorRemovals: monitorRemovals,
-		DeleteLocal:     archive,
-		Metadata:        meta.Metadata(),
-	}
-
-	if err := client.AddOrUpdateSet(set); err != nil {
-		return err
-	}
-
-	if err := client.MergeFiles(set.ID(), files); err != nil {
-		return err
-	}
-
-	if err := client.MergeDirs(set.ID(), dirs); err != nil {
-		return err
-	}
-
-	return client.TriggerDiscovery(set.ID())
-}
-
-func checkExistingSet(client *server.Client, name, requester string) (*set.Set, error) {
-	set, err := client.GetSetByName(requester, name)
-	if errors.Is(err, server.ErrBadSet) {
-		return set, nil
-	} else if err != nil {
-		return nil, err
-	}
-
-	return set, ErrDuplicateSet
-}
-
-func parseDuration(s string, minDuration time.Duration) (time.Duration, error) {
-	s = convertDurationString(s)
-
-	monitorDuration, err := time.ParseDuration(s)
-	if err != nil {
-		return 0, &InvalidMonitorDurationError{
-			Err: err,
+	if setItems != "" {
+		if discoveryItems, err = ReadFoi(discoveryItems, transformer, setItems, nullSep); err != nil {
+			return nil, err
 		}
 	}
 
-	if monitorDuration < minDuration {
-		return 0, &MonitorDurationTooShortError{
-			Duration:    monitorDuration,
-			MinDuration: minDuration,
+	if setPath != "" { //nolint:nestif
+		if !transformer.Match(setPath) {
+			return nil, fmt.Errorf("path: %s: %w", setPath, db.ErrInvalidTransformPath)
 		}
-	}
 
-	return monitorDuration, nil
-}
-
-func convertDurationString(s string) string {
-	durationRegex := regexp.MustCompile("[0-9]+[dw]")
-
-	return durationRegex.ReplaceAllStringFunc(s, func(d string) string {
-		num, err := strconv.ParseInt(d[:len(d)-1], 10, 64)
+		discoveryItems, err = AddDiscoveryFromFile(discoveryItems, setPath)
 		if err != nil {
-			return d
+			return nil, err
 		}
+	}
 
-		switch d[len(d)-1] {
-		case 'd':
-			num *= hoursInDay
-		case 'w':
-			num *= hoursInWeek
+	return discoveryItems, nil
+}
+
+func ReadFon(existing []*db.Discover, transformer *db.Transformer,
+	path string, isDir, nullSep bool) ([]*db.Discover, error) {
+	fofnType := db.DiscoverFOFN
+	endType := db.DiscoverFile
+
+	if isDir { //nolint:nestif
+		fofnType = db.DiscoverFODN
+		endType = db.DiscoverDirectory
+
+		if nullSep {
+			fofnType = db.DiscoverFODNNull
 		}
+	} else if nullSep {
+		fofnType = db.DiscoverFOFNNull
+	}
 
-		return strconv.FormatInt(num, 10) + "h"
+	fofn, err := discovery.ReadFon(transformer, &db.Discover{
+		Type: fofnType,
+		Path: path,
 	})
+	if err != nil {
+		return nil, err
+	}
+
+	for _, file := range fofn {
+		existing = append(existing, &db.Discover{
+			Type: endType,
+			Path: file,
+		})
+	}
+
+	return existing, nil
+}
+
+func ReadFoi(existing []*db.Discover, transformer *db.Transformer, path string, nullSep bool) ([]*db.Discover, error) {
+	fofnType := db.DiscoverFOFN
+
+	if nullSep {
+		fofnType = db.DiscoverFOFNNull
+	}
+
+	fofn, err := discovery.ReadFon(transformer, &db.Discover{
+		Type: fofnType,
+		Path: path,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	for _, file := range fofn {
+		if existing, err = AddDiscoveryFromFile(existing, file); err != nil {
+			return nil, err
+		}
+	}
+
+	return existing, nil
+}
+
+func AddDiscoveryFromFile(existing []*db.Discover, path string) ([]*db.Discover, error) {
+	stat, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+
+	endType := db.DiscoverFile
+
+	if stat.IsDir() {
+		endType = db.DiscoverDirectory
+	}
+
+	return append(existing, &db.Discover{
+		Type: endType,
+		Path: path,
+	}), nil
+}
+
+func discover(client *db.DB, set *db.Set) error {
+	info("Discovery Started")
+
+	var files, missing, symlinks, abnormal int
+
+	if err := discovery.Discover(client, set, func(f *db.File) {
+		switch f.Type {
+		case db.Abnormal:
+			abnormal++
+		case db.Symlink:
+			symlinks++
+		default:
+			if f.Status == db.StatusMissing {
+				missing++
+			} else {
+				files++
+			}
+		}
+
+		printDiscoveryStatus(files, missing, symlinks, abnormal)
+	}); err != nil {
+		return err
+	}
+
+	fmt.Println() //nolint:forbidigo
+	info("Discovery Complete")
+
+	return nil
+}
+
+func printDiscoveryStatus(files, missing, symlinks, abnormal int) {
+	fmt.Printf("\033[2K\rFiles: %d\tSymlinks: %d\tOther: %d\tMissing: %d", files, symlinks, abnormal, missing) //nolint:forbidigo,lll
 }

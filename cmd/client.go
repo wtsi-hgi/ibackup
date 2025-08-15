@@ -27,37 +27,84 @@
 package cmd
 
 import (
+	"encoding/json"
+	"fmt"
+	"os"
 	"os/user"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"syscall"
 
-	gas "github.com/wtsi-hgi/go-authserver"
-	"github.com/wtsi-hgi/ibackup/server"
+	"github.com/wtsi-hgi/ibackup/db"
 )
 
-const jwtBasename = ".ibackup.jwt"
+var dbDriver = "mysql"
 
-// newServerClient tries to get a jwt for the given server url, and returns a
-// client that can interact with it.
-func newServerClient(url, cert string) (*server.Client, error) {
-	client, err := gasClientCLI(url, cert)
-	if err != nil {
-		return nil, err
-	}
-
-	token, err := client.GetJWT()
-	if err != nil {
-		return nil, err
-	}
-
-	return server.NewClient(url, cert, token), nil
+type transformer struct {
+	Re      string `json:"re"`
+	Replace string `json:"replace"`
 }
 
-func gasClientCLI(url, cert string) (*gas.ClientCLI, error) {
-	c, err := gas.NewClientCLI(jwtBasename, serverTokenBasename, url, cert, false)
-	if err != nil {
-		return nil, err
+type transformers map[string]transformer
+
+func (t transformers) Compile(name string) (*db.Transformer, error) {
+	trans, ok := t[name]
+	if !ok {
+		return compilePrefixTransformer(name)
 	}
 
-	return c, nil
+	return db.NewTransformer(name, trans.Re, trans.Replace)
+}
+
+func compilePrefixTransformer(trans string) (*db.Transformer, error) {
+	const prefixPrefix = "prefix="
+
+	if !strings.HasPrefix(trans, prefixPrefix) {
+		return nil, db.ErrInvalidTransformer
+	}
+
+	parts := strings.SplitN(strings.TrimPrefix(trans, prefixPrefix), ":", 2)
+	if len(parts) != 2 {
+		return nil, db.ErrInvalidTransformer
+	}
+
+	parts[0] = filepath.Clean(parts[0]) + "/"
+	parts[1] = filepath.Clean(parts[1]) + "/"
+
+	return db.NewTransformer(trans, "^"+regexp.QuoteMeta(parts[0]), strings.ReplaceAll(parts[1], "$", "$$"))
+}
+
+type Config struct {
+	DBURI string `json:"dburi"`
+
+	// SlackToken is the token you get from the OAuth&Permissions tab in your slack
+	// application's features.
+	SlackToken string `json:"slackToken"`
+
+	// SlackChannel is the channel ID you get after pressing the 'Get channel
+	// details' button (channel title) in any channel, the SlackChannel ID is at the
+	// bottom of the pop-up box.
+	SlackChannel string `json:"slackChannel"`
+
+	WRConfig string `json:"wrConfig"`
+
+	Transformers transformers `json:"transformers"`
+}
+
+func newConfig(config string) (*Config, error) {
+	f, err := os.Open(config)
+	if err != nil {
+		return nil, fmt.Errorf("error opening ibackup config: %w", err)
+	}
+
+	var conf Config
+
+	if err = json.NewDecoder(f).Decode(&conf); err != nil {
+		return nil, fmt.Errorf("error parsing ibackup config: %w", err)
+	}
+
+	return &conf, nil
 }
 
 func currentUsername() string {
@@ -67,4 +114,24 @@ func currentUsername() string {
 	}
 
 	return user.Username
+}
+
+func isExeOwner() bool {
+	exe, err := os.Executable()
+	if err != nil {
+		return false
+	}
+
+	stat, err := os.Stat(exe)
+	if err != nil {
+		return false
+	}
+
+	statt, ok := stat.Sys().(*syscall.Stat_t)
+
+	return ok && int(statt.Uid) == syscall.Getuid()
+}
+
+func dropSuid() error {
+	return syscall.Setuid(os.Getuid())
 }
