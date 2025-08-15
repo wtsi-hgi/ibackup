@@ -38,8 +38,7 @@ import (
 // options for this cmd.
 var arFile string
 var arPrefix string
-var arHumgen bool
-var arGengen bool
+var arTransformer string
 var arNull bool
 var arBase64 bool
 
@@ -49,6 +48,7 @@ const arPrefixParts = 2
 var addremoteCmd = &cobra.Command{
 	Use:   "addremote",
 	Short: "Add a remote path column to a local path fofn",
+	// Long is appended to in init() with available transformers from the registry.
 	Long: `Add a remote path column to a local path fofn.
 
 The 'put' subcommand takes a file that has at least 2 columns: local path, and
@@ -79,32 +79,32 @@ Which you can pipe to the 'put' subcommand.
 (If the local prefix isn't present, the local path will be assumed to be
 relative to the local prefix, and will end up relative to the remote prefix.)
 
-Specific to the "humgen" and "gengen" groups at the Sanger Institute, you can
-use the --humgen or --gengen options to do a more complex transformation from
-local "lustre" paths to the "canonical" iRODS path in the humgen zone.
+If named transformers have been configured, you can specify --transformer
+instead of --prefix.
+    'name' : the name of a configured transformer
 `,
 	Run: func(cmd *cobra.Command, args []string) {
-		if arHumgen && arPrefix != "" {
-			dief("--humgen and --prefix are mutually exclusive")
+		loadTransformerRegistryFromEnv()
+
+		if arTransformer != "" && arPrefix != "" {
+			dief("--transformer and --prefix are mutually exclusive")
 		}
 
-		if arGengen && arPrefix != "" {
-			dief("--gengen and --prefix are mutually exclusive")
+		if arTransformer == "" && arPrefix == "" {
+			dief("you must specify one of --prefix or --transformer")
 		}
 
-		if arHumgen && arGengen {
-			dief("--humgen and --gengen are mutually exclusive")
-		}
+		var pt transfer.PathTransformer
 
-		if !arHumgen && !arGengen && arPrefix == "" {
-			dief("you must specify one of --prefix, --humgen or --gengen")
-		}
-
-		pt := transfer.HumgenTransformer
 		if arPrefix != "" {
 			pt = makePrefixTransformer(arPrefix)
-		} else if arGengen {
-			pt = transfer.GengenTransformer
+		} else {
+			var ok bool
+
+			pt, ok = transfer.LookupTransformer(arTransformer)
+			if !ok {
+				dief("invalid transformer: %s", arTransformer)
+			}
 		}
 
 		transformARFile(arFile, pt, fofnLineSplitter(arNull), arBase64)
@@ -119,14 +119,14 @@ func init() {
 		"path to file with one local path per line (- means read from STDIN)")
 	addremoteCmd.Flags().StringVarP(&arPrefix, "prefix", "p", "",
 		"'/local/prefix:/remote/prefix' string to replace local prefix with remote")
-	addremoteCmd.Flags().BoolVar(&arHumgen, "humgen", false,
-		"generate the humgen zone canonical path for humgen lustre paths")
-	addremoteCmd.Flags().BoolVar(&arGengen, "gengen", false,
-		"generate the humgen zone canonical path for gengen lustre paths")
+	addremoteCmd.Flags().StringVar(&arTransformer, "transformer", "",
+		"use the transformer with this name defined in IBACKUP_TRANSFORMERS_CONFIG")
 	addremoteCmd.Flags().BoolVarP(&arNull, "null", "0", false,
 		"input paths are terminated by a null character instead of a new line")
 	addremoteCmd.Flags().BoolVarP(&arBase64, "base64", "b", false,
 		"output paths base64 encoded")
+
+	updateHelpWithTransformers(addremoteCmd)
 }
 
 func makePrefixTransformer(def string) transfer.PathTransformer {

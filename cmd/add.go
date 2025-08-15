@@ -34,6 +34,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -46,7 +47,7 @@ const (
 	hoursInDay          = 24
 	hoursInWeek         = hoursInDay * 7
 	helpTextName        = "a short name for this backup set"
-	helpTextTransformer = "'humgen' | 'gengen' | 'prefix=local:remote'"
+	helpTextTransformer = "'prefix=local:remote' or the name of a transformer loaded from IBACKUP_TRANSFORMERS_CONFIG"
 	helpTextDescription = "a long description of this backup set"
 	helpTextFiles       = "path to file with one absolute local file path per line"
 	helpTextDirs        = "path to file with one absolute local directory path per line"
@@ -129,10 +130,7 @@ To describe the backup set you must provide:
 --name : a short unique name for this backup set; must not contain comma.
 --transformer : define where your local files should be backed up to by defining
   a conversion of local path to a remote iRODS path:
-    'humgen' : for files stored on the Sanger Institute's lustre filesystem in a
-      Human Genetics project or team folder, use this transformer to backup
-	  files to the canonical path in the iRODS humgen zone.
-    'gengen' : like 'humgen', but for Generative Genomics data.
+    'name' : the name of a configured transformer
     'prefix=local:remote' : replace 'local' with a local path prefix, and
 	  'remote' with a remote one, eg. 'prefix=/mnt/diska:/zone1' would backup
 	  /mnt/diska/subdir/file.txt to /zone1/subdir/file.txt.
@@ -206,6 +204,11 @@ option to add sets on behalf of other users.
 
 		if setTransformer == "" {
 			dief("-t must be provided")
+		}
+
+		_, ok := transfer.LookupTransformer(setTransformer)
+		if !ok {
+			dief("unknown transformer: %s", setTransformer)
 		}
 
 		var monitorDuration time.Duration
@@ -282,6 +285,45 @@ func init() {
 
 	if err := addCmd.MarkFlagRequired("name"); err != nil {
 		die(err)
+	}
+
+	updateHelpWithTransformers(addCmd)
+}
+
+// updateHelpWithTransformers updates the transformer listing in the Long help.
+func updateHelpWithTransformers(c *cobra.Command) {
+	loadTransformerRegistryFromEnv()
+
+	reg := transfer.DefaultRegistry()
+	if reg == nil {
+		return
+	}
+
+	var b strings.Builder
+
+	for _, info := range reg.GetAll() {
+		b.WriteString(fmt.Sprintf("    '%s' : %s\n", info.Name, info.Description))
+	}
+
+	c.Long = strings.Replace(
+		c.Long,
+		"    'name' : the name of a configured transformer\n",
+		b.String(),
+		1,
+	)
+}
+
+// loadTransformerRegistryFromEnv reads IBACKUP_TRANSFORMERS_CONFIG and installs
+// the default registry.
+func loadTransformerRegistryFromEnv() {
+	path := os.Getenv("IBACKUP_TRANSFORMERS_CONFIG")
+	if path == "" {
+		return
+	}
+
+	err := transfer.SetDefaultRegistryFromFile(path)
+	if err != nil {
+		dief("failed to load transformer registry: %s", err)
 	}
 }
 
