@@ -330,6 +330,8 @@ func TestSet(t *testing.T) {
 					setB = d.getSetFromDB(setB)
 					So(setB.NumFiles, ShouldEqual, 11)
 					So(setB.SizeTotal, ShouldEqual, 1500)
+					
+					So(d.clearQueue(), ShouldBeNil)
 
 					So(len(collectIter(t, d.listInodes(t))), ShouldEqual, 8)
 				})
