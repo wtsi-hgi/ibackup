@@ -4166,7 +4166,7 @@ func TestEdit(t *testing.T) {
 
 						s.addSetForTestingWithFlag(t, nonAdminSetName, transformer, setFile1, "--user", user)
 
-						Convey("Non admins cannot use the --list flag", func() {
+						Convey("Non admins cannot use the --add-items flag", func() {
 							exitCode, _ := s.runBinaryWithNoLogging(t, "edit", "--name", nonAdminSetName,
 								"--user", user, "--add-items", tempTestFile.Name())
 							So(exitCode, ShouldEqual, 1)
