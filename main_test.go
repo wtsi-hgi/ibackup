@@ -4145,6 +4145,8 @@ func TestEdit(t *testing.T) {
 					_, err = io.WriteString(tempTestFile, setDir2+"\n"+setFile3+"\n"+setFile4+"\n")
 					So(err, ShouldBeNil)
 
+					tempTestFile.Close()
+
 					Convey("Admins can add multiple files at once", func() {
 						exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--add-items", tempTestFile.Name())
 						So(exitCode, ShouldEqual, 0)

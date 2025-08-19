@@ -314,14 +314,18 @@ func updateSet(client *server.Client, sid, path, items string, null bool) error 
 
 	files, dirs := categorisePaths(filesAndDirs, []string{}, []string{})
 
-	err = addFilesToSet(sid, files, client)
-	if err != nil {
-		return err
+	if len(files) > 0 {
+		err = addFilesToSet(sid, files, client)
+		if err != nil {
+			return err
+		}
 	}
 
-	err = client.MergeDirs(sid, dirs)
-	if err != nil {
-		return err
+	if len(dirs) > 0 {
+		err = client.MergeDirs(sid, dirs)
+		if err != nil {
+			return err
+		}
 	}
 
 	return client.TriggerDiscovery(sid, false)
