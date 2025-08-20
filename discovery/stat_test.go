@@ -88,8 +88,8 @@ func TestStat(t *testing.T) {
 
 				So(os.WriteFile(path, bytes.Repeat([]byte{0}, n), 0600), ShouldBeNil)
 
-				stat, err := os.Stat(path)
-				So(err, ShouldBeNil)
+				stat, errr := os.Stat(path)
+				So(errr, ShouldBeNil)
 
 				btime := stat.ModTime()
 				mtime := btime.Add(5 * time.Second)

@@ -80,7 +80,7 @@ func readDiscoveryFromDB(d discoverDB, set *db.Set) ( //nolint:gocyclo
 	)
 
 	if err := d.GetSetDiscovery(set).ForEach(func(d *db.Discover) error {
-		switch d.Type {
+		switch d.Type { //nolint:exhaustive
 		case db.DiscoverFile:
 			files = append(files, d.Path)
 		case db.DiscoverDirectory:
@@ -212,15 +212,12 @@ func addFilesToSet(d discoverDB, set *db.Set, files []*db.File) error {
 		return ErrNoFilesDiscovered
 	}
 
-	sm, err := buildFileStateMachine(files)
-	if err != nil {
-		return err
-	}
+	sm := buildFileSet(files)
 
 	var removedFiles []*db.File
 
 	if err := d.GetSetFiles(set).ForEach(func(f *db.File) error {
-		if m := sm.Match(toBytes(f.LocalPath)); m == nil {
+		if _, ok := sm[f.LocalPath]; !ok {
 			if set.MonitorRemovals {
 				removedFiles = append(removedFiles, f)
 			} else {
@@ -237,14 +234,12 @@ func addFilesToSet(d discoverDB, set *db.Set, files []*db.File) error {
 	return d.CompleteDiscovery(set, slices.Values(files), slices.Values(removedFiles))
 }
 
-func buildFileStateMachine(files []*db.File) (StateMachine[struct{}], error) {
-	exists := new(struct{})
-
-	list := make([]PathGroup[struct{}], 0, len(files))
+func buildFileSet(files []*db.File) map[string]struct{} {
+	set := make(map[string]struct{}, len(files))
 
 	for _, f := range files {
-		list = append(list, PathGroup[struct{}]{Path: toBytes(f.LocalPath), Group: exists})
+		set[f.LocalPath] = struct{}{}
 	}
 
-	return NewStatemachine(list)
+	return set
 }

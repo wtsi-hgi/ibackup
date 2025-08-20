@@ -72,7 +72,6 @@ func TestDiscover(t *testing.T) {
 		So(err, ShouldBeNil)
 		So(set.StartedDiscovery, ShouldHappenOnOrAfter, start)
 		So(set.StartedDiscovery, ShouldHappenOnOrBefore, end)
-		//So(set.StartedDiscovery, ShouldHappenOnOrBefore, set.LastDiscovery)
 
 		dirA := filepath.Join(tmp, "dirA")
 		dirB := filepath.Join(dirA, "dirB")
