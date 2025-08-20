@@ -2,6 +2,7 @@
  * Copyright (c) 2025 Genome Research Ltd.
  *
  * Author: Michael Woolnough <mw31@sanger.ac.uk>
+ * Author: Rosie Kern <rk18@sanger.ac.uk>
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
