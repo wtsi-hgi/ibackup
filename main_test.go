@@ -62,8 +62,9 @@ import (
 )
 
 const (
-	app       = "ibackup"
-	userPerms = 0700
+	app               = "ibackup"
+	userPerms         = 0700
+	alternateUsername = "root"
 )
 
 const noBackupSets = `Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
@@ -3091,7 +3092,7 @@ func TestRemove(t *testing.T) {
 		})
 
 		Convey("And a set made by a non-admin user", func() {
-			user := "root"
+			user := alternateUsername
 			setName := "nonAdminSet"
 			originalEnv := s.impersonateUser(t, user)
 
@@ -3922,7 +3923,7 @@ func TestEdit(t *testing.T) {
 			})
 
 			Convey("And a read-only set made by a different user", func() {
-				user := "root"
+				user := alternateUsername
 				setName := "rootSet"
 				originalEnv := s.impersonateUser(t, user)
 
@@ -4129,6 +4130,50 @@ func TestEdit(t *testing.T) {
 
 					So(output, ShouldContainSubstring, "Num files: 1")
 					So(output, ShouldContainSubstring, setFile1+"\tskipped")
+				})
+
+				Convey("And a file of paths", func() {
+					setFile3 := filepath.Join(setDir1, "file3")
+					internal.CreateTestFileOfLength(t, setFile3, 1)
+
+					setFile4 := filepath.Join(setDir1, "file4")
+					internal.CreateTestFileOfLength(t, setFile4, 1)
+
+					tempTestFile, errc := os.CreateTemp(path, "testFileSet")
+					So(errc, ShouldBeNil)
+
+					_, err = io.WriteString(tempTestFile, setDir2+"\n"+setFile3+"\n"+setFile4+"\n")
+					So(err, ShouldBeNil)
+
+					tempTestFile.Close()
+
+					Convey("Admins can add multiple files at once", func() {
+						exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--add-items", tempTestFile.Name())
+						So(exitCode, ShouldEqual, 0)
+
+						exitCode, output := s.runBinaryWithNoLogging(t, "status", "--name", setName, "-d")
+						So(exitCode, ShouldEqual, 0)
+
+						So(output, ShouldContainSubstring, "Num files: 4")
+						So(output, ShouldContainSubstring, setDir2)
+						So(output, ShouldContainSubstring, setFile2)
+						So(output, ShouldContainSubstring, setFile3)
+						So(output, ShouldContainSubstring, setFile4)
+					})
+
+					Convey("And a set made by a non-admin user", func() {
+						user := alternateUsername
+						nonAdminSetName := "nonAdminSet"
+						_ = s.impersonateUser(t, user)
+
+						s.addSetForTestingWithFlag(t, nonAdminSetName, transformer, setFile1, "--user", user)
+
+						Convey("Non admins cannot use the --add-items flag", func() {
+							exitCode, _ := s.runBinaryWithNoLogging(t, "edit", "--name", nonAdminSetName,
+								"--user", user, "--add-items", tempTestFile.Name())
+							So(exitCode, ShouldEqual, 1)
+						})
+					})
 				})
 
 				SkipConvey("You can add a file back to the set after removing it", func() {

@@ -28,8 +28,6 @@ package cmd
 
 import (
 	"errors"
-	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -49,6 +47,8 @@ var (
 	editRemovalDate         string
 	editTransformer         string
 	editAddPath             string
+	editItems               string
+	editNull                bool
 	editMonitor             string
 	editStopMonitor         bool
 	editMonitorRemovals     bool
@@ -176,11 +176,11 @@ preexisting backup set.`,
 			return err
 		}
 
-		if editAddPath == "" {
+		if editAddPath == "" && editItems == "" {
 			return nil
 		}
 
-		return updateSet(client, userSet.ID(), editAddPath)
+		return updateSet(client, userSet.ID(), editAddPath, editItems, editNull)
 	},
 }
 
@@ -212,6 +212,11 @@ func init() { //nolint:funlen
 		"hide set when viewing status")
 	editCmd.Flags().BoolVar(&editUnHide, "unhide", false,
 		"unhide set when viewing status")
+
+	if isAdmin() {
+		editCmd.Flags().StringVar(&editItems, "add-items", "", helpTextItems)
+		editCmd.Flags().BoolVarP(&editNull, "null", "0", false, helpTextNull)
+	}
 
 	if err := editCmd.MarkFlagRequired("name"); err != nil {
 		die(err)
@@ -300,66 +305,63 @@ func editSet(client *server.Client, givenSet *set.Set, makeWritable bool) error 
 	return client.AddOrUpdateSet(givenSet)
 }
 
-// updateSet updates the files in the set.
-func updateSet(client *server.Client, sid, path string) error {
-	absPath, err := filepath.Abs(path)
+// updateSet updates the files and dirs in the set.
+func updateSet(client *server.Client, sid, path, items string, null bool) error {
+	filesAndDirs, err := getPathsFromInput(items, path, null)
 	if err != nil {
 		return err
 	}
 
-	info, err := os.Stat(absPath)
-	if err != nil {
-		return err
+	files, dirs := categorisePaths(filesAndDirs, []string{}, []string{})
+
+	if len(files) > 0 {
+		err = addFilesToSet(sid, files, client)
+		if err != nil {
+			return err
+		}
 	}
 
-	if info.IsDir() {
-		err = client.MergeDirs(sid, []string{absPath})
-	} else {
-		err = addFileToSet(sid, absPath, client)
-	}
-
-	if err != nil {
-		return err
+	if len(dirs) > 0 {
+		err = client.MergeDirs(sid, dirs)
+		if err != nil {
+			return err
+		}
 	}
 
 	return client.TriggerDiscovery(sid, false)
 }
 
-// addFileToSet will add the given path to the set if its parent dir is not in
-// the set already.
-func addFileToSet(sid, path string, client *server.Client) error {
-	inSetAlready, err := isParentDirInSet(sid, path, client)
+// addFilesToSet will add the given paths to the set if they aren't part of a
+// directory already added.
+func addFilesToSet(sid string, files []string, client *server.Client) error {
+	newFiles, err := getNewPaths(sid, files, client)
 	if err != nil {
 		return err
 	}
 
-	if inSetAlready {
-		return nil
-	}
-
-	return client.MergeFiles(sid, []string{path})
+	return client.MergeFiles(sid, newFiles)
 }
 
-func isParentDirInSet(sid, path string, client *server.Client) (bool, error) {
+// getNewPaths returns the paths that are not already part of the set's
+// directories.
+func getNewPaths(sid string, paths []string, client *server.Client) ([]string, error) {
 	dirEntries, err := client.GetDirs(sid)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 
-	dirMap := make(map[string]struct{}, len(dirEntries))
+	dirMap := make(map[string]bool, len(dirEntries))
 	for _, dirEntry := range dirEntries {
-		dirMap[dirEntry.Path] = struct{}{}
+		dirMap[dirEntry.Path] = true
 	}
 
-	fileDir := filepath.Dir(path)
+	var newPaths []string
 
-	for fileDir != filepath.Dir(fileDir) {
-		if _, exists := dirMap[fileDir]; exists {
-			return true, nil
+	for _, path := range paths {
+		if !fileDirIsInDirs(path, dirMap) {
+			newPaths = append(newPaths, path)
 		}
-
-		fileDir = filepath.Dir(fileDir)
 	}
 
-	return false, nil
+	return newPaths, nil
 }
