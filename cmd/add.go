@@ -46,7 +46,7 @@ const (
 	hoursInDay          = 24
 	hoursInWeek         = hoursInDay * 7
 	helpTextName        = "a short name for this backup set"
-	helpTextTransformer = "'humgen' | 'gengen' | 'prefix=local:remote'"
+	helpTextTransformer = "'humgen' | 'gengen' | 'otar' | 'prefix=local:remote'"
 	helpTextDescription = "a long description of this backup set"
 	helpTextFiles       = "path to file with one absolute local file path per line"
 	helpTextDirs        = "path to file with one absolute local directory path per line"
@@ -133,6 +133,7 @@ To describe the backup set you must provide:
       Human Genetics project or team folder, use this transformer to backup
 	  files to the canonical path in the iRODS humgen zone.
     'gengen' : like 'humgen', but for Generative Genomics data.
+	'otar'   : like 'humgen', but for Open Targets data.
     'prefix=local:remote' : replace 'local' with a local path prefix, and
 	  'remote' with a remote one, eg. 'prefix=/mnt/diska:/zone1' would backup
 	  /mnt/diska/subdir/file.txt to /zone1/subdir/file.txt.

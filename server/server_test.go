@@ -2380,7 +2380,7 @@ func TestServer(t *testing.T) {
 						So(gotSet.Error, ShouldNotBeNil)
 						So(slackWriter.String(), ShouldEqual,
 							fmt.Sprintf(slack.BoxPrefixInfo+"`jim.setbad` completed discovery: 4 files"+
-								slack.BoxPrefixError+"`jim.setbad` is invalid: not a valid humgen lustre path [%s]", expected[0]))
+								slack.BoxPrefixError+"`jim.setbad` is invalid: not a valid lustre path [%s]", expected[0]))
 
 						err = dfunc()
 						So(err, ShouldBeNil)
@@ -2397,10 +2397,10 @@ func TestServer(t *testing.T) {
 						}()
 
 						So(logWriter.String(), ShouldEqual, fmt.Sprintf("failed to recover set setbad for jim: "+
-							"not a valid humgen lustre path [%s]\n", expected[0]))
+							"not a valid lustre path [%s]\n", expected[0]))
 						So(slackWriter.String(), ShouldEqual, fmt.Sprintf(serverStartMessage+
 							slack.BoxPrefixError+"`jim.setbad` could not be recovered: "+
-							"not a valid humgen lustre path [%s]"+serverRecoveryMessage+serverStartedMessage, expected[0]))
+							"not a valid lustre path [%s]"+serverRecoveryMessage+serverStartedMessage, expected[0]))
 					})
 
 					Convey("And if you make the set read-only", func() {

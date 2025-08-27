@@ -56,12 +56,12 @@ const (
 	RequestStatusFailed          RequestStatus = "failed"
 	RequestStatusWarning         RequestStatus = "warning"
 	RequestStatusHardlinkSkipped RequestStatus = "hardlink"
-	ErrNotHumgenLustre                         = "not a valid humgen lustre path"
+	ErrNotHumgenLustre                         = "not a valid lustre path"
 	stuckTimeFormat                            = "02/01/06 15:04 MST"
 	defaultDirPerms                            = 0777
 )
 
-var genTransformerRegex = regexp.MustCompile(`^/lustre/(scratch[^/]+)(/[^/]*)+?/(projects|teams|users)(_v2)?/([^/]+)/`)
+var genTransformerRegex = regexp.MustCompile(`^/lustre/(scratch[^/]+)(/[^/]*)+?/([Pp]rojects|teams|users)(_v2)?/([^/]+)/`) //nolint:lll
 
 // Stuck is used to provide details of a potentially "stuck" upload Request.
 type Stuck struct {
@@ -510,4 +510,19 @@ func GengenTransformer(local string) (string, error) {
 	}
 
 	return strings.Replace(humgenPath, "/humgen", "/humgen/gengen", 1), nil
+}
+
+// OpentargetsTransformer is a PathTransformer that will convert a local
+// "lustre" path to a "canonical" path in the humgen iRODS zone, for the
+// OpenTargets BoM.
+//
+// This transform is specific to the "opentargets" group at the Sanger
+// Institute.
+func OpentargetsTransformer(local string) (string, error) {
+	humgenPath, err := HumgenTransformer(local)
+	if err != nil {
+		return "", err
+	}
+
+	return strings.Replace(humgenPath, "/humgen", "/humgen/open-targets", 1), nil
 }
