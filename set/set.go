@@ -337,6 +337,10 @@ func (s *Set) MakeTransformer() (transfer.PathTransformer, error) {
 		return transfer.GengenTransformer, nil
 	}
 
+	if s.Transformer == "otar" {
+		return transfer.OpentargetsTransformer, nil
+	}
+
 	if !strings.HasPrefix(s.Transformer, prefixTransformerKey) {
 		return nil, Error{ErrInvalidTransformer, ""}
 	}

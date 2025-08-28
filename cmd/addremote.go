@@ -40,6 +40,7 @@ var arFile string
 var arPrefix string
 var arHumgen bool
 var arGengen bool
+var arOtar bool
 var arNull bool
 var arBase64 bool
 
@@ -79,9 +80,10 @@ Which you can pipe to the 'put' subcommand.
 (If the local prefix isn't present, the local path will be assumed to be
 relative to the local prefix, and will end up relative to the remote prefix.)
 
-Specific to the "humgen" and "gengen" groups at the Sanger Institute, you can
-use the --humgen or --gengen options to do a more complex transformation from
-local "lustre" paths to the "canonical" iRODS path in the humgen zone.
+Specific to the "humgen", "gengen" and "otar" groups at the Sanger Institute,
+you can use the --humgen, --gengen or --otar options to do a more complex
+transformation from local "lustre" paths to the "canonical" iRODS path in the
+humgen zone.
 `,
 	Run: func(cmd *cobra.Command, args []string) {
 		if arHumgen && arPrefix != "" {
@@ -92,12 +94,30 @@ local "lustre" paths to the "canonical" iRODS path in the humgen zone.
 			dief("--gengen and --prefix are mutually exclusive")
 		}
 
-		if arHumgen && arGengen {
-			dief("--humgen and --gengen are mutually exclusive")
+		if arOtar && arPrefix != "" {
+			dief("--otar and --prefix are mutually exclusive")
 		}
 
-		if !arHumgen && !arGengen && arPrefix == "" {
-			dief("you must specify one of --prefix, --humgen or --gengen")
+		optionCount := 0
+
+		if arHumgen {
+			optionCount++
+		}
+
+		if arGengen {
+			optionCount++
+		}
+
+		if arOtar {
+			optionCount++
+		}
+
+		if optionCount > 1 {
+			dief("--humgen, --gengen and --otar are mutually exclusive")
+		}
+
+		if !arHumgen && !arGengen && !arOtar && arPrefix == "" {
+			dief("you must specify one of --prefix, --humgen, --gengen or --otar")
 		}
 
 		pt := transfer.HumgenTransformer
@@ -105,6 +125,8 @@ local "lustre" paths to the "canonical" iRODS path in the humgen zone.
 			pt = makePrefixTransformer(arPrefix)
 		} else if arGengen {
 			pt = transfer.GengenTransformer
+		} else if arOtar {
+			pt = transfer.OpentargetsTransformer
 		}
 
 		transformARFile(arFile, pt, fofnLineSplitter(arNull), arBase64)
@@ -123,6 +145,8 @@ func init() {
 		"generate the humgen zone canonical path for humgen lustre paths")
 	addremoteCmd.Flags().BoolVar(&arGengen, "gengen", false,
 		"generate the humgen zone canonical path for gengen lustre paths")
+	addremoteCmd.Flags().BoolVar(&arOtar, "otar", false,
+		"generate the humgen zone canonical path for open-targets lustre paths")
 	addremoteCmd.Flags().BoolVarP(&arNull, "null", "0", false,
 		"input paths are terminated by a null character instead of a new line")
 	addremoteCmd.Flags().BoolVarP(&arBase64, "base64", "b", false,

@@ -700,7 +700,7 @@ func TestList(t *testing.T) {
 
 				Convey("list returns an error", func() {
 					s.confirmOutput(t, []string{"list", "--name", "testAddFiles"}, 1,
-						"your transformer didn't work: not a valid humgen lustre path ["+
+						"your transformer didn't work: not a valid lustre path ["+
 							dir+"/path/to/other/file]")
 				})
 			})
@@ -1204,7 +1204,7 @@ Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently 
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Completed in: 0s
 Directories:
-your transformer didn't work: not a valid humgen lustre path [` + localDir + `/file.txt]
+your transformer didn't work: not a valid lustre path [` + localDir + `/file.txt]
   ` + localDir
 
 			s.confirmOutput(t, []string{"status", "-n", "badHumgen"}, 0, expected)

@@ -180,6 +180,30 @@ func TestRequest(t *testing.T) {
 		}
 	})
 
+	Convey("You can make new requests using the opentargets transform", t, func() {
+		r, err := NewRequestWithTransformedLocal("/lustre/scratch117/casm/team78/so11/file.txt", OpentargetsTransformer)
+		So(err, ShouldNotBeNil)
+		So(r, ShouldBeNil)
+
+		r, err = NewRequestWithTransformedLocal("file.txt", OpentargetsTransformer)
+		So(err, ShouldNotBeNil)
+		So(r, ShouldBeNil)
+
+		locals := []string{
+			"/lustre/scratch127/open-targets/Projects/OTAR2064/file.txt",
+		}
+
+		expected := []string{
+			"/humgen/open-targets/Projects/OTAR2064/scratch127/file.txt",
+		}
+
+		for i, local := range locals {
+			r, err = NewRequestWithTransformedLocal(local, OpentargetsTransformer)
+			So(err, ShouldBeNil)
+			So(r.Remote, ShouldEqual, expected[i])
+		}
+	})
+
 	Convey("You can create and stringify Stucks", t, func() {
 		n := time.Now()
 		s := NewStuck(n)
