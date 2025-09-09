@@ -26,464 +26,462 @@
 //nolint:gochecknoglobals
 package db
 
-var (
-	tables = [...]string{
-		"CREATE TABLE IF NOT EXISTS `transformers` (" +
-			"`id` INTEGER PRIMARY KEY " + autoIncrement + ", " +
-			"`transformer` TEXT NOT NULL, " +
-			"`transformerHash` " + hashColumnStart + "`transformer`" + hashColumnEnd + ", " +
-			"`regexp` TEXT NOT NULL, " +
-			"`regexpHash` " + hashColumnStart + "`regexp`" + hashColumnEnd + ", " +
-			"`replace` TEXT NOT NULL, " +
-			"`replaceHash` " + hashColumnStart + "`replace`" + hashColumnEnd + ", " +
-			"UNIQUE(`transformerHash`, `regexpHash`, `replaceHash`)" +
-			");",
+var tables = [...]string{
+	"CREATE TABLE IF NOT EXISTS `transformers` (" +
+		"`id` BIGINT PRIMARY KEY " + autoIncrement + ", " +
+		"`transformer` TEXT NOT NULL, " +
+		"`transformerHash` " + hashColumnStart + "`transformer`" + hashColumnEnd + ", " +
+		"`regexp` TEXT NOT NULL, " +
+		"`regexpHash` " + hashColumnStart + "`regexp`" + hashColumnEnd + ", " +
+		"`replace` TEXT NOT NULL, " +
+		"`replaceHash` " + hashColumnStart + "`replace`" + hashColumnEnd + ", " +
+		"UNIQUE(`transformerHash`, `regexpHash`, `replaceHash`)" +
+		");",
 
-		"CREATE TABLE IF NOT EXISTS `sets` (" +
-			"`id` INTEGER PRIMARY KEY " + autoIncrement + ", " +
-			"`name` TEXT NOT NULL, " +
-			"`nameHash` " + hashColumnStart + "`name`" + hashColumnEnd + ", " +
-			"`requester` TEXT NOT NULL, " +
-			"`requesterHash` " + hashColumnStart + "`requester`" + hashColumnEnd + ", " +
-			"`transformerID` INTEGER, " +
-			"`monitorTime` INTEGER NOT NULL, " +
-			"`monitorRemovals` BOOLEAN DEFAULT FALSE, " +
-			"`archive` BOOLEAN DEFAULT FALSE, " +
-			"`description` TEXT NOT NULL, " +
-			"`numFiles` INTEGER DEFAULT 0, " +
-			"`sizeFiles` INTEGER DEFAULT 0, " +
-			"`uploaded` INTEGER DEFAULT 0, " +
-			"`replaced` INTEGER DEFAULT 0, " +
-			"`skipped` INTEGER DEFAULT 0, " +
-			"`failing` INTEGER DEFAULT 0, " +
-			"`failed` INTEGER DEFAULT 0, " +
-			"`missing` INTEGER DEFAULT 0, " +
-			"`orphaned` INTEGER DEFAULT 0, " +
-			"`abnormal` INTEGER DEFAULT 0, " +
-			"`hardlinks` INTEGER DEFAULT 0, " +
-			"`symlinks` INTEGER DEFAULT 0, " +
-			"`uploadedSize` INTEGER DEFAULT 0, " +
-			"`removed` INTEGER DEFAULT 0, " +
-			"`removedSize` INTEGER DEFAULT 0, " +
-			"`toRemove` INTEGER DEFAULT 0, " +
-			"`startedDiscovery` DATETIME DEFAULT '0001-01-01 00:00:00', " +
-			"`lastDiscovery` DATETIME DEFAULT '0001-01-01 00:00:00', " +
-			"`lastCompleted` DATETIME DEFAULT '0001-01-01 00:00:00', " +
-			"`status` TINYINT GENERATED ALWAYS AS (" +
-			"IF(`numFiles` = 0, " + string('0'+PendingDiscovery) + ", " +
-			"IF(`uploaded` + `replaced` + `skipped` + `failed` + " +
-			"`missing` + `orphaned` + `abnormal` = `numFiles`" + ", " + string('0'+Complete) + ", " +
-			"IF(`failed` != 0, " + string('0'+Failing) + ", " +
-			"IF(`uploaded` + `replaced` + `skipped` + `failed` + " +
-			"`failing` = 0, " + string('0'+PendingUpload) + ", " +
-			string('0'+Uploading) + "))))), " +
-			"`lastCompletedCount` INTEGER DEFAULT 0, " +
-			"`lastCompletedSize` INTEGER DEFAULT 0, " +
-			"`error` TEXT NOT NULL, " +
-			"`warning` TEXT NOT NULL, " +
-			"`metadata` TEXT NOT NULL, " +
-			"`reason` TINYINT DEFAULT 0, " +
-			"`review` DATETIME DEFAULT '0001-01-01 00:00:00', " +
-			"`delete` DATETIME DEFAULT '0001-01-01 00:00:00', " +
-			"`deleteLocal` BOOLEAN DEFAULT FALSE, " +
-			"`modifiable` BOOLEAN DEFAULT TRUE, " +
-			"`hidden` BOOLEAN DEFAULT FALSE, " +
-			"UNIQUE(`requesterHash`, `nameHash`), " +
-			"FOREIGN KEY(`transformerID`) REFERENCES `transformers`(`id`) ON UPDATE RESTRICT ON DELETE RESTRICT" +
-			");",
+	"CREATE TABLE IF NOT EXISTS `sets` (" +
+		"`id` INTEGER PRIMARY KEY " + autoIncrement + ", " +
+		"`name` TEXT NOT NULL, " +
+		"`nameHash` " + hashColumnStart + "`name`" + hashColumnEnd + ", " +
+		"`requester` TEXT NOT NULL, " +
+		"`requesterHash` " + hashColumnStart + "`requester`" + hashColumnEnd + ", " +
+		"`transformerID` INTEGER, " +
+		"`monitorTime` INTEGER NOT NULL, " +
+		"`monitorRemovals` BOOLEAN DEFAULT FALSE, " +
+		"`archive` BOOLEAN DEFAULT FALSE, " +
+		"`description` TEXT NOT NULL, " +
+		"`numFiles` INTEGER DEFAULT 0, " +
+		"`sizeFiles` BIGINT DEFAULT 0, " +
+		"`uploaded` INTEGER DEFAULT 0, " +
+		"`replaced` INTEGER DEFAULT 0, " +
+		"`skipped` INTEGER DEFAULT 0, " +
+		"`failing` INTEGER DEFAULT 0, " +
+		"`failed` INTEGER DEFAULT 0, " +
+		"`missing` INTEGER DEFAULT 0, " +
+		"`orphaned` INTEGER DEFAULT 0, " +
+		"`abnormal` INTEGER DEFAULT 0, " +
+		"`hardlinks` INTEGER DEFAULT 0, " +
+		"`symlinks` INTEGER DEFAULT 0, " +
+		"`uploadedSize` BIGINT DEFAULT 0, " +
+		"`removed` INTEGER DEFAULT 0, " +
+		"`removedSize` BIGINT DEFAULT 0, " +
+		"`toRemove` INTEGER DEFAULT 0, " +
+		"`startedDiscovery` DATETIME DEFAULT '0001-01-01 00:00:00', " +
+		"`lastDiscovery` DATETIME DEFAULT '0001-01-01 00:00:00', " +
+		"`lastCompleted` DATETIME DEFAULT '0001-01-01 00:00:00', " +
+		"`status` TINYINT GENERATED ALWAYS AS (" +
+		"IF(`numFiles` = 0, " + string('0'+PendingDiscovery) + ", " +
+		"IF(`uploaded` + `replaced` + `skipped` + `failed` + " +
+		"`missing` + `orphaned` + `abnormal` = `numFiles`" + ", " + string('0'+Complete) + ", " +
+		"IF(`failed` != 0, " + string('0'+Failing) + ", " +
+		"IF(`uploaded` + `replaced` + `skipped` + `failed` + " +
+		"`failing` = 0, " + string('0'+PendingUpload) + ", " +
+		string('0'+Uploading) + "))))), " +
+		"`lastCompletedCount` INTEGER DEFAULT 0, " +
+		"`lastCompletedSize` BIGINT DEFAULT 0, " +
+		"`error` TEXT NOT NULL, " +
+		"`warning` TEXT NOT NULL, " +
+		"`metadata` TEXT NOT NULL, " +
+		"`reason` TINYINT DEFAULT 0, " +
+		"`review` DATETIME DEFAULT '0001-01-01 00:00:00', " +
+		"`delete` DATETIME DEFAULT '0001-01-01 00:00:00', " +
+		"`deleteLocal` BOOLEAN DEFAULT FALSE, " +
+		"`modifiable` BOOLEAN DEFAULT TRUE, " +
+		"`hidden` BOOLEAN DEFAULT FALSE, " +
+		"UNIQUE(`requesterHash`, `nameHash`), " +
+		"FOREIGN KEY(`transformerID`) REFERENCES `transformers`(`id`) ON UPDATE RESTRICT ON DELETE RESTRICT" +
+		");",
 
-		"CREATE TABLE IF NOT EXISTS `toDiscover` (" +
-			"`id` INTEGER PRIMARY KEY " + autoIncrement + ", " +
-			"`setID` INTEGER NOT NULL, " +
-			"`path` TEXT NOT NULL, " +
-			"`pathHash` " + hashColumnStart + "`path`" + hashColumnEnd + ", " +
-			"`type` TINYINT NOT NULL, " +
-			"`typeIsFons` BOOLEAN GENERATED ALWAYS AS (`type` IN (" +
-			string('0'+DiscoverFOFN) + ", " +
-			string('0'+DiscoverFOFNBase64) + ", " +
-			string('0'+DiscoverFOFNQuoted) + ", " +
-			string('0'+DiscoverFOFNNull) + ", " +
-			string('0'+DiscoverFODN) + ", " +
-			string('0'+DiscoverFODNBase64) + ", " +
-			string('0'+DiscoverFODNQuoted) + ", " +
-			string('0'+DiscoverFODNNull) +
-			")) /*! INVISIBLE */, " +
-			"UNIQUE(`setID`, `pathHash`, `typeIsFons`), " +
-			"FOREIGN KEY(`setID`) REFERENCES `sets`(`id`) ON DELETE CASCADE" +
-			");",
+	"CREATE TABLE IF NOT EXISTS `toDiscover` (" +
+		"`id` INTEGER PRIMARY KEY " + autoIncrement + ", " +
+		"`setID` INTEGER NOT NULL, " +
+		"`path` TEXT NOT NULL, " +
+		"`pathHash` " + hashColumnStart + "`path`" + hashColumnEnd + ", " +
+		"`type` TINYINT NOT NULL, " +
+		"`typeIsFons` BOOLEAN GENERATED ALWAYS AS (`type` IN (" +
+		string('0'+DiscoverFOFN) + ", " +
+		string('0'+DiscoverFOFNBase64) + ", " +
+		string('0'+DiscoverFOFNQuoted) + ", " +
+		string('0'+DiscoverFOFNNull) + ", " +
+		string('0'+DiscoverFODN) + ", " +
+		string('0'+DiscoverFODNBase64) + ", " +
+		string('0'+DiscoverFODNQuoted) + ", " +
+		string('0'+DiscoverFODNNull) +
+		")) /*! INVISIBLE */, " +
+		"UNIQUE(`setID`, `pathHash`, `typeIsFons`), " +
+		"FOREIGN KEY(`setID`) REFERENCES `sets`(`id`) ON DELETE CASCADE" +
+		");",
 
-		"CREATE TABLE IF NOT EXISTS `hardlinks` (" +
-			"`id` INTEGER PRIMARY KEY " + autoIncrement + ", " +
-			"`inode` INTEGER NOT NULL, " +
-			"`mountpoint` TEXT NOT NULL, " +
-			"`mountpointHash` " + hashColumnStart + "`mountpoint`" + hashColumnEnd + ", " +
-			"`btime` INTEGER, " +
-			"`mtime` INTEGER, " +
-			"`size` INTEGER DEFAULT 0, " +
-			"`fileType` TINYINT NOT NULL, " +
-			"`owner` TEXT NOT NULL, " +
-			"`group` TEXT NOT NULL, " +
-			"`dest` TEXT NOT NULL, " +
-			"`firstRemote` TEXT NOT NULL, " +
-			updateCol +
-			"UNIQUE(`mountpointHash`, `inode`, `btime`)" +
-			");",
+	"CREATE TABLE IF NOT EXISTS `hardlinks` (" +
+		"`id` INTEGER PRIMARY KEY " + autoIncrement + ", " +
+		"`inode` INTEGER NOT NULL, " +
+		"`mountpoint` TEXT NOT NULL, " +
+		"`mountpointHash` " + hashColumnStart + "`mountpoint`" + hashColumnEnd + ", " +
+		"`btime` INTEGER, " +
+		"`mtime` INTEGER, " +
+		"`size` BIGINT DEFAULT 0, " +
+		"`fileType` TINYINT NOT NULL, " +
+		"`owner` TEXT NOT NULL, " +
+		"`group` TEXT NOT NULL, " +
+		"`dest` TEXT NOT NULL, " +
+		"`firstRemote` TEXT NOT NULL, " +
+		updateCol +
+		"UNIQUE(`mountpointHash`, `inode`, `btime`)" +
+		");",
 
-		"CREATE TABLE IF NOT EXISTS `remoteFiles` (" +
-			"`id` INTEGER PRIMARY KEY " + autoIncrement + ", " +
-			"`remotePath` TEXT NOT NULL, " +
-			"`remotePathHash` " + hashColumnStart + "`remotePath`" + hashColumnEnd + ", " +
-			"`lastUploaded` DATETIME DEFAULT '0001-01-01 00:00:00', " +
-			"`hardlinkID` INTEGER NOT NULL, " +
-			"`transformerID` INTEGER NOT NULL, " +
-			"`updated` TINYINT DEFAULT 0 /*! INVISIBLE */," +
-			"UNIQUE(`remotePathHash`), " +
-			"FOREIGN KEY(`hardlinkID`) REFERENCES `hardlinks`(`id`) ON DELETE RESTRICT, " +
-			"FOREIGN KEY(`transformerID`) REFERENCES `transformers`(`id`) ON UPDATE RESTRICT ON DELETE RESTRICT" +
-			");",
+	"CREATE TABLE IF NOT EXISTS `remoteFiles` (" +
+		"`id` INTEGER PRIMARY KEY " + autoIncrement + ", " +
+		"`remotePath` TEXT NOT NULL, " +
+		"`remotePathHash` " + hashColumnStart + "`remotePath`" + hashColumnEnd + ", " +
+		"`lastUploaded` DATETIME DEFAULT '0001-01-01 00:00:00', " +
+		"`hardlinkID` INTEGER NOT NULL, " +
+		"`transformerID` INTEGER NOT NULL, " +
+		"`updated` TINYINT DEFAULT 0 /*! INVISIBLE */," +
+		"UNIQUE(`remotePathHash`), " +
+		"FOREIGN KEY(`hardlinkID`) REFERENCES `hardlinks`(`id`) ON DELETE RESTRICT, " +
+		"FOREIGN KEY(`transformerID`) REFERENCES `transformers`(`id`) ON UPDATE RESTRICT ON DELETE RESTRICT" +
+		");",
 
-		"CREATE TABLE IF NOT EXISTS `localFiles` (" +
-			"`id` INTEGER PRIMARY KEY " + autoIncrement + ", " +
-			"`localPath` TEXT NOT NULL, " +
-			"`localPathHash` " + hashColumnStart + "`localPath`" + hashColumnEnd + ", " +
-			"`setID` INTEGER NOT NULL, " +
-			"`remoteFileID` INTEGER NOT NULL, " +
-			"`lastUploaded` DATETIME DEFAULT '0001-01-01 00:00:00', " +
-			"`status` TINYINT NOT NULL DEFAULT 0, " +
-			"`updated` BOOLEAN DEFAULT FALSE, " +
-			"UNIQUE(`localPathHash`, `setID`), " +
-			"FOREIGN KEY(`setID`) REFERENCES `sets`(`id`) ON DELETE RESTRICT, " +
-			"FOREIGN KEY(`remoteFileID`) REFERENCES `remoteFiles`(`id`) ON DELETE RESTRICT" +
-			");",
+	"CREATE TABLE IF NOT EXISTS `localFiles` (" +
+		"`id` INTEGER PRIMARY KEY " + autoIncrement + ", " +
+		"`localPath` TEXT NOT NULL, " +
+		"`localPathHash` " + hashColumnStart + "`localPath`" + hashColumnEnd + ", " +
+		"`setID` INTEGER NOT NULL, " +
+		"`remoteFileID` INTEGER NOT NULL, " +
+		"`lastUploaded` DATETIME DEFAULT '0001-01-01 00:00:00', " +
+		"`status` TINYINT NOT NULL DEFAULT 0, " +
+		"`updated` BOOLEAN DEFAULT FALSE, " +
+		"UNIQUE(`localPathHash`, `setID`), " +
+		"FOREIGN KEY(`setID`) REFERENCES `sets`(`id`) ON DELETE RESTRICT, " +
+		"FOREIGN KEY(`remoteFileID`) REFERENCES `remoteFiles`(`id`) ON DELETE RESTRICT" +
+		");",
 
-		"CREATE TABLE IF NOT EXISTS `processes` (" +
-			"`id` INTEGER PRIMARY KEY " + autoIncrement + ", " +
-			"`lastPing` DATETIME DEFAULT '0001-01-01 00:00:00'" +
-			");",
+	"CREATE TABLE IF NOT EXISTS `processes` (" +
+		"`id` INTEGER PRIMARY KEY " + autoIncrement + ", " +
+		"`lastPing` DATETIME DEFAULT '0001-01-01 00:00:00'" +
+		");",
 
-		"CREATE TABLE IF NOT EXISTS `queue` (" +
-			"`id` INTEGER PRIMARY KEY " + autoIncrement + ", " +
-			"`localFileID` INTEGER, " +
-			"`type` TINYINT DEFAULT 0," +
-			"`attempts` INTEGER DEFAULT 0, " +
-			"`lastAttempt` DATETIME DEFAULT '0001-01-01 00:00:00', " +
-			"`lastError` TEXT, " +
-			"`heldBy` INTEGER, " +
-			"`skipped` BOOLEAN DEFAULT FALSE, " +
-			"UNIQUE(`localFileID`), " +
-			"FOREIGN KEY(`heldBy`) REFERENCES `processes`(`id`) ON DELETE SET NULL, " +
-			"FOREIGN KEY(`localFileID`) REFERENCES `localFiles`(`id`) ON DELETE RESTRICT" +
-			");",
+	"CREATE TABLE IF NOT EXISTS `queue` (" +
+		"`id` INTEGER PRIMARY KEY " + autoIncrement + ", " +
+		"`localFileID` INTEGER, " +
+		"`type` TINYINT DEFAULT 0," +
+		"`attempts` INTEGER DEFAULT 0, " +
+		"`lastAttempt` DATETIME DEFAULT '0001-01-01 00:00:00', " +
+		"`lastError` TEXT, " +
+		"`heldBy` INTEGER, " +
+		"`skipped` BOOLEAN DEFAULT FALSE, " +
+		"UNIQUE(`localFileID`), " +
+		"FOREIGN KEY(`heldBy`) REFERENCES `processes`(`id`) ON DELETE SET NULL, " +
+		"FOREIGN KEY(`localFileID`) REFERENCES `localFiles`(`id`) ON DELETE RESTRICT" +
+		");",
 
-		"CREATE TABLE IF NOT EXISTS `activeDiscoveries` (" +
-			"`sessionID` INTEGER PRIMARY KEY, " +
-			"`setID` INTEGER NOT NULL, " +
-			"UNIQUE(`setID`), " +
-			"FOREIGN KEY(`setID`) REFERENCES `sets`(`id`) ON DELETE RESTRICT" +
-			");",
+	"CREATE TABLE IF NOT EXISTS `activeDiscoveries` (" +
+		"`sessionID` INTEGER PRIMARY KEY, " +
+		"`setID` INTEGER NOT NULL, " +
+		"UNIQUE(`setID`), " +
+		"FOREIGN KEY(`setID`) REFERENCES `sets`(`id`) ON DELETE RESTRICT" +
+		");",
 
-		"CREATE TABLE IF NOT EXISTS `changedInodes` (" +
-			"`remoteFileID` INTEGER NOT NULL, " +
-			"`hardlinkID` INTEGER NOT NULL, " +
-			"`transformerID` INTEGER NOT NULL, " +
-			"`remotePath` TEXT, " +
-			"FOREIGN KEY(`remoteFileID`) REFERENCES `remoteFiles`(`id`) ON DELETE RESTRICT, " +
-			"FOREIGN KEY(`hardlinkID`) REFERENCES `hardlinks`(`id`) ON DELETE RESTRICT, " +
-			"FOREIGN KEY(`transformerID`) REFERENCES `transformers`(`id`) ON DELETE RESTRICT" +
-			");",
+	"CREATE TABLE IF NOT EXISTS `changedInodes` (" +
+		"`remoteFileID` INTEGER NOT NULL, " +
+		"`hardlinkID` INTEGER NOT NULL, " +
+		"`transformerID` INTEGER NOT NULL, " +
+		"`remotePath` TEXT, " +
+		"FOREIGN KEY(`remoteFileID`) REFERENCES `remoteFiles`(`id`) ON DELETE RESTRICT, " +
+		"FOREIGN KEY(`hardlinkID`) REFERENCES `hardlinks`(`id`) ON DELETE RESTRICT, " +
+		"FOREIGN KEY(`transformerID`) REFERENCES `transformers`(`id`) ON DELETE RESTRICT" +
+		");",
 
-		"CREATE TRIGGER IF NOT EXISTS `remove_old_inodes` AFTER DELETE ON `changedInodes` FOR EACH ROW BEGIN " +
-			"INSERT INTO `remoteFiles` " +
-			"(`remotePath`, `hardlinkID`, `transformerID`) VALUES " +
-			"(`OLD`.`remotePath`, `OLD`.`hardlinkID`, `OLD`.`transformerID`);" +
-			"INSERT INTO `localFiles` " +
-			"(`setID`, `localPath`, `remoteFileID`, `updated`) " +
-			"SELECT " +
-			"`setID`, " +
-			"`OLD`.`remotePath`, " +
-			"/*! LAST_INSERT_ID() -- */ LAST_INSERT_ROWID()\n/*! */, " +
-			"2 " +
-			"FROM `localFiles` WHERE `remoteFileID` = `OLD`.`remoteFileID`;" +
-			"END;",
+	"CREATE TRIGGER IF NOT EXISTS `remove_old_inodes` AFTER DELETE ON `changedInodes` FOR EACH ROW BEGIN " +
+		"INSERT INTO `remoteFiles` " +
+		"(`remotePath`, `hardlinkID`, `transformerID`) VALUES " +
+		"(`OLD`.`remotePath`, `OLD`.`hardlinkID`, `OLD`.`transformerID`);" +
+		"INSERT INTO `localFiles` " +
+		"(`setID`, `localPath`, `remoteFileID`, `updated`) " +
+		"SELECT " +
+		"`setID`, " +
+		"`OLD`.`remotePath`, " +
+		"/*! LAST_INSERT_ID() -- */ LAST_INSERT_ROWID()\n/*! */, " +
+		"2 " +
+		"FROM `localFiles` WHERE `remoteFileID` = `OLD`.`remoteFileID`;" +
+		"END;",
 
-		"/*! CREATE TRIGGER IF NOT EXISTS `update_set_last_complete` BEFORE UPDATE ON `sets` FOR EACH ROW BEGIN " +
-			"IF " + lastCompletedChangeCondition + " THEN " +
-			"SET `NEW`.`lastCompleted` = now(), " +
-			"`NEW`.`lastCompletedCount` = `NEW`.`numFiles`, " +
-			"`NEW`.`lastCompletedSize` = `NEW`.`sizeFiles`;" +
-			"END IF;" +
-			"-- */" +
-			"CREATE TRIGGER IF NOT EXISTS `update_set_last_complete` BEFORE UPDATE ON `sets` FOR EACH ROW " +
-			"WHEN " + lastCompletedChangeCondition + " BEGIN " +
-			"UPDATE `sets` SET " +
-			"`lastCompleted` = DATETIME('now'), " +
-			"`lastCompletedCount` = `NEW`.`numFiles`, " +
-			"`lastCompletedSize` = `NEW`.`sizeFiles` " +
-			"WHERE `sets`.`id` = `NEW`.`id`;" +
-			"\n/*! */" +
-			"END;",
+	"/*! CREATE TRIGGER IF NOT EXISTS `update_set_last_complete` BEFORE UPDATE ON `sets` FOR EACH ROW BEGIN " +
+		"IF " + lastCompletedChangeCondition + " THEN " +
+		"SET `NEW`.`lastCompleted` = now(), " +
+		"`NEW`.`lastCompletedCount` = `NEW`.`numFiles`, " +
+		"`NEW`.`lastCompletedSize` = `NEW`.`sizeFiles`;" +
+		"END IF;" +
+		"-- */" +
+		"CREATE TRIGGER IF NOT EXISTS `update_set_last_complete` BEFORE UPDATE ON `sets` FOR EACH ROW " +
+		"WHEN " + lastCompletedChangeCondition + " BEGIN " +
+		"UPDATE `sets` SET " +
+		"`lastCompleted` = DATETIME('now'), " +
+		"`lastCompletedCount` = `NEW`.`numFiles`, " +
+		"`lastCompletedSize` = `NEW`.`sizeFiles` " +
+		"WHERE `sets`.`id` = `NEW`.`id`;" +
+		"\n/*! */" +
+		"END;",
 
-		"CREATE TRIGGER IF NOT EXISTS `set_discovery_start_time` AFTER INSERT ON `activeDiscoveries` FOR EACH ROW BEGIN " +
-			"UPDATE `sets` SET `startedDiscovery` = " + now + ", `error` = '' WHERE `id` = `NEW`.`setID`;" +
-			"END;",
+	"CREATE TRIGGER IF NOT EXISTS `set_discovery_start_time` AFTER INSERT ON `activeDiscoveries` FOR EACH ROW BEGIN " +
+		"UPDATE `sets` SET `startedDiscovery` = " + now + ", `error` = '' WHERE `id` = `NEW`.`setID`;" +
+		"END;",
 
-		"/*! CREATE TRIGGER IF NOT EXISTS `set_discovery_timeout_error` AFTER UPDATE ON `activeDiscoveries` " +
-			"FOR EACH ROW BEGIN " +
-			"UPDATE `sets` SET `lastError` = '" + discoveryTimeout + "' WHERE `id` = `OLD`.`setID`;" +
-			"END; */",
+	"/*! CREATE TRIGGER IF NOT EXISTS `set_discovery_timeout_error` AFTER UPDATE ON `activeDiscoveries` " +
+		"FOR EACH ROW BEGIN " +
+		"UPDATE `sets` SET `lastError` = '" + discoveryTimeout + "' WHERE `id` = `OLD`.`setID`;" +
+		"END; */",
 
-		"CREATE TRIGGER IF NOT EXISTS `delete_hardlink_when_not_refd` AFTER DELETE ON `remoteFiles` FOR EACH ROW BEGIN " +
-			"DELETE FROM `hardlinks` WHERE " +
-			"`hardlinks`.`id` = `OLD`.`hardlinkID` AND " +
-			"`OLD`.`hardlinkID` NOT IN (" +
-			"SELECT `hardlinkID` FROM `remoteFiles`" +
-			");" +
-			"END;",
+	"CREATE TRIGGER IF NOT EXISTS `delete_hardlink_when_not_refd` AFTER DELETE ON `remoteFiles` FOR EACH ROW BEGIN " +
+		"DELETE FROM `hardlinks` WHERE " +
+		"`hardlinks`.`id` = `OLD`.`hardlinkID` AND " +
+		"`OLD`.`hardlinkID` NOT IN (" +
+		"SELECT `hardlinkID` FROM `remoteFiles`" +
+		");" +
+		"END;",
 
-		"CREATE TRIGGER IF NOT EXISTS `insert_file_count_size` AFTER INSERT ON `localFiles` FOR EACH ROW " + //nolint:dupl
-			"/*! BEGIN IF -- */ WHEN\n/*! */ `NEW`.`updated` != 2 /*! THEN -- */ BEGIN\n/*! */ " +
-			"/*! WITH `newHardlinkInfo` AS (" + newHardlinkInfo + ") */" +
-			"UPDATE `sets` SET " +
-			"`numFiles` = `numFiles` + 1, " +
-			"`sizeFiles` = `sizeFiles` + " + newHardlinkSize + ", " +
-			"`symlinks` = `symlinks` + " + newHardlinkSymlink + ", " +
-			"`hardlinks` = `hardlinks` + " + newHardlinkHardlink + ", " +
-			"`abnormal` = `abnormal` + " + newHardlinkAbnormal + ", " +
-			"`uploaded` = `uploaded` + IF(`NEW`.`status` = " + string('0'+StatusUploaded) + ", 1, 0), " +
-			"`replaced` = `replaced` + IF(`NEW`.`status` = " + string('0'+StatusReplaced) + ", 1, 0), " +
-			"`skipped` = `skipped` + IF(`NEW`.`status` = " + string('0'+StatusSkipped) + ", 1, 0), " +
-			"`missing` = `missing` + IF(`NEW`.`status` = " + string('0'+StatusMissing) + ", 1, 0), " +
-			"`orphaned` = `orphaned` + IF(`NEW`.`status` = " + string('0'+StatusOrphaned) + ", 1, 0) " +
-			"/*! -- */ " +
-			"FROM (" + newHardlinkInfo + ") AS `newHardlinkInfo`" +
-			"\n/*! */ " +
-			"WHERE `id` = `NEW`.`setID`;" +
-			"/*! END IF; */" +
-			"END;",
+	"CREATE TRIGGER IF NOT EXISTS `insert_file_count_size` AFTER INSERT ON `localFiles` FOR EACH ROW " + //nolint:dupl
+		"/*! BEGIN IF -- */ WHEN\n/*! */ `NEW`.`updated` != 2 /*! THEN -- */ BEGIN\n/*! */ " +
+		"/*! WITH `newHardlinkInfo` AS (" + newHardlinkInfo + ") */" +
+		"UPDATE `sets` SET " +
+		"`numFiles` = `numFiles` + 1, " +
+		"`sizeFiles` = `sizeFiles` + " + newHardlinkSize + ", " +
+		"`symlinks` = `symlinks` + " + newHardlinkSymlink + ", " +
+		"`hardlinks` = `hardlinks` + " + newHardlinkHardlink + ", " +
+		"`abnormal` = `abnormal` + " + newHardlinkAbnormal + ", " +
+		"`uploaded` = `uploaded` + IF(`NEW`.`status` = " + string('0'+StatusUploaded) + ", 1, 0), " +
+		"`replaced` = `replaced` + IF(`NEW`.`status` = " + string('0'+StatusReplaced) + ", 1, 0), " +
+		"`skipped` = `skipped` + IF(`NEW`.`status` = " + string('0'+StatusSkipped) + ", 1, 0), " +
+		"`missing` = `missing` + IF(`NEW`.`status` = " + string('0'+StatusMissing) + ", 1, 0), " +
+		"`orphaned` = `orphaned` + IF(`NEW`.`status` = " + string('0'+StatusOrphaned) + ", 1, 0) " +
+		"/*! -- */ " +
+		"FROM (" + newHardlinkInfo + ") AS `newHardlinkInfo`" +
+		"\n/*! */ " +
+		"WHERE `id` = `NEW`.`setID`;" +
+		"/*! END IF; */" +
+		"END;",
 
-		"CREATE TRIGGER IF NOT EXISTS `delete_empty_special_sets` AFTER DELETE ON `localFiles` FOR EACH ROW BEGIN " +
-			"DELETE FROM `sets` WHERE `id` = `OLD`.`setID` AND " +
-			"`numFiles` = 0 AND " +
-			"(`name` LIKE CONCAT(CHAR(0), '%') OR `requester` LIKE CONCAT(CHAR(0), '%'));" +
-			"END;",
+	"CREATE TRIGGER IF NOT EXISTS `delete_empty_special_sets` AFTER DELETE ON `localFiles` FOR EACH ROW BEGIN " +
+		"DELETE FROM `sets` WHERE `id` = `OLD`.`setID` AND " +
+		"`numFiles` = 0 AND " +
+		"(`name` LIKE CONCAT(CHAR(0), '%') OR `requester` LIKE CONCAT(CHAR(0), '%'));" +
+		"END;",
 
-		"CREATE TRIGGER IF NOT EXISTS `delete_file_count_size` BEFORE DELETE ON `localFiles` FOR EACH ROW " + //nolint:dupl
-			"/*! BEGIN IF -- */ WHEN\n/*! */ `OLD`.`updated` != 2 /*! THEN -- */ BEGIN\n/*! */ " +
-			"/*! WITH `oldHardlinkInfo` AS (" + oldHardlinkInfo + ") */" +
-			"UPDATE `sets` SET " +
-			"`numFiles` = `numFiles` - 1, " +
-			"`sizeFiles` = `sizeFiles` - " + oldHardlinkSize + ", " +
-			"`symlinks` = `symlinks` - " + oldHardlinkSymlink + ", " +
-			"`hardlinks` = `hardlinks` - " + oldHardlinkHardlink + ", " +
-			"`abnormal` = `abnormal` - " + oldHardlinkAbnormal + ", " +
-			"`uploaded` = `uploaded` - IF(`OLD`.`status` = " + string('0'+StatusUploaded) + ", 1, 0), " +
-			"`replaced` = `replaced` - IF(`OLD`.`status` = " + string('0'+StatusReplaced) + ", 1, 0), " +
-			"`skipped` = `skipped` - IF(`OLD`.`status` = " + string('0'+StatusSkipped) + ", 1, 0), " +
-			"`missing` = `missing` - IF(`OLD`.`status` = " + string('0'+StatusMissing) + ", 1, 0), " +
-			"`orphaned` = `orphaned` - IF(`OLD`.`status` = " + string('0'+StatusOrphaned) + ", 1, 0) " +
-			"/*! -- */ " +
-			"FROM (" + oldHardlinkInfo + ") AS `oldHardlinkInfo`" +
-			"\n/*! */ " +
-			"WHERE `id` = `OLD`.`setID`;" +
-			"/*! END IF; */" +
-			"END;",
+	"CREATE TRIGGER IF NOT EXISTS `delete_file_count_size` BEFORE DELETE ON `localFiles` FOR EACH ROW " + //nolint:dupl
+		"/*! BEGIN IF -- */ WHEN\n/*! */ `OLD`.`updated` != 2 /*! THEN -- */ BEGIN\n/*! */ " +
+		"/*! WITH `oldHardlinkInfo` AS (" + oldHardlinkInfo + ") */" +
+		"UPDATE `sets` SET " +
+		"`numFiles` = `numFiles` - 1, " +
+		"`sizeFiles` = `sizeFiles` - " + oldHardlinkSize + ", " +
+		"`symlinks` = `symlinks` - " + oldHardlinkSymlink + ", " +
+		"`hardlinks` = `hardlinks` - " + oldHardlinkHardlink + ", " +
+		"`abnormal` = `abnormal` - " + oldHardlinkAbnormal + ", " +
+		"`uploaded` = `uploaded` - IF(`OLD`.`status` = " + string('0'+StatusUploaded) + ", 1, 0), " +
+		"`replaced` = `replaced` - IF(`OLD`.`status` = " + string('0'+StatusReplaced) + ", 1, 0), " +
+		"`skipped` = `skipped` - IF(`OLD`.`status` = " + string('0'+StatusSkipped) + ", 1, 0), " +
+		"`missing` = `missing` - IF(`OLD`.`status` = " + string('0'+StatusMissing) + ", 1, 0), " +
+		"`orphaned` = `orphaned` - IF(`OLD`.`status` = " + string('0'+StatusOrphaned) + ", 1, 0) " +
+		"/*! -- */ " +
+		"FROM (" + oldHardlinkInfo + ") AS `oldHardlinkInfo`" +
+		"\n/*! */ " +
+		"WHERE `id` = `OLD`.`setID`;" +
+		"/*! END IF; */" +
+		"END;",
 
-		"CREATE TRIGGER IF NOT EXISTS `update_remote_file_size` AFTER UPDATE ON `remoteFiles` FOR EACH ROW " +
-			"/*! BEGIN IF -- */ WHEN\n/*! */ `OLD`.`hardlinkID` != `NEW`.`hardlinkID` /*! THEN -- */ BEGIN\n/*! */ " +
-			"/*! WITH `oldHardlinkInfo` AS (" + selectOldHardlinkInfo + "), " +
-			"`newHardlinkInfo` AS (" + selectNewHardlinkInfo + "), " +
-			"`setFileCounts` AS (" +
-			"SELECT `setID`, COUNT(1) AS `count` FROM `localFiles` WHERE " +
-			"`remoteFileID` = `NEW`.`id` AND `updated` != 2  GROUP BY `setID`" +
-			") */" +
-			"UPDATE `sets` SET " +
-			"`sizeFiles` = `sizeFiles` + (" + newHardlinkSize + " - " + oldHardlinkSize + ") * " + setFileCount + ", " +
-			"`symlinks` = `symlinks` + (" + newHardlinkSymlink + " - " + oldHardlinkSymlink + ") * " + setFileCount + ", " +
-			"`hardlinks` = `hardlinks` + (" + newHardlinkHardlink + " - " + oldHardlinkHardlink + ") * " + setFileCount + ", " +
-			"`abnormal` = `abnormal` + (" + newHardlinkAbnormal + " - " + oldHardlinkAbnormal + ") * " + setFileCount + " " +
-			"/*! -- */ FROM " +
-			"(" + selectOldHardlinkInfo + ") AS `oldHardlinkInfo`, " +
-			"(" + selectNewHardlinkInfo + ") AS `newHardlinkInfo`, " +
-			"(" +
-			"SELECT `setID`, COUNT(1) AS `count` FROM `localFiles` WHERE " +
-			"`remoteFileID` = `NEW`.`id` AND `updated` != 2 GROUP BY `setID`" +
-			") AS `setFileCounts` " +
-			"\n/*! */ " +
-			"WHERE `id` IN (SELECT `setID` FROM `localFiles` WHERE " +
-			"`remoteFileID` = `NEW`.`id` AND `updated` != 2 AND `localFiles`.`setID` = `sets`.`id`);" +
-			"INSERT INTO `changedInodes` " +
-			"(`remoteFileID`, `remotePath`, `hardlinkID`, `transformerID`) VALUES (" +
-			"`OLD`.`id`, " +
-			"CONCAT(CHAR(0), `OLD`.`remotePath`, CHAR(0), `OLD`.`hardlinkID`, CHAR(0), `OLD`.`id`, CHAR(0), " + now + "), " +
-			"`OLD`.`hardlinkID`," +
-			"`OLD`.`transformerID`" +
-			");" +
-			"/*! END IF; */" +
-			"END;",
+	"CREATE TRIGGER IF NOT EXISTS `update_remote_file_size` AFTER UPDATE ON `remoteFiles` FOR EACH ROW " +
+		"/*! BEGIN IF -- */ WHEN\n/*! */ `OLD`.`hardlinkID` != `NEW`.`hardlinkID` /*! THEN -- */ BEGIN\n/*! */ " +
+		"/*! WITH `oldHardlinkInfo` AS (" + selectOldHardlinkInfo + "), " +
+		"`newHardlinkInfo` AS (" + selectNewHardlinkInfo + "), " +
+		"`setFileCounts` AS (" +
+		"SELECT `setID`, COUNT(1) AS `count` FROM `localFiles` WHERE " +
+		"`remoteFileID` = `NEW`.`id` AND `updated` != 2  GROUP BY `setID`" +
+		") */" +
+		"UPDATE `sets` SET " +
+		"`sizeFiles` = `sizeFiles` + (" + newHardlinkSize + " - " + oldHardlinkSize + ") * " + setFileCount + ", " +
+		"`symlinks` = `symlinks` + (" + newHardlinkSymlink + " - " + oldHardlinkSymlink + ") * " + setFileCount + ", " +
+		"`hardlinks` = `hardlinks` + (" + newHardlinkHardlink + " - " + oldHardlinkHardlink + ") * " + setFileCount + ", " +
+		"`abnormal` = `abnormal` + (" + newHardlinkAbnormal + " - " + oldHardlinkAbnormal + ") * " + setFileCount + " " +
+		"/*! -- */ FROM " +
+		"(" + selectOldHardlinkInfo + ") AS `oldHardlinkInfo`, " +
+		"(" + selectNewHardlinkInfo + ") AS `newHardlinkInfo`, " +
+		"(" +
+		"SELECT `setID`, COUNT(1) AS `count` FROM `localFiles` WHERE " +
+		"`remoteFileID` = `NEW`.`id` AND `updated` != 2 GROUP BY `setID`" +
+		") AS `setFileCounts` " +
+		"\n/*! */ " +
+		"WHERE `id` IN (SELECT `setID` FROM `localFiles` WHERE " +
+		"`remoteFileID` = `NEW`.`id` AND `updated` != 2 AND `localFiles`.`setID` = `sets`.`id`);" +
+		"INSERT INTO `changedInodes` " +
+		"(`remoteFileID`, `remotePath`, `hardlinkID`, `transformerID`) VALUES (" +
+		"`OLD`.`id`, " +
+		"CONCAT(CHAR(0), `OLD`.`remotePath`, CHAR(0), `OLD`.`hardlinkID`, CHAR(0), `OLD`.`id`, CHAR(0), " + now + "), " +
+		"`OLD`.`hardlinkID`," +
+		"`OLD`.`transformerID`" +
+		");" +
+		"/*! END IF; */" +
+		"END;",
 
-		"CREATE TRIGGER IF NOT EXISTS `update_hardlink_file_size` AFTER UPDATE ON `hardlinks` FOR EACH ROW BEGIN " +
-			"UPDATE `sets` SET `sizeFiles` = `sizeFiles` + " +
-			"(`NEW`.`size` - `OLD`.`size`) * (" +
-			"SELECT COUNT(1) FROM `localFiles` JOIN `remoteFiles` ON `remoteFiles`.`id` = `localFiles`.`remoteFileID` " +
-			"WHERE `remoteFiles`.`hardlinkID` = `NEW`.`id`" +
-			") WHERE `id` IN (" +
-			"SELECT `localFiles`.`setID` FROM `localFiles` " +
-			"JOIN `remoteFiles` ON `remoteFiles`.`id` = `localFiles`.`remoteFileID` WHERE " +
-			"`remoteFiles`.`hardlinkID` = `NEW`.`id` AND `localFiles`.`updated` != 2);" +
-			"END;",
+	"CREATE TRIGGER IF NOT EXISTS `update_hardlink_file_size` AFTER UPDATE ON `hardlinks` FOR EACH ROW BEGIN " +
+		"UPDATE `sets` SET `sizeFiles` = `sizeFiles` + " +
+		"(`NEW`.`size` - `OLD`.`size`) * (" +
+		"SELECT COUNT(1) FROM `localFiles` JOIN `remoteFiles` ON `remoteFiles`.`id` = `localFiles`.`remoteFileID` " +
+		"WHERE `remoteFiles`.`hardlinkID` = `NEW`.`id`" +
+		") WHERE `id` IN (" +
+		"SELECT `localFiles`.`setID` FROM `localFiles` " +
+		"JOIN `remoteFiles` ON `remoteFiles`.`id` = `localFiles`.`remoteFileID` WHERE " +
+		"`remoteFiles`.`hardlinkID` = `NEW`.`id` AND `localFiles`.`updated` != 2);" +
+		"END;",
 
-		"CREATE TRIGGER IF NOT EXISTS `upload_local_file` AFTER INSERT ON `localFiles` FOR EACH ROW BEGIN " +
-			"INSERT INTO `queue` (`localFileID`, `type`) SELECT `NEW`.`id`, " +
-			"IF(`NEW`.`updated` = 2, " + string('0'+QueueRemoval) + ", " + string('0'+QueueUpload) + ") " +
-			"WHERE `NEW`.`status` NOT IN (" + string('0'+StatusMissing) + ", " + string('0'+StatusOrphaned) + ") " +
-			onConflictUpdate + "`type` = " + string('0'+QueueUpload) + ", `attempts` = 0, " +
-			"`lastAttempt` = '0001-01-01 00:00:00', `lastError` = '';" +
-			"END;",
+	"CREATE TRIGGER IF NOT EXISTS `upload_local_file` AFTER INSERT ON `localFiles` FOR EACH ROW BEGIN " +
+		"INSERT INTO `queue` (`localFileID`, `type`) SELECT `NEW`.`id`, " +
+		"IF(`NEW`.`updated` = 2, " + string('0'+QueueRemoval) + ", " + string('0'+QueueUpload) + ") " +
+		"WHERE `NEW`.`status` NOT IN (" + string('0'+StatusMissing) + ", " + string('0'+StatusOrphaned) + ") " +
+		onConflictUpdate + "`type` = " + string('0'+QueueUpload) + ", `attempts` = 0, " +
+		"`lastAttempt` = '0001-01-01 00:00:00', `lastError` = '';" +
+		"END;",
 
-		"CREATE TRIGGER IF NOT EXISTS `update_set_counts_on_file_update` AFTER UPDATE ON `localFiles` FOR EACH ROW " +
-			"/*! BEGIN IF -- */ WHEN\n/*! */ `OLD`.`updated` != 2 /*! THEN -- */ BEGIN\n/*! */ " +
-			"UPDATE `sets` SET " +
-			"`uploaded` = `uploaded` + IF(`OLD`.`status` = " + string('0'+StatusUploaded) + ", " +
-			"IF(`NEW`.`status` = " + string('0'+StatusUploaded) + ", 0, -1), " +
-			"IF(`NEW`.`status` = " + string('0'+StatusUploaded) + ", 1, 0)), " +
-			"`replaced` = `replaced` + IF(`OLD`.`status` = " + string('0'+StatusReplaced) + ", " +
-			"IF(`NEW`.`status` = " + string('0'+StatusReplaced) + ", 0, -1), " +
-			"IF(`NEW`.`status` = " + string('0'+StatusReplaced) + ", 1, 0)), " +
-			"`skipped` = `skipped` + IF(`OLD`.`status` = " + string('0'+StatusSkipped) + ", " +
-			"IF(`NEW`.`status` = " + string('0'+StatusSkipped) + ", 0, -1), " +
-			"IF(`NEW`.`status` = " + string('0'+StatusSkipped) + ", 1, 0)), " +
-			"`missing` = `missing` + IF(`OLD`.`status` = " + string('0'+StatusMissing) + ", " +
-			"IF(`NEW`.`status` = " + string('0'+StatusMissing) + ", 0, -1), " +
-			"IF(`NEW`.`status` = " + string('0'+StatusMissing) + ", 1, 0)), " +
-			"`orphaned` = `orphaned` + IF(`OLD`.`status` = " + string('0'+StatusOrphaned) + ", " +
-			"IF(`NEW`.`status` = " + string('0'+StatusOrphaned) + ", 0, -1), " +
-			"IF(`NEW`.`status` = " + string('0'+StatusOrphaned) + ", 1, 0)) " +
-			"WHERE `sets`.`id` = `NEW`.`setID`;" +
-			"/*! END IF; */" +
-			"END;",
+	"CREATE TRIGGER IF NOT EXISTS `update_set_counts_on_file_update` AFTER UPDATE ON `localFiles` FOR EACH ROW " +
+		"/*! BEGIN IF -- */ WHEN\n/*! */ `OLD`.`updated` != 2 /*! THEN -- */ BEGIN\n/*! */ " +
+		"UPDATE `sets` SET " +
+		"`uploaded` = `uploaded` + IF(`OLD`.`status` = " + string('0'+StatusUploaded) + ", " +
+		"IF(`NEW`.`status` = " + string('0'+StatusUploaded) + ", 0, -1), " +
+		"IF(`NEW`.`status` = " + string('0'+StatusUploaded) + ", 1, 0)), " +
+		"`replaced` = `replaced` + IF(`OLD`.`status` = " + string('0'+StatusReplaced) + ", " +
+		"IF(`NEW`.`status` = " + string('0'+StatusReplaced) + ", 0, -1), " +
+		"IF(`NEW`.`status` = " + string('0'+StatusReplaced) + ", 1, 0)), " +
+		"`skipped` = `skipped` + IF(`OLD`.`status` = " + string('0'+StatusSkipped) + ", " +
+		"IF(`NEW`.`status` = " + string('0'+StatusSkipped) + ", 0, -1), " +
+		"IF(`NEW`.`status` = " + string('0'+StatusSkipped) + ", 1, 0)), " +
+		"`missing` = `missing` + IF(`OLD`.`status` = " + string('0'+StatusMissing) + ", " +
+		"IF(`NEW`.`status` = " + string('0'+StatusMissing) + ", 0, -1), " +
+		"IF(`NEW`.`status` = " + string('0'+StatusMissing) + ", 1, 0)), " +
+		"`orphaned` = `orphaned` + IF(`OLD`.`status` = " + string('0'+StatusOrphaned) + ", " +
+		"IF(`NEW`.`status` = " + string('0'+StatusOrphaned) + ", 0, -1), " +
+		"IF(`NEW`.`status` = " + string('0'+StatusOrphaned) + ", 1, 0)) " +
+		"WHERE `sets`.`id` = `NEW`.`setID`;" +
+		"/*! END IF; */" +
+		"END;",
 
-		"CREATE TRIGGER IF NOT EXISTS `reupload_local_file` AFTER UPDATE ON `localFiles` FOR EACH ROW " +
-			"/*! BEGIN IF -- */ WHEN\n/*! */ `OLD`.`updated` != `NEW`.`updated` /*! THEN -- */ BEGIN\n/*! */ " +
-			"INSERT INTO `queue` (`localFileID`, `type`) SELECT `NEW`.`id`, " + string('0'+QueueUpload) + " " +
-			"WHERE  `NEW`.`status` NOT IN (" + string('0'+StatusMissing) + ", " + string('0'+StatusOrphaned) + ") " +
-			onConflictUpdate + "`type` = " + string('0'+QueueUpload) + ", `attempts` = 0, " +
-			"`lastAttempt` = '0001-01-01 00:00:00', `lastError` = '';" +
-			"/*! END IF; */" +
-			"END;",
+	"CREATE TRIGGER IF NOT EXISTS `reupload_local_file` AFTER UPDATE ON `localFiles` FOR EACH ROW " +
+		"/*! BEGIN IF -- */ WHEN\n/*! */ `OLD`.`updated` != `NEW`.`updated` /*! THEN -- */ BEGIN\n/*! */ " +
+		"INSERT INTO `queue` (`localFileID`, `type`) SELECT `NEW`.`id`, " + string('0'+QueueUpload) + " " +
+		"WHERE  `NEW`.`status` NOT IN (" + string('0'+StatusMissing) + ", " + string('0'+StatusOrphaned) + ") " +
+		onConflictUpdate + "`type` = " + string('0'+QueueUpload) + ", `attempts` = 0, " +
+		"`lastAttempt` = '0001-01-01 00:00:00', `lastError` = '';" +
+		"/*! END IF; */" +
+		"END;",
 
-		"CREATE TRIGGER IF NOT EXISTS `update_set_toRemove_when_queued` AFTER INSERT ON `queue` FOR EACH ROW " +
-			"/*! BEGIN IF -- */ WHEN\n/*! */ `NEW`.`type` = " + string('0'+QueueRemoval) + " /*! THEN -- */ BEGIN\n/*! */ " +
-			"UPDATE `sets` SET " +
-			"`removedSize` = IF(`toRemove` = `removed`, 0, `removedSize`), " +
-			"`toRemove` = 1 + IF(`toRemove` = `removed`, 0, `toRemove`), " +
-			"`removed` = IF(`toRemove` = `removed`, 0, `removed`) " +
-			"WHERE `id` IN (" +
-			"SELECT `setID` FROM `localFiles` WHERE `id` = `NEW`.`localFileID` AND `localFiles`.`updated` != 2" +
-			");" +
-			"/*! END IF; */" +
-			"END;",
+	"CREATE TRIGGER IF NOT EXISTS `update_set_toRemove_when_queued` AFTER INSERT ON `queue` FOR EACH ROW " +
+		"/*! BEGIN IF -- */ WHEN\n/*! */ `NEW`.`type` = " + string('0'+QueueRemoval) + " /*! THEN -- */ BEGIN\n/*! */ " +
+		"UPDATE `sets` SET " +
+		"`removedSize` = IF(`toRemove` = `removed`, 0, `removedSize`), " +
+		"`toRemove` = 1 + IF(`toRemove` = `removed`, 0, `toRemove`), " +
+		"`removed` = IF(`toRemove` = `removed`, 0, `removed`) " +
+		"WHERE `id` IN (" +
+		"SELECT `setID` FROM `localFiles` WHERE `id` = `NEW`.`localFileID` AND `localFiles`.`updated` != 2" +
+		");" +
+		"/*! END IF; */" +
+		"END;",
 
-		"CREATE TRIGGER IF NOT EXISTS `update_set_after_queued_error` AFTER UPDATE ON `queue` FOR EACH ROW BEGIN " +
-			"UPDATE `sets` SET " +
-			"`failing` = `failing` + IF(" +
-			"`OLD`.`attempts` = 0 AND `NEW`.`attempts` = 1, 1, " +
-			"IF(`NEW`.`attempts` = 0 AND `OLD`.`attempts` IN (1, 2) OR `NEW`.`attempts` = 3 AND `OLD`.`attempts` = 2, -1, 0)" +
-			"), " +
-			"`failed` = `failed` + IF(`NEW`.`attempts` = 3, 1, IF(`NEW`.`attempts` = 0 AND `OLD`.`attempts` = 3, -1, 0)) " +
-			"WHERE `sets`.`id` IN (" +
-			"SELECT `setID` FROM `localFiles` WHERE `localFiles`.`id` = `OLD`.`localfileID` AND `localFiles`.`updated` != 2" +
-			");" +
-			"/*!IF `OLD`.`type` = " + string('0'+QueueRemoval) + " AND `NEW`.`type` != " + string('0'+QueueRemoval) + " THEN*/" +
-			"UPDATE `sets` SET " +
-			"`toRemove` = `toRemove` - 1 " +
-			"WHERE `OLD`.`type` = " + string('0'+QueueRemoval) + " AND `NEW`.`type` != " + string('0'+QueueRemoval) + " AND " +
-			"`sets`.`id` = (SELECT `setID` FROM `localFiles` WHERE `localFiles`.`id` = `OLD`.`localfileID`);" +
-			"/*! END IF; */" +
-			"/*!IF `OLD`.`type` != " + string('0'+QueueRemoval) + " AND `NEW`.`type` = " + string('0'+QueueRemoval) + " THEN*/" +
-			"UPDATE `sets` SET " +
-			"`toRemove` = `toRemove` + 1 " +
-			"WHERE `OLD`.`type` != " + string('0'+QueueRemoval) + " AND `NEW`.`type` = " + string('0'+QueueRemoval) + " AND " +
-			"`sets`.`id` = (SELECT `setID` FROM `localFiles` WHERE `localFiles`.`id` = `OLD`.`localfileID`);" +
-			"/*! END IF; */" +
-			"END;",
+	"CREATE TRIGGER IF NOT EXISTS `update_set_after_queued_error` AFTER UPDATE ON `queue` FOR EACH ROW BEGIN " +
+		"UPDATE `sets` SET " +
+		"`failing` = `failing` + IF(" +
+		"`OLD`.`attempts` = 0 AND `NEW`.`attempts` = 1, 1, " +
+		"IF(`NEW`.`attempts` = 0 AND `OLD`.`attempts` IN (1, 2) OR `NEW`.`attempts` = 3 AND `OLD`.`attempts` = 2, -1, 0)" +
+		"), " +
+		"`failed` = `failed` + IF(`NEW`.`attempts` = 3, 1, IF(`NEW`.`attempts` = 0 AND `OLD`.`attempts` = 3, -1, 0)) " +
+		"WHERE `sets`.`id` IN (" +
+		"SELECT `setID` FROM `localFiles` WHERE `localFiles`.`id` = `OLD`.`localfileID` AND `localFiles`.`updated` != 2" +
+		");" +
+		"/*!IF `OLD`.`type` = " + string('0'+QueueRemoval) + " AND `NEW`.`type` != " + string('0'+QueueRemoval) + " THEN*/" +
+		"UPDATE `sets` SET " +
+		"`toRemove` = `toRemove` - 1 " +
+		"WHERE `OLD`.`type` = " + string('0'+QueueRemoval) + " AND `NEW`.`type` != " + string('0'+QueueRemoval) + " AND " +
+		"`sets`.`id` = (SELECT `setID` FROM `localFiles` WHERE `localFiles`.`id` = `OLD`.`localfileID`);" +
+		"/*! END IF; */" +
+		"/*!IF `OLD`.`type` != " + string('0'+QueueRemoval) + " AND `NEW`.`type` = " + string('0'+QueueRemoval) + " THEN*/" +
+		"UPDATE `sets` SET " +
+		"`toRemove` = `toRemove` + 1 " +
+		"WHERE `OLD`.`type` != " + string('0'+QueueRemoval) + " AND `NEW`.`type` = " + string('0'+QueueRemoval) + " AND " +
+		"`sets`.`id` = (SELECT `setID` FROM `localFiles` WHERE `localFiles`.`id` = `OLD`.`localfileID`);" +
+		"/*! END IF; */" +
+		"END;",
 
-		"CREATE TRIGGER IF NOT EXISTS `update_file_after_queued_action` AFTER DELETE ON `queue` FOR EACH ROW BEGIN " +
-			"/*! IF `OLD`.`lastError` IS NOT NULL THEN */" +
-			"UPDATE `sets` SET " +
-			"`failing` = `failing` - IF(`OLD`.`attempts` IN (1, 2), 1, 0), " +
-			"`failed` = `failed` - IF(`OLD`.`attempts` = 3, 1, 0) " +
-			"WHERE `OLD`.`lastError` IS NOT NULL AND " +
-			"`sets`.`id` IN (" +
-			"SELECT `setID` FROM `localFiles` WHERE `localFiles`.`id` = `OLD`.`localfileID` AND `localFiles`.`updated` != 2" +
-			");" +
-			"/*! END IF; */" +
-			"/*! IF `OLD`.`type` = " + string('0'+QueueRemoval) + " THEN */" +
-			"UPDATE `sets` SET " +
-			"`removed` = `removed` + 1, " +
-			"`removedSize` = `removedSize` + (" +
-			"SELECT `hardlinks`.`size` FROM `localFiles` JOIN " +
-			"`remoteFiles` ON `localFiles`.`remoteFileID` = `remoteFiles`.`id` JOIN " +
-			"`hardlinks` ON `remoteFiles`.`hardlinkID` = `hardlinks`.`id` WHERE " +
-			"`localFiles`.`id` = `OLD`.`localFileID`) " +
-			"WHERE `OLD`.`type` = " + string('0'+QueueRemoval) + " AND " +
-			"`id` IN (SELECT `setID` FROM `localFiles` WHERE `id` = `OLD`.`localFileID` AND `localFiles`.`updated` != 2);" +
-			"DELETE FROM `localFiles` WHERE " +
-			"`OLD`.`type` = " + string('0'+QueueRemoval) + " AND `localFiles`.`id` = `OLD`.`localFileID`;" +
-			"/*! END IF; */" +
-			"/*! IF `OLD`.`type` = " + string('0'+QueueUpload) + " THEN */ " +
-			"UPDATE `sets` " +
-			"/*! JOIN `localFiles` ON `OLD`.`localFileID` = `localFiles`.`id` JOIN " +
-			"`remoteFiles` ON `localFiles`.`remoteFileID` = `remoteFiles`.`id` JOIN " +
-			"`hardlinks` ON `remoteFiles`.`hardlinkID` = `hardlinks`.`id` */ " +
-			"SET " +
-			"`uploadedSize` = `uploadedSize` + `hardlinks`.`size` " +
-			"/*! -- */ FROM `localFiles` JOIN " +
-			"`remoteFiles` ON `localFiles`.`remoteFileID` = `remoteFiles`.`id` JOIN " +
-			"`hardlinks` ON `remoteFiles`.`hardlinkID` = `hardlinks`.`id`\n/*! */" +
-			"WHERE `OLD`.`type` = " + string('0'+QueueUpload) + " AND " +
-			"`OLD`.`skipped` = FALSE AND " +
-			"`sets`.`id` = `localFiles`.`setID` AND " +
-			"`localFiles`.`id` = `OLD`.`localFileID` AND `localFiles`.`updated` != 2;" +
-			"UPDATE `localFiles` /*! JOIN `remoteFiles` ON `localFiles`.`remoteFileID` = `remoteFiles`.`id` */ SET " +
-			"/*! `localFiles`.*/`lastUploaded` = IF(`OLD`.`skipped`, `localFiles`.`lastUploaded`, " + now + "), " +
-			"`status` = IF(`OLD`.`skipped`, " + string('0'+StatusSkipped) + ", " +
-			"IF(`remoteFiles`.`lastUploaded` = '0001-01-01 00:00:00', " + string('0'+StatusUploaded) + ", " +
-			string('0'+StatusReplaced) + ")) " +
-			"/*! -- */ FROM `localFiles` AS `local` JOIN `remoteFiles` ON (" +
-			"`local`.`remoteFileID` = `remoteFiles`.`id` AND `local`.`id` = `OLD`.`localFileID`" +
-			")\n/*! */" +
-			"WHERE `OLD`.`type` = " + string('0'+QueueUpload) + " AND " +
-			"`localFiles`.`id` = `OLD`.`localFileID` AND " +
-			"`localFiles`.`updated` != 2 AND " +
-			"`localFiles`.`status` NOT IN (" + string('0'+StatusMissing) + ", " + string('0'+StatusOrphaned) + ");" +
-			"/*! IF `OLD`.`skipped` = FALSE THEN */ " +
-			"UPDATE `remoteFiles` SET `lastUploaded` = " + now + " " +
-			"WHERE `OLD`.`skipped` = FALSE AND `OLD`.`type` = " + string('0'+QueueUpload) + " AND " +
-			"`remoteFiles`.`id` = (SELECT `remoteFileID` from `localFiles` WHERE `localFiles`.`id` = `OLD`.`localFileID`);" +
-			"/*! WITH `remoteFilesInfo` AS (SELECT `remoteFileID` FROM `localFiles` WHERE `id` = `OLD`.`localFileID`) */" +
-			"UPDATE `localFiles` SET " +
-			"`status` = " + string('0'+StatusOrphaned) + " " +
-			"WHERE `OLD`.`type` = " + string('0'+QueueUpload) + " AND " +
-			"`updated` != 2 AND " +
-			"`status` = " + string('0'+StatusMissing) + " AND " +
-			"`remoteFileID` = (" +
-			"SELECT `remoteFileID` FROM /*! `remoteFilesInfo` -- */`localFiles` WHERE `id`= `OLD`.`localFileID`\n/*! */);" +
-			"/*! END IF; */" +
-			"/*! END IF; */" +
-			"END;",
+	"CREATE TRIGGER IF NOT EXISTS `update_file_after_queued_action` AFTER DELETE ON `queue` FOR EACH ROW BEGIN " +
+		"/*! IF `OLD`.`lastError` IS NOT NULL THEN */" +
+		"UPDATE `sets` SET " +
+		"`failing` = `failing` - IF(`OLD`.`attempts` IN (1, 2), 1, 0), " +
+		"`failed` = `failed` - IF(`OLD`.`attempts` = 3, 1, 0) " +
+		"WHERE `OLD`.`lastError` IS NOT NULL AND " +
+		"`sets`.`id` IN (" +
+		"SELECT `setID` FROM `localFiles` WHERE `localFiles`.`id` = `OLD`.`localfileID` AND `localFiles`.`updated` != 2" +
+		");" +
+		"/*! END IF; */" +
+		"/*! IF `OLD`.`type` = " + string('0'+QueueRemoval) + " THEN */" +
+		"UPDATE `sets` SET " +
+		"`removed` = `removed` + 1, " +
+		"`removedSize` = `removedSize` + (" +
+		"SELECT `hardlinks`.`size` FROM `localFiles` JOIN " +
+		"`remoteFiles` ON `localFiles`.`remoteFileID` = `remoteFiles`.`id` JOIN " +
+		"`hardlinks` ON `remoteFiles`.`hardlinkID` = `hardlinks`.`id` WHERE " +
+		"`localFiles`.`id` = `OLD`.`localFileID`) " +
+		"WHERE `OLD`.`type` = " + string('0'+QueueRemoval) + " AND " +
+		"`id` IN (SELECT `setID` FROM `localFiles` WHERE `id` = `OLD`.`localFileID` AND `localFiles`.`updated` != 2);" +
+		"DELETE FROM `localFiles` WHERE " +
+		"`OLD`.`type` = " + string('0'+QueueRemoval) + " AND `localFiles`.`id` = `OLD`.`localFileID`;" +
+		"/*! END IF; */" +
+		"/*! IF `OLD`.`type` = " + string('0'+QueueUpload) + " THEN */ " +
+		"UPDATE `sets` " +
+		"/*! JOIN `localFiles` ON `OLD`.`localFileID` = `localFiles`.`id` JOIN " +
+		"`remoteFiles` ON `localFiles`.`remoteFileID` = `remoteFiles`.`id` JOIN " +
+		"`hardlinks` ON `remoteFiles`.`hardlinkID` = `hardlinks`.`id` */ " +
+		"SET " +
+		"`uploadedSize` = `uploadedSize` + `hardlinks`.`size` " +
+		"/*! -- */ FROM `localFiles` JOIN " +
+		"`remoteFiles` ON `localFiles`.`remoteFileID` = `remoteFiles`.`id` JOIN " +
+		"`hardlinks` ON `remoteFiles`.`hardlinkID` = `hardlinks`.`id`\n/*! */" +
+		"WHERE `OLD`.`type` = " + string('0'+QueueUpload) + " AND " +
+		"`OLD`.`skipped` = FALSE AND " +
+		"`sets`.`id` = `localFiles`.`setID` AND " +
+		"`localFiles`.`id` = `OLD`.`localFileID` AND `localFiles`.`updated` != 2;" +
+		"UPDATE `localFiles` /*! JOIN `remoteFiles` ON `localFiles`.`remoteFileID` = `remoteFiles`.`id` */ SET " +
+		"/*! `localFiles`.*/`lastUploaded` = IF(`OLD`.`skipped`, `localFiles`.`lastUploaded`, " + now + "), " +
+		"`status` = IF(`OLD`.`skipped`, " + string('0'+StatusSkipped) + ", " +
+		"IF(`remoteFiles`.`lastUploaded` = '0001-01-01 00:00:00', " + string('0'+StatusUploaded) + ", " +
+		string('0'+StatusReplaced) + ")) " +
+		"/*! -- */ FROM `localFiles` AS `local` JOIN `remoteFiles` ON (" +
+		"`local`.`remoteFileID` = `remoteFiles`.`id` AND `local`.`id` = `OLD`.`localFileID`" +
+		")\n/*! */" +
+		"WHERE `OLD`.`type` = " + string('0'+QueueUpload) + " AND " +
+		"`localFiles`.`id` = `OLD`.`localFileID` AND " +
+		"`localFiles`.`updated` != 2 AND " +
+		"`localFiles`.`status` NOT IN (" + string('0'+StatusMissing) + ", " + string('0'+StatusOrphaned) + ");" +
+		"/*! IF `OLD`.`skipped` = FALSE THEN */ " +
+		"UPDATE `remoteFiles` SET `lastUploaded` = " + now + " " +
+		"WHERE `OLD`.`skipped` = FALSE AND `OLD`.`type` = " + string('0'+QueueUpload) + " AND " +
+		"`remoteFiles`.`id` = (SELECT `remoteFileID` from `localFiles` WHERE `localFiles`.`id` = `OLD`.`localFileID`);" +
+		"/*! WITH `remoteFilesInfo` AS (SELECT `remoteFileID` FROM `localFiles` WHERE `id` = `OLD`.`localFileID`) */" +
+		"UPDATE `localFiles` SET " +
+		"`status` = " + string('0'+StatusOrphaned) + " " +
+		"WHERE `OLD`.`type` = " + string('0'+QueueUpload) + " AND " +
+		"`updated` != 2 AND " +
+		"`status` = " + string('0'+StatusMissing) + " AND " +
+		"`remoteFileID` = (" +
+		"SELECT `remoteFileID` FROM /*! `remoteFilesInfo` -- */`localFiles` WHERE `id`= `OLD`.`localFileID`\n/*! */);" +
+		"/*! END IF; */" +
+		"/*! END IF; */" +
+		"END;",
 
-		// "/*! IF (SELECT COUNT(1) FROM information_schema.VIEWS WHERE `TABLE_NAME` = 'my_processes') = 0 THEN " +
-		// 	"CREATE VIEW `my_processes` AS SELECT `Id` FROM `information_schema`.`processlist`;" +
-		// 	"END; */",
+	// "/*! IF (SELECT COUNT(1) FROM information_schema.VIEWS WHERE `TABLE_NAME` = 'my_processes') = 0 THEN " +
+	// 	"CREATE VIEW `my_processes` AS SELECT `Id` FROM `information_schema`.`processlist`;" +
+	// 	"END; */",
 
-		"/*! CREATE EVENT IF NOT EXISTS `check_discovery_sessions` ON SCHEDULE EVERY 1 MINUTE DO BEGIN " +
-			"UPDATE `activeDiscoveries` SET `sessionID` = NULL WHERE `sessionID` NOT IN " +
-			"(SELECT `Id` FROM `my_processes`);" +
-			"DELETE FROM `activeDiscoveries` WHERE `sessionID` = NULL;" +
-			"END;" +
-			"*/",
-	}
-)
+	"/*! CREATE EVENT IF NOT EXISTS `check_discovery_sessions` ON SCHEDULE EVERY 1 MINUTE DO BEGIN " +
+		"UPDATE `activeDiscoveries` SET `sessionID` = NULL WHERE `sessionID` NOT IN " +
+		"(SELECT `Id` FROM `my_processes`);" +
+		"DELETE FROM `activeDiscoveries` WHERE `sessionID` = NULL;" +
+		"END;" +
+		"*/",
+}
 
 const (
 	autoIncrement   = "/*! AUTO_INCREMENT -- */ AUTOINCREMENT\n/*! */"
