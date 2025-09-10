@@ -113,11 +113,11 @@ var tables = [...]string{
 
 	"CREATE TABLE IF NOT EXISTS `hardlinks` (" +
 		"`id` INTEGER PRIMARY KEY " + autoIncrement + ", " +
-		"`inode` INTEGER NOT NULL, " +
+		"`inode` BIGINT NOT NULL, " +
 		"`mountpoint` TEXT NOT NULL, " +
 		"`mountpointHash` " + hashColumnStart + "`mountpoint`" + hashColumnEnd + ", " +
-		"`btime` INTEGER, " +
-		"`mtime` INTEGER, " +
+		"`btime` BIGINT, " +
+		"`mtime` BIGINT, " +
 		"`size` BIGINT DEFAULT 0, " +
 		"`fileType` TINYINT NOT NULL, " +
 		"`owner` TEXT NOT NULL, " +
