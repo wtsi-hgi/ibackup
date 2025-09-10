@@ -28,7 +28,7 @@ package db
 
 var tables = [...]string{
 	"CREATE TABLE IF NOT EXISTS `transformers` (" +
-		"`id` BIGINT PRIMARY KEY " + autoIncrement + ", " +
+		"`id` INTEGER PRIMARY KEY " + autoIncrement + ", " +
 		"`transformer` TEXT NOT NULL, " +
 		"`transformerHash` " + hashColumnStart + "`transformer`" + hashColumnEnd + ", " +
 		"`regexp` TEXT NOT NULL, " +
@@ -335,6 +335,7 @@ var tables = [...]string{
 		"INSERT INTO `queue` (`localFileID`, `type`) SELECT `NEW`.`id`, " +
 		"IF(`NEW`.`updated` = 2, " + string('0'+QueueRemoval) + ", " + string('0'+QueueUpload) + ") " +
 		"WHERE `NEW`.`status` NOT IN (" + string('0'+StatusMissing) + ", " + string('0'+StatusOrphaned) + ") " +
+		"AND " + string('0'+Abnormal) + " != (SELECT `fileType` FROM `hardlinks` JOIN `remoteFiles` ON `remoteFiles`.`hardlinkID` = `hardlinks`.`id` WHERE `remoteFiles`.`id` = `NEW`.`remoteFileID`) " +
 		onConflictUpdate + "`type` = " + string('0'+QueueUpload) + ", `attempts` = 0, " +
 		"`lastAttempt` = '0001-01-01 00:00:00', `lastError` = '';" +
 		"END;",
@@ -365,6 +366,7 @@ var tables = [...]string{
 		"/*! BEGIN IF -- */ WHEN\n/*! */ `OLD`.`updated` != `NEW`.`updated` /*! THEN -- */ BEGIN\n/*! */ " +
 		"INSERT INTO `queue` (`localFileID`, `type`) SELECT `NEW`.`id`, " + string('0'+QueueUpload) + " " +
 		"WHERE  `NEW`.`status` NOT IN (" + string('0'+StatusMissing) + ", " + string('0'+StatusOrphaned) + ") " +
+		"AND " + string('0'+Abnormal) + " != (SELECT `fileType` FROM `hardlinks` JOIN `remoteFiles` ON `remoteFiles`.`hardlinkID` = `hardlinks`.`id` WHERE `remoteFiles`.`id` = `NEW`.`remoteFileID`) " +
 		onConflictUpdate + "`type` = " + string('0'+QueueUpload) + ", `attempts` = 0, " +
 		"`lastAttempt` = '0001-01-01 00:00:00', `lastError` = '';" +
 		"/*! END IF; */" +
