@@ -123,7 +123,7 @@ type Set struct {
 	// Monitor the files and directories and re-upload them whenever they
 	// change, checking for changes after the given amount of time. Optional,
 	// defaults to unmonitored (a one time upload of Entries).
-	MonitorTime time.Duration
+	MonitorTime uint32
 
 	// Tells the monitor if it should remove any files from the set that have
 	// been locally deleted.
