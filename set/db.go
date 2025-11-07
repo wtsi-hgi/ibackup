@@ -230,7 +230,12 @@ func New(path, backupPath string, readonly bool) (*DB, error) {
 	return db, nil
 }
 
+// SetStatter sets the path of an external statter which will be used when
+// checking the inodes of entries store in the inodes bucket.
 func (d *DB) SetStatter(statterPath string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
 	d.statterPath = statterPath
 	d.statterFunc = noStat
 }
