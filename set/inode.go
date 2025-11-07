@@ -27,6 +27,8 @@
 package set
 
 import (
+	"errors"
+	"io"
 	"os"
 	"slices"
 	"sort"
@@ -37,6 +39,7 @@ import (
 	"github.com/moby/sys/mountinfo"
 	"github.com/ugorji/go/codec"
 	"github.com/wtsi-hgi/ibackup/errs"
+	statter "github.com/wtsi-hgi/statter/client"
 	bolt "go.etcd.io/bbolt"
 )
 
@@ -346,7 +349,7 @@ func (d *DB) decodeIMPValue(v []byte, inode uint64) ([]string, []string) {
 
 	for _, file := range files {
 		if !found {
-			if valid := impFileIsValid(file, inode); !valid {
+			if valid := d.impFileIsValid(file, inode); !valid {
 				continue
 			}
 		}
@@ -359,20 +362,60 @@ func (d *DB) decodeIMPValue(v []byte, inode uint64) ([]string, []string) {
 	return existingFiles, files
 }
 
-func impFileIsValid(file string, inode uint64) bool {
+func (d *DB) impFileIsValid(file string, inode uint64) bool {
 	_, path, err := splitTransformerPath(file)
 	if err != nil {
 		return false
 	}
 
-	info, err := os.Lstat(path)
+	ino, err := d.stat(path)
 	if err != nil {
 		return false
 	}
 
-	ino := info.Sys().(*syscall.Stat_t).Ino //nolint:forcetypeassert,errcheck
-
 	return ino == inode
+}
+
+func (d *DB) stat(path string) (uint64, error) {
+	if d.statterPath != "" {
+		inode, err := d.tryStatter(path)
+		if inode != 0 || err != nil {
+			return inode, err
+		}
+	}
+
+	return lstat(path)
+}
+
+func (d *DB) tryStatter(path string) (uint64, error) {
+	for range 3 {
+		ino, err := d.statterFunc(path)
+		if !errors.Is(err, io.EOF) {
+			return ino, err
+		}
+
+		d.statterFunc, err = statter.CreateStatter(d.statterPath)
+		if err != nil {
+			d.statterFunc = noStat
+
+			break
+		}
+	}
+
+	return 0, nil
+}
+
+func noStat(_ string) (uint64, error) {
+	return 0, io.EOF
+}
+
+func lstat(path string) (uint64, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return 0, err
+	}
+
+	return info.Sys().(*syscall.Stat_t).Ino, nil //nolint:forcetypeassert,errcheck
 }
 
 // HardlinkPaths returns all known hardlink paths that share the same mountpoint

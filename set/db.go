@@ -43,6 +43,7 @@ import (
 	"github.com/gammazero/workerpool"
 	"github.com/ugorji/go/codec"
 	"github.com/wtsi-hgi/ibackup/transfer"
+	statter "github.com/wtsi-hgi/statter/client"
 	bolt "go.etcd.io/bbolt"
 	boltErrors "go.etcd.io/bbolt/errors"
 )
@@ -190,6 +191,8 @@ type DB struct {
 	minTimeBetweenBackups time.Duration
 	remoteBackupPath      string
 	remoteBackupHandler   transfer.Handler
+	statterPath           string
+	statterFunc           statter.Statter
 
 	rebackup atomic.Bool
 }
@@ -215,7 +218,8 @@ func New(path, backupPath string, readonly bool) (*DB, error) {
 		backupPath:            backupPath,
 		minTimeBetweenBackups: 1 * time.Second,
 
-		filePool: workerpool.New(workerPoolSizeFiles),
+		filePool:    workerpool.New(workerPoolSizeFiles),
+		statterFunc: lstat,
 	}
 
 	err = db.getMountPoints()
@@ -224,6 +228,11 @@ func New(path, backupPath string, readonly bool) (*DB, error) {
 	}
 
 	return db, nil
+}
+
+func (d *DB) SetStatter(statterPath string) {
+	d.statterPath = statterPath
+	d.statterFunc = noStat
 }
 
 func initDB(path string, readonly bool) (*bolt.DB, error) {

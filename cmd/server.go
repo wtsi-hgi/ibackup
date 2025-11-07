@@ -64,6 +64,7 @@ var serverHardlinksCollection string
 var serverSlackDebouncePeriod int
 var serverStillRunningMsgFreq string
 var serverTrashLifespan string
+var statterPath string
 
 // serverCmd represents the server command.
 var serverCmd = &cobra.Command{
@@ -255,7 +256,7 @@ database that you've made, to investigate.
 			s.SetRemoteHardlinkLocation(serverHardlinksCollection)
 		}
 
-		err = s.LoadSetDB(args[0], dbBackupPath)
+		err = s.LoadSetDB(args[0], dbBackupPath, statterPath)
 		if err != nil {
 			dief("failed to load database: %s", err)
 		}
@@ -323,6 +324,8 @@ func init() {
 	serverCmd.Flags().StringVar(&serverTrashLifespan, "trash_lifespan", "30d",
 		"the period of time trash will be kept before being permanently removed"+
 			" (eg. 1d for 1 day or 2w for 2 weeks), defaults to 30 days")
+	serverCmd.Flags().StringVar(&statterPath, "statter", "",
+		"path to an external statter program (https://github.com/wtsi-hgi/statter)")
 }
 
 // setServerLogger makes our appLogger log to the given path if non-blank,
