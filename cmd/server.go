@@ -84,6 +84,10 @@ the hardlinks_collection location.
 Symlinks will also be stored as empty files, this time with metadata indicating
 what the symlink pointed to. The referenced data is NOT backed up.
 
+The --statter flag allows the setting of an optional external statter program
+(https://github.com/wtsi-hgi/statter); useful for when operating on potentially
+unreliable filesystems.
+
 Starting the web server brings up a web interface and REST API that will use the
 given set database path to create a set database if it doesn't exist, add
 backup sets to the database, and return information about their status. If you
