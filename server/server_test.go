@@ -145,7 +145,7 @@ func TestServer(t *testing.T) {
 			err = s.MakeQueueEndPoints()
 			So(err, ShouldBeNil)
 
-			err = s.LoadSetDB(dbPath, "")
+			err = s.LoadSetDB(dbPath, "", "")
 			So(err, ShouldBeNil)
 
 			addr, dfunc, err := gas.StartTestServer(s, certPath, keyPath)
@@ -214,7 +214,7 @@ func TestServer(t *testing.T) {
 
 			slackWriter.Reset()
 
-			err = s.LoadSetDB(dbPath, "")
+			err = s.LoadSetDB(dbPath, "", "")
 			So(err, ShouldBeNil)
 
 			addr, dfunc, errs := gas.StartTestServer(s, certPath, keyPath)

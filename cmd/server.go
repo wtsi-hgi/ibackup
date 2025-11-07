@@ -64,6 +64,7 @@ var serverHardlinksCollection string
 var serverSlackDebouncePeriod int
 var serverStillRunningMsgFreq string
 var serverTrashLifespan string
+var statterPath string
 
 // serverCmd represents the server command.
 var serverCmd = &cobra.Command{
@@ -82,6 +83,10 @@ the hardlinks_collection location.
 
 Symlinks will also be stored as empty files, this time with metadata indicating
 what the symlink pointed to. The referenced data is NOT backed up.
+
+The --statter flag allows the setting of an optional external statter program
+(https://github.com/wtsi-hgi/statter); useful for when operating on potentially
+unreliable filesystems.
 
 Starting the web server brings up a web interface and REST API that will use the
 given set database path to create a set database if it doesn't exist, add
@@ -255,7 +260,7 @@ database that you've made, to investigate.
 			s.SetRemoteHardlinkLocation(serverHardlinksCollection)
 		}
 
-		err = s.LoadSetDB(args[0], dbBackupPath)
+		err = s.LoadSetDB(args[0], dbBackupPath, statterPath)
 		if err != nil {
 			dief("failed to load database: %s", err)
 		}
@@ -323,6 +328,8 @@ func init() {
 	serverCmd.Flags().StringVar(&serverTrashLifespan, "trash_lifespan", "30d",
 		"the period of time trash will be kept before being permanently removed"+
 			" (eg. 1d for 1 day or 2w for 2 weeks), defaults to 30 days")
+	serverCmd.Flags().StringVar(&statterPath, "statter", "",
+		"path to an external statter program (https://github.com/wtsi-hgi/statter)")
 }
 
 // setServerLogger makes our appLogger log to the given path if non-blank,

@@ -432,6 +432,8 @@ github.com/wtsi-hgi/go-authserver v1.5.1 h1:v6zLNiQfD44L4uzgaSG1W+KbnkkQzNJUDFrT
 github.com/wtsi-hgi/go-authserver v1.5.1/go.mod h1:M13uQ/KBAZFTodW32wsrKBwonOw5lQneiiq6wUuTdtA=
 github.com/wtsi-hgi/grand v1.0.0 h1:TNrcRcmXSOevZ2Ex/HQ5QCtcGnA7AmlsnhFyre0M5XE=
 github.com/wtsi-hgi/grand v1.0.0/go.mod h1:y8fr2gVC0hBCiMV7oM9UQZ5NOUcbmD9Vf2jeNE6FBdA=
+github.com/wtsi-hgi/statter v1.0.0 h1:p/Nrm8eMUN4g31LE6O6TGi8cfecYBtavOjvZqe7qXBc=
+github.com/wtsi-hgi/statter v1.0.0/go.mod h1:hzNtz6wCY1y7wq5ALNNZjia7PQWEDpK4Tqhlz1eG7Mw=
 github.com/wtsi-npg/logshim v1.5.0 h1:Ror+LE2DCbTytMTYGEpYpoAOX2Qpat5vYa8BPvyglyI=
 github.com/wtsi-npg/logshim v1.5.0/go.mod h1:e3+dd6fWzRpX+Lk2JM6s13F7BRypHutzatIxZklY1NI=
 github.com/wtsi-npg/logshim-zerolog v1.5.0 h1:i6lE9Y99PRPGmJ7IkMiTm4a7QwLHYe/gsykSDS+g4KI=
