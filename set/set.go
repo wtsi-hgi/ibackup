@@ -572,7 +572,7 @@ func (s *Set) checkIfUploading() {
 }
 
 func (s *Set) checkIfComplete() {
-	if s.Uploaded+s.Replaced+s.Skipped+s.Failed+s.Missing+s.Orphaned+s.Abnormal != s.NumFiles {
+	if !(s.Uploaded+s.Replaced+s.Skipped+s.Failed+s.Missing+s.Orphaned+s.Abnormal == s.NumFiles) { //nolint:staticcheck,lll
 		return
 	}
 

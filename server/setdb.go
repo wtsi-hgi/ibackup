@@ -880,7 +880,7 @@ func (s *Server) processRemoteFileRemoval(removeReq *set.RemoveReq, entry *set.E
 }
 
 func fileErrorCannotBeIgnored(err error, mayMissInRemote bool) bool {
-	return !mayMissInRemote || !strings.Contains(err.Error(), internal.ErrFileDoesNotExist)
+	return !(mayMissInRemote && strings.Contains(err.Error(), internal.ErrFileDoesNotExist)) //nolint:staticcheck,lll
 }
 
 func (s *Server) processDBFileTrash(set *set.Set, entry *set.Entry) error {
