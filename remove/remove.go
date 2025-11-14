@@ -36,6 +36,7 @@ import (
 
 	"github.com/wtsi-hgi/ibackup/errs"
 	"github.com/wtsi-hgi/ibackup/transfer"
+	"github.com/wtsi-hgi/ibackup/transformer"
 )
 
 type Handler interface {
@@ -120,7 +121,7 @@ func removeEmptyFoldersRecursively(handler Handler, path string) error {
 
 // RemoveRemoteDir removes the remote path of a given directory from the remote
 // storage.
-func RemoveRemoteDir(handler Handler, path string, transformer transfer.PathTransformer) error { //nolint:revive
+func RemoveRemoteDir(handler Handler, path string, transformer transformer.PathTransformer) error { //nolint:revive
 	rpath, err := transformer(path)
 	if err != nil {
 		return err
@@ -131,7 +132,7 @@ func RemoveRemoteDir(handler Handler, path string, transformer transfer.PathTran
 
 // FindHardlinksWithInode returns paths to all hardlinks that point to the
 // provided inode path.
-func FindHardlinksWithInode(rInodePath string, transformer transfer.PathTransformer,
+func FindHardlinksWithInode(rInodePath string, transformer transformer.PathTransformer,
 	handler Handler) ([]string, error) {
 	dir, err := transformer("/")
 	if err != nil {

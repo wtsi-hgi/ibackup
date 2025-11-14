@@ -34,247 +34,254 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/wtsi-hgi/ibackup/internal"
+	"github.com/wtsi-hgi/ibackup/transformer"
 )
 
 func TestRequest(t *testing.T) {
-	Convey("You can get request IDs", t, func() {
-		r := &Request{Local: "/a", Remote: "/b"}
-		id := r.ID()
-		So(id, ShouldNotBeBlank)
+	Convey("With the default transformers", t, func() {
+		HumgenTransformer, GengenTransformer, OpentargetsTransformer := internal.RegisterDefaultTransformers(t)
 
-		r.Set = "c"
-		id2 := r.ID()
-		So(id2, ShouldNotBeBlank)
-		So(id2, ShouldNotEqual, id)
+		Convey("You can get request IDs", func() {
+			r := &Request{Local: "/a", Remote: "/b"}
+			id := r.ID()
+			So(id, ShouldNotBeBlank)
 
-		r.Requester = "d"
-		id3 := r.ID()
-		So(id3, ShouldNotBeBlank)
-		So(id3, ShouldNotEqual, id2)
+			r.Set = "c"
+			id2 := r.ID()
+			So(id2, ShouldNotBeBlank)
+			So(id2, ShouldNotEqual, id)
 
-		r.Local = "/e"
-		id4 := r.ID()
-		So(id4, ShouldNotBeBlank)
-		So(id4, ShouldNotEqual, id3)
+			r.Requester = "d"
+			id3 := r.ID()
+			So(id3, ShouldNotBeBlank)
+			So(id3, ShouldNotEqual, id2)
 
-		r.Remote = "/f"
-		id5 := r.ID()
-		So(id5, ShouldNotBeBlank)
-		So(id5, ShouldNotEqual, id4)
+			r.Local = "/e"
+			id4 := r.ID()
+			So(id4, ShouldNotBeBlank)
+			So(id4, ShouldNotEqual, id3)
 
-		r2 := &Request{Local: "/e", Remote: "/f", Set: "c", Requester: "d"}
+			r.Remote = "/f"
+			id5 := r.ID()
+			So(id5, ShouldNotBeBlank)
+			So(id5, ShouldNotEqual, id4)
 
-		So(r2.ID(), ShouldEqual, id5)
-	})
+			r2 := &Request{Local: "/e", Remote: "/f", Set: "c", Requester: "d"}
 
-	Convey("You can validate request paths", t, func() {
-		r := &Request{Local: "/root/../foo", Remote: "/bar"}
-		err := r.ValidatePaths()
-		So(err, ShouldBeNil)
-		So(r.Local, ShouldEqual, "/foo")
-		So(r.Remote, ShouldEqual, "/bar")
+			So(r2.ID(), ShouldEqual, id5)
+		})
 
-		r = &Request{Local: "foo", Remote: "/bar"}
-		err = r.ValidatePaths()
-		So(err, ShouldBeNil)
-		wd, err := os.Getwd()
-		So(err, ShouldBeNil)
-		So(r.Local, ShouldEqual, filepath.Join(wd, "foo"))
-
-		r = &Request{Local: "/foo", Remote: "bar"}
-		err = r.ValidatePaths()
-		So(err, ShouldNotBeNil)
-	})
-
-	Convey("You can make new requests using the prefix transform", t, func() {
-		transform := PrefixTransformer("/mnt/diska", "/zone")
-		r, err := NewRequestWithTransformedLocal("/mnt/diska/project1/file.txt", transform)
-		So(err, ShouldBeNil)
-		So(r.Local, ShouldEqual, "/mnt/diska/project1/file.txt")
-		So(r.Remote, ShouldEqual, "/zone/project1/file.txt")
-
-		r, err = NewRequestWithTransformedLocal("project2/file.zip", transform)
-		So(err, ShouldBeNil)
-		So(r.Local, ShouldEqual, "project2/file.zip")
-		So(r.Remote, ShouldEqual, "/zone/project2/file.zip")
-
-		r, err = NewRequestWithTransformedLocal("project2/mnt/diska/file.zip", transform)
-		So(err, ShouldBeNil)
-		So(r.Local, ShouldEqual, "project2/mnt/diska/file.zip")
-		So(r.Remote, ShouldEqual, "/zone/project2/mnt/diska/file.zip")
-	})
-
-	Convey("You can make new requests using the humgen transform", t, func() {
-		r, err := NewRequestWithTransformedLocal("/lustre/scratch117/casm/team78/so11/file.txt", HumgenTransformer)
-		So(err, ShouldNotBeNil)
-		So(r, ShouldBeNil)
-
-		r, err = NewRequestWithTransformedLocal("file.txt", HumgenTransformer)
-		So(err, ShouldNotBeNil)
-		So(r, ShouldBeNil)
-
-		locals := []string{
-			"/lustre/scratch118/humgen/projects/ddd/file.txt",
-			"/lustre/scratch118/humgen/hgi/projects/ibdx10/file.txt",
-			"/lustre/scratch118/humgen/hgi/users/hp3/file.txt",
-			"/lustre/scratch119/realdata/mdt3/projects/interval_rna/file.txt",
-			"/lustre/scratch119/realdata/mdt3/teams/parts/ap32/file.txt",
-			"/lustre/scratch123/hgi/mdt2/projects/chromo_ndd/file.txt",
-			"/lustre/scratch123/hgi/mdt1/teams/martin/dm22/file.txt",
-			"/lustre/scratch123/hgi/mdt1/teams/martin/dm22/sub/folder/file.txt",
-			"/lustre/scratch125/humgen/projects_v2/ddd/file.txt",
-			"/lustre/scratch127/hgi/mdt1/teams_v2/martin/dm22/file.txt",
-			"/lustre/scratch127/hgi/mdt1/teams_v2/martin/dm22/sub/folder/file.txt",
-		}
-
-		expected := []string{
-			"/humgen/projects/ddd/scratch118/file.txt",
-			"/humgen/projects/ibdx10/scratch118/file.txt",
-			"/humgen/users/hp3/scratch118/file.txt",
-			"/humgen/projects/interval_rna/scratch119/file.txt",
-			"/humgen/teams/parts/scratch119/ap32/file.txt",
-			"/humgen/projects/chromo_ndd/scratch123/file.txt",
-			"/humgen/teams/martin/scratch123/dm22/file.txt",
-			"/humgen/teams/martin/scratch123/dm22/sub/folder/file.txt",
-			"/humgen/projects/ddd/scratch125_v2/file.txt",
-			"/humgen/teams/martin/scratch127_v2/dm22/file.txt",
-			"/humgen/teams/martin/scratch127_v2/dm22/sub/folder/file.txt",
-		}
-
-		for i, local := range locals {
-			r, err = NewRequestWithTransformedLocal(local, HumgenTransformer)
+		Convey("You can validate request paths", func() {
+			r := &Request{Local: "/root/../foo", Remote: "/bar"}
+			err := r.ValidatePaths()
 			So(err, ShouldBeNil)
-			So(r.Remote, ShouldEqual, expected[i])
-		}
-	})
+			So(r.Local, ShouldEqual, "/foo")
+			So(r.Remote, ShouldEqual, "/bar")
 
-	Convey("You can make new requests using the gengen transform", t, func() {
-		r, err := NewRequestWithTransformedLocal("/lustre/scratch117/casm/team78/so11/file.txt", GengenTransformer)
-		So(err, ShouldNotBeNil)
-		So(r, ShouldBeNil)
-
-		r, err = NewRequestWithTransformedLocal("file.txt", GengenTransformer)
-		So(err, ShouldNotBeNil)
-		So(r, ShouldBeNil)
-
-		locals := []string{
-			"/lustre/scratch126/gengen/teams/lehner/file.txt",
-			"/lustre/scratch126/gengen/projects/alpha-allostery-global/file.txt",
-			"/lustre/scratch126/gengen/teams/parts/sequencing/file.txt",
-			"/lustre/scratch125/gengen/projects_v2/ddd/file.txt",
-			"/lustre/scratch127/gengen/teams_v2/parts/sequencing/file.txt",
-		}
-
-		expected := []string{
-			"/humgen/gengen/teams/lehner/scratch126/file.txt",
-			"/humgen/gengen/projects/alpha-allostery-global/scratch126/file.txt",
-			"/humgen/gengen/teams/parts/scratch126/sequencing/file.txt",
-			"/humgen/gengen/projects/ddd/scratch125_v2/file.txt",
-			"/humgen/gengen/teams/parts/scratch127_v2/sequencing/file.txt",
-		}
-
-		for i, local := range locals {
-			r, err = NewRequestWithTransformedLocal(local, GengenTransformer)
+			r = &Request{Local: "foo", Remote: "/bar"}
+			err = r.ValidatePaths()
 			So(err, ShouldBeNil)
-			So(r.Remote, ShouldEqual, expected[i])
-		}
-	})
-
-	Convey("You can make new requests using the opentargets transform", t, func() {
-		r, err := NewRequestWithTransformedLocal("/lustre/scratch117/casm/team78/so11/file.txt", OpentargetsTransformer)
-		So(err, ShouldNotBeNil)
-		So(r, ShouldBeNil)
-
-		r, err = NewRequestWithTransformedLocal("file.txt", OpentargetsTransformer)
-		So(err, ShouldNotBeNil)
-		So(r, ShouldBeNil)
-
-		locals := []string{
-			"/lustre/scratch127/open-targets/Projects/OTAR2064/file.txt",
-		}
-
-		expected := []string{
-			"/humgen/open-targets/Projects/OTAR2064/scratch127/file.txt",
-		}
-
-		for i, local := range locals {
-			r, err = NewRequestWithTransformedLocal(local, OpentargetsTransformer)
+			wd, err := os.Getwd()
 			So(err, ShouldBeNil)
-			So(r.Remote, ShouldEqual, expected[i])
-		}
-	})
+			So(r.Local, ShouldEqual, filepath.Join(wd, "foo"))
 
-	Convey("You can create and stringify Stucks", t, func() {
-		n := time.Now()
-		s := NewStuck(n)
-		So(s, ShouldNotBeNil)
-		So(s.Host, ShouldNotBeBlank)
-		So(s.PID, ShouldEqual, os.Getpid())
-		So(s.String(), ShouldContainSubstring, "upload stuck? started ")
-		So(s.String(), ShouldContainSubstring, " on host "+s.Host)
-		So(s.String(), ShouldContainSubstring, ", PID "+strconv.Itoa(s.PID))
-	})
+			r = &Request{Local: "/foo", Remote: "bar"}
+			err = r.ValidatePaths()
+			So(err, ShouldNotBeNil)
+		})
 
-	Convey("You can specify symlink files and get back a path to an empty file for uploading", t, func() {
-		local := "/a/file"
-		size := uint64(123)
+		Convey("You can make new requests using the prefix transform", func() {
+			transform, err := transformer.MakePathTransformer("prefix=/mnt/diska:/zone")
+			So(err, ShouldBeNil)
 
-		r := &Request{Local: local, Symlink: "/another/file", Size: size}
-		So(r.LocalDataPath(), ShouldEqual, os.DevNull)
-		So(r.UploadedSize(), ShouldEqual, 0)
+			r, err := NewRequestWithTransformedLocal("/mnt/diska/project1/file.txt", transform)
+			So(err, ShouldBeNil)
+			So(r.Local, ShouldEqual, "/mnt/diska/project1/file.txt")
+			So(r.Remote, ShouldEqual, "/zone/project1/file.txt")
 
-		r = &Request{Local: local, Size: size}
-		So(r.LocalDataPath(), ShouldEqual, local)
-		So(r.UploadedSize(), ShouldEqual, size)
-	})
+			r, err = NewRequestWithTransformedLocal("project2/file.zip", transform)
+			So(err, ShouldBeNil)
+			So(r.Local, ShouldEqual, "project2/file.zip")
+			So(r.Remote, ShouldEqual, "/zone/project2/file.zip")
 
-	Convey("Cloning a request creates an exact copy with cloned maps", t, func() {
-		r := &Request{
-			Local:     "/some/path",
-			Remote:    "/some/remote/path",
-			Requester: "someRequester",
-			Set:       "testSet",
-			Meta: &Meta{
-				LocalMeta: map[string]string{
-					"metaKey": "metaValue",
-				},
-				remoteMeta: map[string]string{
-					"remoteMetaKey": "remoteMetaValue",
-				},
-			},
-			Status:   RequestStatusFailed,
-			Symlink:  "/path/to/dest",
-			Hardlink: "/path/to/original",
-			Size:     123,
-			Error:    "oh no",
-			Stuck:    new(Stuck),
-			skipPut:  true,
-		}
+			r, err = NewRequestWithTransformedLocal("project2/mnt/diska/file.zip", transform)
+			So(err, ShouldBeNil)
+			So(r.Local, ShouldEqual, "project2/mnt/diska/file.zip")
+			So(r.Remote, ShouldEqual, "/zone/project2/mnt/diska/file.zip")
+		})
 
-		v := reflect.ValueOf(r).Elem()
-		t := v.Type()
+		Convey("You can make new requests using the humgen transform", func() {
+			r, err := NewRequestWithTransformedLocal("/lustre/scratch117/casm/team78/so11/file.txt", HumgenTransformer)
+			So(err, ShouldNotBeNil)
+			So(r, ShouldBeNil)
 
-		fields := t.NumField()
+			r, err = NewRequestWithTransformedLocal("file.txt", HumgenTransformer)
+			So(err, ShouldNotBeNil)
+			So(r, ShouldBeNil)
 
-		for i := 0; i < fields; i++ {
-			if t.Field(i).Name == "LocalForJSON" || t.Field(i).Name == "RemoteForJSON" ||
-				t.Field(i).Name == "emptyFileRequest" || t.Field(i).Name == "inodeRequest" ||
-				t.Field(i).Name == "onlyUploadEmptyFile" {
-
-				continue
+			locals := []string{
+				"/lustre/scratch118/humgen/projects/ddd/file.txt",
+				"/lustre/scratch118/humgen/hgi/projects/ibdx10/file.txt",
+				"/lustre/scratch118/humgen/hgi/users/hp3/file.txt",
+				"/lustre/scratch119/realdata/mdt3/projects/interval_rna/file.txt",
+				"/lustre/scratch119/realdata/mdt3/teams/parts/ap32/file.txt",
+				"/lustre/scratch123/hgi/mdt2/projects/chromo_ndd/file.txt",
+				"/lustre/scratch123/hgi/mdt1/teams/martin/dm22/file.txt",
+				"/lustre/scratch123/hgi/mdt1/teams/martin/dm22/sub/folder/file.txt",
+				"/lustre/scratch125/humgen/projects_v2/ddd/file.txt",
+				"/lustre/scratch127/hgi/mdt1/teams_v2/martin/dm22/file.txt",
+				"/lustre/scratch127/hgi/mdt1/teams_v2/martin/dm22/sub/folder/file.txt",
 			}
 
-			So(v.Field(i).IsZero(), ShouldBeFalse)
-		}
+			expected := []string{
+				"/humgen/projects/ddd/scratch118/file.txt",
+				"/humgen/projects/ibdx10/scratch118/file.txt",
+				"/humgen/users/hp3/scratch118/file.txt",
+				"/humgen/projects/interval_rna/scratch119/file.txt",
+				"/humgen/teams/parts/scratch119/ap32/file.txt",
+				"/humgen/projects/chromo_ndd/scratch123/file.txt",
+				"/humgen/teams/martin/scratch123/dm22/file.txt",
+				"/humgen/teams/martin/scratch123/dm22/sub/folder/file.txt",
+				"/humgen/projects/ddd/scratch125_v2/file.txt",
+				"/humgen/teams/martin/scratch127_v2/dm22/file.txt",
+				"/humgen/teams/martin/scratch127_v2/dm22/sub/folder/file.txt",
+			}
 
-		clone := r.Clone()
-		So(r, ShouldNotEqual, clone)
-		So(*r, ShouldResemble, *clone)
+			for i, local := range locals {
+				r, err = NewRequestWithTransformedLocal(local, HumgenTransformer)
+				So(err, ShouldBeNil)
+				So(r.Remote, ShouldEqual, expected[i])
+			}
+		})
 
-		r.Requester = "someOtherRequester"
-		So(r.Requester, ShouldNotEqual, clone.Requester)
+		Convey("You can make new requests using the gengen transform", func() {
+			r, err := NewRequestWithTransformedLocal("/lustre/scratch117/casm/team78/so11/file.txt", GengenTransformer)
+			So(err, ShouldNotBeNil)
+			So(r, ShouldBeNil)
 
-		r.Meta.LocalMeta["metaKey"] = "anotherMetaValue"
-		So(r.Meta, ShouldNotResemble, clone.Meta)
+			r, err = NewRequestWithTransformedLocal("file.txt", GengenTransformer)
+			So(err, ShouldNotBeNil)
+			So(r, ShouldBeNil)
+
+			locals := []string{
+				"/lustre/scratch126/gengen/teams/lehner/file.txt",
+				"/lustre/scratch126/gengen/projects/alpha-allostery-global/file.txt",
+				"/lustre/scratch126/gengen/teams/parts/sequencing/file.txt",
+				"/lustre/scratch125/gengen/projects_v2/ddd/file.txt",
+				"/lustre/scratch127/gengen/teams_v2/parts/sequencing/file.txt",
+			}
+
+			expected := []string{
+				"/humgen/gengen/teams/lehner/scratch126/file.txt",
+				"/humgen/gengen/projects/alpha-allostery-global/scratch126/file.txt",
+				"/humgen/gengen/teams/parts/scratch126/sequencing/file.txt",
+				"/humgen/gengen/projects/ddd/scratch125_v2/file.txt",
+				"/humgen/gengen/teams/parts/scratch127_v2/sequencing/file.txt",
+			}
+
+			for i, local := range locals {
+				r, err = NewRequestWithTransformedLocal(local, GengenTransformer)
+				So(err, ShouldBeNil)
+				So(r.Remote, ShouldEqual, expected[i])
+			}
+		})
+
+		Convey("You can make new requests using the opentargets transform", func() {
+			r, err := NewRequestWithTransformedLocal("/lustre/scratch117/casm/team78/so11/file.txt", OpentargetsTransformer)
+			So(err, ShouldNotBeNil)
+			So(r, ShouldBeNil)
+
+			r, err = NewRequestWithTransformedLocal("file.txt", OpentargetsTransformer)
+			So(err, ShouldNotBeNil)
+			So(r, ShouldBeNil)
+
+			locals := []string{
+				"/lustre/scratch127/open-targets/Projects/OTAR2064/file.txt",
+			}
+
+			expected := []string{
+				"/humgen/open-targets/Projects/OTAR2064/scratch127/file.txt",
+			}
+
+			for i, local := range locals {
+				r, err = NewRequestWithTransformedLocal(local, OpentargetsTransformer)
+				So(err, ShouldBeNil)
+				So(r.Remote, ShouldEqual, expected[i])
+			}
+		})
+
+		Convey("You can create and stringify Stucks", func() {
+			n := time.Now()
+			s := NewStuck(n)
+			So(s, ShouldNotBeNil)
+			So(s.Host, ShouldNotBeBlank)
+			So(s.PID, ShouldEqual, os.Getpid())
+			So(s.String(), ShouldContainSubstring, "upload stuck? started ")
+			So(s.String(), ShouldContainSubstring, " on host "+s.Host)
+			So(s.String(), ShouldContainSubstring, ", PID "+strconv.Itoa(s.PID))
+		})
+
+		Convey("You can specify symlink files and get back a path to an empty file for uploading", func() {
+			local := "/a/file"
+			size := uint64(123)
+
+			r := &Request{Local: local, Symlink: "/another/file", Size: size}
+			So(r.LocalDataPath(), ShouldEqual, os.DevNull)
+			So(r.UploadedSize(), ShouldEqual, 0)
+
+			r = &Request{Local: local, Size: size}
+			So(r.LocalDataPath(), ShouldEqual, local)
+			So(r.UploadedSize(), ShouldEqual, size)
+		})
+
+		Convey("Cloning a request creates an exact copy with cloned maps", func() {
+			r := &Request{
+				Local:     "/some/path",
+				Remote:    "/some/remote/path",
+				Requester: "someRequester",
+				Set:       "testSet",
+				Meta: &Meta{
+					LocalMeta: map[string]string{
+						"metaKey": "metaValue",
+					},
+					remoteMeta: map[string]string{
+						"remoteMetaKey": "remoteMetaValue",
+					},
+				},
+				Status:   RequestStatusFailed,
+				Symlink:  "/path/to/dest",
+				Hardlink: "/path/to/original",
+				Size:     123,
+				Error:    "oh no",
+				Stuck:    new(Stuck),
+				skipPut:  true,
+			}
+
+			v := reflect.ValueOf(r).Elem()
+			t := v.Type()
+
+			fields := t.NumField()
+
+			for i := range fields {
+				if t.Field(i).Name == "LocalForJSON" || t.Field(i).Name == "RemoteForJSON" ||
+					t.Field(i).Name == "emptyFileRequest" || t.Field(i).Name == "inodeRequest" ||
+					t.Field(i).Name == "onlyUploadEmptyFile" { //nolint:whitespace
+					continue
+				}
+
+				So(v.Field(i).IsZero(), ShouldBeFalse)
+			}
+
+			clone := r.Clone()
+			So(r, ShouldNotEqual, clone)
+			So(*r, ShouldResemble, *clone)
+
+			r.Requester = "someOtherRequester"
+			So(r.Requester, ShouldNotEqual, clone.Requester)
+
+			r.Meta.LocalMeta["metaKey"] = "anotherMetaValue"
+			So(r.Meta, ShouldNotResemble, clone.Meta)
+		})
 	})
 }

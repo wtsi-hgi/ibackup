@@ -107,6 +107,8 @@ func TestServer(t *testing.T) {
 
 		dbPath := createDBLocation(t)
 
+		internal.RegisterDefaultTransformers(t)
+
 		Convey("You can make a Server without a logger configured, but it isn't usable", func() {
 			s, errn := New(Config{})
 			So(errn, ShouldNotBeNil)
@@ -2038,9 +2040,12 @@ func TestServer(t *testing.T) {
 								r := requests[4].Clone()
 								r.Symlink = "/path/to/dest"
 								r.Status = transfer.RequestStatusUploading
+
 								uploadStartsCh <- r
+
 								r = r.Clone()
 								r.Status = transfer.RequestStatusUploaded
+
 								uploadResultsCh <- r
 
 								updateRequestStatus(
@@ -2061,9 +2066,12 @@ func TestServer(t *testing.T) {
 								r = requests[6].Clone()
 								r.Status = transfer.RequestStatusUploading
 								r.Size = 6
+
 								uploadStartsCh <- r
+
 								r = r.Clone()
 								r.Stuck = transfer.NewStuck(time.Now())
+
 								uploadResultsCh <- r
 
 								close(uploadStartsCh)
@@ -2121,6 +2129,7 @@ func TestServer(t *testing.T) {
 								}
 
 								errCh <- client.AddOrUpdateSet(exampleSet4)
+
 								tsCh <- time.Now()
 							}()
 
@@ -2380,7 +2389,7 @@ func TestServer(t *testing.T) {
 						So(gotSet.Error, ShouldNotBeNil)
 						So(slackWriter.String(), ShouldEqual,
 							fmt.Sprintf(slack.BoxPrefixInfo+"`jim.setbad` completed discovery: 4 files"+
-								slack.BoxPrefixError+"`jim.setbad` is invalid: not a valid lustre path [%s]", expected[0]))
+								slack.BoxPrefixError+"`jim.setbad` is invalid: %s: invalid transform path", expected[0]))
 
 						err = dfunc()
 						So(err, ShouldBeNil)
@@ -2397,10 +2406,10 @@ func TestServer(t *testing.T) {
 						}()
 
 						So(logWriter.String(), ShouldEqual, fmt.Sprintf("failed to recover set setbad for jim: "+
-							"not a valid lustre path [%s]\n", expected[0]))
+							"%s: invalid transform path\n", expected[0]))
 						So(slackWriter.String(), ShouldEqual, fmt.Sprintf(serverStartMessage+
 							slack.BoxPrefixError+"`jim.setbad` could not be recovered: "+
-							"not a valid lustre path [%s]"+serverRecoveryMessage+serverStartedMessage, expected[0]))
+							"%s: invalid transform path"+serverRecoveryMessage+serverStartedMessage, expected[0]))
 					})
 
 					Convey("And if you make the set read-only", func() {
@@ -4036,6 +4045,7 @@ func TestDiscoveryCoordinator(t *testing.T) {
 					return
 				default:
 					remCount.Add(1)
+
 					removals <- true
 
 					dc.AllowDiscovery(sid)
@@ -4052,11 +4062,7 @@ func TestDiscoveryCoordinator(t *testing.T) {
 
 			go mockRemoval(sid)
 
-			for {
-				if discoveryFinished.Load() {
-					break
-				}
-
+			for !discoveryFinished.Load() {
 				So(remCount.Load(), ShouldEqual, 0)
 				time.Sleep(100 * time.Millisecond)
 			}
@@ -4082,11 +4088,7 @@ func TestDiscoveryCoordinator(t *testing.T) {
 
 			clearChannel(removals)
 
-			for {
-				if discoveryFinished.Load() {
-					break
-				}
-
+			for !discoveryFinished.Load() {
 				So(remCount.Load(), ShouldEqual, removalsCompletedBeforeDiscovery)
 				time.Sleep(100 * time.Millisecond)
 			}

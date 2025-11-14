@@ -35,6 +35,7 @@ import (
 	"github.com/dustin/go-humanize" //nolint:misspell
 	"github.com/wtsi-hgi/ibackup/slack"
 	"github.com/wtsi-hgi/ibackup/transfer"
+	"github.com/wtsi-hgi/ibackup/transformer"
 )
 
 type Status int
@@ -313,12 +314,7 @@ func (s *Set) RemovedSize() string {
 }
 
 func (s *Set) TransformPath(path string) (string, error) {
-	transformer, err := s.MakeTransformer()
-	if err != nil {
-		return "", err
-	}
-
-	dest, err := transformer(path)
+	dest, err := transformer.Transform(s.Transformer, path)
 	if err != nil {
 		return "", err
 	}
@@ -326,33 +322,10 @@ func (s *Set) TransformPath(path string) (string, error) {
 	return dest, nil
 }
 
-// MakeTransformer turns our Transformer string in to a put.HumgenTransformer or
-// a put.PrefixTransformer as appropriate.
-func (s *Set) MakeTransformer() (transfer.PathTransformer, error) {
-	if s.Transformer == "humgen" {
-		return transfer.HumgenTransformer, nil
-	}
-
-	if s.Transformer == "gengen" {
-		return transfer.GengenTransformer, nil
-	}
-
-	if s.Transformer == "otar" {
-		return transfer.OpentargetsTransformer, nil
-	}
-
-	if !strings.HasPrefix(s.Transformer, prefixTransformerKey) {
-		return nil, Error{ErrInvalidTransformer, ""}
-	}
-
-	lr := strings.TrimPrefix(s.Transformer, prefixTransformerKey)
-
-	parts := strings.Split(lr, ":")
-	if len(parts) != arPrefixParts {
-		return nil, Error{ErrInvalidTransformer, ""}
-	}
-
-	return transfer.PrefixTransformer(parts[0], parts[1]), nil
+// MakeTransformer turns our Transformer string in to a
+// transformer.PathTransformer.
+func (s *Set) MakeTransformer() (transformer.PathTransformer, error) {
+	return transformer.MakePathTransformer(s.Transformer)
 }
 
 // Incomplete returns true if our Status is not Complete, or if we
@@ -368,7 +341,7 @@ func (s *Set) Incomplete() bool {
 // Currently does NOT check if all of the user's desired local paths can be
 // transformed, so there might actually be problems.
 func (s *Set) HasProblems() bool {
-	_, err := s.MakeTransformer()
+	err := transformer.ValidateTransformer(s.Transformer)
 
 	return s.Failed > 0 || s.Error != "" || err != nil
 }
@@ -599,7 +572,7 @@ func (s *Set) checkIfUploading() {
 }
 
 func (s *Set) checkIfComplete() {
-	if !(s.Uploaded+s.Replaced+s.Skipped+s.Failed+s.Missing+s.Orphaned+s.Abnormal == s.NumFiles) {
+	if !(s.Uploaded+s.Replaced+s.Skipped+s.Failed+s.Missing+s.Orphaned+s.Abnormal == s.NumFiles) { //nolint:staticcheck,lll
 		return
 	}
 

@@ -220,27 +220,27 @@ func resetIRODS(remotePath string) {
 		return
 	}
 
-	exec.Command("irm", "-r", remotePath).Run() //nolint:errcheck
+	exec.Command("irm", "-r", remotePath).Run() //nolint:errcheck,noctx
 
-	exec.Command("imkdir", remotePath).Run() //nolint:errcheck
+	exec.Command("imkdir", remotePath).Run() //nolint:errcheck,noctx
 }
 
 func isObjectInIRODS(remotePath, name string) bool {
-	output, err := exec.Command("ils", remotePath).CombinedOutput()
+	output, err := exec.Command("ils", remotePath).CombinedOutput() //nolint:noctx
 	So(err, ShouldBeNil)
 
 	return strings.Contains(string(output), name)
 }
 
 func getRemoteMeta(path string) string {
-	output, err := exec.Command("imeta", "ls", "-d", path).CombinedOutput()
+	output, err := exec.Command("imeta", "ls", "-d", path).CombinedOutput() //nolint:noctx
 	So(err, ShouldBeNil)
 
 	return string(output)
 }
 
 func addRemoteMeta(path, key, val string) {
-	output, err := exec.Command("imeta", "add", "-d", path, key, val).CombinedOutput()
+	output, err := exec.Command("imeta", "add", "-d", path, key, val).CombinedOutput() //nolint:noctx
 	if strings.Contains(string(output), "CATALOG_ALREADY_HAS_ITEM_BY_THAT_NAME") {
 		return
 	}
@@ -249,7 +249,7 @@ func addRemoteMeta(path, key, val string) {
 }
 
 func getSizeOfObject(path string) int {
-	output, err := exec.Command("ils", "-l", path).CombinedOutput()
+	output, err := exec.Command("ils", "-l", path).CombinedOutput() //nolint:noctx
 	So(err, ShouldBeNil)
 
 	cols := strings.Fields(string(output))

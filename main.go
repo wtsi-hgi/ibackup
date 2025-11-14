@@ -28,9 +28,21 @@
 package main
 
 import (
+	"fmt"
+	"os"
+
 	"github.com/wtsi-hgi/ibackup/cmd"
 )
 
 func main() {
+	config := os.Getenv("IBACKUP_CONFIG")
+	if config != "" {
+		if err := cmd.LoadConfig(config); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+
+			os.Exit(1)
+		}
+	}
+
 	cmd.Execute()
 }

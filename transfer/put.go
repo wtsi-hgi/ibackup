@@ -387,6 +387,7 @@ func (p *Putter) putRequests(requests []*Request, transferStartCh, transferRetur
 
 	go func() {
 		defer wg.Done()
+
 		cloneChannel(r1, transferStartCh)
 	}()
 
@@ -394,6 +395,7 @@ func (p *Putter) putRequests(requests []*Request, transferStartCh, transferRetur
 
 	go func() {
 		defer wg.Done()
+
 		cloneChannel(r2, transferReturnCh)
 	}()
 
@@ -401,6 +403,7 @@ func (p *Putter) putRequests(requests []*Request, transferStartCh, transferRetur
 
 	go func() {
 		defer wg.Done()
+
 		cloneChannel(r3, skipReturnCh)
 	}()
 

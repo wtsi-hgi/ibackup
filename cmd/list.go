@@ -31,7 +31,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/wtsi-hgi/ibackup/server"
 	"github.com/wtsi-hgi/ibackup/set"
-	"github.com/wtsi-hgi/ibackup/transfer"
+	"github.com/wtsi-hgi/ibackup/transformer"
 )
 
 // options for this cmd.
@@ -202,7 +202,7 @@ func getAllSetsFromDBAndDisplayPaths(dbPath string, local, remote, uploaded, //n
 	}
 }
 
-func getSetTransformerIfNeeded(s *set.Set, needed bool) transfer.PathTransformer {
+func getSetTransformerIfNeeded(s *set.Set, needed bool) transformer.PathTransformer {
 	if !needed {
 		return nil
 	}
@@ -210,7 +210,7 @@ func getSetTransformerIfNeeded(s *set.Set, needed bool) transfer.PathTransformer
 	return getSetTransformer(s)
 }
 
-func displayEntryPaths(entries []*set.Entry, transformer transfer.PathTransformer,
+func displayEntryPaths(entries []*set.Entry, transformer transformer.PathTransformer,
 	local, remote, size, encode bool,
 ) {
 	format := "%[1]s\t%[2]s"

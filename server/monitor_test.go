@@ -130,6 +130,7 @@ func TestMonitorHeap(t *testing.T) {
 
 				mu.Lock()
 				defer mu.Unlock()
+
 				So(names, ShouldEqual, "firstsecondthird")
 
 				So(mh.NextDiscovery().IsZero(), ShouldBeTrue)
@@ -145,6 +146,7 @@ func TestMonitorHeap(t *testing.T) {
 
 				mu.Lock()
 				defer mu.Unlock()
+
 				So(names, ShouldEqual, "secondthird")
 				So(calls, ShouldHaveLength, 2)
 				So(calls[0].After(ld.Add(20*time.Millisecond)), ShouldBeTrue)

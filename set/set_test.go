@@ -50,260 +50,264 @@ import (
 const userPerms = 0700
 
 func TestSet(t *testing.T) {
-	Convey("Set statuses convert nicely to strings", t, func() {
-		So(PendingDiscovery.String(), ShouldEqual, "pending discovery")
-		So(PendingUpload.String(), ShouldEqual, "pending upload")
-		So(Uploading.String(), ShouldEqual, "uploading")
-		So(Failing.String(), ShouldEqual, "failing")
-		So(Complete.String(), ShouldEqual, "complete")
-	})
+	Convey("With the default transformers", t, func() {
+		internal.RegisterDefaultTransformers(t)
 
-	Convey("Entry statuses convert nicely to strings", t, func() {
-		So(Pending.String(), ShouldEqual, "pending")
-		So(Uploaded.String(), ShouldEqual, "uploaded")
-		So(Failed.String(), ShouldEqual, "failed")
-		So(Missing.String(), ShouldEqual, "missing")
-	})
+		Convey("Set statuses convert nicely to strings", func() {
+			So(PendingDiscovery.String(), ShouldEqual, "pending discovery")
+			So(PendingUpload.String(), ShouldEqual, "pending upload")
+			So(Uploading.String(), ShouldEqual, "uploading")
+			So(Failing.String(), ShouldEqual, "failing")
+			So(Complete.String(), ShouldEqual, "complete")
+		})
 
-	Convey("Status methods are useful helpers", t, func() {
-		s := &Set{Transformer: "humgen"}
-		So(s.Incomplete(), ShouldBeTrue)
-		So(s.HasProblems(), ShouldBeFalse)
-		So(s.Queued(), ShouldBeTrue)
+		Convey("Entry statuses convert nicely to strings", func() {
+			So(Pending.String(), ShouldEqual, "pending")
+			So(Uploaded.String(), ShouldEqual, "uploaded")
+			So(Failed.String(), ShouldEqual, "failed")
+			So(Missing.String(), ShouldEqual, "missing")
+		})
 
-		s.Status = Complete
-		So(s.Incomplete(), ShouldBeFalse)
-		So(s.HasProblems(), ShouldBeFalse)
-		So(s.Queued(), ShouldBeFalse)
+		Convey("Status methods are useful helpers", func() {
+			s := &Set{Transformer: "humgen"}
+			So(s.Incomplete(), ShouldBeTrue)
+			So(s.HasProblems(), ShouldBeFalse)
+			So(s.Queued(), ShouldBeTrue)
 
-		s.Failed = 1
-		So(s.Incomplete(), ShouldBeTrue)
-		So(s.HasProblems(), ShouldBeTrue)
-		So(s.Queued(), ShouldBeFalse)
+			s.Status = Complete
+			So(s.Incomplete(), ShouldBeFalse)
+			So(s.HasProblems(), ShouldBeFalse)
+			So(s.Queued(), ShouldBeFalse)
 
-		s.Failed = 0
-		s.Error = "error"
-		So(s.Incomplete(), ShouldBeTrue)
-		So(s.HasProblems(), ShouldBeTrue)
-		So(s.Queued(), ShouldBeFalse)
+			s.Failed = 1
+			So(s.Incomplete(), ShouldBeTrue)
+			So(s.HasProblems(), ShouldBeTrue)
+			So(s.Queued(), ShouldBeFalse)
 
-		s.Error = ""
-		s.Transformer = "invalid"
-		So(s.Incomplete(), ShouldBeTrue)
-		So(s.HasProblems(), ShouldBeTrue)
-		So(s.Queued(), ShouldBeFalse)
+			s.Failed = 0
+			s.Error = "error"
+			So(s.Incomplete(), ShouldBeTrue)
+			So(s.HasProblems(), ShouldBeTrue)
+			So(s.Queued(), ShouldBeFalse)
 
-		s.Transformer = "humgen"
-		s.Status = PendingDiscovery
-		So(s.Incomplete(), ShouldBeTrue)
-		So(s.HasProblems(), ShouldBeFalse)
-		So(s.Queued(), ShouldBeTrue)
+			s.Error = ""
+			s.Transformer = "invalid"
+			So(s.Incomplete(), ShouldBeTrue)
+			So(s.HasProblems(), ShouldBeTrue)
+			So(s.Queued(), ShouldBeFalse)
 
-		s.Status = PendingUpload
-		So(s.Incomplete(), ShouldBeTrue)
-		So(s.HasProblems(), ShouldBeFalse)
-		So(s.Queued(), ShouldBeTrue)
-	})
+			s.Transformer = "humgen"
+			s.Status = PendingDiscovery
+			So(s.Incomplete(), ShouldBeTrue)
+			So(s.HasProblems(), ShouldBeFalse)
+			So(s.Queued(), ShouldBeTrue)
 
-	Convey("Entry.ShouldUpload() gives good advice", t, func() {
-		reuploadAfter := time.Now()
+			s.Status = PendingUpload
+			So(s.Incomplete(), ShouldBeTrue)
+			So(s.HasProblems(), ShouldBeFalse)
+			So(s.Queued(), ShouldBeTrue)
+		})
 
-		e := &Entry{Status: Pending}
-		So(e.ShouldUpload(reuploadAfter), ShouldBeTrue)
+		Convey("Entry.ShouldUpload() gives good advice", func() {
+			reuploadAfter := time.Now()
 
-		e.Status = Missing
-		So(e.ShouldUpload(reuploadAfter), ShouldBeTrue)
+			e := &Entry{Status: Pending}
+			So(e.ShouldUpload(reuploadAfter), ShouldBeTrue)
 
-		e.Status = Failed
-		So(e.ShouldUpload(reuploadAfter), ShouldBeTrue)
+			e.Status = Missing
+			So(e.ShouldUpload(reuploadAfter), ShouldBeTrue)
 
-		e.Attempts = AttemptsToBeConsideredFailing
-		So(e.ShouldUpload(reuploadAfter), ShouldBeTrue)
+			e.Status = Failed
+			So(e.ShouldUpload(reuploadAfter), ShouldBeTrue)
 
-		e.Attempts = 1
-		e.LastAttempt = reuploadAfter.Add(1 * time.Second)
-		e.Status = Uploaded
-		So(e.ShouldUpload(reuploadAfter), ShouldBeFalse)
-		So(e.ShouldUpload(reuploadAfter.Add(2*time.Second)), ShouldBeTrue)
-	})
+			e.Attempts = AttemptsToBeConsideredFailing
+			So(e.ShouldUpload(reuploadAfter), ShouldBeTrue)
 
-	Convey("Discovered() returns friendly strings", t, func() {
-		s := &Set{}
-		So(s.Discovered(), ShouldEqual, "not started")
+			e.Attempts = 1
+			e.LastAttempt = reuploadAfter.Add(1 * time.Second)
+			e.Status = Uploaded
+			So(e.ShouldUpload(reuploadAfter), ShouldBeFalse)
+			So(e.ShouldUpload(reuploadAfter.Add(2*time.Second)), ShouldBeTrue)
+		})
 
-		t := time.Now()
-		s.StartedDiscovery = t
-		So(s.Discovered(), ShouldEqual, "started "+t.Format(dateFormat))
+		Convey("Discovered() returns friendly strings", func() {
+			s := &Set{}
+			So(s.Discovered(), ShouldEqual, "not started")
 
-		t2 := t.Add(24 * time.Hour)
-		s.LastDiscovery = t2
-		So(s.Discovered(), ShouldEqual, "completed "+t2.Format(dateFormat))
+			t := time.Now()
+			s.StartedDiscovery = t
+			So(s.Discovered(), ShouldEqual, "started "+t.Format(dateFormat))
 
-		t3 := t2.Add(24 * time.Hour)
-		s.StartedDiscovery = t3
-		So(s.Discovered(), ShouldEqual, "started "+t3.Format(dateFormat))
-	})
+			t2 := t.Add(24 * time.Hour)
+			s.LastDiscovery = t2
+			So(s.Discovered(), ShouldEqual, "completed "+t2.Format(dateFormat))
 
-	Convey("Count() and Size() return friendly strings", t, func() {
-		s := &Set{}
-		So(s.Count(), ShouldEqual, "pending")
-		So(s.Size(), ShouldEqual, "pending")
+			t3 := t2.Add(24 * time.Hour)
+			s.StartedDiscovery = t3
+			So(s.Discovered(), ShouldEqual, "started "+t3.Format(dateFormat))
+		})
 
-		s.NumFiles = 3
+		Convey("Count() and Size() return friendly strings", func() {
+			s := &Set{}
+			So(s.Count(), ShouldEqual, "pending")
+			So(s.Size(), ShouldEqual, "pending")
 
-		So(s.Count(), ShouldEqual, "pending")
-		So(s.Size(), ShouldEqual, "pending")
+			s.NumFiles = 3
 
-		s.LastDiscovery = time.Now()
+			So(s.Count(), ShouldEqual, "pending")
+			So(s.Size(), ShouldEqual, "pending")
 
-		So(s.Count(), ShouldEqual, "3")
-		So(s.Size(), ShouldEqual, "0 B (and counting)")
+			s.LastDiscovery = time.Now()
 
-		s.SizeTotal = 30
-		So(s.Size(), ShouldEqual, "30 B (and counting)")
+			So(s.Count(), ShouldEqual, "3")
+			So(s.Size(), ShouldEqual, "0 B (and counting)")
 
-		s.Status = Complete
-		So(s.Count(), ShouldEqual, "3")
-		So(s.Size(), ShouldEqual, "30 B")
+			s.SizeTotal = 30
+			So(s.Size(), ShouldEqual, "30 B (and counting)")
 
-		s.LastCompletedCount = 3
-		s.LastCompletedSize = 30
-		s.NumFiles = 0
-		s.SizeTotal = 0
-		s.Status = PendingDiscovery
+			s.Status = Complete
+			So(s.Count(), ShouldEqual, "3")
+			So(s.Size(), ShouldEqual, "30 B")
 
-		So(s.Count(), ShouldEqual, "3 (as of last completion)")
-		So(s.Size(), ShouldEqual, "30 B (as of last completion)")
-	})
+			s.LastCompletedCount = 3
+			s.LastCompletedSize = 30
+			s.NumFiles = 0
+			s.SizeTotal = 0
+			s.Status = PendingDiscovery
 
-	Convey("MakeTransformer and TransformPath work", t, func() {
-		s := &Set{Transformer: "humgen"}
-		trans, err := s.MakeTransformer()
-		So(err, ShouldBeNil)
+			So(s.Count(), ShouldEqual, "3 (as of last completion)")
+			So(s.Size(), ShouldEqual, "30 B (as of last completion)")
+		})
 
-		dddLocalPath := "/lustre/scratch118/humgen/projects/ddd/file.txt"
-		remote, err := trans(dddLocalPath)
-		So(err, ShouldBeNil)
+		Convey("MakeTransformer and TransformPath work", func() {
+			s := &Set{Transformer: "humgen"}
+			trans, err := s.MakeTransformer()
+			So(err, ShouldBeNil)
 
-		dddRemotePath := "/humgen/projects/ddd/scratch118/file.txt"
-		So(remote, ShouldEqual, dddRemotePath)
+			dddLocalPath := "/lustre/scratch118/humgen/projects/ddd/file.txt"
+			remote, err := trans(dddLocalPath)
+			So(err, ShouldBeNil)
 
-		dest, err := s.TransformPath(dddLocalPath)
-		So(err, ShouldBeNil)
-		So(dest, ShouldEqual, dddRemotePath)
+			dddRemotePath := "/humgen/projects/ddd/scratch118/file.txt"
+			So(remote, ShouldEqual, dddRemotePath)
 
-		_, err = s.TransformPath("/invalid/path.txt")
-		So(err, ShouldNotBeNil)
+			dest, err := s.TransformPath(dddLocalPath)
+			So(err, ShouldBeNil)
+			So(dest, ShouldEqual, dddRemotePath)
 
-		dest, err = s.TransformPath("/lustre/scratch118/humgen/projects_v2/ddd/file.txt")
-		So(err, ShouldBeNil)
-		So(dest, ShouldEqual, "/humgen/projects/ddd/scratch118_v2/file.txt")
+			_, err = s.TransformPath("/invalid/path.txt")
+			So(err, ShouldNotBeNil)
 
-		s = &Set{Transformer: "gengen"}
-		trans, err = s.MakeTransformer()
-		So(err, ShouldBeNil)
+			dest, err = s.TransformPath("/lustre/scratch118/humgen/projects_v2/ddd/file.txt")
+			So(err, ShouldBeNil)
+			So(dest, ShouldEqual, "/humgen/projects/ddd/scratch118_v2/file.txt")
 
-		partsLocalPath := "/lustre/scratch126/gengen/teams/parts/sequencing/file.txt"
-		remote, err = trans(partsLocalPath)
-		So(err, ShouldBeNil)
+			s = &Set{Transformer: "gengen"}
+			trans, err = s.MakeTransformer()
+			So(err, ShouldBeNil)
 
-		partsRemotePath := "/humgen/gengen/teams/parts/scratch126/sequencing/file.txt"
-		So(remote, ShouldEqual, partsRemotePath)
+			partsLocalPath := "/lustre/scratch126/gengen/teams/parts/sequencing/file.txt"
+			remote, err = trans(partsLocalPath)
+			So(err, ShouldBeNil)
 
-		dest, err = s.TransformPath(partsLocalPath)
-		So(err, ShouldBeNil)
-		So(dest, ShouldEqual, partsRemotePath)
+			partsRemotePath := "/humgen/gengen/teams/parts/scratch126/sequencing/file.txt"
+			So(remote, ShouldEqual, partsRemotePath)
 
-		_, err = s.TransformPath("/invalid/path.txt")
-		So(err, ShouldNotBeNil)
+			dest, err = s.TransformPath(partsLocalPath)
+			So(err, ShouldBeNil)
+			So(dest, ShouldEqual, partsRemotePath)
 
-		dir, err := os.Getwd()
-		So(err, ShouldBeNil)
+			_, err = s.TransformPath("/invalid/path.txt")
+			So(err, ShouldNotBeNil)
 
-		dest, err = s.TransformPath("/lustre/scratch126/gengen/teams_v2/parts/sequencing/file.txt")
-		So(err, ShouldBeNil)
-		So(dest, ShouldEqual, "/humgen/gengen/teams/parts/scratch126_v2/sequencing/file.txt")
+			dir, err := os.Getwd()
+			So(err, ShouldBeNil)
 
-		s = &Set{Transformer: "prefix=" + dir + ":/zone"}
-		trans, err = s.MakeTransformer()
-		So(err, ShouldBeNil)
-		remote, err = trans(filepath.Join(dir, "file.txt"))
-		So(err, ShouldBeNil)
-		So(remote, ShouldEqual, "/zone/file.txt")
-	})
+			dest, err = s.TransformPath("/lustre/scratch126/gengen/teams_v2/parts/sequencing/file.txt")
+			So(err, ShouldBeNil)
+			So(dest, ShouldEqual, "/humgen/gengen/teams/parts/scratch126_v2/sequencing/file.txt")
 
-	Convey("UsageSummary returns summaries of all given sets", t, func() {
-		nov23 := time.Unix(1700063826, 0)
-		month := 730 * time.Hour
-		sets := []*Set{
-			{Name: "setA", Requester: "userA", LastCompleted: nov23,
-				SizeTotal: 10, NumFiles: 1},
-			{Name: "setB", Requester: "userA", LastCompleted: nov23.Add(month),
-				SizeTotal: 20, NumFiles: 2},
-			{Name: "setC", Requester: "userB", LastCompleted: nov23,
-				SizeTotal: 40, NumFiles: 3},
-			{Name: "setD", Requester: "userC", LastCompleted: nov23.Add(-1 * month),
-				SizeTotal: 1, NumFiles: 4},
-			{Name: "setE", Requester: "userD", LastCompleted: nov23.Add(-1 * month),
-				SizeTotal: 1, NumFiles: 5},
-			{Name: "setF", Requester: "userE", SizeTotal: 0, NumFiles: 1},
-		}
+			s = &Set{Transformer: "prefix=" + dir + ":/zone"}
+			trans, err = s.MakeTransformer()
+			So(err, ShouldBeNil)
+			remote, err = trans(filepath.Join(dir, "file.txt"))
+			So(err, ShouldBeNil)
+			So(remote, ShouldEqual, "/zone/file.txt")
+		})
 
-		usage := UsageSummary(sets)
-		So(usage, ShouldNotBeNil)
+		Convey("UsageSummary returns summaries of all given sets", func() {
+			nov23 := time.Unix(1700063826, 0)
+			month := 730 * time.Hour
+			sets := []*Set{
+				{Name: "setA", Requester: "userA", LastCompleted: nov23,
+					SizeTotal: 10, NumFiles: 1},
+				{Name: "setB", Requester: "userA", LastCompleted: nov23.Add(month),
+					SizeTotal: 20, NumFiles: 2},
+				{Name: "setC", Requester: "userB", LastCompleted: nov23,
+					SizeTotal: 40, NumFiles: 3},
+				{Name: "setD", Requester: "userC", LastCompleted: nov23.Add(-1 * month),
+					SizeTotal: 1, NumFiles: 4},
+				{Name: "setE", Requester: "userD", LastCompleted: nov23.Add(-1 * month),
+					SizeTotal: 1, NumFiles: 5},
+				{Name: "setF", Requester: "userE", SizeTotal: 0, NumFiles: 1},
+			}
 
-		So(usage.Total.Size, ShouldEqual, 72)
-		So(usage.Total.Number, ShouldEqual, 16)
+			usage := UsageSummary(sets)
+			So(usage, ShouldNotBeNil)
 
-		br := usage.ByRequester
-		So(len(br), ShouldEqual, 5)
-		So(br[0].For, ShouldEqual, "userB")
-		So(br[0].Size, ShouldEqual, 40)
-		So(br[0].Number, ShouldEqual, 3)
-		So(br[1].For, ShouldEqual, "userA")
-		So(br[1].Size, ShouldEqual, 30)
-		So(br[1].Number, ShouldEqual, 3)
-		So(br[2].For, ShouldEqual, "userD")
-		So(br[2].Size, ShouldEqual, 1)
-		So(br[2].Number, ShouldEqual, 5)
-		So(br[3].For, ShouldEqual, "userC")
-		So(br[3].Size, ShouldEqual, 1)
-		So(br[3].Number, ShouldEqual, 4)
-		So(br[4].For, ShouldEqual, "userE")
-		So(br[4].Size, ShouldEqual, 0)
-		So(br[4].Number, ShouldEqual, 1)
+			So(usage.Total.Size, ShouldEqual, 72)
+			So(usage.Total.Number, ShouldEqual, 16)
 
-		bs := usage.BySet
-		So(len(bs), ShouldEqual, 6)
-		So(bs[0].For, ShouldEqual, "userB.setC")
-		So(bs[0].Size, ShouldEqual, 40)
-		So(bs[1].For, ShouldEqual, "userA.setB")
-		So(bs[1].Size, ShouldEqual, 20)
-		So(bs[2].For, ShouldEqual, "userA.setA")
-		So(bs[2].Size, ShouldEqual, 10)
-		So(bs[3].For, ShouldEqual, "userD.setE")
-		So(bs[3].Size, ShouldEqual, 1)
-		So(bs[4].For, ShouldEqual, "userC.setD")
-		So(bs[4].Size, ShouldEqual, 1)
-		So(bs[5].For, ShouldEqual, "userE.setF")
-		So(bs[5].Size, ShouldEqual, 0)
+			br := usage.ByRequester
+			So(len(br), ShouldEqual, 5)
+			So(br[0].For, ShouldEqual, "userB")
+			So(br[0].Size, ShouldEqual, 40)
+			So(br[0].Number, ShouldEqual, 3)
+			So(br[1].For, ShouldEqual, "userA")
+			So(br[1].Size, ShouldEqual, 30)
+			So(br[1].Number, ShouldEqual, 3)
+			So(br[2].For, ShouldEqual, "userD")
+			So(br[2].Size, ShouldEqual, 1)
+			So(br[2].Number, ShouldEqual, 5)
+			So(br[3].For, ShouldEqual, "userC")
+			So(br[3].Size, ShouldEqual, 1)
+			So(br[3].Number, ShouldEqual, 4)
+			So(br[4].For, ShouldEqual, "userE")
+			So(br[4].Size, ShouldEqual, 0)
+			So(br[4].Number, ShouldEqual, 1)
 
-		bm := usage.ByMonth
-		So(len(bm), ShouldEqual, 3)
-		So(bm[0].For, ShouldEqual, "2023/10")
-		So(bm[0].Size, ShouldEqual, 2)
-		So(bm[1].For, ShouldEqual, "2023/11")
-		So(bm[1].Size, ShouldEqual, 50)
-		So(bm[2].For, ShouldEqual, "2023/12")
-		So(bm[2].Size, ShouldEqual, 20)
+			bs := usage.BySet
+			So(len(bs), ShouldEqual, 6)
+			So(bs[0].For, ShouldEqual, "userB.setC")
+			So(bs[0].Size, ShouldEqual, 40)
+			So(bs[1].For, ShouldEqual, "userA.setB")
+			So(bs[1].Size, ShouldEqual, 20)
+			So(bs[2].For, ShouldEqual, "userA.setA")
+			So(bs[2].Size, ShouldEqual, 10)
+			So(bs[3].For, ShouldEqual, "userD.setE")
+			So(bs[3].Size, ShouldEqual, 1)
+			So(bs[4].For, ShouldEqual, "userC.setD")
+			So(bs[4].Size, ShouldEqual, 1)
+			So(bs[5].For, ShouldEqual, "userE.setF")
+			So(bs[5].Size, ShouldEqual, 0)
 
-		sets = []*Set{
-			{Name: "setA", Requester: "userA",
-				SizeTotal: 10 * uint64(bytesInTiB), NumFiles: 1},
-		}
+			bm := usage.ByMonth
+			So(len(bm), ShouldEqual, 3)
+			So(bm[0].For, ShouldEqual, "2023/10")
+			So(bm[0].Size, ShouldEqual, 2)
+			So(bm[1].For, ShouldEqual, "2023/11")
+			So(bm[1].Size, ShouldEqual, 50)
+			So(bm[2].For, ShouldEqual, "2023/12")
+			So(bm[2].Size, ShouldEqual, 20)
 
-		usage = UsageSummary(sets)
-		So(usage.Total.SizeTiB(), ShouldEqual, 10)
+			sets = []*Set{
+				{Name: "setA", Requester: "userA",
+					SizeTotal: 10 * uint64(bytesInTiB), NumFiles: 1},
+			}
+
+			usage = UsageSummary(sets)
+			So(usage.Total.SizeTiB(), ShouldEqual, 10)
+		})
 	})
 }
 
