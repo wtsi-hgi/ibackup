@@ -2040,9 +2040,12 @@ func TestServer(t *testing.T) {
 								r := requests[4].Clone()
 								r.Symlink = "/path/to/dest"
 								r.Status = transfer.RequestStatusUploading
+
 								uploadStartsCh <- r
+
 								r = r.Clone()
 								r.Status = transfer.RequestStatusUploaded
+
 								uploadResultsCh <- r
 
 								updateRequestStatus(
@@ -2063,9 +2066,12 @@ func TestServer(t *testing.T) {
 								r = requests[6].Clone()
 								r.Status = transfer.RequestStatusUploading
 								r.Size = 6
+
 								uploadStartsCh <- r
+
 								r = r.Clone()
 								r.Stuck = transfer.NewStuck(time.Now())
+
 								uploadResultsCh <- r
 
 								close(uploadStartsCh)
@@ -2123,6 +2129,7 @@ func TestServer(t *testing.T) {
 								}
 
 								errCh <- client.AddOrUpdateSet(exampleSet4)
+
 								tsCh <- time.Now()
 							}()
 
@@ -4038,6 +4045,7 @@ func TestDiscoveryCoordinator(t *testing.T) {
 					return
 				default:
 					remCount.Add(1)
+
 					removals <- true
 
 					dc.AllowDiscovery(sid)
@@ -4054,11 +4062,7 @@ func TestDiscoveryCoordinator(t *testing.T) {
 
 			go mockRemoval(sid)
 
-			for {
-				if discoveryFinished.Load() {
-					break
-				}
-
+			for !discoveryFinished.Load() {
 				So(remCount.Load(), ShouldEqual, 0)
 				time.Sleep(100 * time.Millisecond)
 			}
@@ -4084,11 +4088,7 @@ func TestDiscoveryCoordinator(t *testing.T) {
 
 			clearChannel(removals)
 
-			for {
-				if discoveryFinished.Load() {
-					break
-				}
-
+			for !discoveryFinished.Load() {
 				So(remCount.Load(), ShouldEqual, removalsCompletedBeforeDiscovery)
 				time.Sleep(100 * time.Millisecond)
 			}

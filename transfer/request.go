@@ -60,8 +60,6 @@ const (
 	defaultDirPerms                            = 0777
 )
 
-// var genTransformerRegex = regexp.MustCompile(`^/lustre/(scratch[^/]+)(/[^/]*)+?/([Pp]rojects|teams|users)(_v2)?/([^/]+)/`) //nolint:lll
-
 // Stuck is used to provide details of a potentially "stuck" upload Request.
 type Stuck struct {
 	UploadStarted time.Time
@@ -465,59 +463,3 @@ func NewRequestWithTransformedLocal(local string, pt transformer.PathTransformer
 
 	return &Request{Local: local, Remote: remote, Meta: NewMeta()}, nil
 }
-
-// // PrefixTransformer returns a PathTransformer that will replace localPrefix
-// // in any path given to it with remotePrefix, and return the result.
-// //
-// // If the given path does not start with localPrefix, returns the path prefixed
-// // with remotePrefix (treating the given path as relative to localPrefix).
-// func PrefixTransformer(localPrefix, remotePrefix string) PathTransformer {
-// 	return func(local string) (string, error) {
-// 		return filepath.Join(remotePrefix, strings.TrimPrefix(local, localPrefix)), nil
-// 	}
-// }
-
-// // HumgenTransformer is a PathTransformer that will convert a local "lustre"
-// // path to a "canonical" path in the humgen iRODS zone.
-// //
-// // This transform is specific to the "humgen" group at the Sanger Institute.
-// func HumgenTransformer(local string) (string, error) {
-// 	local, err := filepath.Abs(local)
-// 	if err != nil {
-// 		return "", err
-// 	}
-
-// 	if !genTransformerRegex.MatchString(local) {
-// 		return "", errs.PathError{Msg: ErrNotHumgenLustre, Path: local}
-// 	}
-
-// 	return genTransformerRegex.ReplaceAllString(local, "/humgen/$3/$5/$1$4/"), nil
-// }
-
-// // GengenTransformer is a PathTransformer that will convert a local "lustre"
-// // path to a "canonical" path in the humgen iRODS zone, for the gengen BoM.
-// //
-// // This transform is specific to the "gengen" group at the Sanger Institute.
-// func GengenTransformer(local string) (string, error) {
-// 	humgenPath, err := HumgenTransformer(local)
-// 	if err != nil {
-// 		return "", err
-// 	}
-
-// 	return strings.Replace(humgenPath, "/humgen", "/humgen/gengen", 1), nil
-// }
-
-// // OpentargetsTransformer is a PathTransformer that will convert a local
-// // "lustre" path to a "canonical" path in the humgen iRODS zone, for the
-// // OpenTargets BoM.
-// //
-// // This transform is specific to the "opentargets" group at the Sanger
-// // Institute.
-// func OpentargetsTransformer(local string) (string, error) {
-// 	humgenPath, err := HumgenTransformer(local)
-// 	if err != nil {
-// 		return "", err
-// 	}
-
-// 	return strings.Replace(humgenPath, "/humgen", "/humgen/open-targets", 1), nil
-// }

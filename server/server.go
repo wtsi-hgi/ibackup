@@ -217,7 +217,6 @@ func (s *Server) EnableJobSubmission(putCmd, deployment, cwd, queue string, numC
 		Timeout:    connectTimeout,
 		Logger:     logger,
 	})
-
 	if err != nil {
 		return err
 	}

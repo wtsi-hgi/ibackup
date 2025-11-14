@@ -3,12 +3,11 @@ package internal
 import (
 	"testing"
 
-	. "github.com/smartystreets/goconvey/convey"
-
+	. "github.com/smartystreets/goconvey/convey" //nolint:revive,staticcheck
 	"github.com/wtsi-hgi/ibackup/transformer"
 )
 
-func RegisterDefaultTransformers(t *testing.T) (transformer.PathTransformer, transformer.PathTransformer, transformer.PathTransformer) {
+func RegisterDefaultTransformers(t *testing.T) (transformer.PathTransformer, transformer.PathTransformer, transformer.PathTransformer) { //nolint:lll
 	t.Helper()
 
 	genRe := `^/lustre/(scratch[^/]+)(/[^/]*)+?/([pP]rojects|teams|users)(_v2)?/([^/]+)/`

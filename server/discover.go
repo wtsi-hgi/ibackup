@@ -492,9 +492,8 @@ func filterEntries(entriesCh chan *set.Dirent, excludeTree ptrie.Trie[bool],
 			return nil
 		}
 
-		if !(entry.IsRegular() || entry.IsSymlink() || entry.IsDir()) ||
-			dirent.Path == filepath.Clean(parentDir) { //nolint:wsl
-
+		if !entry.IsRegular() && !entry.IsSymlink() && !entry.IsDir() &&
+			dirent.Path != filepath.Clean(parentDir) { //nolint:wsl,whitespace
 			return nil
 		}
 

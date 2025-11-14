@@ -101,6 +101,9 @@ relative to the local prefix, and will end up relative to the remote prefix.)
 				optionCount++
 
 				tx, err = transformer.MakePathTransformer(name)
+				if err != nil {
+					die(err)
+				}
 			}
 		}
 

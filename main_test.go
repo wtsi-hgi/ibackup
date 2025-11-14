@@ -257,6 +257,8 @@ func (s *TestServer) prepareConfig(t *testing.T) {
 }
 
 func generateDefaultConfig(t *testing.T) {
+	t.Helper()
+
 	conf := filepath.Join(t.TempDir(), "config.json")
 	genRe := `^/lustre/(scratch[^/]+)(/[^/]*)+?/([pP]rojects|teams|users)(_v2)?/([^/]+)/`
 
@@ -1624,7 +1626,6 @@ var errMismatchedDBBackupSizes = errors.New("mismatched db backup sizes")
 
 func TestBackup(t *testing.T) {
 	Convey("Adding a set causes a database backup locally and remotely", t, func() {
-
 		remotePath := remoteDBBackupPath()
 		if remotePath == "" {
 			SkipConvey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
@@ -2286,17 +2287,17 @@ func getRemoteMeta(path string) string {
 }
 
 func removeFileFromIRODS(path string) {
-	_, err := exec.Command("irm", "-f", path).CombinedOutput()
+	_, err := exec.Command("irm", "-f", path).CombinedOutput() //nolint:noctx
 	So(err, ShouldBeNil)
 }
 
 func addFileToIRODS(localPath, remotePath string) {
-	_, err := exec.Command("iput", localPath, remotePath).CombinedOutput()
+	_, err := exec.Command("iput", localPath, remotePath).CombinedOutput() //nolint:noctx
 	So(err, ShouldBeNil)
 }
 
 func addRemoteMeta(remotePath, key, value string) {
-	_, err := exec.Command("imeta", "add", "-d", remotePath, key, value).CombinedOutput()
+	_, err := exec.Command("imeta", "add", "-d", remotePath, key, value).CombinedOutput() //nolint:noctx
 	So(err, ShouldBeNil)
 }
 
@@ -2442,7 +2443,7 @@ func TestManualMode(t *testing.T) {
 			restoreFiles(t, file1+"\t"+remote1+"\n", "1 downloaded (1 replaced); 0 skipped; 0 failed; 0 missing\n")
 			confirmFileContents(t, file1, fileContents1)
 
-			So(exec.Command("imeta", "add", "-d", remote2, transfer.MetaKeySymlink, file1).Run(), ShouldBeNil)
+			So(exec.Command("imeta", "add", "-d", remote2, transfer.MetaKeySymlink, file1).Run(), ShouldBeNil) //nolint:noctx
 
 			restoreFiles(t, file3+"\t"+remote2+"\n", "1 downloaded (0 replaced); 0 skipped; 0 failed; 0 missing\n")
 
@@ -2474,7 +2475,7 @@ func TestManualMode(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(link, ShouldEqual, file1)
 
-			So(exec.Command("imeta", "add", "-d", remote1, transfer.MetaKeyRemoteHardlink, remote2).Run(), ShouldBeNil)
+			So(exec.Command("imeta", "add", "-d", remote1, transfer.MetaKeyRemoteHardlink, remote2).Run(), ShouldBeNil) //nolint:noctx,lll
 
 			restoreFiles(
 				t,
@@ -2491,9 +2492,9 @@ func TestManualMode(t *testing.T) {
 			)
 			confirmFileContents(t, file8, fileContents2)
 
-			So(exec.Command("imeta", "rm", "-d", remote1, transfer.MetaKeyRemoteHardlink, remote2).Run(), ShouldBeNil)
+			So(exec.Command("imeta", "rm", "-d", remote1, transfer.MetaKeyRemoteHardlink, remote2).Run(), ShouldBeNil) //nolint:noctx,lll
 			So(
-				exec.Command("imeta", "mod", "-d", remote1, transfer.MetaKeyGroup, groupA.Name, "v:root").Run(),
+				exec.Command("imeta", "mod", "-d", remote1, transfer.MetaKeyGroup, groupA.Name, "v:root").Run(), //nolint:noctx
 				ShouldBeNil,
 			)
 
@@ -2501,7 +2502,7 @@ func TestManualMode(t *testing.T) {
 				"[1/1] "+file6+" warning: lchown "+file6+": operation not permitted\n"+
 					"1 downloaded (0 replaced); 0 skipped; 0 failed; 0 missing\n")
 
-			So(exec.Command("imeta", "rm", "-d", remote2, transfer.MetaKeyMtime).Run(), ShouldBeNil)
+			So(exec.Command("imeta", "rm", "-d", remote2, transfer.MetaKeyMtime).Run(), ShouldBeNil) //nolint:noctx
 
 			restoreFiles(t, file7+"\t"+remote2+"\n",
 				"1 downloaded (0 replaced); 0 skipped; 0 failed; 0 missing\n")
@@ -2515,7 +2516,7 @@ func TestManualMode(t *testing.T) {
 func restoreFiles(t *testing.T, files, expectedOutput string, args ...string) {
 	t.Helper()
 
-	cmd := exec.Command("./"+app, append([]string{"get"}, args...)...) //nolint:gosec
+	cmd := exec.Command("./"+app, append([]string{"get"}, args...)...) //nolint:gosec,noctx
 	cmd.Stdin = strings.NewReader(files)
 
 	output, err := cmd.CombinedOutput()
@@ -3090,7 +3091,7 @@ func TestRemove(t *testing.T) {
 				cmd := []string{"status", "--name", setName, "--url", s.url, "--cert", s.cert}
 
 				status := retry.Do(ctx, func() error {
-					clientCmd := exec.Command("./"+app, cmd...)
+					clientCmd := exec.Command("./"+app, cmd...) //nolint:noctx
 					clientCmd.Env = s.env
 
 					output, errc := clientCmd.CombinedOutput()
@@ -3297,7 +3298,7 @@ func TestTrashRemove(t *testing.T) {
 				s.waitForStatus(setName, "Removal status: 9 / 9 objects removed", timeout)
 
 				Convey("Trash remove will permanently remove a file from the set", func() {
-					output, erro := exec.Command("ils", remotePath).CombinedOutput()
+					output, erro := exec.Command("ils", remotePath).CombinedOutput() //nolint:noctx
 					So(erro, ShouldBeNil)
 					So(string(output), ShouldContainSubstring, "file2")
 
@@ -3307,14 +3308,14 @@ func TestTrashRemove(t *testing.T) {
 						0, file2)
 
 					Convey("And from iRODS", func() {
-						output, err = exec.Command("ils", remotePath).CombinedOutput()
+						output, err = exec.Command("ils", remotePath).CombinedOutput() //nolint:noctx
 						So(err, ShouldBeNil)
 						So(string(output), ShouldNotContainSubstring, "file2")
 					})
 				})
 
 				Convey("Trash remove removes the dir from the set", func() {
-					output, errc := exec.Command("ils", "-r", remotePath).CombinedOutput()
+					output, errc := exec.Command("ils", "-r", remotePath).CombinedOutput() //nolint:noctx
 					So(errc, ShouldBeNil)
 					So(string(output), ShouldContainSubstring, "path/to/some/dir")
 					So(string(output), ShouldContainSubstring, "file3\n")
@@ -3328,7 +3329,7 @@ func TestTrashRemove(t *testing.T) {
 					So(outputStr, ShouldNotContainSubstring, dir1+" => ")
 
 					Convey("And from iRODS", func() {
-						output, err = exec.Command("ils", "-r", remotePath).CombinedOutput()
+						output, err = exec.Command("ils", "-r", remotePath).CombinedOutput() //nolint:noctx
 						So(err, ShouldBeNil)
 						So(string(output), ShouldContainSubstring, "dir_not_removed\n")
 						So(string(output), ShouldNotContainSubstring, "path/to/some/dir")
@@ -3432,15 +3433,15 @@ func TestTrashRemove(t *testing.T) {
 				Convey("Trash remove with a hardlink removes both the hardlink file and inode file", func() {
 					remoteInode := getMetaValue(getRemoteMeta(filepath.Join(remotePath, "link")), "ibackup:remotehardlink")
 
-					_, err = exec.Command("ils", remoteInode).CombinedOutput()
+					_, err = exec.Command("ils", remoteInode).CombinedOutput() //nolint:noctx
 					So(err, ShouldBeNil)
 
 					s.trashRemovePath(t, setName, linkPath, 1)
 
-					_, err = exec.Command("ils", remoteLink).CombinedOutput()
+					_, err = exec.Command("ils", remoteLink).CombinedOutput() //nolint:noctx
 					So(err, ShouldNotBeNil)
 
-					_, err = exec.Command("ils", remoteInode).CombinedOutput()
+					_, err = exec.Command("ils", remoteInode).CombinedOutput() //nolint:noctx
 					So(err, ShouldNotBeNil)
 				})
 
@@ -3457,15 +3458,15 @@ func TestTrashRemove(t *testing.T) {
 					Convey("Removing a hardlink does not remove the inode file", func() {
 						remoteInode := getMetaValue(getRemoteMeta(filepath.Join(remotePath, "link")), "ibackup:remotehardlink")
 
-						_, err = exec.Command("ils", remoteInode).CombinedOutput()
+						_, err = exec.Command("ils", remoteInode).CombinedOutput() //nolint:noctx
 						So(err, ShouldBeNil)
 
 						s.trashRemovePath(t, setName, linkPath, 1)
 
-						_, err = exec.Command("ils", remoteLink).CombinedOutput()
+						_, err = exec.Command("ils", remoteLink).CombinedOutput() //nolint:noctx
 						So(err, ShouldNotBeNil)
 
-						_, err = exec.Command("ils", remoteInode).CombinedOutput()
+						_, err = exec.Command("ils", remoteInode).CombinedOutput() //nolint:noctx
 						So(err, ShouldBeNil)
 					})
 				})
@@ -3473,7 +3474,7 @@ func TestTrashRemove(t *testing.T) {
 				Convey("And if you trash remove a file nested in an otherwise empty dir", func() {
 					s.trashRemovePath(t, setName, file3, 1)
 
-					output, errc := exec.Command("ils", "-r", remotePath).CombinedOutput()
+					output, errc := exec.Command("ils", "-r", remotePath).CombinedOutput() //nolint:noctx
 					So(errc, ShouldBeNil)
 					So(string(output), ShouldNotContainSubstring, "path/to/some/dir")
 					So(string(output), ShouldNotContainSubstring, "file3\n")
@@ -3512,7 +3513,7 @@ func TestTrashRemove(t *testing.T) {
 						s.trashRemovePath(t, setName, file1, 1)
 
 						Convey("The file is still in iRODS", func() {
-							outputBytes, errc := exec.Command("ils", remotePath).CombinedOutput()
+							outputBytes, errc := exec.Command("ils", remotePath).CombinedOutput() //nolint:noctx
 							So(errc, ShouldBeNil)
 							So(string(outputBytes), ShouldContainSubstring, "file1")
 
@@ -3530,13 +3531,13 @@ func TestTrashRemove(t *testing.T) {
 					})
 
 					Convey("Trash remove does not try and fail to remove the provided dir from iRODS", func() {
-						output, errc := exec.Command("ils", "-r", remotePath).CombinedOutput()
+						output, errc := exec.Command("ils", "-r", remotePath).CombinedOutput() //nolint:noctx
 						So(errc, ShouldBeNil)
 						So(string(output), ShouldContainSubstring, "path/to/some/dir")
 
 						s.trashRemovePath(t, setName, dir1, 2)
 
-						output, errc = exec.Command("ils", "-r", remotePath).CombinedOutput()
+						output, errc = exec.Command("ils", "-r", remotePath).CombinedOutput() //nolint:noctx
 						So(errc, ShouldBeNil)
 						So(string(output), ShouldContainSubstring, "path/to/some/dir")
 					})
@@ -3602,11 +3603,11 @@ func TestTrashRemove(t *testing.T) {
 					usernameRE := regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 					So(usernameRE.MatchString(curUser.Username), ShouldBeTrue)
 
-					_, err = exec.Command("ichmod", "read", curUser.Username, file1remote).CombinedOutput() //nolint:gosec
+					_, err = exec.Command("ichmod", "read", curUser.Username, file1remote).CombinedOutput() //nolint:gosec,noctx
 					So(err, ShouldBeNil)
 
 					defer func() {
-						exec.Command("ichmod", "own", curUser.Username, file1remote).CombinedOutput() //nolint:errcheck,gosec
+						exec.Command("ichmod", "own", curUser.Username, file1remote).CombinedOutput() //nolint:errcheck,gosec,noctx
 					}()
 
 					exitCode, _ := s.runBinary(t, "trash", "--remove", "--name", setName, "--path", file1)
@@ -3622,7 +3623,7 @@ func TestTrashRemove(t *testing.T) {
 					})
 
 					Convey("And succeeds if issue is fixed during retries", func() {
-						_, err = exec.Command("ichmod", "own", curUser.Username, file1remote).CombinedOutput() //nolint:gosec
+						_, err = exec.Command("ichmod", "own", curUser.Username, file1remote).CombinedOutput() //nolint:gosec,noctx
 						So(err, ShouldBeNil)
 
 						s.waitForStatus(trashSetName, "Removal status: 1 / 1 objects removed", 10*time.Second)

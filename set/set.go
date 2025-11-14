@@ -325,10 +325,6 @@ func (s *Set) TransformPath(path string) (string, error) {
 // MakeTransformer turns our Transformer string in to a
 // transformer.PathTransformer.
 func (s *Set) MakeTransformer() (transformer.PathTransformer, error) {
-	if err := transformer.ValidateTransformer(s.Transformer); err != nil {
-		return nil, err
-	}
-
 	return transformer.MakePathTransformer(s.Transformer)
 }
 
@@ -576,7 +572,7 @@ func (s *Set) checkIfUploading() {
 }
 
 func (s *Set) checkIfComplete() {
-	if !(s.Uploaded+s.Replaced+s.Skipped+s.Failed+s.Missing+s.Orphaned+s.Abnormal == s.NumFiles) {
+	if s.Uploaded+s.Replaced+s.Skipped+s.Failed+s.Missing+s.Orphaned+s.Abnormal != s.NumFiles {
 		return
 	}
 

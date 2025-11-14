@@ -185,7 +185,6 @@ func TestPutMock(t *testing.T) {
 					p.Cleanup()
 					So(lh.Cleaned, ShouldBeTrue)
 				})
-
 			})
 
 			Convey("Put() fails if the local files don't exist", func() {

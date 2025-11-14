@@ -321,7 +321,6 @@ func (d *DB) AddOrUpdate(set *Set) error { //nolint:funlen,gocognit,gocyclo
 
 		return b.Put([]byte(set.Requester+separator+id), bid)
 	})
-
 	if err == nil {
 		set.SuccessfullyStoredInDB()
 	}
@@ -399,7 +398,9 @@ func (d *DB) UpdateEntry(sid, key string, entry *Entry) error {
 // in a database.
 func (d *DB) encodeToBytes(thing interface{}) []byte {
 	var encoded []byte
+
 	enc := codec.NewEncoderBytes(&encoded, d.ch)
+
 	enc.MustEncode(thing)
 
 	return encoded

@@ -263,11 +263,10 @@ func TestRequest(t *testing.T) {
 
 			fields := t.NumField()
 
-			for i := 0; i < fields; i++ {
+			for i := range fields {
 				if t.Field(i).Name == "LocalForJSON" || t.Field(i).Name == "RemoteForJSON" ||
 					t.Field(i).Name == "emptyFileRequest" || t.Field(i).Name == "inodeRequest" ||
-					t.Field(i).Name == "onlyUploadEmptyFile" {
-
+					t.Field(i).Name == "onlyUploadEmptyFile" { //nolint:whitespace
 					continue
 				}
 

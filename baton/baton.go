@@ -417,6 +417,7 @@ func (b *Baton) Stat(remote string) (bool, map[string]string, error) {
 
 	err = timeoutOp(func() error {
 		var errl error
+
 		it, errl = b.metaClient.ListItem(ex.Args{Timestamp: true, AVU: true}, *requestToRodsItem("", remote))
 
 		return errl

@@ -705,7 +705,8 @@ func displayAllEntries(client *server.Client, given *set.Set, showRemotePaths bo
 }
 
 // displayEntries prints info about the given file entries to STDOUT.
-func displayEntries(entries []*set.Entry, showRemotePaths, showTrashDate bool, transformer transformer.PathTransformer) {
+func displayEntries(entries []*set.Entry, showRemotePaths,
+	showTrashDate bool, transformer transformer.PathTransformer) {
 	if len(entries) == 0 {
 		return
 	}

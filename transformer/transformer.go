@@ -18,8 +18,6 @@ var (
 )
 
 type transformer struct {
-	id      int64
-	name    string
 	re      *regexp.Regexp
 	replace string
 }
@@ -29,8 +27,8 @@ type tx interface {
 }
 
 var (
-	mu           sync.RWMutex
-	transformers = map[string]tx{}
+	mu           sync.RWMutex      //nolint:gochecknoglobals
+	transformers = map[string]tx{} //nolint:gochecknoglobals
 )
 
 func newTransformer(name, match, replace string) (*transformer, error) {
@@ -49,7 +47,9 @@ func newTransformer(name, match, replace string) (*transformer, error) {
 	}
 
 	mu.Lock()
+
 	transformers[name] = tx
+
 	mu.Unlock()
 
 	return tx, nil
@@ -71,29 +71,34 @@ func (t *transformer) Transform(path string) (string, error) {
 // named or prefix transformer.
 func Transform(transformer string, path string) (string, error) {
 	mu.RLock()
-	tx, ok := transformers[transformer]
+
+	txa, ok := transformers[transformer]
+
 	mu.RUnlock()
 
-	if !ok {
+	if !ok { //nolint:nestif
 		if strings.HasPrefix(transformer, prefixPrefix) {
 			var err error
-			tx, err = compilePrefixTransformer(transformer)
+
+			txa, err = compilePrefixTransformer(transformer)
 			if err != nil {
-				return "", nil
+				return "", nil //nolint:nilerr
 			}
 		} else {
 			return "", ErrInvalidTransformer
 		}
 	}
 
-	return tx.Transform(path)
+	return txa.Transform(path)
 }
 
 // ValidateTransformer confirms the existence of a named transformer, or whether
 // a given prefix transform is of the correct format.
 func ValidateTransformer(transformer string) error {
 	mu.RLock()
+
 	_, ok := transformers[transformer]
+
 	mu.RUnlock()
 
 	if ok {
@@ -112,6 +117,10 @@ type PathTransformer func(local string) (remote string, err error)
 // MakePathTransformer returns a function that used the given named or prefix
 // transformer to transform local paths to remote paths.
 func MakePathTransformer(tx string) (PathTransformer, error) {
+	if err := ValidateTransformer(tx); err != nil {
+		return nil, err
+	}
+
 	return func(path string) (string, error) {
 		return Transform(tx, path)
 	}, nil
@@ -133,7 +142,7 @@ func (p *prefixTransformer) Transform(path string) (string, error) {
 	return filepath.Join(p.remote, strings.TrimPrefix(path, p.local)), nil
 }
 
-func compilePrefixTransformer(trans string) (tx, error) {
+func compilePrefixTransformer(trans string) (tx, error) { //nolint:ireturn
 	if !strings.HasPrefix(trans, prefixPrefix) {
 		return nil, ErrInvalidTransformer
 	}
@@ -149,7 +158,9 @@ func compilePrefixTransformer(trans string) (tx, error) {
 	}
 
 	mu.Lock()
+
 	transformers[trans] = tx
+
 	mu.Unlock()
 
 	return tx, nil
