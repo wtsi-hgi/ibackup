@@ -39,7 +39,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/wtsi-hgi/ibackup/server"
 	"github.com/wtsi-hgi/ibackup/set"
-	"github.com/wtsi-hgi/ibackup/transfer"
+	"github.com/wtsi-hgi/ibackup/transformer"
 )
 
 const dateShort = "06/01/02"
@@ -576,7 +576,7 @@ func bytesToMB(bytes uint64) float64 {
 }
 
 // getSetTransformer returns the set's tranformer, or dies.
-func getSetTransformer(given *set.Set) transfer.PathTransformer {
+func getSetTransformer(given *set.Set) transformer.PathTransformer {
 	transformer, err := given.MakeTransformer()
 	if err != nil {
 		dief("your transformer didn't work: %s", err)
@@ -604,7 +604,7 @@ func getDirs(client *server.Client, setID string) map[string]set.EntryStatus {
 
 // displayDirs prints out directories one per line with a header, if dirs is not
 // empty.
-func displayDirs(dirs map[string]set.EntryStatus, transformer transfer.PathTransformer) {
+func displayDirs(dirs map[string]set.EntryStatus, transformer transformer.PathTransformer) {
 	if len(dirs) == 0 {
 		return
 	}
@@ -660,7 +660,7 @@ func getExampleFile(client *server.Client, setID string) string {
 	return exampleFile.Path
 }
 
-func displayExampleFile(path string, transformer transfer.PathTransformer) {
+func displayExampleFile(path string, transformer transformer.PathTransformer) {
 	if path == "" {
 		return
 	}
@@ -693,7 +693,7 @@ func displayFailedEntries(client *server.Client, given *set.Set) {
 // displayAllEntries prints out details about all entries in the given
 // set.
 func displayAllEntries(client *server.Client, given *set.Set, showRemotePaths bool,
-	transformer transfer.PathTransformer) {
+	transformer transformer.PathTransformer) {
 	all, err := client.GetFiles(given.ID())
 	if err != nil {
 		die(err)
@@ -705,7 +705,7 @@ func displayAllEntries(client *server.Client, given *set.Set, showRemotePaths bo
 }
 
 // displayEntries prints info about the given file entries to STDOUT.
-func displayEntries(entries []*set.Entry, showRemotePaths, showTrashDate bool, transformer transfer.PathTransformer) {
+func displayEntries(entries []*set.Entry, showRemotePaths, showTrashDate bool, transformer transformer.PathTransformer) {
 	if len(entries) == 0 {
 		return
 	}
@@ -743,7 +743,7 @@ func printEntriesHeader(cols []string) {
 }
 
 // getRemotePath returns the remote path for a given path.
-func getRemotePath(path string, transformer transfer.PathTransformer, wantRemote bool) string {
+func getRemotePath(path string, transformer transformer.PathTransformer, wantRemote bool) string {
 	if !wantRemote {
 		return ""
 	}

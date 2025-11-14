@@ -31,6 +31,7 @@ import (
 	"crypto/sha256"
 	b64 "encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -100,8 +101,8 @@ func NewTestServer(t *testing.T) *TestServer {
 
 	s := new(TestServer)
 
+	s.prepareConfig(t)
 	s.prepareFilePaths(dir)
-	s.prepareConfig()
 
 	s.startServer()
 
@@ -115,8 +116,8 @@ func NewUploadingTestServer(t *testing.T, withDBBackup bool) (*TestServer, strin
 
 	s := new(TestServer)
 
+	s.prepareConfig(t)
 	s.prepareFilePaths(dir)
-	s.prepareConfig()
 
 	remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
 	if remotePath == "" {
@@ -200,6 +201,7 @@ func (s *TestServer) prepareFilePaths(dir string) {
 		"GEM_HOME=" + os.Getenv("GEM_HOME"),
 		"IBACKUP_SLACK_TOKEN=" + os.Getenv("IBACKUP_SLACK_TOKEN"),
 		"IBACKUP_SLACK_CHANNEL=" + os.Getenv("IBACKUP_SLACK_CHANNEL"),
+		"IBACKUP_CONFIG=" + os.Getenv("IBACKUP_CONFIG"),
 	}
 }
 
@@ -220,7 +222,11 @@ func getFakeBaton(dir string) string {
 
 // prepareConfig creates a key and cert to use with a server and looks at
 // IBACKUP_TEST_* env vars to set SERVER vars as well.
-func (s *TestServer) prepareConfig() {
+func (s *TestServer) prepareConfig(t *testing.T) {
+	t.Helper()
+
+	generateDefaultConfig(t)
+
 	s.url = os.Getenv("IBACKUP_TEST_SERVER_URL")
 	if s.url == "" {
 		port, err := freeport.GetFreePort()
@@ -248,6 +254,32 @@ func (s *TestServer) prepareConfig() {
 	s.ldapLookup = os.Getenv("IBACKUP_TEST_LDAP_LOOKUP")
 
 	s.debouncePeriod = "5"
+}
+
+func generateDefaultConfig(t *testing.T) {
+	conf := filepath.Join(t.TempDir(), "config.json")
+	genRe := `^/lustre/(scratch[^/]+)(/[^/]*)+?/([pP]rojects|teams|users)(_v2)?/([^/]+)/`
+
+	type tx struct {
+		Description string
+		Re, Replace string
+	}
+
+	f, err := os.Create(conf)
+	So(err, ShouldBeNil)
+	So(json.NewEncoder(f).Encode(struct {
+		Transformers map[string]tx `json:"transformers"`
+	}{
+		Transformers: map[string]tx{
+			"humgen": {Re: genRe, Replace: "/humgen/$3/$5/$1$4/"},
+			"gengen": {Re: genRe, Replace: "/humgen/gengen/$3/$5/$1$4/"},
+			"otar":   {Re: genRe, Replace: "/humgen/open-targets/$3/$5/$1$4/"},
+		},
+	}), ShouldBeNil)
+	So(f.Close(), ShouldBeNil)
+
+	os.Setenv("IBACKUP_CONFIG", conf)
+	Reset(func() { os.Setenv("IBACKUP_CONFIG", "") })
 }
 
 func (s *TestServer) startServer() {
@@ -700,8 +732,8 @@ func TestList(t *testing.T) {
 
 				Convey("list returns an error", func() {
 					s.confirmOutput(t, []string{"list", "--name", "testAddFiles"}, 1,
-						"your transformer didn't work: not a valid lustre path ["+
-							dir+"/path/to/other/file]")
+						"your transformer didn't work: "+
+							dir+"/path/to/other/file: invalid transform path")
 				})
 			})
 		})
@@ -1204,7 +1236,7 @@ Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently 
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Completed in: 0s
 Directories:
-your transformer didn't work: not a valid lustre path [` + localDir + `/file.txt]
+your transformer didn't work: ` + localDir + `/file.txt: invalid transform path
   ` + localDir
 
 			s.confirmOutput(t, []string{"status", "-n", "badHumgen"}, 0, expected)
@@ -1592,6 +1624,7 @@ var errMismatchedDBBackupSizes = errors.New("mismatched db backup sizes")
 
 func TestBackup(t *testing.T) {
 	Convey("Adding a set causes a database backup locally and remotely", t, func() {
+
 		remotePath := remoteDBBackupPath()
 		if remotePath == "" {
 			SkipConvey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
@@ -1607,7 +1640,7 @@ func TestBackup(t *testing.T) {
 		dir := t.TempDir()
 		s := new(TestServer)
 		s.prepareFilePaths(dir)
-		s.prepareConfig()
+		s.prepareConfig(t)
 
 		s.backupFile = filepath.Join(dir, "db.bak")
 		s.remoteDBFile = remotePath
@@ -1697,7 +1730,7 @@ func TestBackup(t *testing.T) {
 			bs := new(TestServer)
 			bs.prepareFilePaths(tdir)
 			bs.dbFile = gotPath
-			bs.prepareConfig()
+			bs.prepareConfig(t)
 
 			bs.startServer()
 

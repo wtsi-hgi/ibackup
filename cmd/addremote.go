@@ -29,22 +29,18 @@ import (
 	"bufio"
 	b64 "encoding/base64"
 	"fmt"
-	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/wtsi-hgi/ibackup/transfer"
+	"github.com/wtsi-hgi/ibackup/transformer"
 )
 
 // options for this cmd.
 var arFile string
 var arPrefix string
-var arHumgen bool
-var arGengen bool
-var arOtar bool
+var arTx = map[string]*bool{}
 var arNull bool
 var arBase64 bool
-
-const arPrefixParts = 2
 
 // addremoteCmd represents the addremote command.
 var addremoteCmd = &cobra.Command{
@@ -79,57 +75,44 @@ Which you can pipe to the 'put' subcommand.
 
 (If the local prefix isn't present, the local path will be assumed to be
 relative to the local prefix, and will end up relative to the remote prefix.)
-
-Specific to the "humgen", "gengen" and "otar" groups at the Sanger Institute,
-you can use the --humgen, --gengen or --otar options to do a more complex
-transformation from local "lustre" paths to the "canonical" iRODS path in the
-humgen zone.
 `,
 	Run: func(cmd *cobra.Command, args []string) {
-		if arHumgen && arPrefix != "" {
-			dief("--humgen and --prefix are mutually exclusive")
-		}
+		var (
+			tx  transformer.PathTransformer
+			err error
+		)
 
-		if arGengen && arPrefix != "" {
-			dief("--gengen and --prefix are mutually exclusive")
-		}
+		if arPrefix != "" {
+			for name, set := range arTx {
+				if *set {
+					dief("--%s and --prefix are mutually exclusive", name)
+				}
+			}
 
-		if arOtar && arPrefix != "" {
-			dief("--otar and --prefix are mutually exclusive")
+			tx, err = transformer.MakePathTransformer(arPrefix)
+			if err != nil {
+				die(err)
+			}
 		}
 
 		optionCount := 0
+		for name, set := range arTx {
+			if *set {
+				optionCount++
 
-		if arHumgen {
-			optionCount++
-		}
-
-		if arGengen {
-			optionCount++
-		}
-
-		if arOtar {
-			optionCount++
+				tx, err = transformer.MakePathTransformer(name)
+			}
 		}
 
 		if optionCount > 1 {
-			dief("--humgen, --gengen and --otar are mutually exclusive")
+			dief("custom transformer flags are mutually exclusive")
 		}
 
-		if !arHumgen && !arGengen && !arOtar && arPrefix == "" {
-			dief("you must specify one of --prefix, --humgen, --gengen or --otar")
+		if optionCount == 0 && arPrefix == "" {
+			dief("you must specify one of --prefix, or a custom transformer flag")
 		}
 
-		pt := transfer.HumgenTransformer
-		if arPrefix != "" {
-			pt = makePrefixTransformer(arPrefix)
-		} else if arGengen {
-			pt = transfer.GengenTransformer
-		} else if arOtar {
-			pt = transfer.OpentargetsTransformer
-		}
-
-		transformARFile(arFile, pt, fofnLineSplitter(arNull), arBase64)
+		transformARFile(arFile, tx, fofnLineSplitter(arNull), arBase64)
 	},
 }
 
@@ -141,28 +124,33 @@ func init() {
 		"path to file with one local path per line (- means read from STDIN)")
 	addremoteCmd.Flags().StringVarP(&arPrefix, "prefix", "p", "",
 		"'/local/prefix:/remote/prefix' string to replace local prefix with remote")
-	addremoteCmd.Flags().BoolVar(&arHumgen, "humgen", false,
-		"generate the humgen zone canonical path for humgen lustre paths")
-	addremoteCmd.Flags().BoolVar(&arGengen, "gengen", false,
-		"generate the humgen zone canonical path for gengen lustre paths")
-	addremoteCmd.Flags().BoolVar(&arOtar, "otar", false,
-		"generate the humgen zone canonical path for open-targets lustre paths")
+
+	var txFlagsDesc string
+
+	for name, tx := range Config.Transformers {
+		var txFlag bool
+
+		arTx[name] = &txFlag
+
+		addremoteCmd.Flags().BoolVar(&txFlag, name, false, tx.Description)
+
+		txFlagsDesc += "\n\t--" + name + ":\t" + tx.Description
+	}
+
+	if len(Config.Transformers) > 0 {
+		addremoteCmd.Long += `
+You can use the following options to do a more complex transformation from local
+paths to the iRODS path:
+` + txFlagsDesc
+	}
+
 	addremoteCmd.Flags().BoolVarP(&arNull, "null", "0", false,
 		"input paths are terminated by a null character instead of a new line")
 	addremoteCmd.Flags().BoolVarP(&arBase64, "base64", "b", false,
 		"output paths base64 encoded")
 }
 
-func makePrefixTransformer(def string) transfer.PathTransformer {
-	parts := strings.Split(def, ":")
-	if len(parts) != arPrefixParts {
-		dief("'%s' wrong format, must be like '/local/prefix:/remote/prefix'", def)
-	}
-
-	return transfer.PrefixTransformer(parts[0], parts[1])
-}
-
-func transformARFile(path string, pt transfer.PathTransformer, splitter bufio.SplitFunc, encode bool) {
+func transformARFile(path string, pt transformer.PathTransformer, splitter bufio.SplitFunc, encode bool) {
 	scanner, df := createScannerForFile(path, splitter)
 	defer df()
 
