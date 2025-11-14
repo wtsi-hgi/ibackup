@@ -137,7 +137,7 @@ func init() {
 
 		addremoteCmd.Flags().BoolVar(&txFlag, name, false, tx.Description)
 
-		txFlagsDesc += "\n\t--" + name + ":\t" + tx.Description
+		txFlagsDesc += "\n\t--" + name + ":\t" + tx.Description //nolint:perfsprint
 	}
 
 	if len(Config.Transformers) > 0 {
