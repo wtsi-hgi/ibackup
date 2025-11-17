@@ -43,6 +43,7 @@ import (
 	"github.com/viant/ptrie"
 	"github.com/wtsi-hgi/ibackup/set"
 	"github.com/wtsi-hgi/ibackup/transfer"
+	"github.com/wtsi-hgi/ibackup/transformer"
 	"github.com/wtsi-ssg/wrstat/v6/walk"
 )
 
@@ -233,7 +234,7 @@ func (s *Server) discoverSet(given *set.Set, forceRemovals bool) error {
 // queues the set's files for uploading. Call this in a go-routine, but don't
 // call it multiple times at once for the same set! This will block removals on
 // the same set.
-func (s *Server) discoverThenEnqueue(given *set.Set, transformer transfer.PathTransformer, forceRemovals bool) {
+func (s *Server) discoverThenEnqueue(given *set.Set, transformer transformer.PathTransformer, forceRemovals bool) {
 	if given.MonitorRemovals || forceRemovals {
 		if err := s.discoverSetRemovals(given); err != nil {
 			s.recordSetError("error discovering set (%s) removals: %s", given.ID(), err)
@@ -491,9 +492,8 @@ func filterEntries(entriesCh chan *set.Dirent, excludeTree ptrie.Trie[bool],
 			return nil
 		}
 
-		if !(entry.IsRegular() || entry.IsSymlink() || entry.IsDir()) ||
-			dirent.Path == filepath.Clean(parentDir) { //nolint:wsl
-
+		if !(entry.IsRegular() || entry.IsSymlink() || entry.IsDir()) || //nolint:staticcheck
+			dirent.Path == filepath.Clean(parentDir) { //nolint:wsl,whitespace
 			return nil
 		}
 
@@ -580,7 +580,7 @@ func determineDirStatus(dirStatErr error, entry *set.Entry,
 // put requests for them and adds them to the global put queue for uploading.
 // Skips entries that are missing or that have failed or uploaded since the
 // last discovery.
-func (s *Server) enqueueSetFiles(given *set.Set, transformer transfer.PathTransformer) error {
+func (s *Server) enqueueSetFiles(given *set.Set, transformer transformer.PathTransformer) error {
 	entries, err := s.db.GetFileEntries(given.ID(), nil)
 	if err != nil {
 		return err
@@ -607,7 +607,7 @@ func uploadableEntries(entries []*set.Entry, given *set.Set) []*set.Entry {
 
 // enqueueEntries converts the given entries to requests, stores those in items
 // and adds them the in-memory queue.
-func (s *Server) enqueueEntries(entries []*set.Entry, given *set.Set, transformer transfer.PathTransformer) error {
+func (s *Server) enqueueEntries(entries []*set.Entry, given *set.Set, transformer transformer.PathTransformer) error {
 	defs := make([]*queue.ItemDef, len(entries))
 
 	for i, entry := range entries {
@@ -638,7 +638,7 @@ func (s *Server) enqueueEntries(entries []*set.Entry, given *set.Set, transforme
 
 // entryToRequest converts an Entry to a Request containing details of the given
 // set.
-func (s *Server) entryToRequest(entry *set.Entry, transformer transfer.PathTransformer,
+func (s *Server) entryToRequest(entry *set.Entry, transformer transformer.PathTransformer,
 	given *set.Set,
 ) (*transfer.Request, error) {
 	r, err := transfer.NewRequestWithTransformedLocal(entry.Path, transformer)

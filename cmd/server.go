@@ -146,7 +146,8 @@ ctrl-z; bg. Or better yet, use the daemonize program to daemonize this.
 If there's an issue with the database or behaviour of the queue, you can use the
 --debug option to start the server with job submission disabled on a copy of the
 database that you've made, to investigate.
-`,
+
+` + configSubHelp,
 	Run: func(cmd *cobra.Command, args []string) {
 		if len(args) != 1 && len(args) != 2 {
 			dief("you must supply the path to your set database file")

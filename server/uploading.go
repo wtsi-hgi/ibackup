@@ -114,6 +114,7 @@ func (ut *uploadTracker) numUploading() int {
 func (ut *uploadTracker) currentlyStuck() []*transfer.Request {
 	ut.RLock()
 	defer ut.RUnlock()
+
 	stuck := make([]*transfer.Request, len(ut.stuckRequests))
 	i := 0
 

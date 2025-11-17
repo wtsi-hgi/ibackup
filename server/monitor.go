@@ -142,6 +142,7 @@ func (m *Monitor) Add(s *set.Set) {
 	}
 
 	m.mu.Unlock()
+
 	m.monitorCh <- struct{}{}
 }
 

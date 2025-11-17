@@ -33,7 +33,9 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -46,7 +48,7 @@ const (
 	hoursInDay          = 24
 	hoursInWeek         = hoursInDay * 7
 	helpTextName        = "a short name for this backup set"
-	helpTextTransformer = "'humgen' | 'gengen' | 'otar' | 'prefix=local:remote'"
+	helpTextTransformer = "'prefix=local:remote'"
 	helpTextDescription = "a long description of this backup set"
 	helpTextFiles       = "path to file with one absolute local file path per line"
 	helpTextDirs        = "path to file with one absolute local directory path per line"
@@ -128,12 +130,7 @@ environment variable, or overriding that with the --cert argument).
 To describe the backup set you must provide:
 --name : a short unique name for this backup set; must not contain comma.
 --transformer : define where your local files should be backed up to by defining
-  a conversion of local path to a remote iRODS path:
-    'humgen' : for files stored on the Sanger Institute's lustre filesystem in a
-      Human Genetics project or team folder, use this transformer to backup
-	  files to the canonical path in the iRODS humgen zone.
-    'gengen' : like 'humgen', but for Generative Genomics data.
-	'otar'   : like 'humgen', but for Open Targets data.
+  a conversion of local path to a remote iRODS path:` + "\u200b" + `
     'prefix=local:remote' : replace 'local' with a local path prefix, and
 	  'remote' with a remote one, eg. 'prefix=/mnt/diska:/zone1' would backup
 	  /mnt/diska/subdir/file.txt to /zone1/subdir/file.txt.
@@ -193,7 +190,8 @@ it will backup and monitor the new list of files in future.
 
 If you are the user who started the ibackup server, you can use the --user
 option to add sets on behalf of other users.
-`,
+
+` + configSubHelp,
 	Run: func(cmd *cobra.Command, args []string) {
 		ensureURLandCert()
 
@@ -283,6 +281,33 @@ func init() {
 
 	if err := addCmd.MarkFlagRequired("name"); err != nil {
 		die(err)
+	}
+}
+
+func updateAddDescFlag() {
+	var (
+		txLongDesc, txFlagDesc string
+		maxLen                 = 0
+		keys                   = make([]string, 0, len(Config.Transformers))
+	)
+
+	for name := range Config.Transformers {
+		maxLen = max(maxLen, len(name))
+
+		keys = append(keys, name)
+	}
+
+	slices.Sort(keys)
+
+	for _, name := range keys {
+		txFlagDesc += "'" + name + "' | "                                       //nolint:perfsprint
+		txLongDesc += "\n    " + name + strings.Repeat(" ", maxLen-len(name)) + //nolint:perfsprint
+			": " + Config.Transformers[name].Description
+	}
+
+	if len(Config.Transformers) > 0 {
+		addCmd.Long = strings.ReplaceAll(addCmd.Long, "\u200b", txLongDesc)
+		addCmd.Flags().Lookup("transformer").Usage = txFlagDesc + helpTextTransformer
 	}
 }
 

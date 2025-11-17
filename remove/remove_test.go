@@ -34,6 +34,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/wtsi-hgi/ibackup/internal"
 	"github.com/wtsi-hgi/ibackup/transfer"
+	"github.com/wtsi-hgi/ibackup/transformer"
 )
 
 const userPerms = 0700
@@ -45,9 +46,8 @@ func TestRemoveMock(t *testing.T) {
 		sourceDir := t.TempDir()
 		destDir := t.TempDir()
 
-		transformer := transfer.PrefixTransformer(sourceDir, destDir)
-
-		var err error
+		transformer, err := transformer.MakePathTransformer("prefix=" + sourceDir + ":" + destDir)
+		So(err, ShouldBeNil)
 
 		Convey("Given an uploaded empty dir", func() {
 			dir1local := filepath.Join(sourceDir, "dir")

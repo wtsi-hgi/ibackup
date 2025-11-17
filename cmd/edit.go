@@ -28,6 +28,8 @@ package cmd
 
 import (
 	"errors"
+	"maps"
+	"slices"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -82,7 +84,9 @@ Edit an existing backup set. You cannot edit readonly sets and you cannot use
 --add on sets that are in the process of a removal.
 
 To edit the backup set you must provide --name, which should be the name of a 
-preexisting backup set.`,
+preexisting backup set.
+
+` + configSubHelp,
 	PreRunE: func(_ *cobra.Command, _ []string) error {
 		if editMakeReadOnly && editMakeWritable {
 			return ErrInvalidEditRO
@@ -220,6 +224,22 @@ func init() { //nolint:funlen
 
 	if err := editCmd.MarkFlagRequired("name"); err != nil {
 		die(err)
+	}
+}
+
+func updateEditFlagText() {
+	var txFlagDesc string
+
+	keys := slices.Collect(maps.Keys(Config.Transformers))
+
+	slices.Sort(keys)
+
+	for _, name := range keys {
+		txFlagDesc += "'" + name + "' | " //nolint:perfsprint
+	}
+
+	if len(Config.Transformers) > 0 {
+		editCmd.Flags().Lookup("transformer").Usage = txFlagDesc + helpTextTransformer
 	}
 }
 

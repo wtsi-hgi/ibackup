@@ -47,6 +47,7 @@ import (
 	"github.com/wtsi-hgi/ibackup/set"
 	"github.com/wtsi-hgi/ibackup/slack"
 	"github.com/wtsi-hgi/ibackup/transfer"
+	"github.com/wtsi-hgi/ibackup/transformer"
 )
 
 const (
@@ -879,7 +880,7 @@ func (s *Server) processRemoteFileRemoval(removeReq *set.RemoveReq, entry *set.E
 }
 
 func fileErrorCannotBeIgnored(err error, mayMissInRemote bool) bool {
-	return !(mayMissInRemote && strings.Contains(err.Error(), internal.ErrFileDoesNotExist))
+	return !(mayMissInRemote && strings.Contains(err.Error(), internal.ErrFileDoesNotExist)) //nolint:staticcheck,lll
 }
 
 func (s *Server) processDBFileTrash(set *set.Set, entry *set.Entry) error {
@@ -935,7 +936,7 @@ func (s *Server) processDBInodeRemoval(entry *set.Entry) error {
 	return s.db.RemoveFileFromInode(entry.Path, entry.Inode)
 }
 
-func (s *Server) updateOrRemoveRemoteFile(removeReq *set.RemoveReq, transformer transfer.PathTransformer,
+func (s *Server) updateOrRemoveRemoteFile(removeReq *set.RemoveReq, transformer transformer.PathTransformer,
 	entry *set.Entry,
 ) error {
 	rpath, err := transformer(removeReq.Path)
@@ -968,7 +969,7 @@ func (s *Server) updateOrRemoveRemoteFile(removeReq *set.RemoveReq, transformer 
 }
 
 func (s *Server) removeRemoteFileAndHandleHardlink(lpath, rpath string, meta map[string]string,
-	transformer transfer.PathTransformer, entry *set.Entry,
+	transformer transformer.PathTransformer, entry *set.Entry,
 ) error {
 	err := remove.RemoveFileAndParentFoldersIfEmpty(s.storageHandler, rpath)
 	if err != nil {
@@ -996,7 +997,7 @@ func (s *Server) removeRemoteFileAndHandleHardlink(lpath, rpath string, meta map
 	return s.storageHandler.RemoveFile(meta[transfer.MetaKeyRemoteHardlink])
 }
 
-func (s *Server) getFilesWithSameInode(path string, inode uint64, transformer transfer.PathTransformer,
+func (s *Server) getFilesWithSameInode(path string, inode uint64, transformer transformer.PathTransformer,
 	rInodePath string,
 ) ([]string, int, error) {
 	files, err := s.db.GetFilesFromInode(inode, s.db.GetMountPointFromPath(path))
@@ -1967,7 +1968,7 @@ func (s *Server) recoverSet(given *set.Set) error {
 
 	s.monitorSet(given)
 
-	var transformer transfer.PathTransformer
+	var transformer transformer.PathTransformer
 
 	var err error
 

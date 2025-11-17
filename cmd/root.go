@@ -48,7 +48,11 @@ var (
 const (
 	serverURLEnvKey  = "IBACKUP_SERVER_URL"
 	serverCertEnvKey = "IBACKUP_SERVER_CERT"
+	ConfigKey        = "IBACKUP_CONFIG"
 )
+
+const configSubHelp = "Non-prefix transformers can be specified in a config file.\n" +
+	"Please check ibackup -h for more information."
 
 // RootCmd represents the base command when called without any subcommands.
 var RootCmd = &cobra.Command{
@@ -66,9 +70,30 @@ echo /abs/path/to/dir2 >> dirs.txt
 ibackup add -n myfirstbackup -t 'humgen' -f files.txt -d dirs.txt
 ibackup status
 
-(You'll need the IBACKUP_SERVER_URL and IBACKUP_SERVER_CERT environment
+(You'll need the ` + serverURLEnvKey + ` and ` + serverCertEnvKey + ` environment
 variables set up for you by whoever started the server.)
 
+The ` + ConfigKey + ` environmental variable can be set to specify an ibackup
+configuration file.
+
+Currently that config file is used to register named transformers. The format of
+the file is as follows:
+
+{
+	"transformers": {
+		"transformer1": {
+			"description": "This is my first transformer",
+			"re": "^/some/local/path/([^/]+)/files",
+			"replace: "/remote/path/files/$1/"
+		},
+		"transformer2": {
+			"description": "This is my second transformer",
+			"re": "^/some/other/path/([^/]+)/version_([0-9]+)/",
+			"replace: "/remote/path/version_$2/$1/"
+		},
+		…
+	}
+}
 
 For manual backups, use the addremote and put sub-commands, eg. to backup
 everything in a directory:
