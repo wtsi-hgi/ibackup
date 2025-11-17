@@ -37,6 +37,7 @@ import (
 func main() {
 	config := os.Getenv("IBACKUP_CONFIG")
 	if config != "" {
+		fmt.Println(config)
 		if err := cmd.LoadConfig(config); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 

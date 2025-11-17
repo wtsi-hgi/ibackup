@@ -28,6 +28,8 @@ package cmd
 
 import (
 	"errors"
+	"maps"
+	"slices"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -220,6 +222,22 @@ func init() { //nolint:funlen
 
 	if err := editCmd.MarkFlagRequired("name"); err != nil {
 		die(err)
+	}
+}
+
+func updateEditFlagText() {
+	var txFlagDesc string
+
+	keys := slices.Collect(maps.Keys(Config.Transformers))
+
+	slices.Sort(keys)
+
+	for _, name := range keys {
+		txFlagDesc += "'" + name + "' | " //nolint:perfsprint
+	}
+
+	if len(Config.Transformers) > 0 {
+		editCmd.Flags().Lookup("transformer").Usage = txFlagDesc + helpTextTransformer
 	}
 }
 

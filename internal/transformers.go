@@ -7,6 +7,8 @@ import (
 	"github.com/wtsi-hgi/ibackup/transformer"
 )
 
+// RegisterDefaultTransformers registers three named transformers, 'humgen',
+// 'gengen', and 'otar', returning each as a PathTransformer.
 func RegisterDefaultTransformers(t *testing.T) (transformer.PathTransformer, transformer.PathTransformer, transformer.PathTransformer) { //nolint:lll
 	t.Helper()
 

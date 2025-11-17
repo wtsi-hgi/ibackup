@@ -29,6 +29,8 @@ import (
 	"bufio"
 	b64 "encoding/base64"
 	"fmt"
+	"slices"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/wtsi-hgi/ibackup/transfer"
@@ -128,29 +130,44 @@ func init() {
 	addremoteCmd.Flags().StringVarP(&arPrefix, "prefix", "p", "",
 		"'/local/prefix:/remote/prefix' string to replace local prefix with remote")
 
-	var txFlagsDesc string
+	addremoteCmd.Flags().BoolVarP(&arNull, "null", "0", false,
+		"input paths are terminated by a null character instead of a new line")
+	addremoteCmd.Flags().BoolVarP(&arBase64, "base64", "b", false,
+		"output paths base64 encoded")
+}
 
-	for name, tx := range Config.Transformers {
+func addRemoteCmdFlags() {
+	var (
+		txFlagsDesc string
+		maxLen      = 0
+		keys        []string
+	)
+
+	for name := range Config.Transformers {
+		maxLen = max(maxLen, len(name))
+
+		keys = append(keys, name)
+	}
+
+	slices.Sort(keys)
+
+	for _, name := range keys {
+		tx := Config.Transformers[name]
+
 		var txFlag bool
 
 		arTx[name] = &txFlag
 
 		addremoteCmd.Flags().BoolVar(&txFlag, name, false, tx.Description)
 
-		txFlagsDesc += "\n\t--" + name + ":\t" + tx.Description //nolint:perfsprint
+		txFlagsDesc += "\n\t--" + name + ":" + strings.Repeat(" ", maxLen-len(name)) + " " + tx.Description //nolint:perfsprint
 	}
 
 	if len(Config.Transformers) > 0 {
 		addremoteCmd.Long += `
 You can use the following options to do a more complex transformation from local
-paths to the iRODS path:
-` + txFlagsDesc
+paths to the iRODS path:` + txFlagsDesc
 	}
-
-	addremoteCmd.Flags().BoolVarP(&arNull, "null", "0", false,
-		"input paths are terminated by a null character instead of a new line")
-	addremoteCmd.Flags().BoolVarP(&arBase64, "base64", "b", false,
-		"output paths base64 encoded")
 }
 
 func transformARFile(path string, pt transformer.PathTransformer, splitter bufio.SplitFunc, encode bool) {
