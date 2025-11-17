@@ -51,6 +51,9 @@ const (
 	ConfigKey        = "IBACKUP_CONFIG"
 )
 
+const configSubHelp = "Non-prefix transformers can be specified in a config file.\n" +
+	"Please check ibackup -h for more information."
+
 // RootCmd represents the base command when called without any subcommands.
 var RootCmd = &cobra.Command{
 	Use:   "ibackup",

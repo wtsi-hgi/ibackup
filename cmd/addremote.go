@@ -77,7 +77,8 @@ Which you can pipe to the 'put' subcommand.
 
 (If the local prefix isn't present, the local path will be assumed to be
 relative to the local prefix, and will end up relative to the remote prefix.)
-`,
+
+` + configSubHelp,
 	Run: func(cmd *cobra.Command, args []string) {
 		var (
 			tx  transformer.PathTransformer

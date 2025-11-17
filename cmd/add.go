@@ -190,7 +190,8 @@ it will backup and monitor the new list of files in future.
 
 If you are the user who started the ibackup server, you can use the --user
 option to add sets on behalf of other users.
-`,
+
+` + configSubHelp,
 	Run: func(cmd *cobra.Command, args []string) {
 		ensureURLandCert()
 

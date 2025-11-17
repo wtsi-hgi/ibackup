@@ -84,7 +84,9 @@ Edit an existing backup set. You cannot edit readonly sets and you cannot use
 --add on sets that are in the process of a removal.
 
 To edit the backup set you must provide --name, which should be the name of a 
-preexisting backup set.`,
+preexisting backup set.
+
+` + configSubHelp,
 	PreRunE: func(_ *cobra.Command, _ []string) error {
 		if editMakeReadOnly && editMakeWritable {
 			return ErrInvalidEditRO
