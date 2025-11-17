@@ -140,12 +140,11 @@ func addRemoteCmdFlags() {
 	var (
 		txFlagsDesc string
 		maxLen      = 0
-		keys        []string
+		keys        = make([]string, 0, len(Config.Transformers))
 	)
 
 	for name := range Config.Transformers {
 		maxLen = max(maxLen, len(name))
-
 		keys = append(keys, name)
 	}
 
@@ -160,7 +159,8 @@ func addRemoteCmdFlags() {
 
 		addremoteCmd.Flags().BoolVar(&txFlag, name, false, tx.Description)
 
-		txFlagsDesc += "\n\t--" + name + ":" + strings.Repeat(" ", maxLen-len(name)) + " " + tx.Description //nolint:perfsprint
+		txFlagsDesc += "\n\t--" + name + ":" + //nolint:perfsprint
+			strings.Repeat(" ", maxLen-len(name)) + " " + tx.Description
 	}
 
 	if len(Config.Transformers) > 0 {

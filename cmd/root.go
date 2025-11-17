@@ -48,6 +48,7 @@ var (
 const (
 	serverURLEnvKey  = "IBACKUP_SERVER_URL"
 	serverCertEnvKey = "IBACKUP_SERVER_CERT"
+	ConfigKey        = "IBACKUP_CONFIG"
 )
 
 // RootCmd represents the base command when called without any subcommands.

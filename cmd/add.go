@@ -130,7 +130,7 @@ environment variable, or overriding that with the --cert argument).
 To describe the backup set you must provide:
 --name : a short unique name for this backup set; must not contain comma.
 --transformer : define where your local files should be backed up to by defining
-  a conversion of local path to a remote iRODS path:​
+  a conversion of local path to a remote iRODS path:` + "\u200b" + `
     'prefix=local:remote' : replace 'local' with a local path prefix, and
 	  'remote' with a remote one, eg. 'prefix=/mnt/diska:/zone1' would backup
 	  /mnt/diska/subdir/file.txt to /zone1/subdir/file.txt.
@@ -287,7 +287,7 @@ func updateAddDescFlag() {
 	var (
 		txLongDesc, txFlagDesc string
 		maxLen                 = 0
-		keys                   []string
+		keys                   = make([]string, 0, len(Config.Transformers))
 	)
 
 	for name := range Config.Transformers {
@@ -305,7 +305,7 @@ func updateAddDescFlag() {
 	}
 
 	if len(Config.Transformers) > 0 {
-		addCmd.Long = strings.ReplaceAll(addCmd.Long, "​", txLongDesc)
+		addCmd.Long = strings.ReplaceAll(addCmd.Long, "\u200b", txLongDesc)
 		addCmd.Flags().Lookup("transformer").Usage = txFlagDesc + helpTextTransformer
 	}
 }
