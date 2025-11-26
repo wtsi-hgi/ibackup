@@ -616,6 +616,26 @@ func TestNoServer(t *testing.T) {
 	})
 }
 
+func TestAddRemote(t *testing.T) {
+	Convey("You can call the addremote subcommand to get transformed paths", t, func() {
+		var sb strings.Builder
+
+		cmd := exec.Command("./"+app, "addremote", "--prefix", "/local/:/remote/")
+		cmd.Stdin = strings.NewReader(``)
+		cmd.Stdout = &sb
+
+		So(cmd.Run(), ShouldBeNil)
+		So(sb.String(), ShouldBeBlank)
+
+		cmd = exec.Command("./"+app, "addremote", "--prefix", "/local/:/remote/")
+		cmd.Stdin = strings.NewReader("/local/path/to/file\n/path/to/another/file")
+		cmd.Stdout = &sb
+
+		So(cmd.Run(), ShouldBeNil)
+		So(sb.String(), ShouldEqual, "/local/path/to/file\t/remote/path/to/file\n/path/to/another/file\t/remote/path/to/another/file\n")
+	})
+}
+
 func TestList(t *testing.T) {
 	Convey("With a started server", t, func() {
 		s := NewTestServer(t)
