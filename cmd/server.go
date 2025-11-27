@@ -91,8 +91,9 @@ unreliable filesystems.
 Starting the web server brings up a web interface and REST API that will use the
 given set database path to create a set database if it doesn't exist, add
 backup sets to the database, and return information about their status. If you
-provide a second database path, the database will be backed up to that path upon
-significant changes to the database.
+provide a second database path on the command line or set the
+IBACKUP_LOCAL_DB_BACKUP_PATH env var, the database will be backed up to that
+path upon significant changes to the database.
 
 If you also set --remote_backup or the IBACKUP_REMOTE_DB_BACKUP_PATH env var,
 and the second database path, the database backup files will also be put in to
@@ -255,6 +256,8 @@ database that you've made, to investigate.
 		dbBackupPath := ""
 		if len(args) == dbBackupParamPosition {
 			dbBackupPath = args[dbBackupParamPosition-1]
+		} else {
+			dbBackupPath = os.Getenv("IBACKUP_LOCAL_DB_BACKUP_PATH")
 		}
 
 		if serverHardlinksCollection != "" {
