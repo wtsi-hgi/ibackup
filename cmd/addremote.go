@@ -92,7 +92,7 @@ relative to the local prefix, and will end up relative to the remote prefix.)
 				}
 			}
 
-			tx, err = transformer.MakePathTransformer(arPrefix)
+			tx, err = transformer.MakePathTransformer("prefix=" + arPrefix)
 			if err != nil {
 				die(err)
 			}
