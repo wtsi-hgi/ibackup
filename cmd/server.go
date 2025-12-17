@@ -27,11 +27,16 @@
 package cmd
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/syslog"
 	"net"
 	"os"
+	"os/exec"
+	"slices"
+	"strings"
 	"time"
 
 	ldap "github.com/go-ldap/ldap/v3"
@@ -65,6 +70,8 @@ var serverSlackDebouncePeriod int
 var serverStillRunningMsgFreq string
 var serverTrashLifespan string
 var statterPath string
+var queue string
+var queueAvoid string
 
 // serverCmd represents the server command.
 var serverCmd = &cobra.Command{
@@ -147,6 +154,9 @@ ctrl-z; bg. Or better yet, use the daemonize program to daemonize this.
 If there's an issue with the database or behaviour of the queue, you can use the
 --debug option to start the server with job submission disabled on a copy of the
 database that you've made, to investigate.
+
+To specify the queue to which the jobs will be submitted, use the --queue option.
+To specify queues to avoid for job submission, use the --queues_avoid option.
 
 ` + configSubHelp,
 	Run: func(cmd *cobra.Command, args []string) {
@@ -231,6 +241,14 @@ database that you've made, to investigate.
 			dief("failed to make queue endpoints: %s", err)
 		}
 
+		validated, err := validateQueues(queue, queueAvoid)
+		if err != nil {
+			dief("failed to validate queues: %s", err)
+		}
+		if !validated {
+			queue = ""
+		}
+
 		if serverDebug || readonly {
 			warn("job submission has been disabled")
 		} else {
@@ -245,7 +263,7 @@ database that you've made, to investigate.
 				putCmd += fmt.Sprintf("--log %s.client.", serverLogPath)
 			}
 
-			err = s.EnableJobSubmission(putCmd, serverWRDeployment, "", "", numPutClients, appLogger)
+			err = s.EnableJobSubmission(putCmd, serverWRDeployment, "", queue, queueAvoid, numPutClients, appLogger)
 			if err != nil {
 				dief("failed to enable job submission: %s", err)
 			}
@@ -334,6 +352,9 @@ func init() {
 			" (eg. 1d for 1 day or 2w for 2 weeks), defaults to 30 days")
 	serverCmd.Flags().StringVar(&statterPath, "statter", "",
 		"path to an external statter program (https://github.com/wtsi-hgi/statter)")
+	serverCmd.Flags().StringVar(&queue, "queue", "", "specify queue to submit job") // TODO: Should it be valid to input multiple here? wr accepts multiple
+	serverCmd.Flags().StringVar(&queueAvoid, "queues_avoid", "",
+		"specify queues to not submit job")
 }
 
 // setServerLogger makes our appLogger log to the given path if non-blank,
@@ -415,6 +436,73 @@ func checkLDAPPassword(username, password string) (bool, string) {
 	}
 
 	return true, uid
+}
+
+func parseQueues(avoidQueues string) []string {
+	output := []string{}
+
+	if avoidQueues == "" {
+		return output
+	}
+
+	for _, queue := range strings.Split(avoidQueues, ",") {
+		queue = strings.TrimSpace(queue)
+		if queue != "" {
+			output = append(output, queue)
+		}
+	}
+
+	return output
+}
+
+type bqueuesOutput struct {
+	Records []struct {
+		QueueName string `json:"QUEUE_NAME"`
+	} `json:"RECORDS"`
+}
+
+func validateQueues(queueName string, avoidQueues string) (bool, error) {
+	avoid := parseQueues(avoidQueues)
+	if slices.Contains(avoid, queueName) {
+		return false, fmt.Errorf("queue '%s' is in avoid queues list", queueName)
+	}
+
+	if serverDebug || readonly {
+		return false, nil
+	}
+
+	validQueues, err := getValidQueues()
+	if err != nil {
+		return false, fmt.Errorf("failed to get valid queues: %s", err)
+	}
+
+	for _, record := range validQueues.Records {
+		if record.QueueName == queueName {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+func getValidQueues() (bqueuesOutput, error) {
+	var buf bytes.Buffer
+	cmd := exec.Command("bqueues", "-o", "QUEUE_NAME", "-json")
+	cmd.Stdout = &buf
+
+	err := cmd.Run()
+	if err != nil {
+		return bqueuesOutput{}, fmt.Errorf("failed to run bqueues: %s", err)
+	}
+
+	var output bqueuesOutput
+
+	err = json.NewDecoder(&buf).Decode(&output)
+	if err != nil {
+		return bqueuesOutput{}, fmt.Errorf("failed to decode bqueues output: %s", err)
+	}
+
+	return output, nil
 }
 
 // sayStarted logs to console that the server stated. It does this a second
