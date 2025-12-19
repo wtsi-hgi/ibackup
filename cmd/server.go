@@ -157,6 +157,7 @@ database that you've made, to investigate.
 
 To specify the queues to which the jobs will be submitted, use the --queues option.
 To specify queues to avoid for job submission, use the --queues_avoid option.
+These should be supplied as a comma separated list.
 
 ` + configSubHelp,
 	Run: func(cmd *cobra.Command, args []string) {
