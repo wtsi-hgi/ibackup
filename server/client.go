@@ -30,6 +30,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"runtime"
 	"sync"
 	"time"
 
@@ -48,8 +49,15 @@ const (
 	numHandlers          = 2
 	millisecondsInSecond = 1000
 
+	uploadResultWaitTick       = 30 * time.Second
+	uploadResultWaitLogEvery   = 2 * time.Minute
+	uploadResultWaitStackAfter = 10 * time.Minute
+	uploadResultWaitStackBuf   = 1 << 20
+
 	ErrKilledDueToStuck = gas.Error(transfer.ErrStuckTimeout)
 )
+
+var errUploadResultsClosedWhileWaiting = errors.New("upload results channel closed while waiting for result")
 
 // Client is used to interact with the Server over the network, with
 // authentication.
@@ -73,8 +81,6 @@ type Client struct {
 //
 // Provide a non-blank path to a certificate to force us to trust that
 // certificate, eg. if the server was started with a self-signed certificate.
-//
-// You must first gas.GetJWT() to get a JWT that you must supply here.
 func NewClient(url, cert, jwt string) *Client {
 	return &Client{
 		url:  url,
@@ -183,6 +189,7 @@ func (c *Client) GetSetByID(requester, setID string) (*set.Set, error) {
 
 // getFilteredSet calls GetSets() and returns the set that the given checker
 // returned true for.
+
 func (c *Client) getFilteredSet(requester string, checker func(*set.Set) bool) (*set.Set, error) {
 	sets, err := c.GetSets(requester)
 	if err != nil {
@@ -485,16 +492,90 @@ func (c *Client) handleUploadTracking(wg *sync.WaitGroup, uploadStarts, uploadRe
 
 		stopStuckTimer := c.stuckIfUploadTakesTooLong(ru)
 
-		rr := <-uploadResults
-
-		c.logger.Info("finished upload", "path", ru.Local)
+		rr, ok := c.waitForUploadResult(ru, uploadResults)
 		close(stopStuckTimer)
+
+		if !ok {
+			err := errUploadResultsClosedWhileWaiting
+			c.logger.Error("failed to read upload result", "err", err, "path", ru.Local)
+
+			c.uploadsErrCh <- err
+
+			continue
+		}
+
+		c.logger.Info("finished upload", "path", ru.Local, "status", rr.Status)
 
 		if err := c.UpdateFileStatus(rr); err != nil {
 			c.logger.Warn("failed to update file status to complete", "err", err, "path", ru.Local)
 			c.uploadsErrCh <- err
 		}
 	}
+}
+
+func (c *Client) waitForUploadResult(
+	started *transfer.Request,
+	uploadResults chan *transfer.Request,
+) (*transfer.Request, bool) {
+	startedWaiting := time.Now()
+	lastLog := startedWaiting
+	loggedStack := false
+
+	ticker := time.NewTicker(uploadResultWaitTick)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case rr, ok := <-uploadResults:
+			return rr, ok
+		case <-ticker.C:
+			waiting := time.Since(startedWaiting)
+			c.onUploadResultWaitTick(started, waiting, &lastLog, &loggedStack)
+		}
+	}
+}
+
+func (c *Client) onUploadResultWaitTick(
+	started *transfer.Request,
+	waiting time.Duration,
+	lastLog *time.Time,
+	loggedStack *bool,
+) {
+	c.logStillWaitingForUploadResult(started, waiting, lastLog)
+	c.dumpGoroutinesIfStuckWaiting(started, waiting, loggedStack)
+}
+
+func (c *Client) logStillWaitingForUploadResult(started *transfer.Request, waiting time.Duration, lastLog *time.Time) {
+	// Avoid log spam during normal but lengthy uploads.
+	if time.Since(*lastLog) < uploadResultWaitLogEvery {
+		return
+	}
+
+	c.logger.Warn(
+		"still waiting for upload result",
+		"path", started.Local,
+		"waiting", waiting,
+		"size_bytes", started.Size,
+	)
+
+	*lastLog = time.Now()
+}
+
+func (c *Client) dumpGoroutinesIfStuckWaiting(started *transfer.Request, waiting time.Duration, loggedStack *bool) {
+	if *loggedStack || waiting < uploadResultWaitStackAfter {
+		return
+	}
+
+	buf := make([]byte, uploadResultWaitStackBuf)
+	n := runtime.Stack(buf, true)
+	c.logger.Warn(
+		"goroutine dump after long wait for upload result",
+		"path", started.Local,
+		"waiting", waiting,
+		"dump", string(buf[:n]),
+	)
+
+	*loggedStack = true
 }
 
 // stuckIfUploadTakesTooLong will send stuck info to the server after some time

@@ -103,6 +103,14 @@ type Handler interface {
 	GetMeta(path string) (map[string]string, error)
 }
 
+// Logger is an optional structured logger used for deep tracing.
+// log15.Logger satisfies this interface.
+type Logger interface {
+	Debug(msg string, ctx ...interface{})
+	Info(msg string, ctx ...interface{})
+	Warn(msg string, ctx ...interface{})
+}
+
 // FileReadTester is a function that attempts to open and read the given path,
 // returning any error doing so. Should stop and clean up if the given ctx
 // becomes done before the open and read succeeds.
@@ -129,6 +137,7 @@ type FileStatusCallback func(absPath string, fi os.FileInfo) RequestStatus
 // Putter is used to Put() files in iRODS.
 type Putter struct {
 	handler                    Handler
+	logger                     Logger
 	fileReadTimeout            time.Duration
 	fileReadTester             FileReadTester
 	requests                   []*Request
@@ -137,6 +146,29 @@ type Putter struct {
 	transfer                   func(r *Request, handler Handler) error
 	applyMetadata              func(r *Request, handler Handler) error
 	overwrite, hardlinksNormal bool
+}
+
+// SetLogger sets an optional logger for deep tracing.
+func (p *Putter) SetLogger(logger Logger) {
+	p.logger = logger
+}
+
+func (p *Putter) debug(msg string, ctx ...interface{}) {
+	if p.logger != nil {
+		p.logger.Debug(msg, ctx...)
+	}
+}
+
+func (p *Putter) info(msg string, ctx ...interface{}) {
+	if p.logger != nil {
+		p.logger.Info(msg, ctx...)
+	}
+}
+
+func (p *Putter) warn(msg string, ctx ...interface{}) {
+	if p.logger != nil {
+		p.logger.Warn(msg, ctx...)
+	}
 }
 
 // New returns a *Putter that will use the given Handler to Put() all the
@@ -250,6 +282,7 @@ func (p *Putter) Cleanup() {
 // wrapped in to one.
 func (p *Putter) CreateCollections() error {
 	dirs := p.getUniqueRequestLeafCollections()
+	p.info("create collections", "collections", len(dirs))
 	pool := workerpool.New(WorkerPoolSizeCollections)
 	errCh := make(chan error, len(dirs))
 
@@ -277,7 +310,14 @@ func (p *Putter) CreateCollections() error {
 		merr = multierror.Append(merr, cdErr)
 	}
 
-	return merr.ErrorOrNil()
+	err := error(nil)
+	if merr != nil {
+		err = merr.ErrorOrNil()
+	}
+
+	p.info("create collections finished", "err", err)
+
+	return err
 }
 
 func (p *Putter) getUniqueRequestLeafCollections() []string {
@@ -357,12 +397,20 @@ func noLeavesOrNewLeaf(uniqueLeafs []string, last string) bool {
 // By calling SetFileStatusCallback() you can decide additional files to not
 // upload.
 func (p *Putter) Put() (chan *Request, chan *Request, chan *Request) {
+	p.info(
+		"put starting",
+		"requests", len(p.requests),
+		"duplicates", len(p.duplicateRequests),
+		"file_read_timeout", p.fileReadTimeout,
+	)
+
 	chanLen := len(p.requests) + len(p.duplicateRequests)
 	transferStartCh := make(chan *Request, chanLen)
 	transferReturnCh := make(chan *Request, chanLen)
 	skipReturnCh := make(chan *Request, chanLen)
 
 	go func() {
+		started := time.Now()
 		p.putRequests(p.requests, transferStartCh, transferReturnCh, skipReturnCh)
 
 		for i := range p.duplicateRequests {
@@ -372,6 +420,7 @@ func (p *Putter) Put() (chan *Request, chan *Request, chan *Request) {
 		close(transferStartCh)
 		close(transferReturnCh)
 		close(skipReturnCh)
+		p.info("put finished", "took", time.Since(started))
 	}()
 
 	return transferStartCh, transferReturnCh, skipReturnCh
@@ -447,6 +496,8 @@ func (p *Putter) pickFilesToPut(wg *sync.WaitGroup, requests []*Request,
 	putCh chan *Request, skipReturnCh chan *Request) {
 	defer wg.Done()
 
+	p.debug("pickFilesToPut starting", "requests", len(requests))
+
 	pool := workerpool.New(workerPoolSizeStats)
 
 	for _, request := range requests {
@@ -459,6 +510,7 @@ func (p *Putter) pickFilesToPut(wg *sync.WaitGroup, requests []*Request,
 
 	pool.StopWait()
 	close(putCh)
+	p.debug("pickFilesToPut finished")
 }
 
 // statPathsAndReturnOrPut stats the Local and Remote paths. On error, sends the
@@ -467,8 +519,10 @@ func (p *Putter) pickFilesToPut(wg *sync.WaitGroup, requests []*Request,
 // with a note to skip the actual put and just do metadata. Otherwise, sends
 // them to the putCh normally.
 func (p *Putter) statPathsAndReturnOrPut(request *Request, putCh chan *Request, skipReturnCh chan *Request) {
+	p.debug("stat local+remote", "local", request.Local, "remote", request.Remote)
 	lInfo, err := Stat(request.Local)
 	if err != nil {
+		p.warn("stat local failed", "local", request.Local, "err", err)
 		sendRequest(request, RequestStatusFailed, err, skipReturnCh)
 
 		return
@@ -478,18 +532,27 @@ func (p *Putter) statPathsAndReturnOrPut(request *Request, putCh chan *Request, 
 
 	rInfo, err := request.StatAndAssociateStandardMetadata(lInfo, p.handler)
 	if err != nil {
+		p.warn("stat remote/associate metadata failed", "remote", request.Remote, "local", request.Local, "err", err)
 		sendRequest(request, RequestStatusFailed, err, skipReturnCh)
 
 		return
 	}
 
 	if !lInfo.Exists {
+		p.info("local missing/orphaned", "local", request.Local, "remote", request.Remote, "remote_exists", rInfo.Exists)
 		sendRequest(request, getStatusBasedOnInfo(rInfo.Exists), nil, skipReturnCh)
 
 		return
 	}
 
 	if sendForUploadOrUnmodified(request, lInfo, rInfo, putCh, skipReturnCh) {
+		p.debug(
+			"decided upload/unmodified",
+			"local", request.Local,
+			"remote", request.Remote,
+			"status", request.Status,
+			"skip_put", request.skipPut,
+		)
 		return
 	}
 
@@ -505,6 +568,7 @@ func getStatusBasedOnInfo(remoteExists bool) RequestStatus {
 }
 
 func (p *Putter) getMetadataAndReturnOrPut(request *Request, putCh chan *Request, skipReturnCh chan *Request) {
+	p.debug("get metadata", "local", request.Local, "remote", request.Remote)
 	lInfo, err := Stat(request.Local)
 	if skipIfLocalFileIsNotEmptyAndNotOverwriting(lInfo, err, p.overwrite) {
 		sendRequest(request, RequestStatusUnmodified, err, skipReturnCh)
@@ -514,6 +578,7 @@ func (p *Putter) getMetadataAndReturnOrPut(request *Request, putCh chan *Request
 
 	rInfo, err := request.GetRemoteMetadata(p.handler)
 	if err != nil {
+		p.warn("get remote metadata failed", "remote", request.Remote, "err", err)
 		sendRequest(request, RequestStatusFailed, err, skipReturnCh)
 
 		return
@@ -617,6 +682,8 @@ func (p *Putter) transferFilesInIRODS(wg *sync.WaitGroup, putCh, uploadStartCh,
 	uploadReturnCh, skipReturnCh chan *Request) {
 	defer wg.Done()
 
+	p.debug("transferFilesInIRODS starting")
+
 	metaCh := make(chan *Request, cap(uploadReturnCh))
 	metaDoneCh := make(chan struct{})
 
@@ -627,11 +694,15 @@ func (p *Putter) transferFilesInIRODS(wg *sync.WaitGroup, putCh, uploadStartCh,
 	close(uploadStartCh)
 	close(metaCh)
 	<-metaDoneCh
+	p.debug("transferFilesInIRODS finished")
 }
 
 func (p *Putter) applyMetadataConcurrently(metaCh, uploadReturnCh, skipReturnCh chan *Request,
 	metaDoneCh chan struct{}) {
 	for request := range metaCh {
+		start := time.Now()
+
+		p.debug("apply metadata starting", "remote", request.Remote, "local", request.Local, "skip_put", request.skipPut)
 		returnCh := uploadReturnCh
 
 		if request.skipPut {
@@ -639,6 +710,13 @@ func (p *Putter) applyMetadataConcurrently(metaCh, uploadReturnCh, skipReturnCh 
 		}
 
 		if err := p.applyMetadata(request, p.handler); err != nil { //nolint:nestif
+			p.warn(
+				"apply metadata failed",
+				"remote", request.Remote,
+				"local", request.Local,
+				"took", time.Since(start),
+				"err", err,
+			)
 			if pe := new(fs.PathError); errors.As(err, &pe) && pe.Op == "lchown" {
 				sendRequest(request, RequestStatusWarning, err, returnCh)
 			} else {
@@ -648,6 +726,7 @@ func (p *Putter) applyMetadataConcurrently(metaCh, uploadReturnCh, skipReturnCh 
 			continue
 		}
 
+		p.debug("apply metadata finished", "remote", request.Remote, "local", request.Local, "took", time.Since(start))
 		returnCh <- request
 	}
 
@@ -663,6 +742,7 @@ func (p *Putter) sendFailedRequest(request *Request, err error, uploadReturnCh c
 func (p *Putter) processPutCh(putCh, uploadStartCh, uploadReturnCh, metaCh chan *Request) {
 	for request := range putCh {
 		if request.skipPut {
+			p.info("skip put; metadata only", "local", request.Local, "remote", request.Remote)
 			metaCh <- request
 
 			continue
@@ -670,20 +750,35 @@ func (p *Putter) processPutCh(putCh, uploadStartCh, uploadReturnCh, metaCh chan 
 
 		uploading := request.Clone()
 		uploading.Status = RequestStatusUploading
+
+		p.info("upload starting", "local", request.Local, "remote", request.Remote, "size_bytes", request.Size)
 		uploadStartCh <- uploading
 
+		rstart := time.Now()
 		if err := p.testRead(request); err != nil {
+			p.warn(
+				"pre-read test failed",
+				"local", request.Local,
+				"remote", request.Remote,
+				"took", time.Since(rstart),
+				"err", err,
+			)
 			p.sendFailedRequest(request, err, uploadReturnCh)
 
 			continue
 		}
 
+		p.debug("pre-read test ok", "local", request.Local, "remote", request.Remote, "took", time.Since(rstart))
+
+		tstart := time.Now()
 		if err := p.transfer(request, p.handler); err != nil {
+			p.warn("transfer failed", "local", request.Local, "remote", request.Remote, "took", time.Since(tstart), "err", err)
 			p.sendFailedRequest(request, err, uploadReturnCh)
 
 			continue
 		}
 
+		p.info("transfer finished", "local", request.Local, "remote", request.Remote, "took", time.Since(tstart))
 		metaCh <- request
 	}
 }

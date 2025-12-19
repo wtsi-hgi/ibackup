@@ -279,9 +279,19 @@ func getPutter(requests []*transfer.Request) *transfer.Putter {
 		die(err)
 	}
 
+	// In server mode we need deep tracing to debug stalls; use the app logger so
+	// logs end up in the same place as other client logs.
+	if serverMode() || putVerbose {
+		handler.SetLogger(appLogger.New("component", "baton"))
+	}
+
 	p, err := transfer.New(handler, requests)
 	if err != nil {
 		die(err)
+	}
+
+	if serverMode() || putVerbose {
+		p.SetLogger(appLogger.New("component", "transfer"))
 	}
 
 	return p

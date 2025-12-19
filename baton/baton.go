@@ -67,6 +67,7 @@ const (
 	operationBackoffFactor = 1.1
 	operationTimeout       = 15 * time.Second
 	operationRetries       = 6
+	putStillRunningLogFreq = 2 * time.Minute
 )
 
 // Baton is a Handler that uses Baton (via extendo) to interact with iRODS.
@@ -80,6 +81,38 @@ type Baton struct {
 	putClient    *ex.Client
 	metaClient   *ex.Client
 	removeClient *ex.Client
+	logger       Logger
+}
+
+// Logger is an optional structured logger used for deep tracing.
+// log15.Logger satisfies this interface.
+type Logger interface {
+	Debug(msg string, ctx ...interface{})
+	Info(msg string, ctx ...interface{})
+	Warn(msg string, ctx ...interface{})
+}
+
+// SetLogger sets an optional logger for deep tracing.
+func (b *Baton) SetLogger(logger Logger) {
+	b.logger = logger
+}
+
+func (b *Baton) debug(msg string, ctx ...interface{}) {
+	if b.logger != nil {
+		b.logger.Debug(msg, ctx...)
+	}
+}
+
+func (b *Baton) info(msg string, ctx ...interface{}) {
+	if b.logger != nil {
+		b.logger.Info(msg, ctx...)
+	}
+}
+
+func (b *Baton) warn(msg string, ctx ...interface{}) {
+	if b.logger != nil {
+		b.logger.Warn(msg, ctx...)
+	}
 }
 
 // GetBatonHandler returns a Handler that uses Baton to interact with iRODS. If
@@ -365,6 +398,8 @@ func (b *Baton) setClientIfNotExists(client **ex.Client) error {
 		return nil
 	}
 
+	b.debug("baton creating new client")
+
 	newClient, err := b.getNewClient()
 	if err != nil {
 		return err
@@ -483,6 +518,10 @@ func RodsItemToMeta(it ex.RodsItem) map[string]string {
 // local checksum. It creates a new put client if necessary so after calling
 // this function you must eventually call Cleanup().
 func (b *Baton) Put(local, remote string) error {
+	started := time.Now()
+
+	b.info("baton put starting", "local", local, "remote", remote)
+
 	err := b.setClientIfNotExists(&b.putClient)
 	if err != nil {
 		return err
@@ -504,6 +543,24 @@ func (b *Baton) Put(local, remote string) error {
 		defer os.Remove(fileName)
 	}
 
+	// extendo/baton-do Put() can occasionally block indefinitely; emit periodic
+	// logs so we can see which object is stuck.
+	done := make(chan struct{})
+
+	go func() {
+		ticker := time.NewTicker(putStillRunningLogFreq)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				b.warn("baton put still running", "local", local, "remote", remote, "elapsed", time.Since(started))
+			}
+		}
+	}()
+
 	_, err = b.putClient.Put(
 		ex.Args{
 			Force:  true,
@@ -511,6 +568,9 @@ func (b *Baton) Put(local, remote string) error {
 		},
 		*item,
 	)
+
+	close(done)
+	b.info("baton put finished", "local", local, "remote", remote, "took", time.Since(started), "err", err)
 
 	return err
 }
