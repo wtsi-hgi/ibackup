@@ -246,7 +246,7 @@ To specify queues to avoid for job submission, use the --queues_avoid option.
 			dief("failed to validate queues: %s", err)
 		}
 		if !validated {
-			queue = ""
+			dief("invalid queues specified")
 		}
 
 		if serverDebug || readonly {
@@ -352,7 +352,7 @@ func init() {
 			" (eg. 1d for 1 day or 2w for 2 weeks), defaults to 30 days")
 	serverCmd.Flags().StringVar(&statterPath, "statter", "",
 		"path to an external statter program (https://github.com/wtsi-hgi/statter)")
-	serverCmd.Flags().StringVar(&queue, "queue", "", "specify queue to submit job") // TODO: Should it be valid to input multiple here? wr accepts multiple
+	serverCmd.Flags().StringVar(&queue, "queue", "", "specify queue to submit job")
 	serverCmd.Flags().StringVar(&queueAvoid, "queues_avoid", "",
 		"specify queues to not submit job")
 }
@@ -438,14 +438,16 @@ func checkLDAPPassword(username, password string) (bool, string) {
 	return true, uid
 }
 
-func parseQueues(avoidQueues string) []string {
+// parseQueues will parse the users specified queues (supplied via a
+// comma separated list) into a slice.
+func parseQueues(queues string) []string {
 	output := []string{}
 
-	if avoidQueues == "" {
+	if queues == "" {
 		return output
 	}
 
-	for _, queue := range strings.Split(avoidQueues, ",") {
+	for _, queue := range strings.Split(queues, ",") {
 		queue = strings.TrimSpace(queue)
 		if queue != "" {
 			output = append(output, queue)
@@ -461,45 +463,60 @@ type bqueuesOutput struct {
 	} `json:"RECORDS"`
 }
 
-func validateQueues(queueName string, avoidQueues string) (bool, error) {
+// validateQueues will parse and check that all queues provided exist, and that
+// the chosen queues are not also present in the avoid list.
+func validateQueues(useQueues string, avoidQueues string) (bool, error) { //nolint:gocognit,gocyclo
 	avoid := parseQueues(avoidQueues)
-	if slices.Contains(avoid, queueName) {
-		return false, fmt.Errorf("queue '%s' is in avoid queues list", queueName)
+	queues := parseQueues(useQueues)
+
+	// Check that no queue is in both use and avoid lists
+	for _, q := range queues {
+		if slices.Contains(avoid, q) {
+			return false, fmt.Errorf("queue '%s' is in avoid queues list", q) //nolint:err113
+		}
 	}
 
 	if serverDebug || readonly {
-		return false, nil
+		return true, nil
 	}
 
 	validQueues, err := getValidQueues()
 	if err != nil {
-		return false, fmt.Errorf("failed to get valid queues: %s", err)
+		return false, fmt.Errorf("failed to get valid queues: %w", err)
 	}
 
-	for _, record := range validQueues.Records {
-		if record.QueueName == queueName {
-			return true, nil
+	queueMap := make(map[string]struct{})
+
+	for _, r := range validQueues.Records {
+		queueMap[r.QueueName] = struct{}{}
+	}
+
+	for _, queue := range append(queues, avoid...) {
+		if _, exists := queueMap[queue]; !exists {
+			return false, fmt.Errorf("queue '%s' is not a valid queue", queue) //nolint:err113
 		}
 	}
 
-	return false, nil
+	return true, nil
 }
 
+// getValidQueues() runs bqueues.
 func getValidQueues() (bqueuesOutput, error) {
 	var buf bytes.Buffer
-	cmd := exec.Command("bqueues", "-o", "QUEUE_NAME", "-json")
+
+	cmd := exec.Command("bqueues", "-o", "QUEUE_NAME", "-json") //nolint:noctx
 	cmd.Stdout = &buf
 
 	err := cmd.Run()
 	if err != nil {
-		return bqueuesOutput{}, fmt.Errorf("failed to run bqueues: %s", err)
+		return bqueuesOutput{}, fmt.Errorf("failed to run bqueues: %w", err)
 	}
 
 	var output bqueuesOutput
 
 	err = json.NewDecoder(&buf).Decode(&output)
 	if err != nil {
-		return bqueuesOutput{}, fmt.Errorf("failed to decode bqueues output: %s", err)
+		return bqueuesOutput{}, fmt.Errorf("failed to decode bqueues output: %w", err)
 	}
 
 	return output, nil
