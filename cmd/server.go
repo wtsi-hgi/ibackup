@@ -70,7 +70,7 @@ var serverSlackDebouncePeriod int
 var serverStillRunningMsgFreq string
 var serverTrashLifespan string
 var statterPath string
-var queue string
+var queues string
 var queueAvoid string
 
 // serverCmd represents the server command.
@@ -155,7 +155,7 @@ If there's an issue with the database or behaviour of the queue, you can use the
 --debug option to start the server with job submission disabled on a copy of the
 database that you've made, to investigate.
 
-To specify the queue to which the jobs will be submitted, use the --queue option.
+To specify the queues to which the jobs will be submitted, use the --queues option.
 To specify queues to avoid for job submission, use the --queues_avoid option.
 
 ` + configSubHelp,
@@ -241,7 +241,7 @@ To specify queues to avoid for job submission, use the --queues_avoid option.
 			dief("failed to make queue endpoints: %s", err)
 		}
 
-		validated, err := validateQueues(queue, queueAvoid)
+		validated, err := validateQueues(queues, queueAvoid)
 		if err != nil {
 			dief("failed to validate queues: %s", err)
 		}
@@ -263,7 +263,7 @@ To specify queues to avoid for job submission, use the --queues_avoid option.
 				putCmd += fmt.Sprintf("--log %s.client.", serverLogPath)
 			}
 
-			err = s.EnableJobSubmission(putCmd, serverWRDeployment, "", queue, queueAvoid, numPutClients, appLogger)
+			err = s.EnableJobSubmission(putCmd, serverWRDeployment, "", queues, queueAvoid, numPutClients, appLogger)
 			if err != nil {
 				dief("failed to enable job submission: %s", err)
 			}
@@ -352,7 +352,7 @@ func init() {
 			" (eg. 1d for 1 day or 2w for 2 weeks), defaults to 30 days")
 	serverCmd.Flags().StringVar(&statterPath, "statter", "",
 		"path to an external statter program (https://github.com/wtsi-hgi/statter)")
-	serverCmd.Flags().StringVar(&queue, "queue", "", "specify queue to submit job")
+	serverCmd.Flags().StringVar(&queues, "queues", "", "specify queues to submit job")
 	serverCmd.Flags().StringVar(&queueAvoid, "queues_avoid", "",
 		"specify queues to not submit job")
 }
@@ -500,7 +500,7 @@ func validateQueues(useQueues string, avoidQueues string) (bool, error) { //noli
 	return true, nil
 }
 
-// getValidQueues() runs bqueues.
+// getValidQueues runs bqueues.
 func getValidQueues() (bqueuesOutput, error) {
 	var buf bytes.Buffer
 

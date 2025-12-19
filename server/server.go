@@ -209,12 +209,12 @@ func (s *Server) SetRemoteHardlinkLocation(path string) {
 //
 // Provide a hint as the the maximum number of put job clients you'll run at
 // once, so that reservations can be balanced between them.
-func (s *Server) EnableJobSubmission(putCmd, deployment, cwd, queue, queuesAvoid string,
+func (s *Server) EnableJobSubmission(putCmd, deployment, cwd, queues, queuesAvoid string,
 	numClients int, logger log15.Logger) error {
 	sched, err := client.New(client.SchedulerSettings{
 		Deployment:  deployment,
 		Cwd:         cwd,
-		Queue:       queue,
+		Queue:       queues,
 		QueuesAvoid: queuesAvoid,
 		Timeout:     connectTimeout,
 		Logger:      logger,

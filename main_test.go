@@ -91,7 +91,7 @@ type TestServer struct {
 	env                  []string
 	stopped              bool
 	debouncePeriod       string
-	queue                []string
+	queues               []string
 	avoidQueues          []string
 	shouldFail           bool
 
@@ -114,7 +114,7 @@ func NewTestServer(t *testing.T) *TestServer {
 	return s
 }
 
-func NewTestServerWithQueues(t *testing.T, queue, avoidQueues []string, shouldFail bool) *TestServer {
+func NewTestServerWithQueues(t *testing.T, queues, avoidQueues []string, shouldFail bool) *TestServer {
 	t.Helper()
 
 	dir := t.TempDir()
@@ -124,7 +124,7 @@ func NewTestServerWithQueues(t *testing.T, queue, avoidQueues []string, shouldFa
 	s.prepareConfig(t)
 	s.prepareFilePaths(dir)
 
-	s.queue = queue
+	s.queues = queues
 	s.avoidQueues = avoidQueues
 	s.schedulerDeployment = "development"
 	s.ch = make(chan []*jobqueue.Job)
@@ -316,8 +316,8 @@ func (s *TestServer) startServer() {
 		"-s", s.ldapServer, "-l", s.ldapLookup, "--url", s.url, "--slack_debounce", s.debouncePeriod,
 	}
 
-	if s.queue != nil {
-		args = append(args, "--queue", strings.Join(s.queue, ","))
+	if s.queues != nil {
+		args = append(args, "--queues", strings.Join(s.queues, ","))
 	}
 
 	if s.avoidQueues != nil {
