@@ -33,6 +33,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -48,6 +49,12 @@ import (
 	"github.com/wtsi-hgi/ibackup/slack"
 	"github.com/wtsi-hgi/ibackup/transfer"
 	"github.com/wtsi-hgi/ibackup/transformer"
+)
+
+const (
+	slowLogFirstAfter   = 15 * time.Second
+	slowLogEvery        = 60 * time.Second
+	errDBNotInitialised = "db not initialised"
 )
 
 const (
@@ -417,11 +424,66 @@ func (s *Server) makeSetWritable(c *gin.Context, sid string) error {
 // EnableDatabaseBackups().
 func (s *Server) tryBackup() {
 	go func() {
+		trace := grand.LcString(logTraceIDLen)
+		start := time.Now()
+
+		s.Logger.Printf("[%s] db backup requested", trace)
+
+		done := make(chan struct{})
+		go s.logIfBlocked(done, trace, "db backup", func() string {
+			if s.db == nil {
+				return errDBNotInitialised
+			}
+
+			started := s.db.LastBackupStarted()
+			finished := s.db.LastBackupFinished()
+
+			return "backupInProgress=" + strconv.FormatBool(s.db.BackupInProgress()) +
+				" lastBackupStarted=" + started.Format(time.RFC3339Nano) +
+				" lastBackupFinished=" + finished.Format(time.RFC3339Nano)
+		})
+
 		err := s.db.Backup()
+
+		close(done)
+
+		s.Logger.Printf("[%s] db backup finished in %s (err=%v)", trace, time.Since(start).Truncate(time.Millisecond), err)
 		if err != nil {
 			s.Logger.Printf("error creating database backup: %s", err)
 		}
 	}()
+}
+
+func (s *Server) logIfBlocked(done <-chan struct{}, trace, op string, details func() string) {
+	firstTimer := time.NewTimer(slowLogFirstAfter)
+	defer firstTimer.Stop()
+
+	var ticker *time.Ticker
+
+	defer func() {
+		if ticker != nil {
+			ticker.Stop()
+		}
+	}()
+
+	for {
+		select {
+		case <-done:
+			return
+		case <-firstTimer.C:
+			s.Logger.Printf("[%s] WARNING: %s still blocked after %s (%s)", trace, op, slowLogFirstAfter, details())
+
+			ticker = time.NewTicker(slowLogEvery)
+		case <-func() <-chan time.Time {
+			if ticker == nil {
+				return nil
+			}
+
+			return ticker.C
+		}():
+			s.Logger.Printf("[%s] WARNING: %s still blocked (%s)", trace, op, details())
+		}
+	}
 }
 
 // getSets returns the requester's set(s) from the database. requester URL
@@ -1749,7 +1811,21 @@ func (s *Server) putFileStatus(c *gin.Context) {
 	r.CorrectFromJSON()
 
 	ceCh := s.queueFileStatusUpdate(r)
+
+	waitTrace := grand.LcString(logTraceIDLen)
+
+	waitDone := make(chan struct{})
+	go s.logIfBlocked(waitDone, waitTrace, "waiting for /file_status update to complete", func() string {
+		if s.db == nil {
+			return errDBNotInitialised
+		}
+
+		return "rid=" + r.ID() + " local=" + r.Local + " backupInProgress=" + strconv.FormatBool(s.db.BackupInProgress())
+	})
+
 	ce := <-ceCh
+
+	close(waitDone)
 
 	if ce != nil {
 		c.AbortWithError(ce.code, ce.err) //nolint:errcheck
@@ -1773,9 +1849,41 @@ func (s *Server) queueFileStatusUpdate(r *transfer.Request) chan *codeAndError {
 	ceCh := make(chan *codeAndError)
 
 	go func() {
-		s.statusUpdateCh <- &fileStatusPacket{
-			r:    r,
-			ceCh: ceCh,
+		start := time.Now()
+		warned := false
+		packet := &fileStatusPacket{r: r, ceCh: ceCh}
+
+		for {
+			select {
+			case s.statusUpdateCh <- packet:
+				if !warned {
+					return
+				}
+
+				s.Logger.Printf(
+					"status update enqueue for rid=%s local=%s unblocked after %s",
+					r.ID(), r.Local, time.Since(start).Truncate(time.Millisecond),
+				)
+
+				return
+			case <-time.After(slowLogFirstAfter):
+				if warned {
+					continue
+				}
+
+				warned = true
+
+				backup := false
+				if s.db != nil {
+					backup = s.db.BackupInProgress()
+				}
+
+				s.Logger.Printf(
+					"WARNING: status update enqueue blocked for rid=%s local=%s after %s (backupInProgress=%t)",
+					r.ID(), r.Local, time.Since(start).Truncate(time.Millisecond), backup,
+				)
+				start = time.Now()
+			}
 		}
 	}()
 
@@ -1817,7 +1925,25 @@ func (s *Server) handleFileStatusUpdates() {
 //
 // The supplied trace string is used in logging output.
 func (s *Server) updateFileStatus(r *transfer.Request, trace string) error {
+	setStart := time.Now()
+
+	setDone := make(chan struct{})
+	go s.logIfBlocked(setDone, trace, "SetEntryStatus()", func() string {
+		if s.db == nil {
+			return errDBNotInitialised
+		}
+
+		return "rid=" + r.ID() + " local=" + r.Local + " backupInProgress=" + strconv.FormatBool(s.db.BackupInProgress())
+	})
+
 	entry, err := s.db.SetEntryStatus(r)
+
+	close(setDone)
+
+	s.Logger.Printf(
+		"[%s] SetEntryStatus completed in %s (err=%v)",
+		trace, time.Since(setStart).Truncate(time.Millisecond), err,
+	)
 	if err != nil {
 		var errr error
 

@@ -194,7 +194,40 @@ type DB struct {
 	statterPath           string
 	statterFunc           statter.Statter
 
-	rebackup atomic.Bool
+	rebackup         atomic.Bool
+	backupInProgress atomic.Bool
+	backupLastStart  atomic.Int64
+	backupLastEnd    atomic.Int64
+}
+
+// BackupInProgress reports if a backup is currently running.
+//
+// This becomes true only when Backup() successfully acquires its internal lock,
+// so it reflects the actual backup work, not just backup requests.
+func (d *DB) BackupInProgress() bool {
+	return d.backupInProgress.Load()
+}
+
+// LastBackupStarted returns when the last backup started, or the zero time if
+// no backup has started yet.
+func (d *DB) LastBackupStarted() time.Time {
+	ns := d.backupLastStart.Load()
+	if ns == 0 {
+		return time.Time{}
+	}
+
+	return time.Unix(0, ns)
+}
+
+// LastBackupFinished returns when the last backup finished, or the zero time if
+// no backup has finished yet.
+func (d *DB) LastBackupFinished() time.Time {
+	ns := d.backupLastEnd.Load()
+	if ns == 0 {
+		return time.Time{}
+	}
+
+	return time.Unix(0, ns)
 }
 
 // New returns a *DB that can be used to create or query a set database. Provide
@@ -1972,6 +2005,14 @@ func (d *DB) Backup() error {
 		return nil
 	}
 	defer d.mu.Unlock()
+
+	d.backupInProgress.Store(true)
+	d.backupLastStart.Store(time.Now().UnixNano())
+
+	defer func() {
+		d.backupInProgress.Store(false)
+		d.backupLastEnd.Store(time.Now().UnixNano())
+	}()
 
 	for {
 		if err := d.doBackup(); err != nil {
