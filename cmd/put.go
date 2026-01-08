@@ -231,12 +231,29 @@ func warnIfBad(r *transfer.Request, i, total int, verbose bool) {
 	switch r.Status {
 	case transfer.RequestStatusFailed, transfer.RequestStatusMissing, transfer.RequestStatusOrphaned,
 		transfer.RequestStatusWarning:
-		warn("[%d/%d] %s %s: %s", i, total, r.Local, r.Status, r.Error)
+		warn(
+			"[%d/%d] rid=%s local=%s remote=%s %s: %s",
+			i,
+			total,
+			r.ID(),
+			r.Local,
+			r.Remote,
+			r.Status,
+			r.Error,
+		)
 	case transfer.RequestStatusHardlinkSkipped:
-		warn("[%d/%d] Hardlink skipped: %s\t%s", i, total, r.Local, r.Hardlink)
+		warn(
+			"[%d/%d] rid=%s Hardlink skipped: local=%s hardlink=%s remote=%s",
+			i,
+			total,
+			r.ID(),
+			r.Local,
+			r.Hardlink,
+			r.Remote,
+		)
 	default:
 		if verbose {
-			info("[%d/%d] %s %s", i, total, r.Local, r.Status)
+			info("[%d/%d] rid=%s local=%s remote=%s %s", i, total, r.ID(), r.Local, r.Remote, r.Status)
 		}
 	}
 }
