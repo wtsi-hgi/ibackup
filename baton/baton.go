@@ -723,18 +723,7 @@ func (b *Baton) Put(local, remote string) (err error) {
 	}
 	defer cleanup()
 
-	items, err := b.putClient.Put(b.putArgsForTracing(), *item)
-	if err != nil {
-		b.logIRODSError(err, "op", "put", "local", local, "remote", remote)
-
-		return err
-	}
-
-	// Log the returned details without attempting to add per-request ids here;
-	// higher-level callers can correlate using their own ctx.
-	b.debugPutItems(local, remote, items)
-
-	return nil
+	return b.putItem(item, local, remote)
 }
 
 func requestToRodsItemForPut(local, remote string) (*ex.RodsItem, func(), error) {
@@ -757,6 +746,29 @@ func requestToRodsItemForPut(local, remote string) (*ex.RodsItem, func(), error)
 	cleanup = func() { os.Remove(fileName) }
 
 	return item, cleanup, nil
+}
+
+func (b *Baton) putItem(item *ex.RodsItem, local, remote string) error {
+	b.info("baton calling extendo Put", "local", local, "remote", remote, "item_dir", item.IDirectory,
+		"item_file", item.IFile)
+
+	start := time.Now()
+
+	items, err := b.putClient.Put(b.putArgsForTracing(), *item)
+
+	b.info("baton extendo Put returned", "local", local, "remote", remote, "took", time.Since(start), "err", err)
+
+	if err != nil {
+		b.logIRODSError(err, "op", "put", "local", local, "remote", remote)
+
+		return err
+	}
+
+	// Log the returned details without attempting to add per-request ids here;
+	// higher-level callers can correlate using their own ctx.
+	b.debugPutItems(local, remote, items)
+
+	return nil
 }
 
 func (b *Baton) putArgsForTracing() ex.Args {
