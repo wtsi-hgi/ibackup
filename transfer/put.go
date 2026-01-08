@@ -471,10 +471,10 @@ func (p *Putter) pickFilesToPut(wg *sync.WaitGroup, requests []*Request,
 // with a note to skip the actual put and just do metadata. Otherwise, sends
 // them to the putCh normally.
 func (p *Putter) statPathsAndReturnOrPut(request *Request, putCh chan *Request, skipReturnCh chan *Request) {
-	p.debug("stat local+remote", "local", request.Local, "remote", request.Remote)
+	p.debug("stat local+remote", requestLogCtx(request)...)
 	lInfo, err := Stat(request.Local)
 	if err != nil {
-		p.warn("stat local failed", "local", request.Local, "err", err)
+		p.warn("stat local failed", append(requestLogCtx(request), "err", err)...)
 		sendRequest(request, RequestStatusFailed, err, skipReturnCh)
 
 		return
@@ -484,14 +484,17 @@ func (p *Putter) statPathsAndReturnOrPut(request *Request, putCh chan *Request, 
 
 	rInfo, err := request.StatAndAssociateStandardMetadata(lInfo, p.handler)
 	if err != nil {
-		p.warn("stat remote/associate metadata failed", "remote", request.Remote, "local", request.Local, "err", err)
+		p.warn("stat remote/associate metadata failed", append(requestLogCtx(request), "err", err)...)
 		sendRequest(request, RequestStatusFailed, err, skipReturnCh)
 
 		return
 	}
 
 	if !lInfo.Exists {
-		p.info("local missing/orphaned", "local", request.Local, "remote", request.Remote, "remote_exists", rInfo.Exists)
+		p.info(
+			"local missing/orphaned",
+			append(requestLogCtx(request), "remote_exists", rInfo.Exists)...,
+		)
 		sendRequest(request, getStatusBasedOnInfo(rInfo.Exists), nil, skipReturnCh)
 
 		return
@@ -500,15 +503,24 @@ func (p *Putter) statPathsAndReturnOrPut(request *Request, putCh chan *Request, 
 	if sendForUploadOrUnmodified(request, lInfo, rInfo, putCh, skipReturnCh) {
 		p.debug(
 			"decided upload/unmodified",
-			"local", request.Local,
-			"remote", request.Remote,
-			"status", request.Status,
-			"skip_put", request.skipPut,
+			append(requestLogCtx(request), "status", request.Status, "skip_put", request.skipPut)...,
 		)
 		return
 	}
 
 	sendRequest(request, RequestStatusReplaced, nil, putCh)
+}
+
+func requestLogCtx(r *Request) []interface{} {
+	if r == nil {
+		return []interface{}{"rid", ""}
+	}
+
+	return []interface{}{
+		"rid", r.ID(),
+		"local", r.Local,
+		"remote", r.Remote,
+	}
 }
 
 // sendRequest sets the given status and err on the given request, then sends it
@@ -561,7 +573,7 @@ func sendForUploadOrUnmodified(request *Request, lInfo, rInfo *ObjectInfo, putCh
 }
 
 func (p *Putter) getMetadataAndReturnOrPut(request *Request, putCh chan *Request, skipReturnCh chan *Request) {
-	p.debug("get metadata", "local", request.Local, "remote", request.Remote)
+	p.debug("get metadata", requestLogCtx(request)...)
 	lInfo, err := Stat(request.Local)
 	if skipIfLocalFileIsNotEmptyAndNotOverwriting(lInfo, err, p.overwrite) {
 		sendRequest(request, RequestStatusUnmodified, err, skipReturnCh)
@@ -571,7 +583,7 @@ func (p *Putter) getMetadataAndReturnOrPut(request *Request, putCh chan *Request
 
 	rInfo, err := request.GetRemoteMetadata(p.handler)
 	if err != nil {
-		p.warn("get remote metadata failed", "remote", request.Remote, "err", err)
+		p.warn("get remote metadata failed", append(requestLogCtx(request), "err", err)...)
 		sendRequest(request, RequestStatusFailed, err, skipReturnCh)
 
 		return
@@ -641,7 +653,10 @@ func (p *Putter) applyMetadataConcurrently(metaCh, uploadReturnCh, skipReturnCh 
 	for request := range metaCh {
 		start := time.Now()
 
-		p.debug("apply metadata starting", "remote", request.Remote, "local", request.Local, "skip_put", request.skipPut)
+		p.debug(
+			"apply metadata starting",
+			append(requestLogCtx(request), "skip_put", request.skipPut)...,
+		)
 		returnCh := uploadReturnCh
 
 		if request.skipPut {
@@ -651,10 +666,7 @@ func (p *Putter) applyMetadataConcurrently(metaCh, uploadReturnCh, skipReturnCh 
 		if err := p.applyMetadata(request, p.handler); err != nil { //nolint:nestif
 			p.warn(
 				"apply metadata failed",
-				"remote", request.Remote,
-				"local", request.Local,
-				"took", time.Since(start),
-				"err", err,
+				append(requestLogCtx(request), "took", time.Since(start), "err", err)...,
 			)
 			if pe := new(fs.PathError); errors.As(err, &pe) && pe.Op == "lchown" {
 				sendRequest(request, RequestStatusWarning, err, returnCh)
@@ -665,7 +677,10 @@ func (p *Putter) applyMetadataConcurrently(metaCh, uploadReturnCh, skipReturnCh 
 			continue
 		}
 
-		p.debug("apply metadata finished", "remote", request.Remote, "local", request.Local, "took", time.Since(start))
+		p.debug(
+			"apply metadata finished",
+			append(requestLogCtx(request), "took", time.Since(start))...,
+		)
 		returnCh <- request
 	}
 
@@ -681,7 +696,7 @@ func (p *Putter) sendFailedRequest(request *Request, err error, uploadReturnCh c
 func (p *Putter) processPutCh(putCh, uploadStartCh, uploadReturnCh, metaCh chan *Request) {
 	for request := range putCh {
 		if request.skipPut {
-			p.info("skip put; metadata only", "local", request.Local, "remote", request.Remote)
+			p.info("skip put; metadata only", requestLogCtx(request)...)
 			metaCh <- request
 
 			continue
@@ -690,34 +705,51 @@ func (p *Putter) processPutCh(putCh, uploadStartCh, uploadReturnCh, metaCh chan 
 		uploading := request.Clone()
 		uploading.Status = RequestStatusUploading
 
-		p.info("upload starting", "local", request.Local, "remote", request.Remote, "size_bytes", request.Size)
+		ctx := append(requestLogCtx(request), "size_bytes", request.Size)
+		if request.Hardlink != "" {
+			ctx = append(
+				ctx,
+				"hardlink", request.Hardlink,
+				"only_empty", request.onlyUploadEmptyFile,
+				"inode_remote", request.inodeRequest.Remote,
+				"empty_remote", request.emptyFileRequest.Remote,
+			)
+		}
+
+		p.info("upload starting", ctx...)
 		uploadStartCh <- uploading
 
 		rstart := time.Now()
 		if err := p.testRead(request); err != nil {
 			p.warn(
 				"pre-read test failed",
-				"local", request.Local,
-				"remote", request.Remote,
-				"took", time.Since(rstart),
-				"err", err,
+				append(requestLogCtx(request), "took", time.Since(rstart), "err", err)...,
 			)
 			p.sendFailedRequest(request, err, uploadReturnCh)
 
 			continue
 		}
 
-		p.debug("pre-read test ok", "local", request.Local, "remote", request.Remote, "took", time.Since(rstart))
+		p.debug(
+			"pre-read test ok",
+			append(requestLogCtx(request), "took", time.Since(rstart))...,
+		)
 
 		tstart := time.Now()
 		if err := p.transfer(request, p.handler); err != nil {
-			p.warn("transfer failed", "local", request.Local, "remote", request.Remote, "took", time.Since(tstart), "err", err)
+			p.warn(
+				"transfer failed",
+				append(requestLogCtx(request), "took", time.Since(tstart), "err", err)...,
+			)
 			p.sendFailedRequest(request, err, uploadReturnCh)
 
 			continue
 		}
 
-		p.info("transfer finished", "local", request.Local, "remote", request.Remote, "took", time.Since(tstart))
+		p.info(
+			"transfer finished",
+			append(requestLogCtx(request), "took", time.Since(tstart))...,
+		)
 		metaCh <- request
 	}
 }
