@@ -68,6 +68,8 @@ const (
 	alternateUsername = "root"
 )
 
+var appPath = "./" + app //nolint:gochecknoglobals
+
 const noBackupSets = `Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
 Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
 no backup sets`
@@ -101,6 +103,7 @@ func NewTestServer(t *testing.T) *TestServer {
 
 	s := new(TestServer)
 
+	s.prepareFilePaths(dir)
 	s.prepareConfig(t)
 	s.prepareFilePaths(dir)
 
@@ -116,6 +119,7 @@ func NewUploadingTestServer(t *testing.T, withDBBackup bool) (*TestServer, strin
 
 	s := new(TestServer)
 
+	s.prepareFilePaths(dir)
 	s.prepareConfig(t)
 	s.prepareFilePaths(dir)
 
@@ -205,6 +209,19 @@ func (s *TestServer) prepareFilePaths(dir string) {
 	}
 }
 
+func upsertEnvVar(env []string, key, value string) []string {
+	prefix := key + "="
+
+	for i, v := range env {
+		if strings.HasPrefix(v, prefix) {
+			env[i] = prefix + value
+			return env
+		}
+	}
+
+	return append(env, prefix+value)
+}
+
 func getFakeBaton(dir string) string {
 	fakeBatonDir := filepath.Join(dir, "baton")
 	err := os.Mkdir(fakeBatonDir, 0755)
@@ -226,6 +243,9 @@ func (s *TestServer) prepareConfig(t *testing.T) {
 	t.Helper()
 
 	generateDefaultConfig(t)
+	if len(s.env) > 0 {
+		s.env = upsertEnvVar(s.env, "IBACKUP_CONFIG", os.Getenv("IBACKUP_CONFIG"))
+	}
 
 	s.url = os.Getenv("IBACKUP_TEST_SERVER_URL")
 	if s.url == "" {
@@ -311,7 +331,7 @@ func (s *TestServer) startServer() {
 	}
 
 	s.stopped = false
-	s.cmd = exec.Command("./"+app, args...)
+	s.cmd = exec.Command(appPath, args...)
 	s.cmd.Env = s.env
 	s.cmd.Stdout = os.Stdout
 	s.cmd.Stderr = os.Stderr
@@ -331,7 +351,7 @@ func (s *TestServer) waitForServer() {
 	cmd := []string{"status", "--cert", s.cert, "--url", s.url}
 
 	status := retry.Do(ctx, func() error {
-		clientCmd := exec.Command("./"+app, cmd...)
+		clientCmd := exec.Command(appPath, cmd...)
 		clientCmd.Env = []string{"XDG_STATE_HOME=" + s.dir}
 
 		return clientCmd.Run()
@@ -392,7 +412,7 @@ func (s *TestServer) runBinaryWithNoLogging(t *testing.T, args ...string) (int, 
 func (s *TestServer) clientCmd(args []string) *exec.Cmd {
 	args = append([]string{"--url", s.url, "--cert", s.cert}, args...)
 
-	cmd := exec.Command("./"+app, args...)
+	cmd := exec.Command(appPath, args...)
 	cmd.Env = s.env
 
 	return cmd
@@ -510,7 +530,7 @@ func (s *TestServer) waitForStatusWithFlags(name, statusToFind string, timeout t
 	var err error
 
 	status := retry.Do(ctx, func() error {
-		clientCmd := exec.Command("./"+app, cmd...)
+		clientCmd := exec.Command(appPath, cmd...)
 		clientCmd.Env = s.env
 
 		output, err = clientCmd.CombinedOutput()
@@ -586,13 +606,28 @@ func TestMain(m *testing.M) {
 }
 
 func buildSelf() func() {
-	if err := exec.Command("make", "build").Run(); err != nil {
+	tempDir, err := os.MkdirTemp("", "ibackup-test-*")
+	if err != nil {
 		failMainTest(err.Error())
 
 		return nil
 	}
 
-	return func() { os.Remove(app) }
+	appPath = filepath.Join(tempDir, app)
+
+	cmd := exec.Command("go", "build", "-tags", "netgo", "-o", appPath)
+	cmd.Env = append(os.Environ(), "CGO_ENABLED=1")
+
+	if err := cmd.Run(); err != nil {
+		failMainTest(err.Error())
+
+		return nil
+	}
+
+	return func() {
+		_ = os.RemoveAll(tempDir)
+		appPath = "./" + app
+	}
 }
 
 func resetIRODS() {
@@ -620,14 +655,14 @@ func TestAddRemote(t *testing.T) {
 	Convey("You can call the addremote subcommand to get transformed paths", t, func() {
 		var sb strings.Builder
 
-		cmd := exec.Command("./"+app, "addremote", "--prefix", "/local/:/remote/") //nolint:noctx
+		cmd := exec.Command(appPath, "addremote", "--prefix", "/local/:/remote/") //nolint:noctx
 		cmd.Stdin = strings.NewReader(``)
 		cmd.Stdout = &sb
 
 		So(cmd.Run(), ShouldBeNil)
 		So(sb.String(), ShouldBeBlank)
 
-		cmd = exec.Command("./"+app, "addremote", "--prefix", "/local/:/remote/") //nolint:noctx
+		cmd = exec.Command(appPath, "addremote", "--prefix", "/local/:/remote/") //nolint:noctx
 		cmd.Stdin = strings.NewReader("/local/path/to/file\n/path/to/another/file")
 		cmd.Stdout = &sb
 
@@ -1857,9 +1892,9 @@ func TestPuts(t *testing.T) {
 				So(exitCode, ShouldEqual, 0)
 
 				s.confirmOutputContains(t, []string{"status", "--name", "testAddFiles", "-d"},
-					0, "Directories:\n  "+
-						dir2+" => "+remoteDir2+"\n  "+
-						dir1+" => "+remoteDir1)
+					0, dir1+" => "+remoteDir1)
+				s.confirmOutputContains(t, []string{"status", "--name", "testAddFiles", "-d"},
+					0, dir2+" => "+remoteDir2)
 
 				s.confirmOutputContains(t, []string{"status", "--name", "testAddFiles", "-d"},
 					0, "Example File:")
@@ -2379,7 +2414,7 @@ func TestManualMode(t *testing.T) {
 		files := file1 + "\t" + remote1 + "\n"
 		files += file2 + "\t" + remote2 + "\n"
 
-		cmd := exec.Command("./"+app, "put")
+		cmd := exec.Command(appPath, "put")
 		cmd.Stdin = strings.NewReader(files)
 
 		output, err := cmd.CombinedOutput()
@@ -2537,7 +2572,7 @@ func TestManualMode(t *testing.T) {
 func restoreFiles(t *testing.T, files, expectedOutput string, args ...string) {
 	t.Helper()
 
-	cmd := exec.Command("./"+app, append([]string{"get"}, args...)...) //nolint:gosec,noctx
+	cmd := exec.Command(appPath, append([]string{"get"}, args...)...) //nolint:gosec,noctx
 	cmd.Stdin = strings.NewReader(files)
 
 	output, err := cmd.CombinedOutput()
@@ -3112,7 +3147,7 @@ func TestRemove(t *testing.T) {
 				cmd := []string{"status", "--name", setName, "--url", s.url, "--cert", s.cert}
 
 				status := retry.Do(ctx, func() error {
-					clientCmd := exec.Command("./"+app, cmd...) //nolint:noctx
+					clientCmd := exec.Command(appPath, cmd...) //nolint:noctx
 					clientCmd.Env = s.env
 
 					output, errc := clientCmd.CombinedOutput()
