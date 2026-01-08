@@ -511,7 +511,7 @@ func (p *Putter) statPathsAndReturnOrPut(request *Request, putCh chan *Request, 
 
 	h := p.handler
 	if lh, ok := h.(logCtxHandler); ok {
-		h = lh.WithLogCtx(requestLogCtx(request)...)
+		h = lh.WithLogCtx(requestHandlerLogCtx(request)...)
 	}
 
 	rInfo, err := request.StatAndAssociateStandardMetadata(lInfo, h)
@@ -581,6 +581,25 @@ func sendRequest(request *Request, status RequestStatus, err error, ch chan *Req
 	}
 
 	ch <- request
+}
+
+// requestHandlerLogCtx returns the per-request context that should be used for
+// iRODS operation logs.
+//
+// We intentionally avoid keys like "local" and "remote" here, because those are
+// used by individual iRODS operations (eg. Put(local, remote)) and would
+// otherwise appear twice in log records. This is especially confusing for
+// hardlink uploads where the operation remote differs from the request remote.
+func requestHandlerLogCtx(r *Request) []any {
+	if r == nil {
+		return []any{"rid", ""}
+	}
+
+	return []any{
+		"rid", r.ID(),
+		"req_local", r.Local,
+		"req_remote", r.Remote,
+	}
 }
 
 func formatMetaTime(t time.Time) string {
@@ -663,7 +682,7 @@ func (p *Putter) getMetadataAndReturnOrPut(request *Request, putCh chan *Request
 
 	h := p.handler
 	if lh, ok := h.(logCtxHandler); ok {
-		h = lh.WithLogCtx(requestLogCtx(request)...)
+		h = lh.WithLogCtx(requestHandlerLogCtx(request)...)
 	}
 
 	rInfo, err := request.GetRemoteMetadata(h)
@@ -774,7 +793,7 @@ func (p *Putter) applyMetadataConcurrently(metaCh, uploadReturnCh, skipReturnCh 
 
 		h := p.handler
 		if lh, ok := h.(logCtxHandler); ok {
-			h = lh.WithLogCtx(requestLogCtx(request)...)
+			h = lh.WithLogCtx(requestHandlerLogCtx(request)...)
 		}
 
 		if err := p.applyMetadata(request, h); err != nil { //nolint:nestif
@@ -874,7 +893,7 @@ func (p *Putter) processPutCh(putCh, uploadStartCh, uploadReturnCh, metaCh chan 
 
 		h := p.handler
 		if lh, ok := h.(logCtxHandler); ok {
-			h = lh.WithLogCtx(requestLogCtx(request)...)
+			h = lh.WithLogCtx(requestHandlerLogCtx(request)...)
 		}
 
 		if err := p.transfer(request, h); err != nil {

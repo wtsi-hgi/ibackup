@@ -481,10 +481,22 @@ func (c *Client) handleUploadTracking(wg *sync.WaitGroup, uploadStarts, uploadRe
 	defer wg.Done()
 
 	for ru := range uploadStarts {
-		c.logger.Info("started upload", "path", ru.Local)
+		c.logger.Info(
+			"started upload",
+			"rid", ru.ID(),
+			"local", ru.Local,
+			"remote", ru.Remote,
+			"size_bytes", ru.Size,
+		)
 
 		if err := c.UpdateFileStatus(ru); err != nil {
-			c.logger.Warn("failed to update file status to uploading", "err", err, "path", ru.Local)
+			c.logger.Warn(
+				"failed to update file status to uploading",
+				"rid", ru.ID(),
+				"local", ru.Local,
+				"remote", ru.Remote,
+				"err", err,
+			)
 			c.uploadsErrCh <- err
 
 			continue
@@ -497,17 +509,35 @@ func (c *Client) handleUploadTracking(wg *sync.WaitGroup, uploadStarts, uploadRe
 
 		if !ok {
 			err := errUploadResultsClosedWhileWaiting
-			c.logger.Error("failed to read upload result", "err", err, "path", ru.Local)
+			c.logger.Error(
+				"failed to read upload result",
+				"rid", ru.ID(),
+				"local", ru.Local,
+				"remote", ru.Remote,
+				"err", err,
+			)
 
 			c.uploadsErrCh <- err
 
 			continue
 		}
 
-		c.logger.Info("finished upload", "path", ru.Local, "status", rr.Status)
+		c.logger.Info(
+			"finished upload",
+			"rid", ru.ID(),
+			"local", ru.Local,
+			"remote", ru.Remote,
+			"status", rr.Status,
+		)
 
 		if err := c.UpdateFileStatus(rr); err != nil {
-			c.logger.Warn("failed to update file status to complete", "err", err, "path", ru.Local)
+			c.logger.Warn(
+				"failed to update file status to complete",
+				"rid", ru.ID(),
+				"local", ru.Local,
+				"remote", ru.Remote,
+				"err", err,
+			)
 			c.uploadsErrCh <- err
 		}
 	}
@@ -553,7 +583,9 @@ func (c *Client) logStillWaitingForUploadResult(started *transfer.Request, waiti
 
 	c.logger.Warn(
 		"still waiting for upload result",
-		"path", started.Local,
+		"rid", started.ID(),
+		"local", started.Local,
+		"remote", started.Remote,
 		"waiting", waiting,
 		"size_bytes", started.Size,
 		"goroutines", runtime.NumGoroutine(),
@@ -571,7 +603,9 @@ func (c *Client) dumpGoroutinesIfStuckWaiting(started *transfer.Request, waiting
 	n := runtime.Stack(buf, true)
 	c.logger.Debug(
 		"goroutine dump after long wait for upload result",
-		"path", started.Local,
+		"rid", started.ID(),
+		"local", started.Local,
+		"remote", started.Remote,
 		"waiting", waiting,
 		"dump", string(buf[:n]),
 	)
@@ -596,7 +630,14 @@ func (c *Client) stuckIfUploadTakesTooLong(request *transfer.Request) chan bool 
 			return
 		case <-stuckTimer.C:
 			request.Stuck = transfer.NewStuck(started)
-			c.logger.Warn("upload stuck?", "path", request.Local)
+			c.logger.Warn(
+				"upload stuck?",
+				"rid", request.ID(),
+				"local", request.Local,
+				"remote", request.Remote,
+				"threshold", c.maxTimeForUpload(request),
+				"size_bytes", request.Size,
+			)
 
 			if err := c.UpdateFileStatus(request); err != nil {
 				c.uploadsErrCh <- err
@@ -637,7 +678,13 @@ func (c *Client) killStuckIfTakesTooLong(request *transfer.Request, doneCh chan 
 
 	select {
 	case <-timeout.C:
-		c.logger.Warn("upload stuck for a long time, giving up", "path", request.Local)
+		c.logger.Warn(
+			"upload stuck for a long time, giving up",
+			"rid", request.ID(),
+			"local", request.Local,
+			"remote", request.Remote,
+			"max_stuck_time", c.maxStuckTime,
+		)
 		request.Status = transfer.RequestStatusFailed
 		request.Error = transfer.ErrStuckTimeout
 
@@ -657,10 +704,22 @@ func (c *Client) handleSendingSkipResults(wg *sync.WaitGroup, results chan *tran
 	defer wg.Done()
 
 	for r := range results {
-		c.logger.Info("skipped upload", "path", r.Local)
+		c.logger.Info(
+			"skipped upload",
+			"rid", r.ID(),
+			"local", r.Local,
+			"remote", r.Remote,
+			"status", r.Status,
+		)
 
 		if err := c.UpdateFileStatus(r); err != nil {
-			c.logger.Warn("failed to update file status for skipped", "err", err, "path", r.Local)
+			c.logger.Warn(
+				"failed to update file status for skipped",
+				"rid", r.ID(),
+				"local", r.Local,
+				"remote", r.Remote,
+				"err", err,
+			)
 			c.uploadsErrCh <- err
 		}
 	}
