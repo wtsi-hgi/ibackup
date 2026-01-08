@@ -70,7 +70,24 @@ const (
 	operationRetries       = 6
 	putStillRunningLogFreq = 2 * time.Minute
 	getStillRunningLogFreq = 2 * time.Minute
+
+	maxReplicateDetails = 10
+	checksumPrefixLen   = 12
 )
+
+type loggingSleeper struct {
+	logger logger.Logger
+	ctx    []any
+	base   *btime.Sleeper
+}
+
+func (s *loggingSleeper) Sleep(ctx context.Context, d time.Duration) {
+	if s.logger != nil {
+		s.logger.Info("baton retry backoff", append(s.ctx, "sleep", d)...)
+	}
+
+	s.base.Sleep(ctx, d)
+}
 
 // Baton is a Handler that uses Baton (via extendo) to interact with iRODS.
 type Baton struct {
@@ -105,6 +122,171 @@ func (b *Baton) debug(msg string, ctx ...interface{}) {
 	if b.logger != nil {
 		b.logger.Debug(msg, ctx...)
 	}
+}
+
+func (b *Baton) info(msg string, ctx ...interface{}) {
+	if b.logger != nil {
+		b.logger.Info(msg, ctx...)
+	}
+}
+
+func (b *Baton) warn(msg string, ctx ...interface{}) {
+	if b.logger != nil {
+		b.logger.Warn(msg, ctx...)
+	}
+}
+
+func (b *Baton) logIRODSError(err error, ctx ...interface{}) {
+	if b.logger == nil || err == nil {
+		return
+	}
+
+	if ex.IsRodsError(err) {
+		code, cerr := ex.RodsErrorCode(err)
+		if cerr == nil {
+			b.warn("iRODS error", append(ctx, "code", code, "err", err)...)
+
+			return
+		}
+	}
+
+	b.warn("iRODS error", append(ctx, "err", err)...)
+}
+
+func (b *Baton) replicateSummaries(reps []ex.Replicate) []string {
+	if len(reps) == 0 {
+		return nil
+	}
+
+	limit := len(reps)
+	if limit > maxReplicateDetails {
+		limit = maxReplicateDetails
+	}
+
+	out := make([]string, 0, limit)
+	for i := range limit {
+		r := reps[i]
+
+		ck := r.Checksum
+		if len(ck) > checksumPrefixLen {
+			ck = ck[:checksumPrefixLen]
+		}
+
+		out = append(out, fmt.Sprintf("%s@%s#%d valid=%t cksum=%s", r.Resource, r.Location, r.Number, r.Valid, ck))
+	}
+
+	if len(reps) > limit {
+		out = append(out, fmt.Sprintf("... (%d more)", len(reps)-limit))
+	}
+
+	return out
+}
+
+func (b *Baton) listItemDetails(
+	client *ex.Client,
+	remote string,
+) (exists bool, it ex.RodsItem, took time.Duration, err error) {
+	start := time.Now()
+	args := ex.Args{Timestamp: true, Size: true, Checksum: true, Replicate: true}
+
+	err = timeoutOp(func() error {
+		var errl error
+
+		it, errl = client.ListItem(args, *requestToRodsItem("", remote))
+
+		return errl
+	}, "debug list failed: "+remote)
+
+	took = time.Since(start)
+
+	if err != nil {
+		if strings.Contains(err.Error(), extendoNotExist) {
+			return false, ex.RodsItem{}, took, nil
+		}
+
+		return false, ex.RodsItem{}, took, err
+	}
+
+	return true, it, took, nil
+}
+
+// timeoutOp carries out op, returning any error from it. Has an operationTimeout
+// timeout on running op, and will return a timeout error instead if exceeded.
+func timeoutOp(op retry.Operation, path string) error {
+	errCh := make(chan error, 1)
+
+	go func() {
+		errCh <- op()
+	}()
+
+	timer := time.NewTimer(operationTimeout)
+
+	var err error
+
+	select {
+	case err = <-errCh:
+		timer.Stop()
+	case <-timer.C:
+		err = errs.PathError{Msg: ErrOperationTimeout, Path: path}
+	}
+
+	return err
+}
+
+// requestToRodsItem converts a Request in to an extendo RodsItem without AVUs.
+// If you provide an empty local path, it will not be set.
+func requestToRodsItem(local, remote string) *ex.RodsItem {
+	item := &ex.RodsItem{
+		IPath: filepath.Dir(remote),
+		IName: filepath.Base(remote),
+	}
+
+	if local != "" {
+		item.IDirectory = filepath.Dir(local)
+		item.IFile = filepath.Base(local)
+	}
+
+	return item
+}
+
+func (b *Baton) debugListItem(client *ex.Client, remote string, label string) {
+	if b.logger == nil || client == nil {
+		return
+	}
+
+	exists, it, took, err := b.listItemDetails(client, remote)
+	if err != nil {
+		b.logIRODSError(err, "label", label, "remote", remote, "took", took)
+
+		return
+	}
+
+	b.logListSnapshot(label, remote, exists, it, took)
+}
+
+func (b *Baton) logListSnapshot(label, remote string, exists bool, it ex.RodsItem, took time.Duration) {
+	if !exists {
+		b.info("baton list", "label", label, "remote", remote, "exists", false, "took", took)
+
+		return
+	}
+
+	b.info(
+		"baton list",
+		"label", label,
+		"remote", remote,
+		"exists", true,
+		"size", it.ISize,
+		"checksum", it.IChecksum,
+		"replicas", len(it.IReplicates),
+		"took", took,
+	)
+	b.debug(
+		"baton list details",
+		"label", label,
+		"remote", remote,
+		"replicate_details", b.replicateSummaries(it.IReplicates),
+	)
 }
 
 // EnsureCollection ensures the given collection exists in iRODS, creating it if
@@ -259,17 +441,49 @@ func (b *Baton) createCollectionWithTimeoutAndRetries(clientIndex int, ri ex.Rod
 // doWithTimeoutAndRetries does op, but times it out. On timeout or error,
 // retries a few times with backoff, getting a new baton client for each try.
 func (b *Baton) doWithTimeoutAndRetries(op retry.Operation, clientIndex int, path string) error {
+	attempt := 0
+	opName := "MkDir"
+
+	wrapped := func() error {
+		attempt++
+		b.info("baton retry attempt", "op", opName, "path", path, "attempt", attempt, "client_index", clientIndex)
+
+		err := b.timeoutOpAndMakeNewClientOnError(op, clientIndex, path)()
+		if err != nil {
+			b.logIRODSError(err, "op", opName, "path", path, "attempt", attempt, "client_index", clientIndex)
+
+			if errors.Is(err, errs.PathError{Msg: ErrOperationTimeout, Path: path}) {
+				b.warn(
+					"baton operation timed out (may still be running in background)",
+					"op", opName,
+					"path", path,
+					"attempt", attempt,
+				)
+			}
+
+			return err
+		}
+
+		b.info("baton retry attempt succeeded", "op", opName, "path", path, "attempt", attempt, "client_index", clientIndex)
+
+		return nil
+	}
+
 	status := retry.Do(
 		context.Background(),
-		b.timeoutOpAndMakeNewClientOnError(op, clientIndex, path),
+		wrapped,
 		retry.Untils{&retry.UntilLimit{Max: operationRetries}, &retry.UntilNoError{}},
 		&backoff.Backoff{
-			Min:     operationMinBackoff,
-			Max:     operationMaxBackoff,
-			Factor:  operationBackoffFactor,
-			Sleeper: &btime.Sleeper{},
+			Min:    operationMinBackoff,
+			Max:    operationMaxBackoff,
+			Factor: operationBackoffFactor,
+			Sleeper: &loggingSleeper{
+				logger: b.logger,
+				ctx:    []any{"op", opName, "path", path, "client_index", clientIndex},
+				base:   &btime.Sleeper{},
+			},
 		},
-		"MkDir",
+		opName,
 	)
 
 	return status.Err
@@ -281,6 +495,13 @@ func (b *Baton) timeoutOpAndMakeNewClientOnError(op retry.Operation, clientIndex
 	return func() error {
 		err := timeoutOp(op, path)
 		if err != nil {
+			b.warn("baton op failed; replacing client", "path", path, "client_index", clientIndex, "err", err)
+			b.logIRODSError(err, "path", path, "client_index", clientIndex)
+
+			if errors.Is(err, errs.PathError{Msg: ErrOperationTimeout, Path: path}) {
+				b.warn("baton op timed out (may still complete later)", "path", path, "client_index", clientIndex)
+			}
+
 			pool := ex.NewClientPool(ex.DefaultClientPoolParams, "")
 
 			client, errp := pool.Get()
@@ -294,7 +515,10 @@ func (b *Baton) timeoutOpAndMakeNewClientOnError(op retry.Operation, clientIndex
 				}(b.getClientByIndex(clientIndex))
 
 				b.setClientByIndex(clientIndex, client)
+				b.info("baton client replaced", "path", path, "client_index", clientIndex)
 				pool.Close()
+			} else {
+				b.warn("baton failed to create replacement client", "path", path, "client_index", clientIndex, "err", errp)
 			}
 		}
 
@@ -404,64 +628,20 @@ func (b *Baton) Stat(remote string) (exists bool, m map[string]string, err error
 		return false, nil, err
 	}
 
-	var it ex.RodsItem
-
-	err = timeoutOp(func() error {
-		var errl error
-
-		it, errl = b.metaClient.ListItem(ex.Args{Timestamp: true, AVU: true}, *requestToRodsItem("", remote))
-
-		return errl
-	}, "stat failed: "+remote)
-
+	it, exists, err := b.listItemForStat(remote)
 	if err != nil {
-		if strings.Contains(err.Error(), extendoNotExist) {
-			return false, nil, nil
-		}
+		b.logIRODSError(err, "op", "stat", "remote", remote)
 
 		return false, nil, err
 	}
 
+	if !exists {
+		return false, nil, nil
+	}
+
+	b.debugStatDetails(remote, it)
+
 	return true, RodsItemToMeta(it), nil
-}
-
-// timeoutOp carries out op, returning any error from it. Has an operationTimeout
-// timeout on running op, and will return a timeout error instead if exceeded.
-func timeoutOp(op retry.Operation, path string) error {
-	errCh := make(chan error, 1)
-
-	go func() {
-		errCh <- op()
-	}()
-
-	timer := time.NewTimer(operationTimeout)
-
-	var err error
-
-	select {
-	case err = <-errCh:
-		timer.Stop()
-	case <-timer.C:
-		err = errs.PathError{Msg: ErrOperationTimeout, Path: path}
-	}
-
-	return err
-}
-
-// requestToRodsItem converts a Request in to an extendo RodsItem without AVUs.
-// If you provide an empty local path, it will not be set.
-func requestToRodsItem(local, remote string) *ex.RodsItem {
-	item := &ex.RodsItem{
-		IPath: filepath.Dir(remote),
-		IName: filepath.Base(remote),
-	}
-
-	if local != "" {
-		item.IDirectory = filepath.Dir(local)
-		item.IFile = filepath.Base(local)
-	}
-
-	return item
 }
 
 // RodsItemToMeta pulls out the AVUs from a RodsItem and returns them as a map.
@@ -492,6 +672,52 @@ func RodsItemToMeta(it ex.RodsItem) map[string]string {
 	return m
 }
 
+func (b *Baton) statArgsForTracing() ex.Args {
+	args := ex.Args{Timestamp: true, AVU: true}
+	if b.logger != nil {
+		// Only request heavyweight details (checksum/replicates) when deep tracing
+		// is enabled.
+		args.Checksum = true
+		args.Replicate = true
+		args.Size = true
+	}
+
+	return args
+}
+
+func (b *Baton) listItemForStat(remote string) (it ex.RodsItem, exists bool, err error) {
+	err = timeoutOp(func() error {
+		var errl error
+
+		it, errl = b.metaClient.ListItem(b.statArgsForTracing(), *requestToRodsItem("", remote))
+
+		return errl
+	}, "stat failed: "+remote)
+	if err != nil {
+		if strings.Contains(err.Error(), extendoNotExist) {
+			return ex.RodsItem{}, false, nil
+		}
+
+		return ex.RodsItem{}, false, err
+	}
+
+	return it, true, nil
+}
+
+func (b *Baton) debugStatDetails(remote string, it ex.RodsItem) {
+	if b.logger == nil {
+		return
+	}
+
+	b.debug(
+		"baton stat details",
+		"remote", remote,
+		"checksum", it.IChecksum,
+		"replicas", len(it.IReplicates),
+		"replicate_details", b.replicateSummaries(it.IReplicates),
+	)
+}
+
 // Put uploads request Local to the Remote object, overwriting it if it already
 // exists. It calculates and stores the md5 checksum remotely, comparing to the
 // local checksum. It creates a new put client if necessary so after calling
@@ -512,15 +738,22 @@ func (b *Baton) Put(local, remote string) (err error) {
 	}
 	defer cleanup()
 
-	_, err = b.putClient.Put(
-		ex.Args{
-			Force:  true,
-			Verify: true,
-		},
-		*item,
-	)
+	// Snapshot current iRODS state to help diagnose partial failures/retries
+	// leading to excess replicas.
+	b.debugListItem(b.putClient, remote, "pre-put")
 
-	return err
+	items, err := b.putClient.Put(b.putArgsForTracing(), *item)
+	if err != nil {
+		b.logIRODSError(err, "op", "put", "local", local, "remote", remote)
+		b.debugListItem(b.putClient, remote, "post-put (error)")
+
+		return err
+	}
+
+	b.debugPutItems(local, remote, items)
+	b.debugListItem(b.putClient, remote, "post-put")
+
+	return nil
 }
 
 func requestToRodsItemForPut(local, remote string) (*ex.RodsItem, func(), error) {
@@ -545,6 +778,46 @@ func requestToRodsItemForPut(local, remote string) (*ex.RodsItem, func(), error)
 	return item, cleanup, nil
 }
 
+func (b *Baton) putArgsForTracing() ex.Args {
+	args := ex.Args{Force: true, Verify: true}
+	if b.logger != nil {
+		args.Checksum = true
+		args.Replicate = true
+		args.Size = true
+		args.Timestamp = true
+	}
+
+	return args
+}
+
+func (b *Baton) debugPutItems(local, remote string, items []ex.RodsItem) {
+	if b.logger == nil {
+		return
+	}
+
+	if len(items) == 0 {
+		b.warn("baton put returned no items", "local", local, "remote", remote)
+
+		return
+	}
+
+	it := items[0]
+	b.info(
+		"baton put result",
+		"local", local,
+		"remote", remote,
+		"size", it.ISize,
+		"checksum", it.IChecksum,
+		"replicas", len(it.IReplicates),
+	)
+	b.debug(
+		"baton put result details",
+		"local", local,
+		"remote", remote,
+		"replicate_details", b.replicateSummaries(it.IReplicates),
+	)
+}
+
 func (b *Baton) Get(local, remote string) (err error) {
 	finish := logger.StartOperation(b.logger, "baton get", getStillRunningLogFreq, "local", local, "remote", remote)
 
@@ -558,6 +831,9 @@ func (b *Baton) Get(local, remote string) (err error) {
 	localDir, localFile := filepath.Split(local)
 	tmpLocal := filepath.Join(localDir, fmt.Sprintf(".ibackup.get.%X", sha256.Sum256([]byte(localFile))))
 
+	// Snapshot remote state pre-get for debugging.
+	b.debugListItem(b.putClient, remote, "pre-get")
+
 	_, err = b.putClient.Get(
 		ex.Args{
 			Force:  true,
@@ -567,6 +843,7 @@ func (b *Baton) Get(local, remote string) (err error) {
 		*requestToRodsItem(tmpLocal, remote),
 	)
 	if err != nil {
+		b.logIRODSError(err, "op", "get", "local", local, "remote", remote)
 		os.Remove(tmpLocal)
 
 		return err
@@ -609,13 +886,13 @@ func (b *Baton) metaChange(
 	}
 
 	it := RemotePathToRodsItem(path)
+
 	it.IAVUs = metaToAVUs(meta)
+	if b.logger != nil {
+		b.debug("baton meta change", "op", opName, "path", path, "keys", len(meta))
+	}
 
-	err = timeoutOp(func() error {
-		return op(it)
-	}, errMsgPrefix+path)
-
-	return err
+	return b.runMetaOp(opName, errMsgPrefix, path, meta, it, op)
 }
 
 // RemotePathToRodsItem converts a path in to an extendo RodsItem.
@@ -638,6 +915,30 @@ func metaToAVUs(meta map[string]string) []ex.AVU {
 	return avus
 }
 
+func (b *Baton) runMetaOp(
+	opName string,
+	errMsgPrefix string,
+	path string,
+	meta map[string]string,
+	it *ex.RodsItem,
+	op func(item *ex.RodsItem) error,
+) error {
+	err := timeoutOp(func() error {
+		return op(it)
+	}, errMsgPrefix+path)
+	if err == nil {
+		return nil
+	}
+
+	b.logIRODSError(err, "op", opName, "path", path, "keys", len(meta))
+
+	if errors.Is(err, errs.PathError{Msg: ErrOperationTimeout, Path: path}) {
+		b.warn("baton meta change timed out (may still complete later)", "op", opName, "path", path)
+	}
+
+	return err
+}
+
 // GetMeta gets all the metadata for the given object in iRODS. It creates a new
 // meta client if necessary so after calling this function you must eventually
 // call Cleanup().
@@ -651,12 +952,40 @@ func (b *Baton) GetMeta(path string) (meta map[string]string, err error) {
 		return nil, err
 	}
 
+	it, err := b.listMetaItem(path)
+
+	if err != nil && strings.Contains(err.Error(), extendoNotExist) {
+		return nil, errs.PathError{Msg: internal.ErrFileDoesNotExist, Path: path}
+	}
+
+	if err != nil {
+		b.logIRODSError(err, "op", "get meta", "path", path)
+	}
+
+	b.debugGetMetaDetails(path, it, err)
+
+	meta = RodsItemToMeta(it)
+
+	return meta, err
+}
+
+func (b *Baton) metaListArgsForTracing() ex.Args {
+	args := ex.Args{AVU: true, Timestamp: true, Size: true}
+	if b.logger != nil {
+		args.Checksum = true
+		args.Replicate = true
+	}
+
+	return args
+}
+
+func (b *Baton) listMetaItem(path string) (ex.RodsItem, error) {
 	var it ex.RodsItem
 
-	err = timeoutOp(func() error {
+	err := timeoutOp(func() error {
 		var errl error
 
-		it, errl = b.metaClient.ListItem(ex.Args{AVU: true, Timestamp: true, Size: true}, ex.RodsItem{
+		it, errl = b.metaClient.ListItem(b.metaListArgsForTracing(), ex.RodsItem{
 			IPath: filepath.Dir(path),
 			IName: filepath.Base(path),
 		})
@@ -664,13 +993,21 @@ func (b *Baton) GetMeta(path string) (meta map[string]string, err error) {
 		return errl
 	}, "get meta error: "+path)
 
-	if err != nil && strings.Contains(err.Error(), extendoNotExist) {
-		return nil, errs.PathError{Msg: internal.ErrFileDoesNotExist, Path: path}
+	return it, err
+}
+
+func (b *Baton) debugGetMetaDetails(path string, it ex.RodsItem, err error) {
+	if b.logger == nil || err != nil {
+		return
 	}
 
-	meta = RodsItemToMeta(it)
-
-	return meta, err
+	b.debug(
+		"baton get meta details",
+		"path", path,
+		"checksum", it.IChecksum,
+		"replicas", len(it.IReplicates),
+		"replicate_details", b.replicateSummaries(it.IReplicates),
+	)
 }
 
 // AddMeta adds the given metadata to a given object in iRODS. It
@@ -730,6 +1067,10 @@ func (b *Baton) RemoveFile(path string) (err error) {
 		return errs.PathError{Msg: internal.ErrFileDoesNotExist, Path: path}
 	}
 
+	if err != nil {
+		b.logIRODSError(err, "op", "remove file", "path", path)
+	}
+
 	return err
 }
 
@@ -758,6 +1099,10 @@ func (b *Baton) RemoveDir(path string) (err error) {
 
 	if err != nil && strings.Contains(err.Error(), "CAT_COLLECTION_NOT_EMPTY") {
 		return errs.NewDirNotEmptyError(path)
+	}
+
+	if err != nil {
+		b.logIRODSError(err, "op", "remove dir", "path", path)
 	}
 
 	return err

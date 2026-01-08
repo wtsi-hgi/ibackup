@@ -184,6 +184,21 @@ func (p *Putter) SetLogger(l logger.Logger) {
 		return
 	}
 
+	// If the underlying handler supports deep tracing, propagate the logger so
+	// it can emit baton-level request/response details.
+	//
+	// Note: we do this before we potentially wrap the handler so we can reach the
+	// actual implementation.
+	if sl, ok := p.handler.(interface{ SetLogger(l logger.Logger) }); ok {
+		sl.SetLogger(l)
+	}
+
+	if lh, ok := p.handler.(*loggingHandler); ok {
+		if sl, ok := lh.base.(interface{ SetLogger(l logger.Logger) }); ok {
+			sl.SetLogger(l)
+		}
+	}
+
 	if lh, ok := p.handler.(*loggingHandler); ok {
 		lh.logger = p.logger
 
