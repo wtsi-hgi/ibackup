@@ -48,6 +48,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/VertebrateResequencing/wr/jobqueue"
 	"github.com/phayes/freeport"
 	. "github.com/smartystreets/goconvey/convey"
 	gas "github.com/wtsi-hgi/go-authserver"
@@ -90,8 +91,12 @@ type TestServer struct {
 	env                  []string
 	stopped              bool
 	debouncePeriod       string
+	queues               []string
+	avoidQueues          []string
+	shouldFail           bool
 
 	cmd *exec.Cmd
+	ch  chan []*jobqueue.Job
 }
 
 func NewTestServer(t *testing.T) *TestServer {
@@ -103,6 +108,27 @@ func NewTestServer(t *testing.T) *TestServer {
 
 	s.prepareConfig(t)
 	s.prepareFilePaths(dir)
+
+	s.startServer()
+
+	return s
+}
+
+func NewTestServerWithQueues(t *testing.T, queues, avoidQueues []string, shouldFail bool) *TestServer {
+	t.Helper()
+
+	dir := t.TempDir()
+
+	s := new(TestServer)
+
+	s.prepareConfig(t)
+	s.prepareFilePaths(dir)
+
+	s.queues = queues
+	s.avoidQueues = avoidQueues
+	s.schedulerDeployment = "development"
+	s.ch = make(chan []*jobqueue.Job)
+	s.shouldFail = shouldFail
 
 	s.startServer()
 
@@ -290,6 +316,14 @@ func (s *TestServer) startServer() {
 		"-s", s.ldapServer, "-l", s.ldapLookup, "--url", s.url, "--slack_debounce", s.debouncePeriod,
 	}
 
+	if s.queues != nil {
+		args = append(args, "--queues", strings.Join(s.queues, ","))
+	}
+
+	if s.avoidQueues != nil {
+		args = append(args, "--queues_avoid", strings.Join(s.avoidQueues, ","))
+	}
+
 	if s.schedulerDeployment != "" {
 		args = append(args, "-w", s.schedulerDeployment)
 	} else {
@@ -316,7 +350,28 @@ func (s *TestServer) startServer() {
 	s.cmd.Stdout = os.Stdout
 	s.cmd.Stderr = os.Stderr
 
-	err := s.cmd.Start()
+	pr, pw, err := os.Pipe()
+	So(err, ShouldBeNil)
+
+	s.cmd.ExtraFiles = []*os.File{pw}
+
+	jd := json.NewDecoder(pr)
+
+	go func() {
+		defer pr.Close()
+
+		for {
+			var j []*jobqueue.Job
+
+			if errr := jd.Decode(&j); errr != nil {
+				return
+			}
+
+			s.ch <- j
+		}
+	}()
+
+	err = s.cmd.Start()
 	So(err, ShouldBeNil)
 
 	s.waitForServer()
@@ -337,7 +392,9 @@ func (s *TestServer) waitForServer() {
 		return clientCmd.Run()
 	}, &retry.UntilNoError{}, btime.SecondsRangeBackoff(), "waiting for server to start")
 
-	So(status.Err, ShouldBeNil)
+	if !s.shouldFail {
+		So(status.Err, ShouldBeNil)
+	}
 }
 
 func normaliseOutput(out string) string {
@@ -434,7 +491,9 @@ func (s *TestServer) addSetForTesting(t *testing.T, name, transformer, path stri
 
 	exitCode, _ := s.runBinary(t, "add", "--name", name, "--transformer", transformer, "--path", path)
 
-	So(exitCode, ShouldEqual, 0)
+	if !s.shouldFail {
+		So(exitCode, ShouldEqual, 0)
+	}
 
 	s.waitForStatus(name, "\nDiscovery: completed", 20*time.Second)
 }
@@ -534,7 +593,9 @@ func (s *TestServer) waitForStatusWithFlags(name, statusToFind string, timeout t
 		fmt.Printf("\nfailed to see set %s get status: %s\n%s\n", name, statusToFind, string(output)) //nolint:forbidigo
 	}
 
-	So(status.Err, ShouldBeNil)
+	if !s.shouldFail {
+		So(status.Err, ShouldBeNil)
+	}
 }
 
 func (s *TestServer) Shutdown() error {
@@ -586,7 +647,12 @@ func TestMain(m *testing.M) {
 }
 
 func buildSelf() func() {
-	if err := exec.Command("make", "build").Run(); err != nil {
+	if err := exec.Command( //nolint:noctx
+		"go", "build",
+		"-ldflags=-X github.com/VertebrateResequencing/wr/client.PretendSubmissions=3 "+
+			"-X github.com/wtsi-ssg/wrstat/v6/cmd.Version=TESTVERSION",
+		"-o", "ibackup",
+	).Run(); err != nil {
 		failMainTest(err.Error())
 
 		return nil
@@ -914,6 +980,100 @@ func TestList(t *testing.T) {
 				"--name and --all are mutually exclusive")
 		})
 	})
+}
+
+func TestQueueFlags(t *testing.T) {
+	Convey("You can specify queues to use and avoid", t, func() {
+		tmp := t.TempDir()
+
+		err := os.WriteFile(filepath.Join(tmp, "bqueues"), []byte("#!/bin/bash\n"+ //nolint:gosec
+			`cat <<HEREDOC
+{
+  "COMMAND":"bqueues",
+  "QUEUES":4,
+  "RECORDS":[
+    {
+      "QUEUE_NAME":"gpu-basement"
+    },
+    {
+      "QUEUE_NAME":"normal"
+    },
+    {
+      "QUEUE_NAME":"parallel"
+    },
+	{
+      "QUEUE_NAME":"long"
+    }
+  ]
+}
+HEREDOC`), 0700)
+		So(err, ShouldBeNil)
+
+		So(os.Setenv("PATH", tmp+":"+os.Getenv("PATH")), ShouldBeNil)
+
+		q, _ := testQueue(t, []string{"normal"}, nil, false)
+		So(q[0].Requirements.Other["scheduler_queue"], ShouldEqual, "normal")
+
+		q, _ = testQueue(t, []string{"normal"}, []string{"long", "parallel"}, false)
+		So(q[0].Requirements.Other["scheduler_queue"], ShouldEqual, "normal")
+		So(q[0].Requirements.Other["scheduler_queues_avoid"], ShouldEqual, "long,parallel")
+
+		q, _ = testQueue(t, []string{"long", "normal"}, []string{"gpu-basement", "parallel"}, false)
+		So(q[0].Requirements.Other["scheduler_queue"], ShouldEqual, "long,normal")
+		So(q[0].Requirements.Other["scheduler_queues_avoid"], ShouldEqual, "gpu-basement,parallel")
+
+		q, s := testQueue(t, []string{"failtestpls"}, nil, true)
+		So(q, ShouldEqual, nil)
+		So(checkErrorInLog(t, s.logFile, "failed to validate queues: queue 'failtestpls' is not a valid queue"), ShouldBeTrue)
+
+		q, s = testQueue(t, []string{"normal"}, []string{"normal", "long"}, true)
+		So(q, ShouldEqual, nil)
+		So(checkErrorInLog(t, s.logFile, "failed to validate queues: queue 'normal' is in avoid queues list"), ShouldBeTrue)
+
+		q, s = testQueue(t, []string{"normal"}, []string{"testtypo", "long"}, true)
+		So(q, ShouldBeNil)
+		So(checkErrorInLog(t, s.logFile, "failed to validate queues: queue 'testtypo' is not a valid queue"), ShouldBeTrue)
+	})
+}
+
+func checkErrorInLog(t *testing.T, logFile string, errStr string) bool {
+	t.Helper()
+
+	f, err := os.OpenFile(logFile, os.O_RDONLY, 0) //nolint:errcheck
+	So(err, ShouldBeNil)
+
+	defer f.Close()
+
+	buf := make([]byte, 1024)
+	n, err := f.Read(buf)
+	So(err, ShouldBeNil)
+
+	logContents := string(buf[:n])
+
+	return strings.Contains(logContents, errStr)
+}
+
+func testQueue(t *testing.T, queue []string, avoid []string, shouldFail bool) ([]*jobqueue.Job, *TestServer) {
+	t.Helper()
+
+	s := NewTestServerWithQueues(t, queue, avoid, shouldFail)
+
+	Reset(func() { s.Shutdown() }) //nolint:errcheck
+
+	transformer, dir, _ := prepareForSetWithEmptyDir(t)
+
+	internal.CreateTestFileOfLength(t, filepath.Join(dir, "afile"), 1)
+
+	if !shouldFail {
+		s.addSetForTesting(t, "testSetName", transformer, dir)
+	}
+
+	select {
+	case <-time.After(1 * time.Second):
+		return nil, s
+	case q := <-s.ch:
+		return q, s
+	}
 }
 
 func TestStatus(t *testing.T) {
