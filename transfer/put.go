@@ -392,6 +392,7 @@ func (p *Putter) Put() (chan *Request, chan *Request, chan *Request) {
 		p.putRequests(p.requests, transferStartCh, transferReturnCh, skipReturnCh)
 
 		for i := range p.duplicateRequests {
+			p.info("processing duplicate request", requestLogCtx(p.duplicateRequests[i])...)
 			p.putRequests(p.duplicateRequests[i:i+1], transferStartCh, transferReturnCh, skipReturnCh)
 		}
 
@@ -521,6 +522,19 @@ func (p *Putter) statPathsAndReturnOrPut(request *Request, putCh chan *Request, 
 		return
 	}
 
+	p.info(
+		"stat results",
+		append(
+			requestLogCtx(request),
+			"local_exists", lInfo.Exists,
+			"remote_exists", rInfo.Exists,
+			"local_size", request.Size,
+			"local_mtime", formatMetaTime(lInfo.ModTime()),
+			"remote_mtime", formatMetaTime(rInfo.ModTime()),
+			"remote_meta_keys", len(rInfo.Meta),
+		)...,
+	)
+
 	if !lInfo.Exists {
 		p.info(
 			"local missing/orphaned",
@@ -531,7 +545,7 @@ func (p *Putter) statPathsAndReturnOrPut(request *Request, putCh chan *Request, 
 		return
 	}
 
-	if sendForUploadOrUnmodified(request, lInfo, rInfo, putCh, skipReturnCh) {
+	if p.sendForUploadOrUnmodified(request, lInfo, rInfo, putCh, skipReturnCh) {
 		p.debug(
 			"decided upload/unmodified",
 			append(requestLogCtx(request), "status", request.Status, "skip_put", request.skipPut)...,
@@ -539,6 +553,7 @@ func (p *Putter) statPathsAndReturnOrPut(request *Request, putCh chan *Request, 
 		return
 	}
 
+	p.logDecision(request, RequestStatusReplaced, "remote mtime differs or remote missing metadata after stat")
 	sendRequest(request, RequestStatusReplaced, nil, putCh)
 }
 
@@ -568,6 +583,14 @@ func sendRequest(request *Request, status RequestStatus, err error, ch chan *Req
 	ch <- request
 }
 
+func formatMetaTime(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+
+	return t.UTC().Format(time.RFC3339Nano)
+}
+
 func getStatusBasedOnInfo(remoteExists bool) RequestStatus {
 	if remoteExists {
 		return RequestStatusOrphaned
@@ -576,31 +599,57 @@ func getStatusBasedOnInfo(remoteExists bool) RequestStatus {
 	return RequestStatusMissing
 }
 
+func (p *Putter) logDecision(r *Request, status RequestStatus, reason string, extraCtx ...interface{}) {
+	ctx := append(requestLogCtx(r), "status", status, "reason", reason)
+	ctx = append(ctx, extraCtx...)
+	p.info("request decision", ctx...)
+}
+
 // sendForUploadOrUnmodified sends the request to putCh if remote doesn't exist
 // or if the mtime hasn't change but the metadata has, or the skipReturnCh if
 // the metadata hasn't changed. Returns true in one of those cases, or false if
 // the request needs to be uploaded again because the mtime changed.
-func sendForUploadOrUnmodified(request *Request, lInfo, rInfo *ObjectInfo, putCh, skipReturnCh chan *Request) bool {
+func (p *Putter) sendForUploadOrUnmodified(
+	request *Request,
+	lInfo *ObjectInfo,
+	rInfo *ObjectInfo,
+	putCh chan *Request,
+	skipReturnCh chan *Request,
+) bool {
 	if !rInfo.Exists {
+		p.logDecision(request, RequestStatusUploaded, "remote missing - scheduling upload")
 		sendRequest(request, RequestStatusUploaded, nil, putCh)
 
 		return true
 	}
 
-	if lInfo.HasSameModTime(rInfo) {
-		ch := skipReturnCh
-
-		request.skipPut = request.Meta.needsMetadataUpdate()
-		if request.skipPut {
-			ch = putCh
-		}
-
-		sendRequest(request, RequestStatusUnmodified, nil, ch)
-
-		return true
+	if !lInfo.HasSameModTime(rInfo) {
+		return false
 	}
 
-	return false
+	p.handleUnmodifiedRequest(request, putCh, skipReturnCh)
+
+	return true
+}
+
+func (p *Putter) handleUnmodifiedRequest(request *Request, putCh, skipReturnCh chan *Request) {
+	ch := skipReturnCh
+
+	request.skipPut = request.Meta.needsMetadataUpdate()
+	if request.skipPut {
+		p.logDecision(
+			request,
+			RequestStatusUnmodified,
+			"remote up to date; metadata needs refresh",
+			"skip_put", request.skipPut,
+		)
+
+		ch = putCh
+	} else {
+		p.logDecision(request, RequestStatusUnmodified, "remote up to date; metadata unchanged")
+	}
+
+	sendRequest(request, RequestStatusUnmodified, nil, ch)
 }
 
 func (p *Putter) getMetadataAndReturnOrPut(request *Request, putCh chan *Request, skipReturnCh chan *Request) {
@@ -627,19 +676,20 @@ func (p *Putter) getMetadataAndReturnOrPut(request *Request, putCh chan *Request
 
 	request.Meta.LocalMeta = request.Meta.remoteMeta
 
-	sendGetRequest(request, lInfo, rInfo, putCh, skipReturnCh, p.hardlinksNormal)
+	p.sendGetRequest(request, lInfo, rInfo, putCh, skipReturnCh, p.hardlinksNormal)
 }
 
 func skipIfLocalFileIsNotEmptyAndNotOverwriting(lInfo *ObjectInfo, err error, overwrite bool) bool {
 	return err == nil && lInfo.Size != 0 && !overwrite
 }
 
-func sendGetRequest(request *Request, lInfo, rInfo *ObjectInfo,
+func (p *Putter) sendGetRequest(request *Request, lInfo, rInfo *ObjectInfo,
 	putCh, skipReturnCh chan *Request, hardlinksNormal bool) {
 	if hardlink, ok := request.Meta.remoteMeta[MetaKeyRemoteHardlink]; ok {
 		request.Hardlink = hardlink
 
 		if !hardlinksNormal {
+			p.logDecision(request, RequestStatusHardlinkSkipped, "hardlink present but restore in normal mode disabled")
 			sendRequest(request, RequestStatusHardlinkSkipped, nil, skipReturnCh)
 
 			return
@@ -656,8 +706,21 @@ func sendGetRequest(request *Request, lInfo, rInfo *ObjectInfo,
 		return
 	}
 
-	if !sendForUploadOrUnmodified(request, lInfo, rInfo, putCh, skipReturnCh) {
+	if !p.sendForUploadOrUnmodified(request, lInfo, rInfo, putCh, skipReturnCh) {
 		sendRequest(request, RequestStatusReplaced, nil, putCh)
+	}
+}
+
+func addRemoteMetaForGetRequest(request *Request) {
+	if symlink, ok := request.Meta.remoteMeta[MetaKeySymlink]; ok {
+		request.Symlink = symlink
+	}
+
+	_, hasMtime := request.Meta.remoteMeta[MetaKeyMtime]
+	remoteMtime, hasRemoteMtime := request.Meta.remoteMeta[meta.MetaKeyRemoteMtime]
+
+	if !hasMtime && hasRemoteMtime {
+		request.Meta.remoteMeta[MetaKeyMtime] = remoteMtime
 	}
 }
 
@@ -688,10 +751,20 @@ func (p *Putter) applyMetadataConcurrently(metaCh, uploadReturnCh, skipReturnCh 
 	metaDoneCh chan struct{}) {
 	for request := range metaCh {
 		start := time.Now()
+		toRemove, toAdd := request.Meta.determineMetadataToRemoveAndAdd()
 
 		p.debug(
 			"apply metadata starting",
 			append(requestLogCtx(request), "skip_put", request.skipPut)...,
+		)
+		p.info(
+			"metadata plan",
+			append(
+				requestLogCtx(request),
+				"skip_put", request.skipPut,
+				"remove_keys", sortedMapKeys(toRemove),
+				"add_keys", sortedMapKeys(toAdd),
+			)...,
 		)
 		returnCh := uploadReturnCh
 
@@ -718,14 +791,35 @@ func (p *Putter) applyMetadataConcurrently(metaCh, uploadReturnCh, skipReturnCh 
 			continue
 		}
 
-		p.debug(
+		p.info(
 			"apply metadata finished",
-			append(requestLogCtx(request), "took", time.Since(start))...,
+			append(
+				requestLogCtx(request),
+				"took", time.Since(start),
+				"remove_keys", len(toRemove),
+				"add_keys", len(toAdd),
+			)...,
 		)
 		returnCh <- request
 	}
 
 	close(metaDoneCh)
+}
+
+func sortedMapKeys(m map[string]string) []string {
+	if len(m) == 0 {
+		return nil
+	}
+
+	keys := make([]string, 0, len(m))
+
+	for k := range m {
+		keys = append(keys, k)
+	}
+
+	sort.Strings(keys)
+
+	return keys
 }
 
 // sendFailedRequest adds the err details to the request and sends it on the
@@ -872,17 +966,4 @@ func dedupAndPrepareRequests(requests []*Request) ([]*Request, []*Request, error
 	}
 
 	return unique, dups, nil
-}
-
-func addRemoteMetaForGetRequest(request *Request) {
-	if symlink, ok := request.Meta.remoteMeta[MetaKeySymlink]; ok {
-		request.Symlink = symlink
-	}
-
-	_, hasMtime := request.Meta.remoteMeta[MetaKeyMtime]
-	remoteMtime, hasRemoteMtime := request.Meta.remoteMeta[meta.MetaKeyRemoteMtime]
-
-	if !hasMtime && hasRemoteMtime {
-		request.Meta.remoteMeta[MetaKeyMtime] = remoteMtime
-	}
 }

@@ -471,6 +471,16 @@ func (b *Baton) doWithTimeoutAndRetries(op retry.Operation, clientIndex int, pat
 		opName,
 	)
 
+	if status.Err != nil {
+		b.warn(
+			"baton retry attempts exhausted",
+			"op", opName,
+			"path", path,
+			"attempts", attempt,
+			"err", status.Err,
+		)
+	}
+
 	return status.Err
 }
 
@@ -559,16 +569,37 @@ func (b *Baton) setClientIfNotExists(client **ex.Client) error {
 		return nil
 	}
 
-	b.debug("baton creating new client")
+	label := b.clientLabel(client)
+	if *client != nil && !(*client).IsRunning() {
+		b.warn("baton client not running; recreating", "client", label)
+	} else {
+		b.info("baton creating new client", "client", label)
+	}
 
 	newClient, err := b.getNewClient()
 	if err != nil {
+		b.warn("baton failed to create client", "client", label, "err", err)
 		return err
 	}
 
 	*client = newClient
 
+	b.info("baton client ready", "client", label)
+
 	return nil
+}
+
+func (b *Baton) clientLabel(client **ex.Client) string {
+	switch client {
+	case &b.putClient:
+		return "put"
+	case &b.metaClient:
+		return "meta"
+	case &b.removeClient:
+		return "remove"
+	default:
+		return "unknown"
+	}
 }
 
 func (b *Baton) getNewClient() (*ex.Client, error) {
