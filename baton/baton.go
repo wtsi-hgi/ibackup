@@ -45,6 +45,7 @@ import (
 	"github.com/wtsi-hgi/ibackup/baton/meta"
 	"github.com/wtsi-hgi/ibackup/errs"
 	"github.com/wtsi-hgi/ibackup/internal"
+	"github.com/wtsi-hgi/ibackup/logger"
 	ex "github.com/wtsi-npg/extendo/v2"
 	logs "github.com/wtsi-npg/logshim"
 	"github.com/wtsi-npg/logshim-zerolog/zlog"
@@ -68,6 +69,7 @@ const (
 	operationTimeout       = 15 * time.Second
 	operationRetries       = 6
 	putStillRunningLogFreq = 2 * time.Minute
+	getStillRunningLogFreq = 2 * time.Minute
 )
 
 // Baton is a Handler that uses Baton (via extendo) to interact with iRODS.
@@ -81,38 +83,7 @@ type Baton struct {
 	putClient    *ex.Client
 	metaClient   *ex.Client
 	removeClient *ex.Client
-	logger       Logger
-}
-
-// Logger is an optional structured logger used for deep tracing.
-// log15.Logger satisfies this interface.
-type Logger interface {
-	Debug(msg string, ctx ...interface{})
-	Info(msg string, ctx ...interface{})
-	Warn(msg string, ctx ...interface{})
-}
-
-// SetLogger sets an optional logger for deep tracing.
-func (b *Baton) SetLogger(logger Logger) {
-	b.logger = logger
-}
-
-func (b *Baton) debug(msg string, ctx ...interface{}) {
-	if b.logger != nil {
-		b.logger.Debug(msg, ctx...)
-	}
-}
-
-func (b *Baton) info(msg string, ctx ...interface{}) {
-	if b.logger != nil {
-		b.logger.Info(msg, ctx...)
-	}
-}
-
-func (b *Baton) warn(msg string, ctx ...interface{}) {
-	if b.logger != nil {
-		b.logger.Warn(msg, ctx...)
-	}
+	logger       logger.Logger
 }
 
 // GetBatonHandler returns a Handler that uses Baton to interact with iRODS. If
@@ -125,11 +96,15 @@ func GetBatonHandler() (*Baton, error) {
 	return &Baton{}, err
 }
 
-// setupExtendoLogger sets up a STDERR logger that the extendo library will use.
-// (We don't actually care about what it might log, but extendo doesn't work
-// without this.)
-func setupExtendoLogger() {
-	logs.InstallLogger(zlog.New(zerolog.SyncWriter(os.Stderr), extendoLogLevel))
+// SetLogger sets an optional logger for deep tracing.
+func (b *Baton) SetLogger(l logger.Logger) {
+	b.logger = l
+}
+
+func (b *Baton) debug(msg string, ctx ...interface{}) {
+	if b.logger != nil {
+		b.logger.Debug(msg, ctx...)
+	}
 }
 
 // EnsureCollection ensures the given collection exists in iRODS, creating it if
@@ -263,29 +238,6 @@ func (b *Baton) ensureCollection(clientIndex int, ri ex.RodsItem) error {
 	}
 
 	return b.createCollectionWithTimeoutAndRetries(clientIndex, ri)
-}
-
-// timeoutOp carries out op, returning any error from it. Has a 10s timeout on
-// running op, and will return a timeout error instead if exceeded.
-func timeoutOp(op retry.Operation, path string) error {
-	errCh := make(chan error, 1)
-
-	go func() {
-		errCh <- op()
-	}()
-
-	timer := time.NewTimer(operationTimeout)
-
-	var err error
-
-	select {
-	case err = <-errCh:
-		timer.Stop()
-	case <-timer.C:
-		err = errs.PathError{Msg: ErrOperationTimeout, Path: path}
-	}
-
-	return err
 }
 
 // createCollectionWithTimeoutAndRetries tries to make and confirm the given
@@ -469,6 +421,29 @@ func (b *Baton) Stat(remote string) (bool, map[string]string, error) {
 	return true, RodsItemToMeta(it), nil
 }
 
+// timeoutOp carries out op, returning any error from it. Has a 10s timeout on
+// running op, and will return a timeout error instead if exceeded.
+func timeoutOp(op retry.Operation, path string) error {
+	errCh := make(chan error, 1)
+
+	go func() {
+		errCh <- op()
+	}()
+
+	timer := time.NewTimer(operationTimeout)
+
+	var err error
+
+	select {
+	case err = <-errCh:
+		timer.Stop()
+	case <-timer.C:
+		err = errs.PathError{Msg: ErrOperationTimeout, Path: path}
+	}
+
+	return err
+}
+
 // requestToRodsItem converts a Request in to an extendo RodsItem without AVUs.
 // If you provide an empty local path, it will not be set.
 func requestToRodsItem(local, remote string) *ex.RodsItem {
@@ -517,49 +492,21 @@ func RodsItemToMeta(it ex.RodsItem) map[string]string {
 // exists. It calculates and stores the md5 checksum remotely, comparing to the
 // local checksum. It creates a new put client if necessary so after calling
 // this function you must eventually call Cleanup().
-func (b *Baton) Put(local, remote string) error {
-	started := time.Now()
+func (b *Baton) Put(local, remote string) (err error) {
+	finish := logger.StartOperation(b.logger, "baton put", putStillRunningLogFreq, "local", local, "remote", remote)
 
-	b.info("baton put starting", "local", local, "remote", remote)
+	defer func() { finish(err) }()
 
-	err := b.setClientIfNotExists(&b.putClient)
+	err = b.setClientIfNotExists(&b.putClient)
 	if err != nil {
 		return err
 	}
 
-	item := requestToRodsItem(local, remote)
-
-	// iRODS treats /dev/null specially, so unless that changes we have to check
-	// for it and create a temporary empty file in its place.
-	if filepath.Join(item.IDirectory, item.IFile) == os.DevNull {
-		fileName, errt := getTempFile()
-		if errt != nil {
-			return errt
-		}
-
-		item.IDirectory = filepath.Dir(fileName)
-		item.IFile = filepath.Base(fileName)
-
-		defer os.Remove(fileName)
+	item, cleanup, err := requestToRodsItemForPut(local, remote)
+	if err != nil {
+		return err
 	}
-
-	// extendo/baton-do Put() can occasionally block indefinitely; emit periodic
-	// logs so we can see which object is stuck.
-	done := make(chan struct{})
-
-	go func() {
-		ticker := time.NewTicker(putStillRunningLogFreq)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-done:
-				return
-			case <-ticker.C:
-				b.warn("baton put still running", "local", local, "remote", remote, "elapsed", time.Since(started))
-			}
-		}
-	}()
+	defer cleanup()
 
 	_, err = b.putClient.Put(
 		ex.Args{
@@ -569,14 +516,37 @@ func (b *Baton) Put(local, remote string) error {
 		*item,
 	)
 
-	close(done)
-	b.info("baton put finished", "local", local, "remote", remote, "took", time.Since(started), "err", err)
-
 	return err
 }
 
-func (b *Baton) Get(local, remote string) error {
-	err := b.setClientIfNotExists(&b.putClient)
+func requestToRodsItemForPut(local, remote string) (*ex.RodsItem, func(), error) {
+	item := requestToRodsItem(local, remote)
+	cleanup := func() {}
+
+	// iRODS treats /dev/null specially, so unless that changes we have to check
+	// for it and create a temporary empty file in its place.
+	if filepath.Join(item.IDirectory, item.IFile) != os.DevNull {
+		return item, cleanup, nil
+	}
+
+	fileName, err := getTempFile()
+	if err != nil {
+		return nil, cleanup, err
+	}
+
+	item.IDirectory = filepath.Dir(fileName)
+	item.IFile = filepath.Base(fileName)
+	cleanup = func() { os.Remove(fileName) }
+
+	return item, cleanup, nil
+}
+
+func (b *Baton) Get(local, remote string) (err error) {
+	finish := logger.StartOperation(b.logger, "baton get", getStillRunningLogFreq, "local", local, "remote", remote)
+
+	defer func() { finish(err) }()
+
+	err = b.setClientIfNotExists(&b.putClient)
 	if err != nil {
 		return err
 	}
@@ -601,29 +571,6 @@ func (b *Baton) Get(local, remote string) error {
 	return os.Rename(tmpLocal, local)
 }
 
-func getTempFile() (string, error) {
-	file, err := os.CreateTemp("", "ibackup-put-empty-*")
-	if err != nil {
-		return "", err
-	}
-
-	file.Close()
-
-	return file.Name(), nil
-}
-
-func metaToAVUs(meta map[string]string) []ex.AVU {
-	avus := make([]ex.AVU, len(meta))
-	i := 0
-
-	for k, v := range meta {
-		avus[i] = ex.AVU{Attr: k, Value: v}
-		i++
-	}
-
-	return avus
-}
-
 // RemoveMeta removes the given metadata from a given object in iRODS. It
 // creates a new meta client if necessary so after calling this function you
 // must eventually call Cleanup().
@@ -645,33 +592,61 @@ func (b *Baton) RemoveMeta(path string, meta map[string]string) error {
 	return err
 }
 
-// GetMeta gets all the metadata for the given object in iRODS. It creates a new
-// meta client if necessary so after calling this function you must eventually
-// call Cleanup().
-func (b *Baton) GetMeta(path string) (map[string]string, error) {
-	err := b.setClientIfNotExists(&b.metaClient)
-	if err != nil {
-		return nil, err
-	}
-
-	it, err := b.metaClient.ListItem(ex.Args{AVU: true, Timestamp: true, Size: true}, ex.RodsItem{
-		IPath: filepath.Dir(path),
-		IName: filepath.Base(path),
-	})
-
-	if err != nil && strings.Contains(err.Error(), extendoNotExist) {
-		return nil, errs.PathError{Msg: internal.ErrFileDoesNotExist, Path: path}
-	}
-
-	return RodsItemToMeta(it), err
-}
-
 // RemotePathToRodsItem converts a path in to an extendo RodsItem.
 func RemotePathToRodsItem(path string) *ex.RodsItem {
 	return &ex.RodsItem{
 		IPath: filepath.Dir(path),
 		IName: filepath.Base(path),
 	}
+}
+
+func metaToAVUs(meta map[string]string) []ex.AVU {
+	avus := make([]ex.AVU, len(meta))
+	i := 0
+
+	for k, v := range meta {
+		avus[i] = ex.AVU{Attr: k, Value: v}
+		i++
+	}
+
+	return avus
+}
+
+// GetMeta gets all the metadata for the given object in iRODS. It creates a new
+// meta client if necessary so after calling this function you must eventually
+// call Cleanup().
+func (b *Baton) GetMeta(path string) (map[string]string, error) {
+	started := time.Now()
+
+	b.debug("baton get meta starting", "path", path)
+
+	err := b.setClientIfNotExists(&b.metaClient)
+	if err != nil {
+		return nil, err
+	}
+
+	var it ex.RodsItem
+
+	err = timeoutOp(func() error {
+		var errl error
+
+		it, errl = b.metaClient.ListItem(ex.Args{AVU: true, Timestamp: true, Size: true}, ex.RodsItem{
+			IPath: filepath.Dir(path),
+			IName: filepath.Base(path),
+		})
+
+		return errl
+	}, "get meta error: "+path)
+
+	if err != nil && strings.Contains(err.Error(), extendoNotExist) {
+		b.debug("baton get meta finished", "path", path, "took", time.Since(started), "err", err)
+
+		return nil, errs.PathError{Msg: internal.ErrFileDoesNotExist, Path: path}
+	}
+
+	b.debug("baton get meta finished", "path", path, "took", time.Since(started), "err", err)
+
+	return RodsItemToMeta(it), err
 }
 
 // AddMeta adds the given metadata to a given object in iRODS. It
@@ -800,4 +775,22 @@ func (b *Baton) QueryMeta(dirToSearch string, meta map[string]string) ([]string,
 	}
 
 	return paths, err
+}
+
+func getTempFile() (string, error) {
+	file, err := os.CreateTemp("", "ibackup-put-empty-*")
+	if err != nil {
+		return "", err
+	}
+
+	file.Close()
+
+	return file.Name(), nil
+}
+
+// setupExtendoLogger sets up a STDERR logger that the extendo library will use.
+// (We don't actually care about what it might log, but extendo doesn't work
+// without this.)
+func setupExtendoLogger() {
+	logs.InstallLogger(zlog.New(zerolog.SyncWriter(os.Stderr), extendoLogLevel))
 }
