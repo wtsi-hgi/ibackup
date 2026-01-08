@@ -46,9 +46,7 @@ type Slacker interface {
 
 const (
 	dateFormat            = "2006-01-02 15:04:05"
-	arPrefixParts         = 2
 	ErrInvalidTransformer = "invalid transformer"
-	prefixTransformerKey  = "prefix="
 )
 
 const (
