@@ -133,6 +133,7 @@ linters:
           - gocyclo
           - maintidx
           - revive
+          - noctx
         path: _test\.go
       - linters:
           - dupl

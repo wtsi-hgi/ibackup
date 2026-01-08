@@ -556,6 +556,7 @@ func (c *Client) logStillWaitingForUploadResult(started *transfer.Request, waiti
 		"path", started.Local,
 		"waiting", waiting,
 		"size_bytes", started.Size,
+		"goroutines", runtime.NumGoroutine(),
 	)
 
 	*lastLog = time.Now()
@@ -568,7 +569,7 @@ func (c *Client) dumpGoroutinesIfStuckWaiting(started *transfer.Request, waiting
 
 	buf := make([]byte, uploadResultWaitStackBuf)
 	n := runtime.Stack(buf, true)
-	c.logger.Warn(
+	c.logger.Debug(
 		"goroutine dump after long wait for upload result",
 		"path", started.Local,
 		"waiting", waiting,

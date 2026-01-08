@@ -535,6 +535,12 @@ func (s *Server) makeSetWritable(c *gin.Context, sid string) error {
 // EnableDatabaseBackups().
 func (s *Server) tryBackup() {
 	go func() {
+		if s.db == nil {
+			s.Logger.Printf("db backup requested but %s", errDBNotInitialised)
+
+			return
+		}
+
 		trace := grand.LcString(logTraceIDLen)
 		start := time.Now()
 
@@ -1826,41 +1832,36 @@ func (s *Server) queueFileStatusUpdate(r *transfer.Request) chan *codeAndError {
 	ceCh := make(chan *codeAndError)
 
 	go func() {
+		trace := grand.LcString(logTraceIDLen)
 		start := time.Now()
-		warned := false
-		packet := &fileStatusPacket{r: r, ceCh: ceCh}
 
-		for {
-			select {
-			case s.statusUpdateCh <- packet:
-				if !warned {
-					return
-				}
-
-				s.Logger.Printf(
-					"status update enqueue for rid=%s local=%s unblocked after %s",
-					r.ID(), r.Local, time.Since(start).Truncate(time.Millisecond),
-				)
-
-				return
-			case <-time.After(slowLogFirstAfter):
-				if warned {
-					continue
-				}
-
-				warned = true
-
+		done := make(chan struct{})
+		go logger.LogIfBlocked(
+			done,
+			s.Logger,
+			trace,
+			"enqueue /file_status update",
+			slowLogFirstAfter,
+			slowLogEvery,
+			func() string {
 				backup := false
 				if s.db != nil {
 					backup = s.db.BackupInProgress()
 				}
 
-				s.Logger.Printf(
-					"WARNING: status update enqueue blocked for rid=%s local=%s after %s (backupInProgress=%t)",
-					r.ID(), r.Local, time.Since(start).Truncate(time.Millisecond), backup,
-				)
-				start = time.Now()
-			}
+				return "rid=" + r.ID() + " local=" + r.Local + " backupInProgress=" + strconv.FormatBool(backup)
+			},
+		)
+
+		s.statusUpdateCh <- &fileStatusPacket{r: r, ceCh: ceCh}
+
+		close(done)
+
+		if time.Since(start) >= slowLogFirstAfter {
+			s.Logger.Printf(
+				"[%s] status update enqueue unblocked after %s (rid=%s local=%s)",
+				trace, time.Since(start).Truncate(time.Millisecond), r.ID(), r.Local,
+			)
 		}
 	}()
 
@@ -1925,10 +1926,13 @@ func (s *Server) updateFileStatus(r *transfer.Request, trace string) error {
 
 	close(setDone)
 
-	s.Logger.Printf(
-		"[%s] SetEntryStatus completed in %s (err=%v)",
-		trace, time.Since(setStart).Truncate(time.Millisecond), err,
-	)
+	setTook := time.Since(setStart)
+	if err != nil || setTook >= slowLogFirstAfter {
+		s.Logger.Printf(
+			"[%s] SetEntryStatus completed in %s (err=%v)",
+			trace, setTook.Truncate(time.Millisecond), err,
+		)
+	}
 	if err != nil {
 		var errr error
 

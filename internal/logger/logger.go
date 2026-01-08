@@ -70,8 +70,10 @@ func StartOperation(
 	startStillRunningTicker(done, l, name, stillRunningEvery, started, ctx)
 
 	return func(err error, extraCtx ...any) {
-		once.Do(func() { close(done) })
-		logFinished(l, name, started, err, ctx, extraCtx...)
+		once.Do(func() {
+			close(done)
+			logFinished(l, name, started, err, ctx, extraCtx...)
+		})
 	}
 }
 

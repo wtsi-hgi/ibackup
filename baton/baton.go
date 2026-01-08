@@ -425,8 +425,8 @@ func (b *Baton) Stat(remote string) (exists bool, m map[string]string, err error
 	return true, RodsItemToMeta(it), nil
 }
 
-// timeoutOp carries out op, returning any error from it. Has a 10s timeout on
-// running op, and will return a timeout error instead if exceeded.
+// timeoutOp carries out op, returning any error from it. Has an operationTimeout
+// timeout on running op, and will return a timeout error instead if exceeded.
 func timeoutOp(op retry.Operation, path string) error {
 	errCh := make(chan error, 1)
 

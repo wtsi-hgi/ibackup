@@ -215,6 +215,7 @@ func upsertEnvVar(env []string, key, value string) []string {
 	for i, v := range env {
 		if strings.HasPrefix(v, prefix) {
 			env[i] = prefix + value
+
 			return env
 		}
 	}
@@ -243,6 +244,7 @@ func (s *TestServer) prepareConfig(t *testing.T) {
 	t.Helper()
 
 	generateDefaultConfig(t)
+
 	if len(s.env) > 0 {
 		s.env = upsertEnvVar(s.env, "IBACKUP_CONFIG", os.Getenv("IBACKUP_CONFIG"))
 	}
@@ -616,6 +618,7 @@ func buildSelf() func() {
 	appPath = filepath.Join(tempDir, app)
 
 	cmd := exec.Command("go", "build", "-tags", "netgo", "-o", appPath)
+
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=1")
 
 	if err := cmd.Run(); err != nil {
