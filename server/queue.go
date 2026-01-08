@@ -266,8 +266,20 @@ func (s *Server) RetryBuried(bf *BuriedFilter) int {
 	var n int
 
 	s.forEachBuriedItem(bf, func(item *queue.Item) {
+		r := item.Data().(*transfer.Request) //nolint:forcetypeassert,errcheck
+
 		if err := s.queue.Kick(context.Background(), item.Key); err == nil {
 			n++
+
+			s.Logger.Printf(
+				"[%s] KICKING buried item for retry (local: %s, remote: %s, error: %s)",
+				r.ID(), r.Local, r.Remote, r.Error,
+			)
+		} else {
+			s.Logger.Printf(
+				"[%s] failed to kick buried item (err: %s)",
+				r.ID(), err,
+			)
 		}
 	})
 

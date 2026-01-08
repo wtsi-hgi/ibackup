@@ -1699,6 +1699,12 @@ func (s *Server) reserveRequest() (*transfer.Request, error) {
 		return nil, ErrInvalidInput
 	}
 
+	stats := item.Stats()
+	s.Logger.Printf(
+		"[%s] request RESERVED (local: %s, remote: %s, reserves: %d, releases: %d, buries: %d)",
+		r.ID(), r.Local, r.Remote, stats.Reserves, stats.Releases, stats.Buries,
+	)
+
 	return r, nil
 }
 
@@ -1994,11 +2000,26 @@ func (s *Server) removeOrReleaseRequestFromQueue(r *transfer.Request, entry *set
 		s.updateQueueItemData(r)
 
 		if entry.Attempts%set.AttemptsToBeConsideredFailing == 0 {
+			s.Logger.Printf(
+				"[%s] request BURIED after %d attempts (error: %s)",
+				r.ID(), entry.Attempts, r.Error,
+			)
+
 			return s.queue.Bury(r.ID())
 		}
 
+		s.Logger.Printf(
+			"[%s] request released for RETRY (attempt %d, error: %s)",
+			r.ID(), entry.Attempts, r.Error,
+		)
+
 		return s.queue.Release(context.Background(), r.ID())
 	}
+
+	s.Logger.Printf(
+		"[%s] request COMPLETED successfully (status: %s)",
+		r.ID(), r.Status,
+	)
 
 	return s.queue.Remove(context.Background(), r.ID())
 }
