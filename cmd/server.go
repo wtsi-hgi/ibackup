@@ -47,23 +47,38 @@ import (
 )
 
 const serverTokenBasename = ".ibackup.token"
+
 const numPutClients = 10
+
 const dbBackupParamPosition = 2
+
 const defaultDebounceSeconds = 600
 
 // options for this cmd.
 var serverLogPath string
+
 var serverKey string
+
 var serverLDAPFQDN string
+
 var serverLDAPBindDN string
+
 var serverDebug bool
+
 var readonly bool
+
 var serverRemoteBackupPath string
+
 var serverWRDeployment string
+
 var serverHardlinksCollection string
+
 var serverSlackDebouncePeriod int
+
 var serverStillRunningMsgFreq string
+
 var serverTrashLifespan string
+
 var statterPath string
 
 // serverCmd represents the server command.
@@ -336,6 +351,28 @@ func init() {
 		"path to an external statter program (https://github.com/wtsi-hgi/statter)")
 }
 
+// sayStarted logs to console that the server stated. It does this a second
+// after being calling in a goroutine, when we can assume the server has
+// actually started; if it failed, we expect it to do so in less than a second
+// and exit.
+func sayStarted() {
+	<-time.After(1 * time.Second)
+
+	info("server started")
+}
+
+// log15Writer wraps a log15.Logger to make it conform to io.Writer interface.
+type log15Writer struct {
+	logger log15.Logger
+}
+
+// Write conforms to the io.Writer interface.
+func (w *log15Writer) Write(p []byte) (n int, err error) {
+	w.logger.Info(string(p))
+
+	return len(p), nil
+}
+
 // setServerLogger makes our appLogger log to the given path if non-blank,
 // otherwise to syslog. Returns an io.Writer version of our appLogger for the
 // server to log to.
@@ -361,18 +398,6 @@ func logToSyslog() {
 	}
 
 	appLogger.SetHandler(fh)
-}
-
-// log15Writer wraps a log15.Logger to make it conform to io.Writer interface.
-type log15Writer struct {
-	logger log15.Logger
-}
-
-// Write conforms to the io.Writer interface.
-func (w *log15Writer) Write(p []byte) (n int, err error) {
-	w.logger.Info(string(p))
-
-	return len(p), nil
 }
 
 // checkPassword defers to checkLDAPPassword(). Warns if we don't have the ldap
@@ -415,14 +440,4 @@ func checkLDAPPassword(username, password string) (bool, string) {
 	}
 
 	return true, uid
-}
-
-// sayStarted logs to console that the server stated. It does this a second
-// after being calling in a goroutine, when we can assume the server has
-// actually started; if it failed, we expect it to do so in less than a second
-// and exit.
-func sayStarted() {
-	<-time.After(1 * time.Second)
-
-	info("server started")
 }

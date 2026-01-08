@@ -34,6 +34,7 @@ import (
 
 // options for this cmd.
 var retryUser string
+
 var retrySet string
 
 // retryCmd represents the retry command.

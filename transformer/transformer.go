@@ -43,11 +43,6 @@ var (
 	ErrInvalidTransformer   = errors.New("invalid transformer")
 )
 
-type transformer struct {
-	re      *regexp.Regexp
-	replace string
-}
-
 type tx interface {
 	Transform(path string) (string, error)
 }
@@ -56,6 +51,11 @@ var (
 	mu           sync.RWMutex      //nolint:gochecknoglobals
 	transformers = map[string]tx{} //nolint:gochecknoglobals
 )
+
+type transformer struct {
+	re      *regexp.Regexp
+	replace string
+}
 
 func newTransformer(name, match, replace string) (*transformer, error) {
 	re, err := regexp.Compile(match)
@@ -118,56 +118,6 @@ func Transform(transformer string, path string) (string, error) {
 	return txa.Transform(path)
 }
 
-// ValidateTransformer confirms the existence of a named transformer, or whether
-// a given prefix transform is of the correct format.
-func ValidateTransformer(transformer string) error {
-	mu.RLock()
-
-	_, ok := transformers[transformer]
-
-	mu.RUnlock()
-
-	if ok {
-		return nil
-	}
-
-	_, err := compilePrefixTransformer(transformer)
-
-	return err
-}
-
-// PathTransformer is a function that given a local path, returns the
-// corresponding remote path.
-type PathTransformer func(local string) (remote string, err error)
-
-// MakePathTransformer returns a function that used the given named or prefix
-// transformer to transform local paths to remote paths.
-func MakePathTransformer(tx string) (PathTransformer, error) {
-	if err := ValidateTransformer(tx); err != nil {
-		return nil, err
-	}
-
-	return func(path string) (string, error) {
-		return Transform(tx, path)
-	}, nil
-}
-
-// Register creates a named transformer from the given regex an replacement
-// strings.
-func Register(name string, re, replace string) error {
-	_, err := newTransformer(name, re, replace)
-
-	return err
-}
-
-type prefixTransformer struct {
-	local, remote string
-}
-
-func (p *prefixTransformer) Transform(path string) (string, error) {
-	return filepath.Join(p.remote, strings.TrimPrefix(path, p.local)), nil
-}
-
 func compilePrefixTransformer(trans string) (tx, error) { //nolint:ireturn
 	if !strings.HasPrefix(trans, prefixPrefix) {
 		return nil, ErrInvalidTransformer
@@ -190,4 +140,54 @@ func compilePrefixTransformer(trans string) (tx, error) { //nolint:ireturn
 	mu.Unlock()
 
 	return tx, nil
+}
+
+// ValidateTransformer confirms the existence of a named transformer, or whether
+// a given prefix transform is of the correct format.
+func ValidateTransformer(transformer string) error {
+	mu.RLock()
+
+	_, ok := transformers[transformer]
+
+	mu.RUnlock()
+
+	if ok {
+		return nil
+	}
+
+	_, err := compilePrefixTransformer(transformer)
+
+	return err
+}
+
+// Register creates a named transformer from the given regex an replacement
+// strings.
+func Register(name string, re, replace string) error {
+	_, err := newTransformer(name, re, replace)
+
+	return err
+}
+
+// PathTransformer is a function that given a local path, returns the
+// corresponding remote path.
+type PathTransformer func(local string) (remote string, err error)
+
+// MakePathTransformer returns a function that used the given named or prefix
+// transformer to transform local paths to remote paths.
+func MakePathTransformer(tx string) (PathTransformer, error) {
+	if err := ValidateTransformer(tx); err != nil {
+		return nil, err
+	}
+
+	return func(path string) (string, error) {
+		return Transform(tx, path)
+	}, nil
+}
+
+type prefixTransformer struct {
+	local, remote string
+}
+
+func (p *prefixTransformer) Transform(path string) (string, error) {
+	return filepath.Join(p.remote, strings.TrimPrefix(path, p.local)), nil
 }

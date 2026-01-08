@@ -39,9 +39,13 @@ import (
 
 // options for this cmd.
 var arFile string
+
 var arPrefix string
+
 var arTx = map[string]*bool{}
+
 var arNull bool
+
 var arBase64 bool
 
 // addremoteCmd represents the addremote command.

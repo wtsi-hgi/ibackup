@@ -173,159 +173,101 @@ func init() {
 		"override the default stuck wait time (1h)")
 }
 
-func serverMode() bool {
-	return putServerMode && serverURL != ""
+// scanNulls is a bufio.SplitFunc like bufio.ScanLines, but it splits on null
+// characters.
+func scanNulls(data []byte, atEOF bool) (advance int, token []byte, err error) {
+	if atEOF && len(data) == 0 {
+		return 0, nil, nil
+	}
+
+	if i := bytes.IndexByte(data, '\000'); i >= 0 {
+		return i + 1, data[0:i], nil
+	}
+
+	if atEOF {
+		return len(data), data, nil
+	}
+
+	return 0, nil, nil
 }
 
-func handlePutServerMode(started time.Time) {
-	handleServerMode(started, (*server.Client).GetSomeUploadRequests, handlePut, (*server.Client).SendPutResultsToServer)
+type results struct {
+	total    int
+	verbose  bool
+	i        int
+	fails    int
+	missing  int
+	replaced int
+	skipped  int
+	uploads  int
+	mu       sync.Mutex
 }
 
-func handleServerMode( //nolint:gocognit,gocyclo,funlen
-	started time.Time,
-	getReq func(*server.Client) ([]*transfer.Request, error),
-	handleReq func(*server.Client, []*transfer.Request) (chan *transfer.Request, chan *transfer.Request,
-		chan *transfer.Request, func()),
-	sendReq func(*server.Client, chan *transfer.Request, chan *transfer.Request, chan *transfer.Request,
-		float64, time.Duration, time.Duration, log15.Logger) error,
-) {
-	for time.Since(started) < runFor {
-		client, err := newServerClient(serverURL, serverCert)
-		if err != nil {
-			die(err)
+func (r *results) update(req *transfer.Request) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.i++
+
+	warnIfBad(req, r.i, r.total, r.verbose)
+
+	switch req.Status { //nolint:exhaustive
+	case transfer.RequestStatusFailed, transfer.RequestStatusUploading:
+		r.fails++
+	case transfer.RequestStatusMissing, transfer.RequestStatusOrphaned:
+		r.missing++
+	case transfer.RequestStatusReplaced:
+		r.replaced++
+	case transfer.RequestStatusUnmodified, transfer.RequestStatusHardlinkSkipped:
+		r.skipped++
+	case transfer.RequestStatusUploaded, transfer.RequestStatusWarning:
+		r.uploads++
+	}
+}
+
+// warnIfBad warns if this Request failed or is missing. If verbose, logs at
+// info level the Request details.
+func warnIfBad(r *transfer.Request, i, total int, verbose bool) {
+	switch r.Status {
+	case transfer.RequestStatusFailed, transfer.RequestStatusMissing, transfer.RequestStatusOrphaned,
+		transfer.RequestStatusWarning:
+		warn("[%d/%d] %s %s: %s", i, total, r.Local, r.Status, r.Error)
+	case transfer.RequestStatusHardlinkSkipped:
+		warn("[%d/%d] Hardlink skipped: %s\t%s", i, total, r.Local, r.Hardlink)
+	default:
+		if verbose {
+			info("[%d/%d] %s %s", i, total, r.Local, r.Status)
 		}
-
-		requests, err := getReq(client)
-		if err != nil {
-			warn("%s", err)
-
-			os.Exit(0)
-		}
-
-		err = client.MakingIRODSConnections(numIRODSConnections, heartbeatFreq)
-		if err != nil {
-			die(err)
-		}
-
-		uploadStarts, uploadResults, skipResults, dfunc := handleReq(client, requests)
-
-		err = sendReq(client, uploadStarts, uploadResults, skipResults,
-			minMBperSecondUploadSpeed, minTimeForUpload, maxStuckTime, appLogger)
-
-		dfunc()
-
-		errm := client.ClosedIRODSConnections()
-		if errm != nil {
-			warn("%s", errm)
-		}
-
-		if err != nil {
-			warn("%s", err)
-
-			os.Exit(0)
-		}
-	}
-
-	if putVerbose {
-		info("all done, exiting")
 	}
 }
 
-func handleGetPut(
-	requests []*transfer.Request,
-	get func([]*transfer.Request) *transfer.Putter,
-) (chan *transfer.Request, chan *transfer.Request, chan *transfer.Request, func()) {
-	if putVerbose {
-		host, errh := os.Hostname()
-		if errh != nil {
-			die(errh)
-		}
+// printResults reads from the given channels, outputs info about them to STDOUT
+// and STDERR, then emits summary numbers. Supply the total number of requests
+// made. Exits 1 if there were upload errors.
+func printResults(upDown string, transferResults, skipResults chan *transfer.Request, total int, verbose bool) {
+	r := &results{total: total, verbose: verbose}
 
-		info("client starting on host %s, pid %d", host, os.Getpid())
+	var wg sync.WaitGroup
+
+	for _, ch := range []chan *transfer.Request{skipResults, transferResults} {
+		wg.Add(1)
+
+		go func(ch chan *transfer.Request) {
+			defer wg.Done()
+
+			for req := range ch {
+				r.update(req)
+			}
+		}(ch)
 	}
 
-	if len(requests) == 0 {
-		warn("no requests to work on")
+	wg.Wait()
 
-		os.Exit(0)
-	}
+	info("%d %sloaded (%d replaced); %d skipped; %d failed; %d missing",
+		r.uploads+r.replaced, upDown, r.replaced, r.skipped, r.fails, r.missing)
 
-	if putVerbose {
-		info("got %d requests to work on", len(requests))
-	}
-
-	p := get(requests)
-
-	transferStarts, transferResults, skipResults := p.Put()
-
-	return transferStarts, transferResults, skipResults, p.Cleanup
-}
-
-func handlePut(client *server.Client, requests []*transfer.Request) (chan *transfer.Request,
-	chan *transfer.Request, chan *transfer.Request, func(),
-) {
-	return handleGetPut(requests, func(requests []*transfer.Request) *transfer.Putter {
-		p := getPutter(requests)
-
-		handleCollections(client, p)
-
-		return p
-	})
-}
-
-func getPutter(requests []*transfer.Request) *transfer.Putter {
-	handler, err := baton.GetBatonHandler()
-	if err != nil {
-		die(err)
-	}
-
-	// In server mode we need deep tracing to debug stalls; use the app logger so
-	// logs end up in the same place as other client logs.
-	if serverMode() || putVerbose {
-		handler.SetLogger(appLogger.New("component", "baton"))
-	}
-
-	p, err := transfer.New(handler, requests)
-	if err != nil {
-		die(err)
-	}
-
-	if serverMode() || putVerbose {
-		p.SetLogger(appLogger.New("component", "transfer"))
-	}
-
-	return p
-}
-
-func handleCollections(client *server.Client, p *transfer.Putter) {
-	if putVerbose {
-		info("will create collections")
-	}
-
-	if client == nil {
-		createCollection(p)
-
-		return
-	}
-
-	err := client.StartingToCreateCollections()
-	if err != nil {
-		warn("telling server we started to create collections failed: %s", err)
-	}
-
-	createCollection(p)
-
-	if err = client.FinishedCreatingCollections(); err != nil {
-		warn("telling server we finished creating collections failed: %s", err)
-	}
-}
-
-func createCollection(p *transfer.Putter) {
-	err := p.CreateCollections()
-	if err != nil {
-		warn("collection creation failed: %s", err)
-	} else if putVerbose {
-		info("collections created")
+	if r.fails > 0 {
+		os.Exit(1)
 	}
 }
 
@@ -385,34 +327,6 @@ func parsePutFile(path, meta, requester string, splitter bufio.SplitFunc, base64
 	}
 
 	return prs
-}
-
-// fofnLineSplitter returns a bufio.SplitFunc that splits on \n be default, or
-// null if the given bool is true.
-func fofnLineSplitter(onNull bool) bufio.SplitFunc {
-	if onNull {
-		return scanNulls
-	}
-
-	return bufio.ScanLines
-}
-
-// scanNulls is a bufio.SplitFunc like bufio.ScanLines, but it splits on null
-// characters.
-func scanNulls(data []byte, atEOF bool) (advance int, token []byte, err error) {
-	if atEOF && len(data) == 0 {
-		return 0, nil, nil
-	}
-
-	if i := bytes.IndexByte(data, '\000'); i >= 0 {
-		return i + 1, data[0:i], nil
-	}
-
-	if atEOF {
-		return len(data), data, nil
-	}
-
-	return 0, nil, nil
 }
 
 // createScannerForFile creates a bufio.Scanner that will scan the given file,
@@ -507,82 +421,162 @@ func decodeBase64(path string, isEncoded bool) string {
 	return string(b)
 }
 
-type results struct {
-	total    int
-	verbose  bool
-	i        int
-	fails    int
-	missing  int
-	replaced int
-	skipped  int
-	uploads  int
-	mu       sync.Mutex
-}
-
-func (r *results) update(req *transfer.Request) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	r.i++
-
-	warnIfBad(req, r.i, r.total, r.verbose)
-
-	switch req.Status { //nolint:exhaustive
-	case transfer.RequestStatusFailed, transfer.RequestStatusUploading:
-		r.fails++
-	case transfer.RequestStatusMissing, transfer.RequestStatusOrphaned:
-		r.missing++
-	case transfer.RequestStatusReplaced:
-		r.replaced++
-	case transfer.RequestStatusUnmodified, transfer.RequestStatusHardlinkSkipped:
-		r.skipped++
-	case transfer.RequestStatusUploaded, transfer.RequestStatusWarning:
-		r.uploads++
-	}
-}
-
-// printResults reads from the given channels, outputs info about them to STDOUT
-// and STDERR, then emits summary numbers. Supply the total number of requests
-// made. Exits 1 if there were upload errors.
-func printResults(upDown string, transferResults, skipResults chan *transfer.Request, total int, verbose bool) {
-	r := &results{total: total, verbose: verbose}
-
-	var wg sync.WaitGroup
-
-	for _, ch := range []chan *transfer.Request{skipResults, transferResults} {
-		wg.Add(1)
-
-		go func(ch chan *transfer.Request) {
-			defer wg.Done()
-
-			for req := range ch {
-				r.update(req)
-			}
-		}(ch)
+// fofnLineSplitter returns a bufio.SplitFunc that splits on \n be default, or
+// null if the given bool is true.
+func fofnLineSplitter(onNull bool) bufio.SplitFunc {
+	if onNull {
+		return scanNulls
 	}
 
-	wg.Wait()
-
-	info("%d %sloaded (%d replaced); %d skipped; %d failed; %d missing",
-		r.uploads+r.replaced, upDown, r.replaced, r.skipped, r.fails, r.missing)
-
-	if r.fails > 0 {
-		os.Exit(1)
-	}
+	return bufio.ScanLines
 }
 
-// warnIfBad warns if this Request failed or is missing. If verbose, logs at
-// info level the Request details.
-func warnIfBad(r *transfer.Request, i, total int, verbose bool) {
-	switch r.Status {
-	case transfer.RequestStatusFailed, transfer.RequestStatusMissing, transfer.RequestStatusOrphaned,
-		transfer.RequestStatusWarning:
-		warn("[%d/%d] %s %s: %s", i, total, r.Local, r.Status, r.Error)
-	case transfer.RequestStatusHardlinkSkipped:
-		warn("[%d/%d] Hardlink skipped: %s\t%s", i, total, r.Local, r.Hardlink)
-	default:
-		if verbose {
-			info("[%d/%d] %s %s", i, total, r.Local, r.Status)
+func handlePut(client *server.Client, requests []*transfer.Request) (chan *transfer.Request,
+	chan *transfer.Request, chan *transfer.Request, func(),
+) {
+	return handleGetPut(requests, func(requests []*transfer.Request) *transfer.Putter {
+		p := getPutter(requests)
+
+		handleCollections(client, p)
+
+		return p
+	})
+}
+
+func handleGetPut(
+	requests []*transfer.Request,
+	get func([]*transfer.Request) *transfer.Putter,
+) (chan *transfer.Request, chan *transfer.Request, chan *transfer.Request, func()) {
+	if putVerbose {
+		host, errh := os.Hostname()
+		if errh != nil {
+			die(errh)
 		}
+
+		info("client starting on host %s, pid %d", host, os.Getpid())
+	}
+
+	if len(requests) == 0 {
+		warn("no requests to work on")
+
+		os.Exit(0)
+	}
+
+	if putVerbose {
+		info("got %d requests to work on", len(requests))
+	}
+
+	p := get(requests)
+
+	transferStarts, transferResults, skipResults := p.Put()
+
+	return transferStarts, transferResults, skipResults, p.Cleanup
+}
+
+func getPutter(requests []*transfer.Request) *transfer.Putter {
+	handler, err := baton.GetBatonHandler()
+	if err != nil {
+		die(err)
+	}
+
+	p, err := transfer.New(handler, requests)
+	if err != nil {
+		die(err)
+	}
+
+	if serverMode() || putVerbose {
+		p.SetLogger(appLogger.New("component", "transfer"))
+	}
+
+	return p
+}
+
+func serverMode() bool {
+	return putServerMode && serverURL != ""
+}
+
+func handleCollections(client *server.Client, p *transfer.Putter) {
+	if putVerbose {
+		info("will create collections")
+	}
+
+	if client == nil {
+		createCollection(p)
+
+		return
+	}
+
+	err := client.StartingToCreateCollections()
+	if err != nil {
+		warn("telling server we started to create collections failed: %s", err)
+	}
+
+	createCollection(p)
+
+	if err = client.FinishedCreatingCollections(); err != nil {
+		warn("telling server we finished creating collections failed: %s", err)
+	}
+}
+
+func createCollection(p *transfer.Putter) {
+	err := p.CreateCollections()
+	if err != nil {
+		warn("collection creation failed: %s", err)
+	} else if putVerbose {
+		info("collections created")
+	}
+}
+
+func handlePutServerMode(started time.Time) {
+	handleServerMode(started, (*server.Client).GetSomeUploadRequests, handlePut, (*server.Client).SendPutResultsToServer)
+}
+
+func handleServerMode( //nolint:gocognit,gocyclo,funlen
+	started time.Time,
+	getReq func(*server.Client) ([]*transfer.Request, error),
+	handleReq func(*server.Client, []*transfer.Request) (chan *transfer.Request, chan *transfer.Request,
+		chan *transfer.Request, func()),
+	sendReq func(*server.Client, chan *transfer.Request, chan *transfer.Request, chan *transfer.Request,
+		float64, time.Duration, time.Duration, log15.Logger) error,
+) {
+	for time.Since(started) < runFor {
+		client, err := newServerClient(serverURL, serverCert)
+		if err != nil {
+			die(err)
+		}
+
+		requests, err := getReq(client)
+		if err != nil {
+			warn("%s", err)
+
+			os.Exit(0)
+		}
+
+		err = client.MakingIRODSConnections(numIRODSConnections, heartbeatFreq)
+		if err != nil {
+			die(err)
+		}
+
+		uploadStarts, uploadResults, skipResults, dfunc := handleReq(client, requests)
+
+		err = sendReq(client, uploadStarts, uploadResults, skipResults,
+			minMBperSecondUploadSpeed, minTimeForUpload, maxStuckTime, appLogger)
+
+		dfunc()
+
+		errm := client.ClosedIRODSConnections()
+		if errm != nil {
+			warn("%s", errm)
+		}
+
+		if err != nil {
+			warn("%s", err)
+
+			os.Exit(0)
+		}
+	}
+
+	if putVerbose {
+		info("all done, exiting")
 	}
 }

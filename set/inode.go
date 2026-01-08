@@ -44,7 +44,117 @@ import (
 )
 
 const transformerInodeSeparator = ":"
+
 const ErrElementNotInSlice = "element not in slice"
+
+func noStat(_ string) (uint64, error) {
+	return 0, io.EOF
+}
+
+func isPathInTransformerPaths(path string, files []string) (bool, error) {
+	for _, file := range files {
+		if file == "" {
+			continue
+		}
+
+		_, pathFromSplit, err := splitTransformerPath(file)
+		if err != nil {
+			return false, err
+		}
+
+		if pathFromSplit == path {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+func removePathFromInodeFiles(path string, files []string) ([]string, error) {
+	transformerID, _, err := splitTransformerPath(files[0])
+	if err != nil {
+		return nil, err
+	}
+
+	transformerPath := transformerID + transformerInodeSeparator + path
+
+	isHardlink := files[0] != transformerPath
+	if isHardlink {
+		return RemoveElementFromSlice(files, transformerPath)
+	}
+
+	files[0] = ""
+
+	return files, nil
+}
+
+func splitTransformerPath(tp string) (string, string, error) {
+	transformerID, hardlinkDest, ok := strings.Cut(tp, transformerInodeSeparator)
+	if !ok {
+		return "", "", &Error{Msg: ErrInvalidTransformerPath}
+	}
+
+	return transformerID, hardlinkDest, nil
+}
+
+// RemoveElementFromSlice returns the given slice without the given element.
+func RemoveElementFromSlice(slice []string, element string) ([]string, error) {
+	index := slices.Index(slice, element)
+	if index < 0 {
+		return nil, errs.PathError{Msg: ErrElementNotInSlice, Path: element}
+	}
+
+	return slices.Delete(slice, index, index+1), nil
+}
+
+func getFirstNonBlankValue(arr []string) string {
+	for _, str := range arr {
+		if str != "" {
+			return str
+		}
+	}
+
+	return ""
+}
+
+// alreadyInFiles checks if path is in existing and returns true if so.
+// Additionally returns true if it's the first entry in files, meaning it's the
+// original and not considered a hardlink.
+func alreadyInFiles(path string, existing []string) (bool, bool) {
+	if path == existing[0] {
+		return true, true
+	}
+
+	for _, existing := range existing[1:] {
+		if path == existing {
+			return true, false
+		}
+	}
+
+	return false, false
+}
+
+func lstat(path string) (uint64, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return 0, err
+	}
+
+	return info.Sys().(*syscall.Stat_t).Ino, nil //nolint:forcetypeassert,errcheck
+}
+
+func getRemotePath(tx *bolt.Tx, transformerID, path string) (string, error) {
+	tb := tx.Bucket([]byte(transformerFromIDBucket))
+
+	v := tb.Get([]byte(transformerID))
+	if v == nil {
+		return "", &Error{Msg: ErrInvalidTransformerPath}
+	}
+
+	s := &Set{Transformer: string(v)}
+
+	return s.TransformPath(path)
+}
 
 // getMountPoints retrieves a list of mount point paths to be used when
 // determining hardlinks. The list is sorted longest first and stored on the
@@ -111,16 +221,6 @@ func (d *DB) handleInode(tx *bolt.Tx, de *Dirent, transformerID string) (string,
 	}
 
 	return hardlinkDest, b.Put(key, d.encodeToBytes(append(allFiles, transformerPath)))
-}
-
-func getFirstNonBlankValue(arr []string) string {
-	for _, str := range arr {
-		if str != "" {
-			return str
-		}
-	}
-
-	return ""
 }
 
 // GetFilesFromInode returns all the paths that share the provided inode on the
@@ -211,25 +311,6 @@ func (d *DBRO) GetAllSetsForFile(path string) ([]string, error) {
 	return sets, err
 }
 
-func isPathInTransformerPaths(path string, files []string) (bool, error) {
-	for _, file := range files {
-		if file == "" {
-			continue
-		}
-
-		_, pathFromSplit, err := splitTransformerPath(file)
-		if err != nil {
-			return false, err
-		}
-
-		if pathFromSplit == path {
-			return true, nil
-		}
-	}
-
-	return false, nil
-}
-
 func (d *DB) updateInodeEntryBasedOnFiles(b *bolt.Bucket, key []byte, path string, files []string) error {
 	isInFiles, err := isPathInTransformerPaths(path, files)
 	if err != nil {
@@ -250,60 +331,6 @@ func (d *DB) updateInodeEntryBasedOnFiles(b *bolt.Bucket, key []byte, path strin
 	}
 
 	return b.Put(key, d.encodeToBytes(files))
-}
-
-func removePathFromInodeFiles(path string, files []string) ([]string, error) {
-	transformerID, _, err := splitTransformerPath(files[0])
-	if err != nil {
-		return nil, err
-	}
-
-	transformerPath := transformerID + transformerInodeSeparator + path
-
-	isHardlink := files[0] != transformerPath
-	if isHardlink {
-		return RemoveElementFromSlice(files, transformerPath)
-	}
-
-	files[0] = ""
-
-	return files, nil
-}
-
-// RemoveElementFromSlice returns the given slice without the given element.
-func RemoveElementFromSlice(slice []string, element string) ([]string, error) {
-	index := slices.Index(slice, element)
-	if index < 0 {
-		return nil, errs.PathError{Msg: ErrElementNotInSlice, Path: element}
-	}
-
-	return slices.Delete(slice, index, index+1), nil
-}
-
-func splitTransformerPath(tp string) (string, string, error) {
-	transformerID, hardlinkDest, ok := strings.Cut(tp, transformerInodeSeparator)
-	if !ok {
-		return "", "", &Error{Msg: ErrInvalidTransformerPath}
-	}
-
-	return transformerID, hardlinkDest, nil
-}
-
-// alreadyInFiles checks if path is in existing and returns true if so.
-// Additionally returns true if it's the first entry in files, meaning it's the
-// original and not considered a hardlink.
-func alreadyInFiles(path string, existing []string) (bool, bool) {
-	if path == existing[0] {
-		return true, true
-	}
-
-	for _, existing := range existing[1:] {
-		if path == existing {
-			return true, false
-		}
-	}
-
-	return false, false
 }
 
 // inodeMountPointKeyFromDirent returns the inodeBucket key for the Dirent's
@@ -405,19 +432,6 @@ func (d *DB) tryStatter(path string) (uint64, error) {
 	return 0, nil
 }
 
-func noStat(_ string) (uint64, error) {
-	return 0, io.EOF
-}
-
-func lstat(path string) (uint64, error) {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return 0, err
-	}
-
-	return info.Sys().(*syscall.Stat_t).Ino, nil //nolint:forcetypeassert,errcheck
-}
-
 // HardlinkPaths returns all known hardlink paths that share the same mountpoint
 // and inode as the entry provided.
 func (d *DB) HardlinkPaths(e *Entry) ([]string, error) {
@@ -491,17 +505,4 @@ func (d *DB) HardlinkRemote(e *Entry) (string, error) {
 	})
 
 	return remotePath, err
-}
-
-func getRemotePath(tx *bolt.Tx, transformerID, path string) (string, error) {
-	tb := tx.Bucket([]byte(transformerFromIDBucket))
-
-	v := tb.Get([]byte(transformerID))
-	if v == nil {
-		return "", &Error{Msg: ErrInvalidTransformerPath}
-	}
-
-	s := &Set{Transformer: string(v)}
-
-	return s.TransformPath(path)
 }

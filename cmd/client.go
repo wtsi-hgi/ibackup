@@ -46,19 +46,6 @@ var Config struct {
 	Transformers map[string]tx `json:"transformers"`
 }
 
-func newConfig(config string) error {
-	f, err := os.Open(config)
-	if err != nil {
-		return fmt.Errorf("error opening ibackup config: %w", err)
-	}
-
-	if err = json.NewDecoder(f).Decode(&Config); err != nil {
-		return fmt.Errorf("error parsing ibackup config: %w", err)
-	}
-
-	return nil
-}
-
 // LoadConfig loads global config from the given path.
 func LoadConfig(path string) error {
 	if err := newConfig(path); err != nil {
@@ -75,6 +62,19 @@ func LoadConfig(path string) error {
 	updateAddDescFlag()
 	addRemoteCmdFlags()
 	updateEditFlagText()
+
+	return nil
+}
+
+func newConfig(config string) error {
+	f, err := os.Open(config)
+	if err != nil {
+		return fmt.Errorf("error opening ibackup config: %w", err)
+	}
+
+	if err = json.NewDecoder(f).Decode(&Config); err != nil {
+		return fmt.Errorf("error parsing ibackup config: %w", err)
+	}
 
 	return nil
 }

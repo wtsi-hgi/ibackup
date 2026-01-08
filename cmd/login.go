@@ -35,6 +35,15 @@ import (
 
 const jwtBasename = ".ibackup.jwt"
 
+func currentUsername() string {
+	user, err := user.Current()
+	if err != nil {
+		dief("couldn't get user: %s", err)
+	}
+
+	return user.Username
+}
+
 // newServerClient tries to get a jwt for the given server url, and returns a
 // client that can interact with it.
 func newServerClient(url, cert string) (*server.Client, error) {
@@ -46,6 +55,12 @@ func newServerClient(url, cert string) (*server.Client, error) {
 	return server.NewClient(url, cert, token), nil
 }
 
+func isAdmin() bool {
+	clientCLI := gasClientCLI(serverURL, serverCert)
+
+	return clientCLI.CanReadServerToken()
+}
+
 func gasClientCLI(url, cert string) *gas.ClientCLI {
 	c, err := gas.NewClientCLI(jwtBasename, serverTokenBasename, url, cert, false)
 	if err != nil {
@@ -53,19 +68,4 @@ func gasClientCLI(url, cert string) *gas.ClientCLI {
 	}
 
 	return c
-}
-
-func currentUsername() string {
-	user, err := user.Current()
-	if err != nil {
-		dief("couldn't get user: %s", err)
-	}
-
-	return user.Username
-}
-
-func isAdmin() bool {
-	clientCLI := gasClientCLI(serverURL, serverCert)
-
-	return clientCLI.CanReadServerToken()
 }

@@ -154,7 +154,7 @@ func New(handler Handler, requests []*Request) (*Putter, error) {
 }
 
 // NewGetter returns a *Putter that will use the given Handler to Put() all the
-// requests from iRODS to the local hisk. You should defer Cleanup() on the
+// requests from iRODS to the local disk. You should defer Cleanup() on the
 // return value. All the incoming requests will have their paths validated (they
 // must be absolute).
 func NewGetter(handler Handler, requests []*Request, overwrite, hardlinksNormal bool) (*Putter, error) {
@@ -180,6 +180,17 @@ func NewGetter(handler Handler, requests []*Request, overwrite, hardlinksNormal 
 // SetLogger sets an optional logger for deep tracing.
 func (p *Putter) SetLogger(l logger.Logger) {
 	p.logger = l
+	if p.logger == nil || p.handler == nil {
+		return
+	}
+
+	if lh, ok := p.handler.(*loggingHandler); ok {
+		lh.logger = p.logger
+
+		return
+	}
+
+	p.handler = &loggingHandler{base: p.handler, logger: p.logger}
 }
 
 func (p *Putter) debug(msg string, ctx ...interface{}) {
@@ -482,7 +493,12 @@ func (p *Putter) statPathsAndReturnOrPut(request *Request, putCh chan *Request, 
 
 	request.Size = lInfo.Size
 
-	rInfo, err := request.StatAndAssociateStandardMetadata(lInfo, p.handler)
+	h := p.handler
+	if lh, ok := h.(logCtxHandler); ok {
+		h = lh.WithLogCtx(requestLogCtx(request)...)
+	}
+
+	rInfo, err := request.StatAndAssociateStandardMetadata(lInfo, h)
 	if err != nil {
 		p.warn("stat remote/associate metadata failed", append(requestLogCtx(request), "err", err)...)
 		sendRequest(request, RequestStatusFailed, err, skipReturnCh)
@@ -581,7 +597,12 @@ func (p *Putter) getMetadataAndReturnOrPut(request *Request, putCh chan *Request
 		return
 	}
 
-	rInfo, err := request.GetRemoteMetadata(p.handler)
+	h := p.handler
+	if lh, ok := h.(logCtxHandler); ok {
+		h = lh.WithLogCtx(requestLogCtx(request)...)
+	}
+
+	rInfo, err := request.GetRemoteMetadata(h)
 	if err != nil {
 		p.warn("get remote metadata failed", append(requestLogCtx(request), "err", err)...)
 		sendRequest(request, RequestStatusFailed, err, skipReturnCh)
@@ -663,7 +684,12 @@ func (p *Putter) applyMetadataConcurrently(metaCh, uploadReturnCh, skipReturnCh 
 			returnCh = skipReturnCh
 		}
 
-		if err := p.applyMetadata(request, p.handler); err != nil { //nolint:nestif
+		h := p.handler
+		if lh, ok := h.(logCtxHandler); ok {
+			h = lh.WithLogCtx(requestLogCtx(request)...)
+		}
+
+		if err := p.applyMetadata(request, h); err != nil { //nolint:nestif
 			p.warn(
 				"apply metadata failed",
 				append(requestLogCtx(request), "took", time.Since(start), "err", err)...,
@@ -736,7 +762,13 @@ func (p *Putter) processPutCh(putCh, uploadStartCh, uploadReturnCh, metaCh chan 
 		)
 
 		tstart := time.Now()
-		if err := p.transfer(request, p.handler); err != nil {
+
+		h := p.handler
+		if lh, ok := h.(logCtxHandler); ok {
+			h = lh.WithLogCtx(requestLogCtx(request)...)
+		}
+
+		if err := p.transfer(request, h); err != nil {
 			p.warn(
 				"transfer failed",
 				append(requestLogCtx(request), "took", time.Since(tstart), "err", err)...,

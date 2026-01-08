@@ -126,6 +126,20 @@ func handleGetServerMode(_ time.Time) {
 	dief("server mode is not currently implemented")
 }
 
+func getGetter(requests []*transfer.Request) *transfer.Putter {
+	handler, err := baton.GetBatonHandler()
+	if err != nil {
+		die(err)
+	}
+
+	p, err := transfer.NewGetter(handler, requests, overwrite, hardlinksNormal)
+	if err != nil {
+		die(err)
+	}
+
+	return p
+}
+
 func handleGetManualMode() {
 	requests, err := getRequestsFromFile(putFile, "", putBase64)
 	if err != nil {
@@ -142,18 +156,4 @@ func handleGetManualMode() {
 func handleGet(requests []*transfer.Request) (chan *transfer.Request, chan *transfer.Request,
 	chan *transfer.Request, func()) {
 	return handleGetPut(requests, getGetter)
-}
-
-func getGetter(requests []*transfer.Request) *transfer.Putter {
-	handler, err := baton.GetBatonHandler()
-	if err != nil {
-		die(err)
-	}
-
-	p, err := transfer.NewGetter(handler, requests, overwrite, hardlinksNormal)
-	if err != nil {
-		die(err)
-	}
-
-	return p
 }

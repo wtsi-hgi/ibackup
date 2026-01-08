@@ -34,11 +34,17 @@ import (
 
 // options for this cmd.
 var queueAll bool
+
 var queueUser string
+
 var queueSet string
+
 var queuePath string
+
 var queueKick bool
+
 var queueDelete bool
+
 var queueUploading bool
 
 // queueCmd represents the queue command.

@@ -43,24 +43,40 @@ import (
 )
 
 const dateShort = "06/01/02"
+
 const bytesInMiB = 1024 * 1024
+
 const hundredForPercentCalc float64 = 100
+
 const nsInWeek = hoursInWeek * time.Hour
+
 const nsInDay = hoursInDay * time.Hour
+
 const alphabetic = "alphabetic"
+
 const recent = "recent"
 
 // options for this cmd.
 var statusUser string
+
 var statusOrder string
+
 var statusName string
+
 var statusDetails bool
+
 var statusRemotePaths bool
+
 var statusIncomplete bool
+
 var statusComplete bool
+
 var statusFailed bool
+
 var statusQueued bool
+
 var statusShowHidden bool
+
 var statusTrash bool
 
 // statusCmd represents the status command.
@@ -216,20 +232,6 @@ func newStatusFilterer(incomplete, complete, failed, queued, trashed bool) statu
 	}
 }
 
-func checkOnlyOneStatusFlagSet(incomplete, complete, failed, queued, trashed bool) {
-	flagSeen := false
-
-	for _, flag := range []bool{incomplete, complete, failed, queued, trashed} {
-		if flag {
-			if flagSeen {
-				dief("--incomplete, --complete, --failed, --queued and --trashed are mutually exclusive")
-			}
-
-			flagSeen = true
-		}
-	}
-}
-
 // status does the main job of getting backup set status from the server.
 func status(client *server.Client, sf statusFilterer, user, order, name string,
 	details, remote, showHidden, trash bool) {
@@ -287,64 +289,6 @@ func getSetByName(client *server.Client, user, name string) *set.Set {
 	}
 
 	return got
-}
-
-// getSets gets all or filtered sets belonging to the given user. Dies on error.
-func getSets(client *server.Client, sf statusFilterer, user string, showHidden, showTrash bool) []*set.Set {
-	sets, err := client.GetSets(user)
-	if err != nil {
-		die(err)
-	}
-
-	if !showHidden {
-		sets = filterHidden(sets)
-	}
-
-	if !showTrash {
-		sets = filter(func(s *set.Set) bool {
-			return !s.IsTrash()
-		}, sets)
-	}
-
-	if sf != nil {
-		sets = filter(sf, sets)
-	}
-
-	return sets
-}
-
-// filter returns the desired subset from amongst the given sets.
-//
-//   - "incomplete" includes sets with status complete, but failures.
-//   - "complete" is sets with status complete, but excluding those with
-//     failures or errors.
-//   - "failed" is any set with any failures or errors.
-//   - "queued" is sets that are between "only just added" and their first
-//     upload.
-func filter(sf statusFilterer, sets []*set.Set) []*set.Set {
-	var filtered []*set.Set
-
-	for _, s := range sets {
-		if sf(s) {
-			filtered = append(filtered, s)
-		}
-	}
-
-	return filtered
-}
-
-func filterHidden(sets []*set.Set) []*set.Set {
-	filtered := make([]*set.Set, 0, len(sets))
-
-	for _, s := range sets {
-		if s.Hide {
-			continue
-		}
-
-		filtered = append(filtered, s)
-	}
-
-	return filtered
 }
 
 // displaySets prints info about the given sets to STDOUT. Failed entry details
@@ -552,6 +496,11 @@ func determineETADetailsFromSize(s *set.Set) (basedOn, unit string, total, done 
 	return
 }
 
+// bytesToMB converts bytes to number of MB.
+func bytesToMB(bytes uint64) float64 {
+	return float64(bytes) / bytesInMiB
+}
+
 func determineETADetailsFromCount(s *set.Set) (basedOn, unit string, total, done uint64, //nolint:unparam
 	remaining, speed float64, timeUnit time.Duration) {
 	basedOn = "number of files"
@@ -570,11 +519,6 @@ func determineETADetailsFromCount(s *set.Set) (basedOn, unit string, total, done
 	return
 }
 
-// bytesToMB converts bytes to number of MB.
-func bytesToMB(bytes uint64) float64 {
-	return float64(bytes) / bytesInMiB
-}
-
 // getSetTransformer returns the set's tranformer, or dies.
 func getSetTransformer(given *set.Set) transformer.PathTransformer {
 	transformer, err := given.MakeTransformer()
@@ -583,23 +527,6 @@ func getSetTransformer(given *set.Set) transformer.PathTransformer {
 	}
 
 	return transformer
-}
-
-// getDirs gets the dir entries for a set and returns their paths along with
-// their status.
-func getDirs(client *server.Client, setID string) map[string]set.EntryStatus {
-	got, err := client.GetDirs(setID)
-	if err != nil {
-		die(err)
-	}
-
-	paths := make(map[string]set.EntryStatus, len(got))
-
-	for _, entry := range got {
-		paths[entry.Path] = entry.Status
-	}
-
-	return paths
 }
 
 // displayDirs prints out directories one per line with a header, if dirs is not
@@ -646,18 +573,21 @@ func generateDirStatusStrings(dirStatus set.EntryStatus) (string, string) {
 	return statusStr, remoteStatusStr
 }
 
-// getExampleFile gets an example file entry for a set and returns its path.
-func getExampleFile(client *server.Client, setID string) string {
-	exampleFile, err := client.GetExampleFile(setID)
+// getDirs gets the dir entries for a set and returns their paths along with
+// their status.
+func getDirs(client *server.Client, setID string) map[string]set.EntryStatus {
+	got, err := client.GetDirs(setID)
 	if err != nil {
 		die(err)
 	}
 
-	if exampleFile == nil {
-		return ""
+	paths := make(map[string]set.EntryStatus, len(got))
+
+	for _, entry := range got {
+		paths[entry.Path] = entry.Status
 	}
 
-	return exampleFile.Path
+	return paths
 }
 
 func displayExampleFile(path string, transformer transformer.PathTransformer) {
@@ -675,19 +605,18 @@ func displayExampleFile(path string, transformer transformer.PathTransformer) {
 	cliPrintf("Example File: %s => %s\n", path, transformedPath)
 }
 
-// displayFailedEntries prints out details about up to 10 failed entries in the
-// given set.
-func displayFailedEntries(client *server.Client, given *set.Set) {
-	failed, skipped, err := client.GetFailedFiles(given.ID())
+// getExampleFile gets an example file entry for a set and returns its path.
+func getExampleFile(client *server.Client, setID string) string {
+	exampleFile, err := client.GetExampleFile(setID)
 	if err != nil {
 		die(err)
 	}
 
-	displayEntries(failed, false, false, nil)
-
-	if skipped > 0 {
-		cliPrintf("[... and %d others]\n", skipped)
+	if exampleFile == nil {
+		return ""
 	}
+
+	return exampleFile.Path
 }
 
 // displayAllEntries prints out details about all entries in the given
@@ -787,4 +716,91 @@ func displayEntry(entry *set.Entry, showTrashDate bool, remotePath string) {
 
 	cliPrintRaw(strings.Join(cols, "\t"))
 	cliPrintRaw("\n")
+}
+
+// displayFailedEntries prints out details about up to 10 failed entries in the
+// given set.
+func displayFailedEntries(client *server.Client, given *set.Set) {
+	failed, skipped, err := client.GetFailedFiles(given.ID())
+	if err != nil {
+		die(err)
+	}
+
+	displayEntries(failed, false, false, nil)
+
+	if skipped > 0 {
+		cliPrintf("[... and %d others]\n", skipped)
+	}
+}
+
+// getSets gets all or filtered sets belonging to the given user. Dies on error.
+func getSets(client *server.Client, sf statusFilterer, user string, showHidden, showTrash bool) []*set.Set {
+	sets, err := client.GetSets(user)
+	if err != nil {
+		die(err)
+	}
+
+	if !showHidden {
+		sets = filterHidden(sets)
+	}
+
+	if !showTrash {
+		sets = filter(func(s *set.Set) bool {
+			return !s.IsTrash()
+		}, sets)
+	}
+
+	if sf != nil {
+		sets = filter(sf, sets)
+	}
+
+	return sets
+}
+
+func filterHidden(sets []*set.Set) []*set.Set {
+	filtered := make([]*set.Set, 0, len(sets))
+
+	for _, s := range sets {
+		if s.Hide {
+			continue
+		}
+
+		filtered = append(filtered, s)
+	}
+
+	return filtered
+}
+
+// filter returns the desired subset from amongst the given sets.
+//
+//   - "incomplete" includes sets with status complete, but failures.
+//   - "complete" is sets with status complete, but excluding those with
+//     failures or errors.
+//   - "failed" is any set with any failures or errors.
+//   - "queued" is sets that are between "only just added" and their first
+//     upload.
+func filter(sf statusFilterer, sets []*set.Set) []*set.Set {
+	var filtered []*set.Set
+
+	for _, s := range sets {
+		if sf(s) {
+			filtered = append(filtered, s)
+		}
+	}
+
+	return filtered
+}
+
+func checkOnlyOneStatusFlagSet(incomplete, complete, failed, queued, trashed bool) {
+	flagSeen := false
+
+	for _, flag := range []bool{incomplete, complete, failed, queued, trashed} {
+		if flag {
+			if flagSeen {
+				dief("--incomplete, --complete, --failed, --queued and --trashed are mutually exclusive")
+			}
+
+			flagSeen = true
+		}
+	}
 }

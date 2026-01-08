@@ -243,6 +243,15 @@ func updateEditFlagText() {
 	}
 }
 
+// editSet updates properties of the given set.
+func editSet(client *server.Client, givenSet *set.Set, makeWritable bool) error {
+	if makeWritable {
+		return client.AddOrUpdateSetMakingWritable(givenSet)
+	}
+
+	return client.AddOrUpdateSet(givenSet)
+}
+
 func editSetMetaData(userSet *set.Set, metaData string, //nolint:gocyclo,funlen
 	reason transfer.Reason, reviewDate, removalDate string) error {
 	if reason == transfer.Unset && reviewDate == "" && removalDate == "" && metaData == "" {
@@ -296,14 +305,6 @@ func givenOrExistingRemovalDate(removalDate string, existingMeta map[string]stri
 	return givenOrExistingDate(removalDate, existingMeta[transfer.MetaKeyRemoval])
 }
 
-func givenOrExistingMetaData(metaData string, userSet *set.Set) string {
-	if metaData != "" {
-		return metaData
-	}
-
-	return userSet.UserMetadata()
-}
-
 func givenOrExistingDate(input, existing string) (string, error) {
 	if input != "" {
 		return input, nil
@@ -316,13 +317,12 @@ func givenOrExistingDate(input, existing string) (string, error) {
 	return t.Format(time.DateOnly), err
 }
 
-// editSet updates properties of the given set.
-func editSet(client *server.Client, givenSet *set.Set, makeWritable bool) error {
-	if makeWritable {
-		return client.AddOrUpdateSetMakingWritable(givenSet)
+func givenOrExistingMetaData(metaData string, userSet *set.Set) string {
+	if metaData != "" {
+		return metaData
 	}
 
-	return client.AddOrUpdateSet(givenSet)
+	return userSet.UserMetadata()
 }
 
 // updateSet updates the files and dirs in the set.

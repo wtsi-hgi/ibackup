@@ -102,15 +102,6 @@ find /abs/path/to/dir -type f -print0 | ibackup addremote --humgen -0 -b | iback
 `,
 }
 
-// Execute adds all child commands to the root command and sets flags
-// appropriately. This is called by main.main(). It only needs to happen once to
-// the rootCmd.
-func Execute() {
-	if err := RootCmd.Execute(); err != nil {
-		die(err)
-	}
-}
-
 func init() {
 	// set up logging to stderr
 	appLogger.SetHandler(log15.LvlFilterHandler(log15.LvlInfo, log15.StderrHandler))
@@ -120,29 +111,6 @@ func init() {
 		"ibackup server URL in the form host:port")
 	RootCmd.PersistentFlags().StringVar(&serverCert, "cert", os.Getenv(serverCertEnvKey),
 		"path to server certificate file")
-}
-
-// ensureURLandCert dies if --url or --cert have not been set.
-func ensureURLandCert() {
-	if serverURL == "" {
-		dief("you must supply --url")
-	}
-
-	if serverCert == "" {
-		dief("you must supply --cert")
-	}
-}
-
-// logToFile logs to the given file.
-func logToFile(path string) {
-	fh, err := log15.FileHandler(path, log15.LogfmtFormat())
-	if err != nil {
-		fh = log15.StderrHandler
-
-		warn("can't write to log file; logging to stderr instead (%s)", err)
-	}
-
-	appLogger.SetHandler(fh)
 }
 
 func cliPrint(msg string) {
@@ -165,9 +133,13 @@ func info(msg string, a ...interface{}) {
 	appLogger.Info(fmt.Sprintf(msg, a...))
 }
 
-// warn is a convenience to log a message at the Warn level.
-func warn(msg string, a ...interface{}) {
-	appLogger.Warn(fmt.Sprintf(msg, a...))
+// Execute adds all child commands to the root command and sets flags
+// appropriately. This is called by main.main(). It only needs to happen once to
+// the rootCmd.
+func Execute() {
+	if err := RootCmd.Execute(); err != nil {
+		die(err)
+	}
 }
 
 // die is a convenience to log a message at the Error level and exit non zero.
@@ -176,8 +148,36 @@ func die(err error) {
 	os.Exit(1)
 }
 
+// ensureURLandCert dies if --url or --cert have not been set.
+func ensureURLandCert() {
+	if serverURL == "" {
+		dief("you must supply --url")
+	}
+
+	if serverCert == "" {
+		dief("you must supply --cert")
+	}
+}
+
 // die is a convenience to log a message at the Error level and exit non zero.
 func dief(msg string, a ...interface{}) {
 	appLogger.Error(fmt.Sprintf(msg, a...))
 	os.Exit(1)
+}
+
+// logToFile logs to the given file.
+func logToFile(path string) {
+	fh, err := log15.FileHandler(path, log15.LogfmtFormat())
+	if err != nil {
+		fh = log15.StderrHandler
+
+		warn("can't write to log file; logging to stderr instead (%s)", err)
+	}
+
+	appLogger.SetHandler(fh)
+}
+
+// warn is a convenience to log a message at the Warn level.
+func warn(msg string, a ...interface{}) {
+	appLogger.Warn(fmt.Sprintf(msg, a...))
 }

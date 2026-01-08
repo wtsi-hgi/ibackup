@@ -105,6 +105,248 @@ func newiRODSTracker(slacker slack.Slacker, debounce time.Duration) *iRODSTracke
 	return irt
 }
 
+// totalIRODSConnections requires you have the mapMu lock before calling.
+func (irt *iRODSTracker) totalIRODSConnections() int {
+	irt.Lock()
+	defer irt.Unlock()
+
+	var totalConnections int
+
+	for _, v := range irt.iRODSConnections {
+		totalConnections += v
+	}
+
+	return totalConnections
+}
+
+func (irt *iRODSTracker) addIRODSConnections(hostPID string, numberOfConnections int) {
+	irt.Lock()
+
+	irt.iRODSConnections[hostPID] += numberOfConnections
+
+	irt.Unlock()
+
+	irt.highestNumDebouncer.SendDebounceMsg(irt.totalIRODSConnections())
+}
+
+func (irt *iRODSTracker) deleteIRODSConnections(hostPID string) {
+	irt.Lock()
+
+	delete(irt.iRODSConnections, hostPID)
+
+	irt.Unlock()
+
+	irt.highestNumDebouncer.SendDebounceMsg(irt.totalIRODSConnections())
+}
+
+// QStatus describes the status of a Server's in-memory put request queue.
+type QStatus struct {
+	Total               int
+	Reserved            int
+	IRODSConnections    int
+	CreatingCollections int
+	Uploading           int
+	Failed              int
+	Stuck               []*transfer.Request
+}
+
+// QueueStatus returns current information about the queue's stats and any
+// possibly stuck requests.
+func (s *Server) QueueStatus() *QStatus {
+	s.mapMu.RLock()
+	defer s.mapMu.RUnlock()
+
+	stats := s.queue.Stats()
+
+	stuck := s.uploadTracker.currentlyStuck()
+
+	iRODSConnectionsNumber := s.iRODSTracker.totalIRODSConnections()
+
+	return &QStatus{
+		Total:               stats.Items,
+		Reserved:            stats.Running,
+		CreatingCollections: len(s.creatingCollections),
+		IRODSConnections:    iRODSConnectionsNumber,
+		Uploading:           s.uploadTracker.numUploading(),
+		Failed:              stats.Buried,
+		Stuck:               stuck,
+	}
+}
+
+// clientMadeIRODSConnections notes that a client created some iRODS connections.
+//
+// MakeQueueEndPoints() must already have been called. This is called when there
+// is a POST on /rest/v1/auth/irodsconnection.
+func (s *Server) clientMadeIRODSConnections(c *gin.Context) {
+	hostPID, status, err := s.extractHostPIDForCreatingCollectionsEndpoints(c)
+	if err != nil {
+		c.AbortWithError(status, err) //nolint:errcheck
+
+		return
+	}
+
+	numberOfConnections := c.Query("nconnections")
+	if numberOfConnections == "" {
+		c.AbortWithError(http.StatusBadRequest, ErrNoConnectionsNumber) //nolint:errcheck
+
+		return
+	}
+
+	n, err := strconv.Atoi(numberOfConnections)
+	if err != nil {
+		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+
+		return
+	}
+
+	s.iRODSTracker.addIRODSConnections(hostPID, n)
+
+	c.Status(http.StatusOK)
+}
+
+func (s *Server) clientClosedIRODSConnections(c *gin.Context) {
+	hostPID, status, err := s.extractHostPIDForCreatingCollectionsEndpoints(c)
+	if err != nil {
+		c.AbortWithError(status, err) //nolint:errcheck
+
+		return
+	}
+
+	s.iRODSTracker.deleteIRODSConnections(hostPID)
+
+	err = s.clientClosed(hostPID)
+	if err != nil {
+		c.AbortWithError(status, err) //nolint:errcheck
+
+		return
+	}
+
+	c.Status(http.StatusOK)
+}
+
+// BuriedFilter describes a filter to be used when retrying or deleting buried
+// requests, to only act of requests that match the set properties of this.
+type BuriedFilter struct {
+	User string
+	Set  string
+	Path string
+}
+
+// RequestPasses returns true if the given Request matches our filter details.
+// Also returns true if User isn't set.
+func (b *BuriedFilter) RequestPasses(r *transfer.Request) bool {
+	if b.User == "" {
+		return true
+	}
+
+	if b.User != r.Requester {
+		return false
+	}
+
+	if b.Set != "" && b.Set != r.Set {
+		return false
+	}
+
+	return b.Path == "" || b.Path == r.Local
+}
+
+// RetryBuried retries put requests that have failed multiple times, optionally
+// filtered according to the BuriedFilter. Returns the number of items retried.
+func (c *Client) RetryBuried(bf *BuriedFilter) (int, error) {
+	var n int
+
+	err := c.putThing(EndPointAuthQueueBuried, bf, &n)
+
+	return n, err
+}
+
+// RetryBuried retries all buried items in the global put queue, and returns
+// the number retried.
+func (s *Server) RetryBuried(bf *BuriedFilter) int {
+	var n int
+
+	s.forEachBuriedItem(bf, func(item *queue.Item) {
+		if err := s.queue.Kick(context.Background(), item.Key); err == nil {
+			n++
+		}
+	})
+
+	return n
+}
+
+// RemoveBuried removes put requests that have failed multiple times from the
+// queue, optionally filtered according to the BuriedFilter. Returns the number
+// of items removed.
+func (c *Client) RemoveBuried(bf *BuriedFilter) (int, error) {
+	var n int
+
+	err := c.deleteThing(EndPointAuthQueueBuried, bf, &n)
+
+	return n, err
+}
+
+// RemoveBuried removes all buried items in the global put queue, and returns
+// the number removed.
+func (s *Server) RemoveBuried(bf *BuriedFilter) int {
+	var n int
+
+	s.forEachBuriedItem(bf, func(item *queue.Item) {
+		if err := s.queue.Remove(context.Background(), item.Key); err == nil {
+			n++
+		}
+	})
+
+	return n
+}
+
+// forEachBuriedItem runs cb on each currently buried item, optionally
+// filtering the items to those for Requests matching the given filter.
+func (s *Server) forEachBuriedItem(bf *BuriedFilter, cb func(*queue.Item)) {
+	items := s.queue.AllItems()
+
+	for _, item := range items {
+		if bf != nil {
+			if !bf.RequestPasses(item.Data().(*transfer.Request)) { //nolint:forcetypeassert,errcheck
+				continue
+			}
+		}
+
+		if item.State() == queue.ItemStateBury {
+			cb(item)
+		}
+	}
+}
+
+// getBuriedFilterFromContext gets the BuriedFilter from c and returns it. The
+// returned bool will be false if we aborted with an error.
+func (s *Server) getBuriedFilterFromContext(c *gin.Context) (*BuriedFilter, bool) {
+	if !s.AllowedAccess(c, "") {
+		c.AbortWithError(http.StatusUnauthorized, ErrNotAdmin) //nolint:errcheck
+
+		return nil, false
+	}
+
+	bf := &BuriedFilter{}
+
+	if err := c.BindJSON(bf); err != nil {
+		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
+
+		return nil, false
+	}
+
+	return bf, true
+}
+
+// hostPID returns our current host:PID.
+func hostPID() (string, error) {
+	host, err := os.Hostname()
+	if err != nil {
+		return "", err
+	}
+
+	return fmt.Sprintf("%s:%d", host, os.Getpid()), nil
+}
+
 // MakeQueueEndPoints adds a number of endpoints to the REST API for working
 // with the global in-memory put request queue:
 //
@@ -135,7 +377,7 @@ func newiRODSTracker(slacker slack.Slacker, debounce time.Duration) *iRODSTracke
 // You must call EnableAuthWithServerToken() before calling this method, and the
 // non-GET endpoints will only work if the logged-in user is the same as the
 // user who started the Server.
-func (s *Server) MakeQueueEndPoints() error {
+func (s *Server) MakeQueueEndPoints() error { //nolint:funlen
 	authGroup := s.AuthRouter()
 	if authGroup == nil {
 		return ErrNoAuth
@@ -177,17 +419,6 @@ func (s *Server) getQueueStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, s.QueueStatus())
 }
 
-// QStatus describes the status of a Server's in-memory put request queue.
-type QStatus struct {
-	Total               int
-	Reserved            int
-	IRODSConnections    int
-	CreatingCollections int
-	Uploading           int
-	Failed              int
-	Stuck               []*transfer.Request
-}
-
 // GetQueueStatus gets information about the server's queue.
 func (c *Client) GetQueueStatus() (*QStatus, error) {
 	var qs *QStatus
@@ -195,43 +426,6 @@ func (c *Client) GetQueueStatus() (*QStatus, error) {
 	err := c.getThing(EndPointAuthQueueStatus, &qs)
 
 	return qs, err
-}
-
-// QueueStatus returns current information about the queue's stats and any
-// possibly stuck requests.
-func (s *Server) QueueStatus() *QStatus {
-	s.mapMu.RLock()
-	defer s.mapMu.RUnlock()
-
-	stats := s.queue.Stats()
-
-	stuck := s.uploadTracker.currentlyStuck()
-
-	iRODSConnectionsNumber := s.iRODSTracker.totalIRODSConnections()
-
-	return &QStatus{
-		Total:               stats.Items,
-		Reserved:            stats.Running,
-		CreatingCollections: len(s.creatingCollections),
-		IRODSConnections:    iRODSConnectionsNumber,
-		Uploading:           s.uploadTracker.numUploading(),
-		Failed:              stats.Buried,
-		Stuck:               stuck,
-	}
-}
-
-// totalIRODSConnections requires you have the mapMu lock before calling.
-func (irt *iRODSTracker) totalIRODSConnections() int {
-	irt.Lock()
-	defer irt.Unlock()
-
-	var totalConnections int
-
-	for _, v := range irt.iRODSConnections {
-		totalConnections += v
-	}
-
-	return totalConnections
 }
 
 // getBuried gets the server's BuriedRequests.
@@ -264,50 +458,6 @@ func (s *Server) BuriedRequests() []*transfer.Request {
 	return buried
 }
 
-// BuriedFilter describes a filter to be used when retrying or deleting buried
-// requests, to only act of requests that match the set properties of this.
-type BuriedFilter struct {
-	User string
-	Set  string
-	Path string
-}
-
-// RequestPasses returns true if the given Request matches our filter details.
-// Also returns true if User isn't set.
-func (b *BuriedFilter) RequestPasses(r *transfer.Request) bool {
-	if b.User == "" {
-		return true
-	}
-
-	if b.User != r.Requester {
-		return false
-	}
-
-	if b.Set != "" && b.Set != r.Set {
-		return false
-	}
-
-	return b.Path == "" || b.Path == r.Local
-}
-
-// forEachBuriedItem runs cb on each currently buried item, optionally
-// filtering the items to those for Requests matching the given filter.
-func (s *Server) forEachBuriedItem(bf *BuriedFilter, cb func(*queue.Item)) {
-	items := s.queue.AllItems()
-
-	for _, item := range items {
-		if bf != nil {
-			if !bf.RequestPasses(item.Data().(*transfer.Request)) { //nolint:forcetypeassert,errcheck
-				continue
-			}
-		}
-
-		if item.State() == queue.ItemStateBury {
-			cb(item)
-		}
-	}
-}
-
 // retryBuried retries the server's Buried.
 //
 // MakeQueueEndPoints() must already have been called. This is called when there
@@ -319,30 +469,6 @@ func (s *Server) retryBuried(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, s.RetryBuried(bf))
-}
-
-// RetryBuried retries put requests that have failed multiple times, optionally
-// filtered according to the BuriedFilter. Returns the number of items retried.
-func (c *Client) RetryBuried(bf *BuriedFilter) (int, error) {
-	var n int
-
-	err := c.putThing(EndPointAuthQueueBuried, bf, &n)
-
-	return n, err
-}
-
-// RetryBuried retries all buried items in the global put queue, and returns
-// the number retried.
-func (s *Server) RetryBuried(bf *BuriedFilter) int {
-	var n int
-
-	s.forEachBuriedItem(bf, func(item *queue.Item) {
-		if err := s.queue.Kick(context.Background(), item.Key); err == nil {
-			n++
-		}
-	})
-
-	return n
 }
 
 // removeBuried removes the server's Buried.
@@ -358,37 +484,6 @@ func (s *Server) removeBuried(c *gin.Context) {
 	c.JSON(http.StatusOK, s.RemoveBuried(bf))
 }
 
-// getBuriedFilterFromContext gets the BuriedFilter from c and returns it. The
-// returned bool will be false if we aborted with an error.
-func (s *Server) getBuriedFilterFromContext(c *gin.Context) (*BuriedFilter, bool) {
-	if !s.AllowedAccess(c, "") {
-		c.AbortWithError(http.StatusUnauthorized, ErrNotAdmin) //nolint:errcheck
-
-		return nil, false
-	}
-
-	bf := &BuriedFilter{}
-
-	if err := c.BindJSON(bf); err != nil {
-		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
-
-		return nil, false
-	}
-
-	return bf, true
-}
-
-// RemoveBuried removes put requests that have failed multiple times from the
-// queue, optionally filtered according to the BuriedFilter. Returns the number
-// of items removed.
-func (c *Client) RemoveBuried(bf *BuriedFilter) (int, error) {
-	var n int
-
-	err := c.deleteThing(EndPointAuthQueueBuried, bf, &n)
-
-	return n, err
-}
-
 // deleteThing sends thing encoded as JSON in the body via a DELETE to the given
 // url. The response JSON is decoded in to responseThing.
 func (c *Client) deleteThing(url string, thing interface{}, optionalResponseThing ...interface{}) error {
@@ -400,20 +495,6 @@ func (c *Client) deleteThing(url string, thing interface{}, optionalResponseThin
 	}
 
 	return responseToErr(resp)
-}
-
-// RemoveBuried removes all buried items in the global put queue, and returns
-// the number removed.
-func (s *Server) RemoveBuried(bf *BuriedFilter) int {
-	var n int
-
-	s.forEachBuriedItem(bf, func(item *queue.Item) {
-		if err := s.queue.Remove(context.Background(), item.Key); err == nil {
-			n++
-		}
-	})
-
-	return n
 }
 
 // getUploading gets the server's UploadingRequests.
@@ -537,16 +618,6 @@ func (c *Client) StartingToCreateCollections() error {
 	return responseToErr(resp)
 }
 
-// hostPID returns our current host:PID.
-func hostPID() (string, error) {
-	host, err := os.Hostname()
-	if err != nil {
-		return "", err
-	}
-
-	return fmt.Sprintf("%s:%d", host, os.Getpid()), nil
-}
-
 // clientStoppedCreatingCollections notes that a client stopped creating
 // collections.
 //
@@ -653,77 +724,6 @@ func (c *Client) ClosedIRODSConnections() error {
 	close(c.heartbeatQuitCh)
 
 	return responseToErr(resp)
-}
-
-// clientMadeIRODSConnections notes that a client created some iRODS connections.
-//
-// MakeQueueEndPoints() must already have been called. This is called when there
-// is a POST on /rest/v1/auth/irodsconnection.
-func (s *Server) clientMadeIRODSConnections(c *gin.Context) {
-	hostPID, status, err := s.extractHostPIDForCreatingCollectionsEndpoints(c)
-	if err != nil {
-		c.AbortWithError(status, err) //nolint:errcheck
-
-		return
-	}
-
-	numberOfConnections := c.Query("nconnections")
-	if numberOfConnections == "" {
-		c.AbortWithError(http.StatusBadRequest, ErrNoConnectionsNumber) //nolint:errcheck
-
-		return
-	}
-
-	n, err := strconv.Atoi(numberOfConnections)
-	if err != nil {
-		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
-
-		return
-	}
-
-	s.iRODSTracker.addIRODSConnections(hostPID, n)
-
-	c.Status(http.StatusOK)
-}
-
-func (irt *iRODSTracker) addIRODSConnections(hostPID string, numberOfConnections int) {
-	irt.Lock()
-
-	irt.iRODSConnections[hostPID] += numberOfConnections
-
-	irt.Unlock()
-
-	irt.highestNumDebouncer.SendDebounceMsg(irt.totalIRODSConnections())
-}
-
-func (s *Server) clientClosedIRODSConnections(c *gin.Context) {
-	hostPID, status, err := s.extractHostPIDForCreatingCollectionsEndpoints(c)
-	if err != nil {
-		c.AbortWithError(status, err) //nolint:errcheck
-
-		return
-	}
-
-	s.iRODSTracker.deleteIRODSConnections(hostPID)
-
-	err = s.clientClosed(hostPID)
-	if err != nil {
-		c.AbortWithError(status, err) //nolint:errcheck
-
-		return
-	}
-
-	c.Status(http.StatusOK)
-}
-
-func (irt *iRODSTracker) deleteIRODSConnections(hostPID string) {
-	irt.Lock()
-
-	delete(irt.iRODSConnections, hostPID)
-
-	irt.Unlock()
-
-	irt.highestNumDebouncer.SendDebounceMsg(irt.totalIRODSConnections())
 }
 
 func (s *Server) clientStarted(c *gin.Context) {

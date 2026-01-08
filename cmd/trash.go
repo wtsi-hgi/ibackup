@@ -37,17 +37,27 @@ import (
 
 // options for this cmd.
 var trashUser string
+
 var trashRemove bool
+
 var trashName string
+
 var trashItems string
+
 var trashPath string
+
 var trashExpired bool
+
 var trashAllExpired bool
+
 var trashNull bool
 
 var ErrTrashRemove = errors.New("you must provide --remove")
+
 var ErrTrashName = errors.New("exactly one of --name or --all-expired must be provided")
+
 var ErrTrashItems = errors.New("exactly one of --items, --path or --expired must be provided")
+
 var ErrTrashAllExpired = errors.New("--all-expired does not take any other flags")
 
 // trashCmd represents the trash command.

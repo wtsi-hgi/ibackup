@@ -40,8 +40,11 @@ import (
 )
 
 const ErrMockStatFail = "stat fail"
+
 const ErrMockPutFail = "put fail"
+
 const ErrMockMetaFail = "meta fail"
+
 const ErrFileDoesNotExist = "file does not exist"
 
 // LocalHandler satisfies the Handler interface, treating "Remote" as local
@@ -173,18 +176,6 @@ func (l *LocalHandler) Put(local, remote string) error {
 	return copyFile(local, remote)
 }
 
-func (l *LocalHandler) Get(local, remote string) error {
-	if l.putFail == remote {
-		return errs.PathError{Msg: ErrMockPutFail, Path: ""}
-	}
-
-	if l.putSlow == remote {
-		<-time.After(l.putDur)
-	}
-
-	return copyFile(remote, local)
-}
-
 // copyFile copies source to dest.
 func copyFile(source, dest string) error {
 	in, err := os.Open(source)
@@ -210,6 +201,18 @@ func copyFile(source, dest string) error {
 	}
 
 	return out.Sync()
+}
+
+func (l *LocalHandler) Get(local, remote string) error {
+	if l.putFail == remote {
+		return errs.PathError{Msg: ErrMockPutFail, Path: ""}
+	}
+
+	if l.putSlow == remote {
+		<-time.After(l.putDur)
+	}
+
+	return copyFile(remote, local)
 }
 
 // MakeMetaFail will result in any subsequent *Meta()s for a Request with the

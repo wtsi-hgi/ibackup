@@ -213,6 +213,24 @@ func (e *Entry) hasSameCoreProperties(other *Entry) bool {
 	return e.Type == other.Type && e.Dest == other.Dest && e.Inode == other.Inode && e.Status == other.Status
 }
 
+func (e *Entry) setTypeAndDetermineDest(eType EntryType) error {
+	e.Type = eType
+
+	var err error
+
+	if eType == Symlink {
+		e.Dest, err = os.Readlink(e.Path)
+	} else if eType != Hardlink {
+		e.Dest = ""
+	}
+
+	if eType == Abnormal {
+		e.Status = AbnormalEntry
+	}
+
+	return err
+}
+
 type entryCreator struct {
 	db              *DB
 	tx              *bolt.Tx
@@ -303,24 +321,6 @@ func (c *entryCreator) updateOrCreateEntryFromDirent(dirent *Dirent) error {
 	}
 
 	return c.bucket.Put([]byte(dirent.Path), entry)
-}
-
-func (e *Entry) setTypeAndDetermineDest(eType EntryType) error {
-	e.Type = eType
-
-	var err error
-
-	if eType == Symlink {
-		e.Dest, err = os.Readlink(e.Path)
-	} else if eType != Hardlink {
-		e.Dest = ""
-	}
-
-	if eType == Abnormal {
-		e.Status = AbnormalEntry
-	}
-
-	return err
 }
 
 func (c *entryCreator) newEntryFromDirent(dirent *Dirent) (*Entry, error) {

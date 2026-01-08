@@ -48,19 +48,6 @@ import (
 	boltErrors "go.etcd.io/bbolt/errors"
 )
 
-type Error struct {
-	Msg string
-	id  string
-}
-
-func (e Error) Error() string {
-	if e.id != "" {
-		return fmt.Sprintf("%s [%s]", e.Msg, e.id)
-	}
-
-	return e.Msg
-}
-
 const (
 	ErrInvalidSetID           = "invalid set ID"
 	ErrInvalidRequest         = "request lacks Requester or Set"
@@ -100,13 +87,6 @@ const (
 	workerPoolSizeFiles = 16
 )
 
-// DBRO is the read-only component of the DB struct.
-type DBRO struct {
-	db      *bolt.DB
-	ch      codec.Handle
-	slacker Slacker
-}
-
 type RemovalStatus int8
 
 const (
@@ -122,6 +102,19 @@ const (
 	ToRemove                     // 1
 )
 
+type Error struct {
+	Msg string
+	id  string
+}
+
+func (e Error) Error() string {
+	if e.id != "" {
+		return fmt.Sprintf("%s [%s]", e.Msg, e.id)
+	}
+
+	return e.Msg
+}
+
 // RemoveReq contains information about a remove request for a path.
 type RemoveReq struct {
 	Path                string
@@ -130,6 +123,17 @@ type RemoveReq struct {
 	RemoteRemovalStatus RemovalStatus
 	IsComplete          bool
 	Action              RemoveAction
+}
+
+// NewRemoveRequest creates a remove requests using the provided information.
+func NewRemoveRequest(path string, set *Set, isDir bool, action RemoveAction) RemoveReq {
+	return RemoveReq{
+		Path:                path,
+		Set:                 set,
+		IsDir:               isDir,
+		RemoteRemovalStatus: NotRemoved,
+		Action:              action,
+	}
 }
 
 func (rq RemoveReq) Key() string {
@@ -146,15 +150,45 @@ func (rq RemoveReq) ItemDef(ttr time.Duration) *queue.ItemDef {
 	}
 }
 
-// NewRemoveRequest creates a remove requests using the provided information.
-func NewRemoveRequest(path string, set *Set, isDir bool, action RemoveAction) RemoveReq {
-	return RemoveReq{
-		Path:                path,
-		Set:                 set,
-		IsDir:               isDir,
-		RemoteRemovalStatus: NotRemoved,
-		Action:              action,
-	}
+type setFileSubBucket struct {
+	Name      []byte
+	Bucket    *bolt.Bucket
+	SetBucket *bolt.Bucket
+}
+
+func (s *setFileSubBucket) DeleteBucket() error {
+	return s.SetBucket.DeleteBucket(s.Name)
+}
+
+func (s *setFileSubBucket) CreateBucket() error {
+	var err error
+
+	s.Bucket, err = s.SetBucket.CreateBucket(s.Name)
+
+	return err
+}
+
+// DiscoverCallback will receive the sets directory entries and return a list of
+// the files and a list of the dirs discovered in those directories.
+type DiscoverCallback func([]*Entry) ([]*Dirent, []*Dirent, error)
+
+// SetFilter is a function used to filter the sets retrieved from the database.
+//
+// A return value of true will keep the set, a return of false will discard it.
+type SetFilter func(*Set) bool //nolint:revive
+
+// EntryFilter is a function used to filter the entries for a set retrieved from
+// the database.
+//
+// A return value of true will keep the file entry, a return of false will
+// discard it.
+type EntryFilter func(*Entry) bool
+
+// DBRO is the read-only component of the DB struct.
+type DBRO struct {
+	db      *bolt.DB
+	ch      codec.Handle
+	slacker Slacker
 }
 
 // NewRO returns a *DBRO that can be used to query a set database. Provide
@@ -178,6 +212,539 @@ func NewRO(path string) (*DBRO, error) {
 	}, nil
 }
 
+// GetFilesInDir returns all file paths from inside the given directory (and all
+// nested inside) for the given set using the db.
+func (d *DBRO) GetFilesInDir(setID string, dirpath string) ([]string, error) {
+	return d.getPathsInDir(setID, dirpath, discoveredBucket, fileBucket)
+}
+
+// GetFoldersInDir returns all folder paths from inside the given directory (and all
+// nested inside) for the given set using the db.
+func (d *DBRO) GetFoldersInDir(setID string, dirpath string) ([]string, error) {
+	return d.getPathsInDir(setID, dirpath, discoveredFoldersBucket, dirBucket)
+}
+
+// getPathsInDir returns all paths from inside the given directory (and all
+// nested inside) for the given set using the provided buckets in the db.
+func (d *DBRO) getPathsInDir(setID string, dirpath string, buckets ...string) ([]string, error) {
+	if !strings.HasSuffix(dirpath, "/") {
+		dirpath += "/"
+	}
+
+	var paths []string
+
+	for _, bucket := range buckets {
+		newPaths, err := d.getPathsWithPrefix(setID, bucket, dirpath)
+		if err != nil {
+			return nil, err
+		}
+
+		paths = slices.Concat(paths, newPaths)
+	}
+
+	return paths, nil
+}
+
+// getPathsWithPrefix returns all the filepaths for the given set from the given sub
+// bucket prefix, that have the given prefix.
+func (d *DBRO) getPathsWithPrefix(setID, bucketName, prefix string) ([]string, error) {
+	var entries []string
+
+	err := d.db.View(func(tx *bolt.Tx) error {
+		subBucketName := []byte(bucketName + separator + setID)
+		setsBucket := tx.Bucket([]byte(setsBucket))
+
+		entriesBucket := setsBucket.Bucket(subBucketName)
+		if entriesBucket == nil {
+			return nil
+		}
+
+		c := entriesBucket.Cursor()
+
+		prefix := []byte(prefix)
+
+		for k, _ := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, _ = c.Next() {
+			entries = append(entries, string(k))
+		}
+
+		return nil
+	})
+
+	return entries, err
+}
+
+// GetIncompleteRemoveRequests returns all incomplete removeReqs from every set.
+func (d *DBRO) GetIncompleteRemoveRequests() ([]RemoveReq, error) {
+	var allRemReqs []RemoveReq
+
+	sets, err := d.GetAll()
+	if err != nil {
+		return nil, err
+	}
+
+	for _, set := range sets {
+		remReqs, err := d.GetRemoveRequests(set.ID())
+		if err != nil {
+			return nil, err
+		}
+
+		for _, remReq := range remReqs {
+			if !remReq.IsComplete {
+				allRemReqs = append(allRemReqs, remReq)
+			}
+		}
+	}
+
+	return allRemReqs, nil
+}
+
+// GetRemoveRequests returns all objects from the remove bucket in the database.
+func (d *DBRO) GetRemoveRequests(sid string) ([]RemoveReq, error) {
+	var remReqs []RemoveReq
+
+	err := d.db.View(func(tx *bolt.Tx) error {
+		b := getSubBucket(tx, sid, removedBucket)
+		if b == nil {
+			return nil
+		}
+
+		return b.ForEach(func(_, v []byte) error {
+			remReq := d.decodeRemoveRequest(v)
+
+			remReqs = append(remReqs, remReq)
+
+			return nil
+		})
+	})
+
+	return remReqs, err
+}
+
+// getSubBucket returns a given subBucket for a given set.
+func getSubBucket(tx *bolt.Tx, setID, subBucket string) *bolt.Bucket {
+	subBucketName := []byte(subBucket + separator + setID)
+	setsBucket := tx.Bucket([]byte(setsBucket))
+
+	return setsBucket.Bucket(subBucketName)
+}
+
+func (d *DBRO) decodeRemoveRequest(v []byte) RemoveReq {
+	dec := codec.NewDecoderBytes(v, d.ch)
+
+	var remReq RemoveReq
+
+	dec.MustDecode(&remReq)
+
+	return remReq
+}
+
+// getSetByID returns the Set with the given ID from the database, along with
+// the byte slice version of the set id and the sets bucket so you can easily
+// put the set back again after making changes. Returns an error of setID isn't
+// in the database.
+func (d *DBRO) getSetByID(tx *bolt.Tx, setID string) (*Set, []byte, *bolt.Bucket, error) {
+	b := tx.Bucket([]byte(setsBucket))
+	bid := []byte(setID)
+
+	v := b.Get(bid)
+	if v == nil {
+		return nil, nil, nil, Error{ErrInvalidSetID, setID}
+	}
+
+	set := d.decodeSet(v)
+
+	return set, bid, b, nil
+}
+
+func (d *DBRO) countAllFilesInSet(tx *bolt.Tx, setID string) uint64 {
+	var numFiles uint64
+
+	cb := func([]byte) {
+		numFiles++
+	}
+
+	getEntriesViewFunc(tx, setID, fileBucket, cb)
+	getEntriesViewFunc(tx, setID, discoveredBucket, cb)
+
+	return numFiles
+}
+
+func getEntriesViewFunc(tx *bolt.Tx, setID, bucketName string, cb getEntriesViewCallBack) {
+	subBucketName := getSubBucketName(setID, bucketName)
+	setsBucket := tx.Bucket([]byte(setsBucket))
+
+	entriesBucket := setsBucket.Bucket(subBucketName)
+	if entriesBucket == nil {
+		return
+	}
+
+	entriesBucket.ForEach(func(_, v []byte) error { //nolint:errcheck
+		cb(v)
+
+		return nil
+	})
+}
+
+// getEntry finds the Entry for the given path in the given set. Returns it
+// along with the bucket it was in, so you can alter the Entry and put it back.
+// Returns an error if the entry can't be found.
+func (d *DBRO) getEntry(tx *bolt.Tx, setID, path string) (*Entry, *bolt.Bucket, error) {
+	setsBucket := tx.Bucket([]byte(setsBucket))
+
+	var (
+		entry *Entry
+		b     *bolt.Bucket
+	)
+
+	for _, kind := range []string{fileBucket, discoveredBucket, dirBucket, discoveredFoldersBucket} {
+		entry, b = d.getEntryFromSubbucket(kind, setID, path, setsBucket)
+		if entry != nil {
+			break
+		}
+	}
+
+	if entry == nil {
+		return nil, nil, Error{ErrInvalidEntry, "set " + setID + " has no path " + path}
+	}
+
+	return entry, b, nil
+}
+
+// getEntryFromSubbucket gets an Entry for the given path from a sub-bucket of
+// the setsBucket for the kind (fileBucket, discoveredBucket or dirBucket) and
+// set ID. If it doesn't exist, just returns nil. Also returns the subbucket it
+// was in. The entry will have isDir true if kind is dirBucket.
+func (d *DBRO) getEntryFromSubbucket(kind, setID, path string, setsBucket *bolt.Bucket) (*Entry, *bolt.Bucket) {
+	subBucketName := []byte(kind + separator + setID)
+
+	b := setsBucket.Bucket(subBucketName)
+	if b == nil {
+		return nil, nil
+	}
+
+	v := b.Get([]byte(path))
+	if v == nil {
+		return nil, nil
+	}
+
+	entry := d.decodeEntry(v)
+	entry.isDir = kind == dirBucket || kind == discoveredFoldersBucket
+
+	return entry, b
+}
+
+// getBucketAndKeyForFailedLookup returns our failedBucket and a lookup key.
+func (d *DBRO) getBucketAndKeyForFailedLookup(tx *bolt.Tx, setID, path string) (*bolt.Bucket, []byte) {
+	return tx.Bucket([]byte(failedBucket)), []byte(setID + separator + path)
+}
+
+// GetAll returns all the Sets previously added to the database.
+func (d *DBRO) GetAll() ([]*Set, error) {
+	return d.GetFilteredSets(nil)
+}
+
+func (d *DBRO) GetFilteredSets(filter SetFilter) ([]*Set, error) {
+	var sets []*Set
+
+	err := d.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(setsBucket))
+
+		return b.ForEach(func(k, v []byte) error {
+			if strings.HasPrefix(string(k), subBucketPrefix) {
+				return nil
+			}
+
+			set := d.decodeSet(v)
+
+			if filter == nil || filter(set) {
+				sets = append(sets, set)
+			}
+
+			return nil
+		})
+	})
+
+	return sets, err
+}
+
+// GetTrashedSets returns all the trash Sets previously added to the database.
+func (d *DBRO) GetTrashedSets() ([]*Set, error) {
+	return d.GetFilteredSets(SetFilterTrashed)
+}
+
+// decodeSet takes a byte slice representation of a Set as stored in the db by
+// AddOrUpdate(), and converts it back in to a *Set.
+func (d *DBRO) decodeSet(v []byte) *Set {
+	dec := codec.NewDecoderBytes(v, d.ch)
+
+	set := struct {
+		Set
+		SizeFiles *uint64
+	}{}
+
+	set.SizeFiles = &set.SizeTotal
+
+	dec.MustDecode(&set)
+
+	set.LogChangesToSlack(d.slacker)
+
+	return &set.Set
+}
+
+// GetByRequester returns all the Sets previously added to the database by the
+// given requester.
+func (d *DBRO) GetByRequester(requester string) ([]*Set, error) {
+	var sets []*Set
+
+	err := d.db.View(func(tx *bolt.Tx) error {
+		c := tx.Bucket([]byte(userToSetBucket)).Cursor()
+		b := tx.Bucket([]byte(setsBucket))
+
+		prefix := []byte(requester + separator)
+		for k, v := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, v = c.Next() {
+			encodedSet := b.Get(v)
+			if encodedSet == nil {
+				continue
+			}
+
+			sets = append(sets, d.decodeSet(encodedSet))
+		}
+
+		return nil
+	})
+
+	return sets, err
+}
+
+// GetByNameAndRequester returns the set with the given name and requester.
+//
+// Returns nil error when no set found.
+func (d *DBRO) GetByNameAndRequester(name, requester string) (*Set, error) {
+	sets, err := d.GetByRequester(requester)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, set := range sets {
+		if set.Name == name {
+			return set, nil
+		}
+	}
+
+	return nil, nil //nolint:nilnil
+}
+
+// GetByID returns the Sets with the given ID previously added to the database.
+// Returns nil if such a set does not exist.
+func (d *DBRO) GetByID(id string) *Set {
+	var set *Set
+
+	d.db.View(func(tx *bolt.Tx) error { //nolint:errcheck
+		b := tx.Bucket([]byte(setsBucket))
+
+		v := b.Get([]byte(id))
+		if v != nil {
+			set = d.decodeSet(v)
+		}
+
+		return nil
+	})
+
+	return set
+}
+
+// GetFileEntries returns all the file entries for the given set (both
+// SetFileEntries and SetDiscoveredEntries).
+func (d *DBRO) GetFileEntries(setID string, filter EntryFilter) ([]*Entry, error) {
+	entries, err := d.getEntries(setID, fileBucket, filter)
+	if err != nil {
+		return nil, err
+	}
+
+	entries2, err := d.getEntries(setID, discoveredBucket, filter)
+	if err != nil {
+		return nil, err
+	}
+
+	return append(entries, entries2...), nil
+}
+
+// GetFileEntryForSet returns the file entry for the given path in the given
+// set.
+func (d *DBRO) GetFileEntryForSet(setID, filePath string) (*Entry, error) {
+	var entry *Entry
+
+	err := d.db.View(func(tx *bolt.Tx) error {
+		var err error
+
+		entry, _, err = d.getEntry(tx, setID, filePath)
+
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return entry, nil
+}
+
+// GetDirEntryForSet returns the dir entry for the given path in the given
+// set.
+func (d *DBRO) GetDirEntryForSet(setID, dirPath string) (*Entry, error) {
+	var entry *Entry
+
+	dirPath = strings.TrimSuffix(dirPath, "/")
+
+	err := d.db.View(func(tx *bolt.Tx) error {
+		var err error
+
+		entry, _, err = d.getEntry(tx, setID, dirPath)
+
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return entry, nil
+}
+
+// GetDefinedFileEntry returns the first defined file entry for the given set.
+//
+// Will return nil Entry if SetFileEntries hasn't been called.
+func (d *DBRO) GetDefinedFileEntry(setID string) (*Entry, error) {
+	entry, err := d.getDefinedFileEntry(setID)
+	if err != nil {
+		return nil, err
+	}
+
+	return entry, nil
+}
+
+// getEntries returns all the entries for the given set from the given sub
+// bucket prefix.
+//
+// Accepts an optional filter func that returns true for the entries to gather.
+func (d *DBRO) getEntries(setID, bucketName string, filter EntryFilter) ([]*Entry, error) {
+	var entries []*Entry
+
+	cb := func(v []byte) {
+		entry := d.decodeEntry(v)
+
+		if filter == nil || filter(entry) {
+			entries = append(entries, entry)
+		}
+	}
+
+	err := d.db.View(func(tx *bolt.Tx) error {
+		getEntriesViewFunc(tx, setID, bucketName, cb)
+
+		return nil
+	})
+
+	return entries, err
+}
+
+// getEntries returns all the entries for the given set from the given sub
+// bucket prefix.
+func (d *DBRO) getDefinedFileEntry(setID string) (*Entry, error) {
+	var entry *Entry
+
+	err := d.db.View(func(tx *bolt.Tx) error {
+		subBucketName := []byte(fileBucket + separator + setID)
+		setsBucket := tx.Bucket([]byte(setsBucket))
+
+		entriesBucket := setsBucket.Bucket(subBucketName)
+		if entriesBucket == nil {
+			return nil
+		}
+
+		_, v := entriesBucket.Cursor().First()
+		if len(v) == 0 {
+			return nil
+		}
+
+		entry = d.decodeEntry(v)
+
+		return nil
+	})
+
+	return entry, err
+}
+
+// decodeEntry takes a byte slice representation of an Entry as stored in the db
+// by Set*Entries(), and converts it back in to an *Entry.
+func (d *DBRO) decodeEntry(v []byte) *Entry {
+	dec := codec.NewDecoderBytes(v, d.ch)
+
+	var entry *Entry
+
+	dec.MustDecode(&entry)
+
+	return entry
+}
+
+// GetFailedEntries returns up to 10 of the file entries for the given set (both
+// SetFileEntries and SetDiscoveredEntries) that have a failed status. Also
+// returns the number of failed entries that were not returned.
+func (d *DBRO) GetFailedEntries(setID string) ([]*Entry, int, error) {
+	entries := make([]*Entry, 0, maxFailedEntries)
+	skipped := 0
+
+	err := d.db.View(func(tx *bolt.Tx) error {
+		c := tx.Bucket([]byte(failedBucket)).Cursor()
+		prefix := []byte(setID + separator)
+
+		for k, v := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, v = c.Next() {
+			if len(entries) < maxFailedEntries {
+				entries = append(entries, d.decodeEntry(v))
+			} else {
+				skipped++
+			}
+		}
+
+		return nil
+	})
+
+	return entries, skipped, err
+}
+
+// GetPureFileEntries returns all the file entries for the given set (only
+// SetFileEntries, not SetDiscoveredEntries).
+func (d *DBRO) GetPureFileEntries(setID string) ([]*Entry, error) {
+	return d.getEntries(setID, fileBucket, nil)
+}
+
+// GetDiscoveredFileEntries returns all the discovered file entries for the given set (only
+// SetDiscoveredEntries, not SetFileEntries).
+func (d *DBRO) GetDiscoveredFileEntries(setID string) ([]*Entry, error) {
+	return d.getEntries(setID, discoveredBucket, nil)
+}
+
+// GetDirEntries returns all the dir entries for the given set.
+func (d *DBRO) GetDirEntries(setID string, filter EntryFilter) ([]*Entry, error) {
+	return d.getEntries(setID, dirBucket, filter)
+}
+
+// GetDirEntries returns all the dir entries for the given set.
+func (d *DBRO) GetAllDirEntries(setID string) ([]*Entry, error) {
+	entries, err := d.getEntries(setID, dirBucket, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	entries2, err := d.getEntries(setID, discoveredFoldersBucket, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return append(entries, entries2...), nil
+}
+
+func (d *DBRO) LogSetChangesToSlack(slacker Slacker) {
+	d.slacker = slacker
+}
+
 // DB is used to create and query a database for storing backup sets (lists of
 // files a user wants to have backed up) and their backup status.
 type DB struct {
@@ -198,36 +765,6 @@ type DB struct {
 	backupInProgress atomic.Bool
 	backupLastStart  atomic.Int64
 	backupLastEnd    atomic.Int64
-}
-
-// BackupInProgress reports if a backup is currently running.
-//
-// This becomes true only when Backup() successfully acquires its internal lock,
-// so it reflects the actual backup work, not just backup requests.
-func (d *DB) BackupInProgress() bool {
-	return d.backupInProgress.Load()
-}
-
-// LastBackupStarted returns when the last backup started, or the zero time if
-// no backup has started yet.
-func (d *DB) LastBackupStarted() time.Time {
-	ns := d.backupLastStart.Load()
-	if ns == 0 {
-		return time.Time{}
-	}
-
-	return time.Unix(0, ns)
-}
-
-// LastBackupFinished returns when the last backup finished, or the zero time if
-// no backup has finished yet.
-func (d *DB) LastBackupFinished() time.Time {
-	ns := d.backupLastEnd.Load()
-	if ns == 0 {
-		return time.Time{}
-	}
-
-	return time.Unix(0, ns)
 }
 
 // New returns a *DB that can be used to create or query a set database. Provide
@@ -263,6 +800,36 @@ func New(path, backupPath string, readonly bool) (*DB, error) {
 	return db, nil
 }
 
+// BackupInProgress reports if a backup is currently running.
+//
+// This becomes true only when Backup() successfully acquires its internal lock,
+// so it reflects the actual backup work, not just backup requests.
+func (d *DB) BackupInProgress() bool {
+	return d.backupInProgress.Load()
+}
+
+// LastBackupStarted returns when the last backup started, or the zero time if
+// no backup has started yet.
+func (d *DB) LastBackupStarted() time.Time {
+	ns := d.backupLastStart.Load()
+	if ns == 0 {
+		return time.Time{}
+	}
+
+	return time.Unix(0, ns)
+}
+
+// LastBackupFinished returns when the last backup finished, or the zero time if
+// no backup has finished yet.
+func (d *DB) LastBackupFinished() time.Time {
+	ns := d.backupLastEnd.Load()
+	if ns == 0 {
+		return time.Time{}
+	}
+
+	return time.Unix(0, ns)
+}
+
 // SetStatter sets the path of an external statter which will be used when
 // checking the inodes of entries store in the inodes bucket.
 func (d *DB) SetStatter(statterPath string) {
@@ -271,37 +838,6 @@ func (d *DB) SetStatter(statterPath string) {
 
 	d.statterPath = statterPath
 	d.statterFunc = noStat
-}
-
-func initDB(path string, readonly bool) (*bolt.DB, error) {
-	boltDB, err := bolt.Open(path, dbOpenMode, &bolt.Options{
-		NoFreelistSync: true,
-		NoGrowSync:     true,
-		FreelistType:   bolt.FreelistMapType,
-		ReadOnly:       readonly,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	if readonly {
-		return boltDB, nil
-	}
-
-	err = boltDB.Update(func(tx *bolt.Tx) error {
-		for _, bucket := range [...]string{
-			setsBucket, failedBucket, inodeBucket,
-			userToSetBucket, userToSetBucket, transformerToIDBucket, transformerFromIDBucket,
-		} {
-			if _, errc := tx.CreateBucketIfNotExists([]byte(bucket)); errc != nil {
-				return errc
-			}
-		}
-
-		return nil
-	})
-
-	return boltDB, err
 }
 
 // Close closes the database. Be sure to call this to finalise any writes to
@@ -679,67 +1215,6 @@ func (d *DB) RemoveDirEntry(setID string, path string) error {
 	return d.removeEntry(setID, path, discoveredFoldersBucket)
 }
 
-// GetFilesInDir returns all file paths from inside the given directory (and all
-// nested inside) for the given set using the db.
-func (d *DBRO) GetFilesInDir(setID string, dirpath string) ([]string, error) {
-	return d.getPathsInDir(setID, dirpath, discoveredBucket, fileBucket)
-}
-
-// GetFoldersInDir returns all folder paths from inside the given directory (and all
-// nested inside) for the given set using the db.
-func (d *DBRO) GetFoldersInDir(setID string, dirpath string) ([]string, error) {
-	return d.getPathsInDir(setID, dirpath, discoveredFoldersBucket, dirBucket)
-}
-
-// getPathsInDir returns all paths from inside the given directory (and all
-// nested inside) for the given set using the provided buckets in the db.
-func (d *DBRO) getPathsInDir(setID string, dirpath string, buckets ...string) ([]string, error) {
-	if !strings.HasSuffix(dirpath, "/") {
-		dirpath += "/"
-	}
-
-	var paths []string
-
-	for _, bucket := range buckets {
-		newPaths, err := d.getPathsWithPrefix(setID, bucket, dirpath)
-		if err != nil {
-			return nil, err
-		}
-
-		paths = slices.Concat(paths, newPaths)
-	}
-
-	return paths, nil
-}
-
-// getPathsWithPrefix returns all the filepaths for the given set from the given sub
-// bucket prefix, that have the given prefix.
-func (d *DBRO) getPathsWithPrefix(setID, bucketName, prefix string) ([]string, error) {
-	var entries []string
-
-	err := d.db.View(func(tx *bolt.Tx) error {
-		subBucketName := []byte(bucketName + separator + setID)
-		setsBucket := tx.Bucket([]byte(setsBucket))
-
-		entriesBucket := setsBucket.Bucket(subBucketName)
-		if entriesBucket == nil {
-			return nil
-		}
-
-		c := entriesBucket.Cursor()
-
-		prefix := []byte(prefix)
-
-		for k, _ := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, _ = c.Next() {
-			entries = append(entries, string(k))
-		}
-
-		return nil
-	})
-
-	return entries, err
-}
-
 // MergeFileEntries sets the file paths for the given backup set. Only supply
 // absolute paths to files. It keeps the existing entries in the set and
 // handles duplicates by updating the existing entries. If the file is not
@@ -864,71 +1339,6 @@ func (d *DB) deleteObjectFromSubBucket(key, setID, subBucket string) error {
 	})
 }
 
-// getSubBucket returns a given subBucket for a given set.
-func getSubBucket(tx *bolt.Tx, setID, subBucket string) *bolt.Bucket {
-	subBucketName := []byte(subBucket + separator + setID)
-	setsBucket := tx.Bucket([]byte(setsBucket))
-
-	return setsBucket.Bucket(subBucketName)
-}
-
-// GetIncompleteRemoveRequests returns all incomplete removeReqs from every set.
-func (d *DBRO) GetIncompleteRemoveRequests() ([]RemoveReq, error) {
-	var allRemReqs []RemoveReq
-
-	sets, err := d.GetAll()
-	if err != nil {
-		return nil, err
-	}
-
-	for _, set := range sets {
-		remReqs, err := d.GetRemoveRequests(set.ID())
-		if err != nil {
-			return nil, err
-		}
-
-		for _, remReq := range remReqs {
-			if !remReq.IsComplete {
-				allRemReqs = append(allRemReqs, remReq)
-			}
-		}
-	}
-
-	return allRemReqs, nil
-}
-
-// GetRemoveRequests returns all objects from the remove bucket in the database.
-func (d *DBRO) GetRemoveRequests(sid string) ([]RemoveReq, error) {
-	var remReqs []RemoveReq
-
-	err := d.db.View(func(tx *bolt.Tx) error {
-		b := getSubBucket(tx, sid, removedBucket)
-		if b == nil {
-			return nil
-		}
-
-		return b.ForEach(func(_, v []byte) error {
-			remReq := d.decodeRemoveRequest(v)
-
-			remReqs = append(remReqs, remReq)
-
-			return nil
-		})
-	})
-
-	return remReqs, err
-}
-
-func (d *DBRO) decodeRemoveRequest(v []byte) RemoveReq {
-	dec := codec.NewDecoderBytes(v, d.ch)
-
-	var remReq RemoveReq
-
-	dec.MustDecode(&remReq)
-
-	return remReq
-}
-
 // GetExcludedPaths returns the paths for all files and dirs that should not be
 // included in any discoveries on the given set.
 func (d *DB) GetExcludedPaths(setID string) ([]string, error) {
@@ -1049,24 +1459,6 @@ func (d *DB) getExistingEntries(tx *bolt.Tx, subBucketName string, setID string)
 	return sfsb.Bucket, existing, err
 }
 
-type setFileSubBucket struct {
-	Name      []byte
-	Bucket    *bolt.Bucket
-	SetBucket *bolt.Bucket
-}
-
-func (s *setFileSubBucket) DeleteBucket() error {
-	return s.SetBucket.DeleteBucket(s.Name)
-}
-
-func (s *setFileSubBucket) CreateBucket() error {
-	var err error
-
-	s.Bucket, err = s.SetBucket.CreateBucket(s.Name)
-
-	return err
-}
-
 func (d *DB) newSetFileBucket(tx *bolt.Tx, kindOfFileBucket, setID string) (*setFileSubBucket, error) {
 	subBucketName := []byte(kindOfFileBucket + separator + setID)
 	setBucket := tx.Bucket([]byte(setsBucket))
@@ -1080,31 +1472,6 @@ func (d *DB) newSetFileBucket(tx *bolt.Tx, kindOfFileBucket, setID string) (*set
 	}, err
 }
 
-// newDirentFromPath returns a Dirent for the path. If it doesn't exist, returns
-// a fake one with no Inode and Type of ModeIrregular.
-func newDirentFromPath(path string) *Dirent {
-	dirent := &Dirent{
-		Path: path,
-		Mode: os.ModeIrregular,
-	}
-
-	info, err := os.Lstat(path)
-	if err != nil {
-		return dirent
-	}
-
-	dirent.Mode = info.Mode().Type()
-
-	statt, ok := info.Sys().(*syscall.Stat_t)
-	if !ok {
-		return dirent
-	}
-
-	dirent.Inode = statt.Ino
-
-	return dirent
-}
-
 // MergeDirEntries sets the directory paths for the given backup set. Only supply
 // absolute paths to directories. It keeps the existing entries in the set and
 // handles duplicates by updating the existing entries. If the dir is not
@@ -1112,28 +1479,6 @@ func newDirentFromPath(path string) *Dirent {
 func (d *DB) MergeDirEntries(setID string, entries []*Dirent) error {
 	return d.mergeEntries(setID, entries, dirBucket, Registered)
 }
-
-// getSetByID returns the Set with the given ID from the database, along with
-// the byte slice version of the set id and the sets bucket so you can easily
-// put the set back again after making changes. Returns an error of setID isn't
-// in the database.
-func (d *DBRO) getSetByID(tx *bolt.Tx, setID string) (*Set, []byte, *bolt.Bucket, error) {
-	b := tx.Bucket([]byte(setsBucket))
-	bid := []byte(setID)
-
-	v := b.Get(bid)
-	if v == nil {
-		return nil, nil, nil, Error{ErrInvalidSetID, setID}
-	}
-
-	set := d.decodeSet(v)
-
-	return set, bid, b, nil
-}
-
-// DiscoverCallback will receive the sets directory entries and return a list of
-// the files and a list of the dirs discovered in those directories.
-type DiscoverCallback func([]*Entry) ([]*Dirent, []*Dirent, error)
 
 // Discover discovers and stores file entry details for the given set.
 // Immediately tries to record in the db that discovery has started and returns
@@ -1208,7 +1553,7 @@ func (d *DB) statPureFileEntries(setID string) error {
 		direntCh := make(chan *Dirent)
 		numEntries := 0
 
-		sfsb.Bucket.ForEach(func(k, v []byte) error { //nolint:errcheck
+		sfsb.Bucket.ForEach(func(k, _ []byte) error { //nolint:errcheck
 			numEntries++
 			path := string(k)
 
@@ -1221,6 +1566,31 @@ func (d *DB) statPureFileEntries(setID string) error {
 
 		return d.handleFilePoolResults(tx, sfsb, setID, direntCh, numEntries)
 	})
+}
+
+// newDirentFromPath returns a Dirent for the path. If it doesn't exist, returns
+// a fake one with no Inode and Type of ModeIrregular.
+func newDirentFromPath(path string) *Dirent {
+	dirent := &Dirent{
+		Path: path,
+		Mode: os.ModeIrregular,
+	}
+
+	info, err := os.Lstat(path)
+	if err != nil {
+		return dirent
+	}
+
+	dirent.Mode = info.Mode().Type()
+
+	statt, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return dirent
+	}
+
+	dirent.Inode = statt.Ino
+
+	return dirent
 }
 
 func (d *DB) handleFilePoolResults(tx *bolt.Tx, sfsb *setFileSubBucket, setID string,
@@ -1295,19 +1665,6 @@ func (d *DB) updateSetAfterDiscovery(setID string) (*Set, error) {
 	})
 
 	return updatedSet, err
-}
-
-func (d *DBRO) countAllFilesInSet(tx *bolt.Tx, setID string) uint64 {
-	var numFiles uint64
-
-	cb := func([]byte) {
-		numFiles++
-	}
-
-	getEntriesViewFunc(tx, setID, fileBucket, cb)
-	getEntriesViewFunc(tx, setID, discoveredBucket, cb)
-
-	return numFiles
 }
 
 // SetEntryStatus finds the set Entry corresponding to the given Request's Local
@@ -1408,54 +1765,6 @@ func (d *DB) updateFileEntry(tx *bolt.Tx, setID string, r *transfer.Request, //n
 	return entry, b.Put([]byte(r.Local), d.encodeToBytes(entry))
 }
 
-// getEntry finds the Entry for the given path in the given set. Returns it
-// along with the bucket it was in, so you can alter the Entry and put it back.
-// Returns an error if the entry can't be found.
-func (d *DBRO) getEntry(tx *bolt.Tx, setID, path string) (*Entry, *bolt.Bucket, error) {
-	setsBucket := tx.Bucket([]byte(setsBucket))
-
-	var (
-		entry *Entry
-		b     *bolt.Bucket
-	)
-
-	for _, kind := range []string{fileBucket, discoveredBucket, dirBucket, discoveredFoldersBucket} {
-		entry, b = d.getEntryFromSubbucket(kind, setID, path, setsBucket)
-		if entry != nil {
-			break
-		}
-	}
-
-	if entry == nil {
-		return nil, nil, Error{ErrInvalidEntry, "set " + setID + " has no path " + path}
-	}
-
-	return entry, b, nil
-}
-
-// getEntryFromSubbucket gets an Entry for the given path from a sub-bucket of
-// the setsBucket for the kind (fileBucket, discoveredBucket or dirBucket) and
-// set ID. If it doesn't exist, just returns nil. Also returns the subbucket it
-// was in. The entry will have isDir true if kind is dirBucket.
-func (d *DBRO) getEntryFromSubbucket(kind, setID, path string, setsBucket *bolt.Bucket) (*Entry, *bolt.Bucket) {
-	subBucketName := []byte(kind + separator + setID)
-
-	b := setsBucket.Bucket(subBucketName)
-	if b == nil {
-		return nil, nil
-	}
-
-	v := b.Get([]byte(path))
-	if v == nil {
-		return nil, nil
-	}
-
-	entry := d.decodeEntry(v)
-	entry.isDir = kind == dirBucket || kind == discoveredFoldersBucket
-
-	return entry, b
-}
-
 // requestStatusToEntryStatus converts Request.Status and stores it as a Status
 // on the entry. Also sets entry.Attempts, unFailed and newFail as appropriate.
 func requestStatusToEntryStatus(r *transfer.Request, entry *Entry) { //nolint:gocyclo,funlen,cyclop
@@ -1521,11 +1830,6 @@ func (d *DB) removeFailedLookup(tx *bolt.Tx, setID, path string) error {
 	return b.Delete(lookupKey)
 }
 
-// getBucketAndKeyForFailedLookup returns our failedBucket and a lookup key.
-func (d *DBRO) getBucketAndKeyForFailedLookup(tx *bolt.Tx, setID, path string) (*bolt.Bucket, []byte) {
-	return tx.Bucket([]byte(failedBucket)), []byte(setID + separator + path)
-}
-
 // RemovePathFromFailedBucket removes the entry with the given setID and path
 // from the failed bucket.
 func (d *DB) RemovePathFromFailedBucket(setID, path string) error {
@@ -1548,360 +1852,6 @@ func (d *DB) addFailedLookup(tx *bolt.Tx, setID, path string, entry *Entry) erro
 // entries.
 func (d *DB) updateSetBasedOnEntry(set *Set, entry *Entry) error {
 	return set.UpdateBasedOnEntry(entry, d.GetFileEntries)
-}
-
-// SetFilter is a function used to filter the sets retrieved from the database.
-//
-// A return value of true will keep the set, a return of false will discard it.
-type SetFilter func(*Set) bool //nolint:revive
-
-// SetFilterTrashed is a SetFilter that filters on trashed sets.
-func SetFilterTrashed(set *Set) bool { //nolint:revive
-	return set.IsTrash()
-}
-
-// GetAll returns all the Sets previously added to the database.
-func (d *DBRO) GetAll() ([]*Set, error) {
-	return d.GetFilteredSets(nil)
-}
-
-func (d *DBRO) GetFilteredSets(filter SetFilter) ([]*Set, error) {
-	var sets []*Set
-
-	err := d.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte(setsBucket))
-
-		return b.ForEach(func(k, v []byte) error {
-			if strings.HasPrefix(string(k), subBucketPrefix) {
-				return nil
-			}
-
-			set := d.decodeSet(v)
-
-			if filter == nil || filter(set) {
-				sets = append(sets, set)
-			}
-
-			return nil
-		})
-	})
-
-	return sets, err
-}
-
-// GetTrashedSets returns all the trash Sets previously added to the database.
-func (d *DBRO) GetTrashedSets() ([]*Set, error) {
-	return d.GetFilteredSets(SetFilterTrashed)
-}
-
-// decodeSet takes a byte slice representation of a Set as stored in the db by
-// AddOrUpdate(), and converts it back in to a *Set.
-func (d *DBRO) decodeSet(v []byte) *Set {
-	dec := codec.NewDecoderBytes(v, d.ch)
-
-	set := struct {
-		Set
-		SizeFiles *uint64
-	}{}
-
-	set.SizeFiles = &set.SizeTotal
-
-	dec.MustDecode(&set)
-
-	set.LogChangesToSlack(d.slacker)
-
-	return &set.Set
-}
-
-// GetByRequester returns all the Sets previously added to the database by the
-// given requester.
-func (d *DBRO) GetByRequester(requester string) ([]*Set, error) {
-	var sets []*Set
-
-	err := d.db.View(func(tx *bolt.Tx) error {
-		c := tx.Bucket([]byte(userToSetBucket)).Cursor()
-		b := tx.Bucket([]byte(setsBucket))
-
-		prefix := []byte(requester + separator)
-		for k, v := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, v = c.Next() {
-			encodedSet := b.Get(v)
-			if encodedSet == nil {
-				continue
-			}
-
-			sets = append(sets, d.decodeSet(encodedSet))
-		}
-
-		return nil
-	})
-
-	return sets, err
-}
-
-// GetByNameAndRequester returns the set with the given name and requester.
-//
-// Returns nil error when no set found.
-func (d *DBRO) GetByNameAndRequester(name, requester string) (*Set, error) {
-	sets, err := d.GetByRequester(requester)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, set := range sets {
-		if set.Name == name {
-			return set, nil
-		}
-	}
-
-	return nil, nil //nolint:nilnil
-}
-
-// GetByID returns the Sets with the given ID previously added to the database.
-// Returns nil if such a set does not exist.
-func (d *DBRO) GetByID(id string) *Set {
-	var set *Set
-
-	d.db.View(func(tx *bolt.Tx) error { //nolint:errcheck
-		b := tx.Bucket([]byte(setsBucket))
-
-		v := b.Get([]byte(id))
-		if v != nil {
-			set = d.decodeSet(v)
-		}
-
-		return nil
-	})
-
-	return set
-}
-
-// EntryFilter is a function used to filter the entries for a set retrieved from
-// the database.
-//
-// A return value of true will keep the file entry, a return of false will
-// discard it.
-type EntryFilter func(*Entry) bool
-
-// FileEntryFilterUploaded is a FileEntryFilter that filters on uploaded files.
-func FileEntryFilterUploaded(e *Entry) bool {
-	return e.Status == Uploaded || e.Status == Replaced ||
-		e.Status == Orphaned || e.Status == Skipped
-}
-
-// FileEntryFilterLastState is a FileEntryFilter that filters on uploaded
-// files (excluding orphaned files).
-func FileEntryFilterLastState(e *Entry) bool {
-	return e.Status == Uploaded || e.Status == Replaced || e.Status == Skipped
-}
-
-// GetFileEntries returns all the file entries for the given set (both
-// SetFileEntries and SetDiscoveredEntries).
-func (d *DBRO) GetFileEntries(setID string, filter EntryFilter) ([]*Entry, error) {
-	entries, err := d.getEntries(setID, fileBucket, filter)
-	if err != nil {
-		return nil, err
-	}
-
-	entries2, err := d.getEntries(setID, discoveredBucket, filter)
-	if err != nil {
-		return nil, err
-	}
-
-	return append(entries, entries2...), nil
-}
-
-// GetFileEntryForSet returns the file entry for the given path in the given
-// set.
-func (d *DBRO) GetFileEntryForSet(setID, filePath string) (*Entry, error) {
-	var entry *Entry
-
-	err := d.db.View(func(tx *bolt.Tx) error {
-		var err error
-
-		entry, _, err = d.getEntry(tx, setID, filePath)
-
-		return err
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return entry, nil
-}
-
-// GetDirEntryForSet returns the dir entry for the given path in the given
-// set.
-func (d *DBRO) GetDirEntryForSet(setID, dirPath string) (*Entry, error) {
-	var entry *Entry
-
-	dirPath = strings.TrimSuffix(dirPath, "/")
-
-	err := d.db.View(func(tx *bolt.Tx) error {
-		var err error
-
-		entry, _, err = d.getEntry(tx, setID, dirPath)
-
-		return err
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return entry, nil
-}
-
-// GetDefinedFileEntry returns the first defined file entry for the given set.
-//
-// Will return nil Entry if SetFileEntries hasn't been called.
-func (d *DBRO) GetDefinedFileEntry(setID string) (*Entry, error) {
-	entry, err := d.getDefinedFileEntry(setID)
-	if err != nil {
-		return nil, err
-	}
-
-	return entry, nil
-}
-
-// getEntries returns all the entries for the given set from the given sub
-// bucket prefix.
-//
-// Accepts an optional filter func that returns true for the entries to gather.
-func (d *DBRO) getEntries(setID, bucketName string, filter EntryFilter) ([]*Entry, error) {
-	var entries []*Entry
-
-	cb := func(v []byte) {
-		entry := d.decodeEntry(v)
-
-		if filter == nil || filter(entry) {
-			entries = append(entries, entry)
-		}
-	}
-
-	err := d.db.View(func(tx *bolt.Tx) error {
-		getEntriesViewFunc(tx, setID, bucketName, cb)
-
-		return nil
-	})
-
-	return entries, err
-}
-
-// getEntries returns all the entries for the given set from the given sub
-// bucket prefix.
-func (d *DBRO) getDefinedFileEntry(setID string) (*Entry, error) {
-	var entry *Entry
-
-	err := d.db.View(func(tx *bolt.Tx) error {
-		subBucketName := []byte(fileBucket + separator + setID)
-		setsBucket := tx.Bucket([]byte(setsBucket))
-
-		entriesBucket := setsBucket.Bucket(subBucketName)
-		if entriesBucket == nil {
-			return nil
-		}
-
-		_, v := entriesBucket.Cursor().First()
-		if len(v) == 0 {
-			return nil
-		}
-
-		entry = d.decodeEntry(v)
-
-		return nil
-	})
-
-	return entry, err
-}
-
-type getEntriesViewCallBack func(v []byte)
-
-func getEntriesViewFunc(tx *bolt.Tx, setID, bucketName string, cb getEntriesViewCallBack) {
-	subBucketName := getSubBucketName(setID, bucketName)
-	setsBucket := tx.Bucket([]byte(setsBucket))
-
-	entriesBucket := setsBucket.Bucket(subBucketName)
-	if entriesBucket == nil {
-		return
-	}
-
-	entriesBucket.ForEach(func(_, v []byte) error { //nolint:errcheck
-		cb(v)
-
-		return nil
-	})
-}
-
-func getSubBucketName(setID, bucketName string) []byte {
-	return []byte(bucketName + separator + setID)
-}
-
-// decodeEntry takes a byte slice representation of an Entry as stored in the db
-// by Set*Entries(), and converts it back in to an *Entry.
-func (d *DBRO) decodeEntry(v []byte) *Entry {
-	dec := codec.NewDecoderBytes(v, d.ch)
-
-	var entry *Entry
-
-	dec.MustDecode(&entry)
-
-	return entry
-}
-
-// GetFailedEntries returns up to 10 of the file entries for the given set (both
-// SetFileEntries and SetDiscoveredEntries) that have a failed status. Also
-// returns the number of failed entries that were not returned.
-func (d *DBRO) GetFailedEntries(setID string) ([]*Entry, int, error) {
-	entries := make([]*Entry, 0, maxFailedEntries)
-	skipped := 0
-
-	err := d.db.View(func(tx *bolt.Tx) error {
-		c := tx.Bucket([]byte(failedBucket)).Cursor()
-		prefix := []byte(setID + separator)
-
-		for k, v := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, v = c.Next() {
-			if len(entries) < maxFailedEntries {
-				entries = append(entries, d.decodeEntry(v))
-			} else {
-				skipped++
-			}
-		}
-
-		return nil
-	})
-
-	return entries, skipped, err
-}
-
-// GetPureFileEntries returns all the file entries for the given set (only
-// SetFileEntries, not SetDiscoveredEntries).
-func (d *DBRO) GetPureFileEntries(setID string) ([]*Entry, error) {
-	return d.getEntries(setID, fileBucket, nil)
-}
-
-// GetDiscoveredFileEntries returns all the discovered file entries for the given set (only
-// SetDiscoveredEntries, not SetFileEntries).
-func (d *DBRO) GetDiscoveredFileEntries(setID string) ([]*Entry, error) {
-	return d.getEntries(setID, discoveredBucket, nil)
-}
-
-// GetDirEntries returns all the dir entries for the given set.
-func (d *DBRO) GetDirEntries(setID string, filter EntryFilter) ([]*Entry, error) {
-	return d.getEntries(setID, dirBucket, filter)
-}
-
-// GetDirEntries returns all the dir entries for the given set.
-func (d *DBRO) GetAllDirEntries(setID string) ([]*Entry, error) {
-	entries, err := d.getEntries(setID, dirBucket, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	entries2, err := d.getEntries(setID, discoveredFoldersBucket, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return append(entries, entries2...), nil
 }
 
 // SetError updates a set with the given error message. Returns an error if the
@@ -2006,13 +1956,8 @@ func (d *DB) Backup() error {
 	}
 	defer d.mu.Unlock()
 
-	d.backupInProgress.Store(true)
-	d.backupLastStart.Store(time.Now().UnixNano())
-
-	defer func() {
-		d.backupInProgress.Store(false)
-		d.backupLastEnd.Store(time.Now().UnixNano())
-	}()
+	finish := d.markBackupStart()
+	defer finish()
 
 	for {
 		if err := d.doBackup(); err != nil {
@@ -2021,14 +1966,22 @@ func (d *DB) Backup() error {
 			return err
 		}
 
-		<-time.After(d.minTimeBetweenBackups)
+		time.Sleep(d.minTimeBetweenBackups)
 
 		if !d.rebackup.CompareAndSwap(true, false) {
-			break
+			return nil
 		}
 	}
+}
 
-	return nil
+func (d *DB) markBackupStart() func() {
+	d.backupInProgress.Store(true)
+	d.backupLastStart.Store(time.Now().UnixNano())
+
+	return func() {
+		d.backupInProgress.Store(false)
+		d.backupLastEnd.Store(time.Now().UnixNano())
+	}
 }
 
 func (d *DB) doBackup() error {
@@ -2124,10 +2077,6 @@ func (d *DB) EnableRemoteBackups(remotePath string, handler transfer.Handler) {
 	d.remoteBackupHandler = handler
 }
 
-func (d *DBRO) LogSetChangesToSlack(slacker Slacker) {
-	d.slacker = slacker
-}
-
 // MakeSetWritable sets ReadOnly to false on a given set.
 // This is the only way to change the ReadOnly set.
 func (d *DB) MakeSetWritable(sid string) error {
@@ -2206,4 +2155,58 @@ func deleteFailedMapping(tx *bolt.Tx, setID string) error {
 	}
 
 	return nil
+}
+
+func initDB(path string, readonly bool) (*bolt.DB, error) {
+	boltDB, err := bolt.Open(path, dbOpenMode, &bolt.Options{
+		NoFreelistSync: true,
+		NoGrowSync:     true,
+		FreelistType:   bolt.FreelistMapType,
+		ReadOnly:       readonly,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if readonly {
+		return boltDB, nil
+	}
+
+	err = boltDB.Update(func(tx *bolt.Tx) error {
+		for _, bucket := range [...]string{
+			setsBucket, failedBucket, inodeBucket,
+			userToSetBucket, userToSetBucket, transformerToIDBucket, transformerFromIDBucket,
+		} {
+			if _, errc := tx.CreateBucketIfNotExists([]byte(bucket)); errc != nil {
+				return errc
+			}
+		}
+
+		return nil
+	})
+
+	return boltDB, err
+}
+
+type getEntriesViewCallBack func(v []byte)
+
+// SetFilterTrashed is a SetFilter that filters on trashed sets.
+func SetFilterTrashed(set *Set) bool { //nolint:revive
+	return set.IsTrash()
+}
+
+// FileEntryFilterUploaded is a FileEntryFilter that filters on uploaded files.
+func FileEntryFilterUploaded(e *Entry) bool {
+	return e.Status == Uploaded || e.Status == Replaced ||
+		e.Status == Orphaned || e.Status == Skipped
+}
+
+// FileEntryFilterLastState is a FileEntryFilter that filters on uploaded
+// files (excluding orphaned files).
+func FileEntryFilterLastState(e *Entry) bool {
+	return e.Status == Uploaded || e.Status == Replaced || e.Status == Skipped
+}
+
+func getSubBucketName(setID, bucketName string) []byte {
+	return []byte(bucketName + separator + setID)
 }

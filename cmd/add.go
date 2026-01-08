@@ -96,23 +96,6 @@ var (
 	)
 )
 
-type InvalidMonitorDurationError struct {
-	Err error
-}
-
-func (e *InvalidMonitorDurationError) Error() string {
-	return fmt.Sprintf("invalid monitor duration: %v", e.Err)
-}
-
-type MonitorDurationTooShortError struct {
-	Duration    time.Duration
-	MinDuration time.Duration
-}
-
-func (e *MonitorDurationTooShortError) Error() string {
-	return fmt.Sprintf("monitor duration must be %s or more, not %s", e.MinDuration, e.Duration)
-}
-
 // addCmd represents the add command.
 var addCmd = &cobra.Command{
 	Use:   "add",
@@ -311,6 +294,103 @@ func updateAddDescFlag() {
 	}
 }
 
+// add does the main job of sending the backup set details to the server.
+func add(client *server.Client, name, requester, transformer, description string,
+	monitor time.Duration, monitorRemovals, archive bool, files, dirs []string, meta *transfer.Meta) error {
+	set := &set.Set{
+		Name:            name,
+		Requester:       requester,
+		Transformer:     transformer,
+		Description:     description,
+		MonitorTime:     monitor,
+		MonitorRemovals: monitorRemovals,
+		DeleteLocal:     archive,
+		Metadata:        meta.Metadata(),
+	}
+
+	if err := client.AddOrUpdateSet(set); err != nil {
+		return err
+	}
+
+	if err := client.MergeFiles(set.ID(), files); err != nil {
+		return err
+	}
+
+	if err := client.MergeDirs(set.ID(), dirs); err != nil {
+		return err
+	}
+
+	return client.TriggerDiscovery(set.ID(), false)
+}
+
+func checkExistingSet(client *server.Client, name, requester string) (*set.Set, error) {
+	set, err := client.GetSetByName(requester, name)
+	if errors.Is(err, server.ErrBadSet) {
+		return set, nil
+	} else if err != nil {
+		return nil, err
+	}
+
+	return set, ErrDuplicateSet
+}
+
+type InvalidMonitorDurationError struct {
+	Err error
+}
+
+func (e *InvalidMonitorDurationError) Error() string {
+	return fmt.Sprintf("invalid monitor duration: %v", e.Err)
+}
+
+func parseDuration(s string, minDuration time.Duration) (time.Duration, error) {
+	s = convertDurationString(s)
+
+	monitorDuration, err := time.ParseDuration(s)
+	if err != nil {
+		return 0, &InvalidMonitorDurationError{
+			Err: err,
+		}
+	}
+
+	if monitorDuration < minDuration {
+		return 0, &MonitorDurationTooShortError{
+			Duration:    monitorDuration,
+			MinDuration: minDuration,
+		}
+	}
+
+	return monitorDuration, nil
+}
+
+func convertDurationString(s string) string {
+	durationRegex := regexp.MustCompile("[0-9]+[dw]")
+
+	return durationRegex.ReplaceAllStringFunc(s, func(d string) string {
+		num, err := strconv.ParseInt(d[:len(d)-1], 10, 64)
+		if err != nil {
+			return d
+		}
+
+		switch d[len(d)-1] {
+		case 'd':
+			num *= hoursInDay
+		case 'w':
+			num *= hoursInWeek
+		}
+
+		return strconv.FormatInt(num, 10) + "h"
+	})
+}
+
+type MonitorDurationTooShortError struct {
+	Duration    time.Duration
+	MinDuration time.Duration
+}
+
+func (e *MonitorDurationTooShortError) Error() string {
+	return fmt.Sprintf("monitor duration must be %s or more, not %s", e.MinDuration, e.Duration)
+}
+
 // readPaths turns the line content (split as per splitter) of the given file.
 // If file is blank, returns nil.
 func readPaths(file string, splitter bufio.SplitFunc) []string {
@@ -402,84 +482,4 @@ func fileDirIsInDirs(file string, dirSet map[string]bool) bool {
 	}
 
 	return false
-}
-
-// add does the main job of sending the backup set details to the server.
-func add(client *server.Client, name, requester, transformer, description string,
-	monitor time.Duration, monitorRemovals, archive bool, files, dirs []string, meta *transfer.Meta) error {
-	set := &set.Set{
-		Name:            name,
-		Requester:       requester,
-		Transformer:     transformer,
-		Description:     description,
-		MonitorTime:     monitor,
-		MonitorRemovals: monitorRemovals,
-		DeleteLocal:     archive,
-		Metadata:        meta.Metadata(),
-	}
-
-	if err := client.AddOrUpdateSet(set); err != nil {
-		return err
-	}
-
-	if err := client.MergeFiles(set.ID(), files); err != nil {
-		return err
-	}
-
-	if err := client.MergeDirs(set.ID(), dirs); err != nil {
-		return err
-	}
-
-	return client.TriggerDiscovery(set.ID(), false)
-}
-
-func checkExistingSet(client *server.Client, name, requester string) (*set.Set, error) {
-	set, err := client.GetSetByName(requester, name)
-	if errors.Is(err, server.ErrBadSet) {
-		return set, nil
-	} else if err != nil {
-		return nil, err
-	}
-
-	return set, ErrDuplicateSet
-}
-
-func parseDuration(s string, minDuration time.Duration) (time.Duration, error) {
-	s = convertDurationString(s)
-
-	monitorDuration, err := time.ParseDuration(s)
-	if err != nil {
-		return 0, &InvalidMonitorDurationError{
-			Err: err,
-		}
-	}
-
-	if monitorDuration < minDuration {
-		return 0, &MonitorDurationTooShortError{
-			Duration:    monitorDuration,
-			MinDuration: minDuration,
-		}
-	}
-
-	return monitorDuration, nil
-}
-
-func convertDurationString(s string) string {
-	durationRegex := regexp.MustCompile("[0-9]+[dw]")
-
-	return durationRegex.ReplaceAllStringFunc(s, func(d string) string {
-		num, err := strconv.ParseInt(d[:len(d)-1], 10, 64)
-		if err != nil {
-			return d
-		}
-
-		switch d[len(d)-1] {
-		case 'd':
-			num *= hoursInDay
-		case 'w':
-			num *= hoursInWeek
-		}
-
-		return strconv.FormatInt(num, 10) + "h"
-	})
 }

@@ -112,6 +112,18 @@ type Request struct {
 	onlyUploadEmptyFile bool
 }
 
+// NewRequestWithTransformedLocal takes a local path string, uses the given
+// PathTransformer to generate the corresponding remote path, and returns a
+// Request with Local and Remote set.
+func NewRequestWithTransformedLocal(local string, pt transformer.PathTransformer) (*Request, error) {
+	remote, err := pt(local)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Request{Local: local, Remote: remote, Meta: NewMeta()}, nil
+}
+
 // MakeSafeForJSON copies Local and Remote to LocalForJSON and RemoteForJSON,
 // so that if this Request struct is encoded as JSON, non-UTF8 characters will
 // be preserved. On decode be sure to use CorrectFromJSON().
@@ -328,6 +340,16 @@ func (r *Request) RemoveAndAddMetadata(handler Handler) error {
 	return removeAndAddMetadata(r.inodeRequest, handler)
 }
 
+func removeAndAddMetadata(r *Request, handler Handler) error {
+	toRemove, toAdd := r.Meta.determineMetadataToRemoveAndAdd()
+
+	if err := r.removeMeta(handler, toRemove); err != nil {
+		return err
+	}
+
+	return r.addMeta(handler, toAdd)
+}
+
 // SetMeta will set the MTime and GID on a locally restored file.
 func (r *Request) SetMeta(_ Handler) error {
 	mtime, ok := r.Meta.remoteMeta[MetaKeyMtime]
@@ -379,16 +401,6 @@ func setGroup(file, group string) error {
 	}
 
 	return os.Lchown(file, int(uid), int(gid)) //nolint:gosec
-}
-
-func removeAndAddMetadata(r *Request, handler Handler) error {
-	toRemove, toAdd := r.Meta.determineMetadataToRemoveAndAdd()
-
-	if err := r.removeMeta(handler, toRemove); err != nil {
-		return err
-	}
-
-	return r.addMeta(handler, toAdd)
 }
 
 func (r *Request) removeMeta(handler Handler, toRemove map[string]string) error {
@@ -450,16 +462,4 @@ func (r *Request) createSymlinkIfRequired() error {
 	}
 
 	return os.Symlink(r.Symlink, r.Local)
-}
-
-// NewRequestWithTransformedLocal takes a local path string, uses the given
-// PathTransformer to generate the corresponding remote path, and returns a
-// Request with Local and Remote set.
-func NewRequestWithTransformedLocal(local string, pt transformer.PathTransformer) (*Request, error) {
-	remote, err := pt(local)
-	if err != nil {
-		return nil, err
-	}
-
-	return &Request{Local: local, Remote: remote, Meta: NewMeta()}, nil
 }

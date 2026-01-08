@@ -172,6 +172,136 @@ func (dc *discoveryCoordinator) OnRemovalsDone(sid string, fn func()) {
 	dc.onRemovalsDone[sid] = append(dc.onRemovalsDone[sid], fn)
 }
 
+// discoverThenEnqueue updates file existence, discovers dir contents, then
+// queues the set's files for uploading. Call this in a go-routine, but don't
+// call it multiple times at once for the same set! This will block removals on
+// the same set.
+func (s *Server) discoverThenEnqueue(given *set.Set, transformer transformer.PathTransformer, forceRemovals bool) {
+	if given.MonitorRemovals || forceRemovals {
+		if err := s.discoverSetRemovals(given); err != nil {
+			s.recordSetError("error discovering set (%s) removals: %s", given.ID(), err)
+
+			return
+		}
+	}
+
+	s.discoveryCoordinator.StartDiscovery(given.ID())
+	defer s.discoveryCoordinator.DiscoveryHappened(given.ID())
+
+	updated, err := s.doDiscovery(given)
+	if err != nil {
+		s.Logger.Printf("discovery error %s: %s", given.ID(), err)
+
+		return
+	}
+
+	s.handleNewlyDefinedSets(updated)
+
+	if err := s.enqueueSetFiles(updated, transformer); err != nil {
+		s.recordSetError("queuing files for %s failed: %s", updated.ID(), err)
+	}
+}
+
+func findNotExistingEntries(entries []*set.Entry) ([]string, error) {
+	var missingPaths []string
+
+	for _, entry := range entries {
+		_, err := os.Stat(entry.Path)
+		if errors.Is(err, os.ErrNotExist) {
+			missingPaths = append(missingPaths, entry.Path)
+		} else if err != nil {
+			return nil, err
+		}
+	}
+
+	return missingPaths, nil
+}
+
+// filterEntries sends every entry found on the walk to the given entriesCh,
+// except for entries that are not regular files or symlinks or dirs, which are
+// silently skipped.
+func filterEntries(entriesCh chan *set.Dirent, excludeTree ptrie.Trie[bool],
+	parentDir string,
+) func(entry *walk.Dirent) error {
+	return func(entry *walk.Dirent) error {
+		dirent := set.DirEntFromWalk(entry)
+
+		isRemoved, _ := isDirentRemovedFromSet(dirent, excludeTree)
+
+		if isRemoved {
+			return nil
+		}
+
+		if !(entry.IsRegular() || entry.IsSymlink() || entry.IsDir()) || //nolint:staticcheck
+			dirent.Path == filepath.Clean(parentDir) { //nolint:wsl,whitespace
+			return nil
+		}
+
+		entriesCh <- dirent
+
+		return nil
+	}
+}
+
+// isDirentRemovedFromSet checks if the dirent has previously been removed from
+// the set by using the provided prefix tree. Also returns the matched prefix.
+func isDirentRemovedFromSet(dirent *set.Dirent, excludeTree ptrie.Trie[bool]) (bool, string) {
+	path := dirent.Path
+	if dirent.IsDir() && !strings.HasSuffix(path, "/") {
+		path += "/"
+	}
+
+	var prefixMatch string
+
+	pathBytes := []byte(path)
+	excludeTree.MatchPrefix(pathBytes, func(match []byte, _ bool) bool {
+		if bytes.HasSuffix(match, []byte{'/'}) {
+			prefixMatch = string(match)
+
+			return false
+		}
+
+		if bytes.Equal(match, pathBytes) {
+			prefixMatch = string(match)
+
+			return false
+		}
+
+		return true
+	})
+
+	return prefixMatch != "", prefixMatch
+}
+
+func determineDirStatus(dirStatErr error, entry *set.Entry,
+	existing map[string]struct{}) (transfer.RequestStatus, string) {
+	if dirStatErr == nil {
+		return transfer.RequestStatusPending, ""
+	}
+
+	status := transfer.RequestStatusMissing
+
+	if _, ok := existing[entry.Path]; ok {
+		status = transfer.RequestStatusOrphaned
+	}
+
+	return status, dirStatErr.Error()
+}
+
+// uploadableEntries returns the subset of given entries that are suitable for
+// uploading: pending and those that were dealt with before the last discovery.
+func uploadableEntries(entries []*set.Entry, given *set.Set) []*set.Entry {
+	var filtered []*set.Entry
+
+	for _, entry := range entries {
+		if entry.ShouldUpload(given.LastDiscovery) {
+			filtered = append(filtered, entry)
+		}
+	}
+
+	return filtered
+}
+
 // triggerDiscovery triggers the file discovery process for the set with the id
 // specified in the URL parameter. Checks a force_removals query parameter and
 // forces removals if it is set to true.
@@ -230,36 +360,6 @@ func (s *Server) discoverSet(given *set.Set, forceRemovals bool) error {
 	return nil
 }
 
-// discoverThenEnqueue updates file existence, discovers dir contents, then
-// queues the set's files for uploading. Call this in a go-routine, but don't
-// call it multiple times at once for the same set! This will block removals on
-// the same set.
-func (s *Server) discoverThenEnqueue(given *set.Set, transformer transformer.PathTransformer, forceRemovals bool) {
-	if given.MonitorRemovals || forceRemovals {
-		if err := s.discoverSetRemovals(given); err != nil {
-			s.recordSetError("error discovering set (%s) removals: %s", given.ID(), err)
-
-			return
-		}
-	}
-
-	s.discoveryCoordinator.StartDiscovery(given.ID())
-	defer s.discoveryCoordinator.DiscoveryHappened(given.ID())
-
-	updated, err := s.doDiscovery(given)
-	if err != nil {
-		s.Logger.Printf("discovery error %s: %s", given.ID(), err)
-
-		return
-	}
-
-	s.handleNewlyDefinedSets(updated)
-
-	if err := s.enqueueSetFiles(updated, transformer); err != nil {
-		s.recordSetError("queuing files for %s failed: %s", updated.ID(), err)
-	}
-}
-
 func (s *Server) doDiscovery(given *set.Set) (*set.Set, error) {
 	excludeTree, err := s.buildExclusionTree(given.ID())
 	if err != nil {
@@ -290,21 +390,6 @@ func (s *Server) findFilesToRemove(given *set.Set) ([]string, error) {
 	}
 
 	return findNotExistingEntries(fileEntriesInSet)
-}
-
-func findNotExistingEntries(entries []*set.Entry) ([]string, error) {
-	var missingPaths []string
-
-	for _, entry := range entries {
-		_, err := os.Stat(entry.Path)
-		if errors.Is(err, os.ErrNotExist) {
-			missingPaths = append(missingPaths, entry.Path)
-		} else if err != nil {
-			return nil, err
-		}
-	}
-
-	return missingPaths, nil
 }
 
 func (s *Server) findDirsToRemove(given *set.Set) ([]string, error) {
@@ -477,62 +562,6 @@ func (s *Server) checkAndWalkDir(dir string, cb walk.PathCallback, warnChan chan
 	})
 }
 
-// filterEntries sends every entry found on the walk to the given entriesCh,
-// except for entries that are not regular files or symlinks or dirs, which are
-// silently skipped.
-func filterEntries(entriesCh chan *set.Dirent, excludeTree ptrie.Trie[bool],
-	parentDir string,
-) func(entry *walk.Dirent) error {
-	return func(entry *walk.Dirent) error {
-		dirent := set.DirEntFromWalk(entry)
-
-		isRemoved, _ := isDirentRemovedFromSet(dirent, excludeTree)
-
-		if isRemoved {
-			return nil
-		}
-
-		if !(entry.IsRegular() || entry.IsSymlink() || entry.IsDir()) || //nolint:staticcheck
-			dirent.Path == filepath.Clean(parentDir) { //nolint:wsl,whitespace
-			return nil
-		}
-
-		entriesCh <- dirent
-
-		return nil
-	}
-}
-
-// isDirentRemovedFromSet checks if the dirent has previously been removed from
-// the set by using the provided prefix tree. Also returns the matched prefix.
-func isDirentRemovedFromSet(dirent *set.Dirent, excludeTree ptrie.Trie[bool]) (bool, string) {
-	path := dirent.Path
-	if dirent.IsDir() && !strings.HasSuffix(path, "/") {
-		path += "/"
-	}
-
-	var prefixMatch string
-
-	pathBytes := []byte(path)
-	excludeTree.MatchPrefix(pathBytes, func(match []byte, _ bool) bool {
-		if bytes.HasSuffix(match, []byte{'/'}) {
-			prefixMatch = string(match)
-
-			return false
-		}
-
-		if bytes.Equal(match, pathBytes) {
-			prefixMatch = string(match)
-
-			return false
-		}
-
-		return true
-	})
-
-	return prefixMatch != "", prefixMatch
-}
-
 // handleMissingDirectories checks if the given error is not nil, and if so
 // records in the database that the entry has problems, is missing or is
 // orphaned.
@@ -561,21 +590,6 @@ func (s *Server) handleMissingDirectories(dirStatErr error, entry *set.Entry,
 	return dirStatErr
 }
 
-func determineDirStatus(dirStatErr error, entry *set.Entry,
-	existing map[string]struct{}) (transfer.RequestStatus, string) {
-	if dirStatErr == nil {
-		return transfer.RequestStatusPending, ""
-	}
-
-	status := transfer.RequestStatusMissing
-
-	if _, ok := existing[entry.Path]; ok {
-		status = transfer.RequestStatusOrphaned
-	}
-
-	return status, dirStatErr.Error()
-}
-
 // enqueueSetFiles gets all the set's file entries (set and discovered), creates
 // put requests for them and adds them to the global put queue for uploading.
 // Skips entries that are missing or that have failed or uploaded since the
@@ -589,20 +603,6 @@ func (s *Server) enqueueSetFiles(given *set.Set, transformer transformer.PathTra
 	entries = uploadableEntries(entries, given)
 
 	return s.enqueueEntries(entries, given, transformer)
-}
-
-// uploadableEntries returns the subset of given entries that are suitable for
-// uploading: pending and those that were dealt with before the last discovery.
-func uploadableEntries(entries []*set.Entry, given *set.Set) []*set.Entry {
-	var filtered []*set.Entry
-
-	for _, entry := range entries {
-		if entry.ShouldUpload(given.LastDiscovery) {
-			filtered = append(filtered, entry)
-		}
-	}
-
-	return filtered
 }
 
 // enqueueEntries converts the given entries to requests, stores those in items

@@ -37,10 +37,15 @@ import (
 
 // options for this cmd.
 var removeUser string
+
 var removeName string
+
 var removeItems string
+
 var removePath string
+
 var removeNull bool
+
 var removeSet bool
 
 var ErrRemoveItems = errors.New("exactly one of --items or --path or --set must be provided")

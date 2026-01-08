@@ -202,6 +202,30 @@ func getAllSetsFromDBAndDisplayPaths(dbPath string, local, remote, uploaded, //n
 	}
 }
 
+func getSetFromServerAndDisplayPaths(client *server.Client,
+	local, remote, uploaded, lastState, size, encode bool, user, name string,
+) {
+	set := getSetByName(client, user, name)
+
+	getFiles := client.GetFiles
+
+	switch {
+	case lastState:
+		getFiles = client.GetLastStateFiles
+	case uploaded:
+		getFiles = client.GetUploadedFiles
+	}
+
+	entries, err := getFiles(set.ID())
+	if err != nil {
+		die(err)
+	}
+
+	transformer := getSetTransformerIfNeeded(set, !local)
+
+	displayEntryPaths(entries, transformer, local, remote, size, encode)
+}
+
 func getSetTransformerIfNeeded(s *set.Set, needed bool) transformer.PathTransformer {
 	if !needed {
 		return nil
@@ -234,28 +258,4 @@ func displayEntryPaths(entries []*set.Entry, transformer transformer.PathTransfo
 
 		cliPrintf(format, localPath, remotePath, entry.Size)
 	}
-}
-
-func getSetFromServerAndDisplayPaths(client *server.Client,
-	local, remote, uploaded, lastState, size, encode bool, user, name string,
-) {
-	set := getSetByName(client, user, name)
-
-	getFiles := client.GetFiles
-
-	switch {
-	case lastState:
-		getFiles = client.GetLastStateFiles
-	case uploaded:
-		getFiles = client.GetUploadedFiles
-	}
-
-	entries, err := getFiles(set.ID())
-	if err != nil {
-		die(err)
-	}
-
-	transformer := getSetTransformerIfNeeded(set, !local)
-
-	displayEntryPaths(entries, transformer, local, remote, size, encode)
 }

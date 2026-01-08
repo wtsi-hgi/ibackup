@@ -36,6 +36,8 @@ import (
 	"github.com/wtsi-hgi/ibackup/set"
 )
 
+var ErrSetNotMonitored = errors.New("set not monitored by server")
+
 // MonitorSet is a set with its next discovery time.
 type MonitoredSet struct {
 	set  *set.Set
@@ -46,36 +48,6 @@ type MonitoredSet struct {
 type monitorHeap struct {
 	slice []MonitoredSet
 	byID  map[string]int
-}
-
-// MonitorCallback receives a set when it is time for it to be discovered.
-type MonitorCallback func(*set.Set)
-
-// Monitor represents a time sort heap of sets.
-type Monitor struct {
-	mu                sync.Mutex
-	monitorHeap       monitorHeap
-	monitoringStarted bool
-	monitorCh         chan struct{}
-	callback          MonitorCallback
-}
-
-var ErrSetNotMonitored = errors.New("set not monitored by server")
-
-// NewMonitor returns a Monitor which will call your callback every time a set
-// you add to this monitor needs to be discovered.
-func NewMonitor(fn MonitorCallback) *Monitor {
-	m := &Monitor{
-		monitorHeap: monitorHeap{
-			byID: make(map[string]int),
-		},
-		monitorCh: make(chan struct{}, 1),
-		callback:  fn,
-	}
-
-	heap.Init(&m.monitorHeap)
-
-	return m
 }
 
 func (m *monitorHeap) Len() int {
@@ -105,6 +77,50 @@ func (m *monitorHeap) Pop() any {
 	delete(m.byID, last.set.ID())
 
 	return last
+}
+
+func (m *monitorHeap) nextDiscovery() time.Time {
+	if len(m.slice) == 0 {
+		return time.Time{}
+	}
+
+	return m.slice[0].next
+}
+
+func (m *monitorHeap) nextSet() *set.Set {
+	if len(m.slice) == 0 {
+		return nil
+	}
+
+	return heap.Pop(m).(MonitoredSet).set //nolint:forcetypeassert,errcheck
+}
+
+// MonitorCallback receives a set when it is time for it to be discovered.
+type MonitorCallback func(*set.Set)
+
+// Monitor represents a time sort heap of sets.
+type Monitor struct {
+	mu                sync.Mutex
+	monitorHeap       monitorHeap
+	monitoringStarted bool
+	monitorCh         chan struct{}
+	callback          MonitorCallback
+}
+
+// NewMonitor returns a Monitor which will call your callback every time a set
+// you add to this monitor needs to be discovered.
+func NewMonitor(fn MonitorCallback) *Monitor {
+	m := &Monitor{
+		monitorHeap: monitorHeap{
+			byID: make(map[string]int),
+		},
+		monitorCh: make(chan struct{}, 1),
+		callback:  fn,
+	}
+
+	heap.Init(&m.monitorHeap)
+
+	return m
 }
 
 // Add pushes a set to the Monitor Heap.
@@ -146,14 +162,6 @@ func (m *Monitor) Add(s *set.Set) {
 	m.monitorCh <- struct{}{}
 }
 
-func (m *monitorHeap) nextDiscovery() time.Time {
-	if len(m.slice) == 0 {
-		return time.Time{}
-	}
-
-	return m.slice[0].next
-}
-
 // NextDiscovery retrieves the discovery time of the next set in the heap.
 //
 // Returns an empty time.Time if the heap is empty.
@@ -164,14 +172,6 @@ func (m *Monitor) NextDiscovery() time.Time {
 	return m.monitorHeap.nextDiscovery()
 }
 
-func (m *monitorHeap) nextSet() *set.Set {
-	if len(m.slice) == 0 {
-		return nil
-	}
-
-	return heap.Pop(m).(MonitoredSet).set //nolint:forcetypeassert
-}
-
 // NextSet returns the next set in the heap.
 //
 // If the heap is empty, it returns nil.
@@ -180,22 +180,6 @@ func (m *Monitor) NextSet() *set.Set {
 	defer m.mu.Unlock()
 
 	return m.monitorHeap.nextSet()
-}
-
-// monitorSet sets up discovery monitoring on the passed set if set Monitor
-// duration is defined. Otherwise, it removes the set from the monitor.
-func (s *Server) monitorSet(given *set.Set) {
-	if given.MonitorTime == 0 {
-		s.monitor.Remove(given.ID()) //nolint:errcheck
-
-		return
-	}
-
-	if given.Status != set.Complete {
-		return
-	}
-
-	s.monitor.Add(given)
 }
 
 // monitorSets is called in a goroutine by monitorSet and should not be called
@@ -246,4 +230,20 @@ func (m *Monitor) Remove(sid string) error {
 	}
 
 	return nil
+}
+
+// monitorSet sets up discovery monitoring on the passed set if set Monitor
+// duration is defined. Otherwise, it removes the set from the monitor.
+func (s *Server) monitorSet(given *set.Set) {
+	if given.MonitorTime == 0 {
+		s.monitor.Remove(given.ID()) //nolint:errcheck
+
+		return
+	}
+
+	if given.Status != set.Complete {
+		return
+	}
+
+	s.monitor.Add(given)
 }

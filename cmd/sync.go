@@ -30,7 +30,9 @@ import (
 )
 
 var syncUser string
+
 var syncSetName string
+
 var syncDelete bool
 
 // syncCmd represents the sync command.

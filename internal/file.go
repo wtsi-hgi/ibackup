@@ -60,15 +60,6 @@ func WaitForFile(t *testing.T, path string) bool {
 	return err == nil
 }
 
-// RetryUntilWorks retries the given function until it no longer returns an
-// error, or until 5 seconds have passed. It waits a small, increasing interval
-// of time between each try.
-func RetryUntilWorks(t *testing.T, f func() error) error {
-	t.Helper()
-
-	return retryUntilWorks(t, f, retryTimeout, btime.SecondsRangeBackoff())
-}
-
 // RetryUntilWorksCustom retries the given function until it no longer returns
 // an error, or until timeout has passed. It waits the given wait between each
 // try.
@@ -81,17 +72,6 @@ func RetryUntilWorksCustom(t *testing.T, f func() error, timeout time.Duration, 
 		Factor:  1,
 		Sleeper: &btime.Sleeper{},
 	})
-}
-
-func retryUntilWorks(t *testing.T, f func() error, retryTimeout time.Duration, backoff *backoff.Backoff) error {
-	t.Helper()
-
-	ctx, cancelFn := context.WithTimeout(context.Background(), retryTimeout)
-	defer cancelFn()
-
-	status := retry.Do(ctx, f, &retry.UntilNoError{}, backoff, "RetryUntilWorks")
-
-	return status.Err
 }
 
 // WaitForFileChange waits for up to 5 seconds for the given path to change, and
@@ -113,6 +93,39 @@ func WaitForFileChange(t *testing.T, path string, lastMod time.Time) bool {
 	})
 
 	return err == nil
+}
+
+// RetryUntilWorks retries the given function until it no longer returns an
+// error, or until 5 seconds have passed. It waits a small, increasing interval
+// of time between each try.
+func RetryUntilWorks(t *testing.T, f func() error) error {
+	t.Helper()
+
+	return retryUntilWorks(t, f, retryTimeout, btime.SecondsRangeBackoff())
+}
+
+func retryUntilWorks(t *testing.T, f func() error, retryTimeout time.Duration, backoff *backoff.Backoff) error {
+	t.Helper()
+
+	ctx, cancelFn := context.WithTimeout(context.Background(), retryTimeout)
+	defer cancelFn()
+
+	status := retry.Do(ctx, f, &retry.UntilNoError{}, backoff, "RetryUntilWorks")
+
+	return status.Err
+}
+
+// CreateTestFileOfLength creates a file at the given path with the given number
+// of bytes of content. It creates any directories the path needs as necessary.
+func CreateTestFileOfLength(t *testing.T, path string, n int) {
+	t.Helper()
+
+	b := make([]byte, n)
+	for i := range b {
+		b[i] = 1
+	}
+
+	CreateTestFile(t, path, string(b))
 }
 
 // CreateTestFile creates a file at the given path with the given content. It
@@ -141,17 +154,4 @@ func CreateTestFile(t *testing.T, path, contents string) {
 	if err != nil {
 		t.Fatalf("close failed: %s", err)
 	}
-}
-
-// CreateTestFileOfLength creates a file at the given path with the given number
-// of bytes of content. It creates any directories the path needs as necessary.
-func CreateTestFileOfLength(t *testing.T, path string, n int) {
-	t.Helper()
-
-	b := make([]byte, n)
-	for i := range b {
-		b[i] = 1
-	}
-
-	CreateTestFile(t, path, string(b))
 }

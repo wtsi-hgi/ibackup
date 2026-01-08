@@ -38,16 +38,12 @@ import (
 	"github.com/wtsi-hgi/ibackup/transformer"
 )
 
-type Status int
-
-type Slacker interface {
-	SendMessage(level slack.Level, msg string)
-}
-
 const (
 	dateFormat            = "2006-01-02 15:04:05"
 	ErrInvalidTransformer = "invalid transformer"
 )
+
+type Status int
 
 const (
 	// PendingDiscovery is a Set status meaning the set's entries are pending
@@ -81,6 +77,10 @@ func (s Status) String() string {
 		"failing",
 		"complete",
 	}[s]
+}
+
+type Slacker interface {
+	SendMessage(level slack.Level, msg string)
 }
 
 // Set describes a backup set; a list of files and directories to backup, plus

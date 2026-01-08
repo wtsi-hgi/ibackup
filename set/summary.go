@@ -55,6 +55,62 @@ func (s *SizeAndNumber) add(set *Set) {
 	s.Number += set.NumFiles
 }
 
+func summariseByRequester(set *Set, byRequester map[string]*SizeAndNumber) {
+	addToSANMap(set, set.Requester, byRequester)
+}
+
+func summariseBySet(set *Set, bySet map[string]*SizeAndNumber) {
+	addToSANMap(set, set.Requester+"."+set.Name, bySet)
+}
+
+func summariseByMonth(set *Set, byMonth map[string]*SizeAndNumber) {
+	if set.LastCompleted.IsZero() {
+		return
+	}
+
+	month := fmt.Sprintf("%d/%02d", set.LastCompleted.Year(), int(set.LastCompleted.Month()))
+
+	addToSANMap(set, month, byMonth)
+}
+
+func addToSANMap(set *Set, key string, sanMap map[string]*SizeAndNumber) {
+	san, ok := sanMap[key]
+	if !ok {
+		san = &SizeAndNumber{For: key}
+		sanMap[key] = san
+	}
+
+	san.add(set)
+}
+
+// sortSANs extracts the values from the given map and sorts them, largest
+// first.
+func sortSANs(sanMap map[string]*SizeAndNumber, s sorter) []*SizeAndNumber {
+	sans := make([]*SizeAndNumber, 0, len(sanMap))
+
+	for _, san := range sanMap {
+		sans = append(sans, san)
+	}
+
+	sort.Slice(sans, func(i, j int) bool {
+		return s(sans[i], sans[j])
+	})
+
+	return sans
+}
+
+func sortBySize(sanI *SizeAndNumber, sanJ *SizeAndNumber) bool {
+	if sanI.Size == sanJ.Size {
+		return sanI.Number > sanJ.Number
+	}
+
+	return sanI.Size > sanJ.Size
+}
+
+func sortByFor(sanI *SizeAndNumber, sanJ *SizeAndNumber) bool {
+	return sanI.For <= sanJ.For
+}
+
 // Usage is the type returned by UsageSummary() and contains various breakdowns
 // of how much iRODS would be used up by the sets.
 type Usage struct {
@@ -103,60 +159,4 @@ func UsageSummary(sets []*Set) *Usage {
 	return u
 }
 
-func summariseByRequester(set *Set, byRequester map[string]*SizeAndNumber) {
-	addToSANMap(set, set.Requester, byRequester)
-}
-
-func addToSANMap(set *Set, key string, sanMap map[string]*SizeAndNumber) {
-	san, ok := sanMap[key]
-	if !ok {
-		san = &SizeAndNumber{For: key}
-		sanMap[key] = san
-	}
-
-	san.add(set)
-}
-
-func summariseBySet(set *Set, bySet map[string]*SizeAndNumber) {
-	addToSANMap(set, set.Requester+"."+set.Name, bySet)
-}
-
-func summariseByMonth(set *Set, byMonth map[string]*SizeAndNumber) {
-	if set.LastCompleted.IsZero() {
-		return
-	}
-
-	month := fmt.Sprintf("%d/%02d", set.LastCompleted.Year(), int(set.LastCompleted.Month()))
-
-	addToSANMap(set, month, byMonth)
-}
-
-// sortSANs extracts the values from the given map and sorts them, largest
-// first.
-func sortSANs(sanMap map[string]*SizeAndNumber, s sorter) []*SizeAndNumber {
-	sans := make([]*SizeAndNumber, 0, len(sanMap))
-
-	for _, san := range sanMap {
-		sans = append(sans, san)
-	}
-
-	sort.Slice(sans, func(i, j int) bool {
-		return s(sans[i], sans[j])
-	})
-
-	return sans
-}
-
 type sorter func(sanI *SizeAndNumber, sanJ *SizeAndNumber) bool
-
-func sortBySize(sanI *SizeAndNumber, sanJ *SizeAndNumber) bool {
-	if sanI.Size == sanJ.Size {
-		return sanI.Number > sanJ.Number
-	}
-
-	return sanI.Size > sanJ.Size
-}
-
-func sortByFor(sanI *SizeAndNumber, sanJ *SizeAndNumber) bool {
-	return sanI.For <= sanJ.For
-}

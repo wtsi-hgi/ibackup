@@ -20,6 +20,7 @@ import (
 
 // options for this cmd.
 var filestatusIrods bool
+
 var filestatusDB string
 
 // statusCmd represents the status command.
@@ -57,34 +58,6 @@ func init() {
 		os.Getenv("IBACKUP_LOCAL_DB_BACKUP_PATH"), "path to ibackup database file")
 	filestatusCmd.Flags().BoolVarP(&filestatusIrods, "irods", "i", false,
 		"do additional checking in iRods")
-}
-
-func fileSummary(dbPath, filePath string, useIrods bool) error {
-	db, err := set.NewRO(dbPath)
-	if err != nil {
-		return err
-	}
-
-	sets, err := db.GetAll()
-	if err != nil {
-		return err
-	}
-
-	fsg := newFSG(db, filePath, useIrods)
-
-	if fsg.baton != nil {
-		defer fsg.baton.StopIgnoreError()
-	}
-
-	if err := fsg.printFileStatuses(sets); err != nil {
-		return err
-	}
-
-	if !fsg.found {
-		cliPrint("file not found in any registered set\n")
-	}
-
-	return nil
 }
 
 type fileStatusGetter struct {
@@ -214,6 +187,15 @@ func (fsg *fileStatusGetter) printIRodsStatus(local, remote string) error {
 	return nil
 }
 
+func getMTime(local string) (string, error) {
+	stat, err := os.Stat(local)
+	if err != nil {
+		return "", err
+	}
+
+	return internal.TimeToMeta(stat.ModTime())
+}
+
 func (fsg *fileStatusGetter) getIrodsTimesFromAVUs(avus []extendo.AVU) (string, string) {
 	var uploadDate, remoteMTime string
 
@@ -228,15 +210,6 @@ func (fsg *fileStatusGetter) getIrodsTimesFromAVUs(avus []extendo.AVU) (string, 
 	}
 
 	return uploadDate, remoteMTime
-}
-
-func getMTime(local string) (string, error) {
-	stat, err := os.Stat(local)
-	if err != nil {
-		return "", err
-	}
-
-	return internal.TimeToMeta(stat.ModTime())
 }
 
 func (fsg *fileStatusGetter) calcMD5Sum(path string) string {
@@ -261,4 +234,32 @@ func (fsg *fileStatusGetter) calcMD5Sum(path string) string {
 	})
 
 	return fsg.md5sum
+}
+
+func fileSummary(dbPath, filePath string, useIrods bool) error {
+	db, err := set.NewRO(dbPath)
+	if err != nil {
+		return err
+	}
+
+	sets, err := db.GetAll()
+	if err != nil {
+		return err
+	}
+
+	fsg := newFSG(db, filePath, useIrods)
+
+	if fsg.baton != nil {
+		defer fsg.baton.StopIgnoreError()
+	}
+
+	if err := fsg.printFileStatuses(sets); err != nil {
+		return err
+	}
+
+	if !fsg.found {
+		cliPrint("file not found in any registered set\n")
+	}
+
+	return nil
 }
