@@ -44,6 +44,7 @@ import (
 	"github.com/wtsi-hgi/grand"
 	"github.com/wtsi-hgi/ibackup/errs"
 	"github.com/wtsi-hgi/ibackup/internal"
+	"github.com/wtsi-hgi/ibackup/internal/logger"
 	"github.com/wtsi-hgi/ibackup/remove"
 	"github.com/wtsi-hgi/ibackup/set"
 	"github.com/wtsi-hgi/ibackup/slack"
@@ -156,6 +157,116 @@ const (
 	logTraceIDLen = 8
 	allUsers      = "all"
 )
+
+func filterTrashed(sets []*set.Set) []*set.Set {
+	filtered := make([]*set.Set, 0, len(sets))
+
+	for _, s := range sets {
+		if strings.HasPrefix(s.Name, set.TrashPrefix) {
+			continue
+		}
+
+		filtered = append(filtered, s)
+	}
+
+	return filtered
+}
+
+func buildRemovalStructsFromPaths(givenSet *set.Set, paths []string, isDir bool,
+	action set.RemoveAction,
+) ([]*queue.ItemDef, []set.RemoveReq) {
+	remReqs := make([]set.RemoveReq, len(paths))
+	defs := make([]*queue.ItemDef, len(paths))
+
+	for i, path := range paths {
+		rq := set.NewRemoveRequest(path, givenSet, isDir, action)
+
+		remReqs[i] = rq
+		defs[i] = rq.ItemDef(ttr)
+	}
+
+	return defs, remReqs
+}
+
+func fileErrorCannotBeIgnored(err error, mayMissInRemote bool) bool {
+	return !(mayMissInRemote && strings.Contains(err.Error(), internal.ErrFileDoesNotExist)) //nolint:staticcheck,lll
+}
+
+func getNamesFromSets(sets []*set.Set) []string {
+	names := make([]string, len(sets))
+
+	for i, set := range sets {
+		names[i] = set.Name
+	}
+
+	return names
+}
+
+// bytesToStrings converts [][]byte to []string so that json unmarshalling
+// doesn't mess with non-UTF8 characters.
+func bytesToStrings(b [][]byte) []string {
+	s := make([]string, len(b))
+
+	for i, value := range b {
+		s[i] = string(value)
+	}
+
+	return s
+}
+
+func findChildPathsToExclude(path string, entry *set.Dirent) ([]set.RemoveReq, error) {
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return nil, err
+	}
+
+	paths := make([]set.RemoveReq, 0, len(entries))
+
+	for _, dirEntry := range entries {
+		if strings.HasPrefix(entry.Path, filepath.Join(path, dirEntry.Name())) {
+			continue
+		}
+
+		removeReq := set.RemoveReq{
+			Path:       filepath.Join(path, dirEntry.Name()),
+			IsDir:      dirEntry.IsDir(),
+			IsComplete: true,
+		}
+
+		paths = append(paths, removeReq)
+	}
+
+	return paths, nil
+}
+
+// getChildPathsFromPTrie expects a Path to a folder. It accept both paths
+// ending with "/" and without it. Folders in PTrie should have a trailing "/".
+func getChildPathsFromPTrie(entryPath string, tree ptrie.Trie[bool]) []string {
+	var paths []string
+
+	if !strings.HasSuffix(entryPath, "/") {
+		entryPath += "/"
+	}
+
+	tree.Walk(func(key []byte, _ bool) bool {
+		path := string(key)
+
+		if strings.HasPrefix(path, entryPath) {
+			paths = append(paths, path)
+		}
+
+		return true
+	})
+
+	return paths
+}
+
+// fileStatusPacket contains a Request and codeAndError channel for sending over
+// a channel.
+type fileStatusPacket struct {
+	r    *transfer.Request
+	ceCh chan *codeAndError
+}
 
 // LoadSetDB loads the given set.db or creates it if it doesn't exist.
 // Optionally, also provide a path to backup the database to.
@@ -430,7 +541,7 @@ func (s *Server) tryBackup() {
 		s.Logger.Printf("[%s] db backup requested", trace)
 
 		done := make(chan struct{})
-		go s.logIfBlocked(done, trace, "db backup", func() string {
+		go logger.LogIfBlocked(done, s.Logger, trace, "db backup", slowLogFirstAfter, slowLogEvery, func() string {
 			if s.db == nil {
 				return errDBNotInitialised
 			}
@@ -452,38 +563,6 @@ func (s *Server) tryBackup() {
 			s.Logger.Printf("error creating database backup: %s", err)
 		}
 	}()
-}
-
-func (s *Server) logIfBlocked(done <-chan struct{}, trace, op string, details func() string) {
-	firstTimer := time.NewTimer(slowLogFirstAfter)
-	defer firstTimer.Stop()
-
-	var ticker *time.Ticker
-
-	defer func() {
-		if ticker != nil {
-			ticker.Stop()
-		}
-	}()
-
-	for {
-		select {
-		case <-done:
-			return
-		case <-firstTimer.C:
-			s.Logger.Printf("[%s] WARNING: %s still blocked after %s (%s)", trace, op, slowLogFirstAfter, details())
-
-			ticker = time.NewTicker(slowLogEvery)
-		case <-func() <-chan time.Time {
-			if ticker == nil {
-				return nil
-			}
-
-			return ticker.C
-		}():
-			s.Logger.Printf("[%s] WARNING: %s still blocked (%s)", trace, op, details())
-		}
-	}
 }
 
 // getSets returns the requester's set(s) from the database. requester URL
@@ -522,20 +601,6 @@ func (s *Server) getSets(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, sets)
-}
-
-func filterTrashed(sets []*set.Set) []*set.Set {
-	filtered := make([]*set.Set, 0, len(sets))
-
-	for _, s := range sets {
-		if strings.HasPrefix(s.Name, set.TrashPrefix) {
-			continue
-		}
-
-		filtered = append(filtered, s)
-	}
-
-	return filtered
 }
 
 // putFiles sets the file paths encoded in to the body as JSON as the files
@@ -824,22 +889,6 @@ func (s *Server) submitFilesForRemoval(set *set.Set, paths []string, action set.
 	return added, err
 }
 
-func buildRemovalStructsFromPaths(givenSet *set.Set, paths []string, isDir bool,
-	action set.RemoveAction,
-) ([]*queue.ItemDef, []set.RemoveReq) {
-	remReqs := make([]set.RemoveReq, len(paths))
-	defs := make([]*queue.ItemDef, len(paths))
-
-	for i, path := range paths {
-		rq := set.NewRemoveRequest(path, givenSet, isDir, action)
-
-		remReqs[i] = rq
-		defs[i] = rq.ItemDef(ttr)
-	}
-
-	return defs, remReqs
-}
-
 func (s *Server) submitDirsForRemoval(set *set.Set, paths []string, action set.RemoveAction) (int, error) {
 	if len(paths) == 0 {
 		return 0, nil
@@ -939,10 +988,6 @@ func (s *Server) processRemoteFileRemoval(removeReq *set.RemoveReq, entry *set.E
 	removeReq.RemoteRemovalStatus = set.Removed
 
 	return s.db.UpdateRemoveRequest(*removeReq)
-}
-
-func fileErrorCannotBeIgnored(err error, mayMissInRemote bool) bool {
-	return !(mayMissInRemote && strings.Contains(err.Error(), internal.ErrFileDoesNotExist)) //nolint:staticcheck,lll
 }
 
 func (s *Server) processDBFileTrash(set *set.Set, entry *set.Entry) error {
@@ -1181,16 +1226,6 @@ func (s *Server) getSetNamesByRequesters(requesters []string, user string) ([]st
 	return otherUserSets, curUserSets, nil
 }
 
-func getNamesFromSets(sets []*set.Set) []string {
-	names := make([]string, len(sets))
-
-	for i, set := range sets {
-		names[i] = set.Name
-	}
-
-	return names
-}
-
 func (s *Server) setErrorOnEntry(entry *set.Entry, sid, path string, errMsg string) {
 	entry.LastError = errMsg
 
@@ -1263,18 +1298,6 @@ func (s *Server) validateSet(c *gin.Context) (*set.Set, bool) {
 	}
 
 	return set, true
-}
-
-// bytesToStrings converts [][]byte to []string so that json unmarshalling
-// doesn't mess with non-UTF8 characters.
-func bytesToStrings(b [][]byte) []string {
-	s := make([]string, len(b))
-
-	for i, value := range b {
-		s[i] = string(value)
-	}
-
-	return s
 }
 
 // putDirs sets the directory paths encoded in to the body as JSON as the dirs
@@ -1420,31 +1443,6 @@ func (s *Server) findAllOtherPathsToExclude(entry *set.Dirent, match string) ([]
 	return paths, nil
 }
 
-func findChildPathsToExclude(path string, entry *set.Dirent) ([]set.RemoveReq, error) {
-	entries, err := os.ReadDir(path)
-	if err != nil {
-		return nil, err
-	}
-
-	paths := make([]set.RemoveReq, 0, len(entries))
-
-	for _, dirEntry := range entries {
-		if strings.HasPrefix(entry.Path, filepath.Join(path, dirEntry.Name())) {
-			continue
-		}
-
-		removeReq := set.RemoveReq{
-			Path:       filepath.Join(path, dirEntry.Name()),
-			IsDir:      dirEntry.IsDir(),
-			IsComplete: true,
-		}
-
-		paths = append(paths, removeReq)
-	}
-
-	return paths, nil
-}
-
 func (s *Server) removeChildEntriesFromRemovedBucket(entry *set.Dirent,
 	excludeTree ptrie.Trie[bool], sid string,
 ) error {
@@ -1458,28 +1456,6 @@ func (s *Server) removeChildEntriesFromRemovedBucket(entry *set.Dirent,
 	}
 
 	return nil
-}
-
-// getChildPathsFromPTrie expects a Path to a folder. It accept both paths
-// ending with "/" and without it. Folders in PTrie should have a trailing "/".
-func getChildPathsFromPTrie(entryPath string, tree ptrie.Trie[bool]) []string {
-	var paths []string
-
-	if !strings.HasSuffix(entryPath, "/") {
-		entryPath += "/"
-	}
-
-	tree.Walk(func(key []byte, _ bool) bool {
-		path := string(key)
-
-		if strings.HasPrefix(path, entryPath) {
-			paths = append(paths, path)
-		}
-
-		return true
-	})
-
-	return paths
 }
 
 // getEntries gets the defined and discovered file entries for the set with the
@@ -1773,12 +1749,6 @@ func (s *Server) touchRequest(rid string) error {
 	return s.queue.Touch(rid)
 }
 
-// codeAndError is used for sending a http status code and error over a channel.
-type codeAndError struct {
-	code int
-	err  error
-}
-
 // putFileStatus interprets the body as a JSON encoding of a put.Request and
 // stores it in the database.
 //
@@ -1815,13 +1785,21 @@ func (s *Server) putFileStatus(c *gin.Context) {
 	waitTrace := grand.LcString(logTraceIDLen)
 
 	waitDone := make(chan struct{})
-	go s.logIfBlocked(waitDone, waitTrace, "waiting for /file_status update to complete", func() string {
-		if s.db == nil {
-			return errDBNotInitialised
-		}
+	go logger.LogIfBlocked(
+		waitDone,
+		s.Logger,
+		waitTrace,
+		"waiting for /file_status update to complete",
+		slowLogFirstAfter,
+		slowLogEvery,
+		func() string {
+			if s.db == nil {
+				return errDBNotInitialised
+			}
 
-		return "rid=" + r.ID() + " local=" + r.Local + " backupInProgress=" + strconv.FormatBool(s.db.BackupInProgress())
-	})
+			return "rid=" + r.ID() + " local=" + r.Local + " backupInProgress=" + strconv.FormatBool(s.db.BackupInProgress())
+		},
+	)
 
 	ce := <-ceCh
 
@@ -1836,11 +1814,10 @@ func (s *Server) putFileStatus(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
-// fileStatusPacket contains a Request and codeAndError channel for sending over
-// a channel.
-type fileStatusPacket struct {
-	r    *transfer.Request
-	ceCh chan *codeAndError
+// codeAndError is used for sending a http status code and error over a channel.
+type codeAndError struct {
+	code int
+	err  error
 }
 
 // queueFileStatusUpdate queues a file status update request from a client,
@@ -1928,13 +1905,21 @@ func (s *Server) updateFileStatus(r *transfer.Request, trace string) error {
 	setStart := time.Now()
 
 	setDone := make(chan struct{})
-	go s.logIfBlocked(setDone, trace, "SetEntryStatus()", func() string {
-		if s.db == nil {
-			return errDBNotInitialised
-		}
+	go logger.LogIfBlocked(
+		setDone,
+		s.Logger,
+		trace,
+		"SetEntryStatus()",
+		slowLogFirstAfter,
+		slowLogEvery,
+		func() string {
+			if s.db == nil {
+				return errDBNotInitialised
+			}
 
-		return "rid=" + r.ID() + " local=" + r.Local + " backupInProgress=" + strconv.FormatBool(s.db.BackupInProgress())
-	})
+			return "rid=" + r.ID() + " local=" + r.Local + " backupInProgress=" + strconv.FormatBool(s.db.BackupInProgress())
+		},
+	)
 
 	entry, err := s.db.SetEntryStatus(r)
 

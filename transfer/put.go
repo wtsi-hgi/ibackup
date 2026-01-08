@@ -43,7 +43,7 @@ import (
 	"github.com/hashicorp/go-multierror"
 	"github.com/wtsi-hgi/ibackup/baton/meta"
 	"github.com/wtsi-hgi/ibackup/errs"
-	"github.com/wtsi-hgi/ibackup/logger"
+	"github.com/wtsi-hgi/ibackup/internal/logger"
 )
 
 const (

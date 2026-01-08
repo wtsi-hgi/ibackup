@@ -45,7 +45,7 @@ import (
 	"github.com/wtsi-hgi/ibackup/baton/meta"
 	"github.com/wtsi-hgi/ibackup/errs"
 	"github.com/wtsi-hgi/ibackup/internal"
-	"github.com/wtsi-hgi/ibackup/logger"
+	"github.com/wtsi-hgi/ibackup/internal/logger"
 	ex "github.com/wtsi-npg/extendo/v2"
 	logs "github.com/wtsi-npg/logshim"
 	"github.com/wtsi-npg/logshim-zerolog/zlog"
@@ -394,8 +394,12 @@ func (b *Baton) closeConnections(clients []*ex.Client) {
 // Stat gets mtime and metadata info for the request Remote object. It creates a
 // new meta client if necessary so after calling this function you must
 // eventually call Cleanup().
-func (b *Baton) Stat(remote string) (bool, map[string]string, error) {
-	err := b.setClientIfNotExists(&b.metaClient)
+func (b *Baton) Stat(remote string) (exists bool, m map[string]string, err error) {
+	finish := logger.StartOperation(b.logger, "baton stat", 0, "remote", remote)
+
+	defer func() { finish(err) }()
+
+	err = b.setClientIfNotExists(&b.metaClient)
 	if err != nil {
 		return false, nil, err
 	}
@@ -574,8 +578,32 @@ func (b *Baton) Get(local, remote string) (err error) {
 // RemoveMeta removes the given metadata from a given object in iRODS. It
 // creates a new meta client if necessary so after calling this function you
 // must eventually call Cleanup().
-func (b *Baton) RemoveMeta(path string, meta map[string]string) error {
-	err := b.setClientIfNotExists(&b.metaClient)
+func (b *Baton) RemoveMeta(path string, meta map[string]string) (err error) {
+	return b.metaChange(
+		"baton remove meta",
+		"remove meta error: ",
+		path,
+		meta,
+		func(item *ex.RodsItem) error {
+			_, errl := b.metaClient.MetaRem(ex.Args{}, *item)
+
+			return errl
+		},
+	)
+}
+
+func (b *Baton) metaChange(
+	opName string,
+	errMsgPrefix string,
+	path string,
+	meta map[string]string,
+	op func(item *ex.RodsItem) error,
+) (err error) {
+	finish := logger.StartOperation(b.logger, opName, 0, "path", path, "keys", len(meta))
+
+	defer func() { finish(err) }()
+
+	err = b.setClientIfNotExists(&b.metaClient)
 	if err != nil {
 		return err
 	}
@@ -584,10 +612,8 @@ func (b *Baton) RemoveMeta(path string, meta map[string]string) error {
 	it.IAVUs = metaToAVUs(meta)
 
 	err = timeoutOp(func() error {
-		_, errl := b.metaClient.MetaRem(ex.Args{}, *it)
-
-		return errl
-	}, "remove meta error: "+path)
+		return op(it)
+	}, errMsgPrefix+path)
 
 	return err
 }
@@ -652,22 +678,18 @@ func (b *Baton) GetMeta(path string) (map[string]string, error) {
 // AddMeta adds the given metadata to a given object in iRODS. It
 // creates a new meta client if necessary so after calling this function you
 // must eventually call Cleanup().
-func (b *Baton) AddMeta(path string, meta map[string]string) error {
-	err := b.setClientIfNotExists(&b.metaClient)
-	if err != nil {
-		return err
-	}
+func (b *Baton) AddMeta(path string, meta map[string]string) (err error) {
+	return b.metaChange(
+		"baton add meta",
+		"add meta error: ",
+		path,
+		meta,
+		func(item *ex.RodsItem) error {
+			_, errl := b.metaClient.MetaAdd(ex.Args{}, *item)
 
-	it := RemotePathToRodsItem(path)
-	it.IAVUs = metaToAVUs(meta)
-
-	err = timeoutOp(func() error {
-		_, errl := b.metaClient.MetaAdd(ex.Args{}, *it)
-
-		return errl
-	}, "add meta error: "+path)
-
-	return err
+			return errl
+		},
+	)
 }
 
 // Cleanup stops our clients and closes our client pool.
@@ -688,8 +710,12 @@ func (b *Baton) Cleanup() {
 // RemoveFile removes the given file from iRODS. It creates a new remove client
 // if necessary so after calling this function you must eventually call
 // Cleanup().
-func (b *Baton) RemoveFile(path string) error {
-	err := b.setClientIfNotExists(&b.removeClient)
+func (b *Baton) RemoveFile(path string) (err error) {
+	finish := logger.StartOperation(b.logger, "baton remove file", 0, "path", path)
+
+	defer func() { finish(err) }()
+
+	err = b.setClientIfNotExists(&b.removeClient)
 	if err != nil {
 		return err
 	}
@@ -712,8 +738,12 @@ func (b *Baton) RemoveFile(path string) error {
 // RemoveDir removes the given directory from iRODS given it is empty. It
 // creates a new remove client if necessary so after calling this function you
 // must eventually call Cleanup().
-func (b *Baton) RemoveDir(path string) error {
-	err := b.setClientIfNotExists(&b.removeClient)
+func (b *Baton) RemoveDir(path string) (err error) {
+	finish := logger.StartOperation(b.logger, "baton remove dir", 0, "path", path)
+
+	defer func() { finish(err) }()
+
+	err = b.setClientIfNotExists(&b.removeClient)
 	if err != nil {
 		return err
 	}
@@ -749,8 +779,12 @@ func (b *Baton) AllClientsStopped() bool {
 // QueryMeta return paths to all objects with given metadata inside the provided
 // scope. It creates a new meta client if necessary so after calling this
 // function you must eventually call Cleanup().
-func (b *Baton) QueryMeta(dirToSearch string, meta map[string]string) ([]string, error) {
-	err := b.setClientIfNotExists(&b.metaClient)
+func (b *Baton) QueryMeta(dirToSearch string, meta map[string]string) (paths []string, err error) {
+	finish := logger.StartOperation(b.logger, "baton query meta", 0, "scope", dirToSearch, "keys", len(meta))
+
+	defer func() { finish(err, "results", len(paths)) }()
+
+	err = b.setClientIfNotExists(&b.metaClient)
 	if err != nil {
 		return nil, err
 	}
@@ -768,7 +802,7 @@ func (b *Baton) QueryMeta(dirToSearch string, meta map[string]string) ([]string,
 		return err
 	}, "query meta error: "+dirToSearch)
 
-	paths := make([]string, len(items))
+	paths = make([]string, len(items))
 
 	for i, item := range items {
 		paths[i] = filepath.Join(item.IPath, item.IName)
