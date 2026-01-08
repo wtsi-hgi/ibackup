@@ -641,12 +641,12 @@ func metaToAVUs(meta map[string]string) []ex.AVU {
 // GetMeta gets all the metadata for the given object in iRODS. It creates a new
 // meta client if necessary so after calling this function you must eventually
 // call Cleanup().
-func (b *Baton) GetMeta(path string) (map[string]string, error) {
-	started := time.Now()
+func (b *Baton) GetMeta(path string) (meta map[string]string, err error) {
+	finish := logger.StartOperation(b.logger, "baton get meta", getStillRunningLogFreq, "path", path)
 
-	b.debug("baton get meta starting", "path", path)
+	defer func() { finish(err, "keys", len(meta)) }()
 
-	err := b.setClientIfNotExists(&b.metaClient)
+	err = b.setClientIfNotExists(&b.metaClient)
 	if err != nil {
 		return nil, err
 	}
@@ -665,14 +665,12 @@ func (b *Baton) GetMeta(path string) (map[string]string, error) {
 	}, "get meta error: "+path)
 
 	if err != nil && strings.Contains(err.Error(), extendoNotExist) {
-		b.debug("baton get meta finished", "path", path, "took", time.Since(started), "err", err)
-
 		return nil, errs.PathError{Msg: internal.ErrFileDoesNotExist, Path: path}
 	}
 
-	b.debug("baton get meta finished", "path", path, "took", time.Since(started), "err", err)
+	meta = RodsItemToMeta(it)
 
-	return RodsItemToMeta(it), err
+	return meta, err
 }
 
 // AddMeta adds the given metadata to a given object in iRODS. It
