@@ -8,6 +8,10 @@ import (
 
 const irodsStillRunningLogFreq = 2 * time.Minute
 
+type irodsSnapshotper interface {
+	Snapshot(remote string) (exists bool, size uint64, checksum string, replicas int, replicateDetails []string, err error)
+}
+
 type loggingHandler struct {
 	base   Handler
 	logger logger.Logger
@@ -68,6 +72,8 @@ func (h *loggingHandler) Stat(remote string) (exists bool, meta map[string]strin
 }
 
 func (h *loggingHandler) Put(local, remote string) (err error) {
+	h.logSnapshot("pre-put", remote)
+
 	finish := logger.StartOperation(
 		h.logger,
 		"irods put",
@@ -75,7 +81,15 @@ func (h *loggingHandler) Put(local, remote string) (err error) {
 		append(h.ctx, "local", local, "remote", remote)...,
 	)
 
-	defer func() { finish(err) }()
+	defer func() {
+		finish(err)
+
+		if err != nil {
+			h.logSnapshot("post-put (error)", remote)
+		} else {
+			h.logSnapshot("post-put", remote)
+		}
+	}()
 
 	return h.base.Put(local, remote)
 }
@@ -138,6 +152,73 @@ func (h *loggingHandler) GetMeta(path string) (meta map[string]string, err error
 	meta, err = h.base.GetMeta(path)
 
 	return meta, err
+}
+
+func (h *loggingHandler) logSnapshot(label, remote string) {
+	if h.logger == nil {
+		return
+	}
+
+	sp, ok := h.base.(irodsSnapshotper)
+	if !ok {
+		return
+	}
+
+	exists, size, checksum, replicas, details, err := sp.Snapshot(remote)
+	if err != nil {
+		h.logSnapshotError(label, remote, err)
+
+		return
+	}
+
+	if !exists {
+		h.logSnapshotNotExists(label, remote)
+
+		return
+	}
+
+	h.logSnapshotExists(label, remote, size, checksum, replicas, details)
+}
+
+func (h *loggingHandler) logSnapshotError(label, remote string, err error) {
+	h.logger.Warn(
+		"irods snapshot failed",
+		append(h.ctx, "label", label, "remote", remote, "err", err)...,
+	)
+}
+
+func (h *loggingHandler) logSnapshotNotExists(label, remote string) {
+	h.logger.Info(
+		"irods snapshot",
+		append(h.ctx, "label", label, "remote", remote, "exists", false)...,
+	)
+}
+
+func (h *loggingHandler) logSnapshotExists(
+	label string,
+	remote string,
+	size uint64,
+	checksum string,
+	replicas int,
+	details []string,
+) {
+	// Keep the info-level snapshot compact; replica details remain at Debug.
+	h.logger.Info(
+		"irods snapshot",
+		append(
+			h.ctx,
+			"label", label,
+			"remote", remote,
+			"exists", true,
+			"size", size,
+			"checksum", checksum,
+			"replicas", replicas,
+		)...,
+	)
+	h.logger.Debug(
+		"irods snapshot details",
+		append(h.ctx, "label", label, "remote", remote, "replicate_details", details)...,
+	)
 }
 
 type logCtxHandler interface {

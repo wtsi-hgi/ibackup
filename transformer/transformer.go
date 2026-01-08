@@ -52,6 +52,73 @@ var (
 	transformers = map[string]tx{} //nolint:gochecknoglobals
 )
 
+func compilePrefixTransformer(trans string) (tx, error) { //nolint:ireturn
+	if !strings.HasPrefix(trans, prefixPrefix) {
+		return nil, ErrInvalidTransformer
+	}
+
+	local, remote, _ := strings.Cut(strings.TrimPrefix(trans, prefixPrefix), ":")
+
+	local = filepath.Clean(local) + "/"
+	remote = filepath.Clean(remote) + "/"
+
+	tx := &prefixTransformer{
+		local:  local,
+		remote: remote,
+	}
+
+	mu.Lock()
+
+	transformers[trans] = tx
+
+	mu.Unlock()
+
+	return tx, nil
+}
+
+// Transform transforms the given local path to a remote path using the given
+// named or prefix transformer.
+func Transform(transformer string, path string) (string, error) {
+	mu.RLock()
+
+	txa, ok := transformers[transformer]
+
+	mu.RUnlock()
+
+	if !ok { //nolint:nestif
+		if strings.HasPrefix(transformer, prefixPrefix) {
+			var err error
+
+			txa, err = compilePrefixTransformer(transformer)
+			if err != nil {
+				return "", nil //nolint:nilerr
+			}
+		} else {
+			return "", ErrInvalidTransformer
+		}
+	}
+
+	return txa.Transform(path)
+}
+
+// ValidateTransformer confirms the existence of a named transformer, or whether
+// a given prefix transform is of the correct format.
+func ValidateTransformer(transformer string) error {
+	mu.RLock()
+
+	_, ok := transformers[transformer]
+
+	mu.RUnlock()
+
+	if ok {
+		return nil
+	}
+
+	_, err := compilePrefixTransformer(transformer)
+
+	return err
+}
+
 type transformer struct {
 	re      *regexp.Regexp
 	replace string
@@ -91,73 +158,6 @@ func (t *transformer) Transform(path string) (string, error) {
 	}
 
 	return filepath.Clean(t.re.ReplaceAllString(path, t.replace)), nil
-}
-
-// Transform transforms the given local path to a remote path using the given
-// named or prefix transformer.
-func Transform(transformer string, path string) (string, error) {
-	mu.RLock()
-
-	txa, ok := transformers[transformer]
-
-	mu.RUnlock()
-
-	if !ok { //nolint:nestif
-		if strings.HasPrefix(transformer, prefixPrefix) {
-			var err error
-
-			txa, err = compilePrefixTransformer(transformer)
-			if err != nil {
-				return "", nil //nolint:nilerr
-			}
-		} else {
-			return "", ErrInvalidTransformer
-		}
-	}
-
-	return txa.Transform(path)
-}
-
-func compilePrefixTransformer(trans string) (tx, error) { //nolint:ireturn
-	if !strings.HasPrefix(trans, prefixPrefix) {
-		return nil, ErrInvalidTransformer
-	}
-
-	local, remote, _ := strings.Cut(strings.TrimPrefix(trans, prefixPrefix), ":")
-
-	local = filepath.Clean(local) + "/"
-	remote = filepath.Clean(remote) + "/"
-
-	tx := &prefixTransformer{
-		local:  local,
-		remote: remote,
-	}
-
-	mu.Lock()
-
-	transformers[trans] = tx
-
-	mu.Unlock()
-
-	return tx, nil
-}
-
-// ValidateTransformer confirms the existence of a named transformer, or whether
-// a given prefix transform is of the correct format.
-func ValidateTransformer(transformer string) error {
-	mu.RLock()
-
-	_, ok := transformers[transformer]
-
-	mu.RUnlock()
-
-	if ok {
-		return nil
-	}
-
-	_, err := compilePrefixTransformer(transformer)
-
-	return err
 }
 
 // Register creates a named transformer from the given regex an replacement

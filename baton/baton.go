@@ -249,44 +249,29 @@ func requestToRodsItem(local, remote string) *ex.RodsItem {
 	return item
 }
 
-func (b *Baton) debugListItem(client *ex.Client, remote string, label string) {
-	if b.logger == nil || client == nil {
-		return
-	}
-
-	exists, it, took, err := b.listItemDetails(client, remote)
+// Snapshot returns a best-effort snapshot of an iRODS data object.
+//
+// Intended for higher-level callers (eg. transfer logging) that already have a
+// per-request correlation id (rid) and want to log iRODS state before/after a
+// put.
+func (b *Baton) Snapshot(
+	remote string,
+) (exists bool, size uint64, checksum string, replicas int, replicateDetails []string, err error) {
+	err = b.setClientIfNotExists(&b.metaClient)
 	if err != nil {
-		b.logIRODSError(err, "label", label, "remote", remote, "took", took)
-
-		return
+		return false, 0, "", 0, nil, err
 	}
 
-	b.logListSnapshot(label, remote, exists, it, took)
-}
+	exists, it, _, err := b.listItemDetails(b.metaClient, remote)
+	if err != nil {
+		return false, 0, "", 0, nil, err
+	}
 
-func (b *Baton) logListSnapshot(label, remote string, exists bool, it ex.RodsItem, took time.Duration) {
 	if !exists {
-		b.info("baton list", "label", label, "remote", remote, "exists", false, "took", took)
-
-		return
+		return false, 0, "", 0, nil, nil
 	}
 
-	b.info(
-		"baton list",
-		"label", label,
-		"remote", remote,
-		"exists", true,
-		"size", it.ISize,
-		"checksum", it.IChecksum,
-		"replicas", len(it.IReplicates),
-		"took", took,
-	)
-	b.debug(
-		"baton list details",
-		"label", label,
-		"remote", remote,
-		"replicate_details", b.replicateSummaries(it.IReplicates),
-	)
+	return true, it.ISize, it.IChecksum, len(it.IReplicates), b.replicateSummaries(it.IReplicates), nil
 }
 
 // EnsureCollection ensures the given collection exists in iRODS, creating it if
@@ -738,20 +723,16 @@ func (b *Baton) Put(local, remote string) (err error) {
 	}
 	defer cleanup()
 
-	// Snapshot current iRODS state to help diagnose partial failures/retries
-	// leading to excess replicas.
-	b.debugListItem(b.putClient, remote, "pre-put")
-
 	items, err := b.putClient.Put(b.putArgsForTracing(), *item)
 	if err != nil {
 		b.logIRODSError(err, "op", "put", "local", local, "remote", remote)
-		b.debugListItem(b.putClient, remote, "post-put (error)")
 
 		return err
 	}
 
+	// Log the returned details without attempting to add per-request ids here;
+	// higher-level callers can correlate using their own ctx.
 	b.debugPutItems(local, remote, items)
-	b.debugListItem(b.putClient, remote, "post-put")
 
 	return nil
 }
@@ -830,9 +811,6 @@ func (b *Baton) Get(local, remote string) (err error) {
 
 	localDir, localFile := filepath.Split(local)
 	tmpLocal := filepath.Join(localDir, fmt.Sprintf(".ibackup.get.%X", sha256.Sum256([]byte(localFile))))
-
-	// Snapshot remote state pre-get for debugging.
-	b.debugListItem(b.putClient, remote, "pre-get")
 
 	_, err = b.putClient.Get(
 		ex.Args{
