@@ -805,7 +805,11 @@ func (b *Baton) putItem(item *ex.RodsItem, local, remote string) error {
 func (b *Baton) putArgsForTracing() ex.Args {
 	args := ex.Args{Force: true, Verify: true}
 	if b.logger != nil {
-		args.Checksum = true
+		// For the baton "put" operation, requesting both Verify and Checksum
+		// can cause iRODS to reject the request (it treats this as attempting
+		// to both verify and update the checksum simultaneously). We still want
+		// verification for correctness, so we keep Verify=true and avoid
+		// requesting checksum output as part of the put itself.
 		args.Replicate = true
 		args.Size = true
 		args.Timestamp = true
