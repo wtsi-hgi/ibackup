@@ -42,9 +42,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/viant/ptrie"
 	"github.com/wtsi-hgi/ibackup/set"
+	"github.com/wtsi-hgi/ibackup/statter"
 	"github.com/wtsi-hgi/ibackup/transfer"
 	"github.com/wtsi-hgi/ibackup/transformer"
-	"github.com/wtsi-ssg/wrstat/v6/walk"
 )
 
 const ttr = 6 * time.Minute
@@ -296,7 +296,7 @@ func findNotExistingEntries(entries []*set.Entry) ([]string, error) {
 	var missingPaths []string
 
 	for _, entry := range entries {
-		_, err := os.Stat(entry.Path)
+		_, err := statter.Stat(entry.Path)
 		if errors.Is(err, os.ErrNotExist) {
 			missingPaths = append(missingPaths, entry.Path)
 		} else if err != nil {
@@ -460,20 +460,20 @@ func (s *Server) doSetDirWalks(entries []*set.Entry, excludeTree ptrie.Trie[bool
 // checkAndWalkDir checks if the given dir exists, and if it does, walks the
 // dir using the given cb. Major errors are returned; walk errors are logged and
 // permission ones sent to the warnChan.
-func (s *Server) checkAndWalkDir(dir string, cb walk.PathCallback, warnChan chan error) error {
-	_, err := os.Lstat(dir)
+func (s *Server) checkAndWalkDir(dir string, cb statter.PathCallback, warnChan chan error) error {
+	_, err := statter.Stat(dir)
 	if err != nil {
 		return err
 	}
 
-	walker := walk.New(cb, true, false)
-
-	return walker.Walk(dir, func(path string, err error) {
+	return statter.Walk(dir, cb, func(path string, err error) error {
 		s.Logger.Printf("walk found %s, but had error: %s", path, err)
 
 		if errors.Is(err, fs.ErrPermission) {
 			warnChan <- fmt.Errorf("%s: %w", path, err)
 		}
+
+		return nil
 	})
 }
 
@@ -482,8 +482,8 @@ func (s *Server) checkAndWalkDir(dir string, cb walk.PathCallback, warnChan chan
 // silently skipped.
 func filterEntries(entriesCh chan *set.Dirent, excludeTree ptrie.Trie[bool],
 	parentDir string,
-) func(entry *walk.Dirent) error {
-	return func(entry *walk.Dirent) error {
+) statter.PathCallback {
+	return func(entry *statter.DirEnt) error {
 		dirent := set.DirEntFromWalk(entry)
 
 		isRemoved, _ := isDirentRemovedFromSet(dirent, excludeTree)
@@ -492,7 +492,7 @@ func filterEntries(entriesCh chan *set.Dirent, excludeTree ptrie.Trie[bool],
 			return nil
 		}
 
-		if !(entry.IsRegular() || entry.IsSymlink() || entry.IsDir()) || //nolint:staticcheck
+		if !(dirent.IsRegular() || dirent.IsSymlink() || dirent.IsDir()) || //nolint:staticcheck
 			dirent.Path == filepath.Clean(parentDir) { //nolint:wsl,whitespace
 			return nil
 		}

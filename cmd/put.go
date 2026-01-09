@@ -40,6 +40,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/wtsi-hgi/ibackup/baton"
 	"github.com/wtsi-hgi/ibackup/server"
+	"github.com/wtsi-hgi/ibackup/statter"
 	"github.com/wtsi-hgi/ibackup/transfer"
 )
 
@@ -145,6 +146,10 @@ you, so should this.`,
 			logToFile(putLog)
 		}
 
+		if err := statter.Init(statterPath); err != nil {
+			dief("failed to initialise statter: %s", err)
+		}
+
 		if serverMode() {
 			handlePutServerMode(time.Now())
 		} else {
@@ -171,6 +176,8 @@ func init() {
 		"log to the given file (implies --verbose)")
 	putCmd.Flags().DurationVar(&maxStuckTime, "stuck-timeout", defaultMaxStuckTime,
 		"override the default stuck wait time (1h)")
+	putCmd.Flags().StringVar(&statterPath, "statter", "",
+		"path to an external statter program (https://github.com/wtsi-hgi/statter)")
 }
 
 func serverMode() bool {

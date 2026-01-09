@@ -24,12 +24,11 @@ require (
 	github.com/viant/ptrie v1.0.1
 	github.com/wtsi-hgi/go-authserver v1.5.1
 	github.com/wtsi-hgi/grand v1.0.0
-	github.com/wtsi-hgi/statter v1.0.0
+	github.com/wtsi-hgi/statter v1.0.1-0.20260109113337-5a774979d3b3
 	github.com/wtsi-npg/extendo/v2 v2.7.1-0.20250509131519-b95b89bd744d
 	github.com/wtsi-npg/logshim v1.5.0
 	github.com/wtsi-npg/logshim-zerolog v1.5.0
 	github.com/wtsi-ssg/wr v0.5.12
-	github.com/wtsi-ssg/wrstat/v6 v6.4.2
 	go.etcd.io/bbolt v1.4.0
 	golang.org/x/sys v0.33.0
 )
@@ -37,6 +36,7 @@ require (
 require (
 	cloud.google.com/go/compute/metadata v0.7.0 // indirect
 	code.cloudfoundry.org/bytefmt v0.41.0 // indirect
+	github.com/Azure/go-ansiterm v0.0.0-20210617225240-d185dfc1b5a1 // indirect
 	github.com/Azure/go-ntlmssp v0.0.0-20221128193559-754e69321358 // indirect
 	github.com/BurntSushi/toml v1.5.0 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
@@ -90,6 +90,7 @@ require (
 	github.com/gorilla/sessions v1.4.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/grafov/bcast v0.0.0-20190217190352-1447f067e08d // indirect
+	github.com/grpc-ecosystem/grpc-gateway/v2 v2.20.0 // indirect
 	github.com/hanwen/go-fuse/v2 v2.7.2 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-uuid v1.0.3 // indirect
@@ -152,6 +153,7 @@ require (
 	go.opentelemetry.io/auto/sdk v1.1.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.61.0 // indirect
 	go.opentelemetry.io/otel v1.36.0 // indirect
+	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.28.0 // indirect
 	go.opentelemetry.io/otel/metric v1.36.0 // indirect
 	go.opentelemetry.io/otel/trace v1.36.0 // indirect
 	golang.org/x/arch v0.16.0 // indirect

@@ -6,10 +6,13 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/wtsi-hgi/ibackup/internal"
 )
 
 func TestInodes(t *testing.T) {
 	Convey("With a new database", t, func() {
+		internal.InitStatter(t)
+
 		tmp := t.TempDir()
 		fileA := filepath.Join(tmp, "testA")
 		fileB := filepath.Join(tmp, "testB")
@@ -21,11 +24,6 @@ func TestInodes(t *testing.T) {
 		db, err := New(dbPath, "", false)
 		So(err, ShouldBeNil)
 		So(db, ShouldNotBeNil)
-
-		statterPath := os.Getenv("IBACKUP_TEST_STATTER")
-		if statterPath != "" {
-			db.SetStatter(statterPath)
-		}
 
 		Convey("Hardlinks get de-duped", func() {
 			got := &Set{
@@ -56,13 +54,6 @@ func TestInodes(t *testing.T) {
 			got, err = db.Discover(got.ID(), nil)
 			So(err, ShouldBeNil)
 			So(got.Hardlinks, ShouldBeZeroValue)
-
-			if statterPath != "" {
-				So(db.statterFunc, ShouldNotEqual, noStat)
-				So(db.statterFunc, ShouldNotEqual, lstat)
-			} else {
-				So(db.statterFunc, ShouldEqual, lstat)
-			}
 		})
 	})
 }

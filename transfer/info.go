@@ -35,6 +35,7 @@ import (
 
 	"github.com/wtsi-hgi/ibackup/errs"
 	"github.com/wtsi-hgi/ibackup/internal"
+	"github.com/wtsi-hgi/ibackup/statter"
 )
 
 const ErrStatFailed = "stat of local path returned strange results"
@@ -48,7 +49,7 @@ type ObjectInfo struct {
 // Stat stats localPath like os.Lstat(), but also returns information about the
 // file in ObjectInfo Meta (mtime, owner and group information).
 func Stat(localPath string) (*ObjectInfo, error) {
-	fi, err := os.Lstat(localPath)
+	fi, err := statter.Stat(localPath)
 	if errors.Is(err, os.ErrNotExist) {
 		return &ObjectInfo{
 			Exists: false,
