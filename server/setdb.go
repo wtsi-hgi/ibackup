@@ -206,7 +206,7 @@ const (
 // endpoints will only let you work on sets where the Requester matches your
 // logged-in username, or if the logged-in user is the same as the user who
 // started the Server.
-func (s *Server) LoadSetDB(path, backupPath, statterPath string) error {
+func (s *Server) LoadSetDB(path, backupPath string) error {
 	authGroup := s.AuthRouter()
 	if authGroup == nil {
 		return ErrNoAuth
@@ -215,10 +215,6 @@ func (s *Server) LoadSetDB(path, backupPath, statterPath string) error {
 	err := s.setupDB(path, backupPath, authGroup)
 	if err != nil {
 		return err
-	}
-
-	if statterPath != "" {
-		s.db.SetStatter(statterPath)
 	}
 
 	if s.readOnly {

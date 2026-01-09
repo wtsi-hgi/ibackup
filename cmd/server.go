@@ -42,6 +42,7 @@ import (
 	"github.com/wtsi-hgi/ibackup/server"
 	"github.com/wtsi-hgi/ibackup/set"
 	"github.com/wtsi-hgi/ibackup/slack"
+	"github.com/wtsi-hgi/ibackup/statter"
 	"github.com/wtsi-npg/logshim"
 	"github.com/wtsi-npg/logshim-zerolog/zlog"
 )
@@ -264,7 +265,11 @@ database that you've made, to investigate.
 			s.SetRemoteHardlinkLocation(serverHardlinksCollection)
 		}
 
-		err = s.LoadSetDB(args[0], dbBackupPath, statterPath)
+		if err := statter.Init(statterPath); err != nil {
+			dief("failed to initialise statter: %s", err)
+		}
+
+		err = s.LoadSetDB(args[0], dbBackupPath)
 		if err != nil {
 			dief("failed to load database: %s", err)
 		}

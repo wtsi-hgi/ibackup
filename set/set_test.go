@@ -51,6 +51,7 @@ const userPerms = 0700
 
 func TestSet(t *testing.T) {
 	Convey("With the default transformers", t, func() {
+		internal.InitStatter(t)
 		internal.RegisterDefaultTransformers(t)
 
 		Convey("Set statuses convert nicely to strings", func() {

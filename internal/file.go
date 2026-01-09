@@ -34,6 +34,8 @@ import (
 	"testing"
 	"time"
 
+	. "github.com/smartystreets/goconvey/convey" //nolint:revive,staticcheck
+	"github.com/wtsi-hgi/ibackup/statter"
 	"github.com/wtsi-ssg/wr/backoff"
 	btime "github.com/wtsi-ssg/wr/backoff/time"
 	"github.com/wtsi-ssg/wr/retry"
@@ -45,6 +47,17 @@ const (
 )
 
 var ErrFileUnchanged = errors.New("file did not change")
+
+func InitStatter(t *testing.T) {
+	t.Helper()
+
+	err := statter.Init(os.Getenv("IBACKUP_TEST_STATTER"))
+	if errors.Is(err, statter.ErrInited) {
+		err = nil
+	}
+
+	So(err, ShouldBeNil)
+}
 
 // WaitForFile waits for up to 5 seconds for the given path to exist, and
 // returns false if it doesn't.

@@ -107,6 +107,7 @@ func TestServer(t *testing.T) {
 
 		dbPath := createDBLocation(t)
 
+		internal.InitStatter(t)
 		internal.RegisterDefaultTransformers(t)
 
 		Convey("You can make a Server without a logger configured, but it isn't usable", func() {
@@ -147,7 +148,7 @@ func TestServer(t *testing.T) {
 			err = s.MakeQueueEndPoints()
 			So(err, ShouldBeNil)
 
-			err = s.LoadSetDB(dbPath, "", "")
+			err = s.LoadSetDB(dbPath, "")
 			So(err, ShouldBeNil)
 
 			addr, dfunc, err := gas.StartTestServer(s, certPath, keyPath)
@@ -216,7 +217,7 @@ func TestServer(t *testing.T) {
 
 			slackWriter.Reset()
 
-			err = s.LoadSetDB(dbPath, "", "")
+			err = s.LoadSetDB(dbPath, "")
 			So(err, ShouldBeNil)
 
 			addr, dfunc, errs := gas.StartTestServer(s, certPath, keyPath)
