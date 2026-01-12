@@ -146,10 +146,6 @@ you, so should this.`,
 			logToFile(putLog)
 		}
 
-		if err := statter.Init(statterPath); err != nil {
-			dief("failed to initialise statter: %s", err)
-		}
-
 		if serverMode() {
 			handlePutServerMode(time.Now())
 		} else {
@@ -181,6 +177,10 @@ func init() {
 }
 
 func serverMode() bool {
+	if err := statter.Init(statterPath); err != nil {
+		dief("failed to initialise statter: %s", err)
+	}
+
 	return putServerMode && serverURL != ""
 }
 
