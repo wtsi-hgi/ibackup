@@ -39,6 +39,8 @@ import (
 
 func TestPutMock(t *testing.T) {
 	Convey("Given Requests and a mock Handler, you can make a new Putter", t, func() {
+		internal.InitStatter(t)
+
 		requests, expectedCollections := makeMockRequests(t)
 
 		lh := internal.GetLocalHandler()
