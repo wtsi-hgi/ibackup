@@ -642,6 +642,20 @@ func TestMain(m *testing.M) {
 
 	defer d1()
 
+	tmp := os.TempDir()
+
+	if err := internal.BuildStatter(tmp); err != nil {
+		exitCode = 1
+
+		failMainTest(err.Error())
+
+		return
+	}
+
+	defer os.RemoveAll(tmp)
+
+	os.Setenv("PATH", tmp+":"+os.Getenv("PATH"))
+
 	exitCode = m.Run()
 
 	for _, s := range servers {
