@@ -332,7 +332,7 @@ func (s *TestServer) waitForServer() {
 
 	status := retry.Do(ctx, func() error {
 		clientCmd := exec.Command("./"+app, cmd...)
-		clientCmd.Env = []string{"XDG_STATE_HOME=" + s.dir}
+		clientCmd.Env = []string{"XDG_STATE_HOME=" + s.dir, "PATH=" + os.Getenv("PATH")}
 
 		return clientCmd.Run()
 	}, &retry.UntilNoError{}, btime.SecondsRangeBackoff(), "waiting for server to start")
@@ -574,7 +574,7 @@ func TestMain(m *testing.M) {
 
 	defer d1()
 
-	tmp := os.TempDir()
+	tmp, _ := os.MkdirTemp("", "")
 
 	if err := internal.BuildStatter(tmp); err != nil {
 		exitCode = 1
