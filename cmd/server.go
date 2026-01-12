@@ -284,8 +284,8 @@ These should be supplied as a comma separated list.
 			s.SetRemoteHardlinkLocation(serverHardlinksCollection)
 		}
 
-		if err := statter.Init(statterPath); err != nil {
-			dief("failed to initialise statter: %s", err)
+		if errr := statter.Init(statterPath); errr != nil {
+			dief("failed to initialise statter: %s", errr)
 		}
 
 		err = s.LoadSetDB(args[0], dbBackupPath)

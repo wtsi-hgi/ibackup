@@ -42,10 +42,10 @@ import (
 )
 
 var (
-	statterExe string
+	statterExe string //nolint:gochecknoglobals
 
-	mu      sync.Mutex
-	statter client.Statter
+	mu      sync.Mutex     //nolint:gochecknoglobals
+	statter client.Statter //nolint:gochecknoglobals
 )
 
 func Init(exe string) error {
@@ -65,10 +65,10 @@ func Init(exe string) error {
 
 func determineStatterEXE() (string, error) {
 	statter := os.Getenv("IBACKUP_STATTER")
-	if statter == "" {
+	if statter == "" { //nolint:nestif
 		exe, err := os.Executable()
 		if err != nil {
-			return "", nil
+			return "", err
 		}
 
 		statter = filepath.Join(filepath.Dir(exe), "statter")
@@ -87,7 +87,7 @@ func isExecutable(fi fs.FileInfo) bool {
 		return false
 	}
 
-	st := fi.Sys().(*syscall.Stat_t)
+	st := fi.Sys().(*syscall.Stat_t) //nolint:errcheck,forcetypeassert
 
 	if u.Uid == strconv.FormatUint(uint64(st.Uid), 10) {
 		return fi.Mode()&0100 > 0
@@ -113,7 +113,6 @@ func Stat(path string) (fs.FileInfo, error) {
 		var err error
 
 		statter, err = client.CreateStatter(statterExe)
-
 		if err != nil {
 			return nil, err
 		}

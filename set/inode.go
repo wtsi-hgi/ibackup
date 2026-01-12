@@ -373,7 +373,7 @@ func (d *DB) impFileIsValid(file string, inode uint64) bool {
 		return false
 	}
 
-	return fi.Sys().(*syscall.Stat_t).Ino == inode
+	return fi.Sys().(*syscall.Stat_t).Ino == inode //nolint:errcheck,forcetypeassert
 }
 
 func (d *DB) stat(path string) (fs.FileInfo, error) {

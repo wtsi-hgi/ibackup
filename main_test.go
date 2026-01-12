@@ -642,7 +642,7 @@ func TestMain(m *testing.M) {
 
 	defer d1()
 
-	tmp, _ := os.MkdirTemp("", "")
+	tmp, _ := os.MkdirTemp("", "") //nolint:errcheck
 
 	if err := internal.BuildStatter(tmp); err != nil {
 		exitCode = 1

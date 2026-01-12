@@ -67,7 +67,8 @@ func InitStatter(t *testing.T) {
 }
 
 func BuildStatter(path string) error {
-	cmd := exec.Command("go", "install", "github.com/wtsi-hgi/statter@latest")
+	cmd := exec.Command("go", "install", "github.com/wtsi-hgi/statter@latest") //nolint:noctx
+
 	cmd.Env = append(os.Environ(), "GOBIN="+path)
 
 	return cmd.Run()
