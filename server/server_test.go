@@ -102,6 +102,7 @@ func TestServer(t *testing.T) {
 	defaultHeartbeatFreq := 1 * time.Minute
 
 	Convey("Given a test cert and db location", t, func() {
+		internal.InitStatter(t)
 		certPath, keyPath, err := gas.CreateTestCert(t)
 		So(err, ShouldBeNil)
 
