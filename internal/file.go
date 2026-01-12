@@ -56,9 +56,7 @@ func InitStatter(t *testing.T) {
 	if statterExe == "" {
 		tmp := t.TempDir()
 
-		cmd := exec.Command("go", "install", "github.com/wtsi-hgi/statter@15732637a183654d16d35fc91a5ddb1e5e218f95")
-		cmd.Env = append(os.Environ(), "GOBIN="+tmp)
-		So(cmd.Run(), ShouldBeNil)
+		So(BuildStatter(tmp), ShouldBeNil)
 
 		statterExe = filepath.Join(tmp, "statter")
 
@@ -66,6 +64,13 @@ func InitStatter(t *testing.T) {
 	}
 
 	So(statter.Init(statterExe), ShouldBeNil)
+}
+
+func BuildStatter(path string) error {
+	cmd := exec.Command("go", "install", "github.com/wtsi-hgi/statter@latest")
+	cmd.Env = append(os.Environ(), "GOBIN="+path)
+
+	return cmd.Run()
 }
 
 // WaitForFile waits for up to 5 seconds for the given path to exist, and
