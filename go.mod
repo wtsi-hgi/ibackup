@@ -24,7 +24,7 @@ require (
 	github.com/viant/ptrie v1.0.1
 	github.com/wtsi-hgi/go-authserver v1.5.1
 	github.com/wtsi-hgi/grand v1.0.0
-	github.com/wtsi-hgi/statter v1.0.1-0.20260112102023-0734b5bca965
+	github.com/wtsi-hgi/statter v1.0.1-0.20260112104733-15732637a183
 	github.com/wtsi-npg/extendo/v2 v2.7.1-0.20250509131519-b95b89bd744d
 	github.com/wtsi-npg/logshim v1.5.0
 	github.com/wtsi-npg/logshim-zerolog v1.5.0

@@ -56,7 +56,7 @@ func InitStatter(t *testing.T) {
 	if statterExe == "" {
 		tmp := t.TempDir()
 
-		cmd := exec.Command("go", "install", "github.com/wtsi-hgi/statter@0734b5bca9656636c475b3f07ea0f2b2fd52d991")
+		cmd := exec.Command("go", "install", "github.com/wtsi-hgi/statter@15732637a183654d16d35fc91a5ddb1e5e218f95")
 		cmd.Env = append(os.Environ(), "GOBIN="+tmp)
 		So(cmd.Run(), ShouldBeNil)
 
