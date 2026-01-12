@@ -38,25 +38,23 @@ import (
 )
 
 var (
-	inited     sync.Once
 	statterExe string
 
 	mu      sync.Mutex
 	statter client.Statter
-
-	ErrInited = errors.New("already init'd")
 )
 
 func Init(exe string) error {
-	err := ErrInited
+	mu.Lock()
+	defer mu.Unlock()
 
-	inited.Do(func() {
-		if exe == "" {
-			exe, err = determineStatterEXE()
-		}
+	var err error
 
-		statterExe = exe
-	})
+	if exe == "" {
+		exe, err = determineStatterEXE()
+	}
+
+	statterExe = exe
 
 	return err
 }

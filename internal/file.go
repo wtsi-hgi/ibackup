@@ -30,6 +30,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -51,12 +52,20 @@ var ErrFileUnchanged = errors.New("file did not change")
 func InitStatter(t *testing.T) {
 	t.Helper()
 
-	err := statter.Init(os.Getenv("IBACKUP_TEST_STATTER"))
-	if errors.Is(err, statter.ErrInited) {
-		err = nil
+	statterExe := os.Getenv("IBACKUP_TEST_STATTER")
+	if statterExe == "" {
+		tmp := t.TempDir()
+
+		cmd := exec.Command("go", "install", "github.com/wtsi-hgi/statter@5a774979d3b35766514436bb68b66b3f2ed97620")
+		cmd.Env = append(os.Environ(), "GOBIN="+tmp)
+		So(cmd.Run(), ShouldBeNil)
+
+		statterExe = filepath.Join(tmp, "statter")
+
+		t.Setenv("PATH", tmp+":"+os.Getenv("PATH"))
 	}
 
-	So(err, ShouldBeNil)
+	So(statter.Init(statterExe), ShouldBeNil)
 }
 
 // WaitForFile waits for up to 5 seconds for the given path to exist, and

@@ -21,9 +21,6 @@ jobs:
       uses: actions/setup-go@v6
       with:
         go-version-file: go.mod
-    
-    - name: Install Statter
-      run: go install github.com/wtsi-hgi/statter@latest
 
     - name: Run tests
       run: make test
