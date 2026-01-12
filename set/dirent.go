@@ -26,6 +26,7 @@ package set
 
 import (
 	"io/fs"
+	"path/filepath"
 
 	"github.com/wtsi-hgi/ibackup/statter"
 )
@@ -39,6 +40,8 @@ type Dirent struct {
 
 // DirEntFromWalk converts a walk.Dirent to an easier to use local Dirent type.
 func DirEntFromWalk(de *statter.DirEnt) *Dirent {
+	de.Path = filepath.Clean(de.Path)
+
 	return (*Dirent)(de)
 }
 
