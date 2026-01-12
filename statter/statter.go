@@ -31,8 +31,12 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"sync"
+	"syscall"
 
 	"github.com/wtsi-hgi/statter/client"
 )
@@ -69,12 +73,36 @@ func determineStatterEXE() (string, error) {
 
 		statter = filepath.Join(filepath.Dir(exe), "statter")
 
-		if _, err := os.Stat(statter); err != nil {
+		if fi, err := os.Stat(statter); err != nil || fi.IsDir() || isExecutable(fi) {
 			return exec.LookPath("statter")
 		}
 	}
 
 	return statter, nil
+}
+
+func isExecutable(fi fs.FileInfo) bool {
+	u, err := user.Current()
+	if err != nil {
+		return false
+	}
+
+	st := fi.Sys().(*syscall.Stat_t)
+
+	if u.Uid == strconv.FormatUint(uint64(st.Uid), 10) {
+		return fi.Mode()&0100 > 0
+	}
+
+	groups, err := u.GroupIds()
+	if err != nil {
+		return false
+	}
+
+	if slices.Contains(groups, strconv.FormatUint(uint64(st.Gid), 10)) {
+		return fi.Mode()&0010 > 0
+	}
+
+	return fi.Mode()&001 > 0
 }
 
 func Stat(path string) (fs.FileInfo, error) {
