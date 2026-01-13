@@ -605,12 +605,15 @@ func (s *Set) fixCounts(entry *Entry, getFileEntries func(string, EntryFilter) (
 	// getFileEntries can't see it yet (eg. it was created/updated within the
 	// current transaction).
 	entryInEntries := false
+
 	for _, e := range entries {
 		if e.Path == entry.Path {
 			entryInEntries = true
+
 			break
 		}
 	}
+
 	if !entryInEntries {
 		entries = append(entries, entry)
 	}

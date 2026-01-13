@@ -1675,6 +1675,7 @@ func (d *DBRO) GetFileEntries(setID string, filter EntryFilter) ([]*Entry, error
 
 	err := d.db.View(func(tx *bolt.Tx) error {
 		entries = d.getFileEntriesWithTx(tx, setID, filter)
+
 		return nil
 	})
 

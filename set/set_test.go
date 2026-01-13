@@ -2234,7 +2234,9 @@ func TestFixCountsHealsNumFiles(t *testing.T) {
 		calls := 0
 		getFileEntries := func(setID string, _ EntryFilter) ([]*Entry, error) {
 			calls++
+
 			So(setID, ShouldEqual, s.ID())
+
 			return entries, nil
 		}
 
@@ -2258,6 +2260,7 @@ func TestSetEntryStatusRecountSeesUpdatedEntry(t *testing.T) {
 		db, err := New(dbPath, "", false)
 		So(err, ShouldBeNil)
 		So(db, ShouldNotBeNil)
+
 		defer func() { So(db.Close(), ShouldBeNil) }()
 
 		set := &Set{Name: "set1", Requester: "jim", Transformer: "prefix=/local:/remote"}
@@ -2272,6 +2275,7 @@ func TestSetEntryStatusRecountSeesUpdatedEntry(t *testing.T) {
 		err = db.db.Update(func(tx *bolt.Tx) error {
 			got, bid, b, errt := db.getSetByID(tx, set.ID())
 			So(errt, ShouldBeNil)
+
 			got.NumFiles = 0
 			got.Uploaded = 0
 			got.Replaced = 0
