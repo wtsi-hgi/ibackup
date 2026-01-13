@@ -46,9 +46,7 @@ type Slacker interface {
 
 const (
 	dateFormat            = "2006-01-02 15:04:05"
-	arPrefixParts         = 2
 	ErrInvalidTransformer = "invalid transformer"
-	prefixTransformerKey  = "prefix="
 )
 
 const (
@@ -599,6 +597,29 @@ func (s *Set) fixCounts(entry *Entry, getFileEntries func(string, EntryFilter) (
 		return err
 	}
 
+	// If counts are invalid because NumFiles is wrong (eg. 0), simply
+	// recalculating the counts is insufficient: countsValid() will remain false
+	// and we will end up rescanning entries on every subsequent update.
+	//
+	// Also ensure the supplied entry is included in the recount even if
+	// getFileEntries can't see it yet (eg. it was created/updated within the
+	// current transaction).
+	entryInEntries := false
+
+	for _, e := range entries {
+		if e.Path == entry.Path {
+			entryInEntries = true
+
+			break
+		}
+	}
+
+	if !entryInEntries {
+		entries = append(entries, entry)
+	}
+
+	s.NumFiles = uint64(len(entries))
+
 	s.resetCounts()
 	s.updateAllCounts(entries, entry)
 
@@ -630,10 +651,6 @@ func (s *Set) resetTypeCounts() {
 // entry as newFail if any entry in entries is Failed.
 func (s *Set) updateAllCounts(entries []*Entry, entry *Entry) {
 	for _, e := range entries {
-		if e.Path == entry.Path {
-			e = entry
-		}
-
 		if e.Status == Failed {
 			e.newFail = true
 		}
