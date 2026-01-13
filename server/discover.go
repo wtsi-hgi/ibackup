@@ -627,7 +627,23 @@ func (s *Server) enqueueEntries(entries []*set.Entry, given *set.Set, transforme
 		return nil
 	}
 
+	// Keep enqueue logging low-volume: one line per enqueue batch.
+	s.Logger.Printf(
+		"requests enqueued requester=%s set=%s count=%d",
+		given.Requester,
+		given.Name,
+		len(defs),
+	)
+
 	_, dups, err := s.queue.AddMany(context.Background(), defs)
+	if dups > 0 {
+		s.Logger.Printf(
+			"request enqueue had duplicates requester=%s set=%s duplicates=%d",
+			given.Requester,
+			given.Name,
+			dups,
+		)
+	}
 
 	if dups > 0 {
 		s.markFailedEntries(given)

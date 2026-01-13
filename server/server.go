@@ -67,10 +67,11 @@ const (
 	reqTime                 = 8 * time.Hour
 	jobRetries        uint8 = 3
 	jobLimitGroup           = "irods"
-	maxJobsToSubmit         = 100
 	racRetriggerDelay       = 1 * time.Minute
 
 	retryDelay = 5 * time.Second
+
+	maxRememberedRequestLogs = 100000
 )
 
 // Config configures the server.
@@ -131,6 +132,10 @@ type Server struct {
 	iRODSTracker        *iRODSTracker
 	clientQueue         *queue.Queue
 
+	requestLogMu   sync.Mutex
+	requestLogged  map[string]struct{}
+	requestLogRIDs []string
+
 	discoveryCoordinator *discoveryCoordinator
 }
 
@@ -158,6 +163,7 @@ func New(conf Config) (*Server, error) { //nolint:funlen
 		clientQueue:         queue.New(context.Background(), "client"),
 		readOnly:            conf.ReadOnly,
 		storageHandler:      conf.StorageHandler,
+		requestLogged:       make(map[string]struct{}),
 
 		discoveryCoordinator: newDiscoveryCoordinator(),
 	}
@@ -191,6 +197,30 @@ func (s *Server) Start(addr, certFile, keyFile string) error {
 
 func (s *Server) SetRemoteHardlinkLocation(path string) {
 	s.remoteHardlinkLocation = path
+}
+
+func (s *Server) markRequestLogged(rid string) bool {
+	if rid == "" {
+		return false
+	}
+
+	s.requestLogMu.Lock()
+	defer s.requestLogMu.Unlock()
+
+	if _, alreadyLogged := s.requestLogged[rid]; alreadyLogged {
+		return false
+	}
+
+	s.requestLogged[rid] = struct{}{}
+	s.requestLogRIDs = append(s.requestLogRIDs, rid)
+
+	if len(s.requestLogRIDs) > maxRememberedRequestLogs {
+		oldest := s.requestLogRIDs[0]
+		delete(s.requestLogged, oldest)
+		s.requestLogRIDs = s.requestLogRIDs[1:]
+	}
+
+	return true
 }
 
 // EnableJobSubmission enables submission of `ibackup put` jobs to wr in
