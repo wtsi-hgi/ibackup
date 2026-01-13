@@ -352,7 +352,7 @@ func (s *TestServer) startServer() {
 	}
 
 	s.stopped = false
-	s.cmd = exec.Command("./"+s.app, args...)
+	s.cmd = exec.Command("./"+s.app, args...) //nolint:gosec,noctx
 	s.cmd.Env = s.env
 	s.cmd.Stdout = os.Stdout
 	s.cmd.Stderr = os.Stderr
@@ -654,7 +654,7 @@ func TestMain(m *testing.M) {
 }
 
 func buildSelf() func() {
-	if err := exec.Command("make", "build").Run(); err != nil {
+	if err := exec.Command("make", "build").Run(); err != nil { //nolint:noctx
 		failMainTest(err.Error())
 
 		return nil
