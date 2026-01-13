@@ -2224,6 +2224,32 @@ func TestCountsValid(t *testing.T) {
 	})
 }
 
+func TestFixCountsHealsNumFiles(t *testing.T) {
+	Convey("fixCounts should make countsValid true even when NumFiles was wrong", t, func() {
+		s := &Set{Requester: "req", Name: "set", Transformer: "humgen"}
+		s.NumFiles = 0
+		s.Status = PendingUpload
+
+		entries := []*Entry{{Path: "/a", Status: Pending}, {Path: "/b", Status: Pending}}
+		calls := 0
+		getFileEntries := func(setID string, _ EntryFilter) ([]*Entry, error) {
+			calls++
+			So(setID, ShouldEqual, s.ID())
+			return entries, nil
+		}
+
+		err := s.UpdateBasedOnEntry(&Entry{Path: "/a", Status: Uploaded}, getFileEntries)
+		So(err, ShouldBeNil)
+		So(s.countsValid(), ShouldBeTrue)
+		So(s.NumFiles, ShouldEqual, 2)
+		So(calls, ShouldEqual, 1)
+
+		err = s.UpdateBasedOnEntry(&Entry{Path: "/b", Status: Uploaded}, getFileEntries)
+		So(err, ShouldBeNil)
+		So(calls, ShouldEqual, 1)
+	})
+}
+
 func TestUserMetadata(t *testing.T) {
 	Convey("Given a metadata map, you can get a string of user data", t, func() {
 		s := new(Set)
