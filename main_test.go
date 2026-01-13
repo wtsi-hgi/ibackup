@@ -107,6 +107,7 @@ func NewTestServer(t *testing.T) *TestServer {
 
 	s := new(TestServer)
 
+	s.prepareFilePaths(dir)
 	s.prepareConfig(t)
 	s.prepareFilePaths(dir)
 
@@ -124,6 +125,7 @@ func NewTestServerWithQueues(t *testing.T, queues, avoidQueues []string, shouldF
 
 	s.app = app + "_ps"
 
+	s.prepareFilePaths(dir)
 	s.prepareConfig(t)
 	s.prepareFilePaths(dir)
 
@@ -145,6 +147,7 @@ func NewUploadingTestServer(t *testing.T, withDBBackup bool) (*TestServer, strin
 
 	s := new(TestServer)
 
+	s.prepareFilePaths(dir)
 	s.prepareConfig(t)
 	s.prepareFilePaths(dir)
 
