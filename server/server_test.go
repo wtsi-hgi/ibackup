@@ -3965,6 +3965,125 @@ func TestServer(t *testing.T) {
 	})
 }
 
+func TestFailedUploadRetryDelayConfig(t *testing.T) {
+	Convey("Failed upload retry delay is configurable", t, func() {
+		handler := internal.GetLocalHandler()
+		logWriter := gas.NewStringLogger()
+
+		Convey("You can set a non-zero delay and it is applied and logged", func() {
+			d := 10 * time.Second
+			conf := Config{
+				HTTPLogger:             logWriter,
+				StorageHandler:         handler,
+				ReadOnly:               true,
+				FailedUploadRetryDelay: d,
+			}
+
+			s, err := New(conf)
+			So(err, ShouldBeNil)
+
+			r := &transfer.Request{
+				Local:     "/local",
+				Remote:    "/remote",
+				Requester: "req",
+				Set:       "set",
+				Status:    transfer.RequestStatusFailed,
+				Error:     "boom",
+			}
+			rid := r.ID()
+			_, _, err = s.queue.AddMany(context.Background(), []*queue.ItemDef{{Key: rid, Data: r, TTR: ttr}})
+			So(err, ShouldBeNil)
+			_, err = s.queue.Reserve("", 0)
+			So(err, ShouldBeNil)
+
+			err = s.removeOrReleaseRequestFromQueue(r, &set.Entry{Attempts: 1})
+			So(err, ShouldBeNil)
+
+			item, err := s.queue.Get(rid)
+			So(err, ShouldBeNil)
+			So(item.Stats().Delay, ShouldEqual, d)
+			So(s.queue.Stats().Ready, ShouldEqual, 0)
+
+			So(logWriter.String(), ShouldContainSubstring, "request retry")
+			So(logWriter.String(), ShouldContainSubstring, "rid="+rid)
+			So(logWriter.String(), ShouldContainSubstring, "delay=10s")
+		})
+
+		Convey("You can explicitly set a 0 delay and it is applied and logged", func() {
+			logWriter := gas.NewStringLogger()
+			conf := Config{
+				HTTPLogger:             logWriter,
+				StorageHandler:         handler,
+				ReadOnly:               true,
+				FailedUploadRetryDelay: 0,
+			}
+
+			s, err := New(conf)
+			So(err, ShouldBeNil)
+
+			r := &transfer.Request{
+				Local:     "/local2",
+				Remote:    "/remote2",
+				Requester: "req",
+				Set:       "set",
+				Status:    transfer.RequestStatusFailed,
+				Error:     "boom",
+			}
+			rid := r.ID()
+			_, _, err = s.queue.AddMany(context.Background(), []*queue.ItemDef{{Key: rid, Data: r, TTR: ttr}})
+			So(err, ShouldBeNil)
+			_, err = s.queue.Reserve("", 0)
+			So(err, ShouldBeNil)
+
+			err = s.removeOrReleaseRequestFromQueue(r, &set.Entry{Attempts: 1})
+			So(err, ShouldBeNil)
+
+			item, err := s.queue.Get(rid)
+			So(err, ShouldBeNil)
+			So(item.Stats().Delay, ShouldEqual, time.Duration(0))
+			So(s.queue.Stats().Ready, ShouldEqual, 1)
+
+			So(logWriter.String(), ShouldContainSubstring, "delay=0s")
+		})
+
+		Convey("If not configured, the default delay is 0", func() {
+			logWriter := gas.NewStringLogger()
+			conf := Config{
+				HTTPLogger:     logWriter,
+				StorageHandler: handler,
+				ReadOnly:       true,
+			}
+
+			s, err := New(conf)
+			So(err, ShouldBeNil)
+			So(s.failedUploadRetryDelay, ShouldEqual, time.Duration(0))
+
+			r := &transfer.Request{
+				Local:     "/local3",
+				Remote:    "/remote3",
+				Requester: "req",
+				Set:       "set",
+				Status:    transfer.RequestStatusFailed,
+				Error:     "boom",
+			}
+			rid := r.ID()
+			_, _, err = s.queue.AddMany(context.Background(), []*queue.ItemDef{{Key: rid, Data: r, TTR: ttr}})
+			So(err, ShouldBeNil)
+			_, err = s.queue.Reserve("", 0)
+			So(err, ShouldBeNil)
+
+			err = s.removeOrReleaseRequestFromQueue(r, &set.Entry{Attempts: 1})
+			So(err, ShouldBeNil)
+
+			item, err := s.queue.Get(rid)
+			So(err, ShouldBeNil)
+			So(item.Stats().Delay, ShouldEqual, time.Duration(0))
+			So(s.queue.Stats().Ready, ShouldEqual, 1)
+			So(logWriter.String(), ShouldContainSubstring, "delay=0s")
+		})
+	})
+}
+
 func TestServerHelperFunctions(t *testing.T) {
 	Convey("With a PTrie and a path", t, func() {
 		entryPath := "/path/to"

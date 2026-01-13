@@ -98,6 +98,12 @@ type Config struct {
 
 	// TrashLifespan is the duration that trash is kept.
 	TrashLifespan time.Duration
+
+	// FailedUploadRetryDelay is the delay applied to failed upload requests
+	// before they are retried.
+	//
+	// A value of 0 means retry immediately.
+	FailedUploadRetryDelay time.Duration
 }
 
 // Server is used to start a web server that provides a REST API to the setdb
@@ -123,6 +129,7 @@ type Server struct {
 	stillRunningMsgFreq    time.Duration
 	serverAliveCh          chan bool
 	uploadTracker          *uploadTracker
+	failedUploadRetryDelay time.Duration
 
 	readOnly       bool
 	storageHandler remove.Handler
@@ -148,22 +155,25 @@ func New(conf Config) (*Server, error) { //nolint:funlen
 		return nil, ErrNoLogger
 	}
 
+	retryDelayToUse := max(conf.FailedUploadRetryDelay, 0)
+
 	s := &Server{
-		Server:              *gas.New(conf.HTTPLogger),
-		numClients:          1,
-		dirPool:             workerpool.New(workerPoolSizeDir),
-		queue:               queue.New(context.Background(), "put"),
-		removeQueue:         queue.New(context.Background(), "remove"),
-		trashLifespan:       conf.TrashLifespan,
-		creatingCollections: make(map[string]bool),
-		slacker:             conf.Slacker,
-		stillRunningMsgFreq: conf.StillRunningMsgFreq,
-		uploadTracker:       newUploadTracker(conf.Slacker, conf.SlackMessageDebounce),
-		iRODSTracker:        newiRODSTracker(conf.Slacker, conf.SlackMessageDebounce),
-		clientQueue:         queue.New(context.Background(), "client"),
-		readOnly:            conf.ReadOnly,
-		storageHandler:      conf.StorageHandler,
-		requestLogged:       make(map[string]struct{}),
+		Server:                 *gas.New(conf.HTTPLogger),
+		numClients:             1,
+		dirPool:                workerpool.New(workerPoolSizeDir),
+		queue:                  queue.New(context.Background(), "put"),
+		removeQueue:            queue.New(context.Background(), "remove"),
+		trashLifespan:          conf.TrashLifespan,
+		creatingCollections:    make(map[string]bool),
+		slacker:                conf.Slacker,
+		stillRunningMsgFreq:    conf.StillRunningMsgFreq,
+		uploadTracker:          newUploadTracker(conf.Slacker, conf.SlackMessageDebounce),
+		failedUploadRetryDelay: retryDelayToUse,
+		iRODSTracker:           newiRODSTracker(conf.Slacker, conf.SlackMessageDebounce),
+		clientQueue:            queue.New(context.Background(), "client"),
+		readOnly:               conf.ReadOnly,
+		storageHandler:         conf.StorageHandler,
+		requestLogged:          make(map[string]struct{}),
 
 		discoveryCoordinator: newDiscoveryCoordinator(),
 	}

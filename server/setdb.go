@@ -145,8 +145,7 @@ const (
 	// reserveRequests returns.
 	maxRequestsToReserve = 100
 
-	logTraceIDLen = 8
-	allUsers      = "all"
+	allUsers = "all"
 )
 
 // LoadSetDB loads the given set.db or creates it if it doesn't exist.
@@ -1897,7 +1896,12 @@ func (s *Server) removeOrReleaseRequestFromQueue(r *transfer.Request, entry *set
 			return s.queue.Bury(r.ID())
 		}
 
-		s.Logger.Printf("request retry rid=%s attempt=%d err=%s", r.ID(), attempts, r.Error)
+		delay := s.failedUploadRetryDelay
+		if err := s.queue.SetDelay(r.ID(), delay); err != nil {
+			s.Logger.Printf("request retry delay set failed rid=%s delay=%s err=%s", r.ID(), delay, err)
+		}
+
+		s.Logger.Printf("request retry rid=%s attempt=%d delay=%s err=%s", r.ID(), attempts, delay, r.Error)
 
 		return s.queue.Release(context.Background(), r.ID())
 	}

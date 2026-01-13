@@ -56,6 +56,7 @@ const serverTokenBasename = ".ibackup.token"
 const numPutClients = 10
 const dbBackupParamPosition = 2
 const defaultDebounceSeconds = 600
+const defaultFailedUploadRetryDelay = 1 * time.Hour
 
 // options for this cmd.
 var serverLogPath string
@@ -70,6 +71,7 @@ var serverHardlinksCollection string
 var serverSlackDebouncePeriod int
 var serverStillRunningMsgFreq string
 var serverTrashLifespan string
+var serverFailedUploadRetryDelay string
 var statterPath string
 var queues string
 var queueAvoid string
@@ -209,6 +211,11 @@ These should be supplied as a comma separated list.
 			die(err)
 		}
 
+		failedUploadRetryDelay, err := parseDuration(serverFailedUploadRetryDelay, defaultFailedUploadRetryDelay)
+		if err != nil {
+			die(err)
+		}
+
 		if serverSlackDebouncePeriod < 0 {
 			dief("slack_debounce period must be positive, not: %d", serverSlackDebouncePeriod)
 		}
@@ -226,6 +233,7 @@ These should be supplied as a comma separated list.
 			ReadOnly:             readonly,
 			StorageHandler:       handler,
 			TrashLifespan:        trashLifespan,
+			FailedUploadRetryDelay: failedUploadRetryDelay,
 		}
 
 		s, err := server.New(conf)
@@ -356,6 +364,12 @@ func init() {
 	serverCmd.Flags().StringVar(&serverTrashLifespan, "trash_lifespan", "30d",
 		"the period of time trash will be kept before being permanently removed"+
 			" (eg. 1d for 1 day or 2w for 2 weeks), defaults to 30 days")
+	serverCmd.Flags().StringVar(
+		&serverFailedUploadRetryDelay,
+		"failed_upload_retry_delay",
+		defaultFailedUploadRetryDelay.String(),
+		"delay before retrying a failed upload (eg. 0, 10m, 1h); defaults to 1 hour",
+	)
 	serverCmd.Flags().StringVar(&statterPath, "statter", "",
 		"path to an external statter program (https://github.com/wtsi-hgi/statter)")
 	serverCmd.Flags().StringVar(&queues, "queues", "", "specify queues to submit job")
