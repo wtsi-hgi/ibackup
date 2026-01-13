@@ -93,14 +93,24 @@ func (s *Stuck) String() string {
 // mtime, upload date) you'd like to associate with it. Setting Requester and
 // Set will add these to the requesters and sets metadata on upload.
 type Request struct {
-	Local               string
-	Remote              string
-	LocalForJSON        []byte // set by MakeSafeForJSON(); do not set this yourself.
-	RemoteForJSON       []byte // set by MakeSafeForJSON(); do not set this yourself.
-	Requester           string
-	Set                 string
-	Meta                *Meta
-	Status              RequestStatus
+	Local         string
+	Remote        string
+	LocalForJSON  []byte // set by MakeSafeForJSON(); do not set this yourself.
+	RemoteForJSON []byte // set by MakeSafeForJSON(); do not set this yourself.
+	Requester     string
+	Set           string
+	Meta          *Meta
+	Status        RequestStatus
+	// ReplicaLogging is set by the server (and passed through to clients) to
+	// enable extra iRODS baton calls that determine replica counts before/after
+	// an upload.
+	ReplicaLogging bool
+	// ReplicaBeforeGood/Bad and ReplicaAfterGood/Bad are best-effort counts of
+	// replicas observed before and after the upload attempt.
+	ReplicaBeforeGood   *int
+	ReplicaBeforeBad    *int
+	ReplicaAfterGood    *int
+	ReplicaAfterBad     *int
 	Symlink             string // contains symlink path if request represents a symlink.
 	Hardlink            string // contains first seen path if request represents a hard-linked file.
 	Size                uint64 // size of Local in bytes, set for you on returned Requests.
@@ -235,18 +245,23 @@ func (r *Request) UploadedSize() uint64 {
 // affecting the original.
 func (r *Request) Clone() *Request {
 	clone := &Request{
-		Local:     r.Local,
-		Remote:    r.Remote,
-		Requester: r.Requester,
-		Set:       r.Set,
-		Meta:      r.Meta,
-		Status:    r.Status,
-		Symlink:   r.Symlink,
-		Hardlink:  r.Hardlink,
-		Size:      r.Size,
-		Error:     r.Error,
-		Stuck:     r.Stuck,
-		skipPut:   r.skipPut,
+		Local:             r.Local,
+		Remote:            r.Remote,
+		Requester:         r.Requester,
+		Set:               r.Set,
+		Meta:              r.Meta,
+		Status:            r.Status,
+		ReplicaLogging:    r.ReplicaLogging,
+		ReplicaBeforeGood: r.ReplicaBeforeGood,
+		ReplicaBeforeBad:  r.ReplicaBeforeBad,
+		ReplicaAfterGood:  r.ReplicaAfterGood,
+		ReplicaAfterBad:   r.ReplicaAfterBad,
+		Symlink:           r.Symlink,
+		Hardlink:          r.Hardlink,
+		Size:              r.Size,
+		Error:             r.Error,
+		Stuck:             r.Stuck,
+		skipPut:           r.skipPut,
 	}
 
 	clone.Meta = r.Meta.Clone()

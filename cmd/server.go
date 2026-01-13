@@ -72,6 +72,7 @@ var serverSlackDebouncePeriod int
 var serverStillRunningMsgFreq string
 var serverTrashLifespan string
 var serverFailedUploadRetryDelay string
+var serverReplicaLogging bool
 var statterPath string
 var queues string
 var queueAvoid string
@@ -226,14 +227,15 @@ These should be supplied as a comma separated list.
 		}
 
 		conf := server.Config{
-			HTTPLogger:           logWriter,
-			Slacker:              slacker,
-			SlackMessageDebounce: time.Duration(serverSlackDebouncePeriod) * time.Second,
-			StillRunningMsgFreq:  stillRunningMsgFreq,
-			ReadOnly:             readonly,
-			StorageHandler:       handler,
-			TrashLifespan:        trashLifespan,
+			HTTPLogger:             logWriter,
+			Slacker:                slacker,
+			SlackMessageDebounce:   time.Duration(serverSlackDebouncePeriod) * time.Second,
+			StillRunningMsgFreq:    stillRunningMsgFreq,
+			ReadOnly:               readonly,
+			StorageHandler:         handler,
+			TrashLifespan:          trashLifespan,
 			FailedUploadRetryDelay: failedUploadRetryDelay,
+			ReplicaLogging:         serverReplicaLogging,
 		}
 
 		s, err := server.New(conf)
@@ -369,6 +371,12 @@ func init() {
 		"failed_upload_retry_delay",
 		defaultFailedUploadRetryDelay.String(),
 		"delay before retrying a failed upload (eg. 0, 10m, 1h); defaults to 1 hour",
+	)
+	serverCmd.Flags().BoolVar(
+		&serverReplicaLogging,
+		"replica_logging",
+		false,
+		"enable extra baton calls (before/after uploads) to determine replica numbers for logging",
 	)
 	serverCmd.Flags().StringVar(&statterPath, "statter", "",
 		"path to an external statter program (https://github.com/wtsi-hgi/statter)")

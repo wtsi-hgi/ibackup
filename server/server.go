@@ -104,6 +104,11 @@ type Config struct {
 	//
 	// A value of 0 means retry immediately.
 	FailedUploadRetryDelay time.Duration
+
+	// ReplicaLogging enables extra baton calls on clients to determine replica
+	// numbers before/after uploads. This is passed through to clients via the
+	// upload requests they receive.
+	ReplicaLogging bool
 }
 
 // Server is used to start a web server that provides a REST API to the setdb
@@ -130,6 +135,7 @@ type Server struct {
 	serverAliveCh          chan bool
 	uploadTracker          *uploadTracker
 	failedUploadRetryDelay time.Duration
+	replicaLogging         bool
 
 	readOnly       bool
 	storageHandler remove.Handler
@@ -169,6 +175,7 @@ func New(conf Config) (*Server, error) { //nolint:funlen
 		stillRunningMsgFreq:    conf.StillRunningMsgFreq,
 		uploadTracker:          newUploadTracker(conf.Slacker, conf.SlackMessageDebounce),
 		failedUploadRetryDelay: retryDelayToUse,
+		replicaLogging:         conf.ReplicaLogging,
 		iRODSTracker:           newiRODSTracker(conf.Slacker, conf.SlackMessageDebounce),
 		clientQueue:            queue.New(context.Background(), "client"),
 		readOnly:               conf.ReadOnly,

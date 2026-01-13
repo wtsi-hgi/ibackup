@@ -38,9 +38,24 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/wtsi-hgi/ibackup/baton/meta"
 	"github.com/wtsi-hgi/ibackup/internal"
+	ex "github.com/wtsi-npg/extendo/v2"
 )
 
 var testStartTime time.Time //nolint:gochecknoglobals
+
+func countReplicates(reps []ex.Replicate) (int, int) {
+	good, bad := 0, 0
+
+	for _, r := range reps {
+		if r.Valid {
+			good++
+		} else {
+			bad++
+		}
+	}
+
+	return good, bad
+}
 
 func TestBaton(t *testing.T) {
 	testStartTime = time.Now()
@@ -82,6 +97,14 @@ func TestBaton(t *testing.T) {
 				So(exists, ShouldBeFalse)
 			})
 
+			Convey("You can get replica counts for a file not in iRODS", func() {
+				exists, good, bad, err := h.ReplicaCounts(file1remote)
+				So(err, ShouldBeNil)
+				So(exists, ShouldBeFalse)
+				So(good, ShouldEqual, 0)
+				So(bad, ShouldEqual, 0)
+			})
+
 			Convey("You can try to remove the file from iRODS and receive an error", func() {
 				err := h.RemoveFile(file1remote)
 				So(err, ShouldNotBeNil)
@@ -93,6 +116,27 @@ func TestBaton(t *testing.T) {
 				So(err, ShouldBeNil)
 
 				So(isObjectInIRODS(remotePath, "file1"), ShouldBeTrue)
+
+				Convey("And you can get its replica counts", func() {
+					exists, good, bad, errr := h.ReplicaCounts(file1remote)
+					So(errr, ShouldBeNil)
+					So(exists, ShouldBeTrue)
+
+					it, existsIt, errIt := h.listItemWithReplicates(file1remote)
+					So(errIt, ShouldBeNil)
+					So(existsIt, ShouldBeTrue)
+					So(len(it.IReplicates), ShouldBeGreaterThan, 0)
+
+					expectedGood, expectedBad := countReplicates(it.IReplicates)
+					So(good, ShouldEqual, expectedGood)
+					So(bad, ShouldEqual, expectedBad)
+
+					exists2, good2, bad2, errr2 := h.ReplicaCounts(file1remote)
+					So(errr2, ShouldBeNil)
+					So(exists2, ShouldBeTrue)
+					So(good2, ShouldEqual, good)
+					So(bad2, ShouldEqual, bad)
+				})
 
 				Convey("And putting a new file in the same location will overwrite existing object", func() {
 					file2local := filepath.Join(localPath, "file2")

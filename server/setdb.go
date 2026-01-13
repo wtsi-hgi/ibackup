@@ -28,6 +28,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"net/http"
 	"os"
@@ -1650,6 +1651,7 @@ func (s *Server) reserveRequest() (*transfer.Request, error) {
 	}
 
 	s.logRequestFirstReserved(r)
+	r.ReplicaLogging = s.replicaLogging
 
 	return r, nil
 }
@@ -1869,7 +1871,7 @@ func (s *Server) handleNewlyCompletedSets(r *transfer.Request) error {
 func (s *Server) trackUploadingAndStuckRequests(r *transfer.Request, entry *set.Entry) error {
 	if r.Status == transfer.RequestStatusUploading {
 		s.uploadTracker.uploadStarting(r)
-		s.Logger.Printf("request uploading rid=%s", r.ID())
+		s.Logger.Printf("request uploading rid=%s%s", r.ID(), s.replicaLogSuffix(r))
 
 		return nil
 	}
@@ -1883,6 +1885,8 @@ func (s *Server) trackUploadingAndStuckRequests(r *transfer.Request, entry *set.
 // unless it has failed. < 3 failures results in it being released, 3 results in
 // it being buried.
 func (s *Server) removeOrReleaseRequestFromQueue(r *transfer.Request, entry *set.Entry) error {
+	rSuffix := s.replicaLogSuffix(r)
+
 	if r.Status == transfer.RequestStatusFailed {
 		s.updateQueueItemData(r)
 
@@ -1892,7 +1896,7 @@ func (s *Server) removeOrReleaseRequestFromQueue(r *transfer.Request, entry *set
 		}
 
 		if entry.Attempts%set.AttemptsToBeConsideredFailing == 0 {
-			s.Logger.Printf("request buried rid=%s attempts=%d err=%s", r.ID(), attempts, r.Error)
+			s.Logger.Printf("request buried rid=%s attempts=%d err=%s%s", r.ID(), attempts, r.Error, rSuffix)
 			return s.queue.Bury(r.ID())
 		}
 
@@ -1901,14 +1905,37 @@ func (s *Server) removeOrReleaseRequestFromQueue(r *transfer.Request, entry *set
 			s.Logger.Printf("request retry delay set failed rid=%s delay=%s err=%s", r.ID(), delay, err)
 		}
 
-		s.Logger.Printf("request retry rid=%s attempt=%d delay=%s err=%s", r.ID(), attempts, delay, r.Error)
+		s.Logger.Printf("request retry rid=%s attempt=%d delay=%s err=%s%s", r.ID(), attempts, delay, r.Error, rSuffix)
 
 		return s.queue.Release(context.Background(), r.ID())
 	}
 
-	s.Logger.Printf("request done rid=%s status=%s", r.ID(), r.Status)
+	s.Logger.Printf("request done rid=%s status=%s%s", r.ID(), r.Status, rSuffix)
 
 	return s.queue.Remove(context.Background(), r.ID())
+}
+
+func (s *Server) replicaLogSuffix(r *transfer.Request) string {
+	if r == nil || !r.ReplicaLogging {
+		return ""
+	}
+
+	var b strings.Builder
+
+	appendIntSuffix(&b, "replicas_before_good", r.ReplicaBeforeGood)
+	appendIntSuffix(&b, "replicas_before_bad", r.ReplicaBeforeBad)
+	appendIntSuffix(&b, "replicas_after_good", r.ReplicaAfterGood)
+	appendIntSuffix(&b, "replicas_after_bad", r.ReplicaAfterBad)
+
+	return b.String()
+}
+
+func appendIntSuffix(b *strings.Builder, key string, v *int) {
+	if v == nil {
+		return
+	}
+
+	_, _ = fmt.Fprintf(b, " %s=%d", key, *v)
 }
 
 // updateQueueItemData updates the item in our queue corresponding to the

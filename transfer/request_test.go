@@ -236,11 +236,21 @@ func TestRequest(t *testing.T) {
 		})
 
 		Convey("Cloning a request creates an exact copy with cloned maps", func() {
+			replicaBeforeGood := 1
+			replicaBeforeBad := 0
+			replicaAfterGood := 2
+			replicaAfterBad := 0
+
 			r := &Request{
-				Local:     "/some/path",
-				Remote:    "/some/remote/path",
-				Requester: "someRequester",
-				Set:       "testSet",
+				Local:             "/some/path",
+				Remote:            "/some/remote/path",
+				Requester:         "someRequester",
+				Set:               "testSet",
+				ReplicaLogging:    true,
+				ReplicaBeforeGood: &replicaBeforeGood,
+				ReplicaBeforeBad:  &replicaBeforeBad,
+				ReplicaAfterGood:  &replicaAfterGood,
+				ReplicaAfterBad:   &replicaAfterBad,
 				Meta: &Meta{
 					LocalMeta: map[string]string{
 						"metaKey": "metaValue",
