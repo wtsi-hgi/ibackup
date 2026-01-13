@@ -76,6 +76,7 @@ no backup sets`
 var errTwoBackupsNotSeen = errors.New("2 backups were not seen")
 
 type TestServer struct {
+	app                  string
 	key                  string
 	cert                 string
 	ldapServer           string
@@ -120,6 +121,8 @@ func NewTestServerWithQueues(t *testing.T, queues, avoidQueues []string, shouldF
 	dir := t.TempDir()
 
 	s := new(TestServer)
+
+	s.app = app + "_ps"
 
 	s.prepareConfig(t)
 	s.prepareFilePaths(dir)
@@ -206,6 +209,10 @@ func (s *TestServer) impersonateUser(t *testing.T, username string) []string {
 }
 
 func (s *TestServer) prepareFilePaths(dir string) {
+	if s.app == "" {
+		s.app = app
+	}
+
 	s.dir = dir
 	s.dbFile = filepath.Join(s.dir, "db")
 	s.logFile = filepath.Join(s.dir, "log")
@@ -345,7 +352,7 @@ func (s *TestServer) startServer() {
 	}
 
 	s.stopped = false
-	s.cmd = exec.Command("./"+app, args...)
+	s.cmd = exec.Command("./"+s.app, args...)
 	s.cmd.Env = s.env
 	s.cmd.Stdout = os.Stdout
 	s.cmd.Stderr = os.Stderr
@@ -647,18 +654,26 @@ func TestMain(m *testing.M) {
 }
 
 func buildSelf() func() {
-	if err := exec.Command( //nolint:noctx
-		"go", "build",
-		"-ldflags=-X github.com/VertebrateResequencing/wr/client.PretendSubmissions=3 "+
-			"-X github.com/wtsi-ssg/wrstat/v6/cmd.Version=TESTVERSION",
-		"-o", "ibackup",
-	).Run(); err != nil {
+	if err := exec.Command("make", "build").Run(); err != nil {
 		failMainTest(err.Error())
 
 		return nil
 	}
 
 	return func() { os.Remove(app) }
+}
+
+func buildSelfWithPS(t *testing.T) {
+	t.Helper()
+
+	So(exec.Command( //nolint:noctx
+		"go", "build",
+		"-ldflags=-X github.com/VertebrateResequencing/wr/client.PretendSubmissions=3 "+
+			"-X github.com/wtsi-ssg/wrstat/v6/cmd.Version=TESTVERSION",
+		"-o", "ibackup_ps",
+	).Run(), ShouldBeNil)
+
+	Reset(func() { os.Remove(app + "_ps") })
 }
 
 func resetIRODS() {
@@ -984,6 +999,8 @@ func TestList(t *testing.T) {
 
 func TestQueueFlags(t *testing.T) {
 	Convey("You can specify queues to use and avoid", t, func() {
+		buildSelfWithPS(t)
+
 		tmp := t.TempDir()
 
 		err := os.WriteFile(filepath.Join(tmp, "bqueues"), []byte("#!/bin/bash\n"+ //nolint:gosec
@@ -3979,8 +3996,10 @@ func TestEdit(t *testing.T) {
 				})
 
 				Convey("You cannot use both --monitor-removals and --stop-monitor-removals together", func() {
-					s.confirmOutputContains(t, []string{"edit", "--name", setName, "--monitor-removals", "1h",
-						"--stop-monitor-removals"}, 1,
+					s.confirmOutputContains(t, []string{
+						"edit", "--name", setName, "--monitor-removals", "1h",
+						"--stop-monitor-removals",
+					}, 1,
 						cmd.ErrInvalidEditMonitorRemovals.Error())
 				})
 			})
