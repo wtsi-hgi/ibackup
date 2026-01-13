@@ -648,10 +648,6 @@ func (s *Set) resetTypeCounts() {
 // entry as newFail if any entry in entries is Failed.
 func (s *Set) updateAllCounts(entries []*Entry, entry *Entry) {
 	for _, e := range entries {
-		if e.Path == entry.Path {
-			e = entry
-		}
-
 		if e.Status == Failed {
 			e.newFail = true
 		}

@@ -1308,7 +1308,7 @@ func (d *DB) SetEntryStatus(r *transfer.Request) (*Entry, error) {
 			return nil
 		}
 
-		erru := d.updateSetBasedOnEntry(got, entry)
+		erru := d.updateSetBasedOnEntry(tx, got, entry)
 		if erru != nil {
 			return erru
 		}
@@ -1513,8 +1513,15 @@ func (d *DB) addFailedLookup(tx *bolt.Tx, setID, path string, entry *Entry) erro
 // updateSetBasedOnEntry updates set status values based on an updated Entry
 // from updateFileEntry(), assuming that request is for one of set's file
 // entries.
-func (d *DB) updateSetBasedOnEntry(set *Set, entry *Entry) error {
-	return set.UpdateBasedOnEntry(entry, d.GetFileEntries)
+//
+// Uses the supplied bolt Tx to ensure recounts (fixCounts) see a consistent
+// snapshot that includes the updated entry.
+func (d *DB) updateSetBasedOnEntry(tx *bolt.Tx, set *Set, entry *Entry) error {
+	getFileEntries := func(setID string, filter EntryFilter) ([]*Entry, error) {
+		return d.getFileEntriesWithTx(tx, setID, filter), nil
+	}
+
+	return set.UpdateBasedOnEntry(entry, getFileEntries)
 }
 
 // SetFilter is a function used to filter the sets retrieved from the database.
@@ -1664,17 +1671,30 @@ func FileEntryFilterLastState(e *Entry) bool {
 // GetFileEntries returns all the file entries for the given set (both
 // SetFileEntries and SetDiscoveredEntries).
 func (d *DBRO) GetFileEntries(setID string, filter EntryFilter) ([]*Entry, error) {
-	entries, err := d.getEntries(setID, fileBucket, filter)
-	if err != nil {
-		return nil, err
+	var entries []*Entry
+
+	err := d.db.View(func(tx *bolt.Tx) error {
+		entries = d.getFileEntriesWithTx(tx, setID, filter)
+		return nil
+	})
+
+	return entries, err
+}
+
+func (d *DBRO) getFileEntriesWithTx(tx *bolt.Tx, setID string, filter EntryFilter) []*Entry {
+	entries := make([]*Entry, 0)
+
+	cb := func(v []byte) {
+		decoded := d.decodeEntry(v)
+		if filter == nil || filter(decoded) {
+			entries = append(entries, decoded)
+		}
 	}
 
-	entries2, err := d.getEntries(setID, discoveredBucket, filter)
-	if err != nil {
-		return nil, err
-	}
+	getEntriesViewFunc(tx, setID, fileBucket, cb)
+	getEntriesViewFunc(tx, setID, discoveredBucket, cb)
 
-	return append(entries, entries2...), nil
+	return entries
 }
 
 // GetFileEntryForSet returns the file entry for the given path in the given

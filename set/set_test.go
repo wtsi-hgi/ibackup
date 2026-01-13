@@ -2250,6 +2250,61 @@ func TestFixCountsHealsNumFiles(t *testing.T) {
 	})
 }
 
+func TestSetEntryStatusRecountSeesUpdatedEntry(t *testing.T) {
+	Convey("SetEntryStatus recount should see entry updates made in the same transaction", t, func() {
+		tDir := t.TempDir()
+		dbPath := filepath.Join(tDir, "set.db")
+
+		db, err := New(dbPath, "", false)
+		So(err, ShouldBeNil)
+		So(db, ShouldNotBeNil)
+		defer func() { So(db.Close(), ShouldBeNil) }()
+
+		set := &Set{Name: "set1", Requester: "jim", Transformer: "prefix=/local:/remote"}
+		err = db.AddOrUpdate(set)
+		So(err, ShouldBeNil)
+
+		err = db.MergeFileEntries(set.ID(), []string{"/a/b.txt"})
+		So(err, ShouldBeNil)
+
+		// Force a recount path during SetEntryStatus: NumFiles=0 makes
+		// Uploaded++ temporarily invalid and triggers fixCounts().
+		err = db.db.Update(func(tx *bolt.Tx) error {
+			got, bid, b, errt := db.getSetByID(tx, set.ID())
+			So(errt, ShouldBeNil)
+			got.NumFiles = 0
+			got.Uploaded = 0
+			got.Replaced = 0
+			got.Skipped = 0
+			got.Failed = 0
+			got.Missing = 0
+			got.Orphaned = 0
+			got.Abnormal = 0
+
+			return b.Put(bid, db.encodeToBytes(got))
+		})
+		So(err, ShouldBeNil)
+
+		r := &transfer.Request{
+			Local:     "/a/b.txt",
+			Requester: set.Requester,
+			Set:       set.Name,
+			Size:      1,
+			Status:    transfer.RequestStatusUploaded,
+			Error:     "",
+		}
+
+		_, err = db.SetEntryStatus(r)
+		So(err, ShouldBeNil)
+
+		sets, err := db.GetByRequester(set.Requester)
+		So(err, ShouldBeNil)
+		So(len(sets), ShouldEqual, 1)
+		So(sets[0].NumFiles, ShouldEqual, 1)
+		So(sets[0].Uploaded, ShouldEqual, 1)
+	})
+}
+
 func TestUserMetadata(t *testing.T) {
 	Convey("Given a metadata map, you can get a string of user data", t, func() {
 		s := new(Set)
