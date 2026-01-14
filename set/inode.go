@@ -28,7 +28,7 @@ package set
 
 import (
 	"errors"
-	"io"
+	"io/fs"
 	"os"
 	"slices"
 	"sort"
@@ -39,7 +39,7 @@ import (
 	"github.com/moby/sys/mountinfo"
 	"github.com/ugorji/go/codec"
 	"github.com/wtsi-hgi/ibackup/errs"
-	statter "github.com/wtsi-hgi/statter/client"
+	"github.com/wtsi-hgi/ibackup/statter"
 	bolt "go.etcd.io/bbolt"
 )
 
@@ -368,54 +368,23 @@ func (d *DB) impFileIsValid(file string, inode uint64) bool {
 		return false
 	}
 
-	ino, err := d.stat(path)
+	fi, err := d.stat(path)
 	if err != nil {
 		return false
 	}
 
-	return ino == inode
+	return fi.Sys().(*syscall.Stat_t).Ino == inode //nolint:errcheck,forcetypeassert
 }
 
-func (d *DB) stat(path string) (uint64, error) {
-	if d.statterPath != "" {
-		inode, err := d.tryStatter(path)
-		if inode != 0 || err != nil {
-			return inode, err
-		}
-	}
-
-	return lstat(path)
-}
-
-func (d *DB) tryStatter(path string) (uint64, error) {
+func (d *DB) stat(path string) (fs.FileInfo, error) {
 	for range 3 {
-		ino, err := d.statterFunc(path)
-		if !errors.Is(err, io.EOF) {
+		ino, err := statter.Stat(path)
+		if !errors.Is(err, os.ErrDeadlineExceeded) {
 			return ino, err
 		}
-
-		d.statterFunc, err = statter.CreateStatter(d.statterPath)
-		if err != nil {
-			d.statterFunc = noStat
-
-			break
-		}
 	}
 
-	return 0, nil
-}
-
-func noStat(_ string) (uint64, error) {
-	return 0, io.EOF
-}
-
-func lstat(path string) (uint64, error) {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return 0, err
-	}
-
-	return info.Sys().(*syscall.Stat_t).Ino, nil //nolint:forcetypeassert,errcheck
+	return nil, os.ErrDeadlineExceeded
 }
 
 // HardlinkPaths returns all known hardlink paths that share the same mountpoint

@@ -394,7 +394,7 @@ func (s *TestServer) waitForServer() {
 
 	status := retry.Do(ctx, func() error {
 		clientCmd := exec.Command("./"+app, cmd...)
-		clientCmd.Env = []string{"XDG_STATE_HOME=" + s.dir}
+		clientCmd.Env = []string{"XDG_STATE_HOME=" + s.dir, "PATH=" + os.Getenv("PATH")}
 
 		return clientCmd.Run()
 	}, &retry.UntilNoError{}, btime.SecondsRangeBackoff(), "waiting for server to start")
@@ -641,6 +641,20 @@ func TestMain(m *testing.M) {
 	}
 
 	defer d1()
+
+	tmp, _ := os.MkdirTemp("", "") //nolint:errcheck
+
+	if err := internal.BuildStatter(tmp); err != nil {
+		exitCode = 1
+
+		failMainTest(err.Error())
+
+		return
+	}
+
+	defer os.RemoveAll(tmp)
+
+	os.Setenv("PATH", tmp+":"+os.Getenv("PATH"))
 
 	exitCode = m.Run()
 
@@ -1040,11 +1054,11 @@ HEREDOC`), 0700)
 		So(q[0].Requirements.Other["scheduler_queues_avoid"], ShouldEqual, "gpu-basement,parallel")
 
 		q, s := testQueue(t, []string{"failtestpls"}, nil, true)
-		So(q, ShouldEqual, nil)
+		So(q, ShouldEqual, []*jobqueue.Job(nil))
 		So(checkErrorInLog(t, s.logFile, "failed to validate queues: queue 'failtestpls' is not a valid queue"), ShouldBeTrue)
 
 		q, s = testQueue(t, []string{"normal"}, []string{"normal", "long"}, true)
-		So(q, ShouldEqual, nil)
+		So(q, ShouldEqual, []*jobqueue.Job(nil))
 		So(checkErrorInLog(t, s.logFile, "failed to validate queues: queue 'normal' is in avoid queues list"), ShouldBeTrue)
 
 		q, s = testQueue(t, []string{"normal"}, []string{"testtypo", "long"}, true)

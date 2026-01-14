@@ -28,7 +28,7 @@ import (
 	"io/fs"
 	"path/filepath"
 
-	"github.com/wtsi-ssg/wrstat/v6/walk"
+	"github.com/wtsi-hgi/ibackup/statter"
 )
 
 // Dirent represents and entry produced from a walk of a specified directory.
@@ -39,12 +39,10 @@ type Dirent struct {
 }
 
 // DirEntFromWalk converts a walk.Dirent to an easier to use local Dirent type.
-func DirEntFromWalk(de *walk.Dirent) *Dirent {
-	return &Dirent{
-		Path:  filepath.Clean(string(de.Bytes())),
-		Mode:  de.Type(),
-		Inode: de.Inode,
-	}
+func DirEntFromWalk(de *statter.DirEnt) *Dirent {
+	de.Path = filepath.Clean(de.Path)
+
+	return (*Dirent)(de)
 }
 
 // IsRegular returns true if the entry refers to a regular file.

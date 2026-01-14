@@ -42,8 +42,8 @@ import (
 	"github.com/VertebrateResequencing/wr/queue"
 	"github.com/gammazero/workerpool"
 	"github.com/ugorji/go/codec"
+	"github.com/wtsi-hgi/ibackup/statter"
 	"github.com/wtsi-hgi/ibackup/transfer"
-	statter "github.com/wtsi-hgi/statter/client"
 	bolt "go.etcd.io/bbolt"
 	boltErrors "go.etcd.io/bbolt/errors"
 )
@@ -191,8 +191,6 @@ type DB struct {
 	minTimeBetweenBackups time.Duration
 	remoteBackupPath      string
 	remoteBackupHandler   transfer.Handler
-	statterPath           string
-	statterFunc           statter.Statter
 
 	rebackup atomic.Bool
 }
@@ -218,8 +216,7 @@ func New(path, backupPath string, readonly bool) (*DB, error) {
 		backupPath:            backupPath,
 		minTimeBetweenBackups: 1 * time.Second,
 
-		filePool:    workerpool.New(workerPoolSizeFiles),
-		statterFunc: lstat,
+		filePool: workerpool.New(workerPoolSizeFiles),
 	}
 
 	err = db.getMountPoints()
@@ -228,16 +225,6 @@ func New(path, backupPath string, readonly bool) (*DB, error) {
 	}
 
 	return db, nil
-}
-
-// SetStatter sets the path of an external statter which will be used when
-// checking the inodes of entries store in the inodes bucket.
-func (d *DB) SetStatter(statterPath string) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	d.statterPath = statterPath
-	d.statterFunc = noStat
 }
 
 func initDB(path string, readonly bool) (*bolt.DB, error) {
@@ -1055,7 +1042,7 @@ func newDirentFromPath(path string) *Dirent {
 		Mode: os.ModeIrregular,
 	}
 
-	info, err := os.Lstat(path)
+	info, err := statter.Stat(path)
 	if err != nil {
 		return dirent
 	}

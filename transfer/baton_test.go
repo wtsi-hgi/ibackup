@@ -61,6 +61,8 @@ func TestPutBaton(t *testing.T) {
 	}
 
 	Convey("Given Requests and a baton Handler, you can make a new Putter", t, func() {
+		internal.InitStatter(t)
+
 		requests, expectedCollections := makeRequests(t, rootCollection)
 
 		p, err := New(h, requests)

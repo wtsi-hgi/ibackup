@@ -30,10 +30,13 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
 
+	. "github.com/smartystreets/goconvey/convey" //nolint:revive,staticcheck
+	"github.com/wtsi-hgi/ibackup/statter"
 	"github.com/wtsi-ssg/wr/backoff"
 	btime "github.com/wtsi-ssg/wr/backoff/time"
 	"github.com/wtsi-ssg/wr/retry"
@@ -45,6 +48,35 @@ const (
 )
 
 var ErrFileUnchanged = errors.New("file did not change")
+
+// InitStatter initialises the external walker and statter program, building it
+// from source if not specified by the IBACKUP_TEST_STATTER env var and it
+// cannot be found in the PATH.
+func InitStatter(t *testing.T) {
+	t.Helper()
+
+	statterExe := os.Getenv("IBACKUP_TEST_STATTER")
+	if statterExe == "" {
+		tmp := t.TempDir()
+
+		So(BuildStatter(tmp), ShouldBeNil)
+
+		statterExe = filepath.Join(tmp, "statter")
+
+		t.Setenv("PATH", tmp+":"+os.Getenv("PATH"))
+	}
+
+	So(statter.Init(statterExe), ShouldBeNil)
+}
+
+// BuildStatter builds an external statter and walk program from source.
+func BuildStatter(path string) error {
+	cmd := exec.Command("go", "install", "github.com/wtsi-hgi/statter@latest") //nolint:noctx
+
+	cmd.Env = append(os.Environ(), "GOBIN="+path)
+
+	return cmd.Run()
+}
 
 // WaitForFile waits for up to 5 seconds for the given path to exist, and
 // returns false if it doesn't.

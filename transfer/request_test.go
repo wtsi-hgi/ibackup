@@ -274,7 +274,7 @@ func TestRequest(t *testing.T) {
 			}
 
 			clone := r.Clone()
-			So(r, ShouldNotEqual, clone)
+			So(r == clone, ShouldBeFalse)
 			So(*r, ShouldResemble, *clone)
 
 			r.Requester = "someOtherRequester"

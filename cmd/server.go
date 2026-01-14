@@ -47,6 +47,7 @@ import (
 	"github.com/wtsi-hgi/ibackup/server"
 	"github.com/wtsi-hgi/ibackup/set"
 	"github.com/wtsi-hgi/ibackup/slack"
+	"github.com/wtsi-hgi/ibackup/statter"
 	"github.com/wtsi-npg/logshim"
 	"github.com/wtsi-npg/logshim-zerolog/zlog"
 )
@@ -283,7 +284,11 @@ These should be supplied as a comma separated list.
 			s.SetRemoteHardlinkLocation(serverHardlinksCollection)
 		}
 
-		err = s.LoadSetDB(args[0], dbBackupPath, statterPath)
+		if errr := statter.Init(statterPath); errr != nil {
+			dief("failed to initialise statter: %s", errr)
+		}
+
+		err = s.LoadSetDB(args[0], dbBackupPath)
 		if err != nil {
 			dief("failed to load database: %s", err)
 		}
