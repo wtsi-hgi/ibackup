@@ -1,6 +1,6 @@
 module github.com/wtsi-hgi/ibackup
 
-go 1.25.3
+go 1.25.5
 
 require (
 	github.com/VertebrateResequencing/wr v0.36.2
@@ -18,13 +18,13 @@ require (
 	github.com/rs/zerolog v1.34.0
 	github.com/shirou/gopsutil v3.21.11+incompatible
 	github.com/slack-go/slack v0.17.0
-	github.com/smartystreets/goconvey v1.7.2
+	github.com/smartystreets/goconvey v1.8.1
 	github.com/spf13/cobra v1.9.1
 	github.com/ugorji/go/codec v1.2.14
 	github.com/viant/ptrie v1.0.1
 	github.com/wtsi-hgi/go-authserver v1.5.1
 	github.com/wtsi-hgi/grand v1.0.0
-	github.com/wtsi-hgi/statter v1.0.1-0.20260112104733-15732637a183
+	github.com/wtsi-hgi/statter v1.1.0
 	github.com/wtsi-npg/extendo/v2 v2.7.1-0.20250509131519-b95b89bd744d
 	github.com/wtsi-npg/logshim v1.5.0
 	github.com/wtsi-npg/logshim-zerolog v1.5.0
@@ -141,13 +141,14 @@ require (
 	github.com/rs/xid v1.6.0 // indirect
 	github.com/sb10/l15h v0.0.0-20170510122137-64c488bf8e22 // indirect
 	github.com/sb10/waitgroup v0.0.0-20200305124406-7ed665007efa // indirect
-	github.com/smartystreets/assertions v1.13.0 // indirect
+	github.com/smarty/assertions v1.15.0 // indirect
 	github.com/spf13/pflag v1.0.6 // indirect
 	github.com/thanhpk/randstr v1.0.6 // indirect
 	github.com/tinylib/msgp v1.3.0 // indirect
 	github.com/tklauser/go-sysconf v0.3.15 // indirect
 	github.com/tklauser/numcpus v0.10.0 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
+	github.com/wtsi-hgi/walk v1.0.1 // indirect
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	go.opentelemetry.io/auto/sdk v1.1.0 // indirect
