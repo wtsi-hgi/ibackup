@@ -61,6 +61,8 @@ func TestPutBaton(t *testing.T) {
 		return
 	}
 
+	rootCollection = filepath.Join(rootCollection, "transfer_test_"+strconv.FormatInt(time.Now().UnixNano(), 10))
+
 	Convey("Given Requests and a baton Handler, you can make a new Putter", t, func() {
 		internal.InitStatter(t)
 

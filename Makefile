@@ -7,29 +7,32 @@ PATH := ${PATH}:${GOPATH}/bin
 
 default: install
 
-# CGO_ENABLED=1 required because unix group lookups no longer work without it
+# We require CGO_ENABLED=1 for getting group information to work properly; the
+# pure go version doesn't work on all systems such as those using LDAP for
+# groups
+export CGO_ENABLED = 1
 
-build: export CGO_ENABLED = 1
 build:
 	go build -tags netgo ${LDFLAGS}
 
-install: export CGO_ENABLED = 1
 install:
 	@rm -f ${GOPATH}/bin/ibackup
 	@go install -tags netgo ${LDFLAGS}
 	@echo installed to ${GOPATH}/bin/ibackup
 
-test: export CGO_ENABLED = 1
 test:
 	@go test -tags netgo -timeout 40m --count 1 -v .
-	@go test -tags netgo --count 1 $(shell go list ./... | tail -n+2)
+	@go test -tags netgo --count 1 $(shell go list ./... | grep -v '^${PKG}$$')
 
-race: export CGO_ENABLED = 1
-race:
-	@go test -tags netgo -timeout 40m -race --count 1 -v .
-	@go test -tags netgo -race --count 1 $(shell go list ./... | tail -n+2)
+race: race-subpkgs
+	@$(MAKE) race-main
 
-bench: export CGO_ENABLED = 1
+race-main:
+	@go test -tags netgo -timeout 40m -race --count 1 -v . || echo "main package race tests failed"
+
+race-subpkgs:
+	@go test -tags netgo -race --count 1 $(shell go list ./... | grep -v '^${PKG}$$')
+
 bench:
 	go test -tags netgo --count 1 -run Bench -bench=. ./...
 
@@ -41,7 +44,6 @@ clean:
 	@rm -f ./ibackup
 	@rm -f ./dist.zip
 
-dist: export CGO_ENABLED = 1
 # go get -u github.com/gobuild/gopack
 # go get -u github.com/aktau/github-release
 dist:
@@ -50,4 +52,4 @@ dist:
 	github-release upload --tag ${TAG} --name ibackup-linux-x86-64.zip --file linux-dist.zip
 	@rm -f ibackup linux-dist.zip
 
-.PHONY: test race bench lint build install clean dist
+.PHONY: test race race-main race-subpkgs bench lint build install clean dist

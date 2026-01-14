@@ -75,6 +75,8 @@ func TestBaton(t *testing.T) {
 		return
 	}
 
+	remotePath = filepath.Join(remotePath, "baton_test_"+strconv.FormatInt(time.Now().UnixNano(), 10))
+
 	resetIRODS(remotePath)
 
 	localPath := t.TempDir()
