@@ -1054,11 +1054,11 @@ HEREDOC`), 0700)
 		So(q[0].Requirements.Other["scheduler_queues_avoid"], ShouldEqual, "gpu-basement,parallel")
 
 		q, s := testQueue(t, []string{"failtestpls"}, nil, true)
-		So(q, ShouldEqual, nil)
+		So(q, ShouldEqual, []*jobqueue.Job(nil))
 		So(checkErrorInLog(t, s.logFile, "failed to validate queues: queue 'failtestpls' is not a valid queue"), ShouldBeTrue)
 
 		q, s = testQueue(t, []string{"normal"}, []string{"normal", "long"}, true)
-		So(q, ShouldEqual, nil)
+		So(q, ShouldEqual, []*jobqueue.Job(nil))
 		So(checkErrorInLog(t, s.logFile, "failed to validate queues: queue 'normal' is in avoid queues list"), ShouldBeTrue)
 
 		q, s = testQueue(t, []string{"normal"}, []string{"testtypo", "long"}, true)
