@@ -621,7 +621,7 @@ func (s *Set) fixCounts(entry *Entry, getFileEntries func(string, EntryFilter) (
 	s.NumFiles = uint64(len(entries))
 
 	s.resetCounts()
-	s.updateAllCounts(entries, entry)
+	s.updateAllCounts(entries)
 
 	return nil
 }
@@ -647,9 +647,12 @@ func (s *Set) resetTypeCounts() {
 }
 
 // updateAllCounts should be called after setting all counts to 0 (because they
-// had become invalid), and then recalculates the counts. Also marks the given
-// entry as newFail if any entry in entries is Failed.
-func (s *Set) updateAllCounts(entries []*Entry, entry *Entry) {
+// had become invalid), and then recalculates the counts.
+//
+// During a recount, we want to count all entries currently in Failed status.
+// Normally we only increment Set.Failed when an entry first transitions to
+// Failed (via Entry.newFail). So here we force Failed entries to be countable.
+func (s *Set) updateAllCounts(entries []*Entry) {
 	for _, e := range entries {
 		if e.Status == Failed {
 			e.newFail = true
