@@ -49,6 +49,9 @@ const (
 
 var ErrFileUnchanged = errors.New("file did not change")
 
+// InitStatter initialises the external walker and statter program, building it
+// from source if not specified by the IBACKUP_TEST_STATTER env var and it
+// cannot be found in the PATH.
 func InitStatter(t *testing.T) {
 	t.Helper()
 
@@ -66,6 +69,7 @@ func InitStatter(t *testing.T) {
 	So(statter.Init(statterExe), ShouldBeNil)
 }
 
+// BuildStatter builds an external statter and walk program from source.
 func BuildStatter(path string) error {
 	cmd := exec.Command("go", "install", "github.com/wtsi-hgi/statter@latest") //nolint:noctx
 

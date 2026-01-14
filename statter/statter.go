@@ -48,6 +48,13 @@ var (
 	statter client.Statter //nolint:gochecknoglobals
 )
 
+// Init sets the location of an external stat program (see:
+// https://github.com/wtsi-hgi/statter).
+//
+// If a location is not specified, either via the passed exe param, or the
+// IBACKUP_STATTER env var, Init will look for an executable named statter
+// adjacent to the ibackup executable, or look in the PATH for a statter
+// executable.
 func Init(exe string) error {
 	mu.Lock()
 	defer mu.Unlock()
@@ -65,17 +72,19 @@ func Init(exe string) error {
 
 func determineStatterEXE() (string, error) {
 	statter := os.Getenv("IBACKUP_STATTER")
-	if statter == "" { //nolint:nestif
-		exe, err := os.Executable()
-		if err != nil {
-			return "", err
-		}
+	if statter != "" {
+		return statter, nil
+	}
 
-		statter = filepath.Join(filepath.Dir(exe), "statter")
+	exe, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
 
-		if fi, err := os.Stat(statter); err != nil || fi.IsDir() || isExecutable(fi) {
-			return exec.LookPath("statter")
-		}
+	statter = filepath.Join(filepath.Dir(exe), "statter")
+
+	if fi, err := os.Stat(statter); err != nil || fi.IsDir() || !isExecutable(fi) {
+		return exec.LookPath("statter")
 	}
 
 	return statter, nil
@@ -105,6 +114,7 @@ func isExecutable(fi fs.FileInfo) bool {
 	return fi.Mode()&001 > 0
 }
 
+// Stat performs a normal os.Lstat call, using an external stat program.
 func Stat(path string) (fs.FileInfo, error) {
 	mu.Lock()
 	defer mu.Unlock()
@@ -131,6 +141,15 @@ type DirEnt = client.Dirent
 type PathCallback = client.PathCallback
 type ErrCallback = client.ErrCallback
 
+// Walk performs a directory walk for the given path.
+//
+// For each path entry, the PathCallback will be called with the directory entry
+// details.
+//
+// For each non-fatal error, such as permission issues, the ErrCallback will be
+// called with the failing path and the error.
+//
+// Fatal erors are returned in the normal manner.
 func Walk(path string, cb PathCallback, errCB ErrCallback) error {
 	return client.WalkPath(statterExe, path, cb, errCB)
 }
