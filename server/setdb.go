@@ -2090,5 +2090,36 @@ func (s *Server) retryFailedSetFiles(given *set.Set) (int, error) {
 		}
 	}
 
-	return len(filtered), s.enqueueEntries(filtered, given, transformer)
+	if len(filtered) == 0 {
+		return 0, nil
+	}
+
+	// A failed entry may already have a corresponding request sitting in the
+	// global queue with a delay applied (default is long). In that case,
+	// re-adding is a duplicate and doesn't force an immediate retry. Attempt to
+	// clear any delay and release existing requests first, and only enqueue
+	// those that aren't already present.
+	toEnqueue := make([]*set.Entry, 0, len(filtered))
+	for _, entry := range filtered {
+		r, errr := s.entryToRequest(entry, transformer, given)
+		if errr != nil {
+			return 0, errr
+		}
+
+		// If the request already exists, make it runnable immediately.
+		present := false
+		if errd := s.queue.SetDelay(r.ID(), 0); errd == nil {
+			present = true
+		}
+
+		if errr := s.queue.Release(context.Background(), r.ID()); errr == nil {
+			present = true
+		}
+
+		if !present {
+			toEnqueue = append(toEnqueue, entry)
+		}
+	}
+
+	return len(filtered), s.enqueueEntries(toEnqueue, given, transformer)
 }

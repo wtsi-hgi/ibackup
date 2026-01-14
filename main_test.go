@@ -4764,8 +4764,7 @@ func TestRetry(t *testing.T) {
 			setName := "failTest"
 			s.addSetForTesting(t, setName, transformer, path)
 
-			s.waitForStatus(setName, "0 reserved to be worked on; 1 failed", timeout)
-			s.waitForStatus(setName, "Status: complete", timeout)
+			s.waitForStatus(setName, "\nStatus: complete (but with failures - try a retry)", timeout)
 
 			exitCode, output := s.runBinaryWithNoLogging(t, "status", "--name", setName, "-d")
 			So(exitCode, ShouldEqual, 0)
