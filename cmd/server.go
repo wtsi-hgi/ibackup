@@ -57,6 +57,7 @@ const numPutClients = 10
 const dbBackupParamPosition = 2
 const defaultDebounceSeconds = 600
 const defaultFailedUploadRetryDelay = 1 * time.Hour
+const defaultHungDebugTimeout = 0
 
 // options for this cmd.
 var serverLogPath string
@@ -73,6 +74,7 @@ var serverStillRunningMsgFreq string
 var serverTrashLifespan string
 var serverFailedUploadRetryDelay string
 var serverReplicaLogging bool
+var serverHungDebugTimeout string
 var statterPath string
 var queues string
 var queueAvoid string
@@ -217,6 +219,11 @@ These should be supplied as a comma separated list.
 			die(err)
 		}
 
+		hungDebugTimeout, err := parseDuration(serverHungDebugTimeout, defaultHungDebugTimeout)
+		if err != nil {
+			die(err)
+		}
+
 		if serverSlackDebouncePeriod < 0 {
 			dief("slack_debounce period must be positive, not: %d", serverSlackDebouncePeriod)
 		}
@@ -236,6 +243,7 @@ These should be supplied as a comma separated list.
 			TrashLifespan:          trashLifespan,
 			FailedUploadRetryDelay: failedUploadRetryDelay,
 			ReplicaLogging:         serverReplicaLogging,
+			HungDebugTimeout:       hungDebugTimeout,
 		}
 
 		s, err := server.New(conf)
@@ -377,6 +385,12 @@ func init() {
 		"replica_logging",
 		false,
 		"enable extra baton calls (before/after uploads) to determine replica numbers for logging",
+	)
+	serverCmd.Flags().StringVar(
+		&serverHungDebugTimeout,
+		"hung_debug_timeout",
+		"0",
+		"server-side hung debugging: if uploads appear stuck for this long, log a goroutine dump (eg. 10m); 0 disables",
 	)
 	serverCmd.Flags().StringVar(&statterPath, "statter", "",
 		"path to an external statter program (https://github.com/wtsi-hgi/statter)")

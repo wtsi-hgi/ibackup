@@ -223,6 +223,8 @@ func (s *Server) LoadSetDB(path, backupPath string) error {
 	s.statusUpdateCh = make(chan *fileStatusPacket)
 	go s.handleFileStatusUpdates()
 
+	s.startHungDebug()
+
 	return s.recoverQueue()
 }
 
@@ -1807,6 +1809,7 @@ func (s *Server) queueFileStatusUpdate(r *transfer.Request) chan *codeAndError {
 func (s *Server) handleFileStatusUpdates() {
 	for fsp := range s.statusUpdateCh {
 		rid := fsp.r.ID()
+		s.hungDebugNoteStatusUpdate(rid)
 
 		if err := s.touchRequest(rid); err != nil {
 			s.Logger.Printf("file status touch failed rid=%s err=%v", rid, err)

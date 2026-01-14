@@ -34,6 +34,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/VertebrateResequencing/wr/client"
@@ -109,6 +110,14 @@ type Config struct {
 	// numbers before/after uploads. This is passed through to clients via the
 	// upload requests they receive.
 	ReplicaLogging bool
+
+	// HungDebugTimeout enables server-side hung debugging.
+	//
+	// When > 0, the server will periodically check for signs of stuck uploads and
+	// (rate-limited) log a summary plus a goroutine dump.
+	//
+	// A value of 0 disables this feature entirely.
+	HungDebugTimeout time.Duration
 }
 
 // Server is used to start a web server that provides a REST API to the setdb
@@ -136,6 +145,12 @@ type Server struct {
 	uploadTracker          *uploadTracker
 	failedUploadRetryDelay time.Duration
 	replicaLogging         bool
+
+	hungDebugTimeout    time.Duration
+	hungDebugStopCh     chan struct{}
+	hungDebugLastLog    atomic.Int64
+	hungDebugLastStatus atomic.Int64
+	hungDebugLastRID    atomic.Value // string
 
 	readOnly       bool
 	storageHandler remove.Handler
@@ -176,6 +191,7 @@ func New(conf Config) (*Server, error) { //nolint:funlen
 		uploadTracker:          newUploadTracker(conf.Slacker, conf.SlackMessageDebounce),
 		failedUploadRetryDelay: retryDelayToUse,
 		replicaLogging:         conf.ReplicaLogging,
+		hungDebugTimeout:       conf.HungDebugTimeout,
 		iRODSTracker:           newiRODSTracker(conf.Slacker, conf.SlackMessageDebounce),
 		clientQueue:            queue.New(context.Background(), "client"),
 		readOnly:               conf.ReadOnly,
@@ -184,6 +200,9 @@ func New(conf Config) (*Server, error) { //nolint:funlen
 
 		discoveryCoordinator: newDiscoveryCoordinator(),
 	}
+
+	// Ensure the atomic.Value is usable before any stores.
+	s.hungDebugLastRID.Store("")
 
 	s.clientQueue.SetTTRCallback(s.clientTTRC)
 	s.SetStopCallBack(s.stop)
@@ -501,6 +520,7 @@ func (s *Server) clientTTRC(data interface{}) queue.SubQueue {
 // properties.
 func (s *Server) stop() {
 	s.sendSlackMessage(slack.Warn, "server stopped")
+	s.stopHungDebug()
 
 	if s.serverAliveCh != nil {
 		close(s.serverAliveCh)
