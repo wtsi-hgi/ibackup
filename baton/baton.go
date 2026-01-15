@@ -434,6 +434,62 @@ func (b *Baton) Stat(remote string) (bool, map[string]string, error) {
 	return true, RodsItemToMeta(it), nil
 }
 
+// ReplicaCounts returns best-effort counts of replicas for the given remote
+// data object.
+//
+// It is intended for low-volume logging around uploads, and so it returns
+// (exists=false, err=nil) if the object does not exist.
+func (b *Baton) ReplicaCounts(remote string) (bool, int, int, error) {
+	it, exists, err := b.listItemWithReplicates(remote)
+	if err != nil || !exists {
+		return exists, 0, 0, err
+	}
+
+	if len(it.IReplicates) == 0 {
+		return true, 0, 0, errs.PathError{Msg: "no replicate information returned", Path: remote}
+	}
+
+	good, bad := 0, 0
+
+	for _, r := range it.IReplicates {
+		if r.Valid {
+			good++
+		} else {
+			bad++
+		}
+	}
+
+	return true, good, bad, nil
+}
+
+func (b *Baton) listItemWithReplicates(remote string) (ex.RodsItem, bool, error) {
+	if err := b.setClientIfNotExists(&b.metaClient); err != nil {
+		return ex.RodsItem{}, false, err
+	}
+
+	var it ex.RodsItem
+
+	err := timeoutOp(func() error {
+		var errl error
+
+		it, errl = b.metaClient.ListItem(
+			ex.Args{Replicate: true, Checksum: true},
+			*requestToRodsItem("", remote),
+		)
+
+		return errl
+	}, "replica number failed: "+remote)
+	if err != nil {
+		if strings.Contains(err.Error(), extendoNotExist) {
+			return ex.RodsItem{}, false, nil
+		}
+
+		return ex.RodsItem{}, false, err
+	}
+
+	return it, true, nil
+}
+
 // requestToRodsItem converts a Request in to an extendo RodsItem without AVUs.
 // If you provide an empty local path, it will not be set.
 func requestToRodsItem(local, remote string) *ex.RodsItem {

@@ -34,6 +34,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/VertebrateResequencing/wr/client"
@@ -67,10 +68,11 @@ const (
 	reqTime                 = 8 * time.Hour
 	jobRetries        uint8 = 3
 	jobLimitGroup           = "irods"
-	maxJobsToSubmit         = 100
 	racRetriggerDelay       = 1 * time.Minute
 
 	retryDelay = 5 * time.Second
+
+	maxRememberedRequestLogs = 100000
 )
 
 // Config configures the server.
@@ -97,6 +99,25 @@ type Config struct {
 
 	// TrashLifespan is the duration that trash is kept.
 	TrashLifespan time.Duration
+
+	// FailedUploadRetryDelay is the delay applied to failed upload requests
+	// before they are retried.
+	//
+	// A value of 0 means retry immediately.
+	FailedUploadRetryDelay time.Duration
+
+	// ReplicaLogging enables extra baton calls on clients to determine replica
+	// numbers before/after uploads. This is passed through to clients via the
+	// upload requests they receive.
+	ReplicaLogging bool
+
+	// HungDebugTimeout enables server-side hung debugging.
+	//
+	// When > 0, the server will periodically check for signs of stuck uploads and
+	// (rate-limited) log a summary plus a goroutine dump.
+	//
+	// A value of 0 disables this feature entirely.
+	HungDebugTimeout time.Duration
 }
 
 // Server is used to start a web server that provides a REST API to the setdb
@@ -122,6 +143,14 @@ type Server struct {
 	stillRunningMsgFreq    time.Duration
 	serverAliveCh          chan bool
 	uploadTracker          *uploadTracker
+	failedUploadRetryDelay time.Duration
+	replicaLogging         bool
+
+	hungDebugTimeout    time.Duration
+	hungDebugStopCh     chan struct{}
+	hungDebugLastLog    atomic.Int64
+	hungDebugLastStatus atomic.Int64
+	hungDebugLastRID    atomic.Value // string
 
 	readOnly       bool
 	storageHandler remove.Handler
@@ -130,6 +159,10 @@ type Server struct {
 	creatingCollections map[string]bool
 	iRODSTracker        *iRODSTracker
 	clientQueue         *queue.Queue
+
+	requestLogMu   sync.Mutex
+	requestLogged  map[string]struct{}
+	requestLogRIDs []string
 
 	discoveryCoordinator *discoveryCoordinator
 }
@@ -143,24 +176,33 @@ func New(conf Config) (*Server, error) { //nolint:funlen
 		return nil, ErrNoLogger
 	}
 
+	retryDelayToUse := max(conf.FailedUploadRetryDelay, 0)
+
 	s := &Server{
-		Server:              *gas.New(conf.HTTPLogger),
-		numClients:          1,
-		dirPool:             workerpool.New(workerPoolSizeDir),
-		queue:               queue.New(context.Background(), "put"),
-		removeQueue:         queue.New(context.Background(), "remove"),
-		trashLifespan:       conf.TrashLifespan,
-		creatingCollections: make(map[string]bool),
-		slacker:             conf.Slacker,
-		stillRunningMsgFreq: conf.StillRunningMsgFreq,
-		uploadTracker:       newUploadTracker(conf.Slacker, conf.SlackMessageDebounce),
-		iRODSTracker:        newiRODSTracker(conf.Slacker, conf.SlackMessageDebounce),
-		clientQueue:         queue.New(context.Background(), "client"),
-		readOnly:            conf.ReadOnly,
-		storageHandler:      conf.StorageHandler,
+		Server:                 *gas.New(conf.HTTPLogger),
+		numClients:             1,
+		dirPool:                workerpool.New(workerPoolSizeDir),
+		queue:                  queue.New(context.Background(), "put"),
+		removeQueue:            queue.New(context.Background(), "remove"),
+		trashLifespan:          conf.TrashLifespan,
+		creatingCollections:    make(map[string]bool),
+		slacker:                conf.Slacker,
+		stillRunningMsgFreq:    conf.StillRunningMsgFreq,
+		uploadTracker:          newUploadTracker(conf.Slacker, conf.SlackMessageDebounce),
+		failedUploadRetryDelay: retryDelayToUse,
+		replicaLogging:         conf.ReplicaLogging,
+		hungDebugTimeout:       conf.HungDebugTimeout,
+		iRODSTracker:           newiRODSTracker(conf.Slacker, conf.SlackMessageDebounce),
+		clientQueue:            queue.New(context.Background(), "client"),
+		readOnly:               conf.ReadOnly,
+		storageHandler:         conf.StorageHandler,
+		requestLogged:          make(map[string]struct{}),
 
 		discoveryCoordinator: newDiscoveryCoordinator(),
 	}
+
+	// Ensure the atomic.Value is usable before any stores.
+	s.hungDebugLastRID.Store("")
 
 	s.clientQueue.SetTTRCallback(s.clientTTRC)
 	s.SetStopCallBack(s.stop)
@@ -191,6 +233,30 @@ func (s *Server) Start(addr, certFile, keyFile string) error {
 
 func (s *Server) SetRemoteHardlinkLocation(path string) {
 	s.remoteHardlinkLocation = path
+}
+
+func (s *Server) markRequestLogged(rid string) bool {
+	if rid == "" {
+		return false
+	}
+
+	s.requestLogMu.Lock()
+	defer s.requestLogMu.Unlock()
+
+	if _, alreadyLogged := s.requestLogged[rid]; alreadyLogged {
+		return false
+	}
+
+	s.requestLogged[rid] = struct{}{}
+	s.requestLogRIDs = append(s.requestLogRIDs, rid)
+
+	if len(s.requestLogRIDs) > maxRememberedRequestLogs {
+		oldest := s.requestLogRIDs[0]
+		delete(s.requestLogged, oldest)
+		s.requestLogRIDs = s.requestLogRIDs[1:]
+	}
+
+	return true
 }
 
 // EnableJobSubmission enables submission of `ibackup put` jobs to wr in
@@ -454,6 +520,7 @@ func (s *Server) clientTTRC(data interface{}) queue.SubQueue {
 // properties.
 func (s *Server) stop() {
 	s.sendSlackMessage(slack.Warn, "server stopped")
+	s.stopHungDebug()
 
 	if s.serverAliveCh != nil {
 		close(s.serverAliveCh)

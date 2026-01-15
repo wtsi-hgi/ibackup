@@ -31,6 +31,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -59,6 +60,8 @@ func TestPutBaton(t *testing.T) {
 
 		return
 	}
+
+	rootCollection = filepath.Join(rootCollection, "transfer_test_"+strconv.FormatInt(time.Now().UnixNano(), 10))
 
 	Convey("Given Requests and a baton Handler, you can make a new Putter", t, func() {
 		internal.InitStatter(t)
@@ -433,8 +436,16 @@ func clearTestCollection(t *testing.T, h *baton.Baton, rootCollection string) (*
 	_, err = testClient.RemDir(ex.Args{Force: true, Recurse: true}, ex.RodsItem{
 		IPath: rootCollection,
 	})
-	if err != nil && !strings.Contains(err.Error(), "-816000") && !strings.Contains(err.Error(), "-310000") {
-		So(err, ShouldBeNil)
+	if err != nil {
+		errStr := err.Error()
+
+		ignore := slices.ContainsFunc(
+			[]string{"-816000", "-310000", "-817000"},
+			func(code string) bool { return strings.Contains(errStr, code) },
+		)
+		if !ignore {
+			So(err, ShouldBeNil)
+		}
 	}
 
 	return testClient, func() {

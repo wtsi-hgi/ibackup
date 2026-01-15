@@ -103,6 +103,12 @@ type Handler interface {
 	GetMeta(path string) (map[string]string, error)
 }
 
+// replicaCounter is an optional interface that a Handler can implement to
+// provide best-effort replica counts for logging.
+type replicaCounter interface {
+	ReplicaCounts(remote string) (exists bool, good, bad int, err error)
+}
+
 // FileReadTester is a function that attempts to open and read the given path,
 // returning any error doing so. Should stop and clean up if the given ctx
 // becomes done before the open and read succeeds.
@@ -660,6 +666,25 @@ func (p *Putter) sendFailedRequest(request *Request, err error, uploadReturnCh c
 	sendRequest(request, RequestStatusFailed, err, uploadReturnCh)
 }
 
+func (p *Putter) captureReplicaCounts(request *Request, goodDest, badDest **int) {
+	if request == nil || !request.ReplicaLogging {
+		return
+	}
+
+	rc, ok := p.handler.(replicaCounter)
+	if !ok {
+		return
+	}
+
+	exists, good, bad, err := rc.ReplicaCounts(request.RemoteDataPath())
+	if err != nil || !exists {
+		return
+	}
+
+	*goodDest = &good
+	*badDest = &bad
+}
+
 func (p *Putter) processPutCh(putCh, uploadStartCh, uploadReturnCh, metaCh chan *Request) {
 	for request := range putCh {
 		if request.skipPut {
@@ -678,11 +703,16 @@ func (p *Putter) processPutCh(putCh, uploadStartCh, uploadReturnCh, metaCh chan 
 			continue
 		}
 
+		p.captureReplicaCounts(request, &request.ReplicaBeforeGood, &request.ReplicaBeforeBad)
+
 		if err := p.transfer(request, p.handler); err != nil {
+			p.captureReplicaCounts(request, &request.ReplicaAfterGood, &request.ReplicaAfterBad)
 			p.sendFailedRequest(request, err, uploadReturnCh)
 
 			continue
 		}
+
+		p.captureReplicaCounts(request, &request.ReplicaAfterGood, &request.ReplicaAfterBad)
 
 		metaCh <- request
 	}

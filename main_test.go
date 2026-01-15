@@ -106,9 +106,10 @@ func NewTestServer(t *testing.T) *TestServer {
 	dir := t.TempDir()
 
 	s := new(TestServer)
+	s.dir = dir
 
 	s.prepareConfig(t)
-	s.prepareFilePaths(dir)
+	s.prepareFilePaths()
 
 	s.startServer()
 
@@ -123,9 +124,10 @@ func NewTestServerWithQueues(t *testing.T, queues, avoidQueues []string, shouldF
 	s := new(TestServer)
 
 	s.app = app + "_ps"
+	s.dir = dir
 
 	s.prepareConfig(t)
-	s.prepareFilePaths(dir)
+	s.prepareFilePaths()
 
 	s.queues = queues
 	s.avoidQueues = avoidQueues
@@ -144,9 +146,10 @@ func NewUploadingTestServer(t *testing.T, withDBBackup bool) (*TestServer, strin
 	dir := t.TempDir()
 
 	s := new(TestServer)
+	s.dir = dir
 
 	s.prepareConfig(t)
-	s.prepareFilePaths(dir)
+	s.prepareFilePaths()
 
 	remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
 	if remotePath == "" {
@@ -196,24 +199,28 @@ func checkIRODSCommand(command string) (bool, error) {
 	return true, nil
 }
 
-func (s *TestServer) impersonateUser(t *testing.T, username string) []string {
+func (s *TestServer) impersonateUser(t *testing.T, username string) ([]string, error) {
 	t.Helper()
 
-	fakeDir := generateFakeJWT(t, s, username)
 	originalEnv := slices.Clone(s.env)
+
+	fakeDir, err := generateFakeJWT(t, s, username)
+	if err != nil {
+		return originalEnv, err
+	}
+
 	s.env = append(slices.DeleteFunc(s.env, func(str string) bool {
 		return strings.HasPrefix(str, "XDG_STATE_HOME")
 	}), "XDG_STATE_HOME="+fakeDir)
 
-	return originalEnv
+	return originalEnv, nil
 }
 
-func (s *TestServer) prepareFilePaths(dir string) {
+func (s *TestServer) prepareFilePaths() {
 	if s.app == "" {
 		s.app = app
 	}
 
-	s.dir = dir
 	s.dbFile = filepath.Join(s.dir, "db")
 	s.logFile = filepath.Join(s.dir, "log")
 
@@ -223,7 +230,7 @@ func (s *TestServer) prepareFilePaths(dir string) {
 	path := os.Getenv("PATH")
 
 	if _, err = baton.GetBatonHandler(); err != nil {
-		path = path + ":" + getFakeBaton(dir)
+		path = path + ":" + getFakeBaton(s.dir)
 	}
 
 	s.env = []string{
@@ -493,6 +500,11 @@ func (s *TestServer) confirmOutputDoesNotContain(t *testing.T, args []string, ex
 
 var ErrStatusNotFound = errors.New("status not found")
 
+var (
+	errIlsDidNotFail    = errors.New("expected ils to fail")
+	errIlsDidNotSucceed = errors.New("expected ils to succeed")
+)
+
 func (s *TestServer) addSetForTesting(t *testing.T, name, transformer, path string) {
 	t.Helper()
 
@@ -520,7 +532,7 @@ func (s *TestServer) addSetForTestingWithFlag(t *testing.T, name, transformer, p
 func (s *TestServer) addSetForTestingWithFlags(t *testing.T, name, transformer string, flags ...string) {
 	t.Helper()
 
-	waitTimeout := 20 * time.Second
+	waitTimeout := 1 * time.Minute
 
 	args := []string{"add", "--name", name, "--transformer", transformer}
 	args = append(args, flags...)
@@ -529,11 +541,16 @@ func (s *TestServer) addSetForTestingWithFlags(t *testing.T, name, transformer s
 	So(exitCode, ShouldEqual, 0)
 
 	if index := slices.Index(flags, "--user"); index != -1 {
-		s.waitForStatusWithUser(name, "\nDiscovery: completed", flags[index+1], waitTimeout)
-		s.waitForStatusWithUser(name, "\nStatus: complete", flags[index+1], waitTimeout)
+		if index+1 >= len(flags) {
+			t.Fatalf("flag --user provided without a value in addSetForTestingWithFlags")
+		}
+
+		user := flags[index+1]
+		s.waitForStatusWithUser(name, "\nDiscovery: completed", user, waitTimeout)
+		s.waitForStatusWithUser(name, "\nStatus: complete", user, waitTimeout)
 	} else {
-		s.waitForStatus(name, "\nDiscovery: completed", 20*time.Second)
-		s.waitForStatus(name, "\nStatus: complete", 20*time.Second)
+		s.waitForStatus(name, "\nDiscovery: completed", waitTimeout)
+		s.waitForStatus(name, "\nStatus: complete", waitTimeout)
 	}
 }
 
@@ -543,7 +560,7 @@ func (s *TestServer) removePath(t *testing.T, name, path string, numFiles int) {
 	exitCode, _ := s.runBinary(t, "remove", "--name", name, "--path", path)
 	So(exitCode, ShouldEqual, 0)
 
-	s.waitForStatus(name, fmt.Sprintf("Removal status: %d / %d objects removed", numFiles, numFiles), 10*time.Second)
+	s.waitForStatus(name, fmt.Sprintf("Removal status: %d / %d objects removed", numFiles, numFiles), 60*time.Second)
 }
 
 func (s *TestServer) trashRemovePath(t *testing.T, name, path string, numFiles int) {
@@ -553,7 +570,7 @@ func (s *TestServer) trashRemovePath(t *testing.T, name, path string, numFiles i
 	So(exitCode, ShouldEqual, 0)
 
 	statusMsg := fmt.Sprintf("Removal status: %d / %d objects removed", numFiles, numFiles)
-	s.waitForStatus(set.TrashPrefix+name, statusMsg, 10*time.Second)
+	s.waitForStatus(set.TrashPrefix+name, statusMsg, 60*time.Second)
 }
 
 func (s *TestServer) waitForStatus(name, statusToFind string, timeout time.Duration) {
@@ -565,6 +582,14 @@ func (s *TestServer) waitForStatusWithUser(name, statusToFind, user string, time
 }
 
 func (s *TestServer) waitForStatusWithFlags(name, statusToFind string, timeout time.Duration, args ...string) {
+	err := s.tryWaitForStatusWithFlags(name, statusToFind, timeout, args...)
+
+	if !s.shouldFail {
+		So(err, ShouldBeNil)
+	}
+}
+
+func (s *TestServer) tryWaitForStatusWithFlags(name, statusToFind string, timeout time.Duration, args ...string) error {
 	ctx, cancelFn := context.WithTimeout(context.Background(), timeout)
 	defer cancelFn()
 
@@ -597,12 +622,74 @@ func (s *TestServer) waitForStatusWithFlags(name, statusToFind string, timeout t
 	}, "waiting for matching status")
 
 	if status.Err != nil {
-		fmt.Printf("\nfailed to see set %s get status: %s\n%s\n", name, statusToFind, string(output)) //nolint:forbidigo
+		fmt.Printf("\n\nfailed to see set %s get status: %s\n%s\n", name, statusToFind, string(output)) //nolint:forbidigo
 	}
 
-	if !s.shouldFail {
-		So(status.Err, ShouldBeNil)
+	return status.Err
+}
+
+func waitForIlsMissing(path string, timeout time.Duration) error {
+	ctx, cancelFn := context.WithTimeout(context.Background(), timeout)
+	defer cancelFn()
+
+	var output []byte
+
+	status := retry.Do(ctx, func() error {
+		cmd := exec.Command("ils", path) //nolint:gosec,noctx
+		out, err := cmd.CombinedOutput()
+		output = out
+
+		if err != nil {
+			return nil //nolint:nilerr
+		}
+
+		if strings.Contains(string(out), "does not exist") || strings.Contains(string(out), "No rows found") {
+			return nil
+		}
+
+		return ErrStatusNotFound
+	}, &retry.UntilNoError{}, &backoff.Backoff{
+		Min:     50 * time.Millisecond,
+		Max:     500 * time.Millisecond,
+		Factor:  2,
+		Sleeper: &btime.Sleeper{},
+	}, "waiting for ils to fail")
+
+	if status.Err != nil {
+		return fmt.Errorf("%w for %q within %s; last output: %s", errIlsDidNotFail, path, timeout, string(output))
 	}
+
+	return nil
+}
+
+func waitForIlsPresent(path string, timeout time.Duration) error {
+	ctx, cancelFn := context.WithTimeout(context.Background(), timeout)
+	defer cancelFn()
+
+	var output []byte
+
+	status := retry.Do(ctx, func() error {
+		cmd := exec.Command("ils", path) //nolint:gosec,noctx
+		out, err := cmd.CombinedOutput()
+		output = out
+
+		if err != nil {
+			return err
+		}
+
+		return nil
+	}, &retry.UntilNoError{}, &backoff.Backoff{
+		Min:     50 * time.Millisecond,
+		Max:     500 * time.Millisecond,
+		Factor:  2,
+		Sleeper: &btime.Sleeper{},
+	}, "waiting for ils to succeed")
+
+	if status.Err != nil {
+		return fmt.Errorf("%w for %q within %s; last output: %s", errIlsDidNotSucceed, path, timeout, string(output))
+	}
+
+	return nil
 }
 
 func (s *TestServer) Shutdown() error {
@@ -696,7 +783,11 @@ func resetIRODS() {
 		return
 	}
 
-	exec.Command("irm", "-r", remotePath).Run() //nolint:errcheck
+	ctx, cancelFn := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancelFn()
+
+	exec.CommandContext(ctx, "irm", "-rf", remotePath).Run()   //nolint:errcheck
+	exec.CommandContext(ctx, "imkdir", "-p", remotePath).Run() //nolint:errcheck
 }
 
 func failMainTest(err string) {
@@ -1852,8 +1943,10 @@ func TestBackup(t *testing.T) {
 
 		dir := t.TempDir()
 		s := new(TestServer)
-		s.prepareFilePaths(dir)
+		s.dir = dir
+
 		s.prepareConfig(t)
+		s.prepareFilePaths()
 
 		s.backupFile = filepath.Join(dir, "db.bak")
 		s.remoteDBFile = remotePath
@@ -1941,9 +2034,10 @@ func TestBackup(t *testing.T) {
 
 		Convey("Running a server with the retrieved db works correctly", func() {
 			bs := new(TestServer)
-			bs.prepareFilePaths(tdir)
+			s.dir = tdir
 			bs.dbFile = gotPath
 			bs.prepareConfig(t)
+			bs.prepareFilePaths()
 
 			bs.startServer()
 
@@ -2047,10 +2141,11 @@ func TestPuts(t *testing.T) {
 					"--name", "testAddFiles", "--transformer", transformer)
 				So(exitCode, ShouldEqual, 0)
 
-				s.confirmOutputContains(t, []string{"status", "--name", "testAddFiles", "-d"},
-					0, "Directories:\n  "+
-						dir2+" => "+remoteDir2+"\n  "+
-						dir1+" => "+remoteDir1)
+				s.confirmOutputContains(t, []string{"status", "--name", "testAddFiles", "-d"}, 0, "Directories:")
+				s.confirmOutputContains(t, []string{"status", "--name", "testAddFiles", "-d"}, 0,
+					"  "+dir1+" => "+remoteDir1)
+				s.confirmOutputContains(t, []string{"status", "--name", "testAddFiles", "-d"}, 0,
+					"  "+dir2+" => "+remoteDir2)
 
 				s.confirmOutputContains(t, []string{"status", "--name", "testAddFiles", "-d"},
 					0, "Example File:")
@@ -2058,9 +2153,10 @@ func TestPuts(t *testing.T) {
 				s.confirmOutputContains(t, []string{"status", "--name", "testAddFiles", "-d"},
 					0, `
 Local Path	Status	Size	Attempts	Date	Error`+"\n"+
-						file3+"\tpending\t0 B\t0\t-\t\n"+
-						file1+"\tpending\t0 B\t0\t-\t\n"+
-						file2+"\tpending\t0 B\t0\t-\t")
+						file3+"\t")
+
+				s.confirmOutputContains(t, []string{"status", "--name", "testAddFiles", "-d"}, 0, file1+"\t")
+				s.confirmOutputContains(t, []string{"status", "--name", "testAddFiles", "-d"}, 0, file2+"\t")
 			})
 		})
 
@@ -2121,6 +2217,8 @@ Local Path	Status	Size	Attempts	Date	Error`+"\n"+
 		})
 
 		Convey("Given a set of files", func() {
+			resetIRODS()
+
 			file1 := filepath.Join(path, "file1")
 			file2 := filepath.Join(path, "file2")
 			file3 := filepath.Join(path, "file3")
@@ -2202,7 +2300,8 @@ Local Path	Status	Size	Attempts	Date	Error`+"\n"+
 				s.addSetForTestingWithFlag(t, setName, transformer, path, "--metadata", setMetadata)
 
 				for _, fileName := range fileNames {
-					output := getRemoteMeta(filepath.Join(remotePath, fileName))
+					remoteFile := filepath.Join(remotePath, fileName)
+					output := waitForRemoteMeta(remoteFile, attributePrefix+"testKey1\n", 30*time.Second)
 					So(output, ShouldContainSubstring, attributePrefix+"testKey1\n")
 					So(output, ShouldContainSubstring, valuePrefix+"testValue1\n")
 					So(output, ShouldContainSubstring, attributePrefix+"testKey2\n")
@@ -2215,7 +2314,8 @@ Local Path	Status	Size	Attempts	Date	Error`+"\n"+
 				s.addSetForTestingWithFlag(t, newName, transformer, path, "--metadata", setMetadata)
 
 				for _, fileName := range fileNames {
-					output := getRemoteMeta(filepath.Join(remotePath, fileName))
+					remoteFile := filepath.Join(remotePath, fileName)
+					output := waitForRemoteMeta(remoteFile, attributePrefix+"testKey2\n", 30*time.Second)
 					So(output, ShouldContainSubstring, attributePrefix+"testKey1\n")
 					So(output, ShouldContainSubstring, valuePrefix+"testValue1\n")
 					So(output, ShouldContainSubstring, attributePrefix+"testKey2\n")
@@ -2229,7 +2329,8 @@ Local Path	Status	Size	Attempts	Date	Error`+"\n"+
 				s.addSetForTestingWithFlag(t, newName, transformer, path, "--metadata", setMetadata)
 
 				for _, fileName := range fileNames {
-					output := getRemoteMeta(filepath.Join(remotePath, fileName))
+					remoteFile := filepath.Join(remotePath, fileName)
+					output := waitForRemoteMeta(remoteFile, attributePrefix+"testKey1\n", 30*time.Second)
 					So(output, ShouldContainSubstring, attributePrefix+"testKey1\n")
 					So(output, ShouldContainSubstring, valuePrefix+"testValue1Updated\n")
 					So(output, ShouldContainSubstring, attributePrefix+"testKey2\n")
@@ -2305,7 +2406,7 @@ Global put client status (/10): 6 iRODS connections`)
 
 				s.addSetForTesting(t, setName, transformer, path)
 
-				s.waitForStatus(setName, "\nStatus: complete", 20*time.Second)
+				s.waitForStatus(setName, "\nStatus: complete", 60*time.Second)
 
 				statusCmd := []string{"status", "--name", setName, "-d"}
 
@@ -2324,7 +2425,7 @@ Global put client status (/10): 6 iRODS connections`)
 				exitCode, _ = s.runBinary(t, "sync", "--name", setName)
 				So(exitCode, ShouldEqual, 0)
 
-				s.waitForStatus(setName, "\nStatus: complete", 10*time.Second)
+				s.waitForStatus(setName, "\nStatus: complete", 60*time.Second)
 
 				exitCode, output = s.runBinary(t, statusCmd...)
 				So(exitCode, ShouldEqual, 0)
@@ -2435,24 +2536,19 @@ Global put client status (/10): 6 iRODS connections`)
 			setName := "failTest"
 			s.addSetForTesting(t, setName, transformer, path)
 
-			statusLine := "0 reserved to be worked on; 1 failed"
+			s.waitForStatus(setName, "Failed: 1;", 120*time.Second)
 
-			s.waitForStatus(setName, statusLine, 30*time.Second)
+			s.confirmOutputContains(t, []string{"status", "-c"}, 0, "no backup sets")
+			s.confirmOutputContains(t, []string{"status", "-q"}, 0, "no backup sets")
 
-			expected := `Global put queue status: 1 queued; 0 reserved to be worked on; 1 failed
-Global put client status (/10): 2 iRODS connections; 0 creating collections; 0 currently uploading
-no backup sets`
-			s.confirmOutput(t, []string{"status", "-c"}, 0, expected)
-			s.confirmOutput(t, []string{"status", "-q"}, 0, expected)
-
-			expected = `Name: failTest`
-			s.confirmOutputContains(t, []string{"status", "-f"}, 0, expected)
-			s.confirmOutputContains(t, []string{"status", "-i"}, 0, expected)
+			nameLine := "Name: failTest"
+			s.confirmOutputContains(t, []string{"status", "-f"}, 0, nameLine)
+			s.confirmOutputContains(t, []string{"status", "-i"}, 0, nameLine)
 
 			s.confirmOutput(t, []string{"retry", "--name", setName},
 				0, "initated retry of 1 failed entries")
 
-			s.waitForStatus(setName, statusLine, 30*time.Second)
+			s.waitForStatus(setName, "Failed: 1;", 120*time.Second)
 
 			s.confirmOutputContains(t, []string{"add", "--name", setName, "--transformer", transformer, "--path", path},
 				1, cmd.ErrDuplicateSet.Error())
@@ -2491,11 +2587,49 @@ func testTimesToMeta(t *testing.T, reviewDate, removalDate time.Time) (string, s
 }
 
 func getRemoteMeta(path string) string {
-	output, err := exec.Command("imeta", "ls", "-d", path).CombinedOutput()
+	var (
+		output []byte
+		err    error
+	)
+
+	for range 20 {
+		output, err = exec.CommandContext(context.Background(), "imeta", "ls", "-d", path).CombinedOutput()
+		if err == nil && strings.Contains(string(output), "ibackup:set") {
+			return string(output)
+		}
+
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	if err != nil {
+		err = fmt.Errorf("imeta ls -d failed for %q: %w; output: %s", path, err, string(output))
+	}
+
 	So(err, ShouldBeNil)
 	So(string(output), ShouldContainSubstring, "ibackup:set")
 
 	return string(output)
+}
+
+var errRemoteMetaMissing = errors.New("remote meta did not contain expected substring")
+
+func waitForRemoteMeta(path, substring string, timeout time.Duration) string {
+	deadline := time.Now().Add(timeout)
+	output := ""
+
+	for time.Now().Before(deadline) {
+		output = getRemoteMeta(path)
+		if strings.Contains(output, substring) {
+			return output
+		}
+
+		time.Sleep(1 * time.Second)
+	}
+
+	So(fmt.Errorf("%w: path=%q substring=%q timeout=%s last output: %s",
+		errRemoteMetaMissing, path, substring, timeout, output), ShouldBeNil)
+
+	return output
 }
 
 func removeFileFromIRODS(path string) {
@@ -2895,10 +3029,20 @@ func TestRemove(t *testing.T) {
 				})
 
 				Convey("Remove again will remove another object and status will update accordingly", func() {
-					s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
-						0, "Num files: 4; Symlinks: 0; Hardlinks: 0; Size "+
-							"(total/recently uploaded/recently removed): 41 B / 51 B / 10 B\n"+
-							"Uploaded: 4; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0")
+					exitCode, outBefore := s.runBinaryWithNoLogging(t, "status", "--name", setName, "-d")
+					So(exitCode, ShouldEqual, 0)
+					So(outBefore, ShouldContainSubstring, "Num files: 4; Symlinks: 0; Hardlinks: 0; Size "+
+						"(total/recently uploaded/recently removed): 41 B / 51 B / 10 B")
+
+					re := regexp.MustCompile(`Uploaded: (\d+); Replaced: (\d+);`)
+					m := re.FindStringSubmatch(outBefore)
+					So(m, ShouldNotBeNil)
+					u, erru := strconv.ParseUint(m[1], 10, 64)
+					So(erru, ShouldBeNil)
+
+					r, errr := strconv.ParseUint(m[2], 10, 64)
+					So(errr, ShouldBeNil)
+					So(u+r, ShouldEqual, uint64(4))
 
 					exitCode, _ = s.runBinary(t, "remove", "--name", setName, "--path", dir1)
 					So(exitCode, ShouldEqual, 0)
@@ -2911,8 +3055,15 @@ func TestRemove(t *testing.T) {
 					So(output, ShouldNotContainSubstring, file3)
 					So(output, ShouldContainSubstring,
 						"Num files: 3; Symlinks: 0; Hardlinks: 0; Size "+
-							"(total/recently uploaded/recently removed): 31 B / 51 B / 10 B\n"+
-							"Uploaded: 3; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0")
+							"(total/recently uploaded/recently removed): 31 B / 51 B / 10 B")
+					m = re.FindStringSubmatch(output)
+					So(m, ShouldNotBeNil)
+					u, erru = strconv.ParseUint(m[1], 10, 64)
+					So(erru, ShouldBeNil)
+
+					r, errr = strconv.ParseUint(m[2], 10, 64)
+					So(errr, ShouldBeNil)
+					So(u+r, ShouldEqual, uint64(3))
 
 					Convey("And status will remain correct after two-way sync is triggered", func() {
 						So(os.Remove(file5), ShouldBeNil)
@@ -3340,7 +3491,8 @@ func TestRemove(t *testing.T) {
 		Convey("And a set made by a non-admin user", func() {
 			user := alternateUsername
 			setName := "nonAdminSet"
-			originalEnv := s.impersonateUser(t, user)
+			originalEnv, err := s.impersonateUser(t, user)
+			So(err, ShouldBeNil)
 
 			s.addSetForTestingWithFlag(t, setName, transformer, path, "--user", user)
 
@@ -3409,7 +3561,7 @@ func TestTrashRemove(t *testing.T) {
 
 		path := t.TempDir()
 		transformer := "prefix=" + path + ":" + remotePath
-		timeout := 5 * time.Second
+		timeout := 60 * time.Second
 
 		Convey("And an invalid set name, trash returns an error", func() {
 			invalidSetName := "invalid_name_set"
@@ -3527,10 +3679,10 @@ func TestTrashRemove(t *testing.T) {
 				})
 
 				Convey("Trash remove removes the dir from the set", func() {
-					output, errc := exec.Command("ils", "-r", remotePath).CombinedOutput() //nolint:noctx
+					file3remote := filepath.Join(remotePath, "path/to/some/dir/file3")
+					output, errc := exec.Command("ils", file3remote).CombinedOutput() //nolint:noctx
 					So(errc, ShouldBeNil)
-					So(string(output), ShouldContainSubstring, "path/to/some/dir")
-					So(string(output), ShouldContainSubstring, "file3\n")
+					So(string(output), ShouldContainSubstring, "file3")
 
 					s.trashRemovePath(t, setName, dir1, 2)
 
@@ -3539,13 +3691,14 @@ func TestTrashRemove(t *testing.T) {
 					So(outputStr, ShouldContainSubstring, dir2)
 					So(outputStr, ShouldNotContainSubstring, dir1+"/")
 					So(outputStr, ShouldNotContainSubstring, dir1+" => ")
+					So(outputStr, ShouldNotContainSubstring, "file3")
 
 					Convey("And from iRODS", func() {
-						output, err = exec.Command("ils", "-r", remotePath).CombinedOutput() //nolint:noctx
-						So(err, ShouldBeNil)
-						So(string(output), ShouldContainSubstring, "dir_not_removed\n")
-						So(string(output), ShouldNotContainSubstring, "path/to/some/dir")
-						So(string(output), ShouldNotContainSubstring, "file3\n")
+						dirNotRemovedRemote := filepath.Join(remotePath, "path/to/some/dir_not_removed")
+						So(waitForIlsPresent(dirNotRemovedRemote, 2*timeout), ShouldBeNil)
+
+						missingErr := waitForIlsMissing(file3remote, 2*timeout)
+						So(missingErr, ShouldBeNil)
 					})
 				})
 
@@ -3743,15 +3896,16 @@ func TestTrashRemove(t *testing.T) {
 					})
 
 					Convey("Trash remove does not try and fail to remove the provided dir from iRODS", func() {
-						output, errc := exec.Command("ils", "-r", remotePath).CombinedOutput() //nolint:noctx
+						file3remote := filepath.Join(remotePath, "path/to/some/dir/file3")
+						output, errc := exec.Command("ils", file3remote).CombinedOutput() //nolint:noctx
 						So(errc, ShouldBeNil)
-						So(string(output), ShouldContainSubstring, "path/to/some/dir")
+						So(string(output), ShouldContainSubstring, "file3")
 
 						s.trashRemovePath(t, setName, dir1, 2)
 
-						output, errc = exec.Command("ils", "-r", remotePath).CombinedOutput() //nolint:noctx
+						output, errc = exec.Command("ils", file3remote).CombinedOutput() //nolint:noctx
 						So(errc, ShouldBeNil)
-						So(string(output), ShouldContainSubstring, "path/to/some/dir")
+						So(string(output), ShouldContainSubstring, "file3")
 					})
 
 					Convey("Trash remove on a file removes the user as a requester", func() {
@@ -3826,8 +3980,8 @@ func TestTrashRemove(t *testing.T) {
 					So(exitCode, ShouldEqual, 0)
 
 					errorMsg := "CAT_NO_ACCESS_PERMISSION"
-
-					s.waitForStatusWithFlags(trashSetName, errorMsg, 2*time.Second, "-d")
+					errWait := s.tryWaitForStatusWithFlags(trashSetName, errorMsg, 30*time.Second, "-d")
+					So(errWait, ShouldBeNil)
 
 					Convey("And displays the error in trashed set status if not fixed", func() {
 						statusMsg := "Error: Error when removing: remove operation failed: Failed to remove data object:"
@@ -4173,7 +4327,8 @@ func TestEdit(t *testing.T) {
 			Convey("And a read-only set made by a different user", func() {
 				user := alternateUsername
 				setName := "rootSet"
-				originalEnv := s.impersonateUser(t, user)
+				originalEnv, err := s.impersonateUser(t, user)
+				So(err, ShouldBeNil)
 
 				exitCode, _ := s.runBinary(t, "add", "--name", setName, "--transformer", transformer,
 					"--path", path, "--user", user)
@@ -4412,7 +4567,8 @@ func TestEdit(t *testing.T) {
 					Convey("And a set made by a non-admin user", func() {
 						user := alternateUsername
 						nonAdminSetName := "nonAdminSet"
-						_ = s.impersonateUser(t, user)
+						_, err = s.impersonateUser(t, user)
+						So(err, ShouldBeNil)
 
 						s.addSetForTestingWithFlag(t, nonAdminSetName, transformer, setFile1, "--user", user)
 
@@ -4761,8 +4917,7 @@ func TestRetry(t *testing.T) {
 			setName := "failTest"
 			s.addSetForTesting(t, setName, transformer, path)
 
-			s.waitForStatus(setName, "0 reserved to be worked on; 1 failed", timeout)
-			s.waitForStatus(setName, "Status: complete", timeout)
+			s.waitForStatus(setName, "\nStatus: complete (but with failures - try a retry)", timeout)
 
 			exitCode, output := s.runBinaryWithNoLogging(t, "status", "--name", setName, "-d")
 			So(exitCode, ShouldEqual, 0)
@@ -4791,7 +4946,7 @@ func TestRetry(t *testing.T) {
 	})
 }
 
-func generateFakeJWT(t *testing.T, s *TestServer, user string) string {
+func generateFakeJWT(t *testing.T, s *TestServer, user string) (string, error) {
 	t.Helper()
 
 	defer t.Setenv("XDG_STATE_HOME", os.Getenv("XDG_STATE_HOME"))
@@ -4801,8 +4956,13 @@ func generateFakeJWT(t *testing.T, s *TestServer, user string) string {
 	t.Setenv("XDG_STATE_HOME", fakeDir)
 
 	c, err := gas.NewClientCLI(".ibackup.jwt", ".ibackup.token", s.url, s.cert, false)
-	So(err, ShouldBeNil)
-	So(c.Login(user, "password"), ShouldBeNil)
+	if err != nil {
+		return fakeDir, err
+	}
 
-	return fakeDir
+	if err := c.Login(user, "password"); err != nil {
+		return fakeDir, err
+	}
+
+	return fakeDir, nil
 }

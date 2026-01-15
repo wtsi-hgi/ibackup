@@ -59,6 +59,8 @@ type Client struct {
 	jwt                       string
 	toTouch                   map[string]bool
 	touchMu                   sync.Mutex
+	logMu                     sync.Mutex
+	loggedRIDs                map[string]struct{}
 	touching                  bool
 	minMBperSecondUploadSpeed float64
 	minTimeForUpload          time.Duration
@@ -80,7 +82,27 @@ func NewClient(url, cert, jwt string) *Client {
 		url:  url,
 		cert: cert,
 		jwt:  jwt,
+		// Only used for log volume reduction; best-effort tracking.
+		loggedRIDs: make(map[string]struct{}),
 	}
+}
+
+func (c *Client) firstTimeLoggingRID(rid string) bool {
+	if rid == "" {
+		return true
+	}
+
+	c.logMu.Lock()
+	defer c.logMu.Unlock()
+
+	_, ok := c.loggedRIDs[rid]
+	if ok {
+		return false
+	}
+
+	c.loggedRIDs[rid] = struct{}{}
+
+	return true
 }
 
 func (c *Client) request() *resty.Request {
@@ -474,10 +496,20 @@ func (c *Client) handleUploadTracking(wg *sync.WaitGroup, uploadStarts, uploadRe
 	defer wg.Done()
 
 	for ru := range uploadStarts {
-		c.logger.Info("started upload", "path", ru.Local)
+		if c.firstTimeLoggingRID(ru.ID()) {
+			c.logger.Info(
+				"started upload",
+				"rid", ru.ID(),
+				"local", ru.Local,
+				"remote", ru.Remote,
+				"size_bytes", ru.Size,
+			)
+		} else {
+			c.logger.Info("started upload", "rid", ru.ID(), "size_bytes", ru.Size)
+		}
 
 		if err := c.UpdateFileStatus(ru); err != nil {
-			c.logger.Warn("failed to update file status to uploading", "err", err, "path", ru.Local)
+			c.logger.Warn("failed to update file status to uploading", "rid", ru.ID(), "err", err)
 			c.uploadsErrCh <- err
 
 			continue
@@ -487,11 +519,11 @@ func (c *Client) handleUploadTracking(wg *sync.WaitGroup, uploadStarts, uploadRe
 
 		rr := <-uploadResults
 
-		c.logger.Info("finished upload", "path", ru.Local)
+		c.logger.Info("finished upload", "rid", ru.ID(), "status", rr.Status)
 		close(stopStuckTimer)
 
 		if err := c.UpdateFileStatus(rr); err != nil {
-			c.logger.Warn("failed to update file status to complete", "err", err, "path", ru.Local)
+			c.logger.Warn("failed to update file status to complete", "rid", ru.ID(), "err", err)
 			c.uploadsErrCh <- err
 		}
 	}
@@ -514,7 +546,7 @@ func (c *Client) stuckIfUploadTakesTooLong(request *transfer.Request) chan bool 
 			return
 		case <-stuckTimer.C:
 			request.Stuck = transfer.NewStuck(started)
-			c.logger.Warn("upload stuck?", "path", request.Local)
+			c.logger.Warn("upload stuck?", "rid", request.ID())
 
 			if err := c.UpdateFileStatus(request); err != nil {
 				c.uploadsErrCh <- err
@@ -555,7 +587,7 @@ func (c *Client) killStuckIfTakesTooLong(request *transfer.Request, doneCh chan 
 
 	select {
 	case <-timeout.C:
-		c.logger.Warn("upload stuck for a long time, giving up", "path", request.Local)
+		c.logger.Warn("upload stuck for a long time, giving up", "rid", request.ID())
 		request.Status = transfer.RequestStatusFailed
 		request.Error = transfer.ErrStuckTimeout
 
@@ -575,10 +607,20 @@ func (c *Client) handleSendingSkipResults(wg *sync.WaitGroup, results chan *tran
 	defer wg.Done()
 
 	for r := range results {
-		c.logger.Info("skipped upload", "path", r.Local)
+		if c.firstTimeLoggingRID(r.ID()) {
+			c.logger.Info(
+				"skipped upload",
+				"rid", r.ID(),
+				"local", r.Local,
+				"remote", r.Remote,
+				"status", r.Status,
+			)
+		} else {
+			c.logger.Info("skipped upload", "rid", r.ID(), "status", r.Status)
+		}
 
 		if err := c.UpdateFileStatus(r); err != nil {
-			c.logger.Warn("failed to update file status for skipped", "err", err, "path", r.Local)
+			c.logger.Warn("failed to update file status for skipped", "rid", r.ID(), "err", err)
 			c.uploadsErrCh <- err
 		}
 	}

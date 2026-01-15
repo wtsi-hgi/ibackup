@@ -28,6 +28,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"net/http"
 	"os"
@@ -40,7 +41,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/viant/ptrie"
 	gas "github.com/wtsi-hgi/go-authserver"
-	"github.com/wtsi-hgi/grand"
 	"github.com/wtsi-hgi/ibackup/errs"
 	"github.com/wtsi-hgi/ibackup/internal"
 	"github.com/wtsi-hgi/ibackup/remove"
@@ -146,8 +146,7 @@ const (
 	// reserveRequests returns.
 	maxRequestsToReserve = 100
 
-	logTraceIDLen = 8
-	allUsers      = "all"
+	allUsers = "all"
 )
 
 // LoadSetDB loads the given set.db or creates it if it doesn't exist.
@@ -223,6 +222,8 @@ func (s *Server) LoadSetDB(path, backupPath string) error {
 
 	s.statusUpdateCh = make(chan *fileStatusPacket)
 	go s.handleFileStatusUpdates()
+
+	s.startHungDebug()
 
 	return s.recoverQueue()
 }
@@ -1651,7 +1652,32 @@ func (s *Server) reserveRequest() (*transfer.Request, error) {
 		return nil, ErrInvalidInput
 	}
 
+	s.logRequestFirstReserved(r)
+	r.ReplicaLogging = s.replicaLogging
+
 	return r, nil
+}
+
+func (s *Server) logRequestFirstReserved(r *transfer.Request) {
+	if r == nil {
+		return
+	}
+
+	rid := r.ID()
+	if !s.markRequestLogged(rid) {
+		return
+	}
+
+	// Intentionally include local+remote only once so grepping by path yields a
+	// single anchor line; all subsequent server logs should be keyed by rid.
+	s.Logger.Printf(
+		"request reserved rid=%s local=%s remote=%s requester=%s set=%s",
+		rid,
+		r.Local,
+		r.Remote,
+		r.Requester,
+		r.Set,
+	)
 }
 
 // putWorking interprets the body as a JSON encoding of a []string of Request
@@ -1726,18 +1752,16 @@ type codeAndError struct {
 func (s *Server) putFileStatus(c *gin.Context) {
 	r := &transfer.Request{}
 
-	s.Logger.Printf("got a putFileStatus")
-
 	if err := c.BindJSON(r); err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
-		s.Logger.Printf("no request sent to putFileStatus")
 
 		return
 	}
 
 	if !s.AllowedAccess(c, "") {
 		c.AbortWithError(http.StatusUnauthorized, ErrNotAdmin) //nolint:errcheck
-		s.Logger.Printf("denied access during file status update for %s", r.Local)
+		r.CorrectFromJSON()
+		s.Logger.Printf("file status denied rid=%s", r.ID())
 
 		return
 	}
@@ -1748,6 +1772,7 @@ func (s *Server) putFileStatus(c *gin.Context) {
 	ce := <-ceCh
 
 	if ce != nil {
+		s.Logger.Printf("file status update failed rid=%s err=%v", r.ID(), ce.err)
 		c.AbortWithError(ce.code, ce.err) //nolint:errcheck
 
 		return
@@ -1783,25 +1808,22 @@ func (s *Server) queueFileStatusUpdate(r *transfer.Request) chan *codeAndError {
 // dealt with fully before dealing with the next request.
 func (s *Server) handleFileStatusUpdates() {
 	for fsp := range s.statusUpdateCh {
-		trace := grand.LcString(logTraceIDLen)
+		rid := fsp.r.ID()
+		s.hungDebugNoteStatusUpdate(rid)
 
-		s.Logger.Printf("[%s] will update status of %s", trace, fsp.r.Local)
-
-		if err := s.touchRequest(fsp.r.ID()); err != nil {
-			s.Logger.Printf("[%s] touch failed for: %s", trace, err)
+		if err := s.touchRequest(rid); err != nil {
+			s.Logger.Printf("file status touch failed rid=%s err=%v", rid, err)
 			fsp.ceCh <- &codeAndError{code: http.StatusBadRequest, err: err}
 
 			continue
 		}
 
-		if err := s.updateFileStatus(fsp.r, trace); err != nil {
-			s.Logger.Printf("[%s] update failed: %s", trace, err)
+		if err := s.updateFileStatus(fsp.r); err != nil {
+			s.Logger.Printf("file status apply failed rid=%s err=%v", rid, err)
 			fsp.ceCh <- &codeAndError{code: http.StatusBadRequest, err: err}
 
 			continue
 		}
-
-		s.Logger.Printf("[%s] update succeeded", trace)
 		fsp.ceCh <- nil
 	}
 }
@@ -1810,9 +1832,7 @@ func (s *Server) handleFileStatusUpdates() {
 // removes the request from our queue if not still uploading or no longer in the
 // set. Possibly stuck requests are noted in the server's in-memory list of
 // stuck requests.
-//
-// The supplied trace string is used in logging output.
-func (s *Server) updateFileStatus(r *transfer.Request, trace string) error {
+func (s *Server) updateFileStatus(r *transfer.Request) error {
 	entry, err := s.db.SetEntryStatus(r)
 	if err != nil {
 		var errr error
@@ -1829,7 +1849,7 @@ func (s *Server) updateFileStatus(r *transfer.Request, trace string) error {
 		return err
 	}
 
-	return s.trackUploadingAndStuckRequests(r, trace, entry)
+	return s.trackUploadingAndStuckRequests(r, entry)
 }
 
 // handleNewlyCompletedSets gets the set the given request is for, and if it
@@ -1851,18 +1871,15 @@ func (s *Server) handleNewlyCompletedSets(r *transfer.Request) error {
 	return nil
 }
 
-func (s *Server) trackUploadingAndStuckRequests(r *transfer.Request, trace string, entry *set.Entry) error {
+func (s *Server) trackUploadingAndStuckRequests(r *transfer.Request, entry *set.Entry) error {
 	if r.Status == transfer.RequestStatusUploading {
 		s.uploadTracker.uploadStarting(r)
-
-		s.Logger.Printf("[%s] uploading, called uploadStarting()", trace)
+		s.Logger.Printf("request uploading rid=%s%s", r.ID(), s.replicaLogSuffix(r))
 
 		return nil
 	}
 
 	s.uploadTracker.uploadFinished(r)
-
-	s.Logger.Printf("[%s] will remove/release; called uploadFinished()", trace)
 
 	return s.removeOrReleaseRequestFromQueue(r, entry)
 }
@@ -1871,17 +1888,58 @@ func (s *Server) trackUploadingAndStuckRequests(r *transfer.Request, trace strin
 // unless it has failed. < 3 failures results in it being released, 3 results in
 // it being buried.
 func (s *Server) removeOrReleaseRequestFromQueue(r *transfer.Request, entry *set.Entry) error {
+	rSuffix := s.replicaLogSuffix(r)
+
 	if r.Status == transfer.RequestStatusFailed {
 		s.updateQueueItemData(r)
 
-		if entry.Attempts%set.AttemptsToBeConsideredFailing == 0 {
-			return s.queue.Bury(r.ID())
+		attempts := 0
+		if entry != nil {
+			attempts = entry.Attempts
+
+			if entry.Attempts%set.AttemptsToBeConsideredFailing == 0 {
+				s.Logger.Printf("request buried rid=%s attempts=%d err=%s%s", r.ID(), attempts, r.Error, rSuffix)
+
+				return s.queue.Bury(r.ID())
+			}
 		}
+
+		delay := s.failedUploadRetryDelay
+		if err := s.queue.SetDelay(r.ID(), delay); err != nil {
+			s.Logger.Printf("request retry delay set failed rid=%s delay=%s err=%s", r.ID(), delay, err)
+		}
+
+		s.Logger.Printf("request retry rid=%s attempt=%d delay=%s err=%s%s", r.ID(), attempts, delay, r.Error, rSuffix)
 
 		return s.queue.Release(context.Background(), r.ID())
 	}
 
+	s.Logger.Printf("request done rid=%s status=%s%s", r.ID(), r.Status, rSuffix)
+
 	return s.queue.Remove(context.Background(), r.ID())
+}
+
+func (s *Server) replicaLogSuffix(r *transfer.Request) string {
+	if r == nil || !r.ReplicaLogging {
+		return ""
+	}
+
+	var b strings.Builder
+
+	appendIntSuffix(&b, "replicas_before_good", r.ReplicaBeforeGood)
+	appendIntSuffix(&b, "replicas_before_bad", r.ReplicaBeforeBad)
+	appendIntSuffix(&b, "replicas_after_good", r.ReplicaAfterGood)
+	appendIntSuffix(&b, "replicas_after_bad", r.ReplicaAfterBad)
+
+	return b.String()
+}
+
+func appendIntSuffix(b *strings.Builder, key string, v *int) {
+	if v == nil {
+		return
+	}
+
+	_, _ = fmt.Fprintf(b, " %s=%d", key, *v)
 }
 
 // updateQueueItemData updates the item in our queue corresponding to the
@@ -2033,5 +2091,36 @@ func (s *Server) retryFailedSetFiles(given *set.Set) (int, error) {
 		}
 	}
 
-	return len(filtered), s.enqueueEntries(filtered, given, transformer)
+	if len(filtered) == 0 {
+		return 0, nil
+	}
+
+	// A failed entry may already have a corresponding request sitting in the
+	// global queue with a delay applied (default is long). In that case,
+	// re-adding is a duplicate and doesn't force an immediate retry. Attempt to
+	// clear any delay and release existing requests first, and only enqueue
+	// those that aren't already present.
+	toEnqueue := make([]*set.Entry, 0, len(filtered))
+	for _, entry := range filtered {
+		r, errr := s.entryToRequest(entry, transformer, given)
+		if errr != nil {
+			return 0, errr
+		}
+
+		// If the request already exists, make it runnable immediately.
+		present := false
+		if errd := s.queue.SetDelay(r.ID(), 0); errd == nil {
+			present = true
+		}
+
+		if errr := s.queue.Release(context.Background(), r.ID()); errr == nil {
+			present = true
+		}
+
+		if !present {
+			toEnqueue = append(toEnqueue, entry)
+		}
+	}
+
+	return len(filtered), s.enqueueEntries(toEnqueue, given, transformer)
 }

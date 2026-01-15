@@ -2130,6 +2130,8 @@ func TestBackup(t *testing.T) {
 				return
 			}
 
+			remoteDir = filepath.Join(remoteDir, fmt.Sprintf("set_test_%d", time.Now().UnixNano()))
+
 			remotePath := filepath.Join(remoteDir, "db")
 
 			handler, err := baton.GetBatonHandler()

@@ -56,6 +56,8 @@ const serverTokenBasename = ".ibackup.token"
 const numPutClients = 10
 const dbBackupParamPosition = 2
 const defaultDebounceSeconds = 600
+const defaultFailedUploadRetryDelay = 1 * time.Hour
+const defaultHungDebugTimeout = 0
 
 // options for this cmd.
 var serverLogPath string
@@ -70,6 +72,9 @@ var serverHardlinksCollection string
 var serverSlackDebouncePeriod int
 var serverStillRunningMsgFreq string
 var serverTrashLifespan string
+var serverFailedUploadRetryDelay string
+var serverReplicaLogging bool
+var serverHungDebugTimeout string
 var statterPath string
 var queues string
 var queueAvoid string
@@ -209,6 +214,16 @@ These should be supplied as a comma separated list.
 			die(err)
 		}
 
+		failedUploadRetryDelay, err := parseDuration(serverFailedUploadRetryDelay, defaultFailedUploadRetryDelay)
+		if err != nil {
+			die(err)
+		}
+
+		hungDebugTimeout, err := parseDuration(serverHungDebugTimeout, defaultHungDebugTimeout)
+		if err != nil {
+			die(err)
+		}
+
 		if serverSlackDebouncePeriod < 0 {
 			dief("slack_debounce period must be positive, not: %d", serverSlackDebouncePeriod)
 		}
@@ -219,13 +234,16 @@ These should be supplied as a comma separated list.
 		}
 
 		conf := server.Config{
-			HTTPLogger:           logWriter,
-			Slacker:              slacker,
-			SlackMessageDebounce: time.Duration(serverSlackDebouncePeriod) * time.Second,
-			StillRunningMsgFreq:  stillRunningMsgFreq,
-			ReadOnly:             readonly,
-			StorageHandler:       handler,
-			TrashLifespan:        trashLifespan,
+			HTTPLogger:             logWriter,
+			Slacker:                slacker,
+			SlackMessageDebounce:   time.Duration(serverSlackDebouncePeriod) * time.Second,
+			StillRunningMsgFreq:    stillRunningMsgFreq,
+			ReadOnly:               readonly,
+			StorageHandler:         handler,
+			TrashLifespan:          trashLifespan,
+			FailedUploadRetryDelay: failedUploadRetryDelay,
+			ReplicaLogging:         serverReplicaLogging,
+			HungDebugTimeout:       hungDebugTimeout,
 		}
 
 		s, err := server.New(conf)
@@ -356,6 +374,24 @@ func init() {
 	serverCmd.Flags().StringVar(&serverTrashLifespan, "trash_lifespan", "30d",
 		"the period of time trash will be kept before being permanently removed"+
 			" (eg. 1d for 1 day or 2w for 2 weeks), defaults to 30 days")
+	serverCmd.Flags().StringVar(
+		&serverFailedUploadRetryDelay,
+		"failed_upload_retry_delay",
+		defaultFailedUploadRetryDelay.String(),
+		"delay before retrying a failed upload (eg. 0, 10m, 1h); defaults to 1 hour",
+	)
+	serverCmd.Flags().BoolVar(
+		&serverReplicaLogging,
+		"replica_logging",
+		false,
+		"enable extra baton calls (before/after uploads) to determine replica numbers for logging",
+	)
+	serverCmd.Flags().StringVar(
+		&serverHungDebugTimeout,
+		"hung_debug_timeout",
+		"0",
+		"server-side hung debugging: if uploads appear stuck for this long, log a goroutine dump (eg. 10m); 0 disables",
+	)
 	serverCmd.Flags().StringVar(&statterPath, "statter", "",
 		"path to an external statter program (https://github.com/wtsi-hgi/statter)")
 	serverCmd.Flags().StringVar(&queues, "queues", "", "specify queues to submit job")

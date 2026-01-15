@@ -571,6 +571,22 @@ func printResults(upDown string, transferResults, skipResults chan *transfer.Req
 // warnIfBad warns if this Request failed or is missing. If verbose, logs at
 // info level the Request details.
 func warnIfBad(r *transfer.Request, i, total int, verbose bool) {
+	if serverMode() {
+		switch r.Status {
+		case transfer.RequestStatusFailed, transfer.RequestStatusMissing, transfer.RequestStatusOrphaned,
+			transfer.RequestStatusWarning:
+			warn("[%d/%d] rid=%s %s: %s", i, total, r.ID(), r.Status, r.Error)
+		case transfer.RequestStatusHardlinkSkipped:
+			warn("[%d/%d] rid=%s Hardlink skipped: hardlink=%s", i, total, r.ID(), r.Hardlink)
+		default:
+			if verbose {
+				info("[%d/%d] rid=%s %s", i, total, r.ID(), r.Status)
+			}
+		}
+
+		return
+	}
+
 	switch r.Status {
 	case transfer.RequestStatusFailed, transfer.RequestStatusMissing, transfer.RequestStatusOrphaned,
 		transfer.RequestStatusWarning:
