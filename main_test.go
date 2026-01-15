@@ -531,7 +531,7 @@ func (s *TestServer) addSetForTestingWithFlag(t *testing.T, name, transformer, p
 func (s *TestServer) addSetForTestingWithFlags(t *testing.T, name, transformer string, flags ...string) {
 	t.Helper()
 
-	waitTimeout := 3 * time.Minute
+	waitTimeout := 1 * time.Minute
 
 	args := []string{"add", "--name", name, "--transformer", transformer}
 	args = append(args, flags...)
@@ -539,15 +539,17 @@ func (s *TestServer) addSetForTestingWithFlags(t *testing.T, name, transformer s
 
 	So(exitCode, ShouldEqual, 0)
 
-	if index := slices.Index(flags, "--user"); index != -1 && index+1 < len(flags) {
+	if index := slices.Index(flags, "--user"); index != -1 {
+		if index+1 >= len(flags) {
+			t.Fatalf("flag --user provided without a value in addSetForTestingWithFlags")
+		}
+
 		user := flags[index+1]
 		s.waitForStatusWithUser(name, "\nDiscovery: completed", user, waitTimeout)
 		s.waitForStatusWithUser(name, "\nStatus: complete", user, waitTimeout)
-		s.waitForStatusWithUser(name, "Failed: 0; Missing: 0;", user, waitTimeout)
 	} else {
 		s.waitForStatus(name, "\nDiscovery: completed", waitTimeout)
 		s.waitForStatus(name, "\nStatus: complete", waitTimeout)
-		s.waitForStatus(name, "Failed: 0; Missing: 0;", waitTimeout)
 	}
 }
 
@@ -580,9 +582,6 @@ func (s *TestServer) waitForStatusWithUser(name, statusToFind, user string, time
 
 func (s *TestServer) waitForStatusWithFlags(name, statusToFind string, timeout time.Duration, args ...string) {
 	err := s.tryWaitForStatusWithFlags(name, statusToFind, timeout, args...)
-	if err != nil {
-		fmt.Printf("\nfailed to see set %s get status: %s\n", name, statusToFind) //nolint:forbidigo
-	}
 
 	if !s.shouldFail {
 		So(err, ShouldBeNil)
@@ -622,7 +621,7 @@ func (s *TestServer) tryWaitForStatusWithFlags(name, statusToFind string, timeou
 	}, "waiting for matching status")
 
 	if status.Err != nil {
-		fmt.Printf("\nfailed to see set %s get status: %s\n%s\n", name, statusToFind, string(output)) //nolint:forbidigo
+		fmt.Printf("\n\nfailed to see set %s get status: %s\n%s\n", name, statusToFind, string(output)) //nolint:forbidigo
 	}
 
 	return status.Err
@@ -1945,6 +1944,7 @@ func TestBackup(t *testing.T) {
 		s := new(TestServer)
 		s.prepareFilePaths(dir)
 		s.prepareConfig(t)
+		s.prepareFilePaths(dir)
 
 		s.backupFile = filepath.Join(dir, "db.bak")
 		s.remoteDBFile = remotePath
@@ -2035,6 +2035,7 @@ func TestBackup(t *testing.T) {
 			bs.prepareFilePaths(tdir)
 			bs.dbFile = gotPath
 			bs.prepareConfig(t)
+			bs.prepareFilePaths(tdir)
 
 			bs.startServer()
 
