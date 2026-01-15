@@ -106,10 +106,10 @@ func NewTestServer(t *testing.T) *TestServer {
 	dir := t.TempDir()
 
 	s := new(TestServer)
+	s.dir = dir
 
-	s.prepareFilePaths(dir)
 	s.prepareConfig(t)
-	s.prepareFilePaths(dir)
+	s.prepareFilePaths()
 
 	s.startServer()
 
@@ -124,10 +124,10 @@ func NewTestServerWithQueues(t *testing.T, queues, avoidQueues []string, shouldF
 	s := new(TestServer)
 
 	s.app = app + "_ps"
+	s.dir = dir
 
-	s.prepareFilePaths(dir)
 	s.prepareConfig(t)
-	s.prepareFilePaths(dir)
+	s.prepareFilePaths()
 
 	s.queues = queues
 	s.avoidQueues = avoidQueues
@@ -146,10 +146,10 @@ func NewUploadingTestServer(t *testing.T, withDBBackup bool) (*TestServer, strin
 	dir := t.TempDir()
 
 	s := new(TestServer)
+	s.dir = dir
 
-	s.prepareFilePaths(dir)
 	s.prepareConfig(t)
-	s.prepareFilePaths(dir)
+	s.prepareFilePaths()
 
 	remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
 	if remotePath == "" {
@@ -216,12 +216,11 @@ func (s *TestServer) impersonateUser(t *testing.T, username string) ([]string, e
 	return originalEnv, nil
 }
 
-func (s *TestServer) prepareFilePaths(dir string) {
+func (s *TestServer) prepareFilePaths() {
 	if s.app == "" {
 		s.app = app
 	}
 
-	s.dir = dir
 	s.dbFile = filepath.Join(s.dir, "db")
 	s.logFile = filepath.Join(s.dir, "log")
 
@@ -231,7 +230,7 @@ func (s *TestServer) prepareFilePaths(dir string) {
 	path := os.Getenv("PATH")
 
 	if _, err = baton.GetBatonHandler(); err != nil {
-		path = path + ":" + getFakeBaton(dir)
+		path = path + ":" + getFakeBaton(s.dir)
 	}
 
 	s.env = []string{
@@ -501,8 +500,10 @@ func (s *TestServer) confirmOutputDoesNotContain(t *testing.T, args []string, ex
 
 var ErrStatusNotFound = errors.New("status not found")
 
-var errIlsDidNotFail = errors.New("expected ils to fail")
-var errIlsDidNotSucceed = errors.New("expected ils to succeed")
+var (
+	errIlsDidNotFail    = errors.New("expected ils to fail")
+	errIlsDidNotSucceed = errors.New("expected ils to succeed")
+)
 
 func (s *TestServer) addSetForTesting(t *testing.T, name, transformer, path string) {
 	t.Helper()
@@ -1942,9 +1943,10 @@ func TestBackup(t *testing.T) {
 
 		dir := t.TempDir()
 		s := new(TestServer)
-		s.prepareFilePaths(dir)
+		s.dir = dir
+
 		s.prepareConfig(t)
-		s.prepareFilePaths(dir)
+		s.prepareFilePaths()
 
 		s.backupFile = filepath.Join(dir, "db.bak")
 		s.remoteDBFile = remotePath
@@ -2032,10 +2034,10 @@ func TestBackup(t *testing.T) {
 
 		Convey("Running a server with the retrieved db works correctly", func() {
 			bs := new(TestServer)
-			bs.prepareFilePaths(tdir)
+			s.dir = tdir
 			bs.dbFile = gotPath
 			bs.prepareConfig(t)
-			bs.prepareFilePaths(tdir)
+			bs.prepareFilePaths()
 
 			bs.startServer()
 
