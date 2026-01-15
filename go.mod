@@ -23,7 +23,6 @@ require (
 	github.com/ugorji/go/codec v1.2.14
 	github.com/viant/ptrie v1.0.1
 	github.com/wtsi-hgi/go-authserver v1.5.1
-	github.com/wtsi-hgi/grand v1.0.0
 	github.com/wtsi-hgi/statter v1.1.0
 	github.com/wtsi-npg/extendo/v2 v2.7.1-0.20250509131519-b95b89bd744d
 	github.com/wtsi-npg/logshim v1.5.0
