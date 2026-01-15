@@ -1899,6 +1899,7 @@ func (s *Server) removeOrReleaseRequestFromQueue(r *transfer.Request, entry *set
 
 			if entry.Attempts%set.AttemptsToBeConsideredFailing == 0 {
 				s.Logger.Printf("request buried rid=%s attempts=%d err=%s%s", r.ID(), attempts, r.Error, rSuffix)
+
 				return s.queue.Bury(r.ID())
 			}
 		}
