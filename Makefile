@@ -28,7 +28,7 @@ race: race-subpkgs
 	@$(MAKE) race-main
 
 race-main:
-	@go test -tags netgo -timeout 40m -race --count 1 -v . || echo "main package race tests failed"
+	@go test -tags netgo -timeout 40m -race --count 1 -v .
 
 race-subpkgs:
 	@go test -tags netgo -race --count 1 $(shell go list ./... | grep -v '^${PKG}$$')

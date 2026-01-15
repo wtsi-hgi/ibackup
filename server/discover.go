@@ -643,9 +643,7 @@ func (s *Server) enqueueEntries(entries []*set.Entry, given *set.Set, transforme
 			given.Name,
 			dups,
 		)
-	}
 
-	if dups > 0 {
 		s.markFailedEntries(given)
 	}
 

@@ -1896,11 +1896,11 @@ func (s *Server) removeOrReleaseRequestFromQueue(r *transfer.Request, entry *set
 		attempts := 0
 		if entry != nil {
 			attempts = entry.Attempts
-		}
 
-		if entry.Attempts%set.AttemptsToBeConsideredFailing == 0 {
-			s.Logger.Printf("request buried rid=%s attempts=%d err=%s%s", r.ID(), attempts, r.Error, rSuffix)
-			return s.queue.Bury(r.ID())
+			if entry.Attempts%set.AttemptsToBeConsideredFailing == 0 {
+				s.Logger.Printf("request buried rid=%s attempts=%d err=%s%s", r.ID(), attempts, r.Error, rSuffix)
+				return s.queue.Bury(r.ID())
+			}
 		}
 
 		delay := s.failedUploadRetryDelay
