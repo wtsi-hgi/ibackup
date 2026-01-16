@@ -27,28 +27,38 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
 	b64 "encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"net"
 	"os"
 	"os/exec"
+	"os/signal"
 	"os/user"
 	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
 
 	"github.com/VertebrateResequencing/wr/jobqueue"
+	"github.com/inconshreveable/log15"
 	"github.com/phayes/freeport"
 	. "github.com/smartystreets/goconvey/convey"
 	gas "github.com/wtsi-hgi/go-authserver"
@@ -57,6 +67,7 @@ import (
 	"github.com/wtsi-hgi/ibackup/internal"
 	"github.com/wtsi-hgi/ibackup/server"
 	"github.com/wtsi-hgi/ibackup/set"
+	"github.com/wtsi-hgi/ibackup/statter"
 	"github.com/wtsi-hgi/ibackup/transfer"
 	"github.com/wtsi-ssg/wr/backoff"
 	btime "github.com/wtsi-ssg/wr/backoff/time"
@@ -69,11 +80,31 @@ const (
 	alternateUsername = "root"
 )
 
+var (
+	testRootDir      string //nolint:gochecknoglobals
+	testBinaryPath   string //nolint:gochecknoglobals
+	testPSBinaryPath string //nolint:gochecknoglobals
+)
+
+const serverTokenBasename = ".ibackup.token"
+
+type cliExitError struct {
+	code int
+}
+
+func (e cliExitError) Error() string {
+	return fmt.Sprintf("exit %d", e.code)
+}
+
+var cliMu sync.Mutex //nolint:gochecknoglobals
+
 const noBackupSets = `Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
 Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
 no backup sets`
 
 var errTwoBackupsNotSeen = errors.New("2 backups were not seen")
+var errInvalidQueuesSpecified = errors.New("invalid queues specified")
+var errServerStopTimeout = errors.New("timeout waiting for server to stop")
 
 type TestServer struct {
 	app                  string
@@ -95,9 +126,14 @@ type TestServer struct {
 	queues               []string
 	avoidQueues          []string
 	shouldFail           bool
+	external             bool
 
-	cmd *exec.Cmd
-	ch  chan []*jobqueue.Job
+	cmd        *exec.Cmd
+	ch         chan []*jobqueue.Job
+	srv        *server.Server
+	srvErr     chan error
+	logFH      *os.File
+	envRestore func()
 }
 
 func NewTestServer(t *testing.T) *TestServer {
@@ -112,6 +148,35 @@ func NewTestServer(t *testing.T) *TestServer {
 	s.prepareFilePaths()
 
 	s.startServer()
+
+	t.Cleanup(func() {
+		if err := s.Shutdown(); err != nil {
+			t.Errorf("server shutdown failed: %s", err)
+		}
+	})
+
+	return s
+}
+
+func NewExternalTestServer(t *testing.T) *TestServer {
+	t.Helper()
+
+	dir := t.TempDir()
+
+	s := new(TestServer)
+	s.dir = dir
+	s.external = true
+
+	s.prepareConfig(t)
+	s.prepareFilePaths()
+
+	s.startServer()
+
+	t.Cleanup(func() {
+		if err := s.Shutdown(); err != nil {
+			t.Errorf("server shutdown failed: %s", err)
+		}
+	})
 
 	return s
 }
@@ -134,8 +199,15 @@ func NewTestServerWithQueues(t *testing.T, queues, avoidQueues []string, shouldF
 	s.schedulerDeployment = "development"
 	s.ch = make(chan []*jobqueue.Job)
 	s.shouldFail = shouldFail
+	s.external = true
 
 	s.startServer()
+
+	t.Cleanup(func() {
+		if err := s.Shutdown(); err != nil {
+			t.Errorf("server shutdown failed: %s", err)
+		}
+	})
 
 	return s
 }
@@ -169,6 +241,12 @@ func NewUploadingTestServer(t *testing.T, withDBBackup bool) (*TestServer, strin
 	}
 
 	s.startServer()
+
+	t.Cleanup(func() {
+		if err := s.Shutdown(); err != nil {
+			t.Errorf("server shutdown failed: %s", err)
+		}
+	})
 
 	return s, remotePath
 }
@@ -219,6 +297,12 @@ func (s *TestServer) impersonateUser(t *testing.T, username string) ([]string, e
 func (s *TestServer) prepareFilePaths() {
 	if s.app == "" {
 		s.app = app
+	}
+
+	if s.app == app && testBinaryPath != "" {
+		s.app = testBinaryPath
+	} else if s.app == app+"_ps" && testPSBinaryPath != "" {
+		s.app = testPSBinaryPath
 	}
 
 	s.dbFile = filepath.Join(s.dir, "db")
@@ -281,19 +365,64 @@ func (s *TestServer) prepareConfig(t *testing.T) {
 	s.key = filepath.Join(s.dir, "key.pem")
 	s.cert = filepath.Join(s.dir, "cert.pem")
 
-	cmd := exec.Command( //nolint:gosec
-		"openssl", "req", "-x509", "-newkey", "rsa:4096", "-keyout", s.key,
-		"-out", s.cert, "-sha256", "-days", "365", "-subj", "/CN="+host,
-		"-addext", "subjectAltName = DNS:"+host, "-nodes",
-	)
-
-	_, err = cmd.CombinedOutput()
+	err = generateSelfSignedCert(host, s.cert, s.key)
 	So(err, ShouldBeNil)
 
 	s.ldapServer = os.Getenv("IBACKUP_TEST_LDAP_SERVER")
 	s.ldapLookup = os.Getenv("IBACKUP_TEST_LDAP_LOOKUP")
 
 	s.debouncePeriod = "5"
+}
+
+func generateSelfSignedCert(host, certPath, keyPath string) error {
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return err
+	}
+
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return err
+	}
+
+	template := x509.Certificate{
+		SerialNumber: serial,
+		NotBefore:    time.Now().Add(-1 * time.Minute),
+		NotAfter:     time.Now().Add(365 * 24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+
+	if ip := net.ParseIP(host); ip != nil {
+		template.IPAddresses = []net.IP{ip}
+	} else {
+		template.DNSNames = []string{host}
+	}
+
+	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &priv.PublicKey, priv)
+	if err != nil {
+		return err
+	}
+
+	certOut, err := os.Create(certPath)
+	if err != nil {
+		return err
+	}
+	defer certOut.Close()
+
+	if err = pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: derBytes}); err != nil {
+		return err
+	}
+
+	keyOut, err := os.Create(keyPath)
+	if err != nil {
+		return err
+	}
+	defer keyOut.Close()
+
+	keyBytes := x509.MarshalPKCS1PrivateKey(priv)
+
+	return pem.Encode(keyOut, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: keyBytes})
 }
 
 func generateDefaultConfig(t *testing.T) {
@@ -325,6 +454,16 @@ func generateDefaultConfig(t *testing.T) {
 }
 
 func (s *TestServer) startServer() {
+	if s.external {
+		s.startServerExternal()
+
+		return
+	}
+
+	s.startServerInProcess()
+}
+
+func (s *TestServer) startServerExternal() {
 	args := []string{
 		"server", "--cert", s.cert, "--key", s.key, "--logfile", s.logFile,
 		"-s", s.ldapServer, "-l", s.ldapLookup, "--url", s.url, "--slack_debounce", s.debouncePeriod,
@@ -359,7 +498,7 @@ func (s *TestServer) startServer() {
 	}
 
 	s.stopped = false
-	s.cmd = exec.Command("./"+s.app, args...) //nolint:gosec,noctx
+	s.cmd = exec.Command(resolveBinary(s.app), args...) //nolint:gosec,noctx
 	s.cmd.Env = s.env
 	s.cmd.Stdout = os.Stdout
 	s.cmd.Stderr = os.Stderr
@@ -389,84 +528,392 @@ func (s *TestServer) startServer() {
 	So(err, ShouldBeNil)
 
 	s.waitForServer()
+}
 
-	servers = append(servers, s)
+func (s *TestServer) startServerInProcess() {
+	s.stopped = false
+
+	s.envRestore = applyEnv(s.env)
+
+	logFH, err := os.OpenFile(s.logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600) //nolint:gosec
+	So(err, ShouldBeNil)
+
+	s.logFH = logFH
+
+	logWriter := io.Writer(logFH)
+
+	handler, err := baton.GetBatonHandler()
+	So(err, ShouldBeNil)
+
+	debounceSeconds, err := strconv.Atoi(s.debouncePeriod)
+	So(err, ShouldBeNil)
+
+	conf := server.Config{
+		HTTPLogger:             logWriter,
+		SlackMessageDebounce:   time.Duration(debounceSeconds) * time.Second,
+		StillRunningMsgFreq:    0,
+		ReadOnly:               false,
+		StorageHandler:         handler,
+		TrashLifespan:          30 * 24 * time.Hour,
+		FailedUploadRetryDelay: 1 * time.Hour,
+		ReplicaLogging:         false,
+		HungDebugTimeout:       0,
+	}
+
+	s.srv, err = server.New(conf)
+	So(err, ShouldBeNil)
+
+	passwordChecker := func(username, _ string) (bool, string) {
+		uid, errb := gas.UserNameToUID(username)
+		if errb != nil {
+			return false, ""
+		}
+
+		return true, uid
+	}
+
+	err = s.srv.EnableAuthWithServerToken(s.cert, s.key, serverTokenBasename, passwordChecker)
+	So(err, ShouldBeNil)
+
+	err = s.srv.MakeQueueEndPoints()
+	So(err, ShouldBeNil)
+
+	debugMode := s.schedulerDeployment == ""
+
+	validated, err := cmd.ValidateQueuesForTests(
+		strings.Join(s.queues, ","),
+		strings.Join(s.avoidQueues, ","),
+		debugMode,
+		false,
+	)
+	if err != nil {
+		fmt.Fprintf(logWriter, "failed to validate queues: %s", err)
+
+		if !s.shouldFail {
+			So(err, ShouldBeNil)
+		}
+
+		return
+	}
+
+	if !validated {
+		fmt.Fprint(logWriter, "invalid queues specified")
+
+		if !s.shouldFail {
+			So(errInvalidQueuesSpecified, ShouldBeNil)
+		}
+
+		return
+	}
+
+	if !debugMode {
+		putCmd := fmt.Sprintf("%q put -s --url '%s' --cert '%s' ", resolveBinary(app), s.url, s.cert)
+		if s.logFile != "" {
+			putCmd += fmt.Sprintf("--log %s.client.", s.logFile)
+		}
+
+		logger := log15.New()
+		logger.SetHandler(log15.StreamHandler(logWriter, log15.LogfmtFormat()))
+		err = s.srv.EnableJobSubmission(putCmd, s.schedulerDeployment, "", strings.Join(s.queues, ","),
+			strings.Join(s.avoidQueues, ","), 10, logger)
+		So(err, ShouldBeNil)
+	}
+
+	if s.remoteHardlinkPrefix != "" {
+		s.srv.SetRemoteHardlinkLocation(s.remoteHardlinkPrefix)
+	}
+
+	err = statter.Init("")
+	So(err, ShouldBeNil)
+
+	err = s.srv.LoadSetDB(s.dbFile, s.backupFile)
+	So(err, ShouldBeNil)
+
+	if s.remoteDBFile != "" {
+		s.srv.EnableRemoteDBBackups(s.remoteDBFile, handler)
+	}
+
+	s.srvErr = make(chan error, 1)
+
+	go func() { s.srvErr <- s.srv.Start(s.url, s.cert, s.key) }()
+
+	s.waitForServer()
 }
 
 func (s *TestServer) waitForServer() {
-	ctx, cancelFn := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancelFn()
+	deadline := time.Now().Add(5 * time.Second)
 
-	cmd := []string{"status", "--cert", s.cert, "--url", s.url}
+	var lastErr error
 
-	status := retry.Do(ctx, func() error {
-		clientCmd := exec.Command("./"+app, cmd...)
-		clientCmd.Env = []string{"XDG_STATE_HOME=" + s.dir, "PATH=" + os.Getenv("PATH")}
+	for time.Now().Before(deadline) {
+		dialer := &net.Dialer{Timeout: 50 * time.Millisecond}
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		tlsDialer := tls.Dialer{NetDialer: dialer, Config: &tls.Config{InsecureSkipVerify: true}} //nolint:gosec
+		conn, err := tlsDialer.DialContext(ctx, "tcp", s.url)
 
-		return clientCmd.Run()
-	}, &retry.UntilNoError{}, btime.SecondsRangeBackoff(), "waiting for server to start")
+		cancel()
+
+		if err == nil {
+			_ = conn.Close()
+
+			return
+		}
+
+		lastErr = err
+
+		time.Sleep(10 * time.Millisecond)
+	}
 
 	if !s.shouldFail {
-		So(status.Err, ShouldBeNil)
+		So(lastErr, ShouldBeNil)
 	}
 }
 
 func normaliseOutput(out string) string {
+	ansiRe := regexp.MustCompile(`\x1b\[[0-9;]*m`)
+	out = ansiRe.ReplaceAllString(out, "")
+
 	lines := strings.Split(out, "\n")
 
 	for n, line := range lines {
+		line = strings.TrimLeft(line, "✔✘")
+
 		if strings.HasPrefix(line, "t=") {
 			pos := strings.IndexByte(line, '"')
 			lines[n] = line[pos+1 : len(line)-1]
+
+			continue
 		}
 
 		if strings.HasPrefix(line, "Discovery:") {
 			lines[n] = line[:10]
+
+			continue
 		}
+
+		lines[n] = line
 	}
 
 	return strings.Join(lines, "\n")
 }
 
+type envBackup struct {
+	key   string
+	value string
+	set   bool
+}
+
+type safeBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *safeBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return b.buf.Write(p)
+}
+
+func (b *safeBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return b.buf.String()
+}
+
+func applyEnv(env []string) func() {
+	backups := make([]envBackup, 0, len(env))
+
+	for _, kv := range env {
+		key, value, ok := strings.Cut(kv, "=")
+		if !ok {
+			continue
+		}
+
+		oldValue, wasSet := os.LookupEnv(key)
+		backups = append(backups, envBackup{key: key, value: oldValue, set: wasSet})
+		_ = os.Setenv(key, value)
+	}
+
+	return func() {
+		for _, b := range backups {
+			if b.set {
+				_ = os.Setenv(b.key, b.value)
+			} else {
+				_ = os.Unsetenv(b.key)
+			}
+		}
+	}
+}
+
+//nolint:thelper
+func handleConfigLoadError(t *testing.T, err error) {
+	if err == nil {
+		return
+	}
+
+	if t != nil {
+		So(err, ShouldBeNil)
+
+		return
+	}
+
+	panic(err)
+}
+
+//nolint:thelper
+func runCLI(t *testing.T, env []string, stdin string, args ...string) (int, string) {
+	if t != nil {
+		t.Helper()
+	}
+
+	cliMu.Lock()
+	defer cliMu.Unlock()
+
+	restoreEnv := applyEnv(env)
+	defer restoreEnv()
+
+	var out safeBuffer
+
+	writer := &out
+
+	var in io.Reader
+	if stdin != "" {
+		in = strings.NewReader(stdin)
+	} else {
+		in = strings.NewReader("")
+	}
+
+	prevExit := cmd.SetExitFunc(func(code int) {
+		panic(cliExitError{code: code})
+	})
+	defer cmd.SetExitFunc(prevExit)
+
+	cmd.SetCLIWriter(writer)
+	defer cmd.SetCLIWriter(nil)
+
+	cmd.SetLoggerHandler(log15.FuncHandler(func(record *log15.Record) error {
+		_, errw := io.WriteString(writer, record.Msg+"\n")
+
+		return errw
+	}))
+	defer cmd.SetLoggerHandler(nil)
+
+	cmd.ResetFlagsForTests()
+
+	if config := os.Getenv(cmd.ConfigKey); config != "" {
+		handleConfigLoadError(t, cmd.LoadConfig(config))
+	}
+
+	cmd.RootCmd.SetOut(writer)
+	cmd.RootCmd.SetErr(writer)
+	cmd.RootCmd.SetIn(in)
+	cmd.RootCmd.SetArgs(args)
+
+	exitCode := 0
+
+	err := func() error {
+		defer func() {
+			if rec := recover(); rec != nil {
+				if ce, ok := rec.(cliExitError); ok {
+					exitCode = ce.code
+
+					return
+				}
+
+				panic(rec)
+			}
+		}()
+
+		return cmd.RootCmd.Execute()
+	}()
+
+	if exitCode == 0 && err != nil {
+		exitCode = 1
+	}
+
+	output := strings.TrimRight(out.String(), "\n")
+	output = normaliseOutput(output)
+
+	return exitCode, output
+}
+
+func runCLIExternal(t *testing.T, env []string, args ...string) (int, string) {
+	t.Helper()
+
+	cmd := exec.Command(resolveBinary(app), args...) //nolint:gosec,noctx
+	cmd.Env = env
+
+	out, err := cmd.CombinedOutput()
+	So(err, ShouldBeNil)
+
+	output := strings.TrimRight(string(out), "\n")
+	output = normaliseOutput(output)
+
+	return cmd.ProcessState.ExitCode(), output
+}
+
+func resolveBinary(name string) string {
+	if filepath.IsAbs(name) {
+		return name
+	}
+
+	if name == app && testBinaryPath != "" {
+		return testBinaryPath
+	}
+
+	if name == app+"_ps" && testPSBinaryPath != "" {
+		return testPSBinaryPath
+	}
+
+	return "./" + name
+}
+
+func waitForStatusExternal(t *testing.T, env []string, url, cert, name, statusToFind string, timeout time.Duration) {
+	t.Helper()
+
+	ctx, cancelFn := context.WithTimeout(context.Background(), timeout)
+	defer cancelFn()
+
+	cmd := []string{"status", "--name", name, "--url", url, "--cert", cert}
+
+	for {
+		select {
+		case <-ctx.Done():
+			So(fmt.Errorf("timeout waiting for status %q", statusToFind), ShouldBeNil) //nolint:err113
+
+			return
+		default:
+			exitCode, out := runCLIExternal(t, env, cmd...)
+			if exitCode == 0 && strings.Contains(out, statusToFind) {
+				return
+			}
+
+			time.Sleep(25 * time.Millisecond)
+		}
+	}
+}
+
 func (s *TestServer) runBinary(t *testing.T, args ...string) (int, string) {
 	t.Helper()
 
-	cmd := s.clientCmd(args)
+	fullArgs := append([]string{"--url", s.url, "--cert", s.cert}, args...)
+	exitCode, out := runCLI(t, s.env, "", fullArgs...)
 
-	outB, err := cmd.CombinedOutput()
-	out := string(outB)
-	out = strings.TrimRight(out, "\n")
-	out = normaliseOutput(out)
-
-	if err != nil {
-		t.Logf("\nbinary gave error: %s\noutput was: %s\n", err, out)
-	} else if cmd.ProcessState.ExitCode() != 0 {
+	if exitCode != 0 {
 		t.Logf("\nno error, but non-0 exit; binary output: %s\n", out)
 	}
 
-	return cmd.ProcessState.ExitCode(), out
+	return exitCode, out
 }
 
 func (s *TestServer) runBinaryWithNoLogging(t *testing.T, args ...string) (int, string) {
 	t.Helper()
 
-	cmd := s.clientCmd(args)
+	fullArgs := append([]string{"--url", s.url, "--cert", s.cert}, args...)
 
-	outB, _ := cmd.CombinedOutput() //nolint:errcheck
-	out := string(outB)
-	out = strings.TrimRight(out, "\n")
-	out = normaliseOutput(out)
-
-	return cmd.ProcessState.ExitCode(), out
-}
-
-func (s *TestServer) clientCmd(args []string) *exec.Cmd {
-	args = append([]string{"--url", s.url, "--cert", s.cert}, args...)
-
-	cmd := exec.Command("./"+app, args...)
-	cmd.Env = s.env
-
-	return cmd
+	return runCLI(t, s.env, "", fullArgs...)
 }
 
 func (s *TestServer) confirmOutput(t *testing.T, args []string, expectedCode int, expected string) {
@@ -533,6 +980,9 @@ func (s *TestServer) addSetForTestingWithFlags(t *testing.T, name, transformer s
 	t.Helper()
 
 	waitTimeout := 1 * time.Minute
+	if s.schedulerDeployment != "" {
+		waitTimeout = 2 * time.Minute
+	}
 
 	args := []string{"add", "--name", name, "--transformer", transformer}
 	args = append(args, flags...)
@@ -593,23 +1043,22 @@ func (s *TestServer) tryWaitForStatusWithFlags(name, statusToFind string, timeou
 	ctx, cancelFn := context.WithTimeout(context.Background(), timeout)
 	defer cancelFn()
 
+	statusNeedle := normaliseOutput(statusToFind)
+
 	cmd := []string{"status", "--name", name, "--url", s.url, "--cert", s.cert}
 	cmd = append(cmd, args...)
 
-	var output []byte
-
-	var err error
+	var output string
 
 	status := retry.Do(ctx, func() error {
-		clientCmd := exec.Command("./"+app, cmd...)
-		clientCmd.Env = s.env
+		exitCode, out := runCLI(nil, s.env, "", cmd...)
+		output = out
 
-		output, err = clientCmd.CombinedOutput()
-		if err != nil {
-			return err
+		if exitCode != 0 {
+			return fmt.Errorf("status command failed with exit %d", exitCode) //nolint:err113
 		}
 
-		if strings.Contains(string(output), statusToFind) {
+		if strings.Contains(output, statusNeedle) {
 			return nil
 		}
 
@@ -622,7 +1071,7 @@ func (s *TestServer) tryWaitForStatusWithFlags(name, statusToFind string, timeou
 	}, "waiting for matching status")
 
 	if status.Err != nil {
-		fmt.Printf("\n\nfailed to see set %s get status: %s\n%s\n", name, statusToFind, string(output)) //nolint:forbidigo
+		fmt.Printf("\n\nfailed to see set %s get status: %s\n%s\n", name, statusToFind, output) //nolint:forbidigo
 	}
 
 	return status.Err
@@ -698,40 +1147,95 @@ func (s *TestServer) Shutdown() error {
 	}
 
 	s.stopped = true
-	err := s.cmd.Process.Signal(os.Interrupt)
 
-	errCh := make(chan error, 1)
+	if s.external && s.cmd != nil {
+		err := s.cmd.Process.Signal(os.Interrupt)
+		errCh := make(chan error, 1)
 
-	go func() { errCh <- s.cmd.Wait() }()
+		go func() { errCh <- s.cmd.Wait() }()
 
-	select {
-	case errb := <-errCh:
-		return errors.Join(err, errb)
-	case <-time.After(5 * time.Second):
-		return errors.Join(err, s.cmd.Process.Kill())
+		select {
+		case errb := <-errCh:
+			return errors.Join(err, errb)
+		case <-time.After(5 * time.Second):
+			return errors.Join(err, s.cmd.Process.Kill())
+		}
 	}
-}
 
-var servers []*TestServer //nolint:gochecknoglobals
+	if s.srv != nil {
+		s.srv.Stop()
+
+		if s.srvErr != nil {
+			select {
+			case err := <-s.srvErr:
+				return err
+			case <-time.After(5 * time.Second):
+				return errServerStopTimeout
+			}
+		}
+	}
+
+	if s.logFH != nil {
+		_ = s.logFH.Close()
+	}
+
+	if s.envRestore != nil {
+		s.envRestore()
+		s.envRestore = nil
+	}
+
+	return nil
+}
 
 // TestMain builds ourself, starts a test server, runs client tests against the
 // server and cleans up afterwards. It's a full e2e integration test.
 func TestMain(m *testing.M) {
-	var exitCode int
+	var (
+		exitCode     int
+		cleanupOnce  sync.Once
+		tmpRoot      string
+		tmpStatter   string
+		removeBinary func()
+	)
+
+	cleanup := func() {
+		resetIRODS()
+
+		if removeBinary != nil {
+			removeBinary()
+		}
+
+		if tmpStatter != "" {
+			_ = os.RemoveAll(tmpStatter)
+		}
+
+		if tmpRoot != "" {
+			_ = os.RemoveAll(tmpRoot)
+		}
+	}
+
+	sigCh := make(chan os.Signal, 2)
+
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+
+	go func() {
+		<-sigCh
+		cleanupOnce.Do(cleanup)
+		os.Exit(130)
+	}()
+
 	defer func() {
+		if rec := recover(); rec != nil {
+			panic(rec)
+		}
+
+		cleanupOnce.Do(cleanup)
 		os.Exit(exitCode)
 	}()
 
-	d1 := buildSelf()
-	if d1 == nil {
-		return
-	}
-
-	defer d1()
-
-	tmp, _ := os.MkdirTemp("", "") //nolint:errcheck
-
-	if err := internal.BuildStatter(tmp); err != nil {
+	createdRoot, err := os.MkdirTemp("", "ibackup-tests-")
+	if err != nil {
 		exitCode = 1
 
 		failMainTest(err.Error())
@@ -739,42 +1243,72 @@ func TestMain(m *testing.M) {
 		return
 	}
 
-	defer os.RemoveAll(tmp)
+	tmpRoot = createdRoot
 
-	os.Setenv("PATH", tmp+":"+os.Getenv("PATH"))
+	testRootDir = tmpRoot
 
-	exitCode = m.Run()
-
-	for _, s := range servers {
-		if err := s.Shutdown(); err != nil {
-			fmt.Println("error shutting down server: ", err) //nolint:forbidigo
-		}
+	removeBinary = buildSelf()
+	if removeBinary == nil {
+		return
 	}
 
-	resetIRODS()
+	tmpStatter, _ = os.MkdirTemp(tmpRoot, "statter-") //nolint:errcheck
+
+	if err := internal.BuildStatter(tmpStatter); err != nil {
+		exitCode = 1
+
+		failMainTest(err.Error())
+
+		return
+	}
+
+	os.Setenv("PATH", tmpStatter+":"+os.Getenv("PATH"))
+
+	exitCode = m.Run()
 }
 
 func buildSelf() func() {
-	if err := exec.Command("make", "build").Run(); err != nil { //nolint:noctx
-		failMainTest(err.Error())
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	if testRootDir == "" {
+		return nil
+	}
+
+	testBinaryPath = filepath.Join(testRootDir, app)
+
+	cmd := exec.CommandContext(ctx, "go", "build", "-tags", "netgo",
+		"-ldflags=-X github.com/wtsi-hgi/ibackup/cmd.Version=TEST",
+		"-o", testBinaryPath,
+	)
+
+	if out, err := cmd.CombinedOutput(); err != nil {
+		failMainTest(fmt.Sprintf("build failed: %s\n%s", err, strings.TrimSpace(string(out))))
 
 		return nil
 	}
 
-	return func() { os.Remove(app) }
+	return func() { os.Remove(testBinaryPath) }
 }
 
 func buildSelfWithPS(t *testing.T) {
 	t.Helper()
 
+	if testRootDir == "" {
+		tempDir := t.TempDir()
+		testRootDir = tempDir
+	}
+
+	testPSBinaryPath = filepath.Join(testRootDir, app+"_ps")
+
 	So(exec.Command( //nolint:noctx
 		"go", "build",
 		"-ldflags=-X github.com/VertebrateResequencing/wr/client.PretendSubmissions=3 "+
 			"-X github.com/wtsi-ssg/wrstat/v6/cmd.Version=TESTVERSION",
-		"-o", "ibackup_ps",
+		"-o", testPSBinaryPath,
 	).Run(), ShouldBeNil)
 
-	Reset(func() { os.Remove(app + "_ps") })
+	Reset(func() { os.Remove(testPSBinaryPath) })
 }
 
 func resetIRODS() {
@@ -804,22 +1338,39 @@ func TestNoServer(t *testing.T) {
 
 func TestAddRemote(t *testing.T) {
 	Convey("You can call the addremote subcommand to get transformed paths", t, func() {
-		var sb strings.Builder
+		exitCode, out := runCLI(t, nil, "", "addremote", "--prefix", "/local/:/remote/")
+		So(exitCode, ShouldEqual, 0)
+		So(out, ShouldBeBlank)
 
-		cmd := exec.Command("./"+app, "addremote", "--prefix", "/local/:/remote/") //nolint:noctx
-		cmd.Stdin = strings.NewReader(``)
-		cmd.Stdout = &sb
+		exitCode, out = runCLI(t, nil, "/local/path/to/file\n/path/to/another/file", "addremote", "--prefix",
+			"/local/:/remote/")
+		So(exitCode, ShouldEqual, 0)
+		So(out, ShouldEqual, strings.TrimRight("/local/path/to/file\t/remote/path/to/file\n"+
+			"/path/to/another/file\t/remote/path/to/another/file\n", "\n"))
+	})
+}
 
-		So(cmd.Run(), ShouldBeNil)
-		So(sb.String(), ShouldBeBlank)
+func TestE2EExternal(t *testing.T) {
+	Convey("External server works end-to-end", t, func() {
+		s := NewExternalTestServer(t)
+		So(s, ShouldNotBeNil)
 
-		cmd = exec.Command("./"+app, "addremote", "--prefix", "/local/:/remote/") //nolint:noctx
-		cmd.Stdin = strings.NewReader("/local/path/to/file\n/path/to/another/file")
-		cmd.Stdout = &sb
+		exitCode, out := runCLIExternal(t, s.env, "status", "--url", s.url, "--cert", s.cert)
+		So(exitCode, ShouldEqual, 0)
+		So(out, ShouldEqual, noBackupSets)
 
-		So(cmd.Run(), ShouldBeNil)
-		So(sb.String(), ShouldEqual, "/local/path/to/file\t/remote/path/to/file\n"+
-			"/path/to/another/file\t/remote/path/to/another/file\n")
+		transformer, localDir, _ := prepareForSetWithEmptyDir(t)
+		setName := "e2eSet"
+
+		exitCode, _ = runCLIExternal(t, s.env, "add", "--name", setName, "--transformer", transformer,
+			"--path", localDir, "--url", s.url, "--cert", s.cert)
+		So(exitCode, ShouldEqual, 0)
+
+		waitForStatusExternal(t, s.env, s.url, s.cert, setName, "Status: complete", 20*time.Second)
+
+		exitCode, out = runCLIExternal(t, s.env, "status", "--name", setName, "--url", s.url, "--cert", s.cert)
+		So(exitCode, ShouldEqual, 0)
+		So(out, ShouldContainSubstring, "Name: "+setName)
 	})
 }
 
@@ -841,6 +1392,8 @@ func TestList(t *testing.T) {
 			dir := t.TempDir()
 			tempTestFile, err := os.CreateTemp(dir, "testFileSet")
 			So(err, ShouldBeNil)
+
+			defer tempTestFile.Close()
 
 			_, err = io.WriteString(tempTestFile, dir+`/path/to/some/file
 `+dir+`/path/to/other/file`)
@@ -958,6 +1511,8 @@ func TestList(t *testing.T) {
 			dir := t.TempDir()
 			tempTestFile, err := os.CreateTemp(dir, "testFileSet")
 			So(err, ShouldBeNil)
+
+			defer tempTestFile.Close()
 
 			uploadFile1Path := filepath.Join(dir, "file1")
 			uploadFile2Path := filepath.Join(dir, "file2")
@@ -1268,12 +1823,9 @@ Directories:
 				meta = "testKey=testValNew;testKey2=testVal2;testKey3=testVal3"
 				setName := "testMeta2"
 
-				cmd := s.clientCmd([]string{
-					"add", "--name", setName, "--transformer", transformer,
-					"--path", localDir, "--metadata", meta, "--reason", "archive", "--remove", "2999-01-01",
-				})
-				err := cmd.Run()
-				So(err, ShouldBeNil)
+				exitCode, _ := s.runBinary(t, "add", "--name", setName, "--transformer", transformer,
+					"--path", localDir, "--metadata", meta, "--reason", "archive", "--remove", "2999-01-01")
+				So(exitCode, ShouldEqual, 0)
 
 				s.confirmOutput(t, []string{"status", "-n", setName}, 0,
 					`Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
@@ -1297,12 +1849,9 @@ Directories:
 				meta = "testKey=testValNew;testKey2=testVal2;testKey3=testVal3"
 				setName = "testMeta3"
 
-				cmd = s.clientCmd([]string{
-					"add", "--name", setName, "--transformer", transformer,
-					"--path", localDir,
-				})
-				err = cmd.Run()
-				So(err, ShouldBeNil)
+				exitCode, _ = s.runBinary(t, "add", "--name", setName, "--transformer", transformer,
+					"--path", localDir)
+				So(exitCode, ShouldEqual, 0)
 
 				s.confirmOutput(t, []string{"status", "-n", setName}, 0,
 					`Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
@@ -1324,12 +1873,9 @@ Directories:
 
 				setName = "testMeta4"
 
-				cmd = s.clientCmd([]string{
-					"add", "--name", setName, "--transformer", transformer,
-					"--path", localDir, "--reason", "backup",
-				})
-				err = cmd.Run()
-				So(err, ShouldBeNil)
+				exitCode, _ = s.runBinary(t, "add", "--name", setName, "--transformer", transformer,
+					"--path", localDir, "--reason", "backup")
+				So(exitCode, ShouldEqual, 0)
 
 				s.confirmOutput(t, []string{"status", "-n", setName}, 0,
 					`Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
@@ -2034,10 +2580,10 @@ func TestBackup(t *testing.T) {
 
 		Convey("Running a server with the retrieved db works correctly", func() {
 			bs := new(TestServer)
-			s.dir = tdir
-			bs.dbFile = gotPath
+			bs.dir = tdir
 			bs.prepareConfig(t)
 			bs.prepareFilePaths()
+			bs.dbFile = gotPath
 
 			bs.startServer()
 
@@ -2704,15 +3250,9 @@ func TestManualMode(t *testing.T) {
 		files := file1 + "\t" + remote1 + "\n"
 		files += file2 + "\t" + remote2 + "\n"
 
-		cmd := exec.Command("./"+app, "put")
-		cmd.Stdin = strings.NewReader(files)
-
-		output, err := cmd.CombinedOutput()
-		So(err, ShouldBeNil)
-		So(cmd.ProcessState.ExitCode(), ShouldEqual, 0)
-
-		out := normaliseOutput(string(output))
-		So(out, ShouldEqual, "2 uploaded (0 replaced); 0 skipped; 0 failed; 0 missing\n")
+		exitCode, out := runCLI(t, nil, files, "put")
+		So(exitCode, ShouldEqual, 0)
+		So(out, ShouldEqual, strings.TrimRight("2 uploaded (0 replaced); 0 skipped; 0 failed; 0 missing\n", "\n"))
 
 		got1 := file1 + ".got"
 		got2 := file2 + ".got"
@@ -2826,7 +3366,7 @@ func TestManualMode(t *testing.T) {
 			restoreFiles(
 				t,
 				file4+"\t"+remote1+"\n",
-				fmt.Sprintf("[1/1] Hardlink skipped: %s\\t%s\n0 downloaded (0 replaced); 1 skipped; 0 failed; 0 missing\n",
+				fmt.Sprintf("[1/1] Hardlink skipped: %s\t%s\n0 downloaded (0 replaced); 1 skipped; 0 failed; 0 missing\n",
 					file4, remote2),
 			)
 
@@ -2862,15 +3402,10 @@ func TestManualMode(t *testing.T) {
 func restoreFiles(t *testing.T, files, expectedOutput string, args ...string) {
 	t.Helper()
 
-	cmd := exec.Command("./"+app, append([]string{"get"}, args...)...) //nolint:gosec,noctx
-	cmd.Stdin = strings.NewReader(files)
-
-	output, err := cmd.CombinedOutput()
-	So(err, ShouldBeNil)
-	So(cmd.ProcessState.ExitCode(), ShouldEqual, 0)
-
-	out := normaliseOutput(string(output))
-	So(out, ShouldEqual, expectedOutput)
+	fullArgs := append([]string{"get"}, args...)
+	exitCode, out := runCLI(t, nil, files, fullArgs...)
+	So(exitCode, ShouldEqual, 0)
+	So(out, ShouldEqual, strings.TrimRight(expectedOutput, "\n"))
 }
 
 func TestReAdd(t *testing.T) {
@@ -3454,15 +3989,16 @@ func TestRemove(t *testing.T) {
 				cmd := []string{"status", "--name", setName, "--url", s.url, "--cert", s.cert}
 
 				status := retry.Do(ctx, func() error {
-					clientCmd := exec.Command("./"+app, cmd...) //nolint:noctx
-					clientCmd.Env = s.env
+					exitCode, output := runCLI(t, s.env, "", cmd...)
+					if exitCode != 0 {
+						if strings.Contains(output, "set with that id does not exist") {
+							return nil
+						}
 
-					output, errc := clientCmd.CombinedOutput()
-					if errc != nil {
-						return err
+						return fmt.Errorf("status command failed with exit %d", exitCode) //nolint:err113
 					}
 
-					if strings.Contains(string(output), "set with that id does not exist") {
+					if strings.Contains(output, "set with that id does not exist") {
 						return nil
 					}
 
@@ -4570,7 +5106,10 @@ func TestEdit(t *testing.T) {
 						_, err = s.impersonateUser(t, user)
 						So(err, ShouldBeNil)
 
-						s.addSetForTestingWithFlag(t, nonAdminSetName, transformer, setFile1, "--user", user)
+						exitCode, _ := s.runBinary(t, "add", "--name", nonAdminSetName, "--transformer",
+							transformer, "--path", setFile1, "--user", user)
+						So(exitCode, ShouldEqual, 0)
+						s.waitForStatusWithUser(nonAdminSetName, "\nDiscovery: completed", user, 2*time.Minute)
 
 						Convey("Non admins cannot use the --add-items flag", func() {
 							exitCode, _ := s.runBinaryWithNoLogging(t, "edit", "--name", nonAdminSetName,

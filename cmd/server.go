@@ -542,6 +542,21 @@ func validateQueues(useQueues string, avoidQueues string) (bool, error) { //noli
 	return true, nil
 }
 
+// ValidateQueuesForTests exposes queue validation for test helpers.
+func ValidateQueuesForTests(useQueues string, avoidQueues string, debug bool, readOnly bool) (bool, error) {
+	oldDebug := serverDebug
+	oldReadonly := readonly
+	serverDebug = debug
+	readonly = readOnly
+
+	defer func() {
+		serverDebug = oldDebug
+		readonly = oldReadonly
+	}()
+
+	return validateQueues(useQueues, avoidQueues)
+}
+
 // getValidQueues runs bqueues.
 func getValidQueues() (bqueuesOutput, error) {
 	var buf bytes.Buffer

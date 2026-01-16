@@ -20,6 +20,7 @@ require (
 	github.com/slack-go/slack v0.17.0
 	github.com/smartystreets/goconvey v1.8.1
 	github.com/spf13/cobra v1.9.1
+	github.com/spf13/pflag v1.0.6
 	github.com/ugorji/go/codec v1.2.14
 	github.com/viant/ptrie v1.0.1
 	github.com/wtsi-hgi/go-authserver v1.5.1
@@ -141,7 +142,6 @@ require (
 	github.com/sb10/l15h v0.0.0-20170510122137-64c488bf8e22 // indirect
 	github.com/sb10/waitgroup v0.0.0-20200305124406-7ed665007efa // indirect
 	github.com/smarty/assertions v1.15.0 // indirect
-	github.com/spf13/pflag v1.0.6 // indirect
 	github.com/thanhpk/randstr v1.0.6 // indirect
 	github.com/tinylib/msgp v1.3.0 // indirect
 	github.com/tklauser/go-sysconf v0.3.15 // indirect

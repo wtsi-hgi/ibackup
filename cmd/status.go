@@ -176,12 +176,17 @@ func init() {
 		"only show queued sets (added but hasn't started to upload yet)")
 	statusCmd.Flags().BoolVar(&statusShowHidden, "show-hidden", false,
 		"show hidden sets")
+	statusCmd.Flags().BoolVar(&statusTrash, "trash", false,
+		"show trash for a single set or for all sets")
 
 	if isAdmin() {
-		statusCmd.Flags().BoolVar(&statusTrash, "trash", false,
-			"show trash for a single set or for all sets")
-	} else if err := listCmd.Flags().MarkHidden("user"); err != nil {
-		die(err)
+		return
+	}
+
+	for _, flag := range []string{"user", "trash"} {
+		if err := statusCmd.Flags().MarkHidden(flag); err != nil {
+			die(err)
+		}
 	}
 }
 

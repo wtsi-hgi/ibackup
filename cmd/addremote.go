@@ -28,7 +28,6 @@ package cmd
 import (
 	"bufio"
 	b64 "encoding/base64"
-	"fmt"
 	"slices"
 	"strings"
 
@@ -142,6 +141,7 @@ func addRemoteCmdFlags() {
 		txFlagsDesc string
 		maxLen      = 0
 		keys        = make([]string, 0, len(Config.Transformers))
+		addedAny    = false
 	)
 
 	for name := range Config.Transformers {
@@ -156,15 +156,21 @@ func addRemoteCmdFlags() {
 
 		var txFlag bool
 
+		if addremoteCmd.Flags().Lookup(name) != nil {
+			continue
+		}
+
 		arTx[name] = &txFlag
 
 		addremoteCmd.Flags().BoolVar(&txFlag, name, false, tx.Description)
+
+		addedAny = true
 
 		txFlagsDesc += "\n\t--" + name + ":" + //nolint:perfsprint
 			strings.Repeat(" ", maxLen-len(name)) + " " + tx.Description
 	}
 
-	if len(Config.Transformers) > 0 {
+	if addedAny {
 		addremoteCmd.Long += `
 You can use the following options to do a more complex transformation from local
 paths to the iRODS path:` + txFlagsDesc
@@ -188,7 +194,7 @@ func transformARFile(path string, pt transformer.PathTransformer, splitter bufio
 			die(err)
 		}
 
-		fmt.Printf("%s\t%s\n", encodeBase64(r.Local, encode), encodeBase64(r.Remote, encode))
+		cliPrintf("%s\t%s\n", encodeBase64(r.Local, encode), encodeBase64(r.Remote, encode))
 	}
 
 	serr := scanner.Err()

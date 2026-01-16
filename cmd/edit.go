@@ -72,6 +72,7 @@ var (
 		"--stop-monitor-removals a set, not both")
 	ErrInvalidEditMonitorRemovalsUnmonitored = errors.New("cannot use --monitor-removals without " +
 		"--monitor or set being monitored")
+	ErrEditItemsNotAdmin = errors.New("only admins can use --add-items")
 )
 
 // editCmd represents the edit command.
@@ -184,6 +185,10 @@ preexisting backup set.
 			return nil
 		}
 
+		if editItems != "" && !isAdmin() {
+			return ErrEditItemsNotAdmin
+		}
+
 		return updateSet(client, userSet.ID(), editAddPath, editItems, editNull)
 	},
 }
@@ -217,10 +222,8 @@ func init() { //nolint:funlen
 	editCmd.Flags().BoolVar(&editUnHide, "unhide", false,
 		"unhide set when viewing status")
 
-	if isAdmin() {
-		editCmd.Flags().StringVar(&editItems, "add-items", "", helpTextItems)
-		editCmd.Flags().BoolVarP(&editNull, "null", "0", false, helpTextNull)
-	}
+	editCmd.Flags().StringVar(&editItems, "add-items", "", helpTextItems)
+	editCmd.Flags().BoolVarP(&editNull, "null", "0", false, helpTextNull)
 
 	if err := editCmd.MarkFlagRequired("name"); err != nil {
 		die(err)

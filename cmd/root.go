@@ -30,14 +30,22 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/inconshreveable/log15"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 // appLogger is used for logging events in our commands.
 var appLogger = log15.New()
+
+// cliOut allows tests to capture output.
+var cliOut io.Writer = os.Stdout
+
+// exitFunc allows tests to intercept os.Exit calls.
+var exitFunc = os.Exit
 
 // global options.
 var (
@@ -146,18 +154,18 @@ func logToFile(path string) {
 }
 
 func cliPrint(msg string) {
-	fmt.Fprint(os.Stdout, msg)
+	fmt.Fprint(cliOut, msg)
 }
 
 // cliPrintf outputs the message to STDOUT.
 func cliPrintf(msg string, a ...interface{}) {
-	fmt.Fprintf(os.Stdout, msg, a...)
+	fmt.Fprintf(cliOut, msg, a...)
 }
 
 // cliPrintRaw is like cliPrint, but does no interpretation of placeholders in
 // msg.
 func cliPrintRaw(msg string) {
-	fmt.Fprint(os.Stdout, msg)
+	fmt.Fprint(cliOut, msg)
 }
 
 // info is a convenience to log a message at the Info level.
@@ -173,11 +181,70 @@ func warn(msg string, a ...interface{}) {
 // die is a convenience to log a message at the Error level and exit non zero.
 func die(err error) {
 	appLogger.Error(err.Error())
-	os.Exit(1)
+	exitFunc(1)
 }
 
 // die is a convenience to log a message at the Error level and exit non zero.
 func dief(msg string, a ...interface{}) {
 	appLogger.Error(fmt.Sprintf(msg, a...))
-	os.Exit(1)
+	exitFunc(1)
+}
+
+// SetCLIWriter allows tests to capture CLI output.
+func SetCLIWriter(out io.Writer) {
+	if out != nil {
+		cliOut = out
+
+		return
+	}
+
+	cliOut = os.Stdout
+}
+
+// SetExitFunc allows tests to intercept os.Exit.
+func SetExitFunc(fn func(int)) func(int) {
+	prev := exitFunc
+	if fn != nil {
+		exitFunc = fn
+	} else {
+		exitFunc = os.Exit
+	}
+
+	return prev
+}
+
+// SetLoggerHandler allows tests to override logging output.
+func SetLoggerHandler(handler log15.Handler) {
+	if handler == nil {
+		appLogger.SetHandler(log15.LvlFilterHandler(log15.LvlInfo, log15.StderrHandler))
+
+		return
+	}
+
+	appLogger.SetHandler(handler)
+}
+
+// ResetFlagsForTests resets all flags to their default values.
+func ResetFlagsForTests() {
+	resetCommandFlags(RootCmd)
+}
+
+func resetCommandFlags(cmd *cobra.Command) {
+	resetFlagSet(cmd.PersistentFlags())
+	resetFlagSet(cmd.Flags())
+
+	for _, c := range cmd.Commands() {
+		resetCommandFlags(c)
+	}
+}
+
+func resetFlagSet(fs *pflag.FlagSet) {
+	if fs == nil {
+		return
+	}
+
+	fs.VisitAll(func(f *pflag.Flag) {
+		_ = fs.Set(f.Name, f.DefValue) //nolint:errcheck
+		f.Changed = false
+	})
 }
