@@ -179,11 +179,12 @@ func init() {
 	statusCmd.Flags().BoolVar(&statusTrash, "trash", false,
 		"show trash for a single set or for all sets")
 
-	if !isAdmin() {
-		if err := statusCmd.Flags().MarkHidden("user"); err != nil {
-			die(err)
-		}
-		if err := statusCmd.Flags().MarkHidden("trash"); err != nil {
+	if isAdmin() {
+		return
+	}
+
+	for _, flag := range []string{"user", "trash"} {
+		if err := statusCmd.Flags().MarkHidden(flag); err != nil {
 			die(err)
 		}
 	}

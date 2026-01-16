@@ -154,11 +154,12 @@ func init() {
 	listCmd.Flags().BoolVar(&lstTrash, "trash", false,
 		"get paths from the trash version of the set")
 
-	if !isAdmin() {
-		if err := listCmd.Flags().MarkHidden("user"); err != nil {
-			die(err)
-		}
-		if err := listCmd.Flags().MarkHidden("trash"); err != nil {
+	if isAdmin() {
+		return
+	}
+
+	for _, flag := range []string{"user", "trash"} {
+		if err := listCmd.Flags().MarkHidden(flag); err != nil {
 			die(err)
 		}
 	}

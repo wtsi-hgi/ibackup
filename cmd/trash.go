@@ -49,6 +49,7 @@ var ErrTrashRemove = errors.New("you must provide --remove")
 var ErrTrashName = errors.New("exactly one of --name or --all-expired must be provided")
 var ErrTrashItems = errors.New("exactly one of --items, --path or --expired must be provided")
 var ErrTrashAllExpired = errors.New("--all-expired does not take any other flags")
+var ErrTrashAdminOnly = errors.New("trash is only available to the server admin user")
 
 // trashCmd represents the trash command.
 var trashCmd = &cobra.Command{
@@ -84,6 +85,10 @@ var trashCmd = &cobra.Command{
   `,
 	PreRunE: func(_ *cobra.Command, _ []string) error {
 		ensureURLandCert()
+
+		if !isAdmin() {
+			return ErrTrashAdminOnly
+		}
 
 		if !trashRemove {
 			return ErrTrashRemove
@@ -134,9 +139,7 @@ var trashCmd = &cobra.Command{
 }
 
 func init() {
-	if isAdmin() {
-		RootCmd.AddCommand(trashCmd)
-	}
+	RootCmd.AddCommand(trashCmd)
 
 	// flags specific to this sub-command
 	trashCmd.Flags().StringVar(&trashUser, "user", currentUsername(), helpTextuser)
@@ -147,6 +150,13 @@ func init() {
 	trashCmd.Flags().BoolVarP(&trashExpired, "expired", "e", false, "remove all expired objects for the set")
 	trashCmd.Flags().BoolVar(&trashAllExpired, "all-expired", false, "remove all expired objects")
 	trashCmd.Flags().BoolVarP(&trashNull, "null", "0", false, helpTextNull)
+
+	if !isAdmin() {
+		trashCmd.Hidden = true
+		if err := trashCmd.Flags().MarkHidden("user"); err != nil {
+			die(err)
+		}
+	}
 }
 
 // handleTrash does the main job of sending the set, files and dirs to the server.
