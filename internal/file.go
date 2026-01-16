@@ -29,9 +29,11 @@ package internal
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -75,7 +77,12 @@ func BuildStatter(path string) error {
 
 	cmd.Env = append(os.Environ(), "GOBIN="+path)
 
-	return cmd.Run()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("statter build failed: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+
+	return nil
 }
 
 // WaitForFile waits for up to 5 seconds for the given path to exist, and
