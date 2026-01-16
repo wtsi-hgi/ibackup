@@ -679,11 +679,13 @@ func normaliseOutput(out string) string {
 		if strings.HasPrefix(line, "t=") {
 			pos := strings.IndexByte(line, '"')
 			lines[n] = line[pos+1 : len(line)-1]
+
 			continue
 		}
 
 		if strings.HasPrefix(line, "Discovery:") {
 			lines[n] = line[:10]
+
 			continue
 		}
 
