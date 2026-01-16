@@ -151,12 +151,16 @@ func init() {
 		"output paths base64 encoded")
 	listCmd.Flags().BoolVar(&lstLastState, "last-state", false,
 		"show uploaded files excluding orphaned ones")
+	listCmd.Flags().BoolVar(&lstTrash, "trash", false,
+		"get paths from the trash version of the set")
 
-	if isAdmin() {
-		listCmd.Flags().BoolVar(&lstTrash, "trash", false,
-			"get paths from the trash version of the set")
-	} else if err := listCmd.Flags().MarkHidden("user"); err != nil {
-		die(err)
+	if !isAdmin() {
+		if err := listCmd.Flags().MarkHidden("user"); err != nil {
+			die(err)
+		}
+		if err := listCmd.Flags().MarkHidden("trash"); err != nil {
+			die(err)
+		}
 	}
 }
 
