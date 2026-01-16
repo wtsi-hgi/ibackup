@@ -27,6 +27,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
@@ -701,6 +702,25 @@ type envBackup struct {
 	set   bool
 }
 
+type safeBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *safeBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return b.buf.Write(p)
+}
+
+func (b *safeBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return b.buf.String()
+}
+
 func applyEnv(env []string) func() {
 	backups := make([]envBackup, 0, len(env))
 
@@ -753,39 +773,27 @@ func runCLI(t *testing.T, env []string, stdin string, args ...string) (int, stri
 	restoreEnv := applyEnv(env)
 	defer restoreEnv()
 
-	r, w, err := os.Pipe()
-	if t != nil {
-		So(err, ShouldBeNil)
-	} else if err != nil {
-		panic(err)
+	var out safeBuffer
+
+	writer := &out
+
+	var in io.Reader
+	if stdin != "" {
+		in = strings.NewReader(stdin)
+	} else {
+		in = strings.NewReader("")
 	}
-
-	oldStdout := os.Stdout
-	oldStderr := os.Stderr
-	oldStdin := os.Stdin
-
-	os.Stdout = w
-	os.Stderr = w
-
-	cleanupStdin := setupStdin(t, stdin)
-	defer cleanupStdin()
-
-	defer func() {
-		os.Stdout = oldStdout
-		os.Stderr = oldStderr
-		os.Stdin = oldStdin
-	}()
 
 	prevExit := cmd.SetExitFunc(func(code int) {
 		panic(cliExitError{code: code})
 	})
 	defer cmd.SetExitFunc(prevExit)
 
-	cmd.SetCLIWriter(w)
+	cmd.SetCLIWriter(writer)
 	defer cmd.SetCLIWriter(nil)
 
 	cmd.SetLoggerHandler(log15.FuncHandler(func(record *log15.Record) error {
-		_, errw := io.WriteString(w, record.Msg+"\n")
+		_, errw := io.WriteString(writer, record.Msg+"\n")
 
 		return errw
 	}))
@@ -797,14 +805,14 @@ func runCLI(t *testing.T, env []string, stdin string, args ...string) (int, stri
 		handleConfigLoadError(t, cmd.LoadConfig(config))
 	}
 
-	cmd.RootCmd.SetOut(w)
-	cmd.RootCmd.SetErr(w)
-	cmd.RootCmd.SetIn(os.Stdin)
+	cmd.RootCmd.SetOut(writer)
+	cmd.RootCmd.SetErr(writer)
+	cmd.RootCmd.SetIn(in)
 	cmd.RootCmd.SetArgs(args)
 
 	exitCode := 0
 
-	err = func() error {
+	err := func() error {
 		defer func() {
 			if rec := recover(); rec != nil {
 				if ce, ok := rec.(cliExitError); ok {
@@ -824,20 +832,7 @@ func runCLI(t *testing.T, env []string, stdin string, args ...string) (int, stri
 		exitCode = 1
 	}
 
-	if t != nil {
-		So(w.Close(), ShouldBeNil)
-	} else {
-		_ = w.Close()
-	}
-
-	outBytes, err := io.ReadAll(r)
-	if t != nil {
-		So(err, ShouldBeNil)
-	} else if err != nil {
-		panic(err)
-	}
-
-	output := strings.TrimRight(string(outBytes), "\n")
+	output := strings.TrimRight(out.String(), "\n")
 	output = normaliseOutput(output)
 
 	return exitCode, output
@@ -897,37 +892,6 @@ func waitForStatusExternal(t *testing.T, env []string, url, cert, name, statusTo
 			time.Sleep(25 * time.Millisecond)
 		}
 	}
-}
-
-//nolint:thelper
-func setupStdin(t *testing.T, stdin string) func() {
-	if stdin == "" {
-		return func() {}
-	}
-
-	pr, pw, err := os.Pipe()
-	if t != nil {
-		So(err, ShouldBeNil)
-	} else if err != nil {
-		panic(err)
-	}
-
-	_, err = pw.WriteString(stdin)
-	if t != nil {
-		So(err, ShouldBeNil)
-	} else if err != nil {
-		panic(err)
-	}
-
-	if t != nil {
-		So(pw.Close(), ShouldBeNil)
-	} else {
-		_ = pw.Close()
-	}
-
-	os.Stdin = pr
-
-	return func() { _ = pr.Close() }
 }
 
 func (s *TestServer) runBinary(t *testing.T, args ...string) (int, string) {

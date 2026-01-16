@@ -25,11 +25,7 @@
 
 package cmd
 
-import (
-	"fmt"
-
-	"github.com/spf13/cobra"
-)
+import "github.com/spf13/cobra"
 
 // Version gets set during build:
 // go build -ldflags "-X github.com/wtsi-hgi/ibackup/cmd.Version=`git describe --tags --always --long --dirty`" .
@@ -41,7 +37,7 @@ var versionCmd = &cobra.Command{
 	Short: "Print ibackup version",
 	Long:  `Print ibackup version.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println(Version)
+		cliPrint(Version + "\n")
 	},
 }
 

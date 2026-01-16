@@ -28,7 +28,6 @@ package cmd
 import (
 	"bufio"
 	b64 "encoding/base64"
-	"fmt"
 	"slices"
 	"strings"
 
@@ -195,7 +194,7 @@ func transformARFile(path string, pt transformer.PathTransformer, splitter bufio
 			die(err)
 		}
 
-		fmt.Printf("%s\t%s\n", encodeBase64(r.Local, encode), encodeBase64(r.Remote, encode))
+		cliPrintf("%s\t%s\n", encodeBase64(r.Local, encode), encodeBase64(r.Remote, encode))
 	}
 
 	serr := scanner.Err()

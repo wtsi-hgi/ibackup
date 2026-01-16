@@ -420,7 +420,7 @@ func createScannerForFile(path string, splitter bufio.SplitFunc) (*bufio.Scanner
 	var dfunc func()
 
 	if path == "-" {
-		reader = os.Stdin
+		reader = RootCmd.InOrStdin()
 		dfunc = func() {}
 	} else {
 		reader, dfunc = openFile(path)
