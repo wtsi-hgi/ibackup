@@ -45,6 +45,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"os/signal"
 	"os/user"
 	"path/filepath"
 	"regexp"
@@ -1189,15 +1190,51 @@ func (s *TestServer) Shutdown() error {
 // TestMain builds ourself, starts a test server, runs client tests against the
 // server and cleans up afterwards. It's a full e2e integration test.
 func TestMain(m *testing.M) {
-	var exitCode int
+	var (
+		exitCode     int
+		cleanupOnce  sync.Once
+		tmpRoot      string
+		tmpStatter   string
+		removeBinary func()
+	)
+
+	cleanup := func() {
+		resetIRODS()
+
+		if removeBinary != nil {
+			removeBinary()
+		}
+
+		if tmpStatter != "" {
+			_ = os.RemoveAll(tmpStatter)
+		}
+
+		if tmpRoot != "" {
+			_ = os.RemoveAll(tmpRoot)
+		}
+	}
+
+	sigCh := make(chan os.Signal, 2)
+
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+
+	go func() {
+		<-sigCh
+		cleanupOnce.Do(cleanup)
+		os.Exit(130)
+	}()
+
 	defer func() {
 		if rec := recover(); rec != nil {
 			panic(rec)
 		}
+
+		cleanupOnce.Do(cleanup)
 		os.Exit(exitCode)
 	}()
 
-	tmpRoot, err := os.MkdirTemp("", "ibackup-tests-")
+	createdRoot, err := os.MkdirTemp("", "ibackup-tests-")
 	if err != nil {
 		exitCode = 1
 
@@ -1205,20 +1242,19 @@ func TestMain(m *testing.M) {
 
 		return
 	}
-	defer os.RemoveAll(tmpRoot)
+
+	tmpRoot = createdRoot
 
 	testRootDir = tmpRoot
 
-	d1 := buildSelf()
-	if d1 == nil {
+	removeBinary = buildSelf()
+	if removeBinary == nil {
 		return
 	}
 
-	defer d1()
+	tmpStatter, _ = os.MkdirTemp(tmpRoot, "statter-") //nolint:errcheck
 
-	tmp, _ := os.MkdirTemp(tmpRoot, "statter-") //nolint:errcheck
-
-	if err := internal.BuildStatter(tmp); err != nil {
+	if err := internal.BuildStatter(tmpStatter); err != nil {
 		exitCode = 1
 
 		failMainTest(err.Error())
@@ -1226,13 +1262,9 @@ func TestMain(m *testing.M) {
 		return
 	}
 
-	defer os.RemoveAll(tmp)
-
-	os.Setenv("PATH", tmp+":"+os.Getenv("PATH"))
+	os.Setenv("PATH", tmpStatter+":"+os.Getenv("PATH"))
 
 	exitCode = m.Run()
-
-	resetIRODS()
 }
 
 func buildSelf() func() {
