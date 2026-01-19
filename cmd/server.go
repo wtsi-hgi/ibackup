@@ -29,8 +29,10 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/syslog"
 	"net"
 	"os"
@@ -128,7 +130,7 @@ https://acme.server:14000/dir
 
 The --cache flag should contain the path to a local directory in which
 automatically generated keys and certs will be stored. Given the contents, the
-directory should *not* be readable by anyone other that the servers user.
+directory must only be readable by the servers user.
 
 The server authenticates users using LDAP. You must provide the FQDN for your
 LDAP server, eg. --ldap_server ldap.example.com, and the bind DN that you would
@@ -191,6 +193,10 @@ These should be supplied as a comma separated list.
 		}
 
 		if isACME() {
+			if err := CheckOrCreateCacheDir(serverCacheDir); err != nil {
+				die(err)
+			}
+
 			serverCert = ""
 			serverKey = filepath.Join(serverCacheDir, "key.private")
 		}
@@ -378,6 +384,21 @@ func isKeyCert() bool {
 func isACME() bool {
 	return serverACMEURL != "" && serverCacheDir != ""
 }
+
+func CheckOrCreateCacheDir(dir string) error {
+	fi, err := os.Stat(dir)
+	if err == nil {
+		if fi.Mode()&fs.ModePerm != 0700 {
+			return ErrInvalidCacheDirPerms
+		}
+	} else if err = os.MkdirAll(dir, 0700); err != nil {
+		return fmt.Errorf("error creating cert cache directory: %w", err)
+	}
+
+	return err
+}
+
+var ErrInvalidCacheDirPerms = errors.New("cert cache directory must only be readable by the server user")
 
 func init() {
 	RootCmd.AddCommand(serverCmd)
