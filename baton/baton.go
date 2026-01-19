@@ -65,7 +65,7 @@ const (
 	operationMinBackoff    = 5 * time.Second
 	operationMaxBackoff    = 30 * time.Second
 	operationBackoffFactor = 1.1
-	operationTimeout       = 15 * time.Second
+	operationTimeout       = 60 * time.Second
 	operationRetries       = 6
 )
 
@@ -232,8 +232,9 @@ func (b *Baton) ensureCollection(clientIndex int, ri ex.RodsItem) error {
 	return b.createCollectionWithTimeoutAndRetries(clientIndex, ri)
 }
 
-// timeoutOp carries out op, returning any error from it. Has a 10s timeout on
-// running op, and will return a timeout error instead if exceeded.
+// timeoutOp carries out op, returning any error from it. Has an
+// operationTimeout timeout on running op, and will return a timeout error
+// instead if exceeded.
 func timeoutOp(op retry.Operation, path string) error {
 	errCh := make(chan error, 1)
 
