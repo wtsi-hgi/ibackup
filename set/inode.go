@@ -27,6 +27,7 @@
 package set
 
 import (
+	"bytes"
 	"errors"
 	"io/fs"
 	"os"
@@ -45,6 +46,8 @@ import (
 
 const transformerInodeSeparator = ":"
 const ErrElementNotInSlice = "element not in slice"
+
+var errSetsBucketMissing = errors.New("sets bucket missing")
 
 // getMountPoints retrieves a list of mount point paths to be used when
 // determining hardlinks. The list is sorted longest first and stored on the
@@ -191,21 +194,44 @@ func (d *DBRO) GetAllSetsForFile(path string) ([]string, error) {
 
 	err := d.db.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(setsBucket))
+		if b == nil {
+			return errSetsBucketMissing
+		}
 
-		return b.ForEach(func(k, _ []byte) error {
-			keyString := string(k)
-			if strings.HasPrefix(keyString, fileBucket) || strings.HasPrefix(keyString, discoveredBucket) {
+		seen := make(map[string]struct{})
+
+		scanPrefix := func(prefix string) {
+			c := b.Cursor()
+			p := []byte(prefix)
+
+			for k, _ := c.Seek(p); k != nil && bytes.HasPrefix(k, p); k, _ = c.Next() {
 				sb := b.Bucket(k)
-
-				v := sb.Get(pathBytes)
-				if v != nil {
-					setid := strings.Split(keyString, separator)[1]
-					sets = append(sets, setid)
+				if sb == nil {
+					continue
 				}
-			}
 
-			return nil
-		})
+				if sb.Get(pathBytes) == nil {
+					continue
+				}
+
+				_, setID, ok := strings.Cut(string(k), separator)
+				if !ok {
+					continue
+				}
+
+				if _, already := seen[setID]; already {
+					continue
+				}
+
+				seen[setID] = struct{}{}
+				sets = append(sets, setID)
+			}
+		}
+
+		scanPrefix(fileBucket)
+		scanPrefix(discoveredBucket)
+
+		return nil
 	})
 
 	return sets, err
