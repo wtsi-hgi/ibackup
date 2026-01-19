@@ -27,6 +27,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -4508,6 +4509,30 @@ func TestTrashRemove(t *testing.T) {
 
 					_, err = exec.Command("ichmod", "read", curUser.Username, file1remote).CombinedOutput() //nolint:gosec,noctx
 					So(err, ShouldBeNil)
+
+					// Downgrade all groups the current user belongs to so the
+					// removal attempt reliably fails with
+					// CAT_NO_ACCESS_PERMISSION.
+					groupsOutput, errg := exec.Command("iuserinfo").CombinedOutput() //nolint:gosec,noctx
+					So(errg, ShouldBeNil)
+
+					scanner := bufio.NewScanner(bytes.NewReader(groupsOutput))
+					for scanner.Scan() {
+						line := strings.TrimSpace(scanner.Text())
+						if !strings.HasPrefix(line, "member of group:") {
+							continue
+						}
+
+						group := strings.TrimSpace(strings.TrimPrefix(line, "member of group:"))
+						if group == "" {
+							continue
+						}
+
+						_, errc := exec.Command("ichmod", "read", group, file1remote).CombinedOutput() //nolint:gosec,noctx
+						So(errc, ShouldBeNil)
+					}
+
+					So(scanner.Err(), ShouldBeNil)
 
 					defer func() {
 						exec.Command("ichmod", "own", curUser.Username, file1remote).CombinedOutput() //nolint:errcheck,gosec,noctx
