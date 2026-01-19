@@ -236,7 +236,7 @@ func (s *Server) Start(addr, certFile, keyFile string) error {
 func (s *Server) StartACME(addr, acmeURL, cacheDir string) error {
 	s.sendSlackMessage(slack.Success, "server started")
 
-	return s.Server.StartACMETLSOnly(addr, acmeURL, cacheDir)
+	return s.StartACMETLSOnly(addr, acmeURL, cacheDir)
 }
 
 func (s *Server) SetRemoteHardlinkLocation(path string) {
