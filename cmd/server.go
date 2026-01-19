@@ -61,6 +61,7 @@ const dbBackupParamPosition = 2
 const defaultDebounceSeconds = 600
 const defaultFailedUploadRetryDelay = 1 * time.Hour
 const defaultHungDebugTimeout = 0
+const cacheDirPerms = 0700
 
 // options for this cmd.
 var serverLogPath string
@@ -387,11 +388,11 @@ func isACME() bool {
 
 func CheckOrCreateCacheDir(dir string) error {
 	fi, err := os.Stat(dir)
-	if err == nil {
-		if fi.Mode()&fs.ModePerm != 0700 {
+	if err == nil { //nolint:nestif
+		if fi.Mode()&fs.ModePerm != cacheDirPerms {
 			return ErrInvalidCacheDirPerms
 		}
-	} else if err = os.MkdirAll(dir, 0700); err != nil {
+	} else if err = os.MkdirAll(dir, cacheDirPerms); err != nil {
 		return fmt.Errorf("error creating cert cache directory: %w", err)
 	}
 
