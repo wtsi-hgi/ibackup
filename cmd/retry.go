@@ -55,7 +55,7 @@ If you are the user who started the ibackup server, you can use the --user
 option to retry the given requestor's backup sets, instead of your own.
 `,
 	RunE: func(_ *cobra.Command, _ []string) error {
-		ensureURLandCert()
+		ensureURL()
 
 		client, err := newServerClient(serverURL, serverCert)
 		if err != nil {

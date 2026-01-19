@@ -73,7 +73,7 @@ var removeCmd = &cobra.Command{
  --set: if you want to remove all the files from the set and the set itself.		 
  `,
 	RunE: func(_ *cobra.Command, _ []string) error {
-		ensureURLandCert()
+		ensureURL()
 
 		if (removeItems == "") == (removePath == "") == !removeSet {
 			return ErrRemoveItems

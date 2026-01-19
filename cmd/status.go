@@ -123,7 +123,7 @@ option to get the status of a given requestor's backup sets, instead of your
 own. You can specify the user as "all" to see all user's sets.
 `,
 	Run: func(cmd *cobra.Command, args []string) {
-		ensureURLandCert()
+		ensureURL()
 
 		if statusDetails && statusName == "" {
 			dief("--details can only be used with --name")

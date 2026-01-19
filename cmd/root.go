@@ -130,14 +130,10 @@ func init() {
 		"path to server certificate file")
 }
 
-// ensureURLandCert dies if --url or --cert have not been set.
-func ensureURLandCert() {
+// ensureURL dies if --url has not been set.
+func ensureURL() {
 	if serverURL == "" {
 		dief("you must supply --url")
-	}
-
-	if serverCert == "" {
-		dief("you must supply --cert")
 	}
 }
 
