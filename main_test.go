@@ -217,7 +217,14 @@ func NewTestServerWithQueues(t *testing.T, queues, avoidQueues []string, shouldF
 func initIRODSTestCollection(tb testing.TB) string {
 	tb.Helper()
 
-	base := os.Getenv("IBACKUP_TEST_COLLECTION")
+	base := os.Getenv("IBACKUP_TEST_COLLECTION_BASE")
+	if base == "" {
+		base = os.Getenv("IBACKUP_TEST_COLLECTION")
+		if base != "" {
+			_ = os.Setenv("IBACKUP_TEST_COLLECTION_BASE", base)
+		}
+	}
+
 	if base == "" {
 		return ""
 	}
@@ -932,10 +939,6 @@ func (s *testServer) runBinary(t *testing.T, args ...string) (int, string) {
 
 	fullArgs := append([]string{"--url", s.url, "--cert", s.cert}, args...)
 	exitCode, out := runCLI(t, s.env, "", fullArgs...)
-
-	if exitCode != 0 {
-		t.Logf("\nno error, but non-0 exit; binary output: %s\n", out)
-	}
 
 	return exitCode, out
 }
@@ -5166,6 +5169,8 @@ func TestEdit(t *testing.T) {
 					Convey("Admins can add multiple files at once", func() {
 						exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--add-items", tempTestFile.Name())
 						So(exitCode, ShouldEqual, 0)
+
+						s.waitForStatus(setName, "\nDiscovery: completed", timeout)
 
 						exitCode, output := s.runBinaryWithNoLogging(t, "status", "--name", setName, "-d")
 						So(exitCode, ShouldEqual, 0)
