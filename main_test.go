@@ -214,7 +214,36 @@ func NewTestServerWithQueues(t *testing.T, queues, avoidQueues []string, shouldF
 	return s
 }
 
-func NewUploadingTestServer(t *testing.T, withDBBackup bool) (*testServer, string) {
+func initIRODSTestCollection(tb testing.TB) string {
+	tb.Helper()
+
+	base := os.Getenv("IBACKUP_TEST_COLLECTION")
+	if base == "" {
+		return ""
+	}
+
+	rnd := make([]byte, 4)
+
+	_, err := rand.Read(rnd)
+	if err != nil {
+		tb.Fatalf("failed to generate random suffix for iRODS test collection: %v", err)
+	}
+
+	unique := filepath.Join(base, "ibackup_test_"+hex.EncodeToString(rnd))
+	tb.Setenv("IBACKUP_TEST_COLLECTION", unique)
+	tb.Cleanup(func() {
+		ctx, cancelFn := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancelFn()
+
+		exec.CommandContext(ctx, "irm", "-rf", unique).Run() //nolint:errcheck,gosec
+	})
+
+	resetIRODSOrFail(tb)
+
+	return unique
+}
+
+func NewUploadingTestServer(t *testing.T, withDBBackup bool) (*TestServer, string) {
 	t.Helper()
 
 	dir := t.TempDir()
@@ -225,8 +254,7 @@ func NewUploadingTestServer(t *testing.T, withDBBackup bool) (*testServer, strin
 	s.prepareConfig(t)
 	s.prepareFilePaths()
 
-	remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
-	if remotePath == "" {
+	if os.Getenv("IBACKUP_TEST_COLLECTION") == "" {
 		t.Skip("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set")
 	}
 
@@ -234,6 +262,8 @@ func NewUploadingTestServer(t *testing.T, withDBBackup bool) (*testServer, strin
 	if schedulerDeployment == "" {
 		t.Skip("skipping iRODS backup test since IBACKUP_TEST_SCHEDULER not set")
 	}
+
+	remotePath := initIRODSTestCollection(t)
 
 	s.schedulerDeployment = schedulerDeployment
 	s.remoteHardlinkPrefix = filepath.Join(remotePath, "hardlinks")
@@ -954,7 +984,42 @@ var (
 	errIlsDidNotSucceed = errors.New("expected ils to succeed")
 )
 
-func (s *testServer) addSetForTesting(t *testing.T, name, transformer, path string) {
+func waitForIlsMissing(path string, timeout time.Duration) error {
+	ctx, cancelFn := context.WithTimeout(context.Background(), timeout)
+	defer cancelFn()
+
+	var output []byte
+
+	status := retry.Do(ctx, func() error {
+		cmd := exec.Command("ils", path) //nolint:gosec,noctx
+		out, err := cmd.CombinedOutput()
+		output = out
+
+		if err == nil {
+			return ErrStatusNotFound
+		}
+
+		outStr := string(out)
+		if strings.Contains(outStr, "does not exist") || strings.Contains(outStr, "No rows found") {
+			return nil
+		}
+
+		return ErrStatusNotFound
+	}, &retry.UntilNoError{}, &backoff.Backoff{
+		Min:     50 * time.Millisecond,
+		Max:     500 * time.Millisecond,
+		Factor:  2,
+		Sleeper: &btime.Sleeper{},
+	}, "waiting for ils to fail")
+
+	if status.Err != nil {
+		return fmt.Errorf("%w for %q within %s; last output: %s", errIlsDidNotFail, path, timeout, string(output))
+	}
+
+	return nil
+}
+
+func (s *TestServer) addSetForTesting(t *testing.T, name, transformer, path string) {
 	t.Helper()
 
 	exitCode, _ := s.runBinary(t, "add", "--name", name, "--transformer", transformer, "--path", path)
@@ -992,18 +1057,21 @@ func (s *testServer) addSetForTestingWithFlags(t *testing.T, name, transformer s
 
 	So(exitCode, ShouldEqual, 0)
 
-	if index := slices.Index(flags, "--user"); index != -1 {
-		if index+1 >= len(flags) {
-			t.Fatalf("flag --user provided without a value in addSetForTestingWithFlags")
-		}
-
-		user := flags[index+1]
-		s.waitForStatusWithUser(name, "\nDiscovery: completed", user, waitTimeout)
-		s.waitForStatusWithUser(name, "\nStatus: complete", user, waitTimeout)
-	} else {
+	index := slices.Index(flags, "--user")
+	if index == -1 {
 		s.waitForStatus(name, "\nDiscovery: completed", waitTimeout)
 		s.waitForStatus(name, "\nStatus: complete", waitTimeout)
+
+		return
 	}
+
+	if index+1 >= len(flags) {
+		t.Fatalf("flag --user provided without a value in addSetForTestingWithFlags")
+	}
+
+	user := flags[index+1]
+	s.waitForStatusWithUser(name, "\nDiscovery: completed", user, waitTimeout)
+	s.waitForStatusWithUser(name, "\nStatus: complete", user, waitTimeout)
 }
 
 func (s *testServer) removePath(t *testing.T, name, path string, numFiles int) {
@@ -1077,40 +1145,6 @@ func (s *testServer) tryWaitForStatusWithFlags(name, statusToFind string, timeou
 	}
 
 	return status.Err
-}
-
-func waitForIlsMissing(path string, timeout time.Duration) error {
-	ctx, cancelFn := context.WithTimeout(context.Background(), timeout)
-	defer cancelFn()
-
-	var output []byte
-
-	status := retry.Do(ctx, func() error {
-		cmd := exec.Command("ils", path) //nolint:gosec,noctx
-		out, err := cmd.CombinedOutput()
-		output = out
-
-		if err != nil {
-			return nil //nolint:nilerr
-		}
-
-		if strings.Contains(string(out), "does not exist") || strings.Contains(string(out), "No rows found") {
-			return nil
-		}
-
-		return ErrStatusNotFound
-	}, &retry.UntilNoError{}, &backoff.Backoff{
-		Min:     50 * time.Millisecond,
-		Max:     500 * time.Millisecond,
-		Factor:  2,
-		Sleeper: &btime.Sleeper{},
-	}, "waiting for ils to fail")
-
-	if status.Err != nil {
-		return fmt.Errorf("%w for %q within %s; last output: %s", errIlsDidNotFail, path, timeout, string(output))
-	}
-
-	return nil
 }
 
 func waitForIlsPresent(path string, timeout time.Duration) error {
@@ -1313,6 +1347,29 @@ func buildSelfWithPS(t *testing.T) {
 	Reset(func() { os.Remove(testPSBinaryPath) })
 }
 
+func resetIRODSOrFail(tb testing.TB) {
+	tb.Helper()
+
+	remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
+	if remotePath == "" {
+		return
+	}
+
+	ctx, cancelFn := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancelFn()
+
+	if out, err := exec.CommandContext(ctx, "irm", "-rf", remotePath).CombinedOutput(); err != nil { //nolint:gosec
+		outStr := string(out)
+		if !strings.Contains(outStr, "does not exist") && !strings.Contains(outStr, "No rows found") {
+			tb.Fatalf("failed to reset iRODS collection %q: irm -rf failed: %v; output: %s", remotePath, err, outStr)
+		}
+	}
+
+	if out, err := exec.CommandContext(ctx, "imkdir", "-p", remotePath).CombinedOutput(); err != nil { //nolint:gosec
+		tb.Fatalf("failed to reset iRODS collection %q: imkdir -p failed: %v; output: %s", remotePath, err, string(out))
+	}
+}
+
 func resetIRODS() {
 	remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
 	if remotePath == "" {
@@ -1322,8 +1379,8 @@ func resetIRODS() {
 	ctx, cancelFn := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancelFn()
 
-	exec.CommandContext(ctx, "irm", "-rf", remotePath).Run()   //nolint:errcheck
-	exec.CommandContext(ctx, "imkdir", "-p", remotePath).Run() //nolint:errcheck
+	exec.CommandContext(ctx, "irm", "-rf", remotePath).Run()   //nolint:errcheck,gosec
+	exec.CommandContext(ctx, "imkdir", "-p", remotePath).Run() //nolint:errcheck,gosec
 }
 
 func failMainTest(err string) {
@@ -1504,8 +1561,6 @@ func TestList(t *testing.T) {
 	})
 
 	Convey("With a started uploading server", t, func() {
-		resetIRODS()
-
 		s, remote := NewUploadingTestServer(t, false)
 		So(s, ShouldNotBeNil)
 
@@ -2765,7 +2820,7 @@ Local Path	Status	Size	Attempts	Date	Error`+"\n"+
 		})
 
 		Convey("Given a set of files", func() {
-			resetIRODS()
+			resetIRODSOrFail(t)
 
 			file1 := filepath.Join(path, "file1")
 			file2 := filepath.Join(path, "file2")
@@ -2888,7 +2943,7 @@ Local Path	Status	Size	Attempts	Date	Error`+"\n"+
 				}
 			})
 			Convey("Repeatedly uploading files that are changed or not changes status details", func() {
-				resetIRODS()
+				resetIRODSOrFail(t)
 
 				setName = "changingFilesTest"
 
@@ -2944,7 +2999,7 @@ Global put client status (/10): 6 iRODS connections`)
 			})
 
 			Convey("Syncing a set with locally removed files will show orphaned status", func() {
-				resetIRODS()
+				resetIRODSOrFail(t)
 
 				setName := "setWithOrphanedFiles"
 
@@ -3196,7 +3251,7 @@ func addRemoteMeta(remotePath, key, value string) {
 }
 
 func TestManualMode(t *testing.T) {
-	resetIRODS()
+	initIRODSTestCollection(t)
 
 	Convey("when using a manual put command, files are uploaded correctly", t, func() {
 		remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
@@ -3500,7 +3555,7 @@ func TestRemove(t *testing.T) {
 
 			setName := "testRemoveFiles1"
 
-			resetIRODS()
+			resetIRODSOrFail(t)
 
 			s.addSetForTestingWithItems(t, setName, transformer, tempTestFileOfPaths.Name())
 
@@ -4090,8 +4145,6 @@ func TestRemove(t *testing.T) {
 }
 
 func TestTrashRemove(t *testing.T) {
-	resetIRODS()
-
 	Convey("Given a server", t, func() {
 		checkICommands(t, "ils", "imeta", "ichmod")
 
@@ -4174,7 +4227,7 @@ func TestTrashRemove(t *testing.T) {
 			setName := "testTrashFiles1"
 			trashSetName := set.TrashPrefix + setName
 
-			resetIRODS()
+			resetIRODSOrFail(t)
 
 			s.addSetForTestingWithItems(t, setName, transformer, tempTestFileOfPaths.Name())
 
@@ -5009,8 +5062,6 @@ func TestEdit(t *testing.T) {
 		path := t.TempDir()
 		transformer := "prefix=" + path + ":" + remotePath
 
-		resetIRODS()
-
 		timeout := 10 * time.Second
 
 		Convey("And some files", func() {
@@ -5364,8 +5415,6 @@ func TestSync(t *testing.T) {
 		path := t.TempDir()
 		transformer := "prefix=" + path + ":" + remotePath
 
-		resetIRODS()
-
 		timeout := 10 * time.Second
 
 		Convey("sync requires --name", func() {
@@ -5455,8 +5504,6 @@ func TestRetry(t *testing.T) {
 
 		path := t.TempDir()
 		transformer := "prefix=" + path + ":" + remotePath
-
-		resetIRODS()
 
 		timeout := 30 * time.Second
 
