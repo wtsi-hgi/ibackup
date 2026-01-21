@@ -2646,6 +2646,7 @@ func TestBackup(t *testing.T) {
 			bs.dbFile = gotPath
 
 			bs.startServer()
+			bs.waitForStatus("testForBackup", "\nDiscovery: completed", 10*time.Second)
 
 			bs.confirmOutput(t, []string{
 				"status", "-n", "testForBackup",
