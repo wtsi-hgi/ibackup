@@ -112,7 +112,7 @@ preexisting backup set.
 		return nil
 	},
 	RunE: func(_ *cobra.Command, _ []string) error {
-		ensureURLandCert()
+		ensureURL()
 
 		client, err := newServerClient(serverURL, serverCert)
 		if err != nil {

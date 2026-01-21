@@ -29,12 +29,15 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/syslog"
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -58,10 +61,13 @@ const dbBackupParamPosition = 2
 const defaultDebounceSeconds = 600
 const defaultFailedUploadRetryDelay = 1 * time.Hour
 const defaultHungDebugTimeout = 0
+const cacheDirPerms = 0700
 
 // options for this cmd.
 var serverLogPath string
 var serverKey string
+var serverACMEURL string
+var serverCacheDir string
 var serverLDAPFQDN string
 var serverLDAPBindDN string
 var serverDebug bool
@@ -117,6 +123,16 @@ port, and for it to work with your --cert, you probably need to specify it as
 fqdn:port. --url defaults to the IBACKUP_SERVER_URL env var. --cert defaults to
 the IBACKUP_SERVER_CERT env var.
 
+If your URL uses port 443, you can use an ACME server to automatically handle
+SSL certificates by specifying both the --acme and --cache flags. The --acme
+flag should be the URL to the ACME server directory path; e.g:
+
+https://acme.server:14000/dir
+
+The --cache flag should contain the path to a local directory in which
+automatically generated keys and certs will be stored. Given the contents, the
+directory must only be readable by the servers user.
+
 The server authenticates users using LDAP. You must provide the FQDN for your
 LDAP server, eg. --ldap_server ldap.example.com, and the bind DN that you would
 supply to eg. 'ldapwhoami -D' to test user credentials, replacing the username
@@ -171,10 +187,19 @@ These should be supplied as a comma separated list.
 			dief("you must supply the path to your set database file")
 		}
 
-		ensureURLandCert()
+		ensureURL()
 
-		if serverKey == "" {
-			dief("you must supply --key")
+		if !isKeyCert() && !isACME() {
+			dief("you must supply --cert and --key, or --acme and --cache")
+		}
+
+		if isACME() {
+			if err := CheckOrCreateCacheDir(serverCacheDir); err != nil {
+				die(err)
+			}
+
+			serverCert = ""
+			serverKey = filepath.Join(serverCacheDir, "key.private")
 		}
 
 		if serverLDAPFQDN == "" || serverLDAPBindDN == "" {
@@ -277,7 +302,11 @@ These should be supplied as a comma separated list.
 				dief("failed to get own exe: %s", erre)
 			}
 
-			putCmd := fmt.Sprintf("%s put -s --url '%s' --cert '%s' ", exe, serverURL, serverCert)
+			putCmd := fmt.Sprintf("%s put -s --url '%s' ", exe, serverURL)
+
+			if isKeyCert() {
+				putCmd += fmt.Sprintf("--cert '%s' ", serverCert)
+			}
 
 			if serverLogPath != "" {
 				putCmd += fmt.Sprintf("--log %s.client.", serverLogPath)
@@ -334,7 +363,13 @@ These should be supplied as a comma separated list.
 		sayStarted()
 
 		info("starting server...")
-		err = s.Start(serverURL, serverCert, serverKey)
+
+		if isKeyCert() {
+			err = s.Start(serverURL, serverCert, serverKey)
+		} else {
+			err = s.StartACME(serverURL, serverACMEURL, serverCacheDir)
+		}
+
 		if err != nil {
 			dief("non-graceful stop: %s", err)
 		}
@@ -343,12 +378,39 @@ These should be supplied as a comma separated list.
 	},
 }
 
+func isKeyCert() bool {
+	return serverCert != "" && serverKey != ""
+}
+
+func isACME() bool {
+	return serverACMEURL != "" && serverCacheDir != ""
+}
+
+func CheckOrCreateCacheDir(dir string) error {
+	fi, err := os.Stat(dir)
+	if err == nil { //nolint:nestif
+		if fi.Mode()&fs.ModePerm != cacheDirPerms {
+			return ErrInvalidCacheDirPerms
+		}
+	} else if err = os.MkdirAll(dir, cacheDirPerms); err != nil {
+		return fmt.Errorf("error creating cert cache directory: %w", err)
+	}
+
+	return err
+}
+
+var ErrInvalidCacheDirPerms = errors.New("cert cache directory must only be readable by the server user")
+
 func init() {
 	RootCmd.AddCommand(serverCmd)
 
 	// flags specific to this sub-command
 	serverCmd.Flags().StringVarP(&serverKey, "key", "k", "",
 		"path to key file")
+	serverCmd.Flags().StringVarP(&serverACMEURL, "acme", "a", "",
+		"ACME directory URL")
+	serverCmd.Flags().StringVarP(&serverCacheDir, "cache", "c", "",
+		"cache directory for server keys")
 	serverCmd.Flags().StringVarP(&serverLDAPFQDN, "ldap_server", "s", "",
 		"fqdn of your ldap server")
 	serverCmd.Flags().StringVarP(&serverLDAPBindDN, "ldap_dn", "l", "",

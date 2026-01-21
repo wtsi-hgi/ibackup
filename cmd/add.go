@@ -193,7 +193,7 @@ option to add sets on behalf of other users.
 
 ` + configSubHelp,
 	Run: func(cmd *cobra.Command, args []string) {
-		ensureURLandCert()
+		ensureURL()
 
 		if setFiles == "" && setDirs == "" && setPath == "" && setItems == "" {
 			dief("at least one of --files or --dirs or --items or --path must be provided")

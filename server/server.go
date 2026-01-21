@@ -231,6 +231,14 @@ func (s *Server) Start(addr, certFile, keyFile string) error {
 	return s.Server.Start(addr, certFile, keyFile)
 }
 
+// StartACME logs to slack that the server has been started and then calls
+// gas.Server.StartACME().
+func (s *Server) StartACME(addr, acmeURL, cacheDir string) error {
+	s.sendSlackMessage(slack.Success, "server started")
+
+	return s.StartACMETLSOnly(addr, acmeURL, cacheDir)
+}
+
 func (s *Server) SetRemoteHardlinkLocation(path string) {
 	s.remoteHardlinkLocation = path
 }

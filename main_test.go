@@ -41,6 +41,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"math/big"
 	"net"
 	"os"
@@ -106,7 +107,7 @@ var errTwoBackupsNotSeen = errors.New("2 backups were not seen")
 var errInvalidQueuesSpecified = errors.New("invalid queues specified")
 var errServerStopTimeout = errors.New("timeout waiting for server to stop")
 
-type TestServer struct {
+type testServer struct {
 	app                  string
 	key                  string
 	cert                 string
@@ -136,12 +137,12 @@ type TestServer struct {
 	envRestore func()
 }
 
-func NewTestServer(t *testing.T) *TestServer {
+func NewTestServer(t *testing.T) *testServer {
 	t.Helper()
 
 	dir := t.TempDir()
 
-	s := new(TestServer)
+	s := new(testServer)
 	s.dir = dir
 
 	s.prepareConfig(t)
@@ -158,12 +159,12 @@ func NewTestServer(t *testing.T) *TestServer {
 	return s
 }
 
-func NewExternalTestServer(t *testing.T) *TestServer {
+func NewExternalTestServer(t *testing.T) *testServer {
 	t.Helper()
 
 	dir := t.TempDir()
 
-	s := new(TestServer)
+	s := new(testServer)
 	s.dir = dir
 	s.external = true
 
@@ -181,12 +182,12 @@ func NewExternalTestServer(t *testing.T) *TestServer {
 	return s
 }
 
-func NewTestServerWithQueues(t *testing.T, queues, avoidQueues []string, shouldFail bool) *TestServer {
+func NewTestServerWithQueues(t *testing.T, queues, avoidQueues []string, shouldFail bool) *testServer {
 	t.Helper()
 
 	dir := t.TempDir()
 
-	s := new(TestServer)
+	s := new(testServer)
 
 	s.app = app + "_ps"
 	s.dir = dir
@@ -212,12 +213,12 @@ func NewTestServerWithQueues(t *testing.T, queues, avoidQueues []string, shouldF
 	return s
 }
 
-func NewUploadingTestServer(t *testing.T, withDBBackup bool) (*TestServer, string) {
+func NewUploadingTestServer(t *testing.T, withDBBackup bool) (*testServer, string) {
 	t.Helper()
 
 	dir := t.TempDir()
 
-	s := new(TestServer)
+	s := new(testServer)
 	s.dir = dir
 
 	s.prepareConfig(t)
@@ -277,7 +278,7 @@ func checkIRODSCommand(command string) (bool, error) {
 	return true, nil
 }
 
-func (s *TestServer) impersonateUser(t *testing.T, username string) ([]string, error) {
+func (s *testServer) impersonateUser(t *testing.T, username string) ([]string, error) {
 	t.Helper()
 
 	originalEnv := slices.Clone(s.env)
@@ -294,7 +295,7 @@ func (s *TestServer) impersonateUser(t *testing.T, username string) ([]string, e
 	return originalEnv, nil
 }
 
-func (s *TestServer) prepareFilePaths() {
+func (s *testServer) prepareFilePaths() {
 	if s.app == "" {
 		s.app = app
 	}
@@ -346,7 +347,7 @@ func getFakeBaton(dir string) string {
 
 // prepareConfig creates a key and cert to use with a server and looks at
 // IBACKUP_TEST_* env vars to set SERVER vars as well.
-func (s *TestServer) prepareConfig(t *testing.T) {
+func (s *testServer) prepareConfig(t *testing.T) {
 	t.Helper()
 
 	generateDefaultConfig(t)
@@ -453,7 +454,7 @@ func generateDefaultConfig(t *testing.T) {
 	Reset(func() { os.Setenv("IBACKUP_CONFIG", "") })
 }
 
-func (s *TestServer) startServer() {
+func (s *testServer) startServer() {
 	if s.external {
 		s.startServerExternal()
 
@@ -463,7 +464,7 @@ func (s *TestServer) startServer() {
 	s.startServerInProcess()
 }
 
-func (s *TestServer) startServerExternal() {
+func (s *testServer) startServerExternal() {
 	args := []string{
 		"server", "--cert", s.cert, "--key", s.key, "--logfile", s.logFile,
 		"-s", s.ldapServer, "-l", s.ldapLookup, "--url", s.url, "--slack_debounce", s.debouncePeriod,
@@ -530,7 +531,7 @@ func (s *TestServer) startServerExternal() {
 	s.waitForServer()
 }
 
-func (s *TestServer) startServerInProcess() {
+func (s *testServer) startServerInProcess() {
 	s.stopped = false
 
 	s.envRestore = applyEnv(s.env)
@@ -640,7 +641,7 @@ func (s *TestServer) startServerInProcess() {
 	s.waitForServer()
 }
 
-func (s *TestServer) waitForServer() {
+func (s *testServer) waitForServer() {
 	deadline := time.Now().Add(5 * time.Second)
 
 	var lastErr error
@@ -895,7 +896,7 @@ func waitForStatusExternal(t *testing.T, env []string, url, cert, name, statusTo
 	}
 }
 
-func (s *TestServer) runBinary(t *testing.T, args ...string) (int, string) {
+func (s *testServer) runBinary(t *testing.T, args ...string) (int, string) {
 	t.Helper()
 
 	fullArgs := append([]string{"--url", s.url, "--cert", s.cert}, args...)
@@ -908,7 +909,7 @@ func (s *TestServer) runBinary(t *testing.T, args ...string) (int, string) {
 	return exitCode, out
 }
 
-func (s *TestServer) runBinaryWithNoLogging(t *testing.T, args ...string) (int, string) {
+func (s *testServer) runBinaryWithNoLogging(t *testing.T, args ...string) (int, string) {
 	t.Helper()
 
 	fullArgs := append([]string{"--url", s.url, "--cert", s.cert}, args...)
@@ -916,7 +917,7 @@ func (s *TestServer) runBinaryWithNoLogging(t *testing.T, args ...string) (int, 
 	return runCLI(t, s.env, "", fullArgs...)
 }
 
-func (s *TestServer) confirmOutput(t *testing.T, args []string, expectedCode int, expected string) {
+func (s *testServer) confirmOutput(t *testing.T, args []string, expectedCode int, expected string) {
 	t.Helper()
 
 	exitCode, actual := s.runBinary(t, args...)
@@ -925,7 +926,7 @@ func (s *TestServer) confirmOutput(t *testing.T, args []string, expectedCode int
 	So(actual, ShouldEqual, expected)
 }
 
-func (s *TestServer) confirmOutputContains(t *testing.T, args []string, expectedCode int, expected string) {
+func (s *testServer) confirmOutputContains(t *testing.T, args []string, expectedCode int, expected string) {
 	t.Helper()
 
 	exitCode, actual := s.runBinaryWithNoLogging(t, args...)
@@ -934,7 +935,7 @@ func (s *TestServer) confirmOutputContains(t *testing.T, args []string, expected
 	So(actual, ShouldContainSubstring, expected)
 }
 
-func (s *TestServer) confirmOutputDoesNotContain(t *testing.T, args []string, expectedCode int, //nolint:unparam
+func (s *testServer) confirmOutputDoesNotContain(t *testing.T, args []string, expectedCode int, //nolint:unparam
 	expected string,
 ) {
 	t.Helper()
@@ -952,7 +953,7 @@ var (
 	errIlsDidNotSucceed = errors.New("expected ils to succeed")
 )
 
-func (s *TestServer) addSetForTesting(t *testing.T, name, transformer, path string) {
+func (s *testServer) addSetForTesting(t *testing.T, name, transformer, path string) {
 	t.Helper()
 
 	exitCode, _ := s.runBinary(t, "add", "--name", name, "--transformer", transformer, "--path", path)
@@ -964,19 +965,19 @@ func (s *TestServer) addSetForTesting(t *testing.T, name, transformer, path stri
 	s.waitForStatus(name, "\nDiscovery: completed", 20*time.Second)
 }
 
-func (s *TestServer) addSetForTestingWithItems(t *testing.T, name, transformer, path string) {
+func (s *testServer) addSetForTestingWithItems(t *testing.T, name, transformer, path string) {
 	t.Helper()
 
 	s.addSetForTestingWithFlags(t, name, transformer, "--items", path, "--monitor", "1h", "--monitor-removals")
 }
 
-func (s *TestServer) addSetForTestingWithFlag(t *testing.T, name, transformer, path, flag, data string) {
+func (s *testServer) addSetForTestingWithFlag(t *testing.T, name, transformer, path, flag, data string) {
 	t.Helper()
 
 	s.addSetForTestingWithFlags(t, name, transformer, "--path", path, flag, data)
 }
 
-func (s *TestServer) addSetForTestingWithFlags(t *testing.T, name, transformer string, flags ...string) {
+func (s *testServer) addSetForTestingWithFlags(t *testing.T, name, transformer string, flags ...string) {
 	t.Helper()
 
 	waitTimeout := 1 * time.Minute
@@ -1004,7 +1005,7 @@ func (s *TestServer) addSetForTestingWithFlags(t *testing.T, name, transformer s
 	}
 }
 
-func (s *TestServer) removePath(t *testing.T, name, path string, numFiles int) {
+func (s *testServer) removePath(t *testing.T, name, path string, numFiles int) {
 	t.Helper()
 
 	exitCode, _ := s.runBinary(t, "remove", "--name", name, "--path", path)
@@ -1013,7 +1014,7 @@ func (s *TestServer) removePath(t *testing.T, name, path string, numFiles int) {
 	s.waitForStatus(name, fmt.Sprintf("Removal status: %d / %d objects removed", numFiles, numFiles), 60*time.Second)
 }
 
-func (s *TestServer) trashRemovePath(t *testing.T, name, path string, numFiles int) {
+func (s *testServer) trashRemovePath(t *testing.T, name, path string, numFiles int) {
 	t.Helper()
 
 	exitCode, _ := s.runBinary(t, "trash", "--remove", "--name", name, "--path", path)
@@ -1023,15 +1024,15 @@ func (s *TestServer) trashRemovePath(t *testing.T, name, path string, numFiles i
 	s.waitForStatus(set.TrashPrefix+name, statusMsg, 60*time.Second)
 }
 
-func (s *TestServer) waitForStatus(name, statusToFind string, timeout time.Duration) {
+func (s *testServer) waitForStatus(name, statusToFind string, timeout time.Duration) {
 	s.waitForStatusWithFlags(name, statusToFind, timeout)
 }
 
-func (s *TestServer) waitForStatusWithUser(name, statusToFind, user string, timeout time.Duration) {
+func (s *testServer) waitForStatusWithUser(name, statusToFind, user string, timeout time.Duration) {
 	s.waitForStatusWithFlags(name, statusToFind, timeout, "--user", user)
 }
 
-func (s *TestServer) waitForStatusWithFlags(name, statusToFind string, timeout time.Duration, args ...string) {
+func (s *testServer) waitForStatusWithFlags(name, statusToFind string, timeout time.Duration, args ...string) {
 	err := s.tryWaitForStatusWithFlags(name, statusToFind, timeout, args...)
 
 	if !s.shouldFail {
@@ -1039,7 +1040,7 @@ func (s *TestServer) waitForStatusWithFlags(name, statusToFind string, timeout t
 	}
 }
 
-func (s *TestServer) tryWaitForStatusWithFlags(name, statusToFind string, timeout time.Duration, args ...string) error {
+func (s *testServer) tryWaitForStatusWithFlags(name, statusToFind string, timeout time.Duration, args ...string) error {
 	ctx, cancelFn := context.WithTimeout(context.Background(), timeout)
 	defer cancelFn()
 
@@ -1141,7 +1142,7 @@ func waitForIlsPresent(path string, timeout time.Duration) error {
 	return nil
 }
 
-func (s *TestServer) Shutdown() error {
+func (s *testServer) Shutdown() error {
 	if s.stopped {
 		return nil
 	}
@@ -1330,7 +1331,7 @@ func failMainTest(err string) {
 
 func TestNoServer(t *testing.T) {
 	Convey("With no server, status fails", t, func() {
-		s := new(TestServer)
+		s := new(testServer)
 
 		s.confirmOutput(t, []string{"status"}, 1, "you must supply --url")
 	})
@@ -1730,7 +1731,7 @@ func checkErrorInLog(t *testing.T, logFile string, errStr string) bool {
 	return strings.Contains(logContents, errStr)
 }
 
-func testQueue(t *testing.T, queue []string, avoid []string, shouldFail bool) ([]*jobqueue.Job, *TestServer) {
+func testQueue(t *testing.T, queue []string, avoid []string, shouldFail bool) ([]*jobqueue.Job, *testServer) {
 	t.Helper()
 
 	s := NewTestServerWithQueues(t, queue, avoid, shouldFail)
@@ -2488,7 +2489,7 @@ func TestBackup(t *testing.T) {
 		removalDate := time.Now().AddDate(1, 0, 0).Format("2006-01-02")
 
 		dir := t.TempDir()
-		s := new(TestServer)
+		s := new(testServer)
 		s.dir = dir
 
 		s.prepareConfig(t)
@@ -2579,7 +2580,7 @@ func TestBackup(t *testing.T) {
 		So(rh, ShouldEqual, bh)
 
 		Convey("Running a server with the retrieved db works correctly", func() {
-			bs := new(TestServer)
+			bs := new(testServer)
 			bs.dir = tdir
 			bs.prepareConfig(t)
 			bs.prepareFilePaths()
@@ -5485,7 +5486,34 @@ func TestRetry(t *testing.T) {
 	})
 }
 
-func generateFakeJWT(t *testing.T, s *TestServer, user string) (string, error) {
+func TestServer(t *testing.T) {
+	Convey("An existing cache dir provided to an ACME-mode server must only be readable by the server user", t, func() {
+		tmp := t.TempDir()
+
+		for n, test := range [...]struct {
+			Perms  fs.FileMode
+			Err    error
+			Create bool
+		}{
+			{0700, nil, true},
+			{0700, nil, false},
+			{0701, cmd.ErrInvalidCacheDirPerms, true},
+			{0710, cmd.ErrInvalidCacheDirPerms, true},
+		} {
+			Convey(fmt.Sprintf("Dir %d", n+1), func() {
+				path := filepath.Join(tmp, strconv.Itoa(n+1))
+
+				if test.Create {
+					So(os.MkdirAll(path, test.Perms), ShouldBeNil)
+				}
+
+				So(cmd.CheckOrCreateCacheDir(path), ShouldResemble, test.Err)
+			})
+		}
+	})
+}
+
+func generateFakeJWT(t *testing.T, s *testServer, user string) (string, error) {
 	t.Helper()
 
 	defer t.Setenv("XDG_STATE_HOME", os.Getenv("XDG_STATE_HOME"))

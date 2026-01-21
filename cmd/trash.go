@@ -84,7 +84,7 @@ var trashCmd = &cobra.Command{
   --expired: removes all expired paths from the trash of the set.
   `,
 	PreRunE: func(_ *cobra.Command, _ []string) error {
-		ensureURLandCert()
+		ensureURL()
 
 		if !isAdmin() {
 			return ErrTrashAdminOnly

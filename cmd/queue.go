@@ -66,7 +66,7 @@ currently uploading. Specifying just --all shows details about all requests in
 the queue.
 `,
 	Run: func(cmd *cobra.Command, args []string) {
-		ensureURLandCert()
+		ensureURL()
 
 		if !gasClientCLI(serverURL, serverCert).CanReadServerToken() {
 			dief("Only the user who started the server can use this sub-command.")
