@@ -572,6 +572,7 @@ func (s *testServer) startServerExternal() {
 func (s *testServer) startServerInProcess() {
 	s.stopped = false
 
+	s.env = ensureHTTP2DisabledInEnv(s.env)
 	s.envRestore = applyEnv(s.env)
 
 	logFH, err := os.OpenFile(s.logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600) //nolint:gosec
@@ -679,7 +680,42 @@ func (s *testServer) startServerInProcess() {
 	s.waitForServer()
 }
 
-func (s *testServer) waitForServer() {
+func ensureHTTP2DisabledInEnv(env []string) []string {
+	const (
+		key = "GODEBUG="
+	)
+
+	flags := []string{"http2server=0", "http2client=0"}
+
+	for i, kv := range env {
+		if !strings.HasPrefix(kv, key) {
+			continue
+		}
+
+		value := strings.TrimPrefix(kv, key)
+		for _, flag := range flags {
+			if strings.Contains(value, flag) {
+				continue
+			}
+
+			if value == "" {
+				value = flag
+
+				continue
+			}
+
+			value += "," + flag
+		}
+
+		env[i] = key + value
+
+		return env
+	}
+
+	return append(env, key+strings.Join(flags, ","))
+}
+
+func (s *TestServer) waitForServer() {
 	deadline := time.Now().Add(5 * time.Second)
 
 	var lastErr error
