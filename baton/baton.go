@@ -77,6 +77,7 @@ type Baton struct {
 	collCh       chan string
 	collErrCh    chan error
 	collMu       sync.Mutex
+	clientMu     sync.Mutex
 	putClient    *ex.Client
 	metaClient   *ex.Client
 	removeClient *ex.Client
@@ -362,6 +363,9 @@ func (b *Baton) CollectionsDone() error {
 }
 
 func (b *Baton) setClientIfNotExists(client **ex.Client) error {
+	b.clientMu.Lock()
+	defer b.clientMu.Unlock()
+
 	if *client != nil && (*client).IsRunning() {
 		return nil
 	}

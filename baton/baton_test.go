@@ -27,11 +27,13 @@
 package baton
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -42,6 +44,8 @@ import (
 )
 
 var testStartTime time.Time //nolint:gochecknoglobals
+
+var errExpectedStatToFindUploadedObject = errors.New("expected Stat to find uploaded object")
 
 func countReplicates(reps []ex.Replicate) (int, int) {
 	good, bad := 0, 0
@@ -258,6 +262,87 @@ func TestBaton(t *testing.T) {
 				})
 			})
 		})
+	})
+}
+
+func TestBatonConcurrentClientInit(t *testing.T) {
+	_, errgbh := GetBatonHandler()
+	if errgbh != nil {
+		t.Logf("GetBatonHandler error: %s", errgbh)
+		SkipConvey("Skipping baton concurrency test since couldn't find baton", t, func() {})
+
+		return
+	}
+
+	remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
+	if remotePath == "" {
+		SkipConvey("Skipping baton concurrency test since IBACKUP_TEST_COLLECTION is not defined", t, func() {})
+
+		return
+	}
+
+	Convey("Concurrent Stat is safe during lazy client init", t, func() {
+		remotePath = filepath.Join(remotePath, "baton_conc_init_test_"+strconv.FormatInt(time.Now().UnixNano(), 10))
+		resetIRODS(remotePath)
+
+		localPath := t.TempDir()
+		fileLocal := filepath.Join(localPath, "file")
+		fileRemote := filepath.Join(remotePath, "file")
+
+		internal.CreateTestFileOfLength(t, fileLocal, 1)
+
+		hPut, err := GetBatonHandler()
+		So(err, ShouldBeNil)
+
+		err = hPut.Put(fileLocal, fileRemote)
+		So(err, ShouldBeNil)
+
+		hPut.Cleanup()
+
+		h, err := GetBatonHandler()
+		So(err, ShouldBeNil)
+		Reset(func() {
+			h.Cleanup()
+		})
+
+		start := make(chan struct{})
+
+		const goroutines = 32
+
+		var wg sync.WaitGroup
+		wg.Add(goroutines)
+
+		errCh := make(chan error, goroutines)
+
+		for range goroutines {
+			go func() {
+				defer wg.Done()
+
+				<-start
+
+				exists, _, err := h.Stat(fileRemote)
+				if err != nil {
+					errCh <- err
+
+					return
+				}
+
+				if !exists {
+					errCh <- errExpectedStatToFindUploadedObject
+				}
+			}()
+		}
+
+		close(start)
+		wg.Wait()
+		close(errCh)
+
+		var errs []error
+		for err := range errCh {
+			errs = append(errs, err)
+		}
+
+		So(errs, ShouldBeEmpty)
 	})
 }
 
