@@ -466,6 +466,10 @@ func (s *Server) rac(_ string, allitemdata []interface{}) {
 		)
 		job.Retries = jobRetries
 		job.LimitGroups = []string{jobLimitGroup}
+		job.Behaviours = []*jobqueue.Behaviour{{
+			When: jobqueue.OnFailure,
+			Do:   jobqueue.Remove,
+		}}
 
 		jobs[i] = job
 	}
