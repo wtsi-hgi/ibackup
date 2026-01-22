@@ -50,6 +50,7 @@ import (
 	"github.com/viant/ptrie"
 	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/ibackup/internal"
+	"github.com/wtsi-hgi/ibackup/internal/testutil"
 	"github.com/wtsi-hgi/ibackup/remove"
 	"github.com/wtsi-hgi/ibackup/set"
 	"github.com/wtsi-hgi/ibackup/slack"
@@ -778,7 +779,7 @@ func TestServer(t *testing.T) {
 								err = client.RemoveSet(exampleSet.ID())
 								So(err, ShouldBeNil)
 
-								internal.RetryUntilWorksCustom(t, func() error { //nolint:errcheck
+								testutil.RetryUntilWorksCustom(t, func() error { //nolint:errcheck
 									_, errg = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
 									if errg == nil {
 										return errNotFinishedRemoving
@@ -842,7 +843,16 @@ func TestServer(t *testing.T) {
 								err = client.TriggerDiscovery(exampleSet.ID(), false)
 								So(err, ShouldBeNil)
 
-								<-time.After(100 * time.Millisecond)
+								testutil.Eventually(t, 2*time.Second, 25*time.Millisecond, func() bool {
+									files, errg := client.GetFiles(exampleSet.ID())
+									if errg != nil || len(files) != 2 {
+										return false
+									}
+
+									dirsLocal, errLocal := s.db.GetAllDirEntries(exampleSet.ID())
+
+									return errLocal == nil && len(dirsLocal) == 2
+								}, "files and dirs after rediscovery")
 
 								files, errg := client.GetFiles(exampleSet.ID())
 								So(errg, ShouldBeNil)
@@ -1162,8 +1172,9 @@ func TestServer(t *testing.T) {
 						err = client.TriggerDiscovery(exampleSet.ID(), false)
 						So(err, ShouldBeNil)
 
-						<-time.After(100 * time.Millisecond)
-						So(racCalls, ShouldEqual, 3)
+						testutil.RequireStable(t, 250*time.Millisecond, 10*time.Millisecond, func() bool {
+							return racCalls == 3
+						}, "racCalls count")
 
 						s.queue.TriggerReadyAddedCallback(context.Background())
 
@@ -1440,7 +1451,9 @@ func TestServer(t *testing.T) {
 							So(slackWriter.String(), ShouldNotContainSubstring, "client")
 							slackWriter.Reset()
 
-							<-time.After(slackDebounce)
+							testutil.Eventually(t, slackDebounce*3, 10*time.Millisecond, func() bool {
+								return slackWriter.String() == slack.BoxPrefixInfo+"0 clients uploading"
+							}, "slack debounce to 0 clients uploading")
 
 							So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"0 clients uploading")
 							slackWriter.Reset()
@@ -1455,12 +1468,16 @@ func TestServer(t *testing.T) {
 							err = client.UpdateFileStatus(requests[12])
 							So(err, ShouldBeNil)
 
-							<-time.After(slackDebounce)
+							testutil.Eventually(t, slackDebounce*3, 10*time.Millisecond, func() bool {
+								return strings.Contains(slackWriter.String(), slack.BoxPrefixInfo+"1 clients uploading")
+							}, "slack debounce to 1 client uploading")
 
 							So(slackWriter.String(), ShouldContainSubstring, slack.BoxPrefixInfo+"1 clients uploading")
 							slackWriter.Reset()
 
-							<-time.After(slackDebounce)
+							testutil.Eventually(t, slackDebounce*3, 10*time.Millisecond, func() bool {
+								return strings.Contains(slackWriter.String(), slack.BoxPrefixInfo+"0 clients uploading")
+							}, "slack debounce back to 0 clients uploading")
 
 							So(slackWriter.String(), ShouldContainSubstring, slack.BoxPrefixInfo+"0 clients uploading")
 							slackWriter.Reset()
@@ -1570,7 +1587,11 @@ func TestServer(t *testing.T) {
 							err = client.TriggerDiscovery(emptySet.ID(), false)
 							So(err, ShouldBeNil)
 
-							<-time.After(100 * time.Millisecond)
+							testutil.Eventually(t, 2*time.Second, 25*time.Millisecond, func() bool {
+								gotSet, err = client.GetSetByID(emptySet.Requester, emptySet.ID())
+
+								return err == nil && gotSet.Status == set.Complete
+							}, "empty monitored set completion")
 
 							gotSet, err = client.GetSetByID(emptySet.Requester, emptySet.ID())
 							So(err, ShouldBeNil)
@@ -1589,7 +1610,7 @@ func TestServer(t *testing.T) {
 								countDiscovered := given.LastDiscovery
 								count := 0
 
-								internal.RetryUntilWorksCustom(t, func() error { //nolint:errcheck
+								testutil.RetryUntilWorksCustom(t, func() error { //nolint:errcheck
 									gotSet, err = client.GetSetByID(given.Requester, given.ID())
 									So(err, ShouldBeNil)
 
@@ -1653,7 +1674,7 @@ func TestServer(t *testing.T) {
 								err = client.AddOrUpdateSet(changedSet)
 								So(err, ShouldBeNil)
 
-								err = internal.RetryUntilWorksCustom(t, func() error {
+								err = testutil.RetryUntilWorksCustom(t, func() error {
 									gotSet, err = client.GetSetByID(emptySet.Requester, emptySet.ID())
 									So(err, ShouldBeNil)
 
@@ -1668,7 +1689,7 @@ func TestServer(t *testing.T) {
 								err = client.TriggerDiscovery(emptySet.ID(), false)
 								So(err, ShouldBeNil)
 
-								err = internal.RetryUntilWorksCustom(t, func() error {
+								err = testutil.RetryUntilWorksCustom(t, func() error {
 									gotSet, err = client.GetSetByID(emptySet.Requester, emptySet.ID())
 									So(err, ShouldBeNil)
 
@@ -1682,11 +1703,11 @@ func TestServer(t *testing.T) {
 
 								discovered = gotSet.LastDiscovery
 
-								<-time.After(emptySet.MonitorTime * 2)
+								testutil.RequireStable(t, emptySet.MonitorTime*2, emptySet.MonitorTime/10, func() bool {
+									gotSet, err = client.GetSetByID(emptySet.Requester, emptySet.ID())
 
-								gotSet, err = client.GetSetByID(emptySet.Requester, emptySet.ID())
-								So(err, ShouldBeNil)
-								So(gotSet.LastDiscovery, ShouldEqual, discovered)
+									return err == nil && gotSet.LastDiscovery.Equal(discovered)
+								}, "discovery timestamp")
 							})
 
 							Convey("Adding a file to an empty set switches to discovery after completion", func() {
@@ -2251,7 +2272,7 @@ func TestServer(t *testing.T) {
 						So(len(files), ShouldEqual, len(listOfFiles))
 
 						waitForRemovals := func(given *set.Set) {
-							internal.RetryUntilWorksCustom(t, func() error { //nolint:errcheck
+							testutil.RetryUntilWorksCustom(t, func() error { //nolint:errcheck
 								tickerSet, errg := client.GetSetByID(given.Requester, given.ID())
 								So(errg, ShouldBeNil)
 
@@ -2421,8 +2442,9 @@ func TestServer(t *testing.T) {
 						err = client.TriggerDiscovery(badSet.ID(), false)
 						So(err, ShouldBeNil)
 
-						<-time.After(300 * time.Millisecond)
-						So(racCalls, ShouldEqual, 0)
+						testutil.RequireStable(t, 500*time.Millisecond, 25*time.Millisecond, func() bool {
+							return racCalls == 0
+						}, "no rac calls for invalid transformer")
 
 						gotSet, errg := client.GetSetByID(badSet.Requester, badSet.ID())
 						So(errg, ShouldBeNil)
@@ -2673,15 +2695,15 @@ func TestServer(t *testing.T) {
 
 							slackWriter.Reset()
 
-							<-time.After(6 * iRODSTimeout)
-
-							So(s.iRODSTracker.totalIRODSConnections(), ShouldEqual, 2)
+							testutil.RequireStable(t, 6*iRODSTimeout, iRODSTimeout/2, func() bool {
+								return s.iRODSTracker.totalIRODSConnections() == 2
+							}, "iRODS connections before heartbeat stops")
 
 							close(client.heartbeatQuitCh)
 
-							<-time.After(6 * iRODSTimeout)
-
-							So(s.iRODSTracker.totalIRODSConnections(), ShouldEqual, 0)
+							testutil.Eventually(t, 6*iRODSTimeout, iRODSTimeout/2, func() bool {
+								return s.iRODSTracker.totalIRODSConnections() == 0
+							}, "iRODS connections to drop to zero")
 
 							So(slackWriter.String(), ShouldContainSubstring, slack.BoxPrefixInfo+"0 iRODS connections open")
 						})
@@ -2715,7 +2737,9 @@ func TestServer(t *testing.T) {
 
 							So(slackWriter.String(), ShouldBeBlank)
 
-							<-time.After(slackDebounce)
+							testutil.Eventually(t, slackDebounce*3, 10*time.Millisecond, func() bool {
+								return slackWriter.String() == slack.BoxPrefixInfo+"4 iRODS connections open"
+							}, "slack debounce to 4 iRODS connections open")
 
 							So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"4 iRODS connections open")
 							slackWriter.Reset()
@@ -2731,12 +2755,16 @@ func TestServer(t *testing.T) {
 
 							So(slackWriter.String(), ShouldBeBlank)
 
-							<-time.After(slackDebounce)
+							testutil.Eventually(t, slackDebounce*3, 10*time.Millisecond, func() bool {
+								return slackWriter.String() == slack.BoxPrefixInfo+"6 iRODS connections open"
+							}, "slack debounce to 6 iRODS connections open")
 
 							So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"6 iRODS connections open")
 							slackWriter.Reset()
 
-							<-time.After(slackDebounce)
+							testutil.Eventually(t, slackDebounce*3, 10*time.Millisecond, func() bool {
+								return slackWriter.String() == slack.BoxPrefixInfo+"0 iRODS connections open"
+							}, "slack debounce to 0 iRODS connections open")
 
 							So(slackWriter.String(), ShouldEqual, slack.BoxPrefixInfo+"0 iRODS connections open")
 						})
@@ -3204,7 +3232,21 @@ func TestServer(t *testing.T) {
 								minMBperSecondUploadSpeed, 100*time.Millisecond, slowDur*2, logger)
 						}()
 
-						<-time.After(600 * time.Millisecond)
+						testutil.Eventually(t, 3*time.Second, 25*time.Millisecond, func() bool {
+							gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+							if err != nil || gotSet.Status != set.Uploading {
+								return false
+							}
+
+							entries, errLocal := client.GetFiles(exampleSet.ID())
+							if errLocal != nil || len(entries) != len(discovers) {
+								return false
+							}
+
+							return entries[0].Status == set.UploadingEntry &&
+								strings.Contains(entries[0].LastError, "upload stuck?")
+						}, "stuck upload warning")
+
 						gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
 						So(err, ShouldBeNil)
 						So(gotSet.Status, ShouldEqual, set.Uploading)
@@ -3584,7 +3626,7 @@ func TestServer(t *testing.T) {
 					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldBeNil)
 
-					exists := internal.WaitForFile(t, backupPath)
+					exists := testutil.WaitForFile(t, backupPath)
 					So(exists, ShouldBeTrue)
 
 					stat, errS := os.Stat(backupPath)
@@ -3604,7 +3646,7 @@ func TestServer(t *testing.T) {
 					ok := <-racCalled
 					So(ok, ShouldBeTrue)
 
-					changed := internal.WaitForFileChange(t, backupPath, lastMod)
+					changed := testutil.WaitForFileChange(t, backupPath, lastMod)
 					So(changed, ShouldBeTrue)
 
 					stat, err = os.Stat(backupPath)
@@ -3614,7 +3656,7 @@ func TestServer(t *testing.T) {
 
 					putSetWithOneFile(t, handler, client, exampleSet, minMBperSecondUploadSpeed, logger)
 
-					changed = internal.WaitForFileChange(t, backupPath, lastMod)
+					changed = testutil.WaitForFileChange(t, backupPath, lastMod)
 					So(changed, ShouldBeTrue)
 
 					remoteBackupDir := filepath.Join(filepath.Dir(backupPath), "remoteBackup")
@@ -3631,7 +3673,7 @@ func TestServer(t *testing.T) {
 					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldBeNil)
 
-					remoteBackupExists := internal.WaitForFile(t, remoteBackupPath)
+					remoteBackupExists := testutil.WaitForFile(t, remoteBackupPath)
 					So(remoteBackupExists, ShouldBeTrue)
 				})
 
@@ -4466,7 +4508,7 @@ func waitForDiscovery(t *testing.T, client *Client, given *set.Set) {
 
 	discovered := given.LastDiscovery
 
-	internal.RetryUntilWorksCustom(t, func() error { //nolint:errcheck
+	testutil.RetryUntilWorksCustom(t, func() error { //nolint:errcheck
 		tickerSet, errg := client.GetSetByID(given.Requester, given.ID())
 		So(errg, ShouldBeNil)
 
@@ -4481,7 +4523,7 @@ func waitForDiscovery(t *testing.T, client *Client, given *set.Set) {
 func waitForRemovals(t *testing.T, client *Client, given *set.Set) {
 	t.Helper()
 
-	internal.RetryUntilWorksCustom(t, func() error { //nolint:errcheck
+	testutil.RetryUntilWorksCustom(t, func() error { //nolint:errcheck
 		tickerSet, errg := client.GetSetByID(given.Requester, given.ID())
 		So(errg, ShouldBeNil)
 

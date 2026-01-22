@@ -32,6 +32,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/wtsi-hgi/ibackup/internal/testutil"
 	"github.com/wtsi-hgi/ibackup/set"
 )
 
@@ -126,12 +127,15 @@ func TestMonitorHeap(t *testing.T) {
 			})
 
 			Convey("Which get automatically sent to the callback at the right time", func() {
-				<-time.After(50 * time.Millisecond)
+				testutil.Eventually(t, 2*time.Second, 10*time.Millisecond, func() bool {
+					mu.Lock()
+					defer mu.Unlock()
+
+					return names == "firstsecondthird"
+				}, "monitor callbacks")
 
 				mu.Lock()
 				defer mu.Unlock()
-
-				So(names, ShouldEqual, "firstsecondthird")
 
 				So(mh.NextDiscovery().IsZero(), ShouldBeTrue)
 				next := mh.NextSet()
@@ -142,12 +146,16 @@ func TestMonitorHeap(t *testing.T) {
 				err := mh.Remove(set1.ID())
 				So(err, ShouldBeNil)
 
-				<-time.After(50 * time.Millisecond)
+				testutil.Eventually(t, 2*time.Second, 10*time.Millisecond, func() bool {
+					mu.Lock()
+					defer mu.Unlock()
+
+					return len(calls) == 2 && names == "secondthird"
+				}, "monitor callbacks after removal")
 
 				mu.Lock()
 				defer mu.Unlock()
 
-				So(names, ShouldEqual, "secondthird")
 				So(calls, ShouldHaveLength, 2)
 				So(calls[0].After(ld.Add(20*time.Millisecond)), ShouldBeTrue)
 				So(calls[1].After(ld.Add(30*time.Millisecond)), ShouldBeTrue)

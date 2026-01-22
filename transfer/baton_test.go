@@ -29,7 +29,6 @@ import (
 	"errors"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -42,6 +41,7 @@ import (
 	"github.com/wtsi-hgi/ibackup/baton"
 	"github.com/wtsi-hgi/ibackup/baton/meta"
 	"github.com/wtsi-hgi/ibackup/internal"
+	"github.com/wtsi-hgi/ibackup/internal/testutil"
 	ex "github.com/wtsi-npg/extendo/v2"
 )
 
@@ -54,14 +54,12 @@ func TestPutBaton(t *testing.T) {
 		return
 	}
 
-	rootCollection := os.Getenv("IBACKUP_TEST_COLLECTION")
+	rootCollection := testutil.RequireIRODSTestCollection(t, "imkdir", "irm", "ils", "imeta")
 	if rootCollection == "" {
 		SkipConvey("Skipping baton tests since IBACKUP_TEST_COLLECTION is not defined", t, func() {})
 
 		return
 	}
-
-	rootCollection = filepath.Join(rootCollection, "transfer_test_"+strconv.FormatInt(time.Now().UnixNano(), 10))
 
 	Convey("Given Requests and a baton Handler, you can make a new Putter", t, func() {
 		internal.InitStatter(t)
@@ -382,8 +380,10 @@ func TestPutBaton(t *testing.T) {
 
 		localDir := t.TempDir()
 		gotPath := filepath.Join(localDir, "got")
+		cmd := testutil.NewIRODSCmd(t, "iget")
+		So(cmd, ShouldNotBeNil)
 
-		outB, err := exec.Command("iget", remotePath, gotPath).CombinedOutput()
+		outB, err := cmd.IGET(remotePath, gotPath)
 		if err != nil {
 			t.Logf("iget failed with output: %s", string(outB))
 		}

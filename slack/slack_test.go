@@ -36,6 +36,7 @@ import (
 	"github.com/slack-go/slack/slacktest"
 	. "github.com/smartystreets/goconvey/convey"
 	gas "github.com/wtsi-hgi/go-authserver"
+	"github.com/wtsi-hgi/ibackup/internal/testutil"
 )
 
 const (
@@ -61,7 +62,9 @@ func TestRealSlack(t *testing.T) {
 		msg := "github.com/wtsi-hgi/ibackup slack package test"
 		s.SendMessage(Info, msg)
 
-		<-time.After(1 * time.Second)
+		testutil.Eventually(t, 2*time.Second, 25*time.Millisecond, func() bool {
+			return logWriter.String() == ""
+		}, "slack log to remain blank")
 
 		So(logWriter.String(), ShouldBeBlank)
 	})
@@ -73,7 +76,9 @@ func TestRealSlack(t *testing.T) {
 		msg := "github.com/wtsi-hgi/ibackup slack package error test"
 		s.SendMessage(Info, msg)
 
-		<-time.After(1 * time.Second)
+		testutil.Eventually(t, 2*time.Second, 25*time.Millisecond, func() bool {
+			return logWriter.String() == "invalid_auth"
+		}, "slack invalid_auth log")
 
 		So(logWriter.String(), ShouldEqual, "invalid_auth")
 
@@ -82,7 +87,9 @@ func TestRealSlack(t *testing.T) {
 			s = New(config)
 
 			s.SendMessage(Info, msg)
-			<-time.After(1 * time.Second)
+			testutil.Eventually(t, 2*time.Second, 25*time.Millisecond, func() bool {
+				return true
+			}, "slack message sent with no logger")
 		})
 	})
 }
@@ -111,73 +118,68 @@ func TestDebounce(t *testing.T) {
 				hnd.SendDebounceMsg(1)
 
 				expectedOutput := fmt.Sprintf("%s1 %s", BoxPrefixInfo, testMessageSuffix)
-				checkMessage(expectedOutput, messageChan)
+				checkMessage(t, expectedOutput, messageChan)
 
 				hnd.SendDebounceMsg(2)
-				So(checkNoMessage(messageChan), ShouldBeTrue)
-
-				<-time.After(debounce)
+				So(checkNoMessage(t, messageChan), ShouldBeTrue)
 
 				expectedOutput = fmt.Sprintf("%s2 %s", BoxPrefixInfo, testMessageSuffix)
-				checkMessage(expectedOutput, messageChan)
+				checkMessage(t, expectedOutput, messageChan)
 			})
 
 			Convey("Which only sends unique messages", func() {
 				hnd.SendDebounceMsg(1)
 
 				expectedOutput := fmt.Sprintf("%s1 %s", BoxPrefixInfo, testMessageSuffix)
-				checkMessage(expectedOutput, messageChan)
+				checkMessage(t, expectedOutput, messageChan)
 
 				hnd.SendDebounceMsg(1)
-				So(checkNoMessage(messageChan), ShouldBeTrue)
+				So(checkNoMessage(t, messageChan), ShouldBeTrue)
 
-				<-time.After(debounce)
-
-				So(checkNoMessage(messageChan), ShouldBeTrue)
+				testutil.RequireStable(t, debounce, 10*time.Millisecond, func() bool {
+					select {
+					case <-messageChan:
+						return false
+					default:
+						return true
+					}
+				}, "no debounce message for duplicate")
 			})
 
 			Convey("Which sends the highest number seen in the debounce period", func() {
 				hnd.SendDebounceMsg(4)
 
 				expectedOutput := fmt.Sprintf("%s4 %s", BoxPrefixInfo, testMessageSuffix)
-				checkMessage(expectedOutput, messageChan)
+				checkMessage(t, expectedOutput, messageChan)
 
 				hnd.SendDebounceMsg(3)
 				hnd.SendDebounceMsg(0)
 				hnd.SendDebounceMsg(6)
 				hnd.SendDebounceMsg(5)
 
-				<-time.After(debounce)
-
 				expectedOutput = fmt.Sprintf("%s6 %s", BoxPrefixInfo, testMessageSuffix)
-				checkMessage(expectedOutput, messageChan)
+				checkMessage(t, expectedOutput, messageChan)
 			})
 
 			Convey("Which always sends the final 0 message", func() {
 				hnd.SendDebounceMsg(1)
 
 				expectedOutput := fmt.Sprintf("%s1 %s", BoxPrefixInfo, testMessageSuffix)
-				checkMessage(expectedOutput, messageChan)
+				checkMessage(t, expectedOutput, messageChan)
 
 				hnd.SendDebounceMsg(3)
 
-				<-time.After(debounce)
-
 				expectedOutput = fmt.Sprintf("%s3 %s", BoxPrefixInfo, testMessageSuffix)
-				checkMessage(expectedOutput, messageChan)
+				checkMessage(t, expectedOutput, messageChan)
 
 				hnd.SendDebounceMsg(2)
 				hnd.SendDebounceMsg(0)
 
-				<-time.After(debounce)
-
 				expectedOutput = fmt.Sprintf("%s2 %s", BoxPrefixInfo, testMessageSuffix)
-				checkMessage(expectedOutput, messageChan)
-
-				<-time.After(debounce)
+				checkMessage(t, expectedOutput, messageChan)
 
 				expectedOutput = fmt.Sprintf("%s0 %s", BoxPrefixInfo, testMessageSuffix)
-				checkMessage(expectedOutput, messageChan)
+				checkMessage(t, expectedOutput, messageChan)
 			})
 		})
 	})
@@ -191,7 +193,7 @@ func TestMockSlack(t *testing.T) {
 		defer dfunc()
 
 		s.SendMessage(Info, testMessage)
-		checkMessage(BoxPrefixInfo+testMessage, messageChan)
+		checkMessage(t, BoxPrefixInfo+testMessage, messageChan)
 	})
 
 	Convey("You can send different levels of message", t, func() {
@@ -201,16 +203,16 @@ func TestMockSlack(t *testing.T) {
 		defer dfunc()
 
 		s.SendMessage(Info, testMessage)
-		checkMessage(BoxPrefixInfo+testMessage, messageChan)
+		checkMessage(t, BoxPrefixInfo+testMessage, messageChan)
 
 		s.SendMessage(Warn, testMessage)
-		checkMessage(BoxPrefixWarn+testMessage, messageChan)
+		checkMessage(t, BoxPrefixWarn+testMessage, messageChan)
 
 		s.SendMessage(Error, testMessage)
-		checkMessage(BoxPrefixError+testMessage, messageChan)
+		checkMessage(t, BoxPrefixError+testMessage, messageChan)
 
 		s.SendMessage(Success, testMessage)
-		checkMessage(BoxPrefixSuccess+testMessage, messageChan)
+		checkMessage(t, BoxPrefixSuccess+testMessage, messageChan)
 	})
 }
 
@@ -238,23 +240,50 @@ func startMockSlackAndCreateSlack() (*Slack, chan *slackGo.MessageEvent, func())
 	return s, messageChan, testServer.Stop
 }
 
-func checkMessage(expectedMsg string, messageChan chan *slackGo.MessageEvent) {
-	select {
-	case m := <-messageChan:
-		So(m.Channel, ShouldEqual, testChannel)
-		So(m.Text, ShouldEqual, expectedMsg)
+func checkMessage(t *testing.T, expectedMsg string, messageChan chan *slackGo.MessageEvent) {
+	t.Helper()
 
-		break
-	case <-time.After(testMaxWait):
+	var (
+		got *slackGo.MessageEvent
+		ok  bool
+	)
+
+	testutil.Eventually(t, testMaxWait, 10*time.Millisecond, func() bool {
+		select {
+		case got = <-messageChan:
+			ok = true
+
+			return true
+		default:
+			return false
+		}
+	}, "slack message")
+
+	if !ok {
 		So(false, ShouldBeTrue, "did not get channel message in time")
+
+		return
 	}
+
+	So(got.Channel, ShouldEqual, testChannel)
+	So(got.Text, ShouldEqual, expectedMsg)
 }
 
-func checkNoMessage(messageChan chan *slackGo.MessageEvent) bool {
-	select {
-	case <-messageChan:
-		return false
-	case <-time.After(testSmallerMaxWait):
-		return true
-	}
+func checkNoMessage(t *testing.T, messageChan chan *slackGo.MessageEvent) bool {
+	t.Helper()
+
+	clean := true
+
+	testutil.RequireStable(t, testSmallerMaxWait, 10*time.Millisecond, func() bool {
+		select {
+		case <-messageChan:
+			clean = false
+
+			return false
+		default:
+			return true
+		}
+	}, "no slack message")
+
+	return clean
 }
