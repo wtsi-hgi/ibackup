@@ -5709,6 +5709,7 @@ func TestServer(t *testing.T) {
 
 				if test.Create {
 					So(os.MkdirAll(path, test.Perms), ShouldBeNil)
+					So(os.Chmod(path, test.Perms), ShouldBeNil)
 				}
 
 				So(cmd.CheckOrCreateCacheDir(path), ShouldResemble, test.Err)
