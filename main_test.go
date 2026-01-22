@@ -1394,17 +1394,14 @@ func resetIRODSOrFail(tb testing.TB) {
 		return
 	}
 
-	ctx, cancelFn := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancelFn()
-
-	if out, err := exec.CommandContext(ctx, "irm", "-rf", remotePath).CombinedOutput(); err != nil { //nolint:gosec
+	if out, err := runIRODSCommandWithRetry(tb, 2*time.Minute, "irm", "-rf", remotePath); err != nil { //nolint:gosec
 		outStr := string(out)
 		if !strings.Contains(outStr, "does not exist") && !strings.Contains(outStr, "No rows found") {
 			tb.Fatalf("failed to reset iRODS collection %q: irm -rf failed: %v; output: %s", remotePath, err, outStr)
 		}
 	}
 
-	if out, err := exec.CommandContext(ctx, "imkdir", "-p", remotePath).CombinedOutput(); err != nil { //nolint:gosec
+	if out, err := runIRODSCommandWithRetry(tb, 2*time.Minute, "imkdir", "-p", remotePath); err != nil { //nolint:gosec
 		tb.Fatalf("failed to reset iRODS collection %q: imkdir -p failed: %v; output: %s", remotePath, err, string(out))
 	}
 }
@@ -1415,11 +1412,99 @@ func resetIRODS() {
 		return
 	}
 
-	ctx, cancelFn := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancelFn()
+	runIRODSCommandWithRetryNoTB(2*time.Minute, "irm", "-rf", remotePath)   //nolint:errcheck,gosec
+	runIRODSCommandWithRetryNoTB(2*time.Minute, "imkdir", "-p", remotePath) //nolint:errcheck,gosec
+}
 
-	exec.CommandContext(ctx, "irm", "-rf", remotePath).Run()   //nolint:errcheck,gosec
-	exec.CommandContext(ctx, "imkdir", "-p", remotePath).Run() //nolint:errcheck,gosec
+var errIRODSRetryExhausted = errors.New("exhausted iRODS retries")
+
+type irodsLogger interface {
+	Logf(format string, args ...any)
+}
+
+func runIRODSCommandWithRetry(tb testing.TB, timeout time.Duration, command string, args ...string) ([]byte, error) {
+	tb.Helper()
+
+	return runIRODSCommandWithRetryInternal(tb, timeout, command, args...)
+}
+
+func runIRODSCommandWithRetryNoTB(timeout time.Duration, command string, args ...string) ([]byte, error) {
+	return runIRODSCommandWithRetryInternal(nil, timeout, command, args...)
+}
+
+func runIRODSCommandWithRetryInternal(
+	logger irodsLogger,
+	timeout time.Duration,
+	command string,
+	args ...string,
+) ([]byte, error) {
+	const maxAttempts = 8
+
+	backoff := 250 * time.Millisecond
+
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		ctx, cancelFn := context.WithTimeout(context.Background(), timeout)
+		out, err := exec.CommandContext(ctx, command, args...).CombinedOutput() //nolint:gosec
+
+		cancelFn()
+
+		if err == nil {
+			return out, nil
+		}
+
+		if isIRODSMissingPath(string(out)) && command == "irm" {
+			return out, nil
+		}
+
+		if !isTransientIRODSError(string(out), err) || attempt == maxAttempts {
+			if logger != nil && attempt == maxAttempts && isTransientIRODSError(string(out), err) {
+				logger.Logf(
+					"exhausted iRODS retries running %s %v (attempt %d/%d): %v; output: %s",
+					command,
+					args,
+					attempt,
+					maxAttempts,
+					err,
+					strings.TrimSpace(string(out)),
+				)
+			}
+
+			return out, err
+		}
+
+		time.Sleep(backoff)
+		backoff *= 2
+	}
+
+	return nil, fmt.Errorf("%w running %s %v", errIRODSRetryExhausted, command, args)
+}
+
+func isIRODSMissingPath(output string) bool {
+	return strings.Contains(output, "does not exist") || strings.Contains(output, "No rows found")
+}
+
+func isTransientIRODSError(output string, err error) bool {
+	if err == nil {
+		return false
+	}
+
+	transientMarkers := []string{
+		"connectToRhost error",
+		"SYS_HEADER_READ_LEN_ERR",
+		"SYS_SOCK_CONNECT_ERR",
+		"connection refused",
+		"Connection refused",
+		"Failed to connect",
+		"remote addresses",
+	}
+
+	for _, marker := range transientMarkers {
+		if strings.Contains(output, marker) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func failMainTest(err string) {
