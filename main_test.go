@@ -5612,6 +5612,8 @@ func TestSync(t *testing.T) {
 
 				s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", timeout)
 				s.waitForStatus(setName, "Status: complete", timeout)
+				s.waitForStatus(setName, "Uploaded: 1;", timeout)
+				s.waitForStatus(setName, "Orphaned: 0;", timeout)
 
 				exitCode, output = s.runBinaryWithNoLogging(t, "status", "--name", setName, "-d")
 				So(exitCode, ShouldEqual, 0)
