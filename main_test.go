@@ -2767,6 +2767,9 @@ func TestBackup(t *testing.T) {
 			bs.dbFile = gotPath
 
 			bs.startServer()
+
+			exitCode, _ := bs.runBinary(t, "sync", "--name", "testForBackup")
+			So(exitCode, ShouldEqual, 0)
 			bs.waitForStatus("testForBackup", "\nDiscovery: completed", 10*time.Second)
 
 			bs.confirmOutput(t, []string{
