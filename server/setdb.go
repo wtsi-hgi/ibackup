@@ -1069,7 +1069,7 @@ func removeAllOccurrences(slice []string, element string) []string {
 		return slice
 	}
 
-	filtered := slice[:0]
+	filtered := make([]string, 0, len(slice))
 	for _, value := range slice {
 		if value == element {
 			continue
