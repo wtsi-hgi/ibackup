@@ -132,13 +132,13 @@ type testServer struct {
 	shouldFail           bool
 	external             bool
 
-	cmd        *exec.Cmd
-	ch         chan []*jobqueue.Job
-	srv        *server.Server
-	srvErr     chan error
-	logFH      *os.File
+	cmd           *exec.Cmd
+	ch            chan []*jobqueue.Job
+	srv           *server.Server
+	srvErr        chan error
+	logFH         *os.File
 	stdLogRestore func()
-	envRestore func()
+	envRestore    func()
 }
 
 func NewTestServer(t *testing.T) *testServer {
@@ -533,7 +533,9 @@ func (s *testServer) startServerInProcess() {
 
 	logWriter := io.Writer(logFH)
 	prevLogWriter := log.Writer()
+
 	log.SetOutput(logWriter)
+
 	s.stdLogRestore = func() {
 		log.SetOutput(prevLogWriter)
 	}
