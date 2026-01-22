@@ -1653,14 +1653,40 @@ func TestServer(t *testing.T) {
 								err = client.AddOrUpdateSet(changedSet)
 								So(err, ShouldBeNil)
 
+								err = internal.RetryUntilWorksCustom(t, func() error {
+									gotSet, err = client.GetSetByID(emptySet.Requester, emptySet.ID())
+									So(err, ShouldBeNil)
+
+									if gotSet.MonitorTime == changedSet.MonitorTime {
+										return nil
+									}
+
+									return errNotDiscovered
+								}, emptySet.MonitorTime*2, emptySet.MonitorTime/10)
+								So(err, ShouldBeNil)
+
 								err = client.TriggerDiscovery(emptySet.ID(), false)
 								So(err, ShouldBeNil)
 
-								<-time.After(10 * time.Millisecond)
+								err = internal.RetryUntilWorksCustom(t, func() error {
+									gotSet, err = client.GetSetByID(emptySet.Requester, emptySet.ID())
+									So(err, ShouldBeNil)
 
-								gotSet.LastDiscovery = time.Now()
-								discovers := countDiscovery(gotSet)
-								So(discovers, ShouldEqual, 0)
+									if gotSet.LastDiscovery.After(discovered) {
+										return nil
+									}
+
+									return errNotDiscovered
+								}, emptySet.MonitorTime*2, emptySet.MonitorTime/10)
+								So(err, ShouldBeNil)
+
+								discovered = gotSet.LastDiscovery
+
+								<-time.After(emptySet.MonitorTime * 2)
+
+								gotSet, err = client.GetSetByID(emptySet.Requester, emptySet.ID())
+								So(err, ShouldBeNil)
+								So(gotSet.LastDiscovery, ShouldEqual, discovered)
 							})
 
 							Convey("Adding a file to an empty set switches to discovery after completion", func() {
