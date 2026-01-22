@@ -4,6 +4,7 @@ TAG := $(shell git describe --abbrev=0 --tags)
 LDFLAGS = -ldflags "-X ${PKG}/cmd.Version=${VERSION}"
 export GOPATH := $(shell go env GOPATH)
 PATH := ${PATH}:${GOPATH}/bin
+MAKEFLAGS += --no-print-directory
 
 default: install
 
