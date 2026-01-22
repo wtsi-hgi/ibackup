@@ -851,7 +851,19 @@ func TestServer(t *testing.T) {
 								dirs, err = s.db.GetAllDirEntries(exampleSet.ID())
 								So(err, ShouldBeNil)
 								So(dirs, ShouldHaveLength, 2)
-								So(dirs[0].Status, ShouldEqual, set.Orphaned)
+
+								var orphaned *set.Entry
+
+								for _, dir := range dirs {
+									if filepath.Clean(dir.Path) == filepath.Clean(dir1local) {
+										orphaned = dir
+
+										break
+									}
+								}
+
+								So(orphaned, ShouldNotBeNil)
+								So(orphaned.Status, ShouldEqual, set.Orphaned)
 							})
 						})
 					})
@@ -3066,6 +3078,16 @@ func TestServer(t *testing.T) {
 
 							So(s.queue.Stats().Buried, ShouldEqual, 1)
 
+							findEntryByPath := func(entries []*set.Entry, path string) *set.Entry {
+								for _, entry := range entries {
+									if filepath.Clean(entry.Path) == filepath.Clean(path) {
+										return entry
+									}
+								}
+
+								return nil
+							}
+
 							manualRetry := func() {
 								retried, errr := client.RetryFailedSetUploads(exampleSet.ID())
 								So(errr, ShouldBeNil)
@@ -3092,8 +3114,11 @@ func TestServer(t *testing.T) {
 								entries, errg = client.GetFiles(exampleSet.ID())
 								So(errg, ShouldBeNil)
 								So(len(entries), ShouldEqual, len(discovers))
-								So(entries[0].Status, ShouldEqual, set.Uploaded)
-								So(entries[0].Attempts, ShouldEqual, jobRetries+1)
+
+								entry := findEntryByPath(entries, discovers[0])
+								So(entry, ShouldNotBeNil)
+								So(entry.Status, ShouldEqual, set.Uploaded)
+								So(entry.Attempts, ShouldEqual, jobRetries+1)
 							}
 
 							Convey("whereupon they can be manually retried", func() {
@@ -3120,10 +3145,13 @@ func TestServer(t *testing.T) {
 								entries, errg = client.GetFiles(exampleSet.ID())
 								So(errg, ShouldBeNil)
 								So(len(entries), ShouldEqual, len(discovers))
-								So(entries[0].Status, ShouldEqual, set.Failed)
-								So(entries[0].Attempts, ShouldEqual, jobRetries)
-								So(entries[0].LastError, ShouldContainSubstring, transfer.ErrReadTimeout)
-								So(entries[0].LastError, ShouldContainSubstring, entries[0].Path)
+
+								entry := findEntryByPath(entries, discovers[0])
+								So(entry, ShouldNotBeNil)
+								So(entry.Status, ShouldEqual, set.Failed)
+								So(entry.Attempts, ShouldEqual, jobRetries)
+								So(entry.LastError, ShouldContainSubstring, transfer.ErrReadTimeout)
+								So(entry.LastError, ShouldContainSubstring, entry.Path)
 
 								manualRetry()
 							})
