@@ -250,7 +250,7 @@ func initIRODSTestCollection(tb testing.TB) string {
 	return unique
 }
 
-func NewUploadingTestServer(t *testing.T, withDBBackup bool) (*TestServer, string) {
+func NewUploadingTestServer(t *testing.T, withDBBackup bool) (*testServer, string) {
 	t.Helper()
 
 	dir := t.TempDir()
@@ -715,7 +715,7 @@ func ensureHTTP2DisabledInEnv(env []string) []string {
 	return append(env, key+strings.Join(flags, ","))
 }
 
-func (s *TestServer) waitForServer() {
+func (s *testServer) waitForServer() {
 	deadline := time.Now().Add(5 * time.Second)
 
 	var lastErr error
@@ -1058,7 +1058,7 @@ func waitForIlsMissing(path string, timeout time.Duration) error {
 	return nil
 }
 
-func (s *TestServer) addSetForTesting(t *testing.T, name, transformer, path string) {
+func (s *testServer) addSetForTesting(t *testing.T, name, transformer, path string) {
 	t.Helper()
 
 	exitCode, _ := s.runBinary(t, "add", "--name", name, "--transformer", transformer, "--path", path)
