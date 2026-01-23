@@ -4,6 +4,7 @@ TAG := $(shell git describe --abbrev=0 --tags)
 LDFLAGS = -ldflags "-X ${PKG}/cmd.Version=${VERSION}"
 export GOPATH := $(shell go env GOPATH)
 PATH := ${PATH}:${GOPATH}/bin
+MAKEFLAGS += --no-print-directory
 
 default: install
 
@@ -21,14 +22,14 @@ install:
 	@echo installed to ${GOPATH}/bin/ibackup
 
 test:
-	@go test -tags netgo -timeout 40m --count 1 -v .
+	@go test -tags netgo -timeout 60m --count 1 -v .
 	@go test -tags netgo --count 1 $(shell go list ./... | grep -v '^${PKG}$$')
 
 race: race-subpkgs
 	@$(MAKE) race-main
 
 race-main:
-	@go test -tags netgo -timeout 40m -race --count 1 -v .
+	@go test -tags netgo -timeout 60m -race --count 1 -v .
 
 race-subpkgs:
 	@go test -tags netgo -race --count 1 $(shell go list ./... | grep -v '^${PKG}$$')

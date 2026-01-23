@@ -27,29 +27,20 @@
 package internal
 
 import (
-	"context"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	. "github.com/smartystreets/goconvey/convey" //nolint:revive,staticcheck
 	"github.com/wtsi-hgi/ibackup/statter"
-	"github.com/wtsi-ssg/wr/backoff"
-	btime "github.com/wtsi-ssg/wr/backoff/time"
-	"github.com/wtsi-ssg/wr/retry"
 )
 
 const (
-	retryTimeout = 5 * time.Second
-	UserPerms    = 0700
+	UserPerms = 0700
 )
-
-var ErrFileUnchanged = errors.New("file did not change")
 
 // InitStatter initialises the external walker and statter program, building it
 // from source if not specified by the IBACKUP_TEST_STATTER env var and it
@@ -83,75 +74,6 @@ func BuildStatter(path string) error {
 	}
 
 	return nil
-}
-
-// WaitForFile waits for up to 5 seconds for the given path to exist, and
-// returns false if it doesn't.
-func WaitForFile(t *testing.T, path string) bool {
-	t.Helper()
-
-	err := RetryUntilWorks(t, func() error {
-		_, err := os.Stat(path)
-
-		return err
-	})
-
-	return err == nil
-}
-
-// RetryUntilWorks retries the given function until it no longer returns an
-// error, or until 5 seconds have passed. It waits a small, increasing interval
-// of time between each try.
-func RetryUntilWorks(t *testing.T, f func() error) error {
-	t.Helper()
-
-	return retryUntilWorks(t, f, retryTimeout, btime.SecondsRangeBackoff())
-}
-
-// RetryUntilWorksCustom retries the given function until it no longer returns
-// an error, or until timeout has passed. It waits the given wait between each
-// try.
-func RetryUntilWorksCustom(t *testing.T, f func() error, timeout time.Duration, wait time.Duration) error {
-	t.Helper()
-
-	return retryUntilWorks(t, f, timeout, &backoff.Backoff{
-		Min:     wait,
-		Max:     wait,
-		Factor:  1,
-		Sleeper: &btime.Sleeper{},
-	})
-}
-
-func retryUntilWorks(t *testing.T, f func() error, retryTimeout time.Duration, backoff *backoff.Backoff) error {
-	t.Helper()
-
-	ctx, cancelFn := context.WithTimeout(context.Background(), retryTimeout)
-	defer cancelFn()
-
-	status := retry.Do(ctx, f, &retry.UntilNoError{}, backoff, "RetryUntilWorks")
-
-	return status.Err
-}
-
-// WaitForFileChange waits for up to 5 seconds for the given path to change, and
-// returns false if it doesn't.
-func WaitForFileChange(t *testing.T, path string, lastMod time.Time) bool {
-	t.Helper()
-
-	err := RetryUntilWorks(t, func() error {
-		stat, errs := os.Stat(path)
-		if errs == nil && stat.ModTime().After(lastMod) {
-			return nil
-		}
-
-		if errs == nil {
-			return ErrFileUnchanged
-		}
-
-		return errs
-	})
-
-	return err == nil
 }
 
 // CreateTestFile creates a file at the given path with the given content. It

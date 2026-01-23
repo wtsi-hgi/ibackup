@@ -35,6 +35,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/wtsi-hgi/ibackup/internal"
+	"github.com/wtsi-hgi/ibackup/internal/testutil"
 )
 
 func TestPutMock(t *testing.T) {
@@ -150,7 +151,8 @@ func TestPutMock(t *testing.T) {
 
 						p.requests = []*Request{requests[0]}
 
-						<-time.After(1 * time.Second)
+						start := time.Now()
+						testutil.WaitForNextSecond(t, start)
 						uCh, urCh, srCh = p.Put()
 
 						request := <-uCh

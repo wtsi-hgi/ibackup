@@ -27,21 +27,25 @@
 package baton
 
 import (
-	"os"
-	"os/exec"
+	"errors"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/wtsi-hgi/ibackup/baton/meta"
 	"github.com/wtsi-hgi/ibackup/internal"
+	"github.com/wtsi-hgi/ibackup/internal/testutil"
 	ex "github.com/wtsi-npg/extendo/v2"
 )
 
-var testStartTime time.Time //nolint:gochecknoglobals
+var testStartTime time.Time   //nolint:gochecknoglobals
+var icmd *testutil.ICommander //nolint:gochecknoglobals
+
+var errExpectedStatToFindUploadedObject = errors.New("expected Stat to find uploaded object")
 
 func countReplicates(reps []ex.Replicate) (int, int) {
 	good, bad := 0, 0
@@ -68,16 +72,17 @@ func TestBaton(t *testing.T) {
 		return
 	}
 
-	remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
+	remotePath := testutil.RequireIRODSTestCollection(t)
 	if remotePath == "" {
 		SkipConvey("Skipping baton tests since IBACKUP_TEST_COLLECTION is not defined", t, func() {})
 
 		return
 	}
 
-	remotePath = filepath.Join(remotePath, "baton_test_"+strconv.FormatInt(time.Now().UnixNano(), 10))
-
-	resetIRODS(remotePath)
+	icmd = testutil.NewIcommander(t)
+	if icmd == nil {
+		t.Skip("skipping baton tests since iCommands are unavailable")
+	}
 
 	localPath := t.TempDir()
 
@@ -261,32 +266,105 @@ func TestBaton(t *testing.T) {
 	})
 }
 
-func resetIRODS(remotePath string) {
-	if remotePath == "" {
+func TestBatonConcurrentClientInit(t *testing.T) {
+	_, errgbh := GetBatonHandler()
+	if errgbh != nil {
+		t.Logf("GetBatonHandler error: %s", errgbh)
+		SkipConvey("Skipping baton concurrency test since couldn't find baton", t, func() {})
+
 		return
 	}
 
-	exec.Command("irm", "-r", remotePath).Run() //nolint:errcheck,noctx
+	remotePath := testutil.RequireIRODSTestCollection(t)
+	if remotePath == "" {
+		SkipConvey("Skipping baton concurrency test since IBACKUP_TEST_COLLECTION is not defined", t, func() {})
 
-	exec.Command("imkdir", remotePath).Run() //nolint:errcheck,noctx
+		return
+	}
+
+	icmd = testutil.NewIcommander(t)
+	if icmd == nil {
+		t.Skip("skipping baton concurrency test since iCommands are unavailable")
+	}
+
+	Convey("Concurrent Stat is safe during lazy client init", t, func() {
+		localPath := t.TempDir()
+		fileLocal := filepath.Join(localPath, "file")
+		fileRemote := filepath.Join(remotePath, "file")
+
+		internal.CreateTestFileOfLength(t, fileLocal, 1)
+
+		hPut, err := GetBatonHandler()
+		So(err, ShouldBeNil)
+
+		err = hPut.Put(fileLocal, fileRemote)
+		So(err, ShouldBeNil)
+
+		hPut.Cleanup()
+
+		h, err := GetBatonHandler()
+		So(err, ShouldBeNil)
+		Reset(func() {
+			h.Cleanup()
+		})
+
+		start := make(chan struct{})
+
+		const goroutines = 32
+
+		var wg sync.WaitGroup
+		wg.Add(goroutines)
+
+		errCh := make(chan error, goroutines)
+
+		for range goroutines {
+			go func() {
+				defer wg.Done()
+
+				<-start
+
+				exists, _, err := h.Stat(fileRemote)
+				if err != nil {
+					errCh <- err
+
+					return
+				}
+
+				if !exists {
+					errCh <- errExpectedStatToFindUploadedObject
+				}
+			}()
+		}
+
+		close(start)
+		wg.Wait()
+		close(errCh)
+
+		var errs []error
+		for err := range errCh {
+			errs = append(errs, err)
+		}
+
+		So(errs, ShouldBeEmpty)
+	})
 }
 
 func isObjectInIRODS(remotePath, name string) bool {
-	output, err := exec.Command("ils", remotePath).CombinedOutput() //nolint:noctx
+	output, err := icmd.ILS(remotePath)
 	So(err, ShouldBeNil)
 
 	return strings.Contains(string(output), name)
 }
 
 func getRemoteMeta(path string) string {
-	output, err := exec.Command("imeta", "ls", "-d", path).CombinedOutput() //nolint:noctx
+	output, err := icmd.IMETA("ls", "-d", path)
 	So(err, ShouldBeNil)
 
 	return string(output)
 }
 
 func addRemoteMeta(path, key, val string) {
-	output, err := exec.Command("imeta", "add", "-d", path, key, val).CombinedOutput() //nolint:noctx
+	output, err := icmd.IMETA("add", "-d", path, key, val)
 	if strings.Contains(string(output), "CATALOG_ALREADY_HAS_ITEM_BY_THAT_NAME") {
 		return
 	}
@@ -295,7 +373,7 @@ func addRemoteMeta(path, key, val string) {
 }
 
 func getSizeOfObject(path string) int {
-	output, err := exec.Command("ils", "-l", path).CombinedOutput() //nolint:noctx
+	output, err := icmd.ILS("-l", path)
 	So(err, ShouldBeNil)
 
 	cols := strings.Fields(string(output))

@@ -1013,8 +1013,8 @@ func (s *Server) getFilesWithSameInode(path string, inode uint64, transformer tr
 
 func (s *Server) handleSetsAndRequesters(path string, givenSet *set.Set,
 	meta map[string]string) ([]string, []string, error) {
-	sets := strings.Split(meta[transfer.MetaKeySets], ",")
-	requesters := strings.Split(meta[transfer.MetaKeyRequester], ",")
+	sets := splitCommaSeparatedUnique(meta[transfer.MetaKeySets])
+	requesters := splitCommaSeparatedUnique(meta[transfer.MetaKeyRequester])
 
 	if !slices.Contains(sets, givenSet.Name) {
 		return sets, requesters, nil
@@ -1026,19 +1026,54 @@ func (s *Server) handleSetsAndRequesters(path string, givenSet *set.Set,
 	}
 
 	if numUserSets == 1 {
-		requesters, err = set.RemoveElementFromSlice(requesters, givenSet.Requester)
-		if err != nil {
-			return nil, nil, err
-		}
+		requesters = slices.DeleteFunc(requesters, func(s string) bool { return s == givenSet.Requester })
 	}
 
 	if numSetsWithGivenName > 1 {
 		return sets, requesters, nil
 	}
 
-	sets, err = set.RemoveElementFromSlice(sets, givenSet.Name)
+	sets = slices.DeleteFunc(sets, func(s string) bool { return s == givenSet.Name })
 
-	return sets, requesters, err
+	return sets, requesters, nil
+}
+
+func splitCommaSeparatedUnique(value string) []string {
+	if value == "" {
+		return nil
+	}
+
+	parts := strings.Split(value, ",")
+	seen := make(map[string]struct{}, len(parts))
+	unique := make([]string, 0, len(parts))
+
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+
+		if _, ok := seen[part]; ok {
+			continue
+		}
+
+		seen[part] = struct{}{}
+		unique = append(unique, part)
+	}
+
+	return unique
+}
+
+func appendIfMissing(slice []string, element string) []string {
+	if element == "" {
+		return slice
+	}
+
+	if slices.Contains(slice, element) {
+		return slice
+	}
+
+	return append(slice, element)
 }
 
 // countSetsForPath gets all sets that contain the provided path and returns a
@@ -1071,10 +1106,10 @@ func (s *Server) countSetsForPath(path, givenName, givenRequester string) (uint1
 }
 
 func (s *Server) handleSetMetadataForTrash(givenSet *set.Set, meta map[string]string) ([]string, []string, error) {
-	sets := strings.Split(meta[transfer.MetaKeySets], ",")
-	requesters := strings.Split(meta[transfer.MetaKeyRequester], ",")
+	sets := splitCommaSeparatedUnique(meta[transfer.MetaKeySets])
+	requesters := splitCommaSeparatedUnique(meta[transfer.MetaKeyRequester])
 
-	sets = append(sets, set.TrashPrefix+givenSet.Name)
+	sets = appendIfMissing(sets, set.TrashPrefix+givenSet.Name)
 
 	otherUserSets, _, err := s.getSetNamesByRequesters(requesters, givenSet.Requester)
 	if err != nil {
@@ -1085,9 +1120,7 @@ func (s *Server) handleSetMetadataForTrash(givenSet *set.Set, meta map[string]st
 		return sets, requesters, nil
 	}
 
-	if slices.Contains(sets, givenSet.Name) {
-		sets, err = set.RemoveElementFromSlice(sets, givenSet.Name)
-	}
+	sets = slices.DeleteFunc(sets, func(s string) bool { return s == givenSet.Name })
 
 	return sets, requesters, err
 }

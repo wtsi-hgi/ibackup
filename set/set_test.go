@@ -30,7 +30,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"syscall"
 	"testing"
@@ -42,6 +41,7 @@ import (
 	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/ibackup/baton"
 	"github.com/wtsi-hgi/ibackup/internal"
+	"github.com/wtsi-hgi/ibackup/internal/testutil"
 	"github.com/wtsi-hgi/ibackup/slack"
 	"github.com/wtsi-hgi/ibackup/transfer"
 	bolt "go.etcd.io/bbolt"
@@ -2123,14 +2123,12 @@ func TestBackup(t *testing.T) {
 		})
 
 		Convey("and can back it up to iRODS as well", func() {
-			remoteDir := os.Getenv("IBACKUP_TEST_COLLECTION")
+			remoteDir := testutil.RequireIRODSTestCollection(t)
 			if remoteDir == "" {
 				SkipConvey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
 
 				return
 			}
-
-			remoteDir = filepath.Join(remoteDir, fmt.Sprintf("set_test_%d", time.Now().UnixNano()))
 
 			remotePath := filepath.Join(remoteDir, "db")
 
@@ -2144,8 +2142,10 @@ func TestBackup(t *testing.T) {
 
 			localPath := t.TempDir()
 			localDB := filepath.Join(localPath, "db")
+			icmd := testutil.NewIcommander(t)
+			So(icmd, ShouldNotBeNil)
 
-			_, err = exec.Command("iget", remotePath, localDB).CombinedOutput()
+			_, err = icmd.IGET(remotePath, localDB)
 			So(err, ShouldBeNil)
 
 			testBackupOK(localDB)
