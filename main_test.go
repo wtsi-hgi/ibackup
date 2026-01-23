@@ -220,7 +220,7 @@ func NewTestServerWithQueues(t *testing.T, queues, avoidQueues []string, shouldF
 func initIRODSTestCollection(tb testing.TB) string {
 	tb.Helper()
 
-	collection := testutil.RequireIRODSTestCollection(tb, "imkdir", "irm", "ils")
+	collection := testutil.RequireIRODSTestCollection(tb)
 	if collection == "" {
 		return ""
 	}
@@ -984,8 +984,8 @@ var (
 func waitForIlsMissing(tb testing.TB, path string, timeout time.Duration) error {
 	tb.Helper()
 
-	cmd := testutil.NewIRODSCmd(tb, "ils")
-	if cmd == nil {
+	icmd := testutil.NewIcommander(tb)
+	if icmd == nil {
 		return nil
 	}
 
@@ -995,7 +995,7 @@ func waitForIlsMissing(tb testing.TB, path string, timeout time.Duration) error 
 	var output []byte
 
 	status := retry.Do(ctx, func() error {
-		out, err := cmd.ILS(path)
+		out, err := icmd.ILS(path)
 		output = out
 
 		if err == nil {
@@ -1153,8 +1153,8 @@ func (s *testServer) tryWaitForStatusWithFlags(name, statusToFind string, timeou
 func waitForIlsPresent(tb testing.TB, path string, timeout time.Duration) error {
 	tb.Helper()
 
-	cmd := testutil.NewIRODSCmd(tb, "ils")
-	if cmd == nil {
+	icmd := testutil.NewIcommander(tb)
+	if icmd == nil {
 		return nil
 	}
 
@@ -1164,7 +1164,7 @@ func waitForIlsPresent(tb testing.TB, path string, timeout time.Duration) error 
 	var output []byte
 
 	status := retry.Do(ctx, func() error {
-		out, err := cmd.ILS(path)
+		out, err := icmd.ILS(path)
 		output = out
 
 		if err != nil {
@@ -1380,16 +1380,16 @@ func resetIRODSOrFail(tb testing.TB) {
 		return
 	}
 
-	cmd := testutil.NewIRODSCmd(tb, "irm", "imkdir")
-	if cmd == nil {
+	icmd := testutil.NewIcommander(tb)
+	if icmd == nil {
 		return
 	}
 
-	if out, err := cmd.IRM("-rf", remotePath); err != nil {
+	if out, err := icmd.IRM("-rf", remotePath); err != nil {
 		tb.Fatalf("failed to reset iRODS collection %q: irm -rf failed: %v; output: %s", remotePath, err, string(out))
 	}
 
-	if out, err := cmd.IMKDIR("-p", remotePath); err != nil {
+	if out, err := icmd.IMKDIR("-p", remotePath); err != nil {
 		tb.Fatalf("failed to reset iRODS collection %q: imkdir -p failed: %v; output: %s", remotePath, err, string(out))
 	}
 }
@@ -1400,15 +1400,15 @@ func resetIRODS() {
 		return
 	}
 
-	cmd := testutil.NewIRODSCmdNoTB(2 * time.Minute)
+	cmd := testutil.NewIcommanderNoTB(2 * time.Minute)
 	_, _ = cmd.IRM("-rf", remotePath)   //nolint:errcheck
 	_, _ = cmd.IMKDIR("-p", remotePath) //nolint:errcheck
 }
 
-func newIRODSCmd(tb testing.TB, commands ...string) *testutil.IRODSCmd {
+func NewIcommander(tb testing.TB) *testutil.ICommander {
 	tb.Helper()
 
-	return testutil.NewIRODSCmd(tb, commands...)
+	return testutil.NewIcommander(tb)
 }
 
 func failMainTest(err string) {
@@ -2594,11 +2594,11 @@ func TestBackup(t *testing.T) {
 
 		sizeRe := regexp.MustCompile(` (\d+)\s+\d{4}-\d{2}-\d{2}\.\d{2}:\d{2}`)
 		foundSize := ""
-		cmd := newIRODSCmd(t, "ils", "iget")
-		So(cmd, ShouldNotBeNil)
+		icmd := NewIcommander(t)
+		So(icmd, ShouldNotBeNil)
 
 		testutil.RetryUntilWorksCustom(t, func() error { //nolint:errcheck
-			out, err := cmd.ILS("-l", remotePath)
+			out, err := icmd.ILS("-l", remotePath)
 			if err != nil {
 				return err
 			}
@@ -2620,7 +2620,7 @@ func TestBackup(t *testing.T) {
 		So(localBackupExists, ShouldBeTrue)
 
 		err := testutil.RetryUntilWorksCustom(t, func() error {
-			out, err := cmd.IGET("-Kf", remotePath, gotPath)
+			out, err := icmd.IGET("-Kf", remotePath, gotPath)
 			if err != nil {
 				t.Logf("iget failed: %s\n%s\n", err, string(out))
 
@@ -3272,30 +3272,30 @@ func waitForRemoteMeta(path, substring string, timeout time.Duration) string {
 func removeFileFromIRODS(t *testing.T, path string) {
 	t.Helper()
 
-	cmd := newIRODSCmd(t, "irm")
-	So(cmd, ShouldNotBeNil)
+	icmd := NewIcommander(t)
+	So(icmd, ShouldNotBeNil)
 
-	_, err := cmd.IRM("-f", path)
+	_, err := icmd.IRM("-f", path)
 	So(err, ShouldBeNil)
 }
 
 func addFileToIRODS(t *testing.T, localPath, remotePath string) {
 	t.Helper()
 
-	cmd := newIRODSCmd(t, "iput")
-	So(cmd, ShouldNotBeNil)
+	icmd := NewIcommander(t)
+	So(icmd, ShouldNotBeNil)
 
-	_, err := cmd.IPUT(localPath, remotePath)
+	_, err := icmd.IPUT(localPath, remotePath)
 	So(err, ShouldBeNil)
 }
 
 func addRemoteMeta(t *testing.T, remotePath, key, value string) {
 	t.Helper()
 
-	cmd := newIRODSCmd(t, "imeta")
-	So(cmd, ShouldNotBeNil)
+	icmd := NewIcommander(t)
+	So(icmd, ShouldNotBeNil)
 
-	_, err := cmd.IMETA("add", "-d", remotePath, key, value)
+	_, err := icmd.IMETA("add", "-d", remotePath, key, value)
 	So(err, ShouldBeNil)
 }
 
@@ -3434,10 +3434,10 @@ func TestManualMode(t *testing.T) {
 			restoreFiles(t, file1+"\t"+remote1+"\n", "1 downloaded (1 replaced); 0 skipped; 0 failed; 0 missing\n")
 			confirmFileContents(t, file1, fileContents1)
 
-			imeta := newIRODSCmd(t, "imeta")
-			So(imeta, ShouldNotBeNil)
+			icmd := NewIcommander(t)
+			So(icmd, ShouldNotBeNil)
 
-			_, err = imeta.IMETA("add", "-d", remote2, transfer.MetaKeySymlink, file1)
+			_, err = icmd.IMETA("add", "-d", remote2, transfer.MetaKeySymlink, file1)
 			So(err, ShouldBeNil)
 
 			restoreFiles(t, file3+"\t"+remote2+"\n", "1 downloaded (0 replaced); 0 skipped; 0 failed; 0 missing\n")
@@ -3470,7 +3470,7 @@ func TestManualMode(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(link, ShouldEqual, file1)
 
-			_, err = imeta.IMETA("add", "-d", remote1, transfer.MetaKeyRemoteHardlink, remote2)
+			_, err = icmd.IMETA("add", "-d", remote1, transfer.MetaKeyRemoteHardlink, remote2)
 			So(err, ShouldBeNil)
 
 			restoreFiles(
@@ -3488,19 +3488,19 @@ func TestManualMode(t *testing.T) {
 			)
 			confirmFileContents(t, file8, fileContents2)
 
-			imeta = newIRODSCmd(t, "imeta")
-			So(imeta, ShouldNotBeNil)
+			icmd = NewIcommander(t)
+			So(icmd, ShouldNotBeNil)
 
-			_, err = imeta.IMETA("rm", "-d", remote1, transfer.MetaKeyRemoteHardlink, remote2)
+			_, err = icmd.IMETA("rm", "-d", remote1, transfer.MetaKeyRemoteHardlink, remote2)
 			So(err, ShouldBeNil)
-			_, err = imeta.IMETA("mod", "-d", remote1, transfer.MetaKeyGroup, groupA.Name, "v:root")
+			_, err = icmd.IMETA("mod", "-d", remote1, transfer.MetaKeyGroup, groupA.Name, "v:root")
 			So(err, ShouldBeNil)
 
 			restoreFiles(t, file6+"\t"+remote1+"\n",
 				"[1/1] "+file6+" warning: lchown "+file6+": operation not permitted\n"+
 					"1 downloaded (0 replaced); 0 skipped; 0 failed; 0 missing\n")
 
-			_, err = imeta.IMETA("rm", "-d", remote2, transfer.MetaKeyMtime)
+			_, err = icmd.IMETA("rm", "-d", remote2, transfer.MetaKeyMtime)
 			So(err, ShouldBeNil)
 
 			restoreFiles(t, file7+"\t"+remote2+"\n",
@@ -3544,10 +3544,10 @@ func TestReAdd(t *testing.T) {
 func getFileFromIRODS(t *testing.T, remotePath, localPath string) {
 	t.Helper()
 
-	cmd := newIRODSCmd(t, "iget")
-	So(cmd, ShouldNotBeNil)
+	icmd := NewIcommander(t)
+	So(icmd, ShouldNotBeNil)
 
-	_, err := cmd.IGET("-K", remotePath, localPath)
+	_, err := icmd.IGET("-K", remotePath, localPath)
 	So(err, ShouldBeNil)
 }
 
@@ -3963,7 +3963,7 @@ func TestRemove(t *testing.T) {
 
 			Convey("If a file fails to be removed, the error is displayed on the file", func() {
 				file1remote := filepath.Join(remotePath, "file1")
-				icmd := newIRODSCmd(t, "ichmod", "iuserinfo")
+				icmd := NewIcommander(t)
 				So(icmd, ShouldNotBeNil)
 
 				removeFileFromIRODS(t, file1remote)
@@ -4312,11 +4312,11 @@ func TestTrashRemove(t *testing.T) {
 
 				s.waitForStatus(setName, "Removal status: 9 / 9 objects removed", timeout)
 
-				irods := newIRODSCmd(t, "ils")
-				So(irods, ShouldNotBeNil)
+				icmd := NewIcommander(t)
+				So(icmd, ShouldNotBeNil)
 
 				Convey("Trash remove will permanently remove a file from the set", func() {
-					output, erro := irods.ILS(remotePath)
+					output, erro := icmd.ILS(remotePath)
 					So(erro, ShouldBeNil)
 					So(string(output), ShouldContainSubstring, "file2")
 
@@ -4326,7 +4326,7 @@ func TestTrashRemove(t *testing.T) {
 						0, file2)
 
 					Convey("And from iRODS", func() {
-						output, err = irods.ILS(remotePath)
+						output, err = icmd.ILS(remotePath)
 						So(err, ShouldBeNil)
 						So(string(output), ShouldNotContainSubstring, "file2")
 					})
@@ -4334,7 +4334,7 @@ func TestTrashRemove(t *testing.T) {
 
 				Convey("Trash remove removes the dir from the set", func() {
 					file3remote := filepath.Join(remotePath, "path/to/some/dir/file3")
-					output, errc := irods.ILS(file3remote)
+					output, errc := icmd.ILS(file3remote)
 					So(errc, ShouldBeNil)
 					So(string(output), ShouldContainSubstring, "file3")
 
@@ -4452,15 +4452,15 @@ func TestTrashRemove(t *testing.T) {
 				Convey("Trash remove with a hardlink removes both the hardlink file and inode file", func() {
 					remoteInode := getMetaValue(getRemoteMeta(filepath.Join(remotePath, "link")), "ibackup:remotehardlink")
 
-					_, err = irods.ILS(remoteInode)
+					_, err = icmd.ILS(remoteInode)
 					So(err, ShouldBeNil)
 
 					s.trashRemovePath(t, setName, linkPath, 1)
 
-					_, err = irods.ILS(remoteLink)
+					_, err = icmd.ILS(remoteLink)
 					So(err, ShouldNotBeNil)
 
-					_, err = irods.ILS(remoteInode)
+					_, err = icmd.ILS(remoteInode)
 					So(err, ShouldNotBeNil)
 				})
 
@@ -4477,15 +4477,15 @@ func TestTrashRemove(t *testing.T) {
 					Convey("Removing a hardlink does not remove the inode file", func() {
 						remoteInode := getMetaValue(getRemoteMeta(filepath.Join(remotePath, "link")), "ibackup:remotehardlink")
 
-						_, err = irods.ILS(remoteInode)
+						_, err = icmd.ILS(remoteInode)
 						So(err, ShouldBeNil)
 
 						s.trashRemovePath(t, setName, linkPath, 1)
 
-						_, err = irods.ILS(remoteLink)
+						_, err = icmd.ILS(remoteLink)
 						So(err, ShouldNotBeNil)
 
-						_, err = irods.ILS(remoteInode)
+						_, err = icmd.ILS(remoteInode)
 						So(err, ShouldBeNil)
 					})
 				})
@@ -4493,7 +4493,7 @@ func TestTrashRemove(t *testing.T) {
 				Convey("And if you trash remove a file nested in an otherwise empty dir", func() {
 					s.trashRemovePath(t, setName, file3, 1)
 
-					output, errc := irods.ILS("-r", remotePath)
+					output, errc := icmd.ILS("-r", remotePath)
 					So(errc, ShouldBeNil)
 					So(string(output), ShouldNotContainSubstring, "path/to/some/dir")
 					So(string(output), ShouldNotContainSubstring, "file3\n")
@@ -4532,7 +4532,7 @@ func TestTrashRemove(t *testing.T) {
 						s.trashRemovePath(t, setName, file1, 1)
 
 						Convey("The file is still in iRODS", func() {
-							outputBytes, errc := irods.ILS(remotePath)
+							outputBytes, errc := icmd.ILS(remotePath)
 							So(errc, ShouldBeNil)
 							So(string(outputBytes), ShouldContainSubstring, "file1")
 
@@ -4551,13 +4551,13 @@ func TestTrashRemove(t *testing.T) {
 
 					Convey("Trash remove does not try and fail to remove the provided dir from iRODS", func() {
 						file3remote := filepath.Join(remotePath, "path/to/some/dir/file3")
-						output, errc := irods.ILS(file3remote)
+						output, errc := icmd.ILS(file3remote)
 						So(errc, ShouldBeNil)
 						So(string(output), ShouldContainSubstring, "file3")
 
 						s.trashRemovePath(t, setName, dir1, 2)
 
-						output, errc = irods.ILS(file3remote)
+						output, errc = icmd.ILS(file3remote)
 						So(errc, ShouldBeNil)
 						So(string(output), ShouldContainSubstring, "file3")
 					})
@@ -4616,7 +4616,7 @@ func TestTrashRemove(t *testing.T) {
 
 				Convey("If a file fails to be removed, the error is displayed on the file", func() {
 					file1remote := filepath.Join(remotePath, "file1")
-					icmd := newIRODSCmd(t, "ichmod", "iuserinfo")
+					icmd := NewIcommander(t)
 					So(icmd, ShouldNotBeNil)
 
 					curUser, e := user.Current()

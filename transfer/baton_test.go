@@ -54,7 +54,7 @@ func TestPutBaton(t *testing.T) {
 		return
 	}
 
-	rootCollection := testutil.RequireIRODSTestCollection(t, "imkdir", "irm", "ils", "imeta")
+	rootCollection := testutil.RequireIRODSTestCollection(t)
 	if rootCollection == "" {
 		SkipConvey("Skipping baton tests since IBACKUP_TEST_COLLECTION is not defined", t, func() {})
 
@@ -380,10 +380,10 @@ func TestPutBaton(t *testing.T) {
 
 		localDir := t.TempDir()
 		gotPath := filepath.Join(localDir, "got")
-		cmd := testutil.NewIRODSCmd(t, "iget")
-		So(cmd, ShouldNotBeNil)
+		icmd := testutil.NewIcommander(t)
+		So(icmd, ShouldNotBeNil)
 
-		outB, err := cmd.IGET(remotePath, gotPath)
+		outB, err := icmd.IGET(remotePath, gotPath)
 		if err != nil {
 			t.Logf("iget failed with output: %s", string(outB))
 		}

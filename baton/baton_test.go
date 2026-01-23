@@ -42,8 +42,8 @@ import (
 	ex "github.com/wtsi-npg/extendo/v2"
 )
 
-var testStartTime time.Time //nolint:gochecknoglobals
-var irodsCmd *testutil.IRODSCmd //nolint:gochecknoglobals
+var testStartTime time.Time   //nolint:gochecknoglobals
+var icmd *testutil.ICommander //nolint:gochecknoglobals
 
 var errExpectedStatToFindUploadedObject = errors.New("expected Stat to find uploaded object")
 
@@ -72,15 +72,15 @@ func TestBaton(t *testing.T) {
 		return
 	}
 
-	remotePath := testutil.RequireIRODSTestCollection(t, "imkdir", "irm", "ils", "imeta")
+	remotePath := testutil.RequireIRODSTestCollection(t)
 	if remotePath == "" {
 		SkipConvey("Skipping baton tests since IBACKUP_TEST_COLLECTION is not defined", t, func() {})
 
 		return
 	}
 
-	irodsCmd = testutil.NewIRODSCmd(t, "ils", "imeta")
-	if irodsCmd == nil {
+	icmd = testutil.NewIcommander(t)
+	if icmd == nil {
 		t.Skip("skipping baton tests since iCommands are unavailable")
 	}
 
@@ -275,15 +275,15 @@ func TestBatonConcurrentClientInit(t *testing.T) {
 		return
 	}
 
-	remotePath := testutil.RequireIRODSTestCollection(t, "imkdir", "irm", "ils")
+	remotePath := testutil.RequireIRODSTestCollection(t)
 	if remotePath == "" {
 		SkipConvey("Skipping baton concurrency test since IBACKUP_TEST_COLLECTION is not defined", t, func() {})
 
 		return
 	}
 
-	irodsCmd = testutil.NewIRODSCmd(t, "ils", "imeta")
-	if irodsCmd == nil {
+	icmd = testutil.NewIcommander(t)
+	if icmd == nil {
 		t.Skip("skipping baton concurrency test since iCommands are unavailable")
 	}
 
@@ -350,21 +350,21 @@ func TestBatonConcurrentClientInit(t *testing.T) {
 }
 
 func isObjectInIRODS(remotePath, name string) bool {
-	output, err := irodsCmd.ILS(remotePath)
+	output, err := icmd.ILS(remotePath)
 	So(err, ShouldBeNil)
 
 	return strings.Contains(string(output), name)
 }
 
 func getRemoteMeta(path string) string {
-	output, err := irodsCmd.IMETA("ls", "-d", path)
+	output, err := icmd.IMETA("ls", "-d", path)
 	So(err, ShouldBeNil)
 
 	return string(output)
 }
 
 func addRemoteMeta(path, key, val string) {
-	output, err := irodsCmd.IMETA("add", "-d", path, key, val)
+	output, err := icmd.IMETA("add", "-d", path, key, val)
 	if strings.Contains(string(output), "CATALOG_ALREADY_HAS_ITEM_BY_THAT_NAME") {
 		return
 	}
@@ -373,7 +373,7 @@ func addRemoteMeta(path, key, val string) {
 }
 
 func getSizeOfObject(path string) int {
-	output, err := irodsCmd.ILS("-l", path)
+	output, err := icmd.ILS("-l", path)
 	So(err, ShouldBeNil)
 
 	cols := strings.Fields(string(output))

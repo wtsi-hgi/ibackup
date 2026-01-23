@@ -2123,7 +2123,7 @@ func TestBackup(t *testing.T) {
 		})
 
 		Convey("and can back it up to iRODS as well", func() {
-			remoteDir := testutil.RequireIRODSTestCollection(t, "imkdir", "irm", "ils", "iget")
+			remoteDir := testutil.RequireIRODSTestCollection(t)
 			if remoteDir == "" {
 				SkipConvey("skipping iRODS backup test since IBACKUP_TEST_COLLECTION not set", func() {})
 
@@ -2142,10 +2142,10 @@ func TestBackup(t *testing.T) {
 
 			localPath := t.TempDir()
 			localDB := filepath.Join(localPath, "db")
-			cmd := testutil.NewIRODSCmd(t, "iget")
-			So(cmd, ShouldNotBeNil)
+			icmd := testutil.NewIcommander(t)
+			So(icmd, ShouldNotBeNil)
 
-			_, err = cmd.IGET(remotePath, localDB)
+			_, err = icmd.IGET(remotePath, localDB)
 			So(err, ShouldBeNil)
 
 			testBackupOK(localDB)

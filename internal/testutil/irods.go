@@ -50,7 +50,7 @@ const (
 var serialMu sync.Mutex //nolint:gochecknoglobals
 
 var (
-	errIRODSCmdNil           = errors.New("irods command runner is nil")
+	errIcmdNil               = errors.New("irods command runner is nil")
 	errIRODSRetriesExhausted = errors.New("exhausted iRODS retries")
 )
 
@@ -58,8 +58,8 @@ type irodsLogger interface {
 	Logf(format string, args ...any)
 }
 
-// IRODSCmd runs iCommands with retry behaviour for transient failures.
-type IRODSCmd struct {
+// ICommander runs iCommands with retry behaviour for transient failures.
+type ICommander struct {
 	logger      irodsLogger
 	timeout     time.Duration
 	maxAttempts int
@@ -68,7 +68,7 @@ type IRODSCmd struct {
 
 // RequireIRODSTestCollection returns a unique iRODS test collection path
 // or skips the test when required config or commands are missing.
-func RequireIRODSTestCollection(tb testing.TB, commands ...string) string {
+func RequireIRODSTestCollection(tb testing.TB) string {
 	tb.Helper()
 
 	base := irodsBase(tb)
@@ -76,11 +76,7 @@ func RequireIRODSTestCollection(tb testing.TB, commands ...string) string {
 		return ""
 	}
 
-	if len(commands) == 0 {
-		commands = defaultIRODSCommands()
-	}
-
-	if !ensureIRODSCommands(tb, commands) {
+	if !ensureIRODSCommands(tb) {
 		return ""
 	}
 
@@ -96,19 +92,15 @@ func RequireIRODSTestCollection(tb testing.TB, commands ...string) string {
 	return unique
 }
 
-// NewIRODSCmd returns a retrying iCommands runner for tests.
-func NewIRODSCmd(tb testing.TB, commands ...string) *IRODSCmd {
+// NewIcommander returns a retrying iCommands runner for tests.
+func NewIcommander(tb testing.TB) *ICommander {
 	tb.Helper()
 
-	if len(commands) == 0 {
-		commands = defaultIRODSCommands()
-	}
-
-	if !ensureIRODSCommands(tb, commands) {
+	if !ensureIRODSCommands(tb) {
 		return nil
 	}
 
-	return &IRODSCmd{
+	return &ICommander{
 		logger:      tb,
 		timeout:     irodsCommandTimeout,
 		maxAttempts: irodsRetryMaxAttempts,
@@ -116,9 +108,9 @@ func NewIRODSCmd(tb testing.TB, commands ...string) *IRODSCmd {
 	}
 }
 
-// NewIRODSCmdNoTB returns a retrying iCommands runner without test helpers.
-func NewIRODSCmdNoTB(timeout time.Duration) *IRODSCmd {
-	return &IRODSCmd{
+// NewIcommanderNoTB returns a retrying iCommands runner without test helpers.
+func NewIcommanderNoTB(timeout time.Duration) *ICommander {
+	return &ICommander{
 		timeout:     timeout,
 		maxAttempts: irodsRetryMaxAttempts,
 		backoff:     irodsRetryBackoff,
@@ -126,9 +118,9 @@ func NewIRODSCmdNoTB(timeout time.Duration) *IRODSCmd {
 }
 
 // Run executes an iCommand with retries for transient failures.
-func (cmd *IRODSCmd) Run(command string, args ...string) ([]byte, error) {
+func (cmd *ICommander) Run(command string, args ...string) ([]byte, error) {
 	if cmd == nil {
-		return nil, errIRODSCmdNil
+		return nil, errIcmdNil
 	}
 
 	return runIRODSCommandWithRetry(
@@ -142,42 +134,42 @@ func (cmd *IRODSCmd) Run(command string, args ...string) ([]byte, error) {
 }
 
 // IRM runs irm with retry handling.
-func (cmd *IRODSCmd) IRM(args ...string) ([]byte, error) {
+func (cmd *ICommander) IRM(args ...string) ([]byte, error) {
 	return cmd.Run("irm", args...)
 }
 
 // IMKDIR runs imkdir with retry handling.
-func (cmd *IRODSCmd) IMKDIR(args ...string) ([]byte, error) {
+func (cmd *ICommander) IMKDIR(args ...string) ([]byte, error) {
 	return cmd.Run("imkdir", args...)
 }
 
 // ILS runs ils with retry handling.
-func (cmd *IRODSCmd) ILS(args ...string) ([]byte, error) {
+func (cmd *ICommander) ILS(args ...string) ([]byte, error) {
 	return cmd.Run("ils", args...)
 }
 
 // IGET runs iget with retry handling.
-func (cmd *IRODSCmd) IGET(args ...string) ([]byte, error) {
+func (cmd *ICommander) IGET(args ...string) ([]byte, error) {
 	return cmd.Run("iget", args...)
 }
 
 // IPUT runs iput with retry handling.
-func (cmd *IRODSCmd) IPUT(args ...string) ([]byte, error) {
+func (cmd *ICommander) IPUT(args ...string) ([]byte, error) {
 	return cmd.Run("iput", args...)
 }
 
 // IMETA runs imeta with retry handling.
-func (cmd *IRODSCmd) IMETA(args ...string) ([]byte, error) {
+func (cmd *ICommander) IMETA(args ...string) ([]byte, error) {
 	return cmd.Run("imeta", args...)
 }
 
 // ICHMOD runs ichmod with retry handling.
-func (cmd *IRODSCmd) ICHMOD(args ...string) ([]byte, error) {
+func (cmd *ICommander) ICHMOD(args ...string) ([]byte, error) {
 	return cmd.Run("ichmod", args...)
 }
 
 // IUSERINFO runs iuserinfo with retry handling.
-func (cmd *IRODSCmd) IUSERINFO(args ...string) ([]byte, error) {
+func (cmd *ICommander) IUSERINFO(args ...string) ([]byte, error) {
 	return cmd.Run("iuserinfo", args...)
 }
 
@@ -201,14 +193,10 @@ func irodsBase(tb testing.TB) string {
 	return base
 }
 
-func defaultIRODSCommands() []string {
-	return []string{"imkdir", "irm", "ils", "iget", "imeta", "ichmod"}
-}
-
-func ensureIRODSCommands(tb testing.TB, commands []string) bool {
+func ensureIRODSCommands(tb testing.TB) bool {
 	tb.Helper()
 
-	for _, command := range commands {
+	for _, command := range []string{"imkdir", "irm", "ils", "iget", "imeta", "ichmod"} {
 		available, err := checkIRODSCommand(command)
 		if err != nil {
 			tb.Fatalf("error checking iRODS command %s: %v", command, err)
