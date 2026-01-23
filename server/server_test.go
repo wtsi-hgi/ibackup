@@ -862,16 +862,7 @@ func TestServer(t *testing.T) {
 								So(err, ShouldBeNil)
 								So(dirs, ShouldHaveLength, 2)
 
-								var orphaned *set.Entry
-
-								for _, dir := range dirs {
-									if filepath.Clean(dir.Path) == filepath.Clean(dir1local) {
-										orphaned = dir
-
-										break
-									}
-								}
-
+								orphaned := findEntryByPath(dirs, dir1local)
 								So(orphaned, ShouldNotBeNil)
 								So(orphaned.Status, ShouldEqual, set.Orphaned)
 							})
@@ -1806,7 +1797,7 @@ func TestServer(t *testing.T) {
 							var failedRequest *transfer.Request
 
 							failARequest := func() {
-								for i := 0; i < set.AttemptsToBeConsideredFailing; i++ {
+								for range set.AttemptsToBeConsideredFailing {
 									requests, errg := client.GetSomeUploadRequests()
 									So(errg, ShouldBeNil)
 									So(len(requests), ShouldBeGreaterThan, 0)
@@ -3132,16 +3123,6 @@ func TestServer(t *testing.T) {
 
 							So(s.queue.Stats().Buried, ShouldEqual, 1)
 
-							findEntryByPath := func(entries []*set.Entry, path string) *set.Entry {
-								for _, entry := range entries {
-									if filepath.Clean(entry.Path) == filepath.Clean(path) {
-										return entry
-									}
-								}
-
-								return nil
-							}
-
 							manualRetry := func() {
 								retried, errr := client.RetryFailedSetUploads(exampleSet.ID())
 								So(errr, ShouldBeNil)
@@ -4059,6 +4040,16 @@ func TestServer(t *testing.T) {
 			})
 		})
 	})
+}
+
+func findEntryByPath(entries []*set.Entry, path string) *set.Entry {
+	for _, entry := range entries {
+		if filepath.Clean(entry.Path) == filepath.Clean(path) {
+			return entry
+		}
+	}
+
+	return nil
 }
 
 func TestFailedUploadRetryDelayConfig(t *testing.T) {

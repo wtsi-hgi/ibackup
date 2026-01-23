@@ -1026,14 +1026,14 @@ func (s *Server) handleSetsAndRequesters(path string, givenSet *set.Set,
 	}
 
 	if numUserSets == 1 {
-		requesters = removeAllOccurrences(requesters, givenSet.Requester)
+		requesters = slices.DeleteFunc(requesters, func(s string) bool { return s == givenSet.Requester })
 	}
 
 	if numSetsWithGivenName > 1 {
 		return sets, requesters, nil
 	}
 
-	sets = removeAllOccurrences(sets, givenSet.Name)
+	sets = slices.DeleteFunc(sets, func(s string) bool { return s == givenSet.Name })
 
 	return sets, requesters, nil
 }
@@ -1062,23 +1062,6 @@ func splitCommaSeparatedUnique(value string) []string {
 	}
 
 	return unique
-}
-
-func removeAllOccurrences(slice []string, element string) []string {
-	if element == "" || len(slice) == 0 {
-		return slice
-	}
-
-	filtered := make([]string, 0, len(slice))
-	for _, value := range slice {
-		if value == element {
-			continue
-		}
-
-		filtered = append(filtered, value)
-	}
-
-	return filtered
 }
 
 func appendIfMissing(slice []string, element string) []string {
@@ -1137,7 +1120,7 @@ func (s *Server) handleSetMetadataForTrash(givenSet *set.Set, meta map[string]st
 		return sets, requesters, nil
 	}
 
-	sets = removeAllOccurrences(sets, givenSet.Name)
+	sets = slices.DeleteFunc(sets, func(s string) bool { return s == givenSet.Name })
 
 	return sets, requesters, err
 }

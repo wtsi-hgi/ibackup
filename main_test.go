@@ -1400,9 +1400,9 @@ func resetIRODS() {
 		return
 	}
 
-	cmd := testutil.NewIcommanderNoTB(2 * time.Minute)
-	_, _ = cmd.IRM("-rf", remotePath)   //nolint:errcheck
-	_, _ = cmd.IMKDIR("-p", remotePath) //nolint:errcheck
+	icmd := testutil.NewIcommanderNoTB(2 * time.Minute)
+	icmd.IRM("-rf", remotePath)   //nolint:errcheck
+	icmd.IMKDIR("-p", remotePath) //nolint:errcheck
 }
 
 func NewIcommander(tb testing.TB) *testutil.ICommander {
