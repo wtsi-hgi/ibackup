@@ -59,6 +59,15 @@ import (
 	"github.com/wtsi-ssg/wr/retry"
 )
 
+var (
+	errUnexpectedNumFiles = errors.New("unexpected NumFiles")
+	errEntryNotFound      = errors.New("entry not found")
+	errUnexpectedStatus   = errors.New("unexpected status")
+	errUnexpectedAttempts = errors.New("unexpected attempts")
+	errErrorNotRecorded   = errors.New("error not yet recorded")
+	errSmallListOfFiles   = errors.New("unexpected small listOfFiles")
+)
+
 const (
 	userPerms        = 0700
 	numManyTestFiles = 5000
@@ -2297,9 +2306,27 @@ func TestServer(t *testing.T) {
 							So(len(files), ShouldEqual, len(listOfFiles)-2)
 							So(files[0].Path, ShouldEqual, file2)
 
-							gotSet, errgs := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
-							So(errgs, ShouldBeNil)
-							So(gotSet.NumFiles, ShouldEqual, len(listOfFiles)-2)
+							err = testutil.RetryUntilWorksCustom(t, func() error { //nolint:errcheck
+								gotSet, errgs := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+								if errgs != nil {
+									return errgs
+								}
+
+								expected := uint64(len(listOfFiles))
+								if expected < 2 {
+									return fmt.Errorf("%w: %d", errSmallListOfFiles, expected)
+								}
+
+								expected -= 2
+
+								if gotSet.NumFiles != expected {
+									return fmt.Errorf("%w: %d", errUnexpectedNumFiles, gotSet.NumFiles)
+								}
+
+								return nil
+							}, time.Second*10, time.Millisecond*100)
+
+							So(err, ShouldBeNil)
 
 							_, err = os.Stat(file1remote)
 							So(err, ShouldNotBeNil)
@@ -3181,12 +3208,36 @@ func TestServer(t *testing.T) {
 								So(errg, ShouldBeNil)
 								So(len(entries), ShouldEqual, len(discovers))
 
-								entry := findEntryByPath(entries, discovers[0])
-								So(entry, ShouldNotBeNil)
-								So(entry.Status, ShouldEqual, set.Failed)
-								So(entry.Attempts, ShouldEqual, jobRetries)
-								So(entry.LastError, ShouldContainSubstring, transfer.ErrReadTimeout)
-								So(entry.LastError, ShouldContainSubstring, entry.Path)
+								err = testutil.RetryUntilWorksCustom(t, func() error { //nolint:errcheck
+									entries, errg = client.GetFiles(exampleSet.ID())
+									if errg != nil {
+										return errg
+									}
+
+									entry := findEntryByPath(entries, discovers[0])
+									if entry == nil {
+										return errEntryNotFound
+									}
+
+									if entry.Status != set.Failed {
+										return fmt.Errorf("%w: %d", errUnexpectedStatus, entry.Status)
+									}
+
+									if entry.Attempts != int(jobRetries) {
+										return fmt.Errorf("%w: %d", errUnexpectedAttempts, entry.Attempts)
+									}
+
+									hasTimeout := strings.Contains(entry.LastError, transfer.ErrReadTimeout)
+
+									hasPath := strings.Contains(entry.LastError, entry.Path)
+									if !hasTimeout || !hasPath {
+										return fmt.Errorf("%w: %s", errErrorNotRecorded, entry.LastError)
+									}
+
+									return nil
+								}, time.Second*10, time.Millisecond*100)
+
+								So(err, ShouldBeNil)
 
 								manualRetry()
 							})
