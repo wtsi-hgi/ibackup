@@ -55,35 +55,39 @@ import (
 	"github.com/wtsi-npg/logshim-zerolog/zlog"
 )
 
-const serverTokenBasename = ".ibackup.token"
-const numPutClients = 10
-const dbBackupParamPosition = 2
-const defaultDebounceSeconds = 600
-const defaultFailedUploadRetryDelay = 1 * time.Hour
-const defaultHungDebugTimeout = 0
-const cacheDirPerms = 0700
+const (
+	serverTokenBasename           = ".ibackup.token"
+	numPutClients                 = 10
+	dbBackupParamPosition         = 2
+	defaultDebounceSeconds        = 600
+	defaultFailedUploadRetryDelay = 1 * time.Hour
+	defaultHungDebugTimeout       = 0
+	cacheDirPerms                 = 0700
+)
 
 // options for this cmd.
-var serverLogPath string
-var serverKey string
-var serverACMEURL string
-var serverCacheDir string
-var serverLDAPFQDN string
-var serverLDAPBindDN string
-var serverDebug bool
-var readonly bool
-var serverRemoteBackupPath string
-var serverWRDeployment string
-var serverHardlinksCollection string
-var serverSlackDebouncePeriod int
-var serverStillRunningMsgFreq string
-var serverTrashLifespan string
-var serverFailedUploadRetryDelay string
-var serverReplicaLogging bool
-var serverHungDebugTimeout string
-var statterPath string
-var queues string
-var queueAvoid string
+var (
+	serverLogPath                string
+	serverKey                    string
+	serverACMEURL                string
+	serverCacheDir               string
+	serverLDAPFQDN               string
+	serverLDAPBindDN             string
+	serverDebug                  bool
+	readonly                     bool
+	serverRemoteBackupPath       string
+	serverWRDeployment           string
+	serverHardlinksCollection    string
+	serverSlackDebouncePeriod    int
+	serverStillRunningMsgFreq    string
+	serverTrashLifespan          string
+	serverFailedUploadRetryDelay string
+	serverReplicaLogging         bool
+	serverHungDebugTimeout       string
+	statterPath                  string
+	queues                       string
+	queueAvoid                   string
+)
 
 // serverCmd represents the server command.
 var serverCmd = &cobra.Command{
@@ -302,14 +306,18 @@ These should be supplied as a comma separated list.
 				dief("failed to get own exe: %s", erre)
 			}
 
-			putCmd := fmt.Sprintf("%s put -s --url '%s' ", exe, serverURL)
+			putCmd := fmt.Sprintf("%s put -s --url '%s'", exe, serverURL)
 
 			if isKeyCert() {
-				putCmd += fmt.Sprintf("--cert '%s' ", serverCert)
+				putCmd += fmt.Sprintf(" --cert '%s'", serverCert)
+			}
+
+			if statterPath != "" {
+				putCmd += fmt.Sprintf(" --statter %q", statterPath)
 			}
 
 			if serverLogPath != "" {
-				putCmd += fmt.Sprintf("--log %s.client.", serverLogPath)
+				putCmd += fmt.Sprintf(" --log %s.client.", serverLogPath)
 			}
 
 			err = s.EnableJobSubmission(putCmd, serverWRDeployment, "", queues, queueAvoid, numPutClients, appLogger)
