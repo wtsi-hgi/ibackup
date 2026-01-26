@@ -73,9 +73,11 @@ const (
 	numManyTestFiles = 5000
 )
 
-var errNotDiscovered = errors.New("not discovered")
-var errNotFinishedRemoving = errors.New("remove not finished")
-var errNotAllRemoved = errors.New("not all removals finished")
+var (
+	errNotDiscovered       = errors.New("not discovered")
+	errNotFinishedRemoving = errors.New("remove not finished")
+	errNotAllRemoved       = errors.New("not all removals finished")
+)
 
 func TestClient(t *testing.T) {
 	Convey("maxTimeForUpload works with small and large requests", t, func() {
@@ -2047,7 +2049,8 @@ func TestServer(t *testing.T) {
 
 								updateRequestStatus := func(origReq *transfer.Request,
 									firstStatus, secondStatus transfer.RequestStatus,
-									size uint64, startCh, endCh chan *transfer.Request) {
+									size uint64, startCh, endCh chan *transfer.Request,
+								) {
 									r := origReq.Clone()
 									r.Status = firstStatus
 									r.Size = size
@@ -3058,15 +3061,14 @@ func TestServer(t *testing.T) {
 						p, d := makePutter(t, handler, requests, client)
 						defer d()
 
-						var forceSlowRead transfer.FileReadTester = func(ctx context.Context, path string) error {
+						var forceSlowRead transfer.FileReadTester = func(path string) error {
 							if path == discovers[0] {
-								<-time.After(100 * time.Millisecond)
+								return os.ErrDeadlineExceeded
 							}
 
 							return nil
 						}
 
-						p.SetFileReadTimeout(1 * time.Millisecond)
 						p.SetFileReadTester(forceSlowRead)
 
 						uploadStarts, uploadResults, skippedResults := p.Put()
@@ -3125,7 +3127,6 @@ func TestServer(t *testing.T) {
 								So(len(requests), ShouldEqual, 1)
 
 								p, d := makePutter(t, handler, requests, client)
-								p.SetFileReadTimeout(1 * time.Millisecond)
 								p.SetFileReadTester(forceSlowRead)
 
 								uploadStarts, uploadResults, skippedResults := p.Put()
@@ -4458,7 +4459,8 @@ func createManyTestBackupFiles(t *testing.T) []string {
 }
 
 func makePutter(t *testing.T, handler transfer.Handler, requests []*transfer.Request,
-	client *Client) (*transfer.Putter, func()) {
+	client *Client,
+) (*transfer.Putter, func()) {
 	t.Helper()
 
 	p, errp := transfer.New(handler, requests)
@@ -4490,7 +4492,8 @@ func makePutter(t *testing.T, handler transfer.Handler, requests []*transfer.Req
 // putSetWithOneFile tests that we can successfully upload a set with 1 file in
 // it.
 func putSetWithOneFile(t *testing.T, handler transfer.Handler, client *Client,
-	exampleSet *set.Set, minMBperSecondUploadSpeed float64, logger log15.Logger) {
+	exampleSet *set.Set, minMBperSecondUploadSpeed float64, logger log15.Logger,
+) {
 	t.Helper()
 
 	gotSet, err := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
@@ -4520,7 +4523,8 @@ func putSetWithOneFile(t *testing.T, handler transfer.Handler, client *Client,
 }
 
 func createRemoteHardlink(t *testing.T, handler remove.Handler, lPath, rPath,
-	filePath, inodePath string, set *set.Set) {
+	filePath, inodePath string, set *set.Set,
+) {
 	t.Helper()
 
 	hardlinkMeta := map[string]string{

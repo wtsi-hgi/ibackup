@@ -64,7 +64,7 @@ func InitStatter(t *testing.T) {
 
 // BuildStatter builds an external statter and walk program from source.
 func BuildStatter(path string) error {
-	cmd := exec.Command("go", "install", "github.com/wtsi-hgi/statter@latest") //nolint:noctx
+	cmd := exec.Command("go", "install", "github.com/wtsi-hgi/statter@v1.2.1") //nolint:noctx
 
 	cmd.Env = append(os.Environ(), "GOBIN="+path)
 
