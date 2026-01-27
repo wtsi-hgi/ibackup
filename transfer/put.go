@@ -28,31 +28,28 @@
 package transfer
 
 import (
-	"context"
 	"errors"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/gammazero/workerpool"
 	"github.com/hashicorp/go-multierror"
 	"github.com/wtsi-hgi/ibackup/baton/meta"
 	"github.com/wtsi-hgi/ibackup/errs"
+	"github.com/wtsi-hgi/ibackup/statter"
 )
 
 const (
-	ErrLocalNotAbs         = "local path could not be made absolute"
-	ErrRemoteNotAbs        = "remote path not absolute"
-	ErrReadTimeout         = "local file read timed out"
-	ErrStuckTimeout        = "upload killed because it was stuck"
-	minDirsForUnique       = 2
-	numPutGoroutines       = 2
-	defaultFileReadTimeout = 10 * time.Second
+	ErrLocalNotAbs   = "local path could not be made absolute"
+	ErrRemoteNotAbs  = "remote path not absolute"
+	ErrReadTimeout   = "local file read timed out"
+	ErrStuckTimeout  = "upload killed because it was stuck"
+	minDirsForUnique = 2
+	numPutGoroutines = 2
 
 	// workerPoolSizeStats is the max number of concurrent file stats we'll do
 	// during Put().
@@ -110,22 +107,17 @@ type replicaCounter interface {
 }
 
 // FileReadTester is a function that attempts to open and read the given path,
-// returning any error doing so. Should stop and clean up if the given ctx
-// becomes done before the open and read succeeds.
-type FileReadTester func(ctx context.Context, path string) error
+// returning any error doing so.
+type FileReadTester func(path string) error
 
-// headRead is a FileReadTester that uses the "head" command and kills it if the
-// ctx becomes done. It's the default FileReadTester used for Putters.
-func headRead(ctx context.Context, path string) error {
-	out, err := exec.CommandContext(ctx, "head", "-c", "1", path).CombinedOutput()
-	if err != nil && len(out) > 0 {
-		err = errs.PathError{Msg: string(out)}
-	}
+// headRead is a FileReadTester that uses the statter to read a byte.
+func headRead(path string) error {
+	_, err := statter.Head(path)
 
 	return err
 }
 
-func noRead(_ context.Context, _ string) error { return nil }
+func noRead(_ string) error { return nil }
 
 // FileStatusCallback returns RequestStatusPending if the file is to be
 // uploaded, and returns any other RequestStatus, such as RequestStatusHardlink
@@ -135,7 +127,6 @@ type FileStatusCallback func(absPath string, fi os.FileInfo) RequestStatus
 // Putter is used to Put() files in iRODS.
 type Putter struct {
 	handler                    Handler
-	fileReadTimeout            time.Duration
 	fileReadTester             FileReadTester
 	requests                   []*Request
 	duplicateRequests          []*Request
@@ -160,7 +151,6 @@ func New(handler Handler, requests []*Request) (*Putter, error) {
 
 	return &Putter{
 		handler:           handler,
-		fileReadTimeout:   defaultFileReadTimeout,
 		fileReadTester:    headRead,
 		requests:          rs,
 		duplicateRequests: dups,
@@ -182,7 +172,6 @@ func NewGetter(handler Handler, requests []*Request, overwrite, hardlinksNormal 
 
 	return &Putter{
 		handler:           handler,
-		fileReadTimeout:   defaultFileReadTimeout,
 		fileReadTester:    noRead,
 		requests:          rs,
 		duplicateRequests: dups,
@@ -222,18 +211,10 @@ func dedupAndPrepareRequests(requests []*Request) ([]*Request, []*Request, error
 	return unique, dups, nil
 }
 
-// SetFileReadTimeout sets how long to wait on a test open and read of each
-// local file before considering it not possible to upload. The default is
-// 10seconds.
-func (p *Putter) SetFileReadTimeout(timeout time.Duration) {
-	p.fileReadTimeout = timeout
-}
-
 // SetFileReadTester sets the function used to see if a file can be opened and
-// read. If this attempt hangs, the function should stop and clean up in
-// response to its context becoming done (when the FileReadTimeout elapses).
+// read. If this attempt hangs, the function should stop and clean up.
 //
-// The default tester shells out to the "head" command so that we don't leak
+// The default tester shells out to the statter command so that we don't leak
 // stuck goroutines.
 func (p *Putter) SetFileReadTester(tester FileReadTester) {
 	p.fileReadTester = tester
@@ -384,7 +365,8 @@ func (p *Putter) Put() (chan *Request, chan *Request, chan *Request) {
 }
 
 func (p *Putter) putRequests(requests []*Request, transferStartCh, transferReturnCh,
-	skipReturnCh chan *Request) {
+	skipReturnCh chan *Request,
+) {
 	r1, r2, r3 := p.put(requests)
 
 	var wg sync.WaitGroup
@@ -450,7 +432,8 @@ func cloneChannel(source, dest chan *Request) {
 // modified since last uploaded) via the returnCh, and sends the remainder to
 // the putCh.
 func (p *Putter) pickFilesToPut(wg *sync.WaitGroup, requests []*Request,
-	putCh chan *Request, skipReturnCh chan *Request) {
+	putCh chan *Request, skipReturnCh chan *Request,
+) {
 	defer wg.Done()
 
 	pool := workerpool.New(workerPoolSizeStats)
@@ -535,7 +518,8 @@ func skipIfLocalFileIsNotEmptyAndNotOverwriting(lInfo *ObjectInfo, err error, ov
 }
 
 func sendGetRequest(request *Request, lInfo, rInfo *ObjectInfo,
-	putCh, skipReturnCh chan *Request, hardlinksNormal bool) {
+	putCh, skipReturnCh chan *Request, hardlinksNormal bool,
+) {
 	if hardlink, ok := request.Meta.remoteMeta[MetaKeyRemoteHardlink]; ok {
 		request.Hardlink = hardlink
 
@@ -620,7 +604,8 @@ func sendRequest(request *Request, status RequestStatus, err error, ch chan *Req
 // once they're in. When each request is about to start uploading, it is sent
 // on uploadStartCh, then when it completes it is sent on the returnCh.
 func (p *Putter) transferFilesInIRODS(wg *sync.WaitGroup, putCh, uploadStartCh,
-	uploadReturnCh, skipReturnCh chan *Request) {
+	uploadReturnCh, skipReturnCh chan *Request,
+) {
 	defer wg.Done()
 
 	metaCh := make(chan *Request, cap(uploadReturnCh))
@@ -636,7 +621,8 @@ func (p *Putter) transferFilesInIRODS(wg *sync.WaitGroup, putCh, uploadStartCh,
 }
 
 func (p *Putter) applyMetadataConcurrently(metaCh, uploadReturnCh, skipReturnCh chan *Request,
-	metaDoneCh chan struct{}) {
+	metaDoneCh chan struct{},
+) {
 	for request := range metaCh {
 		returnCh := uploadReturnCh
 
@@ -725,27 +711,10 @@ func (p *Putter) testRead(request *Request) error {
 		return nil
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	err := p.fileReadTester(request.Local)
+	if errors.Is(err, os.ErrDeadlineExceeded) {
+		err = errs.PathError{Msg: ErrReadTimeout, Path: request.Local}
+	}
 
-	timer := time.NewTimer(p.fileReadTimeout)
-	readCh := make(chan error, 1)
-
-	go func() {
-		readCh <- p.fileReadTester(ctx, request.Local)
-	}()
-
-	errCh := make(chan error)
-
-	go func() {
-		select {
-		case <-timer.C:
-			errCh <- errs.PathError{Msg: ErrReadTimeout, Path: request.Local}
-		case err := <-readCh:
-			timer.Stop()
-			errCh <- err
-		}
-	}()
-
-	return <-errCh
+	return err
 }

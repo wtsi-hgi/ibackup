@@ -46,6 +46,7 @@ var (
 
 	mu      sync.Mutex     //nolint:gochecknoglobals
 	statter client.Statter //nolint:gochecknoglobals
+	header  client.Header  //nolint:gochecknoglobals
 )
 
 // Init sets the location of an external stat program (see:
@@ -119,27 +120,41 @@ func Stat(path string) (fs.FileInfo, error) {
 	mu.Lock()
 	defer mu.Unlock()
 
+	if err := initStatterHead(); err != nil {
+		return nil, err
+	}
+
+	return handleStatError(statter(path))
+}
+
+func initStatterHead() error {
 	if statter == nil {
 		var err error
 
-		statter, err = client.CreateStatter(statterExe)
+		statter, header, err = client.CreateStatter(statterExe)
 		if err != nil {
-			return nil, err
+			return err
 		}
 	}
 
-	fi, err := statter(path)
+	return nil
+}
+
+func handleStatError[T any](v T, err error) (T, error) { //nolint:ireturn
 	if errors.Is(err, io.EOF) {
 		statter = nil
+		header = nil
 		err = os.ErrDeadlineExceeded
 	}
 
-	return fi, err
+	return v, err
 }
 
-type DirEnt = client.Dirent
-type PathCallback = client.PathCallback
-type ErrCallback = client.ErrCallback
+type (
+	DirEnt       = client.Dirent
+	PathCallback = client.PathCallback
+	ErrCallback  = client.ErrCallback
+)
 
 // Walk performs a directory walk for the given path.
 //
@@ -152,4 +167,17 @@ type ErrCallback = client.ErrCallback
 // Fatal erors are returned in the normal manner.
 func Walk(path string, cb PathCallback, errCB ErrCallback) error {
 	return client.WalkPath(statterExe, path, cb, errCB)
+}
+
+// Head reads a single byte from the given path using an external program with a
+// timeout.
+func Head(path string) (byte, error) {
+	mu.Lock()
+	defer mu.Unlock()
+
+	if err := initStatterHead(); err != nil {
+		return 0, err
+	}
+
+	return handleStatError(header(path))
 }

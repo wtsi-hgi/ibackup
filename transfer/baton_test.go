@@ -287,7 +287,7 @@ func TestPutBaton(t *testing.T) {
 
 		for request := range urCh {
 			So(request.Status, ShouldEqual, RequestStatusFailed)
-			So(request.Error, ShouldContainSubstring, "Permission denied")
+			So(request.Error, ShouldContainSubstring, "permission denied")
 		}
 	})
 
