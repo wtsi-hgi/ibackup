@@ -64,6 +64,7 @@ const (
 
 	repGroup                = "ibackup_server_put"
 	reqGroup                = "ibackup_server"
+	reqCores                = 0.1
 	reqRAM                  = 1024
 	reqTime                 = 8 * time.Hour
 	jobRetries        uint8 = 3
@@ -300,6 +301,7 @@ func (s *Server) EnableJobSubmission(putCmd, deployment, cwd, queues, queuesAvoi
 	s.sched = sched
 
 	req := client.DefaultRequirements()
+	req.Cores = reqCores
 	req.RAM = reqRAM
 	req.Time = reqTime
 	s.req = req
