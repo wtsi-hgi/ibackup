@@ -1670,6 +1670,10 @@ func (s *Server) numRequestsToReserve() int {
 // reserveRequest reserves an item from our queue and converts it to a Request.
 // Returns nil and no error if the queue is empty.
 func (s *Server) reserveRequest() (*transfer.Request, error) {
+	if uint(s.queue.Stats().Items) < s.maxQueueLength>>1 { //nolint:gosec
+		go s.refillQueue() //nolint:errcheck
+	}
+
 	item, err := s.queue.Reserve("", 0)
 	if err != nil {
 		qerr, ok := err.(queue.Error) //nolint:errorlint
@@ -1992,16 +1996,20 @@ func (s *Server) recoverQueue() error {
 		return err
 	}
 
+	var discoverOnly bool
+
 	for _, given := range sets {
 		if given.ReadOnly {
 			continue
 		}
 
-		err = s.recoverSet(given)
-		if err != nil {
-			given.RecoveryError(err)
-			s.Logger.Printf("failed to recover set %s for %s: %s", given.Name, given.Requester, err)
+		hitLimit, errs := s.recoverSet(given, discoverOnly)
+		if errs != nil {
+			given.RecoveryError(errs)
+			s.Logger.Printf("failed to recover set %s for %s: %s", given.Name, given.Requester, errs)
 		}
+
+		discoverOnly = discoverOnly || hitLimit
 	}
 
 	err = s.recoverRemoveQueue()
@@ -2012,6 +2020,40 @@ func (s *Server) recoverQueue() error {
 	s.sendSlackMessage(slack.Success, "recovery completed")
 
 	return nil
+}
+
+// refillQueue will scan the database for items to add to the in-memory queue.
+func (s *Server) refillQueue() { //nolint:gocognit,gocyclo,funlen
+	var hitLimit bool
+
+	for !hitLimit {
+		var given *set.Set
+
+		s.queueMu.Lock()
+
+		if len(s.queuedSets) > 0 {
+			given = s.queuedSets[0]
+			s.queuedSets = s.queuedSets[1:]
+		}
+
+		s.queueMu.Unlock()
+
+		if given == nil {
+			break
+		}
+
+		if given.LastDiscovery.After(given.LastCompleted) { //nolint:nestif
+			transformer, err := given.MakeTransformer()
+			if err != nil {
+				continue
+			}
+
+			hitLimit, err = s.enqueueSetFiles(given, transformer)
+			if err != nil {
+				s.Logger.Printf("failed to refill queue from set %s for %s: %s", given.Name, given.Requester, err)
+			}
+		}
+	}
 }
 
 func (s *Server) recoverRemoveQueue() error {
@@ -2048,27 +2090,23 @@ func (s *Server) recoverRemoveQueue() error {
 // appropriate: discover it if it was previously in the middle of being
 // discovered; adds its remaining upload requests if it was previously in the
 // middle of uploading; otherwise do nothing.
-func (s *Server) recoverSet(given *set.Set) error {
+func (s *Server) recoverSet(given *set.Set, discoverOnly bool) (bool, error) {
 	if given.StartedDiscovery.After(given.LastDiscovery) {
-		return s.discoverSet(given, false)
+		return false, s.discoverSet(given, false)
 	}
 
 	s.monitorSet(given)
 
-	var transformer transformer.PathTransformer
-
-	var err error
-
-	if given.LastDiscovery.After(given.LastCompleted) {
-		transformer, err = given.MakeTransformer()
+	if !discoverOnly && given.LastDiscovery.After(given.LastCompleted) {
+		transformer, err := given.MakeTransformer()
 		if err != nil {
-			return err
+			return false, err
 		}
 
-		err = s.enqueueSetFiles(given, transformer)
+		return s.enqueueSetFiles(given, transformer)
 	}
 
-	return err
+	return false, nil
 }
 
 // retryFailedEntries adds failed entires in the set with the id specified in
@@ -2155,5 +2193,7 @@ func (s *Server) retryFailedSetFiles(given *set.Set) (int, error) {
 		}
 	}
 
-	return len(filtered), s.enqueueEntries(toEnqueue, given, transformer)
+	_, err = s.enqueueEntries(toEnqueue, given, transformer)
+
+	return len(filtered), err
 }

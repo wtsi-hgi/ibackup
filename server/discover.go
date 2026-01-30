@@ -255,7 +255,7 @@ func (s *Server) discoverThenEnqueue(given *set.Set, transformer transformer.Pat
 
 	s.handleNewlyDefinedSets(updated)
 
-	if err := s.enqueueSetFiles(updated, transformer); err != nil {
+	if _, err := s.enqueueSetFiles(updated, transformer); err != nil {
 		s.recordSetError("queuing files for %s failed: %s", updated.ID(), err)
 	}
 }
@@ -580,13 +580,13 @@ func determineDirStatus(dirStatErr error, entry *set.Entry,
 // put requests for them and adds them to the global put queue for uploading.
 // Skips entries that are missing or that have failed or uploaded since the
 // last discovery.
-func (s *Server) enqueueSetFiles(given *set.Set, transformer transformer.PathTransformer) error {
-	entries, err := s.db.GetFileEntries(given.ID(), nil)
+func (s *Server) enqueueSetFiles(given *set.Set, transformer transformer.PathTransformer) (bool, error) {
+	entries, err := s.db.GetFileEntries(given.ID(), func(e *set.Entry) bool {
+		return e.ShouldUpload(given.LastDiscovery)
+	})
 	if err != nil {
-		return err
+		return false, err
 	}
-
-	entries = uploadableEntries(entries, given)
 
 	return s.enqueueEntries(entries, given, transformer)
 }
@@ -607,13 +607,27 @@ func uploadableEntries(entries []*set.Entry, given *set.Set) []*set.Entry {
 
 // enqueueEntries converts the given entries to requests, stores those in items
 // and adds them the in-memory queue.
-func (s *Server) enqueueEntries(entries []*set.Entry, given *set.Set, transformer transformer.PathTransformer) error {
-	defs := make([]*queue.ItemDef, len(entries))
+func (s *Server) enqueueEntries(entries []*set.Entry, given *set.Set, transformer transformer.PathTransformer) (bool, error) { //nolint:gocognit,lll,funlen
+	queueSpaceLeft := max(int(s.maxQueueLength)-s.queue.Stats().Items, 0) //nolint:gosec
+	defs := make([]*queue.ItemDef, min(len(entries), queueSpaceLeft))
+	hitLimit := queueSpaceLeft < len(entries)
+
+	if len(defs) == 0 {
+		return hitLimit, nil
+	}
+
+	if hitLimit {
+		s.queueMu.Lock()
+		s.queuedSets = append(s.queuedSets, given)
+		s.queueMu.Unlock()
+
+		entries = entries[:queueSpaceLeft]
+	}
 
 	for i, entry := range entries {
 		r, err := s.entryToRequest(entry, transformer, given)
 		if err != nil {
-			return err
+			return false, err
 		}
 
 		defs[i] = &queue.ItemDef{
@@ -621,10 +635,6 @@ func (s *Server) enqueueEntries(entries []*set.Entry, given *set.Set, transforme
 			Data: r,
 			TTR:  ttr,
 		}
-	}
-
-	if len(defs) == 0 {
-		return nil
 	}
 
 	// Keep enqueue logging low-volume: one line per enqueue batch.
@@ -647,7 +657,7 @@ func (s *Server) enqueueEntries(entries []*set.Entry, given *set.Set, transforme
 		s.markFailedEntries(given)
 	}
 
-	return err
+	return hitLimit, err
 }
 
 // entryToRequest converts an Entry to a Request containing details of the given
