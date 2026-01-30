@@ -28,6 +28,7 @@
 package server
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -74,6 +75,8 @@ const (
 	retryDelay = 5 * time.Second
 
 	maxRememberedRequestLogs = 100000
+
+	defaultMaxQueueLength = 1_000_000
 )
 
 // Config configures the server.
@@ -119,6 +122,15 @@ type Config struct {
 	//
 	// A value of 0 disables this feature entirely.
 	HungDebugTimeout time.Duration
+
+	// Maximum number of items to queue for upload. Once the number is reached,
+	// no more items will be queued.
+	//
+	// Once the queue falls below half of the maximum, the database will be
+	// scanned for items to add.
+	//
+	// An value of zero will fallback to the default of 1 million.
+	MaxQueueLength uint
 }
 
 // Server is used to start a web server that provides a REST API to the setdb
@@ -131,8 +143,11 @@ type Server struct {
 	cacheMu                sync.Mutex
 	dirPoolMu              sync.Mutex
 	dirPool                *workerpool.WorkerPool
+	maxQueueLength         uint
 	queue                  *queue.Queue
 	removeQueue            *queue.Queue
+	queueMu                sync.Mutex
+	queuedSets             []*set.Set
 	trashLifespan          time.Duration
 	sched                  *client.Scheduler
 	putCmd                 string
@@ -185,6 +200,7 @@ func New(conf Config) (*Server, error) { //nolint:funlen
 		dirPool:                workerpool.New(workerPoolSizeDir),
 		queue:                  queue.New(context.Background(), "put"),
 		removeQueue:            queue.New(context.Background(), "remove"),
+		maxQueueLength:         cmp.Or(conf.MaxQueueLength, defaultMaxQueueLength),
 		trashLifespan:          conf.TrashLifespan,
 		creatingCollections:    make(map[string]bool),
 		slacker:                conf.Slacker,

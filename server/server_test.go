@@ -4089,6 +4089,68 @@ func TestServer(t *testing.T) {
 					So(gotSet.Uploaded, ShouldEqual, 0)
 					So(gotSet.Hardlinks, ShouldEqual, 0)
 				})
+
+				Convey("The queue will only fill to a specified maximum, and refill automatically.", func() {
+					s.maxQueueLength = 4
+
+					for n := range 20 {
+						internal.CreateTestFileOfLength(t, filepath.Join(localDir, "file"+strconv.Itoa(n)), n+1)
+					}
+
+					err = client.AddOrUpdateSet(exampleSet)
+					So(err, ShouldBeNil)
+
+					err = client.MergeDirs(exampleSet.ID(), []string{localDir})
+					So(err, ShouldBeNil)
+
+					err = client.TriggerDiscovery(exampleSet.ID(), false)
+					So(err, ShouldBeNil)
+
+					ok := <-racCalled
+					So(ok, ShouldBeTrue)
+
+					gotSet, err := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+					So(err, ShouldBeNil)
+					So(gotSet.Status, ShouldEqual, set.PendingUpload)
+					So(gotSet.NumFiles, ShouldEqual, 20)
+					So(gotSet.Uploaded, ShouldEqual, 0)
+
+					So(s.queue.Stats().Items, ShouldEqual, s.maxQueueLength)
+					So(len(s.queuedSets), ShouldEqual, 1)
+					So(s.queuedSets[0].ID(), ShouldResemble, exampleSet.ID())
+
+					for range 200 {
+						requests, errg := client.GetSomeUploadRequests()
+						So(errg, ShouldBeNil)
+						So(len(requests), ShouldBeLessThanOrEqualTo, s.maxQueueLength)
+
+						if len(requests) > 0 {
+							p, d := makePutter(t, handler, requests, client)
+							Reset(d)
+
+							uploadStarts, uploadResults, skippedResults := p.Put()
+
+							err = client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults,
+								minMBperSecondUploadSpeed, minTimeForUpload, 1*time.Hour, logger)
+							So(err, ShouldBeNil)
+
+							gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+							So(err, ShouldBeNil)
+
+							if gotSet.Uploaded == 20 {
+								break
+							}
+						}
+
+						time.Sleep(10 * time.Millisecond)
+					}
+
+					gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+					So(err, ShouldBeNil)
+					So(gotSet.Status, ShouldEqual, set.Complete)
+					So(gotSet.NumFiles, ShouldEqual, 20)
+					So(gotSet.Uploaded, ShouldEqual, 20)
+				})
 			})
 		})
 	})

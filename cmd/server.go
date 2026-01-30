@@ -62,6 +62,7 @@ const (
 	defaultDebounceSeconds        = 600
 	defaultFailedUploadRetryDelay = 1 * time.Hour
 	defaultHungDebugTimeout       = 0
+	defaultMaxQueueLength         = 1_000_000
 	cacheDirPerms                 = 0700
 )
 
@@ -84,6 +85,7 @@ var (
 	serverFailedUploadRetryDelay string
 	serverReplicaLogging         bool
 	serverHungDebugTimeout       string
+	serverMaxQueueItems          uint
 	statterPath                  string
 	queues                       string
 	queueAvoid                   string
@@ -273,6 +275,7 @@ These should be supplied as a comma separated list.
 			FailedUploadRetryDelay: failedUploadRetryDelay,
 			ReplicaLogging:         serverReplicaLogging,
 			HungDebugTimeout:       hungDebugTimeout,
+			MaxQueueLength:         serverMaxQueueItems,
 		}
 
 		s, err := server.New(conf)
@@ -461,6 +464,12 @@ func init() {
 		"hung_debug_timeout",
 		"0",
 		"server-side hung debugging: if uploads appear stuck for this long, log a goroutine dump (eg. 10m); 0 disables",
+	)
+	serverCmd.Flags().UintVar(
+		&serverMaxQueueItems,
+		"max_queue_length",
+		defaultMaxQueueLength,
+		"maximum size of in-memory queue",
 	)
 	serverCmd.Flags().StringVar(&statterPath, "statter", "",
 		"path to an external statter program (https://github.com/wtsi-hgi/statter)")
