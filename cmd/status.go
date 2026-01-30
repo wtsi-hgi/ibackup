@@ -449,7 +449,7 @@ func displaySet(s *set.Set, showRequesters bool) { //nolint:funlen,gocyclo,gocog
 		monitorStr += " (with removals)"
 	}
 
-	cliPrintf("%s: %s; Archive: %v\n", monitorStr, monitored, s.DeleteLocal)
+	cliPrintf("%s: %s; Archive: %v; Frozen: %v\n", monitorStr, monitored, s.DeleteLocal, s.Frozen)
 
 	if s.Description != "" {
 		cliPrintf("Description: %s\n", s.Description)

@@ -49,9 +49,9 @@ import (
 
 const ttr = 6 * time.Minute
 
-// discoveryCoordinator is used to ensure removals and discoveries cannot
-// happen at the same time on the same set. Discoveries have priority and will
-// pause any removal that's already running until the discovery has finished.
+// discoveryCoordinator is used to ensure removals and discoveries cannot happen
+// at the same time on the same set. Discoveries have priority and will pause
+// any removal that's already running until the discovery has finished.
 type discoveryCoordinator struct {
 	sync.Mutex
 	hasDiscoveryHappened map[string]bool
@@ -209,8 +209,8 @@ func (s *Server) triggerDiscovery(c *gin.Context) {
 // followed by adding all upload requests for the set to the global put queue.
 //
 // The optional forceRemovals bool, if true, makes this behave as if the set has
-// MonitorRemovals true, to force deletion of files in iRODS if the corresponding
-// local file no longer exists.
+// MonitorRemovals true, to force deletion of files in iRODS if the
+// corresponding local file no longer exists.
 func (s *Server) discoverSet(given *set.Set, forceRemovals bool) error {
 	if given.ReadOnly {
 		s.Logger.Printf("Ignore discovery on a read-only set %s [%s:%s]", given.ID(), given.Requester, given.Name)
@@ -457,8 +457,8 @@ func (s *Server) doSetDirWalks(entries []*set.Entry, excludeTree ptrie.Trie[bool
 	doneCh <- err
 }
 
-// checkAndWalkDir checks if the given dir exists, and if it does, walks the
-// dir using the given cb. Major errors are returned; walk errors are logged and
+// checkAndWalkDir checks if the given dir exists, and if it does, walks the dir
+// using the given cb. Major errors are returned; walk errors are logged and
 // permission ones sent to the warnChan.
 func (s *Server) checkAndWalkDir(dir string, cb statter.PathCallback, warnChan chan error) error {
 	_, err := statter.Stat(dir)
@@ -585,7 +585,7 @@ func determineDirStatus(dirStatErr error, entry *set.Entry,
 // reaching the queue limit.
 func (s *Server) enqueueSetFiles(given *set.Set, transformer transformer.PathTransformer) (bool, error) {
 	entries, err := s.db.GetFileEntries(given.ID(), func(e *set.Entry) bool {
-		return e.ShouldUpload(given.LastDiscovery)
+		return e.ShouldUpload(given.LastDiscovery) && !(given.Frozen && e.IsUploaded())
 	})
 	if err != nil {
 		return false, err

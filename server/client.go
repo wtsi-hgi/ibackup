@@ -114,7 +114,8 @@ func (c *Client) AddOrUpdateSet(set *set.Set) error {
 	return c.putThing(EndPointAuthSet, set)
 }
 
-// AddOrUpdateSetMakingWritable adds details about a backup set to the Server's database and makes the set writable.
+// AddOrUpdateSetMakingWritable adds details about a backup set to the Server's
+// database and makes the set writable.
 func (c *Client) AddOrUpdateSetMakingWritable(set *set.Set) error {
 	return c.putThing(EndPointAuthSet+"?"+paramMakeWritable+"=true", set)
 }
@@ -170,9 +171,9 @@ func responseToErr(resp *resty.Response) error {
 	return err
 }
 
-// GetSets gets details about a given requester's backup sets from the
-// Server's database. If you started the server, the user "all" will return
-// all sets in the system.
+// GetSets gets details about a given requester's backup sets from the Server's
+// database. If you started the server, the user "all" will return all sets in
+// the system.
 func (c *Client) GetSets(requester string) ([]*set.Set, error) {
 	var sets []*set.Set
 
@@ -254,10 +255,10 @@ func (c *Client) MergeDirs(setID string, paths []string) error {
 	return c.putThing(EndPointAuthDirs+"/"+setID, stringsToBytes(paths))
 }
 
-// TriggerDiscovery tells the server that you've called MergeFiles() and MergeDirs()
-// for the given set, and now want it to discover the files that exist and
-// discover the contents of the directories, and start the process of backing up
-// the files.
+// TriggerDiscovery tells the server that you've called MergeFiles() and
+// MergeDirs() for the given set, and now want it to discover the files that
+// exist and discover the contents of the directories, and start the process of
+// backing up the files.
 //
 // This will delete remote files missing locally if the set has monitor-removals
 // turned on, or if the force_removals parameter is passed as true.
@@ -456,9 +457,9 @@ func (c *Client) stillWorkingOnRequests(rids []string) error {
 //
 // If an upload seems to take too long, based on the given minimum MB/s upload
 // speed, tells the server the upload might be stuck, but continues to wait an
-// additional maxStuckTime before giving up and returning an error.
-// (Note that uploads may still actually be occurring; we only stop updating the
-// server; you should exit your process to stop the uploads.)
+// additional maxStuckTime before giving up and returning an error. (Note that
+// uploads may still actually be occurring; we only stop updating the server;
+// you should exit your process to stop the uploads.)
 //
 // Do not call this concurrently!
 func (c *Client) SendPutResultsToServer(uploadStarts, uploadResults, skipResults chan *transfer.Request,

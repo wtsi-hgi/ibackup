@@ -314,6 +314,8 @@ func TestSet(t *testing.T) {
 
 func TestSetDB(t *testing.T) {
 	Convey("Given a path", t, func() {
+		internal.InitStatter(t)
+
 		tDir := t.TempDir()
 		dbPath := filepath.Join(tDir, "set.db")
 
@@ -1892,6 +1894,67 @@ func TestSetDB(t *testing.T) {
 					So(got, ShouldNotBeNil)
 					So(errb, ShouldBeNil)
 					So(got.Abnormal, ShouldEqual, 1)
+				})
+			})
+
+			Convey("And add a frozen set", func() {
+				setl1 := &Set{
+					Name:        "freeze",
+					Requester:   "jim",
+					Transformer: "prefix=/tmp:/remote",
+					Frozen:      true,
+				}
+
+				So(db.AddOrUpdate(setl1), ShouldBeNil)
+
+				dir := t.TempDir()
+
+				aFile := filepath.Join(dir, "a")
+				So(os.WriteFile(aFile, []byte("a"), userPerms), ShouldBeNil)
+
+				So(db.MergeFileEntries(setl1.ID(), []string{aFile}), ShouldBeNil)
+
+				_, err = db.Discover(setl1.ID(), nil)
+				So(err, ShouldBeNil)
+
+				entries, err := db.GetPureFileEntries(setl1.ID())
+				So(err, ShouldBeNil)
+				So(len(entries), ShouldEqual, 1)
+				So(entries[0].Inode, ShouldNotEqual, 0)
+
+				setEntryToUploaded(entries[0], setl1, db)
+
+				So(os.Remove(aFile), ShouldBeNil)
+
+				bFile := filepath.Join(dir, "b")
+				So(os.WriteFile(bFile, []byte("b"), userPerms), ShouldBeNil)
+				So(os.WriteFile(aFile, []byte("aa"), userPerms), ShouldBeNil)
+
+				So(db.MergeFileEntries(setl1.ID(), []string{aFile, bFile}), ShouldBeNil)
+
+				_, err = db.Discover(setl1.ID(), nil)
+				So(err, ShouldBeNil)
+
+				oldInode := entries[0].Inode
+
+				entries, err = db.GetPureFileEntries(setl1.ID())
+				So(err, ShouldBeNil)
+				So(len(entries), ShouldEqual, 2)
+				So(entries[0].Inode, ShouldEqual, oldInode)
+
+				Convey("which can be unfrozen to update files", func() {
+					setl1.Frozen = false
+
+					So(db.AddOrUpdate(setl1), ShouldBeNil)
+					So(db.MergeFileEntries(setl1.ID(), []string{aFile, bFile}), ShouldBeNil)
+
+					_, err = db.Discover(setl1.ID(), nil)
+					So(err, ShouldBeNil)
+
+					entries, err = db.GetPureFileEntries(setl1.ID())
+					So(err, ShouldBeNil)
+					So(len(entries), ShouldEqual, 2)
+					So(entries[0].Inode, ShouldNotEqual, oldInode)
 				})
 			})
 		})

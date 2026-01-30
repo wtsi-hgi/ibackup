@@ -121,7 +121,8 @@ const (
 	// EndPointAuthTrashPaths is the endpoint for trashing objects from sets.
 	EndPointAuthTrashPaths = gas.EndPointAuth + trashPathsPath
 
-	// EndPointAuthRemoveExpired is the endpoint for removing expired objects from sets.
+	// EndPointAuthRemoveExpired is the endpoint for removing expired objects
+	// from sets.
 	EndPointAuthRemoveExpired = gas.EndPointAuth + removeExpiredPath
 
 	ErrNoAuth         = gas.Error("auth must be enabled")
@@ -473,8 +474,8 @@ func filterTrashed(sets []*set.Set) []*set.Set {
 	return filtered
 }
 
-// putFiles sets the file paths encoded in to the body as JSON as the files
-// to be backed up for the set with the id specified in the URL parameter.
+// putFiles sets the file paths encoded in to the body as JSON as the files to
+// be backed up for the set with the id specified in the URL parameter.
 //
 // LoadSetDB() must already have been called. This is called when there is a PUT
 // on /rest/v1/auth/files/[id].
@@ -703,9 +704,9 @@ func (s *Server) registerDeletionCallback(setID string) {
 	})
 }
 
-// validateInputsForTrashing returns an error if the provided set is a trashed set,
-// not complete or if any provided path is not in the given set. Also returns
-// the valid paths classified into a slice of filepaths or dirpaths.
+// validateInputsForTrashing returns an error if the provided set is a trashed
+// set, not complete or if any provided path is not in the given set. Also
+// returns the valid paths classified into a slice of filepaths or dirpaths.
 func (s *Server) validateInputsForTrashing(givenSet *set.Set, paths []string) ([]string, []string, error) {
 	if givenSet.IsTrash() {
 		return nil, nil, ErrTrashSetName
@@ -1212,8 +1213,8 @@ func (s *Server) bindPathsAndValidateSet(c *gin.Context) (*set.Set, []string, bo
 
 // validateSet gets the id parameter from the given context and checks a
 // corresponding set exists and the logged-in user is the same as the set's
-// Requester. If so, returns the set and true. If not, Aborts with an error
-// and returns false.
+// Requester. If so, returns the set and true. If not, Aborts with an error and
+// returns false.
 func (s *Server) validateSet(c *gin.Context) (*set.Set, bool) {
 	sid := c.Param(paramSetID)
 
@@ -1363,8 +1364,8 @@ func (s *Server) excludeFromRemovedBucket(entry *set.Dirent, match string,
 	return s.db.RemoveFromRemovedBucket(match, sid)
 }
 
-// findAllOtherPathsToExclude finds every path that should be excluded but isn't due
-// to match being removed from removed bucket.
+// findAllOtherPathsToExclude finds every path that should be excluded but isn't
+// due to match being removed from removed bucket.
 func (s *Server) findAllOtherPathsToExclude(entry *set.Dirent, match string) ([]set.RemoveReq, error) {
 	var paths []set.RemoveReq
 
@@ -1487,8 +1488,8 @@ func (s *Server) getLastStateEntries(c *gin.Context) {
 	s.getFileEntries(c, set.FileEntryFilterLastState)
 }
 
-// getExampleEntry gets the first defined file entry for the set with the
-// id specified in the URL parameter.
+// getExampleEntry gets the first defined file entry for the set with the id
+// specified in the URL parameter.
 //
 // LoadSetDB() must already have been called. This is called when there is a GET
 // on /rest/v1/auth/example_entry/[id].
@@ -1621,8 +1622,8 @@ func (s *Server) reserveRequests() ([]*transfer.Request, error) {
 }
 
 // getCachedNumRequestsToReserve calls numRequestsToReserve and caches the
-// result for the remaining numClients to use, so numClients clients all
-// reserve the same amount.
+// result for the remaining numClients to use, so numClients clients all reserve
+// the same amount.
 func (s *Server) getCachedNumRequestsToReserve() int {
 	s.cacheMu.Lock()
 	defer s.cacheMu.Unlock()
@@ -1889,9 +1890,9 @@ func (s *Server) updateFileStatus(r *transfer.Request) error {
 	return s.trackUploadingAndStuckRequests(r, entry)
 }
 
-// handleNewlyCompletedSets gets the set the given request is for, and if it
-// has completed, carries out actions needed for newly completed sets: trigger
-// the monitoring countdown, and do a database backup.
+// handleNewlyCompletedSets gets the set the given request is for, and if it has
+// completed, carries out actions needed for newly completed sets: trigger the
+// monitoring countdown, and do a database backup.
 func (s *Server) handleNewlyCompletedSets(r *transfer.Request) error {
 	completed, err := s.db.GetByNameAndRequester(r.Set, r.Requester)
 	if err != nil {
@@ -1979,8 +1980,8 @@ func appendIntSuffix(b *strings.Builder, key string, v *int) {
 	_, _ = fmt.Fprintf(b, " %s=%d", key, *v)
 }
 
-// updateQueueItemData updates the item in our queue corresponding to the
-// given request, with the request's latest properties.
+// updateQueueItemData updates the item in our queue corresponding to the given
+// request, with the request's latest properties.
 func (s *Server) updateQueueItemData(r *transfer.Request) {
 	if item, err := s.queue.Get(r.ID()); err == nil {
 		stats := item.Stats()
