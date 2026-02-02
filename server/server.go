@@ -28,11 +28,14 @@
 package server
 
 import (
-	"cmp"
+	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -54,6 +57,7 @@ import (
 const (
 	ErrNoLogger             = gas.Error("an http logger must be configured")
 	ErrIncorrectTypeInQueue = gas.Error("incorrect data type in queue")
+	ErrInsufficientRAM      = gas.Error("insufficient RAM")
 
 	// workerPoolSizeDir is the max number of directory walks we'll do
 	// concurrently during discovery; each of those walks in turn operate on 16
@@ -75,8 +79,6 @@ const (
 	retryDelay = 5 * time.Second
 
 	maxRememberedRequestLogs = 100000
-
-	defaultMaxQueueLength = 1_000_000
 )
 
 // Config configures the server.
@@ -192,6 +194,13 @@ func New(conf Config) (*Server, error) { //nolint:funlen
 		return nil, ErrNoLogger
 	}
 
+	if conf.MaxQueueLength == 0 {
+		var err error
+		if conf.MaxQueueLength, err = determineQueueSize(); err != nil {
+			return nil, err
+		}
+	}
+
 	retryDelayToUse := max(conf.FailedUploadRetryDelay, 0)
 
 	s := &Server{
@@ -200,7 +209,7 @@ func New(conf Config) (*Server, error) { //nolint:funlen
 		dirPool:                workerpool.New(workerPoolSizeDir),
 		queue:                  queue.New(context.Background(), "put"),
 		removeQueue:            queue.New(context.Background(), "remove"),
-		maxQueueLength:         cmp.Or(conf.MaxQueueLength, defaultMaxQueueLength),
+		maxQueueLength:         conf.MaxQueueLength,
 		trashLifespan:          conf.TrashLifespan,
 		creatingCollections:    make(map[string]bool),
 		slacker:                conf.Slacker,
@@ -232,6 +241,47 @@ func New(conf Config) (*Server, error) { //nolint:funlen
 	s.monitor = NewMonitor(s.monitorCB)
 
 	return s, nil
+}
+
+func determineQueueSize() (uint, error) { //nolint:gocognit,gocyclo,funlen
+	f, err := os.Open("/proc/meminfo")
+	if err != nil {
+		return 0, fmt.Errorf("error opening meminfo: %w", err)
+	}
+
+	defer f.Close()
+
+	br := bufio.NewReader(f)
+	memTotal := []byte("MemFree:")
+
+	for {
+		line, err := br.ReadBytes('\n')
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return 0, fmt.Errorf("error parsing meminfo: %w", io.ErrUnexpectedEOF)
+			}
+		}
+
+		if !bytes.HasPrefix(line, memTotal) {
+			continue
+		}
+
+		maxMem, err := strconv.ParseUint(string(
+			bytes.TrimSuffix(bytes.TrimSpace(bytes.TrimPrefix(line, memTotal)), []byte(" kB")),
+		), 10, 64)
+		if err != nil {
+			return 0, fmt.Errorf("error parsing meminfo: %w", err)
+		}
+
+		const queueItem4K = 2 // Assumed average queue item size is 4KiB, maxMem is in KiB.
+
+		queueLimit := uint(maxMem >> queueItem4K)
+		if queueLimit == 0 {
+			return 0, ErrInsufficientRAM
+		}
+
+		return queueLimit, nil
+	}
 }
 
 func (s *Server) monitorCB(given *set.Set) {

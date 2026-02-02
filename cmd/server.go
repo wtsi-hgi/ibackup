@@ -62,7 +62,6 @@ const (
 	defaultDebounceSeconds        = 600
 	defaultFailedUploadRetryDelay = 1 * time.Hour
 	defaultHungDebugTimeout       = 0
-	defaultMaxQueueLength         = 1_000_000
 	cacheDirPerms                 = 0700
 )
 
@@ -468,8 +467,9 @@ func init() {
 	serverCmd.Flags().UintVar(
 		&serverMaxQueueItems,
 		"max_queue_length",
-		defaultMaxQueueLength,
-		"maximum size of in-memory queue",
+		0,
+		"maximum size of in-memory queue; 0 attempts to automatically determine "+
+			"the base size based on available RAM",
 	)
 	serverCmd.Flags().StringVar(&statterPath, "statter", "",
 		"path to an external statter program (https://github.com/wtsi-hgi/statter)")

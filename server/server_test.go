@@ -4446,6 +4446,14 @@ func TestDiscoveryCoordinator(t *testing.T) {
 	})
 }
 
+func TestDetermineQueueSize(t *testing.T) {
+	Convey("You can automatically determine max queue size", t, func() {
+		size, err := determineQueueSize()
+		So(err, ShouldBeNil)
+		So(size, ShouldBeGreaterThan, 0)
+	})
+}
+
 func clearChannel(ch chan bool) {
 	for len(ch) > 0 {
 		<-ch

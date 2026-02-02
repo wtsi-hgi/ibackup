@@ -591,20 +591,6 @@ func (s *Server) enqueueSetFiles(given *set.Set, transformer transformer.PathTra
 	return s.enqueueEntries(entries, given, transformer)
 }
 
-// uploadableEntries returns the subset of given entries that are suitable for
-// uploading: pending and those that were dealt with before the last discovery.
-func uploadableEntries(entries []*set.Entry, given *set.Set) []*set.Entry {
-	var filtered []*set.Entry
-
-	for _, entry := range entries {
-		if entry.ShouldUpload(given.LastDiscovery) {
-			filtered = append(filtered, entry)
-		}
-	}
-
-	return filtered
-}
-
 // enqueueEntries converts the given entries to requests, stores those in items
 // and adds them the in-memory queue.
 func (s *Server) enqueueEntries(entries []*set.Entry, given *set.Set, transformer transformer.PathTransformer) (bool, error) { //nolint:gocognit,lll,funlen
@@ -612,16 +598,16 @@ func (s *Server) enqueueEntries(entries []*set.Entry, given *set.Set, transforme
 	defs := make([]*queue.ItemDef, min(len(entries), queueSpaceLeft))
 	hitLimit := queueSpaceLeft < len(entries)
 
-	if len(defs) == 0 {
-		return hitLimit, nil
-	}
-
 	if hitLimit {
 		s.queueMu.Lock()
 		s.queuedSets = append(s.queuedSets, given)
 		s.queueMu.Unlock()
 
 		entries = entries[:queueSpaceLeft]
+	}
+
+	if len(defs) == 0 {
+		return hitLimit, nil
 	}
 
 	for i, entry := range entries {
