@@ -44,6 +44,7 @@ import (
 	"github.com/gammazero/workerpool"
 	"github.com/inconshreveable/log15"
 	gas "github.com/wtsi-hgi/go-authserver"
+	"github.com/wtsi-hgi/ibackup/internal/mem"
 	"github.com/wtsi-hgi/ibackup/remove"
 	"github.com/wtsi-hgi/ibackup/set"
 	"github.com/wtsi-hgi/ibackup/slack"
@@ -53,6 +54,7 @@ import (
 const (
 	ErrNoLogger             = gas.Error("an http logger must be configured")
 	ErrIncorrectTypeInQueue = gas.Error("incorrect data type in queue")
+	ErrInsufficientRAM      = gas.Error("insufficient RAM")
 
 	// workerPoolSizeDir is the max number of directory walks we'll do
 	// concurrently during discovery; each of those walks in turn operate on 16
@@ -74,6 +76,8 @@ const (
 	retryDelay = 5 * time.Second
 
 	maxRememberedRequestLogs = 100000
+
+	queueItem4K = 2
 )
 
 // Config configures the server.
@@ -119,6 +123,16 @@ type Config struct {
 	//
 	// A value of 0 disables this feature entirely.
 	HungDebugTimeout time.Duration
+
+	// Maximum number of items to queue for upload. Once the number is reached,
+	// no more items will be queued.
+	//
+	// Once the queue falls below half of the maximum, the database will be
+	// scanned for items to add.
+	//
+	// A value of zero will caclculate an optimal number of items based on the
+	// available RAM.
+	MaxQueueLength uint
 }
 
 // Server is used to start a web server that provides a REST API to the setdb
@@ -131,8 +145,11 @@ type Server struct {
 	cacheMu                sync.Mutex
 	dirPoolMu              sync.Mutex
 	dirPool                *workerpool.WorkerPool
+	maxQueueLength         uint
 	queue                  *queue.Queue
 	removeQueue            *queue.Queue
+	queueMu                sync.Mutex
+	queuedSets             []*set.Set
 	trashLifespan          time.Duration
 	sched                  *client.Scheduler
 	putCmd                 string
@@ -177,6 +194,13 @@ func New(conf Config) (*Server, error) { //nolint:funlen
 		return nil, ErrNoLogger
 	}
 
+	if conf.MaxQueueLength == 0 {
+		var err error
+		if conf.MaxQueueLength, err = determineQueueSize(); err != nil {
+			return nil, err
+		}
+	}
+
 	retryDelayToUse := max(conf.FailedUploadRetryDelay, 0)
 
 	s := &Server{
@@ -185,6 +209,7 @@ func New(conf Config) (*Server, error) { //nolint:funlen
 		dirPool:                workerpool.New(workerPoolSizeDir),
 		queue:                  queue.New(context.Background(), "put"),
 		removeQueue:            queue.New(context.Background(), "remove"),
+		maxQueueLength:         conf.MaxQueueLength,
 		trashLifespan:          conf.TrashLifespan,
 		creatingCollections:    make(map[string]bool),
 		slacker:                conf.Slacker,
@@ -216,6 +241,20 @@ func New(conf Config) (*Server, error) { //nolint:funlen
 	s.monitor = NewMonitor(s.monitorCB)
 
 	return s, nil
+}
+
+func determineQueueSize() (uint, error) {
+	maxMem, err := mem.GetAvailableMemory()
+	if err != nil {
+		return 0, err
+	}
+
+	queueLimit := uint(maxMem >> queueItem4K)
+	if queueLimit == 0 {
+		return 0, ErrInsufficientRAM
+	}
+
+	return queueLimit, nil
 }
 
 func (s *Server) monitorCB(given *set.Set) {
