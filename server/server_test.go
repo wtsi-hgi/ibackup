@@ -4451,6 +4451,7 @@ func TestDetermineQueueSize(t *testing.T) {
 		size, err := determineQueueSize()
 		So(err, ShouldBeNil)
 		So(size, ShouldBeGreaterThan, 0)
+		So(size, ShouldBeLessThan, 1<<32)
 	})
 }
 

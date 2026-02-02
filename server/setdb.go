@@ -2042,16 +2042,14 @@ func (s *Server) refillQueue() { //nolint:gocognit,gocyclo,funlen
 			break
 		}
 
-		if given.LastDiscovery.After(given.LastCompleted) { //nolint:nestif
-			transformer, err := given.MakeTransformer()
-			if err != nil {
-				continue
-			}
+		transformer, err := given.MakeTransformer()
+		if err != nil || !given.LastDiscovery.After(given.LastCompleted) {
+			continue
+		}
 
-			hitLimit, err = s.enqueueSetFiles(given, transformer)
-			if err != nil {
-				s.Logger.Printf("failed to refill queue from set %s for %s: %s", given.Name, given.Requester, err)
-			}
+		hitLimit, err = s.enqueueSetFiles(given, transformer)
+		if err != nil {
+			s.Logger.Printf("failed to refill queue from set %s for %s: %s", given.Name, given.Requester, err)
 		}
 	}
 }

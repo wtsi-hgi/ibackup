@@ -28,14 +28,10 @@
 package server
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -48,6 +44,7 @@ import (
 	"github.com/gammazero/workerpool"
 	"github.com/inconshreveable/log15"
 	gas "github.com/wtsi-hgi/go-authserver"
+	"github.com/wtsi-hgi/ibackup/internal/mem"
 	"github.com/wtsi-hgi/ibackup/remove"
 	"github.com/wtsi-hgi/ibackup/set"
 	"github.com/wtsi-hgi/ibackup/slack"
@@ -79,6 +76,8 @@ const (
 	retryDelay = 5 * time.Second
 
 	maxRememberedRequestLogs = 100000
+
+	queueItem4K = 2
 )
 
 // Config configures the server.
@@ -131,7 +130,8 @@ type Config struct {
 	// Once the queue falls below half of the maximum, the database will be
 	// scanned for items to add.
 	//
-	// An value of zero will fallback to the default of 1 million.
+	// A value of zero will caclculate an optimal number of items based on the
+	// available RAM.
 	MaxQueueLength uint
 }
 
@@ -243,45 +243,18 @@ func New(conf Config) (*Server, error) { //nolint:funlen
 	return s, nil
 }
 
-func determineQueueSize() (uint, error) { //nolint:gocognit,gocyclo,funlen
-	f, err := os.Open("/proc/meminfo")
+func determineQueueSize() (uint, error) {
+	maxMem, err := mem.GetAvailableMemory()
 	if err != nil {
-		return 0, fmt.Errorf("error opening meminfo: %w", err)
+		return 0, err
 	}
 
-	defer f.Close()
-
-	br := bufio.NewReader(f)
-	memTotal := []byte("MemFree:")
-
-	for {
-		line, err := br.ReadBytes('\n')
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				return 0, fmt.Errorf("error parsing meminfo: %w", io.ErrUnexpectedEOF)
-			}
-		}
-
-		if !bytes.HasPrefix(line, memTotal) {
-			continue
-		}
-
-		maxMem, err := strconv.ParseUint(string(
-			bytes.TrimSuffix(bytes.TrimSpace(bytes.TrimPrefix(line, memTotal)), []byte(" kB")),
-		), 10, 64)
-		if err != nil {
-			return 0, fmt.Errorf("error parsing meminfo: %w", err)
-		}
-
-		const queueItem4K = 2 // Assumed average queue item size is 4KiB, maxMem is in KiB.
-
-		queueLimit := uint(maxMem >> queueItem4K)
-		if queueLimit == 0 {
-			return 0, ErrInsufficientRAM
-		}
-
-		return queueLimit, nil
+	queueLimit := uint(maxMem >> queueItem4K)
+	if queueLimit == 0 {
+		return 0, ErrInsufficientRAM
 	}
+
+	return queueLimit, nil
 }
 
 func (s *Server) monitorCB(given *set.Set) {
