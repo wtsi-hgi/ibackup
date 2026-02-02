@@ -2090,6 +2090,8 @@ func (s *Server) recoverRemoveQueue() error {
 // appropriate: discover it if it was previously in the middle of being
 // discovered; adds its remaining upload requests if it was previously in the
 // middle of uploading; otherwise do nothing.
+//
+// Returns true if the queue reached its limit while adding upload requests.
 func (s *Server) recoverSet(given *set.Set, discoverOnly bool) (bool, error) {
 	if given.StartedDiscovery.After(given.LastDiscovery) {
 		return false, s.discoverSet(given, false)

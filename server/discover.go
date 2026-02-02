@@ -578,8 +578,11 @@ func determineDirStatus(dirStatErr error, entry *set.Entry,
 
 // enqueueSetFiles gets all the set's file entries (set and discovered), creates
 // put requests for them and adds them to the global put queue for uploading.
-// Skips entries that are missing or that have failed or uploaded since the
-// last discovery.
+// Skips entries that are missing or that have failed or uploaded since the last
+// discovery.
+//
+// Returns true if only some of the entries were added to the queue due to
+// reaching the queue limit.
 func (s *Server) enqueueSetFiles(given *set.Set, transformer transformer.PathTransformer) (bool, error) {
 	entries, err := s.db.GetFileEntries(given.ID(), func(e *set.Entry) bool {
 		return e.ShouldUpload(given.LastDiscovery)
@@ -593,6 +596,9 @@ func (s *Server) enqueueSetFiles(given *set.Set, transformer transformer.PathTra
 
 // enqueueEntries converts the given entries to requests, stores those in items
 // and adds them the in-memory queue.
+//
+// Returns true if only some of the items were added to the queue due to
+// reaching the queue limit.
 func (s *Server) enqueueEntries(entries []*set.Entry, given *set.Set, transformer transformer.PathTransformer) (bool, error) { //nolint:gocognit,lll,funlen
 	queueSpaceLeft := max(int(s.maxQueueLength)-s.queue.Stats().Items, 0) //nolint:gosec
 	defs := make([]*queue.ItemDef, min(len(entries), queueSpaceLeft))
