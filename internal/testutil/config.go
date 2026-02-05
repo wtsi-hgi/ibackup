@@ -74,7 +74,7 @@ func writeConfigFile(tb testing.TB, path string, transformers map[string]transfo
 		tb.Fatalf("failed to write config: %v", err)
 	}
 
-	if err := os.WriteFile(path, buf.Bytes(), 0600); err != nil {
+	if err := os.WriteFile(path, buf.Bytes(), 0600); err != nil { //nolint:mnd
 		tb.Fatalf("failed to create config: %v", err)
 	}
 }
