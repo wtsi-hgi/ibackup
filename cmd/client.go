@@ -56,7 +56,7 @@ func newConfig(config string) error {
 		return fmt.Errorf("error parsing ibackup config: %w", err)
 	}
 
-	return nil
+	return f.Close()
 }
 
 // LoadConfig loads global config from the given path.

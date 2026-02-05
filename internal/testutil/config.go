@@ -26,6 +26,7 @@
 package testutil
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -63,23 +64,18 @@ func defaultTransformers() map[string]transformerConfig {
 func writeConfigFile(tb testing.TB, path string, transformers map[string]transformerConfig) {
 	tb.Helper()
 
-	f, err := os.Create(path)
-	if err != nil {
-		tb.Fatalf("failed to create config: %v", err)
-	}
+	var buf bytes.Buffer
 
-	if err := json.NewEncoder(f).Encode(struct {
+	if err := json.NewEncoder(&buf).Encode(struct {
 		Transformers map[string]transformerConfig `json:"transformers"`
 	}{
 		Transformers: transformers,
 	}); err != nil {
-		_ = f.Close()
-
 		tb.Fatalf("failed to write config: %v", err)
 	}
 
-	if err := f.Close(); err != nil {
-		tb.Fatalf("failed to close config: %v", err)
+	if err := os.WriteFile(path, buf.Bytes(), 0600); err != nil {
+		tb.Fatalf("failed to create config: %v", err)
 	}
 }
 
