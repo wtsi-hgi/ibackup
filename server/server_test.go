@@ -216,9 +216,13 @@ func TestServer(t *testing.T) {
 			serverStartedMessage  = slack.BoxPrefixSuccess + "server started"
 		)
 
-		makeAndStartServer := func() (*Server, string, func() error) {
+		makeAndStartServer := func(maxQueueLength uint) (*Server, string, func() error) {
 			s, errn := New(conf)
 			So(errn, ShouldBeNil)
+
+			if maxQueueLength != 0 {
+				s.maxQueueLength = maxQueueLength
+			}
 
 			err = s.EnableAuthWithServerToken(certPath, keyPath, ".ibackup.test.servertoken", func(u, p string) (bool, string) {
 				return true, "1"
@@ -244,7 +248,7 @@ func TestServer(t *testing.T) {
 
 		Convey("You can make a server that frequently logs to slack that it is still running, until it isn't", func() {
 			conf.StillRunningMsgFreq = 200 * time.Millisecond
-			_, _, dfunc := makeAndStartServer()
+			_, _, dfunc := makeAndStartServer(0)
 
 			slackWriter.Reset()
 
@@ -267,11 +271,11 @@ func TestServer(t *testing.T) {
 
 		Convey("You can make a Server with a logger configured and setup Auth, "+
 			"MakeQueueEndPoints and LoadSetDB", func() {
-			s, addr, dfunc := makeAndStartServer()
+			s, addr, dfunc := makeAndStartServer(0)
 
 			serverStopped := false
 
-			defer func() {
+			Reset(func() {
 				if serverStopped {
 					return
 				}
@@ -284,7 +288,7 @@ func TestServer(t *testing.T) {
 				So(slackWriter.String(), ShouldContainSubstring, slack.BoxPrefixWarn+"server stopped")
 
 				slackWriter.Reset()
-			}()
+			})
 
 			token, errl := gas.Login(gas.NewClientRequest(addr, certPath), admin, "pass")
 			So(errl, ShouldBeNil)
@@ -1420,7 +1424,7 @@ func TestServer(t *testing.T) {
 							slackDebounce := 500 * time.Millisecond
 							conf.SlackMessageDebounce = slackDebounce
 
-							_, addr2, dfunc2 := makeAndStartServer()
+							_, addr2, dfunc2 := makeAndStartServer(0)
 							defer dfunc2() //nolint:errcheck
 
 							token, errl = gas.Login(gas.NewClientRequest(addr2, certPath), admin, "pass")
@@ -2481,7 +2485,7 @@ func TestServer(t *testing.T) {
 
 						logWriter.Reset()
 
-						_, _, dfunc2 := makeAndStartServer()
+						_, _, dfunc2 := makeAndStartServer(0)
 
 						defer func() {
 							errd := dfunc2()
@@ -2737,7 +2741,7 @@ func TestServer(t *testing.T) {
 							slackDebounce := 500 * time.Millisecond
 							conf.SlackMessageDebounce = slackDebounce
 
-							_, addr2, dfunc2 := makeAndStartServer()
+							_, addr2, dfunc2 := makeAndStartServer(0)
 							defer dfunc2() //nolint:errcheck
 
 							token, errl = gas.Login(gas.NewClientRequest(addr2, certPath), admin, "pass")
@@ -4150,6 +4154,72 @@ func TestServer(t *testing.T) {
 					So(gotSet.Status, ShouldEqual, set.Complete)
 					So(gotSet.NumFiles, ShouldEqual, 20)
 					So(gotSet.Uploaded, ShouldEqual, 20)
+				})
+
+				Convey("The queue correctly recovers on a restart", func() {
+					s.maxQueueLength = 4
+
+					var sets [4]*set.Set
+
+					for n := range sets {
+						sets[n] = &set.Set{
+							Name:        "set" + strconv.Itoa(n),
+							Requester:   "jim",
+							Transformer: "prefix=" + localDir + ":" + remoteDir,
+							MonitorTime: 0,
+						}
+
+						setDir := t.TempDir()
+
+						for n := range 5 {
+							internal.CreateTestFileOfLength(t, filepath.Join(setDir, "file"+strconv.Itoa(n)), n+1)
+						}
+
+						err = client.AddOrUpdateSet(sets[n])
+						So(err, ShouldBeNil)
+
+						err = client.MergeDirs(sets[n].ID(), []string{setDir})
+						So(err, ShouldBeNil)
+
+						err = client.TriggerDiscovery(sets[n].ID(), false)
+						So(err, ShouldBeNil)
+					}
+
+					So(<-racCalled, ShouldBeTrue)
+
+					dfunc()
+
+					s, addr, dfunc = makeAndStartServer(4)
+
+					token, errl = gas.Login(gas.NewClientRequest(addr, certPath), admin, "pass")
+					So(errl, ShouldBeNil)
+
+					client = NewClient(addr, certPath, token)
+
+					numRequests := 0
+
+					for range 200 {
+						requests, errg := client.GetSomeUploadRequests()
+						So(errg, ShouldBeNil)
+						So(len(requests), ShouldBeLessThanOrEqualTo, s.maxQueueLength)
+
+						if len(requests) > 0 {
+							p, d := makePutter(t, handler, requests, client)
+							Reset(d)
+
+							uploadStarts, uploadResults, skippedResults := p.Put()
+
+							err = client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults,
+								minMBperSecondUploadSpeed, minTimeForUpload, 1*time.Hour, logger)
+							So(err, ShouldBeNil)
+
+							numRequests += len(requests)
+						}
+
+						time.Sleep(10 * time.Millisecond)
+					}
+
+					So(numRequests, ShouldEqual, 20)
 				})
 			})
 		})
