@@ -2026,6 +2026,12 @@ func (s *Server) recoverQueue() error {
 func (s *Server) refillQueue() { //nolint:gocognit,gocyclo,funlen
 	var hitLimit bool
 
+	if !s.queueRefilling.CompareAndSwap(false, true) {
+		return
+	}
+
+	defer s.queueRefilling.Store(false)
+
 	for !hitLimit {
 		var given *set.Set
 
@@ -2097,16 +2103,28 @@ func (s *Server) recoverSet(given *set.Set, discoverOnly bool) (bool, error) {
 
 	s.monitorSet(given)
 
-	if !discoverOnly && given.LastDiscovery.After(given.LastCompleted) {
-		transformer, err := given.MakeTransformer()
-		if err != nil {
-			return false, err
-		}
-
-		return s.enqueueSetFiles(given, transformer)
+	if given.LastDiscovery.After(given.LastCompleted) {
+		return s.enqueueSet(given, discoverOnly)
 	}
 
 	return false, nil
+}
+
+func (s *Server) enqueueSet(given *set.Set, discoverOnly bool) (bool, error) {
+	if discoverOnly {
+		s.queueMu.Lock()
+		s.queuedSets = append(s.queuedSets, given)
+		s.queueMu.Unlock()
+
+		return false, nil
+	}
+
+	transformer, err := given.MakeTransformer()
+	if err != nil {
+		return false, err
+	}
+
+	return s.enqueueSetFiles(given, transformer)
 }
 
 // retryFailedEntries adds failed entires in the set with the id specified in

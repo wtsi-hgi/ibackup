@@ -149,6 +149,7 @@ type Server struct {
 	queue                  *queue.Queue
 	removeQueue            *queue.Queue
 	queueMu                sync.Mutex
+	queueRefilling         atomic.Bool
 	queuedSets             []*set.Set
 	trashLifespan          time.Duration
 	sched                  *client.Scheduler
