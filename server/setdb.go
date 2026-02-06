@@ -2026,6 +2026,12 @@ func (s *Server) recoverQueue() error {
 func (s *Server) refillQueue() { //nolint:gocognit,gocyclo,funlen
 	var hitLimit bool
 
+	if !s.queueRefilling.CompareAndSwap(false, true) {
+		return
+	}
+
+	defer s.queueRefilling.Store(false)
+
 	for !hitLimit {
 		var given *set.Set
 
