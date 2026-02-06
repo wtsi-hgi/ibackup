@@ -4113,8 +4113,8 @@ func TestServer(t *testing.T) {
 					ok := <-racCalled
 					So(ok, ShouldBeTrue)
 
-					gotSet, err := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
-					So(err, ShouldBeNil)
+					gotSet, errc := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+					So(errc, ShouldBeNil)
 					So(gotSet.Status, ShouldEqual, set.PendingUpload)
 					So(gotSet.NumFiles, ShouldEqual, 20)
 					So(gotSet.Uploaded, ShouldEqual, 0)
@@ -4149,8 +4149,8 @@ func TestServer(t *testing.T) {
 						time.Sleep(10 * time.Millisecond)
 					}
 
-					gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
-					So(err, ShouldBeNil)
+					gotSet, errc = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+					So(errc, ShouldBeNil)
 					So(gotSet.Status, ShouldEqual, set.Complete)
 					So(gotSet.NumFiles, ShouldEqual, 20)
 					So(gotSet.Uploaded, ShouldEqual, 20)
@@ -4187,7 +4187,7 @@ func TestServer(t *testing.T) {
 
 					So(<-racCalled, ShouldBeTrue)
 
-					dfunc()
+					So(dfunc(), ShouldBeNil)
 
 					s, addr, dfunc = makeAndStartServer(4)
 
