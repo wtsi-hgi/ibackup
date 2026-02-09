@@ -54,11 +54,11 @@ are split by responsibility:
 | `fofn/status.go`       | Status file generation, ParseStatus     |
 | `fofn/status_test.go`  | E1 tests                                |
 | `fofn/chunk.go`        | Streaming shuffle and chunk writing     |
-| `fofn/chunk_test.go`   | B1, B2 tests                            |
+| `fofn/chunk_test.go`   | B1 tests                                |
 | `fofn/jobs.go`         | wr job creation, submission, monitoring |
 | `fofn/jobs_test.go`    | F1–F6 tests                             |
 | `fofn/scan.go`         | Watch dir scanning, config file reading |
-| `fofn/scan_test.go`    | G1–G4, G6 tests                         |
+| `fofn/scan_test.go`    | G1–G5 tests                             |
 | `fofn/server.go`       | Server orchestration, ProcessSubDir     |
 | `fofn/server_test.go`  | H1–H5 tests                             |
 
@@ -501,12 +501,12 @@ determine the outcome for every file.
    then `report.tsv` exists and contains 3 lines in the report format defined in
    D1 (4-column TSV with `strconv.Quote`-escaped paths, status, and error), with
    statuses "uploaded", "unmodified", and "missing" respectively. The file can
-   be round-tripped through `fofn.ParseReport()`.
+   be round-tripped through `fofn.CollectReport()`.
 
 2. Given a 2-column put file with 1 file and `--no_replace` and `--report`, when
    the remote file exists with a different mtime, then the report contains a
    `fofn.ReportEntry` with Status="frozen" when parsed with
-   `fofn.ParseReport()`.
+   `fofn.CollectReport()`.
 
 ---
 
@@ -847,7 +847,7 @@ processing, based on whether its mtime differs from the last processed mtime
 3. Given a fofn with mtime 2000 and an existing run directory named "1000", when
    I call `fofn.NeedsProcessing(subDir)`, then it returns true and mtime 2000.
 
-### G6: Read user metadata from .metadata file
+### G5: Read user metadata from .metadata file
 
 As a developer using the fofn package, I want to read optional user-supplied
 metadata from a `.metadata` file in a subdirectory, so that the fofnserver can
@@ -881,7 +881,7 @@ Keys must not contain colons (they will be prefixed with `ibackup:user:` by
 5. Given a `.metadata` file with a line that has no tab separator, when I call
    `fofn.ReadUserMetadata(dir)`, then I get a non-nil error.
 
-### G5: Determine and apply group ownership
+### G6: Determine and apply group ownership
 
 As a developer, I want generic utilities that determine the GID of a directory
 and create files/directories with a specific GID, so that all fofnserver outputs
@@ -1250,12 +1250,12 @@ A2 requires no new code; uses existing `transformer`/`transfer` packages.
 
 ### Phase 8: Directory scanning and group ownership
 
-18. **G5** - Group ownership (internal/ownership/)
+18. **G6** - Group ownership (internal/ownership/)
 19. **G1** - Discover subdirectories with fofn files (fofn/scan.go)
 20. **G2** - Read transformer name
 21. **G3** - Detect .freeze file
 22. **G4** - Detect fofn needing processing
-23. **G6** - Read user metadata from .metadata file
+23. **G5** - Read user metadata from .metadata file
 
 ### Phase 9: Orchestration (fofn/server.go)
 
@@ -1331,8 +1331,8 @@ be used in the production pipeline.
   B1 and E1.
 
 - **cmd/put.go tests:** Use the existing `internal.LocalHandler` mock for
-  iRODS operations. Test --no_replace and --report flags via `main_test.go`
-  integration tests.
+  iRODS operations. Test --no_replace, --report, and --fofn flags via
+  `main_test.go` integration tests.
 
 - **main_test.go integration:** Use `client.PretendSubmissions` to avoid needing
   a real wr server. Simulate job execution by directly running put commands
