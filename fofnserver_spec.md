@@ -9,7 +9,10 @@ each fofn it discovers, it:
 1. Reads the fofn and a `.transformer` file to determine local-to-remote path
    mappings.
 2. Splits the mappings into shuffled chunks.
-3. Submits `ibackup put` jobs to wr via the Go client API.
+3. Submits `ibackup put` jobs to wr via the Go client API, including metadata
+   flags that apply the fofn directory name (as `ibackup:fofn` in the standard
+   namespace) and any user-defined key-value pairs from an optional `.metadata`
+   file (in the `ibackup:user:` namespace) to every uploaded file.
 4. Waits for all jobs to complete (or be buried after exhausting retries).
 5. Parses per-chunk report files and writes an aggregated status file.
 
@@ -53,11 +56,11 @@ are split by responsibility:
 | `fofn/chunk.go`        | Streaming shuffle and chunk writing     |
 | `fofn/chunk_test.go`   | B1, B2 tests                            |
 | `fofn/jobs.go`         | wr job creation, submission, monitoring |
-| `fofn/jobs_test.go`    | F1–F6 tests                              |
+| `fofn/jobs_test.go`    | F1–F6 tests                             |
 | `fofn/scan.go`         | Watch dir scanning, config file reading |
-| `fofn/scan_test.go`    | G1–G4 tests                              |
+| `fofn/scan_test.go`    | G1–G4, G6 tests                         |
 | `fofn/server.go`       | Server orchestration, ProcessSubDir     |
-| `fofn/server_test.go`  | H1–H5 tests                              |
+| `fofn/server_test.go`  | H1–H5 tests                             |
 
 ### Changes to existing packages
 
@@ -65,10 +68,11 @@ are split by responsibility:
   (moved from `cmd/put.go`).
 - `internal/ownership/`: New sub-package for GID lookup and group-owned
   file/directory creation.
+- `transfer/meta.go`: Add `MetaKeyFofn` constant.
 - `transfer/request.go`: Add `RequestStatusFrozen`.
 - `transfer/put.go`: Add no-replace mode to `Putter`.
-- `cmd/put.go`: Add `--no_replace` and `--report` flags; refactor to use
-  `internal/scanner/` for null scanning.
+- `cmd/put.go`: Add `--no_replace`, `--report`, and `--fofn` flags; refactor to
+  use `internal/scanner/` for null scanning.
 - `cmd/fofnserver.go`: CLI-only cobra subcommand.
 - `main_test.go`: Integration test for the fofnserver CLI.
 
@@ -109,6 +113,8 @@ type PutCommandBuilder interface {
         logPath string,
         outPath string,
         noReplace bool,
+        fofnName string,
+        userMeta string,
     ) string
 }
 ```
@@ -122,6 +128,7 @@ Given a watch directory `/watch` with a subdirectory `project1/`, the layout is:
     fofn                     # null-terminated file of filenames
     .transformer             # contains transformer name
     .freeze                  # optional; enables no-replace mode
+    .metadata                # optional; TSV of key\tvalue user metadata
     status                   # latest aggregated status file
     1738000000/              # run dir (fofn mtime as Unix secs)
         chunk.000000         # base64-encoded local\tremote
@@ -306,7 +313,7 @@ Chunk files may end up with slightly uneven sizes (binomial distribution around
 
 ---
 
-## Section C: No-Replace Mode for Put
+## Section C: Put Enhancements
 
 ### C1: RequestStatusFrozen constant
 
@@ -365,6 +372,36 @@ files without replacing existing ones that have changed.
 
 2. Given a 2-column put file with a new file not yet in iRODS, when I run
    `ibackup put --no_replace -f <file>`, then the file is uploaded normally.
+
+### C4: MetaKeyFofn constant
+
+As a developer, I want a `MetaKeyFofn` constant in the transfer package, so that
+the fofn directory name can be stored as standard ibackup metadata.
+
+**Package:** `transfer/`
+**Test file:** `transfer/meta_test.go`
+
+**Acceptance tests:**
+
+1. `MetaKeyFofn` has the string value `"ibackup:fofn"`.
+
+### C5: --fofn CLI flag for ibackup put
+
+As a user of ibackup put, I want a `--fofn <name>` flag, so that I can apply
+`ibackup:fofn` metadata to every uploaded file.
+
+**Package:** `cmd/`
+**Test file:** `main_test.go`
+
+**Acceptance tests:**
+
+1. Given a 2-column put file with 2 files, when I run `ibackup put --fofn
+   project1 -b -f <file>`, then both uploaded files have `ibackup:fofn` metadata
+   set to `"project1"`.
+
+2. Given `--fofn project1` and `--meta "colour=red"`, when I run `ibackup put`,
+   then uploaded files have both `ibackup:fofn=project1` and
+   `ibackup:user:colour=red` metadata.
 
 ---
 
@@ -565,14 +602,22 @@ for an `ibackup put` job given a chunk file, so that I can submit it to wr.
 
 **Acceptance tests:**
 
-1. Given chunkPath="chunk.000000" and noReplace=false, when I call
-   `fofn.BuildPutCommand("chunk.000000", false)`, then the result is: `ibackup
-   put -v -l chunk.000000.log --report chunk.000000.report` `-b -f chunk.000000
-   > chunk.000000.out 2>&1`.
+1. Given chunkPath="chunk.000000", noReplace=false, fofnName="project1", and no
+   user metadata, when I call `fofn.BuildPutCommand("chunk.000000", false,
+   "project1", "")`, then the result is: `ibackup put -v -l chunk.000000.log
+   --report chunk.000000.report --fofn project1 -b -f chunk.000000 >
+   chunk.000000.out 2>&1`.
 
-2. Given chunkPath="chunk.000000" and noReplace=true, when I call
-   `fofn.BuildPutCommand("chunk.000000", true)`, then the result includes
-   `--no_replace` in the command.
+2. Given noReplace=true, when I call `fofn.BuildPutCommand("chunk.000000", true,
+   "project1", "")`, then the result includes `--no_replace` in the command.
+
+3. Given userMeta="colour=red;size=large", when I call
+   `fofn.BuildPutCommand("chunk.000000", false, "project1",
+   "colour=red;size=large")`, then the result includes `--meta
+   "colour=red;size=large"` in the command.
+
+4. Given an empty fofnName, when I call `fofn.BuildPutCommand("chunk.000000",
+   false, "", "")`, then the result does not include `--fofn` in the command.
 
 ### F2: Create wr jobs for all chunks in a run
 
@@ -592,6 +637,8 @@ type RunConfig struct {
     SubDirName  string        // basename of fofn's parent dir
     FofnMtime   int64         // Unix seconds mtime of fofn
     NoReplace   bool          // .freeze mode
+    FofnName    string        // basename of subdir, for ibackup:fofn metadata
+    UserMeta    string        // semicolon-separated key=value from .metadata
     RAM         int           // MB, default 1024
     Time        time.Duration // default 8h
     Retries     uint8         // default 3
@@ -605,7 +652,7 @@ type RunConfig struct {
 1. Given a RunConfig with RunDir="/watch/proj/123", ChunkPaths=["chunk.000000",
    "chunk.000001"], SubDirName="proj", FofnMtime=123, when I call
    `fofn.CreateJobs(cfg)`, then I get 2 `*jobqueue.Job` values where:
-   - Each Cmd matches `BuildPutCommand(chunk, false)`.
+   - Each Cmd matches `BuildPutCommand(chunk, false, "proj", "")`.
    - Each Cwd equals "/watch/proj/123".
    - Each CwdMatters is true.
    - Each RepGroup is "ibackup_fofn_proj_123".
@@ -800,6 +847,40 @@ processing, based on whether its mtime differs from the last processed mtime
 3. Given a fofn with mtime 2000 and an existing run directory named "1000", when
    I call `fofn.NeedsProcessing(subDir)`, then it returns true and mtime 2000.
 
+### G6: Read user metadata from .metadata file
+
+As a developer using the fofn package, I want to read optional user-supplied
+metadata from a `.metadata` file in a subdirectory, so that the fofnserver can
+apply it (in the `ibackup:user:` namespace) to every uploaded file.
+
+The `.metadata` file is a TSV with one key-value pair per line (`key\tvalue`).
+Keys must not contain colons (they will be prefixed with `ibackup:user:` by
+`ibackup put`). Blank lines and lines starting with `#` are ignored.
+
+**Package:** `fofn/`
+**File:** `fofn/scan.go`
+**Test file:** `fofn/scan_test.go`
+
+**Acceptance tests:**
+
+1. Given a `.metadata` file containing `colour\tred\nsize\tlarge\n`, when I call
+   `fofn.ReadUserMetadata(dir)`, then I get `"colour=red;size=large"` and no
+   error.
+
+2. Given no `.metadata` file in the directory, when I call
+   `fofn.ReadUserMetadata(dir)`, then I get `""` and no error (metadata is
+   optional).
+
+3. Given an empty `.metadata` file, when I call `fofn.ReadUserMetadata(dir)`,
+   then I get `""` and no error.
+
+4. Given a `.metadata` file with blank lines and comment lines (`#
+   comment\n\ncolour\tred\n`), when I call `fofn.ReadUserMetadata(dir)`, then I
+   get `"colour=red"` (comments and blanks skipped) and no error.
+
+5. Given a `.metadata` file with a line that has no tab separator, when I call
+   `fofn.ReadUserMetadata(dir)`, then I get a non-nil error.
+
 ### G5: Determine and apply group ownership
 
 As a developer, I want generic utilities that determine the GID of a directory
@@ -836,8 +917,9 @@ As a developer using the fofn package, I want a `fofn.ProcessSubDir` function
 that performs the full streaming pipeline for one subdirectory: scan fofn via
 `scanner.ScanNullTerminated`, transform each path with
 `transfer.NewRequestWithTransformedLocal`, and stream directly into
-`fofn.WriteShuffledChunks`, then submit jobs - never holding all paths in
-memory.
+`fofn.WriteShuffledChunks`, then submit jobs with metadata flags derived from
+the subdirectory name (`ibackup:fofn`) and any `.metadata` file (`ibackup:user:`
+keys) - never holding all paths in memory.
 
 **Package:** `fofn/`
 **File:** `fofn/server.go`
@@ -850,8 +932,8 @@ memory.
    JobSubmitter, when I call `fofn.ProcessSubDir(subDir, submitter, cfg)`, then:
    - A run directory named after the fofn mtime is created.
    - 3 chunk files exist in the run directory (for chunkSize=10).
-   - 3 jobs were submitted to the mock with correct RepGroup, Cwd, and
-     Cmd.
+   - 3 jobs were submitted to the mock with correct RepGroup, Cwd, and Cmd (each
+     Cmd includes `--fofn <dirname>`).
    - No error is returned.
    - The returned `fofn.RunState` has RepGroup set to
      "ibackup_fofn_<dirname>_<mtime>" and the run directory path.
@@ -871,6 +953,14 @@ memory.
 5. Given the same setup as test 1, when I examine the created run directory and
    chunk files, then they have group ownership matching the watch directory's
    GID and are group-readable.
+
+6. Given a subdirectory with a `.metadata` file containing `colour\tred`, when I
+   call `fofn.ProcessSubDir(subDir, submitter, cfg)`, then each submitted job's
+   Cmd includes `--meta "colour=red"`.
+
+7. Given a subdirectory without a `.metadata` file, when I call
+   `fofn.ProcessSubDir(subDir, submitter, cfg)`, then each submitted job's Cmd
+   does not include `--meta`.
 
 ### H2: Generate status file after run completion
 
@@ -1073,9 +1163,10 @@ handler) to generate report files, simulating what wr would do.
 1. **New fofn processing:**
    Given a watch directory with a subdirectory containing:
    - A fofn with 5 null-terminated paths to real temporary local files,
-   - A .transformer file with a registered transformer, When the fofnserver
-   processes this directory (simulated by calling the fofn package directly or
-   building and running the binary), Then:
+   - A .transformer file with a registered transformer,
+   - A .metadata file with `colour\tred`,
+   When the fofnserver processes this directory (simulated by calling the fofn
+   package directly or building and running the binary), Then:
    - A run directory is created named after the fofn mtime.
    - Chunk files exist in the run directory.
    - Jobs were submitted (recorded by PretendSubmissions).
@@ -1085,6 +1176,8 @@ handler) to generate report files, simulating what wr would do.
      subdirectory.
    - The status file contains 5 data lines and a correct SUMMARY line.
    - All created files and directories have the correct group ownership.
+   - Each submitted put command includes `--fofn <dirname>` and `--meta
+     "colour=red"`.
 
 2. **Freeze mode:**
    Given the same setup but with a .freeze file, and some files already
@@ -1130,49 +1223,52 @@ A2 requires no new code; uses existing `transformer`/`transfer` packages.
 
 4. **B1** - `fofn.WriteShuffledChunks` (streaming, memory test)
 
-### Phase 4: Put no-replace mode (transfer/ + cmd/)
+### Phase 4: Put enhancements (transfer/ + cmd/)
 
 5. **C1** - RequestStatusFrozen constant
 6. **C2** - Putter no-replace mode
 7. **C3** - --no_replace CLI flag (main_test.go)
+8. **C4** - MetaKeyFofn constant
+9. **C5** - --fofn CLI flag (main_test.go)
 
 ### Phase 5: Put report output (cmd/)
 
-8. **D3** - --report CLI flag (main_test.go)
+10. **D3** - --report CLI flag (main_test.go)
 
 ### Phase 6: wr job management (fofn/jobs.go)
 
-9. **F1** - Create put job commands
-10. **F2** - Create wr jobs for chunks
-11. **F3** - Submit jobs via interface
-12. **F4** - Check run completion
-13. **F5** - Identify buried chunks
-14. **F6** - Delete buried jobs
+11. **F1** - Create put job commands
+12. **F2** - Create wr jobs for chunks
+13. **F3** - Submit jobs via interface
+14. **F4** - Check run completion
+15. **F5** - Identify buried chunks
+16. **F6** - Delete buried jobs
 
 ### Phase 7: Status generation (fofn/status.go)
 
-15. **E1** - `fofn.WriteStatusFromRun` (streaming, memory test)
+17. **E1** - `fofn.WriteStatusFromRun` (streaming, memory test)
 
 ### Phase 8: Directory scanning and group ownership
 
-16. **G5** - Group ownership (internal/ownership/)
-17. **G1** - Discover subdirectories with fofn files (fofn/scan.go)
-18. **G2** - Read transformer name
-19. **G3** - Detect .freeze file
-20. **G4** - Detect fofn needing processing
+18. **G5** - Group ownership (internal/ownership/)
+19. **G1** - Discover subdirectories with fofn files (fofn/scan.go)
+20. **G2** - Read transformer name
+21. **G3** - Detect .freeze file
+22. **G4** - Detect fofn needing processing
+23. **G6** - Read user metadata from .metadata file
 
 ### Phase 9: Orchestration (fofn/server.go)
 
-21. **H1** - Process single subdirectory end-to-end
-22. **H2** - Generate status after run completion
-23. **H3** - Handle fofn update while jobs running or buried
-24. **H4** - Restart resilience
-25. **H5** - Parallel processing
+24. **H1** - Process single subdirectory end-to-end
+25. **H2** - Generate status after run completion
+26. **H3** - Handle fofn update while jobs running or buried
+27. **H4** - Restart resilience
+28. **H5** - Parallel processing
 
 ### Phase 10: CLI and integration (cmd/ + main_test.go)
 
-26. **I1** - fofnserver CLI subcommand
-27. **J1** - End-to-end integration test
+29. **I1** - fofnserver CLI subcommand
+30. **J1** - End-to-end integration test
 
 ---
 
