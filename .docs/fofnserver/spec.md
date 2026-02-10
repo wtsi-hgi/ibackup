@@ -58,10 +58,10 @@ are split by responsibility:
 | `fofn/chunk_test.go`   | B1 tests                                |
 | `fofn/jobs.go`         | wr job creation, submission, monitoring |
 | `fofn/jobs_test.go`    | F1-F6 tests                             |
-| `fofn/config.go`       | config.yml parsing and creation          |
-| `fofn/config_test.go`  | G2 tests                                 |
-| `fofn/scan.go`         | Watch dir scanning                       |
-| `fofn/scan_test.go`    | G1, G3 tests                             |
+| `fofn/config.go`       | config.yml parsing and creation         |
+| `fofn/config_test.go`  | G2 tests                                |
+| `fofn/scan.go`         | Watch dir scanning                      |
+| `fofn/scan_test.go`    | G1, G3 tests                            |
 | `fofn/server.go`       | Server orchestration, ProcessSubDir     |
 | `fofn/server_test.go`  | H1-H5 tests                             |
 
@@ -1069,8 +1069,8 @@ poll cycle it:
      status file (with not_processed entries for buried chunks) and leave active
      run in place. Do not retry - user must update the fofn to trigger a fresh
      run.
-4. If no active run exists, check if fofn needs processing.
-5. If fofn needs processing, start a new run.
+4. If no active run exists, checks if fofn needs processing.
+5. If fofn needs processing, starts a new run.
 
 **Acceptance tests:**
 
@@ -1166,6 +1166,7 @@ fofnserver with appropriate configuration.
 
 **Package:** `cmd/`
 **File:** `cmd/fofnserver.go`
+**Test file:** `main_test.go`
 
 The command accepts these flags:
 
