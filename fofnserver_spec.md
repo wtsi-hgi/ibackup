@@ -17,9 +17,10 @@ each fofn it discovers, it:
 5. Parses per-chunk report files and writes an aggregated status file.
 
 It handles fofn updates by waiting for running jobs to finish. If any jobs from
-the previous run were buried, it deletes them and starts the new run fresh. It
-supports a `.freeze` mode where files already in iRODS are not re-uploaded even
-if modified locally.
+the previous run were buried, it deletes them and starts the new run fresh. Once
+a new run completes successfully, it deletes any older run directories to save
+space. It supports a `.freeze` mode where files already in iRODS are not
+re-uploaded even if modified locally.
 
 All files and directories created by the system must be readable by the same
 unix group that owns the watched directory.
@@ -1014,8 +1015,9 @@ poll cycle it:
 3. If an active run exists, checks if it is complete (all jobs in a terminal
    state - complete or buried).
    - If not complete (jobs still running), skip - wait for next cycle.
-   - If complete with NO buried jobs: generate status file, clear active run,
-     then check if fofn mtime has changed and start new run if so.
+   - If complete with NO buried jobs: generate status file, delete any older run
+     directories (clean up successful history), clear active run, then check if
+     fofn mtime has changed and start new run if so.
    - If complete with SOME buried jobs AND fofn mtime has changed: generate
      status file for the old run, delete the buried jobs from wr, clear active
      run, and start a new run with the updated fofn.
@@ -1053,6 +1055,11 @@ poll cycle it:
    the fofn mtime HAS changed, when I call `server.Poll()`, then: the status
    file for the old run is generated, the buried job is deleted from wr, the
    active run is cleared, and a new run is started with the updated fofn.
+
+7. Given an active run where all jobs completed successfully (run directory
+   "1000") and a *previous* run directory ("500") still exists on disk, when I
+   call `server.Poll()`, then the "500" directory is deleted (cleanup of old
+   successful/historic runs).
 
 ### H4: Restart resilience
 
