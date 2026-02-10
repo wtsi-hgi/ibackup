@@ -32,7 +32,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -40,7 +39,6 @@ import (
 	"time"
 
 	"github.com/VertebrateResequencing/wr/queue"
-	"github.com/gammazero/workerpool"
 	"github.com/ugorji/go/codec"
 	"github.com/wtsi-hgi/ibackup/statter"
 	"github.com/wtsi-hgi/ibackup/transfer"
@@ -94,15 +92,11 @@ const (
 	backupExt = ".backingup"
 
 	TrashPrefix = ".trash-"
-
-	// workerPoolSizeFiles is the max number of concurrent file stats we'll do
-	// during discovery.
-	workerPoolSizeFiles = 16
 )
 
 // DBRO is the read-only component of the DB struct.
 type DBRO struct {
-	db      *bolt.DB
+	db      BoltDB
 	ch      codec.Handle
 	slacker Slacker
 }
@@ -173,7 +167,7 @@ func NewRO(path string) (*DBRO, error) {
 	}
 
 	return &DBRO{
-		db: boltDB,
+		db: BoltDB{boltDB},
 		ch: new(codec.BincHandle),
 	}, nil
 }
@@ -184,7 +178,6 @@ type DB struct {
 	DBRO
 
 	mountList []string
-	filePool  *workerpool.WorkerPool
 
 	mu                    sync.Mutex
 	backupPath            string
@@ -210,13 +203,11 @@ func New(path, backupPath string, readonly bool) (*DB, error) {
 
 	db := &DB{
 		DBRO: DBRO{
-			db: boltDB,
+			db: BoltDB{boltDB},
 			ch: new(codec.BincHandle),
 		},
 		backupPath:            backupPath,
 		minTimeBetweenBackups: 1 * time.Second,
-
-		filePool: workerpool.New(workerPoolSizeFiles),
 	}
 
 	err = db.getMountPoints()
@@ -261,15 +252,13 @@ func initDB(path string, readonly bool) (*bolt.DB, error) {
 // Close closes the database. Be sure to call this to finalise any writes to
 // disk correctly.
 func (d *DB) Close() error {
-	d.filePool.StopWait()
-
 	return d.db.Close()
 }
 
 // AddOrUpdate adds or updates the given Set to the database. Errors if the set
 // is read-only, or if the set is being discovered.
 func (d *DB) AddOrUpdate(set *Set) error { //nolint:funlen,gocognit,gocyclo
-	err := d.db.Update(func(tx *bolt.Tx) error {
+	err := d.db.Update(func(tx Tx) error {
 		b := tx.Bucket([]byte(setsBucket))
 
 		id := set.ID()
@@ -325,7 +314,7 @@ func updateDatabaseSetWithUserSetDetails(dbSet, userSet *Set) error {
 	return nil
 }
 
-func (d *DB) deleteSubBucket(tx *bolt.Tx, setID, subBucket string) error {
+func (d *DB) deleteSubBucket(tx Tx, setID, subBucket string) error {
 	setsBucket := tx.Bucket([]byte(setsBucket))
 	subBucketName := []byte(subBucket + separator + setID)
 
@@ -339,7 +328,7 @@ func (d *DB) deleteSubBucket(tx *bolt.Tx, setID, subBucket string) error {
 // Hide marks the given Set as hidden in the database. This bypasses the normal
 // AddOrUpdate method, working on read-only sets.
 func (d *DB) Hide(set *Set) error {
-	return d.db.Update(func(tx *bolt.Tx) error {
+	return d.db.Update(func(tx Tx) error {
 		b := tx.Bucket([]byte(setsBucket))
 
 		id := set.ID()
@@ -364,14 +353,14 @@ func (d *DB) Hide(set *Set) error {
 // DeleteSubBucket deletes the provided sub bucket from the set with the
 // provided id.
 func (d *DB) DeleteDiscoveredFoldersBucket(setID string) error {
-	return d.db.Update(func(tx *bolt.Tx) error {
+	return d.db.Update(func(tx Tx) error {
 		return d.deleteSubBucket(tx, setID, discoveredFoldersBucket)
 	})
 }
 
 // UpdateEntry puts the updated entry into the database for the given set.
 func (d *DB) UpdateEntry(sid, key string, entry *Entry) error {
-	return d.db.Update(func(tx *bolt.Tx) error {
+	return d.db.Update(func(tx Tx) error {
 		_, b, err := d.getEntry(tx, sid, key)
 		if err != nil {
 			return err
@@ -465,7 +454,7 @@ func (d *DB) processSetIfOld(sid string, dirPaths, pathsToCheck []string) ([]str
 func (d *DB) checkIfDiscoveredFoldersBucketExists(sid string) (bool, error) {
 	var exists bool
 
-	err := d.db.View(func(tx *bolt.Tx) error {
+	err := d.db.View(func(tx Tx) error {
 		subBucketName := []byte(discoveredFoldersBucket + separator + sid)
 		setsBucket := tx.Bucket([]byte(setsBucket))
 
@@ -610,7 +599,7 @@ func (d *DB) RemoveFileEntry(setID string, path string) error {
 // removeEntry removes the entry with the provided entry key from a given
 // bucket of a given set.
 func (d *DB) removeEntry(setID string, entryKey string, bucketName string) error {
-	return d.db.Update(func(tx *bolt.Tx) error {
+	return d.db.Update(func(tx Tx) error {
 		subBucketName := []byte(bucketName + separator + setID)
 		setsBucket := tx.Bucket([]byte(setsBucket))
 
@@ -671,7 +660,7 @@ func (d *DBRO) getPathsInDir(setID string, dirpath string, buckets ...string) ([
 func (d *DBRO) getPathsWithPrefix(setID, bucketName, prefix string) ([]string, error) {
 	var entries []string
 
-	err := d.db.View(func(tx *bolt.Tx) error {
+	err := d.db.View(func(tx Tx) error {
 		subBucketName := []byte(bucketName + separator + setID)
 		setsBucket := tx.Bucket([]byte(setsBucket))
 
@@ -715,15 +704,15 @@ func (d *DB) MergeFileEntries(setID string, paths []string) error {
 // handles duplicates by updating the existing entries.
 // If the file is not already in the set, it will be added with the given status.
 func (d *DB) mergeEntries(setID string, dirents []*Dirent, bucketName string, initialStatus EntryStatus) error {
-	return d.db.Update(func(tx *bolt.Tx) error {
+	return d.db.Update(func(tx Tx) error {
 		b, existing, err := d.getExistingEntries(tx, bucketName, setID)
 		if err != nil {
 			return err
 		}
 
 		// this sort is critical to database write speed.
-		sort.Slice(dirents, func(i, j int) bool {
-			return strings.Compare(dirents[i].Path, dirents[j].Path) == -1
+		slices.SortFunc(dirents, func(i, j *Dirent) int {
+			return strings.Compare(i.Path, j.Path)
 		})
 
 		ec, err := newEntryCreator(d, tx, b, existing, setID, initialStatus)
@@ -744,7 +733,7 @@ func (d *DB) PutEntryInTrash(set *Set, entry *Entry) error {
 		bucketName = dirBucket
 	}
 
-	return d.db.Update(func(tx *bolt.Tx) error {
+	return d.db.Update(func(tx Tx) error {
 		sfsb, err := d.newSetFileBucket(tx, bucketName, destSet.ID())
 		if err != nil {
 			return err
@@ -769,7 +758,7 @@ func BuildTrashSetFromSet(givenSet *Set) Set {
 // SetRemoveRequests writes a list of remove requests into the database.
 // Directory paths will be put into the database with a trailing slash.
 func (d *DB) SetRemoveRequests(sid string, removeReqs []RemoveReq) error {
-	return d.db.Update(func(tx *bolt.Tx) error {
+	return d.db.Update(func(tx Tx) error {
 		sfsb, err := d.newSetFileBucket(tx, removedBucket, sid)
 		if err != nil {
 			return err
@@ -779,7 +768,7 @@ func (d *DB) SetRemoveRequests(sid string, removeReqs []RemoveReq) error {
 	})
 }
 
-func (d *DB) putRemoveRequestsInBucket(remReqs []RemoveReq, b *bolt.Bucket) error {
+func (d *DB) putRemoveRequestsInBucket(remReqs []RemoveReq, b Bucket) error {
 	for _, remReq := range remReqs {
 		if remReq.IsDir {
 			remReq.Path += "/"
@@ -796,7 +785,7 @@ func (d *DB) putRemoveRequestsInBucket(remReqs []RemoveReq, b *bolt.Bucket) erro
 
 // UpdateRemoveRequest replaces the given removeReq in the db.
 func (d *DB) UpdateRemoveRequest(removeReq RemoveReq) error {
-	return d.db.Update(func(tx *bolt.Tx) error {
+	return d.db.Update(func(tx Tx) error {
 		b := getSubBucket(tx, removeReq.Set.ID(), removedBucket)
 		if b == nil {
 			return nil
@@ -808,7 +797,7 @@ func (d *DB) UpdateRemoveRequest(removeReq RemoveReq) error {
 
 // deleteObjectFromSubBucket deletes the object with the given key from the db.
 func (d *DB) deleteObjectFromSubBucket(key, setID, subBucket string) error {
-	return d.db.Update(func(tx *bolt.Tx) error {
+	return d.db.Update(func(tx Tx) error {
 		b := getSubBucket(tx, setID, subBucket)
 		if b == nil {
 			return nil
@@ -819,7 +808,7 @@ func (d *DB) deleteObjectFromSubBucket(key, setID, subBucket string) error {
 }
 
 // getSubBucket returns a given subBucket for a given set.
-func getSubBucket(tx *bolt.Tx, setID, subBucket string) *bolt.Bucket {
+func getSubBucket(tx Tx, setID, subBucket string) Bucket {
 	subBucketName := []byte(subBucket + separator + setID)
 	setsBucket := tx.Bucket([]byte(setsBucket))
 
@@ -855,7 +844,7 @@ func (d *DBRO) GetIncompleteRemoveRequests() ([]RemoveReq, error) {
 func (d *DBRO) GetRemoveRequests(sid string) ([]RemoveReq, error) {
 	var remReqs []RemoveReq
 
-	err := d.db.View(func(tx *bolt.Tx) error {
+	err := d.db.View(func(tx Tx) error {
 		b := getSubBucket(tx, sid, removedBucket)
 		if b == nil {
 			return nil
@@ -976,7 +965,7 @@ func (d *DB) GetExistingDirs(setID string) (map[string]struct{}, error) {
 // getExistingEntries returns all existing entries in the given sub bucket of
 // the setsBucket. If an entry has recently been added (has the status
 // 'Registered'), it will not be returned.
-func (d *DB) getExistingEntries(tx *bolt.Tx, subBucketName string, setID string) (*bolt.Bucket,
+func (d *DB) getExistingEntries(tx Tx, subBucketName string, setID string) (Bucket,
 	map[string][]byte, error,
 ) {
 	existing := make(map[string][]byte)
@@ -1005,8 +994,8 @@ func (d *DB) getExistingEntries(tx *bolt.Tx, subBucketName string, setID string)
 
 type setFileSubBucket struct {
 	Name      []byte
-	Bucket    *bolt.Bucket
-	SetBucket *bolt.Bucket
+	Bucket    Bucket
+	SetBucket Bucket
 }
 
 func (s *setFileSubBucket) DeleteBucket() error {
@@ -1021,7 +1010,7 @@ func (s *setFileSubBucket) CreateBucket() error {
 	return err
 }
 
-func (d *DB) newSetFileBucket(tx *bolt.Tx, kindOfFileBucket, setID string) (*setFileSubBucket, error) {
+func (d *DB) newSetFileBucket(tx Tx, kindOfFileBucket, setID string) (*setFileSubBucket, error) {
 	subBucketName := []byte(kindOfFileBucket + separator + setID)
 	setBucket := tx.Bucket([]byte(setsBucket))
 
@@ -1071,7 +1060,7 @@ func (d *DB) MergeDirEntries(setID string, entries []*Dirent) error {
 // the byte slice version of the set id and the sets bucket so you can easily
 // put the set back again after making changes. Returns an error of setID isn't
 // in the database.
-func (d *DBRO) getSetByID(tx *bolt.Tx, setID string) (*Set, []byte, *bolt.Bucket, error) {
+func (d *DBRO) getSetByID(tx Tx, setID string) (*Set, []byte, Bucket, error) {
 	b := tx.Bucket([]byte(setsBucket))
 	bid := []byte(setID)
 
@@ -1112,7 +1101,7 @@ func (d *DB) Discover(setID string, cb DiscoverCallback) (*Set, error) {
 // setDiscoveryStarted updates StartedDiscovery and resets some status values
 // for the given set. Returns an error if the setID isn't in the database.
 func (d *DB) setDiscoveryStarted(setID string) error {
-	return d.db.Update(func(tx *bolt.Tx) error {
+	return d.db.Update(func(tx Tx) error {
 		set, bid, b, err := d.getSetByID(tx, setID)
 		if err != nil {
 			return err
@@ -1153,47 +1142,40 @@ func (d *DB) discover(setID string, cb DiscoverCallback) (*Set, error) {
 }
 
 func (d *DB) statPureFileEntries(setID string) error {
-	return d.db.Update(func(tx *bolt.Tx) error {
+	return d.db.Update(func(tx Tx) error {
 		sfsb, err := d.newSetFileBucket(tx, fileBucket, setID)
 		if err != nil {
 			return err
 		}
 
-		direntCh := make(chan *Dirent)
-		numEntries := 0
+		var paths []string
 
 		sfsb.Bucket.ForEach(func(k, v []byte) error { //nolint:errcheck
-			numEntries++
-			path := string(k)
-
-			d.filePool.Submit(func() {
-				direntCh <- newDirentFromPath(path)
-			})
+			paths = append(paths, string(k))
 
 			return nil
 		})
 
-		return d.handleFilePoolResults(tx, sfsb, setID, direntCh, numEntries)
+		return d.handleFilePoolResults(tx, sfsb, setID, paths)
 	})
 }
 
-func (d *DB) handleFilePoolResults(tx *bolt.Tx, sfsb *setFileSubBucket, setID string,
-	direntCh chan *Dirent, numEntries int,
+func (d *DB) handleFilePoolResults(tx Tx, sfsb *setFileSubBucket, setID string,
+	paths []string,
 ) error {
-	dirents := make([]*Dirent, numEntries)
+	dirents := make([]*Dirent, len(paths))
 
 	_, existing, err := d.getExistingEntries(tx, fileBucket, setID)
 	if err != nil {
 		return err
 	}
 
-	for n := range dirents {
-		dirent := <-direntCh
-		dirents[n] = dirent
+	for n, path := range paths {
+		dirents[n] = newDirentFromPath(path)
 	}
 
-	sort.Slice(dirents, func(i, j int) bool {
-		return strings.Compare(dirents[i].Path, dirents[j].Path) == -1
+	slices.SortFunc(dirents, func(i, j *Dirent) int {
+		return strings.Compare(i.Path, j.Path)
 	})
 
 	ec, err := newEntryCreator(d, tx, sfsb.Bucket, existing, setID, Pending)
@@ -1235,7 +1217,7 @@ func (d *DB) setDiscoveredEntries(setID string, fileDirents, dirDirents []*Diren
 func (d *DB) updateSetAfterDiscovery(setID string) (*Set, error) {
 	var updatedSet *Set
 
-	err := d.db.Update(func(tx *bolt.Tx) error {
+	err := d.db.Update(func(tx Tx) error {
 		set, bid, b, err := d.getSetByID(tx, setID)
 		if err != nil {
 			return err
@@ -1251,7 +1233,7 @@ func (d *DB) updateSetAfterDiscovery(setID string) (*Set, error) {
 	return updatedSet, err
 }
 
-func (d *DBRO) countAllFilesInSet(tx *bolt.Tx, setID string) uint64 {
+func (d *DBRO) countAllFilesInSet(tx Tx, setID string) uint64 {
 	var numFiles uint64
 
 	cb := func([]byte) {
@@ -1282,7 +1264,7 @@ func (d *DB) SetEntryStatus(r *transfer.Request) (*Entry, error) {
 
 	var entry *Entry
 
-	err = d.db.Update(func(tx *bolt.Tx) error {
+	err = d.db.Update(func(tx Tx) error {
 		got, bid, b, errt := d.getSetByID(tx, setID)
 		if errt != nil {
 			return errt
@@ -1328,7 +1310,7 @@ func requestToSetID(r *transfer.Request) (string, error) {
 //
 // If setDiscoveryTime is later than the entry's last attempt, resets the
 // entries Attempts to 0.
-func (d *DB) updateFileEntry(tx *bolt.Tx, setID string, r *transfer.Request, //nolint:funlen
+func (d *DB) updateFileEntry(tx Tx, setID string, r *transfer.Request, //nolint:funlen
 	setDiscoveryTime time.Time,
 ) (*Entry, error) {
 	entry, b, err := d.getEntry(tx, setID, r.Local)
@@ -1365,12 +1347,12 @@ func (d *DB) updateFileEntry(tx *bolt.Tx, setID string, r *transfer.Request, //n
 // getEntry finds the Entry for the given path in the given set. Returns it
 // along with the bucket it was in, so you can alter the Entry and put it back.
 // Returns an error if the entry can't be found.
-func (d *DBRO) getEntry(tx *bolt.Tx, setID, path string) (*Entry, *bolt.Bucket, error) {
+func (d *DBRO) getEntry(tx Tx, setID, path string) (*Entry, Bucket, error) {
 	setsBucket := tx.Bucket([]byte(setsBucket))
 
 	var (
 		entry *Entry
-		b     *bolt.Bucket
+		b     Bucket
 	)
 
 	for _, kind := range []string{fileBucket, discoveredBucket, dirBucket, discoveredFoldersBucket} {
@@ -1391,7 +1373,7 @@ func (d *DBRO) getEntry(tx *bolt.Tx, setID, path string) (*Entry, *bolt.Bucket, 
 // the setsBucket for the kind (fileBucket, discoveredBucket or dirBucket) and
 // set ID. If it doesn't exist, just returns nil. Also returns the subbucket it
 // was in. The entry will have isDir true if kind is dirBucket.
-func (d *DBRO) getEntryFromSubbucket(kind, setID, path string, setsBucket *bolt.Bucket) (*Entry, *bolt.Bucket) {
+func (d *DBRO) getEntryFromSubbucket(kind, setID, path string, setsBucket Bucket) (*Entry, Bucket) {
 	subBucketName := []byte(kind + separator + setID)
 
 	b := setsBucket.Bucket(subBucketName)
@@ -1455,7 +1437,7 @@ func requestStatusToEntryStatus(r *transfer.Request, entry *Entry) { //nolint:go
 
 // updateFailedLookup adds or removes the given entry to our failed lookup
 // bucket, for quick retieval of just failed entries later.
-func (d *DB) updateFailedLookup(tx *bolt.Tx, setID, path string, entry *Entry) error {
+func (d *DB) updateFailedLookup(tx Tx, setID, path string, entry *Entry) error {
 	if entry.unFailed {
 		return d.removeFailedLookup(tx, setID, path)
 	}
@@ -1469,21 +1451,21 @@ func (d *DB) updateFailedLookup(tx *bolt.Tx, setID, path string, entry *Entry) e
 
 // removeFailedLookup removes the given path for the given set from our failed
 // lookup bucket.
-func (d *DB) removeFailedLookup(tx *bolt.Tx, setID, path string) error {
+func (d *DB) removeFailedLookup(tx Tx, setID, path string) error {
 	b, lookupKey := d.getBucketAndKeyForFailedLookup(tx, setID, path)
 
 	return b.Delete(lookupKey)
 }
 
 // getBucketAndKeyForFailedLookup returns our failedBucket and a lookup key.
-func (d *DBRO) getBucketAndKeyForFailedLookup(tx *bolt.Tx, setID, path string) (*bolt.Bucket, []byte) {
+func (d *DBRO) getBucketAndKeyForFailedLookup(tx Tx, setID, path string) (Bucket, []byte) {
 	return tx.Bucket([]byte(failedBucket)), []byte(setID + separator + path)
 }
 
 // RemovePathFromFailedBucket removes the entry with the given setID and path
 // from the failed bucket.
 func (d *DB) RemovePathFromFailedBucket(setID, path string) error {
-	return d.db.Update(func(tx *bolt.Tx) error {
+	return d.db.Update(func(tx Tx) error {
 		return d.removeFailedLookup(tx, setID, path)
 	})
 }
@@ -1491,7 +1473,7 @@ func (d *DB) RemovePathFromFailedBucket(setID, path string) error {
 // addFailedLookup adds the given path for the given set from our failed lookup
 // bucket. For speed of retrieval, it's not actually just a lookup, but we
 // duplicate the entry data in the failedBucket.
-func (d *DB) addFailedLookup(tx *bolt.Tx, setID, path string, entry *Entry) error {
+func (d *DB) addFailedLookup(tx Tx, setID, path string, entry *Entry) error {
 	b, lookupKey := d.getBucketAndKeyForFailedLookup(tx, setID, path)
 
 	return b.Put(lookupKey, d.encodeToBytes(entry))
@@ -1503,7 +1485,7 @@ func (d *DB) addFailedLookup(tx *bolt.Tx, setID, path string, entry *Entry) erro
 //
 // Uses the supplied bolt Tx to ensure recounts (fixCounts) see a consistent
 // snapshot that includes the updated entry.
-func (d *DB) updateSetBasedOnEntry(tx *bolt.Tx, set *Set, entry *Entry) error {
+func (d *DB) updateSetBasedOnEntry(tx Tx, set *Set, entry *Entry) error {
 	getFileEntries := func(setID string, filter EntryFilter) ([]*Entry, error) {
 		return d.getFileEntriesWithTx(tx, setID, filter), nil
 	}
@@ -1529,7 +1511,7 @@ func (d *DBRO) GetAll() ([]*Set, error) {
 func (d *DBRO) GetFilteredSets(filter SetFilter) ([]*Set, error) {
 	var sets []*Set
 
-	err := d.db.View(func(tx *bolt.Tx) error {
+	err := d.db.View(func(tx Tx) error {
 		b := tx.Bucket([]byte(setsBucket))
 
 		return b.ForEach(func(k, v []byte) error {
@@ -1579,7 +1561,7 @@ func (d *DBRO) decodeSet(v []byte) *Set {
 func (d *DBRO) GetByRequester(requester string) ([]*Set, error) {
 	var sets []*Set
 
-	err := d.db.View(func(tx *bolt.Tx) error {
+	err := d.db.View(func(tx Tx) error {
 		c := tx.Bucket([]byte(userToSetBucket)).Cursor()
 		b := tx.Bucket([]byte(setsBucket))
 
@@ -1622,7 +1604,7 @@ func (d *DBRO) GetByNameAndRequester(name, requester string) (*Set, error) {
 func (d *DBRO) GetByID(id string) *Set {
 	var set *Set
 
-	d.db.View(func(tx *bolt.Tx) error { //nolint:errcheck
+	d.db.View(func(tx Tx) error { //nolint:errcheck
 		b := tx.Bucket([]byte(setsBucket))
 
 		v := b.Get([]byte(id))
@@ -1660,7 +1642,7 @@ func FileEntryFilterLastState(e *Entry) bool {
 func (d *DBRO) GetFileEntries(setID string, filter EntryFilter) ([]*Entry, error) {
 	var entries []*Entry
 
-	err := d.db.View(func(tx *bolt.Tx) error {
+	err := d.db.View(func(tx Tx) error {
 		entries = d.getFileEntriesWithTx(tx, setID, filter)
 
 		return nil
@@ -1669,7 +1651,7 @@ func (d *DBRO) GetFileEntries(setID string, filter EntryFilter) ([]*Entry, error
 	return entries, err
 }
 
-func (d *DBRO) getFileEntriesWithTx(tx *bolt.Tx, setID string, filter EntryFilter) []*Entry {
+func (d *DBRO) getFileEntriesWithTx(tx Tx, setID string, filter EntryFilter) []*Entry {
 	entries := make([]*Entry, 0)
 
 	cb := func(v []byte) {
@@ -1690,7 +1672,7 @@ func (d *DBRO) getFileEntriesWithTx(tx *bolt.Tx, setID string, filter EntryFilte
 func (d *DBRO) GetFileEntryForSet(setID, filePath string) (*Entry, error) {
 	var entry *Entry
 
-	err := d.db.View(func(tx *bolt.Tx) error {
+	err := d.db.View(func(tx Tx) error {
 		var err error
 
 		entry, _, err = d.getEntry(tx, setID, filePath)
@@ -1711,7 +1693,7 @@ func (d *DBRO) GetDirEntryForSet(setID, dirPath string) (*Entry, error) {
 
 	dirPath = strings.TrimSuffix(dirPath, "/")
 
-	err := d.db.View(func(tx *bolt.Tx) error {
+	err := d.db.View(func(tx Tx) error {
 		var err error
 
 		entry, _, err = d.getEntry(tx, setID, dirPath)
@@ -1752,7 +1734,7 @@ func (d *DBRO) getEntries(setID, bucketName string, filter EntryFilter) ([]*Entr
 		}
 	}
 
-	err := d.db.View(func(tx *bolt.Tx) error {
+	err := d.db.View(func(tx Tx) error {
 		getEntriesViewFunc(tx, setID, bucketName, cb)
 
 		return nil
@@ -1766,7 +1748,7 @@ func (d *DBRO) getEntries(setID, bucketName string, filter EntryFilter) ([]*Entr
 func (d *DBRO) getDefinedFileEntry(setID string) (*Entry, error) {
 	var entry *Entry
 
-	err := d.db.View(func(tx *bolt.Tx) error {
+	err := d.db.View(func(tx Tx) error {
 		subBucketName := []byte(fileBucket + separator + setID)
 		setsBucket := tx.Bucket([]byte(setsBucket))
 
@@ -1790,7 +1772,7 @@ func (d *DBRO) getDefinedFileEntry(setID string) (*Entry, error) {
 
 type getEntriesViewCallBack func(v []byte)
 
-func getEntriesViewFunc(tx *bolt.Tx, setID, bucketName string, cb getEntriesViewCallBack) {
+func getEntriesViewFunc(tx Tx, setID, bucketName string, cb getEntriesViewCallBack) {
 	subBucketName := getSubBucketName(setID, bucketName)
 	setsBucket := tx.Bucket([]byte(setsBucket))
 
@@ -1829,7 +1811,7 @@ func (d *DBRO) GetFailedEntries(setID string) ([]*Entry, int, error) {
 	entries := make([]*Entry, 0, maxFailedEntries)
 	skipped := 0
 
-	err := d.db.View(func(tx *bolt.Tx) error {
+	err := d.db.View(func(tx Tx) error {
 		c := tx.Bucket([]byte(failedBucket)).Cursor()
 		prefix := []byte(setID + separator)
 
@@ -1945,7 +1927,7 @@ func (d *DB) ResetRemoveSize(setID string) error {
 // callback, allowing you to change properties on it. The altered set will then
 // be stored back in the database.
 func (d *DB) updateSetProperties(setID string, cb func(*Set)) error {
-	return d.db.Update(func(tx *bolt.Tx) error {
+	return d.db.Update(func(tx Tx) error {
 		set, bid, b, err := d.getSetByID(tx, setID)
 		if err != nil {
 			return err
@@ -2006,7 +1988,7 @@ func (d *DB) doBackup() error {
 		return err
 	}
 
-	err = d.db.View(func(tx *bolt.Tx) error {
+	err = d.db.DB.View(func(tx *bolt.Tx) error {
 		_, errw := tx.WriteTo(f)
 
 		return errw
@@ -2106,7 +2088,7 @@ func (d *DB) MakeSetWritable(sid string) error {
 // Delete removes the set from the db. Also it deletes its entries and any
 // sub-buckets.
 func (d *DB) Delete(setID string) error {
-	return d.db.Update(func(tx *bolt.Tx) error {
+	return d.db.Update(func(tx Tx) error {
 		set, bid, b, err := d.getSetByID(tx, setID)
 		if err != nil {
 			return err
@@ -2131,7 +2113,7 @@ func (d *DB) Delete(setID string) error {
 	})
 }
 
-func deleteSubBuckets(b *bolt.Bucket, setID string) error {
+func deleteSubBuckets(b Bucket, setID string) error {
 	buckets := []string{
 		fileBucket,
 		dirBucket,
@@ -2150,7 +2132,7 @@ func deleteSubBuckets(b *bolt.Bucket, setID string) error {
 	return nil
 }
 
-func deleteUserMapping(tx *bolt.Tx, requester, setID string) error {
+func deleteUserMapping(tx Tx, requester, setID string) error {
 	userToSet := tx.Bucket([]byte(userToSetBucket))
 
 	err := userToSet.Delete([]byte(requester + separator + setID))
@@ -2161,7 +2143,7 @@ func deleteUserMapping(tx *bolt.Tx, requester, setID string) error {
 	return nil
 }
 
-func deleteFailedMapping(tx *bolt.Tx, setID string) error {
+func deleteFailedMapping(tx Tx, setID string) error {
 	c := tx.Bucket([]byte(failedBucket)).Cursor()
 
 	prefix := []byte(setID)

@@ -41,7 +41,6 @@ import (
 	"github.com/ugorji/go/codec"
 	"github.com/wtsi-hgi/ibackup/errs"
 	"github.com/wtsi-hgi/ibackup/statter"
-	bolt "go.etcd.io/bbolt"
 )
 
 const transformerInodeSeparator = ":"
@@ -83,7 +82,7 @@ func (d *DB) getMountPoints() error {
 // handleInode records the inode of the given Dirent in the database, and
 // returns the path to the first local file with that inode if we've seen if
 // before.
-func (d *DB) handleInode(tx *bolt.Tx, de *Dirent, transformerID string) (string, error) {
+func (d *DB) handleInode(tx Tx, de *Dirent, transformerID string) (string, error) {
 	key := d.inodeMountPointKeyFromDirent(de)
 	b := tx.Bucket([]byte(inodeBucket))
 	transformerPath := transformerID + transformerInodeSeparator + de.Path
@@ -134,7 +133,7 @@ func (d *DB) GetFilesFromInode(inode uint64, mountPoint string) ([]string, error
 
 	var files []string
 
-	err := d.db.View(func(tx *bolt.Tx) error {
+	err := d.db.View(func(tx Tx) error {
 		b := tx.Bucket([]byte(inodeBucket))
 
 		v := b.Get(key)
@@ -169,7 +168,7 @@ func (d *DB) RemoveFileFromInode(path string, inode uint64) error {
 	de.Inode = inode
 	key := d.inodeMountPointKeyFromDirent(de)
 
-	err := d.db.Update(func(tx *bolt.Tx) error {
+	err := d.db.Update(func(tx Tx) error {
 		b := tx.Bucket([]byte(inodeBucket))
 
 		v := b.Get(key)
@@ -192,7 +191,7 @@ func (d *DBRO) GetAllSetsForFile(path string) ([]string, error) {
 
 	var sets []string
 
-	err := d.db.View(func(tx *bolt.Tx) error {
+	err := d.db.View(func(tx Tx) error {
 		b := tx.Bucket([]byte(setsBucket))
 		if b == nil {
 			return errSetsBucketMissing
@@ -256,7 +255,7 @@ func isPathInTransformerPaths(path string, files []string) (bool, error) {
 	return false, nil
 }
 
-func (d *DB) updateInodeEntryBasedOnFiles(b *bolt.Bucket, key []byte, path string, files []string) error {
+func (d *DB) updateInodeEntryBasedOnFiles(b Bucket, key []byte, path string, files []string) error {
 	isInFiles, err := isPathInTransformerPaths(path, files)
 	if err != nil {
 		return err
@@ -418,7 +417,7 @@ func (d *DB) stat(path string) (fs.FileInfo, error) {
 func (d *DB) HardlinkPaths(e *Entry) ([]string, error) {
 	var transformerPaths []string
 
-	if err := d.db.View(func(tx *bolt.Tx) error {
+	if err := d.db.View(func(tx Tx) error {
 		transformerPaths = d.getTransformerPaths(tx, e)
 
 		return nil
@@ -444,7 +443,7 @@ func (d *DB) HardlinkPaths(e *Entry) ([]string, error) {
 	return files, nil
 }
 
-func (d *DB) getTransformerPaths(tx *bolt.Tx, e *Entry) []string {
+func (d *DB) getTransformerPaths(tx Tx, e *Entry) []string {
 	ib := tx.Bucket([]byte(inodeBucket))
 
 	key := d.inodeMountPointKeyFromEntry(e)
@@ -468,7 +467,7 @@ func (d *DB) getTransformerPaths(tx *bolt.Tx, e *Entry) []string {
 func (d *DB) HardlinkRemote(e *Entry) (string, error) {
 	var remotePath string
 
-	err := d.db.View(func(tx *bolt.Tx) error {
+	err := d.db.View(func(tx Tx) error {
 		transformerPaths := d.getTransformerPaths(tx, e)
 
 		if len(transformerPaths) == 0 {
@@ -488,7 +487,7 @@ func (d *DB) HardlinkRemote(e *Entry) (string, error) {
 	return remotePath, err
 }
 
-func getRemotePath(tx *bolt.Tx, transformerID, path string) (string, error) {
+func getRemotePath(tx Tx, transformerID, path string) (string, error) {
 	tb := tx.Bucket([]byte(transformerFromIDBucket))
 
 	v := tb.Get([]byte(transformerID))

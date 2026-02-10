@@ -30,8 +30,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"time"
-
-	bolt "go.etcd.io/bbolt"
 )
 
 type EntryStatus int
@@ -215,11 +213,11 @@ func (e *Entry) hasSameCoreProperties(other *Entry) bool {
 
 type entryCreator struct {
 	db              *DB
-	tx              *bolt.Tx
-	bucket          *bolt.Bucket
+	tx              Tx
+	bucket          Bucket
 	existingEntries map[string][]byte
 	setID           []byte
-	setBucket       *bolt.Bucket
+	setBucket       Bucket
 	set             *Set
 	transformerID   string
 	intialStatus    EntryStatus
@@ -229,7 +227,7 @@ type entryCreator struct {
 // given bucket from dirents passed to UpdateOrCreateEntries(), basing them on
 // the supplied existing ones. The bucket is expected to be empty (so get
 // existing ones and then delete the bucket before calling this).
-func newEntryCreator(db *DB, tx *bolt.Tx, bucket *bolt.Bucket, existing map[string][]byte,
+func newEntryCreator(db *DB, tx Tx, bucket Bucket, existing map[string][]byte,
 	setID string, initialStatus EntryStatus) (*entryCreator, error) {
 	got, setIDb, setBucket, err := db.getSetByID(tx, setID)
 	if err != nil {

@@ -44,7 +44,6 @@ import (
 	"github.com/wtsi-hgi/ibackup/internal/testutil"
 	"github.com/wtsi-hgi/ibackup/slack"
 	"github.com/wtsi-hgi/ibackup/transfer"
-	bolt "go.etcd.io/bbolt"
 )
 
 const userPerms = 0700
@@ -556,7 +555,7 @@ func TestSetDB(t *testing.T) {
 						checkUserLookup := func() bool {
 							found := false
 
-							errv := db.db.View(func(tx *bolt.Tx) error {
+							errv := db.db.View(func(tx Tx) error {
 								b := tx.Bucket([]byte(userToSetBucket))
 								val := b.Get([]byte(set.Requester + separator + set.ID()))
 								found = val != nil
@@ -572,7 +571,7 @@ func TestSetDB(t *testing.T) {
 
 						failedPath := "/path/failed"
 
-						erru := db.db.Update(func(tx *bolt.Tx) error {
+						erru := db.db.Update(func(tx Tx) error {
 							return db.addFailedLookup(tx, set.ID(), failedPath, &Entry{Path: failedPath, Status: Failed})
 						})
 						So(erru, ShouldBeNil)
@@ -580,7 +579,7 @@ func TestSetDB(t *testing.T) {
 						checkFailedLookup := func() bool {
 							found := false
 
-							errv := db.db.View(func(tx *bolt.Tx) error {
+							errv := db.db.View(func(tx Tx) error {
 								b, key := db.getBucketAndKeyForFailedLookup(tx, set.ID(), failedPath)
 								val := b.Get(key)
 								found = val != nil
@@ -849,7 +848,7 @@ func TestSetDB(t *testing.T) {
 							Error:     "",
 						}
 
-						err = db.db.Update(func(tx *bolt.Tx) error {
+						err = db.db.Update(func(tx Tx) error {
 							eg, b, errge := db.getEntry(tx, set.ID(), r.Local)
 							So(errge, ShouldBeNil)
 							eg.Attempts = 2
@@ -2275,7 +2274,7 @@ func TestSetEntryStatusRecountSeesUpdatedEntry(t *testing.T) {
 
 		// Force a recount path during SetEntryStatus: NumFiles=0 makes
 		// Uploaded++ temporarily invalid and triggers fixCounts().
-		err = db.db.Update(func(tx *bolt.Tx) error {
+		err = db.db.Update(func(tx Tx) error {
 			got, bid, b, errt := db.getSetByID(tx, set.ID())
 			So(errt, ShouldBeNil)
 
