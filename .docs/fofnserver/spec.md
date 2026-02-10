@@ -247,9 +247,10 @@ packages:
   `*transfer.Request` with Local and Remote set.
 
 The fofn package should use these directly. No new transformation code is
-needed. `fofn.WriteShuffledChunks` (B1) calls `transformer.MakePathTransformer`
-with the transformer name it receives, then transforms each parsed path using
-`transfer.NewRequestWithTransformedLocal`.
+needed. `fofn.ProcessSubDir` (H1) calls `transformer.MakePathTransformer` with
+the transformer name from `config.yml` to get a `func(string) string`, then
+passes that function to `fofn.WriteShuffledChunks` (B1), which applies it to
+each scanned path to produce the remote path.
 
 ---
 
@@ -261,14 +262,15 @@ As a developer using the fofn package, I want to stream path pairs from a
 callback source directly into shuffled chunk files without holding all entries
 in memory, so that fofns with 10s of millions of paths can be chunked.
 
-The approach: `fofn.WriteShuffledChunks` accepts a fofn path, a transformer
-name, an output directory, a chunk size, and a random seed. It uses
-`scanner.ScanNullTerminated` internally to stream entries from the fofn and
-transforms each path using the named transformer. It opens up to `numChunks`
-file handles simultaneously (where `numChunks` can be estimated by a first pass
-counting entries, or by using a default upper bound). Each incoming entry is
-assigned to a random chunk index (`rand.Intn(numChunks)`) and written
-immediately. This achieves shuffle without storing all entries.
+The approach: `fofn.WriteShuffledChunks` accepts a fofn path, a transform
+function (`func(string) string` mapping local path to remote path), an output
+directory, a chunk size, and a random seed. It uses `scanner.ScanNullTerminated`
+internally to stream entries from the fofn and transforms each path using the
+provided function. It opens up to `numChunks` file handles simultaneously (where
+`numChunks` can be estimated by a first pass counting entries, or by using a
+default upper bound). Each incoming entry is assigned to a random chunk index
+(`rand.Intn(numChunks)`) and written immediately. This achieves shuffle without
+storing all entries.
 
 For testability, the assignment must be deterministic when a seed is provided.
 The public API should therefore accept a `randSeed` argument (or an equivalent
@@ -291,14 +293,14 @@ Chunk files may end up with slightly uneven sizes (binomial distribution around
 **Acceptance tests:**
 
 1. Given a fofn with 25 null-terminated paths and a chunk size of 10, when I
-   call `fofn.WriteShuffledChunks(fofnPath, transformerName, dir, 10, 1)`,
-   then 3 chunk files are created in `dir` named `chunk.000000`, `chunk.000001`,
+   call `fofn.WriteShuffledChunks(fofnPath, transform, dir, 10, 1)`, then 3
+   chunk files are created in `dir` named `chunk.000000`, `chunk.000001`,
    `chunk.000002`, the total line count across all chunks is 25, and each line
    has base64-encoded local and remote paths separated by a tab.
 
 2. Given a fofn with 10 paths and a chunk size of 10, when I call
-   `fofn.WriteShuffledChunks(fofnPath, transformerName, dir, 10, 1)`, then 1
-   chunk file is created containing 10 lines.
+   `fofn.WriteShuffledChunks(fofnPath, transform, dir, 10, 1)`, then 1 chunk
+   file is created containing 10 lines.
 
 3. Given an empty fofn, when I call `fofn.WriteShuffledChunks(...)`, then 0
    chunk files are created and an empty slice of chunk names is returned.
@@ -954,9 +956,11 @@ are readable by the same unix group as the watch directory.
 
 As a developer using the fofn package, I want a `fofn.ProcessSubDir` function
 that performs the full streaming pipeline for one subdirectory: read
-`config.yml`, call `fofn.WriteShuffledChunks` (which internally scans the fofn
-and transforms each path), then submit jobs with metadata flags derived from
-the subdirectory name (`ibackup:fofn`) and any user metadata from `config.yml`
+`config.yml`, look up the named transformer via
+`transformer.MakePathTransformer` to get a transform function, pass it to
+`fofn.WriteShuffledChunks` (which internally scans the fofn and applies the
+transform to each path), then submit jobs with metadata flags derived from the
+subdirectory name (`ibackup:fofn`) and any user metadata from `config.yml`
 (`ibackup:user:` keys) - never holding all paths in memory.
 
 **Package:** `fofn/`
@@ -1343,9 +1347,9 @@ packages.
 
 ### Existing code reuse
 
-- **Path transformation:** Use `transformer.MakePathTransformer()` and
-  `transfer.NewRequestWithTransformedLocal()` directly. No new transformation
-  code.
+- **Path transformation:** `ProcessSubDir` calls
+  `transformer.MakePathTransformer()` and passes the resulting function to
+  `WriteShuffledChunks`. No new transformation code.
 - **Null scanning:** `scanNulls` and `fofnLineSplitter` in `cmd/put.go` are
   moved to `internal/scanner/`. Both `cmd/` and `fofn/` import from there.
 - **Test helpers:** Use `internal.RegisterDefaultTransformers()`,
@@ -1363,8 +1367,8 @@ may accumulate all entries in a slice. Specifically:
 - `fofn.WriteReportEntry` writes one entry at a time.
 - `fofn.ParseReportCallback` streams via callback.
 - `fofn.WriteStatusFromRun` streams from report files to status file.
-- `fofn.ProcessSubDir` (H1) never holds all paths in memory; it pipes the
-  scanner output through transform and into chunk writing.
+- `fofn.ProcessSubDir` (H1) never holds all paths in memory; it passes the
+  transform function to `WriteShuffledChunks` which handles streaming.
 
 Each of A1, B1, and E1 includes a memory-bounded acceptance test that creates
 1,000,000 entries and asserts heap growth stays under a threshold (10-20 MB).
