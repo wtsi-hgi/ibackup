@@ -65,10 +65,6 @@ are split by responsibility:
 
 ### Changes to existing packages
 
-- `internal/scanner/`: New sub-package for null-terminated file scanning
-  (moved from `cmd/put.go`).
-- `internal/ownership/`: New sub-package for GID lookup and group-owned
-  file/directory creation.
 - `transfer/meta.go`: Add `MetaKeyFofn` constant.
 - `transfer/request.go`: Add `RequestStatusFrozen`.
 - `transfer/put.go`: Add no-replace mode to `Putter`.
@@ -139,10 +135,10 @@ Given a watch directory `/watch` with a subdirectory `project1/`, the layout is:
         status               # aggregated status file for this run
         chunk.000001
         ...
+```
 
 The server writes the status file into the run directory, then updates the
 subdirectory-root `status` symlink atomically to point at `<runDir>/status`.
-```
 
 ### Unix group ownership
 
@@ -294,9 +290,8 @@ Chunk files may end up with slightly uneven sizes (binomial distribution around
 **Acceptance tests:**
 
 1. Given a fofn with 25 null-terminated paths and a chunk size of 10, when I
-   call `fofn.WriteShuffledChunks(fofnPath, transformerName, dir, 10, 1)`, then
-   3
-   chunk files are created in `dir` named `chunk.000000`, `chunk.000001`,
+   call `fofn.WriteShuffledChunks(fofnPath, transformerName, dir, 10, 1)`,
+   then 3 chunk files are created in `dir` named `chunk.000000`, `chunk.000001`,
    `chunk.000002`, the total line count across all chunks is 25, and each line
    has base64-encoded local and remote paths separated by a tab.
 
@@ -1040,7 +1035,7 @@ poll cycle it:
 2. For each subdirectory, checks if an active run exists.
 3. If an active run exists, checks if it is complete (all jobs in a terminal
    state - complete or buried).
-    - If not complete (jobs still running), skip - wait for next cycle.
+   - If not complete (jobs still running), skip - wait for next cycle.
    - If complete with NO buried jobs: generate status file, delete any older run
      directories (clean up successful history), clear active run, then check if
      fofn mtime has changed and start new run if so.
