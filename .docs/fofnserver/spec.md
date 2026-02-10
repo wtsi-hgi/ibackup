@@ -83,9 +83,6 @@ operations:
 ```go
 type JobSubmitter interface {
     SubmitJobs(jobs []*jobqueue.Job) error
-    FindCompleteJobsByRepGroup(
-        prefix string,
-    ) ([]*jobqueue.Job, error)
     FindBuriedJobsByRepGroup(
         prefix string,
     ) ([]*jobqueue.Job, error)
