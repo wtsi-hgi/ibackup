@@ -101,6 +101,11 @@ For each acceptance test, follow these steps exactly. Do not skip any step.
   nested Convey blocks are clearer.
 - **Test independence:** Each `Convey` block must be independent. No
   shared mutable state between tests.
+- **Assertion volume:** Never put `So()` assertions inside loops that
+  iterate more than ~100 times. Instead, count successes/failures in
+  the loop and assert the final count once after the loop. For example,
+  count write errors in a variable and then
+  `So(writeErrors, ShouldEqual, 0)`.
 - Every acceptance test listed in spec.md for the referenced user stories
   MUST have a corresponding GoConvey test. Do not skip, stub out, or
   circumvent any test.
@@ -124,8 +129,11 @@ func TestStreamingMemory(t *testing.T) {
     runtime.GC()
     var after runtime.MemStats
     runtime.ReadMemStats(&after)
-    // 5. Assert:
-    growth := after.HeapInuse - before.HeapInuse
+    // 5. Assert (guard against unsigned underflow):
+    var growth uint64
+    if after.HeapInuse > before.HeapInuse {
+        growth = after.HeapInuse - before.HeapInuse
+    }
     So(growth, ShouldBeLessThan, 20*1024*1024)
 }
 ```
