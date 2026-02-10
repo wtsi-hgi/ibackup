@@ -1,6 +1,6 @@
 ---
 name: go-implementor
-description: Go code implementation for the ibackup project. Provides the TDD cycle, copyright boilerplate, code quality standards, modern Go idioms, testing patterns, streaming/memory requirements, and implementation workflow. Use when implementing Go code, writing tests, creating new packages, or following a phase plan.
+description: Go code implementation for the ibackup project. Provides the TDD cycle, copyright boilerplate, code quality standards, modern Go idioms, testing patterns, memory-bounded test pattern, and implementation workflow. Use when implementing Go code, writing tests, creating new packages, or following a phase plan.
 ---
 
 # Go Implementor Skill
