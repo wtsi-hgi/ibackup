@@ -39,7 +39,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-
 	"github.com/wtsi-hgi/ibackup/internal/scanner"
 	"github.com/wtsi-hgi/ibackup/server"
 	"github.com/wtsi-hgi/ibackup/set"

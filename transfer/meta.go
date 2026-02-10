@@ -57,6 +57,7 @@ const (
 	MetaKeyHardlink = MetaNamespace + "hardlink"
 	// iRODS path that contains the data for this hardlink.
 	MetaKeyRemoteHardlink = MetaNamespace + "remotehardlink"
+	MetaKeyFofn           = MetaNamespace + "fofn"
 	validMetaParts        = 2
 	validMetaKeyDividers  = 2
 	metaListSeparator     = ","
@@ -67,6 +68,10 @@ const (
 	ErrInvalidDurationFormat   = "duration must be in the form <number><unit>, or YYYY-MM-DD"
 	ErrInvalidReviewRemoveDate = "--review duration must be smaller than --removal duration"
 )
+
+var Reasons = []string{"unset", "backup", "archive", "quarantine"} //nolint:gochecknoglobals
+
+type Reason int
 
 const (
 	Unset Reason = iota
@@ -93,8 +98,6 @@ func (e MetaError) Is(err error) bool {
 	return false
 }
 
-type Reason int
-
 func (r *Reason) Set(value string) error {
 	index := slices.Index(Reasons, value)
 	if index != -1 {
@@ -106,6 +109,134 @@ func (r *Reason) Set(value string) error {
 	return MetaError{ErrInvalidReason, value}
 }
 
+// ValidateAndCreateUserMetadata takes a key=value string, validates it as a
+// metadata value then returns the key prefixed with the user namespace,
+// 'ibackup:user:', and the value. Returns an error if the meta is invalid.
+func ValidateAndCreateUserMetadata(kv string) (string, string, error) {
+	parts := strings.Split(kv, "=")
+	if len(parts) != validMetaParts {
+		return "", "", MetaError{errInvalidMetaLength, kv}
+	}
+
+	key, err := handleNamespace(parts[0])
+	value := parts[1]
+
+	return key, value, err
+}
+
+// handleNamespace prefixes the user namespace 'ibackup:user:' onto the key if
+// it isn't already included. Returns an error if the key contains an invalid
+// namespace.
+func handleNamespace(key string) (string, error) {
+	keyDividers := strings.Count(key, ":")
+
+	switch {
+	case keyDividers == 0:
+		return MetaUserNamespace + key, nil
+	case keyDividers != validMetaKeyDividers:
+		return "", MetaError{errInvalidMetaNamespace, key}
+	case strings.HasPrefix(key, MetaUserNamespace):
+		return key, nil
+	default:
+		return "", MetaError{errInvalidMetaNamespace, key}
+	}
+}
+
+// createBackupMetadata adds the backup metadata values to the local meta map if
+// the provided inputs are valid.
+func createBackupMetadata(reason Reason, review, removal string, mm *Meta) error {
+	if reason == Unset {
+		reason = Backup
+	}
+
+	review, removal = setReviewAndRemovalDurations(reason, review, removal)
+
+	removalDate, err := getFutureDateFromDurationOrDate(removal)
+	if err != nil {
+		return err
+	}
+
+	reviewDate, err := getFutureDateFromDurationOrDate(review)
+	if err != nil {
+		return err
+	}
+
+	if reviewDate.After(removalDate) {
+		return MetaError{ErrInvalidReviewRemoveDate, fmt.Sprintf("%s is after %s", review, removal)}
+	}
+
+	reviewStr, removalStr, err := reviewRemovalDatesToMeta(reviewDate, removalDate)
+	if err != nil {
+		return err
+	}
+
+	mm.setBackupMeta(reason.String(), reviewStr, removalStr)
+
+	return nil
+}
+
+// setReviewAndRemovalDurations returns the review and removal durations for a
+// given reason. If the user has not set a duration, the function will return
+// the default corresponding to the provided reason.
+func setReviewAndRemovalDurations(reason Reason, review, removal string) (string, string) {
+	defaultReviewDuration, defaultRemovalDuration := getDefaultReviewAndRemovalDurations(reason)
+	if review == "" {
+		review = defaultReviewDuration
+	}
+
+	if removal == "" {
+		removal = defaultRemovalDuration
+	}
+
+	return review, removal
+}
+
+func getDefaultReviewAndRemovalDurations(reason Reason) (string, string) {
+	switch reason {
+	case Archive:
+		return "1y", "2y"
+	case Quarantine:
+		return "2m", "3m"
+	default:
+		return "6m", "1y"
+	}
+}
+
+func reviewRemovalDatesToMeta(review, removal time.Time) (string, string, error) {
+	reviewStr, err := internal.TimeToMeta(review)
+	if err != nil {
+		return "", "", err
+	}
+
+	removalStr, err := internal.TimeToMeta(removal)
+
+	return reviewStr, removalStr, err
+}
+
+// getFutureDateFromDurationOrDate calculates the future date based on the time
+// string provided. Returns an error if duration is not in the format
+// '<number><unit>', e.g. '1y', '12m' or YYYY-MM-DD.
+func getFutureDateFromDurationOrDate(t string) (time.Time, error) {
+	date, err := time.Parse("2006-01-02", t)
+	if err == nil {
+		return date, nil
+	}
+
+	num, err := strconv.Atoi(t[:len(t)-1])
+	if err != nil {
+		return time.Time{}, MetaError{ErrInvalidDurationFormat, t}
+	}
+
+	switch t[len(t)-1] {
+	case 'y':
+		return time.Now().AddDate(num, 0, 0), nil
+	case 'm':
+		return time.Now().AddDate(0, num, 0), nil
+	default:
+		return time.Time{}, MetaError{ErrInvalidDurationFormat, t}
+	}
+}
+
 func (r Reason) String() string {
 	return Reasons[r]
 }
@@ -114,7 +245,9 @@ func (r Reason) Type() string {
 	return "Reason"
 }
 
-var Reasons = []string{"unset", "backup", "archive", "quarantine"} //nolint:gochecknoglobals
+func areBackupInputsAllBlank(reason Reason, review, removal string) bool {
+	return reason == Unset && review == "" && removal == ""
+}
 
 type Meta struct {
 	LocalMeta  map[string]string
@@ -181,142 +314,10 @@ func applyExistingMetadata(mm map[string]string, existingMetadata map[string]str
 	return &Meta{LocalMeta: mm, remoteMeta: make(map[string]string)}
 }
 
-// ValidateAndCreateUserMetadata takes a key=value string, validates it as a
-// metadata value then returns the key prefixed with the user namespace,
-// 'ibackup:user:', and the value. Returns an error if the meta is invalid.
-func ValidateAndCreateUserMetadata(kv string) (string, string, error) {
-	parts := strings.Split(kv, "=")
-	if len(parts) != validMetaParts {
-		return "", "", MetaError{errInvalidMetaLength, kv}
-	}
-
-	key, err := handleNamespace(parts[0])
-	value := parts[1]
-
-	return key, value, err
-}
-
-// handleNamespace prefixes the user namespace 'ibackup:user:' onto the key if
-// it isn't already included. Returns an error if the key contains an invalid
-// namespace.
-func handleNamespace(key string) (string, error) {
-	keyDividers := strings.Count(key, ":")
-
-	switch {
-	case keyDividers == 0:
-		return MetaUserNamespace + key, nil
-	case keyDividers != validMetaKeyDividers:
-		return "", MetaError{errInvalidMetaNamespace, key}
-	case strings.HasPrefix(key, MetaUserNamespace):
-		return key, nil
-	default:
-		return "", MetaError{errInvalidMetaNamespace, key}
-	}
-}
-
-func areBackupInputsAllBlank(reason Reason, review, removal string) bool {
-	return reason == Unset && review == "" && removal == ""
-}
-
 func (m *Meta) setBackupMeta(reason, review, removal string) {
 	m.LocalMeta[MetaKeyReason] = reason
 	m.LocalMeta[MetaKeyReview] = review
 	m.LocalMeta[MetaKeyRemoval] = removal
-}
-
-// createBackupMetadata adds the backup metadata values to the local meta map if
-// the provided inputs are valid.
-func createBackupMetadata(reason Reason, review, removal string, mm *Meta) error {
-	if reason == Unset {
-		reason = Backup
-	}
-
-	review, removal = setReviewAndRemovalDurations(reason, review, removal)
-
-	removalDate, err := getFutureDateFromDurationOrDate(removal)
-	if err != nil {
-		return err
-	}
-
-	reviewDate, err := getFutureDateFromDurationOrDate(review)
-	if err != nil {
-		return err
-	}
-
-	if reviewDate.After(removalDate) {
-		return MetaError{ErrInvalidReviewRemoveDate, fmt.Sprintf("%s is after %s", review, removal)}
-	}
-
-	reviewStr, removalStr, err := reviewRemovalDatesToMeta(reviewDate, removalDate)
-	if err != nil {
-		return err
-	}
-
-	mm.setBackupMeta(reason.String(), reviewStr, removalStr)
-
-	return nil
-}
-
-func reviewRemovalDatesToMeta(review, removal time.Time) (string, string, error) {
-	reviewStr, err := internal.TimeToMeta(review)
-	if err != nil {
-		return "", "", err
-	}
-
-	removalStr, err := internal.TimeToMeta(removal)
-
-	return reviewStr, removalStr, err
-}
-
-// setReviewAndRemovalDurations returns the review and removal durations for a
-// given reason. If the user has not set a duration, the function will return
-// the default corresponding to the provided reason.
-func setReviewAndRemovalDurations(reason Reason, review, removal string) (string, string) {
-	defaultReviewDuration, defaultRemovalDuration := getDefaultReviewAndRemovalDurations(reason)
-	if review == "" {
-		review = defaultReviewDuration
-	}
-
-	if removal == "" {
-		removal = defaultRemovalDuration
-	}
-
-	return review, removal
-}
-
-func getDefaultReviewAndRemovalDurations(reason Reason) (string, string) {
-	switch reason {
-	case Archive:
-		return "1y", "2y"
-	case Quarantine:
-		return "2m", "3m"
-	default:
-		return "6m", "1y"
-	}
-}
-
-// getFutureDateFromDurationOrDate calculates the future date based on the time
-// string provided. Returns an error if duration is not in the format
-// '<number><unit>', e.g. '1y', '12m' or YYYY-MM-DD.
-func getFutureDateFromDurationOrDate(t string) (time.Time, error) {
-	date, err := time.Parse("2006-01-02", t)
-	if err == nil {
-		return date, nil
-	}
-
-	num, err := strconv.Atoi(t[:len(t)-1])
-	if err != nil {
-		return time.Time{}, MetaError{ErrInvalidDurationFormat, t}
-	}
-
-	switch t[len(t)-1] {
-	case 'y':
-		return time.Now().AddDate(num, 0, 0), nil
-	case 'm':
-		return time.Now().AddDate(0, num, 0), nil
-	default:
-		return time.Time{}, MetaError{ErrInvalidDurationFormat, t}
-	}
 }
 
 // addStandardMeta ensures our Meta is unique to us, and adds key vals from the

@@ -26,12 +26,12 @@
 package cmd
 
 import (
+	"bufio"
 	b64 "encoding/base64"
 	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
-
 	"github.com/wtsi-hgi/ibackup/internal/scanner"
 	"github.com/wtsi-hgi/ibackup/transfer"
 	"github.com/wtsi-hgi/ibackup/transformer"
@@ -39,9 +39,13 @@ import (
 
 // options for this cmd.
 var arFile string
+
 var arPrefix string
+
 var arTx = map[string]*bool{}
+
 var arNull bool
+
 var arBase64 bool
 
 // addremoteCmd represents the addremote command.

@@ -105,22 +105,10 @@ func streamToChunks(
 
 	writers := createWriters(files)
 
-	rng := rand.New(rand.NewSource(randSeed)) //nolint:gosec
-
-	err = scanner.ScanNullTerminated(
-		fofnPath, func(entry string) error {
-			return writeEntry(
-				writers, rng, numChunks,
-				entry, transform,
-			)
-		},
-	)
-
-	if err != nil {
-		return nil, err
-	}
-
-	if err := flushWriters(writers); err != nil {
+	if err := distributeEntries(
+		fofnPath, transform, writers,
+		numChunks, randSeed,
+	); err != nil {
 		return nil, err
 	}
 
@@ -153,6 +141,14 @@ func createChunkFiles(
 	return files, paths, nil
 }
 
+func closeFiles(files []*os.File) {
+	for _, f := range files {
+		if f != nil {
+			f.Close()
+		}
+	}
+}
+
 func createWriters(files []*os.File) []*bufio.Writer {
 	writers := make([]*bufio.Writer, len(files))
 
@@ -161,6 +157,30 @@ func createWriters(files []*os.File) []*bufio.Writer {
 	}
 
 	return writers
+}
+
+func distributeEntries(
+	fofnPath string,
+	transform func(string) (string, error),
+	writers []*bufio.Writer,
+	numChunks int,
+	randSeed int64,
+) error {
+	rng := rand.New(rand.NewSource(randSeed)) //nolint:gosec
+
+	err := scanner.ScanNullTerminated(
+		fofnPath, func(entry string) error {
+			return writeEntry(
+				writers, rng, numChunks,
+				entry, transform,
+			)
+		},
+	)
+	if err != nil {
+		return err
+	}
+
+	return flushWriters(writers)
 }
 
 func writeEntry(
@@ -199,12 +219,4 @@ func flushWriters(writers []*bufio.Writer) error {
 	}
 
 	return nil
-}
-
-func closeFiles(files []*os.File) {
-	for _, f := range files {
-		if f != nil {
-			f.Close()
-		}
-	}
 }

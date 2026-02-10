@@ -126,24 +126,6 @@ func handleGetServerMode(_ time.Time) {
 	dief("server mode is not currently implemented")
 }
 
-func handleGetManualMode() {
-	requests, err := getRequestsFromFile(putFile, "", putBase64)
-	if err != nil {
-		die(err)
-	}
-
-	_, downloadResults, skipResults, dfunc := handleGet(requests)
-
-	defer dfunc()
-
-	printResults("down", downloadResults, skipResults, len(requests), putVerbose)
-}
-
-func handleGet(requests []*transfer.Request) (chan *transfer.Request, chan *transfer.Request,
-	chan *transfer.Request, func()) {
-	return handleGetPut(requests, getGetter)
-}
-
 func getGetter(requests []*transfer.Request) *transfer.Putter {
 	handler, err := baton.GetBatonHandler()
 	if err != nil {
@@ -156,4 +138,22 @@ func getGetter(requests []*transfer.Request) *transfer.Putter {
 	}
 
 	return p
+}
+
+func handleGetManualMode() {
+	requests, err := getRequestsFromFile(putFile, "", putBase64)
+	if err != nil {
+		die(err)
+	}
+
+	_, downloadResults, skipResults, dfunc := handleGet(requests)
+
+	defer dfunc()
+
+	printResults("down", downloadResults, skipResults, len(requests), putVerbose, nil)
+}
+
+func handleGet(requests []*transfer.Request) (chan *transfer.Request, chan *transfer.Request,
+	chan *transfer.Request, func()) {
+	return handleGetPut(requests, getGetter)
 }

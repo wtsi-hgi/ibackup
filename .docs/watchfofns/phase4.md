@@ -22,8 +22,8 @@ Add RequestStatusFrozen constant with string value "frozen" to the transfer
 package. Write a GoConvey test in transfer/request_test.go covering the 1
 acceptance test from spec.md section C1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 4.2: C4 - MetaKeyFofn constant [parallel with 4.1]
 
@@ -33,8 +33,8 @@ Add MetaKeyFofn constant with string value "ibackup:fofn" to the transfer
 package. Write a GoConvey test in transfer/meta_test.go covering the 1
 acceptance test from spec.md section C4.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Batch 2 (parallel, after batch 1 is reviewed)
 
@@ -47,8 +47,8 @@ already exist in iRODS with a different mtime are skipped with "frozen" status
 instead of re-uploaded. Write GoConvey tests in transfer/put_test.go covering
 all 4 acceptance tests from spec.md section C2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 4.4: C5 - --fofn CLI flag [parallel with 4.3]
 
@@ -58,8 +58,8 @@ Depends on C4. Add --fofn flag to ibackup put that applies ibackup:fofn
 metadata to every uploaded file. Write GoConvey tests in main_test.go covering
 all 2 acceptance tests from spec.md section C5.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Batch 3 (after batch 2 is reviewed)
 
@@ -70,8 +70,8 @@ spec.md section: C3
 Depends on C2. Add --no_replace flag to ibackup put CLI. Write GoConvey tests
 in main_test.go covering all 2 acceptance tests from spec.md section C3.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `go-reviewer` skill (review all items

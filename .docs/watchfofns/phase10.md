@@ -23,8 +23,8 @@ Implement the cobra subcommand in cmd/watchfofns.go with all flags listed in
 spec.md section I1. Write GoConvey tests in main_test.go covering all 3
 acceptance tests from spec.md section I1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 10.2: J1 - End-to-end integration test
 
@@ -35,6 +35,6 @@ using PretendSubmissions and LocalHandler. Cover all 5 acceptance tests from
 spec.md section J1 (new fofn processing, freeze mode, restart resilience,
 config.yml creation helper, buried jobs with fofn update).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 

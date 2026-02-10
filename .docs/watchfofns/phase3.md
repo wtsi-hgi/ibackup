@@ -22,6 +22,6 @@ GoConvey tests in fofn/chunk_test.go covering all 7 acceptance tests from
 spec.md section B1, including the deterministic seed test and the
 memory-bounded test with 1,000,000 entries.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 

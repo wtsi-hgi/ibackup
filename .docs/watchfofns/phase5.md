@@ -18,6 +18,6 @@ status report using fofn.WriteReportEntry (from phase 1). Write GoConvey tests
 in main_test.go covering all 2 acceptance tests from spec.md section D3. The
 report must be round-trippable through fofn.CollectReport().
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 

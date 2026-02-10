@@ -24,6 +24,6 @@ the chunk file to identify files that were not reported and mark them as
 acceptance tests from spec.md section E1, including the memory-bounded test
 with 1,000,000 entries.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 

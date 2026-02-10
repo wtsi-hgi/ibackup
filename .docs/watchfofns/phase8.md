@@ -23,8 +23,8 @@ internal/ownership/ownership.go. Write GoConvey tests in
 internal/ownership/ownership_test.go covering all 4 acceptance tests from
 spec.md section G4.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 8.2: G1 - Discover subdirectories with fofn files [parallel with 8.1, 8.3]
 
@@ -33,8 +33,8 @@ spec.md section: G1
 Implement ScanForFOFNs in fofn/scan.go. Write GoConvey tests in
 fofn/scan_test.go covering all 4 acceptance tests from spec.md section G1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 8.3: G2 - Parse and create config.yml [parallel with 8.1, 8.2]
 
@@ -44,8 +44,8 @@ Implement ReadConfig, WriteConfig, and the SubDirConfig type (including
 UserMetaString method) in fofn/config.go. Write GoConvey tests in
 fofn/config_test.go covering all 13 acceptance tests from spec.md section G2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Batch 2 (after batch 1 is reviewed)
 
@@ -57,6 +57,6 @@ Depends on G1 (uses SubDir type). Implement NeedsProcessing in fofn/scan.go.
 Write GoConvey tests in fofn/scan_test.go covering all 3 acceptance tests
 from spec.md section G3.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 

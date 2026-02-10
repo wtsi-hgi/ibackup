@@ -34,6 +34,12 @@ import (
 	"github.com/wtsi-hgi/ibackup/internal"
 )
 
+func TestMetaKeyFofn(t *testing.T) {
+	Convey("MetaKeyFofn has the correct string value", t, func() {
+		So(MetaKeyFofn, ShouldEqual, "ibackup:fofn")
+	})
+}
+
 func TestMeta(t *testing.T) {
 	now := time.Now()
 

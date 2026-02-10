@@ -37,8 +37,8 @@ import (
 
 	"github.com/inconshreveable/log15"
 	"github.com/spf13/cobra"
-
 	"github.com/wtsi-hgi/ibackup/baton"
+	"github.com/wtsi-hgi/ibackup/fofn"
 	"github.com/wtsi-hgi/ibackup/internal/scanner"
 	"github.com/wtsi-hgi/ibackup/server"
 	"github.com/wtsi-hgi/ibackup/statter"
@@ -80,8 +80,11 @@ const (
 var (
 	putFile       string
 	putMeta       string
+	putFofn       string
+	putReport     string
 	putVerbose    bool
 	putBase64     bool
+	putNoReplace  bool
 	putServerMode bool
 	putLog        string
 	maxStuckTime  time.Duration
@@ -167,6 +170,8 @@ func init() {
 		"report upload status of every file")
 	putCmd.Flags().BoolVarP(&putBase64, "base64", "b", false,
 		"input paths are base64 encoded")
+	putCmd.Flags().BoolVar(&putNoReplace, "no_replace", false,
+		"skip files that already exist in iRODS with a different mtime instead of re-uploading")
 	putCmd.Flags().BoolVarP(&putServerMode, "server", "s", false,
 		"pull requests from the server instead of --file; only usable by the user who started the server")
 	putCmd.Flags().StringVarP(&putLog, "log", "l", "",
@@ -175,6 +180,157 @@ func init() {
 		"override the default stuck wait time (1h)")
 	putCmd.Flags().StringVar(&statterPath, "statter", "",
 		"path to an external statter program (https://github.com/wtsi-hgi/statter)")
+	putCmd.Flags().StringVar(&putFofn, "fofn", "",
+		"apply ibackup:fofn metadata with the given value to every uploaded file")
+	putCmd.Flags().StringVar(&putReport, "report", "",
+		"write a machine-parsable per-file status report to the given path")
+}
+
+type results struct {
+	total    int
+	verbose  bool
+	i        int
+	fails    int
+	missing  int
+	replaced int
+	skipped  int
+	uploads  int
+	mu       sync.Mutex
+}
+
+// collectResults drains the transfer and skip channels,
+// updating result counters and writing report entries.
+func collectResults(
+	transferResults, skipResults chan *transfer.Request,
+	total int, verbose bool,
+	reportWriter io.Writer,
+) *results {
+	r := &results{total: total, verbose: verbose}
+
+	var wg sync.WaitGroup
+
+	for _, ch := range []chan *transfer.Request{
+		skipResults, transferResults,
+	} {
+		wg.Add(1)
+
+		go func(ch chan *transfer.Request) {
+			defer wg.Done()
+
+			for req := range ch {
+				r.update(req)
+				writeReportForRequest(
+					reportWriter, req,
+				)
+			}
+		}(ch)
+	}
+
+	wg.Wait()
+
+	return r
+}
+
+func (r *results) update(req *transfer.Request) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.i++
+
+	warnIfBad(req, r.i, r.total, r.verbose)
+
+	switch req.Status { //nolint:exhaustive
+	case transfer.RequestStatusFailed, transfer.RequestStatusUploading:
+		r.fails++
+	case transfer.RequestStatusMissing, transfer.RequestStatusOrphaned:
+		r.missing++
+	case transfer.RequestStatusReplaced:
+		r.replaced++
+	case transfer.RequestStatusUnmodified, transfer.RequestStatusHardlinkSkipped,
+		transfer.RequestStatusFrozen:
+		r.skipped++
+	case transfer.RequestStatusUploaded, transfer.RequestStatusWarning:
+		r.uploads++
+	}
+}
+
+// warnIfBad warns if this Request failed or is missing. If verbose, logs at
+// info level the Request details.
+func warnIfBad(r *transfer.Request, i, total int, verbose bool) {
+	if serverMode() {
+		switch r.Status {
+		case transfer.RequestStatusFailed, transfer.RequestStatusMissing, transfer.RequestStatusOrphaned,
+			transfer.RequestStatusWarning:
+			warn("[%d/%d] rid=%s %s: %s", i, total, r.ID(), r.Status, r.Error)
+		case transfer.RequestStatusHardlinkSkipped:
+			warn("[%d/%d] rid=%s Hardlink skipped: hardlink=%s", i, total, r.ID(), r.Hardlink)
+		default:
+			if verbose {
+				info("[%d/%d] rid=%s %s", i, total, r.ID(), r.Status)
+			}
+		}
+
+		return
+	}
+
+	switch r.Status {
+	case transfer.RequestStatusFailed, transfer.RequestStatusMissing, transfer.RequestStatusOrphaned,
+		transfer.RequestStatusWarning:
+		warn("[%d/%d] %s %s: %s", i, total, r.Local, r.Status, r.Error)
+	case transfer.RequestStatusHardlinkSkipped:
+		warn("[%d/%d] Hardlink skipped: %s\t%s", i, total, r.Local, r.Hardlink)
+	default:
+		if verbose {
+			info("[%d/%d] %s %s", i, total, r.Local, r.Status)
+		}
+	}
+}
+
+// printResults reads from the given channels, outputs
+// info about them to STDOUT and STDERR, then emits
+// summary numbers. Supply the total number of requests
+// made. If reportWriter is non-nil, a fofn.ReportEntry
+// is written for each request. Exits 1 if there were
+// upload errors.
+func printResults(
+	upDown string,
+	transferResults, skipResults chan *transfer.Request,
+	total int, verbose bool,
+	reportWriter io.Writer,
+) {
+	r := collectResults(
+		transferResults, skipResults,
+		total, verbose, reportWriter,
+	)
+
+	info("%d %sloaded (%d replaced); %d skipped; %d failed; %d missing",
+		r.uploads+r.replaced, upDown, r.replaced,
+		r.skipped, r.fails, r.missing)
+
+	if r.fails > 0 {
+		os.Exit(1)
+	}
+}
+
+// writeReportForRequest writes a fofn.ReportEntry for
+// the given request to the writer, if non-nil.
+func writeReportForRequest(
+	w io.Writer, req *transfer.Request,
+) {
+	if w == nil {
+		return
+	}
+
+	entry := fofn.ReportEntry{
+		Local:  req.Local,
+		Remote: req.Remote,
+		Status: string(req.Status),
+		Error:  req.Error,
+	}
+
+	if err := fofn.WriteReportEntry(w, entry); err != nil {
+		warn("failed to write report entry: %s", err)
+	}
 }
 
 func serverMode() bool {
@@ -239,105 +395,27 @@ func handleServerMode( //nolint:gocognit,gocyclo,funlen
 	}
 }
 
-func handleGetPut(
-	requests []*transfer.Request,
-	get func([]*transfer.Request) *transfer.Putter,
-) (chan *transfer.Request, chan *transfer.Request, chan *transfer.Request, func()) {
-	if putVerbose {
-		host, errh := os.Hostname()
-		if errh != nil {
-			die(errh)
-		}
-
-		info("client starting on host %s, pid %d", host, os.Getpid())
-	}
-
-	if len(requests) == 0 {
-		warn("no requests to work on")
-
-		os.Exit(0)
-	}
-
-	if putVerbose {
-		info("got %d requests to work on", len(requests))
-	}
-
-	p := get(requests)
-
-	transferStarts, transferResults, skipResults := p.Put()
-
-	return transferStarts, transferResults, skipResults, p.Cleanup
-}
-
-func handlePut(client *server.Client, requests []*transfer.Request) (chan *transfer.Request,
-	chan *transfer.Request, chan *transfer.Request, func(),
-) {
-	return handleGetPut(requests, func(requests []*transfer.Request) *transfer.Putter {
-		p := getPutter(requests)
-
-		handleCollections(client, p)
-
-		return p
-	})
-}
-
-func getPutter(requests []*transfer.Request) *transfer.Putter {
-	handler, err := baton.GetBatonHandler()
-	if err != nil {
-		die(err)
-	}
-
-	p, err := transfer.New(handler, requests)
-	if err != nil {
-		die(err)
-	}
-
-	return p
-}
-
-func handleCollections(client *server.Client, p *transfer.Putter) {
-	if putVerbose {
-		info("will create collections")
-	}
-
-	if client == nil {
-		createCollection(p)
-
-		return
-	}
-
-	err := client.StartingToCreateCollections()
-	if err != nil {
-		warn("telling server we started to create collections failed: %s", err)
-	}
-
-	createCollection(p)
-
-	if err = client.FinishedCreatingCollections(); err != nil {
-		warn("telling server we finished creating collections failed: %s", err)
-	}
-}
-
-func createCollection(p *transfer.Putter) {
-	err := p.CreateCollections()
-	if err != nil {
-		warn("collection creation failed: %s", err)
-	} else if putVerbose {
-		info("collections created")
-	}
-}
-
 func handlePutManualMode() {
-	requests, err := getRequestsFromFile(putFile, putMeta, putBase64)
+	requests, err := getRequestsFromFile(
+		putFile, putMeta, putBase64,
+	)
 	if err != nil {
 		die(err)
 	}
 
-	_, uploadResults, skipResults, dfunc := handlePut(nil, requests)
+	_, uploadResults, skipResults, dfunc := handlePut(
+		nil, requests,
+	)
 
 	defer dfunc()
 
-	printResults("up", uploadResults, skipResults, len(requests), putVerbose)
+	reportWriter := openReportWriter(putReport)
+	defer closeReportWriter(reportWriter)
+
+	printResults(
+		"up", uploadResults, skipResults,
+		len(requests), putVerbose, reportWriter,
+	)
 }
 
 // getRequestsFromFile reads our 3 column file format from a file or STDIN and
@@ -349,6 +427,8 @@ func getRequestsFromFile(file, meta string, base64Encoded bool) ([]*transfer.Req
 	}
 
 	requests := parsePutFile(file, meta, user.Username, scanner.FofnLineSplitter(false), base64Encoded)
+
+	applyFofnMeta(requests, putFofn)
 
 	return requests, nil
 }
@@ -478,98 +558,134 @@ func decodeBase64(path string, isEncoded bool) string {
 	return string(b)
 }
 
-type results struct {
-	total    int
-	verbose  bool
-	i        int
-	fails    int
-	missing  int
-	replaced int
-	skipped  int
-	uploads  int
-	mu       sync.Mutex
-}
-
-func (r *results) update(req *transfer.Request) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	r.i++
-
-	warnIfBad(req, r.i, r.total, r.verbose)
-
-	switch req.Status { //nolint:exhaustive
-	case transfer.RequestStatusFailed, transfer.RequestStatusUploading:
-		r.fails++
-	case transfer.RequestStatusMissing, transfer.RequestStatusOrphaned:
-		r.missing++
-	case transfer.RequestStatusReplaced:
-		r.replaced++
-	case transfer.RequestStatusUnmodified, transfer.RequestStatusHardlinkSkipped:
-		r.skipped++
-	case transfer.RequestStatusUploaded, transfer.RequestStatusWarning:
-		r.uploads++
-	}
-}
-
-// printResults reads from the given channels, outputs info about them to STDOUT
-// and STDERR, then emits summary numbers. Supply the total number of requests
-// made. Exits 1 if there were upload errors.
-func printResults(upDown string, transferResults, skipResults chan *transfer.Request, total int, verbose bool) {
-	r := &results{total: total, verbose: verbose}
-
-	var wg sync.WaitGroup
-
-	for _, ch := range []chan *transfer.Request{skipResults, transferResults} {
-		wg.Add(1)
-
-		go func(ch chan *transfer.Request) {
-			defer wg.Done()
-
-			for req := range ch {
-				r.update(req)
-			}
-		}(ch)
+// applyFofnMeta sets the ibackup:fofn metadata key on every
+// request's Meta if fofn is non-empty.
+func applyFofnMeta(requests []*transfer.Request, fofn string) {
+	if fofn == "" {
+		return
 	}
 
-	wg.Wait()
-
-	info("%d %sloaded (%d replaced); %d skipped; %d failed; %d missing",
-		r.uploads+r.replaced, upDown, r.replaced, r.skipped, r.fails, r.missing)
-
-	if r.fails > 0 {
-		os.Exit(1)
-	}
-}
-
-// warnIfBad warns if this Request failed or is missing. If verbose, logs at
-// info level the Request details.
-func warnIfBad(r *transfer.Request, i, total int, verbose bool) {
-	if serverMode() {
-		switch r.Status {
-		case transfer.RequestStatusFailed, transfer.RequestStatusMissing, transfer.RequestStatusOrphaned,
-			transfer.RequestStatusWarning:
-			warn("[%d/%d] rid=%s %s: %s", i, total, r.ID(), r.Status, r.Error)
-		case transfer.RequestStatusHardlinkSkipped:
-			warn("[%d/%d] rid=%s Hardlink skipped: hardlink=%s", i, total, r.ID(), r.Hardlink)
-		default:
-			if verbose {
-				info("[%d/%d] rid=%s %s", i, total, r.ID(), r.Status)
-			}
+	for _, r := range requests {
+		if r.Meta == nil {
+			r.Meta = transfer.NewMeta()
 		}
+
+		r.Meta.LocalMeta[transfer.MetaKeyFofn] = fofn
+	}
+}
+
+func handlePut(client *server.Client, requests []*transfer.Request) (chan *transfer.Request,
+	chan *transfer.Request, chan *transfer.Request, func(),
+) {
+	return handleGetPut(requests, func(requests []*transfer.Request) *transfer.Putter {
+		p := getPutter(requests)
+
+		handleCollections(client, p)
+
+		return p
+	})
+}
+
+func handleGetPut(
+	requests []*transfer.Request,
+	get func([]*transfer.Request) *transfer.Putter,
+) (chan *transfer.Request, chan *transfer.Request, chan *transfer.Request, func()) {
+	if putVerbose {
+		host, errh := os.Hostname()
+		if errh != nil {
+			die(errh)
+		}
+
+		info("client starting on host %s, pid %d", host, os.Getpid())
+	}
+
+	if len(requests) == 0 {
+		warn("no requests to work on")
+
+		os.Exit(0)
+	}
+
+	if putVerbose {
+		info("got %d requests to work on", len(requests))
+	}
+
+	p := get(requests)
+
+	transferStarts, transferResults, skipResults := p.Put()
+
+	return transferStarts, transferResults, skipResults, p.Cleanup
+}
+
+func getPutter(requests []*transfer.Request) *transfer.Putter {
+	handler, err := baton.GetBatonHandler()
+	if err != nil {
+		die(err)
+	}
+
+	p, err := transfer.New(handler, requests)
+	if err != nil {
+		die(err)
+	}
+
+	p.SetNoReplace(putNoReplace)
+
+	return p
+}
+
+func handleCollections(client *server.Client, p *transfer.Putter) {
+	if putVerbose {
+		info("will create collections")
+	}
+
+	if client == nil {
+		createCollection(p)
 
 		return
 	}
 
-	switch r.Status {
-	case transfer.RequestStatusFailed, transfer.RequestStatusMissing, transfer.RequestStatusOrphaned,
-		transfer.RequestStatusWarning:
-		warn("[%d/%d] %s %s: %s", i, total, r.Local, r.Status, r.Error)
-	case transfer.RequestStatusHardlinkSkipped:
-		warn("[%d/%d] Hardlink skipped: %s\t%s", i, total, r.Local, r.Hardlink)
-	default:
-		if verbose {
-			info("[%d/%d] %s %s", i, total, r.Local, r.Status)
-		}
+	err := client.StartingToCreateCollections()
+	if err != nil {
+		warn("telling server we started to create collections failed: %s", err)
+	}
+
+	createCollection(p)
+
+	if err = client.FinishedCreatingCollections(); err != nil {
+		warn("telling server we finished creating collections failed: %s", err)
+	}
+}
+
+func createCollection(p *transfer.Putter) {
+	err := p.CreateCollections()
+	if err != nil {
+		warn("collection creation failed: %s", err)
+	} else if putVerbose {
+		info("collections created")
+	}
+}
+
+// openReportWriter opens the report file for writing and
+// returns it. Returns nil if reportPath is empty.
+func openReportWriter(reportPath string) io.WriteCloser {
+	if reportPath == "" {
+		return nil
+	}
+
+	f, err := os.Create(reportPath)
+	if err != nil {
+		dief("failed to create report file: %s", err)
+	}
+
+	return f
+}
+
+// closeReportWriter closes the report writer if non-nil.
+func closeReportWriter(w io.WriteCloser) {
+	if w == nil {
+		return
+	}
+
+	if err := w.Close(); err != nil {
+		warn("failed to close report file: %s", err)
 	}
 }

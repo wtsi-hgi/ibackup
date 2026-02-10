@@ -25,8 +25,8 @@ spec.md section: F1
 Implement BuildPutCommand in fofn/jobs.go. Write GoConvey tests in
 fofn/jobs_test.go covering all 4 acceptance tests from spec.md section F1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 6.2: F3 - Submit jobs via interface [parallel with 6.1, 6.3, 6.4]
 
@@ -36,8 +36,8 @@ Define the mock JobSubmitter in test files and test SubmitJobs via the
 interface. Write GoConvey tests in fofn/jobs_test.go covering all 2
 acceptance tests from spec.md section F3.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 6.3: F4 - Check run completion [parallel with 6.1, 6.2, 6.4]
 
@@ -46,8 +46,8 @@ spec.md section: F4
 Implement IsRunComplete in fofn/jobs.go. Write GoConvey tests in
 fofn/jobs_test.go covering all 2 acceptance tests from spec.md section F4.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 6.4: F5 - Identify buried chunks [parallel with 6.1, 6.2, 6.3]
 
@@ -56,8 +56,8 @@ spec.md section: F5
 Implement FindBuriedChunks in fofn/jobs.go. Write GoConvey tests in
 fofn/jobs_test.go covering all 2 acceptance tests from spec.md section F5.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Batch 2 (parallel, after batch 1 is reviewed)
 
@@ -69,8 +69,8 @@ Depends on F1 (uses BuildPutCommand). Implement CreateJobs in fofn/jobs.go.
 Write GoConvey tests in fofn/jobs_test.go covering all 3 acceptance tests
 from spec.md section F2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 6.6: F6 - Delete buried jobs [parallel with 6.5]
 
@@ -80,6 +80,6 @@ Depends on F5. Implement DeleteBuriedJobs in fofn/jobs.go. Write GoConvey
 tests in fofn/jobs_test.go covering all 2 acceptance tests from spec.md
 section F6.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
