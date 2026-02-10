@@ -57,9 +57,9 @@ fofn/server_test.go covering all 8 acceptance tests from spec.md section H3.
 - [ ] implemented
 - [ ] reviewed
 
-### Batch 4 (parallel, after item 9.3 is reviewed)
+### Batch 1 (parallel, after item 9.3 is reviewed)
 
-#### Item 9.4: H4 - Restart resilience [parallel with 9.5]
+#### Item 9.4: H4 - Restart resilience
 
 spec.md section: H4
 
