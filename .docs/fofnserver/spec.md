@@ -6,21 +6,21 @@ The `ibackup fofnserver` subcommand is a long-running process that monitors a
 watch directory for subdirectories containing null-terminated fofn files. For
 each fofn it discovers, it:
 
-1. Reads the fofn and a `.transformer` file to determine local-to-remote path
-   mappings.
+1. Reads the fofn and a `config.yml` file to determine the transformer
+   (local-to-remote path mappings), freeze mode, and optional user metadata.
 2. Splits the mappings into shuffled chunks.
 3. Submits `ibackup put` jobs to wr via the Go client API, including metadata
    flags that apply the fofn directory name (as `ibackup:fofn` in the standard
-   namespace) and any user-defined key-value pairs from an optional `.metadata`
-   file (in the `ibackup:user:` namespace) to every uploaded file.
+   namespace) and any user-defined key-value pairs from `config.yml` (in the
+   `ibackup:user:` namespace) to every uploaded file.
 4. Waits for all jobs to complete (or be buried after exhausting retries).
 5. Parses per-chunk report files and writes an aggregated status file.
 
 It handles fofn updates by waiting for running jobs to finish. If any jobs from
 the previous run were buried, it deletes them and starts the new run fresh. Once
 a new run completes successfully, it deletes any older run directories to save
-space. It supports a `.freeze` mode where files already in iRODS are not
-re-uploaded even if modified locally.
+space. It supports a `freeze` mode (set in `config.yml`) where files already in
+iRODS are not re-uploaded even if modified locally.
 
 All files and directories created by the system must be readable by the same
 unix group that owns the watched directory.
@@ -58,8 +58,10 @@ are split by responsibility:
 | `fofn/chunk_test.go`   | B1 tests                                |
 | `fofn/jobs.go`         | wr job creation, submission, monitoring |
 | `fofn/jobs_test.go`    | F1-F6 tests                             |
-| `fofn/scan.go`         | Watch dir scanning, config file reading |
-| `fofn/scan_test.go`    | G1-G5 tests                             |
+| `fofn/config.go`       | config.yml parsing and creation          |
+| `fofn/config_test.go`  | G2 tests                                 |
+| `fofn/scan.go`         | Watch dir scanning                       |
+| `fofn/scan_test.go`    | G1, G3 tests                             |
 | `fofn/server.go`       | Server orchestration, ProcessSubDir     |
 | `fofn/server_test.go`  | H1-H5 tests                             |
 
@@ -123,9 +125,7 @@ Given a watch directory `/watch` with a subdirectory `project1/`, the layout is:
 ```
 /watch/project1/
     fofn                     # null-terminated file of filenames
-    .transformer             # contains transformer name
-    .freeze                  # optional; enables no-replace mode
-    .metadata                # optional; TSV of key\tvalue user metadata
+    config.yml               # transformer, freeze, and metadata settings
     status                   # symlink to latest run status (atomic update)
     1738000000/              # run dir (fofn mtime as Unix secs)
         chunk.000000         # base64-encoded local\tremote
@@ -248,9 +248,9 @@ packages:
 
 The fofn package should use these directly. No new transformation code is
 needed. The fofn package's `ProcessSubDir` (H1) calls
-`transformer.MakePathTransformer` with the name read from `.transformer`, then
-iterates parsed paths calling `transfer.NewRequestWithTransformedLocal` for
-each.
+`transformer.MakePathTransformer` with the transformer name read from
+`config.yml`, then iterates parsed paths calling
+`transfer.NewRequestWithTransformedLocal` for each.
 
 ---
 
@@ -655,9 +655,9 @@ type RunConfig struct {
     ChunkPaths  []string      // relative chunk filenames
     SubDirName  string        // basename of fofn's parent dir
     FofnMtime   int64         // Unix seconds mtime of fofn
-    NoReplace   bool          // .freeze mode
+    NoReplace   bool          // freeze mode from config.yml
     FofnName    string        // basename of subdir, for ibackup:fofn metadata
-    UserMeta    string        // semicolon-separated key=value from .metadata
+    UserMeta    string        // semicolon-separated key=value from config.yml
     RAM         int           // MB, default 1024
     Time        time.Duration // default 8h
     Retries     uint8         // default 3
@@ -802,50 +802,102 @@ can be processed for backup.
 4. Given a non-existent watch directory, when I call
    `fofn.ScanForFOFNs(watchDir)`, then I get a non-nil error.
 
-### G2: Read transformer name from .transformer file
+### G2: Parse and create config.yml
 
-As a developer using the fofn package, I want to read the transformer name from
-a `.transformer` file in a subdirectory, so that I know which transformer to use
-for the fofn.
+As a developer using the fofn package, I want to parse a `config.yml` file in a
+subdirectory that holds the transformer name, freeze mode, and optional user
+metadata in a single place, and I want a public method to easily create these
+config files, so that subdirectory configuration is consolidated.
+
+The `config.yml` file uses a simple YAML format:
+
+```yaml
+transformer: humgen
+freeze: true
+metadata:
+  colour: red
+  size: large
+```
+
+Only `transformer` is required. `freeze` defaults to `false` if omitted.
+`metadata` is optional; when present it is a flat string-to-string map. Metadata
+keys must not contain colons (they will be prefixed with `ibackup:user:` by
+`ibackup put`).
+
+The parsed result is returned as a `fofn.SubDirConfig`:
+
+```go
+type SubDirConfig struct {
+    Transformer string            // required transformer name
+    Freeze      bool              // enables no-replace mode
+    Metadata    map[string]string // optional user key-value pairs
+}
+```
+
+A public constructor makes it easy to create config files:
+
+```go
+func WriteConfig(dir string, cfg SubDirConfig) error
+```
+
+This writes a `config.yml` file into `dir` with the given settings.
 
 **Package:** `fofn/`
-**File:** `fofn/scan.go`
-**Test file:** `fofn/scan_test.go`
+**File:** `fofn/config.go`
+**Test file:** `fofn/config_test.go`
 
 **Acceptance tests:**
 
-1. Given a `.transformer` file containing "humgen\n", when I call
-   `fofn.ReadTransformerName(dir)`, then I get "humgen" (trimmed) and no error.
+1. Given a `config.yml` file containing `transformer: humgen\nfreeze: true\n`,
+   when I call `fofn.ReadConfig(dir)`, then I get a `fofn.SubDirConfig` with
+   Transformer="humgen", Freeze=true, Metadata=nil, and no error.
 
-2. Given a `.transformer` file containing "  humgen  \n", when I call
-   `fofn.ReadTransformerName(dir)`, then I get "humgen" (whitespace trimmed) and
-   no error.
+2. Given a `config.yml` file containing `transformer: humgen\nmetadata:\n
+   colour: red\n  size: large\n`, when I call `fofn.ReadConfig(dir)`, then I get
+   a `fofn.SubDirConfig` with Transformer="humgen", Freeze=false,
+   Metadata=map[string]string{"colour":"red","size":"large"}, and no error.
 
-3. Given no `.transformer` file in the directory, when I call
-   `fofn.ReadTransformerName(dir)`, then I get a non-nil error.
+3. Given no `config.yml` file in the directory, when I call
+   `fofn.ReadConfig(dir)`, then I get a non-nil error.
 
-4. Given an empty `.transformer` file, when I call
-   `fofn.ReadTransformerName(dir)`, then I get a non-nil error (transformer name
-   is required).
+4. Given a `config.yml` file with no `transformer` key, when I call
+   `fofn.ReadConfig(dir)`, then I get a non-nil error (transformer is required).
 
-### G3: Detect .freeze file
+5. Given a `config.yml` file with an empty `transformer` value (`transformer:
+   ""`), when I call `fofn.ReadConfig(dir)`, then I get a non-nil error.
 
-As a developer using the fofn package, I want to check whether a `.freeze` file
-exists in a subdirectory, so that I can enable no-replace mode for that fofn.
+6. Given a `config.yml` file with `freeze` omitted, when I call
+   `fofn.ReadConfig(dir)`, then I get Freeze=false (default).
 
-**Package:** `fofn/`
-**File:** `fofn/scan.go`
-**Test file:** `fofn/scan_test.go`
+7. Given a `config.yml` file with `metadata` omitted, when I call
+   `fofn.ReadConfig(dir)`, then I get Metadata=nil and no error.
 
-**Acceptance tests:**
+8. Given a `config.yml` file with a metadata key containing a colon
+   (`metadata:\n  bad:key: value\n`), when I call `fofn.ReadConfig(dir)`, then I
+   get a non-nil error.
 
-1. Given a subdirectory containing a `.freeze` file (contents irrelevant), when
-   I call `fofn.IsFrozen(dir)`, then it returns true.
+9. Given a `fofn.SubDirConfig{Transformer: "humgen", Freeze: true, Metadata:
+   map[string]string{"colour": "red"}}`, when I call `fofn.WriteConfig(dir,
+   cfg)`, then a `config.yml` file is created in `dir` that, when read back with
+   `fofn.ReadConfig(dir)`, returns an identical `SubDirConfig`.
 
-2. Given a subdirectory without a `.freeze` file, when I call
-   `fofn.IsFrozen(dir)`, then it returns false.
+10. Given a `fofn.SubDirConfig{Transformer: "humgen"}` (no freeze, no metadata),
+    when I call `fofn.WriteConfig(dir, cfg)`, then the resulting `config.yml`
+    round-trips correctly through `fofn.ReadConfig(dir)`.
 
-### G4: Detect fofn that needs processing
+11. Given a `SubDirConfig` with an empty `Transformer`, when I call
+    `fofn.WriteConfig(dir, cfg)`, then a non-nil error is returned and no file
+    is created.
+
+12. Given the parsed `SubDirConfig` with Metadata
+    map[string]string{"colour":"red","size":"large"}, when I call
+    `cfg.UserMetaString()`, then I get `"colour=red;size=large"` (semicolon-
+    separated key=value pairs, keys sorted alphabetically).
+
+13. Given a `SubDirConfig` with nil Metadata, when I call
+    `cfg.UserMetaString()`, then I get `""`.
+
+### G3: Detect fofn that needs processing
 
 As a developer using the fofn package, I want to determine whether a fofn needs
 processing, based on whether its mtime differs from the last processed mtime
@@ -866,41 +918,7 @@ processing, based on whether its mtime differs from the last processed mtime
 3. Given a fofn with mtime 2000 and an existing run directory named "1000", when
    I call `fofn.NeedsProcessing(subDir)`, then it returns true and mtime 2000.
 
-### G5: Read user metadata from .metadata file
-
-As a developer using the fofn package, I want to read optional user-supplied
-metadata from a `.metadata` file in a subdirectory, so that the fofnserver can
-apply it (in the `ibackup:user:` namespace) to every uploaded file.
-
-The `.metadata` file is a TSV with one key-value pair per line (`key\tvalue`).
-Keys must not contain colons (they will be prefixed with `ibackup:user:` by
-`ibackup put`). Blank lines and lines starting with `#` are ignored.
-
-**Package:** `fofn/`
-**File:** `fofn/scan.go`
-**Test file:** `fofn/scan_test.go`
-
-**Acceptance tests:**
-
-1. Given a `.metadata` file containing `colour\tred\nsize\tlarge\n`, when I call
-   `fofn.ReadUserMetadata(dir)`, then I get `"colour=red;size=large"` and no
-   error.
-
-2. Given no `.metadata` file in the directory, when I call
-   `fofn.ReadUserMetadata(dir)`, then I get `""` and no error (metadata is
-   optional).
-
-3. Given an empty `.metadata` file, when I call `fofn.ReadUserMetadata(dir)`,
-   then I get `""` and no error.
-
-4. Given a `.metadata` file with blank lines and comment lines (`#
-   comment\n\ncolour\tred\n`), when I call `fofn.ReadUserMetadata(dir)`, then I
-   get `"colour=red"` (comments and blanks skipped) and no error.
-
-5. Given a `.metadata` file with a line that has no tab separator, when I call
-   `fofn.ReadUserMetadata(dir)`, then I get a non-nil error.
-
-### G6: Determine and apply group ownership
+### G4: Determine and apply group ownership
 
 As a developer, I want generic utilities that determine the GID of a directory
 and create files/directories with a specific GID, so that all fofnserver outputs
@@ -933,12 +951,12 @@ are readable by the same unix group as the watch directory.
 ### H1: Process a single subdirectory end-to-end
 
 As a developer using the fofn package, I want a `fofn.ProcessSubDir` function
-that performs the full streaming pipeline for one subdirectory: scan fofn via
-`scanner.ScanNullTerminated`, transform each path with
-`transfer.NewRequestWithTransformedLocal`, and stream directly into
+that performs the full streaming pipeline for one subdirectory: read
+`config.yml`, scan fofn via `scanner.ScanNullTerminated`, transform each path
+with `transfer.NewRequestWithTransformedLocal`, and stream directly into
 `fofn.WriteShuffledChunks`, then submit jobs with metadata flags derived from
-the subdirectory name (`ibackup:fofn`) and any `.metadata` file (`ibackup:user:`
-keys) - never holding all paths in memory.
+the subdirectory name (`ibackup:fofn`) and any user metadata from `config.yml`
+(`ibackup:user:` keys) - never holding all paths in memory.
 
 **Package:** `fofn/`
 **File:** `fofn/server.go`
@@ -947,7 +965,7 @@ keys) - never holding all paths in memory.
 **Acceptance tests:**
 
 1. Given a subdirectory with a fofn containing 25 null-terminated paths, a
-   .transformer file with a valid transformer name, no .freeze file, and a mock
+   config.yml with a valid transformer name and freeze=false, and a mock
    JobSubmitter, when I call `fofn.ProcessSubDir(subDir, submitter, cfg)`, then:
    - A run directory named after the fofn mtime is created.
    - 3 chunk files exist in the run directory (for chunkSize=10).
@@ -957,12 +975,12 @@ keys) - never holding all paths in memory.
    - The returned `fofn.RunState` has RepGroup set to
      "ibackup_fofn_<dirname>_<mtime>" and the run directory path.
 
-2. Given the same setup but with a .freeze file present, when I call
+2. Given the same setup but with freeze=true in config.yml, when I call
    `fofn.ProcessSubDir(subDir, submitter, cfg)`, then each submitted job's Cmd
    includes `--no_replace`.
 
-3. Given a subdirectory with a fofn but missing the .transformer file, when I
-   call `fofn.ProcessSubDir(subDir, submitter, cfg)`, then a non-nil error is
+3. Given a subdirectory with a fofn but missing config.yml, when I call
+   `fofn.ProcessSubDir(subDir, submitter, cfg)`, then a non-nil error is
    returned and no jobs are submitted.
 
 4. Given a subdirectory with a fofn containing 0 paths, when I call
@@ -973,13 +991,13 @@ keys) - never holding all paths in memory.
    chunk files, then they have group ownership matching the watch directory's
    GID and are group-readable.
 
-6. Given a subdirectory with a `.metadata` file containing `colour\tred`, when I
-   call `fofn.ProcessSubDir(subDir, submitter, cfg)`, then each submitted job's
-   Cmd includes `--meta "colour=red"`.
+6. Given a subdirectory with a config.yml containing `metadata:\n  colour: red`,
+   when I call `fofn.ProcessSubDir(subDir, submitter, cfg)`, then each submitted
+   job's Cmd includes `--meta "colour=red"`.
 
-7. Given a subdirectory without a `.metadata` file, when I call
-   `fofn.ProcessSubDir(subDir, submitter, cfg)`, then each submitted job's Cmd
-   does not include `--meta`.
+7. Given a subdirectory with a config.yml that has no `metadata` key, when I
+   call `fofn.ProcessSubDir(subDir, submitter, cfg)`, then each submitted job's
+   Cmd does not include `--meta`.
 
 ### H2: Generate status file after run completion
 
@@ -1206,8 +1224,7 @@ handler) to generate report files, simulating what wr would do.
 1. **New fofn processing:**
    Given a watch directory with a subdirectory containing:
    - A fofn with 5 null-terminated paths to real temporary local files,
-   - A .transformer file with a registered transformer,
-   - A .metadata file with `colour\tred`,
+   - A config.yml with a registered transformer and `metadata:\n  colour: red`,
    When the fofnserver processes this directory (simulated by calling the fofn
    package directly or building and running the binary), Then:
    - A run directory is created named after the fofn mtime.
@@ -1224,12 +1241,11 @@ handler) to generate report files, simulating what wr would do.
    - Each submitted put command includes `--fofn <dirname>` and `--meta
      "colour=red"`.
 
-2. **Freeze mode:**
-   Given the same setup but with a .freeze file, and some files already
-   "uploaded" (mock handler has them with an older mtime), when the fofnserver
-   processes this directory, then the submitted put commands include
-   `--no_replace`, and the status file (read via the `status` symlink) shows
-   "frozen" for the pre-existing files and "uploaded" for the new ones.
+2. **Freeze mode:** Given the same setup but with freeze=true in config.yml, and
+   some files already "uploaded" (mock handler has them with an older mtime),
+   when the fofnserver processes this directory, then the submitted put commands
+   include `--no_replace`, and the status file (read via the `status` symlink)
+   shows "frozen" for the pre-existing files and "uploaded" for the new ones.
 
 3. **Restart resilience:**
    Given a previously created run directory with chunk files, when a new fofn
@@ -1237,7 +1253,13 @@ handler) to generate report files, simulating what wr would do.
    then it does not submit duplicate jobs. (Since wr itself rejects duplicates,
    this is mostly a behavioural test that the server doesn't error out.)
 
-4. **Buried jobs with fofn update:**
+4. **config.yml creation helper:**
+   Given a temporary directory, when I call `fofn.WriteConfig(dir,
+   fofn.SubDirConfig{Transformer: "humgen", Freeze: true, Metadata:
+   map[string]string{"colour": "red"}})`, then a `config.yml` file exists in
+   `dir` and `fofn.ReadConfig(dir)` returns the same values.
+
+5. **Buried jobs with fofn update:**
    Given a completed run with 1 buried job, and the fofn has been updated (new
    mtime), when the server polls, then: the status file for the old run is
    written, the buried job is deleted from wr, and a new run is started with the
@@ -1295,25 +1317,23 @@ A2 requires no new code; uses existing `transformer`/`transfer` packages.
 
 ### Phase 8: Directory scanning and group ownership
 
-18. **G6** - Group ownership (internal/ownership/)
+18. **G4** - Group ownership (internal/ownership/)
 19. **G1** - Discover subdirectories with fofn files (fofn/scan.go)
-20. **G2** - Read transformer name
-21. **G3** - Detect .freeze file
-22. **G4** - Detect fofn needing processing
-23. **G5** - Read user metadata from .metadata file
+20. **G2** - Parse and create config.yml (fofn/config.go)
+21. **G3** - Detect fofn needing processing
 
 ### Phase 9: Orchestration (fofn/server.go)
 
-24. **H1** - Process single subdirectory end-to-end
-25. **H2** - Generate status after run completion
-26. **H3** - Handle fofn update while jobs running or buried
-27. **H4** - Restart resilience
-28. **H5** - Parallel processing
+22. **H1** - Process single subdirectory end-to-end
+23. **H2** - Generate status after run completion
+24. **H3** - Handle fofn update while jobs running or buried
+25. **H4** - Restart resilience
+26. **H5** - Parallel processing
 
 ### Phase 10: CLI and integration (cmd/ + main_test.go)
 
-29. **I1** - fofnserver CLI subcommand
-30. **J1** - End-to-end integration test
+27. **I1** - fofnserver CLI subcommand
+28. **J1** - End-to-end integration test
 
 ---
 
