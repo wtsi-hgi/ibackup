@@ -1,8 +1,8 @@
-# fofnserver Specification
+# watchfofns Specification
 
 ## Overview
 
-The `ibackup fofnserver` subcommand is a long-running process that monitors a
+The `ibackup watchfofns` subcommand is a long-running process that monitors a
 watch directory for subdirectories containing null-terminated fofn files. For
 each fofn it discovers, it:
 
@@ -45,7 +45,7 @@ GID lookup and file/directory creation with group ownership.
 
 #### `fofn/`
 
-All fofnserver-specific logic, fully tested with GoConvey. Source files
+All watchfofns-specific logic, fully tested with GoConvey. Source files
 are split by responsibility:
 
 | File                   | Responsibility                          |
@@ -62,8 +62,8 @@ are split by responsibility:
 | `fofn/config_test.go`  | G2 tests                                |
 | `fofn/scan.go`         | Watch dir scanning                      |
 | `fofn/scan_test.go`    | G1, G3 tests                            |
-| `fofn/server.go`       | Server orchestration, ProcessSubDir     |
-| `fofn/server_test.go`  | H1-H5 tests                             |
+| `fofn/watcher.go`      | Watcher orchestration, ProcessSubDir    |
+| `fofn/watcher_test.go` | H1-H5 tests                             |
 
 ### Changes to existing packages
 
@@ -72,8 +72,8 @@ are split by responsibility:
 - `transfer/put.go`: Add no-replace mode to `Putter`.
 - `cmd/put.go`: Add `--no_replace`, `--report`, and `--fofn` flags; refactor to
   use `internal/scanner/` for null scanning.
-- `cmd/fofnserver.go`: CLI-only cobra subcommand.
-- `main_test.go`: Integration test for the fofnserver CLI.
+- `cmd/watchfofns.go`: CLI-only cobra subcommand.
+- `main_test.go`: Integration test for the watchfofns CLI.
 
 ### Interfaces for testability
 
@@ -131,12 +131,12 @@ Given a watch directory `/watch` with a subdirectory `project1/`, the layout is:
         ...
 ```
 
-The server writes the status file into the run directory, then updates the
+The watcher writes the status file into the run directory, then updates the
 subdirectory-root `status` symlink atomically to point at `<runDir>/status`.
 
 ### Unix group ownership
 
-On startup, the server determines the group owner of the watch directory. All
+On startup, the watcher determines the group owner of the watch directory. All
 directories and files it creates (run dirs, chunk files, status files, etc.)
 must have their group set to this GID and be group-readable (directories
 group-executable). The implementation should call `os.Chown(-1, gid, path)`
@@ -427,7 +427,7 @@ As a user of ibackup put, I want a `--fofn <name>` flag, so that I can apply
 ### D1: Report line formatting and parsing
 
 As a developer using the fofn package, I want functions to format and parse
-report lines, so that `ibackup put` and the fofn server can exchange per-file
+report lines, so that `ibackup put` and the fofn watcher can exchange per-file
 status data reliably even when paths contain special characters.
 
 **Package:** `fofn/`
@@ -920,7 +920,7 @@ processing, based on whether its mtime differs from the last processed mtime
 ### G4: Determine and apply group ownership
 
 As a developer, I want generic utilities that determine the GID of a directory
-and create files/directories with a specific GID, so that all fofnserver outputs
+and create files/directories with a specific GID, so that all watchfofns outputs
 are readable by the same unix group as the watch directory.
 
 **Package:** `internal/ownership/`
@@ -945,7 +945,7 @@ are readable by the same unix group as the watch directory.
 
 ---
 
-## Section H: Server Orchestration
+## Section H: Watcher Orchestration
 
 ### H1: Process a single subdirectory end-to-end
 
@@ -959,8 +959,8 @@ subdirectory name (`ibackup:fofn`) and any user metadata from `config.yml`
 (`ibackup:user:` keys) - never holding all paths in memory.
 
 **Package:** `fofn/`
-**File:** `fofn/server.go`
-**Test file:** `fofn/server_test.go`
+**File:** `fofn/watcher.go`
+**Test file:** `fofn/watcher_test.go`
 
 **Acceptance tests:**
 
@@ -1006,8 +1006,8 @@ that parses all chunk report files in a run directory, handles buried jobs, and
 writes the status file, so that users have a comprehensive backup status.
 
 **Package:** `fofn/`
-**File:** `fofn/server.go`
-**Test file:** `fofn/server_test.go`
+**File:** `fofn/watcher.go`
+**Test file:** `fofn/watcher_test.go`
 
 **Acceptance tests:**
 
@@ -1037,16 +1037,16 @@ writes the status file, so that users have a comprehensive backup status.
 
 ### H3: Handle fofn update while jobs are running or buried
 
-As a developer using the fofn package, I want the server to detect that a fofn
+As a developer using the fofn package, I want the watcher to detect that a fofn
 has been updated while jobs from a previous run are still in progress or buried,
 and handle each case appropriately, so that we either wait or clean up and start
 fresh.
 
 **Package:** `fofn/`
-**File:** `fofn/server.go`
-**Test file:** `fofn/server_test.go`
+**File:** `fofn/watcher.go`
+**Test file:** `fofn/watcher_test.go`
 
-The `fofn.Server` type maintains a map of active runs per subdirectory. On each
+The `fofn.Watcher` type maintains a map of active runs per subdirectory. On each
 poll cycle it:
 
 1. Scans for subdirectories with fofns.
@@ -1069,98 +1069,98 @@ poll cycle it:
 
 **Acceptance tests:**
 
-1. Given a Server with a mock JobSubmitter, and a subdirectory with a fofn, when
-   I call `server.Poll()` the first time, then jobs are submitted and an active
+1. Given a Watcher with a mock JobSubmitter, and a subdirectory with a fofn, when
+   I call `watcher.Poll()` the first time, then jobs are submitted and an active
    run is recorded.
 
 2. Given an active run where all jobs are still incomplete (mock returns running
-   jobs), when I call `server.Poll()` again, then no new jobs are submitted.
+   jobs), when I call `watcher.Poll()` again, then no new jobs are submitted.
 
 3. Given an active run where all jobs completed successfully (no buried jobs),
-   when I call `server.Poll()`, then the status file is generated (or updated),
+   when I call `watcher.Poll()`, then the status file is generated (or updated),
    `subDir/status` exists and points to `<runDir>/status`, the active run is
    cleared, and if the fofn mtime has changed since the run started, a new run
    begins.
 
 4. Given an active run where all jobs completed successfully and the fofn has
-   NOT changed, when I call `server.Poll()`, then the status file is generated
+   NOT changed, when I call `watcher.Poll()`, then the status file is generated
    and no new run begins.
 
 5. Given an active run where all jobs are in terminal state but 1 is buried, and
-   the fofn mtime has NOT changed, when I call `server.Poll()`, then the status
+   the fofn mtime has NOT changed, when I call `watcher.Poll()`, then the status
    file is generated with "not_processed" entries for the buried chunk's files.
    The active run remains in place (no resubmission).
 
 6. Given an active run where all jobs are in terminal state but 1 is buried, and
-   the fofn mtime HAS changed, when I call `server.Poll()`, then: the status
+   the fofn mtime HAS changed, when I call `watcher.Poll()`, then: the status
    file for the old run is generated, the buried job is deleted from wr, the
    active run is cleared, and a new run is started with the updated fofn.
 
 7. Given an active run where all jobs completed successfully (run directory
    "1000") and a *previous* run directory ("500") still exists on disk, when I
-   call `server.Poll()`, then the "500" directory is deleted (cleanup of old
+   call `watcher.Poll()`, then the "500" directory is deleted (cleanup of old
    successful/historic runs).
 
 8. Given a subdirectory with a completed run "1000" where `subDir/status`
    points to "1000/status", and the fofn has been updated to mtime "2000", when
-   I call `server.Poll()` to start the new run and then (after the mock
+   I call `watcher.Poll()` to start the new run and then (after the mock
    JobSubmitter reports all "2000" jobs are in terminal state) I call
-   `server.Poll()` again, then `subDir/status` points to "2000/status".
+   `watcher.Poll()` again, then `subDir/status` points to "2000/status".
 
 ### H4: Restart resilience
 
-As a developer using the fofn package, I want the server on startup to detect
+As a developer using the fofn package, I want the watcher on startup to detect
 existing wr jobs from a previous instance, so that it waits for them to complete
 rather than starting duplicate jobs.
 
 **Package:** `fofn/`
-**File:** `fofn/server.go`
-**Test file:** `fofn/server_test.go`
+**File:** `fofn/watcher.go`
+**Test file:** `fofn/watcher_test.go`
 
 **Acceptance tests:**
 
 1. Given a run directory "1000" with chunk files, and a mock JobSubmitter that
    reports incomplete jobs for RepGroup "ibackup_fofn_proj_1000", when a new
-   Server initialises and calls `Poll()`, then it does NOT submit new jobs but
+   Watcher initialises and calls `Poll()`, then it does NOT submit new jobs but
    records the active run and waits for its completion.
 
 2. Given a run directory "1000" with chunk files and completed report files, and
    a mock JobSubmitter that reports all jobs for RepGroup
-   "ibackup_fofn_proj_1000" are complete, when a new Server initialises and
+   "ibackup_fofn_proj_1000" are complete, when a new Watcher initialises and
    calls `Poll()`, then it generates the status file and checks if the fofn has
    been updated since mtime 1000.
 
 ### H5: Parallel processing of multiple subdirectories
 
-As a developer using the fofn package, I want the server to process multiple
+As a developer using the fofn package, I want the watcher to process multiple
 subdirectories in parallel during a single poll cycle, so that throughput is
 maximised (wr handles resource scheduling).
 
 **Package:** `fofn/`
-**File:** `fofn/server.go`
-**Test file:** `fofn/server_test.go`
+**File:** `fofn/watcher.go`
+**Test file:** `fofn/watcher_test.go`
 
 **Acceptance tests:**
 
 1. Given a watch directory with 3 subdirectories each containing a fofn, when I
-   call `server.Poll()`, then all 3 subdirectories are processed (jobs
+   call `watcher.Poll()`, then all 3 subdirectories are processed (jobs
    submitted) in the same poll cycle.
 
 2. Given 3 subdirectories, 2 with active running jobs and 1 with a new fofn,
-   when I call `server.Poll()`, then only the new subdirectory has jobs
+   when I call `watcher.Poll()`, then only the new subdirectory has jobs
    submitted; the other 2 are left to complete.
 
 ---
 
 ## Section I: CLI Command
 
-### I1: ibackup fofnserver subcommand
+### I1: ibackup watchfofns subcommand
 
-As a user, I want an `ibackup fofnserver` subcommand, so that I can start the
-fofnserver with appropriate configuration.
+As a user, I want an `ibackup watchfofns` subcommand, so that I can start the
+watchfofns process with appropriate configuration.
 
 **Package:** `cmd/`
-**File:** `cmd/fofnserver.go`
+**File:** `cmd/watchfofns.go`
 **Test file:** `main_test.go`
 
 The command accepts these flags:
@@ -1182,8 +1182,8 @@ The command:
 1. Validates that `--dir` is provided and exists.
 2. Validates that the IBACKUP_CONFIG environment variable is set (required for
    named transformers).
-3. Creates a `fofn.Server` with the configured options.
-4. Calls `fofn.Server.Run()` which blocks, polling at the configured interval.
+3. Creates a `fofn.Watcher` with the configured options.
+4. Calls `fofn.Watcher.Run()` which blocks, polling at the configured interval.
 5. On SIGINT/SIGTERM, exits immediately (wr jobs continue independently).
 
 The command logs operational activity (scan results, submissions, state
@@ -1191,23 +1191,23 @@ transitions, and errors) to STDERR.
 
 **Acceptance tests:**
 
-1. Given no `--dir` flag, when I run `ibackup fofnserver`, then it exits with a
+1. Given no `--dir` flag, when I run `ibackup watchfofns`, then it exits with a
    non-zero code and an error message.
 
 2. Given a valid `--dir` pointing to an existing directory, when I run `ibackup
-   fofnserver --dir /tmp/test --interval 1s` and send SIGINT after 2 seconds,
+   watchfofns --dir /tmp/test --interval 1s` and send SIGINT after 2 seconds,
    then it exits cleanly with code 0.
 
-3. Given `ibackup fofnserver --help`, when I run it, then it exits with code 0
-   and prints a usage block that includes the `fofnserver` command name.
+3. Given `ibackup watchfofns --help`, when I run it, then it exits with code 0
+   and prints a usage block that includes the `watchfofns` command name.
 
 ---
 
 ## Section J: Integration Test
 
-### J1: End-to-end fofnserver with PretendSubmissions
+### J1: End-to-end watchfofns with PretendSubmissions
 
-As a developer, I want an integration test that exercises the full fofnserver
+As a developer, I want an integration test that exercises the full watchfofns
 pipeline from CLI to status file, so that I can verify all components work
 together.
 
@@ -1226,7 +1226,7 @@ handler) to generate report files, simulating what wr would do.
    Given a watch directory with a subdirectory containing:
    - A fofn with 5 null-terminated paths to real temporary local files,
    - A config.yml with a registered transformer and `metadata:\n  colour: red`,
-   When the fofnserver processes this directory (simulated by calling the fofn
+   When the watcher processes this directory (simulated by calling the fofn
    package directly or building and running the binary), Then:
    - A run directory is created named after the fofn mtime.
    - Chunk files exist in the run directory.
@@ -1244,15 +1244,15 @@ handler) to generate report files, simulating what wr would do.
 
 2. **Freeze mode:** Given the same setup but with freeze=true in config.yml, and
    some files already "uploaded" (mock handler has them with an older mtime),
-   when the fofnserver processes this directory, then the submitted put commands
+   when the watcher processes this directory, then the submitted put commands
    include `--no_replace`, and the status file (read via the `status` symlink)
    shows "frozen" for the pre-existing files and "uploaded" for the new ones.
 
 3. **Restart resilience:**
    Given a previously created run directory with chunk files, when a new fofn
-   server instance starts and finds existing wr jobs (via PretendSubmissions),
+   watcher instance starts and finds existing wr jobs (via PretendSubmissions),
    then it does not submit duplicate jobs. (Since wr itself rejects duplicates,
-   this is mostly a behavioural test that the server doesn't error out.)
+   this is mostly a behavioural test that the watcher doesn't error out.)
 
 4. **config.yml creation helper:**
    Given a temporary directory, when I call `fofn.WriteConfig(dir,
@@ -1262,7 +1262,7 @@ handler) to generate report files, simulating what wr would do.
 
 5. **Buried jobs with fofn update:**
    Given a completed run with 1 buried job, and the fofn has been updated (new
-   mtime), when the server polls, then: the status file for the old run is
+   mtime), when the watcher polls, then: the status file for the old run is
    written, the buried job is deleted from wr, and a new run is started with the
    updated fofn.
 
@@ -1324,7 +1324,7 @@ packages.
 20. **G2** - Parse and create config.yml (fofn/config.go)
 21. **G3** - Detect fofn needing processing
 
-### Phase 9: Orchestration (fofn/server.go)
+### Phase 9: Orchestration (fofn/watcher.go)
 
 22. **H1** - Process single subdirectory end-to-end
 23. **H2** - Generate status after run completion
@@ -1334,7 +1334,7 @@ packages.
 
 ### Phase 10: CLI and integration (cmd/ + main_test.go)
 
-27. **I1** - fofnserver CLI subcommand
+27. **I1** - watchfofns CLI subcommand
 28. **J1** - End-to-end integration test
 
 ---

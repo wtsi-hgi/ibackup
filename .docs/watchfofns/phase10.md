@@ -23,11 +23,11 @@ Ref: [spec.md](spec.md) sections I1, J1
 
 These items MUST be implemented in the listed order. J1 depends on I1.
 
-### Item 10.1: I1 - ibackup fofnserver subcommand
+### Item 10.1: I1 - ibackup watchfofns subcommand
 
 spec.md section: I1
 
-Implement the cobra subcommand in cmd/fofnserver.go with all flags listed in
+Implement the cobra subcommand in cmd/watchfofns.go with all flags listed in
 spec.md section I1. Write GoConvey tests in main_test.go covering all 3
 acceptance tests from spec.md section I1.
 
