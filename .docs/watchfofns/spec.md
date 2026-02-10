@@ -1341,6 +1341,13 @@ packages.
 
 ## Appendix: Key Decisions
 
+### Skills
+
+The `go-implementor` and `go-reviewer` agent skills (in `.github/skills/`)
+contain the TDD cycle, copyright boilerplate, memory-bounded test pattern,
+code quality standards, and review procedures. Phase files reference these
+skills instead of duplicating the instructions.
+
 ### Existing code reuse
 
 - **Path transformation:** `ProcessSubDir` calls
@@ -1407,25 +1414,8 @@ be used in the production pipeline.
 
 ### Memory-bounded test pattern
 
-All memory tests follow this pattern:
-
-```go
-func TestStreamingMemory(t *testing.T) {
-    // 1. Create large input (1M entries in t.TempDir())
-    // 2. Measure baseline:
-    runtime.GC()
-    var before runtime.MemStats
-    runtime.ReadMemStats(&before)
-    // 3. Run the streaming operation
-    // 4. Measure after:
-    runtime.GC()
-    var after runtime.MemStats
-    runtime.ReadMemStats(&after)
-    // 5. Assert:
-    growth := after.HeapInuse - before.HeapInuse
-    So(growth, ShouldBeLessThan, 20*1024*1024)
-}
-```
+See the `go-implementor` skill for the standard memory-bounded test pattern
+using `runtime.ReadMemStats` with `runtime.GC()`.
 
 The threshold is generous (10-20 MB) to avoid flakiness. A non-streaming
 implementation holding 1M entries would use ~200+ MB, so the test clearly
@@ -1433,45 +1423,9 @@ distinguishes the two approaches.
 
 ### Boilerplate
 
-All new source files must start with:
-
-```
-/*******************************************************************************
- * Copyright (c) 2026 Genome Research Ltd.
- *
- * Author: Sendu Bala <sb10@sanger.ac.uk>
- *
- * Permission is hereby granted, free of charge, to any person obtaining
- * a copy of this software and associated documentation files (the
- * "Software"), to deal in the Software without restriction, including
- * without limitation the rights to use, copy, modify, merge, publish,
- * distribute, sublicense, and/or sell copies of the Software, and to
- * permit persons to whom the Software is furnished to do so, subject to
- * the following conditions:
- *
- * The above copyright notice and this permission notice shall be included
- * in all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
- * CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
- * TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
- * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
- ******************************************************************************/
-```
+See the `go-implementor` skill (`.github/skills/go-implementor/SKILL.md`)
+for the required copyright header on all new source files.
 
 ### TDD cycle
 
-For each acceptance test:
-
-1. Write a failing test (GoConvey style).
-2. Run: `CGO_ENABLED=1 go test -tags netgo --count 1 ./<path> -v -run`
-   `<TestFunc>`
-3. Write minimal implementation to pass.
-4. Refactor (short functions, low complexity, self-documenting names,
-   100-col line wrap, 80-col comment wrap).
-5. Run `cleanorder <file>` on every edited .go file.
-6. Run `golangci-lint run --fix` and fix remaining issues.
-7. Re-run the test to confirm it still passes.
+See the `go-implementor` skill for the complete TDD cycle steps.

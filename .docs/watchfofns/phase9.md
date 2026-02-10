@@ -4,19 +4,13 @@ Ref: [spec.md](spec.md) sections H1, H2, H3, H4, H5
 
 ## General Requirements
 
-- Follow the TDD cycle defined in spec.md (Appendix > "TDD cycle") exactly,
-  for every acceptance test. Do not skip any step.
-- Every acceptance test listed in spec.md for the referenced user stories MUST
-  have a corresponding GoConvey test. Do not skip, stub out, or circumvent any
-  test. Do not hardcode expected results in implementations to make tests pass.
-- All new source files must include the copyright boilerplate defined in
-  spec.md (Appendix > "Boilerplate").
-- All tests must genuinely pass - no tricks, no test helpers that silently
-  swallow failures, no build tags that exclude tests.
-- Consult spec.md for the full acceptance test details, function signatures,
-  types, and package structure.
+Use the `go-implementor` skill for TDD cycle, boilerplate, code quality
+standards, and implementation workflow (including parallel batch handling).
+
 - Tests must use a mock JobSubmitter as described in spec.md (Architecture >
   "Interfaces for testability" and Appendix > "Testing strategy").
+
+Use the `go-reviewer` skill when launching review subagents.
 
 ## Items
 
@@ -83,39 +77,6 @@ single poll cycle. Write GoConvey tests in fofn/watcher_test.go covering all
 
 ## Workflow
 
-1. The implementor implements one item at a time for sequential items
-   (9.1–9.3). For the parallel batch (9.4–9.5), **parallel items MUST be
-   implemented concurrently using separate subagents** — one subagent per
-   item, each given the spec.md context and the item requirements. For
-   each item, write all GoConvey tests corresponding to the acceptance
-   tests in spec.md, then write the implementation code to make those tests
-   pass - strictly following the TDD cycle in spec.md (Appendix > "TDD
-   cycle").
-2. After each item (or parallel batch) is implemented, the implementor
-   checks the "implemented" checkbox and launches a **review subagent** —
-   a separate AI subagent with clean context (no memory of implementation
-   decisions) that performs the review.
-3. The review subagent:
-   - Reads spec.md for the referenced sections and the implemented source
-     and test files.
-   - Runs the tests (`CGO_ENABLED=1 go test -tags netgo --count 1 ...`).
-   - Confirms every acceptance test from spec.md has a corresponding GoConvey
-     test.
-   - Confirms all tests pass without any tricks that provide false positive
-     passes.
-   - Confirms the mock JobSubmitter is used correctly and tests exercise
-     the full poll cycle logic.
-   - Confirms the implementation follows the spec (streaming, group
-     ownership, symlink management, poll cycle state transitions).
-   - Runs `golangci-lint run` and confirms it reports no issues.
-   - Returns a verdict: PASS (checks the "reviewed" checkbox) or FAIL with
-     specific feedback.
-4. If the review subagent returns FAIL, the implementor (or a fix subagent)
-   addresses the feedback — including running `golangci-lint run --fix` and
-   fixing any remaining lint issues — and re-does the complete TDD cycle as
-   defined in spec.md (Appendix > "TDD cycle"), then re-launches a fresh
-   review subagent. This cycle repeats until the review subagent returns
-   PASS.
-5. Only after the current item (or batch) is marked "reviewed" may the
-   implementor proceed to the next item(s).
-6. Repeat until all items in this phase are implemented and reviewed.
+Follow the implementation workflow in the `go-implementor` skill.
+For the parallel batch (9.4–9.5), use separate subagents per item.
+Launch review subagents using the `go-reviewer` skill.
