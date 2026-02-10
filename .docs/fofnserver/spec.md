@@ -236,7 +236,7 @@ use the callback form.
    increase by more than 10 MB above the baseline measured before the call
    (proving the implementation streams rather than accumulating).
 
-### A2: Transform paths using existing transformer infrastructure
+### Path transformation (no new code needed)
 
 Path transformation is already implemented in the `transformer` and `transfer`
 packages:
@@ -262,12 +262,14 @@ As a developer using the fofn package, I want to stream path pairs from a
 callback source directly into shuffled chunk files without holding all entries
 in memory, so that fofns with 10s of millions of paths can be chunked.
 
-The approach: `fofn.WriteShuffledChunks` accepts a callback source (the same
-pattern as `scanner.ScanNullTerminated`), a chunk size, and an output directory.
-It opens up to `numChunks` file handles simultaneously (where `numChunks` can be
-estimated by a first pass counting entries, or by using a default upper bound).
-Each incoming entry is assigned to a random chunk index (`rand.Intn(numChunks)`)
-and written immediately. This achieves shuffle without storing all entries.
+The approach: `fofn.WriteShuffledChunks` accepts a fofn path, a transformer
+name, an output directory, a chunk size, and a random seed. It uses
+`scanner.ScanNullTerminated` internally to stream entries from the fofn and
+transforms each path using the named transformer. It opens up to `numChunks`
+file handles simultaneously (where `numChunks` can be estimated by a first pass
+counting entries, or by using a default upper bound). Each incoming entry is
+assigned to a random chunk index (`rand.Intn(numChunks)`) and written
+immediately. This achieves shuffle without storing all entries.
 
 For testability, the assignment must be deterministic when a seed is provided.
 The public API should therefore accept a `randSeed` argument (or an equivalent
@@ -461,9 +463,9 @@ status data reliably even when paths contain special characters.
 
 ### D2: Write and read a complete report file
 
-As a developer using the fofn package, I want to write report entries
-streamingly via a writer, and read them back streamingly via a callback, so that
-the report file format is a reliable interchange that works at any scale.
+As a developer using the fofn package, I want to write report entries via a
+streaming writer, and read them back via a streaming callback, so that the
+report file format is a reliable interchange that works at any scale.
 
 The write API accepts an `io.Writer`:
 
@@ -503,6 +505,10 @@ tests and small files.
 
 3. Given an empty report file, when I call `fofn.ParseReportCallback(path, cb)`,
    then the callback is never invoked and no error is returned.
+
+4. Given a report file with 10 entries, when I call
+   `fofn.ParseReportCallback(path, cb)`, then the callback is invoked exactly 10
+   times with the correct `fofn.ReportEntry` values, and no error is returned.
 
 ### D3: --report CLI flag for ibackup put
 
@@ -596,11 +602,7 @@ The implementation should be composed of independently testable parts:
    `fofn.ParseStatus(statusPath)`, then I get back 25 `fofn.ReportEntry` values
    and a `fofn.StatusCounts` struct with correct counts for each status.
 
-6. The streaming callback `fofn.ParseReportCallback(path, func(ReportEntry))`,
-   when given a report file with 10 entries, calls the callback exactly 10 times
-   with the correct `fofn.ReportEntry` values, and returns no error.
-
-7. (**Memory test**) Given a run directory with 100 chunk files, each with a
+6. (**Memory test**) Given a run directory with 100 chunk files, each with a
    10,000-entry report file (1,000,000 entries total), when I call
    `fofn.WriteStatusFromRun(runDir, statusPath, nil)`, then
    `runtime.MemStats.HeapInuse` does not increase by more than 20 MB above the
@@ -1284,7 +1286,8 @@ the foundation for everything else.
 
 3. **A1** - `scanner.ScanNullTerminated` (streaming, memory test)
 
-A2 requires no new code; uses existing `transformer`/`transfer` packages.
+Path transformation requires no new code; uses existing `transformer`/`transfer`
+packages.
 
 ### Phase 3: Streaming shuffle and chunking (fofn/chunk.go)
 
