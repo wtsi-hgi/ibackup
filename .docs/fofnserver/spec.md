@@ -108,9 +108,6 @@ verify command construction without needing a real ibackup binary:
 type PutCommandBuilder interface {
     BuildCommand(
         chunkPath string,
-        reportPath string,
-        logPath string,
-        outPath string,
         noReplace bool,
         fofnName string,
         userMeta string,
@@ -248,9 +245,10 @@ packages:
 
 The fofn package should use these directly. No new transformation code is
 needed. `fofn.ProcessSubDir` (H1) calls `transformer.MakePathTransformer` with
-the transformer name from `config.yml` to get a `func(string) string`, then
-passes that function to `fofn.WriteShuffledChunks` (B1), which applies it to
-each scanned path to produce the remote path.
+the transformer name from `config.yml` to get a `PathTransformer` (which has
+signature `func(string) (string, error)`), then passes that function to
+`fofn.WriteShuffledChunks` (B1), which applies it to each scanned path to
+produce the remote path.
 
 ---
 
@@ -263,14 +261,14 @@ callback source directly into shuffled chunk files without holding all entries
 in memory, so that fofns with 10s of millions of paths can be chunked.
 
 The approach: `fofn.WriteShuffledChunks` accepts a fofn path, a transform
-function (`func(string) string` mapping local path to remote path), an output
-directory, a chunk size, and a random seed. It uses `scanner.ScanNullTerminated`
-internally to stream entries from the fofn and transforms each path using the
-provided function. It opens up to `numChunks` file handles simultaneously (where
-`numChunks` can be estimated by a first pass counting entries, or by using a
-default upper bound). Each incoming entry is assigned to a random chunk index
-(`rand.Intn(numChunks)`) and written immediately. This achieves shuffle without
-storing all entries.
+function (`func(string) (string, error)` mapping local path to remote path), an
+output directory, a chunk size, and a random seed. It uses
+`scanner.ScanNullTerminated` internally to stream entries from the fofn and
+transforms each path using the provided function. It opens up to `numChunks`
+file handles simultaneously (where `numChunks` can be estimated by a first pass
+counting entries, or by using a default upper bound). Each incoming entry is
+assigned to a random chunk index (`rand.Intn(numChunks)`) and written
+immediately. This achieves shuffle without storing all entries.
 
 For testability, the assignment must be deterministic when a seed is provided.
 The public API should therefore accept a `randSeed` argument (or an equivalent
@@ -656,10 +654,9 @@ The `fofn.CreateJobs` function takes a `fofn.RunConfig`:
 type RunConfig struct {
     RunDir      string        // absolute path to run dir
     ChunkPaths  []string      // relative chunk filenames
-    SubDirName  string        // basename of fofn's parent dir
+    SubDirName  string        // subdirectory basename (used for RepGroup and --fofn)
     FofnMtime   int64         // Unix seconds mtime of fofn
     NoReplace   bool          // freeze mode from config.yml
-    FofnName    string        // basename of subdir, for ibackup:fofn metadata
     UserMeta    string        // semicolon-separated key=value from config.yml
     RAM         int           // MB, default 1024
     Time        time.Duration // default 8h
