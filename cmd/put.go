@@ -27,7 +27,6 @@ package cmd
 
 import (
 	"bufio"
-	"bytes"
 	b64 "encoding/base64"
 	"io"
 	"os"
@@ -38,7 +37,9 @@ import (
 
 	"github.com/inconshreveable/log15"
 	"github.com/spf13/cobra"
+
 	"github.com/wtsi-hgi/ibackup/baton"
+	"github.com/wtsi-hgi/ibackup/internal/scanner"
 	"github.com/wtsi-hgi/ibackup/server"
 	"github.com/wtsi-hgi/ibackup/statter"
 	"github.com/wtsi-hgi/ibackup/transfer"
@@ -347,7 +348,7 @@ func getRequestsFromFile(file, meta string, base64Encoded bool) ([]*transfer.Req
 		return nil, err
 	}
 
-	requests := parsePutFile(file, meta, user.Username, fofnLineSplitter(false), base64Encoded)
+	requests := parsePutFile(file, meta, user.Username, scanner.FofnLineSplitter(false), base64Encoded)
 
 	return requests, nil
 }
@@ -384,36 +385,9 @@ func parsePutFile(path, meta, requester string, splitter bufio.SplitFunc, base64
 	return prs
 }
 
-// fofnLineSplitter returns a bufio.SplitFunc that splits on \n be default, or
-// null if the given bool is true.
-func fofnLineSplitter(onNull bool) bufio.SplitFunc {
-	if onNull {
-		return scanNulls
-	}
-
-	return bufio.ScanLines
-}
-
-// scanNulls is a bufio.SplitFunc like bufio.ScanLines, but it splits on null
-// characters.
-func scanNulls(data []byte, atEOF bool) (advance int, token []byte, err error) {
-	if atEOF && len(data) == 0 {
-		return 0, nil, nil
-	}
-
-	if i := bytes.IndexByte(data, '\000'); i >= 0 {
-		return i + 1, data[0:i], nil
-	}
-
-	if atEOF {
-		return len(data), data, nil
-	}
-
-	return 0, nil, nil
-}
-
-// createScannerForFile creates a bufio.Scanner that will scan the given file,
-// splitting lines using the given splitter (eg. output of fofnLineSplitter()).
+// createScannerForFile creates a bufio.Scanner that will scan
+// the given file, splitting lines using the given splitter
+// (e.g. output of scanner.FofnLineSplitter()).
 func createScannerForFile(path string, splitter bufio.SplitFunc) (*bufio.Scanner, func()) {
 	var reader io.Reader
 

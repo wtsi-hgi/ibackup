@@ -5,7 +5,7 @@ Ref: [spec.md](spec.md) sections F1, F2, F3, F4, F5, F6
 ## Instructions
 
 Use the `orchestrator` skill to complete this phase, coordinating
-`go-implementor` and `go-reviewer` subagents.
+subagents with the `go-implementor` and `go-reviewer` skills.
 
 - Tests must use a mock JobSubmitter (defined in fofn/ test files) that records
   submitted jobs and allows tests to control job state responses. See spec.md

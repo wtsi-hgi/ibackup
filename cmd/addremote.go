@@ -26,12 +26,13 @@
 package cmd
 
 import (
-	"bufio"
 	b64 "encoding/base64"
 	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/wtsi-hgi/ibackup/internal/scanner"
 	"github.com/wtsi-hgi/ibackup/transfer"
 	"github.com/wtsi-hgi/ibackup/transformer"
 )
@@ -117,7 +118,7 @@ relative to the local prefix, and will end up relative to the remote prefix.)
 			dief("you must specify one of --prefix, or a custom transformer flag")
 		}
 
-		transformARFile(arFile, tx, fofnLineSplitter(arNull), arBase64)
+		transformARFile(arFile, tx, scanner.FofnLineSplitter(arNull), arBase64)
 	},
 }
 

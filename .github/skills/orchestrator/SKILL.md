@@ -7,8 +7,13 @@ description: Orchestrates implementation and review of phase plans for the iback
 # Orchestrator Skill
 
 You are an orchestrating agent. You do NOT implement code or run tests
-yourself — you launch subagents to do that work. This keeps your context
-clean and focused on coordination.
+yourself — you launch subagents (via `runSubagent`) to do that work,
+embedding the relevant skill instructions in each subagent's prompt.
+This keeps your context clean and focused on coordination.
+
+Note: `go-implementor` and `go-reviewer` are skills (instruction files
+in `.github/skills/`), not named agents. To use them, read their
+SKILL.md and include the full text in the `runSubagent` prompt.
 
 ## Input
 
@@ -45,9 +50,11 @@ Respect the ordering and batch structure in the phase file:
 
 #### a. Implementation
 
-Launch a **go-implementor** subagent with a prompt that includes:
+Launch a subagent with the **go-implementor** skill by including
+in its prompt:
 
-- The full text of the go-implementor skill.
+- The full text of the go-implementor skill (from
+  `.github/skills/go-implementor/SKILL.md`).
 - The item description from the phase file.
 - The spec.md section reference.
 - Any phase-specific instructions from the Instructions section.
@@ -63,9 +70,11 @@ checkbox in the phase MD file:
 
 #### b. Review
 
-Launch a **go-reviewer** subagent with a prompt that includes:
+Launch a subagent with the **go-reviewer** skill by including
+in its prompt:
 
-- The full text of the go-reviewer skill.
+- The full text of the go-reviewer skill (from
+  `.github/skills/go-reviewer/SKILL.md`).
 - The item description (or all items in the batch for parallel batches).
 - The spec.md section reference(s).
 - Any phase-specific instructions from the Instructions section.

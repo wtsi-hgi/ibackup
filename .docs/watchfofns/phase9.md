@@ -5,7 +5,7 @@ Ref: [spec.md](spec.md) sections H1, H2, H3, H4, H5
 ## Instructions
 
 Use the `orchestrator` skill to complete this phase, coordinating
-`go-implementor` and `go-reviewer` subagents.
+subagents with the `go-implementor` and `go-reviewer` skills.
 
 - Tests must use a mock JobSubmitter as described in spec.md (Architecture >
   "Interfaces for testability" and Appendix > "Testing strategy").

@@ -5,7 +5,7 @@ Ref: [spec.md](spec.md) sections I1, J1
 ## Instructions
 
 Use the `orchestrator` skill to complete this phase, coordinating
-`go-implementor` and `go-reviewer` subagents.
+subagents with the `go-implementor` and `go-reviewer` skills.
 
 - Integration tests must use `client.PretendSubmissions` to avoid needing a real
   wr server, and `internal.LocalHandler` to avoid needing real iRODS, as

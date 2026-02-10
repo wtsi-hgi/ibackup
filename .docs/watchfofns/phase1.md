@@ -5,7 +5,7 @@ Ref: [spec.md](spec.md) sections D1, D2
 ## Instructions
 
 Use the `orchestrator` skill to complete this phase, coordinating
-`go-implementor` and `go-reviewer` subagents.
+subagents with the `go-implementor` and `go-reviewer` skills.
 
 ## Items
 

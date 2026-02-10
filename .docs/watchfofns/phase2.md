@@ -5,7 +5,7 @@ Ref: [spec.md](spec.md) section A1
 ## Instructions
 
 Use the `orchestrator` skill to complete this phase, coordinating
-`go-implementor` and `go-reviewer` subagents.
+subagents with the `go-implementor` and `go-reviewer` skills.
 
 The memory-bounded test pattern is defined in the `go-implementor` skill.
 
