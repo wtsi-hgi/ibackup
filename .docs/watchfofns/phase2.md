@@ -56,9 +56,12 @@ section A1, including the memory-bounded test with 1,000,000 entries.
      accumulate them in a slice.
    - Confirms cmd/put.go now imports from internal/scanner/ instead of using
      local unexported functions.
+   - Runs `golangci-lint run` and confirms it reports no issues.
    - Returns a verdict: PASS (checks the "reviewed" checkbox) or FAIL with
      specific feedback.
 4. If the review subagent returns FAIL, the implementor addresses the
-   feedback and re-launches a fresh review subagent. This cycle repeats
-   until the review subagent returns PASS.
+   feedback — including running `golangci-lint run --fix` and fixing any
+   remaining lint issues — and re-does the complete TDD cycle as defined in
+   spec.md (Appendix > "TDD cycle"), then re-launches a fresh review
+   subagent. This cycle repeats until the review subagent returns PASS.
 5. Once the item is marked "reviewed", this phase is complete.

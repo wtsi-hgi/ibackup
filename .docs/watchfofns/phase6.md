@@ -116,12 +116,15 @@ section F6.
      the interface properly.
    - Confirms the implementation follows the spec (correct RepGroup format,
      job fields, command construction).
+   - Runs `golangci-lint run` and confirms it reports no issues.
    - Returns a verdict per item: PASS (checks the "reviewed" checkbox) or
      FAIL with specific feedback.
 4. If the review subagent returns FAIL for any item, the implementor (or a
-   fix subagent) addresses the feedback and re-launches a fresh review
-   subagent. This cycle repeats until the review subagent returns PASS for
-   all items in the batch.
+   fix subagent) addresses the feedback — including running
+   `golangci-lint run --fix` and fixing any remaining lint issues — and
+   re-does the complete TDD cycle as defined in spec.md (Appendix > "TDD
+   cycle"), then re-launches a fresh review subagent. This cycle repeats
+   until the review subagent returns PASS for all items in the batch.
 5. Only after all items in the current batch are marked "reviewed" may the
    implementor proceed to the next batch.
 6. Repeat until all items in this phase are implemented and reviewed.

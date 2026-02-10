@@ -63,11 +63,14 @@ A CollectReport convenience wrapper may also be added for test use.
      passes.
    - Confirms the implementation follows the spec (correct packages, files,
      function signatures, escaping via strconv.Quote).
+   - Runs `golangci-lint run` and confirms it reports no issues.
    - Returns a verdict: PASS (checks the "reviewed" checkbox) or FAIL with
      specific feedback.
 4. If the review subagent returns FAIL, the implementor addresses the
-   feedback and re-launches a fresh review subagent. This cycle repeats
-   until the review subagent returns PASS.
+   feedback — including running `golangci-lint run --fix` and fixing any
+   remaining lint issues — and re-does the complete TDD cycle as defined in
+   spec.md (Appendix > "TDD cycle"), then re-launches a fresh review
+   subagent. This cycle repeats until the review subagent returns PASS.
 5. Only after the current item is marked "reviewed" may the implementor
    proceed to the next item.
 6. Repeat until all items in this phase are implemented and reviewed.

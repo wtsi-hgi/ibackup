@@ -107,11 +107,15 @@ single poll cycle. Write GoConvey tests in fofn/watcher_test.go covering all
      the full poll cycle logic.
    - Confirms the implementation follows the spec (streaming, group
      ownership, symlink management, poll cycle state transitions).
+   - Runs `golangci-lint run` and confirms it reports no issues.
    - Returns a verdict: PASS (checks the "reviewed" checkbox) or FAIL with
      specific feedback.
 4. If the review subagent returns FAIL, the implementor (or a fix subagent)
-   addresses the feedback and re-launches a fresh review subagent. This
-   cycle repeats until the review subagent returns PASS.
+   addresses the feedback — including running `golangci-lint run --fix` and
+   fixing any remaining lint issues — and re-does the complete TDD cycle as
+   defined in spec.md (Appendix > "TDD cycle"), then re-launches a fresh
+   review subagent. This cycle repeats until the review subagent returns
+   PASS.
 5. Only after the current item (or batch) is marked "reviewed" may the
    implementor proceed to the next item(s).
 6. Repeat until all items in this phase are implemented and reviewed.
