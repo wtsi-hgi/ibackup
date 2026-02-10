@@ -247,10 +247,9 @@ packages:
   `*transfer.Request` with Local and Remote set.
 
 The fofn package should use these directly. No new transformation code is
-needed. The fofn package's `ProcessSubDir` (H1) calls
-`transformer.MakePathTransformer` with the transformer name read from
-`config.yml`, then iterates parsed paths calling
-`transfer.NewRequestWithTransformedLocal` for each.
+needed. `fofn.WriteShuffledChunks` (B1) calls `transformer.MakePathTransformer`
+with the transformer name it receives, then transforms each parsed path using
+`transfer.NewRequestWithTransformedLocal`.
 
 ---
 
@@ -854,9 +853,10 @@ This writes a `config.yml` file into `dir` with the given settings.
    when I call `fofn.ReadConfig(dir)`, then I get a `fofn.SubDirConfig` with
    Transformer="humgen", Freeze=true, Metadata=nil, and no error.
 
-2. Given a `config.yml` file containing `transformer: humgen\nmetadata:\n
-   colour: red\n  size: large\n`, when I call `fofn.ReadConfig(dir)`, then I get
-   a `fofn.SubDirConfig` with Transformer="humgen", Freeze=false,
+2. Given a `config.yml` file containing
+   `transformer: humgen\nmetadata:\n  colour: red\n  size: large\n`,
+   when I call `fofn.ReadConfig(dir)`, then I get a `fofn.SubDirConfig` with
+   Transformer="humgen", Freeze=false,
    Metadata=map[string]string{"colour":"red","size":"large"}, and no error.
 
 3. Given no `config.yml` file in the directory, when I call
@@ -954,9 +954,8 @@ are readable by the same unix group as the watch directory.
 
 As a developer using the fofn package, I want a `fofn.ProcessSubDir` function
 that performs the full streaming pipeline for one subdirectory: read
-`config.yml`, scan fofn via `scanner.ScanNullTerminated`, transform each path
-with `transfer.NewRequestWithTransformedLocal`, and stream directly into
-`fofn.WriteShuffledChunks`, then submit jobs with metadata flags derived from
+`config.yml`, call `fofn.WriteShuffledChunks` (which internally scans the fofn
+and transforms each path), then submit jobs with metadata flags derived from
 the subdirectory name (`ibackup:fofn`) and any user metadata from `config.yml`
 (`ibackup:user:` keys) - never holding all paths in memory.
 
