@@ -18,8 +18,8 @@ Ref: [spec.md](spec.md) sections G4, G1, G2, G3
 
 ## Items
 
-Items marked "parallel" are independent of each other and MAY be implemented
-simultaneously (e.g. by an AI agent dispatching sub-agents).
+Items marked "parallel" are independent of each other and MUST be implemented
+concurrently using separate AI subagents — one subagent per item.
 
 ### Batch 1 (parallel)
 
@@ -71,24 +71,33 @@ from spec.md section G3.
 
 ## Workflow
 
-1. The implementor implements one batch of items at a time. For parallel
-   items within a batch, they may be implemented simultaneously. For each
-   item, write all GoConvey tests corresponding to the acceptance tests in
-   spec.md, then write the implementation code to make those tests pass -
-   strictly following the TDD cycle in spec.md (Appendix > "TDD cycle").
-2. The implementor checks the "implemented" checkbox for each completed item
-   in the batch, then STOPS and waits for review.
-3. A reviewer (who MUST be a separate entity from the implementor) reviews the
-   work:
+1. The implementor processes one batch at a time. **Parallel items within a
+   batch MUST be implemented concurrently using separate subagents** — one
+   subagent per item, each given the spec.md context and the item
+   requirements. Each subagent writes all GoConvey tests corresponding to
+   the acceptance tests in spec.md, then writes the implementation code to
+   make those tests pass - strictly following the TDD cycle in spec.md
+   (Appendix > "TDD cycle").
+2. Once all subagents in the batch complete, the implementor checks the
+   "implemented" checkbox for each item, then launches a **review
+   subagent** — a separate AI subagent with clean context (no memory of
+   implementation decisions) that reviews ALL items in the batch together.
+3. The review subagent:
+   - Reads spec.md for the referenced sections and all implemented source
+     and test files in the batch.
+   - Runs all tests (`CGO_ENABLED=1 go test -tags netgo --count 1 ...`).
    - Confirms every acceptance test from spec.md has a corresponding GoConvey
-     test.
+     test for each item.
    - Confirms all tests pass without any tricks that provide false positive
      passes.
    - Confirms the implementation follows the spec (correct packages, files,
      function signatures, YAML parsing, file permissions, GID handling).
-   - If satisfied, checks the "reviewed" checkbox for each item in the batch.
-   - If not satisfied, provides feedback. The implementor must address the
-     feedback before the items can be marked reviewed.
-4. Only after all items in the current batch are marked "reviewed" may the
+   - Returns a verdict per item: PASS (checks the "reviewed" checkbox) or
+     FAIL with specific feedback.
+4. If the review subagent returns FAIL for any item, the implementor (or a
+   fix subagent) addresses the feedback and re-launches a fresh review
+   subagent. This cycle repeats until the review subagent returns PASS for
+   all items in the batch.
+5. Only after all items in the current batch are marked "reviewed" may the
    implementor proceed to the next batch.
-5. Repeat until all items in this phase are implemented and reviewed.
+6. Repeat until all items in this phase are implemented and reviewed.

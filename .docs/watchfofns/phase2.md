@@ -41,10 +41,13 @@ section A1, including the memory-bounded test with 1,000,000 entries.
    corresponding to the acceptance tests in spec.md, then writing the
    implementation code to make those tests pass - strictly following the TDD
    cycle in spec.md (Appendix > "TDD cycle").
-2. The implementor checks the "implemented" checkbox, then STOPS and waits
-   for review.
-3. A reviewer (who MUST be a separate entity from the implementor) reviews the
-   work:
+2. The implementor checks the "implemented" checkbox, then launches a
+   **review subagent** — a separate AI subagent with clean context (no
+   memory of implementation decisions) that performs the review.
+3. The review subagent:
+   - Reads spec.md for the referenced sections and the implemented source
+     and test files.
+   - Runs the tests (`CGO_ENABLED=1 go test -tags netgo --count 1 ...`).
    - Confirms every acceptance test from spec.md (all 7 for A1) has a
      corresponding GoConvey test.
    - Confirms all tests pass without any tricks that provide false positive
@@ -53,7 +56,9 @@ section A1, including the memory-bounded test with 1,000,000 entries.
      accumulate them in a slice.
    - Confirms cmd/put.go now imports from internal/scanner/ instead of using
      local unexported functions.
-   - If satisfied, checks the "reviewed" checkbox.
-   - If not satisfied, provides feedback. The implementor must address the
-     feedback before the item can be marked reviewed.
-4. Once the item is marked "reviewed", this phase is complete.
+   - Returns a verdict: PASS (checks the "reviewed" checkbox) or FAIL with
+     specific feedback.
+4. If the review subagent returns FAIL, the implementor addresses the
+   feedback and re-launches a fresh review subagent. This cycle repeats
+   until the review subagent returns PASS.
+5. Once the item is marked "reviewed", this phase is complete.

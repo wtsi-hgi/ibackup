@@ -83,26 +83,35 @@ single poll cycle. Write GoConvey tests in fofn/watcher_test.go covering all
 
 ## Workflow
 
-1. The implementor implements one item (or a batch of parallel items) at a
-   time. For each item, write all GoConvey tests corresponding to the
-   acceptance tests in spec.md, then write the implementation code to make
-   those tests pass - strictly following the TDD cycle in spec.md
-   (Appendix > "TDD cycle").
-2. The implementor checks the "implemented" checkbox for each completed item,
-   then STOPS and waits for review.
-3. A reviewer (who MUST be a separate entity from the implementor) reviews the
-   work:
+1. The implementor implements one item at a time for sequential items
+   (9.1–9.3). For the parallel batch (9.4–9.5), **parallel items MUST be
+   implemented concurrently using separate subagents** — one subagent per
+   item, each given the spec.md context and the item requirements. For
+   each item, write all GoConvey tests corresponding to the acceptance
+   tests in spec.md, then write the implementation code to make those tests
+   pass - strictly following the TDD cycle in spec.md (Appendix > "TDD
+   cycle").
+2. After each item (or parallel batch) is implemented, the implementor
+   checks the "implemented" checkbox and launches a **review subagent** —
+   a separate AI subagent with clean context (no memory of implementation
+   decisions) that performs the review.
+3. The review subagent:
+   - Reads spec.md for the referenced sections and the implemented source
+     and test files.
+   - Runs the tests (`CGO_ENABLED=1 go test -tags netgo --count 1 ...`).
    - Confirms every acceptance test from spec.md has a corresponding GoConvey
      test.
    - Confirms all tests pass without any tricks that provide false positive
      passes.
-   - Confirms the mock JobSubmitter is used correctly and tests exercise the
-     full poll cycle logic.
+   - Confirms the mock JobSubmitter is used correctly and tests exercise
+     the full poll cycle logic.
    - Confirms the implementation follows the spec (streaming, group
      ownership, symlink management, poll cycle state transitions).
-   - If satisfied, checks the "reviewed" checkbox.
-   - If not satisfied, provides feedback. The implementor must address the
-     feedback before the item can be marked reviewed.
-4. Only after the current item (or batch) is marked "reviewed" may the
+   - Returns a verdict: PASS (checks the "reviewed" checkbox) or FAIL with
+     specific feedback.
+4. If the review subagent returns FAIL, the implementor (or a fix subagent)
+   addresses the feedback and re-launches a fresh review subagent. This
+   cycle repeats until the review subagent returns PASS.
+5. Only after the current item (or batch) is marked "reviewed" may the
    implementor proceed to the next item(s).
-5. Repeat until all items in this phase are implemented and reviewed.
+6. Repeat until all items in this phase are implemented and reviewed.

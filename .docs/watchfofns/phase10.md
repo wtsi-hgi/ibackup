@@ -53,9 +53,12 @@ config.yml creation helper, buried jobs with fofn update).
    implementation code to make those tests pass - strictly following the TDD
    cycle in spec.md (Appendix > "TDD cycle").
 2. The implementor checks the "implemented" checkbox for the completed item,
-   then STOPS and waits for review.
-3. A reviewer (who MUST be a separate entity from the implementor) reviews the
-   work:
+   then launches a **review subagent** — a separate AI subagent with clean
+   context (no memory of implementation decisions) that performs the review.
+3. The review subagent:
+   - Reads spec.md for the referenced sections and the implemented source
+     and test files.
+   - Runs the tests (`CGO_ENABLED=1 go test -tags netgo --count 1 ...`).
    - Confirms every acceptance test from spec.md has a corresponding GoConvey
      test.
    - Confirms all tests pass without any tricks that provide false positive
@@ -64,9 +67,11 @@ config.yml creation helper, buried jobs with fofn update).
    - For J1, confirms the integration test exercises the full pipeline and
      verifies all specified assertions (status file contents, group
      ownership, metadata flags, symlinks, etc.).
-   - If satisfied, checks the "reviewed" checkbox.
-   - If not satisfied, provides feedback. The implementor must address the
-     feedback before the item can be marked reviewed.
-4. Only after the current item is marked "reviewed" may the implementor
+   - Returns a verdict: PASS (checks the "reviewed" checkbox) or FAIL with
+     specific feedback.
+4. If the review subagent returns FAIL, the implementor addresses the
+   feedback and re-launches a fresh review subagent. This cycle repeats
+   until the review subagent returns PASS.
+5. Only after the current item is marked "reviewed" may the implementor
    proceed to the next item.
-5. Repeat until all items in this phase are implemented and reviewed.
+6. Repeat until all items in this phase are implemented and reviewed.
