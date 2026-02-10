@@ -1162,6 +1162,8 @@ The command accepts these flags:
 | `--retries`       | int      | 3          | wr job retries         |
 | `--limit-group`   | string   | irods      | wr limit group         |
 
+The command also supports the standard cobra help flags (`-h`, `--help`).
+
 The command:
 1. Validates that `--dir` is provided and exists.
 2. Validates that the IBACKUP_CONFIG environment variable is set (required for
@@ -1181,6 +1183,9 @@ transitions, and errors) to STDERR.
 2. Given a valid `--dir` pointing to an existing directory, when I run `ibackup
    fofnserver --dir /tmp/test --interval 1s` and send SIGINT after 2 seconds,
    then it exits cleanly with code 0.
+
+3. Given `ibackup fofnserver --help`, when I run it, then it exits with code 0
+   and prints a usage block that includes the `fofnserver` command name.
 
 ---
 
@@ -1417,8 +1422,7 @@ All new source files must start with:
 /*******************************************************************************
  * Copyright (c) 2026 Genome Research Ltd.
  *
- * Authors:
- *	- Sendu Bala <sb10@sanger.ac.uk>
+ * Author: Sendu Bala <sb10@sanger.ac.uk>
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
