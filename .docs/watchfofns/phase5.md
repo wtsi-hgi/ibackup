@@ -2,12 +2,10 @@
 
 Ref: [spec.md](spec.md) section D3
 
-## General Requirements
+## Instructions
 
-Use the `go-implementor` skill for TDD cycle, boilerplate, code quality
-standards, and implementation workflow.
-
-Use the `go-reviewer` skill when launching review subagents.
+Use the `orchestrator` skill to complete this phase, coordinating
+`go-implementor` and `go-reviewer` subagents.
 
 ## Items
 
@@ -23,7 +21,3 @@ report must be round-trippable through fofn.CollectReport().
 - [ ] implemented
 - [ ] reviewed
 
-## Workflow
-
-Follow the implementation workflow in the `go-implementor` skill.
-Launch review subagents using the `go-reviewer` skill.

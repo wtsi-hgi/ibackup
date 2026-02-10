@@ -2,15 +2,13 @@
 
 Ref: [spec.md](spec.md) sections H1, H2, H3, H4, H5
 
-## General Requirements
+## Instructions
 
-Use the `go-implementor` skill for TDD cycle, boilerplate, code quality
-standards, and implementation workflow (including parallel batch handling).
+Use the `orchestrator` skill to complete this phase, coordinating
+`go-implementor` and `go-reviewer` subagents.
 
 - Tests must use a mock JobSubmitter as described in spec.md (Architecture >
   "Interfaces for testability" and Appendix > "Testing strategy").
-
-Use the `go-reviewer` skill when launching review subagents.
 
 ## Items
 
@@ -75,8 +73,3 @@ single poll cycle. Write GoConvey tests in fofn/watcher_test.go covering all
 - [ ] implemented
 - [ ] reviewed
 
-## Workflow
-
-Follow the implementation workflow in the `go-implementor` skill.
-For the parallel batch (9.4–9.5), use separate subagents per item.
-Launch review subagents using the `go-reviewer` skill.

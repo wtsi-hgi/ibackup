@@ -2,12 +2,10 @@
 
 Ref: [spec.md](spec.md) sections D1, D2
 
-## General Requirements
+## Instructions
 
-Use the `go-implementor` skill for TDD cycle, boilerplate, code quality
-standards, and implementation workflow.
-
-Use the `go-reviewer` skill when launching review subagents.
+Use the `orchestrator` skill to complete this phase, coordinating
+`go-implementor` and `go-reviewer` subagents.
 
 ## Items
 
@@ -22,8 +20,8 @@ Write FormatReportLine and ParseReportLine functions in fofn/report.go, with
 GoConvey tests in fofn/report_test.go covering all 5 acceptance tests from
 spec.md section D1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 1.2: D2 - Streaming report write and callback read
 
@@ -34,10 +32,6 @@ callback reader) in fofn/report.go, with GoConvey tests in
 fofn/report_test.go covering all 4 acceptance tests from spec.md section D2.
 A CollectReport convenience wrapper may also be added for test use.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
-## Workflow
-
-Follow the implementation workflow in the `go-implementor` skill.
-Launch review subagents using the `go-reviewer` skill.

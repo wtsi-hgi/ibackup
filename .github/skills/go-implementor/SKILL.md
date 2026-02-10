@@ -135,16 +135,7 @@ func TestStreamingMemory(t *testing.T) {
 1. Implement ONE item at a time, writing all GoConvey tests corresponding
    to the acceptance tests in spec.md, then writing the implementation
    code to make those tests pass — strictly following the TDD cycle above.
-2. For parallel batch items: implement concurrently using separate
-   subagents — one subagent per item.
-3. After implementation, check the "implemented" checkbox, then launch a
-   review subagent (use the `go-reviewer` skill) with clean context.
-4. If the reviewer returns FAIL, address feedback, run
-   `golangci-lint run --fix`, fix remaining issues, re-do the complete TDD
-   cycle, then re-launch a fresh review subagent.
-5. Only after an item is marked "reviewed" proceed to the next item (or
-   batch).
-6. Consult spec.md for the full acceptance test details, function
+2. Consult spec.md for the full acceptance test details, function
    signatures, types, and package structure.
 
 ## Test Commands

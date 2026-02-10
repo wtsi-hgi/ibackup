@@ -80,8 +80,8 @@ golangci-lint run
 
 Return one of:
 
-- **PASS** — Check the "reviewed" checkbox. Optionally note minor
-  suggestions that do not block approval.
+- **PASS** — Optionally note minor suggestions that do not block
+  approval.
 - **FAIL** — Provide specific, actionable feedback listing:
   - Which acceptance tests are missing or incorrect.
   - Which spec requirements are not met.
@@ -99,12 +99,4 @@ Review the one item's source and test files.
 Review ALL items in the batch together in a single review pass. Return a
 per-item verdict (PASS or FAIL with specific feedback for each).
 
-## After FAIL Verdict
 
-The implementor must:
-1. Address all feedback.
-2. Run `golangci-lint run --fix` and fix remaining issues.
-3. Re-do the complete TDD cycle for affected tests.
-4. Re-launch a fresh review subagent (new clean context).
-
-This cycle repeats until the reviewer returns PASS.

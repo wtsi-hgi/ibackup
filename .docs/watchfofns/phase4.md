@@ -2,12 +2,10 @@
 
 Ref: [spec.md](spec.md) sections C1, C2, C3, C4, C5
 
-## General Requirements
+## Instructions
 
-Use the `go-implementor` skill for TDD cycle, boilerplate, code quality
-standards, and implementation workflow (including parallel batch handling).
-
-Use the `go-reviewer` skill when launching review subagents.
+Use the `orchestrator` skill to complete this phase, coordinating
+`go-implementor` and `go-reviewer` subagents.
 
 ## Items
 
@@ -75,9 +73,6 @@ in main_test.go covering all 2 acceptance tests from spec.md section C3.
 - [ ] implemented
 - [ ] reviewed
 
-## Workflow
-
-Follow the implementation workflow in the `go-implementor` skill.
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `go-reviewer` skill (review all items
 in the batch together in a single review pass).

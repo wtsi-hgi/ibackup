@@ -2,16 +2,14 @@
 
 Ref: [spec.md](spec.md) sections I1, J1
 
-## General Requirements
+## Instructions
 
-Use the `go-implementor` skill for TDD cycle, boilerplate, code quality
-standards, and implementation workflow.
+Use the `orchestrator` skill to complete this phase, coordinating
+`go-implementor` and `go-reviewer` subagents.
 
 - Integration tests must use `client.PretendSubmissions` to avoid needing a real
   wr server, and `internal.LocalHandler` to avoid needing real iRODS, as
   described in spec.md (Appendix > "Testing strategy").
-
-Use the `go-reviewer` skill when launching review subagents.
 
 ## Items
 
@@ -40,7 +38,3 @@ config.yml creation helper, buried jobs with fofn update).
 - [ ] implemented
 - [ ] reviewed
 
-## Workflow
-
-Follow the implementation workflow in the `go-implementor` skill.
-Launch review subagents using the `go-reviewer` skill.
