@@ -538,7 +538,7 @@ determine the outcome for every file.
 As a developer using the fofn package, I want a single function that reads all
 chunk files and their corresponding report files in a run directory, identifies
 unprocessed files from buried/failed chunks, and streams the combined results
-into a status file with a SUMMARY line - without loading everything into memory.
+into a status file with a SUMMARY line, without loading everything into memory.
 
 The key type is `fofn.ReportEntry`:
 
@@ -579,10 +579,10 @@ The implementation should be composed of independently testable parts:
 
 2. Given a run directory with 3 chunk files, 2 complete report files (10 entries
    each), and 1 buried chunk ("chunk.000002") whose report file does not exist,
-   when I call `fofn.WriteStatusFromRun(runDir, statusPath, ["chunk.000002"])`,
-   then the status file contains 20 entries from the reports plus 5 entries
-   (matching chunk.000002's contents) with Status="not_processed", and the
-   SUMMARY line reflects all 25 entries.
+   when I call `fofn.WriteStatusFromRun(runDir, statusPath,
+   []string{"chunk.000002"})`, then the status file contains 20 entries from the
+   reports plus 5 entries (matching chunk.000002's contents) with
+   Status="not_processed", and the SUMMARY line reflects all 25 entries.
 
 3. Given a buried chunk whose report file exists but is incomplete (5 of 10
    files reported), when I call `fofn.WriteStatusFromRun(...)` with that chunk
@@ -658,16 +658,17 @@ type RunConfig struct {
     RAM         int           // MB, default 1024
     Time        time.Duration // default 8h
     Retries     uint8         // default 3
-    LimitGroups []string      // default ["irods"]
+    LimitGroups []string      // default []string{"irods"}
     ReqGroup    string        // default "ibackup"
 }
 ```
 
 **Acceptance tests:**
 
-1. Given a RunConfig with RunDir="/watch/proj/123", ChunkPaths=["chunk.000000",
-   "chunk.000001"], SubDirName="proj", FofnMtime=123, when I call
-   `fofn.CreateJobs(cfg)`, then I get 2 `*jobqueue.Job` values where:
+1. Given a RunConfig with RunDir="/watch/proj/123",
+   ChunkPaths=[]string{"chunk.000000", "chunk.000001"}, SubDirName="proj",
+   FofnMtime=123, when I call `fofn.CreateJobs(cfg)`, then I get 2
+   `*jobqueue.Job` values where:
    - Each Cmd matches `BuildPutCommand(chunk, false, "proj", "")`.
    - Each Cwd equals "/watch/proj/123".
    - Each CwdMatters is true.
@@ -676,7 +677,7 @@ type RunConfig struct {
    - Each Requirements.RAM is 1024.
    - Each Requirements.Time is 8h.
    - Each Retries is 3.
-   - Each LimitGroups is ["irods"].
+   - Each LimitGroups is []string{"irods"}.
 
 2. Given a RunConfig with NoReplace=true, when I call `fofn.CreateJobs(cfg)`,
    then each Cmd contains `--no_replace`.
@@ -1020,7 +1021,7 @@ writes the status file, so that users have a comprehensive backup status.
 
 2. Given a run directory with 3 chunk files but only 2 report files (simulating
    1 buried job whose chunk had 10 files), when I call
-   `fofn.GenerateStatus(runDir, subDir, ["chunk.000002"])`, then
+   `fofn.GenerateStatus(runDir, subDir, []string{"chunk.000002"})`, then
    `<runDir>/status` contains entries from the 2 reports plus 10 entries with
    status "not_processed" for the missing chunk's files, and the SUMMARY line
    reflects the correct counts. The `subDir/status` symlink points to
@@ -1028,8 +1029,8 @@ writes the status file, so that users have a comprehensive backup status.
 
 3. Given a run directory with 1 chunk file and 1 report file that is incomplete
    (5 of 10 files), when I call `fofn.GenerateStatus(runDir, subDir,
-   ["chunk.000000"])`, then the 5 unreported files from chunk.000000 appear as
-   "not_processed" in `<runDir>/status`.
+   []string{"chunk.000000"})`, then the 5 unreported files from chunk.000000
+   appear as "not_processed" in `<runDir>/status`.
 
 4. Given any of the above, when I examine the created status file, then it has
    group ownership matching the watch directory's GID and is group-readable.
