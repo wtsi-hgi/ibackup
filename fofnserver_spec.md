@@ -57,11 +57,11 @@ are split by responsibility:
 | `fofn/chunk.go`        | Streaming shuffle and chunk writing     |
 | `fofn/chunk_test.go`   | B1 tests                                |
 | `fofn/jobs.go`         | wr job creation, submission, monitoring |
-| `fofn/jobs_test.go`    | F1–F6 tests                             |
+| `fofn/jobs_test.go`    | F1-F6 tests                             |
 | `fofn/scan.go`         | Watch dir scanning, config file reading |
-| `fofn/scan_test.go`    | G1–G5 tests                             |
+| `fofn/scan_test.go`    | G1-G5 tests                             |
 | `fofn/server.go`       | Server orchestration, ProcessSubDir     |
-| `fofn/server_test.go`  | H1–H5 tests                             |
+| `fofn/server_test.go`  | H1-H5 tests                             |
 
 ### Changes to existing packages
 
@@ -130,14 +130,18 @@ Given a watch directory `/watch` with a subdirectory `project1/`, the layout is:
     .transformer             # contains transformer name
     .freeze                  # optional; enables no-replace mode
     .metadata                # optional; TSV of key\tvalue user metadata
-    status                   # latest aggregated status file
+    status                   # symlink to latest run status (atomic update)
     1738000000/              # run dir (fofn mtime as Unix secs)
         chunk.000000         # base64-encoded local\tremote
         chunk.000000.log     # ibackup put log output
         chunk.000000.out     # ibackup put stdout+stderr
         chunk.000000.report  # machine-parsable report
+        status               # aggregated status file for this run
         chunk.000001
         ...
+
+The server writes the status file into the run directory, then updates the
+subdirectory-root `status` symlink atomically to point at `<runDir>/status`.
 ```
 
 ### Unix group ownership
@@ -269,6 +273,10 @@ estimated by a first pass counting entries, or by using a default upper bound).
 Each incoming entry is assigned to a random chunk index (`rand.Intn(numChunks)`)
 and written immediately. This achieves shuffle without storing all entries.
 
+For testability, the assignment must be deterministic when a seed is provided.
+The public API should therefore accept a `randSeed` argument (or an equivalent
+injectable randomness source). Production code may use a time-based seed.
+
 For small inputs where chunk count is unknown in advance, a two-pass approach
 is acceptable:
 1. First pass: count entries via `scanner.ScanNullTerminated`.
@@ -286,14 +294,15 @@ Chunk files may end up with slightly uneven sizes (binomial distribution around
 **Acceptance tests:**
 
 1. Given a fofn with 25 null-terminated paths and a chunk size of 10, when I
-   call `fofn.WriteShuffledChunks(fofnPath, transformerName, dir, 10)`, then 3
+   call `fofn.WriteShuffledChunks(fofnPath, transformerName, dir, 10, 1)`, then
+   3
    chunk files are created in `dir` named `chunk.000000`, `chunk.000001`,
    `chunk.000002`, the total line count across all chunks is 25, and each line
    has base64-encoded local and remote paths separated by a tab.
 
 2. Given a fofn with 10 paths and a chunk size of 10, when I call
-   `fofn.WriteShuffledChunks(...)`, then 1 chunk file is created containing 10
-   lines.
+   `fofn.WriteShuffledChunks(fofnPath, transformerName, dir, 10, 1)`, then 1
+   chunk file is created containing 10 lines.
 
 3. Given an empty fofn, when I call `fofn.WriteShuffledChunks(...)`, then 0
    chunk files are created and an empty slice of chunk names is returned.
@@ -302,12 +311,26 @@ Chunk files may end up with slightly uneven sizes (binomial distribution around
    file and base64-decode each field, then the decoded local and remote paths
    are a subset of the original entries.
 
-5. Given a fofn with 1000 sorted paths, when I call
-   `fofn.WriteShuffledChunks(...)` twice, then the concatenated contents of all
-   chunk files differ between the two runs (with very high probability),
-   confirming entries are shuffled.
+5. Given a fofn with 1000 paths and a fixed `randSeed`, when I call
+   `fofn.WriteShuffledChunks(...)` twice with the same `randSeed`, then the
+   concatenated contents of all chunk files are identical between the two runs
+   (confirming deterministic assignment for testability).
 
-6. (**Memory test**) Given a fofn with 1,000,000 null-terminated 100-byte paths,
+6. Given a fofn with 10 paths `"/f0"` ... `"/f9"` and chunkSize=3 (so
+   numChunks=4), when I call `fofn.WriteShuffledChunks(...)` with randSeed=1,
+   then the decoded local paths appear in these chunk files, in this order:
+   - chunk.000000: /f7, /f8, /f9
+   - chunk.000001: /f0, /f4, /f6
+   - chunk.000002: /f5
+   - chunk.000003: /f1, /f2, /f3
+   And when I call `fofn.WriteShuffledChunks(...)` again with randSeed=2, then
+   the decoded local paths appear in these chunk files, in this order:
+   - chunk.000000: /f2, /f3, /f4, /f7, /f9
+   - chunk.000001: (no lines)
+   - chunk.000002: /f0, /f1, /f5, /f6
+   - chunk.000003: /f8
+
+7. (**Memory test**) Given a fofn with 1,000,000 null-terminated 100-byte paths,
    when I call `fofn.WriteShuffledChunks(...)` with chunkSize=10000, then
    `runtime.MemStats.HeapInuse` does not increase by more than 20 MB above the
    baseline (proving entries are streamed, not accumulated).
@@ -977,21 +1000,24 @@ writes the status file, so that users have a comprehensive backup status.
 
 1. Given a run directory with 3 chunk files and 3 corresponding report files
    (all complete), when I call `fofn.GenerateStatus(runDir, subDir,
-   buriedChunks)` with no buried chunks, then a "status" file is written in the
-   subdirectory containing all entries from all reports plus a correct SUMMARY
-   line, and no error is returned.
+   buriedChunks)` with no buried chunks, then:
+   - A status file is written at `<runDir>/status` containing all entries from
+     all reports plus a correct SUMMARY line.
+   - A symlink `subDir/status` exists and points to `<runDir>/status`.
+   - No error is returned.
 
 2. Given a run directory with 3 chunk files but only 2 report files (simulating
    1 buried job whose chunk had 10 files), when I call
-   `fofn.GenerateStatus(runDir, subDir, ["chunk.000002"])`, then the status file
-   contains entries from the 2 reports plus 10 entries with status
-   "not_processed" for the missing chunk's files, and the SUMMARY line reflects
-   the correct counts.
+   `fofn.GenerateStatus(runDir, subDir, ["chunk.000002"])`, then
+   `<runDir>/status` contains entries from the 2 reports plus 10 entries with
+   status "not_processed" for the missing chunk's files, and the SUMMARY line
+   reflects the correct counts. The `subDir/status` symlink points to
+   `<runDir>/status`.
 
 3. Given a run directory with 1 chunk file and 1 report file that is incomplete
    (5 of 10 files), when I call `fofn.GenerateStatus(runDir, subDir,
    ["chunk.000000"])`, then the 5 unreported files from chunk.000000 appear as
-   "not_processed" in the status file.
+   "not_processed" in `<runDir>/status`.
 
 4. Given any of the above, when I examine the created status file, then it has
    group ownership matching the watch directory's GID and is group-readable.
@@ -1014,7 +1040,7 @@ poll cycle it:
 2. For each subdirectory, checks if an active run exists.
 3. If an active run exists, checks if it is complete (all jobs in a terminal
    state - complete or buried).
-   - If not complete (jobs still running), skip - wait for next cycle.
+    - If not complete (jobs still running), skip - wait for next cycle.
    - If complete with NO buried jobs: generate status file, delete any older run
      directories (clean up successful history), clear active run, then check if
      fofn mtime has changed and start new run if so.
@@ -1038,9 +1064,10 @@ poll cycle it:
    jobs), when I call `server.Poll()` again, then no new jobs are submitted.
 
 3. Given an active run where all jobs completed successfully (no buried jobs),
-   when I call `server.Poll()`, then the status file is generated, the active
-   run is cleared, and if the fofn mtime has changed since the run started, a
-   new run begins.
+   when I call `server.Poll()`, then the status file is generated (or updated),
+   `subDir/status` exists and points to `<runDir>/status`, the active run is
+   cleared, and if the fofn mtime has changed since the run started, a new run
+   begins.
 
 4. Given an active run where all jobs completed successfully and the fofn has
    NOT changed, when I call `server.Poll()`, then the status file is generated
@@ -1060,6 +1087,12 @@ poll cycle it:
    "1000") and a *previous* run directory ("500") still exists on disk, when I
    call `server.Poll()`, then the "500" directory is deleted (cleanup of old
    successful/historic runs).
+
+8. Given a subdirectory with a completed run "1000" where `subDir/status`
+   points to "1000/status", and the fofn has been updated to mtime "2000", when
+   I call `server.Poll()` to start the new run and then (after the mock
+   JobSubmitter reports all "2000" jobs are in terminal state) I call
+   `server.Poll()` again, then `subDir/status` points to "2000/status".
 
 ### H4: Restart resilience
 
@@ -1137,6 +1170,9 @@ The command:
 4. Calls `fofn.Server.Run()` which blocks, polling at the configured interval.
 5. On SIGINT/SIGTERM, exits immediately (wr jobs continue independently).
 
+The command logs operational activity (scan results, submissions, state
+transitions, and errors) to STDERR.
+
 **Acceptance tests:**
 
 1. Given no `--dir` flag, when I run `ibackup fofnserver`, then it exits with a
@@ -1179,8 +1215,10 @@ handler) to generate report files, simulating what wr would do.
    - Jobs were submitted (recorded by PretendSubmissions).
    - After simulating job execution (running `ibackup put` directly for each
      chunk), report files are written.
-   - After calling status generation, a "status" file exists in the
-     subdirectory.
+   - After calling status generation, a status file exists at
+       `<runDir>/status`.
+   - A `status` symlink exists in the subdirectory and points to
+       `<runDir>/status`.
    - The status file contains 5 data lines and a correct SUMMARY line.
    - All created files and directories have the correct group ownership.
    - Each submitted put command includes `--fofn <dirname>` and `--meta
@@ -1190,8 +1228,8 @@ handler) to generate report files, simulating what wr would do.
    Given the same setup but with a .freeze file, and some files already
    "uploaded" (mock handler has them with an older mtime), when the fofnserver
    processes this directory, then the submitted put commands include
-   `--no_replace`, and the status file shows "frozen" for the pre-existing files
-   and "uploaded" for the new ones.
+   `--no_replace`, and the status file (read via the `status` symlink) shows
+   "frozen" for the pre-existing files and "uploaded" for the new ones.
 
 3. **Restart resilience:**
    Given a previously created run directory with chunk files, when a new fofn
@@ -1307,7 +1345,7 @@ may accumulate all entries in a slice. Specifically:
   scanner output through transform and into chunk writing.
 
 Each of A1, B1, and E1 includes a memory-bounded acceptance test that creates
-1,000,000 entries and asserts heap growth stays under a threshold (10–20 MB).
+1,000,000 entries and asserts heap growth stays under a threshold (10-20 MB).
 These tests use `runtime.ReadMemStats` before and after the operation, with a
 forced `runtime.GC()` before each measurement.
 
@@ -1367,7 +1405,7 @@ func TestStreamingMemory(t *testing.T) {
 }
 ```
 
-The threshold is generous (10–20 MB) to avoid flakiness. A non-streaming
+The threshold is generous (10-20 MB) to avoid flakiness. A non-streaming
 implementation holding 1M entries would use ~200+ MB, so the test clearly
 distinguishes the two approaches.
 
