@@ -104,6 +104,8 @@ func TestCreateJobs(t *testing.T) {
 					"ibackup")
 				So(jobs[0].Requirements.RAM, ShouldEqual,
 					1024)
+				So(jobs[0].Requirements.Cores, ShouldEqual,
+					0.1)
 				So(jobs[0].Requirements.Time, ShouldEqual,
 					8*time.Hour)
 				So(jobs[0].Retries, ShouldEqual, uint8(3))

@@ -37,6 +37,7 @@ import (
 
 const (
 	defaultRAM      = 1024
+	defaultCores    = 0.1
 	defaultTime     = 8 * time.Hour
 	defaultReqGroup = "ibackup"
 )
@@ -72,8 +73,9 @@ func CreateJobs(cfg RunConfig) []*jobqueue.Job {
 			RepGroup:   repGroup,
 			ReqGroup:   cfg.ReqGroup,
 			Requirements: &jqs.Requirements{
-				RAM:  cfg.RAM,
-				Time: cfg.Time,
+				RAM:   cfg.RAM,
+				Cores: defaultCores,
+				Time:  cfg.Time,
 			},
 			Retries:     cfg.Retries,
 			LimitGroups: cfg.LimitGroups,
