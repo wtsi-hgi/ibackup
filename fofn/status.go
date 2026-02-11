@@ -35,7 +35,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"unsafe"
 )
 
 const (
@@ -53,10 +52,6 @@ var ErrMalformedSummary = errors.New("malformed summary field")
 // ErrMalformedChunkLine is returned when a chunk line
 // does not have exactly the expected number of fields.
 var ErrMalformedChunkLine = errors.New("malformed chunk line")
-
-// statusOffsets maps status strings to their byte offset
-// within StatusCounts. Populated once at init time.
-var statusOffsets = buildStatusOffsets() //nolint:gochecknoglobals
 
 // StatusCounts holds counts per upload status for a completed run.
 type StatusCounts struct {
@@ -196,9 +191,27 @@ func parseSummaryField(
 func assignSummaryCount(
 	counts *StatusCounts, key string, val int,
 ) {
-	ptr := statusFieldPtr(counts, key)
-	if ptr != nil {
-		*ptr = val
+	switch key {
+	case "uploaded":
+		counts.Uploaded = val
+	case "replaced":
+		counts.Replaced = val
+	case "unmodified":
+		counts.Unmodified = val
+	case "missing":
+		counts.Missing = val
+	case "failed":
+		counts.Failed = val
+	case "frozen":
+		counts.Frozen = val
+	case "orphaned":
+		counts.Orphaned = val
+	case "warning":
+		counts.Warning = val
+	case "hardlink":
+		counts.Hardlink = val
+	case statusNotProcessed:
+		counts.NotProcessed = val
 	}
 }
 
@@ -399,39 +412,27 @@ func decodeChunkLine(line string) (string, string, error) {
 }
 
 func tallyStatus(counts *StatusCounts, status string) {
-	ptr := statusFieldPtr(counts, status)
-	if ptr != nil {
-		*ptr++
-	}
-}
-
-func statusFieldPtr(
-	counts *StatusCounts, status string,
-) *int {
-	offset, ok := statusOffsets[status]
-	if !ok {
-		return nil
-	}
-
-	return (*int)(unsafe.Add(unsafe.Pointer(counts), offset))
-}
-
-func buildStatusOffsets() map[string]uintptr {
-	var sc StatusCounts
-
-	base := uintptr(unsafe.Pointer(&sc))
-
-	return map[string]uintptr{
-		"uploaded":         uintptr(unsafe.Pointer(&sc.Uploaded)) - base,
-		"replaced":         uintptr(unsafe.Pointer(&sc.Replaced)) - base,
-		"unmodified":       uintptr(unsafe.Pointer(&sc.Unmodified)) - base,
-		"missing":          uintptr(unsafe.Pointer(&sc.Missing)) - base,
-		"failed":           uintptr(unsafe.Pointer(&sc.Failed)) - base,
-		"frozen":           uintptr(unsafe.Pointer(&sc.Frozen)) - base,
-		"orphaned":         uintptr(unsafe.Pointer(&sc.Orphaned)) - base,
-		"warning":          uintptr(unsafe.Pointer(&sc.Warning)) - base,
-		"hardlink":         uintptr(unsafe.Pointer(&sc.Hardlink)) - base,
-		statusNotProcessed: uintptr(unsafe.Pointer(&sc.NotProcessed)) - base,
+	switch status {
+	case "uploaded":
+		counts.Uploaded++
+	case "replaced":
+		counts.Replaced++
+	case "unmodified":
+		counts.Unmodified++
+	case "missing":
+		counts.Missing++
+	case "failed":
+		counts.Failed++
+	case "frozen":
+		counts.Frozen++
+	case "orphaned":
+		counts.Orphaned++
+	case "warning":
+		counts.Warning++
+	case "hardlink":
+		counts.Hardlink++
+	case statusNotProcessed:
+		counts.NotProcessed++
 	}
 }
 
