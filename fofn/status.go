@@ -220,7 +220,25 @@ func writeStatusFile(
 	chunks []string,
 	buried map[string]bool,
 ) error {
-	f, err := os.Create(statusPath)
+	tmpPath := statusPath + ".tmp"
+
+	if err := writeStatusToFile(tmpPath, chunks, buried); err != nil {
+		return err
+	}
+
+	if err := os.Rename(tmpPath, statusPath); err != nil {
+		return fmt.Errorf("rename status file: %w", err)
+	}
+
+	return nil
+}
+
+func writeStatusToFile(
+	path string,
+	chunks []string,
+	buried map[string]bool,
+) error {
+	f, err := os.Create(path)
 	if err != nil {
 		return fmt.Errorf("create status file: %w", err)
 	}
