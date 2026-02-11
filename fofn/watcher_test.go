@@ -223,7 +223,7 @@ func TestProcessSubDir(t *testing.T) {
 				So(job.Cwd, ShouldEqual,
 					state.RunDir)
 				So(job.Cmd, ShouldContainSubstring,
-					"--fofn "+dirName)
+					fmt.Sprintf("--fofn %q", dirName))
 			}
 		})
 

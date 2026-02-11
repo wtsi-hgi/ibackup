@@ -120,7 +120,8 @@ func buildPutCoreParts(
 	}
 
 	if fofnName != "" {
-		parts = append(parts, "--fofn "+fofnName)
+		parts = append(parts,
+			fmt.Sprintf("--fofn %q", fofnName))
 	}
 
 	return parts
