@@ -568,19 +568,25 @@ func setStatusGID(
 	return nil
 }
 
-// createStatusSymlink creates or updates a symlink at
-// subDir/status pointing to the given statusPath.
+// createStatusSymlink atomically creates or updates a
+// symlink at subDir/status pointing to the given
+// statusPath, using a temp symlink + rename.
 func createStatusSymlink(
 	statusPath, subDirPath string,
 ) error {
 	symlinkPath := filepath.Join(subDirPath, statusFilename)
+	tmpLink := symlinkPath + ".tmp"
 
-	_ = os.Remove(symlinkPath)
+	_ = os.Remove(tmpLink)
 
 	if err := os.Symlink(
-		statusPath, symlinkPath,
+		statusPath, tmpLink,
 	); err != nil {
-		return fmt.Errorf("create status symlink: %w", err)
+		return fmt.Errorf("create temp status symlink: %w", err)
+	}
+
+	if err := os.Rename(tmpLink, symlinkPath); err != nil {
+		return fmt.Errorf("rename status symlink: %w", err)
 	}
 
 	return nil
