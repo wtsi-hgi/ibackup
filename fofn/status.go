@@ -188,7 +188,7 @@ func parseSummaryField(
 	return nil
 }
 
-func assignSummaryCount(
+func assignSummaryCount( //nolint:gocyclo,cyclop,funlen
 	counts *StatusCounts, key string, val int,
 ) {
 	switch key {
@@ -338,7 +338,7 @@ func streamExistingReport(
 		},
 	)
 
-	if err != nil && !os.IsNotExist(err) {
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
 
@@ -429,7 +429,7 @@ func decodeChunkLine(line string) (string, string, error) {
 	return string(localBytes), string(remoteBytes), nil
 }
 
-func tallyStatus(counts *StatusCounts, status string) {
+func tallyStatus(counts *StatusCounts, status string) { //nolint:gocyclo,cyclop,funlen
 	switch status {
 	case "uploaded":
 		counts.Uploaded++

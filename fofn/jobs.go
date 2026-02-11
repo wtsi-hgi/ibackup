@@ -51,7 +51,7 @@ type RunConfig struct {
 	UserMeta    string
 	RAM         int           // MB, default 1024
 	Time        time.Duration // default 8h
-	Retries     uint8         // default 3
+	Retries     uint8         // set via CLI flag; zero means no retries
 	LimitGroups []string      // default []string{"irods"}
 	ReqGroup    string        // default "ibackup"
 }
