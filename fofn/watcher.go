@@ -570,9 +570,8 @@ func setStatusGID(
 	return nil
 }
 
-// createStatusSymlink atomically creates or updates a
-// symlink at subDir/status pointing to the given
-// statusPath, using a temp symlink + rename.
+// createStatusSymlink atomically creates or updates a symlink at subDir/status
+// pointing to the given statusPath, using a temp symlink + rename.
 func createStatusSymlink(
 	statusPath, subDirPath string,
 ) error {

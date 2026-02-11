@@ -6732,10 +6732,9 @@ func TestWatchFofnsCommand(t *testing.T) {
 	})
 }
 
-// runWatchFofnsAndCaptureJobs sets up a watch directory
-// with a minimal fofn and config, runs watchfofns with the
-// given extra flags, and returns the submitted jobs captured
-// via PretendSubmissions.
+// runWatchFofnsAndCaptureJobs sets up a watch directory with a minimal fofn and
+// config, runs watchfofns with the given extra flags, and returns the submitted
+// jobs captured via PretendSubmissions.
 func runWatchFofnsAndCaptureJobs(t *testing.T, extraFlags ...string) []*jobqueue.Job {
 	t.Helper()
 
