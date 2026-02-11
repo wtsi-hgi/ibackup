@@ -26,6 +26,7 @@
 package fofn
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -171,6 +172,51 @@ func TestConfig(t *testing.T) {
 
 			_, statErr := os.Stat(filepath.Join(sub, "config.yml"))
 			So(os.IsNotExist(statErr), ShouldBeTrue)
+		})
+
+		Convey("ReadConfig rejects metadata value containing =", func() {
+			sub := filepath.Join(dir, "bad_eq")
+			So(os.MkdirAll(sub, 0750), ShouldBeNil)
+
+			So(os.WriteFile(
+				filepath.Join(sub, "config.yml"),
+				[]byte("transformer: test\nmetadata:\n  key: val=ue\n"),
+				0600,
+			), ShouldBeNil)
+
+			_, err := ReadConfig(sub)
+			So(err, ShouldNotBeNil)
+			So(errors.Is(err, ErrMetadataDelimiter), ShouldBeTrue)
+		})
+
+		Convey("ReadConfig rejects metadata value containing ;", func() {
+			sub := filepath.Join(dir, "bad_semi")
+			So(os.MkdirAll(sub, 0750), ShouldBeNil)
+
+			So(os.WriteFile(
+				filepath.Join(sub, "config.yml"),
+				[]byte("transformer: test\nmetadata:\n  key: va;lue\n"),
+				0600,
+			), ShouldBeNil)
+
+			_, err := ReadConfig(sub)
+			So(err, ShouldNotBeNil)
+			So(errors.Is(err, ErrMetadataDelimiter), ShouldBeTrue)
+		})
+
+		Convey("ReadConfig rejects metadata key containing =", func() {
+			sub := filepath.Join(dir, "bad_key_eq")
+			So(os.MkdirAll(sub, 0750), ShouldBeNil)
+
+			So(os.WriteFile(
+				filepath.Join(sub, "config.yml"),
+				[]byte("transformer: test\nmetadata:\n  k=ey: value\n"),
+				0600,
+			), ShouldBeNil)
+
+			_, err := ReadConfig(sub)
+			So(err, ShouldNotBeNil)
+			So(errors.Is(err, ErrMetadataDelimiter), ShouldBeTrue)
 		})
 	})
 

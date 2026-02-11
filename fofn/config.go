@@ -48,6 +48,10 @@ var ErrEmptyTransformer = errors.New("config missing or empty transformer")
 // ErrMetadataKeyColon is returned when a metadata key contains a colon.
 var ErrMetadataKeyColon = errors.New("metadata key contains colon")
 
+// ErrMetadataDelimiter is returned when a metadata key or value contains
+// a semicolon or equals sign, which would break the serialized meta string.
+var ErrMetadataDelimiter = errors.New("metadata key or value contains '=' or ';'")
+
 // SubDirConfig holds configuration for a watched subdirectory.
 type SubDirConfig struct {
 	Transformer string            `yaml:"transformer"`
@@ -118,9 +122,17 @@ func validateConfig(cfg SubDirConfig) error {
 		return ErrEmptyTransformer
 	}
 
-	for key := range cfg.Metadata {
+	for key, val := range cfg.Metadata {
 		if strings.Contains(key, ":") {
 			return fmt.Errorf("%w: %q", ErrMetadataKeyColon, key)
+		}
+
+		if strings.ContainsAny(key, "=;") {
+			return fmt.Errorf("%w: key %q", ErrMetadataDelimiter, key)
+		}
+
+		if strings.ContainsAny(val, "=;") {
+			return fmt.Errorf("%w: value %q", ErrMetadataDelimiter, val)
 		}
 	}
 
