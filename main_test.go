@@ -5802,7 +5802,6 @@ func TestWatchFofnsIntegration(t *testing.T) {
 					if !strings.HasSuffix(base, ".report") &&
 						!strings.HasSuffix(base, ".log") &&
 						!strings.HasSuffix(base, ".out") {
-
 						chunkFiles = append(
 							chunkFiles, c,
 						)
