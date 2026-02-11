@@ -202,7 +202,6 @@ func createWatcher(submitter fofn.JobSubmitter) *fofn.Watcher {
 			Time:        watchTime,
 			Retries:     uint8(watchRetries), //nolint:gosec
 			LimitGroups: []string{watchLimitGroup},
-			ReqGroup:    watchWRDeployment,
 		},
 	}
 
