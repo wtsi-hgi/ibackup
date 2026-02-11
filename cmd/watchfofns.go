@@ -172,7 +172,18 @@ func runWatchFofns() error {
 		return err
 	}
 
-	watcher := createWatcher()
+	submitter, err := fofn.NewWRSubmitter(
+		watchWRDeployment, appLogger,
+	)
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		_ = submitter.Disconnect()
+	}()
+
+	watcher := createWatcher(submitter)
 
 	ctx, cancel := watchCtxFunc()
 	defer cancel()
@@ -212,9 +223,8 @@ func validateWatchConfig() error {
 }
 
 // createWatcher builds a Watcher with the configured
-// options and a nil submitter (real wr integration is
-// deferred to a later phase).
-func createWatcher() *fofn.Watcher {
+// options and the given submitter.
+func createWatcher(submitter fofn.JobSubmitter) *fofn.Watcher {
 	cfg := fofn.ProcessSubDirConfig{
 		ChunkSize: watchChunkSize,
 		RunConfig: fofn.RunConfig{
@@ -226,5 +236,5 @@ func createWatcher() *fofn.Watcher {
 		},
 	}
 
-	return fofn.NewWatcher(watchDir, nil, cfg)
+	return fofn.NewWatcher(watchDir, submitter, cfg)
 }

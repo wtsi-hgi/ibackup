@@ -60,6 +60,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/VertebrateResequencing/wr/client"
 	"github.com/VertebrateResequencing/wr/jobqueue"
 	"github.com/inconshreveable/log15"
 	"github.com/phayes/freeport"
@@ -5799,12 +5800,8 @@ func TestWatchFofnsIntegration(t *testing.T) {
 
 				for _, c := range allChunks {
 					base := filepath.Base(c)
-					if !strings.HasSuffix(base, ".report") &&
-						!strings.HasSuffix(base, ".log") &&
-						!strings.HasSuffix(base, ".out") {
-						chunkFiles = append(
-							chunkFiles, c,
-						)
+					if !strings.HasSuffix(base, ".report") && !strings.HasSuffix(base, ".log") && !strings.HasSuffix(base, ".out") {
+						chunkFiles = append(chunkFiles, c)
 					}
 				}
 
@@ -5875,6 +5872,217 @@ func TestWatchFofnsIntegration(t *testing.T) {
 				So(newRunDir, ShouldNotEqual, oldRunDir)
 			})
 	})
+}
+
+func TestWatchFofnsRealWRIntegration(t *testing.T) {
+	schedulerDeployment := os.Getenv("IBACKUP_TEST_SCHEDULER")
+	if schedulerDeployment == "" {
+		t.Skip("skipping watchfofns real-wr test since IBACKUP_TEST_SCHEDULER not set")
+	}
+
+	remoteRoot := initIRODSTestCollection(t)
+	if remoteRoot == "" {
+		t.Skip("skipping watchfofns real-wr test since IBACKUP_TEST_COLLECTION not set")
+	}
+
+	localRoot := os.Getenv("IBACKUP_WATCHFOFNS_IT_LOCAL_ROOT")
+	if localRoot == "" {
+		if schedulerDeployment != "development" {
+			t.Skip("skipping watchfofns real-wr test: set IBACKUP_WATCHFOFNS_IT_LOCAL_ROOT to a shared filesystem path when not using development scheduler")
+		}
+
+		localRoot = t.TempDir()
+	} else {
+		if err := os.MkdirAll(localRoot, 0750); err != nil {
+			t.Fatalf("failed to create IBACKUP_WATCHFOFNS_IT_LOCAL_ROOT: %v", err)
+		}
+	}
+
+	// Ensure wr jobs can find our test ibackup binary.
+	if testRootDir == "" {
+		t.Skip("skipping watchfofns real-wr test since testRootDir not initialised")
+	}
+
+	filesRoot := filepath.Join(localRoot, "watchfofns_files")
+	watchDir := filepath.Join(localRoot, "watchfofns_watch")
+	subDir := filepath.Join(watchDir, "proj")
+	remoteBase := filepath.Join(remoteRoot, "watchfofns_realwr")
+
+	if err := os.MkdirAll(filesRoot, 0750); err != nil {
+		t.Fatalf("failed to create files root: %v", err)
+	}
+
+	if err := os.MkdirAll(subDir, 0750); err != nil {
+		t.Fatalf("failed to create watch subdir: %v", err)
+	}
+
+	// Create a few small local files in subfolders.
+	paths := []string{
+		filepath.Join(filesRoot, "00", "00", "f000"),
+		filepath.Join(filesRoot, "00", "01", "f001"),
+		filepath.Join(filesRoot, "01", "00", "f002"),
+	}
+	for i, p := range paths {
+		if err := os.MkdirAll(filepath.Dir(p), 0750); err != nil {
+			t.Fatalf("failed to create parent dir: %v", err)
+		}
+
+		internal.CreateTestFile(t, p, fmt.Sprintf("x%d", i))
+	}
+
+	// Write an ibackup config with a named transformer that maps filesRoot -> remoteBase.
+	configPath := filepath.Join(localRoot, "ibackup_config.json")
+	txName := "watchfofns_it"
+
+	localRe := "^" + regexp.QuoteMeta(filesRoot) + "/(.*)$"
+	remoteReplace := filepath.ToSlash(remoteBase) + "/$1"
+
+	conf := struct {
+		Transformers map[string]struct {
+			Description string `json:"description"`
+			Re          string `json:"re"`
+			Replace     string `json:"replace"`
+		} `json:"transformers"`
+	}{
+		Transformers: map[string]struct {
+			Description string `json:"description"`
+			Re          string `json:"re"`
+			Replace     string `json:"replace"`
+		}{
+			txName: {
+				Description: "watchfofns integration transformer",
+				Re:          localRe,
+				Replace:     remoteReplace,
+			},
+		},
+	}
+
+	f, err := os.Create(configPath)
+	if err != nil {
+		t.Fatalf("failed to create IBACKUP_CONFIG: %v", err)
+	}
+
+	if err := json.NewEncoder(f).Encode(conf); err != nil {
+		_ = f.Close()
+
+		t.Fatalf("failed to write IBACKUP_CONFIG: %v", err)
+	}
+
+	if err := f.Close(); err != nil {
+		t.Fatalf("failed to close IBACKUP_CONFIG: %v", err)
+	}
+
+	// Create the watchfofns config.yml referencing the named transformer.
+	if err := fofn.WriteConfig(subDir, fofn.SubDirConfig{Transformer: txName}); err != nil {
+		t.Fatalf("failed to write config.yml: %v", err)
+	}
+
+	// Create the null-terminated fofn.
+	fofnPath := filepath.Join(subDir, "fofn")
+
+	nf, err := os.Create(fofnPath)
+	if err != nil {
+		t.Fatalf("failed to create fofn: %v", err)
+	}
+
+	for _, p := range paths {
+		if _, err := nf.WriteString(p + "\x00"); err != nil {
+			_ = nf.Close()
+
+			t.Fatalf("failed to write fofn: %v", err)
+		}
+	}
+
+	if err := nf.Close(); err != nil {
+		t.Fatalf("failed to close fofn: %v", err)
+	}
+
+	// Run watchfofns in the background, cancelling once status is correct.
+	ctx, cancel := context.WithCancel(context.Background())
+
+	cmd.SetWatchCtxFunc(func() (context.Context, context.CancelFunc) {
+		return ctx, cancel
+	})
+	t.Cleanup(func() { cmd.SetWatchCtxFunc(nil) })
+
+	// Ensure wr gets a PATH that includes our built ibackup.
+	env := []string{
+		"IBACKUP_CONFIG=" + configPath,
+		"PATH=" + testRootDir + ":" + os.Getenv("PATH"),
+	}
+
+	var (
+		exitCode int
+		output   string
+	)
+
+	done := make(chan struct{})
+
+	go func() {
+		exitCode, output = runCLI(nil, env, "",
+			"watchfofns",
+			"--dir", watchDir,
+			"--interval", "1s",
+			"--chunk-size", "10000",
+			"--wr-deployment", schedulerDeployment,
+		)
+
+		close(done)
+	}()
+
+	// Wait for remote uploads and local status file.
+	remoteFiles := []string{
+		filepath.Join(remoteBase, "00", "00", "f000"),
+		filepath.Join(remoteBase, "00", "01", "f001"),
+		filepath.Join(remoteBase, "01", "00", "f002"),
+	}
+	for _, rf := range remoteFiles {
+		if err := waitForIlsPresent(t, rf, 2*time.Minute); err != nil {
+			cancel()
+			<-done
+			t.Fatalf("remote file not present: %v", err)
+		}
+	}
+
+	statusPath := filepath.Join(subDir, "status")
+
+	ctxWait, cancelWait := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancelWait()
+
+	status := retry.Do(ctxWait, func() error {
+		_, counts, err := fofn.ParseStatus(statusPath)
+		if err != nil {
+			return err
+		}
+
+		if counts.Uploaded != len(paths) {
+			return fmt.Errorf("uploaded=%d want=%d", counts.Uploaded, len(paths))
+		}
+
+		return nil
+	}, &retry.UntilNoError{}, &backoff.Backoff{
+		Min:     100 * time.Millisecond,
+		Max:     1 * time.Second,
+		Factor:  2,
+		Sleeper: &btime.Sleeper{},
+	}, "waiting for status")
+
+	cancel()
+
+	select {
+	case <-done:
+		// ok
+	case <-time.After(30 * time.Second):
+		t.Fatalf("watchfofns did not exit after cancel")
+	}
+
+	if status.Err != nil {
+		t.Fatalf("status not ready: %v", status.Err)
+	}
+
+	if exitCode != 0 {
+		t.Fatalf("watchfofns exit=%d output=%s", exitCode, output)
+	}
 }
 
 // integrationPaths returns n paths matching the test
@@ -6492,6 +6700,17 @@ func TestWatchFofnsCommand(t *testing.T) {
 		})
 
 		Convey("exits cleanly when given valid dir and context cancel", func() {
+			r, w, errp := os.Pipe()
+			So(errp, ShouldBeNil)
+
+			_ = r.Close()
+
+			defer func() { _ = w.Close() }()
+
+			client.PretendSubmissions = fmt.Sprintf("%d", w.Fd())
+
+			defer func() { client.PretendSubmissions = "" }()
+
 			tmpDir := t.TempDir()
 
 			configPath := filepath.Join(tmpDir, "config.json")
