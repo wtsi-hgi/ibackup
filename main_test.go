@@ -118,6 +118,8 @@ var errMismatchedDBBackupSizes = errors.New("mismatched db backup sizes")
 
 var errRemoteMetaMissing = errors.New("remote meta did not contain expected substring")
 
+var errUploadCountMismatch = errors.New("upload count mismatch")
+
 func TestServer(t *testing.T) {
 	Convey("An existing cache dir provided to an ACME-mode server must only be readable by the server user", t, func() {
 		tmp := t.TempDir()
@@ -5596,7 +5598,6 @@ func TestWatchFofnsIntegration(t *testing.T) {
 			So(metaFound, ShouldEqual,
 				len(mock.submitted))
 		})
-
 		Convey("AT2: freeze mode", func() {
 			watchDir := t.TempDir()
 			paths := integrationPaths(5)
@@ -5886,16 +5887,18 @@ func TestWatchFofnsRealWRIntegration(t *testing.T) {
 	}
 
 	localRoot := os.Getenv("IBACKUP_WATCHFOFNS_IT_LOCAL_ROOT")
-	if localRoot == "" {
-		if schedulerDeployment != "development" {
-			t.Skip("skipping watchfofns real-wr test: set IBACKUP_WATCHFOFNS_IT_LOCAL_ROOT to a shared filesystem path when not using development scheduler")
-		}
+	if localRoot == "" && schedulerDeployment != "development" {
+		t.Skip(
+			"skipping watchfofns real-wr test: " +
+				"set IBACKUP_WATCHFOFNS_IT_LOCAL_ROOT to a shared filesystem path " +
+				"when not using development scheduler",
+		)
+	}
 
+	if localRoot == "" {
 		localRoot = t.TempDir()
-	} else {
-		if err := os.MkdirAll(localRoot, 0750); err != nil {
-			t.Fatalf("failed to create IBACKUP_WATCHFOFNS_IT_LOCAL_ROOT: %v", err)
-		}
+	} else if err := os.MkdirAll(localRoot, 0750); err != nil {
+		t.Fatalf("failed to create IBACKUP_WATCHFOFNS_IT_LOCAL_ROOT: %v", err)
 	}
 
 	// Ensure wr jobs can find our test ibackup binary.
@@ -5962,19 +5965,22 @@ func TestWatchFofnsRealWRIntegration(t *testing.T) {
 		t.Fatalf("failed to create IBACKUP_CONFIG: %v", err)
 	}
 
-	if err := json.NewEncoder(f).Encode(conf); err != nil {
+	encodeErr := json.NewEncoder(f).Encode(conf)
+	if encodeErr != nil {
 		_ = f.Close()
 
-		t.Fatalf("failed to write IBACKUP_CONFIG: %v", err)
+		t.Fatalf("failed to write IBACKUP_CONFIG: %v", encodeErr)
 	}
 
-	if err := f.Close(); err != nil {
-		t.Fatalf("failed to close IBACKUP_CONFIG: %v", err)
+	closeErr := f.Close()
+	if closeErr != nil {
+		t.Fatalf("failed to close IBACKUP_CONFIG: %v", closeErr)
 	}
 
 	// Create the watchfofns config.yml referencing the named transformer.
-	if err := fofn.WriteConfig(subDir, fofn.SubDirConfig{Transformer: txName}); err != nil {
-		t.Fatalf("failed to write config.yml: %v", err)
+	writeCfgErr := fofn.WriteConfig(subDir, fofn.SubDirConfig{Transformer: txName})
+	if writeCfgErr != nil {
+		t.Fatalf("failed to write config.yml: %v", writeCfgErr)
 	}
 
 	// Create the null-terminated fofn.
@@ -6056,7 +6062,12 @@ func TestWatchFofnsRealWRIntegration(t *testing.T) {
 		}
 
 		if counts.Uploaded != len(paths) {
-			return fmt.Errorf("uploaded=%d want=%d", counts.Uploaded, len(paths))
+			return fmt.Errorf(
+				"%w: uploaded=%d want=%d",
+				errUploadCountMismatch,
+				counts.Uploaded,
+				len(paths),
+			)
 		}
 
 		return nil

@@ -180,7 +180,9 @@ func runWatchFofns() error {
 	}
 
 	defer func() {
-		_ = submitter.Disconnect()
+		if derr := submitter.Disconnect(); derr != nil {
+			warn("watchfofns: disconnect failed: %s", derr)
+		}
 	}()
 
 	watcher := createWatcher(submitter)
