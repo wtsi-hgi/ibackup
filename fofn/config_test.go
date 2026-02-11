@@ -169,9 +169,7 @@ func TestConfig(t *testing.T) {
 			err := WriteConfig(sub, SubDirConfig{})
 			So(err, ShouldNotBeNil)
 
-			_, statErr := os.Stat(
-				filepath.Join(sub, "config.yml"),
-			)
+			_, statErr := os.Stat(filepath.Join(sub, "config.yml"))
 			So(os.IsNotExist(statErr), ShouldBeTrue)
 		})
 	})

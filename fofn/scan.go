@@ -34,8 +34,7 @@ import (
 
 const fofnFilename = "fofn"
 
-// SubDir represents a subdirectory that contains a fofn
-// file.
+// SubDir represents a subdirectory that contains a fofn file.
 type SubDir struct {
 	Path string // absolute path to subdirectory
 }
@@ -66,12 +65,10 @@ func ScanForFOFNs(watchDir string) ([]SubDir, error) {
 	return result, nil
 }
 
-// NeedsProcessing checks whether the fofn in the given
-// SubDir needs to be processed. It compares the fofn
-// file's mtime against the newest numeric run directory
-// name. Returns true and the mtime if processing is
-// needed, or false and 0 if the newest run directory
-// already matches the fofn mtime.
+// NeedsProcessing checks whether the fofn in the given SubDir needs to be
+// processed. It compares the fofn file's mtime against the newest numeric run
+// directory name. Returns true and the mtime if processing is needed, or false
+// and 0 if the newest run directory already matches the fofn mtime.
 func NeedsProcessing(subDir SubDir) (bool, int64, error) {
 	fofnPath := filepath.Join(subDir.Path, fofnFilename)
 
@@ -94,14 +91,12 @@ func NeedsProcessing(subDir SubDir) (bool, int64, error) {
 	return false, 0, nil
 }
 
-// newestRunDir finds the largest numeric directory name
-// in dir. Returns the value, whether one was found, and
-// any error.
+// newestRunDir finds the largest numeric directory name in dir. Returns the
+// value, whether one was found, and any error.
 func newestRunDir(dir string) (int64, bool, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return 0, false, fmt.Errorf(
-			"read dir for run dirs: %w", err)
+		return 0, false, fmt.Errorf("read dir for run dirs: %w", err)
 	}
 
 	var (

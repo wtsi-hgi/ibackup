@@ -41,9 +41,7 @@ func TestBuildPutCommand(t *testing.T) {
 	Convey("BuildPutCommand", t, func() {
 		Convey("builds a basic command without optional flags",
 			func() {
-				cmd := BuildPutCommand(
-					"chunk.000000", false, "project1", "",
-				)
+				cmd := BuildPutCommand("chunk.000000", false, "project1", "")
 				So(cmd, ShouldEqual,
 					"ibackup put -v -l chunk.000000.log "+
 						"--report chunk.000000.report "+
@@ -54,9 +52,7 @@ func TestBuildPutCommand(t *testing.T) {
 
 		Convey("includes --no_replace when noReplace is true",
 			func() {
-				cmd := BuildPutCommand(
-					"chunk.000000", true, "project1", "",
-				)
+				cmd := BuildPutCommand("chunk.000000", true, "project1", "")
 				So(cmd, ShouldContainSubstring,
 					"--no_replace")
 			})
@@ -73,9 +69,7 @@ func TestBuildPutCommand(t *testing.T) {
 
 		Convey("omits --fofn when fofnName is empty",
 			func() {
-				cmd := BuildPutCommand(
-					"chunk.000000", false, "", "",
-				)
+				cmd := BuildPutCommand("chunk.000000", false, "", "")
 				So(cmd, ShouldNotContainSubstring, "--fofn")
 			})
 	})
@@ -98,9 +92,7 @@ func TestCreateJobs(t *testing.T) {
 				jobs := CreateJobs(cfg)
 				So(jobs, ShouldHaveLength, 2)
 
-				expectedCmd0 := BuildPutCommand(
-					"chunk.000000", false, "proj", "",
-				)
+				expectedCmd0 := BuildPutCommand("chunk.000000", false, "proj", "")
 				So(jobs[0].Cmd, ShouldEqual, expectedCmd0)
 				So(jobs[0].Cwd, ShouldEqual,
 					"/watch/proj/123")
@@ -117,9 +109,7 @@ func TestCreateJobs(t *testing.T) {
 				So(jobs[0].LimitGroups, ShouldResemble,
 					[]string{"irods"})
 
-				expectedCmd1 := BuildPutCommand(
-					"chunk.000001", false, "proj", "",
-				)
+				expectedCmd1 := BuildPutCommand("chunk.000001", false, "proj", "")
 				So(jobs[1].Cmd, ShouldEqual, expectedCmd1)
 			})
 
@@ -244,9 +234,7 @@ func TestIsRunComplete(t *testing.T) {
 					incomplete: []*jobqueue.Job{},
 				}
 
-				complete, err := IsRunComplete(
-					mock, "repgroup1",
-				)
+				complete, err := IsRunComplete(mock, "repgroup1")
 				So(err, ShouldBeNil)
 				So(complete, ShouldBeTrue)
 			})
@@ -260,9 +248,7 @@ func TestIsRunComplete(t *testing.T) {
 				},
 			}
 
-			complete, err := IsRunComplete(
-				mock, "repgroup1",
-			)
+			complete, err := IsRunComplete(mock, "repgroup1")
 			So(err, ShouldBeNil)
 			So(complete, ShouldBeFalse)
 		})
@@ -284,9 +270,7 @@ func TestFindBuriedChunks(t *testing.T) {
 					},
 				}
 
-				chunks, err := FindBuriedChunks(
-					mock, "repgroup1", "/run/dir",
-				)
+				chunks, err := FindBuriedChunks(mock, "repgroup1", "/run/dir")
 				So(err, ShouldBeNil)
 				So(chunks, ShouldHaveLength, 1)
 				So(chunks[0], ShouldEqual,
@@ -299,9 +283,7 @@ func TestFindBuriedChunks(t *testing.T) {
 					buried: []*jobqueue.Job{},
 				}
 
-				chunks, err := FindBuriedChunks(
-					mock, "repgroup1", "/run/dir",
-				)
+				chunks, err := FindBuriedChunks(mock, "repgroup1", "/run/dir")
 				So(err, ShouldBeNil)
 				So(chunks, ShouldBeEmpty)
 			})
@@ -320,9 +302,7 @@ func TestDeleteBuriedJobs(t *testing.T) {
 					buried: buried,
 				}
 
-				err := DeleteBuriedJobs(
-					mock, "repgroup1",
-				)
+				err := DeleteBuriedJobs(mock, "repgroup1")
 				So(err, ShouldBeNil)
 				So(mock.deleted, ShouldHaveLength, 2)
 			})

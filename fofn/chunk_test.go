@@ -50,17 +50,12 @@ func TestChunk(t *testing.T) {
 			outDir := filepath.Join(dir, "out1")
 			So(os.MkdirAll(outDir, 0750), ShouldBeNil)
 
-			paths, err := WriteShuffledChunks(
-				fofnPath, transform, outDir, 10, 1,
-			)
+			paths, err := WriteShuffledChunks(fofnPath, transform, outDir, 10, 1)
 			So(err, ShouldBeNil)
 			So(paths, ShouldHaveLength, 3)
 
 			for i, p := range paths {
-				expected := filepath.Join(
-					outDir,
-					fmt.Sprintf("chunk.%06d", i),
-				)
+				expected := filepath.Join(outDir, fmt.Sprintf("chunk.%06d", i))
 				So(p, ShouldEqual, expected)
 			}
 
@@ -75,9 +70,7 @@ func TestChunk(t *testing.T) {
 			outDir := filepath.Join(dir, "out2")
 			So(os.MkdirAll(outDir, 0750), ShouldBeNil)
 
-			paths, err := WriteShuffledChunks(
-				fofnPath, transform, outDir, 10, 1,
-			)
+			paths, err := WriteShuffledChunks(fofnPath, transform, outDir, 10, 1)
 			So(err, ShouldBeNil)
 			So(paths, ShouldHaveLength, 1)
 
@@ -90,9 +83,7 @@ func TestChunk(t *testing.T) {
 			outDir := filepath.Join(dir, "out3")
 			So(os.MkdirAll(outDir, 0750), ShouldBeNil)
 
-			paths, err := WriteShuffledChunks(
-				fofnPath, transform, outDir, 10, 1,
-			)
+			paths, err := WriteShuffledChunks(fofnPath, transform, outDir, 10, 1)
 			So(err, ShouldBeNil)
 			So(paths, ShouldBeEmpty)
 		})
@@ -103,9 +94,7 @@ func TestChunk(t *testing.T) {
 			outDir := filepath.Join(dir, "out4")
 			So(os.MkdirAll(outDir, 0750), ShouldBeNil)
 
-			paths, err := WriteShuffledChunks(
-				fofnPath, transform, outDir, 10, 1,
-			)
+			paths, err := WriteShuffledChunks(fofnPath, transform, outDir, 10, 1)
 			So(err, ShouldBeNil)
 
 			allLocals, allRemotes := decodeAllChunks(paths)
@@ -120,10 +109,7 @@ func TestChunk(t *testing.T) {
 			}
 
 			for _, remote := range allRemotes {
-				So(
-					strings.HasPrefix(remote, "/remote/"),
-					ShouldBeTrue,
-				)
+				So(strings.HasPrefix(remote, "/remote/"), ShouldBeTrue)
 			}
 
 			So(allLocals, ShouldHaveLength, len(inputPaths))
@@ -136,22 +122,16 @@ func TestChunk(t *testing.T) {
 			outDir1 := filepath.Join(dir, "det1")
 			So(os.MkdirAll(outDir1, 0750), ShouldBeNil)
 
-			paths1, err := WriteShuffledChunks(
-				fofnPath, transform, outDir1, 10, 42,
-			)
+			paths1, err := WriteShuffledChunks(fofnPath, transform, outDir1, 10, 42)
 			So(err, ShouldBeNil)
 
 			outDir2 := filepath.Join(dir, "det2")
 			So(os.MkdirAll(outDir2, 0750), ShouldBeNil)
 
-			paths2, err := WriteShuffledChunks(
-				fofnPath, transform, outDir2, 10, 42,
-			)
+			paths2, err := WriteShuffledChunks(fofnPath, transform, outDir2, 10, 42)
 			So(err, ShouldBeNil)
 
-			So(
-				len(paths1), ShouldEqual, len(paths2),
-			)
+			So(len(paths1), ShouldEqual, len(paths2))
 
 			for i := range paths1 {
 				content1 := readFileContent(paths1[i])
@@ -172,9 +152,7 @@ func TestChunk(t *testing.T) {
 				outDir := filepath.Join(dir, "seed1")
 				So(os.MkdirAll(outDir, 0750), ShouldBeNil)
 
-				paths, err := WriteShuffledChunks(
-					fofnPath, transform, outDir, 3, 1,
-				)
+				paths, err := WriteShuffledChunks(fofnPath, transform, outDir, 3, 1)
 				So(err, ShouldBeNil)
 				So(paths, ShouldHaveLength, 4)
 
@@ -197,9 +175,7 @@ func TestChunk(t *testing.T) {
 				outDir := filepath.Join(dir, "seed2")
 				So(os.MkdirAll(outDir, 0750), ShouldBeNil)
 
-				paths, err := WriteShuffledChunks(
-					fofnPath, transform, outDir, 3, 2,
-				)
+				paths, err := WriteShuffledChunks(fofnPath, transform, outDir, 3, 2)
 				So(err, ShouldBeNil)
 				So(paths, ShouldHaveLength, 4)
 
@@ -234,9 +210,7 @@ func TestChunk(t *testing.T) {
 			var before runtime.MemStats
 			runtime.ReadMemStats(&before)
 
-			_, err := WriteShuffledChunks(
-				fofnPath, transform, outDir, chunkSz, 1,
-			)
+			_, err := WriteShuffledChunks(fofnPath, transform, outDir, chunkSz, 1)
 			So(err, ShouldBeNil)
 
 			runtime.GC()
@@ -396,14 +370,10 @@ func decodeChunk(path string) (locals, remotes []string) {
 		parts := strings.Split(line, "\t")
 		So(parts, ShouldHaveLength, 2)
 
-		localBytes, err := base64.StdEncoding.DecodeString(
-			parts[0],
-		)
+		localBytes, err := base64.StdEncoding.DecodeString(parts[0])
 		So(err, ShouldBeNil)
 
-		remoteBytes, err := base64.StdEncoding.DecodeString(
-			parts[1],
-		)
+		remoteBytes, err := base64.StdEncoding.DecodeString(parts[1])
 		So(err, ShouldBeNil)
 
 		locals = append(locals, string(localBytes))

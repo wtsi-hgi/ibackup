@@ -42,8 +42,7 @@ const (
 	defaultReqGroup = "ibackup"
 )
 
-// RunConfig holds configuration for creating jobs from
-// chunk files.
+// RunConfig holds configuration for creating jobs from chunk files.
 type RunConfig struct {
 	RunDir      string
 	ChunkPaths  []string
@@ -58,24 +57,17 @@ type RunConfig struct {
 	ReqGroup    string        // default "ibackup"
 }
 
-// CreateJobs creates jobqueue Jobs from a RunConfig,
-// one per chunk path.
+// CreateJobs creates jobqueue Jobs from a RunConfig, one per chunk path.
 func CreateJobs(cfg RunConfig) []*jobqueue.Job {
 	applyDefaults(&cfg)
 
-	repGroup := fmt.Sprintf(
-		"ibackup_fofn_%s_%d",
-		cfg.SubDirName, cfg.FofnMtime,
-	)
+	repGroup := fmt.Sprintf("ibackup_fofn_%s_%d", cfg.SubDirName, cfg.FofnMtime)
 
 	jobs := make([]*jobqueue.Job, len(cfg.ChunkPaths))
 
 	for i, chunk := range cfg.ChunkPaths {
 		jobs[i] = &jobqueue.Job{
-			Cmd: BuildPutCommand(
-				chunk, cfg.NoReplace,
-				cfg.SubDirName, cfg.UserMeta,
-			),
+			Cmd:        BuildPutCommand(chunk, cfg.NoReplace, cfg.SubDirName, cfg.UserMeta),
 			Cwd:        cfg.RunDir,
 			CwdMatters: true,
 			RepGroup:   repGroup,
@@ -156,8 +148,7 @@ func applyDefaults(cfg *RunConfig) {
 	}
 }
 
-// JobSubmitter is an interface for submitting and querying
-// jobs in a job queue.
+// JobSubmitter is an interface for submitting and querying jobs in a job queue.
 type JobSubmitter interface {
 	SubmitJobs(jobs []*jobqueue.Job) error
 	FindBuriedJobsByRepGroup(prefix string) ([]*jobqueue.Job, error)
@@ -171,9 +162,7 @@ type JobSubmitter interface {
 func IsRunComplete(
 	submitter JobSubmitter, repGroup string,
 ) (bool, error) {
-	jobs, err := submitter.FindIncompleteJobsByRepGroup(
-		repGroup,
-	)
+	jobs, err := submitter.FindIncompleteJobsByRepGroup(repGroup)
 	if err != nil {
 		return false, err
 	}
@@ -181,16 +170,13 @@ func IsRunComplete(
 	return len(jobs) == 0, nil
 }
 
-// FindBuriedChunks returns the absolute paths of chunk
-// files extracted from buried jobs matching the given
-// repGroup. The chunk path is the argument after -f in
-// each job's Cmd, joined with runDir.
+// FindBuriedChunks returns the absolute paths of chunk files extracted from
+// buried jobs matching the given repGroup. The chunk path is the argument after
+// -f in each job's Cmd, joined with runDir.
 func FindBuriedChunks(
 	submitter JobSubmitter, repGroup, runDir string,
 ) ([]string, error) {
-	jobs, err := submitter.FindBuriedJobsByRepGroup(
-		repGroup,
-	)
+	jobs, err := submitter.FindBuriedJobsByRepGroup(repGroup)
 	if err != nil {
 		return nil, err
 	}
@@ -222,14 +208,11 @@ func extractChunkFromCmd(cmd string) string {
 	return ""
 }
 
-// DeleteBuriedJobs finds and deletes buried jobs
-// matching the given repGroup.
+// DeleteBuriedJobs finds and deletes buried jobs matching the given repGroup.
 func DeleteBuriedJobs(
 	submitter JobSubmitter, repGroup string,
 ) error {
-	jobs, err := submitter.FindBuriedJobsByRepGroup(
-		repGroup,
-	)
+	jobs, err := submitter.FindBuriedJobsByRepGroup(repGroup)
 	if err != nil {
 		return err
 	}

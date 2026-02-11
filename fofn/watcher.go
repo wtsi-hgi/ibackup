@@ -40,17 +40,15 @@ import (
 
 const statusFilename = "status"
 
-// ProcessSubDirConfig holds configuration for
-// processing a subdirectory.
+// ProcessSubDirConfig holds configuration for processing a subdirectory.
 type ProcessSubDirConfig struct {
 	ChunkSize int
 	RandSeed  int64
 	RunConfig RunConfig
 }
 
-// prepareChunks creates a run directory, writes shuffled
-// chunk files, and sets their GID. Returns empty runDir
-// and nil chunks if the fofn is empty.
+// prepareChunks creates a run directory, writes shuffled chunk files, and sets
+// their GID. Returns empty runDir and nil chunks if the fofn is empty.
 func prepareChunks(
 	subDir SubDir,
 	transform func(string) (string, error),
@@ -79,9 +77,8 @@ func prepareChunks(
 	return runDir, chunks, nil
 }
 
-// createRunDir creates a run directory named after the
-// given mtime, with group ownership matching the watch
-// directory.
+// createRunDir creates a run directory named after the given mtime, with group
+// ownership matching the watch directory.
 func createRunDir(
 	subDir SubDir, mtime int64,
 ) (int, string, error) {
@@ -92,10 +89,7 @@ func createRunDir(
 		return 0, "", err
 	}
 
-	runDir := filepath.Join(
-		subDir.Path,
-		strconv.FormatInt(mtime, 10),
-	)
+	runDir := filepath.Join(subDir.Path, strconv.FormatInt(mtime, 10))
 
 	if err := ownership.CreateDirWithGID(
 		runDir, gid,
@@ -116,37 +110,30 @@ func writeChunksWithGID(
 ) ([]string, error) {
 	fofnPath := filepath.Join(subDirPath, fofnFilename)
 
-	chunks, err := WriteShuffledChunks(
-		fofnPath, transform, runDir,
-		chunkSize, randSeed,
-	)
+	chunks, err := WriteShuffledChunks(fofnPath, transform, runDir, chunkSize, randSeed)
 	if err != nil {
 		return nil, err
 	}
 
 	for _, chunk := range chunks {
 		if err := os.Chown(chunk, -1, gid); err != nil {
-			return nil, fmt.Errorf(
-				"chown chunk: %w", err,
-			)
+			return nil, fmt.Errorf("chown chunk: %w", err)
 		}
 	}
 
 	return chunks, nil
 }
 
-// RunState tracks the state of an active run for a
-// subdirectory.
+// RunState tracks the state of an active run for a subdirectory.
 type RunState struct {
 	RepGroup string
 	RunDir   string
 	Mtime    int64
 }
 
-// ProcessSubDir reads config.yml, looks up the named
-// transformer, writes shuffled chunks, and submits jobs.
-// Returns a RunState describing the active run, or an
-// error.
+// ProcessSubDir reads config.yml, looks up the named transformer, writes
+// shuffled chunks, and submits jobs. Returns a RunState describing the active
+// run, or an error.
 func ProcessSubDir(
 	subDir SubDir,
 	submitter JobSubmitter,
@@ -157,16 +144,12 @@ func ProcessSubDir(
 		return RunState{}, err
 	}
 
-	transform, err := transformer.MakePathTransformer(
-		sdCfg.Transformer,
-	)
+	transform, err := transformer.MakePathTransformer(sdCfg.Transformer)
 	if err != nil {
 		return RunState{}, err
 	}
 
-	runDir, chunks, err := prepareChunks(
-		subDir, transform, mtime, cfg,
-	)
+	runDir, chunks, err := prepareChunks(subDir, transform, mtime, cfg)
 	if err != nil || chunks == nil {
 		return RunState{}, err
 	}
@@ -189,9 +172,7 @@ func submitChunkJobs(
 	dirName string,
 	mtime int64,
 ) (RunState, error) {
-	jobCfg := buildRunConfig(
-		sdCfg, baseCfg, runDir, chunks, dirName, mtime,
-	)
+	jobCfg := buildRunConfig(sdCfg, baseCfg, runDir, chunks, dirName, mtime)
 
 	jobs := CreateJobs(jobCfg)
 
@@ -199,9 +180,7 @@ func submitChunkJobs(
 		return RunState{}, err
 	}
 
-	repGroup := fmt.Sprintf(
-		"ibackup_fofn_%s_%d", dirName, mtime,
-	)
+	repGroup := fmt.Sprintf("ibackup_fofn_%s_%d", dirName, mtime)
 
 	return RunState{
 		RepGroup: repGroup,
@@ -221,12 +200,8 @@ func buildRunFromNewest(
 	}
 
 	dirName := filepath.Base(subDirPath)
-	repGroup := fmt.Sprintf(
-		"ibackup_fofn_%s_%d", dirName, mtime,
-	)
-	runDir := filepath.Join(
-		subDirPath, strconv.FormatInt(mtime, 10),
-	)
+	repGroup := fmt.Sprintf("ibackup_fofn_%s_%d", dirName, mtime)
+	runDir := filepath.Join(subDirPath, strconv.FormatInt(mtime, 10))
 
 	return RunState{
 		RepGroup: repGroup,
@@ -235,8 +210,7 @@ func buildRunFromNewest(
 	}, true, nil
 }
 
-// Watcher monitors a watch directory for fofn changes
-// and manages backup runs.
+// Watcher monitors a watch directory for fofn changes and manages backup runs.
 type Watcher struct {
 	watchDir   string
 	submitter  JobSubmitter
@@ -245,8 +219,7 @@ type Watcher struct {
 	activeRuns map[string]RunState // key: subDir.Path
 }
 
-// NewWatcher creates a new Watcher for the given watch
-// directory.
+// NewWatcher creates a new Watcher for the given watch directory.
 func NewWatcher(
 	watchDir string,
 	submitter JobSubmitter,
@@ -293,9 +266,8 @@ func (w *Watcher) clearActiveRun(path string) {
 	delete(w.activeRuns, path)
 }
 
-// Poll performs one poll cycle: scan for subdirectories,
-// check active runs, start new runs as needed.
-// Subdirectories are processed in parallel.
+// Poll performs one poll cycle: scan for subdirectories, check active runs,
+// start new runs as needed. Subdirectories are processed in parallel.
 func (w *Watcher) Poll() error {
 	subDirs, err := ScanForFOFNs(w.watchDir)
 	if err != nil {
@@ -305,9 +277,8 @@ func (w *Watcher) Poll() error {
 	return w.pollSubDirsParallel(subDirs)
 }
 
-// Run polls immediately and then at the given interval
-// until the context is cancelled. Returns nil on
-// cancellation.
+// Run polls immediately and then at the given interval until the context is
+// cancelled. Returns nil on cancellation.
 func (w *Watcher) Run(
 	ctx context.Context, interval time.Duration,
 ) error {
@@ -378,9 +349,7 @@ func (w *Watcher) pollSubDir(
 func (w *Watcher) handleActiveRun(
 	subDir SubDir, run RunState,
 ) error {
-	complete, err := IsRunComplete(
-		w.submitter, run.RepGroup,
-	)
+	complete, err := IsRunComplete(w.submitter, run.RepGroup)
 	if err != nil {
 		return err
 	}
@@ -389,9 +358,7 @@ func (w *Watcher) handleActiveRun(
 		return nil
 	}
 
-	buriedChunks, err := FindBuriedChunks(
-		w.submitter, run.RepGroup, run.RunDir,
-	)
+	buriedChunks, err := FindBuriedChunks(w.submitter, run.RepGroup, run.RunDir)
 	if err != nil {
 		return err
 	}
@@ -400,9 +367,7 @@ func (w *Watcher) handleActiveRun(
 		return w.handleSuccessfulRun(subDir, run)
 	}
 
-	return w.handleBuriedRun(
-		subDir, run, buriedChunks,
-	)
+	return w.handleBuriedRun(subDir, run, buriedChunks)
 }
 
 func (w *Watcher) handleSuccessfulRun(
@@ -425,10 +390,9 @@ func (w *Watcher) handleSuccessfulRun(
 	return w.checkAndStartNewRun(subDir)
 }
 
-// GenerateStatus writes a combined status file from all
-// chunk reports in runDir, handles buried chunks, and
-// creates/updates a symlink at subDir/status pointing to
-// runDir/status.
+// GenerateStatus writes a combined status file from all chunk reports in
+// runDir, handles buried chunks, and creates/updates a symlink at subDir/status
+// pointing to runDir/status.
 func GenerateStatus(
 	runDir string,
 	subDir SubDir,
@@ -448,9 +412,7 @@ func GenerateStatus(
 		return err
 	}
 
-	return createStatusSymlink(
-		statusPath, subDir.Path,
-	)
+	return createStatusSymlink(statusPath, subDir.Path)
 }
 
 // deleteOldRunDirs removes all numeric directories in
@@ -460,9 +422,7 @@ func deleteOldRunDirs(
 ) error {
 	entries, err := os.ReadDir(subDirPath)
 	if err != nil {
-		return fmt.Errorf(
-			"read dir for cleanup: %w", err,
-		)
+		return fmt.Errorf("read dir for cleanup: %w", err)
 	}
 
 	for _, entry := range entries {
@@ -509,8 +469,7 @@ func (w *Watcher) handleBuriedRun(
 	return w.startNewRun(subDir)
 }
 
-// toBaseNames converts a slice of full paths to their
-// base names.
+// toBaseNames converts a slice of full paths to their base names.
 func toBaseNames(paths []string) []string {
 	bases := make([]string, len(paths))
 
@@ -549,10 +508,9 @@ func (w *Watcher) checkAndStartNewRun(
 	return w.startNewRun(subDir)
 }
 
-// detectExistingRun checks for a run directory left by a
-// previous Watcher instance. If an existing run has
-// incomplete jobs, it records the active run and returns
-// true. If the existing run is complete, it processes the
+// detectExistingRun checks for a run directory left by a previous Watcher
+// instance. If an existing run has incomplete jobs, it records the active run
+// and returns true. If the existing run is complete, it processes the
 // completion immediately and returns true.
 func (w *Watcher) detectExistingRun(
 	subDir SubDir,
@@ -562,9 +520,7 @@ func (w *Watcher) detectExistingRun(
 		return false, err
 	}
 
-	complete, err := IsRunComplete(
-		w.submitter, run.RepGroup,
-	)
+	complete, err := IsRunComplete(w.submitter, run.RepGroup)
 	if err != nil {
 		return false, err
 	}
@@ -579,9 +535,7 @@ func (w *Watcher) detectExistingRun(
 }
 
 func (w *Watcher) startNewRun(subDir SubDir) error {
-	state, err := ProcessSubDir(
-		subDir, w.submitter, w.cfg,
-	)
+	state, err := ProcessSubDir(subDir, w.submitter, w.cfg)
 	if err != nil {
 		return err
 	}
@@ -619,26 +573,21 @@ func setStatusGID(
 func createStatusSymlink(
 	statusPath, subDirPath string,
 ) error {
-	symlinkPath := filepath.Join(
-		subDirPath, statusFilename,
-	)
+	symlinkPath := filepath.Join(subDirPath, statusFilename)
 
 	_ = os.Remove(symlinkPath)
 
 	if err := os.Symlink(
 		statusPath, symlinkPath,
 	); err != nil {
-		return fmt.Errorf(
-			"create status symlink: %w", err,
-		)
+		return fmt.Errorf("create status symlink: %w", err)
 	}
 
 	return nil
 }
 
-// readAndCheckConfig reads the config and checks if
-// processing is needed. Returns zero mtime when
-// processing is not needed.
+// readAndCheckConfig reads the config and checks if processing is needed.
+// Returns zero mtime when processing is not needed.
 func readAndCheckConfig(
 	subDir SubDir,
 ) (SubDirConfig, int64, error) {
@@ -691,9 +640,7 @@ func removeIfOldRunDir(
 		return nil
 	}
 
-	n, err := strconv.ParseInt(
-		entry.Name(), 10, 64,
-	)
+	n, err := strconv.ParseInt(entry.Name(), 10, 64)
 	if err != nil {
 		return nil //nolint:nilerr
 	}
@@ -702,14 +649,10 @@ func removeIfOldRunDir(
 		return nil
 	}
 
-	dirPath := filepath.Join(
-		subDirPath, entry.Name(),
-	)
+	dirPath := filepath.Join(subDirPath, entry.Name())
 
 	if err := os.RemoveAll(dirPath); err != nil {
-		return fmt.Errorf(
-			"remove old run dir: %w", err,
-		)
+		return fmt.Errorf("remove old run dir: %w", err)
 	}
 
 	return nil

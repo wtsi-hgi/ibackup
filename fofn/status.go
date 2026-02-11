@@ -48,22 +48,17 @@ const (
 
 // ErrMalformedSummary is returned when a summary field
 // does not have a key=value format.
-var ErrMalformedSummary = errors.New(
-	"malformed summary field",
-)
+var ErrMalformedSummary = errors.New("malformed summary field")
 
 // ErrMalformedChunkLine is returned when a chunk line
 // does not have exactly the expected number of fields.
-var ErrMalformedChunkLine = errors.New(
-	"malformed chunk line",
-)
+var ErrMalformedChunkLine = errors.New("malformed chunk line")
 
 // statusOffsets maps status strings to their byte offset
 // within StatusCounts. Populated once at init time.
 var statusOffsets = buildStatusOffsets() //nolint:gochecknoglobals
 
-// StatusCounts holds counts per upload status for a
-// completed run.
+// StatusCounts holds counts per upload status for a completed run.
 type StatusCounts struct {
 	Uploaded     int
 	Replaced     int
@@ -77,9 +72,8 @@ type StatusCounts struct {
 	NotProcessed int
 }
 
-// ParseStatus reads a status file produced by
-// WriteStatusFromRun and returns all entries plus the
-// summary counts from the SUMMARY line.
+// ParseStatus reads a status file produced by WriteStatusFromRun and returns
+// all entries plus the summary counts from the SUMMARY line.
 func ParseStatus(
 	path string,
 ) ([]ReportEntry, StatusCounts, error) {
@@ -110,9 +104,7 @@ func scanStatusFile(
 
 		var err error
 
-		entries, counts, err = handleStatusLine(
-			line, entries, counts,
-		)
+		entries, counts, err = handleStatusLine(line, entries, counts)
 		if err != nil {
 			return nil, StatusCounts{}, err
 		}
@@ -184,9 +176,7 @@ func processAllChunks(
 func parseSummaryField(
 	counts *StatusCounts, field string,
 ) error {
-	parts := strings.SplitN(
-		field, "=", summaryKVFieldCount,
-	)
+	parts := strings.SplitN(field, "=", summaryKVFieldCount)
 	if len(parts) != summaryKVFieldCount {
 		return fmt.Errorf("%w: %s",
 			ErrMalformedSummary, field,
@@ -195,9 +185,7 @@ func parseSummaryField(
 
 	val, err := strconv.Atoi(parts[1])
 	if err != nil {
-		return fmt.Errorf(
-			"parse summary count %s: %w", parts[0], err,
-		)
+		return fmt.Errorf("parse summary count %s: %w", parts[0], err)
 	}
 
 	assignSummaryCount(counts, parts[0], val)
@@ -277,9 +265,7 @@ func processChunk(
 		return streamReport(w, reportPath, counts)
 	}
 
-	return processBuriedChunk(
-		w, chunkPath, reportPath, counts,
-	)
+	return processBuriedChunk(w, chunkPath, reportPath, counts)
 }
 
 func streamReport(
@@ -299,16 +285,12 @@ func processBuriedChunk(
 	chunkPath, reportPath string,
 	counts *StatusCounts,
 ) error {
-	reportedLocals, err := streamExistingReport(
-		w, reportPath, counts,
-	)
+	reportedLocals, err := streamExistingReport(w, reportPath, counts)
 	if err != nil {
 		return err
 	}
 
-	return emitUnprocessedEntries(
-		w, chunkPath, reportedLocals, counts,
-	)
+	return emitUnprocessedEntries(w, chunkPath, reportedLocals, counts)
 }
 
 func streamExistingReport(
@@ -344,9 +326,7 @@ func emitUnprocessedEntries(
 	}
 	defer f.Close()
 
-	return scanChunkForUnprocessed(
-		w, f, reported, counts,
-	)
+	return scanChunkForUnprocessed(w, f, reported, counts)
 }
 
 func scanChunkForUnprocessed(
@@ -405,16 +385,12 @@ func decodeChunkLine(line string) (string, string, error) {
 		return "", "", ErrMalformedChunkLine
 	}
 
-	localBytes, err := base64.StdEncoding.DecodeString(
-		parts[0],
-	)
+	localBytes, err := base64.StdEncoding.DecodeString(parts[0])
 	if err != nil {
 		return "", "", fmt.Errorf("decode local: %w", err)
 	}
 
-	remoteBytes, err := base64.StdEncoding.DecodeString(
-		parts[1],
-	)
+	remoteBytes, err := base64.StdEncoding.DecodeString(parts[1])
 	if err != nil {
 		return "", "", fmt.Errorf("decode remote: %w", err)
 	}
@@ -437,9 +413,7 @@ func statusFieldPtr(
 		return nil
 	}
 
-	return (*int)(unsafe.Add(
-		unsafe.Pointer(counts), offset,
-	))
+	return (*int)(unsafe.Add(unsafe.Pointer(counts), offset))
 }
 
 func buildStatusOffsets() map[string]uintptr {
@@ -461,13 +435,11 @@ func buildStatusOffsets() map[string]uintptr {
 	}
 }
 
-// WriteStatusFromRun reads all chunk report files in
-// runDir, writes a combined status file at statusPath,
-// and appends a SUMMARY line with tallied counts.
+// WriteStatusFromRun reads all chunk report files in runDir, writes a combined
+// status file at statusPath, and appends a SUMMARY line with tallied counts.
 //
-// Chunks listed in buriedChunks are treated specially:
-// if their report is incomplete or missing, remaining
-// entries are emitted as not_processed.
+// Chunks listed in buriedChunks are treated specially: if their report is
+// incomplete or missing, remaining entries are emitted as not_processed.
 func WriteStatusFromRun(
 	runDir, statusPath string, buriedChunks []string,
 ) error {
@@ -478,15 +450,11 @@ func WriteStatusFromRun(
 
 	buried := makeBuriedSet(buriedChunks)
 
-	return writeStatusFile(
-		statusPath, chunks, buried,
-	)
+	return writeStatusFile(statusPath, chunks, buried)
 }
 
 func findChunkFiles(runDir string) ([]string, error) {
-	matches, err := filepath.Glob(
-		filepath.Join(runDir, chunkGlob),
-	)
+	matches, err := filepath.Glob(filepath.Join(runDir, chunkGlob))
 	if err != nil {
 		return nil, fmt.Errorf("glob chunks: %w", err)
 	}

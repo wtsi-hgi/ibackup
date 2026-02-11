@@ -53,9 +53,7 @@ func TestWriteStatusFromRun(t *testing.T) {
 
 			statusPath := filepath.Join(dir, "status1")
 
-			err := WriteStatusFromRun(
-				runDir, statusPath, nil,
-			)
+			err := WriteStatusFromRun(runDir, statusPath, nil)
 			So(err, ShouldBeNil)
 
 			entries, counts, err := ParseStatus(statusPath)
@@ -100,9 +98,7 @@ func TestWriteStatusFromRun(t *testing.T) {
 			runDir := filepath.Join(dir, "run3")
 			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
 
-			createChunkWithPartialReport(
-				runDir, 0, 10, 5,
-			)
+			createChunkWithPartialReport(runDir, 0, 10, 5)
 
 			statusPath := filepath.Join(dir, "status3")
 
@@ -125,9 +121,7 @@ func TestWriteStatusFromRun(t *testing.T) {
 
 			statusPath := filepath.Join(dir, "status4")
 
-			err := WriteStatusFromRun(
-				runDir, statusPath, nil,
-			)
+			err := WriteStatusFromRun(runDir, statusPath, nil)
 			So(err, ShouldBeNil)
 
 			entries, counts, err := ParseStatus(statusPath)
@@ -151,9 +145,7 @@ func TestWriteStatusFromRun(t *testing.T) {
 
 			statusPath := filepath.Join(dir, "status5")
 
-			err := WriteStatusFromRun(
-				runDir, statusPath, nil,
-			)
+			err := WriteStatusFromRun(runDir, statusPath, nil)
 			So(err, ShouldBeNil)
 
 			entries, counts, err := ParseStatus(statusPath)
@@ -186,9 +178,7 @@ func TestWriteStatusFromRun(t *testing.T) {
 func createChunkAndReport(
 	runDir string, index, count int, statuses []string,
 ) {
-	chunkPath := filepath.Join(
-		runDir, fmt.Sprintf(chunkNameFormat, index),
-	)
+	chunkPath := filepath.Join(runDir, fmt.Sprintf(chunkNameFormat, index))
 	reportPath := chunkPath + ".report"
 
 	cf, err := os.Create(chunkPath)
@@ -219,9 +209,7 @@ func createChunkAndReport(
 
 // createChunkOnly creates a chunk file without a report.
 func createChunkOnly(runDir string, index, count int) {
-	chunkPath := filepath.Join(
-		runDir, fmt.Sprintf(chunkNameFormat, index),
-	)
+	chunkPath := filepath.Join(runDir, fmt.Sprintf(chunkNameFormat, index))
 
 	cf, err := os.Create(chunkPath)
 	So(err, ShouldBeNil)
@@ -236,15 +224,12 @@ func createChunkOnly(runDir string, index, count int) {
 	So(cf.Close(), ShouldBeNil)
 }
 
-// createChunkWithPartialReport creates a chunk file with
-// totalEntries entries but only reportedEntries in the
-// report.
+// createChunkWithPartialReport creates a chunk file with totalEntries entries
+// but only reportedEntries in the report.
 func createChunkWithPartialReport(
 	runDir string, index, totalEntries, reportedEntries int,
 ) {
-	chunkPath := filepath.Join(
-		runDir, fmt.Sprintf(chunkNameFormat, index),
-	)
+	chunkPath := filepath.Join(runDir, fmt.Sprintf(chunkNameFormat, index))
 	reportPath := chunkPath + ".report"
 
 	cf, err := os.Create(chunkPath)
@@ -275,12 +260,8 @@ func createChunkWithPartialReport(
 
 // writeChunkEntry writes a base64-encoded chunk line.
 func writeChunkEntry(f *os.File, local, remote string) {
-	local64 := base64.StdEncoding.EncodeToString(
-		[]byte(local),
-	)
-	remote64 := base64.StdEncoding.EncodeToString(
-		[]byte(remote),
-	)
+	local64 := base64.StdEncoding.EncodeToString([]byte(local))
+	remote64 := base64.StdEncoding.EncodeToString([]byte(remote))
 
 	_, err := fmt.Fprintf(f, "%s\t%s\n", local64, remote64)
 	So(err, ShouldBeNil)
@@ -306,9 +287,7 @@ func TestStatusMemory(t *testing.T) {
 		createErrors := 0
 
 		for i := range numChunks {
-			err := createLargeChunkAndReport(
-				runDir, i, entriesPerChunk, statuses,
-			)
+			err := createLargeChunkAndReport(runDir, i, entriesPerChunk, statuses)
 			if err != nil {
 				createErrors++
 			}
@@ -323,9 +302,7 @@ func TestStatusMemory(t *testing.T) {
 		var before runtime.MemStats
 		runtime.ReadMemStats(&before)
 
-		err := WriteStatusFromRun(
-			runDir, statusPath, nil,
-		)
+		err := WriteStatusFromRun(runDir, statusPath, nil)
 		So(err, ShouldBeNil)
 
 		runtime.GC()
@@ -342,15 +319,12 @@ func TestStatusMemory(t *testing.T) {
 	})
 }
 
-// createLargeChunkAndReport creates a chunk and report
-// with many entries for memory testing. Does not use
-// So() assertions inside the loop.
+// createLargeChunkAndReport creates a chunk and report with many entries for
+// memory testing. Does not use So() assertions inside the loop.
 func createLargeChunkAndReport(
 	runDir string, index, count int, statuses []string,
 ) error {
-	chunkPath := filepath.Join(
-		runDir, fmt.Sprintf(chunkNameFormat, index),
-	)
+	chunkPath := filepath.Join(runDir, fmt.Sprintf(chunkNameFormat, index))
 	reportPath := chunkPath + ".report"
 
 	cf, err := os.Create(chunkPath)
@@ -369,12 +343,8 @@ func createLargeChunkAndReport(
 		local := fmt.Sprintf("/local/%d/%06d", index, i)
 		remote := fmt.Sprintf("/remote/%d/%06d", index, i)
 
-		local64 := base64.StdEncoding.EncodeToString(
-			[]byte(local),
-		)
-		remote64 := base64.StdEncoding.EncodeToString(
-			[]byte(remote),
-		)
+		local64 := base64.StdEncoding.EncodeToString([]byte(local))
+		remote64 := base64.StdEncoding.EncodeToString([]byte(remote))
 
 		if _, werr := fmt.Fprintf(
 			cf, "%s\t%s\n", local64, remote64,

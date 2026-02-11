@@ -43,32 +43,23 @@ const (
 
 // ErrEmptyTransformer is returned when the transformer
 // field is missing or empty.
-var ErrEmptyTransformer = errors.New(
-	"config missing or empty transformer",
-)
+var ErrEmptyTransformer = errors.New("config missing or empty transformer")
 
-// ErrMetadataKeyColon is returned when a metadata key
-// contains a colon.
-var ErrMetadataKeyColon = errors.New(
-	"metadata key contains colon",
-)
+// ErrMetadataKeyColon is returned when a metadata key contains a colon.
+var ErrMetadataKeyColon = errors.New("metadata key contains colon")
 
-// SubDirConfig holds configuration for a watched
-// subdirectory.
+// SubDirConfig holds configuration for a watched subdirectory.
 type SubDirConfig struct {
 	Transformer string            `yaml:"transformer"`
 	Freeze      bool              `yaml:"freeze,omitempty"`
 	Metadata    map[string]string `yaml:"metadata,omitempty"`
 }
 
-// ReadConfig reads config.yml from dir and returns the
-// parsed SubDirConfig. Returns an error if the file is
-// missing, transformer is empty, or metadata keys contain
-// colons.
+// ReadConfig reads config.yml from dir and returns the parsed SubDirConfig.
+// Returns an error if the file is missing, transformer is empty, or metadata
+// keys contain colons.
 func ReadConfig(dir string) (SubDirConfig, error) {
-	data, err := os.ReadFile(
-		filepath.Join(dir, configFilename),
-	)
+	data, err := os.ReadFile(filepath.Join(dir, configFilename))
 	if err != nil {
 		return SubDirConfig{}, fmt.Errorf(
 			"read config: %w", err,
@@ -119,10 +110,7 @@ func WriteConfig(dir string, cfg SubDirConfig) error {
 		return fmt.Errorf("marshal config: %w", err)
 	}
 
-	return os.WriteFile(
-		filepath.Join(dir, configFilename),
-		data, configFileMode,
-	)
+	return os.WriteFile(filepath.Join(dir, configFilename), data, configFileMode)
 }
 
 func validateConfig(cfg SubDirConfig) error {

@@ -219,9 +219,7 @@ func collectResults(
 
 			for req := range ch {
 				r.update(req)
-				writeReportForRequest(
-					reportWriter, req,
-				)
+				writeReportForRequest(reportWriter, req)
 			}
 		}(ch)
 	}
@@ -294,22 +292,17 @@ func warnIfBadClient(r *transfer.Request, i, total int, verbose bool) {
 	}
 }
 
-// printResults reads from the given channels, outputs
-// info about them to STDOUT and STDERR, then emits
-// summary numbers. Supply the total number of requests
-// made. If reportWriter is non-nil, a fofn.ReportEntry
-// is written for each request. Exits 1 if there were
-// upload errors.
+// printResults reads from the given channels, outputs info about them to STDOUT
+// and STDERR, then emits summary numbers. Supply the total number of requests
+// made. If reportWriter is non-nil, a fofn.ReportEntry is written for each
+// request. Exits 1 if there were upload errors.
 func printResults(
 	upDown string,
 	transferResults, skipResults chan *transfer.Request,
 	total int, verbose bool,
 	reportWriter io.Writer,
 ) {
-	r := collectResults(
-		transferResults, skipResults,
-		total, verbose, reportWriter,
-	)
+	r := collectResults(transferResults, skipResults, total, verbose, reportWriter)
 
 	info("%d %sloaded (%d replaced); %d skipped; %d failed; %d missing",
 		r.uploads+r.replaced, upDown, r.replaced,
@@ -404,26 +397,19 @@ func handleServerMode( //nolint:gocognit,gocyclo,funlen
 }
 
 func handlePutManualMode() {
-	requests, err := getRequestsFromFile(
-		putFile, putMeta, putBase64,
-	)
+	requests, err := getRequestsFromFile(putFile, putMeta, putBase64)
 	if err != nil {
 		die(err)
 	}
 
-	_, uploadResults, skipResults, dfunc := handlePut(
-		nil, requests,
-	)
+	_, uploadResults, skipResults, dfunc := handlePut(nil, requests)
 
 	defer dfunc()
 
 	reportWriter := openReportWriter(putReport)
 	defer closeReportWriter(reportWriter)
 
-	printResults(
-		"up", uploadResults, skipResults,
-		len(requests), putVerbose, reportWriter,
-	)
+	printResults("up", uploadResults, skipResults, len(requests), putVerbose, reportWriter)
 }
 
 // getRequestsFromFile reads our 3 column file format from a file or STDIN and

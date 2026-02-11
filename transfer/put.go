@@ -175,9 +175,8 @@ func NewGetter(handler Handler, requests []*Request, overwrite, hardlinksNormal 
 	}, nil
 }
 
-// SetNoReplace configures the Putter to skip files that
-// already exist in iRODS with a different mtime, marking
-// them as frozen instead of replacing them.
+// SetNoReplace configures the Putter to skip files that already exist in iRODS
+// with a different mtime, marking them as frozen instead of replacing them.
 func (p *Putter) SetNoReplace(noReplace bool) {
 	p.noReplace = noReplace
 }

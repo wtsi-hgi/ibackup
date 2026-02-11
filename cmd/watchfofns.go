@@ -50,10 +50,7 @@ const (
 var (
 	errDirRequired    = errors.New("--dir is required")
 	errDirNotADir     = errors.New("--dir is not a directory")
-	errConfigRequired = fmt.Errorf(
-		"%s environment variable must be set",
-		ConfigKey,
-	)
+	errConfigRequired = fmt.Errorf("%s environment variable must be set", ConfigKey)
 )
 
 // command-line options for watchfofns.
@@ -108,10 +105,7 @@ func SetWatchCtxFunc(
 }
 
 func defaultWatchCtx() (context.Context, context.CancelFunc) {
-	return signal.NotifyContext(
-		context.Background(),
-		syscall.SIGINT, syscall.SIGTERM,
-	)
+	return signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 }
 
 func init() {
@@ -122,43 +116,19 @@ func init() {
 func registerWatchFofnsFlags() {
 	f := watchfofnsCmd.Flags()
 
-	f.StringVar(
-		&watchDir, "dir", "",
-		"watch directory (required)",
-	)
-	f.DurationVar(
-		&watchInterval, "interval",
-		defaultWatchInterval, "poll interval",
-	)
-	f.IntVar(
-		&watchChunkSize, "chunk-size",
-		defaultWatchChunkSize, "files per chunk",
-	)
-	f.StringVar(
-		&watchWRDeployment, "wr-deployment",
-		"production", "wr deployment name",
-	)
+	f.StringVar(&watchDir, "dir", "", "watch directory (required)")
+	f.DurationVar(&watchInterval, "interval", defaultWatchInterval, "poll interval")
+	f.IntVar(&watchChunkSize, "chunk-size", defaultWatchChunkSize, "files per chunk")
+	f.StringVar(&watchWRDeployment, "wr-deployment", "production", "wr deployment name")
 
 	registerWatchFofnsJobFlags(f)
 }
 
 func registerWatchFofnsJobFlags(f *pflag.FlagSet) {
-	f.IntVar(
-		&watchRAM, "ram",
-		defaultWatchRAM, "RAM (MB) per put job",
-	)
-	f.DurationVar(
-		&watchTime, "time",
-		defaultWatchTime, "time limit per put job",
-	)
-	f.IntVar(
-		&watchRetries, "retries",
-		defaultWatchRetries, "wr job retries",
-	)
-	f.StringVar(
-		&watchLimitGroup, "limit-group",
-		"irods", "wr limit group",
-	)
+	f.IntVar(&watchRAM, "ram", defaultWatchRAM, "RAM (MB) per put job")
+	f.DurationVar(&watchTime, "time", defaultWatchTime, "time limit per put job")
+	f.IntVar(&watchRetries, "retries", defaultWatchRetries, "wr job retries")
+	f.StringVar(&watchLimitGroup, "limit-group", "irods", "wr limit group")
 }
 
 // runWatchFofns validates flags, creates a watcher, and
@@ -172,9 +142,7 @@ func runWatchFofns() error {
 		return err
 	}
 
-	submitter, err := fofn.NewWRSubmitter(
-		watchWRDeployment, appLogger,
-	)
+	submitter, err := fofn.NewWRSubmitter(watchWRDeployment, appLogger)
 	if err != nil {
 		return err
 	}

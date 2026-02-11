@@ -5425,8 +5425,7 @@ func (b *safeBuffer) String() string {
 	return b.buf.String()
 }
 
-// testSubmitter implements fofn.JobSubmitter for
-// integration tests.
+// testSubmitter implements fofn.JobSubmitter for integration tests.
 type testSubmitter struct {
 	mu         sync.Mutex
 	submitted  []*jobqueue.Job
@@ -5479,9 +5478,7 @@ func (s *testSubmitter) Disconnect() error { return nil }
 
 func TestWatchFofnsIntegration(t *testing.T) {
 	Convey("watchfofns integration", t, func() {
-		So(transformer.Register(
-			"test", `^/tmp/(.*)$`, "/irods/$1",
-		), ShouldBeNil)
+		So(transformer.Register("test", `^/tmp/(.*)$`, "/irods/$1"), ShouldBeNil)
 
 		Convey("AT1: new fofn processing", func() {
 			watchDir := t.TempDir()
@@ -5518,11 +5515,7 @@ func TestWatchFofnsIntegration(t *testing.T) {
 			_, dirErr := os.Stat(state.RunDir)
 			So(dirErr, ShouldBeNil)
 
-			chunks, globErr := filepath.Glob(
-				filepath.Join(
-					state.RunDir, "chunk.*",
-				),
-			)
+			chunks, globErr := filepath.Glob(filepath.Join(state.RunDir, "chunk.*"))
 			So(globErr, ShouldBeNil)
 			So(len(chunks), ShouldBeGreaterThan, 0)
 
@@ -5531,25 +5524,17 @@ func TestWatchFofnsIntegration(t *testing.T) {
 
 			simulatePutExecution(state.RunDir)
 
-			err = fofn.GenerateStatus(
-				state.RunDir, subDir, nil,
-			)
+			err = fofn.GenerateStatus(state.RunDir, subDir, nil)
 			So(err, ShouldBeNil)
 
-			symlinkPath := filepath.Join(
-				subPath, "status",
-			)
+			symlinkPath := filepath.Join(subPath, "status")
 			_, linkErr := os.Lstat(symlinkPath)
 			So(linkErr, ShouldBeNil)
 
-			target, readErr := os.Readlink(
-				symlinkPath,
-			)
+			target, readErr := os.Readlink(symlinkPath)
 			So(readErr, ShouldBeNil)
 			So(target, ShouldEqual,
-				filepath.Join(
-					state.RunDir, "status",
-				),
+				filepath.Join(state.RunDir, "status"),
 			)
 
 			entries, counts, parseErr :=
@@ -5576,16 +5561,14 @@ func TestWatchFofnsIntegration(t *testing.T) {
 			metaFound := 0
 
 			for _, job := range mock.submitted {
-				if strings.Contains(
-					job.Cmd, "--fofn") &&
+				if strings.Contains(job.Cmd, "--fofn") &&
 					strings.Contains(
 						job.Cmd, "proj") {
 
 					fofnFound++
 				}
 
-				if strings.Contains(
-					job.Cmd, "--meta") &&
+				if strings.Contains(job.Cmd, "--meta") &&
 					strings.Contains(
 						job.Cmd, "colour=red") {
 
@@ -5656,17 +5639,11 @@ func TestWatchFofnsIntegration(t *testing.T) {
 				},
 			)
 
-			err = fofn.GenerateStatus(
-				state.RunDir, subDir, nil,
-			)
+			err = fofn.GenerateStatus(state.RunDir, subDir, nil)
 			So(err, ShouldBeNil)
 
 			entries, counts, parseErr :=
-				fofn.ParseStatus(
-					filepath.Join(
-						subPath, "status",
-					),
-				)
+				fofn.ParseStatus(filepath.Join(subPath, "status"))
 			So(parseErr, ShouldBeNil)
 			So(entries, ShouldHaveLength, 5)
 			So(counts.Frozen, ShouldEqual, 2)
@@ -5676,9 +5653,7 @@ func TestWatchFofnsIntegration(t *testing.T) {
 		Convey("AT3: restart resilience", func() {
 			watchDir := t.TempDir()
 			paths := integrationPaths(5)
-			subPath := filepath.Join(
-				watchDir, "restart",
-			)
+			subPath := filepath.Join(watchDir, "restart")
 
 			So(os.MkdirAll(subPath, 0750), ShouldBeNil)
 
@@ -5738,9 +5713,7 @@ func TestWatchFofnsIntegration(t *testing.T) {
 			)
 			So(err, ShouldBeNil)
 
-			configPath := filepath.Join(
-				dir, "config.yml",
-			)
+			configPath := filepath.Join(dir, "config.yml")
 			_, statErr := os.Stat(configPath)
 			So(statErr, ShouldBeNil)
 
@@ -5756,13 +5729,9 @@ func TestWatchFofnsIntegration(t *testing.T) {
 			func() {
 				watchDir := t.TempDir()
 				paths := integrationPaths(5)
-				subPath := filepath.Join(
-					watchDir, "buried",
-				)
+				subPath := filepath.Join(watchDir, "buried")
 
-				So(os.MkdirAll(
-					subPath, 0750,
-				), ShouldBeNil)
+				So(os.MkdirAll(subPath, 0750), ShouldBeNil)
 
 				writeNullFofn(subPath, paths)
 
@@ -5795,9 +5764,7 @@ func TestWatchFofnsIntegration(t *testing.T) {
 				)
 				So(globErr, ShouldBeNil)
 
-				chunkFiles := make(
-					[]string, 0, len(allChunks),
-				)
+				chunkFiles := make([]string, 0, len(allChunks))
 
 				for _, c := range allChunks {
 					base := filepath.Base(c)
@@ -5819,26 +5786,20 @@ func TestWatchFofnsIntegration(t *testing.T) {
 				newMtime := oldMtime + 10
 				newPaths := integrationPaths(5)
 
-				fofnPath := filepath.Join(
-					subPath, "fofn",
-				)
+				fofnPath := filepath.Join(subPath, "fofn")
 
 				nf, createErr := os.Create(fofnPath)
 				So(createErr, ShouldBeNil)
 
 				for _, p := range newPaths {
-					_, wErr := nf.WriteString(
-						p + "\x00",
-					)
+					_, wErr := nf.WriteString(p + "\x00")
 					So(wErr, ShouldBeNil)
 				}
 
 				So(nf.Close(), ShouldBeNil)
 
 				t2 := time.Unix(newMtime, 0)
-				So(os.Chtimes(
-					fofnPath, t2, t2,
-				), ShouldBeNil)
+				So(os.Chtimes(fofnPath, t2, t2), ShouldBeNil)
 
 				mock.submitted = nil
 
@@ -5852,9 +5813,7 @@ func TestWatchFofnsIntegration(t *testing.T) {
 				err = watcher.Poll()
 				So(err, ShouldBeNil)
 
-				statusPath := filepath.Join(
-					subPath, "status",
-				)
+				statusPath := filepath.Join(subPath, "status")
 				_, statusErr := os.Lstat(statusPath)
 				So(statusErr, ShouldBeNil)
 
@@ -5864,10 +5823,7 @@ func TestWatchFofnsIntegration(t *testing.T) {
 				So(len(mock.submitted),
 					ShouldBeGreaterThan, 0)
 
-				newRunDir := filepath.Join(
-					subPath,
-					strconv.FormatInt(newMtime, 10),
-				)
+				newRunDir := filepath.Join(subPath, strconv.FormatInt(newMtime, 10))
 				_, newDirErr := os.Stat(newRunDir)
 				So(newDirErr, ShouldBeNil)
 				So(newRunDir, ShouldNotEqual, oldRunDir)
@@ -6141,9 +6097,7 @@ func simulatePutWithStatuses(
 	runDir string,
 	statusFunc func(local, remote string) string,
 ) {
-	matches, err := filepath.Glob(
-		filepath.Join(runDir, "chunk.*"),
-	)
+	matches, err := filepath.Glob(filepath.Join(runDir, "chunk.*"))
 	So(err, ShouldBeNil)
 
 	for _, m := range matches {
@@ -6173,9 +6127,7 @@ func writeReportForChunk(
 	f, err := os.Create(reportPath)
 	So(err, ShouldBeNil)
 
-	lines := strings.Split(
-		strings.TrimSpace(string(content)), "\n",
-	)
+	lines := strings.Split(strings.TrimSpace(string(content)), "\n")
 
 	for _, line := range lines {
 		if line == "" {
@@ -6324,11 +6276,7 @@ func TestManualMode(t *testing.T) {
 			file8 := filepath.Join(restoreDir, "file8")
 			tmpFile := filepath.Join(restoreDir, fmt.Sprintf(".ibackup.get.%X", sha256.Sum256([]byte("file2"))))
 
-			err = os.WriteFile(
-				tmpFile,
-				[]byte("bad data"),
-				0600,
-			)
+			err = os.WriteFile(tmpFile, []byte("bad data"), 0600)
 			So(err, ShouldBeNil)
 
 			_, err = os.Stat(tmpFile)
@@ -6727,14 +6675,10 @@ func TestWatchFofnsCommand(t *testing.T) {
 			configPath := filepath.Join(tmpDir, "config.json")
 			configData := `{"transformers": {}}`
 
-			err := os.WriteFile(
-				configPath, []byte(configData), userPerms,
-			)
+			err := os.WriteFile(configPath, []byte(configData), userPerms)
 			So(err, ShouldBeNil)
 
-			ctx, cancel := context.WithCancel(
-				context.Background(),
-			)
+			ctx, cancel := context.WithCancel(context.Background())
 
 			cmd.SetWatchCtxFunc(
 				func() (context.Context, context.CancelFunc) {

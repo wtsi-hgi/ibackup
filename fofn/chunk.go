@@ -38,20 +38,17 @@ import (
 
 const chunkNameFormat = "chunk.%06d"
 
-// WriteShuffledChunks reads a null-terminated fofn file
-// and writes the entries into shuffled chunk files. Each
-// entry is transformed using the provided function and
-// written as a base64-encoded local/remote pair separated
-// by a tab.
+// WriteShuffledChunks reads a null-terminated fofn file and writes the entries
+// into shuffled chunk files. Each entry is transformed using the provided
+// function and written as a base64-encoded local/remote pair separated by a
+// tab.
 //
-// The function uses a two-pass approach: first counting
-// entries via scanner.ScanNullTerminated, then streaming
-// them into randomly assigned chunk files. The random
-// assignment is deterministic for a given randSeed.
+// The function uses a two-pass approach: first counting entries via
+// scanner.ScanNullTerminated, then streaming them into randomly assigned chunk
+// files. The random assignment is deterministic for a given randSeed.
 //
-// Chunk files are named chunk.000000, chunk.000001, etc.
-// Returns the paths of the created chunk files, or nil
-// if the fofn is empty.
+// Chunk files are named chunk.000000, chunk.000001, etc. Returns the paths of
+// the created chunk files, or nil if the fofn is empty.
 func WriteShuffledChunks(
 	fofnPath string,
 	transform func(string) (string, error),
@@ -70,9 +67,7 @@ func WriteShuffledChunks(
 
 	numChunks := (count + chunkSize - 1) / chunkSize
 
-	return streamToChunks(
-		fofnPath, transform, dir, numChunks, randSeed,
-	)
+	return streamToChunks(fofnPath, transform, dir, numChunks, randSeed)
 }
 
 func countEntries(fofnPath string) (int, error) {
@@ -129,9 +124,7 @@ func createChunkFiles(
 		if err != nil {
 			closeFiles(files[:i])
 
-			return nil, nil, fmt.Errorf(
-				"create chunk file: %w", err,
-			)
+			return nil, nil, fmt.Errorf("create chunk file: %w", err)
 		}
 
 		files[i] = f
@@ -197,16 +190,10 @@ func writeEntry(
 
 	chunk := rng.Intn(numChunks)
 
-	local64 := base64.StdEncoding.EncodeToString(
-		[]byte(entry),
-	)
-	remote64 := base64.StdEncoding.EncodeToString(
-		[]byte(remote),
-	)
+	local64 := base64.StdEncoding.EncodeToString([]byte(entry))
+	remote64 := base64.StdEncoding.EncodeToString([]byte(remote))
 
-	_, err = fmt.Fprintf(
-		writers[chunk], "%s\t%s\n", local64, remote64,
-	)
+	_, err = fmt.Fprintf(writers[chunk], "%s\t%s\n", local64, remote64)
 
 	return err
 }

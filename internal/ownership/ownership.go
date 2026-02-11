@@ -39,9 +39,7 @@ const (
 
 // ErrUnsupportedPlatform is returned when the platform
 // does not support syscall.Stat_t.
-var ErrUnsupportedPlatform = errors.New(
-	"unsupported platform",
-)
+var ErrUnsupportedPlatform = errors.New("unsupported platform")
 
 // GetDirGID returns the GID of the given directory.
 func GetDirGID(dir string) (int, error) {
