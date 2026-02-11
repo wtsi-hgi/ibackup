@@ -36,6 +36,8 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
+var errStopHere = errors.New("stop here")
+
 func TestScanNullTerminated(t *testing.T) {
 	Convey("Given a scanner package", t, func() {
 		dir := t.TempDir()
@@ -121,19 +123,18 @@ func TestScanNullTerminated(t *testing.T) {
 			err := os.WriteFile(path, []byte("/a/b\x00/c/d\x00/e/f\x00"), 0600)
 			So(err, ShouldBeNil)
 
-			cbErr := errors.New("stop here")
 			count := 0
 
 			err = ScanNullTerminated(path, func(entry string) error {
 				count++
 				if count == 2 {
-					return cbErr
+					return errStopHere
 				}
 
 				return nil
 			})
 
-			So(err, ShouldEqual, cbErr)
+			So(err, ShouldEqual, errStopHere)
 			So(count, ShouldEqual, 2)
 		})
 

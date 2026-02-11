@@ -258,21 +258,29 @@ func (r *results) update(req *transfer.Request) {
 // info level the Request details.
 func warnIfBad(r *transfer.Request, i, total int, verbose bool) {
 	if serverMode() {
-		switch r.Status {
-		case transfer.RequestStatusFailed, transfer.RequestStatusMissing, transfer.RequestStatusOrphaned,
-			transfer.RequestStatusWarning:
-			warn("[%d/%d] rid=%s %s: %s", i, total, r.ID(), r.Status, r.Error)
-		case transfer.RequestStatusHardlinkSkipped:
-			warn("[%d/%d] rid=%s Hardlink skipped: hardlink=%s", i, total, r.ID(), r.Hardlink)
-		default:
-			if verbose {
-				info("[%d/%d] rid=%s %s", i, total, r.ID(), r.Status)
-			}
-		}
+		warnIfBadServer(r, i, total, verbose)
 
 		return
 	}
 
+	warnIfBadClient(r, i, total, verbose)
+}
+
+func warnIfBadServer(r *transfer.Request, i, total int, verbose bool) {
+	switch r.Status {
+	case transfer.RequestStatusFailed, transfer.RequestStatusMissing, transfer.RequestStatusOrphaned,
+		transfer.RequestStatusWarning:
+		warn("[%d/%d] rid=%s %s: %s", i, total, r.ID(), r.Status, r.Error)
+	case transfer.RequestStatusHardlinkSkipped:
+		warn("[%d/%d] rid=%s Hardlink skipped: hardlink=%s", i, total, r.ID(), r.Hardlink)
+	default:
+		if verbose {
+			info("[%d/%d] rid=%s %s", i, total, r.ID(), r.Status)
+		}
+	}
+}
+
+func warnIfBadClient(r *transfer.Request, i, total int, verbose bool) {
 	switch r.Status {
 	case transfer.RequestStatusFailed, transfer.RequestStatusMissing, transfer.RequestStatusOrphaned,
 		transfer.RequestStatusWarning:
