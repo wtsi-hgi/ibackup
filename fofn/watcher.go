@@ -315,10 +315,10 @@ func (w *Watcher) pollSubDirsParallel(
 	for _, subDir := range subDirs {
 		wg.Add(1)
 
-		go func() {
+		go func(sd SubDir) {
 			defer wg.Done()
 
-			if err := w.pollSubDir(subDir); err != nil {
+			if err := w.pollSubDir(sd); err != nil {
 				errMu.Lock()
 
 				if firstErr == nil {
@@ -327,7 +327,7 @@ func (w *Watcher) pollSubDirsParallel(
 
 				errMu.Unlock()
 			}
-		}()
+		}(subDir)
 	}
 
 	wg.Wait()
