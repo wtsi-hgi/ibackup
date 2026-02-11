@@ -218,8 +218,7 @@ func collectResults(
 			defer wg.Done()
 
 			for req := range ch {
-				r.update(req)
-				writeReportForRequest(reportWriter, req)
+				r.update(req, reportWriter)
 			}
 		}(ch)
 	}
@@ -229,13 +228,14 @@ func collectResults(
 	return r
 }
 
-func (r *results) update(req *transfer.Request) {
+func (r *results) update(req *transfer.Request, reportWriter io.Writer) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	r.i++
 
 	warnIfBad(req, r.i, r.total, r.verbose)
+	writeReportForRequest(reportWriter, req)
 
 	switch req.Status { //nolint:exhaustive
 	case transfer.RequestStatusFailed, transfer.RequestStatusUploading:
