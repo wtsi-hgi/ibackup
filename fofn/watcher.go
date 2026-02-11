@@ -65,6 +65,8 @@ func prepareChunks(
 		gid, cfg.ChunkSize, cfg.RandSeed,
 	)
 	if err != nil {
+		_ = os.RemoveAll(runDir)
+
 		return "", nil, err
 	}
 
