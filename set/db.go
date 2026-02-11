@@ -40,7 +40,6 @@ import (
 	"time"
 
 	"github.com/VertebrateResequencing/wr/queue"
-	"github.com/gammazero/workerpool"
 	"github.com/ugorji/go/codec"
 	"github.com/wtsi-hgi/ibackup/statter"
 	"github.com/wtsi-hgi/ibackup/transfer"
@@ -94,10 +93,6 @@ const (
 	backupExt = ".backingup"
 
 	TrashPrefix = ".trash-"
-
-	// workerPoolSizeFiles is the max number of concurrent file stats we'll do
-	// during discovery.
-	workerPoolSizeFiles = 16
 )
 
 // DBRO is the read-only component of the DB struct.
@@ -184,7 +179,6 @@ type DB struct {
 	DBRO
 
 	mountList []string
-	filePool  *workerpool.WorkerPool
 
 	mu                    sync.Mutex
 	backupPath            string
@@ -215,8 +209,6 @@ func New(path, backupPath string, readonly bool) (*DB, error) {
 		},
 		backupPath:            backupPath,
 		minTimeBetweenBackups: 1 * time.Second,
-
-		filePool: workerpool.New(workerPoolSizeFiles),
 	}
 
 	err = db.getMountPoints()
@@ -261,8 +253,6 @@ func initDB(path string, readonly bool) (*bolt.DB, error) {
 // Close closes the database. Be sure to call this to finalise any writes to
 // disk correctly.
 func (d *DB) Close() error {
-	d.filePool.StopWait()
-
 	return d.db.Close()
 }
 
@@ -1153,48 +1143,48 @@ func (d *DB) discover(setID string, cb DiscoverCallback) (*Set, error) {
 }
 
 func (d *DB) statPureFileEntries(setID string) error {
+	var paths []string
+
+	if err := d.db.Update(func(tx *bolt.Tx) error {
+		sfsb, err := d.newSetFileBucket(tx, fileBucket, setID)
+		if err != nil {
+			return err
+		}
+
+		return sfsb.Bucket.ForEach(func(k, v []byte) error { //nolint:errcheck
+			paths = append(paths, string(k))
+
+			return nil
+		})
+	}); err != nil {
+		return err
+	}
+
+	dirents := make([]*Dirent, len(paths))
+
+	slices.Sort(paths)
+
+	for n, path := range paths {
+		dirents[n] = newDirentFromPath(path)
+	}
+
 	return d.db.Update(func(tx *bolt.Tx) error {
 		sfsb, err := d.newSetFileBucket(tx, fileBucket, setID)
 		if err != nil {
 			return err
 		}
 
-		direntCh := make(chan *Dirent)
-		numEntries := 0
-
-		sfsb.Bucket.ForEach(func(k, v []byte) error { //nolint:errcheck
-			numEntries++
-			path := string(k)
-
-			d.filePool.Submit(func() {
-				direntCh <- newDirentFromPath(path)
-			})
-
-			return nil
-		})
-
-		return d.handleFilePoolResults(tx, sfsb, setID, direntCh, numEntries)
+		return d.handleFilePoolResults(tx, sfsb, setID, dirents)
 	})
 }
 
 func (d *DB) handleFilePoolResults(tx *bolt.Tx, sfsb *setFileSubBucket, setID string,
-	direntCh chan *Dirent, numEntries int,
+	dirents []*Dirent,
 ) error {
-	dirents := make([]*Dirent, numEntries)
-
 	_, existing, err := d.getExistingEntries(tx, fileBucket, setID)
 	if err != nil {
 		return err
 	}
-
-	for n := range dirents {
-		dirent := <-direntCh
-		dirents[n] = dirent
-	}
-
-	sort.Slice(dirents, func(i, j int) bool {
-		return strings.Compare(dirents[i].Path, dirents[j].Path) == -1
-	})
 
 	ec, err := newEntryCreator(d, tx, sfsb.Bucket, existing, setID, Pending)
 	if err != nil {

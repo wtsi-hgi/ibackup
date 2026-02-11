@@ -1594,6 +1594,10 @@ func (s *Server) getRequests(c *gin.Context) {
 //
 // Returns the Requests in the items.
 func (s *Server) reserveRequests() ([]*transfer.Request, error) {
+	if uint(s.queue.Stats().Items) < s.maxQueueLength>>1 { //nolint:gosec
+		go s.refillQueue() //nolint:errcheck
+	}
+
 	n := s.getCachedNumRequestsToReserve()
 	requests := make([]*transfer.Request, 0, n)
 	count := 0
@@ -1670,10 +1674,6 @@ func (s *Server) numRequestsToReserve() int {
 // reserveRequest reserves an item from our queue and converts it to a Request.
 // Returns nil and no error if the queue is empty.
 func (s *Server) reserveRequest() (*transfer.Request, error) {
-	if uint(s.queue.Stats().Items) < s.maxQueueLength>>1 { //nolint:gosec
-		go s.refillQueue() //nolint:errcheck
-	}
-
 	item, err := s.queue.Reserve("", 0)
 	if err != nil {
 		qerr, ok := err.(queue.Error) //nolint:errorlint
