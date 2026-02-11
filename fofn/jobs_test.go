@@ -87,6 +87,7 @@ func TestCreateJobs(t *testing.T) {
 					},
 					SubDirName: "proj",
 					FofnMtime:  123,
+					Retries:    3,
 				}
 
 				jobs := CreateJobs(cfg)
@@ -111,6 +112,21 @@ func TestCreateJobs(t *testing.T) {
 
 				expectedCmd1 := BuildPutCommand("chunk.000001", false, "proj", "")
 				So(jobs[1].Cmd, ShouldEqual, expectedCmd1)
+			})
+
+		Convey("preserves Retries zero value",
+			func() {
+				cfg := RunConfig{
+					RunDir:     "/watch/proj/123",
+					ChunkPaths: []string{"chunk.000000"},
+					SubDirName: "proj",
+					FofnMtime:  123,
+					Retries:    0,
+				}
+
+				jobs := CreateJobs(cfg)
+				So(jobs, ShouldHaveLength, 1)
+				So(jobs[0].Retries, ShouldEqual, uint8(0))
 			})
 
 		Convey("includes --no_replace when NoReplace is "+

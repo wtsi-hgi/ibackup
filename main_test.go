@@ -6701,6 +6701,27 @@ func TestWatchFofnsCommand(t *testing.T) {
 			So(exitCode, ShouldEqual, 0)
 		})
 
+		Convey("defaults to 3 retries when --retries not supplied", func() {
+			jobs := runWatchFofnsAndCaptureJobs(t)
+
+			So(len(jobs), ShouldBeGreaterThan, 0)
+			So(jobs[0].Retries, ShouldEqual, uint8(3))
+		})
+
+		Convey("honours --retries 0 in submitted jobs", func() {
+			jobs := runWatchFofnsAndCaptureJobs(t, "--retries", "0")
+
+			So(len(jobs), ShouldBeGreaterThan, 0)
+			So(jobs[0].Retries, ShouldEqual, uint8(0))
+		})
+
+		Convey("passes --retries value through to submitted jobs", func() {
+			jobs := runWatchFofnsAndCaptureJobs(t, "--retries", "5")
+
+			So(len(jobs), ShouldBeGreaterThan, 0)
+			So(jobs[0].Retries, ShouldEqual, uint8(5))
+		})
+
 		Convey("prints help with --help", func() {
 			exitCode, out := runCLI(t, nil, "",
 				"watchfofns", "--help")
@@ -6709,4 +6730,84 @@ func TestWatchFofnsCommand(t *testing.T) {
 				"watchfofns")
 		})
 	})
+}
+
+// runWatchFofnsAndCaptureJobs sets up a watch directory
+// with a minimal fofn and config, runs watchfofns with the
+// given extra flags, and returns the submitted jobs captured
+// via PretendSubmissions.
+func runWatchFofnsAndCaptureJobs(t *testing.T, extraFlags ...string) []*jobqueue.Job {
+	t.Helper()
+
+	pr, pw, errp := os.Pipe()
+	So(errp, ShouldBeNil)
+
+	defer func() { _ = pr.Close() }()
+	defer func() { _ = pw.Close() }()
+
+	client.PretendSubmissions = fmt.Sprintf("%d", pw.Fd())
+
+	defer func() { client.PretendSubmissions = "" }()
+
+	tmpDir := t.TempDir()
+
+	configPath := filepath.Join(tmpDir, "config.json")
+	configData := `{"transformers": {"clitest": {"re": "^/tmp/(.*)$", "replace": "/irods/$1"}}}`
+
+	err := os.WriteFile(configPath, []byte(configData), userPerms)
+	So(err, ShouldBeNil)
+
+	subPath := filepath.Join(tmpDir, "proj")
+	So(os.MkdirAll(subPath, 0750), ShouldBeNil)
+
+	writeNullFofn(subPath, []string{"/tmp/a"})
+
+	cfgErr := fofn.WriteConfig(subPath, fofn.SubDirConfig{
+		Transformer: "clitest",
+	})
+	So(cfgErr, ShouldBeNil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	cmd.SetWatchCtxFunc(
+		func() (context.Context, context.CancelFunc) {
+			return ctx, cancel
+		},
+	)
+
+	defer cmd.SetWatchCtxFunc(nil)
+
+	type pipeResult struct {
+		jobs []*jobqueue.Job
+		err  error
+	}
+
+	ch := make(chan pipeResult, 1)
+
+	go func() {
+		var jobs []*jobqueue.Job
+
+		decErr := json.NewDecoder(pr).Decode(&jobs)
+		ch <- pipeResult{jobs: jobs, err: decErr}
+
+		cancel()
+	}()
+
+	args := []string{
+		"watchfofns", "--dir", tmpDir,
+		"--interval", "1s",
+	}
+	args = append(args, extraFlags...)
+
+	exitCode, _ := runCLI(t,
+		[]string{"IBACKUP_CONFIG=" + configPath},
+		"",
+		args...,
+	)
+
+	result := <-ch
+	So(result.err, ShouldBeNil)
+	So(exitCode, ShouldEqual, 0)
+
+	return result.jobs
 }

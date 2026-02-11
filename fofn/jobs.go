@@ -38,7 +38,6 @@ import (
 const (
 	defaultRAM      = 1024
 	defaultTime     = 8 * time.Hour
-	defaultRetries  = 3
 	defaultReqGroup = "ibackup"
 )
 
@@ -134,10 +133,6 @@ func applyDefaults(cfg *RunConfig) {
 
 	if cfg.Time == 0 {
 		cfg.Time = defaultTime
-	}
-
-	if cfg.Retries == 0 {
-		cfg.Retries = defaultRetries
 	}
 
 	if cfg.LimitGroups == nil {

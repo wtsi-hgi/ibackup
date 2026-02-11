@@ -49,7 +49,7 @@ var ErrEmptyTransformer = errors.New("config missing or empty transformer")
 var ErrMetadataKeyColon = errors.New("metadata key contains colon")
 
 // ErrMetadataDelimiter is returned when a metadata key or value contains
-// a semicolon or equals sign, which would break the serialized meta string.
+// a semicolon or equals sign, which would break the serialised meta string.
 var ErrMetadataDelimiter = errors.New("metadata key or value contains '=' or ';'")
 
 // SubDirConfig holds configuration for a watched subdirectory.
