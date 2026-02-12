@@ -30,6 +30,7 @@ package scanner
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -107,7 +108,7 @@ func countNullBytes(r io.Reader) (int, byte, error) {
 			lastByte = buf[n-1]
 		}
 
-		if readErr == io.EOF {
+		if errors.Is(readErr, io.EOF) {
 			return count, lastByte, nil
 		}
 

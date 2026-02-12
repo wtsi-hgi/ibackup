@@ -278,16 +278,24 @@ func TestChunk(t *testing.T) {
 			So(len(paths1), ShouldEqual, len(paths2))
 
 			mismatches := 0
+			readErrors := 0
 
 			for i := range paths1 {
-				content1 := readFileContent(paths1[i])
-				content2 := readFileContent(paths2[i])
+				content1, err1 := readFileContent(paths1[i])
+				content2, err2 := readFileContent(paths2[i])
+
+				if err1 != nil || err2 != nil {
+					readErrors++
+
+					continue
+				}
 
 				if content1 != content2 {
 					mismatches++
 				}
 			}
 
+			So(readErrors, ShouldEqual, 0)
 			So(mismatches, ShouldEqual, 0)
 		})
 
@@ -625,14 +633,16 @@ func decodeAllChunks(
 	return locals, remotes
 }
 
-// readFileContent reads the full contents of a file.
-func readFileContent(path string) string {
+// readFileContent reads the full contents of a file. Returns ("", error) on
+// failure so callers inside loops can accumulate errors without firing
+// assertions per iteration.
+func readFileContent(path string) (string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return ""
+		return "", err
 	}
 
-	return string(data)
+	return string(data), nil
 }
 
 // decodeChunkLocals reads a chunk file and returns only the

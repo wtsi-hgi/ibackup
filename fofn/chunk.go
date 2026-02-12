@@ -45,7 +45,7 @@ const TargetChunks = 100
 var (
 	ErrMinChunkTooSmall = errors.New("minChunk must be >= 1")
 	ErrMaxChunkTooSmall = errors.New("maxChunk must be >= 1")
-	ErrMinExceedsMax = errors.New("minChunk must be <= maxChunk")
+	ErrMinExceedsMax    = errors.New("minChunk must be <= maxChunk")
 )
 
 // WriteShuffledChunks reads a null-terminated fofn file and writes the entries
@@ -54,7 +54,7 @@ var (
 // tab.
 //
 // The function uses a two-pass approach: first counting entries via
-// scanner.ScanNullTerminated, then streaming them into randomly assigned chunk
+// scanner.CountNullTerminated, then streaming them into randomly assigned chunk
 // files. The random assignment is deterministic for a given randSeed.
 //
 // Chunk files are named chunk.000000, chunk.000001, etc. Returns the paths of
