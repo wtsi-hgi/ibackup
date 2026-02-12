@@ -1,6 +1,6 @@
-# Phase VC1: Variable chunk sizing (fofn/chunk.go + callers)
+# Phase VC1: Variable chunk sizing
 
-Ref: [spec-variable-chunks.md](spec-variable-chunks.md) sections VC1, VC2, VC3
+Ref: [spec-variable-chunks.md](spec-variable-chunks.md) sections VC0, VC1, VC2, VC3
 
 ## Instructions
 
@@ -11,39 +11,81 @@ The memory-bounded test pattern is defined in the `go-implementor` skill.
 
 ## Items
 
-These items MUST be implemented in the listed order, except where noted as
-parallel.
+Items marked "parallel" are independent of each other and MUST be implemented
+concurrently using separate AI subagents — one subagent per item.
 
-### Item 1.1: VC1 - CalculateChunks pure function
+### Batch 1 (parallel)
+
+#### Item 1.0: VC0 - Fast entry counting [parallel with 1.1]
+
+spec-variable-chunks.md section: VC0
+
+Add `CountNullTerminated` to `internal/scanner/scanner.go`. The implementation
+reads the file in large buffer chunks and uses `bytes.Count` to tally null bytes,
+avoiding all per-entry string allocation. If the file is non-empty and does not
+end with a null byte, the trailing content counts as one additional entry
+(matching `ScanNullTerminated` semantics). Write GoConvey tests in
+`internal/scanner/scanner_test.go` covering all 8 acceptance tests from
+spec-variable-chunks.md section VC0, including the consistency check against
+`ScanNullTerminated` and the memory-bounded test with 1,000,000 entries.
+
+After implementation, update `fofn/chunk.go`'s private `countEntries` function
+to use `scanner.CountNullTerminated` instead of `scanner.ScanNullTerminated`
+with a counting callback. All existing chunk tests must still pass.
+
+- [ ] implemented
+- [ ] reviewed
+
+#### Item 1.1: VC1 - CalculateChunks pure function [parallel with 1.0]
 
 spec-variable-chunks.md section: VC1
 
 Add the `TargetChunks` constant (100) and implement the `CalculateChunks`
-function in `fofn/chunk.go`. This is a pure function with no side effects. Write
-GoConvey tests in `fofn/chunk_test.go` covering all 21 acceptance tests from
-spec-variable-chunks.md section VC1, including the comprehensive table-driven
-test with the full worked-examples table.
+function in `fofn/chunk.go`. This is a pure function with no side effects and
+no error return: it assumes valid inputs (minChunk >= 1, maxChunk >= 1,
+minChunk <= maxChunk). Write GoConvey tests in `fofn/chunk_test.go` covering
+all 26 acceptance tests from spec-variable-chunks.md section VC1, including:
+
+- Individual named tests for each edge case and boundary value (tests 1-25).
+- The comprehensive table-driven test (test 26) with the full worked-examples
+  table (22 rows including n=501 and n=100000000).
+- The degenerate min=max tests (tests 21-22) confirming equivalence with the
+  old fixed chunkSize behaviour.
 
 - [ ] implemented
 - [ ] reviewed
 
-### Item 1.2: VC2 - WriteShuffledChunks with variable sizing
+### Batch 2 (after batch 1 is reviewed)
+
+#### Item 1.2: VC2 - WriteShuffledChunks with variable sizing
 
 spec-variable-chunks.md section: VC2
 
-Depends on item 1.1. Change the `WriteShuffledChunks` signature to accept
-`minChunk, maxChunk int` instead of `chunkSize int`. Internally, after counting
-entries, call `CalculateChunks(count, minChunk, maxChunk)` to determine
-`numChunks`. Update all existing B1 tests in `fofn/chunk_test.go` to use the
-new signature (use `minChunk = maxChunk = <old chunkSize>` where deterministic
-behaviour is needed). Add the 6 new acceptance tests from spec-variable-chunks.md
-section VC2, including the memory-bounded test. Ensure all existing tests still
-pass.
+Depends on items 1.0 and 1.1. Change the `WriteShuffledChunks` signature to
+accept `minChunk, maxChunk int` instead of `chunkSize int`. Add input
+validation: return an error if `minChunk < 1`, `maxChunk < 1`, or
+`minChunk > maxChunk`. Internally, use `scanner.CountNullTerminated` (from
+item 1.0) for the count pass, then call `CalculateChunks(count, minChunk,
+maxChunk)` (from item 1.1) to determine `numChunks`.
+
+Update all existing B1 tests in `fofn/chunk_test.go` to use the new signature
+(use `minChunk = maxChunk = <old chunkSize>` where deterministic behaviour is
+needed). Add the 10 new acceptance tests from spec-variable-chunks.md
+section VC2, including:
+
+- End-to-end adaptive tests (tests 1-6): verify correct chunk count with
+  various fofn sizes and min/max combinations.
+- Validation error tests (tests 7-9): minChunk=0, maxChunk=0, minChunk>maxChunk.
+- Memory-bounded test (test 10): 1,000,000 entries with default bounds.
+
+Ensure all existing tests still pass after the signature change.
 
 - [ ] implemented
 - [ ] reviewed
 
-### Item 1.3: VC3 - Update callers (watcher, CLI, integration tests)
+### Batch 3 (after batch 2 is reviewed)
+
+#### Item 1.3: VC3 - Update callers (watcher, CLI, integration tests)
 
 spec-variable-chunks.md section: VC3
 

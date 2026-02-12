@@ -15,6 +15,13 @@ This keeps the number of wr jobs manageable (100 is easy to monitor) while
 ensuring each job processes a reasonable number of files (not so few that job
 overhead dominates, not so many that a single failure loses too much progress).
 
+To handle very large fofns (tens of millions of paths) efficiently, the counting
+pass that determines the total number of entries uses a max-speed byte-counting
+approach — counting null terminators directly without allocating strings or
+invoking per-entry callbacks. This avoids the overhead of
+`scanner.ScanNullTerminated` during the count-only first pass while retaining
+identical semantics for determining the entry count.
+
 ## Algorithm
 
 ### Constants and defaults
@@ -51,46 +58,81 @@ TargetChunks` using integer arithmetic.
 
 In step 4, `ceil(n / perChunk)` is computed as `(n + perChunk - 1) / perChunk`.
 
+### Preconditions
+
+`CalculateChunks` is a pure function that assumes valid inputs. Callers must
+ensure:
+
+- `minChunk >= 1`
+- `maxChunk >= 1`
+- `minChunk <= maxChunk`
+
+`WriteShuffledChunks` validates these preconditions and returns an error if any
+condition is violated. The CLI layer should also reject invalid flag
+combinations, but the library function must be independently safe.
+
 ### Worked examples
 
-| n (files) | minChunk | maxChunk | ideal (ceil(n/100)) | perChunk (clamped) | numChunks (ceil(n/perChunk)) |
-|-----------|----------|----------|---------------------|--------------------|------------------------------|
-| 0         | 250      | 10000    | -                   | -                  | 0                            |
-| 1         | 250      | 10000    | 1                   | 250                | 1                            |
-| 100       | 250      | 10000    | 1                   | 250                | 1                            |
-| 249       | 250      | 10000    | 3                   | 250                | 1                            |
-| 250       | 250      | 10000    | 3                   | 250                | 1                            |
-| 251       | 250      | 10000    | 3                   | 250                | 2                            |
-| 500       | 250      | 10000    | 5                   | 250                | 2                            |
-| 1000      | 250      | 10000    | 10                  | 250                | 4                            |
-| 10000     | 250      | 10000    | 100                 | 250                | 40                           |
-| 24999     | 250      | 10000    | 250                 | 250                | 100                          |
-| 25000     | 250      | 10000    | 250                 | 250                | 100                          |
-| 25001     | 250      | 10000    | 251                 | 251                | 100                          |
-| 50000     | 250      | 10000    | 500                 | 500                | 100                          |
-| 100000    | 250      | 10000    | 1000                | 1000               | 100                          |
-| 500000    | 250      | 10000    | 5000                | 5000               | 100                          |
-| 999999    | 250      | 10000    | 10000               | 10000              | 100                          |
-| 1000000   | 250      | 10000    | 10000               | 10000              | 100                          |
-| 1000001   | 250      | 10000    | 10001               | 10000              | 101                          |
-| 2000000   | 250      | 10000    | 20000               | 10000              | 200                          |
-| 10000000  | 250      | 10000    | 100000              | 10000              | 1000                         |
+| n (files)   | minChunk | maxChunk | ideal (ceil(n/100)) | perChunk (clamped) | numChunks (ceil(n/perChunk)) |
+|-------------|----------|----------|---------------------|--------------------|------------------------------|
+| 0           | 250      | 10000    | -                   | -                  | 0                            |
+| 1           | 250      | 10000    | 1                   | 250                | 1                            |
+| 100         | 250      | 10000    | 1                   | 250                | 1                            |
+| 249         | 250      | 10000    | 3                   | 250                | 1                            |
+| 250         | 250      | 10000    | 3                   | 250                | 1                            |
+| 251         | 250      | 10000    | 3                   | 250                | 2                            |
+| 500         | 250      | 10000    | 5                   | 250                | 2                            |
+| 501         | 250      | 10000    | 6                   | 250                | 3                            |
+| 1000        | 250      | 10000    | 10                  | 250                | 4                            |
+| 10000       | 250      | 10000    | 100                 | 250                | 40                           |
+| 24999       | 250      | 10000    | 250                 | 250                | 100                          |
+| 25000       | 250      | 10000    | 250                 | 250                | 100                          |
+| 25001       | 250      | 10000    | 251                 | 251                | 100                          |
+| 50000       | 250      | 10000    | 500                 | 500                | 100                          |
+| 100000      | 250      | 10000    | 1000                | 1000               | 100                          |
+| 500000      | 250      | 10000    | 5000                | 5000               | 100                          |
+| 999999      | 250      | 10000    | 10000               | 10000              | 100                          |
+| 1000000     | 250      | 10000    | 10000               | 10000              | 100                          |
+| 1000001     | 250      | 10000    | 10001               | 10000              | 101                          |
+| 2000000     | 250      | 10000    | 20000               | 10000              | 200                          |
+| 10000000    | 250      | 10000    | 100000              | 10000              | 1000                         |
+| 100000000   | 250      | 10000    | 1000000             | 10000              | 10000                        |
 
 Key observations from the table:
-- For small fofns (n <= minChunk), we get 1 chunk.
-- Between minChunk and minChunk * TargetChunks (25,000 at defaults), we get
-  fewer than 100 chunks because the minimum constraint forces larger chunks
-  than ideal.
-- Between 25,000 and maxChunk * TargetChunks (1,000,000 at defaults), we get
-  exactly 100 chunks.
+- For small fofns (n ≤ minChunk), we get 1 chunk.
+- Between minChunk and minChunk × TargetChunks (25,000 at defaults), we get
+  fewer than 100 chunks because the minimum constraint forces each chunk to
+  contain at least minChunk files.
+- Between 25,000 and maxChunk × TargetChunks (1,000,000 at defaults), we get
+  exactly 100 chunks — the ideal operating range.
 - Above 1,000,000, we get more than 100 chunks because the maximum constraint
-  prevents chunks from growing large enough.
+  prevents chunks from growing large enough to keep the count at 100.
+- When minChunk = maxChunk, the algorithm degenerates to the old fixed
+  chunkSize behaviour: `numChunks = ceil(n / chunkSize)`.
 
 ## Changes
 
+### `internal/scanner/scanner.go`
+
+#### New function: `CountNullTerminated`
+
+```go
+func CountNullTerminated(path string) (int, error)
+```
+
+Counts the number of null-terminated entries in a file by scanning for null
+bytes directly, without parsing entries into strings. The implementation reads
+the file in large buffer chunks (e.g. 32 KB) and uses `bytes.Count` to tally
+null bytes, avoiding all per-entry string allocation. This is significantly
+faster than `ScanNullTerminated` with a counting callback for large files.
+
+If the file is non-empty and does not end with a null byte, the trailing content
+is counted as an additional entry (matching `ScanNullTerminated` semantics for
+files without a trailing null). An empty file returns 0.
+
 ### `fofn/chunk.go`
 
-#### New function: `CalculateChunks`
+#### New constant and function: `TargetChunks`, `CalculateChunks`
 
 ```go
 const TargetChunks = 100
@@ -99,6 +141,7 @@ func CalculateChunks(n, minChunk, maxChunk int) int
 ```
 
 Pure function. Returns the number of chunks as described in the algorithm above.
+Has no side effects and assumes valid inputs (see Preconditions).
 
 #### Modified function: `WriteShuffledChunks`
 
@@ -126,9 +169,14 @@ func WriteShuffledChunks(
 ) ([]string, error)
 ```
 
-Internally, the first pass counts entries (as before), then calls
-`CalculateChunks(count, minChunk, maxChunk)` to determine `numChunks`, then
-streams entries to that many chunk files (as before).
+Before counting, `WriteShuffledChunks` validates that `minChunk >= 1`,
+`maxChunk >= 1`, and `minChunk <= maxChunk`, returning an error if any
+condition is violated.
+
+Internally, the counting pass switches from `scanner.ScanNullTerminated` with
+a counter callback to `scanner.CountNullTerminated` for maximum speed. Then it
+calls `CalculateChunks(count, minChunk, maxChunk)` to determine `numChunks`,
+and streams entries to that many chunk files (as before).
 
 ### `fofn/watcher.go`
 
@@ -166,21 +214,27 @@ Add:
 Pass `MinChunk: watchMinChunk` and `MaxChunk: watchMaxChunk` instead of
 `ChunkSize: watchChunkSize`.
 
-### `fofn/chunk_test.go`
+### Test file updates
+
+#### `internal/scanner/scanner_test.go`
+
+New tests for `CountNullTerminated` (acceptance tests VC0).
+
+#### `fofn/chunk_test.go`
 
 All existing tests that call `WriteShuffledChunks` with a `chunkSize` argument
 must be updated to pass `minChunk, maxChunk` instead. The existing acceptance
 tests from spec.md section B1 remain valid; they just use `minChunk = maxChunk =
 <old chunkSize>` to get the same deterministic behaviour.
 
-New tests for `CalculateChunks` are added (see acceptance tests below).
+New tests for `CalculateChunks` are added (see acceptance tests VC1).
 
-### `fofn/watcher_test.go`
+#### `fofn/watcher_test.go`
 
 All existing tests that set `ChunkSize` in `ProcessSubDirConfig` must be updated
 to set `MinChunk` and `MaxChunk` instead.
 
-### `main_test.go`
+#### `main_test.go`
 
 All existing tests that set `ChunkSize` in config structs or pass `--chunk-size`
 on the CLI must be updated to use `MinChunk`/`MaxChunk` and
@@ -189,6 +243,51 @@ on the CLI must be updated to use `MinChunk`/`MaxChunk` and
 ---
 
 ## Acceptance Tests
+
+### VC0: Fast entry counting
+
+As a developer, I want a function that counts null-terminated entries in a file
+as fast as possible by counting null bytes directly, so that the chunk sizing
+algorithm can determine the number of files in a multi-million-entry fofn
+without the overhead of per-entry string allocation and callbacks.
+
+**Package:** `internal/scanner/`
+**File:** `internal/scanner/scanner.go`
+**Test file:** `internal/scanner/scanner_test.go`
+
+**Acceptance tests:**
+
+1. Given a file containing three null-terminated paths `/a/b\0/c/d\0/e/f\0`,
+   when I call `scanner.CountNullTerminated(path)`, then I get 3 and no error.
+
+2. Given an empty file, when I call `scanner.CountNullTerminated(path)`, then
+   I get 0 and no error.
+
+3. Given a file with paths `/a/b\0/c/d` (no trailing null after last entry),
+   when I call `scanner.CountNullTerminated(path)`, then I get 2 (the trailing
+   content without a null terminator counts as one entry, matching
+   `ScanNullTerminated` semantics).
+
+4. Given a non-existent file path, when I call
+   `scanner.CountNullTerminated(path)`, then I get 0 and a non-nil error.
+
+5. Given a file containing entries with embedded newlines `/a\nb\0/c/d\0`,
+   when I call `scanner.CountNullTerminated(path)`, then I get 2 (newlines are
+   not treated as terminators).
+
+6. Given a file containing a single null byte `\0`, when I call
+   `scanner.CountNullTerminated(path)`, then I get 1 (one entry whose content
+   is the empty string).
+
+7. Given a file containing 1,000,000 null-terminated paths, when I call
+   `scanner.CountNullTerminated(path)`, then the result equals the count
+   obtained by `scanner.ScanNullTerminated` with a counting callback
+   (consistency check between the two implementations).
+
+8. (**Memory test**) Given a file containing 1,000,000 null-terminated 100-byte
+   paths (~100 MB), when I call `scanner.CountNullTerminated(path)`, then
+   `runtime.MemStats.HeapInuse` does not increase by more than 1 MB above the
+   baseline (proving no per-entry string allocation).
 
 ### VC1: CalculateChunks pure function
 
@@ -278,14 +377,37 @@ logic is independently testable.
     `fofn.CalculateChunks(1500, 10, 20)`, then I get 100 (ideal=15, in
     range, exactly 100 chunks).
 
-21. (**Table-driven comprehensive test**) Given the full worked-examples table
-    above, when I call `fofn.CalculateChunks` for each row, then every result
-    matches the expected `numChunks`.
+21. Given minChunk=maxChunk=10 and n=25, when I call
+    `fofn.CalculateChunks(25, 10, 10)`, then I get 3 (degenerates to the
+    old fixed chunkSize=10 behaviour: ceil(25/10)=3).
+
+22. Given minChunk=maxChunk=10 and n=100, when I call
+    `fofn.CalculateChunks(100, 10, 10)`, then I get 10 (degenerates to
+    fixed chunkSize: ceil(100/10)=10).
+
+23. Given minChunk=1, maxChunk=100, n=50, when I call
+    `fofn.CalculateChunks(50, 1, 100)`, then I get 50 (ideal=1, clamped to
+    1, ceil(50/1)=50 — minimum of 1 file per chunk yields maximum number
+    of chunks).
+
+24. Given n=100000000 (100 million), minChunk=250, maxChunk=10000, when I call
+    `fofn.CalculateChunks(100000000, 250, 10000)`, then I get 10000 (massive
+    fofn, ideal=1000000, clamped to maxChunk 10000, ceil(100000000/10000)=10000).
+
+25. Given n=501, minChunk=250, maxChunk=10000, when I call
+    `fofn.CalculateChunks(501, 250, 10000)`, then I get 3 (ideal=6, clamped
+    to 250, ceil(501/250)=3 — just above the 2-chunk boundary).
+
+26. (**Table-driven comprehensive test**) Given the full worked-examples table
+    above (including the n=501 and n=100000000 rows), when I call
+    `fofn.CalculateChunks` for each row, then every result matches the expected
+    `numChunks`.
 
 ### VC2: WriteShuffledChunks with variable sizing
 
 As a developer, I want `WriteShuffledChunks` to accept min/max chunk parameters
-instead of a fixed chunk size, so that the adaptive algorithm is used end-to-end.
+instead of a fixed chunk size, so that the adaptive algorithm is used end-to-end
+and invalid parameter combinations are rejected.
 
 **Package:** `fofn/`
 **File:** `fofn/chunk.go`
@@ -312,10 +434,24 @@ instead of a fixed chunk size, so that the adaptive algorithm is used end-to-end
 5. Given an empty fofn, when I call `fofn.WriteShuffledChunks(...)` with any
    min/max values, then 0 chunk files are created and nil is returned.
 
-6. (**Memory test**) Given a fofn with 1,000,000 null-terminated 100-byte paths,
-   when I call `fofn.WriteShuffledChunks(...)` with minChunk=250,
-   maxChunk=10000, then `runtime.MemStats.HeapInuse` does not increase by more
-   than 20 MB above the baseline (proving entries are still streamed).
+6. Given a fofn with 1 path and minChunk=250, maxChunk=10000, when I call
+   `fofn.WriteShuffledChunks(...)`, then 1 chunk file is created containing
+   1 line.
+
+7. Given minChunk=0 and any fofn, when I call `fofn.WriteShuffledChunks(...)`,
+   then a non-nil error is returned and no chunk files are created.
+
+8. Given maxChunk=0 and any fofn, when I call `fofn.WriteShuffledChunks(...)`,
+   then a non-nil error is returned and no chunk files are created.
+
+9. Given minChunk=500, maxChunk=100 (min > max), when I call
+   `fofn.WriteShuffledChunks(...)`, then a non-nil error is returned and no
+   chunk files are created.
+
+10. (**Memory test**) Given a fofn with 1,000,000 null-terminated 100-byte
+    paths, when I call `fofn.WriteShuffledChunks(...)` with minChunk=250,
+    maxChunk=10000, then `runtime.MemStats.HeapInuse` does not increase by more
+    than 20 MB above the baseline (proving entries are still streamed).
 
 ### VC3: Updated callers
 
