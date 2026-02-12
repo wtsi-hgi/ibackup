@@ -174,6 +174,36 @@ func TestConfig(t *testing.T) {
 			So(os.IsNotExist(statErr), ShouldBeTrue)
 		})
 
+		Convey("WriteConfig rejects metadata key containing colon", func() {
+			sub := filepath.Join(dir, "write_colon")
+			So(os.MkdirAll(sub, 0750), ShouldBeNil)
+
+			err := WriteConfig(sub, SubDirConfig{
+				Transformer: "test",
+				Metadata:    map[string]string{"bad:key": "val"},
+			})
+			So(err, ShouldNotBeNil)
+			So(errors.Is(err, ErrMetadataKeyColon), ShouldBeTrue)
+
+			_, statErr := os.Stat(filepath.Join(sub, "config.yml"))
+			So(os.IsNotExist(statErr), ShouldBeTrue)
+		})
+
+		Convey("WriteConfig rejects metadata value containing =", func() {
+			sub := filepath.Join(dir, "write_eq")
+			So(os.MkdirAll(sub, 0750), ShouldBeNil)
+
+			err := WriteConfig(sub, SubDirConfig{
+				Transformer: "test",
+				Metadata:    map[string]string{"key": "val=ue"},
+			})
+			So(err, ShouldNotBeNil)
+			So(errors.Is(err, ErrMetadataDelimiter), ShouldBeTrue)
+
+			_, statErr := os.Stat(filepath.Join(sub, "config.yml"))
+			So(os.IsNotExist(statErr), ShouldBeTrue)
+		})
+
 		Convey("ReadConfig rejects metadata value containing =", func() {
 			sub := filepath.Join(dir, "bad_eq")
 			So(os.MkdirAll(sub, 0750), ShouldBeNil)

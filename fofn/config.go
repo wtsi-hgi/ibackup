@@ -99,10 +99,11 @@ func (c SubDirConfig) UserMetaString() string {
 }
 
 // WriteConfig writes cfg as config.yml in dir. Returns an
-// error if Transformer is empty.
+// error if Transformer is empty or metadata keys/values
+// are invalid.
 func WriteConfig(dir string, cfg SubDirConfig) error {
-	if cfg.Transformer == "" {
-		return ErrEmptyTransformer
+	if err := validateConfig(cfg); err != nil {
+		return err
 	}
 
 	data, err := yaml.Marshal(cfg)
