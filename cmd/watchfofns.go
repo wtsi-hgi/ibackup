@@ -46,15 +46,17 @@ const (
 	defaultWatchRAM      = 1024
 	defaultWatchTime     = 8 * time.Hour
 	defaultWatchRetries  = 3
+	maxRetries           = 255
 )
 
 var (
-	errDirRequired    = errors.New("--dir is required")
-	errDirNotADir     = errors.New("--dir is not a directory")
-	errConfigRequired = fmt.Errorf("%s environment variable must be set", ConfigKey)
-	errMinChunkSmall  = errors.New("--min-chunk must be >= 1")
-	errMaxChunkSmall  = errors.New("--max-chunk must be >= 1")
-	errMinExceedsMax  = errors.New("--min-chunk must be <= --max-chunk")
+	errDirRequired     = errors.New("--dir is required")
+	errDirNotADir      = errors.New("--dir is not a directory")
+	errConfigRequired  = fmt.Errorf("%s environment variable must be set", ConfigKey)
+	errMinChunkSmall   = errors.New("--min-chunk must be >= 1")
+	errMaxChunkSmall   = errors.New("--max-chunk must be >= 1")
+	errMinExceedsMax   = errors.New("--min-chunk must be <= --max-chunk")
+	errRetriesTooLarge = fmt.Errorf("--retries must be <= %d", maxRetries)
 )
 
 // command-line options for watchfofns.
@@ -220,6 +222,10 @@ func validateChunkFlags() error {
 
 	if watchMinChunk > watchMaxChunk {
 		return fmt.Errorf("%w: %d > %d", errMinExceedsMax, watchMinChunk, watchMaxChunk)
+	}
+
+	if watchRetries > maxRetries {
+		return fmt.Errorf("%w: got %d", errRetriesTooLarge, watchRetries)
 	}
 
 	return nil
