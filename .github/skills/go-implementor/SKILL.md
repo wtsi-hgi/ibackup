@@ -75,7 +75,9 @@ For each acceptance test, follow these steps exactly. Do not skip any step.
 
 - **Line width:** 100-column hard limit for code, 80-column for comments.
 - **Function length:** Keep functions short. Extract helpers when a
-  function exceeds ~30 lines of logic.
+  function exceeds ~30 lines of logic, excluding error handling. But do not be
+  too aggressive about this: do not make it difficult to trace the logic by
+  scattering it across too many tiny functions.
 - **Cyclomatic complexity:** Keep low. Prefer early returns and guard
   clauses over deeply nested if/else.
 - **Naming:** Self-documenting names. No abbreviations except well-known
