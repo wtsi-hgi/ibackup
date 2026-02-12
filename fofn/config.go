@@ -28,9 +28,10 @@ package fofn
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -87,12 +88,7 @@ func (c SubDirConfig) UserMetaString() string {
 		return ""
 	}
 
-	keys := make([]string, 0, len(c.Metadata))
-	for k := range c.Metadata {
-		keys = append(keys, k)
-	}
-
-	sort.Strings(keys)
+	keys := slices.Sorted(maps.Keys(c.Metadata))
 
 	pairs := make([]string, 0, len(keys))
 	for _, k := range keys {

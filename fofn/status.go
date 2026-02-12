@@ -32,7 +32,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -481,7 +481,7 @@ func findChunkFiles(runDir string) ([]string, error) {
 	}
 
 	chunks := filterChunkFiles(matches)
-	sort.Strings(chunks)
+	slices.Sort(chunks)
 
 	return chunks, nil
 }
