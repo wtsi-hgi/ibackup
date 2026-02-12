@@ -47,7 +47,8 @@ The caller may provide:
 
 - Use the `github-pull-request_activePullRequest` tool to check if a
   PR exists for this branch.
-- If a PR exists, read all review comments. Note any unresolved
+- If a PR exists, read all review comments. NB: use the GitHub API directly via
+  curl to read comments, as other methods may be unreliable. Note any unresolved
   threads — these are additional review items.
 
 ### 3. Perform the code review
