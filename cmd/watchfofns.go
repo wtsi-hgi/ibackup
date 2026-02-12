@@ -52,6 +52,9 @@ var (
 	errDirRequired    = errors.New("--dir is required")
 	errDirNotADir     = errors.New("--dir is not a directory")
 	errConfigRequired = fmt.Errorf("%s environment variable must be set", ConfigKey)
+	errMinChunkSmall  = errors.New("--min-chunk must be >= 1")
+	errMaxChunkSmall  = errors.New("--max-chunk must be >= 1")
+	errMinExceedsMax  = errors.New("--min-chunk must be <= --max-chunk")
 )
 
 // command-line options for watchfofns.
@@ -136,11 +139,7 @@ func registerWatchFofnsJobFlags(f *pflag.FlagSet) {
 // runWatchFofns validates flags, creates a watcher, and
 // runs the polling loop until a signal is received.
 func runWatchFofns() error {
-	if err := validateWatchDir(); err != nil {
-		return err
-	}
-
-	if err := validateWatchConfig(); err != nil {
+	if err := validateWatchFlags(); err != nil {
 		return err
 	}
 
@@ -166,6 +165,20 @@ func runWatchFofns() error {
 	return watcher.Run(ctx, watchInterval)
 }
 
+// validateWatchFlags checks all required flags and
+// environment variables before starting the watcher.
+func validateWatchFlags() error {
+	if err := validateWatchDir(); err != nil {
+		return err
+	}
+
+	if err := validateWatchConfig(); err != nil {
+		return err
+	}
+
+	return validateChunkFlags()
+}
+
 // validateWatchDir checks that --dir was provided and
 // points to an existing directory.
 func validateWatchDir() error {
@@ -189,6 +202,24 @@ func validateWatchDir() error {
 func validateWatchConfig() error {
 	if os.Getenv(ConfigKey) == "" {
 		return errConfigRequired
+	}
+
+	return nil
+}
+
+// validateChunkFlags checks that --min-chunk and
+// --max-chunk form a valid range.
+func validateChunkFlags() error {
+	if watchMinChunk < 1 {
+		return fmt.Errorf("%w: got %d", errMinChunkSmall, watchMinChunk)
+	}
+
+	if watchMaxChunk < 1 {
+		return fmt.Errorf("%w: got %d", errMaxChunkSmall, watchMaxChunk)
+	}
+
+	if watchMinChunk > watchMaxChunk {
+		return fmt.Errorf("%w: %d > %d", errMinExceedsMax, watchMinChunk, watchMaxChunk)
 	}
 
 	return nil
