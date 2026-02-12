@@ -409,7 +409,7 @@ func (w *Watcher) handleSuccessfulRun(
 
 	w.clearActiveRun(subDir.Path)
 
-	return w.checkAndStartNewRun(subDir)
+	return w.startNewRun(subDir)
 }
 
 // GenerateStatus writes a combined status file from all chunk reports in
@@ -510,23 +510,6 @@ func (w *Watcher) handleNewSubDir(
 		return err
 	}
 
-	return w.checkAndStartNewRun(subDir)
-}
-
-// checkAndStartNewRun checks if the fofn needs
-// processing and starts a new run if so.
-func (w *Watcher) checkAndStartNewRun(
-	subDir SubDir,
-) error {
-	needed, _, err := NeedsProcessing(subDir)
-	if err != nil {
-		return err
-	}
-
-	if !needed {
-		return nil
-	}
-
 	return w.startNewRun(subDir)
 }
 
@@ -613,16 +596,11 @@ func createStatusSymlink(
 	return nil
 }
 
-// readAndCheckConfig reads the config and checks if processing is needed.
-// Returns zero mtime when processing is not needed.
+// readAndCheckConfig checks if processing is needed, and if so reads the
+// config. Returns zero mtime when processing is not needed.
 func readAndCheckConfig(
 	subDir SubDir,
 ) (SubDirConfig, int64, error) {
-	sdCfg, err := ReadConfig(subDir.Path)
-	if err != nil {
-		return SubDirConfig{}, 0, err
-	}
-
 	needed, mtime, err := NeedsProcessing(subDir)
 	if err != nil {
 		return SubDirConfig{}, 0, err
@@ -630,6 +608,11 @@ func readAndCheckConfig(
 
 	if !needed {
 		return SubDirConfig{}, 0, nil
+	}
+
+	sdCfg, err := ReadConfig(subDir.Path)
+	if err != nil {
+		return SubDirConfig{}, 0, err
 	}
 
 	return sdCfg, mtime, nil
