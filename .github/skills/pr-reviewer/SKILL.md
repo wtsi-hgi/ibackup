@@ -29,6 +29,25 @@ The caller may provide:
 
 ## Procedure
 
+### 0. Mandatory base branch guardrail
+
+Before any diff, lint, or test command runs, you MUST lock the review base.
+
+- If caller provided a base reference, use it.
+- Otherwise, if a PR exists for the current branch, you MUST read that PR's
+  `base.ref` and use it.
+- Only if no caller base and no PR base are available, fallback to `develop`.
+
+Hard requirements:
+
+- Never use repository default branch as an inferred review base when a PR
+  exists.
+- Never run `git diff <base>...HEAD` until `base` is explicitly resolved.
+- Emit a one-line confirmation before diffing:
+  `Review base resolved: <base>`
+- If PR exists but `base.ref` cannot be determined, stop and report failure;
+  do not guess.
+
 ### 1. Gather context
 
 - Determine the current branch name (`git branch --show-current`).
@@ -36,6 +55,9 @@ The caller may provide:
 - If no base was provided by the caller, check for an active PR and use
   its target branch as base when available.
 - Do not infer the base from repository default branch alone.
+- If PR metadata from helper tools does not include `base.ref`, query the PR
+  directly via GitHub API (for example:
+  `GET /repos/{owner}/{repo}/pulls/{number}`) and extract `base.ref`.
 - Collect the full diff:
   ```
   git diff <base>...HEAD
@@ -55,6 +77,8 @@ The caller may provide:
   PR exists for this branch.
 - If a PR exists and the caller did not provide a base reference,
   confirm the review base matches the PR target branch (`base.ref`).
+- Validate explicitly: if resolved base != PR `base.ref`, stop and report a
+  guardrail violation.
 - If a PR exists, read all review comments. NB: use the GitHub API directly via
   curl to read comments, as other methods may be unreliable. Note any unresolved
   threads — these are additional review items.
@@ -214,3 +238,6 @@ Move to the next finding and repeat from step 8b.
 - Findings that are purely cosmetic (e.g. comment typos) should be
   batched into a single "style cleanup" commit.
 - Never write outside the repository directory.
+- Do NOT use repository default branch as diff base when a PR exists.
+- Do NOT continue if PR `base.ref` cannot be resolved and no caller base is
+  provided.

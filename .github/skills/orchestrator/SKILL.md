@@ -115,8 +115,9 @@ of all the work done across every phase:
 - Launch a subagent with the **pr-reviewer** skill by including in
   its prompt:
   - The full text of the pr-reviewer skill.
-  - The base reference: `develop` (or the branch the work branched
-    from, if known).
+  - Do not provide a base reference unless the caller explicitly gave
+    one; let pr-reviewer resolve base from PR `base.ref` per its own
+    guardrails.
   - The path to the spec document referenced in the phase files.
   - The instruction: "You have clean context. Review all committed
     and uncommitted changes on this branch compared to the base.
