@@ -47,16 +47,6 @@ type filePair struct {
 	Remote string
 }
 
-// writeChunkAndReport writes both a chunk file and a complete report file for
-// all pairs with status "uploaded".
-func writeChunkAndReport(
-	runDir, chunkName string,
-	pairs []filePair,
-) {
-	writeChunkFile(runDir, chunkName, pairs)
-	writeReportFile(runDir, chunkName, pairs, "uploaded")
-}
-
 // makeFilePairs creates n file pairs with sequential
 // indices starting from startIdx.
 func makeFilePairs(startIdx, endIdx int) []filePair {
@@ -71,6 +61,16 @@ func makeFilePairs(startIdx, endIdx int) []filePair {
 	}
 
 	return pairs
+}
+
+// writeChunkAndReport writes both a chunk file and a complete report file for
+// all pairs with status "uploaded".
+func writeChunkAndReport(
+	runDir, chunkName string,
+	pairs []filePair,
+) {
+	writeChunkFile(runDir, chunkName, pairs)
+	writeReportFile(runDir, chunkName, pairs, "uploaded")
 }
 
 // writeChunkOnly writes a chunk file with no report.
@@ -180,7 +180,7 @@ func TestProcessSubDir(t *testing.T) {
 		Convey("creates run dir and submits jobs for "+
 			"25 paths", func() {
 			paths := generateTmpPaths(25)
-			subDir := setupSubDir(watchDir, "proj1", paths, "transformer: test\n")
+			subDir := setupSubDir(watchDir, "proj1", paths, SubDirConfig{Transformer: "test"})
 
 			mock := &mockJobSubmitter{}
 			cfg := ProcessSubDirConfig{
@@ -233,7 +233,7 @@ func TestProcessSubDir(t *testing.T) {
 			paths := generateTmpPaths(5)
 			subDir := setupSubDir(
 				watchDir, "proj2", paths,
-				"transformer: test\nfreeze: true\n",
+				SubDirConfig{Transformer: "test", Freeze: true},
 			)
 
 			mock := &mockJobSubmitter{}
@@ -276,7 +276,7 @@ func TestProcessSubDir(t *testing.T) {
 
 		Convey("returns zero state for empty fofn",
 			func() {
-				subDir := setupSubDir(watchDir, "proj4", nil, "transformer: test\n")
+				subDir := setupSubDir(watchDir, "proj4", nil, SubDirConfig{Transformer: "test"})
 
 				mock := &mockJobSubmitter{}
 				cfg := ProcessSubDirConfig{
@@ -303,7 +303,7 @@ func TestProcessSubDir(t *testing.T) {
 				paths := generateTmpPaths(25)
 				subDir := setupSubDir(
 					watchDir, "proj5", paths,
-					"transformer: test\n",
+					SubDirConfig{Transformer: "test"},
 				)
 
 				mock := &mockJobSubmitter{}
@@ -345,8 +345,7 @@ func TestProcessSubDir(t *testing.T) {
 			paths := generateTmpPaths(5)
 			subDir := setupSubDir(
 				watchDir, "proj6", paths,
-				"transformer: test\nmetadata:\n"+
-					"  colour: red\n",
+				SubDirConfig{Transformer: "test", Metadata: map[string]string{"colour": "red"}},
 			)
 
 			mock := &mockJobSubmitter{}
@@ -369,7 +368,7 @@ func TestProcessSubDir(t *testing.T) {
 		Convey("omits --meta when config has no "+
 			"metadata", func() {
 			paths := generateTmpPaths(5)
-			subDir := setupSubDir(watchDir, "proj7", paths, "transformer: test\n")
+			subDir := setupSubDir(watchDir, "proj7", paths, SubDirConfig{Transformer: "test"})
 
 			mock := &mockJobSubmitter{}
 			cfg := ProcessSubDirConfig{
@@ -391,7 +390,7 @@ func TestProcessSubDir(t *testing.T) {
 		Convey("creates 100 chunks and 100 jobs for "+
 			"50000 paths with default bounds", func() {
 			paths := generateTmpPaths(50000)
-			subDir := setupSubDir(watchDir, "proj_vc3", paths, "transformer: test\n")
+			subDir := setupSubDir(watchDir, "proj_vc3", paths, SubDirConfig{Transformer: "test"})
 
 			mock := &mockJobSubmitter{}
 			cfg := ProcessSubDirConfig{
@@ -539,7 +538,7 @@ func TestWatcherPoll(t *testing.T) {
 		Convey("first poll submits jobs and records "+
 			"active run", func() {
 			paths := generateTmpPaths(25)
-			subDir := setupSubDir(watchDir, "proj1", paths, "transformer: test\n")
+			subDir := setupSubDir(watchDir, "proj1", paths, SubDirConfig{Transformer: "test"})
 
 			mock := &mockJobSubmitter{}
 			w := NewWatcher(watchDir, mock, cfg)
@@ -557,7 +556,7 @@ func TestWatcherPoll(t *testing.T) {
 		Convey("skips when active run has "+
 			"incomplete jobs", func() {
 			paths := generateTmpPaths(25)
-			subDir := setupSubDir(watchDir, "proj2", paths, "transformer: test\n")
+			subDir := setupSubDir(watchDir, "proj2", paths, SubDirConfig{Transformer: "test"})
 
 			mock := &mockJobSubmitter{}
 			w := NewWatcher(watchDir, mock, cfg)
@@ -583,7 +582,7 @@ func TestWatcherPoll(t *testing.T) {
 		Convey("completes successful run and starts "+
 			"new run when fofn changed", func() {
 			paths := generateTmpPaths(25)
-			subDir := setupSubDir(watchDir, "proj3", paths, "transformer: test\n")
+			subDir := setupSubDir(watchDir, "proj3", paths, SubDirConfig{Transformer: "test"})
 
 			mock := &mockJobSubmitter{}
 			w := NewWatcher(watchDir, mock, cfg)
@@ -624,7 +623,7 @@ func TestWatcherPoll(t *testing.T) {
 		Convey("completes successful run with no "+
 			"new run when fofn unchanged", func() {
 			paths := generateTmpPaths(25)
-			subDir := setupSubDir(watchDir, "proj4", paths, "transformer: test\n")
+			subDir := setupSubDir(watchDir, "proj4", paths, SubDirConfig{Transformer: "test"})
 
 			mock := &mockJobSubmitter{}
 			w := NewWatcher(watchDir, mock, cfg)
@@ -660,7 +659,7 @@ func TestWatcherPoll(t *testing.T) {
 				paths := generateTmpPaths(25)
 				subDir := setupSubDir(
 					watchDir, "proj5", paths,
-					"transformer: test\n",
+					SubDirConfig{Transformer: "test"},
 				)
 
 				mock := &mockJobSubmitter{}
@@ -711,7 +710,7 @@ func TestWatcherPoll(t *testing.T) {
 		Convey("deletes buried jobs and starts new "+
 			"run when fofn changed", func() {
 			paths := generateTmpPaths(25)
-			subDir := setupSubDir(watchDir, "proj6", paths, "transformer: test\n")
+			subDir := setupSubDir(watchDir, "proj6", paths, SubDirConfig{Transformer: "test"})
 
 			mock := &mockJobSubmitter{}
 			w := NewWatcher(watchDir, mock, cfg)
@@ -753,7 +752,7 @@ func TestWatcherPoll(t *testing.T) {
 		Convey("deletes old run directories on "+
 			"successful completion", func() {
 			paths := generateTmpPaths(25)
-			subDir := setupSubDir(watchDir, "proj7", paths, "transformer: test\n")
+			subDir := setupSubDir(watchDir, "proj7", paths, SubDirConfig{Transformer: "test"})
 
 			mock := &mockJobSubmitter{}
 			w := NewWatcher(watchDir, mock, cfg)
@@ -785,7 +784,7 @@ func TestWatcherPoll(t *testing.T) {
 		Convey("updates status symlink after second "+
 			"run completes", func() {
 			paths := generateTmpPaths(25)
-			subDir := setupSubDir(watchDir, "proj8", paths, "transformer: test\n")
+			subDir := setupSubDir(watchDir, "proj8", paths, SubDirConfig{Transformer: "test"})
 
 			mock := &mockJobSubmitter{}
 			w := NewWatcher(watchDir, mock, cfg)
@@ -846,13 +845,7 @@ func TestWatcherRestart(t *testing.T) {
 
 				writeFofn(subPath, generateTmpPaths(10))
 
-				So(os.WriteFile(
-					filepath.Join(
-						subPath, "config.yml",
-					),
-					[]byte("transformer: test\n"),
-					0600,
-				), ShouldBeNil)
+				So(WriteConfig(subPath, SubDirConfig{Transformer: "test"}), ShouldBeNil)
 
 				runDir := filepath.Join(subPath, "1000")
 				So(os.MkdirAll(runDir, 0750),
@@ -893,13 +886,7 @@ func TestWatcherRestart(t *testing.T) {
 			fofnTime := time.Unix(1000, 0)
 			So(os.Chtimes(fofnPath, fofnTime, fofnTime), ShouldBeNil)
 
-			So(os.WriteFile(
-				filepath.Join(
-					subPath, "config.yml",
-				),
-				[]byte("transformer: test\n"),
-				0600,
-			), ShouldBeNil)
+			So(WriteConfig(subPath, SubDirConfig{Transformer: "test"}), ShouldBeNil)
 
 			runDir := filepath.Join(subPath, "1000")
 			So(os.MkdirAll(runDir, 0750),
@@ -951,7 +938,7 @@ func TestWatcherParallel(t *testing.T) {
 					setupSubDir(
 						watchDir, name,
 						generateTmpPaths(5),
-						"transformer: test\n",
+						SubDirConfig{Transformer: "test"},
 					)
 				}
 
@@ -975,7 +962,7 @@ func TestWatcherParallel(t *testing.T) {
 					setupSubDir(
 						watchDir, name,
 						generateTmpPaths(5),
-						"transformer: test\n",
+						SubDirConfig{Transformer: "test"},
 					)
 				}
 
@@ -995,7 +982,7 @@ func TestWatcherParallel(t *testing.T) {
 				setupSubDir(
 					watchDir, "proj3",
 					generateTmpPaths(5),
-					"transformer: test\n",
+					SubDirConfig{Transformer: "test"},
 				)
 
 				err = w.Poll()
@@ -1014,17 +1001,14 @@ func TestWatcherParallel(t *testing.T) {
 func setupSubDir(
 	watchDir, name string,
 	paths []string,
-	configContent string,
+	cfg SubDirConfig,
 ) SubDir {
 	subPath := filepath.Join(watchDir, name)
 	So(os.MkdirAll(subPath, 0750), ShouldBeNil)
 
 	writeFofn(subPath, paths)
 
-	So(os.WriteFile(
-		filepath.Join(subPath, "config.yml"),
-		[]byte(configContent), 0600,
-	), ShouldBeNil)
+	So(WriteConfig(subPath, cfg), ShouldBeNil)
 
 	return SubDir{Path: subPath}
 }
