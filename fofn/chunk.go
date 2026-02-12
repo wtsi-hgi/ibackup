@@ -33,6 +33,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/wtsi-hgi/ibackup/internal/scanner"
 )
@@ -150,6 +151,8 @@ func flushWriters(writers []*bufio.Writer) error {
 // The function uses a two-pass approach: first counting entries via
 // scanner.CountNullTerminated, then streaming them into randomly assigned chunk
 // files. The random assignment is deterministic for a given randSeed.
+// If randSeed is 0, time.Now().UnixNano() is used for non-deterministic
+// shuffling.
 //
 // Chunk files are named chunk.000000, chunk.000001, etc. Returns the paths of
 // the created chunk files, or nil if the fofn is empty.
@@ -174,6 +177,10 @@ func WriteShuffledChunks(
 	}
 
 	numChunks := CalculateChunks(count, minChunk, maxChunk)
+
+	if randSeed == 0 {
+		randSeed = time.Now().UnixNano()
+	}
 
 	return streamToChunks(fofnPath, transform, dir, numChunks, randSeed)
 }

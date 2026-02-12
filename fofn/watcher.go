@@ -46,6 +46,8 @@ const (
 )
 
 // ProcessSubDirConfig holds configuration for processing a subdirectory.
+// RandSeed controls chunk shuffling: 0 means use time-based randomness;
+// a non-zero value gives deterministic shuffling (useful for tests).
 type ProcessSubDirConfig struct {
 	MinChunk  int
 	MaxChunk  int
@@ -331,23 +333,28 @@ func (w *Watcher) pollSubDirsParallel(
 
 		sem <- struct{}{}
 
-		go func(sd SubDir) {
-			defer wg.Done()
-			defer func() { <-sem }()
-
-			if err := w.pollSubDir(sd); err != nil {
-				errMu.Lock()
-
-				errs = append(errs, err)
-
-				errMu.Unlock()
-			}
-		}(subDir)
+		go w.pollSubDirCollect(subDir, sem, &wg, &errMu, &errs)
 	}
 
 	wg.Wait()
 
 	return errors.Join(errs...)
+}
+
+func (w *Watcher) pollSubDirCollect(
+	sd SubDir, sem chan struct{},
+	wg *sync.WaitGroup, errMu *sync.Mutex, errs *[]error,
+) {
+	defer wg.Done()
+	defer func() { <-sem }()
+
+	if err := w.pollSubDir(sd); err != nil {
+		errMu.Lock()
+
+		*errs = append(*errs, err)
+
+		errMu.Unlock()
+	}
 }
 
 func (w *Watcher) pollSubDir(
