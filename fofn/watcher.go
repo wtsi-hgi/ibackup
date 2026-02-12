@@ -28,6 +28,7 @@ package fofn
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -218,6 +219,7 @@ type Watcher struct {
 	watchDir   string
 	submitter  JobSubmitter
 	cfg        ProcessSubDirConfig
+	logger     *slog.Logger
 	mu         sync.Mutex
 	activeRuns map[string]RunState // key: subDir.Path
 }
@@ -232,6 +234,7 @@ func NewWatcher(
 		watchDir:   watchDir,
 		submitter:  submitter,
 		cfg:        cfg,
+		logger:     slog.Default(),
 		activeRuns: make(map[string]RunState),
 	}
 }
@@ -281,7 +284,8 @@ func (w *Watcher) Poll() error {
 }
 
 // Run polls immediately and then at the given interval until the context is
-// cancelled. Returns nil on cancellation.
+// cancelled. Returns nil on cancellation. The initial poll error is returned
+// immediately; subsequent poll errors are logged and polling continues.
 func (w *Watcher) Run(
 	ctx context.Context, interval time.Duration,
 ) error {
@@ -298,7 +302,8 @@ func (w *Watcher) Run(
 			return nil
 		case <-ticker.C:
 			if err := w.Poll(); err != nil {
-				return err
+				w.logger.Error("poll failed",
+					"err", err)
 			}
 		}
 	}
