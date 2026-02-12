@@ -18,7 +18,10 @@ SKILL.md and include the full text in the `runSubagent` prompt.
 The caller may provide:
 
 - **Base reference** — a branch name or commit SHA to compare against.
-  Default: `develop`.
+  Selection order:
+  1. Caller-provided base reference.
+  2. Active PR target branch (`base.ref`) for the current branch.
+  3. Fallback: `develop`.
 - **Spec document** — a path to a spec file (e.g. `spec.md`) for
   conformance checking.
 - **Focus areas** — specific files, packages, or concerns to
@@ -29,7 +32,10 @@ The caller may provide:
 ### 1. Gather context
 
 - Determine the current branch name (`git branch --show-current`).
-- Determine the base reference (caller-provided, or `develop`).
+- Determine the base reference using the selection order above.
+- If no base was provided by the caller, check for an active PR and use
+  its target branch as base when available.
+- Do not infer the base from repository default branch alone.
 - Collect the full diff:
   ```
   git diff <base>...HEAD
@@ -47,6 +53,8 @@ The caller may provide:
 
 - Use the `github-pull-request_activePullRequest` tool to check if a
   PR exists for this branch.
+- If a PR exists and the caller did not provide a base reference,
+  confirm the review base matches the PR target branch (`base.ref`).
 - If a PR exists, read all review comments. NB: use the GitHub API directly via
   curl to read comments, as other methods may be unreliable. Note any unresolved
   threads — these are additional review items.
