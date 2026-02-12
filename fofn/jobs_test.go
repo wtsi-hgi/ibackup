@@ -43,11 +43,11 @@ func TestBuildPutCommand(t *testing.T) {
 			func() {
 				cmd := BuildPutCommand("chunk.000000", false, "project1", "")
 				So(cmd, ShouldEqual,
-					"ibackup put -v -l chunk.000000.log "+
-						"--report chunk.000000.report "+
+					`ibackup put -v -l "chunk.000000.log" `+
+						`--report "chunk.000000.report" `+
 						`--fofn "project1" -b `+
-						"-f chunk.000000 "+
-						"> chunk.000000.out 2>&1")
+						`-f "chunk.000000" `+
+						`> "chunk.000000.out" 2>&1`)
 			})
 
 		Convey("includes --no_replace when noReplace is true",
@@ -279,12 +279,12 @@ func TestFindBuriedChunks(t *testing.T) {
 			func() {
 				mock := &mockJobSubmitter{
 					buried: []*jobqueue.Job{
-						{Cmd: "ibackup put -v " +
-							"-l chunk.000000.log " +
-							"--report chunk.000000.report " +
+						{Cmd: `ibackup put -v ` +
+							`-l "chunk.000000.log" ` +
+							`--report "chunk.000000.report" ` +
 							`--fofn "project1" -b ` +
-							"-f chunk.000000 " +
-							"> chunk.000000.out 2>&1"},
+							`-f "chunk.000000" ` +
+							`> "chunk.000000.out" 2>&1`},
 					},
 				}
 

@@ -42,24 +42,18 @@ type SubDir struct {
 // ScanForFOFNs returns subdirectories of watchDir that
 // contain a file named "fofn".
 func ScanForFOFNs(watchDir string) ([]SubDir, error) {
-	entries, err := os.ReadDir(watchDir)
-	if err != nil {
-		return nil, fmt.Errorf("read watch dir: %w", err)
+	if _, err := os.Stat(watchDir); err != nil {
+		return nil, err
 	}
 
-	var result []SubDir
+	matches, err := filepath.Glob(filepath.Join(watchDir, "*", fofnFilename))
+	if err != nil {
+		return nil, fmt.Errorf("glob fofns: %w", err)
+	}
 
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-
-		subPath := filepath.Join(watchDir, entry.Name())
-		fofnPath := filepath.Join(subPath, fofnFilename)
-
-		if _, err := os.Stat(fofnPath); err == nil {
-			result = append(result, SubDir{Path: subPath})
-		}
+	result := make([]SubDir, len(matches))
+	for i, m := range matches {
+		result[i] = SubDir{Path: filepath.Dir(m)}
 	}
 
 	return result, nil
@@ -74,7 +68,7 @@ func NeedsProcessing(subDir SubDir) (bool, int64, error) {
 
 	info, err := os.Stat(fofnPath)
 	if err != nil {
-		return false, 0, fmt.Errorf("stat fofn: %w", err)
+		return false, 0, err
 	}
 
 	mtime := info.ModTime().Unix()

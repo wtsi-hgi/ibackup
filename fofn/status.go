@@ -38,11 +38,10 @@ import (
 )
 
 const (
-	statusNotProcessed  = "not_processed"
-	summaryPrefix       = "SUMMARY"
-	chunkGlob           = "chunk.*"
-	chunkFieldCount     = 2
-	summaryKVFieldCount = 2
+	statusNotProcessed = "not_processed"
+	summaryPrefix      = "SUMMARY"
+	chunkGlob          = "chunk.[0-9]*"
+	chunkFieldCount    = 2
 )
 
 // ErrMalformedSummary is returned when a summary field
@@ -171,19 +170,19 @@ func processAllChunks(
 func parseSummaryField(
 	counts *StatusCounts, field string,
 ) error {
-	parts := strings.SplitN(field, "=", summaryKVFieldCount)
-	if len(parts) != summaryKVFieldCount {
+	key, valStr, ok := strings.Cut(field, "=")
+	if !ok {
 		return fmt.Errorf("%w: %s",
 			ErrMalformedSummary, field,
 		)
 	}
 
-	val, err := strconv.Atoi(parts[1])
+	val, err := strconv.Atoi(valStr)
 	if err != nil {
-		return fmt.Errorf("parse summary count %s: %w", parts[0], err)
+		return fmt.Errorf("parse summary count %s: %w", key, err)
 	}
 
-	assignSummaryCount(counts, parts[0], val)
+	assignSummaryCount(counts, key, val)
 
 	return nil
 }
@@ -213,24 +212,6 @@ func assignSummaryCount( //nolint:gocyclo,cyclop,funlen
 	case statusNotProcessed:
 		counts.NotProcessed = val
 	}
-}
-
-func writeStatusFile(
-	statusPath string,
-	chunks []string,
-	buried map[string]bool,
-) error {
-	tmpPath := statusPath + ".tmp"
-
-	if err := writeStatusToFile(tmpPath, chunks, buried); err != nil {
-		return err
-	}
-
-	if err := os.Rename(tmpPath, statusPath); err != nil {
-		return fmt.Errorf("rename status file: %w", err)
-	}
-
-	return nil
 }
 
 func writeStatusToFile(
@@ -514,4 +495,22 @@ func makeBuriedSet(buriedChunks []string) map[string]bool {
 	}
 
 	return buried
+}
+
+func writeStatusFile(
+	statusPath string,
+	chunks []string,
+	buried map[string]bool,
+) error {
+	tmpPath := statusPath + ".tmp"
+
+	if err := writeStatusToFile(tmpPath, chunks, buried); err != nil {
+		return err
+	}
+
+	if err := os.Rename(tmpPath, statusPath); err != nil {
+		return fmt.Errorf("rename status file: %w", err)
+	}
+
+	return nil
 }

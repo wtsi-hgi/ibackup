@@ -105,8 +105,9 @@ func BuildPutCommand(
 			fmt.Sprintf("--meta %q", userMeta))
 	}
 
-	parts = append(parts, "-b", "-f "+chunkPath,
-		fmt.Sprintf("> %s.out 2>&1", chunkPath))
+	parts = append(parts, "-b",
+		fmt.Sprintf("-f %q", chunkPath),
+		fmt.Sprintf("> %q 2>&1", chunkPath+".out"))
 
 	return strings.Join(parts, " ")
 }
@@ -116,8 +117,8 @@ func buildPutCoreParts(
 ) []string {
 	parts := []string{
 		"ibackup put -v",
-		fmt.Sprintf("-l %s.log", chunkPath),
-		fmt.Sprintf("--report %s.report", chunkPath),
+		fmt.Sprintf("-l %q", chunkPath+".log"),
+		fmt.Sprintf("--report %q", chunkPath+".report"),
 	}
 
 	if fofnName != "" {
@@ -193,16 +194,14 @@ func FindBuriedChunks(
 }
 
 // extractChunkFromCmd parses a command string and returns
-// the argument immediately following the -f flag.
-// This uses strings.Fields which splits on whitespace; it
-// is safe because chunk file names are system-generated
-// (e.g. "chunk.000000") and never contain spaces.
+// the argument immediately following the -f flag, stripping
+// any surrounding double quotes.
 func extractChunkFromCmd(cmd string) string {
 	fields := strings.Fields(cmd)
 
 	for i, f := range fields {
 		if f == "-f" && i+1 < len(fields) {
-			return fields[i+1]
+			return strings.Trim(fields[i+1], `"`)
 		}
 	}
 
