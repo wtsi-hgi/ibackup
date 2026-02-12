@@ -45,7 +45,7 @@ var ErrUnsupportedPlatform = errors.New("unsupported platform")
 func GetDirGID(dir string) (int, error) {
 	info, err := os.Stat(dir)
 	if err != nil {
-		return 0, fmt.Errorf("stat dir: %w", err)
+		return 0, err
 	}
 
 	stat, ok := info.Sys().(*syscall.Stat_t)
@@ -60,7 +60,7 @@ func GetDirGID(dir string) (int, error) {
 // and sets its group to the given GID.
 func CreateDirWithGID(path string, gid int) error {
 	if err := os.Mkdir(path, dirMode); err != nil {
-		return fmt.Errorf("mkdir: %w", err)
+		return err
 	}
 
 	if err := os.Chown(path, -1, gid); err != nil {

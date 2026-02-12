@@ -47,8 +47,8 @@ func ScanNulls(
 		return 0, nil, nil
 	}
 
-	if i := bytes.IndexByte(data, '\000'); i >= 0 {
-		return i + 1, data[0:i], nil
+	if i := bytes.IndexByte(data, 0); i >= 0 {
+		return i + 1, data[:i], nil
 	}
 
 	if atEOF {
@@ -76,7 +76,7 @@ func FofnLineSplitter(onNull bool) bufio.SplitFunc {
 func CountNullTerminated(path string) (int, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return 0, fmt.Errorf("open file: %w", err)
+		return 0, err
 	}
 	defer f.Close()
 
@@ -141,7 +141,7 @@ func ScanNullTerminated(
 ) error {
 	f, err := os.Open(path)
 	if err != nil {
-		return fmt.Errorf("open file: %w", err)
+		return err
 	}
 	defer f.Close()
 

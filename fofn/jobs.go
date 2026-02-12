@@ -194,6 +194,9 @@ func FindBuriedChunks(
 
 // extractChunkFromCmd parses a command string and returns
 // the argument immediately following the -f flag.
+// This uses strings.Fields which splits on whitespace; it
+// is safe because chunk file names are system-generated
+// (e.g. "chunk.000000") and never contain spaces.
 func extractChunkFromCmd(cmd string) string {
 	fields := strings.Fields(cmd)
 
