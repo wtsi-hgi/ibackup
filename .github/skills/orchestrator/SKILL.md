@@ -1,4 +1,3 @@
-````skill
 ---
 name: orchestrator
 description: Orchestrates implementation and review of phase plans for the ibackup project. Coordinates go-implementor and go-reviewer subagents, tracks progress via checkboxes in phase MD files, handles retries on transient failures, and runs a final pr-reviewer pass over all changes. Use when given a phase MD file to complete.
@@ -150,5 +149,3 @@ of all the work done across every phase:
   success.
 - Do NOT push to the remote — never run `git push`.
 - Keep your context minimal: delegate, track, coordinate.
-
-````
