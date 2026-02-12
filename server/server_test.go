@@ -153,6 +153,8 @@ func TestServer(t *testing.T) {
 			s, errn := New(conf)
 			So(errn, ShouldBeNil)
 
+			s.statusUpdateTimeout = 0
+
 			err = s.EnableAuthWithServerToken(certPath, keyPath, ".ibackup.test.servertoken", func(u, p string) (bool, string) {
 				return true, "1"
 			})
@@ -219,6 +221,8 @@ func TestServer(t *testing.T) {
 		makeAndStartServer := func(maxQueueLength uint) (*Server, string, func() error) {
 			s, errn := New(conf)
 			So(errn, ShouldBeNil)
+
+			s.statusUpdateTimeout = 0
 
 			if maxQueueLength != 0 {
 				s.maxQueueLength = maxQueueLength

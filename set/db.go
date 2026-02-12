@@ -1273,27 +1273,60 @@ func (d *DB) SetEntryStatus(r *transfer.Request) (*Entry, error) {
 	var entry *Entry
 
 	err = d.db.Update(func(tx *bolt.Tx) error {
-		got, bid, b, errt := d.getSetByID(tx, setID)
-		if errt != nil {
-			return errt
-		}
+		var errr error
 
-		entry, errt = d.updateFileEntry(tx, setID, r, got.LastDiscovery)
-		if errt != nil {
-			return errt
-		} else if entry.isDir {
-			return nil
-		}
+		entry, errr = d.updateEntryStatus(tx, setID, r)
 
-		erru := d.updateSetBasedOnEntry(tx, got, entry)
-		if erru != nil {
-			return erru
-		}
-
-		return b.Put(bid, d.encodeToBytes(got))
+		return errr
 	})
 
 	return entry, err
+}
+
+func (d *DB) updateEntryStatus(tx *bolt.Tx, setID string, r *transfer.Request) (*Entry, error) {
+	got, bid, b, errt := d.getSetByID(tx, setID)
+	if errt != nil {
+		return nil, errt
+	}
+
+	entry, errt := d.updateFileEntry(tx, setID, r, got.LastDiscovery)
+	if errt != nil {
+		return entry, errt
+	} else if entry.isDir {
+		return entry, nil
+	}
+
+	erru := d.updateSetBasedOnEntry(tx, got, entry)
+	if erru != nil {
+		return entry, erru
+	}
+
+	return entry, b.Put(bid, d.encodeToBytes(got))
+}
+
+func (d *DB) SetEntryStatuses(rs []*transfer.Request, fn func(*transfer.Request, *Entry, error) error) ([]*Entry, []error) {
+	var (
+		entries []*Entry
+		errs    []error
+	)
+
+	d.db.Update(func(tx *bolt.Tx) error {
+		for _, r := range rs {
+			setID, err := requestToSetID(r)
+			if err != nil {
+				return err
+			}
+
+			entry, errr := d.updateEntryStatus(tx, setID, r)
+
+			entries = append(entries, entry)
+			errs = append(errs, fn(r, entry, errr))
+		}
+
+		return nil
+	})
+
+	return entries, errs
 }
 
 // requestToSetID returns a setID for the Request. Returns an error if the

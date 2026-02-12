@@ -157,6 +157,9 @@ type Server struct {
 	req                    *jqs.Requirements
 	remoteHardlinkLocation string
 	statusUpdateCh         chan *fileStatusPacket
+	statusUpdateMu         sync.Mutex
+	statusUpdates          []*transfer.Request
+	statusUpdateTimeout    time.Duration
 	monitor                *Monitor
 	slacker                set.Slacker
 	stillRunningMsgFreq    time.Duration
@@ -224,6 +227,7 @@ func New(conf Config) (*Server, error) { //nolint:funlen
 		readOnly:               conf.ReadOnly,
 		storageHandler:         conf.StorageHandler,
 		requestLogged:          make(map[string]struct{}),
+		statusUpdateTimeout:    time.Second,
 
 		discoveryCoordinator: newDiscoveryCoordinator(),
 	}

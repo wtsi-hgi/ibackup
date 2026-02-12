@@ -1805,8 +1805,7 @@ func (s *Server) putFileStatus(c *gin.Context) {
 
 	r.CorrectFromJSON()
 
-	ceCh := s.queueFileStatusUpdate(r)
-	ce := <-ceCh
+	ce := s.queueFileStatusUpdate(r)
 
 	if ce != nil {
 		s.Logger.Printf("file status update failed rid=%s err=%v", r.ID(), ce.err)
@@ -1827,23 +1826,28 @@ type fileStatusPacket struct {
 
 // queueFileStatusUpdate queues a file status update request from a client,
 // sending it to the channel handleFileStatusUpdates() reads from.
-func (s *Server) queueFileStatusUpdate(r *transfer.Request) chan *codeAndError {
+func (s *Server) queueFileStatusUpdate(r *transfer.Request) *codeAndError {
 	ceCh := make(chan *codeAndError)
 
-	go func() {
-		s.statusUpdateCh <- &fileStatusPacket{
-			r:    r,
-			ceCh: ceCh,
-		}
-	}()
+	s.statusUpdateCh <- &fileStatusPacket{
+		r:    r,
+		ceCh: ceCh,
+	}
 
-	return ceCh
+	return <-ceCh
 }
 
 // handleFileStatusUpdates linearises file status updates by continueously
 // looping over update requests coming in from clients and ensuring they are
 // dealt with fully before dealing with the next request.
 func (s *Server) handleFileStatusUpdates() {
+	if s.statusUpdateTimeout > 0 {
+		ctx, cfn := context.WithCancel(context.Background())
+		defer cfn()
+
+		go s.updateFileStatusesLoop(ctx)
+	}
+
 	for fsp := range s.statusUpdateCh {
 		rid := fsp.r.ID()
 		s.hungDebugNoteStatusUpdate(rid)
@@ -1855,38 +1859,77 @@ func (s *Server) handleFileStatusUpdates() {
 			continue
 		}
 
-		if err := s.updateFileStatus(fsp.r); err != nil {
-			s.Logger.Printf("file status apply failed rid=%s err=%v", rid, err)
-			fsp.ceCh <- &codeAndError{code: http.StatusBadRequest, err: err}
+		s.statusUpdateMu.Lock()
+		s.statusUpdates = append(s.statusUpdates, fsp.r)
+		s.statusUpdateMu.Unlock()
 
-			continue
+		if s.statusUpdateTimeout == 0 {
+			ctx, cfn := context.WithCancel(context.Background())
+
+			cfn()
+			s.updateFileStatusesLoop(ctx)
 		}
+
 		fsp.ceCh <- nil
 	}
 }
 
-// updateFileStatus updates the request's file entry status in the db, and
+func (s *Server) updateFileStatusesLoop(ctx context.Context) {
+	for {
+		var rs []*transfer.Request
+
+		s.statusUpdateMu.Lock()
+		rs = s.statusUpdates
+		s.statusUpdates = nil
+		s.statusUpdateMu.Unlock()
+
+		if len(rs) > 0 {
+			s.updateFileStatuses(rs)
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(s.statusUpdateTimeout):
+		}
+	}
+}
+
+// updateFileStatused updates the request's file entry status in the db, and
 // removes the request from our queue if not still uploading or no longer in the
 // set. Possibly stuck requests are noted in the server's in-memory list of
 // stuck requests.
-func (s *Server) updateFileStatus(r *transfer.Request) error {
-	entry, err := s.db.SetEntryStatus(r)
-	if err != nil {
-		var errr error
+func (s *Server) updateFileStatuses(rs []*transfer.Request) {
+	entries, errs := s.db.SetEntryStatuses(rs, func(r *transfer.Request, entry *set.Entry, err error) error {
+		if err != nil {
+			var (
+				errr error
+				errs set.Error
+			)
 
-		errs := &set.Error{}
-		if errors.As(err, errs) && errs.Msg == set.ErrInvalidEntry {
-			errr = s.removeOrReleaseRequestFromQueue(r, entry)
+			if errors.As(err, &errs) && errs.Msg == set.ErrInvalidEntry {
+				errr = s.removeOrReleaseRequestFromQueue(r, entry)
+			}
+
+			return errors.Join(err, errr)
 		}
 
-		return errors.Join(err, errr)
-	}
+		return nil
+	})
 
-	if err = s.handleNewlyCompletedSets(r); err != nil {
-		return err
-	}
+	for n, err := range errs {
+		if err == nil {
+			err = s.handleNewlyCompletedSets(rs[n])
+		}
 
-	return s.trackUploadingAndStuckRequests(r, entry)
+		if err == nil {
+			err = s.trackUploadingAndStuckRequests(rs[n], entries[n])
+		}
+
+		if err != nil {
+			s.Logger.Printf("file status apply failed rid=%s err=%v", rs[n].ID(), err)
+		}
+	}
 }
 
 // handleNewlyCompletedSets gets the set the given request is for, and if it
