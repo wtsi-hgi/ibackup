@@ -184,8 +184,9 @@ func TestProcessSubDir(t *testing.T) {
 
 			mock := &mockJobSubmitter{}
 			cfg := ProcessSubDirConfig{
-				ChunkSize: 10,
-				RandSeed:  1,
+				MinChunk: 10,
+				MaxChunk: 10,
+				RandSeed: 1,
 			}
 
 			state, err := ProcessSubDir(subDir, mock, cfg)
@@ -237,8 +238,9 @@ func TestProcessSubDir(t *testing.T) {
 
 			mock := &mockJobSubmitter{}
 			cfg := ProcessSubDirConfig{
-				ChunkSize: 10,
-				RandSeed:  1,
+				MinChunk: 10,
+				MaxChunk: 10,
+				RandSeed: 1,
 			}
 
 			_, err := ProcessSubDir(subDir, mock, cfg)
@@ -262,8 +264,9 @@ func TestProcessSubDir(t *testing.T) {
 			sd := SubDir{Path: subPath}
 			mock := &mockJobSubmitter{}
 			cfg := ProcessSubDirConfig{
-				ChunkSize: 10,
-				RandSeed:  1,
+				MinChunk: 10,
+				MaxChunk: 10,
+				RandSeed: 1,
 			}
 
 			_, err := ProcessSubDir(sd, mock, cfg)
@@ -277,8 +280,9 @@ func TestProcessSubDir(t *testing.T) {
 
 				mock := &mockJobSubmitter{}
 				cfg := ProcessSubDirConfig{
-					ChunkSize: 10,
-					RandSeed:  1,
+					MinChunk: 10,
+					MaxChunk: 10,
+					RandSeed: 1,
 				}
 
 				state, err := ProcessSubDir(subDir, mock, cfg)
@@ -304,8 +308,9 @@ func TestProcessSubDir(t *testing.T) {
 
 				mock := &mockJobSubmitter{}
 				cfg := ProcessSubDirConfig{
-					ChunkSize: 10,
-					RandSeed:  1,
+					MinChunk: 10,
+					MaxChunk: 10,
+					RandSeed: 1,
 				}
 
 				state, err := ProcessSubDir(subDir, mock, cfg)
@@ -346,8 +351,9 @@ func TestProcessSubDir(t *testing.T) {
 
 			mock := &mockJobSubmitter{}
 			cfg := ProcessSubDirConfig{
-				ChunkSize: 10,
-				RandSeed:  1,
+				MinChunk: 10,
+				MaxChunk: 10,
+				RandSeed: 1,
 			}
 
 			_, err := ProcessSubDir(subDir, mock, cfg)
@@ -367,8 +373,9 @@ func TestProcessSubDir(t *testing.T) {
 
 			mock := &mockJobSubmitter{}
 			cfg := ProcessSubDirConfig{
-				ChunkSize: 10,
-				RandSeed:  1,
+				MinChunk: 10,
+				MaxChunk: 10,
+				RandSeed: 1,
 			}
 
 			_, err := ProcessSubDir(subDir, mock, cfg)
@@ -379,6 +386,32 @@ func TestProcessSubDir(t *testing.T) {
 				So(job.Cmd, ShouldNotContainSubstring,
 					"--meta")
 			}
+		})
+
+		Convey("creates 100 chunks and 100 jobs for "+
+			"50000 paths with default bounds", func() {
+			paths := generateTmpPaths(50000)
+			subDir := setupSubDir(
+				watchDir, "proj_vc3", paths,
+				"transformer: test\n",
+			)
+
+			mock := &mockJobSubmitter{}
+			cfg := ProcessSubDirConfig{
+				MinChunk: 250,
+				MaxChunk: 10000,
+				RandSeed: 1,
+			}
+
+			state, err := ProcessSubDir(subDir, mock, cfg)
+			So(err, ShouldBeNil)
+			So(state.RunDir, ShouldNotBeEmpty)
+
+			entries, readErr := os.ReadDir(state.RunDir)
+			So(readErr, ShouldBeNil)
+			So(entries, ShouldHaveLength, 100)
+
+			So(mock.submitted, ShouldHaveLength, 100)
 		})
 	})
 }
@@ -501,8 +534,9 @@ func TestWatcherPoll(t *testing.T) {
 
 		watchDir := t.TempDir()
 		cfg := ProcessSubDirConfig{
-			ChunkSize: 10,
-			RandSeed:  1,
+			MinChunk: 10,
+			MaxChunk: 10,
+			RandSeed: 1,
 		}
 
 		Convey("first poll submits jobs and records "+
@@ -801,8 +835,9 @@ func TestWatcherRestart(t *testing.T) {
 
 		watchDir := t.TempDir()
 		cfg := ProcessSubDirConfig{
-			ChunkSize: 10,
-			RandSeed:  1,
+			MinChunk: 10,
+			MaxChunk: 10,
+			RandSeed: 1,
 		}
 
 		Convey("detects existing run with incomplete "+
@@ -906,8 +941,9 @@ func TestWatcherParallel(t *testing.T) {
 
 			watchDir := t.TempDir()
 			cfg := ProcessSubDirConfig{
-				ChunkSize: 10,
-				RandSeed:  1,
+				MinChunk: 10,
+				MaxChunk: 10,
+				RandSeed: 1,
 			}
 
 			Convey("processes all 3 subdirectories "+

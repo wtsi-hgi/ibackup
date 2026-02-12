@@ -39,8 +39,8 @@ After implementation, update `fofn/chunk.go`'s private `countEntries` function
 to use `scanner.CountNullTerminated` instead of `scanner.ScanNullTerminated`
 with a counting callback. All existing chunk tests must still pass.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 1.1: VC1 - CalculateChunks pure function [parallel with 1.0]
 
@@ -58,8 +58,8 @@ all 26 acceptance tests from spec-variable-chunks.md section VC1, including:
 - The degenerate min=max tests (tests 21-22) confirming equivalence with the
   old fixed chunkSize behaviour.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Batch 2 (after batch 1 is reviewed)
 
@@ -87,8 +87,8 @@ section VC2, including:
 
 Ensure all existing tests still pass after the signature change.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Batch 3 (after batch 2 is reviewed)
 
@@ -117,5 +117,5 @@ Depends on item 1.2. Update all callers of `WriteShuffledChunks` and
 Write GoConvey tests covering the 3 acceptance tests from spec-variable-chunks.md
 section VC3. Ensure all existing tests still pass.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

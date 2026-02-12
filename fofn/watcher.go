@@ -42,7 +42,8 @@ const statusFilename = "status"
 
 // ProcessSubDirConfig holds configuration for processing a subdirectory.
 type ProcessSubDirConfig struct {
-	ChunkSize int
+	MinChunk  int
+	MaxChunk  int
 	RandSeed  int64
 	RunConfig RunConfig
 }
@@ -62,7 +63,7 @@ func prepareChunks(
 
 	chunks, err := writeChunksWithGID(
 		subDir.Path, runDir, transform,
-		gid, cfg.ChunkSize, cfg.RandSeed,
+		gid, cfg.MinChunk, cfg.MaxChunk, cfg.RandSeed,
 	)
 	if err != nil {
 		_ = os.RemoveAll(runDir)
@@ -107,12 +108,12 @@ func createRunDir(
 func writeChunksWithGID(
 	subDirPath, runDir string,
 	transform func(string) (string, error),
-	gid, chunkSize int,
+	gid, minChunk, maxChunk int,
 	randSeed int64,
 ) ([]string, error) {
 	fofnPath := filepath.Join(subDirPath, fofnFilename)
 
-	chunks, err := WriteShuffledChunks(fofnPath, transform, runDir, chunkSize, randSeed)
+	chunks, err := WriteShuffledChunks(fofnPath, transform, runDir, minChunk, maxChunk, randSeed)
 	if err != nil {
 		return nil, err
 	}

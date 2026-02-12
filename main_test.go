@@ -5504,7 +5504,8 @@ func TestWatchFofnsIntegration(t *testing.T) {
 
 			state, err := fofn.ProcessSubDir(
 				subDir, mock, fofn.ProcessSubDirConfig{
-					ChunkSize: 10000,
+					MinChunk: 10000,
+					MaxChunk: 10000,
 				},
 			)
 			So(err, ShouldBeNil)
@@ -5606,7 +5607,8 @@ func TestWatchFofnsIntegration(t *testing.T) {
 
 			state, err := fofn.ProcessSubDir(
 				subDir, mock, fofn.ProcessSubDirConfig{
-					ChunkSize: 10000,
+					MinChunk: 10000,
+					MaxChunk: 10000,
 				},
 			)
 			So(err, ShouldBeNil)
@@ -5671,7 +5673,8 @@ func TestWatchFofnsIntegration(t *testing.T) {
 
 			state, err := fofn.ProcessSubDir(
 				subDir, mock, fofn.ProcessSubDirConfig{
-					ChunkSize: 10000,
+					MinChunk: 10000,
+					MaxChunk: 10000,
 				},
 			)
 			So(err, ShouldBeNil)
@@ -5688,7 +5691,8 @@ func TestWatchFofnsIntegration(t *testing.T) {
 			watcher := fofn.NewWatcher(
 				watchDir, mock,
 				fofn.ProcessSubDirConfig{
-					ChunkSize: 10000,
+					MinChunk: 10000,
+					MaxChunk: 10000,
 				},
 			)
 
@@ -5748,7 +5752,8 @@ func TestWatchFofnsIntegration(t *testing.T) {
 				state, err := fofn.ProcessSubDir(
 					subDir, mock,
 					fofn.ProcessSubDirConfig{
-						ChunkSize: 10000,
+						MinChunk: 10000,
+						MaxChunk: 10000,
 					},
 				)
 				So(err, ShouldBeNil)
@@ -5806,7 +5811,8 @@ func TestWatchFofnsIntegration(t *testing.T) {
 				watcher := fofn.NewWatcher(
 					watchDir, mock,
 					fofn.ProcessSubDirConfig{
-						ChunkSize: 10000,
+						MinChunk: 10000,
+						MaxChunk: 10000,
 					},
 				)
 
@@ -5985,7 +5991,8 @@ func TestWatchFofnsRealWRIntegration(t *testing.T) {
 			"watchfofns",
 			"--dir", watchDir,
 			"--interval", "1s",
-			"--chunk-size", "10000",
+			"--min-chunk", "10000",
+			"--max-chunk", "10000",
 			"--wr-deployment", schedulerDeployment,
 		)
 
@@ -6728,6 +6735,29 @@ func TestWatchFofnsCommand(t *testing.T) {
 			So(exitCode, ShouldEqual, 0)
 			So(out, ShouldContainSubstring,
 				"watchfofns")
+		})
+
+		Convey("has --min-chunk and --max-chunk flags "+
+			"and no --chunk-size", func() {
+			_, out := runCLI(t, nil, "",
+				"watchfofns", "--help")
+			So(out, ShouldContainSubstring, "--min-chunk")
+			So(out, ShouldContainSubstring, "--max-chunk")
+			So(out, ShouldNotContainSubstring, "--chunk-size")
+		})
+
+		Convey("defaults to minChunk=250 and "+
+			"maxChunk=10000", func() {
+			_, out := runCLI(t, nil, "",
+				"watchfofns", "--help")
+			So(out, ShouldContainSubstring,
+				"--min-chunk int")
+			So(out, ShouldContainSubstring,
+				"(default 250)")
+			So(out, ShouldContainSubstring,
+				"--max-chunk int")
+			So(out, ShouldContainSubstring,
+				"(default 10000)")
 		})
 	})
 }

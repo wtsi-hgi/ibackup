@@ -31,8 +31,11 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 )
+
+const countBufSize = 32 * 1024
 
 // ScanNulls is a bufio.SplitFunc like bufio.ScanLines, but it
 // splits on null characters instead of newlines.
@@ -64,6 +67,72 @@ func FofnLineSplitter(onNull bool) bufio.SplitFunc {
 	return bufio.ScanLines
 }
 
+// CountNullTerminated counts the number of null-terminated
+// entries in the file at path without per-entry string
+// allocation. It reads the file in large buffer chunks and
+// counts null bytes. If the file is non-empty and does not end
+// with a null byte, the trailing content counts as one
+// additional entry (matching ScanNullTerminated semantics).
+// An empty file returns 0.
+func CountNullTerminated(path string) (int, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, fmt.Errorf("open file: %w", err)
+	}
+	defer f.Close()
+
+	count, lastByte, err := countNullBytes(f)
+	if err != nil {
+		return 0, err
+	}
+
+	if count == 0 && lastByte == 0 {
+		return 0, nil
+	}
+
+	if lastByte != 0 {
+		count++
+	}
+
+	return count, nil
+}
+
+func countNullBytes(r io.Reader) (int, byte, error) {
+	buf := make([]byte, countBufSize)
+	count := 0
+	lastByte := byte(0)
+
+	for {
+		n, readErr := r.Read(buf)
+		if n > 0 {
+			count += bytes.Count(buf[:n], []byte{0})
+			lastByte = buf[n-1]
+		}
+
+		if readErr == io.EOF {
+			return count, lastByte, nil
+		}
+
+		if readErr != nil {
+			return 0, 0, fmt.Errorf("read file: %w", readErr)
+		}
+	}
+}
+
+// CollectNullTerminated reads all null-terminated entries from
+// the file at path and returns them as a slice.
+func CollectNullTerminated(path string) ([]string, error) {
+	var entries []string
+
+	err := ScanNullTerminated(path, func(entry string) error {
+		entries = append(entries, entry)
+
+		return nil
+	})
+
+	return entries, err
+}
+
 // ScanNullTerminated opens the file at path and calls cb for
 // each null-terminated entry. It streams the file without loading
 // it all into memory. If cb returns a non-nil error, scanning
@@ -87,18 +156,4 @@ func ScanNullTerminated(
 	}
 
 	return s.Err()
-}
-
-// CollectNullTerminated reads all null-terminated entries from
-// the file at path and returns them as a slice.
-func CollectNullTerminated(path string) ([]string, error) {
-	var entries []string
-
-	err := ScanNullTerminated(path, func(entry string) error {
-		entries = append(entries, entry)
-
-		return nil
-	})
-
-	return entries, err
 }

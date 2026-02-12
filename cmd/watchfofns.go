@@ -40,11 +40,12 @@ import (
 )
 
 const (
-	defaultWatchInterval  = 5 * time.Minute
-	defaultWatchChunkSize = 10000
-	defaultWatchRAM       = 1024
-	defaultWatchTime      = 8 * time.Hour
-	defaultWatchRetries   = 3
+	defaultWatchInterval = 5 * time.Minute
+	defaultWatchMinChunk = 250
+	defaultWatchMaxChunk = 10000
+	defaultWatchRAM      = 1024
+	defaultWatchTime     = 8 * time.Hour
+	defaultWatchRetries  = 3
 )
 
 var (
@@ -57,7 +58,8 @@ var (
 var (
 	watchDir          string
 	watchInterval     time.Duration
-	watchChunkSize    int
+	watchMinChunk     int
+	watchMaxChunk     int
 	watchRAM          int
 	watchTime         time.Duration
 	watchRetries      int
@@ -75,16 +77,15 @@ var watchfofnsCmd = &cobra.Command{
 	Short: "Watch a directory for fofn changes and submit backup jobs",
 	Long: `Watch a directory for fofn changes and submit backup jobs.
 
-The watchfofns command monitors a watch directory for
-subdirectories containing fofn files. When a new or
-updated fofn is detected, it creates chunk files and
+The watchfofns command monitors a watch directory for subdirectories containing
+fofn files. When a new or updated fofn is detected, it creates chunk files and
 submits backup jobs via wr.
 
-Each subdirectory must contain a config.yml specifying
-the transformer to use and optional metadata.
+Each subdirectory must contain a config.yml specifying the transformer to use
+and optional metadata.
 
-The IBACKUP_CONFIG environment variable must be set to
-the ibackup configuration file (for named transformers).`,
+The IBACKUP_CONFIG environment variable must be set to the ibackup configuration
+file (for named transformers).`,
 	RunE: func(_ *cobra.Command, _ []string) error {
 		return runWatchFofns()
 	},
@@ -118,7 +119,8 @@ func registerWatchFofnsFlags() {
 
 	f.StringVar(&watchDir, "dir", "", "watch directory (required)")
 	f.DurationVar(&watchInterval, "interval", defaultWatchInterval, "poll interval")
-	f.IntVar(&watchChunkSize, "chunk-size", defaultWatchChunkSize, "files per chunk")
+	f.IntVar(&watchMinChunk, "min-chunk", defaultWatchMinChunk, "minimum files per chunk")
+	f.IntVar(&watchMaxChunk, "max-chunk", defaultWatchMaxChunk, "maximum files per chunk")
 	f.StringVar(&watchWRDeployment, "wr-deployment", "production", "wr deployment name")
 
 	registerWatchFofnsJobFlags(f)
@@ -196,7 +198,8 @@ func validateWatchConfig() error {
 // options and the given submitter.
 func createWatcher(submitter fofn.JobSubmitter) *fofn.Watcher {
 	cfg := fofn.ProcessSubDirConfig{
-		ChunkSize: watchChunkSize,
+		MinChunk: watchMinChunk,
+		MaxChunk: watchMaxChunk,
 		RunConfig: fofn.RunConfig{
 			RAM:         watchRAM,
 			Time:        watchTime,

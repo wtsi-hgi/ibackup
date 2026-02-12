@@ -193,3 +193,157 @@ func TestScanNullTerminated(t *testing.T) {
 		})
 	})
 }
+
+func TestCountNullTerminated(t *testing.T) {
+	Convey("Given a scanner package", t, func() {
+		dir := t.TempDir()
+
+		Convey("CountNullTerminated with three null-terminated paths returns 3", func() {
+			path := filepath.Join(dir, "three.fofn")
+			err := os.WriteFile(path, []byte("/a/b\x00/c/d\x00/e/f\x00"), 0600)
+			So(err, ShouldBeNil)
+
+			count, err := CountNullTerminated(path)
+			So(err, ShouldBeNil)
+			So(count, ShouldEqual, 3)
+		})
+
+		Convey("CountNullTerminated with an empty file returns 0", func() {
+			path := filepath.Join(dir, "empty.fofn")
+			err := os.WriteFile(path, []byte{}, 0600)
+			So(err, ShouldBeNil)
+
+			count, err := CountNullTerminated(path)
+			So(err, ShouldBeNil)
+			So(count, ShouldEqual, 0)
+		})
+
+		Convey("CountNullTerminated with no trailing null returns 2", func() {
+			path := filepath.Join(dir, "notrail.fofn")
+			err := os.WriteFile(path, []byte("/a/b\x00/c/d"), 0600)
+			So(err, ShouldBeNil)
+
+			count, err := CountNullTerminated(path)
+			So(err, ShouldBeNil)
+			So(count, ShouldEqual, 2)
+		})
+
+		Convey("CountNullTerminated with non-existent file returns 0 and error", func() {
+			count, err := CountNullTerminated("/no/such/file")
+			So(err, ShouldNotBeNil)
+			So(count, ShouldEqual, 0)
+		})
+
+		Convey("CountNullTerminated with embedded newlines returns 2", func() {
+			path := filepath.Join(dir, "newline.fofn")
+			err := os.WriteFile(path, []byte("/a\nb\x00/c/d\x00"), 0600)
+			So(err, ShouldBeNil)
+
+			count, err := CountNullTerminated(path)
+			So(err, ShouldBeNil)
+			So(count, ShouldEqual, 2)
+		})
+
+		Convey("CountNullTerminated with a single null byte returns 1", func() {
+			path := filepath.Join(dir, "single.fofn")
+			err := os.WriteFile(path, []byte("\x00"), 0600)
+			So(err, ShouldBeNil)
+
+			count, err := CountNullTerminated(path)
+			So(err, ShouldBeNil)
+			So(count, ShouldEqual, 1)
+		})
+
+		Convey("CountNullTerminated matches ScanNullTerminated for 1M entries", func() {
+			const numEntries = 1_000_000
+
+			path := filepath.Join(dir, "million.fofn")
+
+			f, err := os.Create(path)
+			So(err, ShouldBeNil)
+
+			entry := "/" + strings.Repeat("x", 99)
+			writeErr := 0
+
+			for range numEntries {
+				if _, wErr := f.WriteString(entry + "\x00"); wErr != nil {
+					writeErr++
+				}
+			}
+
+			err = f.Close()
+			So(err, ShouldBeNil)
+			So(writeErr, ShouldEqual, 0)
+
+			scanCount := 0
+
+			err = ScanNullTerminated(path, func(_ string) error {
+				scanCount++
+
+				return nil
+			})
+			So(err, ShouldBeNil)
+
+			count, err := CountNullTerminated(path)
+			So(err, ShouldBeNil)
+			So(count, ShouldEqual, scanCount)
+		})
+
+		Convey("CountNullTerminated uses bounded memory for 1M entries", func() {
+			const (
+				numEntries = 1_000_000
+				entryLen   = 100
+			)
+
+			path := filepath.Join(dir, "mem.fofn")
+
+			f, err := os.Create(path)
+			So(err, ShouldBeNil)
+
+			entry := "/" + strings.Repeat("x", entryLen-1)
+			writeErr := 0
+
+			for range numEntries {
+				if _, wErr := f.WriteString(entry + "\x00"); wErr != nil {
+					writeErr++
+				}
+			}
+
+			err = f.Close()
+			So(err, ShouldBeNil)
+			So(writeErr, ShouldEqual, 0)
+
+			runtime.GC()
+
+			var before runtime.MemStats
+			runtime.ReadMemStats(&before)
+
+			count, err := CountNullTerminated(path)
+
+			runtime.GC()
+
+			var after runtime.MemStats
+			runtime.ReadMemStats(&after)
+
+			So(err, ShouldBeNil)
+			So(count, ShouldEqual, numEntries)
+
+			var growth uint64
+			if after.HeapInuse > before.HeapInuse {
+				growth = after.HeapInuse - before.HeapInuse
+			}
+
+			So(growth, ShouldBeLessThan, 1*1024*1024)
+		})
+
+		Convey("CountNullTerminated with consecutive null bytes returns 3", func() {
+			path := filepath.Join(dir, "consecutive.fofn")
+			err := os.WriteFile(path, []byte("a\x00\x00b\x00"), 0600)
+			So(err, ShouldBeNil)
+
+			count, err := CountNullTerminated(path)
+			So(err, ShouldBeNil)
+			So(count, ShouldEqual, 3)
+		})
+	})
+}

@@ -28,6 +28,7 @@ package fofn
 import (
 	"bufio"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"math/rand"
 	"os"
@@ -37,6 +38,22 @@ import (
 )
 
 const chunkNameFormat = "chunk.%06d"
+
+// TargetChunks is the ideal number of chunks to split a
+// fofn into.
+const TargetChunks = 100
+
+var (
+	ErrMinChunkTooSmall = errors.New(
+		"minChunk must be >= 1",
+	)
+	ErrMaxChunkTooSmall = errors.New(
+		"maxChunk must be >= 1",
+	)
+	ErrMinExceedsMax = errors.New(
+		"minChunk must be <= maxChunk",
+	)
+)
 
 // WriteShuffledChunks reads a null-terminated fofn file and writes the entries
 // into shuffled chunk files. Each entry is transformed using the provided
@@ -53,9 +70,13 @@ func WriteShuffledChunks(
 	fofnPath string,
 	transform func(string) (string, error),
 	dir string,
-	chunkSize int,
+	minChunk, maxChunk int,
 	randSeed int64,
 ) ([]string, error) {
+	if err := validateChunkBounds(minChunk, maxChunk); err != nil {
+		return nil, err
+	}
+
 	count, err := countEntries(fofnPath)
 	if err != nil {
 		return nil, err
@@ -65,23 +86,59 @@ func WriteShuffledChunks(
 		return nil, nil
 	}
 
-	numChunks := (count + chunkSize - 1) / chunkSize
+	numChunks := CalculateChunks(count, minChunk, maxChunk)
 
 	return streamToChunks(fofnPath, transform, dir, numChunks, randSeed)
 }
 
+func validateChunkBounds(minChunk, maxChunk int) error {
+	if minChunk < 1 {
+		return fmt.Errorf(
+			"%w: got %d", ErrMinChunkTooSmall, minChunk,
+		)
+	}
+
+	if maxChunk < 1 {
+		return fmt.Errorf(
+			"%w: got %d", ErrMaxChunkTooSmall, maxChunk,
+		)
+	}
+
+	if minChunk > maxChunk {
+		return fmt.Errorf(
+			"%w: %d > %d",
+			ErrMinExceedsMax, minChunk, maxChunk,
+		)
+	}
+
+	return nil
+}
+
 func countEntries(fofnPath string) (int, error) {
-	var count int
+	return scanner.CountNullTerminated(fofnPath)
+}
 
-	err := scanner.ScanNullTerminated(
-		fofnPath, func(_ string) error {
-			count++
+// CalculateChunks returns the optimal number of chunks for
+// n entries given minimum and maximum files-per-chunk
+// constraints. It assumes valid inputs: minChunk >= 1,
+// maxChunk >= 1, minChunk <= maxChunk. Returns 0 for n == 0.
+func CalculateChunks(n, minChunk, maxChunk int) int {
+	if n == 0 {
+		return 0
+	}
 
-			return nil
-		},
-	)
+	ideal := (n + TargetChunks - 1) / TargetChunks
 
-	return count, err
+	perChunk := ideal
+	if perChunk < minChunk {
+		perChunk = minChunk
+	}
+
+	if perChunk > maxChunk {
+		perChunk = maxChunk
+	}
+
+	return (n + perChunk - 1) / perChunk
 }
 
 func streamToChunks(
