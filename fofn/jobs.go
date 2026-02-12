@@ -193,9 +193,8 @@ func FindBuriedChunks(
 	return chunks, nil
 }
 
-// extractChunkFromCmd parses a command string and returns
-// the argument immediately following the -f flag, stripping
-// any surrounding double quotes.
+// extractChunkFromCmd parses a command string and returns the argument
+// immediately following the -f flag, stripping any surrounding double quotes.
 func extractChunkFromCmd(cmd string) string {
 	fields := strings.Fields(cmd)
 

@@ -48,10 +48,9 @@ var (
 	ErrMinExceedsMax    = errors.New("minChunk must be <= maxChunk")
 )
 
-// chunkDeck implements a shuffle-bag approach for
-// distributing entries evenly across chunks. It maintains
-// a shuffled deck of chunk indices [0..n-1]; when the deck
-// is exhausted it refills and reshuffles.
+// chunkDeck implements a shuffle-bag approach for distributing entries evenly
+// across chunks. It maintains a shuffled deck of chunk indices [0..n-1]; when
+// the deck is exhausted it refills and reshuffles.
 type chunkDeck struct {
 	rng  *rand.Rand
 	n    int

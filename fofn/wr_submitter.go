@@ -39,21 +39,6 @@ type wrSubmitter struct {
 	sched *client.Scheduler
 }
 
-// NewWRSubmitter connects to wr using the given deployment and returns a
-// JobSubmitter backed by the wr scheduler.
-func NewWRSubmitter(deployment string, logger log15.Logger) (JobSubmitter, error) { //nolint:ireturn
-	sched, err := client.New(client.SchedulerSettings{
-		Deployment: deployment,
-		Timeout:    wrConnectTimeout,
-		Logger:     logger,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return &wrSubmitter{sched: sched}, nil
-}
-
 func (w *wrSubmitter) SubmitJobs(jobs []*jobqueue.Job) error {
 	return w.sched.SubmitJobs(jobs)
 }
@@ -88,4 +73,19 @@ func (w *wrSubmitter) DeleteJobs(jobs []*jobqueue.Job) error {
 
 func (w *wrSubmitter) Disconnect() error {
 	return w.sched.Disconnect()
+}
+
+// NewWRSubmitter connects to wr using the given deployment and returns a
+// JobSubmitter backed by the wr scheduler.
+func NewWRSubmitter(deployment string, logger log15.Logger) (JobSubmitter, error) { //nolint:ireturn
+	sched, err := client.New(client.SchedulerSettings{
+		Deployment: deployment,
+		Timeout:    wrConnectTimeout,
+		Logger:     logger,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &wrSubmitter{sched: sched}, nil
 }
