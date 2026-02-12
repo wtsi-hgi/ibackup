@@ -48,6 +48,101 @@ var (
 	ErrMinExceedsMax    = errors.New("minChunk must be <= maxChunk")
 )
 
+// chunkDeck implements a shuffle-bag approach for
+// distributing entries evenly across chunks. It maintains
+// a shuffled deck of chunk indices [0..n-1]; when the deck
+// is exhausted it refills and reshuffles.
+type chunkDeck struct {
+	rng  *rand.Rand
+	n    int
+	deck []int
+	pos  int
+}
+
+func newChunkDeck(n int, rng *rand.Rand) *chunkDeck {
+	d := &chunkDeck{
+		rng:  rng,
+		n:    n,
+		deck: make([]int, n),
+		pos:  n, // force refill on first call
+	}
+
+	return d
+}
+
+func (d *chunkDeck) next() int {
+	if d.pos >= d.n {
+		for i := range d.n {
+			d.deck[i] = i
+		}
+
+		d.rng.Shuffle(d.n, func(i, j int) {
+			d.deck[i], d.deck[j] = d.deck[j], d.deck[i]
+		})
+
+		d.pos = 0
+	}
+
+	idx := d.deck[d.pos]
+	d.pos++
+
+	return idx
+}
+
+func distributeEntries(
+	fofnPath string,
+	transform func(string) (string, error),
+	writers []*bufio.Writer,
+	numChunks int,
+	randSeed int64,
+) error {
+	rng := rand.New(rand.NewSource(randSeed)) //nolint:gosec
+	deck := newChunkDeck(numChunks, rng)
+
+	err := scanner.ScanNullTerminated(
+		fofnPath, func(entry string) error {
+			return writeEntry(
+				writers, deck.next(),
+				entry, transform,
+			)
+		},
+	)
+	if err != nil {
+		return err
+	}
+
+	return flushWriters(writers)
+}
+
+func writeEntry(
+	writers []*bufio.Writer,
+	chunk int,
+	entry string,
+	transform func(string) (string, error),
+) error {
+	remote, err := transform(entry)
+	if err != nil {
+		return err
+	}
+
+	local64 := base64.StdEncoding.EncodeToString([]byte(entry))
+	remote64 := base64.StdEncoding.EncodeToString([]byte(remote))
+
+	_, err = fmt.Fprintf(writers[chunk], "%s\t%s\n", local64, remote64)
+
+	return err
+}
+
+func flushWriters(writers []*bufio.Writer) error {
+	for _, w := range writers {
+		if err := w.Flush(); err != nil {
+			return fmt.Errorf("flush chunk writer: %w", err)
+		}
+	}
+
+	return nil
+}
+
 // WriteShuffledChunks reads a null-terminated fofn file and writes the entries
 // into shuffled chunk files. Each entry is transformed using the provided
 // function and written as a base64-encoded local/remote pair separated by a
@@ -192,60 +287,4 @@ func createWriters(files []*os.File) []*bufio.Writer {
 	}
 
 	return writers
-}
-
-func distributeEntries(
-	fofnPath string,
-	transform func(string) (string, error),
-	writers []*bufio.Writer,
-	numChunks int,
-	randSeed int64,
-) error {
-	rng := rand.New(rand.NewSource(randSeed)) //nolint:gosec
-
-	err := scanner.ScanNullTerminated(
-		fofnPath, func(entry string) error {
-			return writeEntry(
-				writers, rng, numChunks,
-				entry, transform,
-			)
-		},
-	)
-	if err != nil {
-		return err
-	}
-
-	return flushWriters(writers)
-}
-
-func writeEntry(
-	writers []*bufio.Writer,
-	rng *rand.Rand,
-	numChunks int,
-	entry string,
-	transform func(string) (string, error),
-) error {
-	remote, err := transform(entry)
-	if err != nil {
-		return err
-	}
-
-	chunk := rng.Intn(numChunks)
-
-	local64 := base64.StdEncoding.EncodeToString([]byte(entry))
-	remote64 := base64.StdEncoding.EncodeToString([]byte(remote))
-
-	_, err = fmt.Fprintf(writers[chunk], "%s\t%s\n", local64, remote64)
-
-	return err
-}
-
-func flushWriters(writers []*bufio.Writer) error {
-	for _, w := range writers {
-		if err := w.Flush(); err != nil {
-			return fmt.Errorf("flush chunk writer: %w", err)
-		}
-	}
-
-	return nil
 }
