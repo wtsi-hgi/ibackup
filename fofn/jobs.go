@@ -169,9 +169,9 @@ func IsRunComplete(
 	return len(jobs) == 0, nil
 }
 
-// FindBuriedChunks returns the absolute paths of chunk files extracted from
+// FindBuriedChunks returns the paths of chunk files extracted from
 // buried jobs matching the given repGroup. The chunk path is the argument after
-// -f in each job's Cmd, joined with runDir.
+// -f in each job's Cmd; relative paths are joined with runDir.
 func FindBuriedChunks(
 	submitter JobSubmitter, repGroup, runDir string,
 ) ([]string, error) {
@@ -185,8 +185,11 @@ func FindBuriedChunks(
 	for _, job := range jobs {
 		chunk := extractChunkFromCmd(job.Cmd)
 		if chunk != "" {
-			chunks = append(chunks,
-				filepath.Join(runDir, chunk))
+			if !filepath.IsAbs(chunk) {
+				chunk = filepath.Join(runDir, chunk)
+			}
+
+			chunks = append(chunks, chunk)
 		}
 	}
 
