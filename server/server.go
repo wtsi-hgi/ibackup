@@ -186,6 +186,8 @@ type Server struct {
 	requestLogged  map[string]struct{}
 	requestLogRIDs []string
 
+	racTrigger atomic.Bool
+
 	discoveryCoordinator *discoveryCoordinator
 }
 
@@ -524,10 +526,13 @@ func (s *Server) rac(_ string, allitemdata []interface{}) {
 		s.Logger.Printf("failed to add jobs to wr's queue: %s", err)
 	}
 
-	go func() {
-		<-time.After(racRetriggerDelay)
-		s.queue.TriggerReadyAddedCallback(context.Background())
-	}()
+	if !s.racTrigger.Swap(true) {
+		go func() {
+			<-time.After(racRetriggerDelay)
+			s.queue.TriggerReadyAddedCallback(context.Background())
+			s.racTrigger.Store(false)
+		}()
+	}
 }
 
 // estimateJobsNeeded always returns our numClients, unless the number of
