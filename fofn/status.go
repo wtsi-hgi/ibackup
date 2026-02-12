@@ -223,8 +223,21 @@ func writeStatusToFile(
 	if err != nil {
 		return fmt.Errorf("create status file: %w", err)
 	}
-	defer f.Close()
 
+	if err := writeAndSyncStatus(f, chunks, buried); err != nil {
+		f.Close()
+
+		return err
+	}
+
+	return f.Close()
+}
+
+func writeAndSyncStatus(
+	f *os.File,
+	chunks []string,
+	buried map[string]bool,
+) error {
 	w := bufio.NewWriter(f)
 
 	counts, err := processAllChunks(w, chunks, buried)
@@ -236,7 +249,15 @@ func writeStatusToFile(
 		return err
 	}
 
-	return w.Flush()
+	if err := w.Flush(); err != nil {
+		return err
+	}
+
+	if err := f.Sync(); err != nil {
+		return fmt.Errorf("sync status file: %w", err)
+	}
+
+	return nil
 }
 
 func writeSummaryLine(
@@ -505,10 +526,14 @@ func writeStatusFile(
 	tmpPath := statusPath + ".tmp"
 
 	if err := writeStatusToFile(tmpPath, chunks, buried); err != nil {
+		os.Remove(tmpPath)
+
 		return err
 	}
 
 	if err := os.Rename(tmpPath, statusPath); err != nil {
+		os.Remove(tmpPath)
+
 		return fmt.Errorf("rename status file: %w", err)
 	}
 
