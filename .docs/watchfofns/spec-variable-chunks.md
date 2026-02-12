@@ -289,6 +289,12 @@ without the overhead of per-entry string allocation and callbacks.
    `runtime.MemStats.HeapInuse` does not increase by more than 1 MB above the
    baseline (proving no per-entry string allocation).
 
+9. Given a file containing `a\0\0b\0` (consecutive null bytes producing an
+   empty entry between "a" and "b"), when I call
+   `scanner.CountNullTerminated(path)`, then I get 3 (entries are "a", "",
+   "b" — matching `ScanNullTerminated` semantics where consecutive null bytes
+   delimit an empty-string entry).
+
 ### VC1: CalculateChunks pure function
 
 As a developer, I want a pure function that computes the optimal number of
@@ -427,9 +433,11 @@ and invalid parameter combinations are rejected.
    `fofn.WriteShuffledChunks(...)`, then 1 chunk file is created (all 100 files
    fit within minChunk).
 
-4. Given a fofn with 2000000 paths and minChunk=250, maxChunk=10000, when I
-   call `fofn.WriteShuffledChunks(...)`, then 200 chunk files are created
-   (forced above 100 by maxChunk constraint).
+4. Given a fofn with 201 paths and minChunk=2, maxChunk=2, when I call
+   `fofn.WriteShuffledChunks(fofnPath, transform, dir, 2, 2, 1)`, then 101
+   chunk files are created (degenerate min=max=2 forces ceil(201/2)=101 chunks,
+   demonstrating the >100 chunks case without creating a multi-million-entry
+   test fofn).
 
 5. Given an empty fofn, when I call `fofn.WriteShuffledChunks(...)` with any
    min/max values, then 0 chunk files are created and nil is returned.

@@ -16,6 +16,11 @@ concurrently using separate AI subagents — one subagent per item.
 
 ### Batch 1 (parallel)
 
+**Note:** Both items in this batch modify `fofn/chunk.go` — Item 1.0 changes the
+private `countEntries` function, while Item 1.1 adds new exported symbols
+(`TargetChunks`, `CalculateChunks`). These edits touch different parts of the
+file and should not conflict, but the orchestrator must apply them sequentially.
+
 #### Item 1.0: VC0 - Fast entry counting [parallel with 1.1]
 
 spec-variable-chunks.md section: VC0
@@ -25,9 +30,10 @@ reads the file in large buffer chunks and uses `bytes.Count` to tally null bytes
 avoiding all per-entry string allocation. If the file is non-empty and does not
 end with a null byte, the trailing content counts as one additional entry
 (matching `ScanNullTerminated` semantics). Write GoConvey tests in
-`internal/scanner/scanner_test.go` covering all 8 acceptance tests from
-spec-variable-chunks.md section VC0, including the consistency check against
-`ScanNullTerminated` and the memory-bounded test with 1,000,000 entries.
+`internal/scanner/scanner_test.go` covering all 9 acceptance tests from
+spec-variable-chunks.md section VC0, including the consecutive-null-bytes edge
+case (test 9), the consistency check against `ScanNullTerminated` (test 7), and
+the memory-bounded test with 1,000,000 entries (test 8).
 
 After implementation, update `fofn/chunk.go`'s private `countEntries` function
 to use `scanner.CountNullTerminated` instead of `scanner.ScanNullTerminated`
@@ -74,7 +80,8 @@ needed). Add the 10 new acceptance tests from spec-variable-chunks.md
 section VC2, including:
 
 - End-to-end adaptive tests (tests 1-6): verify correct chunk count with
-  various fofn sizes and min/max combinations.
+  various fofn sizes and min/max combinations. Note that test 4 uses a small
+  201-entry fofn with min=max=2 to produce 101 chunks efficiently.
 - Validation error tests (tests 7-9): minChunk=0, maxChunk=0, minChunk>maxChunk.
 - Memory-bounded test (test 10): 1,000,000 entries with default bounds.
 
