@@ -1,7 +1,7 @@
 ````skill
 ---
 name: orchestrator
-description: Orchestrates implementation and review of phase plans for the ibackup project. Coordinates go-implementor and go-reviewer subagents, tracks progress via checkboxes in phase MD files, and handles retries on transient failures. Use when given a phase MD file to complete.
+description: Orchestrates implementation and review of phase plans for the ibackup project. Coordinates go-implementor and go-reviewer subagents, tracks progress via checkboxes in phase MD files, handles retries on transient failures, and runs a final pr-reviewer pass over all changes. Use when given a phase MD file to complete.
 ---
 
 # Orchestrator Skill
@@ -11,9 +11,10 @@ yourself — you launch subagents (via `runSubagent`) to do that work,
 embedding the relevant skill instructions in each subagent's prompt.
 This keeps your context clean and focused on coordination.
 
-Note: `go-implementor` and `go-reviewer` are skills (instruction files
-in `.github/skills/`), not named agents. To use them, read their
-SKILL.md and include the full text in the `runSubagent` prompt.
+Note: `go-implementor`, `go-reviewer`, and `pr-reviewer` are skills
+(instruction files in `.github/skills/`), not named agents. To use
+them, read their SKILL.md and include the full text in the `runSubagent`
+prompt.
 
 ## Input
 
@@ -92,10 +93,40 @@ in its prompt:
 subagent with the reviewer's feedback included, then re-launch a fresh
 go-reviewer subagent. Repeat until PASS.
 
-### 4. Completion
+### 4. Phase completion
 
-Once all items in the phase have both checkboxes checked, the phase is
-complete.
+Once all items in the phase have both checkboxes checked, commit all
+changes with the message:
+
+```
+Implement phase <N>
+```
+
+where `<N>` is the phase number from the filename (e.g. `phase3.md` →
+`Implement phase 3`). Then report completion to the caller.
+
+### 5. Final PR review (after all phases)
+
+When the caller has no more phases to run, perform a holistic review
+of all the work done across every phase:
+
+- Read the `pr-reviewer` skill
+  (`.github/skills/pr-reviewer/SKILL.md`).
+- Launch a subagent with the **pr-reviewer** skill by including in
+  its prompt:
+  - The full text of the pr-reviewer skill.
+  - The base reference: `develop` (or the branch the work branched
+    from, if known).
+  - The path to the spec document referenced in the phase files.
+  - The instruction: "You have clean context. Review all committed
+    and uncommitted changes on this branch compared to the base.
+    Check for code quality, subtle bugs, real-world usability, and
+    spec conformance. Fix issues via go-implementor subagents,
+    pausing after each fix for me to commit."
+- Follow the subagent's fix-and-commit cycle: after each fix, commit
+  as instructed before allowing the next fix to proceed.
+- Once the pr-reviewer reports no remaining findings, all work is
+  complete.
 
 ## Error Handling
 
@@ -116,6 +147,7 @@ complete.
   parallel execution.
 - Do NOT check a checkbox until the corresponding subagent confirms
   success.
+- Do NOT push to the remote — never run `git push`.
 - Keep your context minimal: delegate, track, coordinate.
 
 ````
