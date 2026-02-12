@@ -195,16 +195,39 @@ func FindBuriedChunks(
 
 // extractChunkFromCmd parses a command string and returns the argument
 // immediately following the -f flag, stripping any surrounding double quotes.
+// The argument may be quoted (e.g. -f "path/to/chunk") to support paths
+// containing spaces.
 func extractChunkFromCmd(cmd string) string {
-	fields := strings.Fields(cmd)
+	const flag = "-f "
 
-	for i, f := range fields {
-		if f == "-f" && i+1 < len(fields) {
-			return strings.Trim(fields[i+1], `"`)
-		}
+	idx := strings.Index(cmd, flag)
+	if idx == -1 {
+		return ""
 	}
 
-	return ""
+	rest := cmd[idx+len(flag):]
+
+	return extractQuotedOrWord(rest)
+}
+
+func extractQuotedOrWord(s string) string {
+	if len(s) == 0 {
+		return ""
+	}
+
+	if s[0] == '"' {
+		if end := strings.IndexByte(s[1:], '"'); end >= 0 {
+			return s[1 : end+1]
+		}
+
+		return s[1:]
+	}
+
+	if end := strings.IndexByte(s, ' '); end >= 0 {
+		return s[:end]
+	}
+
+	return s
 }
 
 // DeleteBuriedJobs finds and deletes buried jobs matching the given repGroup.

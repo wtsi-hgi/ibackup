@@ -305,6 +305,26 @@ func TestFindBuriedChunks(t *testing.T) {
 				So(err, ShouldBeNil)
 				So(chunks, ShouldBeEmpty)
 			})
+
+		Convey("handles paths with spaces in -f argument",
+			func() {
+				mock := &mockJobSubmitter{
+					buried: []*jobqueue.Job{
+						{Cmd: `ibackup put -v ` +
+							`-l "my dir/chunk.000000.log" ` +
+							`--report "my dir/chunk.000000.report" ` +
+							`--fofn "project1" -b ` +
+							`-f "my dir/chunk.000000" ` +
+							`> "my dir/chunk.000000.out" 2>&1`},
+					},
+				}
+
+				chunks, err := FindBuriedChunks(mock, "repgroup1", "/run/dir")
+				So(err, ShouldBeNil)
+				So(chunks, ShouldHaveLength, 1)
+				So(chunks[0], ShouldEqual,
+					"/run/dir/my dir/chunk.000000")
+			})
 	})
 }
 
