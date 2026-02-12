@@ -67,13 +67,11 @@ func FofnLineSplitter(onNull bool) bufio.SplitFunc {
 	return bufio.ScanLines
 }
 
-// CountNullTerminated counts the number of null-terminated
-// entries in the file at path without per-entry string
-// allocation. It reads the file in large buffer chunks and
-// counts null bytes. If the file is non-empty and does not end
-// with a null byte, the trailing content counts as one
-// additional entry (matching ScanNullTerminated semantics).
-// An empty file returns 0.
+// CountNullTerminated counts the number of null-terminated entries in the file
+// at path without per-entry string allocation. It reads the file in large
+// buffer chunks and counts null bytes. If the file is non-empty and does not
+// end with a null byte, the trailing content counts as one additional entry
+// (matching ScanNullTerminated semantics). An empty file returns 0.
 func CountNullTerminated(path string) (int, error) {
 	f, err := os.Open(path)
 	if err != nil {

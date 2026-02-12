@@ -382,9 +382,7 @@ func TestChunk(t *testing.T) {
 			outDir := filepath.Join(dir, "vc2_1")
 			So(os.MkdirAll(outDir, 0750), ShouldBeNil)
 
-			paths, err := WriteShuffledChunks(
-				fofnPath, transform, outDir, 10, 10, 1,
-			)
+			paths, err := WriteShuffledChunks(fofnPath, transform, outDir, 10, 10, 1)
 			So(err, ShouldBeNil)
 			So(paths, ShouldHaveLength, 3)
 
@@ -427,9 +425,7 @@ func TestChunk(t *testing.T) {
 			outDir := filepath.Join(dir, "vc2_4")
 			So(os.MkdirAll(outDir, 0750), ShouldBeNil)
 
-			paths, err := WriteShuffledChunks(
-				fofnPath, transform, outDir, 2, 2, 1,
-			)
+			paths, err := WriteShuffledChunks(fofnPath, transform, outDir, 2, 2, 1)
 			So(err, ShouldBeNil)
 			So(paths, ShouldHaveLength, 101)
 
@@ -469,9 +465,7 @@ func TestChunk(t *testing.T) {
 			outDir := filepath.Join(dir, "vc2_7")
 			So(os.MkdirAll(outDir, 0750), ShouldBeNil)
 
-			paths, err := WriteShuffledChunks(
-				fofnPath, transform, outDir, 0, 10, 1,
-			)
+			paths, err := WriteShuffledChunks(fofnPath, transform, outDir, 0, 10, 1)
 			So(err, ShouldNotBeNil)
 			So(paths, ShouldBeNil)
 
@@ -484,9 +478,7 @@ func TestChunk(t *testing.T) {
 			outDir := filepath.Join(dir, "vc2_8")
 			So(os.MkdirAll(outDir, 0750), ShouldBeNil)
 
-			paths, err := WriteShuffledChunks(
-				fofnPath, transform, outDir, 10, 0, 1,
-			)
+			paths, err := WriteShuffledChunks(fofnPath, transform, outDir, 10, 0, 1)
 			So(err, ShouldNotBeNil)
 			So(paths, ShouldBeNil)
 
@@ -499,9 +491,7 @@ func TestChunk(t *testing.T) {
 			outDir := filepath.Join(dir, "vc2_9")
 			So(os.MkdirAll(outDir, 0750), ShouldBeNil)
 
-			paths, err := WriteShuffledChunks(
-				fofnPath, transform, outDir, 500, 100, 1,
-			)
+			paths, err := WriteShuffledChunks(fofnPath, transform, outDir, 500, 100, 1)
 			So(err, ShouldNotBeNil)
 			So(paths, ShouldBeNil)
 
@@ -524,9 +514,7 @@ func TestChunk(t *testing.T) {
 			var before runtime.MemStats
 			runtime.ReadMemStats(&before)
 
-			_, err := WriteShuffledChunks(
-				fofnPath, transform, outDir, 250, 10000, 1,
-			)
+			_, err := WriteShuffledChunks(fofnPath, transform, outDir, 250, 10000, 1)
 			So(err, ShouldBeNil)
 
 			runtime.GC()

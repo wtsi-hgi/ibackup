@@ -39,20 +39,13 @@ import (
 
 const chunkNameFormat = "chunk.%06d"
 
-// TargetChunks is the ideal number of chunks to split a
-// fofn into.
+// TargetChunks is the ideal number of chunks to split a fofn into.
 const TargetChunks = 100
 
 var (
-	ErrMinChunkTooSmall = errors.New(
-		"minChunk must be >= 1",
-	)
-	ErrMaxChunkTooSmall = errors.New(
-		"maxChunk must be >= 1",
-	)
-	ErrMinExceedsMax = errors.New(
-		"minChunk must be <= maxChunk",
-	)
+	ErrMinChunkTooSmall = errors.New("minChunk must be >= 1")
+	ErrMaxChunkTooSmall = errors.New("maxChunk must be >= 1")
+	ErrMinExceedsMax = errors.New("minChunk must be <= maxChunk")
 )
 
 // WriteShuffledChunks reads a null-terminated fofn file and writes the entries
@@ -93,22 +86,15 @@ func WriteShuffledChunks(
 
 func validateChunkBounds(minChunk, maxChunk int) error {
 	if minChunk < 1 {
-		return fmt.Errorf(
-			"%w: got %d", ErrMinChunkTooSmall, minChunk,
-		)
+		return fmt.Errorf("%w: got %d", ErrMinChunkTooSmall, minChunk)
 	}
 
 	if maxChunk < 1 {
-		return fmt.Errorf(
-			"%w: got %d", ErrMaxChunkTooSmall, maxChunk,
-		)
+		return fmt.Errorf("%w: got %d", ErrMaxChunkTooSmall, maxChunk)
 	}
 
 	if minChunk > maxChunk {
-		return fmt.Errorf(
-			"%w: %d > %d",
-			ErrMinExceedsMax, minChunk, maxChunk,
-		)
+		return fmt.Errorf("%w: %d > %d", ErrMinExceedsMax, minChunk, maxChunk)
 	}
 
 	return nil
@@ -118,10 +104,9 @@ func countEntries(fofnPath string) (int, error) {
 	return scanner.CountNullTerminated(fofnPath)
 }
 
-// CalculateChunks returns the optimal number of chunks for
-// n entries given minimum and maximum files-per-chunk
-// constraints. It assumes valid inputs: minChunk >= 1,
-// maxChunk >= 1, minChunk <= maxChunk. Returns 0 for n == 0.
+// CalculateChunks returns the optimal number of chunks for n entries given
+// minimum and maximum files-per-chunk constraints. It assumes valid inputs:
+// minChunk >= 1, maxChunk >= 1, minChunk <= maxChunk. Returns 0 for n == 0.
 func CalculateChunks(n, minChunk, maxChunk int) int {
 	if n == 0 {
 		return 0

@@ -391,10 +391,7 @@ func TestProcessSubDir(t *testing.T) {
 		Convey("creates 100 chunks and 100 jobs for "+
 			"50000 paths with default bounds", func() {
 			paths := generateTmpPaths(50000)
-			subDir := setupSubDir(
-				watchDir, "proj_vc3", paths,
-				"transformer: test\n",
-			)
+			subDir := setupSubDir(watchDir, "proj_vc3", paths, "transformer: test\n")
 
 			mock := &mockJobSubmitter{}
 			cfg := ProcessSubDirConfig{
