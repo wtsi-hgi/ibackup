@@ -232,15 +232,19 @@ func streamToChunks(
 		return nil, err
 	}
 
-	defer closeFiles(files)
-
 	writers := createWriters(files)
 
 	if err := distributeEntries(
 		fofnPath, transform, writers,
 		numChunks, randSeed,
 	); err != nil {
+		closeFiles(files) //nolint:errcheck
+
 		return nil, err
+	}
+
+	if err := closeFiles(files); err != nil {
+		return nil, fmt.Errorf("close chunk files: %w", err)
 	}
 
 	return paths, nil
@@ -258,7 +262,7 @@ func createChunkFiles(
 
 		f, err := os.Create(p)
 		if err != nil {
-			closeFiles(files[:i])
+			closeFiles(files[:i]) //nolint:errcheck
 
 			return nil, nil, fmt.Errorf("create chunk file: %w", err)
 		}
@@ -270,12 +274,18 @@ func createChunkFiles(
 	return files, paths, nil
 }
 
-func closeFiles(files []*os.File) {
+func closeFiles(files []*os.File) error {
+	var errs []error
+
 	for _, f := range files {
 		if f != nil {
-			f.Close()
+			if err := f.Close(); err != nil {
+				errs = append(errs, err)
+			}
 		}
 	}
+
+	return errors.Join(errs...)
 }
 
 func createWriters(files []*os.File) []*bufio.Writer {
