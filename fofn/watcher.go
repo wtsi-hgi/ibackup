@@ -27,6 +27,7 @@ package fofn
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -39,7 +40,10 @@ import (
 	"github.com/wtsi-hgi/ibackup/transformer"
 )
 
-const statusFilename = "status"
+const (
+	statusFilename = "status"
+	maxPollWorkers = 10
+)
 
 // ProcessSubDirConfig holds configuration for processing a subdirectory.
 type ProcessSubDirConfig struct {
@@ -310,28 +314,31 @@ func (w *Watcher) Run(
 }
 
 // pollSubDirsParallel processes all subdirectories
-// concurrently, collecting the first error encountered.
+// concurrently with bounded parallelism, collecting
+// all errors.
 func (w *Watcher) pollSubDirsParallel(
 	subDirs []SubDir,
 ) error {
 	var (
-		wg       sync.WaitGroup
-		errMu    sync.Mutex
-		firstErr error
+		wg    sync.WaitGroup
+		errMu sync.Mutex
+		errs  []error
+		sem   = make(chan struct{}, maxPollWorkers)
 	)
 
 	for _, subDir := range subDirs {
 		wg.Add(1)
 
+		sem <- struct{}{}
+
 		go func(sd SubDir) {
 			defer wg.Done()
+			defer func() { <-sem }()
 
 			if err := w.pollSubDir(sd); err != nil {
 				errMu.Lock()
 
-				if firstErr == nil {
-					firstErr = err
-				}
+				errs = append(errs, err)
 
 				errMu.Unlock()
 			}
@@ -340,7 +347,7 @@ func (w *Watcher) pollSubDirsParallel(
 
 	wg.Wait()
 
-	return firstErr
+	return errors.Join(errs...)
 }
 
 func (w *Watcher) pollSubDir(
