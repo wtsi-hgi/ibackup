@@ -214,25 +214,6 @@ func assignSummaryCount( //nolint:gocyclo,cyclop,funlen
 	}
 }
 
-func writeStatusToFile(
-	path string,
-	chunks []string,
-	buried map[string]bool,
-) error {
-	f, err := os.Create(path)
-	if err != nil {
-		return fmt.Errorf("create status file: %w", err)
-	}
-
-	if err := writeAndSyncStatus(f, chunks, buried); err != nil {
-		f.Close()
-
-		return err
-	}
-
-	return f.Close()
-}
-
 func writeAndSyncStatus(
 	f *os.File,
 	chunks []string,
@@ -538,4 +519,23 @@ func writeStatusFile(
 	}
 
 	return nil
+}
+
+func writeStatusToFile(
+	path string,
+	chunks []string,
+	buried map[string]bool,
+) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("create status file: %w", err)
+	}
+
+	if err := writeAndSyncStatus(f, chunks, buried); err != nil {
+		f.Close()
+
+		return err
+	}
+
+	return f.Close()
 }

@@ -150,9 +150,8 @@ func flushWriters(writers []*bufio.Writer) error {
 //
 // The function uses a two-pass approach: first counting entries via
 // scanner.CountNullTerminated, then streaming them into randomly assigned chunk
-// files. The random assignment is deterministic for a given randSeed.
-// If randSeed is 0, time.Now().UnixNano() is used for non-deterministic
-// shuffling.
+// files. The random assignment is deterministic for a given randSeed. If
+// randSeed is 0, time.Now().UnixNano() is used for non-deterministic shuffling.
 //
 // Chunk files are named chunk.000000, chunk.000001, etc. Returns the paths of
 // the created chunk files, or nil if the fofn is empty.
@@ -281,6 +280,16 @@ func createChunkFiles(
 	return files, paths, nil
 }
 
+func createWriters(files []*os.File) []*bufio.Writer {
+	writers := make([]*bufio.Writer, len(files))
+
+	for i, f := range files {
+		writers[i] = bufio.NewWriter(f)
+	}
+
+	return writers
+}
+
 func closeFiles(files []*os.File) error {
 	var errs []error
 
@@ -293,14 +302,4 @@ func closeFiles(files []*os.File) error {
 	}
 
 	return errors.Join(errs...)
-}
-
-func createWriters(files []*os.File) []*bufio.Writer {
-	writers := make([]*bufio.Writer, len(files))
-
-	for i, f := range files {
-		writers[i] = bufio.NewWriter(f)
-	}
-
-	return writers
 }

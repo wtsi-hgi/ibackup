@@ -658,9 +658,8 @@ func createCollection(p *transfer.Putter) {
 	}
 }
 
-// openReportWriter opens the report file for writing and
-// returns a buffered writer. Returns nil if reportPath is
-// empty.
+// openReportWriter opens the report file for writing and returns a buffered
+// writer. Returns nil if reportPath is empty.
 func openReportWriter(reportPath string) io.WriteCloser {
 	if reportPath == "" {
 		return nil
@@ -677,8 +676,7 @@ func openReportWriter(reportPath string) io.WriteCloser {
 	}
 }
 
-// bufferedWriteCloser wraps a bufio.Writer over a file,
-// flushing on close.
+// bufferedWriteCloser wraps a bufio.Writer over a file, flushing on close.
 type bufferedWriteCloser struct {
 	w *bufio.Writer
 	f *os.File

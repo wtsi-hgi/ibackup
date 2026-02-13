@@ -315,9 +315,8 @@ func (w *Watcher) Run(
 	}
 }
 
-// pollSubDirsParallel processes all subdirectories
-// concurrently with bounded parallelism, collecting
-// all errors.
+// pollSubDirsParallel processes all subdirectories concurrently with bounded
+// parallelism, collecting all errors.
 func (w *Watcher) pollSubDirsParallel(
 	subDirs []SubDir,
 ) error {

@@ -98,9 +98,8 @@ func (c SubDirConfig) UserMetaString() string {
 	return strings.Join(pairs, ";")
 }
 
-// WriteConfig writes cfg as config.yml in dir. Returns an
-// error if Transformer is empty or metadata keys/values
-// are invalid.
+// WriteConfig writes cfg as config.yml in dir. Returns an error if Transformer
+// is empty or metadata keys/values are invalid.
 func WriteConfig(dir string, cfg SubDirConfig) error {
 	if err := validateConfig(cfg); err != nil {
 		return err
