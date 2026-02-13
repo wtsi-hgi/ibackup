@@ -484,7 +484,7 @@ func getStatusBasedOnInfo(remoteExists bool) RequestStatus {
 }
 
 // sendForUploadOrUnmodified sends the request to putCh if remote doesn't exist
-// or if the mtime hasn't change but the metadata has, or the skipReturnCh if
+// or if the mtime hasn't changed but the metadata has, or the skipReturnCh if
 // the metadata hasn't changed. Returns true in one of those cases, or false if
 // the request needs to be uploaded again because the mtime changed.
 func sendForUploadOrUnmodified(request *Request, lInfo, rInfo *ObjectInfo, putCh, skipReturnCh chan *Request) bool {
@@ -691,7 +691,7 @@ func headRead(path string) error {
 
 func noRead(_ string) error { return nil }
 
-// dedupRequests splits the given requests in to a slice requests that have
+// dedupRequests splits the given requests into a slice requests that have
 // unique Remote values, and a slice with duplicates. Also "prepares" all
 // requests, ensuring they have valid paths and that hardlinks will be handled
 // appropriately later.
