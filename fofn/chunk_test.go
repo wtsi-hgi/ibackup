@@ -323,11 +323,11 @@ func TestChunk(t *testing.T) {
 				So(c0, ShouldResemble,
 					[]string{"/f0", "/f4"})
 				So(c1, ShouldResemble,
-					[]string{"/f1", "/f7", "/f8"})
+					[]string{"/f1", "/f7"})
 				So(c2, ShouldResemble,
-					[]string{"/f3", "/f5", "/f9"})
+					[]string{"/f3", "/f6", "/f9"})
 				So(c3, ShouldResemble,
-					[]string{"/f2", "/f6"})
+					[]string{"/f2", "/f5", "/f8"})
 			})
 
 			Convey("seed 2", func() {
@@ -344,13 +344,13 @@ func TestChunk(t *testing.T) {
 				c3 := decodeChunkLocals(paths[3])
 
 				So(c0, ShouldResemble,
-					[]string{"/f3", "/f7"})
+					[]string{"/f3", "/f4"})
 				So(c1, ShouldResemble,
-					[]string{"/f0", "/f6"})
+					[]string{"/f0", "/f7", "/f8"})
 				So(c2, ShouldResemble,
-					[]string{"/f1", "/f5", "/f9"})
+					[]string{"/f1", "/f6", "/f9"})
 				So(c3, ShouldResemble,
-					[]string{"/f2", "/f4", "/f8"})
+					[]string{"/f2", "/f5"})
 			})
 		})
 

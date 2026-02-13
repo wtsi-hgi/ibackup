@@ -60,10 +60,15 @@ type chunkDeck struct {
 }
 
 func newChunkDeck(n int, rng *rand.Rand) *chunkDeck {
+	deck := make([]int, n)
+	for i := range n {
+		deck[i] = i
+	}
+
 	d := &chunkDeck{
 		rng:  rng,
 		n:    n,
-		deck: make([]int, n),
+		deck: deck,
 		pos:  n, // force refill on first call
 	}
 
@@ -72,10 +77,6 @@ func newChunkDeck(n int, rng *rand.Rand) *chunkDeck {
 
 func (d *chunkDeck) next() int {
 	if d.pos >= d.n {
-		for i := range d.n {
-			d.deck[i] = i
-		}
-
 		d.rng.Shuffle(d.n, func(i, j int) {
 			d.deck[i], d.deck[j] = d.deck[j], d.deck[i]
 		})
@@ -232,11 +233,18 @@ func streamToChunks(
 	dir string,
 	numChunks int,
 	randSeed int64,
-) ([]string, error) {
+) (paths []string, err error) {
 	files, paths, err := createChunkFiles(dir, numChunks)
 	if err != nil {
 		return nil, err
 	}
+
+	defer func() {
+		if cerr := closeFiles(files); cerr != nil && err == nil {
+			err = fmt.Errorf("close chunk files: %w", cerr)
+			paths = nil
+		}
+	}()
 
 	writers := createWriters(files)
 
@@ -244,13 +252,7 @@ func streamToChunks(
 		fofnPath, transform, writers,
 		numChunks, randSeed,
 	); err != nil {
-		closeFiles(files) //nolint:errcheck
-
 		return nil, err
-	}
-
-	if err := closeFiles(files); err != nil {
-		return nil, fmt.Errorf("close chunk files: %w", err)
 	}
 
 	return paths, nil
