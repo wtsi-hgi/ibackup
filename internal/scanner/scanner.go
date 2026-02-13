@@ -98,13 +98,14 @@ func CountNullTerminated(path string) (int, error) {
 
 func countNullBytes(r io.Reader) (int, byte, error) {
 	buf := make([]byte, countBufSize)
+	nullByte := []byte{0}
 	count := 0
 	lastByte := byte(0)
 
 	for {
 		n, readErr := r.Read(buf)
 		if n > 0 {
-			count += bytes.Count(buf[:n], []byte{0})
+			count += bytes.Count(buf[:n], nullByte)
 			lastByte = buf[n-1]
 		}
 
