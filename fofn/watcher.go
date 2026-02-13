@@ -173,6 +173,8 @@ func ProcessSubDir(
 
 // submitChunkJobs builds a RunConfig, creates jobs from
 // the chunks, and submits them via the given submitter.
+// Chunk paths are converted to basenames since the job's
+// Cwd is set to runDir where the chunks reside.
 func submitChunkJobs(
 	submitter JobSubmitter,
 	sdCfg SubDirConfig,
@@ -182,7 +184,12 @@ func submitChunkJobs(
 	dirName string,
 	mtime int64,
 ) (RunState, error) {
-	jobCfg := buildRunConfig(sdCfg, baseCfg, runDir, chunks, dirName, mtime)
+	relChunks := make([]string, len(chunks))
+	for i, c := range chunks {
+		relChunks[i] = filepath.Base(c)
+	}
+
+	jobCfg := buildRunConfig(sdCfg, baseCfg, runDir, relChunks, dirName, mtime)
 
 	jobs := CreateJobs(jobCfg)
 
