@@ -467,7 +467,9 @@ func TestServer(t *testing.T) {
 			adminClient := NewClient(addr, certPath, token)
 
 			var racRequests []*transfer.Request
-			racCalls := 0
+
+			var racCalls atomic.Int32
+
 			racCalled := make(chan bool, 1)
 
 			s.queue.SetReadyAddedCallback(func(queuename string, allitemdata []interface{}) {
@@ -485,7 +487,7 @@ func TestServer(t *testing.T) {
 					racRequests[i] = r
 				}
 
-				racCalls++
+				racCalls.Add(1)
 				racCalled <- true
 			})
 
@@ -1344,20 +1346,20 @@ func TestServer(t *testing.T) {
 						So(gotSet.Missing, ShouldEqual, 0)
 						So(gotSet.NumFiles, ShouldEqual, len(discovers))
 
-						So(racCalls, ShouldEqual, 3)
+						So(racCalls.Load(), ShouldEqual, 3)
 
 						err = client.TriggerDiscovery(exampleSet.ID(), false)
 						So(err, ShouldBeNil)
 
 						testutil.RequireStable(t, 250*time.Millisecond, 10*time.Millisecond, func() bool {
-							return racCalls == 3
+							return racCalls.Load() == 3
 						}, "racCalls count")
 
 						s.queue.TriggerReadyAddedCallback(context.Background())
 
 						ok = <-racCalled
 						So(ok, ShouldBeTrue)
-						So(racCalls, ShouldEqual, 4)
+						So(racCalls.Load(), ShouldEqual, 4)
 						So(len(racRequests), ShouldEqual, numFiles+len(discovers)+len(set2Files)+len(discovers))
 
 						expectedRequests := 13
@@ -2639,7 +2641,7 @@ func TestServer(t *testing.T) {
 						So(err, ShouldBeNil)
 
 						testutil.RequireStable(t, 500*time.Millisecond, 25*time.Millisecond, func() bool {
-							return racCalls == 0
+							return racCalls.Load() == 0
 						}, "no rac calls for invalid transformer")
 
 						gotSet, errg := client.GetSetByID(badSet.Requester, badSet.ID())
