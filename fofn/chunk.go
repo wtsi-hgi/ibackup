@@ -282,16 +282,6 @@ func createChunkFiles(
 	return files, paths, nil
 }
 
-func createWriters(files []*os.File) []*bufio.Writer {
-	writers := make([]*bufio.Writer, len(files))
-
-	for i, f := range files {
-		writers[i] = bufio.NewWriter(f)
-	}
-
-	return writers
-}
-
 func closeFiles(files []*os.File) error {
 	var errs []error
 
@@ -304,4 +294,14 @@ func closeFiles(files []*os.File) error {
 	}
 
 	return errors.Join(errs...)
+}
+
+func createWriters(files []*os.File) []*bufio.Writer {
+	writers := make([]*bufio.Writer, len(files))
+
+	for i, f := range files {
+		writers[i] = bufio.NewWriter(f)
+	}
+
+	return writers
 }
