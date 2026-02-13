@@ -96,6 +96,9 @@ func BuildPutCommand(
 ) string {
 	parts := buildPutCoreParts(chunkPath, fofnName)
 
+	parts = append(parts, "-b",
+		fmt.Sprintf("-f %q", chunkPath))
+
 	if noReplace {
 		parts = append(parts, "--no_replace")
 	}
@@ -105,8 +108,7 @@ func BuildPutCommand(
 			fmt.Sprintf("--meta %q", userMeta))
 	}
 
-	parts = append(parts, "-b",
-		fmt.Sprintf("-f %q", chunkPath),
+	parts = append(parts,
 		fmt.Sprintf("> %q 2>&1", chunkPath+".out"))
 
 	return strings.Join(parts, " ")
