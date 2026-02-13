@@ -56,6 +56,7 @@ var (
 	errMinChunkSmall   = errors.New("--min-chunk must be >= 1")
 	errMaxChunkSmall   = errors.New("--max-chunk must be >= 1")
 	errMinExceedsMax   = errors.New("--min-chunk must be <= --max-chunk")
+	errRetriesNegative = errors.New("--retries must be >= 0")
 	errRetriesTooLarge = fmt.Errorf("--retries must be <= %d", maxRetries)
 )
 
@@ -222,6 +223,10 @@ func validateChunkFlags() error {
 
 	if watchMinChunk > watchMaxChunk {
 		return fmt.Errorf("%w: %d > %d", errMinExceedsMax, watchMinChunk, watchMaxChunk)
+	}
+
+	if watchRetries < 0 {
+		return fmt.Errorf("%w: got %d", errRetriesNegative, watchRetries)
 	}
 
 	if watchRetries > maxRetries {
