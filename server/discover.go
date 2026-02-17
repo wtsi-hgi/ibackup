@@ -585,7 +585,7 @@ func determineDirStatus(dirStatErr error, entry *set.Entry,
 // reaching the queue limit.
 func (s *Server) enqueueSetFiles(given *set.Set, transformer transformer.PathTransformer) (bool, error) {
 	entries, err := s.db.GetFileEntries(given.ID(), func(e *set.Entry) bool {
-		return e.ShouldUpload(given.LastDiscovery) && (!given.Frozen || !e.IsUploaded())
+		return e.ShouldUpload(given)
 	})
 	if err != nil {
 		return false, err

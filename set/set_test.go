@@ -110,25 +110,32 @@ func TestSet(t *testing.T) {
 		})
 
 		Convey("Entry.ShouldUpload() gives good advice", func() {
-			reuploadAfter := time.Now()
+			given := &Set{
+				LastDiscovery: time.Now(),
+			}
 
 			e := &Entry{Status: Pending}
-			So(e.ShouldUpload(reuploadAfter), ShouldBeTrue)
+			So(e.ShouldUpload(given), ShouldBeTrue)
 
 			e.Status = Missing
-			So(e.ShouldUpload(reuploadAfter), ShouldBeTrue)
+			So(e.ShouldUpload(given), ShouldBeTrue)
 
 			e.Status = Failed
-			So(e.ShouldUpload(reuploadAfter), ShouldBeTrue)
+			So(e.ShouldUpload(given), ShouldBeTrue)
 
 			e.Attempts = AttemptsToBeConsideredFailing
-			So(e.ShouldUpload(reuploadAfter), ShouldBeTrue)
+			So(e.ShouldUpload(given), ShouldBeTrue)
 
 			e.Attempts = 1
-			e.LastAttempt = reuploadAfter.Add(1 * time.Second)
+			e.LastAttempt = given.LastDiscovery.Add(1 * time.Second)
 			e.Status = Uploaded
-			So(e.ShouldUpload(reuploadAfter), ShouldBeFalse)
-			So(e.ShouldUpload(reuploadAfter.Add(2*time.Second)), ShouldBeTrue)
+			So(e.ShouldUpload(given), ShouldBeFalse)
+
+			given.LastDiscovery = given.LastDiscovery.Add(2 * time.Second)
+			So(e.ShouldUpload(given), ShouldBeTrue)
+
+			given.Frozen = true
+			So(e.ShouldUpload(given), ShouldBeFalse)
 		})
 
 		Convey("Discovered() returns friendly strings", func() {

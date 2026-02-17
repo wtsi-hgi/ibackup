@@ -144,7 +144,11 @@ func (e *Entry) CorrectFromJSON() {
 
 // ShouldUpload returns true if this Entry is pending or the last attempt was
 // before the given time. Always returns false if the Type is Abnormal.
-func (e *Entry) ShouldUpload(reuploadAfter time.Time) bool {
+func (e *Entry) ShouldUpload(given *Set) bool {
+	if given.Frozen && e.IsUploaded() {
+		return false
+	}
+
 	if e.Type == Abnormal {
 		return false
 	}
@@ -153,7 +157,7 @@ func (e *Entry) ShouldUpload(reuploadAfter time.Time) bool {
 		return true
 	}
 
-	return !e.LastAttempt.After(reuploadAfter)
+	return !e.LastAttempt.After(given.LastDiscovery)
 }
 
 // IsUploaded returns true if the entry status indicates that it is currently
