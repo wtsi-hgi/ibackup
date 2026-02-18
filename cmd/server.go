@@ -47,6 +47,7 @@ import (
 	"github.com/spf13/cobra"
 	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/ibackup/baton"
+	"github.com/wtsi-hgi/ibackup/internal/shell"
 	"github.com/wtsi-hgi/ibackup/server"
 	"github.com/wtsi-hgi/ibackup/set"
 	"github.com/wtsi-hgi/ibackup/slack"
@@ -308,18 +309,18 @@ These should be supplied as a comma separated list.
 				dief("failed to get own exe: %s", erre)
 			}
 
-			putCmd := fmt.Sprintf("%s put -s --url '%s'", exe, serverURL)
+			putCmd := fmt.Sprintf("%s put -s --url %s", exe, shell.Quote(serverURL))
 
 			if isKeyCert() {
-				putCmd += fmt.Sprintf(" --cert '%s'", serverCert)
+				putCmd += " --cert " + shell.Quote(serverCert)
 			}
 
 			if statterPath != "" {
-				putCmd += fmt.Sprintf(" --statter %q", statterPath)
+				putCmd += " --statter " + shell.Quote(statterPath)
 			}
 
 			if serverLogPath != "" {
-				putCmd += fmt.Sprintf(" --log %s.client.", serverLogPath)
+				putCmd += " --log " + shell.Quote(serverLogPath+".client.")
 			}
 
 			err = s.EnableJobSubmission(putCmd, serverWRDeployment, "", queues, queueAvoid, numPutClients, appLogger)

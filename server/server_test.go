@@ -102,6 +102,177 @@ func TestClient(t *testing.T) {
 	})
 }
 
+func TestFailedUploadRetryDelayConfig(t *testing.T) {
+	Convey("Failed upload retry delay is configurable", t, func() {
+		handler := internal.GetLocalHandler()
+		logWriter := gas.NewStringLogger()
+
+		Convey("You can set a non-zero delay and it is applied and logged", func() {
+			d := 10 * time.Second
+			conf := Config{
+				HTTPLogger:             logWriter,
+				StorageHandler:         handler,
+				ReadOnly:               true,
+				FailedUploadRetryDelay: d,
+			}
+
+			s, err := New(conf)
+			So(err, ShouldBeNil)
+
+			r := &transfer.Request{
+				Local:     "/local",
+				Remote:    "/remote",
+				Requester: "req",
+				Set:       "set",
+				Status:    transfer.RequestStatusFailed,
+				Error:     "boom",
+			}
+			rid := r.ID()
+			_, _, err = s.queue.AddMany(context.Background(), []*queue.ItemDef{{Key: rid, Data: r, TTR: ttr}})
+			So(err, ShouldBeNil)
+			_, err = s.queue.Reserve("", 0)
+			So(err, ShouldBeNil)
+
+			err = s.removeOrReleaseRequestFromQueue(r, &set.Entry{Attempts: 1})
+			So(err, ShouldBeNil)
+
+			item, err := s.queue.Get(rid)
+			So(err, ShouldBeNil)
+			So(item.Stats().Delay, ShouldEqual, d)
+			So(s.queue.Stats().Ready, ShouldEqual, 0)
+
+			So(logWriter.String(), ShouldContainSubstring, "request retry")
+			So(logWriter.String(), ShouldContainSubstring, "rid="+rid)
+			So(logWriter.String(), ShouldContainSubstring, "delay=10s")
+		})
+
+		Convey("You can explicitly set a 0 delay and it is applied and logged", func() {
+			logWriter := gas.NewStringLogger()
+			conf := Config{
+				HTTPLogger:             logWriter,
+				StorageHandler:         handler,
+				ReadOnly:               true,
+				FailedUploadRetryDelay: 0,
+			}
+
+			s, err := New(conf)
+			So(err, ShouldBeNil)
+
+			r := &transfer.Request{
+				Local:     "/local2",
+				Remote:    "/remote2",
+				Requester: "req",
+				Set:       "set",
+				Status:    transfer.RequestStatusFailed,
+				Error:     "boom",
+			}
+			rid := r.ID()
+			_, _, err = s.queue.AddMany(context.Background(), []*queue.ItemDef{{Key: rid, Data: r, TTR: ttr}})
+			So(err, ShouldBeNil)
+			_, err = s.queue.Reserve("", 0)
+			So(err, ShouldBeNil)
+
+			err = s.removeOrReleaseRequestFromQueue(r, &set.Entry{Attempts: 1})
+			So(err, ShouldBeNil)
+
+			item, err := s.queue.Get(rid)
+			So(err, ShouldBeNil)
+			So(item.Stats().Delay, ShouldEqual, time.Duration(0))
+			So(s.queue.Stats().Ready, ShouldEqual, 1)
+
+			So(logWriter.String(), ShouldContainSubstring, "delay=0s")
+		})
+
+		Convey("If not configured, the default delay is 0", func() {
+			logWriter := gas.NewStringLogger()
+			conf := Config{
+				HTTPLogger:     logWriter,
+				StorageHandler: handler,
+				ReadOnly:       true,
+			}
+
+			s, err := New(conf)
+			So(err, ShouldBeNil)
+			So(s.failedUploadRetryDelay, ShouldEqual, time.Duration(0))
+
+			r := &transfer.Request{
+				Local:     "/local3",
+				Remote:    "/remote3",
+				Requester: "req",
+				Set:       "set",
+				Status:    transfer.RequestStatusFailed,
+				Error:     "boom",
+			}
+			rid := r.ID()
+			_, _, err = s.queue.AddMany(context.Background(), []*queue.ItemDef{{Key: rid, Data: r, TTR: ttr}})
+			So(err, ShouldBeNil)
+			_, err = s.queue.Reserve("", 0)
+			So(err, ShouldBeNil)
+
+			err = s.removeOrReleaseRequestFromQueue(r, &set.Entry{Attempts: 1})
+			So(err, ShouldBeNil)
+
+			item, err := s.queue.Get(rid)
+			So(err, ShouldBeNil)
+			So(item.Stats().Delay, ShouldEqual, time.Duration(0))
+			So(s.queue.Stats().Ready, ShouldEqual, 1)
+			So(logWriter.String(), ShouldContainSubstring, "delay=0s")
+		})
+	})
+}
+
+func TestServerHelperFunctions(t *testing.T) {
+	Convey("With a PTrie and a path", t, func() {
+		entryPath := "/path/to"
+
+		pathsForTree := []string{"/path/", "/some/path/to/myF", "/path/toFile", "/path/to/file"}
+
+		tree := ptrie.New[bool]()
+		for _, path := range pathsForTree {
+			err := tree.Put([]byte(path), true)
+			So(err, ShouldBeNil)
+		}
+
+		Convey("getChildEntriesFromPTrie returns only children paths", func() {
+			paths := getChildPathsFromPTrie(entryPath, tree)
+			So(paths, ShouldHaveLength, 1)
+			So(paths[0], ShouldEqual, "/path/to/file")
+
+			paths = getChildPathsFromPTrie(entryPath+"/", tree)
+			So(paths, ShouldHaveLength, 1)
+		})
+
+		Convey("isDirentRemovedFromSet works for dirs", func() {
+			dirent := set.Dirent{
+				Path: entryPath,
+				Mode: os.ModeDir,
+			}
+
+			isRemoved, match := isDirentRemovedFromSet(&dirent, tree)
+			So(isRemoved, ShouldBeTrue)
+			So(match, ShouldEqual, "/path/")
+		})
+
+		Convey("isDirentRemovedFromSet works for files", func() {
+			dirent := set.Dirent{
+				Path: "/some/path/to/myFile",
+			}
+
+			isRemoved, _ := isDirentRemovedFromSet(&dirent, tree)
+			So(isRemoved, ShouldBeFalse)
+		})
+	})
+}
+
+func TestDetermineQueueSize(t *testing.T) {
+	Convey("You can automatically determine max queue size", t, func() {
+		size, err := determineQueueSize()
+		So(err, ShouldBeNil)
+		So(size, ShouldBeGreaterThan, 0)
+		So(size, ShouldBeLessThan, 1<<32)
+	})
+}
+
 func TestServer(t *testing.T) {
 	u, err := user.Current()
 	if err != nil {
@@ -296,7 +467,9 @@ func TestServer(t *testing.T) {
 			adminClient := NewClient(addr, certPath, token)
 
 			var racRequests []*transfer.Request
-			racCalls := 0
+
+			var racCalls atomic.Int32
+
 			racCalled := make(chan bool, 1)
 
 			s.queue.SetReadyAddedCallback(func(queuename string, allitemdata []interface{}) {
@@ -314,7 +487,7 @@ func TestServer(t *testing.T) {
 					racRequests[i] = r
 				}
 
-				racCalls++
+				racCalls.Add(1)
 				racCalled <- true
 			})
 
@@ -1173,20 +1346,20 @@ func TestServer(t *testing.T) {
 						So(gotSet.Missing, ShouldEqual, 0)
 						So(gotSet.NumFiles, ShouldEqual, len(discovers))
 
-						So(racCalls, ShouldEqual, 3)
+						So(racCalls.Load(), ShouldEqual, 3)
 
 						err = client.TriggerDiscovery(exampleSet.ID(), false)
 						So(err, ShouldBeNil)
 
 						testutil.RequireStable(t, 250*time.Millisecond, 10*time.Millisecond, func() bool {
-							return racCalls == 3
+							return racCalls.Load() == 3
 						}, "racCalls count")
 
 						s.queue.TriggerReadyAddedCallback(context.Background())
 
 						ok = <-racCalled
 						So(ok, ShouldBeTrue)
-						So(racCalls, ShouldEqual, 4)
+						So(racCalls.Load(), ShouldEqual, 4)
 						So(len(racRequests), ShouldEqual, numFiles+len(discovers)+len(set2Files)+len(discovers))
 
 						expectedRequests := 13
@@ -2468,7 +2641,7 @@ func TestServer(t *testing.T) {
 						So(err, ShouldBeNil)
 
 						testutil.RequireStable(t, 500*time.Millisecond, 25*time.Millisecond, func() bool {
-							return racCalls == 0
+							return racCalls.Load() == 0
 						}, "no rac calls for invalid transformer")
 
 						gotSet, errg := client.GetSetByID(badSet.Requester, badSet.ID())
@@ -3203,6 +3376,8 @@ func TestServer(t *testing.T) {
 							})
 
 							Convey("whereupon they can be manually retried even if the set gets re-discovered", func() {
+								drainRacCalled(t, racCalled)
+
 								err = client.TriggerDiscovery(exampleSet.ID(), false)
 								So(err, ShouldBeNil)
 
@@ -3454,6 +3629,8 @@ func TestServer(t *testing.T) {
 					So(errg, ShouldBeNil)
 					So(gotSet.Uploaded, ShouldEqual, 1)
 					So(gotSet.Failed, ShouldEqual, 1)
+
+					drainRacCalled(t, racCalled)
 
 					err = s.db.RemoveFileEntry(exampleSet.ID(), dirs[0])
 					So(err, ShouldBeNil)
@@ -4226,6 +4403,72 @@ func TestServer(t *testing.T) {
 	})
 }
 
+// createDBLocation creates a temporary location for to store a database and
+// returns the path to the (non-existent) database file.
+func createDBLocation(t *testing.T) string {
+	t.Helper()
+
+	tdir := t.TempDir()
+	path := filepath.Join(tdir, "set.db")
+
+	return path
+}
+
+func createRemoteHardlink(t *testing.T, handler remove.Handler, lPath, rPath,
+	filePath, inodePath string, set *set.Set,
+) {
+	t.Helper()
+
+	hardlinkMeta := map[string]string{
+		transfer.MetaKeySets:           set.Name,
+		transfer.MetaKeyRequester:      set.Requester,
+		transfer.MetaKeyHardlink:       "hardlink",
+		transfer.MetaKeyRemoteHardlink: inodePath,
+	}
+
+	createRemoteObject(t, handler, hardlinkMeta, rPath)
+
+	err := os.Link(filePath, lPath)
+	So(err, ShouldBeNil)
+}
+
+func waitForRemovals(t *testing.T, client *Client, given *set.Set) {
+	t.Helper()
+
+	testutil.RetryUntilWorksCustom(t, func() error { //nolint:errcheck
+		tickerSet, errg := client.GetSetByID(given.Requester, given.ID())
+		So(errg, ShouldBeNil)
+
+		if tickerSet.NumObjectsRemoved == tickerSet.NumObjectsToBeRemoved {
+			return nil
+		}
+
+		return errNotFinishedRemoving
+	}, time.Second*10, time.Millisecond*100)
+}
+
+func makeGivenSetComplete(numExpectedRequests int, setName string, client *Client) {
+	for i := range numExpectedRequests/100 + 1 {
+		changeSetFilesStatus(min(100, numExpectedRequests-100*i), setName, client, transfer.RequestStatusUploaded)
+	}
+}
+
+func changeSetFilesStatus(numExpectedRequests int, setName string, client *Client, status transfer.RequestStatus) {
+	requests, errg := client.GetSomeUploadRequests()
+	So(errg, ShouldBeNil)
+	So(len(requests), ShouldEqual, numExpectedRequests)
+
+	for _, request := range requests {
+		if request.Set != setName {
+			continue
+		}
+
+		request.Status = status
+		err := client.UpdateFileStatus(request)
+		So(err, ShouldBeNil)
+	}
+}
+
 func findEntryByPath(entries []*set.Entry, path string) *set.Entry {
 	for _, entry := range entries {
 		if filepath.Clean(entry.Path) == filepath.Clean(path) {
@@ -4236,166 +4479,175 @@ func findEntryByPath(entries []*set.Entry, path string) *set.Entry {
 	return nil
 }
 
-func TestFailedUploadRetryDelayConfig(t *testing.T) {
-	Convey("Failed upload retry delay is configurable", t, func() {
-		handler := internal.GetLocalHandler()
-		logWriter := gas.NewStringLogger()
+// createTestBackupFiles creates and returns files, dirs and the files we're
+// expecting to discover in the dirs. Also created is a symlink in one of the
+// directories; the path to this is returned separately.
+func createTestBackupFiles(t *testing.T, dir string) ([]string, []string, []string, string) {
+	t.Helper()
 
-		Convey("You can set a non-zero delay and it is applied and logged", func() {
-			d := 10 * time.Second
-			conf := Config{
-				HTTPLogger:             logWriter,
-				StorageHandler:         handler,
-				ReadOnly:               true,
-				FailedUploadRetryDelay: d,
-			}
+	files := []string{
+		filepath.Join(dir, "a"),
+		filepath.Join(dir, "b"),
+	}
 
-			s, err := New(conf)
-			So(err, ShouldBeNil)
+	dirs := []string{
+		filepath.Join(dir, "c/d"),
+		filepath.Join(dir, "e/f"),
+	}
 
-			r := &transfer.Request{
-				Local:     "/local",
-				Remote:    "/remote",
-				Requester: "req",
-				Set:       "set",
-				Status:    transfer.RequestStatusFailed,
-				Error:     "boom",
-			}
-			rid := r.ID()
-			_, _, err = s.queue.AddMany(context.Background(), []*queue.ItemDef{{Key: rid, Data: r, TTR: ttr}})
-			So(err, ShouldBeNil)
-			_, err = s.queue.Reserve("", 0)
-			So(err, ShouldBeNil)
+	discovers := []string{
+		filepath.Join(dir, "c/d/g"),
+		filepath.Join(dir, "c/d/h"),
+		filepath.Join(dir, "e/f/i/j/k/l"),
+	}
 
-			err = s.removeOrReleaseRequestFromQueue(r, &set.Entry{Attempts: 1})
-			So(err, ShouldBeNil)
+	for i, path := range files {
+		internal.CreateTestFileOfLength(t, path, i+1)
+	}
 
-			item, err := s.queue.Get(rid)
-			So(err, ShouldBeNil)
-			So(item.Stats().Delay, ShouldEqual, d)
-			So(s.queue.Stats().Ready, ShouldEqual, 0)
+	for i, path := range discovers {
+		internal.CreateTestFileOfLength(t, path, i+1)
+	}
 
-			So(logWriter.String(), ShouldContainSubstring, "request retry")
-			So(logWriter.String(), ShouldContainSubstring, "rid="+rid)
-			So(logWriter.String(), ShouldContainSubstring, "delay=10s")
-		})
+	symlinkPath := filepath.Join(dirs[0], "symlink")
+	if err := os.Symlink(files[0], symlinkPath); err != nil {
+		t.Fatalf("failed to create symlink: %s", err)
+	}
 
-		Convey("You can explicitly set a 0 delay and it is applied and logged", func() {
-			logWriter := gas.NewStringLogger()
-			conf := Config{
-				HTTPLogger:             logWriter,
-				StorageHandler:         handler,
-				ReadOnly:               true,
-				FailedUploadRetryDelay: 0,
-			}
+	discovers = append(discovers, symlinkPath)
 
-			s, err := New(conf)
-			So(err, ShouldBeNil)
-
-			r := &transfer.Request{
-				Local:     "/local2",
-				Remote:    "/remote2",
-				Requester: "req",
-				Set:       "set",
-				Status:    transfer.RequestStatusFailed,
-				Error:     "boom",
-			}
-			rid := r.ID()
-			_, _, err = s.queue.AddMany(context.Background(), []*queue.ItemDef{{Key: rid, Data: r, TTR: ttr}})
-			So(err, ShouldBeNil)
-			_, err = s.queue.Reserve("", 0)
-			So(err, ShouldBeNil)
-
-			err = s.removeOrReleaseRequestFromQueue(r, &set.Entry{Attempts: 1})
-			So(err, ShouldBeNil)
-
-			item, err := s.queue.Get(rid)
-			So(err, ShouldBeNil)
-			So(item.Stats().Delay, ShouldEqual, time.Duration(0))
-			So(s.queue.Stats().Ready, ShouldEqual, 1)
-
-			So(logWriter.String(), ShouldContainSubstring, "delay=0s")
-		})
-
-		Convey("If not configured, the default delay is 0", func() {
-			logWriter := gas.NewStringLogger()
-			conf := Config{
-				HTTPLogger:     logWriter,
-				StorageHandler: handler,
-				ReadOnly:       true,
-			}
-
-			s, err := New(conf)
-			So(err, ShouldBeNil)
-			So(s.failedUploadRetryDelay, ShouldEqual, time.Duration(0))
-
-			r := &transfer.Request{
-				Local:     "/local3",
-				Remote:    "/remote3",
-				Requester: "req",
-				Set:       "set",
-				Status:    transfer.RequestStatusFailed,
-				Error:     "boom",
-			}
-			rid := r.ID()
-			_, _, err = s.queue.AddMany(context.Background(), []*queue.ItemDef{{Key: rid, Data: r, TTR: ttr}})
-			So(err, ShouldBeNil)
-			_, err = s.queue.Reserve("", 0)
-			So(err, ShouldBeNil)
-
-			err = s.removeOrReleaseRequestFromQueue(r, &set.Entry{Attempts: 1})
-			So(err, ShouldBeNil)
-
-			item, err := s.queue.Get(rid)
-			So(err, ShouldBeNil)
-			So(item.Stats().Delay, ShouldEqual, time.Duration(0))
-			So(s.queue.Stats().Ready, ShouldEqual, 1)
-			So(logWriter.String(), ShouldContainSubstring, "delay=0s")
-		})
-	})
+	return files, dirs, discovers, symlinkPath
 }
 
-func TestServerHelperFunctions(t *testing.T) {
-	Convey("With a PTrie and a path", t, func() {
-		entryPath := "/path/to"
+func waitForDiscovery(t *testing.T, client *Client, given *set.Set) {
+	t.Helper()
 
-		pathsForTree := []string{"/path/", "/some/path/to/myF", "/path/toFile", "/path/to/file"}
+	discovered := given.LastDiscovery
 
-		tree := ptrie.New[bool]()
-		for _, path := range pathsForTree {
-			err := tree.Put([]byte(path), true)
-			So(err, ShouldBeNil)
+	testutil.RetryUntilWorksCustom(t, func() error { //nolint:errcheck
+		tickerSet, errg := client.GetSetByID(given.Requester, given.ID())
+		So(errg, ShouldBeNil)
+
+		if tickerSet.LastDiscovery.After(discovered) {
+			return nil
 		}
 
-		Convey("getChildEntriesFromPTrie returns only children paths", func() {
-			paths := getChildPathsFromPTrie(entryPath, tree)
-			So(paths, ShouldHaveLength, 1)
-			So(paths[0], ShouldEqual, "/path/to/file")
+		return errNotDiscovered
+	}, given.MonitorTime*2, given.MonitorTime/10)
+}
 
-			paths = getChildPathsFromPTrie(entryPath+"/", tree)
-			So(paths, ShouldHaveLength, 1)
-		})
+// createManyTestBackupFiles creates and returns the paths to many files in a
+// new temp directory.
+func createManyTestBackupFiles(t *testing.T) []string {
+	t.Helper()
+	dir := t.TempDir()
 
-		Convey("isDirentRemovedFromSet works for dirs", func() {
-			dirent := set.Dirent{
-				Path: entryPath,
-				Mode: os.ModeDir,
+	paths := make([]string, numManyTestFiles)
+
+	for i := range paths {
+		path := filepath.Join(dir, fmt.Sprintf("%d.file", i))
+		paths[i] = path
+		internal.CreateTestFileOfLength(t, path, 1)
+	}
+
+	return paths
+}
+
+func createRemoteObject(t *testing.T, handler remove.Handler, meta map[string]string, rPath string) {
+	t.Helper()
+
+	internal.CreateTestFileOfLength(t, rPath, 1)
+
+	err := handler.AddMeta(rPath, meta)
+	So(err, ShouldBeNil)
+}
+
+// drainRacCalled drains any stale readyAdded signals from the racCalled
+// channel. These can accumulate when SendPutResultsToServer processes failed
+// uploads, causing removeOrReleaseRequestFromQueue to Release items back to the
+// ready queue with delay=0, which triggers the readyAdded callback. Call this
+// before TriggerDiscovery to ensure the subsequent <-racCalled receives the
+// discovery's signal rather than a stale one.
+func drainRacCalled(t *testing.T, racCalled chan bool) {
+	t.Helper()
+
+	for {
+		err := testutil.RetryUntilWorksCustom(t, func() error {
+			select {
+			case <-racCalled:
+				return nil
+			default:
+				return errNotDiscovered
 			}
+		}, 100*time.Millisecond, 10*time.Millisecond)
+		if err != nil {
+			return
+		}
+	}
+}
 
-			isRemoved, match := isDirentRemovedFromSet(&dirent, tree)
-			So(isRemoved, ShouldBeTrue)
-			So(match, ShouldEqual, "/path/")
-		})
+// putSetWithOneFile tests that we can successfully upload a set with 1 file in
+// it.
+func putSetWithOneFile(t *testing.T, handler transfer.Handler, client *Client,
+	exampleSet *set.Set, minMBperSecondUploadSpeed float64, logger log15.Logger,
+) {
+	t.Helper()
 
-		Convey("isDirentRemovedFromSet works for files", func() {
-			dirent := set.Dirent{
-				Path: "/some/path/to/myFile",
-			}
+	gotSet, err := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+	So(err, ShouldBeNil)
+	So(gotSet.Status, ShouldEqual, set.PendingUpload)
+	So(gotSet.NumFiles, ShouldEqual, 1)
+	So(gotSet.Uploaded, ShouldEqual, 0)
 
-			isRemoved, _ := isDirentRemovedFromSet(&dirent, tree)
-			So(isRemoved, ShouldBeFalse)
-		})
-	})
+	requests, err := client.GetSomeUploadRequests()
+	So(err, ShouldBeNil)
+	So(len(requests), ShouldEqual, 1)
+
+	p, d := makePutter(t, handler, requests, client)
+	defer d()
+
+	uploadStarts, uploadResults, skippedResults := p.Put()
+
+	err = client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults,
+		minMBperSecondUploadSpeed, minTimeForUpload, 1*time.Hour, logger)
+	So(err, ShouldBeNil)
+
+	gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+	So(err, ShouldBeNil)
+	So(gotSet.Status, ShouldEqual, set.Complete)
+	So(gotSet.NumFiles, ShouldEqual, 1)
+	So(gotSet.Uploaded, ShouldEqual, 1)
+}
+
+func makePutter(t *testing.T, handler transfer.Handler, requests []*transfer.Request,
+	client *Client,
+) (*transfer.Putter, func()) {
+	t.Helper()
+
+	p, errp := transfer.New(handler, requests)
+	So(errp, ShouldBeNil)
+
+	d := func() {
+		p.Cleanup()
+	}
+
+	err := client.StartingToCreateCollections()
+	So(err, ShouldBeNil)
+
+	qs, err := client.GetQueueStatus()
+	So(err, ShouldBeNil)
+	So(qs.CreatingCollections, ShouldEqual, 1)
+
+	err = p.CreateCollections()
+	So(err, ShouldBeNil)
+
+	err = client.FinishedCreatingCollections()
+	So(err, ShouldBeNil)
+	qs, err = client.GetQueueStatus()
+	So(err, ShouldBeNil)
+	So(qs.CreatingCollections, ShouldEqual, 0)
+
+	return p, d
 }
 
 func TestDiscoveryCoordinator(t *testing.T) {
@@ -4516,230 +4768,8 @@ func TestDiscoveryCoordinator(t *testing.T) {
 	})
 }
 
-func TestDetermineQueueSize(t *testing.T) {
-	Convey("You can automatically determine max queue size", t, func() {
-		size, err := determineQueueSize()
-		So(err, ShouldBeNil)
-		So(size, ShouldBeGreaterThan, 0)
-		So(size, ShouldBeLessThan, 1<<32)
-	})
-}
-
 func clearChannel(ch chan bool) {
 	for len(ch) > 0 {
 		<-ch
-	}
-}
-
-// createDBLocation creates a temporary location for to store a database and
-// returns the path to the (non-existent) database file.
-func createDBLocation(t *testing.T) string {
-	t.Helper()
-
-	tdir := t.TempDir()
-	path := filepath.Join(tdir, "set.db")
-
-	return path
-}
-
-// createTestBackupFiles creates and returns files, dirs and the files we're
-// expecting to discover in the dirs. Also created is a symlink in one of the
-// directories; the path to this is returned separately.
-func createTestBackupFiles(t *testing.T, dir string) ([]string, []string, []string, string) {
-	t.Helper()
-
-	files := []string{
-		filepath.Join(dir, "a"),
-		filepath.Join(dir, "b"),
-	}
-
-	dirs := []string{
-		filepath.Join(dir, "c/d"),
-		filepath.Join(dir, "e/f"),
-	}
-
-	discovers := []string{
-		filepath.Join(dir, "c/d/g"),
-		filepath.Join(dir, "c/d/h"),
-		filepath.Join(dir, "e/f/i/j/k/l"),
-	}
-
-	for i, path := range files {
-		internal.CreateTestFileOfLength(t, path, i+1)
-	}
-
-	for i, path := range discovers {
-		internal.CreateTestFileOfLength(t, path, i+1)
-	}
-
-	symlinkPath := filepath.Join(dirs[0], "symlink")
-	if err := os.Symlink(files[0], symlinkPath); err != nil {
-		t.Fatalf("failed to create symlink: %s", err)
-	}
-
-	discovers = append(discovers, symlinkPath)
-
-	return files, dirs, discovers, symlinkPath
-}
-
-// createManyTestBackupFiles creates and returns the paths to many files in a
-// new temp directory.
-func createManyTestBackupFiles(t *testing.T) []string {
-	t.Helper()
-	dir := t.TempDir()
-
-	paths := make([]string, numManyTestFiles)
-
-	for i := range paths {
-		path := filepath.Join(dir, fmt.Sprintf("%d.file", i))
-		paths[i] = path
-		internal.CreateTestFileOfLength(t, path, 1)
-	}
-
-	return paths
-}
-
-func makePutter(t *testing.T, handler transfer.Handler, requests []*transfer.Request,
-	client *Client,
-) (*transfer.Putter, func()) {
-	t.Helper()
-
-	p, errp := transfer.New(handler, requests)
-	So(errp, ShouldBeNil)
-
-	d := func() {
-		p.Cleanup()
-	}
-
-	err := client.StartingToCreateCollections()
-	So(err, ShouldBeNil)
-
-	qs, err := client.GetQueueStatus()
-	So(err, ShouldBeNil)
-	So(qs.CreatingCollections, ShouldEqual, 1)
-
-	err = p.CreateCollections()
-	So(err, ShouldBeNil)
-
-	err = client.FinishedCreatingCollections()
-	So(err, ShouldBeNil)
-	qs, err = client.GetQueueStatus()
-	So(err, ShouldBeNil)
-	So(qs.CreatingCollections, ShouldEqual, 0)
-
-	return p, d
-}
-
-// putSetWithOneFile tests that we can successfully upload a set with 1 file in
-// it.
-func putSetWithOneFile(t *testing.T, handler transfer.Handler, client *Client,
-	exampleSet *set.Set, minMBperSecondUploadSpeed float64, logger log15.Logger,
-) {
-	t.Helper()
-
-	gotSet, err := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
-	So(err, ShouldBeNil)
-	So(gotSet.Status, ShouldEqual, set.PendingUpload)
-	So(gotSet.NumFiles, ShouldEqual, 1)
-	So(gotSet.Uploaded, ShouldEqual, 0)
-
-	requests, err := client.GetSomeUploadRequests()
-	So(err, ShouldBeNil)
-	So(len(requests), ShouldEqual, 1)
-
-	p, d := makePutter(t, handler, requests, client)
-	defer d()
-
-	uploadStarts, uploadResults, skippedResults := p.Put()
-
-	err = client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults,
-		minMBperSecondUploadSpeed, minTimeForUpload, 1*time.Hour, logger)
-	So(err, ShouldBeNil)
-
-	gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
-	So(err, ShouldBeNil)
-	So(gotSet.Status, ShouldEqual, set.Complete)
-	So(gotSet.NumFiles, ShouldEqual, 1)
-	So(gotSet.Uploaded, ShouldEqual, 1)
-}
-
-func createRemoteHardlink(t *testing.T, handler remove.Handler, lPath, rPath,
-	filePath, inodePath string, set *set.Set,
-) {
-	t.Helper()
-
-	hardlinkMeta := map[string]string{
-		transfer.MetaKeySets:           set.Name,
-		transfer.MetaKeyRequester:      set.Requester,
-		transfer.MetaKeyHardlink:       "hardlink",
-		transfer.MetaKeyRemoteHardlink: inodePath,
-	}
-
-	createRemoteObject(t, handler, hardlinkMeta, rPath)
-
-	err := os.Link(filePath, lPath)
-	So(err, ShouldBeNil)
-}
-
-func createRemoteObject(t *testing.T, handler remove.Handler, meta map[string]string, rPath string) {
-	t.Helper()
-
-	internal.CreateTestFileOfLength(t, rPath, 1)
-
-	err := handler.AddMeta(rPath, meta)
-	So(err, ShouldBeNil)
-}
-
-func waitForDiscovery(t *testing.T, client *Client, given *set.Set) {
-	t.Helper()
-
-	discovered := given.LastDiscovery
-
-	testutil.RetryUntilWorksCustom(t, func() error { //nolint:errcheck
-		tickerSet, errg := client.GetSetByID(given.Requester, given.ID())
-		So(errg, ShouldBeNil)
-
-		if tickerSet.LastDiscovery.After(discovered) {
-			return nil
-		}
-
-		return errNotDiscovered
-	}, given.MonitorTime*2, given.MonitorTime/10)
-}
-
-func waitForRemovals(t *testing.T, client *Client, given *set.Set) {
-	t.Helper()
-
-	testutil.RetryUntilWorksCustom(t, func() error { //nolint:errcheck
-		tickerSet, errg := client.GetSetByID(given.Requester, given.ID())
-		So(errg, ShouldBeNil)
-
-		if tickerSet.NumObjectsRemoved == tickerSet.NumObjectsToBeRemoved {
-			return nil
-		}
-
-		return errNotFinishedRemoving
-	}, time.Second*10, time.Millisecond*100)
-}
-
-func makeGivenSetComplete(numExpectedRequests int, setName string, client *Client) {
-	for i := range numExpectedRequests/100 + 1 {
-		changeSetFilesStatus(min(100, numExpectedRequests-100*i), setName, client, transfer.RequestStatusUploaded)
-	}
-}
-
-func changeSetFilesStatus(numExpectedRequests int, setName string, client *Client, status transfer.RequestStatus) {
-	requests, errg := client.GetSomeUploadRequests()
-	So(errg, ShouldBeNil)
-	So(len(requests), ShouldEqual, numExpectedRequests)
-
-	for _, request := range requests {
-		if request.Set != setName {
-			continue
-		}
-
-		request.Status = status
-		err := client.UpdateFileStatus(request)
-		So(err, ShouldBeNil)
 	}
 }

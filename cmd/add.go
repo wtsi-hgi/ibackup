@@ -39,6 +39,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/wtsi-hgi/ibackup/internal/scanner"
 	"github.com/wtsi-hgi/ibackup/server"
 	"github.com/wtsi-hgi/ibackup/set"
 	"github.com/wtsi-hgi/ibackup/transfer"
@@ -222,8 +223,8 @@ option to add sets on behalf of other users.
 			die(err)
 		}
 
-		files := readPaths(setFiles, fofnLineSplitter(setNull))
-		dirs := readPaths(setDirs, fofnLineSplitter(setNull))
+		files := readPaths(setFiles, scanner.FofnLineSplitter(setNull))
+		dirs := readPaths(setDirs, scanner.FofnLineSplitter(setNull))
 
 		filesAndDirs, err := getPathsFromInput(setItems, setPath, setNull)
 		if err != nil {
@@ -339,7 +340,7 @@ func getPathsFromInput(items, path string, null bool) ([]string, error) {
 	var paths []string
 
 	if items != "" {
-		itemPaths := readPaths(items, fofnLineSplitter(null))
+		itemPaths := readPaths(items, scanner.FofnLineSplitter(null))
 
 		paths = append(paths, itemPaths...)
 	}

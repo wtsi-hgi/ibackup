@@ -38,6 +38,12 @@ import (
 	"github.com/wtsi-hgi/ibackup/transformer"
 )
 
+func TestRequestStatusFrozen(t *testing.T) {
+	Convey("RequestStatusFrozen has the correct string value", t, func() {
+		So(string(RequestStatusFrozen), ShouldEqual, "frozen")
+	})
+}
+
 func TestRequest(t *testing.T) {
 	Convey("With the default transformers", t, func() {
 		HumgenTransformer, GengenTransformer, OpentargetsTransformer := internal.RegisterDefaultTransformers(t)

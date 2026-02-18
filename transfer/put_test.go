@@ -584,6 +584,216 @@ func checkAddedMeta(meta map[string]string) {
 	So(meta[MetaKeyDate], ShouldNotBeBlank)
 }
 
+func TestPutNoReplace(t *testing.T) {
+	Convey("Given a Putter with SetNoReplace(true)", t, func() {
+		internal.InitStatter(t)
+
+		sourceDir := t.TempDir()
+		destDir := t.TempDir()
+
+		localPath := filepath.Join(sourceDir, "file.txt")
+		remotePath := filepath.Join(destDir, "file.txt")
+
+		internal.CreateTestFile(t, localPath, "ab")
+
+		lh := internal.GetLocalHandler()
+
+		Convey("Existing remote with different mtime results in frozen status", func() {
+			request := &Request{
+				Local:  localPath,
+				Remote: remotePath,
+				Meta:   &Meta{LocalMeta: map[string]string{"a": "1"}},
+			}
+
+			// First upload normally.
+			p, err := New(lh, []*Request{request})
+			So(err, ShouldBeNil)
+
+			err = p.CreateCollections()
+			So(err, ShouldBeNil)
+
+			uCh, urCh, srCh := p.Put()
+			for range uCh {
+			}
+
+			for range urCh {
+			}
+
+			for range srCh {
+			}
+
+			// Touch local file to change mtime.
+			touchFile(localPath, 1*time.Hour)
+
+			// Now put with no-replace.
+			request2 := &Request{
+				Local:  localPath,
+				Remote: remotePath,
+				Meta:   &Meta{LocalMeta: map[string]string{"a": "1"}},
+			}
+
+			p2, err := New(lh, []*Request{request2})
+			So(err, ShouldBeNil)
+
+			p2.SetNoReplace(true)
+
+			uCh, urCh, srCh = p2.Put()
+
+			for range uCh {
+			}
+
+			uploadedCount := 0
+			for range urCh {
+				uploadedCount++
+			}
+
+			So(uploadedCount, ShouldEqual, 0)
+
+			frozenCount := 0
+
+			for r := range srCh {
+				So(r.Status, ShouldEqual, RequestStatusFrozen)
+
+				frozenCount++
+			}
+
+			So(frozenCount, ShouldEqual, 1)
+
+			// Confirm remote file was not replaced (content unchanged).
+			data, err := os.ReadFile(remotePath)
+			So(err, ShouldBeNil)
+			So(string(data), ShouldEqual, "ab")
+		})
+
+		Convey("New file (remote doesn't exist) is still uploaded", func() {
+			newRemote := filepath.Join(destDir, "newfile.txt")
+
+			request := &Request{
+				Local:  localPath,
+				Remote: newRemote,
+				Meta:   &Meta{LocalMeta: map[string]string{"a": "1"}},
+			}
+
+			p, err := New(lh, []*Request{request})
+			So(err, ShouldBeNil)
+
+			err = p.CreateCollections()
+			So(err, ShouldBeNil)
+
+			p.SetNoReplace(true)
+
+			uCh, urCh, srCh := p.Put()
+
+			for range uCh {
+			}
+
+			uploadedCount := 0
+
+			for r := range urCh {
+				So(r.Status, ShouldEqual, RequestStatusUploaded)
+
+				uploadedCount++
+			}
+
+			So(uploadedCount, ShouldEqual, 1)
+
+			for range srCh {
+			}
+		})
+
+		Convey("Same mtime results in unmodified status", func() {
+			request := &Request{
+				Local:  localPath,
+				Remote: remotePath,
+				Meta:   &Meta{LocalMeta: map[string]string{"a": "1"}},
+			}
+
+			// First upload normally.
+			p, err := New(lh, []*Request{request})
+			So(err, ShouldBeNil)
+
+			err = p.CreateCollections()
+			So(err, ShouldBeNil)
+
+			uCh, urCh, srCh := p.Put()
+			for range uCh {
+			}
+
+			for range urCh {
+			}
+
+			for range srCh {
+			}
+
+			// Put again with no-replace, same mtime.
+			request2 := &Request{
+				Local:  localPath,
+				Remote: remotePath,
+				Meta:   &Meta{LocalMeta: map[string]string{"a": "1"}},
+			}
+
+			p2, err := New(lh, []*Request{request2})
+			So(err, ShouldBeNil)
+
+			p2.SetNoReplace(true)
+
+			uCh, urCh, srCh = p2.Put()
+
+			for range uCh {
+			}
+
+			for range urCh {
+			}
+
+			unmodCount := 0
+
+			for r := range srCh {
+				So(r.Status, ShouldEqual, RequestStatusUnmodified)
+
+				unmodCount++
+			}
+
+			So(unmodCount, ShouldEqual, 1)
+		})
+
+		Convey("Missing local file results in missing status", func() {
+			missingLocal := filepath.Join(sourceDir, "nonexistent.txt")
+
+			request := &Request{
+				Local:  missingLocal,
+				Remote: remotePath,
+				Meta:   &Meta{LocalMeta: map[string]string{"a": "1"}},
+			}
+
+			p, err := New(lh, []*Request{request})
+			So(err, ShouldBeNil)
+
+			err = p.CreateCollections()
+			So(err, ShouldBeNil)
+
+			p.SetNoReplace(true)
+
+			uCh, urCh, srCh := p.Put()
+
+			for range uCh {
+			}
+
+			for range urCh {
+			}
+
+			missingCount := 0
+
+			for r := range srCh {
+				So(r.Status, ShouldEqual, RequestStatusMissing)
+
+				missingCount++
+			}
+
+			So(missingCount, ShouldEqual, 1)
+		})
+	})
+}
+
 // touchFile alters the mtime of the given file by the given duration. Returns
 // the time set.
 func touchFile(path string, d time.Duration) time.Time {

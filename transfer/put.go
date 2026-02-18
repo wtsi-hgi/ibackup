@@ -110,15 +110,6 @@ type replicaCounter interface {
 // returning any error doing so.
 type FileReadTester func(path string) error
 
-// headRead is a FileReadTester that uses the statter to read a byte.
-func headRead(path string) error {
-	_, err := statter.Head(path)
-
-	return err
-}
-
-func noRead(_ string) error { return nil }
-
 // FileStatusCallback returns RequestStatusPending if the file is to be
 // uploaded, and returns any other RequestStatus, such as RequestStatusHardlink
 // and RequestStatusSymlink, to not be uploaded.
@@ -134,6 +125,7 @@ type Putter struct {
 	transfer                   func(r *Request, handler Handler) error
 	applyMetadata              func(r *Request, handler Handler) error
 	overwrite, hardlinksNormal bool
+	noReplace                  bool
 }
 
 // New returns a *Putter that will use the given Handler to Put() all the
@@ -183,32 +175,10 @@ func NewGetter(handler Handler, requests []*Request, overwrite, hardlinksNormal 
 	}, nil
 }
 
-// dedupRequests splits the given requests in to a slice requests that have
-// unique Remote values, and a slice with duplicates. Also "prepares" all
-// requests, ensuring they have valid paths and that hardlinks will be handled
-// appropriately later.
-func dedupAndPrepareRequests(requests []*Request) ([]*Request, []*Request, error) {
-	unique := make([]*Request, 0, len(requests))
-	seen := make(map[string]bool)
-
-	var dups []*Request
-
-	for _, r := range requests {
-		err := r.Prepare()
-		if err != nil {
-			return nil, nil, err
-		}
-
-		if seen[r.RemoteDataPath()] {
-			dups = append(dups, r)
-		} else {
-			unique = append(unique, r)
-		}
-
-		seen[r.RemoteDataPath()] = true
-	}
-
-	return unique, dups, nil
+// SetNoReplace configures the Putter to skip files that already exist in iRODS
+// with a different mtime, marking them as frozen instead of replacing them.
+func (p *Putter) SetNoReplace(noReplace bool) {
+	p.noReplace = noReplace
 }
 
 // SetFileReadTester sets the function used to see if a file can be opened and
@@ -295,6 +265,10 @@ func (p *Putter) getUniqueRequestLeafCollections() []string {
 	return uniqueLeafs
 }
 
+func noLeavesOrNewLeaf(uniqueLeafs []string, last string) bool {
+	return len(uniqueLeafs) == 0 || last != uniqueLeafs[len(uniqueLeafs)-1]
+}
+
 func (p *Putter) getSortedRequestCollections() []string {
 	dirs := make([]string, 0, len(p.requests))
 
@@ -307,10 +281,6 @@ func (p *Putter) getSortedRequestCollections() []string {
 	sort.Strings(dirs)
 
 	return dirs
-}
-
-func noLeavesOrNewLeaf(uniqueLeafs []string, last string) bool {
-	return len(uniqueLeafs) == 0 || last != uniqueLeafs[len(uniqueLeafs)-1]
 }
 
 // Put will upload all our request Local files to iRODS at the Remote locations.
@@ -398,6 +368,12 @@ func (p *Putter) putRequests(requests []*Request, transferStartCh, transferRetur
 	wg.Wait()
 }
 
+func cloneChannel(source, dest chan *Request) {
+	for r := range source {
+		dest <- r
+	}
+}
+
 func (p *Putter) put(requests []*Request) (chan *Request, chan *Request, chan *Request) {
 	chanLen := len(requests)
 	transferStartCh := make(chan *Request, chanLen)
@@ -419,12 +395,6 @@ func (p *Putter) put(requests []*Request) (chan *Request, chan *Request, chan *R
 	}()
 
 	return transferStartCh, transferReturnCh, skipReturnCh
-}
-
-func cloneChannel(source, dest chan *Request) {
-	for r := range source {
-		dest <- r
-	}
 }
 
 // pickFilesToPut goes through all our Requests, immediately returns bad ones
@@ -482,7 +452,27 @@ func (p *Putter) statPathsAndReturnOrPut(request *Request, putCh chan *Request, 
 		return
 	}
 
+	if p.noReplace {
+		sendRequest(request, RequestStatusFrozen, nil, skipReturnCh)
+
+		return
+	}
+
 	sendRequest(request, RequestStatusReplaced, nil, putCh)
+}
+
+// sendRequest sets the given status and err on the given request, then sends it
+// down the given channel.
+func sendRequest(request *Request, status RequestStatus, err error, ch chan *Request) {
+	request.Status = status
+
+	if err != nil {
+		request.Error = err.Error()
+	} else {
+		request.Error = ""
+	}
+
+	ch <- request
 }
 
 func getStatusBasedOnInfo(remoteExists bool) RequestStatus {
@@ -491,6 +481,33 @@ func getStatusBasedOnInfo(remoteExists bool) RequestStatus {
 	}
 
 	return RequestStatusMissing
+}
+
+// sendForUploadOrUnmodified sends the request to putCh if remote doesn't exist
+// or if the mtime hasn't changed but the metadata has, or the skipReturnCh if
+// the metadata hasn't changed. Returns true in one of those cases, or false if
+// the request needs to be uploaded again because the mtime changed.
+func sendForUploadOrUnmodified(request *Request, lInfo, rInfo *ObjectInfo, putCh, skipReturnCh chan *Request) bool {
+	if !rInfo.Exists {
+		sendRequest(request, RequestStatusUploaded, nil, putCh)
+
+		return true
+	}
+
+	if lInfo.HasSameModTime(rInfo) {
+		ch := skipReturnCh
+
+		request.skipPut = request.Meta.needsMetadataUpdate()
+		if request.skipPut {
+			ch = putCh
+		}
+
+		sendRequest(request, RequestStatusUnmodified, nil, ch)
+
+		return true
+	}
+
+	return false
 }
 
 func (p *Putter) getMetadataAndReturnOrPut(request *Request, putCh chan *Request, skipReturnCh chan *Request) {
@@ -543,60 +560,6 @@ func sendGetRequest(request *Request, lInfo, rInfo *ObjectInfo,
 	if !sendForUploadOrUnmodified(request, lInfo, rInfo, putCh, skipReturnCh) {
 		sendRequest(request, RequestStatusReplaced, nil, putCh)
 	}
-}
-
-func addRemoteMetaForGetRequest(request *Request) {
-	if symlink, ok := request.Meta.remoteMeta[MetaKeySymlink]; ok {
-		request.Symlink = symlink
-	}
-
-	_, hasMtime := request.Meta.remoteMeta[MetaKeyMtime]
-	remoteMtime, hasRemoteMtime := request.Meta.remoteMeta[meta.MetaKeyRemoteMtime]
-
-	if !hasMtime && hasRemoteMtime {
-		request.Meta.remoteMeta[MetaKeyMtime] = remoteMtime
-	}
-}
-
-// sendForUploadOrUnmodified sends the request to putCh if remote doesn't exist
-// or if the mtime hasn't change but the metadata has, or the skipReturnCh if
-// the metadata hasn't changed. Returns true in one of those cases, or false if
-// the request needs to be uploaded again because the mtime changed.
-func sendForUploadOrUnmodified(request *Request, lInfo, rInfo *ObjectInfo, putCh, skipReturnCh chan *Request) bool {
-	if !rInfo.Exists {
-		sendRequest(request, RequestStatusUploaded, nil, putCh)
-
-		return true
-	}
-
-	if lInfo.HasSameModTime(rInfo) {
-		ch := skipReturnCh
-
-		request.skipPut = request.Meta.needsMetadataUpdate()
-		if request.skipPut {
-			ch = putCh
-		}
-
-		sendRequest(request, RequestStatusUnmodified, nil, ch)
-
-		return true
-	}
-
-	return false
-}
-
-// sendRequest sets the given status and err on the given request, then sends it
-// down the given channel.
-func sendRequest(request *Request, status RequestStatus, err error, ch chan *Request) {
-	request.Status = status
-
-	if err != nil {
-		request.Error = err.Error()
-	} else {
-		request.Error = ""
-	}
-
-	ch <- request
 }
 
 // transferFilesInIRODS uses our handler to Put() requests sent on the given putCh in
@@ -717,4 +680,54 @@ func (p *Putter) testRead(request *Request) error {
 	}
 
 	return err
+}
+
+// headRead is a FileReadTester that uses the statter to read a byte.
+func headRead(path string) error {
+	_, err := statter.Head(path)
+
+	return err
+}
+
+func noRead(_ string) error { return nil }
+
+// dedupRequests splits the given requests into a slice requests that have
+// unique Remote values, and a slice with duplicates. Also "prepares" all
+// requests, ensuring they have valid paths and that hardlinks will be handled
+// appropriately later.
+func dedupAndPrepareRequests(requests []*Request) ([]*Request, []*Request, error) {
+	unique := make([]*Request, 0, len(requests))
+	seen := make(map[string]bool)
+
+	var dups []*Request
+
+	for _, r := range requests {
+		err := r.Prepare()
+		if err != nil {
+			return nil, nil, err
+		}
+
+		if seen[r.RemoteDataPath()] {
+			dups = append(dups, r)
+		} else {
+			unique = append(unique, r)
+		}
+
+		seen[r.RemoteDataPath()] = true
+	}
+
+	return unique, dups, nil
+}
+
+func addRemoteMetaForGetRequest(request *Request) {
+	if symlink, ok := request.Meta.remoteMeta[MetaKeySymlink]; ok {
+		request.Symlink = symlink
+	}
+
+	_, hasMtime := request.Meta.remoteMeta[MetaKeyMtime]
+	remoteMtime, hasRemoteMtime := request.Meta.remoteMeta[meta.MetaKeyRemoteMtime]
+
+	if !hasMtime && hasRemoteMtime {
+		request.Meta.remoteMeta[MetaKeyMtime] = remoteMtime
+	}
 }
