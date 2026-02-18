@@ -33,6 +33,7 @@ import (
 
 	"github.com/VertebrateResequencing/wr/jobqueue"
 	jqs "github.com/VertebrateResequencing/wr/jobqueue/scheduler"
+	"github.com/wtsi-hgi/ibackup/internal/shell"
 )
 
 const (
@@ -96,8 +97,10 @@ func BuildPutCommand(
 ) string {
 	parts := buildPutCoreParts(chunkPath, fofnName)
 
-	parts = append(parts, "-b",
-		fmt.Sprintf("-f %q", chunkPath))
+	parts = append(parts,
+		"-b",
+		"-f", shell.Quote(chunkPath),
+	)
 
 	if noReplace {
 		parts = append(parts, "--no_replace")
@@ -105,11 +108,11 @@ func BuildPutCommand(
 
 	if userMeta != "" {
 		parts = append(parts,
-			fmt.Sprintf("--meta %q", userMeta))
+			"--meta", shell.Quote(userMeta))
 	}
 
 	parts = append(parts,
-		fmt.Sprintf("> %q 2>&1", chunkPath+".out"))
+		">", shell.Quote(chunkPath+".out"), "2>&1")
 
 	return strings.Join(parts, " ")
 }
@@ -119,13 +122,13 @@ func buildPutCoreParts(
 ) []string {
 	parts := []string{
 		"ibackup put -v",
-		fmt.Sprintf("-l %q", chunkPath+".log"),
-		fmt.Sprintf("--report %q", chunkPath+".report"),
+		"-l", shell.Quote(chunkPath + ".log"),
+		"--report", shell.Quote(chunkPath + ".report"),
 	}
 
 	if fofnName != "" {
 		parts = append(parts,
-			fmt.Sprintf("--fofn %q", fofnName))
+			"--fofn", shell.Quote(fofnName))
 	}
 
 	return parts
@@ -220,8 +223,8 @@ func extractQuotedOrWord(s string) string {
 		return ""
 	}
 
-	if s[0] == '"' {
-		if end := strings.IndexByte(s[1:], '"'); end >= 0 {
+	if s[0] == '"' || s[0] == '\'' {
+		if end := strings.IndexByte(s[1:], s[0]); end >= 0 {
 			return s[1 : end+1]
 		}
 

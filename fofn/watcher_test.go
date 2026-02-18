@@ -224,7 +224,7 @@ func TestProcessSubDir(t *testing.T) {
 				So(job.Cwd, ShouldEqual,
 					state.RunDir)
 				So(job.Cmd, ShouldContainSubstring,
-					fmt.Sprintf("--fofn %q", dirName))
+					fmt.Sprintf("--fofn '%s'", dirName))
 			}
 		})
 
@@ -361,7 +361,7 @@ func TestProcessSubDir(t *testing.T) {
 
 			for _, job := range mock.submitted {
 				So(job.Cmd, ShouldContainSubstring,
-					`--meta "colour=red"`)
+					`--meta 'colour=red'`)
 			}
 		})
 

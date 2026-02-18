@@ -43,11 +43,11 @@ func TestBuildPutCommand(t *testing.T) {
 			func() {
 				cmd := BuildPutCommand("chunk.000000", false, "project1", "")
 				So(cmd, ShouldEqual,
-					`ibackup put -v -l "chunk.000000.log" `+
-						`--report "chunk.000000.report" `+
-						`--fofn "project1" -b `+
-						`-f "chunk.000000" `+
-						`> "chunk.000000.out" 2>&1`)
+					`ibackup put -v -l 'chunk.000000.log' `+
+						`--report 'chunk.000000.report' `+
+						`--fofn 'project1' -b `+
+						`-f 'chunk.000000' `+
+						`> 'chunk.000000.out' 2>&1`)
 			})
 
 		Convey("includes --no_replace when noReplace is true",
@@ -64,8 +64,25 @@ func TestBuildPutCommand(t *testing.T) {
 				"colour=red;size=large",
 			)
 			So(cmd, ShouldContainSubstring,
-				`--meta "colour=red;size=large"`)
+				`--meta 'colour=red;size=large'`)
 		})
+
+		Convey("single-quotes and escapes user-controlled values",
+			func() {
+				cmd := BuildPutCommand(
+					"chunk.'$(touch /tmp/nope)'",
+					false,
+					"proj'$(id)'",
+					"colour=red';`uname`",
+				)
+
+				So(cmd, ShouldContainSubstring,
+					`--fofn 'proj'"'"'$(id)'"'"''`)
+				So(cmd, ShouldContainSubstring,
+					`--meta 'colour=red'"'"';`+"`"+`uname`+"`"+`'`)
+				So(cmd, ShouldContainSubstring,
+					`-f 'chunk.'"'"'$(touch /tmp/nope)'"'"''`)
+			})
 
 		Convey("omits --fofn when fofnName is empty",
 			func() {
@@ -324,6 +341,21 @@ func TestFindBuriedChunks(t *testing.T) {
 				So(chunks, ShouldHaveLength, 1)
 				So(chunks[0], ShouldEqual,
 					"/run/dir/my dir/chunk.000000")
+			})
+
+		Convey("handles single-quoted -f argument",
+			func() {
+				mock := &mockJobSubmitter{
+					buried: []*jobqueue.Job{
+						{Cmd: `ibackup put -v -f 'chunk.000123' > 'chunk.000123.out' 2>&1`},
+					},
+				}
+
+				chunks, err := FindBuriedChunks(mock, "repgroup1", "/run/dir")
+				So(err, ShouldBeNil)
+				So(chunks, ShouldHaveLength, 1)
+				So(chunks[0], ShouldEqual,
+					"/run/dir/chunk.000123")
 			})
 	})
 }
