@@ -157,8 +157,8 @@ func NewRemoveRequest(path string, set *Set, isDir bool, action RemoveAction) Re
 	}
 }
 
-// NewRO returns a *DBRO that can be used to query a set database. Provide
-// the path to the database file.
+// NewRO returns a *DBRO that can be used to query a set database. Provide the
+// path to the database file.
 //
 // Returns an error if database can't be opened.
 func NewRO(path string) (*DBRO, error) {
@@ -639,8 +639,8 @@ func (d *DBRO) GetFilesInDir(setID string, dirpath string) ([]string, error) {
 	return d.getPathsInDir(setID, dirpath, discoveredBucket, fileBucket)
 }
 
-// GetFoldersInDir returns all folder paths from inside the given directory (and all
-// nested inside) for the given set using the db.
+// GetFoldersInDir returns all folder paths from inside the given directory (and
+// all nested inside) for the given set using the db.
 func (d *DBRO) GetFoldersInDir(setID string, dirpath string) ([]string, error) {
 	return d.getPathsInDir(setID, dirpath, discoveredFoldersBucket, dirBucket)
 }
@@ -695,9 +695,9 @@ func (d *DBRO) getPathsWithPrefix(setID, bucketName, prefix string) ([]string, e
 }
 
 // MergeFileEntries sets the file paths for the given backup set. Only supply
-// absolute paths to files. It keeps the existing entries in the set and
-// handles duplicates by updating the existing entries. If the file is not
-// already in the set, it will be added with the status Registered.
+// absolute paths to files. It keeps the existing entries in the set and handles
+// duplicates by updating the existing entries. If the file is not already in
+// the set, it will be added with the status Registered.
 func (d *DB) MergeFileEntries(setID string, paths []string) error {
 	entries := make([]*Dirent, len(paths))
 
@@ -711,9 +711,9 @@ func (d *DB) MergeFileEntries(setID string, paths []string) error {
 }
 
 // mergeEntries sets the paths for the given backup set in a sub bucket with the
-// given prefix. Only supply absolute paths. It keeps the existing entries in the set and
-// handles duplicates by updating the existing entries.
-// If the file is not already in the set, it will be added with the given status.
+// given prefix. Only supply absolute paths. It keeps the existing entries in
+// the set and handles duplicates by updating the existing entries. If the file
+// is not already in the set, it will be added with the given status.
 func (d *DB) mergeEntries(setID string, dirents []*Dirent, bucketName string, initialStatus EntryStatus) error {
 	return d.db.Update(func(tx *bolt.Tx) error {
 		b, existing, err := d.getExistingEntries(tx, bucketName, setID)
@@ -722,8 +722,8 @@ func (d *DB) mergeEntries(setID string, dirents []*Dirent, bucketName string, in
 		}
 
 		// this sort is critical to database write speed.
-		sort.Slice(dirents, func(i, j int) bool {
-			return strings.Compare(dirents[i].Path, dirents[j].Path) == -1
+		slices.SortFunc(dirents, func(i, j *Dirent) int {
+			return strings.Compare(i.Path, j.Path)
 		})
 
 		ec, err := newEntryCreator(d, tx, b, existing, setID, initialStatus)
@@ -950,7 +950,8 @@ func (d *DB) removeEntryIfRedundant(remReq RemoveReq, curDir string) (string, er
 	return curDir, nil
 }
 
-// RemoveFromRemovedBucket removes the given path from the removed bucket of the given set.
+// RemoveFromRemovedBucket removes the given path from the removed bucket of the
+// given set.
 func (d *DB) RemoveFromRemovedBucket(path, sid string) error {
 	return d.deleteObjectFromSubBucket(path, sid, removedBucket)
 }
@@ -1059,10 +1060,10 @@ func newDirentFromPath(path string) *Dirent {
 	return dirent
 }
 
-// MergeDirEntries sets the directory paths for the given backup set. Only supply
-// absolute paths to directories. It keeps the existing entries in the set and
-// handles duplicates by updating the existing entries. If the dir is not
-// already in the set, it will be added with the status Registered.
+// MergeDirEntries sets the directory paths for the given backup set. Only
+// supply absolute paths to directories. It keeps the existing entries in the
+// set and handles duplicates by updating the existing entries. If the dir is
+// not already in the set, it will be added with the status Registered.
 func (d *DB) MergeDirEntries(setID string, entries []*Dirent) error {
 	return d.mergeEntries(setID, entries, dirBucket, Registered)
 }
@@ -1207,9 +1208,8 @@ func (d *DB) handleFilePoolResults(tx *bolt.Tx, sfsb *setFileSubBucket, setID st
 // setDiscoveredEntries adds discovered file paths for the given backup set's
 // directory entries. Only supply absolute paths to files.
 //
-// It also updates LastDiscovery, sets NumFiles and sets status to
-// PendingUpload unless the set contains no files, in which case it sets status
-// to Complete.
+// It also updates LastDiscovery, sets NumFiles and sets status to PendingUpload
+// unless the set contains no files, in which case it sets status to Complete.
 //
 // Returns the updated set and an error if the setID isn't in the database.
 func (d *DB) setDiscoveredEntries(setID string, fileDirents, dirDirents []*Dirent) (*Set, error) {
@@ -1853,8 +1853,8 @@ func (d *DBRO) GetPureFileEntries(setID string) ([]*Entry, error) {
 	return d.getEntries(setID, fileBucket, nil)
 }
 
-// GetDiscoveredFileEntries returns all the discovered file entries for the given set (only
-// SetDiscoveredEntries, not SetFileEntries).
+// GetDiscoveredFileEntries returns all the discovered file entries for the
+// given set (only SetDiscoveredEntries, not SetFileEntries).
 func (d *DBRO) GetDiscoveredFileEntries(setID string) ([]*Entry, error) {
 	return d.getEntries(setID, discoveredBucket, nil)
 }

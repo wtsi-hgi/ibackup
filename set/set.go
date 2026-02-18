@@ -117,6 +117,10 @@ type Set struct {
 	// deletions (ie. do a backup, not a move).
 	DeleteLocal bool
 
+	// Frozen prevents uploaded files from being overwritten by newer local
+	// copies.
+	Frozen bool
+
 	// Delete remote paths if removed from the set. Optional, defaults to no
 	// deletions (ie. keep all uploads and ignore removed Entries).
 	// DeleteRemote bool
@@ -344,9 +348,9 @@ func (s *Set) HasProblems() bool {
 	return s.Failed > 0 || s.Error != "" || err != nil
 }
 
-// Queued returns true if we're either pending discovery or upload. Ie. the
-// set was recently added or updated, but uploads haven't begun yet probably due
-// to uploads for other sets being first in the queue.
+// Queued returns true if we're either pending discovery or upload. Ie. the set
+// was recently added or updated, but uploads haven't begun yet probably due to
+// uploads for other sets being first in the queue.
 func (s *Set) Queued() bool {
 	return s.Status == PendingDiscovery || s.Status == PendingUpload
 }
@@ -541,9 +545,8 @@ func (s *Set) DiscoveryCompleted(numFiles uint64) {
 	s.sendSlackMessage(slack.Info, fmt.Sprintf("completed discovery: %d files", numFiles))
 }
 
-// UpdateBasedOnEntry updates set status values based on an updated Entry
-// from updateFileEntry(), assuming that request is for one of set's file
-// entries.
+// UpdateBasedOnEntry updates set status values based on an updated Entry from
+// updateFileEntry(), assuming that request is for one of set's file entries.
 func (s *Set) UpdateBasedOnEntry(entry *Entry, getFileEntries func(string, EntryFilter) ([]*Entry, error)) error {
 	s.checkIfUploading()
 
@@ -584,9 +587,9 @@ func (s *Set) checkIfComplete() {
 		s.Uploaded, s.Replaced, s.Skipped, s.Failed, s.Missing, s.Orphaned, s.Abnormal, s.UploadedSize()))
 }
 
-// fixCounts resets the set counts to 0 and goes through all the entries for
-// the set in the db to recaluclate them. The supplied entry should be one you
-// newly updated and that wasn't in the db before the transaction we're in.
+// fixCounts resets the set counts to 0 and goes through all the entries for the
+// set in the db to recaluclate them. The supplied entry should be one you newly
+// updated and that wasn't in the db before the transaction we're in.
 func (s *Set) fixCounts(entry *Entry, getFileEntries func(string, EntryFilter) ([]*Entry, error)) error {
 	if s.countsValid() {
 		return nil
@@ -696,6 +699,7 @@ func (s *Set) copyUserProperties(copySet *Set) {
 	s.SizeRemoved = copySet.SizeRemoved
 	s.ReadOnly = copySet.ReadOnly
 	s.Hide = copySet.Hide
+	s.Frozen = copySet.Frozen
 }
 
 // reset puts the Set data back to zero/initial/empty values.

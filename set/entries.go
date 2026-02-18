@@ -144,7 +144,11 @@ func (e *Entry) CorrectFromJSON() {
 
 // ShouldUpload returns true if this Entry is pending or the last attempt was
 // before the given time. Always returns false if the Type is Abnormal.
-func (e *Entry) ShouldUpload(reuploadAfter time.Time) bool {
+func (e *Entry) ShouldUpload(given *Set) bool {
+	if given.Frozen && e.IsUploaded() {
+		return false
+	}
+
 	if e.Type == Abnormal {
 		return false
 	}
@@ -153,7 +157,13 @@ func (e *Entry) ShouldUpload(reuploadAfter time.Time) bool {
 		return true
 	}
 
-	return !e.LastAttempt.After(reuploadAfter)
+	return !e.LastAttempt.After(given.LastDiscovery)
+}
+
+// IsUploaded returns true if the entry status indicates that it is currently
+// successfully uploaded.
+func (e *Entry) IsUploaded() bool {
+	return e.Status == Uploaded || e.Status == Replaced || e.Status == Skipped || e.Status == Orphaned
 }
 
 // InodeStoragePath returns a relative path that the data for this entry could
@@ -199,7 +209,8 @@ func (e *Entry) updateTypeDestAndInode(newEntry *Entry) bool {
 	return true
 }
 
-// WasNotUploaded checks whether the entry's status corresponds to a status in which the entry could not be uploaded.
+// WasNotUploaded checks whether the entry's status corresponds to a status in
+// which the entry could not be uploaded.
 func (e *Entry) WasNotUploaded() bool {
 	switch e.Status {
 	case Failed, Missing, AbnormalEntry:
@@ -360,13 +371,14 @@ func (c *entryCreator) existingOrNewEncodedEntry(dirent *Dirent) ([]byte, error)
 	e := c.existingEntries[dirent.Path]
 	if e != nil {
 		dbEntry := c.db.decodeEntry(e)
+		isUploaded := dbEntry.IsUploaded()
 		isIdentical := dbEntry.updateTypeDestAndInode(entry)
 
 		if entry.Status == Missing || entry.Status == Orphaned || entry.Status == AbnormalEntry {
 			c.set.entryStatusToSetCounts(dbEntry)
 		}
 
-		if !isIdentical {
+		if !isIdentical || c.set.Frozen && isUploaded {
 			return e, nil
 		}
 

@@ -46,6 +46,7 @@ import (
 	"log"
 	"math/big"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -317,6 +318,8 @@ func TestPuts(t *testing.T) {
 
 			tempTestFileOfPaths, err := os.CreateTemp(dir, "testFileSet")
 			So(err, ShouldBeNil)
+
+			Reset(func() { tempTestFileOfPaths.Close() })
 
 			err = os.MkdirAll(dir1, 0755)
 			So(err, ShouldBeNil)
@@ -815,7 +818,7 @@ func NewUploadingTestServer(t *testing.T, withDBBackup bool) (*testServer, strin
 
 	s.startServer()
 
-	t.Cleanup(func() {
+	Reset(func() {
 		if err := s.Shutdown(); err != nil {
 			t.Errorf("server shutdown failed: %s", err)
 		}
@@ -964,6 +967,8 @@ func TestRemove(t *testing.T) {
 
 			tempTestFileOfPaths, err := os.CreateTemp(dir, "testFileSet")
 			So(err, ShouldBeNil)
+
+			Reset(func() { tempTestFileOfPaths.Close() })
 
 			err = os.MkdirAll(dir1, 0755)
 			So(err, ShouldBeNil)
@@ -1233,6 +1238,8 @@ func TestRemove(t *testing.T) {
 				tempTestFileOfPathsToRemove, errt := os.CreateTemp(dir, "testFileSet")
 				So(errt, ShouldBeNil)
 
+				Reset(func() { tempTestFileOfPathsToRemove.Close() })
+
 				_, err = io.WriteString(tempTestFileOfPathsToRemove,
 					fmt.Sprintf("%s\n%s", file1, dir1))
 				So(err, ShouldBeNil)
@@ -1263,6 +1270,8 @@ func TestRemove(t *testing.T) {
 				tempTestFileOfPathsToRemove, errt := os.CreateTemp(dir, "testFileSet")
 				So(errt, ShouldBeNil)
 
+				Reset(func() { tempTestFileOfPathsToRemove.Close() })
+
 				_, err = io.WriteString(tempTestFileOfPathsToRemove,
 					fmt.Sprintf("%s\n%s\n%s\n%s", file1, file1, dir1, dir1))
 				So(err, ShouldBeNil)
@@ -1278,12 +1287,16 @@ func TestRemove(t *testing.T) {
 				tempTestFileOfPathsToRemove1, errt := os.CreateTemp(dir, "testFileSet")
 				So(errt, ShouldBeNil)
 
+				Reset(func() { tempTestFileOfPathsToRemove1.Close() })
+
 				_, err = io.WriteString(tempTestFileOfPathsToRemove1,
 					fmt.Sprintf("%s\n%s", file1, dir1))
 				So(err, ShouldBeNil)
 
 				tempTestFileOfPathsToRemove2, errt := os.CreateTemp(dir, "testFileSet")
 				So(errt, ShouldBeNil)
+
+				Reset(func() { tempTestFileOfPathsToRemove2.Close() })
 
 				_, err = io.WriteString(tempTestFileOfPathsToRemove2,
 					fmt.Sprintf("%s\n%s\n%s", file2, file4, dir2))
@@ -1685,6 +1698,7 @@ func runCLI(t *testing.T, env []string, stdin string, args ...string) (int, stri
 				panic(rec)
 			}
 		}()
+		defer http.DefaultClient.CloseIdleConnections()
 
 		return cmd.RootCmd.Execute()
 	}()
@@ -1817,6 +1831,8 @@ func TestTrashRemove(t *testing.T) {
 			tempTestFileOfPaths, err := os.CreateTemp(dir, "testFileSet")
 			So(err, ShouldBeNil)
 
+			Reset(func() { tempTestFileOfPaths.Close() })
+
 			err = os.MkdirAll(dir1, 0755)
 			So(err, ShouldBeNil)
 
@@ -1946,6 +1962,8 @@ func TestTrashRemove(t *testing.T) {
 					tempTestFileOfPathsToRemove, errt := os.CreateTemp(dir, "testFileSet")
 					So(errt, ShouldBeNil)
 
+					Reset(func() { tempTestFileOfPathsToRemove.Close() })
+
 					_, err = io.WriteString(tempTestFileOfPathsToRemove,
 						fmt.Sprintf("%s\n%s", file1, dir1))
 					So(err, ShouldBeNil)
@@ -1970,6 +1988,8 @@ func TestTrashRemove(t *testing.T) {
 					tempTestFileOfPathsToRemove, errt := os.CreateTemp(dir, "testFileSet")
 					So(errt, ShouldBeNil)
 
+					Reset(func() { tempTestFileOfPathsToRemove.Close() })
+
 					_, err = io.WriteString(tempTestFileOfPathsToRemove,
 						fmt.Sprintf("%s\n%s\n%s\n%s", file1, file1, dir1, dir1))
 					So(err, ShouldBeNil)
@@ -1984,6 +2004,8 @@ func TestTrashRemove(t *testing.T) {
 				Convey("if the server dies during removal, the removal will continue upon server startup", func() {
 					tempTestFileOfPathsToRemove1, errt := os.CreateTemp(dir, "testFileSet")
 					So(errt, ShouldBeNil)
+
+					Reset(func() { tempTestFileOfPathsToRemove1.Close() })
 
 					_, err = io.WriteString(tempTestFileOfPathsToRemove1,
 						fmt.Sprintf("%s\n%s", file1, dir1))
@@ -2215,9 +2237,9 @@ func TestTrashRemove(t *testing.T) {
 
 					So(scanner.Err(), ShouldBeNil)
 
-					defer func() {
+					Reset(func() {
 						_, _ = icmd.ICHMOD("own", curUser.Username, file1remote) //nolint:errcheck
-					}()
+					})
 
 					exitCode, _ := s.runBinary(t, "trash", "--remove", "--name", setName, "--path", file1)
 					So(exitCode, ShouldEqual, 0)
@@ -2526,21 +2548,45 @@ func TestEdit(t *testing.T) {
 				setName := "archiveSet"
 				s.addSetForTestingWithFlags(t, setName, transformer, "--path", path, "--archive")
 
-				s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Archive: true\n")
+				s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Archive: true;")
 
 				Convey("You can disable archive mode", func() {
 					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--stop-archiving")
 					So(exitCode, ShouldEqual, 0)
 
-					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Archive: false\n")
+					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Archive: false;")
 
 					Convey("You can re-enable archive mode", func() {
 						exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--archive")
 						So(exitCode, ShouldEqual, 0)
 
-						s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Archive: true\n")
+						s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Archive: true;")
 
 						s.confirmOutputContains(t, []string{"edit", "--name", setName, "--archive", "--stop-archiving"}, 1,
+							cmd.ErrInvalidEditArchive.Error())
+					})
+				})
+			})
+
+			Convey("And a set marked as frozen", func() { //nolint:dupl
+				setName := "frozenSet"
+				s.addSetForTestingWithFlags(t, setName, transformer, "--path", path, "--freeze")
+
+				s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Frozen: true\n")
+
+				Convey("You can disable freeze mode", func() {
+					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--stop-freeze")
+					So(exitCode, ShouldEqual, 0)
+
+					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Frozen: false\n")
+
+					Convey("You can re-enable freeze mode", func() {
+						exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--freeze")
+						So(exitCode, ShouldEqual, 0)
+
+						s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Frozen: true\n")
+
+						s.confirmOutputContains(t, []string{"edit", "--name", setName, "--freeze", "--stop-freeze"}, 1,
 							cmd.ErrInvalidEditArchive.Error())
 					})
 				})
@@ -2851,6 +2897,8 @@ func TestEdit(t *testing.T) {
 					tempTestFile, errc := os.CreateTemp(path, "testFileSet")
 					So(errc, ShouldBeNil)
 
+					Reset(func() { tempTestFile.Close() })
+
 					_, err = io.WriteString(tempTestFile, setDir2+"\n"+setFile3+"\n"+setFile4+"\n")
 					So(err, ShouldBeNil)
 
@@ -3115,7 +3163,7 @@ func NewTestServer(t *testing.T) *testServer {
 
 	s.startServer()
 
-	t.Cleanup(func() {
+	Reset(func() {
 		if err := s.Shutdown(); err != nil {
 			t.Errorf("server shutdown failed: %s", err)
 		}
@@ -3261,7 +3309,7 @@ func NewExternalTestServer(t *testing.T) *testServer {
 
 	s.startServer()
 
-	t.Cleanup(func() {
+	Reset(func() {
 		if err := s.Shutdown(); err != nil {
 			t.Errorf("server shutdown failed: %s", err)
 		}
@@ -3292,9 +3340,11 @@ func NewTestServerWithQueues(t *testing.T, queues, avoidQueues []string, shouldF
 
 	s.startServer()
 
-	t.Cleanup(func() {
+	Reset(func() {
 		if err := s.Shutdown(); err != nil {
-			t.Errorf("server shutdown failed: %s", err)
+			if !shouldFail {
+				t.Errorf("server shutdown failed: %s", err)
+			}
 		}
 	})
 
@@ -3305,8 +3355,6 @@ func testQueue(t *testing.T, queue []string, avoid []string, shouldFail bool) ([
 	t.Helper()
 
 	s := NewTestServerWithQueues(t, queue, avoid, shouldFail)
-
-	Reset(func() { s.Shutdown() }) //nolint:errcheck
 
 	transformer, dir, _ := prepareForSetWithEmptyDir(t)
 
@@ -4117,7 +4165,7 @@ func TestList(t *testing.T) {
 			tempTestFile, err := os.CreateTemp(dir, "testFileSet")
 			So(err, ShouldBeNil)
 
-			defer tempTestFile.Close()
+			Reset(func() { tempTestFile.Close() })
 
 			_, err = io.WriteString(tempTestFile, dir+`/path/to/some/file
 `+dir+`/path/to/other/file`)
@@ -4234,7 +4282,7 @@ func TestList(t *testing.T) {
 			tempTestFile, err := os.CreateTemp(dir, "testFileSet")
 			So(err, ShouldBeNil)
 
-			defer tempTestFile.Close()
+			Reset(func() { tempTestFile.Close() })
 
 			uploadFile1Path := filepath.Join(dir, "file1")
 			uploadFile2Path := filepath.Join(dir, "file2")
@@ -4499,7 +4547,7 @@ Transformer: `+transformer+`
 Reason: backup
 Review date: `+reviewDate+`
 Removal date: `+removalDate+`
-Monitored: false; Archive: false
+Monitored: false; Archive: false; Frozen: false
 Status: complete
 Discovery:
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
@@ -4530,7 +4578,7 @@ Reason: backup
 Review date: `+reviewDate+`
 Removal date: `+removalDate+`
 User metadata: testKey=testVal;testKey2=testVal2
-Monitored: false; Archive: false
+Monitored: false; Archive: false; Frozen: false
 Status: complete
 Discovery:
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
@@ -4556,7 +4604,7 @@ Reason: archive
 Review date: `+time.Now().AddDate(1, 0, 0).Format("2006-01-02")+`
 Removal date: 2999-01-01
 User metadata: `+meta+`
-Monitored: false; Archive: false
+Monitored: false; Archive: false; Frozen: false
 Status: complete
 Discovery:
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
@@ -4581,7 +4629,7 @@ Transformer: `+transformer+`
 Reason: backup
 Review date: `+reviewDate+`
 Removal date: `+removalDate+`
-Monitored: false; Archive: false
+Monitored: false; Archive: false; Frozen: false
 Status: complete
 Discovery:
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
@@ -4605,7 +4653,7 @@ Transformer: `+transformer+`
 Reason: backup
 Review date: `+reviewDate+`
 Removal date: `+removalDate+`
-Monitored: false; Archive: false
+Monitored: false; Archive: false; Frozen: false
 Status: complete
 Discovery:
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
@@ -4631,7 +4679,7 @@ Transformer: `+transformer+`
 Reason: backup
 Review date: `+reviewDate+`
 Removal date: `+removalDate+`
-Monitored: false; Archive: false
+Monitored: false; Archive: false; Frozen: false
 Status: complete
 Discovery:
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
@@ -4647,7 +4695,7 @@ Transformer: `+transformer+`
 Reason: backup
 Review date: `+reviewDate+`
 Removal date: `+removalDate+`
-Monitored: false; Archive: false
+Monitored: false; Archive: false; Frozen: false
 Status: complete
 Discovery:
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
@@ -4663,7 +4711,7 @@ Transformer: `+transformer+`
 Reason: backup
 Review date: `+reviewDate+`
 Removal date: `+removalDate+`
-Monitored: false; Archive: false
+Monitored: false; Archive: false; Frozen: false
 Status: complete
 Discovery:
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
@@ -4683,7 +4731,7 @@ Transformer: `+transformer+`
 Reason: backup
 Review date: `+reviewDate+`
 Removal date: `+removalDate+`
-Monitored: false; Archive: false
+Monitored: false; Archive: false; Frozen: false
 Status: complete
 Discovery:
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
@@ -4699,7 +4747,7 @@ Transformer: `+transformer+`
 Reason: backup
 Review date: `+reviewDate+`
 Removal date: `+removalDate+`
-Monitored: false; Archive: false
+Monitored: false; Archive: false; Frozen: false
 Status: complete
 Discovery:
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
@@ -4715,7 +4763,7 @@ Transformer: `+transformer+`
 Reason: backup
 Review date: `+reviewDate+`
 Removal date: `+removalDate+`
-Monitored: false; Archive: false
+Monitored: false; Archive: false; Frozen: false
 Status: complete
 Discovery:
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
@@ -4730,6 +4778,8 @@ Directories:
 			dir := t.TempDir()
 			tempTestFile, err := os.CreateTemp(dir, "testFileSet")
 			So(err, ShouldBeNil)
+
+			Reset(func() { tempTestFile.Close() })
 
 			_, err = io.WriteString(tempTestFile, dir+`/path/to/some/file
 `+dir+`/path/to/other/file`)
@@ -4751,7 +4801,7 @@ Transformer: prefix=`+dir+`:/remote
 Reason: backup
 Review date: `+reviewDate+`
 Removal date: `+removalDate+`
-Monitored: false; Archive: false
+Monitored: false; Archive: false; Frozen: false
 Status: complete
 Discovery:
 Num files: 2; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
@@ -4773,7 +4823,7 @@ Transformer: prefix=`+dir+`:/remote
 Reason: backup
 Review date: `+reviewDate+`
 Removal date: `+removalDate+`
-Monitored: false; Archive: false
+Monitored: false; Archive: false; Frozen: false
 Status: complete
 Discovery:
 Num files: 2; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
@@ -4799,7 +4849,7 @@ Transformer: humgen
 Reason: backup
 Review date: ` + reviewDate + `
 Removal date: ` + removalDate + `
-Monitored: false; Archive: false
+Monitored: false; Archive: false; Frozen: false
 Status: complete
 Discovery:
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
@@ -4836,7 +4886,7 @@ Transformer: `+transformer+`
 Reason: backup
 Review date: `+reviewDate+`
 Removal date: `+removalDate+`
-Monitored: false; Archive: false
+Monitored: false; Archive: false; Frozen: false
 Status: complete
 Discovery:
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
@@ -4871,7 +4921,7 @@ Transformer: `+transformer+`
 Reason: backup
 Review date: `+reviewDate+`
 Removal date: `+removalDate+`
-Monitored: false; Archive: false
+Monitored: false; Archive: false; Frozen: false
 Status: complete
 Warning: `+badPermDir+`/: permission denied
 Discovery:
@@ -4903,7 +4953,7 @@ Transformer: humgen
 Reason: backup
 Review date: `+reviewDate+`
 Removal date: `+removalDate+`
-Monitored: false; Archive: false
+Monitored: false; Archive: false; Frozen: false
 Status: pending upload
 Discovery:
 Num files: 1; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B (and counting) / 0 B / 0 B
@@ -4932,7 +4982,7 @@ Transformer: gengen
 Reason: backup
 Review date: `+reviewDate+`
 Removal date: `+removalDate+`
-Monitored: false; Archive: false
+Monitored: false; Archive: false; Frozen: false
 Status: pending upload
 Discovery:
 Num files: 1; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B (and counting) / 0 B / 0 B
@@ -4961,7 +5011,7 @@ Transformer: gengen
 Reason: backup
 Review date: `+reviewDate+`
 Removal date: `+removalDate+`
-Monitored: false; Archive: false
+Monitored: false; Archive: false; Frozen: false
 Status: pending upload
 Discovery:
 Num files: 1; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B (and counting) / 0 B / 0 B
@@ -5001,7 +5051,7 @@ Transformer: prefix=`+dir+`:/remote
 Reason: backup
 Review date: `+reviewDate+`
 Removal date: `+removalDate+`
-Monitored: false; Archive: false
+Monitored: false; Archive: false; Frozen: false
 Status: pending upload
 Discovery:
 Num files: 4; Symlinks: 2; Hardlinks: 1; Size (total/recently uploaded/recently removed): 0 B (and counting) / 0 B / 0 B
@@ -5064,7 +5114,7 @@ Transformer: `+transformer+`
 Reason: backup
 Review date: `+reviewDate+`
 Removal date: `+removalDate+`
-Monitored: false; Archive: false
+Monitored: false; Archive: false; Frozen: false
 Status: complete
 Discovery:
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
@@ -5096,7 +5146,7 @@ Transformer: prefix=`+dir+`:/remote
 Reason: backup
 Review date: `+reviewDate+`
 Removal date: `+removalDate+`
-Monitored: false; Archive: false
+Monitored: false; Archive: false; Frozen: false
 Status: complete
 Discovery:
 Num files: 1; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
@@ -5124,7 +5174,7 @@ Transformer: prefix=`+dir+`:/remote
 Reason: backup
 Review date: `+reviewDate+`
 Removal date: `+removalDate+`
-Monitored: false; Archive: false
+Monitored: false; Archive: false; Frozen: false
 Status: complete
 Discovery:
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
@@ -5146,6 +5196,8 @@ func TestFileStatus(t *testing.T) {
 			dir := t.TempDir()
 			tempTestFile, err := os.CreateTemp(dir, "testFileSet")
 			So(err, ShouldBeNil)
+
+			Reset(func() { tempTestFile.Close() })
 
 			_, err = io.WriteString(tempTestFile, dir+`/path/to/some/file
 `+dir+`/path/to/other/file`)
@@ -5296,7 +5348,7 @@ Transformer: `+transformer+`
 Reason: backup
 Review date: `+reviewDate+`
 Removal date: `+removalDate+`
-Monitored: false; Archive: false
+Monitored: false; Archive: false; Frozen: false
 Status: complete
 Discovery:
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B

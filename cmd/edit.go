@@ -57,6 +57,8 @@ var (
 	editStopMonitorRemovals bool
 	editStopArchive         bool
 	editArchive             bool
+	editStopFreeze          bool
+	editFreeze              bool
 	editMakeReadOnly        bool
 	editMakeWritable        bool
 	editHide                bool
@@ -66,6 +68,7 @@ var (
 var (
 	ErrInvalidEditRO              = errors.New("you can either make a set read-only or writable, not both")
 	ErrInvalidEditArchive         = errors.New("you can either --archive a set or --stop-archiving, not both")
+	ErrInvalidEditFreeze          = errors.New("you can either --freeze a set or --stop-freeze, not both")
 	ErrInvalidEditHide            = errors.New("you can either --hide or --unhide a set, not both")
 	ErrInvalidEditMonitor         = errors.New("you can either --monitor or --stop-monitor a set, not both")
 	ErrInvalidEditMonitorRemovals = errors.New("you can either --monitor-removals or " +
@@ -94,6 +97,10 @@ preexisting backup set.
 		}
 
 		if editArchive && editStopArchive {
+			return ErrInvalidEditArchive
+		}
+
+		if editFreeze && editStopFreeze {
 			return ErrInvalidEditArchive
 		}
 
@@ -162,6 +169,12 @@ preexisting backup set.
 			userSet.DeleteLocal = false
 		}
 
+		if editFreeze {
+			userSet.Frozen = true
+		} else if editStopFreeze {
+			userSet.Frozen = false
+		}
+
 		if editMakeReadOnly {
 			userSet.ReadOnly = true
 		}
@@ -213,6 +226,8 @@ func init() { //nolint:funlen
 		"stop monitoring the set for locally removed files")
 	editCmd.Flags().BoolVarP(&editArchive, "archive", "a", false, helpTextArchive)
 	editCmd.Flags().BoolVar(&editStopArchive, "stop-archiving", false, "disable archive mode")
+	editCmd.Flags().BoolVar(&editFreeze, "freeze", false, helpTextFreeze)
+	editCmd.Flags().BoolVar(&editStopFreeze, "stop-freeze", false, "disable freeze mode")
 	editCmd.Flags().BoolVar(&editMakeReadOnly, "make-readonly", false,
 		"make the set read-only (backup set will be preserved at the current state)")
 	editCmd.Flags().BoolVar(&editMakeWritable, "disable-readonly", false,

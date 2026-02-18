@@ -60,6 +60,7 @@ const (
 		"(eg. 1d for 1 day, or 2w for 2 weeks, min 1h) after completion"
 	helpTextMonitorRemovals = "also monitor and update the set for files removed locally"
 	helpTextArchive         = "delete local files after successfully uploading them (deletions not yet implemented)"
+	helpTextFreeze          = "prevent uploaded files from being overwritten with newer versions"
 	helpTextuser            = "pretend to be the this user (only works if you started the server)"
 	helpTextMetaData        = "key=val;key=val metadata to apply to all files in the set"
 	helpTextReason          = "storage reason: 'backup' | 'archive' | 'quarantine'"
@@ -82,6 +83,7 @@ var (
 	setMonitor         string
 	setMonitorRemovals bool
 	setArchive         bool
+	setFreeze          bool
 	setUser            string
 	setMetadata        string
 	setReason          transfer.Reason
@@ -169,6 +171,8 @@ You can also provide:
 --archive : delete local files after successfully uploading them. (The actual
             deletion is not yet implemented, but you can at least record the
 		    fact you wanted deletion now, so they can be deleted in the future.)
+--freeze  : prevent uploaded files from being overwritten with newer versions
+		    after a successful upload.
 --reason  : the reason you are storing the set, which can be 'backup', 'archive' 
 			or 'quarantine'. The default is 'backup' which will default review 
 			date to 6 months and removal date to 1 year. 'archive' defaults 
@@ -249,7 +253,7 @@ option to add sets on behalf of other users.
 		}
 
 		err = add(client, setName, setUser, setTransformer, setDescription, monitorDuration,
-			setMonitorRemovals, setArchive, files, dirs, meta)
+			setMonitorRemovals, setArchive, setFreeze, files, dirs, meta)
 		if err != nil {
 			die(err)
 		}
@@ -274,6 +278,7 @@ func init() {
 	addCmd.Flags().StringVarP(&setMonitor, "monitor", "m", "", helpTextMonitor)
 	addCmd.Flags().BoolVar(&setMonitorRemovals, "monitor-removals", false, helpTextMonitorRemovals)
 	addCmd.Flags().BoolVarP(&setArchive, "archive", "a", false, helpTextArchive)
+	addCmd.Flags().BoolVar(&setFreeze, "freeze", false, helpTextFreeze)
 	addCmd.Flags().StringVar(&setUser, "user", currentUsername(), helpTextuser)
 	addCmd.Flags().StringVar(&setMetadata, "metadata", "", helpTextMetaData)
 	addCmd.Flags().Var(&setReason, "reason", helpTextReason)
@@ -407,7 +412,7 @@ func fileDirIsInDirs(file string, dirSet map[string]bool) bool {
 
 // add does the main job of sending the backup set details to the server.
 func add(client *server.Client, name, requester, transformer, description string,
-	monitor time.Duration, monitorRemovals, archive bool, files, dirs []string, meta *transfer.Meta) error {
+	monitor time.Duration, monitorRemovals, archive, freeze bool, files, dirs []string, meta *transfer.Meta) error {
 	set := &set.Set{
 		Name:            name,
 		Requester:       requester,
@@ -417,6 +422,7 @@ func add(client *server.Client, name, requester, transformer, description string
 		MonitorRemovals: monitorRemovals,
 		DeleteLocal:     archive,
 		Metadata:        meta.Metadata(),
+		Frozen:          freeze,
 	}
 
 	if err := client.AddOrUpdateSet(set); err != nil {

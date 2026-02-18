@@ -118,8 +118,8 @@ type Config struct {
 
 	// HungDebugTimeout enables server-side hung debugging.
 	//
-	// When > 0, the server will periodically check for signs of stuck uploads and
-	// (rate-limited) log a summary plus a goroutine dump.
+	// When > 0, the server will periodically check for signs of stuck uploads
+	// and (rate-limited) log a summary plus a goroutine dump.
 	//
 	// A value of 0 disables this feature entirely.
 	HungDebugTimeout time.Duration
