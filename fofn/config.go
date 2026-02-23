@@ -56,6 +56,10 @@ var ErrMetadataKeyColon = errors.New("metadata key contains colon")
 // a semicolon or equals sign, which would break the serialised meta string.
 var ErrMetadataDelimiter = errors.New("metadata key or value contains '=' or ';'")
 
+// ErrMetadataDelimiter is returned when a metadata key or value contains
+// a null byte.
+var ErrMetadataNull = errors.New("metadata key or value contains null byte")
+
 // SubDirConfig holds configuration for a watched subdirectory.
 type SubDirConfig struct {
 	Transformer string            `yaml:"transformer"`
@@ -92,10 +96,6 @@ func ReadConfig(dir string) (SubDirConfig, error) {
 // UserMetaString returns a semicolon-separated string of
 // sorted key=value pairs from the metadata map.
 func (c SubDirConfig) UserMetaString() string {
-	if len(c.Metadata) == 0 {
-		return ""
-	}
-
 	keys := slices.Sorted(maps.Keys(c.Metadata))
 
 	pairs := make([]string, 0, len(keys))
@@ -141,20 +141,46 @@ func validateConfig(cfg SubDirConfig) error {
 	}
 
 	for key, val := range cfg.Metadata {
-		if strings.Contains(key, ":") {
-			return fmt.Errorf("%w: %q", ErrMetadataKeyColon, key)
-		}
-
-		if strings.ContainsAny(key, "=;") {
-			return fmt.Errorf("%w: key %q", ErrMetadataDelimiter, key)
-		}
-
-		if strings.ContainsAny(val, "=;") {
-			return fmt.Errorf("%w: value %q", ErrMetadataDelimiter, val)
+		if err := validateKeyValue(key, val); err != nil {
+			return err
 		}
 	}
 
-	return cmp.Or(validDate("Review", cfg.Review), validDate("Remove", cfg.Remove))
+	return cmp.Or(
+		validateValue(cfg.Reason),
+		validateValue(cfg.Requester),
+		validateValue(cfg.Name),
+		validDate("Review", cfg.Review),
+		validDate("Remove", cfg.Remove),
+	)
+}
+
+func validateKeyValue(key, val string) error {
+	if strings.Contains(key, ":") {
+		return fmt.Errorf("%w: %q", ErrMetadataKeyColon, key)
+	}
+
+	if strings.ContainsAny(key, "=;") {
+		return fmt.Errorf("%w: key %q", ErrMetadataDelimiter, key)
+	}
+
+	if strings.Contains(key, "\x00") {
+		return fmt.Errorf("%w: key %q", ErrMetadataDelimiter, key)
+	}
+
+	return validateValue(val)
+}
+
+func validateValue(val string) error {
+	if strings.ContainsAny(val, "=;") {
+		return fmt.Errorf("%w: value %q", ErrMetadataDelimiter, val)
+	}
+
+	if strings.Contains(val, "\x00") {
+		return fmt.Errorf("%w: value %q", ErrMetadataDelimiter, val)
+	}
+
+	return nil
 }
 
 func validDate(key, date string) error {

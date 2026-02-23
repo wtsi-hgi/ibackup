@@ -63,7 +63,7 @@ const (
 	validMetaKeyDividers  = 2
 	metaListSeparator     = ","
 
-	errInvalidMetaNamespace    = "namespace is incorrect, must be 'ibackup:user:' or empty"
+	errInvalidMetaNamespace    = "namespace is incorrect, must be 'ibackup:user:', 'ibackup:fofn:', or empty"
 	errInvalidMetaLength       = "meta must be provided in the form key=value"
 	ErrInvalidReason           = "reason must be 'backup', 'archive', 'quarantine'"
 	ErrInvalidDurationFormat   = "duration must be in the form <number><unit>, or YYYY-MM-DD"

@@ -239,6 +239,48 @@ func TestConfig(t *testing.T) {
 			So(os.IsNotExist(statErr), ShouldBeTrue)
 		})
 
+		Convey("WriteConfig rejects invalid reason", func() {
+			sub := filepath.Join(dir, "write_eq")
+			So(os.MkdirAll(sub, 0750), ShouldBeNil)
+
+			err := WriteConfig(sub, SubDirConfig{
+				Transformer: "test",
+				Reason:      "=",
+			})
+			So(err, ShouldNotBeNil)
+
+			_, statErr := os.Stat(filepath.Join(sub, "config.yml"))
+			So(os.IsNotExist(statErr), ShouldBeTrue)
+		})
+
+		Convey("WriteConfig rejects invalid setname", func() {
+			sub := filepath.Join(dir, "write_eq")
+			So(os.MkdirAll(sub, 0750), ShouldBeNil)
+
+			err := WriteConfig(sub, SubDirConfig{
+				Transformer: "test",
+				Reason:      ";",
+			})
+			So(err, ShouldNotBeNil)
+
+			_, statErr := os.Stat(filepath.Join(sub, "config.yml"))
+			So(os.IsNotExist(statErr), ShouldBeTrue)
+		})
+
+		Convey("WriteConfig rejects invalid requester", func() {
+			sub := filepath.Join(dir, "write_eq")
+			So(os.MkdirAll(sub, 0750), ShouldBeNil)
+
+			err := WriteConfig(sub, SubDirConfig{
+				Transformer: "test",
+				Reason:      "\x00",
+			})
+			So(err, ShouldNotBeNil)
+
+			_, statErr := os.Stat(filepath.Join(sub, "config.yml"))
+			So(os.IsNotExist(statErr), ShouldBeTrue)
+		})
+
 		Convey("ReadConfig rejects metadata value containing =", func() {
 			sub := filepath.Join(dir, "bad_eq")
 			So(os.MkdirAll(sub, 0750), ShouldBeNil)
