@@ -30,6 +30,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
@@ -204,6 +205,40 @@ func TestConfig(t *testing.T) {
 			So(os.IsNotExist(statErr), ShouldBeTrue)
 		})
 
+		Convey("WriteConfig rejects invalid review date", func() {
+			sub := filepath.Join(dir, "write_eq")
+			So(os.MkdirAll(sub, 0750), ShouldBeNil)
+
+			timeError := new(time.ParseError)
+
+			err := WriteConfig(sub, SubDirConfig{
+				Transformer: "test",
+				Review:      "bad",
+			})
+			So(err, ShouldNotBeNil)
+			So(errors.As(err, &timeError), ShouldBeTrue)
+
+			_, statErr := os.Stat(filepath.Join(sub, "config.yml"))
+			So(os.IsNotExist(statErr), ShouldBeTrue)
+		})
+
+		Convey("WriteConfig rejects invalid remove date", func() {
+			sub := filepath.Join(dir, "write_eq")
+			So(os.MkdirAll(sub, 0750), ShouldBeNil)
+
+			timeError := new(time.ParseError)
+
+			err := WriteConfig(sub, SubDirConfig{
+				Transformer: "test",
+				Remove:      "2026-13-01",
+			})
+			So(err, ShouldNotBeNil)
+			So(errors.As(err, &timeError), ShouldBeTrue)
+
+			_, statErr := os.Stat(filepath.Join(sub, "config.yml"))
+			So(os.IsNotExist(statErr), ShouldBeTrue)
+		})
+
 		Convey("ReadConfig rejects metadata value containing =", func() {
 			sub := filepath.Join(dir, "bad_eq")
 			So(os.MkdirAll(sub, 0750), ShouldBeNil)
@@ -265,6 +300,24 @@ func TestConfig(t *testing.T) {
 		Convey("with nil metadata returns empty string", func() {
 			cfg := SubDirConfig{}
 			So(cfg.UserMetaString(), ShouldEqual, "")
+		})
+
+		Convey("with additional config fields set returns correct pairs", func() {
+			cfg := SubDirConfig{
+				Requester: "userA",
+				Name:      "mySet",
+				Review:    "2001-01-02",
+				Remove:    "2005-04-03",
+				Reason:    "backup",
+				Metadata: map[string]string{
+					"colour": "red",
+					"size":   "large",
+				},
+			}
+			So(cfg.UserMetaString(), ShouldEqual,
+				"colour=red;size=large;ibackup:fofn:reason=backup;"+
+					"ibackup:fofn:remove=2005-04-03;ibackup:fofn:requester=userA;"+
+					"ibackup:fofn:review=2001-01-02;ibackup:fofn:set=mySet")
 		})
 	})
 }

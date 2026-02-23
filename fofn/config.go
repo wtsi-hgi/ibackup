@@ -26,6 +26,7 @@
 package fofn
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"maps"
@@ -33,7 +34,9 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
+	"github.com/wtsi-hgi/ibackup/transfer"
 	"gopkg.in/yaml.v3"
 )
 
@@ -57,6 +60,11 @@ var ErrMetadataDelimiter = errors.New("metadata key or value contains '=' or ';'
 type SubDirConfig struct {
 	Transformer string            `yaml:"transformer"`
 	Freeze      bool              `yaml:"freeze,omitempty"`
+	Requester   string            `yaml:"requester,omitempty"`
+	Name        string            `yaml:"name,omitempty"`
+	Review      string            `yaml:"review,omitempty"`
+	Remove      string            `yaml:"remove,omitempty"`
+	Reason      string            `yaml:"reason,omitempty"`
 	Metadata    map[string]string `yaml:"metadata,omitempty"`
 }
 
@@ -95,7 +103,21 @@ func (c SubDirConfig) UserMetaString() string {
 		pairs = append(pairs, k+"="+c.Metadata[k])
 	}
 
+	pairs = appendFOFNMetaData(pairs, "reason", c.Reason)
+	pairs = appendFOFNMetaData(pairs, "remove", c.Remove)
+	pairs = appendFOFNMetaData(pairs, "requester", c.Requester)
+	pairs = appendFOFNMetaData(pairs, "review", c.Review)
+	pairs = appendFOFNMetaData(pairs, "set", c.Name)
+
 	return strings.Join(pairs, ";")
+}
+
+func appendFOFNMetaData(pairs []string, key, value string) []string {
+	if value == "" {
+		return pairs
+	}
+
+	return append(pairs, transfer.MetaFOFNNamespace+key+"="+value)
 }
 
 // WriteConfig writes cfg as config.yml in dir. Returns an error if Transformer
@@ -130,6 +152,19 @@ func validateConfig(cfg SubDirConfig) error {
 		if strings.ContainsAny(val, "=;") {
 			return fmt.Errorf("%w: value %q", ErrMetadataDelimiter, val)
 		}
+	}
+
+	return cmp.Or(validDate("Review", cfg.Review), validDate("Remove", cfg.Remove))
+}
+
+func validDate(key, date string) error {
+	if date == "" {
+		return nil
+	}
+
+	_, err := time.Parse("2006-01-02", date)
+	if err != nil {
+		return fmt.Errorf("%s: %w", key, err)
 	}
 
 	return nil
