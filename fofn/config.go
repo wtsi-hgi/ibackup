@@ -162,7 +162,7 @@ func validDate(key, date string) error {
 		return nil
 	}
 
-	_, err := time.Parse("2006-01-02", date)
+	_, err := time.Parse(time.RFC3339Nano, date)
 	if err != nil {
 		return fmt.Errorf("%s: %w", key, err)
 	}

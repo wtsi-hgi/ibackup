@@ -230,7 +230,7 @@ func TestConfig(t *testing.T) {
 
 			err := WriteConfig(sub, SubDirConfig{
 				Transformer: "test",
-				Remove:      "2026-13-01",
+				Remove:      "2006-13-02T15:04:05Z",
 			})
 			So(err, ShouldNotBeNil)
 			So(errors.As(err, &timeError), ShouldBeTrue)
