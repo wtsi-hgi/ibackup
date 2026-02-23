@@ -46,7 +46,7 @@ func TestMeta(t *testing.T) {
 	Convey("Given meta strings", t, func() {
 		validMetaStr1 := "ibackup:user:testKey1=testValue1"
 		validMetaStr2 := "testKey2=testValue2"
-		validMetaStr3 := "testKey3=testValue3;ibackup:user:testKey4=testValue4"
+		validMetaStr3 := "testKey3=testValue3;ibackup:fofn:testKey4=testValue4"
 		validMetaStr4 := ""
 		validPrevMetaMap := map[string]string{
 			"ibackup:user:testKeyPrev1": "testValuePrev1",
@@ -68,7 +68,7 @@ func TestMeta(t *testing.T) {
 			meta, err = ParseMetaString(validMetaStr3, validPrevMetaMap)
 			So(err, ShouldBeNil)
 			So(meta.Metadata()["ibackup:user:testKey3"], ShouldEqual, "testValue3")
-			So(meta.Metadata()["ibackup:user:testKey4"], ShouldEqual, "testValue4")
+			So(meta.Metadata()["ibackup:fofn:testKey4"], ShouldEqual, "testValue4")
 
 			meta, err = ParseMetaString(validMetaStr4, nil)
 			So(err, ShouldBeNil)
