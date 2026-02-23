@@ -26,6 +26,7 @@
 package fofn
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"maps"
@@ -33,7 +34,9 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
+	"github.com/wtsi-hgi/ibackup/transfer"
 	"gopkg.in/yaml.v3"
 )
 
@@ -53,10 +56,19 @@ var ErrMetadataKeyColon = errors.New("metadata key contains colon")
 // a semicolon or equals sign, which would break the serialised meta string.
 var ErrMetadataDelimiter = errors.New("metadata key or value contains '=' or ';'")
 
+// ErrMetadataDelimiter is returned when a metadata key or value contains
+// a null byte.
+var ErrMetadataNull = errors.New("metadata key or value contains null byte")
+
 // SubDirConfig holds configuration for a watched subdirectory.
 type SubDirConfig struct {
 	Transformer string            `yaml:"transformer"`
 	Freeze      bool              `yaml:"freeze,omitempty"`
+	Requester   string            `yaml:"requester,omitempty"`
+	Name        string            `yaml:"name,omitempty"`
+	Review      string            `yaml:"review,omitempty"`
+	Remove      string            `yaml:"remove,omitempty"`
+	Reason      string            `yaml:"reason,omitempty"`
 	Metadata    map[string]string `yaml:"metadata,omitempty"`
 }
 
@@ -84,10 +96,6 @@ func ReadConfig(dir string) (SubDirConfig, error) {
 // UserMetaString returns a semicolon-separated string of
 // sorted key=value pairs from the metadata map.
 func (c SubDirConfig) UserMetaString() string {
-	if len(c.Metadata) == 0 {
-		return ""
-	}
-
 	keys := slices.Sorted(maps.Keys(c.Metadata))
 
 	pairs := make([]string, 0, len(keys))
@@ -95,7 +103,21 @@ func (c SubDirConfig) UserMetaString() string {
 		pairs = append(pairs, k+"="+c.Metadata[k])
 	}
 
+	pairs = appendFOFNMetaData(pairs, "reason", c.Reason)
+	pairs = appendFOFNMetaData(pairs, "remove", c.Remove)
+	pairs = appendFOFNMetaData(pairs, "requester", c.Requester)
+	pairs = appendFOFNMetaData(pairs, "review", c.Review)
+	pairs = appendFOFNMetaData(pairs, "set", c.Name)
+
 	return strings.Join(pairs, ";")
+}
+
+func appendFOFNMetaData(pairs []string, key, value string) []string {
+	if value == "" {
+		return pairs
+	}
+
+	return append(pairs, transfer.MetaFOFNNamespace+key+"="+value)
 }
 
 // WriteConfig writes cfg as config.yml in dir. Returns an error if Transformer
@@ -119,17 +141,56 @@ func validateConfig(cfg SubDirConfig) error {
 	}
 
 	for key, val := range cfg.Metadata {
-		if strings.Contains(key, ":") {
-			return fmt.Errorf("%w: %q", ErrMetadataKeyColon, key)
+		if err := validateKeyValue(key, val); err != nil {
+			return err
 		}
+	}
 
-		if strings.ContainsAny(key, "=;") {
-			return fmt.Errorf("%w: key %q", ErrMetadataDelimiter, key)
-		}
+	return cmp.Or(
+		validateValue(cfg.Reason),
+		validateValue(cfg.Requester),
+		validateValue(cfg.Name),
+		validDate("Review", cfg.Review),
+		validDate("Remove", cfg.Remove),
+	)
+}
 
-		if strings.ContainsAny(val, "=;") {
-			return fmt.Errorf("%w: value %q", ErrMetadataDelimiter, val)
-		}
+func validateKeyValue(key, val string) error {
+	if strings.Contains(key, ":") {
+		return fmt.Errorf("%w: %q", ErrMetadataKeyColon, key)
+	}
+
+	if strings.ContainsAny(key, "=;") {
+		return fmt.Errorf("%w: key %q", ErrMetadataDelimiter, key)
+	}
+
+	if strings.Contains(key, "\x00") {
+		return fmt.Errorf("%w: key %q", ErrMetadataDelimiter, key)
+	}
+
+	return validateValue(val)
+}
+
+func validateValue(val string) error {
+	if strings.ContainsAny(val, "=;") {
+		return fmt.Errorf("%w: value %q", ErrMetadataDelimiter, val)
+	}
+
+	if strings.Contains(val, "\x00") {
+		return fmt.Errorf("%w: value %q", ErrMetadataDelimiter, val)
+	}
+
+	return nil
+}
+
+func validDate(key, date string) error {
+	if date == "" {
+		return nil
+	}
+
+	_, err := time.Parse(time.RFC3339Nano, date)
+	if err != nil {
+		return fmt.Errorf("%s: %w", key, err)
 	}
 
 	return nil

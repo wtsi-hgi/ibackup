@@ -41,6 +41,7 @@ import (
 const (
 	MetaNamespace     = "ibackup:"
 	MetaUserNamespace = MetaNamespace + "user:"
+	MetaFOFNNamespace = MetaNamespace + "fofn:"
 	MetaKeyMtime      = MetaNamespace + "mtime"   // mtime of source file, 1sec truncated UTC RFC 3339
 	MetaKeyOwner      = MetaNamespace + "owner"   // a username
 	MetaKeyGroup      = MetaNamespace + "group"   // a unix group name
@@ -62,7 +63,7 @@ const (
 	validMetaKeyDividers  = 2
 	metaListSeparator     = ","
 
-	errInvalidMetaNamespace    = "namespace is incorrect, must be 'ibackup:user:' or empty"
+	errInvalidMetaNamespace    = "namespace is incorrect, must be 'ibackup:user:', 'ibackup:fofn:', or empty"
 	errInvalidMetaLength       = "meta must be provided in the form key=value"
 	ErrInvalidReason           = "reason must be 'backup', 'archive', 'quarantine'"
 	ErrInvalidDurationFormat   = "duration must be in the form <number><unit>, or YYYY-MM-DD"
@@ -135,7 +136,7 @@ func handleNamespace(key string) (string, error) {
 		return MetaUserNamespace + key, nil
 	case keyDividers != validMetaKeyDividers:
 		return "", MetaError{errInvalidMetaNamespace, key}
-	case strings.HasPrefix(key, MetaUserNamespace):
+	case strings.HasPrefix(key, MetaUserNamespace), strings.HasPrefix(key, MetaFOFNNamespace):
 		return key, nil
 	default:
 		return "", MetaError{errInvalidMetaNamespace, key}
