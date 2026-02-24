@@ -131,8 +131,7 @@ func TestWriteStatusFromRun(t *testing.T) {
 			So(counts.NotProcessed, ShouldEqual, 0)
 		})
 
-		Convey("ParseStatus returns correct entries "+
-			"and counts", func() {
+		Convey("ParseStatus returns correct entries and counts", func() {
 			runDir := filepath.Join(dir, "run5")
 			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
 
@@ -268,8 +267,7 @@ func writeChunkEntry(f *os.File, local, remote string) {
 }
 
 func TestStatusMemory(t *testing.T) {
-	Convey("WriteStatusFromRun streams without "+
-		"excessive memory", t, func() {
+	Convey("WriteStatusFromRun streams without excessive memory", t, func() {
 		dir := t.TempDir()
 		runDir := filepath.Join(dir, "memrun")
 		So(os.MkdirAll(runDir, 0750), ShouldBeNil)

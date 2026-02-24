@@ -57,8 +57,7 @@ func TestBuildPutCommand(t *testing.T) {
 					"--no_replace")
 			})
 
-		Convey("includes --meta with quoted value when "+
-			"userMeta is set", func() {
+		Convey("includes --meta with quoted value when userMeta is set", func() {
 			cmd := BuildPutCommand(
 				"chunk.000000", false, "project1",
 				"colour=red;size=large",
@@ -148,8 +147,7 @@ func TestCreateJobs(t *testing.T) {
 				So(jobs[0].Retries, ShouldEqual, uint8(0))
 			})
 
-		Convey("includes --no_replace when NoReplace is "+
-			"true", func() {
+		Convey("includes --no_replace when NoReplace is true", func() {
 			cfg := RunConfig{
 				RunDir:     "/watch/proj/123",
 				ChunkPaths: []string{"chunk.000000"},
@@ -274,8 +272,7 @@ func TestIsRunComplete(t *testing.T) {
 				So(complete, ShouldBeTrue)
 			})
 
-		Convey("returns false when there are incomplete "+
-			"jobs", func() {
+		Convey("returns false when there are incomplete jobs", func() {
 			mock := &mockJobSubmitter{
 				incomplete: []*jobqueue.Job{
 					{Cmd: "cmd1"},

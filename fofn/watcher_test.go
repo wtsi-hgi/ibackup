@@ -47,16 +47,6 @@ type filePair struct {
 	Remote string
 }
 
-// writeChunkAndReport writes both a chunk file and a complete report file for
-// all pairs with status "uploaded".
-func writeChunkAndReport(
-	runDir, chunkName string,
-	pairs []filePair,
-) {
-	writeChunkFile(runDir, chunkName, pairs)
-	writeReportFile(runDir, chunkName, pairs, "uploaded")
-}
-
 // makeFilePairs creates n file pairs with sequential
 // indices starting from startIdx.
 func makeFilePairs(startIdx, endIdx int) []filePair {
@@ -71,6 +61,16 @@ func makeFilePairs(startIdx, endIdx int) []filePair {
 	}
 
 	return pairs
+}
+
+// writeChunkAndReport writes both a chunk file and a complete report file for
+// all pairs with status "uploaded".
+func writeChunkAndReport(
+	runDir, chunkName string,
+	pairs []filePair,
+) {
+	writeChunkFile(runDir, chunkName, pairs)
+	writeReportFile(runDir, chunkName, pairs, "uploaded")
 }
 
 // writeChunkOnly writes a chunk file with no report.
@@ -177,8 +177,7 @@ func TestProcessSubDir(t *testing.T) {
 
 		watchDir := t.TempDir()
 
-		Convey("creates run dir and submits jobs for "+
-			"25 paths", func() {
+		Convey("creates run dir and submits jobs for 25 paths", func() {
 			paths := generateTmpPaths(25)
 			subDir := setupSubDir(watchDir, "proj1", paths, SubDirConfig{Transformer: "test"})
 
@@ -228,8 +227,7 @@ func TestProcessSubDir(t *testing.T) {
 			}
 		})
 
-		Convey("includes --no_replace when freeze is "+
-			"true", func() {
+		Convey("includes --no_replace when freeze is true", func() {
 			paths := generateTmpPaths(5)
 			subDir := setupSubDir(
 				watchDir, "proj2", paths,
@@ -253,8 +251,7 @@ func TestProcessSubDir(t *testing.T) {
 			}
 		})
 
-		Convey("returns error when config.yml is "+
-			"missing", func() {
+		Convey("returns error when config.yml is missing", func() {
 			subPath := filepath.Join(watchDir, "proj3")
 			So(os.MkdirAll(subPath, 0750),
 				ShouldBeNil)
@@ -340,8 +337,7 @@ func TestProcessSubDir(t *testing.T) {
 				}
 			})
 
-		Convey("includes --meta when config has "+
-			"metadata", func() {
+		Convey("includes --meta when config has metadata", func() {
 			paths := generateTmpPaths(5)
 			subDir := setupSubDir(
 				watchDir, "proj6", paths,
@@ -365,8 +361,7 @@ func TestProcessSubDir(t *testing.T) {
 			}
 		})
 
-		Convey("omits --meta when config has no "+
-			"metadata", func() {
+		Convey("omits --meta when config has no metadata", func() {
 			paths := generateTmpPaths(5)
 			subDir := setupSubDir(watchDir, "proj7", paths, SubDirConfig{Transformer: "test"})
 
@@ -387,8 +382,7 @@ func TestProcessSubDir(t *testing.T) {
 			}
 		})
 
-		Convey("creates 100 chunks and 100 jobs for "+
-			"50000 paths with default bounds", func() {
+		Convey("creates 100 chunks and 100 jobs for 50000 paths with default bounds", func() {
 			paths := generateTmpPaths(50000)
 			subDir := setupSubDir(watchDir, "proj_vc3", paths, SubDirConfig{Transformer: "test"})
 
@@ -416,8 +410,7 @@ func TestGenerateStatus(t *testing.T) {
 	Convey("GenerateStatus", t, func() {
 		watchDir := t.TempDir()
 
-		Convey("writes status file and symlink "+
-			"for 3 complete reports", func() {
+		Convey("writes status file and symlink for 3 complete reports", func() {
 			subDir, runDir := setupRunDir(watchDir, "proj1")
 
 			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 5))
@@ -439,8 +432,7 @@ func TestGenerateStatus(t *testing.T) {
 			So(target, ShouldEqual, statusPath)
 		})
 
-		Convey("handles buried chunk with no "+
-			"report file", func() {
+		Convey("handles buried chunk with no report file", func() {
 			subDir, runDir := setupRunDir(watchDir, "proj2")
 
 			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 5))
@@ -466,8 +458,7 @@ func TestGenerateStatus(t *testing.T) {
 			So(target, ShouldEqual, statusPath)
 		})
 
-		Convey("handles buried chunk with "+
-			"incomplete report", func() {
+		Convey("handles buried chunk with incomplete report", func() {
 			subDir, runDir := setupRunDir(watchDir, "proj3")
 
 			pairs := makeFilePairs(0, 10)
@@ -488,8 +479,7 @@ func TestGenerateStatus(t *testing.T) {
 			So(counts.NotProcessed, ShouldEqual, 5)
 		})
 
-		Convey("sets GID on status file matching "+
-			"watch directory", func() {
+		Convey("sets GID on status file matching watch directory", func() {
 			subDir, runDir := setupRunDir(watchDir, "proj4")
 
 			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 3))
@@ -535,8 +525,7 @@ func TestWatcherPoll(t *testing.T) {
 			RandSeed: 1,
 		}
 
-		Convey("first poll submits jobs and records "+
-			"active run", func() {
+		Convey("first poll submits jobs and records active run", func() {
 			paths := generateTmpPaths(25)
 			subDir := setupSubDir(watchDir, "proj1", paths, SubDirConfig{Transformer: "test"})
 
@@ -553,8 +542,7 @@ func TestWatcherPoll(t *testing.T) {
 			So(run.RunDir, ShouldNotBeEmpty)
 		})
 
-		Convey("skips when active run has "+
-			"incomplete jobs", func() {
+		Convey("skips when active run has incomplete jobs", func() {
 			paths := generateTmpPaths(25)
 			subDir := setupSubDir(watchDir, "proj2", paths, SubDirConfig{Transformer: "test"})
 
@@ -579,8 +567,7 @@ func TestWatcherPoll(t *testing.T) {
 			So(ok, ShouldBeTrue)
 		})
 
-		Convey("completes successful run and starts "+
-			"new run when fofn changed", func() {
+		Convey("completes successful run and starts new run when fofn changed", func() {
 			paths := generateTmpPaths(25)
 			subDir := setupSubDir(watchDir, "proj3", paths, SubDirConfig{Transformer: "test"})
 
@@ -620,8 +607,7 @@ func TestWatcherPoll(t *testing.T) {
 				run.RunDir)
 		})
 
-		Convey("completes successful run with no "+
-			"new run when fofn unchanged", func() {
+		Convey("completes successful run with no new run when fofn unchanged", func() {
 			paths := generateTmpPaths(25)
 			subDir := setupSubDir(watchDir, "proj4", paths, SubDirConfig{Transformer: "test"})
 
@@ -653,8 +639,7 @@ func TestWatcherPoll(t *testing.T) {
 			So(ok, ShouldBeFalse)
 		})
 
-		Convey("generates not_processed status for "+
-			"buried chunk when fofn unchanged",
+		Convey("generates not_processed status for buried chunk when fofn unchanged",
 			func() {
 				paths := generateTmpPaths(25)
 				subDir := setupSubDir(
@@ -707,8 +692,7 @@ func TestWatcherPoll(t *testing.T) {
 					submitCount)
 			})
 
-		Convey("deletes buried jobs and starts new "+
-			"run when fofn changed", func() {
+		Convey("deletes buried jobs and starts new run when fofn changed", func() {
 			paths := generateTmpPaths(25)
 			subDir := setupSubDir(watchDir, "proj6", paths, SubDirConfig{Transformer: "test"})
 
@@ -749,8 +733,7 @@ func TestWatcherPoll(t *testing.T) {
 				run.RunDir)
 		})
 
-		Convey("deletes old run directories on "+
-			"successful completion", func() {
+		Convey("deletes old run directories on successful completion", func() {
 			paths := generateTmpPaths(25)
 			subDir := setupSubDir(watchDir, "proj7", paths, SubDirConfig{Transformer: "test"})
 
@@ -781,8 +764,7 @@ func TestWatcherPoll(t *testing.T) {
 			So(statErr, ShouldBeNil)
 		})
 
-		Convey("updates status symlink after second "+
-			"run completes", func() {
+		Convey("updates status symlink after second run completes", func() {
 			paths := generateTmpPaths(25)
 			subDir := setupSubDir(watchDir, "proj8", paths, SubDirConfig{Transformer: "test"})
 
@@ -814,6 +796,12 @@ func TestWatcherPoll(t *testing.T) {
 			err = w.Poll()
 			So(err, ShouldBeNil)
 
+			statusPath := filepath.Join(secondRun.RunDir, "status")
+			entries, counts, parseErr := ParseStatus(statusPath)
+			So(parseErr, ShouldBeNil)
+			So(entries, ShouldHaveLength, 15)
+			So(counts.Uploaded, ShouldEqual, 15)
+
 			symlinkPath := filepath.Join(subDir.Path, "status")
 			target, readErr := os.Readlink(symlinkPath)
 			So(readErr, ShouldBeNil)
@@ -836,8 +824,7 @@ func TestWatcherRestart(t *testing.T) {
 			RandSeed: 1,
 		}
 
-		Convey("detects existing run with incomplete "+
-			"jobs and does not submit new jobs",
+		Convey("detects existing run with incomplete jobs and does not submit new jobs",
 			func() {
 				subPath := filepath.Join(watchDir, "proj")
 				So(os.MkdirAll(subPath, 0750),
@@ -875,8 +862,7 @@ func TestWatcherRestart(t *testing.T) {
 				So(run.RunDir, ShouldEqual, runDir)
 			})
 
-		Convey("detects completed existing run and "+
-			"generates status file", func() {
+		Convey("detects completed existing run and generates status file", func() {
 			subPath := filepath.Join(watchDir, "proj")
 			So(os.MkdirAll(subPath, 0750),
 				ShouldBeNil)
@@ -987,8 +973,7 @@ func TestWatcherParallel(t *testing.T) {
 				RandSeed: 1,
 			}
 
-			Convey("processes all 3 subdirectories "+
-				"in a single poll cycle", func() {
+			Convey("processes all 3 subdirectories in a single poll cycle", func() {
 				for _, name := range []string{
 					"proj1", "proj2", "proj3",
 				} {
@@ -1010,9 +995,7 @@ func TestWatcherParallel(t *testing.T) {
 					ShouldHaveLength, 3)
 			})
 
-			Convey("only submits jobs for new "+
-				"subdirectory when 2 have active "+
-				"runs", func() {
+			Convey("only submits jobs for new subdirectory when 2 have active runs", func() {
 				for _, name := range []string{
 					"proj1", "proj2",
 				} {
