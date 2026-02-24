@@ -442,27 +442,6 @@ func GenerateStatus(
 	return createStatusSymlink(statusPath, subDir.Path)
 }
 
-// deleteOldRunDirs removes all numeric directories in
-// subDirPath except the one matching keepMtime.
-func deleteOldRunDirs(
-	subDirPath string, keepMtime int64,
-) error {
-	entries, err := os.ReadDir(subDirPath)
-	if err != nil {
-		return fmt.Errorf("read dir for cleanup: %w", err)
-	}
-
-	for _, entry := range entries {
-		if err := removeIfOldRunDir(
-			subDirPath, entry, keepMtime,
-		); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
 func (w *Watcher) handleBuriedRun(
 	subDir SubDir,
 	run RunState,
@@ -545,6 +524,10 @@ func (w *Watcher) detectExistingRun(
 	}
 
 	if complete && !needsProcessing && hasCurrentStatusArtifacts(subDir.Path, run.RunDir) {
+		if err := deleteOldRunDirs(subDir.Path, run.Mtime); err != nil {
+			return false, err
+		}
+
 		return true, nil
 	}
 
@@ -574,6 +557,27 @@ func hasCurrentStatusArtifacts(subDirPath, runDir string) bool {
 	}
 
 	return target == statusPath
+}
+
+// deleteOldRunDirs removes all numeric directories in
+// subDirPath except the one matching keepMtime.
+func deleteOldRunDirs(
+	subDirPath string, keepMtime int64,
+) error {
+	entries, err := os.ReadDir(subDirPath)
+	if err != nil {
+		return fmt.Errorf("read dir for cleanup: %w", err)
+	}
+
+	for _, entry := range entries {
+		if err := removeIfOldRunDir(
+			subDirPath, entry, keepMtime,
+		); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (w *Watcher) startNewRun(subDir SubDir) error {

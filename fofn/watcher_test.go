@@ -47,6 +47,16 @@ type filePair struct {
 	Remote string
 }
 
+// writeChunkAndReport writes both a chunk file and a complete report file for
+// all pairs with status "uploaded".
+func writeChunkAndReport(
+	runDir, chunkName string,
+	pairs []filePair,
+) {
+	writeChunkFile(runDir, chunkName, pairs)
+	writeReportFile(runDir, chunkName, pairs, "uploaded")
+}
+
 // makeFilePairs creates n file pairs with sequential
 // indices starting from startIdx.
 func makeFilePairs(startIdx, endIdx int) []filePair {
@@ -61,16 +71,6 @@ func makeFilePairs(startIdx, endIdx int) []filePair {
 	}
 
 	return pairs
-}
-
-// writeChunkAndReport writes both a chunk file and a complete report file for
-// all pairs with status "uploaded".
-func writeChunkAndReport(
-	runDir, chunkName string,
-	pairs []filePair,
-) {
-	writeChunkFile(runDir, chunkName, pairs)
-	writeReportFile(runDir, chunkName, pairs, "uploaded")
 }
 
 // writeChunkOnly writes a chunk file with no report.
@@ -898,8 +898,8 @@ func TestWatcherRestart(t *testing.T) {
 
 			So(mock.submitted, ShouldBeEmpty)
 
-			_, ok := w.activeRuns[subPath]
-			So(ok, ShouldBeFalse)
+			_, found := w.activeRuns[subPath]
+			So(found, ShouldBeFalse)
 		})
 
 		Convey("does not rewrite status artefacts for same fofn mtime after completion", func() {
@@ -928,16 +928,21 @@ func TestWatcherRestart(t *testing.T) {
 			So(err, ShouldBeNil)
 
 			statusPath := filepath.Join(runDir, "status")
+			knownTime := time.Unix(900, 0)
+			So(os.Chtimes(statusPath, knownTime, knownTime), ShouldBeNil)
+
 			statusInfoBefore, statErr := os.Stat(statusPath)
 			So(statErr, ShouldBeNil)
+			So(statusInfoBefore.ModTime(), ShouldEqual, knownTime)
 
 			symlinkPath := filepath.Join(subPath, "status")
 			symlinkInfoBefore, lstatErr := os.Lstat(symlinkPath)
 			So(lstatErr, ShouldBeNil)
 
-			So(mock.submitted, ShouldBeEmpty)
+			beforeStat, ok := symlinkInfoBefore.Sys().(*syscall.Stat_t)
+			So(ok, ShouldBeTrue)
 
-			time.Sleep(1100 * time.Millisecond)
+			So(mock.submitted, ShouldBeEmpty)
 
 			err = w.Poll()
 			So(err, ShouldBeNil)
@@ -948,15 +953,50 @@ func TestWatcherRestart(t *testing.T) {
 			symlinkInfoAfter, lstatErr := os.Lstat(symlinkPath)
 			So(lstatErr, ShouldBeNil)
 
+			afterStat, ok := symlinkInfoAfter.Sys().(*syscall.Stat_t)
+			So(ok, ShouldBeTrue)
+
 			So(statusInfoAfter.ModTime(), ShouldEqual, statusInfoBefore.ModTime())
-			So(symlinkInfoAfter.ModTime(), ShouldEqual, symlinkInfoBefore.ModTime())
+			So(afterStat.Ino, ShouldEqual, beforeStat.Ino)
 
 			target, readErr := os.Readlink(symlinkPath)
 			So(readErr, ShouldBeNil)
 			So(target, ShouldEqual, statusPath)
 
-			_, ok := w.activeRuns[subPath]
-			So(ok, ShouldBeFalse)
+			_, found := w.activeRuns[subPath]
+			So(found, ShouldBeFalse)
+		})
+
+		Convey("cleans stale run directories on no-rewrite early return", func() {
+			subPath := filepath.Join(watchDir, "proj")
+			So(os.MkdirAll(subPath, 0750), ShouldBeNil)
+
+			fofnPath := writeFofn(subPath, generateTmpPaths(10))
+			fofnTime := time.Unix(1000, 0)
+			So(os.Chtimes(fofnPath, fofnTime, fofnTime), ShouldBeNil)
+
+			So(WriteConfig(subPath, SubDirConfig{Transformer: "test"}), ShouldBeNil)
+
+			runDir := filepath.Join(subPath, "1000")
+			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
+
+			oldRunDir := filepath.Join(subPath, "500")
+			So(os.MkdirAll(oldRunDir, 0750), ShouldBeNil)
+
+			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 10))
+			So(GenerateStatus(runDir, SubDir{Path: subPath}, nil), ShouldBeNil)
+
+			mock := &mockJobSubmitter{}
+			w := NewWatcher(watchDir, mock, cfg)
+
+			err := w.Poll()
+			So(err, ShouldBeNil)
+			So(mock.submitted, ShouldBeEmpty)
+
+			_, statErr := os.Stat(oldRunDir)
+			So(os.IsNotExist(statErr), ShouldBeTrue)
+			_, statErr = os.Stat(runDir)
+			So(statErr, ShouldBeNil)
 		})
 
 		Convey("processes updated fofn when completed status artefacts already exist", func() {
