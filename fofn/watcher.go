@@ -535,7 +535,16 @@ func (w *Watcher) detectExistingRun(
 		return false, err
 	}
 
-	if complete && hasCurrentStatusArtifacts(subDir.Path, run.RunDir) {
+	needsProcessing := true
+
+	if complete {
+		needsProcessing, _, err = NeedsProcessing(subDir)
+		if err != nil {
+			return false, err
+		}
+	}
+
+	if complete && !needsProcessing && hasCurrentStatusArtifacts(subDir.Path, run.RunDir) {
 		return true, nil
 	}
 

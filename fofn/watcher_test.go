@@ -958,6 +958,37 @@ func TestWatcherRestart(t *testing.T) {
 			_, ok := w.activeRuns[subPath]
 			So(ok, ShouldBeFalse)
 		})
+
+		Convey("processes updated fofn when completed status artefacts already exist", func() {
+			subPath := filepath.Join(watchDir, "proj")
+			So(os.MkdirAll(subPath, 0750), ShouldBeNil)
+
+			fofnPath := writeFofn(subPath, generateTmpPaths(10))
+			fofnTime := time.Unix(1000, 0)
+			So(os.Chtimes(fofnPath, fofnTime, fofnTime), ShouldBeNil)
+
+			So(WriteConfig(subPath, SubDirConfig{Transformer: "test"}), ShouldBeNil)
+
+			runDir := filepath.Join(subPath, "1000")
+			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
+
+			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 10))
+			So(GenerateStatus(runDir, SubDir{Path: subPath}, nil), ShouldBeNil)
+
+			mock := &mockJobSubmitter{}
+			w := NewWatcher(watchDir, mock, cfg)
+
+			updateFofnMtime(subPath, generateTmpPaths(15), 2000)
+
+			err := w.Poll()
+			So(err, ShouldBeNil)
+			So(mock.submitted, ShouldNotBeEmpty)
+
+			run, ok := w.activeRuns[subPath]
+			So(ok, ShouldBeTrue)
+			So(run.Mtime, ShouldEqual, 2000)
+			So(run.RunDir, ShouldNotEqual, runDir)
+		})
 	})
 }
 
