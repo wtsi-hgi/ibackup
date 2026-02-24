@@ -47,6 +47,16 @@ type filePair struct {
 	Remote string
 }
 
+// writeChunkAndReport writes both a chunk file and a complete report file for
+// all pairs with status "uploaded".
+func writeChunkAndReport(
+	runDir, chunkName string,
+	pairs []filePair,
+) {
+	writeChunkFile(runDir, chunkName, pairs)
+	writeReportFile(runDir, chunkName, pairs, "uploaded")
+}
+
 // makeFilePairs creates n file pairs with sequential
 // indices starting from startIdx.
 func makeFilePairs(startIdx, endIdx int) []filePair {
@@ -61,16 +71,6 @@ func makeFilePairs(startIdx, endIdx int) []filePair {
 	}
 
 	return pairs
-}
-
-// writeChunkAndReport writes both a chunk file and a complete report file for
-// all pairs with status "uploaded".
-func writeChunkAndReport(
-	runDir, chunkName string,
-	pairs []filePair,
-) {
-	writeChunkFile(runDir, chunkName, pairs)
-	writeReportFile(runDir, chunkName, pairs, "uploaded")
 }
 
 // writeChunkOnly writes a chunk file with no report.
@@ -911,6 +911,63 @@ func TestWatcherRestart(t *testing.T) {
 			So(target, ShouldEqual, statusPath)
 
 			So(mock.submitted, ShouldBeEmpty)
+
+			_, ok := w.activeRuns[subPath]
+			So(ok, ShouldBeFalse)
+		})
+
+		Convey("does not rewrite status artefacts for same fofn mtime after completion", func() {
+			subPath := filepath.Join(watchDir, "proj")
+			So(os.MkdirAll(subPath, 0750),
+				ShouldBeNil)
+
+			fofnPath := writeFofn(subPath, generateTmpPaths(10))
+
+			fofnTime := time.Unix(1000, 0)
+			So(os.Chtimes(fofnPath, fofnTime, fofnTime), ShouldBeNil)
+
+			So(WriteConfig(subPath, SubDirConfig{Transformer: "test"}), ShouldBeNil)
+
+			runDir := filepath.Join(subPath, "1000")
+			So(os.MkdirAll(runDir, 0750),
+				ShouldBeNil)
+
+			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 10))
+
+			mock := &mockJobSubmitter{}
+
+			w := NewWatcher(watchDir, mock, cfg)
+
+			err := w.Poll()
+			So(err, ShouldBeNil)
+
+			statusPath := filepath.Join(runDir, "status")
+			statusInfoBefore, statErr := os.Stat(statusPath)
+			So(statErr, ShouldBeNil)
+
+			symlinkPath := filepath.Join(subPath, "status")
+			symlinkInfoBefore, lstatErr := os.Lstat(symlinkPath)
+			So(lstatErr, ShouldBeNil)
+
+			So(mock.submitted, ShouldBeEmpty)
+
+			time.Sleep(1100 * time.Millisecond)
+
+			err = w.Poll()
+			So(err, ShouldBeNil)
+
+			statusInfoAfter, statErr := os.Stat(statusPath)
+			So(statErr, ShouldBeNil)
+
+			symlinkInfoAfter, lstatErr := os.Lstat(symlinkPath)
+			So(lstatErr, ShouldBeNil)
+
+			So(statusInfoAfter.ModTime(), ShouldEqual, statusInfoBefore.ModTime())
+			So(symlinkInfoAfter.ModTime(), ShouldEqual, symlinkInfoBefore.ModTime())
+
+			target, readErr := os.Readlink(symlinkPath)
+			So(readErr, ShouldBeNil)
+			So(target, ShouldEqual, statusPath)
 
 			_, ok := w.activeRuns[subPath]
 			So(ok, ShouldBeFalse)

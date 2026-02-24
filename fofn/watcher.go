@@ -535,6 +535,10 @@ func (w *Watcher) detectExistingRun(
 		return false, err
 	}
 
+	if complete && hasCurrentStatusArtifacts(subDir.Path, run.RunDir) {
+		return true, nil
+	}
+
 	w.setActiveRun(subDir.Path, run)
 
 	if !complete {
@@ -542,6 +546,25 @@ func (w *Watcher) detectExistingRun(
 	}
 
 	return true, w.handleActiveRun(subDir, run)
+}
+
+// hasCurrentStatusArtifacts returns true when both the run status file exists
+// and subDir/status is a symlink pointing to that file.
+func hasCurrentStatusArtifacts(subDirPath, runDir string) bool {
+	statusPath := filepath.Join(runDir, statusFilename)
+
+	if _, err := os.Stat(statusPath); err != nil {
+		return false
+	}
+
+	symlinkPath := filepath.Join(subDirPath, statusFilename)
+
+	target, err := os.Readlink(symlinkPath)
+	if err != nil {
+		return false
+	}
+
+	return target == statusPath
 }
 
 func (w *Watcher) startNewRun(subDir SubDir) error {
