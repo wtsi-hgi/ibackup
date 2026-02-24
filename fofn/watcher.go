@@ -442,27 +442,6 @@ func GenerateStatus(
 	return createStatusSymlink(statusPath, subDir.Path)
 }
 
-// deleteOldRunDirs removes all numeric directories in
-// subDirPath except the one matching keepMtime.
-func deleteOldRunDirs(
-	subDirPath string, keepMtime int64,
-) error {
-	entries, err := os.ReadDir(subDirPath)
-	if err != nil {
-		return fmt.Errorf("read dir for cleanup: %w", err)
-	}
-
-	for _, entry := range entries {
-		if err := removeIfOldRunDir(
-			subDirPath, entry, keepMtime,
-		); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
 func (w *Watcher) handleBuriedRun(
 	subDir SubDir,
 	run RunState,
@@ -535,6 +514,23 @@ func (w *Watcher) detectExistingRun(
 		return false, err
 	}
 
+	needsProcessing := true
+
+	if complete {
+		needsProcessing, _, err = NeedsProcessing(subDir)
+		if err != nil {
+			return false, err
+		}
+	}
+
+	if complete && !needsProcessing && hasCurrentStatusArtifacts(subDir.Path, run.RunDir) {
+		if err := deleteOldRunDirs(subDir.Path, run.Mtime); err != nil {
+			return false, err
+		}
+
+		return true, nil
+	}
+
 	w.setActiveRun(subDir.Path, run)
 
 	if !complete {
@@ -542,6 +538,46 @@ func (w *Watcher) detectExistingRun(
 	}
 
 	return true, w.handleActiveRun(subDir, run)
+}
+
+// hasCurrentStatusArtifacts returns true when both the run status file exists
+// and subDir/status is a symlink pointing to that file.
+func hasCurrentStatusArtifacts(subDirPath, runDir string) bool {
+	statusPath := filepath.Join(runDir, statusFilename)
+
+	if _, err := os.Stat(statusPath); err != nil {
+		return false
+	}
+
+	symlinkPath := filepath.Join(subDirPath, statusFilename)
+
+	target, err := os.Readlink(symlinkPath)
+	if err != nil {
+		return false
+	}
+
+	return target == statusPath
+}
+
+// deleteOldRunDirs removes all numeric directories in
+// subDirPath except the one matching keepMtime.
+func deleteOldRunDirs(
+	subDirPath string, keepMtime int64,
+) error {
+	entries, err := os.ReadDir(subDirPath)
+	if err != nil {
+		return fmt.Errorf("read dir for cleanup: %w", err)
+	}
+
+	for _, entry := range entries {
+		if err := removeIfOldRunDir(
+			subDirPath, entry, keepMtime,
+		); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (w *Watcher) startNewRun(subDir SubDir) error {
