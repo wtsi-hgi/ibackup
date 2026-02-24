@@ -862,6 +862,25 @@ func TestWatcherRestart(t *testing.T) {
 				So(run.RunDir, ShouldEqual, runDir)
 			})
 
+		Convey("returns error when completion status cannot be queried", func() {
+			subPath := filepath.Join(watchDir, "proj")
+			So(os.MkdirAll(subPath, 0750), ShouldBeNil)
+
+			writeFofn(subPath, generateTmpPaths(10))
+			So(WriteConfig(subPath, SubDirConfig{Transformer: "test"}), ShouldBeNil)
+
+			runDir := filepath.Join(subPath, "1000")
+			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
+			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 10))
+
+			mock := &mockJobSubmitter{incompleteErr: errTest}
+			w := NewWatcher(watchDir, mock, cfg)
+
+			err := w.Poll()
+			So(err, ShouldNotBeNil)
+			So(mock.submitted, ShouldBeEmpty)
+		})
+
 		Convey("detects completed existing run and generates status file", func() {
 			subPath := filepath.Join(watchDir, "proj")
 			So(os.MkdirAll(subPath, 0750),
@@ -900,6 +919,74 @@ func TestWatcherRestart(t *testing.T) {
 
 			_, found := w.activeRuns[subPath]
 			So(found, ShouldBeFalse)
+		})
+
+		Convey("regenerates status when symlink is missing", func() {
+			subPath := filepath.Join(watchDir, "proj")
+			So(os.MkdirAll(subPath, 0750), ShouldBeNil)
+
+			fofnPath := writeFofn(subPath, generateTmpPaths(10))
+			fofnTime := time.Unix(1000, 0)
+			So(os.Chtimes(fofnPath, fofnTime, fofnTime), ShouldBeNil)
+
+			So(WriteConfig(subPath, SubDirConfig{Transformer: "test"}), ShouldBeNil)
+
+			runDir := filepath.Join(subPath, "1000")
+			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
+
+			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 10))
+			So(GenerateStatus(runDir, SubDir{Path: subPath}, nil), ShouldBeNil)
+
+			symlinkPath := filepath.Join(subPath, "status")
+			So(os.Remove(symlinkPath), ShouldBeNil)
+
+			mock := &mockJobSubmitter{}
+			w := NewWatcher(watchDir, mock, cfg)
+
+			err := w.Poll()
+			So(err, ShouldBeNil)
+			So(mock.submitted, ShouldBeEmpty)
+
+			target, readErr := os.Readlink(symlinkPath)
+			So(readErr, ShouldBeNil)
+			So(target, ShouldEqual, filepath.Join(runDir, "status"))
+		})
+
+		Convey("regenerates status when symlink points to wrong status file", func() {
+			subPath := filepath.Join(watchDir, "proj")
+			So(os.MkdirAll(subPath, 0750), ShouldBeNil)
+
+			fofnPath := writeFofn(subPath, generateTmpPaths(10))
+			fofnTime := time.Unix(1000, 0)
+			So(os.Chtimes(fofnPath, fofnTime, fofnTime), ShouldBeNil)
+
+			So(WriteConfig(subPath, SubDirConfig{Transformer: "test"}), ShouldBeNil)
+
+			runDir := filepath.Join(subPath, "1000")
+			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
+
+			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 10))
+			So(GenerateStatus(runDir, SubDir{Path: subPath}, nil), ShouldBeNil)
+
+			wrongRunDir := filepath.Join(subPath, "900")
+			So(os.MkdirAll(wrongRunDir, 0750), ShouldBeNil)
+			wrongStatusPath := filepath.Join(wrongRunDir, "status")
+			So(os.WriteFile(wrongStatusPath, []byte("wrong"), 0600), ShouldBeNil)
+
+			symlinkPath := filepath.Join(subPath, "status")
+			So(os.Remove(symlinkPath), ShouldBeNil)
+			So(os.Symlink(wrongStatusPath, symlinkPath), ShouldBeNil)
+
+			mock := &mockJobSubmitter{}
+			w := NewWatcher(watchDir, mock, cfg)
+
+			err := w.Poll()
+			So(err, ShouldBeNil)
+			So(mock.submitted, ShouldBeEmpty)
+
+			target, readErr := os.Readlink(symlinkPath)
+			So(readErr, ShouldBeNil)
+			So(target, ShouldEqual, filepath.Join(runDir, "status"))
 		})
 
 		Convey("does not rewrite status artefacts for same fofn mtime after completion", func() {
@@ -996,6 +1083,44 @@ func TestWatcherRestart(t *testing.T) {
 			_, statErr := os.Stat(oldRunDir)
 			So(os.IsNotExist(statErr), ShouldBeTrue)
 			_, statErr = os.Stat(runDir)
+			So(statErr, ShouldBeNil)
+		})
+
+		Convey("returns error when stale-run cleanup fails on no-rewrite path", func() {
+			subPath := filepath.Join(watchDir, "proj")
+			So(os.MkdirAll(subPath, 0750), ShouldBeNil)
+
+			fofnPath := writeFofn(subPath, generateTmpPaths(10))
+			fofnTime := time.Unix(1000, 0)
+			So(os.Chtimes(fofnPath, fofnTime, fofnTime), ShouldBeNil)
+
+			So(WriteConfig(subPath, SubDirConfig{Transformer: "test"}), ShouldBeNil)
+
+			runDir := filepath.Join(subPath, "1000")
+			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
+
+			oldRunDir := filepath.Join(subPath, "500")
+			So(os.MkdirAll(oldRunDir, 0750), ShouldBeNil)
+
+			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 10))
+			So(GenerateStatus(runDir, SubDir{Path: subPath}, nil), ShouldBeNil)
+
+			soErr := os.Chmod(subPath, 0550)
+			So(soErr, ShouldBeNil)
+
+			defer func() {
+				restoreErr := os.Chmod(subPath, 0750)
+				So(restoreErr, ShouldBeNil)
+			}()
+
+			mock := &mockJobSubmitter{}
+			w := NewWatcher(watchDir, mock, cfg)
+
+			err := w.Poll()
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "remove old run dir")
+
+			_, statErr := os.Stat(oldRunDir)
 			So(statErr, ShouldBeNil)
 		})
 
