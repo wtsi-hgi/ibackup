@@ -372,6 +372,23 @@ func scanReportBestEffort(
 	return reported, hasIssues, nil
 }
 
+func handleReportScanError(
+	scanErr error,
+	issues *[]string,
+	chunkPath, reportPath string,
+	lineNo int,
+	hasIssues *bool,
+) {
+	if scanErr == nil {
+		return
+	}
+
+	*hasIssues = true
+
+	addIssue(issues, chunkPath, reportPath, lineNo,
+		fmt.Errorf("scan report: %w", scanErr))
+}
+
 func scanReportLines(
 	s *bufio.Scanner,
 	w *bufio.Writer,
@@ -421,23 +438,6 @@ func processReportTextLine(
 		chunkPath, reportPath,
 		counts, issues, reported,
 	)
-}
-
-func handleReportScanError(
-	scanErr error,
-	issues *[]string,
-	chunkPath, reportPath string,
-	lineNo int,
-	hasIssues *bool,
-) {
-	if scanErr == nil {
-		return
-	}
-
-	*hasIssues = true
-
-	addIssue(issues, chunkPath, reportPath, lineNo,
-		fmt.Errorf("scan report: %w", scanErr))
 }
 
 func processReportLine(
@@ -689,7 +689,7 @@ func writeStatusToFile(
 	return issues, nil
 }
 
-func writeIssuesFile(path string, issues []string) error {
+func writeIssuesFile(path string, issues []string) (err error) {
 	if len(issues) == 0 {
 		return removeIssuesFile(path)
 	}
@@ -701,39 +701,14 @@ func writeIssuesFile(path string, issues []string) error {
 		return fmt.Errorf("create issues file: %w", err)
 	}
 
-	if err := writeIssuesToTemp(f, issues, tmpPath); err != nil {
+	defer closeIssuesTmpOnReturn(f, tmpPath, &err)
+
+	if err = writeIssuesToTemp(f, issues); err != nil {
 		return err
 	}
 
 	if err := os.Rename(tmpPath, path); err != nil {
-		os.Remove(tmpPath)
-
 		return fmt.Errorf("rename issues file: %w", err)
-	}
-
-	return nil
-}
-
-func writeIssuesToTemp(
-	f *os.File,
-	issues []string,
-	tmpPath string,
-) error {
-	w := bufio.NewWriter(f)
-
-	if err := writeAllIssues(w, issues); err != nil {
-		return closeAndRemoveIssuesTmp(f, tmpPath, err)
-	}
-
-	if err := w.Flush(); err != nil {
-		return closeAndRemoveIssuesTmp(f, tmpPath,
-			fmt.Errorf("flush issues file: %w", err))
-	}
-
-	if err := f.Close(); err != nil {
-		os.Remove(tmpPath)
-
-		return fmt.Errorf("close issues file: %w", err)
 	}
 
 	return nil
@@ -747,6 +722,30 @@ func removeIssuesFile(path string) error {
 	return nil
 }
 
+func closeIssuesTmpOnReturn(f *os.File, tmpPath string, returnedErr *error) {
+	if closeErr := f.Close(); closeErr != nil && *returnedErr == nil {
+		*returnedErr = fmt.Errorf("close issues file: %w", closeErr)
+	}
+
+	if *returnedErr != nil {
+		os.Remove(tmpPath)
+	}
+}
+
+func writeIssuesToTemp(f *os.File, issues []string) error {
+	w := bufio.NewWriter(f)
+
+	if err := writeAllIssues(w, issues); err != nil {
+		return err
+	}
+
+	if err := w.Flush(); err != nil {
+		return fmt.Errorf("flush issues file: %w", err)
+	}
+
+	return nil
+}
+
 func writeAllIssues(w *bufio.Writer, issues []string) error {
 	for _, issue := range issues {
 		if _, err := fmt.Fprintln(w, issue); err != nil {
@@ -755,15 +754,4 @@ func writeAllIssues(w *bufio.Writer, issues []string) error {
 	}
 
 	return nil
-}
-
-func closeAndRemoveIssuesTmp(
-	f *os.File,
-	tmpPath string,
-	err error,
-) error {
-	f.Close()
-	os.Remove(tmpPath)
-
-	return err
 }
