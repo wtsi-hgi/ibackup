@@ -30,7 +30,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -308,13 +307,6 @@ func addIssue(
 ) {
 	line := formatIssue(chunkPath, reportPath, lineNo, err)
 	*issues = append(*issues, line)
-
-	attrs := []any{"chunk", chunkPath, "report", reportPath, "err", err.Error()}
-	if lineNo != issueLineUnknown {
-		attrs = append(attrs, "line", lineNo)
-	}
-
-	slog.Default().Warn("status report issue", attrs...)
 }
 
 func formatIssue(
@@ -701,7 +693,11 @@ func writeIssuesFile(path string, issues []string) (err error) {
 		return fmt.Errorf("create issues file: %w", err)
 	}
 
-	defer closeIssuesTmpOnReturn(f, tmpPath, &err)
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close issues file: %w", closeErr)
+		}
+	}()
 
 	if err = writeIssuesToTemp(f, issues); err != nil {
 		return err
@@ -720,16 +716,6 @@ func removeIssuesFile(path string) error {
 	}
 
 	return nil
-}
-
-func closeIssuesTmpOnReturn(f *os.File, tmpPath string, returnedErr *error) {
-	if closeErr := f.Close(); closeErr != nil && *returnedErr == nil {
-		*returnedErr = fmt.Errorf("close issues file: %w", closeErr)
-	}
-
-	if *returnedErr != nil {
-		os.Remove(tmpPath)
-	}
 }
 
 func writeIssuesToTemp(f *os.File, issues []string) error {
