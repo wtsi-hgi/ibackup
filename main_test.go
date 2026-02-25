@@ -5939,10 +5939,7 @@ func simulatePutWithStatuses(
 
 	for _, m := range matches {
 		base := filepath.Base(m)
-		if strings.HasSuffix(base, ".report") ||
-			strings.HasSuffix(base, ".log") ||
-			strings.HasSuffix(base, ".out") {
-
+		if strings.HasSuffix(base, ".report") || strings.HasSuffix(base, ".log") || strings.HasSuffix(base, ".out") {
 			continue
 		}
 
