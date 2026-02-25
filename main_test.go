@@ -5942,6 +5942,7 @@ func simulatePutWithStatuses(
 		if strings.HasSuffix(base, ".report") ||
 			strings.HasSuffix(base, ".log") ||
 			strings.HasSuffix(base, ".out") {
+
 			continue
 		}
 
