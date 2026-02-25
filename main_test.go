@@ -5942,7 +5942,6 @@ func simulatePutWithStatuses(
 		if strings.HasSuffix(base, ".report") ||
 			strings.HasSuffix(base, ".log") ||
 			strings.HasSuffix(base, ".out") {
-
 			continue
 		}
 
@@ -6717,8 +6716,9 @@ func TestPutReportFlag(t *testing.T) {
 			internal.CreateTestFile(t, badFile, "bad data")
 
 			So(os.Chmod(badFile, 0), ShouldBeNil)
+
 			defer func() {
-				_ = os.Chmod(badFile, 0600)
+				So(os.Chmod(badFile, 0600), ShouldBeNil)
 			}()
 
 			files := enc(goodFile) + "\t" + enc(remoteGood) + "\n"
@@ -6726,10 +6726,10 @@ func TestPutReportFlag(t *testing.T) {
 
 			reportPath := filepath.Join(tmpDir, "failure_report.tsv")
 
-			execCmd := exec.Command(
+			execCmd := exec.Command( //nolint:gosec,noctx
 				resolveBinary(app),
 				"put", "--report", reportPath, "-b",
-			) //nolint:gosec,noctx
+			)
 			execCmd.Env = os.Environ()
 			execCmd.Stdin = strings.NewReader(files)
 
