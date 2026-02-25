@@ -5889,6 +5889,134 @@ func TestWatchFofnsIntegration(t *testing.T) {
 	})
 }
 
+// integrationPaths returns n paths matching the test
+// transformer pattern (^/tmp/.*).
+func integrationPaths(n int) []string { //nolint:unparam
+	paths := make([]string, n)
+
+	for i := range n {
+		paths[i] = fmt.Sprintf("/tmp/file/%06d", i)
+	}
+
+	return paths
+}
+
+// writeNullFofn writes paths as a null-terminated fofn
+// file in the given directory.
+func writeNullFofn(dir string, paths []string) {
+	p := filepath.Join(dir, "fofn")
+
+	f, err := os.Create(p)
+	So(err, ShouldBeNil)
+
+	for _, path := range paths {
+		_, err = f.WriteString(path + "\x00")
+		So(err, ShouldBeNil)
+	}
+
+	So(f.Close(), ShouldBeNil)
+}
+
+// simulatePutExecution reads chunk files in runDir,
+// decodes base64-encoded local\tremote lines, and writes
+// .report files with "uploaded" status for all entries.
+func simulatePutExecution(runDir string) {
+	simulatePutWithStatuses(
+		runDir, func(_, _ string) string {
+			return "uploaded"
+		},
+	)
+}
+
+// simulatePutWithStatuses reads chunk files and writes
+// .report files using a custom status function.
+func simulatePutWithStatuses(
+	runDir string,
+	statusFunc func(local, remote string) string,
+) {
+	matches, err := filepath.Glob(filepath.Join(runDir, "chunk.*"))
+	So(err, ShouldBeNil)
+
+	for _, m := range matches {
+		base := filepath.Base(m)
+		if strings.HasSuffix(base, ".report") ||
+			strings.HasSuffix(base, ".log") ||
+			strings.HasSuffix(base, ".out") {
+
+			continue
+		}
+
+		writeReportForChunk(m, statusFunc)
+	}
+}
+
+// writeReportForChunk reads a chunk file and writes a
+// corresponding .report file.
+func writeReportForChunk(
+	chunkPath string,
+	statusFunc func(local, remote string) string,
+) {
+	content, err := os.ReadFile(chunkPath)
+	So(err, ShouldBeNil)
+
+	reportPath := chunkPath + ".report"
+
+	f, err := os.Create(reportPath)
+	So(err, ShouldBeNil)
+
+	lines := strings.Split(strings.TrimSpace(string(content)), "\n")
+
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+
+		local, remote := decodeIntegChunkLine(line)
+		status := statusFunc(local, remote)
+
+		reportLine := fofn.FormatReportLine(
+			fofn.ReportEntry{
+				Local:  local,
+				Remote: remote,
+				Status: status,
+			},
+		)
+
+		_, writeErr := fmt.Fprintln(f, reportLine)
+		So(writeErr, ShouldBeNil)
+	}
+
+	So(f.Close(), ShouldBeNil)
+}
+
+// decodeIntegChunkLine decodes a base64-encoded chunk
+// line into local and remote paths.
+func decodeIntegChunkLine(
+	line string,
+) (string, string) {
+	parts := strings.SplitN(line, "\t", 2)
+	So(len(parts), ShouldEqual, 2)
+
+	local, err := b64.StdEncoding.DecodeString(parts[0])
+	So(err, ShouldBeNil)
+
+	remote, err := b64.StdEncoding.DecodeString(parts[1])
+	So(err, ShouldBeNil)
+
+	return string(local), string(remote)
+}
+
+// fileGIDInteg returns the group ID of the given path.
+func fileGIDInteg(path string) int {
+	info, err := os.Stat(path)
+	So(err, ShouldBeNil)
+
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	So(ok, ShouldBeTrue)
+
+	return int(stat.Gid)
+}
+
 func TestWatchFofnsRealWRIntegration(t *testing.T) {
 	schedulerDeployment := os.Getenv("IBACKUP_TEST_SCHEDULER")
 	if schedulerDeployment == "" {
@@ -6109,134 +6237,6 @@ func TestWatchFofnsRealWRIntegration(t *testing.T) {
 	if exitCode != 0 {
 		t.Fatalf("watchfofns exit=%d output=%s", exitCode, output)
 	}
-}
-
-// integrationPaths returns n paths matching the test
-// transformer pattern (^/tmp/.*).
-func integrationPaths(n int) []string { //nolint:unparam
-	paths := make([]string, n)
-
-	for i := range n {
-		paths[i] = fmt.Sprintf("/tmp/file/%06d", i)
-	}
-
-	return paths
-}
-
-// writeNullFofn writes paths as a null-terminated fofn
-// file in the given directory.
-func writeNullFofn(dir string, paths []string) {
-	p := filepath.Join(dir, "fofn")
-
-	f, err := os.Create(p)
-	So(err, ShouldBeNil)
-
-	for _, path := range paths {
-		_, err = f.WriteString(path + "\x00")
-		So(err, ShouldBeNil)
-	}
-
-	So(f.Close(), ShouldBeNil)
-}
-
-// simulatePutExecution reads chunk files in runDir,
-// decodes base64-encoded local\tremote lines, and writes
-// .report files with "uploaded" status for all entries.
-func simulatePutExecution(runDir string) {
-	simulatePutWithStatuses(
-		runDir, func(_, _ string) string {
-			return "uploaded"
-		},
-	)
-}
-
-// simulatePutWithStatuses reads chunk files and writes
-// .report files using a custom status function.
-func simulatePutWithStatuses(
-	runDir string,
-	statusFunc func(local, remote string) string,
-) {
-	matches, err := filepath.Glob(filepath.Join(runDir, "chunk.*"))
-	So(err, ShouldBeNil)
-
-	for _, m := range matches {
-		base := filepath.Base(m)
-		if strings.HasSuffix(base, ".report") ||
-			strings.HasSuffix(base, ".log") ||
-			strings.HasSuffix(base, ".out") {
-
-			continue
-		}
-
-		writeReportForChunk(m, statusFunc)
-	}
-}
-
-// writeReportForChunk reads a chunk file and writes a
-// corresponding .report file.
-func writeReportForChunk(
-	chunkPath string,
-	statusFunc func(local, remote string) string,
-) {
-	content, err := os.ReadFile(chunkPath)
-	So(err, ShouldBeNil)
-
-	reportPath := chunkPath + ".report"
-
-	f, err := os.Create(reportPath)
-	So(err, ShouldBeNil)
-
-	lines := strings.Split(strings.TrimSpace(string(content)), "\n")
-
-	for _, line := range lines {
-		if line == "" {
-			continue
-		}
-
-		local, remote := decodeIntegChunkLine(line)
-		status := statusFunc(local, remote)
-
-		reportLine := fofn.FormatReportLine(
-			fofn.ReportEntry{
-				Local:  local,
-				Remote: remote,
-				Status: status,
-			},
-		)
-
-		_, writeErr := fmt.Fprintln(f, reportLine)
-		So(writeErr, ShouldBeNil)
-	}
-
-	So(f.Close(), ShouldBeNil)
-}
-
-// decodeIntegChunkLine decodes a base64-encoded chunk
-// line into local and remote paths.
-func decodeIntegChunkLine(
-	line string,
-) (string, string) {
-	parts := strings.SplitN(line, "\t", 2)
-	So(len(parts), ShouldEqual, 2)
-
-	local, err := b64.StdEncoding.DecodeString(parts[0])
-	So(err, ShouldBeNil)
-
-	remote, err := b64.StdEncoding.DecodeString(parts[1])
-	So(err, ShouldBeNil)
-
-	return string(local), string(remote)
-}
-
-// fileGIDInteg returns the group ID of the given path.
-func fileGIDInteg(path string) int {
-	info, err := os.Stat(path)
-	So(err, ShouldBeNil)
-
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	So(ok, ShouldBeTrue)
-
-	return int(stat.Gid)
 }
 
 func TestAddRemote(t *testing.T) {
@@ -6704,6 +6704,50 @@ func TestPutReportFlag(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(len(entries), ShouldEqual, 1)
 			So(entries[0].Status, ShouldEqual, "frozen")
+		})
+
+		Convey("report is fully parseable when put exits non-zero", func() {
+			goodFile := filepath.Join(tmpDir, "goodfile")
+			badFile := filepath.Join(tmpDir, "unreadablefile")
+
+			remoteGood := remotePath + "/goodfile"
+			remoteBad := remotePath + "/unreadablefile"
+
+			internal.CreateTestFile(t, goodFile, "good data")
+			internal.CreateTestFile(t, badFile, "bad data")
+
+			So(os.Chmod(badFile, 0), ShouldBeNil)
+			defer func() {
+				_ = os.Chmod(badFile, 0600)
+			}()
+
+			files := enc(goodFile) + "\t" + enc(remoteGood) + "\n"
+			files += enc(badFile) + "\t" + enc(remoteBad) + "\n"
+
+			reportPath := filepath.Join(tmpDir, "failure_report.tsv")
+
+			execCmd := exec.Command(
+				resolveBinary(app),
+				"put", "--report", reportPath, "-b",
+			) //nolint:gosec,noctx
+			execCmd.Env = os.Environ()
+			execCmd.Stdin = strings.NewReader(files)
+
+			_, err := execCmd.CombinedOutput()
+			So(err, ShouldNotBeNil)
+			So(execCmd.ProcessState.ExitCode(), ShouldEqual, 1)
+
+			entries, err := fofn.CollectReport(reportPath)
+			So(err, ShouldBeNil)
+			So(len(entries), ShouldEqual, 2)
+
+			statusMap := make(map[string]string)
+			for _, e := range entries {
+				statusMap[e.Local] = e.Status
+			}
+
+			So(statusMap[goodFile], ShouldEqual, "uploaded")
+			So(statusMap[badFile], ShouldEqual, "failed")
 		})
 	})
 }

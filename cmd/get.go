@@ -26,6 +26,7 @@
 package cmd
 
 import (
+	"os"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -148,9 +149,16 @@ func handleGetManualMode() {
 
 	_, downloadResults, skipResults, dfunc := handleGet(requests)
 
-	defer dfunc()
+	exitCode := printResults(
+		"down", downloadResults, skipResults,
+		len(requests), putVerbose, nil,
+	)
 
-	printResults("down", downloadResults, skipResults, len(requests), putVerbose, nil)
+	dfunc()
+
+	if exitCode != 0 {
+		os.Exit(1)
+	}
 }
 
 func handleGet(requests []*transfer.Request) (chan *transfer.Request, chan *transfer.Request,

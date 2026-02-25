@@ -264,6 +264,112 @@ func warnIfBad(r *transfer.Request, i, total int, verbose bool) {
 	warnIfBadClient(r, i, total, verbose)
 }
 
+// writeReportForRequest writes a fofn.ReportEntry for
+// the given request to the writer, if non-nil.
+func writeReportForRequest(
+	w io.Writer, req *transfer.Request,
+) {
+	if w == nil {
+		return
+	}
+
+	entry := fofn.ReportEntry{
+		Local:  req.Local,
+		Remote: req.Remote,
+		Status: string(req.Status),
+		Error:  req.Error,
+	}
+
+	if err := fofn.WriteReportEntry(w, entry); err != nil {
+		warn("failed to write report entry: %s", err)
+	}
+}
+
+// printResults reads from the given channels, outputs info about them to STDOUT
+// and STDERR, then emits summary numbers. Supply the total number of requests
+// made. If reportWriter is non-nil, a fofn.ReportEntry is written for each
+// request. Returns 1 if there were upload errors, otherwise 0.
+func printResults(
+	upDown string,
+	transferResults, skipResults chan *transfer.Request,
+	total int, verbose bool,
+	reportWriter io.Writer,
+) int {
+	r := collectResults(transferResults, skipResults, total, verbose, reportWriter)
+
+	info("%d %sloaded (%d replaced); %d skipped; %d failed; %d missing",
+		r.uploads+r.replaced, upDown, r.replaced,
+		r.skipped, r.fails, r.missing)
+
+	if r.fails > 0 {
+		return 1
+	}
+
+	return 0
+}
+
+// bufferedWriteCloser wraps a bufio.Writer over a file, flushing on close.
+type bufferedWriteCloser struct {
+	w *bufio.Writer
+	f *os.File
+}
+
+func (b *bufferedWriteCloser) Write(p []byte) (int, error) {
+	return b.w.Write(p)
+}
+
+func (b *bufferedWriteCloser) Close() error {
+	if err := b.w.Flush(); err != nil {
+		b.f.Close()
+
+		return err
+	}
+
+	return b.f.Close()
+}
+
+// openFile opens the given path, and returns it as an io.Reader along with a
+// function you should defer (to close the file).
+func openFile(path string) (io.Reader, func()) {
+	file, err := os.Open(path)
+	if err != nil {
+		dief("could not open file '%s': %s", path, err)
+	}
+
+	return file, func() {
+		file.Close()
+	}
+}
+
+// openReportWriter opens the report file for writing and returns a buffered
+// writer. Returns nil if reportPath is empty.
+func openReportWriter(reportPath string) io.WriteCloser {
+	if reportPath == "" {
+		return nil
+	}
+
+	f, err := os.Create(reportPath)
+	if err != nil {
+		dief("failed to create report file: %s", err)
+	}
+
+	return &bufferedWriteCloser{
+		w: bufio.NewWriter(f),
+		f: f,
+	}
+}
+
+// closeReportWriter closes the report writer if non-nil.
+func closeReportWriter(w io.WriteCloser) {
+	if w == nil {
+		return
+	}
+
+	if err := w.Close(); err != nil {
+		warn("failed to close report file: %s", err)
+	}
+}
+
 func warnIfBadServer(r *transfer.Request, i, total int, verbose bool) {
 	switch r.Status {
 	case transfer.RequestStatusFailed, transfer.RequestStatusMissing, transfer.RequestStatusOrphaned,
@@ -292,110 +398,6 @@ func warnIfBadClient(r *transfer.Request, i, total int, verbose bool) {
 	}
 }
 
-// printResults reads from the given channels, outputs info about them to STDOUT
-// and STDERR, then emits summary numbers. Supply the total number of requests
-// made. If reportWriter is non-nil, a fofn.ReportEntry is written for each
-// request. Exits 1 if there were upload errors.
-func printResults(
-	upDown string,
-	transferResults, skipResults chan *transfer.Request,
-	total int, verbose bool,
-	reportWriter io.Writer,
-) {
-	r := collectResults(transferResults, skipResults, total, verbose, reportWriter)
-
-	info("%d %sloaded (%d replaced); %d skipped; %d failed; %d missing",
-		r.uploads+r.replaced, upDown, r.replaced,
-		r.skipped, r.fails, r.missing)
-
-	if r.fails > 0 {
-		os.Exit(1)
-	}
-}
-
-// writeReportForRequest writes a fofn.ReportEntry for
-// the given request to the writer, if non-nil.
-func writeReportForRequest(
-	w io.Writer, req *transfer.Request,
-) {
-	if w == nil {
-		return
-	}
-
-	entry := fofn.ReportEntry{
-		Local:  req.Local,
-		Remote: req.Remote,
-		Status: string(req.Status),
-		Error:  req.Error,
-	}
-
-	if err := fofn.WriteReportEntry(w, entry); err != nil {
-		warn("failed to write report entry: %s", err)
-	}
-}
-
-func serverMode() bool {
-	if err := statter.Init(statterPath); err != nil {
-		dief("failed to initialise statter: %s", err)
-	}
-
-	return putServerMode && serverURL != ""
-}
-
-func handlePutServerMode(started time.Time) {
-	handleServerMode(started, (*server.Client).GetSomeUploadRequests, handlePut, (*server.Client).SendPutResultsToServer)
-}
-
-func handleServerMode( //nolint:gocognit,gocyclo,funlen
-	started time.Time,
-	getReq func(*server.Client) ([]*transfer.Request, error),
-	handleReq func(*server.Client, []*transfer.Request) (chan *transfer.Request, chan *transfer.Request,
-		chan *transfer.Request, func()),
-	sendReq func(*server.Client, chan *transfer.Request, chan *transfer.Request, chan *transfer.Request,
-		float64, time.Duration, time.Duration, log15.Logger) error,
-) {
-	for time.Since(started) < runFor {
-		client, err := newServerClient(serverURL, serverCert)
-		if err != nil {
-			die(err)
-		}
-
-		requests, err := getReq(client)
-		if err != nil {
-			warn("%s", err)
-
-			os.Exit(0)
-		}
-
-		err = client.MakingIRODSConnections(numIRODSConnections, heartbeatFreq)
-		if err != nil {
-			die(err)
-		}
-
-		uploadStarts, uploadResults, skipResults, dfunc := handleReq(client, requests)
-
-		err = sendReq(client, uploadStarts, uploadResults, skipResults,
-			minMBperSecondUploadSpeed, minTimeForUpload, maxStuckTime, appLogger)
-
-		dfunc()
-
-		errm := client.ClosedIRODSConnections()
-		if errm != nil {
-			warn("%s", errm)
-		}
-
-		if err != nil {
-			warn("%s", err)
-
-			os.Exit(0)
-		}
-	}
-
-	if putVerbose {
-		info("all done, exiting")
-	}
-}
-
 func handlePutManualMode() {
 	requests, err := getRequestsFromFile(putFile, putMeta, putBase64)
 	if err != nil {
@@ -404,12 +406,18 @@ func handlePutManualMode() {
 
 	_, uploadResults, skipResults, dfunc := handlePut(nil, requests)
 
-	defer dfunc()
-
 	reportWriter := openReportWriter(putReport)
-	defer closeReportWriter(reportWriter)
 
-	printResults("up", uploadResults, skipResults, len(requests), putVerbose, reportWriter)
+	exitCode := printAndCloseResults(
+		"up", uploadResults, skipResults,
+		len(requests), putVerbose, reportWriter,
+	)
+
+	dfunc()
+
+	if exitCode != 0 {
+		os.Exit(exitCode)
+	}
 }
 
 // getRequestsFromFile reads our 3 column file format from a file or STDIN and
@@ -482,19 +490,6 @@ func createScannerForFile(path string, splitter bufio.SplitFunc) (*bufio.Scanner
 	scanner.Buffer(buf, maxScanTokenSize)
 
 	return scanner, dfunc
-}
-
-// openFile opens the given path, and returns it as an io.Reader along with a
-// function you should defer (to close the file).
-func openFile(path string) (io.Reader, func()) {
-	file, err := os.Open(path)
-	if err != nil {
-		dief("could not open file '%s': %s", path, err)
-	}
-
-	return file, func() {
-		file.Close()
-	}
 }
 
 func parsePutFileLine(line string, base64Encoded bool, lineNum int,
@@ -658,51 +653,80 @@ func createCollection(p *transfer.Putter) {
 	}
 }
 
-// openReportWriter opens the report file for writing and returns a buffered
-// writer. Returns nil if reportPath is empty.
-func openReportWriter(reportPath string) io.WriteCloser {
-	if reportPath == "" {
-		return nil
-	}
+func printAndCloseResults(
+	upDown string,
+	transferResults, skipResults chan *transfer.Request,
+	total int, verbose bool,
+	reportWriter io.WriteCloser,
+) int {
+	exitCode := printResults(
+		upDown, transferResults, skipResults,
+		total, verbose, reportWriter,
+	)
 
-	f, err := os.Create(reportPath)
-	if err != nil {
-		dief("failed to create report file: %s", err)
-	}
+	closeReportWriter(reportWriter)
 
-	return &bufferedWriteCloser{
-		w: bufio.NewWriter(f),
-		f: f,
-	}
+	return exitCode
 }
 
-// bufferedWriteCloser wraps a bufio.Writer over a file, flushing on close.
-type bufferedWriteCloser struct {
-	w *bufio.Writer
-	f *os.File
-}
-
-func (b *bufferedWriteCloser) Write(p []byte) (int, error) {
-	return b.w.Write(p)
-}
-
-func (b *bufferedWriteCloser) Close() error {
-	if err := b.w.Flush(); err != nil {
-		b.f.Close()
-
-		return err
+func serverMode() bool {
+	if err := statter.Init(statterPath); err != nil {
+		dief("failed to initialise statter: %s", err)
 	}
 
-	return b.f.Close()
+	return putServerMode && serverURL != ""
 }
 
-// closeReportWriter closes the report writer if non-nil.
-func closeReportWriter(w io.WriteCloser) {
-	if w == nil {
-		return
+func handlePutServerMode(started time.Time) {
+	handleServerMode(started, (*server.Client).GetSomeUploadRequests, handlePut, (*server.Client).SendPutResultsToServer)
+}
+
+func handleServerMode( //nolint:gocognit,gocyclo,funlen
+	started time.Time,
+	getReq func(*server.Client) ([]*transfer.Request, error),
+	handleReq func(*server.Client, []*transfer.Request) (chan *transfer.Request, chan *transfer.Request,
+		chan *transfer.Request, func()),
+	sendReq func(*server.Client, chan *transfer.Request, chan *transfer.Request, chan *transfer.Request,
+		float64, time.Duration, time.Duration, log15.Logger) error,
+) {
+	for time.Since(started) < runFor {
+		client, err := newServerClient(serverURL, serverCert)
+		if err != nil {
+			die(err)
+		}
+
+		requests, err := getReq(client)
+		if err != nil {
+			warn("%s", err)
+
+			os.Exit(0)
+		}
+
+		err = client.MakingIRODSConnections(numIRODSConnections, heartbeatFreq)
+		if err != nil {
+			die(err)
+		}
+
+		uploadStarts, uploadResults, skipResults, dfunc := handleReq(client, requests)
+
+		err = sendReq(client, uploadStarts, uploadResults, skipResults,
+			minMBperSecondUploadSpeed, minTimeForUpload, maxStuckTime, appLogger)
+
+		dfunc()
+
+		errm := client.ClosedIRODSConnections()
+		if errm != nil {
+			warn("%s", errm)
+		}
+
+		if err != nil {
+			warn("%s", err)
+
+			os.Exit(0)
+		}
 	}
 
-	if err := w.Close(); err != nil {
-		warn("failed to close report file: %s", err)
+	if putVerbose {
+		info("all done, exiting")
 	}
 }
