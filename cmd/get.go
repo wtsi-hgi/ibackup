@@ -157,7 +157,7 @@ func handleGetManualMode() {
 	dfunc()
 
 	if exitCode != 0 {
-		os.Exit(1)
+		os.Exit(exitCode)
 	}
 }
 
