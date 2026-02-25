@@ -611,6 +611,14 @@ func setStatusGID(
 		return fmt.Errorf("chown status: %w", err)
 	}
 
+	issuesPath := statusPath + issuesSuffix
+
+	if err := os.Chown(
+		issuesPath, -1, gid,
+	); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("chown status issues: %w", err)
+	}
+
 	return nil
 }
 
