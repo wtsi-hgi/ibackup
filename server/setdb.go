@@ -959,7 +959,7 @@ func (s *Server) updateOrRemoveRemoteFile(removeReq *set.RemoveReq, transformer 
 		return err
 	}
 
-	if len(sets) == 0 {
+	if len(sets) == 0 && remoteMeta[transfer.MetaFOFNSet] == "" {
 		return s.removeRemoteFileAndHandleHardlink(removeReq.Path, rpath, remoteMeta, transformer, entry)
 	}
 
