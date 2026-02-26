@@ -27,6 +27,7 @@ package fofn
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -67,6 +68,9 @@ func TestWriteStatusFromRun(t *testing.T) {
 				counts.Orphaned + counts.NotProcessed
 			So(total, ShouldEqual, 25)
 			So(counts.NotProcessed, ShouldEqual, 0)
+
+			_, statErr := os.Stat(statusPath + ".issues")
+			So(errors.Is(statErr, os.ErrNotExist), ShouldBeTrue)
 		})
 
 		Convey("3 chunks, 1 buried with no report", func() {
@@ -168,6 +172,64 @@ func TestWriteStatusFromRun(t *testing.T) {
 				counts.Warning + counts.Hardlink +
 				counts.NotProcessed
 			So(sumFromCounts, ShouldEqual, 25)
+		})
+
+		Convey("malformed report line is bypassed with not_processed and diagnostics", func() {
+			runDir := filepath.Join(dir, "run6")
+			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
+
+			chunkPath := filepath.Join(runDir, fmt.Sprintf(chunkNameFormat, 0))
+			reportPath := chunkPath + ".report"
+
+			cf, err := os.Create(chunkPath)
+			So(err, ShouldBeNil)
+
+			rf, err := os.Create(reportPath)
+			So(err, ShouldBeNil)
+
+			locals := []string{"/local/0/0", "/local/0/1", "/local/0/2"}
+			remotes := []string{"/remote/0/0", "/remote/0/1", "/remote/0/2"}
+
+			for i := range locals {
+				writeChunkEntry(cf, locals[i], remotes[i])
+			}
+
+			err = WriteReportEntry(rf, ReportEntry{
+				Local:  locals[0],
+				Remote: remotes[0],
+				Status: "uploaded",
+			})
+			So(err, ShouldBeNil)
+
+			_, err = fmt.Fprintln(rf, "this\tis\tmalformed")
+			So(err, ShouldBeNil)
+
+			err = WriteReportEntry(rf, ReportEntry{
+				Local:  locals[2],
+				Remote: remotes[2],
+				Status: "uploaded",
+			})
+			So(err, ShouldBeNil)
+
+			So(cf.Close(), ShouldBeNil)
+			So(rf.Close(), ShouldBeNil)
+
+			statusPath := filepath.Join(dir, "status6")
+
+			err = WriteStatusFromRun(runDir, statusPath, nil)
+			So(err, ShouldBeNil)
+
+			entries, counts, err := ParseStatus(statusPath)
+			So(err, ShouldBeNil)
+			So(len(entries), ShouldEqual, 3)
+			So(counts.Uploaded, ShouldEqual, 2)
+			So(counts.NotProcessed, ShouldEqual, 1)
+
+			issuesPath := statusPath + ".issues"
+			issues, err := os.ReadFile(issuesPath)
+			So(err, ShouldBeNil)
+			So(string(issues), ShouldContainSubstring, "chunk.000000.report")
+			So(string(issues), ShouldContainSubstring, "line=2")
 		})
 	})
 }
