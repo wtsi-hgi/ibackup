@@ -606,9 +606,9 @@ func TestServer(t *testing.T) {
 						})
 
 						Convey("You cannot remove a file from IRODS that has the FOFN set metadata set", func() {
-							handler.AddMeta(hardlink1Remote, map[string]string{
+							So(handler.AddMeta(hardlink1Remote, map[string]string{
 								transfer.MetaFOFNSet: "fofnSet",
-							})
+							}), ShouldBeNil)
 
 							remReq := set.RemoveReq{
 								Path:   hardlink1local,
