@@ -38,7 +38,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/VertebrateResequencing/wr/jobqueue"
 	"github.com/wtsi-hgi/ibackup/internal/ownership"
 	"github.com/wtsi-hgi/ibackup/transformer"
 )
@@ -237,6 +236,12 @@ func submitChunkJobs(
 	}, nil
 }
 
+// preRead holds a cached run record and any read error for one subdirectory.
+type preRead struct {
+	rec *RunRecord
+	err error
+}
+
 // Watcher monitors a watch directory for fofn changes and manages backup runs
 // using a persisted run.json state machine.
 type Watcher struct {
@@ -259,44 +264,61 @@ func NewWatcher(watchDir string, submitter JobSubmitter, cfg ProcessSubDirConfig
 // Poll performs one poll cycle: scan for subdirectories, optionally query wr
 // for job statuses, and process each subdirectory through a linear pipeline.
 //
-// A pre-scan reads each subdirectory's run.json to determine whether any
-// directory requires wr status information. In the common steady state where
-// all directories have reached the "done" phase, the expensive wr query is
-// skipped entirely — reducing poll cost to O(N) stat/read calls.
+// A pre-scan reads each subdirectory's run.json once into a cache, both to
+// determine whether wr must be queried and to supply each goroutine with its
+// record without a second file read. In the common steady state where all
+// directories have reached the "done" phase, the expensive wr query is
+// skipped entirely — reducing poll cost to O(N) stat/readlink calls.
 func (w *Watcher) Poll() error {
 	subDirs, err := ScanForFOFNs(w.watchDir)
 	if err != nil {
 		return err
 	}
 
+	cache, needWR := preReadAll(subDirs)
+
 	var allStatus map[string]RunJobStatus
 
-	if w.anyNeedWR(subDirs) {
+	if needWR {
 		allStatus, err = ClassifyAllJobs(w.submitter)
 		if err != nil {
 			return err
 		}
 	}
 
-	return w.pollSubDirsParallel(subDirs, allStatus)
+	return w.pollSubDirsParallel(subDirs, cache, allStatus)
 }
 
-// anyNeedWR returns true if any subdirectory has a run.json with a non-done
-// phase, meaning wr job status must be queried. Directories without run.json
-// (new directories) and done directories do not require wr.
-func (w *Watcher) anyNeedWR(subDirs []SubDir) bool {
+// preReadAll reads all run.json files in one pass, caching the results and
+// determining whether any subdirectory requires a wr query. Subdirectories
+// without run.json (no entry in cache) need no wr query; subdirectories
+// with a read error are cached and wr is queried conservatively.
+func preReadAll(subDirs []SubDir) (map[string]preRead, bool) {
+	cache := make(map[string]preRead, len(subDirs))
+	needWR := false
+
 	for _, sd := range subDirs {
 		rec, found, err := readRunRecord(sd.Path)
 		if err != nil {
-			return true // conservative: query wr on read error
+			cache[sd.Path] = preRead{err: err}
+			needWR = true
+
+			continue
 		}
 
-		if found && rec.Phase != phaseDone {
-			return true
+		if !found {
+			continue
+		}
+
+		r := rec
+		cache[sd.Path] = preRead{rec: &r}
+
+		if rec.Phase != phaseDone {
+			needWR = true
 		}
 	}
 
-	return false
+	return cache, needWR
 }
 
 // Run polls immediately and then at the given interval until the context is
@@ -325,7 +347,8 @@ func (w *Watcher) Run(ctx context.Context, interval time.Duration) error {
 
 // pollSubDirsParallel processes all subdirectories concurrently with bounded
 // parallelism, collecting all errors.
-func (w *Watcher) pollSubDirsParallel(subDirs []SubDir, allStatus map[string]RunJobStatus) error {
+func (w *Watcher) pollSubDirsParallel(
+	subDirs []SubDir, cache map[string]preRead, allStatus map[string]RunJobStatus) error {
 	var (
 		wg    sync.WaitGroup
 		errMu sync.Mutex
@@ -338,7 +361,7 @@ func (w *Watcher) pollSubDirsParallel(subDirs []SubDir, allStatus map[string]Run
 
 		sem <- struct{}{}
 
-		go w.pollSubDirCollect(subDir, allStatus, sem, &wg, &errMu, &errs)
+		go w.pollSubDirCollect(subDir, cache[subDir.Path], allStatus, sem, &wg, &errMu, &errs)
 	}
 
 	wg.Wait()
@@ -348,6 +371,7 @@ func (w *Watcher) pollSubDirsParallel(subDirs []SubDir, allStatus map[string]Run
 
 func (w *Watcher) pollSubDirCollect(
 	sd SubDir,
+	cached preRead,
 	allStatus map[string]RunJobStatus,
 	sem chan struct{},
 	wg *sync.WaitGroup, errMu *sync.Mutex, errs *[]error,
@@ -355,7 +379,7 @@ func (w *Watcher) pollSubDirCollect(
 	defer wg.Done()
 	defer func() { <-sem }()
 
-	if err := w.pollSubDir(sd, allStatus); err != nil {
+	if err := w.pollSubDir(sd, cached, allStatus); err != nil {
 		errMu.Lock()
 
 		*errs = append(*errs, err)
@@ -364,23 +388,29 @@ func (w *Watcher) pollSubDirCollect(
 	}
 }
 
-// pollSubDir processes a single subdirectory using the run.json state machine:
+// pollSubDir processes a single subdirectory through a linear decision
+// pipeline using the cached run record from pre-scan:
 //
-//  1. No run.json → start a new run
-//  2. Done phase → handle locally without wr query
-//  3. Active phase (running/buried) → use wr status to decide
+//  1. Pre-read error       → propagate
+//  2. No run record        → start a new run
+//  3. Phase done           → restart if fofn changed, else repair artefacts
+//  4. Phase running/buried → skip if jobs running, restart if fofn changed,
+//     else advance via wr status
 //
-// Done directories never require wr communication because the "done" phase
-// guarantees all jobs reached a terminal state with no buried entries.
-func (w *Watcher) pollSubDir(subDir SubDir, allStatus map[string]RunJobStatus) error {
-	rec, found, err := readRunRecord(subDir.Path)
-	if err != nil {
-		return err
+// The done and active paths each check fofn mtime at the appropriate point:
+// done directories can restart immediately; active directories must first
+// confirm no wr jobs are still running (to avoid deleting their working
+// directories).
+func (w *Watcher) pollSubDir(subDir SubDir, cached preRead, allStatus map[string]RunJobStatus) error {
+	if cached.err != nil {
+		return cached.err
 	}
 
-	if !found {
+	if cached.rec == nil {
 		return w.startNewRun(subDir)
 	}
+
+	rec := cached.rec
 
 	mtime, err := fofnMtime(subDir)
 	if err != nil {
@@ -388,7 +418,7 @@ func (w *Watcher) pollSubDir(subDir SubDir, allStatus map[string]RunJobStatus) e
 	}
 
 	if rec.Phase == phaseDone {
-		return w.handleDone(subDir, rec, mtime)
+		return w.handleDone(subDir, *rec, mtime, allStatus)
 	}
 
 	return w.handleActive(subDir, rec, mtime, allStatus)
@@ -396,10 +426,11 @@ func (w *Watcher) pollSubDir(subDir SubDir, allStatus map[string]RunJobStatus) e
 
 // handleDone processes a subdirectory whose run is in the "done" phase.
 // No wr query is needed because "done" guarantees all jobs completed
-// successfully with no buried entries.
-func (w *Watcher) handleDone(subDir SubDir, rec RunRecord, mtime int64) error {
+// successfully with no buried entries. Safe to restart immediately on
+// fofn change.
+func (w *Watcher) handleDone(subDir SubDir, rec RunRecord, mtime int64, allStatus map[string]RunJobStatus) error {
 	if mtime != rec.FofnMtime {
-		return w.restartRun(subDir, rec, nil, nil)
+		return w.restartRun(subDir, rec, allStatus)
 	}
 
 	if err := repairStatusArtifacts(rec.RunDir, subDir, nil); err != nil {
@@ -410,10 +441,10 @@ func (w *Watcher) handleDone(subDir SubDir, rec RunRecord, mtime int64) error {
 }
 
 // handleActive processes a subdirectory whose run is in "running" or "buried"
-// phase. These phases require wr job status to determine progress.
-func (w *Watcher) handleActive(
-	subDir SubDir, rec RunRecord, mtime int64, allStatus map[string]RunJobStatus,
-) error {
+// phase. These phases require wr job status to determine progress. Running
+// jobs must be waited for before considering a restart; this prevents deleting
+// the run directory that active jobs depend on.
+func (w *Watcher) handleActive(subDir SubDir, rec *RunRecord, mtime int64, allStatus map[string]RunJobStatus) error {
 	status := allStatus[rec.RepGroup]
 
 	if status.HasRunning {
@@ -421,12 +452,10 @@ func (w *Watcher) handleActive(
 	}
 
 	if mtime != rec.FofnMtime {
-		_, buriedChunks := classifyPhase(status)
-
-		return w.restartRun(subDir, rec, buriedChunks, status.BuriedJobs)
+		return w.restartRun(subDir, *rec, allStatus)
 	}
 
-	return w.reconcileActive(subDir, rec, status)
+	return w.reconcileActive(subDir, *rec, status)
 }
 
 // reconcileActive performs a state transition when wr shows a phase change.
@@ -522,18 +551,19 @@ func statusSymlinkCurrent(statusPath, subDirPath string) bool {
 
 // restartRun generates a final status snapshot for the old run, cleans up
 // buried jobs and stale directories, removes run.json, and starts a fresh run
-// for the updated fofn. When called from a "done" phase, buriedChunks and
-// buriedJobs will be nil; when called from an active phase, they reflect the
-// current wr state.
-func (w *Watcher) restartRun(
-	subDir SubDir, rec RunRecord, buriedChunks []string, buriedJobs []*jobqueue.Job,
-) error {
+// for the updated fofn. Buried job information is extracted from allStatus;
+// when called from a "done" phase where allStatus may be nil, the zero-value
+// RunJobStatus correctly indicates no buried jobs.
+func (w *Watcher) restartRun(subDir SubDir, rec RunRecord, allStatus map[string]RunJobStatus) error {
+	status := allStatus[rec.RepGroup]
+	_, buriedChunks := classifyPhase(status)
+
 	if err := GenerateStatus(rec.RunDir, subDir, buriedChunks); err != nil {
 		return err
 	}
 
-	if len(buriedJobs) > 0 {
-		if err := w.submitter.DeleteJobs(buriedJobs); err != nil {
+	if len(status.BuriedJobs) > 0 {
+		if err := w.submitter.DeleteJobs(status.BuriedJobs); err != nil {
 			return err
 		}
 	}
