@@ -60,6 +60,7 @@ type RunRecord struct {
 	RepGroup     string   `json:"rep_group"`
 	Phase        string   `json:"phase"`
 	BuriedChunks []string `json:"buried_chunks,omitempty"`
+	Settled      bool     `json:"settled,omitempty"`
 }
 
 // readRunRecord reads run.json from subDirPath. Returns found=false if the
@@ -236,10 +237,14 @@ func submitChunkJobs(
 	}, nil
 }
 
-// preRead holds a cached run record and any read error for one subdirectory.
+// preRead holds a cached run record, fofn mtime, and any read error for one
+// subdirectory. Centralising all reads into the pre-scan lets pollSubDir make
+// decisions without additional I/O.
 type preRead struct {
-	rec *RunRecord
-	err error
+	rec       *RunRecord
+	err       error
+	fofnMtime int64
+	mtimeErr  error
 }
 
 // Watcher monitors a watch directory for fofn changes and manages backup runs
@@ -264,11 +269,12 @@ func NewWatcher(watchDir string, submitter JobSubmitter, cfg ProcessSubDirConfig
 // Poll performs one poll cycle: scan for subdirectories, optionally query wr
 // for job statuses, and process each subdirectory through a linear pipeline.
 //
-// A pre-scan reads each subdirectory's run.json once into a cache, both to
-// determine whether wr must be queried and to supply each goroutine with its
-// record without a second file read. In the common steady state where all
-// directories have reached the "done" phase, the expensive wr query is
-// skipped entirely — reducing poll cost to O(N) stat/readlink calls.
+// A pre-scan reads each subdirectory's run.json and fofn mtime once into a
+// cache, both to determine whether wr must be queried and to supply each
+// goroutine with its data without further file reads. Settled done directories
+// whose fofn mtime has not changed are skipped entirely \u2014 zero additional I/O.
+// In the common steady state where all directories are settled, the expensive
+// wr query is also skipped, reducing poll cost to O(N) ReadFile + Stat calls.
 func (w *Watcher) Poll() error {
 	subDirs, err := ScanForFOFNs(w.watchDir)
 	if err != nil {
@@ -289,10 +295,12 @@ func (w *Watcher) Poll() error {
 	return w.pollSubDirsParallel(subDirs, cache, allStatus)
 }
 
-// preReadAll reads all run.json files in one pass, caching the results and
-// determining whether any subdirectory requires a wr query. Subdirectories
-// without run.json (no entry in cache) need no wr query; subdirectories
-// with a read error are cached and wr is queried conservatively.
+// preReadAll reads all run.json files and fofn mtimes in one pass, caching the
+// results and determining whether any subdirectory requires a wr query.
+// Subdirectories without run.json (no entry in cache) need no wr query;
+// subdirectories with a read error are cached and wr is queried
+// conservatively. Settled done directories that match their fofn mtime are
+// skipped entirely — no further I/O is needed for them.
 func preReadAll(subDirs []SubDir) (map[string]preRead, bool) {
 	cache := make(map[string]preRead, len(subDirs))
 	needWR := false
@@ -311,11 +319,15 @@ func preReadAll(subDirs []SubDir) (map[string]preRead, bool) {
 		}
 
 		r := rec
-		cache[sd.Path] = preRead{rec: &r}
+		pr := preRead{rec: &r}
+
+		pr.fofnMtime, pr.mtimeErr = fofnMtimeFromPath(sd.Path)
 
 		if rec.Phase != phaseDone {
 			needWR = true
 		}
+
+		cache[sd.Path] = pr
 	}
 
 	return cache, needWR
@@ -389,12 +401,13 @@ func (w *Watcher) pollSubDirCollect(
 }
 
 // pollSubDir processes a single subdirectory through a linear decision
-// pipeline using the cached run record from pre-scan:
+// pipeline using the cached run record and fofn mtime from pre-scan:
 //
 //  1. Pre-read error       → propagate
 //  2. No run record        → start a new run
-//  3. Phase done           → restart if fofn changed, else repair artefacts
-//  4. Phase running/buried → skip if jobs running, restart if fofn changed,
+//  3. Settled + mtime same → nothing to do (zero I/O fast path)
+//  4. Phase done           → restart if fofn changed, else settle artefacts
+//  5. Phase running/buried → skip if jobs running, restart if fofn changed,
 //     else advance via wr status
 //
 // The done and active paths each check fofn mtime at the appropriate point:
@@ -410,11 +423,23 @@ func (w *Watcher) pollSubDir(subDir SubDir, cached preRead, allStatus map[string
 		return w.startNewRun(subDir)
 	}
 
-	rec := cached.rec
+	if cached.mtimeErr != nil {
+		return cached.mtimeErr
+	}
 
-	mtime, err := fofnMtime(subDir)
-	if err != nil {
-		return err
+	return w.pollExistingRun(subDir, cached, allStatus)
+}
+
+// pollExistingRun handles a subdirectory that has a cached run record and a
+// valid fofn mtime. It implements the settled fast path, done, and active
+// branches of the decision pipeline.
+func (w *Watcher) pollExistingRun(subDir SubDir, cached preRead, allStatus map[string]RunJobStatus) error {
+	rec := cached.rec
+	mtime := cached.fofnMtime
+
+	// Fast path: settled done run with unchanged fofn needs zero I/O.
+	if rec.Settled && rec.Phase == phaseDone && mtime == rec.FofnMtime {
+		return nil
 	}
 
 	if rec.Phase == phaseDone {
@@ -428,6 +453,10 @@ func (w *Watcher) pollSubDir(subDir SubDir, cached preRead, allStatus map[string
 // No wr query is needed because "done" guarantees all jobs completed
 // successfully with no buried entries. Safe to restart immediately on
 // fofn change.
+//
+// When the fofn is unchanged, it repairs any broken artefacts, cleans up old
+// run directories, and marks the run as Settled so that subsequent polls skip
+// all I/O via the fast path in pollSubDir.
 func (w *Watcher) handleDone(subDir SubDir, rec RunRecord, mtime int64, allStatus map[string]RunJobStatus) error {
 	if mtime != rec.FofnMtime {
 		return w.restartRun(subDir, rec, allStatus)
@@ -437,7 +466,17 @@ func (w *Watcher) handleDone(subDir SubDir, rec RunRecord, mtime int64, allStatu
 		return err
 	}
 
-	return deleteOldRunDirs(subDir.Path, rec.FofnMtime)
+	if err := deleteOldRunDirs(subDir.Path, rec.FofnMtime); err != nil {
+		return err
+	}
+
+	if !rec.Settled {
+		rec.Settled = true
+
+		return WriteRunRecord(subDir.Path, rec)
+	}
+
+	return nil
 }
 
 // handleActive processes a subdirectory whose run is in "running" or "buried"
@@ -609,10 +648,10 @@ func (w *Watcher) startNewRun(subDir SubDir) error {
 	return WriteRunRecord(subDir.Path, rec)
 }
 
-// fofnMtime returns the mtime of the fofn file in the given subdirectory as a
-// Unix timestamp.
-func fofnMtime(subDir SubDir) (int64, error) {
-	fofnPath := filepath.Join(subDir.Path, fofnFilename)
+// fofnMtimeFromPath returns the mtime of the fofn file in the given
+// subdirectory path as a Unix timestamp.
+func fofnMtimeFromPath(subDirPath string) (int64, error) {
+	fofnPath := filepath.Join(subDirPath, fofnFilename)
 
 	info, err := os.Stat(fofnPath)
 	if err != nil {

@@ -1410,6 +1410,97 @@ func TestWatcherRestart(t *testing.T) {
 			So(mock.findCallCount, ShouldEqual, 0)
 		})
 
+		Convey("marks run as settled after first done poll and skips all I/O on subsequent polls", func() {
+			subPath := filepath.Join(watchDir, "proj")
+			So(os.MkdirAll(subPath, 0750), ShouldBeNil)
+
+			fofnPath := writeFofn(subPath, generateTmpPaths(10))
+			fofnTime := time.Unix(1000, 0)
+			So(os.Chtimes(fofnPath, fofnTime, fofnTime), ShouldBeNil)
+
+			So(WriteConfig(subPath, SubDirConfig{Transformer: "test"}), ShouldBeNil)
+
+			runDir := filepath.Join(subPath, "1000")
+			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
+
+			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 10))
+			So(GenerateStatus(runDir, SubDir{Path: subPath}, nil), ShouldBeNil)
+
+			// Start with non-settled done record.
+			writeTestRunRecord(subPath, RunRecord{
+				FofnMtime: 1000,
+				RunDir:    runDir,
+				RepGroup:  "ibackup_fofn_proj_1000",
+				Phase:     phaseDone,
+			})
+
+			mock := &mockJobSubmitter{}
+			w := NewWatcher(watchDir, mock, cfg)
+
+			// First poll: repairs artefacts and sets Settled.
+			err := w.Poll()
+			So(err, ShouldBeNil)
+
+			rec := readTestRunRecord(subPath)
+			So(rec.Phase, ShouldEqual, phaseDone)
+			So(rec.Settled, ShouldBeTrue)
+
+			// Break the symlink AFTER settling; the fast path should
+			// skip repair, so the symlink stays broken until fofn changes.
+			symlinkPath := filepath.Join(subPath, "status")
+			So(os.Remove(symlinkPath), ShouldBeNil)
+
+			// Second poll: settled fast path — no I/O, no wr query,
+			// symlink not repaired (by design).
+			err = w.Poll()
+			So(err, ShouldBeNil)
+			So(mock.findCallCount, ShouldEqual, 0)
+
+			_, readErr := os.Readlink(symlinkPath)
+			So(os.IsNotExist(readErr), ShouldBeTrue)
+		})
+
+		Convey("settled done run restarts when fofn changes", func() {
+			subPath := filepath.Join(watchDir, "proj")
+			So(os.MkdirAll(subPath, 0750), ShouldBeNil)
+
+			fofnPath := writeFofn(subPath, generateTmpPaths(10))
+			fofnTime := time.Unix(1000, 0)
+			So(os.Chtimes(fofnPath, fofnTime, fofnTime), ShouldBeNil)
+
+			So(WriteConfig(subPath, SubDirConfig{Transformer: "test"}), ShouldBeNil)
+
+			runDir := filepath.Join(subPath, "1000")
+			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
+
+			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 10))
+			So(GenerateStatus(runDir, SubDir{Path: subPath}, nil), ShouldBeNil)
+
+			// Pre-settled done record.
+			writeTestRunRecord(subPath, RunRecord{
+				FofnMtime: 1000,
+				RunDir:    runDir,
+				RepGroup:  "ibackup_fofn_proj_1000",
+				Phase:     phaseDone,
+				Settled:   true,
+			})
+
+			updateFofnMtime(subPath, generateTmpPaths(15), 2000)
+
+			mock := &mockJobSubmitter{}
+			w := NewWatcher(watchDir, mock, cfg)
+
+			err := w.Poll()
+			So(err, ShouldBeNil)
+			So(mock.submitted, ShouldNotBeEmpty)
+			So(mock.findCallCount, ShouldEqual, 0)
+
+			rec := readTestRunRecord(subPath)
+			So(rec.Phase, ShouldEqual, phaseRunning)
+			So(rec.FofnMtime, ShouldEqual, 2000)
+			So(rec.Settled, ShouldBeFalse)
+		})
+
 		Convey("repairs symlink without regenerating status file", func() {
 			subPath := filepath.Join(watchDir, "proj")
 			So(os.MkdirAll(subPath, 0750), ShouldBeNil)
