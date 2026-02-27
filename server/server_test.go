@@ -605,6 +605,31 @@ func TestServer(t *testing.T) {
 							})
 						})
 
+						Convey("You cannot remove a file from IRODS that has the FOFN set metadata set", func() {
+							So(handler.AddMeta(hardlink1Remote, map[string]string{
+								transfer.MetaFOFNSet: "fofnSet",
+							}), ShouldBeNil)
+
+							remReq := set.RemoveReq{
+								Path:   hardlink1local,
+								Set:    exampleSet,
+								Action: set.ToRemove,
+							}
+
+							err = s.removeFileFromIRODSandDB(&remReq)
+							So(err, ShouldBeNil)
+
+							_, err = os.Stat(hardlink1Remote)
+							So(err, ShouldBeNil)
+
+							err = s.removeFileFromIRODSandDB(&remReq)
+
+							var serr set.Error
+
+							So(errors.As(err, &serr), ShouldBeTrue)
+							So(serr.Msg, ShouldEqual, set.ErrInvalidEntry)
+						})
+
 						Convey("And given an inode bucket that's out of sync with iRODS", func() {
 							info, errls := os.Lstat(hardlink1local)
 							So(errls, ShouldBeNil)

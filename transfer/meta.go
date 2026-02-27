@@ -42,6 +42,7 @@ const (
 	MetaNamespace     = "ibackup:"
 	MetaUserNamespace = MetaNamespace + "user:"
 	MetaFOFNNamespace = MetaNamespace + "fofn:"
+	MetaFOFNSet       = MetaFOFNNamespace + "set"
 	MetaKeyMtime      = MetaNamespace + "mtime"   // mtime of source file, 1sec truncated UTC RFC 3339
 	MetaKeyOwner      = MetaNamespace + "owner"   // a username
 	MetaKeyGroup      = MetaNamespace + "group"   // a unix group name
