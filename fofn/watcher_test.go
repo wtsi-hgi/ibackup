@@ -692,6 +692,56 @@ func TestWatcherPoll(t *testing.T) {
 					submitCount)
 			})
 
+		Convey("does not regenerate status repeatedly for unchanged buried run", func() {
+			paths := generateTmpPaths(25)
+			subDir := setupSubDir(
+				watchDir, "proj5b", paths,
+				SubDirConfig{Transformer: "test"},
+			)
+
+			mock := &mockJobSubmitter{}
+			w := NewWatcher(watchDir, mock, cfg)
+
+			err := w.Poll()
+			So(err, ShouldBeNil)
+
+			run := w.activeRuns[subDir.Path]
+			writeReportsExcept(run.RunDir, "chunk.000002")
+
+			mock.incomplete = nil
+			mock.buried = []*jobqueue.Job{{
+				Cmd: "ibackup put -f chunk.000002",
+			}}
+
+			err = w.Poll()
+			So(err, ShouldBeNil)
+
+			statusPath := filepath.Join(run.RunDir, "status")
+			knownTime := time.Unix(900, 0)
+			So(os.Chtimes(statusPath, knownTime, knownTime), ShouldBeNil)
+
+			symlinkPath := filepath.Join(subDir.Path, "status")
+			symlinkInfoBefore, lstatErr := os.Lstat(symlinkPath)
+			So(lstatErr, ShouldBeNil)
+
+			beforeStat, ok := symlinkInfoBefore.Sys().(*syscall.Stat_t)
+			So(ok, ShouldBeTrue)
+
+			err = w.Poll()
+			So(err, ShouldBeNil)
+
+			statusInfoAfter, statErr := os.Stat(statusPath)
+			So(statErr, ShouldBeNil)
+			So(statusInfoAfter.ModTime(), ShouldEqual, knownTime)
+
+			symlinkInfoAfter, lstatErr := os.Lstat(symlinkPath)
+			So(lstatErr, ShouldBeNil)
+
+			afterStat, ok := symlinkInfoAfter.Sys().(*syscall.Stat_t)
+			So(ok, ShouldBeTrue)
+			So(afterStat.Ino, ShouldEqual, beforeStat.Ino)
+		})
+
 		Convey("deletes buried jobs and starts new run when fofn changed", func() {
 			paths := generateTmpPaths(25)
 			subDir := setupSubDir(watchDir, "proj6", paths, SubDirConfig{Transformer: "test"})

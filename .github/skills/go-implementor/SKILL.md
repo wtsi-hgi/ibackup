@@ -46,7 +46,7 @@ For each acceptance test, follow these steps exactly. Do not skip any step.
 3. Write minimal implementation to pass.
 4. Refactor (short functions, low complexity, self-documenting names,
    100-col line wrap, 80-col comment wrap).
-5. Run `cleanorder <file>` on every edited `.go` file.
+5. Run `cleanorder -min-diff <files>` on every edited `.go` file.
 6. Run `golangci-lint run --fix` and fix remaining issues.
 7. Re-run the test to confirm it still passes.
 

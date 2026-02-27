@@ -447,12 +447,16 @@ func (w *Watcher) handleBuriedRun(
 	run RunState,
 	buriedChunks []string,
 ) error {
-	buriedBases := toBaseNames(buriedChunks)
-
 	needed, _, err := NeedsProcessing(subDir)
 	if err != nil {
 		return err
 	}
+
+	if !needed && hasCurrentStatusArtifacts(subDir.Path, run.RunDir) {
+		return nil
+	}
+
+	buriedBases := toBaseNames(buriedChunks)
 
 	if err := GenerateStatus(
 		run.RunDir, subDir, buriedBases,

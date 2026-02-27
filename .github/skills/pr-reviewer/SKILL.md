@@ -195,9 +195,9 @@ Include in its prompt:
   fix).
 - The surrounding code context.
 - The instruction: "Fix this specific issue. Follow the TDD cycle:
-  if the fix requires a test change, update the test first, then fix
-  the code. Run `cleanorder` on edited files. Run `golangci-lint
-  run --fix`. Confirm all tests in the package still pass."
+  if the fix requires a test change, update the test first, then fix the code.
+  Run `cleanorder -min-diff` on edited files. Run
+  `golangci-lint run --fix`. Confirm all tests in the package still pass."
 
 #### c. Review the subagent's work
 
