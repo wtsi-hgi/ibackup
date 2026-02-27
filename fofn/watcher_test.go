@@ -1104,6 +1104,50 @@ func TestWatcherRestart(t *testing.T) {
 			So(found, ShouldBeFalse)
 		})
 
+		Convey("regenerates status when report is newer than status", func() {
+			subPath := filepath.Join(watchDir, "proj")
+			So(os.MkdirAll(subPath, 0750), ShouldBeNil)
+
+			fofnPath := writeFofn(subPath, generateTmpPaths(10))
+			fofnTime := time.Unix(1000, 0)
+			So(os.Chtimes(fofnPath, fofnTime, fofnTime), ShouldBeNil)
+
+			So(WriteConfig(subPath, SubDirConfig{Transformer: "test"}), ShouldBeNil)
+
+			runDir := filepath.Join(subPath, "1000")
+			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
+
+			pairs := makeFilePairs(0, 10)
+			writeChunkAndReport(runDir, "chunk.000000", pairs)
+			So(GenerateStatus(runDir, SubDir{Path: subPath}, nil), ShouldBeNil)
+
+			statusPath := filepath.Join(runDir, "status")
+			reportPath := filepath.Join(runDir, "chunk.000000.report")
+
+			oldTime := time.Unix(900, 0)
+			newTime := time.Now().Add(2 * time.Hour)
+
+			So(os.Chtimes(statusPath, oldTime, oldTime), ShouldBeNil)
+
+			writeReportFile(runDir, "chunk.000000", pairs, "missing")
+			So(os.Chtimes(reportPath, newTime, newTime), ShouldBeNil)
+
+			mock := &mockJobSubmitter{}
+			w := NewWatcher(watchDir, mock, cfg)
+
+			err := w.Poll()
+			So(err, ShouldBeNil)
+			So(mock.submitted, ShouldBeEmpty)
+
+			_, counts, parseErr := ParseStatus(statusPath)
+			So(parseErr, ShouldBeNil)
+			So(counts.Uploaded, ShouldEqual, 0)
+			So(counts.Missing, ShouldEqual, 10)
+
+			_, found := w.activeRuns[subPath]
+			So(found, ShouldBeFalse)
+		})
+
 		Convey("cleans stale run directories on no-rewrite early return", func() {
 			subPath := filepath.Join(watchDir, "proj")
 			So(os.MkdirAll(subPath, 0750), ShouldBeNil)
@@ -1234,6 +1278,9 @@ func TestWatcherRestart(t *testing.T) {
 			So(initialCounts.NotProcessed, ShouldEqual, 5)
 
 			writeReportFile(runDir, "chunk.000001", makeFilePairs(5, 10), "uploaded")
+			reportPath := filepath.Join(runDir, "chunk.000001.report")
+			updatedTime := time.Now().Add(2 * time.Hour)
+			So(os.Chtimes(reportPath, updatedTime, updatedTime), ShouldBeNil)
 
 			mock := &mockJobSubmitter{}
 			w := NewWatcher(watchDir, mock, cfg)

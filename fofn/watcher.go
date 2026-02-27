@@ -33,6 +33,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -42,6 +43,7 @@ import (
 
 const (
 	statusFilename = "status"
+	statusStamp    = "status.stamp"
 	maxPollWorkers = 10
 )
 
@@ -417,6 +419,17 @@ func (w *Watcher) handleSuccessfulRun(
 	return w.startNewRun(subDir)
 }
 
+func shouldSkipBuriedStatusRefresh(
+	needed bool,
+	subDirPath, runDir string,
+) (bool, error) {
+	if needed {
+		return false, nil
+	}
+
+	return statusArtifactsUpToDate(subDirPath, runDir)
+}
+
 // GenerateStatus writes a combined status file from all chunk reports in
 // runDir, handles buried chunks, and creates/updates a symlink at subDir/status
 // pointing to runDir/status.
@@ -426,6 +439,7 @@ func GenerateStatus(
 	buriedChunks []string,
 ) error {
 	statusPath := filepath.Join(runDir, statusFilename)
+	stampPath := filepath.Join(runDir, statusStamp)
 
 	if err := WriteStatusFromRun(
 		runDir, statusPath, buriedChunks,
@@ -433,8 +447,12 @@ func GenerateStatus(
 		return err
 	}
 
+	if err := touchStatusStamp(stampPath); err != nil {
+		return err
+	}
+
 	if err := setStatusGID(
-		statusPath, subDir.Path,
+		statusPath, stampPath, subDir.Path,
 	); err != nil {
 		return err
 	}
@@ -452,7 +470,16 @@ func (w *Watcher) handleBuriedRun(
 		return err
 	}
 
-	if !needed && hasCurrentStatusArtifacts(subDir.Path, run.RunDir) {
+	skip, err := shouldSkipBuriedStatusRefresh(
+		needed,
+		subDir.Path,
+		run.RunDir,
+	)
+	if err != nil {
+		return err
+	}
+
+	if skip {
 		return nil
 	}
 
@@ -527,33 +554,23 @@ func (w *Watcher) detectExistingRun(
 		}
 	}
 
-	if complete && !needsProcessing && hasCurrentStatusArtifacts(subDir.Path, run.RunDir) {
-		hasNotProcessed, err := statusHasNotProcessed(run.RunDir)
+	skip, err := shouldSkipCompletedNoProcessing(
+		complete,
+		needsProcessing,
+		subDir.Path,
+		run.RunDir,
+	)
+	if err != nil {
+		return false, err
+	}
+
+	if skip {
+		err = deleteOldRunDirs(subDir.Path, run.Mtime)
 		if err != nil {
 			return false, err
 		}
 
-		if !hasNotProcessed {
-			err = deleteOldRunDirs(subDir.Path, run.Mtime)
-			if err != nil {
-				return false, err
-			}
-
-			return true, nil
-		}
-
-		buriedChunks, err := FindBuriedChunks(w.submitter, run.RepGroup, run.RunDir)
-		if err != nil {
-			return false, err
-		}
-
-		w.setActiveRun(subDir.Path, run)
-
-		if len(buriedChunks) > 0 {
-			return true, nil
-		}
-
-		return true, w.handleActiveRun(subDir, run)
+		return true, nil
 	}
 
 	w.setActiveRun(subDir.Path, run)
@@ -563,6 +580,39 @@ func (w *Watcher) detectExistingRun(
 	}
 
 	return true, w.handleActiveRun(subDir, run)
+}
+
+func shouldSkipCompletedNoProcessing(
+	complete, needsProcessing bool,
+	subDirPath, runDir string,
+) (bool, error) {
+	if !complete || needsProcessing {
+		return false, nil
+	}
+
+	return statusArtifactsUpToDate(subDirPath, runDir)
+}
+
+func statusArtifactsUpToDate(subDirPath, runDir string) (bool, error) {
+	if !hasCurrentStatusArtifacts(subDirPath, runDir) {
+		return false, nil
+	}
+
+	referenceMtime, err := statusReferenceMtime(runDir)
+	if err != nil {
+		return false, err
+	}
+
+	latestSource, found, err := latestStatusSourceMtime(runDir)
+	if err != nil {
+		return false, err
+	}
+
+	if !found {
+		return true, nil
+	}
+
+	return !latestSource.After(referenceMtime), nil
 }
 
 // hasCurrentStatusArtifacts returns true when both the run status file exists
@@ -582,17 +632,6 @@ func hasCurrentStatusArtifacts(subDirPath, runDir string) bool {
 	}
 
 	return target == statusPath
-}
-
-func statusHasNotProcessed(runDir string) (bool, error) {
-	statusPath := filepath.Join(runDir, statusFilename)
-
-	_, counts, err := ParseStatus(statusPath)
-	if err != nil {
-		return false, fmt.Errorf("parse status: %w", err)
-	}
-
-	return counts.NotProcessed > 0, nil
 }
 
 // deleteOldRunDirs removes all numeric directories in
@@ -629,10 +668,105 @@ func (w *Watcher) startNewRun(subDir SubDir) error {
 	return nil
 }
 
+func statusReferenceMtime(runDir string) (time.Time, error) {
+	stampPath := filepath.Join(runDir, statusStamp)
+
+	info, err := os.Stat(stampPath)
+	if err == nil {
+		return info.ModTime(), nil
+	}
+
+	if !errors.Is(err, os.ErrNotExist) {
+		return time.Time{}, fmt.Errorf("stat status stamp: %w", err)
+	}
+
+	statusPath := filepath.Join(runDir, statusFilename)
+
+	info, err = os.Stat(statusPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return time.Time{}, nil
+		}
+
+		return time.Time{}, fmt.Errorf("stat status: %w", err)
+	}
+
+	return info.ModTime(), nil
+}
+
+func latestStatusSourceMtime(runDir string) (time.Time, bool, error) {
+	entries, err := os.ReadDir(runDir)
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("read run dir: %w", err)
+	}
+
+	var latest time.Time
+
+	found := false
+
+	for _, entry := range entries {
+		name := entry.Name()
+
+		if !isStatusSourceFile(name) {
+			continue
+		}
+
+		info, err := entry.Info()
+		if err != nil {
+			return time.Time{}, false, fmt.Errorf("stat run entry: %w", err)
+		}
+
+		if !found || info.ModTime().After(latest) {
+			latest = info.ModTime()
+			found = true
+		}
+	}
+
+	return latest, found, nil
+}
+
+func isStatusSourceFile(name string) bool {
+	if !strings.HasPrefix(name, "chunk.") {
+		return false
+	}
+
+	if strings.HasSuffix(name, ".report") {
+		base := strings.TrimSuffix(name, ".report")
+
+		return isStatusSourceFile(base)
+	}
+
+	if isChunkAuxFile(name) {
+		return false
+	}
+
+	suffix := strings.TrimPrefix(name, "chunk.")
+	if suffix == "" {
+		return false
+	}
+
+	_, err := strconv.ParseInt(suffix, 10, 64)
+
+	return err == nil
+}
+
+func touchStatusStamp(path string) error {
+	stamp, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("create status stamp: %w", err)
+	}
+
+	if err := stamp.Close(); err != nil {
+		return fmt.Errorf("close status stamp: %w", err)
+	}
+
+	return nil
+}
+
 // setStatusGID sets the group ownership of the status
 // file to match the watch directory's GID.
 func setStatusGID(
-	statusPath, subDirPath string,
+	statusPath, stampPath, subDirPath string,
 ) error {
 	watchDir := filepath.Dir(subDirPath)
 
@@ -645,6 +779,12 @@ func setStatusGID(
 		statusPath, -1, gid,
 	); err != nil {
 		return fmt.Errorf("chown status: %w", err)
+	}
+
+	if err := os.Chown(
+		stampPath, -1, gid,
+	); err != nil {
+		return fmt.Errorf("chown status stamp: %w", err)
 	}
 
 	issuesPath := statusPath + issuesSuffix
