@@ -27,8 +27,6 @@ package fofn
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -37,7 +35,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -58,11 +55,11 @@ const (
 // RunRecord is the persisted state for one subdirectory's current run. It is
 // written atomically to run.json in the subdirectory.
 type RunRecord struct {
-	FofnMtime    int64  `json:"fofn_mtime"`
-	RunDir       string `json:"run_dir"`
-	RepGroup     string `json:"rep_group"`
-	Phase        string `json:"phase"`
-	ReportDigest string `json:"report_digest"`
+	FofnMtime    int64    `json:"fofn_mtime"`
+	RunDir       string   `json:"run_dir"`
+	RepGroup     string   `json:"rep_group"`
+	Phase        string   `json:"phase"`
+	BuriedChunks []string `json:"buried_chunks,omitempty"`
 }
 
 // readRunRecord reads run.json from subDirPath. Returns found=false if the
@@ -345,9 +342,8 @@ func (w *Watcher) pollSubDirCollect(
 //  3. FOFN changed → finalise old run's status, cleanup, start new run
 //  4. All jobs finished, FOFN unchanged → reconcile status
 //
-// Checking the fofn mtime (step 3) before the expensive status reconciliation
-// (step 4) ensures we skip unnecessary digest computation and run-record
-// updates when the directory is about to be restarted.
+// Checking the fofn mtime (step 3) before the status reconciliation (step 4)
+// ensures we skip unnecessary work when the directory is about to be restarted.
 func (w *Watcher) pollSubDir(subDir SubDir, allStatus map[string]RunJobStatus) error {
 	rec, found, err := readRunRecord(subDir.Path)
 	if err != nil {
@@ -378,24 +374,16 @@ func (w *Watcher) pollSubDir(subDir SubDir, allStatus map[string]RunJobStatus) e
 
 // ensureStatusCurrent ensures the status file, symlink, run record, and old
 // run directories are up to date for a subdirectory whose jobs have all
-// finished. It is phase-agnostic: it computes the correct phase from the
-// current job status rather than branching on the persisted phase.
+// finished. Regeneration is triggered by a phase transition, a change in the
+// set of buried chunks, or a broken/missing status symlink — without needing
+// to stat every report file.
 func (w *Watcher) ensureStatusCurrent(subDir SubDir, rec RunRecord, status RunJobStatus) error {
-	digest, err := reportDigest(rec.RunDir)
-	if err != nil {
-		return err
-	}
-
 	phase, buriedChunks := classifyPhase(status)
 
-	if statusNeedsRegeneration(digest, phase, rec, subDir.Path) {
-		if err := GenerateStatus(rec.RunDir, subDir, buriedChunks); err != nil {
+	if needsStatusRegeneration(rec, phase, buriedChunks, subDir.Path) {
+		if err := regenerateAndRecord(subDir, &rec, phase, buriedChunks); err != nil {
 			return err
 		}
-	}
-
-	if err := w.updateRunRecordIfChanged(subDir.Path, rec, phase, digest); err != nil {
-		return err
 	}
 
 	if phase == phaseDone {
@@ -405,62 +393,47 @@ func (w *Watcher) ensureStatusCurrent(subDir SubDir, rec RunRecord, status RunJo
 	return nil
 }
 
-// reportDigest computes a hex SHA-256 digest of report file names and mtimes
-// in the run directory. Returns empty string if no report files exist.
-func reportDigest(runDir string) (string, error) {
-	names, err := collectReportNames(runDir)
-	if err != nil {
-		return "", err
+// regenerateAndRecord rewrites the status file and persists the updated run
+// record in a single step.
+func regenerateAndRecord(subDir SubDir, rec *RunRecord, phase string, buriedChunks []string) error {
+	if err := GenerateStatus(rec.RunDir, subDir, buriedChunks); err != nil {
+		return err
 	}
 
-	if len(names) == 0 {
-		return "", nil
-	}
+	rec.Phase = phase
+	rec.BuriedChunks = buriedChunks
 
-	h := sha256.New()
-
-	for _, name := range names {
-		info, err := os.Stat(filepath.Join(runDir, name))
-		if err != nil {
-			return "", fmt.Errorf("stat report %s: %w", name, err)
-		}
-
-		fmt.Fprintf(h, "%s:%d\n", name, info.ModTime().UnixNano())
-	}
-
-	return hex.EncodeToString(h.Sum(nil)), nil
+	return WriteRunRecord(subDir.Path, *rec)
 }
 
 // classifyPhase determines the correct phase and buried chunks from current
-// job status.
+// job status. Buried chunks are sorted for deterministic comparison.
 func classifyPhase(status RunJobStatus) (string, []string) {
 	if len(status.BuriedChunks) > 0 {
-		return phaseBuried, status.BuriedChunks
+		sorted := make([]string, len(status.BuriedChunks))
+		copy(sorted, status.BuriedChunks)
+		slices.Sort(sorted)
+
+		return phaseBuried, sorted
 	}
 
 	return phaseDone, nil
 }
 
-// statusNeedsRegeneration returns true when the status file or symlink must be
-// rewritten because the report digest changed, the phase changed, or the
-// symlink is stale.
-func statusNeedsRegeneration(digest, phase string, rec RunRecord, subDirPath string) bool {
-	return digest != rec.ReportDigest ||
-		phase != rec.Phase ||
-		!statusSymlinkCurrent(filepath.Join(rec.RunDir, statusFilename), subDirPath)
-}
-
-// updateRunRecordIfChanged writes the run record when phase or digest differs
-// from what is persisted.
-func (w *Watcher) updateRunRecordIfChanged(subDirPath string, rec RunRecord, phase, digest string) error {
-	if digest == rec.ReportDigest && phase == rec.Phase {
-		return nil
+// needsStatusRegeneration returns true when the status file must be rewritten.
+// This occurs on a phase transition, a change in the set of buried chunks, or
+// a broken/missing status symlink. Unlike the previous digest approach, this
+// avoids stat'ing every report file on each poll cycle.
+func needsStatusRegeneration(rec RunRecord, phase string, buriedChunks []string, subDirPath string) bool {
+	if phase != rec.Phase {
+		return true
 	}
 
-	rec.Phase = phase
-	rec.ReportDigest = digest
+	if phase == phaseBuried && !slices.Equal(buriedChunks, rec.BuriedChunks) {
+		return true
+	}
 
-	return WriteRunRecord(subDirPath, rec)
+	return !statusSymlinkCurrent(filepath.Join(rec.RunDir, statusFilename), subDirPath)
 }
 
 // WriteRunRecord writes run.json atomically via temp file + rename. Sets GID
@@ -576,26 +549,6 @@ func GenerateStatus(runDir string, subDir SubDir, buriedChunks []string) error {
 	}
 
 	return createStatusSymlink(statusPath, subDir.Path)
-}
-
-// collectReportNames returns the sorted names of .report files in runDir.
-func collectReportNames(runDir string) ([]string, error) {
-	entries, err := os.ReadDir(runDir)
-	if err != nil {
-		return nil, fmt.Errorf("read run dir for digest: %w", err)
-	}
-
-	var names []string
-
-	for _, e := range entries {
-		if strings.HasSuffix(e.Name(), ".report") {
-			names = append(names, e.Name())
-		}
-	}
-
-	slices.Sort(names)
-
-	return names, nil
 }
 
 // writeAtomicWithGID writes data to destPath via a temp file, sets GID from
