@@ -621,6 +621,13 @@ func TestServer(t *testing.T) {
 
 							_, err = os.Stat(hardlink1Remote)
 							So(err, ShouldBeNil)
+
+							err = s.removeFileFromIRODSandDB(&remReq)
+
+							var serr set.Error
+
+							So(errors.As(err, &serr), ShouldBeTrue)
+							So(serr.Msg, ShouldEqual, set.ErrInvalidEntry)
 						})
 
 						Convey("And given an inode bucket that's out of sync with iRODS", func() {
