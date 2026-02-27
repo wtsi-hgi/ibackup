@@ -58,8 +58,8 @@ CGO_ENABLED=1 go test -tags netgo --count 1 ./<path> -v -run <TestFunc>
 - **Modern Go (1.25+):** Range over integers (`for i := range n`),
   `slices`/`maps` packages, `fmt.Errorf` with `%w`, `errors.Is`/`As`.
   No C-style for loops in new code.
-- **Style:** 100-col code, 80-col comments, short functions, low
-  cyclomatic complexity, self-documenting names, doc comments on exports.
+- **Style:** short functions, low cyclomatic complexity, self-documenting names,
+  doc comments on exports.
 - **Import grouping:** stdlib, third-party, project — separated by blank
   lines.
 - **Boilerplate:** All new files start with the copyright header (2026,

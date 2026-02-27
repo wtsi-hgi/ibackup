@@ -44,8 +44,7 @@ For each acceptance test, follow these steps exactly. Do not skip any step.
 1. Write a failing test (GoConvey style).
 2. Run: `CGO_ENABLED=1 go test -tags netgo --count 1 ./<path> -v -run <TestFunc>`
 3. Write minimal implementation to pass.
-4. Refactor (short functions, low complexity, self-documenting names,
-   100-col line wrap, 80-col comment wrap).
+4. Refactor (short functions, low complexity, self-documenting names).
 5. Run `cleanorder -min-diff <files>` on every edited `.go` file.
 6. Run `golangci-lint run --fix` and fix remaining issues.
 7. Re-run the test to confirm it still passes.
@@ -105,7 +104,6 @@ repository root. If not, stop and choose an in-repo alternative.
 
 ### Style
 
-- **Line width:** 100-column hard limit for code, 80-column for comments.
 - **Function length:** Keep functions short. Extract helpers when a
   function exceeds ~30 lines of logic, excluding error handling. But do not be
   too aggressive about this: do not make it difficult to trace the logic by
