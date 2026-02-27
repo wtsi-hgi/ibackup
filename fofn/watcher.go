@@ -528,11 +528,32 @@ func (w *Watcher) detectExistingRun(
 	}
 
 	if complete && !needsProcessing && hasCurrentStatusArtifacts(subDir.Path, run.RunDir) {
-		if err := deleteOldRunDirs(subDir.Path, run.Mtime); err != nil {
+		hasNotProcessed, err := statusHasNotProcessed(run.RunDir)
+		if err != nil {
 			return false, err
 		}
 
-		return true, nil
+		if !hasNotProcessed {
+			err = deleteOldRunDirs(subDir.Path, run.Mtime)
+			if err != nil {
+				return false, err
+			}
+
+			return true, nil
+		}
+
+		buriedChunks, err := FindBuriedChunks(w.submitter, run.RepGroup, run.RunDir)
+		if err != nil {
+			return false, err
+		}
+
+		w.setActiveRun(subDir.Path, run)
+
+		if len(buriedChunks) > 0 {
+			return true, nil
+		}
+
+		return true, w.handleActiveRun(subDir, run)
 	}
 
 	w.setActiveRun(subDir.Path, run)
@@ -561,6 +582,17 @@ func hasCurrentStatusArtifacts(subDirPath, runDir string) bool {
 	}
 
 	return target == statusPath
+}
+
+func statusHasNotProcessed(runDir string) (bool, error) {
+	statusPath := filepath.Join(runDir, statusFilename)
+
+	_, counts, err := ParseStatus(statusPath)
+	if err != nil {
+		return false, fmt.Errorf("parse status: %w", err)
+	}
+
+	return counts.NotProcessed > 0, nil
 }
 
 // deleteOldRunDirs removes all numeric directories in

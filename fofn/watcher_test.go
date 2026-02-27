@@ -1204,6 +1204,52 @@ func TestWatcherRestart(t *testing.T) {
 			So(run.Mtime, ShouldEqual, 2000)
 			So(run.RunDir, ShouldNotEqual, runDir)
 		})
+
+		Convey("refreshes status after buried chunk is retried successfully", func() {
+			subPath := filepath.Join(watchDir, "proj")
+			So(os.MkdirAll(subPath, 0750), ShouldBeNil)
+
+			fofnPath := writeFofn(subPath, generateTmpPaths(10))
+			fofnTime := time.Unix(1000, 0)
+			So(os.Chtimes(fofnPath, fofnTime, fofnTime), ShouldBeNil)
+
+			So(WriteConfig(subPath, SubDirConfig{Transformer: "test"}), ShouldBeNil)
+
+			runDir := filepath.Join(subPath, "1000")
+			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
+
+			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 5))
+			writeChunkOnly(runDir, "chunk.000001", makeFilePairs(5, 10))
+
+			So(GenerateStatus(
+				runDir,
+				SubDir{Path: subPath},
+				[]string{"chunk.000001"},
+			), ShouldBeNil)
+
+			statusPath := filepath.Join(runDir, "status")
+			_, initialCounts, parseErr := ParseStatus(statusPath)
+			So(parseErr, ShouldBeNil)
+			So(initialCounts.Uploaded, ShouldEqual, 5)
+			So(initialCounts.NotProcessed, ShouldEqual, 5)
+
+			writeReportFile(runDir, "chunk.000001", makeFilePairs(5, 10), "uploaded")
+
+			mock := &mockJobSubmitter{}
+			w := NewWatcher(watchDir, mock, cfg)
+
+			err := w.Poll()
+			So(err, ShouldBeNil)
+			So(mock.submitted, ShouldBeEmpty)
+
+			_, counts, parseErr := ParseStatus(statusPath)
+			So(parseErr, ShouldBeNil)
+			So(counts.Uploaded, ShouldEqual, 10)
+			So(counts.NotProcessed, ShouldEqual, 0)
+
+			_, found := w.activeRuns[subPath]
+			So(found, ShouldBeFalse)
+		})
 	})
 }
 
