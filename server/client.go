@@ -518,6 +518,14 @@ func (c *Client) handleUploadTracking(wg *sync.WaitGroup, uploadStarts, uploadRe
 
 				c.uploadsErrCh <- err
 
+				rr := <-uploadResults
+
+				c.logger.Info(
+					"finished upload (status tracking skipped due to earlier error)",
+					"rid", ru.ID(),
+					"status", rr.Status,
+				)
+
 				continue
 			}
 		}
@@ -683,7 +691,7 @@ func (c *Client) UpdateFileStatus(r *transfer.Request) error {
 }
 
 func (c *Client) isRequestNoLongerRunningErr(err error) bool {
-	if err == nil {
+	if err == nil || !errors.Is(err, ErrInvalidInput) {
 		return false
 	}
 

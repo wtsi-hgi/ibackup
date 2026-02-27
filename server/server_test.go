@@ -100,6 +100,21 @@ func TestClient(t *testing.T) {
 		d = c.maxTimeForUpload(&transfer.Request{Size: 1})
 		So(d, ShouldEqual, min)
 	})
+
+	Convey("isRequestNoLongerRunningErr only matches scoped stale queue touch errors", t, func() {
+		c := &Client{}
+
+		staleErr := fmt.Errorf("%w: queue(put) Touch(rid): not running", ErrInvalidInput)
+		So(c.isRequestNoLongerRunningErr(staleErr), ShouldBeTrue)
+
+		notInputErr := fmt.Errorf("%w: queue(put) Touch(rid): not running", ErrInternal)
+		So(c.isRequestNoLongerRunningErr(notInputErr), ShouldBeFalse)
+
+		otherInputErr := fmt.Errorf("%w: some other bad request", ErrInvalidInput)
+		So(c.isRequestNoLongerRunningErr(otherInputErr), ShouldBeFalse)
+
+		So(c.isRequestNoLongerRunningErr(nil), ShouldBeFalse)
+	})
 }
 
 func TestFailedUploadRetryDelayConfig(t *testing.T) {
