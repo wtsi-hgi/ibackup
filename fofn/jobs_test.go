@@ -181,13 +181,14 @@ func TestCreateJobs(t *testing.T) {
 }
 
 type mockJobSubmitter struct {
-	mu         sync.Mutex
-	submitted  []*jobqueue.Job
-	submitErr  error
-	allJobs    []*jobqueue.Job
-	allJobsErr error
-	deleted    []*jobqueue.Job
-	deleteErr  error
+	mu            sync.Mutex
+	submitted     []*jobqueue.Job
+	submitErr     error
+	allJobs       []*jobqueue.Job
+	allJobsErr    error
+	deleted       []*jobqueue.Job
+	deleteErr     error
+	findCallCount int
 }
 
 func (m *mockJobSubmitter) SubmitJobs(
@@ -206,6 +207,8 @@ func (m *mockJobSubmitter) FindJobsByRepGroup(
 ) ([]*jobqueue.Job, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	m.findCallCount++
 
 	return m.allJobs, m.allJobsErr
 }

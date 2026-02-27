@@ -933,6 +933,13 @@ func TestWatcherRestart(t *testing.T) {
 			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
 			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 10))
 
+			writeTestRunRecord(subPath, RunRecord{
+				FofnMtime: 1000,
+				RunDir:    runDir,
+				RepGroup:  "ibackup_fofn_proj_1000",
+				Phase:     phaseRunning,
+			})
+
 			mock := &mockJobSubmitter{allJobsErr: errTest}
 			w := NewWatcher(watchDir, mock, cfg)
 
@@ -1369,6 +1376,126 @@ func TestWatcherRestart(t *testing.T) {
 
 			rec := readTestRunRecord(subPath)
 			So(rec.Phase, ShouldEqual, phaseDone)
+		})
+
+		Convey("skips wr query when all directories are in done phase", func() {
+			subPath := filepath.Join(watchDir, "proj")
+			So(os.MkdirAll(subPath, 0750), ShouldBeNil)
+
+			fofnPath := writeFofn(subPath, generateTmpPaths(10))
+			fofnTime := time.Unix(1000, 0)
+			So(os.Chtimes(fofnPath, fofnTime, fofnTime), ShouldBeNil)
+
+			So(WriteConfig(subPath, SubDirConfig{Transformer: "test"}), ShouldBeNil)
+
+			runDir := filepath.Join(subPath, "1000")
+			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
+
+			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 10))
+			So(GenerateStatus(runDir, SubDir{Path: subPath}, nil), ShouldBeNil)
+
+			writeTestRunRecord(subPath, RunRecord{
+				FofnMtime: 1000,
+				RunDir:    runDir,
+				RepGroup:  "ibackup_fofn_proj_1000",
+				Phase:     phaseDone,
+			})
+
+			mock := &mockJobSubmitter{}
+			w := NewWatcher(watchDir, mock, cfg)
+
+			err := w.Poll()
+			So(err, ShouldBeNil)
+			So(mock.submitted, ShouldBeEmpty)
+			So(mock.findCallCount, ShouldEqual, 0)
+		})
+
+		Convey("repairs symlink without regenerating status file", func() {
+			subPath := filepath.Join(watchDir, "proj")
+			So(os.MkdirAll(subPath, 0750), ShouldBeNil)
+
+			fofnPath := writeFofn(subPath, generateTmpPaths(10))
+			fofnTime := time.Unix(1000, 0)
+			So(os.Chtimes(fofnPath, fofnTime, fofnTime), ShouldBeNil)
+
+			So(WriteConfig(subPath, SubDirConfig{Transformer: "test"}), ShouldBeNil)
+
+			runDir := filepath.Join(subPath, "1000")
+			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
+
+			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 10))
+			So(GenerateStatus(runDir, SubDir{Path: subPath}, nil), ShouldBeNil)
+
+			writeTestRunRecord(subPath, RunRecord{
+				FofnMtime: 1000,
+				RunDir:    runDir,
+				RepGroup:  "ibackup_fofn_proj_1000",
+				Phase:     phaseDone,
+			})
+
+			// Break the symlink
+			symlinkPath := filepath.Join(subPath, "status")
+			So(os.Remove(symlinkPath), ShouldBeNil)
+
+			// Mark status file mtime to verify it's not regenerated
+			statusPath := filepath.Join(runDir, "status")
+			knownTime := time.Unix(900, 0)
+			So(os.Chtimes(statusPath, knownTime, knownTime), ShouldBeNil)
+
+			mock := &mockJobSubmitter{}
+			w := NewWatcher(watchDir, mock, cfg)
+
+			err := w.Poll()
+			So(err, ShouldBeNil)
+			So(mock.findCallCount, ShouldEqual, 0)
+
+			// Symlink was repaired
+			target, readErr := os.Readlink(symlinkPath)
+			So(readErr, ShouldBeNil)
+			So(target, ShouldEqual, statusPath)
+
+			// Status file was NOT regenerated — mtime preserved
+			statusInfo, statErr := os.Stat(statusPath)
+			So(statErr, ShouldBeNil)
+			So(statusInfo.ModTime(), ShouldEqual, knownTime)
+		})
+
+		Convey("restarts done run without wr query when fofn changes", func() {
+			subPath := filepath.Join(watchDir, "proj")
+			So(os.MkdirAll(subPath, 0750), ShouldBeNil)
+
+			fofnPath := writeFofn(subPath, generateTmpPaths(10))
+			fofnTime := time.Unix(1000, 0)
+			So(os.Chtimes(fofnPath, fofnTime, fofnTime), ShouldBeNil)
+
+			So(WriteConfig(subPath, SubDirConfig{Transformer: "test"}), ShouldBeNil)
+
+			runDir := filepath.Join(subPath, "1000")
+			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
+
+			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 10))
+			So(GenerateStatus(runDir, SubDir{Path: subPath}, nil), ShouldBeNil)
+
+			writeTestRunRecord(subPath, RunRecord{
+				FofnMtime: 1000,
+				RunDir:    runDir,
+				RepGroup:  "ibackup_fofn_proj_1000",
+				Phase:     phaseDone,
+			})
+
+			updateFofnMtime(subPath, generateTmpPaths(15), 2000)
+
+			mock := &mockJobSubmitter{}
+			w := NewWatcher(watchDir, mock, cfg)
+
+			err := w.Poll()
+			So(err, ShouldBeNil)
+			So(mock.submitted, ShouldNotBeEmpty)
+			So(mock.findCallCount, ShouldEqual, 0)
+
+			rec := readTestRunRecord(subPath)
+			So(rec.Phase, ShouldEqual, phaseRunning)
+			So(rec.FofnMtime, ShouldEqual, 2000)
 		})
 	})
 }

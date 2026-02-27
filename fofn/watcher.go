@@ -38,6 +38,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/VertebrateResequencing/wr/jobqueue"
 	"github.com/wtsi-hgi/ibackup/internal/ownership"
 	"github.com/wtsi-hgi/ibackup/transformer"
 )
@@ -255,20 +256,47 @@ func NewWatcher(watchDir string, submitter JobSubmitter, cfg ProcessSubDirConfig
 	}
 }
 
-// Poll performs one poll cycle: scan for subdirectories, query wr once for all
-// fofn job statuses, and process each subdirectory through a linear pipeline.
+// Poll performs one poll cycle: scan for subdirectories, optionally query wr
+// for job statuses, and process each subdirectory through a linear pipeline.
+//
+// A pre-scan reads each subdirectory's run.json to determine whether any
+// directory requires wr status information. In the common steady state where
+// all directories have reached the "done" phase, the expensive wr query is
+// skipped entirely — reducing poll cost to O(N) stat/read calls.
 func (w *Watcher) Poll() error {
 	subDirs, err := ScanForFOFNs(w.watchDir)
 	if err != nil {
 		return err
 	}
 
-	allStatus, err := ClassifyAllJobs(w.submitter)
-	if err != nil {
-		return err
+	var allStatus map[string]RunJobStatus
+
+	if w.anyNeedWR(subDirs) {
+		allStatus, err = ClassifyAllJobs(w.submitter)
+		if err != nil {
+			return err
+		}
 	}
 
 	return w.pollSubDirsParallel(subDirs, allStatus)
+}
+
+// anyNeedWR returns true if any subdirectory has a run.json with a non-done
+// phase, meaning wr job status must be queried. Directories without run.json
+// (new directories) and done directories do not require wr.
+func (w *Watcher) anyNeedWR(subDirs []SubDir) bool {
+	for _, sd := range subDirs {
+		rec, found, err := readRunRecord(sd.Path)
+		if err != nil {
+			return true // conservative: query wr on read error
+		}
+
+		if found && rec.Phase != phaseDone {
+			return true
+		}
+	}
+
+	return false
 }
 
 // Run polls immediately and then at the given interval until the context is
@@ -337,13 +365,13 @@ func (w *Watcher) pollSubDirCollect(
 }
 
 // pollSubDir processes a single subdirectory using the run.json state machine:
-//  1. No run.json → start a new run
-//  2. Jobs still running → wait
-//  3. FOFN changed → finalise old run's status, cleanup, start new run
-//  4. All jobs finished, FOFN unchanged → reconcile status
 //
-// Checking the fofn mtime (step 3) before the status reconciliation (step 4)
-// ensures we skip unnecessary work when the directory is about to be restarted.
+//  1. No run.json → start a new run
+//  2. Done phase → handle locally without wr query
+//  3. Active phase (running/buried) → use wr status to decide
+//
+// Done directories never require wr communication because the "done" phase
+// guarantees all jobs reached a terminal state with no buried entries.
 func (w *Watcher) pollSubDir(subDir SubDir, allStatus map[string]RunJobStatus) error {
 	rec, found, err := readRunRecord(subDir.Path)
 	if err != nil {
@@ -354,48 +382,64 @@ func (w *Watcher) pollSubDir(subDir SubDir, allStatus map[string]RunJobStatus) e
 		return w.startNewRun(subDir)
 	}
 
+	mtime, err := fofnMtime(subDir)
+	if err != nil {
+		return err
+	}
+
+	if rec.Phase == phaseDone {
+		return w.handleDone(subDir, rec, mtime)
+	}
+
+	return w.handleActive(subDir, rec, mtime, allStatus)
+}
+
+// handleDone processes a subdirectory whose run is in the "done" phase.
+// No wr query is needed because "done" guarantees all jobs completed
+// successfully with no buried entries.
+func (w *Watcher) handleDone(subDir SubDir, rec RunRecord, mtime int64) error {
+	if mtime != rec.FofnMtime {
+		return w.restartRun(subDir, rec, nil, nil)
+	}
+
+	if err := repairStatusArtifacts(rec.RunDir, subDir, nil); err != nil {
+		return err
+	}
+
+	return deleteOldRunDirs(subDir.Path, rec.FofnMtime)
+}
+
+// handleActive processes a subdirectory whose run is in "running" or "buried"
+// phase. These phases require wr job status to determine progress.
+func (w *Watcher) handleActive(
+	subDir SubDir, rec RunRecord, mtime int64, allStatus map[string]RunJobStatus,
+) error {
 	status := allStatus[rec.RepGroup]
 
 	if status.HasRunning {
 		return nil
 	}
 
-	mtime, err := fofnMtime(subDir)
-	if err != nil {
-		return err
-	}
-
 	if mtime != rec.FofnMtime {
-		return w.finalizeAndRestart(subDir, rec, status)
+		_, buriedChunks := classifyPhase(status)
+
+		return w.restartRun(subDir, rec, buriedChunks, status.BuriedJobs)
 	}
 
-	return w.ensureStatusCurrent(subDir, rec, status)
+	return w.reconcileActive(subDir, rec, status)
 }
 
-// ensureStatusCurrent ensures the status file, symlink, run record, and old
-// run directories are up to date for a subdirectory whose jobs have all
-// finished. Regeneration is triggered by a phase transition, a change in the
-// set of buried chunks, or a broken/missing status symlink — without needing
-// to stat every report file.
-func (w *Watcher) ensureStatusCurrent(subDir SubDir, rec RunRecord, status RunJobStatus) error {
+// reconcileActive performs a state transition when wr shows a phase change.
+// Status is regenerated only on genuine transitions (running→done,
+// running→buried, buried→done, or buried chunk set change), eliminating
+// redundant I/O on stable buried runs.
+func (w *Watcher) reconcileActive(subDir SubDir, rec RunRecord, status RunJobStatus) error {
 	phase, buriedChunks := classifyPhase(status)
 
-	if needsStatusRegeneration(rec, phase, buriedChunks, subDir.Path) {
-		if err := regenerateAndRecord(subDir, &rec, phase, buriedChunks); err != nil {
-			return err
-		}
+	if phase == rec.Phase && slices.Equal(buriedChunks, rec.BuriedChunks) {
+		return repairStatusArtifacts(rec.RunDir, subDir, buriedChunks)
 	}
 
-	if phase == phaseDone {
-		return deleteOldRunDirs(subDir.Path, rec.FofnMtime)
-	}
-
-	return nil
-}
-
-// regenerateAndRecord rewrites the status file and persists the updated run
-// record in a single step.
-func regenerateAndRecord(subDir SubDir, rec *RunRecord, phase string, buriedChunks []string) error {
 	if err := GenerateStatus(rec.RunDir, subDir, buriedChunks); err != nil {
 		return err
 	}
@@ -403,7 +447,15 @@ func regenerateAndRecord(subDir SubDir, rec *RunRecord, phase string, buriedChun
 	rec.Phase = phase
 	rec.BuriedChunks = buriedChunks
 
-	return WriteRunRecord(subDir.Path, *rec)
+	if err := WriteRunRecord(subDir.Path, rec); err != nil {
+		return err
+	}
+
+	if phase == phaseDone {
+		return deleteOldRunDirs(subDir.Path, rec.FofnMtime)
+	}
+
+	return nil
 }
 
 // classifyPhase determines the correct phase and buried chunks from current
@@ -420,20 +472,26 @@ func classifyPhase(status RunJobStatus) (string, []string) {
 	return phaseDone, nil
 }
 
-// needsStatusRegeneration returns true when the status file must be rewritten.
-// This occurs on a phase transition, a change in the set of buried chunks, or
-// a broken/missing status symlink. Unlike the previous digest approach, this
-// avoids stat'ing every report file on each poll cycle.
-func needsStatusRegeneration(rec RunRecord, phase string, buriedChunks []string, subDirPath string) bool {
-	if phase != rec.Phase {
-		return true
+// repairStatusArtifacts ensures the status file and its symlink are intact
+// without re-reading all report files. If the status file was externally
+// deleted, it regenerates from reports. If only the symlink is broken, it
+// creates a new symlink — an O(1) fix rather than an O(reports) rebuild.
+func repairStatusArtifacts(runDir string, subDir SubDir, buriedChunks []string) error {
+	statusPath := filepath.Join(runDir, statusFilename)
+
+	if _, err := os.Stat(statusPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return GenerateStatus(runDir, subDir, buriedChunks)
+		}
+
+		return err
 	}
 
-	if phase == phaseBuried && !slices.Equal(buriedChunks, rec.BuriedChunks) {
-		return true
+	if !statusSymlinkCurrent(statusPath, subDir.Path) {
+		return createStatusSymlink(statusPath, subDir.Path)
 	}
 
-	return !statusSymlinkCurrent(filepath.Join(rec.RunDir, statusFilename), subDirPath)
+	return nil
 }
 
 // WriteRunRecord writes run.json atomically via temp file + rename. Sets GID
@@ -462,20 +520,20 @@ func statusSymlinkCurrent(statusPath, subDirPath string) bool {
 	return target == statusPath
 }
 
-// finalizeAndRestart generates the final status for the completed old run,
-// cleans up buried jobs and stale directories, removes run.json, and starts a
-// fresh run for the updated fofn. Unlike ensureStatusCurrent, status is always
-// generated (no digest check) since this is a one-shot finalisation before the
-// old state is discarded.
-func (w *Watcher) finalizeAndRestart(subDir SubDir, rec RunRecord, status RunJobStatus) error {
-	_, buriedChunks := classifyPhase(status)
-
+// restartRun generates a final status snapshot for the old run, cleans up
+// buried jobs and stale directories, removes run.json, and starts a fresh run
+// for the updated fofn. When called from a "done" phase, buriedChunks and
+// buriedJobs will be nil; when called from an active phase, they reflect the
+// current wr state.
+func (w *Watcher) restartRun(
+	subDir SubDir, rec RunRecord, buriedChunks []string, buriedJobs []*jobqueue.Job,
+) error {
 	if err := GenerateStatus(rec.RunDir, subDir, buriedChunks); err != nil {
 		return err
 	}
 
-	if len(status.BuriedJobs) > 0 {
-		if err := w.submitter.DeleteJobs(status.BuriedJobs); err != nil {
+	if len(buriedJobs) > 0 {
+		if err := w.submitter.DeleteJobs(buriedJobs); err != nil {
 			return err
 		}
 	}
