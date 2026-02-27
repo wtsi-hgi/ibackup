@@ -517,17 +517,17 @@ func (c *Client) handleUploadTracking(wg *sync.WaitGroup, uploadStarts, uploadRe
 				c.logger.Warn("failed to update file status to uploading", "rid", ru.ID(), "err", err)
 
 				c.uploadsErrCh <- err
-
-				rr := <-uploadResults
-
-				c.logger.Info(
-					"finished upload (status tracking skipped due to earlier error)",
-					"rid", ru.ID(),
-					"status", rr.Status,
-				)
-
-				continue
 			}
+
+			rr := <-uploadResults
+
+			c.logger.Info(
+				"finished upload (status tracking skipped due to earlier error)",
+				"rid", ru.ID(),
+				"status", rr.Status,
+			)
+
+			continue
 		}
 
 		stopStuckTimer := c.stuckIfUploadTakesTooLong(ru)
