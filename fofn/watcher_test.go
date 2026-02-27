@@ -1410,7 +1410,7 @@ func TestWatcherRestart(t *testing.T) {
 			So(mock.findCallCount, ShouldEqual, 0)
 		})
 
-		Convey("marks run as settled after first done poll and skips all I/O on subsequent polls", func() {
+		Convey("done run with intact artefacts skips repair and wr query on subsequent polls", func() {
 			subPath := filepath.Join(watchDir, "proj")
 			So(os.MkdirAll(subPath, 0750), ShouldBeNil)
 
@@ -1426,7 +1426,7 @@ func TestWatcherRestart(t *testing.T) {
 			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 10))
 			So(GenerateStatus(runDir, SubDir{Path: subPath}, nil), ShouldBeNil)
 
-			// Start with non-settled done record.
+			// Done record with status file and symlink already intact.
 			writeTestRunRecord(subPath, RunRecord{
 				FofnMtime: 1000,
 				RunDir:    runDir,
@@ -1434,33 +1434,43 @@ func TestWatcherRestart(t *testing.T) {
 				Phase:     phaseDone,
 			})
 
+			statusPath := filepath.Join(runDir, "status")
+			knownTime := time.Unix(900, 0)
+			So(os.Chtimes(statusPath, knownTime, knownTime), ShouldBeNil)
+
 			mock := &mockJobSubmitter{}
 			w := NewWatcher(watchDir, mock, cfg)
 
-			// First poll: repairs artefacts and sets Settled.
+			// First poll: artefacts intact → fast path, no wr query,
+			// status file not regenerated.
 			err := w.Poll()
 			So(err, ShouldBeNil)
+			So(mock.findCallCount, ShouldEqual, 0)
 
-			rec := readTestRunRecord(subPath)
-			So(rec.Phase, ShouldEqual, phaseDone)
-			So(rec.Settled, ShouldBeTrue)
+			statusInfo, statErr := os.Stat(statusPath)
+			So(statErr, ShouldBeNil)
+			So(statusInfo.ModTime(), ShouldEqual, knownTime)
 
-			// Break the symlink AFTER settling; the fast path should
-			// skip repair, so the symlink stays broken until fofn changes.
+			// Break the symlink → next poll repairs it.
 			symlinkPath := filepath.Join(subPath, "status")
 			So(os.Remove(symlinkPath), ShouldBeNil)
 
-			// Second poll: settled fast path — no I/O, no wr query,
-			// symlink not repaired (by design).
 			err = w.Poll()
 			So(err, ShouldBeNil)
 			So(mock.findCallCount, ShouldEqual, 0)
 
-			_, readErr := os.Readlink(symlinkPath)
-			So(os.IsNotExist(readErr), ShouldBeTrue)
+			// Symlink was repaired.
+			target, readErr := os.Readlink(symlinkPath)
+			So(readErr, ShouldBeNil)
+			So(target, ShouldEqual, statusPath)
+
+			// Status file was NOT regenerated — mtime preserved.
+			statusInfo, statErr = os.Stat(statusPath)
+			So(statErr, ShouldBeNil)
+			So(statusInfo.ModTime(), ShouldEqual, knownTime)
 		})
 
-		Convey("settled done run restarts when fofn changes", func() {
+		Convey("done run with intact artefacts restarts when fofn changes", func() {
 			subPath := filepath.Join(watchDir, "proj")
 			So(os.MkdirAll(subPath, 0750), ShouldBeNil)
 
@@ -1476,13 +1486,11 @@ func TestWatcherRestart(t *testing.T) {
 			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 10))
 			So(GenerateStatus(runDir, SubDir{Path: subPath}, nil), ShouldBeNil)
 
-			// Pre-settled done record.
 			writeTestRunRecord(subPath, RunRecord{
 				FofnMtime: 1000,
 				RunDir:    runDir,
 				RepGroup:  "ibackup_fofn_proj_1000",
 				Phase:     phaseDone,
-				Settled:   true,
 			})
 
 			updateFofnMtime(subPath, generateTmpPaths(15), 2000)
@@ -1498,7 +1506,6 @@ func TestWatcherRestart(t *testing.T) {
 			rec := readTestRunRecord(subPath)
 			So(rec.Phase, ShouldEqual, phaseRunning)
 			So(rec.FofnMtime, ShouldEqual, 2000)
-			So(rec.Settled, ShouldBeFalse)
 		})
 
 		Convey("repairs symlink without regenerating status file", func() {
@@ -1551,7 +1558,51 @@ func TestWatcherRestart(t *testing.T) {
 			So(statusInfo.ModTime(), ShouldEqual, knownTime)
 		})
 
-		Convey("restarts done run without wr query when fofn changes", func() {
+		Convey("waits for running jobs before restarting when fofn changes during active phase", func() {
+			subPath := filepath.Join(watchDir, "proj")
+			So(os.MkdirAll(subPath, 0750), ShouldBeNil)
+
+			fofnPath := writeFofn(subPath, generateTmpPaths(10))
+			fofnTime := time.Unix(1000, 0)
+			So(os.Chtimes(fofnPath, fofnTime, fofnTime), ShouldBeNil)
+
+			So(WriteConfig(subPath, SubDirConfig{Transformer: "test"}), ShouldBeNil)
+
+			runDir := filepath.Join(subPath, "1000")
+			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
+
+			writeChunkOnly(runDir, "chunk.000000", makeFilePairs(0, 10))
+
+			writeTestRunRecord(subPath, RunRecord{
+				FofnMtime: 1000,
+				RunDir:    runDir,
+				RepGroup:  "ibackup_fofn_proj_1000",
+				Phase:     phaseRunning,
+			})
+
+			// fofn has changed
+			updateFofnMtime(subPath, generateTmpPaths(15), 2000)
+
+			// But jobs are still running
+			mock := &mockJobSubmitter{
+				allJobs: []*jobqueue.Job{
+					{RepGroup: "ibackup_fofn_proj_1000", Cmd: "running"},
+				},
+			}
+
+			w := NewWatcher(watchDir, mock, cfg)
+
+			err := w.Poll()
+			So(err, ShouldBeNil)
+			So(mock.submitted, ShouldBeEmpty)
+
+			// Run record unchanged — still waiting
+			rec := readTestRunRecord(subPath)
+			So(rec.Phase, ShouldEqual, phaseRunning)
+			So(rec.FofnMtime, ShouldEqual, 1000)
+		})
+
+		Convey("regenerates status when status file deleted from done run", func() {
 			subPath := filepath.Join(watchDir, "proj")
 			So(os.MkdirAll(subPath, 0750), ShouldBeNil)
 
@@ -1574,19 +1625,29 @@ func TestWatcherRestart(t *testing.T) {
 				Phase:     phaseDone,
 			})
 
-			updateFofnMtime(subPath, generateTmpPaths(15), 2000)
+			// Delete the status file
+			So(os.Remove(filepath.Join(runDir, "status")), ShouldBeNil)
 
 			mock := &mockJobSubmitter{}
 			w := NewWatcher(watchDir, mock, cfg)
 
 			err := w.Poll()
 			So(err, ShouldBeNil)
-			So(mock.submitted, ShouldNotBeEmpty)
+			So(mock.submitted, ShouldBeEmpty)
 			So(mock.findCallCount, ShouldEqual, 0)
 
-			rec := readTestRunRecord(subPath)
-			So(rec.Phase, ShouldEqual, phaseRunning)
-			So(rec.FofnMtime, ShouldEqual, 2000)
+			// Status file regenerated
+			statusPath := filepath.Join(runDir, "status")
+			entries, counts, parseErr := ParseStatus(statusPath)
+			So(parseErr, ShouldBeNil)
+			So(entries, ShouldHaveLength, 10)
+			So(counts.Uploaded, ShouldEqual, 10)
+
+			// Symlink updated
+			symlinkPath := filepath.Join(subPath, "status")
+			target, readErr := os.Readlink(symlinkPath)
+			So(readErr, ShouldBeNil)
+			So(target, ShouldEqual, statusPath)
 		})
 	})
 }
