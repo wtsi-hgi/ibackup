@@ -515,6 +515,7 @@ func (c *Client) handleUploadTracking(wg *sync.WaitGroup, uploadStarts, uploadRe
 				c.logger.Info("ignoring stale uploading status update", "rid", ru.ID(), "err", err)
 			} else {
 				c.logger.Warn("failed to update file status to uploading", "rid", ru.ID(), "err", err)
+
 				c.uploadsErrCh <- err
 
 				continue
@@ -533,6 +534,7 @@ func (c *Client) handleUploadTracking(wg *sync.WaitGroup, uploadStarts, uploadRe
 				c.logger.Info("ignoring stale completed status update", "rid", ru.ID(), "err", err)
 			} else {
 				c.logger.Warn("failed to update file status to complete", "rid", ru.ID(), "err", err)
+
 				c.uploadsErrCh <- err
 			}
 		}
@@ -638,6 +640,7 @@ func (c *Client) handleSendingSkipResults(wg *sync.WaitGroup, results chan *tran
 				c.logger.Info("ignoring stale skipped status update", "rid", r.ID(), "err", err)
 			} else {
 				c.logger.Warn("failed to update file status for skipped", "rid", r.ID(), "err", err)
+
 				c.uploadsErrCh <- err
 			}
 		}
