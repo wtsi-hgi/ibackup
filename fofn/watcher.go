@@ -198,7 +198,7 @@ func submitChunkJobs(
 		return RunState{}, err
 	}
 
-	repGroup := fmt.Sprintf("ibackup_fofn_%s_%d", dirName, mtime)
+	repGroup := fmt.Sprintf("%s%s_%d", RepGroupPrefix, dirName, mtime)
 
 	return RunState{
 		RepGroup: repGroup,
@@ -218,7 +218,7 @@ func buildRunFromNewest(
 	}
 
 	dirName := filepath.Base(subDirPath)
-	repGroup := fmt.Sprintf("ibackup_fofn_%s_%d", dirName, mtime)
+	repGroup := fmt.Sprintf("%s%s_%d", RepGroupPrefix, dirName, mtime)
 	runDir := filepath.Join(subDirPath, strconv.FormatInt(mtime, 10))
 
 	return RunState{
@@ -286,15 +286,20 @@ func (w *Watcher) clearActiveRun(path string) {
 	delete(w.activeRuns, path)
 }
 
-// Poll performs one poll cycle: scan for subdirectories, check active runs,
-// start new runs as needed. Subdirectories are processed in parallel.
+// Poll performs one poll cycle: scan for subdirectories, query wr once for all
+// fofn job statuses, and process each subdirectory through a linear pipeline.
 func (w *Watcher) Poll() error {
 	subDirs, err := ScanForFOFNs(w.watchDir)
 	if err != nil {
 		return err
 	}
 
-	return w.pollSubDirsParallel(subDirs)
+	allStatus, err := ClassifyAllJobs(w.submitter)
+	if err != nil {
+		return err
+	}
+
+	return w.pollSubDirsParallel(subDirs, allStatus)
 }
 
 // Run polls immediately and then at the given interval until the context is
@@ -327,6 +332,7 @@ func (w *Watcher) Run(
 // parallelism, collecting all errors.
 func (w *Watcher) pollSubDirsParallel(
 	subDirs []SubDir,
+	allStatus map[string]RunJobStatus,
 ) error {
 	var (
 		wg    sync.WaitGroup
@@ -340,7 +346,7 @@ func (w *Watcher) pollSubDirsParallel(
 
 		sem <- struct{}{}
 
-		go w.pollSubDirCollect(subDir, sem, &wg, &errMu, &errs)
+		go w.pollSubDirCollect(subDir, allStatus, sem, &wg, &errMu, &errs)
 	}
 
 	wg.Wait()
@@ -349,13 +355,15 @@ func (w *Watcher) pollSubDirsParallel(
 }
 
 func (w *Watcher) pollSubDirCollect(
-	sd SubDir, sem chan struct{},
+	sd SubDir,
+	allStatus map[string]RunJobStatus,
+	sem chan struct{},
 	wg *sync.WaitGroup, errMu *sync.Mutex, errs *[]error,
 ) {
 	defer wg.Done()
 	defer func() { <-sem }()
 
-	if err := w.pollSubDir(sd); err != nil {
+	if err := w.pollSubDir(sd, allStatus); err != nil {
 		errMu.Lock()
 
 		*errs = append(*errs, err)
@@ -364,48 +372,49 @@ func (w *Watcher) pollSubDirCollect(
 	}
 }
 
+// pollSubDir processes a single subdirectory using a linear pipeline:
+//  1. Resolve existing run (from memory or disk)
+//  2. If running → skip
+//  3. If finished → ensure status is current
+//  4. Check if fofn changed → optionally start new run
 func (w *Watcher) pollSubDir(
 	subDir SubDir,
+	allStatus map[string]RunJobStatus,
 ) error {
-	run, active := w.getActiveRun(subDir.Path)
-	if active {
-		return w.handleActiveRun(subDir, run)
-	}
-
-	return w.handleNewSubDir(subDir)
-}
-
-func (w *Watcher) handleActiveRun(
-	subDir SubDir, run RunState,
-) error {
-	complete, err := IsRunComplete(w.submitter, run.RepGroup)
+	run, hasRun, err := w.resolveRun(subDir)
 	if err != nil {
 		return err
 	}
 
-	if !complete {
+	if !hasRun {
+		return w.startNewRun(subDir)
+	}
+
+	status := allStatus[run.RepGroup]
+
+	if status.HasRunning {
 		return nil
 	}
 
-	buriedChunks, err := FindBuriedChunks(w.submitter, run.RepGroup, run.RunDir)
+	if statusErr := ensureStatusCurrent(subDir, run, status.BuriedChunks); statusErr != nil {
+		return statusErr
+	}
+
+	mtime, err := fofnMtime(subDir)
 	if err != nil {
 		return err
 	}
 
-	if len(buriedChunks) == 0 {
-		return w.handleSuccessfulRun(subDir, run)
+	changed := mtime != run.Mtime
+
+	if len(status.BuriedChunks) > 0 && !changed {
+		return nil
 	}
 
-	return w.handleBuriedRun(subDir, run, buriedChunks)
-}
-
-func (w *Watcher) handleSuccessfulRun(
-	subDir SubDir, run RunState,
-) error {
-	if err := GenerateStatus(
-		run.RunDir, subDir, nil,
-	); err != nil {
-		return err
+	if len(status.BuriedJobs) > 0 {
+		if err := w.submitter.DeleteJobs(status.BuriedJobs); err != nil {
+			return err
+		}
 	}
 
 	if err := deleteOldRunDirs(
@@ -416,34 +425,73 @@ func (w *Watcher) handleSuccessfulRun(
 
 	w.clearActiveRun(subDir.Path)
 
+	if !changed {
+		return nil
+	}
+
 	return w.startNewRun(subDir)
 }
 
-func shouldSkipBuriedStatusRefresh(
-	needed bool,
-	subDirPath, runDir string,
-) (bool, error) {
-	if needed {
-		return false, nil
+// resolveRun returns the active run for the given subdirectory. It first checks
+// the in-memory map, then looks on disk for an existing run directory.
+func (w *Watcher) resolveRun(
+	subDir SubDir,
+) (RunState, bool, error) {
+	run, ok := w.getActiveRun(subDir.Path)
+	if ok {
+		return run, true, nil
 	}
 
-	return statusArtifactsUpToDate(subDirPath, runDir)
+	run, found, err := buildRunFromNewest(subDir.Path)
+	if err != nil || !found {
+		return RunState{}, false, err
+	}
+
+	w.setActiveRun(subDir.Path, run)
+
+	return run, true, nil
+}
+
+// ensureStatusCurrent regenerates the status file only when the existing
+// status artefacts are missing or stale relative to reports.
+func ensureStatusCurrent(
+	subDir SubDir,
+	run RunState,
+	buriedChunks []string,
+) error {
+	upToDate, err := statusArtifactsUpToDate(subDir.Path, run.RunDir)
+	if err != nil {
+		return err
+	}
+
+	if upToDate {
+		return nil
+	}
+
+	return GenerateStatus(run.RunDir, subDir, buriedChunks)
+}
+
+// fofnMtime returns the mtime of the fofn file in the given subdirectory as a
+// Unix timestamp.
+func fofnMtime(subDir SubDir) (int64, error) {
+	fofnPath := filepath.Join(subDir.Path, fofnFilename)
+
+	info, err := os.Stat(fofnPath)
+	if err != nil {
+		return 0, err
+	}
+
+	return info.ModTime().Unix(), nil
 }
 
 // GenerateStatus writes a combined status file from all chunk reports in
 // runDir, handles buried chunks, and creates/updates a symlink at subDir/status
 // pointing to runDir/status.
-func GenerateStatus(
-	runDir string,
-	subDir SubDir,
-	buriedChunks []string,
-) error {
+func GenerateStatus(runDir string, subDir SubDir, buriedChunks []string) error {
 	statusPath := filepath.Join(runDir, statusFilename)
 	stampPath := filepath.Join(runDir, statusStamp)
 
-	if err := WriteStatusFromRun(
-		runDir, statusPath, buriedChunks,
-	); err != nil {
+	if err := WriteStatusFromRun(runDir, statusPath, buriedChunks); err != nil {
 		return err
 	}
 
@@ -451,149 +499,16 @@ func GenerateStatus(
 		return err
 	}
 
-	if err := setStatusGID(
-		statusPath, stampPath, subDir.Path,
-	); err != nil {
+	if err := setStatusGID(statusPath, stampPath, subDir.Path); err != nil {
 		return err
 	}
 
 	return createStatusSymlink(statusPath, subDir.Path)
 }
 
-func (w *Watcher) handleBuriedRun(
-	subDir SubDir,
-	run RunState,
-	buriedChunks []string,
-) error {
-	needed, _, err := NeedsProcessing(subDir)
-	if err != nil {
-		return err
-	}
-
-	skip, err := shouldSkipBuriedStatusRefresh(
-		needed,
-		subDir.Path,
-		run.RunDir,
-	)
-	if err != nil {
-		return err
-	}
-
-	if skip {
-		return nil
-	}
-
-	buriedBases := toBaseNames(buriedChunks)
-
-	if err := GenerateStatus(
-		run.RunDir, subDir, buriedBases,
-	); err != nil {
-		return err
-	}
-
-	if !needed {
-		return nil
-	}
-
-	if err := DeleteBuriedJobs(
-		w.submitter, run.RepGroup,
-	); err != nil {
-		return err
-	}
-
-	w.clearActiveRun(subDir.Path)
-
-	return w.startNewRun(subDir)
-}
-
-// toBaseNames converts a slice of full paths to their base names.
-func toBaseNames(paths []string) []string {
-	bases := make([]string, len(paths))
-
-	for i, p := range paths {
-		bases[i] = filepath.Base(p)
-	}
-
-	return bases
-}
-
-func (w *Watcher) handleNewSubDir(
-	subDir SubDir,
-) error {
-	recovered, err := w.detectExistingRun(subDir)
-	if err != nil || recovered {
-		return err
-	}
-
-	return w.startNewRun(subDir)
-}
-
-// detectExistingRun checks for a run directory left by a previous Watcher
-// instance. If an existing run has incomplete jobs, it records the active run
-// and returns true. If the existing run is complete, it processes the
-// completion immediately and returns true.
-func (w *Watcher) detectExistingRun(
-	subDir SubDir,
-) (bool, error) {
-	run, found, err := buildRunFromNewest(subDir.Path)
-	if err != nil || !found {
-		return false, err
-	}
-
-	complete, err := IsRunComplete(w.submitter, run.RepGroup)
-	if err != nil {
-		return false, err
-	}
-
-	needsProcessing := true
-
-	if complete {
-		needsProcessing, _, err = NeedsProcessing(subDir)
-		if err != nil {
-			return false, err
-		}
-	}
-
-	skip, err := shouldSkipCompletedNoProcessing(
-		complete,
-		needsProcessing,
-		subDir.Path,
-		run.RunDir,
-	)
-	if err != nil {
-		return false, err
-	}
-
-	if skip {
-		err = deleteOldRunDirs(subDir.Path, run.Mtime)
-		if err != nil {
-			return false, err
-		}
-
-		return true, nil
-	}
-
-	w.setActiveRun(subDir.Path, run)
-
-	if !complete {
-		return true, nil
-	}
-
-	return true, w.handleActiveRun(subDir, run)
-}
-
-func shouldSkipCompletedNoProcessing(
-	complete, needsProcessing bool,
+func statusArtifactsUpToDate(
 	subDirPath, runDir string,
 ) (bool, error) {
-	if !complete || needsProcessing {
-		return false, nil
-	}
-
-	return statusArtifactsUpToDate(subDirPath, runDir)
-}
-
-func statusArtifactsUpToDate(subDirPath, runDir string) (bool, error) {
 	if !hasCurrentStatusArtifacts(subDirPath, runDir) {
 		return false, nil
 	}
@@ -700,6 +615,10 @@ func latestStatusSourceMtime(runDir string) (time.Time, bool, error) {
 		return time.Time{}, false, fmt.Errorf("read run dir: %w", err)
 	}
 
+	return findLatestSourceEntry(entries)
+}
+
+func findLatestSourceEntry(entries []os.DirEntry) (time.Time, bool, error) {
 	var latest time.Time
 
 	found := false

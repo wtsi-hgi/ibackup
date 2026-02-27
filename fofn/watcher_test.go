@@ -553,9 +553,10 @@ func TestWatcherPoll(t *testing.T) {
 			So(err, ShouldBeNil)
 
 			submitCount := len(mock.submitted)
+			run := w.activeRuns[subDir.Path]
 
-			mock.incomplete = []*jobqueue.Job{
-				{Cmd: "running"},
+			mock.allJobs = []*jobqueue.Job{
+				{RepGroup: run.RepGroup, Cmd: "running"},
 			}
 
 			err = w.Poll()
@@ -582,8 +583,7 @@ func TestWatcherPoll(t *testing.T) {
 
 			writeReportsForChunks(run.RunDir)
 
-			mock.incomplete = nil
-			mock.buried = nil
+			mock.allJobs = nil
 
 			updateFofnMtime(subDir.Path, generateTmpPaths(15), run.Mtime+1000)
 
@@ -622,8 +622,7 @@ func TestWatcherPoll(t *testing.T) {
 
 			writeReportsForChunks(run.RunDir)
 
-			mock.incomplete = nil
-			mock.buried = nil
+			mock.allJobs = nil
 
 			err = w.Poll()
 			So(err, ShouldBeNil)
@@ -666,10 +665,13 @@ func TestWatcherPoll(t *testing.T) {
 
 				writeReportsExcept(run.RunDir, "chunk.000002")
 
-				mock.incomplete = nil
-				mock.buried = []*jobqueue.Job{
-					{Cmd: "ibackup put " +
-						"-f chunk.000002"},
+				mock.allJobs = []*jobqueue.Job{
+					{
+						RepGroup: run.RepGroup,
+						State:    jobqueue.JobStateBuried,
+						Cmd: "ibackup put " +
+							"-f chunk.000002",
+					},
 				}
 
 				err = w.Poll()
@@ -708,9 +710,10 @@ func TestWatcherPoll(t *testing.T) {
 			run := w.activeRuns[subDir.Path]
 			writeReportsExcept(run.RunDir, "chunk.000002")
 
-			mock.incomplete = nil
-			mock.buried = []*jobqueue.Job{{
-				Cmd: "ibackup put -f chunk.000002",
+			mock.allJobs = []*jobqueue.Job{{
+				RepGroup: run.RepGroup,
+				State:    jobqueue.JobStateBuried,
+				Cmd:      "ibackup put -f chunk.000002",
 			}}
 
 			err = w.Poll()
@@ -758,10 +761,11 @@ func TestWatcherPoll(t *testing.T) {
 			writeReportsExcept(run.RunDir, "chunk.000002")
 
 			buriedJob := &jobqueue.Job{
-				Cmd: "ibackup put -f chunk.000002",
+				RepGroup: run.RepGroup,
+				State:    jobqueue.JobStateBuried,
+				Cmd:      "ibackup put -f chunk.000002",
 			}
-			mock.incomplete = nil
-			mock.buried = []*jobqueue.Job{buriedJob}
+			mock.allJobs = []*jobqueue.Job{buriedJob}
 
 			updateFofnMtime(subDir.Path, generateTmpPaths(15), run.Mtime+1000)
 
@@ -801,8 +805,7 @@ func TestWatcherPoll(t *testing.T) {
 
 			writeReportsForChunks(run.RunDir)
 
-			mock.incomplete = nil
-			mock.buried = nil
+			mock.allJobs = nil
 
 			err = w.Poll()
 			So(err, ShouldBeNil)
@@ -828,8 +831,7 @@ func TestWatcherPoll(t *testing.T) {
 
 			writeReportsForChunks(firstRun.RunDir)
 
-			mock.incomplete = nil
-			mock.buried = nil
+			mock.allJobs = nil
 
 			updateFofnMtime(subDir.Path, generateTmpPaths(15), firstRun.Mtime+1000)
 
@@ -840,8 +842,7 @@ func TestWatcherPoll(t *testing.T) {
 
 			writeReportsForChunks(secondRun.RunDir)
 
-			mock.incomplete = nil
-			mock.buried = nil
+			mock.allJobs = nil
 
 			err = w.Poll()
 			So(err, ShouldBeNil)
@@ -891,8 +892,11 @@ func TestWatcherRestart(t *testing.T) {
 				writeChunkOnly(runDir, "chunk.000000", makeFilePairs(0, 10))
 
 				mock := &mockJobSubmitter{
-					incomplete: []*jobqueue.Job{
-						{Cmd: "running"},
+					allJobs: []*jobqueue.Job{
+						{
+							RepGroup: "ibackup_fofn_proj_1000",
+							Cmd:      "running",
+						},
 					},
 				}
 
@@ -923,7 +927,7 @@ func TestWatcherRestart(t *testing.T) {
 			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
 			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 10))
 
-			mock := &mockJobSubmitter{incompleteErr: errTest}
+			mock := &mockJobSubmitter{allJobsErr: errTest}
 			w := NewWatcher(watchDir, mock, cfg)
 
 			err := w.Poll()
@@ -1354,9 +1358,16 @@ func TestWatcherParallel(t *testing.T) {
 				initialCount := len(mock.submitted)
 				So(initialCount, ShouldEqual, 2)
 
-				mock.incomplete = []*jobqueue.Job{
-					{Cmd: "running"},
+				var runningJobs []*jobqueue.Job
+				for _, run := range w.activeRuns {
+					runningJobs = append(runningJobs,
+						&jobqueue.Job{
+							RepGroup: run.RepGroup,
+							Cmd:      "running",
+						})
 				}
+
+				mock.allJobs = runningJobs
 
 				setupSubDir(
 					watchDir, "proj3",
