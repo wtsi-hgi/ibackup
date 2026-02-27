@@ -30,6 +30,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -510,10 +511,14 @@ func (c *Client) handleUploadTracking(wg *sync.WaitGroup, uploadStarts, uploadRe
 		}
 
 		if err := c.UpdateFileStatus(ru); err != nil {
-			c.logger.Warn("failed to update file status to uploading", "rid", ru.ID(), "err", err)
-			c.uploadsErrCh <- err
+			if c.isRequestNoLongerRunningErr(err) {
+				c.logger.Info("ignoring stale uploading status update", "rid", ru.ID(), "err", err)
+			} else {
+				c.logger.Warn("failed to update file status to uploading", "rid", ru.ID(), "err", err)
+				c.uploadsErrCh <- err
 
-			continue
+				continue
+			}
 		}
 
 		stopStuckTimer := c.stuckIfUploadTakesTooLong(ru)
@@ -524,8 +529,12 @@ func (c *Client) handleUploadTracking(wg *sync.WaitGroup, uploadStarts, uploadRe
 		close(stopStuckTimer)
 
 		if err := c.UpdateFileStatus(rr); err != nil {
-			c.logger.Warn("failed to update file status to complete", "rid", ru.ID(), "err", err)
-			c.uploadsErrCh <- err
+			if c.isRequestNoLongerRunningErr(err) {
+				c.logger.Info("ignoring stale completed status update", "rid", ru.ID(), "err", err)
+			} else {
+				c.logger.Warn("failed to update file status to complete", "rid", ru.ID(), "err", err)
+				c.uploadsErrCh <- err
+			}
 		}
 	}
 }
@@ -550,7 +559,11 @@ func (c *Client) stuckIfUploadTakesTooLong(request *transfer.Request) chan bool 
 			c.logger.Warn("upload stuck?", "rid", request.ID())
 
 			if err := c.UpdateFileStatus(request); err != nil {
-				c.uploadsErrCh <- err
+				if c.isRequestNoLongerRunningErr(err) {
+					c.logger.Info("ignoring stale stuck status update", "rid", request.ID(), "err", err)
+				} else {
+					c.uploadsErrCh <- err
+				}
 			}
 
 			go c.killStuckIfTakesTooLong(request, doneCh)
@@ -621,8 +634,12 @@ func (c *Client) handleSendingSkipResults(wg *sync.WaitGroup, results chan *tran
 		}
 
 		if err := c.UpdateFileStatus(r); err != nil {
-			c.logger.Warn("failed to update file status for skipped", "rid", r.ID(), "err", err)
-			c.uploadsErrCh <- err
+			if c.isRequestNoLongerRunningErr(err) {
+				c.logger.Info("ignoring stale skipped status update", "rid", r.ID(), "err", err)
+			} else {
+				c.logger.Warn("failed to update file status for skipped", "rid", r.ID(), "err", err)
+				c.uploadsErrCh <- err
+			}
 		}
 	}
 }
@@ -660,6 +677,16 @@ func (c *Client) UpdateFileStatus(r *transfer.Request) error {
 	r.MakeSafeForJSON()
 
 	return c.putThing(EndPointAuthFileStatus, r)
+}
+
+func (c *Client) isRequestNoLongerRunningErr(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	errMsg := err.Error()
+
+	return strings.Contains(errMsg, "queue(put) Touch(") && strings.Contains(errMsg, "not running")
 }
 
 // RetryFailedSetUploads initiates the retry of any failed uploads in the given
