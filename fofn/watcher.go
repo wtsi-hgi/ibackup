@@ -46,9 +46,6 @@ import (
 	"github.com/wtsi-hgi/ibackup/transformer"
 )
 
-// ErrUnknownPhase is returned when run.json contains an unrecognised phase.
-var ErrUnknownPhase = errors.New("unknown run phase")
-
 const (
 	statusFilename    = "status"
 	maxPollWorkers    = 10
@@ -345,9 +342,8 @@ func (w *Watcher) pollSubDirCollect(
 
 // pollSubDir processes a single subdirectory using the run.json state machine:
 //  1. No run.json → start a new run
-//  2. Phase "running" → check job status and transition
-//  3. Phase "done" → check for fofn/report changes
-//  4. Phase "buried" → check for fofn change or retry completion
+//  2. Jobs still running → wait
+//  3. All jobs finished → ensure status is current, then check for fofn changes
 func (w *Watcher) pollSubDir(subDir SubDir, allStatus map[string]RunJobStatus) error {
 	rec, found, err := readRunRecord(subDir.Path)
 	if err != nil {
@@ -360,85 +356,54 @@ func (w *Watcher) pollSubDir(subDir SubDir, allStatus map[string]RunJobStatus) e
 
 	status := allStatus[rec.RepGroup]
 
-	switch rec.Phase {
-	case phaseRunning:
-		return w.handleRunning(subDir, rec, status)
-	case phaseDone:
-		return w.handleDone(subDir, rec)
-	case phaseBuried:
-		return w.handleBuried(subDir, rec, status)
-	default:
-		return fmt.Errorf("%w %q for %s", ErrUnknownPhase, rec.Phase, subDir.Path)
-	}
-}
-
-// handleRunning processes a subdirectory whose run is in the "running" phase.
-// If jobs are still running, it returns immediately. Otherwise it generates
-// status, checks for fofn changes, and transitions to "done" or "buried".
-func (w *Watcher) handleRunning(subDir SubDir, rec RunRecord, status RunJobStatus) error {
 	if status.HasRunning {
 		return nil
 	}
 
-	if len(status.BuriedChunks) > 0 {
-		return w.handleRunningBuried(subDir, rec, status)
-	}
-
-	return w.handleRunningComplete(subDir, rec)
-}
-
-func (w *Watcher) handleRunningBuried(subDir SubDir, rec RunRecord, status RunJobStatus) error {
-	if err := GenerateStatus(rec.RunDir, subDir, status.BuriedChunks); err != nil {
-		return err
-	}
-
-	mtime, err := fofnMtime(subDir)
+	err = w.ensureStatusCurrent(subDir, rec, status)
 	if err != nil {
 		return err
+	}
+
+	mtime, fofnErr := fofnMtime(subDir)
+	if fofnErr != nil {
+		return fofnErr
 	}
 
 	if mtime != rec.FofnMtime {
 		return w.cleanupAndRestart(subDir, rec.FofnMtime, status.BuriedJobs)
 	}
 
-	digest, err := reportDigest(rec.RunDir)
-	if err != nil {
-		return err
-	}
-
-	rec.Phase = phaseBuried
-	rec.ReportDigest = digest
-
-	return WriteRunRecord(subDir.Path, rec)
+	return nil
 }
 
-func (w *Watcher) handleRunningComplete(subDir SubDir, rec RunRecord) error {
-	if err := GenerateStatus(rec.RunDir, subDir, nil); err != nil {
-		return err
-	}
-
-	mtime, err := fofnMtime(subDir)
-	if err != nil {
-		return err
-	}
-
-	if mtime != rec.FofnMtime {
-		return w.cleanupAndRestart(subDir, rec.FofnMtime, nil)
-	}
-
+// ensureStatusCurrent ensures the status file, symlink, run record, and old
+// run directories are up to date for a subdirectory whose jobs have all
+// finished. It is phase-agnostic: it computes the correct phase from the
+// current job status rather than branching on the persisted phase.
+func (w *Watcher) ensureStatusCurrent(subDir SubDir, rec RunRecord, status RunJobStatus) error {
 	digest, err := reportDigest(rec.RunDir)
 	if err != nil {
 		return err
 	}
 
-	rec.Phase = phaseDone
-	rec.ReportDigest = digest
+	phase, buriedChunks := classifyPhase(status)
 
-	if err := WriteRunRecord(subDir.Path, rec); err != nil {
+	if statusNeedsRegeneration(digest, phase, rec, subDir.Path) {
+		if err := GenerateStatus(rec.RunDir, subDir, buriedChunks); err != nil {
+			return err
+		}
+	}
+
+	if err := w.updateRunRecordIfChanged(subDir.Path, rec, phase, digest); err != nil {
 		return err
 	}
 
-	return deleteOldRunDirs(subDir.Path, rec.FofnMtime)
+	if phase == phaseDone {
+		return deleteOldRunDirs(subDir.Path, rec.FofnMtime)
+	}
+
+	return nil
 }
 
 // reportDigest computes a hex SHA-256 digest of report file names and mtimes
@@ -467,6 +432,38 @@ func reportDigest(runDir string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
+// classifyPhase determines the correct phase and buried chunks from current
+// job status.
+func classifyPhase(status RunJobStatus) (string, []string) {
+	if len(status.BuriedChunks) > 0 {
+		return phaseBuried, status.BuriedChunks
+	}
+
+	return phaseDone, nil
+}
+
+// statusNeedsRegeneration returns true when the status file or symlink must be
+// rewritten because the report digest changed, the phase changed, or the
+// symlink is stale.
+func statusNeedsRegeneration(digest, phase string, rec RunRecord, subDirPath string) bool {
+	return digest != rec.ReportDigest ||
+		phase != rec.Phase ||
+		!statusSymlinkCurrent(filepath.Join(rec.RunDir, statusFilename), subDirPath)
+}
+
+// updateRunRecordIfChanged writes the run record when phase or digest differs
+// from what is persisted.
+func (w *Watcher) updateRunRecordIfChanged(subDirPath string, rec RunRecord, phase, digest string) error {
+	if digest == rec.ReportDigest && phase == rec.Phase {
+		return nil
+	}
+
+	rec.Phase = phase
+	rec.ReportDigest = digest
+
+	return WriteRunRecord(subDirPath, rec)
+}
+
 // WriteRunRecord writes run.json atomically via temp file + rename. Sets GID
 // to match the watch directory (parent of subDirPath).
 func WriteRunRecord(subDirPath string, rec RunRecord) error {
@@ -480,43 +477,6 @@ func WriteRunRecord(subDirPath string, rec RunRecord) error {
 	return writeAtomicWithGID(recordPath, data, subDirPath)
 }
 
-// handleDone processes a subdirectory whose run completed successfully. It
-// checks for fofn changes, report digest changes, and symlink correctness.
-func (w *Watcher) handleDone(subDir SubDir, rec RunRecord) error {
-	mtime, err := fofnMtime(subDir)
-	if err != nil {
-		return err
-	}
-
-	if mtime != rec.FofnMtime {
-		return w.cleanupAndRestart(subDir, rec.FofnMtime, nil)
-	}
-
-	if err := deleteOldRunDirs(subDir.Path, rec.FofnMtime); err != nil {
-		return err
-	}
-
-	return w.refreshDoneStatus(subDir, rec)
-}
-
-func (w *Watcher) refreshDoneStatus(subDir SubDir, rec RunRecord) error {
-	digest, err := reportDigest(rec.RunDir)
-	if err != nil {
-		return err
-	}
-
-	if digest != rec.ReportDigest {
-		return w.updateDoneDigest(subDir, rec, digest)
-	}
-
-	statusPath := filepath.Join(rec.RunDir, statusFilename)
-	if !statusSymlinkCurrent(statusPath, subDir.Path) {
-		return GenerateStatus(rec.RunDir, subDir, nil)
-	}
-
-	return nil
-}
-
 // statusSymlinkCurrent returns true when the subDir/status symlink exists and
 // points to the given statusPath.
 func statusSymlinkCurrent(statusPath, subDirPath string) bool {
@@ -528,71 +488,6 @@ func statusSymlinkCurrent(statusPath, subDirPath string) bool {
 	}
 
 	return target == statusPath
-}
-
-func (w *Watcher) updateDoneDigest(subDir SubDir, rec RunRecord, digest string) error {
-	if err := GenerateStatus(rec.RunDir, subDir, nil); err != nil {
-		return err
-	}
-
-	rec.ReportDigest = digest
-
-	return WriteRunRecord(subDir.Path, rec)
-}
-
-// handleBuried processes a subdirectory whose run has buried chunks. It checks
-// for fofn changes and report digest changes that indicate retries completed.
-func (w *Watcher) handleBuried(subDir SubDir, rec RunRecord, status RunJobStatus) error {
-	mtime, err := fofnMtime(subDir)
-	if err != nil {
-		return err
-	}
-
-	if mtime != rec.FofnMtime {
-		return w.cleanupAndRestart(subDir, rec.FofnMtime, status.BuriedJobs)
-	}
-
-	digest, err := reportDigest(rec.RunDir)
-	if err != nil {
-		return err
-	}
-
-	if digest != rec.ReportDigest {
-		return w.handleBuriedDigestChanged(subDir, rec, status, digest)
-	}
-
-	return nil
-}
-
-func (w *Watcher) handleBuriedDigestChanged(
-	subDir SubDir, rec RunRecord, status RunJobStatus, digest string,
-) error {
-	if len(status.BuriedChunks) == 0 {
-		return w.transitionBuriedToDone(subDir, rec, digest)
-	}
-
-	if err := GenerateStatus(rec.RunDir, subDir, status.BuriedChunks); err != nil {
-		return err
-	}
-
-	rec.ReportDigest = digest
-
-	return WriteRunRecord(subDir.Path, rec)
-}
-
-func (w *Watcher) transitionBuriedToDone(subDir SubDir, rec RunRecord, digest string) error {
-	if err := GenerateStatus(rec.RunDir, subDir, nil); err != nil {
-		return err
-	}
-
-	rec.Phase = phaseDone
-	rec.ReportDigest = digest
-
-	if err := WriteRunRecord(subDir.Path, rec); err != nil {
-		return err
-	}
-
-	return deleteOldRunDirs(subDir.Path, rec.FofnMtime)
 }
 
 // cleanupAndRestart deletes buried jobs (if any), cleans old run dirs, removes
