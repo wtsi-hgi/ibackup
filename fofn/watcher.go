@@ -592,17 +592,13 @@ func setStatusGID(statusPath, subDirPath string) error {
 		return err
 	}
 
-	if err := os.Chown(
-		statusPath, -1, gid,
-	); err != nil {
+	if err := os.Chown(statusPath, -1, gid); err != nil {
 		return fmt.Errorf("chown status: %w", err)
 	}
 
 	issuesPath := statusPath + issuesSuffix
 
-	if err := os.Chown(
-		issuesPath, -1, gid,
-	); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := os.Chown(issuesPath, -1, gid); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("chown status issues: %w", err)
 	}
 
@@ -618,9 +614,7 @@ func deleteOldRunDirs(subDirPath string, keepMtime int64) error {
 	}
 
 	for _, entry := range entries {
-		if err := removeIfOldRunDir(
-			subDirPath, entry, keepMtime,
-		); err != nil {
+		if err := removeIfOldRunDir(subDirPath, entry, keepMtime); err != nil {
 			return err
 		}
 	}
@@ -636,9 +630,7 @@ func createStatusSymlink(statusPath, subDirPath string) error {
 
 	_ = os.Remove(tmpLink)
 
-	if err := os.Symlink(
-		statusPath, tmpLink,
-	); err != nil {
+	if err := os.Symlink(statusPath, tmpLink); err != nil {
 		return fmt.Errorf("create temp status symlink: %w", err)
 	}
 
