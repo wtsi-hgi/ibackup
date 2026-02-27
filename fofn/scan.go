@@ -29,7 +29,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 )
 
 const fofnFilename = "fofn"
@@ -57,62 +56,4 @@ func ScanForFOFNs(watchDir string) ([]SubDir, error) {
 	}
 
 	return result, nil
-}
-
-// NeedsProcessing checks whether the fofn in the given SubDir needs to be
-// processed. It compares the fofn file's mtime against the newest numeric run
-// directory name. Returns true and the mtime if processing is needed, or false
-// and 0 if the newest run directory already matches the fofn mtime.
-func NeedsProcessing(subDir SubDir) (bool, int64, error) {
-	fofnPath := filepath.Join(subDir.Path, fofnFilename)
-
-	info, err := os.Stat(fofnPath)
-	if err != nil {
-		return false, 0, err
-	}
-
-	mtime := info.ModTime().Unix()
-
-	newest, found, err := newestRunDir(subDir.Path)
-	if err != nil {
-		return false, 0, err
-	}
-
-	if !found || newest != mtime {
-		return true, mtime, nil
-	}
-
-	return false, 0, nil
-}
-
-// newestRunDir finds the largest numeric directory name in dir. Returns the
-// value, whether one was found, and any error.
-func newestRunDir(dir string) (int64, bool, error) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return 0, false, fmt.Errorf("read dir for run dirs: %w", err)
-	}
-
-	var (
-		best  int64
-		found bool
-	)
-
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-
-		n, err := strconv.ParseInt(entry.Name(), 10, 64)
-		if err != nil {
-			continue
-		}
-
-		if !found || n > best {
-			best = n
-			found = true
-		}
-	}
-
-	return best, found, nil
 }

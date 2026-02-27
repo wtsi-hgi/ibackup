@@ -29,7 +29,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
@@ -93,54 +92,6 @@ func TestScanForFOFNs(t *testing.T) {
 		Convey("non-existent watchDir returns error", func() {
 			_, err := ScanForFOFNs(filepath.Join(dir, "nope"))
 			So(err, ShouldNotBeNil)
-		})
-	})
-}
-
-func TestNeedsProcessing(t *testing.T) {
-	Convey("NeedsProcessing", t, func() {
-		dir := t.TempDir()
-
-		createSubWithFOFN := func(name string, mtime int64) SubDir {
-			sub := filepath.Join(dir, name)
-			So(os.MkdirAll(sub, 0750), ShouldBeNil)
-
-			fofnPath := filepath.Join(sub, "fofn")
-			So(os.WriteFile(fofnPath, []byte(""), 0600), ShouldBeNil) //nolint:gosec
-
-			tm := time.Unix(mtime, 0)
-			So(os.Chtimes(fofnPath, tm, tm), ShouldBeNil)
-
-			return SubDir{Path: sub}
-		}
-
-		Convey("fofn with no run dirs needs processing", func() {
-			sd := createSubWithFOFN("proj1", 1000)
-
-			needs, mtime, err := NeedsProcessing(sd)
-			So(err, ShouldBeNil)
-			So(needs, ShouldBeTrue)
-			So(mtime, ShouldEqual, int64(1000))
-		})
-
-		Convey("fofn with matching run dir does not need processing", func() {
-			sd := createSubWithFOFN("proj2", 1000)
-			So(os.MkdirAll(filepath.Join(sd.Path, "1000"), 0750), ShouldBeNil)
-
-			needs, mtime, err := NeedsProcessing(sd)
-			So(err, ShouldBeNil)
-			So(needs, ShouldBeFalse)
-			So(mtime, ShouldEqual, int64(0))
-		})
-
-		Convey("fofn with stale run dir needs processing", func() {
-			sd := createSubWithFOFN("proj3", 2000)
-			So(os.MkdirAll(filepath.Join(sd.Path, "1000"), 0750), ShouldBeNil)
-
-			needs, mtime, err := NeedsProcessing(sd)
-			So(err, ShouldBeNil)
-			So(needs, ShouldBeTrue)
-			So(mtime, ShouldEqual, int64(2000))
 		})
 	})
 }

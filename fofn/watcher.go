@@ -41,7 +41,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/VertebrateResequencing/wr/jobqueue"
 	"github.com/wtsi-hgi/ibackup/internal/ownership"
 	"github.com/wtsi-hgi/ibackup/transformer"
 )
@@ -343,7 +342,12 @@ func (w *Watcher) pollSubDirCollect(
 // pollSubDir processes a single subdirectory using the run.json state machine:
 //  1. No run.json → start a new run
 //  2. Jobs still running → wait
-//  3. All jobs finished → ensure status is current, then check for fofn changes
+//  3. FOFN changed → finalise old run's status, cleanup, start new run
+//  4. All jobs finished, FOFN unchanged → reconcile status
+//
+// Checking the fofn mtime (step 3) before the expensive status reconciliation
+// (step 4) ensures we skip unnecessary digest computation and run-record
+// updates when the directory is about to be restarted.
 func (w *Watcher) pollSubDir(subDir SubDir, allStatus map[string]RunJobStatus) error {
 	rec, found, err := readRunRecord(subDir.Path)
 	if err != nil {
@@ -360,21 +364,16 @@ func (w *Watcher) pollSubDir(subDir SubDir, allStatus map[string]RunJobStatus) e
 		return nil
 	}
 
-	err = w.ensureStatusCurrent(subDir, rec, status)
+	mtime, err := fofnMtime(subDir)
 	if err != nil {
 		return err
 	}
 
-	mtime, fofnErr := fofnMtime(subDir)
-	if fofnErr != nil {
-		return fofnErr
-	}
-
 	if mtime != rec.FofnMtime {
-		return w.cleanupAndRestart(subDir, rec.FofnMtime, status.BuriedJobs)
+		return w.finalizeAndRestart(subDir, rec, status)
 	}
 
-	return nil
+	return w.ensureStatusCurrent(subDir, rec, status)
 }
 
 // ensureStatusCurrent ensures the status file, symlink, run record, and old
@@ -490,18 +489,25 @@ func statusSymlinkCurrent(statusPath, subDirPath string) bool {
 	return target == statusPath
 }
 
-// cleanupAndRestart deletes buried jobs (if any), cleans old run dirs, removes
-// run.json, and starts a fresh run.
-func (w *Watcher) cleanupAndRestart(
-	subDir SubDir, keepMtime int64, buriedJobs []*jobqueue.Job,
-) error {
-	if len(buriedJobs) > 0 {
-		if err := w.submitter.DeleteJobs(buriedJobs); err != nil {
+// finalizeAndRestart generates the final status for the completed old run,
+// cleans up buried jobs and stale directories, removes run.json, and starts a
+// fresh run for the updated fofn. Unlike ensureStatusCurrent, status is always
+// generated (no digest check) since this is a one-shot finalisation before the
+// old state is discarded.
+func (w *Watcher) finalizeAndRestart(subDir SubDir, rec RunRecord, status RunJobStatus) error {
+	_, buriedChunks := classifyPhase(status)
+
+	if err := GenerateStatus(rec.RunDir, subDir, buriedChunks); err != nil {
+		return err
+	}
+
+	if len(status.BuriedJobs) > 0 {
+		if err := w.submitter.DeleteJobs(status.BuriedJobs); err != nil {
 			return err
 		}
 	}
 
-	if err := deleteOldRunDirs(subDir.Path, keepMtime); err != nil {
+	if err := deleteOldRunDirs(subDir.Path, rec.FofnMtime); err != nil {
 		return err
 	}
 
