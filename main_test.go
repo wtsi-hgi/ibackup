@@ -5722,6 +5722,14 @@ func TestWatchFofnsIntegration(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(state.RepGroup, ShouldNotBeEmpty)
 
+			err = fofn.WriteRunRecord(subPath, fofn.RunRecord{
+				FofnMtime: state.Mtime,
+				RunDir:    state.RunDir,
+				RepGroup:  state.RepGroup,
+				Phase:     "running",
+			})
+			So(err, ShouldBeNil)
+
 			initialCount := len(mock.submitted)
 			So(initialCount,
 				ShouldBeGreaterThan, 0)
@@ -5803,6 +5811,14 @@ func TestWatchFofnsIntegration(t *testing.T) {
 				)
 				So(err, ShouldBeNil)
 				So(state.RepGroup, ShouldNotBeEmpty)
+
+				err = fofn.WriteRunRecord(subPath, fofn.RunRecord{
+					FofnMtime: state.Mtime,
+					RunDir:    state.RunDir,
+					RepGroup:  state.RepGroup,
+					Phase:     "running",
+				})
+				So(err, ShouldBeNil)
 
 				oldRunDir := state.RunDir
 				oldMtime := state.Mtime
