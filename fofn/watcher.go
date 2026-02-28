@@ -60,6 +60,7 @@ type RunRecord struct {
 	RepGroup     string   `json:"rep_group"`
 	Phase        string   `json:"phase"`
 	BuriedChunks []string `json:"buried_chunks,omitempty"`
+	Clean        bool     `json:"clean,omitempty"`
 }
 
 // readRunRecord reads run.json from subDirPath. Returns found=false if the
@@ -82,21 +83,25 @@ func readRunRecord(subDirPath string) (RunRecord, bool, error) {
 	return rec, true, nil
 }
 
-// checkDoneArtefacts checks whether the status file and its symlink are intact
-// for a done run. Returns statusOK (status file exists in run dir) and
-// symlinkOK (subdir/status symlink points to the correct status file).
-func checkDoneArtefacts(rec *RunRecord, sdPath string) (bool, bool) {
-	statusPath := filepath.Join(rec.RunDir, statusFilename)
-
-	var statusOK bool
-
-	if _, err := os.Stat(statusPath); err == nil {
-		statusOK = true
+// checkDoneSkip sets pr.skip when the run record has a Clean flag, the fofn
+// mtime matches, and status artefacts (file + symlink) are still intact.
+// If artefacts are broken despite Clean being set, Clean is reset to force
+// repair during reconcile.
+func checkDoneSkip(pr *preRead, rec *RunRecord, sd SubDir) {
+	if !rec.Clean || pr.mtimeErr != nil || pr.fofnMtime != rec.FofnMtime {
+		return
 	}
 
-	symlinkOK := statusSymlinkCurrent(statusPath, sdPath)
+	statusPath := filepath.Join(rec.RunDir, statusFilename)
 
-	return statusOK, symlinkOK
+	_, err := os.Stat(statusPath)
+	if err != nil || !statusSymlinkCurrent(statusPath, sd.Path) {
+		rec.Clean = false
+
+		return
+	}
+
+	pr.skip = true
 }
 
 // ProcessSubDirConfig holds configuration for processing a subdirectory.
@@ -256,15 +261,15 @@ func submitChunkJobs(
 // preRead holds a cached run record, fofn mtime, and any read error for one
 // subdirectory. Centralising all reads into the pre-scan lets pollSubDir make
 // decisions without additional I/O. For done directories whose fofn mtime
-// matches the record, statusOK and symlinkOK cache artefact integrity checks
-// so that subsequent polling skips all repair I/O when both are true.
+// matches the record and whose Clean flag is set, artefact integrity is
+// verified via Stat + Readlink; if both are intact the skip flag is set
+// so that pollSubDir returns immediately.
 type preRead struct {
 	rec       *RunRecord
 	err       error
 	fofnMtime int64
 	mtimeErr  error
-	statusOK  bool // status file exists in run dir
-	symlinkOK bool // subdir/status symlink points to correct status file
+	skip      bool // Clean + same mtime + artefacts intact → skip entirely
 }
 
 // preReadOne reads the run record and fofn mtime for a single subdirectory.
@@ -289,9 +294,10 @@ func preReadOne(sd SubDir) (*preRead, bool) {
 		return &pr, true
 	}
 
-	if pr.mtimeErr == nil && pr.fofnMtime == rec.FofnMtime {
-		pr.statusOK, pr.symlinkOK = checkDoneArtefacts(&r, sd.Path)
-	}
+	// Done phase: no wr query needed. When the Clean flag is set and the
+	// fofn mtime matches, verify that artefacts are still intact. If so,
+	// skip all further work for this directory.
+	checkDoneSkip(&pr, &r, sd)
 
 	return &pr, false
 }
@@ -349,9 +355,8 @@ func (w *Watcher) Poll() error {
 // results and determining whether any subdirectory requires a wr query.
 // Subdirectories without run.json (no entry in cache) need no wr query;
 // subdirectories with a read error are cached and wr is queried
-// conservatively. For done directories whose fofn mtime matches the record,
-// artefact integrity (status file + symlink) is also checked — if both are
-// intact, the reconcile fast path skips all repair I/O.
+// conservatively. For done directories with a Clean flag set, artefact
+// integrity is verified and the skip flag is set if intact.
 func preReadAll(subDirs []SubDir) (map[string]preRead, bool) {
 	cache := make(map[string]preRead, len(subDirs))
 	needWR := false
@@ -445,7 +450,8 @@ func (w *Watcher) pollSubDirCollect(
 //  1. Pre-read error       → propagate
 //  2. No run record        → start a new run
 //  3. Mtime read error     → propagate
-//  4. Existing run record  → reconcile state
+//  4. Clean + intact       → skip (verified in pre-scan)
+//  5. Existing run record  → reconcile state
 func (w *Watcher) pollSubDir(subDir SubDir, cached preRead, allStatus map[string]RunJobStatus) error {
 	if cached.err != nil {
 		return cached.err
@@ -459,63 +465,138 @@ func (w *Watcher) pollSubDir(subDir SubDir, cached preRead, allStatus map[string
 		return cached.mtimeErr
 	}
 
+	if cached.skip {
+		return nil
+	}
+
 	return w.reconcile(subDir, cached, allStatus)
 }
 
 // reconcile handles all state transitions for a subdirectory with an existing
-// run record. It follows a linear pipeline:
-//  1. fofn changed          → teardown + restart
-//  2. steady-state done     → skip (artefacts verified in pre-scan)
-//  3. done, broken artefacts→ repair only
-//  4. active phase          → reconcile via wr status
+// run record via a single convergent path:
+//
+//  1. fofn changed                 → teardown + restart (wait if jobs running)
+//  2. active phase (running/buried) → detect phase transitions from wr status
+//  3. ensure all artefacts correct  → single idempotent normalise path
 func (w *Watcher) reconcile(subDir SubDir, cached preRead, allStatus map[string]RunJobStatus) error {
 	rec := cached.rec
 
 	if cached.fofnMtime != rec.FofnMtime {
-		return w.handleFofnChanged(subDir, *rec, allStatus)
+		return w.reconcileFofnChange(subDir, rec, allStatus)
 	}
 
-	if rec.Phase == phaseDone && cached.statusOK && cached.symlinkOK {
-		return deleteOldRunDirs(subDir.Path, rec.FofnMtime)
+	phaseChanged, wait := detectPhaseChange(rec, allStatus)
+	if wait {
+		return nil
 	}
 
-	if rec.Phase == phaseDone {
-		return w.repairDoneArtefacts(subDir, *rec)
-	}
-
-	return w.reconcileActive(subDir, rec, allStatus)
+	return w.ensureArtefacts(subDir, rec, phaseChanged)
 }
 
-// reconcileActive handles the active-phase (running/buried) branch of the
-// reconciliation pipeline. It waits for running jobs, detects phase transitions,
-// and repairs artefacts when the phase is stable.
-func (w *Watcher) reconcileActive(subDir SubDir, rec *RunRecord, allStatus map[string]RunJobStatus) error {
+// detectPhaseChange checks wr status for active-phase runs and updates rec’s
+// Phase and BuriedChunks. Returns phaseChanged=true when a transition was
+// detected. Returns wait=true when jobs are still running.
+func detectPhaseChange(rec *RunRecord, allStatus map[string]RunJobStatus) (phaseChanged, wait bool) {
+	if rec.Phase == phaseDone {
+		return false, false
+	}
+
 	status := allStatus[rec.RepGroup]
 	if status.HasRunning {
-		return nil
+		return false, true
 	}
 
 	newPhase, newBuried := classifyPhase(status)
 
 	if newPhase != rec.Phase || !slices.Equal(newBuried, rec.BuriedChunks) {
-		return w.applyPhaseTransition(subDir, rec, newPhase, newBuried)
+		phaseChanged = true
 	}
 
-	return repairStatusArtifacts(rec.RunDir, subDir, rec.BuriedChunks)
+	rec.Phase = newPhase
+	rec.BuriedChunks = newBuried
+
+	return phaseChanged, false
 }
 
-// handleFofnChanged handles the case where the fofn file has been modified.
-// For active phases, it waits for running jobs to finish before restarting.
-// For done phases, it restarts immediately since no jobs are in flight.
-func (w *Watcher) handleFofnChanged(subDir SubDir, rec RunRecord, allStatus map[string]RunJobStatus) error {
-	if rec.Phase != phaseDone {
-		status := allStatus[rec.RepGroup]
-		if status.HasRunning {
+// reconcileFofnChange handles the fofn-changed branch: waits for active jobs
+// to finish, then tears down the old run and starts a new one.
+func (w *Watcher) reconcileFofnChange(
+	subDir SubDir, rec *RunRecord, allStatus map[string]RunJobStatus,
+) error {
+	if rec.Phase != phaseDone && allStatus[rec.RepGroup].HasRunning {
+		return nil
+	}
+
+	return w.teardownAndRestart(subDir, *rec, allStatus)
+}
+
+// ensureArtefacts guarantees all artefacts are correct for the current phase,
+// then marks the record clean and persists it. Each ensure step is idempotent:
+// calling it when the artefact is already correct costs only a single Stat or
+// Readlink. When no phase change occurred and the record is already clean, a
+// quick artefact check avoids redundant I/O.
+func (w *Watcher) ensureArtefacts(subDir SubDir, rec *RunRecord, phaseChanged bool) error {
+	if !phaseChanged && rec.Clean && artefactsIntact(rec, subDir.Path) {
+		return nil
+	}
+
+	if err := ensureStatusFile(rec.RunDir, subDir, rec.BuriedChunks, phaseChanged); err != nil {
+		return err
+	}
+
+	if err := ensureStatusSymlink(rec.RunDir, subDir.Path); err != nil {
+		return err
+	}
+
+	if err := deleteOldRunDirs(subDir.Path, rec.FofnMtime); err != nil {
+		return err
+	}
+
+	rec.Clean = true
+
+	return WriteRunRecord(subDir.Path, *rec)
+}
+
+// artefactsIntact returns true when the status file exists in rec.RunDir and
+// the status symlink in subDirPath points to it.
+func artefactsIntact(rec *RunRecord, subDirPath string) bool {
+	statusPath := filepath.Join(rec.RunDir, statusFilename)
+
+	if _, err := os.Stat(statusPath); err != nil {
+		return false
+	}
+
+	return statusSymlinkCurrent(statusPath, subDirPath)
+}
+
+// ensureStatusFile checks whether the status file exists in runDir. If absent
+// or if forceRegenerate is true (phase transition), it regenerates the status
+// from reports. When the file already exists and no regeneration is forced, the
+// cost is a single os.Stat call.
+func ensureStatusFile(runDir string, subDir SubDir, buriedChunks []string, forceRegenerate bool) error {
+	if !forceRegenerate {
+		statusPath := filepath.Join(runDir, statusFilename)
+
+		if _, err := os.Stat(statusPath); err == nil {
 			return nil
 		}
 	}
 
-	return w.teardownAndRestart(subDir, rec, allStatus)
+	return GenerateStatus(runDir, subDir, buriedChunks)
+}
+
+// ensureStatusSymlink checks whether the status symlink in subDirPath points
+// to the correct status file in runDir. If absent or incorrect, it creates or
+// updates the symlink. When the symlink is already correct, the cost is a
+// single os.Readlink call.
+func ensureStatusSymlink(runDir string, subDirPath string) error {
+	statusPath := filepath.Join(runDir, statusFilename)
+
+	if statusSymlinkCurrent(statusPath, subDirPath) {
+		return nil
+	}
+
+	return createStatusSymlink(statusPath, subDirPath)
 }
 
 // teardownAndRestart generates a final status snapshot for the old run, cleans
@@ -560,61 +641,6 @@ func classifyPhase(status RunJobStatus) (string, []string) {
 	}
 
 	return phaseDone, nil
-}
-
-// repairStatusArtifacts ensures the status file and its symlink are intact
-// without re-reading all report files. If the status file was externally
-// deleted, it regenerates from reports. If only the symlink is broken, it
-// creates a new symlink — an O(1) fix rather than an O(reports) rebuild.
-func repairStatusArtifacts(runDir string, subDir SubDir, buriedChunks []string) error {
-	statusPath := filepath.Join(runDir, statusFilename)
-
-	if _, err := os.Stat(statusPath); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return GenerateStatus(runDir, subDir, buriedChunks)
-		}
-
-		return err
-	}
-
-	if !statusSymlinkCurrent(statusPath, subDir.Path) {
-		return createStatusSymlink(statusPath, subDir.Path)
-	}
-
-	return nil
-}
-
-// repairDoneArtefacts repairs the status file and symlink for a done run whose
-// artefacts are broken, then cleans up stale run directories. No wr query is
-// needed because the run is already complete.
-func (w *Watcher) repairDoneArtefacts(subDir SubDir, rec RunRecord) error {
-	if err := repairStatusArtifacts(rec.RunDir, subDir, nil); err != nil {
-		return err
-	}
-
-	return deleteOldRunDirs(subDir.Path, rec.FofnMtime)
-}
-
-// applyPhaseTransition regenerates the status file and updates the run record
-// when a phase change has been detected (e.g. running→done, running→buried,
-// buried→done, or buried chunk set change).
-func (w *Watcher) applyPhaseTransition(subDir SubDir, rec *RunRecord, newPhase string, newBuried []string) error {
-	if err := GenerateStatus(rec.RunDir, subDir, newBuried); err != nil {
-		return err
-	}
-
-	rec.Phase = newPhase
-	rec.BuriedChunks = newBuried
-
-	if err := WriteRunRecord(subDir.Path, *rec); err != nil {
-		return err
-	}
-
-	if newPhase == phaseDone {
-		return deleteOldRunDirs(subDir.Path, rec.FofnMtime)
-	}
-
-	return nil
 }
 
 // WriteRunRecord writes run.json atomically via temp file + rename. Sets GID
