@@ -138,7 +138,6 @@ type RunRecord struct {
 	RepGroup     string   `json:"rep_group"`
 	Phase        string   `json:"phase"`
 	BuriedChunks []string `json:"buried_chunks,omitempty"`
-	Clean        bool     `json:"clean,omitempty"`
 }
 
 // readRunRecord reads run.json from subDirPath. Returns found=false if the
@@ -159,27 +158,6 @@ func readRunRecord(subDirPath string) (RunRecord, bool, error) {
 	}
 
 	return rec, true, nil
-}
-
-// checkDoneSkip sets pr.skip when the run record has a Clean flag, the fofn
-// mtime matches, and status artefacts (file + symlink) are still intact.
-// If artefacts are broken despite Clean being set, Clean is reset to force
-// repair during reconcile.
-func checkDoneSkip(pr *preRead, rec *RunRecord, sd SubDir) {
-	if !rec.Clean || pr.mtimeErr != nil || pr.fofnMtime != rec.FofnMtime {
-		return
-	}
-
-	statusPath := filepath.Join(rec.RunDir, statusFilename)
-
-	_, err := os.Stat(statusPath)
-	if err != nil || !statusSymlinkCurrent(statusPath, sd.Path) {
-		rec.Clean = false
-
-		return
-	}
-
-	pr.skip = true
 }
 
 // ProcessSubDirConfig holds configuration for processing a subdirectory.
@@ -338,16 +316,12 @@ func submitChunkJobs(
 
 // preRead holds a cached run record, fofn mtime, and any read error for one
 // subdirectory. Centralising all reads into the pre-scan lets pollSubDir make
-// decisions without additional I/O. For done directories whose fofn mtime
-// matches the record and whose Clean flag is set, artefact integrity is
-// verified via Stat + Readlink; if both are intact the skip flag is set
-// so that pollSubDir returns immediately.
+// decisions without additional I/O.
 type preRead struct {
 	rec       *RunRecord
 	err       error
 	fofnMtime int64
 	mtimeErr  error
-	skip      bool // Clean + same mtime + artefacts intact → skip entirely
 }
 
 // preReadOne reads the run record and fofn mtime for a single subdirectory.
@@ -368,16 +342,7 @@ func preReadOne(sd SubDir) (*preRead, bool) {
 
 	pr.fofnMtime, pr.mtimeErr = fofnMtimeFromPath(sd.Path)
 
-	if rec.Phase != phaseDone {
-		return &pr, true
-	}
-
-	// Done phase: no wr query needed. When the Clean flag is set and the
-	// fofn mtime matches, verify that artefacts are still intact. If so,
-	// skip all further work for this directory.
-	checkDoneSkip(&pr, &r, sd)
-
-	return &pr, false
+	return &pr, rec.Phase != phaseDone
 }
 
 // Watcher monitors a watch directory for fofn changes and manages backup runs
@@ -433,8 +398,7 @@ func (w *Watcher) Poll() error {
 // results and determining whether any subdirectory requires a wr query.
 // Subdirectories without run.json (no entry in cache) need no wr query;
 // subdirectories with a read error are cached and wr is queried
-// conservatively. For done directories with a Clean flag set, artefact
-// integrity is verified and the skip flag is set if intact.
+// conservatively.
 func preReadAll(subDirs []SubDir) (map[string]preRead, bool) {
 	cache := make(map[string]preRead, len(subDirs))
 	needWR := false
@@ -528,8 +492,7 @@ func (w *Watcher) pollSubDirCollect(
 //  1. Pre-read error       → propagate
 //  2. No run record        → start a new run
 //  3. Mtime read error     → propagate
-//  4. Clean + intact       → skip (verified in pre-scan)
-//  5. Existing run record  → reconcile state
+//  4. Existing run record  → reconcile state
 func (w *Watcher) pollSubDir(subDir SubDir, cached preRead, allStatus map[string]RunJobStatus) error {
 	if cached.err != nil {
 		return cached.err
@@ -541,10 +504,6 @@ func (w *Watcher) pollSubDir(subDir SubDir, cached preRead, allStatus map[string
 
 	if cached.mtimeErr != nil {
 		return cached.mtimeErr
-	}
-
-	if cached.skip {
-		return nil
 	}
 
 	return w.reconcile(subDir, cached, allStatus)
@@ -594,15 +553,21 @@ func (w *Watcher) settle(subDir SubDir, rec *RunRecord, newPhase string, buriedC
 	rec.Phase = newPhase
 	rec.BuriedChunks = buriedChunks
 
-	if !phaseChanged && rec.Clean && artefactsIntact(rec, subDir.Path) {
+	if !phaseChanged && artefactsIntact(rec, subDir.Path) {
 		return nil
 	}
 
-	if err := repairArtefacts(rec.RunDir, subDir, rec.FofnMtime, buriedChunks, phaseChanged); err != nil {
+	if err := repairArtefacts(rec.RunDir, subDir, buriedChunks, phaseChanged); err != nil {
 		return err
 	}
 
-	rec.Clean = true
+	if !phaseChanged {
+		return nil
+	}
+
+	if err := deleteOldRunDirs(subDir.Path, rec.FofnMtime); err != nil {
+		return err
+	}
 
 	return WriteRunRecord(subDir.Path, *rec)
 }
@@ -619,21 +584,17 @@ func artefactsIntact(rec *RunRecord, subDirPath string) bool {
 	return statusSymlinkCurrent(statusPath, subDirPath)
 }
 
-// repairArtefacts ensures the status file, symlink, and run directories are
-// correct. Extracted from settle to keep cyclomatic complexity low.
+// repairArtefacts ensures the status file and symlink are correct. Extracted
+// from settle to keep cyclomatic complexity low.
 func repairArtefacts(
-	runDir string, subDir SubDir, fofnMtime int64,
+	runDir string, subDir SubDir,
 	buriedChunks []string, phaseChanged bool,
 ) error {
 	if err := ensureStatusFile(runDir, subDir, buriedChunks, phaseChanged); err != nil {
 		return err
 	}
 
-	if err := ensureStatusSymlink(runDir, subDir.Path); err != nil {
-		return err
-	}
-
-	return deleteOldRunDirs(subDir.Path, fofnMtime)
+	return ensureStatusSymlink(runDir, subDir.Path)
 }
 
 // sortedBuriedChunks extracts and sorts the buried chunk names from the job

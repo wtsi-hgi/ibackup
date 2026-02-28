@@ -1213,6 +1213,12 @@ func TestWatcherRestart(t *testing.T) {
 			beforeStat, ok := symlinkInfoBefore.Sys().(*syscall.Stat_t)
 			So(ok, ShouldBeTrue)
 
+			runJSONPath := filepath.Join(subPath, "run.json")
+			runJSONBefore, statErr := os.Stat(runJSONPath)
+			So(statErr, ShouldBeNil)
+
+			runJSONMtimeBefore := runJSONBefore.ModTime()
+
 			mock := &mockJobSubmitter{}
 
 			w := NewWatcher(watchDir, mock, cfg)
@@ -1233,6 +1239,10 @@ func TestWatcherRestart(t *testing.T) {
 
 			So(statusInfoAfter.ModTime(), ShouldEqual, statusInfoBefore.ModTime())
 			So(afterStat.Ino, ShouldEqual, beforeStat.Ino)
+
+			runJSONAfter, statErr := os.Stat(runJSONPath)
+			So(statErr, ShouldBeNil)
+			So(runJSONAfter.ModTime(), ShouldEqual, runJSONMtimeBefore)
 
 			target, readErr := os.Readlink(symlinkPath)
 			So(readErr, ShouldBeNil)
@@ -1295,7 +1305,7 @@ func TestWatcherRestart(t *testing.T) {
 			So(rec.Phase, ShouldEqual, phaseDone)
 		})
 
-		Convey("cleans stale run directories on no-rewrite early return", func() {
+		Convey("cleans stale run directories during phase transition", func() {
 			subPath := filepath.Join(watchDir, "proj")
 			So(os.MkdirAll(subPath, 0750), ShouldBeNil)
 
@@ -1312,15 +1322,16 @@ func TestWatcherRestart(t *testing.T) {
 			So(os.MkdirAll(oldRunDir, 0750), ShouldBeNil)
 
 			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 10))
-			So(GenerateStatus(runDir, SubDir{Path: subPath}, nil), ShouldBeNil)
 
+			// Start with running phase so poll transitions running→done
 			writeTestRunRecord(subPath, RunRecord{
 				FofnMtime: 1000,
 				RunDir:    runDir,
 				RepGroup:  "ibackup_fofn_proj_1000",
-				Phase:     phaseDone,
+				Phase:     phaseRunning,
 			})
 
+			// wr returns no jobs → complete
 			mock := &mockJobSubmitter{}
 			w := NewWatcher(watchDir, mock, cfg)
 
@@ -1328,13 +1339,16 @@ func TestWatcherRestart(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(mock.submitted, ShouldBeEmpty)
 
+			rec := readTestRunRecord(subPath)
+			So(rec.Phase, ShouldEqual, phaseDone)
+
 			_, statErr := os.Stat(oldRunDir)
 			So(os.IsNotExist(statErr), ShouldBeTrue)
 			_, statErr = os.Stat(runDir)
 			So(statErr, ShouldBeNil)
 		})
 
-		Convey("returns error when stale-run cleanup fails on no-rewrite path", func() {
+		Convey("returns error when stale-run cleanup fails during phase transition", func() {
 			subPath := filepath.Join(watchDir, "proj")
 			So(os.MkdirAll(subPath, 0750), ShouldBeNil)
 
@@ -1347,27 +1361,30 @@ func TestWatcherRestart(t *testing.T) {
 			runDir := filepath.Join(subPath, "1000")
 			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
 
+			// Create old run dir with undeletable content so
+			// os.RemoveAll fails on the nested directory.
 			oldRunDir := filepath.Join(subPath, "500")
-			So(os.MkdirAll(oldRunDir, 0750), ShouldBeNil)
+			nestedDir := filepath.Join(oldRunDir, "nested")
+			So(os.MkdirAll(nestedDir, 0750), ShouldBeNil)
+			So(os.WriteFile(filepath.Join(nestedDir, "file"), []byte("x"), 0600), ShouldBeNil)
+			So(os.Chmod(nestedDir, 0550), ShouldBeNil)
+
+			defer func() {
+				restoreErr := os.Chmod(nestedDir, 0750)
+				So(restoreErr, ShouldBeNil)
+			}()
 
 			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 10))
-			So(GenerateStatus(runDir, SubDir{Path: subPath}, nil), ShouldBeNil)
 
+			// Start with running phase so poll transitions running→done
 			writeTestRunRecord(subPath, RunRecord{
 				FofnMtime: 1000,
 				RunDir:    runDir,
 				RepGroup:  "ibackup_fofn_proj_1000",
-				Phase:     phaseDone,
+				Phase:     phaseRunning,
 			})
 
-			soErr := os.Chmod(subPath, 0550)
-			So(soErr, ShouldBeNil)
-
-			defer func() {
-				restoreErr := os.Chmod(subPath, 0750)
-				So(restoreErr, ShouldBeNil)
-			}()
-
+			// wr returns no jobs → complete
 			mock := &mockJobSubmitter{}
 			w := NewWatcher(watchDir, mock, cfg)
 
@@ -2048,9 +2065,6 @@ func TestSettleRepairsArtefacts(t *testing.T) {
 			os.Remove(issuesPath)
 		}
 
-		// Reset Clean to simulate re-entry after damage
-		rec.Clean = false
-
 		// Call settle again — must repair
 		if err := w.settle(sd, rec, phase, buriedChunks); err != nil {
 			rt.Fatalf("repair settle: %v", err)
@@ -2071,12 +2085,7 @@ func TestSettleRepairsArtefacts(t *testing.T) {
 			rt.Fatalf("symlink target: want %s, got %s", statusPath, target)
 		}
 
-		// Invariant 3: run record is clean
-		if !rec.Clean {
-			rt.Fatal("rec.Clean should be true after settle")
-		}
-
-		// Invariant 4: phase is correct
+		// Invariant 3: phase is correct
 		if rec.Phase != phase {
 			rt.Fatalf("rec.Phase: want %s, got %s", phase, rec.Phase)
 		}
@@ -2208,7 +2217,6 @@ func TestPollRepairsDoneRun(t *testing.T) {
 			RunDir:    runDir,
 			RepGroup:  "ibackup_fofn_proj_1000",
 			Phase:     phaseDone,
-			Clean:     true,
 		}
 
 		if err := WriteRunRecord(subPath, rec); err != nil {
