@@ -52,6 +52,84 @@ const (
 	ownerReadWrite    = 0o600
 )
 
+// jobResult classifies wr job status for the state machine.
+type jobResult int
+
+const (
+	jobsNA       jobResult = iota // done phase; no wr query needed
+	jobsRunning                   // at least one job still active
+	jobsComplete                  // all complete, none buried
+	jobsBuried                    // at least one job buried
+)
+
+// actionType describes the action the state machine selects.
+type actionType int
+
+const (
+	actionWait    actionType = iota // do nothing; jobs still running
+	actionSettle                    // ensure artefacts match current phase
+	actionRestart                   // teardown old run + start new
+)
+
+// transitionKey uniquely identifies a state-machine input.
+type transitionKey struct {
+	phase       string
+	fofnChanged bool
+	jobs        jobResult
+}
+
+// transition holds the result of a state-machine lookup.
+type transition struct {
+	action   actionType
+	newPhase string // meaningful only for actionSettle
+}
+
+// transitions is the explicit state machine. Every reachable (phase,
+// fofnChanged, jobResult) triple MUST have an entry. A missing entry panics at
+// runtime, making missed-case bugs structurally impossible rather than merely
+// unlikely.
+var transitions = map[transitionKey]transition{ //nolint:gochecknoglobals
+	// running + fofn unchanged
+	{phaseRunning, false, jobsRunning}:  {actionWait, ""},
+	{phaseRunning, false, jobsComplete}: {actionSettle, phaseDone},
+	{phaseRunning, false, jobsBuried}:   {actionSettle, phaseBuried},
+	// running + fofn changed
+	{phaseRunning, true, jobsRunning}:  {actionWait, ""},
+	{phaseRunning, true, jobsComplete}: {actionRestart, ""},
+	{phaseRunning, true, jobsBuried}:   {actionRestart, ""},
+	// done + fofn unchanged (no wr query needed)
+	{phaseDone, false, jobsNA}: {actionSettle, phaseDone},
+	// done + fofn changed (no wr query needed)
+	{phaseDone, true, jobsNA}: {actionRestart, ""},
+	// buried + fofn unchanged
+	{phaseBuried, false, jobsRunning}:  {actionWait, ""},
+	{phaseBuried, false, jobsComplete}: {actionSettle, phaseDone},
+	{phaseBuried, false, jobsBuried}:   {actionSettle, phaseBuried},
+	// buried + fofn changed
+	{phaseBuried, true, jobsRunning}:  {actionWait, ""},
+	{phaseBuried, true, jobsComplete}: {actionRestart, ""},
+	{phaseBuried, true, jobsBuried}:   {actionRestart, ""},
+}
+
+// classifyJobResult determines the jobResult for the transition table from the
+// current phase and wr job status. Done-phase runs return jobsNA because no wr
+// query is made for them.
+func classifyJobResult(phase string, status RunJobStatus) jobResult {
+	if phase == phaseDone {
+		return jobsNA
+	}
+
+	if status.HasRunning {
+		return jobsRunning
+	}
+
+	if len(status.BuriedChunks) > 0 {
+		return jobsBuried
+	}
+
+	return jobsComplete
+}
+
 // RunRecord is the persisted state for one subdirectory's current run. It is
 // written atomically to run.json in the subdirectory.
 type RunRecord struct {
@@ -472,83 +550,55 @@ func (w *Watcher) pollSubDir(subDir SubDir, cached preRead, allStatus map[string
 	return w.reconcile(subDir, cached, allStatus)
 }
 
-// reconcile handles all state transitions for a subdirectory with an existing
-// run record via a single convergent path:
-//
-//  1. fofn changed                 → teardown + restart (wait if jobs running)
-//  2. active phase (running/buried) → detect phase transitions from wr status
-//  3. ensure all artefacts correct  → single idempotent normalise path
+// reconcile uses the explicit transition table to determine and execute the
+// correct action for a subdirectory with an existing run record. Every
+// (phase, fofnChanged, jobResult) triple is accounted for in the table;
+// a missing entry panics, making missed-case bugs structurally impossible.
 func (w *Watcher) reconcile(subDir SubDir, cached preRead, allStatus map[string]RunJobStatus) error {
 	rec := cached.rec
+	status := allStatus[rec.RepGroup]
 
-	if cached.fofnMtime != rec.FofnMtime {
-		return w.reconcileFofnChange(subDir, rec, allStatus)
+	key := transitionKey{
+		phase:       rec.Phase,
+		fofnChanged: cached.fofnMtime != rec.FofnMtime,
+		jobs:        classifyJobResult(rec.Phase, status),
 	}
 
-	phaseChanged, wait := detectPhaseChange(rec, allStatus)
-	if wait {
+	tr, ok := transitions[key]
+	if !ok {
+		panic(fmt.Sprintf("watchfofns: unhandled transition: phase=%s fofnChanged=%t jobs=%d",
+			key.phase, key.fofnChanged, key.jobs))
+	}
+
+	switch tr.action {
+	case actionWait:
 		return nil
-	}
+	case actionSettle:
+		buried := sortedBuriedChunks(status)
 
-	return w.ensureArtefacts(subDir, rec, phaseChanged)
+		return w.settle(subDir, rec, tr.newPhase, buried)
+	case actionRestart:
+		return w.teardownAndRestart(subDir, *rec, status)
+	default:
+		panic(fmt.Sprintf("watchfofns: unknown action: %d", tr.action))
+	}
 }
 
-// detectPhaseChange checks wr status for active-phase runs and updates rec’s
-// Phase and BuriedChunks. Returns phaseChanged=true when a transition was
-// detected. Returns wait=true when jobs are still running.
-func detectPhaseChange(rec *RunRecord, allStatus map[string]RunJobStatus) (phaseChanged, wait bool) {
-	if rec.Phase == phaseDone {
-		return false, false
-	}
-
-	status := allStatus[rec.RepGroup]
-	if status.HasRunning {
-		return false, true
-	}
-
-	newPhase, newBuried := classifyPhase(status)
-
-	if newPhase != rec.Phase || !slices.Equal(newBuried, rec.BuriedChunks) {
-		phaseChanged = true
-	}
+// settle is the single convergent artefact reconciler. Every code path that
+// must ensure status file, symlink, and run-record consistency calls this
+// function. It is idempotent: when artefacts are already correct and the phase
+// has not changed, the cost is a single Stat + Readlink.
+func (w *Watcher) settle(subDir SubDir, rec *RunRecord, newPhase string, buriedChunks []string) error {
+	phaseChanged := newPhase != rec.Phase || !slices.Equal(buriedChunks, rec.BuriedChunks)
 
 	rec.Phase = newPhase
-	rec.BuriedChunks = newBuried
+	rec.BuriedChunks = buriedChunks
 
-	return phaseChanged, false
-}
-
-// reconcileFofnChange handles the fofn-changed branch: waits for active jobs
-// to finish, then tears down the old run and starts a new one.
-func (w *Watcher) reconcileFofnChange(
-	subDir SubDir, rec *RunRecord, allStatus map[string]RunJobStatus,
-) error {
-	if rec.Phase != phaseDone && allStatus[rec.RepGroup].HasRunning {
-		return nil
-	}
-
-	return w.teardownAndRestart(subDir, *rec, allStatus)
-}
-
-// ensureArtefacts guarantees all artefacts are correct for the current phase,
-// then marks the record clean and persists it. Each ensure step is idempotent:
-// calling it when the artefact is already correct costs only a single Stat or
-// Readlink. When no phase change occurred and the record is already clean, a
-// quick artefact check avoids redundant I/O.
-func (w *Watcher) ensureArtefacts(subDir SubDir, rec *RunRecord, phaseChanged bool) error {
 	if !phaseChanged && rec.Clean && artefactsIntact(rec, subDir.Path) {
 		return nil
 	}
 
-	if err := ensureStatusFile(rec.RunDir, subDir, rec.BuriedChunks, phaseChanged); err != nil {
-		return err
-	}
-
-	if err := ensureStatusSymlink(rec.RunDir, subDir.Path); err != nil {
-		return err
-	}
-
-	if err := deleteOldRunDirs(subDir.Path, rec.FofnMtime); err != nil {
+	if err := repairArtefacts(rec.RunDir, subDir, rec.FofnMtime, buriedChunks, phaseChanged); err != nil {
 		return err
 	}
 
@@ -567,6 +617,37 @@ func artefactsIntact(rec *RunRecord, subDirPath string) bool {
 	}
 
 	return statusSymlinkCurrent(statusPath, subDirPath)
+}
+
+// repairArtefacts ensures the status file, symlink, and run directories are
+// correct. Extracted from settle to keep cyclomatic complexity low.
+func repairArtefacts(
+	runDir string, subDir SubDir, fofnMtime int64,
+	buriedChunks []string, phaseChanged bool,
+) error {
+	if err := ensureStatusFile(runDir, subDir, buriedChunks, phaseChanged); err != nil {
+		return err
+	}
+
+	if err := ensureStatusSymlink(runDir, subDir.Path); err != nil {
+		return err
+	}
+
+	return deleteOldRunDirs(subDir.Path, fofnMtime)
+}
+
+// sortedBuriedChunks extracts and sorts the buried chunk names from the job
+// status. Buried chunks are sorted for deterministic comparison.
+func sortedBuriedChunks(status RunJobStatus) []string {
+	if len(status.BuriedChunks) > 0 {
+		sorted := make([]string, len(status.BuriedChunks))
+		copy(sorted, status.BuriedChunks)
+		slices.Sort(sorted)
+
+		return sorted
+	}
+
+	return nil
 }
 
 // ensureStatusFile checks whether the status file exists in runDir. If absent
@@ -601,12 +682,11 @@ func ensureStatusSymlink(runDir string, subDirPath string) error {
 
 // teardownAndRestart generates a final status snapshot for the old run, cleans
 // up buried jobs and stale directories, removes run.json, and starts a fresh
-// run for the updated fofn. Buried job information is extracted from allStatus;
-// when called from a "done" phase where allStatus may be nil, the zero-value
-// RunJobStatus correctly indicates no buried jobs.
-func (w *Watcher) teardownAndRestart(subDir SubDir, rec RunRecord, allStatus map[string]RunJobStatus) error {
-	status := allStatus[rec.RepGroup]
-	_, buriedChunks := classifyPhase(status)
+// run for the updated fofn. Called by the state machine's actionRestart; for
+// done-phase runs where no wr query was made, the zero-value RunJobStatus
+// correctly indicates no buried jobs.
+func (w *Watcher) teardownAndRestart(subDir SubDir, rec RunRecord, status RunJobStatus) error {
+	buriedChunks := sortedBuriedChunks(status)
 
 	if err := GenerateStatus(rec.RunDir, subDir, buriedChunks); err != nil {
 		return err
@@ -627,20 +707,6 @@ func (w *Watcher) teardownAndRestart(subDir SubDir, rec RunRecord, allStatus map
 	}
 
 	return w.startNewRun(subDir)
-}
-
-// classifyPhase determines the correct phase and buried chunks from current
-// job status. Buried chunks are sorted for deterministic comparison.
-func classifyPhase(status RunJobStatus) (string, []string) {
-	if len(status.BuriedChunks) > 0 {
-		sorted := make([]string, len(status.BuriedChunks))
-		copy(sorted, status.BuriedChunks)
-		slices.Sort(sorted)
-
-		return phaseBuried, sorted
-	}
-
-	return phaseDone, nil
 }
 
 // WriteRunRecord writes run.json atomically via temp file + rename. Sets GID

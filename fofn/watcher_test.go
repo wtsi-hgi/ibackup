@@ -40,7 +40,40 @@ import (
 	"github.com/VertebrateResequencing/wr/jobqueue"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/wtsi-hgi/ibackup/transformer"
+	"pgregory.net/rapid"
 )
+
+func TestTransitionTableExhaustive(t *testing.T) {
+	Convey("transition table covers every reachable state", t, func() {
+		phases := []string{phaseRunning, phaseDone, phaseBuried}
+
+		total := 0
+
+		for _, phase := range phases {
+			var jobs []jobResult
+			if phase == phaseDone {
+				jobs = []jobResult{jobsNA}
+			} else {
+				jobs = []jobResult{jobsRunning, jobsComplete, jobsBuried}
+			}
+
+			for _, fofnChanged := range []bool{false, true} {
+				for _, jr := range jobs {
+					key := transitionKey{phase: phase, fofnChanged: fofnChanged, jobs: jr}
+					_, ok := transitions[key]
+					So(ok, ShouldBeTrue)
+
+					total++
+				}
+			}
+		}
+
+		Convey("has exactly 14 entries with no spurious extras", func() {
+			So(len(transitions), ShouldEqual, total)
+			So(total, ShouldEqual, 14)
+		})
+	})
+}
 
 // filePair represents a local/remote path pair.
 type filePair struct {
@@ -170,6 +203,68 @@ func writeReportFile(
 	}
 
 	So(f.Close(), ShouldBeNil)
+}
+
+// mustWriteChunkT writes a chunk file without GoConvey assertions,
+// for use inside rapid property checks.
+func mustWriteChunkT(t fataler, runDir, chunkName string, pairs []filePair) {
+	path := filepath.Join(runDir, chunkName)
+
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, p := range pairs {
+		line := base64.StdEncoding.EncodeToString(
+			[]byte(p.Local),
+		) + "\t" + base64.StdEncoding.EncodeToString(
+			[]byte(p.Remote),
+		) + "\n"
+
+		if _, err := f.WriteString(line); err != nil {
+			f.Close()
+			t.Fatal(err)
+		}
+	}
+
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// mustWriteReportT writes a report file without GoConvey assertions,
+// for use inside rapid property checks.
+func mustWriteReportT(t fataler, runDir, chunkName string, pairs []filePair, status string) {
+	path := filepath.Join(runDir, chunkName+".report")
+
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, p := range pairs {
+		line := FormatReportLine(ReportEntry{
+			Local:  p.Local,
+			Remote: p.Remote,
+			Status: status,
+		})
+
+		if _, err := fmt.Fprintln(f, line); err != nil {
+			f.Close()
+			t.Fatal(err)
+		}
+	}
+
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// fataler is the subset of testing.TB needed by property-test helpers.
+type fataler interface {
+	Fatal(args ...any)
+	Fatalf(format string, args ...any)
 }
 
 func TestProcessSubDir(t *testing.T) {
@@ -1860,4 +1955,328 @@ func fileGID(path string) int {
 	So(ok, ShouldBeTrue)
 
 	return int(stat.Gid)
+}
+
+// TestSettleRepairsArtefacts uses property-based testing to verify that the
+// settle function correctly repairs any combination of artefact damage.
+// This catches the class of bugs where "we generated status/symlink in path
+// A but forgot to in path B.".
+func TestSettleRepairsArtefacts(t *testing.T) {
+	rapid.Check(t, func(rt *rapid.T) {
+		watchDir := t.TempDir()
+		subPath := filepath.Join(watchDir, "proj")
+
+		if err := os.MkdirAll(subPath, 0750); err != nil {
+			rt.Fatal(err)
+		}
+
+		mtime := rapid.Int64Range(1000, 9999).Draw(rt, "mtime")
+		numChunks := rapid.IntRange(1, 5).Draw(rt, "numChunks")
+		numBuried := rapid.IntRange(0, numChunks).Draw(rt, "numBuried")
+
+		runDir := filepath.Join(subPath, strconv.FormatInt(mtime, 10))
+		if err := os.MkdirAll(runDir, 0750); err != nil {
+			rt.Fatal(err)
+		}
+
+		// Write chunks and reports
+		var buriedChunks []string
+
+		for i := range numChunks {
+			chunkName := fmt.Sprintf("chunk.%06d", i)
+			pairs := makeFilePairs(i*5, i*5+5)
+
+			mustWriteChunkT(rt, runDir, chunkName, pairs)
+
+			if i >= numChunks-numBuried {
+				buriedChunks = append(buriedChunks, chunkName)
+
+				continue
+			}
+
+			mustWriteReportT(rt, runDir, chunkName, pairs, "uploaded")
+		}
+
+		phase := phaseDone
+		if numBuried > 0 {
+			phase = phaseBuried
+		}
+
+		// Create valid initial state via settle
+		rec := &RunRecord{
+			FofnMtime: mtime,
+			RunDir:    runDir,
+			RepGroup:  fmt.Sprintf("ibackup_fofn_proj_%d", mtime),
+			Phase:     phase,
+		}
+
+		w := NewWatcher(watchDir, &mockJobSubmitter{}, ProcessSubDirConfig{})
+		sd := SubDir{Path: subPath}
+
+		if err := w.settle(sd, rec, phase, buriedChunks); err != nil {
+			rt.Fatalf("initial settle: %v", err)
+		}
+
+		// Apply random damage
+		statusPath := filepath.Join(runDir, "status")
+		symlinkPath := filepath.Join(subPath, "status")
+
+		damage := rapid.SampledFrom([]string{
+			"none", "deleteStatus", "deleteSymlink",
+			"corruptSymlink", "deleteBoth",
+		}).Draw(rt, "damage")
+
+		switch damage {
+		case "deleteStatus":
+			os.Remove(statusPath)
+
+			issuesPath := statusPath + issuesSuffix
+			os.Remove(issuesPath)
+		case "deleteSymlink":
+			os.Remove(symlinkPath)
+		case "corruptSymlink":
+			os.Remove(symlinkPath)
+
+			if err := os.Symlink("/wrong/path", symlinkPath); err != nil {
+				rt.Fatal(err)
+			}
+		case "deleteBoth":
+			os.Remove(statusPath)
+			os.Remove(symlinkPath)
+
+			issuesPath := statusPath + issuesSuffix
+			os.Remove(issuesPath)
+		}
+
+		// Reset Clean to simulate re-entry after damage
+		rec.Clean = false
+
+		// Call settle again — must repair
+		if err := w.settle(sd, rec, phase, buriedChunks); err != nil {
+			rt.Fatalf("repair settle: %v", err)
+		}
+
+		// Invariant 1: status file exists
+		if _, err := os.Stat(statusPath); err != nil {
+			rt.Fatalf("status file should exist after settle: %v", err)
+		}
+
+		// Invariant 2: symlink points to correct status file
+		target, err := os.Readlink(symlinkPath)
+		if err != nil {
+			rt.Fatalf("symlink should exist after settle: %v", err)
+		}
+
+		if target != statusPath {
+			rt.Fatalf("symlink target: want %s, got %s", statusPath, target)
+		}
+
+		// Invariant 3: run record is clean
+		if !rec.Clean {
+			rt.Fatal("rec.Clean should be true after settle")
+		}
+
+		// Invariant 4: phase is correct
+		if rec.Phase != phase {
+			rt.Fatalf("rec.Phase: want %s, got %s", phase, rec.Phase)
+		}
+	})
+}
+
+// TestSettleIdempotent verifies that calling settle twice produces the same
+// result — no redundant file operations on the second call.
+func TestSettleIdempotent(t *testing.T) {
+	rapid.Check(t, func(rt *rapid.T) {
+		watchDir := t.TempDir()
+		subPath := filepath.Join(watchDir, "proj")
+
+		if err := os.MkdirAll(subPath, 0750); err != nil {
+			rt.Fatal(err)
+		}
+
+		mtime := rapid.Int64Range(1000, 9999).Draw(rt, "mtime")
+		numChunks := rapid.IntRange(1, 3).Draw(rt, "numChunks")
+
+		runDir := filepath.Join(subPath, strconv.FormatInt(mtime, 10))
+		if err := os.MkdirAll(runDir, 0750); err != nil {
+			rt.Fatal(err)
+		}
+
+		for i := range numChunks {
+			chunkName := fmt.Sprintf("chunk.%06d", i)
+			pairs := makeFilePairs(i*5, i*5+5)
+
+			mustWriteChunkT(rt, runDir, chunkName, pairs)
+			mustWriteReportT(rt, runDir, chunkName, pairs, "uploaded")
+		}
+
+		rec := &RunRecord{
+			FofnMtime: mtime,
+			RunDir:    runDir,
+			RepGroup:  fmt.Sprintf("ibackup_fofn_proj_%d", mtime),
+			Phase:     phaseRunning, // will transition to done
+		}
+
+		w := NewWatcher(watchDir, &mockJobSubmitter{}, ProcessSubDirConfig{})
+		sd := SubDir{Path: subPath}
+
+		// First settle: transitions running → done
+		if err := w.settle(sd, rec, phaseDone, nil); err != nil {
+			rt.Fatalf("first settle: %v", err)
+		}
+
+		statusPath := filepath.Join(runDir, "status")
+
+		statusInfo, err := os.Stat(statusPath)
+		if err != nil {
+			rt.Fatal(err)
+		}
+
+		firstMtime := statusInfo.ModTime()
+
+		// Second settle: same phase, should be a no-op
+		settleErr := w.settle(sd, rec, phaseDone, nil)
+		if settleErr != nil {
+			rt.Fatalf("second settle: %v", settleErr)
+		}
+
+		statusInfo, err = os.Stat(statusPath)
+		if err != nil {
+			rt.Fatal(err)
+		}
+
+		if statusInfo.ModTime() != firstMtime {
+			rt.Fatal("settle should not rewrite status file on idempotent call")
+		}
+	})
+}
+
+// TestPollRepairsDoneRun uses property-based testing to verify that a full
+// poll cycle correctly repairs artefact damage for done runs with unchanged
+// fofns. This is the exact invariant stated in the design: "if phase==done
+// and fofn unchanged, status file exists and symlink is correct.".
+func TestPollRepairsDoneRun(t *testing.T) {
+	if err := transformer.Register("test", `^/tmp/(.*)$`, "/irods/$1"); err != nil {
+		t.Log("transformer already registered:", err)
+	}
+
+	rapid.Check(t, func(rt *rapid.T) {
+		watchDir := t.TempDir()
+		subPath := filepath.Join(watchDir, "proj")
+
+		if err := os.MkdirAll(subPath, 0750); err != nil {
+			rt.Fatal(err)
+		}
+
+		// Write fofn with fixed mtime
+		fofnPath := filepath.Join(subPath, fofnFilename)
+		if err := os.WriteFile(fofnPath, []byte("/tmp/file/000000\n"), 0600); err != nil {
+			rt.Fatal(err)
+		}
+
+		fofnTime := time.Unix(1000, 0)
+		if err := os.Chtimes(fofnPath, fofnTime, fofnTime); err != nil {
+			rt.Fatal(err)
+		}
+
+		if err := WriteConfig(subPath, SubDirConfig{Transformer: "test"}); err != nil {
+			rt.Fatal(err)
+		}
+
+		// Create completed run
+		runDir := filepath.Join(subPath, "1000")
+		if err := os.MkdirAll(runDir, 0750); err != nil {
+			rt.Fatal(err)
+		}
+
+		numChunks := rapid.IntRange(1, 4).Draw(rt, "numChunks")
+		for i := range numChunks {
+			chunkName := fmt.Sprintf("chunk.%06d", i)
+			pairs := makeFilePairs(i*5, i*5+5)
+
+			mustWriteChunkT(rt, runDir, chunkName, pairs)
+			mustWriteReportT(rt, runDir, chunkName, pairs, "uploaded")
+		}
+
+		sd := SubDir{Path: subPath}
+		if err := GenerateStatus(runDir, sd, nil); err != nil {
+			rt.Fatal(err)
+		}
+
+		rec := RunRecord{
+			FofnMtime: 1000,
+			RunDir:    runDir,
+			RepGroup:  "ibackup_fofn_proj_1000",
+			Phase:     phaseDone,
+			Clean:     true,
+		}
+
+		if err := WriteRunRecord(subPath, rec); err != nil {
+			rt.Fatal(err)
+		}
+
+		// Apply random damage
+		statusPath := filepath.Join(runDir, "status")
+		symlinkPath := filepath.Join(subPath, "status")
+
+		damage := rapid.SampledFrom([]string{
+			"none", "deleteStatus", "deleteSymlink",
+			"corruptSymlink", "deleteBoth",
+		}).Draw(rt, "damage")
+
+		switch damage {
+		case "deleteStatus":
+			os.Remove(statusPath)
+
+			issuesPath := statusPath + issuesSuffix
+			os.Remove(issuesPath)
+		case "deleteSymlink":
+			os.Remove(symlinkPath)
+		case "corruptSymlink":
+			os.Remove(symlinkPath)
+
+			if err := os.Symlink("/wrong/path", symlinkPath); err != nil {
+				rt.Fatal(err)
+			}
+		case "deleteBoth":
+			os.Remove(statusPath)
+			os.Remove(symlinkPath)
+
+			issuesPath := statusPath + issuesSuffix
+			os.Remove(issuesPath)
+		}
+
+		// Full poll cycle
+		mock := &mockJobSubmitter{}
+		w := NewWatcher(watchDir, mock, ProcessSubDirConfig{
+			MinChunk: 10,
+			MaxChunk: 10,
+			RandSeed: 1,
+		})
+
+		if err := w.Poll(); err != nil {
+			rt.Fatalf("Poll failed: %v", err)
+		}
+
+		// Invariant: status file exists
+		if _, err := os.Stat(statusPath); err != nil {
+			rt.Fatalf("status file missing after poll (damage=%s): %v", damage, err)
+		}
+
+		// Invariant: symlink correct
+		target, err := os.Readlink(symlinkPath)
+		if err != nil {
+			rt.Fatalf("symlink missing after poll (damage=%s): %v", damage, err)
+		}
+
+		if target != statusPath {
+			rt.Fatalf("symlink target wrong (damage=%s): want %s, got %s",
+				damage, statusPath, target)
+		}
+
+		// Invariant: no new jobs submitted (fofn unchanged)
+		if len(mock.submitted) != 0 {
+			rt.Fatalf("expected no new jobs, got %d", len(mock.submitted))
+		}
+	})
 }
