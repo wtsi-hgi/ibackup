@@ -325,8 +325,10 @@ func (w *Watcher) reconcileAll(subDirs []SubDir, allStatus map[string]RunJobStat
 
 // reconcile determines and executes the appropriate action for a subdirectory.
 // scanRunDirs reads the directory once, yielding both the current run dir and
-// any stale dirs. The status map is looked up once and shared between classify
-// and the handler, eliminating redundant map lookups and ReadDir calls.
+// any stale dirs. Stale-dir cleanup is always performed after dispatch,
+// eliminating the common bug class of "handler X forgets to clean stale dirs."
+// The status map is looked up once and shared between classify and the handler,
+// eliminating redundant map lookups and ReadDir calls.
 func (w *Watcher) reconcile(sd SubDir, allStatus map[string]RunJobStatus) error {
 	scan, err := scanRunDirs(sd.Path)
 	if err != nil {
@@ -338,20 +340,11 @@ func (w *Watcher) reconcile(sd SubDir, allStatus map[string]RunJobStatus) error 
 		status = allStatus[makeRepGroup(sd.Path, scan.runMtime)]
 	}
 
-	state := classify(sd, scan.found, scan.runMtime, status)
-
-	switch state {
-	case stateNewRun:
-		return w.startNewRun(sd)
-	case stateRunning:
-		return nil
-	case stateSettle:
-		return w.settle(sd, scan.runDir, status, scan.staleDirs)
-	case stateRestart:
-		return w.teardownAndRestart(sd, scan.runDir, status, scan.staleDirs)
-	default:
-		panic(fmt.Sprintf("watchfofns: unhandled state: %d (%s)", state, stateDesc[state]))
+	if err := w.dispatch(sd, scan, status); err != nil {
+		return err
 	}
+
+	return removeDirs(scan.staleDirs)
 }
 
 // scanRunDirs reads subDirPath once and partitions numeric subdirectories into
@@ -371,19 +364,44 @@ func scanRunDirs(subDirPath string) (runDirScan, error) {
 	return partitionRunDirs(subDirPath, entries), nil
 }
 
+// dispatch executes the state-appropriate handler for a subdirectory. The
+// exhaustive switch ensures every state is handled; adding a new state without
+// a case triggers the default panic.
+func (w *Watcher) dispatch(sd SubDir, scan runDirScan, status RunJobStatus) error {
+	state := classify(sd, scan.found, scan.runMtime, status)
+
+	switch state {
+	case stateNewRun:
+		return w.startNewRun(sd)
+	case stateRunning:
+		return nil
+	case stateSettle:
+		return w.settle(sd, scan.runDir, status)
+	case stateRestart:
+		return w.teardownAndRestart(sd, scan.runDir, status)
+	default:
+		panic(fmt.Sprintf("watchfofns: unhandled state: %d (%s)", state, stateDesc[state]))
+	}
+}
+
 // ensureArtefacts is the single function responsible for status file and
-// symlink correctness. It regenerates the status file only when wr reports a
-// more recent completion than the current status (avoiding the infinite-regen
-// problem from issue #171), then ensures the symlink points to the right place.
+// symlink correctness. When forceRegen is true, the status file is always
+// regenerated (used by teardownAndRestart for the final snapshot). Otherwise,
+// it regenerates only when wr reports a more recent completion than the current
+// status (avoiding the infinite-regen problem from issue #171). The symlink is
+// always checked and repaired if needed.
+//
 // Centralising both operations makes it structurally impossible to update one
 // without the other — the class of bug where "we generated status in path A
-// but forgot the symlink in path B" cannot occur.
+// but forgot the symlink in path B" cannot occur. Having both settle and
+// teardownAndRestart use this single function also eliminates the class of bug
+// where "we added a new artefact to one path but forgot the other."
 //
 // Runs with buried chunks still get a valid status file and symlink showing
 // which chunks completed and which remain. Since wr is queried every poll
 // cycle, buried-then-retried chunks are detected naturally.
-func ensureArtefacts(runDir string, subDir SubDir, status RunJobStatus) error {
-	if needsStatusRegen(runDir, status.LastCompletedTime) {
+func ensureArtefacts(runDir string, subDir SubDir, status RunJobStatus, forceRegen bool) error {
+	if forceRegen || needsStatusRegen(runDir, status.LastCompletedTime) {
 		if err := GenerateStatus(runDir, subDir, sortedBuriedChunks(status)); err != nil {
 			return err
 		}
@@ -488,15 +506,11 @@ func makeRepGroup(subDirPath string, mtime int64) string {
 	return fmt.Sprintf("%s%s_%d", RepGroupPrefix, filepath.Base(subDirPath), mtime)
 }
 
-// settle ensures artefacts are correct and removes stale run directories.
-// ensureArtefacts handles the conditional status regen + symlink in one call,
-// making it structurally impossible to update one without the other.
-func (w *Watcher) settle(subDir SubDir, runDir string, status RunJobStatus, staleDirs []string) error {
-	if err := ensureArtefacts(runDir, subDir, status); err != nil {
-		return err
-	}
-
-	return removeDirs(staleDirs)
+// settle ensures artefacts are correct for the current run. Stale-dir cleanup
+// is handled by reconcile after dispatch, making it structurally impossible to
+// forget cleanup in any handler.
+func (w *Watcher) settle(subDir SubDir, runDir string, status RunJobStatus) error {
+	return ensureArtefacts(runDir, subDir, status, false)
 }
 
 // sortedBuriedChunks extracts and sorts the buried chunk names from the job
@@ -571,16 +585,14 @@ func ensureStatusSymlink(runDir string, subDirPath string) error {
 	return createStatusSymlink(runDir, subDirPath)
 }
 
-// teardownAndRestart generates a final status snapshot for the old run, cleans
-// up buried jobs and stale directories, and starts a fresh run for the updated
-// fofn. Unlike settle, status is always regenerated here because the run is
-// being replaced and the snapshot must reflect the final state.
-func (w *Watcher) teardownAndRestart(subDir SubDir, runDir string, status RunJobStatus, staleDirs []string) error {
-	if err := GenerateStatus(runDir, subDir, sortedBuriedChunks(status)); err != nil {
-		return err
-	}
-
-	if err := ensureStatusSymlink(runDir, subDir.Path); err != nil {
+// teardownAndRestart generates a final status snapshot for the old run via
+// ensureArtefacts (with forced regeneration to capture the final state), cleans
+// up buried jobs, and starts a fresh run for the updated fofn. Using
+// ensureArtefacts rather than direct GenerateStatus + ensureStatusSymlink calls
+// means any new artefact added to ensureArtefacts is automatically handled
+// here too. Stale-dir cleanup is handled by reconcile after dispatch.
+func (w *Watcher) teardownAndRestart(subDir SubDir, runDir string, status RunJobStatus) error {
+	if err := ensureArtefacts(runDir, subDir, status, true); err != nil {
 		return err
 	}
 
@@ -588,10 +600,6 @@ func (w *Watcher) teardownAndRestart(subDir SubDir, runDir string, status RunJob
 		if err := w.submitter.DeleteJobs(status.BuriedJobs); err != nil {
 			return err
 		}
-	}
-
-	if err := removeDirs(staleDirs); err != nil {
-		return err
 	}
 
 	return w.startNewRun(subDir)
