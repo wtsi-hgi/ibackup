@@ -1764,6 +1764,182 @@ func TestWatcherRestart(t *testing.T) {
 	})
 }
 
+func TestDoneCacheBypassesRunJSON(t *testing.T) {
+	Convey("done cache proves it bypasses run.json", t, func() {
+		So(transformer.Register("test", `^/tmp/(.*)$`, "/irods/$1"), ShouldBeNil)
+
+		watchDir := t.TempDir()
+		cfg := ProcessSubDirConfig{
+			MinChunk: 10,
+			MaxChunk: 10,
+			RandSeed: 1,
+		}
+
+		Convey("poll succeeds after run.json is deleted because cache reconstructs the record", func() {
+			subPath := filepath.Join(watchDir, "proj")
+			So(os.MkdirAll(subPath, 0750), ShouldBeNil)
+
+			fofnPath := writeFofn(subPath, generateTmpPaths(10))
+			fofnTime := time.Unix(1000, 0)
+			So(os.Chtimes(fofnPath, fofnTime, fofnTime), ShouldBeNil)
+
+			So(WriteConfig(subPath, SubDirConfig{Transformer: "test"}), ShouldBeNil)
+
+			runDir := filepath.Join(subPath, "1000")
+			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
+
+			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 10))
+			So(GenerateStatus(runDir, SubDir{Path: subPath}, nil), ShouldBeNil)
+
+			writeTestRunRecord(subPath, RunRecord{
+				FofnMtime: 1000,
+				RunDir:    runDir,
+				RepGroup:  "ibackup_fofn_proj_1000",
+				Phase:     phaseDone,
+			})
+
+			mock := &mockJobSubmitter{}
+			w := NewWatcher(watchDir, mock, cfg)
+
+			// First poll: reads run.json, confirms done+intact, populates cache.
+			err := w.Poll()
+			So(err, ShouldBeNil)
+			So(mock.submitted, ShouldBeEmpty)
+
+			// Delete run.json. Without the cache this would look like a
+			// brand-new directory and trigger startNewRun.
+			So(os.Remove(filepath.Join(subPath, runRecordFilename)), ShouldBeNil)
+
+			// Second poll with same watcher: cache hit reconstructs the
+			// RunRecord, settle confirms artefacts intact → no-op.
+			err = w.Poll()
+			So(err, ShouldBeNil)
+			So(mock.submitted, ShouldBeEmpty)
+			So(mock.findCallCount, ShouldEqual, 0)
+
+			// Artefacts still correct.
+			statusPath := filepath.Join(runDir, "status")
+			_, statErr := os.Stat(statusPath)
+			So(statErr, ShouldBeNil)
+
+			symlinkTarget, readErr := os.Readlink(filepath.Join(subPath, "status"))
+			So(readErr, ShouldBeNil)
+			So(symlinkTarget, ShouldEqual, statusPath)
+		})
+
+		Convey("fresh watcher without cache submits new jobs when run.json is missing", func() {
+			// Setup a directory with fofn and config but NO run.json and
+			// no done cache. A fresh watcher must call startNewRun.
+			subPath := filepath.Join(watchDir, "proj")
+			So(os.MkdirAll(subPath, 0750), ShouldBeNil)
+
+			fofnPath := writeFofn(subPath, generateTmpPaths(10))
+			fofnTime := time.Unix(1000, 0)
+			So(os.Chtimes(fofnPath, fofnTime, fofnTime), ShouldBeNil)
+
+			So(WriteConfig(subPath, SubDirConfig{Transformer: "test"}), ShouldBeNil)
+
+			mock := &mockJobSubmitter{}
+			fresh := NewWatcher(watchDir, mock, cfg)
+
+			// No run.json, no cache → startNewRun → new jobs submitted.
+			err := fresh.Poll()
+			So(err, ShouldBeNil)
+			So(mock.submitted, ShouldNotBeEmpty)
+		})
+
+		Convey("cache is invalidated when fofn mtime changes", func() {
+			subPath := filepath.Join(watchDir, "proj")
+			So(os.MkdirAll(subPath, 0750), ShouldBeNil)
+
+			fofnPath := writeFofn(subPath, generateTmpPaths(10))
+			fofnTime := time.Unix(1000, 0)
+			So(os.Chtimes(fofnPath, fofnTime, fofnTime), ShouldBeNil)
+
+			So(WriteConfig(subPath, SubDirConfig{Transformer: "test"}), ShouldBeNil)
+
+			runDir := filepath.Join(subPath, "1000")
+			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
+
+			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 10))
+			So(GenerateStatus(runDir, SubDir{Path: subPath}, nil), ShouldBeNil)
+
+			writeTestRunRecord(subPath, RunRecord{
+				FofnMtime: 1000,
+				RunDir:    runDir,
+				RepGroup:  "ibackup_fofn_proj_1000",
+				Phase:     phaseDone,
+			})
+
+			mock := &mockJobSubmitter{}
+			w := NewWatcher(watchDir, mock, cfg)
+
+			// First poll: populates cache.
+			err := w.Poll()
+			So(err, ShouldBeNil)
+			So(mock.submitted, ShouldBeEmpty)
+
+			// Change fofn mtime: cache miss → falls through to run.json read
+			// → teardownAndRestart → new jobs.
+			updateFofnMtime(subPath, generateTmpPaths(15), 2000)
+
+			err = w.Poll()
+			So(err, ShouldBeNil)
+			So(mock.submitted, ShouldNotBeEmpty)
+
+			newRec := readTestRunRecord(subPath)
+			So(newRec.Phase, ShouldEqual, phaseRunning)
+			So(newRec.FofnMtime, ShouldEqual, 2000)
+		})
+
+		Convey("cache repairs artefacts without reading run.json", func() {
+			subPath := filepath.Join(watchDir, "proj")
+			So(os.MkdirAll(subPath, 0750), ShouldBeNil)
+
+			fofnPath := writeFofn(subPath, generateTmpPaths(10))
+			fofnTime := time.Unix(1000, 0)
+			So(os.Chtimes(fofnPath, fofnTime, fofnTime), ShouldBeNil)
+
+			So(WriteConfig(subPath, SubDirConfig{Transformer: "test"}), ShouldBeNil)
+
+			runDir := filepath.Join(subPath, "1000")
+			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
+
+			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 10))
+			So(GenerateStatus(runDir, SubDir{Path: subPath}, nil), ShouldBeNil)
+
+			writeTestRunRecord(subPath, RunRecord{
+				FofnMtime: 1000,
+				RunDir:    runDir,
+				RepGroup:  "ibackup_fofn_proj_1000",
+				Phase:     phaseDone,
+			})
+
+			mock := &mockJobSubmitter{}
+			w := NewWatcher(watchDir, mock, cfg)
+
+			// First poll: populates cache.
+			err := w.Poll()
+			So(err, ShouldBeNil)
+
+			// Delete both run.json AND the symlink.
+			So(os.Remove(filepath.Join(subPath, runRecordFilename)), ShouldBeNil)
+			So(os.Remove(filepath.Join(subPath, "status")), ShouldBeNil)
+
+			// Second poll: cache reconstructs RunRecord, settle detects
+			// broken symlink and repairs it — all without run.json.
+			err = w.Poll()
+			So(err, ShouldBeNil)
+			So(mock.submitted, ShouldBeEmpty)
+
+			statusPath := filepath.Join(runDir, "status")
+			symlinkTarget, readErr := os.Readlink(filepath.Join(subPath, "status"))
+			So(readErr, ShouldBeNil)
+			So(symlinkTarget, ShouldEqual, statusPath)
+		})
+	})
+}
+
 func TestWatcherParallel(t *testing.T) {
 	Convey("Watcher.Poll parallel processing",
 		t, func() {
