@@ -46,7 +46,37 @@ const (
 	maxPollWorkers = 10
 )
 
-// jobResult classifies wr job status for the state machine.
+// stateDesc maps each state to a human-readable description.
+// The array is sized by numStates, so adding a state without a description
+// is caught by the exhaustive test.
+var stateDesc = [numStates]string{ //nolint:gochecknoglobals
+	stateNewRun:  "start new run",
+	stateDone:    "skip (done)",
+	stateChanged: "teardown and restart (fofn changed)",
+	stateDamaged: "repair artefacts",
+	stateRunning: "wait for jobs",
+	stateSettled: "settle artefacts",
+	stateRestart: "teardown and restart (obsolete run)",
+}
+
+// subDirState classifies the complete observable state of a subdirectory.
+// Every reachable combination of filesystem and wr state maps to exactly one
+// value. The dispatch switch and the exhaustive test verify all values are
+// handled, making missed-case bugs structurally impossible.
+type subDirState int
+
+const (
+	stateNewRun  subDirState = iota // no run dir → start new
+	stateDone                       // artefacts intact, fofn unchanged → skip
+	stateChanged                    // artefacts intact, fofn changed → teardown + restart
+	stateDamaged                    // cached done, artefacts damaged → repair
+	stateRunning                    // wr jobs still active → wait
+	stateSettled                    // wr jobs done, fofn unchanged → settle
+	stateRestart                    // wr jobs done, fofn changed → teardown + restart
+	numStates                       // sentinel for exhaustive checks
+)
+
+// jobResult classifies wr job status.
 type jobResult int
 
 const (
@@ -55,54 +85,20 @@ const (
 	jobsBuried                    // at least one job buried
 )
 
-// actionType describes the action the state machine selects.
-type actionType int
+// classifyWR determines the state for an active run using wr data.
+func classifyWR(snap snapshot, status RunJobStatus) subDirState {
+	if classifyJobResult(status) == jobsRunning {
+		return stateRunning
+	}
 
-const (
-	actionWait    actionType = iota // do nothing; jobs still running
-	actionSettle                    // ensure artefacts match current state
-	actionRestart                   // teardown old run + start new
-)
+	if snap.MtimeMatch {
+		return stateSettled
+	}
 
-// transitionKey uniquely identifies a state-machine input. Phase is derived
-// from the filesystem (run-dir existence + status file) and wr, so the table
-// uses only two dimensions: whether the fofn changed and the wr job result.
-type transitionKey struct {
-	fofnChanged bool
-	jobs        jobResult
+	return stateRestart
 }
 
-// transitions is the explicit state machine. Every reachable (fofnChanged,
-// jobResult) pair MUST have an entry. A missing entry panics at runtime,
-// making missed-case bugs structurally impossible rather than merely unlikely.
-//
-// The table applies only to subdirectories with an existing run directory.
-// "Quick done" directories (artefacts intact + fofn unchanged) are handled
-// before the wr query and never reach the table.
-var transitions = map[transitionKey]actionType{ //nolint:gochecknoglobals
-	// fofn unchanged
-	{false, jobsRunning}:  actionWait,
-	{false, jobsComplete}: actionSettle,
-	{false, jobsBuried}:   actionSettle,
-	// fofn changed
-	{true, jobsRunning}:  actionWait,
-	{true, jobsComplete}: actionRestart,
-	{true, jobsBuried}:   actionRestart,
-}
-
-// quickResult records the fast-path classification of a subdirectory.
-type quickResult int
-
-const (
-	quickNeedsPoll   quickResult = iota // needs wr query + state machine
-	quickDone                           // confirmed done — skip entirely
-	quickNewRun                         // no run dir at all — start new
-	quickDoneRestart                    // done but fofn changed — restart
-	quickDoneRepair                     // cached done, artefacts damaged — repair without wr
-)
-
-// classifyJobResult determines the jobResult for the transition table from
-// the wr job status.
+// classifyJobResult determines the jobResult from the wr job status.
 func classifyJobResult(status RunJobStatus) jobResult {
 	if status.HasRunning {
 		return jobsRunning
@@ -113,6 +109,27 @@ func classifyJobResult(status RunJobStatus) jobResult {
 	}
 
 	return jobsComplete
+}
+
+// snapshot captures filesystem-observable state for a subdirectory, gathered
+// once during classification. Downstream processing reads only this snapshot,
+// eliminating redundant filesystem reads (e.g. the duplicate findRunDir call
+// that previously occurred on the wr-query path).
+type snapshot struct {
+	RunDir     string
+	RunMtime   int64
+	HasRunDir  bool
+	MtimeMatch bool // RunMtime == SubDir.FofnMtime
+	Intact     bool // status file exists + symlink correct
+	CachedDone bool // in-memory done-cache hit for current fofn mtime
+}
+
+// pollEntry holds the per-subdirectory state computed during a poll cycle.
+type pollEntry struct {
+	sd      SubDir
+	snap    snapshot
+	state   subDirState
+	needsWR bool
 }
 
 // ProcessSubDirConfig holds configuration for processing a subdirectory.
@@ -328,8 +345,10 @@ func (w *Watcher) clearDone(path string) {
 	delete(w.doneRuns, path)
 }
 
-// Poll performs one poll cycle: scan for subdirectories, optionally query wr
-// for job statuses, and process each subdirectory through the state machine.
+// Poll performs one poll cycle: scan for subdirectories, classify each using
+// filesystem state, optionally query wr for unresolved entries, and dispatch
+// the appropriate action for each subdirectory through the unified state
+// machine.
 //
 // In the common steady state where all directories are done (artefacts intact
 // + fofn unchanged), the expensive wr query is skipped entirely.
@@ -341,18 +360,35 @@ func (w *Watcher) Poll() error {
 
 	w.pruneDone(subDirs)
 
-	needWR, quickResults := w.classifySubDirs(subDirs)
+	entries, anyNeedWR := w.classifyAll(subDirs)
 
 	var allStatus map[string]RunJobStatus
 
-	if needWR {
+	if anyNeedWR {
 		allStatus, err = ClassifyAllJobs(w.submitter)
 		if err != nil {
 			return err
 		}
+
+		resolveWR(entries, allStatus)
 	}
 
-	return w.pollSubDirsParallel(subDirs, quickResults, allStatus)
+	return w.dispatchAll(entries, allStatus)
+}
+
+// resolveWR refines unresolved pollEntries using wr job status data.
+func resolveWR(entries []pollEntry, allStatus map[string]RunJobStatus) {
+	for i := range entries {
+		if !entries[i].needsWR {
+			continue
+		}
+
+		repGroup := makeRepGroup(entries[i].sd.Path, entries[i].snap.RunMtime)
+		status := allStatus[repGroup]
+
+		entries[i].state = classifyWR(entries[i].snap, status)
+		entries[i].needsWR = false
+	}
 }
 
 // pruneDone removes done-cache entries for subdirectories no longer present.
@@ -372,62 +408,70 @@ func (w *Watcher) pruneDone(subDirs []SubDir) {
 	}
 }
 
-// classifySubDirs determines which subdirectories need a wr query by checking
-// the done cache and filesystem state. Returns whether wr is needed and
-// per-subdir quick results.
-func (w *Watcher) classifySubDirs(subDirs []SubDir) (bool, map[string]quickResult) {
-	needWR := false
-	results := make(map[string]quickResult, len(subDirs))
+// classifyAll snapshots every subdirectory and classifies it using filesystem
+// state. Returns the entries and whether any require a wr query to resolve.
+func (w *Watcher) classifyAll(subDirs []SubDir) ([]pollEntry, bool) {
+	entries := make([]pollEntry, len(subDirs))
+	anyNeedWR := false
 
-	for _, sd := range subDirs {
-		qr := w.quickClassify(sd)
-		results[sd.Path] = qr
+	for i, sd := range subDirs {
+		snap := w.takeSnapshot(sd)
+		state, needsWR := w.classifyFS(sd, snap)
 
-		if qr == quickNeedsPoll {
-			needWR = true
+		entries[i] = pollEntry{
+			sd:      sd,
+			snap:    snap,
+			state:   state,
+			needsWR: needsWR,
+		}
+
+		if needsWR {
+			anyNeedWR = true
 		}
 	}
 
-	return needWR, results
+	return entries, anyNeedWR
 }
 
-// quickClassify performs a fast filesystem check to determine if a subdirectory
-// can be handled without a wr query.
-func (w *Watcher) quickClassify(subDir SubDir) quickResult {
-	// Check the in-memory done cache first.
-	if w.isDone(subDir.Path, subDir.FofnMtime) {
-		runDir := filepath.Join(subDir.Path, strconv.FormatInt(subDir.FofnMtime, 10))
+// takeSnapshot captures filesystem state for a subdirectory in a single pass.
+// The resulting snapshot is used for all subsequent classification and dispatch,
+// eliminating redundant directory reads. If the in-memory done cache points to
+// a run directory that no longer exists, the cache is cleared (fixing an edge
+// case where external deletion caused an error loop).
+func (w *Watcher) takeSnapshot(sd SubDir) snapshot {
+	// Check in-memory done cache first.
+	if w.isDone(sd.Path, sd.FofnMtime) {
+		runDir := filepath.Join(sd.Path, strconv.FormatInt(sd.FofnMtime, 10))
 
-		if artefactsIntact(runDir, subDir.Path) {
-			return quickDone
+		fi, err := os.Stat(runDir)
+		if err == nil && fi.IsDir() {
+			return snapshot{
+				RunDir:     runDir,
+				RunMtime:   sd.FofnMtime,
+				HasRunDir:  true,
+				MtimeMatch: true,
+				Intact:     artefactsIntact(runDir, sd.Path),
+				CachedDone: true,
+			}
 		}
 
-		// Artefacts damaged — repair without wr since we know it was done.
-		return quickDoneRepair
+		// Cached run dir vanished — clear cache and scan from disk.
+		w.clearDone(sd.Path)
 	}
 
-	// Not in cache. Check if a run dir exists at all.
-	_, runMtime, found := findRunDir(subDir.Path)
+	// Scan for the latest run directory on disk.
+	runDir, runMtime, found := findRunDir(sd.Path)
 	if !found {
-		return quickNewRun
+		return snapshot{}
 	}
 
-	// Run dir exists. Check artefact state once.
-	runDir := filepath.Join(subDir.Path, strconv.FormatInt(runMtime, 10))
-	if !artefactsIntact(runDir, subDir.Path) {
-		return quickNeedsPoll
+	return snapshot{
+		RunDir:     runDir,
+		RunMtime:   runMtime,
+		HasRunDir:  true,
+		MtimeMatch: runMtime == sd.FofnMtime,
+		Intact:     artefactsIntact(runDir, sd.Path),
 	}
-
-	// Artefacts intact. If mtime matches fofn, this is a done run we
-	// haven't cached yet (e.g. first poll after restart).
-	if runMtime == subDir.FofnMtime {
-		w.markDone(subDir.Path, subDir.FofnMtime)
-
-		return quickDone
-	}
-
-	// Old done run with changed fofn — restart without wr.
-	return quickDoneRestart
 }
 
 // findRunDir finds the current run directory inside subDirPath by looking for
@@ -463,6 +507,31 @@ func findRunDir(subDirPath string) (string, int64, bool) {
 	return filepath.Join(subDirPath, strconv.FormatInt(bestMtime, 10)), bestMtime, true
 }
 
+// classifyFS determines the subdirectory state from filesystem-only data.
+// Returns needsWR=true when wr data is required to determine the final state;
+// the returned state value is meaningless in that case.
+func (w *Watcher) classifyFS(sd SubDir, snap snapshot) (subDirState, bool) {
+	if !snap.HasRunDir {
+		return stateNewRun, false
+	}
+
+	if snap.Intact {
+		if snap.MtimeMatch {
+			w.markDone(sd.Path, sd.FofnMtime)
+
+			return stateDone, false
+		}
+
+		return stateChanged, false
+	}
+
+	if snap.CachedDone {
+		return stateDamaged, false
+	}
+
+	return 0, true // needs wr
+}
+
 // Run polls immediately and then at the given interval until the context is
 // cancelled. Returns nil on cancellation. The initial poll error is returned
 // immediately; subsequent poll errors are logged and polling continues.
@@ -487,11 +556,9 @@ func (w *Watcher) Run(ctx context.Context, interval time.Duration) error {
 	}
 }
 
-// pollSubDirsParallel processes all subdirectories concurrently with bounded
-// parallelism, collecting all errors. quickDone subdirectories are skipped.
-func (w *Watcher) pollSubDirsParallel(
-	subDirs []SubDir, quickResults map[string]quickResult, allStatus map[string]RunJobStatus,
-) error {
+// dispatchAll processes all entries concurrently with bounded parallelism,
+// collecting errors. stateDone and stateRunning entries are skipped.
+func (w *Watcher) dispatchAll(entries []pollEntry, allStatus map[string]RunJobStatus) error {
 	var (
 		wg    sync.WaitGroup
 		errMu sync.Mutex
@@ -499,9 +566,8 @@ func (w *Watcher) pollSubDirsParallel(
 		sem   = make(chan struct{}, maxPollWorkers)
 	)
 
-	for _, subDir := range subDirs {
-		qr := quickResults[subDir.Path]
-		if qr == quickDone {
+	for i := range entries {
+		if entries[i].state == stateDone || entries[i].state == stateRunning {
 			continue
 		}
 
@@ -509,7 +575,7 @@ func (w *Watcher) pollSubDirsParallel(
 
 		sem <- struct{}{}
 
-		go w.pollSubDirCollect(subDir, qr, allStatus, sem, &wg, &errMu, &errs)
+		go w.dispatchCollect(entries[i], allStatus, sem, &wg, &errMu, &errs)
 	}
 
 	wg.Wait()
@@ -517,81 +583,39 @@ func (w *Watcher) pollSubDirsParallel(
 	return errors.Join(errs...)
 }
 
-func (w *Watcher) pollSubDirCollect(
-	sd SubDir,
-	qr quickResult,
-	allStatus map[string]RunJobStatus,
-	sem chan struct{},
-	wg *sync.WaitGroup, errMu *sync.Mutex, errs *[]error,
+func (w *Watcher) dispatchCollect(
+	e pollEntry, allStatus map[string]RunJobStatus,
+	sem chan struct{}, wg *sync.WaitGroup, errMu *sync.Mutex, errs *[]error,
 ) {
 	defer wg.Done()
 	defer func() { <-sem }()
 
-	if err := w.pollSubDir(sd, qr, allStatus); err != nil {
+	if err := w.dispatch(e, allStatus); err != nil {
 		errMu.Lock()
-
 		*errs = append(*errs, err)
-
 		errMu.Unlock()
 	}
 }
 
-// pollSubDir processes a single subdirectory. State is derived entirely from
-// the filesystem (run directory existence, status file) and wr job status.
-func (w *Watcher) pollSubDir(subDir SubDir, qr quickResult, allStatus map[string]RunJobStatus) error {
-	switch qr {
-	case quickNewRun:
-		return w.startNewRun(subDir)
-	case quickDoneRestart:
-		runDir, runMtime, _ := findRunDir(subDir.Path)
-
-		return w.teardownAndRestart(subDir, runDir, runMtime, RunJobStatus{})
-	case quickDoneRepair:
-		// Cached-done entry with damaged artefacts — repair without wr query.
-		runDir := filepath.Join(subDir.Path, strconv.FormatInt(subDir.FofnMtime, 10))
-
-		return w.settle(subDir, runDir, subDir.FofnMtime, RunJobStatus{})
+// dispatch executes the action for a single subdirectory based on its state.
+// Every subDirState value has an explicit case; the default panics, making
+// unhandled states a crash rather than a silent bug.
+func (w *Watcher) dispatch(e pollEntry, allStatus map[string]RunJobStatus) error {
+	switch e.state { //nolint:exhaustive
+	case stateNewRun:
+		return w.startNewRun(e.sd)
+	case stateChanged:
+		return w.teardownAndRestart(e.sd, e.snap.RunDir, e.snap.RunMtime, RunJobStatus{})
+	case stateDamaged:
+		return w.settle(e.sd, e.snap.RunDir, e.snap.RunMtime, RunJobStatus{})
+	case stateSettled:
+		return w.settle(e.sd, e.snap.RunDir, e.snap.RunMtime,
+			allStatus[makeRepGroup(e.sd.Path, e.snap.RunMtime)])
+	case stateRestart:
+		return w.teardownAndRestart(e.sd, e.snap.RunDir, e.snap.RunMtime,
+			allStatus[makeRepGroup(e.sd.Path, e.snap.RunMtime)])
 	default:
-		// quickNeedsPoll: has a run dir, needs wr to determine action
-		return w.reconcile(subDir, allStatus)
-	}
-}
-
-// reconcile uses the explicit transition table to determine and execute the
-// correct action for a subdirectory with an existing run directory. State is
-// derived from the filesystem and wr; every (fofnChanged, jobResult) pair is
-// accounted for in the table; a missing entry panics, making missed-case bugs
-// structurally impossible.
-func (w *Watcher) reconcile(subDir SubDir, allStatus map[string]RunJobStatus) error {
-	runDir, runMtime, found := findRunDir(subDir.Path)
-	if !found {
-		return w.startNewRun(subDir)
-	}
-
-	fofnChanged := subDir.FofnMtime != runMtime
-	repGroup := makeRepGroup(subDir.Path, runMtime)
-	status := allStatus[repGroup]
-
-	key := transitionKey{
-		fofnChanged: fofnChanged,
-		jobs:        classifyJobResult(status),
-	}
-
-	action, ok := transitions[key]
-	if !ok {
-		panic(fmt.Sprintf("watchfofns: unhandled transition: fofnChanged=%t jobs=%d",
-			key.fofnChanged, key.jobs))
-	}
-
-	switch action {
-	case actionWait:
-		return nil
-	case actionSettle:
-		return w.settle(subDir, runDir, runMtime, status)
-	case actionRestart:
-		return w.teardownAndRestart(subDir, runDir, runMtime, status)
-	default:
-		panic(fmt.Sprintf("watchfofns: unknown action: %d", action))
+		panic(fmt.Sprintf("watchfofns: unhandled state: %d (%s)", e.state, stateDesc[e.state]))
 	}
 }
 

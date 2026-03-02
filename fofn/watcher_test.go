@@ -42,23 +42,19 @@ import (
 	"pgregory.net/rapid"
 )
 
-func TestTransitionTableExhaustive(t *testing.T) {
-	Convey("transition table covers every reachable state", t, func() {
-		total := 0
+func TestStateExhaustive(t *testing.T) {
+	Convey("every subDirState has a description", t, func() {
+		covered := 0
 
-		for _, fofnChanged := range []bool{false, true} {
-			for _, jr := range []jobResult{jobsRunning, jobsComplete, jobsBuried} {
-				key := transitionKey{fofnChanged: fofnChanged, jobs: jr}
-				_, ok := transitions[key]
-				So(ok, ShouldBeTrue)
+		for s := subDirState(0); s < numStates; s++ {
+			So(stateDesc[s], ShouldNotBeEmpty)
 
-				total++
-			}
+			covered++
 		}
 
-		Convey("has exactly 6 entries with no spurious extras", func() {
-			So(len(transitions), ShouldEqual, total)
-			So(total, ShouldEqual, 6)
+		Convey("has exactly 7 states with no gaps", func() {
+			So(covered, ShouldEqual, int(numStates))
+			So(int(numStates), ShouldEqual, 7)
 		})
 	})
 }
@@ -1776,6 +1772,45 @@ func TestDoneCache(t *testing.T) {
 			symlinkTarget, readErr := os.Readlink(filepath.Join(subPath, "status"))
 			So(readErr, ShouldBeNil)
 			So(symlinkTarget, ShouldEqual, statusPath)
+		})
+
+		Convey("cache recovers when run directory is externally deleted", func() {
+			subPath := filepath.Join(watchDir, "proj")
+			So(os.MkdirAll(subPath, 0750), ShouldBeNil)
+
+			fofnPath := writeFofn(subPath, generateTmpPaths(10))
+			fofnTime := time.Unix(1000, 0)
+			So(os.Chtimes(fofnPath, fofnTime, fofnTime), ShouldBeNil)
+
+			So(WriteConfig(subPath, SubDirConfig{Transformer: "test"}), ShouldBeNil)
+
+			runDir := filepath.Join(subPath, "1000")
+			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
+
+			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 10))
+			generateDoneStatus(runDir, SubDir{Path: subPath})
+
+			mock := &mockJobSubmitter{}
+			w := NewWatcher(watchDir, mock, cfg)
+
+			// First poll: populates cache.
+			err := w.Poll()
+			So(err, ShouldBeNil)
+			So(mock.submitted, ShouldBeEmpty)
+
+			// Delete entire run directory.
+			So(os.RemoveAll(runDir), ShouldBeNil)
+			So(os.Remove(filepath.Join(subPath, "status")), ShouldBeNil)
+
+			// Second poll: cache detects deleted run dir, clears cache,
+			// starts a new run instead of entering an error loop.
+			err = w.Poll()
+			So(err, ShouldBeNil)
+			So(mock.submitted, ShouldNotBeEmpty)
+
+			_, newMtime, found := findRunDir(subPath)
+			So(found, ShouldBeTrue)
+			So(newMtime, ShouldEqual, 1000)
 		})
 	})
 }
