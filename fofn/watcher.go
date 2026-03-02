@@ -314,33 +314,17 @@ func submitChunkJobs(
 	}, nil
 }
 
-// preRead holds a cached run record, fofn mtime, and any read error for one
-// subdirectory. Centralising all reads into the pre-scan lets pollSubDir make
-// decisions without additional I/O.
-type preRead struct {
-	rec       *RunRecord
-	err       error
-	fofnMtime int64
-	mtimeErr  error
-}
-
-// doneCacheEntry stores the essential fields of a done run's RunRecord so
-// that subsequent polls can reconstruct the record without reading run.json.
-type doneCacheEntry struct {
-	fofnMtime int64
-	runDir    string
-	repGroup  string
-}
-
 // Watcher monitors a watch directory for fofn changes and manages backup runs
-// using a persisted run.json state machine.
+// using a persisted run.json state machine. All run record mutations go through
+// persistRecord/deleteRecord, making disk-cache divergence structurally
+// impossible.
 type Watcher struct {
 	watchDir  string
 	submitter JobSubmitter
 	cfg       ProcessSubDirConfig
 	logger    *slog.Logger
-	doneMu    sync.Mutex
-	doneCache map[string]doneCacheEntry // subdir path → essential fields of done run
+	mu        sync.Mutex
+	records   map[string]*RunRecord // subdir path → last known run record
 }
 
 // NewWatcher creates a new Watcher for the given watch directory.
@@ -350,66 +334,80 @@ func NewWatcher(watchDir string, submitter JobSubmitter, cfg ProcessSubDirConfig
 		submitter: submitter,
 		cfg:       cfg,
 		logger:    slog.Default(),
-		doneCache: make(map[string]doneCacheEntry),
+		records:   make(map[string]*RunRecord),
 	}
 }
 
-// preReadOne reads the fofn mtime and run record for a single subdirectory.
-// It checks the done cache first: if the fofn mtime matches a previously
-// confirmed-done entry, it reconstructs the RunRecord from cache without
-// reading run.json. The reconcile path still runs settle() which checks
-// and repairs artefacts as needed.
-// Returns nil when no record exists (new directory). The active flag indicates
-// whether a wr query is required for this entry.
-func (w *Watcher) preReadOne(sd SubDir) (*preRead, bool) {
-	fofnMtime, mtimeErr := fofnMtimeFromPath(sd.Path)
-	if mtimeErr == nil {
-		if entry, ok := w.getDoneCached(sd.Path); ok && entry.fofnMtime == fofnMtime {
-			rec := &RunRecord{
-				FofnMtime: entry.fofnMtime,
-				RunDir:    entry.runDir,
-				RepGroup:  entry.repGroup,
-				Phase:     phaseDone,
-			}
+// getRecord returns the cached RunRecord for a subdirectory. Returns nil and
+// false if no record is cached (either never loaded or no run.json on disk).
+func (w *Watcher) getRecord(path string) (*RunRecord, bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 
-			return &preRead{rec: rec, fofnMtime: fofnMtime}, false
-		}
-	}
+	rec, ok := w.records[path]
 
-	rec, found, err := readRunRecord(sd.Path)
-	if err != nil {
-		return &preRead{err: err}, true
-	}
+	return rec, ok
+}
 
-	if !found {
-		w.uncacheDone(sd.Path)
+// setRecord stores a RunRecord in the in-memory cache.
+func (w *Watcher) setRecord(path string, rec *RunRecord) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 
-		return nil, false
+	w.records[path] = rec
+}
+
+// clearRecord removes the cached record for a subdirectory.
+func (w *Watcher) clearRecord(path string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	delete(w.records, path)
+}
+
+// persistRecord writes run.json to disk and updates the in-memory cache
+// atomically. This is the ONLY way the watcher creates or updates run records,
+// ensuring disk and cache can never diverge.
+func (w *Watcher) persistRecord(subDirPath string, rec RunRecord) error {
+	if err := WriteRunRecord(subDirPath, rec); err != nil {
+		return err
 	}
 
 	r := rec
+	w.setRecord(subDirPath, &r)
 
-	return &preRead{rec: &r, fofnMtime: fofnMtime, mtimeErr: mtimeErr}, rec.Phase != phaseDone
+	return nil
+}
+
+// deleteRecord removes run.json from disk and clears the in-memory cache.
+// This is the ONLY way the watcher removes run records, ensuring disk and
+// cache can never diverge.
+func (w *Watcher) deleteRecord(subDirPath string) error {
+	if err := removeRunRecord(subDirPath); err != nil {
+		return err
+	}
+
+	w.clearRecord(subDirPath)
+
+	return nil
 }
 
 // Poll performs one poll cycle: scan for subdirectories, optionally query wr
-// for job statuses, and process each subdirectory through a linear pipeline.
+// for job statuses, and process each subdirectory through the state machine.
 //
-// A pre-scan stats each fofn and checks an in-memory done cache. Done
-// directories whose fofn mtime matches the cache have their RunRecord
-// reconstructed without reading run.json, saving one ReadFile per done dir.
-// The reconcile path still runs settle() which verifies and repairs artefacts.
-// In the common steady state where all directories are done, the expensive wr
-// query is also skipped entirely.
+// All run records are kept in an in-memory cache. On first encounter a
+// subdirectory's run.json is read from disk; subsequent polls use the cached
+// record directly. In the common steady state where all directories are done,
+// the expensive wr query is skipped entirely.
 func (w *Watcher) Poll() error {
 	subDirs, err := ScanForFOFNs(w.watchDir)
 	if err != nil {
 		return err
 	}
 
-	w.pruneCache(subDirs)
+	w.pruneRecords(subDirs)
 
-	cache, needWR := w.preReadAll(subDirs)
+	loadErrs, needWR := w.loadAndCheckAll(subDirs)
 
 	var allStatus map[string]RunJobStatus
 
@@ -420,50 +418,79 @@ func (w *Watcher) Poll() error {
 		}
 	}
 
-	return w.pollSubDirsParallel(subDirs, cache, allStatus)
+	return w.pollSubDirsParallel(subDirs, loadErrs, allStatus)
 }
 
-// pruneCache removes cache entries for subdirectories that are no longer
+// pruneRecords removes cache entries for subdirectories that are no longer
 // present in the watch directory.
-func (w *Watcher) pruneCache(subDirs []SubDir) {
+func (w *Watcher) pruneRecords(subDirs []SubDir) {
 	present := make(map[string]struct{}, len(subDirs))
 	for _, sd := range subDirs {
 		present[sd.Path] = struct{}{}
 	}
 
-	w.doneMu.Lock()
-	defer w.doneMu.Unlock()
+	w.mu.Lock()
+	defer w.mu.Unlock()
 
-	for path := range w.doneCache {
+	for path := range w.records {
 		if _, ok := present[path]; !ok {
-			delete(w.doneCache, path)
+			delete(w.records, path)
 		}
 	}
 }
 
-// preReadAll stats each fofn and reads run.json, utilising the done cache to
-// reconstruct records for stable done directories without reading run.json.
-// Subdirectories without run.json (no entry in cache) need no wr query;
-// subdirectories with a read error are cached and wr is queried
-// conservatively.
-func (w *Watcher) preReadAll(subDirs []SubDir) (map[string]preRead, bool) {
-	cache := make(map[string]preRead, len(subDirs))
+// loadAndCheckAll reads run.json for subdirectories not yet cached and
+// determines whether a wr query is needed. Returns per-subdir load errors and
+// whether wr should be queried. Only non-done phases require a wr query.
+func (w *Watcher) loadAndCheckAll(subDirs []SubDir) (map[string]error, bool) {
+	var loadErrs map[string]error
+
 	needWR := false
 
 	for _, sd := range subDirs {
-		pr, active := w.preReadOne(sd)
-		if pr == nil {
+		active, err := w.loadIfNeeded(sd.Path)
+		if err != nil {
+			if loadErrs == nil {
+				loadErrs = make(map[string]error)
+			}
+
+			loadErrs[sd.Path] = err
+			needWR = true
+
 			continue
 		}
 
 		if active {
 			needWR = true
 		}
-
-		cache[sd.Path] = *pr
 	}
 
-	return cache, needWR
+	return loadErrs, needWR
+}
+
+// loadIfNeeded ensures a subdirectory's run record is cached. If already
+// cached, it checks the phase. If not cached, it reads run.json from disk.
+// Returns true when the subdirectory has an active (non-done) run that
+// requires a wr query.
+func (w *Watcher) loadIfNeeded(path string) (bool, error) {
+	rec, cached := w.getRecord(path)
+	if cached {
+		return rec.Phase != phaseDone, nil
+	}
+
+	diskRec, found, err := readRunRecord(path)
+	if err != nil {
+		return false, err
+	}
+
+	if !found {
+		return false, nil
+	}
+
+	r := diskRec
+	w.setRecord(path, &r)
+
+	return diskRec.Phase != phaseDone, nil
 }
 
 // Run polls immediately and then at the given interval until the context is
@@ -491,9 +518,10 @@ func (w *Watcher) Run(ctx context.Context, interval time.Duration) error {
 }
 
 // pollSubDirsParallel processes all subdirectories concurrently with bounded
-// parallelism, collecting all errors.
+// parallelism, collecting all errors. Subdirectories with load errors are
+// included in the error list without spawning a goroutine.
 func (w *Watcher) pollSubDirsParallel(
-	subDirs []SubDir, cache map[string]preRead, allStatus map[string]RunJobStatus) error {
+	subDirs []SubDir, loadErrs map[string]error, allStatus map[string]RunJobStatus) error {
 	var (
 		wg    sync.WaitGroup
 		errMu sync.Mutex
@@ -502,11 +530,17 @@ func (w *Watcher) pollSubDirsParallel(
 	)
 
 	for _, subDir := range subDirs {
+		if loadErr := loadErrs[subDir.Path]; loadErr != nil {
+			errs = append(errs, loadErr)
+
+			continue
+		}
+
 		wg.Add(1)
 
 		sem <- struct{}{}
 
-		go w.pollSubDirCollect(subDir, cache[subDir.Path], allStatus, sem, &wg, &errMu, &errs)
+		go w.pollSubDirCollect(subDir, allStatus, sem, &wg, &errMu, &errs)
 	}
 
 	wg.Wait()
@@ -516,7 +550,6 @@ func (w *Watcher) pollSubDirsParallel(
 
 func (w *Watcher) pollSubDirCollect(
 	sd SubDir,
-	cached preRead,
 	allStatus map[string]RunJobStatus,
 	sem chan struct{},
 	wg *sync.WaitGroup, errMu *sync.Mutex, errs *[]error,
@@ -524,7 +557,7 @@ func (w *Watcher) pollSubDirCollect(
 	defer wg.Done()
 	defer func() { <-sem }()
 
-	if err := w.pollSubDir(sd, cached, allStatus); err != nil {
+	if err := w.pollSubDir(sd, allStatus); err != nil {
 		errMu.Lock()
 
 		*errs = append(*errs, err)
@@ -534,39 +567,37 @@ func (w *Watcher) pollSubDirCollect(
 }
 
 // pollSubDir processes a single subdirectory through a linear decision
-// pipeline using the cached run record and fofn mtime from pre-scan:
+// pipeline using the in-memory record cache:
 //
-//  1. Pre-read error       → propagate
-//  2. No run record        → start a new run
-//  3. Mtime read error     → propagate
-//  4. Existing run record  → reconcile state
-func (w *Watcher) pollSubDir(subDir SubDir, cached preRead, allStatus map[string]RunJobStatus) error {
-	if cached.err != nil {
-		return cached.err
-	}
-
-	if cached.rec == nil {
+//  1. No cached record  → start a new run
+//  2. Stat fofn error   → propagate
+//  3. Cached record     → reconcile state
+func (w *Watcher) pollSubDir(subDir SubDir, allStatus map[string]RunJobStatus) error {
+	rec, _ := w.getRecord(subDir.Path)
+	if rec == nil {
 		return w.startNewRun(subDir)
 	}
 
-	if cached.mtimeErr != nil {
-		return cached.mtimeErr
+	fofnMtime, err := fofnMtimeFromPath(subDir.Path)
+	if err != nil {
+		return err
 	}
 
-	return w.reconcile(subDir, cached, allStatus)
+	return w.reconcile(subDir, rec, fofnMtime, allStatus)
 }
 
 // reconcile uses the explicit transition table to determine and execute the
 // correct action for a subdirectory with an existing run record. Every
 // (phase, fofnChanged, jobResult) triple is accounted for in the table;
 // a missing entry panics, making missed-case bugs structurally impossible.
-func (w *Watcher) reconcile(subDir SubDir, cached preRead, allStatus map[string]RunJobStatus) error {
-	rec := cached.rec
+func (w *Watcher) reconcile(
+	subDir SubDir, rec *RunRecord, fofnMtime int64, allStatus map[string]RunJobStatus,
+) error {
 	status := allStatus[rec.RepGroup]
 
 	key := transitionKey{
 		phase:       rec.Phase,
-		fofnChanged: cached.fofnMtime != rec.FofnMtime,
+		fofnChanged: fofnMtime != rec.FofnMtime,
 		jobs:        classifyJobResult(rec.Phase, status),
 	}
 
@@ -594,15 +625,14 @@ func (w *Watcher) reconcile(subDir SubDir, cached preRead, allStatus map[string]
 // must ensure status file, symlink, and run-record consistency calls this
 // function. It is idempotent: when artefacts are already correct and the phase
 // has not changed, the cost is a single Stat + Readlink.
+//
+// Records are treated as immutable: on a phase transition a new RunRecord is
+// created and persisted via persistRecord, preventing stale-cache bugs if the
+// disk write fails.
 func (w *Watcher) settle(subDir SubDir, rec *RunRecord, newPhase string, buriedChunks []string) error {
 	phaseChanged := newPhase != rec.Phase || !slices.Equal(buriedChunks, rec.BuriedChunks)
 
-	rec.Phase = newPhase
-	rec.BuriedChunks = buriedChunks
-
 	if !phaseChanged && artefactsIntact(rec, subDir.Path) {
-		w.updateDoneCache(subDir.Path, rec)
-
 		return nil
 	}
 
@@ -611,12 +641,16 @@ func (w *Watcher) settle(subDir SubDir, rec *RunRecord, newPhase string, buriedC
 	}
 
 	if phaseChanged {
-		if err := persistPhaseChange(subDir.Path, rec); err != nil {
+		if err := deleteOldRunDirs(subDir.Path, rec.FofnMtime); err != nil {
 			return err
 		}
-	}
 
-	w.updateDoneCache(subDir.Path, rec)
+		updated := *rec
+		updated.Phase = newPhase
+		updated.BuriedChunks = buriedChunks
+
+		return w.persistRecord(subDir.Path, updated)
+	}
 
 	return nil
 }
@@ -644,51 +678,6 @@ func repairArtefacts(
 	}
 
 	return ensureStatusSymlink(runDir, subDir.Path)
-}
-
-// persistPhaseChange deletes stale run directories and writes the updated
-// run record to disk. Called only when the phase has actually changed.
-func persistPhaseChange(subDirPath string, rec *RunRecord) error {
-	if err := deleteOldRunDirs(subDirPath, rec.FofnMtime); err != nil {
-		return err
-	}
-
-	return WriteRunRecord(subDirPath, *rec)
-}
-
-// getDoneCached returns the done cache entry for the given path, if present.
-func (w *Watcher) getDoneCached(path string) (doneCacheEntry, bool) {
-	w.doneMu.Lock()
-	defer w.doneMu.Unlock()
-
-	entry, ok := w.doneCache[path]
-
-	return entry, ok
-}
-
-// updateDoneCache stores or removes a cache entry depending on the record's
-// phase. Done directories are cached; non-done directories are removed.
-func (w *Watcher) updateDoneCache(path string, rec *RunRecord) {
-	w.doneMu.Lock()
-	defer w.doneMu.Unlock()
-
-	if rec.Phase == phaseDone {
-		w.doneCache[path] = doneCacheEntry{
-			fofnMtime: rec.FofnMtime,
-			runDir:    rec.RunDir,
-			repGroup:  rec.RepGroup,
-		}
-	} else {
-		delete(w.doneCache, path)
-	}
-}
-
-// uncacheDone removes a directory from the done cache unconditionally.
-func (w *Watcher) uncacheDone(path string) {
-	w.doneMu.Lock()
-	defer w.doneMu.Unlock()
-
-	delete(w.doneCache, path)
 }
 
 // sortedBuriedChunks extracts and sorts the buried chunk names from the job
@@ -741,8 +730,6 @@ func ensureStatusSymlink(runDir string, subDirPath string) error {
 // done-phase runs where no wr query was made, the zero-value RunJobStatus
 // correctly indicates no buried jobs.
 func (w *Watcher) teardownAndRestart(subDir SubDir, rec RunRecord, status RunJobStatus) error {
-	w.uncacheDone(subDir.Path)
-
 	buriedChunks := sortedBuriedChunks(status)
 
 	if err := GenerateStatus(rec.RunDir, subDir, buriedChunks); err != nil {
@@ -759,7 +746,7 @@ func (w *Watcher) teardownAndRestart(subDir SubDir, rec RunRecord, status RunJob
 		return err
 	}
 
-	if err := removeRunRecord(subDir.Path); err != nil {
+	if err := w.deleteRecord(subDir.Path); err != nil {
 		return err
 	}
 
@@ -803,8 +790,6 @@ func removeRunRecord(subDirPath string) error {
 }
 
 func (w *Watcher) startNewRun(subDir SubDir) error {
-	w.uncacheDone(subDir.Path)
-
 	state, err := ProcessSubDir(subDir, w.submitter, w.cfg)
 	if err != nil {
 		return err
@@ -821,7 +806,7 @@ func (w *Watcher) startNewRun(subDir SubDir) error {
 		Phase:     phaseRunning,
 	}
 
-	return WriteRunRecord(subDir.Path, rec)
+	return w.persistRecord(subDir.Path, rec)
 }
 
 // fofnMtimeFromPath returns the mtime of the fofn file in the given

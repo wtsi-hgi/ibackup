@@ -1764,8 +1764,8 @@ func TestWatcherRestart(t *testing.T) {
 	})
 }
 
-func TestDoneCacheBypassesRunJSON(t *testing.T) {
-	Convey("done cache proves it bypasses run.json", t, func() {
+func TestRecordCacheBypassesRunJSON(t *testing.T) {
+	Convey("record cache proves it bypasses run.json", t, func() {
 		So(transformer.Register("test", `^/tmp/(.*)$`, "/irods/$1"), ShouldBeNil)
 
 		watchDir := t.TempDir()
@@ -2319,8 +2319,15 @@ func TestSettleIdempotent(t *testing.T) {
 
 		firstMtime := statusInfo.ModTime()
 
+		// Fetch the updated record from cache (settle persists a new
+		// RunRecord; the old pointer is intentionally not mutated).
+		updatedRec, ok := w.getRecord(sd.Path)
+		if !ok || updatedRec == nil {
+			rt.Fatal("expected cached record after first settle")
+		}
+
 		// Second settle: same phase, should be a no-op
-		settleErr := w.settle(sd, rec, phaseDone, nil)
+		settleErr := w.settle(sd, updatedRec, phaseDone, nil)
 		if settleErr != nil {
 			rt.Fatalf("second settle: %v", settleErr)
 		}
