@@ -45,32 +45,31 @@ import (
 
 func TestTransitionTableExhaustive(t *testing.T) {
 	Convey("transition table covers every reachable state", t, func() {
-		phases := []string{phaseRunning, phaseDone, phaseBuried}
-
 		total := 0
 
-		for _, phase := range phases {
-			var jobs []jobResult
-			if phase == phaseDone {
-				jobs = []jobResult{jobsNA}
-			} else {
-				jobs = []jobResult{jobsRunning, jobsComplete, jobsBuried}
-			}
+		// active phase: all three job results × both fofnChanged values
+		for _, fofnChanged := range []bool{false, true} {
+			for _, jr := range []jobResult{jobsRunning, jobsComplete, jobsBuried} {
+				key := transitionKey{phase: phaseActive, fofnChanged: fofnChanged, jobs: jr}
+				_, ok := transitions[key]
+				So(ok, ShouldBeTrue)
 
-			for _, fofnChanged := range []bool{false, true} {
-				for _, jr := range jobs {
-					key := transitionKey{phase: phase, fofnChanged: fofnChanged, jobs: jr}
-					_, ok := transitions[key]
-					So(ok, ShouldBeTrue)
-
-					total++
-				}
+				total++
 			}
 		}
 
-		Convey("has exactly 14 entries with no spurious extras", func() {
+		// done phase: jobsNA only × both fofnChanged values
+		for _, fofnChanged := range []bool{false, true} {
+			key := transitionKey{phase: phaseDone, fofnChanged: fofnChanged, jobs: jobsNA}
+			_, ok := transitions[key]
+			So(ok, ShouldBeTrue)
+
+			total++
+		}
+
+		Convey("has exactly 8 entries with no spurious extras", func() {
 			So(len(transitions), ShouldEqual, total)
-			So(total, ShouldEqual, 14)
+			So(total, ShouldEqual, 8)
 		})
 	})
 }
@@ -354,7 +353,7 @@ func TestProcessSubDir(t *testing.T) {
 
 			writeFofn(subPath, generateTmpPaths(5))
 
-			sd := SubDir{Path: subPath}
+			sd := subDirWithMtime(subPath)
 			mock := &mockJobSubmitter{}
 			cfg := ProcessSubDirConfig{
 				MinChunk: 10,
@@ -633,7 +632,7 @@ func TestWatcherPoll(t *testing.T) {
 			So(mock.submitted, ShouldHaveLength, 3)
 
 			rec := readTestRunRecord(subDir.Path)
-			So(rec.Phase, ShouldEqual, phaseRunning)
+			So(rec.Phase, ShouldEqual, phaseActive)
 			So(rec.RepGroup, ShouldNotBeEmpty)
 			So(rec.RunDir, ShouldNotBeEmpty)
 		})
@@ -661,7 +660,7 @@ func TestWatcherPoll(t *testing.T) {
 				submitCount)
 
 			rec2 := readTestRunRecord(subDir.Path)
-			So(rec2.Phase, ShouldEqual, phaseRunning)
+			So(rec2.Phase, ShouldEqual, phaseActive)
 		})
 
 		Convey("completes successful run and starts new run when fofn changed", func() {
@@ -700,7 +699,7 @@ func TestWatcherPoll(t *testing.T) {
 			newRec := readTestRunRecord(subDir.Path)
 			So(newRec.RunDir, ShouldNotEqual,
 				rec.RunDir)
-			So(newRec.Phase, ShouldEqual, phaseRunning)
+			So(newRec.Phase, ShouldEqual, phaseActive)
 		})
 
 		Convey("completes successful run with no new run when fofn unchanged", func() {
@@ -784,7 +783,7 @@ func TestWatcherPoll(t *testing.T) {
 					ShouldEqual, buriedCount)
 
 				buriedRec := readTestRunRecord(subDir.Path)
-				So(buriedRec.Phase, ShouldEqual, phaseBuried)
+				So(buriedRec.Phase, ShouldEqual, phaseActive)
 
 				So(mock.submitted, ShouldHaveLength,
 					submitCount)
@@ -878,7 +877,7 @@ func TestWatcherPoll(t *testing.T) {
 				ShouldBeGreaterThan, firstCount)
 
 			newRec := readTestRunRecord(subDir.Path)
-			So(newRec.Phase, ShouldEqual, phaseRunning)
+			So(newRec.Phase, ShouldEqual, phaseActive)
 			So(newRec.RunDir, ShouldNotEqual,
 				rec.RunDir)
 		})
@@ -991,7 +990,7 @@ func TestWatcherRestart(t *testing.T) {
 					FofnMtime: 1000,
 					RunDir:    runDir,
 					RepGroup:  "ibackup_fofn_proj_1000",
-					Phase:     phaseRunning,
+					Phase:     phaseActive,
 				})
 
 				mock := &mockJobSubmitter{
@@ -1010,7 +1009,7 @@ func TestWatcherRestart(t *testing.T) {
 				So(mock.submitted, ShouldBeEmpty)
 
 				rec := readTestRunRecord(subPath)
-				So(rec.Phase, ShouldEqual, phaseRunning)
+				So(rec.Phase, ShouldEqual, phaseActive)
 				So(rec.FofnMtime, ShouldEqual, 1000)
 				So(rec.RepGroup, ShouldEqual,
 					"ibackup_fofn_proj_1000")
@@ -1032,7 +1031,7 @@ func TestWatcherRestart(t *testing.T) {
 				FofnMtime: 1000,
 				RunDir:    runDir,
 				RepGroup:  "ibackup_fofn_proj_1000",
-				Phase:     phaseRunning,
+				Phase:     phaseActive,
 			})
 
 			mock := &mockJobSubmitter{allJobsErr: errTest}
@@ -1065,7 +1064,7 @@ func TestWatcherRestart(t *testing.T) {
 				FofnMtime: 1000,
 				RunDir:    runDir,
 				RepGroup:  "ibackup_fofn_proj_1000",
-				Phase:     phaseRunning,
+				Phase:     phaseActive,
 			})
 
 			mock := &mockJobSubmitter{}
@@ -1323,12 +1322,12 @@ func TestWatcherRestart(t *testing.T) {
 
 			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 10))
 
-			// Start with running phase so poll transitions running→done
+			// Start with active phase so poll transitions active→done
 			writeTestRunRecord(subPath, RunRecord{
 				FofnMtime: 1000,
 				RunDir:    runDir,
 				RepGroup:  "ibackup_fofn_proj_1000",
-				Phase:     phaseRunning,
+				Phase:     phaseActive,
 			})
 
 			// wr returns no jobs → complete
@@ -1376,12 +1375,12 @@ func TestWatcherRestart(t *testing.T) {
 
 			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 10))
 
-			// Start with running phase so poll transitions running→done
+			// Start with active phase so poll transitions active→done
 			writeTestRunRecord(subPath, RunRecord{
 				FofnMtime: 1000,
 				RunDir:    runDir,
 				RepGroup:  "ibackup_fofn_proj_1000",
-				Phase:     phaseRunning,
+				Phase:     phaseActive,
 			})
 
 			// wr returns no jobs → complete
@@ -1429,7 +1428,7 @@ func TestWatcherRestart(t *testing.T) {
 			So(mock.submitted, ShouldNotBeEmpty)
 
 			rec := readTestRunRecord(subPath)
-			So(rec.Phase, ShouldEqual, phaseRunning)
+			So(rec.Phase, ShouldEqual, phaseActive)
 			So(rec.FofnMtime, ShouldEqual, 2000)
 			So(rec.RunDir, ShouldNotEqual, runDir)
 		})
@@ -1466,7 +1465,7 @@ func TestWatcherRestart(t *testing.T) {
 				FofnMtime:    1000,
 				RunDir:       runDir,
 				RepGroup:     "ibackup_fofn_proj_1000",
-				Phase:        phaseBuried,
+				Phase:        phaseActive,
 				BuriedChunks: []string{"chunk.000001"},
 			})
 
@@ -1616,7 +1615,7 @@ func TestWatcherRestart(t *testing.T) {
 			So(mock.findCallCount, ShouldEqual, 0)
 
 			rec := readTestRunRecord(subPath)
-			So(rec.Phase, ShouldEqual, phaseRunning)
+			So(rec.Phase, ShouldEqual, phaseActive)
 			So(rec.FofnMtime, ShouldEqual, 2000)
 		})
 
@@ -1689,7 +1688,7 @@ func TestWatcherRestart(t *testing.T) {
 				FofnMtime: 1000,
 				RunDir:    runDir,
 				RepGroup:  "ibackup_fofn_proj_1000",
-				Phase:     phaseRunning,
+				Phase:     phaseActive,
 			})
 
 			// fofn has changed
@@ -1710,7 +1709,7 @@ func TestWatcherRestart(t *testing.T) {
 
 			// Run record unchanged — still waiting
 			rec := readTestRunRecord(subPath)
-			So(rec.Phase, ShouldEqual, phaseRunning)
+			So(rec.Phase, ShouldEqual, phaseActive)
 			So(rec.FofnMtime, ShouldEqual, 1000)
 		})
 
@@ -1888,7 +1887,7 @@ func TestRecordCacheBypassesRunJSON(t *testing.T) {
 			So(mock.submitted, ShouldNotBeEmpty)
 
 			newRec := readTestRunRecord(subPath)
-			So(newRec.Phase, ShouldEqual, phaseRunning)
+			So(newRec.Phase, ShouldEqual, phaseActive)
 			So(newRec.FofnMtime, ShouldEqual, 2000)
 		})
 
@@ -2072,7 +2071,7 @@ func setupSubDir(
 
 	So(WriteConfig(subPath, cfg), ShouldBeNil)
 
-	return SubDir{Path: subPath}
+	return subDirWithMtime(subPath)
 }
 
 // generateTmpPaths creates n paths matching the test
@@ -2085,6 +2084,14 @@ func generateTmpPaths(n int) []string {
 	}
 
 	return paths
+}
+
+// subDirWithMtime creates a SubDir by statting the fofn to get FofnMtime.
+func subDirWithMtime(subPath string) SubDir {
+	info, err := os.Stat(filepath.Join(subPath, fofnFilename))
+	So(err, ShouldBeNil)
+
+	return SubDir{Path: subPath, FofnMtime: info.ModTime().Unix()}
 }
 
 // writeTestRunRecord writes a run.json in subDirPath for test setup.
@@ -2192,7 +2199,7 @@ func TestSettleRepairsArtefacts(t *testing.T) {
 
 		phase := phaseDone
 		if numBuried > 0 {
-			phase = phaseBuried
+			phase = phaseActive
 		}
 
 		// Create valid initial state via settle
@@ -2299,13 +2306,13 @@ func TestSettleIdempotent(t *testing.T) {
 			FofnMtime: mtime,
 			RunDir:    runDir,
 			RepGroup:  fmt.Sprintf("ibackup_fofn_proj_%d", mtime),
-			Phase:     phaseRunning, // will transition to done
+			Phase:     phaseActive, // will transition to done
 		}
 
 		w := NewWatcher(watchDir, &mockJobSubmitter{}, ProcessSubDirConfig{})
 		sd := SubDir{Path: subPath}
 
-		// First settle: transitions running → done
+		// First settle: transitions active → done
 		if err := w.settle(sd, rec, phaseDone, nil); err != nil {
 			rt.Fatalf("first settle: %v", err)
 		}

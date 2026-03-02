@@ -46,9 +46,8 @@ const (
 	statusFilename    = "status"
 	maxPollWorkers    = 10
 	runRecordFilename = "run.json"
-	phaseRunning      = "running"
+	phaseActive       = "active"
 	phaseDone         = "done"
-	phaseBuried       = "buried"
 	ownerReadWrite    = 0o600
 )
 
@@ -89,26 +88,18 @@ type transition struct {
 // runtime, making missed-case bugs structurally impossible rather than merely
 // unlikely.
 var transitions = map[transitionKey]transition{ //nolint:gochecknoglobals
-	// running + fofn unchanged
-	{phaseRunning, false, jobsRunning}:  {actionWait, ""},
-	{phaseRunning, false, jobsComplete}: {actionSettle, phaseDone},
-	{phaseRunning, false, jobsBuried}:   {actionSettle, phaseBuried},
-	// running + fofn changed
-	{phaseRunning, true, jobsRunning}:  {actionWait, ""},
-	{phaseRunning, true, jobsComplete}: {actionRestart, ""},
-	{phaseRunning, true, jobsBuried}:   {actionRestart, ""},
+	// active + fofn unchanged
+	{phaseActive, false, jobsRunning}:  {actionWait, ""},
+	{phaseActive, false, jobsComplete}: {actionSettle, phaseDone},
+	{phaseActive, false, jobsBuried}:   {actionSettle, phaseActive},
+	// active + fofn changed
+	{phaseActive, true, jobsRunning}:  {actionWait, ""},
+	{phaseActive, true, jobsComplete}: {actionRestart, ""},
+	{phaseActive, true, jobsBuried}:   {actionRestart, ""},
 	// done + fofn unchanged (no wr query needed)
 	{phaseDone, false, jobsNA}: {actionSettle, phaseDone},
 	// done + fofn changed (no wr query needed)
 	{phaseDone, true, jobsNA}: {actionRestart, ""},
-	// buried + fofn unchanged
-	{phaseBuried, false, jobsRunning}:  {actionWait, ""},
-	{phaseBuried, false, jobsComplete}: {actionSettle, phaseDone},
-	{phaseBuried, false, jobsBuried}:   {actionSettle, phaseBuried},
-	// buried + fofn changed
-	{phaseBuried, true, jobsRunning}:  {actionWait, ""},
-	{phaseBuried, true, jobsComplete}: {actionRestart, ""},
-	{phaseBuried, true, jobsBuried}:   {actionRestart, ""},
 }
 
 // classifyJobResult determines the jobResult for the transition table from the
@@ -255,11 +246,16 @@ type RunState struct {
 }
 
 // ProcessSubDir reads config.yml, looks up the named transformer, writes
-// shuffled chunks, and submits jobs. Returns a RunState describing the active
-// run, or an error.
+// shuffled chunks, and submits jobs. SubDir.FofnMtime is used as the run
+// directory name (eliminating a redundant stat). Returns a RunState describing
+// the active run, or an error.
 func ProcessSubDir(subDir SubDir, submitter JobSubmitter, cfg ProcessSubDirConfig) (RunState, error) {
-	sdCfg, mtime, err := readAndCheckConfig(subDir)
-	if err != nil || mtime == 0 {
+	if subDir.FofnMtime == 0 {
+		return RunState{}, nil
+	}
+
+	sdCfg, err := readSubDirConfig(subDir)
+	if err != nil {
 		return RunState{}, err
 	}
 
@@ -268,7 +264,7 @@ func ProcessSubDir(subDir SubDir, submitter JobSubmitter, cfg ProcessSubDirConfi
 		return RunState{}, err
 	}
 
-	runDir, chunks, err := prepareChunks(subDir, transform, mtime, cfg)
+	runDir, chunks, err := prepareChunks(subDir, transform, subDir.FofnMtime, cfg)
 	if err != nil || chunks == nil {
 		return RunState{}, err
 	}
@@ -276,7 +272,7 @@ func ProcessSubDir(subDir SubDir, submitter JobSubmitter, cfg ProcessSubDirConfi
 	return submitChunkJobs(
 		submitter, sdCfg, cfg.RunConfig,
 		runDir, chunks,
-		filepath.Base(subDir.Path), mtime,
+		filepath.Base(subDir.Path), subDir.FofnMtime,
 	)
 }
 
@@ -570,20 +566,14 @@ func (w *Watcher) pollSubDirCollect(
 // pipeline using the in-memory record cache:
 //
 //  1. No cached record  → start a new run
-//  2. Stat fofn error   → propagate
-//  3. Cached record     → reconcile state
+//  2. Cached record     → reconcile state using SubDir.FofnMtime
 func (w *Watcher) pollSubDir(subDir SubDir, allStatus map[string]RunJobStatus) error {
 	rec, _ := w.getRecord(subDir.Path)
 	if rec == nil {
 		return w.startNewRun(subDir)
 	}
 
-	fofnMtime, err := fofnMtimeFromPath(subDir.Path)
-	if err != nil {
-		return err
-	}
-
-	return w.reconcile(subDir, rec, fofnMtime, allStatus)
+	return w.reconcile(subDir, rec, allStatus)
 }
 
 // reconcile uses the explicit transition table to determine and execute the
@@ -591,13 +581,13 @@ func (w *Watcher) pollSubDir(subDir SubDir, allStatus map[string]RunJobStatus) e
 // (phase, fofnChanged, jobResult) triple is accounted for in the table;
 // a missing entry panics, making missed-case bugs structurally impossible.
 func (w *Watcher) reconcile(
-	subDir SubDir, rec *RunRecord, fofnMtime int64, allStatus map[string]RunJobStatus,
+	subDir SubDir, rec *RunRecord, allStatus map[string]RunJobStatus,
 ) error {
 	status := allStatus[rec.RepGroup]
 
 	key := transitionKey{
 		phase:       rec.Phase,
-		fofnChanged: fofnMtime != rec.FofnMtime,
+		fofnChanged: subDir.FofnMtime != rec.FofnMtime,
 		jobs:        classifyJobResult(rec.Phase, status),
 	}
 
@@ -803,23 +793,10 @@ func (w *Watcher) startNewRun(subDir SubDir) error {
 		FofnMtime: state.Mtime,
 		RunDir:    state.RunDir,
 		RepGroup:  state.RepGroup,
-		Phase:     phaseRunning,
+		Phase:     phaseActive,
 	}
 
 	return w.persistRecord(subDir.Path, rec)
-}
-
-// fofnMtimeFromPath returns the mtime of the fofn file in the given
-// subdirectory path as a Unix timestamp.
-func fofnMtimeFromPath(subDirPath string) (int64, error) {
-	fofnPath := filepath.Join(subDirPath, fofnFilename)
-
-	info, err := os.Stat(fofnPath)
-	if err != nil {
-		return 0, err
-	}
-
-	return info.ModTime().Unix(), nil
 }
 
 // GenerateStatus writes a combined status file from all chunk reports in
@@ -929,24 +906,9 @@ func createStatusSymlink(statusPath, subDirPath string) error {
 	return nil
 }
 
-// readAndCheckConfig reads the config and returns the fofn mtime. Returns zero
-// mtime if the fofn file does not exist.
-func readAndCheckConfig(subDir SubDir) (SubDirConfig, int64, error) {
-	fofnPath := filepath.Join(subDir.Path, fofnFilename)
-
-	info, err := os.Stat(fofnPath)
-	if err != nil {
-		return SubDirConfig{}, 0, err
-	}
-
-	mtime := info.ModTime().Unix()
-
-	sdCfg, err := ReadConfig(subDir.Path)
-	if err != nil {
-		return SubDirConfig{}, 0, err
-	}
-
-	return sdCfg, mtime, nil
+// readSubDirConfig reads config.yml for the given subdirectory.
+func readSubDirConfig(subDir SubDir) (SubDirConfig, error) {
+	return ReadConfig(subDir.Path)
 }
 
 func buildRunConfig(

@@ -67,6 +67,10 @@ func TestScanForFOFNs(t *testing.T) {
 			paths := []string{result[0].Path, result[1].Path}
 			So(paths, ShouldContain, pathA)
 			So(paths, ShouldContain, pathC)
+
+			for _, sd := range result {
+				So(sd.FofnMtime, ShouldBeGreaterThan, 0)
+			}
 		})
 
 		Convey("no subdirs returns empty slice, no error", func() {
