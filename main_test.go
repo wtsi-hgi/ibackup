@@ -5542,7 +5542,7 @@ func TestWatchFofnsIntegration(t *testing.T) {
 			So(err, ShouldBeNil)
 
 			mock := &testSubmitter{}
-			subDir := fofn.SubDir{Path: subPath}
+			subDir := fofn.SubDir{Path: subPath, FofnMtime: getFofnMtime(subPath)}
 
 			state, err := fofn.ProcessSubDir(
 				subDir, mock, fofn.ProcessSubDirConfig{
@@ -5569,6 +5569,9 @@ func TestWatchFofnsIntegration(t *testing.T) {
 
 			err = fofn.GenerateStatus(state.RunDir, subDir, nil)
 			So(err, ShouldBeNil)
+
+			statusFile := filepath.Join(state.RunDir, "status")
+			So(os.Symlink(statusFile, filepath.Join(subPath, "status")), ShouldBeNil)
 
 			symlinkPath := filepath.Join(subPath, "status")
 			_, linkErr := os.Lstat(symlinkPath)
@@ -5645,7 +5648,7 @@ func TestWatchFofnsIntegration(t *testing.T) {
 			So(err, ShouldBeNil)
 
 			mock := &testSubmitter{}
-			subDir := fofn.SubDir{Path: subPath}
+			subDir := fofn.SubDir{Path: subPath, FofnMtime: getFofnMtime(subPath)}
 
 			state, err := fofn.ProcessSubDir(
 				subDir, mock, fofn.ProcessSubDirConfig{
@@ -5686,6 +5689,11 @@ func TestWatchFofnsIntegration(t *testing.T) {
 			err = fofn.GenerateStatus(state.RunDir, subDir, nil)
 			So(err, ShouldBeNil)
 
+			So(os.Symlink(
+				filepath.Join(state.RunDir, "status"),
+				filepath.Join(subPath, "status"),
+			), ShouldBeNil)
+
 			entries, counts, parseErr :=
 				fofn.ParseStatus(filepath.Join(subPath, "status"))
 			So(parseErr, ShouldBeNil)
@@ -5711,7 +5719,7 @@ func TestWatchFofnsIntegration(t *testing.T) {
 			So(err, ShouldBeNil)
 
 			mock := &testSubmitter{}
-			subDir := fofn.SubDir{Path: subPath}
+			subDir := fofn.SubDir{Path: subPath, FofnMtime: getFofnMtime(subPath)}
 
 			state, err := fofn.ProcessSubDir(
 				subDir, mock, fofn.ProcessSubDirConfig{
@@ -5721,14 +5729,6 @@ func TestWatchFofnsIntegration(t *testing.T) {
 			)
 			So(err, ShouldBeNil)
 			So(state.RepGroup, ShouldNotBeEmpty)
-
-			err = fofn.WriteRunRecord(subPath, fofn.RunRecord{
-				FofnMtime: state.Mtime,
-				RunDir:    state.RunDir,
-				RepGroup:  state.RepGroup,
-				Phase:     "running",
-			})
-			So(err, ShouldBeNil)
 
 			initialCount := len(mock.submitted)
 			So(initialCount,
@@ -5800,7 +5800,7 @@ func TestWatchFofnsIntegration(t *testing.T) {
 				So(err, ShouldBeNil)
 
 				mock := &testSubmitter{}
-				subDir := fofn.SubDir{Path: subPath}
+				subDir := fofn.SubDir{Path: subPath, FofnMtime: getFofnMtime(subPath)}
 
 				state, err := fofn.ProcessSubDir(
 					subDir, mock,
@@ -5811,14 +5811,6 @@ func TestWatchFofnsIntegration(t *testing.T) {
 				)
 				So(err, ShouldBeNil)
 				So(state.RepGroup, ShouldNotBeEmpty)
-
-				err = fofn.WriteRunRecord(subPath, fofn.RunRecord{
-					FofnMtime: state.Mtime,
-					RunDir:    state.RunDir,
-					RepGroup:  state.RepGroup,
-					Phase:     "running",
-				})
-				So(err, ShouldBeNil)
 
 				oldRunDir := state.RunDir
 				oldMtime := state.Mtime
@@ -5927,6 +5919,14 @@ func writeNullFofn(dir string, paths []string) {
 	}
 
 	So(f.Close(), ShouldBeNil)
+}
+
+// getFofnMtime returns the Unix mtime of the fofn file in dir.
+func getFofnMtime(dir string) int64 {
+	info, err := os.Stat(filepath.Join(dir, "fofn"))
+	So(err, ShouldBeNil)
+
+	return info.ModTime().Unix()
 }
 
 // simulatePutExecution reads chunk files in runDir,

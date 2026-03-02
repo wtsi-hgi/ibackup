@@ -166,9 +166,10 @@ type JobSubmitter interface {
 
 // RunJobStatus holds the classified result of a wr query for a single repgroup.
 type RunJobStatus struct {
-	HasRunning   bool
-	BuriedJobs   []*jobqueue.Job
-	BuriedChunks []string
+	HasRunning        bool
+	BuriedJobs        []*jobqueue.Job
+	BuriedChunks      []string
+	LastCompletedTime time.Time
 }
 
 // ClassifyAllJobs queries wr once for all fofn jobs and returns a map keyed by
@@ -192,7 +193,11 @@ func classifyJobs(jobs []*jobqueue.Job) map[string]RunJobStatus {
 		s := result[rg]
 
 		switch job.State {
-		case jobqueue.JobStateComplete, jobqueue.JobStateDeleted:
+		case jobqueue.JobStateComplete:
+			if job.EndTime.After(s.LastCompletedTime) {
+				s.LastCompletedTime = job.EndTime
+			}
+		case jobqueue.JobStateDeleted:
 			continue
 		case jobqueue.JobStateBuried:
 			s.BuriedJobs = append(s.BuriedJobs, job)

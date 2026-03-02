@@ -315,14 +315,17 @@ func TestClassifyAllJobs(t *testing.T) {
 					[]string{"chunk.000002"})
 			})
 
-		Convey("ignores complete and deleted jobs",
+		Convey("tracks completed time and ignores deleted jobs",
 			func() {
+				completedTime := time.Date(2026, 1, 15, 10, 30, 0, 0, time.UTC)
+
 				mock := &mockJobSubmitter{
 					allJobs: []*jobqueue.Job{
 						{
 							RepGroup: "ibackup_fofn_proj_100",
 							State:    jobqueue.JobStateComplete,
 							Cmd:      "cmd1",
+							EndTime:  completedTime,
 						},
 						{
 							RepGroup: "ibackup_fofn_proj_100",
@@ -334,7 +337,12 @@ func TestClassifyAllJobs(t *testing.T) {
 
 				result, err := ClassifyAllJobs(mock)
 				So(err, ShouldBeNil)
-				So(result, ShouldHaveLength, 0)
+				So(result, ShouldHaveLength, 1)
+
+				s := result["ibackup_fofn_proj_100"]
+				So(s.HasRunning, ShouldBeFalse)
+				So(s.BuriedChunks, ShouldBeEmpty)
+				So(s.LastCompletedTime, ShouldEqual, completedTime)
 			})
 
 		Convey("mixes running and buried in same repgroup",

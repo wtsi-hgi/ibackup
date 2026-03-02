@@ -27,7 +27,6 @@ package fofn
 
 import (
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -47,10 +46,9 @@ func TestTransitionTableExhaustive(t *testing.T) {
 	Convey("transition table covers every reachable state", t, func() {
 		total := 0
 
-		// active phase: all three job results × both fofnChanged values
 		for _, fofnChanged := range []bool{false, true} {
 			for _, jr := range []jobResult{jobsRunning, jobsComplete, jobsBuried} {
-				key := transitionKey{phase: phaseActive, fofnChanged: fofnChanged, jobs: jr}
+				key := transitionKey{fofnChanged: fofnChanged, jobs: jr}
 				_, ok := transitions[key]
 				So(ok, ShouldBeTrue)
 
@@ -58,18 +56,9 @@ func TestTransitionTableExhaustive(t *testing.T) {
 			}
 		}
 
-		// done phase: jobsNA only × both fofnChanged values
-		for _, fofnChanged := range []bool{false, true} {
-			key := transitionKey{phase: phaseDone, fofnChanged: fofnChanged, jobs: jobsNA}
-			_, ok := transitions[key]
-			So(ok, ShouldBeTrue)
-
-			total++
-		}
-
-		Convey("has exactly 8 entries with no spurious extras", func() {
+		Convey("has exactly 6 entries with no spurious extras", func() {
 			So(len(transitions), ShouldEqual, total)
-			So(total, ShouldEqual, 8)
+			So(total, ShouldEqual, 6)
 		})
 	})
 }
@@ -521,6 +510,10 @@ func TestGenerateStatus(t *testing.T) {
 			So(entries, ShouldHaveLength, 15)
 			So(counts.Uploaded, ShouldEqual, 15)
 
+			// GenerateStatus writes the status file; symlink is managed
+			// separately by the watcher's settle path.
+			So(os.Symlink(statusPath, filepath.Join(subDir.Path, "status")), ShouldBeNil)
+
 			symlinkPath := filepath.Join(subDir.Path, "status")
 			target, readErr := os.Readlink(symlinkPath)
 			So(readErr, ShouldBeNil)
@@ -546,11 +539,6 @@ func TestGenerateStatus(t *testing.T) {
 			So(entries, ShouldHaveLength, 20)
 			So(counts.Uploaded, ShouldEqual, 10)
 			So(counts.NotProcessed, ShouldEqual, 10)
-
-			symlinkPath := filepath.Join(subDir.Path, "status")
-			target, readErr := os.Readlink(symlinkPath)
-			So(readErr, ShouldBeNil)
-			So(target, ShouldEqual, statusPath)
 		})
 
 		Convey("handles buried chunk with incomplete report", func() {
@@ -620,7 +608,7 @@ func TestWatcherPoll(t *testing.T) {
 			RandSeed: 1,
 		}
 
-		Convey("first poll submits jobs and records active run", func() {
+		Convey("first poll submits jobs and creates run dir", func() {
 			paths := generateTmpPaths(25)
 			subDir := setupSubDir(watchDir, "proj1", paths, SubDirConfig{Transformer: "test"})
 
@@ -631,10 +619,11 @@ func TestWatcherPoll(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(mock.submitted, ShouldHaveLength, 3)
 
-			rec := readTestRunRecord(subDir.Path)
-			So(rec.Phase, ShouldEqual, phaseActive)
-			So(rec.RepGroup, ShouldNotBeEmpty)
-			So(rec.RunDir, ShouldNotBeEmpty)
+			// Run dir should exist with the fofn mtime as name
+			runDir, runMtime, found := findRunDir(subDir.Path)
+			So(found, ShouldBeTrue)
+			So(runMtime, ShouldEqual, subDir.FofnMtime)
+			So(runDir, ShouldNotBeEmpty)
 		})
 
 		Convey("skips when active run has incomplete jobs", func() {
@@ -648,19 +637,16 @@ func TestWatcherPoll(t *testing.T) {
 			So(err, ShouldBeNil)
 
 			submitCount := len(mock.submitted)
-			rec := readTestRunRecord(subDir.Path)
+			repGroup := makeRepGroup(subDir.Path, subDir.FofnMtime)
 
 			mock.allJobs = []*jobqueue.Job{
-				{RepGroup: rec.RepGroup, Cmd: "running"},
+				{RepGroup: repGroup, Cmd: "running"},
 			}
 
 			err = w.Poll()
 			So(err, ShouldBeNil)
 			So(mock.submitted, ShouldHaveLength,
 				submitCount)
-
-			rec2 := readTestRunRecord(subDir.Path)
-			So(rec2.Phase, ShouldEqual, phaseActive)
 		})
 
 		Convey("completes successful run and starts new run when fofn changed", func() {
@@ -674,18 +660,19 @@ func TestWatcherPoll(t *testing.T) {
 			So(err, ShouldBeNil)
 
 			firstCount := len(mock.submitted)
-			rec := readTestRunRecord(subDir.Path)
+			runDir, runMtime, found := findRunDir(subDir.Path)
+			So(found, ShouldBeTrue)
 
-			writeReportsForChunks(rec.RunDir)
+			writeReportsForChunks(runDir)
 
 			mock.allJobs = nil
 
-			updateFofnMtime(subDir.Path, generateTmpPaths(15), rec.FofnMtime+1000)
+			updateFofnMtime(subDir.Path, generateTmpPaths(15), runMtime+1000)
 
 			err = w.Poll()
 			So(err, ShouldBeNil)
 
-			statusPath := filepath.Join(rec.RunDir, "status")
+			statusPath := filepath.Join(runDir, "status")
 			_, statErr := os.Stat(statusPath)
 			So(statErr, ShouldBeNil)
 
@@ -696,10 +683,10 @@ func TestWatcherPoll(t *testing.T) {
 			So(len(mock.submitted),
 				ShouldBeGreaterThan, firstCount)
 
-			newRec := readTestRunRecord(subDir.Path)
-			So(newRec.RunDir, ShouldNotEqual,
-				rec.RunDir)
-			So(newRec.Phase, ShouldEqual, phaseActive)
+			newRunDir, newMtime, newFound := findRunDir(subDir.Path)
+			So(newFound, ShouldBeTrue)
+			So(newRunDir, ShouldNotEqual, runDir)
+			So(newMtime, ShouldEqual, runMtime+1000)
 		})
 
 		Convey("completes successful run with no new run when fofn unchanged", func() {
@@ -713,24 +700,22 @@ func TestWatcherPoll(t *testing.T) {
 			So(err, ShouldBeNil)
 
 			submitCount := len(mock.submitted)
-			rec := readTestRunRecord(subDir.Path)
+			runDir, _, found := findRunDir(subDir.Path)
+			So(found, ShouldBeTrue)
 
-			writeReportsForChunks(rec.RunDir)
+			writeReportsForChunks(runDir)
 
 			mock.allJobs = nil
 
 			err = w.Poll()
 			So(err, ShouldBeNil)
 
-			statusPath := filepath.Join(rec.RunDir, "status")
+			statusPath := filepath.Join(runDir, "status")
 			_, statErr := os.Stat(statusPath)
 			So(statErr, ShouldBeNil)
 
 			So(mock.submitted, ShouldHaveLength,
 				submitCount)
-
-			doneRec := readTestRunRecord(subDir.Path)
-			So(doneRec.Phase, ShouldEqual, phaseDone)
 		})
 
 		Convey("generates not_processed status for buried chunk when fofn unchanged",
@@ -748,21 +733,24 @@ func TestWatcherPoll(t *testing.T) {
 				So(err, ShouldBeNil)
 
 				submitCount := len(mock.submitted)
-				rec := readTestRunRecord(subDir.Path)
+				runDir, _, found := findRunDir(subDir.Path)
+				So(found, ShouldBeTrue)
+
+				repGroup := makeRepGroup(subDir.Path, subDir.FofnMtime)
 
 				buriedPairs := readChunkPairs(
 					filepath.Join(
-						rec.RunDir, "chunk.000002",
+						runDir, "chunk.000002",
 					),
 				)
 				buriedCount := len(buriedPairs)
 				uploadedCount := 25 - buriedCount
 
-				writeReportsExcept(rec.RunDir, "chunk.000002")
+				writeReportsExcept(runDir, "chunk.000002")
 
 				mock.allJobs = []*jobqueue.Job{
 					{
-						RepGroup: rec.RepGroup,
+						RepGroup: repGroup,
 						State:    jobqueue.JobStateBuried,
 						Cmd: "ibackup put " +
 							"-f chunk.000002",
@@ -772,7 +760,7 @@ func TestWatcherPoll(t *testing.T) {
 				err = w.Poll()
 				So(err, ShouldBeNil)
 
-				statusPath := filepath.Join(rec.RunDir, "status")
+				statusPath := filepath.Join(runDir, "status")
 				entries, counts, parseErr :=
 					ParseStatus(statusPath)
 				So(parseErr, ShouldBeNil)
@@ -781,9 +769,6 @@ func TestWatcherPoll(t *testing.T) {
 					uploadedCount)
 				So(counts.NotProcessed,
 					ShouldEqual, buriedCount)
-
-				buriedRec := readTestRunRecord(subDir.Path)
-				So(buriedRec.Phase, ShouldEqual, phaseActive)
 
 				So(mock.submitted, ShouldHaveLength,
 					submitCount)
@@ -802,42 +787,51 @@ func TestWatcherPoll(t *testing.T) {
 			err := w.Poll()
 			So(err, ShouldBeNil)
 
-			rec := readTestRunRecord(subDir.Path)
-			writeReportsExcept(rec.RunDir, "chunk.000002")
+			runDir, _, found := findRunDir(subDir.Path)
+			So(found, ShouldBeTrue)
 
+			repGroup := makeRepGroup(subDir.Path, subDir.FofnMtime)
+
+			writeReportsExcept(runDir, "chunk.000002")
+
+			// Buried job with EndTime in the past.
+			buriedTime := time.Now().Add(-time.Hour)
 			mock.allJobs = []*jobqueue.Job{{
-				RepGroup: rec.RepGroup,
+				RepGroup: repGroup,
 				State:    jobqueue.JobStateBuried,
 				Cmd:      "ibackup put -f chunk.000002",
 			}}
+			// Add a completed job to set LastCompletedTime.
+			mock.allJobs = append(mock.allJobs, &jobqueue.Job{
+				RepGroup: repGroup,
+				State:    jobqueue.JobStateComplete,
+				Cmd:      "ibackup put -f chunk.000000",
+				EndTime:  buriedTime,
+			})
 
 			err = w.Poll()
 			So(err, ShouldBeNil)
 
-			statusPath := filepath.Join(rec.RunDir, "status")
+			statusPath := filepath.Join(runDir, "status")
 			knownTime := time.Unix(900, 0)
 			So(os.Chtimes(statusPath, knownTime, knownTime), ShouldBeNil)
 
-			symlinkPath := filepath.Join(subDir.Path, "status")
-			symlinkInfoBefore, lstatErr := os.Lstat(symlinkPath)
-			So(lstatErr, ShouldBeNil)
-
-			beforeStat, ok := symlinkInfoBefore.Sys().(*syscall.Stat_t)
-			So(ok, ShouldBeTrue)
+			// Third poll: same buried state, same LastCompletedTime.
+			// Status mtime is now in the future relative to buriedTime,
+			// so needsStatusRegen returns false → no regen.
+			futureTime := time.Now().Add(time.Hour)
+			So(os.Chtimes(statusPath, futureTime, futureTime), ShouldBeNil)
 
 			err = w.Poll()
 			So(err, ShouldBeNil)
 
 			statusInfoAfter, statErr := os.Stat(statusPath)
 			So(statErr, ShouldBeNil)
-			So(statusInfoAfter.ModTime(), ShouldEqual, knownTime)
+			So(statusInfoAfter.ModTime().Unix(), ShouldEqual, futureTime.Unix())
 
-			symlinkInfoAfter, lstatErr := os.Lstat(symlinkPath)
-			So(lstatErr, ShouldBeNil)
-
-			afterStat, ok := symlinkInfoAfter.Sys().(*syscall.Stat_t)
-			So(ok, ShouldBeTrue)
-			So(afterStat.Ino, ShouldEqual, beforeStat.Ino)
+			// Buried runs have no symlink (symlink signals completion).
+			_, lstatErr := os.Lstat(filepath.Join(subDir.Path, "status"))
+			So(os.IsNotExist(lstatErr), ShouldBeTrue)
 		})
 
 		Convey("deletes buried jobs and starts new run when fofn changed", func() {
@@ -851,23 +845,26 @@ func TestWatcherPoll(t *testing.T) {
 			So(err, ShouldBeNil)
 
 			firstCount := len(mock.submitted)
-			rec := readTestRunRecord(subDir.Path)
+			runDir, runMtime, found := findRunDir(subDir.Path)
+			So(found, ShouldBeTrue)
 
-			writeReportsExcept(rec.RunDir, "chunk.000002")
+			repGroup := makeRepGroup(subDir.Path, runMtime)
+
+			writeReportsExcept(runDir, "chunk.000002")
 
 			buriedJob := &jobqueue.Job{
-				RepGroup: rec.RepGroup,
+				RepGroup: repGroup,
 				State:    jobqueue.JobStateBuried,
 				Cmd:      "ibackup put -f chunk.000002",
 			}
 			mock.allJobs = []*jobqueue.Job{buriedJob}
 
-			updateFofnMtime(subDir.Path, generateTmpPaths(15), rec.FofnMtime+1000)
+			updateFofnMtime(subDir.Path, generateTmpPaths(15), runMtime+1000)
 
 			err = w.Poll()
 			So(err, ShouldBeNil)
 
-			statusPath := filepath.Join(rec.RunDir, "status")
+			statusPath := filepath.Join(runDir, "status")
 			_, statErr := os.Stat(statusPath)
 			So(statErr, ShouldBeNil)
 
@@ -876,10 +873,10 @@ func TestWatcherPoll(t *testing.T) {
 			So(len(mock.submitted),
 				ShouldBeGreaterThan, firstCount)
 
-			newRec := readTestRunRecord(subDir.Path)
-			So(newRec.Phase, ShouldEqual, phaseActive)
-			So(newRec.RunDir, ShouldNotEqual,
-				rec.RunDir)
+			newRunDir, newMtime, newFound := findRunDir(subDir.Path)
+			So(newFound, ShouldBeTrue)
+			So(newMtime, ShouldEqual, runMtime+1000)
+			So(newRunDir, ShouldNotEqual, runDir)
 		})
 
 		Convey("deletes old run directories on successful completion", func() {
@@ -892,13 +889,14 @@ func TestWatcherPoll(t *testing.T) {
 			err := w.Poll()
 			So(err, ShouldBeNil)
 
-			rec := readTestRunRecord(subDir.Path)
+			runDir, _, found := findRunDir(subDir.Path)
+			So(found, ShouldBeTrue)
 
 			oldRunDir := filepath.Join(subDir.Path, "500")
 			So(os.MkdirAll(oldRunDir, 0750),
 				ShouldBeNil)
 
-			writeReportsForChunks(rec.RunDir)
+			writeReportsForChunks(runDir)
 
 			mock.allJobs = nil
 
@@ -908,7 +906,7 @@ func TestWatcherPoll(t *testing.T) {
 			_, statErr := os.Stat(oldRunDir)
 			So(os.IsNotExist(statErr), ShouldBeTrue)
 
-			_, statErr = os.Stat(rec.RunDir)
+			_, statErr = os.Stat(runDir)
 			So(statErr, ShouldBeNil)
 		})
 
@@ -922,27 +920,29 @@ func TestWatcherPoll(t *testing.T) {
 			err := w.Poll()
 			So(err, ShouldBeNil)
 
-			firstRec := readTestRunRecord(subDir.Path)
+			firstRunDir, firstMtime, found := findRunDir(subDir.Path)
+			So(found, ShouldBeTrue)
 
-			writeReportsForChunks(firstRec.RunDir)
+			writeReportsForChunks(firstRunDir)
 
 			mock.allJobs = nil
 
-			updateFofnMtime(subDir.Path, generateTmpPaths(15), firstRec.FofnMtime+1000)
+			updateFofnMtime(subDir.Path, generateTmpPaths(15), firstMtime+1000)
 
 			err = w.Poll()
 			So(err, ShouldBeNil)
 
-			secondRec := readTestRunRecord(subDir.Path)
+			secondRunDir, _, found := findRunDir(subDir.Path)
+			So(found, ShouldBeTrue)
 
-			writeReportsForChunks(secondRec.RunDir)
+			writeReportsForChunks(secondRunDir)
 
 			mock.allJobs = nil
 
 			err = w.Poll()
 			So(err, ShouldBeNil)
 
-			statusPath := filepath.Join(secondRec.RunDir, "status")
+			statusPath := filepath.Join(secondRunDir, "status")
 			entries, counts, parseErr := ParseStatus(statusPath)
 			So(parseErr, ShouldBeNil)
 			So(entries, ShouldHaveLength, 15)
@@ -952,7 +952,7 @@ func TestWatcherPoll(t *testing.T) {
 			target, readErr := os.Readlink(symlinkPath)
 			So(readErr, ShouldBeNil)
 
-			expectedTarget := filepath.Join(secondRec.RunDir, "status")
+			expectedTarget := filepath.Join(secondRunDir, "status")
 			So(target, ShouldEqual,
 				expectedTarget)
 		})
@@ -976,7 +976,9 @@ func TestWatcherRestart(t *testing.T) {
 				So(os.MkdirAll(subPath, 0750),
 					ShouldBeNil)
 
-				writeFofn(subPath, generateTmpPaths(10))
+				fofnPath := writeFofn(subPath, generateTmpPaths(10))
+				fofnTime := time.Unix(1000, 0)
+				So(os.Chtimes(fofnPath, fofnTime, fofnTime), ShouldBeNil)
 
 				So(WriteConfig(subPath, SubDirConfig{Transformer: "test"}), ShouldBeNil)
 
@@ -985,13 +987,6 @@ func TestWatcherRestart(t *testing.T) {
 					ShouldBeNil)
 
 				writeChunkOnly(runDir, "chunk.000000", makeFilePairs(0, 10))
-
-				writeTestRunRecord(subPath, RunRecord{
-					FofnMtime: 1000,
-					RunDir:    runDir,
-					RepGroup:  "ibackup_fofn_proj_1000",
-					Phase:     phaseActive,
-				})
 
 				mock := &mockJobSubmitter{
 					allJobs: []*jobqueue.Job{
@@ -1008,12 +1003,10 @@ func TestWatcherRestart(t *testing.T) {
 				So(err, ShouldBeNil)
 				So(mock.submitted, ShouldBeEmpty)
 
-				rec := readTestRunRecord(subPath)
-				So(rec.Phase, ShouldEqual, phaseActive)
-				So(rec.FofnMtime, ShouldEqual, 1000)
-				So(rec.RepGroup, ShouldEqual,
-					"ibackup_fofn_proj_1000")
-				So(rec.RunDir, ShouldEqual, runDir)
+				// Run dir unchanged
+				_, runMtime, found := findRunDir(subPath)
+				So(found, ShouldBeTrue)
+				So(runMtime, ShouldEqual, 1000)
 			})
 
 		Convey("returns error when completion status cannot be queried", func() {
@@ -1025,14 +1018,7 @@ func TestWatcherRestart(t *testing.T) {
 
 			runDir := filepath.Join(subPath, "1000")
 			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
-			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 10))
-
-			writeTestRunRecord(subPath, RunRecord{
-				FofnMtime: 1000,
-				RunDir:    runDir,
-				RepGroup:  "ibackup_fofn_proj_1000",
-				Phase:     phaseActive,
-			})
+			writeChunkOnly(runDir, "chunk.000000", makeFilePairs(0, 10))
 
 			mock := &mockJobSubmitter{allJobsErr: errTest}
 			w := NewWatcher(watchDir, mock, cfg)
@@ -1060,13 +1046,7 @@ func TestWatcherRestart(t *testing.T) {
 
 			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 10))
 
-			writeTestRunRecord(subPath, RunRecord{
-				FofnMtime: 1000,
-				RunDir:    runDir,
-				RepGroup:  "ibackup_fofn_proj_1000",
-				Phase:     phaseActive,
-			})
-
+			// No status file yet — active run with all jobs complete.
 			mock := &mockJobSubmitter{}
 
 			w := NewWatcher(watchDir, mock, cfg)
@@ -1084,9 +1064,6 @@ func TestWatcherRestart(t *testing.T) {
 			So(target, ShouldEqual, statusPath)
 
 			So(mock.submitted, ShouldBeEmpty)
-
-			rec := readTestRunRecord(subPath)
-			So(rec.Phase, ShouldEqual, phaseDone)
 		})
 
 		Convey("regenerates status when symlink is missing", func() {
@@ -1103,14 +1080,7 @@ func TestWatcherRestart(t *testing.T) {
 			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
 
 			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 10))
-			So(GenerateStatus(runDir, SubDir{Path: subPath}, nil), ShouldBeNil)
-
-			writeTestRunRecord(subPath, RunRecord{
-				FofnMtime: 1000,
-				RunDir:    runDir,
-				RepGroup:  "ibackup_fofn_proj_1000",
-				Phase:     phaseDone,
-			})
+			generateDoneStatus(runDir, SubDir{Path: subPath})
 
 			symlinkPath := filepath.Join(subPath, "status")
 			So(os.Remove(symlinkPath), ShouldBeNil)
@@ -1141,14 +1111,7 @@ func TestWatcherRestart(t *testing.T) {
 			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
 
 			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 10))
-			So(GenerateStatus(runDir, SubDir{Path: subPath}, nil), ShouldBeNil)
-
-			writeTestRunRecord(subPath, RunRecord{
-				FofnMtime: 1000,
-				RunDir:    runDir,
-				RepGroup:  "ibackup_fofn_proj_1000",
-				Phase:     phaseDone,
-			})
+			generateDoneStatus(runDir, SubDir{Path: subPath})
 
 			wrongRunDir := filepath.Join(subPath, "900")
 			So(os.MkdirAll(wrongRunDir, 0750), ShouldBeNil)
@@ -1188,14 +1151,7 @@ func TestWatcherRestart(t *testing.T) {
 				ShouldBeNil)
 
 			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 10))
-			So(GenerateStatus(runDir, SubDir{Path: subPath}, nil), ShouldBeNil)
-
-			writeTestRunRecord(subPath, RunRecord{
-				FofnMtime: 1000,
-				RunDir:    runDir,
-				RepGroup:  "ibackup_fofn_proj_1000",
-				Phase:     phaseDone,
-			})
+			generateDoneStatus(runDir, SubDir{Path: subPath})
 
 			statusPath := filepath.Join(runDir, "status")
 			knownTime := time.Unix(900, 0)
@@ -1211,12 +1167,6 @@ func TestWatcherRestart(t *testing.T) {
 
 			beforeStat, ok := symlinkInfoBefore.Sys().(*syscall.Stat_t)
 			So(ok, ShouldBeTrue)
-
-			runJSONPath := filepath.Join(subPath, "run.json")
-			runJSONBefore, statErr := os.Stat(runJSONPath)
-			So(statErr, ShouldBeNil)
-
-			runJSONMtimeBefore := runJSONBefore.ModTime()
 
 			mock := &mockJobSubmitter{}
 
@@ -1239,16 +1189,9 @@ func TestWatcherRestart(t *testing.T) {
 			So(statusInfoAfter.ModTime(), ShouldEqual, statusInfoBefore.ModTime())
 			So(afterStat.Ino, ShouldEqual, beforeStat.Ino)
 
-			runJSONAfter, statErr := os.Stat(runJSONPath)
-			So(statErr, ShouldBeNil)
-			So(runJSONAfter.ModTime(), ShouldEqual, runJSONMtimeBefore)
-
 			target, readErr := os.Readlink(symlinkPath)
 			So(readErr, ShouldBeNil)
 			So(target, ShouldEqual, statusPath)
-
-			rec := readTestRunRecord(subPath)
-			So(rec.Phase, ShouldEqual, phaseDone)
 		})
 
 		Convey("does not regenerate status for externally modified reports in stable done run", func() {
@@ -1266,14 +1209,7 @@ func TestWatcherRestart(t *testing.T) {
 
 			pairs := makeFilePairs(0, 10)
 			writeChunkAndReport(runDir, "chunk.000000", pairs)
-			So(GenerateStatus(runDir, SubDir{Path: subPath}, nil), ShouldBeNil)
-
-			writeTestRunRecord(subPath, RunRecord{
-				FofnMtime: 1000,
-				RunDir:    runDir,
-				RepGroup:  "ibackup_fofn_proj_1000",
-				Phase:     phaseDone,
-			})
+			generateDoneStatus(runDir, SubDir{Path: subPath})
 
 			// Externally overwrite the report with different statuses.
 			writeReportFile(runDir, "chunk.000000", pairs, "missing")
@@ -1299,9 +1235,6 @@ func TestWatcherRestart(t *testing.T) {
 			So(parseErr, ShouldBeNil)
 			So(counts.Uploaded, ShouldEqual, 10)
 			So(counts.Missing, ShouldEqual, 0)
-
-			rec := readTestRunRecord(subPath)
-			So(rec.Phase, ShouldEqual, phaseDone)
 		})
 
 		Convey("cleans stale run directories during phase transition", func() {
@@ -1322,15 +1255,7 @@ func TestWatcherRestart(t *testing.T) {
 
 			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 10))
 
-			// Start with active phase so poll transitions active→done
-			writeTestRunRecord(subPath, RunRecord{
-				FofnMtime: 1000,
-				RunDir:    runDir,
-				RepGroup:  "ibackup_fofn_proj_1000",
-				Phase:     phaseActive,
-			})
-
-			// wr returns no jobs → complete
+			// No status file — active run. wr returns no jobs → complete.
 			mock := &mockJobSubmitter{}
 			w := NewWatcher(watchDir, mock, cfg)
 
@@ -1338,9 +1263,7 @@ func TestWatcherRestart(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(mock.submitted, ShouldBeEmpty)
 
-			rec := readTestRunRecord(subPath)
-			So(rec.Phase, ShouldEqual, phaseDone)
-
+			// status was generated (transition to done), old dir cleaned
 			_, statErr := os.Stat(oldRunDir)
 			So(os.IsNotExist(statErr), ShouldBeTrue)
 			_, statErr = os.Stat(runDir)
@@ -1375,15 +1298,7 @@ func TestWatcherRestart(t *testing.T) {
 
 			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 10))
 
-			// Start with active phase so poll transitions active→done
-			writeTestRunRecord(subPath, RunRecord{
-				FofnMtime: 1000,
-				RunDir:    runDir,
-				RepGroup:  "ibackup_fofn_proj_1000",
-				Phase:     phaseActive,
-			})
-
-			// wr returns no jobs → complete
+			// No status file — active run. wr returns no jobs → complete.
 			mock := &mockJobSubmitter{}
 			w := NewWatcher(watchDir, mock, cfg)
 
@@ -1409,14 +1324,9 @@ func TestWatcherRestart(t *testing.T) {
 			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
 
 			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 10))
-			So(GenerateStatus(runDir, SubDir{Path: subPath}, nil), ShouldBeNil)
+			generateDoneStatus(runDir, SubDir{Path: subPath})
 
-			writeTestRunRecord(subPath, RunRecord{
-				FofnMtime: 1000,
-				RunDir:    runDir,
-				RepGroup:  "ibackup_fofn_proj_1000",
-				Phase:     phaseDone,
-			})
+			generateDoneStatus(runDir, SubDir{Path: subPath})
 
 			mock := &mockJobSubmitter{}
 			w := NewWatcher(watchDir, mock, cfg)
@@ -1427,10 +1337,10 @@ func TestWatcherRestart(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(mock.submitted, ShouldNotBeEmpty)
 
-			rec := readTestRunRecord(subPath)
-			So(rec.Phase, ShouldEqual, phaseActive)
-			So(rec.FofnMtime, ShouldEqual, 2000)
-			So(rec.RunDir, ShouldNotEqual, runDir)
+			// New run dir created for mtime 2000
+			_, newMtime, found := findRunDir(subPath)
+			So(found, ShouldBeTrue)
+			So(newMtime, ShouldEqual, 2000)
 		})
 
 		Convey("refreshes status after buried chunk is retried successfully", func() {
@@ -1461,19 +1371,19 @@ func TestWatcherRestart(t *testing.T) {
 			So(initialCounts.Uploaded, ShouldEqual, 5)
 			So(initialCounts.NotProcessed, ShouldEqual, 5)
 
-			writeTestRunRecord(subPath, RunRecord{
-				FofnMtime:    1000,
-				RunDir:       runDir,
-				RepGroup:     "ibackup_fofn_proj_1000",
-				Phase:        phaseActive,
-				BuriedChunks: []string{"chunk.000001"},
-			})
-
 			// Simulate retry: write the previously missing report
 			writeReportFile(runDir, "chunk.000001", makeFilePairs(5, 10), "uploaded")
 
-			// mock returns no buried jobs (retry succeeded)
-			mock := &mockJobSubmitter{}
+			// mock returns no buried jobs (retry succeeded), but a completed
+			// job with EndTime after status mtime to trigger regen.
+			mock := &mockJobSubmitter{
+				allJobs: []*jobqueue.Job{{
+					RepGroup: "ibackup_fofn_proj_1000",
+					State:    jobqueue.JobStateComplete,
+					Cmd:      "ibackup put -f chunk.000001",
+					EndTime:  time.Now().Add(time.Hour),
+				}},
+			}
 			w := NewWatcher(watchDir, mock, cfg)
 
 			err := w.Poll()
@@ -1484,9 +1394,6 @@ func TestWatcherRestart(t *testing.T) {
 			So(parseErr, ShouldBeNil)
 			So(counts.Uploaded, ShouldEqual, 10)
 			So(counts.NotProcessed, ShouldEqual, 0)
-
-			rec := readTestRunRecord(subPath)
-			So(rec.Phase, ShouldEqual, phaseDone)
 		})
 
 		Convey("skips wr query when all directories are in done phase", func() {
@@ -1503,14 +1410,7 @@ func TestWatcherRestart(t *testing.T) {
 			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
 
 			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 10))
-			So(GenerateStatus(runDir, SubDir{Path: subPath}, nil), ShouldBeNil)
-
-			writeTestRunRecord(subPath, RunRecord{
-				FofnMtime: 1000,
-				RunDir:    runDir,
-				RepGroup:  "ibackup_fofn_proj_1000",
-				Phase:     phaseDone,
-			})
+			generateDoneStatus(runDir, SubDir{Path: subPath})
 
 			mock := &mockJobSubmitter{}
 			w := NewWatcher(watchDir, mock, cfg)
@@ -1535,15 +1435,7 @@ func TestWatcherRestart(t *testing.T) {
 			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
 
 			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 10))
-			So(GenerateStatus(runDir, SubDir{Path: subPath}, nil), ShouldBeNil)
-
-			// Done record with status file and symlink already intact.
-			writeTestRunRecord(subPath, RunRecord{
-				FofnMtime: 1000,
-				RunDir:    runDir,
-				RepGroup:  "ibackup_fofn_proj_1000",
-				Phase:     phaseDone,
-			})
+			generateDoneStatus(runDir, SubDir{Path: subPath})
 
 			statusPath := filepath.Join(runDir, "status")
 			knownTime := time.Unix(900, 0)
@@ -1595,14 +1487,7 @@ func TestWatcherRestart(t *testing.T) {
 			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
 
 			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 10))
-			So(GenerateStatus(runDir, SubDir{Path: subPath}, nil), ShouldBeNil)
-
-			writeTestRunRecord(subPath, RunRecord{
-				FofnMtime: 1000,
-				RunDir:    runDir,
-				RepGroup:  "ibackup_fofn_proj_1000",
-				Phase:     phaseDone,
-			})
+			generateDoneStatus(runDir, SubDir{Path: subPath})
 
 			updateFofnMtime(subPath, generateTmpPaths(15), 2000)
 
@@ -1614,9 +1499,11 @@ func TestWatcherRestart(t *testing.T) {
 			So(mock.submitted, ShouldNotBeEmpty)
 			So(mock.findCallCount, ShouldEqual, 0)
 
-			rec := readTestRunRecord(subPath)
-			So(rec.Phase, ShouldEqual, phaseActive)
-			So(rec.FofnMtime, ShouldEqual, 2000)
+			// New run dir created with updated mtime.
+			newRunDir, newMtime, found := findRunDir(subPath)
+			So(found, ShouldBeTrue)
+			So(newMtime, ShouldEqual, 2000)
+			So(newRunDir, ShouldNotEqual, runDir)
 		})
 
 		Convey("repairs symlink without regenerating status file", func() {
@@ -1633,14 +1520,7 @@ func TestWatcherRestart(t *testing.T) {
 			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
 
 			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 10))
-			So(GenerateStatus(runDir, SubDir{Path: subPath}, nil), ShouldBeNil)
-
-			writeTestRunRecord(subPath, RunRecord{
-				FofnMtime: 1000,
-				RunDir:    runDir,
-				RepGroup:  "ibackup_fofn_proj_1000",
-				Phase:     phaseDone,
-			})
+			generateDoneStatus(runDir, SubDir{Path: subPath})
 
 			// Break the symlink
 			symlinkPath := filepath.Join(subPath, "status")
@@ -1656,7 +1536,9 @@ func TestWatcherRestart(t *testing.T) {
 
 			err := w.Poll()
 			So(err, ShouldBeNil)
-			So(mock.findCallCount, ShouldEqual, 0)
+			// Fresh watcher has no cache, so one wr query is expected
+			// to confirm the run is done before repairing.
+			So(mock.findCallCount, ShouldEqual, 1)
 
 			// Symlink was repaired
 			target, readErr := os.Readlink(symlinkPath)
@@ -1684,20 +1566,13 @@ func TestWatcherRestart(t *testing.T) {
 
 			writeChunkOnly(runDir, "chunk.000000", makeFilePairs(0, 10))
 
-			writeTestRunRecord(subPath, RunRecord{
-				FofnMtime: 1000,
-				RunDir:    runDir,
-				RepGroup:  "ibackup_fofn_proj_1000",
-				Phase:     phaseActive,
-			})
-
 			// fofn has changed
 			updateFofnMtime(subPath, generateTmpPaths(15), 2000)
 
 			// But jobs are still running
 			mock := &mockJobSubmitter{
 				allJobs: []*jobqueue.Job{
-					{RepGroup: "ibackup_fofn_proj_1000", Cmd: "running"},
+					{RepGroup: makeRepGroup(subPath, 1000), Cmd: "running"},
 				},
 			}
 
@@ -1707,10 +1582,10 @@ func TestWatcherRestart(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(mock.submitted, ShouldBeEmpty)
 
-			// Run record unchanged — still waiting
-			rec := readTestRunRecord(subPath)
-			So(rec.Phase, ShouldEqual, phaseActive)
-			So(rec.FofnMtime, ShouldEqual, 1000)
+			// Run dir unchanged — still waiting for old run.
+			_, runMtime, found := findRunDir(subPath)
+			So(found, ShouldBeTrue)
+			So(runMtime, ShouldEqual, 1000)
 		})
 
 		Convey("regenerates status when status file deleted from done run", func() {
@@ -1727,14 +1602,7 @@ func TestWatcherRestart(t *testing.T) {
 			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
 
 			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 10))
-			So(GenerateStatus(runDir, SubDir{Path: subPath}, nil), ShouldBeNil)
-
-			writeTestRunRecord(subPath, RunRecord{
-				FofnMtime: 1000,
-				RunDir:    runDir,
-				RepGroup:  "ibackup_fofn_proj_1000",
-				Phase:     phaseDone,
-			})
+			generateDoneStatus(runDir, SubDir{Path: subPath})
 
 			// Delete the status file
 			So(os.Remove(filepath.Join(runDir, "status")), ShouldBeNil)
@@ -1745,7 +1613,9 @@ func TestWatcherRestart(t *testing.T) {
 			err := w.Poll()
 			So(err, ShouldBeNil)
 			So(mock.submitted, ShouldBeEmpty)
-			So(mock.findCallCount, ShouldEqual, 0)
+			// Fresh watcher has no cache, so one wr query is expected
+			// to confirm the run is done before regenerating.
+			So(mock.findCallCount, ShouldEqual, 1)
 
 			// Status file regenerated
 			statusPath := filepath.Join(runDir, "status")
@@ -1763,8 +1633,8 @@ func TestWatcherRestart(t *testing.T) {
 	})
 }
 
-func TestRecordCacheBypassesRunJSON(t *testing.T) {
-	Convey("record cache proves it bypasses run.json", t, func() {
+func TestDoneCache(t *testing.T) {
+	Convey("done cache skips wr queries for completed runs", t, func() {
 		So(transformer.Register("test", `^/tmp/(.*)$`, "/irods/$1"), ShouldBeNil)
 
 		watchDir := t.TempDir()
@@ -1774,7 +1644,7 @@ func TestRecordCacheBypassesRunJSON(t *testing.T) {
 			RandSeed: 1,
 		}
 
-		Convey("poll succeeds after run.json is deleted because cache reconstructs the record", func() {
+		Convey("second poll skips wr query via cache", func() {
 			subPath := filepath.Join(watchDir, "proj")
 			So(os.MkdirAll(subPath, 0750), ShouldBeNil)
 
@@ -1788,29 +1658,17 @@ func TestRecordCacheBypassesRunJSON(t *testing.T) {
 			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
 
 			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 10))
-			So(GenerateStatus(runDir, SubDir{Path: subPath}, nil), ShouldBeNil)
-
-			writeTestRunRecord(subPath, RunRecord{
-				FofnMtime: 1000,
-				RunDir:    runDir,
-				RepGroup:  "ibackup_fofn_proj_1000",
-				Phase:     phaseDone,
-			})
+			generateDoneStatus(runDir, SubDir{Path: subPath})
 
 			mock := &mockJobSubmitter{}
 			w := NewWatcher(watchDir, mock, cfg)
 
-			// First poll: reads run.json, confirms done+intact, populates cache.
+			// First poll: discovers done artefacts, populates cache.
 			err := w.Poll()
 			So(err, ShouldBeNil)
 			So(mock.submitted, ShouldBeEmpty)
 
-			// Delete run.json. Without the cache this would look like a
-			// brand-new directory and trigger startNewRun.
-			So(os.Remove(filepath.Join(subPath, runRecordFilename)), ShouldBeNil)
-
-			// Second poll with same watcher: cache hit reconstructs the
-			// RunRecord, settle confirms artefacts intact → no-op.
+			// Second poll: cache hit → no wr query at all.
 			err = w.Poll()
 			So(err, ShouldBeNil)
 			So(mock.submitted, ShouldBeEmpty)
@@ -1826,9 +1684,7 @@ func TestRecordCacheBypassesRunJSON(t *testing.T) {
 			So(symlinkTarget, ShouldEqual, statusPath)
 		})
 
-		Convey("fresh watcher without cache submits new jobs when run.json is missing", func() {
-			// Setup a directory with fofn and config but NO run.json and
-			// no done cache. A fresh watcher must call startNewRun.
+		Convey("fresh watcher without cache submits new jobs for empty subdir", func() {
 			subPath := filepath.Join(watchDir, "proj")
 			So(os.MkdirAll(subPath, 0750), ShouldBeNil)
 
@@ -1841,7 +1697,7 @@ func TestRecordCacheBypassesRunJSON(t *testing.T) {
 			mock := &mockJobSubmitter{}
 			fresh := NewWatcher(watchDir, mock, cfg)
 
-			// No run.json, no cache → startNewRun → new jobs submitted.
+			// No run dir, no cache → startNewRun → new jobs submitted.
 			err := fresh.Poll()
 			So(err, ShouldBeNil)
 			So(mock.submitted, ShouldNotBeEmpty)
@@ -1861,14 +1717,7 @@ func TestRecordCacheBypassesRunJSON(t *testing.T) {
 			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
 
 			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 10))
-			So(GenerateStatus(runDir, SubDir{Path: subPath}, nil), ShouldBeNil)
-
-			writeTestRunRecord(subPath, RunRecord{
-				FofnMtime: 1000,
-				RunDir:    runDir,
-				RepGroup:  "ibackup_fofn_proj_1000",
-				Phase:     phaseDone,
-			})
+			generateDoneStatus(runDir, SubDir{Path: subPath})
 
 			mock := &mockJobSubmitter{}
 			w := NewWatcher(watchDir, mock, cfg)
@@ -1878,20 +1727,20 @@ func TestRecordCacheBypassesRunJSON(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(mock.submitted, ShouldBeEmpty)
 
-			// Change fofn mtime: cache miss → falls through to run.json read
-			// → teardownAndRestart → new jobs.
+			// Change fofn mtime: cache miss → quickDoneRestart → new jobs.
 			updateFofnMtime(subPath, generateTmpPaths(15), 2000)
 
 			err = w.Poll()
 			So(err, ShouldBeNil)
 			So(mock.submitted, ShouldNotBeEmpty)
 
-			newRec := readTestRunRecord(subPath)
-			So(newRec.Phase, ShouldEqual, phaseActive)
-			So(newRec.FofnMtime, ShouldEqual, 2000)
+			// New run dir with updated mtime.
+			_, newMtime, found := findRunDir(subPath)
+			So(found, ShouldBeTrue)
+			So(newMtime, ShouldEqual, 2000)
 		})
 
-		Convey("cache repairs artefacts without reading run.json", func() {
+		Convey("cache repairs broken symlink without wr query", func() {
 			subPath := filepath.Join(watchDir, "proj")
 			So(os.MkdirAll(subPath, 0750), ShouldBeNil)
 
@@ -1905,14 +1754,7 @@ func TestRecordCacheBypassesRunJSON(t *testing.T) {
 			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
 
 			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 10))
-			So(GenerateStatus(runDir, SubDir{Path: subPath}, nil), ShouldBeNil)
-
-			writeTestRunRecord(subPath, RunRecord{
-				FofnMtime: 1000,
-				RunDir:    runDir,
-				RepGroup:  "ibackup_fofn_proj_1000",
-				Phase:     phaseDone,
-			})
+			generateDoneStatus(runDir, SubDir{Path: subPath})
 
 			mock := &mockJobSubmitter{}
 			w := NewWatcher(watchDir, mock, cfg)
@@ -1921,12 +1763,11 @@ func TestRecordCacheBypassesRunJSON(t *testing.T) {
 			err := w.Poll()
 			So(err, ShouldBeNil)
 
-			// Delete both run.json AND the symlink.
-			So(os.Remove(filepath.Join(subPath, runRecordFilename)), ShouldBeNil)
+			// Delete the symlink.
 			So(os.Remove(filepath.Join(subPath, "status")), ShouldBeNil)
 
-			// Second poll: cache reconstructs RunRecord, settle detects
-			// broken symlink and repairs it — all without run.json.
+			// Second poll: cached done + damaged artefacts → wr query
+			// to settle, but repairs the symlink.
 			err = w.Poll()
 			So(err, ShouldBeNil)
 			So(mock.submitted, ShouldBeEmpty)
@@ -1970,22 +1811,14 @@ func TestWatcherParallel(t *testing.T) {
 				So(mock.submitted,
 					ShouldHaveLength, 3)
 
-				runRecordCount := 0
-
 				for _, name := range []string{
 					"proj1", "proj2", "proj3",
 				} {
-					_, found, rErr := readRunRecord(
+					_, _, found := findRunDir(
 						filepath.Join(watchDir, name),
 					)
-					So(rErr, ShouldBeNil)
-
-					if found {
-						runRecordCount++
-					}
+					So(found, ShouldBeTrue)
 				}
-
-				So(runRecordCount, ShouldEqual, 3)
 			})
 
 			Convey("only submits jobs for new subdirectory when 2 have active runs", func() {
@@ -2008,17 +1841,19 @@ func TestWatcherParallel(t *testing.T) {
 				initialCount := len(mock.submitted)
 				So(initialCount, ShouldEqual, 2)
 
+				// Build running jobs from the run dirs that were created.
 				var runningJobs []*jobqueue.Job
 
 				for _, name := range []string{
 					"proj1", "proj2",
 				} {
-					rec := readTestRunRecord(
-						filepath.Join(watchDir, name),
-					)
+					subPath := filepath.Join(watchDir, name)
+					_, mtime, found := findRunDir(subPath)
+					So(found, ShouldBeTrue)
+
 					runningJobs = append(runningJobs,
 						&jobqueue.Job{
-							RepGroup: rec.RepGroup,
+							RepGroup: makeRepGroup(subPath, mtime),
 							Cmd:      "running",
 						})
 				}
@@ -2037,22 +1872,14 @@ func TestWatcherParallel(t *testing.T) {
 					ShouldHaveLength,
 					initialCount+1)
 
-				runRecordCount := 0
-
 				for _, name := range []string{
 					"proj1", "proj2", "proj3",
 				} {
-					_, found, rErr := readRunRecord(
+					_, _, found := findRunDir(
 						filepath.Join(watchDir, name),
 					)
-					So(rErr, ShouldBeNil)
-
-					if found {
-						runRecordCount++
-					}
+					So(found, ShouldBeTrue)
 				}
-
-				So(runRecordCount, ShouldEqual, 3)
 			})
 		})
 }
@@ -2094,20 +1921,16 @@ func subDirWithMtime(subPath string) SubDir {
 	return SubDir{Path: subPath, FofnMtime: info.ModTime().Unix()}
 }
 
-// writeTestRunRecord writes a run.json in subDirPath for test setup.
-func writeTestRunRecord(subDirPath string, rec RunRecord) {
-	data, err := json.MarshalIndent(rec, "", "  ")
-	So(err, ShouldBeNil)
-	So(os.WriteFile(filepath.Join(subDirPath, "run.json"), data, 0o600), ShouldBeNil)
-}
+// generateDoneStatus creates a complete "done" state: status file + symlink.
+// Use this when setting up a test that expects artefacts to be intact.
+func generateDoneStatus(runDir string, subDir SubDir) {
+	So(GenerateStatus(runDir, subDir, nil), ShouldBeNil)
 
-// readTestRunRecord reads run.json from subDirPath for test assertions.
-func readTestRunRecord(subDirPath string) RunRecord {
-	rec, found, err := readRunRecord(subDirPath)
-	So(err, ShouldBeNil)
-	So(found, ShouldBeTrue)
+	statusPath := filepath.Join(runDir, "status")
+	symlinkPath := filepath.Join(subDir.Path, "status")
 
-	return rec
+	_ = os.Remove(symlinkPath)
+	So(os.Symlink(statusPath, symlinkPath), ShouldBeNil)
 }
 
 // writeReportsForChunks writes "uploaded" report files
@@ -2180,7 +2003,7 @@ func TestSettleRepairsArtefacts(t *testing.T) {
 		}
 
 		// Write chunks and reports
-		var buriedChunks []string
+		var buriedChunkNames []string
 
 		for i := range numChunks {
 			chunkName := fmt.Sprintf("chunk.%06d", i)
@@ -2189,7 +2012,7 @@ func TestSettleRepairsArtefacts(t *testing.T) {
 			mustWriteChunkT(rt, runDir, chunkName, pairs)
 
 			if i >= numChunks-numBuried {
-				buriedChunks = append(buriedChunks, chunkName)
+				buriedChunkNames = append(buriedChunkNames, chunkName)
 
 				continue
 			}
@@ -2197,23 +2020,19 @@ func TestSettleRepairsArtefacts(t *testing.T) {
 			mustWriteReportT(rt, runDir, chunkName, pairs, "uploaded")
 		}
 
-		phase := phaseDone
-		if numBuried > 0 {
-			phase = phaseActive
+		// Build a RunJobStatus with buried info and a LastCompletedTime
+		// that forces status generation.
+		status := RunJobStatus{
+			LastCompletedTime: time.Now().Add(time.Hour),
 		}
+
+		status.BuriedChunks = append(status.BuriedChunks, buriedChunkNames...)
 
 		// Create valid initial state via settle
-		rec := &RunRecord{
-			FofnMtime: mtime,
-			RunDir:    runDir,
-			RepGroup:  fmt.Sprintf("ibackup_fofn_proj_%d", mtime),
-			Phase:     phase,
-		}
-
 		w := NewWatcher(watchDir, &mockJobSubmitter{}, ProcessSubDirConfig{})
-		sd := SubDir{Path: subPath}
+		sd := SubDir{Path: subPath, FofnMtime: mtime}
 
-		if err := w.settle(sd, rec, phase, buriedChunks); err != nil {
+		if err := w.settle(sd, runDir, mtime, status); err != nil {
 			rt.Fatalf("initial settle: %v", err)
 		}
 
@@ -2248,8 +2067,15 @@ func TestSettleRepairsArtefacts(t *testing.T) {
 			os.Remove(issuesPath)
 		}
 
-		// Call settle again — must repair
-		if err := w.settle(sd, rec, phase, buriedChunks); err != nil {
+		// Call settle again — must repair. Use a LastCompletedTime in the
+		// future so needsStatusRegen triggers for damaged status files.
+		repairStatus := RunJobStatus{
+			LastCompletedTime: time.Now().Add(2 * time.Hour),
+		}
+
+		repairStatus.BuriedChunks = append(repairStatus.BuriedChunks, buriedChunkNames...)
+
+		if err := w.settle(sd, runDir, mtime, repairStatus); err != nil {
 			rt.Fatalf("repair settle: %v", err)
 		}
 
@@ -2258,21 +2084,30 @@ func TestSettleRepairsArtefacts(t *testing.T) {
 			rt.Fatalf("status file should exist after settle: %v", err)
 		}
 
-		// Invariant 2: symlink points to correct status file
-		target, err := os.Readlink(symlinkPath)
-		if err != nil {
-			rt.Fatalf("symlink should exist after settle: %v", err)
-		}
-
-		if target != statusPath {
-			rt.Fatalf("symlink target: want %s, got %s", statusPath, target)
-		}
-
-		// Invariant 3: phase is correct
-		if rec.Phase != phase {
-			rt.Fatalf("rec.Phase: want %s, got %s", phase, rec.Phase)
-		}
+		// Invariant 2: symlink semantics depend on burial state.
+		verifySymlink(rt, numBuried, symlinkPath, statusPath)
 	})
+}
+
+func verifySymlink(rt *rapid.T, numBuried int, symlinkPath, statusPath string) {
+	if numBuried > 0 {
+		// Buried: symlink must NOT exist so future polls query wr.
+		if _, err := os.Lstat(symlinkPath); !os.IsNotExist(err) {
+			rt.Fatal("symlink should not exist for buried run")
+		}
+
+		return
+	}
+
+	// Non-buried: symlink points to correct status file.
+	target, err := os.Readlink(symlinkPath)
+	if err != nil {
+		rt.Fatalf("symlink should exist after settle: %v", err)
+	}
+
+	if target != statusPath {
+		rt.Fatalf("symlink target: want %s, got %s", statusPath, target)
+	}
 }
 
 // TestSettleIdempotent verifies that calling settle twice produces the same
@@ -2302,18 +2137,15 @@ func TestSettleIdempotent(t *testing.T) {
 			mustWriteReportT(rt, runDir, chunkName, pairs, "uploaded")
 		}
 
-		rec := &RunRecord{
-			FofnMtime: mtime,
-			RunDir:    runDir,
-			RepGroup:  fmt.Sprintf("ibackup_fofn_proj_%d", mtime),
-			Phase:     phaseActive, // will transition to done
+		w := NewWatcher(watchDir, &mockJobSubmitter{}, ProcessSubDirConfig{})
+		sd := SubDir{Path: subPath, FofnMtime: mtime}
+
+		// First settle with a recent LastCompletedTime to force status generation.
+		status := RunJobStatus{
+			LastCompletedTime: time.Now().Add(time.Hour),
 		}
 
-		w := NewWatcher(watchDir, &mockJobSubmitter{}, ProcessSubDirConfig{})
-		sd := SubDir{Path: subPath}
-
-		// First settle: transitions active → done
-		if err := w.settle(sd, rec, phaseDone, nil); err != nil {
+		if err := w.settle(sd, runDir, mtime, status); err != nil {
 			rt.Fatalf("first settle: %v", err)
 		}
 
@@ -2326,15 +2158,11 @@ func TestSettleIdempotent(t *testing.T) {
 
 		firstMtime := statusInfo.ModTime()
 
-		// Fetch the updated record from cache (settle persists a new
-		// RunRecord; the old pointer is intentionally not mutated).
-		updatedRec, ok := w.getRecord(sd.Path)
-		if !ok || updatedRec == nil {
-			rt.Fatal("expected cached record after first settle")
-		}
+		// Second settle with zero LastCompletedTime — needsStatusRegen
+		// returns false because status file exists and no new completions.
+		idempotentStatus := RunJobStatus{}
 
-		// Second settle: same phase, should be a no-op
-		settleErr := w.settle(sd, updatedRec, phaseDone, nil)
+		settleErr := w.settle(sd, runDir, mtime, idempotentStatus)
 		if settleErr != nil {
 			rt.Fatalf("second settle: %v", settleErr)
 		}
@@ -2352,8 +2180,8 @@ func TestSettleIdempotent(t *testing.T) {
 
 // TestPollRepairsDoneRun uses property-based testing to verify that a full
 // poll cycle correctly repairs artefact damage for done runs with unchanged
-// fofns. This is the exact invariant stated in the design: "if phase==done
-// and fofn unchanged, status file exists and symlink is correct.".
+// fofns. This is the exact invariant stated in the design: "if artefacts are
+// intact and fofn unchanged, status file exists and symlink is correct.".
 func TestPollRepairsDoneRun(t *testing.T) {
 	if err := transformer.Register("test", `^/tmp/(.*)$`, "/irods/$1"); err != nil {
 		t.Log("transformer already registered:", err)
@@ -2402,19 +2230,12 @@ func TestPollRepairsDoneRun(t *testing.T) {
 			rt.Fatal(err)
 		}
 
-		rec := RunRecord{
-			FofnMtime: 1000,
-			RunDir:    runDir,
-			RepGroup:  "ibackup_fofn_proj_1000",
-			Phase:     phaseDone,
-		}
-
-		if err := WriteRunRecord(subPath, rec); err != nil {
+		statusPath := filepath.Join(runDir, "status")
+		if err := os.Symlink(statusPath, filepath.Join(subPath, "status")); err != nil {
 			rt.Fatal(err)
 		}
 
 		// Apply random damage
-		statusPath := filepath.Join(runDir, "status")
 		symlinkPath := filepath.Join(subPath, "status")
 
 		damage := rapid.SampledFrom([]string{
