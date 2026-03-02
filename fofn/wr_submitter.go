@@ -43,28 +43,8 @@ func (w *wrSubmitter) SubmitJobs(jobs []*jobqueue.Job) error {
 	return w.sched.SubmitJobs(jobs)
 }
 
-func (w *wrSubmitter) FindBuriedJobsByRepGroup(prefix string) ([]*jobqueue.Job, error) {
-	return w.sched.FindJobsByRepGroupPrefixAndState(prefix, jobqueue.JobStateBuried)
-}
-
-func (w *wrSubmitter) FindIncompleteJobsByRepGroup(prefix string) ([]*jobqueue.Job, error) {
-	jobs, err := w.sched.FindJobsByRepGroupPrefixAndState(prefix, "")
-	if err != nil {
-		return nil, err
-	}
-
-	incomplete := make([]*jobqueue.Job, 0, len(jobs))
-
-	for _, job := range jobs {
-		switch job.State {
-		case jobqueue.JobStateComplete, jobqueue.JobStateBuried, jobqueue.JobStateDeleted:
-			continue
-		default:
-			incomplete = append(incomplete, job)
-		}
-	}
-
-	return incomplete, nil
+func (w *wrSubmitter) FindJobsByRepGroup(prefix string) ([]*jobqueue.Job, error) {
+	return w.sched.FindJobsByRepGroupPrefixAndState(prefix, "")
 }
 
 func (w *wrSubmitter) DeleteJobs(jobs []*jobqueue.Job) error {

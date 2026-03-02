@@ -32,6 +32,7 @@ require (
 	go.etcd.io/bbolt v1.4.0
 	golang.org/x/sys v0.40.0
 	gopkg.in/yaml.v3 v3.0.1
+	pgregory.net/rapid v1.2.0
 )
 
 require (

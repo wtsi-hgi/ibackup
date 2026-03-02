@@ -184,12 +184,11 @@ type mockJobSubmitter struct {
 	mu            sync.Mutex
 	submitted     []*jobqueue.Job
 	submitErr     error
-	buried        []*jobqueue.Job
-	buriedErr     error
-	incomplete    []*jobqueue.Job
-	incompleteErr error
+	allJobs       []*jobqueue.Job
+	allJobsErr    error
 	deleted       []*jobqueue.Job
 	deleteErr     error
+	findCallCount int
 }
 
 func (m *mockJobSubmitter) SubmitJobs(
@@ -203,16 +202,15 @@ func (m *mockJobSubmitter) SubmitJobs(
 	return m.submitErr
 }
 
-func (m *mockJobSubmitter) FindBuriedJobsByRepGroup(
+func (m *mockJobSubmitter) FindJobsByRepGroup(
 	_ string,
 ) ([]*jobqueue.Job, error) {
-	return m.buried, m.buriedErr
-}
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
-func (m *mockJobSubmitter) FindIncompleteJobsByRepGroup(
-	_ string,
-) ([]*jobqueue.Job, error) {
-	return m.incomplete, m.incompleteErr
+	m.findCallCount++
+
+	return m.allJobs, m.allJobsErr
 }
 
 func (m *mockJobSubmitter) DeleteJobs(
@@ -259,133 +257,118 @@ func TestJobSubmitter(t *testing.T) {
 	})
 }
 
-func TestIsRunComplete(t *testing.T) {
-	Convey("IsRunComplete", t, func() {
-		Convey("returns true when no incomplete jobs",
+func TestClassifyAllJobs(t *testing.T) {
+	Convey("ClassifyAllJobs", t, func() {
+		Convey("returns empty map when no jobs exist",
 			func() {
-				mock := &mockJobSubmitter{
-					incomplete: []*jobqueue.Job{},
-				}
+				mock := &mockJobSubmitter{}
 
-				complete, err := IsRunComplete(mock, "repgroup1")
+				result, err := ClassifyAllJobs(mock)
 				So(err, ShouldBeNil)
-				So(complete, ShouldBeTrue)
+				So(result, ShouldHaveLength, 0)
 			})
 
-		Convey("returns false when there are incomplete jobs", func() {
-			mock := &mockJobSubmitter{
-				incomplete: []*jobqueue.Job{
-					{Cmd: "cmd1"},
-					{Cmd: "cmd2"},
-				},
-			}
-
-			complete, err := IsRunComplete(mock, "repgroup1")
-			So(err, ShouldBeNil)
-			So(complete, ShouldBeFalse)
-		})
-	})
-}
-
-func TestFindBuriedChunks(t *testing.T) {
-	Convey("FindBuriedChunks", t, func() {
-		Convey("extracts chunk path from buried job cmd",
+		Convey("groups running jobs by repgroup",
 			func() {
 				mock := &mockJobSubmitter{
-					buried: []*jobqueue.Job{
-						{Cmd: `ibackup put -v ` +
-							`-l "chunk.000000.log" ` +
-							`--report "chunk.000000.report" ` +
-							`--fofn "project1" -b ` +
-							`-f "chunk.000000" ` +
-							`> "chunk.000000.out" 2>&1`},
+					allJobs: []*jobqueue.Job{
+						{
+							RepGroup: "ibackup_fofn_proj1_100",
+							Cmd:      "cmd1",
+						},
+						{
+							RepGroup: "ibackup_fofn_proj2_200",
+							Cmd:      "cmd2",
+						},
 					},
 				}
 
-				chunks, err := FindBuriedChunks(mock, "repgroup1", "/run/dir")
+				result, err := ClassifyAllJobs(mock)
 				So(err, ShouldBeNil)
-				So(chunks, ShouldHaveLength, 1)
-				So(chunks[0], ShouldEqual,
-					"/run/dir/chunk.000000")
+				So(result, ShouldHaveLength, 2)
+				So(result["ibackup_fofn_proj1_100"].HasRunning,
+					ShouldBeTrue)
+				So(result["ibackup_fofn_proj2_200"].HasRunning,
+					ShouldBeTrue)
 			})
 
-		Convey("returns empty slice when no buried jobs",
+		Convey("classifies buried jobs with chunk extraction",
 			func() {
 				mock := &mockJobSubmitter{
-					buried: []*jobqueue.Job{},
-				}
-
-				chunks, err := FindBuriedChunks(mock, "repgroup1", "/run/dir")
-				So(err, ShouldBeNil)
-				So(chunks, ShouldBeEmpty)
-			})
-
-		Convey("handles paths with spaces in -f argument",
-			func() {
-				mock := &mockJobSubmitter{
-					buried: []*jobqueue.Job{
-						{Cmd: `ibackup put -v ` +
-							`-l "my dir/chunk.000000.log" ` +
-							`--report "my dir/chunk.000000.report" ` +
-							`--fofn "project1" -b ` +
-							`-f "my dir/chunk.000000" ` +
-							`> "my dir/chunk.000000.out" 2>&1`},
+					allJobs: []*jobqueue.Job{
+						{
+							RepGroup: "ibackup_fofn_proj_100",
+							State:    jobqueue.JobStateBuried,
+							Cmd:      "ibackup put -f 'chunk.000002'",
+						},
 					},
 				}
 
-				chunks, err := FindBuriedChunks(mock, "repgroup1", "/run/dir")
+				result, err := ClassifyAllJobs(mock)
 				So(err, ShouldBeNil)
-				So(chunks, ShouldHaveLength, 1)
-				So(chunks[0], ShouldEqual,
-					"/run/dir/my dir/chunk.000000")
+				So(result, ShouldHaveLength, 1)
+
+				s := result["ibackup_fofn_proj_100"]
+				So(s.HasRunning, ShouldBeFalse)
+				So(s.BuriedJobs, ShouldHaveLength, 1)
+				So(s.BuriedChunks, ShouldResemble,
+					[]string{"chunk.000002"})
 			})
 
-		Convey("handles single-quoted -f argument",
+		Convey("ignores complete and deleted jobs",
 			func() {
 				mock := &mockJobSubmitter{
-					buried: []*jobqueue.Job{
-						{Cmd: `ibackup put -v -f 'chunk.000123' > 'chunk.000123.out' 2>&1`},
+					allJobs: []*jobqueue.Job{
+						{
+							RepGroup: "ibackup_fofn_proj_100",
+							State:    jobqueue.JobStateComplete,
+							Cmd:      "cmd1",
+						},
+						{
+							RepGroup: "ibackup_fofn_proj_100",
+							State:    jobqueue.JobStateDeleted,
+							Cmd:      "cmd2",
+						},
 					},
 				}
 
-				chunks, err := FindBuriedChunks(mock, "repgroup1", "/run/dir")
+				result, err := ClassifyAllJobs(mock)
 				So(err, ShouldBeNil)
-				So(chunks, ShouldHaveLength, 1)
-				So(chunks[0], ShouldEqual,
-					"/run/dir/chunk.000123")
+				So(result, ShouldHaveLength, 0)
 			})
-	})
-}
 
-func TestDeleteBuriedJobs(t *testing.T) {
-	Convey("DeleteBuriedJobs", t, func() {
-		Convey("deletes buried jobs and returns no error",
+		Convey("mixes running and buried in same repgroup",
 			func() {
-				buried := []*jobqueue.Job{
-					{Cmd: "cmd1"},
-					{Cmd: "cmd2"},
-				}
 				mock := &mockJobSubmitter{
-					buried: buried,
+					allJobs: []*jobqueue.Job{
+						{
+							RepGroup: "ibackup_fofn_proj_100",
+							Cmd:      "running-cmd",
+						},
+						{
+							RepGroup: "ibackup_fofn_proj_100",
+							State:    jobqueue.JobStateBuried,
+							Cmd:      "ibackup put -f 'chunk.000001'",
+						},
+					},
 				}
 
-				err := DeleteBuriedJobs(mock, "repgroup1")
+				result, err := ClassifyAllJobs(mock)
 				So(err, ShouldBeNil)
-				So(mock.deleted, ShouldHaveLength, 2)
+
+				s := result["ibackup_fofn_proj_100"]
+				So(s.HasRunning, ShouldBeTrue)
+				So(s.BuriedJobs, ShouldHaveLength, 1)
 			})
 
-		Convey("propagates DeleteJobs error", func() {
-			buried := []*jobqueue.Job{
-				{Cmd: "cmd1"},
-			}
-			mock := &mockJobSubmitter{
-				buried:    buried,
-				deleteErr: errTest,
-			}
+		Convey("propagates FindJobsByRepGroup error",
+			func() {
+				mock := &mockJobSubmitter{
+					allJobsErr: errTest,
+				}
 
-			err := DeleteBuriedJobs(mock, "repgroup1")
-			So(err, ShouldNotBeNil)
-			So(err, ShouldEqual, errTest)
-		})
+				_, err := ClassifyAllJobs(mock)
+				So(err, ShouldEqual, errTest)
+			})
 	})
 }

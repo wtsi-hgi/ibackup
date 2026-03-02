@@ -92,9 +92,8 @@ pragmatic engineer. For each modified file, assess:
 - **Modern Go idioms (1.25+):** Range over integers, `slices`/`maps`
   packages, `%w` error wrapping, `errors.Is`/`As`. No C-style for
   loops in new code.
-- **Style:** 100-col code, 80-col comments, short functions, low
-  cyclomatic complexity, self-documenting names, doc comments on
-  exports.
+- **Style:** short functions, low cyclomatic complexity, self-documenting names,
+  doc comments on exports.
 - **Import grouping:** stdlib, third-party, project — separated by
   blank lines.
 - **Copyright boilerplate:** New files must start with the project

@@ -5479,11 +5479,10 @@ func (b *safeBuffer) String() string {
 
 // testSubmitter implements fofn.JobSubmitter for integration tests.
 type testSubmitter struct {
-	mu         sync.Mutex
-	submitted  []*jobqueue.Job
-	incomplete []*jobqueue.Job
-	buried     []*jobqueue.Job
-	deleted    []*jobqueue.Job
+	mu        sync.Mutex
+	submitted []*jobqueue.Job
+	allJobs   []*jobqueue.Job
+	deleted   []*jobqueue.Job
 }
 
 func (s *testSubmitter) SubmitJobs(
@@ -5497,22 +5496,13 @@ func (s *testSubmitter) SubmitJobs(
 	return nil
 }
 
-func (s *testSubmitter) FindIncompleteJobsByRepGroup(
+func (s *testSubmitter) FindJobsByRepGroup(
 	_ string,
 ) ([]*jobqueue.Job, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return s.incomplete, nil
-}
-
-func (s *testSubmitter) FindBuriedJobsByRepGroup(
-	_ string,
-) ([]*jobqueue.Job, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	return s.buried, nil
+	return s.allJobs, nil
 }
 
 func (s *testSubmitter) DeleteJobs(
@@ -5732,12 +5722,23 @@ func TestWatchFofnsIntegration(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(state.RepGroup, ShouldNotBeEmpty)
 
+			err = fofn.WriteRunRecord(subPath, fofn.RunRecord{
+				FofnMtime: state.Mtime,
+				RunDir:    state.RunDir,
+				RepGroup:  state.RepGroup,
+				Phase:     "running",
+			})
+			So(err, ShouldBeNil)
+
 			initialCount := len(mock.submitted)
 			So(initialCount,
 				ShouldBeGreaterThan, 0)
 
-			mock.incomplete = []*jobqueue.Job{
-				{Cmd: "in-progress"},
+			mock.allJobs = []*jobqueue.Job{
+				{
+					RepGroup: state.RepGroup,
+					Cmd:      "in-progress",
+				},
 			}
 
 			watcher := fofn.NewWatcher(
@@ -5811,6 +5812,14 @@ func TestWatchFofnsIntegration(t *testing.T) {
 				So(err, ShouldBeNil)
 				So(state.RepGroup, ShouldNotBeEmpty)
 
+				err = fofn.WriteRunRecord(subPath, fofn.RunRecord{
+					FofnMtime: state.Mtime,
+					RunDir:    state.RunDir,
+					RepGroup:  state.RepGroup,
+					Phase:     "running",
+				})
+				So(err, ShouldBeNil)
+
 				oldRunDir := state.RunDir
 				oldMtime := state.Mtime
 
@@ -5835,9 +5844,12 @@ func TestWatchFofnsIntegration(t *testing.T) {
 
 				simulatePutExecution(oldRunDir)
 
-				mock.incomplete = nil
-				mock.buried = []*jobqueue.Job{
-					{Cmd: mock.submitted[0].Cmd},
+				mock.allJobs = []*jobqueue.Job{
+					{
+						RepGroup: state.RepGroup,
+						State:    jobqueue.JobStateBuried,
+						Cmd:      mock.submitted[0].Cmd,
+					},
 				}
 
 				newMtime := oldMtime + 10

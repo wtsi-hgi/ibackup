@@ -29,18 +29,21 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 )
 
 const fofnFilename = "fofn"
 
-// SubDir represents a subdirectory that contains a fofn file.
+// SubDir represents a subdirectory that contains a fofn file. FofnMtime holds
+// the fofn's modification time as a Unix timestamp, populated during scan so
+// that callers need not stat each fofn separately.
 type SubDir struct {
-	Path string // absolute path to subdirectory
+	Path      string // absolute path to subdirectory
+	FofnMtime int64  // Unix mtime of the fofn file
 }
 
-// ScanForFOFNs returns subdirectories of watchDir that
-// contain a file named "fofn".
+// ScanForFOFNs returns subdirectories of watchDir that contain a file named
+// "fofn". Each returned SubDir includes the fofn's mtime, avoiding a separate
+// stat call per directory during the poll cycle.
 func ScanForFOFNs(watchDir string) ([]SubDir, error) {
 	if _, err := os.Stat(watchDir); err != nil {
 		return nil, err
@@ -51,68 +54,19 @@ func ScanForFOFNs(watchDir string) ([]SubDir, error) {
 		return nil, fmt.Errorf("glob fofns: %w", err)
 	}
 
-	result := make([]SubDir, len(matches))
-	for i, m := range matches {
-		result[i] = SubDir{Path: filepath.Dir(m)}
+	result := make([]SubDir, 0, len(matches))
+
+	for _, m := range matches {
+		info, statErr := os.Stat(m)
+		if statErr != nil {
+			return nil, fmt.Errorf("stat fofn: %w", statErr)
+		}
+
+		result = append(result, SubDir{
+			Path:      filepath.Dir(m),
+			FofnMtime: info.ModTime().Unix(),
+		})
 	}
 
 	return result, nil
-}
-
-// NeedsProcessing checks whether the fofn in the given SubDir needs to be
-// processed. It compares the fofn file's mtime against the newest numeric run
-// directory name. Returns true and the mtime if processing is needed, or false
-// and 0 if the newest run directory already matches the fofn mtime.
-func NeedsProcessing(subDir SubDir) (bool, int64, error) {
-	fofnPath := filepath.Join(subDir.Path, fofnFilename)
-
-	info, err := os.Stat(fofnPath)
-	if err != nil {
-		return false, 0, err
-	}
-
-	mtime := info.ModTime().Unix()
-
-	newest, found, err := newestRunDir(subDir.Path)
-	if err != nil {
-		return false, 0, err
-	}
-
-	if !found || newest != mtime {
-		return true, mtime, nil
-	}
-
-	return false, 0, nil
-}
-
-// newestRunDir finds the largest numeric directory name in dir. Returns the
-// value, whether one was found, and any error.
-func newestRunDir(dir string) (int64, bool, error) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return 0, false, fmt.Errorf("read dir for run dirs: %w", err)
-	}
-
-	var (
-		best  int64
-		found bool
-	)
-
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-
-		n, err := strconv.ParseInt(entry.Name(), 10, 64)
-		if err != nil {
-			continue
-		}
-
-		if !found || n > best {
-			best = n
-			found = true
-		}
-	}
-
-	return best, found, nil
 }
