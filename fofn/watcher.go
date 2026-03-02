@@ -71,17 +71,16 @@ const (
 )
 
 // classify determines the subdirectory state from run directory presence, wr
-// job status, and fofn mtime comparison. Since wr is queried on every poll
-// cycle, classification needs no filesystem artefact checks or caching.
+// job status, and fofn mtime comparison. It is a pure function: the caller
+// performs the map lookup once and passes the result, eliminating double
+// lookups and making the classification trivially testable.
 func classify(
 	sd SubDir, hasRunDir bool, runMtime int64,
-	allStatus map[string]RunJobStatus,
+	status RunJobStatus,
 ) subDirState {
 	if !hasRunDir {
 		return stateNewRun
 	}
-
-	status := allStatus[makeRepGroup(sd.Path, runMtime)]
 
 	if status.HasRunning {
 		return stateRunning
@@ -325,15 +324,21 @@ func (w *Watcher) reconcileAll(subDirs []SubDir, allStatus map[string]RunJobStat
 }
 
 // reconcile determines and executes the appropriate action for a subdirectory.
-// classify returns the state; the switch dispatches the action. Every state has
-// an explicit case; the default panics.
+// scanRunDirs reads the directory once, yielding both the current run dir and
+// any stale dirs. The status map is looked up once and shared between classify
+// and the handler, eliminating redundant map lookups and ReadDir calls.
 func (w *Watcher) reconcile(sd SubDir, allStatus map[string]RunJobStatus) error {
-	runDir, runMtime, found, err := findRunDir(sd.Path)
+	scan, err := scanRunDirs(sd.Path)
 	if err != nil {
 		return err
 	}
 
-	state := classify(sd, found, runMtime, allStatus)
+	var status RunJobStatus
+	if scan.found {
+		status = allStatus[makeRepGroup(sd.Path, scan.runMtime)]
+	}
+
+	state := classify(sd, scan.found, scan.runMtime, status)
 
 	switch state {
 	case stateNewRun:
@@ -341,34 +346,116 @@ func (w *Watcher) reconcile(sd SubDir, allStatus map[string]RunJobStatus) error 
 	case stateRunning:
 		return nil
 	case stateSettle:
-		return w.settle(sd, runDir, runMtime, allStatus[makeRepGroup(sd.Path, runMtime)])
+		return w.settle(sd, scan.runDir, status, scan.staleDirs)
 	case stateRestart:
-		return w.teardownAndRestart(sd, runDir, runMtime, allStatus[makeRepGroup(sd.Path, runMtime)])
+		return w.teardownAndRestart(sd, scan.runDir, status, scan.staleDirs)
 	default:
 		panic(fmt.Sprintf("watchfofns: unhandled state: %d (%s)", state, stateDesc[state]))
 	}
 }
 
-// findRunDir finds the current run directory inside subDirPath by looking for
-// the highest-numbered numeric subdirectory. Returns the path, its mtime
-// value, and true if found. Returns ("", 0, false, nil) if no run directory
-// exists. Non-existence errors (e.g. directory removed between scan and
-// classification) are treated as "not found"; other errors are propagated.
-func findRunDir(subDirPath string) (string, int64, bool, error) {
+// scanRunDirs reads subDirPath once and partitions numeric subdirectories into
+// the current run dir (highest number) and stale dirs (everything else).
+// Non-existence of subDirPath is treated as "not found" to tolerate races
+// where a directory is removed between scan and classification.
+func scanRunDirs(subDirPath string) (runDirScan, error) {
 	entries, err := os.ReadDir(subDirPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return "", 0, false, nil
+			return runDirScan{}, nil
 		}
 
-		return "", 0, false, fmt.Errorf("read dir for run dir: %w", err)
+		return runDirScan{}, fmt.Errorf("read dir for run dir: %w", err)
 	}
 
-	if bestMtime := highestNumericDir(entries); bestMtime != 0 {
-		return filepath.Join(subDirPath, strconv.FormatInt(bestMtime, 10)), bestMtime, true, nil
+	return partitionRunDirs(subDirPath, entries), nil
+}
+
+// ensureArtefacts is the single function responsible for status file and
+// symlink correctness. It regenerates the status file only when wr reports a
+// more recent completion than the current status (avoiding the infinite-regen
+// problem from issue #171), then ensures the symlink points to the right place.
+// Centralising both operations makes it structurally impossible to update one
+// without the other — the class of bug where "we generated status in path A
+// but forgot the symlink in path B" cannot occur.
+//
+// Runs with buried chunks still get a valid status file and symlink showing
+// which chunks completed and which remain. Since wr is queried every poll
+// cycle, buried-then-retried chunks are detected naturally.
+func ensureArtefacts(runDir string, subDir SubDir, status RunJobStatus) error {
+	if needsStatusRegen(runDir, status.LastCompletedTime) {
+		if err := GenerateStatus(runDir, subDir, sortedBuriedChunks(status)); err != nil {
+			return err
+		}
 	}
 
-	return "", 0, false, nil
+	return ensureStatusSymlink(runDir, subDir.Path)
+}
+
+// removeDirs removes a list of directories. Returns the first error
+// encountered. The stale-dir list is pre-computed by scanRunDirs, so no
+// additional ReadDir call is needed.
+func removeDirs(dirs []string) error {
+	for _, dir := range dirs {
+		if err := os.RemoveAll(dir); err != nil {
+			return fmt.Errorf("remove old run dir: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// runDirScan holds the result of scanning a subdirectory for numeric run
+// directories. It combines run-dir lookup with stale-dir enumeration in a
+// single ReadDir call, eliminating the second ReadDir that deleteOldRunDirs
+// previously required.
+type runDirScan struct {
+	runDir    string   // path to highest-numbered numeric dir, or ""
+	runMtime  int64    // mtime value parsed from the dir name, or 0
+	found     bool     // true if a numeric run dir exists
+	staleDirs []string // absolute paths of numeric dirs other than the current
+}
+
+// partitionRunDirs separates numeric directories into the highest (current run)
+// and all others (stale). Non-numeric and non-directory entries are ignored.
+func partitionRunDirs(subDirPath string, entries []os.DirEntry) runDirScan {
+	var scan runDirScan
+
+	for _, entry := range entries {
+		n, ok := numericDirValue(entry)
+		if !ok {
+			continue
+		}
+
+		dirPath := filepath.Join(subDirPath, entry.Name())
+
+		if n <= scan.runMtime {
+			scan.staleDirs = append(scan.staleDirs, dirPath)
+
+			continue
+		}
+
+		// Demote the previous best to stale.
+		if scan.found {
+			scan.staleDirs = append(scan.staleDirs, scan.runDir)
+		}
+
+		scan.runDir = dirPath
+		scan.runMtime = n
+		scan.found = true
+	}
+
+	return scan
+}
+
+// findRunDir finds the current run directory inside subDirPath by looking for
+// the highest-numbered numeric subdirectory. Returns the path, its mtime
+// value, and true if found. Convenience wrapper around scanRunDirs for callers
+// that don't need stale-dir info.
+func findRunDir(subDirPath string) (string, int64, bool, error) {
+	scan, err := scanRunDirs(subDirPath)
+
+	return scan.runDir, scan.runMtime, scan.found, err
 }
 
 // Run polls immediately and then at the given interval until the context is
@@ -401,29 +488,15 @@ func makeRepGroup(subDirPath string, mtime int64) string {
 	return fmt.Sprintf("%s%s_%d", RepGroupPrefix, filepath.Base(subDirPath), mtime)
 }
 
-// settle is the single convergent artefact reconciler. It ensures the status
-// file and symlink are correct for the current run state. Status regeneration
-// is driven by comparing wr's last completed job time against the status file's
-// mtime, avoiding the endless-regeneration problem (issue #171).
-//
-// Runs with buried chunks still get a valid status file and symlink showing
-// which chunks completed and which remain. Since wr is queried every poll
-// cycle, buried-then-retried chunks are detected naturally without needing
-// symlink-removal signalling.
-func (w *Watcher) settle(subDir SubDir, runDir string, runMtime int64, status RunJobStatus) error {
-	buriedChunks := sortedBuriedChunks(status)
-
-	if needsStatusRegen(runDir, status.LastCompletedTime) {
-		if err := GenerateStatus(runDir, subDir, buriedChunks); err != nil {
-			return err
-		}
-	}
-
-	if err := ensureStatusSymlink(runDir, subDir.Path); err != nil {
+// settle ensures artefacts are correct and removes stale run directories.
+// ensureArtefacts handles the conditional status regen + symlink in one call,
+// making it structurally impossible to update one without the other.
+func (w *Watcher) settle(subDir SubDir, runDir string, status RunJobStatus, staleDirs []string) error {
+	if err := ensureArtefacts(runDir, subDir, status); err != nil {
 		return err
 	}
 
-	return deleteOldRunDirs(subDir.Path, runMtime)
+	return removeDirs(staleDirs)
 }
 
 // sortedBuriedChunks extracts and sorts the buried chunk names from the job
@@ -440,6 +513,21 @@ func sortedBuriedChunks(status RunJobStatus) []string {
 	return nil
 }
 
+// numericDirValue returns the parsed int64 value and true for a directory entry
+// whose name is a valid base-10 integer, or (0, false) otherwise.
+func numericDirValue(entry os.DirEntry) (int64, bool) {
+	if !entry.IsDir() {
+		return 0, false
+	}
+
+	n, err := strconv.ParseInt(entry.Name(), 10, 64)
+	if err != nil {
+		return 0, false
+	}
+
+	return n, true
+}
+
 // needsStatusRegen returns true when the status file should be (re)generated.
 // The decision compares wr's most recent job completion time against the status
 // file's mtime: if a job completed more recently than the status was written,
@@ -454,24 +542,6 @@ func needsStatusRegen(runDir string, lastCompleted time.Time) bool {
 	}
 
 	return !lastCompleted.IsZero() && lastCompleted.After(info.ModTime())
-}
-
-// highestNumericDir returns the largest numeric directory name from entries, or
-// 0 if none exist.
-func highestNumericDir(entries []os.DirEntry) int64 {
-	var best int64
-
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-
-		if n, err := strconv.ParseInt(entry.Name(), 10, 64); err == nil && n > best {
-			best = n
-		}
-	}
-
-	return best
 }
 
 // statusSymlinkCurrent returns true when the subDir/status symlink exists and
@@ -503,15 +573,13 @@ func ensureStatusSymlink(runDir string, subDirPath string) error {
 
 // teardownAndRestart generates a final status snapshot for the old run, cleans
 // up buried jobs and stale directories, and starts a fresh run for the updated
-// fofn.
-func (w *Watcher) teardownAndRestart(subDir SubDir, runDir string, runMtime int64, status RunJobStatus) error {
-	buriedChunks := sortedBuriedChunks(status)
-
-	if err := GenerateStatus(runDir, subDir, buriedChunks); err != nil {
+// fofn. Unlike settle, status is always regenerated here because the run is
+// being replaced and the snapshot must reflect the final state.
+func (w *Watcher) teardownAndRestart(subDir SubDir, runDir string, status RunJobStatus, staleDirs []string) error {
+	if err := GenerateStatus(runDir, subDir, sortedBuriedChunks(status)); err != nil {
 		return err
 	}
 
-	// Create symlink for the final status snapshot before teardown.
 	if err := ensureStatusSymlink(runDir, subDir.Path); err != nil {
 		return err
 	}
@@ -522,7 +590,7 @@ func (w *Watcher) teardownAndRestart(subDir SubDir, runDir string, runMtime int6
 		}
 	}
 
-	if err := deleteOldRunDirs(subDir.Path, runMtime); err != nil {
+	if err := removeDirs(staleDirs); err != nil {
 		return err
 	}
 
@@ -566,23 +634,6 @@ func setStatusGID(statusPath, subDirPath string) error {
 
 	if err := os.Chown(issuesPath, -1, gid); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("chown status issues: %w", err)
-	}
-
-	return nil
-}
-
-// deleteOldRunDirs removes all numeric directories in
-// subDirPath except the one matching keepMtime.
-func deleteOldRunDirs(subDirPath string, keepMtime int64) error {
-	entries, err := os.ReadDir(subDirPath)
-	if err != nil {
-		return fmt.Errorf("read dir for cleanup: %w", err)
-	}
-
-	for _, entry := range entries {
-		if err := removeIfOldRunDir(subDirPath, entry, keepMtime); err != nil {
-			return err
-		}
 	}
 
 	return nil
@@ -635,27 +686,4 @@ func buildRunConfig(
 		LimitGroups: baseCfg.LimitGroups,
 		ReqGroup:    baseCfg.ReqGroup,
 	}
-}
-
-func removeIfOldRunDir(subDirPath string, entry os.DirEntry, keepMtime int64) error {
-	if !entry.IsDir() {
-		return nil
-	}
-
-	n, err := strconv.ParseInt(entry.Name(), 10, 64)
-	if err != nil {
-		return nil //nolint:nilerr
-	}
-
-	if n == keepMtime {
-		return nil
-	}
-
-	dirPath := filepath.Join(subDirPath, entry.Name())
-
-	if err := os.RemoveAll(dirPath); err != nil {
-		return fmt.Errorf("remove old run dir: %w", err)
-	}
-
-	return nil
 }

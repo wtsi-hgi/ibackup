@@ -1895,7 +1895,7 @@ func TestSettleRepairsArtefacts(t *testing.T) {
 		w := NewWatcher(watchDir, &mockJobSubmitter{}, ProcessSubDirConfig{})
 		sd := SubDir{Path: subPath, FofnMtime: mtime}
 
-		if err := w.settle(sd, runDir, mtime, status); err != nil {
+		if err := w.settle(sd, runDir, status, nil); err != nil {
 			rt.Fatalf("initial settle: %v", err)
 		}
 
@@ -1938,7 +1938,7 @@ func TestSettleRepairsArtefacts(t *testing.T) {
 
 		repairStatus.BuriedChunks = append(repairStatus.BuriedChunks, buriedChunkNames...)
 
-		if err := w.settle(sd, runDir, mtime, repairStatus); err != nil {
+		if err := w.settle(sd, runDir, repairStatus, nil); err != nil {
 			rt.Fatalf("repair settle: %v", err)
 		}
 
@@ -2006,7 +2006,7 @@ func TestSettleIdempotent(t *testing.T) {
 			LastCompletedTime: time.Now().Add(time.Hour),
 		}
 
-		if err := w.settle(sd, runDir, mtime, status); err != nil {
+		if err := w.settle(sd, runDir, status, nil); err != nil {
 			rt.Fatalf("first settle: %v", err)
 		}
 
@@ -2023,7 +2023,7 @@ func TestSettleIdempotent(t *testing.T) {
 		// returns false because status file exists and no new completions.
 		idempotentStatus := RunJobStatus{}
 
-		settleErr := w.settle(sd, runDir, mtime, idempotentStatus)
+		settleErr := w.settle(sd, runDir, idempotentStatus, nil)
 		if settleErr != nil {
 			rt.Fatalf("second settle: %v", settleErr)
 		}
