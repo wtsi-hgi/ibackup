@@ -5567,7 +5567,7 @@ func TestWatchFofnsIntegration(t *testing.T) {
 
 			simulatePutExecution(state.RunDir)
 
-			err = fofn.GenerateStatus(state.RunDir, subDir, nil)
+			err = fofn.GenerateStatus(state.RunDir, nil)
 			So(err, ShouldBeNil)
 
 			statusFile := filepath.Join(state.RunDir, "status")
@@ -5686,7 +5686,7 @@ func TestWatchFofnsIntegration(t *testing.T) {
 				},
 			)
 
-			err = fofn.GenerateStatus(state.RunDir, subDir, nil)
+			err = fofn.GenerateStatus(state.RunDir, nil)
 			So(err, ShouldBeNil)
 
 			So(os.Symlink(

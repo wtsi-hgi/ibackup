@@ -32,18 +32,17 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"slices"
 	"strconv"
-	"sync"
 	"time"
 
-	"github.com/wtsi-hgi/ibackup/internal/ownership"
 	"github.com/wtsi-hgi/ibackup/transformer"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
 	statusFilename = "status"
 	maxPollWorkers = 10
+	dirMode        = 0750
 )
 
 // stateDesc maps each state to a human-readable description.
@@ -103,23 +102,24 @@ type ProcessSubDirConfig struct {
 	RunConfig RunConfig
 }
 
-// prepareChunks creates a run directory, writes shuffled chunk files, and sets
-// their GID. Returns empty runDir and nil chunks if the fofn is empty.
+// prepareChunks creates a run directory and writes shuffled chunk files.
+// Returns empty runDir and nil chunks if the fofn is empty. Group ownership
+// is inherited from the parent directory's setgid bit.
 func prepareChunks(
 	subDir SubDir,
 	transform func(string) (string, error),
 	mtime int64,
 	cfg ProcessSubDirConfig,
 ) (string, []string, error) {
-	gid, runDir, err := createRunDir(subDir, mtime)
-	if err != nil {
+	runDir := filepath.Join(subDir.Path, strconv.FormatInt(mtime, 10))
+
+	if err := os.Mkdir(runDir, dirMode); err != nil {
 		return "", nil, err
 	}
 
-	chunks, err := writeChunksWithGID(
-		subDir.Path, runDir, transform,
-		gid, cfg.MinChunk, cfg.MaxChunk, cfg.RandSeed,
-	)
+	fofnPath := filepath.Join(subDir.Path, fofnFilename)
+
+	chunks, err := WriteShuffledChunks(fofnPath, transform, runDir, cfg.MinChunk, cfg.MaxChunk, cfg.RandSeed)
 	if err != nil {
 		_ = os.RemoveAll(runDir)
 
@@ -133,51 +133,6 @@ func prepareChunks(
 	}
 
 	return runDir, chunks, nil
-}
-
-// createRunDir creates a run directory named after the given mtime, with group
-// ownership matching the watch directory.
-func createRunDir(subDir SubDir, mtime int64) (int, string, error) {
-	watchDir := filepath.Dir(subDir.Path)
-
-	gid, err := ownership.GetDirGID(watchDir)
-	if err != nil {
-		return 0, "", err
-	}
-
-	runDir := filepath.Join(subDir.Path, strconv.FormatInt(mtime, 10))
-
-	if err := ownership.CreateDirWithGID(
-		runDir, gid,
-	); err != nil {
-		return 0, "", err
-	}
-
-	return gid, runDir, nil
-}
-
-// writeChunksWithGID writes shuffled chunk files and sets
-// their group ownership to the given GID.
-func writeChunksWithGID(
-	subDirPath, runDir string,
-	transform func(string) (string, error),
-	gid, minChunk, maxChunk int,
-	randSeed int64,
-) ([]string, error) {
-	fofnPath := filepath.Join(subDirPath, fofnFilename)
-
-	chunks, err := WriteShuffledChunks(fofnPath, transform, runDir, minChunk, maxChunk, randSeed)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, chunk := range chunks {
-		if err := os.Chown(chunk, -1, gid); err != nil {
-			return nil, fmt.Errorf("chown chunk: %w", err)
-		}
-	}
-
-	return chunks, nil
 }
 
 // RunState tracks the state of an active run for a subdirectory.
@@ -290,37 +245,18 @@ func (w *Watcher) Poll() error {
 }
 
 // reconcileAll classifies and dispatches all subdirectories concurrently with
-// bounded parallelism, collecting errors.
+// bounded parallelism. Returns the first error encountered.
 func (w *Watcher) reconcileAll(subDirs []SubDir, allStatus map[string]RunJobStatus) error {
-	var (
-		wg    sync.WaitGroup
-		errMu sync.Mutex
-		errs  []error
-		sem   = make(chan struct{}, maxPollWorkers)
-	)
+	g := new(errgroup.Group)
+	g.SetLimit(maxPollWorkers)
 
 	for _, sd := range subDirs {
-		wg.Add(1)
-
-		sem <- struct{}{}
-
-		go func() {
-			defer wg.Done()
-			defer func() { <-sem }()
-
-			if err := w.reconcile(sd, allStatus); err != nil {
-				errMu.Lock()
-
-				errs = append(errs, err)
-
-				errMu.Unlock()
-			}
-		}()
+		g.Go(func() error {
+			return w.reconcile(sd, allStatus)
+		})
 	}
 
-	wg.Wait()
-
-	return errors.Join(errs...)
+	return g.Wait()
 }
 
 // reconcile determines and executes the appropriate action for a subdirectory.
@@ -402,7 +338,7 @@ func (w *Watcher) dispatch(sd SubDir, scan runDirScan, status RunJobStatus) erro
 // cycle, buried-then-retried chunks are detected naturally.
 func ensureArtefacts(runDir string, subDir SubDir, status RunJobStatus, forceRegen bool) error {
 	if forceRegen || needsStatusRegen(runDir, status.LastCompletedTime) {
-		if err := GenerateStatus(runDir, subDir, sortedBuriedChunks(status)); err != nil {
+		if err := GenerateStatus(runDir, status.BuriedChunks); err != nil {
 			return err
 		}
 	}
@@ -513,20 +449,6 @@ func (w *Watcher) settle(subDir SubDir, runDir string, status RunJobStatus) erro
 	return ensureArtefacts(runDir, subDir, status, false)
 }
 
-// sortedBuriedChunks extracts and sorts the buried chunk names from the job
-// status. Buried chunks are sorted for deterministic comparison.
-func sortedBuriedChunks(status RunJobStatus) []string {
-	if len(status.BuriedChunks) > 0 {
-		sorted := make([]string, len(status.BuriedChunks))
-		copy(sorted, status.BuriedChunks)
-		slices.Sort(sorted)
-
-		return sorted
-	}
-
-	return nil
-}
-
 // numericDirValue returns the parsed int64 value and true for a directory entry
 // whose name is a valid base-10 integer, or (0, false) otherwise.
 func numericDirValue(entry os.DirEntry) (int64, bool) {
@@ -612,39 +534,11 @@ func (w *Watcher) startNewRun(subDir SubDir) error {
 }
 
 // GenerateStatus writes a combined status file from all chunk reports in
-// runDir, handles buried chunks, and creates/updates a symlink at subDir/status
-// pointing to runDir/status.
-func GenerateStatus(runDir string, subDir SubDir, buriedChunks []string) error {
+// runDir. Group ownership is inherited from the parent directory's setgid bit.
+func GenerateStatus(runDir string, buriedChunks []string) error {
 	statusPath := filepath.Join(runDir, statusFilename)
 
-	if err := WriteStatusFromRun(runDir, statusPath, buriedChunks); err != nil {
-		return err
-	}
-
-	return setStatusGID(statusPath, subDir.Path)
-}
-
-// setStatusGID sets the group ownership of the status file to match the watch
-// directory's GID.
-func setStatusGID(statusPath, subDirPath string) error {
-	watchDir := filepath.Dir(subDirPath)
-
-	gid, err := ownership.GetDirGID(watchDir)
-	if err != nil {
-		return err
-	}
-
-	if err := os.Chown(statusPath, -1, gid); err != nil {
-		return fmt.Errorf("chown status: %w", err)
-	}
-
-	issuesPath := statusPath + issuesSuffix
-
-	if err := os.Chown(issuesPath, -1, gid); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("chown status issues: %w", err)
-	}
-
-	return nil
+	return WriteStatusFromRun(runDir, statusPath, buriedChunks)
 }
 
 // createStatusSymlink atomically creates or updates a symlink at subDir/status

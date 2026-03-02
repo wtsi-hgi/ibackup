@@ -375,48 +375,6 @@ func TestProcessSubDir(t *testing.T) {
 				}
 			})
 
-		Convey("sets GID on run dir and chunk files",
-			func() {
-				paths := generateTmpPaths(25)
-				subDir := setupSubDir(
-					watchDir, "proj5", paths,
-					SubDirConfig{Transformer: "test"},
-				)
-
-				mock := &mockJobSubmitter{}
-				cfg := ProcessSubDirConfig{
-					MinChunk: 10,
-					MaxChunk: 10,
-					RandSeed: 1,
-				}
-
-				state, err := ProcessSubDir(subDir, mock, cfg)
-				So(err, ShouldBeNil)
-
-				expectedGID := fileGID(watchDir)
-				So(fileGID(state.RunDir), ShouldEqual,
-					expectedGID)
-
-				runInfo, statErr := os.Stat(state.RunDir)
-				So(statErr, ShouldBeNil)
-				So(runInfo.Mode()&0040,
-					ShouldNotEqual, 0)
-
-				entries, readErr := os.ReadDir(state.RunDir)
-				So(readErr, ShouldBeNil)
-
-				for _, e := range entries {
-					cp := filepath.Join(state.RunDir, e.Name())
-					So(fileGID(cp), ShouldEqual,
-						expectedGID)
-
-					ci, ciErr := os.Stat(cp)
-					So(ciErr, ShouldBeNil)
-					So(ci.Mode()&0040,
-						ShouldNotEqual, 0)
-				}
-			})
-
 		Convey("includes --meta when config has metadata", func() {
 			paths := generateTmpPaths(5)
 			subDir := setupSubDir(
@@ -497,7 +455,7 @@ func TestGenerateStatus(t *testing.T) {
 			writeChunkAndReport(runDir, "chunk.000001", makeFilePairs(5, 10))
 			writeChunkAndReport(runDir, "chunk.000002", makeFilePairs(10, 15))
 
-			err := GenerateStatus(runDir, subDir, nil)
+			err := GenerateStatus(runDir, nil)
 			So(err, ShouldBeNil)
 
 			statusPath := filepath.Join(runDir, "status")
@@ -517,14 +475,14 @@ func TestGenerateStatus(t *testing.T) {
 		})
 
 		Convey("handles buried chunk with no report file", func() {
-			subDir, runDir := setupRunDir(watchDir, "proj2")
+			_, runDir := setupRunDir(watchDir, "proj2")
 
 			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 5))
 			writeChunkAndReport(runDir, "chunk.000001", makeFilePairs(5, 10))
 			writeChunkOnly(runDir, "chunk.000002", makeFilePairs(10, 20))
 
 			err := GenerateStatus(
-				runDir, subDir,
+				runDir,
 				[]string{"chunk.000002"},
 			)
 			So(err, ShouldBeNil)
@@ -538,14 +496,14 @@ func TestGenerateStatus(t *testing.T) {
 		})
 
 		Convey("handles buried chunk with incomplete report", func() {
-			subDir, runDir := setupRunDir(watchDir, "proj3")
+			_, runDir := setupRunDir(watchDir, "proj3")
 
 			pairs := makeFilePairs(0, 10)
 			writeChunkFile(runDir, "chunk.000000", pairs)
 			writeReportFile(runDir, "chunk.000000", pairs[:5], "uploaded")
 
 			err := GenerateStatus(
-				runDir, subDir,
+				runDir,
 				[]string{"chunk.000000"},
 			)
 			So(err, ShouldBeNil)
@@ -558,24 +516,6 @@ func TestGenerateStatus(t *testing.T) {
 			So(counts.NotProcessed, ShouldEqual, 5)
 		})
 
-		Convey("sets GID on status file matching watch directory", func() {
-			subDir, runDir := setupRunDir(watchDir, "proj4")
-
-			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 3))
-
-			err := GenerateStatus(runDir, subDir, nil)
-			So(err, ShouldBeNil)
-
-			statusPath := filepath.Join(runDir, "status")
-			expectedGID := fileGID(watchDir)
-			So(fileGID(statusPath), ShouldEqual,
-				expectedGID)
-
-			info, statErr := os.Stat(statusPath)
-			So(statErr, ShouldBeNil)
-			So(info.Mode()&0040,
-				ShouldNotEqual, 0)
-		})
 	})
 }
 
@@ -1372,7 +1312,6 @@ func TestWatcherRestart(t *testing.T) {
 
 			So(GenerateStatus(
 				runDir,
-				SubDir{Path: subPath},
 				[]string{"chunk.000001"},
 			), ShouldBeNil)
 
@@ -1787,7 +1726,7 @@ func subDirWithMtime(subPath string) SubDir {
 // The symlink uses a relative target (runDirName/status) matching the
 // watcher's createStatusSymlink convention.
 func generateDoneStatus(runDir string, subDir SubDir) {
-	So(GenerateStatus(runDir, subDir, nil), ShouldBeNil)
+	So(GenerateStatus(runDir, nil), ShouldBeNil)
 
 	symlinkPath := filepath.Join(subDir.Path, "status")
 	relTarget := filepath.Join(filepath.Base(runDir), "status")
@@ -1830,17 +1769,6 @@ func writeReportsExcept(runDir, skip string) {
 		pairs := readChunkPairs(m)
 		writeReportFile(runDir, base, pairs, "uploaded")
 	}
-}
-
-// fileGID returns the group ID of the given path.
-func fileGID(path string) int {
-	info, err := os.Stat(path)
-	So(err, ShouldBeNil)
-
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	So(ok, ShouldBeTrue)
-
-	return int(stat.Gid)
 }
 
 // TestSettleRepairsArtefacts uses property-based testing to verify that the
@@ -2086,8 +2014,7 @@ func TestPollRepairsDoneRun(t *testing.T) {
 			mustWriteReportT(rt, runDir, chunkName, pairs, "uploaded")
 		}
 
-		sd := SubDir{Path: subPath}
-		if err := GenerateStatus(runDir, sd, nil); err != nil {
+		if err := GenerateStatus(runDir, nil); err != nil {
 			rt.Fatal(err)
 		}
 
