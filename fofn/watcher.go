@@ -45,9 +45,9 @@ const (
 	dirMode        = 0750
 )
 
-// stateDesc maps each state to a human-readable description.
-// The array is sized by numStates, so adding a state without a description
-// is caught by the exhaustive test.
+// stateDesc maps each state to a human-readable description. The array is sized
+// by numStates, so adding a state without a description is caught by the
+// exhaustive test.
 var stateDesc = [numStates]string{ //nolint:gochecknoglobals
 	stateNewRun:  "start new run",
 	stateRunning: "wait for jobs",
@@ -57,8 +57,8 @@ var stateDesc = [numStates]string{ //nolint:gochecknoglobals
 
 // subDirState classifies the observable state of a subdirectory. Every
 // reachable combination of filesystem and wr state maps to exactly one value.
-// The dispatch switch and exhaustive test verify all values are handled,
-// making missed-case bugs structurally impossible.
+// The dispatch switch and exhaustive test verify all values are handled, making
+// missed-case bugs structurally impossible.
 type subDirState int
 
 const (
@@ -93,8 +93,8 @@ func classify(
 }
 
 // ProcessSubDirConfig holds configuration for processing a subdirectory.
-// RandSeed controls chunk shuffling: 0 means use time-based randomness;
-// a non-zero value gives deterministic shuffling (useful for tests).
+// RandSeed controls chunk shuffling: 0 means use time-based randomness; a
+// non-zero value gives deterministic shuffling (useful for tests).
 type ProcessSubDirConfig struct {
 	MinChunk  int
 	MaxChunk  int
@@ -103,8 +103,8 @@ type ProcessSubDirConfig struct {
 }
 
 // prepareChunks creates a run directory and writes shuffled chunk files.
-// Returns empty runDir and nil chunks if the fofn is empty. Group ownership
-// is inherited from the parent directory's setgid bit.
+// Returns empty runDir and nil chunks if the fofn is empty. Group ownership is
+// inherited from the parent directory's setgid bit.
 func prepareChunks(
 	subDir SubDir,
 	transform func(string) (string, error),
@@ -285,8 +285,8 @@ func (w *Watcher) reconcile(sd SubDir, allStatus map[string]RunJobStatus) error 
 
 // scanRunDirs reads subDirPath once and partitions numeric subdirectories into
 // the current run dir (highest number) and stale dirs (everything else).
-// Non-existence of subDirPath is treated as "not found" to tolerate races
-// where a directory is removed between scan and classification.
+// Non-existence of subDirPath is treated as "not found" to tolerate races where
+// a directory is removed between scan and classification.
 func scanRunDirs(subDirPath string) (runDirScan, error) {
 	entries, err := os.ReadDir(subDirPath)
 	if err != nil {
@@ -321,23 +321,28 @@ func (w *Watcher) dispatch(sd SubDir, scan runDirScan, status RunJobStatus) erro
 }
 
 // ensureArtefacts is the single function responsible for status file and
-// symlink correctness. When forceRegen is true, the status file is always
-// regenerated (used by teardownAndRestart for the final snapshot). Otherwise,
-// it regenerates only when wr reports a more recent completion than the current
-// status (avoiding the infinite-regen problem from issue #171). The symlink is
+// symlink correctness. It regenerates the status file only when wr reports a
+// more recent completion than the current status (avoiding the infinite-regen
+// problem from issue #171), or when the status file is missing. The symlink is
 // always checked and repaired if needed.
 //
+// Callers that need a forced regeneration (e.g. teardownAndRestart for its
+// final snapshot) simply remove the status file first — needsStatusRegen
+// naturally returns true for a missing file, so no boolean flag is needed.
+// Deriving the decision from filesystem state rather than a control flag
+// eliminates the class of bug where the wrong boolean is passed.
+//
 // Centralising both operations makes it structurally impossible to update one
-// without the other — the class of bug where "we generated status in path A
-// but forgot the symlink in path B" cannot occur. Having both settle and
+// without the other — the class of bug where "we generated status in path A but
+// forgot the symlink in path B" cannot occur. Having both settle and
 // teardownAndRestart use this single function also eliminates the class of bug
 // where "we added a new artefact to one path but forgot the other."
 //
 // Runs with buried chunks still get a valid status file and symlink showing
 // which chunks completed and which remain. Since wr is queried every poll
 // cycle, buried-then-retried chunks are detected naturally.
-func ensureArtefacts(runDir string, subDir SubDir, status RunJobStatus, forceRegen bool) error {
-	if forceRegen || needsStatusRegen(runDir, status.LastCompletedTime) {
+func ensureArtefacts(runDir string, subDir SubDir, status RunJobStatus) error {
+	if needsStatusRegen(runDir, status.LastCompletedTime) {
 		if err := GenerateStatus(runDir, status.BuriedChunks); err != nil {
 			return err
 		}
@@ -403,9 +408,9 @@ func partitionRunDirs(subDirPath string, entries []os.DirEntry) runDirScan {
 }
 
 // findRunDir finds the current run directory inside subDirPath by looking for
-// the highest-numbered numeric subdirectory. Returns the path, its mtime
-// value, and true if found. Convenience wrapper around scanRunDirs for callers
-// that don't need stale-dir info.
+// the highest-numbered numeric subdirectory. Returns the path, its mtime value,
+// and true if found. Convenience wrapper around scanRunDirs for callers that
+// don't need stale-dir info.
 func findRunDir(subDirPath string) (string, int64, bool, error) {
 	scan, err := scanRunDirs(subDirPath)
 
@@ -446,7 +451,7 @@ func makeRepGroup(subDirPath string, mtime int64) string {
 // is handled by reconcile after dispatch, making it structurally impossible to
 // forget cleanup in any handler.
 func (w *Watcher) settle(subDir SubDir, runDir string, status RunJobStatus) error {
-	return ensureArtefacts(runDir, subDir, status, false)
+	return ensureArtefacts(runDir, subDir, status)
 }
 
 // numericDirValue returns the parsed int64 value and true for a directory entry
@@ -495,8 +500,8 @@ func statusSymlinkCurrent(runDir, subDirPath string) bool {
 	return target == expected
 }
 
-// ensureStatusSymlink checks whether the status symlink in subDirPath points
-// to the correct status file in runDir. If absent or incorrect, it creates or
+// ensureStatusSymlink checks whether the status symlink in subDirPath points to
+// the correct status file in runDir. If absent or incorrect, it creates or
 // updates the symlink. When the symlink is already correct, the cost is a
 // single os.Readlink call.
 func ensureStatusSymlink(runDir string, subDirPath string) error {
@@ -507,14 +512,17 @@ func ensureStatusSymlink(runDir string, subDirPath string) error {
 	return createStatusSymlink(runDir, subDirPath)
 }
 
-// teardownAndRestart generates a final status snapshot for the old run via
-// ensureArtefacts (with forced regeneration to capture the final state), cleans
-// up buried jobs, and starts a fresh run for the updated fofn. Using
+// teardownAndRestart generates a final status snapshot for the old run, cleans
+// up buried jobs, and starts a fresh run for the updated fofn. The status file
+// is removed first so that ensureArtefacts unconditionally regenerates it,
+// capturing the final state without needing a control flag. Using
 // ensureArtefacts rather than direct GenerateStatus + ensureStatusSymlink calls
-// means any new artefact added to ensureArtefacts is automatically handled
-// here too. Stale-dir cleanup is handled by reconcile after dispatch.
+// means any new artefact added to ensureArtefacts is automatically handled here
+// too. Stale-dir cleanup is handled by reconcile after dispatch.
 func (w *Watcher) teardownAndRestart(subDir SubDir, runDir string, status RunJobStatus) error {
-	if err := ensureArtefacts(runDir, subDir, status, true); err != nil {
+	_ = os.Remove(filepath.Join(runDir, statusFilename))
+
+	if err := ensureArtefacts(runDir, subDir, status); err != nil {
 		return err
 	}
 
