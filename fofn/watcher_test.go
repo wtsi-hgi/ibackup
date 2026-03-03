@@ -42,23 +42,6 @@ import (
 	"pgregory.net/rapid"
 )
 
-func TestStateExhaustive(t *testing.T) {
-	Convey("every subDirState has a description", t, func() {
-		covered := 0
-
-		for s := subDirState(0); s < numStates; s++ {
-			So(stateDesc[s], ShouldNotBeEmpty)
-
-			covered++
-		}
-
-		Convey("has exactly 4 states with no gaps", func() {
-			So(covered, ShouldEqual, int(numStates))
-			So(int(numStates), ShouldEqual, 4)
-		})
-	})
-}
-
 // filePair represents a local/remote path pair.
 type filePair struct {
 	Local  string
@@ -906,6 +889,16 @@ func TestWatcherPoll(t *testing.T) {
 				expectedTarget)
 		})
 	})
+}
+
+// findRunDir finds the current run directory inside subDirPath by looking for
+// the highest-numbered numeric subdirectory. Returns the path, its mtime value,
+// and true if found. Convenience wrapper around scanRunDirs for test callers
+// that don't need stale-dir info.
+func findRunDir(subDirPath string) (string, int64, bool, error) {
+	scan, err := scanRunDirs(subDirPath)
+
+	return scan.runDir, scan.runMtime, scan.found, err
 }
 
 func TestWatcherRestart(t *testing.T) {

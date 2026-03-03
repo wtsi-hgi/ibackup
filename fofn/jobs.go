@@ -175,9 +175,7 @@ type RunJobStatus struct {
 // ClassifyAllJobs queries wr once for all fofn jobs and returns a map keyed by
 // repgroup with classified status.
 func ClassifyAllJobs(submitter JobSubmitter) (map[string]RunJobStatus, error) {
-	jobs, err := submitter.FindJobsByRepGroup(
-		RepGroupPrefix,
-	)
+	jobs, err := submitter.FindJobsByRepGroup(RepGroupPrefix)
 	if err != nil {
 		return nil, err
 	}

@@ -45,53 +45,6 @@ const (
 	dirMode        = 0750
 )
 
-// stateDesc maps each state to a human-readable description. The array is sized
-// by numStates, so adding a state without a description is caught by the
-// exhaustive test.
-var stateDesc = [numStates]string{ //nolint:gochecknoglobals
-	stateNewRun:  "start new run",
-	stateRunning: "wait for jobs",
-	stateSettle:  "settle artefacts",
-	stateRestart: "teardown and restart",
-}
-
-// subDirState classifies the observable state of a subdirectory. Every
-// reachable combination of filesystem and wr state maps to exactly one value.
-// The dispatch switch and exhaustive test verify all values are handled, making
-// missed-case bugs structurally impossible.
-type subDirState int
-
-const (
-	stateNewRun  subDirState = iota // no run dir → start new
-	stateRunning                    // wr jobs still active → wait
-	stateSettle                     // jobs done, fofn unchanged → settle artefacts
-	stateRestart                    // jobs done, fofn changed → teardown + restart
-	numStates                       // sentinel for exhaustive checks
-)
-
-// classify determines the subdirectory state from run directory presence, wr
-// job status, and fofn mtime comparison. It is a pure function: the caller
-// performs the map lookup once and passes the result, eliminating double
-// lookups and making the classification trivially testable.
-func classify(
-	sd SubDir, hasRunDir bool, runMtime int64,
-	status RunJobStatus,
-) subDirState {
-	if !hasRunDir {
-		return stateNewRun
-	}
-
-	if status.HasRunning {
-		return stateRunning
-	}
-
-	if sd.FofnMtime != runMtime {
-		return stateRestart
-	}
-
-	return stateSettle
-}
-
 // ProcessSubDirConfig holds configuration for processing a subdirectory.
 // RandSeed controls chunk shuffling: 0 means use time-based randomness; a
 // non-zero value gives deterministic shuffling (useful for tests).
@@ -151,7 +104,7 @@ func ProcessSubDir(subDir SubDir, submitter JobSubmitter, cfg ProcessSubDirConfi
 		return RunState{}, nil
 	}
 
-	sdCfg, err := readSubDirConfig(subDir)
+	sdCfg, err := ReadConfig(subDir.Path)
 	if err != nil {
 		return RunState{}, err
 	}
@@ -300,24 +253,21 @@ func scanRunDirs(subDirPath string) (runDirScan, error) {
 	return partitionRunDirs(subDirPath, entries), nil
 }
 
-// dispatch executes the state-appropriate handler for a subdirectory. The
-// exhaustive switch ensures every state is handled; adding a new state without
-// a case triggers the default panic.
+// dispatch executes the state-appropriate handler for a subdirectory.
 func (w *Watcher) dispatch(sd SubDir, scan runDirScan, status RunJobStatus) error {
-	state := classify(sd, scan.found, scan.runMtime, status)
-
-	switch state {
-	case stateNewRun:
+	if !scan.found {
 		return w.startNewRun(sd)
-	case stateRunning:
-		return nil
-	case stateSettle:
-		return w.settle(sd, scan.runDir, status)
-	case stateRestart:
-		return w.teardownAndRestart(sd, scan.runDir, status)
-	default:
-		panic(fmt.Sprintf("watchfofns: unhandled state: %d (%s)", state, stateDesc[state]))
 	}
+
+	if status.HasRunning {
+		return nil
+	}
+
+	if sd.FofnMtime != scan.runMtime {
+		return w.teardownAndRestart(sd, scan.runDir, status)
+	}
+
+	return w.settle(sd, scan.runDir, status)
 }
 
 // ensureArtefacts is the single function responsible for status file and
@@ -325,12 +275,6 @@ func (w *Watcher) dispatch(sd SubDir, scan runDirScan, status RunJobStatus) erro
 // more recent completion than the current status (avoiding the infinite-regen
 // problem from issue #171), or when the status file is missing. The symlink is
 // always checked and repaired if needed.
-//
-// Callers that need a forced regeneration (e.g. teardownAndRestart for its
-// final snapshot) simply remove the status file first — needsStatusRegen
-// naturally returns true for a missing file, so no boolean flag is needed.
-// Deriving the decision from filesystem state rather than a control flag
-// eliminates the class of bug where the wrong boolean is passed.
 //
 // Centralising both operations makes it structurally impossible to update one
 // without the other — the class of bug where "we generated status in path A but
@@ -388,7 +332,7 @@ func partitionRunDirs(subDirPath string, entries []os.DirEntry) runDirScan {
 
 		dirPath := filepath.Join(subDirPath, entry.Name())
 
-		if n <= scan.runMtime {
+		if !shouldPromoteRunDir(scan, entry.Name(), n) {
 			scan.staleDirs = append(scan.staleDirs, dirPath)
 
 			continue
@@ -407,14 +351,20 @@ func partitionRunDirs(subDirPath string, entries []os.DirEntry) runDirScan {
 	return scan
 }
 
-// findRunDir finds the current run directory inside subDirPath by looking for
-// the highest-numbered numeric subdirectory. Returns the path, its mtime value,
-// and true if found. Convenience wrapper around scanRunDirs for callers that
-// don't need stale-dir info.
-func findRunDir(subDirPath string) (string, int64, bool, error) {
-	scan, err := scanRunDirs(subDirPath)
+func shouldPromoteRunDir(scan runDirScan, dirName string, mtime int64) bool {
+	if !scan.found {
+		return true
+	}
 
-	return scan.runDir, scan.runMtime, scan.found, err
+	if mtime > scan.runMtime {
+		return true
+	}
+
+	if mtime < scan.runMtime {
+		return false
+	}
+
+	return dirName > filepath.Base(scan.runDir)
 }
 
 // Run polls immediately and then at the given interval until the context is
@@ -434,8 +384,7 @@ func (w *Watcher) Run(ctx context.Context, interval time.Duration) error {
 			return nil
 		case <-ticker.C:
 			if err := w.Poll(); err != nil {
-				w.logger.Error("poll failed",
-					"err", err)
+				w.logger.Error("poll failed", "err", err)
 			}
 		}
 	}
@@ -512,16 +461,10 @@ func ensureStatusSymlink(runDir string, subDirPath string) error {
 	return createStatusSymlink(runDir, subDirPath)
 }
 
-// teardownAndRestart generates a final status snapshot for the old run, cleans
-// up buried jobs, and starts a fresh run for the updated fofn. The status file
-// is removed first so that ensureArtefacts unconditionally regenerates it,
-// capturing the final state without needing a control flag. Using
-// ensureArtefacts rather than direct GenerateStatus + ensureStatusSymlink calls
-// means any new artefact added to ensureArtefacts is automatically handled here
-// too. Stale-dir cleanup is handled by reconcile after dispatch.
+// teardownAndRestart generates any needed status artefacts for the old run,
+// cleans up buried jobs, and starts a fresh run for the updated fofn.
+// Stale-dir cleanup is handled by reconcile after dispatch.
 func (w *Watcher) teardownAndRestart(subDir SubDir, runDir string, status RunJobStatus) error {
-	_ = os.Remove(filepath.Join(runDir, statusFilename))
-
 	if err := ensureArtefacts(runDir, subDir, status); err != nil {
 		return err
 	}
@@ -568,11 +511,6 @@ func createStatusSymlink(runDir, subDirPath string) error {
 	}
 
 	return nil
-}
-
-// readSubDirConfig reads config.yml for the given subdirectory.
-func readSubDirConfig(subDir SubDir) (SubDirConfig, error) {
-	return ReadConfig(subDir.Path)
 }
 
 func buildRunConfig(
