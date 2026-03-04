@@ -211,28 +211,20 @@ func classifyIncompleteJobs(jobs []*jobqueue.Job) map[string]RunJobStatus {
 	for _, job := range jobs {
 		rg := job.RepGroup
 		s := result[rg]
-
-		s, keep := classifyIncompleteJob(s, job)
-		if !keep {
-			continue
-		}
-
-		result[rg] = s
+		result[rg] = classifyIncompleteJob(s, job)
 	}
 
 	return result
 }
 
-func classifyIncompleteJob(s RunJobStatus, job *jobqueue.Job) (RunJobStatus, bool) {
+func classifyIncompleteJob(s RunJobStatus, job *jobqueue.Job) RunJobStatus {
 	switch job.State {
-	case jobqueue.JobStateDeleted:
-		return s, false
 	case jobqueue.JobStateBuried:
-		return classifyBuriedJob(s, job), true
+		return classifyBuriedJob(s, job)
 	default:
 		s.HasRunning = true
 
-		return s, true
+		return s
 	}
 }
 
@@ -267,14 +259,10 @@ func mergeCompletionTimes(result map[string]RunJobStatus, completionTimes map[st
 // The argument may be quoted (e.g. -f "path/to/chunk") to support paths
 // containing spaces.
 func extractChunkFromCmd(cmd string) string {
-	const flag = "-f "
-
-	_, after, ok := strings.Cut(cmd, flag)
+	_, rest, ok := strings.Cut(cmd, "-f ")
 	if !ok {
 		return ""
 	}
-
-	rest := after
 
 	return extractQuotedOrWord(rest)
 }

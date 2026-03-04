@@ -161,9 +161,9 @@ func submitChunkJobs(
 }
 
 // Watcher monitors a watch directory for fofn changes and manages backup runs
-// using a state machine driven by the filesystem and wr job status. On each
-// poll, wr is queried once for all fofn jobs (via RepGroupPrefix), eliminating
-// the need for in-memory caching or filesystem artefact signalling.
+// based on the filesystem and wr job status. On each poll, wr is queried once
+// for all fofn jobs (via RepGroupPrefix), eliminating the need for in-memory
+// caching or filesystem artefact signalling.
 type Watcher struct {
 	watchDir  string
 	submitter JobSubmitter
@@ -182,7 +182,7 @@ func NewWatcher(watchDir string, submitter JobSubmitter, cfg ProcessSubDirConfig
 }
 
 // Poll performs one poll cycle: scan for subdirectories, query wr once for all
-// job status, then reconcile each subdirectory through the state machine.
+// job status, then reconcile each subdirectory.
 func (w *Watcher) Poll() error {
 	subDirs, err := ScanForFOFNs(w.watchDir)
 	if err != nil {
@@ -272,19 +272,8 @@ func (w *Watcher) dispatch(sd SubDir, scan runDirScan, status RunJobStatus) erro
 
 // ensureArtefacts is the single function responsible for status file and
 // symlink correctness. It regenerates the status file only when wr reports a
-// more recent completion than the current status (avoiding the infinite-regen
-// problem from issue #171), or when the status file is missing. The symlink is
-// always checked and repaired if needed.
-//
-// Centralising both operations makes it structurally impossible to update one
-// without the other — the class of bug where "we generated status in path A but
-// forgot the symlink in path B" cannot occur. Having both settle and
-// teardownAndRestart use this single function also eliminates the class of bug
-// where "we added a new artefact to one path but forgot the other."
-//
-// Runs with buried chunks still get a valid status file and symlink showing
-// which chunks completed and which remain. Since wr is queried every poll
-// cycle, buried-then-retried chunks are detected naturally.
+// more recent completion than the current status. The symlink is always checked
+// and repaired if needed.
 func ensureArtefacts(runDir string, subDir SubDir, status RunJobStatus) error {
 	if needsStatusRegen(runDir, status.LastCompletedTime) {
 		if err := GenerateStatus(runDir, status.BuriedChunks); err != nil {
@@ -295,17 +284,18 @@ func ensureArtefacts(runDir string, subDir SubDir, status RunJobStatus) error {
 	return ensureStatusSymlink(runDir, subDir.Path)
 }
 
-// removeDirs removes a list of directories. Returns the first error
-// encountered. The stale-dir list is pre-computed by scanRunDirs, so no
-// additional ReadDir call is needed.
+// removeDirs removes a list of directories. Returns the last error
+// encountered.
 func removeDirs(dirs []string) error {
+	var lastErr error
+
 	for _, dir := range dirs {
 		if err := os.RemoveAll(dir); err != nil {
-			return fmt.Errorf("remove old run dir: %w", err)
+			lastErr = fmt.Errorf("remove old run dir: %w", err)
 		}
 	}
 
-	return nil
+	return lastErr
 }
 
 // runDirScan holds the result of scanning a subdirectory for numeric run

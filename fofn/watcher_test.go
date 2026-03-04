@@ -1263,8 +1263,6 @@ func TestWatcherRestart(t *testing.T) {
 			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 10))
 			generateDoneStatus(runDir, SubDir{Path: subPath})
 
-			generateDoneStatus(runDir, SubDir{Path: subPath})
-
 			mock := &mockJobSubmitter{}
 			w := NewWatcher(watchDir, mock, cfg)
 
