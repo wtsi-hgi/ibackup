@@ -6793,7 +6793,6 @@ func TestWatchFofnsCommand(t *testing.T) {
 
 	Convey("The watchfofns subcommand", t, func() {
 		Convey("errors when --dir is not provided", func() {
-
 			exitCode, out := runCLI(t, nil, "",
 				"watchfofns")
 			So(exitCode, ShouldNotEqual, 0)
@@ -6801,7 +6800,6 @@ func TestWatchFofnsCommand(t *testing.T) {
 		})
 
 		Convey("exits cleanly when given valid dir and context cancel", func() {
-
 			r, w, errp := os.Pipe()
 			So(errp, ShouldBeNil)
 
