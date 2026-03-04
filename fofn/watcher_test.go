@@ -429,8 +429,8 @@ func TestGenerateStatus(t *testing.T) {
 	Convey("GenerateStatus", t, func() {
 		watchDir := t.TempDir()
 
-		Convey("writes status file and symlink for 3 complete reports", func() {
-			subDir, runDir := setupRunDir(watchDir, "proj1")
+		Convey("writes status file for 3 complete reports", func() {
+			_, runDir := setupRunDir(watchDir, "proj1")
 
 			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 5))
 			writeChunkAndReport(runDir, "chunk.000001", makeFilePairs(5, 10))
@@ -444,15 +444,6 @@ func TestGenerateStatus(t *testing.T) {
 			So(parseErr, ShouldBeNil)
 			So(entries, ShouldHaveLength, 15)
 			So(counts.Uploaded, ShouldEqual, 15)
-
-			// GenerateStatus writes the status file; symlink is managed
-			// separately by the watcher's settle path.
-			So(os.Symlink(statusPath, filepath.Join(subDir.Path, "status")), ShouldBeNil)
-
-			symlinkPath := filepath.Join(subDir.Path, "status")
-			target, readErr := os.Readlink(symlinkPath)
-			So(readErr, ShouldBeNil)
-			So(target, ShouldEqual, statusPath)
 		})
 
 		Convey("handles buried chunk with no report file", func() {
