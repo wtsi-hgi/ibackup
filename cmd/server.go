@@ -594,7 +594,7 @@ func validateQueues(useQueues string, avoidQueues string) error { //nolint:gocog
 		}
 	}
 
-	if serverDebug || readonly || len(avoid) == 0 && len(queues) == 0 {
+	if serverDebug || readonly || (len(avoid) == 0 && len(queues) == 0) {
 		return nil
 	}
 
