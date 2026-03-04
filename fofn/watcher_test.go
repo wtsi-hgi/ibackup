@@ -231,6 +231,7 @@ func mustWriteReportT(t *rapid.T, runDir, chunkName string, pairs []filePair, st
 		t.Fatal(err)
 	}
 }
+
 func TestProcessSubDir(t *testing.T) {
 	Convey("ProcessSubDir", t, func() {
 		So(transformer.Register("test", `^/tmp/(.*)$`, "/irods/$1"), ShouldBeNil)
@@ -1859,15 +1860,15 @@ func TestSettleRepairsArtefacts(t *testing.T) {
 			rt.Fatalf("status file should exist after settle: %v", err)
 		}
 
-		// Invariant 2: symlink semantics depend on burial state.
-		verifySymlink(rt, numBuried, symlinkPath, statusPath)
+		// Invariant 2: symlink points to the current run status file.
+		verifySymlink(rt, symlinkPath, statusPath)
 	})
 }
 
 // verifySymlink checks that the symlink points to the correct relative status
 // file target. Since wr is queried every poll cycle, buried runs also have a
 // valid symlink showing which chunks completed.
-func verifySymlink(rt *rapid.T, _ int, symlinkPath, statusPath string) {
+func verifySymlink(rt *rapid.T, symlinkPath, statusPath string) {
 	target, err := os.Readlink(symlinkPath)
 	if err != nil {
 		rt.Fatalf("symlink should exist after settle: %v", err)

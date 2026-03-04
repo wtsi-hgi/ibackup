@@ -161,9 +161,7 @@ func submitChunkJobs(
 }
 
 // Watcher monitors a watch directory for fofn changes and manages backup runs
-// based on the filesystem and wr job status. On each poll, wr is queried once
-// for all fofn jobs (via RepGroupPrefix), eliminating the need for in-memory
-// caching or filesystem artefact signalling.
+// using filesystem state plus wr job status.
 type Watcher struct {
 	watchDir  string
 	submitter JobSubmitter
@@ -212,12 +210,8 @@ func (w *Watcher) reconcileAll(subDirs []SubDir, allStatus map[string]RunJobStat
 	return g.Wait()
 }
 
-// reconcile determines and executes the appropriate action for a subdirectory.
-// scanRunDirs reads the directory once, yielding both the current run dir and
-// any stale dirs. Stale-dir cleanup is always performed after dispatch,
-// eliminating the common bug class of "handler X forgets to clean stale dirs."
-// The status map is looked up once and shared between classify and the handler,
-// eliminating redundant map lookups and ReadDir calls.
+// reconcile determines and executes the appropriate action for a subdirectory,
+// then removes stale run directories.
 func (w *Watcher) reconcile(sd SubDir, allStatus map[string]RunJobStatus) error {
 	scan, err := scanRunDirs(sd.Path)
 	if err != nil {
@@ -284,24 +278,21 @@ func ensureArtefacts(runDir string, subDir SubDir, status RunJobStatus) error {
 	return ensureStatusSymlink(runDir, subDir.Path)
 }
 
-// removeDirs removes a list of directories. Returns the last error
-// encountered.
+// removeDirs removes a list of directories and returns any removal errors.
 func removeDirs(dirs []string) error {
-	var lastErr error
+	var errs []error
 
 	for _, dir := range dirs {
 		if err := os.RemoveAll(dir); err != nil {
-			lastErr = fmt.Errorf("remove old run dir: %w", err)
+			errs = append(errs, fmt.Errorf("remove old run dir: %w", err))
 		}
 	}
 
-	return lastErr
+	return errors.Join(errs...)
 }
 
 // runDirScan holds the result of scanning a subdirectory for numeric run
-// directories. It combines run-dir lookup with stale-dir enumeration in a
-// single ReadDir call, eliminating the second ReadDir that deleteOldRunDirs
-// previously required.
+// directories.
 type runDirScan struct {
 	runDir    string   // path to highest-numbered numeric dir, or ""
 	runMtime  int64    // mtime value parsed from the dir name, or 0
@@ -386,9 +377,7 @@ func makeRepGroup(subDirPath string, mtime int64) string {
 	return fmt.Sprintf("%s%s_%d", RepGroupPrefix, filepath.Base(subDirPath), mtime)
 }
 
-// settle ensures artefacts are correct for the current run. Stale-dir cleanup
-// is handled by reconcile after dispatch, making it structurally impossible to
-// forget cleanup in any handler.
+// settle ensures artefacts are correct for the current run.
 func (w *Watcher) settle(subDir SubDir, runDir string, status RunJobStatus) error {
 	return ensureArtefacts(runDir, subDir, status)
 }
