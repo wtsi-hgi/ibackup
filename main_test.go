@@ -4431,32 +4431,7 @@ func TestQueueFlags(t *testing.T) {
 	Convey("You can specify queues to use and avoid", t, func() {
 		buildSelfWithPS(t)
 
-		tmp := t.TempDir()
-
-		err := os.WriteFile(filepath.Join(tmp, "bqueues"), []byte("#!/bin/bash\n"+ //nolint:gosec
-			`cat <<HEREDOC
-{
-  "COMMAND":"bqueues",
-  "QUEUES":4,
-  "RECORDS":[
-    {
-      "QUEUE_NAME":"gpu-basement"
-    },
-    {
-      "QUEUE_NAME":"normal"
-    },
-    {
-      "QUEUE_NAME":"parallel"
-    },
-	{
-      "QUEUE_NAME":"long"
-    }
-  ]
-}
-HEREDOC`), 0700)
-		So(err, ShouldBeNil)
-
-		So(os.Setenv("PATH", tmp+":"+os.Getenv("PATH")), ShouldBeNil)
+		addBqueuesToPath(t)
 
 		q, _ := testQueue(t, []string{"normal"}, nil, false)
 		So(q[0].Requirements.Other["scheduler_queue"], ShouldEqual, "normal")
@@ -4481,6 +4456,37 @@ HEREDOC`), 0700)
 		So(q, ShouldBeNil)
 		So(checkErrorInLog(t, s.logFile, "failed to validate queues: queue 'testtypo' is not a valid queue"), ShouldBeTrue)
 	})
+}
+
+func addBqueuesToPath(t *testing.T) {
+	t.Helper()
+
+	tmp := t.TempDir()
+
+	err := os.WriteFile(filepath.Join(tmp, "bqueues"), []byte("#!/bin/bash\n"+ //nolint:gosec
+		`cat <<HEREDOC
+{
+  "COMMAND":"bqueues",
+  "QUEUES":4,
+  "RECORDS":[
+    {
+      "QUEUE_NAME":"gpu-basement"
+    },
+    {
+      "QUEUE_NAME":"normal"
+    },
+    {
+      "QUEUE_NAME":"parallel"
+    },
+	{
+      "QUEUE_NAME":"long"
+    }
+  ]
+}
+HEREDOC`), 0700)
+	So(err, ShouldBeNil)
+
+	So(os.Setenv("PATH", tmp+":"+os.Getenv("PATH")), ShouldBeNil)
 }
 
 func buildSelfWithPS(t *testing.T) {
@@ -6781,16 +6787,18 @@ func TestWatchFofnsCommand(t *testing.T) {
 		})
 
 		Convey("exits cleanly when given valid dir and context cancel", func() {
+			addBqueuesToPath(t)
+
 			r, w, errp := os.Pipe()
 			So(errp, ShouldBeNil)
 
 			_ = r.Close()
 
-			defer func() { _ = w.Close() }()
+			Reset(func() { _ = w.Close() })
 
 			client.PretendSubmissions = fmt.Sprintf("%d", w.Fd())
 
-			defer func() { client.PretendSubmissions = "" }()
+			Reset(func() { client.PretendSubmissions = "" })
 
 			tmpDir := t.TempDir()
 
@@ -6807,7 +6815,7 @@ func TestWatchFofnsCommand(t *testing.T) {
 					return ctx, cancel
 				},
 			)
-			defer cmd.SetWatchCtxFunc(nil)
+			Reset(func() { cmd.SetWatchCtxFunc(nil) })
 
 			go func() {
 				time.Sleep(200 * time.Millisecond)
