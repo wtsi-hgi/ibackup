@@ -725,14 +725,8 @@ func TestWatcherPoll(t *testing.T) {
 				RepGroup: repGroup,
 				State:    jobqueue.JobStateBuried,
 				Cmd:      "ibackup put -f chunk.000002",
-			}}
-			// Add a completed job to set LastCompletedTime.
-			mock.allJobs = append(mock.allJobs, &jobqueue.Job{
-				RepGroup: repGroup,
-				State:    jobqueue.JobStateComplete,
-				Cmd:      "ibackup put -f chunk.000000",
 				EndTime:  buriedTime,
-			})
+			}}
 
 			err = w.Poll()
 			So(err, ShouldBeNil)
@@ -1317,15 +1311,12 @@ func TestWatcherRestart(t *testing.T) {
 			// Simulate retry: write the previously missing report
 			writeReportFile(runDir, "chunk.000001", makeFilePairs(5, 10), "uploaded")
 
-			// mock returns no buried jobs (retry succeeded), but a completed
-			// job with EndTime after status mtime to trigger regen.
+			// mock returns no buried jobs (retry succeeded), but completion lookup
+			// reports a completion time after status mtime to trigger regen.
 			mock := &mockJobSubmitter{
-				allJobs: []*jobqueue.Job{{
-					RepGroup: "ibackup_fofn_proj_1000",
-					State:    jobqueue.JobStateComplete,
-					Cmd:      "ibackup put -f chunk.000001",
-					EndTime:  time.Now().Add(time.Hour),
-				}},
+				completionMap: map[string]time.Time{
+					"ibackup_fofn_proj_1000": time.Now().Add(time.Hour),
+				},
 			}
 			w := NewWatcher(watchDir, mock, cfg)
 

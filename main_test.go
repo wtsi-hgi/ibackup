@@ -5496,13 +5496,21 @@ func (s *testSubmitter) SubmitJobs(
 	return nil
 }
 
-func (s *testSubmitter) FindJobsByRepGroup(
+func (s *testSubmitter) FindIncompleteJobsByRepGroup(
 	_ string,
+	_ jobqueue.RepGroupMatch,
 ) ([]*jobqueue.Job, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	return s.allJobs, nil
+}
+
+func (s *testSubmitter) GetLastCompletionTimeByRepGroup(
+	_ string,
+	_ jobqueue.RepGroupMatch,
+) (map[string]time.Time, error) {
+	return map[string]time.Time{}, nil
 }
 
 func (s *testSubmitter) DeleteJobs(

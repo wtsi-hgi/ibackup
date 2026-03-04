@@ -159,7 +159,8 @@ func applyDefaults(cfg *RunConfig) {
 // JobSubmitter is an interface for submitting and querying jobs in a job queue.
 type JobSubmitter interface {
 	SubmitJobs(jobs []*jobqueue.Job) error
-	FindJobsByRepGroup(prefix string) ([]*jobqueue.Job, error)
+	FindIncompleteJobsByRepGroup(repgroup string, match jobqueue.RepGroupMatch) ([]*jobqueue.Job, error)
+	GetLastCompletionTimeByRepGroup(repgroup string, match jobqueue.RepGroupMatch) (map[string]time.Time, error)
 	DeleteJobs(jobs []*jobqueue.Job) error
 	Disconnect() error
 }
@@ -172,46 +173,93 @@ type RunJobStatus struct {
 	LastCompletedTime time.Time
 }
 
-// ClassifyAllJobs queries wr once for all fofn jobs and returns a map keyed by
-// repgroup with classified status.
+// ClassifyAllJobs queries wr for incomplete fofn jobs plus latest completion
+// times and returns a map keyed by repgroup with classified status.
 func ClassifyAllJobs(submitter JobSubmitter) (map[string]RunJobStatus, error) {
-	jobs, err := submitter.FindJobsByRepGroup(RepGroupPrefix)
+	jobs, err := submitter.FindIncompleteJobsByRepGroup(
+		RepGroupPrefix,
+		jobqueue.RepGroupMatchPrefix,
+	)
 	if err != nil {
 		return nil, err
 	}
 
-	return classifyJobs(jobs), nil
+	completionTimes, err := submitter.GetLastCompletionTimeByRepGroup(
+		RepGroupPrefix,
+		jobqueue.RepGroupMatchPrefix,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return classifyJobs(jobs, completionTimes), nil
 }
 
-func classifyJobs(jobs []*jobqueue.Job) map[string]RunJobStatus {
+func classifyJobs(
+	jobs []*jobqueue.Job,
+	completionTimes map[string]time.Time,
+) map[string]RunJobStatus {
+	result := classifyIncompleteJobs(jobs)
+	mergeCompletionTimes(result, completionTimes)
+
+	return result
+}
+
+func classifyIncompleteJobs(jobs []*jobqueue.Job) map[string]RunJobStatus {
 	result := make(map[string]RunJobStatus)
 
 	for _, job := range jobs {
 		rg := job.RepGroup
 		s := result[rg]
 
-		switch job.State {
-		case jobqueue.JobStateComplete:
-			if job.EndTime.After(s.LastCompletedTime) {
-				s.LastCompletedTime = job.EndTime
-			}
-		case jobqueue.JobStateDeleted:
+		s, keep := classifyIncompleteJob(s, job)
+		if !keep {
 			continue
-		case jobqueue.JobStateBuried:
-			s.BuriedJobs = append(s.BuriedJobs, job)
-
-			chunk := extractChunkFromCmd(job.Cmd)
-			if chunk != "" {
-				s.BuriedChunks = append(s.BuriedChunks, chunk)
-			}
-		default:
-			s.HasRunning = true
 		}
 
 		result[rg] = s
 	}
 
 	return result
+}
+
+func classifyIncompleteJob(s RunJobStatus, job *jobqueue.Job) (RunJobStatus, bool) {
+	switch job.State {
+	case jobqueue.JobStateDeleted:
+		return s, false
+	case jobqueue.JobStateBuried:
+		return classifyBuriedJob(s, job), true
+	default:
+		s.HasRunning = true
+
+		return s, true
+	}
+}
+
+func classifyBuriedJob(s RunJobStatus, job *jobqueue.Job) RunJobStatus {
+	s.BuriedJobs = append(s.BuriedJobs, job)
+
+	if job.EndTime.After(s.LastCompletedTime) {
+		s.LastCompletedTime = job.EndTime
+	}
+
+	chunk := extractChunkFromCmd(job.Cmd)
+	if chunk != "" {
+		s.BuriedChunks = append(s.BuriedChunks, chunk)
+	}
+
+	return s
+}
+
+func mergeCompletionTimes(result map[string]RunJobStatus, completionTimes map[string]time.Time) {
+	for rg, completionTime := range completionTimes {
+		s := result[rg]
+		if len(s.BuriedJobs) == 0 {
+			s.LastCompletedTime = completionTime
+		}
+
+		result[rg] = s
+	}
 }
 
 // extractChunkFromCmd parses a command string and returns the argument
@@ -221,12 +269,12 @@ func classifyJobs(jobs []*jobqueue.Job) map[string]RunJobStatus {
 func extractChunkFromCmd(cmd string) string {
 	const flag = "-f "
 
-	idx := strings.Index(cmd, flag)
-	if idx == -1 {
+	_, after, ok := strings.Cut(cmd, flag)
+	if !ok {
 		return ""
 	}
 
-	rest := cmd[idx+len(flag):]
+	rest := after
 
 	return extractQuotedOrWord(rest)
 }

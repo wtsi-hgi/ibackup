@@ -3,7 +3,7 @@ module github.com/wtsi-hgi/ibackup
 go 1.25.5
 
 require (
-	github.com/VertebrateResequencing/wr v0.36.2
+	github.com/VertebrateResequencing/wr v0.36.5
 	github.com/dgryski/go-farm v0.0.0-20240924180020-3414d57e47da
 	github.com/dustin/go-humanize v1.0.1
 	github.com/fsnotify/fsnotify v1.6.0

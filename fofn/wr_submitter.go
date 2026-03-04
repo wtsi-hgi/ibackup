@@ -43,8 +43,18 @@ func (w *wrSubmitter) SubmitJobs(jobs []*jobqueue.Job) error {
 	return w.sched.SubmitJobs(jobs)
 }
 
-func (w *wrSubmitter) FindJobsByRepGroup(prefix string) ([]*jobqueue.Job, error) {
-	return w.sched.FindJobsByRepGroupPrefixAndState(prefix, "")
+func (w *wrSubmitter) FindIncompleteJobsByRepGroup(
+	repgroup string,
+	match jobqueue.RepGroupMatch,
+) ([]*jobqueue.Job, error) {
+	return w.sched.FindIncompleteJobsByRepGroup(repgroup, match)
+}
+
+func (w *wrSubmitter) GetLastCompletionTimeByRepGroup(
+	repgroup string,
+	match jobqueue.RepGroupMatch,
+) (map[string]time.Time, error) {
+	return w.sched.GetLastCompletionTimeByRepGroup(repgroup, match)
 }
 
 func (w *wrSubmitter) DeleteJobs(jobs []*jobqueue.Job) error {
