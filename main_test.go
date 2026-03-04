@@ -3677,7 +3677,7 @@ func (s *testServer) startServerInProcess() {
 
 	debugMode := s.schedulerDeployment == ""
 
-	validated, err := cmd.ValidateQueuesForTests(
+	err = cmd.ValidateQueuesForTests(
 		strings.Join(s.queues, ","),
 		strings.Join(s.avoidQueues, ","),
 		debugMode,
@@ -3688,16 +3688,6 @@ func (s *testServer) startServerInProcess() {
 
 		if !s.shouldFail {
 			So(err, ShouldBeNil)
-		}
-
-		return
-	}
-
-	if !validated {
-		fmt.Fprint(logWriter, "invalid queues specified")
-
-		if !s.shouldFail {
-			So(errInvalidQueuesSpecified, ShouldBeNil)
 		}
 
 		return
@@ -4487,7 +4477,7 @@ func addBqueuesToPath(t *testing.T) {
 HEREDOC`), 0700)
 	So(err, ShouldBeNil)
 
-	So(os.Setenv("PATH", tmp+":"+os.Getenv("PATH")), ShouldBeNil)
+	t.Setenv("PATH", tmp+":"+os.Getenv("PATH"))
 }
 
 func buildSelfWithPS(t *testing.T) {
@@ -5520,9 +5510,7 @@ func (s *testSubmitter) GetLastCompletionTimeByRepGroup(
 	return map[string]time.Time{}, nil
 }
 
-func (s *testSubmitter) DeleteJobs(
-	jobs []*jobqueue.Job,
-) error {
+func (s *testSubmitter) RemoveJobs(jobs ...*jobqueue.Job) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -5608,8 +5596,7 @@ func TestWatchFofnsIntegration(t *testing.T) {
 				relStatusFile,
 			)
 
-			entries, counts, parseErr :=
-				fofn.ParseStatus(symlinkPath)
+			entries, counts, parseErr := fofn.ParseStatus(symlinkPath)
 			So(parseErr, ShouldBeNil)
 			So(entries, ShouldHaveLength, 5)
 			So(counts.Uploaded, ShouldEqual, 5)
@@ -5720,8 +5707,7 @@ func TestWatchFofnsIntegration(t *testing.T) {
 				filepath.Join(subPath, "status"),
 			), ShouldBeNil)
 
-			entries, counts, parseErr :=
-				fofn.ParseStatus(filepath.Join(subPath, "status"))
+			entries, counts, parseErr := fofn.ParseStatus(filepath.Join(subPath, "status"))
 			So(parseErr, ShouldBeNil)
 			So(entries, ShouldHaveLength, 5)
 			So(counts.Frozen, ShouldEqual, 2)

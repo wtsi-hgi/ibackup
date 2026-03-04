@@ -58,7 +58,6 @@ var (
 	errMinExceedsMax   = errors.New("--min-chunk must be <= --max-chunk")
 	errRetriesNegative = errors.New("--retries must be >= 0")
 	errRetriesTooLarge = fmt.Errorf("--retries must be <= %d", maxRetries)
-	errInvalidQueues   = errors.New("invalid queues specified")
 )
 
 // command-line options for watchfofns.
@@ -187,11 +186,8 @@ func validateWatchFlags() error {
 		return err
 	}
 
-	validated, err := validateQueues(queues, queueAvoid)
-	if err != nil {
+	if err := validateQueues(queues, queueAvoid); err != nil {
 		return fmt.Errorf("failed to validate queues: %w", err)
-	} else if !validated {
-		return errInvalidQueues
 	}
 
 	return nil

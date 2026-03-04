@@ -293,12 +293,8 @@ These should be supplied as a comma separated list.
 			dief("failed to make queue endpoints: %s", err)
 		}
 
-		validated, err := validateQueues(queues, queueAvoid)
-		if err != nil {
+		if err = validateQueues(queues, queueAvoid); err != nil {
 			dief("failed to validate queues: %s", err)
-		}
-		if !validated {
-			dief("invalid queues specified")
 		}
 
 		if serverDebug || readonly {
@@ -587,24 +583,24 @@ type bqueuesOutput struct {
 
 // validateQueues will parse and check that all queues provided exist, and that
 // the chosen queues are not also present in the avoid list.
-func validateQueues(useQueues string, avoidQueues string) (bool, error) { //nolint:gocognit,gocyclo
+func validateQueues(useQueues string, avoidQueues string) error { //nolint:gocognit,gocyclo,cyclop
 	avoid := parseQueues(avoidQueues)
 	queues := parseQueues(useQueues)
 
 	// Check that no queue is in both use and avoid lists
 	for _, q := range queues {
 		if slices.Contains(avoid, q) {
-			return false, fmt.Errorf("queue '%s' is in avoid queues list", q) //nolint:err113
+			return fmt.Errorf("queue '%s' is in avoid queues list", q) //nolint:err113
 		}
 	}
 
 	if serverDebug || readonly || len(avoid) == 0 && len(queues) == 0 {
-		return true, nil
+		return nil
 	}
 
 	validQueues, err := getValidQueues()
 	if err != nil {
-		return false, fmt.Errorf("failed to get valid queues: %w", err)
+		return fmt.Errorf("failed to get valid queues: %w", err)
 	}
 
 	queueMap := make(map[string]struct{})
@@ -615,15 +611,15 @@ func validateQueues(useQueues string, avoidQueues string) (bool, error) { //noli
 
 	for _, queue := range append(queues, avoid...) {
 		if _, exists := queueMap[queue]; !exists {
-			return false, fmt.Errorf("queue '%s' is not a valid queue", queue) //nolint:err113
+			return fmt.Errorf("queue '%s' is not a valid queue", queue) //nolint:err113
 		}
 	}
 
-	return true, nil
+	return nil
 }
 
 // ValidateQueuesForTests exposes queue validation for test helpers.
-func ValidateQueuesForTests(useQueues string, avoidQueues string, debug bool, readOnly bool) (bool, error) {
+func ValidateQueuesForTests(useQueues string, avoidQueues string, debug bool, readOnly bool) error {
 	oldDebug := serverDebug
 	oldReadonly := readonly
 	serverDebug = debug
