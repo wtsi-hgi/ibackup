@@ -3294,8 +3294,18 @@ func TestServer(t *testing.T) {
 							minMBperSecondUploadSpeed, minTimeForUpload, maxStuckTime, logger)
 						So(err, ShouldBeNil)
 
-						gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+						err = testutil.RetryUntilWorksCustom(t, func() error {
+							gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+							So(err, ShouldBeNil)
+
+							if gotSet.Status == set.Complete {
+								return nil
+							}
+
+							return errUnexpectedStatus
+						}, 5*time.Second, 50*time.Millisecond)
 						So(err, ShouldBeNil)
+
 						So(gotSet.Status, ShouldEqual, set.Complete)
 						So(gotSet.NumFiles, ShouldEqual, len(discovers))
 						So(gotSet.Uploaded, ShouldBeLessThanOrEqualTo, len(discovers)-1)

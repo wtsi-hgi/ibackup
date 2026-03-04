@@ -27,7 +27,6 @@ package fofn
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -41,6 +40,11 @@ const (
 	defaultCores    = 0.1
 	defaultTime     = 8 * time.Hour
 	defaultReqGroup = "ibackup"
+
+	// RepGroupPrefix is the common prefix for all fofn job repgroups. A single
+	// wr query with this prefix retrieves jobs for every fofn directory at
+	// once.
+	RepGroupPrefix = "ibackup_fofn_"
 )
 
 // RunConfig holds configuration for creating jobs from chunk files.
@@ -62,7 +66,7 @@ type RunConfig struct {
 func CreateJobs(cfg RunConfig) []*jobqueue.Job {
 	applyDefaults(&cfg)
 
-	repGroup := fmt.Sprintf("ibackup_fofn_%s_%d", cfg.SubDirName, cfg.FofnMtime)
+	repGroup := fmt.Sprintf("%s%s_%d", RepGroupPrefix, cfg.SubDirName, cfg.FofnMtime)
 
 	jobs := make([]*jobqueue.Job, len(cfg.ChunkPaths))
 
@@ -155,50 +159,100 @@ func applyDefaults(cfg *RunConfig) {
 // JobSubmitter is an interface for submitting and querying jobs in a job queue.
 type JobSubmitter interface {
 	SubmitJobs(jobs []*jobqueue.Job) error
-	FindBuriedJobsByRepGroup(prefix string) ([]*jobqueue.Job, error)
-	FindIncompleteJobsByRepGroup(prefix string) ([]*jobqueue.Job, error)
+	FindIncompleteJobsByRepGroup(repgroup string, match jobqueue.RepGroupMatch) ([]*jobqueue.Job, error)
+	GetLastCompletionTimeByRepGroup(repgroup string, match jobqueue.RepGroupMatch) (map[string]time.Time, error)
 	DeleteJobs(jobs []*jobqueue.Job) error
 	Disconnect() error
 }
 
-// IsRunComplete returns true if there are no incomplete
-// jobs for the given repGroup.
-func IsRunComplete(
-	submitter JobSubmitter, repGroup string,
-) (bool, error) {
-	jobs, err := submitter.FindIncompleteJobsByRepGroup(repGroup)
-	if err != nil {
-		return false, err
-	}
-
-	return len(jobs) == 0, nil
+// RunJobStatus holds the classified result of a wr query for a single repgroup.
+type RunJobStatus struct {
+	HasRunning        bool
+	BuriedJobs        []*jobqueue.Job
+	BuriedChunks      []string
+	LastCompletedTime time.Time
 }
 
-// FindBuriedChunks returns the paths of chunk files extracted from
-// buried jobs matching the given repGroup. The chunk path is the argument after
-// -f in each job's Cmd; relative paths are joined with runDir.
-func FindBuriedChunks(
-	submitter JobSubmitter, repGroup, runDir string,
-) ([]string, error) {
-	jobs, err := submitter.FindBuriedJobsByRepGroup(repGroup)
+// ClassifyAllJobs queries wr for incomplete fofn jobs plus latest completion
+// times and returns a map keyed by repgroup with classified status.
+func ClassifyAllJobs(submitter JobSubmitter) (map[string]RunJobStatus, error) {
+	jobs, err := submitter.FindIncompleteJobsByRepGroup(
+		RepGroupPrefix,
+		jobqueue.RepGroupMatchPrefix,
+	)
 	if err != nil {
 		return nil, err
 	}
 
-	chunks := make([]string, 0, len(jobs))
-
-	for _, job := range jobs {
-		chunk := extractChunkFromCmd(job.Cmd)
-		if chunk != "" {
-			if !filepath.IsAbs(chunk) {
-				chunk = filepath.Join(runDir, chunk)
-			}
-
-			chunks = append(chunks, chunk)
-		}
+	completionTimes, err := submitter.GetLastCompletionTimeByRepGroup(
+		RepGroupPrefix,
+		jobqueue.RepGroupMatchPrefix,
+	)
+	if err != nil {
+		return nil, err
 	}
 
-	return chunks, nil
+	return classifyJobs(jobs, completionTimes), nil
+}
+
+func classifyJobs(
+	jobs []*jobqueue.Job,
+	completionTimes map[string]time.Time,
+) map[string]RunJobStatus {
+	result := classifyIncompleteJobs(jobs)
+	mergeCompletionTimes(result, completionTimes)
+
+	return result
+}
+
+func classifyIncompleteJobs(jobs []*jobqueue.Job) map[string]RunJobStatus {
+	result := make(map[string]RunJobStatus)
+
+	for _, job := range jobs {
+		rg := job.RepGroup
+		s := result[rg]
+		result[rg] = classifyIncompleteJob(s, job)
+	}
+
+	return result
+}
+
+func classifyIncompleteJob(s RunJobStatus, job *jobqueue.Job) RunJobStatus {
+	switch job.State {
+	case jobqueue.JobStateBuried:
+		return classifyBuriedJob(s, job)
+	default:
+		s.HasRunning = true
+
+		return s
+	}
+}
+
+func classifyBuriedJob(s RunJobStatus, job *jobqueue.Job) RunJobStatus {
+	chunk := extractChunkFromCmd(job.Cmd)
+	if chunk == "" {
+		return s
+	}
+
+	s.BuriedJobs = append(s.BuriedJobs, job)
+	s.BuriedChunks = append(s.BuriedChunks, chunk)
+
+	if job.EndTime.After(s.LastCompletedTime) {
+		s.LastCompletedTime = job.EndTime
+	}
+
+	return s
+}
+
+func mergeCompletionTimes(result map[string]RunJobStatus, completionTimes map[string]time.Time) {
+	for rg, completionTime := range completionTimes {
+		s := result[rg]
+		if len(s.BuriedJobs) == 0 && completionTime.After(s.LastCompletedTime) {
+			s.LastCompletedTime = completionTime
+		}
+
+		result[rg] = s
+	}
 }
 
 // extractChunkFromCmd parses a command string and returns the argument
@@ -206,14 +260,10 @@ func FindBuriedChunks(
 // The argument may be quoted (e.g. -f "path/to/chunk") to support paths
 // containing spaces.
 func extractChunkFromCmd(cmd string) string {
-	const flag = "-f "
-
-	idx := strings.Index(cmd, flag)
-	if idx == -1 {
+	_, rest, ok := strings.Cut(cmd, "-f ")
+	if !ok {
 		return ""
 	}
-
-	rest := cmd[idx+len(flag):]
 
 	return extractQuotedOrWord(rest)
 }
@@ -236,20 +286,4 @@ func extractQuotedOrWord(s string) string {
 	}
 
 	return s
-}
-
-// DeleteBuriedJobs finds and deletes buried jobs matching the given repGroup.
-func DeleteBuriedJobs(
-	submitter JobSubmitter, repGroup string,
-) error {
-	jobs, err := submitter.FindBuriedJobsByRepGroup(repGroup)
-	if err != nil {
-		return err
-	}
-
-	if len(jobs) > 0 {
-		return submitter.DeleteJobs(jobs)
-	}
-
-	return nil
 }

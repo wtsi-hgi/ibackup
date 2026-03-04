@@ -13,8 +13,8 @@ github.com/Microsoft/go-winio v0.6.2 h1:F2VQgta7ecxGYO8k3ZZz3RS8fVIXVxONVUPlNERo
 github.com/Microsoft/go-winio v0.6.2/go.mod h1:yd8OoFMLzJbo9gZq8j5qaps8bJ9aShtEA8Ipt1oGCvU=
 github.com/VertebrateResequencing/muxfys/v4 v4.0.3 h1:yEfoOk4kewSeAX2DKNKyoa2636yFzi02/okXsHuIqHw=
 github.com/VertebrateResequencing/muxfys/v4 v4.0.3/go.mod h1:OvbcbZwgWdjzeL+7uAdSIanJDdUleEA1/05wGmhgeTA=
-github.com/VertebrateResequencing/wr v0.36.2 h1:4mq4UiW/QkPKHOc133ksfvXjOHAKaLU86fSE5SJrtxw=
-github.com/VertebrateResequencing/wr v0.36.2/go.mod h1:orCpSVYYUq2/M0KeYfF9uSFYhaVFNMApGerWzbj11Dk=
+github.com/VertebrateResequencing/wr v0.36.5 h1:3g2PQemzcCmH8WOPCb7yXWFaIKuOIPUhngjqy3jT/9k=
+github.com/VertebrateResequencing/wr v0.36.5/go.mod h1:orCpSVYYUq2/M0KeYfF9uSFYhaVFNMApGerWzbj11Dk=
 github.com/VividCortex/ewma v1.2.0 h1:f58SaIzcDXrSy3kWaHNvuJgJ3Nmz59Zji6XoJR/q1ow=
 github.com/VividCortex/ewma v1.2.0/go.mod h1:nz4BbCtbLyFDeC9SUHbtcT5644juEuWfUAUnGx7j5l4=
 github.com/acarl005/stripansi v0.0.0-20180116102854-5a71ef0e047d h1:licZJFw2RwpHMqeKTCYkitsPqHNxTmd4SNR5r94FGM8=
@@ -651,5 +651,7 @@ k8s.io/client-go v7.0.0+incompatible h1:kiH+Y6hn+pc78QS/mtBfMJAMIIaWevHi++JvOGEE
 k8s.io/client-go v7.0.0+incompatible/go.mod h1:7vJpHMYJwNQCWgzmNV+VYUl1zCObLyodBc8nIyt8L5s=
 nanomsg.org/go-mangos v1.4.0 h1:pVRLnzXePdSbhWlWdSncYszTagERhMG5zK/vXYmbEdM=
 nanomsg.org/go-mangos v1.4.0/go.mod h1:MOor8xUIgwsRMPpLr9xQxe7bT7rciibScOqVyztNxHQ=
+pgregory.net/rapid v1.2.0 h1:keKAYRcjm+e1F0oAuU5F5+YPAWcyxNNRK2wud503Gnk=
+pgregory.net/rapid v1.2.0/go.mod h1:PY5XlDGj0+V1FCq0o192FdRhpKHGTRIWBgqjDBTrq04=
 vimagination.zapto.org/parser v1.2.2 h1:LdihVnnzb7m2e0caKm2Zsj+8IJiUKW2ZCK7b/+XmpSo=
 vimagination.zapto.org/parser v1.2.2/go.mod h1:MxM1MZY6A9AeEx6nahIQ6MJaGZqX80n6Vm3zGVqV9FU=

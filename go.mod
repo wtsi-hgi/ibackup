@@ -3,7 +3,7 @@ module github.com/wtsi-hgi/ibackup
 go 1.25.5
 
 require (
-	github.com/VertebrateResequencing/wr v0.36.2
+	github.com/VertebrateResequencing/wr v0.36.5
 	github.com/dgryski/go-farm v0.0.0-20240924180020-3414d57e47da
 	github.com/dustin/go-humanize v1.0.1
 	github.com/fsnotify/fsnotify v1.6.0
@@ -30,8 +30,10 @@ require (
 	github.com/wtsi-npg/logshim-zerolog v1.5.0
 	github.com/wtsi-ssg/wr v0.5.12
 	go.etcd.io/bbolt v1.4.0
+	golang.org/x/sync v0.19.0
 	golang.org/x/sys v0.40.0
 	gopkg.in/yaml.v3 v3.0.1
+	pgregory.net/rapid v1.2.0
 )
 
 require (
@@ -165,7 +167,6 @@ require (
 	golang.org/x/crypto v0.47.0 // indirect
 	golang.org/x/net v0.49.0 // indirect
 	golang.org/x/oauth2 v0.34.0 // indirect
-	golang.org/x/sync v0.19.0 // indirect
 	golang.org/x/term v0.39.0 // indirect
 	golang.org/x/text v0.33.0 // indirect
 	golang.org/x/time v0.12.0 // indirect

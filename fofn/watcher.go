@@ -33,21 +33,21 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"sync"
 	"time"
 
-	"github.com/wtsi-hgi/ibackup/internal/ownership"
 	"github.com/wtsi-hgi/ibackup/transformer"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
 	statusFilename = "status"
 	maxPollWorkers = 10
+	dirMode        = 0750
 )
 
 // ProcessSubDirConfig holds configuration for processing a subdirectory.
-// RandSeed controls chunk shuffling: 0 means use time-based randomness;
-// a non-zero value gives deterministic shuffling (useful for tests).
+// RandSeed controls chunk shuffling: 0 means use time-based randomness; a
+// non-zero value gives deterministic shuffling (useful for tests).
 type ProcessSubDirConfig struct {
 	MinChunk  int
 	MaxChunk  int
@@ -55,23 +55,24 @@ type ProcessSubDirConfig struct {
 	RunConfig RunConfig
 }
 
-// prepareChunks creates a run directory, writes shuffled chunk files, and sets
-// their GID. Returns empty runDir and nil chunks if the fofn is empty.
+// prepareChunks creates a run directory and writes shuffled chunk files.
+// Returns empty runDir and nil chunks if the fofn is empty. Group ownership is
+// inherited from the parent directory's setgid bit.
 func prepareChunks(
 	subDir SubDir,
 	transform func(string) (string, error),
 	mtime int64,
 	cfg ProcessSubDirConfig,
 ) (string, []string, error) {
-	gid, runDir, err := createRunDir(subDir, mtime)
-	if err != nil {
+	runDir := filepath.Join(subDir.Path, strconv.FormatInt(mtime, 10))
+
+	if err := os.Mkdir(runDir, dirMode); err != nil {
 		return "", nil, err
 	}
 
-	chunks, err := writeChunksWithGID(
-		subDir.Path, runDir, transform,
-		gid, cfg.MinChunk, cfg.MaxChunk, cfg.RandSeed,
-	)
+	fofnPath := filepath.Join(subDir.Path, fofnFilename)
+
+	chunks, err := WriteShuffledChunks(fofnPath, transform, runDir, cfg.MinChunk, cfg.MaxChunk, cfg.RandSeed)
 	if err != nil {
 		_ = os.RemoveAll(runDir)
 
@@ -87,53 +88,6 @@ func prepareChunks(
 	return runDir, chunks, nil
 }
 
-// createRunDir creates a run directory named after the given mtime, with group
-// ownership matching the watch directory.
-func createRunDir(
-	subDir SubDir, mtime int64,
-) (int, string, error) {
-	watchDir := filepath.Dir(subDir.Path)
-
-	gid, err := ownership.GetDirGID(watchDir)
-	if err != nil {
-		return 0, "", err
-	}
-
-	runDir := filepath.Join(subDir.Path, strconv.FormatInt(mtime, 10))
-
-	if err := ownership.CreateDirWithGID(
-		runDir, gid,
-	); err != nil {
-		return 0, "", err
-	}
-
-	return gid, runDir, nil
-}
-
-// writeChunksWithGID writes shuffled chunk files and sets
-// their group ownership to the given GID.
-func writeChunksWithGID(
-	subDirPath, runDir string,
-	transform func(string) (string, error),
-	gid, minChunk, maxChunk int,
-	randSeed int64,
-) ([]string, error) {
-	fofnPath := filepath.Join(subDirPath, fofnFilename)
-
-	chunks, err := WriteShuffledChunks(fofnPath, transform, runDir, minChunk, maxChunk, randSeed)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, chunk := range chunks {
-		if err := os.Chown(chunk, -1, gid); err != nil {
-			return nil, fmt.Errorf("chown chunk: %w", err)
-		}
-	}
-
-	return chunks, nil
-}
-
 // RunState tracks the state of an active run for a subdirectory.
 type RunState struct {
 	RepGroup string
@@ -142,15 +96,16 @@ type RunState struct {
 }
 
 // ProcessSubDir reads config.yml, looks up the named transformer, writes
-// shuffled chunks, and submits jobs. Returns a RunState describing the active
-// run, or an error.
-func ProcessSubDir(
-	subDir SubDir,
-	submitter JobSubmitter,
-	cfg ProcessSubDirConfig,
-) (RunState, error) {
-	sdCfg, mtime, err := readAndCheckConfig(subDir)
-	if err != nil || mtime == 0 {
+// shuffled chunks, and submits jobs. SubDir.FofnMtime is used as the run
+// directory name (eliminating a redundant stat). Returns a RunState describing
+// the active run, or an error.
+func ProcessSubDir(subDir SubDir, submitter JobSubmitter, cfg ProcessSubDirConfig) (RunState, error) {
+	if subDir.FofnMtime == 0 {
+		return RunState{}, nil
+	}
+
+	sdCfg, err := ReadConfig(subDir.Path)
+	if err != nil {
 		return RunState{}, err
 	}
 
@@ -159,7 +114,7 @@ func ProcessSubDir(
 		return RunState{}, err
 	}
 
-	runDir, chunks, err := prepareChunks(subDir, transform, mtime, cfg)
+	runDir, chunks, err := prepareChunks(subDir, transform, subDir.FofnMtime, cfg)
 	if err != nil || chunks == nil {
 		return RunState{}, err
 	}
@@ -167,7 +122,7 @@ func ProcessSubDir(
 	return submitChunkJobs(
 		submitter, sdCfg, cfg.RunConfig,
 		runDir, chunks,
-		filepath.Base(subDir.Path), mtime,
+		filepath.Base(subDir.Path), subDir.FofnMtime,
 	)
 }
 
@@ -196,7 +151,7 @@ func submitChunkJobs(
 		return RunState{}, err
 	}
 
-	repGroup := fmt.Sprintf("ibackup_fofn_%s_%d", dirName, mtime)
+	repGroup := fmt.Sprintf("%s%s_%d", RepGroupPrefix, dirName, mtime)
 
 	return RunState{
 		RepGroup: repGroup,
@@ -205,102 +160,198 @@ func submitChunkJobs(
 	}, nil
 }
 
-// buildRunFromNewest finds the newest numeric run
-// directory and constructs the corresponding RunState.
-func buildRunFromNewest(
-	subDirPath string,
-) (RunState, bool, error) {
-	mtime, found, err := newestRunDir(subDirPath)
-	if err != nil || !found {
-		return RunState{}, false, err
-	}
-
-	dirName := filepath.Base(subDirPath)
-	repGroup := fmt.Sprintf("ibackup_fofn_%s_%d", dirName, mtime)
-	runDir := filepath.Join(subDirPath, strconv.FormatInt(mtime, 10))
-
-	return RunState{
-		RepGroup: repGroup,
-		RunDir:   runDir,
-		Mtime:    mtime,
-	}, true, nil
-}
-
-// Watcher monitors a watch directory for fofn changes and manages backup runs.
+// Watcher monitors a watch directory for fofn changes and manages backup runs
+// using filesystem state plus wr job status.
 type Watcher struct {
-	watchDir   string
-	submitter  JobSubmitter
-	cfg        ProcessSubDirConfig
-	logger     *slog.Logger
-	mu         sync.Mutex
-	activeRuns map[string]RunState // key: subDir.Path
+	watchDir  string
+	submitter JobSubmitter
+	cfg       ProcessSubDirConfig
+	logger    *slog.Logger
 }
 
 // NewWatcher creates a new Watcher for the given watch directory.
-func NewWatcher(
-	watchDir string,
-	submitter JobSubmitter,
-	cfg ProcessSubDirConfig,
-) *Watcher {
+func NewWatcher(watchDir string, submitter JobSubmitter, cfg ProcessSubDirConfig) *Watcher {
 	return &Watcher{
-		watchDir:   watchDir,
-		submitter:  submitter,
-		cfg:        cfg,
-		logger:     slog.Default(),
-		activeRuns: make(map[string]RunState),
+		watchDir:  watchDir,
+		submitter: submitter,
+		cfg:       cfg,
+		logger:    slog.Default(),
 	}
 }
 
-// getActiveRun returns the RunState for the given path
-// and whether it exists, with thread-safe map access.
-func (w *Watcher) getActiveRun(
-	path string,
-) (RunState, bool) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-
-	r, ok := w.activeRuns[path]
-
-	return r, ok
-}
-
-// setActiveRun stores a RunState for the given path
-// with thread-safe map access.
-func (w *Watcher) setActiveRun(
-	path string, state RunState,
-) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-
-	w.activeRuns[path] = state
-}
-
-// clearActiveRun removes the RunState for the given
-// path with thread-safe map access.
-func (w *Watcher) clearActiveRun(path string) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-
-	delete(w.activeRuns, path)
-}
-
-// Poll performs one poll cycle: scan for subdirectories, check active runs,
-// start new runs as needed. Subdirectories are processed in parallel.
+// Poll performs one poll cycle: scan for subdirectories, query wr once for all
+// job status, then reconcile each subdirectory.
 func (w *Watcher) Poll() error {
 	subDirs, err := ScanForFOFNs(w.watchDir)
 	if err != nil {
 		return err
 	}
 
-	return w.pollSubDirsParallel(subDirs)
+	allStatus, err := ClassifyAllJobs(w.submitter)
+	if err != nil {
+		return err
+	}
+
+	return w.reconcileAll(subDirs, allStatus)
+}
+
+// reconcileAll classifies and dispatches all subdirectories concurrently with
+// bounded parallelism. Returns the first error encountered.
+func (w *Watcher) reconcileAll(subDirs []SubDir, allStatus map[string]RunJobStatus) error {
+	g := new(errgroup.Group)
+	g.SetLimit(maxPollWorkers)
+
+	for _, sd := range subDirs {
+		g.Go(func() error {
+			return w.reconcile(sd, allStatus)
+		})
+	}
+
+	return g.Wait()
+}
+
+// reconcile determines and executes the appropriate action for a subdirectory,
+// then removes stale run directories.
+func (w *Watcher) reconcile(sd SubDir, allStatus map[string]RunJobStatus) error {
+	scan, err := scanRunDirs(sd.Path)
+	if err != nil {
+		return err
+	}
+
+	var status RunJobStatus
+	if scan.found {
+		status = allStatus[makeRepGroup(sd.Path, scan.runMtime)]
+	}
+
+	if err := w.dispatch(sd, scan, status); err != nil {
+		return err
+	}
+
+	return removeDirs(scan.staleDirs)
+}
+
+// scanRunDirs reads subDirPath once and partitions numeric subdirectories into
+// the current run dir (highest number) and stale dirs (everything else).
+// Non-existence of subDirPath is treated as "not found" to tolerate races where
+// a directory is removed between scan and classification.
+func scanRunDirs(subDirPath string) (runDirScan, error) {
+	entries, err := os.ReadDir(subDirPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return runDirScan{}, nil
+		}
+
+		return runDirScan{}, fmt.Errorf("read dir for run dir: %w", err)
+	}
+
+	return partitionRunDirs(subDirPath, entries), nil
+}
+
+// dispatch executes the state-appropriate handler for a subdirectory.
+func (w *Watcher) dispatch(sd SubDir, scan runDirScan, status RunJobStatus) error {
+	if !scan.found {
+		return w.startNewRun(sd)
+	}
+
+	if status.HasRunning {
+		return nil
+	}
+
+	if sd.FofnMtime != scan.runMtime {
+		return w.teardownAndRestart(sd, scan.runDir, status)
+	}
+
+	return w.settle(sd, scan.runDir, status)
+}
+
+// ensureArtefacts is the single function responsible for status file and
+// symlink correctness. It regenerates the status file only when wr reports a
+// more recent completion than the current status. The symlink is always checked
+// and repaired if needed.
+func ensureArtefacts(runDir string, subDir SubDir, status RunJobStatus) error {
+	if needsStatusRegen(runDir, status.LastCompletedTime) {
+		if err := GenerateStatus(runDir, status.BuriedChunks); err != nil {
+			return err
+		}
+	}
+
+	return ensureStatusSymlink(runDir, subDir.Path)
+}
+
+// removeDirs removes a list of directories and returns any removal errors.
+func removeDirs(dirs []string) error {
+	var errs []error
+
+	for _, dir := range dirs {
+		if err := os.RemoveAll(dir); err != nil {
+			errs = append(errs, fmt.Errorf("remove old run dir: %w", err))
+		}
+	}
+
+	return errors.Join(errs...)
+}
+
+// runDirScan holds the result of scanning a subdirectory for numeric run
+// directories.
+type runDirScan struct {
+	runDir    string   // path to highest-numbered numeric dir, or ""
+	runMtime  int64    // mtime value parsed from the dir name, or 0
+	found     bool     // true if a numeric run dir exists
+	staleDirs []string // absolute paths of numeric dirs other than the current
+}
+
+// partitionRunDirs separates numeric directories into the highest (current run)
+// and all others (stale). Non-numeric and non-directory entries are ignored.
+func partitionRunDirs(subDirPath string, entries []os.DirEntry) runDirScan {
+	var scan runDirScan
+
+	for _, entry := range entries {
+		n, ok := numericDirValue(entry)
+		if !ok {
+			continue
+		}
+
+		dirPath := filepath.Join(subDirPath, entry.Name())
+
+		if !shouldPromoteRunDir(scan, entry.Name(), n) {
+			scan.staleDirs = append(scan.staleDirs, dirPath)
+
+			continue
+		}
+
+		// Demote the previous best to stale.
+		if scan.found {
+			scan.staleDirs = append(scan.staleDirs, scan.runDir)
+		}
+
+		scan.runDir = dirPath
+		scan.runMtime = n
+		scan.found = true
+	}
+
+	return scan
+}
+
+func shouldPromoteRunDir(scan runDirScan, dirName string, mtime int64) bool {
+	if !scan.found {
+		return true
+	}
+
+	if mtime > scan.runMtime {
+		return true
+	}
+
+	if mtime < scan.runMtime {
+		return false
+	}
+
+	return dirName > filepath.Base(scan.runDir)
 }
 
 // Run polls immediately and then at the given interval until the context is
 // cancelled. Returns nil on cancellation. The initial poll error is returned
 // immediately; subsequent poll errors are logged and polling continues.
-func (w *Watcher) Run(
-	ctx context.Context, interval time.Duration,
-) error {
+func (w *Watcher) Run(ctx context.Context, interval time.Duration) error {
 	if err := w.Poll(); err != nil {
 		return err
 	}
@@ -314,245 +365,57 @@ func (w *Watcher) Run(
 			return nil
 		case <-ticker.C:
 			if err := w.Poll(); err != nil {
-				w.logger.Error("poll failed",
-					"err", err)
+				w.logger.Error("poll failed", "err", err)
 			}
 		}
 	}
 }
 
-// pollSubDirsParallel processes all subdirectories concurrently with bounded
-// parallelism, collecting all errors.
-func (w *Watcher) pollSubDirsParallel(
-	subDirs []SubDir,
-) error {
-	var (
-		wg    sync.WaitGroup
-		errMu sync.Mutex
-		errs  []error
-		sem   = make(chan struct{}, maxPollWorkers)
-	)
-
-	for _, subDir := range subDirs {
-		wg.Add(1)
-
-		sem <- struct{}{}
-
-		go w.pollSubDirCollect(subDir, sem, &wg, &errMu, &errs)
-	}
-
-	wg.Wait()
-
-	return errors.Join(errs...)
+// makeRepGroup derives a deterministic repgroup name from a subdirectory path
+// and fofn mtime, matching the format used by ProcessSubDir/submitChunkJobs.
+func makeRepGroup(subDirPath string, mtime int64) string {
+	return fmt.Sprintf("%s%s_%d", RepGroupPrefix, filepath.Base(subDirPath), mtime)
 }
 
-func (w *Watcher) pollSubDirCollect(
-	sd SubDir, sem chan struct{},
-	wg *sync.WaitGroup, errMu *sync.Mutex, errs *[]error,
-) {
-	defer wg.Done()
-	defer func() { <-sem }()
-
-	if err := w.pollSubDir(sd); err != nil {
-		errMu.Lock()
-
-		*errs = append(*errs, err)
-
-		errMu.Unlock()
-	}
+// settle ensures artefacts are correct for the current run.
+func (w *Watcher) settle(subDir SubDir, runDir string, status RunJobStatus) error {
+	return ensureArtefacts(runDir, subDir, status)
 }
 
-func (w *Watcher) pollSubDir(
-	subDir SubDir,
-) error {
-	run, active := w.getActiveRun(subDir.Path)
-	if active {
-		return w.handleActiveRun(subDir, run)
+// numericDirValue returns the parsed int64 value and true for a directory entry
+// whose name is a valid base-10 integer, or (0, false) otherwise.
+func numericDirValue(entry os.DirEntry) (int64, bool) {
+	if !entry.IsDir() {
+		return 0, false
 	}
 
-	return w.handleNewSubDir(subDir)
-}
-
-func (w *Watcher) handleActiveRun(
-	subDir SubDir, run RunState,
-) error {
-	complete, err := IsRunComplete(w.submitter, run.RepGroup)
+	n, err := strconv.ParseInt(entry.Name(), 10, 64)
 	if err != nil {
-		return err
+		return 0, false
 	}
 
-	if !complete {
-		return nil
-	}
-
-	buriedChunks, err := FindBuriedChunks(w.submitter, run.RepGroup, run.RunDir)
-	if err != nil {
-		return err
-	}
-
-	if len(buriedChunks) == 0 {
-		return w.handleSuccessfulRun(subDir, run)
-	}
-
-	return w.handleBuriedRun(subDir, run, buriedChunks)
+	return n, true
 }
 
-func (w *Watcher) handleSuccessfulRun(
-	subDir SubDir, run RunState,
-) error {
-	if err := GenerateStatus(
-		run.RunDir, subDir, nil,
-	); err != nil {
-		return err
-	}
-
-	if err := deleteOldRunDirs(
-		subDir.Path, run.Mtime,
-	); err != nil {
-		return err
-	}
-
-	w.clearActiveRun(subDir.Path)
-
-	return w.startNewRun(subDir)
-}
-
-// GenerateStatus writes a combined status file from all chunk reports in
-// runDir, handles buried chunks, and creates/updates a symlink at subDir/status
-// pointing to runDir/status.
-func GenerateStatus(
-	runDir string,
-	subDir SubDir,
-	buriedChunks []string,
-) error {
+// needsStatusRegen returns true when the status file should be (re)generated.
+// The decision compares wr's most recent job completion time against the status
+// file's mtime: if a job completed more recently than the status was written,
+// the status is stale and must be regenerated. A missing status file always
+// triggers regeneration.
+func needsStatusRegen(runDir string, lastCompleted time.Time) bool {
 	statusPath := filepath.Join(runDir, statusFilename)
 
-	if err := WriteStatusFromRun(
-		runDir, statusPath, buriedChunks,
-	); err != nil {
-		return err
-	}
-
-	if err := setStatusGID(
-		statusPath, subDir.Path,
-	); err != nil {
-		return err
-	}
-
-	return createStatusSymlink(statusPath, subDir.Path)
-}
-
-func (w *Watcher) handleBuriedRun(
-	subDir SubDir,
-	run RunState,
-	buriedChunks []string,
-) error {
-	needed, _, err := NeedsProcessing(subDir)
+	info, err := os.Stat(statusPath)
 	if err != nil {
-		return err
+		return true // no status file → generate
 	}
 
-	if !needed && hasCurrentStatusArtifacts(subDir.Path, run.RunDir) {
-		return nil
-	}
-
-	buriedBases := toBaseNames(buriedChunks)
-
-	if err := GenerateStatus(
-		run.RunDir, subDir, buriedBases,
-	); err != nil {
-		return err
-	}
-
-	if !needed {
-		return nil
-	}
-
-	if err := DeleteBuriedJobs(
-		w.submitter, run.RepGroup,
-	); err != nil {
-		return err
-	}
-
-	w.clearActiveRun(subDir.Path)
-
-	return w.startNewRun(subDir)
+	return !lastCompleted.IsZero() && lastCompleted.After(info.ModTime())
 }
 
-// toBaseNames converts a slice of full paths to their base names.
-func toBaseNames(paths []string) []string {
-	bases := make([]string, len(paths))
-
-	for i, p := range paths {
-		bases[i] = filepath.Base(p)
-	}
-
-	return bases
-}
-
-func (w *Watcher) handleNewSubDir(
-	subDir SubDir,
-) error {
-	recovered, err := w.detectExistingRun(subDir)
-	if err != nil || recovered {
-		return err
-	}
-
-	return w.startNewRun(subDir)
-}
-
-// detectExistingRun checks for a run directory left by a previous Watcher
-// instance. If an existing run has incomplete jobs, it records the active run
-// and returns true. If the existing run is complete, it processes the
-// completion immediately and returns true.
-func (w *Watcher) detectExistingRun(
-	subDir SubDir,
-) (bool, error) {
-	run, found, err := buildRunFromNewest(subDir.Path)
-	if err != nil || !found {
-		return false, err
-	}
-
-	complete, err := IsRunComplete(w.submitter, run.RepGroup)
-	if err != nil {
-		return false, err
-	}
-
-	needsProcessing := true
-
-	if complete {
-		needsProcessing, _, err = NeedsProcessing(subDir)
-		if err != nil {
-			return false, err
-		}
-	}
-
-	if complete && !needsProcessing && hasCurrentStatusArtifacts(subDir.Path, run.RunDir) {
-		if err := deleteOldRunDirs(subDir.Path, run.Mtime); err != nil {
-			return false, err
-		}
-
-		return true, nil
-	}
-
-	w.setActiveRun(subDir.Path, run)
-
-	if !complete {
-		return true, nil
-	}
-
-	return true, w.handleActiveRun(subDir, run)
-}
-
-// hasCurrentStatusArtifacts returns true when both the run status file exists
-// and subDir/status is a symlink pointing to that file.
-func hasCurrentStatusArtifacts(subDirPath, runDir string) bool {
-	statusPath := filepath.Join(runDir, statusFilename)
-
-	if _, err := os.Stat(statusPath); err != nil {
-		return false
-	}
-
+// statusSymlinkCurrent returns true when the subDir/status symlink exists and
+// points to the expected relative target (runDirName/status).
+func statusSymlinkCurrent(runDir, subDirPath string) bool {
 	symlinkPath := filepath.Join(subDirPath, statusFilename)
 
 	target, err := os.Readlink(symlinkPath)
@@ -560,85 +423,65 @@ func hasCurrentStatusArtifacts(subDirPath, runDir string) bool {
 		return false
 	}
 
-	return target == statusPath
+	expected := filepath.Join(filepath.Base(runDir), statusFilename)
+
+	return target == expected
 }
 
-// deleteOldRunDirs removes all numeric directories in
-// subDirPath except the one matching keepMtime.
-func deleteOldRunDirs(
-	subDirPath string, keepMtime int64,
-) error {
-	entries, err := os.ReadDir(subDirPath)
-	if err != nil {
-		return fmt.Errorf("read dir for cleanup: %w", err)
+// ensureStatusSymlink checks whether the status symlink in subDirPath points to
+// the correct status file in runDir. If absent or incorrect, it creates or
+// updates the symlink. When the symlink is already correct, the cost is a
+// single os.Readlink call.
+func ensureStatusSymlink(runDir string, subDirPath string) error {
+	if statusSymlinkCurrent(runDir, subDirPath) {
+		return nil
 	}
 
-	for _, entry := range entries {
-		if err := removeIfOldRunDir(
-			subDirPath, entry, keepMtime,
-		); err != nil {
+	return createStatusSymlink(runDir, subDirPath)
+}
+
+// teardownAndRestart generates any needed status artefacts for the old run,
+// cleans up buried jobs, and starts a fresh run for the updated fofn.
+// Stale-dir cleanup is handled by reconcile after dispatch.
+func (w *Watcher) teardownAndRestart(subDir SubDir, runDir string, status RunJobStatus) error {
+	if err := ensureArtefacts(runDir, subDir, status); err != nil {
+		return err
+	}
+
+	if len(status.BuriedJobs) > 0 {
+		if err := w.submitter.DeleteJobs(status.BuriedJobs); err != nil {
 			return err
 		}
 	}
 
-	return nil
+	return w.startNewRun(subDir)
 }
 
 func (w *Watcher) startNewRun(subDir SubDir) error {
-	state, err := ProcessSubDir(subDir, w.submitter, w.cfg)
-	if err != nil {
-		return err
-	}
+	_, err := ProcessSubDir(subDir, w.submitter, w.cfg)
 
-	if state.RepGroup != "" {
-		w.setActiveRun(subDir.Path, state)
-	}
-
-	return nil
+	return err
 }
 
-// setStatusGID sets the group ownership of the status
-// file to match the watch directory's GID.
-func setStatusGID(
-	statusPath, subDirPath string,
-) error {
-	watchDir := filepath.Dir(subDirPath)
+// GenerateStatus writes a combined status file from all chunk reports in
+// runDir. Group ownership is inherited from the parent directory's setgid bit.
+func GenerateStatus(runDir string, buriedChunks []string) error {
+	statusPath := filepath.Join(runDir, statusFilename)
 
-	gid, err := ownership.GetDirGID(watchDir)
-	if err != nil {
-		return err
-	}
-
-	if err := os.Chown(
-		statusPath, -1, gid,
-	); err != nil {
-		return fmt.Errorf("chown status: %w", err)
-	}
-
-	issuesPath := statusPath + issuesSuffix
-
-	if err := os.Chown(
-		issuesPath, -1, gid,
-	); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("chown status issues: %w", err)
-	}
-
-	return nil
+	return WriteStatusFromRun(runDir, statusPath, buriedChunks)
 }
 
 // createStatusSymlink atomically creates or updates a symlink at subDir/status
-// pointing to the given statusPath, using a temp symlink + rename.
-func createStatusSymlink(
-	statusPath, subDirPath string,
-) error {
+// pointing to runDirName/status (a relative path), using a temp symlink +
+// rename. Relative symlinks are portable if the directory tree is moved.
+func createStatusSymlink(runDir, subDirPath string) error {
 	symlinkPath := filepath.Join(subDirPath, statusFilename)
+	relTarget := filepath.Join(filepath.Base(runDir), statusFilename)
 	tmpLink := symlinkPath + ".tmp"
 
 	_ = os.Remove(tmpLink)
 
-	if err := os.Symlink(
-		statusPath, tmpLink,
-	); err != nil {
+	if err := os.Symlink(relTarget, tmpLink); err != nil {
 		return fmt.Errorf("create temp status symlink: %w", err)
 	}
 
@@ -647,28 +490,6 @@ func createStatusSymlink(
 	}
 
 	return nil
-}
-
-// readAndCheckConfig checks if processing is needed, and if so reads the
-// config. Returns zero mtime when processing is not needed.
-func readAndCheckConfig(
-	subDir SubDir,
-) (SubDirConfig, int64, error) {
-	needed, mtime, err := NeedsProcessing(subDir)
-	if err != nil {
-		return SubDirConfig{}, 0, err
-	}
-
-	if !needed {
-		return SubDirConfig{}, 0, nil
-	}
-
-	sdCfg, err := ReadConfig(subDir.Path)
-	if err != nil {
-		return SubDirConfig{}, 0, err
-	}
-
-	return sdCfg, mtime, nil
 }
 
 func buildRunConfig(
@@ -692,31 +513,4 @@ func buildRunConfig(
 		LimitGroups: baseCfg.LimitGroups,
 		ReqGroup:    baseCfg.ReqGroup,
 	}
-}
-
-func removeIfOldRunDir(
-	subDirPath string,
-	entry os.DirEntry,
-	keepMtime int64,
-) error {
-	if !entry.IsDir() {
-		return nil
-	}
-
-	n, err := strconv.ParseInt(entry.Name(), 10, 64)
-	if err != nil {
-		return nil //nolint:nilerr
-	}
-
-	if n == keepMtime {
-		return nil
-	}
-
-	dirPath := filepath.Join(subDirPath, entry.Name())
-
-	if err := os.RemoveAll(dirPath); err != nil {
-		return fmt.Errorf("remove old run dir: %w", err)
-	}
-
-	return nil
 }

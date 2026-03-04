@@ -5479,11 +5479,10 @@ func (b *safeBuffer) String() string {
 
 // testSubmitter implements fofn.JobSubmitter for integration tests.
 type testSubmitter struct {
-	mu         sync.Mutex
-	submitted  []*jobqueue.Job
-	incomplete []*jobqueue.Job
-	buried     []*jobqueue.Job
-	deleted    []*jobqueue.Job
+	mu        sync.Mutex
+	submitted []*jobqueue.Job
+	allJobs   []*jobqueue.Job
+	deleted   []*jobqueue.Job
 }
 
 func (s *testSubmitter) SubmitJobs(
@@ -5499,20 +5498,19 @@ func (s *testSubmitter) SubmitJobs(
 
 func (s *testSubmitter) FindIncompleteJobsByRepGroup(
 	_ string,
+	_ jobqueue.RepGroupMatch,
 ) ([]*jobqueue.Job, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return s.incomplete, nil
+	return s.allJobs, nil
 }
 
-func (s *testSubmitter) FindBuriedJobsByRepGroup(
+func (s *testSubmitter) GetLastCompletionTimeByRepGroup(
 	_ string,
-) ([]*jobqueue.Job, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	return s.buried, nil
+	_ jobqueue.RepGroupMatch,
+) (map[string]time.Time, error) {
+	return map[string]time.Time{}, nil
 }
 
 func (s *testSubmitter) DeleteJobs(
@@ -5552,7 +5550,7 @@ func TestWatchFofnsIntegration(t *testing.T) {
 			So(err, ShouldBeNil)
 
 			mock := &testSubmitter{}
-			subDir := fofn.SubDir{Path: subPath}
+			subDir := fofn.SubDir{Path: subPath, FofnMtime: getFofnMtime(subPath)}
 
 			state, err := fofn.ProcessSubDir(
 				subDir, mock, fofn.ProcessSubDirConfig{
@@ -5577,8 +5575,11 @@ func TestWatchFofnsIntegration(t *testing.T) {
 
 			simulatePutExecution(state.RunDir)
 
-			err = fofn.GenerateStatus(state.RunDir, subDir, nil)
+			err = fofn.GenerateStatus(state.RunDir, nil)
 			So(err, ShouldBeNil)
+
+			relStatusFile := filepath.Join(filepath.Base(state.RunDir), "status")
+			So(os.Symlink(relStatusFile, filepath.Join(subPath, "status")), ShouldBeNil)
 
 			symlinkPath := filepath.Join(subPath, "status")
 			_, linkErr := os.Lstat(symlinkPath)
@@ -5587,7 +5588,7 @@ func TestWatchFofnsIntegration(t *testing.T) {
 			target, readErr := os.Readlink(symlinkPath)
 			So(readErr, ShouldBeNil)
 			So(target, ShouldEqual,
-				filepath.Join(state.RunDir, "status"),
+				relStatusFile,
 			)
 
 			entries, counts, parseErr :=
@@ -5655,7 +5656,7 @@ func TestWatchFofnsIntegration(t *testing.T) {
 			So(err, ShouldBeNil)
 
 			mock := &testSubmitter{}
-			subDir := fofn.SubDir{Path: subPath}
+			subDir := fofn.SubDir{Path: subPath, FofnMtime: getFofnMtime(subPath)}
 
 			state, err := fofn.ProcessSubDir(
 				subDir, mock, fofn.ProcessSubDirConfig{
@@ -5693,8 +5694,14 @@ func TestWatchFofnsIntegration(t *testing.T) {
 				},
 			)
 
-			err = fofn.GenerateStatus(state.RunDir, subDir, nil)
+			err = fofn.GenerateStatus(state.RunDir, nil)
 			So(err, ShouldBeNil)
+
+			relStatusFile := filepath.Join(filepath.Base(state.RunDir), "status")
+			So(os.Symlink(
+				relStatusFile,
+				filepath.Join(subPath, "status"),
+			), ShouldBeNil)
 
 			entries, counts, parseErr :=
 				fofn.ParseStatus(filepath.Join(subPath, "status"))
@@ -5721,7 +5728,7 @@ func TestWatchFofnsIntegration(t *testing.T) {
 			So(err, ShouldBeNil)
 
 			mock := &testSubmitter{}
-			subDir := fofn.SubDir{Path: subPath}
+			subDir := fofn.SubDir{Path: subPath, FofnMtime: getFofnMtime(subPath)}
 
 			state, err := fofn.ProcessSubDir(
 				subDir, mock, fofn.ProcessSubDirConfig{
@@ -5736,8 +5743,11 @@ func TestWatchFofnsIntegration(t *testing.T) {
 			So(initialCount,
 				ShouldBeGreaterThan, 0)
 
-			mock.incomplete = []*jobqueue.Job{
-				{Cmd: "in-progress"},
+			mock.allJobs = []*jobqueue.Job{
+				{
+					RepGroup: state.RepGroup,
+					Cmd:      "in-progress",
+				},
 			}
 
 			watcher := fofn.NewWatcher(
@@ -5799,7 +5809,7 @@ func TestWatchFofnsIntegration(t *testing.T) {
 				So(err, ShouldBeNil)
 
 				mock := &testSubmitter{}
-				subDir := fofn.SubDir{Path: subPath}
+				subDir := fofn.SubDir{Path: subPath, FofnMtime: getFofnMtime(subPath)}
 
 				state, err := fofn.ProcessSubDir(
 					subDir, mock,
@@ -5835,9 +5845,12 @@ func TestWatchFofnsIntegration(t *testing.T) {
 
 				simulatePutExecution(oldRunDir)
 
-				mock.incomplete = nil
-				mock.buried = []*jobqueue.Job{
-					{Cmd: mock.submitted[0].Cmd},
+				mock.allJobs = []*jobqueue.Job{
+					{
+						RepGroup: state.RepGroup,
+						State:    jobqueue.JobStateBuried,
+						Cmd:      mock.submitted[0].Cmd,
+					},
 				}
 
 				newMtime := oldMtime + 10
@@ -5915,6 +5928,14 @@ func writeNullFofn(dir string, paths []string) {
 	}
 
 	So(f.Close(), ShouldBeNil)
+}
+
+// getFofnMtime returns the Unix mtime of the fofn file in dir.
+func getFofnMtime(dir string) int64 {
+	info, err := os.Stat(filepath.Join(dir, "fofn"))
+	So(err, ShouldBeNil)
+
+	return info.ModTime().Unix()
 }
 
 // simulatePutExecution reads chunk files in runDir,
