@@ -26,6 +26,7 @@
 package fofn
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -59,6 +60,10 @@ func ScanForFOFNs(watchDir string) ([]SubDir, error) {
 	for _, m := range matches {
 		info, statErr := os.Stat(m)
 		if statErr != nil {
+			if errors.Is(statErr, os.ErrNotExist) {
+				continue
+			}
+
 			return nil, fmt.Errorf("stat fofn: %w", statErr)
 		}
 

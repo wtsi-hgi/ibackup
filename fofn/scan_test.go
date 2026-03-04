@@ -93,6 +93,19 @@ func TestScanForFOFNs(t *testing.T) {
 			So(result[0].Path, ShouldEqual, pathX)
 		})
 
+		Convey("skips fofn entries that disappear between glob and stat", func() {
+			pathGood := createSubWithFOFN("good")
+
+			raceSub := filepath.Join(dir, "race")
+			So(os.MkdirAll(raceSub, 0750), ShouldBeNil)
+			So(os.Symlink(filepath.Join(dir, "gone"), filepath.Join(raceSub, fofnFilename)), ShouldBeNil)
+
+			result, err := ScanForFOFNs(dir)
+			So(err, ShouldBeNil)
+			So(result, ShouldHaveLength, 1)
+			So(result[0].Path, ShouldEqual, pathGood)
+		})
+
 		Convey("non-existent watchDir returns error", func() {
 			_, err := ScanForFOFNs(filepath.Join(dir, "nope"))
 			So(err, ShouldNotBeNil)
