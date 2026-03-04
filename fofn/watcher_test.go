@@ -174,7 +174,9 @@ func writeReportFile(
 
 // mustWriteChunkT writes a chunk file without GoConvey assertions,
 // for use inside rapid property checks.
-func mustWriteChunkT(t fataler, runDir, chunkName string, pairs []filePair) {
+func mustWriteChunkT(t *rapid.T, runDir, chunkName string, pairs []filePair) {
+	t.Helper()
+
 	path := filepath.Join(runDir, chunkName)
 
 	f, err := os.Create(path)
@@ -202,7 +204,9 @@ func mustWriteChunkT(t fataler, runDir, chunkName string, pairs []filePair) {
 
 // mustWriteReportT writes a report file without GoConvey assertions,
 // for use inside rapid property checks.
-func mustWriteReportT(t fataler, runDir, chunkName string, pairs []filePair, status string) {
+func mustWriteReportT(t *rapid.T, runDir, chunkName string, pairs []filePair, status string) {
+	t.Helper()
+
 	path := filepath.Join(runDir, chunkName+".report")
 
 	f, err := os.Create(path)
@@ -227,13 +231,6 @@ func mustWriteReportT(t fataler, runDir, chunkName string, pairs []filePair, sta
 		t.Fatal(err)
 	}
 }
-
-// fataler is the subset of testing.TB needed by property-test helpers.
-type fataler interface {
-	Fatal(args ...any)
-	Fatalf(format string, args ...any)
-}
-
 func TestProcessSubDir(t *testing.T) {
 	Convey("ProcessSubDir", t, func() {
 		So(transformer.Register("test", `^/tmp/(.*)$`, "/irods/$1"), ShouldBeNil)
@@ -539,11 +536,11 @@ func TestWatcherPoll(t *testing.T) {
 			So(mock.submitted, ShouldHaveLength, 3)
 
 			// Run dir should exist with the fofn mtime as name
-			runDir, runMtime, found, findErr := findRunDir(subDir.Path)
+			runScan, findErr := scanRunDirs(subDir.Path)
 			So(findErr, ShouldBeNil)
-			So(found, ShouldBeTrue)
-			So(runMtime, ShouldEqual, subDir.FofnMtime)
-			So(runDir, ShouldNotBeEmpty)
+			So(runScan.found, ShouldBeTrue)
+			So(runScan.runMtime, ShouldEqual, subDir.FofnMtime)
+			So(runScan.runDir, ShouldNotBeEmpty)
 		})
 
 		Convey("skips when active run has incomplete jobs", func() {
@@ -580,9 +577,12 @@ func TestWatcherPoll(t *testing.T) {
 			So(err, ShouldBeNil)
 
 			firstCount := len(mock.submitted)
-			runDir, runMtime, found, findErr := findRunDir(subDir.Path)
+			runScan, findErr := scanRunDirs(subDir.Path)
 			So(findErr, ShouldBeNil)
-			So(found, ShouldBeTrue)
+			So(runScan.found, ShouldBeTrue)
+
+			runDir := runScan.runDir
+			runMtime := runScan.runMtime
 
 			writeReportsForChunks(runDir)
 
@@ -604,11 +604,11 @@ func TestWatcherPoll(t *testing.T) {
 			So(len(mock.submitted),
 				ShouldBeGreaterThan, firstCount)
 
-			newRunDir, newMtime, newFound, newFindErr := findRunDir(subDir.Path)
+			newRunScan, newFindErr := scanRunDirs(subDir.Path)
 			So(newFindErr, ShouldBeNil)
-			So(newFound, ShouldBeTrue)
-			So(newRunDir, ShouldNotEqual, runDir)
-			So(newMtime, ShouldEqual, runMtime+1000)
+			So(newRunScan.found, ShouldBeTrue)
+			So(newRunScan.runDir, ShouldNotEqual, runDir)
+			So(newRunScan.runMtime, ShouldEqual, runMtime+1000)
 		})
 
 		Convey("completes successful run with no new run when fofn unchanged", func() {
@@ -622,9 +622,11 @@ func TestWatcherPoll(t *testing.T) {
 			So(err, ShouldBeNil)
 
 			submitCount := len(mock.submitted)
-			runDir, _, found, findErr := findRunDir(subDir.Path)
+			runScan, findErr := scanRunDirs(subDir.Path)
 			So(findErr, ShouldBeNil)
-			So(found, ShouldBeTrue)
+			So(runScan.found, ShouldBeTrue)
+
+			runDir := runScan.runDir
 
 			writeReportsForChunks(runDir)
 
@@ -656,9 +658,11 @@ func TestWatcherPoll(t *testing.T) {
 				So(err, ShouldBeNil)
 
 				submitCount := len(mock.submitted)
-				runDir, _, found, findErr := findRunDir(subDir.Path)
+				runScan, findErr := scanRunDirs(subDir.Path)
 				So(findErr, ShouldBeNil)
-				So(found, ShouldBeTrue)
+				So(runScan.found, ShouldBeTrue)
+
+				runDir := runScan.runDir
 
 				repGroup := makeRepGroup(subDir.Path, subDir.FofnMtime)
 
@@ -711,9 +715,11 @@ func TestWatcherPoll(t *testing.T) {
 			err := w.Poll()
 			So(err, ShouldBeNil)
 
-			runDir, _, found, findErr := findRunDir(subDir.Path)
+			runScan, findErr := scanRunDirs(subDir.Path)
 			So(findErr, ShouldBeNil)
-			So(found, ShouldBeTrue)
+			So(runScan.found, ShouldBeTrue)
+
+			runDir := runScan.runDir
 
 			repGroup := makeRepGroup(subDir.Path, subDir.FofnMtime)
 
@@ -766,9 +772,12 @@ func TestWatcherPoll(t *testing.T) {
 			So(err, ShouldBeNil)
 
 			firstCount := len(mock.submitted)
-			runDir, runMtime, found, findErr := findRunDir(subDir.Path)
+			runScan, findErr := scanRunDirs(subDir.Path)
 			So(findErr, ShouldBeNil)
-			So(found, ShouldBeTrue)
+			So(runScan.found, ShouldBeTrue)
+
+			runDir := runScan.runDir
+			runMtime := runScan.runMtime
 
 			repGroup := makeRepGroup(subDir.Path, runMtime)
 
@@ -795,11 +804,11 @@ func TestWatcherPoll(t *testing.T) {
 			So(len(mock.submitted),
 				ShouldBeGreaterThan, firstCount)
 
-			newRunDir, newMtime, newFound, newFindErr := findRunDir(subDir.Path)
+			newRunScan, newFindErr := scanRunDirs(subDir.Path)
 			So(newFindErr, ShouldBeNil)
-			So(newFound, ShouldBeTrue)
-			So(newMtime, ShouldEqual, runMtime+1000)
-			So(newRunDir, ShouldNotEqual, runDir)
+			So(newRunScan.found, ShouldBeTrue)
+			So(newRunScan.runMtime, ShouldEqual, runMtime+1000)
+			So(newRunScan.runDir, ShouldNotEqual, runDir)
 		})
 
 		Convey("deletes old run directories on successful completion", func() {
@@ -812,9 +821,11 @@ func TestWatcherPoll(t *testing.T) {
 			err := w.Poll()
 			So(err, ShouldBeNil)
 
-			runDir, _, found, findErr := findRunDir(subDir.Path)
+			runScan, findErr := scanRunDirs(subDir.Path)
 			So(findErr, ShouldBeNil)
-			So(found, ShouldBeTrue)
+			So(runScan.found, ShouldBeTrue)
+
+			runDir := runScan.runDir
 
 			oldRunDir := filepath.Join(subDir.Path, "500")
 			So(os.MkdirAll(oldRunDir, 0750),
@@ -844,9 +855,12 @@ func TestWatcherPoll(t *testing.T) {
 			err := w.Poll()
 			So(err, ShouldBeNil)
 
-			firstRunDir, firstMtime, found, findErr := findRunDir(subDir.Path)
+			firstRunScan, findErr := scanRunDirs(subDir.Path)
 			So(findErr, ShouldBeNil)
-			So(found, ShouldBeTrue)
+			So(firstRunScan.found, ShouldBeTrue)
+
+			firstRunDir := firstRunScan.runDir
+			firstMtime := firstRunScan.runMtime
 
 			writeReportsForChunks(firstRunDir)
 
@@ -857,9 +871,11 @@ func TestWatcherPoll(t *testing.T) {
 			err = w.Poll()
 			So(err, ShouldBeNil)
 
-			secondRunDir, _, found, findErr2 := findRunDir(subDir.Path)
+			secondRunScan, findErr2 := scanRunDirs(subDir.Path)
 			So(findErr2, ShouldBeNil)
-			So(found, ShouldBeTrue)
+			So(secondRunScan.found, ShouldBeTrue)
+
+			secondRunDir := secondRunScan.runDir
 
 			writeReportsForChunks(secondRunDir)
 
@@ -883,16 +899,6 @@ func TestWatcherPoll(t *testing.T) {
 				expectedTarget)
 		})
 	})
-}
-
-// findRunDir finds the current run directory inside subDirPath by looking for
-// the highest-numbered numeric subdirectory. Returns the path, its mtime value,
-// and true if found. Convenience wrapper around scanRunDirs for test callers
-// that don't need stale-dir info.
-func findRunDir(subDirPath string) (string, int64, bool, error) {
-	scan, err := scanRunDirs(subDirPath)
-
-	return scan.runDir, scan.runMtime, scan.found, err
 }
 
 func TestWatcherRestart(t *testing.T) {
@@ -940,10 +946,10 @@ func TestWatcherRestart(t *testing.T) {
 				So(mock.submitted, ShouldBeEmpty)
 
 				// Run dir unchanged
-				_, runMtime, found, findErr := findRunDir(subPath)
+				runScan, findErr := scanRunDirs(subPath)
 				So(findErr, ShouldBeNil)
-				So(found, ShouldBeTrue)
-				So(runMtime, ShouldEqual, 1000)
+				So(runScan.found, ShouldBeTrue)
+				So(runScan.runMtime, ShouldEqual, 1000)
 			})
 
 		Convey("returns error when completion status cannot be queried", func() {
@@ -1273,10 +1279,10 @@ func TestWatcherRestart(t *testing.T) {
 			So(mock.submitted, ShouldNotBeEmpty)
 
 			// New run dir created for mtime 2000
-			_, newMtime, found, findErr := findRunDir(subPath)
+			newRunScan, findErr := scanRunDirs(subPath)
 			So(findErr, ShouldBeNil)
-			So(found, ShouldBeTrue)
-			So(newMtime, ShouldEqual, 2000)
+			So(newRunScan.found, ShouldBeTrue)
+			So(newRunScan.runMtime, ShouldEqual, 2000)
 		})
 
 		Convey("refreshes status after buried chunk is retried successfully", func() {
@@ -1427,11 +1433,11 @@ func TestWatcherRestart(t *testing.T) {
 			So(mock.submitted, ShouldNotBeEmpty)
 
 			// New run dir created with updated mtime.
-			newRunDir, newMtime, found, findErr := findRunDir(subPath)
+			newRunScan, findErr := scanRunDirs(subPath)
 			So(findErr, ShouldBeNil)
-			So(found, ShouldBeTrue)
-			So(newMtime, ShouldEqual, 2000)
-			So(newRunDir, ShouldNotEqual, runDir)
+			So(newRunScan.found, ShouldBeTrue)
+			So(newRunScan.runMtime, ShouldEqual, 2000)
+			So(newRunScan.runDir, ShouldNotEqual, runDir)
 		})
 
 		Convey("repairs symlink without regenerating status file", func() {
@@ -1510,10 +1516,10 @@ func TestWatcherRestart(t *testing.T) {
 			So(mock.submitted, ShouldBeEmpty)
 
 			// Run dir unchanged — still waiting for old run.
-			_, runMtime, found, findErr := findRunDir(subPath)
+			runScan, findErr := scanRunDirs(subPath)
 			So(findErr, ShouldBeNil)
-			So(found, ShouldBeTrue)
-			So(runMtime, ShouldEqual, 1000)
+			So(runScan.found, ShouldBeTrue)
+			So(runScan.runMtime, ShouldEqual, 1000)
 		})
 
 		Convey("regenerates status when status file deleted from done run", func() {
@@ -1593,11 +1599,9 @@ func TestWatcherParallel(t *testing.T) {
 				for _, name := range []string{
 					"proj1", "proj2", "proj3",
 				} {
-					_, _, found, findErr := findRunDir(
-						filepath.Join(watchDir, name),
-					)
+					runScan, findErr := scanRunDirs(filepath.Join(watchDir, name))
 					So(findErr, ShouldBeNil)
-					So(found, ShouldBeTrue)
+					So(runScan.found, ShouldBeTrue)
 				}
 			})
 
@@ -1628,13 +1632,13 @@ func TestWatcherParallel(t *testing.T) {
 					"proj1", "proj2",
 				} {
 					subPath := filepath.Join(watchDir, name)
-					_, mtime, found, findErr := findRunDir(subPath)
+					runScan, findErr := scanRunDirs(subPath)
 					So(findErr, ShouldBeNil)
-					So(found, ShouldBeTrue)
+					So(runScan.found, ShouldBeTrue)
 
 					runningJobs = append(runningJobs,
 						&jobqueue.Job{
-							RepGroup: makeRepGroup(subPath, mtime),
+							RepGroup: makeRepGroup(subPath, runScan.runMtime),
 							Cmd:      "running",
 						})
 				}
@@ -1656,11 +1660,9 @@ func TestWatcherParallel(t *testing.T) {
 				for _, name := range []string{
 					"proj1", "proj2", "proj3",
 				} {
-					_, _, found, findErr := findRunDir(
-						filepath.Join(watchDir, name),
-					)
+					runScan, findErr := scanRunDirs(filepath.Join(watchDir, name))
 					So(findErr, ShouldBeNil)
-					So(found, ShouldBeTrue)
+					So(runScan.found, ShouldBeTrue)
 				}
 			})
 		})

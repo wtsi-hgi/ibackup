@@ -229,15 +229,16 @@ func classifyIncompleteJob(s RunJobStatus, job *jobqueue.Job) RunJobStatus {
 }
 
 func classifyBuriedJob(s RunJobStatus, job *jobqueue.Job) RunJobStatus {
+	chunk := extractChunkFromCmd(job.Cmd)
+	if chunk == "" {
+		return s
+	}
+
 	s.BuriedJobs = append(s.BuriedJobs, job)
+	s.BuriedChunks = append(s.BuriedChunks, chunk)
 
 	if job.EndTime.After(s.LastCompletedTime) {
 		s.LastCompletedTime = job.EndTime
-	}
-
-	chunk := extractChunkFromCmd(job.Cmd)
-	if chunk != "" {
-		s.BuriedChunks = append(s.BuriedChunks, chunk)
 	}
 
 	return s
@@ -246,7 +247,7 @@ func classifyBuriedJob(s RunJobStatus, job *jobqueue.Job) RunJobStatus {
 func mergeCompletionTimes(result map[string]RunJobStatus, completionTimes map[string]time.Time) {
 	for rg, completionTime := range completionTimes {
 		s := result[rg]
-		if len(s.BuriedJobs) == 0 {
+		if len(s.BuriedJobs) == 0 && completionTime.After(s.LastCompletedTime) {
 			s.LastCompletedTime = completionTime
 		}
 

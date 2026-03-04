@@ -327,6 +327,32 @@ func TestClassifyAllJobs(t *testing.T) {
 			So(s.BuriedChunks, ShouldResemble, []string{"chunk.000002"})
 		})
 
+		Convey("ignores buried jobs without a parseable chunk", func() {
+			completedTime := time.Date(2026, 1, 15, 10, 30, 0, 0, time.UTC)
+
+			mock := &mockJobSubmitter{
+				allJobs: []*jobqueue.Job{
+					{
+						RepGroup: "ibackup_fofn_proj_100",
+						State:    jobqueue.JobStateBuried,
+						Cmd:      "ibackup put --report chunk.000002.report",
+						EndTime:  completedTime.Add(-time.Hour),
+					},
+				},
+				completionMap: map[string]time.Time{
+					"ibackup_fofn_proj_100": completedTime,
+				},
+			}
+
+			result, err := ClassifyAllJobs(mock)
+			So(err, ShouldBeNil)
+
+			s := result["ibackup_fofn_proj_100"]
+			So(s.BuriedJobs, ShouldBeEmpty)
+			So(s.BuriedChunks, ShouldBeEmpty)
+			So(s.LastCompletedTime, ShouldEqual, completedTime)
+		})
+
 		Convey("uses completion lookup time when no buried jobs exist", func() {
 			completedTime := time.Date(2026, 1, 15, 10, 30, 0, 0, time.UTC)
 
