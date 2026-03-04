@@ -6789,9 +6789,9 @@ func TestPutReportFlag(t *testing.T) {
 }
 
 func TestWatchFofnsCommand(t *testing.T) {
-	addBqueuesToPath(t)
-
 	Convey("The watchfofns subcommand", t, func() {
+		addBqueuesToPath(t)
+
 		Convey("errors when --dir is not provided", func() {
 			exitCode, out := runCLI(t, nil, "",
 				"watchfofns")
