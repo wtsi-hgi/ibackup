@@ -50,6 +50,7 @@ const (
 // RunConfig holds configuration for creating jobs from chunk files.
 type RunConfig struct {
 	RunDir      string
+	Statter     string
 	ChunkPaths  []string
 	SubDirName  string
 	FofnMtime   int64
@@ -72,7 +73,7 @@ func CreateJobs(cfg RunConfig) []*jobqueue.Job {
 
 	for i, chunk := range cfg.ChunkPaths {
 		jobs[i] = &jobqueue.Job{
-			Cmd:        BuildPutCommand(chunk, cfg.NoReplace, cfg.SubDirName, cfg.UserMeta),
+			Cmd:        BuildPutCommand(chunk, cfg.Statter, cfg.NoReplace, cfg.SubDirName, cfg.UserMeta),
 			Cwd:        cfg.RunDir,
 			CwdMatters: true,
 			RepGroup:   repGroup,
@@ -93,12 +94,7 @@ func CreateJobs(cfg RunConfig) []*jobqueue.Job {
 // BuildPutCommand constructs an ibackup put command string
 // for a given chunk file. It includes logging, reporting,
 // and optional flags for no-replace and user metadata.
-func BuildPutCommand(
-	chunkPath string,
-	noReplace bool,
-	fofnName string,
-	userMeta string,
-) string {
+func BuildPutCommand(chunkPath, statter string, noReplace bool, fofnName, userMeta string) string {
 	parts := buildPutCoreParts(chunkPath, fofnName)
 
 	parts = append(parts,
@@ -113,6 +109,10 @@ func BuildPutCommand(
 	if userMeta != "" {
 		parts = append(parts,
 			"--meta", shell.Quote(userMeta))
+	}
+
+	if statter != "" {
+		parts = append(parts, "--statter", shell.Quote(statter))
 	}
 
 	parts = append(parts,

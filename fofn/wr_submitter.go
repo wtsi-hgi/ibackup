@@ -67,11 +67,13 @@ func (w *wrSubmitter) Disconnect() error {
 
 // NewWRSubmitter connects to wr using the given deployment and returns a
 // JobSubmitter backed by the wr scheduler.
-func NewWRSubmitter(deployment string, logger log15.Logger) (JobSubmitter, error) { //nolint:ireturn
+func NewWRSubmitter(deployment, queue, queuesAvoid string, logger log15.Logger) (JobSubmitter, error) { //nolint:ireturn
 	sched, err := client.New(client.SchedulerSettings{
-		Deployment: deployment,
-		Timeout:    wrConnectTimeout,
-		Logger:     logger,
+		Deployment:  deployment,
+		Timeout:     wrConnectTimeout,
+		Logger:      logger,
+		Queue:       queue,
+		QueuesAvoid: queuesAvoid,
 	})
 	if err != nil {
 		return nil, err

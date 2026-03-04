@@ -58,6 +58,7 @@ var (
 	errMinExceedsMax   = errors.New("--min-chunk must be <= --max-chunk")
 	errRetriesNegative = errors.New("--retries must be >= 0")
 	errRetriesTooLarge = fmt.Errorf("--retries must be <= %d", maxRetries)
+	errInvalidQueues   = errors.New("invalid queues specified")
 )
 
 // command-line options for watchfofns.
@@ -128,6 +129,8 @@ func registerWatchFofnsFlags() {
 	f.IntVar(&watchMinChunk, "min-chunk", defaultWatchMinChunk, "minimum files per chunk")
 	f.IntVar(&watchMaxChunk, "max-chunk", defaultWatchMaxChunk, "maximum files per chunk")
 	f.StringVar(&watchWRDeployment, "wr-deployment", "production", "wr deployment name")
+	f.StringVar(&statterPath, "statter", "",
+		"path to an external statter program (https://github.com/wtsi-hgi/statter)")
 
 	registerWatchFofnsJobFlags(f)
 }
@@ -137,6 +140,8 @@ func registerWatchFofnsJobFlags(f *pflag.FlagSet) {
 	f.DurationVar(&watchTime, "time", defaultWatchTime, "time limit per put job")
 	f.IntVar(&watchRetries, "retries", defaultWatchRetries, "wr job retries")
 	f.StringVar(&watchLimitGroup, "limit-group", "irods", "wr limit group")
+	f.StringVar(&queues, "queues", "", "specify queues to submit job")
+	f.StringVar(&queueAvoid, "queues_avoid", "", "specify queues to not submit job")
 }
 
 // runWatchFofns validates flags, creates a watcher, and
@@ -146,7 +151,7 @@ func runWatchFofns() error {
 		return err
 	}
 
-	submitter, err := fofn.NewWRSubmitter(watchWRDeployment, appLogger)
+	submitter, err := fofn.NewWRSubmitter(watchWRDeployment, queues, queueAvoid, appLogger)
 	if err != nil {
 		return err
 	}
@@ -162,8 +167,7 @@ func runWatchFofns() error {
 	ctx, cancel := watchCtxFunc()
 	defer cancel()
 
-	info("watchfofns: polling %s every %s",
-		watchDir, watchInterval)
+	info("watchfofns: polling %s every %s", watchDir, watchInterval)
 
 	return watcher.Run(ctx, watchInterval)
 }
@@ -171,6 +175,13 @@ func runWatchFofns() error {
 // validateWatchFlags checks all required flags and
 // environment variables before starting the watcher.
 func validateWatchFlags() error {
+	validated, err := validateQueues(queues, queueAvoid)
+	if err != nil {
+		return fmt.Errorf("failed to validate queues: %w", err)
+	} else if !validated {
+		return errInvalidQueues
+	}
+
 	if err := validateWatchDir(); err != nil {
 		return err
 	}
@@ -243,6 +254,7 @@ func createWatcher(submitter fofn.JobSubmitter) *fofn.Watcher {
 		MinChunk: watchMinChunk,
 		MaxChunk: watchMaxChunk,
 		RunConfig: fofn.RunConfig{
+			Statter:     statterPath,
 			RAM:         watchRAM,
 			Time:        watchTime,
 			Retries:     uint8(watchRetries), //nolint:gosec

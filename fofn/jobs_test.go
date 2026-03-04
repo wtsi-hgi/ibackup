@@ -40,7 +40,7 @@ var errTest = errors.New("test error")
 func TestBuildPutCommand(t *testing.T) {
 	Convey("BuildPutCommand", t, func() {
 		Convey("builds a basic command without optional flags", func() {
-			cmd := BuildPutCommand("chunk.000000", false, "project1", "")
+			cmd := BuildPutCommand("chunk.000000", "", false, "project1", "")
 			So(cmd, ShouldEqual,
 				`ibackup put -v -l 'chunk.000000.log' `+
 					`--report 'chunk.000000.report' `+
@@ -50,39 +50,45 @@ func TestBuildPutCommand(t *testing.T) {
 		})
 
 		Convey("includes --no_replace when noReplace is true", func() {
-			cmd := BuildPutCommand("chunk.000000", true, "project1", "")
-			So(cmd, ShouldContainSubstring,
-				"--no_replace")
+			cmd := BuildPutCommand("chunk.000000", "", true, "project1", "")
+			So(cmd, ShouldContainSubstring, "--no_replace")
 		})
 
 		Convey("includes --meta with quoted value when userMeta is set", func() {
 			cmd := BuildPutCommand(
-				"chunk.000000", false, "project1",
+				"chunk.000000", "", false, "project1",
 				"colour=red;size=large",
 			)
-			So(cmd, ShouldContainSubstring,
-				`--meta 'colour=red;size=large'`)
+			So(cmd, ShouldContainSubstring, `--meta 'colour=red;size=large'`)
 		})
 
 		Convey("single-quotes and escapes user-controlled values", func() {
 			cmd := BuildPutCommand(
 				"chunk.'$(touch /tmp/nope)'",
+				"",
 				false,
 				"proj'$(id)'",
 				"colour=red';`uname`",
 			)
 
-			So(cmd, ShouldContainSubstring,
-				`--fofn 'proj'"'"'$(id)'"'"''`)
-			So(cmd, ShouldContainSubstring,
-				`--meta 'colour=red'"'"';`+"`"+`uname`+"`"+`'`)
-			So(cmd, ShouldContainSubstring,
-				`-f 'chunk.'"'"'$(touch /tmp/nope)'"'"''`)
+			So(cmd, ShouldContainSubstring, `--fofn 'proj'"'"'$(id)'"'"''`)
+			So(cmd, ShouldContainSubstring, `--meta 'colour=red'"'"';`+"`"+`uname`+"`"+`'`)
+			So(cmd, ShouldContainSubstring, `-f 'chunk.'"'"'$(touch /tmp/nope)'"'"''`)
 		})
 
 		Convey("omits --fofn when fofnName is empty", func() {
-			cmd := BuildPutCommand("chunk.000000", false, "", "")
+			cmd := BuildPutCommand("chunk.000000", "", false, "", "")
 			So(cmd, ShouldNotContainSubstring, "--fofn")
+		})
+
+		Convey("omits --statter flag when statter path is empty", func() {
+			cmd := BuildPutCommand("chunk.000000", "", false, "", "")
+			So(cmd, ShouldNotContainSubstring, "--statter")
+		})
+
+		Convey("set --statter flag when statter path is supplied", func() {
+			cmd := BuildPutCommand("chunk.000000", "/path/to/statter", false, "", "")
+			So(cmd, ShouldContainSubstring, "--statter '/path/to/statter'")
 		})
 	})
 }
@@ -105,7 +111,7 @@ func TestCreateJobs(t *testing.T) {
 				jobs := CreateJobs(cfg)
 				So(jobs, ShouldHaveLength, 2)
 
-				expectedCmd0 := BuildPutCommand("chunk.000000", false, "proj", "")
+				expectedCmd0 := BuildPutCommand("chunk.000000", "", false, "proj", "")
 				So(jobs[0].Cmd, ShouldEqual, expectedCmd0)
 				So(jobs[0].Cwd, ShouldEqual,
 					"/watch/proj/123")
@@ -124,7 +130,7 @@ func TestCreateJobs(t *testing.T) {
 				So(jobs[0].LimitGroups, ShouldResemble,
 					[]string{"irods"})
 
-				expectedCmd1 := BuildPutCommand("chunk.000001", false, "proj", "")
+				expectedCmd1 := BuildPutCommand("chunk.000001", "", false, "proj", "")
 				So(jobs[1].Cmd, ShouldEqual, expectedCmd1)
 			})
 
