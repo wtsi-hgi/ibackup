@@ -5578,8 +5578,8 @@ func TestWatchFofnsIntegration(t *testing.T) {
 			err = fofn.GenerateStatus(state.RunDir, nil)
 			So(err, ShouldBeNil)
 
-			statusFile := filepath.Join(state.RunDir, "status")
-			So(os.Symlink(statusFile, filepath.Join(subPath, "status")), ShouldBeNil)
+			relStatusFile := filepath.Join(filepath.Base(state.RunDir), "status")
+			So(os.Symlink(relStatusFile, filepath.Join(subPath, "status")), ShouldBeNil)
 
 			symlinkPath := filepath.Join(subPath, "status")
 			_, linkErr := os.Lstat(symlinkPath)
@@ -5588,7 +5588,7 @@ func TestWatchFofnsIntegration(t *testing.T) {
 			target, readErr := os.Readlink(symlinkPath)
 			So(readErr, ShouldBeNil)
 			So(target, ShouldEqual,
-				filepath.Join(state.RunDir, "status"),
+				relStatusFile,
 			)
 
 			entries, counts, parseErr :=
@@ -5697,8 +5697,9 @@ func TestWatchFofnsIntegration(t *testing.T) {
 			err = fofn.GenerateStatus(state.RunDir, nil)
 			So(err, ShouldBeNil)
 
+			relStatusFile := filepath.Join(filepath.Base(state.RunDir), "status")
 			So(os.Symlink(
-				filepath.Join(state.RunDir, "status"),
+				relStatusFile,
 				filepath.Join(subPath, "status"),
 			), ShouldBeNil)
 
