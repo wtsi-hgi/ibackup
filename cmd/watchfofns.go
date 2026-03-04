@@ -91,7 +91,22 @@ Each subdirectory must contain a config.yml specifying the transformer to use
 and optional metadata.
 
 The IBACKUP_CONFIG environment variable must be set to the ibackup configuration
-file (for named transformers).`,
+file (for named transformers).
+
+The --statter flag allows the setting of an external statter program
+(https://github.com/wtsi-hgi/statter); if not set, the IBACKUP_STATTER env var
+will be checked for an executable; if also not set, ibackup will check to see
+if theres an executable named 'statter' in the same directory as the ibackup
+executable, before finally falling back to checking for a 'statter' executable
+in the PATH.
+
+A wr manager instance must be running for 'ibackup add' commands to be
+automatically scheduled. Set --wr_deployment to "development" if you're using a
+development manager.
+
+To specify the queues to which the jobs will be submitted, use the --queues option.
+To specify queues to avoid for job submission, use the --queues_avoid option.
+These should be supplied as a comma separated list.`,
 	RunE: func(_ *cobra.Command, _ []string) error {
 		return runWatchFofns()
 	},
@@ -127,7 +142,7 @@ func registerWatchFofnsFlags() {
 	f.DurationVar(&watchInterval, "interval", defaultWatchInterval, "poll interval")
 	f.IntVar(&watchMinChunk, "min-chunk", defaultWatchMinChunk, "minimum files per chunk")
 	f.IntVar(&watchMaxChunk, "max-chunk", defaultWatchMaxChunk, "maximum files per chunk")
-	f.StringVar(&watchWRDeployment, "wr-deployment", "production", "wr deployment name")
+	f.StringVar(&watchWRDeployment, "wr_deployment", "production", "wr deployment name")
 	f.StringVar(&statterPath, "statter", "",
 		"path to an external statter program (https://github.com/wtsi-hgi/statter)")
 

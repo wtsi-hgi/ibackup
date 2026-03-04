@@ -109,9 +109,12 @@ the hardlinks_collection location.
 Symlinks will also be stored as empty files, this time with metadata indicating
 what the symlink pointed to. The referenced data is NOT backed up.
 
-The --statter flag allows the setting of an optional external statter program
-(https://github.com/wtsi-hgi/statter); useful for when operating on potentially
-unreliable filesystems.
+The --statter flag allows the setting of an external statter program
+(https://github.com/wtsi-hgi/statter); if not set, the IBACKUP_STATTER env var
+will be checked for an executable; if also not set, ibackup will check to see
+if theres an executable named 'statter' in the same directory as the ibackup
+executable, before finally falling back to checking for a 'statter' executable
+in the PATH.
 
 Starting the web server brings up a web interface and REST API that will use the
 given set database path to create a set database if it doesn't exist, add
