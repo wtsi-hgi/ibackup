@@ -175,13 +175,6 @@ func runWatchFofns() error {
 // validateWatchFlags checks all required flags and
 // environment variables before starting the watcher.
 func validateWatchFlags() error {
-	validated, err := validateQueues(queues, queueAvoid)
-	if err != nil {
-		return fmt.Errorf("failed to validate queues: %w", err)
-	} else if !validated {
-		return errInvalidQueues
-	}
-
 	if err := validateWatchDir(); err != nil {
 		return err
 	}
@@ -190,7 +183,18 @@ func validateWatchFlags() error {
 		return err
 	}
 
-	return validateChunkFlags()
+	if err := validateChunkFlags(); err != nil {
+		return err
+	}
+
+	validated, err := validateQueues(queues, queueAvoid)
+	if err != nil {
+		return fmt.Errorf("failed to validate queues: %w", err)
+	} else if !validated {
+		return errInvalidQueues
+	}
+
+	return nil
 }
 
 // validateWatchDir checks that --dir was provided and

@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/VertebrateResequencing/wr/jobqueue"
+	"github.com/VertebrateResequencing/wr/jobqueue/scheduler"
 	. "github.com/smartystreets/goconvey/convey"
 )
 
@@ -86,7 +87,7 @@ func TestBuildPutCommand(t *testing.T) {
 			So(cmd, ShouldNotContainSubstring, "--statter")
 		})
 
-		Convey("set --statter flag when statter path is supplied", func() {
+		Convey("includes --statter flag when statter path is supplied", func() {
 			cmd := BuildPutCommand("chunk.000000", "/path/to/statter", false, "", "")
 			So(cmd, ShouldContainSubstring, "--statter '/path/to/statter'")
 		})
@@ -95,44 +96,45 @@ func TestBuildPutCommand(t *testing.T) {
 
 func TestCreateJobs(t *testing.T) {
 	Convey("CreateJobs", t, func() {
-		Convey("creates jobs with default config values",
-			func() {
-				cfg := RunConfig{
-					RunDir: "/watch/proj/123",
-					ChunkPaths: []string{
-						"chunk.000000",
-						"chunk.000001",
-					},
-					SubDirName: "proj",
-					FofnMtime:  123,
-					Retries:    3,
-				}
+		mock := &mockJobSubmitter{}
 
-				jobs := CreateJobs(cfg)
-				So(jobs, ShouldHaveLength, 2)
+		Convey("creates jobs with default config values", func() {
+			cfg := RunConfig{
+				RunDir: "/watch/proj/123",
+				ChunkPaths: []string{
+					"chunk.000000",
+					"chunk.000001",
+				},
+				SubDirName: "proj",
+				FofnMtime:  123,
+				Retries:    3,
+			}
 
-				expectedCmd0 := BuildPutCommand("chunk.000000", "", false, "proj", "")
-				So(jobs[0].Cmd, ShouldEqual, expectedCmd0)
-				So(jobs[0].Cwd, ShouldEqual,
-					"/watch/proj/123")
-				So(jobs[0].CwdMatters, ShouldBeTrue)
-				So(jobs[0].RepGroup, ShouldEqual,
-					"ibackup_fofn_proj_123")
-				So(jobs[0].ReqGroup, ShouldEqual,
-					"ibackup")
-				So(jobs[0].Requirements.RAM, ShouldEqual,
-					1024)
-				So(jobs[0].Requirements.Cores, ShouldEqual,
-					0.1)
-				So(jobs[0].Requirements.Time, ShouldEqual,
-					8*time.Hour)
-				So(jobs[0].Retries, ShouldEqual, uint8(3))
-				So(jobs[0].LimitGroups, ShouldResemble,
-					[]string{"irods"})
+			jobs := CreateJobs(mock, cfg)
+			So(jobs, ShouldHaveLength, 2)
 
-				expectedCmd1 := BuildPutCommand("chunk.000001", "", false, "proj", "")
-				So(jobs[1].Cmd, ShouldEqual, expectedCmd1)
-			})
+			expectedCmd0 := BuildPutCommand("chunk.000000", "", false, "proj", "")
+			So(jobs[0].Cmd, ShouldEqual, expectedCmd0)
+			So(jobs[0].Cwd, ShouldEqual,
+				"/watch/proj/123")
+			So(jobs[0].CwdMatters, ShouldBeTrue)
+			So(jobs[0].RepGroup, ShouldEqual,
+				"ibackup_fofn_proj_123")
+			So(jobs[0].ReqGroup, ShouldEqual,
+				"ibackup")
+			So(jobs[0].Requirements.RAM, ShouldEqual,
+				1024)
+			So(jobs[0].Requirements.Cores, ShouldEqual,
+				0.1)
+			So(jobs[0].Requirements.Time, ShouldEqual,
+				8*time.Hour)
+			So(jobs[0].Retries, ShouldEqual, uint8(3))
+			So(jobs[0].LimitGroups, ShouldResemble,
+				[]string{"irods"})
+
+			expectedCmd1 := BuildPutCommand("chunk.000001", "", false, "proj", "")
+			So(jobs[1].Cmd, ShouldEqual, expectedCmd1)
+		})
 
 		Convey("preserves Retries zero value",
 			func() {
@@ -144,7 +146,7 @@ func TestCreateJobs(t *testing.T) {
 					Retries:    0,
 				}
 
-				jobs := CreateJobs(cfg)
+				jobs := CreateJobs(mock, cfg)
 				So(jobs, ShouldHaveLength, 1)
 				So(jobs[0].Retries, ShouldEqual, uint8(0))
 			})
@@ -158,7 +160,7 @@ func TestCreateJobs(t *testing.T) {
 				NoReplace:  true,
 			}
 
-			jobs := CreateJobs(cfg)
+			jobs := CreateJobs(mock, cfg)
 			So(jobs[0].Cmd, ShouldContainSubstring,
 				"--no_replace")
 		})
@@ -173,7 +175,7 @@ func TestCreateJobs(t *testing.T) {
 				Time:       4 * time.Hour,
 			}
 
-			jobs := CreateJobs(cfg)
+			jobs := CreateJobs(mock, cfg)
 			So(jobs[0].Requirements.RAM, ShouldEqual,
 				2048)
 			So(jobs[0].Requirements.Time, ShouldEqual,
@@ -235,9 +237,7 @@ func (m *mockJobSubmitter) GetLastCompletionTimeByRepGroup(
 	return m.completionMap, m.completionErr
 }
 
-func (m *mockJobSubmitter) DeleteJobs(
-	jobs []*jobqueue.Job,
-) error {
+func (m *mockJobSubmitter) RemoveJobs(jobs ...*jobqueue.Job) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -248,6 +248,16 @@ func (m *mockJobSubmitter) DeleteJobs(
 
 func (m *mockJobSubmitter) Disconnect() error {
 	return nil
+}
+
+func (m *mockJobSubmitter) NewJob(cmd, repGroup, reqGroup, _, _ string, req *scheduler.Requirements) *jobqueue.Job {
+	return &jobqueue.Job{
+		Cmd:          cmd,
+		CwdMatters:   true,
+		RepGroup:     repGroup,
+		ReqGroup:     reqGroup,
+		Requirements: req,
+	}
 }
 
 func TestJobSubmitter(t *testing.T) {

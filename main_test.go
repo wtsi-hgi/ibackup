@@ -63,6 +63,7 @@ import (
 
 	"github.com/VertebrateResequencing/wr/client"
 	"github.com/VertebrateResequencing/wr/jobqueue"
+	"github.com/VertebrateResequencing/wr/jobqueue/scheduler"
 	"github.com/inconshreveable/log15"
 	"github.com/phayes/freeport"
 	. "github.com/smartystreets/goconvey/convey"
@@ -5532,6 +5533,16 @@ func (s *testSubmitter) DeleteJobs(
 
 func (s *testSubmitter) Disconnect() error { return nil }
 
+func (s *testSubmitter) NewJob(cmd, repGroup, reqGroup, _, _ string, req *scheduler.Requirements) *jobqueue.Job {
+	return &jobqueue.Job{
+		Cmd:          cmd,
+		CwdMatters:   true,
+		RepGroup:     repGroup,
+		ReqGroup:     reqGroup,
+		Requirements: req,
+	}
+}
+
 func TestWatchFofnsIntegration(t *testing.T) {
 	Convey("watchfofns integration", t, func() {
 		So(transformer.Register("test", `^/tmp/(.*)$`, "/irods/$1"), ShouldBeNil)
@@ -6778,8 +6789,11 @@ func TestPutReportFlag(t *testing.T) {
 }
 
 func TestWatchFofnsCommand(t *testing.T) {
+	addBqueuesToPath(t)
+
 	Convey("The watchfofns subcommand", t, func() {
 		Convey("errors when --dir is not provided", func() {
+
 			exitCode, out := runCLI(t, nil, "",
 				"watchfofns")
 			So(exitCode, ShouldNotEqual, 0)
@@ -6787,7 +6801,6 @@ func TestWatchFofnsCommand(t *testing.T) {
 		})
 
 		Convey("exits cleanly when given valid dir and context cancel", func() {
-			addBqueuesToPath(t)
 
 			r, w, errp := os.Pipe()
 			So(errp, ShouldBeNil)
@@ -6850,6 +6863,21 @@ func TestWatchFofnsCommand(t *testing.T) {
 
 			So(len(jobs), ShouldBeGreaterThan, 0)
 			So(jobs[0].Retries, ShouldEqual, uint8(5))
+		})
+
+		Convey("passes --queues and --queues_avoid values through to submitted jobs", func() {
+			jobs := runWatchFofnsAndCaptureJobs(t, "--queues", "normal", "--queues_avoid", "long")
+
+			So(len(jobs), ShouldBeGreaterThan, 0)
+			So(jobs[0].Requirements.Other["scheduler_queue"], ShouldEqual, "normal")
+			So(jobs[0].Requirements.Other["scheduler_queues_avoid"], ShouldEqual, "long")
+		})
+
+		Convey("passes --statter through to submitted jobs", func() {
+			jobs := runWatchFofnsAndCaptureJobs(t, "--statter", "/path/to/statter")
+
+			So(len(jobs), ShouldBeGreaterThan, 0)
+			So(jobs[0].Cmd, ShouldContainSubstring, "--statter '/path/to/statter'")
 		})
 
 		Convey("prints help with --help", func() {

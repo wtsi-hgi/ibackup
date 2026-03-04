@@ -145,7 +145,7 @@ func submitChunkJobs(
 
 	jobCfg := buildRunConfig(sdCfg, baseCfg, runDir, relChunks, dirName, mtime)
 
-	jobs := CreateJobs(jobCfg)
+	jobs := CreateJobs(submitter, jobCfg)
 
 	if err := submitter.SubmitJobs(jobs); err != nil {
 		return RunState{}, err
@@ -449,7 +449,7 @@ func (w *Watcher) teardownAndRestart(subDir SubDir, runDir string, status RunJob
 	}
 
 	if len(status.BuriedJobs) > 0 {
-		if err := w.submitter.DeleteJobs(status.BuriedJobs); err != nil {
+		if err := w.submitter.RemoveJobs(status.BuriedJobs...); err != nil {
 			return err
 		}
 	}

@@ -569,7 +569,7 @@ func parseQueues(queues string) []string {
 		return output
 	}
 
-	for _, queue := range strings.Split(queues, ",") {
+	for queue := range strings.SplitSeq(queues, ",") {
 		queue = strings.TrimSpace(queue)
 		if queue != "" {
 			output = append(output, queue)
@@ -598,7 +598,7 @@ func validateQueues(useQueues string, avoidQueues string) (bool, error) { //noli
 		}
 	}
 
-	if serverDebug || readonly {
+	if serverDebug || readonly || len(avoid) == 0 && len(queues) == 0 {
 		return true, nil
 	}
 
