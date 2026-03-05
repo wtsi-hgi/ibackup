@@ -701,7 +701,13 @@ func (p *Putter) testRead(request *Request) error {
 func clearRequestSymlinkState(request *Request) {
 	request.Symlink = ""
 
-	if request.Meta == nil || request.Meta.LocalMeta == nil {
+	if request.Meta == nil {
+		return
+	}
+
+	request.Meta = request.Meta.Clone()
+
+	if request.Meta.LocalMeta == nil {
 		return
 	}
 
@@ -714,6 +720,8 @@ func setRequestSymlinkState(request *Request, symlink string) {
 	if request.Meta == nil {
 		return
 	}
+
+	request.Meta = request.Meta.Clone()
 
 	if request.Meta.LocalMeta == nil {
 		request.Meta.LocalMeta = make(map[string]string)

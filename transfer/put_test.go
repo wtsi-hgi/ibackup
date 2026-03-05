@@ -90,6 +90,33 @@ func TestSetRequestSymlinkFromInfoMeta(t *testing.T) {
 			_, hasSymlink = request.Meta.LocalMeta[MetaKeySymlink]
 			So(hasSymlink, ShouldBeFalse)
 		})
+
+		Convey("When requests share the same Meta pointer, symlink updates are isolated per request", func() {
+			sharedMeta := &Meta{LocalMeta: map[string]string{
+				MetaKeySymlink: "/shared-target",
+				"custom":       "value",
+			}}
+
+			first := &Request{Meta: sharedMeta, Symlink: "/shared-target"}
+			second := &Request{Meta: sharedMeta}
+
+			setRequestSymlinkFromInfoMeta(first, &ObjectInfo{Meta: map[string]string{}})
+
+			So(first.Symlink, ShouldEqual, "")
+			_, firstHasSymlink := first.Meta.LocalMeta[MetaKeySymlink]
+			So(firstHasSymlink, ShouldBeFalse)
+
+			So(second.Meta.LocalMeta[MetaKeySymlink], ShouldEqual, "/shared-target")
+			So(first.Meta, ShouldNotEqual, second.Meta)
+
+			setRequestSymlinkFromInfoMeta(first, &ObjectInfo{Meta: map[string]string{
+				MetaKeySymlink: "/new-target",
+			}})
+
+			So(first.Symlink, ShouldEqual, "/new-target")
+			So(first.Meta.LocalMeta[MetaKeySymlink], ShouldEqual, "/new-target")
+			So(second.Meta.LocalMeta[MetaKeySymlink], ShouldEqual, "/shared-target")
+		})
 	})
 }
 

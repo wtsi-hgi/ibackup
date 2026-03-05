@@ -6254,11 +6254,15 @@ func TestWatchFofnsRealWRIntegration(t *testing.T) {
 
 				select {
 				case <-done:
-				default:
-					<-done
+				case <-time.After(30 * time.Second):
+					t.Fatalf("watchfofns did not exit after cancel within timeout: exit=%d output=%s",
+						exitCode, output)
 				}
 
-				So(uploadVisibleErr, ShouldBeNil)
+				wrappedErr := fmt.Errorf("waitForRemoteFile(%q) failed: %w; exit=%d output=%s",
+					rf, uploadVisibleErr, exitCode, output)
+
+				So(wrappedErr, ShouldBeNil)
 			}
 		}
 
