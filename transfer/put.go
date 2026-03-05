@@ -463,7 +463,7 @@ func (p *Putter) statPathsAndReturnOrPut(request *Request, putCh chan *Request, 
 }
 
 func setRequestSymlinkFromInfoMeta(request *Request, lInfo *ObjectInfo) {
-	clearRequestSymlinkState(request)
+	metaIsUnique := clearRequestSymlinkState(request)
 
 	if lInfo == nil || lInfo.Meta == nil {
 		return
@@ -474,7 +474,7 @@ func setRequestSymlinkFromInfoMeta(request *Request, lInfo *ObjectInfo) {
 		return
 	}
 
-	setRequestSymlinkState(request, symlink)
+	setRequestSymlinkState(request, symlink, metaIsUnique)
 }
 
 // sendRequest sets the given status and err on the given request, then sends it
@@ -698,30 +698,38 @@ func (p *Putter) testRead(request *Request) error {
 	return err
 }
 
-func clearRequestSymlinkState(request *Request) {
+func clearRequestSymlinkState(request *Request) bool {
 	request.Symlink = ""
 
-	if request.Meta == nil {
-		return
+	if request.Meta == nil || request.Meta.LocalMeta == nil {
+		return false
+	}
+
+	if _, ok := request.Meta.LocalMeta[MetaKeySymlink]; !ok {
+		return false
 	}
 
 	request.Meta = request.Meta.Clone()
 
-	if request.Meta.LocalMeta == nil {
-		return
-	}
-
 	delete(request.Meta.LocalMeta, MetaKeySymlink)
+
+	return true
 }
 
-func setRequestSymlinkState(request *Request, symlink string) {
+func setRequestSymlinkState(request *Request, symlink string, metaIsUnique bool) {
 	request.Symlink = symlink
 
 	if request.Meta == nil {
 		return
 	}
 
-	request.Meta = request.Meta.Clone()
+	if !metaIsUnique {
+		if existing, ok := request.Meta.LocalMeta[MetaKeySymlink]; ok && existing == symlink {
+			return
+		}
+
+		request.Meta = request.Meta.Clone()
+	}
 
 	if request.Meta.LocalMeta == nil {
 		request.Meta.LocalMeta = make(map[string]string)
