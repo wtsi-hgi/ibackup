@@ -26,6 +26,7 @@
 package transfer
 
 import (
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -659,7 +660,7 @@ func createTestRequests(t *testing.T, sourceDir, destDir string, sourcePaths []s
 	t.Helper()
 
 	requests := make([]*Request, len(sourcePaths))
-	localMeta := map[string]string{"a": "1", "b": "2"}
+	baseLocalMeta := map[string]string{"a": "1", "b": "2"}
 
 	for i, path := range sourcePaths {
 		dir := filepath.Dir(path)
@@ -674,7 +675,7 @@ func createTestRequests(t *testing.T, sourceDir, destDir string, sourcePaths []s
 		requests[i] = &Request{
 			Local:  path,
 			Remote: strings.Replace(path, sourceDir, destDir, 1),
-			Meta:   &Meta{LocalMeta: localMeta},
+			Meta:   &Meta{LocalMeta: maps.Clone(baseLocalMeta)},
 		}
 	}
 
