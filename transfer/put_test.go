@@ -38,6 +38,39 @@ import (
 	"github.com/wtsi-hgi/ibackup/internal/testutil"
 )
 
+func TestSetRequestSymlinkFromInfoMeta(t *testing.T) {
+	Convey("Given a request reused across Put calls", t, func() {
+		request := &Request{
+			Meta: &Meta{LocalMeta: map[string]string{
+				MetaKeySymlink: "/old/target",
+				"custom":       "value",
+			}},
+			Symlink: "/old/target",
+		}
+
+		Convey("When local stat metadata has no symlink key, stale symlink state is cleared", func() {
+			setRequestSymlinkFromInfoMeta(request, &ObjectInfo{Meta: map[string]string{}})
+
+			So(request.Symlink, ShouldEqual, "")
+
+			_, hasSymlink := request.Meta.LocalMeta[MetaKeySymlink]
+			So(hasSymlink, ShouldBeFalse)
+			So(request.Meta.LocalMeta["custom"], ShouldEqual, "value")
+		})
+
+		Convey("When local stat metadata includes a symlink key, it is copied to the request", func() {
+			target := "/new/target"
+
+			setRequestSymlinkFromInfoMeta(request, &ObjectInfo{Meta: map[string]string{
+				MetaKeySymlink: target,
+			}})
+
+			So(request.Symlink, ShouldEqual, target)
+			So(request.Meta.LocalMeta[MetaKeySymlink], ShouldEqual, target)
+		})
+	})
+}
+
 func TestPutMock(t *testing.T) {
 	Convey("Given Requests and a mock Handler, you can make a new Putter", t, func() {
 		internal.InitStatter(t)

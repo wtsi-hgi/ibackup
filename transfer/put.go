@@ -463,9 +463,28 @@ func (p *Putter) statPathsAndReturnOrPut(request *Request, putCh chan *Request, 
 }
 
 func setRequestSymlinkFromInfoMeta(request *Request, lInfo *ObjectInfo) {
-	if symlink, ok := lInfo.Meta[MetaKeySymlink]; ok {
-		request.Symlink = symlink
+	request.Symlink = ""
+
+	if request.Meta != nil && request.Meta.LocalMeta != nil {
+		delete(request.Meta.LocalMeta, MetaKeySymlink)
 	}
+
+	symlink, ok := lInfo.Meta[MetaKeySymlink]
+	if !ok {
+		return
+	}
+
+	request.Symlink = symlink
+
+	if request.Meta == nil {
+		return
+	}
+
+	if request.Meta.LocalMeta == nil {
+		request.Meta.LocalMeta = make(map[string]string)
+	}
+
+	request.Meta.LocalMeta[MetaKeySymlink] = symlink
 }
 
 // sendRequest sets the given status and err on the given request, then sends it

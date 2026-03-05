@@ -6227,27 +6227,24 @@ func TestWatchFofnsRealWRIntegration(t *testing.T) {
 		}
 
 		waitForRemoteFile := func(path string, timeout time.Duration) error {
-			deadline := time.Now().Add(timeout)
-
-			for time.Now().Before(deadline) {
-				select {
-				case <-done:
-					return fmt.Errorf("%w: exit=%d output=%s", errWatchFofnsExitedEarly, exitCode, output)
-				default:
-				}
-
-				waitErr := waitForIlsPresent(t, path, 1*time.Second)
-				if waitErr == nil {
-					return nil
-				}
-
-				time.Sleep(200 * time.Millisecond)
+			select {
+			case <-done:
+				return fmt.Errorf("%w: exit=%d output=%s", errWatchFofnsExitedEarly, exitCode, output)
+			default:
 			}
 
-			return fmt.Errorf(
-				"%w for %q within %s",
-				errIlsDidNotSucceed, path, timeout,
-			)
+			waitErr := waitForIlsPresent(t, path, timeout)
+			if waitErr == nil {
+				return nil
+			}
+
+			select {
+			case <-done:
+				return fmt.Errorf("%w: exit=%d output=%s", errWatchFofnsExitedEarly, exitCode, output)
+			default:
+			}
+
+			return waitErr
 		}
 
 		for _, rf := range remoteFiles {
