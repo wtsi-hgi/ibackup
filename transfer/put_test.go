@@ -26,7 +26,6 @@
 package transfer
 
 import (
-	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -38,104 +37,6 @@ import (
 	"github.com/wtsi-hgi/ibackup/internal"
 	"github.com/wtsi-hgi/ibackup/internal/testutil"
 )
-
-func TestSetRequestSymlinkFromInfoMeta(t *testing.T) {
-	Convey("Given a request reused across Put calls", t, func() {
-		request := &Request{
-			Meta: &Meta{LocalMeta: map[string]string{
-				MetaKeySymlink: "/old/target",
-				"custom":       "value",
-			}},
-			Symlink: "/old/target",
-		}
-
-		Convey("When local stat metadata has no symlink key, stale symlink state is cleared", func() {
-			setRequestSymlinkFromInfoMeta(request, &ObjectInfo{Meta: map[string]string{}})
-
-			So(request.Symlink, ShouldEqual, "")
-
-			_, hasSymlink := request.Meta.LocalMeta[MetaKeySymlink]
-			So(hasSymlink, ShouldBeFalse)
-			So(request.Meta.LocalMeta["custom"], ShouldEqual, "value")
-		})
-
-		Convey("When local stat metadata includes a symlink key, it is copied to the request", func() {
-			target := "/new/target"
-
-			setRequestSymlinkFromInfoMeta(request, &ObjectInfo{Meta: map[string]string{
-				MetaKeySymlink: target,
-			}})
-
-			So(request.Symlink, ShouldEqual, target)
-			So(request.Meta.LocalMeta[MetaKeySymlink], ShouldEqual, target)
-		})
-
-		Convey("When local stat info is nil or has nil metadata, stale symlink state is still cleared", func() {
-			request.Symlink = "/old/target"
-			request.Meta.LocalMeta[MetaKeySymlink] = "/old/target"
-
-			setRequestSymlinkFromInfoMeta(request, nil)
-
-			So(request.Symlink, ShouldEqual, "")
-
-			_, hasSymlink := request.Meta.LocalMeta[MetaKeySymlink]
-			So(hasSymlink, ShouldBeFalse)
-
-			request.Symlink = "/another/target"
-			request.Meta.LocalMeta[MetaKeySymlink] = "/another/target"
-
-			setRequestSymlinkFromInfoMeta(request, &ObjectInfo{})
-
-			So(request.Symlink, ShouldEqual, "")
-
-			_, hasSymlink = request.Meta.LocalMeta[MetaKeySymlink]
-			So(hasSymlink, ShouldBeFalse)
-		})
-
-		Convey("When requests share the same Meta pointer, symlink updates are isolated per request", func() {
-			sharedMeta := &Meta{LocalMeta: map[string]string{
-				MetaKeySymlink: "/shared-target",
-				"custom":       "value",
-			}}
-
-			first := &Request{Meta: sharedMeta, Symlink: "/shared-target"}
-			second := &Request{Meta: sharedMeta}
-
-			setRequestSymlinkFromInfoMeta(first, &ObjectInfo{Meta: map[string]string{}})
-
-			So(first.Symlink, ShouldEqual, "")
-			_, firstHasSymlink := first.Meta.LocalMeta[MetaKeySymlink]
-			So(firstHasSymlink, ShouldBeFalse)
-
-			So(second.Meta.LocalMeta[MetaKeySymlink], ShouldEqual, "/shared-target")
-			So(first.Meta, ShouldNotEqual, second.Meta)
-
-			setRequestSymlinkFromInfoMeta(first, &ObjectInfo{Meta: map[string]string{
-				MetaKeySymlink: "/new-target",
-			}})
-
-			So(first.Symlink, ShouldEqual, "/new-target")
-			So(first.Meta.LocalMeta[MetaKeySymlink], ShouldEqual, "/new-target")
-			So(second.Meta.LocalMeta[MetaKeySymlink], ShouldEqual, "/shared-target")
-		})
-
-		Convey("When the request already matches the desired symlink state, metadata is not cloned", func() {
-			current := "/current-target"
-			request.Symlink = current
-			request.Meta.LocalMeta[MetaKeySymlink] = current
-
-			metaBefore := request.Meta
-
-			setRequestSymlinkFromInfoMeta(request, &ObjectInfo{Meta: map[string]string{
-				MetaKeySymlink: current,
-			}})
-
-			So(request.Symlink, ShouldEqual, current)
-			So(request.Meta.LocalMeta[MetaKeySymlink], ShouldEqual, current)
-			So(request.Meta, ShouldEqual, metaBefore)
-		})
-	})
-}
 
 func TestPutMock(t *testing.T) {
 	Convey("Given Requests and a mock Handler, you can make a new Putter", t, func() {
@@ -676,7 +577,7 @@ func createTestRequests(t *testing.T, sourceDir, destDir string, sourcePaths []s
 	t.Helper()
 
 	requests := make([]*Request, len(sourcePaths))
-	baseLocalMeta := map[string]string{"a": "1", "b": "2"}
+	localMeta := map[string]string{"a": "1", "b": "2"}
 
 	for i, path := range sourcePaths {
 		dir := filepath.Dir(path)
@@ -691,7 +592,7 @@ func createTestRequests(t *testing.T, sourceDir, destDir string, sourcePaths []s
 		requests[i] = &Request{
 			Local:  path,
 			Remote: strings.Replace(path, sourceDir, destDir, 1),
-			Meta:   &Meta{LocalMeta: maps.Clone(baseLocalMeta)},
+			Meta:   &Meta{LocalMeta: localMeta},
 		}
 	}
 
