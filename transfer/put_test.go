@@ -68,6 +68,28 @@ func TestSetRequestSymlinkFromInfoMeta(t *testing.T) {
 			So(request.Symlink, ShouldEqual, target)
 			So(request.Meta.LocalMeta[MetaKeySymlink], ShouldEqual, target)
 		})
+
+		Convey("When local stat info is nil or has nil metadata, stale symlink state is still cleared", func() {
+			request.Symlink = "/old/target"
+			request.Meta.LocalMeta[MetaKeySymlink] = "/old/target"
+
+			setRequestSymlinkFromInfoMeta(request, nil)
+
+			So(request.Symlink, ShouldEqual, "")
+
+			_, hasSymlink := request.Meta.LocalMeta[MetaKeySymlink]
+			So(hasSymlink, ShouldBeFalse)
+
+			request.Symlink = "/another/target"
+			request.Meta.LocalMeta[MetaKeySymlink] = "/another/target"
+
+			setRequestSymlinkFromInfoMeta(request, &ObjectInfo{})
+
+			So(request.Symlink, ShouldEqual, "")
+
+			_, hasSymlink = request.Meta.LocalMeta[MetaKeySymlink]
+			So(hasSymlink, ShouldBeFalse)
+		})
 	})
 }
 

@@ -463,10 +463,10 @@ func (p *Putter) statPathsAndReturnOrPut(request *Request, putCh chan *Request, 
 }
 
 func setRequestSymlinkFromInfoMeta(request *Request, lInfo *ObjectInfo) {
-	request.Symlink = ""
+	clearRequestSymlinkState(request)
 
-	if request.Meta != nil && request.Meta.LocalMeta != nil {
-		delete(request.Meta.LocalMeta, MetaKeySymlink)
+	if lInfo == nil || lInfo.Meta == nil {
+		return
 	}
 
 	symlink, ok := lInfo.Meta[MetaKeySymlink]
@@ -474,17 +474,7 @@ func setRequestSymlinkFromInfoMeta(request *Request, lInfo *ObjectInfo) {
 		return
 	}
 
-	request.Symlink = symlink
-
-	if request.Meta == nil {
-		return
-	}
-
-	if request.Meta.LocalMeta == nil {
-		request.Meta.LocalMeta = make(map[string]string)
-	}
-
-	request.Meta.LocalMeta[MetaKeySymlink] = symlink
+	setRequestSymlinkState(request, symlink)
 }
 
 // sendRequest sets the given status and err on the given request, then sends it
@@ -706,6 +696,30 @@ func (p *Putter) testRead(request *Request) error {
 	}
 
 	return err
+}
+
+func clearRequestSymlinkState(request *Request) {
+	request.Symlink = ""
+
+	if request.Meta == nil || request.Meta.LocalMeta == nil {
+		return
+	}
+
+	delete(request.Meta.LocalMeta, MetaKeySymlink)
+}
+
+func setRequestSymlinkState(request *Request, symlink string) {
+	request.Symlink = symlink
+
+	if request.Meta == nil {
+		return
+	}
+
+	if request.Meta.LocalMeta == nil {
+		request.Meta.LocalMeta = make(map[string]string)
+	}
+
+	request.Meta.LocalMeta[MetaKeySymlink] = symlink
 }
 
 // headRead is a FileReadTester that uses the statter to read a byte.
