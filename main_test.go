@@ -6088,13 +6088,44 @@ func TestWatchFofnsRealWRIntegration(t *testing.T) {
 		filepath.Join(filesRoot, "00", "01", "f001"),
 		filepath.Join(filesRoot, "01", "00", "f002"),
 	}
+
+	regularPaths := slices.Clone(paths)
+	regularContents := make(map[string]string, len(regularPaths))
+
 	for i, p := range paths {
 		if err := os.MkdirAll(filepath.Dir(p), 0750); err != nil {
 			t.Fatalf("failed to create parent dir: %v", err)
 		}
 
-		internal.CreateTestFile(t, p, fmt.Sprintf("x%d", i))
+		content := fmt.Sprintf("x%d", i)
+
+		internal.CreateTestFile(t, p, content)
+		regularContents[p] = content
 	}
+
+	fileSymlinkTarget := paths[0]
+	dirSymlinkTarget := filepath.Dir(paths[0])
+
+	fileSymlinkPath := filepath.Join(filesRoot, "01", "01", "f003_link")
+	dirSymlinkPath := filepath.Join(filesRoot, "01", "02", "d000_link")
+
+	if err := os.MkdirAll(filepath.Dir(fileSymlinkPath), 0750); err != nil {
+		t.Fatalf("failed to create file symlink dir: %v", err)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(dirSymlinkPath), 0750); err != nil {
+		t.Fatalf("failed to create dir symlink dir: %v", err)
+	}
+
+	if err := os.Symlink(fileSymlinkTarget, fileSymlinkPath); err != nil {
+		t.Fatalf("failed to create file symlink: %v", err)
+	}
+
+	if err := os.Symlink(dirSymlinkTarget, dirSymlinkPath); err != nil {
+		t.Fatalf("failed to create dir symlink: %v", err)
+	}
+
+	paths = append(paths, fileSymlinkPath, dirSymlinkPath)
 
 	// Write an ibackup config with a named transformer that maps filesRoot -> remoteBase.
 	configPath := filepath.Join(localRoot, "ibackup_config.json")
@@ -6194,22 +6225,60 @@ func TestWatchFofnsRealWRIntegration(t *testing.T) {
 			"--interval", "1s",
 			"--min-chunk", "10000",
 			"--max-chunk", "10000",
-			"--wr-deployment", schedulerDeployment,
+			"--wr_deployment", schedulerDeployment,
 		)
 
 		close(done)
 	}()
 
 	// Wait for remote uploads and local status file.
-	remoteFiles := []string{
-		filepath.Join(remoteBase, "00", "00", "f000"),
-		filepath.Join(remoteBase, "00", "01", "f001"),
-		filepath.Join(remoteBase, "01", "00", "f002"),
+	remoteFiles := make([]string, len(paths))
+
+	for i, p := range paths {
+		rel, relErr := filepath.Rel(filesRoot, p)
+		if relErr != nil {
+			t.Fatalf("failed to make relative path %q: %v", p, relErr)
+		}
+
+		remoteFiles[i] = filepath.Join(remoteBase, rel)
 	}
+
+	waitForRemoteFile := func(path string, timeout time.Duration) error {
+		deadline := time.Now().Add(timeout)
+
+		for time.Now().Before(deadline) {
+			select {
+			case <-done:
+				return fmt.Errorf(
+					"watchfofns exited before upload became visible: exit=%d output=%s",
+					exitCode, output,
+				)
+			default:
+			}
+
+			if err := waitForIlsPresent(t, path, 1*time.Second); err == nil {
+				return nil
+			}
+
+			time.Sleep(200 * time.Millisecond)
+		}
+
+		return fmt.Errorf(
+			"%w for %q within %s",
+			errIlsDidNotSucceed, path, timeout,
+		)
+	}
+
 	for _, rf := range remoteFiles {
-		if err := waitForIlsPresent(t, rf, 2*time.Minute); err != nil {
+		if err := waitForRemoteFile(rf, 20*time.Second); err != nil {
 			cancel()
-			<-done
+
+			select {
+			case <-done:
+			default:
+				<-done
+			}
+
 			t.Fatalf("remote file not present: %v", err)
 		}
 	}
@@ -6257,6 +6326,155 @@ func TestWatchFofnsRealWRIntegration(t *testing.T) {
 
 	if exitCode != 0 {
 		t.Fatalf("watchfofns exit=%d output=%s", exitCode, output)
+	}
+
+	icmd := NewIcommander(t)
+	if icmd == nil {
+		t.Skip("skipping watchfofns real-wr test since iCommands are unavailable")
+	}
+
+	waitRemoteMeta := func(path, requiredSubstring string, timeout time.Duration) string {
+		deadline := time.Now().Add(timeout)
+
+		var lastOutput string
+
+		for time.Now().Before(deadline) {
+			out, err := icmd.IMETA("ls", "-d", path)
+			if err == nil {
+				meta := string(out)
+				lastOutput = meta
+
+				if requiredSubstring == "" || strings.Contains(meta, requiredSubstring) {
+					return meta
+				}
+			} else {
+				lastOutput = string(out)
+			}
+
+			time.Sleep(500 * time.Millisecond)
+		}
+
+		t.Fatalf("remote meta did not contain %q for %q within %s; last output: %s",
+			requiredSubstring, path, timeout, lastOutput)
+
+		return ""
+	}
+
+	metaValue := func(meta, key string) string {
+		attrFind := "attribute: " + key + "\nvalue: "
+		attrPos := strings.Index(meta, attrFind)
+		if attrPos == -1 {
+			t.Fatalf("meta for key %q not found in output: %s", key, meta)
+		}
+
+		value := meta[attrPos+len(attrFind):]
+		nlPos := strings.Index(value, "\n")
+		if nlPos == -1 {
+			t.Fatalf("meta for key %q had malformed output: %s", key, meta)
+		}
+
+		return value[:nlPos]
+	}
+
+	downloadRemote := func(remotePath, localPath string) {
+		t.Helper()
+
+		out, err := icmd.IGET("-K", remotePath, localPath)
+		if err != nil {
+			t.Fatalf("iget failed for %q -> %q: %v; output: %s",
+				remotePath, localPath, err, string(out))
+		}
+	}
+
+	downloadDir := t.TempDir()
+
+	for _, p := range regularPaths {
+		rel, relErr := filepath.Rel(filesRoot, p)
+		if relErr != nil {
+			t.Fatalf("failed to make relative path %q: %v", p, relErr)
+		}
+
+		remotePath := filepath.Join(remoteBase, rel)
+		localPath := filepath.Join(downloadDir, filepath.Base(p)+".got")
+
+		downloadRemote(remotePath, localPath)
+
+		data, readErr := os.ReadFile(localPath)
+		if readErr != nil {
+			t.Fatalf("failed to read %q: %v", localPath, readErr)
+		}
+
+		if string(data) != regularContents[p] {
+			t.Fatalf("wrong content for %q: got %q want %q",
+				localPath, string(data), regularContents[p])
+		}
+
+		info, statErr := os.Stat(localPath)
+		if statErr != nil {
+			t.Fatalf("failed to stat %q: %v", localPath, statErr)
+		}
+
+		if info.Size() <= 0 {
+			t.Fatalf("expected non-zero size for regular file %q, got %d",
+				localPath, info.Size())
+		}
+
+		meta := waitRemoteMeta(remotePath, "attribute: "+transfer.MetaKeySets+"\nvalue: ", 30*time.Second)
+		if strings.Contains(meta, "attribute: "+transfer.MetaKeySymlink+"\n") {
+			t.Fatalf("regular file %q unexpectedly had symlink metadata: %s",
+				remotePath, meta)
+		}
+	}
+
+	fileSymlinkRemote := filepath.Join(remoteBase, "01", "01", "f003_link")
+	dirSymlinkRemote := filepath.Join(remoteBase, "01", "02", "d000_link")
+
+	fileMeta := waitRemoteMeta(
+		fileSymlinkRemote,
+		"attribute: "+transfer.MetaKeySymlink+"\nvalue: ",
+		30*time.Second,
+	)
+
+	if got := metaValue(fileMeta, transfer.MetaKeySymlink); got != fileSymlinkTarget {
+		t.Fatalf("wrong file symlink target metadata: got %q want %q",
+			got, fileSymlinkTarget)
+	}
+
+	dirMeta := waitRemoteMeta(
+		dirSymlinkRemote,
+		"attribute: "+transfer.MetaKeySymlink+"\nvalue: ",
+		30*time.Second,
+	)
+
+	if got := metaValue(dirMeta, transfer.MetaKeySymlink); got != dirSymlinkTarget {
+		t.Fatalf("wrong dir symlink target metadata: got %q want %q",
+			got, dirSymlinkTarget)
+	}
+
+	fileSymlinkGot := filepath.Join(downloadDir, "f003_link.got")
+	dirSymlinkGot := filepath.Join(downloadDir, "d000_link.got")
+
+	downloadRemote(fileSymlinkRemote, fileSymlinkGot)
+	downloadRemote(dirSymlinkRemote, dirSymlinkGot)
+
+	fileInfo, err := os.Stat(fileSymlinkGot)
+	if err != nil {
+		t.Fatalf("failed to stat %q: %v", fileSymlinkGot, err)
+	}
+
+	if fileInfo.Size() != 0 {
+		t.Fatalf("expected file symlink placeholder to be 0 bytes, got %d",
+			fileInfo.Size())
+	}
+
+	dirInfo, err := os.Stat(dirSymlinkGot)
+	if err != nil {
+		t.Fatalf("failed to stat %q: %v", dirSymlinkGot, err)
+	}
+
+	if dirInfo.Size() != 0 {
+		t.Fatalf("expected dir symlink placeholder to be 0 bytes, got %d",
+			dirInfo.Size())
 	}
 }
 
