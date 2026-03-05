@@ -109,9 +109,12 @@ the hardlinks_collection location.
 Symlinks will also be stored as empty files, this time with metadata indicating
 what the symlink pointed to. The referenced data is NOT backed up.
 
-The --statter flag allows the setting of an optional external statter program
-(https://github.com/wtsi-hgi/statter); useful for when operating on potentially
-unreliable filesystems.
+The --statter flag allows the setting of an external statter program
+(https://github.com/wtsi-hgi/statter); if not set, the IBACKUP_STATTER env var
+will be checked for an executable; if also not set, ibackup will check to see
+if theres an executable named 'statter' in the same directory as the ibackup
+executable, before finally falling back to checking for a 'statter' executable
+in the PATH.
 
 Starting the web server brings up a web interface and REST API that will use the
 given set database path to create a set database if it doesn't exist, add
@@ -293,12 +296,8 @@ These should be supplied as a comma separated list.
 			dief("failed to make queue endpoints: %s", err)
 		}
 
-		validated, err := validateQueues(queues, queueAvoid)
-		if err != nil {
+		if err = validateQueues(queues, queueAvoid); err != nil {
 			dief("failed to validate queues: %s", err)
-		}
-		if !validated {
-			dief("invalid queues specified")
 		}
 
 		if serverDebug || readonly {
@@ -569,7 +568,7 @@ func parseQueues(queues string) []string {
 		return output
 	}
 
-	for _, queue := range strings.Split(queues, ",") {
+	for queue := range strings.SplitSeq(queues, ",") {
 		queue = strings.TrimSpace(queue)
 		if queue != "" {
 			output = append(output, queue)
@@ -587,24 +586,24 @@ type bqueuesOutput struct {
 
 // validateQueues will parse and check that all queues provided exist, and that
 // the chosen queues are not also present in the avoid list.
-func validateQueues(useQueues string, avoidQueues string) (bool, error) { //nolint:gocognit,gocyclo
+func validateQueues(useQueues string, avoidQueues string) error { //nolint:gocognit,gocyclo,cyclop
 	avoid := parseQueues(avoidQueues)
 	queues := parseQueues(useQueues)
 
 	// Check that no queue is in both use and avoid lists
 	for _, q := range queues {
 		if slices.Contains(avoid, q) {
-			return false, fmt.Errorf("queue '%s' is in avoid queues list", q) //nolint:err113
+			return fmt.Errorf("queue '%s' is in avoid queues list", q) //nolint:err113
 		}
 	}
 
-	if serverDebug || readonly {
-		return true, nil
+	if serverDebug || readonly || (len(avoid) == 0 && len(queues) == 0) {
+		return nil
 	}
 
 	validQueues, err := getValidQueues()
 	if err != nil {
-		return false, fmt.Errorf("failed to get valid queues: %w", err)
+		return fmt.Errorf("failed to get valid queues: %w", err)
 	}
 
 	queueMap := make(map[string]struct{})
@@ -615,15 +614,15 @@ func validateQueues(useQueues string, avoidQueues string) (bool, error) { //noli
 
 	for _, queue := range append(queues, avoid...) {
 		if _, exists := queueMap[queue]; !exists {
-			return false, fmt.Errorf("queue '%s' is not a valid queue", queue) //nolint:err113
+			return fmt.Errorf("queue '%s' is not a valid queue", queue) //nolint:err113
 		}
 	}
 
-	return true, nil
+	return nil
 }
 
 // ValidateQueuesForTests exposes queue validation for test helpers.
-func ValidateQueuesForTests(useQueues string, avoidQueues string, debug bool, readOnly bool) (bool, error) {
+func ValidateQueuesForTests(useQueues string, avoidQueues string, debug bool, readOnly bool) error {
 	oldDebug := serverDebug
 	oldReadonly := readonly
 	serverDebug = debug

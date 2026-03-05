@@ -29,53 +29,27 @@ import (
 	"time"
 
 	"github.com/VertebrateResequencing/wr/client"
-	"github.com/VertebrateResequencing/wr/jobqueue"
 	"github.com/inconshreveable/log15"
 )
 
 const wrConnectTimeout = 10 * time.Second
 
-type wrSubmitter struct {
-	sched *client.Scheduler
-}
-
-func (w *wrSubmitter) SubmitJobs(jobs []*jobqueue.Job) error {
-	return w.sched.SubmitJobs(jobs)
-}
-
-func (w *wrSubmitter) FindIncompleteJobsByRepGroup(
-	repgroup string,
-	match jobqueue.RepGroupMatch,
-) ([]*jobqueue.Job, error) {
-	return w.sched.FindIncompleteJobsByRepGroup(repgroup, match)
-}
-
-func (w *wrSubmitter) GetLastCompletionTimeByRepGroup(
-	repgroup string,
-	match jobqueue.RepGroupMatch,
-) (map[string]time.Time, error) {
-	return w.sched.GetLastCompletionTimeByRepGroup(repgroup, match)
-}
-
-func (w *wrSubmitter) DeleteJobs(jobs []*jobqueue.Job) error {
-	return w.sched.RemoveJobs(jobs...)
-}
-
-func (w *wrSubmitter) Disconnect() error {
-	return w.sched.Disconnect()
-}
-
 // NewWRSubmitter connects to wr using the given deployment and returns a
 // JobSubmitter backed by the wr scheduler.
-func NewWRSubmitter(deployment string, logger log15.Logger) (JobSubmitter, error) { //nolint:ireturn
+//
+// The queue and queuesAvoid params are passed through to the
+// client.SchedulerSettings.
+func NewWRSubmitter(deployment, queue, queuesAvoid string, logger log15.Logger) (JobSubmitter, error) { //nolint:ireturn
 	sched, err := client.New(client.SchedulerSettings{
-		Deployment: deployment,
-		Timeout:    wrConnectTimeout,
-		Logger:     logger,
+		Deployment:  deployment,
+		Timeout:     wrConnectTimeout,
+		Logger:      logger,
+		Queue:       queue,
+		QueuesAvoid: queuesAvoid,
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	return &wrSubmitter{sched: sched}, nil
+	return sched, nil
 }

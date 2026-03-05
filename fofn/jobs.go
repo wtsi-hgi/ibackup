@@ -50,6 +50,7 @@ const (
 // RunConfig holds configuration for creating jobs from chunk files.
 type RunConfig struct {
 	RunDir      string
+	Statter     string
 	ChunkPaths  []string
 	SubDirName  string
 	FofnMtime   int64
@@ -63,7 +64,7 @@ type RunConfig struct {
 }
 
 // CreateJobs creates jobqueue Jobs from a RunConfig, one per chunk path.
-func CreateJobs(cfg RunConfig) []*jobqueue.Job {
+func CreateJobs(submitter JobSubmitter, cfg RunConfig) []*jobqueue.Job {
 	applyDefaults(&cfg)
 
 	repGroup := fmt.Sprintf("%s%s_%d", RepGroupPrefix, cfg.SubDirName, cfg.FofnMtime)
@@ -71,34 +72,30 @@ func CreateJobs(cfg RunConfig) []*jobqueue.Job {
 	jobs := make([]*jobqueue.Job, len(cfg.ChunkPaths))
 
 	for i, chunk := range cfg.ChunkPaths {
-		jobs[i] = &jobqueue.Job{
-			Cmd:        BuildPutCommand(chunk, cfg.NoReplace, cfg.SubDirName, cfg.UserMeta),
-			Cwd:        cfg.RunDir,
-			CwdMatters: true,
-			RepGroup:   repGroup,
-			ReqGroup:   cfg.ReqGroup,
-			Requirements: &jqs.Requirements{
+		job := submitter.NewJob(
+			BuildPutCommand(chunk, cfg.Statter, cfg.NoReplace, cfg.SubDirName, cfg.UserMeta),
+			repGroup, cfg.ReqGroup,
+			"", "",
+			&jqs.Requirements{
 				RAM:   cfg.RAM,
 				Cores: defaultCores,
 				Time:  cfg.Time,
 			},
-			Retries:     cfg.Retries,
-			LimitGroups: cfg.LimitGroups,
-		}
+		)
+
+		job.Cwd = cfg.RunDir
+		job.Retries = cfg.Retries
+		job.LimitGroups = cfg.LimitGroups
+		jobs[i] = job
 	}
 
 	return jobs
 }
 
-// BuildPutCommand constructs an ibackup put command string
-// for a given chunk file. It includes logging, reporting,
-// and optional flags for no-replace and user metadata.
-func BuildPutCommand(
-	chunkPath string,
-	noReplace bool,
-	fofnName string,
-	userMeta string,
-) string {
+// BuildPutCommand constructs an ibackup put command string for a given chunk
+// file. It includes logging, reporting, and optional flags for no-replace, user
+// metadata, and statter.
+func BuildPutCommand(chunkPath, statter string, noReplace bool, fofnName, userMeta string) string {
 	parts := buildPutCoreParts(chunkPath, fofnName)
 
 	parts = append(parts,
@@ -113,6 +110,10 @@ func BuildPutCommand(
 	if userMeta != "" {
 		parts = append(parts,
 			"--meta", shell.Quote(userMeta))
+	}
+
+	if statter != "" {
+		parts = append(parts, "--statter", shell.Quote(statter))
 	}
 
 	parts = append(parts,
@@ -158,10 +159,11 @@ func applyDefaults(cfg *RunConfig) {
 
 // JobSubmitter is an interface for submitting and querying jobs in a job queue.
 type JobSubmitter interface {
+	NewJob(cmd, repGroup, reqGroup, depGroup, dep string, req *jqs.Requirements) *jobqueue.Job
 	SubmitJobs(jobs []*jobqueue.Job) error
 	FindIncompleteJobsByRepGroup(repgroup string, match jobqueue.RepGroupMatch) ([]*jobqueue.Job, error)
 	GetLastCompletionTimeByRepGroup(repgroup string, match jobqueue.RepGroupMatch) (map[string]time.Time, error)
-	DeleteJobs(jobs []*jobqueue.Job) error
+	RemoveJobs(jobs ...*jobqueue.Job) error
 	Disconnect() error
 }
 

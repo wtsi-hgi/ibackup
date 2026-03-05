@@ -63,6 +63,7 @@ import (
 
 	"github.com/VertebrateResequencing/wr/client"
 	"github.com/VertebrateResequencing/wr/jobqueue"
+	"github.com/VertebrateResequencing/wr/jobqueue/scheduler"
 	"github.com/inconshreveable/log15"
 	"github.com/phayes/freeport"
 	. "github.com/smartystreets/goconvey/convey"
@@ -3676,7 +3677,7 @@ func (s *testServer) startServerInProcess() {
 
 	debugMode := s.schedulerDeployment == ""
 
-	validated, err := cmd.ValidateQueuesForTests(
+	err = cmd.ValidateQueuesForTests(
 		strings.Join(s.queues, ","),
 		strings.Join(s.avoidQueues, ","),
 		debugMode,
@@ -3687,16 +3688,6 @@ func (s *testServer) startServerInProcess() {
 
 		if !s.shouldFail {
 			So(err, ShouldBeNil)
-		}
-
-		return
-	}
-
-	if !validated {
-		fmt.Fprint(logWriter, "invalid queues specified")
-
-		if !s.shouldFail {
-			So(errInvalidQueuesSpecified, ShouldBeNil)
 		}
 
 		return
@@ -4431,32 +4422,7 @@ func TestQueueFlags(t *testing.T) {
 	Convey("You can specify queues to use and avoid", t, func() {
 		buildSelfWithPS(t)
 
-		tmp := t.TempDir()
-
-		err := os.WriteFile(filepath.Join(tmp, "bqueues"), []byte("#!/bin/bash\n"+ //nolint:gosec
-			`cat <<HEREDOC
-{
-  "COMMAND":"bqueues",
-  "QUEUES":4,
-  "RECORDS":[
-    {
-      "QUEUE_NAME":"gpu-basement"
-    },
-    {
-      "QUEUE_NAME":"normal"
-    },
-    {
-      "QUEUE_NAME":"parallel"
-    },
-	{
-      "QUEUE_NAME":"long"
-    }
-  ]
-}
-HEREDOC`), 0700)
-		So(err, ShouldBeNil)
-
-		So(os.Setenv("PATH", tmp+":"+os.Getenv("PATH")), ShouldBeNil)
+		addBqueuesToPath(t)
 
 		q, _ := testQueue(t, []string{"normal"}, nil, false)
 		So(q[0].Requirements.Other["scheduler_queue"], ShouldEqual, "normal")
@@ -4481,6 +4447,37 @@ HEREDOC`), 0700)
 		So(q, ShouldBeNil)
 		So(checkErrorInLog(t, s.logFile, "failed to validate queues: queue 'testtypo' is not a valid queue"), ShouldBeTrue)
 	})
+}
+
+func addBqueuesToPath(t *testing.T) {
+	t.Helper()
+
+	tmp := t.TempDir()
+
+	err := os.WriteFile(filepath.Join(tmp, "bqueues"), []byte("#!/bin/bash\n"+ //nolint:gosec
+		`cat <<HEREDOC
+{
+  "COMMAND":"bqueues",
+  "QUEUES":4,
+  "RECORDS":[
+    {
+      "QUEUE_NAME":"gpu-basement"
+    },
+    {
+      "QUEUE_NAME":"normal"
+    },
+    {
+      "QUEUE_NAME":"parallel"
+    },
+	{
+      "QUEUE_NAME":"long"
+    }
+  ]
+}
+HEREDOC`), 0700)
+	So(err, ShouldBeNil)
+
+	t.Setenv("PATH", tmp+":"+os.Getenv("PATH"))
 }
 
 func buildSelfWithPS(t *testing.T) {
@@ -5513,9 +5510,7 @@ func (s *testSubmitter) GetLastCompletionTimeByRepGroup(
 	return map[string]time.Time{}, nil
 }
 
-func (s *testSubmitter) DeleteJobs(
-	jobs []*jobqueue.Job,
-) error {
+func (s *testSubmitter) RemoveJobs(jobs ...*jobqueue.Job) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -5525,6 +5520,16 @@ func (s *testSubmitter) DeleteJobs(
 }
 
 func (s *testSubmitter) Disconnect() error { return nil }
+
+func (s *testSubmitter) NewJob(cmd, repGroup, reqGroup, _, _ string, req *scheduler.Requirements) *jobqueue.Job {
+	return &jobqueue.Job{
+		Cmd:          cmd,
+		CwdMatters:   true,
+		RepGroup:     repGroup,
+		ReqGroup:     reqGroup,
+		Requirements: req,
+	}
+}
 
 func TestWatchFofnsIntegration(t *testing.T) {
 	Convey("watchfofns integration", t, func() {
@@ -5591,8 +5596,7 @@ func TestWatchFofnsIntegration(t *testing.T) {
 				relStatusFile,
 			)
 
-			entries, counts, parseErr :=
-				fofn.ParseStatus(symlinkPath)
+			entries, counts, parseErr := fofn.ParseStatus(symlinkPath)
 			So(parseErr, ShouldBeNil)
 			So(entries, ShouldHaveLength, 5)
 			So(counts.Uploaded, ShouldEqual, 5)
@@ -5703,8 +5707,7 @@ func TestWatchFofnsIntegration(t *testing.T) {
 				filepath.Join(subPath, "status"),
 			), ShouldBeNil)
 
-			entries, counts, parseErr :=
-				fofn.ParseStatus(filepath.Join(subPath, "status"))
+			entries, counts, parseErr := fofn.ParseStatus(filepath.Join(subPath, "status"))
 			So(parseErr, ShouldBeNil)
 			So(entries, ShouldHaveLength, 5)
 			So(counts.Frozen, ShouldEqual, 2)
@@ -6773,6 +6776,8 @@ func TestPutReportFlag(t *testing.T) {
 
 func TestWatchFofnsCommand(t *testing.T) {
 	Convey("The watchfofns subcommand", t, func() {
+		addBqueuesToPath(t)
+
 		Convey("errors when --dir is not provided", func() {
 			exitCode, out := runCLI(t, nil, "",
 				"watchfofns")
@@ -6786,11 +6791,11 @@ func TestWatchFofnsCommand(t *testing.T) {
 
 			_ = r.Close()
 
-			defer func() { _ = w.Close() }()
+			Reset(func() { _ = w.Close() })
 
 			client.PretendSubmissions = fmt.Sprintf("%d", w.Fd())
 
-			defer func() { client.PretendSubmissions = "" }()
+			Reset(func() { client.PretendSubmissions = "" })
 
 			tmpDir := t.TempDir()
 
@@ -6807,7 +6812,7 @@ func TestWatchFofnsCommand(t *testing.T) {
 					return ctx, cancel
 				},
 			)
-			defer cmd.SetWatchCtxFunc(nil)
+			Reset(func() { cmd.SetWatchCtxFunc(nil) })
 
 			go func() {
 				time.Sleep(200 * time.Millisecond)
@@ -6842,6 +6847,21 @@ func TestWatchFofnsCommand(t *testing.T) {
 
 			So(len(jobs), ShouldBeGreaterThan, 0)
 			So(jobs[0].Retries, ShouldEqual, uint8(5))
+		})
+
+		Convey("passes --queues and --queues_avoid values through to submitted jobs", func() {
+			jobs := runWatchFofnsAndCaptureJobs(t, "--queues", "normal", "--queues_avoid", "long")
+
+			So(len(jobs), ShouldBeGreaterThan, 0)
+			So(jobs[0].Requirements.Other["scheduler_queue"], ShouldEqual, "normal")
+			So(jobs[0].Requirements.Other["scheduler_queues_avoid"], ShouldEqual, "long")
+		})
+
+		Convey("passes --statter through to submitted jobs", func() {
+			jobs := runWatchFofnsAndCaptureJobs(t, "--statter", "/path/to/statter")
+
+			So(len(jobs), ShouldBeGreaterThan, 0)
+			So(jobs[0].Cmd, ShouldContainSubstring, "--statter '/path/to/statter'")
 		})
 
 		Convey("prints help with --help", func() {
