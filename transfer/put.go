@@ -463,18 +463,19 @@ func (p *Putter) statPathsAndReturnOrPut(request *Request, putCh chan *Request, 
 }
 
 func setRequestSymlinkFromInfoMeta(request *Request, lInfo *ObjectInfo) {
-	metaIsUnique := clearRequestSymlinkState(request)
+	desiredSymlink, hasDesiredSymlink := symlinkFromInfo(lInfo)
 
-	if lInfo == nil || lInfo.Meta == nil {
+	if symlinkStateAlreadyMatches(request, desiredSymlink, hasDesiredSymlink) {
 		return
 	}
 
-	symlink, ok := lInfo.Meta[MetaKeySymlink]
-	if !ok {
-		return
+	if hasDesiredSymlink {
+		request.Symlink = desiredSymlink
+	} else {
+		request.Symlink = ""
 	}
 
-	setRequestSymlinkState(request, symlink, metaIsUnique)
+	reconcileRequestMetaSymlink(request, desiredSymlink, hasDesiredSymlink)
 }
 
 // sendRequest sets the given status and err on the given request, then sends it
@@ -698,44 +699,92 @@ func (p *Putter) testRead(request *Request) error {
 	return err
 }
 
-func clearRequestSymlinkState(request *Request) bool {
-	request.Symlink = ""
-
-	if request.Meta == nil || request.Meta.LocalMeta == nil {
-		return false
+func symlinkFromInfo(lInfo *ObjectInfo) (string, bool) {
+	if lInfo == nil || lInfo.Meta == nil {
+		return "", false
 	}
 
-	if _, ok := request.Meta.LocalMeta[MetaKeySymlink]; !ok {
-		return false
-	}
+	symlink, ok := lInfo.Meta[MetaKeySymlink]
 
-	request.Meta = request.Meta.Clone()
-
-	delete(request.Meta.LocalMeta, MetaKeySymlink)
-
-	return true
+	return symlink, ok
 }
 
-func setRequestSymlinkState(request *Request, symlink string, metaIsUnique bool) {
-	request.Symlink = symlink
+func symlinkStateAlreadyMatches(request *Request, desiredSymlink string, hasDesiredSymlink bool) bool {
+	if hasDesiredSymlink && request.Symlink != desiredSymlink {
+		return false
+	}
 
+	if !hasDesiredSymlink && request.Symlink != "" {
+		return false
+	}
+
+	if request.Meta == nil || request.Meta.LocalMeta == nil {
+		return !hasDesiredSymlink
+	}
+
+	existingSymlink, hasExistingSymlink := request.Meta.LocalMeta[MetaKeySymlink]
+
+	return !metaSymlinkNeedsUpdate(existingSymlink, hasExistingSymlink, desiredSymlink, hasDesiredSymlink)
+}
+
+func reconcileRequestMetaSymlink(request *Request, desiredSymlink string, hasDesiredSymlink bool) {
 	if request.Meta == nil {
 		return
 	}
 
-	if !metaIsUnique {
-		if existing, ok := request.Meta.LocalMeta[MetaKeySymlink]; ok && existing == symlink {
-			return
-		}
+	existingSymlink, hasExistingSymlink := requestMetaSymlink(request)
 
-		request.Meta = request.Meta.Clone()
+	if !metaSymlinkNeedsUpdate(existingSymlink, hasExistingSymlink, desiredSymlink, hasDesiredSymlink) {
+		return
 	}
 
-	if request.Meta.LocalMeta == nil {
-		request.Meta.LocalMeta = make(map[string]string)
+	request.Meta = request.Meta.Clone()
+
+	if !ensureRequestMetaLocalMapForSymlink(request, hasDesiredSymlink) {
+		return
 	}
 
-	request.Meta.LocalMeta[MetaKeySymlink] = symlink
+	if !hasDesiredSymlink {
+		delete(request.Meta.LocalMeta, MetaKeySymlink)
+
+		return
+	}
+
+	request.Meta.LocalMeta[MetaKeySymlink] = desiredSymlink
+}
+
+func requestMetaSymlink(request *Request) (string, bool) {
+	if request.Meta == nil || request.Meta.LocalMeta == nil {
+		return "", false
+	}
+
+	symlink, ok := request.Meta.LocalMeta[MetaKeySymlink]
+
+	return symlink, ok
+}
+
+func metaSymlinkNeedsUpdate(existingSymlink string, hasExistingSymlink bool, desiredSymlink string,
+	hasDesiredSymlink bool,
+) bool {
+	if hasDesiredSymlink {
+		return !hasExistingSymlink || existingSymlink != desiredSymlink
+	}
+
+	return hasExistingSymlink
+}
+
+func ensureRequestMetaLocalMapForSymlink(request *Request, hasDesiredSymlink bool) bool {
+	if request.Meta.LocalMeta != nil {
+		return true
+	}
+
+	if !hasDesiredSymlink {
+		return false
+	}
+
+	request.Meta.LocalMeta = make(map[string]string)
+
+	return true
 }
 
 // headRead is a FileReadTester that uses the statter to read a byte.

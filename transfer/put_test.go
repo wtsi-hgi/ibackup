@@ -118,6 +118,22 @@ func TestSetRequestSymlinkFromInfoMeta(t *testing.T) {
 			So(first.Meta.LocalMeta[MetaKeySymlink], ShouldEqual, "/new-target")
 			So(second.Meta.LocalMeta[MetaKeySymlink], ShouldEqual, "/shared-target")
 		})
+
+		Convey("When the request already matches the desired symlink state, metadata is not cloned", func() {
+			current := "/current-target"
+			request.Symlink = current
+			request.Meta.LocalMeta[MetaKeySymlink] = current
+
+			metaBefore := request.Meta
+
+			setRequestSymlinkFromInfoMeta(request, &ObjectInfo{Meta: map[string]string{
+				MetaKeySymlink: current,
+			}})
+
+			So(request.Symlink, ShouldEqual, current)
+			So(request.Meta.LocalMeta[MetaKeySymlink], ShouldEqual, current)
+			So(request.Meta, ShouldEqual, metaBefore)
+		})
 	})
 }
 
