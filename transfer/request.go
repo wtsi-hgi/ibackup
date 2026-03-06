@@ -38,6 +38,7 @@ import (
 
 	"github.com/dgryski/go-farm"
 	"github.com/wtsi-hgi/ibackup/errs"
+	"github.com/wtsi-hgi/ibackup/statter"
 	"github.com/wtsi-hgi/ibackup/transformer"
 	"golang.org/x/sys/unix"
 )
@@ -468,7 +469,7 @@ func (r *Request) Get(handler Handler) error {
 }
 
 func (r *Request) createSymlinkIfRequired() error {
-	symlink, err := os.Readlink(r.Local)
+	symlink, err := statter.Readlink(r.Local)
 	if symlink == r.Symlink { //nolint:nestif
 		return nil
 	} else if !errors.Is(err, fs.ErrNotExist) {

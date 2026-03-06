@@ -92,7 +92,7 @@ func maybeAddSymlinkMeta(localPath string, fi os.FileInfo, meta map[string]strin
 		return nil
 	}
 
-	dest, err := os.Readlink(localPath)
+	dest, err := statter.Readlink(localPath)
 	if err != nil {
 		return err
 	}
