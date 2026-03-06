@@ -44,9 +44,10 @@ import (
 var (
 	statterExe string //nolint:gochecknoglobals
 
-	mu      sync.Mutex     //nolint:gochecknoglobals
-	statter client.Statter //nolint:gochecknoglobals
-	header  client.Header  //nolint:gochecknoglobals
+	mu         sync.Mutex        //nolint:gochecknoglobals
+	statter    client.Statter    //nolint:gochecknoglobals
+	header     client.Header     //nolint:gochecknoglobals
+	readlinker client.Readlinker //nolint:gochecknoglobals
 )
 
 // Init sets the location of an external stat program (see:
@@ -131,7 +132,7 @@ func initStatterHead() error {
 	if statter == nil {
 		var err error
 
-		statter, header, err = client.CreateStatter(statterExe)
+		statter, header, readlinker, err = client.CreateStatter(statterExe)
 		if err != nil {
 			return err
 		}
@@ -144,6 +145,7 @@ func handleStatError[T any](v T, err error) (T, error) { //nolint:ireturn
 	if errors.Is(err, io.EOF) {
 		statter = nil
 		header = nil
+		readlinker = nil
 		err = os.ErrDeadlineExceeded
 	}
 
@@ -180,4 +182,17 @@ func Head(path string) (byte, error) {
 	}
 
 	return handleStatError(header(path))
+}
+
+// Readlink reads the destination of a symbolic link using an external program
+// with a timeout.
+func Readlink(path string) (string, error) {
+	mu.Lock()
+	defer mu.Unlock()
+
+	if err := initStatterHead(); err != nil {
+		return "", err
+	}
+
+	return handleStatError(readlinker(path))
 }
