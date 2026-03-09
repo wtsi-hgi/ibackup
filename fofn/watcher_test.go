@@ -890,6 +890,21 @@ func TestWatcherPoll(t *testing.T) {
 			So(target, ShouldEqual,
 				expectedTarget)
 		})
+
+		Convey("jobs are created with the correct unix group set", func() {
+			paths := generateTmpPaths(25)
+			cfg.RunConfig.Group = "some-group"
+
+			setupSubDir(watchDir, "proj1", paths, SubDirConfig{Transformer: "test"})
+
+			mock := &mockJobSubmitter{}
+			w := NewWatcher(watchDir, mock, cfg)
+
+			err := w.Poll()
+			So(err, ShouldBeNil)
+			So(mock.submitted, ShouldHaveLength, 3)
+			So(mock.submitted[0].Group, ShouldEqual, "some-group")
+		})
 	})
 }
 

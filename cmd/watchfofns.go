@@ -106,7 +106,10 @@ development manager.
 
 To specify the queues to which the jobs will be submitted, use the --queues option.
 To specify queues to avoid for job submission, use the --queues_avoid option.
-These should be supplied as a comma separated list.`,
+These should be supplied as a comma separated list.
+
+The --group flag can be specified to override the unix group with which the
+backup jobs will be run.`,
 	RunE: func(_ *cobra.Command, _ []string) error {
 		return runWatchFofns()
 	},
@@ -156,6 +159,7 @@ func registerWatchFofnsJobFlags(f *pflag.FlagSet) {
 	f.StringVar(&watchLimitGroup, "limit-group", "irods", "wr limit group")
 	f.StringVar(&queues, "queues", "", "specify queues to submit job")
 	f.StringVar(&queueAvoid, "queues_avoid", "", "specify queues to not submit job")
+	f.StringVar(&wrUnixGroup, "group", "", "unix group to run the backup jobs as")
 }
 
 // runWatchFofns validates flags, creates a watcher, and
@@ -274,6 +278,7 @@ func createWatcher(submitter fofn.JobSubmitter) *fofn.Watcher {
 			Time:        watchTime,
 			Retries:     uint8(watchRetries), //nolint:gosec
 			LimitGroups: []string{watchLimitGroup},
+			Group:       wrUnixGroup,
 		},
 	}
 

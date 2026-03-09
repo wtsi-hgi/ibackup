@@ -155,6 +155,7 @@ type Server struct {
 	sched                  *client.Scheduler
 	putCmd                 string
 	req                    *jqs.Requirements
+	wrGroup                string
 	remoteHardlinkLocation string
 	statusUpdateCh         chan *fileStatusPacket
 	monitor                *Monitor
@@ -324,7 +325,7 @@ func (s *Server) markRequestLogged(rid string) bool {
 //
 // Provide a hint as the the maximum number of put job clients you'll run at
 // once, so that reservations can be balanced between them.
-func (s *Server) EnableJobSubmission(putCmd, deployment, cwd, queues, queuesAvoid string,
+func (s *Server) EnableJobSubmission(putCmd, deployment, cwd, queues, queuesAvoid, group string,
 	numClients int, logger log15.Logger) error {
 	sched, err := client.New(client.SchedulerSettings{
 		Deployment:  deployment,
@@ -346,6 +347,7 @@ func (s *Server) EnableJobSubmission(putCmd, deployment, cwd, queues, queuesAvoi
 	req.Time = reqTime
 	s.req = req
 	s.putCmd = putCmd
+	s.wrGroup = group
 
 	s.queue.SetReadyAddedCallback(s.rac)
 	s.queue.SetTTRCallback(s.ttrc)
@@ -512,6 +514,7 @@ func (s *Server) rac(_ string, allitemdata []interface{}) {
 			When: jobqueue.OnFailure,
 			Do:   jobqueue.Remove,
 		}}
+		job.Group = s.wrGroup
 
 		jobs[i] = job
 	}

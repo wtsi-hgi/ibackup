@@ -61,6 +61,7 @@ type RunConfig struct {
 	Retries     uint8         // set via CLI flag; zero means no retries
 	LimitGroups []string      // default []string{"irods"}
 	ReqGroup    string        // default "ibackup"
+	Group       string
 }
 
 // CreateJobs creates jobqueue Jobs from a RunConfig, one per chunk path.
@@ -86,6 +87,7 @@ func CreateJobs(submitter JobSubmitter, cfg RunConfig) []*jobqueue.Job {
 		job.Cwd = cfg.RunDir
 		job.Retries = cfg.Retries
 		job.LimitGroups = cfg.LimitGroups
+		job.Group = cfg.Group
 		jobs[i] = job
 	}
 

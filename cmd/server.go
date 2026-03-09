@@ -89,6 +89,7 @@ var (
 	statterPath                  string
 	queues                       string
 	queueAvoid                   string
+	wrUnixGroup                  string
 )
 
 // serverCmd represents the server command.
@@ -189,6 +190,9 @@ database that you've made, to investigate.
 To specify the queues to which the jobs will be submitted, use the --queues option.
 To specify queues to avoid for job submission, use the --queues_avoid option.
 These should be supplied as a comma separated list.
+
+The --group flag can be specified to override the unix group with which the
+backup jobs will be run.
 
 ` + configSubHelp,
 	Run: func(cmd *cobra.Command, args []string) {
@@ -322,7 +326,8 @@ These should be supplied as a comma separated list.
 				putCmd += " --log " + shell.Quote(serverLogPath+".client.")
 			}
 
-			err = s.EnableJobSubmission(putCmd, serverWRDeployment, "", queues, queueAvoid, numPutClients, appLogger)
+			err = s.EnableJobSubmission(putCmd, serverWRDeployment, "", queues, queueAvoid,
+				wrUnixGroup, numPutClients, appLogger)
 			if err != nil {
 				dief("failed to enable job submission: %s", err)
 			}
@@ -476,6 +481,7 @@ func init() {
 	serverCmd.Flags().StringVar(&queues, "queues", "", "specify queues to submit job")
 	serverCmd.Flags().StringVar(&queueAvoid, "queues_avoid", "",
 		"specify queues to not submit job")
+	serverCmd.Flags().StringVar(&wrUnixGroup, "group", "", "unix group to run the backup jobs as")
 }
 
 // setServerLogger makes our appLogger log to the given path if non-blank,

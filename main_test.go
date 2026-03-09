@@ -3704,7 +3704,7 @@ func (s *testServer) startServerInProcess() {
 		logger := log15.New()
 		logger.SetHandler(log15.StreamHandler(logWriter, log15.LogfmtFormat()))
 		err = s.srv.EnableJobSubmission(putCmd, s.schedulerDeployment, "", strings.Join(s.queues, ","),
-			strings.Join(s.avoidQueues, ","), 10, logger)
+			strings.Join(s.avoidQueues, ","), "", 10, logger)
 		So(err, ShouldBeNil)
 	}
 
