@@ -430,7 +430,7 @@ func TestGenerateStatus(t *testing.T) {
 		watchDir := t.TempDir()
 
 		Convey("writes status file for 3 complete reports", func() {
-			_, runDir := setupRunDir(watchDir, "proj1")
+			runDir := setupRunDir(watchDir, "proj1")
 
 			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 5))
 			writeChunkAndReport(runDir, "chunk.000001", makeFilePairs(5, 10))
@@ -447,7 +447,7 @@ func TestGenerateStatus(t *testing.T) {
 		})
 
 		Convey("handles buried chunk with no report file", func() {
-			_, runDir := setupRunDir(watchDir, "proj2")
+			runDir := setupRunDir(watchDir, "proj2")
 
 			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 5))
 			writeChunkAndReport(runDir, "chunk.000001", makeFilePairs(5, 10))
@@ -468,7 +468,7 @@ func TestGenerateStatus(t *testing.T) {
 		})
 
 		Convey("handles buried chunk with incomplete report", func() {
-			_, runDir := setupRunDir(watchDir, "proj3")
+			runDir := setupRunDir(watchDir, "proj3")
 
 			pairs := makeFilePairs(0, 10)
 			writeChunkFile(runDir, "chunk.000000", pairs)
@@ -494,14 +494,14 @@ func TestGenerateStatus(t *testing.T) {
 // and run directory; returns the SubDir and run path.
 func setupRunDir(
 	watchDir, name string,
-) (SubDir, string) {
+) string {
 	subPath := filepath.Join(watchDir, name)
 	So(os.MkdirAll(subPath, dirMode), ShouldBeNil)
 
 	runDir := filepath.Join(subPath, "12345")
 	So(os.MkdirAll(runDir, dirMode), ShouldBeNil)
 
-	return SubDir{Path: subPath}, runDir
+	return runDir
 }
 
 func TestWatcherPoll(t *testing.T) {

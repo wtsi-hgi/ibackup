@@ -323,9 +323,9 @@ func (s *Server) markRequestLogged(rid string) bool {
 // current working dir is used. If queue is not blank, that queue will be
 // forced.
 //
-// Added jobs will have the group override set the the value of the group param.
+// Added jobs will have the group override set the value of the group param.
 //
-// Provide a hint as the the maximum number of put job clients you'll run at
+// Provide a hint as the maximum number of put job clients you'll run at
 // once, so that reservations can be balanced between them.
 func (s *Server) EnableJobSubmission(putCmd, deployment, cwd, queues, queuesAvoid, group string,
 	numClients int, logger log15.Logger) error {
