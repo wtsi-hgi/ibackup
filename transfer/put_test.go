@@ -340,6 +340,30 @@ func TestPutMock(t *testing.T) {
 				So(info.Size(), ShouldEqual, 0)
 			})
 
+			Convey("Put() auto-detects directory symlinks from local paths", func() {
+				err = os.Remove(requests[0].Local)
+				So(err, ShouldBeNil)
+
+				dirTarget := filepath.Dir(requests[2].Local)
+
+				err = os.Symlink(dirTarget, requests[0].Local)
+				So(err, ShouldBeNil)
+
+				uploading, skipped, statusCounts := uploadRequests(t, lh, requests[:1])
+
+				So(uploading, ShouldEqual, 1)
+				So(statusCounts[RequestStatusUploaded], ShouldEqual, 1)
+				So(skipped, ShouldEqual, 0)
+
+				info, errs := os.Stat(requests[0].Remote)
+				So(errs, ShouldBeNil)
+				So(info.Size(), ShouldEqual, 0)
+
+				meta, errm := lh.GetMeta(requests[0].Remote)
+				So(errm, ShouldBeNil)
+				So(meta[MetaKeySymlink], ShouldEqual, dirTarget)
+			})
+
 			Convey("Underlying put and metadata operation failures result in failed requests", func() {
 				lh.MakeStatFail(requests[0].Remote)
 				lh.MakePutFail(requests[1].Remote)

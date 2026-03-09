@@ -70,15 +70,36 @@ func Stat(localPath string) (*ObjectInfo, error) {
 		return nil, err
 	}
 
+	meta := map[string]string{
+		MetaKeyMtime: mtime,
+		MetaKeyOwner: user,
+		MetaKeyGroup: group,
+	}
+
+	if err = maybeAddSymlinkMeta(localPath, fi, meta); err != nil {
+		return nil, err
+	}
+
 	return &ObjectInfo{
 		Exists: true,
 		Size:   uint64(fi.Size()),
-		Meta: map[string]string{
-			MetaKeyMtime: mtime,
-			MetaKeyOwner: user,
-			MetaKeyGroup: group,
-		},
+		Meta:   meta,
 	}, nil
+}
+
+func maybeAddSymlinkMeta(localPath string, fi os.FileInfo, meta map[string]string) error {
+	if fi.Mode()&os.ModeSymlink == 0 {
+		return nil
+	}
+
+	dest, err := statter.Readlink(localPath)
+	if err != nil {
+		return err
+	}
+
+	meta[MetaKeySymlink] = dest
+
+	return nil
 }
 
 // getUserAndGroupFromFileInfo returns the username and group name from the

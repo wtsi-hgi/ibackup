@@ -434,6 +434,7 @@ func (p *Putter) statPathsAndReturnOrPut(request *Request, putCh chan *Request, 
 	}
 
 	request.Size = lInfo.Size
+	setRequestSymlinkFromInfoMeta(request, lInfo)
 
 	rInfo, err := request.StatAndAssociateStandardMetadata(lInfo, p.handler)
 	if err != nil {
@@ -459,6 +460,12 @@ func (p *Putter) statPathsAndReturnOrPut(request *Request, putCh chan *Request, 
 	}
 
 	sendRequest(request, RequestStatusReplaced, nil, putCh)
+}
+
+func setRequestSymlinkFromInfoMeta(request *Request, lInfo *ObjectInfo) {
+	if symlink, ok := lInfo.Meta[MetaKeySymlink]; ok {
+		request.Symlink = symlink
+	}
 }
 
 // sendRequest sets the given status and err on the given request, then sends it

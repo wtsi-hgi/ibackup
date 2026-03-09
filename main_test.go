@@ -120,6 +120,8 @@ var errMismatchedDBBackupSizes = errors.New("mismatched db backup sizes")
 
 var errRemoteMetaMissing = errors.New("remote meta did not contain expected substring")
 
+var errWatchFofnsExitedEarly = errors.New("watchfofns exited before upload became visible")
+
 var errUploadCountMismatch = errors.New("upload count mismatch")
 
 func TestServer(t *testing.T) {
@@ -6039,225 +6041,398 @@ func fileGIDInteg(path string) int {
 }
 
 func TestWatchFofnsRealWRIntegration(t *testing.T) {
-	schedulerDeployment := os.Getenv("IBACKUP_TEST_SCHEDULER")
-	if schedulerDeployment == "" {
-		t.Skip("skipping watchfofns real-wr test since IBACKUP_TEST_SCHEDULER not set")
-	}
+	Convey("watchfofns real-wr integration", t, func() {
+		schedulerDeployment := os.Getenv("IBACKUP_TEST_SCHEDULER")
+		if schedulerDeployment == "" {
+			SkipConvey("skipping watchfofns real-wr test since IBACKUP_TEST_SCHEDULER not set", func() {})
 
-	remoteRoot := initIRODSTestCollection(t)
-	if remoteRoot == "" {
-		t.Skip("skipping watchfofns real-wr test since IBACKUP_TEST_COLLECTION not set")
-	}
-
-	localRoot := os.Getenv("IBACKUP_WATCHFOFNS_IT_LOCAL_ROOT")
-	if localRoot == "" && schedulerDeployment != "development" {
-		t.Skip(
-			"skipping watchfofns real-wr test: " +
-				"set IBACKUP_WATCHFOFNS_IT_LOCAL_ROOT to a shared filesystem path " +
-				"when not using development scheduler",
-		)
-	}
-
-	if localRoot == "" {
-		localRoot = t.TempDir()
-	} else if err := os.MkdirAll(localRoot, 0750); err != nil {
-		t.Fatalf("failed to create IBACKUP_WATCHFOFNS_IT_LOCAL_ROOT: %v", err)
-	}
-
-	// Ensure wr jobs can find our test ibackup binary.
-	if testRootDir == "" {
-		t.Skip("skipping watchfofns real-wr test since testRootDir not initialised")
-	}
-
-	filesRoot := filepath.Join(localRoot, "watchfofns_files")
-	watchDir := filepath.Join(localRoot, "watchfofns_watch")
-	subDir := filepath.Join(watchDir, "proj")
-	remoteBase := filepath.Join(remoteRoot, "watchfofns_realwr")
-
-	if err := os.MkdirAll(filesRoot, 0750); err != nil {
-		t.Fatalf("failed to create files root: %v", err)
-	}
-
-	if err := os.MkdirAll(subDir, 0750); err != nil {
-		t.Fatalf("failed to create watch subdir: %v", err)
-	}
-
-	// Create a few small local files in subfolders.
-	paths := []string{
-		filepath.Join(filesRoot, "00", "00", "f000"),
-		filepath.Join(filesRoot, "00", "01", "f001"),
-		filepath.Join(filesRoot, "01", "00", "f002"),
-	}
-	for i, p := range paths {
-		if err := os.MkdirAll(filepath.Dir(p), 0750); err != nil {
-			t.Fatalf("failed to create parent dir: %v", err)
+			return
 		}
 
-		internal.CreateTestFile(t, p, fmt.Sprintf("x%d", i))
-	}
+		remoteRoot := initIRODSTestCollection(t)
+		if remoteRoot == "" {
+			SkipConvey("skipping watchfofns real-wr test since IBACKUP_TEST_COLLECTION not set", func() {})
 
-	// Write an ibackup config with a named transformer that maps filesRoot -> remoteBase.
-	configPath := filepath.Join(localRoot, "ibackup_config.json")
-	txName := "watchfofns_it"
-
-	localRe := "^" + regexp.QuoteMeta(filesRoot) + "/(.*)$"
-	remoteReplace := filepath.ToSlash(remoteBase) + "/$1"
-
-	conf := struct {
-		Transformers map[string]struct {
-			Description string `json:"description"`
-			Re          string `json:"re"`
-			Replace     string `json:"replace"`
-		} `json:"transformers"`
-	}{
-		Transformers: map[string]struct {
-			Description string `json:"description"`
-			Re          string `json:"re"`
-			Replace     string `json:"replace"`
-		}{
-			txName: {
-				Description: "watchfofns integration transformer",
-				Re:          localRe,
-				Replace:     remoteReplace,
-			},
-		},
-	}
-
-	f, err := os.Create(configPath)
-	if err != nil {
-		t.Fatalf("failed to create IBACKUP_CONFIG: %v", err)
-	}
-
-	encodeErr := json.NewEncoder(f).Encode(conf)
-	if encodeErr != nil {
-		_ = f.Close()
-
-		t.Fatalf("failed to write IBACKUP_CONFIG: %v", encodeErr)
-	}
-
-	closeErr := f.Close()
-	if closeErr != nil {
-		t.Fatalf("failed to close IBACKUP_CONFIG: %v", closeErr)
-	}
-
-	// Create the watchfofns config.yml referencing the named transformer.
-	writeCfgErr := fofn.WriteConfig(subDir, fofn.SubDirConfig{Transformer: txName})
-	if writeCfgErr != nil {
-		t.Fatalf("failed to write config.yml: %v", writeCfgErr)
-	}
-
-	// Create the null-terminated fofn.
-	fofnPath := filepath.Join(subDir, "fofn")
-
-	nf, err := os.Create(fofnPath)
-	if err != nil {
-		t.Fatalf("failed to create fofn: %v", err)
-	}
-
-	for _, p := range paths {
-		if _, err := nf.WriteString(p + "\x00"); err != nil {
-			_ = nf.Close()
-
-			t.Fatalf("failed to write fofn: %v", err)
-		}
-	}
-
-	if err := nf.Close(); err != nil {
-		t.Fatalf("failed to close fofn: %v", err)
-	}
-
-	// Run watchfofns in the background, cancelling once status is correct.
-	ctx, cancel := context.WithCancel(context.Background())
-
-	cmd.SetWatchCtxFunc(func() (context.Context, context.CancelFunc) {
-		return ctx, cancel
-	})
-	t.Cleanup(func() { cmd.SetWatchCtxFunc(nil) })
-
-	// Ensure wr gets a PATH that includes our built ibackup.
-	env := []string{
-		"IBACKUP_CONFIG=" + configPath,
-		"PATH=" + testRootDir + ":" + os.Getenv("PATH"),
-	}
-
-	var (
-		exitCode int
-		output   string
-	)
-
-	done := make(chan struct{})
-
-	go func() {
-		exitCode, output = runCLI(nil, env, "",
-			"watchfofns",
-			"--dir", watchDir,
-			"--interval", "1s",
-			"--min-chunk", "10000",
-			"--max-chunk", "10000",
-			"--wr-deployment", schedulerDeployment,
-		)
-
-		close(done)
-	}()
-
-	// Wait for remote uploads and local status file.
-	remoteFiles := []string{
-		filepath.Join(remoteBase, "00", "00", "f000"),
-		filepath.Join(remoteBase, "00", "01", "f001"),
-		filepath.Join(remoteBase, "01", "00", "f002"),
-	}
-	for _, rf := range remoteFiles {
-		if err := waitForIlsPresent(t, rf, 2*time.Minute); err != nil {
-			cancel()
-			<-done
-			t.Fatalf("remote file not present: %v", err)
-		}
-	}
-
-	statusPath := filepath.Join(subDir, "status")
-
-	ctxWait, cancelWait := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancelWait()
-
-	status := retry.Do(ctxWait, func() error {
-		_, counts, err := fofn.ParseStatus(statusPath)
-		if err != nil {
-			return err
+			return
 		}
 
-		if counts.Uploaded != len(paths) {
-			return fmt.Errorf(
-				"%w: uploaded=%d want=%d",
-				errUploadCountMismatch,
-				counts.Uploaded,
-				len(paths),
+		localRoot := os.Getenv("IBACKUP_WATCHFOFNS_IT_LOCAL_ROOT")
+		if localRoot == "" && schedulerDeployment != "development" {
+			SkipConvey(
+				"skipping watchfofns real-wr test: "+
+					"set IBACKUP_WATCHFOFNS_IT_LOCAL_ROOT to a shared filesystem path "+
+					"when not using development scheduler",
+				func() {},
 			)
+
+			return
 		}
 
-		return nil
-	}, &retry.UntilNoError{}, &backoff.Backoff{
-		Min:     100 * time.Millisecond,
-		Max:     1 * time.Second,
-		Factor:  2,
-		Sleeper: &btime.Sleeper{},
-	}, "waiting for status")
+		if localRoot == "" {
+			localRoot = t.TempDir()
+		} else {
+			So(os.MkdirAll(localRoot, 0750), ShouldBeNil)
+		}
 
-	cancel()
+		// Ensure wr jobs can find our test ibackup binary.
+		if testRootDir == "" {
+			SkipConvey("skipping watchfofns real-wr test since testRootDir not initialised", func() {})
 
-	select {
-	case <-done:
-		// ok
-	case <-time.After(30 * time.Second):
-		t.Fatalf("watchfofns did not exit after cancel")
-	}
+			return
+		}
 
-	if status.Err != nil {
-		t.Fatalf("status not ready: %v", status.Err)
-	}
+		filesRoot := filepath.Join(localRoot, "watchfofns_files")
+		watchDir := filepath.Join(localRoot, "watchfofns_watch")
+		subDir := filepath.Join(watchDir, "proj")
+		remoteBase := filepath.Join(remoteRoot, "watchfofns_realwr")
 
-	if exitCode != 0 {
-		t.Fatalf("watchfofns exit=%d output=%s", exitCode, output)
-	}
+		So(os.MkdirAll(filesRoot, 0750), ShouldBeNil)
+		So(os.MkdirAll(subDir, 0750), ShouldBeNil)
+
+		// Create a few small local files in subfolders.
+		paths := []string{
+			filepath.Join(filesRoot, "00", "00", "f000"),
+			filepath.Join(filesRoot, "00", "01", "f001"),
+			filepath.Join(filesRoot, "01", "00", "f002"),
+		}
+
+		regularPaths := slices.Clone(paths)
+		regularContents := make(map[string]string, len(regularPaths))
+
+		for i, p := range paths {
+			So(os.MkdirAll(filepath.Dir(p), 0750), ShouldBeNil)
+
+			content := fmt.Sprintf("x%d", i)
+
+			internal.CreateTestFile(t, p, content)
+			regularContents[p] = content
+		}
+
+		fileSymlinkTarget := paths[0]
+		dirSymlinkTarget := filepath.Dir(paths[0])
+
+		fileSymlinkPath := filepath.Join(filesRoot, "01", "01", "f003_link")
+		dirSymlinkPath := filepath.Join(filesRoot, "01", "02", "d000_link")
+
+		So(os.MkdirAll(filepath.Dir(fileSymlinkPath), 0750), ShouldBeNil)
+		So(os.MkdirAll(filepath.Dir(dirSymlinkPath), 0750), ShouldBeNil)
+		So(os.Symlink(fileSymlinkTarget, fileSymlinkPath), ShouldBeNil)
+		So(os.Symlink(dirSymlinkTarget, dirSymlinkPath), ShouldBeNil)
+
+		paths = append(paths, fileSymlinkPath, dirSymlinkPath)
+
+		// Write an ibackup config with a named transformer that maps filesRoot -> remoteBase.
+		configPath := filepath.Join(localRoot, "ibackup_config.json")
+		txName := "watchfofns_it"
+
+		localRe := "^" + regexp.QuoteMeta(filesRoot) + "/(.*)$"
+		remoteReplace := filepath.ToSlash(remoteBase) + "/$1"
+
+		conf := struct {
+			Transformers map[string]struct {
+				Description string `json:"description"`
+				Re          string `json:"re"`
+				Replace     string `json:"replace"`
+			} `json:"transformers"`
+		}{
+			Transformers: map[string]struct {
+				Description string `json:"description"`
+				Re          string `json:"re"`
+				Replace     string `json:"replace"`
+			}{
+				txName: {
+					Description: "watchfofns integration transformer",
+					Re:          localRe,
+					Replace:     remoteReplace,
+				},
+			},
+		}
+
+		f, createConfigErr := os.Create(configPath)
+		So(createConfigErr, ShouldBeNil)
+
+		encodeErr := json.NewEncoder(f).Encode(conf)
+		if encodeErr != nil {
+			_ = f.Close()
+		}
+
+		So(encodeErr, ShouldBeNil)
+
+		closeErr := f.Close()
+		So(closeErr, ShouldBeNil)
+
+		// Create the watchfofns config.yml referencing the named transformer.
+		writeCfgErr := fofn.WriteConfig(subDir, fofn.SubDirConfig{Transformer: txName})
+		So(writeCfgErr, ShouldBeNil)
+
+		// Create the null-terminated fofn.
+		fofnPath := filepath.Join(subDir, "fofn")
+
+		nf, createFofnErr := os.Create(fofnPath)
+		So(createFofnErr, ShouldBeNil)
+
+		for _, p := range paths {
+			_, writeErr := nf.WriteString(p + "\x00")
+			if writeErr != nil {
+				_ = nf.Close()
+			}
+
+			So(writeErr, ShouldBeNil)
+		}
+
+		So(nf.Close(), ShouldBeNil)
+
+		// Run watchfofns in the background, cancelling once status is correct.
+		ctx, cancel := context.WithCancel(context.Background())
+
+		cmd.SetWatchCtxFunc(func() (context.Context, context.CancelFunc) {
+			return ctx, cancel
+		})
+		t.Cleanup(func() { cmd.SetWatchCtxFunc(nil) })
+
+		// Ensure wr gets a PATH that includes our built ibackup.
+		env := []string{
+			"IBACKUP_CONFIG=" + configPath,
+			"PATH=" + testRootDir + ":" + os.Getenv("PATH"),
+		}
+
+		var (
+			exitCode int
+			output   string
+		)
+
+		done := make(chan struct{})
+
+		go func() {
+			exitCode, output = runCLI(nil, env, "",
+				"watchfofns",
+				"--dir", watchDir,
+				"--interval", "1s",
+				"--min-chunk", "10000",
+				"--max-chunk", "10000",
+				"--wr_deployment", schedulerDeployment,
+			)
+
+			close(done)
+		}()
+
+		// Wait for remote uploads and local status file.
+		remoteFiles := make([]string, len(paths))
+
+		for i, p := range paths {
+			rel, relErr := filepath.Rel(filesRoot, p)
+			So(relErr, ShouldBeNil)
+
+			remoteFiles[i] = filepath.Join(remoteBase, rel)
+		}
+
+		waitForRemoteFile := func(path string, timeout time.Duration) error {
+			select {
+			case <-done:
+				return fmt.Errorf("%w: exit=%d output=%s", errWatchFofnsExitedEarly, exitCode, output)
+			default:
+			}
+
+			waitErr := waitForIlsPresent(t, path, timeout)
+			if waitErr == nil {
+				return nil
+			}
+
+			select {
+			case <-done:
+				return fmt.Errorf("%w: exit=%d output=%s", errWatchFofnsExitedEarly, exitCode, output)
+			default:
+			}
+
+			return waitErr
+		}
+
+		for _, rf := range remoteFiles {
+			uploadVisibleErr := waitForRemoteFile(rf, 20*time.Second)
+			if uploadVisibleErr != nil {
+				cancel()
+
+				select {
+				case <-done:
+				case <-time.After(30 * time.Second):
+					t.Fatalf("watchfofns did not exit after cancel within timeout: exit=%d output=%s",
+						exitCode, output)
+				}
+
+				wrappedErr := fmt.Errorf("waitForRemoteFile(%q) failed: %w; exit=%d output=%s",
+					rf, uploadVisibleErr, exitCode, output)
+
+				So(wrappedErr, ShouldBeNil)
+			}
+		}
+
+		statusPath := filepath.Join(subDir, "status")
+
+		ctxWait, cancelWait := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancelWait()
+
+		status := retry.Do(ctxWait, func() error {
+			_, counts, parseStatusErr := fofn.ParseStatus(statusPath)
+			if parseStatusErr != nil {
+				return parseStatusErr
+			}
+
+			if counts.Uploaded != len(paths) {
+				return fmt.Errorf(
+					"%w: uploaded=%d want=%d",
+					errUploadCountMismatch,
+					counts.Uploaded,
+					len(paths),
+				)
+			}
+
+			return nil
+		}, &retry.UntilNoError{}, &backoff.Backoff{
+			Min:     100 * time.Millisecond,
+			Max:     1 * time.Second,
+			Factor:  2,
+			Sleeper: &btime.Sleeper{},
+		}, "waiting for status")
+
+		cancel()
+
+		exitedAfterCancel := false
+
+		select {
+		case <-done:
+			exitedAfterCancel = true
+		case <-time.After(30 * time.Second):
+		}
+
+		So(exitedAfterCancel, ShouldBeTrue)
+		So(status.Err, ShouldBeNil)
+		So(exitCode, ShouldEqual, 0)
+
+		icmd := NewIcommander(t)
+		if icmd == nil {
+			SkipConvey("skipping watchfofns real-wr test since iCommands are unavailable", func() {})
+
+			return
+		}
+
+		waitRemoteMeta := func(path, requiredSubstring string, timeout time.Duration) string {
+			deadline := time.Now().Add(timeout)
+
+			var lastOutput string
+
+			for time.Now().Before(deadline) {
+				out, imetaErr := icmd.IMETA("ls", "-d", path)
+				if imetaErr != nil {
+					lastOutput = string(out)
+
+					time.Sleep(500 * time.Millisecond)
+
+					continue
+				}
+
+				meta := string(out)
+				lastOutput = meta
+
+				if requiredSubstring == "" || strings.Contains(meta, requiredSubstring) {
+					return meta
+				}
+
+				time.Sleep(500 * time.Millisecond)
+			}
+
+			So(fmt.Errorf("%w for %q within %s; required substring: %q; last output: %s",
+				errRemoteMetaMissing, path, timeout, requiredSubstring, lastOutput), ShouldBeNil)
+
+			return ""
+		}
+
+		metaValue := func(meta, key string) string {
+			attrFind := "attribute: " + key + "\nvalue: "
+
+			attrPos := strings.Index(meta, attrFind)
+			if attrPos == -1 {
+				So(attrPos, ShouldBeGreaterThanOrEqualTo, 0)
+
+				return ""
+			}
+
+			value := meta[attrPos+len(attrFind):]
+
+			nlPos := strings.Index(value, "\n")
+			if nlPos == -1 {
+				So(nlPos, ShouldBeGreaterThanOrEqualTo, 0)
+
+				return ""
+			}
+
+			return value[:nlPos]
+		}
+
+		downloadRemote := func(remotePath, localPath string) {
+			t.Helper()
+
+			_, igetErr := icmd.IGET("-K", remotePath, localPath)
+			So(igetErr, ShouldBeNil)
+		}
+
+		downloadDir := t.TempDir()
+
+		for _, p := range regularPaths {
+			rel, relErr := filepath.Rel(filesRoot, p)
+			So(relErr, ShouldBeNil)
+
+			remotePath := filepath.Join(remoteBase, rel)
+			localPath := filepath.Join(downloadDir, filepath.Base(p)+".got")
+
+			downloadRemote(remotePath, localPath)
+
+			data, readErr := os.ReadFile(localPath)
+			So(readErr, ShouldBeNil)
+
+			So(string(data), ShouldEqual, regularContents[p])
+
+			info, statErr := os.Stat(localPath)
+			So(statErr, ShouldBeNil)
+
+			So(info.Size(), ShouldBeGreaterThan, int64(0))
+
+			meta := waitRemoteMeta(remotePath, "attribute: "+transfer.MetaKeySets+"\nvalue: ", 30*time.Second)
+			So(strings.Contains(meta, "attribute: "+transfer.MetaKeySymlink+"\n"), ShouldBeFalse)
+		}
+
+		fileSymlinkRemote := filepath.Join(remoteBase, "01", "01", "f003_link")
+		dirSymlinkRemote := filepath.Join(remoteBase, "01", "02", "d000_link")
+
+		fileMeta := waitRemoteMeta(
+			fileSymlinkRemote,
+			"attribute: "+transfer.MetaKeySymlink+"\nvalue: ",
+			30*time.Second,
+		)
+
+		So(metaValue(fileMeta, transfer.MetaKeySymlink), ShouldEqual, fileSymlinkTarget)
+
+		dirMeta := waitRemoteMeta(
+			dirSymlinkRemote,
+			"attribute: "+transfer.MetaKeySymlink+"\nvalue: ",
+			30*time.Second,
+		)
+
+		So(metaValue(dirMeta, transfer.MetaKeySymlink), ShouldEqual, dirSymlinkTarget)
+
+		fileSymlinkGot := filepath.Join(downloadDir, "f003_link.got")
+		dirSymlinkGot := filepath.Join(downloadDir, "d000_link.got")
+
+		downloadRemote(fileSymlinkRemote, fileSymlinkGot)
+		downloadRemote(dirSymlinkRemote, dirSymlinkGot)
+
+		fileInfo, fileStatErr := os.Stat(fileSymlinkGot)
+		So(fileStatErr, ShouldBeNil)
+		So(fileInfo.Size(), ShouldEqual, int64(0))
+
+		dirInfo, dirStatErr := os.Stat(dirSymlinkGot)
+		So(dirStatErr, ShouldBeNil)
+		So(dirInfo.Size(), ShouldEqual, int64(0))
+	})
 }
 
 func TestAddRemote(t *testing.T) {
