@@ -487,7 +487,6 @@ func TestGenerateStatus(t *testing.T) {
 			So(counts.Uploaded, ShouldEqual, 5)
 			So(counts.NotProcessed, ShouldEqual, 5)
 		})
-
 	})
 }
 
