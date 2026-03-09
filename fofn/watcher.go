@@ -42,7 +42,7 @@ import (
 const (
 	statusFilename = "status"
 	maxPollWorkers = 10
-	dirMode        = 0770
+	dirMode        = 0750
 )
 
 // ProcessSubDirConfig holds configuration for processing a subdirectory.
