@@ -39,7 +39,7 @@ func TestScanForFOFNs(t *testing.T) {
 
 		createSubWithFOFN := func(name string) string {
 			sub := filepath.Join(dir, name)
-			So(os.MkdirAll(sub, 0750), ShouldBeNil)
+			So(os.MkdirAll(sub, dirMode), ShouldBeNil)
 			So(os.WriteFile(
 				filepath.Join(sub, "fofn"),
 				[]byte(""), 0600, //nolint:gosec
@@ -50,7 +50,7 @@ func TestScanForFOFNs(t *testing.T) {
 
 		createSubWithoutFOFN := func(name string) {
 			sub := filepath.Join(dir, name)
-			So(os.MkdirAll(sub, 0750), ShouldBeNil)
+			So(os.MkdirAll(sub, dirMode), ShouldBeNil)
 		}
 
 		Convey("3 subdirs, 2 with fofn returns 2 SubDirs", func() {
@@ -75,7 +75,7 @@ func TestScanForFOFNs(t *testing.T) {
 
 		Convey("no subdirs returns empty slice, no error", func() {
 			emptyDir := filepath.Join(dir, "empty")
-			So(os.MkdirAll(emptyDir, 0750), ShouldBeNil)
+			So(os.MkdirAll(emptyDir, dirMode), ShouldBeNil)
 
 			result, err := ScanForFOFNs(emptyDir)
 			So(err, ShouldBeNil)
@@ -97,7 +97,7 @@ func TestScanForFOFNs(t *testing.T) {
 			pathGood := createSubWithFOFN("good")
 
 			raceSub := filepath.Join(dir, "race")
-			So(os.MkdirAll(raceSub, 0750), ShouldBeNil)
+			So(os.MkdirAll(raceSub, dirMode), ShouldBeNil)
 			So(os.Symlink(filepath.Join(dir, "gone"), filepath.Join(raceSub, fofnFilename)), ShouldBeNil)
 
 			result, err := ScanForFOFNs(dir)

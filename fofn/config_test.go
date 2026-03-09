@@ -41,7 +41,7 @@ func TestConfig(t *testing.T) {
 
 		writeYAML := func(subdir, content string) string {
 			sub := filepath.Join(dir, subdir)
-			So(os.MkdirAll(sub, 0750), ShouldBeNil)
+			So(os.MkdirAll(sub, dirMode), ShouldBeNil)
 			So(os.WriteFile(
 				filepath.Join(sub, "config.yml"),
 				[]byte(content), 0600, //nolint:gosec
@@ -78,7 +78,7 @@ func TestConfig(t *testing.T) {
 
 		Convey("no config.yml returns error", func() {
 			sub := filepath.Join(dir, "noconfig")
-			So(os.MkdirAll(sub, 0750), ShouldBeNil)
+			So(os.MkdirAll(sub, dirMode), ShouldBeNil)
 
 			_, err := ReadConfig(sub)
 			So(err, ShouldNotBeNil)
@@ -125,7 +125,7 @@ func TestConfig(t *testing.T) {
 
 		Convey("WriteConfig + ReadConfig round-trip with freeze and metadata", func() {
 			sub := filepath.Join(dir, "rt1")
-			So(os.MkdirAll(sub, 0750), ShouldBeNil)
+			So(os.MkdirAll(sub, dirMode), ShouldBeNil)
 
 			orig := SubDirConfig{
 				Transformer: "gendev",
@@ -148,7 +148,7 @@ func TestConfig(t *testing.T) {
 
 		Convey("WriteConfig + ReadConfig round-trip without freeze/metadata", func() {
 			sub := filepath.Join(dir, "rt2")
-			So(os.MkdirAll(sub, 0750), ShouldBeNil)
+			So(os.MkdirAll(sub, dirMode), ShouldBeNil)
 
 			orig := SubDirConfig{
 				Transformer: "humgen",
@@ -166,7 +166,7 @@ func TestConfig(t *testing.T) {
 
 		Convey("WriteConfig with empty Transformer returns error, no file", func() {
 			sub := filepath.Join(dir, "empty_tx")
-			So(os.MkdirAll(sub, 0750), ShouldBeNil)
+			So(os.MkdirAll(sub, dirMode), ShouldBeNil)
 
 			err := WriteConfig(sub, SubDirConfig{})
 			So(err, ShouldNotBeNil)
@@ -177,7 +177,7 @@ func TestConfig(t *testing.T) {
 
 		Convey("WriteConfig rejects metadata key containing colon", func() {
 			sub := filepath.Join(dir, "write_colon")
-			So(os.MkdirAll(sub, 0750), ShouldBeNil)
+			So(os.MkdirAll(sub, dirMode), ShouldBeNil)
 
 			err := WriteConfig(sub, SubDirConfig{
 				Transformer: "test",
@@ -192,7 +192,7 @@ func TestConfig(t *testing.T) {
 
 		Convey("WriteConfig rejects metadata value containing =", func() {
 			sub := filepath.Join(dir, "write_eq")
-			So(os.MkdirAll(sub, 0750), ShouldBeNil)
+			So(os.MkdirAll(sub, dirMode), ShouldBeNil)
 
 			err := WriteConfig(sub, SubDirConfig{
 				Transformer: "test",
@@ -207,7 +207,7 @@ func TestConfig(t *testing.T) {
 
 		Convey("WriteConfig rejects invalid review date", func() {
 			sub := filepath.Join(dir, "write_eq")
-			So(os.MkdirAll(sub, 0750), ShouldBeNil)
+			So(os.MkdirAll(sub, dirMode), ShouldBeNil)
 
 			timeError := new(time.ParseError)
 
@@ -224,7 +224,7 @@ func TestConfig(t *testing.T) {
 
 		Convey("WriteConfig rejects invalid remove date", func() {
 			sub := filepath.Join(dir, "write_eq")
-			So(os.MkdirAll(sub, 0750), ShouldBeNil)
+			So(os.MkdirAll(sub, dirMode), ShouldBeNil)
 
 			timeError := new(time.ParseError)
 
@@ -241,7 +241,7 @@ func TestConfig(t *testing.T) {
 
 		Convey("WriteConfig rejects invalid reason", func() {
 			sub := filepath.Join(dir, "write_eq")
-			So(os.MkdirAll(sub, 0750), ShouldBeNil)
+			So(os.MkdirAll(sub, dirMode), ShouldBeNil)
 
 			err := WriteConfig(sub, SubDirConfig{
 				Transformer: "test",
@@ -255,7 +255,7 @@ func TestConfig(t *testing.T) {
 
 		Convey("WriteConfig rejects invalid setname", func() {
 			sub := filepath.Join(dir, "write_eq")
-			So(os.MkdirAll(sub, 0750), ShouldBeNil)
+			So(os.MkdirAll(sub, dirMode), ShouldBeNil)
 
 			err := WriteConfig(sub, SubDirConfig{
 				Transformer: "test",
@@ -269,7 +269,7 @@ func TestConfig(t *testing.T) {
 
 		Convey("WriteConfig rejects invalid requester", func() {
 			sub := filepath.Join(dir, "write_eq")
-			So(os.MkdirAll(sub, 0750), ShouldBeNil)
+			So(os.MkdirAll(sub, dirMode), ShouldBeNil)
 
 			err := WriteConfig(sub, SubDirConfig{
 				Transformer: "test",
@@ -283,7 +283,7 @@ func TestConfig(t *testing.T) {
 
 		Convey("ReadConfig rejects metadata value containing =", func() {
 			sub := filepath.Join(dir, "bad_eq")
-			So(os.MkdirAll(sub, 0750), ShouldBeNil)
+			So(os.MkdirAll(sub, dirMode), ShouldBeNil)
 
 			So(os.WriteFile(
 				filepath.Join(sub, "config.yml"),
@@ -298,7 +298,7 @@ func TestConfig(t *testing.T) {
 
 		Convey("ReadConfig rejects metadata value containing ;", func() {
 			sub := filepath.Join(dir, "bad_semi")
-			So(os.MkdirAll(sub, 0750), ShouldBeNil)
+			So(os.MkdirAll(sub, dirMode), ShouldBeNil)
 
 			So(os.WriteFile(
 				filepath.Join(sub, "config.yml"),
@@ -313,7 +313,7 @@ func TestConfig(t *testing.T) {
 
 		Convey("ReadConfig rejects metadata key containing =", func() {
 			sub := filepath.Join(dir, "bad_key_eq")
-			So(os.MkdirAll(sub, 0750), ShouldBeNil)
+			So(os.MkdirAll(sub, dirMode), ShouldBeNil)
 
 			So(os.WriteFile(
 				filepath.Join(sub, "config.yml"),

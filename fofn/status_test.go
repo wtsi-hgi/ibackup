@@ -43,7 +43,7 @@ func TestWriteStatusFromRun(t *testing.T) {
 
 		Convey("3 chunks with reports, no buried", func() {
 			runDir := filepath.Join(dir, "run1")
-			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
+			So(os.MkdirAll(runDir, dirMode), ShouldBeNil)
 
 			createChunkAndReport(runDir, 0, 10,
 				[]string{"uploaded", "replaced"})
@@ -75,7 +75,7 @@ func TestWriteStatusFromRun(t *testing.T) {
 
 		Convey("3 chunks, 1 buried with no report", func() {
 			runDir := filepath.Join(dir, "run2")
-			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
+			So(os.MkdirAll(runDir, dirMode), ShouldBeNil)
 
 			createChunkAndReport(runDir, 0, 10,
 				[]string{"uploaded"})
@@ -100,7 +100,7 @@ func TestWriteStatusFromRun(t *testing.T) {
 
 		Convey("1 buried chunk with partial report", func() {
 			runDir := filepath.Join(dir, "run3")
-			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
+			So(os.MkdirAll(runDir, dirMode), ShouldBeNil)
 
 			createChunkWithPartialReport(runDir, 0, 10, 5)
 
@@ -121,7 +121,7 @@ func TestWriteStatusFromRun(t *testing.T) {
 
 		Convey("0 chunk files produces SUMMARY only", func() {
 			runDir := filepath.Join(dir, "run4")
-			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
+			So(os.MkdirAll(runDir, dirMode), ShouldBeNil)
 
 			statusPath := filepath.Join(dir, "status4")
 
@@ -137,7 +137,7 @@ func TestWriteStatusFromRun(t *testing.T) {
 
 		Convey("ParseStatus returns correct entries and counts", func() {
 			runDir := filepath.Join(dir, "run5")
-			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
+			So(os.MkdirAll(runDir, dirMode), ShouldBeNil)
 
 			createChunkAndReport(runDir, 0, 10,
 				[]string{"uploaded", "replaced"})
@@ -176,7 +176,7 @@ func TestWriteStatusFromRun(t *testing.T) {
 
 		Convey("malformed report line is bypassed with not_processed and diagnostics", func() {
 			runDir := filepath.Join(dir, "run6")
-			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
+			So(os.MkdirAll(runDir, dirMode), ShouldBeNil)
 
 			chunkPath := filepath.Join(runDir, fmt.Sprintf(chunkNameFormat, 0))
 			reportPath := chunkPath + ".report"
@@ -332,7 +332,7 @@ func TestStatusMemory(t *testing.T) {
 	Convey("WriteStatusFromRun streams without excessive memory", t, func() {
 		dir := t.TempDir()
 		runDir := filepath.Join(dir, "memrun")
-		So(os.MkdirAll(runDir, 0750), ShouldBeNil)
+		So(os.MkdirAll(runDir, dirMode), ShouldBeNil)
 
 		const (
 			numChunks       = 100

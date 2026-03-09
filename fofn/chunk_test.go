@@ -192,7 +192,7 @@ func TestChunk(t *testing.T) {
 		Convey("splits 25 paths into 3 chunks with chunkSize 10", func() {
 			fofnPath := writeFofn(dir, generatePaths(25))
 			outDir := filepath.Join(dir, "out1")
-			So(os.MkdirAll(outDir, 0750), ShouldBeNil)
+			So(os.MkdirAll(outDir, dirMode), ShouldBeNil)
 
 			paths, err := WriteShuffledChunks(fofnPath, transform, outDir, 10, 10, 1)
 			So(err, ShouldBeNil)
@@ -212,7 +212,7 @@ func TestChunk(t *testing.T) {
 		Convey("puts 10 paths into 1 chunk with chunkSize 10", func() {
 			fofnPath := writeFofn(dir, generatePaths(10))
 			outDir := filepath.Join(dir, "out2")
-			So(os.MkdirAll(outDir, 0750), ShouldBeNil)
+			So(os.MkdirAll(outDir, dirMode), ShouldBeNil)
 
 			paths, err := WriteShuffledChunks(fofnPath, transform, outDir, 10, 10, 1)
 			So(err, ShouldBeNil)
@@ -225,7 +225,7 @@ func TestChunk(t *testing.T) {
 		Convey("returns empty slice for empty fofn", func() {
 			fofnPath := writeFofn(dir, nil)
 			outDir := filepath.Join(dir, "out3")
-			So(os.MkdirAll(outDir, 0750), ShouldBeNil)
+			So(os.MkdirAll(outDir, dirMode), ShouldBeNil)
 
 			paths, err := WriteShuffledChunks(fofnPath, transform, outDir, 10, 10, 1)
 			So(err, ShouldBeNil)
@@ -236,7 +236,7 @@ func TestChunk(t *testing.T) {
 			inputPaths := generatePaths(15)
 			fofnPath := writeFofn(dir, inputPaths)
 			outDir := filepath.Join(dir, "out4")
-			So(os.MkdirAll(outDir, 0750), ShouldBeNil)
+			So(os.MkdirAll(outDir, dirMode), ShouldBeNil)
 
 			paths, err := WriteShuffledChunks(fofnPath, transform, outDir, 10, 10, 1)
 			So(err, ShouldBeNil)
@@ -264,13 +264,13 @@ func TestChunk(t *testing.T) {
 			fofnPath := writeFofn(dir, inputPaths)
 
 			outDir1 := filepath.Join(dir, "det1")
-			So(os.MkdirAll(outDir1, 0750), ShouldBeNil)
+			So(os.MkdirAll(outDir1, dirMode), ShouldBeNil)
 
 			paths1, err := WriteShuffledChunks(fofnPath, transform, outDir1, 10, 10, 42)
 			So(err, ShouldBeNil)
 
 			outDir2 := filepath.Join(dir, "det2")
-			So(os.MkdirAll(outDir2, 0750), ShouldBeNil)
+			So(os.MkdirAll(outDir2, dirMode), ShouldBeNil)
 
 			paths2, err := WriteShuffledChunks(fofnPath, transform, outDir2, 10, 10, 42)
 			So(err, ShouldBeNil)
@@ -309,7 +309,7 @@ func TestChunk(t *testing.T) {
 
 			Convey("seed 1", func() {
 				outDir := filepath.Join(dir, "seed1")
-				So(os.MkdirAll(outDir, 0750), ShouldBeNil)
+				So(os.MkdirAll(outDir, dirMode), ShouldBeNil)
 
 				paths, err := WriteShuffledChunks(fofnPath, transform, outDir, 3, 3, 1)
 				So(err, ShouldBeNil)
@@ -332,7 +332,7 @@ func TestChunk(t *testing.T) {
 
 			Convey("seed 2", func() {
 				outDir := filepath.Join(dir, "seed2")
-				So(os.MkdirAll(outDir, 0750), ShouldBeNil)
+				So(os.MkdirAll(outDir, dirMode), ShouldBeNil)
 
 				paths, err := WriteShuffledChunks(fofnPath, transform, outDir, 3, 3, 2)
 				So(err, ShouldBeNil)
@@ -363,7 +363,7 @@ func TestChunk(t *testing.T) {
 
 			fofnPath := writeLargeFofn(dir, numEntries, entryLen)
 			outDir := filepath.Join(dir, "mem")
-			So(os.MkdirAll(outDir, 0750), ShouldBeNil)
+			So(os.MkdirAll(outDir, dirMode), ShouldBeNil)
 
 			runtime.GC()
 
@@ -389,7 +389,7 @@ func TestChunk(t *testing.T) {
 		Convey("VC2-1: 25 paths min=max=10 gives 3 chunks", func() {
 			fofnPath := writeFofn(dir, generatePaths(25))
 			outDir := filepath.Join(dir, "vc2_1")
-			So(os.MkdirAll(outDir, 0750), ShouldBeNil)
+			So(os.MkdirAll(outDir, dirMode), ShouldBeNil)
 
 			paths, err := WriteShuffledChunks(fofnPath, transform, outDir, 10, 10, 1)
 			So(err, ShouldBeNil)
@@ -402,7 +402,7 @@ func TestChunk(t *testing.T) {
 		Convey("VC2-2: 50000 paths min=250 max=10000 gives 100 chunks", func() {
 			fofnPath := writeLargeFofn(dir, 50000, 13)
 			outDir := filepath.Join(dir, "vc2_2")
-			So(os.MkdirAll(outDir, 0750), ShouldBeNil)
+			So(os.MkdirAll(outDir, dirMode), ShouldBeNil)
 
 			paths, err := WriteShuffledChunks(
 				fofnPath, transform, outDir, 250, 10000, 1,
@@ -417,7 +417,7 @@ func TestChunk(t *testing.T) {
 		Convey("VC2-3: 100 paths min=250 max=10000 gives 1 chunk", func() {
 			fofnPath := writeFofn(dir, generatePaths(100))
 			outDir := filepath.Join(dir, "vc2_3")
-			So(os.MkdirAll(outDir, 0750), ShouldBeNil)
+			So(os.MkdirAll(outDir, dirMode), ShouldBeNil)
 
 			paths, err := WriteShuffledChunks(
 				fofnPath, transform, outDir, 250, 10000, 1,
@@ -432,7 +432,7 @@ func TestChunk(t *testing.T) {
 		Convey("VC2-4: 201 paths min=max=2 gives 101 chunks", func() {
 			fofnPath := writeFofn(dir, generatePaths(201))
 			outDir := filepath.Join(dir, "vc2_4")
-			So(os.MkdirAll(outDir, 0750), ShouldBeNil)
+			So(os.MkdirAll(outDir, dirMode), ShouldBeNil)
 
 			paths, err := WriteShuffledChunks(fofnPath, transform, outDir, 2, 2, 1)
 			So(err, ShouldBeNil)
@@ -445,7 +445,7 @@ func TestChunk(t *testing.T) {
 		Convey("VC2-5: empty fofn gives 0 chunks and nil", func() {
 			fofnPath := writeFofn(dir, nil)
 			outDir := filepath.Join(dir, "vc2_5")
-			So(os.MkdirAll(outDir, 0750), ShouldBeNil)
+			So(os.MkdirAll(outDir, dirMode), ShouldBeNil)
 
 			paths, err := WriteShuffledChunks(
 				fofnPath, transform, outDir, 250, 10000, 1,
@@ -457,7 +457,7 @@ func TestChunk(t *testing.T) {
 		Convey("VC2-6: 1 path min=250 max=10000 gives 1 chunk with 1 line", func() {
 			fofnPath := writeFofn(dir, generatePaths(1))
 			outDir := filepath.Join(dir, "vc2_6")
-			So(os.MkdirAll(outDir, 0750), ShouldBeNil)
+			So(os.MkdirAll(outDir, dirMode), ShouldBeNil)
 
 			paths, err := WriteShuffledChunks(
 				fofnPath, transform, outDir, 250, 10000, 1,
@@ -472,7 +472,7 @@ func TestChunk(t *testing.T) {
 		Convey("VC2-7: minChunk=0 returns error, no chunks", func() {
 			fofnPath := writeFofn(dir, generatePaths(10))
 			outDir := filepath.Join(dir, "vc2_7")
-			So(os.MkdirAll(outDir, 0750), ShouldBeNil)
+			So(os.MkdirAll(outDir, dirMode), ShouldBeNil)
 
 			paths, err := WriteShuffledChunks(fofnPath, transform, outDir, 0, 10, 1)
 			So(err, ShouldNotBeNil)
@@ -485,7 +485,7 @@ func TestChunk(t *testing.T) {
 		Convey("VC2-8: maxChunk=0 returns error, no chunks", func() {
 			fofnPath := writeFofn(dir, generatePaths(10))
 			outDir := filepath.Join(dir, "vc2_8")
-			So(os.MkdirAll(outDir, 0750), ShouldBeNil)
+			So(os.MkdirAll(outDir, dirMode), ShouldBeNil)
 
 			paths, err := WriteShuffledChunks(fofnPath, transform, outDir, 10, 0, 1)
 			So(err, ShouldNotBeNil)
@@ -498,7 +498,7 @@ func TestChunk(t *testing.T) {
 		Convey("VC2-9: minChunk > maxChunk returns error, no chunks", func() {
 			fofnPath := writeFofn(dir, generatePaths(10))
 			outDir := filepath.Join(dir, "vc2_9")
-			So(os.MkdirAll(outDir, 0750), ShouldBeNil)
+			So(os.MkdirAll(outDir, dirMode), ShouldBeNil)
 
 			paths, err := WriteShuffledChunks(fofnPath, transform, outDir, 500, 100, 1)
 			So(err, ShouldNotBeNil)
@@ -516,7 +516,7 @@ func TestChunk(t *testing.T) {
 
 			fofnPath := writeLargeFofn(dir, numEntries, entryLen)
 			outDir := filepath.Join(dir, "vc2_10")
-			So(os.MkdirAll(outDir, 0750), ShouldBeNil)
+			So(os.MkdirAll(outDir, dirMode), ShouldBeNil)
 
 			runtime.GC()
 

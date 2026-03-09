@@ -5533,6 +5533,8 @@ func (s *testSubmitter) NewJob(cmd, repGroup, reqGroup, _, _ string, req *schedu
 	}
 }
 
+const dirMode = 0770
+
 func TestWatchFofnsIntegration(t *testing.T) {
 	Convey("watchfofns integration", t, func() {
 		So(transformer.Register("test", `^/tmp/(.*)$`, "/irods/$1"), ShouldBeNil)
@@ -5542,7 +5544,7 @@ func TestWatchFofnsIntegration(t *testing.T) {
 			paths := integrationPaths(5)
 			subPath := filepath.Join(watchDir, "proj")
 
-			So(os.MkdirAll(subPath, 0750), ShouldBeNil)
+			So(os.MkdirAll(subPath, dirMode), ShouldBeNil)
 
 			writeNullFofn(subPath, paths)
 
@@ -5646,7 +5648,7 @@ func TestWatchFofnsIntegration(t *testing.T) {
 			paths := integrationPaths(5)
 			subPath := filepath.Join(watchDir, "frozen")
 
-			So(os.MkdirAll(subPath, 0750), ShouldBeNil)
+			So(os.MkdirAll(subPath, dirMode), ShouldBeNil)
 
 			writeNullFofn(subPath, paths)
 
@@ -5721,7 +5723,7 @@ func TestWatchFofnsIntegration(t *testing.T) {
 			paths := integrationPaths(5)
 			subPath := filepath.Join(watchDir, "restart")
 
-			So(os.MkdirAll(subPath, 0750), ShouldBeNil)
+			So(os.MkdirAll(subPath, dirMode), ShouldBeNil)
 
 			writeNullFofn(subPath, paths)
 
@@ -5802,7 +5804,7 @@ func TestWatchFofnsIntegration(t *testing.T) {
 				paths := integrationPaths(5)
 				subPath := filepath.Join(watchDir, "buried")
 
-				So(os.MkdirAll(subPath, 0750), ShouldBeNil)
+				So(os.MkdirAll(subPath, dirMode), ShouldBeNil)
 
 				writeNullFofn(subPath, paths)
 
@@ -6071,7 +6073,7 @@ func TestWatchFofnsRealWRIntegration(t *testing.T) {
 		if localRoot == "" {
 			localRoot = t.TempDir()
 		} else {
-			So(os.MkdirAll(localRoot, 0750), ShouldBeNil)
+			So(os.MkdirAll(localRoot, dirMode), ShouldBeNil)
 		}
 
 		// Ensure wr jobs can find our test ibackup binary.
@@ -6086,8 +6088,8 @@ func TestWatchFofnsRealWRIntegration(t *testing.T) {
 		subDir := filepath.Join(watchDir, "proj")
 		remoteBase := filepath.Join(remoteRoot, "watchfofns_realwr")
 
-		So(os.MkdirAll(filesRoot, 0750), ShouldBeNil)
-		So(os.MkdirAll(subDir, 0750), ShouldBeNil)
+		So(os.MkdirAll(filesRoot, dirMode), ShouldBeNil)
+		So(os.MkdirAll(subDir, dirMode), ShouldBeNil)
 
 		// Create a few small local files in subfolders.
 		paths := []string{
@@ -6100,7 +6102,7 @@ func TestWatchFofnsRealWRIntegration(t *testing.T) {
 		regularContents := make(map[string]string, len(regularPaths))
 
 		for i, p := range paths {
-			So(os.MkdirAll(filepath.Dir(p), 0750), ShouldBeNil)
+			So(os.MkdirAll(filepath.Dir(p), dirMode), ShouldBeNil)
 
 			content := fmt.Sprintf("x%d", i)
 
@@ -6114,8 +6116,8 @@ func TestWatchFofnsRealWRIntegration(t *testing.T) {
 		fileSymlinkPath := filepath.Join(filesRoot, "01", "01", "f003_link")
 		dirSymlinkPath := filepath.Join(filesRoot, "01", "02", "d000_link")
 
-		So(os.MkdirAll(filepath.Dir(fileSymlinkPath), 0750), ShouldBeNil)
-		So(os.MkdirAll(filepath.Dir(dirSymlinkPath), 0750), ShouldBeNil)
+		So(os.MkdirAll(filepath.Dir(fileSymlinkPath), dirMode), ShouldBeNil)
+		So(os.MkdirAll(filepath.Dir(dirSymlinkPath), dirMode), ShouldBeNil)
 		So(os.Symlink(fileSymlinkTarget, fileSymlinkPath), ShouldBeNil)
 		So(os.Symlink(dirSymlinkTarget, dirSymlinkPath), ShouldBeNil)
 
@@ -7097,7 +7099,7 @@ func runWatchFofnsAndCaptureJobs(t *testing.T, extraFlags ...string) []*jobqueue
 	So(err, ShouldBeNil)
 
 	subPath := filepath.Join(tmpDir, "proj")
-	So(os.MkdirAll(subPath, 0750), ShouldBeNil)
+	So(os.MkdirAll(subPath, dirMode), ShouldBeNil)
 
 	writeNullFofn(subPath, []string{"/tmp/a"})
 
