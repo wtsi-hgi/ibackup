@@ -5533,7 +5533,7 @@ func (s *testSubmitter) NewJob(cmd, repGroup, reqGroup, _, _ string, req *schedu
 	}
 }
 
-const dirMode = 0770
+const dirMode = 0750
 
 func TestWatchFofnsIntegration(t *testing.T) {
 	Convey("watchfofns integration", t, func() {
@@ -7039,6 +7039,13 @@ func TestWatchFofnsCommand(t *testing.T) {
 
 			So(len(jobs), ShouldBeGreaterThan, 0)
 			So(jobs[0].Cmd, ShouldContainSubstring, "--statter '/path/to/statter'")
+		})
+
+		Convey("passes --group through to submitted jobs", func() {
+			jobs := runWatchFofnsAndCaptureJobs(t, "--group", "some-group")
+
+			So(len(jobs), ShouldBeGreaterThan, 0)
+			So(jobs[0].Group, ShouldEqual, "some-group")
 		})
 
 		Convey("prints help with --help", func() {

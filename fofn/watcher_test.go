@@ -491,7 +491,7 @@ func TestGenerateStatus(t *testing.T) {
 }
 
 // setupRunDir creates a watch directory, subdirectory,
-// and run directory; returns the SubDir and run path.
+// and run directory; returns the run path.
 func setupRunDir(
 	watchDir, name string,
 ) string {
