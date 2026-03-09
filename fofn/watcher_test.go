@@ -314,7 +314,7 @@ func TestProcessSubDir(t *testing.T) {
 
 		Convey("returns error when config.yml is missing", func() {
 			subPath := filepath.Join(watchDir, "proj3")
-			So(os.MkdirAll(subPath, 0750),
+			So(os.MkdirAll(subPath, dirMode),
 				ShouldBeNil)
 
 			writeFofn(subPath, generateTmpPaths(5))
@@ -430,7 +430,7 @@ func TestGenerateStatus(t *testing.T) {
 		watchDir := t.TempDir()
 
 		Convey("writes status file for 3 complete reports", func() {
-			_, runDir := setupRunDir(watchDir, "proj1")
+			runDir := setupRunDir(watchDir, "proj1")
 
 			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 5))
 			writeChunkAndReport(runDir, "chunk.000001", makeFilePairs(5, 10))
@@ -447,7 +447,7 @@ func TestGenerateStatus(t *testing.T) {
 		})
 
 		Convey("handles buried chunk with no report file", func() {
-			_, runDir := setupRunDir(watchDir, "proj2")
+			runDir := setupRunDir(watchDir, "proj2")
 
 			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 5))
 			writeChunkAndReport(runDir, "chunk.000001", makeFilePairs(5, 10))
@@ -468,7 +468,7 @@ func TestGenerateStatus(t *testing.T) {
 		})
 
 		Convey("handles buried chunk with incomplete report", func() {
-			_, runDir := setupRunDir(watchDir, "proj3")
+			runDir := setupRunDir(watchDir, "proj3")
 
 			pairs := makeFilePairs(0, 10)
 			writeChunkFile(runDir, "chunk.000000", pairs)
@@ -487,22 +487,21 @@ func TestGenerateStatus(t *testing.T) {
 			So(counts.Uploaded, ShouldEqual, 5)
 			So(counts.NotProcessed, ShouldEqual, 5)
 		})
-
 	})
 }
 
 // setupRunDir creates a watch directory, subdirectory,
-// and run directory; returns the SubDir and run path.
+// and run directory; returns the run path.
 func setupRunDir(
 	watchDir, name string,
-) (SubDir, string) {
+) string {
 	subPath := filepath.Join(watchDir, name)
-	So(os.MkdirAll(subPath, 0750), ShouldBeNil)
+	So(os.MkdirAll(subPath, dirMode), ShouldBeNil)
 
 	runDir := filepath.Join(subPath, "12345")
-	So(os.MkdirAll(runDir, 0750), ShouldBeNil)
+	So(os.MkdirAll(runDir, dirMode), ShouldBeNil)
 
-	return SubDir{Path: subPath}, runDir
+	return runDir
 }
 
 func TestWatcherPoll(t *testing.T) {
@@ -820,7 +819,7 @@ func TestWatcherPoll(t *testing.T) {
 			runDir := runScan.runDir
 
 			oldRunDir := filepath.Join(subDir.Path, "500")
-			So(os.MkdirAll(oldRunDir, 0750),
+			So(os.MkdirAll(oldRunDir, dirMode),
 				ShouldBeNil)
 
 			writeReportsForChunks(runDir)
@@ -890,6 +889,21 @@ func TestWatcherPoll(t *testing.T) {
 			So(target, ShouldEqual,
 				expectedTarget)
 		})
+
+		Convey("jobs are created with the correct unix group set", func() {
+			paths := generateTmpPaths(25)
+			cfg.RunConfig.Group = "some-group"
+
+			setupSubDir(watchDir, "proj1", paths, SubDirConfig{Transformer: "test"})
+
+			mock := &mockJobSubmitter{}
+			w := NewWatcher(watchDir, mock, cfg)
+
+			err := w.Poll()
+			So(err, ShouldBeNil)
+			So(mock.submitted, ShouldHaveLength, 3)
+			So(mock.submitted[0].Group, ShouldEqual, "some-group")
+		})
 	})
 }
 
@@ -907,7 +921,7 @@ func TestWatcherRestart(t *testing.T) {
 		Convey("detects existing run with incomplete jobs and does not submit new jobs",
 			func() {
 				subPath := filepath.Join(watchDir, "proj")
-				So(os.MkdirAll(subPath, 0750),
+				So(os.MkdirAll(subPath, dirMode),
 					ShouldBeNil)
 
 				fofnPath := writeFofn(subPath, generateTmpPaths(10))
@@ -917,7 +931,7 @@ func TestWatcherRestart(t *testing.T) {
 				So(WriteConfig(subPath, SubDirConfig{Transformer: "test"}), ShouldBeNil)
 
 				runDir := filepath.Join(subPath, "1000")
-				So(os.MkdirAll(runDir, 0750),
+				So(os.MkdirAll(runDir, dirMode),
 					ShouldBeNil)
 
 				writeChunkOnly(runDir, "chunk.000000", makeFilePairs(0, 10))
@@ -946,13 +960,13 @@ func TestWatcherRestart(t *testing.T) {
 
 		Convey("returns error when completion status cannot be queried", func() {
 			subPath := filepath.Join(watchDir, "proj")
-			So(os.MkdirAll(subPath, 0750), ShouldBeNil)
+			So(os.MkdirAll(subPath, dirMode), ShouldBeNil)
 
 			writeFofn(subPath, generateTmpPaths(10))
 			So(WriteConfig(subPath, SubDirConfig{Transformer: "test"}), ShouldBeNil)
 
 			runDir := filepath.Join(subPath, "1000")
-			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
+			So(os.MkdirAll(runDir, dirMode), ShouldBeNil)
 			writeChunkOnly(runDir, "chunk.000000", makeFilePairs(0, 10))
 
 			mock := &mockJobSubmitter{allJobsErr: errTest}
@@ -965,7 +979,7 @@ func TestWatcherRestart(t *testing.T) {
 
 		Convey("detects completed existing run and generates status file", func() {
 			subPath := filepath.Join(watchDir, "proj")
-			So(os.MkdirAll(subPath, 0750),
+			So(os.MkdirAll(subPath, dirMode),
 				ShouldBeNil)
 
 			fofnPath := writeFofn(subPath, generateTmpPaths(10))
@@ -976,7 +990,7 @@ func TestWatcherRestart(t *testing.T) {
 			So(WriteConfig(subPath, SubDirConfig{Transformer: "test"}), ShouldBeNil)
 
 			runDir := filepath.Join(subPath, "1000")
-			So(os.MkdirAll(runDir, 0750),
+			So(os.MkdirAll(runDir, dirMode),
 				ShouldBeNil)
 
 			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 10))
@@ -1003,7 +1017,7 @@ func TestWatcherRestart(t *testing.T) {
 
 		Convey("regenerates status when symlink is missing", func() {
 			subPath := filepath.Join(watchDir, "proj")
-			So(os.MkdirAll(subPath, 0750), ShouldBeNil)
+			So(os.MkdirAll(subPath, dirMode), ShouldBeNil)
 
 			fofnPath := writeFofn(subPath, generateTmpPaths(10))
 			fofnTime := time.Unix(1000, 0)
@@ -1012,7 +1026,7 @@ func TestWatcherRestart(t *testing.T) {
 			So(WriteConfig(subPath, SubDirConfig{Transformer: "test"}), ShouldBeNil)
 
 			runDir := filepath.Join(subPath, "1000")
-			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
+			So(os.MkdirAll(runDir, dirMode), ShouldBeNil)
 
 			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 10))
 			generateDoneStatus(runDir, SubDir{Path: subPath})
@@ -1034,7 +1048,7 @@ func TestWatcherRestart(t *testing.T) {
 
 		Convey("regenerates status when symlink points to wrong status file", func() {
 			subPath := filepath.Join(watchDir, "proj")
-			So(os.MkdirAll(subPath, 0750), ShouldBeNil)
+			So(os.MkdirAll(subPath, dirMode), ShouldBeNil)
 
 			fofnPath := writeFofn(subPath, generateTmpPaths(10))
 			fofnTime := time.Unix(1000, 0)
@@ -1043,13 +1057,13 @@ func TestWatcherRestart(t *testing.T) {
 			So(WriteConfig(subPath, SubDirConfig{Transformer: "test"}), ShouldBeNil)
 
 			runDir := filepath.Join(subPath, "1000")
-			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
+			So(os.MkdirAll(runDir, dirMode), ShouldBeNil)
 
 			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 10))
 			generateDoneStatus(runDir, SubDir{Path: subPath})
 
 			wrongRunDir := filepath.Join(subPath, "900")
-			So(os.MkdirAll(wrongRunDir, 0750), ShouldBeNil)
+			So(os.MkdirAll(wrongRunDir, dirMode), ShouldBeNil)
 			wrongStatusPath := filepath.Join(wrongRunDir, "status")
 			So(os.WriteFile(wrongStatusPath, []byte("wrong"), 0600), ShouldBeNil)
 
@@ -1071,7 +1085,7 @@ func TestWatcherRestart(t *testing.T) {
 
 		Convey("does not rewrite status artefacts for same fofn mtime after completion", func() {
 			subPath := filepath.Join(watchDir, "proj")
-			So(os.MkdirAll(subPath, 0750),
+			So(os.MkdirAll(subPath, dirMode),
 				ShouldBeNil)
 
 			fofnPath := writeFofn(subPath, generateTmpPaths(10))
@@ -1082,7 +1096,7 @@ func TestWatcherRestart(t *testing.T) {
 			So(WriteConfig(subPath, SubDirConfig{Transformer: "test"}), ShouldBeNil)
 
 			runDir := filepath.Join(subPath, "1000")
-			So(os.MkdirAll(runDir, 0750),
+			So(os.MkdirAll(runDir, dirMode),
 				ShouldBeNil)
 
 			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 10))
@@ -1131,7 +1145,7 @@ func TestWatcherRestart(t *testing.T) {
 
 		Convey("does not regenerate status for externally modified reports in stable done run", func() {
 			subPath := filepath.Join(watchDir, "proj")
-			So(os.MkdirAll(subPath, 0750), ShouldBeNil)
+			So(os.MkdirAll(subPath, dirMode), ShouldBeNil)
 
 			fofnPath := writeFofn(subPath, generateTmpPaths(10))
 			fofnTime := time.Unix(1000, 0)
@@ -1140,7 +1154,7 @@ func TestWatcherRestart(t *testing.T) {
 			So(WriteConfig(subPath, SubDirConfig{Transformer: "test"}), ShouldBeNil)
 
 			runDir := filepath.Join(subPath, "1000")
-			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
+			So(os.MkdirAll(runDir, dirMode), ShouldBeNil)
 
 			pairs := makeFilePairs(0, 10)
 			writeChunkAndReport(runDir, "chunk.000000", pairs)
@@ -1174,7 +1188,7 @@ func TestWatcherRestart(t *testing.T) {
 
 		Convey("cleans stale run directories during phase transition", func() {
 			subPath := filepath.Join(watchDir, "proj")
-			So(os.MkdirAll(subPath, 0750), ShouldBeNil)
+			So(os.MkdirAll(subPath, dirMode), ShouldBeNil)
 
 			fofnPath := writeFofn(subPath, generateTmpPaths(10))
 			fofnTime := time.Unix(1000, 0)
@@ -1183,10 +1197,10 @@ func TestWatcherRestart(t *testing.T) {
 			So(WriteConfig(subPath, SubDirConfig{Transformer: "test"}), ShouldBeNil)
 
 			runDir := filepath.Join(subPath, "1000")
-			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
+			So(os.MkdirAll(runDir, dirMode), ShouldBeNil)
 
 			oldRunDir := filepath.Join(subPath, "500")
-			So(os.MkdirAll(oldRunDir, 0750), ShouldBeNil)
+			So(os.MkdirAll(oldRunDir, dirMode), ShouldBeNil)
 
 			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 10))
 
@@ -1207,7 +1221,7 @@ func TestWatcherRestart(t *testing.T) {
 
 		Convey("returns error when stale-run cleanup fails during phase transition", func() {
 			subPath := filepath.Join(watchDir, "proj")
-			So(os.MkdirAll(subPath, 0750), ShouldBeNil)
+			So(os.MkdirAll(subPath, dirMode), ShouldBeNil)
 
 			fofnPath := writeFofn(subPath, generateTmpPaths(10))
 			fofnTime := time.Unix(1000, 0)
@@ -1216,18 +1230,18 @@ func TestWatcherRestart(t *testing.T) {
 			So(WriteConfig(subPath, SubDirConfig{Transformer: "test"}), ShouldBeNil)
 
 			runDir := filepath.Join(subPath, "1000")
-			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
+			So(os.MkdirAll(runDir, dirMode), ShouldBeNil)
 
 			// Create old run dir with undeletable content so
 			// os.RemoveAll fails on the nested directory.
 			oldRunDir := filepath.Join(subPath, "500")
 			nestedDir := filepath.Join(oldRunDir, "nested")
-			So(os.MkdirAll(nestedDir, 0750), ShouldBeNil)
+			So(os.MkdirAll(nestedDir, dirMode), ShouldBeNil)
 			So(os.WriteFile(filepath.Join(nestedDir, "file"), []byte("x"), 0600), ShouldBeNil)
 			So(os.Chmod(nestedDir, 0550), ShouldBeNil)
 
 			defer func() {
-				restoreErr := os.Chmod(nestedDir, 0750)
+				restoreErr := os.Chmod(nestedDir, dirMode)
 				So(restoreErr, ShouldBeNil)
 			}()
 
@@ -1247,7 +1261,7 @@ func TestWatcherRestart(t *testing.T) {
 
 		Convey("processes updated fofn when completed status artefacts already exist", func() {
 			subPath := filepath.Join(watchDir, "proj")
-			So(os.MkdirAll(subPath, 0750), ShouldBeNil)
+			So(os.MkdirAll(subPath, dirMode), ShouldBeNil)
 
 			fofnPath := writeFofn(subPath, generateTmpPaths(10))
 			fofnTime := time.Unix(1000, 0)
@@ -1256,7 +1270,7 @@ func TestWatcherRestart(t *testing.T) {
 			So(WriteConfig(subPath, SubDirConfig{Transformer: "test"}), ShouldBeNil)
 
 			runDir := filepath.Join(subPath, "1000")
-			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
+			So(os.MkdirAll(runDir, dirMode), ShouldBeNil)
 
 			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 10))
 			generateDoneStatus(runDir, SubDir{Path: subPath})
@@ -1279,7 +1293,7 @@ func TestWatcherRestart(t *testing.T) {
 
 		Convey("refreshes status after buried chunk is retried successfully", func() {
 			subPath := filepath.Join(watchDir, "proj")
-			So(os.MkdirAll(subPath, 0750), ShouldBeNil)
+			So(os.MkdirAll(subPath, dirMode), ShouldBeNil)
 
 			fofnPath := writeFofn(subPath, generateTmpPaths(10))
 			fofnTime := time.Unix(1000, 0)
@@ -1288,7 +1302,7 @@ func TestWatcherRestart(t *testing.T) {
 			So(WriteConfig(subPath, SubDirConfig{Transformer: "test"}), ShouldBeNil)
 
 			runDir := filepath.Join(subPath, "1000")
-			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
+			So(os.MkdirAll(runDir, dirMode), ShouldBeNil)
 
 			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 5))
 			writeChunkOnly(runDir, "chunk.000001", makeFilePairs(5, 10))
@@ -1328,7 +1342,7 @@ func TestWatcherRestart(t *testing.T) {
 
 		Convey("done run submits no new jobs", func() {
 			subPath := filepath.Join(watchDir, "proj")
-			So(os.MkdirAll(subPath, 0750), ShouldBeNil)
+			So(os.MkdirAll(subPath, dirMode), ShouldBeNil)
 
 			fofnPath := writeFofn(subPath, generateTmpPaths(10))
 			fofnTime := time.Unix(1000, 0)
@@ -1337,7 +1351,7 @@ func TestWatcherRestart(t *testing.T) {
 			So(WriteConfig(subPath, SubDirConfig{Transformer: "test"}), ShouldBeNil)
 
 			runDir := filepath.Join(subPath, "1000")
-			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
+			So(os.MkdirAll(runDir, dirMode), ShouldBeNil)
 
 			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 10))
 			generateDoneStatus(runDir, SubDir{Path: subPath})
@@ -1352,7 +1366,7 @@ func TestWatcherRestart(t *testing.T) {
 
 		Convey("done run with intact artefacts does not regenerate status on subsequent polls", func() {
 			subPath := filepath.Join(watchDir, "proj")
-			So(os.MkdirAll(subPath, 0750), ShouldBeNil)
+			So(os.MkdirAll(subPath, dirMode), ShouldBeNil)
 
 			fofnPath := writeFofn(subPath, generateTmpPaths(10))
 			fofnTime := time.Unix(1000, 0)
@@ -1361,7 +1375,7 @@ func TestWatcherRestart(t *testing.T) {
 			So(WriteConfig(subPath, SubDirConfig{Transformer: "test"}), ShouldBeNil)
 
 			runDir := filepath.Join(subPath, "1000")
-			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
+			So(os.MkdirAll(runDir, dirMode), ShouldBeNil)
 
 			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 10))
 			generateDoneStatus(runDir, SubDir{Path: subPath})
@@ -1401,7 +1415,7 @@ func TestWatcherRestart(t *testing.T) {
 
 		Convey("done run with intact artefacts restarts when fofn changes", func() {
 			subPath := filepath.Join(watchDir, "proj")
-			So(os.MkdirAll(subPath, 0750), ShouldBeNil)
+			So(os.MkdirAll(subPath, dirMode), ShouldBeNil)
 
 			fofnPath := writeFofn(subPath, generateTmpPaths(10))
 			fofnTime := time.Unix(1000, 0)
@@ -1410,7 +1424,7 @@ func TestWatcherRestart(t *testing.T) {
 			So(WriteConfig(subPath, SubDirConfig{Transformer: "test"}), ShouldBeNil)
 
 			runDir := filepath.Join(subPath, "1000")
-			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
+			So(os.MkdirAll(runDir, dirMode), ShouldBeNil)
 
 			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 10))
 			generateDoneStatus(runDir, SubDir{Path: subPath})
@@ -1434,7 +1448,7 @@ func TestWatcherRestart(t *testing.T) {
 
 		Convey("repairs symlink without regenerating status file", func() {
 			subPath := filepath.Join(watchDir, "proj")
-			So(os.MkdirAll(subPath, 0750), ShouldBeNil)
+			So(os.MkdirAll(subPath, dirMode), ShouldBeNil)
 
 			fofnPath := writeFofn(subPath, generateTmpPaths(10))
 			fofnTime := time.Unix(1000, 0)
@@ -1443,7 +1457,7 @@ func TestWatcherRestart(t *testing.T) {
 			So(WriteConfig(subPath, SubDirConfig{Transformer: "test"}), ShouldBeNil)
 
 			runDir := filepath.Join(subPath, "1000")
-			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
+			So(os.MkdirAll(runDir, dirMode), ShouldBeNil)
 
 			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 10))
 			generateDoneStatus(runDir, SubDir{Path: subPath})
@@ -1478,7 +1492,7 @@ func TestWatcherRestart(t *testing.T) {
 
 		Convey("waits for running jobs before restarting when fofn changes during active phase", func() {
 			subPath := filepath.Join(watchDir, "proj")
-			So(os.MkdirAll(subPath, 0750), ShouldBeNil)
+			So(os.MkdirAll(subPath, dirMode), ShouldBeNil)
 
 			fofnPath := writeFofn(subPath, generateTmpPaths(10))
 			fofnTime := time.Unix(1000, 0)
@@ -1487,7 +1501,7 @@ func TestWatcherRestart(t *testing.T) {
 			So(WriteConfig(subPath, SubDirConfig{Transformer: "test"}), ShouldBeNil)
 
 			runDir := filepath.Join(subPath, "1000")
-			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
+			So(os.MkdirAll(runDir, dirMode), ShouldBeNil)
 
 			writeChunkOnly(runDir, "chunk.000000", makeFilePairs(0, 10))
 
@@ -1516,7 +1530,7 @@ func TestWatcherRestart(t *testing.T) {
 
 		Convey("regenerates status when status file deleted from done run", func() {
 			subPath := filepath.Join(watchDir, "proj")
-			So(os.MkdirAll(subPath, 0750), ShouldBeNil)
+			So(os.MkdirAll(subPath, dirMode), ShouldBeNil)
 
 			fofnPath := writeFofn(subPath, generateTmpPaths(10))
 			fofnTime := time.Unix(1000, 0)
@@ -1525,7 +1539,7 @@ func TestWatcherRestart(t *testing.T) {
 			So(WriteConfig(subPath, SubDirConfig{Transformer: "test"}), ShouldBeNil)
 
 			runDir := filepath.Join(subPath, "1000")
-			So(os.MkdirAll(runDir, 0750), ShouldBeNil)
+			So(os.MkdirAll(runDir, dirMode), ShouldBeNil)
 
 			writeChunkAndReport(runDir, "chunk.000000", makeFilePairs(0, 10))
 			generateDoneStatus(runDir, SubDir{Path: subPath})
@@ -1668,7 +1682,7 @@ func setupSubDir(
 	cfg SubDirConfig,
 ) SubDir {
 	subPath := filepath.Join(watchDir, name)
-	So(os.MkdirAll(subPath, 0750), ShouldBeNil)
+	So(os.MkdirAll(subPath, dirMode), ShouldBeNil)
 
 	writeFofn(subPath, paths)
 
@@ -1756,7 +1770,7 @@ func TestSettleRepairsArtefacts(t *testing.T) {
 		watchDir := t.TempDir()
 		subPath := filepath.Join(watchDir, "proj")
 
-		if err := os.MkdirAll(subPath, 0750); err != nil {
+		if err := os.MkdirAll(subPath, dirMode); err != nil {
 			rt.Fatal(err)
 		}
 
@@ -1765,7 +1779,7 @@ func TestSettleRepairsArtefacts(t *testing.T) {
 		numBuried := rapid.IntRange(0, numChunks).Draw(rt, "numBuried")
 
 		runDir := filepath.Join(subPath, strconv.FormatInt(mtime, 10))
-		if err := os.MkdirAll(runDir, 0750); err != nil {
+		if err := os.MkdirAll(runDir, dirMode); err != nil {
 			rt.Fatal(err)
 		}
 
@@ -1882,7 +1896,7 @@ func TestSettleIdempotent(t *testing.T) {
 		watchDir := t.TempDir()
 		subPath := filepath.Join(watchDir, "proj")
 
-		if err := os.MkdirAll(subPath, 0750); err != nil {
+		if err := os.MkdirAll(subPath, dirMode); err != nil {
 			rt.Fatal(err)
 		}
 
@@ -1890,7 +1904,7 @@ func TestSettleIdempotent(t *testing.T) {
 		numChunks := rapid.IntRange(1, 3).Draw(rt, "numChunks")
 
 		runDir := filepath.Join(subPath, strconv.FormatInt(mtime, 10))
-		if err := os.MkdirAll(runDir, 0750); err != nil {
+		if err := os.MkdirAll(runDir, dirMode); err != nil {
 			rt.Fatal(err)
 		}
 
@@ -1956,7 +1970,7 @@ func TestPollRepairsDoneRun(t *testing.T) {
 		watchDir := t.TempDir()
 		subPath := filepath.Join(watchDir, "proj")
 
-		if err := os.MkdirAll(subPath, 0750); err != nil {
+		if err := os.MkdirAll(subPath, dirMode); err != nil {
 			rt.Fatal(err)
 		}
 
@@ -1977,7 +1991,7 @@ func TestPollRepairsDoneRun(t *testing.T) {
 
 		// Create completed run
 		runDir := filepath.Join(subPath, "1000")
-		if err := os.MkdirAll(runDir, 0750); err != nil {
+		if err := os.MkdirAll(runDir, dirMode); err != nil {
 			rt.Fatal(err)
 		}
 

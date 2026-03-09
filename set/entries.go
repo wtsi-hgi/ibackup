@@ -180,7 +180,7 @@ func (e *Entry) InodeStoragePath() string {
 }
 
 // setTypeForNoInode sets our type based on the given dirent's Type, for the
-// case that the the dirent has no Inode (is missing or is a directory).
+// case that the dirent has no Inode (is missing or is a directory).
 func (e *Entry) setTypeForNoInode(dirent *Dirent) {
 	if dirent.IsIrregular() {
 		e.Status = Missing

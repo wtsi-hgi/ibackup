@@ -513,5 +513,6 @@ func buildRunConfig(
 		Retries:     baseCfg.Retries,
 		LimitGroups: baseCfg.LimitGroups,
 		ReqGroup:    baseCfg.ReqGroup,
+		Group:       baseCfg.Group,
 	}
 }

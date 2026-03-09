@@ -181,6 +181,17 @@ func TestCreateJobs(t *testing.T) {
 			So(jobs[0].Requirements.Time, ShouldEqual,
 				4*time.Hour)
 		})
+
+		Convey("sets group when supplied", func() {
+			cfg := RunConfig{
+				ChunkPaths: []string{"chunk.000000"},
+				Group:      "some-group",
+			}
+
+			jobs := CreateJobs(mock, cfg)
+			So(jobs[0].Group, ShouldEqual,
+				"some-group")
+		})
 	})
 }
 
