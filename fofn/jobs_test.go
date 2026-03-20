@@ -34,6 +34,7 @@ import (
 	"github.com/VertebrateResequencing/wr/jobqueue"
 	"github.com/VertebrateResequencing/wr/jobqueue/scheduler"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/wtsi-hgi/ibackup/internal/shell"
 )
 
 var errTest = errors.New("test error")
@@ -41,9 +42,9 @@ var errTest = errors.New("test error")
 func TestBuildPutCommand(t *testing.T) {
 	Convey("BuildPutCommand", t, func() {
 		Convey("builds a basic command without optional flags", func() {
-			cmd := BuildPutCommand("chunk.000000", "", false, "project1", "")
+			cmd := BuildPutCommand("ibackup", "chunk.000000", "", false, "project1", "")
 			So(cmd, ShouldEqual,
-				`ibackup put -v -l 'chunk.000000.log' `+
+				shell.Quote("ibackup")+` put -v -l 'chunk.000000.log' `+
 					`--report 'chunk.000000.report' `+
 					`--fofn 'project1' -b `+
 					`-f 'chunk.000000' `+
@@ -51,26 +52,17 @@ func TestBuildPutCommand(t *testing.T) {
 		})
 
 		Convey("includes --no_replace when noReplace is true", func() {
-			cmd := BuildPutCommand("chunk.000000", "", true, "project1", "")
+			cmd := BuildPutCommand("", "chunk.000000", "", true, "project1", "")
 			So(cmd, ShouldContainSubstring, "--no_replace")
 		})
 
 		Convey("includes --meta with quoted value when userMeta is set", func() {
-			cmd := BuildPutCommand(
-				"chunk.000000", "", false, "project1",
-				"colour=red;size=large",
-			)
+			cmd := BuildPutCommand("", "chunk.000000", "", false, "project1", "colour=red;size=large")
 			So(cmd, ShouldContainSubstring, `--meta 'colour=red;size=large'`)
 		})
 
 		Convey("single-quotes and escapes user-controlled values", func() {
-			cmd := BuildPutCommand(
-				"chunk.'$(touch /tmp/nope)'",
-				"",
-				false,
-				"proj'$(id)'",
-				"colour=red';`uname`",
-			)
+			cmd := BuildPutCommand("", "chunk.'$(touch /tmp/nope)'", "", false, "proj'$(id)'", "colour=red';`uname`")
 
 			So(cmd, ShouldContainSubstring, `--fofn 'proj'"'"'$(id)'"'"''`)
 			So(cmd, ShouldContainSubstring, `--meta 'colour=red'"'"';`+"`"+`uname`+"`"+`'`)
@@ -78,17 +70,17 @@ func TestBuildPutCommand(t *testing.T) {
 		})
 
 		Convey("omits --fofn when fofnName is empty", func() {
-			cmd := BuildPutCommand("chunk.000000", "", false, "", "")
+			cmd := BuildPutCommand("", "chunk.000000", "", false, "", "")
 			So(cmd, ShouldNotContainSubstring, "--fofn")
 		})
 
 		Convey("omits --statter flag when statter path is empty", func() {
-			cmd := BuildPutCommand("chunk.000000", "", false, "", "")
+			cmd := BuildPutCommand("", "chunk.000000", "", false, "", "")
 			So(cmd, ShouldNotContainSubstring, "--statter")
 		})
 
 		Convey("includes --statter flag when statter path is supplied", func() {
-			cmd := BuildPutCommand("chunk.000000", "/path/to/statter", false, "", "")
+			cmd := BuildPutCommand("", "chunk.000000", "/path/to/statter", false, "", "")
 			So(cmd, ShouldContainSubstring, "--statter '/path/to/statter'")
 		})
 	})
@@ -113,26 +105,19 @@ func TestCreateJobs(t *testing.T) {
 			jobs := CreateJobs(mock, cfg)
 			So(jobs, ShouldHaveLength, 2)
 
-			expectedCmd0 := BuildPutCommand("chunk.000000", "", false, "proj", "")
+			expectedCmd0 := BuildPutCommand("", "chunk.000000", "", false, "proj", "")
 			So(jobs[0].Cmd, ShouldEqual, expectedCmd0)
-			So(jobs[0].Cwd, ShouldEqual,
-				"/watch/proj/123")
+			So(jobs[0].Cwd, ShouldEqual, "/watch/proj/123")
 			So(jobs[0].CwdMatters, ShouldBeTrue)
-			So(jobs[0].RepGroup, ShouldEqual,
-				"ibackup_fofn_proj_123")
-			So(jobs[0].ReqGroup, ShouldEqual,
-				"ibackup")
-			So(jobs[0].Requirements.RAM, ShouldEqual,
-				1024)
-			So(jobs[0].Requirements.Cores, ShouldEqual,
-				0.1)
-			So(jobs[0].Requirements.Time, ShouldEqual,
-				8*time.Hour)
+			So(jobs[0].RepGroup, ShouldEqual, "ibackup_fofn_proj_123")
+			So(jobs[0].ReqGroup, ShouldEqual, "ibackup")
+			So(jobs[0].Requirements.RAM, ShouldEqual, 1024)
+			So(jobs[0].Requirements.Cores, ShouldEqual, 0.1)
+			So(jobs[0].Requirements.Time, ShouldEqual, 8*time.Hour)
 			So(jobs[0].Retries, ShouldEqual, uint8(3))
-			So(jobs[0].LimitGroups, ShouldResemble,
-				[]string{"irods"})
+			So(jobs[0].LimitGroups, ShouldResemble, []string{"irods"})
 
-			expectedCmd1 := BuildPutCommand("chunk.000001", "", false, "proj", "")
+			expectedCmd1 := BuildPutCommand("", "chunk.000001", "", false, "proj", "")
 			So(jobs[1].Cmd, ShouldEqual, expectedCmd1)
 		})
 
@@ -161,8 +146,7 @@ func TestCreateJobs(t *testing.T) {
 			}
 
 			jobs := CreateJobs(mock, cfg)
-			So(jobs[0].Cmd, ShouldContainSubstring,
-				"--no_replace")
+			So(jobs[0].Cmd, ShouldContainSubstring, "--no_replace")
 		})
 
 		Convey("uses custom RAM and Time", func() {
@@ -176,10 +160,8 @@ func TestCreateJobs(t *testing.T) {
 			}
 
 			jobs := CreateJobs(mock, cfg)
-			So(jobs[0].Requirements.RAM, ShouldEqual,
-				2048)
-			So(jobs[0].Requirements.Time, ShouldEqual,
-				4*time.Hour)
+			So(jobs[0].Requirements.RAM, ShouldEqual, 2048)
+			So(jobs[0].Requirements.Time, ShouldEqual, 4*time.Hour)
 		})
 
 		Convey("sets group when supplied", func() {
@@ -189,8 +171,7 @@ func TestCreateJobs(t *testing.T) {
 			}
 
 			jobs := CreateJobs(mock, cfg)
-			So(jobs[0].Group, ShouldEqual,
-				"some-group")
+			So(jobs[0].Group, ShouldEqual, "some-group")
 		})
 	})
 }
@@ -327,10 +308,8 @@ func TestClassifyAllJobs(t *testing.T) {
 			result, err := ClassifyAllJobs(mock)
 			So(err, ShouldBeNil)
 			So(result, ShouldHaveLength, 2)
-			So(result["ibackup_fofn_proj1_100"].HasRunning,
-				ShouldBeTrue)
-			So(result["ibackup_fofn_proj2_200"].HasRunning,
-				ShouldBeTrue)
+			So(result["ibackup_fofn_proj1_100"].HasRunning, ShouldBeTrue)
+			So(result["ibackup_fofn_proj2_200"].HasRunning, ShouldBeTrue)
 		})
 
 		Convey("classifies buried jobs with chunk extraction", func() {

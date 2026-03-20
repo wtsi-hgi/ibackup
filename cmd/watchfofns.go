@@ -169,6 +169,11 @@ func runWatchFofns() error {
 		return err
 	}
 
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("failed to determine executable path: %w", err)
+	}
+
 	submitter, err := fofn.NewWRSubmitter(watchWRDeployment, queues, queueAvoid, appLogger)
 	if err != nil {
 		return err
@@ -180,7 +185,7 @@ func runWatchFofns() error {
 		}
 	}()
 
-	watcher := createWatcher(submitter)
+	watcher := createWatcher(exe, submitter)
 
 	ctx, cancel := watchCtxFunc()
 	defer cancel()
@@ -268,11 +273,12 @@ func validateChunkFlags() error {
 
 // createWatcher builds a Watcher with the configured
 // options and the given submitter.
-func createWatcher(submitter fofn.JobSubmitter) *fofn.Watcher {
+func createWatcher(exe string, submitter fofn.JobSubmitter) *fofn.Watcher {
 	cfg := fofn.ProcessSubDirConfig{
 		MinChunk: watchMinChunk,
 		MaxChunk: watchMaxChunk,
 		RunConfig: fofn.RunConfig{
+			Exe:         exe,
 			Statter:     statterPath,
 			RAM:         watchRAM,
 			Time:        watchTime,

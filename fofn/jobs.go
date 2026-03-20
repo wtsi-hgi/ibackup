@@ -50,6 +50,7 @@ const (
 // RunConfig holds configuration for creating jobs from chunk files.
 type RunConfig struct {
 	RunDir      string
+	Exe         string
 	Statter     string
 	ChunkPaths  []string
 	SubDirName  string
@@ -74,7 +75,7 @@ func CreateJobs(submitter JobSubmitter, cfg RunConfig) []*jobqueue.Job {
 
 	for i, chunk := range cfg.ChunkPaths {
 		job := submitter.NewJob(
-			BuildPutCommand(chunk, cfg.Statter, cfg.NoReplace, cfg.SubDirName, cfg.UserMeta),
+			BuildPutCommand(cfg.Exe, chunk, cfg.Statter, cfg.NoReplace, cfg.SubDirName, cfg.UserMeta),
 			repGroup, cfg.ReqGroup,
 			"", "",
 			&jqs.Requirements{
@@ -97,48 +98,38 @@ func CreateJobs(submitter JobSubmitter, cfg RunConfig) []*jobqueue.Job {
 // BuildPutCommand constructs an ibackup put command string for a given chunk
 // file. It includes logging, reporting, and optional flags for no-replace, user
 // metadata, and statter.
-func BuildPutCommand(chunkPath, statter string, noReplace bool, fofnName, userMeta string) string {
-	parts := buildPutCoreParts(chunkPath, fofnName)
+func BuildPutCommand(exe, chunkPath, statter string, noReplace bool, fofnName, userMeta string) string {
+	cmd := buildPutCoreCmd(exe, chunkPath, fofnName)
 
-	parts = append(parts,
-		"-b",
-		"-f", shell.Quote(chunkPath),
-	)
+	cmd += " -b -f " + shell.Quote(chunkPath)
 
 	if noReplace {
-		parts = append(parts, "--no_replace")
+		cmd += " --no_replace"
 	}
 
 	if userMeta != "" {
-		parts = append(parts,
-			"--meta", shell.Quote(userMeta))
+		cmd += " --meta " + shell.Quote(userMeta)
 	}
 
 	if statter != "" {
-		parts = append(parts, "--statter", shell.Quote(statter))
+		cmd += " --statter " + shell.Quote(statter)
 	}
 
-	parts = append(parts,
-		">", shell.Quote(chunkPath+".out"), "2>&1")
+	cmd += " > " + shell.Quote(chunkPath+".out") + " 2>&1"
 
-	return strings.Join(parts, " ")
+	return cmd
 }
 
-func buildPutCoreParts(
-	chunkPath, fofnName string,
-) []string {
-	parts := []string{
-		"ibackup put -v",
-		"-l", shell.Quote(chunkPath + ".log"),
-		"--report", shell.Quote(chunkPath + ".report"),
-	}
+func buildPutCoreCmd(exe, chunkPath, fofnName string) string {
+	cmd := shell.Quote(exe) + " put -v" +
+		" -l " + shell.Quote(chunkPath+".log") +
+		" --report " + shell.Quote(chunkPath+".report")
 
 	if fofnName != "" {
-		parts = append(parts,
-			"--fofn", shell.Quote(fofnName))
+		cmd += " --fofn " + shell.Quote(fofnName)
 	}
 
-	return parts
+	return cmd
 }
 
 func applyDefaults(cfg *RunConfig) {

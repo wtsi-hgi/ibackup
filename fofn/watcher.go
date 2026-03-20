@@ -502,6 +502,7 @@ func buildRunConfig(
 ) RunConfig {
 	return RunConfig{
 		RunDir:      runDir,
+		Exe:         baseCfg.Exe,
 		Statter:     baseCfg.Statter,
 		ChunkPaths:  chunks,
 		SubDirName:  dirName,
