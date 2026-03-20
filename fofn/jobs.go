@@ -27,6 +27,7 @@ package fofn
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -98,47 +99,44 @@ func CreateJobs(submitter JobSubmitter, cfg RunConfig) []*jobqueue.Job {
 // file. It includes logging, reporting, and optional flags for no-replace, user
 // metadata, and statter.
 func BuildPutCommand(chunkPath, statter string, noReplace bool, fofnName, userMeta string) string {
-	parts := buildPutCoreParts(chunkPath, fofnName)
+	cmd := buildPutCoreCmd(chunkPath, fofnName)
 
-	parts = append(parts,
-		"-b",
-		"-f", shell.Quote(chunkPath),
-	)
+	cmd += " -b -f " + shell.Quote(chunkPath)
 
 	if noReplace {
-		parts = append(parts, "--no_replace")
+		cmd += " --no_replace"
 	}
 
 	if userMeta != "" {
-		parts = append(parts,
-			"--meta", shell.Quote(userMeta))
+		cmd += " --meta " + shell.Quote(userMeta)
 	}
 
 	if statter != "" {
-		parts = append(parts, "--statter", shell.Quote(statter))
+		cmd += " --statter " + shell.Quote(statter)
 	}
 
-	parts = append(parts,
-		">", shell.Quote(chunkPath+".out"), "2>&1")
+	cmd += " > " + shell.Quote(chunkPath+".out") + " 2>&1"
 
-	return strings.Join(parts, " ")
+	return cmd
 }
 
-func buildPutCoreParts(
+func buildPutCoreCmd(
 	chunkPath, fofnName string,
-) []string {
-	parts := []string{
-		"ibackup put -v",
-		"-l", shell.Quote(chunkPath + ".log"),
-		"--report", shell.Quote(chunkPath + ".report"),
+) string {
+	exe, err := os.Executable()
+	if err != nil {
+		exe = "ibackup"
 	}
+
+	cmd := shell.Quote(exe) + " put -v" +
+		" -l " + shell.Quote(chunkPath+".log") +
+		" --report " + shell.Quote(chunkPath+".report")
 
 	if fofnName != "" {
-		parts = append(parts,
-			"--fofn", shell.Quote(fofnName))
+		cmd += " --fofn " + shell.Quote(fofnName)
 	}
 
-	return parts
+	return cmd
 }
 
 func applyDefaults(cfg *RunConfig) {

@@ -27,6 +27,7 @@ package fofn
 
 import (
 	"errors"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -41,9 +42,12 @@ var errTest = errors.New("test error")
 func TestBuildPutCommand(t *testing.T) {
 	Convey("BuildPutCommand", t, func() {
 		Convey("builds a basic command without optional flags", func() {
+			exe, err := os.Executable()
+			So(err, ShouldBeNil)
+
 			cmd := BuildPutCommand("chunk.000000", "", false, "project1", "")
 			So(cmd, ShouldEqual,
-				`ibackup put -v -l 'chunk.000000.log' `+
+				"'"+exe+`' put -v -l 'chunk.000000.log' `+
 					`--report 'chunk.000000.report' `+
 					`--fofn 'project1' -b `+
 					`-f 'chunk.000000' `+
