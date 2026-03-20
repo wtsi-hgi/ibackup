@@ -27,7 +27,6 @@ package fofn
 
 import (
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -51,6 +50,7 @@ const (
 // RunConfig holds configuration for creating jobs from chunk files.
 type RunConfig struct {
 	RunDir      string
+	Exe         string
 	Statter     string
 	ChunkPaths  []string
 	SubDirName  string
@@ -75,7 +75,7 @@ func CreateJobs(submitter JobSubmitter, cfg RunConfig) []*jobqueue.Job {
 
 	for i, chunk := range cfg.ChunkPaths {
 		job := submitter.NewJob(
-			BuildPutCommand(chunk, cfg.Statter, cfg.NoReplace, cfg.SubDirName, cfg.UserMeta),
+			BuildPutCommand(cfg.Exe, chunk, cfg.Statter, cfg.NoReplace, cfg.SubDirName, cfg.UserMeta),
 			repGroup, cfg.ReqGroup,
 			"", "",
 			&jqs.Requirements{
@@ -98,8 +98,8 @@ func CreateJobs(submitter JobSubmitter, cfg RunConfig) []*jobqueue.Job {
 // BuildPutCommand constructs an ibackup put command string for a given chunk
 // file. It includes logging, reporting, and optional flags for no-replace, user
 // metadata, and statter.
-func BuildPutCommand(chunkPath, statter string, noReplace bool, fofnName, userMeta string) string {
-	cmd := buildPutCoreCmd(chunkPath, fofnName)
+func BuildPutCommand(exe, chunkPath, statter string, noReplace bool, fofnName, userMeta string) string {
+	cmd := buildPutCoreCmd(exe, chunkPath, fofnName)
 
 	cmd += " -b -f " + shell.Quote(chunkPath)
 
@@ -120,14 +120,7 @@ func BuildPutCommand(chunkPath, statter string, noReplace bool, fofnName, userMe
 	return cmd
 }
 
-func buildPutCoreCmd(
-	chunkPath, fofnName string,
-) string {
-	exe, err := os.Executable()
-	if err != nil {
-		exe = "ibackup"
-	}
-
+func buildPutCoreCmd(exe, chunkPath, fofnName string) string {
 	cmd := shell.Quote(exe) + " put -v" +
 		" -l " + shell.Quote(chunkPath+".log") +
 		" --report " + shell.Quote(chunkPath+".report")

@@ -72,6 +72,7 @@ import (
 	"github.com/wtsi-hgi/ibackup/cmd"
 	"github.com/wtsi-hgi/ibackup/fofn"
 	"github.com/wtsi-hgi/ibackup/internal"
+	"github.com/wtsi-hgi/ibackup/internal/shell"
 	"github.com/wtsi-hgi/ibackup/internal/testutil"
 	"github.com/wtsi-hgi/ibackup/server"
 	"github.com/wtsi-hgi/ibackup/set"
@@ -7005,6 +7006,16 @@ func TestWatchFofnsCommand(t *testing.T) {
 			So(exitCode, ShouldEqual, 0)
 		})
 
+		Convey("job command starts with quoted executable path", func() {
+			jobs := runWatchFofnsAndCaptureJobs(t)
+
+			exe, err := os.Executable()
+			So(err, ShouldBeNil)
+
+			So(len(jobs), ShouldBeGreaterThan, 0)
+			So(jobs[0].Cmd, ShouldStartWith, shell.Quote(exe))
+		})
+
 		Convey("defaults to 3 retries when --retries not supplied", func() {
 			jobs := runWatchFofnsAndCaptureJobs(t)
 
@@ -7052,8 +7063,7 @@ func TestWatchFofnsCommand(t *testing.T) {
 			exitCode, out := runCLI(t, nil, "",
 				"watchfofns", "--help")
 			So(exitCode, ShouldEqual, 0)
-			So(out, ShouldContainSubstring,
-				"watchfofns")
+			So(out, ShouldContainSubstring, "watchfofns")
 		})
 
 		Convey("has --min-chunk and --max-chunk flags "+
@@ -7067,16 +7077,11 @@ func TestWatchFofnsCommand(t *testing.T) {
 
 		Convey("defaults to minChunk=250 and "+
 			"maxChunk=10000", func() {
-			_, out := runCLI(t, nil, "",
-				"watchfofns", "--help")
-			So(out, ShouldContainSubstring,
-				"--min-chunk int")
-			So(out, ShouldContainSubstring,
-				"(default 250)")
-			So(out, ShouldContainSubstring,
-				"--max-chunk int")
-			So(out, ShouldContainSubstring,
-				"(default 10000)")
+			_, out := runCLI(t, nil, "", "watchfofns", "--help")
+			So(out, ShouldContainSubstring, "--min-chunk int")
+			So(out, ShouldContainSubstring, "(default 250)")
+			So(out, ShouldContainSubstring, "--max-chunk int")
+			So(out, ShouldContainSubstring, "(default 10000)")
 		})
 	})
 }
