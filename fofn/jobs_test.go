@@ -190,9 +190,7 @@ type mockJobSubmitter struct {
 	lctCallCount  int
 }
 
-func (m *mockJobSubmitter) SubmitJobs(
-	jobs []*jobqueue.Job,
-) error {
+func (m *mockJobSubmitter) SubmitJobs(jobs []*jobqueue.Job) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 

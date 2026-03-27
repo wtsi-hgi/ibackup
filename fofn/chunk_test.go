@@ -544,7 +544,7 @@ func TestChunk(t *testing.T) {
 // writeFofn creates a null-terminated fofn file containing
 // the given paths and returns its path.
 func writeFofn(dir string, paths []string) string {
-	p := filepath.Join(dir, "fofn")
+	p := filepath.Join(dir, fofnFilename)
 
 	f, err := os.Create(p)
 	So(err, ShouldBeNil)
@@ -622,9 +622,7 @@ func verifyBase64Format(paths []string) {
 
 // decodeAllChunks reads all chunk files and returns the
 // decoded local and remote paths.
-func decodeAllChunks(
-	paths []string,
-) (locals, remotes []string) {
+func decodeAllChunks(paths []string) (locals, remotes []string) {
 	for _, p := range paths {
 		l, r := decodeChunk(p)
 		locals = append(locals, l...)

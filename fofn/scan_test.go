@@ -41,7 +41,7 @@ func TestScanForFOFNs(t *testing.T) {
 			sub := filepath.Join(dir, name)
 			So(os.MkdirAll(sub, dirMode), ShouldBeNil)
 			So(os.WriteFile(
-				filepath.Join(sub, "fofn"),
+				filepath.Join(sub, fofnFilename),
 				[]byte(""), 0600, //nolint:gosec
 			), ShouldBeNil)
 

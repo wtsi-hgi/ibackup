@@ -236,9 +236,7 @@ func TestWriteStatusFromRun(t *testing.T) {
 
 // createChunkAndReport creates a chunk file and its
 // corresponding complete report. Statuses are cycled.
-func createChunkAndReport(
-	runDir string, index, count int, statuses []string,
-) {
+func createChunkAndReport(runDir string, index, count int, statuses []string) {
 	chunkPath := filepath.Join(runDir, fmt.Sprintf(chunkNameFormat, index))
 	reportPath := chunkPath + ".report"
 
@@ -287,9 +285,7 @@ func createChunkOnly(runDir string, index, count int) {
 
 // createChunkWithPartialReport creates a chunk file with totalEntries entries
 // but only reportedEntries in the report.
-func createChunkWithPartialReport(
-	runDir string, index, totalEntries, reportedEntries int,
-) {
+func createChunkWithPartialReport(runDir string, index, totalEntries, reportedEntries int) {
 	chunkPath := filepath.Join(runDir, fmt.Sprintf(chunkNameFormat, index))
 	reportPath := chunkPath + ".report"
 
@@ -381,9 +377,7 @@ func TestStatusMemory(t *testing.T) {
 
 // createLargeChunkAndReport creates a chunk and report with many entries for
 // memory testing. Does not use So() assertions inside the loop.
-func createLargeChunkAndReport(
-	runDir string, index, count int, statuses []string,
-) error {
+func createLargeChunkAndReport(runDir string, index, count int, statuses []string) error {
 	chunkPath := filepath.Join(runDir, fmt.Sprintf(chunkNameFormat, index))
 	reportPath := chunkPath + ".report"
 

@@ -29,6 +29,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -227,7 +228,7 @@ func (w *Watcher) reconcile(sd SubDir, allStatus map[string]RunJobStatus) error 
 		return err
 	}
 
-	return removeDirs(scan.staleDirs)
+	return removeDirs(scan.staleDirs, sd.Path)
 }
 
 // scanRunDirs reads subDirPath once and partitions numeric subdirectories into
@@ -279,10 +280,27 @@ func ensureArtefacts(runDir string, subDir SubDir, status RunJobStatus) error {
 }
 
 // removeDirs removes a list of directories and returns any removal errors.
-func removeDirs(dirs []string) error {
+//
+// Also deref's status symlink if target would be removed.
+func removeDirs(dirs []string, fofnDir string) error {
 	var errs []error
 
+	status := filepath.Join(fofnDir, statusFilename)
+
+	target, err := filepath.EvalSymlinks(status)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		errs = append(errs, fmt.Errorf("status symlink eval: %w", err))
+	}
+
+	statusRunDir := filepath.Dir(target)
+
 	for _, dir := range dirs {
+		if dir == statusRunDir {
+			if err := os.Rename(target, status); err != nil {
+				errs = append(errs, fmt.Errorf("deref status symlink: %w", err))
+			}
+		}
+
 		if err := os.RemoveAll(dir); err != nil {
 			errs = append(errs, fmt.Errorf("remove old run dir: %w", err))
 		}

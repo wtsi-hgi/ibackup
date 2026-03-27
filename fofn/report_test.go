@@ -44,8 +44,7 @@ func TestReportLine(t *testing.T) {
 			}
 
 			result := FormatReportLine(entry)
-			So(result, ShouldEqual,
-				"\"/a/b\"\t\"/c/d\"\tuploaded\t\"\"")
+			So(result, ShouldEqual, "\"/a/b\"\t\"/c/d\"\tuploaded\t\"\"")
 		})
 
 		Convey("format an entry with tabs in paths and error", func() {
@@ -57,8 +56,7 @@ func TestReportLine(t *testing.T) {
 			}
 
 			result := FormatReportLine(entry)
-			So(result, ShouldEqual,
-				"\"/a\\tb\"\t\"/c\\td\"\tfailed\t\"conn\\treset\"")
+			So(result, ShouldEqual, "\"/a\\tb\"\t\"/c\\td\"\tfailed\t\"conn\\treset\"")
 		})
 
 		Convey("parse a simple line", func() {
