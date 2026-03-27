@@ -282,7 +282,7 @@ func ensureArtefacts(runDir string, subDir SubDir, status RunJobStatus) error {
 // removeDirs removes a list of directories and returns any removal errors.
 //
 // Also deref's status symlink if target would be removed.
-func removeDirs(dirs []string, fofnDir string) error {
+func removeDirs(dirs []string, fofnDir string) error { //nolint:gocognit
 	var errs []error
 
 	status := filepath.Join(fofnDir, statusFilename)
