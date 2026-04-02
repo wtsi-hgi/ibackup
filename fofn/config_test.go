@@ -69,11 +69,10 @@ func TestConfig(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(cfg.Transformer, ShouldEqual, "humgen")
 			So(cfg.Freeze, ShouldBeFalse)
-			So(cfg.Metadata, ShouldResemble,
-				map[string]string{
-					"colour": "red",
-					"size":   "large",
-				})
+			So(cfg.Metadata, ShouldResemble, map[string]string{
+				"colour": "red",
+				"size":   "large",
+			})
 		})
 
 		Convey("no config.yml returns error", func() {
@@ -335,8 +334,7 @@ func TestConfig(t *testing.T) {
 					"size":   "large",
 				},
 			}
-			So(cfg.UserMetaString(), ShouldEqual,
-				"colour=red;size=large")
+			So(cfg.UserMetaString(), ShouldEqual, "colour=red;size=large")
 		})
 
 		Convey("with nil metadata returns empty string", func() {
