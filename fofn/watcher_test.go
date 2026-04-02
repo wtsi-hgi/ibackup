@@ -767,9 +767,67 @@ func TestWatcherPoll(t *testing.T) {
 			So(newRunScan.runDir, ShouldNotEqual, runDir)
 		})
 
-		Convey("deletes old run directories on successful completion", func() {
+		Convey("preserves status while removing superseded run during replacement", func() {
 			paths := generateTmpPaths(25)
 			subDir := setupSubDir(watchDir, "proj7", paths, SubDirConfig{Transformer: "test"})
+
+			mock := &mockJobSubmitter{}
+			w := NewWatcher(watchDir, mock, cfg)
+
+			err := w.Poll()
+			So(err, ShouldBeNil)
+
+			firstRunScan, findErr := scanRunDirs(subDir.Path)
+			So(findErr, ShouldBeNil)
+			So(firstRunScan.found, ShouldBeTrue)
+
+			firstRunDir := firstRunScan.runDir
+			firstMtime := firstRunScan.runMtime
+
+			writeReportsForChunks(firstRunDir)
+
+			err = w.Poll()
+			So(err, ShouldBeNil)
+
+			updateFofnMtime(subDir.Path, generateTmpPaths(15), firstMtime+1000)
+
+			err = w.Poll()
+			So(err, ShouldBeNil)
+
+			secondRunScan, findErr := scanRunDirs(subDir.Path)
+			So(findErr, ShouldBeNil)
+			So(secondRunScan.found, ShouldBeTrue)
+			So(secondRunScan.runDir, ShouldNotEqual, firstRunDir)
+
+			secondRepGroup := makeRepGroup(subDir.Path, secondRunScan.runMtime)
+			mock.allJobs = []*jobqueue.Job{{
+				RepGroup: secondRepGroup,
+				Cmd:      "running",
+			}}
+
+			err = w.Poll()
+			So(err, ShouldBeNil)
+
+			_, statErr := os.Stat(firstRunDir)
+			So(os.IsNotExist(statErr), ShouldBeTrue)
+
+			statusPath := filepath.Join(subDir.Path, statusFilename)
+			statusInfo, lstatErr := os.Lstat(statusPath)
+			So(lstatErr, ShouldBeNil)
+			So(statusInfo.Mode()&os.ModeSymlink == os.ModeSymlink, ShouldBeFalse)
+
+			entries, counts, parseErr := ParseStatus(statusPath)
+			So(parseErr, ShouldBeNil)
+			So(entries, ShouldHaveLength, 25)
+			So(counts.Uploaded, ShouldEqual, 25)
+
+			_, statErr = os.Stat(filepath.Join(secondRunScan.runDir, statusFilename))
+			So(os.IsNotExist(statErr), ShouldBeTrue)
+		})
+
+		Convey("deletes old run directories on successful completion", func() {
+			paths := generateTmpPaths(25)
+			subDir := setupSubDir(watchDir, "proj8", paths, SubDirConfig{Transformer: "test"})
 
 			mock := &mockJobSubmitter{}
 			w := NewWatcher(watchDir, mock, cfg)
@@ -802,7 +860,7 @@ func TestWatcherPoll(t *testing.T) {
 
 		Convey("updates status symlink after second run completes", func() {
 			paths := generateTmpPaths(25)
-			subDir := setupSubDir(watchDir, "proj8", paths, SubDirConfig{Transformer: "test"})
+			subDir := setupSubDir(watchDir, "proj9", paths, SubDirConfig{Transformer: "test"})
 
 			mock := &mockJobSubmitter{}
 			w := NewWatcher(watchDir, mock, cfg)
