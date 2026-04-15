@@ -252,6 +252,7 @@ func TestRequest(t *testing.T) {
 				Remote:            "/some/remote/path",
 				Requester:         "someRequester",
 				Set:               "testSet",
+				Retrying:          true,
 				ReplicaLogging:    true,
 				ReplicaBeforeGood: &replicaBeforeGood,
 				ReplicaBeforeBad:  &replicaBeforeBad,

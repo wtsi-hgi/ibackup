@@ -2192,13 +2192,16 @@ func (s *Server) retryFailedSetFiles(given *set.Set) (int, error) {
 	// those that aren't already present.
 	toEnqueue := make([]*set.Entry, 0, len(filtered))
 	for _, entry := range filtered {
-		r, errr := s.entryToRequest(entry, transformer, given)
+		r, errr := s.entryToRequest(entry, transformer, given, true)
 		if errr != nil {
 			return 0, errr
 		}
 
 		// If the request already exists, make it runnable immediately.
 		present := false
+
+		s.updateQueueItemData(r)
+
 		if errd := s.queue.SetDelay(r.ID(), 0); errd == nil {
 			present = true
 		}
@@ -2212,7 +2215,7 @@ func (s *Server) retryFailedSetFiles(given *set.Set) (int, error) {
 		}
 	}
 
-	_, err = s.enqueueEntries(toEnqueue, given, transformer)
+	_, err = s.enqueueEntries(toEnqueue, given, transformer, true)
 
 	return len(filtered), err
 }

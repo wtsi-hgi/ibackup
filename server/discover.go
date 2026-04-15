@@ -591,7 +591,7 @@ func (s *Server) enqueueSetFiles(given *set.Set, transformer transformer.PathTra
 		return false, err
 	}
 
-	return s.enqueueEntries(entries, given, transformer)
+	return s.enqueueEntries(entries, given, transformer, false)
 }
 
 // enqueueEntries converts the given entries to requests, stores those in items
@@ -599,7 +599,11 @@ func (s *Server) enqueueSetFiles(given *set.Set, transformer transformer.PathTra
 //
 // Returns true if only some of the items were added to the queue due to
 // reaching the queue limit.
-func (s *Server) enqueueEntries(entries []*set.Entry, given *set.Set, transformer transformer.PathTransformer) (bool, error) { //nolint:gocognit,lll,funlen
+//
+//nolint:gocognit,lll,funlen
+func (s *Server) enqueueEntries(entries []*set.Entry, given *set.Set,
+	transformer transformer.PathTransformer, retrying bool,
+) (bool, error) {
 	queueSpaceLeft := max(int(s.maxQueueLength)-s.queue.Stats().Items, 0) //nolint:gosec
 	defs := make([]*queue.ItemDef, min(len(entries), queueSpaceLeft))
 	hitLimit := queueSpaceLeft < len(entries)
@@ -617,7 +621,7 @@ func (s *Server) enqueueEntries(entries []*set.Entry, given *set.Set, transforme
 	}
 
 	for i, entry := range entries {
-		r, err := s.entryToRequest(entry, transformer, given)
+		r, err := s.entryToRequest(entry, transformer, given, retrying)
 		if err != nil {
 			return false, err
 		}
@@ -655,7 +659,7 @@ func (s *Server) enqueueEntries(entries []*set.Entry, given *set.Set, transforme
 // entryToRequest converts an Entry to a Request containing details of the given
 // set.
 func (s *Server) entryToRequest(entry *set.Entry, transformer transformer.PathTransformer,
-	given *set.Set,
+	given *set.Set, retrying bool,
 ) (*transfer.Request, error) {
 	r, err := transfer.NewRequestWithTransformedLocal(entry.Path, transformer)
 	if err != nil {
@@ -668,6 +672,7 @@ func (s *Server) entryToRequest(entry *set.Entry, transformer transformer.PathTr
 
 	r.Set = given.Name
 	r.Requester = given.Requester
+	r.Retrying = retrying
 
 	if entry.Type == set.Symlink {
 		r.Symlink = entry.Dest

@@ -55,6 +55,7 @@ import (
 	"github.com/wtsi-hgi/ibackup/set"
 	"github.com/wtsi-hgi/ibackup/slack"
 	"github.com/wtsi-hgi/ibackup/transfer"
+	"github.com/wtsi-hgi/ibackup/transformer"
 	btime "github.com/wtsi-ssg/wr/backoff/time"
 	"github.com/wtsi-ssg/wr/retry"
 )
@@ -286,6 +287,148 @@ func TestDetermineQueueSize(t *testing.T) {
 		So(size, ShouldBeGreaterThan, 0)
 		So(size, ShouldBeLessThan, 1<<32)
 	})
+}
+
+func TestEnqueueEntriesDoesNotMarkRetrying(t *testing.T) {
+	Convey("Ordinary enqueue of failed entries does not mark requests as retrying", t, func() {
+		logWriter := gas.NewStringLogger()
+		s, err := New(Config{
+			HTTPLogger:     logWriter,
+			ReadOnly:       true,
+			MaxQueueLength: 1,
+		})
+		So(err, ShouldBeNil)
+
+		localDir := t.TempDir()
+		remoteDir := t.TempDir()
+		given := &set.Set{
+			Name:        "set1",
+			Requester:   "jim",
+			Transformer: "prefix=" + localDir + ":" + remoteDir,
+			Metadata:    map[string]string{"project": "alpha"},
+		}
+
+		transform, err := given.MakeTransformer()
+		So(err, ShouldBeNil)
+
+		entry := &set.Entry{
+			Path:     filepath.Join(localDir, "failed.txt"),
+			Status:   set.Failed,
+			Attempts: 2,
+		}
+
+		request, err := s.entryToRequest(entry, transform, given, false)
+		So(err, ShouldBeNil)
+		So(request.Retrying, ShouldBeFalse)
+		So(request.Requester, ShouldEqual, given.Requester)
+		So(request.Set, ShouldEqual, given.Name)
+		So(request.Meta.LocalMeta["project"], ShouldEqual, "alpha")
+
+		hitLimit, err := s.enqueueEntries([]*set.Entry{entry}, given, transform, false)
+		So(err, ShouldBeNil)
+		So(hitLimit, ShouldBeFalse)
+
+		item, err := s.queue.Get(request.ID())
+		So(err, ShouldBeNil)
+
+		queuedRequest, ok := item.Data().(*transfer.Request)
+		So(ok, ShouldBeTrue)
+		So(queuedRequest.Retrying, ShouldBeFalse)
+		So(queuedRequest.Requester, ShouldEqual, given.Requester)
+		So(queuedRequest.Set, ShouldEqual, given.Name)
+		So(queuedRequest.Meta.LocalMeta["project"], ShouldEqual, "alpha")
+	})
+}
+
+func TestRetryFailedSetFilesMarksRequestsRetrying(t *testing.T) {
+	Convey("Explicit retry updates queued failed requests to retrying", t, func() {
+		s, given, entry, transform := setupFailedRetryEntryTest(t)
+
+		_, err := s.enqueueEntries([]*set.Entry{entry}, given, transform, false)
+		So(err, ShouldBeNil)
+
+		request, err := s.entryToRequest(entry, transform, given, false)
+		So(err, ShouldBeNil)
+
+		item, err := s.queue.Get(request.ID())
+		So(err, ShouldBeNil)
+
+		queuedRequest, ok := item.Data().(*transfer.Request)
+		So(ok, ShouldBeTrue)
+		So(queuedRequest.Retrying, ShouldBeFalse)
+
+		failed, err := s.retryFailedSetFiles(given)
+		So(err, ShouldBeNil)
+		So(failed, ShouldEqual, 1)
+
+		item, err = s.queue.Get(request.ID())
+		So(err, ShouldBeNil)
+
+		queuedRequest, ok = item.Data().(*transfer.Request)
+		So(ok, ShouldBeTrue)
+		So(queuedRequest.Retrying, ShouldBeTrue)
+	})
+}
+
+func setupFailedRetryEntryTest(t *testing.T) (*Server, *set.Set, *set.Entry, transformer.PathTransformer) {
+	t.Helper()
+
+	logWriter := gas.NewStringLogger()
+	s, err := New(Config{
+		HTTPLogger:     logWriter,
+		MaxQueueLength: 1,
+	})
+	So(err, ShouldBeNil)
+
+	db, err := set.New(createDBLocation(t), "", false)
+	So(err, ShouldBeNil)
+
+	s.db = db
+
+	localDir := t.TempDir()
+	remoteDir := t.TempDir()
+	localPath := filepath.Join(localDir, "failed.txt")
+
+	err = os.WriteFile(localPath, []byte("failed"), 0600)
+	So(err, ShouldBeNil)
+
+	given := &set.Set{
+		Name:        "set1",
+		Requester:   "jim",
+		Transformer: "prefix=" + localDir + ":" + remoteDir,
+	}
+
+	err = s.db.AddOrUpdate(given)
+	So(err, ShouldBeNil)
+	err = s.db.MergeFileEntries(given.ID(), []string{localPath})
+	So(err, ShouldBeNil)
+
+	_, err = s.db.Discover(given.ID(), nil)
+	So(err, ShouldBeNil)
+
+	failedRequest := &transfer.Request{
+		Local:     localPath,
+		Remote:    filepath.Join(remoteDir, "failed.txt"),
+		Requester: given.Requester,
+		Set:       given.Name,
+		Status:    transfer.RequestStatusFailed,
+		Error:     "boom",
+	}
+
+	_, err = s.db.SetEntryStatus(failedRequest)
+	So(err, ShouldBeNil)
+	_, err = s.db.SetEntryStatus(failedRequest)
+	So(err, ShouldBeNil)
+
+	transform, err := given.MakeTransformer()
+	So(err, ShouldBeNil)
+
+	entry, err := s.db.GetFileEntryForSet(given.ID(), localPath)
+	So(err, ShouldBeNil)
+	So(entry.Status, ShouldEqual, set.Failed)
+	So(entry.Attempts, ShouldEqual, 2)
+
+	return s, given, entry, transform
 }
 
 func TestServer(t *testing.T) {

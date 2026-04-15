@@ -40,6 +40,7 @@ import (
 	"github.com/hashicorp/go-multierror"
 	"github.com/wtsi-hgi/ibackup/baton/meta"
 	"github.com/wtsi-hgi/ibackup/errs"
+	"github.com/wtsi-hgi/ibackup/internal"
 	"github.com/wtsi-hgi/ibackup/statter"
 )
 
@@ -58,6 +59,7 @@ const (
 	// WorkerPoolSizeCollections is the max number of concurrent collection
 	// creations we'll do during CreateCollections().
 	WorkerPoolSizeCollections = 2
+	maxHealthyReplicaCount    = 2
 )
 
 // Handler is something that knows how to communicate with iRODS and carry out
@@ -104,6 +106,12 @@ type Handler interface {
 // provide best-effort replica counts for logging.
 type replicaCounter interface {
 	ReplicaCounts(remote string) (exists bool, good, bad int, err error)
+}
+
+// fileRemover is an optional interface that a Handler can implement to remove
+// a remote object prior to retrying an upload from scratch.
+type fileRemover interface {
+	RemoveFile(path string) error
 }
 
 // FileReadTester is a function that attempts to open and read the given path,
@@ -627,18 +635,90 @@ func (p *Putter) captureReplicaCounts(request *Request, goodDest, badDest **int)
 		return
 	}
 
-	rc, ok := p.handler.(replicaCounter)
-	if !ok {
-		return
-	}
-
-	exists, good, bad, err := rc.ReplicaCounts(request.RemoteDataPath())
-	if err != nil || !exists {
+	exists, good, bad, ok := p.replicaCounts(request)
+	if !ok || !exists {
 		return
 	}
 
 	*goodDest = &good
 	*badDest = &bad
+}
+
+func (p *Putter) replicaCounts(request *Request) (bool, int, int, bool) {
+	if request == nil {
+		return false, 0, 0, false
+	}
+
+	rc, ok := p.handler.(replicaCounter)
+	if !ok {
+		return false, 0, 0, false
+	}
+
+	exists, good, bad, err := rc.ReplicaCounts(request.RemoteDataPath())
+	if err != nil || !exists {
+		return exists, good, bad, false
+	}
+
+	return true, good, bad, true
+}
+
+func (p *Putter) shouldResetRemoteBeforeRetry(request *Request) bool {
+	if request == nil {
+		return false
+	}
+
+	if !request.Retrying {
+		return false
+	}
+
+	if should, known := shouldResetRemoteFromRecordedReplicaCounts(request); known {
+		return should
+	}
+
+	return p.shouldResetRemoteFromReplicaCounts(request)
+}
+
+func shouldResetRemoteFromRecordedReplicaCounts(request *Request) (bool, bool) {
+	if request.ReplicaBeforeBad != nil && *request.ReplicaBeforeBad > 0 {
+		return true, true
+	}
+
+	if request.ReplicaBeforeGood != nil || request.ReplicaBeforeBad != nil {
+		return replicaTotal(request.ReplicaBeforeGood, request.ReplicaBeforeBad) > maxHealthyReplicaCount, true
+	}
+
+	return false, false
+}
+
+func (p *Putter) shouldResetRemoteFromReplicaCounts(request *Request) bool {
+	exists, good, bad, ok := p.replicaCounts(request)
+	if !ok || !exists {
+		return false
+	}
+
+	if bad > 0 {
+		return true
+	}
+
+	return good+bad > maxHealthyReplicaCount
+}
+
+func (p *Putter) resetRemoteBeforeRetry(request *Request) error {
+	if !p.shouldResetRemoteBeforeRetry(request) {
+		return nil
+	}
+
+	remover, ok := p.handler.(fileRemover)
+	if !ok {
+		return nil
+	}
+
+	err := remover.RemoveFile(request.RemoteDataPath())
+	if err != nil && !errors.Is(err, errs.PathError{Msg: internal.ErrFileDoesNotExist}) {
+		return err
+	}
+
+	return nil
 }
 
 func (p *Putter) processPutCh(putCh, uploadStartCh, uploadReturnCh, metaCh chan *Request) {
@@ -660,6 +740,12 @@ func (p *Putter) processPutCh(putCh, uploadStartCh, uploadReturnCh, metaCh chan 
 		}
 
 		p.captureReplicaCounts(request, &request.ReplicaBeforeGood, &request.ReplicaBeforeBad)
+
+		if err := p.resetRemoteBeforeRetry(request); err != nil {
+			p.sendFailedRequest(request, err, uploadReturnCh)
+
+			continue
+		}
 
 		if err := p.transfer(request, p.handler); err != nil {
 			p.captureReplicaCounts(request, &request.ReplicaAfterGood, &request.ReplicaAfterBad)
@@ -687,6 +773,18 @@ func (p *Putter) testRead(request *Request) error {
 	}
 
 	return err
+}
+
+func replicaTotal(counts ...*int) int {
+	total := 0
+
+	for _, count := range counts {
+		if count != nil {
+			total += *count
+		}
+	}
+
+	return total
 }
 
 // headRead is a FileReadTester that uses the statter to read a byte.

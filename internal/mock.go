@@ -40,25 +40,38 @@ import (
 )
 
 const ErrMockStatFail = "stat fail"
+
 const ErrMockPutFail = "put fail"
+
 const ErrMockMetaFail = "meta fail"
+
 const ErrFileDoesNotExist = "file does not exist"
+
+const defaultGoodReplicaCount = 2
+
+type replicaCount struct {
+	good int
+	bad  int
+}
 
 // LocalHandler satisfies the Handler interface, treating "Remote" as local
 // paths and moving from Local to Remote for the Put().
 type LocalHandler struct {
-	Connected   bool
-	Cleaned     bool
-	Collections []string
-	Meta        map[string]map[string]string
-	statFail    string
-	putFail     string
-	putSlow     string
-	putDur      time.Duration
-	metaFail    string
-	removeSlow  bool
-	addMetaSlow bool
-	mu          sync.RWMutex
+	Connected             bool
+	Cleaned               bool
+	Collections           []string
+	Meta                  map[string]map[string]string
+	RemovedFiles          []string
+	statFail              string
+	putFail               string
+	putFailIfRemoteExists string
+	putSlow               string
+	putDur                time.Duration
+	metaFail              string
+	removeSlow            bool
+	addMetaSlow           bool
+	replicaCounts         map[string]replicaCount
+	mu                    sync.RWMutex
 }
 
 // GetLocalHandler returns a Handler that doesn't actually interact with iRODS,
@@ -66,7 +79,8 @@ type LocalHandler struct {
 // Remote for any Put()s. For use during tests.
 func GetLocalHandler() *LocalHandler {
 	return &LocalHandler{
-		Meta: make(map[string]map[string]string),
+		Meta:          make(map[string]map[string]string),
+		replicaCounts: make(map[string]replicaCount),
 	}
 }
 
@@ -141,6 +155,12 @@ func (l *LocalHandler) MakePutFail(remote string) {
 	l.putFail = remote
 }
 
+// MakePutFailOnExistingRemote will result in any subsequent Put()s for the
+// given remote path failing only while that remote already exists.
+func (l *LocalHandler) MakePutFailOnExistingRemote(remote string) {
+	l.putFailIfRemoteExists = remote
+}
+
 // MakePutSlow will result in any subsequent Put()s for a Request with the
 // given local path taking the given amount of time.
 func (l *LocalHandler) MakePutSlow(remote string, dur time.Duration) {
@@ -166,11 +186,24 @@ func (l *LocalHandler) Put(local, remote string) error {
 		return errs.PathError{Msg: ErrMockPutFail, Path: ""}
 	}
 
+	if l.putFailIfRemoteExists == remote {
+		if _, err := os.Stat(remote); err == nil {
+			return errs.PathError{Msg: ErrMockPutFail, Path: ""}
+		}
+	}
+
 	if l.putSlow == remote {
 		<-time.After(l.putDur)
 	}
 
-	return copyFile(local, remote)
+	err := copyFile(local, remote)
+	if err == nil {
+		l.mu.Lock()
+		l.replicaCounts[remote] = replicaCount{good: defaultGoodReplicaCount}
+		l.mu.Unlock()
+	}
+
+	return err
 }
 
 func (l *LocalHandler) Get(local, remote string) error {
@@ -327,6 +360,35 @@ func doesMetaContainMeta(sourceMeta, targetMeta map[string]string) bool {
 	return valid
 }
 
+// SetReplicaCounts configures the returned good/bad replica counts for a path.
+func (l *LocalHandler) SetReplicaCounts(path string, good, bad int) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	l.replicaCounts[path] = replicaCount{good: good, bad: bad}
+}
+
+// ReplicaCounts returns configured good/bad replica counts for a path.
+func (l *LocalHandler) ReplicaCounts(path string) (bool, int, int, error) {
+	l.mu.RLock()
+	counts, ok := l.replicaCounts[path]
+	l.mu.RUnlock()
+
+	if ok {
+		return true, counts.good, counts.bad, nil
+	}
+
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return false, 0, 0, nil
+		}
+
+		return false, 0, 0, err
+	}
+
+	return true, 1, 0, nil
+}
+
 // RemoveDir removes the empty dir.
 func (l *LocalHandler) RemoveDir(path string) error {
 	if l.removeSlow {
@@ -347,7 +409,11 @@ func (l *LocalHandler) RemoveFile(path string) error {
 		time.Sleep(1 * time.Second)
 	}
 
+	l.RemovedFiles = append(l.RemovedFiles, path)
 	delete(l.Meta, path)
+	l.mu.Lock()
+	delete(l.replicaCounts, path)
+	l.mu.Unlock()
 
 	err := os.Remove(path)
 	if err != nil && strings.Contains(err.Error(), "no such file or directory") {

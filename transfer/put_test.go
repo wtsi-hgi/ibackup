@@ -210,6 +210,61 @@ func TestPutMock(t *testing.T) {
 				}
 			})
 
+			Convey("Put() removes a corrupt remote object before retrying a replace", func() {
+				request := requests[1].Clone()
+				returned := uploadRetryingReplaceRequest(t, lh, request, true, 2, 1)
+				assertReplicaCounts(returned, 2, 1, 2, 0)
+			})
+
+			Convey("Put() removes an over-replicated remote object before retrying a replace", func() {
+				request := requests[1].Clone()
+				returned := uploadRetryingReplaceRequest(t, lh, request, true, 3, 0)
+				assertReplicaCounts(returned, 3, 0, 2, 0)
+			})
+
+			Convey("Put() removes a corrupt remote object before retrying a replace when replica logging is disabled", func() {
+				request := requests[1].Clone()
+				returned := uploadRetryingReplaceRequest(t, lh, request, false, 2, 1)
+				So(returned.ReplicaBeforeGood, ShouldBeNil)
+				So(returned.ReplicaBeforeBad, ShouldBeNil)
+				So(returned.ReplicaAfterGood, ShouldBeNil)
+				So(returned.ReplicaAfterBad, ShouldBeNil)
+			})
+
+			Convey("Put() removes an over-replicated remote object on retry when replica logging is disabled", func() {
+				request := requests[1].Clone()
+				returned := uploadRetryingReplaceRequest(t, lh, request, false, 3, 0)
+				So(returned.ReplicaBeforeGood, ShouldBeNil)
+				So(returned.ReplicaBeforeBad, ShouldBeNil)
+				So(returned.ReplicaAfterGood, ShouldBeNil)
+				So(returned.ReplicaAfterBad, ShouldBeNil)
+			})
+
+			Convey("Put() does not remove a remote object for a non-retrying replaced request", func() {
+				request := requests[1].Clone()
+				request.ReplicaLogging = true
+				request.Status = RequestStatusReplaced
+
+				remoteDir := filepath.Dir(request.Remote)
+				err = os.MkdirAll(remoteDir, 0o755)
+				So(err, ShouldBeNil)
+
+				err = os.WriteFile(request.Remote, []byte("stale"), 0o600)
+				So(err, ShouldBeNil)
+
+				lh.SetReplicaCounts(request.Remote, 2, 1)
+
+				p2 := &Putter{handler: lh}
+
+				err = p2.resetRemoteBeforeRetry(request)
+				So(err, ShouldBeNil)
+				So(lh.RemovedFiles, ShouldNotContain, request.Remote)
+
+				data, errr := os.ReadFile(request.Remote)
+				So(errr, ShouldBeNil)
+				So(string(data), ShouldEqual, "stale")
+			})
+
 			Convey("Put() uploads an empty file in place of links, with hardlink data going to the Hardlink location", func() {
 				err = os.Remove(requests[0].Local)
 				So(err, ShouldBeNil)
@@ -818,6 +873,65 @@ func TestPutNoReplace(t *testing.T) {
 	})
 }
 
+func uploadRetryingReplaceRequest(
+	t *testing.T,
+	lh *internal.LocalHandler,
+	request *Request,
+	replicaLogging bool,
+	goodReplicas, badReplicas int,
+) *Request {
+	t.Helper()
+
+	request.ReplicaLogging = replicaLogging
+	request.Retrying = true
+
+	remoteDir := filepath.Dir(request.Remote)
+	err := os.MkdirAll(remoteDir, 0o755)
+	So(err, ShouldBeNil)
+
+	err = os.WriteFile(request.Remote, []byte("stale"), 0o600)
+	So(err, ShouldBeNil)
+
+	touchFile(request.Local, time.Hour)
+	lh.SetReplicaCounts(request.Remote, goodReplicas, badReplicas)
+	lh.MakePutFailOnExistingRemote(request.Remote)
+
+	p, err := New(lh, []*Request{request})
+	So(err, ShouldBeNil)
+
+	uCh, urCh, srCh := p.Put()
+
+	uploading := 0
+	for range uCh {
+		uploading++
+	}
+
+	returned := make([]*Request, 0, 1)
+	for returnedRequest := range urCh {
+		returned = append(returned, returnedRequest)
+	}
+
+	skipped := 0
+	for range srCh {
+		skipped++
+	}
+
+	So(uploading, ShouldEqual, 1)
+	So(skipped, ShouldEqual, 0)
+	So(returned, ShouldHaveLength, 1)
+	So(returned[0].Status, ShouldEqual, RequestStatusReplaced)
+	So(lh.RemovedFiles, ShouldContain, request.Remote)
+
+	data, err := os.ReadFile(request.Remote)
+	So(err, ShouldBeNil)
+
+	expected, err := os.ReadFile(request.Local)
+	So(err, ShouldBeNil)
+	So(string(data), ShouldEqual, string(expected))
+
+	return returned[0]
+}
+
 // touchFile alters the mtime of the given file by the given duration. Returns
 // the time set.
 func touchFile(path string, d time.Duration) time.Time {
@@ -826,6 +940,17 @@ func touchFile(path string, d time.Duration) time.Time {
 	So(err, ShouldBeNil)
 
 	return newT
+}
+
+func assertReplicaCounts(request *Request, beforeGood, beforeBad, afterGood, afterBad int) {
+	So(request.ReplicaBeforeGood, ShouldNotBeNil)
+	So(*request.ReplicaBeforeGood, ShouldEqual, beforeGood)
+	So(request.ReplicaBeforeBad, ShouldNotBeNil)
+	So(*request.ReplicaBeforeBad, ShouldEqual, beforeBad)
+	So(request.ReplicaAfterGood, ShouldNotBeNil)
+	So(*request.ReplicaAfterGood, ShouldEqual, afterGood)
+	So(request.ReplicaAfterBad, ShouldNotBeNil)
+	So(*request.ReplicaAfterBad, ShouldEqual, afterBad)
 }
 
 // uploadRequests uploads the requests with the given handler and returns the

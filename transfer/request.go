@@ -103,6 +103,9 @@ type Request struct {
 	Set           string
 	Meta          *Meta
 	Status        RequestStatus
+	// Retrying is true when this request is re-attempting a previously failed
+	// upload.
+	Retrying bool
 	// ReplicaLogging is set by the server (and passed through to clients) to
 	// enable extra iRODS baton calls that determine replica counts before/after
 	// an upload.
@@ -265,6 +268,7 @@ func (r *Request) Clone() *Request {
 		Set:               r.Set,
 		Meta:              r.Meta,
 		Status:            r.Status,
+		Retrying:          r.Retrying,
 		ReplicaLogging:    r.ReplicaLogging,
 		ReplicaBeforeGood: r.ReplicaBeforeGood,
 		ReplicaBeforeBad:  r.ReplicaBeforeBad,
