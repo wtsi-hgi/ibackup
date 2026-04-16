@@ -63,7 +63,6 @@ import (
 
 	"github.com/VertebrateResequencing/wr/client"
 	"github.com/VertebrateResequencing/wr/jobqueue"
-	"github.com/VertebrateResequencing/wr/jobqueue/scheduler"
 	"github.com/inconshreveable/log15"
 	"github.com/phayes/freeport"
 	. "github.com/smartystreets/goconvey/convey"
@@ -78,7 +77,6 @@ import (
 	"github.com/wtsi-hgi/ibackup/set"
 	"github.com/wtsi-hgi/ibackup/statter"
 	"github.com/wtsi-hgi/ibackup/transfer"
-	"github.com/wtsi-hgi/ibackup/transformer"
 	"github.com/wtsi-ssg/wr/backoff"
 	btime "github.com/wtsi-ssg/wr/backoff/time"
 	"github.com/wtsi-ssg/wr/retry"
@@ -5477,571 +5475,7 @@ func (b *safeBuffer) String() string {
 	return b.buf.String()
 }
 
-// testSubmitter implements fofn.JobSubmitter for integration tests.
-type testSubmitter struct {
-	mu        sync.Mutex
-	submitted []*jobqueue.Job
-	allJobs   []*jobqueue.Job
-	deleted   []*jobqueue.Job
-}
-
-func (s *testSubmitter) SubmitJobs(
-	jobs []*jobqueue.Job,
-) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	s.submitted = append(s.submitted, jobs...)
-
-	return nil
-}
-
-func (s *testSubmitter) FindIncompleteJobsByRepGroup(
-	_ string,
-	_ jobqueue.RepGroupMatch,
-) ([]*jobqueue.Job, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	return s.allJobs, nil
-}
-
-func (s *testSubmitter) GetLastCompletionTimeByRepGroup(
-	_ string,
-	_ jobqueue.RepGroupMatch,
-) (map[string]time.Time, error) {
-	return map[string]time.Time{}, nil
-}
-
-func (s *testSubmitter) RemoveJobs(jobs ...*jobqueue.Job) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	s.deleted = append(s.deleted, jobs...)
-
-	return nil
-}
-
-func (s *testSubmitter) Disconnect() error { return nil }
-
-func (s *testSubmitter) NewJob(cmd, repGroup, reqGroup, _, _ string, req *scheduler.Requirements) *jobqueue.Job {
-	return &jobqueue.Job{
-		Cmd:          cmd,
-		CwdMatters:   true,
-		RepGroup:     repGroup,
-		ReqGroup:     reqGroup,
-		Requirements: req,
-	}
-}
-
 const dirMode = 0750
-
-func TestWatchFofnsIntegration(t *testing.T) {
-	Convey("watchfofns integration", t, func() {
-		So(transformer.Register("test", `^/tmp/(.*)$`, "/irods/$1"), ShouldBeNil)
-
-		Convey("AT1: new fofn processing", func() {
-			watchDir := t.TempDir()
-			paths := integrationPaths(5)
-			subPath := filepath.Join(watchDir, "proj")
-
-			So(os.MkdirAll(subPath, dirMode), ShouldBeNil)
-
-			writeNullFofn(subPath, paths)
-
-			err := fofn.WriteConfig(subPath,
-				fofn.SubDirConfig{
-					Transformer: "test",
-					Metadata: map[string]string{
-						"colour": "red",
-					},
-				},
-			)
-			So(err, ShouldBeNil)
-
-			mock := &testSubmitter{}
-			subDir := fofn.SubDir{Path: subPath, FofnMtime: getFofnMtime(subPath)}
-
-			state, err := fofn.ProcessSubDir(
-				subDir, mock, fofn.ProcessSubDirConfig{
-					MinChunk: 10000,
-					MaxChunk: 10000,
-				},
-			)
-			So(err, ShouldBeNil)
-			So(state.RepGroup, ShouldNotBeEmpty)
-			So(state.RunDir, ShouldNotBeEmpty)
-			So(state.Mtime, ShouldBeGreaterThan, 0)
-
-			_, dirErr := os.Stat(state.RunDir)
-			So(dirErr, ShouldBeNil)
-
-			chunks, globErr := filepath.Glob(filepath.Join(state.RunDir, "chunk.*"))
-			So(globErr, ShouldBeNil)
-			So(len(chunks), ShouldBeGreaterThan, 0)
-
-			So(len(mock.submitted),
-				ShouldBeGreaterThan, 0)
-
-			simulatePutExecution(state.RunDir)
-
-			err = fofn.GenerateStatus(state.RunDir, nil)
-			So(err, ShouldBeNil)
-
-			relStatusFile := filepath.Join(filepath.Base(state.RunDir), "status")
-			So(os.Symlink(relStatusFile, filepath.Join(subPath, "status")), ShouldBeNil)
-
-			symlinkPath := filepath.Join(subPath, "status")
-			_, linkErr := os.Lstat(symlinkPath)
-			So(linkErr, ShouldBeNil)
-
-			target, readErr := os.Readlink(symlinkPath)
-			So(readErr, ShouldBeNil)
-			So(target, ShouldEqual,
-				relStatusFile,
-			)
-
-			entries, counts, parseErr := fofn.ParseStatus(symlinkPath)
-			So(parseErr, ShouldBeNil)
-			So(entries, ShouldHaveLength, 5)
-			So(counts.Uploaded, ShouldEqual, 5)
-
-			watchGID := fileGIDInteg(watchDir)
-			runGID := fileGIDInteg(state.RunDir)
-			So(runGID, ShouldEqual, watchGID)
-
-			chunkGIDs := 0
-
-			for _, c := range chunks {
-				if fileGIDInteg(c) != watchGID {
-					chunkGIDs++
-				}
-			}
-
-			So(chunkGIDs, ShouldEqual, 0)
-
-			fofnFound := 0
-			metaFound := 0
-
-			for _, job := range mock.submitted {
-				if strings.Contains(job.Cmd, "--fofn") &&
-					strings.Contains(
-						job.Cmd, "proj") {
-
-					fofnFound++
-				}
-
-				if strings.Contains(job.Cmd, "--meta") &&
-					strings.Contains(
-						job.Cmd, "colour=red") {
-
-					metaFound++
-				}
-			}
-
-			So(fofnFound, ShouldEqual,
-				len(mock.submitted))
-			So(metaFound, ShouldEqual,
-				len(mock.submitted))
-		})
-		Convey("AT2: freeze mode", func() {
-			watchDir := t.TempDir()
-			paths := integrationPaths(5)
-			subPath := filepath.Join(watchDir, "frozen")
-
-			So(os.MkdirAll(subPath, dirMode), ShouldBeNil)
-
-			writeNullFofn(subPath, paths)
-
-			err := fofn.WriteConfig(subPath,
-				fofn.SubDirConfig{
-					Transformer: "test",
-					Freeze:      true,
-					Metadata: map[string]string{
-						"colour": "red",
-					},
-				},
-			)
-			So(err, ShouldBeNil)
-
-			mock := &testSubmitter{}
-			subDir := fofn.SubDir{Path: subPath, FofnMtime: getFofnMtime(subPath)}
-
-			state, err := fofn.ProcessSubDir(
-				subDir, mock, fofn.ProcessSubDirConfig{
-					MinChunk: 10000,
-					MaxChunk: 10000,
-				},
-			)
-			So(err, ShouldBeNil)
-
-			noReplaceCount := 0
-
-			for _, job := range mock.submitted {
-				if strings.Contains(
-					job.Cmd, "--no_replace") {
-
-					noReplaceCount++
-				}
-			}
-
-			So(noReplaceCount, ShouldEqual,
-				len(mock.submitted))
-
-			frozenRemotes := map[string]bool{
-				"/irods/file/000001": true,
-				"/irods/file/000003": true,
-			}
-
-			simulatePutWithStatuses(state.RunDir,
-				func(_, remote string) string {
-					if frozenRemotes[remote] {
-						return "frozen"
-					}
-
-					return "uploaded"
-				},
-			)
-
-			err = fofn.GenerateStatus(state.RunDir, nil)
-			So(err, ShouldBeNil)
-
-			relStatusFile := filepath.Join(filepath.Base(state.RunDir), "status")
-			So(os.Symlink(
-				relStatusFile,
-				filepath.Join(subPath, "status"),
-			), ShouldBeNil)
-
-			entries, counts, parseErr := fofn.ParseStatus(filepath.Join(subPath, "status"))
-			So(parseErr, ShouldBeNil)
-			So(entries, ShouldHaveLength, 5)
-			So(counts.Frozen, ShouldEqual, 2)
-			So(counts.Uploaded, ShouldEqual, 3)
-		})
-
-		Convey("AT3: restart resilience", func() {
-			watchDir := t.TempDir()
-			paths := integrationPaths(5)
-			subPath := filepath.Join(watchDir, "restart")
-
-			So(os.MkdirAll(subPath, dirMode), ShouldBeNil)
-
-			writeNullFofn(subPath, paths)
-
-			err := fofn.WriteConfig(subPath,
-				fofn.SubDirConfig{
-					Transformer: "test",
-				},
-			)
-			So(err, ShouldBeNil)
-
-			mock := &testSubmitter{}
-			subDir := fofn.SubDir{Path: subPath, FofnMtime: getFofnMtime(subPath)}
-
-			state, err := fofn.ProcessSubDir(
-				subDir, mock, fofn.ProcessSubDirConfig{
-					MinChunk: 10000,
-					MaxChunk: 10000,
-				},
-			)
-			So(err, ShouldBeNil)
-			So(state.RepGroup, ShouldNotBeEmpty)
-
-			initialCount := len(mock.submitted)
-			So(initialCount,
-				ShouldBeGreaterThan, 0)
-
-			mock.allJobs = []*jobqueue.Job{
-				{
-					RepGroup: state.RepGroup,
-					Cmd:      "in-progress",
-				},
-			}
-
-			watcher := fofn.NewWatcher(
-				watchDir, mock,
-				fofn.ProcessSubDirConfig{
-					MinChunk: 10000,
-					MaxChunk: 10000,
-				},
-			)
-
-			err = watcher.Poll()
-			So(err, ShouldBeNil)
-
-			So(len(mock.submitted),
-				ShouldEqual, initialCount)
-		})
-
-		Convey("AT4: config.yml creation helper", func() {
-			dir := t.TempDir()
-
-			err := fofn.WriteConfig(dir,
-				fofn.SubDirConfig{
-					Transformer: "humgen",
-					Freeze:      true,
-					Metadata: map[string]string{
-						"colour": "red",
-					},
-				},
-			)
-			So(err, ShouldBeNil)
-
-			configPath := filepath.Join(dir, "config.yml")
-			_, statErr := os.Stat(configPath)
-			So(statErr, ShouldBeNil)
-
-			cfg, readErr := fofn.ReadConfig(dir)
-			So(readErr, ShouldBeNil)
-			So(cfg.Transformer, ShouldEqual, "humgen")
-			So(cfg.Freeze, ShouldBeTrue)
-			So(cfg.Metadata, ShouldResemble,
-				map[string]string{"colour": "red"})
-		})
-
-		Convey("AT5: buried jobs with fofn update",
-			func() {
-				watchDir := t.TempDir()
-				paths := integrationPaths(5)
-				subPath := filepath.Join(watchDir, "buried")
-
-				So(os.MkdirAll(subPath, dirMode), ShouldBeNil)
-
-				writeNullFofn(subPath, paths)
-
-				err := fofn.WriteConfig(subPath,
-					fofn.SubDirConfig{
-						Transformer: "test",
-					},
-				)
-				So(err, ShouldBeNil)
-
-				mock := &testSubmitter{}
-				subDir := fofn.SubDir{Path: subPath, FofnMtime: getFofnMtime(subPath)}
-
-				state, err := fofn.ProcessSubDir(
-					subDir, mock,
-					fofn.ProcessSubDirConfig{
-						MinChunk: 10000,
-						MaxChunk: 10000,
-					},
-				)
-				So(err, ShouldBeNil)
-				So(state.RepGroup, ShouldNotBeEmpty)
-
-				oldRunDir := state.RunDir
-				oldMtime := state.Mtime
-
-				allChunks, globErr := filepath.Glob(
-					filepath.Join(
-						oldRunDir, "chunk.*",
-					),
-				)
-				So(globErr, ShouldBeNil)
-
-				chunkFiles := make([]string, 0, len(allChunks))
-
-				for _, c := range allChunks {
-					base := filepath.Base(c)
-					if !strings.HasSuffix(base, ".report") && !strings.HasSuffix(base, ".log") && !strings.HasSuffix(base, ".out") {
-						chunkFiles = append(chunkFiles, c)
-					}
-				}
-
-				So(len(chunkFiles),
-					ShouldBeGreaterThan, 0)
-
-				simulatePutExecution(oldRunDir)
-
-				mock.allJobs = []*jobqueue.Job{
-					{
-						RepGroup: state.RepGroup,
-						State:    jobqueue.JobStateBuried,
-						Cmd:      mock.submitted[0].Cmd,
-					},
-				}
-
-				newMtime := oldMtime + 10
-				newPaths := integrationPaths(5)
-
-				fofnPath := filepath.Join(subPath, "fofn")
-
-				nf, createErr := os.Create(fofnPath)
-				So(createErr, ShouldBeNil)
-
-				for _, p := range newPaths {
-					_, wErr := nf.WriteString(p + "\x00")
-					So(wErr, ShouldBeNil)
-				}
-
-				So(nf.Close(), ShouldBeNil)
-
-				t2 := time.Unix(newMtime, 0)
-				So(os.Chtimes(fofnPath, t2, t2), ShouldBeNil)
-
-				mock.submitted = nil
-
-				watcher := fofn.NewWatcher(
-					watchDir, mock,
-					fofn.ProcessSubDirConfig{
-						MinChunk: 10000,
-						MaxChunk: 10000,
-					},
-				)
-
-				err = watcher.Poll()
-				So(err, ShouldBeNil)
-
-				statusPath := filepath.Join(subPath, "status")
-				_, statusErr := os.Lstat(statusPath)
-				So(statusErr, ShouldBeNil)
-
-				So(len(mock.deleted),
-					ShouldBeGreaterThan, 0)
-
-				So(len(mock.submitted),
-					ShouldBeGreaterThan, 0)
-
-				newRunDir := filepath.Join(subPath, strconv.FormatInt(newMtime, 10))
-				_, newDirErr := os.Stat(newRunDir)
-				So(newDirErr, ShouldBeNil)
-				So(newRunDir, ShouldNotEqual, oldRunDir)
-			})
-	})
-}
-
-// integrationPaths returns n paths matching the test
-// transformer pattern (^/tmp/.*).
-func integrationPaths(n int) []string { //nolint:unparam
-	paths := make([]string, n)
-
-	for i := range n {
-		paths[i] = fmt.Sprintf("/tmp/file/%06d", i)
-	}
-
-	return paths
-}
-
-// writeNullFofn writes paths as a null-terminated fofn
-// file in the given directory.
-func writeNullFofn(dir string, paths []string) {
-	p := filepath.Join(dir, "fofn")
-
-	f, err := os.Create(p)
-	So(err, ShouldBeNil)
-
-	for _, path := range paths {
-		_, err = f.WriteString(path + "\x00")
-		So(err, ShouldBeNil)
-	}
-
-	So(f.Close(), ShouldBeNil)
-}
-
-// getFofnMtime returns the Unix mtime of the fofn file in dir.
-func getFofnMtime(dir string) int64 {
-	info, err := os.Stat(filepath.Join(dir, "fofn"))
-	So(err, ShouldBeNil)
-
-	return info.ModTime().Unix()
-}
-
-// simulatePutExecution reads chunk files in runDir,
-// decodes base64-encoded local\tremote lines, and writes
-// .report files with "uploaded" status for all entries.
-func simulatePutExecution(runDir string) {
-	simulatePutWithStatuses(
-		runDir, func(_, _ string) string {
-			return "uploaded"
-		},
-	)
-}
-
-// simulatePutWithStatuses reads chunk files and writes
-// .report files using a custom status function.
-func simulatePutWithStatuses(
-	runDir string,
-	statusFunc func(local, remote string) string,
-) {
-	matches, err := filepath.Glob(filepath.Join(runDir, "chunk.*"))
-	So(err, ShouldBeNil)
-
-	for _, m := range matches {
-		base := filepath.Base(m)
-		if strings.HasSuffix(base, ".report") || strings.HasSuffix(base, ".log") || strings.HasSuffix(base, ".out") {
-			continue
-		}
-
-		writeReportForChunk(m, statusFunc)
-	}
-}
-
-// writeReportForChunk reads a chunk file and writes a
-// corresponding .report file.
-func writeReportForChunk(
-	chunkPath string,
-	statusFunc func(local, remote string) string,
-) {
-	content, err := os.ReadFile(chunkPath)
-	So(err, ShouldBeNil)
-
-	reportPath := chunkPath + ".report"
-
-	f, err := os.Create(reportPath)
-	So(err, ShouldBeNil)
-
-	lines := strings.Split(strings.TrimSpace(string(content)), "\n")
-
-	for _, line := range lines {
-		if line == "" {
-			continue
-		}
-
-		local, remote := decodeIntegChunkLine(line)
-		status := statusFunc(local, remote)
-
-		reportLine := fofn.FormatReportLine(
-			fofn.ReportEntry{
-				Local:  local,
-				Remote: remote,
-				Status: status,
-			},
-		)
-
-		_, writeErr := fmt.Fprintln(f, reportLine)
-		So(writeErr, ShouldBeNil)
-	}
-
-	So(f.Close(), ShouldBeNil)
-}
-
-// decodeIntegChunkLine decodes a base64-encoded chunk
-// line into local and remote paths.
-func decodeIntegChunkLine(
-	line string,
-) (string, string) {
-	parts := strings.SplitN(line, "\t", 2)
-	So(len(parts), ShouldEqual, 2)
-
-	local, err := b64.StdEncoding.DecodeString(parts[0])
-	So(err, ShouldBeNil)
-
-	remote, err := b64.StdEncoding.DecodeString(parts[1])
-	So(err, ShouldBeNil)
-
-	return string(local), string(remote)
-}
-
-// fileGIDInteg returns the group ID of the given path.
-func fileGIDInteg(path string) int {
-	info, err := os.Stat(path)
-	So(err, ShouldBeNil)
-
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	So(ok, ShouldBeTrue)
-
-	return int(stat.Gid)
-}
 
 func TestWatchFofnsRealWRIntegration(t *testing.T) {
 	Convey("watchfofns real-wr integration", t, func() {
@@ -6086,11 +5520,9 @@ func TestWatchFofnsRealWRIntegration(t *testing.T) {
 
 		filesRoot := filepath.Join(localRoot, "watchfofns_files")
 		watchDir := filepath.Join(localRoot, "watchfofns_watch")
-		subDir := filepath.Join(watchDir, "proj")
 		remoteBase := filepath.Join(remoteRoot, "watchfofns_realwr")
 
 		So(os.MkdirAll(filesRoot, dirMode), ShouldBeNil)
-		So(os.MkdirAll(subDir, dirMode), ShouldBeNil)
 
 		// Create a few small local files in subfolders.
 		paths := []string{
@@ -6128,10 +5560,15 @@ func TestWatchFofnsRealWRIntegration(t *testing.T) {
 		configPath := filepath.Join(localRoot, "ibackup_config.json")
 		txName := "watchfofns_it"
 
-		localRe := "^" + regexp.QuoteMeta(filesRoot) + "/(.*)$"
-		remoteReplace := filepath.ToSlash(remoteBase) + "/$1"
+		client := fofn.NewClient(filesRoot)
+		got := &set.Set{Name: "proj", Requester: "me", Transformer: txName}
 
-		conf := struct {
+		So(client.AddOrUpdateSet(got), ShouldBeNil)
+
+		f, createConfigErr := os.Create(configPath)
+		So(createConfigErr, ShouldBeNil)
+
+		encodeErr := json.NewEncoder(f).Encode(struct {
 			Transformers map[string]struct {
 				Description string `json:"description"`
 				Re          string `json:"re"`
@@ -6145,16 +5582,11 @@ func TestWatchFofnsRealWRIntegration(t *testing.T) {
 			}{
 				txName: {
 					Description: "watchfofns integration transformer",
-					Re:          localRe,
-					Replace:     remoteReplace,
+					Re:          "^" + regexp.QuoteMeta(filesRoot) + "/(.*)$",
+					Replace:     filepath.ToSlash(remoteBase) + "/$1",
 				},
 			},
-		}
-
-		f, createConfigErr := os.Create(configPath)
-		So(createConfigErr, ShouldBeNil)
-
-		encodeErr := json.NewEncoder(f).Encode(conf)
+		})
 		if encodeErr != nil {
 			_ = f.Close()
 		}
@@ -6164,26 +5596,8 @@ func TestWatchFofnsRealWRIntegration(t *testing.T) {
 		closeErr := f.Close()
 		So(closeErr, ShouldBeNil)
 
-		// Create the watchfofns config.yml referencing the named transformer.
-		writeCfgErr := fofn.WriteConfig(subDir, fofn.SubDirConfig{Transformer: txName})
-		So(writeCfgErr, ShouldBeNil)
-
-		// Create the null-terminated fofn.
-		fofnPath := filepath.Join(subDir, "fofn")
-
-		nf, createFofnErr := os.Create(fofnPath)
-		So(createFofnErr, ShouldBeNil)
-
-		for _, p := range paths {
-			_, writeErr := nf.WriteString(p + "\x00")
-			if writeErr != nil {
-				_ = nf.Close()
-			}
-
-			So(writeErr, ShouldBeNil)
-		}
-
-		So(nf.Close(), ShouldBeNil)
+		So(client.MergeFiles(got.ID(), paths), ShouldBeNil)
+		So(client.TriggerDiscovery(got.ID(), false), ShouldBeNil)
 
 		// Run watchfofns in the background, cancelling once status is correct.
 		ctx, cancel := context.WithCancel(context.Background())
@@ -6269,24 +5683,17 @@ func TestWatchFofnsRealWRIntegration(t *testing.T) {
 			}
 		}
 
-		statusPath := filepath.Join(subDir, "status")
-
 		ctxWait, cancelWait := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancelWait()
 
 		status := retry.Do(ctxWait, func() error {
-			_, counts, parseStatusErr := fofn.ParseStatus(statusPath)
-			if parseStatusErr != nil {
-				return parseStatusErr
+			got, err := client.GetSetByName("me", "proj")
+			if err != nil {
+				return err
 			}
 
-			if counts.Uploaded != len(paths) {
-				return fmt.Errorf(
-					"%w: uploaded=%d want=%d",
-					errUploadCountMismatch,
-					counts.Uploaded,
-					len(paths),
-				)
+			if int(got.Uploaded) != len(paths) { //nolint:gosec
+				return fmt.Errorf("%w: uploaded=%d want=%d", errUploadCountMismatch, got.Uploaded, len(paths))
 			}
 
 			return nil
@@ -7110,15 +6517,20 @@ func runWatchFofnsAndCaptureJobs(t *testing.T, extraFlags ...string) []*jobqueue
 	err := os.WriteFile(configPath, []byte(configData), userPerms)
 	So(err, ShouldBeNil)
 
+	got := &set.Set{
+		Name:        "proj",
+		Requester:   "me",
+		Transformer: "clitest",
+	}
+
+	c := fofn.NewClient(tmpDir)
+
+	So(c.AddOrUpdateSet(got), ShouldBeNil)
+	So(c.MergeFiles(got.ID(), []string{"/tmp/a"}), ShouldBeNil)
+	So(c.TriggerDiscovery(got.ID(), false), ShouldBeNil)
+
 	subPath := filepath.Join(tmpDir, "proj")
 	So(os.MkdirAll(subPath, dirMode), ShouldBeNil)
-
-	writeNullFofn(subPath, []string{"/tmp/a"})
-
-	cfgErr := fofn.WriteConfig(subPath, fofn.SubDirConfig{
-		Transformer: "clitest",
-	})
-	So(cfgErr, ShouldBeNil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 

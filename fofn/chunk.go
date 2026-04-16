@@ -30,15 +30,22 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"math/rand"
 	"os"
 	"path/filepath"
 	"time"
 
-	"github.com/wtsi-hgi/ibackup/internal/scanner"
+	"github.com/wtsi-hgi/ibackup/transfer"
+	"github.com/wtsi-hgi/ibackup/transformer"
+	"vimagination.zapto.org/byteio"
 )
 
-const chunkNameFormat = "chunk.%06d"
+const (
+	chunkNameFormat  = "chunk.%06d"
+	unmodified       = "unmodified"
+	unmodifiedReport = unmodified + ".report"
+)
 
 // TargetChunks is the ideal number of chunks to split a fofn into.
 const TargetChunks = 100
@@ -90,61 +97,119 @@ func (d *chunkDeck) next() int {
 	return idx
 }
 
-func distributeEntries(
-	fofnPath string,
-	transform func(string) (string, error),
-	writers []*bufio.Writer,
-	numChunks int,
-	randSeed int64,
-) error {
-	rng := rand.New(rand.NewSource(randSeed)) //nolint:gosec
-	deck := newChunkDeck(numChunks, rng)
-
-	err := scanner.ScanNullTerminated(
-		fofnPath, func(entry string) error {
-			return writeEntry(
-				writers, deck.next(),
-				entry, transform,
-			)
-		},
-	)
-	if err != nil {
-		return err
-	}
-
-	return flushWriters(writers)
+type bufWriter struct {
+	path string
+	*bufio.Writer
+	io.Closer
 }
 
-func writeEntry(
-	writers []*bufio.Writer,
-	chunk int,
-	entry string,
-	transform func(string) (string, error),
-) error {
-	remote, err := transform(entry)
+func newBufWriter(path string) (*bufWriter, error) {
+	f, err := os.Create(path)
+	if err != nil {
+		return nil, err
+	}
+
+	return &bufWriter{
+		path:   path,
+		Writer: bufio.NewWriter(f),
+		Closer: f,
+	}, nil
+}
+
+func (b *bufWriter) Close() error {
+	if b == nil {
+		return nil
+	}
+
+	return errors.Join(b.Flush(), b.Closer.Close())
+}
+
+type chunkWriters struct {
+	unchangeWriter *bufWriter
+	chunks         []*bufWriter
+	deck           *chunkDeck
+}
+
+func newChunkWriters(dir string, numChunks int, hasUnchanged bool, randSeed int64) (*chunkWriters, error) {
+	c := &chunkWriters{
+		chunks: make([]*bufWriter, numChunks),
+	}
+
+	for i := range numChunks {
+		w, err := newBufWriter(filepath.Join(dir, fmt.Sprintf(chunkNameFormat, i)))
+		if err != nil {
+			c.Close()
+
+			return nil, fmt.Errorf("failed to create chunk file: %w", err)
+		}
+
+		c.chunks[i] = w
+	}
+
+	if hasUnchanged {
+		w, err := newBufWriter(filepath.Join(dir, unmodifiedReport))
+		if err != nil {
+			return nil, fmt.Errorf("failed to unchaged report file: %w", err)
+		}
+
+		c.unchangeWriter = w
+	}
+
+	c.deck = newChunkDeck(numChunks, rand.New(rand.NewSource(randSeed))) //nolint:gosec
+
+	return c, nil
+}
+
+func (c *chunkWriters) writeChunkPath(local, tx string) error {
+	remote, err := transformer.Transform(tx, local)
 	if err != nil {
 		return err
 	}
 
-	local64 := base64.StdEncoding.EncodeToString([]byte(entry))
+	local64 := base64.StdEncoding.EncodeToString([]byte(local))
 	remote64 := base64.StdEncoding.EncodeToString([]byte(remote))
 
-	_, err = fmt.Fprintf(writers[chunk], "%s\t%s\n", local64, remote64)
+	_, err = fmt.Fprintf(c.chunks[c.deck.next()], "%s\t%s\n", local64, remote64)
 
 	return err
 }
 
-func flushWriters(writers []*bufio.Writer) error {
-	for _, w := range writers {
-		if err := w.Flush(); err != nil {
-			return fmt.Errorf("flush chunk writer: %w", err)
-		}
+func (c *chunkWriters) writeUnchangedPath(local, tx string) error {
+	remote, err := transformer.Transform(tx, local)
+	if err != nil {
+		return err
 	}
 
-	return nil
+	_, err = fmt.Fprintln(c.unchangeWriter, formatReportLine(ReportEntry{
+		Local:  local,
+		Remote: remote,
+		Status: string(transfer.RequestStatusUnmodified),
+	}))
+
+	return err
 }
 
-// WriteShuffledChunks reads a null-terminated fofn file and writes the entries
+func (c *chunkWriters) paths() []string {
+	paths := make([]string, len(c.chunks))
+
+	for n, p := range c.chunks {
+		paths[n] = p.path
+	}
+
+	return paths
+}
+
+func (c *chunkWriters) Close() error {
+	err := c.unchangeWriter.Close()
+
+	for _, chunk := range c.chunks {
+		err = errors.Join(err, chunk.Close())
+	}
+
+	return err
+}
+
+// writeShuffledChunks reads a null-terminated fofn file and writes the entries
 // into shuffled chunk files. Each entry is transformed using the provided
 // function and written as a base64-encoded local/remote pair separated by a
 // tab.
@@ -156,18 +221,12 @@ func flushWriters(writers []*bufio.Writer) error {
 //
 // Chunk files are named chunk.000000, chunk.000001, etc. Returns the paths of
 // the created chunk files, or nil if the fofn is empty.
-func WriteShuffledChunks(
-	fofnPath string,
-	transform func(string) (string, error),
-	dir string,
+func writeShuffledChunks(
+	fofnPath, transformer, dir string,
 	minChunk, maxChunk int,
-	randSeed int64,
+	randSeed, lastRunTime int64,
 ) ([]string, error) {
-	if err := validateChunkBounds(minChunk, maxChunk); err != nil {
-		return nil, err
-	}
-
-	count, err := countEntries(fofnPath)
+	count, hasUnchanged, err := countEntries(fofnPath, lastRunTime)
 	if err != nil {
 		return nil, err
 	}
@@ -176,13 +235,13 @@ func WriteShuffledChunks(
 		return nil, nil
 	}
 
-	numChunks := CalculateChunks(count, minChunk, maxChunk)
+	numChunks := calculateChunks(count, minChunk, maxChunk)
 
 	if randSeed == 0 {
 		randSeed = time.Now().UnixNano()
 	}
 
-	return streamToChunks(fofnPath, transform, dir, numChunks, randSeed)
+	return streamToChunks(fofnPath, transformer, dir, numChunks, randSeed, lastRunTime, hasUnchanged)
 }
 
 func validateChunkBounds(minChunk, maxChunk int) error {
@@ -201,14 +260,40 @@ func validateChunkBounds(minChunk, maxChunk int) error {
 	return nil
 }
 
-func countEntries(fofnPath string) (int, error) {
-	return scanner.CountNullTerminated(fofnPath)
+func countEntries(fofn string, lastRunTime int64) (count int, hasUnchanged bool, err error) { //nolint:gocognit,gocyclo
+	f, err := os.Open(fofn)
+	if err != nil {
+		return 0, false, err
+	}
+	defer f.Close()
+
+	lr := byteio.StickyLittleEndianReader{Reader: bufio.NewReader(f)}
+
+	for {
+		mtime := lr.ReadInt64()
+
+		if errors.Is(lr.Err, io.EOF) {
+			return count, hasUnchanged, nil
+		}
+
+		for lr.ReadUint8() != 0 {
+			if lr.Err != nil {
+				return 0, false, lr.Err
+			}
+		}
+
+		if mtime > 0 && mtime < lastRunTime {
+			hasUnchanged = true
+		} else {
+			count++
+		}
+	}
 }
 
-// CalculateChunks returns the optimal number of chunks for n entries given
+// calculateChunks returns the optimal number of chunks for n entries given
 // minimum and maximum files-per-chunk constraints. It assumes valid inputs:
 // minChunk >= 1, maxChunk >= 1, minChunk <= maxChunk. Returns 0 for n == 0.
-func CalculateChunks(n, minChunk, maxChunk int) int {
+func calculateChunks(n, minChunk, maxChunk int) int {
 	if n == 0 {
 		return 0
 	}
@@ -228,80 +313,59 @@ func CalculateChunks(n, minChunk, maxChunk int) int {
 }
 
 func streamToChunks(
-	fofnPath string,
-	transform func(string) (string, error),
-	dir string,
+	fofnPath, transformer, dir string,
 	numChunks int,
-	randSeed int64,
-) (paths []string, err error) {
-	files, paths, err := createChunkFiles(dir, numChunks)
+	randSeed, lastRunTime int64,
+	hasUnchanged bool,
+) ([]string, error) {
+	w, err := newChunkWriters(dir, numChunks, hasUnchanged, randSeed)
 	if err != nil {
 		return nil, err
 	}
 
 	defer func() {
-		if cerr := closeFiles(files); cerr != nil && err == nil {
-			err = fmt.Errorf("close chunk files: %w", cerr)
-			paths = nil
+		if cerr := w.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("error closing chunk files: %w", cerr)
 		}
 	}()
 
-	writers := createWriters(files)
-
-	if err := distributeEntries(
-		fofnPath, transform, writers,
-		numChunks, randSeed,
-	); err != nil {
+	if err := distributeEntries(fofnPath, transformer, w, lastRunTime); err != nil {
 		return nil, err
 	}
 
-	return paths, nil
+	return w.paths(), nil
 }
 
-func createChunkFiles(
-	dir string, numChunks int,
-) ([]*os.File, []string, error) {
-	files := make([]*os.File, numChunks)
-	paths := make([]string, numChunks)
-
-	for i := range numChunks {
-		name := fmt.Sprintf(chunkNameFormat, i)
-		p := filepath.Join(dir, name)
-
-		f, err := os.Create(p)
-		if err != nil {
-			closeFiles(files[:i]) //nolint:errcheck
-
-			return nil, nil, fmt.Errorf("create chunk file: %w", err)
-		}
-
-		files[i] = f
-		paths[i] = p
+func distributeEntries(fofnPath, transformer string, w *chunkWriters, lastRunTime int64) error {
+	f, err := os.Open(fofnPath)
+	if err != nil {
+		return err
 	}
+	defer f.Close()
 
-	return files, paths, nil
-}
+	lr := byteio.StickyLittleEndianReader{Reader: bufio.NewReader(f)}
 
-func closeFiles(files []*os.File) error {
-	var errs []error
+	for {
+		mtime := lr.ReadInt64()
 
-	for _, f := range files {
-		if f != nil {
-			if err := f.Close(); err != nil {
-				errs = append(errs, err)
+		if lr.Err != nil {
+			if errors.Is(lr.Err, io.EOF) {
+				return nil
 			}
+
+			return lr.Err
+		}
+
+		if err := writePath(w, lastRunTime, mtime, lr.ReadString0(), transformer); err != nil {
+			return err
 		}
 	}
-
-	return errors.Join(errs...)
 }
 
-func createWriters(files []*os.File) []*bufio.Writer {
-	writers := make([]*bufio.Writer, len(files))
-
-	for i, f := range files {
-		writers[i] = bufio.NewWriter(f)
+func writePath(w *chunkWriters, lastRunTime, mtime int64, path, transformer string) error {
+	if mtime > 0 && mtime < lastRunTime {
+		return w.writeUnchangedPath(path, transformer)
 	}
 
-	return writers
+	return w.writeChunkPath(path, transformer)
 }

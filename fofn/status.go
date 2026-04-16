@@ -30,6 +30,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -54,40 +55,36 @@ var ErrMalformedSummary = errors.New("malformed summary field")
 // does not have exactly the expected number of fields.
 var ErrMalformedChunkLine = errors.New("malformed chunk line")
 
-// StatusCounts holds counts per upload status for a completed run.
-type StatusCounts struct {
+// statusCounts holds counts per upload status for a completed run.
+type statusCounts struct {
 	Uploaded     int
 	Replaced     int
-	Unmodified   int
+	Skipped      int
 	Missing      int
 	Failed       int
 	Frozen       int
 	Orphaned     int
 	Warning      int
-	Hardlink     int
+	Hardlinks    int
 	NotProcessed int
 }
 
-// ParseStatus reads a status file produced by WriteStatusFromRun and returns
+// parseStatus reads a status file produced by WriteStatusFromRun and returns
 // all entries plus the summary counts from the SUMMARY line.
-func ParseStatus(
-	path string,
-) ([]ReportEntry, StatusCounts, error) {
+func parseStatus(path string) ([]ReportEntry, statusCounts, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, StatusCounts{}, err
+		return nil, statusCounts{}, err
 	}
 	defer f.Close()
 
 	return scanStatusFile(f)
 }
 
-func scanStatusFile(
-	r *os.File,
-) ([]ReportEntry, StatusCounts, error) {
+func scanStatusFile(r io.Reader) ([]ReportEntry, statusCounts, error) {
 	var (
 		entries = make([]ReportEntry, 0)
-		counts  StatusCounts
+		counts  statusCounts
 	)
 
 	s := bufio.NewScanner(r)
@@ -102,69 +99,55 @@ func scanStatusFile(
 
 		entries, counts, err = handleStatusLine(line, entries, counts)
 		if err != nil {
-			return nil, StatusCounts{}, err
+			return nil, statusCounts{}, err
 		}
 	}
 
 	if err := s.Err(); err != nil {
-		return nil, StatusCounts{}, err
+		return nil, statusCounts{}, err
 	}
 
 	return entries, counts, nil
 }
 
-func handleStatusLine(
-	line string,
-	entries []ReportEntry,
-	counts StatusCounts,
-) ([]ReportEntry, StatusCounts, error) {
+func handleStatusLine(line string, entries []ReportEntry, counts statusCounts) ([]ReportEntry, statusCounts, error) {
 	if strings.HasPrefix(line, summaryPrefix+"\t") {
 		parsed, err := parseSummaryLine(line)
 
 		return entries, parsed, err
 	}
 
-	entry, err := ParseReportLine(line)
+	entry, err := parseReportLine(line)
 	if err != nil {
-		return nil, StatusCounts{},
+		return nil, statusCounts{},
 			fmt.Errorf("parse status line: %w", err)
 	}
 
 	return append(entries, entry), counts, nil
 }
 
-func parseSummaryLine(
-	line string,
-) (StatusCounts, error) {
-	var counts StatusCounts
+func parseSummaryLine(line string) (statusCounts, error) {
+	var counts statusCounts
 
 	fields := strings.Split(line, "\t")
 
 	for _, field := range fields[1:] {
-		if err := parseSummaryField(
-			&counts, field,
-		); err != nil {
-			return StatusCounts{}, err
+		if err := parseSummaryField(&counts, field); err != nil {
+			return statusCounts{}, err
 		}
 	}
 
 	return counts, nil
 }
 
-func processAllChunks(
-	w *bufio.Writer,
-	chunks []string,
-	buried map[string]bool,
-) (StatusCounts, []string, error) {
-	var counts StatusCounts
+func processAllChunks(w *bufWriter, chunks []string, buried map[string]bool) (statusCounts, []string, error) {
+	var counts statusCounts
 
 	issues := make([]string, 0)
 
 	for _, chunk := range chunks {
-		if err := processChunk(
-			w, chunk, buried, &counts, &issues,
-		); err != nil {
-			return StatusCounts{}, nil, err
+		if err := processChunk(w, chunk, buried, &counts, &issues); err != nil {
+			return statusCounts{}, nil, err
 		}
 	}
 
@@ -172,13 +155,11 @@ func processAllChunks(
 }
 
 func parseSummaryField(
-	counts *StatusCounts, field string,
+	counts *statusCounts, field string,
 ) error {
 	key, valStr, ok := strings.Cut(field, "=")
 	if !ok {
-		return fmt.Errorf("%w: %s",
-			ErrMalformedSummary, field,
-		)
+		return fmt.Errorf("%w: %s", ErrMalformedSummary, field)
 	}
 
 	val, err := strconv.Atoi(valStr)
@@ -192,7 +173,7 @@ func parseSummaryField(
 }
 
 func assignSummaryCount( //nolint:gocyclo,cyclop,funlen
-	counts *StatusCounts, key string, val int,
+	counts *statusCounts, key string, val int,
 ) {
 	switch key {
 	case "uploaded":
@@ -200,7 +181,7 @@ func assignSummaryCount( //nolint:gocyclo,cyclop,funlen
 	case "replaced":
 		counts.Replaced = val
 	case "unmodified":
-		counts.Unmodified = val
+		counts.Skipped = val
 	case "missing":
 		counts.Missing = val
 	case "failed":
@@ -212,19 +193,13 @@ func assignSummaryCount( //nolint:gocyclo,cyclop,funlen
 	case "warning":
 		counts.Warning = val
 	case "hardlink":
-		counts.Hardlink = val
+		counts.Hardlinks = val
 	case statusNotProcessed:
 		counts.NotProcessed = val
 	}
 }
 
-func writeAndSyncStatus(
-	f *os.File,
-	chunks []string,
-	buried map[string]bool,
-) ([]string, error) {
-	w := bufio.NewWriter(f)
-
+func writeAndSyncStatus(w *bufWriter, chunks []string, buried map[string]bool) ([]string, error) {
 	counts, issues, err := processAllChunks(w, chunks, buried)
 	if err != nil {
 		return nil, err
@@ -234,20 +209,10 @@ func writeAndSyncStatus(
 		return nil, err
 	}
 
-	if err := w.Flush(); err != nil {
-		return nil, err
-	}
-
-	if err := f.Sync(); err != nil {
-		return nil, fmt.Errorf("sync status file: %w", err)
-	}
-
 	return issues, nil
 }
 
-func writeSummaryLine(
-	w *bufio.Writer, counts StatusCounts,
-) error {
+func writeSummaryLine(w *bufWriter, counts statusCounts) error {
 	line := fmt.Sprintf(
 		"%s\tuploaded=%d\treplaced=%d\tunmodified=%d\t"+
 			"missing=%d\tfailed=%d\tfrozen=%d\torphaned=%d\t"+
@@ -255,13 +220,13 @@ func writeSummaryLine(
 		summaryPrefix,
 		counts.Uploaded,
 		counts.Replaced,
-		counts.Unmodified,
+		counts.Skipped,
 		counts.Missing,
 		counts.Failed,
 		counts.Frozen,
 		counts.Orphaned,
 		counts.Warning,
-		counts.Hardlink,
+		counts.Hardlinks,
 		counts.NotProcessed,
 	)
 
@@ -271,10 +236,10 @@ func writeSummaryLine(
 }
 
 func processChunk(
-	w *bufio.Writer,
+	w *bufWriter,
 	chunkPath string,
 	buried map[string]bool,
-	counts *StatusCounts,
+	counts *statusCounts,
 	issues *[]string,
 ) error {
 	reportPath := chunkPath + ".report"
@@ -285,8 +250,7 @@ func processChunk(
 	)
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
-			addIssue(issues, chunkPath, reportPath, issueLineUnknown,
-				fmt.Errorf("read report: %w", err))
+			addIssue(issues, chunkPath, reportPath, issueLineUnknown, fmt.Errorf("read report: %w", err))
 		}
 
 		hasIssues = true
@@ -299,34 +263,22 @@ func processChunk(
 	return emitUnprocessedEntries(w, chunkPath, reportedLocals, counts)
 }
 
-func addIssue(
-	issues *[]string,
-	chunkPath, reportPath string,
-	lineNo int,
-	err error,
-) {
-	line := formatIssue(chunkPath, reportPath, lineNo, err)
-	*issues = append(*issues, line)
+func addIssue(issues *[]string, chunkPath, reportPath string, lineNo int, err error) {
+	*issues = append(*issues, formatIssue(chunkPath, reportPath, lineNo, err))
 }
 
-func formatIssue(
-	chunkPath, reportPath string,
-	lineNo int,
-	err error,
-) string {
+func formatIssue(chunkPath, reportPath string, lineNo int, err error) string {
 	if lineNo == issueLineUnknown {
-		return fmt.Sprintf("chunk=%s report=%s error=%s",
-			filepath.Base(chunkPath), reportPath, err)
+		return fmt.Sprintf("chunk=%s report=%s error=%s", filepath.Base(chunkPath), reportPath, err)
 	}
 
-	return fmt.Sprintf("chunk=%s report=%s line=%d error=%s",
-		filepath.Base(chunkPath), reportPath, lineNo, err)
+	return fmt.Sprintf("chunk=%s report=%s line=%d error=%s", filepath.Base(chunkPath), reportPath, lineNo, err)
 }
 
 func streamReportBestEffort(
-	w *bufio.Writer,
+	w *bufWriter,
 	chunkPath, reportPath string,
-	counts *StatusCounts,
+	counts *statusCounts,
 	issues *[]string,
 ) (map[string]bool, bool, error) {
 	reported := make(map[string]bool)
@@ -337,24 +289,20 @@ func streamReportBestEffort(
 	}
 	defer f.Close()
 
-	return scanReportBestEffort(
-		w, f, chunkPath, reportPath, counts, issues, reported,
-	)
+	return scanReportBestEffort(w, f, chunkPath, reportPath, counts, issues, reported)
 }
 
 func scanReportBestEffort(
-	w *bufio.Writer,
+	w *bufWriter,
 	f *os.File,
 	chunkPath, reportPath string,
-	counts *StatusCounts,
+	counts *statusCounts,
 	issues *[]string,
 	reported map[string]bool,
 ) (map[string]bool, bool, error) {
 	s := bufio.NewScanner(f)
 
-	hasIssues, lineNo, err := scanReportLines(
-		s, w, chunkPath, reportPath, counts, issues, reported,
-	)
+	hasIssues, lineNo, err := scanReportLines(s, w, chunkPath, reportPath, counts, issues, reported)
 	if err != nil {
 		return reported, hasIssues, err
 	}
@@ -377,15 +325,14 @@ func handleReportScanError(
 
 	*hasIssues = true
 
-	addIssue(issues, chunkPath, reportPath, lineNo,
-		fmt.Errorf("scan report: %w", scanErr))
+	addIssue(issues, chunkPath, reportPath, lineNo, fmt.Errorf("scan report: %w", scanErr))
 }
 
 func scanReportLines(
 	s *bufio.Scanner,
-	w *bufio.Writer,
+	w *bufWriter,
 	chunkPath, reportPath string,
-	counts *StatusCounts,
+	counts *statusCounts,
 	issues *[]string,
 	reported map[string]bool,
 ) (bool, int, error) {
@@ -413,11 +360,11 @@ func scanReportLines(
 }
 
 func processReportTextLine(
-	w *bufio.Writer,
+	w *bufWriter,
 	line string,
 	lineNo int,
 	chunkPath, reportPath string,
-	counts *StatusCounts,
+	counts *statusCounts,
 	issues *[]string,
 	reported map[string]bool,
 ) (bool, error) {
@@ -433,15 +380,15 @@ func processReportTextLine(
 }
 
 func processReportLine(
-	w *bufio.Writer,
+	w *bufWriter,
 	line string,
 	lineNo int,
 	chunkPath, reportPath string,
-	counts *StatusCounts,
+	counts *statusCounts,
 	issues *[]string,
 	reported map[string]bool,
 ) (bool, error) {
-	entry, parseErr := ParseReportLine(line)
+	entry, parseErr := parseReportLine(line)
 	if parseErr != nil {
 		addIssue(issues, chunkPath, reportPath, lineNo,
 			fmt.Errorf("parse report line: %w", parseErr))
@@ -460,10 +407,10 @@ func processReportLine(
 }
 
 func emitUnprocessedEntries(
-	w *bufio.Writer,
+	w *bufWriter,
 	chunkPath string,
 	reported map[string]bool,
-	counts *StatusCounts,
+	counts *statusCounts,
 ) error {
 	f, err := os.Open(chunkPath)
 	if err != nil {
@@ -475,10 +422,10 @@ func emitUnprocessedEntries(
 }
 
 func scanChunkForUnprocessed(
-	w *bufio.Writer,
+	w *bufWriter,
 	r *os.File,
 	reported map[string]bool,
-	counts *StatusCounts,
+	counts *statusCounts,
 ) error {
 	s := bufio.NewScanner(r)
 
@@ -488,9 +435,7 @@ func scanChunkForUnprocessed(
 			continue
 		}
 
-		if err := emitIfUnprocessed(
-			w, line, reported, counts,
-		); err != nil {
+		if err := emitIfUnprocessed(w, line, reported, counts); err != nil {
 			return err
 		}
 	}
@@ -499,10 +444,10 @@ func scanChunkForUnprocessed(
 }
 
 func emitIfUnprocessed(
-	w *bufio.Writer,
+	w *bufWriter,
 	line string,
 	reported map[string]bool,
-	counts *StatusCounts,
+	counts *statusCounts,
 ) error {
 	local, remote, err := decodeChunkLine(line)
 	if err != nil {
@@ -543,14 +488,14 @@ func decodeChunkLine(line string) (string, string, error) {
 	return string(localBytes), string(remoteBytes), nil
 }
 
-func tallyStatus(counts *StatusCounts, status string) { //nolint:gocyclo,cyclop,funlen
+func tallyStatus(counts *statusCounts, status string) { //nolint:gocyclo,cyclop,funlen
 	switch status {
 	case "uploaded":
 		counts.Uploaded++
 	case "replaced":
 		counts.Replaced++
 	case "unmodified":
-		counts.Unmodified++
+		counts.Skipped++
 	case "missing":
 		counts.Missing++
 	case "failed":
@@ -562,20 +507,18 @@ func tallyStatus(counts *StatusCounts, status string) { //nolint:gocyclo,cyclop,
 	case "warning":
 		counts.Warning++
 	case "hardlink":
-		counts.Hardlink++
+		counts.Hardlinks++
 	case statusNotProcessed:
 		counts.NotProcessed++
 	}
 }
 
-// WriteStatusFromRun reads all chunk report files in runDir, writes a combined
+// writeStatusFromRun reads all chunk report files in runDir, writes a combined
 // status file at statusPath, and appends a SUMMARY line with tallied counts.
 //
 // Chunks listed in buriedChunks are treated specially: if their report is
 // incomplete or missing, remaining entries are emitted as not_processed.
-func WriteStatusFromRun(
-	runDir, statusPath string, buriedChunks []string,
-) error {
+func writeStatusFromRun(runDir, statusPath string, buriedChunks []string) error {
 	chunks, err := findChunkFiles(runDir)
 	if err != nil {
 		return err
@@ -594,6 +537,10 @@ func findChunkFiles(runDir string) ([]string, error) {
 
 	chunks := filterChunkFiles(matches)
 	slices.Sort(chunks)
+
+	if _, err := os.Lstat(filepath.Join(runDir, unmodifiedReport)); err == nil {
+		chunks = append(chunks, filepath.Join(runDir, unmodified))
+	}
 
 	return chunks, nil
 }
@@ -630,11 +577,7 @@ func makeBuriedSet(buriedChunks []string) map[string]bool {
 	return buried
 }
 
-func writeStatusFile(
-	statusPath string,
-	chunks []string,
-	buried map[string]bool,
-) error {
+func writeStatusFile(statusPath string, chunks []string, buried map[string]bool) error {
 	tmpPath := statusPath + ".tmp"
 
 	issues, err := writeStatusToFile(tmpPath, chunks, buried)
@@ -657,24 +600,20 @@ func writeStatusFile(
 	return nil
 }
 
-func writeStatusToFile(
-	path string,
-	chunks []string,
-	buried map[string]bool,
-) ([]string, error) {
-	f, err := os.Create(path)
+func writeStatusToFile(path string, chunks []string, buried map[string]bool) (issues []string, err error) {
+	w, err := newBufWriter(path)
 	if err != nil {
 		return nil, fmt.Errorf("create status file: %w", err)
 	}
 
-	issues, err := writeAndSyncStatus(f, chunks, buried)
+	defer func() {
+		if errr := w.Close(); err != nil {
+			err = errr
+		}
+	}()
+
+	issues, err = writeAndSyncStatus(w, chunks, buried)
 	if err != nil {
-		f.Close()
-
-		return nil, err
-	}
-
-	if err := f.Close(); err != nil {
 		return nil, err
 	}
 
@@ -688,19 +627,19 @@ func writeIssuesFile(path string, issues []string) (err error) {
 
 	tmpPath := path + ".tmp"
 
-	f, err := os.Create(tmpPath)
+	bw, err := newBufWriter(tmpPath)
 	if err != nil {
 		return fmt.Errorf("create issues file: %w", err)
 	}
 
-	defer func() {
-		if closeErr := f.Close(); closeErr != nil && err == nil {
-			err = fmt.Errorf("close issues file: %w", closeErr)
-		}
-	}()
+	if err := writeAllIssues(bw, issues); err != nil {
+		bw.Close()
 
-	if err = writeIssuesToTemp(f, issues); err != nil {
 		return err
+	}
+
+	if err := bw.Close(); err != nil {
+		return fmt.Errorf("close issues file: %w", err)
 	}
 
 	if err := os.Rename(tmpPath, path); err != nil {
@@ -718,21 +657,7 @@ func removeIssuesFile(path string) error {
 	return nil
 }
 
-func writeIssuesToTemp(f *os.File, issues []string) error {
-	w := bufio.NewWriter(f)
-
-	if err := writeAllIssues(w, issues); err != nil {
-		return err
-	}
-
-	if err := w.Flush(); err != nil {
-		return fmt.Errorf("flush issues file: %w", err)
-	}
-
-	return nil
-}
-
-func writeAllIssues(w *bufio.Writer, issues []string) error {
+func writeAllIssues(w io.Writer, issues []string) error {
 	for _, issue := range issues {
 		if _, err := fmt.Fprintln(w, issue); err != nil {
 			return fmt.Errorf("write issues file: %w", err)

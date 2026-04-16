@@ -54,17 +54,17 @@ func TestWriteStatusFromRun(t *testing.T) {
 
 			statusPath := filepath.Join(dir, "status1")
 
-			err := WriteStatusFromRun(runDir, statusPath, nil)
+			err := writeStatusFromRun(runDir, statusPath, nil)
 			So(err, ShouldBeNil)
 
-			entries, counts, err := ParseStatus(statusPath)
+			entries, counts, err := parseStatus(statusPath)
 			So(err, ShouldBeNil)
 			So(len(entries), ShouldEqual, 25)
 
 			total := counts.Uploaded + counts.Replaced +
-				counts.Unmodified + counts.Missing +
+				counts.Skipped + counts.Missing +
 				counts.Failed + counts.Frozen +
-				counts.Warning + counts.Hardlink +
+				counts.Warning + counts.Hardlinks +
 				counts.Orphaned + counts.NotProcessed
 			So(total, ShouldEqual, 25)
 			So(counts.NotProcessed, ShouldEqual, 0)
@@ -85,13 +85,13 @@ func TestWriteStatusFromRun(t *testing.T) {
 
 			statusPath := filepath.Join(dir, "status2")
 
-			err := WriteStatusFromRun(
+			err := writeStatusFromRun(
 				runDir, statusPath,
 				[]string{"chunk.000002"},
 			)
 			So(err, ShouldBeNil)
 
-			entries, counts, err := ParseStatus(statusPath)
+			entries, counts, err := parseStatus(statusPath)
 			So(err, ShouldBeNil)
 			So(len(entries), ShouldEqual, 25)
 			So(counts.Uploaded, ShouldEqual, 20)
@@ -106,13 +106,13 @@ func TestWriteStatusFromRun(t *testing.T) {
 
 			statusPath := filepath.Join(dir, "status3")
 
-			err := WriteStatusFromRun(
+			err := writeStatusFromRun(
 				runDir, statusPath,
 				[]string{"chunk.000000"},
 			)
 			So(err, ShouldBeNil)
 
-			entries, counts, err := ParseStatus(statusPath)
+			entries, counts, err := parseStatus(statusPath)
 			So(err, ShouldBeNil)
 			So(len(entries), ShouldEqual, 10)
 			So(counts.Uploaded, ShouldEqual, 5)
@@ -125,10 +125,10 @@ func TestWriteStatusFromRun(t *testing.T) {
 
 			statusPath := filepath.Join(dir, "status4")
 
-			err := WriteStatusFromRun(runDir, statusPath, nil)
+			err := writeStatusFromRun(runDir, statusPath, nil)
 			So(err, ShouldBeNil)
 
-			entries, counts, err := ParseStatus(statusPath)
+			entries, counts, err := parseStatus(statusPath)
 			So(err, ShouldBeNil)
 			So(len(entries), ShouldEqual, 0)
 			So(counts.Uploaded, ShouldEqual, 0)
@@ -148,10 +148,10 @@ func TestWriteStatusFromRun(t *testing.T) {
 
 			statusPath := filepath.Join(dir, "status5")
 
-			err := WriteStatusFromRun(runDir, statusPath, nil)
+			err := writeStatusFromRun(runDir, statusPath, nil)
 			So(err, ShouldBeNil)
 
-			entries, counts, err := ParseStatus(statusPath)
+			entries, counts, err := parseStatus(statusPath)
 			So(err, ShouldBeNil)
 			So(len(entries), ShouldEqual, 25)
 
@@ -166,10 +166,10 @@ func TestWriteStatusFromRun(t *testing.T) {
 			So(entryCount, ShouldEqual, 25)
 
 			sumFromCounts := counts.Uploaded +
-				counts.Replaced + counts.Unmodified +
+				counts.Replaced + counts.Skipped +
 				counts.Missing + counts.Failed +
 				counts.Frozen + counts.Orphaned +
-				counts.Warning + counts.Hardlink +
+				counts.Warning + counts.Hardlinks +
 				counts.NotProcessed
 			So(sumFromCounts, ShouldEqual, 25)
 		})
@@ -216,10 +216,10 @@ func TestWriteStatusFromRun(t *testing.T) {
 
 			statusPath := filepath.Join(dir, "status6")
 
-			err = WriteStatusFromRun(runDir, statusPath, nil)
+			err = writeStatusFromRun(runDir, statusPath, nil)
 			So(err, ShouldBeNil)
 
-			entries, counts, err := ParseStatus(statusPath)
+			entries, counts, err := parseStatus(statusPath)
 			So(err, ShouldBeNil)
 			So(len(entries), ShouldEqual, 3)
 			So(counts.Uploaded, ShouldEqual, 2)
@@ -358,7 +358,7 @@ func TestStatusMemory(t *testing.T) {
 		var before runtime.MemStats
 		runtime.ReadMemStats(&before)
 
-		err := WriteStatusFromRun(runDir, statusPath, nil)
+		err := writeStatusFromRun(runDir, statusPath, nil)
 		So(err, ShouldBeNil)
 
 		runtime.GC()

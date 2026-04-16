@@ -33,110 +33,113 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/wtsi-hgi/ibackup/server"
+	"github.com/wtsi-hgi/ibackup/set"
 )
 
 func TestCalculateChunks(t *testing.T) {
 	Convey("CalculateChunks returns the optimal number of chunks", t, func() {
 		Convey("returns 0 for n=0", func() {
-			So(CalculateChunks(0, 250, 10000), ShouldEqual, 0)
+			So(calculateChunks(0, 250, 10000), ShouldEqual, 0)
 		})
 
 		Convey("returns 1 for n=1", func() {
-			So(CalculateChunks(1, 250, 10000), ShouldEqual, 1)
+			So(calculateChunks(1, 250, 10000), ShouldEqual, 1)
 		})
 
 		Convey("returns 1 for n=250 (exactly minChunk)", func() {
-			So(CalculateChunks(250, 250, 10000), ShouldEqual, 1)
+			So(calculateChunks(250, 250, 10000), ShouldEqual, 1)
 		})
 
 		Convey("returns 2 for n=251 (just over minChunk)", func() {
-			So(CalculateChunks(251, 250, 10000), ShouldEqual, 2)
+			So(calculateChunks(251, 250, 10000), ShouldEqual, 2)
 		})
 
 		Convey("returns 2 for n=500", func() {
-			So(CalculateChunks(500, 250, 10000), ShouldEqual, 2)
+			So(calculateChunks(500, 250, 10000), ShouldEqual, 2)
 		})
 
 		Convey("returns 40 for n=10000", func() {
-			So(CalculateChunks(10000, 250, 10000), ShouldEqual, 40)
+			So(calculateChunks(10000, 250, 10000), ShouldEqual, 40)
 		})
 
 		Convey("returns 100 for n=25000 (ideal hits TargetChunks)", func() {
-			So(CalculateChunks(25000, 250, 10000), ShouldEqual, 100)
+			So(calculateChunks(25000, 250, 10000), ShouldEqual, 100)
 		})
 
 		Convey("returns 100 for n=50000", func() {
-			So(CalculateChunks(50000, 250, 10000), ShouldEqual, 100)
+			So(calculateChunks(50000, 250, 10000), ShouldEqual, 100)
 		})
 
 		Convey("returns 100 for n=100000", func() {
-			So(CalculateChunks(100000, 250, 10000), ShouldEqual, 100)
+			So(calculateChunks(100000, 250, 10000), ShouldEqual, 100)
 		})
 
 		Convey("returns 100 for n=1000000 (at maxChunk boundary)", func() {
-			So(CalculateChunks(1000000, 250, 10000), ShouldEqual, 100)
+			So(calculateChunks(1000000, 250, 10000), ShouldEqual, 100)
 		})
 
 		Convey("returns 101 for n=1000001 (just over maxChunk boundary)", func() {
-			So(CalculateChunks(1000001, 250, 10000), ShouldEqual, 101)
+			So(calculateChunks(1000001, 250, 10000), ShouldEqual, 101)
 		})
 
 		Convey("returns 200 for n=2000000", func() {
-			So(CalculateChunks(2000000, 250, 10000), ShouldEqual, 200)
+			So(calculateChunks(2000000, 250, 10000), ShouldEqual, 200)
 		})
 
 		Convey("returns 1000 for n=10000000", func() {
-			So(CalculateChunks(10000000, 250, 10000), ShouldEqual, 1000)
+			So(calculateChunks(10000000, 250, 10000), ShouldEqual, 1000)
 		})
 
 		Convey("returns 1 for n=100 (below minChunk)", func() {
-			So(CalculateChunks(100, 250, 10000), ShouldEqual, 1)
+			So(calculateChunks(100, 250, 10000), ShouldEqual, 1)
 		})
 
 		Convey("returns 1 for n=249 (just below minChunk)", func() {
-			So(CalculateChunks(249, 250, 10000), ShouldEqual, 1)
+			So(calculateChunks(249, 250, 10000), ShouldEqual, 1)
 		})
 
 		Convey("returns 100 for n=999999 (just below maxChunk boundary)", func() {
-			So(CalculateChunks(999999, 250, 10000), ShouldEqual, 100)
+			So(calculateChunks(999999, 250, 10000), ShouldEqual, 100)
 		})
 
 		Convey("returns 100 for n=25001", func() {
-			So(CalculateChunks(25001, 250, 10000), ShouldEqual, 100)
+			So(calculateChunks(25001, 250, 10000), ShouldEqual, 100)
 		})
 
 		Convey("returns 5 for n=50 with min=10 max=20", func() {
-			So(CalculateChunks(50, 10, 20), ShouldEqual, 5)
+			So(calculateChunks(50, 10, 20), ShouldEqual, 5)
 		})
 
 		Convey("returns 125 for n=2500 with min=10 max=20", func() {
-			So(CalculateChunks(2500, 10, 20), ShouldEqual, 125)
+			So(calculateChunks(2500, 10, 20), ShouldEqual, 125)
 		})
 
 		Convey("returns 100 for n=1500 with min=10 max=20", func() {
-			So(CalculateChunks(1500, 10, 20), ShouldEqual, 100)
+			So(calculateChunks(1500, 10, 20), ShouldEqual, 100)
 		})
 
 		Convey("returns 3 for n=25 with degenerate min=max=10", func() {
-			So(CalculateChunks(25, 10, 10), ShouldEqual, 3)
+			So(calculateChunks(25, 10, 10), ShouldEqual, 3)
 		})
 
 		Convey("returns 10 for n=100 with degenerate min=max=10", func() {
-			So(CalculateChunks(100, 10, 10), ShouldEqual, 10)
+			So(calculateChunks(100, 10, 10), ShouldEqual, 10)
 		})
 
 		Convey("returns 50 for n=50 with min=1 max=100", func() {
-			So(CalculateChunks(50, 1, 100), ShouldEqual, 50)
+			So(calculateChunks(50, 1, 100), ShouldEqual, 50)
 		})
 
 		Convey("returns 10000 for n=100000000", func() {
-			So(CalculateChunks(100000000, 250, 10000), ShouldEqual, 10000)
+			So(calculateChunks(100000000, 250, 10000), ShouldEqual, 10000)
 		})
 
 		Convey("returns 3 for n=501", func() {
-			So(CalculateChunks(501, 250, 10000), ShouldEqual, 3)
+			So(calculateChunks(501, 250, 10000), ShouldEqual, 3)
 		})
 
 		Convey("table-driven comprehensive test", func() {
@@ -170,7 +173,7 @@ func TestCalculateChunks(t *testing.T) {
 			failures := 0
 
 			for _, tc := range cases {
-				got := CalculateChunks(tc.n, tc.minChunk, tc.maxChunk)
+				got := calculateChunks(tc.n, tc.minChunk, tc.maxChunk)
 				if got != tc.expected {
 					failures++
 				}
@@ -185,16 +188,14 @@ func TestChunk(t *testing.T) {
 	Convey("WriteShuffledChunks", t, func() {
 		dir := t.TempDir()
 
-		transform := func(local string) (string, error) {
-			return "/remote" + local, nil
-		}
+		transform := "prefix=/:/remote/"
 
 		Convey("splits 25 paths into 3 chunks with chunkSize 10", func() {
 			fofnPath := writeFofn(dir, generatePaths(25))
 			outDir := filepath.Join(dir, "out1")
 			So(os.MkdirAll(outDir, dirMode), ShouldBeNil)
 
-			paths, err := WriteShuffledChunks(fofnPath, transform, outDir, 10, 10, 1)
+			paths, err := writeShuffledChunks(fofnPath, transform, outDir, 10, 10, 1, 0)
 			So(err, ShouldBeNil)
 			So(paths, ShouldHaveLength, 3)
 
@@ -214,7 +215,7 @@ func TestChunk(t *testing.T) {
 			outDir := filepath.Join(dir, "out2")
 			So(os.MkdirAll(outDir, dirMode), ShouldBeNil)
 
-			paths, err := WriteShuffledChunks(fofnPath, transform, outDir, 10, 10, 1)
+			paths, err := writeShuffledChunks(fofnPath, transform, outDir, 10, 10, 1, 0)
 			So(err, ShouldBeNil)
 			So(paths, ShouldHaveLength, 1)
 
@@ -227,7 +228,7 @@ func TestChunk(t *testing.T) {
 			outDir := filepath.Join(dir, "out3")
 			So(os.MkdirAll(outDir, dirMode), ShouldBeNil)
 
-			paths, err := WriteShuffledChunks(fofnPath, transform, outDir, 10, 10, 1)
+			paths, err := writeShuffledChunks(fofnPath, transform, outDir, 10, 10, 1, 0)
 			So(err, ShouldBeNil)
 			So(paths, ShouldBeEmpty)
 		})
@@ -238,7 +239,7 @@ func TestChunk(t *testing.T) {
 			outDir := filepath.Join(dir, "out4")
 			So(os.MkdirAll(outDir, dirMode), ShouldBeNil)
 
-			paths, err := WriteShuffledChunks(fofnPath, transform, outDir, 10, 10, 1)
+			paths, err := writeShuffledChunks(fofnPath, transform, outDir, 10, 10, 1, 0)
 			So(err, ShouldBeNil)
 
 			allLocals, allRemotes := decodeAllChunks(paths)
@@ -266,13 +267,13 @@ func TestChunk(t *testing.T) {
 			outDir1 := filepath.Join(dir, "det1")
 			So(os.MkdirAll(outDir1, dirMode), ShouldBeNil)
 
-			paths1, err := WriteShuffledChunks(fofnPath, transform, outDir1, 10, 10, 42)
+			paths1, err := writeShuffledChunks(fofnPath, transform, outDir1, 10, 10, 42, 0)
 			So(err, ShouldBeNil)
 
 			outDir2 := filepath.Join(dir, "det2")
 			So(os.MkdirAll(outDir2, dirMode), ShouldBeNil)
 
-			paths2, err := WriteShuffledChunks(fofnPath, transform, outDir2, 10, 10, 42)
+			paths2, err := writeShuffledChunks(fofnPath, transform, outDir2, 10, 10, 42, 0)
 			So(err, ShouldBeNil)
 
 			So(len(paths1), ShouldEqual, len(paths2))
@@ -311,7 +312,7 @@ func TestChunk(t *testing.T) {
 				outDir := filepath.Join(dir, "seed1")
 				So(os.MkdirAll(outDir, dirMode), ShouldBeNil)
 
-				paths, err := WriteShuffledChunks(fofnPath, transform, outDir, 3, 3, 1)
+				paths, err := writeShuffledChunks(fofnPath, transform, outDir, 3, 3, 1, 0)
 				So(err, ShouldBeNil)
 				So(paths, ShouldHaveLength, 4)
 
@@ -334,7 +335,7 @@ func TestChunk(t *testing.T) {
 				outDir := filepath.Join(dir, "seed2")
 				So(os.MkdirAll(outDir, dirMode), ShouldBeNil)
 
-				paths, err := WriteShuffledChunks(fofnPath, transform, outDir, 3, 3, 2)
+				paths, err := writeShuffledChunks(fofnPath, transform, outDir, 3, 3, 2, 0)
 				So(err, ShouldBeNil)
 				So(paths, ShouldHaveLength, 4)
 
@@ -370,7 +371,7 @@ func TestChunk(t *testing.T) {
 			var before runtime.MemStats
 			runtime.ReadMemStats(&before)
 
-			_, err := WriteShuffledChunks(fofnPath, transform, outDir, chunkSz, chunkSz, 1)
+			_, err := writeShuffledChunks(fofnPath, transform, outDir, chunkSz, chunkSz, 1, 0)
 			So(err, ShouldBeNil)
 
 			runtime.GC()
@@ -391,7 +392,7 @@ func TestChunk(t *testing.T) {
 			outDir := filepath.Join(dir, "vc2_1")
 			So(os.MkdirAll(outDir, dirMode), ShouldBeNil)
 
-			paths, err := WriteShuffledChunks(fofnPath, transform, outDir, 10, 10, 1)
+			paths, err := writeShuffledChunks(fofnPath, transform, outDir, 10, 10, 1, 0)
 			So(err, ShouldBeNil)
 			So(paths, ShouldHaveLength, 3)
 
@@ -404,9 +405,7 @@ func TestChunk(t *testing.T) {
 			outDir := filepath.Join(dir, "vc2_2")
 			So(os.MkdirAll(outDir, dirMode), ShouldBeNil)
 
-			paths, err := WriteShuffledChunks(
-				fofnPath, transform, outDir, 250, 10000, 1,
-			)
+			paths, err := writeShuffledChunks(fofnPath, transform, outDir, 250, 10000, 1, 0)
 			So(err, ShouldBeNil)
 			So(paths, ShouldHaveLength, 100)
 
@@ -419,9 +418,7 @@ func TestChunk(t *testing.T) {
 			outDir := filepath.Join(dir, "vc2_3")
 			So(os.MkdirAll(outDir, dirMode), ShouldBeNil)
 
-			paths, err := WriteShuffledChunks(
-				fofnPath, transform, outDir, 250, 10000, 1,
-			)
+			paths, err := writeShuffledChunks(fofnPath, transform, outDir, 250, 10000, 1, 0)
 			So(err, ShouldBeNil)
 			So(paths, ShouldHaveLength, 1)
 
@@ -434,7 +431,7 @@ func TestChunk(t *testing.T) {
 			outDir := filepath.Join(dir, "vc2_4")
 			So(os.MkdirAll(outDir, dirMode), ShouldBeNil)
 
-			paths, err := WriteShuffledChunks(fofnPath, transform, outDir, 2, 2, 1)
+			paths, err := writeShuffledChunks(fofnPath, transform, outDir, 2, 2, 1, 0)
 			So(err, ShouldBeNil)
 			So(paths, ShouldHaveLength, 101)
 
@@ -447,9 +444,7 @@ func TestChunk(t *testing.T) {
 			outDir := filepath.Join(dir, "vc2_5")
 			So(os.MkdirAll(outDir, dirMode), ShouldBeNil)
 
-			paths, err := WriteShuffledChunks(
-				fofnPath, transform, outDir, 250, 10000, 1,
-			)
+			paths, err := writeShuffledChunks(fofnPath, transform, outDir, 250, 10000, 1, 0)
 			So(err, ShouldBeNil)
 			So(paths, ShouldBeNil)
 		})
@@ -459,53 +454,12 @@ func TestChunk(t *testing.T) {
 			outDir := filepath.Join(dir, "vc2_6")
 			So(os.MkdirAll(outDir, dirMode), ShouldBeNil)
 
-			paths, err := WriteShuffledChunks(
-				fofnPath, transform, outDir, 250, 10000, 1,
-			)
+			paths, err := writeShuffledChunks(fofnPath, transform, outDir, 250, 10000, 1, 0)
 			So(err, ShouldBeNil)
 			So(paths, ShouldHaveLength, 1)
 
 			totalLines := countChunkLines(paths)
 			So(totalLines, ShouldEqual, 1)
-		})
-
-		Convey("VC2-7: minChunk=0 returns error, no chunks", func() {
-			fofnPath := writeFofn(dir, generatePaths(10))
-			outDir := filepath.Join(dir, "vc2_7")
-			So(os.MkdirAll(outDir, dirMode), ShouldBeNil)
-
-			paths, err := WriteShuffledChunks(fofnPath, transform, outDir, 0, 10, 1)
-			So(err, ShouldNotBeNil)
-			So(paths, ShouldBeNil)
-
-			entries := dirEntries(outDir)
-			So(entries, ShouldBeEmpty)
-		})
-
-		Convey("VC2-8: maxChunk=0 returns error, no chunks", func() {
-			fofnPath := writeFofn(dir, generatePaths(10))
-			outDir := filepath.Join(dir, "vc2_8")
-			So(os.MkdirAll(outDir, dirMode), ShouldBeNil)
-
-			paths, err := WriteShuffledChunks(fofnPath, transform, outDir, 10, 0, 1)
-			So(err, ShouldNotBeNil)
-			So(paths, ShouldBeNil)
-
-			entries := dirEntries(outDir)
-			So(entries, ShouldBeEmpty)
-		})
-
-		Convey("VC2-9: minChunk > maxChunk returns error, no chunks", func() {
-			fofnPath := writeFofn(dir, generatePaths(10))
-			outDir := filepath.Join(dir, "vc2_9")
-			So(os.MkdirAll(outDir, dirMode), ShouldBeNil)
-
-			paths, err := WriteShuffledChunks(fofnPath, transform, outDir, 500, 100, 1)
-			So(err, ShouldNotBeNil)
-			So(paths, ShouldBeNil)
-
-			entries := dirEntries(outDir)
-			So(entries, ShouldBeEmpty)
 		})
 
 		Convey("VC2-10: 1M entries streams without excessive memory", func() {
@@ -523,7 +477,7 @@ func TestChunk(t *testing.T) {
 			var before runtime.MemStats
 			runtime.ReadMemStats(&before)
 
-			_, err := WriteShuffledChunks(fofnPath, transform, outDir, 250, 10000, 1)
+			_, err := writeShuffledChunks(fofnPath, transform, outDir, 250, 10000, 1, 0)
 			So(err, ShouldBeNil)
 
 			runtime.GC()
@@ -538,31 +492,74 @@ func TestChunk(t *testing.T) {
 
 			So(growth, ShouldBeLessThan, 20*1024*1024)
 		})
+
+		Convey("Files in a FOFN that haven't been updated are not re-uploaded", func() {
+			client := NewClient(dir)
+			got := &set.Set{Transformer: transform, LastDiscovery: time.Unix(2000, 0)}
+
+			So(client.AddOrUpdateSet(got), ShouldBeNil)
+			So(os.Mkdir(filepath.Join(dir, got.ID(), "1000"), 0700), ShouldBeNil)
+			So(client.MergeFilesWithMTimes(got.ID(), []server.PathMTime{
+				{Path: "/some/file/a", MTime: 900},
+				{Path: "/some/file/b", MTime: 800},
+				{Path: "/some/file/c", MTime: 1200},
+				{Path: "/some/file/d", MTime: 1500},
+			}), ShouldBeNil)
+			So(client.TriggerDiscovery(got.ID(), false), ShouldBeNil)
+
+			client.setLastDiscovery(got)
+
+			watcher, err := NewWatcher(dir, &mockJobSubmitter{}, ProcessSubDirConfig{MinChunk: 10, MaxChunk: 100})
+			So(err, ShouldBeNil)
+
+			So(watcher.poll(), ShouldBeNil)
+
+			chunk, err := os.ReadFile(filepath.Join(dir, got.ID(), "2000", "chunk.000000"))
+			So(err, ShouldBeNil)
+			So(string(chunk), ShouldEqual,
+				base64.StdEncoding.EncodeToString([]byte("/some/file/c"))+"\t"+
+					base64.StdEncoding.EncodeToString([]byte("/remote/some/file/c"))+"\n"+
+					base64.StdEncoding.EncodeToString([]byte("/some/file/d"))+"\t"+
+					base64.StdEncoding.EncodeToString([]byte("/remote/some/file/d"))+"\n")
+
+			unmodified, err := os.ReadFile(filepath.Join(dir, got.ID(), "2000", unmodifiedReport))
+			So(err, ShouldBeNil)
+			So(string(unmodified), ShouldEqual, "\"/some/file/a\"\t\"/remote/some/file/a\"\tunmodified\t\"\"\n"+
+				"\"/some/file/b\"\t\"/remote/some/file/b\"\tunmodified\t\"\"\n")
+
+			got, err = client.GetSetByName("", "")
+			So(err, ShouldBeNil)
+
+			So(got.Skipped, ShouldEqual, 2)
+			So(got.NumFiles, ShouldEqual, 4)
+		})
 	})
 }
 
 // writeFofn creates a null-terminated fofn file containing
 // the given paths and returns its path.
-func writeFofn(dir string, paths []string) string {
-	p := filepath.Join(dir, fofnFilename)
+func writeFofn(dir string, paths []string, cfg ...subDirConfig) string {
+	tx := "prefix=/:/"
+	frozen := false
+	metadata := map[string]string{}
+	name := ""
 
-	f, err := os.Create(p)
-	So(err, ShouldBeNil)
-
-	writeErrors := 0
-
-	for _, path := range paths {
-		if _, wErr := f.WriteString(path + "\x00"); wErr != nil {
-			writeErrors++
-		}
+	if len(cfg) == 1 {
+		tx = cfg[0].Transformer
+		frozen = cfg[0].Freeze
+		metadata = cfg[0].Metadata
+		name = cfg[0].Name
 	}
 
-	So(writeErrors, ShouldEqual, 0)
+	client := NewClient(dir)
+	set := &set.Set{Name: name, Transformer: tx, Frozen: frozen, Metadata: metadata}
+	id := set.ID()
 
-	err = f.Close()
-	So(err, ShouldBeNil)
+	So(client.AddOrUpdateSet(set), ShouldBeNil)
+	So(client.MergeFiles(id, paths), ShouldBeNil)
+	So(client.TriggerDiscovery(id, false), ShouldBeNil)
 
-	return p
+	return filepath.Join(dir, id, fofnFilename)
 }
 
 // generatePaths creates n paths of the form /path/000000.

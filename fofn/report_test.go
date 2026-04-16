@@ -43,7 +43,7 @@ func TestReportLine(t *testing.T) {
 				Error:  "",
 			}
 
-			result := FormatReportLine(entry)
+			result := formatReportLine(entry)
 			So(result, ShouldEqual, "\"/a/b\"\t\"/c/d\"\tuploaded\t\"\"")
 		})
 
@@ -55,14 +55,14 @@ func TestReportLine(t *testing.T) {
 				Error:  "conn\treset",
 			}
 
-			result := FormatReportLine(entry)
+			result := formatReportLine(entry)
 			So(result, ShouldEqual, "\"/a\\tb\"\t\"/c\\td\"\tfailed\t\"conn\\treset\"")
 		})
 
 		Convey("parse a simple line", func() {
 			line := "\"/a/b\"\t\"/c/d\"\tuploaded\t\"\""
 
-			entry, err := ParseReportLine(line)
+			entry, err := parseReportLine(line)
 			So(err, ShouldBeNil)
 			So(entry.Local, ShouldEqual, "/a/b")
 			So(entry.Remote, ShouldEqual, "/c/d")
@@ -73,7 +73,7 @@ func TestReportLine(t *testing.T) {
 		Convey("parse a line with tabs in fields", func() {
 			line := "\"/a\\tb\"\t\"/c\\td\"\tfailed\t\"conn\\treset\""
 
-			entry, err := ParseReportLine(line)
+			entry, err := parseReportLine(line)
 			So(err, ShouldBeNil)
 			So(entry.Local, ShouldEqual, "/a\tb")
 			So(entry.Remote, ShouldEqual, "/c\td")
@@ -84,7 +84,7 @@ func TestReportLine(t *testing.T) {
 		Convey("parse a malformed line returns error", func() {
 			line := "only\ttwo"
 
-			_, err := ParseReportLine(line)
+			_, err := parseReportLine(line)
 			So(err, ShouldNotBeNil)
 		})
 	})
@@ -118,7 +118,7 @@ func TestReportWriteAndRead(t *testing.T) {
 
 			var got []ReportEntry
 
-			err = ParseReportCallback(path,
+			err = parseReportCallback(path,
 				func(entry ReportEntry) error {
 					got = append(got, entry)
 
@@ -136,7 +136,7 @@ func TestReportWriteAndRead(t *testing.T) {
 		})
 
 		Convey("non-existent file returns error", func() {
-			err := ParseReportCallback("/no/such/file",
+			err := parseReportCallback("/no/such/file",
 				func(ReportEntry) error {
 					return nil
 				})
@@ -155,7 +155,7 @@ func TestReportWriteAndRead(t *testing.T) {
 
 			count := 0
 
-			err = ParseReportCallback(path,
+			err = parseReportCallback(path,
 				func(ReportEntry) error {
 					count++
 
@@ -189,7 +189,7 @@ func TestReportWriteAndRead(t *testing.T) {
 
 			count := 0
 
-			err = ParseReportCallback(path,
+			err = parseReportCallback(path,
 				func(ReportEntry) error {
 					count++
 

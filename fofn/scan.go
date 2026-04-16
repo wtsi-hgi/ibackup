@@ -34,18 +34,18 @@ import (
 
 const fofnFilename = "fofn"
 
-// SubDir represents a subdirectory that contains a fofn file. FofnMtime holds
+// subDir represents a subdirectory that contains a fofn file. FofnMtime holds
 // the fofn's modification time as a Unix timestamp, populated during scan so
 // that callers need not stat each fofn separately.
-type SubDir struct {
+type subDir struct {
 	Path      string // absolute path to subdirectory
 	FofnMtime int64  // Unix mtime of the fofn file
 }
 
-// ScanForFOFNs returns subdirectories of watchDir that contain a file named
+// scanForFOFNs returns subdirectories of watchDir that contain a file named
 // "fofn". Each returned SubDir includes the fofn's mtime, avoiding a separate
 // stat call per directory during the poll cycle.
-func ScanForFOFNs(watchDir string) ([]SubDir, error) {
+func scanForFOFNs(watchDir string) ([]subDir, error) {
 	if _, err := os.Stat(watchDir); err != nil {
 		return nil, err
 	}
@@ -55,7 +55,7 @@ func ScanForFOFNs(watchDir string) ([]SubDir, error) {
 		return nil, fmt.Errorf("glob fofns: %w", err)
 	}
 
-	result := make([]SubDir, 0, len(matches))
+	result := make([]subDir, 0, len(matches))
 
 	for _, m := range matches {
 		info, statErr := os.Stat(m)
@@ -67,7 +67,7 @@ func ScanForFOFNs(watchDir string) ([]SubDir, error) {
 			return nil, fmt.Errorf("stat fofn: %w", statErr)
 		}
 
-		result = append(result, SubDir{
+		result = append(result, subDir{
 			Path:      filepath.Dir(m),
 			FofnMtime: info.ModTime().Unix(),
 		})

@@ -60,7 +60,7 @@ func TestScanForFOFNs(t *testing.T) {
 
 			pathC := createSubWithFOFN("c")
 
-			result, err := ScanForFOFNs(dir)
+			result, err := scanForFOFNs(dir)
 			So(err, ShouldBeNil)
 			So(result, ShouldHaveLength, 2)
 
@@ -77,7 +77,7 @@ func TestScanForFOFNs(t *testing.T) {
 			emptyDir := filepath.Join(dir, "empty")
 			So(os.MkdirAll(emptyDir, dirMode), ShouldBeNil)
 
-			result, err := ScanForFOFNs(emptyDir)
+			result, err := scanForFOFNs(emptyDir)
 			So(err, ShouldBeNil)
 			So(result, ShouldBeEmpty)
 		})
@@ -87,7 +87,7 @@ func TestScanForFOFNs(t *testing.T) {
 
 			createSubWithoutFOFN("y")
 
-			result, err := ScanForFOFNs(dir)
+			result, err := scanForFOFNs(dir)
 			So(err, ShouldBeNil)
 			So(result, ShouldHaveLength, 1)
 			So(result[0].Path, ShouldEqual, pathX)
@@ -100,14 +100,14 @@ func TestScanForFOFNs(t *testing.T) {
 			So(os.MkdirAll(raceSub, dirMode), ShouldBeNil)
 			So(os.Symlink(filepath.Join(dir, "gone"), filepath.Join(raceSub, fofnFilename)), ShouldBeNil)
 
-			result, err := ScanForFOFNs(dir)
+			result, err := scanForFOFNs(dir)
 			So(err, ShouldBeNil)
 			So(result, ShouldHaveLength, 1)
 			So(result[0].Path, ShouldEqual, pathGood)
 		})
 
 		Convey("non-existent watchDir returns error", func() {
-			_, err := ScanForFOFNs(filepath.Join(dir, "nope"))
+			_, err := scanForFOFNs(filepath.Join(dir, "nope"))
 			So(err, ShouldNotBeNil)
 		})
 	})

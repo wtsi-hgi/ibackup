@@ -34,6 +34,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/VertebrateResequencing/wr/client"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/wtsi-hgi/ibackup/fofn"
@@ -174,7 +175,15 @@ func runWatchFofns() error {
 		return fmt.Errorf("failed to determine executable path: %w", err)
 	}
 
-	submitter, err := fofn.NewWRSubmitter(watchWRDeployment, queues, queueAvoid, appLogger)
+	const wrConnectTimeout = 10 * time.Second
+
+	submitter, err := client.New(client.SchedulerSettings{
+		Deployment:  watchWRDeployment,
+		Timeout:     wrConnectTimeout,
+		Logger:      appLogger,
+		Queue:       queues,
+		QueuesAvoid: queueAvoid,
+	})
 	if err != nil {
 		return err
 	}
@@ -185,7 +194,10 @@ func runWatchFofns() error {
 		}
 	}()
 
-	watcher := createWatcher(exe, submitter)
+	watcher, err := createWatcher(exe, submitter)
+	if err != nil {
+		return err
+	}
 
 	ctx, cancel := watchCtxFunc()
 	defer cancel()
@@ -273,7 +285,7 @@ func validateChunkFlags() error {
 
 // createWatcher builds a Watcher with the configured
 // options and the given submitter.
-func createWatcher(exe string, submitter fofn.JobSubmitter) *fofn.Watcher {
+func createWatcher(exe string, submitter fofn.JobSubmitter) (*fofn.Watcher, error) {
 	cfg := fofn.ProcessSubDirConfig{
 		MinChunk: watchMinChunk,
 		MaxChunk: watchMaxChunk,
