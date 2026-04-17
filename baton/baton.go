@@ -35,6 +35,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -586,7 +587,11 @@ func (b *Baton) Put(local, remote string) error {
 }
 
 func (b *Baton) removeAndRetry(item *ex.RodsItem) error {
-	if _, err := b.putClient.RemObj(ex.Args{}, *item); err != nil {
+	if err := timeoutOp(func() error {
+		_, err := b.putClient.RemObj(ex.Args{}, *item)
+
+		return err
+	}, path.Join(item.IDirectory, item.IFile)); err != nil {
 		return err
 	}
 

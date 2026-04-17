@@ -379,6 +379,8 @@ exec 3>&-;`)
 		h, err := GetBatonHandler()
 		So(err, ShouldBeNil)
 
+		Reset(h.Cleanup)
+
 		bh := make(chan func(*ex.Envelope), 1)
 
 		Reset(func() { close(bh) })
@@ -419,7 +421,7 @@ exec 3>&-;`)
 			So(err.Error(), ShouldEqual, "put operation failed: bad code: 123")
 		})
 
-		Convey("An upload error'ing due to a space issue is retried after deleting", func() {
+		Convey("An upload erroring due to a space issue is retried after deleting", func() {
 			bh <- func(e *ex.Envelope) {
 				e.ErrorMsg = &ex.ErrorMsg{Code: errSysCopyLen, Message: "SYS_COPY_LEN_ERR"}
 
