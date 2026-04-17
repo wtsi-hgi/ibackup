@@ -27,7 +27,10 @@
 package baton
 
 import (
+	"encoding/json"
 	"errors"
+	"net"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -346,6 +349,123 @@ func TestBatonConcurrentClientInit(t *testing.T) {
 		}
 
 		So(errs, ShouldBeEmpty)
+	})
+}
+
+func TestUploadRetry(t *testing.T) {
+	path := os.Getenv("PATH")
+
+	Convey("With a pseudo baton script", t, func() {
+		l, err := net.Listen("tcp", "127.0.0.1:0") //nolint:noctx
+		So(err, ShouldBeNil)
+		Reset(func() { l.Close() })
+
+		dir := t.TempDir()
+
+		port := strconv.Itoa(l.Addr().(*net.TCPAddr).Port) //nolint:forcetypeassert,errcheck
+
+		source := []byte(`#!/bin/bash
+exec 3<>/dev/tcp/127.0.0.1/` + port + `;
+cat <&3 &
+declare PID=$!;
+cat >&3;
+kill $PID;
+exec 3>&-;`)
+
+		So(os.WriteFile(filepath.Join(dir, "baton-do"), source, 0700), ShouldBeNil) //nolint:gosec
+
+		t.Setenv("PATH", dir+":"+path)
+
+		h, err := GetBatonHandler()
+		So(err, ShouldBeNil)
+
+		Reset(h.Cleanup)
+
+		bh := make(chan func(*ex.Envelope), 1)
+
+		Reset(func() { close(bh) })
+
+		go func() {
+			c, errr := l.Accept()
+			if errr != nil {
+				return
+			}
+
+			defer c.Close()
+
+			dec := json.NewDecoder(c)
+			enc := json.NewEncoder(c)
+
+			for fn := range bh {
+				var env ex.Envelope
+
+				dec.Decode(&env) //nolint:errcheck
+				fn(&env)
+				enc.Encode(&env) //nolint:errcheck
+			}
+		}()
+
+		Convey("You can 'upload' files", func() {
+			bh <- func(e *ex.Envelope) {
+				e.Result = &ex.ResultWrapper{Item: &e.Target}
+			}
+
+			So(h.Put("/some/local/file", "/some/remote/file"), ShouldBeNil)
+
+			bh <- func(e *ex.Envelope) {
+				e.ErrorMsg = &ex.ErrorMsg{Code: 123, Message: "bad"}
+			}
+
+			err = h.Put("/some/local/file", "/some/remote/file")
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldEqual, "put operation failed: bad code: 123")
+		})
+
+		Convey("An upload erroring due to a space issue is retried after deleting", func() {
+			bh <- func(e *ex.Envelope) {
+				e.ErrorMsg = &ex.ErrorMsg{Code: errSysCopyLen, Message: "SYS_COPY_LEN_ERR"}
+
+				bh <- func(e *ex.Envelope) {
+					e.Result = &ex.ResultWrapper{Item: &e.Target}
+
+					bh <- func(e *ex.Envelope) {
+						e.Result = &ex.ResultWrapper{Item: &e.Target}
+					}
+				}
+			}
+
+			So(h.Put("/some/local/file", "/some/remote/file"), ShouldBeNil)
+		})
+
+		Convey("Errors are correctly returned when retrying an upload", func() {
+			bh <- func(e *ex.Envelope) {
+				e.ErrorMsg = &ex.ErrorMsg{Code: errSysCopyLen, Message: "SYS_COPY_LEN_ERR"}
+
+				bh <- func(e *ex.Envelope) {
+					e.ErrorMsg = &ex.ErrorMsg{Code: 1234, Message: "BAD"}
+				}
+			}
+
+			err = h.Put("/some/local/file", "/some/remote/file")
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldEqual, "remove operation failed: BAD code: 1234")
+
+			bh <- func(e *ex.Envelope) {
+				e.ErrorMsg = &ex.ErrorMsg{Code: errSysCopyLen, Message: "SYS_COPY_LEN_ERR"}
+
+				bh <- func(e *ex.Envelope) {
+					e.Result = &ex.ResultWrapper{Item: &e.Target}
+
+					bh <- func(e *ex.Envelope) {
+						e.ErrorMsg = &ex.ErrorMsg{Code: 12345, Message: "BAD"}
+					}
+				}
+			}
+
+			err = h.Put("/some/local/file", "/some/remote/file")
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldEqual, "put operation failed: BAD code: 12345")
+		})
 	})
 }
 

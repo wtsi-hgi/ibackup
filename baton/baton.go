@@ -35,6 +35,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -67,6 +68,8 @@ const (
 	operationBackoffFactor = 1.1
 	operationTimeout       = 60 * time.Second
 	operationRetries       = 6
+
+	errSysCopyLen = -27000
 )
 
 // Baton is a Handler that uses Baton (via extendo) to interact with iRODS.
@@ -543,6 +546,10 @@ func RodsItemToMeta(it ex.RodsItem) map[string]string {
 // exists. It calculates and stores the md5 checksum remotely, comparing to the
 // local checksum. It creates a new put client if necessary so after calling
 // this function you must eventually call Cleanup().
+//
+// In the event of a SYS_COPY_LEN_ERR error, which might indicate an issue
+// overwriting a file due to limited storage available, the remote file will be
+// removed and the upload will be retried.
 func (b *Baton) Put(local, remote string) error {
 	err := b.setClientIfNotExists(&b.putClient)
 	if err != nil {
@@ -572,6 +579,23 @@ func (b *Baton) Put(local, remote string) error {
 		},
 		*item,
 	)
+	if re, ok := errors.AsType[*ex.RodsError](err); ok && re.Code() == errSysCopyLen {
+		err = b.removeAndRetry(item)
+	}
+
+	return err
+}
+
+func (b *Baton) removeAndRetry(item *ex.RodsItem) error {
+	if err := timeoutOp(func() error {
+		_, err := b.putClient.RemObj(ex.Args{}, *item)
+
+		return err
+	}, path.Join(item.IDirectory, item.IFile)); err != nil {
+		return err
+	}
+
+	_, err := b.putClient.Put(ex.Args{Force: true, Verify: true}, *item)
 
 	return err
 }
