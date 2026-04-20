@@ -81,7 +81,7 @@ func prepareChunks(
 	}
 
 	if chunks == nil {
-		_ = os.Remove(runDir)
+		_ = os.RemoveAll(runDir)
 
 		return "", nil, nil
 	}
@@ -102,10 +102,6 @@ type runState struct {
 // the active run, or an error.
 func processSubDir(subDir subDir, submitter JobSubmitter,
 	cfg ProcessSubDirConfig, lastRunTime int64) (runState, error) {
-	if subDir.FofnMtime == 0 {
-		return runState{}, nil
-	}
-
 	sdCfg, err := readConfig(subDir.Path)
 	if err != nil {
 		return runState{}, err
@@ -228,7 +224,7 @@ func (w *Watcher) reconcile(sd subDir, allStatus map[string]runJobStatus) error 
 		return err
 	}
 
-	return removeDirs(scan.staleDirs, sd.Path)
+	return removeDirs(scan.staleDirs)
 }
 
 // scanRunDirs reads subDirPath once and partitions numeric subdirectories into
@@ -265,7 +261,7 @@ func (w *Watcher) dispatch(sd subDir, scan runDirScan, status runJobStatus) erro
 		state.RunDir = scan.runDir
 	}
 
-	if err != nil {
+	if err != nil || state.RunDir == "" {
 		return err
 	}
 
@@ -287,9 +283,7 @@ func ensureArtefacts(runDir string, sd subDir, status runJobStatus) error {
 }
 
 // removeDirs removes a list of directories and returns any removal errors.
-//
-// Also deref's status symlink if target would be removed.
-func removeDirs(dirs []string, fofnDir string) error { //nolint:gocognit
+func removeDirs(dirs []string) error { //nolint:gocognit
 	var errs []error
 
 	for _, dir := range dirs {

@@ -199,7 +199,7 @@ func assignSummaryCount( //nolint:gocyclo,cyclop,funlen
 	}
 }
 
-func writeAndSyncStatus(w *bufWriter, chunks []string, buried map[string]bool) ([]string, error) {
+func writeStatus(w *bufWriter, chunks []string, buried map[string]bool) ([]string, error) {
 	counts, issues, err := processAllChunks(w, chunks, buried)
 	if err != nil {
 		return nil, err
@@ -607,12 +607,12 @@ func writeStatusToFile(path string, chunks []string, buried map[string]bool) (is
 	}
 
 	defer func() {
-		if errr := w.Close(); err != nil {
+		if errr := w.Close(); err == nil {
 			err = errr
 		}
 	}()
 
-	issues, err = writeAndSyncStatus(w, chunks, buried)
+	issues, err = writeStatus(w, chunks, buried)
 	if err != nil {
 		return nil, err
 	}

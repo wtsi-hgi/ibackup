@@ -244,7 +244,7 @@ type PathMTime struct {
 	MTime int64
 }
 
-// MergeFilesWithMTimes acts simply calls MergeFiles with the slice of paths
+// MergeFilesWithMTimes simply calls MergeFiles with the slice of paths
 // generated from the slice of PathMTime objects.
 func (c *Client) MergeFilesWithMTimes(setID string, paths []PathMTime) error {
 	p := make([]string, len(paths))

@@ -149,7 +149,7 @@ func newChunkWriters(dir string, numChunks int, hasUnchanged bool, randSeed int6
 	if hasUnchanged {
 		w, err := newBufWriter(filepath.Join(dir, unmodifiedReport))
 		if err != nil {
-			return nil, fmt.Errorf("failed to unchaged report file: %w", err)
+			return nil, fmt.Errorf("failed to create unchanged report file: %w", err)
 		}
 
 		c.unchangeWriter = w
