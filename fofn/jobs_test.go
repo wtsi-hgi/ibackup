@@ -42,7 +42,7 @@ var errTest = errors.New("test error")
 func TestBuildPutCommand(t *testing.T) {
 	Convey("BuildPutCommand", t, func() {
 		Convey("builds a basic command without optional flags", func() {
-			cmd := BuildPutCommand("ibackup", "chunk.000000", "", false, "project1", "")
+			cmd := buildPutCommand("ibackup", "chunk.000000", "", false, "project1", "")
 			So(cmd, ShouldEqual,
 				shell.Quote("ibackup")+` put -v -l 'chunk.000000.log' `+
 					`--report 'chunk.000000.report' `+
@@ -52,17 +52,17 @@ func TestBuildPutCommand(t *testing.T) {
 		})
 
 		Convey("includes --no_replace when noReplace is true", func() {
-			cmd := BuildPutCommand("", "chunk.000000", "", true, "project1", "")
+			cmd := buildPutCommand("", "chunk.000000", "", true, "project1", "")
 			So(cmd, ShouldContainSubstring, "--no_replace")
 		})
 
 		Convey("includes --meta with quoted value when userMeta is set", func() {
-			cmd := BuildPutCommand("", "chunk.000000", "", false, "project1", "colour=red;size=large")
+			cmd := buildPutCommand("", "chunk.000000", "", false, "project1", "colour=red;size=large")
 			So(cmd, ShouldContainSubstring, `--meta 'colour=red;size=large'`)
 		})
 
 		Convey("single-quotes and escapes user-controlled values", func() {
-			cmd := BuildPutCommand("", "chunk.'$(touch /tmp/nope)'", "", false, "proj'$(id)'", "colour=red';`uname`")
+			cmd := buildPutCommand("", "chunk.'$(touch /tmp/nope)'", "", false, "proj'$(id)'", "colour=red';`uname`")
 
 			So(cmd, ShouldContainSubstring, `--fofn 'proj'"'"'$(id)'"'"''`)
 			So(cmd, ShouldContainSubstring, `--meta 'colour=red'"'"';`+"`"+`uname`+"`"+`'`)
@@ -70,17 +70,17 @@ func TestBuildPutCommand(t *testing.T) {
 		})
 
 		Convey("omits --fofn when fofnName is empty", func() {
-			cmd := BuildPutCommand("", "chunk.000000", "", false, "", "")
+			cmd := buildPutCommand("", "chunk.000000", "", false, "", "")
 			So(cmd, ShouldNotContainSubstring, "--fofn")
 		})
 
 		Convey("omits --statter flag when statter path is empty", func() {
-			cmd := BuildPutCommand("", "chunk.000000", "", false, "", "")
+			cmd := buildPutCommand("", "chunk.000000", "", false, "", "")
 			So(cmd, ShouldNotContainSubstring, "--statter")
 		})
 
 		Convey("includes --statter flag when statter path is supplied", func() {
-			cmd := BuildPutCommand("", "chunk.000000", "/path/to/statter", false, "", "")
+			cmd := buildPutCommand("", "chunk.000000", "/path/to/statter", false, "", "")
 			So(cmd, ShouldContainSubstring, "--statter '/path/to/statter'")
 		})
 	})
@@ -102,10 +102,10 @@ func TestCreateJobs(t *testing.T) {
 				Retries:    3,
 			}
 
-			jobs := CreateJobs(mock, cfg)
+			jobs := createJobs(mock, cfg)
 			So(jobs, ShouldHaveLength, 2)
 
-			expectedCmd0 := BuildPutCommand("", "chunk.000000", "", false, "proj", "")
+			expectedCmd0 := buildPutCommand("", "chunk.000000", "", false, "proj", "")
 			So(jobs[0].Cmd, ShouldEqual, expectedCmd0)
 			So(jobs[0].Cwd, ShouldEqual, "/watch/proj/123")
 			So(jobs[0].CwdMatters, ShouldBeTrue)
@@ -117,7 +117,7 @@ func TestCreateJobs(t *testing.T) {
 			So(jobs[0].Retries, ShouldEqual, uint8(3))
 			So(jobs[0].LimitGroups, ShouldResemble, []string{"irods"})
 
-			expectedCmd1 := BuildPutCommand("", "chunk.000001", "", false, "proj", "")
+			expectedCmd1 := buildPutCommand("", "chunk.000001", "", false, "proj", "")
 			So(jobs[1].Cmd, ShouldEqual, expectedCmd1)
 		})
 
@@ -131,7 +131,7 @@ func TestCreateJobs(t *testing.T) {
 					Retries:    0,
 				}
 
-				jobs := CreateJobs(mock, cfg)
+				jobs := createJobs(mock, cfg)
 				So(jobs, ShouldHaveLength, 1)
 				So(jobs[0].Retries, ShouldEqual, uint8(0))
 			})
@@ -145,7 +145,7 @@ func TestCreateJobs(t *testing.T) {
 				NoReplace:  true,
 			}
 
-			jobs := CreateJobs(mock, cfg)
+			jobs := createJobs(mock, cfg)
 			So(jobs[0].Cmd, ShouldContainSubstring, "--no_replace")
 		})
 
@@ -159,7 +159,7 @@ func TestCreateJobs(t *testing.T) {
 				Time:       4 * time.Hour,
 			}
 
-			jobs := CreateJobs(mock, cfg)
+			jobs := createJobs(mock, cfg)
 			So(jobs[0].Requirements.RAM, ShouldEqual, 2048)
 			So(jobs[0].Requirements.Time, ShouldEqual, 4*time.Hour)
 		})
@@ -170,7 +170,7 @@ func TestCreateJobs(t *testing.T) {
 				Group:      "some-group",
 			}
 
-			jobs := CreateJobs(mock, cfg)
+			jobs := createJobs(mock, cfg)
 			So(jobs[0].Group, ShouldEqual, "some-group")
 		})
 	})
@@ -284,7 +284,7 @@ func TestClassifyAllJobs(t *testing.T) {
 		Convey("returns empty map when no jobs exist", func() {
 			mock := &mockJobSubmitter{}
 
-			result, err := ClassifyAllJobs(mock)
+			result, err := classifyAllJobs(mock)
 			So(err, ShouldBeNil)
 			So(result, ShouldHaveLength, 0)
 		})
@@ -303,7 +303,7 @@ func TestClassifyAllJobs(t *testing.T) {
 				},
 			}
 
-			result, err := ClassifyAllJobs(mock)
+			result, err := classifyAllJobs(mock)
 			So(err, ShouldBeNil)
 			So(result, ShouldHaveLength, 2)
 			So(result["ibackup_fofn_proj1_100"].HasRunning, ShouldBeTrue)
@@ -321,7 +321,7 @@ func TestClassifyAllJobs(t *testing.T) {
 				},
 			}
 
-			result, err := ClassifyAllJobs(mock)
+			result, err := classifyAllJobs(mock)
 			So(err, ShouldBeNil)
 			So(result, ShouldHaveLength, 1)
 
@@ -348,7 +348,7 @@ func TestClassifyAllJobs(t *testing.T) {
 				},
 			}
 
-			result, err := ClassifyAllJobs(mock)
+			result, err := classifyAllJobs(mock)
 			So(err, ShouldBeNil)
 
 			s := result["ibackup_fofn_proj_100"]
@@ -366,7 +366,7 @@ func TestClassifyAllJobs(t *testing.T) {
 				},
 			}
 
-			result, err := ClassifyAllJobs(mock)
+			result, err := classifyAllJobs(mock)
 			So(err, ShouldBeNil)
 			So(result, ShouldHaveLength, 1)
 
@@ -394,7 +394,7 @@ func TestClassifyAllJobs(t *testing.T) {
 				},
 			}
 
-			result, err := ClassifyAllJobs(mock)
+			result, err := classifyAllJobs(mock)
 			So(err, ShouldBeNil)
 
 			s := result["ibackup_fofn_proj_100"]
@@ -417,7 +417,7 @@ func TestClassifyAllJobs(t *testing.T) {
 				},
 			}
 
-			result, err := ClassifyAllJobs(mock)
+			result, err := classifyAllJobs(mock)
 			So(err, ShouldBeNil)
 
 			s := result["ibackup_fofn_proj_100"]
@@ -430,7 +430,7 @@ func TestClassifyAllJobs(t *testing.T) {
 				allJobsErr: errTest,
 			}
 
-			_, err := ClassifyAllJobs(mock)
+			_, err := classifyAllJobs(mock)
 			So(err, ShouldEqual, errTest)
 		})
 
@@ -439,7 +439,7 @@ func TestClassifyAllJobs(t *testing.T) {
 				completionErr: errTest,
 			}
 
-			_, err := ClassifyAllJobs(mock)
+			_, err := classifyAllJobs(mock)
 			So(err, ShouldEqual, errTest)
 		})
 	})

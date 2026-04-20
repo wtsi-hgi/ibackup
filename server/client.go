@@ -238,6 +238,24 @@ func (c *Client) MergeFiles(setID string, paths []string) error {
 	return c.putThing(EndPointAuthFiles+"/"+setID, stringsToBytes(paths))
 }
 
+// PathMTime represents a file to be backed up along with its modification time.
+type PathMTime struct {
+	Path  string
+	MTime int64
+}
+
+// MergeFilesWithMTimes simply calls MergeFiles with the slice of paths
+// generated from the slice of PathMTime objects.
+func (c *Client) MergeFilesWithMTimes(setID string, paths []PathMTime) error {
+	p := make([]string, len(paths))
+
+	for n, path := range paths {
+		p[n] = path.Path
+	}
+
+	return c.MergeFiles(setID, p)
+}
+
 // stringsToBytes converts []string to [][]byte so that json marshalling
 // doesn't mess with non-UTF8 characters.
 func stringsToBytes(s []string) [][]byte {

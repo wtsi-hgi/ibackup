@@ -50,10 +50,10 @@ type ReportEntry struct {
 	Error  string
 }
 
-// ParseReportLine parses a tab-separated report line into a
+// parseReportLine parses a tab-separated report line into a
 // ReportEntry. It expects exactly 4 fields separated by
 // literal tabs. Returns an error if the line is malformed.
-func ParseReportLine(line string) (ReportEntry, error) {
+func parseReportLine(line string) (ReportEntry, error) {
 	fields := strings.Split(line, "\t")
 	if len(fields) != reportFieldCount {
 		return ReportEntry{}, ErrMalformedLine
@@ -85,15 +85,15 @@ func ParseReportLine(line string) (ReportEntry, error) {
 // WriteReportEntry writes a single ReportEntry line to the
 // given writer. Each entry is followed by a newline.
 func WriteReportEntry(w io.Writer, entry ReportEntry) error {
-	_, err := fmt.Fprintln(w, FormatReportLine(entry))
+	_, err := fmt.Fprintln(w, formatReportLine(entry))
 
 	return err
 }
 
-// FormatReportLine formats a ReportEntry as a tab-separated line. Local, Remote
+// formatReportLine formats a ReportEntry as a tab-separated line. Local, Remote
 // and Error fields are quoted using strconv.Quote; Status is plain text. No
 // trailing newline is appended.
-func FormatReportLine(entry ReportEntry) string {
+func formatReportLine(entry ReportEntry) string {
 	return strconv.Quote(entry.Local) + "\t" +
 		strconv.Quote(entry.Remote) + "\t" +
 		entry.Status + "\t" +
@@ -101,11 +101,11 @@ func FormatReportLine(entry ReportEntry) string {
 }
 
 // CollectReport reads all entries from a report file into a slice. This is a
-// convenience wrapper around ParseReportCallback for tests and small files.
+// convenience wrapper around parseReportCallback for tests and small files.
 func CollectReport(path string) ([]ReportEntry, error) {
 	var entries []ReportEntry
 
-	err := ParseReportCallback(path, func(entry ReportEntry) error {
+	err := parseReportCallback(path, func(entry ReportEntry) error {
 		entries = append(entries, entry)
 
 		return nil
@@ -114,10 +114,10 @@ func CollectReport(path string) ([]ReportEntry, error) {
 	return entries, err
 }
 
-// ParseReportCallback reads a report file line by line, parsing each line into
+// parseReportCallback reads a report file line by line, parsing each line into
 // a ReportEntry and passing it to the callback. It returns an error if the file
 // cannot be opened or if any line fails to parse.
-func ParseReportCallback(
+func parseReportCallback(
 	path string, cb func(ReportEntry) error,
 ) error {
 	f, err := os.Open(path)
@@ -134,7 +134,7 @@ func ParseReportCallback(
 			continue
 		}
 
-		entry, parseErr := ParseReportLine(line)
+		entry, parseErr := parseReportLine(line)
 		if parseErr != nil {
 			return fmt.Errorf("parse report line: %w", parseErr)
 		}

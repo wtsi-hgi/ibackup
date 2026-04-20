@@ -34,6 +34,7 @@ require (
 	golang.org/x/sys v0.40.0
 	gopkg.in/yaml.v3 v3.0.1
 	pgregory.net/rapid v1.2.0
+	vimagination.zapto.org/byteio v1.3.2
 )
 
 require (

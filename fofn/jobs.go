@@ -65,8 +65,8 @@ type RunConfig struct {
 	Group       string
 }
 
-// CreateJobs creates jobqueue Jobs from a RunConfig, one per chunk path.
-func CreateJobs(submitter JobSubmitter, cfg RunConfig) []*jobqueue.Job {
+// createJobs creates jobqueue Jobs from a RunConfig, one per chunk path.
+func createJobs(submitter JobSubmitter, cfg RunConfig) []*jobqueue.Job {
 	applyDefaults(&cfg)
 
 	repGroup := fmt.Sprintf("%s%s_%d", RepGroupPrefix, cfg.SubDirName, cfg.FofnMtime)
@@ -75,7 +75,7 @@ func CreateJobs(submitter JobSubmitter, cfg RunConfig) []*jobqueue.Job {
 
 	for i, chunk := range cfg.ChunkPaths {
 		job := submitter.NewJob(
-			BuildPutCommand(cfg.Exe, chunk, cfg.Statter, cfg.NoReplace, cfg.SubDirName, cfg.UserMeta),
+			buildPutCommand(cfg.Exe, chunk, cfg.Statter, cfg.NoReplace, cfg.SubDirName, cfg.UserMeta),
 			repGroup, cfg.ReqGroup,
 			"", "",
 			&jqs.Requirements{
@@ -95,10 +95,10 @@ func CreateJobs(submitter JobSubmitter, cfg RunConfig) []*jobqueue.Job {
 	return jobs
 }
 
-// BuildPutCommand constructs an ibackup put command string for a given chunk
+// buildPutCommand constructs an ibackup put command string for a given chunk
 // file. It includes logging, reporting, and optional flags for no-replace, user
 // metadata, and statter.
-func BuildPutCommand(exe, chunkPath, statter string, noReplace bool, fofnName, userMeta string) string {
+func buildPutCommand(exe, chunkPath, statter string, noReplace bool, fofnName, userMeta string) string {
 	cmd := buildPutCoreCmd(exe, chunkPath, fofnName)
 
 	cmd += " -b -f " + shell.Quote(chunkPath)
@@ -160,17 +160,17 @@ type JobSubmitter interface {
 	Disconnect() error
 }
 
-// RunJobStatus holds the classified result of a wr query for a single repgroup.
-type RunJobStatus struct {
+// runJobStatus holds the classified result of a wr query for a single repgroup.
+type runJobStatus struct {
 	HasRunning        bool
 	BuriedJobs        []*jobqueue.Job
 	BuriedChunks      []string
 	LastCompletedTime time.Time
 }
 
-// ClassifyAllJobs queries wr for incomplete fofn jobs plus latest completion
+// classifyAllJobs queries wr for incomplete fofn jobs plus latest completion
 // times and returns a map keyed by repgroup with classified status.
-func ClassifyAllJobs(submitter JobSubmitter) (map[string]RunJobStatus, error) {
+func classifyAllJobs(submitter JobSubmitter) (map[string]runJobStatus, error) {
 	jobs, err := submitter.FindIncompleteJobsByRepGroup(
 		RepGroupPrefix,
 		jobqueue.RepGroupMatchPrefix,
@@ -187,21 +187,14 @@ func ClassifyAllJobs(submitter JobSubmitter) (map[string]RunJobStatus, error) {
 		return nil, err
 	}
 
-	return classifyJobs(jobs, completionTimes), nil
-}
-
-func classifyJobs(
-	jobs []*jobqueue.Job,
-	completionTimes map[string]time.Time,
-) map[string]RunJobStatus {
 	result := classifyIncompleteJobs(jobs)
 	mergeCompletionTimes(result, completionTimes)
 
-	return result
+	return result, nil
 }
 
-func classifyIncompleteJobs(jobs []*jobqueue.Job) map[string]RunJobStatus {
-	result := make(map[string]RunJobStatus)
+func classifyIncompleteJobs(jobs []*jobqueue.Job) map[string]runJobStatus {
+	result := make(map[string]runJobStatus)
 
 	for _, job := range jobs {
 		rg := job.RepGroup
@@ -212,7 +205,7 @@ func classifyIncompleteJobs(jobs []*jobqueue.Job) map[string]RunJobStatus {
 	return result
 }
 
-func classifyIncompleteJob(s RunJobStatus, job *jobqueue.Job) RunJobStatus {
+func classifyIncompleteJob(s runJobStatus, job *jobqueue.Job) runJobStatus {
 	switch job.State {
 	case jobqueue.JobStateBuried:
 		return classifyBuriedJob(s, job)
@@ -223,7 +216,7 @@ func classifyIncompleteJob(s RunJobStatus, job *jobqueue.Job) RunJobStatus {
 	}
 }
 
-func classifyBuriedJob(s RunJobStatus, job *jobqueue.Job) RunJobStatus {
+func classifyBuriedJob(s runJobStatus, job *jobqueue.Job) runJobStatus {
 	chunk := extractChunkFromCmd(job.Cmd)
 	if chunk == "" {
 		return s
@@ -239,7 +232,7 @@ func classifyBuriedJob(s RunJobStatus, job *jobqueue.Job) RunJobStatus {
 	return s
 }
 
-func mergeCompletionTimes(result map[string]RunJobStatus, completionTimes map[string]time.Time) {
+func mergeCompletionTimes(result map[string]runJobStatus, completionTimes map[string]time.Time) {
 	for rg, completionTime := range completionTimes {
 		s := result[rg]
 		if len(s.BuriedJobs) == 0 && completionTime.After(s.LastCompletedTime) {

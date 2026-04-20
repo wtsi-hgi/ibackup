@@ -60,8 +60,8 @@ var ErrMetadataDelimiter = errors.New("metadata key or value contains '=' or ';'
 // a null byte.
 var ErrMetadataNull = errors.New("metadata key or value contains null byte")
 
-// SubDirConfig holds configuration for a watched subdirectory.
-type SubDirConfig struct {
+// subDirConfig holds configuration for a watched subdirectory.
+type subDirConfig struct {
 	Transformer string            `yaml:"transformer"`
 	Freeze      bool              `yaml:"freeze,omitempty"`
 	Requester   string            `yaml:"requester,omitempty"`
@@ -72,20 +72,20 @@ type SubDirConfig struct {
 	Metadata    map[string]string `yaml:"metadata,omitempty"`
 }
 
-// ReadConfig reads config.yml from dir and returns the parsed SubDirConfig.
+// readConfig reads config.yml from dir and returns the parsed SubDirConfig.
 // Returns an error if the file is missing, transformer is empty, or metadata
 // keys contain colons.
-func ReadConfig(dir string) (SubDirConfig, error) {
+func readConfig(dir string) (subDirConfig, error) {
 	data, err := os.ReadFile(filepath.Join(dir, configFilename))
 	if err != nil {
-		return SubDirConfig{}, fmt.Errorf(
+		return subDirConfig{}, fmt.Errorf(
 			"read config: %w", err,
 		)
 	}
 
-	var cfg SubDirConfig
+	var cfg subDirConfig
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return SubDirConfig{}, fmt.Errorf(
+		return subDirConfig{}, fmt.Errorf(
 			"parse config: %w", err,
 		)
 	}
@@ -95,7 +95,7 @@ func ReadConfig(dir string) (SubDirConfig, error) {
 
 // UserMetaString returns a semicolon-separated string of
 // sorted key=value pairs from the metadata map.
-func (c SubDirConfig) UserMetaString() string {
+func (c subDirConfig) UserMetaString() string {
 	keys := slices.Sorted(maps.Keys(c.Metadata))
 
 	pairs := make([]string, 0, len(keys))
@@ -122,7 +122,7 @@ func appendFOFNMetaData(pairs []string, key, value string) []string {
 
 // WriteConfig writes cfg as config.yml in dir. Returns an error if Transformer
 // is empty or metadata keys/values are invalid.
-func WriteConfig(dir string, cfg SubDirConfig) error {
+func writeConfig(dir string, cfg subDirConfig) error {
 	if err := validateConfig(cfg); err != nil {
 		return err
 	}
@@ -135,7 +135,7 @@ func WriteConfig(dir string, cfg SubDirConfig) error {
 	return os.WriteFile(filepath.Join(dir, configFilename), data, configFileMode)
 }
 
-func validateConfig(cfg SubDirConfig) error {
+func validateConfig(cfg subDirConfig) error {
 	if cfg.Transformer == "" {
 		return ErrEmptyTransformer
 	}

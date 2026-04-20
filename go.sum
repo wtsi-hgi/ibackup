@@ -653,5 +653,7 @@ nanomsg.org/go-mangos v1.4.0 h1:pVRLnzXePdSbhWlWdSncYszTagERhMG5zK/vXYmbEdM=
 nanomsg.org/go-mangos v1.4.0/go.mod h1:MOor8xUIgwsRMPpLr9xQxe7bT7rciibScOqVyztNxHQ=
 pgregory.net/rapid v1.2.0 h1:keKAYRcjm+e1F0oAuU5F5+YPAWcyxNNRK2wud503Gnk=
 pgregory.net/rapid v1.2.0/go.mod h1:PY5XlDGj0+V1FCq0o192FdRhpKHGTRIWBgqjDBTrq04=
+vimagination.zapto.org/byteio v1.3.2 h1:nzybNVxEon1f/ycZAhghao0q5quwCCO9s190nTxUoaU=
+vimagination.zapto.org/byteio v1.3.2/go.mod h1:PvkDI/R/f6NXQWabWbOzaRxxeK7hdOTKGcgS8hBIiWw=
 vimagination.zapto.org/parser v1.2.2 h1:LdihVnnzb7m2e0caKm2Zsj+8IJiUKW2ZCK7b/+XmpSo=
 vimagination.zapto.org/parser v1.2.2/go.mod h1:MxM1MZY6A9AeEx6nahIQ6MJaGZqX80n6Vm3zGVqV9FU=
