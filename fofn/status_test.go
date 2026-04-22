@@ -35,6 +35,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/wtsi-hgi/ibackup/transfer"
 )
 
 func TestWriteStatusFromRun(t *testing.T) {
@@ -46,11 +47,11 @@ func TestWriteStatusFromRun(t *testing.T) {
 			So(os.MkdirAll(runDir, dirMode), ShouldBeNil)
 
 			createChunkAndReport(runDir, 0, 10,
-				[]string{"uploaded", "replaced"})
+				[]transfer.RequestStatus{transfer.RequestStatusUploaded, transfer.RequestStatusReplaced})
 			createChunkAndReport(runDir, 1, 10,
-				[]string{"unmodified", "missing"})
+				[]transfer.RequestStatus{transfer.RequestStatusUnmodified, transfer.RequestStatusMissing})
 			createChunkAndReport(runDir, 2, 5,
-				[]string{"failed", "frozen", "warning"})
+				[]transfer.RequestStatus{transfer.RequestStatusFailed, transfer.RequestStatusFrozen, transfer.RequestStatusWarning})
 
 			statusPath := filepath.Join(dir, "status1")
 
@@ -78,9 +79,9 @@ func TestWriteStatusFromRun(t *testing.T) {
 			So(os.MkdirAll(runDir, dirMode), ShouldBeNil)
 
 			createChunkAndReport(runDir, 0, 10,
-				[]string{"uploaded"})
+				[]transfer.RequestStatus{transfer.RequestStatusUploaded})
 			createChunkAndReport(runDir, 1, 10,
-				[]string{"uploaded"})
+				[]transfer.RequestStatus{transfer.RequestStatusUploaded})
 			createChunkOnly(runDir, 2, 5)
 
 			statusPath := filepath.Join(dir, "status2")
@@ -140,11 +141,11 @@ func TestWriteStatusFromRun(t *testing.T) {
 			So(os.MkdirAll(runDir, dirMode), ShouldBeNil)
 
 			createChunkAndReport(runDir, 0, 10,
-				[]string{"uploaded", "replaced"})
+				[]transfer.RequestStatus{transfer.RequestStatusUploaded, transfer.RequestStatusReplaced})
 			createChunkAndReport(runDir, 1, 10,
-				[]string{"unmodified", "missing"})
+				[]transfer.RequestStatus{transfer.RequestStatusUnmodified, transfer.RequestStatusMissing})
 			createChunkAndReport(runDir, 2, 5,
-				[]string{"failed"})
+				[]transfer.RequestStatus{transfer.RequestStatusFailed})
 
 			statusPath := filepath.Join(dir, "status5")
 
@@ -197,7 +198,7 @@ func TestWriteStatusFromRun(t *testing.T) {
 			err = WriteReportEntry(rf, ReportEntry{
 				Local:  locals[0],
 				Remote: remotes[0],
-				Status: "uploaded",
+				Status: transfer.RequestStatusUploaded,
 			})
 			So(err, ShouldBeNil)
 
@@ -207,7 +208,7 @@ func TestWriteStatusFromRun(t *testing.T) {
 			err = WriteReportEntry(rf, ReportEntry{
 				Local:  locals[2],
 				Remote: remotes[2],
-				Status: "uploaded",
+				Status: transfer.RequestStatusUploaded,
 			})
 			So(err, ShouldBeNil)
 
@@ -236,7 +237,7 @@ func TestWriteStatusFromRun(t *testing.T) {
 
 // createChunkAndReport creates a chunk file and its
 // corresponding complete report. Statuses are cycled.
-func createChunkAndReport(runDir string, index, count int, statuses []string) {
+func createChunkAndReport(runDir string, index, count int, statuses []transfer.RequestStatus) {
 	chunkPath := filepath.Join(runDir, fmt.Sprintf(chunkNameFormat, index))
 	reportPath := chunkPath + ".report"
 
@@ -305,7 +306,7 @@ func createChunkWithPartialReport(runDir string, index, totalEntries, reportedEn
 			err = WriteReportEntry(rf, ReportEntry{
 				Local:  local,
 				Remote: remote,
-				Status: "uploaded",
+				Status: transfer.RequestStatusUploaded,
 			})
 			So(err, ShouldBeNil)
 		}
@@ -335,9 +336,10 @@ func TestStatusMemory(t *testing.T) {
 			entriesPerChunk = 10_000
 		)
 
-		statuses := []string{
-			"uploaded", "replaced", "unmodified",
-			"missing", "failed",
+		statuses := []transfer.RequestStatus{
+			transfer.RequestStatusUploaded, transfer.RequestStatusReplaced,
+			transfer.RequestStatusUnmodified,
+			transfer.RequestStatusMissing, transfer.RequestStatusFailed,
 		}
 
 		createErrors := 0
@@ -377,7 +379,7 @@ func TestStatusMemory(t *testing.T) {
 
 // createLargeChunkAndReport creates a chunk and report with many entries for
 // memory testing. Does not use So() assertions inside the loop.
-func createLargeChunkAndReport(runDir string, index, count int, statuses []string) error {
+func createLargeChunkAndReport(runDir string, index, count int, statuses []transfer.RequestStatus) error {
 	chunkPath := filepath.Join(runDir, fmt.Sprintf(chunkNameFormat, index))
 	reportPath := chunkPath + ".report"
 
