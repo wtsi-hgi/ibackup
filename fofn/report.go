@@ -33,6 +33,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/wtsi-hgi/ibackup/transfer"
 )
 
 const reportFieldCount = 4
@@ -46,8 +48,12 @@ var ErrMalformedLine = errors.New("malformed report line")
 type ReportEntry struct {
 	Local  string
 	Remote string
-	Status string
+	Status transfer.RequestStatus
 	Error  string
+}
+
+func (r ReportEntry) uploadFailed() bool {
+	return r.Status == transfer.RequestStatusFailed || r.Status == transfer.RequestStatusMissing
 }
 
 // parseReportLine parses a tab-separated report line into a
@@ -77,7 +83,7 @@ func parseReportLine(line string) (ReportEntry, error) {
 	return ReportEntry{
 		Local:  local,
 		Remote: remote,
-		Status: fields[2],
+		Status: transfer.RequestStatus(fields[2]),
 		Error:  errMsg,
 	}, nil
 }
@@ -96,7 +102,7 @@ func WriteReportEntry(w io.Writer, entry ReportEntry) error {
 func formatReportLine(entry ReportEntry) string {
 	return strconv.Quote(entry.Local) + "\t" +
 		strconv.Quote(entry.Remote) + "\t" +
-		entry.Status + "\t" +
+		string(entry.Status) + "\t" +
 		strconv.Quote(entry.Error)
 }
 

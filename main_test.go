@@ -6271,7 +6271,7 @@ func TestPutReportFlag(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(len(entries), ShouldEqual, 3)
 
-			statusMap := make(map[string]string)
+			statusMap := make(map[string]transfer.RequestStatus)
 			for _, e := range entries {
 				statusMap[e.Local] = e.Status
 			}
@@ -6309,7 +6309,7 @@ func TestPutReportFlag(t *testing.T) {
 			entries, err := fofn.CollectReport(reportPath)
 			So(err, ShouldBeNil)
 			So(len(entries), ShouldEqual, 1)
-			So(entries[0].Status, ShouldEqual, "frozen")
+			So(entries[0].Status, ShouldEqual, transfer.RequestStatusFrozen)
 		})
 
 		Convey("report is fully parseable when put exits non-zero", func() {
@@ -6348,7 +6348,7 @@ func TestPutReportFlag(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(len(entries), ShouldEqual, 2)
 
-			statusMap := make(map[string]string)
+			statusMap := make(map[string]transfer.RequestStatus)
 			for _, e := range entries {
 				statusMap[e.Local] = e.Status
 			}
@@ -6364,8 +6364,7 @@ func TestWatchFofnsCommand(t *testing.T) {
 		addBqueuesToPath(t)
 
 		Convey("errors when --dir is not provided", func() {
-			exitCode, out := runCLI(t, nil, "",
-				"watchfofns")
+			exitCode, out := runCLI(t, nil, "", "watchfofns")
 			So(exitCode, ShouldNotEqual, 0)
 			So(out, ShouldContainSubstring, "--dir")
 		})
@@ -6467,23 +6466,19 @@ func TestWatchFofnsCommand(t *testing.T) {
 		})
 
 		Convey("prints help with --help", func() {
-			exitCode, out := runCLI(t, nil, "",
-				"watchfofns", "--help")
+			exitCode, out := runCLI(t, nil, "", "watchfofns", "--help")
 			So(exitCode, ShouldEqual, 0)
 			So(out, ShouldContainSubstring, "watchfofns")
 		})
 
-		Convey("has --min-chunk and --max-chunk flags "+
-			"and no --chunk-size", func() {
-			_, out := runCLI(t, nil, "",
-				"watchfofns", "--help")
+		Convey("has --min-chunk and --max-chunk flags and no --chunk-size", func() {
+			_, out := runCLI(t, nil, "", "watchfofns", "--help")
 			So(out, ShouldContainSubstring, "--min-chunk")
 			So(out, ShouldContainSubstring, "--max-chunk")
 			So(out, ShouldNotContainSubstring, "--chunk-size")
 		})
 
-		Convey("defaults to minChunk=250 and "+
-			"maxChunk=10000", func() {
+		Convey("defaults to minChunk=250 and maxChunk=10000", func() {
 			_, out := runCLI(t, nil, "", "watchfofns", "--help")
 			So(out, ShouldContainSubstring, "--min-chunk int")
 			So(out, ShouldContainSubstring, "(default 250)")

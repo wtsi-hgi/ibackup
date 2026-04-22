@@ -202,8 +202,7 @@ type results struct {
 // updating result counters and writing report entries.
 func collectResults(
 	transferResults, skipResults chan *transfer.Request,
-	total int, verbose bool,
-	reportWriter io.Writer,
+	total int, verbose bool, reportWriter io.Writer,
 ) *results {
 	r := &results{total: total, verbose: verbose}
 
@@ -266,9 +265,7 @@ func warnIfBad(r *transfer.Request, i, total int, verbose bool) {
 
 // writeReportForRequest writes a fofn.ReportEntry for
 // the given request to the writer, if non-nil.
-func writeReportForRequest(
-	w io.Writer, req *transfer.Request,
-) {
+func writeReportForRequest(w io.Writer, req *transfer.Request) {
 	if w == nil {
 		return
 	}
@@ -276,7 +273,7 @@ func writeReportForRequest(
 	entry := fofn.ReportEntry{
 		Local:  req.Local,
 		Remote: req.Remote,
-		Status: string(req.Status),
+		Status: req.Status,
 		Error:  req.Error,
 	}
 
@@ -290,10 +287,8 @@ func writeReportForRequest(
 // made. If reportWriter is non-nil, a fofn.ReportEntry is written for each
 // request. Returns 1 if there were upload errors, otherwise 0.
 func printResults(
-	upDown string,
-	transferResults, skipResults chan *transfer.Request,
-	total int, verbose bool,
-	reportWriter io.Writer,
+	upDown string, transferResults, skipResults chan *transfer.Request,
+	total int, verbose bool, reportWriter io.Writer,
 ) int {
 	r := collectResults(transferResults, skipResults, total, verbose, reportWriter)
 

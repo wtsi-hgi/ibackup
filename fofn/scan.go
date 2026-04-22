@@ -40,6 +40,11 @@ const fofnFilename = "fofn"
 type subDir struct {
 	Path      string // absolute path to subdirectory
 	FofnMtime int64  // Unix mtime of the fofn file
+	Status    map[string]ReportEntry
+}
+
+func (s subDir) FOFNPath() string {
+	return filepath.Join(s.Path, fofnFilename)
 }
 
 // scanForFOFNs returns subdirectories of watchDir that contain a file named

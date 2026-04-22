@@ -69,7 +69,7 @@ func (c *Client) GetSetByName(requester, setName string) (*set.Set, error) {
 	}
 
 	statusFile := c.path(s.ID(), statusFilename)
-	_, counts, _ := parseStatus(statusFile) //nolint:errcheck
+	counts, _ := parseStatusCounts(statusFile) //nolint:errcheck
 
 	fofnInfo, err := os.Stat(c.path(s.ID(), fofnFilename))
 	if err == nil {

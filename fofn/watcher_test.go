@@ -39,6 +39,7 @@ import (
 	"github.com/VertebrateResequencing/wr/jobqueue"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/wtsi-hgi/ibackup/set"
+	"github.com/wtsi-hgi/ibackup/transfer"
 	"github.com/wtsi-hgi/ibackup/transformer"
 	"pgregory.net/rapid"
 )
@@ -53,7 +54,7 @@ type filePair struct {
 // all pairs with status "uploaded".
 func writeChunkAndReport(runDir, chunkName string, pairs []filePair) {
 	writeChunkFile(runDir, chunkName, pairs)
-	writeReportFile(runDir, chunkName, pairs, "uploaded")
+	writeReportFile(runDir, chunkName, pairs, transfer.RequestStatusUploaded)
 }
 
 // makeFilePairs creates n file pairs with sequential
@@ -131,7 +132,7 @@ func decodeChunkTestLine(line string) (string, string) {
 
 // writeReportFile writes a report file (.report suffix)
 // for the given chunk using FormatReportLine.
-func writeReportFile(runDir, chunkName string, pairs []filePair, status string) {
+func writeReportFile(runDir, chunkName string, pairs []filePair, status transfer.RequestStatus) {
 	path := filepath.Join(runDir, chunkName+".report")
 
 	f, err := os.Create(path)
@@ -180,7 +181,7 @@ func mustWriteChunkT(t *rapid.T, runDir, chunkName string, pairs []filePair) {
 
 // mustWriteReportT writes a report file without GoConvey assertions,
 // for use inside rapid property checks.
-func mustWriteReportT(t *rapid.T, runDir, chunkName string, pairs []filePair, status string) {
+func mustWriteReportT(t *rapid.T, runDir, chunkName string, pairs []filePair, status transfer.RequestStatus) {
 	t.Helper()
 
 	path := filepath.Join(runDir, chunkName+".report")
@@ -278,9 +279,8 @@ func TestProcessSubDir(t *testing.T) {
 		})
 
 		Convey("returns error when config.yml is missing", func() {
-			fofnFilename := writeFofn(watchDir, generateTmpPaths(5), subDirConfig{Transformer: "test"})
-
-			sd := subDirWithMtime(filepath.Dir(fofnFilename))
+			sd := writeFofn(watchDir, generateTmpPaths(5), subDirConfig{Transformer: "test"})
+			sd = subDirWithMtime(sd)
 			mock := &mockJobSubmitter{}
 			cfg := ProcessSubDirConfig{
 				MinChunk: 10,
@@ -432,7 +432,7 @@ func TestGenerateStatus(t *testing.T) {
 
 			pairs := makeFilePairs(0, 10)
 			writeChunkFile(runDir, "chunk.000000", pairs)
-			writeReportFile(runDir, "chunk.000000", pairs[:5], "uploaded")
+			writeReportFile(runDir, "chunk.000000", pairs[:5], transfer.RequestStatusUploaded)
 
 			err := generateStatus(
 				runDir,
@@ -880,7 +880,7 @@ func TestWatcherRestart(t *testing.T) {
 			subPath := filepath.Join(watchDir, "proj")
 			So(os.MkdirAll(subPath, dirMode), ShouldBeNil)
 
-			fofnPath := writeFofn(subPath, generateTmpPaths(10))
+			fofnPath := writeFofn(subPath, generateTmpPaths(10)).FOFNPath()
 			fofnTime := time.Unix(1000, 0)
 			So(os.Chtimes(fofnPath, fofnTime, fofnTime), ShouldBeNil)
 
@@ -935,7 +935,7 @@ func TestWatcherRestart(t *testing.T) {
 		})
 
 		Convey("detects completed existing run and generates status file", func() {
-			fofnPath := writeFofn(watchDir, generateTmpPaths(10), subDirConfig{Transformer: "test"})
+			fofnPath := writeFofn(watchDir, generateTmpPaths(10), subDirConfig{Transformer: "test"}).FOFNPath()
 			subPath := filepath.Dir(fofnPath)
 
 			fofnTime := time.Unix(1000, 0)
@@ -968,7 +968,7 @@ func TestWatcherRestart(t *testing.T) {
 		})
 
 		Convey("regenerates status when symlink is missing", func() {
-			fofnPath := writeFofn(watchDir, generateTmpPaths(10), subDirConfig{Transformer: "test"})
+			fofnPath := writeFofn(watchDir, generateTmpPaths(10), subDirConfig{Transformer: "test"}).FOFNPath()
 			fofnTime := time.Unix(1000, 0)
 
 			So(os.Chtimes(fofnPath, fofnTime, fofnTime), ShouldBeNil)
@@ -999,7 +999,7 @@ func TestWatcherRestart(t *testing.T) {
 		})
 
 		Convey("regenerates status when symlink points to wrong status file", func() {
-			fofnPath := writeFofn(watchDir, generateTmpPaths(10), subDirConfig{Transformer: "test"})
+			fofnPath := writeFofn(watchDir, generateTmpPaths(10), subDirConfig{Transformer: "test"}).FOFNPath()
 			fofnTime := time.Unix(1000, 0)
 
 			So(os.Chtimes(fofnPath, fofnTime, fofnTime), ShouldBeNil)
@@ -1036,7 +1036,7 @@ func TestWatcherRestart(t *testing.T) {
 		})
 
 		Convey("does not rewrite status artefacts for same fofn mtime after completion", func() {
-			fofnPath := writeFofn(watchDir, generateTmpPaths(10), subDirConfig{Transformer: "test"})
+			fofnPath := writeFofn(watchDir, generateTmpPaths(10), subDirConfig{Transformer: "test"}).FOFNPath()
 
 			fofnTime := time.Unix(1000, 0)
 			So(os.Chtimes(fofnPath, fofnTime, fofnTime), ShouldBeNil)
@@ -1091,7 +1091,7 @@ func TestWatcherRestart(t *testing.T) {
 		})
 
 		Convey("does not regenerate status for externally modified reports in stable done run", func() {
-			fofnPath := writeFofn(watchDir, generateTmpPaths(10), subDirConfig{Transformer: "test"})
+			fofnPath := writeFofn(watchDir, generateTmpPaths(10), subDirConfig{Transformer: "test"}).FOFNPath()
 			fofnTime := time.Unix(1000, 0)
 
 			So(os.Chtimes(fofnPath, fofnTime, fofnTime), ShouldBeNil)
@@ -1106,7 +1106,7 @@ func TestWatcherRestart(t *testing.T) {
 			generateDoneStatus(runDir, subDir{Path: subPath})
 
 			// Externally overwrite the report with different statuses.
-			writeReportFile(runDir, "chunk.000000", pairs, "missing")
+			writeReportFile(runDir, "chunk.000000", pairs, transfer.RequestStatusMissing)
 
 			statusPath := filepath.Join(runDir, statusFilename)
 			knownTime := time.Unix(900, 0)
@@ -1134,7 +1134,7 @@ func TestWatcherRestart(t *testing.T) {
 		})
 
 		Convey("cleans stale run directories during phase transition", func() {
-			fofnPath := writeFofn(watchDir, generateTmpPaths(10), subDirConfig{Transformer: "test"})
+			fofnPath := writeFofn(watchDir, generateTmpPaths(10), subDirConfig{Transformer: "test"}).FOFNPath()
 			fofnTime := time.Unix(1000, 0)
 
 			So(os.Chtimes(fofnPath, fofnTime, fofnTime), ShouldBeNil)
@@ -1167,7 +1167,7 @@ func TestWatcherRestart(t *testing.T) {
 		})
 
 		Convey("returns error when stale-run cleanup fails during phase transition", func() {
-			fofnPath := writeFofn(watchDir, generateTmpPaths(10), subDirConfig{Transformer: "test"})
+			fofnPath := writeFofn(watchDir, generateTmpPaths(10), subDirConfig{Transformer: "test"}).FOFNPath()
 			fofnTime := time.Unix(1000, 0)
 
 			So(os.Chtimes(fofnPath, fofnTime, fofnTime), ShouldBeNil)
@@ -1207,7 +1207,7 @@ func TestWatcherRestart(t *testing.T) {
 		})
 
 		Convey("processes updated fofn when completed status artefacts already exist", func() {
-			fofnPath := writeFofn(watchDir, generateTmpPaths(10), subDirConfig{Transformer: "test"})
+			fofnPath := writeFofn(watchDir, generateTmpPaths(10), subDirConfig{Transformer: "test"}).FOFNPath()
 			fofnTime := time.Unix(1000, 0)
 			So(os.Chtimes(fofnPath, fofnTime, fofnTime), ShouldBeNil)
 
@@ -1238,7 +1238,7 @@ func TestWatcherRestart(t *testing.T) {
 		})
 
 		Convey("refreshes status after buried chunk is retried successfully", func() {
-			fofnPath := writeFofn(watchDir, generateTmpPaths(10), subDirConfig{Transformer: "test"})
+			fofnPath := writeFofn(watchDir, generateTmpPaths(10), subDirConfig{Transformer: "test"}).FOFNPath()
 			fofnTime := time.Unix(1000, 0)
 			So(os.Chtimes(fofnPath, fofnTime, fofnTime), ShouldBeNil)
 
@@ -1259,7 +1259,7 @@ func TestWatcherRestart(t *testing.T) {
 			So(initialCounts.NotProcessed, ShouldEqual, 5)
 
 			// Simulate retry: write the previously missing report
-			writeReportFile(runDir, "chunk.000001", makeFilePairs(5, 10), "uploaded")
+			writeReportFile(runDir, "chunk.000001", makeFilePairs(5, 10), transfer.RequestStatusUploaded)
 
 			// mock returns no buried jobs (retry succeeded), but completion lookup
 			// reports a completion time after status mtime to trigger regen.
@@ -1285,7 +1285,7 @@ func TestWatcherRestart(t *testing.T) {
 			subPath := filepath.Join(watchDir, "proj")
 			So(os.MkdirAll(subPath, dirMode), ShouldBeNil)
 
-			fofnPath := writeFofn(subPath, generateTmpPaths(10))
+			fofnPath := writeFofn(subPath, generateTmpPaths(10)).FOFNPath()
 			fofnTime := time.Unix(1000, 0)
 			So(os.Chtimes(fofnPath, fofnTime, fofnTime), ShouldBeNil)
 
@@ -1308,7 +1308,7 @@ func TestWatcherRestart(t *testing.T) {
 		})
 
 		Convey("done run with intact artefacts does not regenerate status on subsequent polls", func() {
-			fofnPath := writeFofn(watchDir, generateTmpPaths(10), subDirConfig{Transformer: "test"})
+			fofnPath := writeFofn(watchDir, generateTmpPaths(10), subDirConfig{Transformer: "test"}).FOFNPath()
 			fofnTime := time.Unix(1000, 0)
 
 			So(os.Chtimes(fofnPath, fofnTime, fofnTime), ShouldBeNil)
@@ -1357,7 +1357,7 @@ func TestWatcherRestart(t *testing.T) {
 		})
 
 		Convey("done run with intact artefacts restarts when fofn changes", func() {
-			fofnPath := writeFofn(watchDir, generateTmpPaths(10), subDirConfig{Transformer: "test"})
+			fofnPath := writeFofn(watchDir, generateTmpPaths(10), subDirConfig{Transformer: "test"}).FOFNPath()
 			fofnTime := time.Unix(1000, 0)
 			So(os.Chtimes(fofnPath, fofnTime, fofnTime), ShouldBeNil)
 
@@ -1389,7 +1389,7 @@ func TestWatcherRestart(t *testing.T) {
 		})
 
 		Convey("repairs symlink without regenerating status file", func() {
-			fofnPath := writeFofn(watchDir, generateTmpPaths(10), subDirConfig{Transformer: "test"})
+			fofnPath := writeFofn(watchDir, generateTmpPaths(10), subDirConfig{Transformer: "test"}).FOFNPath()
 			fofnTime := time.Unix(1000, 0)
 			So(os.Chtimes(fofnPath, fofnTime, fofnTime), ShouldBeNil)
 
@@ -1432,7 +1432,7 @@ func TestWatcherRestart(t *testing.T) {
 		})
 
 		Convey("waits for running jobs before restarting when fofn changes during active phase", func() {
-			fofnPath := writeFofn(watchDir, generateTmpPaths(10), subDirConfig{Transformer: "test"})
+			fofnPath := writeFofn(watchDir, generateTmpPaths(10), subDirConfig{Transformer: "test"}).FOFNPath()
 			fofnTime := time.Unix(1000, 0)
 			So(os.Chtimes(fofnPath, fofnTime, fofnTime), ShouldBeNil)
 
@@ -1468,7 +1468,7 @@ func TestWatcherRestart(t *testing.T) {
 		})
 
 		Convey("regenerates status when status file deleted from done run", func() {
-			fofnPath := writeFofn(watchDir, generateTmpPaths(10), subDirConfig{Transformer: "test"})
+			fofnPath := writeFofn(watchDir, generateTmpPaths(10), subDirConfig{Transformer: "test"}).FOFNPath()
 			fofnTime := time.Unix(1000, 0)
 			So(os.Chtimes(fofnPath, fofnTime, fofnTime), ShouldBeNil)
 
@@ -1603,7 +1603,7 @@ func TestWatcherParallel(t *testing.T) {
 // setupSubDir creates a subdirectory with a fofn and
 // config.yml inside the watch directory.
 func setupSubDir(watchDir string, paths []string, cfg subDirConfig) subDir {
-	return subDirWithMtime(filepath.Dir(writeFofn(watchDir, paths, cfg)))
+	return subDirWithMtime(writeFofn(watchDir, paths, cfg))
 }
 
 // generateTmpPaths creates n paths matching the test
@@ -1619,11 +1619,13 @@ func generateTmpPaths(n int) []string {
 }
 
 // subDirWithMtime creates a SubDir by statting the fofn to get FofnMtime.
-func subDirWithMtime(subPath string) subDir {
-	info, err := os.Stat(filepath.Join(subPath, fofnFilename))
+func subDirWithMtime(s subDir) subDir {
+	info, err := os.Stat(s.FOFNPath())
 	So(err, ShouldBeNil)
 
-	return subDir{Path: subPath, FofnMtime: info.ModTime().Unix()}
+	s.FofnMtime = info.ModTime().Unix()
+
+	return s
 }
 
 // generateDoneStatus creates a complete "done" state: status file + symlink.
@@ -1651,7 +1653,7 @@ func writeReportsForChunks(runDir string) {
 func updateFofnMtime(watchDir string, paths []string, mtime int64) {
 	t := time.Unix(mtime, 0)
 
-	So(os.Chtimes(writeFofn(watchDir, paths), t, t), ShouldBeNil)
+	So(os.Chtimes(writeFofn(watchDir, paths).FOFNPath(), t, t), ShouldBeNil)
 }
 
 // writeReportsExcept writes "uploaded" report files for
@@ -1668,7 +1670,7 @@ func writeReportsExcept(runDir, skip string) {
 		}
 
 		pairs := readChunkPairs(m)
-		writeReportFile(runDir, base, pairs, "uploaded")
+		writeReportFile(runDir, base, pairs, transfer.RequestStatusUploaded)
 	}
 }
 
@@ -1709,7 +1711,7 @@ func TestSettleRepairsArtefacts(t *testing.T) {
 				continue
 			}
 
-			mustWriteReportT(rt, runDir, chunkName, pairs, "uploaded")
+			mustWriteReportT(rt, runDir, chunkName, pairs, transfer.RequestStatusUploaded)
 		}
 
 		// Build a RunJobStatus with buried info and a LastCompletedTime
@@ -1820,7 +1822,7 @@ func TestSettleIdempotent(t *testing.T) {
 			pairs := makeFilePairs(i*5, i*5+5)
 
 			mustWriteChunkT(rt, runDir, chunkName, pairs)
-			mustWriteReportT(rt, runDir, chunkName, pairs, "uploaded")
+			mustWriteReportT(rt, runDir, chunkName, pairs, transfer.RequestStatusUploaded)
 		}
 
 		sd := subDir{Path: subPath, FofnMtime: mtime}
@@ -1907,7 +1909,7 @@ func TestPollRepairsDoneRun(t *testing.T) {
 			pairs := makeFilePairs(i*5, i*5+5)
 
 			mustWriteChunkT(rt, runDir, chunkName, pairs)
-			mustWriteReportT(rt, runDir, chunkName, pairs, "uploaded")
+			mustWriteReportT(rt, runDir, chunkName, pairs, transfer.RequestStatusUploaded)
 		}
 
 		if err := generateStatus(runDir, nil); err != nil {
