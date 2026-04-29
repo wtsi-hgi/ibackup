@@ -183,7 +183,7 @@ func (c *chunkWriters) writeUnchangedPath(local, tx string) error {
 	_, err = fmt.Fprintln(c.unchangeWriter, formatReportLine(ReportEntry{
 		Local:  local,
 		Remote: remote,
-		Status: string(transfer.RequestStatusUnmodified),
+		Status: transfer.RequestStatusUnmodified,
 	}))
 
 	return err
@@ -222,11 +222,11 @@ func (c *chunkWriters) Close() error {
 // Chunk files are named chunk.000000, chunk.000001, etc. Returns the paths of
 // the created chunk files, or nil if the fofn is empty.
 func writeShuffledChunks(
-	fofnPath, transformer, dir string,
+	subDir subDir, transformer, dir string,
 	minChunk, maxChunk int,
 	randSeed, lastRunTime int64,
 ) ([]string, error) {
-	count, hasUnchanged, err := countEntries(fofnPath, lastRunTime)
+	count, hasUnchanged, err := countEntries(subDir, lastRunTime)
 	if err != nil {
 		return nil, err
 	}
@@ -241,7 +241,7 @@ func writeShuffledChunks(
 		randSeed = time.Now().UnixNano()
 	}
 
-	return streamToChunks(fofnPath, transformer, dir, numChunks, randSeed, lastRunTime, hasUnchanged)
+	return streamToChunks(subDir, transformer, dir, numChunks, randSeed, lastRunTime, hasUnchanged)
 }
 
 func validateChunkBounds(minChunk, maxChunk int) error {
@@ -260,8 +260,8 @@ func validateChunkBounds(minChunk, maxChunk int) error {
 	return nil
 }
 
-func countEntries(fofn string, lastRunTime int64) (count int, hasUnchanged bool, err error) { //nolint:gocognit,gocyclo
-	f, err := os.Open(fofn)
+func countEntries(subDir subDir, lastRunTime int64) (count int, hasUnchanged bool, err error) { //nolint:gocognit,gocyclo,lll
+	f, err := os.Open(subDir.FOFNPath())
 	if err != nil {
 		return 0, false, err
 	}
@@ -276,13 +276,9 @@ func countEntries(fofn string, lastRunTime int64) (count int, hasUnchanged bool,
 			return count, hasUnchanged, nil
 		}
 
-		for lr.ReadUint8() != 0 {
-			if lr.Err != nil {
-				return 0, false, lr.Err
-			}
-		}
+		local := lr.ReadString0()
 
-		if mtime > 0 && mtime < lastRunTime {
+		if mtime > 0 && mtime < lastRunTime && !subDir.Status[local].uploadFailed() {
 			hasUnchanged = true
 		} else {
 			count++
@@ -313,7 +309,7 @@ func calculateChunks(n, minChunk, maxChunk int) int {
 }
 
 func streamToChunks(
-	fofnPath, transformer, dir string,
+	subDir subDir, transformer, dir string,
 	numChunks int,
 	randSeed, lastRunTime int64,
 	hasUnchanged bool,
@@ -329,15 +325,15 @@ func streamToChunks(
 		}
 	}()
 
-	if err := distributeEntries(fofnPath, transformer, w, lastRunTime); err != nil {
+	if err := distributeEntries(subDir, transformer, w, lastRunTime); err != nil {
 		return nil, err
 	}
 
 	return w.paths(), nil
 }
 
-func distributeEntries(fofnPath, transformer string, w *chunkWriters, lastRunTime int64) error {
-	f, err := os.Open(fofnPath)
+func distributeEntries(subDir subDir, transformer string, w *chunkWriters, lastRunTime int64) error {
+	f, err := os.Open(subDir.FOFNPath())
 	if err != nil {
 		return err
 	}
@@ -356,14 +352,14 @@ func distributeEntries(fofnPath, transformer string, w *chunkWriters, lastRunTim
 			return lr.Err
 		}
 
-		if err := writePath(w, lastRunTime, mtime, lr.ReadString0(), transformer); err != nil {
+		if err := writePath(subDir, w, lastRunTime, mtime, lr.ReadString0(), transformer); err != nil {
 			return err
 		}
 	}
 }
 
-func writePath(w *chunkWriters, lastRunTime, mtime int64, path, transformer string) error {
-	if mtime > 0 && mtime < lastRunTime {
+func writePath(subDir subDir, w *chunkWriters, lastRunTime, mtime int64, path, transformer string) error {
+	if mtime > 0 && mtime < lastRunTime && !subDir.Status[path].uploadFailed() {
 		return w.writeUnchangedPath(path, transformer)
 	}
 

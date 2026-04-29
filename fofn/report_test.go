@@ -31,6 +31,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/wtsi-hgi/ibackup/transfer"
 )
 
 func TestReportLine(t *testing.T) {
@@ -39,7 +40,7 @@ func TestReportLine(t *testing.T) {
 			entry := ReportEntry{
 				Local:  "/a/b",
 				Remote: "/c/d",
-				Status: "uploaded",
+				Status: transfer.RequestStatusUploaded,
 				Error:  "",
 			}
 
@@ -51,7 +52,7 @@ func TestReportLine(t *testing.T) {
 			entry := ReportEntry{
 				Local:  "/a\tb",
 				Remote: "/c\td",
-				Status: "failed",
+				Status: transfer.RequestStatusFailed,
 				Error:  "conn\treset",
 			}
 
@@ -66,7 +67,7 @@ func TestReportLine(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(entry.Local, ShouldEqual, "/a/b")
 			So(entry.Remote, ShouldEqual, "/c/d")
-			So(entry.Status, ShouldEqual, "uploaded")
+			So(entry.Status, ShouldEqual, transfer.RequestStatusUploaded)
 			So(entry.Error, ShouldEqual, "")
 		})
 
@@ -77,7 +78,7 @@ func TestReportLine(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(entry.Local, ShouldEqual, "/a\tb")
 			So(entry.Remote, ShouldEqual, "/c\td")
-			So(entry.Status, ShouldEqual, "failed")
+			So(entry.Status, ShouldEqual, transfer.RequestStatusFailed)
 			So(entry.Error, ShouldEqual, "conn\treset")
 		})
 
@@ -97,12 +98,9 @@ func TestReportWriteAndRead(t *testing.T) {
 			path := filepath.Join(dir, "report.tsv")
 
 			entries := []ReportEntry{
-				{Local: "/a/b", Remote: "/c/d",
-					Status: "uploaded", Error: ""},
-				{Local: "/path\twith\ttabs", Remote: "/remote\ttab",
-					Status: "failed", Error: "conn\treset"},
-				{Local: "/normal/path", Remote: "/remote/path",
-					Status: "unmodified", Error: ""},
+				{Local: "/a/b", Remote: "/c/d", Status: transfer.RequestStatusUploaded, Error: ""},
+				{Local: "/path\twith\ttabs", Remote: "/remote\ttab", Status: transfer.RequestStatusFailed, Error: "conn\treset"},
+				{Local: "/normal/path", Remote: "/remote/path", Status: transfer.RequestStatusUnmodified, Error: ""},
 			}
 
 			f, err := os.Create(path)
@@ -176,7 +174,7 @@ func TestReportWriteAndRead(t *testing.T) {
 				e := ReportEntry{
 					Local:  "/local/" + string(rune('a'+i)),
 					Remote: "/remote/" + string(rune('a'+i)),
-					Status: "uploaded",
+					Status: transfer.RequestStatusUploaded,
 					Error:  "",
 				}
 

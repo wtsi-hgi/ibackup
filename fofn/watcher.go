@@ -29,6 +29,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -70,9 +71,7 @@ func prepareChunks(
 		return "", nil, err
 	}
 
-	fofnPath := filepath.Join(subDir.Path, fofnFilename)
-
-	chunks, err := writeShuffledChunks(fofnPath, transformer, runDir,
+	chunks, err := writeShuffledChunks(subDir, transformer, runDir,
 		cfg.MinChunk, cfg.MaxChunk, cfg.RandSeed, lastRunTime)
 	if err != nil {
 		_ = os.RemoveAll(runDir)
@@ -104,6 +103,11 @@ func processSubDir(subDir subDir, submitter JobSubmitter,
 	cfg ProcessSubDirConfig, lastRunTime int64) (runState, error) {
 	sdCfg, err := readConfig(subDir.Path)
 	if err != nil {
+		return runState{}, err
+	}
+
+	subDir.Status, _, err = parseStatus(filepath.Join(subDir.Path, statusFilename))
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return runState{}, err
 	}
 

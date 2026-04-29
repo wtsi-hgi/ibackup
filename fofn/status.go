@@ -36,6 +36,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/wtsi-hgi/ibackup/transfer"
 )
 
 const (
@@ -71,7 +73,7 @@ type statusCounts struct {
 
 // parseStatus reads a status file produced by WriteStatusFromRun and returns
 // all entries plus the summary counts from the SUMMARY line.
-func parseStatus(path string) ([]ReportEntry, statusCounts, error) {
+func parseStatus(path string) (map[string]ReportEntry, statusCounts, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, statusCounts{}, err
@@ -81,9 +83,21 @@ func parseStatus(path string) ([]ReportEntry, statusCounts, error) {
 	return scanStatusFile(f)
 }
 
-func scanStatusFile(r io.Reader) ([]ReportEntry, statusCounts, error) {
+// parseStatusCounts reads a status file produced by WriteStatusFromRun and
+// returns the summary counts from the SUMMARY line.
+func parseStatusCounts(path string) (statusCounts, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return statusCounts{}, err
+	}
+	defer f.Close()
+
+	return scanStatusFileCounts(f)
+}
+
+func scanStatusFile(r io.Reader) (map[string]ReportEntry, statusCounts, error) {
 	var (
-		entries = make([]ReportEntry, 0)
+		entries = make(map[string]ReportEntry)
 		counts  statusCounts
 	)
 
@@ -97,7 +111,7 @@ func scanStatusFile(r io.Reader) ([]ReportEntry, statusCounts, error) {
 
 		var err error
 
-		entries, counts, err = handleStatusLine(line, entries, counts)
+		counts, err = handleStatusLine(line, entries, counts)
 		if err != nil {
 			return nil, statusCounts{}, err
 		}
@@ -110,20 +124,36 @@ func scanStatusFile(r io.Reader) ([]ReportEntry, statusCounts, error) {
 	return entries, counts, nil
 }
 
-func handleStatusLine(line string, entries []ReportEntry, counts statusCounts) ([]ReportEntry, statusCounts, error) {
+func handleStatusLine(line string, entries map[string]ReportEntry, counts statusCounts) (statusCounts, error) {
 	if strings.HasPrefix(line, summaryPrefix+"\t") {
-		parsed, err := parseSummaryLine(line)
-
-		return entries, parsed, err
+		return parseSummaryLine(line)
 	}
 
 	entry, err := parseReportLine(line)
 	if err != nil {
-		return nil, statusCounts{},
-			fmt.Errorf("parse status line: %w", err)
+		return statusCounts{}, fmt.Errorf("parse status line: %w", err)
 	}
 
-	return append(entries, entry), counts, nil
+	entries[entry.Local] = entry
+
+	return counts, nil
+}
+
+func scanStatusFileCounts(r io.Reader) (statusCounts, error) {
+	s := bufio.NewScanner(r)
+
+	for s.Scan() {
+		line := s.Text()
+		if line == "" {
+			continue
+		}
+
+		if strings.HasPrefix(line, summaryPrefix+"\t") {
+			return parseSummaryLine(line)
+		}
+	}
+
+	return statusCounts{}, s.Err()
 }
 
 func parseSummaryLine(line string) (statusCounts, error) {
@@ -488,25 +518,25 @@ func decodeChunkLine(line string) (string, string, error) {
 	return string(localBytes), string(remoteBytes), nil
 }
 
-func tallyStatus(counts *statusCounts, status string) { //nolint:gocyclo,cyclop,funlen
+func tallyStatus(counts *statusCounts, status transfer.RequestStatus) { //nolint:gocyclo,cyclop,funlen
 	switch status {
-	case "uploaded":
+	case transfer.RequestStatusUploaded:
 		counts.Uploaded++
-	case "replaced":
+	case transfer.RequestStatusReplaced:
 		counts.Replaced++
-	case "unmodified":
+	case transfer.RequestStatusUnmodified:
 		counts.Skipped++
-	case "missing":
+	case transfer.RequestStatusMissing:
 		counts.Missing++
-	case "failed":
+	case transfer.RequestStatusFailed:
 		counts.Failed++
-	case "frozen":
+	case transfer.RequestStatusFrozen:
 		counts.Frozen++
-	case "orphaned":
+	case transfer.RequestStatusOrphaned:
 		counts.Orphaned++
-	case "warning":
+	case transfer.RequestStatusWarning:
 		counts.Warning++
-	case "hardlink":
+	case transfer.RequestStatusHardlinkSkipped:
 		counts.Hardlinks++
 	case statusNotProcessed:
 		counts.NotProcessed++
