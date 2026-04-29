@@ -84,7 +84,7 @@ func parseStatus(path string) (map[string]ReportEntry, statusCounts, error) {
 }
 
 // parseStatusCounts reads a status file produced by WriteStatusFromRun and
-// returns all entries plus the summary counts from the SUMMARY line.
+// returns the summary counts from the SUMMARY line.
 func parseStatusCounts(path string) (statusCounts, error) {
 	f, err := os.Open(path)
 	if err != nil {
