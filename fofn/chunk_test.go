@@ -500,6 +500,16 @@ func TestChunk(t *testing.T) {
 
 			So(client.AddOrUpdateSet(got), ShouldBeNil)
 			So(os.Mkdir(filepath.Join(dir, got.ID(), "1000"), 0700), ShouldBeNil)
+			So(os.WriteFile(filepath.Join(dir, got.ID(), "status"), fmt.Appendf(
+				nil,
+				"%q\t%q\t%s\t\"\"\n%q\t%q\t%s\t\"\"\n",
+				"/some/file/a",
+				"/remote/some/file/a",
+				transfer.RequestStatusUnmodified,
+				"/some/file/b",
+				"/remote/some/file/b",
+				transfer.RequestStatusUnmodified,
+			), 0600), ShouldBeNil)
 			So(client.MergeFilesWithMTimes(got.ID(), []server.PathMTime{
 				{Path: "/some/file/a", MTime: 900},
 				{Path: "/some/file/b", MTime: 800},
@@ -537,6 +547,7 @@ func TestChunk(t *testing.T) {
 			Convey("Unless they failed to upload last time", func() {
 				So(os.WriteFile(filepath.Join(dir, got.ID(), "2000", "status"), []byte("\"/some/file/a\"\t\"/remote/some/file/a\"\t"+transfer.RequestStatusFailed+"\t\"\"\n"+ //nolint:lll
 					"\"/some/file/b\"\t\"/remote/some/file/b\"\t"+transfer.RequestStatusFailed+"\t\"\"\n"+
+					"\"/some/file/c\"\t\"/remote/some/file/c\"\t"+transfer.RequestStatusUnmodified+"\t\"\"\n"+
 					"\"/some/file/d\"\t\"/remote/some/file/d\"\t"+transfer.RequestStatusFailed+"\t\"\"\n",
 				), 0600), ShouldBeNil)
 
@@ -547,7 +558,7 @@ func TestChunk(t *testing.T) {
 					{Path: "/some/file/b", MTime: 800},
 					{Path: "/some/file/c", MTime: 1200},
 					{Path: "/some/file/d", MTime: 1500},
-					{Path: "/some/file/e", MTime: 4000},
+					{Path: "/some/file/e", MTime: 100},
 				}), ShouldBeNil)
 				So(client.AddOrUpdateSet(got), ShouldBeNil)
 				So(client.TriggerDiscovery(got.ID(), false), ShouldBeNil)

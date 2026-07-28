@@ -278,12 +278,20 @@ func countEntries(subDir subDir, lastRunTime int64) (count int, hasUnchanged boo
 
 		local := lr.ReadString0()
 
-		if mtime > 0 && mtime < lastRunTime && !subDir.Status[local].uploadFailed() {
+		if isUnchanged(mtime, lastRunTime, subDir.Status, local) {
 			hasUnchanged = true
 		} else {
 			count++
 		}
 	}
+}
+
+func isUnchanged(mtime, lastRunTime int64, statuses map[string]ReportEntry, local string) bool {
+	if re, ok := statuses[local]; !ok || re.uploadFailed() {
+		return false
+	}
+
+	return mtime > 0 && mtime < lastRunTime
 }
 
 // calculateChunks returns the optimal number of chunks for n entries given
@@ -359,7 +367,7 @@ func distributeEntries(subDir subDir, transformer string, w *chunkWriters, lastR
 }
 
 func writePath(subDir subDir, w *chunkWriters, lastRunTime, mtime int64, path, transformer string) error {
-	if mtime > 0 && mtime < lastRunTime && !subDir.Status[path].uploadFailed() {
+	if isUnchanged(mtime, lastRunTime, subDir.Status, path) {
 		return w.writeUnchangedPath(path, transformer)
 	}
 
