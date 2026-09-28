@@ -896,7 +896,7 @@ func TestWatcherPoll(t *testing.T) {
 			p := make([]server.PathMTime, len(paths))
 
 			for n, path := range paths {
-				p[n] = server.PathMTime{Path: path, MTime: time.Now().Add(-time.Hour - time.Minute*time.Duration(rand.Intn(1000))).Unix()}
+				p[n] = server.PathMTime{Path: path, MTime: time.Now().Add(-time.Hour - time.Minute*time.Duration(rand.Intn(1000))).Unix()} //nolint:gosec,lll
 			}
 
 			So(client.MergeFilesWithMTimes(id, p), ShouldBeNil)
@@ -939,7 +939,7 @@ func TestWatcherPoll(t *testing.T) {
 			So(adminState, ShouldEqual, adminStateNoNew)
 
 			for n, path := range paths {
-				p[n] = server.PathMTime{Path: path, MTime: time.Now().Add(time.Hour + time.Minute*time.Duration(rand.Intn(1000))).Unix()}
+				p[n] = server.PathMTime{Path: path, MTime: time.Now().Add(time.Hour + time.Minute*time.Duration(rand.Intn(1000))).Unix()} //nolint:gosec,lll
 			}
 
 			So(client.MergeFilesWithMTimes(id, p), ShouldBeNil)

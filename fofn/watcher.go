@@ -106,7 +106,7 @@ const (
 )
 
 func (a adminState) String() string {
-	switch a {
+	switch a { //nolint:exhaustive
 	case adminStateBackingUp:
 		return "Backing Up"
 	case adminStateNoNew:
@@ -274,9 +274,9 @@ func scanRunDirs(subDirPath string) (runDirScan, error) {
 // dispatch executes the state-appropriate handler for a subdirectory.
 func (w *Watcher) dispatch(sd subDir, scan runDirScan, status runJobStatus) error {
 	var (
-		state      runState
-		adminState adminState
-		err        error
+		state runState
+		as    adminState
+		err   error
 	)
 
 	if !scan.found { //nolint:gocritic,nestif
@@ -286,7 +286,7 @@ func (w *Watcher) dispatch(sd subDir, scan runDirScan, status runJobStatus) erro
 	} else if sd.FofnMtime != scan.runMtime {
 		state, err = w.teardownAndRestart(sd, scan, status)
 	} else {
-		adminState = adminStateDone
+		as = adminStateDone
 		state.RunDir = scan.runDir
 	}
 
@@ -294,15 +294,15 @@ func (w *Watcher) dispatch(sd subDir, scan runDirScan, status runJobStatus) erro
 		return err
 	}
 
-	if adminState == adminStateNone {
+	if as == adminStateNone { //nolint:nestif
 		if state.RunDir == "" {
-			adminState = adminStateNoNew
+			as = adminStateNoNew
 		} else {
-			adminState = adminStateBackingUp
+			as = adminStateBackingUp
 		}
 	}
 
-	if err = writeAdminState(sd, adminState); err != nil {
+	if err = writeAdminState(sd, as); err != nil {
 		return err
 	}
 
@@ -322,7 +322,7 @@ func writeAdminState(sd subDir, as adminState) error {
 	}
 
 	if currentState != as {
-		return os.WriteFile(adminFile, []byte(as.String()), 0600)
+		return os.WriteFile(adminFile, []byte(as.String()), 0600) //nolint:mnd
 	}
 
 	current, err := os.Lstat(adminFile)
