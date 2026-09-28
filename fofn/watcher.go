@@ -41,6 +41,7 @@ import (
 
 const (
 	statusFilename = "status"
+	adminStatus    = "admin-status"
 	maxPollWorkers = 10
 	dirMode        = 0750
 )
@@ -93,6 +94,28 @@ type runState struct {
 	RepGroup string
 	RunDir   string
 	Mtime    int64
+}
+
+type adminState int
+
+const (
+	adminStateNone adminState = iota
+	adminStateBackingUp
+	adminStateNoNew
+	adminStateDone
+)
+
+func (a adminState) String() string {
+	switch a {
+	case adminStateBackingUp:
+		return "Backing Up"
+	case adminStateNoNew:
+		return "No New Files"
+	case adminStateDone:
+		return "Done"
+	}
+
+	return ""
 }
 
 // processSubDir reads config.yml, looks up the named transformer, writes
@@ -251,8 +274,9 @@ func scanRunDirs(subDirPath string) (runDirScan, error) {
 // dispatch executes the state-appropriate handler for a subdirectory.
 func (w *Watcher) dispatch(sd subDir, scan runDirScan, status runJobStatus) error {
 	var (
-		state runState
-		err   error
+		state      runState
+		adminState adminState
+		err        error
 	)
 
 	if !scan.found { //nolint:gocritic,nestif
@@ -262,14 +286,75 @@ func (w *Watcher) dispatch(sd subDir, scan runDirScan, status runJobStatus) erro
 	} else if sd.FofnMtime != scan.runMtime {
 		state, err = w.teardownAndRestart(sd, scan, status)
 	} else {
+		adminState = adminStateDone
 		state.RunDir = scan.runDir
 	}
 
-	if err != nil || state.RunDir == "" {
+	if err != nil {
 		return err
 	}
 
+	if adminState == adminStateNone {
+		if state.RunDir == "" {
+			adminState = adminStateNoNew
+		} else {
+			adminState = adminStateBackingUp
+		}
+	}
+
+	if err = writeAdminState(sd, adminState); err != nil {
+		return err
+	}
+
+	if state.RunDir == "" {
+		return nil
+	}
+
 	return ensureArtefacts(state.RunDir, sd, status)
+}
+
+func writeAdminState(sd subDir, as adminState) error {
+	adminFile := filepath.Join(sd.Path, adminStatus)
+
+	currentState, err := readCurrentState(adminFile)
+	if err != nil {
+		return err
+	}
+
+	if currentState != as {
+		return os.WriteFile(adminFile, []byte(as.String()), 0600)
+	}
+
+	current, err := os.Lstat(adminFile)
+	if err != nil {
+		return err
+	}
+
+	if fofnTime := time.Unix(sd.FofnMtime, 0); current.ModTime().Before(fofnTime) {
+		return os.Chtimes(adminFile, fofnTime, fofnTime)
+	}
+
+	return nil
+}
+
+func readCurrentState(adminFile string) (adminState, error) {
+	contents, err := os.ReadFile(adminFile)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return adminStateNone, err
+	}
+
+	var currentState adminState
+
+	switch string(contents) {
+	case adminStateBackingUp.String():
+		currentState = adminStateBackingUp
+	case adminStateNoNew.String():
+		currentState = adminStateNoNew
+	case adminStateDone.String():
+		currentState = adminStateDone
+	}
+
+	return currentState, nil
 }
 
 // ensureArtefacts is the single function responsible for status file and

@@ -28,6 +28,7 @@ package fofn
 import (
 	"encoding/base64"
 	"fmt"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -38,6 +39,7 @@ import (
 
 	"github.com/VertebrateResequencing/wr/jobqueue"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/wtsi-hgi/ibackup/server"
 	"github.com/wtsi-hgi/ibackup/set"
 	"github.com/wtsi-hgi/ibackup/transfer"
 	"github.com/wtsi-hgi/ibackup/transformer"
@@ -537,6 +539,10 @@ func TestWatcherPoll(t *testing.T) {
 			So(findErr, ShouldBeNil)
 			So(runScan.found, ShouldBeTrue)
 
+			adminState, err := readCurrentState(filepath.Join(ssubDir.Path, adminStatus))
+			So(err, ShouldBeNil)
+			So(adminState, ShouldEqual, adminStateBackingUp)
+
 			runDir := runScan.runDir
 			runMtime := runScan.runMtime
 
@@ -556,6 +562,10 @@ func TestWatcherPoll(t *testing.T) {
 			symlinkPath := filepath.Join(ssubDir.Path, statusFilename)
 			_, readErr := os.Readlink(symlinkPath)
 			So(readErr, ShouldBeNil)
+
+			adminState, err = readCurrentState(filepath.Join(ssubDir.Path, adminStatus))
+			So(err, ShouldBeNil)
+			So(adminState, ShouldEqual, adminStateBackingUp)
 
 			So(len(mock.submitted), ShouldBeGreaterThan, firstCount)
 
@@ -589,12 +599,20 @@ func TestWatcherPoll(t *testing.T) {
 
 			mock.allJobs = nil
 
+			adminState, err := readCurrentState(filepath.Join(ssubDir.Path, adminStatus))
+			So(err, ShouldBeNil)
+			So(adminState, ShouldEqual, adminStateBackingUp)
+
 			err = w.poll()
 			So(err, ShouldBeNil)
 
 			statusPath := filepath.Join(runDir, statusFilename)
 			_, statErr := os.Stat(statusPath)
 			So(statErr, ShouldBeNil)
+
+			adminState, err = readCurrentState(filepath.Join(ssubDir.Path, adminStatus))
+			So(err, ShouldBeNil)
+			So(adminState, ShouldEqual, adminStateDone)
 
 			So(mock.submitted, ShouldHaveLength, submitCount)
 		})
@@ -861,6 +879,78 @@ func TestWatcherPoll(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(mock.submitted, ShouldHaveLength, 3)
 			So(mock.submitted[0].Group, ShouldEqual, "some-group")
+		})
+
+		Convey("adminStatus updates correctly when FOFN contains no changes since last run", func() {
+			paths := generateTmpPaths(25)
+			tx := "prefix=/:/"
+			frozen := false
+			metadata := map[string]string{}
+
+			client := NewClient(watchDir)
+			set := &set.Set{Name: "", Transformer: tx, Frozen: frozen, Metadata: metadata}
+			id := set.ID()
+
+			So(client.AddOrUpdateSet(set), ShouldBeNil)
+
+			p := make([]server.PathMTime, len(paths))
+
+			for n, path := range paths {
+				p[n] = server.PathMTime{Path: path, MTime: time.Now().Add(-time.Hour - time.Minute*time.Duration(rand.Intn(1000))).Unix()}
+			}
+
+			So(client.MergeFilesWithMTimes(id, p), ShouldBeNil)
+			So(client.TriggerDiscovery(id, false), ShouldBeNil)
+
+			sd := subDirWithMtime(subDir{Path: filepath.Join(watchDir, id)})
+
+			mock := &mockJobSubmitter{}
+
+			w, err := NewWatcher(watchDir, mock, cfg)
+			So(err, ShouldBeNil)
+
+			err = w.poll()
+			So(err, ShouldBeNil)
+
+			adminState, err := readCurrentState(filepath.Join(sd.Path, adminStatus))
+			So(err, ShouldBeNil)
+			So(adminState, ShouldEqual, adminStateBackingUp)
+
+			mock.allJobs = nil
+
+			time.Sleep(time.Second)
+
+			err = w.poll()
+			So(err, ShouldBeNil)
+
+			adminState, err = readCurrentState(filepath.Join(sd.Path, adminStatus))
+			So(err, ShouldBeNil)
+			So(adminState, ShouldEqual, adminStateDone)
+
+			time.Sleep(time.Second)
+
+			So(os.Chtimes(filepath.Join(sd.Path, fofnFilename), time.Now(), time.Now()), ShouldBeNil)
+
+			err = w.poll()
+			So(err, ShouldBeNil)
+
+			adminState, err = readCurrentState(filepath.Join(sd.Path, adminStatus))
+			So(err, ShouldBeNil)
+			So(adminState, ShouldEqual, adminStateNoNew)
+
+			for n, path := range paths {
+				p[n] = server.PathMTime{Path: path, MTime: time.Now().Add(time.Hour + time.Minute*time.Duration(rand.Intn(1000))).Unix()}
+			}
+
+			So(client.MergeFilesWithMTimes(id, p), ShouldBeNil)
+			So(client.TriggerDiscovery(id, false), ShouldBeNil)
+
+			err = w.poll()
+			So(err, ShouldBeNil)
+
+			adminState, err = readCurrentState(filepath.Join(sd.Path, adminStatus))
+			So(err, ShouldBeNil)
+			So(adminState, ShouldEqual, adminStateBackingUp)
 		})
 	})
 }
