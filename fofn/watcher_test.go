@@ -912,7 +912,9 @@ func TestWatcherPoll(t *testing.T) {
 			err = w.poll()
 			So(err, ShouldBeNil)
 
-			adminState, err := readCurrentState(filepath.Join(sd.Path, adminStatus))
+			adminStatusFile := filepath.Join(sd.Path, adminStatus)
+
+			adminState, err := readCurrentState(adminStatusFile)
 			So(err, ShouldBeNil)
 			So(adminState, ShouldEqual, adminStateBackingUp)
 
@@ -923,9 +925,26 @@ func TestWatcherPoll(t *testing.T) {
 			err = w.poll()
 			So(err, ShouldBeNil)
 
-			adminState, err = readCurrentState(filepath.Join(sd.Path, adminStatus))
+			adminState, err = readCurrentState(adminStatusFile)
 			So(err, ShouldBeNil)
 			So(adminState, ShouldEqual, adminStateDone)
+
+			s, err := os.Lstat(adminStatusFile)
+			So(err, ShouldBeNil)
+
+			lastMTime := s.ModTime()
+
+			time.Sleep(time.Second)
+
+			err = w.poll()
+			So(err, ShouldBeNil)
+
+			s, err = os.Lstat(adminStatusFile)
+			So(err, ShouldBeNil)
+
+			So(s.ModTime(), ShouldEqual, lastMTime)
+
+			lastMTime = s.ModTime()
 
 			time.Sleep(time.Second)
 
@@ -934,9 +953,34 @@ func TestWatcherPoll(t *testing.T) {
 			err = w.poll()
 			So(err, ShouldBeNil)
 
-			adminState, err = readCurrentState(filepath.Join(sd.Path, adminStatus))
+			adminState, err = readCurrentState(adminStatusFile)
 			So(err, ShouldBeNil)
 			So(adminState, ShouldEqual, adminStateNoNew)
+
+			s, err = os.Lstat(adminStatusFile)
+			So(err, ShouldBeNil)
+
+			So(s.ModTime(), ShouldHappenAfter, lastMTime)
+
+			lastMTime = s.ModTime()
+
+			time.Sleep(time.Second)
+
+			So(os.Chtimes(filepath.Join(sd.Path, fofnFilename), time.Now(), time.Now()), ShouldBeNil)
+
+			err = w.poll()
+			So(err, ShouldBeNil)
+
+			adminState, err = readCurrentState(adminStatusFile)
+			So(err, ShouldBeNil)
+			So(adminState, ShouldEqual, adminStateNoNew)
+
+			s, err = os.Lstat(adminStatusFile)
+			So(err, ShouldBeNil)
+
+			So(s.ModTime(), ShouldHappenAfter, lastMTime)
+
+			lastMTime = s.ModTime()
 
 			for n, path := range paths {
 				p[n] = server.PathMTime{Path: path, MTime: time.Now().Add(time.Hour + time.Minute*time.Duration(rand.Intn(1000))).Unix()} //nolint:gosec,lll

@@ -322,7 +322,7 @@ func writeAdminState(sd subDir, as adminState) error {
 	}
 
 	if currentState != as {
-		return os.WriteFile(adminFile, []byte(as.String()), 0600) //nolint:mnd
+		return os.WriteFile(adminFile, []byte(as.String()), configFileMode) //nolint:mnd
 	}
 
 	current, err := os.Lstat(adminFile)
