@@ -980,8 +980,6 @@ func TestWatcherPoll(t *testing.T) {
 
 			So(s.ModTime(), ShouldHappenAfter, lastMTime)
 
-			lastMTime = s.ModTime()
-
 			for n, path := range paths {
 				p[n] = server.PathMTime{Path: path, MTime: time.Now().Add(time.Hour + time.Minute*time.Duration(rand.Intn(1000))).Unix()} //nolint:gosec,lll
 			}
