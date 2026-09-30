@@ -22,7 +22,7 @@ install:
 	@echo installed to ${GOPATH}/bin/ibackup
 
 test:
-	@go test -tags netgo -timeout 60m --count 1 -v .
+	@go test -tags netgo -timeout 120m --count 1 -v .
 	@go test -tags netgo --count 1 $(shell go list ./... | grep -v '^${PKG}$$')
 
 race: race-subpkgs

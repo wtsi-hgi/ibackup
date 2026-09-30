@@ -353,7 +353,7 @@ func TestBatonConcurrentClientInit(t *testing.T) {
 }
 
 func TestUploadRetry(t *testing.T) {
-	path := os.Getenv("PATH")
+	path := pathWithoutBaton()
 
 	Convey("With a pseudo baton script", t, func() {
 		l, err := net.Listen("tcp", "127.0.0.1:0") //nolint:noctx
@@ -474,6 +474,20 @@ func isObjectInIRODS(remotePath, name string) bool {
 	So(err, ShouldBeNil)
 
 	return strings.Contains(string(output), name)
+}
+
+// pathWithoutBaton returns PATH minus any dirs containing baton-do, since
+// ex.FindBaton() returns the last baton-do in PATH, not the first.
+func pathWithoutBaton() string {
+	var dirs []string
+
+	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
+		if _, err := os.Stat(filepath.Join(dir, "baton-do")); err != nil {
+			dirs = append(dirs, dir)
+		}
+	}
+
+	return strings.Join(dirs, string(os.PathListSeparator))
 }
 
 func getRemoteMeta(path string) string {

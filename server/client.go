@@ -36,7 +36,7 @@ import (
 
 	"github.com/go-resty/resty/v2"
 	"github.com/hashicorp/go-multierror"
-	"github.com/inconshreveable/log15"
+	"github.com/inconshreveable/log15/v3"
 	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/ibackup/set"
 	"github.com/wtsi-hgi/ibackup/transfer"

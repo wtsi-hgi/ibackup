@@ -42,7 +42,7 @@ import (
 	jqs "github.com/VertebrateResequencing/wr/jobqueue/scheduler"
 	"github.com/VertebrateResequencing/wr/queue"
 	"github.com/gammazero/workerpool"
-	"github.com/inconshreveable/log15"
+	"github.com/inconshreveable/log15/v3"
 	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/ibackup/internal/mem"
 	"github.com/wtsi-hgi/ibackup/remove"

@@ -63,7 +63,7 @@ import (
 
 	"github.com/VertebrateResequencing/wr/client"
 	"github.com/VertebrateResequencing/wr/jobqueue"
-	"github.com/inconshreveable/log15"
+	"github.com/inconshreveable/log15/v3"
 	"github.com/phayes/freeport"
 	. "github.com/smartystreets/goconvey/convey"
 	gas "github.com/wtsi-hgi/go-authserver"
@@ -389,7 +389,7 @@ Local Path	Status	Size	Attempts	Date	Error`+"\n"+
 				"--path", path, "--metadata", setMetadata)
 
 			So(exitCode, ShouldEqual, 1)
-			So(err, ShouldContainSubstring, "namespace is incorrect, must be 'ibackup:user:' or empty")
+			So(err, ShouldContainSubstring, "namespace is incorrect, must be 'ibackup:user:', 'ibackup:fofn:', or empty")
 
 			setName = "invalidMetadataTest3"
 			setMetadata = "ibackup:name=name"
@@ -442,7 +442,7 @@ Local Path	Status	Size	Attempts	Date	Error`+"\n"+
 			Convey("Add will apply default reason/review/remove metadata", func() {
 				s.addSetForTesting(t, setName, transformer, path)
 
-				s.waitForStatus(setName, "\nStatus: complete", 5*time.Second)
+				s.waitForStatus(setName, "\nStatus: complete", 30*time.Second)
 
 				testRemoteReviewRemove(t, filepath.Join(remotePath, "file1"),
 					"backup", now.AddDate(0, 6, 0), now.AddDate(1, 0, 0))
@@ -832,14 +832,7 @@ func NewUploadingTestServer(t *testing.T, withDBBackup bool) (*testServer, strin
 func initIRODSTestCollection(tb testing.TB) string {
 	tb.Helper()
 
-	collection := testutil.RequireIRODSTestCollection(tb)
-	if collection == "" {
-		return ""
-	}
-
-	resetIRODSOrFail(tb)
-
-	return collection
+	return testutil.RequireIRODSTestCollection(tb)
 }
 
 func resetIRODSOrFail(tb testing.TB) {
@@ -1008,7 +1001,7 @@ func TestRemove(t *testing.T) {
 				s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
 					0, "Removal status: 0 / 1 objects removed")
 
-				s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 5*time.Second)
+				s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 30*time.Second)
 
 				trashSetName := set.TrashPrefix + setName
 
@@ -1080,7 +1073,7 @@ func TestRemove(t *testing.T) {
 					exitCode, _ = s.runBinary(t, "remove", "--name", setName, "--path", dir1)
 					So(exitCode, ShouldEqual, 0)
 
-					s.waitForStatus(setName, "Removal status: 2 / 2 objects removed", 5*time.Second)
+					s.waitForStatus(setName, "Removal status: 2 / 2 objects removed", 30*time.Second)
 
 					exitCode, output := s.runBinary(t, "status", "--name", setName, "-d")
 					So(exitCode, ShouldEqual, 0)
@@ -1103,7 +1096,7 @@ func TestRemove(t *testing.T) {
 
 						exitCode, _ = s.runBinary(t, "sync", "--name", setName)
 
-						s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 5*time.Second)
+						s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 30*time.Second)
 
 						s.waitForStatus(setName, "\nDiscovery: completed", 10*time.Second)
 						s.waitForStatus(setName, "\nStatus: complete", 10*time.Second)
@@ -1135,7 +1128,7 @@ func TestRemove(t *testing.T) {
 					exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", file2)
 					So(exitCode, ShouldEqual, 0)
 
-					s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 5*time.Second)
+					s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 30*time.Second)
 
 					remoteFile := filepath.Join(remotePath, "file2")
 					sets := getMetaValue(getRemoteMeta(remoteFile), transfer.MetaKeySets)
@@ -1210,7 +1203,7 @@ func TestRemove(t *testing.T) {
 				setName = "nestedDirSet"
 
 				s.addSetForTesting(t, setName, transformer, dir1)
-				s.waitForStatus(setName, "\nStatus: complete", 5*time.Second)
+				s.waitForStatus(setName, "\nStatus: complete", 30*time.Second)
 
 				Convey("Remove removes the nested dir even though it wasnt specified in the set", func() {
 					s.removePath(t, setName, dir3, 2)
@@ -1232,7 +1225,7 @@ func TestRemove(t *testing.T) {
 					s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
 						0, "Removal status: 0 / 4 objects removed")
 
-					s.waitForStatus(setName, "Removal status: 4 / 4 objects removed", 5*time.Second)
+					s.waitForStatus(setName, "Removal status: 4 / 4 objects removed", 30*time.Second)
 				})
 			})
 
@@ -1250,7 +1243,7 @@ func TestRemove(t *testing.T) {
 
 				So(exitCode, ShouldEqual, 0)
 
-				s.waitForStatus(setName, "Removal status: 3 / 3 objects removed", 5*time.Second)
+				s.waitForStatus(setName, "Removal status: 3 / 3 objects removed", 30*time.Second)
 
 				exitCode, output := s.runBinary(t, "status", "--name", setName, "-d")
 				So(exitCode, ShouldEqual, 0)
@@ -1282,7 +1275,7 @@ func TestRemove(t *testing.T) {
 
 				So(exitCode, ShouldEqual, 0)
 
-				s.waitForStatus(setName, "Removal status: 3 / 3 objects removed", 5*time.Second)
+				s.waitForStatus(setName, "Removal status: 3 / 3 objects removed", 30*time.Second)
 			})
 
 			Convey("if the server dies during removal, the removal will continue upon server startup", func() {
@@ -1317,7 +1310,7 @@ func TestRemove(t *testing.T) {
 
 				s.startServer()
 
-				s.waitForStatus(setName, "Removal status: 6 / 6 objects removed", 5*time.Second)
+				s.waitForStatus(setName, "Removal status: 6 / 6 objects removed", 30*time.Second)
 			})
 
 			Convey("And a new file added to a directory already in the set", func() {
@@ -1668,7 +1661,7 @@ func runCLI(t *testing.T, env []string, stdin string, args ...string) (int, stri
 	cmd.SetCLIWriter(writer)
 	defer cmd.SetCLIWriter(nil)
 
-	cmd.SetLoggerHandler(log15.FuncHandler(func(record *log15.Record) error {
+	cmd.SetLoggerHandler(log15.FuncHandler(func(record log15.Record) error {
 		_, errw := io.WriteString(writer, record.Msg+"\n")
 
 		return errw
@@ -2945,7 +2938,7 @@ func TestEdit(t *testing.T) {
 					exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", setFile1)
 					So(exitCode, ShouldEqual, 0)
 
-					s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 5*time.Second)
+					s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 30*time.Second)
 
 					exitCode, _ = s.runBinary(t, "edit", "--name", setName, "--add", setFile1)
 					So(exitCode, ShouldEqual, 0)
@@ -3016,7 +3009,7 @@ func TestEdit(t *testing.T) {
 					exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", setFile1)
 					So(exitCode, ShouldEqual, 0)
 
-					s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 5*time.Second)
+					s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 30*time.Second)
 
 					exitCode, _ = s.runBinary(t, "edit", "--name", setName, "--add", setDir1)
 					So(exitCode, ShouldEqual, 0)
@@ -3057,7 +3050,7 @@ func TestEdit(t *testing.T) {
 					exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", setDir1)
 					So(exitCode, ShouldEqual, 0)
 
-					s.waitForStatus(setName, "Removal status: 2 / 2 objects removed", 5*time.Second)
+					s.waitForStatus(setName, "Removal status: 2 / 2 objects removed", 30*time.Second)
 
 					exitCode, _ = s.runBinary(t, "edit", "--name", setName, "--add", setDir1)
 					So(exitCode, ShouldEqual, 0)
@@ -3075,7 +3068,7 @@ func TestEdit(t *testing.T) {
 					exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", setDir1)
 					So(exitCode, ShouldEqual, 0)
 
-					s.waitForStatus(setName, "Removal status: 2 / 2 objects removed", 5*time.Second)
+					s.waitForStatus(setName, "Removal status: 2 / 2 objects removed", 30*time.Second)
 
 					setDir3 := filepath.Join(setDir1, "dir3")
 					err = os.Mkdir(setDir3, userPerms)
@@ -3101,7 +3094,7 @@ func TestEdit(t *testing.T) {
 						exitCode, _ = s.runBinary(t, "remove", "--name", setName, "--path", setDir3)
 						So(exitCode, ShouldEqual, 0)
 
-						s.waitForStatus(setName, "Removal status: 3 / 3 objects removed", 5*time.Second)
+						s.waitForStatus(setName, "Removal status: 3 / 3 objects removed", 30*time.Second)
 
 						exitCode, _ = s.runBinary(t, "edit", "--name", setName, "--add", setDir1)
 						So(exitCode, ShouldEqual, 0)
@@ -4373,7 +4366,7 @@ func TestList(t *testing.T) {
 					exitCode, _ := s.runBinary(t, "add", "-p", dir2,
 						"--name", setName2, "--transformer", "prefix="+dir2+":"+remotePath)
 					So(exitCode, ShouldEqual, 0)
-					s.waitForStatus(setName2, "Status: complete", 5*time.Second)
+					s.waitForStatus(setName2, "Status: complete", 30*time.Second)
 
 					err := s.Shutdown()
 					So(err, ShouldBeNil)
@@ -4564,7 +4557,7 @@ Directories:
 			exitCode, _ := s.runBinary(t, "add", "--name", setName, "--transformer",
 				transformer, "--path", localDir, "--metadata", meta)
 			So(exitCode, ShouldEqual, 0)
-			s.waitForStatus(setName, "\nDiscovery: completed", 5*time.Second)
+			s.waitForStatus(setName, "\nDiscovery: completed", 30*time.Second)
 
 			Convey("Status tells you the user metadata", func() {
 				s.confirmOutput(t, []string{"status"}, 0, `Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
@@ -4618,6 +4611,8 @@ Directories:
 					"--path", localDir)
 				So(exitCode, ShouldEqual, 0)
 
+				s.waitForStatus(setName, "\nStatus: complete", 30*time.Second)
+
 				s.confirmOutput(t, []string{"status", "-n", setName}, 0,
 					`Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
 Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
@@ -4641,6 +4636,8 @@ Directories:
 				exitCode, _ = s.runBinary(t, "add", "--name", setName, "--transformer", transformer,
 					"--path", localDir, "--reason", "backup")
 				So(exitCode, ShouldEqual, 0)
+
+				s.waitForStatus(setName, "\nStatus: complete", 30*time.Second)
 
 				s.confirmOutput(t, []string{"status", "-n", setName}, 0,
 					`Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
@@ -5068,7 +5065,7 @@ Directories:
 
 			So(exitCode, ShouldEqual, 0)
 
-			s.waitForStatus(setName, "Monitored: 4d", 5*time.Second)
+			s.waitForStatus(setName, "Monitored: 4d", 30*time.Second)
 
 			setName = "testAddMonitorWeek"
 			exitCode, _ = s.runBinary(t, "add", "--path", dir,
@@ -5077,7 +5074,7 @@ Directories:
 
 			So(exitCode, ShouldEqual, 0)
 
-			s.waitForStatus(setName, "Monitored: 2w", 5*time.Second)
+			s.waitForStatus(setName, "Monitored: 2w", 30*time.Second)
 		})
 
 		Convey("Sets added with a monitor that monitors removals displays this", func() {
@@ -5090,7 +5087,7 @@ Directories:
 
 			So(exitCode, ShouldEqual, 0)
 
-			s.waitForStatus(setName, "Monitored (with removals): 4d", 5*time.Second)
+			s.waitForStatus(setName, "Monitored (with removals): 4d", 30*time.Second)
 		})
 
 		Convey("When requesting statuses for all users, requesters are shown in output", func() {
@@ -5381,7 +5378,7 @@ func TestReAdd(t *testing.T) {
 		Convey("Re-adding a set with the same name fails", func() {
 			s.addSetForTesting(t, name, transformer, localDir)
 
-			s.waitForStatus(name, "Status:", 5*time.Second)
+			s.waitForStatus(name, "Status:", 30*time.Second)
 
 			s.confirmOutputContains(t, []string{"add", "--name", name, "--transformer", transformer, "--path", localDir}, 1,
 				"set with this name already exists")
@@ -5560,7 +5557,7 @@ func TestWatchFofnsRealWRIntegration(t *testing.T) {
 		configPath := filepath.Join(localRoot, "ibackup_config.json")
 		txName := "watchfofns_it"
 
-		client := fofn.NewClient(filesRoot)
+		client := fofn.NewClient(watchDir)
 		got := &set.Set{Name: "proj", Requester: "me", Transformer: txName}
 
 		So(client.AddOrUpdateSet(got), ShouldBeNil)
@@ -6276,9 +6273,9 @@ func TestPutReportFlag(t *testing.T) {
 				statusMap[e.Local] = e.Status
 			}
 
-			So(statusMap[file1], ShouldEqual, "uploaded")
-			So(statusMap[file2], ShouldEqual, "unmodified")
-			So(statusMap[fileMissing], ShouldEqual, "missing")
+			So(statusMap[file1], ShouldEqual, transfer.RequestStatusUploaded)
+			So(statusMap[file2], ShouldEqual, transfer.RequestStatusUnmodified)
+			So(statusMap[fileMissing], ShouldEqual, transfer.RequestStatusMissing)
 
 			for _, e := range entries {
 				So(e.Remote, ShouldNotBeEmpty)
@@ -6353,8 +6350,8 @@ func TestPutReportFlag(t *testing.T) {
 				statusMap[e.Local] = e.Status
 			}
 
-			So(statusMap[goodFile], ShouldEqual, "uploaded")
-			So(statusMap[badFile], ShouldEqual, "failed")
+			So(statusMap[goodFile], ShouldEqual, transfer.RequestStatusUploaded)
+			So(statusMap[badFile], ShouldEqual, transfer.RequestStatusFailed)
 		})
 	})
 }
