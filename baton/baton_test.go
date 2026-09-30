@@ -482,7 +482,7 @@ func pathWithoutBaton() string {
 	var dirs []string
 
 	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
-		if _, err := os.Stat(filepath.Join(dir, "baton-do")); err != nil {
+		if _, err := os.Stat(filepath.Join(dir, "baton-do")); err != nil { //nolint:gosec // PATH dirs from test env
 			dirs = append(dirs, dir)
 		}
 	}
