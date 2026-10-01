@@ -123,6 +123,8 @@ var errWatchFofnsExitedEarly = errors.New("watchfofns exited before upload becam
 
 var errUploadCountMismatch = errors.New("upload count mismatch")
 
+const dirMode = 0750
+
 func TestServer(t *testing.T) {
 	Convey("An existing cache dir provided to an ACME-mode server must only be readable by the server user", t, func() {
 		tmp := t.TempDir()
@@ -221,6 +223,8 @@ func TestMain(m *testing.M) {
 
 	removeBinary = buildSelf()
 	if removeBinary == nil {
+		exitCode = 1
+
 		return
 	}
 
@@ -5472,8 +5476,6 @@ func (b *safeBuffer) String() string {
 	return b.buf.String()
 }
 
-const dirMode = 0750
-
 func TestWatchFofnsRealWRIntegration(t *testing.T) {
 	Convey("watchfofns real-wr integration", t, func() {
 		schedulerDeployment := os.Getenv("IBACKUP_TEST_SCHEDULER")
@@ -5596,19 +5598,26 @@ func TestWatchFofnsRealWRIntegration(t *testing.T) {
 		So(client.MergeFiles(got.ID(), paths), ShouldBeNil)
 		So(client.TriggerDiscovery(got.ID(), false), ShouldBeNil)
 
-		// Run watchfofns in the background, cancelling once status is correct.
-		ctx, cancel := context.WithCancel(context.Background())
+		// watchfofns submits wr jobs that run its own executable, so it must run
+		// as the built ibackup binary: in-process, the jobs would run this test
+		// binary instead.
+		watchCmd := exec.Command(resolveBinary(app), //nolint:gosec,noctx
+			"watchfofns",
+			"--dir", watchDir,
+			"--interval", "1s",
+			"--min-chunk", "10000",
+			"--max-chunk", "10000",
+			"--wr_deployment", schedulerDeployment,
+		)
 
-		cmd.SetWatchCtxFunc(func() (context.Context, context.CancelFunc) {
-			return ctx, cancel
-		})
-		t.Cleanup(func() { cmd.SetWatchCtxFunc(nil) })
+		watchCmd.Env = append(os.Environ(), "IBACKUP_CONFIG="+configPath)
 
-		// Ensure wr gets a PATH that includes our built ibackup.
-		env := []string{
-			"IBACKUP_CONFIG=" + configPath,
-			"PATH=" + testRootDir + ":" + os.Getenv("PATH"),
-		}
+		var watchOut safeBuffer
+
+		watchCmd.Stdout = &watchOut
+		watchCmd.Stderr = &watchOut
+
+		So(watchCmd.Start(), ShouldBeNil)
 
 		var (
 			exitCode int
@@ -5618,17 +5627,25 @@ func TestWatchFofnsRealWRIntegration(t *testing.T) {
 		done := make(chan struct{})
 
 		go func() {
-			exitCode, output = runCLI(nil, env, "",
-				"watchfofns",
-				"--dir", watchDir,
-				"--interval", "1s",
-				"--min-chunk", "10000",
-				"--max-chunk", "10000",
-				"--wr_deployment", schedulerDeployment,
-			)
+			_ = watchCmd.Wait() //nolint:errcheck
+
+			exitCode = watchCmd.ProcessState.ExitCode()
+			output = watchOut.String()
 
 			close(done)
 		}()
+
+		cancel := func() { _ = watchCmd.Process.Signal(syscall.SIGTERM) } //nolint:errcheck
+
+		t.Cleanup(func() {
+			cancel()
+
+			select {
+			case <-done:
+			case <-time.After(30 * time.Second):
+				_ = watchCmd.Process.Kill() //nolint:errcheck
+			}
+		})
 
 		// Wait for remote uploads and local status file.
 		remoteFiles := make([]string, len(paths))
@@ -5662,15 +5679,17 @@ func TestWatchFofnsRealWRIntegration(t *testing.T) {
 		}
 
 		for _, rf := range remoteFiles {
-			uploadVisibleErr := waitForRemoteFile(rf, 20*time.Second)
+			// The job creates each nested collection before uploading, which
+			// can take several seconds per collection.
+			uploadVisibleErr := waitForRemoteFile(rf, 2*time.Minute)
 			if uploadVisibleErr != nil {
 				cancel()
 
 				select {
 				case <-done:
 				case <-time.After(30 * time.Second):
-					t.Fatalf("watchfofns did not exit after cancel within timeout: exit=%d output=%s",
-						exitCode, output)
+					t.Fatalf("watchfofns did not exit after cancel within timeout: output=%s",
+						watchOut.String())
 				}
 
 				wrappedErr := fmt.Errorf("waitForRemoteFile(%q) failed: %w; exit=%d output=%s",
