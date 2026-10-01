@@ -1096,7 +1096,7 @@ type DiscoverCallback func([]*Entry) ([]*Dirent, []*Dirent, error)
 // directories will then proceed, as will the stat'ing of pure files, and return
 // the updated set.
 func (d *DB) Discover(setID string, cb DiscoverCallback) (*Set, error) {
-	err := d.setDiscoveryStarted(setID)
+	err := d.SetDiscoveryStarted(setID)
 	if err != nil {
 		return nil, err
 	}
@@ -1110,9 +1110,10 @@ func (d *DB) Discover(setID string, cb DiscoverCallback) (*Set, error) {
 	return s, err
 }
 
-// setDiscoveryStarted updates StartedDiscovery and resets some status values
-// for the given set. Returns an error if the setID isn't in the database.
-func (d *DB) setDiscoveryStarted(setID string) error {
+// SetDiscoveryStarted updates StartedDiscovery, sets status to
+// PendingDiscovery and resets the counts for the given set. Returns an error if
+// the setID isn't in the database.
+func (d *DB) SetDiscoveryStarted(setID string) error {
 	return d.db.Update(func(tx *bolt.Tx) error {
 		set, bid, b, err := d.getSetByID(tx, setID)
 		if err != nil {
@@ -1892,11 +1893,20 @@ func (d *DB) SetError(setID, errMsg string) error {
 func (d *DB) UpdateBasedOnRemovedEntry(setID string, entry *Entry) error {
 	return d.updateSetProperties(setID, func(got *Set) {
 		got.SizeRemoved += entry.Size
-		got.SizeTotal -= entry.Size
-		got.NumFiles--
 		got.NumObjectsRemoved++
 
-		got.removedEntryToSetCounts(entry)
+		got.removedEntryTypeToSetCounts(entry)
+
+		// Starting discovery zeroed these, and they get rebuilt without this
+		// entry; decrementing them now would wrap them.
+		if got.StartedDiscovery.After(got.LastDiscovery) {
+			return
+		}
+
+		got.SizeTotal -= entry.Size
+		got.NumFiles--
+
+		got.removedEntryStatusToSetCounts(entry)
 	})
 }
 

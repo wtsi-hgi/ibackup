@@ -433,11 +433,6 @@ func (s *Set) entryToSetCounts(entry *Entry) {
 	s.entryTypeToSetCounts(entry)
 }
 
-func (s *Set) removedEntryToSetCounts(entry *Entry) {
-	s.removedEntryStatusToSetCounts(entry)
-	s.removedEntryTypeToSetCounts(entry)
-}
-
 func (s *Set) entryStatusToSetCounts(entry *Entry) { //nolint:gocyclo
 	switch entry.Status { //nolint:exhaustive
 	case Uploaded:

@@ -3737,6 +3737,48 @@ func TestServer(t *testing.T) {
 					putSetWithOneFile(t, handler, client, exampleSet, minMBperSecondUploadSpeed, logger)
 				})
 
+				Convey("and re-trigger discovery on a complete set, which is pending discovery as soon as "+
+					"the trigger returns", func() {
+					err = client.AddOrUpdateSet(exampleSet)
+					So(err, ShouldBeNil)
+
+					path := filepath.Join(localDir, "file")
+					internal.CreateTestFileOfLength(t, path, 1)
+
+					err = client.MergeFiles(exampleSet.ID(), []string{path})
+					So(err, ShouldBeNil)
+
+					err = client.TriggerDiscovery(exampleSet.ID(), false)
+					So(err, ShouldBeNil)
+
+					ok := <-racCalled
+					So(ok, ShouldBeTrue)
+
+					putSetWithOneFile(t, handler, client, exampleSet, minMBperSecondUploadSpeed, logger)
+
+					s.discoveryCoordinator.StartDiscovery(exampleSet.ID())
+
+					err = client.TriggerDiscovery(exampleSet.ID(), false)
+					So(err, ShouldBeNil)
+
+					gotSet, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+					So(errg, ShouldBeNil)
+					So(gotSet.Status, ShouldEqual, set.PendingDiscovery)
+					So(gotSet.StartedDiscovery, ShouldHappenAfter, gotSet.LastDiscovery)
+					So(gotSet.NumFiles, ShouldEqual, 0)
+					So(gotSet.Uploaded, ShouldEqual, 0)
+
+					s.discoveryCoordinator.DiscoveryHappened(exampleSet.ID())
+
+					ok = <-racCalled
+					So(ok, ShouldBeTrue)
+
+					gotSet, errg = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+					So(errg, ShouldBeNil)
+					So(gotSet.Status, ShouldEqual, set.PendingUpload)
+					So(gotSet.NumFiles, ShouldEqual, 1)
+				})
+
 				Convey("and add a set with non-regular files and have the system skip them as abnormal", func() {
 					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldBeNil)

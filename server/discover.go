@@ -192,21 +192,21 @@ func (s *Server) triggerDiscovery(c *gin.Context) {
 
 	forceRemovals := c.Query("force_removals") == "true"
 
-	go func() {
-		err := s.discoverSet(givenSet, forceRemovals)
-		if err != nil {
-			s.Logger.Printf("discovery error %s: %s", givenSet.ID(), err)
-		}
-	}()
+	if err := s.discoverSet(givenSet, forceRemovals); err != nil {
+		c.AbortWithError(http.StatusInternalServerError, err) //nolint:errcheck
+
+		return
+	}
 
 	c.Status(http.StatusOK)
 }
 
 // discoverSet discovers and stores file entry details for the given set if it
-// is not read-only. Immediately tries to record in the db that discovery has
-// started, and create a transformer for local->remote paths and returns any
-// error from doing that. Actual discovery will then proceed asynchronously,
-// followed by adding all upload requests for the set to the global put queue.
+// is not read-only. Immediately tries to create a transformer for local->remote
+// paths and record in the db that discovery has started, and returns any error
+// from doing that. Actual discovery (including any removals) will then proceed
+// asynchronously, followed by adding all upload requests for the set to the
+// global put queue.
 //
 // The optional forceRemovals bool, if true, makes this behave as if the set has
 // MonitorRemovals true, to force deletion of files in iRODS if the
@@ -222,6 +222,10 @@ func (s *Server) discoverSet(given *set.Set, forceRemovals bool) error {
 	if err != nil {
 		s.recordSetError("making transformer for %s failed: %s", given.ID(), err)
 
+		return err
+	}
+
+	if err := s.db.SetDiscoveryStarted(given.ID()); err != nil {
 		return err
 	}
 

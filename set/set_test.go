@@ -1351,7 +1351,7 @@ func TestSetDB(t *testing.T) {
 					err = db.AddOrUpdate(set)
 					So(err, ShouldBeNil)
 
-					err = db.setDiscoveryStarted(set.ID())
+					err = db.SetDiscoveryStarted(set.ID())
 					So(err, ShouldBeNil)
 
 					err = db.AddOrUpdate(set)
@@ -1493,6 +1493,33 @@ func TestSetDB(t *testing.T) {
 					So(got, ShouldNotBeNil)
 					So(err, ShouldBeNil)
 					So(got.Hardlinks, ShouldEqual, 1)
+				})
+
+				Convey("then start rediscovery and remove a hard link without breaking the counts", func() {
+					err = db.SetDiscoveryStarted(setl1.ID())
+					So(err, ShouldBeNil)
+
+					entries, errg := db.GetPureFileEntries(setl1.ID())
+					So(errg, ShouldBeNil)
+					So(entries[1].Type, ShouldEqual, Hardlink)
+
+					err = db.RemoveFileEntry(setl1.ID(), entries[1].Path)
+					So(err, ShouldBeNil)
+
+					err = db.UpdateBasedOnRemovedEntry(setl1.ID(), entries[1])
+					So(err, ShouldBeNil)
+
+					got := db.GetByID(setl1.ID())
+					So(got, ShouldNotBeNil)
+					So(got.Status, ShouldEqual, PendingDiscovery)
+					So(got.NumFiles, ShouldEqual, 0)
+					So(got.Hardlinks, ShouldEqual, 0)
+					So(got.NumObjectsRemoved, ShouldEqual, 1)
+
+					got, err = db.Discover(setl1.ID(), nil)
+					So(err, ShouldBeNil)
+					So(got.NumFiles, ShouldEqual, 2)
+					So(got.Hardlinks, ShouldEqual, 0)
 				})
 			})
 

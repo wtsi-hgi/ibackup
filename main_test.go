@@ -1417,7 +1417,7 @@ func TestRemove(t *testing.T) {
 				exitCode, _ := s.runBinary(t, "sync", "--name", setName)
 				So(exitCode, ShouldEqual, 0)
 
-				s.waitForStatus(setName, "\nStatus: complete", 10*time.Second)
+				s.waitForStatus(setName, "\nStatus: complete\n", 10*time.Second)
 
 				s.confirmOutputContains(t, statusCmd, 0, "file1\tabnormal")
 
