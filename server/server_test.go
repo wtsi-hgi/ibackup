@@ -4246,6 +4246,120 @@ func TestServer(t *testing.T) {
 							})
 						})
 					})
+
+					Convey("with remote hardlink location set, separate clients are not given hardlinks "+
+						"to the same inode at the same time", func() {
+						s.SetRemoteHardlinkLocation(filepath.Join(remoteDir, "mountpoints"))
+						s.numClients = 3
+
+						err = client.TriggerDiscovery(exampleSet.ID(), false)
+						So(err, ShouldBeNil)
+
+						ok := <-racCalled
+						So(ok, ShouldBeTrue)
+
+						handedOut := make([]*transfer.Request, 0, s.numClients)
+
+						for range s.numClients {
+							requests, errg := client.GetSomeUploadRequests()
+							So(errg, ShouldBeNil)
+
+							handedOut = append(handedOut, requests...)
+						}
+
+						So(len(handedOut), ShouldEqual, 2)
+						So(handedOut[0].Local, ShouldEqual, path1)
+						So(handedOut[1].Local, ShouldEqual, path2)
+						So(handedOut[1].Hardlink, ShouldNotBeBlank)
+
+						requests, errg := client.GetSomeUploadRequests()
+						So(errg, ShouldBeNil)
+						So(requests, ShouldBeEmpty)
+
+						for _, status := range []transfer.RequestStatus{
+							transfer.RequestStatusUploaded, transfer.RequestStatusFailed,
+						} {
+							Convey("until the in-progress hardlink's upload finishes with status "+string(status), func() {
+								handedOut[1].Status = status
+								err = client.UpdateFileStatus(handedOut[1])
+								So(err, ShouldBeNil)
+
+								ok = <-racCalled
+								So(ok, ShouldBeTrue)
+
+								requests, errg = client.GetSomeUploadRequests()
+								So(errg, ShouldBeNil)
+								So(len(requests), ShouldEqual, 1)
+								So(requests[0].Hardlink, ShouldEqual, handedOut[1].Hardlink)
+
+								if status == transfer.RequestStatusUploaded {
+									So(requests[0].Local, ShouldEqual, path3)
+								}
+
+								others, errg := client.GetSomeUploadRequests()
+								So(errg, ShouldBeNil)
+								So(others, ShouldBeEmpty)
+							})
+						}
+					})
+
+					Convey("with remote hardlink location set, hardlinks to the same inode given to a client "+
+						"that dies are not then given to separate clients at the same time", func() {
+						s.SetRemoteHardlinkLocation(filepath.Join(remoteDir, "mountpoints"))
+						s.numClients = 1
+
+						err = client.TriggerDiscovery(exampleSet.ID(), false)
+						So(err, ShouldBeNil)
+
+						ok := <-racCalled
+						So(ok, ShouldBeTrue)
+
+						requests, errg := client.GetSomeUploadRequests()
+						So(errg, ShouldBeNil)
+						So(len(requests), ShouldEqual, 3)
+						So(requests[1].Hardlink, ShouldNotBeBlank)
+						So(requests[2].Hardlink, ShouldEqual, requests[1].Hardlink)
+
+						setTTR := func(d time.Duration) {
+							for _, r := range requests {
+								item, errq := s.queue.Get(r.ID())
+								So(errq, ShouldBeNil)
+
+								stats := item.Stats()
+								err = s.queue.Update(context.Background(), item.Key, "", item.Data(),
+									stats.Priority, stats.Delay, d)
+								So(err, ShouldBeNil)
+							}
+						}
+
+						setTTR(time.Millisecond)
+
+						ok = <-racCalled
+						So(ok, ShouldBeTrue)
+
+						testutil.Eventually(t, 5*time.Second, 10*time.Millisecond, func() bool {
+							qs := s.queue.Stats()
+
+							return qs.Running == 0 && qs.Ready == len(requests)
+						}, "abandoned requests to become ready")
+
+						setTTR(ttr)
+
+						s.numClients = len(requests)
+						hardlinkClients := 0
+						isHardlink := func(r *transfer.Request) bool { return r.Hardlink != "" }
+
+						for range s.numClients {
+							requests, errg = client.GetSomeUploadRequests()
+							So(errg, ShouldBeNil)
+
+							if slices.ContainsFunc(requests, isHardlink) {
+								hardlinkClients++
+							}
+						}
+
+						So(hardlinkClients, ShouldEqual, 1)
+					})
 				})
 
 				Convey("and add a set with hardlinks in a directory which only uploads the file once", func() {

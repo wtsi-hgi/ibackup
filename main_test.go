@@ -699,7 +699,7 @@ Global put client status (/10): 6 iRODS connections`)
 			s.addSetForTesting(t, "hardlinkTest", transformer, path)
 
 			s.waitForStatus("hardlinkTest", "\nStatus: uploading", 60*time.Second)
-			s.waitForStatus("hardlinkTest", "\nStatus: complete", 60*time.Second)
+			s.waitForStatus("hardlinkTest", "\nStatus: complete\n", 60*time.Second)
 
 			output := getRemoteMeta(remoteFile)
 			So(output, ShouldNotContainSubstring, "ibackup:hardlink")

@@ -163,6 +163,7 @@ type Server struct {
 	stillRunningMsgFreq    time.Duration
 	serverAliveCh          chan bool
 	uploadTracker          *uploadTracker
+	remoteClaims           *remoteClaims
 	failedUploadRetryDelay time.Duration
 	replicaLogging         bool
 
@@ -228,6 +229,8 @@ func New(conf Config) (*Server, error) { //nolint:funlen
 
 		discoveryCoordinator: newDiscoveryCoordinator(),
 	}
+
+	s.remoteClaims = newRemoteClaims(s.queue)
 
 	// Ensure the atomic.Value is usable before any stores.
 	s.hungDebugLastRID.Store("")

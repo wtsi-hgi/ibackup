@@ -1593,10 +1593,15 @@ func (s *Server) getRequests(c *gin.Context) {
 // reserveRequests keeps reserving items from our queue until we have total
 // requests/s.numClients (but max 100) of them, or the queue is empty.
 //
+// Hardlink requests whose remote inode file is being worked on by a different
+// client are not returned; they wait in the queue until that client is done
+// with it.
+//
 // Returns the Requests in the items.
 func (s *Server) reserveRequests() ([]*transfer.Request, error) {
 	n := s.getCachedNumRequestsToReserve()
 	requests := make([]*transfer.Request, 0, n)
+	batch := make(map[string]bool)
 	count := 0
 
 	for {
@@ -1607,6 +1612,15 @@ func (s *Server) reserveRequests() ([]*transfer.Request, error) {
 
 		if r == nil {
 			break
+		}
+
+		claimed, err := s.remoteClaims.claim(r, batch)
+		if err != nil {
+			s.Logger.Printf("failed to claim remote hardlink for rid=%s: %s", r.ID(), err)
+		}
+
+		if !claimed {
+			continue
 		}
 
 		r.MakeSafeForJSON()
@@ -1924,8 +1938,13 @@ func (s *Server) trackUploadingAndStuckRequests(r *transfer.Request, entry *set.
 
 // removeOrReleaseRequestFromQueue removes the given Request from our queue
 // unless it has failed. < 3 failures results in it being released, 3 results in
-// it being buried.
+// it being buried. Either way, any claim it has on a remote inode file is
+// released.
 func (s *Server) removeOrReleaseRequestFromQueue(r *transfer.Request, entry *set.Entry) error {
+	return errors.Join(s.moveFinishedRequestInQueue(r, entry), s.remoteClaims.release(r))
+}
+
+func (s *Server) moveFinishedRequestInQueue(r *transfer.Request, entry *set.Entry) error {
 	rSuffix := s.replicaLogSuffix(r)
 
 	if r.Status == transfer.RequestStatusFailed {
