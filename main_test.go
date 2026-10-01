@@ -173,8 +173,6 @@ func TestMain(m *testing.M) {
 	)
 
 	cleanup := func() {
-		resetIRODS()
-
 		if removeBinary != nil {
 			removeBinary()
 		}
@@ -241,17 +239,6 @@ func TestMain(m *testing.M) {
 	os.Setenv("PATH", tmpStatter+":"+os.Getenv("PATH"))
 
 	exitCode = m.Run()
-}
-
-func resetIRODS() {
-	remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
-	if remotePath == "" {
-		return
-	}
-
-	icmd := testutil.NewIcommanderNoTB(2 * time.Minute)
-	icmd.IRM("-rf", remotePath)   //nolint:errcheck
-	icmd.IMKDIR("-p", remotePath) //nolint:errcheck
 }
 
 func failMainTest(err string) {
@@ -429,7 +416,7 @@ Local Path	Status	Size	Attempts	Date	Error`+"\n"+
 		})
 
 		Convey("Given a set of files", func() {
-			resetIRODSOrFail(t)
+			resetIRODSOrFail(t, remotePath)
 
 			file1 := filepath.Join(path, "file1")
 			file2 := filepath.Join(path, "file2")
@@ -552,7 +539,7 @@ Local Path	Status	Size	Attempts	Date	Error`+"\n"+
 				}
 			})
 			Convey("Repeatedly uploading files that are changed or not changes status details", func() {
-				resetIRODSOrFail(t)
+				resetIRODSOrFail(t, remotePath)
 
 				setName = "changingFilesTest"
 
@@ -608,7 +595,7 @@ Global put client status (/10): 6 iRODS connections`)
 			})
 
 			Convey("Syncing a set with locally removed files will show orphaned status", func() {
-				resetIRODSOrFail(t)
+				resetIRODSOrFail(t, remotePath)
 
 				setName := "setWithOrphanedFiles"
 
@@ -839,13 +826,10 @@ func initIRODSTestCollection(tb testing.TB) string {
 	return testutil.RequireIRODSTestCollection(tb)
 }
 
-func resetIRODSOrFail(tb testing.TB) {
+// resetIRODSOrFail empties the given collection, which must be the test's own
+// collection from initIRODSTestCollection, never a shared base.
+func resetIRODSOrFail(tb testing.TB, remotePath string) {
 	tb.Helper()
-
-	remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
-	if remotePath == "" {
-		return
-	}
 
 	icmd := testutil.NewIcommander(tb)
 	if icmd == nil {
@@ -993,7 +977,7 @@ func TestRemove(t *testing.T) {
 
 			setName := "testRemoveFiles1"
 
-			resetIRODSOrFail(t)
+			resetIRODSOrFail(t, remotePath)
 
 			s.addSetForTestingWithItems(t, setName, transformer, tempTestFileOfPaths.Name())
 
@@ -1865,7 +1849,7 @@ func TestTrashRemove(t *testing.T) {
 			setName := "testTrashFiles1"
 			trashSetName := set.TrashPrefix + setName
 
-			resetIRODSOrFail(t)
+			resetIRODSOrFail(t, remotePath)
 
 			s.addSetForTestingWithItems(t, setName, transformer, tempTestFileOfPaths.Name())
 

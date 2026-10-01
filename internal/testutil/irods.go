@@ -108,15 +108,6 @@ func NewIcommander(tb testing.TB) *ICommander {
 	}
 }
 
-// NewIcommanderNoTB returns a retrying iCommands runner without test helpers.
-func NewIcommanderNoTB(timeout time.Duration) *ICommander {
-	return &ICommander{
-		timeout:     timeout,
-		maxAttempts: irodsRetryMaxAttempts,
-		backoff:     irodsRetryBackoff,
-	}
-}
-
 // Run executes an iCommand with retries for transient failures.
 func (cmd *ICommander) Run(command string, args ...string) ([]byte, error) {
 	if cmd == nil {
