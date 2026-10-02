@@ -288,6 +288,26 @@ func TestDetermineQueueSize(t *testing.T) {
 	})
 }
 
+// gatedGetMetaHandler is a remove.Handler whose GetMeta(), the first remote
+// step of removing a file, signals reached and then blocks until gate is
+// closed, letting tests act while a removal is in progress.
+type gatedGetMetaHandler struct {
+	remove.Handler
+	reached chan struct{}
+	gate    chan struct{}
+}
+
+func (g *gatedGetMetaHandler) GetMeta(path string) (map[string]string, error) {
+	select {
+	case g.reached <- struct{}{}:
+	default:
+	}
+
+	<-g.gate
+
+	return g.Handler.GetMeta(path)
+}
+
 func TestServer(t *testing.T) {
 	u, err := user.Current()
 	if err != nil {
@@ -794,6 +814,50 @@ func TestServer(t *testing.T) {
 							failedEntries, _, err = s.db.GetFailedEntries(exampleSet.ID())
 							So(err, ShouldBeNil)
 							So(len(failedEntries), ShouldEqual, 1)
+						})
+
+						Convey("Removing a failed file only counts it as removed once its database cleanup is done", func() {
+							changeSetFilesStatus(2, exampleSet.Name, adminClient, transfer.RequestStatusFailed)
+
+							entry, errg := s.db.GetFileEntryForSet(exampleSet.ID(), file1local)
+							So(errg, ShouldBeNil)
+
+							remReq := set.RemoveReq{Path: file1local, Set: exampleSet, Action: set.ToRemove}
+
+							Convey("so a complete removal leaves no failed or inode record", func() {
+								err = s.removeFileFromIRODSandDB(&remReq)
+								So(err, ShouldBeNil)
+
+								gotSet, errs := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+								So(errs, ShouldBeNil)
+								So(gotSet.NumObjectsRemoved, ShouldEqual, 1)
+
+								failedEntries, _, errf := s.db.GetFailedEntries(exampleSet.ID())
+								So(errf, ShouldBeNil)
+								So(len(failedEntries), ShouldEqual, 1)
+								So(failedEntries[0].Path, ShouldEqual, file2local)
+
+								_, err = s.db.GetFilesFromInode(entry.Inode, s.db.GetMountPointFromPath(file1local))
+								So(err, ShouldNotBeNil)
+							})
+
+							Convey("so a failure to clean up its inode record leaves it uncounted", func() {
+								err = s.db.RemoveFileFromInode(file1local, entry.Inode)
+								So(err, ShouldBeNil)
+
+								err = s.removeFileFromIRODSandDB(&remReq)
+								So(err, ShouldNotBeNil)
+								So(err.Error(), ShouldContainSubstring, "key not found in inode bucket")
+
+								gotSet, errs := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+								So(errs, ShouldBeNil)
+								So(gotSet.NumObjectsRemoved, ShouldEqual, 0)
+
+								failedEntries, _, errf := s.db.GetFailedEntries(exampleSet.ID())
+								So(errf, ShouldBeNil)
+								So(len(failedEntries), ShouldEqual, 1)
+								So(failedEntries[0].Path, ShouldEqual, file2local)
+							})
 						})
 
 						Convey("And given all files are uploaded", func() {
@@ -3682,7 +3746,7 @@ func TestServer(t *testing.T) {
 
 					drainRacCalled(t, racCalled)
 
-					err = s.db.RemoveFileEntry(exampleSet.ID(), dirs[0])
+					_, err = s.db.RemoveFileEntry(exampleSet.ID(), dirs[0])
 					So(err, ShouldBeNil)
 
 					err = client.TriggerDiscovery(exampleSet.ID(), false)
@@ -3777,6 +3841,146 @@ func TestServer(t *testing.T) {
 					So(errg, ShouldBeNil)
 					So(gotSet.Status, ShouldEqual, set.PendingUpload)
 					So(gotSet.NumFiles, ShouldEqual, 1)
+				})
+
+				Convey("and add a directory set, then remove a locally deleted file after rediscovery "+
+					"without breaking the counts", func() {
+					err = client.AddOrUpdateSet(exampleSet)
+					So(err, ShouldBeNil)
+
+					setDir := filepath.Join(localDir, "syncdir")
+					err = os.Mkdir(setDir, userPerms)
+					So(err, ShouldBeNil)
+
+					keptPath := filepath.Join(setDir, "kept")
+					internal.CreateTestFileOfLength(t, keptPath, 1)
+
+					deletedPath := filepath.Join(setDir, "deleted")
+					internal.CreateTestFileOfLength(t, deletedPath, 1)
+
+					err = client.MergeDirs(exampleSet.ID(), []string{setDir})
+					So(err, ShouldBeNil)
+
+					err = client.TriggerDiscovery(exampleSet.ID(), false)
+					So(err, ShouldBeNil)
+
+					ok := <-racCalled
+					So(ok, ShouldBeTrue)
+
+					putRequests := func(requests []*transfer.Request) {
+						p, d := makePutter(t, handler, requests, client)
+						defer d()
+
+						uploadStarts, uploadResults, skippedResults := p.Put()
+
+						err = client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults,
+							minMBperSecondUploadSpeed, minTimeForUpload, 1*time.Hour, logger)
+						So(err, ShouldBeNil)
+					}
+
+					requests, errg := client.GetSomeUploadRequests()
+					So(errg, ShouldBeNil)
+					So(len(requests), ShouldEqual, 2)
+
+					putRequests(requests)
+
+					gotSet, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+					So(errg, ShouldBeNil)
+					So(gotSet.Status, ShouldEqual, set.Complete)
+					So(gotSet.Uploaded, ShouldEqual, 2)
+
+					err = os.Remove(deletedPath)
+					So(err, ShouldBeNil)
+
+					addedPath := filepath.Join(setDir, "added")
+					internal.CreateTestFileOfLength(t, addedPath, 1)
+
+					drainRacCalled(t, racCalled)
+
+					err = client.TriggerDiscovery(exampleSet.ID(), false)
+					So(err, ShouldBeNil)
+
+					ok = <-racCalled
+					So(ok, ShouldBeTrue)
+
+					requests, errg = client.GetSomeUploadRequests()
+					So(errg, ShouldBeNil)
+					So(len(requests), ShouldEqual, 3)
+
+					gated := &gatedGetMetaHandler{
+						Handler: s.storageHandler,
+						reached: make(chan struct{}, 1),
+						gate:    make(chan struct{}),
+					}
+					s.storageHandler = gated
+
+					gotSet, errg = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+					So(errg, ShouldBeNil)
+
+					err = s.removeFilesAndDirs(gotSet, []string{deletedPath}, nil, set.ToRemove)
+					So(err, ShouldBeNil)
+
+					waitForRemoval := func() {
+						err = testutil.RetryUntilWorksCustom(t, func() error {
+							files, errgf := client.GetFiles(exampleSet.ID())
+							if errgf != nil {
+								return errgf
+							}
+
+							removingSet, errgs := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+							if errgs != nil {
+								return errgs
+							}
+
+							if len(files) != 2 || removingSet.NumObjectsRemoved != 1 {
+								return errNotAllRemoved
+							}
+
+							return nil
+						}, 10*time.Second, 10*time.Millisecond)
+						So(err, ShouldBeNil)
+					}
+
+					expectCorrectCounts := func() {
+						gotSet, errg = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+						So(errg, ShouldBeNil)
+						So(gotSet.Status, ShouldEqual, set.Complete)
+						So(gotSet.NumFiles, ShouldEqual, 2)
+						So(gotSet.Uploaded, ShouldEqual, 1)
+						So(gotSet.Skipped, ShouldEqual, 1)
+						So(gotSet.Orphaned, ShouldEqual, 0)
+						So(gotSet.Missing, ShouldEqual, 0)
+						So(gotSet.SizeTotal, ShouldEqual, 2)
+					}
+
+					Convey("when the deleted file's upload result arrives during the removal", func() {
+						<-gated.reached
+
+						putRequests(requests)
+
+						close(gated.gate)
+
+						waitForRemoval()
+						expectCorrectCounts()
+					})
+
+					Convey("when the removal finishes before the deleted file's upload result", func() {
+						close(gated.gate)
+
+						waitForRemoval()
+
+						remaining := make([]*transfer.Request, 0, 2)
+
+						for _, r := range requests {
+							if r.Local != deletedPath {
+								remaining = append(remaining, r)
+							}
+						}
+
+						putRequests(remaining)
+
+						expectCorrectCounts()
+					})
 				})
 
 				Convey("and add a set with non-regular files and have the system skip them as abnormal", func() {
@@ -4242,10 +4446,10 @@ func TestServer(t *testing.T) {
 								So(err, ShouldBeNil)
 
 								for _, file := range entries {
-									err = s.db.RemoveFileEntry(exampleSet.ID(), file.Path)
-									So(err, ShouldBeNil)
+									removed, errr := s.db.RemoveFileEntry(exampleSet.ID(), file.Path)
+									So(errr, ShouldBeNil)
 
-									err = s.db.UpdateBasedOnRemovedEntry(exampleSet.ID(), file)
+									err = s.db.UpdateBasedOnRemovedEntry(exampleSet.ID(), removed)
 									So(err, ShouldBeNil)
 								}
 

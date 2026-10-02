@@ -1503,11 +1503,8 @@ func TestSetDB(t *testing.T) {
 					So(errg, ShouldBeNil)
 					So(entries[1].Type, ShouldEqual, Hardlink)
 
-					err = db.RemoveFileEntry(setl1.ID(), entries[1].Path)
-					So(err, ShouldBeNil)
-
-					err = db.UpdateBasedOnRemovedEntry(setl1.ID(), entries[1])
-					So(err, ShouldBeNil)
+					removed := removeFileEntryAndCount(db, setl1.ID(), entries[1].Path)
+					So(removed.Path, ShouldEqual, entries[1].Path)
 
 					got := db.GetByID(setl1.ID())
 					So(got, ShouldNotBeNil)
@@ -1854,6 +1851,17 @@ func TestSetDB(t *testing.T) {
 					So(errb, ShouldBeNil)
 					So(got.Missing, ShouldEqual, 1)
 				})
+
+				Convey("then remove the missing file and have it no longer counted", func() {
+					removed := removeFileEntryAndCount(db, setl1.ID(), missing)
+					So(removed.Status, ShouldEqual, Missing)
+
+					got = db.GetByID(setl1.ID())
+					So(got, ShouldNotBeNil)
+					So(got.NumFiles, ShouldEqual, 0)
+					So(got.Missing, ShouldEqual, 0)
+					So(got.NumObjectsRemoved, ShouldEqual, 1)
+				})
 			})
 
 			Convey("And add a set with a missing directory to it (which are just recorded and not checked)", func() {
@@ -1928,6 +1936,90 @@ func TestSetDB(t *testing.T) {
 					So(got, ShouldNotBeNil)
 					So(errb, ShouldBeNil)
 					So(got.Abnormal, ShouldEqual, 1)
+				})
+
+				Convey("then remove the abnormal file and have it no longer counted", func() {
+					removed := removeFileEntryAndCount(db, setl1.ID(), fifoPath)
+					So(removed.Status, ShouldEqual, AbnormalEntry)
+
+					got = db.GetByID(setl1.ID())
+					So(got, ShouldNotBeNil)
+					So(got.NumFiles, ShouldEqual, 0)
+					So(got.Abnormal, ShouldEqual, 0)
+				})
+			})
+
+			Convey("And add a directory set containing an abnormal file", func() {
+				setl1 := &Set{
+					Name:        "abnormaldir",
+					Requester:   "jim",
+					Transformer: "prefix=/local:/remote",
+				}
+
+				err = db.AddOrUpdate(setl1)
+				So(err, ShouldBeNil)
+
+				dir := t.TempDir()
+
+				fifoPath := filepath.Join(dir, "fifo")
+				err = syscall.Mkfifo(fifoPath, userPerms)
+				So(err, ShouldBeNil)
+
+				regPath := filepath.Join(dir, "reg")
+				internal.CreateTestFile(t, regPath, "a")
+
+				err = db.MergeDirEntries(setl1.ID(), []*Dirent{{Path: dir, Mode: os.ModeDir}})
+				So(err, ShouldBeNil)
+
+				discover := func(paths ...string) *Set {
+					got, errd := db.Discover(setl1.ID(), func([]*Entry) ([]*Dirent, []*Dirent, error) {
+						dirents := make([]*Dirent, len(paths))
+
+						for i, path := range paths {
+							dirents[i] = newDirentFromPath(path)
+						}
+
+						return dirents, nil, nil
+					})
+					So(errd, ShouldBeNil)
+
+					return got
+				}
+
+				got := discover(fifoPath, regPath)
+				So(got.NumFiles, ShouldEqual, 2)
+				So(got.Abnormal, ShouldEqual, 1)
+
+				removeFifoAndCheckCounts := func() {
+					removed := removeFileEntryAndCount(db, setl1.ID(), fifoPath)
+					So(removed.Status, ShouldEqual, AbnormalEntry)
+
+					got = db.GetByID(setl1.ID())
+					So(got, ShouldNotBeNil)
+					So(got.NumFiles, ShouldEqual, 1)
+					So(got.Abnormal, ShouldEqual, 0)
+				}
+
+				Convey("then remove the abnormal file and have it no longer counted", func() {
+					removeFifoAndCheckCounts()
+				})
+
+				Convey("then rediscover with it still present, remove it and have it no longer counted", func() {
+					got = discover(fifoPath, regPath)
+					So(got.Abnormal, ShouldEqual, 1)
+
+					removeFifoAndCheckCounts()
+				})
+
+				Convey("then delete it locally, rediscover, remove it and have counts not wrap", func() {
+					err = os.Remove(fifoPath)
+					So(err, ShouldBeNil)
+
+					got = discover(regPath)
+					So(got.NumFiles, ShouldEqual, 2)
+					So(got.Abnormal, ShouldEqual, 0)
+
+					removeFifoAndCheckCounts()
 				})
 			})
 
@@ -2059,6 +2151,19 @@ func discoverASet(db *DB, set *Set, discoveryFunc func() ([]*Dirent, []*Dirent, 
 
 	err := <-errCh
 	So(err, ShouldBeNil)
+}
+
+// removeFileEntryAndCount removes the given file from the given set the way the
+// server does, returning the removed entry.
+func removeFileEntryAndCount(db *DB, setID, path string) *Entry {
+	removed, err := db.RemoveFileEntry(setID, path)
+	So(err, ShouldBeNil)
+	So(removed, ShouldNotBeNil)
+
+	err = db.UpdateBasedOnRemovedEntry(setID, removed)
+	So(err, ShouldBeNil)
+
+	return removed
 }
 
 func setEntryToUploaded(entry *Entry, given *Set, db *DB) {

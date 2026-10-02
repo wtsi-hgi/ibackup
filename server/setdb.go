@@ -894,25 +894,23 @@ func (s *Server) processDBFileTrash(set *set.Set, entry *set.Entry) error {
 	return s.processDBFileRemoval(set.ID(), entry, false)
 }
 
+// processDBFileRemoval removes the given entry's file from the set in the
+// database, counting it as removed only once all its database cleanup is done,
+// so that a complete removal status means the cleanup is complete.
 func (s *Server) processDBFileRemoval(setID string, entry *set.Entry, checkInode bool) error {
-	err := s.db.RemoveFileEntry(setID, entry.Path)
-	if err != nil {
+	removed, err := s.db.RemoveFileEntry(setID, entry.Path)
+	if err != nil || removed == nil {
 		return err
 	}
 
 	if checkInode {
-		err = s.processDBInodeRemoval(entry)
+		err = s.processDBInodeRemoval(removed)
 		if err != nil {
 			return err
 		}
 	}
 
-	err = s.db.RemovePathFromFailedBucket(setID, entry.Path)
-	if err != nil {
-		return err
-	}
-
-	return s.db.UpdateBasedOnRemovedEntry(setID, entry)
+	return s.db.UpdateBasedOnRemovedEntry(setID, removed)
 }
 
 // processDBInodeRemoval checks if the inode for the entry should be removed and

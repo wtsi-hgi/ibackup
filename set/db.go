@@ -597,14 +597,48 @@ func (d *DB) validateDirPaths(set *Set, paths []string) ([]string, []string, err
 	return d.validatePaths(set, dirBucket, discoveredFoldersBucket, paths)
 }
 
-// RemoveFileEntry removes the provided file from a given set.
-func (d *DB) RemoveFileEntry(setID string, path string) error {
-	err := d.removeEntry(setID, path, fileBucket)
-	if err != nil {
-		return err
+// RemoveFileEntry removes the provided file from a given set, including from
+// our failed lookup. Returns the file's entry as it was at the moment of
+// removal, or nil if the set didn't have the file.
+func (d *DB) RemoveFileEntry(setID string, path string) (*Entry, error) {
+	var removed *Entry
+
+	err := d.db.Update(func(tx *bolt.Tx) error {
+		var err error
+
+		removed, err = d.deleteFileEntry(tx, setID, path)
+		if err != nil {
+			return err
+		}
+
+		return d.removeFailedLookup(tx, setID, path)
+	})
+
+	return removed, err
+}
+
+// deleteFileEntry deletes the given path from the given set's file and
+// discovered buckets. Returns the deleted entry (preferring the file bucket
+// one), or nil if the path was in neither.
+func (d *DB) deleteFileEntry(tx *bolt.Tx, setID, path string) (*Entry, error) {
+	setsBucket := tx.Bucket([]byte(setsBucket))
+
+	var deleted *Entry
+
+	for _, kind := range []string{discoveredBucket, fileBucket} {
+		entry, b := d.getEntryFromSubbucket(kind, setID, path, setsBucket)
+		if entry == nil {
+			continue
+		}
+
+		if err := b.Delete([]byte(path)); err != nil {
+			return nil, err
+		}
+
+		deleted = entry
 	}
 
-	return d.removeEntry(setID, path, discoveredBucket)
+	return deleted, nil
 }
 
 // removeEntry removes the entry with the provided entry key from a given
@@ -1481,14 +1515,6 @@ func (d *DBRO) getBucketAndKeyForFailedLookup(tx *bolt.Tx, setID, path string) (
 	return tx.Bucket([]byte(failedBucket)), []byte(setID + separator + path)
 }
 
-// RemovePathFromFailedBucket removes the entry with the given setID and path
-// from the failed bucket.
-func (d *DB) RemovePathFromFailedBucket(setID, path string) error {
-	return d.db.Update(func(tx *bolt.Tx) error {
-		return d.removeFailedLookup(tx, setID, path)
-	})
-}
-
 // addFailedLookup adds the given path for the given set from our failed lookup
 // bucket. For speed of retrieval, it's not actually just a lookup, but we
 // duplicate the entry data in the failedBucket.
@@ -1889,7 +1915,9 @@ func (d *DB) SetError(setID, errMsg string) error {
 }
 
 // UpdateBasedOnRemovedEntry updates set counts based on the given entry that's
-// been removed.
+// been removed. Pass it the entry RemoveFileEntry() returned, and only call it
+// after all other database cleanup for that entry, since it counts the entry as
+// removed.
 func (d *DB) UpdateBasedOnRemovedEntry(setID string, entry *Entry) error {
 	return d.updateSetProperties(setID, func(got *Set) {
 		got.SizeRemoved += entry.Size
@@ -1903,10 +1931,20 @@ func (d *DB) UpdateBasedOnRemovedEntry(setID string, entry *Entry) error {
 			return
 		}
 
-		got.SizeTotal -= entry.Size
 		got.NumFiles--
 
-		got.removedEntryStatusToSetCounts(entry)
+		if entry.LastAttempt.After(got.LastDiscovery) {
+			got.SizeTotal -= entry.Size
+			got.removedEntryStatusToSetCounts(entry)
+
+			return
+		}
+
+		// Otherwise the entry's status is from before our last discovery, so
+		// is only in our counts if that discovery counted it.
+		if entry.CountedInDiscovery.Equal(got.StartedDiscovery) {
+			got.removedEntryStatusToSetCounts(entry)
+		}
 	})
 }
 
