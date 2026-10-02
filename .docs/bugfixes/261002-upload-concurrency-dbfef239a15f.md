@@ -39,3 +39,14 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
   - Origin item: "TestTrashRemove intermittently fails in clean `make test`"
     on `deps`, whose fix stops the server triggering this hang by not
     overlapping removals with handler `Cleanup()`.
+- [ ] `baton/baton.go` `Cleanup` (~line 725) reads `b.metaClient` and the
+  other clients without holding `clientMu`, so it races with
+  `setClientIfNotExists` (~line 368). The `deps` fix 1fa0608 stops the
+  server reaching this, but the handler itself is still unsafe.
+  - Origin item: "TestTrashRemove intermittently fails in clean `make test`"
+    on `deps` (found reviewing its fix).
+- [ ] `server/server.go` (~lines 437-441): when
+  `convertQueueItemToRemoveRequest` fails, the reserved item stays in
+  `removeQueue`, so `Items` never reaches 0 and the storage handler's
+  `Cleanup()` never runs again. Unchanged by the `deps` fix.
+  - Origin item: as above.
