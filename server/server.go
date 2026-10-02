@@ -176,6 +176,11 @@ type Server struct {
 	readOnly       bool
 	storageHandler remove.Handler
 
+	// removalsMu guards activeRemovals and is held while storageHandler is
+	// cleaned up, so no removal uses the handler during its Cleanup().
+	removalsMu     sync.Mutex
+	activeRemovals int
+
 	mapMu               sync.RWMutex
 	creatingCollections map[string]bool
 	iRODSTracker        *iRODSTracker
@@ -246,6 +251,29 @@ func New(conf Config) (*Server, error) { //nolint:funlen
 	s.monitor = NewMonitor(s.monitorCB)
 
 	return s, nil
+}
+
+// removalStarted records that a removal is using storageHandler, waiting for
+// any Cleanup() of it to finish first.
+func (s *Server) removalStarted() {
+	s.removalsMu.Lock()
+	defer s.removalsMu.Unlock()
+
+	s.activeRemovals++
+}
+
+// removalFinished records that a removal stopped using storageHandler, and
+// cleans it up if no removals are using it and none are queued. Using the
+// handler while it is cleaned up can hang forever, as its connections stop.
+func (s *Server) removalFinished() {
+	s.removalsMu.Lock()
+	defer s.removalsMu.Unlock()
+
+	s.activeRemovals--
+
+	if s.activeRemovals == 0 && s.removeQueue.Stats().Items == 0 {
+		s.storageHandler.Cleanup()
+	}
 }
 
 func determineQueueSize() (uint, error) {
@@ -365,6 +393,7 @@ func (s *Server) EnableJobSubmission(putCmd, deployment, cwd, queues, queuesAvoi
 // inside removeQueue from iRODS and data base. This function should be called
 // inside a go routine, so the user API request is not locked.
 func (s *Server) handleRemoveRequests(sid string) {
+	s.removalStarted()
 	s.discoveryCoordinator.WillRemove(sid)
 
 	for {
@@ -489,9 +518,7 @@ func (s *Server) finalizeRemoval(sid string) {
 		s.Logger.Printf("%s", err.Error())
 	}
 
-	if s.removeQueue.Stats().Items == 0 {
-		s.storageHandler.Cleanup()
-	}
+	s.removalFinished()
 }
 
 // rac is our queue's ready added callback which will get all ready put Requests

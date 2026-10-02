@@ -577,6 +577,92 @@ func TestServer(t *testing.T) {
 					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldBeNil)
 
+					Convey("A removal started while another set's finished removals clean up the "+
+						"storage handler waits for that cleanup", func() {
+						err = client.AddOrUpdateSet(exampleSet3)
+						So(err, ShouldBeNil)
+
+						file1local := filepath.Join(localDir, "file1")
+						file2local := filepath.Join(localDir, "file2")
+
+						internal.CreateTestFileOfLength(t, file1local, 1)
+						internal.CreateTestFileOfLength(t, file2local, 1)
+
+						createRemoteObject(t, s.storageHandler, map[string]string{
+							transfer.MetaKeySets:      exampleSet.Name,
+							transfer.MetaKeyRequester: exampleSet.Requester,
+						}, filepath.Join(remoteDir, "file1"))
+						createRemoteObject(t, s.storageHandler, map[string]string{
+							transfer.MetaKeySets:      exampleSet3.Name,
+							transfer.MetaKeyRequester: exampleSet3.Requester,
+						}, filepath.Join(remoteDir, "file2"))
+
+						err = client.MergeFiles(exampleSet.ID(), []string{file1local})
+						So(err, ShouldBeNil)
+
+						err = client.MergeFiles(exampleSet3.ID(), []string{file2local})
+						So(err, ShouldBeNil)
+
+						for _, given := range []*set.Set{exampleSet, exampleSet3} {
+							drainRacCalled(t, racCalled)
+
+							err = client.TriggerDiscovery(given.ID(), false)
+							So(err, ShouldBeNil)
+
+							So(<-racCalled, ShouldBeTrue)
+						}
+
+						gated := &gatedCleanupHandler{
+							Handler:           s.storageHandler,
+							cleaning:          make(chan struct{}),
+							gate:              make(chan struct{}),
+							usedDuringCleanup: make(chan struct{}, 1),
+						}
+						s.storageHandler = gated
+
+						err = s.removeFilesAndDirs(exampleSet, []string{file1local}, nil, set.ToRemove)
+						So(err, ShouldBeNil)
+
+						cleanupStarted := false
+
+						select {
+						case <-gated.cleaning:
+							cleanupStarted = true
+						case <-time.After(30 * time.Second):
+						}
+
+						So(cleanupStarted, ShouldBeTrue)
+
+						err = s.removeFilesAndDirs(exampleSet3, []string{file2local}, nil, set.ToRemove)
+						So(err, ShouldBeNil)
+
+						usedDuringCleanup := false
+
+						select {
+						case <-gated.usedDuringCleanup:
+							usedDuringCleanup = true
+						case <-time.After(time.Second):
+						}
+
+						close(gated.gate)
+
+						So(usedDuringCleanup, ShouldBeFalse)
+
+						err = testutil.RetryUntilWorksCustom(t, func() error {
+							got, errg := client.GetSetByID(exampleSet3.Requester, exampleSet3.ID())
+							if errg != nil {
+								return errg
+							}
+
+							if got.NumObjectsRemoved != 1 {
+								return errNotAllRemoved
+							}
+
+							return nil
+						}, 10*time.Second, 10*time.Millisecond)
+						So(err, ShouldBeNil)
+					})
+
 					Convey("And given two hardlinks to the same file", func() {
 						file1local := filepath.Join(localDir, "file1")
 						hardlink1local := filepath.Join(localDir, "hardlink1")
@@ -5058,6 +5144,41 @@ func makePutter(t *testing.T, handler transfer.Handler, requests []*transfer.Req
 	So(qs.CreatingCollections, ShouldEqual, 0)
 
 	return p, d
+}
+
+// gatedCleanupHandler is a remove.Handler whose first Cleanup() signals
+// cleaning and then blocks until gate is closed. A GetMeta(), the first remote
+// step of removing a file, that starts during that Cleanup() signals
+// usedDuringCleanup.
+type gatedCleanupHandler struct {
+	remove.Handler
+	cleaning          chan struct{}
+	gate              chan struct{}
+	usedDuringCleanup chan struct{}
+	inCleanup         atomic.Bool
+	cleanedOnce       atomic.Bool
+}
+
+func (g *gatedCleanupHandler) Cleanup() {
+	if g.cleanedOnce.CompareAndSwap(false, true) {
+		g.inCleanup.Store(true)
+		close(g.cleaning)
+		<-g.gate
+		g.inCleanup.Store(false)
+	}
+
+	g.Handler.Cleanup()
+}
+
+func (g *gatedCleanupHandler) GetMeta(path string) (map[string]string, error) {
+	if g.inCleanup.Load() {
+		select {
+		case g.usedDuringCleanup <- struct{}{}:
+		default:
+		}
+	}
+
+	return g.Handler.GetMeta(path)
 }
 
 func TestDiscoveryCoordinator(t *testing.T) {
