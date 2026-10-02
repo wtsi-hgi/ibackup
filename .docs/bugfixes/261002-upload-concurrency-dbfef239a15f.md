@@ -28,3 +28,14 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
   another collection's error. Spotted by reading the code; no failure seen.
   Not yet confirmed.
   - Origin item: "Possible: `baton/baton.go` `EnsureCollection`".
+- [ ] `baton/baton.go` `GetMeta` is the only remote operation without
+  `timeoutOp`, so any hang in it blocks its caller forever. One such hang:
+  extendo (github.com/mjkw31/extendo/v2 v2.7.1-beta2, client.go
+  execute/send) accepts a request after `Stop()` has cancelled its writer
+  goroutine (`isRunning` stays true until the process exits) and blocks on
+  an unbuffered send (client.go:848). A scratch probe calling `GetMeta`
+  0-2ms after a concurrent `Cleanup()` on real iRODS hung 29 of 30 times.
+  The extendo part is upstream.
+  - Origin item: "TestTrashRemove intermittently fails in clean `make test`"
+    on `deps`, whose fix stops the server triggering this hang by not
+    overlapping removals with handler `Cleanup()`.
