@@ -34,3 +34,11 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
   counting the file. Same at `origin/develop`.
   - Origin item: "If a removal's inode cleanup fails" (found reviewing the
     TestSync fix; see `server/setdb.go` `processDBFileRemoval`).
+- [ ] Trashing a subfolder that isn't itself in the set, for a legacy set
+  without a discovered-folders bucket, fails on the folder's own entry in
+  `trashDirFromDB`: the set ends with `Error when removing: invalid set
+  entry [set ... has no path .../dir1/dir2]` and `removed 1 of 2`. Present at
+  `origin/develop`; previously hidden by a test helper that ignored its
+  timeout.
+  - Origin item: "TestServer (server package) is flaky" on `deps` (server
+    test "Trash on a folder not specified should still work").
