@@ -3697,6 +3697,75 @@ func TestServer(t *testing.T) {
 						})
 					})
 
+					Convey("Upload results that arrive out of start order update the right files", func() {
+						requests, errg := client.GetSomeUploadRequests()
+						So(errg, ShouldBeNil)
+						So(len(requests), ShouldEqual, len(discovers))
+
+						// A Putter sends a read failure as soon as it happens, but
+						// an earlier upload's result only after its metadata is
+						// applied, so a failure can overtake an earlier upload.
+						uploadStarts := make(chan *transfer.Request, len(requests))
+						uploadResults := make(chan *transfer.Request, len(requests))
+						skippedResults := make(chan *transfer.Request)
+
+						for _, r := range requests {
+							started := r.Clone()
+							started.Status = transfer.RequestStatusUploading
+
+							uploadStarts <- started
+						}
+
+						failed := requests[1].Clone()
+						failed.Status = transfer.RequestStatusFailed
+						failed.Error = "read failed"
+
+						uploadResults <- failed
+
+						for i, r := range requests {
+							if i == 1 {
+								continue
+							}
+
+							uploaded := r.Clone()
+							uploaded.Status = transfer.RequestStatusUploaded
+
+							uploadResults <- uploaded
+						}
+
+						close(uploadStarts)
+						close(uploadResults)
+						close(skippedResults)
+
+						err = client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults,
+							minMBperSecondUploadSpeed, minTimeForUpload, maxStuckTime, logger)
+						So(err, ShouldBeNil)
+
+						entries, errg := client.GetFiles(exampleSet.ID())
+						So(errg, ShouldBeNil)
+						So(len(entries), ShouldEqual, len(discovers))
+
+						for _, r := range requests {
+							entry := findEntryByPath(entries, r.Local)
+							So(entry, ShouldNotBeNil)
+
+							if r.Local == requests[1].Local {
+								So(entry.Status, ShouldEqual, set.Failed)
+								So(entry.LastError, ShouldEqual, "read failed")
+
+								continue
+							}
+
+							So(entry.Status, ShouldEqual, set.Uploaded)
+						}
+
+						gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+						So(err, ShouldBeNil)
+						So(gotSet.Status, ShouldEqual, set.Complete)
+						So(gotSet.Uploaded, ShouldEqual, len(discovers)-1)
+						So(gotSet.Failed, ShouldEqual, 1)
+					})
+
 					Convey("The system warns of possibly stuck uploads", func() {
 						requests, errg := client.GetSomeUploadRequests()
 						So(errg, ShouldBeNil)
