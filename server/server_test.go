@@ -4274,6 +4274,7 @@ func TestServer(t *testing.T) {
 						So(gotSet.Orphaned, ShouldEqual, 0)
 						So(gotSet.Missing, ShouldEqual, 0)
 						So(gotSet.SizeTotal, ShouldEqual, 2)
+						So(gotSet.SizeRemoved, ShouldEqual, 1)
 					}
 
 					Convey("when the deleted file's upload result arrives during the removal", func() {
@@ -4282,6 +4283,28 @@ func TestServer(t *testing.T) {
 						putRequests(requests)
 
 						close(gated.gate)
+
+						waitForRemoval()
+						expectCorrectCounts()
+					})
+
+					Convey("when the deleted file's upload result arrives after its remote removal, "+
+						"before its database removal", func() {
+						<-gated.reached
+
+						afterRemoteRemoval := &gatedRemoveFileHandler{
+							Handler: gated.Handler,
+							removed: make(chan struct{}, 1),
+							gate:    make(chan struct{}),
+						}
+						s.storageHandler = afterRemoteRemoval
+
+						close(gated.gate)
+						<-afterRemoteRemoval.removed
+
+						putRequests(requests)
+
+						close(afterRemoteRemoval.gate)
 
 						waitForRemoval()
 						expectCorrectCounts()
@@ -4772,7 +4795,7 @@ func TestServer(t *testing.T) {
 									removed, errr := s.db.RemoveFileEntry(exampleSet.ID(), file.Path)
 									So(errr, ShouldBeNil)
 
-									err = s.db.UpdateBasedOnRemovedEntry(exampleSet.ID(), removed)
+									err = s.db.UpdateBasedOnRemovedEntry(exampleSet.ID(), removed, removed.Size)
 									So(err, ShouldBeNil)
 								}
 
@@ -5389,6 +5412,28 @@ func makePutter(t *testing.T, handler transfer.Handler, requests []*transfer.Req
 	So(qs.CreatingCollections, ShouldEqual, 0)
 
 	return p, d
+}
+
+// gatedRemoveFileHandler is a remove.Handler whose RemoveFile() removes the
+// file, signals removed and then blocks until gate is closed, letting tests act
+// between a file's remote removal and its removal from the database.
+type gatedRemoveFileHandler struct {
+	remove.Handler
+	removed chan struct{}
+	gate    chan struct{}
+}
+
+func (g *gatedRemoveFileHandler) RemoveFile(path string) error {
+	err := g.Handler.RemoveFile(path)
+
+	select {
+	case g.removed <- struct{}{}:
+	default:
+	}
+
+	<-g.gate
+
+	return err
 }
 
 // gatedCleanupHandler is a remove.Handler whose first Cleanup() signals

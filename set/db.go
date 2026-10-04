@@ -1918,9 +1918,13 @@ func (d *DB) SetError(setID, errMsg string) error {
 // been removed. Pass it the entry RemoveFileEntry() returned, and only call it
 // after all other database cleanup for that entry, since it counts the entry as
 // removed.
-func (d *DB) UpdateBasedOnRemovedEntry(setID string, entry *Entry) error {
+//
+// removedSize is added to the set's SizeRemoved. Pass the entry's size from
+// before the removal started, since an upload result arriving after the remote
+// object was removed (status missing) changes the stored entry's size to 0.
+func (d *DB) UpdateBasedOnRemovedEntry(setID string, entry *Entry, removedSize uint64) error {
 	return d.updateSetProperties(setID, func(got *Set) {
-		got.SizeRemoved += entry.Size
+		got.SizeRemoved += removedSize
 		got.NumObjectsRemoved++
 
 		got.removedEntryTypeToSetCounts(entry)

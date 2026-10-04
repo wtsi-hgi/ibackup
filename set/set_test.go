@@ -2160,7 +2160,7 @@ func removeFileEntryAndCount(db *DB, setID, path string) *Entry {
 	So(err, ShouldBeNil)
 	So(removed, ShouldNotBeNil)
 
-	err = db.UpdateBasedOnRemovedEntry(setID, removed)
+	err = db.UpdateBasedOnRemovedEntry(setID, removed, removed.Size)
 	So(err, ShouldBeNil)
 
 	return removed
