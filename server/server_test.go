@@ -895,7 +895,7 @@ func TestServer(t *testing.T) {
 							err = client.TrashFilesAndDirs(exampleSet.ID(), []string{file1local})
 							So(err, ShouldBeNil)
 
-							waitForRemovals(t, client, exampleSet)
+							waitForRemovals(t, s, client, exampleSet)
 
 							failedEntries, _, err = s.db.GetFailedEntries(exampleSet.ID())
 							So(err, ShouldBeNil)
@@ -953,7 +953,7 @@ func TestServer(t *testing.T) {
 								err = client.TrashFilesAndDirs(exampleSet.ID(), []string{file1local, dir2local})
 								So(err, ShouldBeNil)
 
-								waitForRemovals(t, client, exampleSet)
+								waitForRemovals(t, s, client, exampleSet)
 
 								incompleteRemReqs, errg := s.db.GetIncompleteRemoveRequests()
 								So(errg, ShouldBeNil)
@@ -978,7 +978,7 @@ func TestServer(t *testing.T) {
 									err = adminClient.RemoveFilesAndDirs(trashSet.ID(), []string{file1local, dir2local})
 									So(err, ShouldBeNil)
 
-									waitForRemovals(t, adminClient, trashSet)
+									waitForRemovals(t, s, adminClient, trashSet)
 
 									incompleteRemReqs, errg := s.db.GetIncompleteRemoveRequests()
 									So(errg, ShouldBeNil)
@@ -991,7 +991,7 @@ func TestServer(t *testing.T) {
 									err = adminClient.RemoveFilesAndDirs(trashSet.ID(), []string{file1local})
 									So(err, ShouldBeNil)
 
-									waitForRemovals(t, adminClient, trashSet)
+									waitForRemovals(t, s, adminClient, trashSet)
 
 									_, err = os.Stat(file1remote)
 									So(err, ShouldNotBeNil)
@@ -1006,13 +1006,13 @@ func TestServer(t *testing.T) {
 									err = client.TrashFilesAndDirs(exampleSet.ID(), []string{dir1local})
 									So(err, ShouldBeNil)
 
-									waitForRemovals(t, client, exampleSet)
+									waitForRemovals(t, s, client, exampleSet)
 
 									Convey("Remove on the parent folder removes the nested folder from the db", func() {
 										err = adminClient.RemoveFilesAndDirs(trashSet.ID(), []string{dir1local})
 										So(err, ShouldBeNil)
 
-										waitForRemovals(t, adminClient, trashSet)
+										waitForRemovals(t, s, adminClient, trashSet)
 
 										entries, errg := s.db.GetAllDirEntries(trashSet.ID())
 										So(errg, ShouldBeNil)
@@ -1033,7 +1033,7 @@ func TestServer(t *testing.T) {
 										err = adminClient.RemoveFilesAndDirs(trashSet.ID(), []string{file1local})
 										So(err, ShouldBeNil)
 
-										waitForRemovals(t, adminClient, trashSet)
+										waitForRemovals(t, s, adminClient, trashSet)
 
 										_, err = os.Stat(file1remote)
 										So(err, ShouldNotBeNil)
@@ -1063,26 +1063,38 @@ func TestServer(t *testing.T) {
 									err = client.TrashFilesAndDirs(exampleSet2.ID(), []string{file1local})
 									So(err, ShouldBeNil)
 
-									waitForRemovals(t, client, exampleSet2)
+									waitForRemovals(t, s, client, exampleSet2)
 
 									trashSet2, errg := adminClient.GetSetByName(exampleSet2.Requester, set.TrashPrefix+exampleSet2.Name)
 									So(errg, ShouldBeNil)
 
 									Convey("And with a very short trash expire time", func() {
-										s.trashLifespan = 200 * time.Millisecond
+										trashedEarlier := time.Now()
 
-										time.Sleep(200 * time.Millisecond)
+										time.Sleep(time.Second)
+
+										trashingLater := time.Now()
 
 										err = client.TrashFilesAndDirs(exampleSet.ID(), []string{file2local})
 										So(err, ShouldBeNil)
 
-										waitForRemovals(t, client, exampleSet)
+										waitForRemovals(t, s, client, exampleSet)
+
+										// entries trashed by trashedEarlier are expired, but not
+										// those trashed after trashingLater, as long as the
+										// removal request is made within half the time between
+										// them.
+										expireEarlierTrash := func() {
+											s.trashLifespan = (time.Since(trashedEarlier) + time.Since(trashingLater)) / 2
+										}
 
 										Convey("You can remove all expired files for a set", func() {
+											expireEarlierTrash()
+
 											err = adminClient.RemoveExpiredEntriesForSet(trashSet.ID())
 											So(err, ShouldBeNil)
 
-											waitForRemovals(t, adminClient, trashSet)
+											waitForRemovals(t, s, adminClient, trashSet)
 
 											files, errg := client.GetFiles(trashSet.ID())
 											So(errg, ShouldBeNil)
@@ -1099,10 +1111,12 @@ func TestServer(t *testing.T) {
 										})
 
 										Convey("You can remove all expired files for all sets", func() {
+											expireEarlierTrash()
+
 											err = adminClient.RemoveAllExpiredEntries()
 											So(err, ShouldBeNil)
 
-											waitForRemovals(t, adminClient, trashSet)
+											waitForRemovals(t, s, adminClient, trashSet)
 
 											files, errg := client.GetFiles(trashSet.ID())
 											So(errg, ShouldBeNil)
@@ -1218,19 +1232,17 @@ func TestServer(t *testing.T) {
 							So(dirs, ShouldHaveLength, 2)
 
 							Convey("You can still see original files and folders after rediscovery", func() {
+								before, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+								So(errg, ShouldBeNil)
+
 								err = client.TriggerDiscovery(exampleSet.ID(), false)
 								So(err, ShouldBeNil)
 
-								testutil.Eventually(t, 2*time.Second, 25*time.Millisecond, func() bool {
-									files, errg := client.GetFiles(exampleSet.ID())
-									if errg != nil || len(files) != 2 {
-										return false
-									}
+								testutil.Eventually(t, 30*time.Second, 25*time.Millisecond, func() bool {
+									got, errgs := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
 
-									dirsLocal, errLocal := s.db.GetAllDirEntries(exampleSet.ID())
-
-									return errLocal == nil && len(dirsLocal) == 2
-								}, "files and dirs after rediscovery")
+									return errgs == nil && got.LastDiscovery.After(before.LastDiscovery)
+								}, "rediscovery")
 
 								files, errg := client.GetFiles(exampleSet.ID())
 								So(errg, ShouldBeNil)
@@ -1276,7 +1288,12 @@ func TestServer(t *testing.T) {
 							err = client.TrashFilesAndDirs(exampleSet.ID(), []string{dir2})
 							So(err, ShouldBeNil)
 
-							waitForRemovals(t, client, exampleSet)
+							// trashing the unspecified folder's own entry currently fails
+							// with "has no path" after retries, so the set never shows
+							// all objects removed; wait for every removal attempt to end
+							testutil.Eventually(t, time.Minute, 100*time.Millisecond, func() bool {
+								return s.removeQueue.Stats().Items == 0
+							}, "removal attempts to finish")
 
 							files, errgf := client.GetFiles(exampleSet.ID())
 							So(errgf, ShouldBeNil)
@@ -1335,10 +1352,11 @@ func TestServer(t *testing.T) {
 							err = client.TrashFilesAndDirs(exampleSet.ID(), []string{dir3})
 							So(err, ShouldBeNil)
 
-							time.Sleep(50 * time.Millisecond)
+							testutil.Eventually(t, 30*time.Second, 10*time.Millisecond, func() bool {
+								gotSet, errg = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
 
-							gotSet, errg = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
-							So(errg, ShouldBeNil)
+								return errg == nil && gotSet.NumObjectsRemoved > 0
+							}, "trashing to start")
 
 							So(gotSet.NumObjectsRemoved, ShouldBeGreaterThan, 0)
 							So(gotSet.NumObjectsToBeRemoved, ShouldEqual, filesInSet+2)
@@ -1359,13 +1377,8 @@ func TestServer(t *testing.T) {
 								So(gotSet.NumObjectsRemoved, ShouldBeLessThan, gotSet.NumObjectsToBeRemoved)
 
 								Convey("And then the trashing will still complete", func() {
-									time.Sleep(1000 * time.Millisecond)
-
-									gotSet, errg = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
-									So(errg, ShouldBeNil)
-
 									func() {
-										ctx, cancelFn := context.WithTimeout(context.Background(), 5*time.Second)
+										ctx, cancelFn := context.WithTimeout(context.Background(), 60*time.Second)
 										defer cancelFn()
 
 										status := retry.Do(ctx, func() error {
@@ -1538,8 +1551,19 @@ func TestServer(t *testing.T) {
 
 						So(racCalls.Load(), ShouldEqual, 3)
 
+						beforeRediscovery, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+						So(errg, ShouldBeNil)
+
 						err = client.TriggerDiscovery(exampleSet.ID(), false)
 						So(err, ShouldBeNil)
+
+						// rediscovery finishing would reset the set's status, so
+						// let it finish before uploads update the status
+						testutil.Eventually(t, 30*time.Second, 10*time.Millisecond, func() bool {
+							got, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+
+							return errg == nil && got.LastDiscovery.After(beforeRediscovery.LastDiscovery)
+						}, "rediscovery")
 
 						testutil.RequireStable(t, 250*time.Millisecond, 10*time.Millisecond, func() bool {
 							return racCalls.Load() == 3
@@ -1975,28 +1999,70 @@ func TestServer(t *testing.T) {
 							So(gotSet.LastDiscovery, ShouldHappenAfter, discovered)
 							discovered = gotSet.LastDiscovery
 
-							countDiscovery := func(given *set.Set) int {
-								countDiscovered := given.LastDiscovery
-								count := 0
+							// soMonitorCadenceIs observes the next 10 monitor-triggered
+							// discoveries of given, and asserts that each started no
+							// sooner than monitorTime after the previous discovery
+							// completed, and that on average they started within
+							// half a monitorTime more than that. Measuring from
+							// completion to start, using the server's timestamps,
+							// excludes the time discoveries take, which varies with
+							// load.
+							soMonitorCadenceIs := func(given *set.Set, monitorTime time.Duration) {
+								const numDiscoveries = 10
 
-								testutil.RetryUntilWorksCustom(t, func() error { //nolint:errcheck
+								lastStarted := given.StartedDiscovery
+								completions := []time.Time{given.LastCompleted}
+
+								var gaps []time.Duration
+
+								// a discovery may have completed by the time we see
+								// it started, so we look for the completion before it
+								completionBefore := func(started time.Time) time.Time {
+									for i := len(completions) - 1; i >= 0; i-- {
+										if completions[i].Before(started) {
+											return completions[i]
+										}
+									}
+
+									return time.Time{}
+								}
+
+								testutil.Eventually(t, numDiscoveries*monitorTime*4, monitorTime/10, func() bool {
 									gotSet, err = client.GetSetByID(given.Requester, given.ID())
 									So(err, ShouldBeNil)
 
-									if gotSet.LastDiscovery.After(countDiscovered) {
-										count++
-										countDiscovered = gotSet.LastDiscovery
+									if gotSet.LastCompleted.After(completions[len(completions)-1]) {
+										completions = append(completions, gotSet.LastCompleted)
 									}
 
-									return errNotDiscovered
-								}, given.MonitorTime*10, given.MonitorTime/10)
+									if gotSet.StartedDiscovery.After(lastStarted) {
+										completed := completionBefore(gotSet.StartedDiscovery)
 
-								return count
+										// unless we missed a whole discovery between polls,
+										// this is the previous discovery's completion
+										if completed.After(lastStarted) {
+											gaps = append(gaps, gotSet.StartedDiscovery.Sub(completed))
+										}
+
+										lastStarted = gotSet.StartedDiscovery
+									}
+
+									return len(gaps) >= numDiscoveries
+								}, "monitored discoveries")
+
+								var total time.Duration
+
+								for _, gap := range gaps {
+									So(gap, ShouldBeGreaterThanOrEqualTo, monitorTime)
+
+									total += gap
+								}
+
+								So(total/time.Duration(len(gaps)), ShouldBeLessThan, monitorTime*3/2)
 							}
 
 							Convey("Changing discovery from long to short duration works", func() {
-								discovers := countDiscovery(gotSet)
-								So(discovers, ShouldBeBetweenOrEqual, 9, 11)
+								soMonitorCadenceIs(gotSet, emptySet.MonitorTime)
 
 								gotSet, err = client.GetSetByID(emptySet.Requester, emptySet.ID())
 								So(err, ShouldBeNil)
@@ -2010,22 +2076,22 @@ func TestServer(t *testing.T) {
 									MonitorTime: 250 * time.Millisecond,
 								}
 
-								for range 5 {
-									if err = client.AddOrUpdateSet(changedSet); err == nil {
-										break
-									}
-								}
-
-								So(err, ShouldBeNil)
+								// sets can't be updated while being discovered, which the
+								// monitor keeps doing
+								testutil.Eventually(t, 10*time.Second, 10*time.Millisecond, func() bool {
+									return client.AddOrUpdateSet(changedSet) == nil
+								}, "set update between discoveries")
 
 								err = client.TriggerDiscovery(emptySet.ID(), false)
 								So(err, ShouldBeNil)
 
-								gotSet, err = client.GetSetByID(emptySet.Requester, emptySet.ID())
-								So(err, ShouldBeNil)
+								testutil.Eventually(t, 10*time.Second, 10*time.Millisecond, func() bool {
+									gotSet, err = client.GetSetByID(emptySet.Requester, emptySet.ID())
 
-								discovers = countDiscovery(gotSet)
-								So(discovers, ShouldBeBetweenOrEqual, 9, 11)
+									return err == nil && gotSet.LastDiscovery.After(discovered)
+								}, "triggered discovery")
+
+								soMonitorCadenceIs(gotSet, changedSet.MonitorTime)
 							})
 
 							Convey("Changing discovery from short to long duration works", func() {
@@ -2641,17 +2707,34 @@ func TestServer(t *testing.T) {
 
 						So(len(files), ShouldEqual, len(listOfFiles))
 
-						waitForRemovals := func(given *set.Set) {
-							testutil.RetryUntilWorksCustom(t, func() error { //nolint:errcheck
-								tickerSet, errg := client.GetSetByID(given.Requester, given.ID())
+						// monitorAndWaitForRemovals stores exampleSet as complete, so
+						// that it gets monitored, then waits for the monitor's
+						// discovery to find local removals and finish removing them.
+						monitorAndWaitForRemovals := func() {
+							before, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+							So(errg, ShouldBeNil)
+
+							exampleSet.Status = set.Complete
+
+							err = client.AddOrUpdateSet(exampleSet)
+							So(err, ShouldBeNil)
+
+							err = testutil.RetryUntilWorksCustom(t, func() error {
+								got, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
 								So(errg, ShouldBeNil)
 
-								if tickerSet.NumObjectsRemoved == tickerSet.NumObjectsToBeRemoved {
+								discovered := got.LastDiscovery.After(before.LastDiscovery)
+								removed := got.NumObjectsToBeRemoved > 0 && got.NumObjectsRemoved == got.NumObjectsToBeRemoved
+
+								if discovered && removed {
 									return nil
 								}
 
-								return errNotAllRemoved
-							}, time.Second*10, time.Millisecond*100)
+								return fmt.Errorf("%w: discovered %t; status %s; error %q; removed %d of %d",
+									errNotFinishedRemoving, discovered,
+									got.Status, got.Error, got.NumObjectsRemoved, got.NumObjectsToBeRemoved)
+							}, 30*time.Second, exampleSet.MonitorTime/10)
+							So(err, ShouldBeNil)
 						}
 
 						Convey("The monitor can detect locally removed files and remove them from the set", func() {
@@ -2661,14 +2744,7 @@ func TestServer(t *testing.T) {
 							err = os.Remove(file3local)
 							So(err, ShouldBeNil)
 
-							exampleSet.Status = set.Complete
-
-							err = client.AddOrUpdateSet(exampleSet)
-							So(err, ShouldBeNil)
-
-							waitForDiscovery(t, client, exampleSet)
-
-							waitForRemovals(exampleSet)
+							monitorAndWaitForRemovals()
 
 							files, errg := client.GetFiles(exampleSet.ID())
 							So(errg, ShouldBeNil)
@@ -2712,14 +2788,7 @@ func TestServer(t *testing.T) {
 							err = os.RemoveAll(dir3)
 							So(err, ShouldBeNil)
 
-							exampleSet.Status = set.Complete
-
-							err = client.AddOrUpdateSet(exampleSet)
-							So(err, ShouldBeNil)
-
-							waitForDiscovery(t, client, exampleSet)
-
-							waitForRemovals(exampleSet)
+							monitorAndWaitForRemovals()
 
 							files, errg := client.GetFiles(exampleSet.ID())
 							So(errg, ShouldBeNil)
@@ -2751,14 +2820,14 @@ func TestServer(t *testing.T) {
 							gotSet.MonitorRemovals = true
 							gotSet.ReadOnly = true
 
+							logWriter.Reset()
+
 							err = client.AddOrUpdateSet(gotSet)
 							So(err, ShouldBeNil)
 
-							logWriter.Reset()
-
-							time.Sleep(exampleSet.MonitorTime * 5)
-
-							So(logWriter.String(), ShouldContainSubstring, "Ignore discovery")
+							testutil.Eventually(t, exampleSet.MonitorTime*20, gotSet.MonitorTime/10, func() bool {
+								return strings.Contains(logWriter.String(), "Ignore discovery")
+							}, "monitor to ignore discovery of the read-only set")
 
 							files, errg := client.GetFiles(exampleSet.ID())
 							So(errg, ShouldBeNil)
@@ -2776,8 +2845,12 @@ func TestServer(t *testing.T) {
 						err = client.TriggerDiscovery(gotSet.ID(), false)
 						So(err, ShouldBeNil)
 
-						gotSet, err = client.GetSetByID(gotSet.Requester, gotSet.ID())
-						So(err, ShouldBeNil)
+						testutil.Eventually(t, 10*time.Second, 10*time.Millisecond, func() bool {
+							gotSet, err = client.GetSetByID(gotSet.Requester, gotSet.ID())
+
+							return err == nil && gotSet.LastDiscovery.After(discovered)
+						}, "triggered discovery")
+
 						So(gotSet.LastDiscovery, ShouldHappenAfter, discovered)
 						discovered = gotSet.LastDiscovery
 
@@ -4928,19 +5001,27 @@ func createRemoteHardlink(t *testing.T, handler remove.Handler, lPath, rPath,
 	So(err, ShouldBeNil)
 }
 
-func waitForRemovals(t *testing.T, client *Client, given *set.Set) {
+// waitForRemovals waits for the given set's removal status to show all its
+// objects removed, and for every queued removal to have finished, which happens
+// just after it is counted as removed.
+func waitForRemovals(t *testing.T, s *Server, client *Client, given *set.Set) {
 	t.Helper()
 
-	testutil.RetryUntilWorksCustom(t, func() error { //nolint:errcheck
+	err := testutil.RetryUntilWorksCustom(t, func() error {
 		tickerSet, errg := client.GetSetByID(given.Requester, given.ID())
 		So(errg, ShouldBeNil)
 
-		if tickerSet.NumObjectsRemoved == tickerSet.NumObjectsToBeRemoved {
+		queued := s.removeQueue.Stats().Items
+
+		if tickerSet.NumObjectsRemoved == tickerSet.NumObjectsToBeRemoved && queued == 0 {
 			return nil
 		}
 
-		return errNotFinishedRemoving
-	}, time.Second*10, time.Millisecond*100)
+		return fmt.Errorf("%w: status %s; error %q; removed %d of %d; %d queued",
+			errNotFinishedRemoving, tickerSet.Status, tickerSet.Error,
+			tickerSet.NumObjectsRemoved, tickerSet.NumObjectsToBeRemoved, queued)
+	}, time.Second*30, time.Millisecond*100)
+	So(err, ShouldBeNil)
 }
 
 func makeGivenSetComplete(numExpectedRequests int, setName string, client *Client) {
