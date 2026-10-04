@@ -96,6 +96,12 @@ var (
 
 const serverTokenBasename = ".ibackup.token"
 
+// inProcessServerStopTimeout bounds an in-process server's Stop(). go-authserver
+// waits up to 10s for open connections to drain, and its tylerb/graceful server
+// deadlocks until then if a request starts arriving as it stops, so the limit
+// must exceed that.
+const inProcessServerStopTimeout = 30 * time.Second
+
 var cliMu sync.Mutex //nolint:gochecknoglobals
 
 const noBackupSets = `Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
@@ -3994,7 +4000,7 @@ func (s *testServer) Shutdown() error {
 
 		select {
 		case <-stopDone:
-		case <-time.After(5 * time.Second):
+		case <-time.After(inProcessServerStopTimeout):
 			return errServerStopTimeout
 		}
 
