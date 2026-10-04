@@ -73,6 +73,13 @@ const (
 	jobLimitGroup           = "irods"
 	racRetriggerDelay       = 1 * time.Minute
 
+	// clientExitGrace is how long after a put client finds no requests to
+	// work on (so exits) that we try submitting put jobs again. Until wr
+	// records the client's job as complete (seen taking tens of ms),
+	// put jobs we submit are rejected as duplicates of it. If wr takes longer
+	// than this, rac's racRetriggerDelay retrigger is the fallback.
+	clientExitGrace = 2 * time.Second
+
 	retryDelay = 5 * time.Second
 
 	maxRememberedRequestLogs = 100000
@@ -153,6 +160,8 @@ type Server struct {
 	queuedSets             []*set.Set
 	trashLifespan          time.Duration
 	sched                  *client.Scheduler
+	racRetriggerDelay      time.Duration
+	racRetriggerPending    atomic.Bool
 	putCmd                 string
 	req                    *jqs.Requirements
 	wrGroup                string
@@ -219,6 +228,7 @@ func New(conf Config) (*Server, error) { //nolint:funlen
 		removeQueue:            queue.New(context.Background(), "remove"),
 		maxQueueLength:         conf.MaxQueueLength,
 		trashLifespan:          conf.TrashLifespan,
+		racRetriggerDelay:      racRetriggerDelay,
 		creatingCollections:    make(map[string]bool),
 		slacker:                conf.Slacker,
 		stillRunningMsgFreq:    conf.StillRunningMsgFreq,
@@ -274,6 +284,31 @@ func (s *Server) removalFinished() {
 	if s.activeRemovals == 0 && s.removeQueue.Stats().Items == 0 {
 		s.storageHandler.Cleanup()
 	}
+}
+
+// triggerReadyAddedCallbackAfter calls our queue's ready added callback after
+// the given delay, so that rac can submit put jobs for any ready requests.
+func (s *Server) triggerReadyAddedCallbackAfter(delay time.Duration) {
+	go func() {
+		<-time.After(delay)
+		s.queue.TriggerReadyAddedCallback(context.Background())
+	}()
+}
+
+// scheduleRacRetrigger triggers rac again after racRetriggerDelay, so that put
+// jobs keep flowing while requests remain ready. Only one retrigger is ever
+// pending, since every rac run that finds ready requests calls this, and
+// otherwise each separate trigger would start its own endless chain.
+func (s *Server) scheduleRacRetrigger() {
+	if !s.racRetriggerPending.CompareAndSwap(false, true) {
+		return
+	}
+
+	go func() {
+		<-time.After(s.racRetriggerDelay)
+		s.racRetriggerPending.Store(false)
+		s.queue.TriggerReadyAddedCallback(context.Background())
+	}()
 }
 
 func determineQueueSize() (uint, error) {
@@ -555,10 +590,7 @@ func (s *Server) rac(_ string, allitemdata []interface{}) {
 		s.Logger.Printf("failed to add jobs to wr's queue: %s", err)
 	}
 
-	go func() {
-		<-time.After(racRetriggerDelay)
-		s.queue.TriggerReadyAddedCallback(context.Background())
-	}()
+	s.scheduleRacRetrigger()
 }
 
 // estimateJobsNeeded always returns our numClients, unless the number of

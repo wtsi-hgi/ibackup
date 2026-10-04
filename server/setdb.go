@@ -1585,6 +1585,12 @@ func (s *Server) getRequests(c *gin.Context) {
 		return
 	}
 
+	if len(requests) == 0 {
+		// the client will exit, and requests that become ready before wr
+		// notices can't get a put job submitted for them until it has
+		s.triggerReadyAddedCallbackAfter(clientExitGrace)
+	}
+
 	c.JSON(http.StatusOK, requests)
 }
 

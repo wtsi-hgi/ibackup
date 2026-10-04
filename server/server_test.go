@@ -43,6 +43,7 @@ import (
 	"testing"
 	"time"
 
+	wrclient "github.com/VertebrateResequencing/wr/client"
 	"github.com/VertebrateResequencing/wr/queue"
 	"github.com/gin-gonic/gin"
 	"github.com/inconshreveable/log15/v3"
@@ -232,6 +233,67 @@ func TestFailedUploadRetryDelayConfig(t *testing.T) {
 			So(item.Stats().Delay, ShouldEqual, time.Duration(0))
 			So(s.queue.Stats().Ready, ShouldEqual, 1)
 			So(logWriter.String(), ShouldContainSubstring, "delay=0s")
+		})
+	})
+}
+
+func TestPutJobSubmissionRetrigger(t *testing.T) {
+	Convey("Given a server submitting put jobs for a ready request", t, func() {
+		wrclient.PretendSubmissions = "Y"
+
+		Reset(func() { wrclient.PretendSubmissions = "" })
+
+		s, err := New(Config{HTTPLogger: gas.NewStringLogger(), ReadOnly: true})
+		So(err, ShouldBeNil)
+
+		err = s.EnableJobSubmission("put", "development", "", "", "", "", 1, log15.New())
+		So(err, ShouldBeNil)
+
+		retriggerDelay := 1 * time.Second
+		s.racRetriggerDelay = retriggerDelay
+
+		var racRuns atomic.Int32
+
+		s.queue.SetReadyAddedCallback(func(queuename string, allitemdata []any) {
+			racRuns.Add(1)
+			s.rac(queuename, allitemdata)
+		})
+
+		ctx := context.Background()
+		r := &transfer.Request{Local: "/local", Remote: "/remote", Requester: "req", Set: "set"}
+
+		_, err = s.queue.Add(ctx, r.ID(), "", r, 0, 0, ttr, queue.SubQueueReady)
+		So(err, ShouldBeNil)
+
+		Reset(func() {
+			So(s.queue.Remove(ctx, r.ID()), ShouldBeNil)
+		})
+
+		Convey("many separate triggers while it stays ready result in only one "+
+			"retrigger per delay", func() {
+			for range 5 {
+				<-time.After(50 * time.Millisecond)
+				s.queue.TriggerReadyAddedCallback(ctx)
+			}
+
+			// The rapid triggers leave one wr recall pending (recallBreak is
+			// 500ms) as well as the first retrigger at retriggerDelay. Wait
+			// past both, so that the window starts a quarter of the way into
+			// a retrigger cycle and excludes runs caused by the triggers
+			// themselves. A window of 3 delays then sees 3 retriggers when
+			// they keep chaining one per delay, 0 when the chain stops, and
+			// many more when the per-delay cap is missing; bounds of 2..4
+			// leave a margin of 1 for scheduling jitter at each end.
+			<-time.After(retriggerDelay + retriggerDelay/4)
+
+			start := racRuns.Load()
+			window := 3 * retriggerDelay
+
+			<-time.After(window)
+
+			runs := racRuns.Load() - start
+			So(runs, ShouldBeGreaterThanOrEqualTo, 2)
+			So(runs, ShouldBeLessThanOrEqualTo, 4)
 		})
 	})
 }
@@ -661,6 +723,39 @@ func TestServer(t *testing.T) {
 							return nil
 						}, 10*time.Second, 10*time.Millisecond)
 						So(err, ShouldBeNil)
+					})
+
+					Convey("Requests queued just after a client found nothing to work on "+
+						"trigger put job submission again once that client has exited", func() {
+						requests, errg := adminClient.GetSomeUploadRequests()
+						So(errg, ShouldBeNil)
+						So(requests, ShouldBeEmpty)
+
+						file1local := filepath.Join(localDir, "file1")
+						internal.CreateTestFileOfLength(t, file1local, 1)
+
+						err = client.MergeFiles(exampleSet.ID(), []string{file1local})
+						So(err, ShouldBeNil)
+
+						drainRacCalled(t, racCalled)
+
+						err = client.TriggerDiscovery(exampleSet.ID(), false)
+						So(err, ShouldBeNil)
+
+						So(<-racCalled, ShouldBeTrue)
+
+						// wr rejects put jobs submitted now as duplicates of
+						// the exiting client's job, so they must be submitted
+						// again after it has gone
+						retriggered := false
+
+						select {
+						case retriggered = <-racCalled:
+						case <-time.After(clientExitGrace + 5*time.Second):
+						}
+
+						So(retriggered, ShouldBeTrue)
+						So(racRequests, ShouldHaveLength, 1)
 					})
 
 					Convey("And given two hardlinks to the same file", func() {
