@@ -42,3 +42,15 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
   timeout.
   - Origin item: "TestServer (server package) is flaky" on `deps` (server
     test "Trash on a folder not specified should still work").
+- [ ] A removal retried after its remote delete succeeded (released after a
+  failed `UpdateRemoveRequest`, `PutEntryInTrash` or `RemoveFileEntry`, or
+  re-run by `recoverRemoveQueue` after a crash) re-reads the entry in
+  `removeFileFromIRODSandDB`; if a `missing` upload result zeroed its size
+  meanwhile, SizeRemoved gains 0 B. Needs `deps` at `db513d8` or later
+  (`UpdateBasedOnRemovedEntry` takes the removed size).
+  - Origin item: "TestSync intermittently fails in clean `make race` (after
+    8a854d1)" (found reviewing its fix, db513d8).
+  - Evidence: code reading only; reachable only after a database failure or
+    crash. Suggested fix: record the object's size on `RemoveReq` when it
+    moves to AboutToBeRemoved (persisted by `UpdateRemoveRequest`) and pass
+    that as the removed size.
