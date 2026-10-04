@@ -1588,8 +1588,9 @@ func (s *Server) getRequests(c *gin.Context) {
 	}
 
 	if len(requests) == 0 {
-		// the client will exit, and requests that become ready before wr
-		// notices can't get a put job submitted for them until it has
+		// a client given no requests exits; until wr records its job as
+		// complete, put jobs rac submits for newly ready requests are rejected
+		// as duplicates, so trigger submission again once that should be done
 		s.triggerReadyAddedCallbackAfter(clientExitGrace)
 	}
 
