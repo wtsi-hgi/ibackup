@@ -256,6 +256,7 @@ type env struct {
 	handler     *internal.LocalHandler
 	remoteDir   string
 	submissions string
+	subsFD      int
 	addr        string
 	token       string
 	client      *server.Client
@@ -311,8 +312,8 @@ func (e *env) startServer(b *testing.B, dir string) {
 // pretendSubmissions makes the server's put job submission record jobs to a
 // file in dir, without wr. A file descriptor is used, rather than "Y", because
 // wr before v0.38 panics when stopping a pretend scheduler without one. Old wr
-// closes the descriptor and new wr duplicates it, so it is left open here: a
-// leak of one descriptor per benchmark op.
+// closes the descriptor when the server stops, while new wr duplicates it, so
+// close() closes it only if it is still open.
 func (e *env) pretendSubmissions(b *testing.B, dir string) {
 	b.Helper()
 
@@ -323,6 +324,7 @@ func (e *env) pretendSubmissions(b *testing.B, dir string) {
 		b.Fatal(err)
 	}
 
+	e.subsFD = fd
 	wrclient.PretendSubmissions = strconv.Itoa(fd)
 }
 
@@ -336,6 +338,30 @@ func (e *env) close(b *testing.B) {
 	if err := e.stop(); err != nil {
 		b.Fatal(err)
 	}
+
+	e.closeSubmissions(b)
+}
+
+// closeSubmissions closes the pretend submissions descriptor if the stopped
+// server left it open. Old wr has already closed it, and its number may now
+// belong to another file, so it is closed only while it is still the
+// submissions file.
+func (e *env) closeSubmissions(b *testing.B) {
+	b.Helper()
+
+	var fdStat, fileStat syscall.Stat_t
+
+	if syscall.Fstat(e.subsFD, &fdStat) != nil {
+		return
+	}
+
+	e.must(b, syscall.Stat(e.submissions, &fileStat))
+
+	if fdStat.Dev != fileStat.Dev || fdStat.Ino != fileStat.Ino {
+		return
+	}
+
+	e.must(b, syscall.Close(e.subsFD))
 }
 
 // uploadSet adds a set of the fixture's files, discovers them, and has put
