@@ -143,3 +143,14 @@ up to 10,000 files. Run those jobs however you like, eg. by adding them to wr:
 ```
 wr add -f put.jobs -i needsbackup -g ibackup -m 1G -t 8h -r 3 -l 'irods' --cwd_matters
 ```
+
+## Development
+Run `make test` and `make lint` before submitting changes.
+
+When you touch code in the critical upload path, you must also run
+`make speed`, and it must pass. That path is the server's request
+reservation and hardlink claims, the client's upload tracking
+(`SendPutResultsToServer`), transfer's put, set discovery and status counting,
+and the server's put job submission. The gate compares upload and removal
+speed to origin/develop and fails if your tree is over 10% slower; see
+[developers/README.md](developers/README.md).
