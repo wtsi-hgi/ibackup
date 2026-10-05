@@ -46,7 +46,7 @@ import (
 	"github.com/wtsi-hgi/ibackup/baton/meta"
 	"github.com/wtsi-hgi/ibackup/errs"
 	"github.com/wtsi-hgi/ibackup/internal"
-	ex "github.com/wtsi-npg/extendo/v2"
+	ex "github.com/wtsi-npg/extendo/v3"
 	logs "github.com/wtsi-npg/logshim"
 	"github.com/wtsi-npg/logshim-zerolog/zlog"
 	"github.com/wtsi-ssg/wr/backoff"

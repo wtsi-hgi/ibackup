@@ -248,8 +248,6 @@ github.com/minio/minio-go/v7 v7.3.0 h1:HM4pFCSQq/TK+j0/zmorSh5ddh81iDgRgU0BG0Vz/
 github.com/minio/minio-go/v7 v7.3.0/go.mod h1:KUPWdecEO1LWyUz+sTGXAuf2jZHrPh5fCsRH86QbPfk=
 github.com/mitchellh/go-homedir v1.1.0 h1:lukF9ziXFxDFPkA1vsr5zpc1XuPDn/wFntq5mG+4E0Y=
 github.com/mitchellh/go-homedir v1.1.0/go.mod h1:SfyaCUpYCn1Vlf4IUYiD9fPX4A5wJrkLzIz1N1q0pr0=
-github.com/mjkw31/extendo/v2 v2.7.1-beta2 h1:iHRMuQfFLEPSfoBJi0AUEl/NASyj1Zyn/pur0l+VRFM=
-github.com/mjkw31/extendo/v2 v2.7.1-beta2/go.mod h1:Q6JAyqY42n5PuCmQzbG16boNtjlELh97rNlQOvjVWmo=
 github.com/moby/docker-image-spec v1.3.1 h1:jMKff3w6PgbfSa69GfNg+zN/XLhfXJGnEx3Nl2EsFP0=
 github.com/moby/docker-image-spec v1.3.1/go.mod h1:eKmb5VW8vQEh/BAr2yvVNvuiJuY6UIocYsFu/DxxRpo=
 github.com/moby/moby/api v1.56.0 h1:GQzua3NA599ASSIICx0iFgiJeO9YkdDARvQsm23ZZuQ=
@@ -383,6 +381,8 @@ github.com/wtsi-hgi/statter v1.3.0 h1:RL+oKQyB9xxXi84uW1LjjA91An6eo6U7V9Dq69PtT7
 github.com/wtsi-hgi/statter v1.3.0/go.mod h1:V3X2bExgbv7Q1PSgH7E/twzIYCF2UAbGKD50DVyq970=
 github.com/wtsi-hgi/walk v1.0.1 h1:EGbUi968KlVK2g5EbhJWnVQ6aC2lD0A1dgxmviw1F9M=
 github.com/wtsi-hgi/walk v1.0.1/go.mod h1:M6ZhCYUH6KuaDSmlzxV/Kni0lUTf5EPQf0hBtpbGgRM=
+github.com/wtsi-npg/extendo/v3 v3.2.0 h1:y2WeAptH4vJzwCKKYgi9bKTJHVkZKNTJpyveZNCb6MM=
+github.com/wtsi-npg/extendo/v3 v3.2.0/go.mod h1:Znn3f+z/PnCwe2Yz+7RPGAIbpCWMhcxFLo0yiWz1IXU=
 github.com/wtsi-npg/logshim v1.6.0 h1:mKoRc88N9yuBAtn02f4qpW21ZoFBc+Ye8Lk03aWizc0=
 github.com/wtsi-npg/logshim v1.6.0/go.mod h1:ambfhxmKumviaoDeJbgjeU/a/ArLTZge2QQHtl+zL68=
 github.com/wtsi-npg/logshim-zerolog v1.6.0 h1:FYSs7ogt6XQ5Ce81pU7XFChpX7VADE80AAZZyYKzIho=

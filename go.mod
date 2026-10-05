@@ -25,7 +25,7 @@ require (
 	github.com/viant/ptrie v1.0.1
 	github.com/wtsi-hgi/go-authserver v1.6.0
 	github.com/wtsi-hgi/statter v1.3.0
-	github.com/wtsi-npg/extendo/v2 v2.7.1-0.20250509131519-b95b89bd744d
+	github.com/wtsi-npg/extendo/v3 v3.2.0
 	github.com/wtsi-npg/logshim v1.6.0
 	github.com/wtsi-npg/logshim-zerolog v1.6.0
 	github.com/wtsi-ssg/wr v0.5.12
@@ -195,5 +195,3 @@ replace github.com/docker/spdystream => github.com/docker/spdystream v0.1.0
 
 // mergo moved to a vanity URL in v1.0.0
 replace github.com/imdario/mergo => github.com/imdario/mergo v0.3.16
-
-replace github.com/wtsi-npg/extendo/v2 => github.com/mjkw31/extendo/v2 v2.7.1-beta2
