@@ -35,17 +35,13 @@ the benchmark. Once more than 10 rounds of put clients in a row get no
 requests, which takes about 4 seconds, the benchmark stops starting new
 clients and fails.
 
-The one exception is for base revisions from before the server stopped
-separate clients uploading a shared hardlink inode at the same time, such as
-develop at 1727e87. There, a client may skip a hardlink whose inode another
-client is uploading. The gate tells base's benchmarks, but never head's, to
-accept skipped files as long as each is a hardlink.
-
 ### How it compares
-[speedgate](speedgate) checks out the base revision in a temporary detached
-worktree, copies the benchmark package into it, and builds a test binary
-from each tree. It then runs the two binaries in turn for several rounds,
-alternating which goes first, and compares the median ns/op of each
+[speedgate](speedgate) extracts the base revision's files into a temporary
+directory with `git archive | tar -x`, copies the benchmark package into it,
+and builds a test binary from each tree. Its only other use of git is
+`git rev-parse` to find the repository and resolve `SPEED_BASE`, so it leaves
+the repository unchanged. It then runs the two binaries in turn for several
+rounds, alternating which goes first, and compares the median ns/op of each
 benchmark. Head is the working tree you run it in, uncommitted changes
 included.
 
@@ -55,14 +51,16 @@ rounds, pools those results with the first ones, and fails only if the pooled
 medians are still over the threshold. This stops one noisy burst on a shared
 host from failing the gate.
 
-The benchmarks only use APIs present in both trees. Where base requires the
-pre-v3 `github.com/inconshreveable/log15` module, the gate rewrites the
-benchmarks' `log15/v3` import to it; the two have the same API for what the
-benchmarks use. If you change or remove an API that the benchmarks call, you
-must update the benchmarks too, and base's copy will then fail to compile:
-the gate exits 2 with the compiler error. In that case set `SPEED_BASE` to a
-revision that has the new API, such as a commit of yours that only changes
-the API, and compare against that.
+Base must have the APIs and dependencies that head's benchmarks use. If you
+change or remove an API that the benchmarks call, you must update the
+benchmarks too, and base's copy will then fail to compile: the gate exits 2,
+saying that the benchmarks do not build in base, with the compiler error. In
+that case set `SPEED_BASE` to a revision that has the new API, such as a
+commit of yours that only changes the API, and compare against that.
+
+The benchmarks need the `log15/v3` and wr v0.38.0 dependencies of PR #193, so
+comparing against develop works once that PR has merged. That PR's own
+comparison with develop is recorded in its description.
 
 Benchmark files go under /dev/shm when it exists. On a shared disk, database
 fsync latency varies too much for a 10% threshold, so the gate measures CPU
@@ -88,7 +86,7 @@ over 0.5 per CPU when it started.
 | `SPEED_COUNT`     | `1`              | `-test.count` per run                      |
 | `SPEED_BENCHTIME` | `1x`             | `-test.benchtime` per run                  |
 | `SPEED_BENCH`     | `.`              | `-test.bench` regexp                       |
-| `SPEED_TMPDIR`    | `/dev/shm`       | where the worktree and benchmark files go  |
+| `SPEED_TMPDIR`    | `/dev/shm`       | where the base tree and benchmark files go |
 
 To run the benchmarks alone:
 
@@ -129,19 +127,12 @@ within 5%. If a result is near the threshold and spreads are large, run it
 again when the host is quieter before treating it as a regression.
 
 ### Interrupting it
-Ctrl-C (or SIGTERM) stops the benchmarks and removes the base worktree and
-the gate's work dir; make then reports `Error 130` on its
+Ctrl-C (or SIGTERM or SIGHUP) stops the benchmarks and removes the gate's
+work dir, which holds the base tree; make then reports `Error 130` on its
 `make: *** [Makefile:...: speed]` line. If the gate is killed without a
-chance to clean up, its next run removes the work dirs that earlier runs on
-the same host left behind, with `git worktree remove --force` on each one's
-base worktree. Only if git can't remove a base worktree that is still
-registered does the gate run `git worktree prune`, which drops the
-registrations of all the repo's worktrees whose directories no longer exist.
-To clean up by hand instead:
+chance to clean up, its work dir stays behind; once no gate is running,
+remove it with:
 
 ```bash
-for d in /dev/shm/ibackup-speed-*; do git worktree remove --force "$d/base"; rm -rf "$d"; done
+rm -rf /dev/shm/ibackup-speed-*
 ```
-
-Only remove the work dirs of runs that have finished; the gate checks this by
-the process ID it records in each.

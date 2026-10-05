@@ -36,13 +36,6 @@ import (
 
 const (
 	loadavgPath = "/proc/loadavg"
-
-	// allowHardlinkSkipsVar, when not empty, tells the benchmarks to accept
-	// the hardlink skips of revisions from before the server claimed
-	// hardlinks. Only base gets it set; head gets it explicitly empty, even if
-	// it is set in our own environment, so head must upload every file.
-	allowHardlinkSkipsVar = "IBACKUP_SPEED_ALLOW_HARDLINK_SKIPS"
-
 	baseDirName = "base"
 )
 
@@ -59,51 +52,28 @@ func run(ctx context.Context, cfg config) (regressed bool, err error) {
 		return false, err
 	}
 
-	if err = removeStaleWorkDirs(ctx, root, cfg.tmpDir); err != nil {
-		return false, err
-	}
-
-	workDir, err := makeWorkDir(cfg.tmpDir)
-	if workDir != "" {
-		defer func() { err = errors.Join(err, os.RemoveAll(workDir)) }()
-	}
-
+	workDir, err := os.MkdirTemp(cfg.tmpDir, workDirPrefix)
 	if err != nil {
 		return false, err
 	}
 
-	return runInWorkDir(ctx, cfg, root, sha, workDir)
-}
+	defer func() { err = errors.Join(err, os.RemoveAll(workDir)) }()
 
-// runInWorkDir does the work of run() with a temporary workDir to hold the
-// base worktree, test binaries and benchmark files.
-func runInWorkDir(ctx context.Context, cfg config, root, sha, workDir string) (regressed bool, err error) {
 	sides := newSides(root, workDir)
 
-	removeWorktree, err := addBaseWorktree(ctx, root, sha, sides[baseSide].dir)
-	if removeWorktree != nil {
-		defer func() { err = errors.Join(err, removeWorktree()) }()
-	}
-
-	if err != nil {
+	if err = extractBase(ctx, root, sha, sides[baseSide].dir); err != nil {
 		return false, err
 	}
 
 	return measure(ctx, cfg, sides, workDir, fmt.Sprintf("base %s (%.12s)", cfg.base, sha))
 }
 
-// newSides returns the base side, with its worktree in workDir, and the head
-// side, the tree at root.
+// newSides returns the base side, with its tree in workDir, and the head side,
+// the tree at root.
 func newSides(root, workDir string) [2]side {
 	return [2]side{
-		{
-			id: baseSide, dir: filepath.Join(workDir, baseDirName), bin: filepath.Join(workDir, "base.test"),
-			env: []string{allowHardlinkSkipsVar + "=1"},
-		},
-		{
-			id: headSide, dir: root, bin: filepath.Join(workDir, "head.test"),
-			env: []string{allowHardlinkSkipsVar + "="},
-		},
+		{id: baseSide, dir: filepath.Join(workDir, baseDirName), bin: filepath.Join(workDir, "base.test")},
+		{id: headSide, dir: root, bin: filepath.Join(workDir, "head.test")},
 	}
 }
 
@@ -118,7 +88,8 @@ func measure(ctx context.Context, cfg config, sides [2]side, workDir, baseDesc s
 		return false, err
 	}
 
-	r := rounds{cfg: cfg, sides: sides, workDir: workDir, env: env}
+	// the benchmarks' files go in workDir, which is on tmpfs by default
+	r := rounds{cfg: cfg, sides: sides, workDir: workDir, env: append(env, "TMPDIR="+workDir)}
 	all := newSamples()
 
 	first, err := r.runAndCompare(ctx, all, "round", cfg.bench)

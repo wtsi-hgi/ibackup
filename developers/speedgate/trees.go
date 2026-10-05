@@ -31,22 +31,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
-	"strconv"
 	"strings"
-	"syscall"
 )
 
 const (
-	benchPkgDir = "developers/speed"
-	dirPerms    = 0o700
-	filePerms   = 0o600
-
-	log15V3   = "github.com/inconshreveable/log15/v3"
-	log15Prev = "github.com/inconshreveable/log15"
-
+	benchPkgDir   = "developers/speed"
+	dirPerms      = 0o700
+	filePerms     = 0o600
 	workDirPrefix = "ibackup-speed-"
-	ownerFile     = "owner"
 )
 
 var errBaseMissing = errors.New("base ref not found")
@@ -67,143 +59,50 @@ func resolveBase(ctx context.Context, root, ref string) (string, error) {
 	return sha, nil
 }
 
-// makeWorkDir creates a new work directory in tmpDir, recording this process
-// as its owner so that later runs can tell if it is stale.
-func makeWorkDir(tmpDir string) (string, error) {
-	dir, err := os.MkdirTemp(tmpDir, workDirPrefix)
-	if err != nil {
-		return "", err
+// extractBase writes the files of commit sha in the repo at root to the new
+// directory dir, with `git archive | tar -x`, and copies head's benchmark
+// package into it.
+func extractBase(ctx context.Context, root, sha, dir string) error {
+	if err := os.Mkdir(dir, dirPerms); err != nil {
+		return err
 	}
 
-	host, err := os.Hostname()
-	if err == nil {
-		err = os.WriteFile(filepath.Join(dir, ownerFile),
-			[]byte(host+" "+strconv.Itoa(os.Getpid())), filePerms)
-	}
-
-	return dir, err
-}
-
-// removeStaleWorkDirs removes the work directories in tmpDir that isStale(),
-// left by gate runs on this host that were killed before they could clean up,
-// along with their base worktrees' registrations in the repo at root.
-func removeStaleWorkDirs(ctx context.Context, root, tmpDir string) error {
-	dirs, err := filepath.Glob(filepath.Join(tmpDir, workDirPrefix+"*"))
+	pipeR, pipeW, err := os.Pipe()
 	if err != nil {
 		return err
 	}
 
-	host, err := os.Hostname()
+	archive := newCommand(ctx, root, nil, "git", "archive", sha)
+	archive.Stdout = pipeW
+	extract := newCommand(ctx, dir, nil, "tar", "-x")
+	extract.Stdin = pipeR
+
+	err = errors.Join(archive.wrapErr(ctx, archive.Start()), extract.wrapErr(ctx, extract.Start()))
+
+	// the children have their own copies, so that if one exits, the other sees
+	// EOF or EPIPE instead of waiting on us
+	err = errors.Join(err, pipeR.Close(), pipeW.Close())
+
+	err = errors.Join(err, waitIfStarted(ctx, archive), waitIfStarted(ctx, extract))
 	if err != nil {
 		return err
 	}
 
-	for _, dir := range dirs {
-		if !isStale(dir, host) {
-			continue
-		}
-
-		fmt.Fprintf(os.Stderr, "removing %s left by an earlier speed gate run\n", dir)
-
-		if err = removeStaleWorkDir(ctx, root, dir); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return copyBenchPkg(filepath.Join(root, benchPkgDir), filepath.Join(dir, benchPkgDir))
 }
 
-// isStale returns true if the given work dir's owner file says it was made on
-// the given host by a process that no longer exists. Dirs we can't read, eg.
-// those of other users, are not stale.
-func isStale(dir, host string) bool {
-	content, err := os.ReadFile(filepath.Join(dir, ownerFile))
-	if err != nil {
-		return false
+// waitIfStarted waits for the given command if it was started, returning its
+// wrapped error.
+func waitIfStarted(ctx context.Context, c *stderrCmd) error {
+	if c.Process == nil {
+		return nil
 	}
 
-	ownerHost, pidStr, ok := strings.Cut(string(content), " ")
-	if !ok || ownerHost != host {
-		return false
-	}
-
-	pid, err := strconv.Atoi(pidStr)
-	if err != nil {
-		return false
-	}
-
-	return errors.Is(syscall.Kill(pid, 0), syscall.ESRCH)
+	return c.wrapErr(ctx, c.Wait())
 }
 
-// removeStaleWorkDir removes the given work dir and its base worktree. If git
-// can't remove the worktree, but it is still registered in the repo at root
-// once the dir is gone, it falls back to pruning all the repo's registrations
-// of worktrees that no longer exist.
-func removeStaleWorkDir(ctx context.Context, root, dir string) error {
-	base := filepath.Join(dir, baseDirName)
-
-	_, removeErr := command(ctx, root, nil, "git", "worktree", "remove", "--force", base)
-
-	if err := os.RemoveAll(dir); err != nil || removeErr == nil {
-		return err
-	}
-
-	registered, err := isWorktree(ctx, root, base)
-	if err != nil || !registered {
-		return err
-	}
-
-	_, err = command(ctx, root, nil, "git", "worktree", "prune")
-
-	return err
-}
-
-// isWorktree returns true if dir is registered as a worktree of the repo at
-// root.
-func isWorktree(ctx context.Context, root, dir string) (bool, error) {
-	abs, err := filepath.Abs(dir)
-	if err != nil {
-		return false, err
-	}
-
-	out, err := command(ctx, root, nil, "git", "worktree", "list", "--porcelain")
-	if err != nil {
-		return false, err
-	}
-
-	return slices.Contains(strings.Split(out, "\n"), "worktree "+abs), nil
-}
-
-// addBaseWorktree checks out sha in a detached worktree at dir and copies the
-// head's benchmark package into it. It returns a function that removes the
-// worktree, which works even after ctx is cancelled.
-func addBaseWorktree(ctx context.Context, root, sha, dir string) (func() error, error) {
-	if _, err := command(ctx, root, nil, "git", "worktree", "add", "--detach", dir, sha); err != nil {
-		return nil, err
-	}
-
-	remove := func() error {
-		_, err := command(context.WithoutCancel(ctx), root, nil, "git", "worktree", "remove", "--force", dir)
-
-		return err
-	}
-
-	err := copyBenchPkg(filepath.Join(root, benchPkgDir), filepath.Join(dir, benchPkgDir), dir)
-	if err != nil {
-		return remove, err
-	}
-
-	return remove, nil
-}
-
-// copyBenchPkg copies the benchmark package from src to dst, adjusting its
-// imports to compile against the module at baseRoot.
-func copyBenchPkg(src, dst, baseRoot string) error {
-	gomod, err := os.ReadFile(filepath.Join(baseRoot, "go.mod"))
-	if err != nil {
-		return err
-	}
-
+// copyBenchPkg copies the Go files of the benchmark package from src to dst.
+func copyBenchPkg(src, dst string) error {
 	entries, err := os.ReadDir(src)
 	if err != nil {
 		return err
@@ -214,7 +113,7 @@ func copyBenchPkg(src, dst, baseRoot string) error {
 	}
 
 	for _, entry := range entries {
-		if err = copyGoFile(src, dst, entry, string(gomod)); err != nil {
+		if err = copyGoFile(src, dst, entry); err != nil {
 			return err
 		}
 	}
@@ -222,7 +121,7 @@ func copyBenchPkg(src, dst, baseRoot string) error {
 	return nil
 }
 
-func copyGoFile(src, dst string, entry os.DirEntry, gomod string) error {
+func copyGoFile(src, dst string, entry os.DirEntry) error {
 	if !entry.Type().IsRegular() || !strings.HasSuffix(entry.Name(), ".go") {
 		return nil
 	}
@@ -233,17 +132,5 @@ func copyGoFile(src, dst string, entry os.DirEntry, gomod string) error {
 	}
 
 	// entry is from our own listing of src, so its name has no path elements
-	return os.WriteFile(filepath.Join(dst, entry.Name()), //nolint:gosec
-		[]byte(adaptImports(string(content), gomod)), filePerms)
-}
-
-// adaptImports rewrites the log15/v3 import of the given Go source to the
-// pre-v3 module path if that is what the given go.mod requires. The two
-// versions have the same API for the parts the benchmarks use.
-func adaptImports(source, gomod string) string {
-	if strings.Contains(gomod, log15V3+" ") || !strings.Contains(gomod, log15Prev+" ") {
-		return source
-	}
-
-	return strings.ReplaceAll(source, `"`+log15V3+`"`, `"`+log15Prev+`"`)
+	return os.WriteFile(filepath.Join(dst, entry.Name()), content, filePerms) //nolint:gosec
 }

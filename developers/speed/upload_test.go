@@ -26,10 +26,9 @@
 // Package speed holds benchmarks of ibackup's critical upload path, for the
 // `make speed` regression gate. See developers/README.md.
 //
-// The benchmarks are copied into a worktree of a baseline revision and run
-// there too, so they must only use APIs that exist in every revision being
-// compared. The log15 import is the one exception: the gate rewrites it to
-// match the baseline's go.mod.
+// The benchmarks are copied into a baseline revision's tree and run there
+// too, so they must only use APIs and dependencies that exist in every
+// revision being compared.
 package speed
 
 import (
@@ -89,14 +88,6 @@ const (
 	maxIdleWait   = time.Second
 
 	statterEnvVar = "IBACKUP_TEST_STATTER"
-
-	// allowHardlinkSkipsEnvVar, when set, makes the upload checks accept
-	// hardlinks counted as skipped instead of uploaded. The gate sets it for
-	// the base tree only. Before the server claimed hardlinks for one put
-	// client at a time, two clients could upload the same inode at once and
-	// one would then skip its link: 1727e87 skipped up to 7 of the 2000 files
-	// per op. Head must upload every file.
-	allowHardlinkSkipsEnvVar = "IBACKUP_SPEED_ALLOW_HARDLINK_SKIPS"
 )
 
 var errTimeout = errors.New("timed out")
@@ -186,11 +177,11 @@ func BenchmarkUpload(b *testing.B) {
 
 		b.StartTimer()
 
-		given, got := e.uploadSet(b)
+		_, got := e.uploadSet(b)
 
 		b.StopTimer()
 
-		e.checkUpload(b, given, got)
+		e.checkUpload(b, got)
 		e.close(b)
 
 		b.StartTimer()
@@ -232,7 +223,7 @@ func BenchmarkRemove(b *testing.B) {
 
 		e := newEnv(b, f)
 		given, got := e.uploadSet(b)
-		e.checkUpload(b, given, got)
+		e.checkUpload(b, got)
 
 		b.StartTimer()
 
@@ -308,10 +299,9 @@ func (e *env) startServer(b *testing.B, dir string) {
 }
 
 // pretendSubmissions makes the server's put job submission record jobs to a
-// file in dir, without wr. A file descriptor is used, rather than "Y", because
-// wr before v0.38 panics when stopping a pretend scheduler without one. Old wr
-// closes the descriptor when the server stops, while new wr duplicates it, so
-// close() closes it only if it is still open.
+// file in dir, without wr, so that checkSubmissions can see that jobs were
+// submitted. wr writes to a duplicate of the descriptor, so close() closes
+// ours.
 func (e *env) pretendSubmissions(b *testing.B, dir string) {
 	b.Helper()
 
@@ -335,28 +325,6 @@ func (e *env) close(b *testing.B) {
 
 	if err := e.stop(); err != nil {
 		b.Fatal(err)
-	}
-
-	e.closeSubmissions(b)
-}
-
-// closeSubmissions closes the pretend submissions descriptor if the stopped
-// server left it open. Old wr has already closed it, and its number may now
-// belong to another file, so it is closed only while it is still the
-// submissions file.
-func (e *env) closeSubmissions(b *testing.B) {
-	b.Helper()
-
-	var fdStat, fileStat syscall.Stat_t
-
-	if syscall.Fstat(e.subsFD, &fdStat) != nil {
-		return
-	}
-
-	e.must(b, syscall.Stat(e.submissions, &fileStat))
-
-	if fdStat.Dev != fileStat.Dev || fdStat.Ino != fileStat.Ino {
-		return
 	}
 
 	e.must(b, syscall.Close(e.subsFD))
@@ -385,52 +353,22 @@ func (e *env) uploadSet(b *testing.B) (*set.Set, *set.Set) {
 
 // checkUpload fails the benchmark unless every file of the completed set got
 // was uploaded, so that a broken path that skips work cannot look fast.
-func (e *env) checkUpload(b *testing.B, given, got *set.Set) {
+func (e *env) checkUpload(b *testing.B, got *set.Set) {
 	b.Helper()
 
 	want := uint64(e.f.numFiles) //nolint:gosec
 
-	var skipped uint64
-	if os.Getenv(allowHardlinkSkipsEnvVar) != "" {
-		skipped = e.countSkippedHardlinks(b, given)
-	}
-
-	allDone := got.NumFiles == want && got.Uploaded == want-skipped && got.Skipped == skipped &&
+	allDone := got.NumFiles == want && got.Uploaded == want && got.Skipped == 0 &&
 		got.Replaced == 0 && got.Failed == 0 && got.Missing == 0
 
 	if !allDone {
 		b.Fatalf("set completed with %d files, %d uploaded, %d replaced, %d skipped, %d failed, "+
-			"%d missing; want %d uploaded and %d skipped hardlinks", got.NumFiles, got.Uploaded,
-			got.Replaced, got.Skipped, got.Failed, got.Missing, want-skipped, skipped)
+			"%d missing; want %d uploaded", got.NumFiles, got.Uploaded,
+			got.Replaced, got.Skipped, got.Failed, got.Missing, want)
 	}
 
 	e.checkRemoteFiles(b)
 	e.checkSubmissions(b)
-}
-
-// countSkippedHardlinks returns how many of the given set's files were
-// skipped, failing the benchmark if any of those is not a hardlink.
-func (e *env) countSkippedHardlinks(b *testing.B, given *set.Set) uint64 {
-	b.Helper()
-
-	entries, err := e.client.GetFiles(given.ID())
-	e.must(b, err)
-
-	var skipped uint64
-
-	for _, entry := range entries {
-		if entry.Status != set.Skipped {
-			continue
-		}
-
-		if entry.Type != set.Hardlink {
-			b.Fatalf("%s was skipped, but is not a hardlink", entry.Path)
-		}
-
-		skipped++
-	}
-
-	return skipped
 }
 
 // checkRemoteFiles fails the benchmark unless every local file has a remote

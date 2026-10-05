@@ -32,7 +32,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -235,18 +234,6 @@ func TestLoadWarning(t *testing.T) {
 	})
 }
 
-func TestAdaptImports(t *testing.T) {
-	Convey("adaptImports rewrites the log15/v3 import only for a base requiring pre-v3 log15", t, func() {
-		src := `import "github.com/inconshreveable/log15/v3"`
-		pre := `import "github.com/inconshreveable/log15"`
-
-		So(adaptImports(src, "\tgithub.com/inconshreveable/log15/v3 v3.2.1\n"), ShouldEqual, src)
-		So(adaptImports(src, "\tgithub.com/inconshreveable/log15 v3.0.0-testing.5+incompatible\n"),
-			ShouldEqual, pre)
-		So(adaptImports(src, "\tgithub.com/other/mod v1.0.0\n"), ShouldEqual, src)
-	})
-}
-
 func TestConfigFromEnv(t *testing.T) {
 	Convey("configFromEnv uses defaults, SPEED_* overrides, and rejects bad numbers", t, func() {
 		for _, key := range []string{"SPEED_BASE", "SPEED_THRESHOLD", "SPEED_ROUNDS", "SPEED_COUNT",
@@ -305,111 +292,65 @@ func TestResolveBase(t *testing.T) {
 	})
 }
 
-func TestSideEnv(t *testing.T) {
-	Convey("Base benchmarks may skip hardlinks, but head's may not even if our environment allows it", t, func() {
-		t.Setenv(allowHardlinkSkipsVar, "1")
-
-		workDir := t.TempDir()
-		sides := newSides(t.TempDir(), workDir)
-
-		for id, want := range map[sideID]string{baseSide: "1", headSide: ""} {
-			got, err := command(t.Context(), workDir, sides[id].runEnv(nil, workDir),
-				"sh", "-c", `printf '%s %s' "$`+allowHardlinkSkipsVar+`" "$TMPDIR"`)
-			So(err, ShouldBeNil)
-			So(got, ShouldEqual, strings.TrimSpace(want+" "+workDir))
-		}
-	})
-}
-
-func TestRemoveStaleWorkDirs(t *testing.T) {
-	Convey("removeStaleWorkDirs removes only work dirs whose owner on this host has exited", t, func() {
-		host, err := os.Hostname()
+func TestExtractBase(t *testing.T) {
+	Convey("extractBase writes a commit's files, without git metadata, plus head's benchmarks", t, func() {
+		root, err := headRoot(t.Context())
 		So(err, ShouldBeNil)
 
-		root := newRepo(t)
-		tmpDir := t.TempDir()
-
-		live, err := makeWorkDir(tmpDir)
+		// the first commit, which has no benchmarks, unless this is a shallow clone
+		roots, err := command(t.Context(), root, nil, "git", "rev-list", "--max-parents=0", "HEAD")
 		So(err, ShouldBeNil)
 
-		pid := strconv.Itoa(exitedPID(t))
-		exited := newWorkDir(tmpDir, "exited", host+" "+pid)
-		otherHost := newWorkDir(tmpDir, "other", "not-"+host+" "+pid)
-		unowned := newWorkDir(tmpDir, "unowned", "")
-		noBase := newWorkDir(tmpDir, "nobase", host+" "+pid)
+		sha := roots[strings.LastIndexByte(roots, '\n')+1:]
 
-		for _, dir := range []string{live, exited} {
-			git(t, root, "worktree", "add", "--detach", filepath.Join(dir, baseDirName))
-		}
+		dir := filepath.Join(t.TempDir(), baseDirName)
+		So(extractBase(t.Context(), root, sha, dir), ShouldBeNil)
 
-		missing := filepath.Join(t.TempDir(), "missing")
-		git(t, root, "worktree", "add", "--detach", missing)
-		So(os.RemoveAll(missing), ShouldBeNil)
+		license, err := command(t.Context(), root, nil, "git", "show", sha+":LICENSE")
+		So(err, ShouldBeNil)
 
-		So(removeStaleWorkDirs(t.Context(), root, tmpDir), ShouldBeNil)
+		got, err := os.ReadFile(filepath.Join(dir, "LICENSE"))
+		So(err, ShouldBeNil)
+		So(strings.TrimSpace(string(got)), ShouldEqual, license)
 
-		for _, dir := range []string{live, otherHost, unowned} {
-			_, err = os.Stat(dir)
-			So(err, ShouldBeNil)
-		}
+		_, err = os.Stat(filepath.Join(dir, ".git"))
+		So(errors.Is(err, os.ErrNotExist), ShouldBeTrue)
 
-		for _, dir := range []string{exited, noBase} {
-			_, err = os.Stat(dir)
-			So(errors.Is(err, os.ErrNotExist), ShouldBeTrue)
-		}
+		want, err := os.ReadFile(filepath.Join(root, benchPkgDir, "upload_test.go"))
+		So(err, ShouldBeNil)
 
-		Convey("and only the stale base worktree's registration, not other missing worktrees'", func() {
-			for dir, want := range map[string]bool{
-				filepath.Join(live, baseDirName): true, filepath.Join(exited, baseDirName): false, missing: true,
-			} {
-				registered, errw := isWorktree(t.Context(), root, dir)
-				So(errw, ShouldBeNil)
-				So(registered, ShouldEqual, want)
-			}
+		got, err = os.ReadFile(filepath.Join(dir, benchPkgDir, "upload_test.go"))
+		So(err, ShouldBeNil)
+		So(string(got), ShouldEqual, string(want))
+
+		Convey("but not for a missing commit", func() {
+			err = extractBase(t.Context(), root, strings.Repeat("0", 40), filepath.Join(t.TempDir(), baseDirName))
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "git archive")
 		})
 	})
 }
 
-// newRepo returns the path to a new git repo with one commit.
-func newRepo(t *testing.T) string {
-	t.Helper()
+func TestBuildBase(t *testing.T) {
+	Convey("A base whose benchmarks do not build fails with advice to set SPEED_BASE", t, func() {
+		dir := t.TempDir()
+		pkg := filepath.Join(dir, benchPkgDir)
 
-	root := t.TempDir()
+		So(os.MkdirAll(pkg, dirPerms), ShouldBeNil)
+		So(os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/base\n\ngo 1.25\n"),
+			filePerms), ShouldBeNil)
+		So(os.WriteFile(filepath.Join(pkg, "speed_test.go"),
+			[]byte("package speed\n\nimport _ \"example.com/missing\"\n"), filePerms), ShouldBeNil)
 
-	git(t, root, "init", "-q")
-	git(t, root, "-c", "user.name=test", "-c", "user.email=test@example.com",
-		"commit", "-q", "--allow-empty", "-m", "initial")
+		base := side{id: baseSide, dir: dir, bin: filepath.Join(dir, "base.test")}
+		err := base.build(t.Context())
+		So(err, ShouldWrap, errBaseBuild)
+		So(err.Error(), ShouldContainSubstring, "SPEED_BASE")
+		So(err.Error(), ShouldContainSubstring, "example.com/missing")
 
-	return root
-}
-
-// exitedPID returns the pid of a process that has exited.
-func exitedPID(t *testing.T) int {
-	t.Helper()
-
-	cmd := exec.CommandContext(t.Context(), "true")
-	So(cmd.Run(), ShouldBeNil)
-
-	return cmd.Process.Pid
-}
-
-// newWorkDir makes a work dir in tmpDir with the given owner file content, or
-// none if it is empty.
-func newWorkDir(tmpDir, name, owner string) string {
-	dir := filepath.Join(tmpDir, workDirPrefix+name)
-	So(os.Mkdir(dir, dirPerms), ShouldBeNil)
-
-	if owner != "" {
-		So(os.WriteFile(filepath.Join(dir, ownerFile), []byte(owner), filePerms), ShouldBeNil)
-	}
-
-	return dir
-}
-
-// git runs git with the given args in the repo at root.
-func git(t *testing.T, root string, args ...string) {
-	t.Helper()
-
-	_, err := command(t.Context(), root, nil, "git", args...)
-	So(err, ShouldBeNil)
+		head := side{id: headSide, dir: dir, bin: filepath.Join(dir, "head.test")}
+		err = head.build(t.Context())
+		So(err, ShouldNotBeNil)
+		So(errors.Is(err, errBaseBuild), ShouldBeFalse)
+	})
 }

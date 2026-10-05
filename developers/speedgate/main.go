@@ -64,32 +64,50 @@ const (
 
 var errBadEnv = errors.New("invalid environment variable")
 
+// stderrCmd is a command that keeps its stderr for its errors.
+type stderrCmd struct {
+	*exec.Cmd
+
+	stderr strings.Builder
+}
+
+// newCommand returns a command that will run the named program in dir with our
+// environment plus env, and that is killed if ctx is cancelled.
+func newCommand(ctx context.Context, dir string, env []string, name string, args ...string) *stderrCmd {
+	c := &stderrCmd{Cmd: exec.CommandContext(ctx, name, args...)}
+
+	c.Dir = dir
+	c.WaitDelay = waitDelay
+
+	c.Env = append(os.Environ(), env...)
+	c.Stderr = &c.stderr
+
+	return c
+}
+
+// wrapErr returns the given error from running the command with its args and
+// stderr added, or an interruption error if ctx was cancelled.
+func (c *stderrCmd) wrapErr(ctx context.Context, err error) error {
+	if ctx.Err() != nil {
+		return fmt.Errorf("%s interrupted: %w", c.Args[0], ctx.Err())
+	}
+
+	if err != nil {
+		return fmt.Errorf("%s: %w: %s", strings.Join(c.Args, " "), err, c.stderr.String())
+	}
+
+	return nil
+}
+
 // command runs the named program in dir, returning its trimmed stdout, and on
 // failure an error that includes its stderr. The program is killed if ctx is
 // cancelled.
 func command(ctx context.Context, dir string, env []string, name string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
-
-	cmd.Dir = dir
-	cmd.WaitDelay = waitDelay
-
-	cmd.Env = append(os.Environ(), env...)
-
-	var stderr strings.Builder
-
-	cmd.Stderr = &stderr
+	cmd := newCommand(ctx, dir, env, name, args...)
 
 	out, err := cmd.Output()
 
-	if ctx.Err() != nil {
-		return "", fmt.Errorf("%s interrupted: %w", name, ctx.Err())
-	}
-
-	if err != nil {
-		err = fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, stderr.String())
-	}
-
-	return strings.TrimSpace(string(out)), err
+	return strings.TrimSpace(string(out)), cmd.wrapErr(ctx, err)
 }
 
 // config holds the gate's settings, taken from SPEED_* environment variables.
@@ -138,7 +156,7 @@ func configAndRun(ctx context.Context) (bool, error) {
 }
 
 func main() {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 
 	code := exitCode(configAndRun(ctx))
 

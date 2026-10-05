@@ -27,11 +27,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -39,6 +39,9 @@ import (
 )
 
 const benchTimeout = "30m"
+
+var errBaseBuild = errors.New("head's benchmarks do not build in base, which may lack APIs they use; " +
+	"set SPEED_BASE to a revision that has them (see developers/README.md)")
 
 // sideID identifies which of the two trees being compared a side is.
 type sideID int
@@ -112,24 +115,28 @@ type side struct {
 	id  sideID
 	dir string
 	bin string
-	env []string
 }
 
-// build compiles the benchmark package of the given side's tree.
+// build compiles the benchmark package of the given side's tree. Base's tree
+// has no git metadata, so neither side's binary records VCS information.
 func (s side) build(ctx context.Context) error {
 	_, err := command(ctx, s.dir, []string{"CGO_ENABLED=1"}, "go", "test", "-c", "-tags", "netgo",
-		"-o", s.bin, "./"+benchPkgDir)
+		"-buildvcs=false", "-o", s.bin, "./"+benchPkgDir)
+	if err != nil && s.id == baseSide {
+		return fmt.Errorf("%w: building base benchmarks: %w", errBaseBuild, err)
+	}
+
 	if err != nil {
-		return fmt.Errorf("building %s benchmarks: %w", s.id, err)
+		return fmt.Errorf("building head benchmarks: %w", err)
 	}
 
 	return nil
 }
 
 // run runs the benchmarks matching the bench regexp with the side's benchmark
-// binary once in workDir, which also becomes the benchmarks' temp dir.
+// binary once in workDir, with env on top of our own environment.
 func (s side) run(ctx context.Context, cfg config, bench, workDir string, env []string) ([]namedResult, error) {
-	out, err := command(ctx, workDir, s.runEnv(env, workDir), s.bin, "-test.run=^$", "-test.bench="+bench,
+	out, err := command(ctx, workDir, env, s.bin, "-test.run=^$", "-test.bench="+bench,
 		"-test.benchtime="+cfg.benchtime, "-test.count="+strconv.Itoa(cfg.count),
 		"-test.benchmem", "-test.timeout="+benchTimeout)
 	if err != nil {
@@ -150,12 +157,6 @@ func parseBenchOutput(out string) []namedResult {
 	}
 
 	return results
-}
-
-// runEnv returns the environment, on top of our own, that the side's benchmarks
-// run with: the given env, the side's own, and workDir as the temp dir.
-func (s side) runEnv(env []string, workDir string) []string {
-	return append(slices.Concat(env, s.env), "TMPDIR="+workDir)
 }
 
 // samples holds the results of each benchmark for each side, with the
