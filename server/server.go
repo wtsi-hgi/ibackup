@@ -290,7 +290,7 @@ func (s *Server) removalFinished() {
 // the given delay, so that rac can submit put jobs for any ready requests.
 func (s *Server) triggerReadyAddedCallbackAfter(delay time.Duration) {
 	go func() {
-		<-time.After(delay)
+		time.Sleep(delay)
 		s.queue.TriggerReadyAddedCallback(context.Background())
 	}()
 }
@@ -305,7 +305,7 @@ func (s *Server) scheduleRacRetrigger() {
 	}
 
 	go func() {
-		<-time.After(s.racRetriggerDelay)
+		time.Sleep(s.racRetriggerDelay)
 		s.racRetriggerPending.Store(false)
 		s.queue.TriggerReadyAddedCallback(context.Background())
 	}()
