@@ -1746,6 +1746,8 @@ func normaliseOutput(out string) string {
 	ansiRe := regexp.MustCompile(`\x1b\[[0-9;]*m`)
 	out = ansiRe.ReplaceAllString(out, "")
 
+	discoveryDateRe := regexp.MustCompile(` \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$`)
+
 	lines := strings.Split(out, "\n")
 
 	for n, line := range lines {
@@ -1759,7 +1761,9 @@ func normaliseOutput(out string) string {
 		}
 
 		if strings.HasPrefix(line, "Discovery:") {
-			lines[n] = line[:10]
+			// keep the state (so waits for "Discovery: completed" work), but
+			// drop its varying timestamp
+			lines[n] = discoveryDateRe.ReplaceAllString(line, "")
 
 			continue
 		}
@@ -4534,7 +4538,7 @@ Review date: `+reviewDate+`
 Removal date: `+removalDate+`
 Monitored: false; Archive: false; Frozen: false
 Status: complete
-Discovery:
+Discovery: completed
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Completed in: 0s
@@ -4565,7 +4569,7 @@ Removal date: `+removalDate+`
 User metadata: testKey=testVal;testKey2=testVal2
 Monitored: false; Archive: false; Frozen: false
 Status: complete
-Discovery:
+Discovery: completed
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Completed in: 0s
@@ -4579,6 +4583,8 @@ Directories:
 					"--path", localDir, "--metadata", meta, "--reason", "archive", "--remove", "2999-01-01")
 				So(exitCode, ShouldEqual, 0)
 
+				s.waitForStatus(setName, "\nStatus: complete", 30*time.Second)
+
 				s.confirmOutput(t, []string{"status", "-n", setName}, 0,
 					`Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
 Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
@@ -4591,7 +4597,7 @@ Removal date: 2999-01-01
 User metadata: `+meta+`
 Monitored: false; Archive: false; Frozen: false
 Status: complete
-Discovery:
+Discovery: completed
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Completed in: 0s
@@ -4618,7 +4624,7 @@ Review date: `+reviewDate+`
 Removal date: `+removalDate+`
 Monitored: false; Archive: false; Frozen: false
 Status: complete
-Discovery:
+Discovery: completed
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Completed in: 0s
@@ -4644,7 +4650,7 @@ Review date: `+reviewDate+`
 Removal date: `+removalDate+`
 Monitored: false; Archive: false; Frozen: false
 Status: complete
-Discovery:
+Discovery: completed
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Completed in: 0s
@@ -4670,7 +4676,7 @@ Review date: `+reviewDate+`
 Removal date: `+removalDate+`
 Monitored: false; Archive: false; Frozen: false
 Status: complete
-Discovery:
+Discovery: completed
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Completed in: 0s
@@ -4686,7 +4692,7 @@ Review date: `+reviewDate+`
 Removal date: `+removalDate+`
 Monitored: false; Archive: false; Frozen: false
 Status: complete
-Discovery:
+Discovery: completed
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Completed in: 0s
@@ -4702,7 +4708,7 @@ Review date: `+reviewDate+`
 Removal date: `+removalDate+`
 Monitored: false; Archive: false; Frozen: false
 Status: complete
-Discovery:
+Discovery: completed
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Completed in: 0s
@@ -4722,7 +4728,7 @@ Review date: `+reviewDate+`
 Removal date: `+removalDate+`
 Monitored: false; Archive: false; Frozen: false
 Status: complete
-Discovery:
+Discovery: completed
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Completed in: 0s
@@ -4738,7 +4744,7 @@ Review date: `+reviewDate+`
 Removal date: `+removalDate+`
 Monitored: false; Archive: false; Frozen: false
 Status: complete
-Discovery:
+Discovery: completed
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Completed in: 0s
@@ -4754,7 +4760,7 @@ Review date: `+reviewDate+`
 Removal date: `+removalDate+`
 Monitored: false; Archive: false; Frozen: false
 Status: complete
-Discovery:
+Discovery: completed
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Completed in: 0s
@@ -4779,6 +4785,7 @@ Directories:
 			So(exitCode, ShouldEqual, 0)
 
 			s.waitForStatus("testAddFiles", "Status: complete", 1*time.Second)
+			s.waitForStatus("testAddFiles", "Global put queue status: 2 queued", 10*time.Second)
 
 			Convey("Status tells you an example of where input files would get uploaded to", func() {
 				s.confirmOutput(t, []string{"status", "--name", "testAddFiles"}, 0,
@@ -4792,7 +4799,7 @@ Review date: `+reviewDate+`
 Removal date: `+removalDate+`
 Monitored: false; Archive: false; Frozen: false
 Status: complete
-Discovery:
+Discovery: completed
 Num files: 2; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 2; Orphaned: 0; Abnormal: 0
 Completed in: 0s
@@ -4814,7 +4821,7 @@ Review date: `+reviewDate+`
 Removal date: `+removalDate+`
 Monitored: false; Archive: false; Frozen: false
 Status: complete
-Discovery:
+Discovery: completed
 Num files: 2; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 2; Orphaned: 0; Abnormal: 0
 Completed in: 0s
@@ -4840,7 +4847,7 @@ Review date: ` + reviewDate + `
 Removal date: ` + removalDate + `
 Monitored: false; Archive: false; Frozen: false
 Status: complete
-Discovery:
+Discovery: completed
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Completed in: 0s
@@ -4877,7 +4884,7 @@ Review date: `+reviewDate+`
 Removal date: `+removalDate+`
 Monitored: false; Archive: false; Frozen: false
 Status: complete
-Discovery:
+Discovery: completed
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Completed in: 0s
@@ -4913,7 +4920,7 @@ Removal date: `+removalDate+`
 Monitored: false; Archive: false; Frozen: false
 Status: complete
 Warning: `+badPermDir+`/: permission denied
-Discovery:
+Discovery: completed
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Completed in: 0s
@@ -4932,6 +4939,7 @@ Directories:
 			}
 
 			s.addSetForTesting(t, "humgenV2Set", "humgen", humgenFile)
+			s.waitForStatus("humgenV2Set", "Global put queue status: 1 queued", 10*time.Second)
 
 			s.confirmOutput(t, []string{"status", "-n", "humgenV2Set"}, 0,
 				`Global put queue status: 1 queued; 0 reserved to be worked on; 0 failed
@@ -4944,7 +4952,7 @@ Review date: `+reviewDate+`
 Removal date: `+removalDate+`
 Monitored: false; Archive: false; Frozen: false
 Status: pending upload
-Discovery:
+Discovery: completed
 Num files: 1; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B (and counting) / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Example File: `+humgenFile+" => /humgen/teams/hgi/scratch125_v2/mercury/ibackup/file_for_testsuite.do_not_delete")
@@ -4961,6 +4969,7 @@ Example File: `+humgenFile+" => /humgen/teams/hgi/scratch125_v2/mercury/ibackup/
 			}
 
 			s.addSetForTesting(t, "gengenSet", "gengen", gengenFile)
+			s.waitForStatus("gengenSet", "Global put queue status: 1 queued", 10*time.Second)
 
 			s.confirmOutput(t, []string{"status", "-n", "gengenSet"}, 0,
 				`Global put queue status: 1 queued; 0 reserved to be worked on; 0 failed
@@ -4973,7 +4982,7 @@ Review date: `+reviewDate+`
 Removal date: `+removalDate+`
 Monitored: false; Archive: false; Frozen: false
 Status: pending upload
-Discovery:
+Discovery: completed
 Num files: 1; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B (and counting) / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Example File: `+gengenFile+" => /humgen/gengen/teams/hgi/scratch126/mercury/ibackup/file_for_testsuite.do_not_delete")
@@ -4990,6 +4999,7 @@ Example File: `+gengenFile+" => /humgen/gengen/teams/hgi/scratch126/mercury/ibac
 			}
 
 			s.addSetForTesting(t, "gengenV2Set", "gengen", gFile)
+			s.waitForStatus("gengenV2Set", "Global put queue status: 1 queued", 10*time.Second)
 
 			s.confirmOutput(t, []string{"status", "-n", "gengenV2Set"}, 0,
 				`Global put queue status: 1 queued; 0 reserved to be worked on; 0 failed
@@ -5002,7 +5012,7 @@ Review date: `+reviewDate+`
 Removal date: `+removalDate+`
 Monitored: false; Archive: false; Frozen: false
 Status: pending upload
-Discovery:
+Discovery: completed
 Num files: 1; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B (and counting) / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Example File: `+gFile+" => /humgen/gengen/teams/hgi/scratch126_v2/mercury/ibackup/file_for_testsuite.do_not_delete")
@@ -5030,6 +5040,7 @@ Example File: `+gFile+" => /humgen/gengen/teams/hgi/scratch126_v2/mercury/ibacku
 			So(exitCode, ShouldEqual, 0)
 
 			s.waitForStatus("testLinks", "Status: pending upload", 1*time.Second)
+			s.waitForStatus("testLinks", "Global put queue status: 4 queued", 10*time.Second)
 
 			s.confirmOutput(t, []string{"status", "--name", "testLinks"}, 0,
 				`Global put queue status: 4 queued; 0 reserved to be worked on; 0 failed
@@ -5042,7 +5053,7 @@ Review date: `+reviewDate+`
 Removal date: `+removalDate+`
 Monitored: false; Archive: false; Frozen: false
 Status: pending upload
-Discovery:
+Discovery: completed
 Num files: 4; Symlinks: 2; Hardlinks: 1; Size (total/recently uploaded/recently removed): 0 B (and counting) / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Directories:
@@ -5105,7 +5116,7 @@ Review date: `+reviewDate+`
 Removal date: `+removalDate+`
 Monitored: false; Archive: false; Frozen: false
 Status: complete
-Discovery:
+Discovery: completed
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Completed in: 0s
@@ -5137,7 +5148,7 @@ Review date: `+reviewDate+`
 Removal date: `+removalDate+`
 Monitored: false; Archive: false; Frozen: false
 Status: complete
-Discovery:
+Discovery: completed
 Num files: 1; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 1
 Completed in: 0s
@@ -5165,7 +5176,7 @@ Review date: `+reviewDate+`
 Removal date: `+removalDate+`
 Monitored: false; Archive: false; Frozen: false
 Status: complete
-Discovery:
+Discovery: completed
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Completed in: 0s
@@ -5339,7 +5350,7 @@ Review date: `+reviewDate+`
 Removal date: `+removalDate+`
 Monitored: false; Archive: false; Frozen: false
 Status: complete
-Discovery:
+Discovery: completed
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Completed in: 0s
