@@ -177,9 +177,11 @@ func writeTable(w io.Writer, comparisons []comparison) {
 func fmtNs(ns float64) string {
 	d := time.Duration(ns)
 
-	precision := time.Duration(1)
-	for precision*1000000 < d {
-		precision *= 1000
+	// Multiplying by time.Millisecond and time.Microsecond scales by 1e6 and
+	// 1e3: precision grows 1000-fold while d is over a million of it.
+	precision := time.Nanosecond
+	for precision*time.Millisecond < d { //nolint:durationcheck
+		precision *= time.Microsecond //nolint:durationcheck
 	}
 
 	return d.Round(precision).String()
