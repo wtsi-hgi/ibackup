@@ -126,7 +126,7 @@ func measure(ctx context.Context, cfg config, sides [2]side, workDir, baseDesc s
 		return false, err
 	}
 
-	fmt.Fprintf(os.Stdout, "\n%shead: working tree at %s\n%s; %d rounds, -benchtime %s, -count %d\n\n",
+	fmt.Printf("\n%shead: working tree at %s\n%s; %d rounds, -benchtime %s, -count %d\n\n",
 		warning, sides[headSide].dir, baseDesc, cfg.rounds, cfg.benchtime, cfg.count)
 	writeTable(os.Stdout, first)
 
@@ -135,7 +135,7 @@ func measure(ctx context.Context, cfg config, sides [2]side, workDir, baseDesc s
 		return false, err
 	}
 
-	fmt.Fprintln(os.Stdout)
+	fmt.Println()
 
 	return writeVerdict(os.Stdout, first, final, cfg.threshold, baseDesc), nil
 }
@@ -176,14 +176,14 @@ func confirm(ctx context.Context, r rounds, all *samples, first []comparison) ([
 		return first, nil
 	}
 
-	fmt.Fprintf(os.Stdout, "\nconfirming %v with %d more rounds\n", names, r.cfg.rounds)
+	fmt.Printf("\nconfirming %v with %d more rounds\n", names, r.cfg.rounds)
 
 	final, err := r.runAndCompare(ctx, all, "confirmation round", benchPattern(names))
 	if err != nil {
 		return nil, err
 	}
 
-	fmt.Fprintln(os.Stdout, "\npooled results:")
+	fmt.Println("\npooled results:")
 	writeTable(os.Stdout, final)
 
 	return final, nil

@@ -144,6 +144,9 @@ linters:
           - forbidigo
         path: version\.go
       - linters:
+          - forbidigo
+        path: developers/speedgate/
+      - linters:
           - dupl
         path: groupuser\.go
       - linters:
