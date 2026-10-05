@@ -17,6 +17,7 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
   removing it leaves `Orphaned: 1` with `Num files: 0`. At `origin/develop` it
   is worse (removal wraps Uploaded). Needs a decision on what frozen-set
   counts should be.
+  - Decision (user, 2026-10-05): count it as Orphaned, not Uploaded.
   - Origin item: "Frozen sets: when a frozen set's uploaded file is deleted
     locally" (found reviewing the TestSync fix, 5855c25).
   - Evidence: reviewer probe in a set-package test: frozen set, uploaded file
