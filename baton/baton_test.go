@@ -353,7 +353,7 @@ func TestBatonConcurrentClientInit(t *testing.T) {
 }
 
 func TestUploadRetry(t *testing.T) {
-	path := pathWithoutBaton()
+	path := os.Getenv("PATH")
 
 	Convey("With a pseudo baton script", t, func() {
 		l, err := net.Listen("tcp", "127.0.0.1:0") //nolint:noctx
@@ -374,7 +374,8 @@ exec 3>&-;`)
 
 		So(os.WriteFile(filepath.Join(dir, "baton-do"), source, 0700), ShouldBeNil) //nolint:gosec
 
-		t.Setenv("PATH", dir+":"+path)
+		// ex.FindBaton() returns the last baton-do in PATH, so append ours.
+		t.Setenv("PATH", path+":"+dir)
 
 		h, err := GetBatonHandler()
 		So(err, ShouldBeNil)
@@ -474,20 +475,6 @@ func isObjectInIRODS(remotePath, name string) bool {
 	So(err, ShouldBeNil)
 
 	return strings.Contains(string(output), name)
-}
-
-// pathWithoutBaton returns PATH minus any dirs containing baton-do, since
-// ex.FindBaton() returns the last baton-do in PATH, not the first.
-func pathWithoutBaton() string {
-	var dirs []string
-
-	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
-		if _, err := os.Stat(filepath.Join(dir, "baton-do")); err != nil { //nolint:gosec // PATH dirs from test env
-			dirs = append(dirs, dir)
-		}
-	}
-
-	return strings.Join(dirs, string(os.PathListSeparator))
 }
 
 func getRemoteMeta(path string) string {
