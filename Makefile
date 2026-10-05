@@ -40,10 +40,10 @@ bench:
 # Compares the speed of the critical upload path to origin/develop, failing if
 # it is over 10% slower. See developers/README.md for the SPEED_* options. The
 # gate is built and run directly, not with go run, so that its exit code of 1
-# (regression) or 2 (could not run) reaches make. On Ctrl-C the shell waits for
-# the gate to clean up before removing the build dir.
+# (regression) or 2 (could not run) reaches make. On a signal the shell waits
+# for the gate to clean up before removing the build dir.
 speed:
-	@d=$$(mktemp -d) && trap 'rm -rf "$$d"' EXIT && trap 'exit 130' INT TERM && \
+	@d=$$(mktemp -d) && trap 'rm -rf "$$d"' EXIT && trap 'exit 130' INT TERM HUP && \
 	CGO_ENABLED=1 go build -tags netgo -o "$$d/speedgate" ./developers/speedgate && "$$d/speedgate"
 
 # curl -sSfL https://golangci-lint.run/install.sh | sh -s -- -b $(go env GOPATH)/bin v2.6.0

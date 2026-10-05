@@ -127,11 +127,13 @@ within 5%. If a result is near the threshold and spreads are large, run it
 again when the host is quieter before treating it as a regression.
 
 ### Interrupting it
-Ctrl-C (or SIGTERM or SIGHUP) stops the benchmarks and removes the gate's
-work dir, which holds the base tree; make then reports `Error 130` on its
-`make: *** [Makefile:...: speed]` line. If the gate is killed without a
-chance to clean up, its work dir stays behind; once no gate is running,
-remove it with:
+Ctrl-C, SIGTERM or SIGHUP sent to make's process group stops the benchmarks,
+removes the gate's work dir, which holds the base tree, and removes make's
+build dir for the gate. For each of the three, make reports `Error 130` on its
+`make: *** [Makefile:...: speed]` line and then dies by the same signal, so
+the calling shell may add its own report, such as `Hangup`, and sees an exit
+status of 130, 143 or 129. If the gate is killed without a chance to clean
+up, its work dir stays behind; once no gate is running, remove it with:
 
 ```bash
 rm -rf /dev/shm/ibackup-speed-*

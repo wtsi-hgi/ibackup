@@ -117,11 +117,10 @@ type side struct {
 	bin string
 }
 
-// build compiles the benchmark package of the given side's tree. Base's tree
-// has no git metadata, so neither side's binary records VCS information.
+// build compiles the benchmark package of the given side's tree.
 func (s side) build(ctx context.Context) error {
 	_, err := command(ctx, s.dir, []string{"CGO_ENABLED=1"}, "go", "test", "-c", "-tags", "netgo",
-		"-buildvcs=false", "-o", s.bin, "./"+benchPkgDir)
+		"-o", s.bin, "./"+benchPkgDir)
 	if err != nil && s.id == baseSide {
 		return fmt.Errorf("%w: building base benchmarks: %w", errBaseBuild, err)
 	}
