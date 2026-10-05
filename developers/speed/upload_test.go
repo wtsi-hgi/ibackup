@@ -178,9 +178,8 @@ func BenchmarkUpload(b *testing.B) {
 	f := newFixture(b, numUploadFiles)
 
 	b.ReportAllocs()
-	b.ResetTimer()
 
-	for range b.N {
+	for b.Loop() {
 		b.StopTimer()
 
 		e := newEnv(b, f)
@@ -227,9 +226,8 @@ func BenchmarkRemove(b *testing.B) {
 	f := newFixture(b, numRemoveFiles)
 
 	b.ReportAllocs()
-	b.ResetTimer()
 
-	for range b.N {
+	for b.Loop() {
 		b.StopTimer()
 
 		e := newEnv(b, f)
