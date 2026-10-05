@@ -23,11 +23,15 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
     RemoteDataPath broke existing server tests that reserve such requests for
     separate clients concurrently. The one gate failure first attributed to
     it was the shared-collection wipe (fixed in e4c7b83).
+  - Decision (user, 2026-10-05): try to reproduce it; fix only if it
+    reproduces, otherwise record what was tried and leave it unfixed.
 - [ ] Possible: `baton/baton.go` `EnsureCollection` sends every concurrent
   caller's result back on one shared channel, so a caller may receive
   another collection's error. Spotted by reading the code; no failure seen.
   Not yet confirmed.
   - Origin item: "Possible: `baton/baton.go` `EnsureCollection`".
+  - Decision (user, 2026-10-05): try to reproduce it; fix only if it
+    reproduces, otherwise record what was tried and leave it unfixed.
 - [ ] `baton/baton.go` `GetMeta` is the only remote operation without
   `timeoutOp`, so any hang in it blocks its caller forever. One such hang:
   extendo (github.com/mjkw31/extendo/v2 v2.7.1-beta2, client.go
