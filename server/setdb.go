@@ -861,6 +861,11 @@ func (s *Server) processRemoteFileRemoval(removeReq *set.RemoveReq, entry *set.E
 	mayMissInRemote := removeReq.RemoteRemovalStatus == set.AboutToBeRemoved && removeReq.Action == set.ToRemove
 	removeReq.RemoteRemovalStatus = set.AboutToBeRemoved
 
+	if removeReq.ObjectSize == nil {
+		size := entry.Size
+		removeReq.ObjectSize = &size
+	}
+
 	err = s.db.UpdateRemoveRequest(*removeReq)
 	if err != nil {
 		return err

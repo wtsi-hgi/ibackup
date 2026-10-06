@@ -100,7 +100,7 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
     and checks the trash set's dirs and that the folder validates in the
     trash set; the server test now fails on timeout and asserts no error,
     2/2 removed, and the file in trash. A "skip the trash entry" mutant fails.
-- [ ] A removal retried after its remote delete succeeded (released after a
+- [x] A removal retried after its remote delete succeeded (released after a
   failed `UpdateRemoveRequest`, `PutEntryInTrash` or `RemoveFileEntry`, or
   re-run by `recoverRemoveQueue` after a crash) re-reads the entry in
   `removeFileFromIRODSandDB`; if a `missing` upload result zeroed its size
@@ -112,6 +112,22 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
     crash. Suggested fix: record the object's size on `RemoveReq` when it
     moves to AboutToBeRemoved (persisted by `UpdateRemoveRequest`) and pass
     that as the removed size.
+  - Still applied after d200a1d: each retry re-read the entry, and a result
+    in the window between the remote step and the database transaction
+    (Missing for remove, Failed for trash) changed its size, so SizeRemoved
+    gained the wrong amount after a stop and restart.
+  - Red: server tests stopping after the remote step, changing the entry's
+    size, then restarting: SizeRemoved expected 1, actual 0 (remove) / 3
+    (trash).
+  - Fixed in `set/db.go` and `server/setdb.go`: `RemoveReq.ObjectSize` is
+    recorded once from the entry's size when the request moves to
+    AboutToBeRemoved (saved before any remote call) and used as the removed
+    size; requests stored before this field fall back to the entry's size.
+    Status counts and SizeTotal still use the stored entry.
+  - Tests in `server/server_test.go`: stopped after Removed was saved, and
+    stopped before it (the stored request is captured at the first remote
+    call), for remove and trash. Mutants recording the size after the remote
+    call, ignoring it, or overwriting it on each attempt fail.
 - [ ] Possible: `set` `RemoveFileFromInode` errors with "invalid transformer
   path concatenation" when the original file of an inode with 3 or more
   paths is removed before its hardlinks: removing the original blanks
@@ -150,3 +166,11 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
   so removing it would leave Abnormal 1. Same on develop. Needs a design
   that keeps frozen from re-uploading a later regular file at that path.
   - Origin: found fixing the frozen-sets item; confirmed by its reviewer.
+- [ ] A trash removal retried in the same window, after a re-upload attempt
+  failed (entry now WasNotUploaded), skips `putEntryInTrash` in
+  `cleanUpRemovedFile`, so the remote object is tagged with the trash set but
+  the trash set has no entry for it (it can't be listed or expired). A fix
+  would record the decision to trash on the request at AboutToBeRemoved.
+  Code reading only; low priority.
+  - Origin: found fixing the removed-size retry item; confirmed (narrowed)
+    by its reviewer.

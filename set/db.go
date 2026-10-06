@@ -130,6 +130,12 @@ type RemoveReq struct {
 	RemoteRemovalStatus RemovalStatus
 	IsComplete          bool
 	Action              RemoveAction
+
+	// ObjectSize is the size of the file's entry when its remote removal
+	// first started, so a retry still counts the size of the remote object
+	// even if an upload result changed the entry's size meanwhile. Nil for
+	// requests stored before it existed, and for directories.
+	ObjectSize *uint64
 }
 
 func (rq RemoveReq) Key() string {
@@ -165,6 +171,16 @@ func NewRemoveRequest(path string, set *Set, isDir bool, action RemoveAction) Re
 		RemoteRemovalStatus: NotRemoved,
 		Action:              action,
 	}
+}
+
+// removedSize returns our ObjectSize if recorded, otherwise the size of the
+// given entry, read before the removal.
+func (rq RemoveReq) removedSize(before *Entry) uint64 {
+	if rq.ObjectSize != nil {
+		return *rq.ObjectSize
+	}
+
+	return before.Size
 }
 
 // NewRO returns a *DBRO that can be used to query a set database. Provide the
@@ -620,8 +636,11 @@ func (d *DB) validateDirPaths(set *Set, paths []string) ([]string, []string, err
 // before must be the file's entry as read before the removal started. It's
 // what gets trashed, and its size is added to the set's SizeRemoved, since an
 // upload result arriving after the remote object was removed (status missing)
-// changes the stored entry's size to 0. Other set counts use the entry as
-// stored, which is returned, or nil if the set didn't have the file.
+// changes the stored entry's size to 0. If the request recorded an ObjectSize
+// when its remote removal started, that is added instead, since a retry's
+// before may have been read after such a result, or after a failed result for
+// a modified file changed its size. Other set counts use the entry as stored,
+// which is returned, or nil if the set didn't have the file.
 func (d *DB) RemoveFileEntry(removeReq *RemoveReq, before *Entry) (*Entry, error) {
 	completed := *removeReq
 	completed.IsComplete = true
@@ -666,7 +685,7 @@ func (d *DB) removeFileInTx(tx *bolt.Tx, removeReq *RemoveReq, before *Entry) (*
 	}
 
 	return removed, d.updateSetPropertiesInTx(tx, setID, func(got *Set) {
-		got.countRemovedEntry(removed, before.Size)
+		got.countRemovedEntry(removed, removeReq.removedSize(before))
 	})
 }
 

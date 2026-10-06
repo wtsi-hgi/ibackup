@@ -861,6 +861,81 @@ func TestServer(t *testing.T) {
 								expectFile1Removed(action)
 							})
 
+							// expectSizeOfObjectRemoved does the given steps of
+							// removing file1, which must include its remote
+							// removal, then gives it an upload result that
+							// changes its stored size before the restart.
+							// Removing deletes the remote object, so the result
+							// is missing (size 0). Trashing keeps the remote
+							// object, so a missing local file would be orphaned
+							// instead, keeping the size; the result is a failed
+							// upload of the local file, since grown to 3 bytes.
+							expectSizeOfObjectRemoved := func(steps func(*set.RemoveReq)) {
+								restartDuring(file1local, false, action, func(remReq *set.RemoveReq) {
+									steps(remReq)
+
+									var result *transfer.Request
+
+									for _, r := range requests {
+										if r.Local == file1local {
+											result = r.Clone()
+										}
+									}
+
+									So(result, ShouldNotBeNil)
+
+									result.Status, result.Size = transfer.RequestStatusMissing, 0
+
+									if action == set.ToTrash {
+										result.Status, result.Size = transfer.RequestStatusFailed, 3
+									}
+
+									changed, errs := s.db.SetEntryStatus(result)
+									So(errs, ShouldBeNil)
+									So(changed.Size, ShouldEqual, result.Size)
+								})
+
+								got, errs := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+								So(errs, ShouldBeNil)
+								So(got.Error, ShouldBeBlank)
+								So(got.NumObjectsRemoved, ShouldEqual, 1)
+								So(got.NumFiles, ShouldEqual, 1)
+								So(got.Missing, ShouldEqual, 0)
+								So(got.Failed, ShouldEqual, 0)
+								So(got.SizeRemoved, ShouldEqual, 1)
+							}
+
+							Convey(name+" a file, stopped after its remote removal, then given an upload "+
+								"result that changes its size, counts the size of the object removed", func() {
+								expectSizeOfObjectRemoved(func(remReq *set.RemoveReq) {
+									So(s.processRemoteFileRemoval(remReq, entry), ShouldBeNil)
+								})
+							})
+
+							Convey(name+" a file, stopped after its remote removal but before recording "+
+								"that, then given an upload result that changes its size, counts the size "+
+								"of the object removed", func() {
+								expectSizeOfObjectRemoved(func(remReq *set.RemoveReq) {
+									var stored []set.RemoveReq
+
+									s.storageHandler = &hookedGetMetaHandler{
+										Handler: s.storageHandler,
+										hook: func() {
+											var errg error
+
+											stored, errg = s.db.GetRemoveRequests(before.ID())
+											So(errg, ShouldBeNil)
+										},
+									}
+
+									So(s.processRemoteFileRemoval(remReq, entry), ShouldBeNil)
+
+									So(stored, ShouldHaveLength, 1)
+									So(stored[0].RemoteRemovalStatus, ShouldEqual, set.AboutToBeRemoved)
+									So(s.db.UpdateRemoveRequest(stored[0]), ShouldBeNil)
+								})
+							})
+
 							Convey(name+" a file, stopped after its database removal", func() {
 								restartDuring(file1local, false, action, func(remReq *set.RemoveReq) {
 									So(s.removeRequestFromIRODSandDB(remReq), ShouldBeNil)
@@ -4286,13 +4361,13 @@ func TestServer(t *testing.T) {
 
 						So(s.numRequestsToReserve(), ShouldEqual, maxRequestsToReserve)
 
-						for i := 0; i < s.numClients; i++ {
+						for range s.numClients {
 							rs, errr := s.reserveRequests()
 							So(errr, ShouldBeNil)
 							So(len(rs), ShouldEqual, maxRequestsToReserve)
 						}
 
-						for i := 0; i < s.numClients; i++ {
+						for range s.numClients {
 							rs, errr := s.reserveRequests()
 							So(errr, ShouldBeNil)
 							So(len(rs), ShouldEqual, numExtra/s.numClients)
@@ -5785,6 +5860,21 @@ func makePutter(t *testing.T, handler transfer.Handler, requests []*transfer.Req
 	So(qs.CreatingCollections, ShouldEqual, 0)
 
 	return p, d
+}
+
+// hookedGetMetaHandler is a remove.Handler whose GetMeta(), the first remote
+// step of removing a file, calls hook first. Removing a file saves its request
+// as about to be removed before this, and as removed only after its last
+// remote step, so hook sees what is stored if the server stops in between.
+type hookedGetMetaHandler struct {
+	remove.Handler
+	hook func()
+}
+
+func (h *hookedGetMetaHandler) GetMeta(path string) (map[string]string, error) {
+	h.hook()
+
+	return h.Handler.GetMeta(path)
 }
 
 // requeueFailingQueue is a claimQueue whose Requeue fails while fail is true,
