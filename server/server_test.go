@@ -2156,7 +2156,12 @@ func TestServer(t *testing.T) {
 
 							serverStopped = true
 
-							slackDebounce := 500 * time.Millisecond
+							// Each suppression check below must run inside the
+							// window started by the message just before it. Under
+							// -race on a busy host, the poll that sees that
+							// message plus a status update can take over 500ms,
+							// so the window must comfortably outlast that.
+							slackDebounce := 2 * time.Second
 							conf.SlackMessageDebounce = slackDebounce
 
 							_, addr2, dfunc2 := makeAndStartServer(0)
