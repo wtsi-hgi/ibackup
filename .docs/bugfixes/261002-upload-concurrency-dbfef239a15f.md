@@ -56,3 +56,11 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
   `removeQueue`, so `Items` never reaches 0 and the storage handler's
   `Cleanup()` never runs again. Unchanged by the `deps` fix.
   - Origin item: as above.
+- [ ] `transfer/put.go` `getSortedRequestCollections` (~272) only creates
+  collections for `p.requests`, not `p.duplicateRequests`, so a request
+  deduplicated by `RemoteDataPath()` (e.g. a second set's hardlink to the same
+  remote inode file in the same batch) never gets its own `Remote` collection
+  created, and its put fails with `open .../remote2/file.link2: no such file
+  or directory`. Seen in a server test on the set-counts branch; same on
+  develop.
+  - Origin: found reviewing the set-counts self-hardlink fix (2026-10-07).
