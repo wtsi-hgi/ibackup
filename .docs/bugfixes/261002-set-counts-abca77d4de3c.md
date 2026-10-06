@@ -55,3 +55,18 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
     crash. Suggested fix: record the object's size on `RemoveReq` when it
     moves to AboutToBeRemoved (persisted by `UpdateRemoveRequest`) and pass
     that as the removed size.
+- [ ] Possible: `set` `RemoveFileFromInode` errors with "invalid transformer
+  path concatenation" when the original file of an inode with 3 or more
+  paths is removed before its hardlinks: removing the original blanks
+  `files[0]`, and the next call fails splitting `""` in
+  `removePathFromInodeFiles`. Code is unchanged from develop; not confirmed by
+  a run at base.
+  - Origin: found while fixing the deps removal-retry race (2026-10-06).
+- [ ] Possible: a ToRemove of an entry with no inode record fails with "key
+  not found in inode bucket [0/]". Seen in set tests whose entries had no
+  inode records; not checked whether production can reach it.
+  - Origin: found while fixing the deps removal-retry race (2026-10-06).
+- [ ] Removals interrupted under a build before the deps removal-retry fix
+  still fail after upgrading: the entry is gone and the stored request has no
+  saved `RemovedEntry`, so the retry fails with "has no path".
+  - Origin: limitation of the deps removal-retry fix (2026-10-06).
