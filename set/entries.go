@@ -125,6 +125,11 @@ type Entry struct {
 	// that counted our Status in the set's counts, if any.
 	CountedInDiscovery time.Time
 
+	// countedStatus and countedIn are the Status and CountedInDiscovery this
+	// entry had before an upload result updated it.
+	countedStatus EntryStatus
+	countedIn     time.Time
+
 	newSize  bool // is this the first attempt
 	newFail  bool
 	unFailed bool
