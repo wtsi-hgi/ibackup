@@ -76,7 +76,7 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
     transaction, so a failed inode cleanup rolls it back; the entry and Num
     files stay consistent and retries report the inode error. Test "so a
     failure to clean up its inode record leaves its database removal undone"
-    in `set/set_test.go`.
+    in `server/server_test.go`.
 - [ ] Trashing a subfolder that isn't itself in the set, for a legacy set
   without a discovered-folders bucket, fails on the folder's own entry in
   `trashDirFromDB`: the set ends with `Error when removing: invalid set
