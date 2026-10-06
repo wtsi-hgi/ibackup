@@ -168,6 +168,7 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
   removed) or accept as a one-off upgrade window.
   - Origin: limitation of the deps removal-retry fix; behaviour confirmed by
     probe on 03efdf6 (2026-10-07).
+  - Decision (user, 2026-10-07): fix it.
 - [ ] An uploaded (or orphaned) entry whose remote object was deleted outside
   ibackup can never be removed: `processRemoteFileRemoval` tolerates GetMeta
   "does not exist" only when the request was already AboutToBeRemoved
@@ -175,6 +176,8 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
   Same logic on develop. Needs a decision: should a vanished remote object
   count as successfully removed?
   - Origin: found while fixing the deps removal-retry race (2026-10-06).
+  - Decision (user, 2026-10-07): treat the missing remote object as removed
+    (removal succeeds) and log a warning.
 - [ ] Upload results that arrive while a discovery is running are counted
   twice: with NumFiles reset to 0, a result triggers a full `fixCounts`
   recount, and the running discovery then counts the entry again. Same on
@@ -186,6 +189,7 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
   "pending upload" forever. Same on develop (43f7323). Needs a decision:
   count them as Uploaded or as Skipped. Also covers restored frozen files.
   - Origin: found fixing the frozen-sets item; confirmed by its reviewer.
+  - Decision (user, 2026-10-07): count them as Uploaded.
 - [ ] A frozen set's uploaded file replaced by an abnormal file (e.g. a FIFO)
   is counted Abnormal but the frozen guard keeps the stored Uploaded entry,
   so removing it would leave Abnormal 1. Same on develop. Needs a design
@@ -246,3 +250,18 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
     `transfer/put.go` `getSortedRequestCollections` ignores
     `duplicateRequests`, so the put fails with "no such file or directory"
     otherwise. Separate pre-existing bug, not fixed here.
+  - Same-transformer guard: tests where two sets with the same transformer
+    share a hardlink path (set level: the record keeps the path until both
+    remove it; server level: the inode file survives one set removing its
+    links while the other still holds one). A mutant ignoring same-
+    transformer sets fails both.
+- [ ] When an original is removed while its hardlinks remain (record
+  `["", h1, h2]`), the next discovery makes h1 the Dest: h1 becomes a
+  hardlink of itself, both links' storage path moves from `<orig>/<ino>` to
+  `<h1>/<ino>` and they are re-uploaded, and (from code reading) the old inode
+  file is left orphaned in iRODS. Same on develop; records left as
+  `["", path]` by older builds have the same shape.
+  - Decision (user, 2026-10-07): option (a), keep the hardlinks pointing at
+    the original's existing inode file (use the hardlink entries' stored Dest
+    when the record's first slot is blank); no re-upload.
+  - Origin: found fixing the self-hardlink item; confirmed by its reviewer.
