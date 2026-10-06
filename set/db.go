@@ -697,7 +697,7 @@ func (d *DB) cleanUpRemovedFile(tx *bolt.Tx, removeReq *RemoveReq, before, remov
 	case removeReq.Action == ToTrash && !before.WasNotUploaded():
 		return d.putEntryInTrash(tx, removeReq.Set, before)
 	case removeReq.Action == ToRemove:
-		return d.removeInodeIfUnused(tx, removed)
+		return d.removeInodeIfUnused(tx, removed, removeReq.Set.Transformer)
 	default:
 		return nil
 	}

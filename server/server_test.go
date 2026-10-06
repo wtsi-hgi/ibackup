@@ -4955,8 +4955,10 @@ func TestServer(t *testing.T) {
 
 					pathExpected := filepath.Join(setDir, "dir1", "file1.txt")
 					internal.CreateTestFileOfLength(t, pathExpected, 1)
+
 					pathExpected2 := filepath.Join(setDir, "dir2", "file2.txt")
 					internal.CreateTestFileOfLength(t, pathExpected2, 1)
+
 					pathExpected3 := filepath.Join(setDir, "dir3", "file3.txt")
 					internal.CreateTestFileOfLength(t, pathExpected3, 1)
 
@@ -5051,6 +5053,248 @@ func TestServer(t *testing.T) {
 						info, errs = os.Stat(requests[2].Remote)
 						So(errs, ShouldBeNil)
 						So(info.Size(), ShouldNotEqual, 0)
+					})
+
+					Convey("with remote hardlink location set, a set with another transformer uploads "+
+						"the same file as a regular file", func() {
+						s.SetRemoteHardlinkLocation(filepath.Join(remoteDir, "mountpoints"))
+
+						err = client.TriggerDiscovery(exampleSet.ID(), false)
+						So(err, ShouldBeNil)
+
+						ok := <-racCalled
+						So(ok, ShouldBeTrue)
+
+						otherRemoteDir := filepath.Join(localDir, "remote2")
+						otherSet := &set.Set{
+							Name:        "set2",
+							Requester:   exampleSet.Requester,
+							Transformer: "prefix=" + localDir + ":" + otherRemoteDir,
+						}
+
+						err = client.AddOrUpdateSet(otherSet)
+						So(err, ShouldBeNil)
+
+						err = client.MergeFiles(otherSet.ID(), []string{path1})
+						So(err, ShouldBeNil)
+
+						err = client.TriggerDiscovery(otherSet.ID(), false)
+						So(err, ShouldBeNil)
+
+						ok = <-racCalled
+						So(ok, ShouldBeTrue)
+
+						gotSet, errg := client.GetSetByID(otherSet.Requester, otherSet.ID())
+						So(errg, ShouldBeNil)
+						So(gotSet.Hardlinks, ShouldEqual, 0)
+
+						requests, errg := client.GetSomeUploadRequests()
+						So(errg, ShouldBeNil)
+						So(len(requests), ShouldEqual, 4)
+
+						otherRemote := filepath.Join(otherRemoteDir, filepath.Base(path1))
+
+						idx := slices.IndexFunc(requests, func(r *transfer.Request) bool { return r.Set == otherSet.Name })
+						So(idx, ShouldBeGreaterThanOrEqualTo, 0)
+						So(requests[idx].Remote, ShouldEqual, otherRemote)
+						So(requests[idx].Hardlink, ShouldBeBlank)
+
+						p, d := makePutter(t, handler, requests, client)
+						defer d()
+
+						uploadStarts, uploadResults, skippedResults := p.Put()
+
+						err = client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults,
+							minMBperSecondUploadSpeed, minTimeForUpload, 1*time.Hour, logger)
+						So(err, ShouldBeNil)
+
+						info, errs := os.Stat(otherRemote)
+						So(errs, ShouldBeNil)
+						So(info.Size(), ShouldEqual, 1)
+
+						remoteMeta, errm := handler.GetMeta(otherRemote)
+						So(errm, ShouldBeNil)
+						So(remoteMeta[transfer.MetaKeyHardlink], ShouldBeBlank)
+						So(remoteMeta[transfer.MetaKeyRemoteHardlink], ShouldBeBlank)
+					})
+
+					Convey("with remote hardlink location set, the inode file stays while a set with another "+
+						"transformer still has a hardlink, and goes once no set has one", func() {
+						hardlinksDir := filepath.Join(remoteDir, "mountpoints")
+						s.SetRemoteHardlinkLocation(hardlinksDir)
+
+						err = client.TriggerDiscovery(exampleSet.ID(), false)
+						So(err, ShouldBeNil)
+
+						ok := <-racCalled
+						So(ok, ShouldBeTrue)
+
+						otherRemoteDir := filepath.Join(localDir, "remote2")
+						otherSet := &set.Set{
+							Name:        "set2",
+							Requester:   exampleSet.Requester,
+							Transformer: "prefix=" + localDir + ":" + otherRemoteDir,
+						}
+
+						// the putter doesn't create collections for requests whose
+						// local path another request has, so we have to.
+						err = os.MkdirAll(otherRemoteDir, userPerms)
+						So(err, ShouldBeNil)
+
+						err = client.AddOrUpdateSet(otherSet)
+						So(err, ShouldBeNil)
+
+						err = client.MergeFiles(otherSet.ID(), []string{path2})
+						So(err, ShouldBeNil)
+
+						err = client.TriggerDiscovery(otherSet.ID(), false)
+						So(err, ShouldBeNil)
+
+						ok = <-racCalled
+						So(ok, ShouldBeTrue)
+
+						requests, errg := client.GetSomeUploadRequests()
+						So(errg, ShouldBeNil)
+						So(len(requests), ShouldEqual, 4)
+
+						// the server removes with its own handler, not this scope's
+						storage, ok := s.storageHandler.(*internal.LocalHandler)
+						So(ok, ShouldBeTrue)
+
+						p, d := makePutter(t, storage, requests, client)
+						defer d()
+
+						uploadStarts, uploadResults, skippedResults := p.Put()
+
+						err = client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults,
+							minMBperSecondUploadSpeed, minTimeForUpload, 1*time.Hour, logger)
+						So(err, ShouldBeNil)
+
+						info, errs := os.Stat(path1)
+						So(errs, ShouldBeNil)
+
+						statt, ok := info.Sys().(*syscall.Stat_t)
+						So(ok, ShouldBeTrue)
+
+						inodeFile := filepath.Join(hardlinksDir, path1, strconv.FormatUint(statt.Ino, 10))
+
+						otherTransformer, errt := otherSet.MakeTransformer()
+						So(errt, ShouldBeNil)
+
+						otherRemote, errt := otherTransformer(path2)
+						So(errt, ShouldBeNil)
+
+						remoteMeta, errm := storage.GetMeta(otherRemote)
+						So(errm, ShouldBeNil)
+						So(remoteMeta[transfer.MetaKeyRemoteHardlink], ShouldEqual, inodeFile)
+
+						remove := func(given *set.Set, path string) {
+							remReq := set.RemoveReq{Path: path, Set: given, Action: set.ToRemove}
+
+							So(s.removeFileFromIRODSandDB(&remReq), ShouldBeNil)
+						}
+
+						remove(exampleSet, path3)
+						remove(exampleSet, path2)
+
+						_, err = os.Stat(otherRemote)
+						So(err, ShouldBeNil)
+
+						info, errs = os.Stat(inodeFile)
+						So(errs, ShouldBeNil)
+						So(info.Size(), ShouldEqual, 1)
+
+						remove(otherSet, path2)
+						remove(exampleSet, path1)
+
+						_, err = os.Stat(inodeFile)
+						So(err, ShouldNotBeNil)
+						So(err.Error(), ShouldContainSubstring, "no such file or directory")
+
+						files, errf := s.db.GetFilesFromInode(statt.Ino, s.db.GetMountPointFromPath(path1))
+						So(errf, ShouldBeNil)
+						So(files, ShouldBeEmpty)
+					})
+
+					Convey("with remote hardlink location set, the inode file stays while a set with the same "+
+						"transformer still has a hardlink, and goes once no set has one", func() {
+						hardlinksDir := filepath.Join(remoteDir, "mountpoints")
+						s.SetRemoteHardlinkLocation(hardlinksDir)
+
+						err = client.TriggerDiscovery(exampleSet.ID(), false)
+						So(err, ShouldBeNil)
+
+						ok := <-racCalled
+						So(ok, ShouldBeTrue)
+
+						otherSet := &set.Set{
+							Name:        "set2",
+							Requester:   exampleSet.Requester,
+							Transformer: exampleSet.Transformer,
+						}
+
+						err = client.AddOrUpdateSet(otherSet)
+						So(err, ShouldBeNil)
+
+						err = client.MergeFiles(otherSet.ID(), []string{path2})
+						So(err, ShouldBeNil)
+
+						err = client.TriggerDiscovery(otherSet.ID(), false)
+						So(err, ShouldBeNil)
+
+						ok = <-racCalled
+						So(ok, ShouldBeTrue)
+
+						requests, errg := client.GetSomeUploadRequests()
+						So(errg, ShouldBeNil)
+
+						// the server removes with its own handler, not this scope's
+						storage, ok := s.storageHandler.(*internal.LocalHandler)
+						So(ok, ShouldBeTrue)
+
+						p, d := makePutter(t, storage, requests, client)
+						defer d()
+
+						uploadStarts, uploadResults, skippedResults := p.Put()
+
+						err = client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults,
+							minMBperSecondUploadSpeed, minTimeForUpload, 1*time.Hour, logger)
+						So(err, ShouldBeNil)
+
+						info, errs := os.Stat(path1)
+						So(errs, ShouldBeNil)
+
+						statt, ok := info.Sys().(*syscall.Stat_t)
+						So(ok, ShouldBeTrue)
+
+						inodeFile := filepath.Join(hardlinksDir, path1, strconv.FormatUint(statt.Ino, 10))
+
+						_, err = os.Stat(inodeFile)
+						So(err, ShouldBeNil)
+
+						remove := func(given *set.Set, path string) {
+							remReq := set.RemoveReq{Path: path, Set: given, Action: set.ToRemove}
+
+							So(s.removeFileFromIRODSandDB(&remReq), ShouldBeNil)
+						}
+
+						remove(exampleSet, path2)
+						remove(exampleSet, path3)
+
+						info, errs = os.Stat(inodeFile)
+						So(errs, ShouldBeNil)
+						So(info.Size(), ShouldEqual, 1)
+
+						remove(otherSet, path2)
+						remove(exampleSet, path1)
+
+						_, err = os.Stat(inodeFile)
+						So(err, ShouldNotBeNil)
+						So(err.Error(), ShouldContainSubstring, "no such file or directory")
+
+						files, errf := s.db.GetFilesFromInode(statt.Ino, s.db.GetMountPointFromPath(path1))
+						So(errf, ShouldBeNil)
+						So(files, ShouldBeEmpty)
 					})
 
 					Convey("with remote hardlink location set only uploads hardlinks once", func() {

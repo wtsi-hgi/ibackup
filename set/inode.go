@@ -39,14 +39,11 @@ import (
 
 	"github.com/moby/sys/mountinfo"
 	"github.com/ugorji/go/codec"
-	"github.com/wtsi-hgi/ibackup/errs"
 	"github.com/wtsi-hgi/ibackup/statter"
 	bolt "go.etcd.io/bbolt"
 )
 
 const transformerInodeSeparator = ":"
-
-const ErrElementNotInSlice = "element not in slice"
 
 var errSetsBucketMissing = errors.New("sets bucket missing")
 
@@ -76,6 +73,49 @@ func setsWithPath(b *bolt.Bucket, kind string, path []byte, seen map[string]stru
 	}
 
 	return sets
+}
+
+// checkInodeFiles returns an error if any of the given files from an inode
+// record, other than a blank (removed) original, isn't a valid transformer path.
+func checkInodeFiles(files []string) error {
+	for _, file := range files {
+		if file == "" {
+			continue
+		}
+
+		if _, _, err := splitTransformerPath(file); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// inodeFileHasPath returns true if the given file from an inode record is for
+// the given path, whatever transformer added it. A blank (removed) original
+// never is.
+func inodeFileHasPath(file, path string) bool {
+	_, filePath, err := splitTransformerPath(file)
+
+	return err == nil && filePath == path
+}
+
+// removeFromInodeFiles returns files without those that remove returns true
+// for, given their index, blanking the original (files[0]) instead of
+// removing it.
+func removeFromInodeFiles(files []string, remove func(int, string) bool) []string {
+	kept := make([]string, 0, len(files))
+
+	for i, file := range files {
+		switch {
+		case !remove(i, file):
+			kept = append(kept, file)
+		case i == 0:
+			kept = append(kept, "")
+		}
+	}
+
+	return kept
 }
 
 // getMountPoints retrieves a list of mount point paths to be used when
@@ -112,6 +152,12 @@ func (d *DB) getMountPoints() error {
 // handleInode records the inode of the given Dirent in the database, and
 // returns the path to the first local file with that inode if we've seen if
 // before.
+//
+// The first file (the original) is uploaded as a regular file, so it isn't a
+// hardlink of itself when a set with another transformer adds it. Each other
+// file is recorded once per transformer, since each is a separate remote object
+// that points to the one remote inode file, and removal counts them to know
+// when that file is unused (see removeInodeIfUnused()).
 func (d *DB) handleInode(tx *bolt.Tx, de *Dirent, transformerID string) (string, error) {
 	key := d.inodeMountPointKeyFromDirent(de)
 	b := tx.Bucket([]byte(inodeBucket))
@@ -132,13 +178,11 @@ func (d *DB) handleInode(tx *bolt.Tx, de *Dirent, transformerID string) (string,
 		return "", err
 	}
 
-	isExistingPath, isOriginalPath := alreadyInFiles(transformerPath, allFiles)
-
-	if isOriginalPath {
+	if inodeFileHasPath(allFiles[0], de.Path) {
 		return "", nil
 	}
 
-	if isExistingPath {
+	if slices.Contains(allFiles[1:], transformerPath) {
 		return hardlinkDest, nil
 	}
 
@@ -191,10 +235,11 @@ func (d *DB) GetFilesFromInode(inode uint64, mountPoint string) ([]string, error
 	return files, err
 }
 
-// RemoveFileFromInode removes entry for the given path from inode bucket if it
-// is the last file with that inode. Otherwise just removes itself from the list
-// (if the path is the original file 'removal' is setting it to be blank). If
-// there's no record for the inode, there's nothing to remove.
+// RemoveFileFromInode removes every entry for the given path, whatever
+// transformer added it, from the inode bucket (if the path is the original file
+// 'removal' is setting it to be blank), and removes the inode's record once it
+// has no other files. If there's no record for the inode, there's nothing to
+// remove.
 func (d *DB) RemoveFileFromInode(path string, inode uint64) error {
 	return d.db.Update(func(tx *bolt.Tx) error {
 		return d.removeFileFromInode(tx, path, inode)
@@ -207,6 +252,16 @@ func (d *DB) RemoveFileFromInode(path string, inode uint64) error {
 // record, which goes when that file is removed; and the record's key changes
 // if the path's mount point does (eg. an automount mounted at server start).
 func (d *DB) removeFileFromInode(tx *bolt.Tx, path string, inode uint64) error {
+	return d.updateInodeFiles(tx, path, inode, func(files []string) []string {
+		return removeFromInodeFiles(files, func(_ int, file string) bool {
+			return inodeFileHasPath(file, path)
+		})
+	})
+}
+
+// updateInodeFiles replaces the files of the record for the given path's inode
+// with the result of update, deleting the record if no files remain.
+func (d *DB) updateInodeFiles(tx *bolt.Tx, path string, inode uint64, update func([]string) []string) error {
 	de := newDirentFromPath(path)
 	de.Inode = inode
 	key := d.inodeMountPointKeyFromDirent(de)
@@ -219,24 +274,91 @@ func (d *DB) removeFileFromInode(tx *bolt.Tx, path string, inode uint64) error {
 
 	_, files := d.decodeIMPValue(v, de.Inode)
 
-	return d.updateInodeEntryBasedOnFiles(b, key, path, files)
+	if err := checkInodeFiles(files); err != nil {
+		return err
+	}
+
+	kept := update(files)
+	if slices.Equal(kept, files) {
+		return nil
+	}
+
+	if !slices.ContainsFunc(kept, func(file string) bool { return file != "" }) {
+		return b.Delete(key)
+	}
+
+	return b.Put(key, d.encodeToBytes(kept))
 }
 
-// removeInodeIfUnused removes the given removed file entry from our inode
-// records, unless it isn't a file with an inode, or another set still has it.
-// Entries whose local file is gone (missing or orphaned) have inode 0 and so
-// have no inode record.
-func (d *DB) removeInodeIfUnused(tx *bolt.Tx, entry *Entry) error {
+// removeInodeIfUnused removes the given removed file entry, of a set with the
+// given transformer, from our inode records, unless it isn't a file with an
+// inode, or another set still uses it. Entries whose local file is gone
+// (missing or orphaned) have inode 0 and so have no inode record.
+//
+// The records' hardlink entries are a count of the remote objects that point to
+// the remote inode file (see handleInode()), so a hardlink entry goes once no
+// set with its transformer has its path, even while sets with other
+// transformers do; otherwise removing their remote objects later would never
+// see the inode file as unused. The original, uploaded as a regular file by
+// sets with any transformer, stays until no set has it.
+func (d *DB) removeInodeIfUnused(tx *bolt.Tx, entry *Entry, transformer string) error {
 	if entry.Type == Symlink || entry.Type == Abnormal || entry.Inode == 0 {
 		return nil
 	}
 
 	setsWithFile, err := d.setsForFile(tx, entry.Path)
-	if err != nil || len(setsWithFile) > 0 {
+	if err != nil {
 		return err
 	}
 
-	return d.removeFileFromInode(tx, entry.Path, entry.Inode)
+	if len(setsWithFile) == 0 {
+		return d.removeFileFromInode(tx, entry.Path, entry.Inode)
+	}
+
+	return d.removeHardlinkFromInodeIfUnused(tx, entry, transformer, setsWithFile)
+}
+
+// removeHardlinkFromInodeIfUnused removes the given entry's hardlink entry for
+// the given transformer from its inode's record, leaving the original as is,
+// unless one of the given sets, that still have the entry's path, has that
+// transformer.
+func (d *DB) removeHardlinkFromInodeIfUnused(tx *bolt.Tx, entry *Entry, transformer string,
+	setsWithFile []string,
+) error {
+	used, err := d.anySetHasTransformer(tx, setsWithFile, transformer)
+	if err != nil || used {
+		return err
+	}
+
+	transformerID := tx.Bucket([]byte(transformerToIDBucket)).Get([]byte(transformer))
+	if transformerID == nil {
+		return nil
+	}
+
+	transformerPath := string(transformerID) + transformerInodeSeparator + entry.Path
+
+	return d.updateInodeFiles(tx, entry.Path, entry.Inode, func(files []string) []string {
+		return removeFromInodeFiles(files, func(i int, file string) bool {
+			return i > 0 && file == transformerPath
+		})
+	})
+}
+
+// anySetHasTransformer returns true if any of the given sets has the given
+// transformer.
+func (d *DB) anySetHasTransformer(tx *bolt.Tx, setIDs []string, transformer string) (bool, error) {
+	for _, setID := range setIDs {
+		s, _, _, err := d.getSetByID(tx, setID)
+		if err != nil {
+			return false, err
+		}
+
+		if s.Transformer == transformer {
+			return true, nil
+		}
+	}
+
+	return false, nil
 }
 
 // GetAllSetsForFile returns a slice of setIDs for sets that contain the given
@@ -255,25 +377,6 @@ func (d *DBRO) GetAllSetsForFile(path string) ([]string, error) {
 	return sets, err
 }
 
-func isPathInTransformerPaths(path string, files []string) (bool, error) {
-	for _, file := range files {
-		if file == "" {
-			continue
-		}
-
-		_, pathFromSplit, err := splitTransformerPath(file)
-		if err != nil {
-			return false, err
-		}
-
-		if pathFromSplit == path {
-			return true, nil
-		}
-	}
-
-	return false, nil
-}
-
 func (d *DBRO) setsForFile(tx *bolt.Tx, path string) ([]string, error) {
 	b := tx.Bucket([]byte(setsBucket))
 	if b == nil {
@@ -286,60 +389,6 @@ func (d *DBRO) setsForFile(tx *bolt.Tx, path string) ([]string, error) {
 	return setsWithPath(b, discoveredBucket, []byte(path), seen, sets), nil
 }
 
-func (d *DB) updateInodeEntryBasedOnFiles(b *bolt.Bucket, key []byte, path string, files []string) error {
-	isInFiles, err := isPathInTransformerPaths(path, files)
-	if err != nil {
-		return err
-	}
-
-	if !isInFiles {
-		return nil
-	}
-
-	if len(files) == 1 || (len(files) == 2 && files[0] == "") {
-		return b.Delete(key)
-	}
-
-	files, err = removePathFromInodeFiles(path, files)
-	if err != nil {
-		return err
-	}
-
-	return b.Put(key, d.encodeToBytes(files))
-}
-
-// removePathFromInodeFiles matches path against each file's path, not against
-// files[0]'s transformer, since files[0] is blanked once the original is
-// removed, and other sets' hardlinks may have other transformers.
-func removePathFromInodeFiles(path string, files []string) ([]string, error) {
-	index := slices.IndexFunc(files, func(file string) bool {
-		_, filePath, err := splitTransformerPath(file)
-
-		return err == nil && filePath == path
-	})
-
-	switch index {
-	case -1:
-		return nil, errs.PathError{Msg: ErrElementNotInSlice, Path: path}
-	case 0:
-		files[0] = ""
-
-		return files, nil
-	default:
-		return slices.Delete(files, index, index+1), nil
-	}
-}
-
-// RemoveElementFromSlice returns the given slice without the given element.
-func RemoveElementFromSlice(slice []string, element string) ([]string, error) {
-	index := slices.Index(slice, element)
-	if index < 0 {
-		return nil, errs.PathError{Msg: ErrElementNotInSlice, Path: element}
-	}
-
-	return slices.Delete(slice, index, index+1), nil
-}
-
 func splitTransformerPath(tp string) (string, string, error) {
 	transformerID, hardlinkDest, ok := strings.Cut(tp, transformerInodeSeparator)
 	if !ok {
@@ -347,23 +396,6 @@ func splitTransformerPath(tp string) (string, string, error) {
 	}
 
 	return transformerID, hardlinkDest, nil
-}
-
-// alreadyInFiles checks if path is in existing and returns true if so.
-// Additionally returns true if it's the first entry in files, meaning it's the
-// original and not considered a hardlink.
-func alreadyInFiles(path string, existing []string) (bool, bool) {
-	if path == existing[0] {
-		return true, true
-	}
-
-	for _, existing := range existing[1:] {
-		if path == existing {
-			return true, false
-		}
-	}
-
-	return false, false
 }
 
 // inodeMountPointKeyFromDirent returns the inodeBucket key for the Dirent's

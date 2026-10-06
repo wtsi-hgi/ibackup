@@ -199,7 +199,7 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
   Code reading only; low priority.
   - Origin: found fixing the removed-size retry item; confirmed (narrowed)
     by its reviewer.
-- [ ] `handleInode` treats the same path added by sets with different
+- [x] `handleInode` treats the same path added by sets with different
   transformers as a hardlink of itself (it compares full `transformerID:path`
   strings): the second set's entry becomes Type Hardlink with Dest the same
   path, and after both sets remove it a stale record `["", path]` remains, so
@@ -208,3 +208,41 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
   `RemoveElementFromSlice` (set/inode.go) is now unused.
   - Origin: found reviewing the inode removal fixes (2026-10-07); confirmed
     by probe.
+  - Red: a set test (sets with transformers `/remote` and `/remote2` both
+    add one plain file) failed: the second set counted 2 hardlinks, not 1;
+    with that softened, a record `["", path]` remained after both removed
+    it, and a third set got it as a hardlink. A server test with a remote
+    hardlink location: the second set's request had `Hardlink` set to
+    `<hardlinks>/<path>/<inode>`, and its upload failed (`open
+    .../remote2/file.link1: no such file or directory`).
+  - Fixed in `set/inode.go`. The original (`files[0]`) matches by path
+    part only, whatever transformer added it, so another set's entry for it
+    is Regular and adds nothing to the record; the original is uploaded as
+    a regular file and doesn't use the remote inode file. A hardlink is
+    recorded once per `transformerID:path`, since each is a separate remote
+    object pointing to the inode file, and the server's
+    `getFilesWithSameInode` threshold counts them.
+  - Removal: once no set has the path, every entry for it goes (the
+    original is blanked), so no stale `["", path]` remains. Until then, a
+    hardlink entry goes once no set with its transformer has the path, as
+    the remote side removes that set's object before the database side
+    runs; the original stays. `RemoveElementFromSlice`, `alreadyInFiles`
+    and `ErrElementNotInSlice` are removed.
+  - Review cycle 1 FAIL: cycle 1 recorded one entry per path, so the
+    threshold undercounted. With `/remote` holding link1-3 and `/remote2`
+    holding link2, removing `/remote`'s link3 and link2 deleted the inode
+    file that `/remote2`'s link2 still pointed to. Removing every entry only
+    once no set had the path (the reviewer's suggestion) would instead
+    leave the inode file behind after `/remote2`'s link2 went, since its
+    removal still counted `/remote`'s entry.
+  - Tests: `set/set_test.go` (the scenario, plus a real hardlink in the
+    second set staying a hardlink to the first set's original) and
+    `server/server_test.go` (the second set uploads a full regular file
+    with no hardlink metadata; and the data-loss scenario above: the inode
+    file stays while `/remote2` has link2, then goes once no set has a
+    hardlink). The cycle 1 mutant fails the "stays" assertion; the
+    path-only-removal mutant fails the "goes" assertion.
+  - The data-loss test pre-creates `/remote2`'s collection:
+    `transfer/put.go` `getSortedRequestCollections` ignores
+    `duplicateRequests`, so the put fails with "no such file or directory"
+    otherwise. Separate pre-existing bug, not fixed here.

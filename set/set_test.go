@@ -31,6 +31,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"testing"
 	"time"
@@ -1862,6 +1863,56 @@ func TestSetDB(t *testing.T) {
 					So(files, ShouldContain, link2)
 				})
 
+				Convey("then removing a hardlink that a set with the same transformer still has keeps it in our "+
+					"inode record until that set removes it too", func() {
+					setl2 := &Set{
+						Name:        "setlink2",
+						Requester:   "jim",
+						Transformer: setl1.Transformer,
+					}
+
+					err = db.AddOrUpdate(setl2)
+					So(err, ShouldBeNil)
+
+					_, errd = db.Discover(setl2.ID(), func(_ []*Entry) ([]*Dirent, []*Dirent, error) {
+						return []*Dirent{{Path: link1, Inode: stat.Ino}}, nil, nil
+					})
+					So(errd, ShouldBeNil)
+
+					countLink1 := func() int {
+						files, errf := db.GetFilesFromInode(stat.Ino, local)
+						So(errf, ShouldBeNil)
+
+						n := 0
+
+						for _, file := range files {
+							if file == link1 {
+								n++
+							}
+						}
+
+						return n
+					}
+
+					remove := func(s *Set) {
+						entry, erre := db.GetFileEntryForSet(s.ID(), link1)
+						So(erre, ShouldBeNil)
+
+						remReq := NewRemoveRequest(link1, db.GetByID(s.ID()), false, ToRemove)
+
+						_, errr := db.RemoveFileEntry(&remReq, entry)
+						So(errr, ShouldBeNil)
+					}
+
+					So(countLink1(), ShouldEqual, 1)
+
+					remove(setl1)
+					So(countLink1(), ShouldEqual, 1)
+
+					remove(setl2)
+					So(countLink1(), ShouldEqual, 0)
+				})
+
 				Convey("then a file whose inode was reused by another set's removed file can still be removed", func() {
 					err = os.Remove(unlinked)
 					So(err, ShouldBeNil)
@@ -1950,6 +2001,70 @@ func TestSetDB(t *testing.T) {
 						So(erri, ShouldBeNil)
 						So(incomplete, ShouldHaveLength, 1)
 					}
+				})
+
+				Convey("then a set with another transformer adding the same file gets a regular entry, "+
+					"and its real hardlinks are still hardlinks", func() {
+					link3 := filepath.Join(tdir, "link3")
+					err = os.Link(local, link3)
+					So(err, ShouldBeNil)
+
+					addSet := func(name, transformer string, dirents ...*Dirent) *Set {
+						s := &Set{Name: name, Requester: "jim", Transformer: transformer}
+
+						So(db.AddOrUpdate(s), ShouldBeNil)
+
+						_, errd = db.Discover(s.ID(), func(_ []*Entry) ([]*Dirent, []*Dirent, error) {
+							return dirents, nil, nil
+						})
+						So(errd, ShouldBeNil)
+
+						return s
+					}
+
+					setl2 := addSet("setlink2", "prefix="+tdir+":/remote2",
+						&Dirent{Path: unlinked, Inode: statUnlinked.Ino},
+						&Dirent{Path: link3, Inode: stat.Ino})
+
+					got = db.GetByID(setl2.ID())
+					So(got.Hardlinks, ShouldEqual, 1)
+
+					entry, erre := db.GetFileEntryForSet(setl2.ID(), unlinked)
+					So(erre, ShouldBeNil)
+					So(entry.Type, ShouldEqual, Regular)
+					So(entry.InodeStoragePath(), ShouldBeBlank)
+
+					entry, erre = db.GetFileEntryForSet(setl2.ID(), link3)
+					So(erre, ShouldBeNil)
+					So(entry.Type, ShouldEqual, Hardlink)
+					So(entry.InodeStoragePath(), ShouldEqual, filepath.Join(local, strconv.FormatUint(stat.Ino, 10)))
+
+					files, errf := db.GetFilesFromInode(statUnlinked.Ino, unlinked)
+					So(errf, ShouldBeNil)
+					So(files, ShouldResemble, []string{unlinked})
+
+					Convey("and once both sets remove it, no inode record of it remains", func() {
+						for _, s := range []*Set{setl1, setl2} {
+							entry, erre = db.GetFileEntryForSet(s.ID(), unlinked)
+							So(erre, ShouldBeNil)
+
+							remReq := NewRemoveRequest(unlinked, db.GetByID(s.ID()), false, ToRemove)
+
+							_, errr := db.RemoveFileEntry(&remReq, entry)
+							So(errr, ShouldBeNil)
+						}
+
+						files, errf = db.GetFilesFromInode(statUnlinked.Ino, unlinked)
+						So(errf, ShouldBeNil)
+						So(files, ShouldBeEmpty)
+
+						setl3 := addSet("setlink3", setl1.Transformer, &Dirent{Path: unlinked, Inode: statUnlinked.Ino})
+
+						entry, erre = db.GetFileEntryForSet(setl3.ID(), unlinked)
+						So(erre, ShouldBeNil)
+						So(entry.Type, ShouldEqual, Regular)
+						So(db.GetByID(setl3.ID()).Hardlinks, ShouldEqual, 0)
+					})
 				})
 
 				// Test does not work, not clear how to implement
