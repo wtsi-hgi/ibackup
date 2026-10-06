@@ -156,7 +156,8 @@ func getFirstNonBlankValue(arr []string) string {
 }
 
 // GetFilesFromInode returns all the paths that share the provided inode on the
-// given mount point.
+// given mount point. It returns none if there's no record for the inode, which
+// a file's entry can still have (see removeFileFromInode()).
 func (d *DB) GetFilesFromInode(inode uint64, mountPoint string) ([]string, error) {
 	de := &Dirent{Inode: inode, Path: mountPoint}
 	key := d.inodeMountPointKeyFromDirent(de)
@@ -168,7 +169,7 @@ func (d *DB) GetFilesFromInode(inode uint64, mountPoint string) ([]string, error
 
 		v := b.Get(key)
 		if v == nil {
-			return errs.PathError{Msg: "key not found in inode bucket", Path: string(key)}
+			return nil
 		}
 
 		_, files = d.decodeIMPValue(v, de.Inode)
@@ -192,13 +193,19 @@ func (d *DB) GetFilesFromInode(inode uint64, mountPoint string) ([]string, error
 
 // RemoveFileFromInode removes entry for the given path from inode bucket if it
 // is the last file with that inode. Otherwise just removes itself from the list
-// (if the path is the original file 'removal' is setting it to be blank).
+// (if the path is the original file 'removal' is setting it to be blank). If
+// there's no record for the inode, there's nothing to remove.
 func (d *DB) RemoveFileFromInode(path string, inode uint64) error {
 	return d.db.Update(func(tx *bolt.Tx) error {
 		return d.removeFileFromInode(tx, path, inode)
 	})
 }
 
+// removeFileFromInode does RemoveFileFromInode()'s work in the given
+// transaction. A file's entry can keep an inode that no longer has a record:
+// once its local file is deleted, a new file reusing the inode replaces the
+// record, which goes when that file is removed; and the record's key changes
+// if the path's mount point does (eg. an automount mounted at server start).
 func (d *DB) removeFileFromInode(tx *bolt.Tx, path string, inode uint64) error {
 	de := newDirentFromPath(path)
 	de.Inode = inode
@@ -207,7 +214,7 @@ func (d *DB) removeFileFromInode(tx *bolt.Tx, path string, inode uint64) error {
 
 	v := b.Get(key)
 	if v == nil {
-		return errs.PathError{Msg: "key not found in inode bucket", Path: string(key)}
+		return nil
 	}
 
 	_, files := d.decodeIMPValue(v, de.Inode)
@@ -301,22 +308,26 @@ func (d *DB) updateInodeEntryBasedOnFiles(b *bolt.Bucket, key []byte, path strin
 	return b.Put(key, d.encodeToBytes(files))
 }
 
+// removePathFromInodeFiles matches path against each file's path, not against
+// files[0]'s transformer, since files[0] is blanked once the original is
+// removed, and other sets' hardlinks may have other transformers.
 func removePathFromInodeFiles(path string, files []string) ([]string, error) {
-	transformerID, _, err := splitTransformerPath(files[0])
-	if err != nil {
-		return nil, err
+	index := slices.IndexFunc(files, func(file string) bool {
+		_, filePath, err := splitTransformerPath(file)
+
+		return err == nil && filePath == path
+	})
+
+	switch index {
+	case -1:
+		return nil, errs.PathError{Msg: ErrElementNotInSlice, Path: path}
+	case 0:
+		files[0] = ""
+
+		return files, nil
+	default:
+		return slices.Delete(files, index, index+1), nil
 	}
-
-	transformerPath := transformerID + transformerInodeSeparator + path
-
-	isHardlink := files[0] != transformerPath
-	if isHardlink {
-		return RemoveElementFromSlice(files, transformerPath)
-	}
-
-	files[0] = ""
-
-	return files, nil
 }
 
 // RemoveElementFromSlice returns the given slice without the given element.

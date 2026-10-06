@@ -825,8 +825,9 @@ func TestServer(t *testing.T) {
 							So(files[0].Path, ShouldEqual, file2local)
 
 							if action == set.ToRemove {
-								_, err = s.db.GetFilesFromInode(entry.Inode, s.db.GetMountPointFromPath(file1local))
-								So(err, ShouldNotBeNil)
+								inodeFiles, erri := s.db.GetFilesFromInode(entry.Inode, s.db.GetMountPointFromPath(file1local))
+								So(erri, ShouldBeNil)
+								So(inodeFiles, ShouldBeEmpty)
 
 								return
 							}
@@ -1138,6 +1139,38 @@ func TestServer(t *testing.T) {
 							})
 						})
 
+						Convey("You can permanently remove the original file and then each hardlink", func() {
+							createRemoteObject(t, s.storageHandler, map[string]string{
+								transfer.MetaKeySets:      exampleSet.Name,
+								transfer.MetaKeyRequester: exampleSet.Requester,
+							}, filepath.Join(remoteDir, "file1"))
+
+							for _, path := range []string{file1local, hardlink1local} {
+								remReq := set.RemoveReq{Path: path, Set: exampleSet, Action: set.ToRemove}
+
+								err = s.removeFileFromIRODSandDB(&remReq)
+								So(err, ShouldBeNil)
+							}
+
+							_, err = os.Stat(hardlink1Remote)
+							So(err, ShouldNotBeNil)
+
+							_, err = os.Stat(inodeRemote)
+							So(err, ShouldBeNil)
+
+							remReq := set.RemoveReq{Path: hardlink2local, Set: exampleSet, Action: set.ToRemove}
+
+							err = s.removeFileFromIRODSandDB(&remReq)
+							So(err, ShouldBeNil)
+
+							_, err = os.Stat(inodeRemote)
+							So(err, ShouldNotBeNil)
+
+							entries, errg := s.db.GetFileEntries(exampleSet.ID(), nil)
+							So(errg, ShouldBeNil)
+							So(entries, ShouldBeEmpty)
+						})
+
 						Convey("You cannot remove a file from IRODS that has the FOFN set metadata set", func() {
 							So(handler.AddMeta(hardlink1Remote, map[string]string{
 								transfer.MetaFOFNSet: "fofnSet",
@@ -1197,6 +1230,36 @@ func TestServer(t *testing.T) {
 
 								_, err = os.Stat(inodeRemote)
 								So(err, ShouldBeNil)
+							})
+
+							Convey("You can permanently remove each hardlink after its inode record has gone", func() {
+								for _, path := range []string{file1local, hardlink2local} {
+									err = s.db.RemoveFileFromInode(path, statt.Ino)
+									So(err, ShouldBeNil)
+								}
+
+								inodeFiles, erri := s.db.GetFilesFromInode(statt.Ino, s.db.GetMountPointFromPath(hardlink1local))
+								So(erri, ShouldBeNil)
+								So(inodeFiles, ShouldBeEmpty)
+
+								remReq := set.RemoveReq{Path: hardlink1local, Set: exampleSet, Action: set.ToRemove}
+
+								err = s.removeFileFromIRODSandDB(&remReq)
+								So(err, ShouldBeNil)
+
+								_, err = os.Stat(hardlink1Remote)
+								So(err, ShouldNotBeNil)
+
+								_, err = os.Stat(inodeRemote)
+								So(err, ShouldBeNil)
+
+								remReq = set.RemoveReq{Path: hardlink2local, Set: exampleSet, Action: set.ToRemove}
+
+								err = s.removeFileFromIRODSandDB(&remReq)
+								So(err, ShouldBeNil)
+
+								_, err = os.Stat(inodeRemote)
+								So(err, ShouldNotBeNil)
 							})
 						})
 
@@ -1335,37 +1398,35 @@ func TestServer(t *testing.T) {
 								So(len(failedEntries), ShouldEqual, 1)
 								So(failedEntries[0].Path, ShouldEqual, file2local)
 
-								_, err = s.db.GetFilesFromInode(entry.Inode, s.db.GetMountPointFromPath(file1local))
-								So(err, ShouldNotBeNil)
+								inodeFiles, erri := s.db.GetFilesFromInode(entry.Inode, s.db.GetMountPointFromPath(file1local))
+								So(erri, ShouldBeNil)
+								So(inodeFiles, ShouldBeEmpty)
 							})
 
-							Convey("so a failure to clean up its inode record leaves its database removal undone", func() {
+							Convey("so removing it after its inode record has gone still completes", func() {
 								So(entry.Inode, ShouldNotEqual, 0)
 
 								err = s.db.RemoveFileFromInode(file1local, entry.Inode)
 								So(err, ShouldBeNil)
 
+								inodeFiles, erri := s.db.GetFilesFromInode(entry.Inode, s.db.GetMountPointFromPath(file1local))
+								So(erri, ShouldBeNil)
+								So(inodeFiles, ShouldBeEmpty)
+
 								err = s.removeFileFromIRODSandDB(&remReq)
-								So(err, ShouldNotBeNil)
-								So(err.Error(), ShouldContainSubstring, "key not found in inode bucket")
+								So(err, ShouldBeNil)
 
 								gotSet, errs := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
 								So(errs, ShouldBeNil)
-								So(gotSet.NumObjectsRemoved, ShouldEqual, 0)
-								So(gotSet.NumFiles, ShouldEqual, 2)
+								So(gotSet.NumObjectsRemoved, ShouldEqual, 1)
+								So(gotSet.NumFiles, ShouldEqual, 1)
 
 								failedEntries, _, errf := s.db.GetFailedEntries(exampleSet.ID())
 								So(errf, ShouldBeNil)
-								So(len(failedEntries), ShouldEqual, 2)
+								So(len(failedEntries), ShouldEqual, 1)
 
 								_, err = s.db.GetFileEntryForSet(exampleSet.ID(), file1local)
-								So(err, ShouldBeNil)
-
-								Convey("so a retry fails the same way, not with the file missing", func() {
-									err = s.removeFileFromIRODSandDB(&remReq)
-									So(err, ShouldNotBeNil)
-									So(err.Error(), ShouldContainSubstring, "key not found in inode bucket")
-								})
+								So(err, ShouldNotBeNil)
 							})
 						})
 

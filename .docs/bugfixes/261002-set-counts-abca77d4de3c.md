@@ -128,21 +128,46 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
     stopped before it (the stored request is captured at the first remote
     call), for remove and trash. Mutants recording the size after the remote
     call, ignoring it, or overwriting it on each attempt fail.
-- [ ] Possible: `set` `RemoveFileFromInode` errors with "invalid transformer
+- [x] Possible: `set` `RemoveFileFromInode` errors with "invalid transformer
   path concatenation" when the original file of an inode with 3 or more
   paths is removed before its hardlinks: removing the original blanks
   `files[0]`, and the next call fails splitting `""` in
   `removePathFromInodeFiles`. Code is unchanged from develop; not confirmed by
   a run at base.
   - Origin: found while fixing the deps removal-retry race (2026-10-06).
-- [ ] Possible: a ToRemove of an entry with no inode record fails with "key
+  - Reproduced: removing 3 hardlinked paths in either order that takes the
+    original first failed on the next removal; also, removing a hardlink
+    added by a set with another transformer failed `element not in slice`.
+  - Fixed in `set/inode.go`: `removePathFromInodeFiles` finds the entry by its
+    path part, ignoring the transformer, blanking index 0 (the original) and
+    deleting any other. Tests: all 6 removal orders and the cross-transformer
+    case (`set/set_test.go`), and a server-level original-then-hardlinks
+    removal that keeps the inode file until the last link.
+- [x] Possible: a ToRemove of an entry with no inode record fails with "key
   not found in inode bucket [0/]". Seen in set tests whose entries had no
   inode records; not checked whether production can reach it.
   - Origin: found while fixing the deps removal-retry race (2026-10-06).
-- [ ] Removals interrupted under a build before the deps removal-retry fix
-  still fail after upgrading: the entry is gone and the stored request has no
-  saved `RemovedEntry`, so the retry fails with "has no path".
-  - Origin: limitation of the deps removal-retry fix (2026-10-06).
+  - Reproduced via inode reuse (a deleted file's inode given to a new file in
+    another set, immediate on ext4) and a mount point change across a
+    restart; either made the removal fail on every retry.
+  - Fixed in `set/inode.go`: a missing record means nothing is recorded:
+    `removeFileFromInode` returns nil and `GetFilesFromInode` returns no
+    files, so the server falls back to the remote hardlink query (the inode
+    file is only removed if no remote object still points at it). A corrupt
+    record still errors and rolls the removal back; d200a1d's server leaf
+    that used a deleted record now expects the removal to complete, and the
+    rollback check moved to a corrupt-record set test.
+- [ ] Removals interrupted under a build before #193, after the entry was
+  deleted but before the request completed, fail with "has no path" on retry
+  after upgrading: after 3 retries (~15s) the request is marked complete with
+  set error `Error when removing: invalid set entry [... has no path ...]`.
+  If the old build had not counted it yet, removal status stays one short
+  permanently (NumObjectsRemoved is never repaired) and NumFiles is wrong
+  until the next discovery; ToRemove also leaks the inode record. Needs a
+  decision: fix (treat "has no path" on a recovered request as already
+  removed) or accept as a one-off upgrade window.
+  - Origin: limitation of the deps removal-retry fix; behaviour confirmed by
+    probe on 03efdf6 (2026-10-07).
 - [ ] An uploaded (or orphaned) entry whose remote object was deleted outside
   ibackup can never be removed: `processRemoteFileRemoval` tolerates GetMeta
   "does not exist" only when the request was already AboutToBeRemoved
@@ -174,3 +199,12 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
   Code reading only; low priority.
   - Origin: found fixing the removed-size retry item; confirmed (narrowed)
     by its reviewer.
+- [ ] `handleInode` treats the same path added by sets with different
+  transformers as a hardlink of itself (it compares full `transformerID:path`
+  strings): the second set's entry becomes Type Hardlink with Dest the same
+  path, and after both sets remove it a stale record `["", path]` remains, so
+  a later set also gets it as a hardlink to itself. Same on develop.
+  Possible fix: compare by path part in `alreadyInFiles`. Also
+  `RemoveElementFromSlice` (set/inode.go) is now unused.
+  - Origin: found reviewing the inode removal fixes (2026-10-07); confirmed
+    by probe.

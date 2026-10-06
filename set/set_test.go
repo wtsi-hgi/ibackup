@@ -1775,6 +1775,183 @@ func TestSetDB(t *testing.T) {
 					So(path, ShouldEqual, "/remote/sub1/file")
 				})
 
+				names := map[string]string{local: "file", link1: "link1", link2: "link2"}
+
+				for _, order := range [][]string{
+					{local, link1, link2},
+					{local, link2, link1},
+					{link1, local, link2},
+					{link1, link2, local},
+					{link2, local, link1},
+					{link2, link1, local},
+				} {
+					desc := fmt.Sprintf("then removing the linked files in order %s, %s, %s clears our inode record",
+						names[order[0]], names[order[1]], names[order[2]])
+
+					Convey(desc, func() {
+						for i, path := range order {
+							entry, erre := db.GetFileEntryForSet(setl1.ID(), path)
+							So(erre, ShouldBeNil)
+
+							remReq := NewRemoveRequest(path, db.GetByID(setl1.ID()), false, ToRemove)
+
+							_, errr := db.RemoveFileEntry(&remReq, entry)
+							So(errr, ShouldBeNil)
+
+							files, errf := db.GetFilesFromInode(stat.Ino, local)
+							So(errf, ShouldBeNil)
+
+							if i == len(order)-1 {
+								So(files, ShouldBeEmpty)
+
+								continue
+							}
+
+							So(files, ShouldNotContain, path)
+
+							for _, remaining := range order[i+1:] {
+								So(files, ShouldContain, remaining)
+							}
+						}
+
+						got = db.GetByID(setl1.ID())
+						So(got.NumFiles, ShouldEqual, 1)
+						So(got.NumObjectsRemoved, ShouldEqual, 3)
+					})
+				}
+
+				Convey("then removing a hardlink added by a set with another transformer clears it from our inode record", func() {
+					link3 := filepath.Join(tdir, "link3")
+					err = os.Link(local, link3)
+					So(err, ShouldBeNil)
+
+					setl2 := &Set{
+						Name:        "setlink2",
+						Requester:   "jim",
+						Transformer: "prefix=" + tdir + ":/remote2",
+					}
+
+					err = db.AddOrUpdate(setl2)
+					So(err, ShouldBeNil)
+
+					_, errd = db.Discover(setl2.ID(), func(_ []*Entry) ([]*Dirent, []*Dirent, error) {
+						return []*Dirent{{Path: link3, Inode: stat.Ino}}, nil, nil
+					})
+					So(errd, ShouldBeNil)
+
+					for _, path := range []string{link3, local} {
+						setID := setl2.ID()
+						if path == local {
+							setID = setl1.ID()
+						}
+
+						entry, erre := db.GetFileEntryForSet(setID, path)
+						So(erre, ShouldBeNil)
+
+						remReq := NewRemoveRequest(path, db.GetByID(setID), false, ToRemove)
+
+						_, errr := db.RemoveFileEntry(&remReq, entry)
+						So(errr, ShouldBeNil)
+					}
+
+					files, errf := db.GetFilesFromInode(stat.Ino, local)
+					So(errf, ShouldBeNil)
+					So(files, ShouldNotContain, link3)
+					So(files, ShouldNotContain, local)
+					So(files, ShouldContain, link1)
+					So(files, ShouldContain, link2)
+				})
+
+				Convey("then a file whose inode was reused by another set's removed file can still be removed", func() {
+					err = os.Remove(unlinked)
+					So(err, ShouldBeNil)
+
+					reused := filepath.Join(tdir, "reused")
+					internal.CreateTestFile(t, reused, "b")
+
+					setr := &Set{
+						Name:        "setreuse",
+						Requester:   "jim",
+						Transformer: "prefix=" + tdir + ":/remote",
+					}
+
+					err = db.AddOrUpdate(setr)
+					So(err, ShouldBeNil)
+
+					_, errd = db.Discover(setr.ID(), func(_ []*Entry) ([]*Dirent, []*Dirent, error) {
+						return []*Dirent{{Path: reused, Inode: statUnlinked.Ino}}, nil, nil
+					})
+					So(errd, ShouldBeNil)
+
+					entry, erre := db.GetFileEntryForSet(setr.ID(), reused)
+					So(erre, ShouldBeNil)
+
+					remReq := NewRemoveRequest(reused, db.GetByID(setr.ID()), false, ToRemove)
+					_, errr := db.RemoveFileEntry(&remReq, entry)
+					So(errr, ShouldBeNil)
+
+					entry, erre = db.GetFileEntryForSet(setl1.ID(), unlinked)
+					So(erre, ShouldBeNil)
+					So(entry.Inode, ShouldEqual, statUnlinked.Ino)
+
+					remReq = NewRemoveRequest(unlinked, db.GetByID(setl1.ID()), false, ToRemove)
+					removed, errr := db.RemoveFileEntry(&remReq, entry)
+					So(errr, ShouldBeNil)
+					So(removed.Path, ShouldEqual, unlinked)
+
+					got = db.GetByID(setl1.ID())
+					So(got.NumFiles, ShouldEqual, 3)
+					So(got.NumObjectsRemoved, ShouldEqual, 1)
+				})
+
+				Convey("then a file can still be removed after its mount point changes", func() {
+					entry, erre := db.GetFileEntryForSet(setl1.ID(), unlinked)
+					So(erre, ShouldBeNil)
+
+					db.mountList = append([]string{tdir}, db.mountList...)
+
+					remReq := NewRemoveRequest(unlinked, db.GetByID(setl1.ID()), false, ToRemove)
+					removed, errr := db.RemoveFileEntry(&remReq, entry)
+					So(errr, ShouldBeNil)
+					So(removed.Path, ShouldEqual, unlinked)
+
+					got = db.GetByID(setl1.ID())
+					So(got.NumFiles, ShouldEqual, 3)
+					So(got.NumObjectsRemoved, ShouldEqual, 1)
+				})
+
+				Convey("then a failure to clean up a removed file's inode record leaves its removal undone", func() {
+					erru := db.db.Update(func(tx *bolt.Tx) error {
+						key := db.inodeMountPointKeyFromDirent(&Dirent{Path: unlinked, Inode: statUnlinked.Ino})
+
+						return tx.Bucket([]byte(inodeBucket)).Put(key, db.encodeToBytes([]string{"corrupt"}))
+					})
+					So(erru, ShouldBeNil)
+
+					entry, erre := db.GetFileEntryForSet(setl1.ID(), unlinked)
+					So(erre, ShouldBeNil)
+
+					remReq := NewRemoveRequest(unlinked, db.GetByID(setl1.ID()), false, ToRemove)
+					So(db.SetRemoveRequests(setl1.ID(), []RemoveReq{remReq}), ShouldBeNil)
+
+					for range 2 {
+						_, errr := db.RemoveFileEntry(&remReq, entry)
+						So(errr, ShouldNotBeNil)
+						So(errr.Error(), ShouldContainSubstring, ErrInvalidTransformerPath)
+
+						_, erre = db.GetFileEntryForSet(setl1.ID(), unlinked)
+						So(erre, ShouldBeNil)
+
+						got = db.GetByID(setl1.ID())
+						So(got.NumFiles, ShouldEqual, 4)
+						So(got.NumObjectsRemoved, ShouldEqual, 0)
+
+						incomplete, erri := db.GetIncompleteRemoveRequests()
+						So(erri, ShouldBeNil)
+						So(incomplete, ShouldHaveLength, 1)
+					}
+				})
+
 				// Test does not work, not clear how to implement
 				SkipConvey("then previously seen moved files get treated as hardlinks", func() {
 					moved := filepath.Join(dir, "moved")
