@@ -21,15 +21,40 @@ install:
 	@go install -tags netgo ${LDFLAGS}
 	@echo installed to ${GOPATH}/bin/ibackup
 
+# The main package's end-to-end tests spend most of their time waiting on iRODS
+# and wr, so its top-level tests run as separate processes of one test binary,
+# MAIN_TEST_JOBS at a time, the slowest first. Each test's output is printed
+# when it finishes. The timeout is for the whole run: each process gets what
+# is left of it. Set MAIN_TESTS to run only some of the tests.
+MAIN_TEST_JOBS ?= 4
+MAIN_TESTS ?= $(shell sed -n 's/^func \(Test[A-Za-z0-9_]*\)(t \*testing\.T).*/\1/p' *_test.go)
+MAIN_TESTS_SLOWEST_FIRST := TestEdit TestTrashRemove TestTrashRemovePaths TestTrashRemoveShared \
+	TestRemove TestRemoveFile TestRemoveDirs TestRemoveItems TestPuts
+
+define test-main
+	@d=$$(mktemp -d) && trap 'rm -rf "$$d"' EXIT && trap 'exit 130' INT TERM HUP && \
+	start=$$(date +%s) && end=$$(( start + $(2) )) && \
+	go test -tags netgo $(1) -c -o "$$d/main.test" . && \
+	printf '%s\n' $(filter $(MAIN_TESTS),$(MAIN_TESTS_SLOWEST_FIRST)) \
+		$(filter-out $(MAIN_TESTS_SLOWEST_FIRST),$(MAIN_TESTS)) | \
+	xargs -n 1 -P $(MAIN_TEST_JOBS) sh -c 'left=$$(( $$2 - $$(date +%s) )); [ $$left -gt 0 ] || left=1; \
+		"$$1/main.test" -test.run "^$$3$$" -test.count 1 -test.v=true -test.timeout $${left}s > "$$1/$$3.log" 2>&1 || \
+		{ grep -q "panic: test timed out after" "$$1/$$3.log" && echo "$$3 (timed out)" || echo "$$3"; } >> "$$1/failed"; \
+		flock "$$1/failed.lock" cat "$$1/$$3.log"' sh "$$d" "$$end" && \
+	took=$$(( $$(date +%s) - start )) && \
+	if [ -s "$$d/failed" ]; then echo "FAIL: $$(sort "$$d/failed" | tr '\n' ' ')"; exit 1; fi && \
+	printf 'ok  main package tests passed in %dm%02ds\n' $$(( took / 60 )) $$(( took % 60 ))
+endef
+
 test:
-	@go test -tags netgo -timeout 120m --count 1 -v .
+	$(call test-main,,7200)
 	@go test -tags netgo --count 1 $(shell go list ./... | grep -v '^${PKG}$$')
 
 race: race-subpkgs
 	@$(MAKE) race-main
 
 race-main:
-	@go test -tags netgo -timeout 60m -race --count 1 -v .
+	$(call test-main,-race,3600)
 
 race-subpkgs:
 	@go test -tags netgo -race --count 1 $(shell go list ./... | grep -v '^${PKG}$$')

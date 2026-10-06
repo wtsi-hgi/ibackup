@@ -33,7 +33,6 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
-	"crypto/tls"
 	"crypto/x509"
 	b64 "encoding/base64"
 	"encoding/hex"
@@ -41,6 +40,9 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io"
 	"io/fs"
 	"log"
@@ -102,6 +104,14 @@ const serverTokenBasename = ".ibackup.token"
 // must exceed that.
 const inProcessServerStopTimeout = 30 * time.Second
 
+// serverStartTimeout bounds how long a test server may take to answer after
+// it is started.
+const serverStartTimeout = 5 * time.Second
+
+// prefetchedIRODSCollections is how many test collections are created ahead
+// of use, since most tests here make a new one for every Convey leaf.
+const prefetchedIRODSCollections = 4
+
 var cliMu sync.Mutex //nolint:gochecknoglobals
 
 const noBackupSets = `Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
@@ -130,6 +140,28 @@ var errWatchFofnsExitedEarly = errors.New("watchfofns exited before upload becam
 var errUploadCountMismatch = errors.New("upload count mismatch")
 
 const dirMode = 0750
+
+// removeShard is a share of testRemove's scenarios. They share their setup,
+// but each takes tens of seconds, mostly creating iRODS collections, so they
+// are split between top-level tests that `make test` runs at the same time.
+type removeShard int
+
+const (
+	removeShardMain removeShard = iota
+	removeShardFile
+	removeShardDirs
+	removeShardItems
+)
+
+// trashRemoveShard is a share of testTrashRemove's scenarios, split like
+// removeShard's.
+type trashRemoveShard int
+
+const (
+	trashRemoveShardMain trashRemoveShard = iota
+	trashRemoveShardPaths
+	trashRemoveShardShared
+)
 
 func TestServer(t *testing.T) {
 	Convey("An existing cache dir provided to an ACME-mode server must only be readable by the server user", t, func() {
@@ -179,6 +211,8 @@ func TestMain(m *testing.M) {
 	)
 
 	cleanup := func() {
+		testutil.StopPrefetchingIRODSTestCollections()
+
 		if removeBinary != nil {
 			removeBinary()
 		}
@@ -243,6 +277,8 @@ func TestMain(m *testing.M) {
 	}
 
 	os.Setenv("PATH", tmpStatter+":"+os.Getenv("PATH"))
+
+	testutil.PrefetchIRODSTestCollections(prefetchedIRODSCollections)
 
 	exitCode = m.Run()
 }
@@ -842,12 +878,8 @@ func resetIRODSOrFail(tb testing.TB, remotePath string) {
 		return
 	}
 
-	if out, err := icmd.IRM("-rf", remotePath); err != nil {
-		tb.Fatalf("failed to reset iRODS collection %q: irm -rf failed: %v; output: %s", remotePath, err, string(out))
-	}
-
-	if out, err := icmd.IMKDIR("-p", remotePath); err != nil {
-		tb.Fatalf("failed to reset iRODS collection %q: imkdir -p failed: %v; output: %s", remotePath, err, string(out))
+	if err := icmd.ResetCollection(remotePath); err != nil {
+		tb.Fatalf("failed to reset iRODS collection %q: %v", remotePath, err)
 	}
 }
 
@@ -917,7 +949,9 @@ func waitForRemoteMeta(path, substring string, timeout time.Duration) string {
 	return output
 }
 
-func TestRemove(t *testing.T) {
+func testRemove(t *testing.T, shard removeShard) {
+	t.Helper()
+
 	Convey("Given a server", t, func() {
 		checkICommands(t, "imeta")
 
@@ -926,7 +960,7 @@ func TestRemove(t *testing.T) {
 		path := t.TempDir()
 		transformer := "prefix=" + path + ":" + remotePath
 
-		Convey("And an invalid set name, remove returns an error", func() {
+		conveyIf(shard == removeShardMain, "And an invalid set name, remove returns an error", func() {
 			invalidSetName := "invalidSet"
 
 			s.confirmOutputContains(t, []string{"remove", "--name", invalidSetName, "--path", path},
@@ -973,7 +1007,7 @@ func TestRemove(t *testing.T) {
 
 			s.addSetForTestingWithItems(t, setName, transformer, tempTestFileOfPaths.Name())
 
-			Convey("Remove removes the file from the set and moves it to the trash set", func() {
+			conveyIf(shard == removeShardFile, "Remove removes the file from the set and moves it to the trash set", func() {
 				exitCode, output := s.runBinary(t, "remove", "--name", setName, "--path", file2)
 
 				So(exitCode, ShouldEqual, 0)
@@ -1099,7 +1133,7 @@ func TestRemove(t *testing.T) {
 				})
 			})
 
-			Convey("And with another set with the same name made by a different user", func() {
+			conveyIf(shard == removeShardDirs, "And with another set with the same name made by a different user", func() {
 				anotherUser := "anotherUser"
 				s.addSetForTestingWithFlag(t, setName, transformer, file2, "--user", anotherUser)
 				s.waitForStatusWithUser(setName, "\nStatus: complete", anotherUser, 10*time.Second)
@@ -1118,7 +1152,7 @@ func TestRemove(t *testing.T) {
 				})
 			})
 
-			Convey("Remove removes the dir from the set", func() {
+			conveyIf(shard == removeShardDirs, "Remove removes the dir from the set", func() {
 				s.removePath(t, setName, dir1, 2)
 
 				Convey("And status is updated accordingly", func() {
@@ -1143,7 +1177,7 @@ func TestRemove(t *testing.T) {
 				})
 			})
 
-			Convey("Remove removes the dir from the set even if it no longer exists", func() {
+			conveyIf(shard == removeShardDirs, "Remove removes the dir from the set even if it no longer exists", func() {
 				err = os.RemoveAll(dir1)
 				So(err, ShouldBeNil)
 
@@ -1159,7 +1193,7 @@ func TestRemove(t *testing.T) {
 					0, dir1)
 			})
 
-			Convey("Remove removes an empty dir from the set", func() {
+			conveyIf(shard == removeShardDirs, "Remove removes an empty dir from the set", func() {
 				s.removePath(t, setName, dir2, 1)
 
 				exitCode, output := s.runBinary(t, "status", "--name", setName, "-d")
@@ -1172,7 +1206,7 @@ func TestRemove(t *testing.T) {
 					0, dir2)
 			})
 
-			Convey("Given an added set with a folder containing a nested folder", func() {
+			conveyIf(shard == removeShardDirs, "Given an added set with a folder containing a nested folder", func() {
 				dir3 := filepath.Join(dir1, "dir")
 				err = os.MkdirAll(dir3, 0755)
 				So(err, ShouldBeNil)
@@ -1209,7 +1243,7 @@ func TestRemove(t *testing.T) {
 				})
 			})
 
-			Convey("Remove takes a flag --items and removes all provided files and dirs from the set", func() {
+			conveyIf(shard == removeShardItems, "Remove takes a flag --items and removes all provided files and dirs from the set", func() { //nolint:lll
 				tempTestFileOfPathsToRemove, errt := os.CreateTemp(dir, "testFileSet")
 				So(errt, ShouldBeNil)
 
@@ -1241,7 +1275,7 @@ func TestRemove(t *testing.T) {
 				So(output, ShouldContainSubstring, dir1)
 			})
 
-			Convey("Remove with --items still works as expected with duplicates", func() {
+			conveyIf(shard == removeShardItems, "Remove with --items still works as expected with duplicates", func() {
 				tempTestFileOfPathsToRemove, errt := os.CreateTemp(dir, "testFileSet")
 				So(errt, ShouldBeNil)
 
@@ -1258,7 +1292,7 @@ func TestRemove(t *testing.T) {
 				s.waitForStatus(setName, "Removal status: 3 / 3 objects removed", 30*time.Second)
 			})
 
-			Convey("if the server dies during removal, the removal will continue upon server startup", func() {
+			conveyIf(shard == removeShardItems, "if the server dies during removal, the removal will continue upon server startup", func() { //nolint:lll
 				tempTestFileOfPathsToRemove1, errt := os.CreateTemp(dir, "testFileSet")
 				So(errt, ShouldBeNil)
 
@@ -1293,7 +1327,7 @@ func TestRemove(t *testing.T) {
 				s.waitForStatus(setName, "Removal status: 6 / 6 objects removed", 30*time.Second)
 			})
 
-			Convey("And a new file added to a directory already in the set", func() {
+			conveyIf(shard == removeShardItems, "And a new file added to a directory already in the set", func() {
 				file5 = filepath.Join(dir1, "file5")
 				internal.CreateTestFile(t, file5, "some data5")
 
@@ -1308,7 +1342,7 @@ func TestRemove(t *testing.T) {
 				})
 			})
 
-			Convey("And a new directory", func() {
+			conveyIf(shard == removeShardItems, "And a new directory", func() {
 				dir3 := filepath.Join(path, "path/to/new/dir/")
 
 				Convey("Remove returns an error if you try to remove the directory that doesn't exist", func() {
@@ -1325,7 +1359,7 @@ func TestRemove(t *testing.T) {
 				})
 			})
 
-			Convey("If a file fails to be removed, the error is displayed on the file", func() {
+			conveyIf(shard == removeShardMain, "If a file fails to be removed, the error is displayed on the file", func() {
 				file1remote := filepath.Join(remotePath, "file1")
 				icmd := NewIcommander(t)
 				So(icmd, ShouldNotBeNil)
@@ -1355,7 +1389,7 @@ func TestRemove(t *testing.T) {
 				})
 			})
 
-			Convey("And if you make this set read-only", func() {
+			conveyIf(shard == removeShardMain, "And if you make this set read-only", func() {
 				exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--make-readonly")
 				So(exitCode, ShouldEqual, 0)
 
@@ -1376,7 +1410,7 @@ func TestRemove(t *testing.T) {
 					0, fileName)
 			}
 
-			Convey("Given a set with a file that failed to upload", func() {
+			conveyIf(shard == removeShardMain, "Given a set with a file that failed to upload", func() {
 				dir3 := filepath.Join(path, "dir3")
 				err = os.MkdirAll(dir3, userPerms)
 				So(err, ShouldBeNil)
@@ -1396,7 +1430,7 @@ func TestRemove(t *testing.T) {
 				})
 			})
 
-			Convey("If you sync to retry one of the uploaded files and it does not upload", func() {
+			conveyIf(shard == removeShardMain, "If you sync to retry one of the uploaded files and it does not upload", func() {
 				statusCmd := []string{"status", "--name", setName, "-d"}
 				s.confirmOutputContains(t, statusCmd, 0, "file1\tuploaded")
 
@@ -1425,7 +1459,7 @@ func TestRemove(t *testing.T) {
 				})
 			})
 
-			Convey("Given a set with a missing file", func() {
+			conveyIf(shard == removeShardMain, "Given a set with a missing file", func() {
 				file := filepath.Join(path, "missing-file")
 				internal.CreateTestFileOfLength(t, file, 1)
 
@@ -1443,7 +1477,7 @@ func TestRemove(t *testing.T) {
 				})
 			})
 
-			Convey("Given a set with an abnormal file", func() {
+			conveyIf(shard == removeShardMain, "Given a set with an abnormal file", func() {
 				file := filepath.Join(path, "abnormal-file")
 				e := syscall.Mkfifo(file, userPerms)
 				So(e, ShouldBeNil)
@@ -1459,7 +1493,7 @@ func TestRemove(t *testing.T) {
 				})
 			})
 
-			Convey("Remove --set removes all the files from the set "+
+			conveyIf(shard == removeShardMain, "Remove --set removes all the files from the set "+
 				"and moves it to the trash set, then deletes the set itself", func() {
 				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--set")
 				So(exitCode, ShouldEqual, 0)
@@ -1505,7 +1539,7 @@ func TestRemove(t *testing.T) {
 			})
 		})
 
-		Convey("And a set made by a non-admin user", func() {
+		conveyIf(shard == removeShardMain, "And a set made by a non-admin user", func() {
 			user := alternateUsername
 			setName := "nonAdminSet"
 			originalEnv, err := s.impersonateUser(t, user)
@@ -1566,6 +1600,19 @@ func TestRemove(t *testing.T) {
 			})
 		})
 	})
+}
+
+// conveyIf is Convey when run is true, and otherwise leaves the scenario out.
+// It splits a test's scenarios into shards, each run by its own top-level test,
+// such as TestRemoveFile for removeShardFile. When using it:
+//   - every leaf scenario under a shared parent must be in exactly one shard;
+//   - a conveyIf nested in another must use its parent's shard;
+//   - every shard value needs its own top-level test (TestShardWrappers checks
+//     this).
+func conveyIf(run bool, items ...any) {
+	if run {
+		Convey(items...)
+	}
 }
 
 func getMetaValue(meta, key string) string {
@@ -1760,7 +1807,9 @@ func normaliseOutput(out string) string {
 	return strings.Join(lines, "\n")
 }
 
-func TestTrashRemove(t *testing.T) {
+func testTrashRemove(t *testing.T, shard trashRemoveShard) {
+	t.Helper()
+
 	Convey("Given a server", t, func() {
 		checkICommands(t, "ils", "imeta", "ichmod")
 
@@ -1770,28 +1819,28 @@ func TestTrashRemove(t *testing.T) {
 		transformer := "prefix=" + path + ":" + remotePath
 		timeout := 60 * time.Second
 
-		Convey("And an invalid set name, trash returns an error", func() {
+		conveyIf(shard == trashRemoveShardMain, "And an invalid set name, trash returns an error", func() {
 			invalidSetName := "invalid_name_set"
 
 			s.confirmOutputContains(t, []string{"trash", "--remove", "--name", invalidSetName, "--path", path},
 				1, fmt.Sprintf("set with that id does not exist [%s]", set.TrashPrefix+invalidSetName))
 		})
 
-		Convey("Trash won't work without --remove provided", func() {
+		conveyIf(shard == trashRemoveShardMain, "Trash won't work without --remove provided", func() {
 			invalidSetName := "invalid_input_set"
 
 			s.confirmOutputContains(t, []string{"trash", "--name", invalidSetName, "--path", path},
 				1, cmd.ErrTrashRemove.Error())
 		})
 
-		Convey("Trash won't work with both --expired and --path provided", func() {
+		conveyIf(shard == trashRemoveShardMain, "Trash won't work with both --expired and --path provided", func() {
 			invalidSetName := "too_many_options_set"
 
 			s.confirmOutputContains(t, []string{"trash", "--remove", "--name", invalidSetName, "--path", path, "--expired"},
 				1, cmd.ErrTrashItems.Error())
 		})
 
-		Convey("Trash won't work with both --all-expired and --name provided", func() {
+		conveyIf(shard == trashRemoveShardMain, "Trash won't work with both --all-expired and --name provided", func() {
 			invalidSetName := "too_many_options_set"
 
 			s.confirmOutputContains(t, []string{"trash", "--remove", "--name", invalidSetName, "--all-expired"},
@@ -1849,12 +1898,12 @@ func TestTrashRemove(t *testing.T) {
 
 			s.addSetForTestingWithItems(t, setName, transformer, tempTestFileOfPaths.Name())
 
-			Convey("Trash remove will not work on sets without trashed files", func() {
+			conveyIf(shard == trashRemoveShardMain, "Trash remove will not work on sets without trashed files", func() {
 				s.confirmOutputContains(t, []string{"trash", "--remove", "--name", setName, "--path", path},
 					1, server.ErrBadSet.Error())
 			})
 
-			Convey("And if you remove one file from this set", func() {
+			conveyIf(shard == trashRemoveShardMain, "And if you remove one file from this set", func() {
 				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", file1)
 				So(exitCode, ShouldEqual, 0)
 
@@ -1873,7 +1922,7 @@ func TestTrashRemove(t *testing.T) {
 				icmd := NewIcommander(t)
 				So(icmd, ShouldNotBeNil)
 
-				Convey("Trash remove will permanently remove a file from the set", func() {
+				conveyIf(shard == trashRemoveShardPaths, "Trash remove will permanently remove a file from the set", func() {
 					output, erro := icmd.ILS(remotePath)
 					So(erro, ShouldBeNil)
 					So(string(output), ShouldContainSubstring, "file2")
@@ -1890,7 +1939,7 @@ func TestTrashRemove(t *testing.T) {
 					})
 				})
 
-				Convey("Trash remove removes the dir from the set", func() {
+				conveyIf(shard == trashRemoveShardPaths, "Trash remove removes the dir from the set", func() {
 					file3remote := filepath.Join(remotePath, "path/to/some/dir/file3")
 					output, errc := icmd.ILS(file3remote)
 					So(errc, ShouldBeNil)
@@ -1914,7 +1963,7 @@ func TestTrashRemove(t *testing.T) {
 					})
 				})
 
-				Convey("Trash remove removes the dir from the set even if it no longer exists", func() {
+				conveyIf(shard == trashRemoveShardPaths, "Trash remove removes the dir from the set even if it no longer exists", func() { //nolint:lll
 					err = os.RemoveAll(dir1)
 					So(err, ShouldBeNil)
 
@@ -1927,7 +1976,7 @@ func TestTrashRemove(t *testing.T) {
 					So(outputStr, ShouldNotContainSubstring, dir1+" => ")
 				})
 
-				Convey("Trash remove removes an empty dir from the set", func() {
+				conveyIf(shard == trashRemoveShardPaths, "Trash remove removes an empty dir from the set", func() {
 					s.trashRemovePath(t, setName, dir2, 1)
 
 					exitCode, outputStr := s.runBinary(t, "status", "--name", trashSetName, "-d")
@@ -1937,7 +1986,7 @@ func TestTrashRemove(t *testing.T) {
 					So(outputStr, ShouldNotContainSubstring, dir2+" => ")
 				})
 
-				Convey("Trash remove takes a flag --items and removes all provided files and dirs from the set", func() {
+				conveyIf(shard == trashRemoveShardPaths, "Trash remove takes a flag --items and removes all provided files and dirs from the set", func() { //nolint:lll
 					tempTestFileOfPathsToRemove, errt := os.CreateTemp(dir, "testFileSet")
 					So(errt, ShouldBeNil)
 
@@ -1963,7 +2012,7 @@ func TestTrashRemove(t *testing.T) {
 					So(output, ShouldNotContainSubstring, dir1+" => ")
 				})
 
-				Convey("Trash remove with --items still works as expected with duplicates", func() {
+				conveyIf(shard == trashRemoveShardPaths, "Trash remove with --items still works as expected with duplicates", func() { //nolint:lll
 					tempTestFileOfPathsToRemove, errt := os.CreateTemp(dir, "testFileSet")
 					So(errt, ShouldBeNil)
 
@@ -1980,7 +2029,7 @@ func TestTrashRemove(t *testing.T) {
 					s.waitForStatus(trashSetName, "Removal status: 3 / 3 objects removed", timeout)
 				})
 
-				Convey("if the server dies during removal, the removal will continue upon server startup", func() {
+				conveyIf(shard == trashRemoveShardPaths, "if the server dies during removal, the removal will continue upon server startup", func() { //nolint:lll
 					tempTestFileOfPathsToRemove1, errt := os.CreateTemp(dir, "testFileSet")
 					So(errt, ShouldBeNil)
 
@@ -2013,7 +2062,7 @@ func TestTrashRemove(t *testing.T) {
 					s.waitForStatus(trashSetName, "Removal status: 8 / 8 objects removed", timeout)
 				})
 
-				Convey("Trash remove with a hardlink removes both the hardlink file and inode file", func() {
+				conveyIf(shard == trashRemoveShardShared, "Trash remove with a hardlink removes both the hardlink file and inode file", func() { //nolint:lll
 					remoteInode := getMetaValue(getRemoteMeta(filepath.Join(remotePath, "link")), "ibackup:remotehardlink")
 
 					_, err = icmd.ILS(remoteInode)
@@ -2028,7 +2077,7 @@ func TestTrashRemove(t *testing.T) {
 					So(err, ShouldNotBeNil)
 				})
 
-				Convey("And another set with a hardlink to the same file", func() {
+				conveyIf(shard == trashRemoveShardShared, "And another set with a hardlink to the same file", func() {
 					linkPath2 := filepath.Join(path, "link2")
 
 					err = os.Link(file1, linkPath2)
@@ -2054,7 +2103,7 @@ func TestTrashRemove(t *testing.T) {
 					})
 				})
 
-				Convey("And if you trash remove a file nested in an otherwise empty dir", func() {
+				conveyIf(shard == trashRemoveShardPaths, "And if you trash remove a file nested in an otherwise empty dir", func() {
 					s.trashRemovePath(t, setName, file3, 1)
 
 					output, errc := icmd.ILS("-r", remotePath)
@@ -2075,7 +2124,7 @@ func TestTrashRemove(t *testing.T) {
 					})
 				})
 
-				Convey("And a set with the same files added by a different user", func() {
+				conveyIf(shard == trashRemoveShardShared, "And a set with the same files added by a different user", func() {
 					user, erru := user.Current()
 					So(erru, ShouldBeNil)
 
@@ -2149,7 +2198,7 @@ func TestTrashRemove(t *testing.T) {
 					})
 				})
 
-				Convey("And a set with the same files and name added by a different user", func() {
+				conveyIf(shard == trashRemoveShardMain, "And a set with the same files and name added by a different user", func() {
 					setName2 := setName
 					username := "testUser"
 
@@ -2178,7 +2227,7 @@ func TestTrashRemove(t *testing.T) {
 					})
 				})
 
-				Convey("If a file fails to be removed, the error is displayed on the file", func() {
+				conveyIf(shard == trashRemoveShardMain, "If a file fails to be removed, the error is displayed on the file", func() { //nolint:lll
 					file1remote := filepath.Join(remotePath, "file1")
 					icmd := NewIcommander(t)
 					So(icmd, ShouldNotBeNil)
@@ -2241,7 +2290,7 @@ func TestTrashRemove(t *testing.T) {
 				})
 			})
 
-			Convey("Given an added set with a folder containing a nested folder", func() {
+			conveyIf(shard == trashRemoveShardMain, "Given an added set with a folder containing a nested folder", func() {
 				dir3 := filepath.Join(dir1, "dir")
 				err = os.MkdirAll(dir3, 0755)
 				So(err, ShouldBeNil)
@@ -2270,7 +2319,7 @@ func TestTrashRemove(t *testing.T) {
 				})
 			})
 
-			Convey("If remove fails to trash a file", func() {
+			conveyIf(shard == trashRemoveShardMain, "If remove fails to trash a file", func() {
 				file1remote := filepath.Join(remotePath, "file1")
 				removeFileFromIRODS(t, file1remote)
 
@@ -2365,6 +2414,26 @@ func waitForIlsMissing(tb testing.TB, path string, timeout time.Duration) error 
 
 	return nil
 }
+
+func freeLocalhostURL() (string, error) {
+	port, err := freeport.GetFreePort()
+
+	return fmt.Sprintf("localhost:%d", port), err
+}
+
+func TestRemove(t *testing.T) { testRemove(t, removeShardMain) }
+
+func TestRemoveFile(t *testing.T) { testRemove(t, removeShardFile) }
+
+func TestRemoveDirs(t *testing.T) { testRemove(t, removeShardDirs) }
+
+func TestRemoveItems(t *testing.T) { testRemove(t, removeShardItems) }
+
+func TestTrashRemove(t *testing.T) { testTrashRemove(t, trashRemoveShardMain) }
+
+func TestTrashRemovePaths(t *testing.T) { testTrashRemove(t, trashRemoveShardPaths) }
+
+func TestTrashRemoveShared(t *testing.T) { testTrashRemove(t, trashRemoveShardShared) }
 
 func TestEdit(t *testing.T) {
 	Convey("With a started server", t, func() {
@@ -3268,7 +3337,7 @@ type testServer struct {
 	cmd           *exec.Cmd
 	ch            chan []*jobqueue.Job
 	srv           *server.Server
-	srvErr        chan error
+	srvErr        <-chan error
 	logFH         *os.File
 	stdLogRestore func()
 	envRestore    func()
@@ -3448,10 +3517,10 @@ func (s *testServer) prepareConfig(t *testing.T) {
 
 	s.url = os.Getenv("IBACKUP_TEST_SERVER_URL")
 	if s.url == "" {
-		port, err := freeport.GetFreePort()
-		So(err, ShouldBeNil)
+		var err error
 
-		s.url = fmt.Sprintf("localhost:%d", port)
+		s.url, err = freeLocalhostURL()
+		So(err, ShouldBeNil)
 	}
 
 	host, _, err := net.SplitHostPort(s.url)
@@ -3698,11 +3767,21 @@ func (s *testServer) startServerInProcess() {
 		s.srv.EnableRemoteDBBackups(s.remoteDBFile, handler)
 	}
 
-	s.srvErr = make(chan error, 1)
+	// a port picked by freeport can be taken by another test process before
+	// we bind it, so then start on a new one, unless the URL is fixed or was
+	// already given to job submission above
+	var newURL func() (string, error)
+	if os.Getenv("IBACKUP_TEST_SERVER_URL") == "" && debugMode {
+		newURL = freeLocalhostURL
+	}
 
-	go func() { s.srvErr <- s.srv.Start(s.url, s.cert, s.key) }()
+	s.url, s.srvErr, err = testutil.StartTLSServer(func(addr string) error {
+		return s.srv.Start(addr, s.cert, s.key)
+	}, s.url, s.cert, newURL, serverStartTimeout)
 
-	s.waitForServer()
+	if !s.shouldFail {
+		So(err, ShouldBeNil)
+	}
 }
 
 func ensureHTTP2DisabledInEnv(env []string) []string {
@@ -3756,32 +3835,13 @@ func resolveBinary(name string) string {
 	return "./" + name
 }
 
+// waitForServer waits for an external server to answer with our own cert, so
+// that another process's server on the same port can't satisfy it.
 func (s *testServer) waitForServer() {
-	deadline := time.Now().Add(5 * time.Second)
-
-	var lastErr error
-
-	for time.Now().Before(deadline) {
-		dialer := &net.Dialer{Timeout: 50 * time.Millisecond}
-		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-		tlsDialer := tls.Dialer{NetDialer: dialer, Config: &tls.Config{InsecureSkipVerify: true}} //nolint:gosec
-		conn, err := tlsDialer.DialContext(ctx, "tcp", s.url)
-
-		cancel()
-
-		if err == nil {
-			_ = conn.Close()
-
-			return
-		}
-
-		lastErr = err
-
-		time.Sleep(10 * time.Millisecond)
-	}
+	err := testutil.WaitForTLSServer(s.url, s.cert, nil, serverStartTimeout)
 
 	if !s.shouldFail {
-		So(lastErr, ShouldBeNil)
+		So(err, ShouldBeNil)
 	}
 }
 
@@ -5846,6 +5906,124 @@ func TestWatchFofnsRealWRIntegration(t *testing.T) {
 		So(dirStatErr, ShouldBeNil)
 		So(dirInfo.Size(), ShouldEqual, int64(0))
 	})
+}
+
+// TestShardWrappers checks that every removeShard and trashRemoveShard value
+// is run by exactly one top-level test declared as `func TestX(t *testing.T)`,
+// since `make test` runs only the tests its sed finds in that form, so a shard
+// without one would never run.
+func TestShardWrappers(t *testing.T) {
+	Convey("Every test shard is run by exactly one top-level test", t, func() {
+		f, err := parser.ParseFile(token.NewFileSet(), "main_test.go", nil, 0)
+		So(err, ShouldBeNil)
+
+		declared, run := shardsDeclaredAndRun(f)
+		So(declared, ShouldNotBeEmpty)
+
+		slices.Sort(declared)
+		slices.Sort(run)
+		So(run, ShouldResemble, declared)
+	})
+}
+
+// shardsDeclaredAndRun returns the names of the shard constants declared in
+// f, and of those passed to testRemove or testTrashRemove by its top-level
+// tests that `make test` runs.
+func shardsDeclaredAndRun(f *ast.File) (declared, run []string) {
+	shardTypes := []string{"removeShard", "trashRemoveShard"}
+	shardFuncs := []string{"testRemove", "testTrashRemove"}
+
+	for _, decl := range f.Decls {
+		switch d := decl.(type) {
+		case *ast.GenDecl:
+			declared = append(declared, constantsOfTypes(d, shardTypes)...)
+		case *ast.FuncDecl:
+			if isMakeRunTest(d) {
+				run = append(run, shardsRunBy(d, shardFuncs)...)
+			}
+		}
+	}
+
+	return declared, run
+}
+
+// constantsOfTypes returns the names of the constants in decl whose type, given
+// or carried over from an earlier constant in an iota group, is in types.
+func constantsOfTypes(decl *ast.GenDecl, types []string) []string {
+	var (
+		names []string
+		typ   string
+	)
+
+	for _, spec := range decl.Specs {
+		vs, ok := spec.(*ast.ValueSpec)
+		if !ok || decl.Tok != token.CONST {
+			continue
+		}
+
+		if ident, isIdent := vs.Type.(*ast.Ident); isIdent {
+			typ = ident.Name
+		} else if vs.Values != nil {
+			typ = ""
+		}
+
+		if slices.Contains(types, typ) {
+			for _, name := range vs.Names {
+				names = append(names, name.Name)
+			}
+		}
+	}
+
+	return names
+}
+
+// isMakeRunTest reports whether d is declared as `func TestX(t *testing.T)`,
+// the form the Makefile's sed lists for `make test` to run.
+func isMakeRunTest(d *ast.FuncDecl) bool {
+	if !strings.HasPrefix(d.Name.Name, "Test") || d.Recv != nil {
+		return false
+	}
+
+	params := d.Type.Params.List
+	if len(params) != 1 || len(params[0].Names) != 1 || params[0].Names[0].Name != "t" {
+		return false
+	}
+
+	star, ok := params[0].Type.(*ast.StarExpr)
+	if !ok {
+		return false
+	}
+
+	sel, ok := star.X.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+
+	pkg, ok := sel.X.(*ast.Ident)
+
+	return ok && pkg.Name == "testing" && sel.Sel.Name == "T"
+}
+
+// shardsRunBy returns the shard arguments of calls in fn to the given funcs.
+func shardsRunBy(fn *ast.FuncDecl, funcs []string) []string {
+	var shards []string
+
+	ast.Inspect(fn, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok || len(call.Args) != 2 {
+			return true
+		}
+
+		if fun, isIdent := call.Fun.(*ast.Ident); isIdent && slices.Contains(funcs, fun.Name) {
+			if shard, isShard := call.Args[1].(*ast.Ident); isShard {
+				shards = append(shards, shard.Name)
+			}
+		}
+
+		return true
+	})
+
+	return shards
 }
 
 func TestAddRemote(t *testing.T) {
