@@ -1,10 +1,14 @@
 # Bugfixes 2026-10-02: set counts
 
 - Branch: `bugfix-set-counts-abca77d4de3c`
-- Base: `origin/develop` at `43f73234a4d0` (deps merged as PR #193,
-  2026-10-06; moved from `deps` at `24c0c9ab0123`)
-- Dependency: `deps` merged (PR #193); no longer held.
-- Queue owner: `deps`, `.docs/bugfixes/260930-deps-update-702d9698d638.md`
+- Base: dependency `bugfix-tests-speedup-6d2903c9` (PR #194) at `13915cf`;
+  integration base `origin/develop` at `43f73234a4d0` (resolved 2026-10-06)
+- Dependency: PR #194 (`bugfix-tests-speedup-6d2903c9`), which changes the
+  same set-counting code and fixes the "Missing counted twice" item. Held for
+  dependency merge: keep this branch local; after #194 merges, rebase with
+  `git rebase --onto origin/develop 13915cf` before pushing.
+- Queue owner: `bugfix-tests-speedup-6d2903c9`,
+  `.docs/bugfixes/261005-tests-speedup-31c758180c99.md`
 - Origin: `deps`, `.docs/bugfixes/260930-deps-update-702d9698d638.md`
 
 Each item is independent of the `deps` work: no `make test`, `make race` or
