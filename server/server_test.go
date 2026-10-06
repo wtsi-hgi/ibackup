@@ -1636,12 +1636,13 @@ func TestServer(t *testing.T) {
 							err = client.TrashFilesAndDirs(exampleSet.ID(), []string{dir2})
 							So(err, ShouldBeNil)
 
-							// trashing the unspecified folder's own entry currently fails
-							// with "has no path" after retries, so the set never shows
-							// all objects removed; wait for every removal attempt to end
-							testutil.Eventually(t, time.Minute, 100*time.Millisecond, func() bool {
-								return s.removeQueue.Stats().Items == 0
-							}, "removal attempts to finish")
+							waitForRemovals(t, s, client, exampleSet)
+
+							got, errgs := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+							So(errgs, ShouldBeNil)
+							So(got.Error, ShouldBeBlank)
+							So(got.NumObjectsRemoved, ShouldEqual, 2)
+							So(got.NumObjectsToBeRemoved, ShouldEqual, 2)
 
 							files, errgf := client.GetFiles(exampleSet.ID())
 							So(errgf, ShouldBeNil)
@@ -1650,6 +1651,13 @@ func TestServer(t *testing.T) {
 							dirs, errgd := client.GetDirs(exampleSet.ID())
 							So(errgd, ShouldBeNil)
 							So(len(dirs), ShouldEqual, 1)
+
+							trashSet := set.BuildTrashSetFromSet(exampleSet)
+
+							trashed, errgt := client.GetFiles(trashSet.ID())
+							So(errgt, ShouldBeNil)
+							So(trashed, ShouldHaveLength, 1)
+							So(trashed[0].Path, ShouldEqual, file)
 						})
 					})
 

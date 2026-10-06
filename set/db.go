@@ -768,10 +768,15 @@ func (d *DB) removeDirInTx(tx *bolt.Tx, removeReq *RemoveReq) error {
 }
 
 // trashDirEntry puts the given request's directory entry in the trash set.
+// Sets stored before the discovered folders bucket existed have no entry for a
+// discovered subfolder, so a new dir entry is trashed for one instead, keeping
+// the folder targetable in the trash set.
 func (d *DB) trashDirEntry(tx *bolt.Tx, removeReq *RemoveReq) error {
-	entry, _, err := d.getEntry(tx, removeReq.Set.ID(), strings.TrimSuffix(removeReq.Path, "/"))
+	path := strings.TrimSuffix(removeReq.Path, "/")
+
+	entry, _, err := d.getEntry(tx, removeReq.Set.ID(), path)
 	if err != nil {
-		return err
+		entry = &Entry{Path: path, isDir: true}
 	}
 
 	return d.putEntryInTrash(tx, removeReq.Set, entry)

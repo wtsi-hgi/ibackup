@@ -2194,6 +2194,78 @@ func TestSetDB(t *testing.T) {
 				})
 			})
 
+			Convey("And add a directory set with a nested folder", func() {
+				setl1 := &Set{
+					Name:        "nesteddir",
+					Requester:   "jim",
+					Transformer: "prefix=/local:/remote",
+				}
+
+				So(db.AddOrUpdate(setl1), ShouldBeNil)
+
+				dir1 := t.TempDir()
+				dir2 := filepath.Join(dir1, "dir2")
+				So(os.Mkdir(dir2, userPerms), ShouldBeNil)
+
+				file := filepath.Join(dir2, "file")
+				internal.CreateTestFile(t, file, "a")
+
+				So(db.MergeDirEntries(setl1.ID(), []*Dirent{{Path: dir1, Mode: os.ModeDir}}), ShouldBeNil)
+
+				got, errd := db.Discover(setl1.ID(), func([]*Entry) ([]*Dirent, []*Dirent, error) {
+					return []*Dirent{newDirentFromPath(file)}, []*Dirent{{Path: dir2, Mode: os.ModeDir}}, nil
+				})
+				So(errd, ShouldBeNil)
+				So(got.NumFiles, ShouldEqual, 1)
+
+				trashSet := BuildTrashSetFromSet(setl1)
+
+				trashSubfolder := func() {
+					removeFileEntryAndCount(db, setl1.ID(), file)
+
+					remReq := NewRemoveRequest(dir2, db.GetByID(setl1.ID()), true, ToTrash)
+					So(db.RemoveDirEntry(&remReq), ShouldBeNil)
+
+					got = db.GetByID(setl1.ID())
+					So(got.Error, ShouldBeBlank)
+					So(got.NumFiles, ShouldEqual, 0)
+					So(got.NumObjectsRemoved, ShouldEqual, 2)
+
+					files, errg := db.GetFileEntries(setl1.ID(), nil)
+					So(errg, ShouldBeNil)
+					So(files, ShouldBeEmpty)
+
+					dirs, errg := db.GetAllDirEntries(setl1.ID())
+					So(errg, ShouldBeNil)
+					So(dirs, ShouldHaveLength, 1)
+					So(dirs[0].Path, ShouldEqual, dir1)
+
+					trashed, errg := db.GetFileEntries(trashSet.ID(), nil)
+					So(errg, ShouldBeNil)
+					So(trashed, ShouldHaveLength, 1)
+					So(trashed[0].Path, ShouldEqual, file)
+
+					trashedDirs, errg := db.GetAllDirEntries(trashSet.ID())
+					So(errg, ShouldBeNil)
+					So(trashedDirs, ShouldHaveLength, 1)
+					So(trashedDirs[0].Path, ShouldEqual, dir2)
+
+					_, dirPaths, errv := db.ValidateFileAndDirPaths(&trashSet, []string{dir2})
+					So(errv, ShouldBeNil)
+					So(dirPaths, ShouldResemble, []string{dir2})
+				}
+
+				Convey("then trash the subfolder, which moves it to the trash", func() {
+					trashSubfolder()
+				})
+
+				Convey("then, as a legacy set without discovered folders, trash the subfolder", func() {
+					So(db.DeleteDiscoveredFoldersBucket(setl1.ID()), ShouldBeNil)
+
+					trashSubfolder()
+				})
+			})
+
 			Convey("And add a frozen set", func() {
 				setl1 := &Set{
 					Name:        "freeze",

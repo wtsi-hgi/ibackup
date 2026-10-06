@@ -77,7 +77,7 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
     files stay consistent and retries report the inode error. Test "so a
     failure to clean up its inode record leaves its database removal undone"
     in `server/server_test.go`.
-- [ ] Trashing a subfolder that isn't itself in the set, for a legacy set
+- [x] Trashing a subfolder that isn't itself in the set, for a legacy set
   without a discovered-folders bucket, fails on the folder's own entry in
   `trashDirFromDB`: the set ends with `Error when removing: invalid set
   entry [set ... has no path .../dir1/dir2]` and `removed 1 of 2`. Present at
@@ -85,6 +85,21 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
   timeout.
   - Origin item: "TestServer (server package) is flaky" on `deps` (server
     test "Trash on a folder not specified should still work").
+  - Still present after d200a1d: `RemoveDirEntry` → `trashDirEntry` looked up
+    the subfolder's own entry to copy it into the trash set; a legacy set
+    (no discovered-folders bucket) has none for an unspecified subfolder, so
+    the lookup failed "has no path" and rolled the removal back.
+  - Red: a set test trashing dir1/dir2 of a legacy set failed with `has no
+    path .../dir2`; the focused server test failed with the reported
+    `removed 1 of 2` symptom.
+  - Fixed in `set/db.go`: when the folder has no entry (only possible for
+    legacy sets; `getEntry`'s only error is not-found), a plain dir entry for
+    the path is put in the trash set, so the folder stays targetable there
+    (e.g. `trash --remove --path`) and expires as usual; counts unchanged.
+  - Tests: `set/set_test.go` trashes a nested folder in normal and legacy sets
+    and checks the trash set's dirs and that the folder validates in the
+    trash set; the server test now fails on timeout and asserts no error,
+    2/2 removed, and the file in trash. A "skip the trash entry" mutant fails.
 - [ ] A removal retried after its remote delete succeeded (released after a
   failed `UpdateRemoveRequest`, `PutEntryInTrash` or `RemoveFileEntry`, or
   re-run by `recoverRemoveQueue` after a crash) re-reads the entry in
