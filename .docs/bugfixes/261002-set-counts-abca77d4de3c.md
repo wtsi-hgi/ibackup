@@ -35,6 +35,12 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
   counting the file. Same at `origin/develop`.
   - Origin item: "If a removal's inode cleanup fails" (found reviewing the
     TestSync fix; see `server/setdb.go` `processDBFileRemoval`).
+  - Update (2026-10-06): largely resolved on `deps` by the one-transaction
+    removal fix (deps commit after 9774642, "Do a removal's database side in
+    one transaction"): a failed inode cleanup now rolls the whole removal
+    back, so the entry and Num files stay consistent and retries report the
+    real inode error. Re-check after rebasing onto deps; close if nothing
+    remains.
 - [ ] Trashing a subfolder that isn't itself in the set, for a legacy set
   without a discovered-folders bucket, fails on the folder's own entry in
   `trashDirFromDB`: the set ends with `Error when removing: invalid set
@@ -70,3 +76,10 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
   still fail after upgrading: the entry is gone and the stored request has no
   saved `RemovedEntry`, so the retry fails with "has no path".
   - Origin: limitation of the deps removal-retry fix (2026-10-06).
+- [ ] An uploaded (or orphaned) entry whose remote object was deleted outside
+  ibackup can never be removed: `processRemoteFileRemoval` tolerates GetMeta
+  "does not exist" only when the request was already AboutToBeRemoved
+  (`mayMissInRemote`, server/setdb.go ~861), so every fresh attempt fails.
+  Same logic on develop. Needs a decision: should a vanished remote object
+  count as successfully removed?
+  - Origin: found while fixing the deps removal-retry race (2026-10-06).
