@@ -121,6 +121,10 @@ type Entry struct {
 	Inode       uint64
 	Dest        string
 
+	// CountedInDiscovery is the StartedDiscovery time of the set discovery
+	// that counted our Status in the set's counts, if any.
+	CountedInDiscovery time.Time
+
 	newSize  bool // is this the first attempt
 	newFail  bool
 	unFailed bool
@@ -368,28 +372,40 @@ func (c *entryCreator) existingOrNewEncodedEntry(dirent *Dirent) ([]byte, error)
 		return nil, err
 	}
 
+	// Statuses other than these get counted when upload results arrive.
+	counted := entry.Status == Missing || entry.Status == AbnormalEntry
+
 	e := c.existingEntries[dirent.Path]
-	if e != nil {
-		dbEntry := c.db.decodeEntry(e)
-		isUploaded := dbEntry.IsUploaded()
-		isIdentical := dbEntry.updateTypeDestAndInode(entry)
+	if e == nil {
+		c.set.entryTypeToSetCounts(entry)
 
-		if entry.Status == Missing || entry.Status == Orphaned || entry.Status == AbnormalEntry {
-			c.set.entryStatusToSetCounts(dbEntry)
+		if counted {
+			c.countStatus(entry)
 		}
 
-		if !isIdentical || c.set.Frozen && isUploaded {
-			return e, nil
-		}
-
-		entry = dbEntry
-	} else {
-		c.set.entryToSetCounts(entry)
+		return c.db.encodeToBytes(entry), nil
 	}
 
-	e = c.db.encodeToBytes(entry)
+	dbEntry := c.db.decodeEntry(e)
+	isUploaded := dbEntry.IsUploaded()
+	changed := dbEntry.updateTypeDestAndInode(entry)
 
-	return e, nil
+	if counted {
+		c.countStatus(dbEntry)
+	}
+
+	if c.set.Frozen && isUploaded || !changed && !counted {
+		return e, nil
+	}
+
+	return c.db.encodeToBytes(dbEntry), nil
+}
+
+// countStatus adds the given entry's status to our set's counts, recording on
+// the entry that this discovery counted it.
+func (c *entryCreator) countStatus(entry *Entry) {
+	c.set.entryStatusToSetCounts(entry)
+	entry.CountedInDiscovery = c.set.StartedDiscovery
 }
 
 func (c *entryCreator) determineEntryType(dirent *Dirent) (EntryType, string, error) {

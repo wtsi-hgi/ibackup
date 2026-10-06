@@ -45,9 +45,38 @@ import (
 )
 
 const transformerInodeSeparator = ":"
+
 const ErrElementNotInSlice = "element not in slice"
 
 var errSetsBucketMissing = errors.New("sets bucket missing")
+
+// setsWithPath appends to sets the IDs of sets not yet seen whose sub-bucket
+// of the given kind has the given path.
+func setsWithPath(b *bolt.Bucket, kind string, path []byte, seen map[string]struct{}, sets []string) []string {
+	c := b.Cursor()
+	p := []byte(kind)
+
+	for k, _ := c.Seek(p); k != nil && bytes.HasPrefix(k, p); k, _ = c.Next() {
+		sb := b.Bucket(k)
+		if sb == nil || sb.Get(path) == nil {
+			continue
+		}
+
+		_, setID, ok := strings.Cut(string(k), separator)
+		if !ok {
+			continue
+		}
+
+		if _, already := seen[setID]; already {
+			continue
+		}
+
+		seen[setID] = struct{}{}
+		sets = append(sets, setID)
+	}
+
+	return sets
+}
 
 // getMountPoints retrieves a list of mount point paths to be used when
 // determining hardlinks. The list is sorted longest first and stored on the
@@ -165,73 +194,55 @@ func (d *DB) GetFilesFromInode(inode uint64, mountPoint string) ([]string, error
 // is the last file with that inode. Otherwise just removes itself from the list
 // (if the path is the original file 'removal' is setting it to be blank).
 func (d *DB) RemoveFileFromInode(path string, inode uint64) error {
+	return d.db.Update(func(tx *bolt.Tx) error {
+		return d.removeFileFromInode(tx, path, inode)
+	})
+}
+
+func (d *DB) removeFileFromInode(tx *bolt.Tx, path string, inode uint64) error {
 	de := newDirentFromPath(path)
 	de.Inode = inode
 	key := d.inodeMountPointKeyFromDirent(de)
+	b := tx.Bucket([]byte(inodeBucket))
 
-	err := d.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte(inodeBucket))
+	v := b.Get(key)
+	if v == nil {
+		return errs.PathError{Msg: "key not found in inode bucket", Path: string(key)}
+	}
 
-		v := b.Get(key)
-		if v == nil {
-			return errs.PathError{Msg: "key not found in inode bucket", Path: string(key)}
-		}
+	_, files := d.decodeIMPValue(v, de.Inode)
 
-		_, files := d.decodeIMPValue(v, de.Inode)
+	return d.updateInodeEntryBasedOnFiles(b, key, path, files)
+}
 
-		return d.updateInodeEntryBasedOnFiles(b, key, path, files)
-	})
+// removeInodeIfUnused removes the given removed file entry from our inode
+// records, unless it isn't a file with an inode, or another set still has it.
+// Entries whose local file is gone (missing or orphaned) have inode 0 and so
+// have no inode record.
+func (d *DB) removeInodeIfUnused(tx *bolt.Tx, entry *Entry) error {
+	if entry.Type == Symlink || entry.Type == Abnormal || entry.Inode == 0 {
+		return nil
+	}
 
-	return err
+	setsWithFile, err := d.setsForFile(tx, entry.Path)
+	if err != nil || len(setsWithFile) > 0 {
+		return err
+	}
+
+	return d.removeFileFromInode(tx, entry.Path, entry.Inode)
 }
 
 // GetAllSetsForFile returns a slice of setIDs for sets that contain the given
 // file.
 func (d *DBRO) GetAllSetsForFile(path string) ([]string, error) {
-	pathBytes := []byte(path)
-
 	var sets []string
 
 	err := d.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte(setsBucket))
-		if b == nil {
-			return errSetsBucketMissing
-		}
+		var err error
 
-		seen := make(map[string]struct{})
+		sets, err = d.setsForFile(tx, path)
 
-		scanPrefix := func(prefix string) {
-			c := b.Cursor()
-			p := []byte(prefix)
-
-			for k, _ := c.Seek(p); k != nil && bytes.HasPrefix(k, p); k, _ = c.Next() {
-				sb := b.Bucket(k)
-				if sb == nil {
-					continue
-				}
-
-				if sb.Get(pathBytes) == nil {
-					continue
-				}
-
-				_, setID, ok := strings.Cut(string(k), separator)
-				if !ok {
-					continue
-				}
-
-				if _, already := seen[setID]; already {
-					continue
-				}
-
-				seen[setID] = struct{}{}
-				sets = append(sets, setID)
-			}
-		}
-
-		scanPrefix(fileBucket)
-		scanPrefix(discoveredBucket)
-
-		return nil
+		return err
 	})
 
 	return sets, err
@@ -254,6 +265,18 @@ func isPathInTransformerPaths(path string, files []string) (bool, error) {
 	}
 
 	return false, nil
+}
+
+func (d *DBRO) setsForFile(tx *bolt.Tx, path string) ([]string, error) {
+	b := tx.Bucket([]byte(setsBucket))
+	if b == nil {
+		return nil, errSetsBucketMissing
+	}
+
+	seen := make(map[string]struct{})
+	sets := setsWithPath(b, fileBucket, []byte(path), seen, nil)
+
+	return setsWithPath(b, discoveredBucket, []byte(path), seen, sets), nil
 }
 
 func (d *DB) updateInodeEntryBasedOnFiles(b *bolt.Bucket, key []byte, path string, files []string) error {

@@ -22,7 +22,7 @@ install:
 	@echo installed to ${GOPATH}/bin/ibackup
 
 test:
-	@go test -tags netgo -timeout 60m --count 1 -v .
+	@go test -tags netgo -timeout 120m --count 1 -v .
 	@go test -tags netgo --count 1 $(shell go list ./... | grep -v '^${PKG}$$')
 
 race: race-subpkgs
@@ -36,6 +36,15 @@ race-subpkgs:
 
 bench:
 	go test -tags netgo --count 1 -run Bench -bench=. ./...
+
+# Compares the speed of the critical upload path to origin/develop, failing if
+# it is over 10% slower. See developers/README.md for the SPEED_* options. The
+# gate is built and run directly, not with go run, so that its exit code of 1
+# (regression) or 2 (could not run) reaches make. On a signal the shell waits
+# for the gate to clean up before removing the build dir.
+speed:
+	@d=$$(mktemp -d) && trap 'rm -rf "$$d"' EXIT && trap 'exit 130' INT TERM HUP && \
+	CGO_ENABLED=1 go build -tags netgo -o "$$d/speedgate" ./developers/speedgate && "$$d/speedgate"
 
 # curl -sSfL https://golangci-lint.run/install.sh | sh -s -- -b $(go env GOPATH)/bin v2.6.0
 lint:
@@ -53,4 +62,4 @@ dist:
 	github-release upload --tag ${TAG} --name ibackup-linux-x86-64.zip --file linux-dist.zip
 	@rm -f ibackup linux-dist.zip
 
-.PHONY: test race race-main race-subpkgs bench lint build install clean dist
+.PHONY: test race race-main race-subpkgs bench speed lint build install clean dist

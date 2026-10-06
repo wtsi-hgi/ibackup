@@ -31,7 +31,6 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/wtsi-hgi/ibackup/internal"
 )
 
 func TestMetaKeyFofn(t *testing.T) {
@@ -132,6 +131,22 @@ func TestMeta(t *testing.T) {
 			So(meta.Metadata()[MetaKeyRemoval], ShouldContainSubstring, customRemoval)
 		})
 
+		Convey("Duration review and removal dates use the local calendar date", func() {
+			Reset(func() { timeNow = time.Now })
+
+			for _, local := range []time.Time{
+				time.Date(2026, 10, 6, 0, 30, 0, 0, time.FixedZone("BST", 3600)),
+				time.Date(2026, 10, 6, 14, 0, 0, 0, time.FixedZone("SST", -11*3600)),
+			} {
+				timeNow = func() time.Time { return local }
+
+				err := createBackupMetadata(Backup, "", "", meta)
+				So(err, ShouldBeNil)
+				So(meta.Metadata()[MetaKeyReview], ShouldEqual, "2027-04-06T00:00:00Z")
+				So(meta.Metadata()[MetaKeyRemoval], ShouldEqual, "2027-10-06T00:00:00Z")
+			}
+		})
+
 		Convey("Invalid review/removal inputs return an error", func() {
 			err := createBackupMetadata(Backup, "2y", "1y", meta)
 			So(err.Error(), ShouldContainSubstring, ErrInvalidReviewRemoveDate)
@@ -183,14 +198,10 @@ func TestMeta(t *testing.T) {
 	})
 }
 
+// testTimesToMeta returns the meta values expected for the given local times:
+// their local calendar dates at midnight UTC.
 func testTimesToMeta(t *testing.T, reviewDate, removalDate time.Time) (string, string) {
 	t.Helper()
 
-	reviewStr, err := internal.TimeToMeta(reviewDate)
-	So(err, ShouldBeNil)
-
-	removalStr, err := internal.TimeToMeta(removalDate)
-	So(err, ShouldBeNil)
-
-	return reviewStr, removalStr
+	return reviewDate.Format(time.DateOnly) + "T00:00:00Z", removalDate.Format(time.DateOnly) + "T00:00:00Z"
 }

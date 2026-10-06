@@ -42,7 +42,7 @@ import (
 	"github.com/wtsi-hgi/ibackup/baton/meta"
 	"github.com/wtsi-hgi/ibackup/internal"
 	"github.com/wtsi-hgi/ibackup/internal/testutil"
-	ex "github.com/wtsi-npg/extendo/v2"
+	ex "github.com/wtsi-npg/extendo/v3"
 )
 
 var testStartTime time.Time   //nolint:gochecknoglobals
@@ -374,7 +374,8 @@ exec 3>&-;`)
 
 		So(os.WriteFile(filepath.Join(dir, "baton-do"), source, 0700), ShouldBeNil) //nolint:gosec
 
-		t.Setenv("PATH", dir+":"+path)
+		// ex.FindBaton() returns the last baton-do in PATH, so append ours.
+		t.Setenv("PATH", path+":"+dir)
 
 		h, err := GetBatonHandler()
 		So(err, ShouldBeNil)

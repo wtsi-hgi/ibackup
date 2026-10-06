@@ -433,11 +433,6 @@ func (s *Set) entryToSetCounts(entry *Entry) {
 	s.entryTypeToSetCounts(entry)
 }
 
-func (s *Set) removedEntryToSetCounts(entry *Entry) {
-	s.removedEntryStatusToSetCounts(entry)
-	s.removedEntryTypeToSetCounts(entry)
-}
-
 func (s *Set) entryStatusToSetCounts(entry *Entry) { //nolint:gocyclo
 	switch entry.Status { //nolint:exhaustive
 	case Uploaded:
@@ -510,6 +505,36 @@ func (s *Set) removedEntryTypeToSetCounts(entry *Entry) {
 		s.Symlinks--
 	case Hardlink:
 		s.Hardlinks--
+	}
+}
+
+// countRemovedEntry updates our counts for the given entry, as it was stored,
+// having been removed, adding removedSize to our SizeRemoved.
+func (s *Set) countRemovedEntry(entry *Entry, removedSize uint64) {
+	s.SizeRemoved += removedSize
+	s.NumObjectsRemoved++
+
+	s.removedEntryTypeToSetCounts(entry)
+
+	// Starting discovery zeroed these, and they get rebuilt without this
+	// entry; decrementing them now would wrap them.
+	if s.StartedDiscovery.After(s.LastDiscovery) {
+		return
+	}
+
+	s.NumFiles--
+
+	if entry.LastAttempt.After(s.LastDiscovery) {
+		s.SizeTotal -= entry.Size
+		s.removedEntryStatusToSetCounts(entry)
+
+		return
+	}
+
+	// Otherwise the entry's status is from before our last discovery, so is
+	// only in our counts if that discovery counted it.
+	if entry.CountedInDiscovery.Equal(s.StartedDiscovery) {
+		s.removedEntryStatusToSetCounts(entry)
 	}
 }
 

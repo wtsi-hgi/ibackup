@@ -42,7 +42,7 @@ import (
 	jqs "github.com/VertebrateResequencing/wr/jobqueue/scheduler"
 	"github.com/VertebrateResequencing/wr/queue"
 	"github.com/gammazero/workerpool"
-	"github.com/inconshreveable/log15"
+	"github.com/inconshreveable/log15/v3"
 	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/ibackup/internal/mem"
 	"github.com/wtsi-hgi/ibackup/remove"
@@ -72,6 +72,13 @@ const (
 	jobRetries        uint8 = 3
 	jobLimitGroup           = "irods"
 	racRetriggerDelay       = 1 * time.Minute
+
+	// clientExitGrace is how long after a put client finds no requests to
+	// work on (so exits) that we try submitting put jobs again. Until wr
+	// records the client's job as complete (seen taking tens of ms),
+	// put jobs we submit are rejected as duplicates of it. If wr takes longer
+	// than this, rac's racRetriggerDelay retrigger is the fallback.
+	clientExitGrace = 2 * time.Second
 
 	retryDelay = 5 * time.Second
 
@@ -153,6 +160,8 @@ type Server struct {
 	queuedSets             []*set.Set
 	trashLifespan          time.Duration
 	sched                  *client.Scheduler
+	racRetriggerDelay      time.Duration
+	racRetriggerPending    atomic.Bool
 	putCmd                 string
 	req                    *jqs.Requirements
 	wrGroup                string
@@ -163,6 +172,7 @@ type Server struct {
 	stillRunningMsgFreq    time.Duration
 	serverAliveCh          chan bool
 	uploadTracker          *uploadTracker
+	remoteClaims           *remoteClaims
 	failedUploadRetryDelay time.Duration
 	replicaLogging         bool
 
@@ -174,6 +184,11 @@ type Server struct {
 
 	readOnly       bool
 	storageHandler remove.Handler
+
+	// removalsMu guards activeRemovals and is held while storageHandler is
+	// cleaned up, so no removal uses the handler during its Cleanup().
+	removalsMu     sync.Mutex
+	activeRemovals int
 
 	mapMu               sync.RWMutex
 	creatingCollections map[string]bool
@@ -213,6 +228,7 @@ func New(conf Config) (*Server, error) { //nolint:funlen
 		removeQueue:            queue.New(context.Background(), "remove"),
 		maxQueueLength:         conf.MaxQueueLength,
 		trashLifespan:          conf.TrashLifespan,
+		racRetriggerDelay:      racRetriggerDelay,
 		creatingCollections:    make(map[string]bool),
 		slacker:                conf.Slacker,
 		stillRunningMsgFreq:    conf.StillRunningMsgFreq,
@@ -229,6 +245,8 @@ func New(conf Config) (*Server, error) { //nolint:funlen
 		discoveryCoordinator: newDiscoveryCoordinator(),
 	}
 
+	s.remoteClaims = newRemoteClaims(s.queue)
+
 	// Ensure the atomic.Value is usable before any stores.
 	s.hungDebugLastRID.Store("")
 
@@ -243,6 +261,54 @@ func New(conf Config) (*Server, error) { //nolint:funlen
 	s.monitor = NewMonitor(s.monitorCB)
 
 	return s, nil
+}
+
+// removalStarted records that a removal is using storageHandler, waiting for
+// any Cleanup() of it to finish first.
+func (s *Server) removalStarted() {
+	s.removalsMu.Lock()
+	defer s.removalsMu.Unlock()
+
+	s.activeRemovals++
+}
+
+// removalFinished records that a removal stopped using storageHandler, and
+// cleans it up if no removals are using it and none are queued. Using the
+// handler while it is cleaned up can hang forever, as its connections stop.
+func (s *Server) removalFinished() {
+	s.removalsMu.Lock()
+	defer s.removalsMu.Unlock()
+
+	s.activeRemovals--
+
+	if s.activeRemovals == 0 && s.removeQueue.Stats().Items == 0 {
+		s.storageHandler.Cleanup()
+	}
+}
+
+// triggerReadyAddedCallbackAfter calls our queue's ready added callback after
+// the given delay, so that rac can submit put jobs for any ready requests.
+func (s *Server) triggerReadyAddedCallbackAfter(delay time.Duration) {
+	go func() {
+		time.Sleep(delay)
+		s.queue.TriggerReadyAddedCallback(context.Background())
+	}()
+}
+
+// scheduleRacRetrigger triggers rac again after racRetriggerDelay, so that put
+// jobs keep flowing while requests remain ready. Only one retrigger is ever
+// pending, since every rac run that finds ready requests calls this, and
+// otherwise each separate trigger would start its own endless chain.
+func (s *Server) scheduleRacRetrigger() {
+	if !s.racRetriggerPending.CompareAndSwap(false, true) {
+		return
+	}
+
+	go func() {
+		time.Sleep(s.racRetriggerDelay)
+		s.racRetriggerPending.Store(false)
+		s.queue.TriggerReadyAddedCallback(context.Background())
+	}()
 }
 
 func determineQueueSize() (uint, error) {
@@ -362,6 +428,7 @@ func (s *Server) EnableJobSubmission(putCmd, deployment, cwd, queues, queuesAvoi
 // inside removeQueue from iRODS and data base. This function should be called
 // inside a go routine, so the user API request is not locked.
 func (s *Server) handleRemoveRequests(sid string) {
+	s.removalStarted()
 	s.discoveryCoordinator.WillRemove(sid)
 
 	for {
@@ -425,11 +492,7 @@ func (s *Server) convertQueueItemToRemoveRequest(data interface{}) (set.RemoveRe
 
 func (s *Server) removeRequestFromIRODSandDB(removeReq *set.RemoveReq) error {
 	if removeReq.IsDir {
-		if removeReq.Action == set.ToTrash {
-			return s.trashDirFromDB(removeReq.Set, removeReq.Path)
-		}
-
-		return s.removeDirFromDB(removeReq.Set.ID(), removeReq.Path)
+		return s.db.RemoveDirEntry(removeReq)
 	}
 
 	return s.removeFileFromIRODSandDB(removeReq)
@@ -468,11 +531,13 @@ func (s *Server) handleErrorOrReleaseItem(item *queue.Item, removeReq set.Remove
 }
 
 func (s *Server) finalizeRemoveReq(removeReq set.RemoveReq) error {
-	removeReq.IsComplete = true
+	if !removeReq.IsComplete {
+		removeReq.IsComplete = true
 
-	err := s.db.UpdateRemoveRequest(removeReq)
-	if err != nil {
-		return err
+		err := s.db.UpdateRemoveRequest(removeReq)
+		if err != nil {
+			return err
+		}
 	}
 
 	return s.removeQueue.Remove(context.Background(), removeReq.Key())
@@ -486,9 +551,7 @@ func (s *Server) finalizeRemoval(sid string) {
 		s.Logger.Printf("%s", err.Error())
 	}
 
-	if s.removeQueue.Stats().Items == 0 {
-		s.storageHandler.Cleanup()
-	}
+	s.removalFinished()
 }
 
 // rac is our queue's ready added callback which will get all ready put Requests
@@ -525,10 +588,7 @@ func (s *Server) rac(_ string, allitemdata []interface{}) {
 		s.Logger.Printf("failed to add jobs to wr's queue: %s", err)
 	}
 
-	go func() {
-		<-time.After(racRetriggerDelay)
-		s.queue.TriggerReadyAddedCallback(context.Background())
-	}()
+	s.scheduleRacRetrigger()
 }
 
 // estimateJobsNeeded always returns our numClients, unless the number of

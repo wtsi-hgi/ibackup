@@ -35,7 +35,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/inconshreveable/log15"
+	"github.com/inconshreveable/log15/v3"
 	"github.com/spf13/cobra"
 	"github.com/wtsi-hgi/ibackup/baton"
 	"github.com/wtsi-hgi/ibackup/fofn"

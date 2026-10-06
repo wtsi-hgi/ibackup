@@ -15,7 +15,7 @@ import (
 	"github.com/wtsi-hgi/ibackup/internal"
 	"github.com/wtsi-hgi/ibackup/set"
 	"github.com/wtsi-hgi/ibackup/transfer"
-	"github.com/wtsi-npg/extendo/v2"
+	"github.com/wtsi-npg/extendo/v3"
 )
 
 // options for this cmd.

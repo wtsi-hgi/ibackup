@@ -36,7 +36,7 @@ import (
 
 	"github.com/go-resty/resty/v2"
 	"github.com/hashicorp/go-multierror"
-	"github.com/inconshreveable/log15"
+	"github.com/inconshreveable/log15/v3"
 	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/ibackup/set"
 	"github.com/wtsi-hgi/ibackup/transfer"
@@ -515,6 +515,8 @@ func (c *Client) SendPutResultsToServer(uploadStarts, uploadResults, skipResults
 func (c *Client) handleUploadTracking(wg *sync.WaitGroup, uploadStarts, uploadResults chan *transfer.Request) {
 	defer wg.Done()
 
+	pending := make(map[string][]*transfer.Request)
+
 	for ru := range uploadStarts {
 		if c.firstTimeLoggingRID(ru.ID()) {
 			c.logger.Info(
@@ -537,7 +539,12 @@ func (c *Client) handleUploadTracking(wg *sync.WaitGroup, uploadStarts, uploadRe
 				c.uploadsErrCh <- err
 			}
 
-			rr := <-uploadResults
+			rr := waitForUploadResult(ru, uploadResults, pending)
+			if rr == nil {
+				c.logger.Warn("upload result never received", "rid", ru.ID())
+
+				continue
+			}
 
 			c.logger.Info(
 				"finished upload (status tracking skipped due to earlier error)",
@@ -550,10 +557,17 @@ func (c *Client) handleUploadTracking(wg *sync.WaitGroup, uploadStarts, uploadRe
 
 		stopStuckTimer := c.stuckIfUploadTakesTooLong(ru)
 
-		rr := <-uploadResults
+		rr := waitForUploadResult(ru, uploadResults, pending)
+
+		close(stopStuckTimer)
+
+		if rr == nil {
+			c.logger.Warn("upload result never received", "rid", ru.ID())
+
+			continue
+		}
 
 		c.logger.Info("finished upload", "rid", ru.ID(), "status", rr.Status)
-		close(stopStuckTimer)
 
 		if err := c.UpdateFileStatus(rr); err != nil {
 			if c.isRequestNoLongerRunningErr(err) {
@@ -565,6 +579,39 @@ func (c *Client) handleUploadTracking(wg *sync.WaitGroup, uploadStarts, uploadRe
 			}
 		}
 	}
+}
+
+// waitForUploadResult returns the result for the given upload start, or nil if
+// uploadResults closes without it. Results needn't arrive in start order (a
+// Putter returns a read failure immediately, but an earlier upload's result
+// only after its metadata is applied), so results for other requests are held
+// in pending until their own start is handled.
+func waitForUploadResult(start *transfer.Request, uploadResults chan *transfer.Request,
+	pending map[string][]*transfer.Request,
+) *transfer.Request {
+	id := start.ID()
+
+	if held := pending[id]; len(held) > 0 {
+		pending[id] = held[1:]
+
+		if len(held) == 1 {
+			delete(pending, id)
+		}
+
+		return held[0]
+	}
+
+	for rr := range uploadResults {
+		if rid := rr.ID(); rid != id {
+			pending[rid] = append(pending[rid], rr)
+
+			continue
+		}
+
+		return rr
+	}
+
+	return nil
 }
 
 // stuckIfUploadTakesTooLong will send stuck info to the server after some time

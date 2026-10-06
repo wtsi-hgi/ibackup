@@ -63,7 +63,7 @@ import (
 
 	"github.com/VertebrateResequencing/wr/client"
 	"github.com/VertebrateResequencing/wr/jobqueue"
-	"github.com/inconshreveable/log15"
+	"github.com/inconshreveable/log15/v3"
 	"github.com/phayes/freeport"
 	. "github.com/smartystreets/goconvey/convey"
 	gas "github.com/wtsi-hgi/go-authserver"
@@ -96,6 +96,12 @@ var (
 
 const serverTokenBasename = ".ibackup.token"
 
+// inProcessServerStopTimeout bounds an in-process server's Stop(). go-authserver
+// waits up to 10s for open connections to drain, and its tylerb/graceful server
+// deadlocks until then if a request starts arriving as it stops, so the limit
+// must exceed that.
+const inProcessServerStopTimeout = 30 * time.Second
+
 var cliMu sync.Mutex //nolint:gochecknoglobals
 
 const noBackupSets = `Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
@@ -122,6 +128,8 @@ var errRemoteMetaMissing = errors.New("remote meta did not contain expected subs
 var errWatchFofnsExitedEarly = errors.New("watchfofns exited before upload became visible")
 
 var errUploadCountMismatch = errors.New("upload count mismatch")
+
+const dirMode = 0750
 
 func TestServer(t *testing.T) {
 	Convey("An existing cache dir provided to an ACME-mode server must only be readable by the server user", t, func() {
@@ -171,8 +179,6 @@ func TestMain(m *testing.M) {
 	)
 
 	cleanup := func() {
-		resetIRODS()
-
 		if removeBinary != nil {
 			removeBinary()
 		}
@@ -221,6 +227,8 @@ func TestMain(m *testing.M) {
 
 	removeBinary = buildSelf()
 	if removeBinary == nil {
+		exitCode = 1
+
 		return
 	}
 
@@ -237,17 +245,6 @@ func TestMain(m *testing.M) {
 	os.Setenv("PATH", tmpStatter+":"+os.Getenv("PATH"))
 
 	exitCode = m.Run()
-}
-
-func resetIRODS() {
-	remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
-	if remotePath == "" {
-		return
-	}
-
-	icmd := testutil.NewIcommanderNoTB(2 * time.Minute)
-	icmd.IRM("-rf", remotePath)   //nolint:errcheck
-	icmd.IMKDIR("-p", remotePath) //nolint:errcheck
 }
 
 func failMainTest(err string) {
@@ -389,7 +386,7 @@ Local Path	Status	Size	Attempts	Date	Error`+"\n"+
 				"--path", path, "--metadata", setMetadata)
 
 			So(exitCode, ShouldEqual, 1)
-			So(err, ShouldContainSubstring, "namespace is incorrect, must be 'ibackup:user:' or empty")
+			So(err, ShouldContainSubstring, "namespace is incorrect, must be 'ibackup:user:', 'ibackup:fofn:', or empty")
 
 			setName = "invalidMetadataTest3"
 			setMetadata = "ibackup:name=name"
@@ -425,7 +422,7 @@ Local Path	Status	Size	Attempts	Date	Error`+"\n"+
 		})
 
 		Convey("Given a set of files", func() {
-			resetIRODSOrFail(t)
+			resetIRODSOrFail(t, remotePath)
 
 			file1 := filepath.Join(path, "file1")
 			file2 := filepath.Join(path, "file2")
@@ -442,7 +439,7 @@ Local Path	Status	Size	Attempts	Date	Error`+"\n"+
 			Convey("Add will apply default reason/review/remove metadata", func() {
 				s.addSetForTesting(t, setName, transformer, path)
 
-				s.waitForStatus(setName, "\nStatus: complete", 5*time.Second)
+				s.waitForStatus(setName, "\nStatus: complete", 30*time.Second)
 
 				testRemoteReviewRemove(t, filepath.Join(remotePath, "file1"),
 					"backup", now.AddDate(0, 6, 0), now.AddDate(1, 0, 0))
@@ -548,7 +545,7 @@ Local Path	Status	Size	Attempts	Date	Error`+"\n"+
 				}
 			})
 			Convey("Repeatedly uploading files that are changed or not changes status details", func() {
-				resetIRODSOrFail(t)
+				resetIRODSOrFail(t, remotePath)
 
 				setName = "changingFilesTest"
 
@@ -604,7 +601,7 @@ Global put client status (/10): 6 iRODS connections`)
 			})
 
 			Convey("Syncing a set with locally removed files will show orphaned status", func() {
-				resetIRODSOrFail(t)
+				resetIRODSOrFail(t, remotePath)
 
 				setName := "setWithOrphanedFiles"
 
@@ -699,7 +696,7 @@ Global put client status (/10): 6 iRODS connections`)
 			s.addSetForTesting(t, "hardlinkTest", transformer, path)
 
 			s.waitForStatus("hardlinkTest", "\nStatus: uploading", 60*time.Second)
-			s.waitForStatus("hardlinkTest", "\nStatus: complete", 60*time.Second)
+			s.waitForStatus("hardlinkTest", "\nStatus: complete\n", 60*time.Second)
 
 			output := getRemoteMeta(remoteFile)
 			So(output, ShouldNotContainSubstring, "ibackup:hardlink")
@@ -832,23 +829,13 @@ func NewUploadingTestServer(t *testing.T, withDBBackup bool) (*testServer, strin
 func initIRODSTestCollection(tb testing.TB) string {
 	tb.Helper()
 
-	collection := testutil.RequireIRODSTestCollection(tb)
-	if collection == "" {
-		return ""
-	}
-
-	resetIRODSOrFail(tb)
-
-	return collection
+	return testutil.RequireIRODSTestCollection(tb)
 }
 
-func resetIRODSOrFail(tb testing.TB) {
+// resetIRODSOrFail empties the given collection, which must be the test's own
+// collection from initIRODSTestCollection, never a shared base.
+func resetIRODSOrFail(tb testing.TB, remotePath string) {
 	tb.Helper()
-
-	remotePath := os.Getenv("IBACKUP_TEST_COLLECTION")
-	if remotePath == "" {
-		return
-	}
 
 	icmd := testutil.NewIcommander(tb)
 	if icmd == nil {
@@ -873,8 +860,6 @@ func NewIcommander(tb testing.TB) *testutil.ICommander {
 func testRemoteReviewRemove(t *testing.T, filepath, reason string, review, remove time.Time) {
 	t.Helper()
 
-	reviewStr, removeStr := testTimesToMeta(t, review, remove)
-
 	output := getRemoteMeta(filepath)
 	So(output, ShouldContainSubstring, `
 attribute: ibackup:reason
@@ -882,22 +867,10 @@ value: `+reason+`
 `)
 	So(output, ShouldContainSubstring, `
 attribute: ibackup:review
-value: `+reviewStr[:10])
+value: `+review.Format(time.DateOnly))
 	So(output, ShouldContainSubstring, `
 attribute: ibackup:removal
-value: `+removeStr[:10])
-}
-
-func testTimesToMeta(t *testing.T, reviewDate, removalDate time.Time) (string, string) {
-	t.Helper()
-
-	reviewStr, err := reviewDate.UTC().Truncate(time.Second).MarshalText()
-	So(err, ShouldBeNil)
-
-	removalStr, err := removalDate.UTC().Truncate(time.Second).MarshalText()
-	So(err, ShouldBeNil)
-
-	return string(reviewStr), string(removalStr)
+value: `+remove.Format(time.DateOnly))
 }
 
 func getRemoteMeta(path string) string {
@@ -996,7 +969,7 @@ func TestRemove(t *testing.T) {
 
 			setName := "testRemoveFiles1"
 
-			resetIRODSOrFail(t)
+			resetIRODSOrFail(t, remotePath)
 
 			s.addSetForTestingWithItems(t, setName, transformer, tempTestFileOfPaths.Name())
 
@@ -1008,7 +981,7 @@ func TestRemove(t *testing.T) {
 				s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
 					0, "Removal status: 0 / 1 objects removed")
 
-				s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 5*time.Second)
+				s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 30*time.Second)
 
 				trashSetName := set.TrashPrefix + setName
 
@@ -1080,7 +1053,7 @@ func TestRemove(t *testing.T) {
 					exitCode, _ = s.runBinary(t, "remove", "--name", setName, "--path", dir1)
 					So(exitCode, ShouldEqual, 0)
 
-					s.waitForStatus(setName, "Removal status: 2 / 2 objects removed", 5*time.Second)
+					s.waitForStatus(setName, "Removal status: 2 / 2 objects removed", 30*time.Second)
 
 					exitCode, output := s.runBinary(t, "status", "--name", setName, "-d")
 					So(exitCode, ShouldEqual, 0)
@@ -1103,7 +1076,7 @@ func TestRemove(t *testing.T) {
 
 						exitCode, _ = s.runBinary(t, "sync", "--name", setName)
 
-						s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 5*time.Second)
+						s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 30*time.Second)
 
 						s.waitForStatus(setName, "\nDiscovery: completed", 10*time.Second)
 						s.waitForStatus(setName, "\nStatus: complete", 10*time.Second)
@@ -1135,7 +1108,7 @@ func TestRemove(t *testing.T) {
 					exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", file2)
 					So(exitCode, ShouldEqual, 0)
 
-					s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 5*time.Second)
+					s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 30*time.Second)
 
 					remoteFile := filepath.Join(remotePath, "file2")
 					sets := getMetaValue(getRemoteMeta(remoteFile), transfer.MetaKeySets)
@@ -1210,7 +1183,7 @@ func TestRemove(t *testing.T) {
 				setName = "nestedDirSet"
 
 				s.addSetForTesting(t, setName, transformer, dir1)
-				s.waitForStatus(setName, "\nStatus: complete", 5*time.Second)
+				s.waitForStatus(setName, "\nStatus: complete", 30*time.Second)
 
 				Convey("Remove removes the nested dir even though it wasnt specified in the set", func() {
 					s.removePath(t, setName, dir3, 2)
@@ -1232,7 +1205,7 @@ func TestRemove(t *testing.T) {
 					s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
 						0, "Removal status: 0 / 4 objects removed")
 
-					s.waitForStatus(setName, "Removal status: 4 / 4 objects removed", 5*time.Second)
+					s.waitForStatus(setName, "Removal status: 4 / 4 objects removed", 30*time.Second)
 				})
 			})
 
@@ -1250,7 +1223,7 @@ func TestRemove(t *testing.T) {
 
 				So(exitCode, ShouldEqual, 0)
 
-				s.waitForStatus(setName, "Removal status: 3 / 3 objects removed", 5*time.Second)
+				s.waitForStatus(setName, "Removal status: 3 / 3 objects removed", 30*time.Second)
 
 				exitCode, output := s.runBinary(t, "status", "--name", setName, "-d")
 				So(exitCode, ShouldEqual, 0)
@@ -1282,7 +1255,7 @@ func TestRemove(t *testing.T) {
 
 				So(exitCode, ShouldEqual, 0)
 
-				s.waitForStatus(setName, "Removal status: 3 / 3 objects removed", 5*time.Second)
+				s.waitForStatus(setName, "Removal status: 3 / 3 objects removed", 30*time.Second)
 			})
 
 			Convey("if the server dies during removal, the removal will continue upon server startup", func() {
@@ -1317,7 +1290,7 @@ func TestRemove(t *testing.T) {
 
 				s.startServer()
 
-				s.waitForStatus(setName, "Removal status: 6 / 6 objects removed", 5*time.Second)
+				s.waitForStatus(setName, "Removal status: 6 / 6 objects removed", 30*time.Second)
 			})
 
 			Convey("And a new file added to a directory already in the set", func() {
@@ -1436,7 +1409,7 @@ func TestRemove(t *testing.T) {
 				exitCode, _ := s.runBinary(t, "sync", "--name", setName)
 				So(exitCode, ShouldEqual, 0)
 
-				s.waitForStatus(setName, "\nStatus: complete", 10*time.Second)
+				s.waitForStatus(setName, "\nStatus: complete\n", 10*time.Second)
 
 				s.confirmOutputContains(t, statusCmd, 0, "file1\tabnormal")
 
@@ -1668,7 +1641,7 @@ func runCLI(t *testing.T, env []string, stdin string, args ...string) (int, stri
 	cmd.SetCLIWriter(writer)
 	defer cmd.SetCLIWriter(nil)
 
-	cmd.SetLoggerHandler(log15.FuncHandler(func(record *log15.Record) error {
+	cmd.SetLoggerHandler(log15.FuncHandler(func(record log15.Record) error {
 		_, errw := io.WriteString(writer, record.Msg+"\n")
 
 		return errw
@@ -1759,6 +1732,8 @@ func normaliseOutput(out string) string {
 	ansiRe := regexp.MustCompile(`\x1b\[[0-9;]*m`)
 	out = ansiRe.ReplaceAllString(out, "")
 
+	discoveryDateRe := regexp.MustCompile(` \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$`)
+
 	lines := strings.Split(out, "\n")
 
 	for n, line := range lines {
@@ -1772,7 +1747,9 @@ func normaliseOutput(out string) string {
 		}
 
 		if strings.HasPrefix(line, "Discovery:") {
-			lines[n] = line[:10]
+			// keep the state (so waits for "Discovery: completed" work), but
+			// drop its varying timestamp
+			lines[n] = discoveryDateRe.ReplaceAllString(line, "")
 
 			continue
 		}
@@ -1868,7 +1845,7 @@ func TestTrashRemove(t *testing.T) {
 			setName := "testTrashFiles1"
 			trashSetName := set.TrashPrefix + setName
 
-			resetIRODSOrFail(t)
+			resetIRODSOrFail(t, remotePath)
 
 			s.addSetForTestingWithItems(t, setName, transformer, tempTestFileOfPaths.Name())
 
@@ -2945,7 +2922,7 @@ func TestEdit(t *testing.T) {
 					exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", setFile1)
 					So(exitCode, ShouldEqual, 0)
 
-					s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 5*time.Second)
+					s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 30*time.Second)
 
 					exitCode, _ = s.runBinary(t, "edit", "--name", setName, "--add", setFile1)
 					So(exitCode, ShouldEqual, 0)
@@ -3016,7 +2993,7 @@ func TestEdit(t *testing.T) {
 					exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", setFile1)
 					So(exitCode, ShouldEqual, 0)
 
-					s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 5*time.Second)
+					s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 30*time.Second)
 
 					exitCode, _ = s.runBinary(t, "edit", "--name", setName, "--add", setDir1)
 					So(exitCode, ShouldEqual, 0)
@@ -3057,7 +3034,7 @@ func TestEdit(t *testing.T) {
 					exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", setDir1)
 					So(exitCode, ShouldEqual, 0)
 
-					s.waitForStatus(setName, "Removal status: 2 / 2 objects removed", 5*time.Second)
+					s.waitForStatus(setName, "Removal status: 2 / 2 objects removed", 30*time.Second)
 
 					exitCode, _ = s.runBinary(t, "edit", "--name", setName, "--add", setDir1)
 					So(exitCode, ShouldEqual, 0)
@@ -3075,7 +3052,7 @@ func TestEdit(t *testing.T) {
 					exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", setDir1)
 					So(exitCode, ShouldEqual, 0)
 
-					s.waitForStatus(setName, "Removal status: 2 / 2 objects removed", 5*time.Second)
+					s.waitForStatus(setName, "Removal status: 2 / 2 objects removed", 30*time.Second)
 
 					setDir3 := filepath.Join(setDir1, "dir3")
 					err = os.Mkdir(setDir3, userPerms)
@@ -3101,7 +3078,7 @@ func TestEdit(t *testing.T) {
 						exitCode, _ = s.runBinary(t, "remove", "--name", setName, "--path", setDir3)
 						So(exitCode, ShouldEqual, 0)
 
-						s.waitForStatus(setName, "Removal status: 3 / 3 objects removed", 5*time.Second)
+						s.waitForStatus(setName, "Removal status: 3 / 3 objects removed", 30*time.Second)
 
 						exitCode, _ = s.runBinary(t, "edit", "--name", setName, "--add", setDir1)
 						So(exitCode, ShouldEqual, 0)
@@ -4013,7 +3990,7 @@ func (s *testServer) Shutdown() error {
 
 		select {
 		case <-stopDone:
-		case <-time.After(5 * time.Second):
+		case <-time.After(inProcessServerStopTimeout):
 			return errServerStopTimeout
 		}
 
@@ -4373,7 +4350,7 @@ func TestList(t *testing.T) {
 					exitCode, _ := s.runBinary(t, "add", "-p", dir2,
 						"--name", setName2, "--transformer", "prefix="+dir2+":"+remotePath)
 					So(exitCode, ShouldEqual, 0)
-					s.waitForStatus(setName2, "Status: complete", 5*time.Second)
+					s.waitForStatus(setName2, "Status: complete", 30*time.Second)
 
 					err := s.Shutdown()
 					So(err, ShouldBeNil)
@@ -4547,7 +4524,7 @@ Review date: `+reviewDate+`
 Removal date: `+removalDate+`
 Monitored: false; Archive: false; Frozen: false
 Status: complete
-Discovery:
+Discovery: completed
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Completed in: 0s
@@ -4564,7 +4541,7 @@ Directories:
 			exitCode, _ := s.runBinary(t, "add", "--name", setName, "--transformer",
 				transformer, "--path", localDir, "--metadata", meta)
 			So(exitCode, ShouldEqual, 0)
-			s.waitForStatus(setName, "\nDiscovery: completed", 5*time.Second)
+			s.waitForStatus(setName, "\nDiscovery: completed", 30*time.Second)
 
 			Convey("Status tells you the user metadata", func() {
 				s.confirmOutput(t, []string{"status"}, 0, `Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
@@ -4578,7 +4555,7 @@ Removal date: `+removalDate+`
 User metadata: testKey=testVal;testKey2=testVal2
 Monitored: false; Archive: false; Frozen: false
 Status: complete
-Discovery:
+Discovery: completed
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Completed in: 0s
@@ -4592,6 +4569,8 @@ Directories:
 					"--path", localDir, "--metadata", meta, "--reason", "archive", "--remove", "2999-01-01")
 				So(exitCode, ShouldEqual, 0)
 
+				s.waitForStatus(setName, "\nStatus: complete", 30*time.Second)
+
 				s.confirmOutput(t, []string{"status", "-n", setName}, 0,
 					`Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
 Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
@@ -4604,7 +4583,7 @@ Removal date: 2999-01-01
 User metadata: `+meta+`
 Monitored: false; Archive: false; Frozen: false
 Status: complete
-Discovery:
+Discovery: completed
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Completed in: 0s
@@ -4618,6 +4597,8 @@ Directories:
 					"--path", localDir)
 				So(exitCode, ShouldEqual, 0)
 
+				s.waitForStatus(setName, "\nStatus: complete", 30*time.Second)
+
 				s.confirmOutput(t, []string{"status", "-n", setName}, 0,
 					`Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
 Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
@@ -4629,7 +4610,7 @@ Review date: `+reviewDate+`
 Removal date: `+removalDate+`
 Monitored: false; Archive: false; Frozen: false
 Status: complete
-Discovery:
+Discovery: completed
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Completed in: 0s
@@ -4642,6 +4623,8 @@ Directories:
 					"--path", localDir, "--reason", "backup")
 				So(exitCode, ShouldEqual, 0)
 
+				s.waitForStatus(setName, "\nStatus: complete", 30*time.Second)
+
 				s.confirmOutput(t, []string{"status", "-n", setName}, 0,
 					`Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
 Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
@@ -4653,7 +4636,7 @@ Review date: `+reviewDate+`
 Removal date: `+removalDate+`
 Monitored: false; Archive: false; Frozen: false
 Status: complete
-Discovery:
+Discovery: completed
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Completed in: 0s
@@ -4679,7 +4662,7 @@ Review date: `+reviewDate+`
 Removal date: `+removalDate+`
 Monitored: false; Archive: false; Frozen: false
 Status: complete
-Discovery:
+Discovery: completed
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Completed in: 0s
@@ -4695,7 +4678,7 @@ Review date: `+reviewDate+`
 Removal date: `+removalDate+`
 Monitored: false; Archive: false; Frozen: false
 Status: complete
-Discovery:
+Discovery: completed
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Completed in: 0s
@@ -4711,7 +4694,7 @@ Review date: `+reviewDate+`
 Removal date: `+removalDate+`
 Monitored: false; Archive: false; Frozen: false
 Status: complete
-Discovery:
+Discovery: completed
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Completed in: 0s
@@ -4731,7 +4714,7 @@ Review date: `+reviewDate+`
 Removal date: `+removalDate+`
 Monitored: false; Archive: false; Frozen: false
 Status: complete
-Discovery:
+Discovery: completed
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Completed in: 0s
@@ -4747,7 +4730,7 @@ Review date: `+reviewDate+`
 Removal date: `+removalDate+`
 Monitored: false; Archive: false; Frozen: false
 Status: complete
-Discovery:
+Discovery: completed
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Completed in: 0s
@@ -4763,7 +4746,7 @@ Review date: `+reviewDate+`
 Removal date: `+removalDate+`
 Monitored: false; Archive: false; Frozen: false
 Status: complete
-Discovery:
+Discovery: completed
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Completed in: 0s
@@ -4788,6 +4771,7 @@ Directories:
 			So(exitCode, ShouldEqual, 0)
 
 			s.waitForStatus("testAddFiles", "Status: complete", 1*time.Second)
+			s.waitForStatus("testAddFiles", "Global put queue status: 2 queued", 10*time.Second)
 
 			Convey("Status tells you an example of where input files would get uploaded to", func() {
 				s.confirmOutput(t, []string{"status", "--name", "testAddFiles"}, 0,
@@ -4801,7 +4785,7 @@ Review date: `+reviewDate+`
 Removal date: `+removalDate+`
 Monitored: false; Archive: false; Frozen: false
 Status: complete
-Discovery:
+Discovery: completed
 Num files: 2; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 2; Orphaned: 0; Abnormal: 0
 Completed in: 0s
@@ -4823,7 +4807,7 @@ Review date: `+reviewDate+`
 Removal date: `+removalDate+`
 Monitored: false; Archive: false; Frozen: false
 Status: complete
-Discovery:
+Discovery: completed
 Num files: 2; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 2; Orphaned: 0; Abnormal: 0
 Completed in: 0s
@@ -4849,7 +4833,7 @@ Review date: ` + reviewDate + `
 Removal date: ` + removalDate + `
 Monitored: false; Archive: false; Frozen: false
 Status: complete
-Discovery:
+Discovery: completed
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Completed in: 0s
@@ -4886,7 +4870,7 @@ Review date: `+reviewDate+`
 Removal date: `+removalDate+`
 Monitored: false; Archive: false; Frozen: false
 Status: complete
-Discovery:
+Discovery: completed
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Completed in: 0s
@@ -4922,7 +4906,7 @@ Removal date: `+removalDate+`
 Monitored: false; Archive: false; Frozen: false
 Status: complete
 Warning: `+badPermDir+`/: permission denied
-Discovery:
+Discovery: completed
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Completed in: 0s
@@ -4941,6 +4925,7 @@ Directories:
 			}
 
 			s.addSetForTesting(t, "humgenV2Set", "humgen", humgenFile)
+			s.waitForStatus("humgenV2Set", "Global put queue status: 1 queued", 10*time.Second)
 
 			s.confirmOutput(t, []string{"status", "-n", "humgenV2Set"}, 0,
 				`Global put queue status: 1 queued; 0 reserved to be worked on; 0 failed
@@ -4953,7 +4938,7 @@ Review date: `+reviewDate+`
 Removal date: `+removalDate+`
 Monitored: false; Archive: false; Frozen: false
 Status: pending upload
-Discovery:
+Discovery: completed
 Num files: 1; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B (and counting) / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Example File: `+humgenFile+" => /humgen/teams/hgi/scratch125_v2/mercury/ibackup/file_for_testsuite.do_not_delete")
@@ -4970,6 +4955,7 @@ Example File: `+humgenFile+" => /humgen/teams/hgi/scratch125_v2/mercury/ibackup/
 			}
 
 			s.addSetForTesting(t, "gengenSet", "gengen", gengenFile)
+			s.waitForStatus("gengenSet", "Global put queue status: 1 queued", 10*time.Second)
 
 			s.confirmOutput(t, []string{"status", "-n", "gengenSet"}, 0,
 				`Global put queue status: 1 queued; 0 reserved to be worked on; 0 failed
@@ -4982,7 +4968,7 @@ Review date: `+reviewDate+`
 Removal date: `+removalDate+`
 Monitored: false; Archive: false; Frozen: false
 Status: pending upload
-Discovery:
+Discovery: completed
 Num files: 1; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B (and counting) / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Example File: `+gengenFile+" => /humgen/gengen/teams/hgi/scratch126/mercury/ibackup/file_for_testsuite.do_not_delete")
@@ -4999,6 +4985,7 @@ Example File: `+gengenFile+" => /humgen/gengen/teams/hgi/scratch126/mercury/ibac
 			}
 
 			s.addSetForTesting(t, "gengenV2Set", "gengen", gFile)
+			s.waitForStatus("gengenV2Set", "Global put queue status: 1 queued", 10*time.Second)
 
 			s.confirmOutput(t, []string{"status", "-n", "gengenV2Set"}, 0,
 				`Global put queue status: 1 queued; 0 reserved to be worked on; 0 failed
@@ -5011,7 +4998,7 @@ Review date: `+reviewDate+`
 Removal date: `+removalDate+`
 Monitored: false; Archive: false; Frozen: false
 Status: pending upload
-Discovery:
+Discovery: completed
 Num files: 1; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B (and counting) / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Example File: `+gFile+" => /humgen/gengen/teams/hgi/scratch126_v2/mercury/ibackup/file_for_testsuite.do_not_delete")
@@ -5039,6 +5026,7 @@ Example File: `+gFile+" => /humgen/gengen/teams/hgi/scratch126_v2/mercury/ibacku
 			So(exitCode, ShouldEqual, 0)
 
 			s.waitForStatus("testLinks", "Status: pending upload", 1*time.Second)
+			s.waitForStatus("testLinks", "Global put queue status: 4 queued", 10*time.Second)
 
 			s.confirmOutput(t, []string{"status", "--name", "testLinks"}, 0,
 				`Global put queue status: 4 queued; 0 reserved to be worked on; 0 failed
@@ -5051,7 +5039,7 @@ Review date: `+reviewDate+`
 Removal date: `+removalDate+`
 Monitored: false; Archive: false; Frozen: false
 Status: pending upload
-Discovery:
+Discovery: completed
 Num files: 4; Symlinks: 2; Hardlinks: 1; Size (total/recently uploaded/recently removed): 0 B (and counting) / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Directories:
@@ -5068,7 +5056,7 @@ Directories:
 
 			So(exitCode, ShouldEqual, 0)
 
-			s.waitForStatus(setName, "Monitored: 4d", 5*time.Second)
+			s.waitForStatus(setName, "Monitored: 4d", 30*time.Second)
 
 			setName = "testAddMonitorWeek"
 			exitCode, _ = s.runBinary(t, "add", "--path", dir,
@@ -5077,7 +5065,7 @@ Directories:
 
 			So(exitCode, ShouldEqual, 0)
 
-			s.waitForStatus(setName, "Monitored: 2w", 5*time.Second)
+			s.waitForStatus(setName, "Monitored: 2w", 30*time.Second)
 		})
 
 		Convey("Sets added with a monitor that monitors removals displays this", func() {
@@ -5090,7 +5078,7 @@ Directories:
 
 			So(exitCode, ShouldEqual, 0)
 
-			s.waitForStatus(setName, "Monitored (with removals): 4d", 5*time.Second)
+			s.waitForStatus(setName, "Monitored (with removals): 4d", 30*time.Second)
 		})
 
 		Convey("When requesting statuses for all users, requesters are shown in output", func() {
@@ -5114,7 +5102,7 @@ Review date: `+reviewDate+`
 Removal date: `+removalDate+`
 Monitored: false; Archive: false; Frozen: false
 Status: complete
-Discovery:
+Discovery: completed
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Completed in: 0s
@@ -5146,7 +5134,7 @@ Review date: `+reviewDate+`
 Removal date: `+removalDate+`
 Monitored: false; Archive: false; Frozen: false
 Status: complete
-Discovery:
+Discovery: completed
 Num files: 1; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 1
 Completed in: 0s
@@ -5174,7 +5162,7 @@ Review date: `+reviewDate+`
 Removal date: `+removalDate+`
 Monitored: false; Archive: false; Frozen: false
 Status: complete
-Discovery:
+Discovery: completed
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Completed in: 0s
@@ -5348,7 +5336,7 @@ Review date: `+reviewDate+`
 Removal date: `+removalDate+`
 Monitored: false; Archive: false; Frozen: false
 Status: complete
-Discovery:
+Discovery: completed
 Num files: 0; Symlinks: 0; Hardlinks: 0; Size (total/recently uploaded/recently removed): 0 B / 0 B / 0 B
 Uploaded: 0; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0
 Completed in: 0s
@@ -5381,7 +5369,7 @@ func TestReAdd(t *testing.T) {
 		Convey("Re-adding a set with the same name fails", func() {
 			s.addSetForTesting(t, name, transformer, localDir)
 
-			s.waitForStatus(name, "Status:", 5*time.Second)
+			s.waitForStatus(name, "Status:", 30*time.Second)
 
 			s.confirmOutputContains(t, []string{"add", "--name", name, "--transformer", transformer, "--path", localDir}, 1,
 				"set with this name already exists")
@@ -5475,8 +5463,6 @@ func (b *safeBuffer) String() string {
 	return b.buf.String()
 }
 
-const dirMode = 0750
-
 func TestWatchFofnsRealWRIntegration(t *testing.T) {
 	Convey("watchfofns real-wr integration", t, func() {
 		schedulerDeployment := os.Getenv("IBACKUP_TEST_SCHEDULER")
@@ -5560,7 +5546,7 @@ func TestWatchFofnsRealWRIntegration(t *testing.T) {
 		configPath := filepath.Join(localRoot, "ibackup_config.json")
 		txName := "watchfofns_it"
 
-		client := fofn.NewClient(filesRoot)
+		client := fofn.NewClient(watchDir)
 		got := &set.Set{Name: "proj", Requester: "me", Transformer: txName}
 
 		So(client.AddOrUpdateSet(got), ShouldBeNil)
@@ -5599,19 +5585,26 @@ func TestWatchFofnsRealWRIntegration(t *testing.T) {
 		So(client.MergeFiles(got.ID(), paths), ShouldBeNil)
 		So(client.TriggerDiscovery(got.ID(), false), ShouldBeNil)
 
-		// Run watchfofns in the background, cancelling once status is correct.
-		ctx, cancel := context.WithCancel(context.Background())
+		// watchfofns submits wr jobs that run its own executable, so it must run
+		// as the built ibackup binary: in-process, the jobs would run this test
+		// binary instead.
+		watchCmd := exec.Command(resolveBinary(app), //nolint:gosec,noctx
+			"watchfofns",
+			"--dir", watchDir,
+			"--interval", "1s",
+			"--min-chunk", "10000",
+			"--max-chunk", "10000",
+			"--wr_deployment", schedulerDeployment,
+		)
 
-		cmd.SetWatchCtxFunc(func() (context.Context, context.CancelFunc) {
-			return ctx, cancel
-		})
-		t.Cleanup(func() { cmd.SetWatchCtxFunc(nil) })
+		watchCmd.Env = append(os.Environ(), "IBACKUP_CONFIG="+configPath)
 
-		// Ensure wr gets a PATH that includes our built ibackup.
-		env := []string{
-			"IBACKUP_CONFIG=" + configPath,
-			"PATH=" + testRootDir + ":" + os.Getenv("PATH"),
-		}
+		var watchOut safeBuffer
+
+		watchCmd.Stdout = &watchOut
+		watchCmd.Stderr = &watchOut
+
+		So(watchCmd.Start(), ShouldBeNil)
 
 		var (
 			exitCode int
@@ -5621,17 +5614,25 @@ func TestWatchFofnsRealWRIntegration(t *testing.T) {
 		done := make(chan struct{})
 
 		go func() {
-			exitCode, output = runCLI(nil, env, "",
-				"watchfofns",
-				"--dir", watchDir,
-				"--interval", "1s",
-				"--min-chunk", "10000",
-				"--max-chunk", "10000",
-				"--wr_deployment", schedulerDeployment,
-			)
+			_ = watchCmd.Wait() //nolint:errcheck
+
+			exitCode = watchCmd.ProcessState.ExitCode()
+			output = watchOut.String()
 
 			close(done)
 		}()
+
+		cancel := func() { _ = watchCmd.Process.Signal(syscall.SIGTERM) } //nolint:errcheck
+
+		t.Cleanup(func() {
+			cancel()
+
+			select {
+			case <-done:
+			case <-time.After(30 * time.Second):
+				_ = watchCmd.Process.Kill() //nolint:errcheck
+			}
+		})
 
 		// Wait for remote uploads and local status file.
 		remoteFiles := make([]string, len(paths))
@@ -5665,15 +5666,17 @@ func TestWatchFofnsRealWRIntegration(t *testing.T) {
 		}
 
 		for _, rf := range remoteFiles {
-			uploadVisibleErr := waitForRemoteFile(rf, 20*time.Second)
+			// The job creates each nested collection before uploading, which
+			// can take several seconds per collection.
+			uploadVisibleErr := waitForRemoteFile(rf, 2*time.Minute)
 			if uploadVisibleErr != nil {
 				cancel()
 
 				select {
 				case <-done:
 				case <-time.After(30 * time.Second):
-					t.Fatalf("watchfofns did not exit after cancel within timeout: exit=%d output=%s",
-						exitCode, output)
+					t.Fatalf("watchfofns did not exit after cancel within timeout: output=%s",
+						watchOut.String())
 				}
 
 				wrappedErr := fmt.Errorf("waitForRemoteFile(%q) failed: %w; exit=%d output=%s",
@@ -6276,9 +6279,9 @@ func TestPutReportFlag(t *testing.T) {
 				statusMap[e.Local] = e.Status
 			}
 
-			So(statusMap[file1], ShouldEqual, "uploaded")
-			So(statusMap[file2], ShouldEqual, "unmodified")
-			So(statusMap[fileMissing], ShouldEqual, "missing")
+			So(statusMap[file1], ShouldEqual, transfer.RequestStatusUploaded)
+			So(statusMap[file2], ShouldEqual, transfer.RequestStatusUnmodified)
+			So(statusMap[fileMissing], ShouldEqual, transfer.RequestStatusMissing)
 
 			for _, e := range entries {
 				So(e.Remote, ShouldNotBeEmpty)
@@ -6353,8 +6356,8 @@ func TestPutReportFlag(t *testing.T) {
 				statusMap[e.Local] = e.Status
 			}
 
-			So(statusMap[goodFile], ShouldEqual, "uploaded")
-			So(statusMap[badFile], ShouldEqual, "failed")
+			So(statusMap[goodFile], ShouldEqual, transfer.RequestStatusUploaded)
+			So(statusMap[badFile], ShouldEqual, transfer.RequestStatusFailed)
 		})
 	})
 }

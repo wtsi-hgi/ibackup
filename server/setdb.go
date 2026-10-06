@@ -828,6 +828,10 @@ func (s *Server) makeItemsDefsFromDirPaths(givenSet *set.Set,
 	return defs, remReqs, nil
 }
 
+// removeFileFromIRODSandDB removes the given request's file from the remote
+// storage, unless an earlier attempt already did, then from the database. The
+// database side is one transaction that also marks the request complete, so a
+// retry after a stop between the two only redoes the database side.
 func (s *Server) removeFileFromIRODSandDB(removeReq *set.RemoveReq) error {
 	entry, err := s.db.GetFileEntryForSet(removeReq.Set.ID(), removeReq.Path)
 	if err != nil {
@@ -839,11 +843,9 @@ func (s *Server) removeFileFromIRODSandDB(removeReq *set.RemoveReq) error {
 		return err
 	}
 
-	if removeReq.Action == set.ToTrash {
-		return s.processDBFileTrash(removeReq.Set, entry)
-	}
+	_, err = s.db.RemoveFileEntry(removeReq, entry)
 
-	return s.processDBFileRemoval(removeReq.Set.ID(), entry, true)
+	return err
 }
 
 func (s *Server) processRemoteFileRemoval(removeReq *set.RemoveReq, entry *set.Entry) error {
@@ -879,59 +881,6 @@ func (s *Server) processRemoteFileRemoval(removeReq *set.RemoveReq, entry *set.E
 
 func fileErrorCannotBeIgnored(err error, mayMissInRemote bool) bool {
 	return !(mayMissInRemote && strings.Contains(err.Error(), internal.ErrFileDoesNotExist)) //nolint:staticcheck,lll
-}
-
-func (s *Server) processDBFileTrash(set *set.Set, entry *set.Entry) error {
-	if entry.WasNotUploaded() {
-		return s.processDBFileRemoval(set.ID(), entry, false)
-	}
-
-	err := s.db.PutEntryInTrash(set, entry)
-	if err != nil {
-		return err
-	}
-
-	return s.processDBFileRemoval(set.ID(), entry, false)
-}
-
-func (s *Server) processDBFileRemoval(setID string, entry *set.Entry, checkInode bool) error {
-	err := s.db.RemoveFileEntry(setID, entry.Path)
-	if err != nil {
-		return err
-	}
-
-	if checkInode {
-		err = s.processDBInodeRemoval(entry)
-		if err != nil {
-			return err
-		}
-	}
-
-	err = s.db.RemovePathFromFailedBucket(setID, entry.Path)
-	if err != nil {
-		return err
-	}
-
-	return s.db.UpdateBasedOnRemovedEntry(setID, entry)
-}
-
-// processDBInodeRemoval checks if the inode for the entry should be removed and
-// removes it. It expects that the entry has already been removed from db.
-func (s *Server) processDBInodeRemoval(entry *set.Entry) error {
-	if entry.Type == set.Symlink || entry.Type == set.Abnormal {
-		return nil
-	}
-
-	setsWithFile, err := s.db.GetAllSetsForFile(entry.Path)
-	if err != nil {
-		return err
-	}
-
-	if len(setsWithFile) > 0 {
-		return nil
-	}
-
-	return s.db.RemoveFileFromInode(entry.Path, entry.Inode)
 }
 
 func (s *Server) updateOrRemoveRemoteFile(removeReq *set.RemoveReq, transformer transformer.PathTransformer,
@@ -1167,29 +1116,6 @@ func (s *Server) setErrorOnEntry(entry *set.Entry, sid, path string, errMsg stri
 	if erru != nil {
 		s.Logger.Printf("%s", erru.Error())
 	}
-}
-
-func (s *Server) removeDirFromDB(setID, path string) error {
-	err := s.db.RemoveDirEntry(setID, path)
-	if err != nil {
-		return err
-	}
-
-	return s.db.IncrementSetTotalRemoved(setID)
-}
-
-func (s *Server) trashDirFromDB(givenSet *set.Set, path string) error {
-	entry, err := s.db.GetDirEntryForSet(givenSet.ID(), path)
-	if err != nil {
-		return err
-	}
-
-	err = s.db.PutEntryInTrash(givenSet, entry)
-	if err != nil {
-		return err
-	}
-
-	return s.removeDirFromDB(givenSet.ID(), path)
 }
 
 // bindPathsAndValidateSet gets the paths out of the JSON body, and the set id
@@ -1587,16 +1513,28 @@ func (s *Server) getRequests(c *gin.Context) {
 		return
 	}
 
+	if len(requests) == 0 {
+		// a client given no requests exits; until wr records its job as
+		// complete, put jobs rac submits for newly ready requests are rejected
+		// as duplicates, so trigger submission again once that should be done
+		s.triggerReadyAddedCallbackAfter(clientExitGrace)
+	}
+
 	c.JSON(http.StatusOK, requests)
 }
 
 // reserveRequests keeps reserving items from our queue until we have total
 // requests/s.numClients (but max 100) of them, or the queue is empty.
 //
+// Hardlink requests whose remote inode file is being worked on by a different
+// client are not returned; they wait in the queue until that client is done
+// with it.
+//
 // Returns the Requests in the items.
 func (s *Server) reserveRequests() ([]*transfer.Request, error) {
 	n := s.getCachedNumRequestsToReserve()
 	requests := make([]*transfer.Request, 0, n)
+	batch := make(map[string]bool)
 	count := 0
 
 	for {
@@ -1609,6 +1547,15 @@ func (s *Server) reserveRequests() ([]*transfer.Request, error) {
 			break
 		}
 
+		claimed, err := s.remoteClaims.claim(r, batch)
+		if err != nil {
+			s.releaseUnclaimedRequest(r, err)
+		}
+
+		if !claimed {
+			continue
+		}
+
 		r.MakeSafeForJSON()
 		requests = append(requests, r)
 
@@ -1619,6 +1566,25 @@ func (s *Server) reserveRequests() ([]*transfer.Request, error) {
 	}
 
 	return requests, nil
+}
+
+// releaseUnclaimedRequest releases a reserved request whose remote hardlink
+// couldn't be claimed, so it is retried instead of staying reserved until its
+// TTR expires. Like removal retries, the release is delayed by retryDelay; this
+// also stops reserveRequests immediately reserving it again. If the release
+// fails, TTR expiry remains the fallback.
+func (s *Server) releaseUnclaimedRequest(r *transfer.Request, claimErr error) {
+	rid := r.ID()
+
+	s.Logger.Printf("failed to claim remote hardlink for rid=%s: %s", rid, claimErr)
+
+	if err := s.queue.SetDelay(rid, retryDelay); err != nil {
+		s.Logger.Printf("request retry delay set failed rid=%s delay=%s err=%s", rid, retryDelay, err)
+	}
+
+	if err := s.queue.Release(context.Background(), rid); err != nil {
+		s.Logger.Printf("failed to release unclaimed request rid=%s: %s", rid, err)
+	}
 }
 
 // getCachedNumRequestsToReserve calls numRequestsToReserve and caches the
@@ -1924,8 +1890,13 @@ func (s *Server) trackUploadingAndStuckRequests(r *transfer.Request, entry *set.
 
 // removeOrReleaseRequestFromQueue removes the given Request from our queue
 // unless it has failed. < 3 failures results in it being released, 3 results in
-// it being buried.
+// it being buried. Either way, any claim it has on a remote inode file is
+// released.
 func (s *Server) removeOrReleaseRequestFromQueue(r *transfer.Request, entry *set.Entry) error {
+	return errors.Join(s.moveFinishedRequestInQueue(r, entry), s.remoteClaims.release(r))
+}
+
+func (s *Server) moveFinishedRequestInQueue(r *transfer.Request, entry *set.Entry) error {
 	rSuffix := s.replicaLogSuffix(r)
 
 	if r.Status == transfer.RequestStatusFailed {

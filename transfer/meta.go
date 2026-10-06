@@ -38,6 +38,9 @@ import (
 	"github.com/wtsi-hgi/ibackup/internal"
 )
 
+// timeNow is time.Now, replaceable by tests.
+var timeNow = time.Now //nolint:gochecknoglobals
+
 const (
 	MetaNamespace     = "ibackup:"
 	MetaUserNamespace = MetaNamespace + "user:"
@@ -163,8 +166,8 @@ func createBackupMetadata(reason Reason, review, removal string, mm *Meta) error
 		return err
 	}
 
-	if reviewDate.After(removalDate) {
-		return MetaError{ErrInvalidReviewRemoveDate, fmt.Sprintf("%s is after %s", review, removal)}
+	if !reviewDate.Before(removalDate) {
+		return MetaError{ErrInvalidReviewRemoveDate, fmt.Sprintf("%s is not before %s", review, removal)}
 	}
 
 	reviewStr, removalStr, err := reviewRemovalDatesToMeta(reviewDate, removalDate)
@@ -231,12 +234,21 @@ func getFutureDateFromDurationOrDate(t string) (time.Time, error) {
 
 	switch t[len(t)-1] {
 	case 'y':
-		return time.Now().AddDate(num, 0, 0), nil
+		return futureDate(num, 0), nil
 	case 'm':
-		return time.Now().AddDate(0, num, 0), nil
+		return futureDate(0, num), nil
 	default:
 		return time.Time{}, MetaError{ErrInvalidDurationFormat, t}
 	}
+}
+
+// futureDate returns the user's local calendar date the given years and months
+// from now, at midnight UTC: the same form time.Parse gives an explicit
+// YYYY-MM-DD date, so that the date shown is the date the user meant.
+func futureDate(years, months int) time.Time {
+	d := timeNow().AddDate(years, months, 0)
+
+	return time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, time.UTC)
 }
 
 func (r Reason) String() string {
