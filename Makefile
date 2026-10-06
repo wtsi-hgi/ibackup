@@ -46,9 +46,13 @@ define test-main
 	printf 'ok  main package tests passed in %dm%02ds\n' $$(( took / 60 )) $$(( took % 60 ))
 endef
 
+# The server package takes close to Go's 10m default test timeout under -race,
+# and longer on a busy host, so the sub-package tests get their own bound.
+SUBPKG_TEST_TIMEOUT ?= 30m
+
 test:
 	$(call test-main,,7200)
-	@go test -tags netgo --count 1 $(shell go list ./... | grep -v '^${PKG}$$')
+	@go test -tags netgo --count 1 -timeout $(SUBPKG_TEST_TIMEOUT) $(shell go list ./... | grep -v '^${PKG}$$')
 
 race: race-subpkgs
 	@$(MAKE) race-main
@@ -57,7 +61,7 @@ race-main:
 	$(call test-main,-race,3600)
 
 race-subpkgs:
-	@go test -tags netgo -race --count 1 $(shell go list ./... | grep -v '^${PKG}$$')
+	@go test -tags netgo -race --count 1 -timeout $(SUBPKG_TEST_TIMEOUT) $(shell go list ./... | grep -v '^${PKG}$$')
 
 bench:
 	go test -tags netgo --count 1 -run Bench -bench=. ./...
