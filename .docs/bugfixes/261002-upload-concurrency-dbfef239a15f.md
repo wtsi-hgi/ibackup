@@ -1,11 +1,9 @@
 # Bugfixes 2026-10-02: upload concurrency
 
 - Branch: `bugfix-upload-concurrency-dbfef239a15f`
-- Base: dependency `deps` at `24c0c9ab0123`; integration base `origin/develop`
-  at `1727e87b34e8` (resolved 2026-10-02)
-- Dependency: `deps` (PR not yet opened). Held for dependency merge: keep this
-  branch local; don't push or open a PR until `deps` is merged and this
-  branch is moved onto the updated `origin/develop`.
+- Base: `origin/develop` at `43f73234a4d0` (deps merged as PR #193,
+  2026-10-06; moved from `deps` at `24c0c9ab0123`)
+- Dependency: `deps` merged (PR #193); no longer held.
 - Queue owner: `deps`, `.docs/bugfixes/260930-deps-update-702d9698d638.md`
 - Origin: `deps`, `.docs/bugfixes/260930-deps-update-702d9698d638.md`
 
