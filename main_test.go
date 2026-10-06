@@ -860,8 +860,6 @@ func NewIcommander(tb testing.TB) *testutil.ICommander {
 func testRemoteReviewRemove(t *testing.T, filepath, reason string, review, remove time.Time) {
 	t.Helper()
 
-	reviewStr, removeStr := testTimesToMeta(t, review, remove)
-
 	output := getRemoteMeta(filepath)
 	So(output, ShouldContainSubstring, `
 attribute: ibackup:reason
@@ -869,22 +867,10 @@ value: `+reason+`
 `)
 	So(output, ShouldContainSubstring, `
 attribute: ibackup:review
-value: `+reviewStr[:10])
+value: `+review.Format(time.DateOnly))
 	So(output, ShouldContainSubstring, `
 attribute: ibackup:removal
-value: `+removeStr[:10])
-}
-
-func testTimesToMeta(t *testing.T, reviewDate, removalDate time.Time) (string, string) {
-	t.Helper()
-
-	reviewStr, err := reviewDate.UTC().Truncate(time.Second).MarshalText()
-	So(err, ShouldBeNil)
-
-	removalStr, err := removalDate.UTC().Truncate(time.Second).MarshalText()
-	So(err, ShouldBeNil)
-
-	return string(reviewStr), string(removalStr)
+value: `+remove.Format(time.DateOnly))
 }
 
 func getRemoteMeta(path string) string {
