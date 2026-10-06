@@ -209,7 +209,7 @@ func (e *Entry) updateTypeDestAndInode(newEntry *Entry) bool {
 	e.Dest = newEntry.Dest
 	e.Inode = newEntry.Inode
 
-	if e.Status == Uploaded && newEntry.Status == Missing {
+	if e.IsUploaded() && newEntry.Status == Missing {
 		e.Status = Orphaned
 	} else {
 		e.Status = newEntry.Status
@@ -399,7 +399,9 @@ func (c *entryCreator) existingOrNewEncodedEntry(dirent *Dirent) ([]byte, error)
 		c.countStatus(dbEntry)
 	}
 
-	if c.set.Frozen && isUploaded || !changed && !counted {
+	// Frozen sets keep an uploaded entry as it was, so changed files don't get
+	// uploaded again, unless it's now orphaned: that status was just counted.
+	if c.set.Frozen && isUploaded && dbEntry.Status != Orphaned || !changed && !counted {
 		return e, nil
 	}
 

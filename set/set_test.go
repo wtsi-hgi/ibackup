@@ -2254,6 +2254,162 @@ func TestSetDB(t *testing.T) {
 					So(entries[0].Inode, ShouldNotEqual, oldInode)
 				})
 			})
+
+			Convey("And add a frozen set whose uploaded file is deleted locally, rediscovery stores and counts "+
+				"it as orphaned", func() {
+				setl1 := &Set{
+					Name:        "frozenOrphan",
+					Requester:   "jim",
+					Transformer: "prefix=/tmp:/remote",
+					Frozen:      true,
+				}
+
+				So(db.AddOrUpdate(setl1), ShouldBeNil)
+
+				aFile := filepath.Join(t.TempDir(), "a")
+				internal.CreateTestFile(t, aFile, "a")
+
+				So(db.MergeFileEntries(setl1.ID(), []string{aFile}), ShouldBeNil)
+
+				_, err = db.Discover(setl1.ID(), nil)
+				So(err, ShouldBeNil)
+
+				entries, errg := db.GetPureFileEntries(setl1.ID())
+				So(errg, ShouldBeNil)
+				So(len(entries), ShouldEqual, 1)
+
+				setEntryToUploaded(entries[0], setl1, db)
+
+				got := db.GetByID(setl1.ID())
+				So(got.Uploaded, ShouldEqual, 1)
+				So(got.Status, ShouldEqual, Complete)
+
+				So(os.Remove(aFile), ShouldBeNil)
+
+				got, err = db.Discover(setl1.ID(), nil)
+				So(err, ShouldBeNil)
+				So(got.NumFiles, ShouldEqual, 1)
+				So(got.Orphaned, ShouldEqual, 1)
+				So(got.Uploaded, ShouldEqual, 0)
+				So(got.Status, ShouldEqual, Complete)
+
+				entry, errg := db.GetFileEntryForSet(setl1.ID(), aFile)
+				So(errg, ShouldBeNil)
+				So(entry.Status, ShouldEqual, Orphaned)
+				So(entry.ShouldUpload(got), ShouldBeFalse)
+
+				Convey("then removing it leaves consistent counts", func() {
+					removed := removeFileEntryAndCount(db, setl1.ID(), aFile)
+					So(removed.Status, ShouldEqual, Orphaned)
+
+					got = db.GetByID(setl1.ID())
+					So(got.NumFiles, ShouldEqual, 0)
+					So(got.Orphaned, ShouldEqual, 0)
+					So(got.Uploaded, ShouldEqual, 0)
+					So(got.NumObjectsRemoved, ShouldEqual, 1)
+				})
+
+				Convey("then rediscovering it while still deleted keeps it orphaned", func() {
+					got, err = db.Discover(setl1.ID(), nil)
+					So(err, ShouldBeNil)
+					So(got.NumFiles, ShouldEqual, 1)
+					So(got.Orphaned, ShouldEqual, 1)
+					So(got.Missing, ShouldEqual, 0)
+
+					entry, errg = db.GetFileEntryForSet(setl1.ID(), aFile)
+					So(errg, ShouldBeNil)
+					So(entry.Status, ShouldEqual, Orphaned)
+				})
+
+				Convey("then restoring it locally and rediscovering doesn't upload it again", func() {
+					internal.CreateTestFile(t, aFile, "changed")
+
+					got, err = db.Discover(setl1.ID(), nil)
+					So(err, ShouldBeNil)
+					So(got.NumFiles, ShouldEqual, 1)
+
+					entry, errg = db.GetFileEntryForSet(setl1.ID(), aFile)
+					So(errg, ShouldBeNil)
+					So(entry.ShouldUpload(got), ShouldBeFalse)
+				})
+			})
+
+			for _, frozen := range []bool{true, false} {
+				Convey(fmt.Sprintf("And add a set (frozen: %v) whose skipped and replaced files are deleted "+
+					"locally, rediscovery stores and counts them as orphaned", frozen), func() {
+					setl1 := &Set{
+						Name:        fmt.Sprintf("skipRepOrphan%v", frozen),
+						Requester:   "jim",
+						Transformer: "prefix=/tmp:/remote",
+						Frozen:      frozen,
+					}
+
+					So(db.AddOrUpdate(setl1), ShouldBeNil)
+
+					dir := t.TempDir()
+					skipped := filepath.Join(dir, "skipped")
+					replaced := filepath.Join(dir, "replaced")
+
+					internal.CreateTestFile(t, skipped, "a")
+					internal.CreateTestFile(t, replaced, "b")
+
+					So(db.MergeFileEntries(setl1.ID(), []string{skipped, replaced}), ShouldBeNil)
+
+					_, err = db.Discover(setl1.ID(), nil)
+					So(err, ShouldBeNil)
+
+					setResult := func(path string, statuses ...transfer.RequestStatus) *Set {
+						for _, status := range statuses {
+							_, errs := db.SetEntryStatus(&transfer.Request{
+								Local:     path,
+								Requester: setl1.Requester,
+								Set:       setl1.Name,
+								Size:      1,
+								Status:    status,
+							})
+							So(errs, ShouldBeNil)
+						}
+
+						return db.GetByID(setl1.ID())
+					}
+
+					setResult(skipped, transfer.RequestStatusUploading, transfer.RequestStatusUnmodified)
+					got := setResult(replaced, transfer.RequestStatusUploading, transfer.RequestStatusReplaced)
+					So(got.Skipped, ShouldEqual, 1)
+					So(got.Replaced, ShouldEqual, 1)
+					So(got.Status, ShouldEqual, Complete)
+
+					So(os.Remove(skipped), ShouldBeNil)
+					So(os.Remove(replaced), ShouldBeNil)
+
+					got, err = db.Discover(setl1.ID(), nil)
+					So(err, ShouldBeNil)
+					So(got.NumFiles, ShouldEqual, 2)
+					So(got.Orphaned, ShouldEqual, 2)
+					So(got.Missing, ShouldEqual, 0)
+					So(got.Skipped, ShouldEqual, 0)
+					So(got.Replaced, ShouldEqual, 0)
+
+					for _, path := range []string{skipped, replaced} {
+						entry, errg := db.GetFileEntryForSet(setl1.ID(), path)
+						So(errg, ShouldBeNil)
+						So(entry.Status, ShouldEqual, Orphaned)
+					}
+
+					if frozen {
+						return
+					}
+
+					got = setResult(skipped, transfer.RequestStatusOrphaned)
+					So(got.Orphaned, ShouldEqual, 2)
+					So(got.Missing, ShouldEqual, 0)
+
+					got = setResult(replaced, transfer.RequestStatusOrphaned)
+					So(got.Orphaned, ShouldEqual, 2)
+					So(got.Missing, ShouldEqual, 0)
+					So(got.Status, ShouldEqual, Complete)
+				})
+			}
 		})
 	})
 }

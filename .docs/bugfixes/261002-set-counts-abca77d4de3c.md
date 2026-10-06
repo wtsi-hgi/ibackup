@@ -14,12 +14,34 @@
 Each item is independent of the `deps` work: no `make test`, `make race` or
 `make lint` run fails because of it. Found while fixing `deps` items.
 
-- [ ] Frozen sets: when a frozen set's uploaded file is deleted locally,
+- [x] Frozen sets: when a frozen set's uploaded file is deleted locally,
   discovery counts it Orphaned but keeps the old entry (status Uploaded), so
   removing it leaves `Orphaned: 1` with `Num files: 0`. At `origin/develop` it
   is worse (removal wraps Uploaded). Needs a decision on what frozen-set
   counts should be.
   - Decision (user, 2026-10-05): count it as Orphaned, not Uploaded.
+  - Cause: `existingOrNewEncodedEntry`'s frozen guard returned the old stored
+    entry (status Uploaded, no discovery stamp) after discovery had counted
+    it Orphaned, so removal didn't decrement Orphaned; and
+    `updateTypeDestAndInode` mapped only Uploaded to Orphaned, so a deleted
+    Skipped/Replaced/Orphaned file became Missing (same mismatch for a frozen
+    Skipped file).
+  - Red: a set test (frozen set, upload, local delete, rediscover, remove)
+    failed with entry Uploaded vs Orphaned, then `Orphaned: 1` after removal.
+  - Fixed in `set/entries.go`: the frozen guard stores a newly Orphaned entry
+    with its counted status and stamp (other changes to frozen uploaded
+    entries are still ignored, so no re-upload); any uploaded-type entry
+    (Uploaded, Replaced, Skipped, Orphaned) that goes missing becomes
+    Orphaned. In unfrozen sets a deleted Skipped/Replaced file is now counted
+    Orphaned at discovery rather than Missing; its put result still replaces
+    that count, so final counts are unchanged.
+  - Tests in `set/set_test.go`: the frozen orphan scenario (removal, still
+    deleted, restored); deleted Skipped and Replaced files in frozen and
+    unfrozen sets. Mutants narrowing the mapping or dropping either change
+    fail.
+  - Decision (user, 2026-10-07): a frozen file deleted then restored locally
+    stays Orphaned and is not re-uploaded (accepted as-is); its count is
+    part of the "existing frozen files never counted" item below.
   - Origin item: "Frozen sets: when a frozen set's uploaded file is deleted
     locally" (found reviewing the TestSync fix, 5855c25).
   - Evidence: reviewer probe in a set-package test: frozen set, uploaded file
@@ -94,3 +116,14 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
   recount, and the running discovery then counts the entry again. Same on
   develop. Found reviewing the tests speed-up branch's double-count fix
   (2026-10-06); no gate fails.
+- [ ] A frozen set rediscovered while its uploaded files still exist never
+  counts them: the frozen guard keeps the stored entry uncounted and it is
+  never queued (`ShouldUpload` false), so the set shows `Uploaded 0` and stays
+  "pending upload" forever. Same on develop (43f7323). Needs a decision:
+  count them as Uploaded or as Skipped. Also covers restored frozen files.
+  - Origin: found fixing the frozen-sets item; confirmed by its reviewer.
+- [ ] A frozen set's uploaded file replaced by an abnormal file (e.g. a FIFO)
+  is counted Abnormal but the frozen guard keeps the stored Uploaded entry,
+  so removing it would leave Abnormal 1. Same on develop. Needs a design
+  that keeps frozen from re-uploading a later regular file at that path.
+  - Origin: found fixing the frozen-sets item; confirmed by its reviewer.
