@@ -47,7 +47,7 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
   - Evidence: reviewer probe in a set-package test: frozen set, uploaded file
     deleted locally, rediscovered, then `RemoveFileEntry` +
     `UpdateBasedOnRemovedEntry` -> final `Orphaned` expected 0, actual 1.
-- [ ] Missing entries are counted at discovery and also queued for upload
+- [x] Missing entries are counted at discovery and also queued for upload
   (`ShouldUpload` is true), so when their "missing" result comes back they are
   counted again: a set with 1 missing file and 1 pending file goes "complete"
   with `Missing: 2` before the other file uploads. Same at `origin/develop`.
@@ -57,7 +57,10 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
     (an upload result now replaces the current discovery's count for that
     entry; covers Missing and Orphaned). Close this once that branch merges
     and this branch is rebased onto it.
-- [ ] If a removal's inode cleanup fails, the entry is already deleted but
+  - Closed: fixed on the base branch by 374a095 (PR #194): an upload result
+    replaces the current discovery's count; test "an upload result for an
+    entry discovery counted replaces that count" in `set/set_test.go`.
+- [x] If a removal's inode cleanup fails, the entry is already deleted but
   not counted as removed; retries then fail with "set ... has no path", so
   the set error shows that instead of the inode error, and Num files keeps
   counting the file. Same at `origin/develop`.
@@ -69,6 +72,11 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
     back, so the entry and Num files stay consistent and retries report the
     real inode error. Re-check after rebasing onto deps; close if nothing
     remains.
+  - Closed: fixed by d200a1d (PR #193): a removal's database side is one
+    transaction, so a failed inode cleanup rolls it back; the entry and Num
+    files stay consistent and retries report the inode error. Test "so a
+    failure to clean up its inode record leaves its database removal undone"
+    in `set/set_test.go`.
 - [ ] Trashing a subfolder that isn't itself in the set, for a legacy set
   without a discovered-folders bucket, fails on the folder's own entry in
   `trashDirFromDB`: the set ends with `Error when removing: invalid set
