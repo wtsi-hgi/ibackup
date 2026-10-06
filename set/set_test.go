@@ -1593,6 +1593,44 @@ func TestSetDB(t *testing.T) {
 					So(err, ShouldBeNil)
 					So(got.Symlinks, ShouldEqual, 1)
 				})
+
+				Convey("then remove a file and rediscover without the file being counted out twice", func() {
+					entry, errg := db.GetFileEntryForSet(setl1.ID(), path1)
+					So(errg, ShouldBeNil)
+
+					remReq := NewRemoveRequest(path1, got, false, ToTrash)
+					So(db.SetRemoveRequests(setl1.ID(), []RemoveReq{remReq}), ShouldBeNil)
+
+					removed, errr := db.RemoveFileEntry(&remReq, entry)
+					So(errr, ShouldBeNil)
+					So(removed.Path, ShouldEqual, path1)
+
+					got = db.GetByID(setl1.ID())
+					So(got.NumFiles, ShouldEqual, 2)
+					So(got.Uploaded, ShouldEqual, 1)
+					So(got.NumObjectsRemoved, ShouldEqual, 1)
+
+					got, err = db.Discover(setl1.ID(), nil)
+					So(err, ShouldBeNil)
+					So(got.NumFiles, ShouldEqual, 2)
+
+					incomplete, errg := db.GetIncompleteRemoveRequests()
+					So(errg, ShouldBeNil)
+					So(incomplete, ShouldBeEmpty)
+
+					Convey("even if the removal is retried", func() {
+						retry := NewRemoveRequest(path1, got, false, ToTrash)
+
+						removed, errr = db.RemoveFileEntry(&retry, entry)
+						So(errr, ShouldBeNil)
+						So(removed, ShouldBeNil)
+
+						got = db.GetByID(setl1.ID())
+						So(got.NumFiles, ShouldEqual, 2)
+						So(got.NumObjectsRemoved, ShouldEqual, 1)
+						So(got.SizeRemoved, ShouldEqual, entry.Size)
+					})
+				})
 			})
 
 			Convey("And add a set with directories containing hardlinks to it", func() {
@@ -2153,15 +2191,19 @@ func discoverASet(db *DB, set *Set, discoveryFunc func() ([]*Dirent, []*Dirent, 
 	So(err, ShouldBeNil)
 }
 
-// removeFileEntryAndCount removes the given file from the given set the way the
-// server does, returning the removed entry.
+// removeFileEntryAndCount removes the given file from the given set and counts
+// it the way the server does, returning the removed entry. It trashes rather
+// than removes, so our inode records, which these tests don't make, are left
+// alone.
 func removeFileEntryAndCount(db *DB, setID, path string) *Entry {
-	removed, err := db.RemoveFileEntry(setID, path)
+	entry, err := db.GetFileEntryForSet(setID, path)
+	So(err, ShouldBeNil)
+
+	remReq := NewRemoveRequest(path, db.GetByID(setID), false, ToTrash)
+
+	removed, err := db.RemoveFileEntry(&remReq, entry)
 	So(err, ShouldBeNil)
 	So(removed, ShouldNotBeNil)
-
-	err = db.UpdateBasedOnRemovedEntry(setID, removed, removed.Size)
-	So(err, ShouldBeNil)
 
 	return removed
 }

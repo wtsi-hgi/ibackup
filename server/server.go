@@ -492,11 +492,7 @@ func (s *Server) convertQueueItemToRemoveRequest(data interface{}) (set.RemoveRe
 
 func (s *Server) removeRequestFromIRODSandDB(removeReq *set.RemoveReq) error {
 	if removeReq.IsDir {
-		if removeReq.Action == set.ToTrash {
-			return s.trashDirFromDB(removeReq.Set, removeReq.Path)
-		}
-
-		return s.removeDirFromDB(removeReq.Set.ID(), removeReq.Path)
+		return s.db.RemoveDirEntry(removeReq)
 	}
 
 	return s.removeFileFromIRODSandDB(removeReq)
@@ -535,11 +531,13 @@ func (s *Server) handleErrorOrReleaseItem(item *queue.Item, removeReq set.Remove
 }
 
 func (s *Server) finalizeRemoveReq(removeReq set.RemoveReq) error {
-	removeReq.IsComplete = true
+	if !removeReq.IsComplete {
+		removeReq.IsComplete = true
 
-	err := s.db.UpdateRemoveRequest(removeReq)
-	if err != nil {
-		return err
+		err := s.db.UpdateRemoveRequest(removeReq)
+		if err != nil {
+			return err
+		}
 	}
 
 	return s.removeQueue.Remove(context.Background(), removeReq.Key())

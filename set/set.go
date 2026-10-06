@@ -508,6 +508,36 @@ func (s *Set) removedEntryTypeToSetCounts(entry *Entry) {
 	}
 }
 
+// countRemovedEntry updates our counts for the given entry, as it was stored,
+// having been removed, adding removedSize to our SizeRemoved.
+func (s *Set) countRemovedEntry(entry *Entry, removedSize uint64) {
+	s.SizeRemoved += removedSize
+	s.NumObjectsRemoved++
+
+	s.removedEntryTypeToSetCounts(entry)
+
+	// Starting discovery zeroed these, and they get rebuilt without this
+	// entry; decrementing them now would wrap them.
+	if s.StartedDiscovery.After(s.LastDiscovery) {
+		return
+	}
+
+	s.NumFiles--
+
+	if entry.LastAttempt.After(s.LastDiscovery) {
+		s.SizeTotal -= entry.Size
+		s.removedEntryStatusToSetCounts(entry)
+
+		return
+	}
+
+	// Otherwise the entry's status is from before our last discovery, so is
+	// only in our counts if that discovery counted it.
+	if entry.CountedInDiscovery.Equal(s.StartedDiscovery) {
+		s.removedEntryStatusToSetCounts(entry)
+	}
+}
+
 // LogChangesToSlack will cause the set to use the slacker when significant
 // events happen to the set.
 func (s *Set) LogChangesToSlack(slacker Slacker) {

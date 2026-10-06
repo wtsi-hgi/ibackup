@@ -136,6 +136,16 @@ func (rq RemoveReq) Key() string {
 	return strings.Join([]string{rq.Set.ID(), rq.Path}, ":")
 }
 
+// storedPath returns our Path as stored in the database: for a directory, with
+// a trailing slash, which requests read back from the database already have.
+func (rq RemoveReq) storedPath() string {
+	if !rq.IsDir {
+		return rq.Path
+	}
+
+	return strings.TrimSuffix(rq.Path, "/") + "/"
+}
+
 // ItemDef returns a queue.ItemDef for the remove request.
 func (rq RemoveReq) ItemDef(ttr time.Duration) *queue.ItemDef {
 	return &queue.ItemDef{
@@ -597,24 +607,81 @@ func (d *DB) validateDirPaths(set *Set, paths []string) ([]string, []string, err
 	return d.validatePaths(set, dirBucket, discoveredFoldersBucket, paths)
 }
 
-// RemoveFileEntry removes the provided file from a given set, including from
-// our failed lookup. Returns the file's entry as it was at the moment of
-// removal, or nil if the set didn't have the file.
-func (d *DB) RemoveFileEntry(setID string, path string) (*Entry, error) {
+// RemoveFileEntry does the database side of removing the given request's file
+// from its set. It removes the file from the set, including from our failed
+// lookup; puts it in the trash set if trashing a file that was uploaded, or
+// removes it from our inode records if removing a file no set still has;
+// counts it as removed; and marks the request complete.
+//
+// It does all that in one transaction, so a removal stopped at any point is
+// either still to do or complete: a retry can't fail to find the file or count
+// it twice, and a complete removal status means the cleanup is complete.
+//
+// before must be the file's entry as read before the removal started. It's
+// what gets trashed, and its size is added to the set's SizeRemoved, since an
+// upload result arriving after the remote object was removed (status missing)
+// changes the stored entry's size to 0. Other set counts use the entry as
+// stored, which is returned, or nil if the set didn't have the file.
+func (d *DB) RemoveFileEntry(removeReq *RemoveReq, before *Entry) (*Entry, error) {
+	completed := *removeReq
+	completed.IsComplete = true
+
 	var removed *Entry
 
 	err := d.db.Update(func(tx *bolt.Tx) error {
 		var err error
 
-		removed, err = d.deleteFileEntry(tx, setID, path)
+		removed, err = d.removeFileInTx(tx, removeReq, before)
 		if err != nil {
 			return err
 		}
 
-		return d.removeFailedLookup(tx, setID, path)
+		return d.updatePendingRemoveRequest(tx, completed)
 	})
+	if err != nil {
+		return nil, err
+	}
 
-	return removed, err
+	*removeReq = completed
+
+	return removed, nil
+}
+
+// removeFileInTx does RemoveFileEntry()'s work, apart from marking the request
+// complete, in the given transaction.
+func (d *DB) removeFileInTx(tx *bolt.Tx, removeReq *RemoveReq, before *Entry) (*Entry, error) {
+	setID := removeReq.Set.ID()
+
+	removed, err := d.deleteFileEntry(tx, setID, removeReq.Path)
+	if err != nil {
+		return nil, err
+	}
+
+	if err = d.removeFailedLookup(tx, setID, removeReq.Path); err != nil || removed == nil {
+		return nil, err
+	}
+
+	if err = d.cleanUpRemovedFile(tx, removeReq, before, removed); err != nil {
+		return nil, err
+	}
+
+	return removed, d.updateSetPropertiesInTx(tx, setID, func(got *Set) {
+		got.countRemovedEntry(removed, before.Size)
+	})
+}
+
+// cleanUpRemovedFile trashes the file of the given request, as it was before
+// the removal, if trashing a file that was uploaded; or, if removing it, removes
+// the removed entry from our inode records unless another set still has it.
+func (d *DB) cleanUpRemovedFile(tx *bolt.Tx, removeReq *RemoveReq, before, removed *Entry) error {
+	switch {
+	case removeReq.Action == ToTrash && !before.WasNotUploaded():
+		return d.putEntryInTrash(tx, removeReq.Set, before)
+	case removeReq.Action == ToRemove:
+		return d.removeInodeIfUnused(tx, removed)
+	default:
+		return nil
+	}
 }
 
 // deleteFileEntry deletes the given path from the given set's file and
@@ -657,14 +724,76 @@ func (d *DB) removeEntry(setID string, entryKey string, bucketName string) error
 	})
 }
 
-// RemoveDirEntry removes the provided directory from a given set.
-func (d *DB) RemoveDirEntry(setID string, path string) error {
-	err := d.removeEntry(setID, path, dirBucket)
+// RemoveDirEntry removes the given request's directory from its set, first
+// putting it in the trash set if the request is to trash it, then counts it as
+// removed and marks the request complete. It does all that in one transaction,
+// so a retried removal can neither fail to find the directory nor count it
+// twice.
+func (d *DB) RemoveDirEntry(removeReq *RemoveReq) error {
+	completed := *removeReq
+	completed.IsComplete = true
+
+	err := d.db.Update(func(tx *bolt.Tx) error {
+		if err := d.removeDirInTx(tx, removeReq); err != nil {
+			return err
+		}
+
+		return d.updatePendingRemoveRequest(tx, completed)
+	})
+	if err == nil {
+		*removeReq = completed
+	}
+
+	return err
+}
+
+// removeDirInTx does RemoveDirEntry()'s work, apart from marking the request
+// complete, in the given transaction.
+func (d *DB) removeDirInTx(tx *bolt.Tx, removeReq *RemoveReq) error {
+	setID := removeReq.Set.ID()
+
+	if removeReq.Action == ToTrash {
+		if err := d.trashDirEntry(tx, removeReq); err != nil {
+			return err
+		}
+	}
+
+	if err := deleteDirEntry(tx, setID, removeReq.Path); err != nil {
+		return err
+	}
+
+	return d.updateSetPropertiesInTx(tx, setID, func(got *Set) {
+		got.NumObjectsRemoved++
+	})
+}
+
+// trashDirEntry puts the given request's directory entry in the trash set.
+func (d *DB) trashDirEntry(tx *bolt.Tx, removeReq *RemoveReq) error {
+	entry, _, err := d.getEntry(tx, removeReq.Set.ID(), strings.TrimSuffix(removeReq.Path, "/"))
 	if err != nil {
 		return err
 	}
 
-	return d.removeEntry(setID, path, discoveredFoldersBucket)
+	return d.putEntryInTrash(tx, removeReq.Set, entry)
+}
+
+// deleteDirEntry deletes the given path, with or without a trailing slash,
+// from the given set's dir and discovered folders buckets.
+func deleteDirEntry(tx *bolt.Tx, setID, path string) error {
+	path = strings.TrimSuffix(path, "/")
+
+	for _, bucketName := range []string{dirBucket, discoveredFoldersBucket} {
+		b := getSubBucket(tx, setID, bucketName)
+		if b == nil {
+			continue
+		}
+
+		if err := b.Delete([]byte(path)); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // GetFilesInDir returns all file paths from inside the given directory (and all
@@ -769,8 +898,8 @@ func (d *DB) mergeEntries(setID string, dirents []*Dirent, bucketName string, in
 	})
 }
 
-// PutEntryInTrash puts the given entry into the trash set for the given set.
-func (d *DB) PutEntryInTrash(set *Set, entry *Entry) error {
+// putEntryInTrash puts the given entry into the trash set for the given set.
+func (d *DB) putEntryInTrash(tx *bolt.Tx, set *Set, entry *Entry) error {
 	destSet := BuildTrashSetFromSet(set)
 
 	bucketName := fileBucket
@@ -778,16 +907,14 @@ func (d *DB) PutEntryInTrash(set *Set, entry *Entry) error {
 		bucketName = dirBucket
 	}
 
-	return d.db.Update(func(tx *bolt.Tx) error {
-		sfsb, err := d.newSetFileBucket(tx, bucketName, destSet.ID())
-		if err != nil {
-			return err
-		}
+	sfsb, err := d.newSetFileBucket(tx, bucketName, destSet.ID())
+	if err != nil {
+		return err
+	}
 
-		entry.TrashDate = time.Now()
+	entry.TrashDate = time.Now()
 
-		return sfsb.Bucket.Put([]byte(entry.Path), d.encodeToBytes(entry))
-	})
+	return sfsb.Bucket.Put([]byte(entry.Path), d.encodeToBytes(entry))
 }
 
 // BuildTrashSetFromSet builds a brand new set which copies the given set's
@@ -815,9 +942,7 @@ func (d *DB) SetRemoveRequests(sid string, removeReqs []RemoveReq) error {
 
 func (d *DB) putRemoveRequestsInBucket(remReqs []RemoveReq, b *bolt.Bucket) error {
 	for _, remReq := range remReqs {
-		if remReq.IsDir {
-			remReq.Path += "/"
-		}
+		remReq.Path = remReq.storedPath()
 
 		err := b.Put([]byte(remReq.Path), d.encodeToBytes(remReq))
 		if err != nil {
@@ -838,6 +963,21 @@ func (d *DB) UpdateRemoveRequest(removeReq RemoveReq) error {
 
 		return d.putRemoveRequestsInBucket([]RemoveReq{removeReq}, b)
 	})
+}
+
+// updatePendingRemoveRequest replaces the stored copy of the given removeReq,
+// if there is one.
+func (d *DB) updatePendingRemoveRequest(tx *bolt.Tx, removeReq RemoveReq) error {
+	b := getSubBucket(tx, removeReq.Set.ID(), removedBucket)
+	if b == nil {
+		return nil
+	}
+
+	if b.Get([]byte(removeReq.storedPath())) == nil {
+		return nil
+	}
+
+	return d.putRemoveRequestsInBucket([]RemoveReq{removeReq}, b)
 }
 
 // deleteObjectFromSubBucket deletes the object with the given key from the db.
@@ -1914,44 +2054,6 @@ func (d *DB) SetError(setID, errMsg string) error {
 	})
 }
 
-// UpdateBasedOnRemovedEntry updates set counts based on the given entry that's
-// been removed. Pass it the entry RemoveFileEntry() returned, and only call it
-// after all other database cleanup for that entry, since it counts the entry as
-// removed.
-//
-// removedSize is added to the set's SizeRemoved. Pass the entry's size from
-// before the removal started, since an upload result arriving after the remote
-// object was removed (status missing) changes the stored entry's size to 0.
-func (d *DB) UpdateBasedOnRemovedEntry(setID string, entry *Entry, removedSize uint64) error {
-	return d.updateSetProperties(setID, func(got *Set) {
-		got.SizeRemoved += removedSize
-		got.NumObjectsRemoved++
-
-		got.removedEntryTypeToSetCounts(entry)
-
-		// Starting discovery zeroed these, and they get rebuilt without this
-		// entry; decrementing them now would wrap them.
-		if got.StartedDiscovery.After(got.LastDiscovery) {
-			return
-		}
-
-		got.NumFiles--
-
-		if entry.LastAttempt.After(got.LastDiscovery) {
-			got.SizeTotal -= entry.Size
-			got.removedEntryStatusToSetCounts(entry)
-
-			return
-		}
-
-		// Otherwise the entry's status is from before our last discovery, so
-		// is only in our counts if that discovery counted it.
-		if entry.CountedInDiscovery.Equal(got.StartedDiscovery) {
-			got.removedEntryStatusToSetCounts(entry)
-		}
-	})
-}
-
 // IncrementNumObjectRemoved increments the number of objects removed for the
 // given set.
 func (d *DB) IncrementNumObjectRemoved(setID string) error {
@@ -1976,14 +2078,6 @@ func (d *DB) UpdateSetTotalToRemove(setID string, num uint64) error {
 	})
 }
 
-// IncrementSetTotalRemoved increments the number of objects removed for the
-// set.
-func (d *DB) IncrementSetTotalRemoved(setID string) error {
-	return d.updateSetProperties(setID, func(got *Set) {
-		got.NumObjectsRemoved++
-	})
-}
-
 // ResetRemoveSize resets the size removed for the set.
 func (d *DB) ResetRemoveSize(setID string) error {
 	return d.updateSetProperties(setID, func(got *Set) {
@@ -1998,15 +2092,21 @@ func (d *DB) ResetRemoveSize(setID string) error {
 // be stored back in the database.
 func (d *DB) updateSetProperties(setID string, cb func(*Set)) error {
 	return d.db.Update(func(tx *bolt.Tx) error {
-		set, bid, b, err := d.getSetByID(tx, setID)
-		if err != nil {
-			return err
-		}
-
-		cb(set)
-
-		return b.Put(bid, d.encodeToBytes(set))
+		return d.updateSetPropertiesInTx(tx, setID, cb)
 	})
+}
+
+// updateSetPropertiesInTx is updateSetProperties() within the given
+// transaction.
+func (d *DB) updateSetPropertiesInTx(tx *bolt.Tx, setID string, cb func(*Set)) error {
+	set, bid, b, err := d.getSetByID(tx, setID)
+	if err != nil {
+		return err
+	}
+
+	cb(set)
+
+	return b.Put(bid, d.encodeToBytes(set))
 }
 
 // SetWarning updates a set with the given warning message. Returns an error if

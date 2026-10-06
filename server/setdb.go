@@ -828,6 +828,10 @@ func (s *Server) makeItemsDefsFromDirPaths(givenSet *set.Set,
 	return defs, remReqs, nil
 }
 
+// removeFileFromIRODSandDB removes the given request's file from the remote
+// storage, unless an earlier attempt already did, then from the database. The
+// database side is one transaction that also marks the request complete, so a
+// retry after a stop between the two only redoes the database side.
 func (s *Server) removeFileFromIRODSandDB(removeReq *set.RemoveReq) error {
 	entry, err := s.db.GetFileEntryForSet(removeReq.Set.ID(), removeReq.Path)
 	if err != nil {
@@ -839,11 +843,9 @@ func (s *Server) removeFileFromIRODSandDB(removeReq *set.RemoveReq) error {
 		return err
 	}
 
-	if removeReq.Action == set.ToTrash {
-		return s.processDBFileTrash(removeReq.Set, entry)
-	}
+	_, err = s.db.RemoveFileEntry(removeReq, entry)
 
-	return s.processDBFileRemoval(removeReq.Set.ID(), entry, true)
+	return err
 }
 
 func (s *Server) processRemoteFileRemoval(removeReq *set.RemoveReq, entry *set.Entry) error {
@@ -879,59 +881,6 @@ func (s *Server) processRemoteFileRemoval(removeReq *set.RemoveReq, entry *set.E
 
 func fileErrorCannotBeIgnored(err error, mayMissInRemote bool) bool {
 	return !(mayMissInRemote && strings.Contains(err.Error(), internal.ErrFileDoesNotExist)) //nolint:staticcheck,lll
-}
-
-func (s *Server) processDBFileTrash(set *set.Set, entry *set.Entry) error {
-	if entry.WasNotUploaded() {
-		return s.processDBFileRemoval(set.ID(), entry, false)
-	}
-
-	err := s.db.PutEntryInTrash(set, entry)
-	if err != nil {
-		return err
-	}
-
-	return s.processDBFileRemoval(set.ID(), entry, false)
-}
-
-// processDBFileRemoval removes the given entry's file from the set in the
-// database, counting it as removed only once all its database cleanup is done,
-// so that a complete removal status means the cleanup is complete. The given
-// entry must be as read before the removal started, so its size is that of the
-// removed object.
-func (s *Server) processDBFileRemoval(setID string, entry *set.Entry, checkInode bool) error {
-	removed, err := s.db.RemoveFileEntry(setID, entry.Path)
-	if err != nil || removed == nil {
-		return err
-	}
-
-	if checkInode {
-		err = s.processDBInodeRemoval(removed)
-		if err != nil {
-			return err
-		}
-	}
-
-	return s.db.UpdateBasedOnRemovedEntry(setID, removed, entry.Size)
-}
-
-// processDBInodeRemoval checks if the inode for the entry should be removed and
-// removes it. It expects that the entry has already been removed from db.
-func (s *Server) processDBInodeRemoval(entry *set.Entry) error {
-	if entry.Type == set.Symlink || entry.Type == set.Abnormal {
-		return nil
-	}
-
-	setsWithFile, err := s.db.GetAllSetsForFile(entry.Path)
-	if err != nil {
-		return err
-	}
-
-	if len(setsWithFile) > 0 {
-		return nil
-	}
-
-	return s.db.RemoveFileFromInode(entry.Path, entry.Inode)
 }
 
 func (s *Server) updateOrRemoveRemoteFile(removeReq *set.RemoveReq, transformer transformer.PathTransformer,
@@ -1167,29 +1116,6 @@ func (s *Server) setErrorOnEntry(entry *set.Entry, sid, path string, errMsg stri
 	if erru != nil {
 		s.Logger.Printf("%s", erru.Error())
 	}
-}
-
-func (s *Server) removeDirFromDB(setID, path string) error {
-	err := s.db.RemoveDirEntry(setID, path)
-	if err != nil {
-		return err
-	}
-
-	return s.db.IncrementSetTotalRemoved(setID)
-}
-
-func (s *Server) trashDirFromDB(givenSet *set.Set, path string) error {
-	entry, err := s.db.GetDirEntryForSet(givenSet.ID(), path)
-	if err != nil {
-		return err
-	}
-
-	err = s.db.PutEntryInTrash(givenSet, entry)
-	if err != nil {
-		return err
-	}
-
-	return s.removeDirFromDB(givenSet.ID(), path)
 }
 
 // bindPathsAndValidateSet gets the paths out of the JSON body, and the set id
