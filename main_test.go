@@ -2478,6 +2478,11 @@ func TestEdit(t *testing.T) {
 
 				s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "your transformer didn't work")
 
+				// status warns about the transformer as soon as the set has a
+				// file, but the server only records the error after discovery;
+				// until then it rejects a transformer change
+				s.waitForStatus(setName, "\nStatus: unable to proceed", 1*time.Minute)
+
 				Convey("You can edit the set to fix the transformer", func() {
 					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--transformer", transformer)
 					So(exitCode, ShouldEqual, 0)
