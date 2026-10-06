@@ -27,6 +27,10 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
   with `Missing: 2` before the other file uploads. Same at `origin/develop`.
   - Origin item: "Missing entries are counted at discovery and also queued for
     upload" (found reviewing the TestSync fix).
+  - Update (2026-10-06): fixed on branch `bugfix-tests-speedup-6d2903c9`
+    (an upload result now replaces the current discovery's count for that
+    entry; covers Missing and Orphaned). Close this once that branch merges
+    and this branch is rebased onto it.
 - [ ] If a removal's inode cleanup fails, the entry is already deleted but
   not counted as removed; retries then fail with "set ... has no path", so
   the set error shows that instead of the inode error, and Num files keeps
@@ -81,3 +85,8 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
   Same logic on develop. Needs a decision: should a vanished remote object
   count as successfully removed?
   - Origin: found while fixing the deps removal-retry race (2026-10-06).
+- [ ] Upload results that arrive while a discovery is running are counted
+  twice: with NumFiles reset to 0, a result triggers a full `fixCounts`
+  recount, and the running discovery then counts the entry again. Same on
+  develop. Found reviewing the tests speed-up branch's double-count fix
+  (2026-10-06); no gate fails.
