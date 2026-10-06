@@ -1623,7 +1623,7 @@ func (s *Server) reserveRequests() ([]*transfer.Request, error) {
 
 		claimed, err := s.remoteClaims.claim(r, batch)
 		if err != nil {
-			s.Logger.Printf("failed to claim remote hardlink for rid=%s: %s", r.ID(), err)
+			s.releaseUnclaimedRequest(r, err)
 		}
 
 		if !claimed {
@@ -1640,6 +1640,25 @@ func (s *Server) reserveRequests() ([]*transfer.Request, error) {
 	}
 
 	return requests, nil
+}
+
+// releaseUnclaimedRequest releases a reserved request whose remote hardlink
+// couldn't be claimed, so it is retried instead of staying reserved until its
+// TTR expires. Like removal retries, the release is delayed by retryDelay; this
+// also stops reserveRequests immediately reserving it again. If the release
+// fails, TTR expiry remains the fallback.
+func (s *Server) releaseUnclaimedRequest(r *transfer.Request, claimErr error) {
+	rid := r.ID()
+
+	s.Logger.Printf("failed to claim remote hardlink for rid=%s: %s", rid, claimErr)
+
+	if err := s.queue.SetDelay(rid, retryDelay); err != nil {
+		s.Logger.Printf("request retry delay set failed rid=%s delay=%s err=%s", rid, retryDelay, err)
+	}
+
+	if err := s.queue.Release(context.Background(), rid); err != nil {
+		s.Logger.Printf("failed to release unclaimed request rid=%s: %s", rid, err)
+	}
 }
 
 // getCachedNumRequestsToReserve calls numRequestsToReserve and caches the

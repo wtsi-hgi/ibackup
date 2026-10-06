@@ -67,6 +67,7 @@ var (
 	errUnexpectedAttempts = errors.New("unexpected attempts")
 	errErrorNotRecorded   = errors.New("error not yet recorded")
 	errSmallListOfFiles   = errors.New("unexpected small listOfFiles")
+	errInjectedRequeue    = errors.New("injected requeue failure")
 )
 
 const (
@@ -4895,6 +4896,100 @@ func TestServer(t *testing.T) {
 						}
 					})
 
+					Convey("with remote hardlink location set, a hardlink that fails to be claimed is "+
+						"given out again without waiting for its reservation to expire", func() {
+						s.SetRemoteHardlinkLocation(filepath.Join(remoteDir, "mountpoints"))
+						s.numClients = 3
+
+						failing := &requeueFailingQueue{claimQueue: s.remoteClaims.queue}
+						failing.fail.Store(true)
+						s.remoteClaims.queue = failing
+
+						err = client.TriggerDiscovery(exampleSet.ID(), false)
+						So(err, ShouldBeNil)
+
+						ok := <-racCalled
+						So(ok, ShouldBeTrue)
+
+						type handOutResult struct {
+							requests []*transfer.Request
+							err      error
+						}
+
+						roundDone := make(chan handOutResult, 1)
+
+						go func() {
+							var res handOutResult
+
+							for range s.numClients {
+								requests, errg := client.GetSomeUploadRequests()
+								if errg != nil {
+									res.err = errg
+
+									break
+								}
+
+								res.requests = append(res.requests, requests...)
+							}
+
+							roundDone <- res
+						}()
+
+						var (
+							round      handOutResult
+							roundTimed bool
+						)
+
+						// without the retry delay, a persistently unclaimable
+						// hardlink is reserved again straight away, forever
+						select {
+						case round = <-roundDone:
+						case <-time.After(retryDelay):
+							roundTimed = true
+						}
+
+						attempts := failing.attempts.Load()
+						failing.fail.Store(false)
+
+						if roundTimed {
+							round = <-roundDone
+						}
+
+						So(roundTimed, ShouldBeFalse)
+						So(attempts, ShouldEqual, 1)
+						So(round.err, ShouldBeNil)
+
+						handedOut := round.requests
+						So(len(handedOut), ShouldEqual, 2)
+						So(handedOut[0].Local, ShouldEqual, path1)
+						So(handedOut[1].Local, ShouldEqual, path2)
+
+						handedOut[1].Status = transfer.RequestStatusUploaded
+						err = client.UpdateFileStatus(handedOut[1])
+						So(err, ShouldBeNil)
+
+						var got []*transfer.Request
+
+						testutil.Eventually(t, retryDelay+10*time.Second, 100*time.Millisecond, func() bool {
+							select {
+							case <-racCalled:
+							default:
+							}
+
+							requests, errg := client.GetSomeUploadRequests()
+							if errg != nil {
+								return false
+							}
+
+							got = append(got, requests...)
+
+							return len(got) > 0
+						}, "the unclaimed hardlink to be given out again")
+
+						So(len(got), ShouldEqual, 1)
+						So(got[0].Local, ShouldEqual, path3)
+					})
+
 					Convey("with remote hardlink location set, hardlinks to the same inode given to a client "+
 						"that dies are not then given to separate clients at the same time", func() {
 						s.SetRemoteHardlinkLocation(filepath.Join(remoteDir, "mountpoints"))
@@ -5412,6 +5507,24 @@ func makePutter(t *testing.T, handler transfer.Handler, requests []*transfer.Req
 	So(qs.CreatingCollections, ShouldEqual, 0)
 
 	return p, d
+}
+
+// requeueFailingQueue is a claimQueue whose Requeue fails while fail is true,
+// counting those failed attempts in attempts.
+type requeueFailingQueue struct {
+	claimQueue
+	fail     atomic.Bool
+	attempts atomic.Int64
+}
+
+func (q *requeueFailingQueue) Requeue(ctx context.Context, key string, deps []string) error {
+	if q.fail.Load() {
+		q.attempts.Add(1)
+
+		return errInjectedRequeue
+	}
+
+	return q.claimQueue.Requeue(ctx, key, deps)
 }
 
 // gatedRemoveFileHandler is a remove.Handler whose RemoveFile() removes the

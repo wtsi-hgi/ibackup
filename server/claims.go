@@ -35,6 +35,12 @@ import (
 
 const remoteClaimDependencyPrefix = "remote:"
 
+// claimQueue is the part of our queue that remoteClaims uses.
+type claimQueue interface {
+	Requeue(ctx context.Context, key string, deps []string) error
+	SatisfyDependency(ctx context.Context, key string) error
+}
+
 // remoteClaims makes sure that hardlink requests which share a remote inode file
 // are only given to one put client at a time. Concurrent uploads of the same
 // iRODS object from different clients fail with
@@ -42,7 +48,7 @@ const remoteClaimDependencyPrefix = "remote:"
 // requests sequentially.
 type remoteClaims struct {
 	sync.Mutex
-	queue   *queue.Queue
+	queue   claimQueue
 	holders map[string]map[string]struct{}
 	paths   map[string]string
 }
