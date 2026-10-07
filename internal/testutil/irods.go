@@ -46,15 +46,9 @@ const (
 	irodsRetryMaxAttempts = 8
 	irodsRetryBackoff     = 250 * time.Millisecond
 	collectionPrefix      = "ibackup_test_"
-	maxConcurrentRemovals = 8
 )
 
 var serialMu sync.Mutex //nolint:gochecknoglobals
-
-var (
-	cleanupMu          sync.Mutex                       //nolint:gochecknoglobals
-	cleanupCollections = make(map[testing.TB]*[]string) //nolint:gochecknoglobals
-)
 
 var (
 	errIcmdNil               = errors.New("irods command runner is nil")
@@ -110,18 +104,15 @@ func RequireIRODSTestCollection(tb testing.TB) string {
 	unlock := Serial(tb)
 	defer unlock()
 
-	unique := takePrefetchedCollection(base)
-	if unique == "" {
-		name, err := randomCollectionName()
-		if err != nil {
-			tb.Fatalf("failed to make an iRODS collection name: %v", err)
-		}
-
-		unique = filepath.Join(base, name)
-		ensureIRODSCollection(tb, unique)
+	name, err := randomCollectionName()
+	if err != nil {
+		tb.Fatalf("failed to make an iRODS collection name: %v", err)
 	}
 
+	unique := filepath.Join(base, name)
 	setTestCollectionEnv(tb, unique)
+
+	ensureIRODSCollection(tb, unique)
 	cleanupIRODSCollection(tb, unique)
 
 	return unique
@@ -295,23 +286,6 @@ func randomCollectionName() (string, error) {
 	return collectionPrefix + hex.EncodeToString(buf), nil
 }
 
-func removeIRODSCollections(collections []string) {
-	var wg sync.WaitGroup
-
-	limit := make(chan struct{}, maxConcurrentRemovals)
-
-	for _, collection := range collections {
-		limit <- struct{}{}
-
-		wg.Go(func() {
-			removeIRODSCollection(collection)
-			<-limit
-		})
-	}
-
-	wg.Wait()
-}
-
 func runIRODSCommandOnce(timeout time.Duration, command string, args ...string) ([]byte, error) {
 	ctx, cancelFn := context.WithTimeout(context.Background(), timeout)
 	defer cancelFn()
@@ -426,31 +400,10 @@ func ensureIRODSCollection(tb testing.TB, collection string) {
 	}
 }
 
-// cleanupIRODSCollection removes collection when tb ends. A test can make many
-// collections (one per Convey leaf), and each removal takes a second or more,
-// so all of a test's collections are removed together, a few at a time.
 func cleanupIRODSCollection(tb testing.TB, collection string) {
 	tb.Helper()
 
-	cleanupMu.Lock()
-	defer cleanupMu.Unlock()
-
-	if collections, ok := cleanupCollections[tb]; ok {
-		*collections = append(*collections, collection)
-
-		return
-	}
-
-	collections := &[]string{collection}
-	cleanupCollections[tb] = collections
-
 	tb.Cleanup(func() {
-		cleanupMu.Lock()
-		toRemove := *collections
-
-		delete(cleanupCollections, tb)
-		cleanupMu.Unlock()
-
-		removeIRODSCollections(toRemove)
+		removeIRODSCollection(collection)
 	})
 }

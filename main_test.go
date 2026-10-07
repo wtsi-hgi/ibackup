@@ -108,6 +108,10 @@ const prefetchedIRODSCollections = 4
 
 var cliMu sync.Mutex //nolint:gochecknoglobals
 
+// irodsCollections hands out the tests' iRODS collections. TestMain sets it
+// before running the tests, and closes it after.
+var irodsCollections *testutil.CollectionPool //nolint:gochecknoglobals
+
 const noBackupSets = `Global put queue status: 0 queued; 0 reserved to be worked on; 0 failed
 Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
 no backup sets`
@@ -184,8 +188,10 @@ func TestMain(m *testing.M) {
 		removeBinary func()
 	)
 
+	irodsCollections = testutil.NewCollectionPool(prefetchedIRODSCollections)
+
 	cleanup := func() {
-		testutil.StopPrefetchingIRODSTestCollections()
+		irodsCollections.Close()
 
 		if removeBinary != nil {
 			removeBinary()
@@ -251,8 +257,6 @@ func TestMain(m *testing.M) {
 	}
 
 	os.Setenv("PATH", tmpStatter+":"+os.Getenv("PATH"))
-
-	testutil.PrefetchIRODSTestCollections(prefetchedIRODSCollections)
 
 	exitCode = m.Run()
 }
@@ -833,7 +837,7 @@ func NewUploadingTestServer(t *testing.T, withDBBackup bool) (*testServer, strin
 func initIRODSTestCollection(tb testing.TB) string {
 	tb.Helper()
 
-	return testutil.RequireIRODSTestCollection(tb)
+	return irodsCollections.Require(tb)
 }
 
 // givenRemoveServer starts the uploading server the TestRemove tests use.
