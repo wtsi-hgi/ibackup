@@ -1,15 +1,27 @@
 # Bugfixes 2026-10-02: set counts
 
 - Branch: `bugfix-set-counts-abca77d4de3c`
-- Base: dependency `bugfix-tests-speedup-6d2903c9` (PR #194) at `13915cf`;
-  integration base `origin/develop` at `43f73234a4d0` (resolved 2026-10-06)
-- Dependency: PR #194 (`bugfix-tests-speedup-6d2903c9`), which changes the
-  same set-counting code and fixes the "Missing counted twice" item. Held for
-  dependency merge: keep this branch local; after #194 merges, rebase with
-  `git rebase --onto origin/develop 13915cf` before pushing.
-- Queue owner: `bugfix-tests-speedup-6d2903c9`,
-  `.docs/bugfixes/261005-tests-speedup-31c758180c99.md`
+- Base: `origin/develop` at `ce92caecdc7a` (#194 merged; rebased
+  2026-10-07 with `git rebase --onto origin/develop 13915cf`)
+- Queue owner: this branch and checklist (moved from
+  `.docs/bugfixes/261005-tests-speedup-31c758180c99.md` after #194 merged)
 - Origin: `deps`, `.docs/bugfixes/260930-deps-update-702d9698d638.md`
+
+## Delivery queue (2026-10-07)
+
+Order: this branch, upload-concurrency, test-collections, irods-ci, then a
+follow-up branch for this checklist's unchecked items. Worktrees live under
+`../ibackup-worktrees/`.
+
+| Branch | Worktree | PR / target | Depends on | Status | Next action |
+|---|---|---|---|---|---|
+| `deps` | (removed) | #193 / `develop` | none | merged 2026-10-06 (43f7323) | none |
+| `bugfix-tests-speedup-6d2903c9` | (removed) | #194 / `develop` | none | merged 2026-10-07 (ce92cae) | none |
+| `bugfix-set-counts-abca77d4de3c` | `set-counts` | to open / `develop` | none | rebased on ce92cae; gates pass | push, PR, pr-resolver |
+| `bugfix-upload-concurrency-dbfef239a15f` | `upload-concurrency` | none / `develop` | set-counts (sequenced) | rebased on ce92cae; items recorded | bugfix ("possible" items: reproduce first) |
+| `bugfix-test-collections-01acd48b1fd1` | `test-collections` | none / `develop` | sequenced | rebased on ce92cae; item recorded | bugfix |
+| `bugfix-irods-ci-1dee5dab` | `irods-ci` | none / `develop` | sequenced | rebased on ce92cae; queued (user, 2026-10-07): run iRODS in a container in CI | bugfix |
+| set-counts follow-up (not created) | - | none / `develop` | set-counts merge | this checklist's unchecked items | branch after set-counts merges |
 
 Each item is independent of the `deps` work: no `make test`, `make race` or
 `make lint` run fails because of it. Found while fixing `deps` items.
