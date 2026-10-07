@@ -61,9 +61,6 @@ const (
 
 	extendoLogLevel        = logs.ErrorLevel
 	numCollClients         = 2
-	collClientMaxIndex     = numCollClients - 1
-	putClientIndex         = collClientMaxIndex + 1
-	metaClientIndex        = putClientIndex + 1
 	extendoNotExist        = "does not exist"
 	operationMinBackoff    = 5 * time.Second
 	operationMaxBackoff    = 30 * time.Second
@@ -108,6 +105,28 @@ func (b *Baton) getCollClients() []*ex.Client {
 	defer b.collMu.Unlock()
 
 	return slices.Clone(b.collClients)
+}
+
+// getCollClient returns the collection client at the given index. collMu
+// guards it, since a failed operation can replace it while Cleanup() or
+// AllClientsStopped() read it.
+func (b *Baton) getCollClient(clientIndex int) *ex.Client {
+	b.collMu.Lock()
+	defer b.collMu.Unlock()
+
+	return b.collClients[clientIndex]
+}
+
+// swapCollClient stores the given client at the given collection client index,
+// returning the client it replaced.
+func (b *Baton) swapCollClient(clientIndex int, client *ex.Client) *ex.Client {
+	b.collMu.Lock()
+	defer b.collMu.Unlock()
+
+	old := b.collClients[clientIndex]
+	b.collClients[clientIndex] = client
+
+	return old
 }
 
 // setupExtendoLogger sets up a STDERR logger that the extendo library will use.
@@ -235,7 +254,7 @@ func (b *Baton) GetClientsFromPoolConcurrently(pool *ex.ClientPool, numClients u
 
 func (b *Baton) ensureCollection(clientIndex int, ri ex.RodsItem) error {
 	err := timeoutOp(func() error {
-		_, errl := b.collClients[clientIndex].ListItem(ex.Args{}, ri)
+		_, errl := b.getCollClient(clientIndex).ListItem(ex.Args{}, ri)
 
 		return errl
 	}, "collection failed: "+ri.IPath)
@@ -279,12 +298,14 @@ func timeoutOp(op retry.Operation, path string) error {
 // then work later.
 func (b *Baton) createCollectionWithTimeoutAndRetries(clientIndex int, ri ex.RodsItem) error {
 	return b.doWithTimeoutAndRetries(func() error {
-		_, err := b.collClients[clientIndex].MkDir(ex.Args{Recurse: true}, ri)
+		client := b.getCollClient(clientIndex)
+
+		_, err := client.MkDir(ex.Args{Recurse: true}, ri)
 		if err != nil {
 			return err
 		}
 
-		_, err = b.collClients[clientIndex].ListItem(ex.Args{}, ri)
+		_, err = client.ListItem(ex.Args{}, ri)
 
 		return err
 	}, clientIndex, ri.IPath)
@@ -310,7 +331,7 @@ func (b *Baton) doWithTimeoutAndRetries(op retry.Operation, clientIndex int, pat
 }
 
 // timeoutOpAndMakeNewClientOnError wraps the given op with a timeout, and
-// makes a new client on timeout or error.
+// makes a new collection client on timeout or error.
 func (b *Baton) timeoutOpAndMakeNewClientOnError(op retry.Operation, clientIndex int, path string) retry.Operation {
 	return func() error {
 		err := timeoutOp(op, path)
@@ -325,36 +346,13 @@ func (b *Baton) timeoutOpAndMakeNewClientOnError(op retry.Operation, clientIndex
 
 						return nil
 					}, "")
-				}(b.getClientByIndex(clientIndex))
+				}(b.swapCollClient(clientIndex, client))
 
-				b.setClientByIndex(clientIndex, client)
 				pool.Close()
 			}
 		}
 
 		return err
-	}
-}
-
-func (b *Baton) getClientByIndex(clientIndex int) *ex.Client {
-	switch clientIndex {
-	case putClientIndex:
-		return b.putClient.Load()
-	case metaClientIndex:
-		return b.metaClient.Load()
-	default:
-		return b.collClients[clientIndex]
-	}
-}
-
-func (b *Baton) setClientByIndex(clientIndex int, client *ex.Client) {
-	switch clientIndex {
-	case putClientIndex:
-		b.putClient.Store(client)
-	case metaClientIndex:
-		b.metaClient.Store(client)
-	default:
-		b.collClients[clientIndex] = client
 	}
 }
 

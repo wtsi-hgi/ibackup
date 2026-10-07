@@ -32,6 +32,9 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
   - Origin item: "Possible: `baton/baton.go` `EnsureCollection`".
   - Decision (user, 2026-10-05): try to reproduce it; fix only if it
     reproduces, otherwise record what was tried and leave it unfixed.
+  - Reproduced (2026-10-07): a per-caller version of the Cleanup-during-
+    EnsureCollection test failed once (`Expected: 0 Actual: 1`): a caller got
+    a nil result although its collection did not exist.
 - [ ] `baton/baton.go` `GetMeta` is the only remote operation without
   `timeoutOp`, so any hang in it blocks its caller forever. One such hang:
   extendo (github.com/mjkw31/extendo/v2 v2.7.1-beta2, client.go
@@ -120,12 +123,28 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
     (`Server.stop` doesn't close `removeQueue`); defensive. Mutants (spin on
     closed queue, return without finalizing, original code) fail. `make
     speed` passed (Upload -0.5%, Remove +2.0% vs ce92cae).
-- [ ] `baton/baton.go` `timeoutOpAndMakeNewClientOnError` → `setClientByIndex`
+- [x] `baton/baton.go` `timeoutOpAndMakeNewClientOnError` → `setClientByIndex`
   writes `b.collClients[i]` without `collMu`, racing with the collection
   worker goroutines and with `Cleanup`/`AllClientsStopped` reading
   `collClients`. Code reading.
   - Origin: found fixing the baton `Cleanup` client race (2026-10-07).
+  - Red: `CGO_ENABLED=1 go test -tags netgo --count 1 -race -timeout 10m
+    ./baton -run TestBatonConcurrentClientInit` (new Convey: EnsureCollection
+    under a data object so MkDir fails and clients are replaced, while polling
+    `AllClientsStopped`): `WARNING: DATA RACE`, write in `setClientByIndex`,
+    read in `getCollClients`.
+  - Fixed in `baton/baton.go`: `getCollClient(i)`/`swapCollClient(i, c)` take
+    `collMu`; the swapped-out client is stopped. Removed the unreachable
+    put/meta index cases. Mutant (unlocked swap) fails.
 - [ ] `baton/baton.go`: if `Cleanup` runs while `EnsureCollection` callers
   are still sending on `collCh`, it closes `collCh` and `collErrCh`, which
   can panic with "send on closed channel". Code reading.
+  - Origin: as above.
+- [ ] `baton/baton.go`: `Cleanup` stops the collection clients but leaves them
+  in `collClients`; `makeCollConnections` then reuses the stopped clients, so
+  every `EnsureCollection` after a `Cleanup` fails once and waits at least 5s
+  of backoff before a fresh client works.
+  - Origin: found fixing the Cleanup/`collCh` panic (2026-10-07).
+- [ ] `baton/baton.go`: `CollectionsDone()` without an earlier
+  `EnsureCollection` panics on a nil `collPool`. Probably unreachable; low.
   - Origin: as above.

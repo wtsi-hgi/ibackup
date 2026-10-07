@@ -45,7 +45,8 @@ import (
 	ex "github.com/wtsi-npg/extendo/v3"
 )
 
-var testStartTime time.Time   //nolint:gochecknoglobals
+var testStartTime time.Time //nolint:gochecknoglobals
+
 var icmd *testutil.ICommander //nolint:gochecknoglobals
 
 var errExpectedStatToFindUploadedObject = errors.New("expected Stat to find uploaded object")
@@ -397,6 +398,43 @@ func TestBatonConcurrentClientInit(t *testing.T) {
 
 		h.Cleanup()
 		So(h.AllClientsStopped(), ShouldBeTrue)
+	})
+
+	Convey("Collection clients replaced after a failed MkDir can be checked concurrently", t, func() {
+		localPath := t.TempDir()
+		fileLocal := filepath.Join(localPath, "file")
+		fileRemote := filepath.Join(remotePath, "notadir")
+
+		internal.CreateTestFileOfLength(t, fileLocal, 1)
+
+		h, err := GetBatonHandler()
+		So(err, ShouldBeNil)
+		Reset(func() {
+			h.Cleanup()
+		})
+
+		So(h.Put(fileLocal, fileRemote), ShouldBeNil)
+
+		ensureDone := make(chan error, 1)
+
+		go func() {
+			ensureDone <- h.EnsureCollection(filepath.Join(fileRemote, "sub"))
+		}()
+
+		var ensureErr error
+
+	poll:
+		for {
+			select {
+			case ensureErr = <-ensureDone:
+				break poll
+			default:
+				h.AllClientsStopped()
+			}
+		}
+
+		So(ensureErr, ShouldNotBeNil)
+		So(h.CollectionsDone(), ShouldBeNil)
 	})
 }
 
