@@ -792,6 +792,34 @@ func TestServer(t *testing.T) {
 						So(got.Error, ShouldContainSubstring, ErrIncorrectTypeInQueue.Error())
 					})
 
+					Convey("A removal whose remove queue has been closed stops cleanly and "+
+						"cleans up the storage handler", func() {
+						counting := &cleanupCountingHandler{Handler: s.storageHandler}
+						s.storageHandler = counting
+
+						err = s.removeQueue.Destroy()
+						So(err, ShouldBeNil)
+
+						done := make(chan any, 1)
+
+						go func() {
+							defer func() { done <- recover() }()
+
+							s.handleRemoveRequests(exampleSet.ID())
+						}()
+
+						var panicked any
+
+						select {
+						case panicked = <-done:
+						case <-time.After(10 * time.Second):
+							panicked = "handleRemoveRequests did not return"
+						}
+
+						So(panicked, ShouldBeNil)
+						So(counting.cleanups.Load(), ShouldEqual, 1)
+					})
+
 					Convey("Given a complete set, a removal interrupted by the server stopping "+
 						"finishes after a restart, counted once", func() {
 						file1local := filepath.Join(localDir, "file1")
