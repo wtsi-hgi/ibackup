@@ -25,7 +25,7 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
     it was the shared-collection wipe (fixed in e4c7b83).
   - Decision (user, 2026-10-05): try to reproduce it; fix only if it
     reproduces, otherwise record what was tried and leave it unfixed.
-- [ ] Possible: `baton/baton.go` `EnsureCollection` sends every concurrent
+- [x] Possible: `baton/baton.go` `EnsureCollection` sends every concurrent
   caller's result back on one shared channel, so a caller may receive
   another collection's error. Spotted by reading the code; no failure seen.
   Not yet confirmed.
@@ -35,6 +35,17 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
   - Reproduced (2026-10-07): a per-caller version of the Cleanup-during-
     EnsureCollection test failed once (`Expected: 0 Actual: 1`): a caller got
     a nil result although its collection did not exist.
+  - Red: `CGO_ENABLED=1 go test -tags netgo --count 1 -timeout 10m ./baton
+    -run TestBatonConcurrentClientInit`, new Convey "Concurrent
+    EnsureCollection callers each get their own collection's result": a
+    failing caller A returned first with B's nil (`Expected: false Actual:
+    true`); the Cleanup Convey tightened to per-caller checks also failed
+    (`Expected: 0 Actual: 1`).
+  - Fixed in `baton/baton.go`: each call sends a `collRequest` with its own
+    buffer-1 reply channel; `collErrCh` is removed; cancel semantics are
+    unchanged. Mutants (b9317e5 code, one shared reply channel, result wait
+    ignoring done) fail. Gates pass; `make speed` Upload -2.5%, Remove +0.3%
+    vs ce92cae.
 - [ ] `baton/baton.go` `GetMeta` is the only remote operation without
   `timeoutOp`, so any hang in it blocks its caller forever. One such hang:
   extendo (github.com/mjkw31/extendo/v2 v2.7.1-beta2, client.go

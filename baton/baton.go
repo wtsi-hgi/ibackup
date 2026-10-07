@@ -72,13 +72,19 @@ const (
 	errSysCopyLen = -27000
 )
 
+// collRequest asks for a collection to be created, with the result sent on
+// reply, which must have a buffer of 1.
+type collRequest struct {
+	collection string
+	reply      chan<- error
+}
+
 // Baton is a Handler that uses Baton (via extendo) to interact with iRODS.
 type Baton struct {
 	collPool     *ex.ClientPool
 	collClients  []*ex.Client
 	collRunning  bool
-	collCh       chan string
-	collErrCh    chan error
+	collCh       chan collRequest
 	collDone     <-chan struct{}
 	collStop     context.CancelFunc
 	collMu       sync.Mutex
@@ -110,20 +116,14 @@ func (b *Baton) getCollClients() []*ex.Client {
 	return slices.Clone(b.collClients)
 }
 
-// createCollections creates collections received from collCh using the
-// collection client at the given index, sending results to errCh, until ctx
-// is cancelled.
-func (b *Baton) createCollections(ctx context.Context, index int, collCh <-chan string, errCh chan<- error) {
+// createCollections creates collections requested on collCh using the
+// collection client at the given index, sending each result to its request's
+// reply channel, until ctx is cancelled.
+func (b *Baton) createCollections(ctx context.Context, index int, collCh <-chan collRequest) {
 	for {
 		select {
-		case collection := <-collCh:
-			err := b.ensureCollection(ctx, index, ex.RodsItem{IPath: collection})
-
-			select {
-			case errCh <- err:
-			case <-ctx.Done():
-				return
-			}
+		case req := <-collCh:
+			req.reply <- b.ensureCollection(ctx, index, ex.RodsItem{IPath: req.collection})
 		case <-ctx.Done():
 			return
 		}
@@ -172,11 +172,8 @@ func setupExtendoLogger() {
 // EnsureCollection ensures the given collection exists in iRODS, creating it if
 // necessary. You must call Connect() before calling this.
 //
-// This is safe for calling concurrently, and uses multiple connections. But an
-// artefact is that the error you get might be for a different
-// EnsureCollection() call you made for a different collection. This shouldn't
-// make much difference if you just collect all your errors and don't care about
-// order.
+// This is safe for calling concurrently, and uses multiple connections. Each
+// call returns the result for its own collection.
 //
 // Calls still waiting when Cleanup() or CollectionsDone() is called return an
 // ErrCollectionsStopped error.
@@ -195,19 +192,20 @@ func (b *Baton) EnsureCollection(collection string) error {
 		b.collRunning = true
 	}
 
-	collCh, errCh, done := b.collCh, b.collErrCh, b.collDone
+	collCh, done := b.collCh, b.collDone
 	b.collMu.Unlock()
 
 	stopped := errs.PathError{Msg: ErrCollectionsStopped, Path: collection}
+	reply := make(chan error, 1)
 
 	select {
-	case collCh <- collection:
+	case collCh <- collRequest{collection: collection, reply: reply}:
 	case <-done:
 		return stopped
 	}
 
 	select {
-	case err := <-errCh:
+	case err := <-reply:
 		return err
 	case <-done:
 		return stopped
@@ -218,15 +216,14 @@ func (b *Baton) EnsureCollection(collection string) error {
 // collection client that creates any collection sent to that channel, until
 // b.collStop() is called.
 func (b *Baton) startCreatingCollections() {
-	b.collCh = make(chan string)
-	b.collErrCh = make(chan error)
+	b.collCh = make(chan collRequest)
 
 	ctx, stop := context.WithCancel(context.Background())
 	b.collDone = ctx.Done()
 	b.collStop = stop
 
 	for index := range b.collClients {
-		go b.createCollections(ctx, index, b.collCh, b.collErrCh)
+		go b.createCollections(ctx, index, b.collCh)
 	}
 }
 

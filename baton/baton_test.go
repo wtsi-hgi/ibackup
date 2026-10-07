@@ -41,6 +41,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/wtsi-hgi/ibackup/baton/meta"
+	"github.com/wtsi-hgi/ibackup/errs"
 	"github.com/wtsi-hgi/ibackup/internal"
 	"github.com/wtsi-hgi/ibackup/internal/testutil"
 	ex "github.com/wtsi-npg/extendo/v3"
@@ -438,6 +439,64 @@ func TestBatonConcurrentClientInit(t *testing.T) {
 		So(h.CollectionsDone(), ShouldBeNil)
 	})
 
+	Convey("Concurrent EnsureCollection callers each get their own collection's result", t, func() {
+		localPath := t.TempDir()
+		fileLocal := filepath.Join(localPath, "file")
+		fileRemote := filepath.Join(remotePath, "notadir-own-result")
+		failColl := filepath.Join(fileRemote, "sub")
+		okColl := filepath.Join(remotePath, "ensure-own-result")
+
+		internal.CreateTestFileOfLength(t, fileLocal, 1)
+
+		h, err := GetBatonHandler()
+		So(err, ShouldBeNil)
+		Reset(func() {
+			h.Cleanup()
+		})
+
+		So(h.Put(fileLocal, fileRemote), ShouldBeNil)
+
+		failErrCh := make(chan error, 1)
+
+		go func() {
+			failErrCh <- h.EnsureCollection(failColl)
+		}()
+
+		// Let the failing call reach a worker and start waiting for its
+		// result; its MkDir retries outlast the rest of this test.
+		time.Sleep(time.Second)
+
+		okErrCh := make(chan error, 1)
+
+		go func() {
+			okErrCh <- h.EnsureCollection(okColl)
+		}()
+
+		var (
+			okReturned, failReturnedFirst bool
+			okErr                         error
+		)
+
+		select {
+		case okErr = <-okErrCh:
+			okReturned = true
+		case <-failErrCh:
+			failReturnedFirst = true
+		case <-time.After(operationTimeout / 6):
+		}
+
+		So(failReturnedFirst, ShouldBeFalse)
+		So(okReturned, ShouldBeTrue)
+		So(okErr, ShouldBeNil)
+
+		_, err = icmd.ILS(okColl)
+		So(err, ShouldBeNil)
+
+		h.Cleanup()
+
+		So(<-failErrCh, ShouldNotBeNil)
+	})
+
 	Convey("Cleanup during concurrent EnsureCollection calls makes them return, leaving a usable handler", t, func() {
 		parent := filepath.Join(remotePath, "ensure-cleanup")
 
@@ -490,22 +549,25 @@ func TestBatonConcurrentClientInit(t *testing.T) {
 		output, err := icmd.ILS(parent)
 		So(err, ShouldBeNil)
 
-		// A caller may get the result of another caller's collection, so
-		// compare totals: every nil error must be for a collection that was
-		// made.
-		var noErrors, made int
+		// Each caller's nil result means its own collection was made, and any
+		// error is the stopped error for its own collection.
+		var nilButNotMade, notOwnStopped int
 
 		for i, ensureErr := range ensureErrs {
-			if ensureErr == nil {
-				noErrors++
-			}
+			coll := filepath.Join(parent, fmt.Sprintf("d%02d", i))
 
-			if strings.Contains(string(output), fmt.Sprintf("/d%02d\n", i)) {
-				made++
+			switch {
+			case ensureErr == nil:
+				if !strings.Contains(string(output), coll+"\n") {
+					nilButNotMade++
+				}
+			case !errors.Is(ensureErr, errs.PathError{Msg: ErrCollectionsStopped, Path: coll}):
+				notOwnStopped++
 			}
 		}
 
-		So(noErrors, ShouldBeLessThanOrEqualTo, made)
+		So(nilButNotMade, ShouldEqual, 0)
+		So(notOwnStopped, ShouldEqual, 0)
 		So(h.CollectionsDone(), ShouldBeNil)
 
 		// Collection creation interrupted by the Cleanup must not still be
