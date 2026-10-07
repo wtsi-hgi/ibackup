@@ -434,7 +434,7 @@ func (c *entryCreator) direntToEntryType(de *Dirent) (EntryType, string, error) 
 	case !(de.IsRegular() || de.IsDir()):
 		eType = Abnormal
 	default:
-		hardLink, err := c.db.handleInode(c.tx, de, c.transformerID)
+		hardLink, err := c.db.handleInode(c.tx, de, c.transformerID, c.existingEntries[de.Path])
 		if err != nil {
 			return eType, "", err
 		}

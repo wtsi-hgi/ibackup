@@ -5297,6 +5297,87 @@ func TestServer(t *testing.T) {
 						So(files, ShouldBeEmpty)
 					})
 
+					Convey("with remote hardlink location set, removing the original keeps its hardlinks "+
+						"using its inode file without uploading them again", func() {
+						hardlinksDir := filepath.Join(remoteDir, "mountpoints")
+						s.SetRemoteHardlinkLocation(hardlinksDir)
+
+						// the server removes with its own handler, not this scope's
+						storage, ok := s.storageHandler.(*internal.LocalHandler)
+						So(ok, ShouldBeTrue)
+
+						discoverAndPut := func() []*transfer.Request {
+							err = client.TriggerDiscovery(exampleSet.ID(), false)
+							So(err, ShouldBeNil)
+
+							So(<-racCalled, ShouldBeTrue)
+
+							requests, errg := client.GetSomeUploadRequests()
+							So(errg, ShouldBeNil)
+
+							p, d := makePutter(t, storage, requests, client)
+							defer d()
+
+							uploadStarts, uploadResults, skippedResults := p.Put()
+
+							err = client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults,
+								minMBperSecondUploadSpeed, minTimeForUpload, 1*time.Hour, logger)
+							So(err, ShouldBeNil)
+
+							return requests
+						}
+
+						discoverAndPut()
+
+						info, errs := os.Stat(path1)
+						So(errs, ShouldBeNil)
+
+						statt, ok := info.Sys().(*syscall.Stat_t)
+						So(ok, ShouldBeTrue)
+
+						inodeFile := filepath.Join(hardlinksDir, path1, strconv.FormatUint(statt.Ino, 10))
+
+						_, err = os.Stat(inodeFile)
+						So(err, ShouldBeNil)
+
+						remove := func(path string) {
+							remReq := set.RemoveReq{Path: path, Set: exampleSet, Action: set.ToRemove}
+
+							So(s.removeFileFromIRODSandDB(&remReq), ShouldBeNil)
+						}
+
+						remove(path1)
+
+						requests := discoverAndPut()
+						So(len(requests), ShouldEqual, 2)
+
+						for _, request := range requests {
+							So(request.Hardlink, ShouldEqual, inodeFile)
+						}
+
+						for _, path := range []string{path2, path3} {
+							entry, erre := s.db.GetFileEntryForSet(exampleSet.ID(), path)
+							So(erre, ShouldBeNil)
+							So(entry.Type, ShouldEqual, set.Hardlink)
+							So(entry.Dest, ShouldEqual, path1)
+							So(entry.Status, ShouldEqual, set.Skipped)
+
+							_, err = os.Stat(filepath.Join(hardlinksDir, path, strconv.FormatUint(statt.Ino, 10)))
+							So(err, ShouldNotBeNil)
+						}
+
+						remove(path2)
+
+						_, err = os.Stat(inodeFile)
+						So(err, ShouldBeNil)
+
+						remove(path3)
+
+						_, err = os.Stat(inodeFile)
+						So(err, ShouldNotBeNil)
+						So(err.Error(), ShouldContainSubstring, "no such file or directory")
+					})
+
 					Convey("with remote hardlink location set only uploads hardlinks once", func() {
 						hardlinksDir := filepath.Join(remoteDir, "mountpoints")
 						s.SetRemoteHardlinkLocation(hardlinksDir)

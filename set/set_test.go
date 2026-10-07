@@ -1821,6 +1821,376 @@ func TestSetDB(t *testing.T) {
 					})
 				}
 
+				Convey("then removing the uploaded original keeps its hardlinks pointing at its inode file", func() {
+					storagePath := filepath.Join(local, strconv.FormatUint(stat.Ino, 10))
+
+					upload := func(s *Set, path string) {
+						r := &transfer.Request{
+							Local:     path,
+							Status:    transfer.RequestStatusUploading,
+							Requester: s.Requester,
+							Set:       s.Name,
+						}
+
+						_, erru := db.SetEntryStatus(r)
+						So(erru, ShouldBeNil)
+
+						r.Status = transfer.RequestStatusUploaded
+
+						_, erru = db.SetEntryStatus(r)
+						So(erru, ShouldBeNil)
+					}
+
+					remove := func(s *Set, path string) {
+						entry, erre := db.GetFileEntryForSet(s.ID(), path)
+						So(erre, ShouldBeNil)
+
+						remReq := NewRemoveRequest(path, db.GetByID(s.ID()), false, ToRemove)
+
+						_, errr := db.RemoveFileEntry(&remReq, entry)
+						So(errr, ShouldBeNil)
+					}
+
+					discover := func(s *Set, dirents ...*Dirent) {
+						_, errd = db.Discover(s.ID(), func(_ []*Entry) ([]*Dirent, []*Dirent, error) {
+							return dirents, dirDirents, nil
+						})
+						So(errd, ShouldBeNil)
+					}
+
+					So(db.SetDiscoveryStarted(setl1.ID()), ShouldBeNil)
+
+					for _, path := range []string{local, link1, link2, unlinked} {
+						upload(setl1, path)
+					}
+
+					remove(setl1, local)
+
+					discover(setl1, fileDirents[1:]...)
+
+					So(db.GetByID(setl1.ID()).Hardlinks, ShouldEqual, 2)
+
+					for _, path := range []string{link1, link2} {
+						entry, erre := db.GetFileEntryForSet(setl1.ID(), path)
+						So(erre, ShouldBeNil)
+						So(entry.Type, ShouldEqual, Hardlink)
+						So(entry.Dest, ShouldEqual, local)
+						So(entry.InodeStoragePath(), ShouldEqual, storagePath)
+					}
+
+					Convey("as does a later set adding a new hardlink to it", func() {
+						link3 := filepath.Join(tdir, "link3")
+						So(os.Link(local, link3), ShouldBeNil)
+
+						setl2 := &Set{Name: "setlink2", Requester: "jim", Transformer: "prefix=" + tdir + ":/remote2"}
+						So(db.AddOrUpdate(setl2), ShouldBeNil)
+
+						discover(setl2, &Dirent{Path: link3, Inode: stat.Ino})
+
+						entry, erre := db.GetFileEntryForSet(setl2.ID(), link3)
+						So(erre, ShouldBeNil)
+						So(entry.Type, ShouldEqual, Hardlink)
+						So(entry.InodeStoragePath(), ShouldEqual, storagePath)
+					})
+
+					Convey("as does its last hardlink, left as the only file in the inode record", func() {
+						remove(setl1, link1)
+
+						files, errf := db.GetFilesFromInode(stat.Ino, local)
+						So(errf, ShouldBeNil)
+						So(files, ShouldResemble, []string{"", link2})
+
+						discover(setl1, fileDirents[2:]...)
+
+						entry, erre := db.GetFileEntryForSet(setl1.ID(), link2)
+						So(erre, ShouldBeNil)
+						So(entry.Type, ShouldEqual, Hardlink)
+						So(entry.InodeStoragePath(), ShouldEqual, storagePath)
+
+						files, errf = db.GetFilesFromInode(stat.Ino, local)
+						So(errf, ShouldBeNil)
+						So(files, ShouldResemble, []string{"", link2})
+					})
+
+					keptOnInodeFile := func(s *Set, path string) {
+						entry, erre := db.GetFileEntryForSet(s.ID(), path)
+						So(erre, ShouldBeNil)
+						So(entry.Type, ShouldEqual, Hardlink)
+						So(entry.Dest, ShouldEqual, local)
+						So(entry.InodeStoragePath(), ShouldEqual, storagePath)
+					}
+
+					newSet := func(name string) *Set {
+						s := &Set{Name: name, Requester: "jim", Transformer: setl1.Transformer}
+						So(db.AddOrUpdate(s), ShouldBeNil)
+
+						return s
+					}
+
+					link1Dirent := &Dirent{Path: link1, Inode: stat.Ino}
+					link2Dirent := &Dirent{Path: link2, Inode: stat.Ino}
+
+					Convey("as does its second hardlink once its first is deleted locally, and its first once "+
+						"linked back", func() {
+						So(os.Remove(link1), ShouldBeNil)
+
+						discover(setl1, &Dirent{Path: link1}, link2Dirent)
+
+						entry, erre := db.GetFileEntryForSet(setl1.ID(), link1)
+						So(erre, ShouldBeNil)
+						So(entry.Inode, ShouldEqual, 0)
+
+						keptOnInodeFile(setl1, link2)
+
+						setl2 := newSet("setlink2")
+						discover(setl2, link2Dirent)
+
+						keptOnInodeFile(setl2, link2)
+
+						So(os.Link(local, link1), ShouldBeNil)
+
+						discover(setl1, link1Dirent, link2Dirent)
+
+						keptOnInodeFile(setl1, link1)
+					})
+
+					Convey("as does its second hardlink once its first is linked to another file, and its first "+
+						"once linked back", func() {
+						other := filepath.Join(tdir, "other")
+						internal.CreateTestFile(t, other, "b")
+
+						info, errs = os.Stat(other)
+						So(errs, ShouldBeNil)
+
+						statOther, oko := info.Sys().(*syscall.Stat_t)
+						So(oko, ShouldBeTrue)
+
+						So(os.Remove(link1), ShouldBeNil)
+						So(os.Link(other, link1), ShouldBeNil)
+
+						discover(setl1, &Dirent{Path: other, Inode: statOther.Ino},
+							&Dirent{Path: link1, Inode: statOther.Ino}, link2Dirent)
+
+						entry, erre := db.GetFileEntryForSet(setl1.ID(), link1)
+						So(erre, ShouldBeNil)
+						So(entry.Type, ShouldEqual, Hardlink)
+						So(entry.Dest, ShouldEqual, other)
+
+						keptOnInodeFile(setl1, link2)
+
+						setl2 := newSet("setlink2")
+						discover(setl2, link2Dirent)
+
+						keptOnInodeFile(setl2, link2)
+
+						So(os.Remove(link1), ShouldBeNil)
+						So(os.Link(local, link1), ShouldBeNil)
+
+						discover(setl1, &Dirent{Path: other, Inode: statOther.Ino}, link1Dirent, link2Dirent)
+
+						keptOnInodeFile(setl1, link1)
+					})
+
+					Convey("as does a new hardlink when only a later set has an up-to-date entry for the "+
+						"remaining one", func() {
+						remove(setl1, link2)
+
+						setl3 := newSet("setlink3")
+						discover(setl3, &Dirent{Path: link1, Inode: stat.Ino})
+
+						keptOnInodeFile(setl3, link1)
+
+						files, errf := db.GetFilesFromInode(stat.Ino, local)
+						So(errf, ShouldBeNil)
+						So(files, ShouldResemble, []string{"", link1})
+
+						setIDs, erra := db.GetAllSetsForFile(link1)
+						So(erra, ShouldBeNil)
+						So(len(setIDs), ShouldEqual, 2)
+
+						So(os.Remove(link1), ShouldBeNil)
+						discover(db.GetByID(setIDs[0]), &Dirent{Path: link1})
+						So(os.Link(local, link1), ShouldBeNil)
+
+						entry, erre := db.GetFileEntryForSet(setIDs[0], link1)
+						So(erre, ShouldBeNil)
+						So(entry.Inode, ShouldEqual, 0)
+
+						link3 := filepath.Join(tdir, "link3")
+						So(os.Link(local, link3), ShouldBeNil)
+
+						setl2 := newSet("setlink2")
+						discover(setl2, &Dirent{Path: link3, Inode: stat.Ino})
+
+						keptOnInodeFile(setl2, link3)
+					})
+
+					Convey("as does its re-added path, made a hardlink of itself that reuses its inode file", func() {
+						discover(setl1, fileDirents...)
+
+						for _, path := range []string{local, link1, link2} {
+							keptOnInodeFile(setl1, path)
+						}
+
+						files, errf := db.GetFilesFromInode(stat.Ino, local)
+						So(errf, ShouldBeNil)
+						So(files, ShouldResemble, []string{"", link1, link2, local})
+					})
+
+					Convey("as do its hardlinks once their own entries are for an earlier file that had the "+
+						"same inode, taking the original of the inode's new group instead", func() {
+						erru := db.db.Update(func(tx *bolt.Tx) error {
+							return tx.Bucket([]byte(inodeBucket)).Delete(db.inodeMountPointKeyFromDirent(link2Dirent))
+						})
+						So(erru, ShouldBeNil)
+
+						newOriginal := filepath.Join(tdir, "newOriginal")
+						newLink := filepath.Join(tdir, "newLink")
+
+						So(os.Link(local, newOriginal), ShouldBeNil)
+						So(os.Link(local, newLink), ShouldBeNil)
+
+						newOriginalDirent := &Dirent{Path: newOriginal, Inode: stat.Ino}
+						newLinkDirent := &Dirent{Path: newLink, Inode: stat.Ino}
+
+						setl2 := newSet("setlink2")
+						discover(setl2, newOriginalDirent)
+						discover(setl2, newOriginalDirent, newLinkDirent)
+						remove(setl2, newOriginal)
+
+						discover(setl1, fileDirents[1:]...)
+
+						for _, path := range []string{link1, link2} {
+							entry, erre := db.GetFileEntryForSet(setl1.ID(), path)
+							So(erre, ShouldBeNil)
+							So(entry.Type, ShouldEqual, Hardlink)
+							So(entry.Dest, ShouldEqual, newOriginal)
+							So(entry.InodeStoragePath(), ShouldEqual,
+								filepath.Join(newOriginal, strconv.FormatUint(stat.Ino, 10)))
+						}
+
+						files, errf := db.GetFilesFromInode(stat.Ino, local)
+						So(errf, ShouldBeNil)
+						So(files, ShouldResemble, []string{"", newLink, link1, link2})
+					})
+				})
+
+				Convey("then a hardlink whose inode record has a removed original that no set's entry knows "+
+					"becomes the original", func() {
+					stale := filepath.Join(tdir, "stale")
+					internal.CreateTestFile(t, stale, "a")
+
+					fresh := filepath.Join(tdir, "fresh")
+					So(os.Link(stale, fresh), ShouldBeNil)
+
+					info, errs = os.Stat(stale)
+					So(errs, ShouldBeNil)
+
+					statStale, oks := info.Sys().(*syscall.Stat_t)
+					So(oks, ShouldBeTrue)
+
+					staleFile := "0" + transformerInodeSeparator + stale
+
+					erru := db.db.Update(func(tx *bolt.Tx) error {
+						key := db.inodeMountPointKeyFromDirent(&Dirent{Path: stale, Inode: statStale.Ino})
+
+						return tx.Bucket([]byte(inodeBucket)).Put(key, db.encodeToBytes([]string{"", staleFile}))
+					})
+					So(erru, ShouldBeNil)
+
+					setl2 := &Set{Name: "setlink2", Requester: "jim", Transformer: setl1.Transformer}
+					So(db.AddOrUpdate(setl2), ShouldBeNil)
+
+					_, errd = db.Discover(setl2.ID(), func(_ []*Entry) ([]*Dirent, []*Dirent, error) {
+						return []*Dirent{{Path: fresh, Inode: statStale.Ino}}, nil, nil
+					})
+					So(errd, ShouldBeNil)
+
+					entry, erre := db.GetFileEntryForSet(setl2.ID(), fresh)
+					So(erre, ShouldBeNil)
+					So(entry.Type, ShouldEqual, Regular)
+					So(entry.InodeStoragePath(), ShouldBeBlank)
+
+					files, errf := db.GetFilesFromInode(statStale.Ino, stale)
+					So(errf, ShouldBeNil)
+					So(files, ShouldResemble, []string{fresh, stale})
+				})
+
+				Convey("then a file whose inode record has a removed original and its own path from a set "+
+					"with another transformer that no set has replaces that path as the original", func() {
+					ghost := filepath.Join(tdir, "ghost")
+					internal.CreateTestFile(t, ghost, "a")
+
+					ghostLink := filepath.Join(tdir, "ghostlink")
+					So(os.Link(ghost, ghostLink), ShouldBeNil)
+
+					info, errs = os.Stat(ghost)
+					So(errs, ShouldBeNil)
+
+					statGhost, okg := info.Sys().(*syscall.Stat_t)
+					So(okg, ShouldBeTrue)
+
+					setl2 := &Set{Name: "setlink2", Requester: "jim", Transformer: "prefix=" + tdir + ":/remote2"}
+					So(db.AddOrUpdate(setl2), ShouldBeNil)
+
+					discover := func(s *Set, dirents ...*Dirent) {
+						_, errd = db.Discover(s.ID(), func(_ []*Entry) ([]*Dirent, []*Dirent, error) {
+							return dirents, nil, nil
+						})
+						So(errd, ShouldBeNil)
+					}
+
+					discover(setl2)
+
+					erru := db.db.Update(func(tx *bolt.Tx) error {
+						id := tx.Bucket([]byte(transformerToIDBucket)).Get([]byte(setl2.Transformer))
+						key := db.inodeMountPointKeyFromDirent(&Dirent{Path: ghost, Inode: statGhost.Ino})
+						ghostFile := string(id) + transformerInodeSeparator + ghost
+
+						return tx.Bucket([]byte(inodeBucket)).Put(key, db.encodeToBytes([]string{"", ghostFile}))
+					})
+					So(erru, ShouldBeNil)
+
+					setl3 := &Set{Name: "setlink3", Requester: "jim", Transformer: setl1.Transformer}
+					So(db.AddOrUpdate(setl3), ShouldBeNil)
+
+					ghostDirent := &Dirent{Path: ghost, Inode: statGhost.Ino}
+					discover(setl3, ghostDirent)
+
+					entry, erre := db.GetFileEntryForSet(setl3.ID(), ghost)
+					So(erre, ShouldBeNil)
+					So(entry.Type, ShouldEqual, Regular)
+
+					files, errf := db.GetFilesFromInode(statGhost.Ino, ghost)
+					So(errf, ShouldBeNil)
+					So(files, ShouldResemble, []string{ghost})
+
+					discover(setl3, ghostDirent, &Dirent{Path: ghostLink, Inode: statGhost.Ino})
+
+					entry, erre = db.GetFileEntryForSet(setl3.ID(), ghostLink)
+					So(erre, ShouldBeNil)
+					So(entry.Type, ShouldEqual, Hardlink)
+					So(entry.Dest, ShouldEqual, ghost)
+
+					files, errf = db.GetFilesFromInode(statGhost.Ino, ghost)
+					So(errf, ShouldBeNil)
+					So(files, ShouldResemble, []string{ghost, ghostLink})
+
+					for _, path := range []string{ghostLink, ghost} {
+						entry, erre = db.GetFileEntryForSet(setl3.ID(), path)
+						So(erre, ShouldBeNil)
+
+						remReq := NewRemoveRequest(path, db.GetByID(setl3.ID()), false, ToRemove)
+
+						_, errr := db.RemoveFileEntry(&remReq, entry)
+						So(errr, ShouldBeNil)
+					}
+
+					files, errf = db.GetFilesFromInode(statGhost.Ino, ghost)
+					So(errf, ShouldBeNil)
+					So(files, ShouldBeEmpty)
+				})
+
 				Convey("then removing a hardlink added by a set with another transformer clears it from our inode record", func() {
 					link3 := filepath.Join(tdir, "link3")
 					err = os.Link(local, link3)

@@ -255,7 +255,7 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
     remove it; server level: the inode file survives one set removing its
     links while the other still holds one). A mutant ignoring same-
     transformer sets fails both.
-- [ ] When an original is removed while its hardlinks remain (record
+- [x] When an original is removed while its hardlinks remain (record
   `["", h1, h2]`), the next discovery makes h1 the Dest: h1 becomes a
   hardlink of itself, both links' storage path moves from `<orig>/<ino>` to
   `<h1>/<ino>` and they are re-uploaded, and (from code reading) the old inode
@@ -265,3 +265,24 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
     the original's existing inode file (use the hardlink entries' stored Dest
     when the record's first slot is blank); no re-upload.
   - Origin: found fixing the self-hardlink item; confirmed by its reviewer.
+  - Red: a set test (original + 2 hardlinks, original removed, rediscovered)
+    gave h1 Dest h1 instead of the original; a server test's storage path
+    moved from file.link1 to file.link2; a model probe (HEAD) re-uploaded.
+  - Fixed in `set/inode.go` and `set/entries.go`: when the record's first
+    slot is blank, a hardlink's Dest comes from the discovering set's own
+    stored entry (trusted only if the record already holds this file, so a
+    reused inode number can't mislead it) or else from another set's stored
+    hardlink entry for one of the files (Hardlink with the same inode); if
+    none knows it, the file becomes the original (and every stale entry for
+    its path, whatever transformer, is dropped). Re-adding a removed original
+    makes it a hardlink of itself reusing its existing inode file (accepted
+    under option (a): no re-upload). The own-entry check keeps rediscovery
+    cost flat (~0.2s for 500 such links from 10 to 2000 sets).
+  - Tests: links keep the original's Dest and storage after its removal
+    (server: no re-upload, inode file removed with the last link); first
+    link deleted locally / re-linked to another inode; a stale own entry
+    (inode 0, other inode, reused inode number); two sets with one stale
+    entry; an older-build ghost record; re-adding the original. Mutants
+    (old first-non-blank Dest, only the first link consulted, no inode
+    check, only the first set, no stale-entry guard, shortcut without inode
+    check or fallthrough, ghost kept) all fail; model probe 0/600.

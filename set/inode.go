@@ -118,6 +118,16 @@ func removeFromInodeFiles(files []string, remove func(int, string) bool) []strin
 	return kept
 }
 
+// entryHardlinkDest returns the given entry's Dest if it's a hardlink with the
+// given inode, otherwise blank.
+func entryHardlinkDest(entry *Entry, inode uint64) string {
+	if entry.Type == Hardlink && entry.Inode == inode {
+		return entry.Dest
+	}
+
+	return ""
+}
+
 // getMountPoints retrieves a list of mount point paths to be used when
 // determining hardlinks. The list is sorted longest first and stored on the
 // server object.
@@ -158,45 +168,150 @@ func (d *DB) getMountPoints() error {
 // file is recorded once per transformer, since each is a separate remote object
 // that points to the one remote inode file, and removal counts them to know
 // when that file is unused (see removeInodeIfUnused()).
-func (d *DB) handleInode(tx *bolt.Tx, de *Dirent, transformerID string) (string, error) {
+//
+// Once the original is removed, hardlinks keep its path (see hardlinkDest()).
+// If no set's entry knows it, the given file becomes the original, uploaded as
+// a regular file. Re-adding the removed original's own path therefore makes it
+// a hardlink of itself, reusing its existing remote inode file rather than
+// uploading its data again.
+//
+// The given stored entry is the discovering set's existing encoded entry for
+// the Dirent's path, if any. It's only trusted if the record already holds this
+// file, since otherwise it may be for an earlier file that had the same inode.
+func (d *DB) handleInode(tx *bolt.Tx, de *Dirent, transformerID string, stored []byte) (string, error) {
 	key := d.inodeMountPointKeyFromDirent(de)
 	b := tx.Bucket([]byte(inodeBucket))
 	transformerPath := transformerID + transformerInodeSeparator + de.Path
 
-	v := b.Get(key)
-	if v == nil {
+	allFiles := d.currentInodeFiles(b.Get(key), de.Inode)
+	if allFiles == nil {
 		return "", b.Put(key, d.encodeToBytes([]string{transformerPath}))
-	}
-
-	existingFiles, allFiles := d.decodeIMPValue(v, de.Inode)
-	if len(existingFiles) == 0 {
-		return "", b.Put(key, d.encodeToBytes([]string{transformerPath}))
-	}
-
-	_, hardlinkDest, err := splitTransformerPath(getFirstNonBlankValue(allFiles))
-	if err != nil {
-		return "", err
 	}
 
 	if inodeFileHasPath(allFiles[0], de.Path) {
 		return "", nil
 	}
 
-	if slices.Contains(allFiles[1:], transformerPath) {
-		return hardlinkDest, nil
+	recorded := slices.Contains(allFiles[1:], transformerPath)
+	if !recorded {
+		stored = nil
 	}
 
-	return hardlinkDest, b.Put(key, d.encodeToBytes(append(allFiles, transformerPath)))
+	hardlinkDest, err := d.hardlinkDest(tx, allFiles, de.Inode, stored)
+	if err != nil {
+		return "", err
+	}
+
+	return hardlinkDest, d.putInodeFile(b, key, allFiles, de.Path, transformerPath, hardlinkDest, recorded)
 }
 
-func getFirstNonBlankValue(arr []string) string {
-	for _, str := range arr {
-		if str != "" {
-			return str
+// currentInodeFiles returns the files of the given encoded inode record for the
+// given inode, or nil if there's no record or none of its files still have the
+// inode locally (eg. the inode was reused by a new file).
+func (d *DB) currentInodeFiles(v []byte, inode uint64) []string {
+	if v == nil {
+		return nil
+	}
+
+	existingFiles, allFiles := d.decodeIMPValue(v, inode)
+	if len(existingFiles) == 0 {
+		return nil
+	}
+
+	return allFiles
+}
+
+// putInodeFile adds the given transformer path, for the given path, to the
+// given files of the inode record with the given key, as a hardlink of the
+// given original path unless the files are already recorded to have it, or as
+// the original if that's blank. A new original replaces every other file for
+// its path, whatever transformer added it, since it's uploaded as a regular
+// file for all of them.
+func (d *DB) putInodeFile(b *bolt.Bucket, key []byte, files []string, path, transformerPath, original string,
+	recorded bool,
+) error {
+	if original == "" {
+		others := slices.DeleteFunc(files[1:], func(file string) bool { return inodeFileHasPath(file, path) })
+
+		return b.Put(key, d.encodeToBytes(append([]string{transformerPath}, others...)))
+	}
+
+	if recorded {
+		return nil
+	}
+
+	return b.Put(key, d.encodeToBytes(append(files, transformerPath)))
+}
+
+// hardlinkDest returns the path of the original (first) file of the given
+// inode record files, which hardlinks store their data under (see
+// Entry.InodeStoragePath()). Once the original is removed its slot is blank, so
+// the path is taken from a stored hardlink entry with the given inode instead:
+// the links then keep using the original's existing remote inode file, rather
+// than being uploaded again to a new one. Returns blank if no entry has it, eg.
+// for a stale record whose files are in no set.
+//
+// The given stored entry (the discovering set's own encoded entry for the file
+// being discovered, or nil) is checked first. Only if that doesn't have the path
+// are the sets holding each of the other files' paths scanned, costing time
+// linear in the number of sets times the number of hardlinks whose original was
+// removed.
+func (d *DB) hardlinkDest(tx *bolt.Tx, files []string, inode uint64, stored []byte) (string, error) {
+	if files[0] != "" {
+		_, dest, err := splitTransformerPath(files[0])
+
+		return dest, err
+	}
+
+	if stored != nil {
+		if dest := entryHardlinkDest(d.decodeEntry(stored), inode); dest != "" {
+			return dest, nil
 		}
 	}
 
-	return ""
+	return d.scannedHardlinkDest(tx, files[1:], inode)
+}
+
+// scannedHardlinkDest returns the Dest of the first stored entry, in any set,
+// for one of the given inode record files' paths that is a hardlink with the
+// given inode, or blank if there isn't one.
+func (d *DB) scannedHardlinkDest(tx *bolt.Tx, files []string, inode uint64) (string, error) {
+	for _, file := range files {
+		_, path, err := splitTransformerPath(file)
+		if err != nil {
+			return "", err
+		}
+
+		dest, err := d.storedHardlinkDest(tx, path, inode)
+		if err != nil || dest != "" {
+			return dest, err
+		}
+	}
+
+	return "", nil
+}
+
+// storedHardlinkDest returns the Dest of the first set's stored entry for the
+// given path that is a hardlink with the given inode, or blank if there isn't
+// one.
+func (d *DB) storedHardlinkDest(tx *bolt.Tx, path string, inode uint64) (string, error) {
+	setIDs, err := d.setsForFile(tx, path)
+	if err != nil {
+		return "", err
+	}
+
+	for _, setID := range setIDs {
+		entry, _, err := d.getEntry(tx, setID, path)
+		if err != nil {
+			return "", err
+		}
+
+		if dest := entryHardlinkDest(entry, inode); dest != "" {
+			return dest, nil
+		}
+	}
+
+	return "", nil
 }
 
 // GetFilesFromInode returns all the paths that share the provided inode on the
