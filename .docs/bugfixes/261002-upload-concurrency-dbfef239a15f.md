@@ -176,6 +176,21 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
     (catching clients swapped in after its snapshot) and sets it to nil, as
     `CollectionsDone` does; the next call takes ~150ms. Mutant (stop but keep
     the clients) fails.
-- [ ] `baton/baton.go`: `CollectionsDone()` without an earlier
+- [x] `baton/baton.go`: `CollectionsDone()` without an earlier
   `EnsureCollection` panics on a nil `collPool`. Probably unreachable; low.
   - Origin: as above.
+  - Reachable after all: `Putter.CreateCollections` calls `CollectionsDone`
+    even with no collections to create, and after `makeCollConnections`
+    fails before setting `collPool`.
+  - Red: same command, new Convey "CollectionsDone without an earlier
+    EnsureCollection works": `Expected func() NOT to panic (error: 'runtime
+    error: invalid memory address or nil pointer dereference')`.
+  - Fixed in `baton/baton.go`: the collection teardown in `CollectionsDone`
+    is guarded by `collRunning`, as in `Cleanup`. Mutant (only the pool close
+    guarded) fails. Gates: lint, `-race ./baton`, `./baton ./transfer
+    ./server`, `make speed` (Upload +0.0%, Remove -1.9% vs ce92cae) pass.
+- [ ] `baton/baton.go` `makeCollConnections`: when `connect` fails partway,
+  `GetClientsFromPoolConcurrently` still returns the clients that started,
+  and they are dropped with the pool without being stopped (leaked baton-do
+  processes). Code reading.
+  - Origin: found reviewing the `CollectionsDone` nil-pool fix (2026-10-08).

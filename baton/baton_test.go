@@ -595,6 +595,17 @@ func TestBatonConcurrentClientInit(t *testing.T) {
 		So(h.EnsureCollection(coll), ShouldBeNil)
 		So(time.Since(start), ShouldBeLessThan, operationMinBackoff)
 	})
+
+	Convey("CollectionsDone without an earlier EnsureCollection works", t, func() {
+		h, err := GetBatonHandler()
+		So(err, ShouldBeNil)
+		Reset(func() {
+			h.Cleanup()
+		})
+
+		So(func() { err = h.CollectionsDone() }, ShouldNotPanic)
+		So(err, ShouldBeNil)
+	})
 }
 
 func TestUploadRetry(t *testing.T) {

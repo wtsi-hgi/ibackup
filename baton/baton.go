@@ -414,12 +414,14 @@ func (b *Baton) CollectionsDone() error {
 	b.collMu.Lock()
 	defer b.collMu.Unlock()
 
-	b.closeConnections(b.collClients)
-	b.collClients = nil
-	b.collPool.Close()
+	if b.collRunning {
+		b.closeConnections(b.collClients)
+		b.collClients = nil
+		b.collPool.Close()
 
-	b.collStop()
-	b.collRunning = false
+		b.collStop()
+		b.collRunning = false
+	}
 
 	err := b.setClientIfNotExists(&b.putClient)
 	if err != nil {
