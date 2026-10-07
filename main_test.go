@@ -33,6 +33,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/tls"
 	"crypto/x509"
 	b64 "encoding/base64"
 	"encoding/hex"
@@ -101,10 +102,6 @@ const serverTokenBasename = ".ibackup.token"
 // must exceed that.
 const inProcessServerStopTimeout = 30 * time.Second
 
-// serverStartTimeout bounds how long a test server may take to answer after
-// it is started.
-const serverStartTimeout = 5 * time.Second
-
 // prefetchedIRODSCollections is how many test collections are created ahead
 // of use, since most tests here make a new one for every Convey leaf.
 const prefetchedIRODSCollections = 4
@@ -120,6 +117,8 @@ var errTwoBackupsNotSeen = errors.New("2 backups were not seen")
 var errInvalidQueuesSpecified = errors.New("invalid queues specified")
 
 var errServerStopTimeout = errors.New("timeout waiting for server to stop")
+
+var errServerStartReturned = errors.New("server Start() returned before it answered")
 
 var ErrStatusNotFound = errors.New("status not found")
 
@@ -1197,6 +1196,41 @@ func givenTrashRemoveItemsRemoved(t *testing.T, fx *trashRemoveFixture) *testuti
 	So(icmd, ShouldNotBeNil)
 
 	return icmd
+}
+
+func (s *testServer) dialServerUntilReady(roots *x509.CertPool) error {
+	deadline := time.Now().Add(5 * time.Second)
+
+	var lastErr error
+
+	for time.Now().Before(deadline) {
+		select {
+		case err := <-s.srvErr:
+			s.srvErr <- err // for stopServer() to see
+
+			return fmt.Errorf("%w: %w", errServerStartReturned, err)
+		default:
+		}
+
+		dialer := &net.Dialer{Timeout: 50 * time.Millisecond}
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		tlsDialer := tls.Dialer{NetDialer: dialer, Config: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}}
+		conn, err := tlsDialer.DialContext(ctx, "tcp", s.url)
+
+		cancel()
+
+		if err == nil {
+			_ = conn.Close()
+
+			return nil
+		}
+
+		lastErr = err
+
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	return lastErr
 }
 
 func TestRemoveDirs(t *testing.T) {
@@ -2512,12 +2546,6 @@ func waitForIlsMissing(tb testing.TB, path string, timeout time.Duration) error 
 	return nil
 }
 
-func freeLocalhostURL() (string, error) {
-	port, err := freeport.GetFreePort()
-
-	return fmt.Sprintf("localhost:%d", port), err
-}
-
 func TestEdit(t *testing.T) {
 	Convey("With a started server", t, func() {
 		t.Setenv("IBACKUP_TEST_LDAP_SERVER", "")
@@ -3425,7 +3453,7 @@ type testServer struct {
 	cmd           *exec.Cmd
 	ch            chan []*jobqueue.Job
 	srv           *server.Server
-	srvErr        <-chan error
+	srvErr        chan error
 	logFH         *os.File
 	stdLogRestore func()
 	envRestore    func()
@@ -3605,10 +3633,10 @@ func (s *testServer) prepareConfig(t *testing.T) {
 
 	s.url = os.Getenv("IBACKUP_TEST_SERVER_URL")
 	if s.url == "" {
-		var err error
-
-		s.url, err = freeLocalhostURL()
+		port, err := freeport.GetFreePort()
 		So(err, ShouldBeNil)
+
+		s.url = fmt.Sprintf("localhost:%d", port)
 	}
 
 	host, _, err := net.SplitHostPort(s.url)
@@ -3855,21 +3883,11 @@ func (s *testServer) startServerInProcess() {
 		s.srv.EnableRemoteDBBackups(s.remoteDBFile, handler)
 	}
 
-	// a port picked by freeport can be taken by another test process before
-	// we bind it, so then start on a new one, unless the URL is fixed or was
-	// already given to job submission above
-	var newURL func() (string, error)
-	if os.Getenv("IBACKUP_TEST_SERVER_URL") == "" && debugMode {
-		newURL = freeLocalhostURL
-	}
+	s.srvErr = make(chan error, 1)
 
-	s.url, s.srvErr, err = testutil.StartTLSServer(func(addr string) error {
-		return s.srv.Start(addr, s.cert, s.key)
-	}, s.url, s.cert, newURL, serverStartTimeout)
+	go func() { s.srvErr <- s.srv.Start(s.url, s.cert, s.key) }()
 
-	if !s.shouldFail {
-		So(err, ShouldBeNil)
-	}
+	s.waitForServer()
 }
 
 func ensureHTTP2DisabledInEnv(env []string) []string {
@@ -3923,13 +3941,20 @@ func resolveBinary(name string) string {
 	return "./" + name
 }
 
-// waitForServer waits for an external server to answer with our own cert, so
-// that another process's server on the same port can't satisfy it.
+// waitForServer waits for the server to answer with our own cert, so that
+// another process's server on the same port can't satisfy it. It stops early
+// if an in-process server's Start() returns, eg. because the port was taken.
 func (s *testServer) waitForServer() {
-	err := testutil.WaitForTLSServer(s.url, s.cert, nil, serverStartTimeout)
+	certPEM, err := os.ReadFile(s.cert)
+	So(err, ShouldBeNil)
+
+	roots := x509.NewCertPool()
+	So(roots.AppendCertsFromPEM(certPEM), ShouldBeTrue)
+
+	lastErr := s.dialServerUntilReady(roots)
 
 	if !s.shouldFail {
-		So(err, ShouldBeNil)
+		So(lastErr, ShouldBeNil)
 	}
 }
 
