@@ -835,7 +835,7 @@ func (s *Server) makeItemsDefsFromDirPaths(givenSet *set.Set,
 func (s *Server) removeFileFromIRODSandDB(removeReq *set.RemoveReq) error {
 	entry, err := s.db.GetFileEntryForSet(removeReq.Set.ID(), removeReq.Path)
 	if err != nil {
-		return err
+		return s.removeDeletedFileFromDB(removeReq, err)
 	}
 
 	err = s.processRemoteFileRemoval(removeReq, entry)
@@ -846,6 +846,27 @@ func (s *Server) removeFileFromIRODSandDB(removeReq *set.RemoveReq) error {
 	_, err = s.db.RemoveFileEntry(removeReq, entry)
 
 	return err
+}
+
+// removeDeletedFileFromDB handles the given error from getting the entry of the
+// given request's file. If the error is that the set has no such file, and the
+// incomplete request's remote removal started, which needed the entry, a build
+// before the one-transaction removal deleted the entry and then stopped, so it
+// finishes the database side without the entry. Otherwise, such as for a path
+// that was never in the set, or a request already complete, it returns the
+// error.
+func (s *Server) removeDeletedFileFromDB(removeReq *set.RemoveReq, err error) error {
+	errs := &set.Error{}
+	notInSet := errors.As(err, errs) && errs.Msg == set.ErrInvalidEntry
+
+	if !notInSet || removeReq.IsComplete || removeReq.RemoteRemovalStatus == set.NotRemoved {
+		return err
+	}
+
+	s.Logger.Printf("finishing removal of %s from set %s, whose entry an older build already removed",
+		removeReq.Path, removeReq.Set.ID())
+
+	return s.db.RemoveDeletedFileEntry(removeReq)
 }
 
 func (s *Server) processRemoteFileRemoval(removeReq *set.RemoveReq, entry *set.Entry) error {

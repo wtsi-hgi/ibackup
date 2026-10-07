@@ -58,6 +58,7 @@ import (
 	"github.com/wtsi-hgi/ibackup/transfer"
 	btime "github.com/wtsi-ssg/wr/backoff/time"
 	"github.com/wtsi-ssg/wr/retry"
+	bolt "go.etcd.io/bbolt"
 )
 
 var (
@@ -774,12 +775,13 @@ func TestServer(t *testing.T) {
 
 						trashSet := set.BuildTrashSetFromSet(exampleSet)
 
-						// restartDuring stores a removal request for the given
-						// path, does the given steps of its removal, then
-						// restarts the server as if it had stopped there and
-						// waits for the removal to finish.
-						restartDuring := func(path string, isDir bool, action set.RemoveAction,
-							steps func(*set.RemoveReq)) {
+						// restartWith stores a removal request for the given
+						// path, does the given steps of its removal, then stops
+						// the server as if it had stopped there, calls
+						// whileStopped, restarts it and waits for the removal
+						// to finish.
+						restartWith := func(path string, isDir bool, action set.RemoveAction,
+							steps func(*set.RemoveReq), whileStopped func()) {
 							remReq := set.NewRemoveRequest(path, before, isDir, action)
 
 							So(s.db.SetRemoveRequests(before.ID(), []set.RemoveReq{remReq}), ShouldBeNil)
@@ -789,6 +791,8 @@ func TestServer(t *testing.T) {
 
 							So(dfunc(), ShouldBeNil)
 
+							whileStopped()
+
 							s, addr, dfunc = makeAndStartServer(0)
 
 							token, errl = gas.Login(gas.NewClientRequest(addr, certPath), "jim", "pass")
@@ -797,6 +801,11 @@ func TestServer(t *testing.T) {
 							client = NewClient(addr, certPath, token)
 
 							waitForRemovals(t, s, client, exampleSet)
+						}
+
+						restartDuring := func(path string, isDir bool, action set.RemoveAction,
+							steps func(*set.RemoveReq)) {
+							restartWith(path, isDir, action, steps, func() {})
 						}
 
 						expectRemovedOnce := func(numFiles, uploaded int, sizeTotal, sizeRemoved uint64) {
@@ -816,9 +825,7 @@ func TestServer(t *testing.T) {
 							So(incomplete, ShouldBeEmpty)
 						}
 
-						expectFile1Removed := func(action set.RemoveAction) {
-							expectRemovedOnce(1, 1, 2, 1)
-
+						expectFile1Gone := func(action set.RemoveAction) {
 							files, errf := client.GetFiles(exampleSet.ID())
 							So(errf, ShouldBeNil)
 							So(files, ShouldHaveLength, 1)
@@ -835,6 +842,11 @@ func TestServer(t *testing.T) {
 							trashed, errt := s.db.GetFileEntryForSet(trashSet.ID(), file1local)
 							So(errt, ShouldBeNil)
 							So(trashed.Path, ShouldEqual, file1local)
+						}
+
+						expectFile1Removed := func(action set.RemoveAction) {
+							expectRemovedOnce(1, 1, 2, 1)
+							expectFile1Gone(action)
 						}
 
 						expectDir1Removed := func(action set.RemoveAction) {
@@ -943,6 +955,74 @@ func TestServer(t *testing.T) {
 								})
 
 								expectFile1Removed(action)
+							})
+
+							// Builds before #193 did a file removal's database
+							// side as separate steps after the remote removal:
+							// trash it (if trashing an uploaded file), delete its
+							// entry, clean up its inode record and failed lookup,
+							// count it, then mark the request complete. Their
+							// requests had no ObjectSize.
+							oldBuildRemoteRemoval := func(remReq *set.RemoveReq) {
+								So(s.processRemoteFileRemoval(remReq, entry), ShouldBeNil)
+
+								remReq.ObjectSize = nil
+								So(s.db.UpdateRemoveRequest(*remReq), ShouldBeNil)
+							}
+
+							Convey(name+" a file under a build before #193, stopped after it deleted the "+
+								"entry, completes after a restart, counted once", func() {
+								trashID := ""
+								if action == set.ToTrash {
+									trashID = trashSet.ID()
+								}
+
+								restartWith(file1local, false, action, oldBuildRemoteRemoval, func() {
+									deleteEntryAsOldBuild(t, dbPath, exampleSet.ID(), file1local, trashID)
+								})
+
+								if action == set.ToTrash {
+									expectFile1Removed(action)
+
+									return
+								}
+
+								// without the entry or a trashed copy of it, its
+								// status and size are unknown, so the file counts
+								// keep it until the next discovery.
+								expectRemovedOnce(2, 2, 3, 0)
+								expectFile1Gone(action)
+							})
+
+							Convey(name+" a file under a build before #193, stopped after it counted the "+
+								"removal, completes after a restart, counted once", func() {
+								restartDuring(file1local, false, action, func(remReq *set.RemoveReq) {
+									oldBuildRemoteRemoval(remReq)
+
+									counted := *remReq
+									_, errr := s.db.RemoveFileEntry(&counted, entry)
+									So(errr, ShouldBeNil)
+
+									So(s.db.UpdateRemoveRequest(*remReq), ShouldBeNil)
+								})
+
+								expectFile1Removed(action)
+							})
+
+							Convey(name+" a path never in the set still fails, uncounted", func() {
+								remReq := set.NewRemoveRequest(filepath.Join(localDir, "never"), before, false, action)
+
+								So(s.db.SetRemoveRequests(before.ID(), []set.RemoveReq{remReq}), ShouldBeNil)
+								So(s.db.UpdateSetTotalToRemove(before.ID(), 1), ShouldBeNil)
+
+								err = s.removeFileFromIRODSandDB(&remReq)
+								So(err, ShouldNotBeNil)
+								So(err.Error(), ShouldContainSubstring, "has no path")
+
+								got, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+								So(errg, ShouldBeNil)
+								So(got.NumObjectsRemoved, ShouldEqual, 0)
+								So(got.NumFiles, ShouldEqual, 2)
 							})
 
 							Convey(name+" a directory, stopped before its database removal", func() {
@@ -6002,6 +6082,59 @@ func createDBLocation(t *testing.T) string {
 	path := filepath.Join(tdir, "set.db")
 
 	return path
+}
+
+// deleteEntryAsOldBuild edits the database at dbPath, whose server must be
+// stopped, as a build before #193 left it when it stopped a file removal just
+// after deleting the file's entry from the given set: if trashSetID isn't blank,
+// it copies the entry to that trash set first, as those builds did when
+// trashing an uploaded file.
+func deleteEntryAsOldBuild(t *testing.T, dbPath, setID, path, trashSetID string) {
+	t.Helper()
+
+	db, err := bolt.Open(dbPath, userPerms, nil)
+	So(err, ShouldBeNil)
+
+	defer db.Close()
+
+	// these are the set package's (unexported) names for the sets bucket and
+	// a set's sub-bucket of given files.
+	const (
+		setsBucket = "sets"
+		filesOf    = "~!~files:!:"
+	)
+
+	err = db.Update(func(tx *bolt.Tx) error {
+		sets := tx.Bucket([]byte(setsBucket))
+		files := sets.Bucket([]byte(filesOf + setID))
+
+		entry := slices.Clone(files.Get([]byte(path)))
+		if entry == nil {
+			return errEntryNotFound
+		}
+
+		if errc := copyToSubBucket(sets, trashSetID, filesOf+trashSetID, path, entry); errc != nil {
+			return errc
+		}
+
+		return files.Delete([]byte(path))
+	})
+	So(err, ShouldBeNil)
+}
+
+// copyToSubBucket puts the given key and value in the given sub-bucket of the
+// given bucket, creating it if needed, unless setID is blank.
+func copyToSubBucket(b *bolt.Bucket, setID, subBucket, key string, value []byte) error {
+	if setID == "" {
+		return nil
+	}
+
+	sub, err := b.CreateBucketIfNotExists([]byte(subBucket))
+	if err != nil {
+		return err
+	}
+
+	return sub.Put([]byte(key), value)
 }
 
 func createRemoteHardlink(t *testing.T, handler remove.Handler, lPath, rPath,

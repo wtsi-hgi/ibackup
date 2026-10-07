@@ -157,7 +157,7 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
     record still errors and rolls the removal back; d200a1d's server leaf
     that used a deleted record now expects the removal to complete, and the
     rollback check moved to a corrupt-record set test.
-- [ ] Removals interrupted under a build before #193, after the entry was
+- [x] Removals interrupted under a build before #193, after the entry was
   deleted but before the request completed, fail with "has no path" on retry
   after upgrading: after 3 retries (~15s) the request is marked complete with
   set error `Error when removing: invalid set entry [... has no path ...]`.
@@ -169,6 +169,30 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
   - Origin: limitation of the deps removal-retry fix; behaviour confirmed by
     probe on 03efdf6 (2026-10-07).
   - Decision (user, 2026-10-07): fix it.
+  - Red: server restart tests recreating the old build's state (remote
+    removed, entry deleted, request incomplete; for remove and trash, stopped
+    before and after counting) failed with `removed 0 of 1` and the "has no
+    path" set error.
+  - Fixed in `server/setdb.go` and `set/db.go`: a request that is incomplete,
+    whose remote removal had started (AboutToBeRemoved or Removed) and whose
+    entry is gone is treated as already removed: `RemoveDeletedFileEntry`
+    removes the failed lookup, cleans the inode record for ToRemove (inode
+    from stat'ing the local path), counts the removal unless the old build
+    already did, and completes the request, in one transaction. A path never
+    in the set (NotRemoved) or a completed request still fails as before.
+  - Already-counted check: skip if NumObjectsRemoved plus the set's
+    incomplete requests exceeds NumObjectsToBeRemoved. Trade-off: a set with
+    any failed removal since its counts were last equal over-counts once if
+    the old build had counted (never worse than always counting); a
+    removal submitted in the narrow window before NumObjectsToBeRemoved is
+    raised may make a recovered request skip its count. For remove, NumFiles
+    and status counts update at the next discovery (the entry is gone); trash
+    uses the trashed copy.
+  - Tests: the server restart cases and a never-in-the-set case; set tests
+    for two-file removals (with an earlier completed request and a failed
+    entry). Mutants (always/never count, no inode cleanup, no trashed-copy
+    lookup, accepting NotRemoved, counting completed requests, keeping the
+    failed lookup) fail.
 - [ ] An uploaded (or orphaned) entry whose remote object was deleted outside
   ibackup can never be removed: `processRemoteFileRemoval` tolerates GetMeta
   "does not exist" only when the request was already AboutToBeRemoved
@@ -286,3 +310,18 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
     (old first-non-blank Dest, only the first link consulted, no inode
     check, only the first set, no stale-entry guard, shortcut without inode
     check or fallthrough, ghost kept) all fail; model probe 0/600.
+- [ ] Trash sets' file counts are never added to when files are trashed
+  (`putEntryInTrash` doesn't count), so removing a file from a trash set
+  decrements them below zero: a probe trashing file1 then removing it from
+  the trash set gave `NumFiles=18446744073709551615 Uploaded=18446744073709551615`
+  (SizeTotal wraps too with non-empty files). Same on develop (43f7323).
+  - Origin: found fixing the old-build removals item; confirmed by probe by
+    its reviewer (2026-10-07).
+- [ ] Directories removed under a build before #193 could be counted twice:
+  the old `removeDirFromDB` ran `RemoveDirEntry`, `IncrementSetTotalRemoved`,
+  then `finalizeRemoveReq` separately, so a stop after the count makes the
+  retry count again; for trash, a stop after the delete makes the retry
+  overwrite the trashed dir entry with a plain one. Not cheap to detect:
+  new batches' dir requests run before `UpdateSetTotalToRemove`, and legacy
+  sets lack entries for discovered subfolders. Low priority (tiny window).
+  - Origin: found fixing the old-build removals item.

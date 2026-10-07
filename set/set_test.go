@@ -1632,6 +1632,100 @@ func TestSetDB(t *testing.T) {
 						So(got.SizeRemoved, ShouldEqual, entry.Size)
 					})
 				})
+
+				Convey("then remove 2 files, the first stopped by an older build after it deleted the "+
+					"entry, and count each once", func() {
+					entry1, errg := db.GetFileEntryForSet(setl1.ID(), path1)
+					So(errg, ShouldBeNil)
+					So(entry1.Inode, ShouldNotEqual, 0)
+
+					mountPoint := db.GetMountPointFromPath(path1)
+
+					inodeFiles, errg := db.GetFilesFromInode(entry1.Inode, mountPoint)
+					So(errg, ShouldBeNil)
+					So(inodeFiles, ShouldContain, path1)
+
+					entry2 := entries[0]
+
+					// an earlier removal completed, so its request stays stored
+					// and the next removal resets the set's removal counts.
+					missing, errg := db.GetFileEntryForSet(setl1.ID(), "/zmissing")
+					So(errg, ShouldBeNil)
+
+					earlier := NewRemoveRequest(missing.Path, got, false, ToTrash)
+					So(db.SetRemoveRequests(setl1.ID(), []RemoveReq{earlier}), ShouldBeNil)
+					So(db.UpdateSetTotalToRemove(setl1.ID(), 1), ShouldBeNil)
+
+					_, errr := db.RemoveFileEntry(&earlier, missing)
+					So(errr, ShouldBeNil)
+					So(db.OptimiseRemoveBucket(setl1.ID()), ShouldBeNil)
+
+					got = db.GetByID(setl1.ID())
+					So(got.NumObjectsToBeRemoved, ShouldEqual, 1)
+					So(got.NumObjectsRemoved, ShouldEqual, 1)
+
+					setEntryToFailed(entry1, setl1, db)
+
+					failed, _, errg := db.GetFailedEntries(setl1.ID())
+					So(errg, ShouldBeNil)
+					So(failed, ShouldHaveLength, 1)
+					So(failed[0].Path, ShouldEqual, path1)
+
+					req1 := NewRemoveRequest(path1, got, false, ToRemove)
+					req2 := NewRemoveRequest(entry2.Path, got, false, ToRemove)
+					So(db.SetRemoveRequests(setl1.ID(), []RemoveReq{req1, req2}), ShouldBeNil)
+					So(db.UpdateSetTotalToRemove(setl1.ID(), 2), ShouldBeNil)
+
+					req1.RemoteRemovalStatus = Removed
+					So(db.UpdateRemoveRequest(req1), ShouldBeNil)
+
+					removeBoth := func() {
+						So(db.RemoveDeletedFileEntry(&req1), ShouldBeNil)
+
+						got = db.GetByID(setl1.ID())
+						So(got.NumObjectsToBeRemoved, ShouldEqual, 2)
+						So(got.NumObjectsRemoved, ShouldEqual, 1)
+
+						_, errr := db.RemoveFileEntry(&req2, entry2)
+						So(errr, ShouldBeNil)
+
+						got = db.GetByID(setl1.ID())
+						So(got.NumObjectsRemoved, ShouldEqual, 2)
+
+						incomplete, errg := db.GetIncompleteRemoveRequests()
+						So(errg, ShouldBeNil)
+						So(incomplete, ShouldBeEmpty)
+
+						inodeFiles, errg = db.GetFilesFromInode(entry1.Inode, mountPoint)
+						So(errg, ShouldBeNil)
+						So(inodeFiles, ShouldNotContain, path1)
+
+						failed, _, errg = db.GetFailedEntries(setl1.ID())
+						So(errg, ShouldBeNil)
+						So(failed, ShouldBeEmpty)
+					}
+
+					Convey("before counting it", func() {
+						err = db.db.Update(func(tx *bolt.Tx) error {
+							_, errd := db.deleteFileEntry(tx, setl1.ID(), path1)
+
+							return errd
+						})
+						So(err, ShouldBeNil)
+
+						removeBoth()
+					})
+
+					Convey("after counting it", func() {
+						counted := req1
+						_, errr := db.RemoveFileEntry(&counted, entry1)
+						So(errr, ShouldBeNil)
+
+						So(db.UpdateRemoveRequest(req1), ShouldBeNil)
+
+						removeBoth()
+					})
+				})
 			})
 
 			Convey("And add a set with directories containing hardlinks to it", func() {
@@ -3232,30 +3326,7 @@ func removeFileEntryAndCount(db *DB, setID, path string) *Entry {
 }
 
 func setEntryToUploaded(entry *Entry, given *Set, db *DB) {
-	transformer, err := given.MakeTransformer()
-	So(err, ShouldBeNil)
-
-	r, err := transfer.NewRequestWithTransformedLocal(entry.Path, transformer)
-	So(err, ShouldBeNil)
-
-	r.Set = given.Name
-	r.Requester = given.Requester
-
-	if entry.Type == Hardlink {
-		r.Hardlink = entry.Dest
-	}
-
-	if entry.Type == Symlink {
-		r.Symlink = entry.Dest
-	}
-
-	r.Status = transfer.RequestStatusUploading
-	_, err = db.SetEntryStatus(r)
-	So(err, ShouldBeNil)
-
-	r.Status = transfer.RequestStatusUploaded
-	_, err = db.SetEntryStatus(r)
-	So(err, ShouldBeNil)
+	setEntryToStatus(entry, given, db, transfer.RequestStatusUploaded)
 }
 
 func TestBackup(t *testing.T) {
@@ -3592,4 +3663,37 @@ func TestUserMetadata(t *testing.T) {
 		userMeta := s.UserMetadata()
 		So(userMeta, ShouldResemble, "testKey=testVal;testKey2=testVal2")
 	})
+}
+
+func setEntryToFailed(entry *Entry, given *Set, db *DB) {
+	setEntryToStatus(entry, given, db, transfer.RequestStatusFailed)
+}
+
+// setEntryToStatus has the given entry start uploading, then end with the given
+// status.
+func setEntryToStatus(entry *Entry, given *Set, db *DB, status transfer.RequestStatus) {
+	transformer, err := given.MakeTransformer()
+	So(err, ShouldBeNil)
+
+	r, err := transfer.NewRequestWithTransformedLocal(entry.Path, transformer)
+	So(err, ShouldBeNil)
+
+	r.Set = given.Name
+	r.Requester = given.Requester
+
+	if entry.Type == Hardlink {
+		r.Hardlink = entry.Dest
+	}
+
+	if entry.Type == Symlink {
+		r.Symlink = entry.Dest
+	}
+
+	r.Status = transfer.RequestStatusUploading
+	_, err = db.SetEntryStatus(r)
+	So(err, ShouldBeNil)
+
+	r.Status = status
+	_, err = db.SetEntryStatus(r)
+	So(err, ShouldBeNil)
 }
