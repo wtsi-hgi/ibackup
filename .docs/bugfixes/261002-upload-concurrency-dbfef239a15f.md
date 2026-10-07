@@ -163,11 +163,19 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
     done, no context in workers) fail. Gates: lint, `-race ./baton`,
     `./baton ./server`, `make speed` (Upload -0.1%, Remove -2.3% vs
     ce92cae) pass.
-- [ ] `baton/baton.go`: `Cleanup` stops the collection clients but leaves them
+- [x] `baton/baton.go`: `Cleanup` stops the collection clients but leaves them
   in `collClients`; `makeCollConnections` then reuses the stopped clients, so
   every `EnsureCollection` after a `Cleanup` fails once and waits at least 5s
   of backoff before a fresh client works.
   - Origin: found fixing the Cleanup/`collCh` panic (2026-10-07).
+  - Red: `CGO_ENABLED=1 go test -tags netgo --count 1 -timeout 10m ./baton
+    -run TestBatonConcurrentClientInit`, new Convey "EnsureCollection after
+    Cleanup succeeds without retrying": `Expected '5.172220699s' to be less
+    than '5s'`.
+  - Fixed in `baton/baton.go`: `Cleanup` stops `collClients` under `collMu`
+    (catching clients swapped in after its snapshot) and sets it to nil, as
+    `CollectionsDone` does; the next call takes ~150ms. Mutant (stop but keep
+    the clients) fails.
 - [ ] `baton/baton.go`: `CollectionsDone()` without an earlier
   `EnsureCollection` panics on a nil `collPool`. Probably unreachable; low.
   - Origin: as above.
