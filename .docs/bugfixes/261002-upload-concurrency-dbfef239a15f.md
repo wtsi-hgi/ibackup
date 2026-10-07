@@ -64,3 +64,11 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
   or directory`. Seen in a server test on the set-counts branch; same on
   develop.
   - Origin: found reviewing the set-counts self-hardlink fix (2026-10-07).
+- [ ] Possible (code reading only; reproduce before fixing): in an unfrozen
+  set, an upload result that lands just before rediscovery processes its entry
+  has that entry reset to Pending. If discovery's `enqueueEntries` then reaches
+  the queue while the item is still there (between `SetEntryStatus` and
+  `updateFileStatus` removing it), `AddMany` treats it as a duplicate, so the
+  entry is never uploaded or counted until the next discovery.
+  - Origin: found fixing the set-counts "results during discovery are counted
+    twice" item (2026-10-07).
