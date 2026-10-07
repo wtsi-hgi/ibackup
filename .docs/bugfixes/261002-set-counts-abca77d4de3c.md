@@ -193,7 +193,7 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
     entry). Mutants (always/never count, no inode cleanup, no trashed-copy
     lookup, accepting NotRemoved, counting completed requests, keeping the
     failed lookup) fail.
-- [ ] An uploaded (or orphaned) entry whose remote object was deleted outside
+- [x] An uploaded (or orphaned) entry whose remote object was deleted outside
   ibackup can never be removed: `processRemoteFileRemoval` tolerates GetMeta
   "does not exist" only when the request was already AboutToBeRemoved
   (`mayMissInRemote`, server/setdb.go ~861), so every fresh attempt fails.
@@ -202,6 +202,27 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
   - Origin: found while fixing the deps removal-retry race (2026-10-06).
   - Decision (user, 2026-10-07): treat the missing remote object as removed
     (removal succeeds) and log a warning.
+  - Red: with a baton-like GetMeta (`file does not exist` for a vanished
+    object), ToTrash failed every attempt (`Error when removing: file does
+    not exist`, `removed 0 of 1`), ToRemove only succeeded silently on its
+    retry, and removing a vanished hardlink failed.
+  - Fixed in `server/setdb.go`: a GetMeta `errs.PathError` with
+    `ErrFileDoesNotExist`, for an entry not marked as never uploaded, logs a
+    warning ("does not exist or is not readable, so treating it as removed";
+    baton reports both the same way) and treats the remote step as done; any
+    other error still fails. Trash still records the DB trash entry, and
+    later removal from the trash set is tolerated the same way. A vanished
+    hardlink's inode file path is rebuilt as discovery built it, and the
+    inode file is removed only if unused (an already-missing inode file is
+    tolerated).
+  - Tests: server leaves for remove, trash, a missing file (no warning), a
+    timeout-like PathError that must still fail, vanished hardlinks (inode
+    file kept while needed, removed with the last, already gone, kept on
+    trash). Main tests that injected failures by deleting the remote object
+    now deny permission instead (`denyRemoteChanges`), plus new leaves for
+    vanished objects. Mutants (no guard, no not-exist check, any PathError,
+    no hardlink handling, no unused check, no missing-inode tolerance, no
+    warning) fail.
 - [ ] Upload results that arrive while a discovery is running are counted
   twice: with NumFiles reset to 0, a result triggers a full `fixCounts`
   recount, and the running discovery then counts the entry again. Same on
@@ -331,9 +352,8 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
     now gives its trashed copy a TrashDate. Mutants (no removal count,
     skipping only status/type counts, deciding by the entry's TrashDate)
     fail.
-  - Pending user decision: repair trash sets whose counts already wrapped
-    (zero their file counts on their next removal, optionally also once at
-    startup for empty ones) or leave them.
+  - Decision (user, 2026-10-07): leave trash sets whose counts already
+    wrapped as they are (no repair); the fix only stops new wrapping.
 - [ ] Directories removed under a build before #193 could be counted twice:
   the old `removeDirFromDB` ran `RemoveDirEntry`, `IncrementSetTotalRemoved`,
   then `finalizeRemoveReq` separately, so a stop after the count makes the

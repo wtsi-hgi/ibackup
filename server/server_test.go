@@ -29,6 +29,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -51,6 +52,7 @@ import (
 	"github.com/ugorji/go/codec"
 	"github.com/viant/ptrie"
 	gas "github.com/wtsi-hgi/go-authserver"
+	"github.com/wtsi-hgi/ibackup/errs"
 	"github.com/wtsi-hgi/ibackup/internal"
 	"github.com/wtsi-hgi/ibackup/internal/testutil"
 	"github.com/wtsi-hgi/ibackup/remove"
@@ -70,6 +72,9 @@ var (
 	errErrorNotRecorded   = errors.New("error not yet recorded")
 	errSmallListOfFiles   = errors.New("unexpected small listOfFiles")
 	errInjectedRequeue    = errors.New("injected requeue failure")
+	// errInjectedGetMeta is a PathError like baton's timeout, to show that only
+	// a PathError for a missing file counts as the remote object being gone.
+	errInjectedGetMeta = errs.PathError{Msg: "iRODS operation timed out"}
 )
 
 const (
@@ -1124,6 +1129,150 @@ func TestServer(t *testing.T) {
 						}
 					})
 
+					Convey("Given a set with an uploaded file whose remote object was deleted outside ibackup", func() {
+						file1local := filepath.Join(localDir, "file1")
+						file2local := filepath.Join(localDir, "file2")
+						missingLocal := filepath.Join(localDir, "missing")
+
+						internal.CreateTestFileOfLength(t, file1local, 1)
+						internal.CreateTestFileOfLength(t, file2local, 2)
+
+						err = client.MergeFiles(exampleSet.ID(), []string{file1local, file2local, missingLocal})
+						So(err, ShouldBeNil)
+
+						drainRacCalled(t, racCalled)
+
+						err = client.TriggerDiscovery(exampleSet.ID(), false)
+						So(err, ShouldBeNil)
+
+						So(<-racCalled, ShouldBeTrue)
+
+						requests, errg := adminClient.GetSomeUploadRequests()
+						So(errg, ShouldBeNil)
+						So(requests, ShouldHaveLength, 3)
+
+						p, d := makePutter(t, handler, requests, adminClient)
+						defer d()
+
+						uploadStarts, uploadResults, skippedResults := p.Put()
+
+						err = adminClient.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults,
+							minMBperSecondUploadSpeed, minTimeForUpload, maxStuckTime, log15.New())
+						So(err, ShouldBeNil)
+
+						transformer, errt := exampleSet.MakeTransformer()
+						So(errt, ShouldBeNil)
+
+						file1remote, errt := transformer(file1local)
+						So(errt, ShouldBeNil)
+
+						file2remote, errt := transformer(file2local)
+						So(errt, ShouldBeNil)
+
+						s.storageHandler = &batonLikeGetMetaHandler{Handler: s.storageHandler}
+
+						So(s.storageHandler.RemoveFile(file1remote), ShouldBeNil)
+
+						logWriter.Reset()
+
+						// trash sets are only visible to admins
+						expectFile1Removed := func(given *set.Set) {
+							waitForRemovals(t, s, adminClient, given)
+
+							got, errs := adminClient.GetSetByID(given.Requester, given.ID())
+							So(errs, ShouldBeNil)
+							So(got.Error, ShouldBeBlank)
+							So(got.NumObjectsToBeRemoved, ShouldEqual, 1)
+							So(got.NumObjectsRemoved, ShouldEqual, 1)
+							So(got.SizeRemoved, ShouldEqual, 1)
+
+							_, err = s.db.GetFileEntryForSet(given.ID(), file1local)
+							So(err, ShouldNotBeNil)
+
+							incomplete, errg := s.db.GetIncompleteRemoveRequests()
+							So(errg, ShouldBeNil)
+							So(incomplete, ShouldBeEmpty)
+
+							So(logWriter.String(), ShouldContainSubstring, "warning")
+							So(logWriter.String(), ShouldContainSubstring, given.ID())
+							So(logWriter.String(), ShouldContainSubstring, file1local)
+							So(logWriter.String(), ShouldContainSubstring, file1remote)
+						}
+
+						expectFile2Kept := func() {
+							got, errs := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+							So(errs, ShouldBeNil)
+							So(got.NumFiles, ShouldEqual, 2)
+							So(got.Uploaded, ShouldEqual, 1)
+							So(got.Missing, ShouldEqual, 1)
+							So(got.SizeTotal, ShouldEqual, 2)
+
+							_, err = os.Stat(file2remote)
+							So(err, ShouldBeNil)
+						}
+
+						Convey("removing it with ToRemove succeeds with a warning", func() {
+							err = s.removeFilesAndDirs(exampleSet, []string{file1local}, nil, set.ToRemove)
+							So(err, ShouldBeNil)
+
+							expectFile1Removed(exampleSet)
+							expectFile2Kept()
+						})
+
+						Convey("trashing it succeeds with a warning, and it can then be removed from the trash set", func() {
+							err = s.removeToTrashSet(exampleSet, []string{file1local}, nil)
+							So(err, ShouldBeNil)
+
+							expectFile1Removed(exampleSet)
+							expectFile2Kept()
+
+							trashSet, errg := adminClient.GetSetByName(exampleSet.Requester, set.TrashPrefix+exampleSet.Name)
+							So(errg, ShouldBeNil)
+
+							files, errg := client.GetFiles(trashSet.ID())
+							So(errg, ShouldBeNil)
+							So(files, ShouldHaveLength, 1)
+							So(files[0].Path, ShouldEqual, file1local)
+
+							logWriter.Reset()
+
+							err = s.removeFilesAndDirs(trashSet, []string{file1local}, nil, set.ToRemove)
+							So(err, ShouldBeNil)
+
+							expectFile1Removed(trashSet)
+						})
+
+						Convey("removing the never-uploaded missing file still succeeds without a warning", func() {
+							err = s.removeFilesAndDirs(exampleSet, []string{missingLocal}, nil, set.ToRemove)
+							So(err, ShouldBeNil)
+
+							waitForRemovals(t, s, client, exampleSet)
+
+							got, errs := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+							So(errs, ShouldBeNil)
+							So(got.Error, ShouldBeBlank)
+							So(got.NumObjectsRemoved, ShouldEqual, 1)
+
+							So(logWriter.String(), ShouldNotContainSubstring, "warning")
+						})
+
+						Convey("another error getting a file's remote metadata still fails its removal", func() {
+							s.storageHandler = &batonLikeGetMetaHandler{Handler: s.storageHandler, failPath: file2remote}
+
+							remReq := set.RemoveReq{Path: file2local, Set: exampleSet, Action: set.ToRemove}
+
+							err = s.removeFileFromIRODSandDB(&remReq)
+							So(err, ShouldEqual, errInjectedGetMeta)
+
+							entry, errg := s.db.GetFileEntryForSet(exampleSet.ID(), file2local)
+							So(errg, ShouldBeNil)
+							So(entry.LastError, ShouldContainSubstring, errInjectedGetMeta.Error())
+
+							_, err = os.Stat(file2remote)
+							So(err, ShouldBeNil)
+						})
+					})
+
 					Convey("Requests queued just after a client found nothing to work on "+
 						"trigger put job submission again once that client has exited", func() {
 						requests, errg := adminClient.GetSomeUploadRequests()
@@ -2016,6 +2165,7 @@ func TestServer(t *testing.T) {
 
 						err = os.Remove(files[1])
 						So(err, ShouldBeNil)
+
 						numFiles := len(files)
 
 						gotSet, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
@@ -2470,6 +2620,7 @@ func TestServer(t *testing.T) {
 
 							gotSet, err = client.GetSetByID(exampleSet2.Requester, exampleSet2.ID())
 							So(err, ShouldBeNil)
+
 							discovered := gotSet.LastDiscovery
 
 							waitForDiscovery(t, client, gotSet)
@@ -2684,6 +2835,7 @@ func TestServer(t *testing.T) {
 							Convey("Changing discovery from short to long duration works", func() {
 								gotSet, err = client.GetSetByID(emptySet.Requester, emptySet.ID())
 								So(err, ShouldBeNil)
+
 								discovered = gotSet.LastDiscovery
 
 								changedSet := &set.Set{
@@ -3073,6 +3225,7 @@ func TestServer(t *testing.T) {
 								) {
 									r := origReq.Clone()
 									r.Status = firstStatus
+
 									r.Size = size
 									startCh <- r
 
@@ -3081,6 +3234,7 @@ func TestServer(t *testing.T) {
 									}
 
 									r2 := r.Clone()
+
 									r2.Status = secondStatus
 									endCh <- r2
 								}
@@ -3825,6 +3979,7 @@ func TestServer(t *testing.T) {
 						Convey("After completion, re-discovery can find new files and we can re-complete", func() {
 							newFile := filepath.Join(dirs[0], "new")
 							internal.CreateTestFileOfLength(t, newFile, 2)
+
 							expectedNumFiles := len(discovers) + 1
 
 							err = client.TriggerDiscovery(exampleSet.ID(), false)
@@ -4029,6 +4184,7 @@ func TestServer(t *testing.T) {
 						for i := 1; i <= int(jobRetries); i++ {
 							requests, errg := client.GetSomeUploadRequests()
 							So(errg, ShouldBeNil)
+
 							if i == 1 {
 								So(len(requests), ShouldEqual, len(discovers))
 							} else {
@@ -4421,11 +4577,13 @@ func TestServer(t *testing.T) {
 
 						for n, entry := range entries {
 							So(entry.Status, ShouldEqual, set.Uploaded)
+
 							if n == 2 {
 								So(entry.Type, ShouldEqual, set.Symlink)
 							} else {
 								So(entry.Type, ShouldEqual, set.Regular)
 							}
+
 							So(entry.Attempts, ShouldEqual, 1)
 							So(entry.LastError, ShouldBeBlank)
 						}
@@ -4481,7 +4639,7 @@ func TestServer(t *testing.T) {
 						ids := make([]*queue.ItemDef, numRequests-len(discovers))
 
 						for i := range ids {
-							key := fmt.Sprintf("%d", i)
+							key := strconv.Itoa(i)
 							ids[i] = &queue.ItemDef{
 								Key:  key,
 								Data: &transfer.Request{Set: key},
@@ -5468,6 +5626,125 @@ func TestServer(t *testing.T) {
 						So(err.Error(), ShouldContainSubstring, "no such file or directory")
 					})
 
+					Convey("with remote hardlink location set, removing hardlinks whose remote objects were "+
+						"deleted outside ibackup keeps their inode file until no hardlink needs it", func() {
+						hardlinksDir := filepath.Join(remoteDir, "mountpoints")
+						s.SetRemoteHardlinkLocation(hardlinksDir)
+
+						storage, ok := s.storageHandler.(*internal.LocalHandler)
+						So(ok, ShouldBeTrue)
+
+						err = client.TriggerDiscovery(exampleSet.ID(), false)
+						So(err, ShouldBeNil)
+
+						So(<-racCalled, ShouldBeTrue)
+
+						requests, errg := client.GetSomeUploadRequests()
+						So(errg, ShouldBeNil)
+
+						p, d := makePutter(t, storage, requests, client)
+						defer d()
+
+						uploadStarts, uploadResults, skippedResults := p.Put()
+
+						err = client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults,
+							minMBperSecondUploadSpeed, minTimeForUpload, 1*time.Hour, logger)
+						So(err, ShouldBeNil)
+
+						info, errs := os.Stat(path1)
+						So(errs, ShouldBeNil)
+
+						statt, ok := info.Sys().(*syscall.Stat_t)
+						So(ok, ShouldBeTrue)
+
+						inodeFile := filepath.Join(hardlinksDir, path1, strconv.FormatUint(statt.Ino, 10))
+
+						_, err = os.Stat(inodeFile)
+						So(err, ShouldBeNil)
+
+						transformer, errt := exampleSet.MakeTransformer()
+						So(errt, ShouldBeNil)
+
+						s.storageHandler = &batonLikeGetMetaHandler{Handler: storage}
+
+						removeVanished := func(path string) {
+							rpath, errt := transformer(path)
+							So(errt, ShouldBeNil)
+
+							So(storage.RemoveFile(rpath), ShouldBeNil)
+
+							logWriter.Reset()
+
+							remReq := set.RemoveReq{Path: path, Set: exampleSet, Action: set.ToRemove}
+
+							So(s.removeFileFromIRODSandDB(&remReq), ShouldBeNil)
+							So(logWriter.String(), ShouldContainSubstring, "warning")
+							So(logWriter.String(), ShouldContainSubstring, rpath)
+						}
+
+						removeVanished(path2)
+
+						_, err = os.Stat(inodeFile)
+						So(err, ShouldBeNil)
+
+						expectOnlyPath1InInode := func() {
+							files, errf := s.db.GetFilesFromInode(statt.Ino, s.db.GetMountPointFromPath(path1))
+							So(errf, ShouldBeNil)
+							So(files, ShouldResemble, []string{path1})
+						}
+
+						Convey("and removes it with the last of them", func() {
+							removeVanished(path3)
+
+							_, err = os.Stat(inodeFile)
+							So(err, ShouldNotBeNil)
+							So(err.Error(), ShouldContainSubstring, "no such file or directory")
+
+							expectOnlyPath1InInode()
+						})
+
+						Convey("and removing the last of them succeeds even if the inode file is already gone", func() {
+							So(storage.RemoveFile(inodeFile), ShouldBeNil)
+
+							removeVanished(path3)
+
+							expectOnlyPath1InInode()
+						})
+
+						Convey("but keeps it when the last of them is trashed", func() {
+							rpath3, errt := transformer(path3)
+							So(errt, ShouldBeNil)
+
+							So(storage.RemoveFile(rpath3), ShouldBeNil)
+
+							logWriter.Reset()
+
+							err = s.removeToTrashSet(exampleSet, []string{path3}, nil)
+							So(err, ShouldBeNil)
+
+							err = testutil.RetryUntilWorksCustom(t, func() error {
+								incomplete, errg := s.db.GetIncompleteRemoveRequests()
+								So(errg, ShouldBeNil)
+
+								if len(incomplete) == 0 && s.removeQueue.Stats().Items == 0 {
+									return nil
+								}
+
+								return errNotFinishedRemoving
+							}, time.Second*30, time.Millisecond*100)
+							So(err, ShouldBeNil)
+
+							_, err = s.db.GetFileEntryForSet(exampleSet.ID(), path3)
+							So(err, ShouldNotBeNil)
+
+							So(logWriter.String(), ShouldContainSubstring, "warning")
+							So(logWriter.String(), ShouldContainSubstring, rpath3)
+
+							_, err = os.Stat(inodeFile)
+							So(err, ShouldBeNil)
+						})
+					})
+
 					Convey("with remote hardlink location set only uploads hardlinks once", func() {
 						hardlinksDir := filepath.Join(remoteDir, "mountpoints")
 						s.SetRemoteHardlinkLocation(hardlinksDir)
@@ -6427,6 +6704,26 @@ type hookedGetMetaHandler struct {
 
 func (h *hookedGetMetaHandler) GetMeta(path string) (map[string]string, error) {
 	h.hook()
+
+	return h.Handler.GetMeta(path)
+}
+
+// batonLikeGetMetaHandler is a remove.Handler whose GetMeta() fails like
+// baton's for a path with no remote object (the mock returns no metadata), and
+// with errInjectedGetMeta, a PathError with a different Msg, for failPath.
+type batonLikeGetMetaHandler struct {
+	remove.Handler
+	failPath string
+}
+
+func (h *batonLikeGetMetaHandler) GetMeta(path string) (map[string]string, error) {
+	if path == h.failPath {
+		return nil, errInjectedGetMeta
+	}
+
+	if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
+		return nil, errs.PathError{Msg: internal.ErrFileDoesNotExist, Path: path}
+	}
 
 	return h.Handler.GetMeta(path)
 }

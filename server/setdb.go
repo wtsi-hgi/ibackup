@@ -150,6 +150,12 @@ const (
 	allUsers = "all"
 )
 
+func isRemoteFileMissing(err error) bool {
+	var pathErr errs.PathError
+
+	return errors.As(err, &pathErr) && pathErr.Msg == internal.ErrFileDoesNotExist
+}
+
 // LoadSetDB loads the given set.db or creates it if it doesn't exist.
 // Optionally, also provide a path to backup the database to.
 //
@@ -919,7 +925,7 @@ func (s *Server) updateOrRemoveRemoteFile(removeReq *set.RemoveReq, transformer 
 
 	remoteMeta, err := s.storageHandler.GetMeta(rpath)
 	if err != nil {
-		return err
+		return s.handleRemoteFileMetaError(err, removeReq, rpath, transformer, entry)
 	}
 
 	var sets, requesters []string
@@ -958,7 +964,61 @@ func (s *Server) removeRemoteFileAndHandleHardlink(lpath, rpath string, meta map
 		return nil
 	}
 
-	files, thresh, err := s.getFilesWithSameInode(lpath, entry.Inode, transformer, meta[transfer.MetaKeyRemoteHardlink])
+	return s.removeInodeFileIfUnused(lpath, meta[transfer.MetaKeyRemoteHardlink], transformer, entry)
+}
+
+// handleRemoteFileMetaError handles the given error from getting the metadata
+// of the given request's remote object. If the object doesn't exist and the
+// entry's status is not one that means it was never uploaded (failed, missing
+// or abnormal), the object was removed outside of ibackup (or by an earlier
+// attempt), so this logs a warning and treats it as removed; when removing,
+// that includes removing a hardlink's inode file if no other hardlink needs
+// it. Otherwise it returns the error.
+func (s *Server) handleRemoteFileMetaError(err error, removeReq *set.RemoveReq, rpath string,
+	transformer transformer.PathTransformer, entry *set.Entry,
+) error {
+	if !isRemoteFileMissing(err) || entry.WasNotUploaded() {
+		return err
+	}
+
+	s.Logger.Printf("warning: remote object %s of %s in set %s does not exist or is not readable, "+
+		"so treating it as removed",
+		rpath, removeReq.Path, removeReq.Set.ID())
+
+	if removeReq.Action != set.ToRemove {
+		return nil
+	}
+
+	return s.removeInodeFileOfMissingHardlink(removeReq.Path, transformer, entry)
+}
+
+// removeInodeFileOfMissingHardlink removes the remote inode file of the given
+// entry, if it is a hardlink whose remote object no longer exists, unless
+// another hardlink still needs it. The inode file's path comes from the entry,
+// as the remote object's metadata that normally gives it is gone.
+func (s *Server) removeInodeFileOfMissingHardlink(lpath string, transformer transformer.PathTransformer,
+	entry *set.Entry,
+) error {
+	if entry.Type != set.Hardlink || s.remoteHardlinkLocation == "" || entry.InodeStoragePath() == "" {
+		return nil
+	}
+
+	rInodePath := filepath.Join(s.remoteHardlinkLocation, entry.InodeStoragePath())
+
+	err := s.removeInodeFileIfUnused(lpath, rInodePath, transformer, entry)
+	if isRemoteFileMissing(err) {
+		return nil
+	}
+
+	return err
+}
+
+// removeInodeFileIfUnused removes the given remote inode file of the given
+// hardlink entry, unless another hardlink still needs it.
+func (s *Server) removeInodeFileIfUnused(lpath, rInodePath string, transformer transformer.PathTransformer,
+	entry *set.Entry,
+) error {
+	files, thresh, err := s.getFilesWithSameInode(lpath, entry.Inode, transformer, rInodePath)
 	if err != nil {
 		return err
 	}
@@ -967,7 +1027,7 @@ func (s *Server) removeRemoteFileAndHandleHardlink(lpath, rpath string, meta map
 		return nil
 	}
 
-	return s.storageHandler.RemoveFile(meta[transfer.MetaKeyRemoteHardlink])
+	return s.storageHandler.RemoveFile(rInodePath)
 }
 
 func (s *Server) getFilesWithSameInode(path string, inode uint64, transformer transformer.PathTransformer,
