@@ -49,11 +49,20 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
   server reaching this, but the handler itself is still unsafe.
   - Origin item: "TestTrashRemove intermittently fails in clean `make test`"
     on `deps` (found reviewing its fix).
-- [ ] `server/server.go` (~lines 437-441): when
+- [x] `server/server.go` (~lines 437-441): when
   `convertQueueItemToRemoveRequest` fails, the reserved item stays in
   `removeQueue`, so `Items` never reaches 0 and the storage handler's
   `Cleanup()` never runs again. Unchanged by the `deps` fix.
   - Origin item: as above.
+  - Red: `CGO_ENABLED=1 go test -tags netgo --count 1 -timeout 20m ./server
+    -run '^TestServer$'`: a new Convey queueing an unconvertible item ahead of
+    a real removal in the set's reserve group failed with `not all removals
+    finished: removed 0; 2 queued; 0 cleanups`.
+  - Fixed in `server/server.go`: `reserveRemoveRequest` loops; an item that
+    fails conversion goes to `dropUnremovableItem`, which records the error on
+    the set (`recordSetError`) and removes it from the queue, then the next
+    item is reserved. Mutants (drop but stop the loop, keep the item, no set
+    error) fail. `make speed` passed (Upload +0.3%, Remove -1.3% vs ce92cae).
 - [x] `transfer/put.go` `getSortedRequestCollections` (~272) only creates
   collections for `p.requests`, not `p.duplicateRequests`, so a request
   deduplicated by `RemoteDataPath()` (e.g. a second set's hardlink to the same
@@ -81,3 +90,8 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
   entry is never uploaded or counted until the next discovery.
   - Origin: found fixing the set-counts "results during discovery are counted
     twice" item (2026-10-07).
+- [ ] `server/server.go` `reserveRemoveRequest`: when `removeQueue.Reserve`
+  fails with anything other than `ErrNothingReady` (e.g. `ErrQueueClosed`
+  from wr v0.38.0 when the queue is closed), the error is only logged and
+  `item.Data()` is then called on a nil item, which panics. Code reading.
+  - Origin: found fixing the unconvertible remove-queue item (2026-10-07).

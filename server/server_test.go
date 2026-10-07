@@ -733,6 +733,65 @@ func TestServer(t *testing.T) {
 						So(err, ShouldBeNil)
 					})
 
+					Convey("A queued removal that isn't a remove request is dropped with an "+
+						"error on its set, and the set's other removals still finish and clean "+
+						"up the storage handler", func() {
+						file1local := filepath.Join(localDir, "file1")
+						internal.CreateTestFileOfLength(t, file1local, 1)
+
+						createRemoteObject(t, s.storageHandler, map[string]string{
+							transfer.MetaKeySets:      exampleSet.Name,
+							transfer.MetaKeyRequester: exampleSet.Requester,
+						}, filepath.Join(remoteDir, "file1"))
+
+						err = client.MergeFiles(exampleSet.ID(), []string{file1local})
+						So(err, ShouldBeNil)
+
+						drainRacCalled(t, racCalled)
+
+						err = client.TriggerDiscovery(exampleSet.ID(), false)
+						So(err, ShouldBeNil)
+
+						So(<-racCalled, ShouldBeTrue)
+
+						counting := &cleanupCountingHandler{Handler: s.storageHandler}
+						s.storageHandler = counting
+
+						_, _, err = s.removeQueue.AddMany(context.Background(), []*queue.ItemDef{{
+							Key:          "not a remove request",
+							ReserveGroup: exampleSet.ID(),
+							Data:         "not a remove request",
+							Priority:     255,
+							TTR:          ttr,
+						}})
+						So(err, ShouldBeNil)
+
+						err = s.removeFilesAndDirs(exampleSet, []string{file1local}, nil, set.ToRemove)
+						So(err, ShouldBeNil)
+
+						err = testutil.RetryUntilWorksCustom(t, func() error {
+							got, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+							if errg != nil {
+								return errg
+							}
+
+							queued := s.removeQueue.Stats().Items
+							cleanups := counting.cleanups.Load()
+
+							if got.NumObjectsRemoved == 1 && queued == 0 && cleanups > 0 {
+								return nil
+							}
+
+							return fmt.Errorf("%w: removed %d; %d queued; %d cleanups",
+								errNotAllRemoved, got.NumObjectsRemoved, queued, cleanups)
+						}, 30*time.Second, 10*time.Millisecond)
+						So(err, ShouldBeNil)
+
+						got, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+						So(errg, ShouldBeNil)
+						So(got.Error, ShouldContainSubstring, ErrIncorrectTypeInQueue.Error())
+					})
+
 					Convey("Given a complete set, a removal interrupted by the server stopping "+
 						"finishes after a restart, counted once", func() {
 						file1local := filepath.Join(localDir, "file1")
@@ -6799,6 +6858,17 @@ func (g *gatedCleanupHandler) GetMeta(path string) (map[string]string, error) {
 	}
 
 	return g.Handler.GetMeta(path)
+}
+
+// cleanupCountingHandler is a remove.Handler that counts its Cleanup() calls.
+type cleanupCountingHandler struct {
+	remove.Handler
+	cleanups atomic.Int32
+}
+
+func (c *cleanupCountingHandler) Cleanup() {
+	c.cleanups.Add(1)
+	c.Handler.Cleanup()
 }
 
 func TestDiscoveryCoordinator(t *testing.T) {
