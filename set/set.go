@@ -649,6 +649,19 @@ func (s *Set) uncountIfCountedInDiscovery(entry *Entry) {
 	s.removedDiscoveredSizeFromSetCounts(entry)
 }
 
+// resultCountedAndQueuedAgain returns true if the given entry was counted in our
+// current discovery and will be queued for upload again, unless its status is
+// one that discovery counts for entries it queues (missing, orphaned or
+// abnormal), whose results replace that count. Call it after LastDiscovery is
+// updated.
+func (s *Set) resultCountedAndQueuedAgain(entry *Entry) bool {
+	if entry.Status == Missing || entry.Status == Orphaned || entry.Status == AbnormalEntry {
+		return false
+	}
+
+	return entry.CountedInDiscovery.Equal(s.StartedDiscovery) && entry.ShouldUpload(s)
+}
+
 // LogChangesToSlack will cause the set to use the slacker when significant
 // events happen to the set.
 func (s *Set) LogChangesToSlack(slacker Slacker) {
@@ -662,10 +675,18 @@ func (s *Set) SuccessfullyStoredInDB() {
 }
 
 // DiscoveryCompleted should be called when you complete discovering a set. Pass
-// in the number of files you discovered.
-func (s *Set) DiscoveryCompleted(numFiles uint64) {
+// in the number of files you discovered, and a function that takes back from
+// our counts any entries that will be queued for upload again, but that an
+// upload result counted during this discovery (it is passed this set, with
+// LastDiscovery updated). Their next results count them, so we don't complete
+// before those arrive.
+func (s *Set) DiscoveryCompleted(numFiles uint64, uncountQueuedResults func(*Set) error) error {
 	s.LastDiscovery = time.Now()
 	s.NumFiles = numFiles
+
+	if err := uncountQueuedResults(s); err != nil {
+		return err
+	}
 
 	if s.NumFiles == 0 || (s.Missing+s.Orphaned+s.Abnormal == s.NumFiles) {
 		s.Status = Complete
@@ -673,7 +694,7 @@ func (s *Set) DiscoveryCompleted(numFiles uint64) {
 
 		s.sendSlackMessage(slack.Warn, "completed discovery and backup due to no files")
 
-		return
+		return nil
 	}
 
 	s.Status = PendingUpload
@@ -682,6 +703,8 @@ func (s *Set) DiscoveryCompleted(numFiles uint64) {
 
 	// Discovery counts a frozen set's uploaded entries, which never get queued.
 	s.checkIfComplete()
+
+	return nil
 }
 
 // UpdateBasedOnEntry updates set status values based on an updated Entry from

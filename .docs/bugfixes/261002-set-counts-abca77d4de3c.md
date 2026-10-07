@@ -416,10 +416,38 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
   "Removal status" (and the old-build already-counted check can misjudge for
   it). Same on develop. Code reading only; low priority.
   - Origin: found reviewing the trash-set counts fix (2026-10-07).
-- [ ] An unfrozen set whose upload results all arrive during a rediscovery,
+- [x] An unfrozen set whose upload results all arrive during a rediscovery,
   after discovery processed each file, is marked Complete by
   `DiscoveryCompleted` → `checkIfComplete` although those files are re-queued;
   when they finish it completes again and sends a second "completed backup"
   Slack message. Predates the results-during-discovery fix (the old recount
   path did the same).
   - Origin: found reviewing the results-during-discovery fix (2026-10-07).
+  - Red: new leaf in the rediscovery block (all results arrive after
+    discovery processed each file) got `Expected: set.Status(1)`,
+    `Actual: set.Status(4)`; a completion-check-only fix still sent two
+    "completed backup" Slack messages.
+  - Fixed in `set/set.go` and `set/db.go`: `DiscoveryCompleted` takes an
+    `uncountQueuedResults` callback, run after `LastDiscovery`/`NumFiles` are
+    set, that takes back (status and size) and unstamps every entry stamped
+    this discovery that `ShouldUpload` will re-queue, except Missing,
+    Orphaned and Abnormal (whose results replace the count, per 374a095).
+    Skipped when no uploaded/failed counts exist. Frozen sets with nothing
+    queued still complete at discovery end.
+  - Behaviour change: after a rediscovery, such files show pending until their
+    re-upload results arrive (two existing leaves now expect Uploaded/size 0
+    and Failed 0 at discovery end; final counts unchanged).
+  - Tests: unfrozen and directory-set leaves with one completion message, and
+    a deleted file staying Missing. Mutants (no ShouldUpload check, no status
+    exclusion, stamp not stored, file bucket only, callback before
+    LastDiscovery, no size, shortcut ignoring Failed) fail. `make speed`
+    passed (Upload +1.4%, Remove +0.3% vs ce92cae).
+- [ ] A set already Complete completes again, sending another "completed
+  backup" Slack message, when a queued result arrives while every file is
+  counted: `checkIfComplete` has no already-Complete guard, and results for
+  discovery-counted Missing or Orphaned entries replace their count. E.g. a
+  set whose files are all missing completes at discovery ("due to no files"),
+  then again for each missing result; a frozen set with kept files plus a
+  missing file; an unfrozen set whose missing file's result comes last.
+  Predates this branch. Code reading only.
+  - Origin: found fixing the early-completion item (2026-10-07).

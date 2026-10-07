@@ -1589,7 +1589,12 @@ func (d *DB) updateSetAfterDiscovery(setID string) (*Set, error) {
 			return err
 		}
 
-		set.DiscoveryCompleted(d.countAllFilesInSet(tx, setID))
+		err = set.DiscoveryCompleted(d.countAllFilesInSet(tx, setID), func(s *Set) error {
+			return d.uncountQueuedResults(tx, s)
+		})
+		if err != nil {
+			return err
+		}
 
 		updatedSet = set
 
@@ -1597,6 +1602,57 @@ func (d *DB) updateSetAfterDiscovery(setID string) (*Set, error) {
 	})
 
 	return updatedSet, err
+}
+
+// uncountQueuedResults takes back from the given set's counts its file entries
+// that an upload result counted during its current discovery, but that will be
+// queued for upload again, and marks them uncounted, so their next result
+// counts them afresh, as for entries that had no result during discovery.
+func (d *DB) uncountQueuedResults(tx *bolt.Tx, set *Set) error {
+	// Only results count these statuses of entries that get queued.
+	if set.Uploaded+set.Replaced+set.Skipped+set.Failed == 0 {
+		return nil
+	}
+
+	for _, kind := range []string{fileBucket, discoveredBucket} {
+		if err := d.uncountQueuedResultsInBucket(tx, set, kind); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (d *DB) uncountQueuedResultsInBucket(tx *bolt.Tx, set *Set, kind string) error {
+	b := tx.Bucket([]byte(setsBucket)).Bucket(getSubBucketName(set.ID(), kind))
+	if b == nil {
+		return nil
+	}
+
+	var keys, values [][]byte
+
+	b.ForEach(func(k, v []byte) error { //nolint:errcheck
+		entry := d.decodeEntry(v)
+		if !set.resultCountedAndQueuedAgain(entry) {
+			return nil
+		}
+
+		set.uncountIfCountedInDiscovery(entry)
+		entry.CountedInDiscovery = time.Time{}
+
+		keys = append(keys, bytes.Clone(k))
+		values = append(values, d.encodeToBytes(entry))
+
+		return nil
+	})
+
+	for i, k := range keys {
+		if err := b.Put(k, values[i]); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (d *DBRO) countAllFilesInSet(tx *bolt.Tx, setID string) uint64 {

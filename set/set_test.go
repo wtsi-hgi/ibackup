@@ -32,6 +32,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -3862,16 +3863,19 @@ func TestSetDB(t *testing.T) {
 						So(got.Status, ShouldEqual, Complete)
 					}
 
-					checkDiscovered := func(got *Set, unfrozenUploaded, unfrozenSize uint64) {
+					// checkDiscovered checks that an unfrozen set's files, which
+					// are queued again, are pending however their results
+					// arrived during discovery.
+					checkDiscovered := func(got *Set) {
 						So(got.NumFiles, ShouldEqual, 2)
 
 						if frozen {
 							checkComplete(got)
 							So(uploadQueued(got), ShouldEqual, 0)
 						} else {
-							So(got.Uploaded, ShouldEqual, unfrozenUploaded)
-							So(got.SizeTotal, ShouldEqual, unfrozenSize)
-							So(got.SizeUploaded, ShouldEqual, unfrozenSize)
+							So(got.Uploaded, ShouldEqual, 0)
+							So(got.SizeTotal, ShouldEqual, 0)
+							So(got.SizeUploaded, ShouldEqual, 0)
 							So(got.Status, ShouldEqual, PendingUpload)
 							So(uploadQueued(got), ShouldEqual, 2)
 						}
@@ -3880,25 +3884,48 @@ func TestSetDB(t *testing.T) {
 					}
 
 					Convey("when a result arrives before discovery processes its file", func() {
-						checkDiscovered(rediscover(inFlightUploaded, nothing), 0, 0)
+						checkDiscovered(rediscover(inFlightUploaded, nothing))
 					})
 
 					Convey("when a result arrives after discovery processes its file", func() {
-						checkDiscovered(rediscover(nothing, inFlightUploaded), 1, 5)
+						checkDiscovered(rediscover(nothing, inFlightUploaded))
 					})
 
-					Convey("when repeated failures arrive during discovery, they count as one failure, which "+
-						"the retry's result replaces", func() {
+					Convey("when every file's result arrives after discovery processes it, the set completes "+
+						"once, after any uploads queued again", func() {
+						slackWriter.Reset()
+
+						checkDiscovered(rediscover(nothing, func() {
+							setResult(done, upload...)
+							inFlightUploaded()
+						}))
+
+						So(strings.Count(slackWriter.String(), "completed backup"), ShouldEqual, 1)
+					})
+
+					Convey("when repeated failures arrive during discovery, they aren't counted once the file "+
+						"is queued again, and the retry's result counts it", func() {
 						got := rediscover(nothing, func() {
 							setResult(inFlight, transfer.RequestStatusFailed, transfer.RequestStatusFailed)
 						})
 						So(got.NumFiles, ShouldEqual, 2)
-						So(got.Failed, ShouldEqual, 1)
+						So(got.Failed, ShouldEqual, 0)
 						So(got.Uploaded, ShouldEqual, boolToUint64(frozen))
 						So(got.SizeTotal, ShouldEqual, sizes[done]*boolToUint64(frozen))
 						So(uploadQueued(got), ShouldEqual, 2-boolToUint64(frozen))
 
 						checkComplete(db.GetByID(setl1.ID()))
+					})
+
+					Convey("when a file is deleted before rediscovery and the other's result arrives after "+
+						"discovery processes it, the deleted file stays counted missing", func() {
+						So(os.Remove(inFlight), ShouldBeNil)
+
+						got := rediscover(nothing, func() { setResult(done, upload...) })
+						So(got.NumFiles, ShouldEqual, 2)
+						So(got.Missing, ShouldEqual, 1)
+						So(got.Uploaded, ShouldEqual, boolToUint64(frozen))
+						So(got.SizeTotal, ShouldEqual, sizes[done]*boolToUint64(frozen))
 					})
 
 					Convey("when a file counted by a result during discovery is then removed", func() {
@@ -3920,6 +3947,63 @@ func TestSetDB(t *testing.T) {
 					})
 				})
 			}
+
+			Convey("And add a directory set, an upload result that arrives after rediscovery processes its "+
+				"file leaves it pending, and it completes once, after the upload queued again", func() {
+				setl1 := &Set{Name: "dirResultDuringDiscovery", Requester: "jim", Transformer: tmpRemoteTransformer}
+				So(db.AddOrUpdate(setl1), ShouldBeNil)
+
+				dir := t.TempDir()
+				path := filepath.Join(dir, "file")
+				internal.CreateTestFile(t, path, "abc")
+
+				So(db.MergeDirEntries(setl1.ID(), []*Dirent{newDirentFromPath(dir)}), ShouldBeNil)
+
+				fileDirents := []*Dirent{newDirentFromPath(path)}
+
+				_, err = db.Discover(setl1.ID(), func(_ []*Entry) ([]*Dirent, []*Dirent, error) {
+					return fileDirents, nil, nil
+				})
+				So(err, ShouldBeNil)
+
+				uploaded := func() {
+					_, errs := db.SetEntryStatus(&transfer.Request{
+						Local:     path,
+						Requester: setl1.Requester,
+						Set:       setl1.Name,
+						Size:      3,
+						Status:    transfer.RequestStatusUploaded,
+					})
+					So(errs, ShouldBeNil)
+				}
+
+				uploaded()
+
+				So(db.SetDiscoveryStarted(setl1.ID()), ShouldBeNil)
+				So(db.mergeEntries(setl1.ID(), fileDirents, discoveredBucket, Pending), ShouldBeNil)
+
+				slackWriter.Reset()
+				uploaded()
+
+				got, errd := db.updateSetAfterDiscovery(setl1.ID())
+				So(errd, ShouldBeNil)
+				So(got.NumFiles, ShouldEqual, 1)
+				So(got.Uploaded, ShouldEqual, 0)
+				So(got.SizeTotal, ShouldEqual, 0)
+				So(got.Status, ShouldEqual, PendingUpload)
+
+				entries, errg := db.GetFileEntries(setl1.ID(), func(e *Entry) bool { return e.ShouldUpload(got) })
+				So(errg, ShouldBeNil)
+				So(len(entries), ShouldEqual, 1)
+
+				uploaded()
+
+				got = db.GetByID(setl1.ID())
+				So(got.Uploaded, ShouldEqual, 1)
+				So(got.SizeTotal, ShouldEqual, 3)
+				So(got.Status, ShouldEqual, Complete)
+				So(strings.Count(slackWriter.String(), "completed backup"), ShouldEqual, 1)
+			})
 		})
 	})
 }
