@@ -223,7 +223,7 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
     vanished objects. Mutants (no guard, no not-exist check, any PathError,
     no hardlink handling, no unused check, no missing-inode tolerance, no
     warning) fail.
-- [ ] Upload results that arrive while a discovery is running are counted
+- [x] Upload results that arrive while a discovery is running are counted
   twice: with NumFiles reset to 0, a result triggers a full `fixCounts`
   recount, and the running discovery then counts the entry again. Same on
   develop. Found reviewing the tests speed-up branch's double-count fix
@@ -231,6 +231,26 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
   - Note (2026-10-07): for frozen sets this now persists (nothing is queued
     to trigger a recount, e.g. `up=4 num=2`), and sizes are double-counted
     too since discovery counts sizes.
+  - Red: new set test block "upload results that arrive during rediscovery
+    are counted once" (frozen and unfrozen; results before/after discovery
+    reaches the entry, repeated failures, removal during discovery): 7
+    assertions failed, e.g. Uploaded 2 vs 0, frozen Uploaded 4 vs 2, size 8
+    vs 3, Failed 1 vs 0, Uploaded 3 vs 1 after removal.
+  - Fixed in `set/set.go`, `set/db.go` and `set/entries.go` by extending the
+    `CountedInDiscovery` stamp: a result during discovery takes back any count
+    stamped this discovery, counts the entry as discovery would (status, size
+    if uploaded, Failed once), stamps it, and skips recount, completion and
+    the Uploading flip; discovery reaching a result-stamped entry takes that
+    count back first; removal during discovery decrements a stamped entry.
+    The set now stays "pending discovery" until discovery completes.
+  - Mutants (no discovery take-back, no stamp, no removal decrement, Failed
+    not forced, no size, no result take-back) fail. `make speed` passed
+    (Upload -1.2%, Remove +3.4% pooled vs 43f7323).
+  - Not fixed (predates this): an unfrozen set whose results all arrive
+    during discovery is marked Complete at `DiscoveryCompleted` although the
+    files are re-queued, so a second completion Slack message follows.
+  - Incidental: possible rediscovery enqueue duplicate race routed to
+    upload-concurrency (`.docs/bugfixes/261002-upload-concurrency-dbfef239a15f.md`).
 - [x] A frozen set rediscovered while its uploaded files still exist never
   counts them: the frozen guard keeps the stored entry uncounted and it is
   never queued (`ShouldUpload` false), so the set shows `Uploaded 0` and stays

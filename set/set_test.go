@@ -3774,6 +3774,152 @@ func TestSetDB(t *testing.T) {
 					})
 				})
 			}
+
+			for _, frozen := range []bool{false, true} {
+				Convey(fmt.Sprintf("And add a set (frozen: %v) with an uploaded file and a file still uploading, "+
+					"upload results that arrive during rediscovery are counted once", frozen), func() {
+					setl1 := &Set{
+						Name:        fmt.Sprintf("resultsDuringDiscovery%v", frozen),
+						Requester:   "jim",
+						Transformer: tmpRemoteTransformer,
+						Frozen:      frozen,
+					}
+
+					So(db.AddOrUpdate(setl1), ShouldBeNil)
+
+					dir := t.TempDir()
+					done := filepath.Join(dir, "done")
+					inFlight := filepath.Join(dir, "inFlight")
+					sizes := map[string]uint64{done: 3, inFlight: 5}
+
+					for path := range sizes {
+						internal.CreateTestFile(t, path, "a")
+					}
+
+					So(db.MergeFileEntries(setl1.ID(), []string{done, inFlight}), ShouldBeNil)
+
+					_, err = db.Discover(setl1.ID(), nil)
+					So(err, ShouldBeNil)
+
+					setResult := func(path string, statuses ...transfer.RequestStatus) {
+						for _, status := range statuses {
+							_, errs := db.SetEntryStatus(&transfer.Request{
+								Local:     path,
+								Requester: setl1.Requester,
+								Set:       setl1.Name,
+								Size:      sizes[path],
+								Status:    status,
+							})
+							So(errs, ShouldBeNil)
+						}
+					}
+
+					upload := []transfer.RequestStatus{transfer.RequestStatusUploading, transfer.RequestStatusUploaded}
+
+					setResult(done, upload...)
+					setResult(inFlight, transfer.RequestStatusUploading)
+
+					// rediscover does what Discover does, calling before once
+					// discovery has started and after once it has processed the
+					// set's files, but before it completes.
+					rediscover := func(before, after func()) *Set {
+						So(db.SetDiscoveryStarted(setl1.ID()), ShouldBeNil)
+						before()
+						So(db.statPureFileEntries(setl1.ID()), ShouldBeNil)
+						after()
+
+						got, errd := db.setDiscoveredEntries(setl1.ID(), nil, nil)
+						So(errd, ShouldBeNil)
+
+						return got
+					}
+
+					nothing := func() {}
+					inFlightUploaded := func() { setResult(inFlight, transfer.RequestStatusUploaded) }
+
+					// uploadQueued gives the results of uploading every file
+					// the server would queue after discovery, returning how
+					// many there were.
+					uploadQueued := func(got *Set) uint64 {
+						entries, errg := db.GetFileEntries(setl1.ID(), func(e *Entry) bool {
+							return e.ShouldUpload(got)
+						})
+						So(errg, ShouldBeNil)
+
+						for _, entry := range entries {
+							setResult(entry.Path, upload...)
+						}
+
+						return uint64(len(entries))
+					}
+
+					checkComplete := func(got *Set) {
+						So(got.NumFiles, ShouldEqual, 2)
+						So(got.Uploaded, ShouldEqual, 2)
+						So(got.Failed, ShouldEqual, 0)
+						So(got.SizeTotal, ShouldEqual, 8)
+						So(got.SizeUploaded, ShouldEqual, 8)
+						So(got.Status, ShouldEqual, Complete)
+					}
+
+					checkDiscovered := func(got *Set, unfrozenUploaded, unfrozenSize uint64) {
+						So(got.NumFiles, ShouldEqual, 2)
+
+						if frozen {
+							checkComplete(got)
+							So(uploadQueued(got), ShouldEqual, 0)
+						} else {
+							So(got.Uploaded, ShouldEqual, unfrozenUploaded)
+							So(got.SizeTotal, ShouldEqual, unfrozenSize)
+							So(got.SizeUploaded, ShouldEqual, unfrozenSize)
+							So(got.Status, ShouldEqual, PendingUpload)
+							So(uploadQueued(got), ShouldEqual, 2)
+						}
+
+						checkComplete(db.GetByID(setl1.ID()))
+					}
+
+					Convey("when a result arrives before discovery processes its file", func() {
+						checkDiscovered(rediscover(inFlightUploaded, nothing), 0, 0)
+					})
+
+					Convey("when a result arrives after discovery processes its file", func() {
+						checkDiscovered(rediscover(nothing, inFlightUploaded), 1, 5)
+					})
+
+					Convey("when repeated failures arrive during discovery, they count as one failure, which "+
+						"the retry's result replaces", func() {
+						got := rediscover(nothing, func() {
+							setResult(inFlight, transfer.RequestStatusFailed, transfer.RequestStatusFailed)
+						})
+						So(got.NumFiles, ShouldEqual, 2)
+						So(got.Failed, ShouldEqual, 1)
+						So(got.Uploaded, ShouldEqual, boolToUint64(frozen))
+						So(got.SizeTotal, ShouldEqual, sizes[done]*boolToUint64(frozen))
+						So(uploadQueued(got), ShouldEqual, 2-boolToUint64(frozen))
+
+						checkComplete(db.GetByID(setl1.ID()))
+					})
+
+					Convey("when a file counted by a result during discovery is then removed", func() {
+						got := rediscover(func() {
+							inFlightUploaded()
+							removeFileEntryAndCount(db, setl1.ID(), inFlight)
+						}, nothing)
+						So(got.NumFiles, ShouldEqual, 1)
+						So(got.Uploaded, ShouldEqual, boolToUint64(frozen))
+						So(got.SizeTotal, ShouldEqual, sizes[done]*boolToUint64(frozen))
+
+						uploadQueued(got)
+
+						got = db.GetByID(setl1.ID())
+						So(got.NumFiles, ShouldEqual, 1)
+						So(got.Uploaded, ShouldEqual, 1)
+						So(got.SizeTotal, ShouldEqual, sizes[done])
+						So(got.Status, ShouldEqual, Complete)
+					})
+				})
+			}
 		})
 	})
 }
@@ -4209,4 +4355,12 @@ func setEntryToFailed(entry *Entry, given *Set, db *DB) {
 // status.
 func setEntryToStatus(entry *Entry, given *Set, db *DB, status transfer.RequestStatus) {
 	setEntryToStatusWithSize(entry, given, db, status, 0)
+}
+
+func boolToUint64(b bool) uint64 {
+	if b {
+		return 1
+	}
+
+	return 0
 }

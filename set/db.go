@@ -1636,7 +1636,7 @@ func (d *DB) SetEntryStatus(r *transfer.Request) (*Entry, error) {
 			return errt
 		}
 
-		entry, errt = d.updateFileEntry(tx, setID, r, got.LastDiscovery)
+		entry, errt = d.updateFileEntry(tx, setID, r, got)
 		if errt != nil {
 			return errt
 		} else if entry.isDir {
@@ -1674,10 +1674,11 @@ func requestToSetID(r *transfer.Request) (string, error) {
 // since the last success, and if this was the first successful upload after a
 // failure.
 //
-// If setDiscoveryTime is later than the entry's last attempt, resets the
-// entries Attempts to 0.
+// If the set's LastDiscovery is later than the entry's last attempt, resets the
+// entries Attempts to 0. If the set is being discovered, stamps the entry as
+// counted in that discovery (see Set.countEntryDuringDiscovery).
 func (d *DB) updateFileEntry(tx *bolt.Tx, setID string, r *transfer.Request, //nolint:funlen
-	setDiscoveryTime time.Time,
+	set *Set,
 ) (*Entry, error) {
 	entry, b, err := d.getEntry(tx, setID, r.Local)
 	if err != nil {
@@ -1687,7 +1688,11 @@ func (d *DB) updateFileEntry(tx *bolt.Tx, setID string, r *transfer.Request, //n
 	entry.countedStatus, entry.countedSize, entry.countedIn = entry.Status, entry.Size, entry.CountedInDiscovery
 	entry.CountedInDiscovery = time.Time{}
 
-	if setDiscoveryTime.After(entry.LastAttempt) {
+	if set.discovering() && !entry.isDir {
+		entry.CountedInDiscovery = set.StartedDiscovery
+	}
+
+	if set.LastDiscovery.After(entry.LastAttempt) {
 		entry.Attempts = 0
 		entry.LastError = ""
 		entry.Status = Pending

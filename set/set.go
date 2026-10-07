@@ -570,8 +570,11 @@ func (s *Set) countRemovedEntry(entry *Entry, removedSize uint64) {
 	s.removedEntryTypeToSetCounts(entry)
 
 	// Starting discovery zeroed these, and they get rebuilt without this
-	// entry; decrementing them now would wrap them.
-	if s.StartedDiscovery.After(s.LastDiscovery) {
+	// entry; decrementing them now would wrap them, unless an upload result
+	// counted it during this discovery.
+	if s.discovering() {
+		s.removedDiscoveredEntryFromSetCounts(entry)
+
 		return
 	}
 
@@ -585,15 +588,65 @@ func (s *Set) countRemovedEntry(entry *Entry, removedSize uint64) {
 	}
 
 	// Otherwise the entry's status is from before our last discovery, so is
-	// only in our counts if that discovery counted it, with its size if it is
-	// an uploaded one (SizeUploaded is kept, as for an upload result's).
-	if entry.CountedInDiscovery.Equal(s.StartedDiscovery) {
-		s.removedEntryStatusToSetCounts(entry)
+	// only in our counts if counted in that discovery.
+	s.removedDiscoveredEntryFromSetCounts(entry)
+}
 
-		if entry.IsUploaded() {
-			s.SizeTotal -= entry.Size
-		}
+// removedDiscoveredEntryFromSetCounts takes the given removed entry's status
+// out of our counts, with its size if it is an uploaded one (SizeUploaded is
+// kept, as for an upload result's), if it was counted in our current
+// discovery.
+func (s *Set) removedDiscoveredEntryFromSetCounts(entry *Entry) {
+	if !entry.CountedInDiscovery.Equal(s.StartedDiscovery) {
+		return
 	}
+
+	s.removedEntryStatusToSetCounts(entry)
+
+	if entry.IsUploaded() {
+		s.SizeTotal -= entry.Size
+	}
+}
+
+// discovering returns true if a discovery of this set has started but not
+// completed.
+func (s *Set) discovering() bool {
+	return s.StartedDiscovery.After(s.LastDiscovery)
+}
+
+// countEntryDuringDiscovery counts the given entry, updated by an upload result
+// that arrived during discovery, as discovery counts entries: by its status,
+// and its size if uploaded.
+//
+// Starting discovery zeroed our counts and NumFiles isn't known until it
+// completes, so a recount or completion check now would count entries discovery
+// is about to count. updateFileEntry stamped the entry as counted in this
+// discovery, so discovery, a later upload result or removal replaces or undoes
+// this count instead of adding to it. A count stays if nothing does: eg. a
+// frozen set's newly uploaded entry, which isn't queued again.
+func (s *Set) countEntryDuringDiscovery(entry *Entry) {
+	s.uncountIfCountedInDiscovery(&Entry{
+		Status:             entry.countedStatus,
+		Size:               entry.countedSize,
+		CountedInDiscovery: entry.countedIn,
+	})
+
+	// Its earlier failures this round were in the zeroed counts.
+	entry.newFail = true
+
+	s.entryStatusToSetCounts(entry)
+	s.discoveredSizeToSetCounts(entry)
+}
+
+// uncountIfCountedInDiscovery undoes the count of the given entry's status and
+// size, if it was counted in our current discovery.
+func (s *Set) uncountIfCountedInDiscovery(entry *Entry) {
+	if !entry.CountedInDiscovery.Equal(s.StartedDiscovery) {
+		return
+	}
+
+	s.removedEntryStatusToSetCounts(entry)
+	s.removedDiscoveredSizeFromSetCounts(entry)
 }
 
 // LogChangesToSlack will cause the set to use the slacker when significant
@@ -634,6 +687,12 @@ func (s *Set) DiscoveryCompleted(numFiles uint64) {
 // UpdateBasedOnEntry updates set status values based on an updated Entry from
 // updateFileEntry(), assuming that request is for one of set's file entries.
 func (s *Set) UpdateBasedOnEntry(entry *Entry, getFileEntries func(string, EntryFilter) ([]*Entry, error)) error {
+	if s.discovering() {
+		s.countEntryDuringDiscovery(entry)
+
+		return nil
+	}
+
 	s.checkIfUploading()
 
 	s.adjustBasedOnEntry(entry)
