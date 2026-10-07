@@ -320,6 +320,223 @@ func TestSet(t *testing.T) {
 	})
 }
 
+// setFileCounts holds a set's file, type, status and size counts.
+type setFileCounts struct {
+	NumFiles, SizeTotal, Symlinks, Hardlinks, Uploaded, Replaced, Skipped,
+	Failed, Missing, Orphaned, Abnormal uint64
+}
+
+// fileCounts returns the given set's file, type, status and size counts.
+func fileCounts(s *Set) setFileCounts {
+	return setFileCounts{
+		NumFiles: s.NumFiles, SizeTotal: s.SizeTotal, Symlinks: s.Symlinks, Hardlinks: s.Hardlinks,
+		Uploaded: s.Uploaded, Replaced: s.Replaced, Skipped: s.Skipped, Failed: s.Failed,
+		Missing: s.Missing, Orphaned: s.Orphaned, Abnormal: s.Abnormal,
+	}
+}
+
+func TestTrashSetCounts(t *testing.T) {
+	Convey("Given a complete set with an uploaded file and symlink", t, func() {
+		internal.InitStatter(t)
+
+		db, err := New(filepath.Join(t.TempDir(), "set.db"), "", false)
+		So(err, ShouldBeNil)
+
+		defer func() { So(db.Close(), ShouldBeNil) }()
+
+		given := &Set{Name: "counts", Requester: "trasher", Transformer: "prefix=/local:/trashcounts"}
+		So(db.AddOrUpdate(given), ShouldBeNil)
+
+		localDir := t.TempDir()
+		file := filepath.Join(localDir, "file")
+		internal.CreateTestFile(t, file, "abc")
+
+		link := filepath.Join(localDir, "link")
+		So(os.Symlink(file, link), ShouldBeNil)
+
+		discoverAndUpload := func(size uint64) {
+			So(db.MergeFileEntries(given.ID(), []string{file, link}), ShouldBeNil)
+
+			_, errd := db.Discover(given.ID(), nil)
+			So(errd, ShouldBeNil)
+
+			entries, errg := db.GetPureFileEntries(given.ID())
+			So(errg, ShouldBeNil)
+
+			for _, entry := range entries {
+				setEntryToStatusWithSize(entry, given, db, transfer.RequestStatusUploaded, size)
+			}
+
+			So(db.GetByID(given.ID()).Status, ShouldEqual, Complete)
+		}
+
+		discoverAndUpload(3)
+
+		trashSet := BuildTrashSetFromSet(given)
+		So(db.AddOrUpdate(&trashSet), ShouldBeNil)
+
+		trash := func(path string) {
+			entry, errg := db.GetFileEntryForSet(given.ID(), path)
+			So(errg, ShouldBeNil)
+
+			remReq := NewRemoveRequest(path, db.GetByID(given.ID()), false, ToTrash)
+			So(db.SetRemoveRequests(given.ID(), []RemoveReq{remReq}), ShouldBeNil)
+
+			_, errr := db.RemoveFileEntry(&remReq, entry)
+			So(errr, ShouldBeNil)
+		}
+
+		removeFromTrash := func(path string) {
+			entry, errg := db.GetFileEntryForSet(trashSet.ID(), path)
+			So(errg, ShouldBeNil)
+
+			remReq := NewRemoveRequest(path, db.GetByID(trashSet.ID()), false, ToRemove)
+			So(db.SetRemoveRequests(trashSet.ID(), []RemoveReq{remReq}), ShouldBeNil)
+
+			removed, errr := db.RemoveFileEntry(&remReq, entry)
+			So(errr, ShouldBeNil)
+			So(removed, ShouldNotBeNil)
+		}
+
+		Convey("then trashing the file under a build before #193, stopped after it trashed the entry "+
+			"and deleted it, counts it against the set once it completes, not the trash set", func() {
+			before := db.GetByID(given.ID())
+
+			entry, errg := db.GetFileEntryForSet(given.ID(), file)
+			So(errg, ShouldBeNil)
+
+			remReq := NewRemoveRequest(file, before, false, ToTrash)
+			So(db.SetRemoveRequests(given.ID(), []RemoveReq{remReq}), ShouldBeNil)
+			So(db.UpdateSetTotalToRemove(given.ID(), 1), ShouldBeNil)
+
+			// those builds did the database side after the remote removal, and
+			// their requests had no ObjectSize.
+			remReq.RemoteRemovalStatus = Removed
+			remReq.ObjectSize = nil
+			So(db.UpdateRemoveRequest(remReq), ShouldBeNil)
+
+			// they trashed a copy of the entry, with a TrashDate, then deleted
+			// it.
+			err = db.db.Update(func(tx *bolt.Tx) error {
+				if errp := db.putEntryInTrash(tx, remReq.Set, entry); errp != nil {
+					return errp
+				}
+
+				_, errd := db.deleteFileEntry(tx, given.ID(), file)
+
+				return errd
+			})
+			So(err, ShouldBeNil)
+
+			trashed, errg := db.GetFileEntryForSet(trashSet.ID(), file)
+			So(errg, ShouldBeNil)
+			So(trashed.TrashDate.IsZero(), ShouldBeFalse)
+
+			So(db.RemoveDeletedFileEntry(&remReq), ShouldBeNil)
+
+			got := db.GetByID(given.ID())
+			So(got.NumObjectsRemoved, ShouldEqual, 1)
+			So(got.SizeRemoved, ShouldEqual, 3)
+			So(got.NumFiles, ShouldEqual, before.NumFiles-1)
+			So(got.Uploaded, ShouldEqual, before.Uploaded-1)
+			So(got.SizeTotal, ShouldEqual, before.SizeTotal-3)
+
+			So(fileCounts(db.GetByID(trashSet.ID())), ShouldResemble, setFileCounts{})
+		})
+
+		Convey("When trashing them", func() {
+			// A trash set is never discovered, so its file counts aren't kept:
+			// they stay zero whatever is trashed or removed from it, and only its
+			// removal counts change.
+			trash(file)
+			trash(link)
+
+			got := db.GetByID(given.ID())
+			So(got.NumFiles, ShouldEqual, 0)
+			So(got.Uploaded, ShouldEqual, 0)
+			So(got.Symlinks, ShouldEqual, 0)
+			So(got.SizeTotal, ShouldEqual, 0)
+			So(got.SizeRemoved, ShouldEqual, 3)
+
+			trashed, err := db.GetPureFileEntries(trashSet.ID())
+			So(err, ShouldBeNil)
+			So(trashed, ShouldHaveLength, 2)
+			So(fileCounts(db.GetByID(trashSet.ID())), ShouldResemble, setFileCounts{})
+
+			Convey("then removing them from the trash set counts only their removal", func() {
+				removeFromTrash(file)
+
+				got = db.GetByID(trashSet.ID())
+				So(fileCounts(got), ShouldResemble, setFileCounts{})
+				So(got.NumObjectsRemoved, ShouldEqual, 1)
+				So(got.SizeRemoved, ShouldEqual, 3)
+
+				removeFromTrash(link)
+
+				got = db.GetByID(trashSet.ID())
+				So(fileCounts(got), ShouldResemble, setFileCounts{})
+				So(got.NumObjectsRemoved, ShouldEqual, 2)
+				So(got.SizeRemoved, ShouldEqual, 3)
+
+				trashed, err = db.GetPureFileEntries(trashSet.ID())
+				So(err, ShouldBeNil)
+				So(trashed, ShouldBeEmpty)
+			})
+
+			Convey("then trashing the same paths again before their earlier copies expire, then removing "+
+				"them from the trash set, counts only their removal", func() {
+				discoverAndUpload(5)
+
+				trash(file)
+				trash(link)
+
+				trashed, err = db.GetPureFileEntries(trashSet.ID())
+				So(err, ShouldBeNil)
+				So(trashed, ShouldHaveLength, 2)
+				So(fileCounts(db.GetByID(trashSet.ID())), ShouldResemble, setFileCounts{})
+
+				removeFromTrash(file)
+				removeFromTrash(link)
+
+				got = db.GetByID(trashSet.ID())
+				So(fileCounts(got), ShouldResemble, setFileCounts{})
+				So(got.NumObjectsRemoved, ShouldEqual, 2)
+				So(got.SizeRemoved, ShouldEqual, 5)
+			})
+		})
+	})
+}
+
+// setEntryToStatusWithSize is like setEntryToStatus(), but the request has the
+// given size.
+func setEntryToStatusWithSize(entry *Entry, given *Set, db *DB, status transfer.RequestStatus, size uint64) {
+	transformer, err := given.MakeTransformer()
+	So(err, ShouldBeNil)
+
+	r, err := transfer.NewRequestWithTransformedLocal(entry.Path, transformer)
+	So(err, ShouldBeNil)
+
+	r.Set = given.Name
+	r.Requester = given.Requester
+	r.Size = size
+
+	if entry.Type == Hardlink {
+		r.Hardlink = entry.Dest
+	}
+
+	if entry.Type == Symlink {
+		r.Symlink = entry.Dest
+	}
+
+	r.Status = transfer.RequestStatusUploading
+	_, err = db.SetEntryStatus(r)
+	So(err, ShouldBeNil)
+
+	r.Status = status
+	_, err = db.SetEntryStatus(r)
+	So(err, ShouldBeNil)
+}
+
 func TestSetDB(t *testing.T) {
 	Convey("Given a path", t, func() {
 		internal.InitStatter(t)
@@ -2640,7 +2857,7 @@ func TestSetDB(t *testing.T) {
 				So(entries[0].Type, ShouldEqual, Regular)
 
 				Convey("then rediscover the set and still know about the missing file", func() {
-					got, errb := db.Discover(setl1.ID(), nil)
+					got, errb = db.Discover(setl1.ID(), nil)
 					So(got, ShouldNotBeNil)
 					So(errb, ShouldBeNil)
 					So(got.Missing, ShouldEqual, 1)
@@ -3672,28 +3889,5 @@ func setEntryToFailed(entry *Entry, given *Set, db *DB) {
 // setEntryToStatus has the given entry start uploading, then end with the given
 // status.
 func setEntryToStatus(entry *Entry, given *Set, db *DB, status transfer.RequestStatus) {
-	transformer, err := given.MakeTransformer()
-	So(err, ShouldBeNil)
-
-	r, err := transfer.NewRequestWithTransformedLocal(entry.Path, transformer)
-	So(err, ShouldBeNil)
-
-	r.Set = given.Name
-	r.Requester = given.Requester
-
-	if entry.Type == Hardlink {
-		r.Hardlink = entry.Dest
-	}
-
-	if entry.Type == Symlink {
-		r.Symlink = entry.Dest
-	}
-
-	r.Status = transfer.RequestStatusUploading
-	_, err = db.SetEntryStatus(r)
-	So(err, ShouldBeNil)
-
-	r.Status = status
-	_, err = db.SetEntryStatus(r)
-	So(err, ShouldBeNil)
+	setEntryToStatusWithSize(entry, given, db, status, 0)
 }

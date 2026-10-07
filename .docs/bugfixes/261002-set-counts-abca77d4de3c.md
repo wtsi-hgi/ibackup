@@ -310,13 +310,30 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
     (old first-non-blank Dest, only the first link consulted, no inode
     check, only the first set, no stale-entry guard, shortcut without inode
     check or fallthrough, ghost kept) all fail; model probe 0/600.
-- [ ] Trash sets' file counts are never added to when files are trashed
+- [x] Trash sets' file counts are never added to when files are trashed
   (`putEntryInTrash` doesn't count), so removing a file from a trash set
   decrements them below zero: a probe trashing file1 then removing it from
   the trash set gave `NumFiles=18446744073709551615 Uploaded=18446744073709551615`
   (SizeTotal wraps too with non-empty files). Same on develop (43f7323).
   - Origin: found fixing the old-build removals item; confirmed by probe by
     its reviewer (2026-10-07).
+  - Red: `TestTrashSetCounts` (trash a 3-byte file and a symlink, remove them
+    from the trash set, re-trash, remove again) wrapped NumFiles, SizeTotal,
+    Uploaded and Symlinks; a server leaf running the probe via the admin
+    client got NumFiles 18446744073709551615.
+  - Fixed in `set/set.go` `countRemovedEntry`: a trash set keeps no file
+    counts (it is never discovered, so `status` shows its Num files and Size
+    as pending); removing from it only counts the removal (NumObjectsRemoved,
+    SizeRemoved). `ibackup summary` thus adds 0 for trash sets (trashed files
+    still in iRODS aren't in usage figures, as before the bug).
+  - Tests: `TestTrashSetCounts`, including an old build's trashed copy (with
+    TrashDate) counted against the normal set; the server old-build fixture
+    now gives its trashed copy a TrashDate. Mutants (no removal count,
+    skipping only status/type counts, deciding by the entry's TrashDate)
+    fail.
+  - Pending user decision: repair trash sets whose counts already wrapped
+    (zero their file counts on their next removal, optionally also once at
+    startup for empty ones) or leave them.
 - [ ] Directories removed under a build before #193 could be counted twice:
   the old `removeDirFromDB` ran `RemoveDirEntry`, `IncrementSetTotalRemoved`,
   then `finalizeRemoveReq` separately, so a stop after the count makes the
@@ -325,3 +342,11 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
   new batches' dir requests run before `UpdateSetTotalToRemove`, and legacy
   sets lack entries for discovered subfolders. Low priority (tiny window).
   - Origin: found fixing the old-build removals item.
+- [ ] Every trash request resets the trash set's removal counts:
+  `removeToTrashSet` (server/setdb.go ~566-571) calls `AddOrUpdate` with a
+  fresh `BuildTrashSetFromSet`, and `copyUserProperties` copies its zero
+  NumObjectsRemoved, NumObjectsToBeRemoved and SizeRemoved over the stored
+  ones, so an expiry or admin removal running on that trash set loses its
+  "Removal status" (and the old-build already-counted check can misjudge for
+  it). Same on develop. Code reading only; low priority.
+  - Origin: found reviewing the trash-set counts fix (2026-10-07).

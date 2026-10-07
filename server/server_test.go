@@ -48,6 +48,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/inconshreveable/log15/v3"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/ugorji/go/codec"
 	"github.com/viant/ptrie"
 	gas "github.com/wtsi-hgi/go-authserver"
 	"github.com/wtsi-hgi/ibackup/internal"
@@ -1547,6 +1548,15 @@ func TestServer(t *testing.T) {
 									incompleteRemReqs, errg := s.db.GetIncompleteRemoveRequests()
 									So(errg, ShouldBeNil)
 									So(incompleteRemReqs, ShouldBeEmpty)
+
+									// a trash set's file counts are never kept, so
+									// only the removal is counted.
+									gotTrash, errs := adminClient.GetSetByID(trashSet.Requester, trashSet.ID())
+									So(errs, ShouldBeNil)
+									So(gotTrash.NumObjectsRemoved, ShouldEqual, 2)
+									So(gotTrash.NumFiles, ShouldEqual, 0)
+									So(gotTrash.Uploaded, ShouldEqual, 0)
+									So(gotTrash.SizeTotal, ShouldEqual, 0)
 								})
 
 								Convey("And removal on a file doesn't remove the dir and doesn't log anything", func() {
@@ -6087,8 +6097,8 @@ func createDBLocation(t *testing.T) string {
 // deleteEntryAsOldBuild edits the database at dbPath, whose server must be
 // stopped, as a build before #193 left it when it stopped a file removal just
 // after deleting the file's entry from the given set: if trashSetID isn't blank,
-// it copies the entry to that trash set first, as those builds did when
-// trashing an uploaded file.
+// it copies the entry, with a TrashDate, to that trash set first, as those
+// builds did when trashing an uploaded file.
 func deleteEntryAsOldBuild(t *testing.T, dbPath, setID, path, trashSetID string) {
 	t.Helper()
 
@@ -6113,13 +6123,38 @@ func deleteEntryAsOldBuild(t *testing.T, dbPath, setID, path, trashSetID string)
 			return errEntryNotFound
 		}
 
-		if errc := copyToSubBucket(sets, trashSetID, filesOf+trashSetID, path, entry); errc != nil {
+		trashed, errt := withTrashDate(entry)
+		if errt != nil {
+			return errt
+		}
+
+		if errc := copyToSubBucket(sets, trashSetID, filesOf+trashSetID, path, trashed); errc != nil {
 			return errc
 		}
 
 		return files.Delete([]byte(path))
 	})
 	So(err, ShouldBeNil)
+}
+
+// withTrashDate returns the given encoded entry with its TrashDate set to now,
+// as the set package encodes it.
+func withTrashDate(encoded []byte) ([]byte, error) {
+	ch := new(codec.BincHandle)
+
+	var entry set.Entry
+
+	if err := codec.NewDecoderBytes(encoded, ch).Decode(&entry); err != nil {
+		return nil, err
+	}
+
+	entry.TrashDate = time.Now()
+
+	var trashed []byte
+
+	err := codec.NewEncoderBytes(&trashed, ch).Encode(&entry)
+
+	return trashed, err
 }
 
 // copyToSubBucket puts the given key and value in the given sub-bucket of the

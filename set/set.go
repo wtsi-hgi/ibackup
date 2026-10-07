@@ -516,9 +516,16 @@ func (s *Set) removedEntryTypeToSetCounts(entry *Entry) {
 
 // countRemovedEntry updates our counts for the given entry, as it was stored,
 // having been removed, adding removedSize to our SizeRemoved.
+//
+// A trash set is never discovered, so trashing doesn't count its entries in its
+// file counts; only the removal is counted, else they would wrap.
 func (s *Set) countRemovedEntry(entry *Entry, removedSize uint64) {
 	s.SizeRemoved += removedSize
 	s.NumObjectsRemoved++
+
+	if s.IsTrash() {
+		return
+	}
 
 	s.removedEntryTypeToSetCounts(entry)
 
