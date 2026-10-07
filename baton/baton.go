@@ -37,9 +37,11 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -81,9 +83,9 @@ type Baton struct {
 	collErrCh    chan error
 	collMu       sync.Mutex
 	clientMu     sync.Mutex
-	putClient    *ex.Client
-	metaClient   *ex.Client
-	removeClient *ex.Client
+	putClient    atomic.Pointer[ex.Client]
+	metaClient   atomic.Pointer[ex.Client]
+	removeClient atomic.Pointer[ex.Client]
 }
 
 // GetBatonHandler returns a Handler that uses Baton to interact with iRODS. If
@@ -94,6 +96,18 @@ func GetBatonHandler() (*Baton, error) {
 	_, err := ex.FindBaton()
 
 	return &Baton{}, err
+}
+
+// getClients returns a snapshot of all our clients, any of which may be nil.
+func (b *Baton) getClients() []*ex.Client {
+	return append(b.getCollClients(), b.putClient.Load(), b.removeClient.Load(), b.metaClient.Load())
+}
+
+func (b *Baton) getCollClients() []*ex.Client {
+	b.collMu.Lock()
+	defer b.collMu.Unlock()
+
+	return slices.Clone(b.collClients)
 }
 
 // setupExtendoLogger sets up a STDERR logger that the extendo library will use.
@@ -325,9 +339,9 @@ func (b *Baton) timeoutOpAndMakeNewClientOnError(op retry.Operation, clientIndex
 func (b *Baton) getClientByIndex(clientIndex int) *ex.Client {
 	switch clientIndex {
 	case putClientIndex:
-		return b.putClient
+		return b.putClient.Load()
 	case metaClientIndex:
-		return b.metaClient
+		return b.metaClient.Load()
 	default:
 		return b.collClients[clientIndex]
 	}
@@ -336,9 +350,9 @@ func (b *Baton) getClientByIndex(clientIndex int) *ex.Client {
 func (b *Baton) setClientByIndex(clientIndex int, client *ex.Client) {
 	switch clientIndex {
 	case putClientIndex:
-		b.putClient = client
+		b.putClient.Store(client)
 	case metaClientIndex:
-		b.metaClient = client
+		b.metaClient.Store(client)
 	default:
 		b.collClients[clientIndex] = client
 	}
@@ -365,11 +379,14 @@ func (b *Baton) CollectionsDone() error {
 	return b.setClientIfNotExists(&b.metaClient)
 }
 
-func (b *Baton) setClientIfNotExists(client **ex.Client) error {
+// setClientIfNotExists stores a new client in the given pointer if it doesn't
+// already hold a running one. clientMu serialises creation; the pointer is
+// atomic so Cleanup() can read it without waiting on a creation in progress.
+func (b *Baton) setClientIfNotExists(client *atomic.Pointer[ex.Client]) error {
 	b.clientMu.Lock()
 	defer b.clientMu.Unlock()
 
-	if *client != nil && (*client).IsRunning() {
+	if c := client.Load(); c != nil && c.IsRunning() {
 		return nil
 	}
 
@@ -378,7 +395,7 @@ func (b *Baton) setClientIfNotExists(client **ex.Client) error {
 		return err
 	}
 
-	*client = newClient
+	client.Store(newClient)
 
 	return nil
 }
@@ -426,7 +443,7 @@ func (b *Baton) Stat(remote string) (bool, map[string]string, error) {
 	err = timeoutOp(func() error {
 		var errl error
 
-		it, errl = b.metaClient.ListItem(ex.Args{Timestamp: true, AVU: true}, *requestToRodsItem("", remote))
+		it, errl = b.metaClient.Load().ListItem(ex.Args{Timestamp: true, AVU: true}, *requestToRodsItem("", remote))
 
 		return errl
 	}, "stat failed: "+remote)
@@ -480,7 +497,7 @@ func (b *Baton) listItemWithReplicates(remote string) (ex.RodsItem, bool, error)
 	err := timeoutOp(func() error {
 		var errl error
 
-		it, errl = b.metaClient.ListItem(
+		it, errl = b.metaClient.Load().ListItem(
 			ex.Args{Replicate: true, Checksum: true},
 			*requestToRodsItem("", remote),
 		)
@@ -572,7 +589,7 @@ func (b *Baton) Put(local, remote string) error {
 		defer os.Remove(fileName)
 	}
 
-	_, err = b.putClient.Put(
+	_, err = b.putClient.Load().Put(
 		ex.Args{
 			Force:  true,
 			Verify: true,
@@ -588,14 +605,14 @@ func (b *Baton) Put(local, remote string) error {
 
 func (b *Baton) removeAndRetry(item *ex.RodsItem) error {
 	if err := timeoutOp(func() error {
-		_, err := b.putClient.RemObj(ex.Args{}, *item)
+		_, err := b.putClient.Load().RemObj(ex.Args{}, *item)
 
 		return err
 	}, path.Join(item.IDirectory, item.IFile)); err != nil {
 		return err
 	}
 
-	_, err := b.putClient.Put(ex.Args{Force: true, Verify: true}, *item)
+	_, err := b.putClient.Load().Put(ex.Args{Force: true, Verify: true}, *item)
 
 	return err
 }
@@ -609,7 +626,7 @@ func (b *Baton) Get(local, remote string) error {
 	localDir, localFile := filepath.Split(local)
 	tmpLocal := filepath.Join(localDir, fmt.Sprintf(".ibackup.get.%X", sha256.Sum256([]byte(localFile))))
 
-	_, err = b.putClient.Get(
+	_, err = b.putClient.Load().Get(
 		ex.Args{
 			Force:  true,
 			Verify: true,
@@ -662,7 +679,7 @@ func (b *Baton) RemoveMeta(path string, meta map[string]string) error {
 	it.IAVUs = metaToAVUs(meta)
 
 	err = timeoutOp(func() error {
-		_, errl := b.metaClient.MetaRem(ex.Args{}, *it)
+		_, errl := b.metaClient.Load().MetaRem(ex.Args{}, *it)
 
 		return errl
 	}, "remove meta error: "+path)
@@ -679,7 +696,7 @@ func (b *Baton) GetMeta(path string) (map[string]string, error) {
 		return nil, err
 	}
 
-	it, err := b.metaClient.ListItem(ex.Args{AVU: true, Timestamp: true, Size: true}, ex.RodsItem{
+	it, err := b.metaClient.Load().ListItem(ex.Args{AVU: true, Timestamp: true, Size: true}, ex.RodsItem{
 		IPath: filepath.Dir(path),
 		IName: filepath.Base(path),
 	})
@@ -712,7 +729,7 @@ func (b *Baton) AddMeta(path string, meta map[string]string) error {
 	it.IAVUs = metaToAVUs(meta)
 
 	err = timeoutOp(func() error {
-		_, errl := b.metaClient.MetaAdd(ex.Args{}, *it)
+		_, errl := b.metaClient.Load().MetaAdd(ex.Args{}, *it)
 
 		return errl
 	}, "add meta error: "+path)
@@ -720,9 +737,12 @@ func (b *Baton) AddMeta(path string, meta map[string]string) error {
 	return err
 }
 
-// Cleanup stops our clients and closes our client pool.
+// Cleanup stops our clients and closes our client pool. It is safe to call
+// concurrently with methods that lazily create the put, meta and remove
+// clients: a client created during the Cleanup is either stopped by it or left
+// usable for a later Cleanup().
 func (b *Baton) Cleanup() {
-	b.closeConnections(append(b.collClients, b.putClient, b.removeClient, b.metaClient))
+	b.closeConnections(b.getClients())
 
 	b.collMu.Lock()
 	defer b.collMu.Unlock()
@@ -747,7 +767,7 @@ func (b *Baton) RemoveFile(path string) error {
 	it := RemotePathToRodsItem(path)
 
 	err = timeoutOp(func() error {
-		_, errl := b.removeClient.RemObj(ex.Args{}, *it)
+		_, errl := b.removeClient.Load().RemObj(ex.Args{}, *it)
 
 		return errl
 	}, "remove file error: "+path)
@@ -773,7 +793,7 @@ func (b *Baton) RemoveDir(path string) error {
 	}
 
 	err = timeoutOp(func() error {
-		_, errl := b.removeClient.RemDir(ex.Args{}, *it)
+		_, errl := b.removeClient.Load().RemDir(ex.Args{}, *it)
 
 		return errl
 	}, "remove meta error: "+path)
@@ -787,7 +807,7 @@ func (b *Baton) RemoveDir(path string) error {
 
 // AllClientsStopped returns true if all our clients are stopped.
 func (b *Baton) AllClientsStopped() bool {
-	for _, client := range append(b.collClients, b.putClient, b.metaClient, b.removeClient) {
+	for _, client := range append(b.getCollClients(), b.putClient.Load(), b.metaClient.Load(), b.removeClient.Load()) {
 		if client != nil && client.IsRunning() {
 			return false
 		}
@@ -813,7 +833,7 @@ func (b *Baton) QueryMeta(dirToSearch string, meta map[string]string) ([]string,
 	var items []ex.RodsItem
 
 	err = timeoutOp(func() error {
-		items, err = b.metaClient.MetaQuery(ex.Args{Object: true}, *it)
+		items, err = b.metaClient.Load().MetaQuery(ex.Args{Object: true}, *it)
 
 		return err
 	}, "query meta error: "+dirToSearch)

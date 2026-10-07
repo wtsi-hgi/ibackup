@@ -40,15 +40,30 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
   an unbuffered send (client.go:848). A scratch probe calling `GetMeta`
   0-2ms after a concurrent `Cleanup()` on real iRODS hung 29 of 30 times.
   The extendo part is upstream.
+  - Note (2026-10-07): go.mod now uses `github.com/wtsi-npg/extendo/v3
+    v3.2.0`; re-check the hang against v3 before fixing.
   - Origin item: "TestTrashRemove intermittently fails in clean `make test`"
     on `deps`, whose fix stops the server triggering this hang by not
     overlapping removals with handler `Cleanup()`.
-- [ ] `baton/baton.go` `Cleanup` (~line 725) reads `b.metaClient` and the
+- [x] `baton/baton.go` `Cleanup` (~line 725) reads `b.metaClient` and the
   other clients without holding `clientMu`, so it races with
   `setClientIfNotExists` (~line 368). The `deps` fix 1fa0608 stops the
   server reaching this, but the handler itself is still unsafe.
   - Origin item: "TestTrashRemove intermittently fails in clean `make test`"
     on `deps` (found reviewing its fix).
+  - Red: `CGO_ENABLED=1 go test -tags netgo --count 1 -race -timeout 10m
+    ./baton -run TestBatonConcurrentClientInit` (new Convey: concurrent `Stat`
+    and `Cleanup` on a fresh handler): `WARNING: DATA RACE`, write in
+    `setClientIfNotExists` (via `Stat`), read in `Cleanup`.
+  - Fixed in `baton/baton.go`: the put, meta and remove clients are
+    `atomic.Pointer[ex.Client]`; `clientMu` still serialises creation;
+    `Cleanup` stops a snapshot (`collClients` cloned under `collMu`) outside
+    any lock, never waiting on `clientMu`. A client created during Cleanup
+    stays usable and the next Cleanup stops it. Taking `clientMu` in Cleanup
+    was rejected: it stops a client just before its caller uses it (hang risk
+    with GetMeta). Mutants (original code, meta client left out of the
+    snapshot) fail. `make speed` passed (Upload +3.7%, Remove +3.4% vs
+    ce92cae).
 - [x] `server/server.go` (~lines 437-441): when
   `convertQueueItemToRemoveRequest` fails, the reserved item stays in
   `removeQueue`, so `Items` never reaches 0 and the storage handler's
@@ -105,3 +120,12 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
     (`Server.stop` doesn't close `removeQueue`); defensive. Mutants (spin on
     closed queue, return without finalizing, original code) fail. `make
     speed` passed (Upload -0.5%, Remove +2.0% vs ce92cae).
+- [ ] `baton/baton.go` `timeoutOpAndMakeNewClientOnError` → `setClientByIndex`
+  writes `b.collClients[i]` without `collMu`, racing with the collection
+  worker goroutines and with `Cleanup`/`AllClientsStopped` reading
+  `collClients`. Code reading.
+  - Origin: found fixing the baton `Cleanup` client race (2026-10-07).
+- [ ] `baton/baton.go`: if `Cleanup` runs while `EnsureCollection` callers
+  are still sending on `collCh`, it closes `collCh` and `collErrCh`, which
+  can panic with "send on closed channel". Code reading.
+  - Origin: as above.

@@ -350,6 +350,54 @@ func TestBatonConcurrentClientInit(t *testing.T) {
 
 		So(errs, ShouldBeEmpty)
 	})
+
+	Convey("Cleanup is safe during lazy client init, leaving a usable handler", t, func() {
+		localPath := t.TempDir()
+		fileLocal := filepath.Join(localPath, "file")
+		fileRemote := filepath.Join(remotePath, "file")
+
+		internal.CreateTestFileOfLength(t, fileLocal, 1)
+
+		hPut, err := GetBatonHandler()
+		So(err, ShouldBeNil)
+
+		err = hPut.Put(fileLocal, fileRemote)
+		So(err, ShouldBeNil)
+
+		hPut.Cleanup()
+
+		h, err := GetBatonHandler()
+		So(err, ShouldBeNil)
+		Reset(func() {
+			h.Cleanup()
+		})
+
+		start := make(chan struct{})
+
+		var wg sync.WaitGroup
+
+		wg.Go(func() {
+			<-start
+
+			h.Stat(fileRemote) //nolint:errcheck
+		})
+
+		wg.Go(func() {
+			<-start
+
+			h.Cleanup()
+		})
+
+		close(start)
+		wg.Wait()
+
+		exists, _, err := h.Stat(fileRemote)
+		So(err, ShouldBeNil)
+		So(exists, ShouldBeTrue)
+
+		h.Cleanup()
+		So(h.AllClientsStopped(), ShouldBeTrue)
+	})
 }
 
 func TestUploadRetry(t *testing.T) {
