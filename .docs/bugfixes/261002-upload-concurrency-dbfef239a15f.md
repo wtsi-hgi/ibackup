@@ -90,8 +90,18 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
   entry is never uploaded or counted until the next discovery.
   - Origin: found fixing the set-counts "results during discovery are counted
     twice" item (2026-10-07).
-- [ ] `server/server.go` `reserveRemoveRequest`: when `removeQueue.Reserve`
+- [x] `server/server.go` `reserveRemoveRequest`: when `removeQueue.Reserve`
   fails with anything other than `ErrNothingReady` (e.g. `ErrQueueClosed`
   from wr v0.38.0 when the queue is closed), the error is only logged and
   `item.Data()` is then called on a nil item, which panics. Code reading.
   - Origin: found fixing the unconvertible remove-queue item (2026-10-07).
+  - Red: `CGO_ENABLED=1 go test -tags netgo --count 1 -timeout 20m ./server
+    -run '^TestServer$'`: a new Convey destroying `s.removeQueue` then running
+    `handleRemoveRequests` failed with `runtime error: invalid memory address
+    or nil pointer dereference`.
+  - Fixed in `server/server.go`: any `Reserve` error is returned (logged
+    unless `ErrNothingReady`), so the caller breaks to `finalizeRemoval` and
+    `removalFinished` once. Not reachable in production today
+    (`Server.stop` doesn't close `removeQueue`); defensive. Mutants (spin on
+    closed queue, return without finalizing, original code) fail. `make
+    speed` passed (Upload -0.5%, Remove +2.0% vs ce92cae).

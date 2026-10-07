@@ -472,17 +472,18 @@ func (s *Server) handleRemoveRequests(sid string) {
 // remove queue and converts it to a removeRequest. Items that aren't remove
 // requests can never be removed, so they are dropped from the queue with an
 // error on the set, and the next item is reserved instead. Returns an error if
-// the queue is empty.
+// nothing could be reserved, ie. the group has nothing ready or the queue is
+// closed; only the latter is logged.
 func (s *Server) reserveRemoveRequest(reserveGroup string) (*queue.Item, set.RemoveReq, error) {
 	for {
 		item, err := s.removeQueue.Reserve(reserveGroup, retryDelay+2*time.Second)
 		if err != nil {
 			qerr, ok := err.(queue.Error) //nolint:errorlint
-			if ok && errors.Is(qerr.Err, queue.ErrNothingReady) {
-				return nil, set.RemoveReq{}, err
+			if !ok || !errors.Is(qerr.Err, queue.ErrNothingReady) {
+				s.Logger.Print(err)
 			}
 
-			s.Logger.Print(err)
+			return nil, set.RemoveReq{}, err
 		}
 
 		remReq, err := s.convertQueueItemToRemoveRequest(item.Data())
