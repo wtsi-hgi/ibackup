@@ -21,29 +21,20 @@ install:
 	@go install -tags netgo ${LDFLAGS}
 	@echo installed to ${GOPATH}/bin/ibackup
 
-# The main package's end-to-end tests spend most of their time waiting on iRODS
-# and wr, so its top-level tests run as separate processes of one test binary,
-# MAIN_TEST_JOBS at a time, the slowest first. Each test's output is printed
-# when it finishes. The timeout is for the whole run: each process gets what
-# is left of it. Set MAIN_TESTS to run only some of the tests.
+# The main package's tests can't use t.Parallel (they share process-wide env and
+# log output), and mostly wait on iRODS and wr, so its top-level tests run as
+# separate processes of one test binary, MAIN_TEST_JOBS at a time. Each test's
+# output is printed whole when it finishes, and MAIN_TEST_TIMEOUT bounds each
+# test. To run only some tests, use go test -run directly.
 MAIN_TEST_JOBS ?= 4
-MAIN_TESTS ?= $(shell sed -n 's/^func \(Test[A-Za-z0-9_]*\)(t \*testing\.T).*/\1/p' *_test.go)
-MAIN_TESTS_SLOWEST_FIRST := TestEdit TestTrashRemove TestTrashRemovePaths TestTrashRemoveShared \
-	TestRemove TestRemoveFile TestRemoveDirs TestRemoveItems TestPuts
+MAIN_TEST_TIMEOUT ?= 30m
 
 define test-main
 	@d=$$(mktemp -d) && trap 'rm -rf "$$d"' EXIT && trap 'exit 130' INT TERM HUP && \
-	start=$$(date +%s) && end=$$(( start + $(2) )) && \
 	go test -tags netgo $(1) -c -o "$$d/main.test" . && \
-	printf '%s\n' $(filter $(MAIN_TESTS),$(MAIN_TESTS_SLOWEST_FIRST)) \
-		$(filter-out $(MAIN_TESTS_SLOWEST_FIRST),$(MAIN_TESTS)) | \
-	xargs -n 1 -P $(MAIN_TEST_JOBS) sh -c 'left=$$(( $$2 - $$(date +%s) )); [ $$left -gt 0 ] || left=1; \
-		"$$1/main.test" -test.run "^$$3$$" -test.count 1 -test.v=true -test.timeout $${left}s > "$$1/$$3.log" 2>&1 || \
-		{ grep -q "panic: test timed out after" "$$1/$$3.log" && echo "$$3 (timed out)" || echo "$$3"; } >> "$$1/failed"; \
-		flock "$$1/failed.lock" cat "$$1/$$3.log"' sh "$$d" "$$end" && \
-	took=$$(( $$(date +%s) - start )) && \
-	if [ -s "$$d/failed" ]; then echo "FAIL: $$(sort "$$d/failed" | tr '\n' ' ')"; exit 1; fi && \
-	printf 'ok  main package tests passed in %dm%02ds\n' $$(( took / 60 )) $$(( took % 60 ))
+	sed -n 's/^func \(Test[A-Za-z0-9_]*\)(t \*testing\.T).*/\1/p' main_test.go | \
+	xargs -n 1 -P $(MAIN_TEST_JOBS) sh -c '"$$0/main.test" -test.run "^$$1$$" -test.count 1 -test.v=true \
+		-test.timeout $(MAIN_TEST_TIMEOUT) > "$$0/$$1.log" 2>&1; rc=$$?; flock "$$0" cat "$$0/$$1.log"; exit $$rc' "$$d"
 endef
 
 # The server package takes close to Go's 10m default test timeout under -race,
@@ -51,14 +42,14 @@ endef
 SUBPKG_TEST_TIMEOUT ?= 30m
 
 test:
-	$(call test-main,,7200)
+	$(call test-main)
 	@go test -tags netgo --count 1 -timeout $(SUBPKG_TEST_TIMEOUT) $(shell go list ./... | grep -v '^${PKG}$$')
 
 race: race-subpkgs
 	@$(MAKE) race-main
 
 race-main:
-	$(call test-main,-race,3600)
+	$(call test-main,-race)
 
 race-subpkgs:
 	@go test -tags netgo -race --count 1 -timeout $(SUBPKG_TEST_TIMEOUT) $(shell go list ./... | grep -v '^${PKG}$$')
