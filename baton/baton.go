@@ -57,7 +57,8 @@ import (
 )
 
 const (
-	ErrOperationTimeout = "iRODS operation timed out"
+	ErrOperationTimeout   = "iRODS operation timed out"
+	ErrCollectionsStopped = "collection creation was stopped"
 
 	extendoLogLevel        = logs.ErrorLevel
 	numCollClients         = 2
@@ -78,6 +79,8 @@ type Baton struct {
 	collRunning  bool
 	collCh       chan string
 	collErrCh    chan error
+	collDone     <-chan struct{}
+	collStop     context.CancelFunc
 	collMu       sync.Mutex
 	clientMu     sync.Mutex
 	putClient    atomic.Pointer[ex.Client]
@@ -107,21 +110,51 @@ func (b *Baton) getCollClients() []*ex.Client {
 	return slices.Clone(b.collClients)
 }
 
+// createCollections creates collections received from collCh using the
+// collection client at the given index, sending results to errCh, until ctx
+// is cancelled.
+func (b *Baton) createCollections(ctx context.Context, index int, collCh <-chan string, errCh chan<- error) {
+	for {
+		select {
+		case collection := <-collCh:
+			err := b.ensureCollection(ctx, index, ex.RodsItem{IPath: collection})
+
+			select {
+			case errCh <- err:
+			case <-ctx.Done():
+				return
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
 // getCollClient returns the collection client at the given index. collMu
 // guards it, since a failed operation can replace it while Cleanup() or
-// AllClientsStopped() read it.
-func (b *Baton) getCollClient(clientIndex int) *ex.Client {
+// AllClientsStopped() read it. Returns ctx's error instead once collection
+// creation has been stopped, since CollectionsDone() discards the clients.
+func (b *Baton) getCollClient(ctx context.Context, clientIndex int) (*ex.Client, error) {
 	b.collMu.Lock()
 	defer b.collMu.Unlock()
 
-	return b.collClients[clientIndex]
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	return b.collClients[clientIndex], nil
 }
 
 // swapCollClient stores the given client at the given collection client index,
-// returning the client it replaced.
-func (b *Baton) swapCollClient(clientIndex int, client *ex.Client) *ex.Client {
+// returning the client it replaced, which should be stopped. If ctx has been
+// cancelled, it stores nothing and returns the given client instead.
+func (b *Baton) swapCollClient(ctx context.Context, clientIndex int, client *ex.Client) *ex.Client {
 	b.collMu.Lock()
 	defer b.collMu.Unlock()
+
+	if ctx.Err() != nil {
+		return client
+	}
 
 	old := b.collClients[clientIndex]
 	b.collClients[clientIndex] = client
@@ -144,6 +177,9 @@ func setupExtendoLogger() {
 // EnsureCollection() call you made for a different collection. This shouldn't
 // make much difference if you just collect all your errors and don't care about
 // order.
+//
+// Calls still waiting when Cleanup() or CollectionsDone() is called return an
+// ErrCollectionsStopped error.
 func (b *Baton) EnsureCollection(collection string) error {
 	b.collMu.Lock()
 
@@ -159,30 +195,39 @@ func (b *Baton) EnsureCollection(collection string) error {
 		b.collRunning = true
 	}
 
-	collCh := b.collCh
-	errCh := b.collErrCh
+	collCh, errCh, done := b.collCh, b.collErrCh, b.collDone
 	b.collMu.Unlock()
 
-	collCh <- collection
+	stopped := errs.PathError{Msg: ErrCollectionsStopped, Path: collection}
 
-	return <-errCh
+	select {
+	case collCh <- collection:
+	case <-done:
+		return stopped
+	}
+
+	select {
+	case err := <-errCh:
+		return err
+	case <-done:
+		return stopped
+	}
 }
 
-// startCreatingCollections creates b.collCh and creates any collection sent to
-// that channel in a goroutine.
+// startCreatingCollections creates b.collCh and starts a goroutine per
+// collection client that creates any collection sent to that channel, until
+// b.collStop() is called.
 func (b *Baton) startCreatingCollections() {
 	b.collCh = make(chan string)
 	b.collErrCh = make(chan error)
 
-	go func(collCh chan string, errCh chan error) {
-		for index := range b.collClients {
-			go func(index int) {
-				for collection := range collCh {
-					errCh <- b.ensureCollection(index, ex.RodsItem{IPath: collection})
-				}
-			}(index)
-		}
-	}(b.collCh, b.collErrCh)
+	ctx, stop := context.WithCancel(context.Background())
+	b.collDone = ctx.Done()
+	b.collStop = stop
+
+	for index := range b.collClients {
+		go b.createCollections(ctx, index, b.collCh, b.collErrCh)
+	}
 }
 
 // makeCollConnections creates connections for making collections, if we don't
@@ -252,9 +297,14 @@ func (b *Baton) GetClientsFromPoolConcurrently(pool *ex.ClientPool, numClients u
 	return clientCh, <-errCh
 }
 
-func (b *Baton) ensureCollection(clientIndex int, ri ex.RodsItem) error {
+func (b *Baton) ensureCollection(ctx context.Context, clientIndex int, ri ex.RodsItem) error {
 	err := timeoutOp(func() error {
-		_, errl := b.getCollClient(clientIndex).ListItem(ex.Args{}, ri)
+		client, errg := b.getCollClient(ctx, clientIndex)
+		if errg != nil {
+			return errg
+		}
+
+		_, errl := client.ListItem(ex.Args{}, ri)
 
 		return errl
 	}, "collection failed: "+ri.IPath)
@@ -266,7 +316,7 @@ func (b *Baton) ensureCollection(clientIndex int, ri ex.RodsItem) error {
 		return err
 	}
 
-	return b.createCollectionWithTimeoutAndRetries(clientIndex, ri)
+	return b.createCollectionWithTimeoutAndRetries(ctx, clientIndex, ri)
 }
 
 // timeoutOp carries out op, returning any error from it. Has an
@@ -296,11 +346,14 @@ func timeoutOp(op retry.Operation, path string) error {
 // createCollectionWithTimeoutAndRetries tries to make and confirm the given
 // collection, retrying with a backoff because it can fail for no good reason,
 // then work later.
-func (b *Baton) createCollectionWithTimeoutAndRetries(clientIndex int, ri ex.RodsItem) error {
-	return b.doWithTimeoutAndRetries(func() error {
-		client := b.getCollClient(clientIndex)
+func (b *Baton) createCollectionWithTimeoutAndRetries(ctx context.Context, clientIndex int, ri ex.RodsItem) error {
+	return b.doWithTimeoutAndRetries(ctx, func() error {
+		client, err := b.getCollClient(ctx, clientIndex)
+		if err != nil {
+			return err
+		}
 
-		_, err := client.MkDir(ex.Args{Recurse: true}, ri)
+		_, err = client.MkDir(ex.Args{Recurse: true}, ri)
 		if err != nil {
 			return err
 		}
@@ -312,11 +365,12 @@ func (b *Baton) createCollectionWithTimeoutAndRetries(clientIndex int, ri ex.Rod
 }
 
 // doWithTimeoutAndRetries does op, but times it out. On timeout or error,
-// retries a few times with backoff, getting a new baton client for each try.
-func (b *Baton) doWithTimeoutAndRetries(op retry.Operation, clientIndex int, path string) error {
+// retries a few times with backoff, getting a new baton client for each try,
+// until ctx is cancelled.
+func (b *Baton) doWithTimeoutAndRetries(ctx context.Context, op retry.Operation, clientIndex int, path string) error {
 	status := retry.Do(
-		context.Background(),
-		b.timeoutOpAndMakeNewClientOnError(op, clientIndex, path),
+		ctx,
+		b.timeoutOpAndMakeNewClientOnError(ctx, op, clientIndex, path),
 		retry.Untils{&retry.UntilLimit{Max: operationRetries}, &retry.UntilNoError{}},
 		&backoff.Backoff{
 			Min:     operationMinBackoff,
@@ -332,10 +386,12 @@ func (b *Baton) doWithTimeoutAndRetries(op retry.Operation, clientIndex int, pat
 
 // timeoutOpAndMakeNewClientOnError wraps the given op with a timeout, and
 // makes a new collection client on timeout or error.
-func (b *Baton) timeoutOpAndMakeNewClientOnError(op retry.Operation, clientIndex int, path string) retry.Operation {
+func (b *Baton) timeoutOpAndMakeNewClientOnError(
+	ctx context.Context, op retry.Operation, clientIndex int, path string,
+) retry.Operation {
 	return func() error {
 		err := timeoutOp(op, path)
-		if err != nil {
+		if err != nil && ctx.Err() == nil {
 			pool := ex.NewClientPool(ex.DefaultClientPoolParams, "")
 
 			client, errp := pool.Get()
@@ -346,7 +402,7 @@ func (b *Baton) timeoutOpAndMakeNewClientOnError(op retry.Operation, clientIndex
 
 						return nil
 					}, "")
-				}(b.swapCollClient(clientIndex, client))
+				}(b.swapCollClient(ctx, clientIndex, client))
 
 				pool.Close()
 			}
@@ -365,8 +421,7 @@ func (b *Baton) CollectionsDone() error {
 	b.collClients = nil
 	b.collPool.Close()
 
-	close(b.collCh)
-	close(b.collErrCh)
+	b.collStop()
 	b.collRunning = false
 
 	err := b.setClientIfNotExists(&b.putClient)
@@ -738,7 +793,9 @@ func (b *Baton) AddMeta(path string, meta map[string]string) error {
 // Cleanup stops our clients and closes our client pool. It is safe to call
 // concurrently with methods that lazily create the put, meta and remove
 // clients: a client created during the Cleanup is either stopped by it or left
-// usable for a later Cleanup().
+// usable for a later Cleanup(). It is also safe to call concurrently with
+// EnsureCollection(): calls still waiting return an ErrCollectionsStopped
+// error, and later calls start collection creation again.
 func (b *Baton) Cleanup() {
 	b.closeConnections(b.getClients())
 
@@ -746,8 +803,7 @@ func (b *Baton) Cleanup() {
 	defer b.collMu.Unlock()
 
 	if b.collRunning {
-		close(b.collCh)
-		close(b.collErrCh)
+		b.collStop()
 		b.collPool.Close()
 		b.collRunning = false
 	}

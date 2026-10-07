@@ -29,6 +29,7 @@ package baton
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -435,6 +436,81 @@ func TestBatonConcurrentClientInit(t *testing.T) {
 
 		So(ensureErr, ShouldNotBeNil)
 		So(h.CollectionsDone(), ShouldBeNil)
+	})
+
+	Convey("Cleanup during concurrent EnsureCollection calls makes them return, leaving a usable handler", t, func() {
+		parent := filepath.Join(remotePath, "ensure-cleanup")
+
+		h, err := GetBatonHandler()
+		So(err, ShouldBeNil)
+		Reset(func() {
+			h.Cleanup()
+		})
+
+		const callers = 32
+
+		ensureErrs := make([]error, callers)
+		firstDone := make(chan struct{})
+
+		var (
+			once sync.Once
+			wg   sync.WaitGroup
+		)
+
+		for i := range callers {
+			wg.Go(func() {
+				ensureErrs[i] = h.EnsureCollection(filepath.Join(parent, fmt.Sprintf("d%02d", i)))
+
+				once.Do(func() { close(firstDone) })
+			})
+		}
+
+		<-firstDone
+		h.Cleanup()
+
+		callersReturned := make(chan struct{})
+
+		go func() {
+			wg.Wait()
+			close(callersReturned)
+		}()
+
+		var returnedPromptly bool
+
+		select {
+		case <-callersReturned:
+			returnedPromptly = true
+		case <-time.After(operationTimeout / 6):
+		}
+
+		So(returnedPromptly, ShouldBeTrue)
+
+		So(h.EnsureCollection(parent), ShouldBeNil)
+
+		output, err := icmd.ILS(parent)
+		So(err, ShouldBeNil)
+
+		// A caller may get the result of another caller's collection, so
+		// compare totals: every nil error must be for a collection that was
+		// made.
+		var noErrors, made int
+
+		for i, ensureErr := range ensureErrs {
+			if ensureErr == nil {
+				noErrors++
+			}
+
+			if strings.Contains(string(output), fmt.Sprintf("/d%02d\n", i)) {
+				made++
+			}
+		}
+
+		So(noErrors, ShouldBeLessThanOrEqualTo, made)
+		So(h.CollectionsDone(), ShouldBeNil)
+
+		// Collection creation interrupted by the Cleanup must not still be
+		// retrying, now that CollectionsDone() has discarded the clients.
+		time.Sleep(2 * operationMinBackoff)
 	})
 }
 

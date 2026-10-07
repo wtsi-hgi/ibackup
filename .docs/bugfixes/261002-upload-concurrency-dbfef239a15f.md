@@ -136,10 +136,22 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
   - Fixed in `baton/baton.go`: `getCollClient(i)`/`swapCollClient(i, c)` take
     `collMu`; the swapped-out client is stopped. Removed the unreachable
     put/meta index cases. Mutant (unlocked swap) fails.
-- [ ] `baton/baton.go`: if `Cleanup` runs while `EnsureCollection` callers
+- [x] `baton/baton.go`: if `Cleanup` runs while `EnsureCollection` callers
   are still sending on `collCh`, it closes `collCh` and `collErrCh`, which
   can panic with "send on closed channel". Code reading.
   - Origin: as above.
+  - Red: same command without `-race`, new Convey (32 concurrent
+    `EnsureCollection` calls, `Cleanup` after the first returns): `panic:
+    send on closed channel` in `EnsureCollection`.
+  - Fixed in `baton/baton.go`: each start of collection creation gets a
+    cancellable context; `Cleanup` and `CollectionsDone` cancel it instead of
+    closing channels; callers and workers select on it; the context flows
+    into retries, and `getCollClient`/`swapCollClient` refuse after cancel.
+    Interrupted callers get `ErrCollectionsStopped`; calls after `Cleanup`
+    restart creation. Mutants (close channels again, result wait without
+    done, no context in workers) fail. Gates: lint, `-race ./baton`,
+    `./baton ./server`, `make speed` (Upload -0.1%, Remove -2.3% vs
+    ce92cae) pass.
 - [ ] `baton/baton.go`: `Cleanup` stops the collection clients but leaves them
   in `collClients`; `makeCollConnections` then reuses the stopped clients, so
   every `EnsureCollection` after a `Cleanup` fails once and waits at least 5s
