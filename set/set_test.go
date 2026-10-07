@@ -1902,6 +1902,139 @@ func TestSetDB(t *testing.T) {
 				})
 			})
 
+			Convey("And add a set with a missing file and an existing file, an upload result for an entry "+
+				"discovery counted replaces that count", func() {
+				setl1 := &Set{
+					Name:        "missingAndExisting",
+					Requester:   "jim",
+					Transformer: "prefix=/local:/remote",
+				}
+
+				err = db.AddOrUpdate(setl1)
+				So(err, ShouldBeNil)
+
+				dir := t.TempDir()
+				missing := filepath.Join(dir, "missing")
+				existing := filepath.Join(dir, "existing")
+				internal.CreateTestFile(t, existing, "a")
+
+				err = db.MergeFileEntries(setl1.ID(), []string{missing, existing})
+				So(err, ShouldBeNil)
+
+				setResult := func(path string, status transfer.RequestStatus) *Set {
+					_, errs := db.SetEntryStatus(&transfer.Request{
+						Local:     path,
+						Requester: setl1.Requester,
+						Set:       setl1.Name,
+						Size:      1,
+						Status:    status,
+					})
+					So(errs, ShouldBeNil)
+
+					return db.GetByID(setl1.ID())
+				}
+
+				got, errd := db.Discover(setl1.ID(), nil)
+				So(errd, ShouldBeNil)
+				So(got.NumFiles, ShouldEqual, 2)
+				So(got.Missing, ShouldEqual, 1)
+				So(got.Status, ShouldEqual, PendingUpload)
+
+				Convey("repeated failed results for the missing file count it as failed once", func() {
+					for range 2 {
+						got = setResult(missing, transfer.RequestStatusFailed)
+						So(got.Failed, ShouldEqual, 1)
+						So(got.Missing, ShouldEqual, 0)
+						So(got.Status, ShouldNotEqual, Complete)
+					}
+
+					got = setResult(existing, transfer.RequestStatusUploaded)
+					So(got.Uploaded, ShouldEqual, 1)
+					So(got.Failed, ShouldEqual, 1)
+					So(got.Status, ShouldEqual, Complete)
+				})
+
+				Convey("a missing result for the missing file and the existing file's upload complete the set", func() {
+					got = setResult(missing, transfer.RequestStatusMissing)
+					So(got.Missing, ShouldEqual, 1)
+					So(got.Status, ShouldNotEqual, Complete)
+
+					got = setResult(existing, transfer.RequestStatusUploaded)
+					So(got.Uploaded, ShouldEqual, 1)
+					So(got.Missing, ShouldEqual, 1)
+					So(got.Status, ShouldEqual, Complete)
+
+					Convey("then delete the uploaded file, add another file and rediscover; the orphaned result "+
+						"leaves the still missing file's count alone", func() {
+						So(os.Remove(existing), ShouldBeNil)
+
+						other := filepath.Join(dir, "other")
+						internal.CreateTestFile(t, other, "c")
+						So(db.MergeFileEntries(setl1.ID(), []string{other}), ShouldBeNil)
+
+						got, errd = db.Discover(setl1.ID(), nil)
+						So(errd, ShouldBeNil)
+						So(got.NumFiles, ShouldEqual, 3)
+						So(got.Missing, ShouldEqual, 1)
+						So(got.Orphaned, ShouldEqual, 1)
+						So(got.Status, ShouldEqual, PendingUpload)
+
+						got = setResult(existing, transfer.RequestStatusOrphaned)
+						So(got.Orphaned, ShouldEqual, 1)
+						So(got.Missing, ShouldEqual, 1)
+						So(got.Status, ShouldNotEqual, Complete)
+
+						got = setResult(missing, transfer.RequestStatusMissing)
+						So(got.Missing, ShouldEqual, 1)
+						So(got.Orphaned, ShouldEqual, 1)
+						So(got.Status, ShouldNotEqual, Complete)
+
+						got = setResult(other, transfer.RequestStatusUploaded)
+						So(got.Uploaded, ShouldEqual, 1)
+						So(got.Missing, ShouldEqual, 1)
+						So(got.Orphaned, ShouldEqual, 1)
+						So(got.Status, ShouldEqual, Complete)
+					})
+
+					Convey("then delete the uploaded file and rediscover; its orphaned result isn't counted "+
+						"twice, so the set isn't complete before the other file's result", func() {
+						So(os.Remove(existing), ShouldBeNil)
+						internal.CreateTestFile(t, missing, "b")
+
+						got, errd = db.Discover(setl1.ID(), nil)
+						So(errd, ShouldBeNil)
+						So(got.NumFiles, ShouldEqual, 2)
+						So(got.Orphaned, ShouldEqual, 1)
+						So(got.Status, ShouldEqual, PendingUpload)
+
+						got = setResult(existing, transfer.RequestStatusOrphaned)
+						So(got.Orphaned, ShouldEqual, 1)
+						So(got.Status, ShouldNotEqual, Complete)
+
+						got = setResult(missing, transfer.RequestStatusUploaded)
+						So(got.Uploaded, ShouldEqual, 1)
+						So(got.Orphaned, ShouldEqual, 1)
+						So(got.Missing, ShouldEqual, 0)
+						So(got.Status, ShouldEqual, Complete)
+
+						entries, errg := db.GetFileEntries(setl1.ID(), FileEntryFilterLastState)
+						So(errg, ShouldBeNil)
+						So(len(entries), ShouldEqual, 1)
+						So(entries[0].Path, ShouldEqual, missing)
+
+						Convey("and removing the orphaned file afterwards leaves consistent counts", func() {
+							removed := removeFileEntryAndCount(db, setl1.ID(), existing)
+							So(removed.Status, ShouldEqual, Orphaned)
+
+							got = db.GetByID(setl1.ID())
+							So(got.NumFiles, ShouldEqual, 1)
+							So(got.Orphaned, ShouldEqual, 0)
+							So(got.Uploaded, ShouldEqual, 1)
+						})
+					})
+				})
+			})
+
 			Convey("And add a set with a missing directory to it (which are just recorded and not checked)", func() {
 				setl1 := &Set{
 					Name:        "missingdir",

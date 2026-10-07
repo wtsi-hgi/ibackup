@@ -21,18 +21,38 @@ install:
 	@go install -tags netgo ${LDFLAGS}
 	@echo installed to ${GOPATH}/bin/ibackup
 
+# The main package's tests can't use t.Parallel (they share process-wide env and
+# log output), and mostly wait on iRODS and wr, so its top-level tests run as
+# separate processes of one test binary, MAIN_TEST_JOBS at a time. Each test's
+# output is printed whole when it finishes, and MAIN_TEST_TIMEOUT bounds each
+# test. To run only some tests, use go test -run directly.
+MAIN_TEST_JOBS ?= 4
+MAIN_TEST_TIMEOUT ?= 30m
+
+define test-main
+	@d=$$(mktemp -d) && trap 'rm -rf "$$d"' EXIT && trap 'exit 130' INT TERM HUP && \
+	go test -tags netgo $(1) -c -o "$$d/main.test" . && \
+	sed -n 's/^func \(Test[A-Za-z0-9_]*\)(t \*testing\.T).*/\1/p' main_test.go | \
+	xargs -n 1 -P $(MAIN_TEST_JOBS) sh -c '"$$0/main.test" -test.run "^$$1$$" -test.count 1 -test.v=true \
+		-test.timeout $(MAIN_TEST_TIMEOUT) > "$$0/$$1.log" 2>&1; rc=$$?; flock "$$0" cat "$$0/$$1.log"; exit $$rc' "$$d"
+endef
+
+# The server package takes close to Go's 10m default test timeout under -race,
+# and longer on a busy host, so the sub-package tests get their own bound.
+SUBPKG_TEST_TIMEOUT ?= 30m
+
 test:
-	@go test -tags netgo -timeout 120m --count 1 -v .
-	@go test -tags netgo --count 1 $(shell go list ./... | grep -v '^${PKG}$$')
+	$(call test-main)
+	@go test -tags netgo --count 1 -timeout $(SUBPKG_TEST_TIMEOUT) $(shell go list ./... | grep -v '^${PKG}$$')
 
 race: race-subpkgs
 	@$(MAKE) race-main
 
 race-main:
-	@go test -tags netgo -timeout 60m -race --count 1 -v .
+	$(call test-main,-race)
 
 race-subpkgs:
-	@go test -tags netgo -race --count 1 $(shell go list ./... | grep -v '^${PKG}$$')
+	@go test -tags netgo -race --count 1 -timeout $(SUBPKG_TEST_TIMEOUT) $(shell go list ./... | grep -v '^${PKG}$$')
 
 bench:
 	go test -tags netgo --count 1 -run Bench -bench=. ./...

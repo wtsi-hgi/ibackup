@@ -45,6 +45,7 @@ const (
 	irodsCommandTimeout   = 2 * time.Minute
 	irodsRetryMaxAttempts = 8
 	irodsRetryBackoff     = 250 * time.Millisecond
+	collectionPrefix      = "ibackup_test_"
 )
 
 var serialMu sync.Mutex //nolint:gochecknoglobals
@@ -66,6 +67,26 @@ type ICommander struct {
 	backoff     time.Duration
 }
 
+func createIRODSCollection(collection string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), irodsCommandTimeout)
+	defer cancel()
+
+	_ = exec.CommandContext(ctx, "irm", "-rf", collection).Run() //nolint:errcheck,gosec
+
+	if err := exec.CommandContext(ctx, "imkdir", "-p", collection).Run(); err != nil { //nolint:gosec
+		return fmt.Errorf("failed to create iRODS collection %s: %w", collection, err)
+	}
+
+	return nil
+}
+
+func removeIRODSCollection(collection string) {
+	ctx, cancel := context.WithTimeout(context.Background(), irodsCommandTimeout)
+	defer cancel()
+
+	exec.CommandContext(ctx, "irm", "-rf", collection).Run() //nolint:errcheck,gosec
+}
+
 // RequireIRODSTestCollection returns a unique iRODS test collection path
 // or skips the test when required config or commands are missing.
 func RequireIRODSTestCollection(tb testing.TB) string {
@@ -83,7 +104,12 @@ func RequireIRODSTestCollection(tb testing.TB) string {
 	unlock := Serial(tb)
 	defer unlock()
 
-	unique := filepath.Join(base, "ibackup_test_"+randomHex(tb, irodsRandomHexBytes))
+	name, err := randomCollectionName()
+	if err != nil {
+		tb.Fatalf("failed to make an iRODS collection name: %v", err)
+	}
+
+	unique := filepath.Join(base, name)
 	setTestCollectionEnv(tb, unique)
 
 	ensureIRODSCollection(tb, unique)
@@ -167,18 +193,26 @@ func (cmd *ICommander) IUSERINFO(args ...string) ([]byte, error) {
 func irodsBase(tb testing.TB) string {
 	tb.Helper()
 
+	base := irodsBaseFromEnv()
+	if base == "" {
+		tb.Skip("skipping iRODS tests since IBACKUP_TEST_COLLECTION[_BASE] not set")
+
+		return ""
+	}
+
+	return base
+}
+
+// irodsBaseFromEnv returns the shared base collection, remembering it in
+// IBACKUP_TEST_COLLECTION_BASE because tests set IBACKUP_TEST_COLLECTION to
+// their own collection.
+func irodsBaseFromEnv() string {
 	base := os.Getenv("IBACKUP_TEST_COLLECTION_BASE")
 	if base == "" {
 		base = os.Getenv("IBACKUP_TEST_COLLECTION")
 		if base != "" {
 			_ = os.Setenv("IBACKUP_TEST_COLLECTION_BASE", base)
 		}
-	}
-
-	if base == "" {
-		tb.Skip("skipping iRODS tests since IBACKUP_TEST_COLLECTION[_BASE] not set")
-
-		return ""
 	}
 
 	return base
@@ -241,6 +275,15 @@ func runIRODSCommandWithRetry(
 	}
 
 	return nil, fmt.Errorf("%w running %s %v", errIRODSRetriesExhausted, command, args)
+}
+
+func randomCollectionName() (string, error) {
+	buf := make([]byte, irodsRandomHexBytes)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+
+	return collectionPrefix + hex.EncodeToString(buf), nil
 }
 
 func runIRODSCommandOnce(timeout time.Duration, command string, args ...string) ([]byte, error) {
@@ -337,17 +380,6 @@ func Serial(tb testing.TB) func() {
 	}
 }
 
-func randomHex(tb testing.TB, bytesLen int) string {
-	tb.Helper()
-
-	buf := make([]byte, bytesLen)
-	if _, err := rand.Read(buf); err != nil {
-		tb.Fatalf("failed to read random bytes: %v", err)
-	}
-
-	return hex.EncodeToString(buf)
-}
-
 func setTestCollectionEnv(tb testing.TB, collection string) {
 	tb.Helper()
 
@@ -363,13 +395,8 @@ func setTestCollectionEnv(tb testing.TB, collection string) {
 func ensureIRODSCollection(tb testing.TB, collection string) {
 	tb.Helper()
 
-	ctx, cancel := context.WithTimeout(context.Background(), irodsCommandTimeout)
-	defer cancel()
-
-	_ = exec.CommandContext(ctx, "irm", "-rf", collection).Run() //nolint:errcheck,gosec
-
-	if err := exec.CommandContext(ctx, "imkdir", "-p", collection).Run(); err != nil { //nolint:gosec
-		tb.Fatalf("failed to create iRODS collection %s: %v", collection, err)
+	if err := createIRODSCollection(collection); err != nil {
+		tb.Fatalf("%v", err)
 	}
 }
 
@@ -377,9 +404,6 @@ func cleanupIRODSCollection(tb testing.TB, collection string) {
 	tb.Helper()
 
 	tb.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), irodsCommandTimeout)
-		defer cancel()
-
-		exec.CommandContext(ctx, "irm", "-rf", collection).Run() //nolint:errcheck,gosec
+		removeIRODSCollection(collection)
 	})
 }

@@ -423,6 +423,12 @@ func (s *Set) adjustBasedOnEntry(entry *Entry) {
 		}
 	}
 
+	// Discovery counted some statuses (eg. missing) of entries that still get
+	// queued; their upload result replaces that count rather than adding to it.
+	if !entry.countedIn.IsZero() && entry.countedIn.Equal(s.StartedDiscovery) {
+		s.removedEntryStatusToSetCounts(&Entry{Status: entry.countedStatus})
+	}
+
 	s.entryStatusToSetCounts(entry)
 }
 
