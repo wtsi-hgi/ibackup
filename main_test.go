@@ -458,8 +458,6 @@ Local Path	Status	Size	Attempts	Date	Error`+"\n"+
 		})
 
 		Convey("Given a set of files", func() {
-			resetIRODSOrFail(t, remotePath)
-
 			file1 := filepath.Join(path, "file1")
 			file2 := filepath.Join(path, "file2")
 			file3 := filepath.Join(path, "file3")
@@ -581,8 +579,6 @@ Local Path	Status	Size	Attempts	Date	Error`+"\n"+
 				}
 			})
 			Convey("Repeatedly uploading files that are changed or not changes status details", func() {
-				resetIRODSOrFail(t, remotePath)
-
 				setName = "changingFilesTest"
 
 				s.addSetForTesting(t, setName, transformer, path)
@@ -637,8 +633,6 @@ Global put client status (/10): 6 iRODS connections`)
 			})
 
 			Convey("Syncing a set with locally removed files will show orphaned status", func() {
-				resetIRODSOrFail(t, remotePath)
-
 				setName := "setWithOrphanedFiles"
 
 				file4 := filepath.Join(path, "file4")
@@ -868,21 +862,6 @@ func initIRODSTestCollection(tb testing.TB) string {
 	return testutil.RequireIRODSTestCollection(tb)
 }
 
-// resetIRODSOrFail empties the given collection, which must be the test's own
-// collection from initIRODSTestCollection, never a shared base.
-func resetIRODSOrFail(tb testing.TB, remotePath string) {
-	tb.Helper()
-
-	icmd := testutil.NewIcommander(tb)
-	if icmd == nil {
-		return
-	}
-
-	if err := icmd.ResetCollection(remotePath); err != nil {
-		tb.Fatalf("failed to reset iRODS collection %q: %v", remotePath, err)
-	}
-}
-
 func NewIcommander(tb testing.TB) *testutil.ICommander {
 	tb.Helper()
 
@@ -1002,8 +981,6 @@ func testRemove(t *testing.T, shard removeShard) {
 			So(err, ShouldBeNil)
 
 			setName := "testRemoveFiles1"
-
-			resetIRODSOrFail(t, remotePath)
 
 			s.addSetForTestingWithItems(t, setName, transformer, tempTestFileOfPaths.Name())
 
@@ -1893,8 +1870,6 @@ func testTrashRemove(t *testing.T, shard trashRemoveShard) {
 
 			setName := "testTrashFiles1"
 			trashSetName := set.TrashPrefix + setName
-
-			resetIRODSOrFail(t, remotePath)
 
 			s.addSetForTestingWithItems(t, setName, transformer, tempTestFileOfPaths.Name())
 
