@@ -1,14 +1,12 @@
 # Bugfixes 2026-10-02: upload concurrency
 
 - Branch: `bugfix-upload-concurrency-dbfef239a15f`
-- Base: dependency `bugfix-tests-speedup-6d2903c9` (PR #194) at `13915cf`;
-  integration base `origin/develop` at `43f73234a4d0` (resolved 2026-10-06)
-- Dependency: PR #194 (`bugfix-tests-speedup-6d2903c9`), for its faster
-  tests and test fixes. Held for dependency merge: keep this branch local;
-  after #194 merges, rebase with `git rebase --onto origin/develop 13915cf`
-  before pushing.
-- Queue owner: `bugfix-tests-speedup-6d2903c9`,
-  `.docs/bugfixes/261005-tests-speedup-31c758180c99.md`
+- Base: `origin/develop` at `ce92caecdc7a` (#194 merged; rebased
+  2026-10-07)
+- Sequenced after PR #195 (set-counts) for review and merge; no code
+  dependency.
+- Queue owner: `bugfix-set-counts-abca77d4de3c`,
+  `.docs/bugfixes/261002-set-counts-abca77d4de3c.md`
 - Origin: `deps`, `.docs/bugfixes/260930-deps-update-702d9698d638.md`
 
 Each item is independent of the `deps` work: no `make test`, `make race` or
