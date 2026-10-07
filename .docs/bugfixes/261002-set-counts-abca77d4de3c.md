@@ -416,3 +416,10 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
   "Removal status" (and the old-build already-counted check can misjudge for
   it). Same on develop. Code reading only; low priority.
   - Origin: found reviewing the trash-set counts fix (2026-10-07).
+- [ ] An unfrozen set whose upload results all arrive during a rediscovery,
+  after discovery processed each file, is marked Complete by
+  `DiscoveryCompleted` → `checkIfComplete` although those files are re-queued;
+  when they finish it completes again and sends a second "completed backup"
+  Slack message. Predates the results-during-discovery fix (the old recount
+  path did the same).
+  - Origin: found reviewing the results-during-discovery fix (2026-10-07).
