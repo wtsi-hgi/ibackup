@@ -574,6 +574,27 @@ func TestBatonConcurrentClientInit(t *testing.T) {
 		// retrying, now that CollectionsDone() has discarded the clients.
 		time.Sleep(2 * operationMinBackoff)
 	})
+
+	Convey("EnsureCollection after Cleanup succeeds without retrying", t, func() {
+		coll := filepath.Join(remotePath, "ensure-after-cleanup")
+
+		h, err := GetBatonHandler()
+		So(err, ShouldBeNil)
+		Reset(func() {
+			h.Cleanup()
+		})
+
+		So(h.EnsureCollection(coll), ShouldBeNil)
+
+		h.Cleanup()
+
+		// The collection exists, so only a failed attempt and its retry
+		// backoff, not a slow iRODS mkdir, could take this long.
+		start := time.Now()
+
+		So(h.EnsureCollection(coll), ShouldBeNil)
+		So(time.Since(start), ShouldBeLessThan, operationMinBackoff)
+	})
 }
 
 func TestUploadRetry(t *testing.T) {

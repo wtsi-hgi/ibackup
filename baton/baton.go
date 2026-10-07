@@ -801,6 +801,11 @@ func (b *Baton) Cleanup() {
 
 	if b.collRunning {
 		b.collStop()
+
+		// Discard the stopped clients so the next EnsureCollection() makes
+		// new ones, also stopping any client swapped in since our snapshot.
+		b.closeConnections(b.collClients)
+		b.collClients = nil
 		b.collPool.Close()
 		b.collRunning = false
 	}
