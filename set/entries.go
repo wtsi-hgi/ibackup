@@ -125,9 +125,10 @@ type Entry struct {
 	// that counted our Status in the set's counts, if any.
 	CountedInDiscovery time.Time
 
-	// countedStatus and countedIn are the Status and CountedInDiscovery this
-	// entry had before an upload result updated it.
+	// countedStatus, countedSize and countedIn are the Status, Size and
+	// CountedInDiscovery this entry had before an upload result updated it.
 	countedStatus EntryStatus
+	countedSize   uint64
 	countedIn     time.Time
 
 	newSize  bool // is this the first attempt
@@ -401,17 +402,37 @@ func (c *entryCreator) existingOrNewEncodedEntry(dirent *Dirent) ([]byte, error)
 
 	// Frozen sets keep an uploaded entry as it was, so changed files don't get
 	// uploaded again, unless it's now orphaned: that status was just counted.
-	if c.set.Frozen && isUploaded && dbEntry.Status != Orphaned || !changed && !counted {
+	if c.set.Frozen && isUploaded && dbEntry.Status != Orphaned {
+		return c.keptFrozenEntry(e, counted), nil
+	}
+
+	if !changed && !counted {
 		return e, nil
 	}
 
 	return c.db.encodeToBytes(dbEntry), nil
 }
 
-// countStatus adds the given entry's status to our set's counts, recording on
-// the entry that this discovery counted it.
+// keptFrozenEntry returns the given encoded uploaded entry of a frozen set with
+// its stored status counted, since it never gets queued for an upload result
+// to count it. If discovery already counted another status for it (abnormal),
+// it is returned unchanged.
+func (c *entryCreator) keptFrozenEntry(e []byte, counted bool) []byte {
+	if counted {
+		return e
+	}
+
+	stored := c.db.decodeEntry(e)
+	c.countStatus(stored)
+
+	return c.db.encodeToBytes(stored)
+}
+
+// countStatus adds the given entry's status (and size, if uploaded) to our
+// set's counts, recording on the entry that this discovery counted it.
 func (c *entryCreator) countStatus(entry *Entry) {
 	c.set.entryStatusToSetCounts(entry)
+	c.set.discoveredSizeToSetCounts(entry)
 	entry.CountedInDiscovery = c.set.StartedDiscovery
 }
 

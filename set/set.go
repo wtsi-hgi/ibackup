@@ -38,16 +38,12 @@ import (
 	"github.com/wtsi-hgi/ibackup/transformer"
 )
 
-type Status int
-
-type Slacker interface {
-	SendMessage(level slack.Level, msg string)
-}
-
 const (
 	dateFormat            = "2006-01-02 15:04:05"
 	ErrInvalidTransformer = "invalid transformer"
 )
+
+type Status int
 
 const (
 	// PendingDiscovery is a Set status meaning the set's entries are pending
@@ -71,6 +67,10 @@ const (
 	// 3 retries.)
 	Complete
 )
+
+type Slacker interface {
+	SendMessage(level slack.Level, msg string)
+}
 
 // String lets you convert a Status to a meaningful string.
 func (s Status) String() string {
@@ -411,7 +411,7 @@ func (s *Set) adjustBasedOnEntry(entry *Entry) {
 		s.SizeUploaded += entry.Size
 	}
 
-	if entry.Status == Skipped || entry.Status == Orphaned {
+	if !dataUploaded(entry) {
 		s.SizeUploaded -= entry.Size
 	}
 
@@ -426,10 +426,50 @@ func (s *Set) adjustBasedOnEntry(entry *Entry) {
 	// Discovery counted some statuses (eg. missing) of entries that still get
 	// queued; their upload result replaces that count rather than adding to it.
 	if !entry.countedIn.IsZero() && entry.countedIn.Equal(s.StartedDiscovery) {
-		s.removedEntryStatusToSetCounts(&Entry{Status: entry.countedStatus})
+		counted := &Entry{Status: entry.countedStatus, Size: entry.countedSize}
+		s.removedEntryStatusToSetCounts(counted)
+
+		if entry.newSize {
+			s.removedDiscoveredSizeFromSetCounts(counted)
+		}
 	}
 
 	s.entryStatusToSetCounts(entry)
+}
+
+// dataUploaded returns true if the given entry's status means its data was
+// uploaded, so counts towards SizeUploaded; Skipped and Orphaned entries' data
+// wasn't.
+func dataUploaded(entry *Entry) bool {
+	return entry.Status != Skipped && entry.Status != Orphaned
+}
+
+// discoveredSizeToSetCounts adds the size of the given entry, whose status
+// discovery counted, to our sizes as adjustBasedOnEntry would for an upload
+// result of that status. Only uploaded statuses have a size known at discovery.
+func (s *Set) discoveredSizeToSetCounts(entry *Entry) {
+	if !entry.IsUploaded() {
+		return
+	}
+
+	s.SizeTotal += entry.Size
+
+	if dataUploaded(entry) {
+		s.SizeUploaded += entry.Size
+	}
+}
+
+// removedDiscoveredSizeFromSetCounts undoes discoveredSizeToSetCounts.
+func (s *Set) removedDiscoveredSizeFromSetCounts(entry *Entry) {
+	if !entry.IsUploaded() {
+		return
+	}
+
+	s.SizeTotal -= entry.Size
+
+	if dataUploaded(entry) {
+		s.SizeUploaded -= entry.Size
+	}
 }
 
 // entryToSetCounts increases set Uploaded, Failed or Missing based on
@@ -545,9 +585,14 @@ func (s *Set) countRemovedEntry(entry *Entry, removedSize uint64) {
 	}
 
 	// Otherwise the entry's status is from before our last discovery, so is
-	// only in our counts if that discovery counted it.
+	// only in our counts if that discovery counted it, with its size if it is
+	// an uploaded one (SizeUploaded is kept, as for an upload result's).
 	if entry.CountedInDiscovery.Equal(s.StartedDiscovery) {
 		s.removedEntryStatusToSetCounts(entry)
+
+		if entry.IsUploaded() {
+			s.SizeTotal -= entry.Size
+		}
 	}
 }
 
@@ -581,6 +626,9 @@ func (s *Set) DiscoveryCompleted(numFiles uint64) {
 	s.Status = PendingUpload
 
 	s.sendSlackMessage(slack.Info, fmt.Sprintf("completed discovery: %d files", numFiles))
+
+	// Discovery counts a frozen set's uploaded entries, which never get queued.
+	s.checkIfComplete()
 }
 
 // UpdateBasedOnEntry updates set status values based on an updated Entry from

@@ -1684,7 +1684,7 @@ func (d *DB) updateFileEntry(tx *bolt.Tx, setID string, r *transfer.Request, //n
 		return nil, err
 	}
 
-	entry.countedStatus, entry.countedIn = entry.Status, entry.CountedInDiscovery
+	entry.countedStatus, entry.countedSize, entry.countedIn = entry.Status, entry.Size, entry.CountedInDiscovery
 	entry.CountedInDiscovery = time.Time{}
 
 	if setDiscoveryTime.After(entry.LastAttempt) {

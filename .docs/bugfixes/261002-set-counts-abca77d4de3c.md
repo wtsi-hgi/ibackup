@@ -228,13 +228,39 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
   recount, and the running discovery then counts the entry again. Same on
   develop. Found reviewing the tests speed-up branch's double-count fix
   (2026-10-06); no gate fails.
-- [ ] A frozen set rediscovered while its uploaded files still exist never
+  - Note (2026-10-07): for frozen sets this now persists (nothing is queued
+    to trigger a recount, e.g. `up=4 num=2`), and sizes are double-counted
+    too since discovery counts sizes.
+- [x] A frozen set rediscovered while its uploaded files still exist never
   counts them: the frozen guard keeps the stored entry uncounted and it is
   never queued (`ShouldUpload` false), so the set shows `Uploaded 0` and stays
   "pending upload" forever. Same on develop (43f7323). Needs a decision:
   count them as Uploaded or as Skipped. Also covers restored frozen files.
   - Origin: found fixing the frozen-sets item; confirmed by its reviewer.
   - Decision (user, 2026-10-07): count them as Uploaded.
+  - Red: set tests (frozen set uploaded, rediscovered with files present; a
+    restored frozen orphan) got Uploaded 0 / Orphaned 0, stuck pending upload.
+  - Fixed in `set/entries.go`, `set/set.go` and `set/db.go`: an entry kept by
+    the frozen guard is counted by its stored status (Uploaded, Replaced,
+    Skipped, Orphaned) and stamped, unless discovery already counted another
+    status; `DiscoveryCompleted` checks completion, so a frozen set with
+    nothing queued completes. Sizes: discovery now adds an uploaded-type
+    entry's size to SizeTotal (and SizeUploaded unless Skipped/Orphaned) for
+    all sets (a frozen-only rule would wrap after `edit --unfreeze`); an
+    upload result replacing that count takes the discovered size back, and
+    removal subtracts it. Unfrozen sets' final sizes are unchanged; SizeTotal
+    includes orphan sizes from discovery end. Monitored frozen sets now
+    re-arm (they never completed before).
+  - After rediscovering a frozen set, SizeUploaded and the Slack completion
+    message report the kept files' earlier upload sizes although nothing was
+    uploaded this run (follows from counting them as Uploaded).
+  - Tests: frozen existing files (Uploaded/Replaced/Skipped, second
+    rediscovery, removal to zero, FIFO, new file), restored frozen orphan,
+    frozen-then-unfrozen re-upload and skip, uploaded file replaced by a FIFO
+    then removed, all with size assertions. Mutants (no stamp, no
+    completion check, all as Uploaded, no discovery size, no removal
+    subtraction, no take-back, take-back with the new size, SizeUploaded for
+    every status, no IsUploaded guard on removal) fail.
 - [ ] A frozen set's uploaded file replaced by an abnormal file (e.g. a FIFO)
   is counted Abnormal but the frozen guard keeps the stored Uploaded entry,
   so removing it would leave Abnormal 1. Same on develop. Needs a design

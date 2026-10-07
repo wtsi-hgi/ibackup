@@ -48,7 +48,10 @@ import (
 	bolt "go.etcd.io/bbolt"
 )
 
-const userPerms = 0700
+const (
+	userPerms            = 0700
+	tmpRemoteTransformer = "prefix=/tmp:/remote"
+)
 
 func TestSet(t *testing.T) {
 	Convey("With the default transformers", t, func() {
@@ -3076,7 +3079,7 @@ func TestSetDB(t *testing.T) {
 				So(entries[0].Type, ShouldEqual, Abnormal)
 
 				Convey("then rediscover the set and still know about the abnormal file", func() {
-					got, errb := db.Discover(setl1.ID(), nil)
+					got, errb = db.Discover(setl1.ID(), nil)
 					So(got, ShouldNotBeNil)
 					So(errb, ShouldBeNil)
 					So(got.Abnormal, ShouldEqual, 1)
@@ -3243,7 +3246,7 @@ func TestSetDB(t *testing.T) {
 				setl1 := &Set{
 					Name:        "freeze",
 					Requester:   "jim",
-					Transformer: "prefix=/tmp:/remote",
+					Transformer: tmpRemoteTransformer,
 					Frozen:      true,
 				}
 
@@ -3259,8 +3262,8 @@ func TestSetDB(t *testing.T) {
 				_, err = db.Discover(setl1.ID(), nil)
 				So(err, ShouldBeNil)
 
-				entries, err := db.GetPureFileEntries(setl1.ID())
-				So(err, ShouldBeNil)
+				entries, errp := db.GetPureFileEntries(setl1.ID())
+				So(errp, ShouldBeNil)
 				So(len(entries), ShouldEqual, 1)
 				So(entries[0].Inode, ShouldNotEqual, 0)
 
@@ -3305,7 +3308,7 @@ func TestSetDB(t *testing.T) {
 				setl1 := &Set{
 					Name:        "frozenOrphan",
 					Requester:   "jim",
-					Transformer: "prefix=/tmp:/remote",
+					Transformer: tmpRemoteTransformer,
 					Frozen:      true,
 				}
 
@@ -3323,11 +3326,12 @@ func TestSetDB(t *testing.T) {
 				So(errg, ShouldBeNil)
 				So(len(entries), ShouldEqual, 1)
 
-				setEntryToUploaded(entries[0], setl1, db)
+				setEntryToStatusWithSize(entries[0], setl1, db, transfer.RequestStatusUploaded, 3)
 
 				got := db.GetByID(setl1.ID())
 				So(got.Uploaded, ShouldEqual, 1)
 				So(got.Status, ShouldEqual, Complete)
+				So(got.SizeTotal, ShouldEqual, 3)
 
 				So(os.Remove(aFile), ShouldBeNil)
 
@@ -3337,6 +3341,9 @@ func TestSetDB(t *testing.T) {
 				So(got.Orphaned, ShouldEqual, 1)
 				So(got.Uploaded, ShouldEqual, 0)
 				So(got.Status, ShouldEqual, Complete)
+				So(got.SizeTotal, ShouldEqual, 3)
+				So(got.SizeUploaded, ShouldEqual, 0)
+				So(got.LastCompletedSize, ShouldEqual, 3)
 
 				entry, errg := db.GetFileEntryForSet(setl1.ID(), aFile)
 				So(errg, ShouldBeNil)
@@ -3352,6 +3359,7 @@ func TestSetDB(t *testing.T) {
 					So(got.Orphaned, ShouldEqual, 0)
 					So(got.Uploaded, ShouldEqual, 0)
 					So(got.NumObjectsRemoved, ShouldEqual, 1)
+					So(got.SizeTotal, ShouldEqual, 0)
 				})
 
 				Convey("then rediscovering it while still deleted keeps it orphaned", func() {
@@ -3366,17 +3374,294 @@ func TestSetDB(t *testing.T) {
 					So(entry.Status, ShouldEqual, Orphaned)
 				})
 
-				Convey("then restoring it locally and rediscovering doesn't upload it again", func() {
-					internal.CreateTestFile(t, aFile, "changed")
+				Convey("then restoring it locally and rediscovering doesn't upload it again, and counts it orphaned",
+					func() {
+						internal.CreateTestFile(t, aFile, "changed")
+
+						got, err = db.Discover(setl1.ID(), nil)
+						So(err, ShouldBeNil)
+						So(got.NumFiles, ShouldEqual, 1)
+						So(got.Orphaned, ShouldEqual, 1)
+						So(got.Uploaded, ShouldEqual, 0)
+						So(got.Status, ShouldEqual, Complete)
+						So(got.SizeTotal, ShouldEqual, 3)
+						So(got.SizeUploaded, ShouldEqual, 0)
+
+						entry, errg = db.GetFileEntryForSet(setl1.ID(), aFile)
+						So(errg, ShouldBeNil)
+						So(entry.Status, ShouldEqual, Orphaned)
+						So(entry.ShouldUpload(got), ShouldBeFalse)
+
+						Convey("and removing it leaves consistent counts", func() {
+							removeFileEntryAndCount(db, setl1.ID(), aFile)
+
+							got = db.GetByID(setl1.ID())
+							So(got.NumFiles, ShouldEqual, 0)
+							So(got.Orphaned, ShouldEqual, 0)
+							So(got.Uploaded, ShouldEqual, 0)
+							So(got.SizeTotal, ShouldEqual, 0)
+						})
+					})
+			})
+
+			Convey("And add a frozen set whose uploaded files still exist, rediscovery counts them by their "+
+				"stored status without uploading them again", func() {
+				setl1 := &Set{
+					Name:        "frozenExisting",
+					Requester:   "jim",
+					Transformer: tmpRemoteTransformer,
+					Frozen:      true,
+				}
+
+				So(db.AddOrUpdate(setl1), ShouldBeNil)
+
+				dir := t.TempDir()
+				uploaded := filepath.Join(dir, "uploaded")
+				replaced := filepath.Join(dir, "replaced")
+				skipped := filepath.Join(dir, "skipped")
+				paths := []string{uploaded, replaced, skipped}
+				sizes := map[string]uint64{uploaded: 3, replaced: 5, skipped: 7}
+
+				for _, path := range paths {
+					internal.CreateTestFile(t, path, "a")
+				}
+
+				So(db.MergeFileEntries(setl1.ID(), paths), ShouldBeNil)
+
+				_, err = db.Discover(setl1.ID(), nil)
+				So(err, ShouldBeNil)
+
+				setResult := func(path string, status transfer.RequestStatus) *Set {
+					for _, s := range []transfer.RequestStatus{transfer.RequestStatusUploading, status} {
+						_, errs := db.SetEntryStatus(&transfer.Request{
+							Local:     path,
+							Requester: setl1.Requester,
+							Set:       setl1.Name,
+							Size:      sizes[path],
+							Status:    s,
+						})
+						So(errs, ShouldBeNil)
+					}
+
+					return db.GetByID(setl1.ID())
+				}
+
+				setResult(uploaded, transfer.RequestStatusUploaded)
+				setResult(replaced, transfer.RequestStatusReplaced)
+				got := setResult(skipped, transfer.RequestStatusUnmodified)
+
+				checkCounts := func(got *Set) {
+					So(got.NumFiles, ShouldEqual, 3)
+					So(got.Uploaded, ShouldEqual, 1)
+					So(got.Replaced, ShouldEqual, 1)
+					So(got.Skipped, ShouldEqual, 1)
+					So(got.Orphaned, ShouldEqual, 0)
+					So(got.Status, ShouldEqual, Complete)
+
+					// The skipped file's size isn't counted as uploaded.
+					So(got.SizeTotal, ShouldEqual, 15)
+					So(got.SizeUploaded, ShouldEqual, 8)
+					So(got.LastCompletedSize, ShouldEqual, 15)
+				}
+
+				checkCounts(got)
+
+				internal.CreateTestFile(t, uploaded, "changed")
+
+				got, err = db.Discover(setl1.ID(), nil)
+				So(err, ShouldBeNil)
+				checkCounts(got)
+
+				expected := map[string]EntryStatus{uploaded: Uploaded, replaced: Replaced, skipped: Skipped}
+
+				for _, path := range paths {
+					entry, errg := db.GetFileEntryForSet(setl1.ID(), path)
+					So(errg, ShouldBeNil)
+					So(entry.Status, ShouldEqual, expected[path])
+					So(entry.ShouldUpload(got), ShouldBeFalse)
+				}
+
+				Convey("then rediscovering again counts them once", func() {
+					got, err = db.Discover(setl1.ID(), nil)
+					So(err, ShouldBeNil)
+					checkCounts(got)
+				})
+
+				Convey("then removing them leaves all counts and the total size at zero", func() {
+					for _, path := range paths {
+						removeFileEntryAndCount(db, setl1.ID(), path)
+					}
+
+					got = db.GetByID(setl1.ID())
+					So(got.NumFiles, ShouldEqual, 0)
+					So(got.Uploaded, ShouldEqual, 0)
+					So(got.Replaced, ShouldEqual, 0)
+					So(got.Skipped, ShouldEqual, 0)
+					So(got.Orphaned, ShouldEqual, 0)
+					So(got.NumObjectsRemoved, ShouldEqual, 3)
+					So(got.SizeRemoved, ShouldEqual, 15)
+					So(got.SizeTotal, ShouldEqual, 0)
+
+					// As for removing files counted by upload results, the data
+					// uploaded and last completed size are history, so are kept.
+					So(got.SizeUploaded, ShouldEqual, 8)
+					So(got.LastCompletedSize, ShouldEqual, 15)
+				})
+
+				Convey("then replacing one with an abnormal file counts it only as abnormal", func() {
+					So(os.Remove(uploaded), ShouldBeNil)
+					So(syscall.Mkfifo(uploaded, userPerms), ShouldBeNil)
 
 					got, err = db.Discover(setl1.ID(), nil)
 					So(err, ShouldBeNil)
-					So(got.NumFiles, ShouldEqual, 1)
-
-					entry, errg = db.GetFileEntryForSet(setl1.ID(), aFile)
-					So(errg, ShouldBeNil)
-					So(entry.ShouldUpload(got), ShouldBeFalse)
+					So(got.NumFiles, ShouldEqual, 3)
+					So(got.Abnormal, ShouldEqual, 1)
+					So(got.Uploaded, ShouldEqual, 0)
+					So(got.Replaced, ShouldEqual, 1)
+					So(got.Skipped, ShouldEqual, 1)
+					So(got.Status, ShouldEqual, Complete)
+					So(got.SizeTotal, ShouldEqual, 12)
+					So(got.SizeUploaded, ShouldEqual, 5)
+					So(got.LastCompletedSize, ShouldEqual, 12)
 				})
+
+				Convey("then adding a new file completes once only that file is uploaded", func() {
+					newFile := filepath.Join(dir, "new")
+					internal.CreateTestFile(t, newFile, "b")
+					sizes[newFile] = 2
+
+					So(db.MergeFileEntries(setl1.ID(), append(paths, newFile)), ShouldBeNil)
+
+					got, err = db.Discover(setl1.ID(), nil)
+					So(err, ShouldBeNil)
+					So(got.NumFiles, ShouldEqual, 4)
+					So(got.Uploaded, ShouldEqual, 1)
+					So(got.Status, ShouldEqual, PendingUpload)
+					So(got.SizeTotal, ShouldEqual, 15)
+					So(got.LastCompletedSize, ShouldEqual, 15)
+
+					entry, errg := db.GetFileEntryForSet(setl1.ID(), newFile)
+					So(errg, ShouldBeNil)
+					So(entry.ShouldUpload(got), ShouldBeTrue)
+
+					got = setResult(newFile, transfer.RequestStatusUploaded)
+					So(got.Uploaded, ShouldEqual, 2)
+					So(got.Replaced, ShouldEqual, 1)
+					So(got.Skipped, ShouldEqual, 1)
+					So(got.Status, ShouldEqual, Complete)
+					So(got.SizeTotal, ShouldEqual, 17)
+					So(got.SizeUploaded, ShouldEqual, 10)
+					So(got.LastCompletedSize, ShouldEqual, 17)
+				})
+			})
+
+			Convey("And add a frozen set with an uploaded file, then unfreeze it after rediscovery, the file's "+
+				"upload result replaces its discovered count and size", func() {
+				setl1 := &Set{
+					Name:        "frozenThenUnfrozen",
+					Requester:   "jim",
+					Transformer: tmpRemoteTransformer,
+					Frozen:      true,
+				}
+
+				So(db.AddOrUpdate(setl1), ShouldBeNil)
+
+				aFile := filepath.Join(t.TempDir(), "a")
+				internal.CreateTestFile(t, aFile, "a")
+
+				So(db.MergeFileEntries(setl1.ID(), []string{aFile}), ShouldBeNil)
+
+				_, err = db.Discover(setl1.ID(), nil)
+				So(err, ShouldBeNil)
+
+				entries, errg := db.GetPureFileEntries(setl1.ID())
+				So(errg, ShouldBeNil)
+				So(len(entries), ShouldEqual, 1)
+
+				setEntryToStatusWithSize(entries[0], setl1, db, transfer.RequestStatusUploaded, 3)
+
+				got, errd := db.Discover(setl1.ID(), nil)
+				So(errd, ShouldBeNil)
+				So(got.Uploaded, ShouldEqual, 1)
+				So(got.Status, ShouldEqual, Complete)
+				So(got.SizeTotal, ShouldEqual, 3)
+				So(got.SizeUploaded, ShouldEqual, 3)
+
+				setl1.Frozen = false
+				So(db.AddOrUpdate(setl1), ShouldBeNil)
+
+				Convey("when it is uploaded again", func() {
+					setEntryToStatusWithSize(entries[0], setl1, db, transfer.RequestStatusUploaded, 10)
+
+					got = db.GetByID(setl1.ID())
+					So(got.NumFiles, ShouldEqual, 1)
+					So(got.Uploaded, ShouldEqual, 1)
+					So(got.Skipped, ShouldEqual, 0)
+					So(got.Status, ShouldEqual, Complete)
+					So(got.SizeTotal, ShouldEqual, 10)
+					So(got.SizeUploaded, ShouldEqual, 10)
+					So(got.LastCompletedSize, ShouldEqual, 10)
+				})
+
+				Convey("when it is skipped as unmodified", func() {
+					setEntryToStatusWithSize(entries[0], setl1, db, transfer.RequestStatusUnmodified, 10)
+
+					got = db.GetByID(setl1.ID())
+					So(got.NumFiles, ShouldEqual, 1)
+					So(got.Uploaded, ShouldEqual, 0)
+					So(got.Skipped, ShouldEqual, 1)
+					So(got.Status, ShouldEqual, Complete)
+					So(got.SizeTotal, ShouldEqual, 10)
+					So(got.SizeUploaded, ShouldEqual, 0)
+					So(got.LastCompletedSize, ShouldEqual, 10)
+				})
+			})
+
+			Convey("And add a set whose uploaded file is replaced by an abnormal one, removing it after "+
+				"rediscovery leaves counts and the total size at zero", func() {
+				setl1 := &Set{
+					Name:        "uploadedThenAbnormal",
+					Requester:   "jim",
+					Transformer: tmpRemoteTransformer,
+				}
+
+				So(db.AddOrUpdate(setl1), ShouldBeNil)
+
+				aFile := filepath.Join(t.TempDir(), "a")
+				internal.CreateTestFile(t, aFile, "a")
+
+				So(db.MergeFileEntries(setl1.ID(), []string{aFile}), ShouldBeNil)
+
+				_, err = db.Discover(setl1.ID(), nil)
+				So(err, ShouldBeNil)
+
+				entries, errg := db.GetPureFileEntries(setl1.ID())
+				So(errg, ShouldBeNil)
+				So(len(entries), ShouldEqual, 1)
+
+				setEntryToStatusWithSize(entries[0], setl1, db, transfer.RequestStatusUploaded, 3)
+
+				So(os.Remove(aFile), ShouldBeNil)
+				So(syscall.Mkfifo(aFile, userPerms), ShouldBeNil)
+
+				got, errd := db.Discover(setl1.ID(), nil)
+				So(errd, ShouldBeNil)
+				So(got.NumFiles, ShouldEqual, 1)
+				So(got.Abnormal, ShouldEqual, 1)
+				So(got.Uploaded, ShouldEqual, 0)
+				So(got.SizeTotal, ShouldEqual, 0)
+
+				entry, errg := db.GetFileEntryForSet(setl1.ID(), aFile)
+				So(errg, ShouldBeNil)
+				So(entry.Type, ShouldEqual, Abnormal)
+				So(entry.Size, ShouldEqual, 3)
+
+				removeFileEntryAndCount(db, setl1.ID(), aFile)
+
+				got = db.GetByID(setl1.ID())
+				So(got.NumFiles, ShouldEqual, 0)
+				So(got.Abnormal, ShouldEqual, 0)
+				So(got.SizeTotal, ShouldEqual, 0)
 			})
 
 			for _, frozen := range []bool{true, false} {
@@ -3385,7 +3670,7 @@ func TestSetDB(t *testing.T) {
 					setl1 := &Set{
 						Name:        fmt.Sprintf("skipRepOrphan%v", frozen),
 						Requester:   "jim",
-						Transformer: "prefix=/tmp:/remote",
+						Transformer: tmpRemoteTransformer,
 						Frozen:      frozen,
 					}
 
@@ -3403,13 +3688,15 @@ func TestSetDB(t *testing.T) {
 					_, err = db.Discover(setl1.ID(), nil)
 					So(err, ShouldBeNil)
 
+					sizes := map[string]uint64{skipped: 3, replaced: 5}
+
 					setResult := func(path string, statuses ...transfer.RequestStatus) *Set {
 						for _, status := range statuses {
 							_, errs := db.SetEntryStatus(&transfer.Request{
 								Local:     path,
 								Requester: setl1.Requester,
 								Set:       setl1.Name,
-								Size:      1,
+								Size:      sizes[path],
 								Status:    status,
 							})
 							So(errs, ShouldBeNil)
@@ -3423,6 +3710,8 @@ func TestSetDB(t *testing.T) {
 					So(got.Skipped, ShouldEqual, 1)
 					So(got.Replaced, ShouldEqual, 1)
 					So(got.Status, ShouldEqual, Complete)
+					So(got.SizeTotal, ShouldEqual, 8)
+					So(got.SizeUploaded, ShouldEqual, 5)
 
 					So(os.Remove(skipped), ShouldBeNil)
 					So(os.Remove(replaced), ShouldBeNil)
@@ -3434,6 +3723,9 @@ func TestSetDB(t *testing.T) {
 					So(got.Missing, ShouldEqual, 0)
 					So(got.Skipped, ShouldEqual, 0)
 					So(got.Replaced, ShouldEqual, 0)
+					So(got.SizeTotal, ShouldEqual, 8)
+					So(got.SizeUploaded, ShouldEqual, 0)
+					So(got.LastCompletedSize, ShouldEqual, 8)
 
 					for _, path := range []string{skipped, replaced} {
 						entry, errg := db.GetFileEntryForSet(setl1.ID(), path)
@@ -3441,18 +3733,45 @@ func TestSetDB(t *testing.T) {
 						So(entry.Status, ShouldEqual, Orphaned)
 					}
 
+					Convey("then removing them leaves counts and the total size at zero", func() {
+						for _, path := range []string{skipped, replaced} {
+							removeFileEntryAndCount(db, setl1.ID(), path)
+						}
+
+						got = db.GetByID(setl1.ID())
+						So(got.NumFiles, ShouldEqual, 0)
+						So(got.Orphaned, ShouldEqual, 0)
+						So(got.SizeTotal, ShouldEqual, 0)
+						So(got.SizeUploaded, ShouldEqual, 0)
+					})
+
 					if frozen {
 						return
 					}
 
-					got = setResult(skipped, transfer.RequestStatusOrphaned)
-					So(got.Orphaned, ShouldEqual, 2)
-					So(got.Missing, ShouldEqual, 0)
+					Convey("then their orphaned results replace their discovered counts and sizes", func() {
+						got = setResult(skipped, transfer.RequestStatusOrphaned)
+						So(got.Orphaned, ShouldEqual, 2)
+						So(got.Missing, ShouldEqual, 0)
+						So(got.SizeTotal, ShouldEqual, 8)
 
-					got = setResult(replaced, transfer.RequestStatusOrphaned)
-					So(got.Orphaned, ShouldEqual, 2)
-					So(got.Missing, ShouldEqual, 0)
-					So(got.Status, ShouldEqual, Complete)
+						got = setResult(replaced, transfer.RequestStatusOrphaned)
+						So(got.Orphaned, ShouldEqual, 2)
+						So(got.Missing, ShouldEqual, 0)
+						So(got.Status, ShouldEqual, Complete)
+						So(got.SizeTotal, ShouldEqual, 8)
+						So(got.SizeUploaded, ShouldEqual, 0)
+						So(got.LastCompletedSize, ShouldEqual, 8)
+
+						for _, path := range []string{skipped, replaced} {
+							removeFileEntryAndCount(db, setl1.ID(), path)
+						}
+
+						got = db.GetByID(setl1.ID())
+						So(got.NumFiles, ShouldEqual, 0)
+						So(got.Orphaned, ShouldEqual, 0)
+						So(got.SizeTotal, ShouldEqual, 0)
+					})
 				})
 			}
 		})
