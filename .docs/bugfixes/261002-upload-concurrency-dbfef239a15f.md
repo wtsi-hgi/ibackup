@@ -54,7 +54,7 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
   `removeQueue`, so `Items` never reaches 0 and the storage handler's
   `Cleanup()` never runs again. Unchanged by the `deps` fix.
   - Origin item: as above.
-- [ ] `transfer/put.go` `getSortedRequestCollections` (~272) only creates
+- [x] `transfer/put.go` `getSortedRequestCollections` (~272) only creates
   collections for `p.requests`, not `p.duplicateRequests`, so a request
   deduplicated by `RemoteDataPath()` (e.g. a second set's hardlink to the same
   remote inode file in the same batch) never gets its own `Remote` collection
@@ -62,6 +62,17 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
   or directory`. Seen in a server test on the set-counts branch; same on
   develop.
   - Origin: found reviewing the set-counts self-hardlink fix (2026-10-07).
+  - Red: `CGO_ENABLED=1 go test -tags netgo --count 1 -timeout 10m ./transfer
+    -run TestPutMock` with the new "Hardlinks to the same inode with Remotes in
+    different collections all upload" Convey failed: `Expected: 0 Actual: 1`,
+    `.../dir2/file.link2 failed: open .../remote2/file.link2: no such file or
+    directory`.
+  - Fixed in `transfer/put.go`: `getSortedRequestCollections` walks
+    `slices.Concat(p.requests, p.duplicateRequests)`, so `CreateCollections`
+    (used by the server and `ibackup put`) also creates duplicates'
+    collections. Mutants (only RemoteDataPath collections, last duplicate
+    left out, no fix) fail. `make speed` passed (Upload -1.7%, Remove -0.8%
+    vs ce92cae).
 - [ ] Possible (code reading only; reproduce before fixing): in an unfrozen
   set, an upload result that lands just before rediscovery processes its entry
   has that entry reset to Pending. If discovery's `enqueueEntries` then reaches
