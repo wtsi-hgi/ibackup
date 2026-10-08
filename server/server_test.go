@@ -596,6 +596,105 @@ func TestServer(t *testing.T) {
 				racCalled <- true
 			})
 
+			// replayResultAcrossRediscovery uploads the given new set's one file,
+			// replaying updateFileStatus's steps for its Uploaded result with a
+			// whole rediscovery between the result being recorded and the request
+			// leaving the queue. Returns the requests then ready to upload.
+			replayResultAcrossRediscovery := func(racerSet *set.Set) []*transfer.Request {
+				err = adminClient.AddOrUpdateSet(racerSet)
+				So(err, ShouldBeNil)
+
+				racerPath := filepath.Join(localDir, racerSet.Name)
+				internal.CreateTestFileOfLength(t, racerPath, 1)
+
+				err = adminClient.MergeFiles(racerSet.ID(), []string{racerPath})
+				So(err, ShouldBeNil)
+
+				drainRacCalled(t, racCalled)
+
+				err = adminClient.TriggerDiscovery(racerSet.ID(), false)
+				So(err, ShouldBeNil)
+				So(<-racCalled, ShouldBeTrue)
+
+				requests, errg := adminClient.GetSomeUploadRequests()
+				So(errg, ShouldBeNil)
+				So(len(requests), ShouldEqual, 1)
+
+				r := requests[0]
+				r.Status = transfer.RequestStatusUploading
+				err = adminClient.UpdateFileStatus(r)
+				So(err, ShouldBeNil)
+
+				r.Status = transfer.RequestStatusUploaded
+				r.Size = 1
+
+				entry, errs := s.db.SetEntryStatus(r)
+				So(errs, ShouldBeNil)
+
+				given := s.db.GetByID(racerSet.ID())
+				tr, errm := given.MakeTransformer()
+				So(errm, ShouldBeNil)
+
+				err = s.db.SetDiscoveryStarted(given.ID())
+				So(err, ShouldBeNil)
+
+				s.discoverThenEnqueue(given, tr, false)
+
+				err = s.handleNewlyCompletedSets(r)
+				So(err, ShouldBeNil)
+
+				err = s.trackUploadingAndStuckRequests(r, entry)
+				So(err, ShouldBeNil)
+
+				requeued, errg := adminClient.GetSomeUploadRequests()
+				So(errg, ShouldBeNil)
+
+				return requeued
+			}
+
+			Convey("An upload result recorded before a rediscovery that re-queues its file, "+
+				"whose request only leaves the queue after that rediscovery's enqueue, "+
+				"still gets the file uploaded and counted", func() {
+				racerSet := &set.Set{
+					Name:        "racer",
+					Requester:   exampleSet.Requester,
+					Transformer: exampleSet.Transformer,
+				}
+
+				requeued := replayResultAcrossRediscovery(racerSet)
+
+				for _, rr := range requeued {
+					rr.Status = transfer.RequestStatusUploaded
+					err = adminClient.UpdateFileStatus(rr)
+					So(err, ShouldBeNil)
+				}
+
+				got, errg := adminClient.GetSetByID(racerSet.Requester, racerSet.ID())
+				So(errg, ShouldBeNil)
+				So(got.Uploaded, ShouldEqual, 1)
+				So(got.Status, ShouldEqual, set.Complete)
+				So(s.queue.Stats().Items, ShouldEqual, 0)
+			})
+
+			Convey("An upload result recorded like that for a frozen set does not re-queue its "+
+				"uploaded file", func() {
+				racerSet := &set.Set{
+					Name:        "frozenracer",
+					Requester:   exampleSet.Requester,
+					Transformer: exampleSet.Transformer,
+					Frozen:      true,
+				}
+
+				requeued := replayResultAcrossRediscovery(racerSet)
+				So(requeued, ShouldBeEmpty)
+				So(s.queue.Stats().Items, ShouldEqual, 0)
+
+				entries, errg := adminClient.GetFiles(racerSet.ID())
+				So(errg, ShouldBeNil)
+				So(len(entries), ShouldEqual, 1)
+				So(entries[0].Status, ShouldEqual, set.Uploaded)
+			})
+
 			Convey("Which lets you login", func() {
 				logWriter.Reset()
 

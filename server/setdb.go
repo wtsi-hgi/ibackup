@@ -1971,7 +1971,50 @@ func (s *Server) trackUploadingAndStuckRequests(r *transfer.Request, entry *set.
 
 	s.uploadTracker.uploadFinished(r)
 
-	return s.removeOrReleaseRequestFromQueue(r, entry)
+	if err := s.removeOrReleaseRequestFromQueue(r, entry); err != nil {
+		return err
+	}
+
+	if r.Status != transfer.RequestStatusFailed {
+		s.requeueIfRediscovered(r, entry)
+	}
+
+	return nil
+}
+
+// requeueIfRediscovered adds the given finished request's entry back to our
+// queue if a discovery completed after its result was recorded. That discovery
+// wants the entry uploaded again, but its enqueue would have skipped it as a
+// duplicate if it ran before we removed the request from the queue. Errors are
+// logged, since the result itself was recorded.
+func (s *Server) requeueIfRediscovered(r *transfer.Request, recorded *set.Entry) {
+	given, err := s.db.GetByNameAndRequester(r.Set, r.Requester)
+	if err != nil || !given.LastDiscovery.After(recorded.LastAttempt) {
+		return
+	}
+
+	err = s.requeueEntry(given, r.Local)
+	if err != nil {
+		s.Logger.Printf("request requeue after rediscovery failed rid=%s err=%s", r.ID(), err)
+	}
+}
+
+// requeueEntry adds the given set's entry for the given path to our queue if
+// discovery would.
+func (s *Server) requeueEntry(given *set.Set, path string) error {
+	entry, err := s.db.GetFileEntryForSet(given.ID(), path)
+	if err != nil || !entry.ShouldUpload(given) {
+		return err
+	}
+
+	transformer, err := given.MakeTransformer()
+	if err != nil {
+		return err
+	}
+
+	_, err = s.enqueueEntries([]*set.Entry{entry}, given, transformer)
+
+	return err
 }
 
 // removeOrReleaseRequestFromQueue removes the given Request from our queue
