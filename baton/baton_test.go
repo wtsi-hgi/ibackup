@@ -33,6 +33,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -634,6 +635,62 @@ func TestBatonConcurrentClientInit(t *testing.T) {
 		So(started, ShouldBeEmpty)
 	})
 
+	Convey("Failing to connect leaves no client pool checking for clients", t, func() {
+		h, err := GetBatonHandler()
+		So(err, ShouldBeNil)
+		Reset(h.Cleanup)
+
+		before := poolCheckerGoroutines()
+
+		withoutBatonDo(t)
+
+		Convey("when making a put client", func() {
+			So(h.Put(os.DevNull, filepath.Join(remotePath, "no-baton")), ShouldNotBeNil)
+			So(newPoolCheckersAfterSettling(before), ShouldBeEmpty)
+		})
+
+		Convey("when making collection clients", func() {
+			So(h.EnsureCollection(remotePath), ShouldNotBeNil)
+			So(newPoolCheckersAfterSettling(before), ShouldBeEmpty)
+		})
+	})
+
+	Convey("Failing to replace a collection client leaves no client pool checking for clients", t, func() {
+		localPath := t.TempDir()
+		fileLocal := filepath.Join(localPath, "file")
+		fileRemote := filepath.Join(remotePath, "notadir-no-baton")
+
+		internal.CreateTestFileOfLength(t, fileLocal, 1)
+
+		h, err := GetBatonHandler()
+		So(err, ShouldBeNil)
+		Reset(h.Cleanup)
+
+		So(h.Put(fileLocal, fileRemote), ShouldBeNil)
+		So(h.EnsureCollection(remotePath), ShouldBeNil)
+
+		// Our open collection client pool must be seen, else nothing would be.
+		before := poolCheckerGoroutines()
+		So(before, ShouldNotBeEmpty)
+
+		withoutBatonDo(t)
+
+		// MkDir under a data object fails, so a new client is tried for; once
+		// the retry backoff is sleeping, that has been tried and failed.
+		ensureDone := make(chan error, 1)
+
+		go func() {
+			ensureDone <- h.EnsureCollection(filepath.Join(fileRemote, "sub"))
+		}()
+
+		So(waitForGoroutineIn("backoff/time.(*Sleeper).Sleep", 30*time.Second), ShouldBeTrue)
+
+		h.Cleanup()
+		So(<-ensureDone, ShouldNotBeNil)
+
+		So(newPoolCheckersAfterSettling(before), ShouldBeEmpty)
+	})
+
 	Convey("GetMeta racing a concurrent Cleanup returns instead of blocking forever", t, func() {
 		localPath := t.TempDir()
 		fileLocal := filepath.Join(localPath, "file")
@@ -916,4 +973,94 @@ func runningBatonDoChildren(t *testing.T) map[int]bool {
 	}
 
 	return pids
+}
+
+// withoutBatonDo makes starting baton-do fail until the current Convey ends, by
+// emptying PATH, and makes client pools check their clients often, so a closed
+// pool's checking goroutine exits quickly.
+func withoutBatonDo(t *testing.T) {
+	t.Helper()
+
+	path := os.Getenv("PATH")
+	freq := ex.DefaultClientPoolParams.CheckClientFreq
+
+	So(os.Setenv("PATH", t.TempDir()), ShouldBeNil)
+
+	ex.DefaultClientPoolParams.CheckClientFreq = 10 * time.Millisecond
+
+	Reset(func() {
+		os.Setenv("PATH", path) //nolint:errcheck,usetesting
+
+		ex.DefaultClientPoolParams.CheckClientFreq = freq
+	})
+}
+
+// newPoolCheckersAfterSettling returns the ids of pool checker goroutines not
+// in before that are still running after giving them time to exit.
+func newPoolCheckersAfterSettling(before map[string]bool) []string {
+	var running []string
+
+	for range 100 {
+		running = nil
+
+		for id := range poolCheckerGoroutines() {
+			if !before[id] {
+				running = append(running, id)
+			}
+		}
+
+		if len(running) == 0 {
+			break
+		}
+
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	return running
+}
+
+// poolCheckerGoroutines returns the ids of the goroutines running an extendo
+// client pool's client checker, which runs until its pool is closed.
+func poolCheckerGoroutines() map[string]bool {
+	ids := make(map[string]bool)
+
+	for _, stack := range goroutineStacks() {
+		if strings.Contains(stack, "extendo/v3.(*ClientPool).checkClients") {
+			id, _, _ := strings.Cut(strings.TrimPrefix(stack, "goroutine "), " ")
+			ids[id] = true
+		}
+	}
+
+	return ids
+}
+
+// waitForGoroutineIn waits until some goroutine's stack contains the given
+// function, returning false if that doesn't happen within the timeout.
+func waitForGoroutineIn(function string, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+
+	for time.Now().Before(deadline) {
+		for _, stack := range goroutineStacks() {
+			if strings.Contains(stack, function) {
+				return true
+			}
+		}
+
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	return false
+}
+
+func goroutineStacks() []string {
+	buf := make([]byte, 1<<20)
+
+	for {
+		n := runtime.Stack(buf, true)
+		if n < len(buf) {
+			return strings.Split(string(buf[:n]), "\n\n")
+		}
+
+		buf = make([]byte, 2*len(buf))
+	}
 }

@@ -251,12 +251,20 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
     `closeConnections`, returning a closed, empty channel. Mutant (first
     client not stopped) fails. Gates pass; `make speed` Upload -0.5%,
     Remove +2.6% vs ce92cae.
-- [ ] Possible: `baton/baton.go` `connect` (used by `makeCollConnections` and
+- [x] Possible: `baton/baton.go` `connect` (used by `makeCollConnections` and
   `getNewClient`) never closes its new pool on error, and nor does
   `timeoutOpAndMakeNewClientOnError` when `pool.Get()` fails; each such
   failure leaks extendo's `checkClients` goroutine and its 30s ticker (no
   processes). Code reading.
   - Origin: found fixing the partial-connect client leak (2026-10-08).
+  - Reproduced. Red: `CGO_ENABLED=1 go test -tags netgo --count 1 -timeout
+    10m ./baton -run TestBatonConcurrentClientInit`, new Conveys (baton-do
+    unstartable via an empty PATH; pool check frequency 10ms) for put-client
+    creation, collection-client creation and collection-client replacement:
+    a `checkClients` goroutine left running (`Expected [442] to be empty`).
+  - Fixed in `baton/baton.go`: `connect` closes its pool on error;
+    `timeoutOpAndMakeNewClientOnError` uses `getNewClient` instead of its
+    own pool. Mutants (no close in `connect`; old inline pool) fail.
 - [ ] Possible: `baton/baton.go` `Put`, `Get` and the `Put` in
   `removeAndRetry` call the put client without `timeoutOp` (probably
   deliberate, as large transfers outlast 60s), so they share extendo
