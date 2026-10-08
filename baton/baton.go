@@ -92,6 +92,7 @@ type Baton struct {
 	putClient    atomic.Pointer[ex.Client]
 	metaClient   atomic.Pointer[ex.Client]
 	removeClient atomic.Pointer[ex.Client]
+	opTimeout    time.Duration
 }
 
 // GetBatonHandler returns a Handler that uses Baton to interact with iRODS. If
@@ -101,7 +102,7 @@ func GetBatonHandler() (*Baton, error) {
 
 	_, err := ex.FindBaton()
 
-	return &Baton{}, err
+	return &Baton{opTimeout: operationTimeout}, err
 }
 
 // getClients returns a snapshot of all our clients, any of which may be nil.
@@ -160,6 +161,30 @@ func (b *Baton) swapCollClient(ctx context.Context, clientIndex int, client *ex.
 	b.collClients[clientIndex] = client
 
 	return old
+}
+
+// timeoutOp carries out op, returning any error from it. Has a b.opTimeout
+// (normally operationTimeout) timeout on running op, and will return a timeout
+// error instead if exceeded.
+func (b *Baton) timeoutOp(op retry.Operation, path string) error {
+	errCh := make(chan error, 1)
+
+	go func() {
+		errCh <- op()
+	}()
+
+	timer := time.NewTimer(b.opTimeout)
+
+	var err error
+
+	select {
+	case err = <-errCh:
+		timer.Stop()
+	case <-timer.C:
+		err = errs.PathError{Msg: ErrOperationTimeout, Path: path}
+	}
+
+	return err
 }
 
 // setupExtendoLogger sets up a STDERR logger that the extendo library will use.
@@ -307,7 +332,7 @@ func (b *Baton) GetClientsFromPoolConcurrently(pool *ex.ClientPool, numClients u
 }
 
 func (b *Baton) ensureCollection(ctx context.Context, clientIndex int, ri ex.RodsItem) error {
-	err := timeoutOp(func() error {
+	err := b.timeoutOp(func() error {
 		client, errg := b.getCollClient(ctx, clientIndex)
 		if errg != nil {
 			return errg
@@ -326,30 +351,6 @@ func (b *Baton) ensureCollection(ctx context.Context, clientIndex int, ri ex.Rod
 	}
 
 	return b.createCollectionWithTimeoutAndRetries(ctx, clientIndex, ri)
-}
-
-// timeoutOp carries out op, returning any error from it. Has an
-// operationTimeout timeout on running op, and will return a timeout error
-// instead if exceeded.
-func timeoutOp(op retry.Operation, path string) error {
-	errCh := make(chan error, 1)
-
-	go func() {
-		errCh <- op()
-	}()
-
-	timer := time.NewTimer(operationTimeout)
-
-	var err error
-
-	select {
-	case err = <-errCh:
-		timer.Stop()
-	case <-timer.C:
-		err = errs.PathError{Msg: ErrOperationTimeout, Path: path}
-	}
-
-	return err
 }
 
 // createCollectionWithTimeoutAndRetries tries to make and confirm the given
@@ -399,14 +400,14 @@ func (b *Baton) timeoutOpAndMakeNewClientOnError(
 	ctx context.Context, op retry.Operation, clientIndex int, path string,
 ) retry.Operation {
 	return func() error {
-		err := timeoutOp(op, path)
+		err := b.timeoutOp(op, path)
 		if err != nil && ctx.Err() == nil {
 			pool := ex.NewClientPool(ex.DefaultClientPoolParams, "")
 
 			client, errp := pool.Get()
 			if errp == nil {
 				go func(oldClient *ex.Client) {
-					timeoutOp(func() error { //nolint:errcheck
+					b.timeoutOp(func() error { //nolint:errcheck
 						oldClient.StopIgnoreError()
 
 						return nil
@@ -485,7 +486,7 @@ func (b *Baton) closeConnections(clients []*ex.Client) {
 			continue
 		}
 
-		timeoutOp(func() error { //nolint:errcheck
+		b.timeoutOp(func() error { //nolint:errcheck
 			client.StopIgnoreError()
 
 			return nil
@@ -504,7 +505,7 @@ func (b *Baton) Stat(remote string) (bool, map[string]string, error) {
 
 	var it ex.RodsItem
 
-	err = timeoutOp(func() error {
+	err = b.timeoutOp(func() error {
 		var errl error
 
 		it, errl = b.metaClient.Load().ListItem(ex.Args{Timestamp: true, AVU: true}, *requestToRodsItem("", remote))
@@ -558,7 +559,7 @@ func (b *Baton) listItemWithReplicates(remote string) (ex.RodsItem, bool, error)
 
 	var it ex.RodsItem
 
-	err := timeoutOp(func() error {
+	err := b.timeoutOp(func() error {
 		var errl error
 
 		it, errl = b.metaClient.Load().ListItem(
@@ -668,7 +669,7 @@ func (b *Baton) Put(local, remote string) error {
 }
 
 func (b *Baton) removeAndRetry(item *ex.RodsItem) error {
-	if err := timeoutOp(func() error {
+	if err := b.timeoutOp(func() error {
 		_, err := b.putClient.Load().RemObj(ex.Args{}, *item)
 
 		return err
@@ -742,7 +743,7 @@ func (b *Baton) RemoveMeta(path string, meta map[string]string) error {
 	it := RemotePathToRodsItem(path)
 	it.IAVUs = metaToAVUs(meta)
 
-	err = timeoutOp(func() error {
+	err = b.timeoutOp(func() error {
 		_, errl := b.metaClient.Load().MetaRem(ex.Args{}, *it)
 
 		return errl
@@ -760,16 +761,25 @@ func (b *Baton) GetMeta(path string) (map[string]string, error) {
 		return nil, err
 	}
 
-	it, err := b.metaClient.Load().ListItem(ex.Args{AVU: true, Timestamp: true, Size: true}, ex.RodsItem{
-		IPath: filepath.Dir(path),
-		IName: filepath.Base(path),
-	})
+	var it ex.RodsItem
 
-	if err != nil && strings.Contains(err.Error(), extendoNotExist) {
-		return nil, errs.PathError{Msg: internal.ErrFileDoesNotExist, Path: path}
+	err = b.timeoutOp(func() error {
+		var errl error
+
+		it, errl = b.metaClient.Load().ListItem(ex.Args{AVU: true, Timestamp: true, Size: true}, *RemotePathToRodsItem(path))
+
+		return errl
+	}, "get meta error: "+path)
+	if err != nil {
+		if strings.Contains(err.Error(), extendoNotExist) {
+			return nil, errs.PathError{Msg: internal.ErrFileDoesNotExist, Path: path}
+		}
+
+		// After a timeout, op may still write it, so it must not be read.
+		return nil, err
 	}
 
-	return RodsItemToMeta(it), err
+	return RodsItemToMeta(it), nil
 }
 
 // RemotePathToRodsItem converts a path in to an extendo RodsItem.
@@ -792,7 +802,7 @@ func (b *Baton) AddMeta(path string, meta map[string]string) error {
 	it := RemotePathToRodsItem(path)
 	it.IAVUs = metaToAVUs(meta)
 
-	err = timeoutOp(func() error {
+	err = b.timeoutOp(func() error {
 		_, errl := b.metaClient.Load().MetaAdd(ex.Args{}, *it)
 
 		return errl
@@ -836,7 +846,7 @@ func (b *Baton) RemoveFile(path string) error {
 
 	it := RemotePathToRodsItem(path)
 
-	err = timeoutOp(func() error {
+	err = b.timeoutOp(func() error {
 		_, errl := b.removeClient.Load().RemObj(ex.Args{}, *it)
 
 		return errl
@@ -862,7 +872,7 @@ func (b *Baton) RemoveDir(path string) error {
 		IPath: path,
 	}
 
-	err = timeoutOp(func() error {
+	err = b.timeoutOp(func() error {
 		_, errl := b.removeClient.Load().RemDir(ex.Args{}, *it)
 
 		return errl
@@ -902,7 +912,7 @@ func (b *Baton) QueryMeta(dirToSearch string, meta map[string]string) ([]string,
 
 	var items []ex.RodsItem
 
-	err = timeoutOp(func() error {
+	err = b.timeoutOp(func() error {
 		items, err = b.metaClient.Load().MetaQuery(ex.Args{Object: true}, *it)
 
 		return err

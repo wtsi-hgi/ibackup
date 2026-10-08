@@ -46,7 +46,7 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
     unchanged. Mutants (b9317e5 code, one shared reply channel, result wait
     ignoring done) fail. Gates pass; `make speed` Upload -2.5%, Remove +0.3%
     vs ce92cae.
-- [ ] `baton/baton.go` `GetMeta` is the only remote operation without
+- [x] `baton/baton.go` `GetMeta` is the only remote operation without
   `timeoutOp`, so any hang in it blocks its caller forever. One such hang:
   extendo (github.com/mjkw31/extendo/v2 v2.7.1-beta2, client.go
   execute/send) accepts a request after `Stop()` has cancelled its writer
@@ -59,6 +59,20 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
   - Origin item: "TestTrashRemove intermittently fails in clean `make test`"
     on `deps`, whose fix stops the server triggering this hang by not
     overlapping removals with handler `Cleanup()`.
+  - Re-checked (2026-10-08) against extendo v3.2.0: same hazard (`send`
+    blocks on `client.in` after `Stop()`, client.go:848); a probe hung 25 of
+    30 times. Upstream bug in wtsi-npg/extendo.
+  - Red: `CGO_ENABLED=1 go test -tags netgo --count 1 -timeout 10m ./baton
+    -run TestBatonConcurrentClientInit`, new Convey "GetMeta racing a
+    concurrent Cleanup returns instead of blocking forever": `So(stuck,
+    ShouldBeFalse)` got `true`.
+  - Fixed in `baton/baton.go`: `GetMeta` runs `ListItem` in `timeoutOp` and
+    returns nil on error (the abandoned op may still write its result). For
+    test speed, `timeoutOp` is a method using a `Baton.opTimeout` field
+    (set to `operationTimeout` in `GetBatonHandler`); the test uses 2s, so
+    it adds ~8s, not ~65s. The goroutine blocked in extendo still leaks
+    until the upstream fix. Gates pass; `make speed` Upload +1.2%, Remove
+    -1.1% vs ce92cae.
 - [x] `baton/baton.go` `Cleanup` (~line 725) reads `b.metaClient` and the
   other clients without holding `clientMu`, so it races with
   `setClientIfNotExists` (~line 368). The `deps` fix 1fa0608 stops the
@@ -210,3 +224,10 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
   failure leaks extendo's `checkClients` goroutine and its 30s ticker (no
   processes). Code reading.
   - Origin: found fixing the partial-connect client leak (2026-10-08).
+- [ ] Possible: `baton/baton.go` `Put`, `Get` and the `Put` in
+  `removeAndRetry` call the put client without `timeoutOp` (probably
+  deliberate, as large transfers outlast 60s), so they share extendo
+  v3.2.0's hang if the put client's `Stop()` overlaps a request (`send`
+  blocks on an unbuffered channel after the writer goroutine is cancelled;
+  upstream wtsi-npg/extendo client.go:848). Code reading.
+  - Origin: found fixing the `GetMeta` timeout (2026-10-08).

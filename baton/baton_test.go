@@ -633,6 +633,82 @@ func TestBatonConcurrentClientInit(t *testing.T) {
 
 		So(started, ShouldBeEmpty)
 	})
+
+	Convey("GetMeta racing a concurrent Cleanup returns instead of blocking forever", t, func() {
+		localPath := t.TempDir()
+		fileLocal := filepath.Join(localPath, "file")
+		fileRemote := filepath.Join(remotePath, "getmeta-cleanup")
+
+		internal.CreateTestFileOfLength(t, fileLocal, 1)
+
+		h, err := GetBatonHandler()
+		So(err, ShouldBeNil)
+		Reset(func() {
+			h.Cleanup()
+		})
+
+		So(h.Put(fileLocal, fileRemote), ShouldBeNil)
+
+		// extendo accepts a request on a client whose Stop() has begun but
+		// whose baton-do has not yet exited, then never sends it; a GetMeta
+		// just after a concurrent Cleanup usually lands in that window, and
+		// can then only return by timing out. A short timeout keeps this
+		// quick; the extra wait covers GetMeta making a new client.
+		const (
+			attempts  = 10
+			opTimeout = 2 * time.Second
+			bound     = opTimeout + operationMinBackoff
+		)
+
+		h.opTimeout = opTimeout
+
+		var stuck, timedOut bool
+
+		for i := range attempts {
+			_, err = h.GetMeta(fileRemote)
+			So(err, ShouldBeNil)
+
+			cleanupDone := make(chan struct{})
+
+			go func() {
+				h.Cleanup()
+				close(cleanupDone)
+			}()
+
+			time.Sleep(time.Duration(i%3) * time.Millisecond)
+
+			metaDone := make(chan error, 1)
+
+			go func() {
+				_, errm := h.GetMeta(fileRemote)
+				metaDone <- errm
+			}()
+
+			select {
+			case errm := <-metaDone:
+				timedOut = errm != nil && strings.Contains(errm.Error(), ErrOperationTimeout)
+			case <-time.After(bound):
+				stuck = true
+			}
+
+			<-cleanupDone
+
+			if stuck || timedOut {
+				break
+			}
+		}
+
+		So(stuck, ShouldBeFalse)
+
+		if !timedOut {
+			t.Logf("GetMeta never landed in the stopping-client window in %d attempts", attempts)
+		}
+
+		h.opTimeout = operationTimeout
+
+		_, err = h.GetMeta(fileRemote)
+		So(err, ShouldBeNil)
+	})
 }
 
 func TestUploadRetry(t *testing.T) {
