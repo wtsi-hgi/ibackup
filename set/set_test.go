@@ -31,6 +31,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -47,7 +49,10 @@ import (
 	bolt "go.etcd.io/bbolt"
 )
 
-const userPerms = 0700
+const (
+	userPerms            = 0700
+	tmpRemoteTransformer = "prefix=/tmp:/remote"
+)
 
 func TestSet(t *testing.T) {
 	Convey("With the default transformers", t, func() {
@@ -317,6 +322,223 @@ func TestSet(t *testing.T) {
 			So(usage.Total.SizeTiB(), ShouldEqual, 10)
 		})
 	})
+}
+
+// setFileCounts holds a set's file, type, status and size counts.
+type setFileCounts struct {
+	NumFiles, SizeTotal, Symlinks, Hardlinks, Uploaded, Replaced, Skipped,
+	Failed, Missing, Orphaned, Abnormal uint64
+}
+
+// fileCounts returns the given set's file, type, status and size counts.
+func fileCounts(s *Set) setFileCounts {
+	return setFileCounts{
+		NumFiles: s.NumFiles, SizeTotal: s.SizeTotal, Symlinks: s.Symlinks, Hardlinks: s.Hardlinks,
+		Uploaded: s.Uploaded, Replaced: s.Replaced, Skipped: s.Skipped, Failed: s.Failed,
+		Missing: s.Missing, Orphaned: s.Orphaned, Abnormal: s.Abnormal,
+	}
+}
+
+func TestTrashSetCounts(t *testing.T) {
+	Convey("Given a complete set with an uploaded file and symlink", t, func() {
+		internal.InitStatter(t)
+
+		db, err := New(filepath.Join(t.TempDir(), "set.db"), "", false)
+		So(err, ShouldBeNil)
+
+		defer func() { So(db.Close(), ShouldBeNil) }()
+
+		given := &Set{Name: "counts", Requester: "trasher", Transformer: "prefix=/local:/trashcounts"}
+		So(db.AddOrUpdate(given), ShouldBeNil)
+
+		localDir := t.TempDir()
+		file := filepath.Join(localDir, "file")
+		internal.CreateTestFile(t, file, "abc")
+
+		link := filepath.Join(localDir, "link")
+		So(os.Symlink(file, link), ShouldBeNil)
+
+		discoverAndUpload := func(size uint64) {
+			So(db.MergeFileEntries(given.ID(), []string{file, link}), ShouldBeNil)
+
+			_, errd := db.Discover(given.ID(), nil)
+			So(errd, ShouldBeNil)
+
+			entries, errg := db.GetPureFileEntries(given.ID())
+			So(errg, ShouldBeNil)
+
+			for _, entry := range entries {
+				setEntryToStatusWithSize(entry, given, db, transfer.RequestStatusUploaded, size)
+			}
+
+			So(db.GetByID(given.ID()).Status, ShouldEqual, Complete)
+		}
+
+		discoverAndUpload(3)
+
+		trashSet := BuildTrashSetFromSet(given)
+		So(db.AddOrUpdate(&trashSet), ShouldBeNil)
+
+		trash := func(path string) {
+			entry, errg := db.GetFileEntryForSet(given.ID(), path)
+			So(errg, ShouldBeNil)
+
+			remReq := NewRemoveRequest(path, db.GetByID(given.ID()), false, ToTrash)
+			So(db.SetRemoveRequests(given.ID(), []RemoveReq{remReq}), ShouldBeNil)
+
+			_, errr := db.RemoveFileEntry(&remReq, entry)
+			So(errr, ShouldBeNil)
+		}
+
+		removeFromTrash := func(path string) {
+			entry, errg := db.GetFileEntryForSet(trashSet.ID(), path)
+			So(errg, ShouldBeNil)
+
+			remReq := NewRemoveRequest(path, db.GetByID(trashSet.ID()), false, ToRemove)
+			So(db.SetRemoveRequests(trashSet.ID(), []RemoveReq{remReq}), ShouldBeNil)
+
+			removed, errr := db.RemoveFileEntry(&remReq, entry)
+			So(errr, ShouldBeNil)
+			So(removed, ShouldNotBeNil)
+		}
+
+		Convey("then trashing the file under a build before #193, stopped after it trashed the entry "+
+			"and deleted it, counts it against the set once it completes, not the trash set", func() {
+			before := db.GetByID(given.ID())
+
+			entry, errg := db.GetFileEntryForSet(given.ID(), file)
+			So(errg, ShouldBeNil)
+
+			remReq := NewRemoveRequest(file, before, false, ToTrash)
+			So(db.SetRemoveRequests(given.ID(), []RemoveReq{remReq}), ShouldBeNil)
+			So(db.UpdateSetTotalToRemove(given.ID(), 1), ShouldBeNil)
+
+			// those builds did the database side after the remote removal, and
+			// their requests had no ObjectSize.
+			remReq.RemoteRemovalStatus = Removed
+			remReq.ObjectSize = nil
+			So(db.UpdateRemoveRequest(remReq), ShouldBeNil)
+
+			// they trashed a copy of the entry, with a TrashDate, then deleted
+			// it.
+			err = db.db.Update(func(tx *bolt.Tx) error {
+				if errp := db.putEntryInTrash(tx, remReq.Set, entry); errp != nil {
+					return errp
+				}
+
+				_, errd := db.deleteFileEntry(tx, given.ID(), file)
+
+				return errd
+			})
+			So(err, ShouldBeNil)
+
+			trashed, errg := db.GetFileEntryForSet(trashSet.ID(), file)
+			So(errg, ShouldBeNil)
+			So(trashed.TrashDate.IsZero(), ShouldBeFalse)
+
+			So(db.RemoveDeletedFileEntry(&remReq), ShouldBeNil)
+
+			got := db.GetByID(given.ID())
+			So(got.NumObjectsRemoved, ShouldEqual, 1)
+			So(got.SizeRemoved, ShouldEqual, 3)
+			So(got.NumFiles, ShouldEqual, before.NumFiles-1)
+			So(got.Uploaded, ShouldEqual, before.Uploaded-1)
+			So(got.SizeTotal, ShouldEqual, before.SizeTotal-3)
+
+			So(fileCounts(db.GetByID(trashSet.ID())), ShouldResemble, setFileCounts{})
+		})
+
+		Convey("When trashing them", func() {
+			// A trash set is never discovered, so its file counts aren't kept:
+			// they stay zero whatever is trashed or removed from it, and only its
+			// removal counts change.
+			trash(file)
+			trash(link)
+
+			got := db.GetByID(given.ID())
+			So(got.NumFiles, ShouldEqual, 0)
+			So(got.Uploaded, ShouldEqual, 0)
+			So(got.Symlinks, ShouldEqual, 0)
+			So(got.SizeTotal, ShouldEqual, 0)
+			So(got.SizeRemoved, ShouldEqual, 3)
+
+			trashed, err := db.GetPureFileEntries(trashSet.ID())
+			So(err, ShouldBeNil)
+			So(trashed, ShouldHaveLength, 2)
+			So(fileCounts(db.GetByID(trashSet.ID())), ShouldResemble, setFileCounts{})
+
+			Convey("then removing them from the trash set counts only their removal", func() {
+				removeFromTrash(file)
+
+				got = db.GetByID(trashSet.ID())
+				So(fileCounts(got), ShouldResemble, setFileCounts{})
+				So(got.NumObjectsRemoved, ShouldEqual, 1)
+				So(got.SizeRemoved, ShouldEqual, 3)
+
+				removeFromTrash(link)
+
+				got = db.GetByID(trashSet.ID())
+				So(fileCounts(got), ShouldResemble, setFileCounts{})
+				So(got.NumObjectsRemoved, ShouldEqual, 2)
+				So(got.SizeRemoved, ShouldEqual, 3)
+
+				trashed, err = db.GetPureFileEntries(trashSet.ID())
+				So(err, ShouldBeNil)
+				So(trashed, ShouldBeEmpty)
+			})
+
+			Convey("then trashing the same paths again before their earlier copies expire, then removing "+
+				"them from the trash set, counts only their removal", func() {
+				discoverAndUpload(5)
+
+				trash(file)
+				trash(link)
+
+				trashed, err = db.GetPureFileEntries(trashSet.ID())
+				So(err, ShouldBeNil)
+				So(trashed, ShouldHaveLength, 2)
+				So(fileCounts(db.GetByID(trashSet.ID())), ShouldResemble, setFileCounts{})
+
+				removeFromTrash(file)
+				removeFromTrash(link)
+
+				got = db.GetByID(trashSet.ID())
+				So(fileCounts(got), ShouldResemble, setFileCounts{})
+				So(got.NumObjectsRemoved, ShouldEqual, 2)
+				So(got.SizeRemoved, ShouldEqual, 5)
+			})
+		})
+	})
+}
+
+// setEntryToStatusWithSize is like setEntryToStatus(), but the request has the
+// given size.
+func setEntryToStatusWithSize(entry *Entry, given *Set, db *DB, status transfer.RequestStatus, size uint64) {
+	transformer, err := given.MakeTransformer()
+	So(err, ShouldBeNil)
+
+	r, err := transfer.NewRequestWithTransformedLocal(entry.Path, transformer)
+	So(err, ShouldBeNil)
+
+	r.Set = given.Name
+	r.Requester = given.Requester
+	r.Size = size
+
+	if entry.Type == Hardlink {
+		r.Hardlink = entry.Dest
+	}
+
+	if entry.Type == Symlink {
+		r.Symlink = entry.Dest
+	}
+
+	r.Status = transfer.RequestStatusUploading
+	_, err = db.SetEntryStatus(r)
+	So(err, ShouldBeNil)
+
+	r.Status = status
+	_, err = db.SetEntryStatus(r)
+	So(err, ShouldBeNil)
 }
 
 func TestSetDB(t *testing.T) {
@@ -1631,6 +1853,100 @@ func TestSetDB(t *testing.T) {
 						So(got.SizeRemoved, ShouldEqual, entry.Size)
 					})
 				})
+
+				Convey("then remove 2 files, the first stopped by an older build after it deleted the "+
+					"entry, and count each once", func() {
+					entry1, errg := db.GetFileEntryForSet(setl1.ID(), path1)
+					So(errg, ShouldBeNil)
+					So(entry1.Inode, ShouldNotEqual, 0)
+
+					mountPoint := db.GetMountPointFromPath(path1)
+
+					inodeFiles, errg := db.GetFilesFromInode(entry1.Inode, mountPoint)
+					So(errg, ShouldBeNil)
+					So(inodeFiles, ShouldContain, path1)
+
+					entry2 := entries[0]
+
+					// an earlier removal completed, so its request stays stored
+					// and the next removal resets the set's removal counts.
+					missing, errg := db.GetFileEntryForSet(setl1.ID(), "/zmissing")
+					So(errg, ShouldBeNil)
+
+					earlier := NewRemoveRequest(missing.Path, got, false, ToTrash)
+					So(db.SetRemoveRequests(setl1.ID(), []RemoveReq{earlier}), ShouldBeNil)
+					So(db.UpdateSetTotalToRemove(setl1.ID(), 1), ShouldBeNil)
+
+					_, errr := db.RemoveFileEntry(&earlier, missing)
+					So(errr, ShouldBeNil)
+					So(db.OptimiseRemoveBucket(setl1.ID()), ShouldBeNil)
+
+					got = db.GetByID(setl1.ID())
+					So(got.NumObjectsToBeRemoved, ShouldEqual, 1)
+					So(got.NumObjectsRemoved, ShouldEqual, 1)
+
+					setEntryToFailed(entry1, setl1, db)
+
+					failed, _, errg := db.GetFailedEntries(setl1.ID())
+					So(errg, ShouldBeNil)
+					So(failed, ShouldHaveLength, 1)
+					So(failed[0].Path, ShouldEqual, path1)
+
+					req1 := NewRemoveRequest(path1, got, false, ToRemove)
+					req2 := NewRemoveRequest(entry2.Path, got, false, ToRemove)
+					So(db.SetRemoveRequests(setl1.ID(), []RemoveReq{req1, req2}), ShouldBeNil)
+					So(db.UpdateSetTotalToRemove(setl1.ID(), 2), ShouldBeNil)
+
+					req1.RemoteRemovalStatus = Removed
+					So(db.UpdateRemoveRequest(req1), ShouldBeNil)
+
+					removeBoth := func() {
+						So(db.RemoveDeletedFileEntry(&req1), ShouldBeNil)
+
+						got = db.GetByID(setl1.ID())
+						So(got.NumObjectsToBeRemoved, ShouldEqual, 2)
+						So(got.NumObjectsRemoved, ShouldEqual, 1)
+
+						_, errr := db.RemoveFileEntry(&req2, entry2)
+						So(errr, ShouldBeNil)
+
+						got = db.GetByID(setl1.ID())
+						So(got.NumObjectsRemoved, ShouldEqual, 2)
+
+						incomplete, errg := db.GetIncompleteRemoveRequests()
+						So(errg, ShouldBeNil)
+						So(incomplete, ShouldBeEmpty)
+
+						inodeFiles, errg = db.GetFilesFromInode(entry1.Inode, mountPoint)
+						So(errg, ShouldBeNil)
+						So(inodeFiles, ShouldNotContain, path1)
+
+						failed, _, errg = db.GetFailedEntries(setl1.ID())
+						So(errg, ShouldBeNil)
+						So(failed, ShouldBeEmpty)
+					}
+
+					Convey("before counting it", func() {
+						err = db.db.Update(func(tx *bolt.Tx) error {
+							_, errd := db.deleteFileEntry(tx, setl1.ID(), path1)
+
+							return errd
+						})
+						So(err, ShouldBeNil)
+
+						removeBoth()
+					})
+
+					Convey("after counting it", func() {
+						counted := req1
+						_, errr := db.RemoveFileEntry(&counted, entry1)
+						So(errr, ShouldBeNil)
+
+						So(db.UpdateRemoveRequest(req1), ShouldBeNil)
+
+						removeBoth()
+					})
+				})
 			})
 
 			Convey("And add a set with directories containing hardlinks to it", func() {
@@ -1775,6 +2091,667 @@ func TestSetDB(t *testing.T) {
 					So(path, ShouldEqual, "/remote/sub1/file")
 				})
 
+				names := map[string]string{local: "file", link1: "link1", link2: "link2"}
+
+				for _, order := range [][]string{
+					{local, link1, link2},
+					{local, link2, link1},
+					{link1, local, link2},
+					{link1, link2, local},
+					{link2, local, link1},
+					{link2, link1, local},
+				} {
+					desc := fmt.Sprintf("then removing the linked files in order %s, %s, %s clears our inode record",
+						names[order[0]], names[order[1]], names[order[2]])
+
+					Convey(desc, func() {
+						for i, path := range order {
+							entry, erre := db.GetFileEntryForSet(setl1.ID(), path)
+							So(erre, ShouldBeNil)
+
+							remReq := NewRemoveRequest(path, db.GetByID(setl1.ID()), false, ToRemove)
+
+							_, errr := db.RemoveFileEntry(&remReq, entry)
+							So(errr, ShouldBeNil)
+
+							files, errf := db.GetFilesFromInode(stat.Ino, local)
+							So(errf, ShouldBeNil)
+
+							if i == len(order)-1 {
+								So(files, ShouldBeEmpty)
+
+								continue
+							}
+
+							So(files, ShouldNotContain, path)
+
+							for _, remaining := range order[i+1:] {
+								So(files, ShouldContain, remaining)
+							}
+						}
+
+						got = db.GetByID(setl1.ID())
+						So(got.NumFiles, ShouldEqual, 1)
+						So(got.NumObjectsRemoved, ShouldEqual, 3)
+					})
+				}
+
+				Convey("then removing the uploaded original keeps its hardlinks pointing at its inode file", func() {
+					storagePath := filepath.Join(local, strconv.FormatUint(stat.Ino, 10))
+
+					upload := func(s *Set, path string) {
+						r := &transfer.Request{
+							Local:     path,
+							Status:    transfer.RequestStatusUploading,
+							Requester: s.Requester,
+							Set:       s.Name,
+						}
+
+						_, erru := db.SetEntryStatus(r)
+						So(erru, ShouldBeNil)
+
+						r.Status = transfer.RequestStatusUploaded
+
+						_, erru = db.SetEntryStatus(r)
+						So(erru, ShouldBeNil)
+					}
+
+					remove := func(s *Set, path string) {
+						entry, erre := db.GetFileEntryForSet(s.ID(), path)
+						So(erre, ShouldBeNil)
+
+						remReq := NewRemoveRequest(path, db.GetByID(s.ID()), false, ToRemove)
+
+						_, errr := db.RemoveFileEntry(&remReq, entry)
+						So(errr, ShouldBeNil)
+					}
+
+					discover := func(s *Set, dirents ...*Dirent) {
+						_, errd = db.Discover(s.ID(), func(_ []*Entry) ([]*Dirent, []*Dirent, error) {
+							return dirents, dirDirents, nil
+						})
+						So(errd, ShouldBeNil)
+					}
+
+					So(db.SetDiscoveryStarted(setl1.ID()), ShouldBeNil)
+
+					for _, path := range []string{local, link1, link2, unlinked} {
+						upload(setl1, path)
+					}
+
+					remove(setl1, local)
+
+					discover(setl1, fileDirents[1:]...)
+
+					So(db.GetByID(setl1.ID()).Hardlinks, ShouldEqual, 2)
+
+					for _, path := range []string{link1, link2} {
+						entry, erre := db.GetFileEntryForSet(setl1.ID(), path)
+						So(erre, ShouldBeNil)
+						So(entry.Type, ShouldEqual, Hardlink)
+						So(entry.Dest, ShouldEqual, local)
+						So(entry.InodeStoragePath(), ShouldEqual, storagePath)
+					}
+
+					Convey("as does a later set adding a new hardlink to it", func() {
+						link3 := filepath.Join(tdir, "link3")
+						So(os.Link(local, link3), ShouldBeNil)
+
+						setl2 := &Set{Name: "setlink2", Requester: "jim", Transformer: "prefix=" + tdir + ":/remote2"}
+						So(db.AddOrUpdate(setl2), ShouldBeNil)
+
+						discover(setl2, &Dirent{Path: link3, Inode: stat.Ino})
+
+						entry, erre := db.GetFileEntryForSet(setl2.ID(), link3)
+						So(erre, ShouldBeNil)
+						So(entry.Type, ShouldEqual, Hardlink)
+						So(entry.InodeStoragePath(), ShouldEqual, storagePath)
+					})
+
+					Convey("as does its last hardlink, left as the only file in the inode record", func() {
+						remove(setl1, link1)
+
+						files, errf := db.GetFilesFromInode(stat.Ino, local)
+						So(errf, ShouldBeNil)
+						So(files, ShouldResemble, []string{"", link2})
+
+						discover(setl1, fileDirents[2:]...)
+
+						entry, erre := db.GetFileEntryForSet(setl1.ID(), link2)
+						So(erre, ShouldBeNil)
+						So(entry.Type, ShouldEqual, Hardlink)
+						So(entry.InodeStoragePath(), ShouldEqual, storagePath)
+
+						files, errf = db.GetFilesFromInode(stat.Ino, local)
+						So(errf, ShouldBeNil)
+						So(files, ShouldResemble, []string{"", link2})
+					})
+
+					keptOnInodeFile := func(s *Set, path string) {
+						entry, erre := db.GetFileEntryForSet(s.ID(), path)
+						So(erre, ShouldBeNil)
+						So(entry.Type, ShouldEqual, Hardlink)
+						So(entry.Dest, ShouldEqual, local)
+						So(entry.InodeStoragePath(), ShouldEqual, storagePath)
+					}
+
+					newSet := func(name string) *Set {
+						s := &Set{Name: name, Requester: "jim", Transformer: setl1.Transformer}
+						So(db.AddOrUpdate(s), ShouldBeNil)
+
+						return s
+					}
+
+					link1Dirent := &Dirent{Path: link1, Inode: stat.Ino}
+					link2Dirent := &Dirent{Path: link2, Inode: stat.Ino}
+
+					Convey("as does its second hardlink once its first is deleted locally, and its first once "+
+						"linked back", func() {
+						So(os.Remove(link1), ShouldBeNil)
+
+						discover(setl1, &Dirent{Path: link1}, link2Dirent)
+
+						entry, erre := db.GetFileEntryForSet(setl1.ID(), link1)
+						So(erre, ShouldBeNil)
+						So(entry.Inode, ShouldEqual, 0)
+
+						keptOnInodeFile(setl1, link2)
+
+						setl2 := newSet("setlink2")
+						discover(setl2, link2Dirent)
+
+						keptOnInodeFile(setl2, link2)
+
+						So(os.Link(local, link1), ShouldBeNil)
+
+						discover(setl1, link1Dirent, link2Dirent)
+
+						keptOnInodeFile(setl1, link1)
+					})
+
+					Convey("as does its second hardlink once its first is linked to another file, and its first "+
+						"once linked back", func() {
+						other := filepath.Join(tdir, "other")
+						internal.CreateTestFile(t, other, "b")
+
+						info, errs = os.Stat(other)
+						So(errs, ShouldBeNil)
+
+						statOther, oko := info.Sys().(*syscall.Stat_t)
+						So(oko, ShouldBeTrue)
+
+						So(os.Remove(link1), ShouldBeNil)
+						So(os.Link(other, link1), ShouldBeNil)
+
+						discover(setl1, &Dirent{Path: other, Inode: statOther.Ino},
+							&Dirent{Path: link1, Inode: statOther.Ino}, link2Dirent)
+
+						entry, erre := db.GetFileEntryForSet(setl1.ID(), link1)
+						So(erre, ShouldBeNil)
+						So(entry.Type, ShouldEqual, Hardlink)
+						So(entry.Dest, ShouldEqual, other)
+
+						keptOnInodeFile(setl1, link2)
+
+						setl2 := newSet("setlink2")
+						discover(setl2, link2Dirent)
+
+						keptOnInodeFile(setl2, link2)
+
+						So(os.Remove(link1), ShouldBeNil)
+						So(os.Link(local, link1), ShouldBeNil)
+
+						discover(setl1, &Dirent{Path: other, Inode: statOther.Ino}, link1Dirent, link2Dirent)
+
+						keptOnInodeFile(setl1, link1)
+					})
+
+					Convey("as does a new hardlink when only a later set has an up-to-date entry for the "+
+						"remaining one", func() {
+						remove(setl1, link2)
+
+						setl3 := newSet("setlink3")
+						discover(setl3, &Dirent{Path: link1, Inode: stat.Ino})
+
+						keptOnInodeFile(setl3, link1)
+
+						files, errf := db.GetFilesFromInode(stat.Ino, local)
+						So(errf, ShouldBeNil)
+						So(files, ShouldResemble, []string{"", link1})
+
+						setIDs, erra := db.GetAllSetsForFile(link1)
+						So(erra, ShouldBeNil)
+						So(len(setIDs), ShouldEqual, 2)
+
+						So(os.Remove(link1), ShouldBeNil)
+						discover(db.GetByID(setIDs[0]), &Dirent{Path: link1})
+						So(os.Link(local, link1), ShouldBeNil)
+
+						entry, erre := db.GetFileEntryForSet(setIDs[0], link1)
+						So(erre, ShouldBeNil)
+						So(entry.Inode, ShouldEqual, 0)
+
+						link3 := filepath.Join(tdir, "link3")
+						So(os.Link(local, link3), ShouldBeNil)
+
+						setl2 := newSet("setlink2")
+						discover(setl2, &Dirent{Path: link3, Inode: stat.Ino})
+
+						keptOnInodeFile(setl2, link3)
+					})
+
+					Convey("as does its re-added path, made a hardlink of itself that reuses its inode file", func() {
+						discover(setl1, fileDirents...)
+
+						for _, path := range []string{local, link1, link2} {
+							keptOnInodeFile(setl1, path)
+						}
+
+						files, errf := db.GetFilesFromInode(stat.Ino, local)
+						So(errf, ShouldBeNil)
+						So(files, ShouldResemble, []string{"", link1, link2, local})
+					})
+
+					Convey("as do its hardlinks once their own entries are for an earlier file that had the "+
+						"same inode, taking the original of the inode's new group instead", func() {
+						erru := db.db.Update(func(tx *bolt.Tx) error {
+							return tx.Bucket([]byte(inodeBucket)).Delete(db.inodeMountPointKeyFromDirent(link2Dirent))
+						})
+						So(erru, ShouldBeNil)
+
+						newOriginal := filepath.Join(tdir, "newOriginal")
+						newLink := filepath.Join(tdir, "newLink")
+
+						So(os.Link(local, newOriginal), ShouldBeNil)
+						So(os.Link(local, newLink), ShouldBeNil)
+
+						newOriginalDirent := &Dirent{Path: newOriginal, Inode: stat.Ino}
+						newLinkDirent := &Dirent{Path: newLink, Inode: stat.Ino}
+
+						setl2 := newSet("setlink2")
+						discover(setl2, newOriginalDirent)
+						discover(setl2, newOriginalDirent, newLinkDirent)
+						remove(setl2, newOriginal)
+
+						discover(setl1, fileDirents[1:]...)
+
+						for _, path := range []string{link1, link2} {
+							entry, erre := db.GetFileEntryForSet(setl1.ID(), path)
+							So(erre, ShouldBeNil)
+							So(entry.Type, ShouldEqual, Hardlink)
+							So(entry.Dest, ShouldEqual, newOriginal)
+							So(entry.InodeStoragePath(), ShouldEqual,
+								filepath.Join(newOriginal, strconv.FormatUint(stat.Ino, 10)))
+						}
+
+						files, errf := db.GetFilesFromInode(stat.Ino, local)
+						So(errf, ShouldBeNil)
+						So(files, ShouldResemble, []string{"", newLink, link1, link2})
+					})
+				})
+
+				Convey("then a hardlink whose inode record has a removed original that no set's entry knows "+
+					"becomes the original", func() {
+					stale := filepath.Join(tdir, "stale")
+					internal.CreateTestFile(t, stale, "a")
+
+					fresh := filepath.Join(tdir, "fresh")
+					So(os.Link(stale, fresh), ShouldBeNil)
+
+					info, errs = os.Stat(stale)
+					So(errs, ShouldBeNil)
+
+					statStale, oks := info.Sys().(*syscall.Stat_t)
+					So(oks, ShouldBeTrue)
+
+					staleFile := "0" + transformerInodeSeparator + stale
+
+					erru := db.db.Update(func(tx *bolt.Tx) error {
+						key := db.inodeMountPointKeyFromDirent(&Dirent{Path: stale, Inode: statStale.Ino})
+
+						return tx.Bucket([]byte(inodeBucket)).Put(key, db.encodeToBytes([]string{"", staleFile}))
+					})
+					So(erru, ShouldBeNil)
+
+					setl2 := &Set{Name: "setlink2", Requester: "jim", Transformer: setl1.Transformer}
+					So(db.AddOrUpdate(setl2), ShouldBeNil)
+
+					_, errd = db.Discover(setl2.ID(), func(_ []*Entry) ([]*Dirent, []*Dirent, error) {
+						return []*Dirent{{Path: fresh, Inode: statStale.Ino}}, nil, nil
+					})
+					So(errd, ShouldBeNil)
+
+					entry, erre := db.GetFileEntryForSet(setl2.ID(), fresh)
+					So(erre, ShouldBeNil)
+					So(entry.Type, ShouldEqual, Regular)
+					So(entry.InodeStoragePath(), ShouldBeBlank)
+
+					files, errf := db.GetFilesFromInode(statStale.Ino, stale)
+					So(errf, ShouldBeNil)
+					So(files, ShouldResemble, []string{fresh, stale})
+				})
+
+				Convey("then a file whose inode record has a removed original and its own path from a set "+
+					"with another transformer that no set has replaces that path as the original", func() {
+					ghost := filepath.Join(tdir, "ghost")
+					internal.CreateTestFile(t, ghost, "a")
+
+					ghostLink := filepath.Join(tdir, "ghostlink")
+					So(os.Link(ghost, ghostLink), ShouldBeNil)
+
+					info, errs = os.Stat(ghost)
+					So(errs, ShouldBeNil)
+
+					statGhost, okg := info.Sys().(*syscall.Stat_t)
+					So(okg, ShouldBeTrue)
+
+					setl2 := &Set{Name: "setlink2", Requester: "jim", Transformer: "prefix=" + tdir + ":/remote2"}
+					So(db.AddOrUpdate(setl2), ShouldBeNil)
+
+					discover := func(s *Set, dirents ...*Dirent) {
+						_, errd = db.Discover(s.ID(), func(_ []*Entry) ([]*Dirent, []*Dirent, error) {
+							return dirents, nil, nil
+						})
+						So(errd, ShouldBeNil)
+					}
+
+					discover(setl2)
+
+					erru := db.db.Update(func(tx *bolt.Tx) error {
+						id := tx.Bucket([]byte(transformerToIDBucket)).Get([]byte(setl2.Transformer))
+						key := db.inodeMountPointKeyFromDirent(&Dirent{Path: ghost, Inode: statGhost.Ino})
+						ghostFile := string(id) + transformerInodeSeparator + ghost
+
+						return tx.Bucket([]byte(inodeBucket)).Put(key, db.encodeToBytes([]string{"", ghostFile}))
+					})
+					So(erru, ShouldBeNil)
+
+					setl3 := &Set{Name: "setlink3", Requester: "jim", Transformer: setl1.Transformer}
+					So(db.AddOrUpdate(setl3), ShouldBeNil)
+
+					ghostDirent := &Dirent{Path: ghost, Inode: statGhost.Ino}
+					discover(setl3, ghostDirent)
+
+					entry, erre := db.GetFileEntryForSet(setl3.ID(), ghost)
+					So(erre, ShouldBeNil)
+					So(entry.Type, ShouldEqual, Regular)
+
+					files, errf := db.GetFilesFromInode(statGhost.Ino, ghost)
+					So(errf, ShouldBeNil)
+					So(files, ShouldResemble, []string{ghost})
+
+					discover(setl3, ghostDirent, &Dirent{Path: ghostLink, Inode: statGhost.Ino})
+
+					entry, erre = db.GetFileEntryForSet(setl3.ID(), ghostLink)
+					So(erre, ShouldBeNil)
+					So(entry.Type, ShouldEqual, Hardlink)
+					So(entry.Dest, ShouldEqual, ghost)
+
+					files, errf = db.GetFilesFromInode(statGhost.Ino, ghost)
+					So(errf, ShouldBeNil)
+					So(files, ShouldResemble, []string{ghost, ghostLink})
+
+					for _, path := range []string{ghostLink, ghost} {
+						entry, erre = db.GetFileEntryForSet(setl3.ID(), path)
+						So(erre, ShouldBeNil)
+
+						remReq := NewRemoveRequest(path, db.GetByID(setl3.ID()), false, ToRemove)
+
+						_, errr := db.RemoveFileEntry(&remReq, entry)
+						So(errr, ShouldBeNil)
+					}
+
+					files, errf = db.GetFilesFromInode(statGhost.Ino, ghost)
+					So(errf, ShouldBeNil)
+					So(files, ShouldBeEmpty)
+				})
+
+				Convey("then removing a hardlink added by a set with another transformer clears it from our inode record", func() {
+					link3 := filepath.Join(tdir, "link3")
+					err = os.Link(local, link3)
+					So(err, ShouldBeNil)
+
+					setl2 := &Set{
+						Name:        "setlink2",
+						Requester:   "jim",
+						Transformer: "prefix=" + tdir + ":/remote2",
+					}
+
+					err = db.AddOrUpdate(setl2)
+					So(err, ShouldBeNil)
+
+					_, errd = db.Discover(setl2.ID(), func(_ []*Entry) ([]*Dirent, []*Dirent, error) {
+						return []*Dirent{{Path: link3, Inode: stat.Ino}}, nil, nil
+					})
+					So(errd, ShouldBeNil)
+
+					for _, path := range []string{link3, local} {
+						setID := setl2.ID()
+						if path == local {
+							setID = setl1.ID()
+						}
+
+						entry, erre := db.GetFileEntryForSet(setID, path)
+						So(erre, ShouldBeNil)
+
+						remReq := NewRemoveRequest(path, db.GetByID(setID), false, ToRemove)
+
+						_, errr := db.RemoveFileEntry(&remReq, entry)
+						So(errr, ShouldBeNil)
+					}
+
+					files, errf := db.GetFilesFromInode(stat.Ino, local)
+					So(errf, ShouldBeNil)
+					So(files, ShouldNotContain, link3)
+					So(files, ShouldNotContain, local)
+					So(files, ShouldContain, link1)
+					So(files, ShouldContain, link2)
+				})
+
+				Convey("then removing a hardlink that a set with the same transformer still has keeps it in our "+
+					"inode record until that set removes it too", func() {
+					setl2 := &Set{
+						Name:        "setlink2",
+						Requester:   "jim",
+						Transformer: setl1.Transformer,
+					}
+
+					err = db.AddOrUpdate(setl2)
+					So(err, ShouldBeNil)
+
+					_, errd = db.Discover(setl2.ID(), func(_ []*Entry) ([]*Dirent, []*Dirent, error) {
+						return []*Dirent{{Path: link1, Inode: stat.Ino}}, nil, nil
+					})
+					So(errd, ShouldBeNil)
+
+					countLink1 := func() int {
+						files, errf := db.GetFilesFromInode(stat.Ino, local)
+						So(errf, ShouldBeNil)
+
+						n := 0
+
+						for _, file := range files {
+							if file == link1 {
+								n++
+							}
+						}
+
+						return n
+					}
+
+					remove := func(s *Set) {
+						entry, erre := db.GetFileEntryForSet(s.ID(), link1)
+						So(erre, ShouldBeNil)
+
+						remReq := NewRemoveRequest(link1, db.GetByID(s.ID()), false, ToRemove)
+
+						_, errr := db.RemoveFileEntry(&remReq, entry)
+						So(errr, ShouldBeNil)
+					}
+
+					So(countLink1(), ShouldEqual, 1)
+
+					remove(setl1)
+					So(countLink1(), ShouldEqual, 1)
+
+					remove(setl2)
+					So(countLink1(), ShouldEqual, 0)
+				})
+
+				Convey("then a file whose inode was reused by another set's removed file can still be removed", func() {
+					err = os.Remove(unlinked)
+					So(err, ShouldBeNil)
+
+					reused := filepath.Join(tdir, "reused")
+					internal.CreateTestFile(t, reused, "b")
+
+					setr := &Set{
+						Name:        "setreuse",
+						Requester:   "jim",
+						Transformer: "prefix=" + tdir + ":/remote",
+					}
+
+					err = db.AddOrUpdate(setr)
+					So(err, ShouldBeNil)
+
+					_, errd = db.Discover(setr.ID(), func(_ []*Entry) ([]*Dirent, []*Dirent, error) {
+						return []*Dirent{{Path: reused, Inode: statUnlinked.Ino}}, nil, nil
+					})
+					So(errd, ShouldBeNil)
+
+					entry, erre := db.GetFileEntryForSet(setr.ID(), reused)
+					So(erre, ShouldBeNil)
+
+					remReq := NewRemoveRequest(reused, db.GetByID(setr.ID()), false, ToRemove)
+					_, errr := db.RemoveFileEntry(&remReq, entry)
+					So(errr, ShouldBeNil)
+
+					entry, erre = db.GetFileEntryForSet(setl1.ID(), unlinked)
+					So(erre, ShouldBeNil)
+					So(entry.Inode, ShouldEqual, statUnlinked.Ino)
+
+					remReq = NewRemoveRequest(unlinked, db.GetByID(setl1.ID()), false, ToRemove)
+					removed, errr := db.RemoveFileEntry(&remReq, entry)
+					So(errr, ShouldBeNil)
+					So(removed.Path, ShouldEqual, unlinked)
+
+					got = db.GetByID(setl1.ID())
+					So(got.NumFiles, ShouldEqual, 3)
+					So(got.NumObjectsRemoved, ShouldEqual, 1)
+				})
+
+				Convey("then a file can still be removed after its mount point changes", func() {
+					entry, erre := db.GetFileEntryForSet(setl1.ID(), unlinked)
+					So(erre, ShouldBeNil)
+
+					db.mountList = append([]string{tdir}, db.mountList...)
+
+					remReq := NewRemoveRequest(unlinked, db.GetByID(setl1.ID()), false, ToRemove)
+					removed, errr := db.RemoveFileEntry(&remReq, entry)
+					So(errr, ShouldBeNil)
+					So(removed.Path, ShouldEqual, unlinked)
+
+					got = db.GetByID(setl1.ID())
+					So(got.NumFiles, ShouldEqual, 3)
+					So(got.NumObjectsRemoved, ShouldEqual, 1)
+				})
+
+				Convey("then a failure to clean up a removed file's inode record leaves its removal undone", func() {
+					erru := db.db.Update(func(tx *bolt.Tx) error {
+						key := db.inodeMountPointKeyFromDirent(&Dirent{Path: unlinked, Inode: statUnlinked.Ino})
+
+						return tx.Bucket([]byte(inodeBucket)).Put(key, db.encodeToBytes([]string{"corrupt"}))
+					})
+					So(erru, ShouldBeNil)
+
+					entry, erre := db.GetFileEntryForSet(setl1.ID(), unlinked)
+					So(erre, ShouldBeNil)
+
+					remReq := NewRemoveRequest(unlinked, db.GetByID(setl1.ID()), false, ToRemove)
+					So(db.SetRemoveRequests(setl1.ID(), []RemoveReq{remReq}), ShouldBeNil)
+
+					for range 2 {
+						_, errr := db.RemoveFileEntry(&remReq, entry)
+						So(errr, ShouldNotBeNil)
+						So(errr.Error(), ShouldContainSubstring, ErrInvalidTransformerPath)
+
+						_, erre = db.GetFileEntryForSet(setl1.ID(), unlinked)
+						So(erre, ShouldBeNil)
+
+						got = db.GetByID(setl1.ID())
+						So(got.NumFiles, ShouldEqual, 4)
+						So(got.NumObjectsRemoved, ShouldEqual, 0)
+
+						incomplete, erri := db.GetIncompleteRemoveRequests()
+						So(erri, ShouldBeNil)
+						So(incomplete, ShouldHaveLength, 1)
+					}
+				})
+
+				Convey("then a set with another transformer adding the same file gets a regular entry, "+
+					"and its real hardlinks are still hardlinks", func() {
+					link3 := filepath.Join(tdir, "link3")
+					err = os.Link(local, link3)
+					So(err, ShouldBeNil)
+
+					addSet := func(name, transformer string, dirents ...*Dirent) *Set {
+						s := &Set{Name: name, Requester: "jim", Transformer: transformer}
+
+						So(db.AddOrUpdate(s), ShouldBeNil)
+
+						_, errd = db.Discover(s.ID(), func(_ []*Entry) ([]*Dirent, []*Dirent, error) {
+							return dirents, nil, nil
+						})
+						So(errd, ShouldBeNil)
+
+						return s
+					}
+
+					setl2 := addSet("setlink2", "prefix="+tdir+":/remote2",
+						&Dirent{Path: unlinked, Inode: statUnlinked.Ino},
+						&Dirent{Path: link3, Inode: stat.Ino})
+
+					got = db.GetByID(setl2.ID())
+					So(got.Hardlinks, ShouldEqual, 1)
+
+					entry, erre := db.GetFileEntryForSet(setl2.ID(), unlinked)
+					So(erre, ShouldBeNil)
+					So(entry.Type, ShouldEqual, Regular)
+					So(entry.InodeStoragePath(), ShouldBeBlank)
+
+					entry, erre = db.GetFileEntryForSet(setl2.ID(), link3)
+					So(erre, ShouldBeNil)
+					So(entry.Type, ShouldEqual, Hardlink)
+					So(entry.InodeStoragePath(), ShouldEqual, filepath.Join(local, strconv.FormatUint(stat.Ino, 10)))
+
+					files, errf := db.GetFilesFromInode(statUnlinked.Ino, unlinked)
+					So(errf, ShouldBeNil)
+					So(files, ShouldResemble, []string{unlinked})
+
+					Convey("and once both sets remove it, no inode record of it remains", func() {
+						for _, s := range []*Set{setl1, setl2} {
+							entry, erre = db.GetFileEntryForSet(s.ID(), unlinked)
+							So(erre, ShouldBeNil)
+
+							remReq := NewRemoveRequest(unlinked, db.GetByID(s.ID()), false, ToRemove)
+
+							_, errr := db.RemoveFileEntry(&remReq, entry)
+							So(errr, ShouldBeNil)
+						}
+
+						files, errf = db.GetFilesFromInode(statUnlinked.Ino, unlinked)
+						So(errf, ShouldBeNil)
+						So(files, ShouldBeEmpty)
+
+						setl3 := addSet("setlink3", setl1.Transformer, &Dirent{Path: unlinked, Inode: statUnlinked.Ino})
+
+						entry, erre = db.GetFileEntryForSet(setl3.ID(), unlinked)
+						So(erre, ShouldBeNil)
+						So(entry.Type, ShouldEqual, Regular)
+						So(db.GetByID(setl3.ID()).Hardlinks, ShouldEqual, 0)
+					})
+				})
+
 				// Test does not work, not clear how to implement
 				SkipConvey("then previously seen moved files get treated as hardlinks", func() {
 					moved := filepath.Join(dir, "moved")
@@ -1884,7 +2861,7 @@ func TestSetDB(t *testing.T) {
 				So(entries[0].Type, ShouldEqual, Regular)
 
 				Convey("then rediscover the set and still know about the missing file", func() {
-					got, errb := db.Discover(setl1.ID(), nil)
+					got, errb = db.Discover(setl1.ID(), nil)
 					So(got, ShouldNotBeNil)
 					So(errb, ShouldBeNil)
 					So(got.Missing, ShouldEqual, 1)
@@ -2103,7 +3080,7 @@ func TestSetDB(t *testing.T) {
 				So(entries[0].Type, ShouldEqual, Abnormal)
 
 				Convey("then rediscover the set and still know about the abnormal file", func() {
-					got, errb := db.Discover(setl1.ID(), nil)
+					got, errb = db.Discover(setl1.ID(), nil)
 					So(got, ShouldNotBeNil)
 					So(errb, ShouldBeNil)
 					So(got.Abnormal, ShouldEqual, 1)
@@ -2194,11 +3171,83 @@ func TestSetDB(t *testing.T) {
 				})
 			})
 
+			Convey("And add a directory set with a nested folder", func() {
+				setl1 := &Set{
+					Name:        "nesteddir",
+					Requester:   "jim",
+					Transformer: "prefix=/local:/remote",
+				}
+
+				So(db.AddOrUpdate(setl1), ShouldBeNil)
+
+				dir1 := t.TempDir()
+				dir2 := filepath.Join(dir1, "dir2")
+				So(os.Mkdir(dir2, userPerms), ShouldBeNil)
+
+				file := filepath.Join(dir2, "file")
+				internal.CreateTestFile(t, file, "a")
+
+				So(db.MergeDirEntries(setl1.ID(), []*Dirent{{Path: dir1, Mode: os.ModeDir}}), ShouldBeNil)
+
+				got, errd := db.Discover(setl1.ID(), func([]*Entry) ([]*Dirent, []*Dirent, error) {
+					return []*Dirent{newDirentFromPath(file)}, []*Dirent{{Path: dir2, Mode: os.ModeDir}}, nil
+				})
+				So(errd, ShouldBeNil)
+				So(got.NumFiles, ShouldEqual, 1)
+
+				trashSet := BuildTrashSetFromSet(setl1)
+
+				trashSubfolder := func() {
+					removeFileEntryAndCount(db, setl1.ID(), file)
+
+					remReq := NewRemoveRequest(dir2, db.GetByID(setl1.ID()), true, ToTrash)
+					So(db.RemoveDirEntry(&remReq), ShouldBeNil)
+
+					got = db.GetByID(setl1.ID())
+					So(got.Error, ShouldBeBlank)
+					So(got.NumFiles, ShouldEqual, 0)
+					So(got.NumObjectsRemoved, ShouldEqual, 2)
+
+					files, errg := db.GetFileEntries(setl1.ID(), nil)
+					So(errg, ShouldBeNil)
+					So(files, ShouldBeEmpty)
+
+					dirs, errg := db.GetAllDirEntries(setl1.ID())
+					So(errg, ShouldBeNil)
+					So(dirs, ShouldHaveLength, 1)
+					So(dirs[0].Path, ShouldEqual, dir1)
+
+					trashed, errg := db.GetFileEntries(trashSet.ID(), nil)
+					So(errg, ShouldBeNil)
+					So(trashed, ShouldHaveLength, 1)
+					So(trashed[0].Path, ShouldEqual, file)
+
+					trashedDirs, errg := db.GetAllDirEntries(trashSet.ID())
+					So(errg, ShouldBeNil)
+					So(trashedDirs, ShouldHaveLength, 1)
+					So(trashedDirs[0].Path, ShouldEqual, dir2)
+
+					_, dirPaths, errv := db.ValidateFileAndDirPaths(&trashSet, []string{dir2})
+					So(errv, ShouldBeNil)
+					So(dirPaths, ShouldResemble, []string{dir2})
+				}
+
+				Convey("then trash the subfolder, which moves it to the trash", func() {
+					trashSubfolder()
+				})
+
+				Convey("then, as a legacy set without discovered folders, trash the subfolder", func() {
+					So(db.DeleteDiscoveredFoldersBucket(setl1.ID()), ShouldBeNil)
+
+					trashSubfolder()
+				})
+			})
+
 			Convey("And add a frozen set", func() {
 				setl1 := &Set{
 					Name:        "freeze",
 					Requester:   "jim",
-					Transformer: "prefix=/tmp:/remote",
+					Transformer: tmpRemoteTransformer,
 					Frozen:      true,
 				}
 
@@ -2214,8 +3263,8 @@ func TestSetDB(t *testing.T) {
 				_, err = db.Discover(setl1.ID(), nil)
 				So(err, ShouldBeNil)
 
-				entries, err := db.GetPureFileEntries(setl1.ID())
-				So(err, ShouldBeNil)
+				entries, errp := db.GetPureFileEntries(setl1.ID())
+				So(errp, ShouldBeNil)
 				So(len(entries), ShouldEqual, 1)
 				So(entries[0].Inode, ShouldNotEqual, 0)
 
@@ -2253,6 +3302,707 @@ func TestSetDB(t *testing.T) {
 					So(len(entries), ShouldEqual, 2)
 					So(entries[0].Inode, ShouldNotEqual, oldInode)
 				})
+			})
+
+			Convey("And add a frozen set whose uploaded file is deleted locally, rediscovery stores and counts "+
+				"it as orphaned", func() {
+				setl1 := &Set{
+					Name:        "frozenOrphan",
+					Requester:   "jim",
+					Transformer: tmpRemoteTransformer,
+					Frozen:      true,
+				}
+
+				So(db.AddOrUpdate(setl1), ShouldBeNil)
+
+				aFile := filepath.Join(t.TempDir(), "a")
+				internal.CreateTestFile(t, aFile, "a")
+
+				So(db.MergeFileEntries(setl1.ID(), []string{aFile}), ShouldBeNil)
+
+				_, err = db.Discover(setl1.ID(), nil)
+				So(err, ShouldBeNil)
+
+				entries, errg := db.GetPureFileEntries(setl1.ID())
+				So(errg, ShouldBeNil)
+				So(len(entries), ShouldEqual, 1)
+
+				setEntryToStatusWithSize(entries[0], setl1, db, transfer.RequestStatusUploaded, 3)
+
+				got := db.GetByID(setl1.ID())
+				So(got.Uploaded, ShouldEqual, 1)
+				So(got.Status, ShouldEqual, Complete)
+				So(got.SizeTotal, ShouldEqual, 3)
+
+				So(os.Remove(aFile), ShouldBeNil)
+
+				got, err = db.Discover(setl1.ID(), nil)
+				So(err, ShouldBeNil)
+				So(got.NumFiles, ShouldEqual, 1)
+				So(got.Orphaned, ShouldEqual, 1)
+				So(got.Uploaded, ShouldEqual, 0)
+				So(got.Status, ShouldEqual, Complete)
+				So(got.SizeTotal, ShouldEqual, 3)
+				So(got.SizeUploaded, ShouldEqual, 0)
+				So(got.LastCompletedSize, ShouldEqual, 3)
+
+				entry, errg := db.GetFileEntryForSet(setl1.ID(), aFile)
+				So(errg, ShouldBeNil)
+				So(entry.Status, ShouldEqual, Orphaned)
+				So(entry.ShouldUpload(got), ShouldBeFalse)
+
+				Convey("then removing it leaves consistent counts", func() {
+					removed := removeFileEntryAndCount(db, setl1.ID(), aFile)
+					So(removed.Status, ShouldEqual, Orphaned)
+
+					got = db.GetByID(setl1.ID())
+					So(got.NumFiles, ShouldEqual, 0)
+					So(got.Orphaned, ShouldEqual, 0)
+					So(got.Uploaded, ShouldEqual, 0)
+					So(got.NumObjectsRemoved, ShouldEqual, 1)
+					So(got.SizeTotal, ShouldEqual, 0)
+				})
+
+				Convey("then rediscovering it while still deleted keeps it orphaned", func() {
+					got, err = db.Discover(setl1.ID(), nil)
+					So(err, ShouldBeNil)
+					So(got.NumFiles, ShouldEqual, 1)
+					So(got.Orphaned, ShouldEqual, 1)
+					So(got.Missing, ShouldEqual, 0)
+
+					entry, errg = db.GetFileEntryForSet(setl1.ID(), aFile)
+					So(errg, ShouldBeNil)
+					So(entry.Status, ShouldEqual, Orphaned)
+				})
+
+				Convey("then restoring it locally and rediscovering doesn't upload it again, and counts it orphaned",
+					func() {
+						internal.CreateTestFile(t, aFile, "changed")
+
+						got, err = db.Discover(setl1.ID(), nil)
+						So(err, ShouldBeNil)
+						So(got.NumFiles, ShouldEqual, 1)
+						So(got.Orphaned, ShouldEqual, 1)
+						So(got.Uploaded, ShouldEqual, 0)
+						So(got.Status, ShouldEqual, Complete)
+						So(got.SizeTotal, ShouldEqual, 3)
+						So(got.SizeUploaded, ShouldEqual, 0)
+
+						entry, errg = db.GetFileEntryForSet(setl1.ID(), aFile)
+						So(errg, ShouldBeNil)
+						So(entry.Status, ShouldEqual, Orphaned)
+						So(entry.ShouldUpload(got), ShouldBeFalse)
+
+						Convey("and removing it leaves consistent counts", func() {
+							removeFileEntryAndCount(db, setl1.ID(), aFile)
+
+							got = db.GetByID(setl1.ID())
+							So(got.NumFiles, ShouldEqual, 0)
+							So(got.Orphaned, ShouldEqual, 0)
+							So(got.Uploaded, ShouldEqual, 0)
+							So(got.SizeTotal, ShouldEqual, 0)
+						})
+					})
+			})
+
+			Convey("And add a frozen set whose uploaded files still exist, rediscovery counts them by their "+
+				"stored status without uploading them again", func() {
+				setl1 := &Set{
+					Name:        "frozenExisting",
+					Requester:   "jim",
+					Transformer: tmpRemoteTransformer,
+					Frozen:      true,
+				}
+
+				So(db.AddOrUpdate(setl1), ShouldBeNil)
+
+				dir := t.TempDir()
+				uploaded := filepath.Join(dir, "uploaded")
+				replaced := filepath.Join(dir, "replaced")
+				skipped := filepath.Join(dir, "skipped")
+				paths := []string{uploaded, replaced, skipped}
+				sizes := map[string]uint64{uploaded: 3, replaced: 5, skipped: 7}
+
+				for _, path := range paths {
+					internal.CreateTestFile(t, path, "a")
+				}
+
+				So(db.MergeFileEntries(setl1.ID(), paths), ShouldBeNil)
+
+				_, err = db.Discover(setl1.ID(), nil)
+				So(err, ShouldBeNil)
+
+				setResult := func(path string, status transfer.RequestStatus) *Set {
+					for _, s := range []transfer.RequestStatus{transfer.RequestStatusUploading, status} {
+						_, errs := db.SetEntryStatus(&transfer.Request{
+							Local:     path,
+							Requester: setl1.Requester,
+							Set:       setl1.Name,
+							Size:      sizes[path],
+							Status:    s,
+						})
+						So(errs, ShouldBeNil)
+					}
+
+					return db.GetByID(setl1.ID())
+				}
+
+				setResult(uploaded, transfer.RequestStatusUploaded)
+				setResult(replaced, transfer.RequestStatusReplaced)
+				got := setResult(skipped, transfer.RequestStatusUnmodified)
+
+				checkCounts := func(got *Set) {
+					So(got.NumFiles, ShouldEqual, 3)
+					So(got.Uploaded, ShouldEqual, 1)
+					So(got.Replaced, ShouldEqual, 1)
+					So(got.Skipped, ShouldEqual, 1)
+					So(got.Orphaned, ShouldEqual, 0)
+					So(got.Status, ShouldEqual, Complete)
+
+					// The skipped file's size isn't counted as uploaded.
+					So(got.SizeTotal, ShouldEqual, 15)
+					So(got.SizeUploaded, ShouldEqual, 8)
+					So(got.LastCompletedSize, ShouldEqual, 15)
+				}
+
+				checkCounts(got)
+
+				internal.CreateTestFile(t, uploaded, "changed")
+
+				got, err = db.Discover(setl1.ID(), nil)
+				So(err, ShouldBeNil)
+				checkCounts(got)
+
+				expected := map[string]EntryStatus{uploaded: Uploaded, replaced: Replaced, skipped: Skipped}
+
+				for _, path := range paths {
+					entry, errg := db.GetFileEntryForSet(setl1.ID(), path)
+					So(errg, ShouldBeNil)
+					So(entry.Status, ShouldEqual, expected[path])
+					So(entry.ShouldUpload(got), ShouldBeFalse)
+				}
+
+				Convey("then rediscovering again counts them once", func() {
+					got, err = db.Discover(setl1.ID(), nil)
+					So(err, ShouldBeNil)
+					checkCounts(got)
+				})
+
+				Convey("then removing them leaves all counts and the total size at zero", func() {
+					for _, path := range paths {
+						removeFileEntryAndCount(db, setl1.ID(), path)
+					}
+
+					got = db.GetByID(setl1.ID())
+					So(got.NumFiles, ShouldEqual, 0)
+					So(got.Uploaded, ShouldEqual, 0)
+					So(got.Replaced, ShouldEqual, 0)
+					So(got.Skipped, ShouldEqual, 0)
+					So(got.Orphaned, ShouldEqual, 0)
+					So(got.NumObjectsRemoved, ShouldEqual, 3)
+					So(got.SizeRemoved, ShouldEqual, 15)
+					So(got.SizeTotal, ShouldEqual, 0)
+
+					// As for removing files counted by upload results, the data
+					// uploaded and last completed size are history, so are kept.
+					So(got.SizeUploaded, ShouldEqual, 8)
+					So(got.LastCompletedSize, ShouldEqual, 15)
+				})
+
+				Convey("then replacing one with an abnormal file counts it only as abnormal", func() {
+					So(os.Remove(uploaded), ShouldBeNil)
+					So(syscall.Mkfifo(uploaded, userPerms), ShouldBeNil)
+
+					got, err = db.Discover(setl1.ID(), nil)
+					So(err, ShouldBeNil)
+					So(got.NumFiles, ShouldEqual, 3)
+					So(got.Abnormal, ShouldEqual, 1)
+					So(got.Uploaded, ShouldEqual, 0)
+					So(got.Replaced, ShouldEqual, 1)
+					So(got.Skipped, ShouldEqual, 1)
+					So(got.Status, ShouldEqual, Complete)
+					So(got.SizeTotal, ShouldEqual, 12)
+					So(got.SizeUploaded, ShouldEqual, 5)
+					So(got.LastCompletedSize, ShouldEqual, 12)
+				})
+
+				Convey("then adding a new file completes once only that file is uploaded", func() {
+					newFile := filepath.Join(dir, "new")
+					internal.CreateTestFile(t, newFile, "b")
+					sizes[newFile] = 2
+
+					So(db.MergeFileEntries(setl1.ID(), append(paths, newFile)), ShouldBeNil)
+
+					got, err = db.Discover(setl1.ID(), nil)
+					So(err, ShouldBeNil)
+					So(got.NumFiles, ShouldEqual, 4)
+					So(got.Uploaded, ShouldEqual, 1)
+					So(got.Status, ShouldEqual, PendingUpload)
+					So(got.SizeTotal, ShouldEqual, 15)
+					So(got.LastCompletedSize, ShouldEqual, 15)
+
+					entry, errg := db.GetFileEntryForSet(setl1.ID(), newFile)
+					So(errg, ShouldBeNil)
+					So(entry.ShouldUpload(got), ShouldBeTrue)
+
+					got = setResult(newFile, transfer.RequestStatusUploaded)
+					So(got.Uploaded, ShouldEqual, 2)
+					So(got.Replaced, ShouldEqual, 1)
+					So(got.Skipped, ShouldEqual, 1)
+					So(got.Status, ShouldEqual, Complete)
+					So(got.SizeTotal, ShouldEqual, 17)
+					So(got.SizeUploaded, ShouldEqual, 10)
+					So(got.LastCompletedSize, ShouldEqual, 17)
+				})
+			})
+
+			Convey("And add a frozen set with an uploaded file, then unfreeze it after rediscovery, the file's "+
+				"upload result replaces its discovered count and size", func() {
+				setl1 := &Set{
+					Name:        "frozenThenUnfrozen",
+					Requester:   "jim",
+					Transformer: tmpRemoteTransformer,
+					Frozen:      true,
+				}
+
+				So(db.AddOrUpdate(setl1), ShouldBeNil)
+
+				aFile := filepath.Join(t.TempDir(), "a")
+				internal.CreateTestFile(t, aFile, "a")
+
+				So(db.MergeFileEntries(setl1.ID(), []string{aFile}), ShouldBeNil)
+
+				_, err = db.Discover(setl1.ID(), nil)
+				So(err, ShouldBeNil)
+
+				entries, errg := db.GetPureFileEntries(setl1.ID())
+				So(errg, ShouldBeNil)
+				So(len(entries), ShouldEqual, 1)
+
+				setEntryToStatusWithSize(entries[0], setl1, db, transfer.RequestStatusUploaded, 3)
+
+				got, errd := db.Discover(setl1.ID(), nil)
+				So(errd, ShouldBeNil)
+				So(got.Uploaded, ShouldEqual, 1)
+				So(got.Status, ShouldEqual, Complete)
+				So(got.SizeTotal, ShouldEqual, 3)
+				So(got.SizeUploaded, ShouldEqual, 3)
+
+				setl1.Frozen = false
+				So(db.AddOrUpdate(setl1), ShouldBeNil)
+
+				Convey("when it is uploaded again", func() {
+					setEntryToStatusWithSize(entries[0], setl1, db, transfer.RequestStatusUploaded, 10)
+
+					got = db.GetByID(setl1.ID())
+					So(got.NumFiles, ShouldEqual, 1)
+					So(got.Uploaded, ShouldEqual, 1)
+					So(got.Skipped, ShouldEqual, 0)
+					So(got.Status, ShouldEqual, Complete)
+					So(got.SizeTotal, ShouldEqual, 10)
+					So(got.SizeUploaded, ShouldEqual, 10)
+					So(got.LastCompletedSize, ShouldEqual, 10)
+				})
+
+				Convey("when it is skipped as unmodified", func() {
+					setEntryToStatusWithSize(entries[0], setl1, db, transfer.RequestStatusUnmodified, 10)
+
+					got = db.GetByID(setl1.ID())
+					So(got.NumFiles, ShouldEqual, 1)
+					So(got.Uploaded, ShouldEqual, 0)
+					So(got.Skipped, ShouldEqual, 1)
+					So(got.Status, ShouldEqual, Complete)
+					So(got.SizeTotal, ShouldEqual, 10)
+					So(got.SizeUploaded, ShouldEqual, 0)
+					So(got.LastCompletedSize, ShouldEqual, 10)
+				})
+			})
+
+			Convey("And add a set whose uploaded file is replaced by an abnormal one, removing it after "+
+				"rediscovery leaves counts and the total size at zero", func() {
+				setl1 := &Set{
+					Name:        "uploadedThenAbnormal",
+					Requester:   "jim",
+					Transformer: tmpRemoteTransformer,
+				}
+
+				So(db.AddOrUpdate(setl1), ShouldBeNil)
+
+				aFile := filepath.Join(t.TempDir(), "a")
+				internal.CreateTestFile(t, aFile, "a")
+
+				So(db.MergeFileEntries(setl1.ID(), []string{aFile}), ShouldBeNil)
+
+				_, err = db.Discover(setl1.ID(), nil)
+				So(err, ShouldBeNil)
+
+				entries, errg := db.GetPureFileEntries(setl1.ID())
+				So(errg, ShouldBeNil)
+				So(len(entries), ShouldEqual, 1)
+
+				setEntryToStatusWithSize(entries[0], setl1, db, transfer.RequestStatusUploaded, 3)
+
+				So(os.Remove(aFile), ShouldBeNil)
+				So(syscall.Mkfifo(aFile, userPerms), ShouldBeNil)
+
+				got, errd := db.Discover(setl1.ID(), nil)
+				So(errd, ShouldBeNil)
+				So(got.NumFiles, ShouldEqual, 1)
+				So(got.Abnormal, ShouldEqual, 1)
+				So(got.Uploaded, ShouldEqual, 0)
+				So(got.SizeTotal, ShouldEqual, 0)
+
+				entry, errg := db.GetFileEntryForSet(setl1.ID(), aFile)
+				So(errg, ShouldBeNil)
+				So(entry.Type, ShouldEqual, Abnormal)
+				So(entry.Size, ShouldEqual, 3)
+
+				removeFileEntryAndCount(db, setl1.ID(), aFile)
+
+				got = db.GetByID(setl1.ID())
+				So(got.NumFiles, ShouldEqual, 0)
+				So(got.Abnormal, ShouldEqual, 0)
+				So(got.SizeTotal, ShouldEqual, 0)
+			})
+
+			for _, frozen := range []bool{true, false} {
+				Convey(fmt.Sprintf("And add a set (frozen: %v) whose skipped and replaced files are deleted "+
+					"locally, rediscovery stores and counts them as orphaned", frozen), func() {
+					setl1 := &Set{
+						Name:        fmt.Sprintf("skipRepOrphan%v", frozen),
+						Requester:   "jim",
+						Transformer: tmpRemoteTransformer,
+						Frozen:      frozen,
+					}
+
+					So(db.AddOrUpdate(setl1), ShouldBeNil)
+
+					dir := t.TempDir()
+					skipped := filepath.Join(dir, "skipped")
+					replaced := filepath.Join(dir, "replaced")
+
+					internal.CreateTestFile(t, skipped, "a")
+					internal.CreateTestFile(t, replaced, "b")
+
+					So(db.MergeFileEntries(setl1.ID(), []string{skipped, replaced}), ShouldBeNil)
+
+					_, err = db.Discover(setl1.ID(), nil)
+					So(err, ShouldBeNil)
+
+					sizes := map[string]uint64{skipped: 3, replaced: 5}
+
+					setResult := func(path string, statuses ...transfer.RequestStatus) *Set {
+						for _, status := range statuses {
+							_, errs := db.SetEntryStatus(&transfer.Request{
+								Local:     path,
+								Requester: setl1.Requester,
+								Set:       setl1.Name,
+								Size:      sizes[path],
+								Status:    status,
+							})
+							So(errs, ShouldBeNil)
+						}
+
+						return db.GetByID(setl1.ID())
+					}
+
+					setResult(skipped, transfer.RequestStatusUploading, transfer.RequestStatusUnmodified)
+					got := setResult(replaced, transfer.RequestStatusUploading, transfer.RequestStatusReplaced)
+					So(got.Skipped, ShouldEqual, 1)
+					So(got.Replaced, ShouldEqual, 1)
+					So(got.Status, ShouldEqual, Complete)
+					So(got.SizeTotal, ShouldEqual, 8)
+					So(got.SizeUploaded, ShouldEqual, 5)
+
+					So(os.Remove(skipped), ShouldBeNil)
+					So(os.Remove(replaced), ShouldBeNil)
+
+					got, err = db.Discover(setl1.ID(), nil)
+					So(err, ShouldBeNil)
+					So(got.NumFiles, ShouldEqual, 2)
+					So(got.Orphaned, ShouldEqual, 2)
+					So(got.Missing, ShouldEqual, 0)
+					So(got.Skipped, ShouldEqual, 0)
+					So(got.Replaced, ShouldEqual, 0)
+					So(got.SizeTotal, ShouldEqual, 8)
+					So(got.SizeUploaded, ShouldEqual, 0)
+					So(got.LastCompletedSize, ShouldEqual, 8)
+
+					for _, path := range []string{skipped, replaced} {
+						entry, errg := db.GetFileEntryForSet(setl1.ID(), path)
+						So(errg, ShouldBeNil)
+						So(entry.Status, ShouldEqual, Orphaned)
+					}
+
+					Convey("then removing them leaves counts and the total size at zero", func() {
+						for _, path := range []string{skipped, replaced} {
+							removeFileEntryAndCount(db, setl1.ID(), path)
+						}
+
+						got = db.GetByID(setl1.ID())
+						So(got.NumFiles, ShouldEqual, 0)
+						So(got.Orphaned, ShouldEqual, 0)
+						So(got.SizeTotal, ShouldEqual, 0)
+						So(got.SizeUploaded, ShouldEqual, 0)
+					})
+
+					if frozen {
+						return
+					}
+
+					Convey("then their orphaned results replace their discovered counts and sizes", func() {
+						got = setResult(skipped, transfer.RequestStatusOrphaned)
+						So(got.Orphaned, ShouldEqual, 2)
+						So(got.Missing, ShouldEqual, 0)
+						So(got.SizeTotal, ShouldEqual, 8)
+
+						got = setResult(replaced, transfer.RequestStatusOrphaned)
+						So(got.Orphaned, ShouldEqual, 2)
+						So(got.Missing, ShouldEqual, 0)
+						So(got.Status, ShouldEqual, Complete)
+						So(got.SizeTotal, ShouldEqual, 8)
+						So(got.SizeUploaded, ShouldEqual, 0)
+						So(got.LastCompletedSize, ShouldEqual, 8)
+
+						for _, path := range []string{skipped, replaced} {
+							removeFileEntryAndCount(db, setl1.ID(), path)
+						}
+
+						got = db.GetByID(setl1.ID())
+						So(got.NumFiles, ShouldEqual, 0)
+						So(got.Orphaned, ShouldEqual, 0)
+						So(got.SizeTotal, ShouldEqual, 0)
+					})
+				})
+			}
+
+			for _, frozen := range []bool{false, true} {
+				Convey(fmt.Sprintf("And add a set (frozen: %v) with an uploaded file and a file still uploading, "+
+					"upload results that arrive during rediscovery are counted once", frozen), func() {
+					setl1 := &Set{
+						Name:        fmt.Sprintf("resultsDuringDiscovery%v", frozen),
+						Requester:   "jim",
+						Transformer: tmpRemoteTransformer,
+						Frozen:      frozen,
+					}
+
+					So(db.AddOrUpdate(setl1), ShouldBeNil)
+
+					dir := t.TempDir()
+					done := filepath.Join(dir, "done")
+					inFlight := filepath.Join(dir, "inFlight")
+					sizes := map[string]uint64{done: 3, inFlight: 5}
+
+					for path := range sizes {
+						internal.CreateTestFile(t, path, "a")
+					}
+
+					So(db.MergeFileEntries(setl1.ID(), []string{done, inFlight}), ShouldBeNil)
+
+					_, err = db.Discover(setl1.ID(), nil)
+					So(err, ShouldBeNil)
+
+					setResult := func(path string, statuses ...transfer.RequestStatus) {
+						for _, status := range statuses {
+							_, errs := db.SetEntryStatus(&transfer.Request{
+								Local:     path,
+								Requester: setl1.Requester,
+								Set:       setl1.Name,
+								Size:      sizes[path],
+								Status:    status,
+							})
+							So(errs, ShouldBeNil)
+						}
+					}
+
+					upload := []transfer.RequestStatus{transfer.RequestStatusUploading, transfer.RequestStatusUploaded}
+
+					setResult(done, upload...)
+					setResult(inFlight, transfer.RequestStatusUploading)
+
+					// rediscover does what Discover does, calling before once
+					// discovery has started and after once it has processed the
+					// set's files, but before it completes.
+					rediscover := func(before, after func()) *Set {
+						So(db.SetDiscoveryStarted(setl1.ID()), ShouldBeNil)
+						before()
+						So(db.statPureFileEntries(setl1.ID()), ShouldBeNil)
+						after()
+
+						got, errd := db.setDiscoveredEntries(setl1.ID(), nil, nil)
+						So(errd, ShouldBeNil)
+
+						return got
+					}
+
+					nothing := func() {}
+					inFlightUploaded := func() { setResult(inFlight, transfer.RequestStatusUploaded) }
+
+					// uploadQueued gives the results of uploading every file
+					// the server would queue after discovery, returning how
+					// many there were.
+					uploadQueued := func(got *Set) uint64 {
+						entries, errg := db.GetFileEntries(setl1.ID(), func(e *Entry) bool {
+							return e.ShouldUpload(got)
+						})
+						So(errg, ShouldBeNil)
+
+						for _, entry := range entries {
+							setResult(entry.Path, upload...)
+						}
+
+						return uint64(len(entries))
+					}
+
+					checkComplete := func(got *Set) {
+						So(got.NumFiles, ShouldEqual, 2)
+						So(got.Uploaded, ShouldEqual, 2)
+						So(got.Failed, ShouldEqual, 0)
+						So(got.SizeTotal, ShouldEqual, 8)
+						So(got.SizeUploaded, ShouldEqual, 8)
+						So(got.Status, ShouldEqual, Complete)
+					}
+
+					// checkDiscovered checks that an unfrozen set's files, which
+					// are queued again, are pending however their results
+					// arrived during discovery.
+					checkDiscovered := func(got *Set) {
+						So(got.NumFiles, ShouldEqual, 2)
+
+						if frozen {
+							checkComplete(got)
+							So(uploadQueued(got), ShouldEqual, 0)
+						} else {
+							So(got.Uploaded, ShouldEqual, 0)
+							So(got.SizeTotal, ShouldEqual, 0)
+							So(got.SizeUploaded, ShouldEqual, 0)
+							So(got.Status, ShouldEqual, PendingUpload)
+							So(uploadQueued(got), ShouldEqual, 2)
+						}
+
+						checkComplete(db.GetByID(setl1.ID()))
+					}
+
+					Convey("when a result arrives before discovery processes its file", func() {
+						checkDiscovered(rediscover(inFlightUploaded, nothing))
+					})
+
+					Convey("when a result arrives after discovery processes its file", func() {
+						checkDiscovered(rediscover(nothing, inFlightUploaded))
+					})
+
+					Convey("when every file's result arrives after discovery processes it, the set completes "+
+						"once, after any uploads queued again", func() {
+						slackWriter.Reset()
+
+						checkDiscovered(rediscover(nothing, func() {
+							setResult(done, upload...)
+							inFlightUploaded()
+						}))
+
+						So(strings.Count(slackWriter.String(), "completed backup"), ShouldEqual, 1)
+					})
+
+					Convey("when repeated failures arrive during discovery, they aren't counted once the file "+
+						"is queued again, and the retry's result counts it", func() {
+						got := rediscover(nothing, func() {
+							setResult(inFlight, transfer.RequestStatusFailed, transfer.RequestStatusFailed)
+						})
+						So(got.NumFiles, ShouldEqual, 2)
+						So(got.Failed, ShouldEqual, 0)
+						So(got.Uploaded, ShouldEqual, boolToUint64(frozen))
+						So(got.SizeTotal, ShouldEqual, sizes[done]*boolToUint64(frozen))
+						So(uploadQueued(got), ShouldEqual, 2-boolToUint64(frozen))
+
+						checkComplete(db.GetByID(setl1.ID()))
+					})
+
+					Convey("when a file is deleted before rediscovery and the other's result arrives after "+
+						"discovery processes it, the deleted file stays counted missing", func() {
+						So(os.Remove(inFlight), ShouldBeNil)
+
+						got := rediscover(nothing, func() { setResult(done, upload...) })
+						So(got.NumFiles, ShouldEqual, 2)
+						So(got.Missing, ShouldEqual, 1)
+						So(got.Uploaded, ShouldEqual, boolToUint64(frozen))
+						So(got.SizeTotal, ShouldEqual, sizes[done]*boolToUint64(frozen))
+					})
+
+					Convey("when a file counted by a result during discovery is then removed", func() {
+						got := rediscover(func() {
+							inFlightUploaded()
+							removeFileEntryAndCount(db, setl1.ID(), inFlight)
+						}, nothing)
+						So(got.NumFiles, ShouldEqual, 1)
+						So(got.Uploaded, ShouldEqual, boolToUint64(frozen))
+						So(got.SizeTotal, ShouldEqual, sizes[done]*boolToUint64(frozen))
+
+						uploadQueued(got)
+
+						got = db.GetByID(setl1.ID())
+						So(got.NumFiles, ShouldEqual, 1)
+						So(got.Uploaded, ShouldEqual, 1)
+						So(got.SizeTotal, ShouldEqual, sizes[done])
+						So(got.Status, ShouldEqual, Complete)
+					})
+				})
+			}
+
+			Convey("And add a directory set, an upload result that arrives after rediscovery processes its "+
+				"file leaves it pending, and it completes once, after the upload queued again", func() {
+				setl1 := &Set{Name: "dirResultDuringDiscovery", Requester: "jim", Transformer: tmpRemoteTransformer}
+				So(db.AddOrUpdate(setl1), ShouldBeNil)
+
+				dir := t.TempDir()
+				path := filepath.Join(dir, "file")
+				internal.CreateTestFile(t, path, "abc")
+
+				So(db.MergeDirEntries(setl1.ID(), []*Dirent{newDirentFromPath(dir)}), ShouldBeNil)
+
+				fileDirents := []*Dirent{newDirentFromPath(path)}
+
+				_, err = db.Discover(setl1.ID(), func(_ []*Entry) ([]*Dirent, []*Dirent, error) {
+					return fileDirents, nil, nil
+				})
+				So(err, ShouldBeNil)
+
+				uploaded := func() {
+					_, errs := db.SetEntryStatus(&transfer.Request{
+						Local:     path,
+						Requester: setl1.Requester,
+						Set:       setl1.Name,
+						Size:      3,
+						Status:    transfer.RequestStatusUploaded,
+					})
+					So(errs, ShouldBeNil)
+				}
+
+				uploaded()
+
+				So(db.SetDiscoveryStarted(setl1.ID()), ShouldBeNil)
+				So(db.mergeEntries(setl1.ID(), fileDirents, discoveredBucket, Pending), ShouldBeNil)
+
+				slackWriter.Reset()
+				uploaded()
+
+				got, errd := db.updateSetAfterDiscovery(setl1.ID())
+				So(errd, ShouldBeNil)
+				So(got.NumFiles, ShouldEqual, 1)
+				So(got.Uploaded, ShouldEqual, 0)
+				So(got.SizeTotal, ShouldEqual, 0)
+				So(got.Status, ShouldEqual, PendingUpload)
+
+				entries, errg := db.GetFileEntries(setl1.ID(), func(e *Entry) bool { return e.ShouldUpload(got) })
+				So(errg, ShouldBeNil)
+				So(len(entries), ShouldEqual, 1)
+
+				uploaded()
+
+				got = db.GetByID(setl1.ID())
+				So(got.Uploaded, ShouldEqual, 1)
+				So(got.SizeTotal, ShouldEqual, 3)
+				So(got.Status, ShouldEqual, Complete)
+				So(strings.Count(slackWriter.String(), "completed backup"), ShouldEqual, 1)
 			})
 		})
 	})
@@ -2342,30 +4092,7 @@ func removeFileEntryAndCount(db *DB, setID, path string) *Entry {
 }
 
 func setEntryToUploaded(entry *Entry, given *Set, db *DB) {
-	transformer, err := given.MakeTransformer()
-	So(err, ShouldBeNil)
-
-	r, err := transfer.NewRequestWithTransformedLocal(entry.Path, transformer)
-	So(err, ShouldBeNil)
-
-	r.Set = given.Name
-	r.Requester = given.Requester
-
-	if entry.Type == Hardlink {
-		r.Hardlink = entry.Dest
-	}
-
-	if entry.Type == Symlink {
-		r.Symlink = entry.Dest
-	}
-
-	r.Status = transfer.RequestStatusUploading
-	_, err = db.SetEntryStatus(r)
-	So(err, ShouldBeNil)
-
-	r.Status = transfer.RequestStatusUploaded
-	_, err = db.SetEntryStatus(r)
-	So(err, ShouldBeNil)
+	setEntryToStatus(entry, given, db, transfer.RequestStatusUploaded)
 }
 
 func TestBackup(t *testing.T) {
@@ -2702,4 +4429,22 @@ func TestUserMetadata(t *testing.T) {
 		userMeta := s.UserMetadata()
 		So(userMeta, ShouldResemble, "testKey=testVal;testKey2=testVal2")
 	})
+}
+
+func setEntryToFailed(entry *Entry, given *Set, db *DB) {
+	setEntryToStatus(entry, given, db, transfer.RequestStatusFailed)
+}
+
+// setEntryToStatus has the given entry start uploading, then end with the given
+// status.
+func setEntryToStatus(entry *Entry, given *Set, db *DB, status transfer.RequestStatus) {
+	setEntryToStatusWithSize(entry, given, db, status, 0)
+}
+
+func boolToUint64(b bool) uint64 {
+	if b {
+		return 1
+	}
+
+	return 0
 }

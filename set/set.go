@@ -38,16 +38,12 @@ import (
 	"github.com/wtsi-hgi/ibackup/transformer"
 )
 
-type Status int
-
-type Slacker interface {
-	SendMessage(level slack.Level, msg string)
-}
-
 const (
 	dateFormat            = "2006-01-02 15:04:05"
 	ErrInvalidTransformer = "invalid transformer"
 )
+
+type Status int
 
 const (
 	// PendingDiscovery is a Set status meaning the set's entries are pending
@@ -71,6 +67,10 @@ const (
 	// 3 retries.)
 	Complete
 )
+
+type Slacker interface {
+	SendMessage(level slack.Level, msg string)
+}
 
 // String lets you convert a Status to a meaningful string.
 func (s Status) String() string {
@@ -411,7 +411,7 @@ func (s *Set) adjustBasedOnEntry(entry *Entry) {
 		s.SizeUploaded += entry.Size
 	}
 
-	if entry.Status == Skipped || entry.Status == Orphaned {
+	if !dataUploaded(entry) {
 		s.SizeUploaded -= entry.Size
 	}
 
@@ -426,10 +426,50 @@ func (s *Set) adjustBasedOnEntry(entry *Entry) {
 	// Discovery counted some statuses (eg. missing) of entries that still get
 	// queued; their upload result replaces that count rather than adding to it.
 	if !entry.countedIn.IsZero() && entry.countedIn.Equal(s.StartedDiscovery) {
-		s.removedEntryStatusToSetCounts(&Entry{Status: entry.countedStatus})
+		counted := &Entry{Status: entry.countedStatus, Size: entry.countedSize}
+		s.removedEntryStatusToSetCounts(counted)
+
+		if entry.newSize {
+			s.removedDiscoveredSizeFromSetCounts(counted)
+		}
 	}
 
 	s.entryStatusToSetCounts(entry)
+}
+
+// dataUploaded returns true if the given entry's status means its data was
+// uploaded, so counts towards SizeUploaded; Skipped and Orphaned entries' data
+// wasn't.
+func dataUploaded(entry *Entry) bool {
+	return entry.Status != Skipped && entry.Status != Orphaned
+}
+
+// discoveredSizeToSetCounts adds the size of the given entry, whose status
+// discovery counted, to our sizes as adjustBasedOnEntry would for an upload
+// result of that status. Only uploaded statuses have a size known at discovery.
+func (s *Set) discoveredSizeToSetCounts(entry *Entry) {
+	if !entry.IsUploaded() {
+		return
+	}
+
+	s.SizeTotal += entry.Size
+
+	if dataUploaded(entry) {
+		s.SizeUploaded += entry.Size
+	}
+}
+
+// removedDiscoveredSizeFromSetCounts undoes discoveredSizeToSetCounts.
+func (s *Set) removedDiscoveredSizeFromSetCounts(entry *Entry) {
+	if !entry.IsUploaded() {
+		return
+	}
+
+	s.SizeTotal -= entry.Size
+
+	if dataUploaded(entry) {
+		s.SizeUploaded -= entry.Size
+	}
 }
 
 // entryToSetCounts increases set Uploaded, Failed or Missing based on
@@ -516,15 +556,25 @@ func (s *Set) removedEntryTypeToSetCounts(entry *Entry) {
 
 // countRemovedEntry updates our counts for the given entry, as it was stored,
 // having been removed, adding removedSize to our SizeRemoved.
+//
+// A trash set is never discovered, so trashing doesn't count its entries in its
+// file counts; only the removal is counted, else they would wrap.
 func (s *Set) countRemovedEntry(entry *Entry, removedSize uint64) {
 	s.SizeRemoved += removedSize
 	s.NumObjectsRemoved++
 
+	if s.IsTrash() {
+		return
+	}
+
 	s.removedEntryTypeToSetCounts(entry)
 
 	// Starting discovery zeroed these, and they get rebuilt without this
-	// entry; decrementing them now would wrap them.
-	if s.StartedDiscovery.After(s.LastDiscovery) {
+	// entry; decrementing them now would wrap them, unless an upload result
+	// counted it during this discovery.
+	if s.discovering() {
+		s.removedDiscoveredEntryFromSetCounts(entry)
+
 		return
 	}
 
@@ -538,10 +588,78 @@ func (s *Set) countRemovedEntry(entry *Entry, removedSize uint64) {
 	}
 
 	// Otherwise the entry's status is from before our last discovery, so is
-	// only in our counts if that discovery counted it.
-	if entry.CountedInDiscovery.Equal(s.StartedDiscovery) {
-		s.removedEntryStatusToSetCounts(entry)
+	// only in our counts if counted in that discovery.
+	s.removedDiscoveredEntryFromSetCounts(entry)
+}
+
+// removedDiscoveredEntryFromSetCounts takes the given removed entry's status
+// out of our counts, with its size if it is an uploaded one (SizeUploaded is
+// kept, as for an upload result's), if it was counted in our current
+// discovery.
+func (s *Set) removedDiscoveredEntryFromSetCounts(entry *Entry) {
+	if !entry.CountedInDiscovery.Equal(s.StartedDiscovery) {
+		return
 	}
+
+	s.removedEntryStatusToSetCounts(entry)
+
+	if entry.IsUploaded() {
+		s.SizeTotal -= entry.Size
+	}
+}
+
+// discovering returns true if a discovery of this set has started but not
+// completed.
+func (s *Set) discovering() bool {
+	return s.StartedDiscovery.After(s.LastDiscovery)
+}
+
+// countEntryDuringDiscovery counts the given entry, updated by an upload result
+// that arrived during discovery, as discovery counts entries: by its status,
+// and its size if uploaded.
+//
+// Starting discovery zeroed our counts and NumFiles isn't known until it
+// completes, so a recount or completion check now would count entries discovery
+// is about to count. updateFileEntry stamped the entry as counted in this
+// discovery, so discovery, a later upload result or removal replaces or undoes
+// this count instead of adding to it. A count stays if nothing does: eg. a
+// frozen set's newly uploaded entry, which isn't queued again.
+func (s *Set) countEntryDuringDiscovery(entry *Entry) {
+	s.uncountIfCountedInDiscovery(&Entry{
+		Status:             entry.countedStatus,
+		Size:               entry.countedSize,
+		CountedInDiscovery: entry.countedIn,
+	})
+
+	// Its earlier failures this round were in the zeroed counts.
+	entry.newFail = true
+
+	s.entryStatusToSetCounts(entry)
+	s.discoveredSizeToSetCounts(entry)
+}
+
+// uncountIfCountedInDiscovery undoes the count of the given entry's status and
+// size, if it was counted in our current discovery.
+func (s *Set) uncountIfCountedInDiscovery(entry *Entry) {
+	if !entry.CountedInDiscovery.Equal(s.StartedDiscovery) {
+		return
+	}
+
+	s.removedEntryStatusToSetCounts(entry)
+	s.removedDiscoveredSizeFromSetCounts(entry)
+}
+
+// resultCountedAndQueuedAgain returns true if the given entry was counted in our
+// current discovery and will be queued for upload again, unless its status is
+// one that discovery counts for entries it queues (missing, orphaned or
+// abnormal), whose results replace that count. Call it after LastDiscovery is
+// updated.
+func (s *Set) resultCountedAndQueuedAgain(entry *Entry) bool {
+	if entry.Status == Missing || entry.Status == Orphaned || entry.Status == AbnormalEntry {
+		return false
+	}
+
+	return entry.CountedInDiscovery.Equal(s.StartedDiscovery) && entry.ShouldUpload(s)
 }
 
 // LogChangesToSlack will cause the set to use the slacker when significant
@@ -557,10 +675,18 @@ func (s *Set) SuccessfullyStoredInDB() {
 }
 
 // DiscoveryCompleted should be called when you complete discovering a set. Pass
-// in the number of files you discovered.
-func (s *Set) DiscoveryCompleted(numFiles uint64) {
+// in the number of files you discovered, and a function that takes back from
+// our counts any entries that will be queued for upload again, but that an
+// upload result counted during this discovery (it is passed this set, with
+// LastDiscovery updated). Their next results count them, so we don't complete
+// before those arrive.
+func (s *Set) DiscoveryCompleted(numFiles uint64, uncountQueuedResults func(*Set) error) error {
 	s.LastDiscovery = time.Now()
 	s.NumFiles = numFiles
+
+	if err := uncountQueuedResults(s); err != nil {
+		return err
+	}
 
 	if s.NumFiles == 0 || (s.Missing+s.Orphaned+s.Abnormal == s.NumFiles) {
 		s.Status = Complete
@@ -568,17 +694,28 @@ func (s *Set) DiscoveryCompleted(numFiles uint64) {
 
 		s.sendSlackMessage(slack.Warn, "completed discovery and backup due to no files")
 
-		return
+		return nil
 	}
 
 	s.Status = PendingUpload
 
 	s.sendSlackMessage(slack.Info, fmt.Sprintf("completed discovery: %d files", numFiles))
+
+	// Discovery counts a frozen set's uploaded entries, which never get queued.
+	s.checkIfComplete()
+
+	return nil
 }
 
 // UpdateBasedOnEntry updates set status values based on an updated Entry from
 // updateFileEntry(), assuming that request is for one of set's file entries.
 func (s *Set) UpdateBasedOnEntry(entry *Entry, getFileEntries func(string, EntryFilter) ([]*Entry, error)) error {
+	if s.discovering() {
+		s.countEntryDuringDiscovery(entry)
+
+		return nil
+	}
+
 	s.checkIfUploading()
 
 	s.adjustBasedOnEntry(entry)

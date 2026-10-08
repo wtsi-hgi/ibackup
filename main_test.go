@@ -169,6 +169,58 @@ func TestServer(t *testing.T) {
 	})
 }
 
+// denyRemoteChanges downgrades the current user and all their groups to read
+// access on the given remote object, so ibackup's changes to it fail with
+// CAT_NO_ACCESS_PERMISSION. It returns a function that restores ownership, which
+// also happens when the current Convey resets.
+func denyRemoteChanges(t *testing.T, path string) func() {
+	t.Helper()
+
+	icmd := NewIcommander(t)
+	So(icmd, ShouldNotBeNil)
+
+	curUser, err := user.Current()
+	So(err, ShouldBeNil)
+
+	usernameRE := regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
+	So(usernameRE.MatchString(curUser.Username), ShouldBeTrue)
+
+	_, err = icmd.ICHMOD("read", curUser.Username, path)
+	So(err, ShouldBeNil)
+
+	groupsOutput, err := icmd.IUSERINFO()
+	So(err, ShouldBeNil)
+
+	scanner := bufio.NewScanner(bytes.NewReader(groupsOutput))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if !strings.HasPrefix(line, "member of group:") {
+			continue
+		}
+
+		group := strings.TrimSpace(strings.TrimPrefix(line, "member of group:"))
+		if group == "" {
+			continue
+		}
+
+		_, err = icmd.ICHMOD("read", group, path)
+		So(err, ShouldBeNil)
+	}
+
+	So(scanner.Err(), ShouldBeNil)
+
+	restore := func() {
+		_, err := icmd.ICHMOD("own", curUser.Username, path)
+		So(err, ShouldBeNil)
+	}
+
+	Reset(func() {
+		_, _ = icmd.ICHMOD("own", curUser.Username, path) //nolint:errcheck
+	})
+
+	return restore
+}
+
 type cliExitError struct {
 	code int
 }
@@ -1519,32 +1571,36 @@ func TestRemove(t *testing.T) {
 
 			Convey("If a file fails to be removed, the error is displayed on the file", func() {
 				file1remote := filepath.Join(remotePath, "file1")
-				icmd := NewIcommander(t)
-				So(icmd, ShouldNotBeNil)
-
-				removeFileFromIRODS(t, file1remote)
+				restoreAccess := denyRemoteChanges(t, file1remote)
 
 				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", file1)
 				So(exitCode, ShouldEqual, 0)
 
-				errorMsg := fmt.Sprintf("file does not exist [%s]", file1remote)
-
-				s.waitForStatusWithFlags(setName, "failed to remove: "+errorMsg, 2*time.Second, "-d")
+				errWait := s.tryWaitForStatusWithFlags(setName, "CAT_NO_ACCESS_PERMISSION", 30*time.Second, "-d")
+				So(errWait, ShouldBeNil)
 
 				Convey("And displays the error in set status if not fixed", func() {
-					s.waitForStatus(setName, "Error: Error when removing: "+errorMsg, 20*time.Second)
+					// file1 is in other sets, so its metadata is changed instead of
+					// it being removed; which key fails first varies.
+					s.waitForStatus(setName, "Error: Error when removing: metamod operation failed: "+
+						"Failed to rm metadata '", 30*time.Second)
+					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "CAT_NO_ACCESS_PERMISSION")
 				})
 
 				Convey("And succeeds if issue is fixed during retries", func() {
-					curUser, e := user.Current()
-					So(e, ShouldBeNil)
-
-					addFileToIRODS(t, file1, file1remote)
-					addRemoteMeta(t, file1remote, transfer.MetaKeySets, setName)
-					addRemoteMeta(t, file1remote, transfer.MetaKeyRequester, curUser.Username)
+					restoreAccess()
 
 					s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 10*time.Second)
 				})
+			})
+
+			Convey("If a file's remote object was deleted outside ibackup, "+
+				"removing the file still succeeds", func() {
+				removeFileFromIRODS(t, filepath.Join(remotePath, "file1"))
+
+				s.removePath(t, setName, file1, 1)
+
+				s.confirmOutputDoesNotContain(t, []string{"status", "--name", setName, "-d"}, 0, "Error when removing")
 			})
 
 			Convey("And if you make this set read-only", func() {
@@ -2044,45 +2100,7 @@ func TestTrashRemove(t *testing.T) {
 
 				Convey("If a file fails to be removed, the error is displayed on the file", func() {
 					file1remote := filepath.Join(remotePath, "file1")
-					icmd := NewIcommander(t)
-					So(icmd, ShouldNotBeNil)
-
-					curUser, e := user.Current()
-					So(e, ShouldBeNil)
-
-					usernameRE := regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
-					So(usernameRE.MatchString(curUser.Username), ShouldBeTrue)
-
-					_, err = icmd.ICHMOD("read", curUser.Username, file1remote)
-					So(err, ShouldBeNil)
-
-					// Downgrade all groups the current user belongs to so the
-					// removal attempt reliably fails with
-					// CAT_NO_ACCESS_PERMISSION.
-					groupsOutput, errg := icmd.IUSERINFO()
-					So(errg, ShouldBeNil)
-
-					scanner := bufio.NewScanner(bytes.NewReader(groupsOutput))
-					for scanner.Scan() {
-						line := strings.TrimSpace(scanner.Text())
-						if !strings.HasPrefix(line, "member of group:") {
-							continue
-						}
-
-						group := strings.TrimSpace(strings.TrimPrefix(line, "member of group:"))
-						if group == "" {
-							continue
-						}
-
-						_, errc := icmd.ICHMOD("read", group, file1remote)
-						So(errc, ShouldBeNil)
-					}
-
-					So(scanner.Err(), ShouldBeNil)
-
-					Reset(func() {
-						_, _ = icmd.ICHMOD("own", curUser.Username, file1remote) //nolint:errcheck
-					})
+					restoreAccess := denyRemoteChanges(t, file1remote)
 
 					exitCode, _ := s.runBinary(t, "trash", "--remove", "--name", setName, "--path", file1)
 					So(exitCode, ShouldEqual, 0)
@@ -2097,8 +2115,7 @@ func TestTrashRemove(t *testing.T) {
 					})
 
 					Convey("And succeeds if issue is fixed during retries", func() {
-						_, err = icmd.ICHMOD("own", curUser.Username, file1remote)
-						So(err, ShouldBeNil)
+						restoreAccess()
 
 						s.waitForStatus(trashSetName, "Removal status: 1 / 1 objects removed", 10*time.Second)
 					})
@@ -2135,18 +2152,33 @@ func TestTrashRemove(t *testing.T) {
 			})
 
 			Convey("If remove fails to trash a file", func() {
-				file1remote := filepath.Join(remotePath, "file1")
-				removeFileFromIRODS(t, file1remote)
+				denyRemoteChanges(t, filepath.Join(remotePath, "file1"))
 
 				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", file1)
 				So(exitCode, ShouldEqual, 0)
 
-				s.waitForStatusWithFlags(setName, "failed to remove: file does not exist", timeout, "-d")
+				errWait := s.tryWaitForStatusWithFlags(setName, "CAT_NO_ACCESS_PERMISSION", timeout, "-d")
+				So(errWait, ShouldBeNil)
 
 				Convey("You cannot permanently remove that file", func() {
 					exitCode, output := s.runBinaryWithNoLogging(t, "trash", "--remove", "--name", setName, "--path", file1)
 					So(exitCode, ShouldEqual, 1)
 					So(output, ShouldContainSubstring, set.ErrPathNotInSet)
+				})
+			})
+
+			Convey("If a file's remote object was deleted outside ibackup, "+
+				"remove still trashes it", func() {
+				removeFileFromIRODS(t, filepath.Join(remotePath, "file1"))
+
+				s.removePath(t, setName, file1, 1)
+
+				s.confirmOutputDoesNotContain(t, []string{"status", "--name", setName, "-d"}, 0, "Error when removing")
+
+				Convey("and you can then permanently remove it", func() {
+					s.trashRemovePath(t, setName, file1, 1)
+
+					s.confirmOutputDoesNotContain(t, []string{"status", "--name", trashSetName, "-d"}, 0, "Error when removing")
 				})
 			})
 		})
@@ -3196,7 +3228,7 @@ func TestEdit(t *testing.T) {
 				})
 
 				Convey("If the set has failed removals, you can still add new files to the set", func() {
-					removeFileFromIRODS(t, filepath.Join(filepath.Join(remotePath, "dir1"), "file1"))
+					denyRemoteChanges(t, filepath.Join(remotePath, "dir1", "file1"))
 
 					exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", setFile1)
 

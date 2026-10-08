@@ -130,6 +130,12 @@ type RemoveReq struct {
 	RemoteRemovalStatus RemovalStatus
 	IsComplete          bool
 	Action              RemoveAction
+
+	// ObjectSize is the size of the file's entry when its remote removal
+	// first started, so a retry still counts the size of the remote object
+	// even if an upload result changed the entry's size meanwhile. Nil for
+	// requests stored before it existed, and for directories.
+	ObjectSize *uint64
 }
 
 func (rq RemoveReq) Key() string {
@@ -165,6 +171,16 @@ func NewRemoveRequest(path string, set *Set, isDir bool, action RemoveAction) Re
 		RemoteRemovalStatus: NotRemoved,
 		Action:              action,
 	}
+}
+
+// removedSize returns our ObjectSize if recorded, otherwise the size of the
+// given entry, read before the removal.
+func (rq RemoveReq) removedSize(before *Entry) uint64 {
+	if rq.ObjectSize != nil {
+		return *rq.ObjectSize
+	}
+
+	return before.Size
 }
 
 // NewRO returns a *DBRO that can be used to query a set database. Provide the
@@ -620,8 +636,11 @@ func (d *DB) validateDirPaths(set *Set, paths []string) ([]string, []string, err
 // before must be the file's entry as read before the removal started. It's
 // what gets trashed, and its size is added to the set's SizeRemoved, since an
 // upload result arriving after the remote object was removed (status missing)
-// changes the stored entry's size to 0. Other set counts use the entry as
-// stored, which is returned, or nil if the set didn't have the file.
+// changes the stored entry's size to 0. If the request recorded an ObjectSize
+// when its remote removal started, that is added instead, since a retry's
+// before may have been read after such a result, or after a failed result for
+// a modified file changed its size. Other set counts use the entry as stored,
+// which is returned, or nil if the set didn't have the file.
 func (d *DB) RemoveFileEntry(removeReq *RemoveReq, before *Entry) (*Entry, error) {
 	completed := *removeReq
 	completed.IsComplete = true
@@ -666,7 +685,7 @@ func (d *DB) removeFileInTx(tx *bolt.Tx, removeReq *RemoveReq, before *Entry) (*
 	}
 
 	return removed, d.updateSetPropertiesInTx(tx, setID, func(got *Set) {
-		got.countRemovedEntry(removed, before.Size)
+		got.countRemovedEntry(removed, removeReq.removedSize(before))
 	})
 }
 
@@ -678,10 +697,159 @@ func (d *DB) cleanUpRemovedFile(tx *bolt.Tx, removeReq *RemoveReq, before, remov
 	case removeReq.Action == ToTrash && !before.WasNotUploaded():
 		return d.putEntryInTrash(tx, removeReq.Set, before)
 	case removeReq.Action == ToRemove:
-		return d.removeInodeIfUnused(tx, removed)
+		return d.removeInodeIfUnused(tx, removed, removeReq.Set.Transformer)
 	default:
 		return nil
 	}
+}
+
+// RemoveDeletedFileEntry does the database side of removing the given request's
+// file, whose remote removal started, when its entry is already gone. Builds
+// before the one-transaction RemoveFileEntry() did the database side as
+// separate steps after the remote one: trash an uploaded file, delete its
+// entry, clean up its inode record and failed lookup, count it, then mark the
+// request complete. A request they were stopped part way through is retried
+// without an entry.
+//
+// It cleans up the failed lookup and, when removing, the inode record of the
+// file's current local inode (the stored inode went with the entry; if the
+// local file is gone or has a new inode, a record left for it isn't found). It
+// counts the removal unless that build already did, which it tells by the
+// set's removal counts: NumObjectsToBeRemoved covers every request still
+// incomplete, so if NumObjectsRemoved plus their number exceeds it, one of them
+// was counted.
+//
+// That check misses if any request failed since the two counts were last equal:
+// a failed request is never counted, and UpdateSetTotalToRemove() only resets
+// the counts when they are equal, so NumObjectsRemoved stays short for good. A
+// set with any such failure in its history is therefore counted again, once, if
+// that build had already counted. This is never worse than always counting, and
+// such an over-count is no more permanent than a missed count would be. Also,
+// removeFilesAndDirs() stores a new removal's requests before it raises
+// NumObjectsToBeRemoved, so in the very rare case that an uncounted request is
+// retried between the two, it is taken as counted and its count is missed.
+//
+// The file counts use the trashed copy of the entry when trashing a removed
+// object. Otherwise the file's status and size are unknown, so only the removal
+// is counted, plus the request's ObjectSize in SizeRemoved if it recorded one,
+// and the file counts keep the file until the next discovery.
+//
+// It does all that, and marks the request complete, in one transaction.
+func (d *DB) RemoveDeletedFileEntry(removeReq *RemoveReq) error {
+	completed := *removeReq
+	completed.IsComplete = true
+
+	var local *Entry
+
+	if removeReq.Action == ToRemove {
+		local = d.localFileEntry(removeReq.Path)
+	}
+
+	err := d.db.Update(func(tx *bolt.Tx) error {
+		if err := d.removeDeletedFileInTx(tx, removeReq, local); err != nil {
+			return err
+		}
+
+		return d.updatePendingRemoveRequest(tx, completed)
+	})
+	if err == nil {
+		*removeReq = completed
+	}
+
+	return err
+}
+
+// localFileEntry returns an entry for the given path with the inode of its
+// local file, or inode 0 if it can't be statted.
+func (d *DB) localFileEntry(path string) *Entry {
+	entry := &Entry{Path: path, Type: Regular}
+
+	if info, err := d.stat(path); err == nil {
+		if st, ok := info.Sys().(*syscall.Stat_t); ok {
+			entry.Inode = st.Ino
+		}
+	}
+
+	return entry
+}
+
+// removeDeletedFileInTx does RemoveDeletedFileEntry()'s work, apart from
+// marking the request complete, in the given transaction. local is the file's
+// entry from localFileEntry() when removing.
+func (d *DB) removeDeletedFileInTx(tx *bolt.Tx, removeReq *RemoveReq, local *Entry) error {
+	setID := removeReq.Set.ID()
+
+	trashed, err := d.cleanUpDeletedFile(tx, removeReq, local)
+	if err != nil {
+		return err
+	}
+
+	incomplete, err := d.countIncompleteRemoveRequests(tx, setID)
+	if err != nil {
+		return err
+	}
+
+	return d.updateSetPropertiesInTx(tx, setID, func(got *Set) {
+		if got.NumObjectsRemoved+incomplete > got.NumObjectsToBeRemoved {
+			return
+		}
+
+		if trashed != nil {
+			got.countRemovedEntry(trashed, removeReq.removedSize(trashed))
+
+			return
+		}
+
+		got.NumObjectsRemoved++
+
+		if removeReq.ObjectSize != nil {
+			got.SizeRemoved += *removeReq.ObjectSize
+		}
+	})
+}
+
+// cleanUpDeletedFile removes the given request's file from our failed lookup
+// and, when removing, the given local entry for it from our inode records
+// unless another set still uses it. When trashing a removed object, it returns
+// the trashed copy of the file's entry, or nil if there isn't one.
+func (d *DB) cleanUpDeletedFile(tx *bolt.Tx, removeReq *RemoveReq, local *Entry) (*Entry, error) {
+	if err := d.removeFailedLookup(tx, removeReq.Set.ID(), removeReq.Path); err != nil {
+		return nil, err
+	}
+
+	if removeReq.Action == ToRemove {
+		return nil, d.removeInodeIfUnused(tx, local, removeReq.Set.Transformer)
+	}
+
+	var trashed *Entry
+
+	if removeReq.RemoteRemovalStatus == Removed {
+		trashSet := BuildTrashSetFromSet(removeReq.Set)
+		trashed, _ = d.getEntryFromSubbucket(fileBucket, trashSet.ID(), removeReq.Path, tx.Bucket([]byte(setsBucket)))
+	}
+
+	return trashed, nil
+}
+
+// countIncompleteRemoveRequests returns the number of the given set's stored
+// remove requests that are incomplete.
+func (d *DB) countIncompleteRemoveRequests(tx *bolt.Tx, setID string) (uint64, error) {
+	b := getSubBucket(tx, setID, removedBucket)
+	if b == nil {
+		return 0, nil
+	}
+
+	var n uint64
+
+	err := b.ForEach(func(_, v []byte) error {
+		if !d.decodeRemoveRequest(v).IsComplete {
+			n++
+		}
+
+		return nil
+	})
+
+	return n, err
 }
 
 // deleteFileEntry deletes the given path from the given set's file and
@@ -768,10 +936,15 @@ func (d *DB) removeDirInTx(tx *bolt.Tx, removeReq *RemoveReq) error {
 }
 
 // trashDirEntry puts the given request's directory entry in the trash set.
+// Sets stored before the discovered folders bucket existed have no entry for a
+// discovered subfolder, so a new dir entry is trashed for one instead, keeping
+// the folder targetable in the trash set.
 func (d *DB) trashDirEntry(tx *bolt.Tx, removeReq *RemoveReq) error {
-	entry, _, err := d.getEntry(tx, removeReq.Set.ID(), strings.TrimSuffix(removeReq.Path, "/"))
+	path := strings.TrimSuffix(removeReq.Path, "/")
+
+	entry, _, err := d.getEntry(tx, removeReq.Set.ID(), path)
 	if err != nil {
-		return err
+		entry = &Entry{Path: path, isDir: true}
 	}
 
 	return d.putEntryInTrash(tx, removeReq.Set, entry)
@@ -1416,7 +1589,12 @@ func (d *DB) updateSetAfterDiscovery(setID string) (*Set, error) {
 			return err
 		}
 
-		set.DiscoveryCompleted(d.countAllFilesInSet(tx, setID))
+		err = set.DiscoveryCompleted(d.countAllFilesInSet(tx, setID), func(s *Set) error {
+			return d.uncountQueuedResults(tx, s)
+		})
+		if err != nil {
+			return err
+		}
 
 		updatedSet = set
 
@@ -1424,6 +1602,57 @@ func (d *DB) updateSetAfterDiscovery(setID string) (*Set, error) {
 	})
 
 	return updatedSet, err
+}
+
+// uncountQueuedResults takes back from the given set's counts its file entries
+// that an upload result counted during its current discovery, but that will be
+// queued for upload again, and marks them uncounted, so their next result
+// counts them afresh, as for entries that had no result during discovery.
+func (d *DB) uncountQueuedResults(tx *bolt.Tx, set *Set) error {
+	// Only results count these statuses of entries that get queued.
+	if set.Uploaded+set.Replaced+set.Skipped+set.Failed == 0 {
+		return nil
+	}
+
+	for _, kind := range []string{fileBucket, discoveredBucket} {
+		if err := d.uncountQueuedResultsInBucket(tx, set, kind); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (d *DB) uncountQueuedResultsInBucket(tx *bolt.Tx, set *Set, kind string) error {
+	b := tx.Bucket([]byte(setsBucket)).Bucket(getSubBucketName(set.ID(), kind))
+	if b == nil {
+		return nil
+	}
+
+	var keys, values [][]byte
+
+	b.ForEach(func(k, v []byte) error { //nolint:errcheck
+		entry := d.decodeEntry(v)
+		if !set.resultCountedAndQueuedAgain(entry) {
+			return nil
+		}
+
+		set.uncountIfCountedInDiscovery(entry)
+		entry.CountedInDiscovery = time.Time{}
+
+		keys = append(keys, bytes.Clone(k))
+		values = append(values, d.encodeToBytes(entry))
+
+		return nil
+	})
+
+	for i, k := range keys {
+		if err := b.Put(k, values[i]); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (d *DBRO) countAllFilesInSet(tx *bolt.Tx, setID string) uint64 {
@@ -1463,7 +1692,7 @@ func (d *DB) SetEntryStatus(r *transfer.Request) (*Entry, error) {
 			return errt
 		}
 
-		entry, errt = d.updateFileEntry(tx, setID, r, got.LastDiscovery)
+		entry, errt = d.updateFileEntry(tx, setID, r, got)
 		if errt != nil {
 			return errt
 		} else if entry.isDir {
@@ -1501,20 +1730,25 @@ func requestToSetID(r *transfer.Request) (string, error) {
 // since the last success, and if this was the first successful upload after a
 // failure.
 //
-// If setDiscoveryTime is later than the entry's last attempt, resets the
-// entries Attempts to 0.
+// If the set's LastDiscovery is later than the entry's last attempt, resets the
+// entries Attempts to 0. If the set is being discovered, stamps the entry as
+// counted in that discovery (see Set.countEntryDuringDiscovery).
 func (d *DB) updateFileEntry(tx *bolt.Tx, setID string, r *transfer.Request, //nolint:funlen
-	setDiscoveryTime time.Time,
+	set *Set,
 ) (*Entry, error) {
 	entry, b, err := d.getEntry(tx, setID, r.Local)
 	if err != nil {
 		return nil, err
 	}
 
-	entry.countedStatus, entry.countedIn = entry.Status, entry.CountedInDiscovery
+	entry.countedStatus, entry.countedSize, entry.countedIn = entry.Status, entry.Size, entry.CountedInDiscovery
 	entry.CountedInDiscovery = time.Time{}
 
-	if setDiscoveryTime.After(entry.LastAttempt) {
+	if set.discovering() && !entry.isDir {
+		entry.CountedInDiscovery = set.StartedDiscovery
+	}
+
+	if set.LastDiscovery.After(entry.LastAttempt) {
 		entry.Attempts = 0
 		entry.LastError = ""
 		entry.Status = Pending
