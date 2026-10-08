@@ -1945,14 +1945,15 @@ func (s *Server) updateFileStatus(r *transfer.Request) error {
 
 // handleNewlyCompletedSets gets the set the given request is for, and if it has
 // completed, carries out actions needed for newly completed sets: trigger the
-// monitoring countdown, and do a database backup.
+// monitoring countdown, and do a database backup. A set deleted since the
+// request's status was recorded has nothing to handle.
 func (s *Server) handleNewlyCompletedSets(r *transfer.Request) error {
 	completed, err := s.db.GetByNameAndRequester(r.Set, r.Requester)
 	if err != nil {
 		return err
 	}
 
-	if completed.Status != set.Complete {
+	if completed == nil || completed.Status != set.Complete {
 		return nil
 	}
 
@@ -1986,11 +1987,12 @@ func (s *Server) trackUploadingAndStuckRequests(r *transfer.Request, entry *set.
 // requeueIfRediscovered adds the given finished request's entry back to our
 // queue if a discovery completed after its result was recorded. That discovery
 // wants the entry uploaded again, but its enqueue would have skipped it as a
-// duplicate if it ran before we removed the request from the queue. Errors are
+// duplicate if it ran before we removed the request from the queue. A set
+// deleted since the result was recorded has nothing to requeue. Errors are
 // logged, since the result itself was recorded.
 func (s *Server) requeueIfRediscovered(r *transfer.Request, recorded *set.Entry) {
 	given, err := s.db.GetByNameAndRequester(r.Set, r.Requester)
-	if err == nil && given.LastDiscovery.After(recorded.LastAttempt) {
+	if err == nil && given != nil && given.LastDiscovery.After(recorded.LastAttempt) {
 		err = s.requeueEntry(given, r.Local)
 	}
 
