@@ -60,7 +60,7 @@
   live zone; suspected cause of `TestRemove`'s stall in CI run 1. Deferred
   to the set-counts follow-up branch (removal code; needs #195).
   - Origin: found diagnosing PR #196 CI run 37754887894 (2026-10-08).
-- [ ] Data race in `gopkg.in/tylerb/graceful.v1` v1.2.15 (graceful.go:399
+- [x] Data race in `gopkg.in/tylerb/graceful.v1` v1.2.15 (graceful.go:399
   sets `srv.Server.ConnState = nil` on its kill path while net/http's
   `(*conn).setState` reads it), reached through `go-authserver` v1.6.0
   `(*Server).Start` → `graceful.ListenAndServeTLS` whenever ibackup's server
@@ -70,3 +70,10 @@
   (replace graceful with `net/http`'s `Server.Shutdown`); needs a user
   decision since it is another repository.
   - Origin: found diagnosing PR #196 CI run 37759317040 (2026-10-08).
+  - Decision (user, 2026-10-08): fork graceful and fix it there.
+  - Fixed upstream of ibackup: wtsi-hgi/graceful#1 (module
+    `github.com/wtsi-hgi/graceful`, released v1.2.16; red test
+    `TestStopTimeoutWithActiveConnectionHasNoRace` reported the race 5/5 on
+    v1.2.15) and wtsi-hgi/go-authserver#8 (released v1.6.1). ibackup now
+    requires go-authserver v1.6.1, which pulls in the fork. CI's `make race`
+    is the evidence here.
