@@ -1574,7 +1574,9 @@ func TestRemove(t *testing.T) {
 
 				errorMsg := fmt.Sprintf("file does not exist [%s]", file1remote)
 
-				s.waitForStatusWithFlags(setName, "failed to remove: "+errorMsg, 2*time.Second, "-d")
+				// The first removal attempt can take several seconds on a slow
+				// host, such as in CI.
+				s.waitForStatusWithFlags(setName, "failed to remove: "+errorMsg, 30*time.Second, "-d")
 
 				Convey("And displays the error in set status if not fixed", func() {
 					s.waitForStatus(setName, "Error: Error when removing: "+errorMsg, 20*time.Second)

@@ -60,3 +60,13 @@
   live zone; suspected cause of `TestRemove`'s stall in CI run 1. Deferred
   to the set-counts follow-up branch (removal code; needs #195).
   - Origin: found diagnosing PR #196 CI run 37754887894 (2026-10-08).
+- [ ] Data race in `gopkg.in/tylerb/graceful.v1` v1.2.15 (graceful.go:399
+  sets `srv.Server.ConnState = nil` on its kill path while net/http's
+  `(*conn).setState` reads it), reached through `go-authserver` v1.6.0
+  `(*Server).Start` → `graceful.ListenAndServeTLS` whenever ibackup's server
+  stops with connections still open after the stop timeout. Fails `TestEdit`
+  and `TestRemove` under `make race` in CI (run 37759317040), where slower
+  stops hit the timeout more often. The fix belongs in go-authserver
+  (replace graceful with `net/http`'s `Server.Shutdown`); needs a user
+  decision since it is another repository.
+  - Origin: found diagnosing PR #196 CI run 37759317040 (2026-10-08).
