@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
 
-    # The iRODS-dependent tests run against a throwaway iRODS zone in a service
+    # The iRODS-dependent tests run against a throwaway iRODS zone in a
     # container, using iCommands and baton-do from a client image run via
     # Singularity, as wtsi-npg/extendo's CI does. They upload with wr jobs, so a
     # wr manager is started too.
@@ -33,6 +33,7 @@ jobs:
       # accept a tag and digest together). The wrappers it installs use 9.8.
       IRODS_CLIENT_IMAGE: ghcr.io/wtsi-npg/ub-22.04-irods-clients-4.3.5@sha256:4fcb42c9b484e869e09051a944cab6e157f10613cc29f31172a52d9f9b0977dc
       IRODS_CLIENTS_PREFIX: ${{ github.workspace }}/.irods-clients
+      IRODS_SERVER_IMAGE: ghcr.io/wtsi-npg/ub-22.04-irods-4.3.5:9.8@sha256:bf8ca288853403cb0bd0bb5a7ae637072aff6afa6080069886bba5fa82227ccb
       WR_VERSION: v0.38.0
       # The tests run as an ordinary iRODS user, as they do against Sanger's
       # zones, and its name deliberately differs from the local user's.
@@ -41,24 +42,28 @@ jobs:
       IBACKUP_TEST_SCHEDULER: development
       IBACKUP_TEST_COLLECTION: /testZone/home/ibackup/ibackup_testsuite
 
-    services:
-      irods-server:
-        image: ghcr.io/wtsi-npg/ub-22.04-irods-4.3.5:9.8@sha256:bf8ca288853403cb0bd0bb5a7ae637072aff6afa6080069886bba5fa82227ccb
-        ports:
-        - "1247:1247"
-        - "20000-20199:20000-20199"
-        volumes:
-        - /dev/shm:/dev/shm
-        options: >-
-          --health-cmd "nc -z -v localhost 1247"
-          --health-start-period 60s
-          --health-interval 10s
-          --health-timeout 20s
-          --health-retries 6
-
     steps:
     - name: Checkout Code
       uses: actions/checkout@v5
+
+    # Not a service container: uploads over 32MB use parallel transfer, for
+    # which the server tells the client to connect to its own address on a port
+    # in 20000-20199, and the client can't reach a service container's own
+    # address. On the host network the server's address is the runner's.
+    - name: Start iRODS server
+      run: |
+        docker run -d --name irods-server --network host -v /dev/shm:/dev/shm "$IRODS_SERVER_IMAGE"
+
+        for _ in $(seq 60); do
+          if (exec 3<>/dev/tcp/localhost/1247) 2>/dev/null; then
+            exit 0
+          fi
+
+          sleep 2
+        done
+
+        docker logs irods-server
+        exit 1
 
     - name: Set up Go
       uses: actions/setup-go@v6
@@ -165,6 +170,10 @@ jobs:
       env:
         MAIN_TEST_LOG_DIR: ${{ runner.temp }}/test-logs/race/main
         IBACKUP_TEST_LOG_DIR: ${{ runner.temp }}/test-logs/race/servers
+
+    - name: Show iRODS server log
+      if: ${{ failure() }}
+      run: docker logs irods-server || true
 
     - name: Upload test logs
       if: ${{ failure() }}
