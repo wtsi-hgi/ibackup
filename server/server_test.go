@@ -693,6 +693,11 @@ func TestServer(t *testing.T) {
 				So(errg, ShouldBeNil)
 				So(len(entries), ShouldEqual, 1)
 				So(entries[0].Status, ShouldEqual, set.Uploaded)
+
+				got, errg := adminClient.GetSetByID(racerSet.Requester, racerSet.ID())
+				So(errg, ShouldBeNil)
+				So(got.Uploaded, ShouldEqual, 1)
+				So(got.Status, ShouldEqual, set.Complete)
 			})
 
 			Convey("Which lets you login", func() {
