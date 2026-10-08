@@ -27,7 +27,6 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -2047,41 +2046,23 @@ func TestTrashRemove(t *testing.T) {
 					icmd := NewIcommander(t)
 					So(icmd, ShouldNotBeNil)
 
-					curUser, e := user.Current()
+					// The iRODS user need not have the local user's name.
+					irodsUser, e := icmd.UserInfo()
 					So(e, ShouldBeNil)
 
-					usernameRE := regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
-					So(usernameRE.MatchString(curUser.Username), ShouldBeTrue)
-
-					_, err = icmd.ICHMOD("read", curUser.Username, file1remote)
+					_, err = icmd.ICHMOD("read", irodsUser.Name, file1remote)
 					So(err, ShouldBeNil)
 
-					// Downgrade all groups the current user belongs to so the
+					// Downgrade all groups the iRODS user belongs to so the
 					// removal attempt reliably fails with
 					// CAT_NO_ACCESS_PERMISSION.
-					groupsOutput, errg := icmd.IUSERINFO()
-					So(errg, ShouldBeNil)
-
-					scanner := bufio.NewScanner(bytes.NewReader(groupsOutput))
-					for scanner.Scan() {
-						line := strings.TrimSpace(scanner.Text())
-						if !strings.HasPrefix(line, "member of group:") {
-							continue
-						}
-
-						group := strings.TrimSpace(strings.TrimPrefix(line, "member of group:"))
-						if group == "" {
-							continue
-						}
-
+					for _, group := range irodsUser.Groups {
 						_, errc := icmd.ICHMOD("read", group, file1remote)
 						So(errc, ShouldBeNil)
 					}
 
-					So(scanner.Err(), ShouldBeNil)
-
 					Reset(func() {
-						_, _ = icmd.ICHMOD("own", curUser.Username, file1remote) //nolint:errcheck
+						_, _ = icmd.ICHMOD("own", irodsUser.Name, file1remote) //nolint:errcheck
 					})
 
 					exitCode, _ := s.runBinary(t, "trash", "--remove", "--name", setName, "--path", file1)
@@ -2097,7 +2078,7 @@ func TestTrashRemove(t *testing.T) {
 					})
 
 					Convey("And succeeds if issue is fixed during retries", func() {
-						_, err = icmd.ICHMOD("own", curUser.Username, file1remote)
+						_, err = icmd.ICHMOD("own", irodsUser.Name, file1remote)
 						So(err, ShouldBeNil)
 
 						s.waitForStatus(trashSetName, "Removal status: 1 / 1 objects removed", 10*time.Second)
@@ -3605,6 +3586,8 @@ func (s *testServer) prepareFilePaths() {
 		"XDG_STATE_HOME=" + s.dir,
 		"PATH=" + path,
 		"HOME=" + home,
+		// the Singularity wrappers for baton-do and iCommands need USER
+		"USER=" + os.Getenv("USER"),
 		"IRODS_ENVIRONMENT_FILE=" + os.Getenv("IRODS_ENVIRONMENT_FILE"),
 		"GEM_HOME=" + os.Getenv("GEM_HOME"),
 		"IBACKUP_SLACK_TOKEN=" + os.Getenv("IBACKUP_SLACK_TOKEN"),

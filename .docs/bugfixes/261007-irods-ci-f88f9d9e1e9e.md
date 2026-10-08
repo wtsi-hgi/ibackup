@@ -32,3 +32,22 @@
     host (farm22-wrstat01) has no docker/podman, only apptainer/singularity
     via modules, so local runs stay on the test zone for now. Estimate 1-3
     days.
+  - Implemented (2026-10-08), not yet proven in CI: `tests.yml` (pinned
+    ubuntu-24.04; server image 4.3.5 tag 9.8 by digest; singularity-ce 4.2.2
+    with a real checksum check; client-image wrappers incl. baton 6.1.0 on
+    PATH; admin `irods` creates rodsuser `ibackup`, tests run as it; wr
+    v0.38.0 `development` manager; IBACKUP_TEST_SCHEDULER and
+    IBACKUP_TEST_COLLECTION set; 120-minute job timeout; read-only
+    permissions; bash with pipefail; `script -e` so a failed iinit fails).
+    Tests: `testutil.UserInfo()` reads the iRODS user and groups, used by
+    `TestTrashRemove`'s `ichmod` instead of the OS user name; test servers'
+    stripped env passes `USER` (the wrappers need it). Live-zone runs pass
+    unchanged. Local container validation was blocked (apptainer: the server
+    hangs after one or two connections; no docker on the host).
+- [ ] `main_test.go` `denyRemoteChanges` (added on `bugfix-set-counts-abca77d4de3c`,
+  commit aab1a7d) runs `ichmod` with `user.Current().Username`, assuming the
+  iRODS user name equals the OS user name; it will fail in CI's container zone
+  (rodsuser `ibackup`, OS user `runner`). Switch it to `UserInfo()` once #195
+  is merged under this branch.
+  - Origin: found while making the tests run against a container zone
+    (2026-10-08).
