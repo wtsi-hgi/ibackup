@@ -1,13 +1,12 @@
 # Bugfixes 2026-10-07: iRODS in CI
 
 - Branch: `bugfix-irods-ci-1dee5dab`
-- Base: dependency `bugfix-tests-speedup-6d2903c9` (PR #194) at `13915cf`;
-  integration base `origin/develop` at `43f73234a4d0` (resolved 2026-10-07)
-- Dependency: PR #194. Held for dependency merge: keep this branch local;
-  after #194 merges, rebase with `git rebase --onto origin/develop 13915cf`
-  before pushing.
-- Queue owner: `bugfix-tests-speedup-6d2903c9`,
-  `.docs/bugfixes/261005-tests-speedup-31c758180c99.md`
+- Base: `origin/develop` at `ce92caecdc7a` (#194 merged; rebased
+  2026-10-07)
+- Sequenced after test-collections for review and merge; no code
+  dependency.
+- Queue owner: `bugfix-set-counts-abca77d4de3c`,
+  `.docs/bugfixes/261002-set-counts-abca77d4de3c.md`
 - Origin: PR #194 review thread on `internal/testutil/irods_prefetch_test.go:88`
   (comment 4204477916)
 
