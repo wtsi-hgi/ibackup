@@ -52,7 +52,10 @@ var testStartTime time.Time //nolint:gochecknoglobals
 
 var icmd *testutil.ICommander //nolint:gochecknoglobals
 
-var errExpectedStatToFindUploadedObject = errors.New("expected Stat to find uploaded object")
+var (
+	errExpectedStatToFindUploadedObject = errors.New("expected Stat to find uploaded object")
+	errTransferStuck                    = errors.New("transfer did not return")
+)
 
 func countReplicates(reps []ex.Replicate) (int, int) {
 	good, bad := 0, 0
@@ -766,6 +769,83 @@ func TestBatonConcurrentClientInit(t *testing.T) {
 		_, err = h.GetMeta(fileRemote)
 		So(err, ShouldBeNil)
 	})
+
+	Convey("Transfers racing a concurrent Cleanup return instead of blocking forever", t, func() {
+		localPath := t.TempDir()
+		fileLocal := filepath.Join(localPath, "file")
+		fileGot := filepath.Join(localPath, "got")
+		fileRemote := filepath.Join(remotePath, "transfer-cleanup")
+
+		internal.CreateTestFileOfLength(t, fileLocal, 1)
+
+		h, err := GetBatonHandler()
+		So(err, ShouldBeNil)
+		Reset(func() {
+			h.Cleanup()
+		})
+
+		So(h.Put(fileLocal, fileRemote), ShouldBeNil)
+
+		// As for GetMeta above, a request on a client whose Stop() has begun
+		// is never sent. Transfers aren't timed out, since they can be long,
+		// so must instead notice that their client stopped.
+		raceCleanup := func(op func() error) {
+			const (
+				attempts = 10
+				bound    = 20 * time.Second
+			)
+
+			var stuck, failed bool
+
+			for i := range attempts {
+				So(op(), ShouldBeNil)
+
+				cleanupDone := make(chan struct{})
+
+				go func() {
+					h.Cleanup()
+					close(cleanupDone)
+				}()
+
+				time.Sleep(time.Duration(i%3) * time.Millisecond)
+
+				opDone := make(chan error, 1)
+
+				go func() {
+					opDone <- op()
+				}()
+
+				select {
+				case erro := <-opDone:
+					failed = erro != nil
+				case <-time.After(bound):
+					stuck = true
+				}
+
+				<-cleanupDone
+
+				if stuck || failed {
+					break
+				}
+			}
+
+			So(stuck, ShouldBeFalse)
+
+			if !failed {
+				t.Logf("transfer never landed in the stopping-client window in %d attempts", attempts)
+			}
+
+			So(op(), ShouldBeNil)
+		}
+
+		Convey("Put", func() {
+			raceCleanup(func() error { return h.Put(fileLocal, fileRemote) })
+		})
+
+		Convey("Get", func() {
+			raceCleanup(func() error { return h.Get(fileGot, fileRemote) })
+		})
+	})
 }
 
 func TestUploadRetry(t *testing.T) {
@@ -785,6 +865,7 @@ exec 3<>/dev/tcp/127.0.0.1/` + port + `;
 cat <&3 &
 declare PID=$!;
 cat >&3;
+sleep ${IBACKUP_TEST_BATON_LINGER:-0};
 kill $PID;
 exec 3>&-;`)
 
@@ -882,6 +963,73 @@ exec 3>&-;`)
 			err = h.Put("/some/local/file", "/some/remote/file")
 			So(err, ShouldNotBeNil)
 			So(err.Error(), ShouldEqual, "put operation failed: BAD code: 12345")
+		})
+
+		Convey("Transfers whose client is stopping as they start return an error", func() {
+			// Like a real baton-do finishing its work, ours lingers after its
+			// stdin is closed, so extendo still thinks the client is running
+			// after Stop() has stopped it reading requests.
+			linger := os.Getenv("IBACKUP_TEST_BATON_LINGER")
+
+			So(os.Setenv("IBACKUP_TEST_BATON_LINGER", "1"), ShouldBeNil)
+			Reset(func() { os.Setenv("IBACKUP_TEST_BATON_LINGER", linger) }) //nolint:errcheck,usetesting
+
+			stopWhileReplying := func(e *ex.Envelope) {
+				e.Result = &ex.ResultWrapper{Item: &e.Target}
+
+				go h.Cleanup()
+
+				time.Sleep(500 * time.Millisecond)
+			}
+
+			returnsWithin := func(op func() error) error {
+				errCh := make(chan error, 1)
+
+				go func() { errCh <- op() }()
+
+				select {
+				case erro := <-errCh:
+					return erro
+				case <-time.After(20 * time.Second):
+					return errTransferStuck
+				}
+			}
+
+			put := func() error { return h.Put("/some/local/file", "/some/remote/file") }
+
+			Convey("for Put", func() {
+				bh <- stopWhileReplying
+
+				So(put(), ShouldBeNil)
+
+				err = returnsWithin(put)
+				So(err, ShouldNotBeNil)
+				So(err.Error(), ShouldContainSubstring, ErrClientStopped)
+			})
+
+			Convey("for Get", func() {
+				bh <- stopWhileReplying
+
+				So(put(), ShouldBeNil)
+
+				err = returnsWithin(func() error {
+					return h.Get(filepath.Join(t.TempDir(), "file"), "/some/remote/file")
+				})
+				So(err, ShouldNotBeNil)
+				So(err.Error(), ShouldContainSubstring, ErrClientStopped)
+			})
+
+			Convey("for the Put retried after a SYS_COPY_LEN_ERR", func() {
+				bh <- func(e *ex.Envelope) {
+					e.ErrorMsg = &ex.ErrorMsg{Code: errSysCopyLen, Message: "SYS_COPY_LEN_ERR"}
+
+					bh <- stopWhileReplying
+				}
+
+				err = returnsWithin(put)
+				So(err, ShouldNotBeNil)
+				So(err.Error(), ShouldContainSubstring, ErrClientStopped)
+			})
 		})
 	})
 }
