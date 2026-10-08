@@ -606,6 +606,33 @@ func TestBatonConcurrentClientInit(t *testing.T) {
 		So(func() { err = h.CollectionsDone() }, ShouldNotPanic)
 		So(err, ShouldBeNil)
 	})
+
+	Convey("GetClientsFromPoolConcurrently failing partway leaves no started client running", t, func() {
+		h, err := GetBatonHandler()
+		So(err, ShouldBeNil)
+
+		// A pool that can only make 1 client lets 1 Get succeed while the
+		// other times out.
+		params := ex.DefaultClientPoolParams
+		params.MaxSize = 1
+		pool := ex.NewClientPool(params, "")
+		Reset(pool.Close)
+
+		before := runningBatonDoChildren(t)
+
+		_, err = h.GetClientsFromPoolConcurrently(pool, 2)
+		So(err, ShouldNotBeNil)
+
+		var started []int
+
+		for pid := range runningBatonDoChildren(t) {
+			if !before[pid] {
+				started = append(started, pid)
+			}
+		}
+
+		So(started, ShouldBeEmpty)
+	})
 }
 
 func TestUploadRetry(t *testing.T) {
@@ -778,4 +805,39 @@ func compareMetasWithSize(t *testing.T, remote, expected map[string]string, size
 	expected[meta.MetaKeyRemoteSize] = strconv.FormatInt(size, 10)
 
 	So(remote, ShouldResemble, expected)
+}
+
+// runningBatonDoChildren returns the pids of our running (not zombie) baton-do
+// child processes.
+func runningBatonDoChildren(t *testing.T) map[int]bool {
+	t.Helper()
+
+	statPaths, err := filepath.Glob("/proc/[0-9]*/stat")
+	So(err, ShouldBeNil)
+
+	ppid := strconv.Itoa(os.Getpid())
+	pids := make(map[int]bool)
+
+	for _, statPath := range statPaths {
+		stat, errr := os.ReadFile(statPath)
+		if errr != nil {
+			continue
+		}
+
+		// Format: pid (comm) state ppid ...
+		pidStr, rest, _ := strings.Cut(string(stat), " (")
+		comm, rest, _ := strings.Cut(rest, ") ")
+		fields := strings.Fields(rest)
+
+		if comm != "baton-do" || len(fields) < 2 || fields[0] == "Z" || fields[1] != ppid {
+			continue
+		}
+
+		pid, errc := strconv.Atoi(pidStr)
+		So(errc, ShouldBeNil)
+
+		pids[pid] = true
+	}
+
+	return pids
 }
