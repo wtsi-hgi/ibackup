@@ -287,3 +287,46 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
     extendo goroutine leaks until the upstream fix. Mutants (no fix; Get or
     the retry Put unwrapped) fail. Gates: lint, `-race ./baton`, `./baton
     ./transfer ./server`, `make speed` pass.
+- [x] "The doc comment states "Errors are logged, since the result itself was
+  recorded", but the error from `GetByNameAndRequester` here is silently
+  discarded (it shares the `return` with the `LastDiscovery` check). A
+  transient DB read error on this path would skip the re-queue without any
+  log line, making a stuck set harder to diagnose. Consider logging this
+  error, as is done for `requeueEntry` below."
+  - Source: PR #197 Copilot thread PRRT_kwDOIEe6nc6qb2XH / comment
+    4221005222 (`server/setdb.go:1995`, `requeueIfRediscovered`).
+  - Red: `CGO_ENABLED=1 go test -tags netgo --count 1 -timeout 5m ./server
+    -run '^TestRequeueIfRediscoveredLogsErrors$'`, exit 1. New test: an
+    Uploaded result through `trackUploadingAndStuckRequests` with a closed
+    set DB (the only way `GetByNameAndRequester` errors is its bolt `View`
+    failing):
+
+    ```text
+    .......x
+    Failures:
+      * .../server/server_test.go
+      Line 282:
+      Expected 'request done rid=7c8e8e737f79a9b00bb3fe29a22b03aa status=uploaded
+      ' to contain substring 'request requeue after rediscovery failed
+      rid=7c8e8e737f79a9b00bb3fe29a22b03aa err=database not open' (but it
+      didn't)!
+    8 total assertions
+    --- FAIL: TestRequeueIfRediscoveredLogsErrors (0.02s)
+    ```
+  - Fixed in `server/setdb.go`: `requeueIfRediscovered` only calls
+    `requeueEntry` when the read succeeded and a later discovery happened,
+    and logs either error with the existing "request requeue after
+    rediscovery failed rid=%s err=%s" line; the doc comment is now accurate.
+    Test `TestRequeueIfRediscoveredLogsErrors` in `server/server_test.go`.
+    Mutant (fix reverted, in a scratch copy) fails as above. A removed set
+    is not this path: `GetByNameAndRequester` returns nil, nil for it.
+    Gates: `make lint`, `make test`, `make race` pass. `make speed` skipped:
+    the change only adds an error-path log.
+- [ ] Possible (code reading only; reproduce before fixing): if a set is
+  deleted between `SetEntryStatus` and the reads that follow it in
+  `server/setdb.go`, `GetByNameAndRequester` returns nil, nil, so
+  `requeueIfRediscovered` (`given.LastDiscovery`, added on this branch) and
+  `handleNewlyCompletedSets` (`completed.Status`, pre-existing) would
+  dereference nil and panic.
+  - Origin: found fixing the unlogged requeue read error (PR #197 Copilot
+    comment 4221005222), 2026-10-08.

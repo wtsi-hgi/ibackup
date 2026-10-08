@@ -62,6 +62,7 @@ import (
 	btime "github.com/wtsi-ssg/wr/backoff/time"
 	"github.com/wtsi-ssg/wr/retry"
 	bolt "go.etcd.io/bbolt"
+	bolterrors "go.etcd.io/bbolt/errors"
 )
 
 var (
@@ -241,6 +242,46 @@ func TestFailedUploadRetryDelayConfig(t *testing.T) {
 			So(item.Stats().Delay, ShouldEqual, time.Duration(0))
 			So(s.queue.Stats().Ready, ShouldEqual, 1)
 			So(logWriter.String(), ShouldContainSubstring, "delay=0s")
+		})
+	})
+}
+
+func TestRequeueIfRediscoveredLogsErrors(t *testing.T) {
+	Convey("Given a server whose set database can no longer be read", t, func() {
+		logWriter := gas.NewStringLogger()
+
+		s, err := New(Config{
+			HTTPLogger:     logWriter,
+			StorageHandler: internal.GetLocalHandler(),
+			ReadOnly:       true,
+		})
+		So(err, ShouldBeNil)
+
+		s.db, err = set.New(filepath.Join(t.TempDir(), "set.db"), "", false)
+		So(err, ShouldBeNil)
+		So(s.db.Close(), ShouldBeNil)
+
+		Convey("an upload result whose set can't be re-read to check for "+
+			"rediscovery logs the error", func() {
+			r := &transfer.Request{
+				Local:     "/local",
+				Remote:    "/remote",
+				Requester: "req",
+				Set:       "set",
+				Status:    transfer.RequestStatusUploaded,
+			}
+			rid := r.ID()
+			_, _, err = s.queue.AddMany(context.Background(), []*queue.ItemDef{{Key: rid, Data: r, TTR: ttr}})
+			So(err, ShouldBeNil)
+			_, err = s.queue.Reserve("", 0)
+			So(err, ShouldBeNil)
+
+			err = s.trackUploadingAndStuckRequests(r, &set.Entry{})
+			So(err, ShouldBeNil)
+			So(s.queue.Stats().Items, ShouldEqual, 0)
+
+			So(logWriter.String(), ShouldContainSubstring,
+				"request requeue after rediscovery failed rid="+rid+" err="+bolterrors.ErrDatabaseNotOpen.Error())
 		})
 	})
 }
