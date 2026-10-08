@@ -322,7 +322,7 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
     is not this path: `GetByNameAndRequester` returns nil, nil for it.
     Gates: `make lint`, `make test`, `make race` pass. `make speed` skipped:
     the change only adds an error-path log.
-- [ ] Possible (code reading only; reproduce before fixing): if a set is
+- [x] Possible (code reading only; reproduce before fixing): if a set is
   deleted between `SetEntryStatus` and the reads that follow it in
   `server/setdb.go`, `GetByNameAndRequester` returns nil, nil, so
   `requeueIfRediscovered` (`given.LastDiscovery`, added on this branch) and
@@ -330,3 +330,34 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
   dereference nil and panic.
   - Origin: found fixing the unlogged requeue read error (PR #197 Copilot
     comment 4221005222), 2026-10-08.
+  - Reachable: `deleteSet` (`server/setdb.go`) has no status check, so a set
+    with uploads in flight can be deleted. It never touches the put queue;
+    `registerDeletionCallback` runs `db.Delete` in its own goroutine once
+    the set's removals finish (`discoveryCoordinator.RemovalDone` in
+    `server/discover.go`). Nothing orders that against
+    `handleFileStatusUpdates`, so the delete can land after
+    `SetEntryStatus` succeeds and before the reads that follow it.
+  - Red: `CGO_ENABLED=1 go test -timeout 300s -count=1 -run
+    'TestUpdateFileStatusForSetDeletedMidUpdate' ./server/`, exit 1. The
+    new test replays `updateFileStatus`'s steps with `db.Delete` between
+    `SetEntryStatus` and the rest; both functions panic:
+
+    ```text
+    ........E.........E.
+      Line 327: - runtime error: invalid memory address or nil pointer dereference
+      github.com/wtsi-hgi/ibackup/server.(*Server).handleNewlyCompletedSets(...)
+        .../server/setdb.go:1955 +0x39
+      Line 331: - runtime error: invalid memory address or nil pointer dereference
+        .../server/setdb.go:1993 +0x67   (requeueIfRediscovered)
+        .../server/setdb.go:1980 +0x1e8  (trackUploadingAndStuckRequests)
+    --- FAIL: TestUpdateFileStatusForSetDeletedMidUpdate (0.05s)
+    ```
+  - Fixed in `server/setdb.go`: `handleNewlyCompletedSets` and
+    `requeueIfRediscovered` treat a nil set as nothing to complete or
+    requeue, without logging, since deleting a set is a normal user
+    action. Test `TestUpdateFileStatusForSetDeletedMidUpdate` in
+    `server/server_test.go` also checks the request still leaves the queue.
+    Mutants (each nil check reverted separately, in a scratch copy) fail
+    as above.
+    Gates: `make lint`, `make test`, `make race` pass. `make speed`
+    skipped: the change only adds nil checks after existing reads.

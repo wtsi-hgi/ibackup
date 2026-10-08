@@ -286,6 +286,54 @@ func TestRequeueIfRediscoveredLogsErrors(t *testing.T) {
 	})
 }
 
+func TestUpdateFileStatusForSetDeletedMidUpdate(t *testing.T) {
+	Convey("Given a server with a set whose upload result was just recorded", t, func() {
+		s, err := New(Config{
+			HTTPLogger:     gas.NewStringLogger(),
+			StorageHandler: internal.GetLocalHandler(),
+			ReadOnly:       true,
+		})
+		So(err, ShouldBeNil)
+
+		s.db, err = set.New(filepath.Join(t.TempDir(), "set.db"), "", false)
+		So(err, ShouldBeNil)
+
+		Reset(func() { So(s.db.Close(), ShouldBeNil) })
+
+		given := &set.Set{Name: "set", Requester: "req", Transformer: "prefix=/:/remote"}
+		So(s.db.AddOrUpdate(given), ShouldBeNil)
+		So(s.db.MergeFileEntries(given.ID(), []string{"/local"}), ShouldBeNil)
+
+		r := &transfer.Request{
+			Local:     "/local",
+			Remote:    "/remote/local",
+			Requester: given.Requester,
+			Set:       given.Name,
+			Status:    transfer.RequestStatusUploaded,
+		}
+		_, _, err = s.queue.AddMany(context.Background(), []*queue.ItemDef{{Key: r.ID(), Data: r, TTR: ttr}})
+		So(err, ShouldBeNil)
+		_, err = s.queue.Reserve("", 0)
+		So(err, ShouldBeNil)
+
+		// These replay updateFileStatus's steps, deleting the set (as the
+		// deleteSet callback does in its own goroutine) after the status was
+		// recorded but before the set is read again.
+		entry, err := s.db.SetEntryStatus(r)
+		So(err, ShouldBeNil)
+		So(s.db.Delete(given.ID()), ShouldBeNil)
+
+		Convey("there is no completed set to handle", func() {
+			So(s.handleNewlyCompletedSets(r), ShouldBeNil)
+		})
+
+		Convey("there is nothing to requeue, and the request leaves the queue", func() {
+			So(s.trackUploadingAndStuckRequests(r, entry), ShouldBeNil)
+			So(s.queue.Stats().Items, ShouldEqual, 0)
+		})
+	})
+}
+
 func TestPutJobSubmissionRetrigger(t *testing.T) {
 	Convey("Given a server submitting put jobs for a ready request", t, func() {
 		wrclient.PretendSubmissions = "Y"
