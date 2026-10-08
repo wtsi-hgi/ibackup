@@ -59,6 +59,7 @@ import (
 const (
 	ErrOperationTimeout   = "iRODS operation timed out"
 	ErrCollectionsStopped = "collection creation was stopped"
+	ErrClientStopped      = "iRODS client stopped during the operation"
 
 	extendoLogLevel        = logs.ErrorLevel
 	numCollClients         = 2
@@ -68,6 +69,8 @@ const (
 	operationBackoffFactor = 1.1
 	operationTimeout       = 60 * time.Second
 	operationRetries       = 6
+	clientStopCheckFreq    = 100 * time.Millisecond
+	clientStoppedGrace     = 5 * time.Second // as extendo's DefaultResponseTimeout
 
 	errSysCopyLen = -27000
 )
@@ -185,6 +188,64 @@ func (b *Baton) timeoutOp(op retry.Operation, path string) error {
 	}
 
 	return err
+}
+
+// putItem uploads item with our put client, returning if that client stops.
+func (b *Baton) putItem(item *ex.RodsItem) error {
+	client := b.putClient.Load()
+
+	return untilClientStops(client, func() error {
+		_, err := client.Put(ex.Args{Force: true, Verify: true}, *item)
+
+		return err
+	}, path.Join(item.IPath, item.IName))
+}
+
+// untilClientStops carries out op, which uses client, returning any error from
+// it. Unlike timeoutOp it doesn't limit how long op can take, since transfers
+// can be long, but returns an error instead if client stops running and op
+// still hasn't returned soon after.
+//
+// extendo (v3.2.0 client.go send) blocks forever when sending a request to a
+// client whose Stop() began before the request was written, and no reply can
+// come once the client has stopped, so op is then abandoned (leaving its
+// goroutine blocked until extendo is fixed).
+func untilClientStops(client *ex.Client, op retry.Operation, path string) error {
+	errCh := make(chan error, 1)
+
+	go func() {
+		errCh <- op()
+	}()
+
+	ticker := time.NewTicker(clientStopCheckFreq)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case err := <-errCh:
+			return err
+		case <-ticker.C:
+			if !client.IsRunning() {
+				return waitAfterClientStopped(errCh, path)
+			}
+		}
+	}
+}
+
+// waitAfterClientStopped returns the error from errCh, or an ErrClientStopped
+// error if none arrives within clientStoppedGrace. Any request that was sent
+// returns promptly once its client stops, so the grace only avoids misreporting
+// an op that is slow to be scheduled.
+func waitAfterClientStopped(errCh <-chan error, path string) error {
+	timer := time.NewTimer(clientStoppedGrace)
+	defer timer.Stop()
+
+	select {
+	case err := <-errCh:
+		return err
+	case <-timer.C:
+		return errs.PathError{Msg: ErrClientStopped, Path: path}
+	}
 }
 
 // setupExtendoLogger sets up a STDERR logger that the extendo library will use.
@@ -655,13 +716,7 @@ func (b *Baton) Put(local, remote string) error {
 		defer os.Remove(fileName)
 	}
 
-	_, err = b.putClient.Load().Put(
-		ex.Args{
-			Force:  true,
-			Verify: true,
-		},
-		*item,
-	)
+	err = b.putItem(item)
 	if re, ok := errors.AsType[*ex.RodsError](err); ok && re.Code() == errSysCopyLen {
 		err = b.removeAndRetry(item)
 	}
@@ -678,9 +733,7 @@ func (b *Baton) removeAndRetry(item *ex.RodsItem) error {
 		return err
 	}
 
-	_, err := b.putClient.Load().Put(ex.Args{Force: true, Verify: true}, *item)
-
-	return err
+	return b.putItem(item)
 }
 
 func (b *Baton) Get(local, remote string) error {
@@ -692,14 +745,20 @@ func (b *Baton) Get(local, remote string) error {
 	localDir, localFile := filepath.Split(local)
 	tmpLocal := filepath.Join(localDir, fmt.Sprintf(".ibackup.get.%X", sha256.Sum256([]byte(localFile))))
 
-	_, err = b.putClient.Load().Get(
-		ex.Args{
-			Force:  true,
-			Verify: true,
-			Save:   true,
-		},
-		*requestToRodsItem(tmpLocal, remote),
-	)
+	client := b.putClient.Load()
+
+	err = untilClientStops(client, func() error {
+		_, errg := client.Get(
+			ex.Args{
+				Force:  true,
+				Verify: true,
+				Save:   true,
+			},
+			*requestToRodsItem(tmpLocal, remote),
+		)
+
+		return errg
+	}, remote)
 	if err != nil {
 		os.Remove(tmpLocal)
 

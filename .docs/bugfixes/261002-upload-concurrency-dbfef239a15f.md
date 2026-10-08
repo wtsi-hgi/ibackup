@@ -265,10 +265,24 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
   - Fixed in `baton/baton.go`: `connect` closes its pool on error;
     `timeoutOpAndMakeNewClientOnError` uses `getNewClient` instead of its
     own pool. Mutants (no close in `connect`; old inline pool) fail.
-- [ ] Possible: `baton/baton.go` `Put`, `Get` and the `Put` in
+- [x] Possible: `baton/baton.go` `Put`, `Get` and the `Put` in
   `removeAndRetry` call the put client without `timeoutOp` (probably
   deliberate, as large transfers outlast 60s), so they share extendo
   v3.2.0's hang if the put client's `Stop()` overlaps a request (`send`
   blocks on an unbuffered channel after the writer goroutine is cancelled;
   upstream wtsi-npg/extendo client.go:848). Code reading.
   - Origin: found fixing the `GetMeta` timeout (2026-10-08).
+  - Reproduced on real iRODS: Put and Get just after a concurrent Cleanup
+    hung in extendo `send` (client.go:848). Red: the same command's new Convey
+    "Transfers racing a concurrent Cleanup return instead of blocking
+    forever", and deterministic fake-baton Conveys in `TestUploadRetry`
+    (Put, Get, and the Put retried after SYS_COPY_LEN_ERR): `transfer did not
+    return`.
+  - Fixed in `baton/baton.go`: `untilClientStops` runs the transfer and checks
+    `IsRunning` every 100ms; once the client has stopped it waits a 5s grace
+    (extendo's response timeout) and then returns `ErrClientStopped`. No time
+    limit on real transfers. Rejected: making Cleanup wait for transfers
+    (could wait hours) and a long `timeoutOp` (caps transfers). The blocked
+    extendo goroutine leaks until the upstream fix. Mutants (no fix; Get or
+    the retry Put unwrapped) fail. Gates: lint, `-race ./baton`, `./baton
+    ./transfer ./server`, `make speed` pass.
