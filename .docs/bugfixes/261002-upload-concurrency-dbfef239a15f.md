@@ -125,7 +125,7 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
     collections. Mutants (only RemoteDataPath collections, last duplicate
     left out, no fix) fail. `make speed` passed (Upload -1.7%, Remove -0.8%
     vs ce92cae).
-- [ ] Possible (code reading only; reproduce before fixing): in an unfrozen
+- [x] Possible (code reading only; reproduce before fixing): in an unfrozen
   set, an upload result that lands just before rediscovery processes its entry
   has that entry reset to Pending. If discovery's `enqueueEntries` then reaches
   the queue while the item is still there (between `SetEntryStatus` and
@@ -133,6 +133,21 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
   entry is never uploaded or counted until the next discovery.
   - Origin: found fixing the set-counts "results during discovery are counted
     twice" item (2026-10-07).
+  - Reproduced. Red: `CGO_ENABLED=1 go test -tags netgo --count 1 -timeout
+    20m ./server -run '^TestServer$'`, new Convey replaying
+    `updateFileStatus`'s steps around a synchronous rediscovery:
+    `got.Uploaded` `Expected: 1 Actual: 0` (nothing re-queued, set stuck
+    PendingUpload).
+  - Fixed in `server/setdb.go`: after a non-failed result's request leaves
+    the queue, `requeueIfRediscovered` re-reads the set and, if a later
+    discovery wants the entry uploaded (`ShouldUpload`), puts it back via
+    `enqueueEntries`. A sibling frozen-set Convey asserts nothing is
+    re-queued. Mutants (no fix, requeue before removal, only failed results,
+    no `ShouldUpload` check) fail. Gates pass; `make speed` Upload -0.2%,
+    Remove +1.7% vs ce92cae.
+  - After #195 merges under this branch: add `Uploaded == 1` and `Complete`
+    assertions to the frozen Convey (they fail on develop because of the
+    frozen-count bug #195 fixes, and pass on #195).
 - [x] `server/server.go` `reserveRemoveRequest`: when `removeQueue.Reserve`
   fails with anything other than `ErrNothingReady` (e.g. `ErrQueueClosed`
   from wr v0.38.0 when the queue is closed), the error is only logged and
