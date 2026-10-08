@@ -34,6 +34,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -53,10 +54,50 @@ var serialMu sync.Mutex //nolint:gochecknoglobals
 var (
 	errIcmdNil               = errors.New("irods command runner is nil")
 	errIRODSRetriesExhausted = errors.New("exhausted iRODS retries")
+	errIUserInfoNoName       = errors.New("iuserinfo output has no valid user name")
+)
+
+var irodsUsernameRE = regexp.MustCompile(`^[A-Za-z0-9_.@-]+$`)
+
+const (
+	iuserinfoNamePrefix  = "name:"
+	iuserinfoGroupPrefix = "member of group:"
 )
 
 type irodsLogger interface {
 	Logf(format string, args ...any)
+}
+
+// IRODSUser is the iRODS user that iCommands run as, which need not have the
+// same name as the local user.
+type IRODSUser struct {
+	Name   string
+	Groups []string
+}
+
+func parseIUserInfo(out []byte) (IRODSUser, error) {
+	var info IRODSUser
+
+	for line := range strings.Lines(string(out)) {
+		line = strings.TrimSpace(line)
+
+		if name, ok := strings.CutPrefix(line, iuserinfoNamePrefix); ok {
+			info.Name = strings.TrimSpace(name)
+
+			continue
+		}
+
+		group, ok := strings.CutPrefix(line, iuserinfoGroupPrefix)
+		if group = strings.TrimSpace(group); ok && group != "" {
+			info.Groups = append(info.Groups, group)
+		}
+	}
+
+	if !irodsUsernameRE.MatchString(info.Name) {
+		return IRODSUser{}, fmt.Errorf("%w: %q", errIUserInfoNoName, info.Name)
+	}
+
+	return info, nil
 }
 
 // ICommander runs iCommands with retry behaviour for transient failures.
@@ -65,6 +106,16 @@ type ICommander struct {
 	timeout     time.Duration
 	maxAttempts int
 	backoff     time.Duration
+}
+
+// UserInfo returns the name and groups of the iRODS user that iCommands run as.
+func (cmd *ICommander) UserInfo() (IRODSUser, error) {
+	out, err := cmd.IUSERINFO()
+	if err != nil {
+		return IRODSUser{}, err
+	}
+
+	return parseIUserInfo(out)
 }
 
 func createIRODSCollection(collection string) error {

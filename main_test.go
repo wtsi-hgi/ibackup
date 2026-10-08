@@ -3637,6 +3637,8 @@ func (s *testServer) prepareFilePaths() {
 		"XDG_STATE_HOME=" + s.dir,
 		"PATH=" + path,
 		"HOME=" + home,
+		// the Singularity wrappers for baton-do and iCommands need USER
+		"USER=" + os.Getenv("USER"),
 		"IRODS_ENVIRONMENT_FILE=" + os.Getenv("IRODS_ENVIRONMENT_FILE"),
 		"GEM_HOME=" + os.Getenv("GEM_HOME"),
 		"IBACKUP_SLACK_TOKEN=" + os.Getenv("IBACKUP_SLACK_TOKEN"),
