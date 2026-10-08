@@ -278,15 +278,20 @@ func (b *Baton) makeCollConnections() error {
 // connections to iRODS concurrently, for later use by other methods.
 //
 // Returns a pool you should later close, and a channel containing numClients
-// clients.
+// clients. On error, it closes the pool itself.
 func (b *Baton) connect(numClients uint8) (*ex.ClientPool, chan *ex.Client, error) {
 	params := ex.DefaultClientPoolParams
 	params.MaxSize = numClients
 	pool := ex.NewClientPool(params, "")
 
 	clientCh, err := b.GetClientsFromPoolConcurrently(pool, numClients)
+	if err != nil {
+		pool.Close()
 
-	return pool, clientCh, err
+		return nil, nil, err
+	}
+
+	return pool, clientCh, nil
 }
 
 // GetClientsFromPoolConcurrently gets numClients clients from the pool
@@ -402,10 +407,8 @@ func (b *Baton) timeoutOpAndMakeNewClientOnError(
 	return func() error {
 		err := b.timeoutOp(op, path)
 		if err != nil && ctx.Err() == nil {
-			pool := ex.NewClientPool(ex.DefaultClientPoolParams, "")
-
-			client, errp := pool.Get()
-			if errp == nil {
+			client, errc := b.getNewClient()
+			if errc == nil {
 				go func(oldClient *ex.Client) {
 					b.timeoutOp(func() error { //nolint:errcheck
 						oldClient.StopIgnoreError()
@@ -413,8 +416,6 @@ func (b *Baton) timeoutOpAndMakeNewClientOnError(
 						return nil
 					}, "")
 				}(b.swapCollClient(ctx, clientIndex, client))
-
-				pool.Close()
 			}
 		}
 
