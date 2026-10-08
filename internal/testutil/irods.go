@@ -34,6 +34,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -46,6 +47,10 @@ const (
 	irodsRetryMaxAttempts = 8
 	irodsRetryBackoff     = 250 * time.Millisecond
 	collectionPrefix      = "ibackup_test_"
+
+	// IRODSAdminEnvKey optionally names the iRODS environment file of an iRODS
+	// admin, for GrantOwn.
+	IRODSAdminEnvKey = "IBACKUP_TEST_IRODS_ADMIN_ENVIRONMENT_FILE"
 )
 
 var serialMu sync.Mutex //nolint:gochecknoglobals
@@ -53,10 +58,50 @@ var serialMu sync.Mutex //nolint:gochecknoglobals
 var (
 	errIcmdNil               = errors.New("irods command runner is nil")
 	errIRODSRetriesExhausted = errors.New("exhausted iRODS retries")
+	errIUserInfoNoName       = errors.New("iuserinfo output has no valid user name")
+)
+
+var irodsUsernameRE = regexp.MustCompile(`^[A-Za-z0-9_.@-]+$`)
+
+const (
+	iuserinfoNamePrefix  = "name:"
+	iuserinfoGroupPrefix = "member of group:"
 )
 
 type irodsLogger interface {
 	Logf(format string, args ...any)
+}
+
+// IRODSUser is the iRODS user that iCommands run as, which need not have the
+// same name as the local user.
+type IRODSUser struct {
+	Name   string
+	Groups []string
+}
+
+func parseIUserInfo(out []byte) (IRODSUser, error) {
+	var info IRODSUser
+
+	for line := range strings.Lines(string(out)) {
+		line = strings.TrimSpace(line)
+
+		if name, ok := strings.CutPrefix(line, iuserinfoNamePrefix); ok {
+			info.Name = strings.TrimSpace(name)
+
+			continue
+		}
+
+		group, ok := strings.CutPrefix(line, iuserinfoGroupPrefix)
+		if group = strings.TrimSpace(group); ok && group != "" {
+			info.Groups = append(info.Groups, group)
+		}
+	}
+
+	if !irodsUsernameRE.MatchString(info.Name) {
+		return IRODSUser{}, fmt.Errorf("%w: %q", errIUserInfoNoName, info.Name)
+	}
+
+	return info, nil
 }
 
 // ICommander runs iCommands with retry behaviour for transient failures.
@@ -65,6 +110,34 @@ type ICommander struct {
 	timeout     time.Duration
 	maxAttempts int
 	backoff     time.Duration
+	env         []string
+}
+
+// UserInfo returns the name and groups of the iRODS user that iCommands run as.
+func (cmd *ICommander) UserInfo() (IRODSUser, error) {
+	out, err := cmd.IUSERINFO()
+	if err != nil {
+		return IRODSUser{}, err
+	}
+
+	return parseIUserInfo(out)
+}
+
+// GrantOwn gives user own access to path. Since iRODS 4.3, a user who has
+// given up their own access to an object cannot take it back, so if
+// IRODSAdminEnvKey names an iRODS admin's environment file, that admin grants
+// it in admin mode instead.
+func (cmd *ICommander) GrantOwn(user, path string) ([]byte, error) {
+	adminEnv := os.Getenv(IRODSAdminEnvKey)
+	if adminEnv == "" {
+		return cmd.ICHMOD("own", user, path)
+	}
+
+	admin := *cmd
+
+	admin.env = append(os.Environ(), "IRODS_ENVIRONMENT_FILE="+adminEnv)
+
+	return admin.ICHMOD("-M", "own", user, path)
 }
 
 func createIRODSCollection(collection string) error {
@@ -140,14 +213,7 @@ func (cmd *ICommander) Run(command string, args ...string) ([]byte, error) {
 		return nil, errIcmdNil
 	}
 
-	return runIRODSCommandWithRetry(
-		cmd.logger,
-		cmd.timeout,
-		cmd.maxAttempts,
-		cmd.backoff,
-		command,
-		args...,
-	)
+	return runIRODSCommandWithRetry(cmd, command, args...)
 }
 
 // IRM runs irm with retry handling.
@@ -250,16 +316,11 @@ func checkIRODSCommand(command string) (bool, error) {
 	return true, nil
 }
 
-func runIRODSCommandWithRetry(
-	logger irodsLogger,
-	timeout time.Duration,
-	maxAttempts int,
-	backoff time.Duration,
-	command string,
-	args ...string,
-) ([]byte, error) {
+func runIRODSCommandWithRetry(cmd *ICommander, command string, args ...string) ([]byte, error) {
+	logger, maxAttempts, backoff := cmd.logger, cmd.maxAttempts, cmd.backoff
+
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		out, err := runIRODSCommandOnce(timeout, command, args...)
+		out, err := runIRODSCommandOnce(cmd.timeout, cmd.env, command, args...)
 		if err == nil || shouldTreatMissingPath(command, out) {
 			return out, nil
 		}
@@ -286,11 +347,14 @@ func randomCollectionName() (string, error) {
 	return collectionPrefix + hex.EncodeToString(buf), nil
 }
 
-func runIRODSCommandOnce(timeout time.Duration, command string, args ...string) ([]byte, error) {
+func runIRODSCommandOnce(timeout time.Duration, env []string, command string, args ...string) ([]byte, error) {
 	ctx, cancelFn := context.WithTimeout(context.Background(), timeout)
 	defer cancelFn()
 
-	return exec.CommandContext(ctx, command, args...).CombinedOutput() //nolint:gosec
+	c := exec.CommandContext(ctx, command, args...) //nolint:gosec
+	c.Env = env
+
+	return c.CombinedOutput()
 }
 
 func shouldTreatMissingPath(command string, out []byte) bool {

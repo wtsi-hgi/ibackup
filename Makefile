@@ -25,28 +25,40 @@ install:
 # log output), and mostly wait on iRODS and wr, so its top-level tests run as
 # separate processes of one test binary, MAIN_TEST_JOBS at a time. Each test's
 # output is printed whole when it finishes, and MAIN_TEST_TIMEOUT bounds each
-# test. To run only some tests, use go test -run directly.
+# test. To run only some tests, use go test -run directly. If MAIN_TEST_LOG_DIR
+# is set, each test's output is also kept there as <test>.log.
 MAIN_TEST_JOBS ?= 4
 MAIN_TEST_TIMEOUT ?= 30m
 
 define test-main
 	@d=$$(mktemp -d) && trap 'rm -rf "$$d"' EXIT && trap 'exit 130' INT TERM HUP && \
+	if [ -n "$(MAIN_TEST_LOG_DIR)" ]; then mkdir -p "$(MAIN_TEST_LOG_DIR)" && ln -s "$(abspath $(MAIN_TEST_LOG_DIR))" "$$d/logs"; \
+	else mkdir "$$d/logs"; fi && \
 	go test -tags netgo $(1) -c -o "$$d/main.test" . && \
 	sed -n 's/^func \(Test[A-Za-z0-9_]*\)(t \*testing\.T).*/\1/p' main_test.go | \
 	xargs -n 1 -P $(MAIN_TEST_JOBS) sh -c '"$$0/main.test" -test.run "^$$1$$" -test.count 1 -test.v=true \
-		-test.timeout $(MAIN_TEST_TIMEOUT) > "$$0/$$1.log" 2>&1; rc=$$?; flock "$$0" cat "$$0/$$1.log"; exit $$rc' "$$d"
+		-test.timeout $(MAIN_TEST_TIMEOUT) > "$$0/logs/$$1.log" 2>&1; rc=$$?; flock "$$0" cat "$$0/logs/$$1.log"; exit $$rc' "$$d"
 endef
 
 # The server package takes close to Go's 10m default test timeout under -race,
 # and longer on a busy host, so the sub-package tests get their own bound.
 SUBPKG_TEST_TIMEOUT ?= 30m
 
-test:
+# With make -k, the sub-package tests still run if the main ones fail.
+test: test-main test-subpkgs
+
+test-main:
 	$(call test-main)
+
+test-subpkgs:
 	@go test -tags netgo --count 1 -timeout $(SUBPKG_TEST_TIMEOUT) $(shell go list ./... | grep -v '^${PKG}$$')
 
-race: race-subpkgs
-	@$(MAKE) race-main
+# With make -k, the main tests still run if the sub-package ones fail.
+race: race-subpkgs race-main
+
+# The halves of test and race run one after the other, even with make -j. (GNU
+# make before 4.4 ignores the targets and makes the whole makefile serial.)
+.NOTPARALLEL: test race
 
 race-main:
 	$(call test-main,-race)
@@ -82,4 +94,4 @@ dist:
 	github-release upload --tag ${TAG} --name ibackup-linux-x86-64.zip --file linux-dist.zip
 	@rm -f ibackup linux-dist.zip
 
-.PHONY: test race race-main race-subpkgs bench speed lint build install clean dist
+.PHONY: test test-main test-subpkgs race race-main race-subpkgs bench speed lint build install clean dist

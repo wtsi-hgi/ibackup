@@ -10,20 +10,176 @@ on:
     - master
     - develop
 
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    # The iRODS-dependent tests run against a throwaway iRODS zone in a
+    # container, using iCommands and baton-do from a client image run via
+    # Singularity, as wtsi-npg/extendo's CI does. They upload with wr jobs, so a
+    # wr manager is started too.
+    env:
+      SINGULARITY_VERSION: "4.2.2"
+      SINGULARITY_CACHEDIR: ${{ github.workspace }}/.singularity-cache
+      # Tag 9.8 of the client image (pinned by digest, as Singularity may not
+      # accept a tag and digest together). The wrappers it installs use 9.8.
+      IRODS_CLIENT_IMAGE: ghcr.io/wtsi-npg/ub-22.04-irods-clients-4.3.5@sha256:4fcb42c9b484e869e09051a944cab6e157f10613cc29f31172a52d9f9b0977dc
+      IRODS_CLIENTS_PREFIX: ${{ github.workspace }}/.irods-clients
+      IRODS_SERVER_IMAGE: ghcr.io/wtsi-npg/ub-22.04-irods-4.3.5:9.8@sha256:bf8ca288853403cb0bd0bb5a7ae637072aff6afa6080069886bba5fa82227ccb
+      WR_VERSION: v0.38.0
+      # The tests run as an ordinary iRODS user, as they do against Sanger's
+      # zones, and its name deliberately differs from the local user's.
+      IRODS_TEST_USER: ibackup
+      IRODS_TEST_PASSWORD: ibackup
+      IBACKUP_TEST_SCHEDULER: development
+      IBACKUP_TEST_COLLECTION: /testZone/home/ibackup/ibackup_testsuite
 
     steps:
     - name: Checkout Code
       uses: actions/checkout@v5
+
+    # Not a service container: uploads over 32MB use parallel transfer, for
+    # which the server tells the client to connect to its own address on a port
+    # in 20000-20199, and the client can't reach a service container's own
+    # address. On the host network the server's address is the runner's.
+    - name: Start iRODS server
+      run: |
+        docker run -d --name irods-server --network host -v /dev/shm:/dev/shm "$IRODS_SERVER_IMAGE"
+
+        for _ in $(seq 60); do
+          if (exec 3<>/dev/tcp/localhost/1247) 2>/dev/null; then
+            exit 0
+          fi
+
+          sleep 2
+        done
+
+        docker logs irods-server
+        exit 1
+
     - name: Set up Go
       uses: actions/setup-go@v6
       with:
         go-version-file: go.mod
 
+    - name: Install Singularity
+      run: |
+        pkg="singularity-ce_${SINGULARITY_VERSION}-$(lsb_release -sc)_amd64.deb"
+        base="https://github.com/sylabs/singularity/releases/download/v${SINGULARITY_VERSION}"
+        curl -sSfL -O "$base/$pkg"
+        curl -sSfL -O "$base/sha256sums"
+        grep " ${pkg}\$" sha256sums | sha256sum -c -
+        sudo apt-get install -q -y "./$pkg"
+        rm "$pkg" sha256sums
+
+        # Avoid the runner's loop devices being exhausted
+        sudo singularity config global --set "max loop devices" 128
+
+        # Enable DBus for this user, so that rootless cgroups works and
+        # Singularity service instances can be created. See
+        # https://github.com/containers/podman/issues/5443
+        systemctl --user enable --now dbus.socket
+        echo "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus" >> "$GITHUB_ENV"
+
+    - name: Cache Singularity images
+      uses: actions/cache@v4
+      with:
+        path: ${{ env.SINGULARITY_CACHEDIR }}
+        key: ${{ runner.os }}-singularity-${{ env.IRODS_CLIENT_IMAGE }}
+
+    - name: Install iRODS client wrappers
+      run: |
+        # -s makes the wrappers reuse one Singularity service instance
+        singularity exec "docker://$IRODS_CLIENT_IMAGE" \
+          singularity-wrapper -s -p "$IRODS_CLIENTS_PREFIX" install
+        echo "$IRODS_CLIENTS_PREFIX/bin" >> "$GITHUB_PATH"
+
+    - name: Configure iRODS clients
+      run: |
+        mkdir -p "$HOME/.irods"
+
+        # script -e returns iinit's exit code, so a failed login fails the step
+
+        write_env() {
+          cat <<EOF > "$1"
+        {
+            "irods_host": "localhost",
+            "irods_port": 1247,
+            "irods_user_name": "$2",
+            "irods_zone_name": "testZone",
+            "irods_home": "/testZone/home/$2",
+            "irods_default_resource": "replResc",
+            "irods_default_hash_scheme": "MD5",
+            "irods_authentication_file": "$HOME/.irods/.irodsA-$2"
+        }
+        EOF
+        }
+
+        admin_env="$HOME/.irods/irods_environment.admin.json"
+        write_env "$admin_env" irods
+        export IRODS_ENVIRONMENT_FILE="$admin_env"
+        echo "irods" | script -e -q -c "iinit" /dev/null
+        iadmin mkuser "$IRODS_TEST_USER" rodsuser
+        iadmin moduser "$IRODS_TEST_USER" password "$IRODS_TEST_PASSWORD"
+
+        # On iRODS 4.3, tests that take away the test user's own access need
+        # the admin to give it back.
+        echo "IBACKUP_TEST_IRODS_ADMIN_ENVIRONMENT_FILE=$admin_env" >> "$GITHUB_ENV"
+
+        # The tests pass IRODS_ENVIRONMENT_FILE on to the servers they start,
+        # so it must be set.
+        export IRODS_ENVIRONMENT_FILE="$HOME/.irods/irods_environment.json"
+        echo "IRODS_ENVIRONMENT_FILE=$IRODS_ENVIRONMENT_FILE" >> "$GITHUB_ENV"
+        write_env "$IRODS_ENVIRONMENT_FILE" "$IRODS_TEST_USER"
+        echo "$IRODS_TEST_PASSWORD" | script -e -q -c "iinit" /dev/null
+
+        ienv
+        iuserinfo
+        ils
+        ilsresc
+
+        baton-do --version
+
+    - name: Install and start wr
+      run: |
+        go install "github.com/VertebrateResequencing/wr@${WR_VERSION}"
+        gobin="$(go env GOPATH)/bin"
+        echo "$gobin" >> "$GITHUB_PATH"
+        "$gobin/wr" manager start --deployment "$IBACKUP_TEST_SCHEDULER"
+        "$gobin/wr" manager status --deployment "$IBACKUP_TEST_SCHEDULER"
+
+    # -k so that main-package failures don't stop the sub-package tests
     - name: Run tests
-      run: make test
+      id: tests
+      run: make -k test
+      env:
+        MAIN_TEST_LOG_DIR: ${{ runner.temp }}/test-logs/test/main
+        IBACKUP_TEST_LOG_DIR: ${{ runner.temp }}/test-logs/test/servers
 
     - name: Run tests with race detection
-      run: make race
+      if: ${{ !cancelled() && steps.tests.outcome != 'skipped' }}
+      run: make -k race
+      env:
+        MAIN_TEST_LOG_DIR: ${{ runner.temp }}/test-logs/race/main
+        IBACKUP_TEST_LOG_DIR: ${{ runner.temp }}/test-logs/race/servers
+
+    - name: Show iRODS server log
+      if: ${{ failure() }}
+      run: docker logs irods-server || true
+
+    - name: Upload test logs
+      if: ${{ failure() }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-logs
+        path: ${{ runner.temp }}/test-logs
+        if-no-files-found: ignore
+        retention-days: 14

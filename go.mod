@@ -23,7 +23,7 @@ require (
 	github.com/spf13/pflag v1.0.10
 	github.com/ugorji/go/codec v1.3.2
 	github.com/viant/ptrie v1.0.1
-	github.com/wtsi-hgi/go-authserver v1.6.0
+	github.com/wtsi-hgi/go-authserver v1.6.1
 	github.com/wtsi-hgi/statter v1.3.0
 	github.com/wtsi-npg/extendo/v3 v3.2.0
 	github.com/wtsi-npg/logshim v1.6.0
@@ -154,6 +154,7 @@ require (
 	github.com/tklauser/go-sysconf v0.4.0 // indirect
 	github.com/tklauser/numcpus v0.12.0 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
+	github.com/wtsi-hgi/graceful v1.2.16 // indirect
 	github.com/wtsi-hgi/walk v1.0.1 // indirect
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
@@ -176,7 +177,6 @@ require (
 	google.golang.org/protobuf v1.36.12 // indirect
 	gopkg.in/ini.v1 v1.67.3 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
-	gopkg.in/tylerb/graceful.v1 v1.2.15 // indirect
 	vimagination.zapto.org/parser v1.2.3 // indirect
 )
 
