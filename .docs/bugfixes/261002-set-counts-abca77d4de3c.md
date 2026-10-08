@@ -464,3 +464,13 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
   missing file; an unfrozen set whose missing file's result comes last.
   Predates this branch. Code reading only.
   - Origin: found fixing the early-completion item (2026-10-07).
+- [ ] Make `set.Error` work with `errors.Is`: give its message a typed string
+  (`ErrorStr`) with `Unwrap`, make the `Err*` constants that type, and turn
+  the `errors.As` + `.Msg ==` checks into `errors.Is` (and the one
+  `fmt.Sprintf` message into a wrapping `fmt.Errorf`). About 20 code sites in
+  7 files plus about 11 test assertions; includes the older
+  `errs := &set.Error{}` form in `server/setdb.go` `updateFileStatus`, which
+  also shadows the `errs` package.
+  - Source: PR #195, mjkw31, comment 4216430007 (suggested alternative to
+    `errors.AsType`). Deferred to the set-counts follow-up branch: it changes
+    pre-existing code well beyond this PR.

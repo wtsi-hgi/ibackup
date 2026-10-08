@@ -151,9 +151,9 @@ const (
 )
 
 func isRemoteFileMissing(err error) bool {
-	var pathErr errs.PathError
+	pathErr, ok := errors.AsType[errs.PathError](err)
 
-	return errors.As(err, &pathErr) && pathErr.Msg == internal.ErrFileDoesNotExist
+	return ok && pathErr.Msg == internal.ErrFileDoesNotExist
 }
 
 // LoadSetDB loads the given set.db or creates it if it doesn't exist.
@@ -862,8 +862,8 @@ func (s *Server) removeFileFromIRODSandDB(removeReq *set.RemoveReq) error {
 // that was never in the set, or a request already complete, it returns the
 // error.
 func (s *Server) removeDeletedFileFromDB(removeReq *set.RemoveReq, err error) error {
-	errs := &set.Error{}
-	notInSet := errors.As(err, errs) && errs.Msg == set.ErrInvalidEntry
+	setErr, ok := errors.AsType[set.Error](err)
+	notInSet := ok && setErr.Msg == set.ErrInvalidEntry
 
 	if !notInSet || removeReq.IsComplete || removeReq.RemoteRemovalStatus == set.NotRemoved {
 		return err
