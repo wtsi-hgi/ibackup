@@ -869,9 +869,7 @@ func TestServer(t *testing.T) {
 							}
 						}
 
-						for _, action := range []set.RemoveAction{set.ToRemove, set.ToTrash} {
-							name := map[set.RemoveAction]string{set.ToRemove: "removing", set.ToTrash: "trashing"}[action]
-
+						for name, action := range map[string]set.RemoveAction{"removing": set.ToRemove, "trashing": set.ToTrash} {
 							Convey(name+" a file, stopped after its remote removal", func() {
 								restartDuring(file1local, false, action, func(remReq *set.RemoveReq) {
 									So(s.processRemoteFileRemoval(remReq, entry), ShouldBeNil)
