@@ -189,8 +189,24 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
     is guarded by `collRunning`, as in `Cleanup`. Mutant (only the pool close
     guarded) fails. Gates: lint, `-race ./baton`, `./baton ./transfer
     ./server`, `make speed` (Upload +0.0%, Remove -1.9% vs ce92cae) pass.
-- [ ] `baton/baton.go` `makeCollConnections`: when `connect` fails partway,
+- [x] `baton/baton.go` `makeCollConnections`: when `connect` fails partway,
   `GetClientsFromPoolConcurrently` still returns the clients that started,
   and they are dropped with the pool without being stopped (leaked baton-do
   processes). Code reading.
   - Origin: found reviewing the `CollectionsDone` nil-pool fix (2026-10-08).
+  - Red: `CGO_ENABLED=1 go test -tags netgo --count 1 -timeout 10m ./baton
+    -run TestBatonConcurrentClientInit`, new Convey
+    "GetClientsFromPoolConcurrently failing partway leaves no started client
+    running" (pool of 1, 2 requested): `Expected [86081] to be empty` (a
+    running baton-do child left after the error).
+  - Fixed in `baton/baton.go`: on error `GetClientsFromPoolConcurrently`
+    drains the channel and stops the started clients with
+    `closeConnections`, returning a closed, empty channel. Mutant (first
+    client not stopped) fails. Gates pass; `make speed` Upload -0.5%,
+    Remove +2.6% vs ce92cae.
+- [ ] Possible: `baton/baton.go` `connect` (used by `makeCollConnections` and
+  `getNewClient`) never closes its new pool on error, and nor does
+  `timeoutOpAndMakeNewClientOnError` when `pool.Get()` fails; each such
+  failure leaks extendo's `checkClients` goroutine and its 30s ticker (no
+  processes). Code reading.
+  - Origin: found fixing the partial-connect client leak (2026-10-08).

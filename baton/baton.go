@@ -265,7 +265,8 @@ func (b *Baton) connect(numClients uint8) (*ex.ClientPool, chan *ex.Client, erro
 }
 
 // GetClientsFromPoolConcurrently gets numClients clients from the pool
-// concurrently.
+// concurrently. If getting any of them fails, it stops the ones it got and
+// returns an error with an empty channel.
 func (b *Baton) GetClientsFromPoolConcurrently(pool *ex.ClientPool, numClients uint8) (chan *ex.Client, error) {
 	clientCh := make(chan *ex.Client, numClients)
 	errCh := make(chan error, numClients)
@@ -291,7 +292,18 @@ func (b *Baton) GetClientsFromPoolConcurrently(pool *ex.ClientPool, numClients u
 	close(errCh)
 	close(clientCh)
 
-	return clientCh, <-errCh
+	err := <-errCh
+	if err != nil {
+		var started []*ex.Client
+
+		for client := range clientCh {
+			started = append(started, client)
+		}
+
+		b.closeConnections(started)
+	}
+
+	return clientCh, err
 }
 
 func (b *Baton) ensureCollection(ctx context.Context, clientIndex int, ri ex.RodsItem) error {
