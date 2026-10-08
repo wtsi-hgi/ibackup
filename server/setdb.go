@@ -1990,11 +1990,10 @@ func (s *Server) trackUploadingAndStuckRequests(r *transfer.Request, entry *set.
 // logged, since the result itself was recorded.
 func (s *Server) requeueIfRediscovered(r *transfer.Request, recorded *set.Entry) {
 	given, err := s.db.GetByNameAndRequester(r.Set, r.Requester)
-	if err != nil || !given.LastDiscovery.After(recorded.LastAttempt) {
-		return
+	if err == nil && given.LastDiscovery.After(recorded.LastAttempt) {
+		err = s.requeueEntry(given, r.Local)
 	}
 
-	err = s.requeueEntry(given, r.Local)
 	if err != nil {
 		s.Logger.Printf("request requeue after rediscovery failed rid=%s err=%s", r.ID(), err)
 	}
