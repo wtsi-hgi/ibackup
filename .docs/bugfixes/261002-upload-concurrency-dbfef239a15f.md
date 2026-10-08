@@ -12,7 +12,7 @@
 Each item is independent of the `deps` work: no `make test`, `make race` or
 `make lint` run fails because of it. Found while fixing `deps` items.
 
-- [ ] Possible: requests from different sets for the same local file map to
+- [x] Possible: requests from different sets for the same local file map to
   the same remote data object and can be handed to different put clients at
   once, so two clients could upload the same iRODS object concurrently (the
   race the `deps` hardlink fix closed for shared inode files). Unconfirmed:
@@ -25,6 +25,24 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
     it was the shared-collection wipe (fixed in e4c7b83).
   - Decision (user, 2026-10-05): try to reproduce it; fix only if it
     reproduces, otherwise record what was tried and leave it unfixed.
+  - Reproduced (2026-10-08): a probe with two baton Putters putting the same
+    file for setA and setB at once on real iRODS failed 10 of 10 times: one
+    put got `-809000 CATALOG_ALREADY_HAS_ITEM_BY_THAT_NAME` and
+    `ibackup:sets` held only the winner, so removing that set could delete an
+    object the other set still backs up.
+  - Red: `CGO_ENABLED=1 go test -tags netgo --count 1 -timeout 20m ./server
+    -run '^TestServer$'`, new Convey "separate clients are not given both
+    sets' requests for its remote object at the same time": `Expected: 1
+    Actual: 2`.
+  - Fixed in `server/claims.go`: `remoteClaims` claims every request's
+    `RemoteDataPath()`, not only hardlinks; requests in one client batch
+    still share a claim (sibling Convey). Existing tests whose fake client
+    left other sets' requests for the same object reserved now finish or
+    give them back (that was the race itself). Mutants (hardlink-only
+    claims, claim on `Remote`, no in-batch sharing) fail. Gates pass;
+    `make speed` Upload +1.3%, Remove +2.0% vs ce92cae.
+  - Behaviour change: a shared object's requests wait for the client holding
+    it (as hardlinks already did); a dead client delays them until TTR.
 - [x] Possible: `baton/baton.go` `EnsureCollection` sends every concurrent
   caller's result back on one shared channel, so a caller may receive
   another collection's error. Spotted by reading the code; no failure seen.
