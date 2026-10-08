@@ -73,6 +73,7 @@ var (
 	errErrorNotRecorded   = errors.New("error not yet recorded")
 	errSmallListOfFiles   = errors.New("unexpected small listOfFiles")
 	errInjectedRequeue    = errors.New("injected requeue failure")
+	errInjectedAddMeta    = errors.New("injected add meta failure")
 	// errInjectedGetMeta is a PathError like baton's timeout, to show that only
 	// a PathError for a missing file counts as the remote object being gone.
 	errInjectedGetMeta = errs.PathError{Msg: "iRODS operation timed out"}
@@ -1013,6 +1014,67 @@ func TestServer(t *testing.T) {
 						So(counting.cleanups.Load(), ShouldEqual, 1)
 					})
 
+					Convey("Given a file in two sets, whose first metadata update fails to add the new metadata", func() {
+						err = client.AddOrUpdateSet(exampleSet3)
+						So(err, ShouldBeNil)
+
+						file1local := filepath.Join(localDir, "file1")
+						file1remote := filepath.Join(remoteDir, "file1")
+
+						internal.CreateTestFileOfLength(t, file1local, 1)
+
+						createRemoteObject(t, s.storageHandler, map[string]string{
+							transfer.MetaKeySets:      exampleSet.Name + "," + exampleSet3.Name,
+							transfer.MetaKeyRequester: exampleSet.Requester,
+						}, file1remote)
+
+						for _, given := range []*set.Set{exampleSet, exampleSet3} {
+							err = client.MergeFiles(given.ID(), []string{file1local})
+							So(err, ShouldBeNil)
+
+							drainRacCalled(t, racCalled)
+
+							err = client.TriggerDiscovery(given.ID(), false)
+							So(err, ShouldBeNil)
+
+							So(<-racCalled, ShouldBeTrue)
+						}
+
+						failing := &failingAddMetaHandler{Handler: s.storageHandler}
+						failing.failures.Store(1)
+						s.storageHandler = failing
+
+						expectRemoteMetaAfterRetry := func(sets string) {
+							So(failing.failures.Load(), ShouldEqual, 0)
+
+							_, err = os.Stat(file1remote)
+							So(err, ShouldBeNil)
+
+							remoteMeta, errg := s.storageHandler.GetMeta(file1remote)
+							So(errg, ShouldBeNil)
+							So(remoteMeta[transfer.MetaKeySets], ShouldEqual, sets)
+							So(remoteMeta[transfer.MetaKeyRequester], ShouldEqual, exampleSet3.Requester)
+						}
+
+						Convey("removing it from one set keeps its remote object for the other", func() {
+							err = s.removeFilesAndDirs(exampleSet, []string{file1local}, nil, set.ToRemove)
+							So(err, ShouldBeNil)
+
+							waitForRemovals(t, s, client, exampleSet)
+
+							expectRemoteMetaAfterRetry(exampleSet3.Name)
+						})
+
+						Convey("trashing it from one set keeps the other set in its remote metadata", func() {
+							err = s.removeToTrashSet(exampleSet, []string{file1local}, nil)
+							So(err, ShouldBeNil)
+
+							waitForRemovals(t, s, adminClient, exampleSet)
+
+							expectRemoteMetaAfterRetry(exampleSet3.Name + "," + set.TrashPrefix + exampleSet.Name)
+						})
+					})
+
 					Convey("Given a complete set, a removal interrupted by the server stopping "+
 						"finishes after a restart, counted once", func() {
 						file1local := filepath.Join(localDir, "file1")
@@ -1215,7 +1277,7 @@ func TestServer(t *testing.T) {
 								expectSizeOfObjectRemoved(func(remReq *set.RemoveReq) {
 									var stored []set.RemoveReq
 
-									s.storageHandler = &hookedGetMetaHandler{
+									s.storageHandler = &hookedRemoteChangeHandler{
 										Handler: s.storageHandler,
 										hook: func() {
 											var errg error
@@ -7071,19 +7133,44 @@ func makePutter(t *testing.T, handler transfer.Handler, requests []*transfer.Req
 	return p, d
 }
 
-// hookedGetMetaHandler is a remove.Handler whose GetMeta(), the first remote
-// step of removing a file, calls hook first. Removing a file saves its request
-// as about to be removed before this, and as removed only after its last
-// remote step, so hook sees what is stored if the server stops in between.
-type hookedGetMetaHandler struct {
+// hookedRemoteChangeHandler is a remove.Handler whose RemoveFile() and
+// RemoveMeta(), the first remote change of removing or trashing a file, call
+// hook first. Removing a file saves its request as about to be removed before
+// this, and as removed only after its last remote step, so hook sees what is
+// stored if the server stops in between.
+type hookedRemoteChangeHandler struct {
 	remove.Handler
 	hook func()
 }
 
-func (h *hookedGetMetaHandler) GetMeta(path string) (map[string]string, error) {
+func (h *hookedRemoteChangeHandler) RemoveFile(path string) error {
 	h.hook()
 
-	return h.Handler.GetMeta(path)
+	return h.Handler.RemoveFile(path)
+}
+
+func (h *hookedRemoteChangeHandler) RemoveMeta(path string, meta map[string]string) error {
+	h.hook()
+
+	return h.Handler.RemoveMeta(path, meta)
+}
+
+// failingAddMetaHandler is a remove.Handler whose AddMeta() fails with
+// errInjectedAddMeta, without changing anything, while failures is above 0,
+// decrementing it each time.
+type failingAddMetaHandler struct {
+	remove.Handler
+	failures atomic.Int64
+}
+
+func (h *failingAddMetaHandler) AddMeta(path string, meta map[string]string) error {
+	if h.failures.Add(-1) >= 0 {
+		return errInjectedAddMeta
+	}
+
+	h.failures.Store(0)
+
+	return h.Handler.AddMeta(path, meta)
 }
 
 // batonLikeGetMetaHandler is a remove.Handler whose GetMeta() fails like

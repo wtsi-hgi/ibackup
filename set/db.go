@@ -136,6 +136,14 @@ type RemoveReq struct {
 	// even if an upload result changed the entry's size meanwhile. Nil for
 	// requests stored before it existed, and for directories.
 	ObjectSize *uint64
+
+	// RemoteMeta is the sets and requester metadata of the file's remote
+	// object when a first attempt to update them started. Updating removes
+	// the old values before adding the new ones, so if adding fails, a retry
+	// takes any value now missing from the object from these, instead of
+	// seeing an object with no sets, which it would remove. Nil for requests
+	// stored before it existed, for directories, and until an update starts.
+	RemoteMeta map[string]string
 }
 
 func (rq RemoveReq) Key() string {

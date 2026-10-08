@@ -29,6 +29,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"net/http"
 	"os"
@@ -154,6 +155,23 @@ func isRemoteFileMissing(err error) bool {
 	pathErr, ok := errors.AsType[errs.PathError](err)
 
 	return ok && pathErr.Msg == internal.ErrFileDoesNotExist
+}
+
+// withRecordedRemoteMeta returns a copy of the given remote metadata with any
+// sets or requester value missing from it taken from the given recorded
+// metadata, since an earlier attempt that recorded them may have removed them
+// and then failed to add their new values.
+func withRecordedRemoteMeta(remoteMeta, recorded map[string]string) map[string]string {
+	meta := make(map[string]string, len(remoteMeta))
+	maps.Copy(meta, remoteMeta)
+
+	for key, value := range recorded {
+		if meta[key] == "" {
+			meta[key] = value
+		}
+	}
+
+	return meta
 }
 
 // LoadSetDB loads the given set.db or creates it if it doesn't exist.
@@ -886,19 +904,19 @@ func (s *Server) processRemoteFileRemoval(removeReq *set.RemoveReq, entry *set.E
 	}
 
 	mayMissInRemote := removeReq.RemoteRemovalStatus == set.AboutToBeRemoved && removeReq.Action == set.ToRemove
-	removeReq.RemoteRemovalStatus = set.AboutToBeRemoved
 
-	if removeReq.ObjectSize == nil {
-		size := entry.Size
-		removeReq.ObjectSize = &size
+	rpath, remoteMeta, err := s.getRemoteMeta(removeReq.Path, transformer)
+
+	if erru := s.markAboutToBeRemoved(removeReq, entry, remoteMeta, err); erru != nil {
+		return erru
 	}
 
-	err = s.db.UpdateRemoveRequest(*removeReq)
-	if err != nil {
-		return err
+	if err == nil {
+		err = s.updateOrRemoveRemoteFile(removeReq, transformer, rpath, remoteMeta, entry)
+	} else {
+		err = s.handleRemoteFileMetaError(err, removeReq, rpath, transformer, entry)
 	}
 
-	err = s.updateOrRemoveRemoteFile(removeReq, transformer, entry)
 	if err != nil && fileErrorCannotBeIgnored(err, mayMissInRemote) {
 		errorPrefix := "failed to remove: "
 		s.setErrorOnEntry(entry, removeReq.Set.ID(), removeReq.Path, errorPrefix+err.Error())
@@ -915,25 +933,61 @@ func fileErrorCannotBeIgnored(err error, mayMissInRemote bool) bool {
 	return !(mayMissInRemote && strings.Contains(err.Error(), internal.ErrFileDoesNotExist)) //nolint:staticcheck,lll
 }
 
-func (s *Server) updateOrRemoveRemoteFile(removeReq *set.RemoveReq, transformer transformer.PathTransformer,
-	entry *set.Entry,
-) error {
-	rpath, err := transformer(removeReq.Path)
+// getRemoteMeta returns the remote path of the given local path, and the
+// metadata of its remote object.
+func (s *Server) getRemoteMeta(lpath string, transformer transformer.PathTransformer,
+) (string, map[string]string, error) {
+	rpath, err := transformer(lpath)
 	if err != nil {
-		return err
+		return "", nil, err
 	}
 
 	remoteMeta, err := s.storageHandler.GetMeta(rpath)
-	if err != nil {
-		return s.handleRemoteFileMetaError(err, removeReq, rpath, transformer, entry)
+
+	return rpath, remoteMeta, err
+}
+
+// markAboutToBeRemoved stores the given request as about to be removed, before
+// anything changes the remote object, along with the size of the given entry
+// and, if the given metadata was read without error, its sets and requester
+// values, unless an earlier attempt already recorded them. Updating the
+// object's metadata removes the old values before adding the new ones, so a
+// retry after adding failed takes any value now missing from the object from
+// these, instead of seeing an object with no sets, which it would remove.
+func (s *Server) markAboutToBeRemoved(removeReq *set.RemoveReq, entry *set.Entry,
+	remoteMeta map[string]string, metaErr error,
+) error {
+	removeReq.RemoteRemovalStatus = set.AboutToBeRemoved
+
+	if removeReq.ObjectSize == nil {
+		size := entry.Size
+		removeReq.ObjectSize = &size
 	}
 
-	var sets, requesters []string
+	if metaErr == nil && removeReq.RemoteMeta == nil {
+		removeReq.RemoteMeta = map[string]string{
+			transfer.MetaKeySets:      remoteMeta[transfer.MetaKeySets],
+			transfer.MetaKeyRequester: remoteMeta[transfer.MetaKeyRequester],
+		}
+	}
+
+	return s.db.UpdateRemoveRequest(*removeReq)
+}
+
+func (s *Server) updateOrRemoveRemoteFile(removeReq *set.RemoveReq, transformer transformer.PathTransformer,
+	rpath string, remoteMeta map[string]string, entry *set.Entry,
+) error {
+	metaBeforeUpdate := withRecordedRemoteMeta(remoteMeta, removeReq.RemoteMeta)
+
+	var (
+		sets, requesters []string
+		err              error
+	)
 
 	if removeReq.Action == set.ToRemove {
-		sets, requesters, err = s.handleSetsAndRequesters(removeReq.Path, removeReq.Set, remoteMeta)
+		sets, requesters, err = s.handleSetsAndRequesters(removeReq.Path, removeReq.Set, metaBeforeUpdate)
 	} else {
-		sets, requesters, err = s.handleSetMetadataForTrash(removeReq.Set, remoteMeta)
+		sets, requesters, err = s.handleSetMetadataForTrash(removeReq.Set, metaBeforeUpdate)
 	}
 
 	if err != nil {
