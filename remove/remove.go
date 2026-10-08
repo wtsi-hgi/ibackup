@@ -69,29 +69,42 @@ type Handler interface {
 }
 
 // UpdateSetsAndRequestersOnRemoteFile updates the given file's metadata in
-// remote storage for the path with the given sets and requesters.
+// remote storage for the path given with the given sets and requesters. Empty
+// values are left out, since remote storage does not allow them: a key missing
+// from meta is not removed, and a key with no new values is not added.
 func UpdateSetsAndRequestersOnRemoteFile(handler Handler, path string,
 	sets, requesters []string, meta map[string]string) error {
-	metaToRemove := map[string]string{
+	metaToRemove := withoutEmptyValues(map[string]string{
 		transfer.MetaKeySets:      meta[transfer.MetaKeySets],
 		transfer.MetaKeyRequester: meta[transfer.MetaKeyRequester],
-	}
+	})
 
-	newMeta := map[string]string{
+	newMeta := withoutEmptyValues(map[string]string{
 		transfer.MetaKeySets:      strings.Join(sets, ","),
 		transfer.MetaKeyRequester: strings.Join(requesters, ","),
-	}
+	})
 
 	if maps.Equal(metaToRemove, newMeta) {
 		return nil
 	}
 
-	err := handler.RemoveMeta(path, metaToRemove)
-	if err != nil {
-		return err
+	if len(metaToRemove) > 0 {
+		if err := handler.RemoveMeta(path, metaToRemove); err != nil {
+			return err
+		}
+	}
+
+	if len(newMeta) == 0 {
+		return nil
 	}
 
 	return handler.AddMeta(path, newMeta)
+}
+
+func withoutEmptyValues(meta map[string]string) map[string]string {
+	maps.DeleteFunc(meta, func(_, value string) bool { return value == "" })
+
+	return meta
 }
 
 // RemoveFileAndParentFoldersIfEmpty removes the provided path from iRODS and

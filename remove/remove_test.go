@@ -32,7 +32,9 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/wtsi-hgi/ibackup/baton"
 	"github.com/wtsi-hgi/ibackup/internal"
+	"github.com/wtsi-hgi/ibackup/internal/testutil"
 	"github.com/wtsi-hgi/ibackup/transfer"
 	"github.com/wtsi-hgi/ibackup/transformer"
 )
@@ -121,6 +123,83 @@ func TestRemoveMock(t *testing.T) {
 						transfer.MetaKeySets:      "set2",
 					})
 			})
+		})
+	})
+}
+
+func TestRemoveIRODS(t *testing.T) {
+	h, err := baton.GetBatonHandler()
+	if err != nil {
+		SkipConvey("Skipping iRODS remove tests since couldn't find baton", t, func() {})
+
+		return
+	}
+
+	remotePath := testutil.RequireIRODSTestCollection(t)
+	if remotePath == "" {
+		SkipConvey("Skipping iRODS remove tests since IBACKUP_TEST_COLLECTION is not defined", t, func() {})
+
+		return
+	}
+
+	t.Cleanup(h.Cleanup)
+
+	Convey("Given a file in iRODS", t, func() {
+		file1local := filepath.Join(t.TempDir(), "file1")
+		file1remote := filepath.Join(remotePath, "file1")
+
+		internal.CreateTestFileOfLength(t, file1local, 1)
+
+		err = h.Put(file1local, file1remote)
+		So(err, ShouldBeNil)
+
+		Reset(func() {
+			h.RemoveFile(file1remote) //nolint:errcheck
+		})
+
+		Convey("Lacking a requester, you can update its sets", func() {
+			meta := map[string]string{transfer.MetaKeySets: "set1,set2"}
+
+			So(h.AddMeta(file1remote, meta), ShouldBeNil)
+
+			err = UpdateSetsAndRequestersOnRemoteFile(h, file1remote, []string{"set2"}, nil, meta)
+			So(err, ShouldBeNil)
+
+			fileMeta, errg := h.GetMeta(file1remote)
+			So(errg, ShouldBeNil)
+			So(fileMeta[transfer.MetaKeySets], ShouldEqual, "set2")
+			So(fileMeta, ShouldNotContainKey, transfer.MetaKeyRequester)
+		})
+
+		Convey("Lacking sets, you can update its requesters", func() {
+			meta := map[string]string{transfer.MetaKeyRequester: "testUser1,testUser2"}
+
+			So(h.AddMeta(file1remote, meta), ShouldBeNil)
+
+			err = UpdateSetsAndRequestersOnRemoteFile(h, file1remote, nil, []string{"testUser2"}, meta)
+			So(err, ShouldBeNil)
+
+			fileMeta, errg := h.GetMeta(file1remote)
+			So(errg, ShouldBeNil)
+			So(fileMeta[transfer.MetaKeyRequester], ShouldEqual, "testUser2")
+			So(fileMeta, ShouldNotContainKey, transfer.MetaKeySets)
+		})
+
+		Convey("You can remove its last set and requester", func() {
+			meta := map[string]string{
+				transfer.MetaKeySets:      "set1",
+				transfer.MetaKeyRequester: "testUser1",
+			}
+
+			So(h.AddMeta(file1remote, meta), ShouldBeNil)
+
+			err = UpdateSetsAndRequestersOnRemoteFile(h, file1remote, nil, nil, meta)
+			So(err, ShouldBeNil)
+
+			fileMeta, errg := h.GetMeta(file1remote)
+			So(errg, ShouldBeNil)
+			So(fileMeta, ShouldNotContainKey, transfer.MetaKeySets)
+			So(fileMeta, ShouldNotContainKey, transfer.MetaKeyRequester)
 		})
 	})
 }
