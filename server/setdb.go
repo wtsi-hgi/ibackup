@@ -1612,8 +1612,9 @@ func (s *Server) getRequests(c *gin.Context) {
 // reserveRequests keeps reserving items from our queue until we have total
 // requests/s.numClients (but max 100) of them, or the queue is empty.
 //
-// Hardlink requests whose remote inode file is being worked on by a different
-// client are not returned; they wait in the queue until that client is done
+// Requests whose remote data object is being worked on by a different client
+// (eg. hardlinks sharing a remote inode file, or another set's request for the
+// same file) are not returned; they wait in the queue until that client is done
 // with it.
 //
 // Returns the Requests in the items.
@@ -1654,7 +1655,7 @@ func (s *Server) reserveRequests() ([]*transfer.Request, error) {
 	return requests, nil
 }
 
-// releaseUnclaimedRequest releases a reserved request whose remote hardlink
+// releaseUnclaimedRequest releases a reserved request whose remote data object
 // couldn't be claimed, so it is retried instead of staying reserved until its
 // TTR expires. Like removal retries, the release is delayed by retryDelay; this
 // also stops reserveRequests immediately reserving it again. If the release
@@ -1662,7 +1663,7 @@ func (s *Server) reserveRequests() ([]*transfer.Request, error) {
 func (s *Server) releaseUnclaimedRequest(r *transfer.Request, claimErr error) {
 	rid := r.ID()
 
-	s.Logger.Printf("failed to claim remote hardlink for rid=%s: %s", rid, claimErr)
+	s.Logger.Printf("failed to claim remote data object for rid=%s: %s", rid, claimErr)
 
 	if err := s.queue.SetDelay(rid, retryDelay); err != nil {
 		s.Logger.Printf("request retry delay set failed rid=%s delay=%s err=%s", rid, retryDelay, err)
@@ -2019,7 +2020,7 @@ func (s *Server) requeueEntry(given *set.Set, path string) error {
 
 // removeOrReleaseRequestFromQueue removes the given Request from our queue
 // unless it has failed. < 3 failures results in it being released, 3 results in
-// it being buried. Either way, any claim it has on a remote inode file is
+// it being buried. Either way, any claim it has on a remote data object is
 // released.
 func (s *Server) removeOrReleaseRequestFromQueue(r *transfer.Request, entry *set.Entry) error {
 	return errors.Join(s.moveFinishedRequestInQueue(r, entry), s.remoteClaims.release(r))

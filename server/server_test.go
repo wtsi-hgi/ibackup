@@ -2581,9 +2581,28 @@ func TestServer(t *testing.T) {
 							So(gotSet.Uploaded, ShouldEqual, 1)
 							So(gotSet.Failed, ShouldEqual, 1)
 
+							// the failed request can't be retried by another client
+							// until this client finishes the other sets' requests
+							// for the same remote object
+							sameRemote := 0
+
+							for _, r := range requests[2:] {
+								if r.Remote != requests[1].Remote {
+									continue
+								}
+
+								r.Status = transfer.RequestStatusMissing
+								err = client.UpdateFileStatus(r)
+								So(err, ShouldBeNil)
+
+								sameRemote++
+							}
+
+							So(sameRemote, ShouldEqual, 1)
+
 							stats = s.queue.Stats()
-							So(stats.Items, ShouldEqual, expectedRequests-1)
-							So(stats.Running, ShouldEqual, expectedRequests-2)
+							So(stats.Items, ShouldEqual, expectedRequests-1-sameRemote)
+							So(stats.Running, ShouldEqual, expectedRequests-2-sameRemote)
 							So(stats.Ready, ShouldEqual, 1)
 
 							err = client.UpdateFileStatus(requests[1])
@@ -2608,8 +2627,8 @@ func TestServer(t *testing.T) {
 							So(gotSet.Failed, ShouldEqual, 1)
 
 							stats = s.queue.Stats()
-							So(stats.Items, ShouldEqual, expectedRequests-1)
-							So(stats.Running, ShouldEqual, expectedRequests-2)
+							So(stats.Items, ShouldEqual, expectedRequests-1-sameRemote)
+							So(stats.Running, ShouldEqual, expectedRequests-2-sameRemote)
 							So(stats.Ready, ShouldEqual, 1)
 
 							frequests, err = client.GetSomeUploadRequests()
@@ -2631,8 +2650,8 @@ func TestServer(t *testing.T) {
 							So(gotSet.Failed, ShouldEqual, 1)
 
 							stats = s.queue.Stats()
-							So(stats.Items, ShouldEqual, expectedRequests-1)
-							So(stats.Running, ShouldEqual, expectedRequests-2)
+							So(stats.Items, ShouldEqual, expectedRequests-1-sameRemote)
+							So(stats.Running, ShouldEqual, expectedRequests-2-sameRemote)
 							So(stats.Buried, ShouldEqual, 1)
 
 							frequests, err = client.GetSomeUploadRequests()
@@ -2829,8 +2848,11 @@ func TestServer(t *testing.T) {
 								So(errg, ShouldBeNil)
 								So(len(requests), ShouldEqual, numExpectedRequests)
 
+								// other sets' requests are for the same remote objects,
+								// so must finish too before set2's can be handed out
+								// again
 								for _, request := range requests {
-									if request.Set != exampleSet2.Name || request.Local == entries[1].Path {
+									if request.Set == exampleSet2.Name && request.Local == entries[1].Path {
 										continue
 									}
 
@@ -3180,6 +3202,11 @@ func TestServer(t *testing.T) {
 									err = client.UpdateFileStatus(failedRequest)
 									So(err, ShouldBeNil)
 
+									// simulate giving back the unstarted requests, along
+									// with their claims on remote objects shared with
+									// other sets; real clients don't do this (they report
+									// every request in their batch, and a dead client's
+									// requests come back via TTR expiry)
 									if len(requests) > 1 {
 										for i, r := range requests {
 											if i == 0 {
@@ -3187,6 +3214,9 @@ func TestServer(t *testing.T) {
 											}
 
 											err = s.queue.Release(context.Background(), r.ID())
+											So(err, ShouldBeNil)
+
+											err = s.remoteClaims.release(r)
 											So(err, ShouldBeNil)
 										}
 									}
@@ -4826,7 +4856,7 @@ func TestServer(t *testing.T) {
 							key := strconv.Itoa(i)
 							ids[i] = &queue.ItemDef{
 								Key:  key,
-								Data: &transfer.Request{Set: key},
+								Data: &transfer.Request{Set: key, Remote: "/remote/" + key},
 								TTR:  ttr,
 							}
 						}
@@ -4844,7 +4874,7 @@ func TestServer(t *testing.T) {
 							key := fmt.Sprintf("%d.extra", i)
 							ids[i] = &queue.ItemDef{
 								Key:  key,
-								Data: &transfer.Request{Set: key},
+								Data: &transfer.Request{Set: key, Remote: "/remote/" + key},
 								TTR:  ttr,
 							}
 						}
@@ -6336,6 +6366,76 @@ func TestServer(t *testing.T) {
 						}
 
 						So(hardlinkClients, ShouldEqual, 1)
+					})
+				})
+
+				Convey("and add two sets with the same file", func() {
+					otherSet := &set.Set{
+						Name:        "set2",
+						Requester:   exampleSet.Requester,
+						Transformer: exampleSet.Transformer,
+					}
+
+					shared := filepath.Join(localDir, "shared.txt")
+					internal.CreateTestFileOfLength(t, shared, 1)
+
+					for _, given := range []*set.Set{exampleSet, otherSet} {
+						err = client.AddOrUpdateSet(given)
+						So(err, ShouldBeNil)
+
+						err = client.MergeFiles(given.ID(), []string{shared})
+						So(err, ShouldBeNil)
+
+						err = client.TriggerDiscovery(given.ID(), false)
+						So(err, ShouldBeNil)
+
+						ok := <-racCalled
+						So(ok, ShouldBeTrue)
+					}
+
+					Convey("one client can be given both sets' requests for its remote object", func() {
+						requests, errg := client.GetSomeUploadRequests()
+						So(errg, ShouldBeNil)
+						So(len(requests), ShouldEqual, 2)
+						So(requests[0].Remote, ShouldEqual, requests[1].Remote)
+						So(requests[0].Set, ShouldNotEqual, requests[1].Set)
+					})
+
+					Convey("separate clients are not given both sets' requests for its remote object "+
+						"at the same time", func() {
+						s.numClients = 2
+
+						handedOut := make([]*transfer.Request, 0, s.numClients)
+						clientsGivenShared := 0
+
+						for range s.numClients {
+							requests, errg := client.GetSomeUploadRequests()
+							So(errg, ShouldBeNil)
+
+							if len(requests) > 0 {
+								clientsGivenShared++
+							}
+
+							handedOut = append(handedOut, requests...)
+						}
+
+						So(clientsGivenShared, ShouldEqual, 1)
+						So(len(handedOut), ShouldEqual, 1)
+						So(handedOut[0].Local, ShouldEqual, shared)
+
+						handedOut[0].Status = transfer.RequestStatusUploaded
+						err = client.UpdateFileStatus(handedOut[0])
+						So(err, ShouldBeNil)
+
+						ok := <-racCalled
+						So(ok, ShouldBeTrue)
+
+						requests, errg := client.GetSomeUploadRequests()
+						So(errg, ShouldBeNil)
+						So(len(requests), ShouldEqual, 1)
+						So(requests[0].Local, ShouldEqual, shared)
+						So(requests[0].Remote, ShouldEqual, handedOut[0].Remote)
+						So(requests[0].Set, ShouldNotEqual, handedOut[0].Set)
 					})
 				})
 
