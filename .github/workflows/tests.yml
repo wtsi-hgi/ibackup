@@ -125,6 +125,10 @@ jobs:
         iadmin mkuser "$IRODS_TEST_USER" rodsuser
         iadmin moduser "$IRODS_TEST_USER" password "$IRODS_TEST_PASSWORD"
 
+        # On iRODS 4.3, tests that take away the test user's own access need
+        # the admin to give it back.
+        echo "IBACKUP_TEST_IRODS_ADMIN_ENVIRONMENT_FILE=$admin_env" >> "$GITHUB_ENV"
+
         # The tests pass IRODS_ENVIRONMENT_FILE on to the servers they start,
         # so it must be set.
         export IRODS_ENVIRONMENT_FILE="$HOME/.irods/irods_environment.json"
@@ -147,8 +151,26 @@ jobs:
         "$gobin/wr" manager start --deployment "$IBACKUP_TEST_SCHEDULER"
         "$gobin/wr" manager status --deployment "$IBACKUP_TEST_SCHEDULER"
 
+    # -k so that main-package failures don't stop the sub-package tests
     - name: Run tests
-      run: make test
+      id: tests
+      run: make -k test
+      env:
+        MAIN_TEST_LOG_DIR: ${{ runner.temp }}/test-logs/test/main
+        IBACKUP_TEST_LOG_DIR: ${{ runner.temp }}/test-logs/test/servers
 
     - name: Run tests with race detection
-      run: make race
+      if: ${{ !cancelled() && steps.tests.outcome != 'skipped' }}
+      run: make -k race
+      env:
+        MAIN_TEST_LOG_DIR: ${{ runner.temp }}/test-logs/race/main
+        IBACKUP_TEST_LOG_DIR: ${{ runner.temp }}/test-logs/race/servers
+
+    - name: Upload test logs
+      if: ${{ failure() }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-logs
+        path: ${{ runner.temp }}/test-logs
+        if-no-files-found: ignore
+        retention-days: 14

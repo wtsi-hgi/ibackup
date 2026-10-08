@@ -26,7 +26,11 @@
 package testutil
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
@@ -60,5 +64,42 @@ member of group: public
 			_, err := parseIUserInfo([]byte(out))
 			So(err, ShouldWrap, errIUserInfoNoName)
 		}
+	})
+}
+
+func TestGrantOwn(t *testing.T) {
+	Convey("GrantOwn runs ichmod to give a user own access", t, func() {
+		dir := t.TempDir()
+		record := filepath.Join(dir, "record")
+		script := "#!/bin/sh\necho \"$IRODS_ENVIRONMENT_FILE $*\" > " + record + "\n"
+		So(os.WriteFile(filepath.Join(dir, "ichmod"), []byte(script), 0700), ShouldBeNil) //nolint:gosec
+
+		t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
+		t.Setenv("IRODS_ENVIRONMENT_FILE", "/user.json")
+
+		icmd := &ICommander{logger: t, timeout: time.Minute, maxAttempts: 1, backoff: time.Millisecond}
+
+		recorded := func() string {
+			b, err := os.ReadFile(record)
+			So(err, ShouldBeNil)
+
+			return strings.TrimSpace(string(b))
+		}
+
+		Convey("as the test user by default", func() {
+			t.Setenv(IRODSAdminEnvKey, "")
+
+			_, err := icmd.GrantOwn("someone", "/zone/obj")
+			So(err, ShouldBeNil)
+			So(recorded(), ShouldEqual, "/user.json own someone /zone/obj")
+		})
+
+		Convey("as the iRODS admin in admin mode if an admin environment is configured", func() {
+			t.Setenv(IRODSAdminEnvKey, "/admin.json")
+
+			_, err := icmd.GrantOwn("someone", "/zone/obj")
+			So(err, ShouldBeNil)
+			So(recorded(), ShouldEqual, "/admin.json -M own someone /zone/obj")
+		})
 	})
 }

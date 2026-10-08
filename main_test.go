@@ -1236,6 +1236,52 @@ func (s *testServer) dialServerUntilReady(roots *x509.CertPool) error {
 	return lastErr
 }
 
+// keepLogsIfFailed copies the server's and its clients' log files to a
+// subdirectory of $IBACKUP_TEST_LOG_DIR, if set, when t fails, since they are
+// otherwise deleted with the server's temp dir.
+func (s *testServer) keepLogsIfFailed(t *testing.T) {
+	t.Helper()
+
+	logDir := os.Getenv("IBACKUP_TEST_LOG_DIR")
+	if logDir == "" {
+		return
+	}
+
+	t.Cleanup(func() {
+		if !t.Failed() || s.logFile == "" {
+			return
+		}
+
+		paths, err := filepath.Glob(s.logFile + "*")
+		if err != nil {
+			t.Logf("failed to find server logs: %s", err)
+
+			return
+		}
+
+		dest := filepath.Join(logDir, strings.ReplaceAll(t.Name(), "/", "_"), filepath.Base(s.dir))
+
+		for _, path := range paths {
+			if err := copyLogFile(path, filepath.Join(dest, filepath.Base(path))); err != nil {
+				t.Logf("failed to keep server log %s: %s", path, err)
+			}
+		}
+	})
+}
+
+func copyLogFile(src, dest string) error {
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+
+	if err = os.MkdirAll(filepath.Dir(dest), dirMode); err != nil { //nolint:gosec
+		return err
+	}
+
+	return os.WriteFile(dest, data, 0600) //nolint:mnd,gosec
+}
+
 func TestRemoveDirs(t *testing.T) {
 	Convey("Given a server", t, func() {
 		fx := givenRemoveServer(t)
@@ -1538,9 +1584,16 @@ func TestRemove(t *testing.T) {
 					curUser, e := user.Current()
 					So(e, ShouldBeNil)
 
-					addFileToIRODS(t, file1, file1remote)
-					addRemoteMeta(t, file1remote, transfer.MetaKeySets, setName)
-					addRemoteMeta(t, file1remote, transfer.MetaKeyRequester, curUser.Username)
+					// The file and its metadata reappear together, since a retry
+					// could otherwise see the file without its metadata.
+					staged := file1remote + ".staged"
+
+					addFileToIRODS(t, file1, staged)
+					addRemoteMeta(t, staged, transfer.MetaKeySets, setName)
+					addRemoteMeta(t, staged, transfer.MetaKeyRequester, curUser.Username)
+
+					_, err = icmd.Run("imv", staged, file1remote)
+					So(err, ShouldBeNil)
 
 					s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 10*time.Second)
 				})
@@ -2050,19 +2103,25 @@ func TestTrashRemove(t *testing.T) {
 					irodsUser, e := icmd.UserInfo()
 					So(e, ShouldBeNil)
 
-					_, err = icmd.ICHMOD("read", irodsUser.Name, file1remote)
-					So(err, ShouldBeNil)
-
-					// Downgrade all groups the iRODS user belongs to so the
-					// removal attempt reliably fails with
-					// CAT_NO_ACCESS_PERMISSION.
+					// Downgrade all groups the iRODS user belongs to, then the
+					// user, so the removal attempt reliably fails with
+					// CAT_NO_ACCESS_PERMISSION. The user goes last because
+					// changing access needs own access. A user is also a group
+					// of the same name, so that group is the user.
 					for _, group := range irodsUser.Groups {
+						if group == irodsUser.Name {
+							continue
+						}
+
 						_, errc := icmd.ICHMOD("read", group, file1remote)
 						So(errc, ShouldBeNil)
 					}
 
+					_, err = icmd.ICHMOD("read", irodsUser.Name, file1remote)
+					So(err, ShouldBeNil)
+
 					Reset(func() {
-						_, _ = icmd.ICHMOD("own", irodsUser.Name, file1remote) //nolint:errcheck
+						_, _ = icmd.GrantOwn(irodsUser.Name, file1remote) //nolint:errcheck
 					})
 
 					exitCode, _ := s.runBinary(t, "trash", "--remove", "--name", setName, "--path", file1)
@@ -2078,7 +2137,7 @@ func TestTrashRemove(t *testing.T) {
 					})
 
 					Convey("And succeeds if issue is fixed during retries", func() {
-						_, err = icmd.ICHMOD("own", irodsUser.Name, file1remote)
+						_, err = icmd.GrantOwn(irodsUser.Name, file1remote)
 						So(err, ShouldBeNil)
 
 						s.waitForStatus(trashSetName, "Removal status: 1 / 1 objects removed", 10*time.Second)
@@ -3616,6 +3675,7 @@ func getFakeBaton(dir string) string {
 func (s *testServer) prepareConfig(t *testing.T) {
 	t.Helper()
 
+	s.keepLogsIfFailed(t)
 	testutil.WriteDefaultConfig(t)
 
 	s.url = os.Getenv("IBACKUP_TEST_SERVER_URL")
@@ -6260,7 +6320,8 @@ func TestManualMode(t *testing.T) {
 				"[1/1] "+file6+" warning: lchown "+file6+": operation not permitted\n"+
 					"1 downloaded (0 replaced); 0 skipped; 0 failed; 0 missing\n")
 
-			_, err = icmd.IMETA("rm", "-d", remote2, transfer.MetaKeyMtime)
+			// iRODS 4.3's imeta rm needs a value, so remove any value
+			_, err = icmd.IMETA("rmw", "-d", remote2, transfer.MetaKeyMtime, "%")
 			So(err, ShouldBeNil)
 
 			restoreFiles(t, file7+"\t"+remote2+"\n",

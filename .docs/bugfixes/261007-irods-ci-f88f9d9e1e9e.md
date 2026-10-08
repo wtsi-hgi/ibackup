@@ -51,3 +51,12 @@
   is merged under this branch.
   - Origin: found while making the tests run against a container zone
     (2026-10-08).
+- [ ] `remove/remove.go` `UpdateSetsAndRequestersOnRemoteFile` builds
+  `metaToRemove` from `meta[sets]` and `meta[requester]` without checking
+  either is present, so an object lacking one of those AVUs gets a baton
+  remove with an empty value: it removes the other AVU, then fails with
+  "attr_value was empty" (-816000), and every retry fails the same way, so
+  the object can never be removed or trashed. Verified with baton-do on the
+  live zone; suspected cause of `TestRemove`'s stall in CI run 1. Deferred
+  to the set-counts follow-up branch (removal code; needs #195).
+  - Origin: found diagnosing PR #196 CI run 37754887894 (2026-10-08).
