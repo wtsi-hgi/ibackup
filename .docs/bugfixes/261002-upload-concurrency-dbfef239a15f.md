@@ -163,9 +163,10 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
     re-queued. Mutants (no fix, requeue before removal, only failed results,
     no `ShouldUpload` check) fail. Gates pass; `make speed` Upload -0.2%,
     Remove +1.7% vs ce92cae.
-  - After #195 merges under this branch: add `Uploaded == 1` and `Complete`
-    assertions to the frozen Convey (they fail on develop because of the
-    frozen-count bug #195 fixes, and pass on #195).
+  - Done after rebasing onto #195 (96faa45): the frozen Convey now also
+    asserts `Uploaded == 1` and `Complete`. They fail on the pre-#195 head
+    (`Expected: 1 Actual: 0`) and pass on the rebase. Gates pass;
+    `make speed` Upload -2.4%, Remove +1.7% vs 96faa45.
 - [x] `server/server.go` `reserveRemoveRequest`: when `removeQueue.Reserve`
   fails with anything other than `ErrNothingReady` (e.g. `ErrQueueClosed`
   from wr v0.38.0 when the queue is closed), the error is only logged and
