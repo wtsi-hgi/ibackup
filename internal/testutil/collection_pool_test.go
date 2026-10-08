@@ -30,6 +30,7 @@ import (
 	"os"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -90,6 +91,23 @@ func TestCollectionPool(t *testing.T) {
 			pool.wg.Wait()
 
 			So(fake.createdCopy(), ShouldBeEmpty)
+		})
+
+		Convey("stale collections are swept once, from the first Require", func() {
+			var sweeps atomic.Int32
+
+			pool.sweep = func() { sweeps.Add(1) }
+
+			pool.wg.Wait()
+			So(sweeps.Load(), ShouldEqual, 0)
+
+			t.Run("take twice", func(st *testing.T) {
+				pool.Require(st)
+				pool.Require(st)
+			})
+
+			pool.wg.Wait()
+			So(sweeps.Load(), ShouldEqual, 1)
 		})
 
 		Convey("Require hands out distinct collections, keeping depth more created ahead", func() {

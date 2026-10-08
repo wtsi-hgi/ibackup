@@ -32,8 +32,8 @@ import (
 	"testing"
 )
 
-// maxConcurrentRemovals is how many of a test's pool collections are removed
-// at once when it ends.
+// maxConcurrentRemovals is how many collections are removed at once, when a
+// test ends or stale ones are swept.
 const maxConcurrentRemovals = 8
 
 // Creating a collection takes several seconds on the test zone, but many can
@@ -52,6 +52,7 @@ type CollectionPool struct {
 	depth    int
 	create   func(collection string) error
 	remove   func(collection string)
+	sweep    func()
 	ready    chan poolResult
 	mu       sync.Mutex
 	started  bool
@@ -75,7 +76,10 @@ func NewCollectionPool(depth int) *CollectionPool {
 		return nil
 	}
 
-	return newCollectionPool(base, depth, createIRODSCollection, removeIRODSCollection)
+	pool := newCollectionPool(base, depth, createIRODSCollection, removeIRODSCollection)
+	pool.sweep = func() { sweepStaleCollectionsOnce(base) }
+
+	return pool
 }
 
 func newCollectionPool(
@@ -135,8 +139,8 @@ func (p *CollectionPool) take() string {
 	return r.collection
 }
 
-// fill begins creating depth collections on its first call, and returns false
-// if closed.
+// fill begins sweeping stale collections and creating depth collections on its
+// first call, and returns false if closed.
 func (p *CollectionPool) fill() bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -147,6 +151,10 @@ func (p *CollectionPool) fill() bool {
 
 	if !p.started {
 		p.started = true
+
+		if p.sweep != nil {
+			p.wg.Go(p.sweep)
+		}
 
 		for range p.depth {
 			p.createInBackground()
@@ -203,11 +211,12 @@ func (p *CollectionPool) cleanupWhenDone(tb testing.TB, collection string) {
 		delete(p.cleanups, tb)
 		p.mu.Unlock()
 
-		p.removeAll(collections)
+		removeCollections(p.remove, collections)
 	})
 }
 
-func (p *CollectionPool) removeAll(collections []string) {
+// removeCollections calls remove on each collection, a few at a time.
+func removeCollections(remove func(string), collections []string) {
 	var wg sync.WaitGroup
 
 	limit := make(chan struct{}, maxConcurrentRemovals)
@@ -216,7 +225,7 @@ func (p *CollectionPool) removeAll(collections []string) {
 		limit <- struct{}{}
 
 		wg.Go(func() {
-			p.remove(collection)
+			remove(collection)
 			<-limit
 		})
 	}
@@ -252,5 +261,5 @@ func (p *CollectionPool) Close() {
 		}
 	}
 
-	p.removeAll(unused)
+	removeCollections(p.remove, unused)
 }

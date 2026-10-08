@@ -101,6 +101,8 @@ func RequireIRODSTestCollection(tb testing.TB) string {
 		return ""
 	}
 
+	sweepStaleCollectionsOnce(base)
+
 	unlock := Serial(tb)
 	defer unlock()
 
