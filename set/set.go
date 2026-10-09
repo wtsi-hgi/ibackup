@@ -493,8 +493,7 @@ func (s *Set) entryStatusToSetCounts(entry *Entry) { //nolint:gocyclo
 		}
 
 		if entry.Attempts >= AttemptsToBeConsideredFailing {
-			s.Status = Failing
-			s.sendSlackMessage(slack.Error, "has failed uploads")
+			s.markFailing()
 		}
 	case Missing:
 		s.Missing++
@@ -503,6 +502,18 @@ func (s *Set) entryStatusToSetCounts(entry *Entry) { //nolint:gocyclo
 	case AbnormalEntry:
 		s.Abnormal++
 	}
+}
+
+// markFailing reports that an entry has used up its upload attempts, and marks
+// us Failing unless we're Complete: a Complete set already counted the entry's
+// first failure and has no other uploads ongoing, so stays Complete rather than
+// completing again.
+func (s *Set) markFailing() {
+	if s.Status != Complete {
+		s.Status = Failing
+	}
+
+	s.sendSlackMessage(slack.Error, "has failed uploads")
 }
 
 func (s *Set) removedEntryStatusToSetCounts(entry *Entry) { //nolint:gocyclo

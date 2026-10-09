@@ -4109,6 +4109,37 @@ func TestSetDB(t *testing.T) {
 					So(completions(), ShouldEqual, 2)
 				})
 
+				Convey("and a failed file failing its last retry says so, without completing it again", func() {
+					s := addSet("failedRetriesExhausted", false, present, missing)
+
+					slackWriter.Reset()
+					discover(s)
+					setResult(s, missing, transfer.RequestStatusMissing)
+
+					var got *Set
+
+					for range AttemptsToBeConsideredFailing - 1 {
+						setResult(s, present, transfer.RequestStatusUploading)
+						got = setResult(s, present, transfer.RequestStatusFailed)
+						So(got.Status, ShouldEqual, Complete)
+						So(slackWriter.String(), ShouldNotContainSubstring, "has failed uploads")
+					}
+
+					So(completions(), ShouldEqual, 1)
+
+					lastCompleted := got.LastCompleted
+
+					setResult(s, present, transfer.RequestStatusUploading)
+					got = setResult(s, present, transfer.RequestStatusFailed)
+
+					So(strings.Count(slackWriter.String(), "has failed uploads"), ShouldEqual, 1)
+					So(completions(), ShouldEqual, 1)
+					So(got.Failed, ShouldEqual, 1)
+					So(got.Missing, ShouldEqual, 1)
+					So(got.Status, ShouldEqual, Complete)
+					So(got.LastCompleted, ShouldEqual, lastCompleted)
+				})
+
 				Convey("when a frozen set with a kept file is rediscovered", func() {
 					s := addSet("frozenMissing", true, present, missing)
 
