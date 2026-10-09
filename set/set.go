@@ -861,7 +861,10 @@ func (s *Set) RecoveryError(err error) {
 	s.sendSlackMessage(slack.Error, "could not be recovered: "+err.Error())
 }
 
-// copyUserProperties copies data from one set into another.
+// copyUserProperties copies data from one set into another. It leaves the
+// removal counts alone: we keep those as removals happen, and a given set (eg.
+// a fresh trash set, or one a client got before a removal it doesn't know about
+// progressed) has stale or zero counts.
 func (s *Set) copyUserProperties(copySet *Set) {
 	s.Transformer = copySet.Transformer
 	s.MonitorTime = copySet.MonitorTime
@@ -871,9 +874,6 @@ func (s *Set) copyUserProperties(copySet *Set) {
 	s.Error = copySet.Error
 	s.Warning = copySet.Warning
 	s.Metadata = copySet.Metadata
-	s.NumObjectsRemoved = copySet.NumObjectsRemoved
-	s.NumObjectsToBeRemoved = copySet.NumObjectsToBeRemoved
-	s.SizeRemoved = copySet.SizeRemoved
 	s.ReadOnly = copySet.ReadOnly
 	s.Hide = copySet.Hide
 	s.Frozen = copySet.Frozen

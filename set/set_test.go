@@ -475,6 +475,15 @@ func TestTrashSetCounts(t *testing.T) {
 				So(got.NumObjectsRemoved, ShouldEqual, 1)
 				So(got.SizeRemoved, ShouldEqual, 3)
 
+				// every trash request adds or updates a fresh trash set, which
+				// mustn't reset the stored removal counts.
+				freshTrashSet := BuildTrashSetFromSet(given)
+				So(db.AddOrUpdate(&freshTrashSet), ShouldBeNil)
+
+				got = db.GetByID(trashSet.ID())
+				So(got.NumObjectsRemoved, ShouldEqual, 1)
+				So(got.SizeRemoved, ShouldEqual, 3)
+
 				removeFromTrash(link)
 
 				got = db.GetByID(trashSet.ID())

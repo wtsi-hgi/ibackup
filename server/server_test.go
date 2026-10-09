@@ -39,6 +39,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -2146,6 +2147,46 @@ func TestServer(t *testing.T) {
 									So(err, ShouldBeNil)
 
 									So(logWriter.String(), ShouldNotContainSubstring, "dir removal error")
+								})
+
+								Convey("A trash request during a removal from the trash set keeps the trash set's "+
+									"removal counts", func() {
+									trashErrCh := make(chan error, 1)
+
+									var once sync.Once
+
+									s.storageHandler = &hookedRemoteChangeHandler{
+										Handler: s.storageHandler,
+										hook: func() {
+											once.Do(func() {
+												trashErrCh <- client.TrashFilesAndDirs(exampleSet.ID(), []string{file2local})
+											})
+										},
+									}
+
+									err = adminClient.RemoveFilesAndDirs(trashSet.ID(), []string{file1local, dir2local})
+									So(err, ShouldBeNil)
+
+									So(<-trashErrCh, ShouldBeNil)
+
+									waitForRemovals(t, s, client, exampleSet)
+
+									gotTrash, errs := adminClient.GetSetByID(trashSet.Requester, trashSet.ID())
+									So(errs, ShouldBeNil)
+									So(gotTrash.NumObjectsToBeRemoved, ShouldEqual, 2)
+									So(gotTrash.NumObjectsRemoved, ShouldEqual, 2)
+
+									Convey("and so does one after it", func() {
+										err = client.TrashFilesAndDirs(exampleSet.ID(), []string{dir1local})
+										So(err, ShouldBeNil)
+
+										waitForRemovals(t, s, client, exampleSet)
+
+										gotTrash, errs = adminClient.GetSetByID(trashSet.Requester, trashSet.ID())
+										So(errs, ShouldBeNil)
+										So(gotTrash.NumObjectsToBeRemoved, ShouldEqual, 2)
+										So(gotTrash.NumObjectsRemoved, ShouldEqual, 2)
+									})
 								})
 
 								Convey("And if you also trash the parent folder", func() {
