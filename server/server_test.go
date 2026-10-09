@@ -29,6 +29,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
@@ -393,6 +394,46 @@ func TestPutJobSubmissionRetrigger(t *testing.T) {
 			runs := racRuns.Load() - start
 			So(runs, ShouldBeGreaterThanOrEqualTo, 2)
 			So(runs, ShouldBeLessThanOrEqualTo, 4)
+		})
+	})
+}
+
+func TestEnableJobSubmissionAgain(t *testing.T) {
+	Convey("Given a server whose wr clients write submissions to a pipe", t, func() {
+		pr, pw, err := os.Pipe()
+		So(err, ShouldBeNil)
+
+		Reset(func() { _ = pr.Close() })
+
+		wrclient.PretendSubmissions = strconv.Itoa(int(pw.Fd()))
+
+		Reset(func() { wrclient.PretendSubmissions = "" })
+
+		s, err := New(Config{HTTPLogger: gas.NewStringLogger(), ReadOnly: true})
+		So(err, ShouldBeNil)
+
+		Convey("enabling job submission again disconnects the first wr client", func() {
+			for range 2 {
+				err = s.EnableJobSubmission("put", "development", "", "", "", "", 1, log15.New())
+				So(err, ShouldBeNil)
+			}
+
+			So(pw.Close(), ShouldBeNil)
+			So(s.sched.Disconnect(), ShouldBeNil)
+
+			readDone := make(chan error, 1)
+
+			go func() {
+				_, errr := io.ReadAll(pr)
+				readDone <- errr
+			}()
+
+			select {
+			case errr := <-readDone:
+				So(errr, ShouldBeNil)
+			case <-time.After(5 * time.Second):
+				So("the first wr client still holds the pipe open", ShouldBeEmpty)
+			}
 		})
 	})
 }

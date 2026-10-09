@@ -439,6 +439,12 @@ func (s *Server) EnableJobSubmission(putCmd, deployment, cwd, queues, queuesAvoi
 		return err
 	}
 
+	if s.sched != nil {
+		if err := s.sched.Disconnect(); err != nil {
+			s.Logger.Printf("scheduler disconnect failed: %s", err)
+		}
+	}
+
 	s.sched = sched
 
 	req := client.DefaultRequirements()

@@ -108,6 +108,10 @@ const prefetchedIRODSCollections = 4
 
 var cliMu sync.Mutex //nolint:gochecknoglobals
 
+// freePort picks the port for a test server; tests replace it to hand out a
+// port that is already taken.
+var freePort = freeport.GetFreePort //nolint:gochecknoglobals
+
 // irodsCollections hands out the tests' iRODS collections. TestMain sets it
 // before running the tests, and closes it after.
 var irodsCollections *testutil.CollectionPool //nolint:gochecknoglobals
@@ -123,6 +127,9 @@ var errInvalidQueuesSpecified = errors.New("invalid queues specified")
 var errServerStopTimeout = errors.New("timeout waiting for server to stop")
 
 var errServerStartReturned = errors.New("server Start() returned before it answered")
+
+// serverStartAttempts bounds how many ports a test server tries to start on.
+const serverStartAttempts = 5
 
 var ErrStatusNotFound = errors.New("status not found")
 
@@ -3780,7 +3787,7 @@ func (s *testServer) prepareConfig(t *testing.T) {
 
 	s.url = os.Getenv("IBACKUP_TEST_SERVER_URL")
 	if s.url == "" {
-		port, err := freeport.GetFreePort()
+		port, err := freePort()
 		So(err, ShouldBeNil)
 
 		s.url = fmt.Sprintf("localhost:%d", port)
@@ -3862,7 +3869,60 @@ func (s *testServer) startServer() {
 	s.startServerInProcess()
 }
 
+// startAndWait calls start, which must start the server on s.url and send on
+// s.srvErr when it stops, then waits for the server to answer. freePort's port
+// is only free when picked, so another process may take it before the server
+// binds. When portTaken says that is why the server stopped, and
+// IBACKUP_TEST_SERVER_URL didn't fix the URL, it moves s.url to a fresh port
+// and tries again, up to serverStartAttempts times.
+func (s *testServer) startAndWait(start func(), portTaken func(error) bool) {
+	for attempt := 1; ; attempt++ {
+		start()
+
+		err := s.waitForServer()
+
+		retry := attempt < serverStartAttempts && os.Getenv("IBACKUP_TEST_SERVER_URL") == "" &&
+			errors.Is(err, errServerStartReturned) && portTaken(err)
+		if !retry {
+			if !s.shouldFail {
+				So(err, ShouldBeNil)
+			}
+
+			return
+		}
+
+		<-s.srvErr
+
+		host, _, err := net.SplitHostPort(s.url)
+		So(err, ShouldBeNil)
+
+		port, err := freePort()
+		So(err, ShouldBeNil)
+
+		s.url = net.JoinHostPort(host, strconv.Itoa(port))
+	}
+}
+
+// startServerExternal runs the server binary, which logs to s.logFile why it
+// exits.
 func (s *testServer) startServerExternal() {
+	var logOffset int64
+
+	s.startAndWait(func() {
+		if info, err := os.Stat(s.logFile); err == nil {
+			logOffset = info.Size()
+		}
+
+		s.startServerProcess()
+	}, func(error) bool {
+		logged, err := os.ReadFile(s.logFile)
+
+		return err == nil && int64(len(logged)) >= logOffset &&
+			bytes.Contains(logged[logOffset:], []byte(syscall.EADDRINUSE.Error()))
+	})
+}
+
+func (s *testServer) startServerProcess() {
 	args := []string{
 		"server", "--cert", s.cert, "--key", s.key, "--logfile", s.logFile,
 		"-s", s.ldapServer, "-l", s.ldapLookup, "--url", s.url, "--slack_debounce", s.debouncePeriod,
@@ -3924,9 +3984,18 @@ func (s *testServer) startServerExternal() {
 	}()
 
 	err = s.cmd.Start()
-	So(err, ShouldBeNil)
 
-	s.waitForServer()
+	// The child has its own copy of pw; closing ours lets the decoder see EOF
+	// once the child exits.
+	errc := pw.Close()
+
+	So(err, ShouldBeNil)
+	So(errc, ShouldBeNil)
+
+	exited := make(chan error, 1)
+	s.srvErr = exited
+
+	go func() { exited <- s.cmd.Wait() }()
 }
 
 func (s *testServer) startServerInProcess() {
@@ -4003,17 +4072,10 @@ func (s *testServer) startServerInProcess() {
 		return
 	}
 
-	if !debugMode {
-		putCmd := fmt.Sprintf("%q put -s --url '%s' --cert '%s' ", resolveBinary(app), s.url, s.cert)
-		if s.logFile != "" {
-			putCmd += fmt.Sprintf("--log %s.client.", s.logFile)
-		}
+	jobsURL := s.url
 
-		logger := log15.New()
-		logger.SetHandler(log15.StreamHandler(logWriter, log15.LogfmtFormat()))
-		err = s.srv.EnableJobSubmission(putCmd, s.schedulerDeployment, "", strings.Join(s.queues, ","),
-			strings.Join(s.avoidQueues, ","), "", 10, logger)
-		So(err, ShouldBeNil)
+	if !debugMode {
+		s.enableJobSubmission(logWriter)
 	}
 
 	if s.remoteHardlinkPrefix != "" {
@@ -4030,11 +4092,32 @@ func (s *testServer) startServerInProcess() {
 		s.srv.EnableRemoteDBBackups(s.remoteDBFile, handler)
 	}
 
-	s.srvErr = make(chan error, 1)
+	s.startAndWait(func() {
+		if !debugMode && s.url != jobsURL {
+			s.enableJobSubmission(logWriter)
 
-	go func() { s.srvErr <- s.srv.Start(s.url, s.cert, s.key) }()
+			jobsURL = s.url
+		}
 
-	s.waitForServer()
+		srvErr, url := make(chan error, 1), s.url
+		s.srvErr = srvErr
+
+		go func() { srvErr <- s.srv.Start(url, s.cert, s.key) }()
+	}, func(err error) bool { return errors.Is(err, syscall.EADDRINUSE) })
+}
+
+// enableJobSubmission has the server submit put jobs that use s.url.
+func (s *testServer) enableJobSubmission(logWriter io.Writer) {
+	putCmd := fmt.Sprintf("%q put -s --url '%s' --cert '%s' ", resolveBinary(app), s.url, s.cert)
+	if s.logFile != "" {
+		putCmd += fmt.Sprintf("--log %s.client.", s.logFile)
+	}
+
+	logger := log15.New()
+	logger.SetHandler(log15.StreamHandler(logWriter, log15.LogfmtFormat()))
+	err := s.srv.EnableJobSubmission(putCmd, s.schedulerDeployment, "", strings.Join(s.queues, ","),
+		strings.Join(s.avoidQueues, ","), "", 10, logger)
+	So(err, ShouldBeNil)
 }
 
 func ensureHTTP2DisabledInEnv(env []string) []string {
@@ -4090,19 +4173,15 @@ func resolveBinary(name string) string {
 
 // waitForServer waits for the server to answer with our own cert, so that
 // another process's server on the same port can't satisfy it. It stops early
-// if an in-process server's Start() returns, eg. because the port was taken.
-func (s *testServer) waitForServer() {
+// if the server stops, eg. because the port was taken.
+func (s *testServer) waitForServer() error {
 	certPEM, err := os.ReadFile(s.cert)
 	So(err, ShouldBeNil)
 
 	roots := x509.NewCertPool()
 	So(roots.AppendCertsFromPEM(certPEM), ShouldBeTrue)
 
-	lastErr := s.dialServerUntilReady(roots)
-
-	if !s.shouldFail {
-		So(lastErr, ShouldBeNil)
-	}
+	return s.dialServerUntilReady(roots)
 }
 
 func (s *testServer) runBinary(t *testing.T, args ...string) (int, string) {
@@ -4288,12 +4367,12 @@ func (s *testServer) Shutdown() error {
 
 	if s.external && s.cmd != nil {
 		err := s.cmd.Process.Signal(os.Interrupt)
-		errCh := make(chan error, 1)
-
-		go func() { errCh <- s.cmd.Wait() }()
+		if errors.Is(err, os.ErrProcessDone) {
+			err = nil
+		}
 
 		select {
-		case errb := <-errCh:
+		case errb := <-s.srvErr:
 			return errors.Join(err, errb)
 		case <-time.After(5 * time.Second):
 			return errors.Join(err, s.cmd.Process.Kill())
@@ -4371,6 +4450,74 @@ func TestE2EExternal(t *testing.T) {
 		So(exitCode, ShouldEqual, 0)
 		So(out, ShouldContainSubstring, "Name: "+setName)
 	})
+}
+
+func TestServerPortTaken(t *testing.T) {
+	Convey("When another process takes a test server's port before it binds", t, func() {
+		taken := listenOnLocalhost(t, 0)
+		_, takenPort, err := net.SplitHostPort(taken.Addr().String())
+		So(err, ShouldBeNil)
+
+		realFreePort := freePort
+		calls := 0
+		freePort = func() (int, error) {
+			calls++
+			if calls == 1 {
+				return strconv.Atoi(takenPort)
+			}
+
+			return realFreePort()
+		}
+
+		Reset(func() { freePort = realFreePort })
+
+		Convey("an in-process server starts on a fresh port", func() {
+			s := NewTestServer(t)
+
+			So(s.url, ShouldNotEndWith, ":"+takenPort)
+			s.confirmOutput(t, []string{"status"}, 0, noBackupSets)
+
+			Convey("and does so again when its port is taken while it is stopped", func() {
+				So(s.Shutdown(), ShouldBeNil)
+
+				_, port, err := net.SplitHostPort(s.url)
+				So(err, ShouldBeNil)
+
+				portNum, err := strconv.Atoi(port)
+				So(err, ShouldBeNil)
+
+				listenOnLocalhost(t, portNum)
+
+				s.startServer()
+
+				So(s.url, ShouldNotEndWith, ":"+port)
+				s.confirmOutput(t, []string{"status"}, 0, noBackupSets)
+			})
+		})
+
+		Convey("an external server starts on a fresh port", func() {
+			s := NewExternalTestServer(t)
+
+			So(s.url, ShouldNotEndWith, ":"+takenPort)
+
+			exitCode, out := runCLIExternal(t, s.env, "status", "--url", s.url, "--cert", s.cert)
+			So(exitCode, ShouldEqual, 0)
+			So(out, ShouldEqual, noBackupSets)
+		})
+	})
+}
+
+// listenOnLocalhost listens on the given port of 127.0.0.1 (0 for any free
+// one) until the test ends, standing in for another process using the port.
+func listenOnLocalhost(t *testing.T, port int) net.Listener {
+	t.Helper()
+
+	l, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port))) //nolint:noctx
+	So(err, ShouldBeNil)
+
+	Reset(func() { _ = l.Close() })
+
+	return l
 }
 
 func runCLIExternal(t *testing.T, env []string, args ...string) (int, string) {
