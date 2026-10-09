@@ -90,6 +90,7 @@ type Baton struct {
 	collCh       chan collRequest
 	collDone     <-chan struct{}
 	collStop     context.CancelFunc
+	collWorkers  sync.WaitGroup
 	collMu       sync.Mutex
 	clientMu     sync.Mutex
 	putClient    atomic.Pointer[ex.Client]
@@ -300,7 +301,8 @@ func (b *Baton) EnsureCollection(collection string) error {
 
 // startCreatingCollections creates b.collCh and starts a goroutine per
 // collection client that creates any collection sent to that channel, until
-// b.collStop() is called.
+// b.collStop() is called. b.collWorkers tracks those goroutines, which may
+// outlive the stop while finishing an operation.
 func (b *Baton) startCreatingCollections() {
 	b.collCh = make(chan collRequest)
 
@@ -308,8 +310,10 @@ func (b *Baton) startCreatingCollections() {
 	b.collDone = ctx.Done()
 	b.collStop = stop
 
+	collCh := b.collCh
+
 	for index := range b.collClients {
-		go b.createCollections(ctx, index, b.collCh)
+		b.collWorkers.Go(func() { b.createCollections(ctx, index, collCh) })
 	}
 }
 
