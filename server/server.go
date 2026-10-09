@@ -190,6 +190,10 @@ type Server struct {
 	removalsMu     sync.Mutex
 	activeRemovals int
 
+	// removalSubmitMu is held while removeFilesAndDirs() queues requests and
+	// records their number.
+	removalSubmitMu sync.Mutex
+
 	mapMu               sync.RWMutex
 	creatingCollections map[string]bool
 	iRODSTracker        *iRODSTracker
@@ -200,6 +204,11 @@ type Server struct {
 	requestLogRIDs []string
 
 	discoveryCoordinator *discoveryCoordinator
+
+	// removalQueuedHook, if set, is called by removeFilesAndDirs() after it
+	// queues a removal's requests and before it records their number. Only for
+	// tests.
+	removalQueuedHook func()
 }
 
 // New creates a Server which can serve a REST API and website.
@@ -320,6 +329,18 @@ func (s *Server) dropUnremovableItem(item *queue.Item, sid string, err error) {
 	if errr := s.removeQueue.Remove(context.Background(), item.Key); errr != nil {
 		s.Logger.Print(errr)
 	}
+}
+
+// waitForRemovalSubmissions waits for any removeFilesAndDirs() in progress, so
+// that a request it queued, which we may just have reserved, is in its set's
+// NumObjectsToBeRemoved before we count it removed. Otherwise a removal
+// requested after the last one finished, and reserved by that one's handler
+// while it waited for more, could be counted before UpdateSetTotalToRemove()
+// sees the counts equal, which then adds to the total instead of resetting
+// the counts.
+func (s *Server) waitForRemovalSubmissions() {
+	s.removalSubmitMu.Lock()
+	s.removalSubmitMu.Unlock() //nolint:staticcheck
 }
 
 func determineQueueSize() (uint, error) {
@@ -447,6 +468,8 @@ func (s *Server) handleRemoveRequests(sid string) {
 		if err != nil {
 			break
 		}
+
+		s.waitForRemovalSubmissions()
 
 		s.discoveryCoordinator.WaitForDiscovery(sid)
 

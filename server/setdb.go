@@ -743,7 +743,15 @@ func (s *Server) validateInputsForTrashing(givenSet *set.Set, paths []string) ([
 	return s.db.ValidateFileAndDirPaths(givenSet, paths)
 }
 
+// removeFilesAndDirs queues the removal of the given paths from the given set,
+// starts handling them, and adds their number to the set's removal counts. It
+// holds removalSubmitMu throughout, so a handler, which waits for it after
+// reserving a request, can't count a request removed before that number
+// includes it.
 func (s *Server) removeFilesAndDirs(set *set.Set, filePaths, dirPaths []string, action set.RemoveAction) error {
+	s.removalSubmitMu.Lock()
+	defer s.removalSubmitMu.Unlock()
+
 	if err := s.db.ResetRemoveSize(set.ID()); err != nil {
 		return err
 	}
@@ -763,6 +771,10 @@ func (s *Server) removeFilesAndDirs(set *set.Set, filePaths, dirPaths []string, 
 	}
 
 	go s.handleRemoveRequests(set.ID())
+
+	if s.removalQueuedHook != nil {
+		s.removalQueuedHook()
+	}
 
 	return s.db.UpdateSetTotalToRemove(set.ID(), uint64(numFilesSubmitted+numObjsSubmitted)) //nolint:gosec
 }

@@ -7638,3 +7638,82 @@ func TestSetDirWalksEndWhenWalkingIsImpossible(t *testing.T) {
 		})
 	})
 }
+
+func TestRemovalCountsOfEachRemoval(t *testing.T) {
+	Convey("Given a server with a set of dirs", t, func() {
+		internal.InitStatter(t)
+		internal.RegisterDefaultTransformers(t)
+
+		certPath, keyPath, err := gas.CreateTestCert(t)
+		So(err, ShouldBeNil)
+
+		s, err := New(Config{HTTPLogger: gas.NewStringLogger(), StorageHandler: internal.GetLocalHandler()})
+		So(err, ShouldBeNil)
+
+		err = s.EnableAuthWithServerToken(certPath, keyPath, ".ibackup.test.servertoken", func(u, p string) (bool, string) {
+			return true, "1"
+		})
+		So(err, ShouldBeNil)
+
+		err = s.LoadSetDB(createDBLocation(t), "")
+		So(err, ShouldBeNil)
+
+		Reset(s.stop)
+
+		localDir := t.TempDir()
+		given := &set.Set{
+			Name:        "set1",
+			Requester:   "jim",
+			Transformer: "prefix=" + localDir + ":" + filepath.Join(localDir, "remote"),
+		}
+
+		So(s.db.AddOrUpdate(given), ShouldBeNil)
+
+		dirs := []*set.Dirent{
+			{Path: filepath.Join(localDir, "dir1"), Mode: fs.ModeDir},
+			{Path: filepath.Join(localDir, "dir2"), Mode: fs.ModeDir},
+		}
+
+		So(s.db.MergeDirEntries(given.ID(), dirs), ShouldBeNil)
+
+		removedCount := func() uint64 {
+			return s.db.GetByID(given.ID()).NumObjectsRemoved
+		}
+
+		// a handler that could start on a removal before its total is
+		// recorded gets the time to do so.
+		s.removalQueuedHook = func() {
+			before := removedCount()
+
+			_ = testutil.RetryUntilWorksCustom(t, func() error { //nolint:errcheck
+				if removedCount() > before {
+					return nil
+				}
+
+				return errNotFinishedRemoving
+			}, 500*time.Millisecond, time.Millisecond)
+		}
+
+		Convey("each removal requested after the last finished is counted on its own, "+
+			"including one the last removal's handler, still waiting for more, picks up", func() {
+			for _, dir := range dirs {
+				So(s.removeFilesAndDirs(given, nil, []string{dir.Path}, set.ToRemove), ShouldBeNil)
+
+				var got *set.Set
+
+				err = testutil.RetryUntilWorksCustom(t, func() error {
+					got = s.db.GetByID(given.ID())
+
+					if got.NumObjectsRemoved == got.NumObjectsToBeRemoved && s.removeQueue.Stats().Items == 0 {
+						return nil
+					}
+
+					return errNotFinishedRemoving
+				}, 10*time.Second, time.Millisecond)
+				So(err, ShouldBeNil)
+				So(got.NumObjectsToBeRemoved, ShouldEqual, 1)
+				So(got.NumObjectsRemoved, ShouldEqual, 1)
+			}
+		})
+	})
+}
