@@ -227,6 +227,10 @@ type DB struct {
 	remoteBackupHandler   transfer.Handler
 
 	rebackup atomic.Bool
+
+	// statSubmitHook, if set, is called before each pure file stat is
+	// submitted to filePool during discovery. Only tests set it.
+	statSubmitHook func()
 }
 
 // New returns a *DB that can be used to create or query a set database. Provide
@@ -294,10 +298,16 @@ func initDB(path string, readonly bool) (*bolt.DB, error) {
 
 // Close closes the database. Be sure to call this to finalise any writes to
 // disk correctly.
+//
+// It waits for in-flight transactions, such as a discovery stat'ing pure files,
+// to finish before stopping the file pool they submit to. Transactions started
+// after that fail.
 func (d *DB) Close() error {
+	err := d.db.Close()
+
 	d.filePool.StopWait()
 
-	return d.db.Close()
+	return err
 }
 
 // AddOrUpdate adds or updates the given Set to the database. Errors if the set
@@ -1522,6 +1532,10 @@ func (d *DB) statPureFileEntries(setID string) error {
 		sfsb.Bucket.ForEach(func(k, v []byte) error { //nolint:errcheck
 			numEntries++
 			path := string(k)
+
+			if d.statSubmitHook != nil {
+				d.statSubmitHook()
+			}
 
 			d.filePool.Submit(func() {
 				direntCh <- newDirentFromPath(path)

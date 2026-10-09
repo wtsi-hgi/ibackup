@@ -4563,3 +4563,80 @@ func boolToUint64(b bool) uint64 {
 
 	return 0
 }
+
+func TestCloseDuringDiscovery(t *testing.T) {
+	Convey("Closing the database while discovery stats pure files", t, func() {
+		internal.InitStatter(t)
+
+		db, err := New(filepath.Join(t.TempDir(), "set.db"), "", false)
+		So(err, ShouldBeNil)
+
+		given := &Set{Name: "closing", Requester: "closer", Transformer: tmpRemoteTransformer}
+		So(db.AddOrUpdate(given), ShouldBeNil)
+
+		localDir := t.TempDir()
+		files := make([]string, 3)
+
+		for i := range files {
+			files[i] = filepath.Join(localDir, "file"+strconv.Itoa(i))
+			internal.CreateTestFile(t, files[i], "abc")
+		}
+
+		So(db.MergeFileEntries(given.ID(), files), ShouldBeNil)
+
+		statStarted := make(chan struct{})
+		closeAttempted := make(chan struct{})
+
+		var hookCalls int
+
+		db.statSubmitHook = func() {
+			hookCalls++
+			if hookCalls != 1 {
+				return
+			}
+
+			close(statStarted)
+			<-closeAttempted
+
+			waitForFilePoolStopOrTimeout(db, 500*time.Millisecond)
+		}
+
+		discoverErrCh := make(chan error, 1)
+
+		go func() {
+			_, errd := db.Discover(given.ID(), nil)
+			discoverErrCh <- errd
+		}()
+
+		<-statStarted
+
+		closeErrCh := make(chan error, 1)
+
+		go func() {
+			closeErrCh <- db.Close()
+		}()
+
+		close(closeAttempted)
+
+		Convey("waits for the in-flight stat'ing, then closes cleanly", func() {
+			So(<-closeErrCh, ShouldBeNil)
+			So(hookCalls, ShouldEqual, len(files))
+
+			select {
+			case <-discoverErrCh:
+			case <-time.After(10 * time.Second):
+				So("discovery did not return after close", ShouldBeEmpty)
+			}
+		})
+	})
+}
+
+// waitForFilePoolStopOrTimeout returns once the given db's file pool has been
+// stopped, or after the given timeout.
+func waitForFilePoolStopOrTimeout(db *DB, timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+
+	for !db.filePool.Stopped() && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+}
