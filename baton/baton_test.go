@@ -27,13 +27,13 @@
 package baton
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -46,6 +46,7 @@ import (
 	"github.com/wtsi-hgi/ibackup/internal"
 	"github.com/wtsi-hgi/ibackup/internal/testutil"
 	ex "github.com/wtsi-npg/extendo/v3"
+	btime "github.com/wtsi-ssg/wr/backoff/time"
 )
 
 var testStartTime time.Time //nolint:gochecknoglobals
@@ -56,6 +57,78 @@ var (
 	errExpectedStatToFindUploadedObject = errors.New("expected Stat to find uploaded object")
 	errTransferStuck                    = errors.New("transfer did not return")
 )
+
+// poolRecorder records the client pools a Baton opens.
+type poolRecorder struct {
+	mu    sync.Mutex
+	pools []*ex.ClientPool
+}
+
+// recordPools makes h record the client pools it opens from now on. Call it
+// before using h concurrently.
+func recordPools(h *Baton) *poolRecorder {
+	r := &poolRecorder{}
+	h.poolOpened = r.add
+
+	return r
+}
+
+func (r *poolRecorder) add(pool *ex.ClientPool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.pools = append(r.pools, pool)
+}
+
+// counts returns how many pools were opened, and how many of those are still
+// open (so still have a goroutine checking their clients).
+func (r *poolRecorder) counts() (opened, open int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	for _, pool := range r.pools {
+		if pool.IsOpen() {
+			open++
+		}
+	}
+
+	return len(r.pools), open
+}
+
+// finishesWithin reports whether wg's goroutines all finish within timeout.
+func finishesWithin(wg *sync.WaitGroup, timeout time.Duration) bool {
+	done := make(chan struct{})
+
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		return true
+	case <-time.After(timeout):
+		return false
+	}
+}
+
+func newSignallingSleeper() *signallingSleeper {
+	return &signallingSleeper{started: make(chan struct{})}
+}
+
+// signallingSleeper is a backoff.Sleeper that sleeps like the real one, having
+// closed started when its first sleep begins.
+type signallingSleeper struct {
+	btime.Sleeper
+
+	once    sync.Once
+	started chan struct{}
+}
+
+func (s *signallingSleeper) Sleep(ctx context.Context, d time.Duration) {
+	s.once.Do(func() { close(s.started) })
+	s.Sleeper.Sleep(ctx, d)
+}
 
 func countReplicates(reps []ex.Replicate) (int, int) {
 	good, bad := 0, 0
@@ -618,27 +691,33 @@ func TestBatonConcurrentClientInit(t *testing.T) {
 		So(started, ShouldBeEmpty)
 	})
 
-	Convey("Failing to connect leaves no client pool checking for clients", t, func() {
+	Convey("Failing to connect leaves no client pool open", t, func() {
 		h, err := GetBatonHandler()
 		So(err, ShouldBeNil)
 		Reset(h.Cleanup)
 
-		before := poolCheckerGoroutines()
+		pools := recordPools(h)
 
 		withoutBatonDo(t)
 
 		Convey("when making a put client", func() {
 			So(h.Put(os.DevNull, filepath.Join(remotePath, "no-baton")), ShouldNotBeNil)
-			So(newPoolCheckersAfterSettling(before), ShouldBeEmpty)
+
+			opened, open := pools.counts()
+			So(opened, ShouldBeGreaterThan, 0)
+			So(open, ShouldEqual, 0)
 		})
 
 		Convey("when making collection clients", func() {
 			So(h.EnsureCollection(remotePath), ShouldNotBeNil)
-			So(newPoolCheckersAfterSettling(before), ShouldBeEmpty)
+
+			opened, open := pools.counts()
+			So(opened, ShouldBeGreaterThan, 0)
+			So(open, ShouldEqual, 0)
 		})
 	})
 
-	Convey("Failing to replace a collection client leaves no client pool checking for clients", t, func() {
+	Convey("Failing to replace a collection client leaves no client pool open", t, func() {
 		localPath := t.TempDir()
 		fileLocal := filepath.Join(localPath, "file")
 		fileRemote := filepath.Join(remotePath, "notadir-no-baton")
@@ -649,12 +728,14 @@ func TestBatonConcurrentClientInit(t *testing.T) {
 		So(err, ShouldBeNil)
 		Reset(h.Cleanup)
 
+		pools := recordPools(h)
+		sleeper := newSignallingSleeper()
+		h.backoffSleeper = sleeper
+
 		So(h.Put(fileLocal, fileRemote), ShouldBeNil)
 		So(h.EnsureCollection(remotePath), ShouldBeNil)
 
-		// Our open collection client pool must be seen, else nothing would be.
-		before := poolCheckerGoroutines()
-		So(before, ShouldNotBeEmpty)
+		openedBefore, _ := pools.counts()
 
 		withoutBatonDo(t)
 
@@ -666,12 +747,22 @@ func TestBatonConcurrentClientInit(t *testing.T) {
 			ensureDone <- h.EnsureCollection(filepath.Join(fileRemote, "sub"))
 		}()
 
-		So(waitForGoroutineIn("backoff/time.(*Sleeper).Sleep", 30*time.Second), ShouldBeTrue)
+		var backingOff bool
+
+		select {
+		case <-sleeper.started:
+			backingOff = true
+		case <-time.After(30 * time.Second):
+		}
+
+		So(backingOff, ShouldBeTrue)
 
 		h.Cleanup()
 		So(<-ensureDone, ShouldNotBeNil)
 
-		So(newPoolCheckersAfterSettling(before), ShouldBeEmpty)
+		opened, open := pools.counts()
+		So(opened, ShouldBeGreaterThan, openedBefore)
+		So(open, ShouldEqual, 0)
 	})
 
 	Convey("GetMeta racing a concurrent Cleanup returns instead of blocking forever", t, func() {
@@ -1100,108 +1191,15 @@ func runningBatonDoChildren(t *testing.T) map[int]bool {
 }
 
 // withoutBatonDo makes starting baton-do fail until the current Convey ends, by
-// emptying PATH, and makes client pools check their clients often, so a closed
-// pool's checking goroutine exits quickly.
+// emptying PATH.
 func withoutBatonDo(t *testing.T) {
 	t.Helper()
 
 	path := os.Getenv("PATH")
-	freq := ex.DefaultClientPoolParams.CheckClientFreq
 
 	So(os.Setenv("PATH", t.TempDir()), ShouldBeNil)
 
-	ex.DefaultClientPoolParams.CheckClientFreq = 10 * time.Millisecond
-
 	Reset(func() {
 		os.Setenv("PATH", path) //nolint:errcheck,usetesting
-
-		ex.DefaultClientPoolParams.CheckClientFreq = freq
 	})
-}
-
-// finishesWithin reports whether wg's goroutines all finish within timeout.
-func finishesWithin(wg *sync.WaitGroup, timeout time.Duration) bool {
-	done := make(chan struct{})
-
-	go func() {
-		wg.Wait()
-		close(done)
-	}()
-
-	select {
-	case <-done:
-		return true
-	case <-time.After(timeout):
-		return false
-	}
-}
-
-// newPoolCheckersAfterSettling returns the ids of pool checker goroutines not
-// in before that are still running after giving them time to exit.
-func newPoolCheckersAfterSettling(before map[string]bool) []string {
-	var running []string
-
-	for range 100 {
-		running = nil
-
-		for id := range poolCheckerGoroutines() {
-			if !before[id] {
-				running = append(running, id)
-			}
-		}
-
-		if len(running) == 0 {
-			break
-		}
-
-		time.Sleep(10 * time.Millisecond)
-	}
-
-	return running
-}
-
-// poolCheckerGoroutines returns the ids of the goroutines running an extendo
-// client pool's client checker, which runs until its pool is closed.
-func poolCheckerGoroutines() map[string]bool {
-	ids := make(map[string]bool)
-
-	for _, stack := range goroutineStacks() {
-		if strings.Contains(stack, "extendo/v3.(*ClientPool).checkClients") {
-			id, _, _ := strings.Cut(strings.TrimPrefix(stack, "goroutine "), " ")
-			ids[id] = true
-		}
-	}
-
-	return ids
-}
-
-// waitForGoroutineIn waits until some goroutine's stack contains the given
-// function, returning false if that doesn't happen within the timeout.
-func waitForGoroutineIn(function string, timeout time.Duration) bool {
-	deadline := time.Now().Add(timeout)
-
-	for time.Now().Before(deadline) {
-		for _, stack := range goroutineStacks() {
-			if strings.Contains(stack, function) {
-				return true
-			}
-		}
-
-		time.Sleep(10 * time.Millisecond)
-	}
-
-	return false
-}
-
-func goroutineStacks() []string {
-	buf := make([]byte, 1<<20)
-
-	for {
-		n := runtime.Stack(buf, true)
-		if n < len(buf) {
-			return strings.Split(string(buf[:n]), "\n\n")
-		}
-
-		buf = make([]byte, 2*len(buf))
-	}
 }

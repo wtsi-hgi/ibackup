@@ -405,7 +405,7 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
   - Gates (all three items together): `make lint`, `make test`, `make race`
     pass; `make speed` passed (Upload +4.9%, Remove +8.9% vs 96faa45, host
     load 22 on 8 CPUs, spreads 41-59%).
-- [ ] PR #197 review (mjkw31): "This cannot be the best way of doing this;
+- [x] PR #197 review (mjkw31): "This cannot be the best way of doing this;
   surely." (`baton/baton_test.go:689`, `waitForGoroutineIn` on the backoff
   sleeper) and "Again, there must be a better of doing this other than stack
   inspection." (`:1183`, `poolCheckerGoroutines`)
@@ -438,3 +438,25 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
   - Gates (all three items together): `make lint`, `make test`, `make race`
     pass; `make speed` passed (Upload +4.9%, Remove +8.9% vs 96faa45, host
     load 22 on 8 CPUs, spreads 41-59%).
+- [ ] A collection worker outlives Cleanup by up to `opTimeout` (60s):
+  `Cleanup` stops clients (`closeConnections(getClients())`) before taking
+  `collMu` and calling `collStop()`, so a worker that finishes its in-flight
+  MkDir takes the next queued request, passes `getCollClient`'s ctx check,
+  and blocks in extendo `Client.send` on the stopped client until
+  `timeoutOp`'s timer fires. Reproduced 4 of 4 runs (reviewer trace: a MkDir
+  started 3ms after Cleanup never finished); exposed by the collection
+  workers assertion, which then takes ~59s. Cancelling before stopping isn't
+  enough (1 of 2 runs still took 59.4s); collection operations likely need
+  the `untilClientStops` treatment c3a286f gave transfers.
+  - Origin: review of the PR #197 sleep replacement (2026-10-09).
+- [ ] Gate failure (review of the PR #197 fixes, `make race`):
+  `TestTrashRemovePaths` "You can trash remove its parent folder from the db"
+  (`main_test.go` ~4129) waited for "Removal status: 1 / 1" but saw "2 / 2";
+  passed 2 of 2 isolated reruns. Same symptom as the removal-count race
+  `removeFilesAndDirs` has on develop (a still-waiting handler counts the
+  next removal's request before `UpdateSetTotalToRemove`), reproduced and
+  fixed on `bugfix-set-counts-2-586f032c7c79` in 72a63b6 ("Record a
+  removal's total before counting its requests"; checklist
+  `.docs/bugfixes/261008-set-counts-2-586f032c7c79.md`, item "Gate failure
+  (same `make race` run): `TestTrashRemovePaths`").
+  - Handoff: fixed on that branch, which is delivered after this PR.
