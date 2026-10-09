@@ -311,6 +311,17 @@ func (s *Server) scheduleRacRetrigger() {
 	}()
 }
 
+// dropUnremovableItem removes the given item, which failed to convert to a
+// remove request, from the remove queue, and records err on the set.
+func (s *Server) dropUnremovableItem(item *queue.Item, sid string, err error) {
+	s.recordSetError("removal for %s failed: %s", sid,
+		fmt.Errorf("error when removing %s: %w", item.Key, err))
+
+	if errr := s.removeQueue.Remove(context.Background(), item.Key); errr != nil {
+		s.Logger.Print(errr)
+	}
+}
+
 func determineQueueSize() (uint, error) {
 	maxMem, err := mem.GetAvailableMemory()
 	if err != nil {
@@ -458,27 +469,30 @@ func (s *Server) handleRemoveRequests(sid string) {
 }
 
 // reserveRemoveRequest reserves an item from the given reserve group from the
-// remove queue and converts it to a removeRequest. Returns nil and no error if
-// the queue is empty.
+// remove queue and converts it to a removeRequest. Items that aren't remove
+// requests can never be removed, so they are dropped from the queue with an
+// error on the set, and the next item is reserved instead. Returns an error if
+// nothing could be reserved, ie. the group has nothing ready or the queue is
+// closed; only the latter is logged.
 func (s *Server) reserveRemoveRequest(reserveGroup string) (*queue.Item, set.RemoveReq, error) {
-	item, err := s.removeQueue.Reserve(reserveGroup, retryDelay+2*time.Second)
-	if err != nil {
-		qerr, ok := err.(queue.Error) //nolint:errorlint
-		if ok && errors.Is(qerr.Err, queue.ErrNothingReady) {
+	for {
+		item, err := s.removeQueue.Reserve(reserveGroup, retryDelay+2*time.Second)
+		if err != nil {
+			qerr, ok := err.(queue.Error) //nolint:errorlint
+			if !ok || !errors.Is(qerr.Err, queue.ErrNothingReady) {
+				s.Logger.Print(err)
+			}
+
 			return nil, set.RemoveReq{}, err
 		}
 
-		s.Logger.Print(err)
+		remReq, err := s.convertQueueItemToRemoveRequest(item.Data())
+		if err == nil {
+			return item, remReq, nil
+		}
+
+		s.dropUnremovableItem(item, reserveGroup, err)
 	}
-
-	remReq, err := s.convertQueueItemToRemoveRequest(item.Data())
-	if err != nil {
-		s.Logger.Print(err)
-
-		return nil, set.RemoveReq{}, err
-	}
-
-	return item, remReq, err
 }
 
 func (s *Server) convertQueueItemToRemoveRequest(data interface{}) (set.RemoveReq, error) {

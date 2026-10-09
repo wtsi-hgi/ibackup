@@ -32,6 +32,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -270,9 +271,10 @@ func noLeavesOrNewLeaf(uniqueLeafs []string, last string) bool {
 }
 
 func (p *Putter) getSortedRequestCollections() []string {
-	dirs := make([]string, 0, len(p.requests))
+	requests := slices.Concat(p.requests, p.duplicateRequests)
+	dirs := make([]string, 0, len(requests))
 
-	for _, request := range p.requests {
+	for _, request := range requests {
 		for _, remote := range request.Remotes() {
 			dirs = append(dirs, filepath.Dir(remote))
 		}

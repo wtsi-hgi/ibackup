@@ -62,6 +62,7 @@ import (
 	btime "github.com/wtsi-ssg/wr/backoff/time"
 	"github.com/wtsi-ssg/wr/retry"
 	bolt "go.etcd.io/bbolt"
+	bolterrors "go.etcd.io/bbolt/errors"
 )
 
 var (
@@ -241,6 +242,94 @@ func TestFailedUploadRetryDelayConfig(t *testing.T) {
 			So(item.Stats().Delay, ShouldEqual, time.Duration(0))
 			So(s.queue.Stats().Ready, ShouldEqual, 1)
 			So(logWriter.String(), ShouldContainSubstring, "delay=0s")
+		})
+	})
+}
+
+func TestRequeueIfRediscoveredLogsErrors(t *testing.T) {
+	Convey("Given a server whose set database can no longer be read", t, func() {
+		logWriter := gas.NewStringLogger()
+
+		s, err := New(Config{
+			HTTPLogger:     logWriter,
+			StorageHandler: internal.GetLocalHandler(),
+			ReadOnly:       true,
+		})
+		So(err, ShouldBeNil)
+
+		s.db, err = set.New(filepath.Join(t.TempDir(), "set.db"), "", false)
+		So(err, ShouldBeNil)
+		So(s.db.Close(), ShouldBeNil)
+
+		Convey("an upload result whose set can't be re-read to check for "+
+			"rediscovery logs the error", func() {
+			r := &transfer.Request{
+				Local:     "/local",
+				Remote:    "/remote",
+				Requester: "req",
+				Set:       "set",
+				Status:    transfer.RequestStatusUploaded,
+			}
+			rid := r.ID()
+			_, _, err = s.queue.AddMany(context.Background(), []*queue.ItemDef{{Key: rid, Data: r, TTR: ttr}})
+			So(err, ShouldBeNil)
+			_, err = s.queue.Reserve("", 0)
+			So(err, ShouldBeNil)
+
+			err = s.trackUploadingAndStuckRequests(r, &set.Entry{})
+			So(err, ShouldBeNil)
+			So(s.queue.Stats().Items, ShouldEqual, 0)
+
+			So(logWriter.String(), ShouldContainSubstring,
+				"request requeue after rediscovery failed rid="+rid+" err="+bolterrors.ErrDatabaseNotOpen.Error())
+		})
+	})
+}
+
+func TestUpdateFileStatusForSetDeletedMidUpdate(t *testing.T) {
+	Convey("Given a server with a set whose upload result was just recorded", t, func() {
+		s, err := New(Config{
+			HTTPLogger:     gas.NewStringLogger(),
+			StorageHandler: internal.GetLocalHandler(),
+			ReadOnly:       true,
+		})
+		So(err, ShouldBeNil)
+
+		s.db, err = set.New(filepath.Join(t.TempDir(), "set.db"), "", false)
+		So(err, ShouldBeNil)
+
+		Reset(func() { So(s.db.Close(), ShouldBeNil) })
+
+		given := &set.Set{Name: "set", Requester: "req", Transformer: "prefix=/:/remote"}
+		So(s.db.AddOrUpdate(given), ShouldBeNil)
+		So(s.db.MergeFileEntries(given.ID(), []string{"/local"}), ShouldBeNil)
+
+		r := &transfer.Request{
+			Local:     "/local",
+			Remote:    "/remote/local",
+			Requester: given.Requester,
+			Set:       given.Name,
+			Status:    transfer.RequestStatusUploaded,
+		}
+		_, _, err = s.queue.AddMany(context.Background(), []*queue.ItemDef{{Key: r.ID(), Data: r, TTR: ttr}})
+		So(err, ShouldBeNil)
+		_, err = s.queue.Reserve("", 0)
+		So(err, ShouldBeNil)
+
+		// These replay updateFileStatus's steps, deleting the set (as the
+		// deleteSet callback does in its own goroutine) after the status was
+		// recorded but before the set is read again.
+		entry, err := s.db.SetEntryStatus(r)
+		So(err, ShouldBeNil)
+		So(s.db.Delete(given.ID()), ShouldBeNil)
+
+		Convey("there is no completed set to handle", func() {
+			So(s.handleNewlyCompletedSets(r), ShouldBeNil)
+		})
+
+		Convey("there is nothing to requeue, and the request leaves the queue", func() {
+			So(s.trackUploadingAndStuckRequests(r, entry), ShouldBeNil)
+			So(s.queue.Stats().Items, ShouldEqual, 0)
 		})
 	})
 }
@@ -596,6 +685,110 @@ func TestServer(t *testing.T) {
 				racCalled <- true
 			})
 
+			// replayResultAcrossRediscovery uploads the given new set's one file,
+			// replaying updateFileStatus's steps for its Uploaded result with a
+			// whole rediscovery between the result being recorded and the request
+			// leaving the queue. Returns the requests then ready to upload.
+			replayResultAcrossRediscovery := func(racerSet *set.Set) []*transfer.Request {
+				err = adminClient.AddOrUpdateSet(racerSet)
+				So(err, ShouldBeNil)
+
+				racerPath := filepath.Join(localDir, racerSet.Name)
+				internal.CreateTestFileOfLength(t, racerPath, 1)
+
+				err = adminClient.MergeFiles(racerSet.ID(), []string{racerPath})
+				So(err, ShouldBeNil)
+
+				drainRacCalled(t, racCalled)
+
+				err = adminClient.TriggerDiscovery(racerSet.ID(), false)
+				So(err, ShouldBeNil)
+				So(<-racCalled, ShouldBeTrue)
+
+				requests, errg := adminClient.GetSomeUploadRequests()
+				So(errg, ShouldBeNil)
+				So(len(requests), ShouldEqual, 1)
+
+				r := requests[0]
+				r.Status = transfer.RequestStatusUploading
+				err = adminClient.UpdateFileStatus(r)
+				So(err, ShouldBeNil)
+
+				r.Status = transfer.RequestStatusUploaded
+				r.Size = 1
+
+				entry, errs := s.db.SetEntryStatus(r)
+				So(errs, ShouldBeNil)
+
+				given := s.db.GetByID(racerSet.ID())
+				tr, errm := given.MakeTransformer()
+				So(errm, ShouldBeNil)
+
+				err = s.db.SetDiscoveryStarted(given.ID())
+				So(err, ShouldBeNil)
+
+				s.discoverThenEnqueue(given, tr, false)
+
+				err = s.handleNewlyCompletedSets(r)
+				So(err, ShouldBeNil)
+
+				err = s.trackUploadingAndStuckRequests(r, entry)
+				So(err, ShouldBeNil)
+
+				requeued, errg := adminClient.GetSomeUploadRequests()
+				So(errg, ShouldBeNil)
+
+				return requeued
+			}
+
+			Convey("An upload result recorded before a rediscovery that re-queues its file, "+
+				"whose request only leaves the queue after that rediscovery's enqueue, "+
+				"still gets the file uploaded and counted", func() {
+				racerSet := &set.Set{
+					Name:        "racer",
+					Requester:   exampleSet.Requester,
+					Transformer: exampleSet.Transformer,
+				}
+
+				requeued := replayResultAcrossRediscovery(racerSet)
+
+				for _, rr := range requeued {
+					rr.Status = transfer.RequestStatusUploaded
+					err = adminClient.UpdateFileStatus(rr)
+					So(err, ShouldBeNil)
+				}
+
+				got, errg := adminClient.GetSetByID(racerSet.Requester, racerSet.ID())
+				So(errg, ShouldBeNil)
+				So(got.Uploaded, ShouldEqual, 1)
+				So(got.Status, ShouldEqual, set.Complete)
+				So(s.queue.Stats().Items, ShouldEqual, 0)
+			})
+
+			Convey("An upload result recorded like that for a frozen set does not re-queue its "+
+				"uploaded file", func() {
+				racerSet := &set.Set{
+					Name:        "frozenracer",
+					Requester:   exampleSet.Requester,
+					Transformer: exampleSet.Transformer,
+					Frozen:      true,
+				}
+
+				requeued := replayResultAcrossRediscovery(racerSet)
+				So(requeued, ShouldBeEmpty)
+				So(s.queue.Stats().Items, ShouldEqual, 0)
+
+				entries, errg := adminClient.GetFiles(racerSet.ID())
+				So(errg, ShouldBeNil)
+				So(len(entries), ShouldEqual, 1)
+				So(entries[0].Status, ShouldEqual, set.Uploaded)
+
+				got, errg := adminClient.GetSetByID(racerSet.Requester, racerSet.ID())
+				So(errg, ShouldBeNil)
+				So(got.Uploaded, ShouldEqual, 1)
+				So(got.Status, ShouldEqual, set.Complete)
+			})
+
 			Convey("Which lets you login", func() {
 				logWriter.Reset()
 
@@ -731,6 +924,93 @@ func TestServer(t *testing.T) {
 							return nil
 						}, 10*time.Second, 10*time.Millisecond)
 						So(err, ShouldBeNil)
+					})
+
+					Convey("A queued removal that isn't a remove request is dropped with an "+
+						"error on its set, and the set's other removals still finish and clean "+
+						"up the storage handler", func() {
+						file1local := filepath.Join(localDir, "file1")
+						internal.CreateTestFileOfLength(t, file1local, 1)
+
+						createRemoteObject(t, s.storageHandler, map[string]string{
+							transfer.MetaKeySets:      exampleSet.Name,
+							transfer.MetaKeyRequester: exampleSet.Requester,
+						}, filepath.Join(remoteDir, "file1"))
+
+						err = client.MergeFiles(exampleSet.ID(), []string{file1local})
+						So(err, ShouldBeNil)
+
+						drainRacCalled(t, racCalled)
+
+						err = client.TriggerDiscovery(exampleSet.ID(), false)
+						So(err, ShouldBeNil)
+
+						So(<-racCalled, ShouldBeTrue)
+
+						counting := &cleanupCountingHandler{Handler: s.storageHandler}
+						s.storageHandler = counting
+
+						_, _, err = s.removeQueue.AddMany(context.Background(), []*queue.ItemDef{{
+							Key:          "not a remove request",
+							ReserveGroup: exampleSet.ID(),
+							Data:         "not a remove request",
+							Priority:     255,
+							TTR:          ttr,
+						}})
+						So(err, ShouldBeNil)
+
+						err = s.removeFilesAndDirs(exampleSet, []string{file1local}, nil, set.ToRemove)
+						So(err, ShouldBeNil)
+
+						err = testutil.RetryUntilWorksCustom(t, func() error {
+							got, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+							if errg != nil {
+								return errg
+							}
+
+							queued := s.removeQueue.Stats().Items
+							cleanups := counting.cleanups.Load()
+
+							if got.NumObjectsRemoved == 1 && queued == 0 && cleanups > 0 {
+								return nil
+							}
+
+							return fmt.Errorf("%w: removed %d; %d queued; %d cleanups",
+								errNotAllRemoved, got.NumObjectsRemoved, queued, cleanups)
+						}, 30*time.Second, 10*time.Millisecond)
+						So(err, ShouldBeNil)
+
+						got, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+						So(errg, ShouldBeNil)
+						So(got.Error, ShouldContainSubstring, ErrIncorrectTypeInQueue.Error())
+					})
+
+					Convey("A removal whose remove queue has been closed stops cleanly and "+
+						"cleans up the storage handler", func() {
+						counting := &cleanupCountingHandler{Handler: s.storageHandler}
+						s.storageHandler = counting
+
+						err = s.removeQueue.Destroy()
+						So(err, ShouldBeNil)
+
+						done := make(chan any, 1)
+
+						go func() {
+							defer func() { done <- recover() }()
+
+							s.handleRemoveRequests(exampleSet.ID())
+						}()
+
+						var panicked any
+
+						select {
+						case panicked = <-done:
+						case <-time.After(10 * time.Second):
+							panicked = "handleRemoveRequests did not return"
+						}
+
+						So(panicked, ShouldBeNil)
+						So(counting.cleanups.Load(), ShouldEqual, 1)
 					})
 
 					Convey("Given a complete set, a removal interrupted by the server stopping "+
@@ -2395,9 +2675,28 @@ func TestServer(t *testing.T) {
 							So(gotSet.Uploaded, ShouldEqual, 1)
 							So(gotSet.Failed, ShouldEqual, 1)
 
+							// the failed request can't be retried by another client
+							// until this client finishes the other sets' requests
+							// for the same remote object
+							sameRemote := 0
+
+							for _, r := range requests[2:] {
+								if r.Remote != requests[1].Remote {
+									continue
+								}
+
+								r.Status = transfer.RequestStatusMissing
+								err = client.UpdateFileStatus(r)
+								So(err, ShouldBeNil)
+
+								sameRemote++
+							}
+
+							So(sameRemote, ShouldEqual, 1)
+
 							stats = s.queue.Stats()
-							So(stats.Items, ShouldEqual, expectedRequests-1)
-							So(stats.Running, ShouldEqual, expectedRequests-2)
+							So(stats.Items, ShouldEqual, expectedRequests-1-sameRemote)
+							So(stats.Running, ShouldEqual, expectedRequests-2-sameRemote)
 							So(stats.Ready, ShouldEqual, 1)
 
 							err = client.UpdateFileStatus(requests[1])
@@ -2422,8 +2721,8 @@ func TestServer(t *testing.T) {
 							So(gotSet.Failed, ShouldEqual, 1)
 
 							stats = s.queue.Stats()
-							So(stats.Items, ShouldEqual, expectedRequests-1)
-							So(stats.Running, ShouldEqual, expectedRequests-2)
+							So(stats.Items, ShouldEqual, expectedRequests-1-sameRemote)
+							So(stats.Running, ShouldEqual, expectedRequests-2-sameRemote)
 							So(stats.Ready, ShouldEqual, 1)
 
 							frequests, err = client.GetSomeUploadRequests()
@@ -2445,8 +2744,8 @@ func TestServer(t *testing.T) {
 							So(gotSet.Failed, ShouldEqual, 1)
 
 							stats = s.queue.Stats()
-							So(stats.Items, ShouldEqual, expectedRequests-1)
-							So(stats.Running, ShouldEqual, expectedRequests-2)
+							So(stats.Items, ShouldEqual, expectedRequests-1-sameRemote)
+							So(stats.Running, ShouldEqual, expectedRequests-2-sameRemote)
 							So(stats.Buried, ShouldEqual, 1)
 
 							frequests, err = client.GetSomeUploadRequests()
@@ -2643,8 +2942,11 @@ func TestServer(t *testing.T) {
 								So(errg, ShouldBeNil)
 								So(len(requests), ShouldEqual, numExpectedRequests)
 
+								// other sets' requests are for the same remote objects,
+								// so must finish too before set2's can be handed out
+								// again
 								for _, request := range requests {
-									if request.Set != exampleSet2.Name || request.Local == entries[1].Path {
+									if request.Set == exampleSet2.Name && request.Local == entries[1].Path {
 										continue
 									}
 
@@ -2994,6 +3296,11 @@ func TestServer(t *testing.T) {
 									err = client.UpdateFileStatus(failedRequest)
 									So(err, ShouldBeNil)
 
+									// simulate giving back the unstarted requests, along
+									// with their claims on remote objects shared with
+									// other sets; real clients don't do this (they report
+									// every request in their batch, and a dead client's
+									// requests come back via TTR expiry)
 									if len(requests) > 1 {
 										for i, r := range requests {
 											if i == 0 {
@@ -3001,6 +3308,9 @@ func TestServer(t *testing.T) {
 											}
 
 											err = s.queue.Release(context.Background(), r.ID())
+											So(err, ShouldBeNil)
+
+											err = s.remoteClaims.release(r)
 											So(err, ShouldBeNil)
 										}
 									}
@@ -4640,7 +4950,7 @@ func TestServer(t *testing.T) {
 							key := strconv.Itoa(i)
 							ids[i] = &queue.ItemDef{
 								Key:  key,
-								Data: &transfer.Request{Set: key},
+								Data: &transfer.Request{Set: key, Remote: "/remote/" + key},
 								TTR:  ttr,
 							}
 						}
@@ -4658,7 +4968,7 @@ func TestServer(t *testing.T) {
 							key := fmt.Sprintf("%d.extra", i)
 							ids[i] = &queue.ItemDef{
 								Key:  key,
-								Data: &transfer.Request{Set: key},
+								Data: &transfer.Request{Set: key, Remote: "/remote/" + key},
 								TTR:  ttr,
 							}
 						}
@@ -6153,6 +6463,76 @@ func TestServer(t *testing.T) {
 					})
 				})
 
+				Convey("and add two sets with the same file", func() {
+					otherSet := &set.Set{
+						Name:        "set2",
+						Requester:   exampleSet.Requester,
+						Transformer: exampleSet.Transformer,
+					}
+
+					shared := filepath.Join(localDir, "shared.txt")
+					internal.CreateTestFileOfLength(t, shared, 1)
+
+					for _, given := range []*set.Set{exampleSet, otherSet} {
+						err = client.AddOrUpdateSet(given)
+						So(err, ShouldBeNil)
+
+						err = client.MergeFiles(given.ID(), []string{shared})
+						So(err, ShouldBeNil)
+
+						err = client.TriggerDiscovery(given.ID(), false)
+						So(err, ShouldBeNil)
+
+						ok := <-racCalled
+						So(ok, ShouldBeTrue)
+					}
+
+					Convey("one client can be given both sets' requests for its remote object", func() {
+						requests, errg := client.GetSomeUploadRequests()
+						So(errg, ShouldBeNil)
+						So(len(requests), ShouldEqual, 2)
+						So(requests[0].Remote, ShouldEqual, requests[1].Remote)
+						So(requests[0].Set, ShouldNotEqual, requests[1].Set)
+					})
+
+					Convey("separate clients are not given both sets' requests for its remote object "+
+						"at the same time", func() {
+						s.numClients = 2
+
+						handedOut := make([]*transfer.Request, 0, s.numClients)
+						clientsGivenShared := 0
+
+						for range s.numClients {
+							requests, errg := client.GetSomeUploadRequests()
+							So(errg, ShouldBeNil)
+
+							if len(requests) > 0 {
+								clientsGivenShared++
+							}
+
+							handedOut = append(handedOut, requests...)
+						}
+
+						So(clientsGivenShared, ShouldEqual, 1)
+						So(len(handedOut), ShouldEqual, 1)
+						So(handedOut[0].Local, ShouldEqual, shared)
+
+						handedOut[0].Status = transfer.RequestStatusUploaded
+						err = client.UpdateFileStatus(handedOut[0])
+						So(err, ShouldBeNil)
+
+						ok := <-racCalled
+						So(ok, ShouldBeTrue)
+
+						requests, errg := client.GetSomeUploadRequests()
+						So(errg, ShouldBeNil)
+						So(len(requests), ShouldEqual, 1)
+						So(requests[0].Local, ShouldEqual, shared)
+						So(requests[0].Remote, ShouldEqual, handedOut[0].Remote)
+						So(requests[0].Set, ShouldNotEqual, handedOut[0].Set)
+					})
+				})
+
 				Convey("and add a set with hardlinks in a directory which only uploads the file once", func() {
 					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldBeNil)
@@ -6799,6 +7179,17 @@ func (g *gatedCleanupHandler) GetMeta(path string) (map[string]string, error) {
 	}
 
 	return g.Handler.GetMeta(path)
+}
+
+// cleanupCountingHandler is a remove.Handler that counts its Cleanup() calls.
+type cleanupCountingHandler struct {
+	remove.Handler
+	cleanups atomic.Int32
+}
+
+func (c *cleanupCountingHandler) Cleanup() {
+	c.cleanups.Add(1)
+	c.Handler.Cleanup()
 }
 
 func TestDiscoveryCoordinator(t *testing.T) {

@@ -27,8 +27,10 @@
 package baton
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -40,15 +42,93 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/wtsi-hgi/ibackup/baton/meta"
+	"github.com/wtsi-hgi/ibackup/errs"
 	"github.com/wtsi-hgi/ibackup/internal"
 	"github.com/wtsi-hgi/ibackup/internal/testutil"
 	ex "github.com/wtsi-npg/extendo/v3"
+	btime "github.com/wtsi-ssg/wr/backoff/time"
 )
 
-var testStartTime time.Time   //nolint:gochecknoglobals
+var testStartTime time.Time //nolint:gochecknoglobals
+
 var icmd *testutil.ICommander //nolint:gochecknoglobals
 
-var errExpectedStatToFindUploadedObject = errors.New("expected Stat to find uploaded object")
+var (
+	errExpectedStatToFindUploadedObject = errors.New("expected Stat to find uploaded object")
+	errTransferStuck                    = errors.New("transfer did not return")
+)
+
+// poolRecorder records the client pools a Baton opens.
+type poolRecorder struct {
+	mu    sync.Mutex
+	pools []*ex.ClientPool
+}
+
+// recordPools makes h record the client pools it opens from now on. Call it
+// before using h concurrently.
+func recordPools(h *Baton) *poolRecorder {
+	r := &poolRecorder{}
+	h.poolOpened = r.add
+
+	return r
+}
+
+func (r *poolRecorder) add(pool *ex.ClientPool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.pools = append(r.pools, pool)
+}
+
+// counts returns how many pools were opened, and how many of those are still
+// open (so still have a goroutine checking their clients).
+func (r *poolRecorder) counts() (opened, open int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	for _, pool := range r.pools {
+		if pool.IsOpen() {
+			open++
+		}
+	}
+
+	return len(r.pools), open
+}
+
+// finishesWithin reports whether wg's goroutines all finish within timeout.
+func finishesWithin(wg *sync.WaitGroup, timeout time.Duration) bool {
+	done := make(chan struct{})
+
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		return true
+	case <-time.After(timeout):
+		return false
+	}
+}
+
+func newSignallingSleeper() *signallingSleeper {
+	return &signallingSleeper{started: make(chan struct{})}
+}
+
+// signallingSleeper is a backoff.Sleeper that sleeps like the real one, having
+// closed started when its first sleep begins.
+type signallingSleeper struct {
+	btime.Sleeper
+
+	once    sync.Once
+	started chan struct{}
+}
+
+func (s *signallingSleeper) Sleep(ctx context.Context, d time.Duration) {
+	s.once.Do(func() { close(s.started) })
+	s.Sleeper.Sleep(ctx, d)
+}
 
 func countReplicates(reps []ex.Replicate) (int, int) {
 	good, bad := 0, 0
@@ -350,6 +430,490 @@ func TestBatonConcurrentClientInit(t *testing.T) {
 
 		So(errs, ShouldBeEmpty)
 	})
+
+	Convey("Cleanup is safe during lazy client init, leaving a usable handler", t, func() {
+		localPath := t.TempDir()
+		fileLocal := filepath.Join(localPath, "file")
+		fileRemote := filepath.Join(remotePath, "file")
+
+		internal.CreateTestFileOfLength(t, fileLocal, 1)
+
+		hPut, err := GetBatonHandler()
+		So(err, ShouldBeNil)
+
+		err = hPut.Put(fileLocal, fileRemote)
+		So(err, ShouldBeNil)
+
+		hPut.Cleanup()
+
+		h, err := GetBatonHandler()
+		So(err, ShouldBeNil)
+		Reset(h.Cleanup)
+
+		var wg sync.WaitGroup
+
+		wg.Go(func() {
+			h.Stat(fileRemote) //nolint:errcheck
+		})
+
+		wg.Go(h.Cleanup)
+
+		wg.Wait()
+
+		exists, _, err := h.Stat(fileRemote)
+		So(err, ShouldBeNil)
+		So(exists, ShouldBeTrue)
+
+		h.Cleanup()
+		So(h.AllClientsStopped(), ShouldBeTrue)
+	})
+
+	Convey("Collection clients replaced after a failed MkDir can be checked concurrently", t, func() {
+		localPath := t.TempDir()
+		fileLocal := filepath.Join(localPath, "file")
+		fileRemote := filepath.Join(remotePath, "notadir")
+
+		internal.CreateTestFileOfLength(t, fileLocal, 1)
+
+		h, err := GetBatonHandler()
+		So(err, ShouldBeNil)
+		Reset(h.Cleanup)
+
+		So(h.Put(fileLocal, fileRemote), ShouldBeNil)
+
+		ensureDone := make(chan error, 1)
+
+		go func() {
+			ensureDone <- h.EnsureCollection(filepath.Join(fileRemote, "sub"))
+		}()
+
+		var ensureErr error
+
+	poll:
+		for {
+			select {
+			case ensureErr = <-ensureDone:
+				break poll
+			default:
+				h.AllClientsStopped()
+			}
+		}
+
+		So(ensureErr, ShouldNotBeNil)
+		So(h.CollectionsDone(), ShouldBeNil)
+	})
+
+	Convey("Concurrent EnsureCollection callers each get their own collection's result", t, func() {
+		localPath := t.TempDir()
+		fileLocal := filepath.Join(localPath, "file")
+		fileRemote := filepath.Join(remotePath, "notadir-own-result")
+		failColl := filepath.Join(fileRemote, "sub")
+		okColl := filepath.Join(remotePath, "ensure-own-result")
+
+		internal.CreateTestFileOfLength(t, fileLocal, 1)
+
+		h, err := GetBatonHandler()
+		So(err, ShouldBeNil)
+		Reset(h.Cleanup)
+
+		So(h.Put(fileLocal, fileRemote), ShouldBeNil)
+
+		failErrCh := make(chan error, 1)
+
+		go func() {
+			failErrCh <- h.EnsureCollection(failColl)
+		}()
+
+		// Let the failing call reach a worker and start waiting for its
+		// result; its MkDir retries outlast the rest of this test.
+		time.Sleep(time.Second)
+
+		okErrCh := make(chan error, 1)
+
+		go func() {
+			okErrCh <- h.EnsureCollection(okColl)
+		}()
+
+		var (
+			okReturned, failReturnedFirst bool
+			okErr                         error
+		)
+
+		select {
+		case okErr = <-okErrCh:
+			okReturned = true
+		case <-failErrCh:
+			failReturnedFirst = true
+		case <-time.After(operationTimeout / 6):
+		}
+
+		So(failReturnedFirst, ShouldBeFalse)
+		So(okReturned, ShouldBeTrue)
+		So(okErr, ShouldBeNil)
+
+		_, err = icmd.ILS(okColl)
+		So(err, ShouldBeNil)
+
+		h.Cleanup()
+
+		So(<-failErrCh, ShouldNotBeNil)
+	})
+
+	Convey("Cleanup during concurrent EnsureCollection calls makes them return, leaving a usable handler", t, func() {
+		parent := filepath.Join(remotePath, "ensure-cleanup")
+
+		h, err := GetBatonHandler()
+		So(err, ShouldBeNil)
+		Reset(h.Cleanup)
+
+		const callers = 32
+
+		ensureErrs := make([]error, callers)
+		firstDone := make(chan struct{})
+
+		var (
+			once sync.Once
+			wg   sync.WaitGroup
+		)
+
+		for i := range callers {
+			wg.Go(func() {
+				ensureErrs[i] = h.EnsureCollection(filepath.Join(parent, fmt.Sprintf("d%02d", i)))
+
+				once.Do(func() { close(firstDone) })
+			})
+		}
+
+		<-firstDone
+		h.Cleanup()
+
+		callersReturned := make(chan struct{})
+
+		go func() {
+			wg.Wait()
+			close(callersReturned)
+		}()
+
+		var returnedPromptly bool
+
+		select {
+		case <-callersReturned:
+			returnedPromptly = true
+		case <-time.After(operationTimeout / 6):
+		}
+
+		So(returnedPromptly, ShouldBeTrue)
+
+		So(h.EnsureCollection(parent), ShouldBeNil)
+
+		output, err := icmd.ILS(parent)
+		So(err, ShouldBeNil)
+
+		// Each caller's nil result means its own collection was made, and any
+		// error is the stopped error for its own collection.
+		var nilButNotMade, notOwnStopped int
+
+		for i, ensureErr := range ensureErrs {
+			coll := filepath.Join(parent, fmt.Sprintf("d%02d", i))
+
+			switch {
+			case ensureErr == nil:
+				if !strings.Contains(string(output), coll+"\n") {
+					nilButNotMade++
+				}
+			case !errors.Is(ensureErr, errs.PathError{Msg: ErrCollectionsStopped, Path: coll}):
+				notOwnStopped++
+			}
+		}
+
+		So(nilButNotMade, ShouldEqual, 0)
+		So(notOwnStopped, ShouldEqual, 0)
+		So(h.CollectionsDone(), ShouldBeNil)
+
+		// Collection creation interrupted by the Cleanup must stop, not keep
+		// retrying with the clients CollectionsDone() has discarded. Nor may a
+		// worker wait out an operation sent to a stopped client: that never
+		// returns, so would only end at opTimeout.
+		So(finishesWithin(&h.collWorkers, operationMinBackoff), ShouldBeTrue)
+	})
+
+	Convey("EnsureCollection after Cleanup succeeds without retrying", t, func() {
+		coll := filepath.Join(remotePath, "ensure-after-cleanup")
+
+		h, err := GetBatonHandler()
+		So(err, ShouldBeNil)
+		Reset(h.Cleanup)
+
+		So(h.EnsureCollection(coll), ShouldBeNil)
+
+		h.Cleanup()
+
+		// The collection exists, so only a failed attempt and its retry
+		// backoff, not a slow iRODS mkdir, could take this long.
+		start := time.Now()
+
+		So(h.EnsureCollection(coll), ShouldBeNil)
+		So(time.Since(start), ShouldBeLessThan, operationMinBackoff)
+	})
+
+	Convey("CollectionsDone without an earlier EnsureCollection works", t, func() {
+		h, err := GetBatonHandler()
+		So(err, ShouldBeNil)
+		Reset(h.Cleanup)
+
+		So(func() { err = h.CollectionsDone() }, ShouldNotPanic)
+		So(err, ShouldBeNil)
+	})
+
+	Convey("GetClientsFromPoolConcurrently failing partway leaves no started client running", t, func() {
+		h, err := GetBatonHandler()
+		So(err, ShouldBeNil)
+
+		// A pool that can only make 1 client lets 1 Get succeed while the
+		// other times out.
+		params := ex.DefaultClientPoolParams
+		params.MaxSize = 1
+		pool := ex.NewClientPool(params, "")
+		Reset(pool.Close)
+
+		before := runningBatonDoChildren(t)
+
+		_, err = h.GetClientsFromPoolConcurrently(pool, 2)
+		So(err, ShouldNotBeNil)
+
+		var started []int
+
+		for pid := range runningBatonDoChildren(t) {
+			if !before[pid] {
+				started = append(started, pid)
+			}
+		}
+
+		So(started, ShouldBeEmpty)
+	})
+
+	Convey("Failing to connect leaves no client pool open", t, func() {
+		h, err := GetBatonHandler()
+		So(err, ShouldBeNil)
+		Reset(h.Cleanup)
+
+		pools := recordPools(h)
+
+		withoutBatonDo(t)
+
+		Convey("when making a put client", func() {
+			So(h.Put(os.DevNull, filepath.Join(remotePath, "no-baton")), ShouldNotBeNil)
+
+			opened, open := pools.counts()
+			So(opened, ShouldBeGreaterThan, 0)
+			So(open, ShouldEqual, 0)
+		})
+
+		Convey("when making collection clients", func() {
+			So(h.EnsureCollection(remotePath), ShouldNotBeNil)
+
+			opened, open := pools.counts()
+			So(opened, ShouldBeGreaterThan, 0)
+			So(open, ShouldEqual, 0)
+		})
+	})
+
+	Convey("Failing to replace a collection client leaves no client pool open", t, func() {
+		localPath := t.TempDir()
+		fileLocal := filepath.Join(localPath, "file")
+		fileRemote := filepath.Join(remotePath, "notadir-no-baton")
+
+		internal.CreateTestFileOfLength(t, fileLocal, 1)
+
+		h, err := GetBatonHandler()
+		So(err, ShouldBeNil)
+		Reset(h.Cleanup)
+
+		pools := recordPools(h)
+		sleeper := newSignallingSleeper()
+		h.backoffSleeper = sleeper
+
+		So(h.Put(fileLocal, fileRemote), ShouldBeNil)
+		So(h.EnsureCollection(remotePath), ShouldBeNil)
+
+		openedBefore, _ := pools.counts()
+
+		withoutBatonDo(t)
+
+		// MkDir under a data object fails, so a new client is tried for; once
+		// the retry backoff is sleeping, that has been tried and failed.
+		ensureDone := make(chan error, 1)
+
+		go func() {
+			ensureDone <- h.EnsureCollection(filepath.Join(fileRemote, "sub"))
+		}()
+
+		var backingOff bool
+
+		select {
+		case <-sleeper.started:
+			backingOff = true
+		case <-time.After(30 * time.Second):
+		}
+
+		So(backingOff, ShouldBeTrue)
+
+		h.Cleanup()
+		So(<-ensureDone, ShouldNotBeNil)
+
+		opened, open := pools.counts()
+		So(opened, ShouldBeGreaterThan, openedBefore)
+		So(open, ShouldEqual, 0)
+	})
+
+	Convey("GetMeta racing a concurrent Cleanup returns instead of blocking forever", t, func() {
+		localPath := t.TempDir()
+		fileLocal := filepath.Join(localPath, "file")
+		fileRemote := filepath.Join(remotePath, "getmeta-cleanup")
+
+		internal.CreateTestFileOfLength(t, fileLocal, 1)
+
+		h, err := GetBatonHandler()
+		So(err, ShouldBeNil)
+		Reset(h.Cleanup)
+
+		So(h.Put(fileLocal, fileRemote), ShouldBeNil)
+
+		// extendo accepts a request on a client whose Stop() has begun but
+		// whose baton-do has not yet exited, then never sends it; a GetMeta
+		// just after a concurrent Cleanup usually lands in that window, and
+		// can then only return by timing out. A short timeout keeps this
+		// quick; the extra wait covers GetMeta making a new client.
+		const (
+			attempts  = 10
+			opTimeout = 2 * time.Second
+			bound     = opTimeout + operationMinBackoff
+		)
+
+		h.opTimeout = opTimeout
+
+		var stuck, timedOut bool
+
+		for i := range attempts {
+			_, err = h.GetMeta(fileRemote)
+			So(err, ShouldBeNil)
+
+			cleanupDone := make(chan struct{})
+
+			go func() {
+				h.Cleanup()
+				close(cleanupDone)
+			}()
+
+			time.Sleep(time.Duration(i%3) * time.Millisecond)
+
+			metaDone := make(chan error, 1)
+
+			go func() {
+				_, errm := h.GetMeta(fileRemote)
+				metaDone <- errm
+			}()
+
+			select {
+			case errm := <-metaDone:
+				timedOut = errm != nil && strings.Contains(errm.Error(), ErrOperationTimeout)
+			case <-time.After(bound):
+				stuck = true
+			}
+
+			<-cleanupDone
+
+			if stuck || timedOut {
+				break
+			}
+		}
+
+		So(stuck, ShouldBeFalse)
+
+		if !timedOut {
+			t.Logf("GetMeta never landed in the stopping-client window in %d attempts", attempts)
+		}
+
+		h.opTimeout = operationTimeout
+
+		_, err = h.GetMeta(fileRemote)
+		So(err, ShouldBeNil)
+	})
+
+	Convey("Transfers racing a concurrent Cleanup return instead of blocking forever", t, func() {
+		localPath := t.TempDir()
+		fileLocal := filepath.Join(localPath, "file")
+		fileGot := filepath.Join(localPath, "got")
+		fileRemote := filepath.Join(remotePath, "transfer-cleanup")
+
+		internal.CreateTestFileOfLength(t, fileLocal, 1)
+
+		h, err := GetBatonHandler()
+		So(err, ShouldBeNil)
+		Reset(h.Cleanup)
+
+		So(h.Put(fileLocal, fileRemote), ShouldBeNil)
+
+		// As for GetMeta above, a request on a client whose Stop() has begun
+		// is never sent. Transfers aren't timed out, since they can be long,
+		// so must instead notice that their client stopped.
+		raceCleanup := func(op func() error) {
+			const (
+				attempts = 10
+				bound    = 20 * time.Second
+			)
+
+			var stuck, failed bool
+
+			for i := range attempts {
+				So(op(), ShouldBeNil)
+
+				cleanupDone := make(chan struct{})
+
+				go func() {
+					h.Cleanup()
+					close(cleanupDone)
+				}()
+
+				time.Sleep(time.Duration(i%3) * time.Millisecond)
+
+				opDone := make(chan error, 1)
+
+				go func() {
+					opDone <- op()
+				}()
+
+				select {
+				case erro := <-opDone:
+					failed = erro != nil
+				case <-time.After(bound):
+					stuck = true
+				}
+
+				<-cleanupDone
+
+				if stuck || failed {
+					break
+				}
+			}
+
+			So(stuck, ShouldBeFalse)
+
+			if !failed {
+				t.Logf("transfer never landed in the stopping-client window in %d attempts", attempts)
+			}
+
+			So(op(), ShouldBeNil)
+		}
+
+		Convey("Put", func() {
+			raceCleanup(func() error { return h.Put(fileLocal, fileRemote) })
+		})
+
+		Convey("Get", func() {
+			raceCleanup(func() error { return h.Get(fileGot, fileRemote) })
+		})
+	})
 }
 
 func TestUploadRetry(t *testing.T) {
@@ -369,6 +933,7 @@ exec 3<>/dev/tcp/127.0.0.1/` + port + `;
 cat <&3 &
 declare PID=$!;
 cat >&3;
+sleep ${IBACKUP_TEST_BATON_LINGER:-0};
 kill $PID;
 exec 3>&-;`)
 
@@ -467,6 +1032,73 @@ exec 3>&-;`)
 			So(err, ShouldNotBeNil)
 			So(err.Error(), ShouldEqual, "put operation failed: BAD code: 12345")
 		})
+
+		Convey("Transfers whose client is stopping as they start return an error", func() {
+			// Like a real baton-do finishing its work, ours lingers after its
+			// stdin is closed, so extendo still thinks the client is running
+			// after Stop() has stopped it reading requests.
+			linger := os.Getenv("IBACKUP_TEST_BATON_LINGER")
+
+			So(os.Setenv("IBACKUP_TEST_BATON_LINGER", "1"), ShouldBeNil)
+			Reset(func() { os.Setenv("IBACKUP_TEST_BATON_LINGER", linger) }) //nolint:errcheck,usetesting
+
+			stopWhileReplying := func(e *ex.Envelope) {
+				e.Result = &ex.ResultWrapper{Item: &e.Target}
+
+				go h.Cleanup()
+
+				time.Sleep(500 * time.Millisecond)
+			}
+
+			returnsWithin := func(op func() error) error {
+				errCh := make(chan error, 1)
+
+				go func() { errCh <- op() }()
+
+				select {
+				case erro := <-errCh:
+					return erro
+				case <-time.After(20 * time.Second):
+					return errTransferStuck
+				}
+			}
+
+			put := func() error { return h.Put("/some/local/file", "/some/remote/file") }
+
+			Convey("for Put", func() {
+				bh <- stopWhileReplying
+
+				So(put(), ShouldBeNil)
+
+				err = returnsWithin(put)
+				So(err, ShouldNotBeNil)
+				So(err.Error(), ShouldContainSubstring, ErrClientStopped)
+			})
+
+			Convey("for Get", func() {
+				bh <- stopWhileReplying
+
+				So(put(), ShouldBeNil)
+
+				err = returnsWithin(func() error {
+					return h.Get(filepath.Join(t.TempDir(), "file"), "/some/remote/file")
+				})
+				So(err, ShouldNotBeNil)
+				So(err.Error(), ShouldContainSubstring, ErrClientStopped)
+			})
+
+			Convey("for the Put retried after a SYS_COPY_LEN_ERR", func() {
+				bh <- func(e *ex.Envelope) {
+					e.ErrorMsg = &ex.ErrorMsg{Code: errSysCopyLen, Message: "SYS_COPY_LEN_ERR"}
+
+					bh <- stopWhileReplying
+				}
+
+				err = returnsWithin(put)
+				So(err, ShouldNotBeNil)
+				So(err.Error(), ShouldContainSubstring, ErrClientStopped)
+			})
+		})
 	})
 }
 
@@ -522,4 +1154,53 @@ func compareMetasWithSize(t *testing.T, remote, expected map[string]string, size
 	expected[meta.MetaKeyRemoteSize] = strconv.FormatInt(size, 10)
 
 	So(remote, ShouldResemble, expected)
+}
+
+// runningBatonDoChildren returns the pids of our running (not zombie) baton-do
+// child processes.
+func runningBatonDoChildren(t *testing.T) map[int]bool {
+	t.Helper()
+
+	statPaths, err := filepath.Glob("/proc/[0-9]*/stat")
+	So(err, ShouldBeNil)
+
+	ppid := strconv.Itoa(os.Getpid())
+	pids := make(map[int]bool)
+
+	for _, statPath := range statPaths {
+		stat, errr := os.ReadFile(statPath)
+		if errr != nil {
+			continue
+		}
+
+		// Format: pid (comm) state ppid ...
+		pidStr, rest, _ := strings.Cut(string(stat), " (")
+		comm, rest, _ := strings.Cut(rest, ") ")
+		fields := strings.Fields(rest)
+
+		if comm != "baton-do" || len(fields) < 2 || fields[0] == "Z" || fields[1] != ppid {
+			continue
+		}
+
+		pid, errc := strconv.Atoi(pidStr)
+		So(errc, ShouldBeNil)
+
+		pids[pid] = true
+	}
+
+	return pids
+}
+
+// withoutBatonDo makes starting baton-do fail until the current Convey ends, by
+// emptying PATH.
+func withoutBatonDo(t *testing.T) {
+	t.Helper()
+
+	path := os.Getenv("PATH")
+
+	So(os.Setenv("PATH", t.TempDir()), ShouldBeNil)
+
+	Reset(func() {
+		os.Setenv("PATH", path) //nolint:errcheck,usetesting
+	})
 }
