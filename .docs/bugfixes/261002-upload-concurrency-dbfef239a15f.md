@@ -381,7 +381,7 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
   - Gates (all three items together): `make lint`, `make test`, `make race`
     pass; `make speed` passed (Upload +4.9%, Remove +8.9% vs 96faa45, host
     load 22 on 8 CPUs, spreads 41-59%).
-- [ ] PR #197 review (mjkw31): "What is this 10 second wait at the end of a
+- [x] PR #197 review (mjkw31): "What is this 10 second wait at the end of a
   function doing?" (`baton/baton_test.go:579`, a
   `time.Sleep(2 * operationMinBackoff)` with no assertion after it)
   - Source: thread PRRT_kwDOIEe6nc6qtqW2 (comment 4228413891).

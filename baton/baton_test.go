@@ -557,9 +557,10 @@ func TestBatonConcurrentClientInit(t *testing.T) {
 		So(notOwnStopped, ShouldEqual, 0)
 		So(h.CollectionsDone(), ShouldBeNil)
 
-		// Collection creation interrupted by the Cleanup must not still be
-		// retrying, now that CollectionsDone() has discarded the clients.
-		time.Sleep(2 * operationMinBackoff)
+		// Collection creation interrupted by the Cleanup must stop, not keep
+		// retrying with the clients CollectionsDone() has discarded. A worker
+		// may first have to finish an operation, taking up to opTimeout.
+		So(finishesWithin(&h.collWorkers, h.opTimeout+operationMinBackoff), ShouldBeTrue)
 	})
 
 	Convey("EnsureCollection after Cleanup succeeds without retrying", t, func() {
@@ -1116,6 +1117,23 @@ func withoutBatonDo(t *testing.T) {
 
 		ex.DefaultClientPoolParams.CheckClientFreq = freq
 	})
+}
+
+// finishesWithin reports whether wg's goroutines all finish within timeout.
+func finishesWithin(wg *sync.WaitGroup, timeout time.Duration) bool {
+	done := make(chan struct{})
+
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		return true
+	case <-time.After(timeout):
+		return false
+	}
 }
 
 // newPoolCheckersAfterSettling returns the ids of pool checker goroutines not
