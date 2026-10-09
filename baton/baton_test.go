@@ -631,9 +631,10 @@ func TestBatonConcurrentClientInit(t *testing.T) {
 		So(h.CollectionsDone(), ShouldBeNil)
 
 		// Collection creation interrupted by the Cleanup must stop, not keep
-		// retrying with the clients CollectionsDone() has discarded. A worker
-		// may first have to finish an operation, taking up to opTimeout.
-		So(finishesWithin(&h.collWorkers, h.opTimeout+operationMinBackoff), ShouldBeTrue)
+		// retrying with the clients CollectionsDone() has discarded. Nor may a
+		// worker wait out an operation sent to a stopped client: that never
+		// returns, so would only end at opTimeout.
+		So(finishesWithin(&h.collWorkers, operationMinBackoff), ShouldBeTrue)
 	})
 
 	Convey("EnsureCollection after Cleanup succeeds without retrying", t, func() {

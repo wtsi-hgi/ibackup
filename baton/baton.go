@@ -198,6 +198,27 @@ func (b *Baton) timeoutOp(op retry.Operation, path string) error {
 	return err
 }
 
+// timeoutCollOp is timeoutOp for collection creation, but returns an
+// ErrCollectionsStopped error instead as soon as ctx is cancelled.
+//
+// Cleanup() and CollectionsDone() cancel ctx when they stop the collection
+// clients, and an op sent to a stopped client never returns (see
+// untilClientStops), so otherwise a worker would wait out b.opTimeout.
+func (b *Baton) timeoutCollOp(ctx context.Context, op retry.Operation, path string) error {
+	errCh := make(chan error, 1)
+
+	go func() {
+		errCh <- b.timeoutOp(op, path)
+	}()
+
+	select {
+	case err := <-errCh:
+		return err
+	case <-ctx.Done():
+		return errs.PathError{Msg: ErrCollectionsStopped, Path: path}
+	}
+}
+
 // putItem uploads item with our put client, returning if that client stops.
 func (b *Baton) putItem(item *ex.RodsItem) error {
 	client := b.putClient.Load()
@@ -322,8 +343,8 @@ func (b *Baton) EnsureCollection(collection string) error {
 
 // startCreatingCollections creates b.collCh and starts a goroutine per
 // collection client that creates any collection sent to that channel, until
-// b.collStop() is called. b.collWorkers tracks those goroutines, which may
-// outlive the stop while finishing an operation.
+// b.collStop() is called. b.collWorkers tracks those goroutines, which abandon
+// any operation in progress when stopped.
 func (b *Baton) startCreatingCollections() {
 	b.collCh = make(chan collRequest)
 
@@ -421,7 +442,7 @@ func (b *Baton) GetClientsFromPoolConcurrently(pool *ex.ClientPool, numClients u
 }
 
 func (b *Baton) ensureCollection(ctx context.Context, clientIndex int, ri ex.RodsItem) error {
-	err := b.timeoutOp(func() error {
+	err := b.timeoutCollOp(ctx, func() error {
 		client, errg := b.getCollClient(ctx, clientIndex)
 		if errg != nil {
 			return errg
@@ -489,7 +510,7 @@ func (b *Baton) timeoutOpAndMakeNewClientOnError(
 	ctx context.Context, op retry.Operation, clientIndex int, path string,
 ) retry.Operation {
 	return func() error {
-		err := b.timeoutOp(op, path)
+		err := b.timeoutCollOp(ctx, op, path)
 		if err != nil && ctx.Err() == nil {
 			client, errc := b.getNewClient()
 			if errc == nil {

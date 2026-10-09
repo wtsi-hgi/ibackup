@@ -438,7 +438,7 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
   - Gates (all three items together): `make lint`, `make test`, `make race`
     pass; `make speed` passed (Upload +4.9%, Remove +8.9% vs 96faa45, host
     load 22 on 8 CPUs, spreads 41-59%).
-- [ ] A collection worker outlives Cleanup by up to `opTimeout` (60s):
+- [x] A collection worker outlives Cleanup by up to `opTimeout` (60s):
   `Cleanup` stops clients (`closeConnections(getClients())`) before taking
   `collMu` and calling `collStop()`, so a worker that finishes its in-flight
   MkDir takes the next queued request, passes `getCollClient`'s ctx check,
@@ -449,6 +449,51 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
   enough (1 of 2 runs still took 59.4s); collection operations likely need
   the `untilClientStops` treatment c3a286f gave transfers.
   - Origin: review of the PR #197 sleep replacement (2026-10-09).
+  - Files: `baton/baton.go`, `baton/baton_test.go`.
+  - Red: `CGO_ENABLED=1 go test -tags netgo --count 1 -timeout 10m ./baton
+    -run '^TestBatonConcurrentClientInit$' -v`, with only "Cleanup during
+    concurrent EnsureCollection calls makes them return, leaving a usable
+    handler" run (the others made `SkipConvey` in a scratch copy) and its
+    workers assertion tightened to `finishesWithin(&h.collWorkers,
+    operationMinBackoff)`. Failed 3 of 3; scratch-only timing logs show the
+    last worker exits at opTimeout:
+
+    ```text
+    baton_test.go:639: TIMING workers exited 5.760753033s after Cleanup (finished in bound: false)
+    baton_test.go:641: TIMING all workers exited 1m0.04121063s after Cleanup
+    Line 642:
+    Expected: true
+    Actual:   false
+    --- FAIL: TestBatonConcurrentClientInit (75.21s)
+    ```
+  - Fixed in `baton/baton.go`: new `timeoutCollOp(ctx, op, path)` runs
+    `timeoutOp` but returns `ErrCollectionsStopped` as soon as the collection
+    context is cancelled. `ensureCollection`'s first `ListItem` and
+    `timeoutOpAndMakeNewClientOnError` (MkDir and its retries) use it, so a
+    worker abandons an op sent to a stopped client once `collStop()` runs,
+    then sees the cancel and returns. Chose the context over
+    `untilClientStops`: workers already have it, `Cleanup()` and
+    `CollectionsDone()` always cancel it when they stop the collection
+    clients, and it needs no 5s grace. Transfers have no such context.
+    `Cleanup`'s order is unchanged: a worker now waits at most for
+    `Cleanup` to stop the other clients before `collStop()` (milliseconds).
+    The abandoned op's goroutine still leaks until extendo is fixed, as for
+    `GetMeta`.
+  - Bound: workers had already exited when the assertion started, about 1s
+    after `Cleanup` (that second covers the follow-up `EnsureCollection`,
+    `ils` and `CollectionsDone`); 3 of 3 fixed runs gave 0.90-1.08s. 5s
+    (`operationMinBackoff`) is 12 times below the 60s symptom. It leaves
+    room on a busy host for the one step a stop doesn't interrupt: a worker
+    already starting a replacement client (one baton-do start).
+  - Runtime of that Convey run alone (`TestBatonConcurrentClientInit`
+    with only it): ~74s before, ~15.5s after.
+  - Mutants (scratch copy, only this Convey, 3 runs each): `ensureCollection`
+    back on plain `timeoutOp` fails 2 of 3 (the stuck worker is sometimes in
+    MkDir instead); `timeoutOpAndMakeNewClientOnError` back on plain
+    `timeoutOp` fails 3 of 3; reverting both is the red above. Fixed code
+    passes 3 of 3.
+  - Gates: `make lint`, `make test`, `make race` pass; `make speed` passed
+    (Upload +0.9%, Remove -1.6% vs 96faa45, host load 10 on 8 CPUs).
 - [ ] Gate failure (review of the PR #197 fixes, `make race`):
   `TestTrashRemovePaths` "You can trash remove its parent folder from the db"
   (`main_test.go` ~4129) waited for "Removal status: 1 / 1" but saw "2 / 2";
@@ -460,3 +505,10 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
   `.docs/bugfixes/261008-set-counts-2-586f032c7c79.md`, item "Gate failure
   (same `make race` run): `TestTrashRemovePaths`").
   - Handoff: fixed on that branch, which is delivered after this PR.
+- [ ] After Cleanup cancels the collection workers, a worker's `select`
+  between `collCh` and `ctx.Done` is random, so it can take one more pending
+  request and reply `context.Canceled`; if that reply is waiting when the
+  caller reaches its second `select`, `EnsureCollection` returns
+  `context.Canceled` instead of its own `ErrCollectionsStopped` `PathError`.
+  Rare; code reading by the reviewer of the worker exit fix.
+  - Origin: review of the collection worker Cleanup fix (2026-10-10).
