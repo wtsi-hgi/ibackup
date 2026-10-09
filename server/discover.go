@@ -413,26 +413,50 @@ func (s *Server) handleNewlyDefinedSets(given *set.Set) {
 // sending discovered file paths to the entriesCh. Closes the entriesCh when
 // done, then sends any error on the doneCh. Non-critical warnings during the
 // walk are sent to the warnChan.
-func (s *Server) doSetDirWalks(entries []*set.Entry, excludeTree ptrie.Trie[bool], given *set.Set, //nolint:funlen
+func (s *Server) doSetDirWalks(entries []*set.Entry, excludeTree ptrie.Trie[bool], given *set.Set,
 	entriesCh chan *set.Dirent, doneCh, warnChan chan error,
 ) {
 	errCh := make(chan error, len(entries))
 
-	s.dirPoolMu.Lock()
-
-	if s.dirPool == nil {
+	if err := s.submitSetDirWalks(entries, excludeTree, given, entriesCh, errCh, warnChan); err != nil {
 		close(entriesCh)
 
-		doneCh <- fs.ErrClosed
+		doneCh <- err
 
 		return
 	}
 
-	existing, errg := s.db.GetExistingDirs(given.ID())
-	if errg != nil {
-		doneCh <- errg
+	var err error
 
-		return
+	for range entries {
+		thisErr := <-errCh
+		if thisErr != nil {
+			err = thisErr
+		}
+	}
+
+	close(entriesCh)
+
+	doneCh <- err
+}
+
+// submitSetDirWalks submits a walk of each of the given dir entries to the dir
+// pool, each walk sending its result to the errCh. Returns an error, having
+// submitted nothing, if the server has stopped or the set's existing dirs can't
+// be read.
+func (s *Server) submitSetDirWalks(entries []*set.Entry, excludeTree ptrie.Trie[bool], given *set.Set,
+	entriesCh chan *set.Dirent, errCh, warnChan chan error,
+) error {
+	s.dirPoolMu.Lock()
+	defer s.dirPoolMu.Unlock()
+
+	if s.dirPool == nil {
+		return fs.ErrClosed
+	}
+
+	existing, err := s.db.GetExistingDirs(given.ID())
+	if err != nil {
+		return err
 	}
 
 	for _, entry := range entries {
@@ -445,20 +469,7 @@ func (s *Server) doSetDirWalks(entries []*set.Entry, excludeTree ptrie.Trie[bool
 		})
 	}
 
-	s.dirPoolMu.Unlock()
-
-	var err error
-
-	for i := 0; i < len(entries); i++ {
-		thisErr := <-errCh
-		if thisErr != nil {
-			err = thisErr
-		}
-	}
-
-	close(entriesCh)
-
-	doneCh <- err
+	return nil
 }
 
 // checkAndWalkDir checks if the given dir exists, and if it does, walks the dir

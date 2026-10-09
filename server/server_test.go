@@ -7506,3 +7506,94 @@ func clearChannel(ch chan bool) {
 		<-ch
 	}
 }
+
+func TestSetDirWalksEndWhenWalkingIsImpossible(t *testing.T) {
+	Convey("Given a server with a set DB and a set with a dir entry", t, func() {
+		internal.InitStatter(t)
+		internal.RegisterDefaultTransformers(t)
+
+		certPath, keyPath, err := gas.CreateTestCert(t)
+		So(err, ShouldBeNil)
+
+		s, err := New(Config{HTTPLogger: gas.NewStringLogger()})
+		So(err, ShouldBeNil)
+
+		err = s.EnableAuthWithServerToken(certPath, keyPath, ".ibackup.test.servertoken", func(u, p string) (bool, string) {
+			return true, "1"
+		})
+		So(err, ShouldBeNil)
+
+		err = s.LoadSetDB(createDBLocation(t), "")
+		So(err, ShouldBeNil)
+
+		localDir := t.TempDir()
+		given := &set.Set{
+			Name:        "set1",
+			Requester:   "jim",
+			Transformer: "prefix=" + localDir + ":" + filepath.Join(localDir, "remote"),
+		}
+
+		So(s.db.AddOrUpdate(given), ShouldBeNil)
+		So(s.db.MergeDirEntries(given.ID(), []*set.Dirent{{Path: localDir, Mode: fs.ModeDir}}), ShouldBeNil)
+
+		entries, err := s.db.GetDirEntries(given.ID(), nil)
+		So(err, ShouldBeNil)
+		So(entries, ShouldHaveLength, 1)
+
+		walk := s.walkDirEntries(given, ptrie.New[bool]())
+
+		walkEnds := func() (error, bool) {
+			errCh := make(chan error, 1)
+
+			go func() {
+				_, _, errw := walk(entries)
+				errCh <- errw
+			}()
+
+			select {
+			case errw := <-errCh:
+				return errw, true
+			case <-time.After(5 * time.Second):
+				return nil, false
+			}
+		}
+
+		stopEnds := func() bool {
+			stopped := make(chan struct{})
+
+			go func() {
+				s.stop()
+				close(stopped)
+			}()
+
+			select {
+			case <-stopped:
+				return true
+			case <-time.After(5 * time.Second):
+				return false
+			}
+		}
+
+		Convey("walks return an error, and stop returns, once the DB can't be read", func() {
+			So(s.db.Close(), ShouldBeNil)
+
+			for range 2 {
+				errw, ended := walkEnds()
+				So(ended, ShouldBeTrue)
+				So(errw, ShouldNotBeNil)
+			}
+
+			So(stopEnds(), ShouldBeTrue)
+		})
+
+		Convey("walks return an error once the server has stopped", func() {
+			So(stopEnds(), ShouldBeTrue)
+
+			for range 2 {
+				errw, ended := walkEnds()
+				So(ended, ShouldBeTrue)
+				So(errors.Is(errw, fs.ErrClosed), ShouldBeTrue)
+			}
+		})
+	})
+}
