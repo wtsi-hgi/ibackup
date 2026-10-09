@@ -375,27 +375,16 @@ func TestBatonConcurrentClientInit(t *testing.T) {
 
 		h, err := GetBatonHandler()
 		So(err, ShouldBeNil)
-		Reset(func() {
-			h.Cleanup()
-		})
-
-		start := make(chan struct{})
+		Reset(h.Cleanup)
 
 		var wg sync.WaitGroup
 
 		wg.Go(func() {
-			<-start
-
 			h.Stat(fileRemote) //nolint:errcheck
 		})
 
-		wg.Go(func() {
-			<-start
+		wg.Go(h.Cleanup)
 
-			h.Cleanup()
-		})
-
-		close(start)
 		wg.Wait()
 
 		exists, _, err := h.Stat(fileRemote)
@@ -415,9 +404,7 @@ func TestBatonConcurrentClientInit(t *testing.T) {
 
 		h, err := GetBatonHandler()
 		So(err, ShouldBeNil)
-		Reset(func() {
-			h.Cleanup()
-		})
+		Reset(h.Cleanup)
 
 		So(h.Put(fileLocal, fileRemote), ShouldBeNil)
 
@@ -454,9 +441,7 @@ func TestBatonConcurrentClientInit(t *testing.T) {
 
 		h, err := GetBatonHandler()
 		So(err, ShouldBeNil)
-		Reset(func() {
-			h.Cleanup()
-		})
+		Reset(h.Cleanup)
 
 		So(h.Put(fileLocal, fileRemote), ShouldBeNil)
 
@@ -506,9 +491,7 @@ func TestBatonConcurrentClientInit(t *testing.T) {
 
 		h, err := GetBatonHandler()
 		So(err, ShouldBeNil)
-		Reset(func() {
-			h.Cleanup()
-		})
+		Reset(h.Cleanup)
 
 		const callers = 32
 
@@ -584,9 +567,7 @@ func TestBatonConcurrentClientInit(t *testing.T) {
 
 		h, err := GetBatonHandler()
 		So(err, ShouldBeNil)
-		Reset(func() {
-			h.Cleanup()
-		})
+		Reset(h.Cleanup)
 
 		So(h.EnsureCollection(coll), ShouldBeNil)
 
@@ -603,9 +584,7 @@ func TestBatonConcurrentClientInit(t *testing.T) {
 	Convey("CollectionsDone without an earlier EnsureCollection works", t, func() {
 		h, err := GetBatonHandler()
 		So(err, ShouldBeNil)
-		Reset(func() {
-			h.Cleanup()
-		})
+		Reset(h.Cleanup)
 
 		So(func() { err = h.CollectionsDone() }, ShouldNotPanic)
 		So(err, ShouldBeNil)
@@ -703,9 +682,7 @@ func TestBatonConcurrentClientInit(t *testing.T) {
 
 		h, err := GetBatonHandler()
 		So(err, ShouldBeNil)
-		Reset(func() {
-			h.Cleanup()
-		})
+		Reset(h.Cleanup)
 
 		So(h.Put(fileLocal, fileRemote), ShouldBeNil)
 
@@ -780,9 +757,7 @@ func TestBatonConcurrentClientInit(t *testing.T) {
 
 		h, err := GetBatonHandler()
 		So(err, ShouldBeNil)
-		Reset(func() {
-			h.Cleanup()
-		})
+		Reset(h.Cleanup)
 
 		So(h.Put(fileLocal, fileRemote), ShouldBeNil)
 

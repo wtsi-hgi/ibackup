@@ -361,3 +361,80 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
     as above.
     Gates: `make lint`, `make test`, `make race` pass. `make speed`
     skipped: the change only adds nil checks after existing reads.
+- [x] PR #197 review (mjkw31): "What's the reason for wrapping the cleanup
+  function in another function? Can you not just do: `Reset(h.Cleanup)`"
+  (`baton/baton_test.go:380`), "Again, what is the wrapping function
+  achieving?" (`:420`), and "What is the start channel achieving here? It
+  looks like completely removing it would have no effect." (`:399`)
+  - Source: threads PRRT_kwDOIEe6nc6qthg5 (comment 4228357560),
+    PRRT_kwDOIEe6nc6qtlIz (4228380462), PRRT_kwDOIEe6nc6qtj8V (4228373069).
+  - Files: `baton/baton_test.go`.
+  - Approach: the wrappers did nothing; this PR's 8 `Reset(func() {
+    h.Cleanup() })` are now `Reset(h.Cleanup)` (`h` is never reassigned).
+    The start channel is removed from "Cleanup is safe during lazy client
+    init": `Stat` spends ~100ms starting baton-do, so the two goroutines
+    overlap anyway; the `Cleanup` goroutine is `wg.Go(h.Cleanup)`.
+  - Red: with 3ba9e3c's fix undone in a scratch copy (client pointers made
+    plain, unsynchronised fields) and only this Convey run, `-race` gives
+    `WARNING: DATA RACE` 10 of 10 runs without the channel and 10 of 10
+    with it; the fixed code passes 3 of 3.
+  - Gates (all three items together): `make lint`, `make test`, `make race`
+    pass; `make speed` passed (Upload +4.9%, Remove +8.9% vs 96faa45, host
+    load 22 on 8 CPUs, spreads 41-59%).
+- [ ] PR #197 review (mjkw31): "What is this 10 second wait at the end of a
+  function doing?" (`baton/baton_test.go:579`, a
+  `time.Sleep(2 * operationMinBackoff)` with no assertion after it)
+  - Source: thread PRRT_kwDOIEe6nc6qtqW2 (comment 4228413891).
+  - Files: `baton/baton.go`, `baton/baton_test.go`.
+  - Purpose (2ca66d5): collection workers that ignored the cancel kept
+    retrying after `Cleanup`, then indexed the `collClients` that
+    `CollectionsDone()` had set to nil and panicked in a background
+    goroutine. The sleep only gave that panic time to crash the binary
+    during this Convey; it asserted nothing.
+  - Approach: the workers started by `startCreatingCollections` now run in
+    `b.collWorkers` (a `sync.WaitGroup`, one `Go` per collection client
+    start). The sleep is replaced by `So(finishesWithin(&h.collWorkers,
+    h.opTimeout+operationMinBackoff), ShouldBeTrue)`: every worker must
+    exit once its stop is seen. The bound covers one in-flight operation;
+    it normally returns at once, so the Convey is ~10s faster.
+  - Red (scratch copy, only this Convey): workers given
+    `context.Background()` (2ca66d5's "no context in workers") panic
+    `index out of range [0] with length 0` 3 of 3; `retry.Do` given
+    `context.Background()` fails `finishesWithin` (`Expected: true`) 3 of
+    3, which the old sleep missed. Fixed code passes 3 of 3.
+  - Gates (all three items together): `make lint`, `make test`, `make race`
+    pass; `make speed` passed (Upload +4.9%, Remove +8.9% vs 96faa45, host
+    load 22 on 8 CPUs, spreads 41-59%).
+- [ ] PR #197 review (mjkw31): "This cannot be the best way of doing this;
+  surely." (`baton/baton_test.go:689`, `waitForGoroutineIn` on the backoff
+  sleeper) and "Again, there must be a better of doing this other than stack
+  inspection." (`:1183`, `poolCheckerGoroutines`)
+  - Source: threads PRRT_kwDOIEe6nc6qttda (comment 4228433612),
+    PRRT_kwDOIEe6nc6qt06U (4228480735).
+  - Files: `baton/baton.go`, `baton/baton_test.go`.
+  - Approach: two seams on `Baton`, no stack inspection. `backoffSleeper`
+    (set to `&btime.Sleeper{}` by `GetBatonHandler`, like `opTimeout`) does
+    collection creation's retry sleeps; the test's `signallingSleeper`
+    closes a channel when the first backoff starts, then sleeps like the
+    real one. `poolOpened` (nil in production) is called by the new
+    `newClientPool`, which `connect` uses and is the only place we open a
+    pool; the test's `poolRecorder` keeps them and counts those still
+    `IsOpen()` (extendo's own state: an open pool's `checkClients`
+    goroutine keeps running). `withoutBatonDo` no longer shortens extendo's
+    global `CheckClientFreq`, and the settle loop and `goroutineStacks`
+    helpers are gone. The Conveys are renamed "... leaves no client pool
+    open" and assert pools were opened (`opened > 0`, or more than before
+    the replacement) and `open == 0`.
+  - Red (scratch copy, only these Conveys, 3 runs each): `connect` not
+    closing its pool on error (1f63e61) fails all three Conveys
+    (`Expected: 0`); the pre-1f63e61 inline pool in
+    `timeoutOpAndMakeNewClientOnError` (via `newClientPool`, closed only
+    when `Get` succeeds) fails the replacement Convey 3 of 3. 2cd7ea1's
+    test ("GetClientsFromPoolConcurrently failing partway") never used
+    stack inspection and is unchanged (it checks for running baton-do
+    child processes); undoing 2cd7ea1 still fails it 3 of 3. Fixed code
+    passes 3 of 3. Limit: a pool opened with `ex.NewClientPool` directly,
+    bypassing `newClientPool`, would not be seen.
+  - Gates (all three items together): `make lint`, `make test`, `make race`
+    pass; `make speed` passed (Upload +4.9%, Remove +8.9% vs 96faa45, host
+    load 22 on 8 CPUs, spreads 41-59%).
