@@ -1014,31 +1014,56 @@ func TestServer(t *testing.T) {
 						So(counting.cleanups.Load(), ShouldEqual, 1)
 					})
 
-					Convey("Given a file in two sets, whose first metadata update fails to add the new metadata", func() {
-						err = client.AddOrUpdateSet(exampleSet3)
-						So(err, ShouldBeNil)
+					file1local := filepath.Join(localDir, "file1")
+					file1remote := filepath.Join(remoteDir, "file1")
 
-						file1local := filepath.Join(localDir, "file1")
-						file1remote := filepath.Join(remoteDir, "file1")
-
+					// givenFile1InSets makes file1, whose remote object has
+					// the given sets and requester values, a file of each of
+					// the given sets.
+					givenFile1InSets := func(sets, requesters string, given ...*set.Set) {
 						internal.CreateTestFileOfLength(t, file1local, 1)
 
 						createRemoteObject(t, s.storageHandler, map[string]string{
-							transfer.MetaKeySets:      exampleSet.Name + "," + exampleSet3.Name,
-							transfer.MetaKeyRequester: exampleSet.Requester,
+							transfer.MetaKeySets:      sets,
+							transfer.MetaKeyRequester: requesters,
 						}, file1remote)
 
-						for _, given := range []*set.Set{exampleSet, exampleSet3} {
-							err = client.MergeFiles(given.ID(), []string{file1local})
+						for _, gs := range given {
+							err = adminClient.AddOrUpdateSet(gs)
+							So(err, ShouldBeNil)
+
+							err = adminClient.MergeFiles(gs.ID(), []string{file1local})
 							So(err, ShouldBeNil)
 
 							drainRacCalled(t, racCalled)
 
-							err = client.TriggerDiscovery(given.ID(), false)
+							err = adminClient.TriggerDiscovery(gs.ID(), false)
 							So(err, ShouldBeNil)
 
 							So(<-racCalled, ShouldBeTrue)
 						}
+					}
+
+					expectRemoteMeta := func(sets, requesters string) {
+						_, err = os.Stat(file1remote)
+						So(err, ShouldBeNil)
+
+						remoteMeta, errg := s.storageHandler.GetMeta(file1remote)
+						So(errg, ShouldBeNil)
+						So(remoteMeta[transfer.MetaKeySets], ShouldEqual, sets)
+						So(remoteMeta[transfer.MetaKeyRequester], ShouldEqual, requesters)
+					}
+
+					bobSet := &set.Set{
+						Name:        "set4",
+						Requester:   "bob",
+						Transformer: exampleSet.Transformer,
+						MonitorTime: 0,
+					}
+
+					Convey("Given a file in two sets, whose first metadata update fails to add the new metadata", func() {
+						givenFile1InSets(exampleSet.Name+","+exampleSet3.Name, exampleSet.Requester,
+							exampleSet, exampleSet3)
 
 						failing := &failingAddMetaHandler{Handler: s.storageHandler}
 						failing.failures.Store(1)
@@ -1047,13 +1072,7 @@ func TestServer(t *testing.T) {
 						expectRemoteMetaAfterRetry := func(sets string) {
 							So(failing.failures.Load(), ShouldEqual, 0)
 
-							_, err = os.Stat(file1remote)
-							So(err, ShouldBeNil)
-
-							remoteMeta, errg := s.storageHandler.GetMeta(file1remote)
-							So(errg, ShouldBeNil)
-							So(remoteMeta[transfer.MetaKeySets], ShouldEqual, sets)
-							So(remoteMeta[transfer.MetaKeyRequester], ShouldEqual, exampleSet3.Requester)
+							expectRemoteMeta(sets, exampleSet3.Requester)
 						}
 
 						Convey("removing it from one set keeps its remote object for the other", func() {
@@ -1073,6 +1092,70 @@ func TestServer(t *testing.T) {
 
 							expectRemoteMetaAfterRetry(exampleSet3.Name + "," + set.TrashPrefix + exampleSet.Name)
 						})
+					})
+
+					Convey("Given a file in sets of two requesters, whose first metadata update adds the new sets "+
+						"but not the new requester, removing it from one set removes that set's requester", func() {
+						givenFile1InSets(exampleSet.Name+","+bobSet.Name, exampleSet.Requester+","+bobSet.Requester,
+							exampleSet, bobSet)
+
+						partial := &partialAddMetaHandler{Handler: s.storageHandler}
+						s.storageHandler = partial
+
+						err = s.removeFilesAndDirs(exampleSet, []string{file1local}, nil, set.ToRemove)
+						So(err, ShouldBeNil)
+
+						waitForRemovals(t, s, client, exampleSet)
+
+						So(partial.failed.Load(), ShouldBeTrue)
+						expectRemoteMeta(bobSet.Name, bobSet.Requester)
+					})
+
+					Convey("Given a file in two sets, whose removal from one set updated its metadata, then "+
+						"stopped before recording that, a retry after another set uploaded it keeps that set", func() {
+						givenFile1InSets(exampleSet.Name+","+exampleSet3.Name, exampleSet.Requester,
+							exampleSet, exampleSet3)
+
+						before, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+						So(errg, ShouldBeNil)
+
+						entry, errg := s.db.GetFileEntryForSet(exampleSet.ID(), file1local)
+						So(errg, ShouldBeNil)
+
+						remReq := set.NewRemoveRequest(file1local, before, false, set.ToRemove)
+						So(s.db.SetRemoveRequests(before.ID(), []set.RemoveReq{remReq}), ShouldBeNil)
+
+						var stored []set.RemoveReq
+
+						unhooked := s.storageHandler
+						s.storageHandler = &hookedRemoteChangeHandler{
+							Handler: unhooked,
+							hook: func() {
+								stored, errg = s.db.GetRemoveRequests(before.ID())
+								So(errg, ShouldBeNil)
+							},
+						}
+
+						So(s.processRemoteFileRemoval(&remReq, entry), ShouldBeNil)
+
+						s.storageHandler = unhooked
+
+						So(stored, ShouldHaveLength, 1)
+						So(stored[0].RemoteRemovalStatus, ShouldEqual, set.AboutToBeRemoved)
+						expectRemoteMeta(exampleSet3.Name, exampleSet.Requester)
+
+						So(unhooked.RemoveMeta(file1remote, map[string]string{
+							transfer.MetaKeySets:      exampleSet3.Name,
+							transfer.MetaKeyRequester: exampleSet.Requester,
+						}), ShouldBeNil)
+						So(unhooked.AddMeta(file1remote, map[string]string{
+							transfer.MetaKeySets:      exampleSet3.Name + "," + bobSet.Name,
+							transfer.MetaKeyRequester: exampleSet.Requester + "," + bobSet.Requester,
+						}), ShouldBeNil)
+
+						So(s.processRemoteFileRemoval(&stored[0], entry), ShouldBeNil)
+
+						expectRemoteMeta(exampleSet3.Name+","+bobSet.Name, exampleSet.Requester+","+bobSet.Requester)
 					})
 
 					Convey("Given a complete set, a removal interrupted by the server stopping "+
@@ -7171,6 +7254,27 @@ func (h *failingAddMetaHandler) AddMeta(path string, meta map[string]string) err
 	h.failures.Store(0)
 
 	return h.Handler.AddMeta(path, meta)
+}
+
+// partialAddMetaHandler is a remove.Handler whose first AddMeta() adds only the
+// sets value of the given metadata, then fails with errInjectedAddMeta, like
+// baton's metamod, which adds one AVU at a time and stops at the first failure.
+type partialAddMetaHandler struct {
+	remove.Handler
+	failed atomic.Bool
+}
+
+func (h *partialAddMetaHandler) AddMeta(path string, meta map[string]string) error {
+	if !h.failed.CompareAndSwap(false, true) {
+		return h.Handler.AddMeta(path, meta)
+	}
+
+	err := h.Handler.AddMeta(path, map[string]string{transfer.MetaKeySets: meta[transfer.MetaKeySets]})
+	if err != nil {
+		return err
+	}
+
+	return errInjectedAddMeta
 }
 
 // batonLikeGetMetaHandler is a remove.Handler whose GetMeta() fails like

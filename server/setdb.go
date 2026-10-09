@@ -1101,12 +1101,20 @@ func (s *Server) getFilesWithSameInode(path string, inode uint64, transformer tr
 	return files, 0, err
 }
 
+// handleSetsAndRequesters returns the sets and requesters values that the
+// remote object of the given path, which has the given metadata, should have
+// once the given set no longer holds it: without the set's name unless another
+// set of that name holds the path, and without its requester unless another of
+// the requester's sets holds the path. The requester goes even when the sets
+// value already lacks the set's name, since adding the new values may have
+// added the sets value and then failed, leaving a retry with the recorded old
+// requester value.
 func (s *Server) handleSetsAndRequesters(path string, givenSet *set.Set,
 	meta map[string]string) ([]string, []string, error) {
 	sets := splitCommaSeparatedUnique(meta[transfer.MetaKeySets])
 	requesters := splitCommaSeparatedUnique(meta[transfer.MetaKeyRequester])
 
-	if !slices.Contains(sets, givenSet.Name) {
+	if !slices.Contains(sets, givenSet.Name) && !slices.Contains(requesters, givenSet.Requester) {
 		return sets, requesters, nil
 	}
 
