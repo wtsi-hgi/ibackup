@@ -97,6 +97,13 @@ type Baton struct {
 	metaClient   atomic.Pointer[ex.Client]
 	removeClient atomic.Pointer[ex.Client]
 	opTimeout    time.Duration
+
+	// backoffSleeper does the sleeps between collection creation retries.
+	backoffSleeper backoff.Sleeper
+
+	// poolOpened, if not nil, is called with each client pool we open. Only
+	// tests set it, before using the Baton.
+	poolOpened func(*ex.ClientPool)
 }
 
 // GetBatonHandler returns a Handler that uses Baton to interact with iRODS. If
@@ -106,7 +113,7 @@ func GetBatonHandler() (*Baton, error) {
 
 	_, err := ex.FindBaton()
 
-	return &Baton{opTimeout: operationTimeout}, err
+	return &Baton{opTimeout: operationTimeout, backoffSleeper: &btime.Sleeper{}}, err
 }
 
 // getClients returns a snapshot of all our clients, any of which may be nil.
@@ -233,6 +240,20 @@ func untilClientStops(client *ex.Client, op retry.Operation, path string) error 
 	}
 }
 
+// newClientPool opens a client pool of up to maxSize clients, telling
+// b.poolOpened about it.
+func (b *Baton) newClientPool(maxSize uint8) *ex.ClientPool {
+	params := ex.DefaultClientPoolParams
+	params.MaxSize = maxSize
+	pool := ex.NewClientPool(params, "")
+
+	if b.poolOpened != nil {
+		b.poolOpened(pool)
+	}
+
+	return pool
+}
+
 // waitAfterClientStopped returns the error from errCh, or an ErrClientStopped
 // error if none arrives within clientStoppedGrace. Any request that was sent
 // returns promptly once its client stops, so the grace only avoids misreporting
@@ -345,9 +366,7 @@ func (b *Baton) makeCollConnections() error {
 // Returns a pool you should later close, and a channel containing numClients
 // clients. On error, it closes the pool itself.
 func (b *Baton) connect(numClients uint8) (*ex.ClientPool, chan *ex.Client, error) {
-	params := ex.DefaultClientPoolParams
-	params.MaxSize = numClients
-	pool := ex.NewClientPool(params, "")
+	pool := b.newClientPool(numClients)
 
 	clientCh, err := b.GetClientsFromPoolConcurrently(pool, numClients)
 	if err != nil {
@@ -456,7 +475,7 @@ func (b *Baton) doWithTimeoutAndRetries(ctx context.Context, op retry.Operation,
 			Min:     operationMinBackoff,
 			Max:     operationMaxBackoff,
 			Factor:  operationBackoffFactor,
-			Sleeper: &btime.Sleeper{},
+			Sleeper: b.backoffSleeper,
 		},
 		"MkDir",
 	)
