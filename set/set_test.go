@@ -4004,6 +4004,121 @@ func TestSetDB(t *testing.T) {
 				So(got.Status, ShouldEqual, Complete)
 				So(strings.Count(slackWriter.String(), "completed backup"), ShouldEqual, 1)
 			})
+
+			Convey("And add a set with a missing file, its missing result doesn't complete it again", func() {
+				dir := t.TempDir()
+				present := filepath.Join(dir, "present")
+				missing := filepath.Join(dir, "missing")
+
+				internal.CreateTestFile(t, present, "abc")
+
+				addSet := func(name string, frozen bool, paths ...string) *Set {
+					s := &Set{Name: name, Requester: "jim", Transformer: tmpRemoteTransformer, Frozen: frozen}
+					So(db.AddOrUpdate(s), ShouldBeNil)
+					So(db.MergeFileEntries(s.ID(), paths), ShouldBeNil)
+
+					return s
+				}
+
+				discover := func(s *Set) *Set {
+					got, errd := db.Discover(s.ID(), nil)
+					So(errd, ShouldBeNil)
+
+					return got
+				}
+
+				setResult := func(s *Set, path string, status transfer.RequestStatus) *Set {
+					_, errs := db.SetEntryStatus(&transfer.Request{
+						Local:     path,
+						Requester: s.Requester,
+						Set:       s.Name,
+						Size:      3,
+						Status:    status,
+					})
+					So(errs, ShouldBeNil)
+
+					return db.GetByID(s.ID())
+				}
+
+				completions := func() int {
+					return strings.Count(slackWriter.String(), "completed backup")
+				}
+
+				Convey("when every file is missing", func() {
+					s := addSet("allMissing", false, missing)
+
+					slackWriter.Reset()
+					So(discover(s).Status, ShouldEqual, Complete)
+					So(slackWriter.String(), ShouldContainSubstring, "completed discovery and backup due to no files")
+
+					got := setResult(s, missing, transfer.RequestStatusMissing)
+					So(got.Missing, ShouldEqual, 1)
+					So(got.Status, ShouldEqual, Complete)
+					So(completions(), ShouldEqual, 0)
+				})
+
+				Convey("when the missing file's result comes last, and a rediscovery completes it again", func() {
+					s := addSet("missingLast", false, present, missing)
+
+					slackWriter.Reset()
+					So(discover(s).Status, ShouldEqual, PendingUpload)
+
+					setResult(s, present, transfer.RequestStatusUploading)
+					So(setResult(s, present, transfer.RequestStatusUploaded).Status, ShouldEqual, Complete)
+					So(completions(), ShouldEqual, 1)
+
+					got := setResult(s, missing, transfer.RequestStatusMissing)
+					So(got.Uploaded, ShouldEqual, 1)
+					So(got.Missing, ShouldEqual, 1)
+					So(got.Status, ShouldEqual, Complete)
+					So(completions(), ShouldEqual, 1)
+
+					So(discover(s).Status, ShouldEqual, PendingUpload)
+					setResult(s, missing, transfer.RequestStatusMissing)
+					So(completions(), ShouldEqual, 1)
+
+					setResult(s, present, transfer.RequestStatusUploading)
+					So(setResult(s, present, transfer.RequestStatusUnmodified).Status, ShouldEqual, Complete)
+					So(completions(), ShouldEqual, 2)
+				})
+
+				Convey("but a retried failed file's upload completes it again", func() {
+					s := addSet("failedThenRetried", false, present, missing)
+
+					slackWriter.Reset()
+					discover(s)
+					setResult(s, missing, transfer.RequestStatusMissing)
+					setResult(s, present, transfer.RequestStatusUploading)
+					So(setResult(s, present, transfer.RequestStatusFailed).Status, ShouldEqual, Complete)
+					So(completions(), ShouldEqual, 1)
+
+					setResult(s, present, transfer.RequestStatusUploading)
+					got := setResult(s, present, transfer.RequestStatusUploaded)
+					So(got.Uploaded, ShouldEqual, 1)
+					So(got.Failed, ShouldEqual, 0)
+					So(got.Status, ShouldEqual, Complete)
+					So(completions(), ShouldEqual, 2)
+				})
+
+				Convey("when a frozen set with a kept file is rediscovered", func() {
+					s := addSet("frozenMissing", true, present, missing)
+
+					discover(s)
+					setResult(s, present, transfer.RequestStatusUploading)
+					setResult(s, present, transfer.RequestStatusUploaded)
+					setResult(s, missing, transfer.RequestStatusMissing)
+
+					slackWriter.Reset()
+					So(discover(s).Status, ShouldEqual, Complete)
+					So(completions(), ShouldEqual, 1)
+
+					got := setResult(s, missing, transfer.RequestStatusMissing)
+					So(got.Uploaded, ShouldEqual, 1)
+					So(got.Missing, ShouldEqual, 1)
+					So(got.Status, ShouldEqual, Complete)
+					So(completions(), ShouldEqual, 1)
+				})
+			})
 		})
 	})
 }

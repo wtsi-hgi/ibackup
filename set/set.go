@@ -740,15 +740,24 @@ func (s *Set) checkIfUploading() {
 	s.sendSlackMessage(slack.Info, "started uploading files")
 }
 
+// checkIfComplete marks us Complete if every file is counted. If we already
+// are, a result that leaves us complete (eg. one replacing discovery's count of
+// a missing file) only updates our last completed counts: it doesn't complete
+// us again. Discovery resets our status, so each discovery can complete us.
 func (s *Set) checkIfComplete() {
 	if !(s.Uploaded+s.Replaced+s.Skipped+s.Failed+s.Missing+s.Orphaned+s.Abnormal == s.NumFiles) { //nolint:staticcheck,lll
 		return
 	}
 
-	s.Status = Complete
-	s.LastCompleted = time.Now()
 	s.LastCompletedCount = s.Uploaded + s.Replaced + s.Skipped + s.Failed
 	s.LastCompletedSize = s.SizeTotal
+
+	if s.Status == Complete {
+		return
+	}
+
+	s.Status = Complete
+	s.LastCompleted = time.Now()
 
 	s.sendSlackMessage(slack.Success, fmt.Sprintf("completed backup "+
 		"(%d newly uploaded; %d replaced; %d skipped; %d failed; %d missing; %d orphaned; %d abnormal; %s data uploaded)",
