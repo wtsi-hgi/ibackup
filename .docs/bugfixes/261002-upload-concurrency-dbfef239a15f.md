@@ -512,3 +512,51 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
   `context.Canceled` instead of its own `ErrCollectionsStopped` `PathError`.
   Rare; code reading by the reviewer of the worker exit fix.
   - Origin: review of the collection worker Cleanup fix (2026-10-10).
+  - Not reproduced (2026-10-10); left unfixed. The mechanism described here
+    cannot happen, and the outcome needs two coinciding OS-level stalls.
+  - Why a worker can't take a request after the cancel: `collCh` is
+    unbuffered, so a hand-off happens only when one side arrives and finds
+    the other parked. Every parked caller and worker also waits on the same
+    done channel (`b.collDone` is `ctx.Done()`). `close(done)` dequeues
+    every select waiter and sets its `g.selectDone` (Go 1.27
+    `runtime/chan.go` `waitq.dequeue`, ~line 897). A later select pass
+    holds the locks of both `collCh` and done, sees done ready, and skips
+    any `collCh` waiter whose `selectDone` is already set. So every
+    hand-off happens before the cancel: the request was already in flight.
+  - Why an in-flight request almost never replies `context.Canceled`:
+    `context.Canceled` reaches a reply only from `getCollClient`, through
+    `timeoutCollOp`'s `errCh`. `cancelCtx.Err()` returns non-nil only once
+    done is closed, so a `timeoutCollOp` select that blocked before the
+    cancel is woken by done and returns the caller's own stopped error
+    (`timeoutOpAndMakeNewClientOnError` passes `ri.IPath`). Both cases are
+    ready only when the worker runs `go func()` after the cancel and its
+    thread stalls before the `select` while two nested goroutines finish
+    on other Ps. The caller must also be between its send and its second
+    select from the cancel until the reply arrives; a caller already parked
+    there is woken by done first.
+  - Tried: `CGO_ENABLED=1 go test -tags netgo --count 1 -timeout 10m
+    ./baton -run '^TestBatonConcurrentClientInit$'` with a temporary
+    `collRequestTaken` hook in `EnsureCollection`, nil in production,
+    called between the send and the reply select. The test's hook ran
+    `Cleanup()` then `collWorkers.Wait()`, so the worker's reply and done
+    were both ready. A new Convey called `EnsureCollection` 30 times and
+    required each error to equal the caller's own stopped `PathError`.
+    The Convey passed (`ok ... 91.544s`): every worker reply was already
+    the caller's own stopped error. Forcing `context.Canceled` would need
+    a second seam inside `timeoutCollOp`, plus a sleep there to stand in
+    for the stalled thread. That simulates the stall instead of
+    reproducing a reachable bug, so the hook and Convey were reverted.
+  - If it is fixed anyway, close it in `createCollections`: reply
+    `errs.PathError{Msg: ErrCollectionsStopped, Path: req.collection}`
+    whenever `ensureCollection` errs and `ctx.Err() != nil`. Every error
+    caused by the cancel follows the cancel, so this closes the race
+    rather than shrinking its window.
+  - Weak test noted: `errs.PathError.Is` compares only `Msg`, so the
+    "Cleanup during concurrent EnsureCollection calls" Convey's
+    `errors.Is(..., PathError{..., Path: coll})` does not check that the
+    path is the caller's own collection.
+  - Gates: none run; no code changed.
+  - Also noted: `errs.PathError.Is` compares only `Msg`, so the "Cleanup
+    during concurrent EnsureCollection calls" Convey's
+    `errors.Is(..., PathError{..., Path: coll})` doesn't check the path is
+    the caller's own collection.
