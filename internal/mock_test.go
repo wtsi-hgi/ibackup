@@ -30,11 +30,73 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/wtsi-hgi/ibackup/baton/meta"
 )
+
+func TestMockConcurrency(t *testing.T) {
+	Convey("A local handler can be used from many goroutines at once", t, func() {
+		lh := GetLocalHandler()
+		dir := t.TempDir()
+		removed := filepath.Join(dir, "removed")
+		kept := filepath.Join(dir, "kept")
+
+		const n = 50
+
+		var wg sync.WaitGroup
+
+		wg.Add(4)
+
+		go func() {
+			defer wg.Done()
+
+			for range n {
+				lh.RemoveFile(removed) //nolint:errcheck
+			}
+		}()
+
+		go func() {
+			defer wg.Done()
+
+			for i := range n {
+				lh.AddMeta(kept, map[string]string{"key" + strconv.Itoa(i): "val"}) //nolint:errcheck
+			}
+		}()
+
+		go func() {
+			defer wg.Done()
+
+			for range n {
+				lh.QueryMeta(dir, map[string]string{"key0": "val"}) //nolint:errcheck
+				lh.Stat(kept)                                       //nolint:errcheck
+				lh.Put(filepath.Join(dir, "missing"), kept)         //nolint:errcheck
+				lh.Cleanup()
+			}
+		}()
+
+		go func() {
+			defer wg.Done()
+
+			other := filepath.Join(dir, "other")
+
+			for range n {
+				lh.MakeMetaFail(other)
+				lh.MakeStatFail(other)
+				lh.MakePutFail(other)
+				lh.CollectionsDone() //nolint:errcheck
+			}
+		}()
+
+		wg.Wait()
+
+		got, err := lh.GetMeta(kept)
+		So(err, ShouldBeNil)
+		So(got, ShouldHaveLength, n)
+	})
+}
 
 func TestMock(t *testing.T) {
 	Convey("Given a local handler", t, func() {

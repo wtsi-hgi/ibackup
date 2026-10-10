@@ -91,6 +91,9 @@ func (l *LocalHandler) EnsureCollection(dir string) error {
 
 // CollectionsDone just records this was called.
 func (l *LocalHandler) CollectionsDone() error { //nolint:unparam
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
 	l.Connected = true
 
 	return nil
@@ -99,13 +102,20 @@ func (l *LocalHandler) CollectionsDone() error { //nolint:unparam
 // MakeStatFail will result in any subsequent Stat()s for a Request with the
 // given remote path failing.
 func (l *LocalHandler) MakeStatFail(remote string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
 	l.statFail = remote
 }
 
 // Stat returns info about the Remote file, which is a local file on disk.
 // Returns an error if statFail == Remote.
 func (l *LocalHandler) Stat(remote string) (bool, map[string]string, error) {
-	if l.statFail == remote {
+	l.mu.RLock()
+	statFail := l.statFail
+	l.mu.RUnlock()
+
+	if statFail == remote {
 		return false, nil, errs.PathError{Msg: ErrMockStatFail, Path: ""}
 	}
 
@@ -138,12 +148,18 @@ func (l *LocalHandler) Stat(remote string) (bool, map[string]string, error) {
 // MakePutFail will result in any subsequent Put()s for a Request with the
 // given remote path failing.
 func (l *LocalHandler) MakePutFail(remote string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
 	l.putFail = remote
 }
 
 // MakePutSlow will result in any subsequent Put()s for a Request with the
 // given local path taking the given amount of time.
 func (l *LocalHandler) MakePutSlow(remote string, dur time.Duration) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
 	l.putSlow = remote
 	l.putDur = dur
 }
@@ -151,35 +167,52 @@ func (l *LocalHandler) MakePutSlow(remote string, dur time.Duration) {
 // MakeRemoveSlow will result in any subsequent RemoveFile() or RemoveDir()
 // calls taking 1s to complete.
 func (l *LocalHandler) MakeRemoveSlow() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
 	l.removeSlow = true
 }
 
 // MakeAddMetaSlow will result in any subsequent AddMeta() call taking 1s to
 // complete.
 func (l *LocalHandler) MakeAddMetaSlow() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
 	l.addMetaSlow = true
 }
 
 // Put just copies from Local to Remote. Returns an error if putFail == Remote.
 func (l *LocalHandler) Put(local, remote string) error {
-	if l.putFail == remote {
-		return errs.PathError{Msg: ErrMockPutFail, Path: ""}
-	}
-
-	if l.putSlow == remote {
-		<-time.After(l.putDur)
+	if err := l.putFailOrDelay(remote); err != nil {
+		return err
 	}
 
 	return copyFile(local, remote)
 }
 
-func (l *LocalHandler) Get(local, remote string) error {
-	if l.putFail == remote {
+// putFailOrDelay returns an error if putFail == remote, and waits for putDur if
+// putSlow == remote.
+func (l *LocalHandler) putFailOrDelay(remote string) error {
+	l.mu.RLock()
+	putFail, putSlow, putDur := l.putFail, l.putSlow, l.putDur
+	l.mu.RUnlock()
+
+	if putFail == remote {
 		return errs.PathError{Msg: ErrMockPutFail, Path: ""}
 	}
 
-	if l.putSlow == remote {
-		<-time.After(l.putDur)
+	if putSlow == remote {
+		<-time.After(putDur)
+	}
+
+	return nil
+}
+
+// Get just copies from Remote to Local. Returns an error if putFail == Remote.
+func (l *LocalHandler) Get(local, remote string) error {
+	if err := l.putFailOrDelay(remote); err != nil {
+		return err
 	}
 
 	return copyFile(remote, local)
@@ -215,18 +248,21 @@ func copyFile(source, dest string) error {
 // MakeMetaFail will result in any subsequent *Meta()s for a Request with the
 // given remote path failing.
 func (l *LocalHandler) MakeMetaFail(remote string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
 	l.metaFail = remote
 }
 
 // RemoveMeta deletes the given keys from a map stored under path. Returns an
 // error if metaFail == path.
 func (l *LocalHandler) RemoveMeta(path string, meta map[string]string) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
 	if l.metaFail == path {
 		return errs.PathError{Msg: ErrMockMetaFail, Path: ""}
 	}
-
-	l.mu.Lock()
-	defer l.mu.Unlock()
 
 	pathMeta, exists := l.Meta[path]
 	if !exists {
@@ -243,11 +279,15 @@ func (l *LocalHandler) RemoveMeta(path string, meta map[string]string) error {
 // AddMeta adds the given meta to a map stored under path. Returns an error
 // if metafail == path, or if keys were already defined in the map.
 func (l *LocalHandler) AddMeta(path string, meta map[string]string) error {
-	if l.metaFail == path {
+	l.mu.RLock()
+	metaFail, addMetaSlow := l.metaFail, l.addMetaSlow
+	l.mu.RUnlock()
+
+	if metaFail == path {
 		return errs.PathError{Msg: ErrMockMetaFail, Path: ""}
 	}
 
-	if l.addMetaSlow {
+	if addMetaSlow {
 		time.Sleep(1 * time.Second)
 	}
 
@@ -274,8 +314,8 @@ func (l *LocalHandler) AddMeta(path string, meta map[string]string) error {
 // GetMeta gets the metadata stored for the given path (returns an empty map if
 // path is not known about or has no metadata).
 func (l *LocalHandler) GetMeta(path string) (map[string]string, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
+	l.mu.RLock()
+	defer l.mu.RUnlock()
 
 	if l.Meta == nil {
 		return make(map[string]string), nil
@@ -298,6 +338,9 @@ func (l *LocalHandler) GetMeta(path string) (map[string]string, error) {
 // QueryMeta return paths to all objects with given metadata inside the provided
 // scope.
 func (l *LocalHandler) QueryMeta(dirToSearch string, meta map[string]string) ([]string, error) { //nolint:unparam
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+
 	var objects []string
 
 	for path, pathMeta := range l.Meta {
@@ -329,9 +372,7 @@ func doesMetaContainMeta(sourceMeta, targetMeta map[string]string) bool {
 
 // RemoveDir removes the empty dir.
 func (l *LocalHandler) RemoveDir(path string) error {
-	if l.removeSlow {
-		time.Sleep(1 * time.Second)
-	}
+	l.delayIfRemoveSlow()
 
 	err := os.Remove(path)
 	if err != nil && strings.Contains(err.Error(), "directory not empty") {
@@ -343,11 +384,11 @@ func (l *LocalHandler) RemoveDir(path string) error {
 
 // RemoveFile removes the file and its metadata.
 func (l *LocalHandler) RemoveFile(path string) error {
-	if l.removeSlow {
-		time.Sleep(1 * time.Second)
-	}
+	l.delayIfRemoveSlow()
 
+	l.mu.Lock()
 	delete(l.Meta, path)
+	l.mu.Unlock()
 
 	err := os.Remove(path)
 	if err != nil && strings.Contains(err.Error(), "no such file or directory") {
@@ -355,6 +396,17 @@ func (l *LocalHandler) RemoveFile(path string) error {
 	}
 
 	return err
+}
+
+// delayIfRemoveSlow sleeps for 1s if MakeRemoveSlow() has been called.
+func (l *LocalHandler) delayIfRemoveSlow() {
+	l.mu.RLock()
+	removeSlow := l.removeSlow
+	l.mu.RUnlock()
+
+	if removeSlow {
+		time.Sleep(1 * time.Second)
+	}
 }
 
 // TimeToMeta converts a time to a string suitable for storing as metadata, in
