@@ -701,6 +701,12 @@ func (s *Server) removeExpiredEntriesFromSet(givenSet *set.Set) error {
 		dirPaths[i] = e.Path
 	}
 
+	// a removal of nothing would still start a new removal, wiping the set's
+	// status of its last one.
+	if len(filePaths) == 0 && len(dirPaths) == 0 {
+		return nil
+	}
+
 	return s.removeFilesAndDirs(givenSet, filePaths, dirPaths, set.ToRemove)
 }
 

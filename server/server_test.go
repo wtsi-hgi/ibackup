@@ -2225,6 +2225,23 @@ func TestServer(t *testing.T) {
 										So(gotTrash.Error, ShouldBeEmpty)
 										So(gotTrash.HasProblems(), ShouldBeFalse)
 									})
+
+									Convey("and an expiry pass with nothing expired keeps that error", func() {
+										s.trashLifespan = time.Hour
+
+										err = adminClient.RemoveExpiredEntriesForSet(trashSet.ID())
+										So(err, ShouldBeNil)
+
+										// a removal run would clear the error once it has waited
+										// for requests to reserve, so the error must stay for
+										// longer than that wait.
+										for deadline := time.Now().Add(retryDelay + 3*time.Second); time.Now().Before(deadline) &&
+											trashSetError() == errMsg; {
+											time.Sleep(100 * time.Millisecond)
+										}
+
+										So(trashSetError(), ShouldEqual, errMsg)
+									})
 								})
 
 								Convey("And removal on a file and a dir sets them as complete in the remove bucket", func() {
@@ -2245,6 +2262,21 @@ func TestServer(t *testing.T) {
 									So(gotTrash.NumFiles, ShouldEqual, 0)
 									So(gotTrash.Uploaded, ShouldEqual, 0)
 									So(gotTrash.SizeTotal, ShouldEqual, 0)
+
+									Convey("and an expiry pass with nothing expired keeps that removal's status", func() {
+										So(gotTrash.NumObjectsToBeRemoved, ShouldEqual, 2)
+
+										s.trashLifespan = time.Hour
+
+										err = adminClient.RemoveExpiredEntriesForSet(trashSet.ID())
+										So(err, ShouldBeNil)
+
+										gotAfter, errs := adminClient.GetSetByID(trashSet.Requester, trashSet.ID())
+										So(errs, ShouldBeNil)
+										So(gotAfter.NumObjectsToBeRemoved, ShouldEqual, 2)
+										So(gotAfter.NumObjectsRemoved, ShouldEqual, 2)
+										So(gotAfter.SizeRemoved, ShouldEqual, gotTrash.SizeRemoved)
+									})
 								})
 
 								Convey("And removal on a file doesn't remove the dir and doesn't log anything", func() {
