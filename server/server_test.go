@@ -2296,6 +2296,33 @@ func TestServer(t *testing.T) {
 									So(logWriter.String(), ShouldNotContainSubstring, "dir removal error")
 								})
 
+								Convey("An expiry pass where only a dir has expired removes that dir", func() {
+									err = adminClient.RemoveFilesAndDirs(trashSet.ID(), []string{file1local})
+									So(err, ShouldBeNil)
+
+									waitForRemovals(t, s, adminClient, trashSet)
+
+									files, errg := client.GetFiles(trashSet.ID())
+									So(errg, ShouldBeNil)
+									So(files, ShouldBeEmpty)
+
+									s.trashLifespan = 0
+
+									err = adminClient.RemoveExpiredEntriesForSet(trashSet.ID())
+									So(err, ShouldBeNil)
+
+									waitForRemovals(t, s, adminClient, trashSet)
+
+									dirs, errg := client.GetDirs(trashSet.ID())
+									So(errg, ShouldBeNil)
+									So(dirs, ShouldBeEmpty)
+
+									gotTrash, errs := adminClient.GetSetByID(trashSet.Requester, trashSet.ID())
+									So(errs, ShouldBeNil)
+									So(gotTrash.NumObjectsToBeRemoved, ShouldEqual, 1)
+									So(gotTrash.NumObjectsRemoved, ShouldEqual, 1)
+								})
+
 								Convey("A trash request during a removal from the trash set keeps the trash set's "+
 									"removal counts", func() {
 									trashErrCh := make(chan error, 1)
