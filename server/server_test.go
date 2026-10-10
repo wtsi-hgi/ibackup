@@ -1706,6 +1706,30 @@ func TestServer(t *testing.T) {
 							So(err, ShouldBeNil)
 
 							expectFile1Removed(trashSet)
+
+							expectRequestWithNoPathsRejected := func(given *set.Set, request func() error) {
+								err = request()
+								So(err, ShouldNotBeNil)
+								So(err.Error(), ShouldContainSubstring, ErrNoPaths.Error())
+
+								got, errs := adminClient.GetSetByID(given.Requester, given.ID())
+								So(errs, ShouldBeNil)
+								So(got.NumObjectsToBeRemoved, ShouldEqual, 1)
+								So(got.NumObjectsRemoved, ShouldEqual, 1)
+								So(got.SizeRemoved, ShouldEqual, 1)
+							}
+
+							Convey("and a trash request with no paths is rejected and keeps the set's removal status", func() {
+								expectRequestWithNoPathsRejected(exampleSet, func() error {
+									return client.TrashFilesAndDirs(exampleSet.ID(), nil)
+								})
+							})
+
+							Convey("and an admin removal with no paths is rejected and keeps that removal's status", func() {
+								expectRequestWithNoPathsRejected(trashSet, func() error {
+									return adminClient.RemoveFilesAndDirs(trashSet.ID(), []string{})
+								})
+							})
 						})
 
 						Convey("removing the never-uploaded missing file still succeeds without a warning", func() {

@@ -134,6 +134,7 @@ const (
 	ErrInvalidName    = gas.Error("set name contains invalid characters")
 	ErrSetNotComplete = gas.Error("set should be complete for this operation")
 	ErrNotAdmin       = gas.Error("you are not the server admin")
+	ErrNoPaths        = gas.Error("no paths given")
 	ErrBadSet         = gas.Error("set with that id does not exist")
 	ErrInvalidInput   = gas.Error("invalid input")
 	ErrInternal       = gas.Error("internal server error")
@@ -548,9 +549,9 @@ func (s *Server) removePaths(c *gin.Context) {
 }
 
 // validateInputsForRemovals returns an error if the provided set is not a
-// trashed set, the user is not an admin or if any provided path is not in the
-// given set. Also returns the valid paths classified into a slice of filepaths
-// or dirpaths.
+// trashed set, the user is not an admin, no paths are provided or any provided
+// path is not in the given set. Also returns the valid paths classified into a
+// slice of filepaths or dirpaths.
 func (s *Server) validateInputsForRemovals(givenSet *set.Set, paths []string,
 	c *gin.Context) ([]string, []string, int, error) {
 	if !givenSet.IsTrash() {
@@ -559,6 +560,10 @@ func (s *Server) validateInputsForRemovals(givenSet *set.Set, paths []string,
 
 	if !s.AllowedAccess(c, "") {
 		return nil, nil, http.StatusUnauthorized, ErrNotAdmin
+	}
+
+	if len(paths) == 0 {
+		return nil, nil, http.StatusBadRequest, ErrNoPaths
 	}
 
 	files, dirs, err := s.db.ValidateFileAndDirPaths(givenSet, paths)
@@ -735,8 +740,9 @@ func (s *Server) registerDeletionCallback(setID string) {
 }
 
 // validateInputsForTrashing returns an error if the provided set is a trashed
-// set, not complete or if any provided path is not in the given set. Also
-// returns the valid paths classified into a slice of filepaths or dirpaths.
+// set or not complete, no paths are provided or any provided path is not in the
+// given set. Also returns the valid paths classified into a slice of filepaths
+// or dirpaths.
 func (s *Server) validateInputsForTrashing(givenSet *set.Set, paths []string) ([]string, []string, error) {
 	if givenSet.IsTrash() {
 		return nil, nil, ErrTrashSetName
@@ -744,6 +750,10 @@ func (s *Server) validateInputsForTrashing(givenSet *set.Set, paths []string) ([
 
 	if givenSet.Status != set.Complete {
 		return nil, nil, ErrSetNotComplete
+	}
+
+	if len(paths) == 0 {
+		return nil, nil, ErrNoPaths
 	}
 
 	return s.db.ValidateFileAndDirPaths(givenSet, paths)
