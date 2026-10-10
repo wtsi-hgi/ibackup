@@ -41,6 +41,10 @@ import (
 const (
 	dateFormat            = "2006-01-02 15:04:05"
 	ErrInvalidTransformer = "invalid transformer"
+
+	// RemovalErrorPrefix starts the Error of a set whose removal of a path ran
+	// out of retries.
+	RemovalErrorPrefix = "Error when removing: "
 )
 
 type Status int

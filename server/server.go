@@ -343,6 +343,21 @@ func (s *Server) waitForRemovalSubmissions() {
 	s.removalSubmitMu.Unlock() //nolint:staticcheck
 }
 
+// clearTrashSetRemovalError clears the removal error of the given set, if it
+// is a trash set, once its removals have finished with none failing.
+// Otherwise nothing would clear it: a trash set is never discovered, and a
+// trash request keeps its Error.
+func (s *Server) clearTrashSetRemovalError(sid string) {
+	got := s.db.GetByID(sid)
+	if got == nil || !got.IsTrash() {
+		return
+	}
+
+	if err := s.db.ClearRemovalError(sid); err != nil {
+		s.Logger.Printf("could not clear removal error of set %s: %s", sid, err)
+	}
+}
+
 func determineQueueSize() (uint, error) {
 	maxMem, err := mem.GetAvailableMemory()
 	if err != nil {
@@ -550,7 +565,9 @@ func (s *Server) handleErrorOrReleaseItem(item *queue.Item, removeReq set.Remove
 	}
 
 	if item.Stats().Releases >= uint32(jobRetries) {
-		errs := s.db.SetError(removeReq.Set.ID(), "Error when removing: "+err.Error())
+		s.discoveryCoordinator.RemovalFailed(removeReq.Set.ID())
+
+		errs := s.db.SetError(removeReq.Set.ID(), set.RemovalErrorPrefix+err.Error())
 		if errs != nil {
 			s.Logger.Printf("Could not put error on set due to: %s\nError was: %s\n", errs.Error(), err.Error())
 		}
@@ -587,7 +604,7 @@ func (s *Server) finalizeRemoveReq(removeReq set.RemoveReq) error {
 }
 
 func (s *Server) finalizeRemoval(sid string) {
-	s.discoveryCoordinator.RemovalDone(sid)
+	s.discoveryCoordinator.RemovalDone(sid, func() { s.clearTrashSetRemovalError(sid) })
 
 	err := s.db.OptimiseRemoveBucket(sid)
 	if err != nil {

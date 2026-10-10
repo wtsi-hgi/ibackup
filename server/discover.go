@@ -56,6 +56,7 @@ type discoveryCoordinator struct {
 	sync.Mutex
 	hasDiscoveryHappened map[string]bool
 	numRunningRemovals   map[string]uint8
+	removalFailed        map[string]bool
 	muMap                map[string]*sync.Mutex
 	onRemovalsDone       map[string][]func()
 }
@@ -64,6 +65,7 @@ func newDiscoveryCoordinator() *discoveryCoordinator {
 	return &discoveryCoordinator{
 		hasDiscoveryHappened: make(map[string]bool),
 		numRunningRemovals:   make(map[string]uint8),
+		removalFailed:        make(map[string]bool),
 		muMap:                make(map[string]*sync.Mutex),
 		onRemovalsDone:       make(map[string][]func()),
 	}
@@ -144,15 +146,33 @@ func (dc *discoveryCoordinator) AllowDiscovery(sid string) {
 	dc.unlockSetMutex(sid)
 }
 
+// RemovalFailed records that a removal running on the provided set id failed
+// to remove something. Call it before recording the failure on the set.
+func (dc *discoveryCoordinator) RemovalFailed(sid string) {
+	dc.Lock()
+	defer dc.Unlock()
+
+	dc.removalFailed[sid] = true
+}
+
 // RemovalDone indicates this set is no longer removing only if all remove
-// commands containing this set have finished.
-func (dc *discoveryCoordinator) RemovalDone(sid string) {
+// commands containing this set have finished. If so, and none of them called
+// RemovalFailed(), it calls ifNoneFailed (when not nil) before returning,
+// while holding our lock, so a removal that starts and fails meanwhile records
+// its failure after ifNoneFailed has run.
+func (dc *discoveryCoordinator) RemovalDone(sid string, ifNoneFailed func()) {
 	dc.Lock()
 	defer dc.Unlock()
 
 	if dc.numRunningRemovals[sid] == 1 {
 		delete(dc.numRunningRemovals, sid)
 		delete(dc.hasDiscoveryHappened, sid)
+
+		if !dc.removalFailed[sid] && ifNoneFailed != nil {
+			ifNoneFailed()
+		}
+
+		delete(dc.removalFailed, sid)
 
 		callbacks := dc.onRemovalsDone[sid]
 		delete(dc.onRemovalsDone, sid)

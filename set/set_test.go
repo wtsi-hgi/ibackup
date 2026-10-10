@@ -496,6 +496,28 @@ func TestTrashSetCounts(t *testing.T) {
 				So(trashed, ShouldBeEmpty)
 			})
 
+			Convey("then a later trash request keeps the trash set's error from a failed removal", func() {
+				errMsg := "Error when removing: remove operation failed"
+				So(db.SetError(trashSet.ID(), errMsg), ShouldBeNil)
+
+				freshTrashSet := BuildTrashSetFromSet(given)
+				So(db.AddOrUpdate(&freshTrashSet), ShouldBeNil)
+
+				So(db.GetByID(trashSet.ID()).Error, ShouldEqual, errMsg)
+			})
+
+			Convey("then ClearRemovalError clears a removal error, but no other error", func() {
+				So(db.SetError(trashSet.ID(), RemovalErrorPrefix+"remove operation failed"), ShouldBeNil)
+				So(db.ClearRemovalError(trashSet.ID()), ShouldBeNil)
+				So(db.GetByID(trashSet.ID()).Error, ShouldBeEmpty)
+
+				So(db.SetError(trashSet.ID(), "some other error"), ShouldBeNil)
+				So(db.ClearRemovalError(trashSet.ID()), ShouldBeNil)
+				So(db.GetByID(trashSet.ID()).Error, ShouldEqual, "some other error")
+
+				So(db.ClearRemovalError("missing"), ShouldNotBeNil)
+			})
+
 			Convey("then trashing the same paths again before their earlier copies expire, then removing "+
 				"them from the trash set, counts only their removal", func() {
 				discoverAndUpload(5)

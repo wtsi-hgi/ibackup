@@ -76,6 +76,7 @@ var (
 	errSmallListOfFiles   = errors.New("unexpected small listOfFiles")
 	errInjectedRequeue    = errors.New("injected requeue failure")
 	errInjectedAddMeta    = errors.New("injected add meta failure")
+	errInjectedRemoveFile = errors.New("injected remove file failure")
 	// errInjectedGetMeta is a PathError like baton's timeout, to show that only
 	// a PathError for a missing file counts as the remote object being gone.
 	errInjectedGetMeta = errs.PathError{Msg: "iRODS operation timed out"}
@@ -2151,6 +2152,79 @@ func TestServer(t *testing.T) {
 									So(errg, ShouldBeNil)
 									So(dirs, ShouldHaveLength, 1)
 									So(dirs[0].Path, ShouldEqual, dir2local)
+								})
+
+								Convey("A later trash request keeps the trash set's removal error", func() {
+									// what handleErrorOrReleaseItem records when a removal
+									// from the trash set runs out of retries.
+									errMsg := "Error when removing: remove operation failed"
+									So(s.db.SetError(trashSet.ID(), errMsg), ShouldBeNil)
+
+									err = client.TrashFilesAndDirs(exampleSet.ID(), []string{file2local})
+									So(err, ShouldBeNil)
+
+									waitForRemovals(t, s, client, exampleSet)
+
+									gotTrash, errs := adminClient.GetSetByID(trashSet.Requester, trashSet.ID())
+									So(errs, ShouldBeNil)
+									So(gotTrash.Error, ShouldEqual, errMsg)
+
+									files, errg := client.GetFiles(trashSet.ID())
+									So(errg, ShouldBeNil)
+									So(files, ShouldHaveLength, 2)
+								})
+
+								Convey("A removal from the trash set that keeps failing leaves its error on the trash set", func() {
+									working := s.storageHandler
+									s.storageHandler = &failingRemoveFileHandler{Handler: working}
+
+									err = adminClient.RemoveFilesAndDirs(trashSet.ID(), []string{file1local})
+									So(err, ShouldBeNil)
+
+									errMsg := "Error when removing: " + errInjectedRemoveFile.Error()
+
+									trashSetError := func() string {
+										got, errs := adminClient.GetSetByID(trashSet.Requester, trashSet.ID())
+										So(errs, ShouldBeNil)
+
+										return got.Error
+									}
+
+									testutil.Eventually(t, time.Minute, 100*time.Millisecond, func() bool {
+										return trashSetError() == errMsg
+									}, "removal error was not recorded")
+
+									waitForRemovalRunsToEnd(t, s)
+
+									gotTrash, errs := adminClient.GetSetByID(trashSet.Requester, trashSet.ID())
+									So(errs, ShouldBeNil)
+									So(gotTrash.Error, ShouldEqual, errMsg)
+									So(gotTrash.HasProblems(), ShouldBeTrue)
+
+									files, errg := client.GetFiles(trashSet.ID())
+									So(errg, ShouldBeNil)
+									So(files, ShouldHaveLength, 1)
+
+									Convey("and a later removal from it that succeeds clears that error", func() {
+										s.storageHandler = working
+
+										err = adminClient.RemoveFilesAndDirs(trashSet.ID(), []string{file1local})
+										So(err, ShouldBeNil)
+
+										testutil.Eventually(t, time.Minute, 100*time.Millisecond, func() bool {
+											files, errg = client.GetFiles(trashSet.ID())
+											So(errg, ShouldBeNil)
+
+											return len(files) == 0
+										}, "file was not removed from the trash set")
+
+										waitForRemovalRunsToEnd(t, s)
+
+										gotTrash, errs = adminClient.GetSetByID(trashSet.Requester, trashSet.ID())
+										So(errs, ShouldBeNil)
+										So(gotTrash.Error, ShouldBeEmpty)
+										So(gotTrash.HasProblems(), ShouldBeFalse)
+									})
 								})
 
 								Convey("And removal on a file and a dir sets them as complete in the remove bucket", func() {
@@ -7117,6 +7191,20 @@ func changeSetFilesStatus(numExpectedRequests int, setName string, client *Clien
 	}
 }
 
+// waitForRemovalRunsToEnd waits until every removal handler has finished,
+// including what each does once it finds no more requests, which is after their
+// requests' removal is visible. Call it only once a handler has started.
+func waitForRemovalRunsToEnd(t *testing.T, s *Server) {
+	t.Helper()
+
+	testutil.Eventually(t, time.Minute, 100*time.Millisecond, func() bool {
+		s.removalsMu.Lock()
+		defer s.removalsMu.Unlock()
+
+		return s.activeRemovals == 0
+	}, "removal handlers did not finish")
+}
+
 func findEntryByPath(entries []*set.Entry, path string) *set.Entry {
 	for _, entry := range entries {
 		if filepath.Clean(entry.Path) == filepath.Clean(path) {
@@ -7397,6 +7485,16 @@ func (q *requeueFailingQueue) Requeue(ctx context.Context, key string, deps []st
 	return q.claimQueue.Requeue(ctx, key, deps)
 }
 
+// failingRemoveFileHandler is a remove.Handler whose RemoveFile() always fails
+// with errInjectedRemoveFile, without removing anything.
+type failingRemoveFileHandler struct {
+	remove.Handler
+}
+
+func (h *failingRemoveFileHandler) RemoveFile(string) error {
+	return errInjectedRemoveFile
+}
+
 // gatedRemoveFileHandler is a remove.Handler whose RemoveFile() removes the
 // file, signals removed and then blocks until gate is closed, letting tests act
 // between a file's remote removal and its removal from the database.
@@ -7511,7 +7609,7 @@ func TestDiscoveryCoordinator(t *testing.T) {
 				}
 			}
 
-			dc.RemovalDone(sid)
+			dc.RemovalDone(sid, nil)
 		}
 
 		Convey("You can start discovery and then run a removal before discovery finishes", func() {
@@ -7579,6 +7677,39 @@ func TestDiscoveryCoordinator(t *testing.T) {
 			}
 
 			So(callbackCalled.Load(), ShouldBeTrue)
+		})
+
+		Convey("RemovalDone runs ifNoneFailed only once the last of a set's removals is done, "+
+			"if none of them failed", func() {
+			calls := 0
+			ifNoneFailed := func() { calls++ }
+
+			dc.WillRemove(sid)
+			dc.WillRemove(sid)
+			dc.WillRemove("other")
+			dc.RemovalFailed("other")
+
+			dc.RemovalDone(sid, ifNoneFailed)
+			So(calls, ShouldEqual, 0)
+
+			dc.RemovalDone(sid, ifNoneFailed)
+			So(calls, ShouldEqual, 1)
+
+			Convey("but not if one failed, even when another finishes after it", func() {
+				dc.WillRemove(sid)
+				dc.WillRemove(sid)
+
+				dc.RemovalFailed(sid)
+				dc.RemovalDone(sid, ifNoneFailed)
+				dc.RemovalDone(sid, ifNoneFailed)
+				So(calls, ShouldEqual, 1)
+
+				Convey("and again for later removals that don't fail", func() {
+					dc.WillRemove(sid)
+					dc.RemovalDone(sid, ifNoneFailed)
+					So(calls, ShouldEqual, 2)
+				})
+			})
 		})
 	})
 }

@@ -364,6 +364,16 @@ func updateDatabaseSetWithUserSetDetails(dbSet, userSet *Set) error {
 		return Error{Msg: ErrNoAddDuringDiscovery, id: dbSet.ID()}
 	}
 
+	// A trash set is only ever given to us fresh, from BuildTrashSetFromSet()
+	// on a trash request, so it has no user properties of its own beyond the
+	// Transformer; copying its empty rest would clear eg. the Error of a failed
+	// removal from the trash set.
+	if userSet.IsTrash() {
+		dbSet.Transformer = userSet.Transformer
+
+		return nil
+	}
+
 	dbSet.copyUserProperties(userSet)
 
 	return nil
@@ -2310,6 +2320,22 @@ func (d *DBRO) GetAllDirEntries(setID string) ([]*Entry, error) {
 func (d *DB) SetError(setID, errMsg string) error {
 	return d.updateSetProperties(setID, func(got *Set) {
 		got.SetError(errMsg)
+	})
+}
+
+// ClearRemovalError clears the given set's Error if it is a removal error,
+// one starting with RemovalErrorPrefix, leaving any other error. Returns an
+// error if the setID isn't in the database.
+func (d *DB) ClearRemovalError(setID string) error {
+	return d.db.Update(func(tx *bolt.Tx) error {
+		set, bid, b, err := d.getSetByID(tx, setID)
+		if err != nil || !strings.HasPrefix(set.Error, RemovalErrorPrefix) {
+			return err
+		}
+
+		set.Error = ""
+
+		return b.Put(bid, d.encodeToBytes(set))
 	})
 }
 
