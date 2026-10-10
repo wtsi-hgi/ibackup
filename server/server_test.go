@@ -7866,26 +7866,148 @@ func TestRemovalCountsOfEachRemoval(t *testing.T) {
 			}, 500*time.Millisecond, time.Millisecond)
 		}
 
+		waitForRemovalsToFinish := func() *set.Set {
+			var got *set.Set
+
+			errw := testutil.RetryUntilWorksCustom(t, func() error {
+				got = s.db.GetByID(given.ID())
+
+				if got.NumObjectsRemoved == got.NumObjectsToBeRemoved && s.removeQueue.Stats().Items == 0 {
+					return nil
+				}
+
+				return errNotFinishedRemoving
+			}, 10*time.Second, time.Millisecond)
+			So(errw, ShouldBeNil)
+
+			return got
+		}
+
 		Convey("each removal requested after the last finished is counted on its own, "+
 			"including one the last removal's handler, still waiting for more, picks up", func() {
 			for _, dir := range dirs {
 				So(s.removeFilesAndDirs(given, nil, []string{dir.Path}, set.ToRemove), ShouldBeNil)
 
-				var got *set.Set
-
-				err = testutil.RetryUntilWorksCustom(t, func() error {
-					got = s.db.GetByID(given.ID())
-
-					if got.NumObjectsRemoved == got.NumObjectsToBeRemoved && s.removeQueue.Stats().Items == 0 {
-						return nil
-					}
-
-					return errNotFinishedRemoving
-				}, 10*time.Second, time.Millisecond)
-				So(err, ShouldBeNil)
+				got := waitForRemovalsToFinish()
 				So(got.NumObjectsToBeRemoved, ShouldEqual, 1)
 				So(got.NumObjectsRemoved, ShouldEqual, 1)
 			}
 		})
+
+		Convey("given a removal of 2 files, one removed and the other being removed remotely", func() {
+			sizes := []uint64{2, 3, 5}
+			files := addUploadedFiles(t, s, given, localDir, sizes)
+
+			entered := make(chan struct{})
+			release := make(chan struct{})
+
+			var calls atomic.Int64
+
+			s.storageHandler = &hookedRemoteChangeHandler{
+				Handler: s.storageHandler,
+				hook: func() {
+					if calls.Add(1) != 2 {
+						return
+					}
+
+					close(entered)
+
+					select {
+					case <-release:
+					case <-time.After(10 * time.Second):
+					}
+				},
+			}
+
+			So(s.removeFilesAndDirs(given, files[:2], nil, set.ToRemove), ShouldBeNil)
+
+			select {
+			case <-entered:
+			case <-time.After(10 * time.Second):
+			}
+
+			Convey("a removal requested meanwhile, with that file counted just after the new removal "+
+				"starts, shows only its own removed size", func() {
+				// the first removal's handler, past its wait for submissions,
+				// counts its last file once the second removal has started.
+				s.removalQueuedHook = func() {
+					close(release)
+
+					_ = testutil.RetryUntilWorksCustom(t, func() error { //nolint:errcheck
+						if removedCount() > 1 {
+							return nil
+						}
+
+						return errNotFinishedRemoving
+					}, 10*time.Second, time.Millisecond)
+				}
+
+				So(s.removeFilesAndDirs(given, files[2:], nil, set.ToRemove), ShouldBeNil)
+
+				got := waitForRemovalsToFinish()
+				So(got.NumObjectsToBeRemoved, ShouldEqual, 1)
+				So(got.NumObjectsRemoved, ShouldEqual, 1)
+				So(got.SizeRemoved, ShouldEqual, sizes[2])
+			})
+
+			Convey("a removal requested meanwhile, with that file counted after the new removal "+
+				"recorded its total, adds to that removal's counts and size", func() {
+				So(s.removeFilesAndDirs(given, files[2:], nil, set.ToRemove), ShouldBeNil)
+
+				close(release)
+
+				got := waitForRemovalsToFinish()
+				So(got.NumObjectsToBeRemoved, ShouldEqual, 3)
+				So(got.NumObjectsRemoved, ShouldEqual, 3)
+				So(got.SizeRemoved, ShouldEqual, sizes[0]+sizes[1]+sizes[2])
+			})
+		})
 	})
+}
+
+// addUploadedFiles creates a local file of each of the given sizes in the given
+// dir, adds them to the given set, puts them in the server's local storage
+// handler with the set's metadata, and records them as uploaded. Returns their
+// paths.
+func addUploadedFiles(t *testing.T, s *Server, given *set.Set, dir string, sizes []uint64) []string {
+	t.Helper()
+
+	transformer, err := given.MakeTransformer()
+	So(err, ShouldBeNil)
+
+	handler, ok := s.storageHandler.(*internal.LocalHandler)
+	So(ok, ShouldBeTrue)
+
+	files := make([]string, len(sizes))
+
+	for i, size := range sizes {
+		files[i] = filepath.Join(dir, "file"+strconv.Itoa(i))
+		internal.CreateTestFile(t, files[i], strings.Repeat("a", int(size))) //nolint:gosec
+	}
+
+	So(s.db.MergeFileEntries(given.ID(), files), ShouldBeNil)
+
+	for i, file := range files {
+		r, errr := transfer.NewRequestWithTransformedLocal(file, transformer)
+		So(errr, ShouldBeNil)
+
+		So(os.MkdirAll(filepath.Dir(r.Remote), userPerms), ShouldBeNil)
+		So(handler.Put(file, r.Remote), ShouldBeNil)
+		So(handler.AddMeta(r.Remote, map[string]string{
+			transfer.MetaKeySets:      given.Name,
+			transfer.MetaKeyRequester: given.Requester,
+		}), ShouldBeNil)
+
+		r.Set = given.Name
+		r.Requester = given.Requester
+		r.Size = sizes[i]
+
+		for _, status := range []transfer.RequestStatus{transfer.RequestStatusUploading, transfer.RequestStatusUploaded} {
+			r.Status = status
+			_, errs := s.db.SetEntryStatus(r)
+			So(errs, ShouldBeNil)
+		}
+	}
+
+	return files
 }

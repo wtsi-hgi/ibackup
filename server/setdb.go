@@ -752,12 +752,8 @@ func (s *Server) removeFilesAndDirs(set *set.Set, filePaths, dirPaths []string, 
 	s.removalSubmitMu.Lock()
 	defer s.removalSubmitMu.Unlock()
 
-	if err := s.db.ResetRemoveSize(set.ID()); err != nil {
-		return err
-	}
-
 	if filePaths == nil && dirPaths == nil {
-		return nil
+		return s.db.ResetRemoveSize(set.ID())
 	}
 
 	numFilesSubmitted, err := s.submitFilesForRemoval(set, filePaths, action)

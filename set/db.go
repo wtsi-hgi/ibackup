@@ -2348,13 +2348,17 @@ func (d *DB) IncrementNumObjectRemoved(setID string) error {
 }
 
 // UpdateSetTotalToRemove sets num of objects to be removed to provided value
-// and resets num of objects removed if the previous removal was successful
-// otherwise just increases number to be removed with provided value.
+// and resets num of objects removed and the size removed if the previous
+// removal was successful, otherwise just increases number to be removed with
+// provided value. The size is reset in the same transaction as the counts, so
+// a previous removal's last object, counted just before, can't leave its size
+// in the new removal's.
 func (d *DB) UpdateSetTotalToRemove(setID string, num uint64) error {
 	return d.updateSetProperties(setID, func(got *Set) {
 		if got.NumObjectsToBeRemoved == got.NumObjectsRemoved {
 			got.NumObjectsToBeRemoved = num
 			got.NumObjectsRemoved = 0
+			got.SizeRemoved = 0
 
 			return
 		}
@@ -2363,7 +2367,8 @@ func (d *DB) UpdateSetTotalToRemove(setID string, num uint64) error {
 	})
 }
 
-// ResetRemoveSize resets the size removed for the set.
+// ResetRemoveSize resets the size removed for the set, if its last removal
+// finished.
 func (d *DB) ResetRemoveSize(setID string) error {
 	return d.updateSetProperties(setID, func(got *Set) {
 		if got.NumObjectsToBeRemoved == got.NumObjectsRemoved {
