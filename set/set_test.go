@@ -518,6 +518,53 @@ func TestTrashSetCounts(t *testing.T) {
 				So(db.ClearRemovalError("missing"), ShouldNotBeNil)
 			})
 
+			Convey("then the set's transformer can't change while the trash set holds any of them, and "+
+				"the trash set's transformer follows the set's once it holds none, even with a trashed dir", func() {
+				edited := db.GetByID(given.ID())
+				So(edited.Uploaded, ShouldEqual, 0)
+				So(edited.Status, ShouldEqual, Complete)
+
+				edited.Transformer = "prefix=/local:/edited"
+				editedTrashSet := BuildTrashSetFromSet(edited)
+
+				expectRejected := func() {
+					erra := db.AddOrUpdate(edited)
+					So(erra, ShouldNotBeNil)
+					So(erra.Error(), ShouldContainSubstring, ErrTransformerUsedByTrash)
+
+					// eg. a set whose transformer changed before that was
+					// rejected, then trashed a path; a removal error on the
+					// trash set doesn't matter.
+					erra = db.AddOrUpdate(&editedTrashSet)
+					So(erra, ShouldNotBeNil)
+					So(erra.Error(), ShouldContainSubstring, ErrTransformerAlreadyUsed)
+					So(db.GetByID(trashSet.ID()).Transformer, ShouldEqual, given.Transformer)
+				}
+
+				expectRejected()
+
+				// a trashed dir has no remote object, so doesn't block.
+				dirReq := NewRemoveRequest(localDir, db.GetByID(given.ID()), true, ToTrash)
+				So(db.SetRemoveRequests(given.ID(), []RemoveReq{dirReq}), ShouldBeNil)
+				So(db.RemoveDirEntry(&dirReq), ShouldBeNil)
+				expectRejected()
+
+				So(db.SetError(trashSet.ID(), RemovalErrorPrefix+"remove operation failed"), ShouldBeNil)
+				removeFromTrash(file)
+				expectRejected()
+
+				removeFromTrash(link)
+				So(db.ClearRemovalError(trashSet.ID()), ShouldBeNil)
+
+				dirs, errd := db.GetDirEntries(trashSet.ID(), nil)
+				So(errd, ShouldBeNil)
+				So(dirs, ShouldHaveLength, 1)
+
+				So(db.AddOrUpdate(edited), ShouldBeNil)
+				So(db.AddOrUpdate(&editedTrashSet), ShouldBeNil)
+				So(db.GetByID(trashSet.ID()).Transformer, ShouldEqual, edited.Transformer)
+			})
+
 			Convey("then trashing the same paths again before their earlier copies expire, then removing "+
 				"them from the trash set, counts only their removal", func() {
 				discoverAndUpload(5)

@@ -71,6 +71,8 @@ const (
 	ErrSetIsNotWritable       = "the set is read-only, you cannot change it"
 	ErrTransformerAlreadyUsed = "you cannot edit the transformer on a set with uploaded files"
 	ErrTransformerInUse       = "you cannot edit the transformer on a set with unfinished uploads"
+	ErrTransformerUsedByTrash = "you cannot edit the transformer on a set with uploaded files in its trash; " +
+		"remove them from the trash or wait for them to expire"
 	ErrPendingRemovals        = "the set has unfinished removals, you cannot change it"
 
 	setsBucket                    = "sets"
@@ -327,12 +329,8 @@ func (d *DB) AddOrUpdate(set *Set) error { //nolint:funlen,gocognit,gocyclo
 			}
 
 			if set.Transformer != eset.Transformer {
-				if eset.Uploaded+eset.Skipped+eset.Replaced+eset.Orphaned > 0 {
-					return Error{Msg: ErrTransformerAlreadyUsed, id: id}
-				}
-
-				if eset.Status != Complete && eset.Error == "" {
-					return Error{Msg: ErrTransformerInUse, id: id}
+				if err := checkTransformerCanChange(tx, eset); err != nil {
+					return err
 				}
 			}
 
@@ -357,6 +355,56 @@ func (d *DB) AddOrUpdate(set *Set) error { //nolint:funlen,gocognit,gocyclo
 	}
 
 	return err
+}
+
+// checkTransformerCanChange returns an error if the given stored set's
+// transformer can't be changed, because files it uploaded or is uploading would
+// then have the wrong remote path.
+//
+// A trash set's transformer follows its original set's, and a trash set is never
+// discovered or uploaded to, so only the files trashed into it matter. Its
+// original set's transformer therefore can't change while it holds any.
+func checkTransformerCanChange(tx *bolt.Tx, eset *Set) error {
+	id := eset.ID()
+
+	if eset.IsTrash() {
+		if setHasFiles(tx, id) {
+			return Error{Msg: ErrTransformerAlreadyUsed, id: id}
+		}
+
+		return nil
+	}
+
+	if eset.Uploaded+eset.Skipped+eset.Replaced+eset.Orphaned > 0 {
+		return Error{Msg: ErrTransformerAlreadyUsed, id: id}
+	}
+
+	trashSet := BuildTrashSetFromSet(eset)
+	if setHasFiles(tx, trashSet.ID()) {
+		return Error{Msg: ErrTransformerUsedByTrash, id: id}
+	}
+
+	if eset.Status != Complete && eset.Error == "" {
+		return Error{Msg: ErrTransformerInUse, id: id}
+	}
+
+	return nil
+}
+
+// setHasFiles returns true if the set with the given ID has any file entries.
+//
+// A trash set's file entries are only ever files that may be in iRODS: ones
+// that failed, went missing or were abnormal are never trashed. Its dir entries
+// have no remote object, so don't count.
+func setHasFiles(tx *bolt.Tx, setID string) bool {
+	b := getSubBucket(tx, setID, fileBucket)
+	if b == nil {
+		return false
+	}
+
+	k, _ := b.Cursor().First()
+
+	return k != nil
 }
 
 func updateDatabaseSetWithUserSetDetails(dbSet, userSet *Set) error {

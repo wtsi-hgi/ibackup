@@ -2414,7 +2414,116 @@ func TestTrashRemovePaths(t *testing.T) {
 				})
 			})
 		})
+
+		newRemotePath := filepath.Join(remotePath, "edited")
+		newTransformer := "prefix=" + fx.path + ":" + newRemotePath
+
+		Convey("And a set of files that failed to upload, with one of them removed", func() {
+			dir := filepath.Join(fx.path, "failing")
+			failed1 := filepath.Join(dir, "failed1")
+			failed2 := filepath.Join(dir, "failed2")
+
+			for _, file := range []string{failed1, failed2} {
+				internal.CreateTestFile(t, file, "some data")
+				So(os.Chmod(file, 0000), ShouldBeNil)
+			}
+
+			setName := "failedSet"
+			s.addSetForTestingWithItems(t, setName, fx.transformer, writeItemsFile(t, failed1, failed2))
+			s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Failed: 2")
+
+			s.removePath(t, setName, failed1, 1)
+
+			Convey("after you change the set's transformer, you can remove the other file, "+
+				"and its trash set's transformer follows the set's", func() {
+				exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--transformer", newTransformer)
+				So(exitCode, ShouldEqual, 0)
+
+				s.waitForStatus(setName, "\nStatus: complete", timeout)
+
+				s.removePath(t, setName, failed2, 1)
+
+				s.confirmOutputContains(t, []string{"status", "--name", set.TrashPrefix + setName}, 0,
+					"Transformer: "+newTransformer+"\n")
+
+				Convey("so a file uploaded with the new transformer and then trashed can be "+
+					"removed from the trash set and iRODS", func() {
+					file := filepath.Join(dir, "file")
+					internal.CreateTestFile(t, file, "some data")
+
+					exitCode, _ = s.runBinary(t, "edit", "--name", setName, "--add", file)
+					So(exitCode, ShouldEqual, 0)
+
+					fileRemote := filepath.Join(newRemotePath, "failing", "file")
+					So(waitForIlsPresent(t, fileRemote, timeout), ShouldBeNil)
+
+					s.waitForStatus(setName, "\nStatus: complete", timeout)
+					s.removePath(t, setName, file, 1)
+					s.trashRemovePath(t, setName, file, 1)
+
+					So(waitForIlsMissing(t, fileRemote, timeout), ShouldBeNil)
+				})
+			})
+		})
+
+		Convey("And a set with an uploaded file that was then removed", func() {
+			file := filepath.Join(fx.path, "trashed", "file")
+			internal.CreateTestFile(t, file, "some data")
+
+			setName := "trashedSet"
+			s.addSetForTestingWithItems(t, setName, fx.transformer, writeItemsFile(t, file))
+			s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Uploaded: 1")
+
+			s.removePath(t, setName, file, 1)
+
+			Convey("you can't change the set's transformer while its trash set holds the file, "+
+				"since the file's remote path depends on it", func() {
+				s.confirmOutputContains(t, []string{"edit", "--name", setName, "--transformer", newTransformer},
+					1, set.ErrTransformerUsedByTrash)
+
+				Convey("but you can once the file is removed from the trash set", func() {
+					s.trashRemovePath(t, setName, file, 1)
+
+					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--transformer", newTransformer)
+					So(exitCode, ShouldEqual, 0)
+				})
+			})
+		})
+
+		Convey("And a set of a folder whose only file failed to upload, with the folder removed", func() {
+			dir := filepath.Join(fx.path, "trashedDir")
+			file := filepath.Join(dir, "failed")
+			internal.CreateTestFile(t, file, "some data")
+			So(os.Chmod(file, 0000), ShouldBeNil)
+
+			setName := "trashedDirSet"
+			s.addSetForTestingWithFlags(t, setName, fx.transformer, "--path", dir)
+			s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Failed: 1")
+
+			s.removePath(t, setName, dir, 2)
+
+			Convey("you can change the set's transformer, since its trash set holds only the folder, "+
+				"which has no remote object", func() {
+				exitCode, output := s.runBinary(t, "edit", "--name", setName, "--transformer", newTransformer)
+				So(output, ShouldNotContainSubstring, "cannot edit the transformer")
+				So(exitCode, ShouldEqual, 0)
+
+				s.confirmOutputContains(t, []string{"status", "--name", setName}, 0,
+					"Transformer: "+newTransformer+"\n")
+			})
+		})
 	})
+}
+
+// writeItemsFile writes the given paths, one per line, to a new file in a temp
+// dir, returning the file's path.
+func writeItemsFile(t *testing.T, paths ...string) string {
+	t.Helper()
+
+	itemsFile := filepath.Join(t.TempDir(), "items")
+	So(os.WriteFile(itemsFile, []byte(strings.Join(paths, "\n")), userPerms), ShouldBeNil)
+
+	return itemsFile
 }
 
 func TestTrashRemoveShared(t *testing.T) {
