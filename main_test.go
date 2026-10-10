@@ -2479,7 +2479,7 @@ func TestTrashRemovePaths(t *testing.T) {
 			Convey("you can't change the set's transformer while its trash set holds the file, "+
 				"since the file's remote path depends on it", func() {
 				s.confirmOutputContains(t, []string{"edit", "--name", setName, "--transformer", newTransformer},
-					1, set.ErrTransformerUsedByTrash)
+					1, server.ErrInvalidInput.Error()+": "+set.ErrTransformerUsedByTrash)
 
 				Convey("but you can once the file is removed from the trash set", func() {
 					s.trashRemovePath(t, setName, file, 1)
@@ -2962,7 +2962,7 @@ func TestEdit(t *testing.T) {
 
 					Convey("And you can no longer edit it", func() {
 						s.confirmOutputContains(t, []string{"edit", "--name", setName}, 1,
-							set.ErrSetIsNotWritable)
+							server.ErrInvalidInput.Error()+": "+set.ErrSetIsNotWritable)
 					})
 
 					Convey("And you can no longer sync it", func() {
@@ -2987,7 +2987,7 @@ func TestEdit(t *testing.T) {
 				Convey("If the set is not complete, you cannot change the transformer", func() {
 					exitCode, output := s.runBinaryWithNoLogging(t, "edit", "--name", setName, "--transformer", "humgen")
 					So(exitCode, ShouldEqual, 1)
-					So(output, ShouldContainSubstring, set.ErrTransformerInUse)
+					So(output, ShouldContainSubstring, server.ErrInvalidInput.Error()+": "+set.ErrTransformerInUse)
 				})
 			})
 
@@ -3223,7 +3223,7 @@ func TestEdit(t *testing.T) {
 				Convey("If there are uploaded files, you cannot change the transformer", func() {
 					exitCode, output := s.runBinaryWithNoLogging(t, "edit", "--name", setName, "--transformer", "humgen")
 					So(exitCode, ShouldEqual, 1)
-					So(output, ShouldContainSubstring, set.ErrTransformerAlreadyUsed)
+					So(output, ShouldContainSubstring, server.ErrInvalidInput.Error()+": "+set.ErrTransformerAlreadyUsed)
 				})
 
 				Convey("You cannot add a non-existing file to a set", func() {

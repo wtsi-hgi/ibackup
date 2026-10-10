@@ -4397,6 +4397,7 @@ func TestServer(t *testing.T) {
 							err = client.AddOrUpdateSet(exampleSet)
 							So(err, ShouldNotBeNil)
 							So(err.Error(), ShouldContainSubstring, set.ErrSetIsNotWritable)
+							So(err, ShouldWrap, ErrInvalidInput)
 						})
 
 						Convey("Admin can make it writable ", func() {

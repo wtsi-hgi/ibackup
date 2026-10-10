@@ -389,7 +389,7 @@ func (s *Server) putSet(c *gin.Context) {
 
 	err = s.db.AddOrUpdate(given)
 	if err != nil {
-		c.AbortWithError(http.StatusInternalServerError, err) //nolint:errcheck
+		c.AbortWithError(addOrUpdateErrStatus(err), err) //nolint:errcheck
 
 		return
 	}
@@ -397,6 +397,19 @@ func (s *Server) putSet(c *gin.Context) {
 	s.handleNewlyDefinedSets(given)
 
 	c.Status(http.StatusOK)
+}
+
+// addOrUpdateErrStatus returns the HTTP status for the given error from
+// AddOrUpdate(). Its set.Errors reject the user's change, such as editing a
+// read-only set or a transformer already used, so are bad requests; anything
+// else is a database failure.
+func addOrUpdateErrStatus(err error) int {
+	var setErr set.Error
+	if errors.As(err, &setErr) {
+		return http.StatusBadRequest
+	}
+
+	return http.StatusInternalServerError
 }
 
 func (s *Server) validatePutSetInputs(c *gin.Context, givenSet *set.Set) (int, error) {
