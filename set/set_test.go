@@ -3948,6 +3948,17 @@ func TestSetDB(t *testing.T) {
 						checkComplete(db.GetByID(setl1.ID()))
 					})
 
+					Convey("when a file's retries run out during discovery, it says once that the set has "+
+						"failed uploads", func() {
+						rediscover(nothing, func() {
+							slackWriter.Reset()
+							setResult(inFlight, transfer.RequestStatusFailed, transfer.RequestStatusFailed,
+								transfer.RequestStatusFailed)
+						})
+
+						So(strings.Count(slackWriter.String(), "has failed uploads"), ShouldEqual, 1)
+					})
+
 					Convey("when a file is deleted before rediscovery and the other's result arrives after "+
 						"discovery processes it, the deleted file stays counted missing", func() {
 						So(os.Remove(inFlight), ShouldBeNil)
@@ -4160,6 +4171,66 @@ func TestSetDB(t *testing.T) {
 					So(got.Missing, ShouldEqual, 1)
 					So(got.Status, ShouldEqual, Complete)
 					So(got.LastCompleted, ShouldEqual, lastCompleted)
+				})
+
+				failedUploads := func() int {
+					return strings.Count(slackWriter.String(), "has failed uploads")
+				}
+
+				failUntilRetriesRunOut := func(s *Set) {
+					for range AttemptsToBeConsideredFailing {
+						setResult(s, present, transfer.RequestStatusUploading)
+						setResult(s, present, transfer.RequestStatusFailed)
+					}
+				}
+
+				Convey("and a retried failed file says it failed once each time its retries run out", func() {
+					s := addSet("failedRetriedAgain", false, present, missing)
+
+					slackWriter.Reset()
+					discover(s)
+					setResult(s, missing, transfer.RequestStatusMissing)
+					failUntilRetriesRunOut(s)
+					So(failedUploads(), ShouldEqual, 1)
+
+					for range AttemptsToBeConsideredFailing - 1 {
+						setResult(s, present, transfer.RequestStatusUploading)
+						setResult(s, present, transfer.RequestStatusFailed)
+						So(failedUploads(), ShouldEqual, 1)
+					}
+
+					setResult(s, present, transfer.RequestStatusUploading)
+					got := setResult(s, present, transfer.RequestStatusFailed)
+
+					So(failedUploads(), ShouldEqual, 2)
+					So(completions(), ShouldEqual, 1)
+					So(got.Failed, ShouldEqual, 1)
+					So(got.Status, ShouldEqual, Complete)
+				})
+
+				Convey("and a recount doesn't say again that a failed file failed", func() {
+					s := addSet("failedRecounted", false, present, missing)
+
+					slackWriter.Reset()
+					discover(s)
+					setResult(s, missing, transfer.RequestStatusMissing)
+					failUntilRetriesRunOut(s)
+					So(failedUploads(), ShouldEqual, 1)
+
+					So(db.db.Update(func(tx *bolt.Tx) error {
+						got, bid, b, errt := db.getSetByID(tx, s.ID())
+						So(errt, ShouldBeNil)
+
+						got.Missing = got.NumFiles + 1
+
+						return b.Put(bid, db.encodeToBytes(got))
+					}), ShouldBeNil)
+
+					got := setResult(s, missing, transfer.RequestStatusMissing)
+					So(got.countsValid(), ShouldBeTrue)
+					So(got.Failed, ShouldEqual, 1)
+					So(got.Missing, ShouldEqual, 1)
+					So(failedUploads(), ShouldEqual, 1)
 				})
 
 				Convey("when a frozen set with a kept file is rediscovered", func() {

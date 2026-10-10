@@ -439,6 +439,7 @@ func (s *Set) adjustBasedOnEntry(entry *Entry) {
 	}
 
 	s.entryStatusToSetCounts(entry)
+	s.reportIfRetriesRanOut(entry)
 }
 
 // dataUploaded returns true if the given entry's status means its data was
@@ -508,13 +509,24 @@ func (s *Set) entryStatusToSetCounts(entry *Entry) { //nolint:gocyclo
 	}
 }
 
-// markFailing reports that an entry has used up its upload attempts, and marks
-// us Failing unless we're Complete: a Complete set already counted the entry's
-// first failure and has no other uploads ongoing, so stays Complete rather than
+// markFailing marks us Failing, as an entry has used up its upload attempts,
+// unless we're Complete: a Complete set already counted the entry's first
+// failure and has no other uploads ongoing, so stays Complete rather than
 // completing again.
 func (s *Set) markFailing() {
 	if s.Status != Complete {
 		s.Status = Failing
+	}
+}
+
+// reportIfRetriesRanOut sends "has failed uploads" if the given entry's upload
+// result used up its attempts. Like the server burying its request, that's at
+// every AttemptsToBeConsideredFailing attempts, so a user retry, which doesn't
+// reset Attempts, reports once more if its attempts run out too. Only upload
+// results call this, not recounts, so a recount doesn't report again.
+func (s *Set) reportIfRetriesRanOut(entry *Entry) {
+	if entry.Status != Failed || entry.Attempts == 0 || entry.Attempts%AttemptsToBeConsideredFailing != 0 {
+		return
 	}
 
 	s.sendSlackMessage(slack.Error, "has failed uploads")
@@ -650,6 +662,7 @@ func (s *Set) countEntryDuringDiscovery(entry *Entry) {
 	entry.newFail = true
 
 	s.entryStatusToSetCounts(entry)
+	s.reportIfRetriesRanOut(entry)
 	s.discoveredSizeToSetCounts(entry)
 }
 
