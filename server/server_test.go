@@ -1707,16 +1707,20 @@ func TestServer(t *testing.T) {
 
 							expectFile1Removed(trashSet)
 
-							expectRequestWithNoPathsRejected := func(given *set.Set, request func() error) {
-								err = request()
-								So(err, ShouldNotBeNil)
-								So(err.Error(), ShouldContainSubstring, ErrNoPaths.Error())
-
+							expectRemovalStatusKept := func(given *set.Set) {
 								got, errs := adminClient.GetSetByID(given.Requester, given.ID())
 								So(errs, ShouldBeNil)
 								So(got.NumObjectsToBeRemoved, ShouldEqual, 1)
 								So(got.NumObjectsRemoved, ShouldEqual, 1)
 								So(got.SizeRemoved, ShouldEqual, 1)
+							}
+
+							expectRequestWithNoPathsRejected := func(given *set.Set, request func() error) {
+								err = request()
+								So(err, ShouldNotBeNil)
+								So(err.Error(), ShouldContainSubstring, ErrNoPaths.Error())
+
+								expectRemovalStatusKept(given)
 							}
 
 							Convey("and a trash request with no paths is rejected and keeps the set's removal status", func() {
@@ -1729,6 +1733,15 @@ func TestServer(t *testing.T) {
 								expectRequestWithNoPathsRejected(trashSet, func() error {
 									return adminClient.RemoveFilesAndDirs(trashSet.ID(), []string{})
 								})
+							})
+
+							Convey("and an expiry pass with nothing expired keeps that removal's status", func() {
+								s.trashLifespan = time.Hour
+
+								err = adminClient.RemoveExpiredEntriesForSet(trashSet.ID())
+								So(err, ShouldBeNil)
+
+								expectRemovalStatusKept(trashSet)
 							})
 						})
 
