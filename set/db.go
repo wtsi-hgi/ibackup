@@ -329,7 +329,7 @@ func (d *DB) AddOrUpdate(set *Set) error { //nolint:funlen,gocognit,gocyclo
 			}
 
 			if set.Transformer != eset.Transformer {
-				if err := checkTransformerCanChange(tx, eset); err != nil {
+				if err := d.checkTransformerCanChange(tx, eset); err != nil {
 					return err
 				}
 			}
@@ -363,8 +363,11 @@ func (d *DB) AddOrUpdate(set *Set) error { //nolint:funlen,gocognit,gocyclo
 //
 // A trash set's transformer follows its original set's, and a trash set is never
 // discovered or uploaded to, so only the files trashed into it matter. Its
-// original set's transformer therefore can't change while it holds any.
-func checkTransformerCanChange(tx *bolt.Tx, eset *Set) error {
+// original set's transformer therefore can't change while it holds any, nor
+// while the original set has removal requests still to do: they remove or trash
+// files using the transformer they were made with, and their trashed files would
+// then be in a trash set whose transformer no longer matches.
+func (d *DB) checkTransformerCanChange(tx *bolt.Tx, eset *Set) error {
 	id := eset.ID()
 
 	if eset.IsTrash() {
@@ -379,13 +382,34 @@ func checkTransformerCanChange(tx *bolt.Tx, eset *Set) error {
 		return Error{Msg: ErrTransformerAlreadyUsed, id: id}
 	}
 
+	if err := d.checkNoTrashOrRemovals(tx, eset); err != nil {
+		return err
+	}
+
+	if eset.Status != Complete && eset.Error == "" {
+		return Error{Msg: ErrTransformerInUse, id: id}
+	}
+
+	return nil
+}
+
+// checkNoTrashOrRemovals returns an error if the given stored set's trash set
+// holds any files, or the set has removal requests still to do.
+func (d *DB) checkNoTrashOrRemovals(tx *bolt.Tx, eset *Set) error {
+	id := eset.ID()
+
 	trashSet := BuildTrashSetFromSet(eset)
 	if setHasFiles(tx, trashSet.ID()) {
 		return Error{Msg: ErrTransformerUsedByTrash, id: id}
 	}
 
-	if eset.Status != Complete && eset.Error == "" {
-		return Error{Msg: ErrTransformerInUse, id: id}
+	incomplete, err := d.countIncompleteRemoveRequests(tx, id)
+	if err != nil {
+		return err
+	}
+
+	if incomplete > 0 {
+		return Error{Msg: ErrPendingRemovals, id: id}
 	}
 
 	return nil

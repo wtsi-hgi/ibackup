@@ -2166,6 +2166,81 @@ func TestServer(t *testing.T) {
 						Convey("And given all files are uploaded", func() {
 							makeGivenSetComplete(2, exampleSet.Name, adminClient)
 
+							Convey("A trash request not yet processed, during which a discovery left no uploaded files "+
+								"and the set got an error, stops its transformer being edited", func() {
+								queued := make(chan struct{})
+								resume := make(chan struct{})
+
+								var once sync.Once
+
+								s.removalQueuedHook = func() {
+									once.Do(func() {
+										close(queued)
+
+										select {
+										case <-resume:
+										case <-time.After(time.Minute):
+										}
+									})
+								}
+
+								trashErrCh := make(chan error, 1)
+
+								go func() {
+									trashErrCh <- client.TrashFilesAndDirs(exampleSet.ID(), []string{file1local})
+								}()
+
+								select {
+								case <-queued:
+								case <-time.After(10 * time.Second):
+								}
+
+								later := time.Now().Add(time.Hour)
+								So(os.Chtimes(file1local, later, later), ShouldBeNil)
+								So(os.Chtimes(file2local, later, later), ShouldBeNil)
+
+								drainRacCalled(t, racCalled)
+
+								err = client.TriggerDiscovery(exampleSet.ID(), false)
+								So(err, ShouldBeNil)
+
+								So(<-racCalled, ShouldBeTrue)
+
+								// what recordSetError() records if queuing the
+								// discovered files fails.
+								So(s.db.SetError(exampleSet.ID(), "queuing files failed"), ShouldBeNil)
+
+								got, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+								So(errg, ShouldBeNil)
+								So(got.Status, ShouldEqual, set.PendingUpload)
+								So(got.Uploaded, ShouldEqual, 0)
+								So(got.Error, ShouldNotBeBlank)
+
+								originalTransformer := got.Transformer
+								got.Transformer = "prefix=" + localDir + ":" + filepath.Join(localDir, "remote2")
+
+								err = client.AddOrUpdateSet(got)
+								So(err, ShouldNotBeNil)
+								So(err.Error(), ShouldContainSubstring, set.ErrPendingRemovals)
+								So(err, ShouldWrap, ErrInvalidInput)
+
+								close(resume)
+
+								So(<-trashErrCh, ShouldBeNil)
+
+								waitForRemovals(t, s, client, exampleSet)
+
+								trashSet := set.BuildTrashSetFromSet(exampleSet)
+
+								trashed, errg := client.GetFiles(trashSet.ID())
+								So(errg, ShouldBeNil)
+								So(trashed, ShouldHaveLength, 1)
+								So(trashed[0].Path, ShouldEqual, file1local)
+
+								So(s.db.GetByID(exampleSet.ID()).Transformer, ShouldEqual, originalTransformer)
+								So(s.db.GetByID(trashSet.ID()).Transformer, ShouldEqual, originalTransformer)
+							})
+
 							Convey("You can trash a file and a dir, which sets them as complete in remove bucket", func() {
 								err = client.TrashFilesAndDirs(exampleSet.ID(), []string{file1local, dir2local})
 								So(err, ShouldBeNil)
