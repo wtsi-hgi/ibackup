@@ -125,6 +125,12 @@ type Entry struct {
 	// that counted our Status in the set's counts, if any.
 	CountedInDiscovery time.Time
 
+	// RemoteObject is true if an earlier upload left an object in iRODS that
+	// no later upload result showed to be gone. It is recorded when our
+	// uploaded Status gets replaced, since a discovery or a failed re-upload
+	// replaces it.
+	RemoteObject bool
+
 	// countedStatus, countedSize and countedIn are the Status, Size and
 	// CountedInDiscovery this entry had before an upload result updated it.
 	countedStatus EntryStatus
@@ -176,13 +182,25 @@ func (e *Entry) IsUploaded() bool {
 	return e.Status == Uploaded || e.Status == Replaced || e.Status == Skipped || e.Status == Orphaned
 }
 
+// rememberRemoteObject sets RemoteObject if our Status says we're uploaded, so
+// that it is kept once our Status is replaced.
+func (e *Entry) rememberRemoteObject() {
+	e.RemoteObject = e.RemoteObject || e.IsUploaded()
+}
+
 // mayHaveRemoteObject returns true if this entry may have an object in iRODS
 // from an earlier upload, or is uploading one.
 //
 // A discovery makes an attempted entry Pending until its next upload result,
-// keeping its LastAttempt and LastError; one whose last attempt failed is
-// treated like a Failed entry, as having no object.
+// keeping its LastAttempt and LastError; one whose last attempt failed, and
+// with no RemoteObject, is treated like a Failed entry, as having no object.
+// Entries stored before RemoteObject existed only have it once a discovery or
+// upload result replaces their uploaded Status.
 func (e *Entry) mayHaveRemoteObject() bool {
+	if e.RemoteObject {
+		return true
+	}
+
 	switch e.Status { //nolint:exhaustive
 	case UploadingEntry:
 		return true
@@ -226,6 +244,7 @@ func (e *Entry) updateTypeDestAndInode(newEntry *Entry) bool {
 	e.Type = newEntry.Type
 	e.Dest = newEntry.Dest
 	e.Inode = newEntry.Inode
+	e.rememberRemoteObject()
 
 	if e.IsUploaded() && newEntry.Status == Missing {
 		e.Status = Orphaned

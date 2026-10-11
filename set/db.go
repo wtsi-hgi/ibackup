@@ -1886,6 +1886,7 @@ func (d *DB) updateFileEntry(tx *bolt.Tx, setID string, r *transfer.Request, //n
 
 	entry.countedStatus, entry.countedSize, entry.countedIn = entry.Status, entry.Size, entry.CountedInDiscovery
 	entry.CountedInDiscovery = time.Time{}
+	entry.rememberRemoteObject()
 
 	if set.discovering() && !entry.isDir {
 		entry.CountedInDiscovery = set.StartedDiscovery
@@ -2000,6 +2001,7 @@ func requestStatusToEntryStatus(r *transfer.Request, entry *Entry) { //nolint:go
 	case transfer.RequestStatusMissing:
 		entry.Status = Missing
 		entry.unFailed = entry.Attempts > 1
+		entry.RemoteObject = false
 	case transfer.RequestStatusOrphaned:
 		entry.Status = Orphaned
 		entry.unFailed = entry.Attempts > 1

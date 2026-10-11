@@ -1877,6 +1877,64 @@ func TestSetDB(t *testing.T) {
 							expectTransformerUnchangeable()
 						})
 					})
+
+					setResult := func(status transfer.RequestStatus, errMsg string) {
+						_, errs := db.SetEntryStatus(&transfer.Request{
+							Local: discovered, Requester: dirSet.Requester, Set: dirSet.Name,
+							Size: 1, Status: status, Error: errMsg,
+						})
+						So(errs, ShouldBeNil)
+					}
+
+					Convey("its transformer can't change after its file failed to re-upload", func() {
+						discover(got)
+						setResult(transfer.RequestStatusFailed, "put failed")
+
+						got = db.GetByID(dirSet.ID())
+						So(got.Status, ShouldEqual, Complete)
+						So(got.Uploaded, ShouldEqual, 0)
+						So(got.Failed, ShouldEqual, 1)
+						So(got.Error, ShouldBeBlank)
+
+						expectTransformerUnchangeable()
+
+						Convey("even after a discovery left it pending and the set got an error", func() {
+							discover(got)
+
+							entries, errg := db.GetFileEntries(dirSet.ID(), nil)
+							So(errg, ShouldBeNil)
+							So(entries, ShouldHaveLength, 1)
+							So(entries[0].Status, ShouldEqual, Pending)
+							So(entries[0].LastError, ShouldEqual, "put failed")
+
+							So(db.SetError(dirSet.ID(), "queuing files failed"), ShouldBeNil)
+
+							expectTransformerUnchangeable()
+						})
+					})
+
+					Convey("its transformer can't change after a repeated upload of its file failed", func() {
+						setResult(transfer.RequestStatusFailed, "read failed")
+
+						got = db.GetByID(dirSet.ID())
+						So(got.Uploaded, ShouldEqual, 0)
+						So(got.Failed, ShouldEqual, 1)
+
+						expectTransformerUnchangeable()
+					})
+
+					Convey("its transformer can change after its file and its object went missing", func() {
+						discover(got)
+						setResult(transfer.RequestStatusMissing, "")
+
+						got = db.GetByID(dirSet.ID())
+						So(got.Status, ShouldEqual, Complete)
+						So(got.Missing, ShouldEqual, 1)
+
+						got.Transformer = editedTransformer
+						So(db.AddOrUpdate(got), ShouldBeNil)
+						So(db.GetByID(dirSet.ID()).Transformer, ShouldEqual, editedTransformer)
+					})
 				})
 
 				Convey("You can get sets with a particular file", func() {
