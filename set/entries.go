@@ -256,8 +256,13 @@ func (e *Entry) updateTypeDestAndInode(newEntry *Entry) bool {
 }
 
 // WasNotUploaded checks whether the entry's status corresponds to a status in
-// which the entry could not be uploaded.
+// which the entry could not be uploaded, and no earlier upload left an object
+// in iRODS (RemoteObject), so it has no remote object to trash or remove.
 func (e *Entry) WasNotUploaded() bool {
+	if e.RemoteObject {
+		return false
+	}
+
 	switch e.Status {
 	case Failed, Missing, AbnormalEntry:
 		return true

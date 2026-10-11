@@ -1060,8 +1060,8 @@ func (s *Server) removeRemoteFileAndHandleHardlink(lpath, rpath string, meta map
 
 // handleRemoteFileMetaError handles the given error from getting the metadata
 // of the given request's remote object. If the object doesn't exist and the
-// entry's status is not one that means it was never uploaded (failed, missing
-// or abnormal), the object was removed outside of ibackup (or by an earlier
+// entry doesn't say it was never uploaded (failed, missing or abnormal, with no
+// earlier upload), the object was removed outside of ibackup (or by an earlier
 // attempt), so this logs a warning and treats it as removed; when removing,
 // that includes removing a hardlink's inode file if no other hardlink needs
 // it. Otherwise it returns the error.

@@ -457,8 +457,8 @@ func (d *DB) checkNoTrashOrRemovals(tx *bolt.Tx, eset *Set) error {
 // setHasFiles returns true if the set with the given ID has any file entries.
 //
 // A trash set's file entries are only ever files that may be in iRODS: ones
-// that failed, went missing or were abnormal are never trashed. Its dir entries
-// have no remote object, so don't count.
+// that failed, went missing or were abnormal without an earlier upload are
+// never trashed. Its dir entries have no remote object, so don't count.
 func setHasFiles(tx *bolt.Tx, setID string) bool {
 	b := getSubBucket(tx, setID, fileBucket)
 	if b == nil {
@@ -829,7 +829,8 @@ func (d *DB) removeFileInTx(tx *bolt.Tx, removeReq *RemoveReq, before *Entry) (*
 }
 
 // cleanUpRemovedFile trashes the file of the given request, as it was before
-// the removal, if trashing a file that was uploaded; or, if removing it, removes
+// the removal, if trashing a file that was uploaded, even if a later upload of
+// it failed (see Entry.WasNotUploaded()); or, if removing it, removes
 // the removed entry from our inode records unless another set still has it.
 func (d *DB) cleanUpRemovedFile(tx *bolt.Tx, removeReq *RemoveReq, before, removed *Entry) error {
 	switch {

@@ -2108,6 +2108,12 @@ func TestServer(t *testing.T) {
 							failedEntries, _, err = s.db.GetFailedEntries(exampleSet.ID())
 							So(err, ShouldBeNil)
 							So(len(failedEntries), ShouldEqual, 1)
+
+							trashSet := set.BuildTrashSetFromSet(exampleSet)
+
+							trashed, errg := client.GetFiles(trashSet.ID())
+							So(errg, ShouldBeNil)
+							So(trashed, ShouldBeEmpty)
 						})
 
 						Convey("Removing a failed file only counts it as removed once its database cleanup is done", func() {
@@ -2295,6 +2301,129 @@ func TestServer(t *testing.T) {
 
 								So(s.db.GetByID(exampleSet.ID()).Transformer, ShouldEqual, originalTransformer)
 								So(s.db.GetByID(trashSet.ID()).Transformer, ShouldEqual, originalTransformer)
+							})
+
+							Convey("And given file1's re-upload then failed, leaving its earlier object in iRODS", func() {
+								failReupload(t, s, client, adminClient, racCalled, exampleSet, file1local, file1local, file2local)
+
+								entry, errg := s.db.GetFileEntryForSet(exampleSet.ID(), file1local)
+								So(errg, ShouldBeNil)
+								So(entry.Status, ShouldEqual, set.Failed)
+
+								trashSet := set.BuildTrashSetFromSet(exampleSet)
+
+								trashFile1 := func() {
+									err = client.TrashFilesAndDirs(exampleSet.ID(), []string{file1local})
+									So(err, ShouldBeNil)
+
+									waitForRemovals(t, s, client, exampleSet)
+								}
+
+								Convey("trashing it after that object went missing completes with a warning, "+
+									"and the trash set lists it", func() {
+									s.storageHandler = &batonLikeGetMetaHandler{Handler: s.storageHandler}
+									So(s.storageHandler.RemoveFile(file1remote), ShouldBeNil)
+
+									logWriter.Reset()
+
+									trashFile1()
+
+									So(s.db.GetByID(exampleSet.ID()).Error, ShouldBeBlank)
+									So(logWriter.String(), ShouldContainSubstring, "warning: remote object "+file1remote)
+
+									files, errf := client.GetFiles(trashSet.ID())
+									So(errf, ShouldBeNil)
+									So(files, ShouldHaveLength, 1)
+									So(files[0].Path, ShouldEqual, file1local)
+								})
+
+								Convey("trashing it tags that object for the trash set, which lists it", func() {
+									trashFile1()
+
+									meta, errm := handler.GetMeta(file1remote)
+									So(errm, ShouldBeNil)
+									So(meta[transfer.MetaKeySets], ShouldEqual, trashSet.Name)
+
+									files, errf := client.GetFiles(trashSet.ID())
+									So(errf, ShouldBeNil)
+									So(files, ShouldHaveLength, 1)
+									So(files[0].Path, ShouldEqual, file1local)
+
+									_, err = s.db.GetFileEntryForSet(exampleSet.ID(), file1local)
+									So(err, ShouldNotBeNil)
+
+									Convey("and its expiry removes that object", func() {
+										s.trashLifespan = 0
+
+										err = adminClient.RemoveExpiredEntriesForSet(trashSet.ID())
+										So(err, ShouldBeNil)
+
+										waitForRemovals(t, s, adminClient, &trashSet)
+
+										files, errf = client.GetFiles(trashSet.ID())
+										So(errf, ShouldBeNil)
+										So(files, ShouldBeEmpty)
+
+										_, err = os.Stat(file1remote)
+										So(err, ShouldNotBeNil)
+									})
+
+									Convey("and a removal from the trash set that keeps failing keeps it there", func() {
+										s.storageHandler = &failingRemoveFileHandler{Handler: s.storageHandler}
+
+										err = adminClient.RemoveFilesAndDirs(trashSet.ID(), []string{file1local})
+										So(err, ShouldBeNil)
+
+										testutil.Eventually(t, time.Minute, 100*time.Millisecond, func() bool {
+											got, errs := adminClient.GetSetByID(trashSet.Requester, trashSet.ID())
+											So(errs, ShouldBeNil)
+
+											return got.Error != ""
+										}, "removal error was not recorded")
+
+										waitForRemovalRunsToEnd(t, s)
+
+										files, errf = client.GetFiles(trashSet.ID())
+										So(errf, ShouldBeNil)
+										So(files, ShouldHaveLength, 1)
+
+										_, err = os.Stat(file1remote)
+										So(err, ShouldBeNil)
+									})
+								})
+							})
+
+							Convey("A trash request retried after a re-upload of its file failed puts the "+
+								"object its first attempt tagged in the trash set", func() {
+								// what removeToTrashSet() stores before the
+								// removal starts.
+								trashSet := set.BuildTrashSetFromSet(exampleSet)
+								So(s.db.AddOrUpdate(&trashSet), ShouldBeNil)
+
+								remReq := set.RemoveReq{Path: file1local, Set: exampleSet, Action: set.ToTrash}
+								So(s.db.SetRemoveRequests(exampleSet.ID(), []set.RemoveReq{remReq}), ShouldBeNil)
+
+								entry, errg := s.db.GetFileEntryForSet(exampleSet.ID(), file1local)
+								So(errg, ShouldBeNil)
+								So(entry.Status, ShouldEqual, set.Uploaded)
+
+								// the first attempt tags the object, then stops
+								// before its database side.
+								So(s.processRemoteFileRemoval(&remReq, entry), ShouldBeNil)
+								So(remReq.RemoteRemovalStatus, ShouldEqual, set.Removed)
+
+								meta, errm := handler.GetMeta(file1remote)
+								So(errm, ShouldBeNil)
+								So(meta[transfer.MetaKeySets], ShouldEqual, trashSet.Name)
+
+								failReupload(t, s, client, adminClient, racCalled, exampleSet, file1local, file1local, file2local)
+
+								So(s.removeFileFromIRODSandDB(&remReq), ShouldBeNil)
+
+								files, errf := client.GetFiles(trashSet.ID())
+								So(errf, ShouldBeNil)
+								So(files, ShouldHaveLength, 1)
+								So(files[0].Path, ShouldEqual, file1local)
 							})
 
 							Convey("You can trash a file and a dir, which sets them as complete in remove bucket", func() {
@@ -7417,6 +7546,45 @@ func changeSetFilesStatus(numExpectedRequests int, setName string, client *Clien
 		err := client.UpdateFileStatus(request)
 		So(err, ShouldBeNil)
 	}
+}
+
+// failReupload makes the given set's files at the given paths newer, rediscovers
+// the set and gives every resulting upload request an uploaded result, apart
+// from that of failPath, which fails.
+func failReupload(t *testing.T, s *Server, client, adminClient *Client, racCalled chan bool, given *set.Set,
+	failPath string, paths ...string,
+) {
+	t.Helper()
+
+	later := time.Now().Add(time.Hour)
+
+	for _, path := range paths {
+		So(os.Chtimes(path, later, later), ShouldBeNil)
+	}
+
+	drainRacCalled(t, racCalled)
+
+	So(client.TriggerDiscovery(given.ID(), false), ShouldBeNil)
+	So(<-racCalled, ShouldBeTrue)
+
+	requests, err := adminClient.GetSomeUploadRequests()
+	So(err, ShouldBeNil)
+	So(requests, ShouldHaveLength, len(paths))
+
+	for _, request := range requests {
+		request.Status = transfer.RequestStatusUploaded
+
+		if request.Local == failPath {
+			request.Status = transfer.RequestStatusFailed
+			request.Error = "permission denied"
+		}
+
+		So(adminClient.UpdateFileStatus(request), ShouldBeNil)
+	}
+
+	got := s.db.GetByID(given.ID())
+	So(got.Status, ShouldEqual, set.Complete)
+	So(got.Failed, ShouldEqual, 1)
 }
 
 // waitForRemovalRunsToEnd waits until every removal handler has finished,
