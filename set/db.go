@@ -73,7 +73,7 @@ const (
 	ErrTransformerInUse       = "you cannot edit the transformer on a set with unfinished uploads"
 	ErrTransformerUsedByTrash = "you cannot edit the transformer on a set with uploaded files in its trash; " +
 		"remove them from the trash or wait for them to expire"
-	ErrPendingRemovals        = "the set has unfinished removals, you cannot change it"
+	ErrPendingRemovals = "the set has unfinished removals, you cannot change it"
 
 	setsBucket                    = "sets"
 	userToSetBucket               = "userLookup"
