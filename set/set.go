@@ -647,7 +647,8 @@ func (s *Set) discovering() bool {
 // discoveryFailed returns true if our latest discovery stopped with an error
 // instead of completing, so is no longer running. A discovery records its
 // failure as our Error, and starting one clears it; a removal can record an
-// error during a discovery, but always with RemovalErrorPrefix.
+// error during a discovery, but always with RemovalErrorPrefix, and never over
+// a failed discovery's Error.
 func (s *Set) discoveryFailed() bool {
 	return s.discovering() && s.Error != "" && !strings.HasPrefix(s.Error, RemovalErrorPrefix)
 }

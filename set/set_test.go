@@ -1676,6 +1676,39 @@ func TestSetDB(t *testing.T) {
 						So(err, ShouldNotBeNil)
 						So(err.Error(), ShouldStartWith, "can't add set while set is being discovered")
 					})
+
+					Convey("even after recording a removal error during it", func() {
+						err = db.SetRemovalError(set.ID(), "remove failed")
+						So(err, ShouldBeNil)
+						So(db.GetByID(set.ID()).Error, ShouldEqual, RemovalErrorPrefix+"remove failed")
+
+						err = db.AddOrUpdate(set)
+						So(err, ShouldNotBeNil)
+						So(err.Error(), ShouldStartWith, "can't add set while set is being discovered")
+					})
+				})
+
+				Convey("Then re-add a set whose discovery failed before a removal failed", func() {
+					err = db.AddOrUpdate(set)
+					So(err, ShouldBeNil)
+
+					_, err = db.Discover(set.ID(), func([]*Entry) ([]*Dirent, []*Dirent, error) {
+						return nil, nil, errors.New("walk failed") //nolint:err113
+					})
+					So(err, ShouldNotBeNil)
+
+					err = db.SetRemovalError(set.ID(), "remove failed")
+					So(err, ShouldBeNil)
+
+					got := db.GetByID(set.ID())
+					So(got, ShouldNotBeNil)
+					So(got.Error, ShouldEqual, "walk failed")
+					So(got.Discovered(), ShouldStartWith, "failed; started ")
+
+					set.Description = "fixed after removal"
+					err = db.AddOrUpdate(set)
+					So(err, ShouldBeNil)
+					So(db.GetByID(set.ID()).Description, ShouldEqual, set.Description)
 				})
 
 				Convey("Then re-add a set whose discovery failed", func() {

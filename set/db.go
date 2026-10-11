@@ -2434,6 +2434,19 @@ func (d *DB) SetError(setID, errMsg string) error {
 	})
 }
 
+// SetRemovalError records the given error from removing a path on the given
+// set, as its Error starting with RemovalErrorPrefix, unless the set's latest
+// discovery failed: that Error is kept, as it is how we know the discovery is
+// no longer running, so the set can be edited. Returns an error if the setID
+// isn't in the database.
+func (d *DB) SetRemovalError(setID, errMsg string) error {
+	return d.updateSetProperties(setID, func(got *Set) {
+		if !got.discoveryFailed() {
+			got.SetError(RemovalErrorPrefix + errMsg)
+		}
+	})
+}
+
 // ClearRemovalError clears the given set's Error if it is a removal error,
 // one starting with RemovalErrorPrefix, leaving any other error. Returns an
 // error if the setID isn't in the database.

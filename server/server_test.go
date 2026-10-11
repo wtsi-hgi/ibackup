@@ -2166,6 +2166,56 @@ func TestServer(t *testing.T) {
 						Convey("And given all files are uploaded", func() {
 							makeGivenSetComplete(2, exampleSet.Name, adminClient)
 
+							Convey("A trash request that keeps failing after a discovery failed leaves the set "+
+								"editable and shown as failed", func() {
+								s.storageHandler = &batonLikeGetMetaHandler{Handler: s.storageHandler, failPath: file1remote}
+
+								err = client.TrashFilesAndDirs(exampleSet.ID(), []string{file1local})
+								So(err, ShouldBeNil)
+
+								So(os.Chmod(dir0local, 0), ShouldBeNil)
+
+								defer func() {
+									So(os.Chmod(dir0local, 0755), ShouldBeNil)
+								}()
+
+								err = client.TriggerDiscovery(exampleSet.ID(), false)
+								So(err, ShouldBeNil)
+
+								getSet := func() *set.Set {
+									got, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+									So(errg, ShouldBeNil)
+
+									return got
+								}
+
+								testutil.Eventually(t, time.Minute, 100*time.Millisecond, func() bool {
+									return strings.Contains(getSet().Error, dir1local+": permission denied")
+								}, "discovery error was not recorded")
+
+								testutil.Eventually(t, time.Minute, 100*time.Millisecond, func() bool {
+									return s.removeQueue.Stats().Items == 0
+								}, "removal did not run out of retries")
+
+								waitForRemovalRunsToEnd(t, s)
+
+								entry, errg := s.db.GetFileEntryForSet(exampleSet.ID(), file1local)
+								So(errg, ShouldBeNil)
+								So(entry.LastError, ShouldContainSubstring, errInjectedGetMeta.Error())
+
+								So(os.Chmod(dir0local, 0755), ShouldBeNil)
+
+								got := getSet()
+								So(got.Error, ShouldContainSubstring, dir1local+": permission denied")
+								So(got.Discovered(), ShouldStartWith, "failed; started ")
+
+								got.Description = "fixed"
+
+								err = client.AddOrUpdateSet(got)
+								So(err, ShouldBeNil)
+								So(getSet().Description, ShouldEqual, "fixed")
+							})
+
 							Convey("A trash request not yet processed, during which a discovery left no uploaded files "+
 								"and the set got an error, stops its transformer being edited", func() {
 								queued := make(chan struct{})

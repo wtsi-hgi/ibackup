@@ -567,7 +567,7 @@ func (s *Server) handleErrorOrReleaseItem(item *queue.Item, removeReq set.Remove
 	if item.Stats().Releases >= uint32(jobRetries) {
 		s.discoveryCoordinator.RemovalFailed(removeReq.Set.ID())
 
-		errs := s.db.SetError(removeReq.Set.ID(), set.RemovalErrorPrefix+err.Error())
+		errs := s.db.SetRemovalError(removeReq.Set.ID(), err.Error())
 		if errs != nil {
 			s.Logger.Printf("Could not put error on set due to: %s\nError was: %s\n", errs.Error(), err.Error())
 		}
