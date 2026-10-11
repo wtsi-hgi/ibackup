@@ -415,12 +415,9 @@ func (s *Set) countsValid() bool {
 func (s *Set) adjustBasedOnEntry(entry *Entry) {
 	if entry.newSize {
 		s.SizeTotal += entry.Size
-		s.SizeUploaded += entry.Size
 	}
 
-	if !dataUploaded(entry) {
-		s.SizeUploaded -= entry.Size
-	}
+	s.adjustUploadedSize(entry)
 
 	if entry.unFailed {
 		s.Failed--
@@ -446,10 +443,27 @@ func (s *Set) adjustBasedOnEntry(entry *Entry) {
 }
 
 // dataUploaded returns true if the given entry's status means its data was
-// uploaded, so counts towards SizeUploaded; Skipped and Orphaned entries' data
-// wasn't.
+// uploaded, so counts towards SizeUploaded; Skipped, Orphaned, Failed and
+// Missing entries' data wasn't, nor was an upload's that hasn't finished.
 func dataUploaded(entry *Entry) bool {
-	return entry.Status != Skipped && entry.Status != Orphaned
+	return entry.Status == Uploaded || entry.Status == Replaced
+}
+
+// adjustUploadedSize keeps SizeUploaded counting the size of each entry whose
+// data was uploaded since our discovery: a result that makes the entry uploaded
+// adds its size, and one that replaces that status this round (eg. a re-run of
+// its request) takes it back, so a repeated result isn't counted twice. The
+// first result since discovery (newSize) replaces a status from before it.
+func (s *Set) adjustUploadedSize(entry *Entry) {
+	wasUploaded := !entry.newSize && dataUploaded(&Entry{Status: entry.countedStatus})
+	isUploaded := dataUploaded(entry)
+
+	switch {
+	case isUploaded && !wasUploaded:
+		s.SizeUploaded += entry.Size
+	case wasUploaded && !isUploaded:
+		s.SizeUploaded -= entry.countedSize
+	}
 }
 
 // discoveredSizeToSetCounts adds the size of the given entry, whose status

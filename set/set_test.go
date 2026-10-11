@@ -1399,7 +1399,7 @@ func TestSetDB(t *testing.T) {
 						So(lastCompleted.IsZero(), ShouldBeFalse)
 						So(sets[0].LastCompletedSize, ShouldEqual, 15)
 						So(sets[0].LastCompletedCount, ShouldEqual, 4)
-						So(sets[0].SizeUploaded, ShouldEqual, 13)
+						So(sets[0].SizeUploaded, ShouldEqual, 7)
 
 						fEntries, err = db.GetFileEntries(sets[0].ID(), nil)
 						So(err, ShouldBeNil)
@@ -1438,6 +1438,7 @@ func TestSetDB(t *testing.T) {
 						So(lastCompleted2.After(lastCompleted), ShouldBeTrue)
 						So(sets[0].LastCompletedSize, ShouldEqual, 15)
 						So(sets[0].LastCompletedCount, ShouldEqual, 4)
+						So(sets[0].SizeUploaded, ShouldEqual, 13)
 
 						fEntries, err = db.GetFileEntries(sets[0].ID(), nil)
 						So(err, ShouldBeNil)
@@ -3657,6 +3658,105 @@ func TestSetDB(t *testing.T) {
 					So(err, ShouldBeNil)
 					So(len(entries), ShouldEqual, 2)
 					So(entries[0].Inode, ShouldNotEqual, oldInode)
+				})
+			})
+
+			Convey("And add a set with a failing upload, its failed file's size isn't counted as uploaded", func() {
+				setl1 := &Set{
+					Name:        "failedSize",
+					Requester:   "jim",
+					Transformer: tmpRemoteTransformer,
+				}
+
+				So(db.AddOrUpdate(setl1), ShouldBeNil)
+
+				dir := t.TempDir()
+				good := filepath.Join(dir, "good")
+				bad := filepath.Join(dir, "bad")
+
+				for _, path := range []string{good, bad} {
+					internal.CreateTestFile(t, path, "a")
+				}
+
+				So(db.MergeFileEntries(setl1.ID(), []string{good, bad}), ShouldBeNil)
+
+				_, err = db.Discover(setl1.ID(), nil)
+				So(err, ShouldBeNil)
+
+				sizes := map[string]uint64{good: 3, bad: 4}
+
+				setResult := func(path string, statuses ...transfer.RequestStatus) *Set {
+					for _, s := range statuses {
+						_, errs := db.SetEntryStatus(&transfer.Request{
+							Local:     path,
+							Requester: setl1.Requester,
+							Set:       setl1.Name,
+							Size:      sizes[path],
+							Status:    s,
+						})
+						So(errs, ShouldBeNil)
+					}
+
+					return db.GetByID(setl1.ID())
+				}
+
+				uploading, uploaded, failed := transfer.RequestStatusUploading,
+					transfer.RequestStatusUploaded, transfer.RequestStatusFailed
+
+				setResult(good, uploading, uploaded)
+				got := setResult(bad, uploading, failed)
+				So(got.Uploaded, ShouldEqual, 1)
+				So(got.Failed, ShouldEqual, 1)
+				So(got.Status, ShouldEqual, Complete)
+				So(got.SizeTotal, ShouldEqual, 7)
+				So(got.SizeUploaded, ShouldEqual, 3)
+
+				got = setResult(bad, uploading, failed)
+				So(got.Failed, ShouldEqual, 1)
+				So(got.SizeUploaded, ShouldEqual, 3)
+
+				Convey("then a retry that uploads it counts its size once", func() {
+					got = setResult(bad, uploading, uploaded)
+					So(got.Uploaded, ShouldEqual, 2)
+					So(got.Failed, ShouldEqual, 0)
+					So(got.SizeTotal, ShouldEqual, 7)
+					So(got.SizeUploaded, ShouldEqual, 7)
+				})
+
+				Convey("then a retry that replaces it counts its size once", func() {
+					got = setResult(bad, uploading, transfer.RequestStatusReplaced)
+					So(got.Replaced, ShouldEqual, 1)
+					So(got.SizeUploaded, ShouldEqual, 7)
+				})
+
+				Convey("then a re-run of the uploaded file's request doesn't count its size twice", func() {
+					got = setResult(good, uploading, uploaded)
+					So(got.SizeUploaded, ShouldEqual, 3)
+
+					got = setResult(good, uploaded)
+					So(got.SizeUploaded, ShouldEqual, 3)
+				})
+
+				Convey("then a retry that skips it doesn't count its size", func() {
+					got = setResult(bad, uploading, transfer.RequestStatusUnmodified)
+					So(got.Skipped, ShouldEqual, 1)
+					So(got.Failed, ShouldEqual, 0)
+					So(got.SizeUploaded, ShouldEqual, 3)
+				})
+
+				Convey("then rediscovering, a re-upload of the uploaded file that fails isn't counted as "+
+					"uploaded", func() {
+					got, err = db.Discover(setl1.ID(), nil)
+					So(err, ShouldBeNil)
+					So(got.SizeUploaded, ShouldEqual, 0)
+
+					setResult(bad, uploading, uploaded)
+					got = setResult(good, uploading, failed)
+					So(got.Uploaded, ShouldEqual, 1)
+					So(got.Failed, ShouldEqual, 1)
+					So(got.Status, ShouldEqual, Complete)
+					So(got.SizeTotal, ShouldEqual, 7)
+					So(got.SizeUploaded, ShouldEqual, 4)
 				})
 			})
 
