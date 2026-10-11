@@ -2825,6 +2825,13 @@ func TestEdit(t *testing.T) {
 				s.waitForStatus(setName, "\nError: ", 1*time.Minute)
 				s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, dir+": permission denied")
 
+				Convey("Status shows its discovery failed, not still running", func() {
+					exitCode, output := s.runBinary(t, "status", "--name", setName)
+					So(exitCode, ShouldEqual, 0)
+					So(output, ShouldContainSubstring, "\nDiscovery: failed; started\n")
+					So(output, ShouldNotContainSubstring, "Discovery: started")
+				})
+
 				Convey("You can still edit the set", func() {
 					exitCode, output := s.runBinaryWithNoLogging(t, "edit", "--name", setName,
 						"--description", "fixed")

@@ -159,6 +159,15 @@ func TestSet(t *testing.T) {
 			t3 := t2.Add(24 * time.Hour)
 			s.StartedDiscovery = t3
 			So(s.Discovered(), ShouldEqual, "started "+t3.Format(dateFormat))
+
+			s.Error = RemovalErrorPrefix + "remove failed"
+			So(s.Discovered(), ShouldEqual, "started "+t3.Format(dateFormat))
+
+			s.Error = "walk failed"
+			So(s.Discovered(), ShouldEqual, "failed; started "+t3.Format(dateFormat))
+
+			s.LastDiscovery = t3.Add(time.Hour)
+			So(s.Discovered(), ShouldEqual, "completed "+s.LastDiscovery.Format(dateFormat))
 		})
 
 		Convey("Count() and Size() return friendly strings", func() {

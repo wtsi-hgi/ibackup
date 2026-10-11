@@ -255,13 +255,16 @@ func (s *Set) ID() string {
 }
 
 // Discovered provides a string representation of when discovery last completed,
-// or if it hasn't, when it started, or if it hasn't, says "not started".
+// or if it hasn't, when it started and whether it failed, or if it hasn't
+// started, says "not started".
 func (s *Set) Discovered() string {
 	discovered := ""
 
 	switch {
 	case s.StartedDiscovery.IsZero() && s.LastDiscovery.IsZero():
 		discovered = "not started"
+	case s.discoveryFailed():
+		discovered = "failed; started " + s.StartedDiscovery.Format(dateFormat)
 	case s.StartedDiscovery.After(s.LastDiscovery):
 		discovered = fmt.Sprintf("started %s", s.StartedDiscovery.Format(dateFormat))
 	default:
