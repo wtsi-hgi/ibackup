@@ -2802,6 +2802,50 @@ func TestEdit(t *testing.T) {
 				})
 			})
 
+			Convey("And a set whose discovery failed because its directory became unreadable", func() {
+				setName := "testEditFailedDiscovery"
+				parent := filepath.Join(path, "parent")
+				dir := filepath.Join(parent, "dir")
+				So(os.MkdirAll(dir, userPerms), ShouldBeNil)
+
+				otherFile := filepath.Join(path, "other")
+				internal.CreateTestFileOfLength(t, otherFile, 1)
+
+				s.addSetForTestingWithFlags(t, setName, transformer, "--path", dir)
+
+				So(os.Chmod(parent, 0), ShouldBeNil)
+
+				defer func() {
+					So(os.Chmod(parent, userPerms), ShouldBeNil)
+				}()
+
+				exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--add", otherFile)
+				So(exitCode, ShouldEqual, 0)
+
+				s.waitForStatus(setName, "\nError: ", 1*time.Minute)
+				s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, dir+": permission denied")
+
+				Convey("You can still edit the set", func() {
+					exitCode, output := s.runBinaryWithNoLogging(t, "edit", "--name", setName,
+						"--description", "fixed")
+					So(output, ShouldBeEmpty)
+					So(exitCode, ShouldEqual, 0)
+
+					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Description: fixed")
+				})
+
+				Convey("You can change its transformer", func() {
+					newTransformer := transformer + "/fixed"
+					exitCode, output := s.runBinaryWithNoLogging(t, "edit", "--name", setName,
+						"--transformer", newTransformer)
+					So(output, ShouldBeEmpty)
+					So(exitCode, ShouldEqual, 0)
+
+					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0,
+						"Transformer: "+newTransformer+"\n")
+				})
+			})
+
 			Convey("And a monitored set", func() {
 				setName := "monitoredSet"
 				s.addSetForTestingWithFlag(t, setName, transformer, path, "--monitor", "1d")

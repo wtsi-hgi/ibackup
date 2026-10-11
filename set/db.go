@@ -386,11 +386,50 @@ func (d *DB) checkTransformerCanChange(tx *bolt.Tx, eset *Set) error {
 		return err
 	}
 
+	return d.checkNoUploads(tx, eset)
+}
+
+// checkNoUploads returns an error if the given stored set isn't complete and has
+// no Error, or if any of its file entries may have an object in iRODS from an
+// earlier or running upload.
+func (d *DB) checkNoUploads(tx *bolt.Tx, eset *Set) error {
+	id := eset.ID()
+
 	if eset.Status != Complete && eset.Error == "" {
 		return Error{Msg: ErrTransformerInUse, id: id}
 	}
 
+	if d.setHasRemoteObjects(tx, id) {
+		return Error{Msg: ErrTransformerAlreadyUsed, id: id}
+	}
+
 	return nil
+}
+
+// setHasRemoteObjects returns true if any file or discovered entry of the set
+// with the given ID may have an object in iRODS at the remote path of the set's
+// current transformer.
+//
+// The set's counts can't tell: a discovery resets them and only counts entries
+// as their upload results arrive, so they are all zero after a discovery fails,
+// or while its files are pending, eg. if queuing them failed.
+func (d *DB) setHasRemoteObjects(tx *bolt.Tx, setID string) bool {
+	for _, kind := range []string{fileBucket, discoveredBucket} {
+		b := getSubBucket(tx, setID, kind)
+		if b == nil {
+			continue
+		}
+
+		c := b.Cursor()
+
+		for k, v := c.First(); k != nil; k, v = c.Next() {
+			if d.decodeEntry(v).mayHaveRemoteObject() {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 // checkNoTrashOrRemovals returns an error if the given stored set's trash set
@@ -432,7 +471,7 @@ func setHasFiles(tx *bolt.Tx, setID string) bool {
 }
 
 func updateDatabaseSetWithUserSetDetails(dbSet, userSet *Set) error {
-	if dbSet.StartedDiscovery.After(dbSet.LastDiscovery) {
+	if dbSet.discovering() && !dbSet.discoveryFailed() {
 		return Error{Msg: ErrNoAddDuringDiscovery, id: dbSet.ID()}
 	}
 

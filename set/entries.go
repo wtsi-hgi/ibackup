@@ -176,6 +176,23 @@ func (e *Entry) IsUploaded() bool {
 	return e.Status == Uploaded || e.Status == Replaced || e.Status == Skipped || e.Status == Orphaned
 }
 
+// mayHaveRemoteObject returns true if this entry may have an object in iRODS
+// from an earlier upload, or is uploading one.
+//
+// A discovery makes an attempted entry Pending until its next upload result,
+// keeping its LastAttempt and LastError; one whose last attempt failed is
+// treated like a Failed entry, as having no object.
+func (e *Entry) mayHaveRemoteObject() bool {
+	switch e.Status { //nolint:exhaustive
+	case UploadingEntry:
+		return true
+	case Pending:
+		return !e.LastAttempt.IsZero() && e.LastError == ""
+	default:
+		return e.IsUploaded()
+	}
+}
+
 // InodeStoragePath returns a relative path that the data for this entry could
 // be stored at if this entry is for a hardlink. The path includes both the
 // inode and the first local path we saw for this inode. This ensures that if an

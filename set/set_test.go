@@ -52,6 +52,7 @@ import (
 const (
 	userPerms            = 0700
 	tmpRemoteTransformer = "prefix=/tmp:/remote"
+	editedTransformer    = "prefix=/local:/edited"
 )
 
 func TestSet(t *testing.T) {
@@ -524,7 +525,7 @@ func TestTrashSetCounts(t *testing.T) {
 				So(edited.Uploaded, ShouldEqual, 0)
 				So(edited.Status, ShouldEqual, Complete)
 
-				edited.Transformer = "prefix=/local:/edited"
+				edited.Transformer = editedTransformer
 				editedTrashSet := BuildTrashSetFromSet(edited)
 
 				expectRejected := func() {
@@ -1657,6 +1658,181 @@ func TestSetDB(t *testing.T) {
 					err = db.AddOrUpdate(set)
 					So(err, ShouldNotBeNil)
 					So(err.Error(), ShouldStartWith, "can't add set while set is being discovered")
+
+					Convey("even if a removal failed during it", func() {
+						err = db.SetError(set.ID(), RemovalErrorPrefix+"failed")
+						So(err, ShouldBeNil)
+
+						err = db.AddOrUpdate(set)
+						So(err, ShouldNotBeNil)
+						So(err.Error(), ShouldStartWith, "can't add set while set is being discovered")
+					})
+				})
+
+				Convey("Then re-add a set whose discovery failed", func() {
+					err = db.AddOrUpdate(set)
+					So(err, ShouldBeNil)
+
+					_, err = db.Discover(set.ID(), func([]*Entry) ([]*Dirent, []*Dirent, error) {
+						return nil, nil, errors.New("walk failed") //nolint:err113
+					})
+					So(err, ShouldNotBeNil)
+
+					got := db.GetByID(set.ID())
+					So(got, ShouldNotBeNil)
+					So(got.Error, ShouldEqual, "walk failed")
+					So(got.StartedDiscovery, ShouldHappenAfter, got.LastDiscovery)
+
+					set.Description = "fixed"
+					err = db.AddOrUpdate(set)
+					So(err, ShouldBeNil)
+
+					got = db.GetByID(set.ID())
+					So(got, ShouldNotBeNil)
+					So(got.Description, ShouldEqual, "fixed")
+				})
+
+				Convey("Then given a directory set with a file never uploaded", func() {
+					dirSet := &Set{Name: "dirSet", Requester: "jim", Transformer: "prefix=/local:/remote"}
+					So(db.AddOrUpdate(dirSet), ShouldBeNil)
+					So(db.MergeDirEntries(dirSet.ID(), createFileEnts([]string{"/g/h"})), ShouldBeNil)
+
+					discovered := "/g/h/l.txt"
+					discover := func() {
+						discoverASet(db, db.GetByID(dirSet.ID()), func() ([]*Dirent, []*Dirent, error) {
+							return createFileEnts([]string{discovered}), []*Dirent{}, nil
+						}, func() {})
+					}
+
+					discover()
+
+					expectTransformerChangeable := func() {
+						edited := db.GetByID(dirSet.ID())
+						edited.Transformer = editedTransformer
+						So(db.AddOrUpdate(edited), ShouldBeNil)
+						So(db.GetByID(dirSet.ID()).Transformer, ShouldEqual, edited.Transformer)
+					}
+
+					Convey("its transformer can change after it got an error", func() {
+						So(db.SetError(dirSet.ID(), "queuing files failed"), ShouldBeNil)
+						So(db.GetByID(dirSet.ID()).Status, ShouldEqual, PendingUpload)
+
+						expectTransformerChangeable()
+					})
+
+					Convey("its transformer can change after its file failed to upload "+
+						"and a discovery left it pending, with the set erroring", func() {
+						_, err = db.SetEntryStatus(&transfer.Request{
+							Local: discovered, Requester: dirSet.Requester, Set: dirSet.Name,
+							Size: 1, Status: transfer.RequestStatusFailed, Error: "put failed",
+						})
+						So(err, ShouldBeNil)
+
+						discover()
+
+						entries, errg := db.GetFileEntries(dirSet.ID(), nil)
+						So(errg, ShouldBeNil)
+						So(entries, ShouldHaveLength, 1)
+						So(entries[0].Status, ShouldEqual, Pending)
+						So(entries[0].LastAttempt.IsZero(), ShouldBeFalse)
+						So(entries[0].LastError, ShouldEqual, "put failed")
+
+						So(db.SetError(dirSet.ID(), "queuing files failed"), ShouldBeNil)
+
+						expectTransformerChangeable()
+					})
+				})
+
+				Convey("Then given a directory set with an uploaded file", func() {
+					dirSet := &Set{Name: "dirSet", Requester: "jim", Transformer: "prefix=/local:/remote"}
+					So(db.AddOrUpdate(dirSet), ShouldBeNil)
+					So(db.MergeDirEntries(dirSet.ID(), createFileEnts([]string{"/g/h"})), ShouldBeNil)
+
+					discovered := "/g/h/l.txt"
+					discover := func(given *Set) {
+						discoverASet(db, given, func() ([]*Dirent, []*Dirent, error) {
+							return createFileEnts([]string{discovered}), []*Dirent{}, nil
+						}, func() {})
+					}
+
+					discover(dirSet)
+
+					_, err = db.SetEntryStatus(&transfer.Request{
+						Local: discovered, Requester: dirSet.Requester, Set: dirSet.Name,
+						Size: 1, Status: transfer.RequestStatusUploaded,
+					})
+					So(err, ShouldBeNil)
+
+					got := db.GetByID(dirSet.ID())
+					So(got.Status, ShouldEqual, Complete)
+					So(got.Uploaded, ShouldEqual, 1)
+
+					expectTransformerUnchangeable := func() {
+						edited := db.GetByID(dirSet.ID())
+						edited.Transformer = editedTransformer
+
+						erra := db.AddOrUpdate(edited)
+						So(erra, ShouldNotBeNil)
+						So(erra.Error(), ShouldContainSubstring, ErrTransformerAlreadyUsed)
+						So(db.GetByID(dirSet.ID()).Transformer, ShouldEqual, dirSet.Transformer)
+					}
+
+					expectTransformerUnchangeable()
+
+					Convey("its transformer can't change after a discovery failed and reset its counts", func() {
+						_, err = db.Discover(dirSet.ID(), func([]*Entry) ([]*Dirent, []*Dirent, error) {
+							return nil, nil, errors.New("walk failed") //nolint:err113
+						})
+						So(err, ShouldNotBeNil)
+
+						got = db.GetByID(dirSet.ID())
+						So(got.Error, ShouldEqual, "walk failed")
+						So(got.Uploaded, ShouldEqual, 0)
+
+						entries, errg := db.GetFileEntries(dirSet.ID(), nil)
+						So(errg, ShouldBeNil)
+						So(entries, ShouldHaveLength, 1)
+						So(entries[0].Status, ShouldEqual, Uploaded)
+
+						expectTransformerUnchangeable()
+
+						got.Description = "fixed"
+						So(db.AddOrUpdate(got), ShouldBeNil)
+						So(db.GetByID(dirSet.ID()).Description, ShouldEqual, "fixed")
+					})
+
+					Convey("its transformer can't change after a discovery left its file pending "+
+						"and the set got an error", func() {
+						discover(got)
+
+						got = db.GetByID(dirSet.ID())
+						So(got.Status, ShouldEqual, PendingUpload)
+						So(got.Uploaded, ShouldEqual, 0)
+
+						entries, errg := db.GetFileEntries(dirSet.ID(), nil)
+						So(errg, ShouldBeNil)
+						So(entries, ShouldHaveLength, 1)
+						So(entries[0].Status, ShouldEqual, Pending)
+
+						So(db.SetError(dirSet.ID(), "queuing files failed"), ShouldBeNil)
+
+						expectTransformerUnchangeable()
+
+						Convey("or while it is uploading again", func() {
+							e, errs := db.SetEntryStatus(&transfer.Request{
+								Local: discovered, Requester: dirSet.Requester, Set: dirSet.Name,
+								Size: 1, Status: transfer.RequestStatusUploading,
+							})
+							So(errs, ShouldBeNil)
+							So(e.Status, ShouldEqual, UploadingEntry)
+
+							got = db.GetByID(dirSet.ID())
+							So(got.Uploaded, ShouldEqual, 0)
+							So(got.Error, ShouldNotBeBlank)
+
+							expectTransformerUnchangeable()
+						})
+					})
 				})
 
 				Convey("You can get sets with a particular file", func() {
