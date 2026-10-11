@@ -2192,6 +2192,9 @@ func TestServer(t *testing.T) {
 								testutil.Eventually(t, time.Minute, 100*time.Millisecond, func() bool {
 									return strings.Contains(getSet().Error, dir1local+": permission denied")
 								}, "discovery error was not recorded")
+								So(s.removeQueue.Stats().Items, ShouldBeGreaterThan, 0)
+
+								logWriter.Reset()
 
 								testutil.Eventually(t, time.Minute, 100*time.Millisecond, func() bool {
 									return s.removeQueue.Stats().Items == 0
@@ -2202,6 +2205,9 @@ func TestServer(t *testing.T) {
 								entry, errg := s.db.GetFileEntryForSet(exampleSet.ID(), file1local)
 								So(errg, ShouldBeNil)
 								So(entry.LastError, ShouldContainSubstring, errInjectedGetMeta.Error())
+								So(logWriter.String(), ShouldContainSubstring, "removal error not put on set "+
+									exampleSet.ID()+", as its discovery failed: ")
+								So(logWriter.String(), ShouldContainSubstring, errInjectedGetMeta.Error())
 
 								So(os.Chmod(dir0local, 0755), ShouldBeNil)
 

@@ -1678,8 +1678,9 @@ func TestSetDB(t *testing.T) {
 					})
 
 					Convey("even after recording a removal error during it", func() {
-						err = db.SetRemovalError(set.ID(), "remove failed")
-						So(err, ShouldBeNil)
+						recorded, errs := db.SetRemovalError(set.ID(), "remove failed")
+						So(errs, ShouldBeNil)
+						So(recorded, ShouldBeTrue)
 						So(db.GetByID(set.ID()).Error, ShouldEqual, RemovalErrorPrefix+"remove failed")
 
 						err = db.AddOrUpdate(set)
@@ -1697,8 +1698,9 @@ func TestSetDB(t *testing.T) {
 					})
 					So(err, ShouldNotBeNil)
 
-					err = db.SetRemovalError(set.ID(), "remove failed")
-					So(err, ShouldBeNil)
+					recorded, errs := db.SetRemovalError(set.ID(), "remove failed")
+					So(errs, ShouldBeNil)
+					So(recorded, ShouldBeFalse)
 
 					got := db.GetByID(set.ID())
 					So(got, ShouldNotBeNil)
