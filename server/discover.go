@@ -613,14 +613,17 @@ func determineDirStatus(dirStatErr error, entry *set.Entry,
 
 // enqueueSetFiles gets all the set's file entries (set and discovered), creates
 // put requests for them and adds them to the global put queue for uploading.
-// Skips entries that are missing or that have failed or uploaded since the last
-// discovery.
+// Skips entries that are abnormal, or that have uploaded or been buried since
+// the last discovery. Entries that are uploading or waiting to retry a failure
+// are included, since a restarted server's queue no longer has them; while
+// their requests are still queued, adding them is a duplicate, like adding a
+// pending entry that is already queued.
 //
 // Returns true if only some of the entries were added to the queue due to
 // reaching the queue limit.
 func (s *Server) enqueueSetFiles(given *set.Set, transformer transformer.PathTransformer) (bool, error) {
 	entries, err := s.db.GetFileEntries(given.ID(), func(e *set.Entry) bool {
-		return e.ShouldUpload(given)
+		return e.ShouldBeQueued(given)
 	})
 	if err != nil {
 		return false, err
@@ -630,50 +633,67 @@ func (s *Server) enqueueSetFiles(given *set.Set, transformer transformer.PathTra
 }
 
 // enqueueEntries converts the given entries to requests, stores those in items
-// and adds them the in-memory queue.
+// and adds them the in-memory queue. Entries whose requests are already in the
+// queue are skipped as duplicates, so that they don't take the place of new
+// requests when the queue limit is reached.
 //
 // Returns true if only some of the items were added to the queue due to
 // reaching the queue limit.
 func (s *Server) enqueueEntries(entries []*set.Entry, given *set.Set, transformer transformer.PathTransformer) (bool, error) { //nolint:gocognit,lll,funlen
 	queueSpaceLeft := max(int(s.maxQueueLength)-s.queue.Stats().Items, 0) //nolint:gosec
-	defs := make([]*queue.ItemDef, min(len(entries), queueSpaceLeft))
-	hitLimit := queueSpaceLeft < len(entries)
+	defs := make([]*queue.ItemDef, 0, min(len(entries), queueSpaceLeft))
+	hitLimit := false
+	queuedDups := 0
 
-	if hitLimit {
-		s.queueMu.Lock()
-		s.queuedSets = append(s.queuedSets, given)
-		s.queueMu.Unlock()
+	for _, entry := range entries {
+		if len(defs) == queueSpaceLeft {
+			hitLimit = true
 
-		entries = entries[:queueSpaceLeft]
-	}
+			break
+		}
 
-	if len(defs) == 0 {
-		return hitLimit, nil
-	}
-
-	for i, entry := range entries {
 		r, err := s.entryToRequest(entry, transformer, given)
 		if err != nil {
 			return false, err
 		}
 
-		defs[i] = &queue.ItemDef{
+		if _, err = s.queue.Get(r.ID()); err == nil {
+			queuedDups++
+
+			continue
+		}
+
+		defs = append(defs, &queue.ItemDef{
 			Key:  r.ID(),
 			Data: r,
 			TTR:  ttr,
-		}
+		})
 	}
 
-	// Keep enqueue logging low-volume: one line per enqueue batch.
-	s.Logger.Printf(
-		"requests enqueued requester=%s set=%s count=%d",
-		given.Requester,
-		given.Name,
-		len(defs),
+	if hitLimit {
+		s.queueMu.Lock()
+		s.queuedSets = append(s.queuedSets, given)
+		s.queueMu.Unlock()
+	}
+
+	var (
+		dups int
+		err  error
 	)
 
-	_, dups, err := s.queue.AddMany(context.Background(), defs)
-	if dups > 0 {
+	if len(defs) > 0 {
+		// Keep enqueue logging low-volume: one line per enqueue batch.
+		s.Logger.Printf(
+			"requests enqueued requester=%s set=%s count=%d",
+			given.Requester,
+			given.Name,
+			len(defs),
+		)
+
+		_, dups, err = s.queue.AddMany(context.Background(), defs)
+	}
+
+	if dups += queuedDups; dups > 0 {
 		s.Logger.Printf(
 			"request enqueue had duplicates requester=%s set=%s duplicates=%d",
 			given.Requester,

@@ -85,6 +85,7 @@ var (
 const (
 	userPerms        = 0700
 	numManyTestFiles = 5000
+	uploadFailedErr  = "upload failed"
 )
 
 var (
@@ -7376,7 +7377,7 @@ func TestServer(t *testing.T) {
 						So(client.UpdateFileStatus(buried), ShouldBeNil)
 
 						buried.Status = transfer.RequestStatusFailed
-						buried.Error = "upload failed"
+						buried.Error = uploadFailedErr
 						So(client.UpdateFileStatus(buried), ShouldBeNil)
 					}
 
@@ -7423,6 +7424,149 @@ func TestServer(t *testing.T) {
 					gotSet, errs := client.GetSetByID(bset.Requester, bset.ID())
 					So(errs, ShouldBeNil)
 					So(gotSet.Failed, ShouldEqual, 1)
+				})
+
+				Convey("A refill re-adding uploading and waiting-to-retry requests fills the queue with new ones, "+
+					"leaving their attempts and a buried file's failures as they were", func() {
+					s.maxQueueLength = 8
+
+					uset := &set.Set{
+						Name:        "uset",
+						Requester:   "jim",
+						Transformer: "prefix=" + localDir + ":" + remoteDir,
+						MonitorTime: 0,
+					}
+
+					setDir := t.TempDir()
+
+					for n := range 12 {
+						internal.CreateTestFileOfLength(t, filepath.Join(setDir, fmt.Sprintf("file%02d", n)), n+1)
+					}
+
+					err = client.AddOrUpdateSet(uset)
+					So(err, ShouldBeNil)
+
+					err = client.MergeDirs(uset.ID(), []string{setDir})
+					So(err, ShouldBeNil)
+
+					err = client.TriggerDiscovery(uset.ID(), false)
+					So(err, ShouldBeNil)
+
+					So(<-racCalled, ShouldBeTrue)
+
+					requests, errg := client.GetSomeUploadRequests()
+					So(errg, ShouldBeNil)
+					So(len(requests), ShouldEqual, 8)
+
+					sort.Slice(requests, func(i, j int) bool { return requests[i].Local < requests[j].Local })
+
+					// file00 gets buried, file01 fails once and waits an hour
+					// to retry, file02 stays uploading and the rest upload, so
+					// the queue holds 3 items and a refill has room for 5,
+					// with file01 and file02 re-added as duplicates.
+					buried, waiting, uploading := requests[0], requests[1], requests[2]
+
+					for attempt := 1; attempt <= set.AttemptsToBeConsideredFailing; attempt++ {
+						if attempt > 1 {
+							retried, errr := client.GetSomeUploadRequests()
+							So(errr, ShouldBeNil)
+							So(len(retried), ShouldEqual, 1)
+
+							buried = retried[0]
+						}
+
+						buried.Status = transfer.RequestStatusUploading
+						So(client.UpdateFileStatus(buried), ShouldBeNil)
+
+						buried.Status = transfer.RequestStatusFailed
+						buried.Error = uploadFailedErr
+						So(client.UpdateFileStatus(buried), ShouldBeNil)
+					}
+
+					s.failedUploadRetryDelay = time.Hour
+
+					waiting.Status = transfer.RequestStatusUploading
+					So(client.UpdateFileStatus(waiting), ShouldBeNil)
+
+					waiting.Status = transfer.RequestStatusFailed
+					waiting.Error = uploadFailedErr
+					So(client.UpdateFileStatus(waiting), ShouldBeNil)
+
+					uploading.Status = transfer.RequestStatusUploading
+					So(client.UpdateFileStatus(uploading), ShouldBeNil)
+
+					for _, r := range requests[3:] {
+						r.Status = transfer.RequestStatusUploading
+						So(client.UpdateFileStatus(r), ShouldBeNil)
+
+						r.Status = transfer.RequestStatusUploaded
+						So(client.UpdateFileStatus(r), ShouldBeNil)
+					}
+
+					stats := s.queue.Stats()
+					So(stats.Buried, ShouldEqual, 1)
+					So(stats.Delayed, ShouldEqual, 1)
+					So(stats.Running, ShouldEqual, 1)
+
+					slackWriter.Reset()
+
+					var refilled []string
+
+					testutil.Eventually(t, 5*time.Second, 10*time.Millisecond, func() bool {
+						got, errr := client.GetSomeUploadRequests()
+						if errr != nil {
+							return false
+						}
+
+						for _, r := range got {
+							refilled = append(refilled, r.Local)
+						}
+
+						return len(refilled) > 0 && !s.queueRefilling.Load()
+					}, "refilled upload requests")
+
+					for {
+						got, errr := client.GetSomeUploadRequests()
+						So(errr, ShouldBeNil)
+
+						if len(got) == 0 {
+							break
+						}
+
+						for _, r := range got {
+							refilled = append(refilled, r.Local)
+						}
+					}
+
+					sort.Strings(refilled)
+
+					expected := make([]string, 0, 4)
+
+					for n := 8; n < 12; n++ {
+						expected = append(expected, filepath.Join(setDir, fmt.Sprintf("file%02d", n)))
+					}
+
+					So(refilled, ShouldResemble, expected)
+
+					entries, errf := client.GetFiles(uset.ID())
+					So(errf, ShouldBeNil)
+
+					statuses := make(map[string]string, 3)
+
+					for _, entry := range entries {
+						switch entry.Path {
+						case buried.Local, waiting.Local, uploading.Local:
+							statuses[entry.Path] = fmt.Sprintf("%s %d", entry.Status, entry.Attempts)
+						}
+					}
+
+					So(statuses, ShouldResemble, map[string]string{
+						buried.Local:    fmt.Sprintf("%s %d", set.Failed, set.AttemptsToBeConsideredFailing),
+						waiting.Local:   fmt.Sprintf("%s 1", set.Failed),
+						uploading.Local: fmt.Sprintf("%s 1", set.UploadingEntry),
+					})
+
+					So(slackWriter.String(), ShouldNotContainSubstring, "has failed uploads")
 				})
 
 				Convey("The queue correctly recovers on a restart", func() {
@@ -7489,6 +7633,141 @@ func TestServer(t *testing.T) {
 					}
 
 					So(numRequests, ShouldEqual, 20)
+				})
+
+				Convey("A restart re-queues files that were uploading or failed with attempts left, "+
+					"but not buried ones, even past the queue limit", func() {
+					rset := &set.Set{
+						Name:        "rset",
+						Requester:   "jim",
+						Transformer: "prefix=" + localDir + ":" + remoteDir,
+						MonitorTime: 0,
+					}
+
+					setDir := t.TempDir()
+
+					for n := range 4 {
+						internal.CreateTestFileOfLength(t, filepath.Join(setDir, "file"+strconv.Itoa(n)), n+1)
+					}
+
+					err = client.AddOrUpdateSet(rset)
+					So(err, ShouldBeNil)
+
+					err = client.MergeDirs(rset.ID(), []string{setDir})
+					So(err, ShouldBeNil)
+
+					err = client.TriggerDiscovery(rset.ID(), false)
+					So(err, ShouldBeNil)
+
+					So(<-racCalled, ShouldBeTrue)
+
+					requests, errg := client.GetSomeUploadRequests()
+					So(errg, ShouldBeNil)
+					So(len(requests), ShouldEqual, 4)
+
+					// in path order, so that with a queue limit of 2 after the
+					// restart, recovery queues pending and uploading, and the
+					// failed one is only queued by a refill.
+					sort.Slice(requests, func(i, j int) bool { return requests[i].Local < requests[j].Local })
+
+					pending, buried, uploading, failed := requests[0], requests[1], requests[2], requests[3]
+
+					uploading.Status = transfer.RequestStatusUploading
+					So(client.UpdateFileStatus(uploading), ShouldBeNil)
+
+					for attempt := 1; attempt <= set.AttemptsToBeConsideredFailing; attempt++ {
+						if attempt > 1 {
+							retried, errr := client.GetSomeUploadRequests()
+							So(errr, ShouldBeNil)
+							So(len(retried), ShouldEqual, 1)
+
+							buried = retried[0]
+						}
+
+						buried.Status = transfer.RequestStatusUploading
+						So(client.UpdateFileStatus(buried), ShouldBeNil)
+
+						buried.Status = transfer.RequestStatusFailed
+						buried.Error = uploadFailedErr
+						So(client.UpdateFileStatus(buried), ShouldBeNil)
+					}
+
+					failed.Status = transfer.RequestStatusUploading
+					So(client.UpdateFileStatus(failed), ShouldBeNil)
+
+					failed.Status = transfer.RequestStatusFailed
+					failed.Error = uploadFailedErr
+					So(client.UpdateFileStatus(failed), ShouldBeNil)
+
+					entries, errf := client.GetFiles(rset.ID())
+					So(errf, ShouldBeNil)
+
+					statuses := make(map[string]string, len(entries))
+
+					for _, entry := range entries {
+						statuses[entry.Path] = fmt.Sprintf("%s %d", entry.Status, entry.Attempts)
+					}
+
+					So(statuses, ShouldResemble, map[string]string{
+						pending.Local:   fmt.Sprintf("%s 0", set.Pending),
+						buried.Local:    fmt.Sprintf("%s %d", set.Failed, set.AttemptsToBeConsideredFailing),
+						uploading.Local: fmt.Sprintf("%s 1", set.UploadingEntry),
+						failed.Local:    fmt.Sprintf("%s 1", set.Failed),
+					})
+
+					So(dfunc(), ShouldBeNil)
+
+					s, addr, dfunc = makeAndStartServer(2)
+
+					token, errl = gas.Login(gas.NewClientRequest(addr, certPath), admin, "pass")
+					So(errl, ShouldBeNil)
+
+					client = NewClient(addr, certPath, token)
+
+					var requested []string
+
+					for range 200 {
+						got, errr := client.GetSomeUploadRequests()
+						So(errr, ShouldBeNil)
+
+						if len(got) > 0 {
+							p, d := makePutter(t, handler, got, client)
+							Reset(d)
+
+							uploadStarts, uploadResults, skippedResults := p.Put()
+
+							So(client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults,
+								minMBperSecondUploadSpeed, minTimeForUpload, 1*time.Hour, logger), ShouldBeNil)
+						}
+
+						for _, r := range got {
+							requested = append(requested, r.Local)
+						}
+
+						if len(requested) >= 3 {
+							break
+						}
+
+						time.Sleep(10 * time.Millisecond)
+					}
+
+					So(requested, ShouldContain, pending.Local)
+					So(requested, ShouldContain, uploading.Local)
+					So(requested, ShouldContain, failed.Local)
+					So(requested, ShouldNotContain, buried.Local)
+					So(len(requested), ShouldEqual, 3)
+
+					testutil.RequireStable(t, 250*time.Millisecond, 10*time.Millisecond, func() bool {
+						got, errr := client.GetSomeUploadRequests()
+
+						return errr == nil && len(got) == 0
+					}, "no more upload requests")
+
+					gotSet, errs := client.GetSetByID(rset.Requester, rset.ID())
+					So(errs, ShouldBeNil)
+					So(gotSet.Status, ShouldEqual, set.Complete)
+					So(gotSet.Uploaded, ShouldEqual, 3)
+					So(gotSet.Failed, ShouldEqual, 1)
 				})
 			})
 		})
