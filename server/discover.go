@@ -723,7 +723,10 @@ func (s *Server) entryToRequest(entry *set.Entry, transformer transformer.PathTr
 }
 
 // markFailedEntries looks for buried items in the queue related to the given
-// set and marks the corresponding entries as failed.
+// set and marks the corresponding entries as failed, if they haven't been
+// attempted since the set's last discovery, which otherwise resets them to be
+// uploaded again. Entries already attempted since then still have their
+// failures recorded, so are left alone.
 func (s *Server) markFailedEntries(given *set.Set) {
 	s.forEachBuriedItem(&BuriedFilter{
 		User: given.Requester,
@@ -731,8 +734,20 @@ func (s *Server) markFailedEntries(given *set.Set) {
 	}, func(item *queue.Item) {
 		request := item.Data().(*transfer.Request) //nolint:errcheck,forcetypeassert
 
+		entry, err := s.db.GetFileEntryForSet(given.ID(), request.Local)
+		if err != nil {
+			s.Logger.Printf("failed to get entry for buried item for set %s for %s: %s\n",
+				given.Name, given.Requester, err)
+
+			return
+		}
+
+		if entry.LastAttempt.After(given.LastDiscovery) {
+			return
+		}
+
 		for range jobRetries {
-			_, err := s.db.SetEntryStatus(request)
+			_, err = s.db.SetEntryStatus(request)
 			if err != nil {
 				s.Logger.Printf("failed to mark entry as failed for buried item for set %s for %s: %s\n",
 					given.Name, given.Requester, err)
