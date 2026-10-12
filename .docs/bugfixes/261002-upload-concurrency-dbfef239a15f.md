@@ -580,3 +580,22 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
     (Upload +1.0%, Remove -2.9% against origin/develop 96faa45) all pass,
     run once with both items applied.
   - Review: PASS (clean-context reviewer re-ran the focused baton tests and make lint, and checked the implementor's make test, make race and make speed logs on both changes).
+- [x] I feel like this should be using a different constant; a +/- 1 might be acceptable, but a divide by 6 really indicates it should be a different constant (or just inline).
+  - Source: PR #197 review thread PRRT_kwDOIEe6nc6rX9RA (comment 4245854158, mjkw31), `baton/baton_test.go` line 602 (`time.After(operationTimeout / 6)`, also at line 547).
+  - Files: `baton/baton_test.go` only.
+  - Approach: added the test constant `promptReturn = 10 * time.Second` (the
+    same 10s as before), which bounds how long an `EnsureCollection` call may
+    take when it has nothing to wait for. Both waits now use it: at line 553
+    the uncontended call must return while another collection's MkDir is
+    still failing, and at line 608 every caller must return after `Cleanup`.
+    10s is plenty for a ListItem and MkDir, or for a stopped worker to see
+    its cancelled context, but well short of the failing MkDir's retries
+    (`operationRetries`, at least `operationMinBackoff` apart, over 30s).
+  - Tests: the waits are in `TestBatonConcurrentClientInit` "Concurrent
+    EnsureCollection callers each get their own collection's result" and
+    "Cleanup during concurrent EnsureCollection calls makes them return,
+    leaving a usable handler". They passed before and after the change.
+  - Gates: `make lint` (0 issues), `make test`, `make race` and `make speed`
+    (Upload +1.0%, Remove -2.9% against origin/develop 96faa45) all pass,
+    run once with both items applied.
+  - Review: PASS (clean-context reviewer re-ran the focused baton tests and make lint, and checked the implementor's make test, make race and make speed logs on both changes).

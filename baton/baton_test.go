@@ -53,6 +53,12 @@ var testStartTime time.Time //nolint:gochecknoglobals
 
 var icmd *testutil.ICommander //nolint:gochecknoglobals
 
+// promptReturn bounds how long an EnsureCollection call may take when it has
+// nothing to wait for: plenty for a ListItem and MkDir, or for a stopped worker
+// to see its cancelled context, but well short of the retries (operationRetries
+// with at least operationMinBackoff between them) of a MkDir that keeps failing.
+const promptReturn = 10 * time.Second
+
 var (
 	errExpectedStatToFindUploadedObject = errors.New("expected Stat to find uploaded object")
 	errTransferStuck                    = errors.New("transfer did not return")
@@ -544,7 +550,7 @@ func TestBatonConcurrentClientInit(t *testing.T) {
 			okReturned = true
 		case <-failErrCh:
 			failReturnedFirst = true
-		case <-time.After(operationTimeout / 6):
+		case <-time.After(promptReturn):
 		}
 
 		So(failReturnedFirst, ShouldBeFalse)
@@ -599,7 +605,7 @@ func TestBatonConcurrentClientInit(t *testing.T) {
 		select {
 		case <-callersReturned:
 			returnedPromptly = true
-		case <-time.After(operationTimeout / 6):
+		case <-time.After(promptReturn):
 		}
 
 		So(returnedPromptly, ShouldBeTrue)
