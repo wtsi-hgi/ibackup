@@ -70,7 +70,6 @@ const (
 	operationTimeout       = 60 * time.Second
 	operationRetries       = 6
 	clientStopCheckFreq    = 100 * time.Millisecond
-	clientStoppedGrace     = 5 * time.Second // as extendo's DefaultResponseTimeout
 
 	errSysCopyLen = -27000
 )
@@ -276,11 +275,12 @@ func (b *Baton) newClientPool(maxSize uint8) *ex.ClientPool {
 }
 
 // waitAfterClientStopped returns the error from errCh, or an ErrClientStopped
-// error if none arrives within clientStoppedGrace. Any request that was sent
-// returns promptly once its client stops, so the grace only avoids misreporting
-// an op that is slow to be scheduled.
+// error if none arrives within extendo's DefaultResponseTimeout. extendo checks
+// that a client is still running each time that timeout passes without a
+// response, so a request it sent fails by about then anyway; the wait mainly
+// ends requests extendo never sent (see untilClientStops).
 func waitAfterClientStopped(errCh <-chan error, path string) error {
-	timer := time.NewTimer(clientStoppedGrace)
+	timer := time.NewTimer(ex.DefaultResponseTimeout)
 	defer timer.Stop()
 
 	select {

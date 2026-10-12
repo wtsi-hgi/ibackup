@@ -560,3 +560,23 @@ Each item is independent of the `deps` work: no `make test`, `make race` or
     during concurrent EnsureCollection calls" Convey's
     `errors.Is(..., PathError{..., Path: coll})` doesn't check the path is
     the caller's own collection.
+- [x] Given that we're copying an extendo value here, is there any reason not to just use that value directly?
+  - Source: PR #197 review thread PRRT_kwDOIEe6nc6rX2dS (comment 4245811457, mjkw31), `baton/baton.go` line 73 (`clientStoppedGrace = 5 * time.Second // as extendo's DefaultResponseTimeout`).
+  - Files: `baton/baton.go` only.
+  - Approach: no reason to copy it. Removed `clientStoppedGrace`;
+    `waitAfterClientStopped` now reads `ex.DefaultResponseTimeout` (an
+    exported var) each time it runs. Its doc comment now gives why that value
+    fits: extendo checks that a client is still running each time that
+    timeout passes without a response, so a request it sent fails by about
+    then anyway, and the wait mainly ends requests extendo never sent.
+  - Tests: refactor with no behaviour change, so no new test. The grace path
+    is covered by `TestUploadRetry` "Transfers whose client is stopping as
+    they start return an error" (Put, Get, retried Put; each requires
+    `ErrClientStopped`) and `TestBaton` "Transfers racing a concurrent
+    Cleanup return instead of blocking forever". No test named
+    `clientStoppedGrace`. `TestBaton`, `TestBatonConcurrentClientInit` and
+    `TestUploadRetry` passed before (`ok ... 129.604s`) and after the change.
+  - Gates: `make lint` (0 issues), `make test`, `make race` and `make speed`
+    (Upload +1.0%, Remove -2.9% against origin/develop 96faa45) all pass,
+    run once with both items applied.
+  - Review: PASS (clean-context reviewer re-ran the focused baton tests and make lint, and checked the implementor's make test, make race and make speed logs on both changes).
