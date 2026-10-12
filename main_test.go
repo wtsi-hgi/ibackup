@@ -102,6 +102,13 @@ const serverTokenBasename = ".ibackup.token"
 // must exceed that.
 const inProcessServerStopTimeout = 30 * time.Second
 
+// wrUploadTimeout bounds waits for uploads by put clients that wr runs. Making
+// each new collection takes about 4.6s on the test zone, so even a set of two
+// 1-byte files takes about 6s to complete, and a busy iRODS can add several
+// more seconds while other main-package tests run alongside. Waits return as
+// soon as the status is seen, so this only lengthens a failing wait.
+const wrUploadTimeout = 2 * time.Minute
+
 // prefetchedIRODSCollections is how many test collections are created ahead
 // of use, since most tests here make a new one for every Convey leaf.
 const prefetchedIRODSCollections = 4
@@ -3589,7 +3596,7 @@ func TestSync(t *testing.T) {
 		path := t.TempDir()
 		transformer := "prefix=" + path + ":" + remotePath
 
-		timeout := 10 * time.Second
+		timeout := wrUploadTimeout
 
 		Convey("sync requires --name", func() {
 			s.confirmOutputContains(t, []string{"sync"}, 1,
@@ -4419,7 +4426,7 @@ func (s *testServer) addSetForTestingWithFlags(t *testing.T, name, transformer s
 
 	waitTimeout := 1 * time.Minute
 	if s.schedulerDeployment != "" {
-		waitTimeout = 2 * time.Minute
+		waitTimeout = wrUploadTimeout
 	}
 
 	args := []string{"add", "--name", name, "--transformer", transformer}
