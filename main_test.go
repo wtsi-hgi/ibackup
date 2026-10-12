@@ -1043,8 +1043,7 @@ func TestRemoveFile(t *testing.T) {
 
 				So(exitCode, ShouldEqual, 0)
 
-				s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
-					0, "Removal status: 0 / 1 objects removed")
+				s.confirmRemovalRequested(t, setName, 1)
 
 				s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 30*time.Second)
 
@@ -1459,8 +1458,7 @@ func TestRemoveDirs(t *testing.T) {
 
 					So(exitCode, ShouldEqual, 0)
 
-					s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
-						0, "Removal status: 0 / 4 objects removed")
+					s.confirmRemovalRequested(t, setName, 4)
 
 					s.waitForStatus(setName, "Removal status: 4 / 4 objects removed", 30*time.Second)
 				})
@@ -1669,8 +1667,7 @@ func TestRemove(t *testing.T) {
 			checkIfRemoveFullyCompleted := func(setName, fileName string) {
 				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", fileName)
 				So(exitCode, ShouldEqual, 0)
-				s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
-					0, "Removal status: 0 / 1 objects removed")
+				s.confirmRemovalRequested(t, setName, 1)
 				s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 10*time.Second)
 
 				s.confirmOutputDoesNotContain(t, []string{"status", "--name", set.TrashPrefix + setName, "-d"},
@@ -2199,8 +2196,7 @@ func TestTrashRemove(t *testing.T) {
 						exitCode, _ := s.runBinary(t, "trash", "--remove", "--name", setName, "--path", dir1)
 						So(exitCode, ShouldEqual, 0)
 
-						s.confirmOutputContains(t, []string{"status", "--name", trashSetName, "-d"},
-							0, "Removal status: 0 / 4 objects removed")
+						s.confirmRemovalRequested(t, trashSetName, 4)
 
 						s.waitForStatus(trashSetName, "Removal status: 4 / 4 objects removed", timeout)
 					})
@@ -4384,6 +4380,25 @@ func (s *testServer) confirmOutputContains(t *testing.T, args []string, expected
 
 	So(exitCode, ShouldEqual, expectedCode)
 	So(actual, ShouldContainSubstring, expected)
+}
+
+// confirmRemovalRequested checks that status already shows a removal of total
+// objects for the named set, as it should as soon as remove or trash --remove
+// returns. The removal itself runs in the background and may have finished by
+// then, so any number of removed objects up to total is accepted.
+func (s *testServer) confirmRemovalRequested(t *testing.T, name string, total int) {
+	t.Helper()
+
+	exitCode, out := s.runBinaryWithNoLogging(t, "status", "--name", name, "-d")
+	So(exitCode, ShouldEqual, 0)
+
+	m := regexp.MustCompile(`Removal status: (\d+) / (\d+) objects removed`).FindStringSubmatch(out)
+	So(m, ShouldNotBeNil)
+
+	removed, err := strconv.Atoi(m[1])
+	So(err, ShouldBeNil)
+	So(m[2], ShouldEqual, strconv.Itoa(total))
+	So(removed, ShouldBeLessThanOrEqualTo, total)
 }
 
 func (s *testServer) confirmOutputDoesNotContain(t *testing.T, args []string, expectedCode int, //nolint:unparam
