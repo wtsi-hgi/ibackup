@@ -2250,12 +2250,9 @@ func (s *Server) refillQueue() { //nolint:gocognit,gocyclo,funlen
 			break
 		}
 
-		transformer, err := given.MakeTransformer()
-		if err != nil || !given.LastDiscovery.After(given.LastCompleted) {
-			continue
-		}
+		var err error
 
-		hitLimit, err = s.enqueueSetFiles(given, transformer)
+		hitLimit, err = s.enqueueSet(given, false)
 		if err != nil {
 			s.Logger.Printf("failed to refill queue from set %s for %s: %s", given.Name, given.Requester, err)
 		}
@@ -2295,7 +2292,8 @@ func (s *Server) recoverRemoveQueue() error {
 // recoverSet checks the status of the given Set and recovers its state as
 // appropriate: discover it if it was previously in the middle of being
 // discovered; adds its remaining upload requests if it was previously in the
-// middle of uploading; otherwise do nothing.
+// middle of uploading, or the requests of its in-flight failed files if it had
+// completed with failures; otherwise do nothing.
 //
 // Returns true if the queue reached its limit while adding upload requests.
 func (s *Server) recoverSet(given *set.Set, discoverOnly bool) (bool, error) {
@@ -2305,13 +2303,19 @@ func (s *Server) recoverSet(given *set.Set, discoverOnly bool) (bool, error) {
 
 	s.monitorSet(given)
 
-	if given.LastDiscovery.After(given.LastCompleted) {
+	if given.LastDiscovery.After(given.LastCompleted) || given.Failed > 0 {
 		return s.enqueueSet(given, discoverOnly)
 	}
 
 	return false, nil
 }
 
+// enqueueSet adds the given set's upload requests to the queue (see
+// enqueueSetFiles), or, if it has completed, only those of its in-flight
+// entries (see enqueueInFlightSetFiles). With discoverOnly, it instead adds the
+// set to queuedSets, for refillQueue to do this later.
+//
+// Returns true if the queue reached its limit while adding upload requests.
 func (s *Server) enqueueSet(given *set.Set, discoverOnly bool) (bool, error) {
 	if discoverOnly {
 		s.queueMu.Lock()
@@ -2326,7 +2330,30 @@ func (s *Server) enqueueSet(given *set.Set, discoverOnly bool) (bool, error) {
 		return false, err
 	}
 
+	if !given.LastDiscovery.After(given.LastCompleted) {
+		return s.enqueueInFlightSetFiles(given, transformer)
+	}
+
 	return s.enqueueSetFiles(given, transformer)
+}
+
+// enqueueInFlightSetFiles adds the requests of the given completed set's file
+// entries that are in flight (see Entry.IsInFlight). A set completes once each
+// file has uploaded or failed at least once, so these are failed files waiting
+// for an automatic retry, buried ones a user retried, and either of those that
+// was uploading. Its other entries, eg. never-attempted missing ones, must not
+// be requested again, so this doesn't use Entry.ShouldBeQueued. Since in-flight
+// entries all failed, only the set's failed entries are read.
+func (s *Server) enqueueInFlightSetFiles(given *set.Set,
+	transformer transformer.PathTransformer) (bool, error) {
+	entries, err := s.db.GetFailedFileEntries(given.ID(), func(e *set.Entry) bool {
+		return e.IsInFlight()
+	})
+	if err != nil || len(entries) == 0 {
+		return false, err
+	}
+
+	return s.enqueueEntries(entries, given, transformer)
 }
 
 // retryFailedEntries adds failed entires in the set with the id specified in
@@ -2361,6 +2388,12 @@ func (s *Server) retryFailedEntries(c *gin.Context) {
 func (s *Server) retryFailedSetFiles(given *set.Set) (int, error) {
 	transformer, err := given.MakeTransformer()
 	if err != nil {
+		return 0, err
+	}
+
+	// Record the retry before kicking the buried requests, so that it isn't
+	// lost if the queue loses them before they run, eg. on a server restart.
+	if err = s.db.MarkBuriedEntriesRetried(given.ID()); err != nil {
 		return 0, err
 	}
 

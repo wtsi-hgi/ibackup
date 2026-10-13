@@ -7257,8 +7257,8 @@ func TestServer(t *testing.T) {
 					ok = <-racCalled
 					So(ok, ShouldBeTrue)
 
-					gotSet, err := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
-					So(err, ShouldBeNil)
+					gotSet, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+					So(errg, ShouldBeNil)
 					So(gotSet.Status, ShouldEqual, set.PendingUpload)
 					So(gotSet.NumFiles, ShouldEqual, 2)
 					So(gotSet.Uploaded, ShouldEqual, 0)
@@ -7768,6 +7768,309 @@ func TestServer(t *testing.T) {
 					So(gotSet.Status, ShouldEqual, set.Complete)
 					So(gotSet.Uploaded, ShouldEqual, 3)
 					So(gotSet.Failed, ShouldEqual, 1)
+				})
+
+				Convey("A user retry of a buried file that hasn't run by a restart is still done after it, "+
+					"and the file is buried again after 3 more failures, waiting for another retry", func() {
+					bset := &set.Set{
+						Name:        "bset",
+						Requester:   "jim",
+						Transformer: "prefix=" + localDir + ":" + remoteDir,
+						MonitorTime: 0,
+					}
+
+					setDir := t.TempDir()
+					internal.CreateTestFileOfLength(t, filepath.Join(setDir, "file0"), 1)
+
+					err = client.AddOrUpdateSet(bset)
+					So(err, ShouldBeNil)
+
+					err = client.MergeDirs(bset.ID(), []string{setDir})
+					So(err, ShouldBeNil)
+
+					err = client.TriggerDiscovery(bset.ID(), false)
+					So(err, ShouldBeNil)
+
+					So(<-racCalled, ShouldBeTrue)
+
+					failAttempts := func(c *Client, n int) string {
+						var local string
+
+						for range n {
+							var got []*transfer.Request
+
+							testutil.Eventually(t, 5*time.Second, 10*time.Millisecond, func() bool {
+								var errr error
+
+								got, errr = c.GetSomeUploadRequests()
+
+								return errr == nil && len(got) > 0
+							}, "an upload request")
+
+							So(len(got), ShouldEqual, 1)
+
+							r := got[0]
+							local = r.Local
+
+							r.Status = transfer.RequestStatusUploading
+							So(c.UpdateFileStatus(r), ShouldBeNil)
+
+							r.Status = transfer.RequestStatusFailed
+							r.Error = uploadFailedErr
+							So(c.UpdateFileStatus(r), ShouldBeNil)
+						}
+
+						return local
+					}
+
+					entryState := func(c *Client) string {
+						entries, errf := c.GetFiles(bset.ID())
+						So(errf, ShouldBeNil)
+						So(len(entries), ShouldEqual, 1)
+
+						return fmt.Sprintf("%s %d", entries[0].Status, entries[0].Attempts)
+					}
+
+					local := failAttempts(client, set.AttemptsToBeConsideredFailing)
+
+					So(s.queue.Stats().Buried, ShouldEqual, 1)
+
+					retried, errr := client.RetryFailedSetUploads(bset.ID())
+					So(errr, ShouldBeNil)
+					So(retried, ShouldEqual, 1)
+					So(s.queue.Stats().Buried, ShouldEqual, 0)
+					So(entryState(client), ShouldEqual,
+						fmt.Sprintf("%s %d", set.Failed, set.AttemptsToBeConsideredFailing))
+
+					So(dfunc(), ShouldBeNil)
+
+					s, addr, dfunc = makeAndStartServer(0)
+
+					token, errl = gas.Login(gas.NewClientRequest(addr, certPath), admin, "pass")
+					So(errl, ShouldBeNil)
+
+					client = NewClient(addr, certPath, token)
+
+					slackWriter.Reset()
+
+					So(failAttempts(client, set.AttemptsToBeConsideredFailing), ShouldEqual, local)
+					So(entryState(client), ShouldEqual,
+						fmt.Sprintf("%s %d", set.Failed, 2*set.AttemptsToBeConsideredFailing))
+					So(strings.Count(slackWriter.String(), "has failed uploads"), ShouldEqual, 1)
+					So(s.queue.Stats().Buried, ShouldEqual, 1)
+
+					So(dfunc(), ShouldBeNil)
+
+					s, addr, dfunc = makeAndStartServer(0)
+
+					token, errl = gas.Login(gas.NewClientRequest(addr, certPath), admin, "pass")
+					So(errl, ShouldBeNil)
+
+					client = NewClient(addr, certPath, token)
+
+					testutil.RequireStable(t, 250*time.Millisecond, 10*time.Millisecond, func() bool {
+						got, errg := client.GetSomeUploadRequests()
+
+						return errg == nil && len(got) == 0
+					}, "no upload requests for the file buried again")
+				})
+
+				Convey("A restart past the queue limit re-queues all of a completed set's retried buried files, "+
+					"but not its missing file", func() {
+					qset := &set.Set{
+						Name:        "qset",
+						Requester:   "jim",
+						Transformer: "prefix=" + localDir + ":" + remoteDir,
+						MonitorTime: 0,
+					}
+
+					setDir := t.TempDir()
+					files := make([]string, 3)
+
+					for n := range files {
+						files[n] = filepath.Join(setDir, "file"+strconv.Itoa(n))
+						internal.CreateTestFileOfLength(t, files[n], 1)
+					}
+
+					missing := filepath.Join(setDir, "nodir", "missing")
+
+					err = client.AddOrUpdateSet(qset)
+					So(err, ShouldBeNil)
+
+					err = client.MergeFiles(qset.ID(), append(slices.Clone(files), missing))
+					So(err, ShouldBeNil)
+
+					err = client.TriggerDiscovery(qset.ID(), false)
+					So(err, ShouldBeNil)
+
+					So(<-racCalled, ShouldBeTrue)
+
+					testutil.Eventually(t, 10*time.Second, 10*time.Millisecond, func() bool {
+						got, errg := client.GetSomeUploadRequests()
+						if errg != nil {
+							return false
+						}
+
+						for _, r := range got {
+							if r.Local == missing {
+								r.Status = transfer.RequestStatusMissing
+								So(client.UpdateFileStatus(r), ShouldBeNil)
+
+								continue
+							}
+
+							r.Status = transfer.RequestStatusUploading
+							So(client.UpdateFileStatus(r), ShouldBeNil)
+
+							r.Status = transfer.RequestStatusFailed
+							r.Error = uploadFailedErr
+							So(client.UpdateFileStatus(r), ShouldBeNil)
+						}
+
+						return s.queue.Stats().Buried == len(files)
+					}, "all files buried")
+
+					gotSet, errs := client.GetSetByID(qset.Requester, qset.ID())
+					So(errs, ShouldBeNil)
+					So(gotSet.Status, ShouldEqual, set.Complete)
+					So(gotSet.Failed, ShouldEqual, len(files))
+					So(gotSet.Missing, ShouldEqual, 1)
+
+					retried, errr := client.RetryFailedSetUploads(qset.ID())
+					So(errr, ShouldBeNil)
+					So(retried, ShouldEqual, len(files))
+
+					So(dfunc(), ShouldBeNil)
+
+					s, addr, dfunc = makeAndStartServer(2)
+
+					token, errl = gas.Login(gas.NewClientRequest(addr, certPath), admin, "pass")
+					So(errl, ShouldBeNil)
+
+					client = NewClient(addr, certPath, token)
+
+					var requested []string
+
+					testutil.Eventually(t, 10*time.Second, 10*time.Millisecond, func() bool {
+						got, errg := client.GetSomeUploadRequests()
+						if errg != nil {
+							return false
+						}
+
+						for _, r := range got {
+							requested = append(requested, r.Local)
+
+							r.Status = transfer.RequestStatusUploading
+							So(client.UpdateFileStatus(r), ShouldBeNil)
+
+							r.Status = transfer.RequestStatusUploaded
+							So(client.UpdateFileStatus(r), ShouldBeNil)
+						}
+
+						return len(requested) >= len(files)
+					}, "the retried files requested after the restart")
+
+					testutil.RequireStable(t, 250*time.Millisecond, 10*time.Millisecond, func() bool {
+						got, errg := client.GetSomeUploadRequests()
+
+						return errg == nil && len(got) == 0
+					}, "no more upload requests")
+
+					So(requested, ShouldHaveLength, len(files))
+					So(requested, ShouldContain, files[0])
+					So(requested, ShouldContain, files[1])
+					So(requested, ShouldContain, files[2])
+
+					gotSet, errs = client.GetSetByID(qset.Requester, qset.ID())
+					So(errs, ShouldBeNil)
+					So(gotSet.Status, ShouldEqual, set.Complete)
+					So(gotSet.Uploaded, ShouldEqual, len(files))
+					So(gotSet.Failed, ShouldEqual, 0)
+					So(gotSet.Missing, ShouldEqual, 1)
+				})
+
+				Convey("A restart re-queues a completed set's file that failed once and is waiting for its "+
+					"automatic retry", func() {
+					aset := &set.Set{
+						Name:        "aset",
+						Requester:   "jim",
+						Transformer: "prefix=" + localDir + ":" + remoteDir,
+						MonitorTime: 0,
+					}
+
+					setDir := t.TempDir()
+					okFile := filepath.Join(setDir, "ok")
+					failFile := filepath.Join(setDir, "fail")
+
+					internal.CreateTestFileOfLength(t, okFile, 1)
+					internal.CreateTestFileOfLength(t, failFile, 1)
+
+					err = client.AddOrUpdateSet(aset)
+					So(err, ShouldBeNil)
+
+					err = client.MergeFiles(aset.ID(), []string{okFile, failFile})
+					So(err, ShouldBeNil)
+
+					err = client.TriggerDiscovery(aset.ID(), false)
+					So(err, ShouldBeNil)
+
+					So(<-racCalled, ShouldBeTrue)
+
+					requests, errg := client.GetSomeUploadRequests()
+					So(errg, ShouldBeNil)
+					So(requests, ShouldHaveLength, 2)
+
+					for _, r := range requests {
+						r.Status = transfer.RequestStatusUploading
+						So(client.UpdateFileStatus(r), ShouldBeNil)
+
+						r.Status = transfer.RequestStatusUploaded
+
+						if r.Local == failFile {
+							r.Status = transfer.RequestStatusFailed
+							r.Error = uploadFailedErr
+						}
+
+						So(client.UpdateFileStatus(r), ShouldBeNil)
+					}
+
+					gotSet, errs := client.GetSetByID(aset.Requester, aset.ID())
+					So(errs, ShouldBeNil)
+					So(gotSet.Status, ShouldEqual, set.Complete)
+					So(gotSet.Uploaded, ShouldEqual, 1)
+					So(gotSet.Failed, ShouldEqual, 1)
+
+					So(dfunc(), ShouldBeNil)
+
+					s, addr, dfunc = makeAndStartServer(0)
+
+					token, errl = gas.Login(gas.NewClientRequest(addr, certPath), admin, "pass")
+					So(errl, ShouldBeNil)
+
+					client = NewClient(addr, certPath, token)
+
+					var got []*transfer.Request
+
+					testutil.Eventually(t, 5*time.Second, 10*time.Millisecond, func() bool {
+						got, errg = client.GetSomeUploadRequests()
+
+						return errg == nil && len(got) > 0
+					}, "an upload request after the restart")
+
+					So(got, ShouldHaveLength, 1)
+					So(got[0].Local, ShouldEqual, failFile)
+
+					got[0].Status = transfer.RequestStatusUploading
+					So(client.UpdateFileStatus(got[0]), ShouldBeNil)
+
+					got[0].Status = transfer.RequestStatusUploaded
+					So(client.UpdateFileStatus(got[0]), ShouldBeNil)
+
+					gotSet, errs = client.GetSetByID(aset.Requester, aset.ID())
+					So(errs, ShouldBeNil)
+					So(gotSet.Status, ShouldEqual, set.Complete)
+					So(gotSet.Uploaded, ShouldEqual, 2)
+					So(gotSet.Failed, ShouldEqual, 0)
 				})
 			})
 		})

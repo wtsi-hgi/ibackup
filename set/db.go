@@ -546,6 +546,32 @@ func (d *DB) UpdateEntry(sid, key string, entry *Entry) error {
 	})
 }
 
+// MarkBuriedEntriesRetried records a user retry on each of the given set's file
+// entries that failed and whose retries ran out, so that they are queued again
+// (see Entry.ShouldBeQueued) until their next upload result.
+func (d *DB) MarkBuriedEntriesRetried(setID string) error {
+	return d.db.Update(func(tx *bolt.Tx) error {
+		buried := d.getFailedFileEntriesWithTx(tx, setID, func(e *Entry) bool {
+			return e.Status == Failed && e.Attempts%AttemptsToBeConsideredFailing == 0
+		})
+
+		for _, entry := range buried {
+			_, b, err := d.getEntry(tx, setID, entry.Path)
+			if err != nil {
+				return err
+			}
+
+			entry.Retried = true
+
+			if err = b.Put([]byte(entry.Path), d.encodeToBytes(entry)); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
+}
+
 // encodeToBytes encodes the given thing as a byte slice, suitable for storing
 // in a database.
 func (d *DB) encodeToBytes(thing interface{}) []byte {
@@ -1900,6 +1926,7 @@ func (d *DB) updateFileEntry(tx *bolt.Tx, setID string, r *transfer.Request, //n
 	}
 
 	entry.LastAttempt = time.Now()
+	entry.Retried = false
 
 	if entry.Status == Pending || entry.Status == Failed {
 		entry.Attempts++
@@ -2233,6 +2260,53 @@ func (d *DBRO) getFileEntriesWithTx(tx *bolt.Tx, setID string, filter EntryFilte
 	getEntriesViewFunc(tx, setID, discoveredBucket, cb)
 
 	return entries
+}
+
+// GetFailedFileEntries returns the given set's file entries (set and
+// discovered) that failed and haven't uploaded since, and that pass the filter
+// (all of them for a nil filter). It reads only the entries in our failed
+// lookup, so its cost depends on the number of failures, not entries.
+func (d *DBRO) GetFailedFileEntries(setID string, filter EntryFilter) ([]*Entry, error) {
+	var entries []*Entry
+
+	err := d.db.View(func(tx *bolt.Tx) error {
+		entries = d.getFailedFileEntriesWithTx(tx, setID, filter)
+
+		return nil
+	})
+
+	return entries, err
+}
+
+// getFailedFileEntriesWithTx gets the current file entries for the paths in our
+// failed lookup for the given set. The lookup's own copies aren't used, since
+// they can be out of date (eg. an entry failed again, then started uploading).
+func (d *DBRO) getFailedFileEntriesWithTx(tx *bolt.Tx, setID string, filter EntryFilter) []*Entry {
+	entries := make([]*Entry, 0)
+	setsBucket := tx.Bucket([]byte(setsBucket))
+	prefix := []byte(setID + separator)
+	c := tx.Bucket([]byte(failedBucket)).Cursor()
+
+	for k, _ := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, _ = c.Next() {
+		entry := d.getFileEntryFromSubbuckets(setID, string(k[len(prefix):]), setsBucket)
+		if entry != nil && (filter == nil || filter(entry)) {
+			entries = append(entries, entry)
+		}
+	}
+
+	return entries
+}
+
+// getFileEntryFromSubbuckets gets the file entry (set or discovered) for the
+// given path in the given set, or nil if there isn't one.
+func (d *DBRO) getFileEntryFromSubbuckets(setID, path string, setsBucket *bolt.Bucket) *Entry {
+	for _, kind := range []string{fileBucket, discoveredBucket} {
+		if entry, _ := d.getEntryFromSubbucket(kind, setID, path, setsBucket); entry != nil {
+			return entry
+		}
+	}
+
+	return nil
 }
 
 // GetFileEntryForSet returns the file entry for the given path in the given

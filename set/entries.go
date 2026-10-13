@@ -131,6 +131,10 @@ type Entry struct {
 	// replaces it.
 	RemoteObject bool
 
+	// Retried is true if a user retry was requested for this entry after its
+	// retries ran out, and it has had no upload result since.
+	Retried bool
+
 	// countedStatus, countedSize and countedIn are the Status, Size and
 	// CountedInDiscovery this entry had before an upload result updated it.
 	countedStatus EntryStatus
@@ -176,21 +180,22 @@ func (e *Entry) ShouldUpload(given *Set) bool {
 	return !e.LastAttempt.After(given.LastDiscovery)
 }
 
-// ShouldBeQueued returns true if ShouldUpload() does, or if this Entry was
-// uploading, or failed and was waiting to be retried (its failures since it
-// was last buried are fewer than AttemptsToBeConsideredFailing). Its request
-// is then in the queue, or needs adding back if the queue lost it, eg. on a
-// server restart.
+// ShouldBeQueued returns true if ShouldUpload() or IsInFlight() does. Its
+// request is then in the queue, or needs adding back if the queue lost it, eg.
+// on a server restart.
 func (e *Entry) ShouldBeQueued(given *Set) bool {
-	if e.ShouldUpload(given) {
-		return true
-	}
+	return e.ShouldUpload(given) || e.IsInFlight()
+}
 
+// IsInFlight returns true if this Entry was uploading, or failed and was
+// waiting to be retried: its failures since it was last buried are fewer than
+// AttemptsToBeConsideredFailing, or a user retried it since.
+func (e *Entry) IsInFlight() bool {
 	switch e.Status { //nolint:exhaustive
 	case UploadingEntry:
 		return true
 	case Failed:
-		return e.Attempts%AttemptsToBeConsideredFailing != 0
+		return e.Retried || e.Attempts%AttemptsToBeConsideredFailing != 0
 	default:
 		return false
 	}
