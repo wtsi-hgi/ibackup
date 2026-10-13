@@ -34,7 +34,7 @@ jobs:
       IRODS_CLIENT_IMAGE: ghcr.io/wtsi-npg/ub-22.04-irods-clients-4.3.5@sha256:4fcb42c9b484e869e09051a944cab6e157f10613cc29f31172a52d9f9b0977dc
       IRODS_CLIENTS_PREFIX: ${{ github.workspace }}/.irods-clients
       IRODS_SERVER_IMAGE: ghcr.io/wtsi-npg/ub-22.04-irods-4.3.5:9.8@sha256:bf8ca288853403cb0bd0bb5a7ae637072aff6afa6080069886bba5fa82227ccb
-      WR_VERSION: v0.38.0
+      WR_VERSION: v0.39.0
       # The tests run as an ordinary iRODS user, as they do against Sanger's
       # zones, and its name deliberately differs from the local user's.
       IRODS_TEST_USER: ibackup

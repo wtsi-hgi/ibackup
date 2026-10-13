@@ -1,12 +1,12 @@
 # Bugfixes 2026-10-07: iRODS in CI
 
 - Branch: `bugfix-irods-ci-1dee5dab`
-- Base: `origin/develop` at `ce92caecdc7a` (#194 merged; rebased
-  2026-10-07)
+- Base: `origin/develop` at `5bb2013bce57` (#195, #199, #197 and #200
+  merged; rebased 2026-10-13)
 - Sequenced after test-collections for review and merge; no code
   dependency.
-- Queue owner: `bugfix-set-counts-abca77d4de3c`,
-  `.docs/bugfixes/261002-set-counts-abca77d4de3c.md`
+- Queue owner: `bugfix-set-counts-2-586f032c7c79`,
+  `.docs/bugfixes/261008-set-counts-2-586f032c7c79.md`
 - Origin: PR #194 review thread on `internal/testutil/irods_prefetch_test.go:88`
   (comment 4204477916)
 
@@ -44,6 +44,14 @@
     stripped env passes `USER` (the wrappers need it). Live-zone runs pass
     unchanged. Local container validation was blocked (apptainer: the server
     hangs after one or two connections; no docker on the host).
+  - Rebased onto develop `5bb2013bce57` (2026-10-13): develop's
+    `denyRemoteChanges` helper replaced the inline `ichmod` blocks in
+    `TestRemove` and `TestTrashRemove`, so the conflicts took develop's helper
+    calls (its 30s removal wait already covered the widened wait) and kept
+    `bufio`, which the helper uses. The container-zone fixes to those blocks
+    move into the helper under the `denyRemoteChanges` item. `tests.yml` now
+    installs wr v0.39.0 to match `go.mod` after #199. #200's collection
+    sweep in `internal/testutil` merged without conflicts.
 - [ ] `main_test.go` `denyRemoteChanges` (added on `bugfix-set-counts-abca77d4de3c`,
   commit aab1a7d) runs `ichmod` with `user.Current().Username`, assuming the
   iRODS user name equals the OS user name; it will fail in CI's container zone
