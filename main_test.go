@@ -1687,7 +1687,7 @@ func TestRemove(t *testing.T) {
 
 				setNameWithFailures := "setWithFailures"
 				s.addSetForTesting(t, setNameWithFailures, transformer, dir3)
-				s.waitForStatus(setNameWithFailures, "\nStatus: complete (but with failures", 10*time.Second)
+				s.waitForStatus(setNameWithFailures, "\nStatus: complete (but with failures", wrUploadTimeout)
 
 				Convey("Remove will still work", func() {
 					checkIfRemoveFullyCompleted(setNameWithFailures, file)
@@ -3213,7 +3213,7 @@ func TestEdit(t *testing.T) {
 		path := t.TempDir()
 		transformer := "prefix=" + path + ":" + remotePath
 
-		timeout := 10 * time.Second
+		timeout := wrUploadTimeout
 
 		Convey("And some files", func() {
 			setDir1 := filepath.Join(path, "dir1")
@@ -3548,7 +3548,7 @@ func TestEdit(t *testing.T) {
 			}
 
 			s.addSetForTesting(t, setName, transformer, setDir)
-			s.waitForStatus(setName, "Status: complete", 10*time.Second)
+			s.waitForStatus(setName, "Status: complete", timeout)
 
 			Convey("You cannot add files to the set during removals", func() {
 				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", setDir)
