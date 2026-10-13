@@ -27,7 +27,6 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -169,37 +168,24 @@ func TestServer(t *testing.T) {
 	})
 }
 
-// denyRemoteChanges downgrades the current user and all their groups to read
-// access on the given remote object, so ibackup's changes to it fail with
-// CAT_NO_ACCESS_PERMISSION. It returns a function that restores ownership, which
-// also happens when the current Convey resets.
+// denyRemoteChanges downgrades the iRODS user that iCommands run as, and all
+// their groups, to read access on the given remote object, so ibackup's changes
+// to it fail with CAT_NO_ACCESS_PERMISSION. It returns a function that restores
+// ownership, which also happens when the current Convey resets.
 func denyRemoteChanges(t *testing.T, path string) func() {
 	t.Helper()
 
 	icmd := NewIcommander(t)
 	So(icmd, ShouldNotBeNil)
 
-	curUser, err := user.Current()
+	// The iRODS user need not have the local user's name.
+	irodsUser, err := icmd.UserInfo()
 	So(err, ShouldBeNil)
 
-	usernameRE := regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
-	So(usernameRE.MatchString(curUser.Username), ShouldBeTrue)
-
-	_, err = icmd.ICHMOD("read", curUser.Username, path)
-	So(err, ShouldBeNil)
-
-	groupsOutput, err := icmd.IUSERINFO()
-	So(err, ShouldBeNil)
-
-	scanner := bufio.NewScanner(bytes.NewReader(groupsOutput))
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if !strings.HasPrefix(line, "member of group:") {
-			continue
-		}
-
-		group := strings.TrimSpace(strings.TrimPrefix(line, "member of group:"))
-		if group == "" {
+	// The user goes last because changing access needs own access. A user is
+	// also a group of the same name, so that group is the user.
+	for _, group := range irodsUser.Groups {
+		if group == irodsUser.Name {
 			continue
 		}
 
@@ -207,15 +193,16 @@ func denyRemoteChanges(t *testing.T, path string) func() {
 		So(err, ShouldBeNil)
 	}
 
-	So(scanner.Err(), ShouldBeNil)
+	_, err = icmd.ICHMOD("read", irodsUser.Name, path)
+	So(err, ShouldBeNil)
 
 	restore := func() {
-		_, err := icmd.ICHMOD("own", curUser.Username, path)
+		_, err := icmd.GrantOwn(irodsUser.Name, path)
 		So(err, ShouldBeNil)
 	}
 
 	Reset(func() {
-		_, _ = icmd.ICHMOD("own", curUser.Username, path) //nolint:errcheck
+		_, _ = icmd.GrantOwn(irodsUser.Name, path) //nolint:errcheck
 	})
 
 	return restore

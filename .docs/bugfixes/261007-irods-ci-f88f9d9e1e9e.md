@@ -52,13 +52,58 @@
     move into the helper under the `denyRemoteChanges` item. `tests.yml` now
     installs wr v0.39.0 to match `go.mod` after #199. #200's collection
     sweep in `internal/testutil` merged without conflicts.
-- [ ] `main_test.go` `denyRemoteChanges` (added on `bugfix-set-counts-abca77d4de3c`,
+- [x] `main_test.go` `denyRemoteChanges` (added on `bugfix-set-counts-abca77d4de3c`,
   commit aab1a7d) runs `ichmod` with `user.Current().Username`, assuming the
   iRODS user name equals the OS user name; it will fail in CI's container zone
   (rodsuser `ibackup`, OS user `runner`). Switch it to `UserInfo()` once #195
   is merged under this branch.
   - Origin: found while making the tests run against a container zone
     (2026-10-08).
+  - Red (2026-10-13): the OS and iRODS users are the same on the build
+    host, so a throwaway harness (not committed) in package `main` put fake
+    iCommands on `PATH`, with `iuserinfo` reporting iRODS user
+    `ci_irods_user` in groups `ci_irods_user` and `public`, and recorded the
+    `ichmod` calls of `denyRemoteChanges(t, "/zone/obj")` plus its restore:
+    `CGO_ENABLED=1 go test -tags netgo -count 1 -timeout 10m -run
+    TestScratchDenyRemoteChangesUsesIRODSUser .` exited 1:
+
+    ```text
+    Expected: []string{"read public /zone/obj", "read ci_irods_user /zone/obj", "own ci_irods_user /zone/obj"}
+    Actual:   []string{"read [REDACTED-os-user] /zone/obj", "read ci_irods_user /zone/obj", "read public /zone/obj", "own [REDACTED-os-user] /zone/obj"}
+    ```
+
+    It also shows develop's helper downgrading the user before its groups
+    and restoring with a plain `ichmod own`, which the container-zone fixes
+    in `TestTrashRemove` had changed (user last, restore via `GrantOwn`,
+    since iRODS 4.3 users cannot take back own access). The CI container-zone
+    run (rodsuser `ibackup`, OS user `runner`) is the end-to-end red/green
+    evidence once pushed.
+  - Fix: `main_test.go` `denyRemoteChanges` takes the name and groups from
+    `testutil.ICommander.UserInfo()`, downgrades the groups other than the
+    user's own-name group first and the user last, and restores (explicitly
+    and on Convey reset) with `GrantOwn`. Its callers are in `TestRemove`,
+    `TestTrashRemove` (twice) and `TestEdit`.
+    The harness above then passed (exit 0) on the final rebase.
+  - Other OS-user uses checked after the rebase: no other test passes
+    `user.Current()` or `$USER` to an iCommand. The remaining uses compare
+    ibackup's requester metadata or set owner (`main_test.go`
+    `TestTrashRemove` "different user" block and `TestStatus` requester
+    output, `server/server_test.go` admin), local file ownership
+    (`TestManualMode`), or the speed benchmark's set owner
+    (`developers/speed/upload_test.go`); those are ibackup's local user names,
+    not iRODS ones, so they stay.
+  - Gates (2026-10-13/14, on `origin/develop` `5bb2013bce57` plus this
+    branch, live test zone): `make lint` 0 issues; `make test` exit 0 (27
+    main tests passed, including `TestRemove`, `TestTrashRemove` and
+    `TestEdit`; all sub-packages ok); `make race` exit 0 (27 main tests
+    passed, no data races; all sub-packages ok); `make speed` passed
+    (BenchmarkUpload +0.8%, BenchmarkRemove +8.1%, both under the 10%
+    limit; the diff is test-only, so the Remove change is noise).
+  - Review: PASS (clean-context reviewer checked the rebase with
+    range-diff (nothing lost from either side; wr v0.39.0 matches go.mod),
+    reproduced the fake-iCommand red and green including the Convey reset
+    restore, accepted CI's container zone as the end-to-end evidence, and
+    re-ran make lint and make test).
 - [ ] `remove/remove.go` `UpdateSetsAndRequestersOnRemoteFile` builds
   `metaToRemove` from `meta[sets]` and `meta[requester]` without checking
   either is present, so an object lacking one of those AVUs gets a baton
