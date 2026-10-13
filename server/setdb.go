@@ -1612,8 +1612,9 @@ func (s *Server) getRequests(c *gin.Context) {
 // reserveRequests keeps reserving items from our queue until we have total
 // requests/s.numClients (but max 100) of them, or the queue is empty.
 //
-// Hardlink requests whose remote inode file is being worked on by a different
-// client are not returned; they wait in the queue until that client is done
+// Requests whose remote data object is being worked on by a different client
+// (eg. hardlinks sharing a remote inode file, or another set's request for the
+// same file) are not returned; they wait in the queue until that client is done
 // with it.
 //
 // Returns the Requests in the items.
@@ -1654,7 +1655,7 @@ func (s *Server) reserveRequests() ([]*transfer.Request, error) {
 	return requests, nil
 }
 
-// releaseUnclaimedRequest releases a reserved request whose remote hardlink
+// releaseUnclaimedRequest releases a reserved request whose remote data object
 // couldn't be claimed, so it is retried instead of staying reserved until its
 // TTR expires. Like removal retries, the release is delayed by retryDelay; this
 // also stops reserveRequests immediately reserving it again. If the release
@@ -1662,7 +1663,7 @@ func (s *Server) reserveRequests() ([]*transfer.Request, error) {
 func (s *Server) releaseUnclaimedRequest(r *transfer.Request, claimErr error) {
 	rid := r.ID()
 
-	s.Logger.Printf("failed to claim remote hardlink for rid=%s: %s", rid, claimErr)
+	s.Logger.Printf("failed to claim remote data object for rid=%s: %s", rid, claimErr)
 
 	if err := s.queue.SetDelay(rid, retryDelay); err != nil {
 		s.Logger.Printf("request retry delay set failed rid=%s delay=%s err=%s", rid, retryDelay, err)
@@ -1944,14 +1945,15 @@ func (s *Server) updateFileStatus(r *transfer.Request) error {
 
 // handleNewlyCompletedSets gets the set the given request is for, and if it has
 // completed, carries out actions needed for newly completed sets: trigger the
-// monitoring countdown, and do a database backup.
+// monitoring countdown, and do a database backup. A set deleted since the
+// request's status was recorded has nothing to handle.
 func (s *Server) handleNewlyCompletedSets(r *transfer.Request) error {
 	completed, err := s.db.GetByNameAndRequester(r.Set, r.Requester)
 	if err != nil {
 		return err
 	}
 
-	if completed.Status != set.Complete {
+	if completed == nil || completed.Status != set.Complete {
 		return nil
 	}
 
@@ -1971,12 +1973,55 @@ func (s *Server) trackUploadingAndStuckRequests(r *transfer.Request, entry *set.
 
 	s.uploadTracker.uploadFinished(r)
 
-	return s.removeOrReleaseRequestFromQueue(r, entry)
+	if err := s.removeOrReleaseRequestFromQueue(r, entry); err != nil {
+		return err
+	}
+
+	if r.Status != transfer.RequestStatusFailed {
+		s.requeueIfRediscovered(r, entry)
+	}
+
+	return nil
+}
+
+// requeueIfRediscovered adds the given finished request's entry back to our
+// queue if a discovery completed after its result was recorded. That discovery
+// wants the entry uploaded again, but its enqueue would have skipped it as a
+// duplicate if it ran before we removed the request from the queue. A set
+// deleted since the result was recorded has nothing to requeue. Errors are
+// logged, since the result itself was recorded.
+func (s *Server) requeueIfRediscovered(r *transfer.Request, recorded *set.Entry) {
+	given, err := s.db.GetByNameAndRequester(r.Set, r.Requester)
+	if err == nil && given != nil && given.LastDiscovery.After(recorded.LastAttempt) {
+		err = s.requeueEntry(given, r.Local)
+	}
+
+	if err != nil {
+		s.Logger.Printf("request requeue after rediscovery failed rid=%s err=%s", r.ID(), err)
+	}
+}
+
+// requeueEntry adds the given set's entry for the given path to our queue if
+// discovery would.
+func (s *Server) requeueEntry(given *set.Set, path string) error {
+	entry, err := s.db.GetFileEntryForSet(given.ID(), path)
+	if err != nil || !entry.ShouldUpload(given) {
+		return err
+	}
+
+	transformer, err := given.MakeTransformer()
+	if err != nil {
+		return err
+	}
+
+	_, err = s.enqueueEntries([]*set.Entry{entry}, given, transformer)
+
+	return err
 }
 
 // removeOrReleaseRequestFromQueue removes the given Request from our queue
 // unless it has failed. < 3 failures results in it being released, 3 results in
-// it being buried. Either way, any claim it has on a remote inode file is
+// it being buried. Either way, any claim it has on a remote data object is
 // released.
 func (s *Server) removeOrReleaseRequestFromQueue(r *transfer.Request, entry *set.Entry) error {
 	return errors.Join(s.moveFinishedRequestInQueue(r, entry), s.remoteClaims.release(r))

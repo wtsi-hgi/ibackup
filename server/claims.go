@@ -41,9 +41,10 @@ type claimQueue interface {
 	SatisfyDependency(ctx context.Context, key string) error
 }
 
-// remoteClaims makes sure that hardlink requests which share a remote inode file
-// are only given to one put client at a time. Concurrent uploads of the same
-// iRODS object from different clients fail with
+// remoteClaims makes sure that requests which upload to the same remote data
+// object (such as hardlinks sharing a remote inode file, or different sets'
+// requests for the same file) are only given to one put client at a time.
+// Concurrent uploads of the same iRODS object from different clients fail with
 // CATALOG_ALREADY_HAS_ITEM_BY_THAT_NAME, whereas a single client handles such
 // requests sequentially.
 type remoteClaims struct {
@@ -61,10 +62,9 @@ func newRemoteClaims(q *queue.Queue) *remoteClaims {
 	}
 }
 
-// claim claims the remote inode file of the given hardlink request, which must
-// be running in our queue, for the batch of requests being given to one client.
-// The batch map records the paths claimed for that batch. Requests that aren't
-// hardlinks are always claimable.
+// claim claims the remote data object (RemoteDataPath()) of the given request,
+// which must be running in our queue, for the batch of requests being given to
+// one client. The batch map records the paths claimed for that batch.
 //
 // A claim the request still holds from an earlier reservation (because it was
 // abandoned by a dead client, or released for retry) is stale and is given up
@@ -73,11 +73,7 @@ func newRemoteClaims(q *queue.Queue) *remoteClaims {
 // If a different client already holds the claim, the request is instead
 // requeued to wait until the claim is released, and false is returned.
 func (rc *remoteClaims) claim(r *transfer.Request, batch map[string]bool) (bool, error) {
-	if r.Hardlink == "" {
-		return true, nil
-	}
-
-	path := r.Hardlink
+	path := r.RemoteDataPath()
 	rid := r.ID()
 
 	rc.Lock()
@@ -111,7 +107,7 @@ func (rc *remoteClaims) hold(rid, path string) {
 	rc.paths[rid] = path
 }
 
-// release gives up the given request's claim on its remote inode file. Once no
+// release gives up the given request's claim on its remote data object. Once no
 // request holds the claim, requests waiting on it become ready to be reserved.
 func (rc *remoteClaims) release(r *transfer.Request) error {
 	rid := r.ID()

@@ -470,6 +470,46 @@ func TestPutMock(t *testing.T) {
 			So(lh.Meta[remotePath]["aKey"], ShouldEqual, "cValue")
 			So(lh.Meta[remotePath]["bKey"], ShouldEqual, "yetAnotherValue")
 		})
+
+		Convey("Hardlinks to the same inode with Remotes in different collections all upload", func() {
+			localDir := t.TempDir()
+			local1 := filepath.Join(localDir, "dir1", "file.link1")
+			local2 := filepath.Join(localDir, "dir2", "file.link2")
+
+			So(os.MkdirAll(filepath.Dir(local1), internal.UserPerms), ShouldBeNil)
+			So(os.MkdirAll(filepath.Dir(local2), internal.UserPerms), ShouldBeNil)
+			internal.CreateTestFile(t, local1, "abc123")
+			So(os.Link(local1, local2), ShouldBeNil)
+
+			remoteDir := t.TempDir()
+			inodeRemote := filepath.Join(remoteDir, "mountpoints", "inode.file")
+			remote1 := filepath.Join(remoteDir, "remote1", "file.link1")
+			remote2 := filepath.Join(remoteDir, "remote2", "file.link2")
+
+			request1 := &Request{
+				Local: local1, Remote: remote1, Hardlink: inodeRemote, Set: "aSet",
+				Meta: &Meta{LocalMeta: map[string]string{}},
+			}
+			request2 := &Request{
+				Local: local2, Remote: remote2, Hardlink: inodeRemote, Set: "bSet",
+				Meta: &Meta{LocalMeta: map[string]string{}},
+			}
+
+			_, _, statusCounts := uploadRequests(t, lh, []*Request{request1, request2})
+
+			So(statusCounts[RequestStatusFailed], ShouldEqual, 0)
+
+			for _, remote := range []string{remote1, remote2} {
+				info, errs := os.Stat(remote)
+				So(errs, ShouldBeNil)
+				So(info.Size(), ShouldEqual, 0)
+				So(lh.Meta[remote][MetaKeyRemoteHardlink], ShouldEqual, inodeRemote)
+			}
+
+			info, errs := os.Stat(inodeRemote)
+			So(errs, ShouldBeNil)
+			So(info.Size(), ShouldEqual, len("abc123"))
+		})
 	})
 
 	Convey("CreateCollections() also works with 0 or 1 requests", t, func() {
