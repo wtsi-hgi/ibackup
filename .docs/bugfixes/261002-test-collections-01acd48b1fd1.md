@@ -1,8 +1,8 @@
 # Bugfixes 2026-10-02: test collections
 
 - Branch: `bugfix-test-collections-01acd48b1fd1`
-- Base: `origin/develop` at `ce92caecdc7a` (#194 merged; rebased
-  2026-10-07)
+- Base: `origin/develop` at `c95b73fab4c4` (#197 merged; rebased
+  2026-10-13)
 - Sequenced after upload-concurrency for review and merge; no code
   dependency.
 - Queue owner: `bugfix-set-counts-abca77d4de3c`,
