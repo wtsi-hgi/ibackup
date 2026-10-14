@@ -7569,6 +7569,358 @@ func TestServer(t *testing.T) {
 					So(slackWriter.String(), ShouldNotContainSubstring, "has failed uploads")
 				})
 
+				Convey("A metadata edit while a set's uploads are still queued is uploaded with the new metadata", func() {
+					const metaKey = transfer.MetaUserNamespace + "colour"
+
+					mset := &set.Set{
+						Name:        "mset",
+						Requester:   "jim",
+						Transformer: "prefix=" + localDir + ":" + remoteDir,
+						Metadata:    map[string]string{metaKey: "red"},
+					}
+
+					setDir := t.TempDir()
+
+					for n := range 2 {
+						internal.CreateTestFileOfLength(t, filepath.Join(setDir, "file"+strconv.Itoa(n)), n+1)
+					}
+
+					err = client.AddOrUpdateSet(mset)
+					So(err, ShouldBeNil)
+
+					err = client.MergeDirs(mset.ID(), []string{setDir})
+					So(err, ShouldBeNil)
+
+					err = client.TriggerDiscovery(mset.ID(), false)
+					So(err, ShouldBeNil)
+
+					So(<-racCalled, ShouldBeTrue)
+
+					gotSet, errg := client.GetSetByID(mset.Requester, mset.ID())
+					So(errg, ShouldBeNil)
+					So(gotSet.Status, ShouldEqual, set.PendingUpload)
+
+					firstDiscovery := gotSet.LastDiscovery
+					gotSet.Metadata = map[string]string{metaKey: "blue"}
+
+					err = client.AddOrUpdateSet(gotSet)
+					So(err, ShouldBeNil)
+
+					err = client.TriggerDiscovery(mset.ID(), false)
+					So(err, ShouldBeNil)
+
+					testutil.Eventually(t, 5*time.Second, 10*time.Millisecond, func() bool {
+						got, errs := client.GetSetByID(mset.Requester, mset.ID())
+
+						return errs == nil && got.LastDiscovery.After(firstDiscovery) &&
+							!got.LastDiscovery.Before(got.StartedDiscovery)
+					}, "the edit's discovery to finish")
+
+					requests, errg := client.GetSomeUploadRequests()
+					So(errg, ShouldBeNil)
+					So(len(requests), ShouldEqual, 2)
+
+					for _, r := range requests {
+						So(r.Meta.LocalMeta[metaKey], ShouldEqual, "blue")
+					}
+
+					p, d := makePutter(t, handler, requests, client)
+					defer d()
+
+					uploadStarts, uploadResults, skippedResults := p.Put()
+
+					err = client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults,
+						minMBperSecondUploadSpeed, minTimeForUpload, maxStuckTime, logger)
+					So(err, ShouldBeNil)
+
+					for _, r := range requests {
+						remoteMeta, errm := handler.GetMeta(r.Remote)
+						So(errm, ShouldBeNil)
+						So(remoteMeta[metaKey], ShouldEqual, "blue")
+					}
+
+					gotSet, err = client.GetSetByID(mset.Requester, mset.ID())
+					So(err, ShouldBeNil)
+					So(gotSet.Status, ShouldEqual, set.Complete)
+					So(gotSet.Uploaded, ShouldEqual, 2)
+				})
+
+				Convey("A metadata edit after a set's uploads failed gives the new metadata to their retries, "+
+					"keeping a buried request's error", func() {
+					const metaKey = transfer.MetaUserNamespace + "colour"
+
+					fset := &set.Set{
+						Name:        "fset",
+						Requester:   "jim",
+						Transformer: "prefix=" + localDir + ":" + remoteDir,
+						Metadata:    map[string]string{metaKey: "red"},
+					}
+
+					setDir := t.TempDir()
+
+					for n := range 2 {
+						internal.CreateTestFileOfLength(t, filepath.Join(setDir, "file"+strconv.Itoa(n)), n+1)
+					}
+
+					err = client.AddOrUpdateSet(fset)
+					So(err, ShouldBeNil)
+
+					err = client.MergeDirs(fset.ID(), []string{setDir})
+					So(err, ShouldBeNil)
+
+					err = client.TriggerDiscovery(fset.ID(), false)
+					So(err, ShouldBeNil)
+
+					So(<-racCalled, ShouldBeTrue)
+
+					requests, errg := client.GetSomeUploadRequests()
+					So(errg, ShouldBeNil)
+					So(len(requests), ShouldEqual, 2)
+
+					sort.Slice(requests, func(i, j int) bool { return requests[i].Local < requests[j].Local })
+
+					// file0 gets buried and file1 fails once, so is released to
+					// be retried, both queued with the data the client sent.
+					buried, retrying := requests[0], requests[1]
+
+					for attempt := 1; attempt <= set.AttemptsToBeConsideredFailing; attempt++ {
+						if attempt > 1 {
+							retried, errr := client.GetSomeUploadRequests()
+							So(errr, ShouldBeNil)
+							So(len(retried), ShouldEqual, 1)
+
+							buried = retried[0]
+						}
+
+						buried.Status = transfer.RequestStatusUploading
+						So(client.UpdateFileStatus(buried), ShouldBeNil)
+
+						buried.Status = transfer.RequestStatusFailed
+						buried.Error = uploadFailedErr
+						So(client.UpdateFileStatus(buried), ShouldBeNil)
+
+						if attempt == 1 {
+							s.failedUploadRetryDelay = time.Hour
+
+							retrying.Status = transfer.RequestStatusUploading
+							So(client.UpdateFileStatus(retrying), ShouldBeNil)
+
+							retrying.Status = transfer.RequestStatusFailed
+							retrying.Error = uploadFailedErr
+							So(client.UpdateFileStatus(retrying), ShouldBeNil)
+
+							s.failedUploadRetryDelay = 0
+						}
+					}
+
+					stats := s.queue.Stats()
+					So(stats.Buried, ShouldEqual, 1)
+					So(stats.Delayed, ShouldEqual, 1)
+
+					gotSet, errs := client.GetSetByID(fset.Requester, fset.ID())
+					So(errs, ShouldBeNil)
+
+					firstDiscovery := gotSet.LastDiscovery
+					gotSet.Metadata = map[string]string{metaKey: "blue"}
+
+					err = client.AddOrUpdateSet(gotSet)
+					So(err, ShouldBeNil)
+
+					err = client.TriggerDiscovery(fset.ID(), false)
+					So(err, ShouldBeNil)
+
+					testutil.Eventually(t, 5*time.Second, 10*time.Millisecond, func() bool {
+						got, errs := client.GetSetByID(fset.Requester, fset.ID())
+
+						return errs == nil && got.LastDiscovery.After(firstDiscovery) &&
+							!got.LastDiscovery.Before(got.StartedDiscovery)
+					}, "the edit's discovery to finish")
+
+					buriedRequests, errb := client.BuriedRequests()
+					So(errb, ShouldBeNil)
+					So(len(buriedRequests), ShouldEqual, 1)
+					So(buriedRequests[0].Local, ShouldEqual, buried.Local)
+					So(buriedRequests[0].Error, ShouldEqual, uploadFailedErr)
+					So(buriedRequests[0].Meta.LocalMeta[metaKey], ShouldEqual, "blue")
+
+					delayed, errq := s.queue.Get(retrying.ID())
+					So(errq, ShouldBeNil)
+					So(delayed.Stats().State, ShouldEqual, queue.ItemStateDelay)
+
+					delayedRequest, ok := delayed.Data().(*transfer.Request)
+					So(ok, ShouldBeTrue)
+					So(delayedRequest.Meta.LocalMeta[metaKey], ShouldEqual, "blue")
+
+					n, errr := client.RetryBuried(&BuriedFilter{User: fset.Requester, Set: fset.Name})
+					So(errr, ShouldBeNil)
+					So(n, ShouldEqual, 1)
+
+					requests, errg = client.GetSomeUploadRequests()
+					So(errg, ShouldBeNil)
+					So(len(requests), ShouldEqual, 1)
+					So(requests[0].Local, ShouldEqual, buried.Local)
+					So(requests[0].Meta.LocalMeta[metaKey], ShouldEqual, "blue")
+				})
+
+				Convey("A symlink re-pointed while its upload is still queued is uploaded with its new destination", func() {
+					lset := &set.Set{
+						Name:        "lset",
+						Requester:   "jim",
+						Transformer: "prefix=" + localDir + ":" + remoteDir,
+					}
+
+					setDir := t.TempDir()
+					oldDest := filepath.Join(setDir, "old")
+					newDest := filepath.Join(setDir, "new")
+					link := filepath.Join(setDir, "link")
+
+					internal.CreateTestFileOfLength(t, oldDest, 1)
+					internal.CreateTestFileOfLength(t, newDest, 2)
+					So(os.Symlink(oldDest, link), ShouldBeNil)
+
+					err = client.AddOrUpdateSet(lset)
+					So(err, ShouldBeNil)
+
+					err = client.MergeFiles(lset.ID(), []string{link})
+					So(err, ShouldBeNil)
+
+					err = client.TriggerDiscovery(lset.ID(), false)
+					So(err, ShouldBeNil)
+
+					So(<-racCalled, ShouldBeTrue)
+
+					gotSet, errg := client.GetSetByID(lset.Requester, lset.ID())
+					So(errg, ShouldBeNil)
+					So(gotSet.Status, ShouldEqual, set.PendingUpload)
+
+					firstDiscovery := gotSet.LastDiscovery
+
+					So(os.Remove(link), ShouldBeNil)
+					So(os.Symlink(newDest, link), ShouldBeNil)
+
+					err = client.TriggerDiscovery(lset.ID(), false)
+					So(err, ShouldBeNil)
+
+					testutil.Eventually(t, 5*time.Second, 10*time.Millisecond, func() bool {
+						got, errs := client.GetSetByID(lset.Requester, lset.ID())
+
+						return errs == nil && got.LastDiscovery.After(firstDiscovery) &&
+							!got.LastDiscovery.Before(got.StartedDiscovery)
+					}, "the second discovery to finish")
+
+					requests, errg := client.GetSomeUploadRequests()
+					So(errg, ShouldBeNil)
+					So(len(requests), ShouldEqual, 1)
+					So(requests[0].Symlink, ShouldEqual, newDest)
+					So(requests[0].Meta.LocalMeta[transfer.MetaKeySymlink], ShouldEqual, newDest)
+
+					p, d := makePutter(t, handler, requests, client)
+					defer d()
+
+					uploadStarts, uploadResults, skippedResults := p.Put()
+
+					err = client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults,
+						minMBperSecondUploadSpeed, minTimeForUpload, maxStuckTime, logger)
+					So(err, ShouldBeNil)
+
+					remoteMeta, errm := handler.GetMeta(requests[0].Remote)
+					So(errm, ShouldBeNil)
+					So(remoteMeta[transfer.MetaKeySymlink], ShouldEqual, newDest)
+
+					gotSet, err = client.GetSetByID(lset.Requester, lset.ID())
+					So(err, ShouldBeNil)
+					So(gotSet.Status, ShouldEqual, set.Complete)
+					So(gotSet.Uploaded, ShouldEqual, 1)
+				})
+
+				Convey("Hard links re-created while their uploads are still queued are uploaded to their new inode", func() {
+					hardlinksDir := filepath.Join(remoteDir, "mountpoints")
+					s.SetRemoteHardlinkLocation(hardlinksDir)
+
+					hset := &set.Set{
+						Name:        "hset",
+						Requester:   "jim",
+						Transformer: "prefix=" + localDir + ":" + remoteDir,
+					}
+
+					setDir := t.TempDir()
+					path1 := filepath.Join(setDir, "link1")
+					path2 := filepath.Join(setDir, "link2")
+
+					internal.CreateTestFileOfLength(t, path1, 1)
+					So(os.Link(path1, path2), ShouldBeNil)
+
+					err = client.AddOrUpdateSet(hset)
+					So(err, ShouldBeNil)
+
+					err = client.MergeFiles(hset.ID(), []string{path1, path2})
+					So(err, ShouldBeNil)
+
+					err = client.TriggerDiscovery(hset.ID(), false)
+					So(err, ShouldBeNil)
+
+					So(<-racCalled, ShouldBeTrue)
+
+					gotSet, errg := client.GetSetByID(hset.Requester, hset.ID())
+					So(errg, ShouldBeNil)
+					So(gotSet.Status, ShouldEqual, set.PendingUpload)
+
+					firstDiscovery := gotSet.LastDiscovery
+
+					// make the new pair before removing the old one, so the new
+					// inode can't reuse the old one's number.
+					newPath1 := filepath.Join(setDir, "new1")
+					newPath2 := filepath.Join(setDir, "new2")
+
+					internal.CreateTestFileOfLength(t, newPath1, 2)
+					So(os.Link(newPath1, newPath2), ShouldBeNil)
+					So(os.Rename(newPath1, path1), ShouldBeNil)
+					So(os.Rename(newPath2, path2), ShouldBeNil)
+
+					info, errs := os.Stat(path1)
+					So(errs, ShouldBeNil)
+
+					statt, ok := info.Sys().(*syscall.Stat_t)
+					So(ok, ShouldBeTrue)
+
+					inodeFile := filepath.Join(hardlinksDir, path1, strconv.FormatUint(statt.Ino, 10))
+
+					err = client.TriggerDiscovery(hset.ID(), false)
+					So(err, ShouldBeNil)
+
+					testutil.Eventually(t, 5*time.Second, 10*time.Millisecond, func() bool {
+						got, errgs := client.GetSetByID(hset.Requester, hset.ID())
+
+						return errgs == nil && got.LastDiscovery.After(firstDiscovery) &&
+							!got.LastDiscovery.Before(got.StartedDiscovery)
+					}, "the second discovery to finish")
+
+					requests, errg := client.GetSomeUploadRequests()
+					So(errg, ShouldBeNil)
+					So(len(requests), ShouldEqual, 2)
+
+					sort.Slice(requests, func(i, j int) bool { return requests[i].Local < requests[j].Local })
+					So(requests[1].Local, ShouldEqual, path2)
+					So(requests[1].Hardlink, ShouldEqual, inodeFile)
+
+					p, d := makePutter(t, handler, requests, client)
+					defer d()
+
+					uploadStarts, uploadResults, skippedResults := p.Put()
+
+					err = client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults,
+						minMBperSecondUploadSpeed, minTimeForUpload, maxStuckTime, logger)
+					So(err, ShouldBeNil)
+
+					remoteMeta, errm := handler.GetMeta(requests[1].Remote)
+					So(errm, ShouldBeNil)
+					So(remoteMeta[transfer.MetaKeyRemoteHardlink], ShouldEqual, inodeFile)
+
+					info, errs = os.Stat(inodeFile)
+					So(errs, ShouldBeNil)
+					So(info.Size(), ShouldEqual, 2)
+				})
+
 				Convey("The queue correctly recovers on a restart", func() {
 					s.maxQueueLength = 4
 

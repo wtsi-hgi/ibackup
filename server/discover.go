@@ -31,6 +31,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -635,7 +636,8 @@ func (s *Server) enqueueSetFiles(given *set.Set, transformer transformer.PathTra
 // enqueueEntries converts the given entries to requests, stores those in items
 // and adds them the in-memory queue. Entries whose requests are already in the
 // queue are skipped as duplicates, so that they don't take the place of new
-// requests when the queue limit is reached.
+// requests when the queue limit is reached, but a queued one not yet running is
+// first given its new request's metadata, in case the set's metadata changed.
 //
 // Returns true if only some of the items were added to the queue due to
 // reaching the queue limit.
@@ -657,7 +659,7 @@ func (s *Server) enqueueEntries(entries []*set.Entry, given *set.Set, transforme
 			return false, err
 		}
 
-		if _, err = s.queue.Get(r.ID()); err == nil {
+		if item, errg := s.queue.Get(r.ID()); errg == nil && s.updateQueuedMeta(item, r) {
 			queuedDups++
 
 			continue
@@ -705,6 +707,37 @@ func (s *Server) enqueueEntries(entries []*set.Entry, given *set.Set, transforme
 	}
 
 	return hitLimit, err
+}
+
+// updateQueuedMeta gives the given queued item's request the given request's
+// metadata (and the Symlink and Hardlink derived from the same entry), if
+// different, unless the item is running: a put client then already has the old
+// metadata, and its result will replace the queued request, so an update made
+// from data read before that result arrives must not overwrite it. Returns false
+// if the item is no longer in the queue.
+func (s *Server) updateQueuedMeta(item *queue.Item, r *transfer.Request) bool {
+	stats := item.Stats()
+	if stats.State == queue.ItemStateRun {
+		return true
+	}
+
+	queued := item.Data().(*transfer.Request) //nolint:errcheck,forcetypeassert
+	same := maps.Equal(queued.Meta.LocalMeta, r.Meta.LocalMeta) &&
+		queued.Symlink == r.Symlink && queued.Hardlink == r.Hardlink
+
+	if same {
+		return true
+	}
+
+	updated := queued.Clone()
+	updated.Meta = r.Meta
+	updated.Symlink = r.Symlink
+	updated.Hardlink = r.Hardlink
+
+	_, err := s.queue.UpdateUnlessRunning(context.Background(), item.Key, "", updated,
+		stats.Priority, stats.Delay, stats.TTR, nil, func() {})
+
+	return err == nil
 }
 
 // entryToRequest converts an Entry to a Request containing details of the given
