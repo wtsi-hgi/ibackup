@@ -195,3 +195,27 @@
     confirmed the 4.3.5 exit 1 vs 4.2.7 exit 0 in upstream `src/iquest.cpp`,
     checked a real error or leading stderr text still surfaces, and re-ran
     make lint and make test).
+- [x] "Add to 196 to make the CI jobs parallel."
+  - Source: user request on PR #196 (2026-10-14); the one `test` job ran
+    `make -k test` (about 14 minutes) then `make -k race` (about 15.5
+    minutes) after the same setup, about 31 minutes in all.
+  - Files: `.github/workflows/tests.yml`.
+  - Approach: the `test` job gains a `fail-fast: false` matrix over the make
+    target (`test`, `race`), so each target runs in its own job with the
+    full setup (iRODS server, Go, Singularity, client wrappers, client
+    config, wr manager). One step runs `make -k ${{ matrix.target }}` with
+    `MAIN_TEST_LOG_DIR` and `IBACKUP_TEST_LOG_DIR` under
+    `test-logs/<target>/`, as before; the `steps.tests.outcome` gating is
+    gone. The server-log-on-failure step is unchanged and the log artifact
+    is `test-logs-<target>`. The job's `name` is the target, so the checks
+    are `test` and `race`: develop's branch protection requires `lint` and
+    `test`, which still match, and `race` is not yet required (master has
+    no required status checks).
+  - Validation: actionlint (latest, via `go run`) 0 errors on all
+    workflows (shellcheck and pyflakes not installed, so those rules were
+    skipped); `make lint` 0 issues. CI on PR #196 is the end-to-end
+    evidence, expected as two parallel jobs taking about 16 minutes
+    wall-clock.
+  - Review: PASS (clean-context reviewer: matrix jobs self-contained, a
+    concurrent cache save only warns, check names exactly `test` and
+    `race`, actionlint and make lint clean).

@@ -19,6 +19,16 @@ defaults:
 
 jobs:
   test:
+    # The plain and race-detecting test runs each take about 15 minutes, so
+    # they run as parallel jobs, each with its own iRODS zone and wr manager.
+    # The check names are the make targets: "test" and "race".
+    name: ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+        - test
+        - race
     runs-on: ubuntu-24.04
     timeout-minutes: 120
 
@@ -157,19 +167,11 @@ jobs:
         "$gobin/wr" manager status --deployment "$IBACKUP_TEST_SCHEDULER"
 
     # -k so that main-package failures don't stop the sub-package tests
-    - name: Run tests
-      id: tests
-      run: make -k test
+    - name: Run make ${{ matrix.target }}
+      run: make -k ${{ matrix.target }}
       env:
-        MAIN_TEST_LOG_DIR: ${{ runner.temp }}/test-logs/test/main
-        IBACKUP_TEST_LOG_DIR: ${{ runner.temp }}/test-logs/test/servers
-
-    - name: Run tests with race detection
-      if: ${{ !cancelled() && steps.tests.outcome != 'skipped' }}
-      run: make -k race
-      env:
-        MAIN_TEST_LOG_DIR: ${{ runner.temp }}/test-logs/race/main
-        IBACKUP_TEST_LOG_DIR: ${{ runner.temp }}/test-logs/race/servers
+        MAIN_TEST_LOG_DIR: ${{ runner.temp }}/test-logs/${{ matrix.target }}/main
+        IBACKUP_TEST_LOG_DIR: ${{ runner.temp }}/test-logs/${{ matrix.target }}/servers
 
     - name: Show iRODS server log
       if: ${{ failure() }}
@@ -179,7 +181,7 @@ jobs:
       if: ${{ failure() }}
       uses: actions/upload-artifact@v4
       with:
-        name: test-logs
+        name: test-logs-${{ matrix.target }}
         path: ${{ runner.temp }}/test-logs
         if-no-files-found: ignore
         retention-days: 14
