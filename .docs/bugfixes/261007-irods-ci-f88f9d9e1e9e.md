@@ -130,3 +130,68 @@
     v1.2.15) and wtsi-hgi/go-authserver#8 (released v1.6.1). ibackup now
     requires go-authserver v1.6.1, which pulls in the fork. CI's `make race`
     is the evidence here.
+- [x] `internal/testutil` `TestSweepStaleIRODSCollections` fails in both
+  `make test` and `make race`:
+
+  ```text
+  Expected: nil
+  Actual:   'iquest failed: exit status 1: CAT_NO_ROWS_FOUND: Nothing was found matching your query'
+  --- FAIL: TestSweepStaleIRODSCollections (4.49s)
+  ```
+
+  and the sweep also logs `WARN failed to remove stale iRODS test
+  collections base=/testZone/home/ibackup/ibackup_testsuite err="iquest
+  failed: exit status 1: CAT_NO_ROWS_FOUND: Nothing was found matching your
+  query"`. The sweep code (internal/testutil/collection_sweep.go, from #200,
+  merged to develop) is meant to treat CAT_NO_ROWS_FOUND as an empty listing,
+  but its detection doesn't match iquest's output on iRODS 4.3.5 (the live
+  zone is 4.2.7, where it works). Every other test in the CI run passed.
+  - Source: PR #196 CI run 38498620840
+  - Cause: for a general query with no rows, both versions' `iquest` print
+    `CAT_NO_ROWS_FOUND: Nothing was found matching your query` to stdout,
+    but 4.2.7 exits 0 (checked on the live zone with a query on a missing
+    parent: exit 0, stdout only, stderr empty) while 4.3.5 exits 1
+    (`irods_client_icommands` `src/iquest.cpp` at tag 4.3.5: `printf(...);
+    return 1;`, against `exit(0)` at 4.2.7; other query errors exit 4).
+    `listIRODSSubcollections` returned on any non-zero exit before
+    `parseIquestCollections` could see the no-rows message.
+  - Red (2026-10-14): `TestListIRODSSubcollections` gained a fake `iquest`
+    on `PATH` printing the no-rows message and exiting 0 or 1:
+    `CGO_ENABLED=1 go test -tags netgo -count 1 -timeout 5m -run
+    TestListIRODSSubcollections ./internal/testutil` exited 1:
+
+    ```text
+    Line 102:
+    Expected: nil
+    Actual:   'iquest failed: exit status 1: CAT_NO_ROWS_FOUND: Nothing was found matching your query'
+    --- FAIL: TestListIRODSSubcollections (0.01s)
+    ```
+
+  - Files: `internal/testutil/collection_sweep.go`,
+    `internal/testutil/collection_sweep_test.go`.
+  - Fix: `listIRODSSubcollections` only returns iquest's error when its
+    output does not start with `CAT_NO_ROWS_FOUND`, so either exit status
+    with that output reaches `parseIquestCollections`, which returns no
+    collections. The new test also covers a row being listed, and a failed
+    query (exit 4, error on stderr) still returning `iquest failed: exit
+    status 4: ...` with iquest's output.
+  - Green: the red command exited 0; `TestParseIquestCollections`,
+    `TestListIRODSSubcollections`, `TestSweepStaleCollections` and
+    `TestSweepStaleIRODSCollections` (live zone) passed. CI's 4.3.5 zone is
+    the end-to-end evidence once pushed.
+  - Mutants (scratch worktree, all killed by the testutil unit tests): the
+    original `err != nil` check; never returning the error; `||` for `&&`;
+    the prefix check negated; `parseIquestCollections` without its no-rows
+    check.
+  - Gates (2026-10-14, live test zone): `make lint` 0 issues; `make test`
+    exit 0 (27 main tests passed, all sub-packages ok, no sweep warnings);
+    `make race` exit 0 on the second run (27 main tests, no data races, all
+    sub-packages ok); the first run failed `TestEdit` "And a set with
+    discovered file" at `main_test.go:4165` (`status not found`; the set's
+    one upload stayed `1 queued; 0 reserved` for the 2-minute wait), which
+    this testutil-only diff cannot reach; `make speed` passed
+    (BenchmarkUpload -1.3%, BenchmarkRemove -1.7%).
+  - Review: PASS (clean-context reviewer reproduced red and green,
+    confirmed the 4.3.5 exit 1 vs 4.2.7 exit 0 in upstream `src/iquest.cpp`,
+    checked a real error or leading stderr text still surfaces, and re-ran
+    make lint and make test).

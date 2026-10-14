@@ -99,7 +99,10 @@ func listIRODSSubcollections(base string) ([]testCollection, error) {
 	query := fmt.Sprintf("select COLL_CREATE_TIME, COLL_NAME where COLL_PARENT_NAME = '%s'", base)
 
 	out, err := exec.CommandContext(ctx, "iquest", "--no-page", "%s %s", query).CombinedOutput() //nolint:gosec
-	if err != nil {
+
+	// For no rows, iquest prints iquestNoRows and exits 0 before iRODS 4.3, but
+	// exits 1 from 4.3.
+	if err != nil && !strings.HasPrefix(string(out), iquestNoRows) {
 		return nil, fmt.Errorf("iquest failed: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 
