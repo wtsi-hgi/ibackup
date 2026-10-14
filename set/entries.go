@@ -131,8 +131,8 @@ type Entry struct {
 	// replaces it.
 	RemoteObject bool
 
-	// Retried is true if a user retry was requested for this entry after its
-	// retries ran out, and it has had no upload result since.
+	// Retried is true if a user or admin retry was requested for this entry
+	// after its retries ran out, and it has had no upload result since.
 	Retried bool
 
 	// countedStatus, countedSize and countedIn are the Status, Size and

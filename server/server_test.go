@@ -8072,6 +8072,132 @@ func TestServer(t *testing.T) {
 					So(gotSet.Uploaded, ShouldEqual, 2)
 					So(gotSet.Failed, ShouldEqual, 0)
 				})
+
+				Convey("An admin retry of buried files that haven't run by a restart is still done after it, "+
+					"for complete and incomplete sets, but not for buried files it didn't retry", func() {
+					// makeSet makes a set of new files with the given names in a new
+					// dir, adding the dir instead of the files if asDir, and discovers
+					// it.
+					makeSet := func(name, requester string, asDir bool, files ...string) *set.Set {
+						given := &set.Set{
+							Name:        name,
+							Requester:   requester,
+							Transformer: "prefix=" + localDir + ":" + remoteDir,
+							MonitorTime: 0,
+						}
+
+						setDir := t.TempDir()
+						paths := make([]string, len(files))
+
+						for n, file := range files {
+							paths[n] = filepath.Join(setDir, file)
+							internal.CreateTestFileOfLength(t, paths[n], 1)
+						}
+
+						So(client.AddOrUpdateSet(given), ShouldBeNil)
+
+						if asDir {
+							So(client.MergeDirs(given.ID(), []string{setDir}), ShouldBeNil)
+						} else {
+							So(client.MergeFiles(given.ID(), paths), ShouldBeNil)
+						}
+
+						So(client.TriggerDiscovery(given.ID(), false), ShouldBeNil)
+						So(<-racCalled, ShouldBeTrue)
+
+						return given
+					}
+
+					incompleteSet := makeSet("iset", "jim", false, "ifail", "ipending")
+					completeSet := makeSet("cset", "jim", true, "cfail")
+					otherSet := makeSet("oset", "fred", false, "ofail")
+
+					testutil.Eventually(t, 10*time.Second, 10*time.Millisecond, func() bool {
+						got, errg := client.GetSomeUploadRequests()
+						if errg != nil {
+							return false
+						}
+
+						for _, r := range got {
+							if filepath.Base(r.Local) == "ipending" {
+								So(s.queue.Release(context.Background(), r.ID()), ShouldBeNil)
+
+								continue
+							}
+
+							r.Status = transfer.RequestStatusUploading
+							So(client.UpdateFileStatus(r), ShouldBeNil)
+
+							r.Status = transfer.RequestStatusFailed
+							r.Error = uploadFailedErr
+							So(client.UpdateFileStatus(r), ShouldBeNil)
+						}
+
+						return s.queue.Stats().Buried == 3
+					}, "3 files buried")
+
+					for _, given := range []*set.Set{incompleteSet, completeSet, otherSet} {
+						gotSet, errs := client.GetSetByID(given.Requester, given.ID())
+						So(errs, ShouldBeNil)
+						So(gotSet.Failed, ShouldEqual, 1)
+						So(gotSet.Status == set.Complete, ShouldEqual, given != incompleteSet)
+					}
+
+					retried, errr := client.RetryBuried(&BuriedFilter{User: "jim"})
+					So(errr, ShouldBeNil)
+					So(retried, ShouldEqual, 2)
+
+					So(dfunc(), ShouldBeNil)
+
+					s, addr, dfunc = makeAndStartServer(0)
+
+					token, errl = gas.Login(gas.NewClientRequest(addr, certPath), admin, "pass")
+					So(errl, ShouldBeNil)
+
+					client = NewClient(addr, certPath, token)
+
+					var requested []string
+
+					testutil.Eventually(t, 10*time.Second, 10*time.Millisecond, func() bool {
+						got, errg := client.GetSomeUploadRequests()
+						if errg != nil {
+							return false
+						}
+
+						for _, r := range got {
+							requested = append(requested, filepath.Base(r.Local))
+
+							r.Status = transfer.RequestStatusUploading
+							So(client.UpdateFileStatus(r), ShouldBeNil)
+
+							r.Status = transfer.RequestStatusUploaded
+							So(client.UpdateFileStatus(r), ShouldBeNil)
+						}
+
+						return len(requested) >= 3
+					}, "the retried and pending files requested after the restart")
+
+					testutil.RequireStable(t, 250*time.Millisecond, 10*time.Millisecond, func() bool {
+						got, errg := client.GetSomeUploadRequests()
+
+						return errg == nil && len(got) == 0
+					}, "no more upload requests")
+
+					slices.Sort(requested)
+					So(requested, ShouldResemble, []string{"cfail", "ifail", "ipending"})
+
+					for given, uploadedAndFailed := range map[*set.Set][2]int{
+						incompleteSet: {2, 0},
+						completeSet:   {1, 0},
+						otherSet:      {0, 1},
+					} {
+						gotSet, errs := client.GetSetByID(given.Requester, given.ID())
+						So(errs, ShouldBeNil)
+						So(gotSet.Status, ShouldEqual, set.Complete)
+						So(gotSet.Uploaded, ShouldEqual, uploadedAndFailed[0])
+						So(gotSet.Failed, ShouldEqual, uploadedAndFailed[1])
+					}
+				})
 			})
 		})
 	})

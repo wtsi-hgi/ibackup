@@ -551,19 +551,54 @@ func (d *DB) UpdateEntry(sid, key string, entry *Entry) error {
 // (see Entry.ShouldBeQueued) until their next upload result.
 func (d *DB) MarkBuriedEntriesRetried(setID string) error {
 	return d.db.Update(func(tx *bolt.Tx) error {
-		buried := d.getFailedFileEntriesWithTx(tx, setID, func(e *Entry) bool {
-			return e.Status == Failed && e.Attempts%AttemptsToBeConsideredFailing == 0
-		})
+		setsBucket := tx.Bucket([]byte(setsBucket))
 
-		for _, entry := range buried {
-			_, b, err := d.getEntry(tx, setID, entry.Path)
+		for _, entry := range d.getFailedFileEntriesWithTx(tx, setID, nil) {
+			if err := d.markFileEntryRetried(setID, entry.Path, setsBucket); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
+}
+
+// markFileEntryRetried records a retry on the given set's file entry for path,
+// if it failed and its retries ran out. Does nothing if there's no such entry.
+func (d *DB) markFileEntryRetried(setID, path string, setsBucket *bolt.Bucket) error {
+	for _, kind := range []string{fileBucket, discoveredBucket} {
+		entry, b := d.getEntryFromSubbucket(kind, setID, path, setsBucket)
+		if entry == nil {
+			continue
+		}
+
+		if entry.Status != Failed || entry.Attempts%AttemptsToBeConsideredFailing != 0 {
+			return nil
+		}
+
+		entry.Retried = true
+
+		return b.Put([]byte(path), d.encodeToBytes(entry))
+	}
+
+	return nil
+}
+
+// MarkRequestsRetried records a retry on the file entry of each of the given
+// requests that failed and whose retries ran out, so that they are queued again
+// (see Entry.ShouldBeQueued) until their next upload result, even if the
+// requests are lost first, eg. on a server restart.
+func (d *DB) MarkRequestsRetried(rs []*transfer.Request) error {
+	return d.db.Update(func(tx *bolt.Tx) error {
+		setsBucket := tx.Bucket([]byte(setsBucket))
+
+		for _, r := range rs {
+			setID, err := requestToSetID(r)
 			if err != nil {
 				return err
 			}
 
-			entry.Retried = true
-
-			if err = b.Put([]byte(entry.Path), d.encodeToBytes(entry)); err != nil {
+			if err = d.markFileEntryRetried(setID, r.Local, setsBucket); err != nil {
 				return err
 			}
 		}

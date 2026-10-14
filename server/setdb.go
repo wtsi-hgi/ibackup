@@ -2397,10 +2397,10 @@ func (s *Server) retryFailedSetFiles(given *set.Set) (int, error) {
 		return 0, err
 	}
 
-	s.RetryBuried(&BuriedFilter{
+	s.kickItems(s.buriedItems(&BuriedFilter{
 		User: given.Requester,
 		Set:  given.Name,
-	})
+	}))
 
 	entries, err := s.db.GetFileEntries(given.ID(), nil)
 	if err != nil {

@@ -105,6 +105,18 @@ func newiRODSTracker(slacker slack.Slacker, debounce time.Duration) *iRODSTracke
 	return irt
 }
 
+// buriedItems returns the currently buried items, optionally filtered to those
+// for Requests matching the given filter.
+func (s *Server) buriedItems(bf *BuriedFilter) []*queue.Item {
+	var items []*queue.Item
+
+	s.forEachBuriedItem(bf, func(item *queue.Item) {
+		items = append(items, item)
+	})
+
+	return items
+}
+
 // MakeQueueEndPoints adds a number of endpoints to the REST API for working
 // with the global in-memory put request queue:
 //
@@ -318,7 +330,14 @@ func (s *Server) retryBuried(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, s.RetryBuried(bf))
+	n, err := s.RetryBuried(bf)
+	if err != nil {
+		c.AbortWithError(http.StatusInternalServerError, err) //nolint:errcheck
+
+		return
+	}
+
+	c.JSON(http.StatusOK, n)
 }
 
 // RetryBuried retries put requests that have failed multiple times, optionally
@@ -331,16 +350,35 @@ func (c *Client) RetryBuried(bf *BuriedFilter) (int, error) {
 	return n, err
 }
 
-// RetryBuried retries all buried items in the global put queue, and returns
-// the number retried.
-func (s *Server) RetryBuried(bf *BuriedFilter) int {
+// RetryBuried retries the buried items in the global put queue that match the
+// given filter, and returns the number retried. It first records the retry on
+// their set entries, so that it isn't lost if the queue loses the items before
+// they run, eg. on a server restart.
+func (s *Server) RetryBuried(bf *BuriedFilter) (int, error) {
+	items := s.buriedItems(bf)
+	rs := make([]*transfer.Request, len(items))
+
+	for i, item := range items {
+		rs[i] = item.Data().(*transfer.Request) //nolint:forcetypeassert,errcheck
+	}
+
+	if err := s.db.MarkRequestsRetried(rs); err != nil {
+		return 0, err
+	}
+
+	return s.kickItems(items), nil
+}
+
+// kickItems kicks the given buried items, so they will be retried, and returns
+// the number kicked.
+func (s *Server) kickItems(items []*queue.Item) int {
 	var n int
 
-	s.forEachBuriedItem(bf, func(item *queue.Item) {
+	for _, item := range items {
 		if err := s.queue.Kick(context.Background(), item.Key); err == nil {
 			n++
 		}
-	})
+	}
 
 	return n
 }
