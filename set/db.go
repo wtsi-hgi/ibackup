@@ -2065,6 +2065,7 @@ func requestStatusToEntryStatus(r *transfer.Request, entry *Entry) { //nolint:go
 		entry.Status = Missing
 		entry.unFailed = entry.Attempts > 1
 		entry.RemoteObject = false
+		entry.RemoteObjectKnown = true
 	case transfer.RequestStatusOrphaned:
 		entry.Status = Orphaned
 		entry.unFailed = entry.Attempts > 1

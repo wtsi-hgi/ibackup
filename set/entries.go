@@ -131,6 +131,12 @@ type Entry struct {
 	// replaces it.
 	RemoteObject bool
 
+	// RemoteObjectKnown is true if RemoteObject can be trusted when false:
+	// this entry had no upload results before RemoteObject was recorded, or a
+	// Missing result has since shown it has no object. Entries stored before
+	// RemoteObject existed lack it, so their past uploads must be guessed.
+	RemoteObjectKnown bool
+
 	// Retried is true if a user or admin retry was requested for this entry
 	// after its retries ran out, and it has had no upload result since.
 	Retried bool
@@ -208,19 +214,22 @@ func (e *Entry) IsUploaded() bool {
 }
 
 // rememberRemoteObject sets RemoteObject if our Status says we're uploaded, so
-// that it is kept once our Status is replaced.
+// that it is kept once our Status is replaced. It sets RemoteObjectKnown if we
+// have never had an upload result, since RemoteObject then covers our whole
+// upload history.
 func (e *Entry) rememberRemoteObject() {
 	e.RemoteObject = e.RemoteObject || e.IsUploaded()
+	e.RemoteObjectKnown = e.RemoteObjectKnown || e.LastAttempt.IsZero()
 }
 
 // mayHaveRemoteObject returns true if this entry may have an object in iRODS
 // from an earlier upload, or is uploading one.
 //
 // A discovery makes an attempted entry Pending until its next upload result,
-// keeping its LastAttempt and LastError; one whose last attempt failed, and
-// with no RemoteObject, is treated like a Failed entry, as having no object.
-// Entries stored before RemoteObject existed only have it once a discovery or
-// upload result replaces their uploaded Status.
+// keeping its LastAttempt and LastError. Without RemoteObjectKnown (an older
+// build stored its upload results, and none since showed it missing), one
+// whose last attempt didn't fail may have been uploaded, while one whose last
+// attempt failed is treated like a Failed entry, as having no object.
 func (e *Entry) mayHaveRemoteObject() bool {
 	if e.RemoteObject {
 		return true
@@ -230,7 +239,7 @@ func (e *Entry) mayHaveRemoteObject() bool {
 	case UploadingEntry:
 		return true
 	case Pending:
-		return !e.LastAttempt.IsZero() && e.LastError == ""
+		return !e.RemoteObjectKnown && !e.LastAttempt.IsZero() && e.LastError == ""
 	default:
 		return e.IsUploaded()
 	}

@@ -1786,6 +1786,37 @@ func TestSetDB(t *testing.T) {
 
 						expectTransformerChangeable()
 					})
+
+					expectChangeableAfterResultAndRediscovery := func(status transfer.RequestStatus) {
+						_, err = db.SetEntryStatus(&transfer.Request{
+							Local: discovered, Requester: dirSet.Requester, Set: dirSet.Name,
+							Size: 1, Status: status,
+						})
+						So(err, ShouldBeNil)
+
+						discover()
+
+						entries, errg := db.GetFileEntries(dirSet.ID(), nil)
+						So(errg, ShouldBeNil)
+						So(entries, ShouldHaveLength, 1)
+						So(entries[0].Status, ShouldEqual, Pending)
+						So(entries[0].LastAttempt.IsZero(), ShouldBeFalse)
+						So(entries[0].LastError, ShouldBeBlank)
+
+						So(db.SetError(dirSet.ID(), "queuing files failed"), ShouldBeNil)
+
+						expectTransformerChangeable()
+					}
+
+					Convey("its transformer can change after its file went missing, "+
+						"reappeared and a discovery left it pending, with the set erroring", func() {
+						expectChangeableAfterResultAndRediscovery(transfer.RequestStatusMissing)
+					})
+
+					Convey("its transformer can change after its file failed with no error message "+
+						"and a discovery left it pending, with the set erroring", func() {
+						expectChangeableAfterResultAndRediscovery(transfer.RequestStatusFailed)
+					})
 				})
 
 				Convey("Then given a directory set with an uploaded file", func() {
@@ -1876,6 +1907,45 @@ func TestSetDB(t *testing.T) {
 							So(got.Error, ShouldNotBeBlank)
 
 							expectTransformerUnchangeable()
+						})
+
+						Convey("or if an older build stored it, with no record of its upload", func() {
+							err = db.db.Update(func(tx *bolt.Tx) error {
+								eg, b, errge := db.getEntry(tx, dirSet.ID(), discovered)
+								So(errge, ShouldBeNil)
+
+								eg.RemoteObject = false
+								eg.RemoteObjectKnown = false
+
+								return b.Put([]byte(discovered), db.encodeToBytes(eg))
+							})
+							So(err, ShouldBeNil)
+
+							expectTransformerUnchangeable()
+
+							Convey("but it can once its file and object went missing, "+
+								"it reappeared and a discovery left it pending", func() {
+								_, errs := db.SetEntryStatus(&transfer.Request{
+									Local: discovered, Requester: dirSet.Requester, Set: dirSet.Name,
+									Size: 1, Status: transfer.RequestStatusMissing,
+								})
+								So(errs, ShouldBeNil)
+
+								discover(db.GetByID(dirSet.ID()))
+
+								entries, errg = db.GetFileEntries(dirSet.ID(), nil)
+								So(errg, ShouldBeNil)
+								So(entries, ShouldHaveLength, 1)
+								So(entries[0].Status, ShouldEqual, Pending)
+								So(entries[0].LastError, ShouldBeBlank)
+
+								So(db.SetError(dirSet.ID(), "queuing files failed"), ShouldBeNil)
+
+								edited := db.GetByID(dirSet.ID())
+								edited.Transformer = editedTransformer
+								So(db.AddOrUpdate(edited), ShouldBeNil)
+								So(db.GetByID(dirSet.ID()).Transformer, ShouldEqual, editedTransformer)
+							})
 						})
 					})
 
