@@ -1232,19 +1232,27 @@ func (d *DBRO) getPathsWithPrefix(setID, bucketName, prefix string) ([]string, e
 }
 
 // MergeFileEntries sets the file paths for the given backup set. Only supply
-// absolute paths to files. It keeps the existing entries in the set and handles
-// duplicates by updating the existing entries. If the file is not already in
-// the set, it will be added with the status Registered.
+// absolute paths to files. It keeps the existing entries in the set unchanged,
+// for discovery to update: making them Registered would have discovery replace
+// them, losing their upload history (eg. RemoteObject). If the file is not
+// already in the set, it will be added with the status Registered.
 func (d *DB) MergeFileEntries(setID string, paths []string) error {
-	entries := make([]*Dirent, len(paths))
-
-	for n, path := range paths {
-		entries[n] = &Dirent{
-			Path: path,
+	return d.db.Update(func(tx *bolt.Tx) error {
+		b, existing, err := d.getExistingEntries(tx, fileBucket, setID)
+		if err != nil {
+			return err
 		}
-	}
 
-	return d.mergeEntries(setID, entries, fileBucket, Registered)
+		entries := make([]*Dirent, 0, len(paths))
+
+		for _, path := range paths {
+			if existing[path] == nil {
+				entries = append(entries, &Dirent{Path: path})
+			}
+		}
+
+		return d.createEntries(tx, b, existing, setID, entries, Registered)
+	})
 }
 
 // mergeEntries sets the paths for the given backup set in a sub bucket with the
@@ -1258,18 +1266,26 @@ func (d *DB) mergeEntries(setID string, dirents []*Dirent, bucketName string, in
 			return err
 		}
 
-		// this sort is critical to database write speed.
-		slices.SortFunc(dirents, func(i, j *Dirent) int {
-			return strings.Compare(i.Path, j.Path)
-		})
-
-		ec, err := newEntryCreator(d, tx, b, existing, setID, initialStatus)
-		if err != nil {
-			return err
-		}
-
-		return ec.UpdateOrCreateEntries(dirents)
+		return d.createEntries(tx, b, existing, setID, dirents, initialStatus)
 	})
+}
+
+// createEntries updates the given existing entries of the given bucket, or
+// creates new ones with the given status, from the given dirents.
+func (d *DB) createEntries(tx *bolt.Tx, b *bolt.Bucket, existing map[string][]byte, setID string,
+	dirents []*Dirent, initialStatus EntryStatus,
+) error {
+	// this sort is critical to database write speed.
+	slices.SortFunc(dirents, func(i, j *Dirent) int {
+		return strings.Compare(i.Path, j.Path)
+	})
+
+	ec, err := newEntryCreator(d, tx, b, existing, setID, initialStatus)
+	if err != nil {
+		return err
+	}
+
+	return ec.UpdateOrCreateEntries(dirents)
 }
 
 // putEntryInTrash puts the given entry into the trash set for the given set.

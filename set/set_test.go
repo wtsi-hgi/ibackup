@@ -3830,6 +3830,106 @@ func TestSetDB(t *testing.T) {
 				})
 			})
 
+			Convey("And add a file set with an uploaded file and a failed file, then re-add its files and "+
+				"rediscover", func() {
+				setl1 := &Set{
+					Name:        "readded",
+					Requester:   "jim",
+					Transformer: tmpRemoteTransformer,
+				}
+
+				So(db.AddOrUpdate(setl1), ShouldBeNil)
+
+				dir := t.TempDir()
+				good := filepath.Join(dir, "good")
+				bad := filepath.Join(dir, "bad")
+				sizes := map[string]uint64{good: 3, bad: 4}
+
+				for _, path := range []string{good, bad} {
+					internal.CreateTestFile(t, path, "a")
+				}
+
+				So(db.MergeFileEntries(setl1.ID(), []string{good, bad}), ShouldBeNil)
+
+				_, err = db.Discover(setl1.ID(), nil)
+				So(err, ShouldBeNil)
+
+				setResult := func(path string, statuses ...transfer.RequestStatus) *Set {
+					for _, s := range statuses {
+						_, errs := db.SetEntryStatus(&transfer.Request{
+							Local:     path,
+							Requester: setl1.Requester,
+							Set:       setl1.Name,
+							Size:      sizes[path],
+							Status:    s,
+							Error:     "put failed",
+						})
+						So(errs, ShouldBeNil)
+					}
+
+					return db.GetByID(setl1.ID())
+				}
+
+				uploading, uploaded, failed := transfer.RequestStatusUploading,
+					transfer.RequestStatusUploaded, transfer.RequestStatusFailed
+
+				setResult(good, uploading, uploaded)
+				got := setResult(bad, uploading, failed)
+				So(got.Uploaded, ShouldEqual, 1)
+				So(got.Failed, ShouldEqual, 1)
+
+				So(db.MergeFileEntries(setl1.ID(), []string{good, bad}), ShouldBeNil)
+
+				got, err = db.Discover(setl1.ID(), nil)
+				So(err, ShouldBeNil)
+				So(got.Status, ShouldEqual, PendingUpload)
+				So(got.NumFiles, ShouldEqual, 2)
+				So(got.Uploaded+got.Failed, ShouldEqual, 0)
+				So(got.SizeUploaded, ShouldEqual, 0)
+
+				entries, errg := db.GetPureFileEntries(setl1.ID())
+				So(errg, ShouldBeNil)
+				So(entries, ShouldHaveLength, 2)
+
+				for _, entry := range entries {
+					So(entry.Status, ShouldEqual, Pending)
+					So(entry.Inode, ShouldNotEqual, 0)
+					So(entry.ShouldUpload(got), ShouldBeTrue)
+				}
+
+				Convey("failed re-uploads of both files keep its transformer from changing", func() {
+					setResult(bad, uploading, failed)
+					got = setResult(good, uploading, failed)
+					So(got.Status, ShouldEqual, Complete)
+					So(got.Uploaded, ShouldEqual, 0)
+					So(got.Failed, ShouldEqual, 2)
+					So(got.SizeUploaded, ShouldEqual, 0)
+
+					got.Transformer = editedTransformer
+					erra := db.AddOrUpdate(got)
+					So(erra, ShouldNotBeNil)
+					So(erra.Error(), ShouldContainSubstring, ErrTransformerAlreadyUsed)
+					So(db.GetByID(setl1.ID()).Transformer, ShouldEqual, tmpRemoteTransformer)
+
+					entry, errg := db.GetFileEntryForSet(setl1.ID(), good)
+					So(errg, ShouldBeNil)
+					So(entry.Status, ShouldEqual, Failed)
+					So(entry.LastError, ShouldEqual, "put failed")
+					So(entry.RemoteObject, ShouldBeTrue)
+				})
+
+				Convey("both files upload again and are counted once", func() {
+					setResult(good, uploading, transfer.RequestStatusUnmodified)
+					got = setResult(bad, uploading, uploaded)
+					So(got.Status, ShouldEqual, Complete)
+					So(got.Uploaded, ShouldEqual, 1)
+					So(got.Skipped, ShouldEqual, 1)
+					So(got.Failed, ShouldEqual, 0)
+					So(got.SizeTotal, ShouldEqual, 7)
+					So(got.SizeUploaded, ShouldEqual, 4)
+				})
+			})
+
 			Convey("And add a frozen set whose uploaded file is deleted locally, rediscovery stores and counts "+
 				"it as orphaned", func() {
 				setl1 := &Set{
