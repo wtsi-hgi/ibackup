@@ -1751,7 +1751,10 @@ func TestRemove(t *testing.T) {
 				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--set")
 				So(exitCode, ShouldEqual, 0)
 
-				ctx, cancelFn := context.WithTimeout(context.Background(), 10*time.Second)
+				// The set is only deleted after the removal handler's last
+				// Reserve waits out its 7s (retryDelay+2s) for more requests, on
+				// top of the removals themselves, so allow ample time beyond that.
+				ctx, cancelFn := context.WithTimeout(context.Background(), 30*time.Second)
 				defer cancelFn()
 
 				cmd := []string{"status", "--name", setName, "--url", s.url, "--cert", s.cert}

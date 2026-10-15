@@ -465,3 +465,46 @@
     `make lint` 0 issues, actionlint 0 errors, singularity
     `up`/`ils`/`baton-do`/`down` cycle fine with `~/.irods` unchanged;
     the docker path is proven only by the next CI run.
+- [x] TestRemove's 'Remove --set ... then deletes the set itself' waits only
+  10s for the set to be deleted, which has a ~7s floor, and failed in CI's
+  race job on ca1f775
+  - Source: CI race job on PR #196 at ca1f775 (`main_test.go:1781`:
+    `Expected: nil Actual: 'set testRemoveFiles1 still exists'`); seen once
+    locally on a busy host on another branch.
+  - Cause: `remove --set` registers a callback (`registerDeletionCallback`)
+    that deletes the set only once `handleRemoveRequests` finishes. That
+    loop ends only when `reserveRemoveRequest`'s
+    `removeQueue.Reserve(sid, retryDelay+2*time.Second)` (`retryDelay` is
+    5s, in `server/server.go`) has waited the full 7s and found nothing
+    ready. So the deletion always comes at least 7s after the last
+    removal, plus the removals themselves, and the test's 10s
+    `context.WithTimeout` left about 3s for those on a race-instrumented
+    runner. The other removal waits in TestRemove and TestTrashRemove
+    (`Removal status: N / N objects removed`, 10s to 60s) don't have this
+    floor: the count is updated as each request completes (`set/db.go`
+    `NumObjectsRemoved++`), before the final Reserve. So only this wait
+    needs widening.
+  - Red: a scratch copy with an injected 1.5s sleep at the start of
+    `removeFileFromIRODSandDB` (a slow iRODS removal, as on a busy runner)
+    and the Convey focused, run as `CGO_ENABLED=1 developers/testzone.sh
+    run go test -tags netgo -race -count=1 -timeout 30m -run
+    '^TestRemove$' .`: exit 1, `Line 1781: Expected: nil Actual: 'set
+    testRemoveFiles1 still exists'`, the CI failure. The live test zone was
+    not usable: a probe `iput` failed with `NO_NEXT_RESC_FOUND`. All
+    evidence used the throwaway container zone.
+  - Files: `main_test.go`.
+  - Approach: the wait becomes 30s, more than 4 times the 7s floor and
+    matching the 30s removal waits already in these tests, with a comment
+    giving the floor. It still returns as soon as status reports that the
+    set does not exist.
+  - Green: the same injected scratch copy with the fix passed (`ok`, 102s);
+    the unmodified worktree's `TestRemove` passed (`ok`, 79s), both with
+    `-race` against the container zone.
+  - Gates: `make lint` 0 issues. `make speed` not run: only test code
+    changed.
+
+  - Review: PASS (clean-context reviewer: confirmed the 7s floor from
+    finalizeRemoval and the final Reserve, and that no other main-package
+    wait shares it; red with a 1.5s removal delay and the 10s wait, green
+    with 30s, unmodified TestRemove green, all on a throwaway zone; make
+    lint clean).
