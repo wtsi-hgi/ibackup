@@ -76,6 +76,7 @@ import (
 	"github.com/wtsi-hgi/ibackup/set"
 	"github.com/wtsi-hgi/ibackup/statter"
 	"github.com/wtsi-hgi/ibackup/transfer"
+	ex "github.com/wtsi-npg/extendo/v3"
 	"github.com/wtsi-ssg/wr/backoff"
 	btime "github.com/wtsi-ssg/wr/backoff/time"
 	"github.com/wtsi-ssg/wr/retry"
@@ -598,14 +599,19 @@ Local Path	Status	Size	Attempts	Date	Error`+"\n"+
 			Convey("Repeatedly uploading files that are changed or not changes status details", func() {
 				setName = "changingFilesTest"
 
+				releaseUploads := s.holdUploads(t)
+
 				s.addSetForTesting(t, setName, transformer, path)
 
 				statusCmd := []string{"status", "--name", setName}
 
-				s.waitForStatus(setName, "\nStatus: uploading", 60*time.Second)
+				// With uploads held, all 3 clients reach and stay in this state.
+				s.waitForStatus(setName, "Global put client status (/10): 6 iRODS connections", 60*time.Second)
 				s.confirmOutputContains(t, statusCmd, 0,
 					`Global put queue status: 3 queued; 3 reserved to be worked on; 0 failed
 Global put client status (/10): 6 iRODS connections`)
+
+				releaseUploads()
 
 				s.waitForStatus(setName, "\nStatus: complete", 60*time.Second)
 
@@ -3693,6 +3699,64 @@ func getFakeBaton(dir string) string {
 	So(err, ShouldBeNil)
 
 	return fakeBatonDir
+}
+
+// holdUploads makes the put clients the server starts from now on wait before
+// they start baton-do, and so before they make any iRODS connection, until the
+// returned function is called, the current Convey resets, the test process
+// ends, or about 40s pass. The clients will have reserved their requests and
+// told the server about their connections by then, so tests can see that state
+// while held. The clients must run on this host, as with a local wr manager.
+func (s *testServer) holdUploads(t *testing.T) func() {
+	t.Helper()
+
+	// the baton-do the clients would otherwise use
+	realBaton, err := ex.FindBaton()
+	So(err, ShouldBeNil)
+
+	dir := t.TempDir()
+	gate := filepath.Join(dir, "release")
+	// If the test process dies while uploads are held, the wrapper stops
+	// waiting, so the clients carry on, fail to reach the gone server and exit,
+	// rather than staying blocked in wr. The wait is also capped at about 40s,
+	// beyond the moments tests hold for but within baton's 60s operation
+	// timeout; a longer hold makes clients time out and start another held
+	// baton-do, over and over.
+	script := fmt.Sprintf("#!/bin/sh\nn=0\n"+
+		"while [ ! -e '%s' ] && kill -0 %d 2>/dev/null && [ $n -lt 400 ]; do sleep 0.1; n=$((n+1)); done\n"+
+		"exec '%s' \"$@\"\n", gate, os.Getpid(), realBaton)
+
+	err = os.WriteFile(filepath.Join(dir, "baton-do"), []byte(script), 0700) //nolint:gosec,mnd
+	So(err, ShouldBeNil)
+
+	// The server submits put jobs with its current environment, which can be
+	// s.env applied by a CLI call, so both get the holding PATH. The wrapper
+	// goes last as well as first, since extendo's FindBaton (v3.2.0) picks the
+	// last baton-do in PATH, not the first.
+	origEnv, origPath := s.env, os.Getenv("PATH")
+	heldPath := dir + ":" + origPath + ":" + dir
+	s.env = slices.Clone(s.env)
+
+	for i, kv := range s.env {
+		if strings.HasPrefix(kv, "PATH=") {
+			s.env[i] = "PATH=" + heldPath
+		}
+	}
+
+	_ = os.Setenv("PATH", heldPath)
+
+	release := func() {
+		_ = os.WriteFile(gate, nil, 0600) //nolint:errcheck,gosec,mnd
+	}
+
+	Reset(func() {
+		release()
+
+		s.env = origEnv
+		_ = os.Setenv("PATH", origPath)
+	})
+
+	return release
 }
 
 // prepareConfig creates a key and cert to use with a server and looks at

@@ -219,3 +219,82 @@
   - Review: PASS (clean-context reviewer: matrix jobs self-contained, a
     concurrent cache save only warns, check names exactly `test` and
     `race`, actionlint and make lint clean).
+- [x] TestPuts 'Repeatedly uploading files that are changed or not changes
+  status details' (main_test.go ~line 625) failed under make race in CI:
+  confirmOutputContains (main_test.go:4065) expected 'Global put queue
+  status: 3 queued; 3 reserved to be worked on; 0 failed\nGlobal put client
+  status (/10): 6 iRODS connections' but got '2 queued; 2 reserved ...; 2
+  currently uploading' with Uploaded: 1 — one of the 3 uploads had already
+  completed when status was read.
+  - Source: CI race job on PR #196 at cf9f999.
+  - Cause: the test waits for `Status: uploading`, then reads the global
+    queue status once and expects all 3 requests still queued and reserved.
+    Nothing holds the uploads, so this checks a passing state: against the
+    fast CI container zone, one 10-byte upload finished first. The assertion
+    is unchanged since #24/#31; neither develop nor
+    `bugfix-set-counts-2-586f032c7c79` touches it.
+  - Environment: all local evidence used a throwaway containerised iRODS
+    4.3.5 zone (the server image CI uses, under Singularity, with the CI
+    client image's wrappers), with the shared `development` wr manager. The
+    container `baton-do` was put last as well as first in PATH, since
+    extendo v3.2.0 `FindBaton` returns the last `baton-do` in PATH, not the
+    first (see below).
+  - Red: a scratch copy with an injected
+    `s.waitForStatus(setName, "\nStatus: complete", 60*time.Second)` before
+    the assertion (uploads finish before status is read), the Convey and
+    its parent focused, run as `CGO_ENABLED=1 go test -tags netgo -race
+    -count=1 -timeout 30m -run '^TestPuts$' .`: exit 1 in 20s, at the same
+    assertion, with `Expected 'Global put queue status: 0 queued; 0
+    reserved to be worked on; 0 failed ... Uploaded: 3; ...' to contain
+    substring 'Global put queue status: 3 queued; 3 reserved to be worked
+    on; 0 failed\nGlobal put client status (/10): 6 iRODS connections'`.
+  - Files: `main_test.go`.
+  - Approach: new test helper `(*testServer).holdUploads` writes a
+    `baton-do` wrapper that waits for a gate file before exec'ing the
+    `baton-do` the clients would otherwise use (`ex.FindBaton`). It puts
+    the wrapper first and last in PATH, in both the process env and
+    `s.env`: put jobs take the server's env when submitted, which can be
+    during a CLI call that has applied `s.env`. A Convey `Reset` opens the
+    gate and restores both. Each put client reserves its request and
+    reports its 2 iRODS connections before it starts `baton-do`, so the
+    test can now wait for `6 iRODS connections` and assert the same full
+    expected text while it is held, then release and carry on to the
+    unchanged completion and count checks. The wait on `Status: uploading`
+    goes, since a held set never gets there; it was only a sync point.
+  - Review fix (reviewer FAIL: an unbounded hold leaves the clients
+    blocked in the shared wr manager if the test dies while held): the
+    wrapper also stops waiting once the test process has gone (`kill -0`
+    on its PID; the clients run on this host under the local wr manager)
+    and after about 40s. A first try with only a 3-minute cap failed a
+    kill repro (scratch copy calling `os.Exit(3)` right after the held
+    assertion, real zone): 7 minutes after the exit the 3 clients were
+    still running and new held wrappers kept appearing. baton's 60s
+    operation timeout fires during a longer hold, and the client then
+    starts another `baton-do` through the wrapper, which holds again; the
+    clients exited once the gate was opened by hand. With the final
+    wrapper, the same repro left 5 client processes at the exit, and 0 (no
+    wrappers either) 20s later. The repro's 2 `ibackup_test_*` collections
+    and its `/tmp` dirs were removed.
+  - Green: the patched scratch copy with a 10s sleep injected between
+    reaching the held state and the assertion passed (`ok`, 35s); the
+    unmodified patched `TestPuts` with `-race` passed (49s).
+  - Gates: `make lint` 0 issues; `make race-main` and `make test-main`
+    exit 0 against the container zone, all 27 main tests PASS in each,
+    none skipped. `make speed` not run: only test code changed. After the
+    review fix: `make lint` 0 issues, and `CGO_ENABLED=1 go test -tags
+    netgo -race -count=1 -timeout 30m -run '^TestPuts$' .` against the live
+    test zone gave `ok` (111s).
+  - Incidental: extendo v3.2.0 `FindBaton` documents returning the first
+    `baton-do` in PATH but returns the last (its `break` leaves only the
+    inner loop). With the host's `baton-do` later in PATH, local runs
+    against the container zone used the host's baton and the 4.3.5 server
+    agent crashed in `unpack_struct` on some metamods (`SYS_INTERNAL_ERR`
+    -154000). With the container `baton-do` last, there were no crashes.
+  - Review: PASS on cycle 2 (clean-context reviewer: the kill repro's
+    wrappers let go within about 1s of the test exiting; the hold is
+    deterministic and the assertion unchanged; make lint clean). Its
+    focused real-zone TestPuts run failed only because the zone stalled all
+    uploads that day (a plain 11-byte iput timed out), including untouched
+    leaves; the implementor's real-zone run of the same code passed, and CI
+    on the pushed head is the end-to-end evidence. Cycle 1 FAILed on the
+    uncapped gate wait.
