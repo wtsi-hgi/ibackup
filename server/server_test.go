@@ -9422,6 +9422,34 @@ func TestDiscoveryCoordinator(t *testing.T) {
 				})
 			})
 		})
+
+		Convey("With more than 256 removals running on a set, RemovalDone waits for the last of them", func() {
+			numRemovals := 257
+			calls := 0
+			ifNoneFailed := func() { calls++ }
+			done := make(chan struct{})
+
+			dc.OnRemovalsDone(sid, func() { close(done) })
+
+			for range numRemovals {
+				dc.WillRemove(sid)
+			}
+
+			for range numRemovals - 1 {
+				dc.RemovalDone(sid, ifNoneFailed)
+			}
+
+			So(calls, ShouldEqual, 0)
+
+			dc.RemovalDone(sid, ifNoneFailed)
+			So(calls, ShouldEqual, 1)
+
+			select {
+			case <-done:
+			case <-time.After(1 * time.Second):
+				t.Error("removalDone callback was not triggered in time")
+			}
+		})
 	})
 }
 

@@ -56,7 +56,7 @@ const ttr = 6 * time.Minute
 type discoveryCoordinator struct {
 	sync.Mutex
 	hasDiscoveryHappened map[string]bool
-	numRunningRemovals   map[string]uint8
+	numRunningRemovals   map[string]int
 	removalFailed        map[string]bool
 	muMap                map[string]*sync.Mutex
 	onRemovalsDone       map[string][]func()
@@ -65,7 +65,7 @@ type discoveryCoordinator struct {
 func newDiscoveryCoordinator() *discoveryCoordinator {
 	return &discoveryCoordinator{
 		hasDiscoveryHappened: make(map[string]bool),
-		numRunningRemovals:   make(map[string]uint8),
+		numRunningRemovals:   make(map[string]int),
 		removalFailed:        make(map[string]bool),
 		muMap:                make(map[string]*sync.Mutex),
 		onRemovalsDone:       make(map[string][]func()),
