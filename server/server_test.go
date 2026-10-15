@@ -2037,6 +2037,27 @@ func TestServer(t *testing.T) {
 						})
 					})
 
+					Convey("Removing a set while its first discovery runs, before it has file entries, "+
+						"deletes it without waiting for that discovery", func() {
+						dirLocal := filepath.Join(localDir, "dirOnly")
+						So(os.MkdirAll(dirLocal, 0755), ShouldBeNil)
+
+						So(client.MergeDirs(exampleSet.ID(), []string{dirLocal}), ShouldBeNil)
+
+						s.discoveryCoordinator.StartDiscovery(exampleSet.ID())
+						defer s.discoveryCoordinator.DiscoveryHappened(exampleSet.ID())
+
+						So(client.RemoveSet(exampleSet.ID()), ShouldBeNil)
+
+						So(testutil.RetryUntilWorksCustom(t, func() error {
+							if _, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID()); errg == nil {
+								return errNotFinishedRemoving
+							}
+
+							return nil
+						}, time.Second*20, time.Millisecond*100), ShouldBeNil)
+					})
+
 					Convey("And given a set with a folder and a nested folder with 2 files", func() {
 						dir0local := filepath.Join(localDir, "dir0/")
 						dir0remote := filepath.Join(remoteDir, "dir0/")
@@ -2092,6 +2113,66 @@ func TestServer(t *testing.T) {
 							err = client.TrashFilesAndDirs(exampleSet.ID(), []string{dir2local})
 							So(err, ShouldNotBeNil)
 							So(err.Error(), ShouldContainSubstring, ErrSetNotComplete.Error())
+						})
+
+						waitForSetDeletion := func() {
+							So(testutil.RetryUntilWorksCustom(t, func() error {
+								if _, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID()); errg == nil {
+									return errNotFinishedRemoving
+								}
+
+								return nil
+							}, time.Second*10, time.Millisecond*100), ShouldBeNil)
+						}
+
+						Convey("Removing the whole set while its uploads are queued leaves none for clients, "+
+							"including those a running discovery queues", func() {
+							s.discoveryCoordinator.StartDiscovery(exampleSet.ID())
+
+							So(client.RemoveSet(exampleSet.ID()), ShouldBeNil)
+
+							requests, errg := adminClient.GetSomeUploadRequests()
+							So(errg, ShouldBeNil)
+							So(requests, ShouldBeEmpty)
+
+							transformer, errg := exampleSet.MakeTransformer()
+							So(errg, ShouldBeNil)
+
+							_, errg = s.enqueueSetFiles(exampleSet, transformer)
+							So(errg, ShouldBeNil)
+							So(s.queue.Stats().Items, ShouldEqual, 2)
+
+							s.discoveryCoordinator.DiscoveryHappened(exampleSet.ID())
+
+							waitForSetDeletion()
+
+							requests, errg = adminClient.GetSomeUploadRequests()
+							So(errg, ShouldBeNil)
+							So(requests, ShouldBeEmpty)
+							So(s.queue.Stats().Items, ShouldEqual, 0)
+						})
+
+						Convey("Removing the whole set while its uploads are running drops their results", func() {
+							requests, errg := adminClient.GetSomeUploadRequests()
+							So(errg, ShouldBeNil)
+							So(requests, ShouldHaveLength, 2)
+
+							requests[0].Status = transfer.RequestStatusUploading
+							So(adminClient.UpdateFileStatus(requests[0]), ShouldBeNil)
+
+							So(client.RemoveSet(exampleSet.ID()), ShouldBeNil)
+							waitForSetDeletion()
+
+							requests[0].Status = transfer.RequestStatusUploaded
+							requests[1].Status = transfer.RequestStatusFailed
+							requests[1].Error = "permission denied"
+
+							for _, request := range requests {
+								So(adminClient.UpdateFileStatus(request), ShouldBeNil)
+							}
+
+							So(s.queue.Stats().Items, ShouldEqual, 0)
+							So(s.UploadingRequests(), ShouldBeEmpty)
 						})
 
 						Convey("Trash of failed files removes entries from Failed bucket", func() {
@@ -6967,6 +7048,81 @@ func TestServer(t *testing.T) {
 								So(others, ShouldBeEmpty)
 							})
 						}
+					})
+
+					Convey("with remote hardlink location set, removing a set whose hardlink upload claimed "+
+						"the inode file doesn't hold up another set's hardlink to it", func() {
+						s.SetRemoteHardlinkLocation(filepath.Join(remoteDir, "mountpoints"))
+						s.numClients = 3
+
+						So(client.TriggerDiscovery(exampleSet.ID(), false), ShouldBeNil)
+						So(<-racCalled, ShouldBeTrue)
+
+						handedOut := make([]*transfer.Request, 0, s.numClients)
+
+						for range s.numClients {
+							requests, errg := client.GetSomeUploadRequests()
+							So(errg, ShouldBeNil)
+
+							handedOut = append(handedOut, requests...)
+						}
+
+						So(handedOut, ShouldHaveLength, 2)
+						So(handedOut[1].Local, ShouldEqual, path2)
+						So(handedOut[1].Hardlink, ShouldNotBeBlank)
+
+						otherSet := &set.Set{
+							Name:        "set2",
+							Requester:   exampleSet.Requester,
+							Transformer: exampleSet.Transformer,
+						}
+
+						So(client.AddOrUpdateSet(otherSet), ShouldBeNil)
+						So(client.MergeFiles(otherSet.ID(), []string{path3}), ShouldBeNil)
+						So(client.TriggerDiscovery(otherSet.ID(), false), ShouldBeNil)
+						So(<-racCalled, ShouldBeTrue)
+
+						requests, errg := client.GetSomeUploadRequests()
+						So(errg, ShouldBeNil)
+						So(requests, ShouldBeEmpty)
+
+						removeExampleSet := func() {
+							So(client.RemoveSet(exampleSet.ID()), ShouldBeNil)
+
+							So(testutil.RetryUntilWorksCustom(t, func() error {
+								if _, errs := client.GetSetByID(exampleSet.Requester, exampleSet.ID()); errs == nil {
+									return errNotFinishedRemoving
+								}
+
+								return nil
+							}, time.Second*10, time.Millisecond*100), ShouldBeNil)
+						}
+
+						otherSetGetsItsHardlink := func() {
+							requests, errg = client.GetSomeUploadRequests()
+							So(errg, ShouldBeNil)
+							So(requests, ShouldHaveLength, 1)
+							So(requests[0].Set, ShouldEqual, otherSet.Name)
+							So(requests[0].Hardlink, ShouldEqual, handedOut[1].Hardlink)
+						}
+
+						Convey("when that upload's result arrives after the removal", func() {
+							removeExampleSet()
+
+							handedOut[1].Status = transfer.RequestStatusUploaded
+							So(client.UpdateFileStatus(handedOut[1]), ShouldBeNil)
+
+							otherSetGetsItsHardlink()
+						})
+
+						Convey("when that upload's reservation expired before the removal", func() {
+							// as TTR expiry does, return it to the queue with its claim
+							So(s.queue.Release(context.Background(), handedOut[1].ID()), ShouldBeNil)
+
+							removeExampleSet()
+
+							otherSetGetsItsHardlink()
+						})
 					})
 
 					Convey("with remote hardlink location set, a hardlink that fails to be claimed is "+

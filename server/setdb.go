@@ -634,7 +634,7 @@ func (s *Server) deleteSet(c *gin.Context) {
 		return
 	}
 
-	s.registerDeletionCallback(set.ID())
+	s.registerDeletionCallback(set)
 
 	err = s.removeToTrashSet(set, paths, nil)
 	if err != nil {
@@ -642,6 +642,8 @@ func (s *Server) deleteSet(c *gin.Context) {
 
 		return
 	}
+
+	s.removeQueuedRequestsOfSet(set)
 }
 
 func (s *Server) removeExpired(c *gin.Context) {
@@ -743,13 +745,50 @@ func (s *Server) getSetPaths(setID string) ([]string, error) {
 	return paths, nil
 }
 
-func (s *Server) registerDeletionCallback(setID string) {
-	s.discoveryCoordinator.OnRemovalsDone(setID, func() {
-		err := s.db.Delete(setID)
+// registerDeletionCallback arranges for the given set to be deleted from the
+// database once its removals are done, along with any of its upload requests
+// queued since deleteSet removed them, such as by a discovery that was running.
+// It doesn't wait for such a discovery, which could take hours; one that
+// queues requests after this cleanup has them dropped by updateFileStatus once
+// they are uploaded.
+func (s *Server) registerDeletionCallback(given *set.Set) {
+	s.discoveryCoordinator.OnRemovalsDone(given.ID(), func() {
+		err := s.db.Delete(given.ID())
 		if err != nil {
 			s.Logger.Print(err.Error())
+
+			return
 		}
+
+		s.removeQueuedRequestsOfSet(given)
 	})
+}
+
+// removeQueuedRequestsOfSet removes from our queue the upload requests of the
+// given set that no client is working on, so clients don't upload the files of
+// a deleted set, and releases any claim they still have on a remote inode file
+// from a reservation that expired, so other sets' requests for it aren't held
+// up. Results for those being worked on are dropped by updateFileStatus. The
+// running check and the removal happen under the queue's lock, so a client
+// can't reserve a request in between and then have its claim released.
+func (s *Server) removeQueuedRequestsOfSet(given *set.Set) {
+	for _, item := range s.queue.AllItems() {
+		r, ok := item.Data().(*transfer.Request)
+		if !ok || r.Set != given.Name || r.Requester != given.Requester {
+			continue
+		}
+
+		removed, err := s.queue.RemoveUnless(context.Background(), item.Key, func(any) bool {
+			return item.State() == queue.ItemStateRun
+		})
+		if removed {
+			err = errors.Join(err, s.remoteClaims.release(r))
+		}
+
+		if err != nil {
+			s.Logger.Printf("queued request of deleted set not removed rid=%s err=%s", item.Key, err)
+		}
+	}
 }
 
 // validateInputsForTrashing returns an error if the provided set is a trashed
@@ -2028,8 +2067,13 @@ func (s *Server) updateFileStatus(r *transfer.Request) error {
 		var errr error
 
 		errs := &set.Error{}
-		if errors.As(err, errs) && errs.Msg == set.ErrInvalidEntry {
-			errr = s.removeOrReleaseRequestFromQueue(r, entry)
+		if errors.As(err, errs) {
+			switch errs.Msg {
+			case set.ErrInvalidEntry:
+				errr = s.removeOrReleaseRequestFromQueue(r, entry)
+			case set.ErrInvalidSetID:
+				return s.dropRequestOfDeletedSet(r)
+			}
 		}
 
 		return errors.Join(err, errr)
@@ -2040,6 +2084,16 @@ func (s *Server) updateFileStatus(r *transfer.Request) error {
 	}
 
 	return s.trackUploadingAndStuckRequests(r, entry)
+}
+
+// dropRequestOfDeletedSet removes the given request, whose set has been deleted,
+// from our queue whatever its status, and releases any claim it has on a remote
+// inode file, so it isn't uploaded again.
+func (s *Server) dropRequestOfDeletedSet(r *transfer.Request) error {
+	s.uploadTracker.uploadFinished(r)
+	s.Logger.Printf("request dropped rid=%s status=%s: its set was deleted", r.ID(), r.Status)
+
+	return errors.Join(s.queue.Remove(context.Background(), r.ID()), s.remoteClaims.release(r))
 }
 
 // handleNewlyCompletedSets gets the set the given request is for, and if it has
