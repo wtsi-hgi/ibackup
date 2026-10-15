@@ -166,6 +166,21 @@ jobs:
         "$gobin/wr" manager start --deployment "$IBACKUP_TEST_SCHEDULER"
         "$gobin/wr" manager status --deployment "$IBACKUP_TEST_SCHEDULER"
 
+    # developers/testzone.sh's docker path is only run here. The test job is the
+    # shorter of the two, so this doesn't make the checks take longer.
+    - name: Smoke test developers/testzone.sh with docker
+      if: ${{ matrix.target == 'test' }}
+      run: |
+        IBACKUP_TEST_RUNTIME=docker developers/testzone.sh run bash -c '
+          set -e
+          d=$(mktemp -d)
+          echo smoke > "$d/f"
+          iput "$d/f" smoke
+          ils -l smoke
+          baton-do --version
+          # its full status output includes the manager web token
+          wr manager status --deployment development | grep -x started >/dev/null'
+
     # -k so that main-package failures don't stop the sub-package tests
     - name: Run make ${{ matrix.target }}
       run: make -k ${{ matrix.target }}

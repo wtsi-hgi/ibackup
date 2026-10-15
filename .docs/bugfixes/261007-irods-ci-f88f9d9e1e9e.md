@@ -10,7 +10,7 @@
 - Origin: PR #194 review thread on `internal/testutil/irods_prefetch_test.go:88`
   (comment 4204477916)
 
-- [ ] Tests run against the live production iRODS zone, and CI has no iRODS,
+- [x] Tests run against the live production iRODS zone, and CI has no iRODS,
   so the 17 iRODS-dependent main tests (and iRODS sub-package tests) are
   skipped in CI. Spin up iRODS in a container in CI (and locally where
   possible) so the full suite runs everywhere and with less latency.
@@ -52,6 +52,8 @@
     move into the helper under the `denyRemoteChanges` item. `tests.yml` now
     installs wr v0.39.0 to match `go.mod` after #199. #200's collection
     sweep in `internal/testutil` merged without conflicts.
+  - Local: done by the `make test-container` item below, which runs the
+    same suite here against the CI image under singularity.
 - [x] `main_test.go` `denyRemoteChanges` (added on `bugfix-set-counts-abca77d4de3c`,
   commit aab1a7d) runs `ichmod` with `user.Current().Username`, assuming the
   iRODS user name equals the OS user name; it will fail in CI's container zone
@@ -298,3 +300,152 @@
     leaves; the implementor's real-zone run of the same code passed, and CI
     on the pushed head is the end-to-end evidence. Cycle 1 FAILed on the
     uncapped gate wait.
+- [x] "Is there an easy way of getting the tests to automatically use docker
+  or singularity as available and if the IRODS_ENVIRONMENT_FILE etc. env
+  vars aren't set? For a no-thinking,no-setup test using irods in a
+  container?" then, on the proposed script and Makefile targets: "in 196".
+  - Source: user request on PR #196 (2026-10-15).
+  - Files: `developers/testzone.sh` (new), `Makefile`, `main_test.go`,
+    `.github/workflows/tests.yml`, `README.md`, `developers/README.md`.
+  - Approach: `make test-container` and `make race-container` run
+    `developers/testzone.sh run $(TESTZONE_MAKE) test` (or `race`;
+    `TESTZONE_MAKE = $(MAKE)` so `make -n` doesn't start a zone). `run`
+    and `up` unset the user's other `IRODS_*`, `WR_*` and
+    `IBACKUP_TEST_COLLECTION*` variables. `run` starts a zone in a private
+    temp dir, runs the command in its own session, and tears down on exit,
+    failure or a signal (SIGTERM to the command's process group, then exit
+    130, 143 or 129). `up DIR` (made mode 700) and `down DIR` do the
+    halves by hand; `env.sh` (for bash) unsets the same variables and exports the
+    zone's, including `WR_DEPLOYMENT=development`. The images are read
+    from `tests.yml`, so they match CI, and pulled once by digest into
+    `~/.cache/ibackup/testzone` under a cross-host lock. The server runs
+    in a writable Singularity sandbox as the invoking user by default
+    (the prototype's fixes: `.irodsA` re-encoded for the uid, PostgreSQL
+    on its unix socket only with md5, `ODBCINI`, jq port edits), or in
+    docker or podman only when `IBACKUP_TEST_RUNTIME` says so; any other
+    value is rejected. The clients use the client image's Singularity
+    wrappers; their shared instance is started from the cached image,
+    under the wrappers' own per-host `/var/lock` lock, if not running, and
+    never stopped, like the wrappers. The lock is released (`flock -u`)
+    and not passed to `singularity instance start`, as the instance would
+    otherwise hold it while it runs and every wrapper call would fail
+    after 60s (found in the review of the cycle 2 fixes). It dies clearly
+    if `USER` is unset, as the wrappers need it. Singularity comes from PATH, else
+    `module load
+    ${IBACKUP_TEST_SINGULARITY_MODULE:-ISG/singularity/3.11.4}`;
+    Apptainer alone gets a `singularity` link. Each zone takes the first
+    260-port block from 21000 that no other zone has locked
+    (`/tmp/ibackup-testzone-<port>.lock`, local, held by a `sleep` that
+    `down` checks by its cmdline before killing) and has no sockets in
+    use. The admin and test user passwords and the control plane key are
+    random; the passwords go through iadmin's stdin. The client bin dir is
+    first and last in PATH (extendo's `FindBaton` takes the last
+    `baton-do`). Non-empty `WR_*` env vars win over wr config files
+    (configor re-applies them after each file), so the zone exports every
+    manager setting wr's clients read (`jobqueue` uses ManagerHost, Port,
+    TokenFile, CAFile and CertDomain), plus Web and Dir, with the zone's
+    values and absolute token and CA paths, in `run`'s env and `env.sh`;
+    no config file in any dir or form (block, flow, quoted keys, or the
+    `.test.yml` that test binaries also load) can redirect the tests. The
+    earlier `check_wr_config` blacklist is gone (it was bypassable, and
+    its premise that files beat env vars was wrong). Every wr command the
+    script runs (`manager start` and `stop`) goes through `zone_wr`: in a
+    subshell, in the zone dir, with `HOME` set to a private `wrhome`, the
+    user's `WR_*` and `CONFIGOR_*` variables unset, the same zone
+    settings, and the absolute wr binary and ports read from the state
+    file, so no user config can reach the manager's other settings at
+    start or stop, whatever `down`'s cwd or env; `down` stops it whenever
+    `wrhome` exists, even if its start reported failure; a failed `wr manager start` shows
+    wr's output; `down` only stops a manager the zone started. Test
+    servers' env now also passes the `WR_*` variables, so their put jobs
+    go to the zone's own manager. CI keeps its own setup; its `test` job
+    gains a docker smoke step (`IBACKUP_TEST_RUNTIME=docker
+    developers/testzone.sh run` with `iput`, `ils`, `baton-do --version`
+    and `wr manager status` checked for `started` without printing its
+    web token), the only run of the docker path.
+  - Validation: shellcheck 0.11.0 (from its container image) clean;
+    `make lint` 0 issues; actionlint 0 errors; `make -n test-container
+    race-container` printed the commands without starting a zone. A bad
+    `IBACKUP_TEST_RUNTIME` is refused. Two concurrent `up`s got ports 21000
+    and 21260, dirs mode 700, a 32-character control plane key; after
+    sourcing `env.sh` with stray `IRODS_HOST`, `WR_MANAGERHOST` and
+    `IBACKUP_TEST_COLLECTION_BASE` set, only the zone's variables
+    remained, and `ils`/`iput` worked in each; after both `down`s there
+    were no zone instances, managers, holders or listeners left. `run`
+    passed the command's exit code (7) through; SIGINT, SIGTERM and SIGHUP
+    to the script gave 130, 143 and 129, killed the command's child
+    processes and tore the zone down. After the cycle 2 fixes, `make -k
+    test-container` passed: zone ready in 7s, 27 main tests PASS, every
+    sub-package `ok`, exit 0, 17 minutes; teardown left no zone
+    instances, managers, holders, temp dir or listeners, and `~/.irods`
+    was unchanged. Cycle 1: `make -k test-container`
+    and `make -k race-container` both passed (27 main tests PASS, every
+    sub-package `ok`, no data races, about 18 minutes each, zone ready in
+    8-9s), with a put job's wr runner connected to the zone's manager.
+  - Cycle 3 validation: with the wrappers copied to scratch with
+    `DOCKER_USER` changed (a private instance name and lock) and no such
+    instance running, `start_client_instance` run verbatim from the
+    script and then the wrapped `baton-do --version`: red before the fix
+    ("Failed to obtain lock on /var/lock/...--sb10.lock" after 60s, the
+    instance holding the lock), green after (6.1.0 at once). A full
+    first-run `up` using that copy (via a scratch `XDG_CACHE_HOME`)
+    started the private instance and was ready in 8s; `ils` and a
+    `baton-do` list worked; then `down`, and only the private instance
+    was stopped by hand. `up` with stray `WR_MANAGERHOST` and
+    `WR_MANAGERPORT` set worked. shellcheck clean, `make lint` 0 issues,
+    actionlint 0 errors. `make test-container` not rerun: the run path
+    only gained the unset in `up`, which `run` already did.
+  - Cycle 4 validation: from a scratch cwd, `up` was refused for a
+    `.wr_config.development.yml` with `managertokenfile: /abs/x` and `run`
+    for a `.wr_config.yml` with an indented `ManagerHost:`, each naming the
+    file and key and leaving no dir behind; a commented `#managerhost` was
+    accepted, as was the real `~/.wr_config.development.yml` (all its
+    manager keys are commented). `up` with `USER` unset died with the new
+    message and left no lock holder. shellcheck clean, `make lint` 0
+    issues, actionlint 0 errors.
+  - Cycle 5 validation (the check it tested was removed in cycle 6):
+    from fresh scratch cwds, `up` was refused for
+    `"managertokenfile": /abs/x` and `'ManagerDbFile' : /abs/y`, naming
+    the unquoted key. `up` from a clean cwd, `ils`, then `down` run from a
+    cwd whose `.wr_config.yml` and `.wr_config.development.yml` set a
+    dummy `managerport`, `managerweb`, `managerdir` and
+    `managertokenfile` (all in scratch), with `CONFIGOR_ENV` and
+    `WR_MANAGERPORT=29999` also set: the zone's manager (pid from its
+    `wr_development/pid`) exited and its port stopped listening, and the
+    dummy token file kept its content and mtime and the dummy dir stayed
+    empty. The manager wrote nothing to `wrhome`. shellcheck clean,
+    `make lint` 0 issues, actionlint 0 errors. `make -k test-container`
+    passed: zone ready in 7s, 27 main tests PASS, every sub-package `ok`,
+    exit 0, 17 minutes; teardown left no zone instance, manager, holder,
+    temp dir or listener (the shared client instance stays running, by
+    design), and `~/.irods` was unchanged.
+  - Cycle 6 validation: from a scratch cwd whose `.wr_config.yml` has
+    quoted keys (`"managertokenfile"`, `"ManagerPort"`) and
+    `.wr_config.test.yml` sets port, CA file and host, `up` was not
+    refused. With a scratch HOME whose `.wr_config.yml` (block) sets
+    host, port, token, CA, dir and cert domain, `.wr_config.development.yml`
+    is a flow mapping, and `.wr_config.test.yml` exists, `wr conf` from
+    both `wr` and a copy named `wr.test` (so configor loads the `.test.yml`
+    files) in the sourced `env.sh` env resolved ManagerHost and CertDomain
+    to localhost and Port, Web, Dir, TokenFile and CAFile to the zone's;
+    with the `WR_*` vars unset instead, the same commands picked up the
+    hostile flow, quoted and `.test.yml` values, so the files were read.
+    `wr manager status` (zone manager only) reported `started` and `ils`
+    worked; `down` from the hostile cwd stopped the zone's manager, and no
+    hostile token or CA path was created. shellcheck clean, `make lint` 0
+    issues, actionlint 0 errors. `make -k test-container` passed: zone
+    ready in 8s, 27 main tests PASS, every sub-package `ok`, exit 0, 17
+    minutes; teardown left no zone instance, manager, holder, temp dir or
+    listener, and `~/.irods` was unchanged.
+  - Untested: the docker and podman server locally (no docker here; CI's
+    smoke step is its first run), Apptainer alone, and module loading on
+    a host without the ISG module.
+  - Review: PASS on cycle 6 (clean-context reviewer: the clients' five
+    manager settings all come from the zone's env, which beats any wr
+    config file; the manager's files all land in its own dir; hostile
+    configs in every form are ignored; down is harmless with the manager
+    already stopped; shellcheck, actionlint and make lint clean). Cycles 1
+    to 5 FAILed on: stopping the shared client instance, per-host locks on
+    NFS, readable secrets; the client instance inheriting the wrappers'
+    lock; a manager-key blacklist that missed keys, quoted keys and flow
+    mappings, and down's unprotected stop; all fixed.

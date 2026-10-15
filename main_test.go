@@ -3684,6 +3684,14 @@ func (s *testServer) prepareFilePaths() {
 		"IBACKUP_SLACK_CHANNEL=" + os.Getenv("IBACKUP_SLACK_CHANNEL"),
 		"IBACKUP_CONFIG=" + os.Getenv("IBACKUP_CONFIG"),
 	}
+
+	// so that servers submit to the same wr manager as the tests, such as the
+	// private one of make test-container
+	for _, kv := range os.Environ() {
+		if strings.HasPrefix(kv, "WR_") {
+			s.env = append(s.env, kv)
+		}
+	}
 }
 
 func getFakeBaton(dir string) string {

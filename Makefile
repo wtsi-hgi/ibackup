@@ -66,6 +66,15 @@ race-main:
 race-subpkgs:
 	@go test -tags netgo -race --count 1 -timeout $(SUBPKG_TEST_TIMEOUT) $(shell go list ./... | grep -v '^${PKG}$$')
 
+# Runs make test or make race against a throwaway iRODS zone and wr manager of
+# their own, in containers, whatever the iRODS and wr env vars say. See
+# developers/README.md. MAKE is used through another variable so that make -n
+# doesn't start a zone.
+TESTZONE_MAKE = $(MAKE)
+
+test-container race-container:
+	@developers/testzone.sh run $(TESTZONE_MAKE) $(@:-container=)
+
 bench:
 	go test -tags netgo --count 1 -run Bench -bench=. ./...
 
@@ -94,4 +103,4 @@ dist:
 	github-release upload --tag ${TAG} --name ibackup-linux-x86-64.zip --file linux-dist.zip
 	@rm -f ibackup linux-dist.zip
 
-.PHONY: test test-main test-subpkgs race race-main race-subpkgs bench speed lint build install clean dist
+.PHONY: test test-main test-subpkgs race race-main race-subpkgs test-container race-container bench speed lint build install clean dist
