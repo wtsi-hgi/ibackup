@@ -458,6 +458,30 @@ func TestTrashSetCounts(t *testing.T) {
 			So(fileCounts(db.GetByID(trashSet.ID())), ShouldResemble, setFileCounts{})
 		})
 
+		Convey("When trashing a file after an earlier attempt failed, the trash set's entry "+
+			"doesn't keep that attempt's removal error, but keeps any other error", func() {
+			for path, lastError := range map[string]string{
+				file: EntryRemovalErrorPrefix + "update operation failed",
+				link: "upload failed",
+			} {
+				entry, errg := db.GetFileEntryForSet(given.ID(), path)
+				So(errg, ShouldBeNil)
+
+				entry.LastError = lastError
+				So(db.UpdateEntry(given.ID(), path, entry), ShouldBeNil)
+
+				trash(path)
+			}
+
+			trashedFile, errg := db.GetFileEntryForSet(trashSet.ID(), file)
+			So(errg, ShouldBeNil)
+			So(trashedFile.LastError, ShouldBeEmpty)
+
+			trashedLink, errg := db.GetFileEntryForSet(trashSet.ID(), link)
+			So(errg, ShouldBeNil)
+			So(trashedLink.LastError, ShouldEqual, "upload failed")
+		})
+
 		Convey("When trashing them", func() {
 			// A trash set is never discovered, so its file counts aren't kept:
 			// they stay zero whatever is trashed or removed from it, and only its
@@ -526,6 +550,28 @@ func TestTrashSetCounts(t *testing.T) {
 				So(db.GetByID(trashSet.ID()).Error, ShouldEqual, "some other error")
 
 				So(db.ClearRemovalError("missing"), ShouldNotBeNil)
+			})
+
+			Convey("then ClearRemovalError keeps a removal error while a file whose removal failed is "+
+				"still in the trash set, and clears it once that file is removed", func() {
+				// what the server records on the entry when removing its
+				// remote object fails.
+				failed, errg := db.GetFileEntryForSet(trashSet.ID(), file)
+				So(errg, ShouldBeNil)
+
+				failed.LastError = EntryRemovalErrorPrefix + "remove operation failed"
+				So(db.UpdateEntry(trashSet.ID(), file, failed), ShouldBeNil)
+
+				errMsg := RemovalErrorPrefix + "remove operation failed"
+				So(db.SetError(trashSet.ID(), errMsg), ShouldBeNil)
+
+				removeFromTrash(link)
+				So(db.ClearRemovalError(trashSet.ID()), ShouldBeNil)
+				So(db.GetByID(trashSet.ID()).Error, ShouldEqual, errMsg)
+
+				removeFromTrash(file)
+				So(db.ClearRemovalError(trashSet.ID()), ShouldBeNil)
+				So(db.GetByID(trashSet.ID()).Error, ShouldBeEmpty)
 			})
 
 			Convey("then the set's transformer can't change while the trash set holds any of them, and "+

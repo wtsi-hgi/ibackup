@@ -344,7 +344,8 @@ func (s *Server) waitForRemovalSubmissions() {
 }
 
 // clearTrashSetRemovalError clears the removal error of the given set, if it
-// is a trash set, once its removals have finished with none failing.
+// is a trash set, once its removals have finished with none failing, unless it
+// still holds a file whose removal failed earlier.
 // Otherwise nothing would clear it: a trash set is never discovered, and a
 // trash request keeps its Error.
 func (s *Server) clearTrashSetRemovalError(sid string) {

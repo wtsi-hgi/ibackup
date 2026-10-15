@@ -1304,6 +1304,11 @@ func (d *DB) putEntryInTrash(tx *bolt.Tx, set *Set, entry *Entry) error {
 
 	entry.TrashDate = time.Now()
 
+	// the entry was trashed, so an earlier attempt's failure is resolved.
+	if strings.HasPrefix(entry.LastError, EntryRemovalErrorPrefix) {
+		entry.LastError = ""
+	}
+
 	return sfsb.Bucket.Put([]byte(entry.Path), d.encodeToBytes(entry))
 }
 
@@ -2583,12 +2588,14 @@ func (d *DB) SetRemovalError(setID, errMsg string) (bool, error) {
 }
 
 // ClearRemovalError clears the given set's Error if it is a removal error,
-// one starting with RemovalErrorPrefix, leaving any other error. Returns an
+// one starting with RemovalErrorPrefix, leaving any other error, unless the
+// set still has a file whose removal failed (one whose LastError starts with
+// EntryRemovalErrorPrefix), as that failure isn't resolved yet. Returns an
 // error if the setID isn't in the database.
 func (d *DB) ClearRemovalError(setID string) error {
 	return d.db.Update(func(tx *bolt.Tx) error {
 		set, bid, b, err := d.getSetByID(tx, setID)
-		if err != nil || !strings.HasPrefix(set.Error, RemovalErrorPrefix) {
+		if err != nil || !strings.HasPrefix(set.Error, RemovalErrorPrefix) || d.hasFailedRemoval(tx, setID) {
 			return err
 		}
 
@@ -2596,6 +2603,20 @@ func (d *DB) ClearRemovalError(setID string) error {
 
 		return b.Put(bid, d.encodeToBytes(set))
 	})
+}
+
+// hasFailedRemoval returns whether any of the given set's file entries has a
+// LastError from a failed removal.
+func (d *DB) hasFailedRemoval(tx *bolt.Tx, setID string) bool {
+	failed := false
+
+	getEntriesViewFunc(tx, setID, fileBucket, func(v []byte) {
+		if !failed && strings.HasPrefix(d.decodeEntry(v).LastError, EntryRemovalErrorPrefix) {
+			failed = true
+		}
+	})
+
+	return failed
 }
 
 // IncrementNumObjectRemoved increments the number of objects removed for the

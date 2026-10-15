@@ -2605,6 +2605,68 @@ func TestServer(t *testing.T) {
 										So(gotTrash.HasProblems(), ShouldBeFalse)
 									})
 
+									// trashFile2 trashes file2 as well, giving the trash set
+									// a path other than the failed one to remove.
+									trashFile2 := func() {
+										s.storageHandler = working
+
+										err = client.TrashFilesAndDirs(exampleSet.ID(), []string{file2local})
+										So(err, ShouldBeNil)
+
+										waitForRemovals(t, s, client, exampleSet)
+									}
+
+									expectErrorKeptWithFailedFileTrashed := func() {
+										testutil.Eventually(t, time.Minute, 100*time.Millisecond, func() bool {
+											files, errg = client.GetFiles(trashSet.ID())
+											So(errg, ShouldBeNil)
+
+											return len(files) == 1
+										}, "file2 was not removed from the trash set")
+
+										waitForRemovalRunsToEnd(t, s)
+
+										So(trashSetError(), ShouldEqual, errMsg)
+										So(files[0].Path, ShouldEqual, file1local)
+									}
+
+									Convey("and a later removal from it of another path that succeeds keeps that error", func() {
+										trashFile2()
+
+										err = adminClient.RemoveFilesAndDirs(trashSet.ID(), []string{file2local})
+										So(err, ShouldBeNil)
+
+										expectErrorKeptWithFailedFileTrashed()
+									})
+
+									Convey("and a removal from it of another path that a restart recovers "+
+										"keeps that error", func() {
+										trashFile2()
+
+										stored, errs := adminClient.GetSetByID(trashSet.Requester, trashSet.ID())
+										So(errs, ShouldBeNil)
+
+										remReq := set.NewRemoveRequest(file2local, stored, false, set.ToRemove)
+										So(s.db.SetRemoveRequests(stored.ID(), []set.RemoveReq{remReq}), ShouldBeNil)
+										So(s.db.UpdateSetTotalToRemove(stored.ID(), 1), ShouldBeNil)
+
+										So(dfunc(), ShouldBeNil)
+
+										s, addr, dfunc = makeAndStartServer(0)
+
+										adminToken, erra := gas.Login(gas.NewClientRequest(addr, certPath), admin, "pass")
+										So(erra, ShouldBeNil)
+
+										adminClient = NewClient(addr, certPath, adminToken)
+
+										token, errl = gas.Login(gas.NewClientRequest(addr, certPath), "jim", "pass")
+										So(errl, ShouldBeNil)
+
+										client = NewClient(addr, certPath, token)
+
+										expectErrorKeptWithFailedFileTrashed()
+									})
+
 									Convey("and an expiry pass with nothing expired keeps that error", func() {
 										s.trashLifespan = time.Hour
 

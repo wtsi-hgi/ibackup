@@ -45,6 +45,10 @@ const (
 	// RemovalErrorPrefix starts the Error of a set whose removal of a path ran
 	// out of retries.
 	RemovalErrorPrefix = "Error when removing: "
+
+	// EntryRemovalErrorPrefix starts the LastError of an entry whose remote
+	// object could not be removed or updated by a removal of its path.
+	EntryRemovalErrorPrefix = "failed to remove: "
 )
 
 type Status int

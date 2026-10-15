@@ -994,8 +994,7 @@ func (s *Server) processRemoteFileRemoval(removeReq *set.RemoveReq, entry *set.E
 	}
 
 	if err != nil && fileErrorCannotBeIgnored(err, mayMissInRemote) {
-		errorPrefix := "failed to remove: "
-		s.setErrorOnEntry(entry, removeReq.Set.ID(), removeReq.Path, errorPrefix+err.Error())
+		s.setErrorOnEntry(entry, removeReq.Set.ID(), removeReq.Path, set.EntryRemovalErrorPrefix+err.Error())
 
 		return err
 	}
