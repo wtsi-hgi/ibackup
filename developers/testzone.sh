@@ -303,11 +303,16 @@ up() {
 	# The server can take a while after it listens before it accepts logins.
 	local i
 	for i in $(seq 30); do
-		if echo irods | client "$ir" admin iinit >/dev/null 2>&1; then
+		if echo irods | client "$ir" admin iinit >/dev/null 2>"$dir/iinit.err"; then
 			break
 		fi
 
-		[ "$i" -lt 30 ] || fail "$dir" "could not log in to the iRODS server"
+		if [ "$i" -eq 30 ]; then
+			echo "testzone: the last iinit's errors:" >&2
+			tail -n 20 "$dir/iinit.err" >&2
+			fail "$dir" "could not log in to the iRODS server"
+		fi
+
 		sleep 1
 	done
 
@@ -437,12 +442,15 @@ write_env() {
 }
 
 # client DIR NAME CMD... runs an iRODS client command as NAME, with a HOME of
-# DIR so that the user's own ~/.irods is untouched.
+# DIR so that the user's own ~/.irods is untouched. The rest of the environment
+# is kept (the user's own iRODS settings are already unset), as Singularity can
+# need it to run the wrappers' commands in their instance: for example, rootless
+# SingularityCE 4 puts instances in cgroups through the user's DBus session.
 client() {
 	local dir=$1 name=$2
 	shift 2
 
-	env -i PATH="$PATH" HOME="$dir" USER="$(id -un)" IRODS_ENVIRONMENT_FILE="$dir/$name.json" "$@"
+	HOME=$dir IRODS_ENVIRONMENT_FILE=$dir/$name.json "$@"
 }
 
 wait_for_port() {

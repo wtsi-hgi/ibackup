@@ -449,3 +449,19 @@
     NFS, readable secrets; the client instance inheriting the wrappers'
     lock; a manager-key blacklist that missed keys, quoted keys and flow
     mappings, and down's unprotected stop; all fixed.
+  - CI on 0c92cb2: the docker smoke step (then before `make`) failed with
+    "could not log in to the iRODS server" after 30 fast iinit attempts;
+    the zone's server was up on port 21000 and logged no login attempt,
+    so the clients never reached it. Likely cause: `client` ran iCommands
+    under `env -i`, which dropped `DBUS_SESSION_BUS_ADDRESS` (and
+    `XDG_RUNTIME_DIR`), and rootless SingularityCE 4.2.2 on the runner
+    needs the DBus session to run commands in the cgroup-managed wrapper
+    instance; local Singularity 3.11 doesn't, so local runs passed. Fix:
+    `client` keeps the environment (the user's `IRODS_*` are already
+    unset) and only sets `HOME` and `IRODS_ENVIRONMENT_FILE`; a final
+    failed iinit now prints its stderr before the server log. The smoke
+    step now runs after `Run make`, with `if: !cancelled() && matrix.target
+    == 'test'`, so it can't stop the tests. Validation: shellcheck clean,
+    `make lint` 0 issues, actionlint 0 errors, singularity
+    `up`/`ils`/`baton-do`/`down` cycle fine with `~/.irods` unchanged;
+    the docker path is proven only by the next CI run.
