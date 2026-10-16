@@ -38,6 +38,15 @@ die() {
 	exit 1
 }
 
+# The client wrappers need USER, for their lock file, but it can be unset, for
+# example under cron or env -i. It is only filled in when missing, from the
+# name of the real uid, and exported for the clients and anything run in the
+# zone.
+if [ -z "${USER:-}" ]; then
+	USER=$(id -un) || die "USER is not set, and uid $(id -u) has no name to set it to"
+	export USER
+fi
+
 # image NAME prints the image CI uses, unless NAME is set in the environment.
 image() {
 	local ref=${!1:-}
@@ -342,6 +351,7 @@ up() {
 			unset "\$var"
 		done < <(compgen -e | grep -E '$own_settings' | grep -Ev '$keep_settings')
 		unset var
+		[ -n "\${USER:-}" ] || export USER="\$(id -un)"
 		export PATH="$clients/bin:$singularity_dir:\$PATH:$clients/bin"
 		export IRODS_ENVIRONMENT_FILE="$ir/user.json"
 		export IBACKUP_TEST_IRODS_ADMIN_ENVIRONMENT_FILE="$ir/admin.json"
@@ -397,7 +407,6 @@ start_client_instance() {
 	instance=$(sed -n 's/^export DOCKER_\(REGISTRY\|USER\|IMAGE\|TAG\)="\(.*\)"/\2/p' "$clients/bin/baton-do" |
 		paste -sd ' ' | sed 's/ /--/g')
 
-	[ -n "${USER:-}" ] || die "USER must be set, as the client wrappers need it"
 	exec {fd}>"/var/lock/$instance--$USER.lock"
 	flock -w 60 "$fd" || die "timed out waiting to start the iRODS client instance"
 

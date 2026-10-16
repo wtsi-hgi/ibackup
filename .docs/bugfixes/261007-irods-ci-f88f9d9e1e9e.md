@@ -508,3 +508,44 @@
     wait shares it; red with a 1.5s removal delay and the 10s wait, green
     with 30s, unmodified TestRemove green, all on a throwaway zone; make
     lint clean).
+- [x] "If it's not set, is there any danger to just setting it? `id -un`?"
+  - Source: PR #196, mjkw31, comment 4292398383, on
+    `developers/testzone.sh:400` (`[ -n "${USER:-}" ] || die "USER must be
+    set, as the client wrappers need it"` in `start_client_instance`).
+  - Red: `env -u USER developers/testzone.sh run true` exited 1 in 0.3s:
+
+    ```text
+    testzone: USER must be set, as the client wrappers need it
+    ```
+
+  - Cause: the client image's `singularity-service-docker` wrapper names
+    its lock `/var/lock/$instance--$USER.lock`, so `start_client_instance`
+    needs USER to take the same lock, and the script died rather than
+    supplying it. Anything run under `run`, and a shell sourcing `up`'s
+    `env.sh`, also runs the wrappers, and `main_test.go`'s test servers
+    pass on `USER` from their environment for the same reason.
+  - Danger considered: none found. USER is only filled when unset or
+    empty, from `id -un` (the real uid's name), so it cannot differ from
+    the user running the zone; a USER that is already set is left as it
+    is, as before. If the uid has no name, the script still dies, with
+    that reason.
+  - Files: `developers/testzone.sh`.
+  - Fix: right after `die`, the script sets and exports USER from
+    `id -un` when it is unset or empty, so the client instance's lock, the
+    clients, and the command `run` runs (and so the test servers) all see
+    it. `up`'s `env.sh` gets `[ -n "${USER:-}" ] || export USER="$(id -un)"`,
+    evaluated when sourced, for a shell that lacks USER. The die in
+    `start_client_instance` is gone.
+  - Green: `env -u USER developers/testzone.sh run true` exit 0;
+    `env -u USER developers/testzone.sh run bash -c 'ils >/dev/null &&
+    baton-do --version && [ "$USER" = "$(id -un)" ]'` exit 0 (baton
+    6.1.0); the same with `USER=` exit 0; with USER set normally exit 0;
+    `USER=someoneelse` is kept unchanged under `run`. `env -u USER
+    developers/testzone.sh up DIR`, then `env -u USER bash -c 'source
+    DIR/env.sh; ...'` had USER equal to `id -un`, and `ils` and
+    `baton-do --version` worked; `down DIR` exit 0, DIR removed.
+  - Gates: shellcheck 0.10.0 clean on `developers/testzone.sh`;
+    actionlint 0 errors; `make lint` 0 issues. `make test-container` not
+    run: the change is to the zone script's USER handling only, proven by
+    the runs above.
+  - Review: PASS (clean-context reviewer: red at HEAD, green with USER unset, empty, set and different; env.sh line written literally and fills USER when sourced; shellcheck clean, make lint 0 issues, actionlint 0 errors without shellcheck on PATH and one pre-existing SC2016 info on tests.yml:182 with it).
