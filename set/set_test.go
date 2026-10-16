@@ -2190,6 +2190,20 @@ func TestSetDB(t *testing.T) {
 					So(got.Hardlinks, ShouldEqual, 1)
 				})
 
+				Convey("then upload them, re-add them and rediscover, counting the hard link once", func() {
+					counts := setFileCounts{NumFiles: 3, Hardlinks: 1, Uploaded: 2, Missing: 1}
+
+					got := uploadPresentEntries(db, setl1)
+					So(got.Status, ShouldEqual, Complete)
+					So(fileCounts(got), ShouldResemble, counts)
+
+					reAddUploadedAndRediscover(db, setl1, []string{path1, path2, "/zmissing"}, counts)
+
+					entry, errg := db.GetFileEntryForSet(setl1.ID(), path2)
+					So(errg, ShouldBeNil)
+					So(entry.Type, ShouldEqual, Hardlink)
+				})
+
 				Convey("then start rediscovery and remove a hard link without breaking the counts", func() {
 					err = db.SetDiscoveryStarted(setl1.ID())
 					So(err, ShouldBeNil)
@@ -2287,6 +2301,15 @@ func TestSetDB(t *testing.T) {
 					So(got, ShouldNotBeNil)
 					So(err, ShouldBeNil)
 					So(got.Symlinks, ShouldEqual, 1)
+				})
+
+				Convey("then re-add them and rediscover, counting the symlink once", func() {
+					reAddUploadedAndRediscover(db, setl1, []string{path1, path2, "/zmissing"}, fileCounts(got))
+
+					entry, errg := db.GetFileEntryForSet(setl1.ID(), path2)
+					So(errg, ShouldBeNil)
+					So(entry.Type, ShouldEqual, Symlink)
+					So(entry.Dest, ShouldEqual, path1)
 				})
 
 				Convey("then remove a file and rediscover without the file being counted out twice", func() {
@@ -5328,6 +5351,41 @@ func setEntryToFailed(entry *Entry, given *Set, db *DB) {
 // status.
 func setEntryToStatus(entry *Entry, given *Set, db *DB, status transfer.RequestStatus) {
 	setEntryToStatusWithSize(entry, given, db, status, 0)
+}
+
+// uploadPresentEntries reports an upload of each of the given set's file
+// entries that isn't missing, and returns the set afterwards.
+func uploadPresentEntries(db *DB, given *Set) *Set {
+	entries, err := db.GetPureFileEntries(given.ID())
+	So(err, ShouldBeNil)
+
+	for _, entry := range entries {
+		if entry.Status != Missing {
+			setEntryToUploaded(entry, given, db)
+		}
+	}
+
+	return db.GetByID(given.ID())
+}
+
+// reAddUploadedAndRediscover re-adds the given paths to the given set, whose
+// files have the given counts after an upload, rediscovers it and uploads its
+// files again, checking that its counts are the given ones again, with only
+// discovered statuses (missing) counted after the rediscovery.
+func reAddUploadedAndRediscover(db *DB, given *Set, paths []string, uploaded setFileCounts) {
+	So(db.MergeFileEntries(given.ID(), paths), ShouldBeNil)
+
+	discovered := uploaded
+	discovered.Uploaded = 0
+
+	got, err := db.Discover(given.ID(), nil)
+	So(err, ShouldBeNil)
+	So(got.Status, ShouldEqual, PendingUpload)
+	So(fileCounts(got), ShouldResemble, discovered)
+
+	got = uploadPresentEntries(db, given)
+	So(got.Status, ShouldEqual, Complete)
+	So(fileCounts(got), ShouldResemble, uploaded)
 }
 
 func boolToUint64(b bool) uint64 {
