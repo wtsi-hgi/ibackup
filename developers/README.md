@@ -1,5 +1,74 @@
 # Developer tools
 
+## Test zone
+`make test-container` and `make race-container` run `make test` and
+`make race` against a throwaway iRODS 4.3.5 zone and wr manager of their own,
+whatever your iRODS and wr settings are, and stop them afterwards, even after
+a failure, Ctrl-C or SIGTERM. They use [testzone.sh](testzone.sh), which you
+can also run yourself:
+
+```bash
+developers/testzone.sh run go test -tags netgo -count 1 -run TestPuts .
+developers/testzone.sh up /tmp/myzone && source /tmp/myzone/env.sh
+developers/testzone.sh down /tmp/myzone
+```
+
+`up` needs a new or empty directory, which it makes private to you, and
+`down` deletes it. On a signal, `run` sends SIGTERM to all of its command's
+processes and waits for them before tearing down, then exits with 130 for
+SIGINT, 143 for SIGTERM or 129 for SIGHUP; otherwise it exits with the
+command's exit code.
+
+You need wr on your PATH and Singularity or Apptainer, which runs the
+iCommands and `baton-do`. If neither is on your PATH, the script runs
+`module load ISG/singularity/3.11.4` (set `IBACKUP_TEST_SINGULARITY_MODULE`
+for another module). The iRODS server runs in Singularity too, unless you set
+`IBACKUP_TEST_RUNTIME` to `docker` or `podman`. Only Singularity has been run
+locally; CI's `test` job runs a smoke test of the docker server.
+
+The images are the ones CI uses, read from
+[tests.yml](../.github/workflows/tests.yml). The first run pulls about 300MB
+of them into `~/.cache/ibackup/testzone` (or under `$XDG_CACHE_HOME`); after
+that a zone takes about 10 seconds to start.
+
+The clients use the wrappers' shared Singularity instance, named
+`ghcr.io--wtsi-npg--ub-22.04-irods-clients-4.3.5--9.8`. The script starts it
+from the cached image if it is not already running, but, like the wrappers
+themselves, never stops it, as anything else using those wrappers may be
+using it. Stop it yourself with `singularity instance stop` once nothing
+needs it.
+
+The clients run inside that instance, so they only see the host paths it
+binds: by default your home, `/tmp` and the directory it was started from,
+plus any your site's Singularity config adds. The zone's directory must be
+one of those, so use a `TMPDIR` that the instance binds, and an `up` directory
+under your home or `/tmp`, or the clients won't find the zone's iRODS
+environment files. The tests' own temp files are under `TMPDIR` too.
+
+The zone runs as you, with its server and work files in its directory. Its
+tests log in as iRODS user `ibackup`, and the admin is `irods`, both with
+random passwords, and the server's control plane key is random too. Your
+`~/.irods` is not used. The tests get `IRODS_ENVIRONMENT_FILE`,
+`IBACKUP_TEST_IRODS_ADMIN_ENVIRONMENT_FILE`, `IBACKUP_TEST_COLLECTION`,
+`IBACKUP_TEST_SCHEDULER`, `WR_DEPLOYMENT` and the `WR_MANAGER*` settings for
+the zone. Any other `IRODS_*`, `WR_*` and `IBACKUP_TEST_COLLECTION*`
+variables you have, and any `CONFIGOR_*` ones (wr reads its config with
+configor), are unset, by `run`, `up` and sourcing `env.sh` (from bash).
+
+Non-empty wr env vars win over wr config files, and the zone sets every
+manager setting that its wr clients read (`WR_MANAGERHOST`, `_PORT`, `_WEB`,
+`_DIR`, `_TOKENFILE`, `_CAFILE` and `_CERTDOMAIN`), so no `.wr_config*.yml`
+of yours, in any directory, can point the tests at another manager. The
+zone's manager itself is started and stopped in the zone's directory with a
+HOME of its own, so your config files can't reach its other settings either.
+
+Each zone takes a block of 260 ports from 21000 up, the first block that no
+other zone holds and that has no sockets in use. A zone holds its block with
+a lock file, `/tmp/ibackup-testzone-<port>.lock`, so you and others can run
+several zones on one host at once. If the script is killed before it can tear
+down, run `down` on its directory, which for `run` is
+`${TMPDIR:-/tmp}/ibackup-testzone.*`.
+
 ## Speed gate
 `make speed` checks the critical upload path for speed regressions. It must
 pass when you change that path (see the main

@@ -27,7 +27,6 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -77,6 +76,7 @@ import (
 	"github.com/wtsi-hgi/ibackup/set"
 	"github.com/wtsi-hgi/ibackup/statter"
 	"github.com/wtsi-hgi/ibackup/transfer"
+	ex "github.com/wtsi-npg/extendo/v3"
 	"github.com/wtsi-ssg/wr/backoff"
 	btime "github.com/wtsi-ssg/wr/backoff/time"
 	"github.com/wtsi-ssg/wr/retry"
@@ -169,37 +169,24 @@ func TestServer(t *testing.T) {
 	})
 }
 
-// denyRemoteChanges downgrades the current user and all their groups to read
-// access on the given remote object, so ibackup's changes to it fail with
-// CAT_NO_ACCESS_PERMISSION. It returns a function that restores ownership, which
-// also happens when the current Convey resets.
+// denyRemoteChanges downgrades the iRODS user that iCommands run as, and all
+// their groups, to read access on the given remote object, so ibackup's changes
+// to it fail with CAT_NO_ACCESS_PERMISSION. It returns a function that restores
+// ownership, which also happens when the current Convey resets.
 func denyRemoteChanges(t *testing.T, path string) func() {
 	t.Helper()
 
 	icmd := NewIcommander(t)
 	So(icmd, ShouldNotBeNil)
 
-	curUser, err := user.Current()
+	// The iRODS user need not have the local user's name.
+	irodsUser, err := icmd.UserInfo()
 	So(err, ShouldBeNil)
 
-	usernameRE := regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
-	So(usernameRE.MatchString(curUser.Username), ShouldBeTrue)
-
-	_, err = icmd.ICHMOD("read", curUser.Username, path)
-	So(err, ShouldBeNil)
-
-	groupsOutput, err := icmd.IUSERINFO()
-	So(err, ShouldBeNil)
-
-	scanner := bufio.NewScanner(bytes.NewReader(groupsOutput))
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if !strings.HasPrefix(line, "member of group:") {
-			continue
-		}
-
-		group := strings.TrimSpace(strings.TrimPrefix(line, "member of group:"))
-		if group == "" {
+	// The user goes last because changing access needs own access. A user is
+	// also a group of the same name, so that group is the user.
+	for _, group := range irodsUser.Groups {
+		if group == irodsUser.Name {
 			continue
 		}
 
@@ -207,15 +194,16 @@ func denyRemoteChanges(t *testing.T, path string) func() {
 		So(err, ShouldBeNil)
 	}
 
-	So(scanner.Err(), ShouldBeNil)
+	_, err = icmd.ICHMOD("read", irodsUser.Name, path)
+	So(err, ShouldBeNil)
 
 	restore := func() {
-		_, err := icmd.ICHMOD("own", curUser.Username, path)
+		_, err := icmd.GrantOwn(irodsUser.Name, path)
 		So(err, ShouldBeNil)
 	}
 
 	Reset(func() {
-		_, _ = icmd.ICHMOD("own", curUser.Username, path) //nolint:errcheck
+		_, _ = icmd.GrantOwn(irodsUser.Name, path) //nolint:errcheck
 	})
 
 	return restore
@@ -611,14 +599,19 @@ Local Path	Status	Size	Attempts	Date	Error`+"\n"+
 			Convey("Repeatedly uploading files that are changed or not changes status details", func() {
 				setName = "changingFilesTest"
 
+				releaseUploads := s.holdUploads(t)
+
 				s.addSetForTesting(t, setName, transformer, path)
 
 				statusCmd := []string{"status", "--name", setName}
 
-				s.waitForStatus(setName, "\nStatus: uploading", 60*time.Second)
+				// With uploads held, all 3 clients reach and stay in this state.
+				s.waitForStatus(setName, "Global put client status (/10): 6 iRODS connections", 60*time.Second)
 				s.confirmOutputContains(t, statusCmd, 0,
 					`Global put queue status: 3 queued; 3 reserved to be worked on; 0 failed
 Global put client status (/10): 6 iRODS connections`)
+
+				releaseUploads()
 
 				s.waitForStatus(setName, "\nStatus: complete", 60*time.Second)
 
@@ -1289,6 +1282,52 @@ func (s *testServer) dialServerUntilReady(roots *x509.CertPool) error {
 	return lastErr
 }
 
+// keepLogsIfFailed copies the server's and its clients' log files to a
+// subdirectory of $IBACKUP_TEST_LOG_DIR, if set, when t fails, since they are
+// otherwise deleted with the server's temp dir.
+func (s *testServer) keepLogsIfFailed(t *testing.T) {
+	t.Helper()
+
+	logDir := os.Getenv("IBACKUP_TEST_LOG_DIR")
+	if logDir == "" {
+		return
+	}
+
+	t.Cleanup(func() {
+		if !t.Failed() || s.logFile == "" {
+			return
+		}
+
+		paths, err := filepath.Glob(s.logFile + "*")
+		if err != nil {
+			t.Logf("failed to find server logs: %s", err)
+
+			return
+		}
+
+		dest := filepath.Join(logDir, strings.ReplaceAll(t.Name(), "/", "_"), filepath.Base(s.dir))
+
+		for _, path := range paths {
+			if err := copyLogFile(path, filepath.Join(dest, filepath.Base(path))); err != nil {
+				t.Logf("failed to keep server log %s: %s", path, err)
+			}
+		}
+	})
+}
+
+func copyLogFile(src, dest string) error {
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+
+	if err = os.MkdirAll(filepath.Dir(dest), dirMode); err != nil { //nolint:gosec
+		return err
+	}
+
+	return os.WriteFile(dest, data, 0600) //nolint:mnd,gosec
+}
+
 func TestRemoveDirs(t *testing.T) {
 	Convey("Given a server", t, func() {
 		fx := givenRemoveServer(t)
@@ -1712,7 +1751,10 @@ func TestRemove(t *testing.T) {
 				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--set")
 				So(exitCode, ShouldEqual, 0)
 
-				ctx, cancelFn := context.WithTimeout(context.Background(), 10*time.Second)
+				// The set is only deleted after the removal handler's last
+				// Reserve waits out its 7s (retryDelay+2s) for more requests, on
+				// top of the removals themselves, so allow ample time beyond that.
+				ctx, cancelFn := context.WithTimeout(context.Background(), 30*time.Second)
 				defer cancelFn()
 
 				cmd := []string{"status", "--name", setName, "--url", s.url, "--cert", s.cert}
@@ -3637,11 +3679,21 @@ func (s *testServer) prepareFilePaths() {
 		"XDG_STATE_HOME=" + s.dir,
 		"PATH=" + path,
 		"HOME=" + home,
+		// the Singularity wrappers for baton-do and iCommands need USER
+		"USER=" + os.Getenv("USER"),
 		"IRODS_ENVIRONMENT_FILE=" + os.Getenv("IRODS_ENVIRONMENT_FILE"),
 		"GEM_HOME=" + os.Getenv("GEM_HOME"),
 		"IBACKUP_SLACK_TOKEN=" + os.Getenv("IBACKUP_SLACK_TOKEN"),
 		"IBACKUP_SLACK_CHANNEL=" + os.Getenv("IBACKUP_SLACK_CHANNEL"),
 		"IBACKUP_CONFIG=" + os.Getenv("IBACKUP_CONFIG"),
+	}
+
+	// so that servers submit to the same wr manager as the tests, such as the
+	// private one of make test-container
+	for _, kv := range os.Environ() {
+		if strings.HasPrefix(kv, "WR_") {
+			s.env = append(s.env, kv)
+		}
 	}
 }
 
@@ -3660,11 +3712,70 @@ func getFakeBaton(dir string) string {
 	return fakeBatonDir
 }
 
+// holdUploads makes the put clients the server starts from now on wait before
+// they start baton-do, and so before they make any iRODS connection, until the
+// returned function is called, the current Convey resets, the test process
+// ends, or about 40s pass. The clients will have reserved their requests and
+// told the server about their connections by then, so tests can see that state
+// while held. The clients must run on this host, as with a local wr manager.
+func (s *testServer) holdUploads(t *testing.T) func() {
+	t.Helper()
+
+	// the baton-do the clients would otherwise use
+	realBaton, err := ex.FindBaton()
+	So(err, ShouldBeNil)
+
+	dir := t.TempDir()
+	gate := filepath.Join(dir, "release")
+	// If the test process dies while uploads are held, the wrapper stops
+	// waiting, so the clients carry on, fail to reach the gone server and exit,
+	// rather than staying blocked in wr. The wait is also capped at about 40s,
+	// beyond the moments tests hold for but within baton's 60s operation
+	// timeout; a longer hold makes clients time out and start another held
+	// baton-do, over and over.
+	script := fmt.Sprintf("#!/bin/sh\nn=0\n"+
+		"while [ ! -e '%s' ] && kill -0 %d 2>/dev/null && [ $n -lt 400 ]; do sleep 0.1; n=$((n+1)); done\n"+
+		"exec '%s' \"$@\"\n", gate, os.Getpid(), realBaton)
+
+	err = os.WriteFile(filepath.Join(dir, "baton-do"), []byte(script), 0700) //nolint:gosec,mnd
+	So(err, ShouldBeNil)
+
+	// The server submits put jobs with its current environment, which can be
+	// s.env applied by a CLI call, so both get the holding PATH. The wrapper
+	// goes last as well as first, since extendo's FindBaton (v3.2.0) picks the
+	// last baton-do in PATH, not the first.
+	origEnv, origPath := s.env, os.Getenv("PATH")
+	heldPath := dir + ":" + origPath + ":" + dir
+	s.env = slices.Clone(s.env)
+
+	for i, kv := range s.env {
+		if strings.HasPrefix(kv, "PATH=") {
+			s.env[i] = "PATH=" + heldPath
+		}
+	}
+
+	_ = os.Setenv("PATH", heldPath)
+
+	release := func() {
+		_ = os.WriteFile(gate, nil, 0600) //nolint:errcheck,gosec,mnd
+	}
+
+	Reset(func() {
+		release()
+
+		s.env = origEnv
+		_ = os.Setenv("PATH", origPath)
+	})
+
+	return release
+}
+
 // prepareConfig creates a key and cert to use with a server and looks at
 // IBACKUP_TEST_* env vars to set SERVER vars as well.
 func (s *testServer) prepareConfig(t *testing.T) {
 	t.Helper()
 
+	s.keepLogsIfFailed(t)
 	testutil.WriteDefaultConfig(t)
 
 	s.url = os.Getenv("IBACKUP_TEST_SERVER_URL")
@@ -6309,7 +6420,8 @@ func TestManualMode(t *testing.T) {
 				"[1/1] "+file6+" warning: lchown "+file6+": operation not permitted\n"+
 					"1 downloaded (0 replaced); 0 skipped; 0 failed; 0 missing\n")
 
-			_, err = icmd.IMETA("rm", "-d", remote2, transfer.MetaKeyMtime)
+			// iRODS 4.3's imeta rm needs a value, so remove any value
+			_, err = icmd.IMETA("rmw", "-d", remote2, transfer.MetaKeyMtime, "%")
 			So(err, ShouldBeNil)
 
 			restoreFiles(t, file7+"\t"+remote2+"\n",

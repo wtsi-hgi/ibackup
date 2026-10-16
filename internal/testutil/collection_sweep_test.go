@@ -27,6 +27,7 @@ package testutil
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -80,6 +81,47 @@ func TestListIRODSSubcollections(t *testing.T) {
 		collections, err := listIRODSSubcollections("/base/it's")
 		So(err, ShouldWrap, errQuoteInIRODSPath)
 		So(collections, ShouldBeNil)
+	})
+
+	Convey("Given a fake iquest on the PATH", t, func() {
+		dir := t.TempDir()
+		t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
+
+		fakeIquest := func(stdout, stderr string, exitCode int) {
+			script := fmt.Sprintf("#!/bin/sh\nprintf '%s'\nprintf '%s' >&2\nexit %d\n", stdout, stderr, exitCode)
+			So(os.WriteFile(filepath.Join(dir, "iquest"), []byte(script), 0700), ShouldBeNil) //nolint:gosec
+		}
+
+		noRows := `CAT_NO_ROWS_FOUND: Nothing was found matching your query\n`
+
+		Convey("no rows is an empty listing whether iquest exits 0 (iRODS 4.2) or 1 (iRODS 4.3)", func() {
+			for _, exitCode := range []int{0, 1} {
+				fakeIquest(noRows, "", exitCode)
+
+				collections, err := listIRODSSubcollections("/base")
+				So(err, ShouldBeNil)
+				So(collections, ShouldBeEmpty)
+			}
+		})
+
+		Convey("rows are listed", func() {
+			fakeIquest(`01791402001 /base/ibackup_test_a\n`, "", 0)
+
+			collections, err := listIRODSSubcollections("/base")
+			So(err, ShouldBeNil)
+			So(collections, ShouldResemble,
+				[]testCollection{{path: "/base/ibackup_test_a", created: time.Unix(1791402001, 0)}})
+		})
+
+		Convey("a failed query is an error that includes iquest's output", func() {
+			fakeIquest("", `ERROR: iquest Error: queryAndShowStrCond failed\n`, 4)
+
+			collections, err := listIRODSSubcollections("/base")
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldStartWith, "iquest failed: exit status 4")
+			So(err.Error(), ShouldContainSubstring, "queryAndShowStrCond failed")
+			So(collections, ShouldBeNil)
+		})
 	})
 }
 

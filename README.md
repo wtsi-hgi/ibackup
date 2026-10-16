@@ -147,6 +147,11 @@ wr add -f put.jobs -i needsbackup -g ibackup -m 1G -t 8h -r 3 -l 'irods' --cwd_m
 ## Development
 Run `make test` and `make lint` before submitting changes.
 
+The iRODS tests need an iRODS zone and a wr manager. `make test-container`
+(or `make race-container`) needs no setup: it starts a throwaway zone and
+manager in containers, runs `make test` (or `make race`) against them, then
+stops them. See [developers/README.md](developers/README.md#test-zone).
+
 When you touch code in the critical upload path, you must also run
 `make speed`, and it must pass. That path is the server's request
 reservation and hardlink claims, the client's upload tracking
