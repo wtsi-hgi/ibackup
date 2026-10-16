@@ -2198,6 +2198,53 @@ func TestServer(t *testing.T) {
 							So(trashed, ShouldBeEmpty)
 						})
 
+						Convey("Trashing a failed file never uploaded leaves another set's object at its remote path "+
+							"untagged, so that set's trashing and expiry of it removes the object", func() {
+							So(handler.RemoveMeta(file1remote, hardlinkMeta), ShouldBeNil)
+							So(handler.AddMeta(file1remote, map[string]string{
+								transfer.MetaKeySets:      exampleSet3.Name,
+								transfer.MetaKeyRequester: exampleSet3.Requester,
+							}), ShouldBeNil)
+
+							So(client.AddOrUpdateSet(exampleSet3), ShouldBeNil)
+							So(client.MergeFiles(exampleSet3.ID(), []string{file1local}), ShouldBeNil)
+							So(client.TriggerDiscovery(exampleSet3.ID(), false), ShouldBeNil)
+							So(<-racCalled, ShouldBeTrue)
+
+							requests, errg := adminClient.GetSomeUploadRequests()
+							So(errg, ShouldBeNil)
+							So(requests, ShouldHaveLength, 3)
+
+							for _, request := range requests {
+								request.Status = transfer.RequestStatusUploaded
+
+								if request.Set == exampleSet.Name {
+									request.Status = transfer.RequestStatusFailed
+								}
+
+								So(adminClient.UpdateFileStatus(request), ShouldBeNil)
+							}
+
+							So(client.TrashFilesAndDirs(exampleSet.ID(), []string{file1local}), ShouldBeNil)
+							waitForRemovals(t, s, client, exampleSet)
+
+							meta, errm := handler.GetMeta(file1remote)
+							So(errm, ShouldBeNil)
+							So(meta[transfer.MetaKeySets], ShouldEqual, exampleSet3.Name)
+
+							So(client.TrashFilesAndDirs(exampleSet3.ID(), []string{file1local}), ShouldBeNil)
+							waitForRemovals(t, s, client, exampleSet3)
+
+							trashSet3 := set.BuildTrashSetFromSet(exampleSet3)
+							s.trashLifespan = 0
+
+							So(adminClient.RemoveExpiredEntriesForSet(trashSet3.ID()), ShouldBeNil)
+							waitForRemovals(t, s, adminClient, &trashSet3)
+
+							_, err = os.Stat(file1remote)
+							So(err, ShouldNotBeNil)
+						})
+
 						Convey("Removing a failed file only counts it as removed once its database cleanup is done", func() {
 							changeSetFilesStatus(2, exampleSet.Name, adminClient, transfer.RequestStatusFailed)
 

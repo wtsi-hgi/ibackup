@@ -1049,9 +1049,19 @@ func (s *Server) markAboutToBeRemoved(removeReq *set.RemoveReq, entry *set.Entry
 	return s.db.UpdateRemoveRequest(*removeReq)
 }
 
+// updateOrRemoveRemoteFile updates the sets and requester metadata of the given
+// request's remote object, or removes it if no set would hold it any more.
+// When trashing a file the set never uploaded (see Entry.WasNotUploaded()), it
+// leaves the object alone: the set has no object to trash, so any object at the
+// remote path is another set's, and the trash set gets no entry that would
+// expire a trash tag on it.
 func (s *Server) updateOrRemoveRemoteFile(removeReq *set.RemoveReq, transformer transformer.PathTransformer,
 	rpath string, remoteMeta map[string]string, entry *set.Entry,
 ) error {
+	if removeReq.Action == set.ToTrash && entry.WasNotUploaded() {
+		return nil
+	}
+
 	metaBeforeUpdate := withRecordedRemoteMeta(remoteMeta, removeReq.RemoteMeta)
 
 	var (
