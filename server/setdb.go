@@ -996,21 +996,34 @@ func (s *Server) removeDeletedFileFromDB(removeReq *set.RemoveReq, err error) er
 	return s.db.RemoveDeletedFileEntry(removeReq)
 }
 
+// processRemoteFileRemoval removes the given request's file from the remote
+// storage, or updates its remote object's metadata, unless an earlier attempt
+// already did. First, even on a retry after that, it removes the file's upload
+// request from our queue, so that one queued again since (by a discovery, or a
+// recovery after a restart) isn't handed out after the remote removal. A retry
+// whose set's transformer can no longer be made (eg. after a restart with a
+// config lacking it) skips that and returns nil, so its database side runs.
 func (s *Server) processRemoteFileRemoval(removeReq *set.RemoveReq, entry *set.Entry) error {
+	transformer, err := removeReq.Set.MakeTransformer()
+	if err != nil {
+		if removeReq.RemoteRemovalStatus == set.Removed {
+			return nil
+		}
+
+		return err
+	}
+
+	rpath, err := transformer(removeReq.Path)
+
+	s.removeWaitingUploadOfFile(removeReq.Set, removeReq.Path, rpath)
+
 	if removeReq.RemoteRemovalStatus == set.Removed {
 		return nil
 	}
 
-	transformer, err := removeReq.Set.MakeTransformer()
-	if err != nil {
-		return err
-	}
-
 	mayMissInRemote := removeReq.RemoteRemovalStatus == set.AboutToBeRemoved && removeReq.Action == set.ToRemove
 
-	rpath, remoteMeta, err := s.getRemoteMeta(removeReq.Path, transformer)
-
-	s.removeWaitingUploadOfFile(removeReq.Set, removeReq.Path, rpath)
+	remoteMeta, err := s.getRemoteMeta(rpath, err)
 
 	if erru := s.markAboutToBeRemoved(removeReq, entry, remoteMeta, err); erru != nil {
 		return erru
@@ -1037,18 +1050,14 @@ func fileErrorCannotBeIgnored(err error, mayMissInRemote bool) bool {
 	return !(mayMissInRemote && strings.Contains(err.Error(), internal.ErrFileDoesNotExist)) //nolint:staticcheck,lll
 }
 
-// getRemoteMeta returns the remote path of the given local path, and the
-// metadata of its remote object.
-func (s *Server) getRemoteMeta(lpath string, transformer transformer.PathTransformer,
-) (string, map[string]string, error) {
-	rpath, err := transformer(lpath)
-	if err != nil {
-		return "", nil, err
+// getRemoteMeta returns the metadata of the remote object at the given remote
+// path, or the given error from transforming a local path to it.
+func (s *Server) getRemoteMeta(rpath string, transformErr error) (map[string]string, error) {
+	if transformErr != nil {
+		return nil, transformErr
 	}
 
-	remoteMeta, err := s.storageHandler.GetMeta(rpath)
-
-	return rpath, remoteMeta, err
+	return s.storageHandler.GetMeta(rpath)
 }
 
 // markAboutToBeRemoved stores the given request as about to be removed, before

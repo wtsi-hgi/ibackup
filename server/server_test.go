@@ -2663,6 +2663,78 @@ func TestServer(t *testing.T) {
 								So(files[0].Path, ShouldEqual, file1local)
 							})
 
+							for name, action := range map[string]set.RemoveAction{"removal": set.ToRemove, "trash": set.ToTrash} {
+								Convey("A "+name+" retried after its remote removal, with its file's upload "+
+									"queued again in between, stops that upload being handed out", func() {
+									trashSet := set.BuildTrashSetFromSet(exampleSet)
+									So(s.db.AddOrUpdate(&trashSet), ShouldBeNil)
+
+									remReq := set.RemoveReq{Path: file1local, Set: exampleSet, Action: action}
+									So(s.db.SetRemoveRequests(exampleSet.ID(), []set.RemoveReq{remReq}), ShouldBeNil)
+
+									entry, errg := s.db.GetFileEntryForSet(exampleSet.ID(), file1local)
+									So(errg, ShouldBeNil)
+
+									// the first attempt changes the remote object,
+									// then stops before its database side.
+									So(s.processRemoteFileRemoval(&remReq, entry), ShouldBeNil)
+									So(remReq.RemoteRemovalStatus, ShouldEqual, set.Removed)
+
+									later := time.Now().Add(time.Hour)
+									So(os.Chtimes(file1local, later, later), ShouldBeNil)
+									So(os.Chtimes(file2local, later, later), ShouldBeNil)
+
+									drainRacCalled(t, racCalled)
+									So(client.TriggerDiscovery(exampleSet.ID(), false), ShouldBeNil)
+									So(<-racCalled, ShouldBeTrue)
+
+									So(s.removeFileFromIRODSandDB(&remReq), ShouldBeNil)
+
+									requests, errr := adminClient.GetSomeUploadRequests()
+									So(errr, ShouldBeNil)
+									So(requests, ShouldHaveLength, 1)
+									So(requests[0].Local, ShouldEqual, file2local)
+								})
+
+								Convey("A "+name+" retried after its remote removal, when its set's transformer "+
+									"can no longer be made, still completes its database side", func() {
+									trashSet := set.BuildTrashSetFromSet(exampleSet)
+									So(s.db.AddOrUpdate(&trashSet), ShouldBeNil)
+
+									remReq := set.RemoveReq{Path: file1local, Set: exampleSet, Action: action}
+									So(s.db.SetRemoveRequests(exampleSet.ID(), []set.RemoveReq{remReq}), ShouldBeNil)
+
+									entry, errg := s.db.GetFileEntryForSet(exampleSet.ID(), file1local)
+									So(errg, ShouldBeNil)
+
+									So(s.processRemoteFileRemoval(&remReq, entry), ShouldBeNil)
+									So(remReq.RemoteRemovalStatus, ShouldEqual, set.Removed)
+
+									// as after a restart with a client config
+									// lacking the set's named transformer.
+									unmakeable := *exampleSet
+									unmakeable.Transformer = "unregistered"
+									_, errt := unmakeable.MakeTransformer()
+									So(errt, ShouldNotBeNil)
+
+									remReq.Set = &unmakeable
+
+									So(s.removeFileFromIRODSandDB(&remReq), ShouldBeNil)
+
+									files, errf := client.GetFiles(exampleSet.ID())
+									So(errf, ShouldBeNil)
+									So(files, ShouldHaveLength, 1)
+									So(files[0].Path, ShouldEqual, file2local)
+
+									if action == set.ToTrash {
+										files, errf = client.GetFiles(trashSet.ID())
+										So(errf, ShouldBeNil)
+										So(files, ShouldHaveLength, 1)
+										So(files[0].Path, ShouldEqual, file1local)
+									}
+								})
+							}
+
 							Convey("You can trash a file and a dir, which sets them as complete in remove bucket", func() {
 								err = client.TrashFilesAndDirs(exampleSet.ID(), []string{file1local, dir2local})
 								So(err, ShouldBeNil)
