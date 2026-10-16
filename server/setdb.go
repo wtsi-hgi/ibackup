@@ -766,11 +766,8 @@ func (s *Server) registerDeletionCallback(given *set.Set) {
 
 // removeQueuedRequestsOfSet removes from our queue the upload requests of the
 // given set that no client is working on, so clients don't upload the files of
-// a deleted set, and releases any claim they still have on a remote inode file
-// from a reservation that expired, so other sets' requests for it aren't held
-// up. Results for those being worked on are dropped by updateFileStatus. The
-// running check and the removal happen under the queue's lock, so a client
-// can't reserve a request in between and then have its claim released.
+// a deleted set. Results for those being worked on are dropped by
+// updateFileStatus.
 func (s *Server) removeQueuedRequestsOfSet(given *set.Set) {
 	for _, item := range s.queue.AllItems() {
 		r, ok := item.Data().(*transfer.Request)
@@ -778,16 +775,46 @@ func (s *Server) removeQueuedRequestsOfSet(given *set.Set) {
 			continue
 		}
 
-		removed, err := s.queue.RemoveUnless(context.Background(), item.Key, func(any) bool {
-			return item.State() == queue.ItemStateRun
-		})
-		if removed {
-			err = errors.Join(err, s.remoteClaims.release(r))
-		}
-
-		if err != nil {
+		if err := s.removeWaitingRequest(item, r); err != nil {
 			s.Logger.Printf("queued request of deleted set not removed rid=%s err=%s", item.Key, err)
 		}
+	}
+}
+
+// removeWaitingRequest removes the given item, holding the given upload request,
+// from our queue unless a client is working on it, and releases any claim the
+// request still has on a remote inode file from a reservation that expired, so
+// other sets' requests for it aren't held up. The check and the removal happen
+// under the queue's lock, so a client can't reserve the request in between and
+// then have its claim released. An item already gone from the queue is kept,
+// so that a newer request queued since under the same key isn't removed.
+func (s *Server) removeWaitingRequest(item *queue.Item, r *transfer.Request) error {
+	removed, err := s.queue.RemoveUnless(context.Background(), item.Key, func(any) bool {
+		state := item.State()
+
+		return state == queue.ItemStateRun || state == queue.ItemStateRemoved
+	})
+	if removed {
+		err = errors.Join(err, s.remoteClaims.release(r))
+	}
+
+	return err
+}
+
+// removeWaitingUploadOfFile removes from our queue the given set's upload
+// request for the given local and remote paths, unless a client is working on
+// it, so that a retry waiting there, or buried and later kicked by a retry of
+// the set, doesn't upload the file again once it has been removed.
+func (s *Server) removeWaitingUploadOfFile(given *set.Set, local, remote string) {
+	r := &transfer.Request{Local: local, Remote: remote, Requester: given.Requester, Set: given.Name}
+
+	item, err := s.queue.Get(r.ID())
+	if err != nil {
+		return
+	}
+
+	if err = s.removeWaitingRequest(item, r); err != nil {
+		s.Logger.Printf("queued request of removed file not removed rid=%s err=%s", item.Key, err)
 	}
 }
 
@@ -982,6 +1009,8 @@ func (s *Server) processRemoteFileRemoval(removeReq *set.RemoveReq, entry *set.E
 	mayMissInRemote := removeReq.RemoteRemovalStatus == set.AboutToBeRemoved && removeReq.Action == set.ToRemove
 
 	rpath, remoteMeta, err := s.getRemoteMeta(removeReq.Path, transformer)
+
+	s.removeWaitingUploadOfFile(removeReq.Set, removeReq.Path, rpath)
 
 	if erru := s.markAboutToBeRemoved(removeReq, entry, remoteMeta, err); erru != nil {
 		return erru

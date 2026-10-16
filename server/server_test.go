@@ -2228,6 +2228,62 @@ func TestServer(t *testing.T) {
 							So(s.queue.Stats().Items, ShouldEqual, 0)
 						})
 
+						queuedLocals := func() []string {
+							items := s.queue.AllItems()
+							locals := make([]string, 0, len(items))
+
+							for _, item := range items {
+								locals = append(locals, item.Data().(*transfer.Request).Local) //nolint:errcheck,forcetypeassert
+							}
+
+							return locals
+						}
+
+						Convey("Trashing a failed file whose retry is waiting stops it being handed out again", func() {
+							changeSetFilesStatus(2, exampleSet.Name, adminClient, transfer.RequestStatusFailed)
+
+							So(client.TrashFilesAndDirs(exampleSet.ID(), []string{file1local}), ShouldBeNil)
+							waitForRemovals(t, s, client, exampleSet)
+
+							retries, errg := adminClient.GetSomeUploadRequests()
+							So(errg, ShouldBeNil)
+							So(retries, ShouldHaveLength, 1)
+							So(retries[0].Local, ShouldEqual, file2local)
+						})
+
+						Convey("Trashing the dir of a failed file whose retry is delayed removes the retry", func() {
+							s.failedUploadRetryDelay = time.Hour
+
+							changeSetFilesStatus(2, exampleSet.Name, adminClient, transfer.RequestStatusFailed)
+							So(s.queue.Stats().Delayed, ShouldEqual, 2)
+
+							So(client.TrashFilesAndDirs(exampleSet.ID(), []string{dir2local}), ShouldBeNil)
+							waitForRemovals(t, s, client, exampleSet)
+
+							So(queuedLocals(), ShouldResemble, []string{file2local})
+						})
+
+						Convey("Trashing a file whose upload was buried means a retry of the set doesn't upload it", func() {
+							for range set.AttemptsToBeConsideredFailing {
+								changeSetFilesStatus(2, exampleSet.Name, adminClient, transfer.RequestStatusFailed)
+							}
+
+							So(s.queue.Stats().Buried, ShouldEqual, 2)
+
+							So(client.TrashFilesAndDirs(exampleSet.ID(), []string{file1local}), ShouldBeNil)
+							waitForRemovals(t, s, client, exampleSet)
+
+							retried, errr := client.RetryFailedSetUploads(exampleSet.ID())
+							So(errr, ShouldBeNil)
+							So(retried, ShouldEqual, 1)
+
+							retries, errg := adminClient.GetSomeUploadRequests()
+							So(errg, ShouldBeNil)
+							So(retries, ShouldHaveLength, 1)
+							So(retries[0].Local, ShouldEqual, file2local)
+							So(queuedLocals(), ShouldResemble, []string{file2local})
+						})
+
 						Convey("Trash of failed files removes entries from Failed bucket", func() {
 							changeSetFilesStatus(2, exampleSet.Name, adminClient, transfer.RequestStatusFailed)
 
