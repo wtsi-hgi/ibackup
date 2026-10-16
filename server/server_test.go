@@ -1636,8 +1636,6 @@ func TestServer(t *testing.T) {
 						file2remote, errt := transformer(file2local)
 						So(errt, ShouldBeNil)
 
-						s.storageHandler = &batonLikeGetMetaHandler{Handler: s.storageHandler}
-
 						So(s.storageHandler.RemoveFile(file1remote), ShouldBeNil)
 
 						logWriter.Reset()
@@ -1761,7 +1759,7 @@ func TestServer(t *testing.T) {
 						})
 
 						Convey("another error getting a file's remote metadata still fails its removal", func() {
-							s.storageHandler = &batonLikeGetMetaHandler{Handler: s.storageHandler, failPath: file2remote}
+							s.storageHandler = &failingGetMetaHandler{Handler: s.storageHandler, failPath: file2remote}
 
 							remReq := set.RemoveReq{Path: file2local, Set: exampleSet, Action: set.ToRemove}
 
@@ -2303,7 +2301,7 @@ func TestServer(t *testing.T) {
 
 							Convey("A trash request that keeps failing after a discovery failed leaves the set "+
 								"editable and shown as failed", func() {
-								s.storageHandler = &batonLikeGetMetaHandler{Handler: s.storageHandler, failPath: file1remote}
+								s.storageHandler = &failingGetMetaHandler{Handler: s.storageHandler, failPath: file1remote}
 
 								err = client.TrashFilesAndDirs(exampleSet.ID(), []string{file1local})
 								So(err, ShouldBeNil)
@@ -2450,7 +2448,6 @@ func TestServer(t *testing.T) {
 
 								Convey("trashing it after that object went missing completes with a warning, "+
 									"and the trash set lists it", func() {
-									s.storageHandler = &batonLikeGetMetaHandler{Handler: s.storageHandler}
 									So(s.storageHandler.RemoveFile(file1remote), ShouldBeNil)
 
 									logWriter.Reset()
@@ -6844,8 +6841,6 @@ func TestServer(t *testing.T) {
 						transformer, errt := exampleSet.MakeTransformer()
 						So(errt, ShouldBeNil)
 
-						s.storageHandler = &batonLikeGetMetaHandler{Handler: storage}
-
 						removeVanished := func(path string) {
 							rpath, errt := transformer(path)
 							So(errt, ShouldBeNil)
@@ -9289,21 +9284,17 @@ func (h *partialAddMetaHandler) AddMeta(path string, meta map[string]string) err
 	return errInjectedAddMeta
 }
 
-// batonLikeGetMetaHandler is a remove.Handler whose GetMeta() fails like
-// baton's for a path with no remote object (the mock returns no metadata), and
-// with errInjectedGetMeta, a PathError with a different Msg, for failPath.
-type batonLikeGetMetaHandler struct {
+// failingGetMetaHandler is a remove.Handler whose GetMeta() fails with
+// errInjectedGetMeta, a PathError with a different Msg to the one for a missing
+// remote object, for failPath.
+type failingGetMetaHandler struct {
 	remove.Handler
 	failPath string
 }
 
-func (h *batonLikeGetMetaHandler) GetMeta(path string) (map[string]string, error) {
+func (h *failingGetMetaHandler) GetMeta(path string) (map[string]string, error) {
 	if path == h.failPath {
 		return nil, errInjectedGetMeta
-	}
-
-	if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
-		return nil, errs.PathError{Msg: internal.ErrFileDoesNotExist, Path: path}
 	}
 
 	return h.Handler.GetMeta(path)

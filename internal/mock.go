@@ -27,7 +27,9 @@
 package internal
 
 import (
+	"errors"
 	"io"
+	"io/fs"
 	"maps"
 	"os"
 	"strconv"
@@ -43,6 +45,10 @@ const ErrMockStatFail = "stat fail"
 const ErrMockPutFail = "put fail"
 const ErrMockMetaFail = "meta fail"
 const ErrFileDoesNotExist = "file does not exist"
+
+// ErrEmptyMetaValue is in the error iRODS gives (-816000) for adding or
+// removing an AVU with an empty value.
+const ErrEmptyMetaValue = "attr_value was empty"
 
 // LocalHandler satisfies the Handler interface, treating "Remote" as local
 // paths and moving from Local to Remote for the Put().
@@ -255,13 +261,18 @@ func (l *LocalHandler) MakeMetaFail(remote string) {
 }
 
 // RemoveMeta deletes the given keys from a map stored under path. Returns an
-// error if metaFail == path.
+// error if metaFail == path, or, like iRODS, if any value is empty, in which
+// case it removes nothing.
 func (l *LocalHandler) RemoveMeta(path string, meta map[string]string) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
 	if l.metaFail == path {
 		return errs.PathError{Msg: ErrMockMetaFail, Path: ""}
+	}
+
+	if err := checkNoEmptyMetaValues(path, meta); err != nil {
+		return err
 	}
 
 	pathMeta, exists := l.Meta[path]
@@ -276,8 +287,22 @@ func (l *LocalHandler) RemoveMeta(path string, meta map[string]string) error {
 	return nil
 }
 
+// checkNoEmptyMetaValues returns an error containing ErrEmptyMetaValue if any
+// of the given meta's values are empty, which iRODS rejects.
+func checkNoEmptyMetaValues(path string, meta map[string]string) error {
+	for key, val := range meta {
+		if val == "" {
+			return errs.PathError{Msg: ErrEmptyMetaValue + " for " + key, Path: path}
+		}
+	}
+
+	return nil
+}
+
 // AddMeta adds the given meta to a map stored under path. Returns an error
-// if metafail == path, or if keys were already defined in the map.
+// if metafail == path, if keys were already defined in the map, or, like iRODS,
+// if any value is empty, in which case it adds nothing. (baton adds AVUs one at
+// a time, so may have added some before an empty one.)
 func (l *LocalHandler) AddMeta(path string, meta map[string]string) error {
 	l.mu.RLock()
 	metaFail, addMetaSlow := l.metaFail, l.addMetaSlow
@@ -285,6 +310,10 @@ func (l *LocalHandler) AddMeta(path string, meta map[string]string) error {
 
 	if metaFail == path {
 		return errs.PathError{Msg: ErrMockMetaFail, Path: ""}
+	}
+
+	if err := checkNoEmptyMetaValues(path, meta); err != nil {
+		return err
 	}
 
 	if addMetaSlow {
@@ -312,8 +341,17 @@ func (l *LocalHandler) AddMeta(path string, meta map[string]string) error {
 }
 
 // GetMeta gets the metadata stored for the given path (returns an empty map if
-// path is not known about or has no metadata).
+// path has no metadata). Like baton, it returns a PathError with Msg
+// ErrFileDoesNotExist if nothing exists at path.
 func (l *LocalHandler) GetMeta(path string) (map[string]string, error) {
+	if _, err := os.Stat(path); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, errs.PathError{Msg: ErrFileDoesNotExist, Path: path}
+		}
+
+		return nil, err
+	}
+
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 

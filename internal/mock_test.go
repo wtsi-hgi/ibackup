@@ -35,6 +35,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/wtsi-hgi/ibackup/baton/meta"
+	"github.com/wtsi-hgi/ibackup/errs"
 )
 
 func TestMockConcurrency(t *testing.T) {
@@ -43,6 +44,8 @@ func TestMockConcurrency(t *testing.T) {
 		dir := t.TempDir()
 		removed := filepath.Join(dir, "removed")
 		kept := filepath.Join(dir, "kept")
+
+		CreateTestFileOfLength(t, kept, 1)
 
 		const n = 50
 
@@ -122,6 +125,12 @@ func TestMock(t *testing.T) {
 				So(exists, ShouldBeFalse)
 			})
 
+			Convey("Getting metadata of a file that's not been uploaded fails like baton", func() {
+				fileMeta, err := lh.GetMeta(file1remote)
+				So(fileMeta, ShouldBeNil)
+				So(err, ShouldResemble, errs.PathError{Msg: ErrFileDoesNotExist, Path: file1remote})
+			})
+
 			Convey("You can try to remove the file from iRODS and receive an error", func() {
 				err := lh.RemoveFile(file1remote)
 				So(err, ShouldNotBeNil)
@@ -154,6 +163,16 @@ func TestMock(t *testing.T) {
 					So(errm, ShouldBeNil)
 
 					So(lh.Meta[file1remote], ShouldResemble, meta)
+				})
+
+				Convey("But adding metadata with an empty value fails, like iRODS, adding none of it", func() {
+					errm := lh.AddMeta(file1remote, map[string]string{"ibackup:test:a": "1", "ibackup:test:b": ""})
+					So(errm, ShouldNotBeNil)
+					So(errm.Error(), ShouldContainSubstring, ErrEmptyMetaValue)
+
+					fileMeta, errg := lh.GetMeta(file1remote)
+					So(errg, ShouldBeNil)
+					So(fileMeta, ShouldBeEmpty)
 				})
 
 				Convey("And given metadata on the uploaded file", func() {
@@ -194,6 +213,16 @@ func TestMock(t *testing.T) {
 						So(errm, ShouldBeNil)
 
 						So(fileMeta, ShouldResemble, map[string]string{"ibackup:test:b": "2"})
+					})
+
+					Convey("But removing metadata with an empty value fails, like iRODS, removing none of it", func() {
+						errm := lh.RemoveMeta(file1remote, map[string]string{"ibackup:test:a": "1", "ibackup:test:b": ""})
+						So(errm, ShouldNotBeNil)
+						So(errm.Error(), ShouldContainSubstring, ErrEmptyMetaValue)
+
+						fileMeta, errg := lh.GetMeta(file1remote)
+						So(errg, ShouldBeNil)
+						So(fileMeta, ShouldResemble, meta)
 					})
 				})
 
