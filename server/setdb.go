@@ -2073,19 +2073,17 @@ func (s *Server) handleFileStatusUpdates() {
 func (s *Server) updateFileStatus(r *transfer.Request) error {
 	entry, err := s.db.SetEntryStatus(r)
 	if err != nil {
-		var errr error
-
 		errs := &set.Error{}
 		if errors.As(err, errs) {
 			switch errs.Msg {
 			case set.ErrInvalidEntry:
-				errr = s.removeOrReleaseRequestFromQueue(r, entry)
+				return s.dropRequest(r, "its file is no longer in its set")
 			case set.ErrInvalidSetID:
-				return s.dropRequestOfDeletedSet(r)
+				return s.dropRequest(r, "its set was deleted")
 			}
 		}
 
-		return errors.Join(err, errr)
+		return err
 	}
 
 	if err = s.handleNewlyCompletedSets(r); err != nil {
@@ -2095,12 +2093,13 @@ func (s *Server) updateFileStatus(r *transfer.Request) error {
 	return s.trackUploadingAndStuckRequests(r, entry)
 }
 
-// dropRequestOfDeletedSet removes the given request, whose set has been deleted,
-// from our queue whatever its status, and releases any claim it has on a remote
-// inode file, so it isn't uploaded again.
-func (s *Server) dropRequestOfDeletedSet(r *transfer.Request) error {
+// dropRequest removes the given request, whose set has been deleted or no longer
+// has its file, from our queue whatever its status, and releases any claim it
+// has on a remote inode file, so it isn't uploaded or retried again. The reason
+// is logged.
+func (s *Server) dropRequest(r *transfer.Request, reason string) error {
 	s.uploadTracker.uploadFinished(r)
-	s.Logger.Printf("request dropped rid=%s status=%s: its set was deleted", r.ID(), r.Status)
+	s.Logger.Printf("request dropped rid=%s status=%s: %s", r.ID(), r.Status, reason)
 
 	return errors.Join(s.queue.Remove(context.Background(), r.ID()), s.remoteClaims.release(r))
 }
@@ -2195,15 +2194,11 @@ func (s *Server) moveFinishedRequestInQueue(r *transfer.Request, entry *set.Entr
 	if r.Status == transfer.RequestStatusFailed {
 		s.updateQueueItemData(r)
 
-		attempts := 0
-		if entry != nil {
-			attempts = entry.Attempts
+		attempts := entry.Attempts
+		if attempts%set.AttemptsToBeConsideredFailing == 0 {
+			s.Logger.Printf("request buried rid=%s attempts=%d err=%s%s", r.ID(), attempts, r.Error, rSuffix)
 
-			if entry.Attempts%set.AttemptsToBeConsideredFailing == 0 {
-				s.Logger.Printf("request buried rid=%s attempts=%d err=%s%s", r.ID(), attempts, r.Error, rSuffix)
-
-				return s.queue.Bury(r.ID())
-			}
+			return s.queue.Bury(r.ID())
 		}
 
 		delay := s.failedUploadRetryDelay

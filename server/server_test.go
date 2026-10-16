@@ -2173,6 +2173,61 @@ func TestServer(t *testing.T) {
 							So(s.UploadingRequests(), ShouldBeEmpty)
 						})
 
+						Convey("Trashing a failed file while its retry runs drops the retry's result, "+
+							"so it isn't retried again", func() {
+							changeSetFilesStatus(2, exampleSet.Name, adminClient, transfer.RequestStatusFailed)
+
+							requests, errg := adminClient.GetSomeUploadRequests()
+							So(errg, ShouldBeNil)
+							So(requests, ShouldHaveLength, 2)
+
+							for _, request := range requests {
+								request.Status = transfer.RequestStatusUploading
+								So(adminClient.UpdateFileStatus(request), ShouldBeNil)
+							}
+
+							So(client.TrashFilesAndDirs(exampleSet.ID(), []string{file1local}), ShouldBeNil)
+							waitForRemovals(t, s, client, exampleSet)
+
+							for _, request := range requests {
+								request.Status = transfer.RequestStatusFailed
+								request.Error = "connection reset"
+								So(adminClient.UpdateFileStatus(request), ShouldBeNil)
+							}
+
+							So(s.UploadingRequests(), ShouldBeEmpty)
+
+							retries, errg := adminClient.GetSomeUploadRequests()
+							So(errg, ShouldBeNil)
+							So(retries, ShouldHaveLength, 1)
+							So(retries[0].Local, ShouldEqual, file2local)
+							So(s.queue.Stats().Items, ShouldEqual, 1)
+						})
+
+						Convey("Trashing a failed file while its retry succeeds drops the retry's result", func() {
+							changeSetFilesStatus(2, exampleSet.Name, adminClient, transfer.RequestStatusFailed)
+
+							requests, errg := adminClient.GetSomeUploadRequests()
+							So(errg, ShouldBeNil)
+							So(requests, ShouldHaveLength, 2)
+
+							for _, request := range requests {
+								request.Status = transfer.RequestStatusUploading
+								So(adminClient.UpdateFileStatus(request), ShouldBeNil)
+							}
+
+							So(client.TrashFilesAndDirs(exampleSet.ID(), []string{file1local}), ShouldBeNil)
+							waitForRemovals(t, s, client, exampleSet)
+
+							for _, request := range requests {
+								request.Status = transfer.RequestStatusUploaded
+								So(adminClient.UpdateFileStatus(request), ShouldBeNil)
+							}
+
+							So(s.UploadingRequests(), ShouldBeEmpty)
+							So(s.queue.Stats().Items, ShouldEqual, 0)
+						})
+
 						Convey("Trash of failed files removes entries from Failed bucket", func() {
 							changeSetFilesStatus(2, exampleSet.Name, adminClient, transfer.RequestStatusFailed)
 
