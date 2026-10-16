@@ -1237,21 +1237,34 @@ func (d *DBRO) getPathsWithPrefix(setID, bucketName, prefix string) ([]string, e
 // them, losing their upload history (eg. RemoteObject). If the file is not
 // already in the set, it will be added with the status Registered.
 func (d *DB) MergeFileEntries(setID string, paths []string) error {
+	dirents := make([]*Dirent, len(paths))
+
+	for n, path := range paths {
+		dirents[n] = &Dirent{Path: path}
+	}
+
+	return d.addNewEntries(setID, dirents, fileBucket)
+}
+
+// addNewEntries adds the given dirents that have no stored (non-Registered)
+// entry in the given sub bucket of the given set, with the status Registered,
+// leaving the stored entries unchanged.
+func (d *DB) addNewEntries(setID string, dirents []*Dirent, bucketName string) error {
 	return d.db.Update(func(tx *bolt.Tx) error {
-		b, existing, err := d.getExistingEntries(tx, fileBucket, setID)
+		b, existing, err := d.getExistingEntries(tx, bucketName, setID)
 		if err != nil {
 			return err
 		}
 
-		entries := make([]*Dirent, 0, len(paths))
+		added := make([]*Dirent, 0, len(dirents))
 
-		for _, path := range paths {
-			if existing[path] == nil {
-				entries = append(entries, &Dirent{Path: path})
+		for _, dirent := range dirents {
+			if existing[dirent.Path] == nil {
+				added = append(added, dirent)
 			}
 		}
 
-		return d.createEntries(tx, b, existing, setID, entries, Registered)
+		return d.createEntries(tx, b, existing, setID, added, Registered)
 	})
 }
 
@@ -1631,10 +1644,12 @@ func newDirentFromPath(path string) *Dirent {
 
 // MergeDirEntries sets the directory paths for the given backup set. Only
 // supply absolute paths to directories. It keeps the existing entries in the
-// set and handles duplicates by updating the existing entries. If the dir is
-// not already in the set, it will be added with the status Registered.
+// set unchanged, for discovery to update: making them Registered would have
+// discovery treat them as new, so one now missing would be Missing instead of
+// Orphaned. If the dir is not already in the set, it will be added with the
+// status Registered.
 func (d *DB) MergeDirEntries(setID string, entries []*Dirent) error {
-	return d.mergeEntries(setID, entries, dirBucket, Registered)
+	return d.addNewEntries(setID, entries, dirBucket)
 }
 
 // getSetByID returns the Set with the given ID from the database, along with

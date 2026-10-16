@@ -3080,15 +3080,19 @@ func TestServer(t *testing.T) {
 							So(errg, ShouldBeNil)
 							So(dirs, ShouldHaveLength, 2)
 
-							Convey("You can still see original files and folders after rediscovery", func() {
+							rediscoverExpectingOrphanedFolder := func() {
 								before, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
 								So(errg, ShouldBeNil)
 
 								err = client.TriggerDiscovery(exampleSet.ID(), false)
 								So(err, ShouldBeNil)
 
+								var got *set.Set
+
 								testutil.Eventually(t, 30*time.Second, 25*time.Millisecond, func() bool {
-									got, errgs := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+									var errgs error
+
+									got, errgs = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
 
 									return errgs == nil && got.LastDiscovery.After(before.LastDiscovery)
 								}, "rediscovery")
@@ -3104,6 +3108,24 @@ func TestServer(t *testing.T) {
 								orphaned := findEntryByPath(dirs, dir1local)
 								So(orphaned, ShouldNotBeNil)
 								So(orphaned.Status, ShouldEqual, set.Orphaned)
+
+								// dirs aren't counted, and the files under the missing
+								// folder stay pending until their upload results.
+								So(got.Status, ShouldEqual, set.PendingUpload)
+								So(got.NumFiles, ShouldEqual, 2)
+								So(got.Missing, ShouldEqual, 0)
+								So(got.Orphaned, ShouldEqual, 0)
+							}
+
+							Convey("You can still see original files and folders after rediscovery", func() {
+								rediscoverExpectingOrphanedFolder()
+							})
+
+							Convey("Re-adding it before rediscovery still shows it orphaned, with the same counts", func() {
+								err = client.MergeDirs(exampleSet.ID(), []string{dir1local})
+								So(err, ShouldBeNil)
+
+								rediscoverExpectingOrphanedFolder()
 							})
 						})
 					})
