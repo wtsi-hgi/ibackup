@@ -48,32 +48,54 @@ import (
 	boltErrors "go.etcd.io/bbolt/errors"
 )
 
+// Error is an error about a set or its entries. Its Msg is one of our
+// StrError constants, or wraps one, so callers can check for it with
+// errors.Is().
 type Error struct {
-	Msg string
+	Msg error
 	id  string
 }
 
+// Error returns our Msg, followed by the id of the set or entry the error is
+// about, if any.
 func (e Error) Error() string {
+	if e.Msg == nil {
+		return e.id
+	}
+
 	if e.id != "" {
 		return fmt.Sprintf("%s [%s]", e.Msg, e.id)
 	}
 
+	return e.Msg.Error()
+}
+
+// Unwrap returns our Msg, so errors.Is() can match our StrError constants.
+func (e Error) Unwrap() error {
 	return e.Msg
 }
 
+// StrError is the type of our Err* constants, so they can be used as errors.
+type StrError string
+
+// Error returns the string itself.
+func (e StrError) Error() string {
+	return string(e)
+}
+
 const (
-	ErrInvalidSetID           = "invalid set ID"
-	ErrInvalidRequest         = "request lacks Requester or Set"
-	ErrInvalidEntry           = "invalid set entry"
-	ErrInvalidTransformerPath = "invalid transformer path concatenation"
-	ErrNoAddDuringDiscovery   = "can't add set while set is being discovered"
-	ErrPathNotInSet           = "path(s) do not belong to the backup set"
-	ErrSetIsNotWritable       = "the set is read-only, you cannot change it"
-	ErrTransformerAlreadyUsed = "you cannot edit the transformer on a set with uploaded files"
-	ErrTransformerInUse       = "you cannot edit the transformer on a set with unfinished uploads"
-	ErrTransformerUsedByTrash = "you cannot edit the transformer on a set with uploaded files in its trash; " +
+	ErrInvalidSetID           StrError = "invalid set ID"
+	ErrInvalidRequest         StrError = "request lacks Requester or Set"
+	ErrInvalidEntry           StrError = "invalid set entry"
+	ErrInvalidTransformerPath StrError = "invalid transformer path concatenation"
+	ErrNoAddDuringDiscovery   StrError = "can't add set while set is being discovered"
+	ErrPathNotInSet           StrError = "path(s) do not belong to the backup set"
+	ErrSetIsNotWritable       StrError = "the set is read-only, you cannot change it"
+	ErrTransformerAlreadyUsed StrError = "you cannot edit the transformer on a set with uploaded files"
+	ErrTransformerInUse       StrError = "you cannot edit the transformer on a set with unfinished uploads"
+	ErrTransformerUsedByTrash StrError = "you cannot edit the transformer on a set with uploaded files in its trash; " +
 		"remove them from the trash or wait for them to expire"
-	ErrPendingRemovals = "the set has unfinished removals, you cannot change it"
+	ErrPendingRemovals StrError = "the set has unfinished removals, you cannot change it"
 
 	setsBucket                    = "sets"
 	userToSetBucket               = "userLookup"
@@ -658,7 +680,7 @@ func (d *DB) ValidateFileAndDirPaths(set *Set, paths []string) ([]string, []stri
 	dirPaths, invalidPaths, err = d.processSetIfOld(set.ID(), dirPaths, invalidPaths)
 
 	if len(invalidPaths) > 0 {
-		err = Error{Msg: fmt.Sprintf("%s : %v", ErrPathNotInSet, invalidPaths), id: set.Name}
+		err = Error{Msg: fmt.Errorf("%w : %v", ErrPathNotInSet, invalidPaths), id: set.Name}
 
 		return nil, nil, err
 	}
