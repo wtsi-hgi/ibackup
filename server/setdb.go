@@ -783,7 +783,7 @@ func (s *Server) removeQueuedRequestsOfSet(given *set.Set) {
 
 // removeWaitingRequest removes the given item, holding the given upload request,
 // from our queue unless a client is working on it, and releases any claim the
-// request still has on a remote inode file from a reservation that expired, so
+// request still has on a remote data object from a reservation that expired, so
 // other sets' requests for it aren't held up. The check and the removal happen
 // under the queue's lock, so a client can't reserve the request in between and
 // then have its claim released. An item already gone from the queue is kept,
@@ -2133,7 +2133,7 @@ func (s *Server) updateFileStatus(r *transfer.Request) error {
 
 // dropRequest removes the given request, whose set has been deleted or no longer
 // has its file, from our queue whatever its status, and releases any claim it
-// has on a remote inode file, so it isn't uploaded or retried again. The reason
+// has on a remote data object, so it isn't uploaded or retried again. The reason
 // is logged.
 func (s *Server) dropRequest(r *transfer.Request, reason string) error {
 	s.uploadTracker.uploadFinished(r)
