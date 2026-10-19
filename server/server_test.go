@@ -3200,17 +3200,21 @@ func TestServer(t *testing.T) {
 								err = client.RemoveSet(exampleSet.ID())
 								So(err, ShouldBeNil)
 
-								testutil.RetryUntilWorksCustom(t, func() error { //nolint:errcheck
-									_, errg = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
-									if errg == nil {
+								// deletion waits for the removal handler's final Reserve
+								// (7s) plus 1s per slow AddMeta.
+								So(testutil.RetryUntilWorksCustom(t, func() error {
+									if _, errs := client.GetSetByID(exampleSet.Requester, exampleSet.ID()); errs == nil {
 										return errNotFinishedRemoving
 									}
 
 									return nil
-								}, time.Second*10, time.Millisecond*100)
+								}, time.Second*30, time.Millisecond*100), ShouldBeNil)
 
 								sets, errg = s.db.GetByRequester(exampleSet.Requester)
 								So(errg, ShouldBeNil)
+								So(slices.ContainsFunc(sets, func(s *set.Set) bool {
+									return s.Name == exampleSet.Name
+								}), ShouldBeFalse)
 								So(slices.ContainsFunc(sets, func(s *set.Set) bool {
 									return s.Name == set.TrashPrefix+exampleSet.Name
 								}), ShouldBeTrue)
