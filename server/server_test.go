@@ -86,6 +86,13 @@ const (
 	userPerms        = 0700
 	numManyTestFiles = 5000
 	uploadFailedErr  = "upload failed"
+
+	// signalTimeout bounds each wait for a test synchronisation signal, such as
+	// a discovery's readyAdded callback or a client call's result, so that a
+	// signal never sent fails the test instead of hanging it. It exceeds the
+	// queue's 6 minute ttr, since some readyAdded signals only come when
+	// reserved requests are released (one leaf's takes 2 minutes).
+	signalTimeout = 10 * time.Minute
 )
 
 var (
@@ -748,7 +755,7 @@ func TestServer(t *testing.T) {
 
 				err = adminClient.TriggerDiscovery(racerSet.ID(), false)
 				So(err, ShouldBeNil)
-				So(<-racCalled, ShouldBeTrue)
+				So(waitForRacCalled(t, racCalled), ShouldBeTrue)
 
 				requests, errg := adminClient.GetSomeUploadRequests()
 				So(errg, ShouldBeNil)
@@ -917,7 +924,7 @@ func TestServer(t *testing.T) {
 							err = client.TriggerDiscovery(given.ID(), false)
 							So(err, ShouldBeNil)
 
-							So(<-racCalled, ShouldBeTrue)
+							So(waitForRacCalled(t, racCalled), ShouldBeTrue)
 						}
 
 						gated := &gatedCleanupHandler{
@@ -990,7 +997,7 @@ func TestServer(t *testing.T) {
 						err = client.TriggerDiscovery(exampleSet.ID(), false)
 						So(err, ShouldBeNil)
 
-						So(<-racCalled, ShouldBeTrue)
+						So(waitForRacCalled(t, racCalled), ShouldBeTrue)
 
 						counting := &cleanupCountingHandler{Handler: s.storageHandler}
 						s.storageHandler = counting
@@ -1084,7 +1091,7 @@ func TestServer(t *testing.T) {
 							err = adminClient.TriggerDiscovery(gs.ID(), false)
 							So(err, ShouldBeNil)
 
-							So(<-racCalled, ShouldBeTrue)
+							So(waitForRacCalled(t, racCalled), ShouldBeTrue)
 						}
 					}
 
@@ -1223,7 +1230,7 @@ func TestServer(t *testing.T) {
 						err = client.TriggerDiscovery(exampleSet.ID(), false)
 						So(err, ShouldBeNil)
 
-						So(<-racCalled, ShouldBeTrue)
+						So(waitForRacCalled(t, racCalled), ShouldBeTrue)
 
 						requests, errg := adminClient.GetSomeUploadRequests()
 						So(errg, ShouldBeNil)
@@ -1531,7 +1538,7 @@ func TestServer(t *testing.T) {
 						err = client.TriggerDiscovery(exampleSet.ID(), false)
 						So(err, ShouldBeNil)
 
-						So(<-racCalled, ShouldBeTrue)
+						So(waitForRacCalled(t, racCalled), ShouldBeTrue)
 
 						requests, errg := adminClient.GetSomeUploadRequests()
 						So(errg, ShouldBeNil)
@@ -1612,7 +1619,7 @@ func TestServer(t *testing.T) {
 						err = client.TriggerDiscovery(exampleSet.ID(), false)
 						So(err, ShouldBeNil)
 
-						So(<-racCalled, ShouldBeTrue)
+						So(waitForRacCalled(t, racCalled), ShouldBeTrue)
 
 						requests, errg := adminClient.GetSomeUploadRequests()
 						So(errg, ShouldBeNil)
@@ -1792,7 +1799,7 @@ func TestServer(t *testing.T) {
 						err = client.TriggerDiscovery(exampleSet.ID(), false)
 						So(err, ShouldBeNil)
 
-						So(<-racCalled, ShouldBeTrue)
+						So(waitForRacCalled(t, racCalled), ShouldBeTrue)
 
 						// wr rejects put jobs submitted now as duplicates of
 						// the exiting client's job, so they must be submitted
@@ -1831,7 +1838,7 @@ func TestServer(t *testing.T) {
 						err = client.TriggerDiscovery(exampleSet.ID(), false)
 						So(err, ShouldBeNil)
 
-						ok := <-racCalled
+						ok := waitForRacCalled(t, racCalled)
 						So(ok, ShouldBeTrue)
 
 						Convey("You can permanently remove the first hardlink and the inode file will stay", func() {
@@ -2012,7 +2019,7 @@ func TestServer(t *testing.T) {
 							err = client.TriggerDiscovery(exampleSet.ID(), false)
 							So(err, ShouldBeNil)
 
-							ok := <-racCalled
+							ok := waitForRacCalled(t, racCalled)
 							So(ok, ShouldBeTrue)
 
 							Convey("Permanently removing the third hardlink does not remove the inode as the database is still in sync with iRODS", func() { //nolint:lll
@@ -2098,7 +2105,7 @@ func TestServer(t *testing.T) {
 						err = client.TriggerDiscovery(exampleSet.ID(), false)
 						So(err, ShouldBeNil)
 
-						ok := <-racCalled
+						ok := waitForRacCalled(t, racCalled)
 						So(ok, ShouldBeTrue)
 
 						Convey("Trash on a pending file returns an error", func() {
@@ -2318,7 +2325,7 @@ func TestServer(t *testing.T) {
 							So(client.AddOrUpdateSet(exampleSet3), ShouldBeNil)
 							So(client.MergeFiles(exampleSet3.ID(), []string{file1local}), ShouldBeNil)
 							So(client.TriggerDiscovery(exampleSet3.ID(), false), ShouldBeNil)
-							So(<-racCalled, ShouldBeTrue)
+							So(waitForRacCalled(t, racCalled), ShouldBeTrue)
 
 							requests, errg := adminClient.GetSomeUploadRequests()
 							So(errg, ShouldBeNil)
@@ -2504,7 +2511,7 @@ func TestServer(t *testing.T) {
 								err = client.TriggerDiscovery(exampleSet.ID(), false)
 								So(err, ShouldBeNil)
 
-								So(<-racCalled, ShouldBeTrue)
+								So(waitForRacCalled(t, racCalled), ShouldBeTrue)
 
 								// what recordSetError() records if queuing the
 								// discovered files fails.
@@ -2526,7 +2533,7 @@ func TestServer(t *testing.T) {
 
 								close(resume)
 
-								So(<-trashErrCh, ShouldBeNil)
+								So(testutil.Receive(t, trashErrCh, signalTimeout, "TrashFilesAndDirs to return"), ShouldBeNil)
 
 								waitForRemovals(t, s, client, exampleSet)
 
@@ -2686,7 +2693,7 @@ func TestServer(t *testing.T) {
 
 									drainRacCalled(t, racCalled)
 									So(client.TriggerDiscovery(exampleSet.ID(), false), ShouldBeNil)
-									So(<-racCalled, ShouldBeTrue)
+									So(waitForRacCalled(t, racCalled), ShouldBeTrue)
 
 									So(s.removeFileFromIRODSandDB(&remReq), ShouldBeNil)
 
@@ -3009,7 +3016,7 @@ func TestServer(t *testing.T) {
 									err = adminClient.RemoveFilesAndDirs(trashSet.ID(), []string{file1local, dir2local})
 									So(err, ShouldBeNil)
 
-									So(<-trashErrCh, ShouldBeNil)
+									So(testutil.Receive(t, trashErrCh, signalTimeout, "TrashFilesAndDirs to return"), ShouldBeNil)
 
 									waitForRemovals(t, s, client, exampleSet)
 
@@ -3084,7 +3091,7 @@ func TestServer(t *testing.T) {
 									err = client.TriggerDiscovery(exampleSet2.ID(), false)
 									So(err, ShouldBeNil)
 
-									ok := <-racCalled
+									ok := waitForRacCalled(t, racCalled)
 									So(ok, ShouldBeTrue)
 
 									makeGivenSetComplete(2, exampleSet2.Name, adminClient)
@@ -3247,7 +3254,7 @@ func TestServer(t *testing.T) {
 								err = client.TriggerDiscovery(exampleSet.ID(), false)
 								So(err, ShouldBeNil)
 
-								ok := <-racCalled
+								ok := waitForRacCalled(t, racCalled)
 								So(ok, ShouldBeTrue)
 
 								files, errg := client.GetFiles(exampleSet.ID())
@@ -3331,7 +3338,7 @@ func TestServer(t *testing.T) {
 						err = client.TriggerDiscovery(exampleSet.ID(), false)
 						So(err, ShouldBeNil)
 
-						ok := <-racCalled
+						ok := waitForRacCalled(t, racCalled)
 						So(ok, ShouldBeTrue)
 
 						err = s.db.DeleteDiscoveredFoldersBucket(exampleSet.ID())
@@ -3398,7 +3405,7 @@ func TestServer(t *testing.T) {
 						err = client.TriggerDiscovery(exampleSet.ID(), false)
 						So(err, ShouldBeNil)
 
-						ok := <-racCalled
+						ok := waitForRacCalled(t, racCalled)
 						So(ok, ShouldBeTrue)
 
 						gotSet, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
@@ -3431,7 +3438,7 @@ func TestServer(t *testing.T) {
 								err = client.TriggerDiscovery(exampleSet.ID(), false)
 								So(err, ShouldBeNil)
 
-								ok = <-racCalled
+								ok = waitForRacCalled(t, racCalled)
 								So(ok, ShouldBeTrue)
 
 								gotSet, errg = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
@@ -3512,7 +3519,7 @@ func TestServer(t *testing.T) {
 						err = client.TriggerDiscovery(exampleSet.ID(), false)
 						So(err, ShouldBeNil)
 
-						ok := <-racCalled
+						ok := waitForRacCalled(t, racCalled)
 						So(ok, ShouldBeTrue)
 						So(len(racRequests), ShouldEqual, numFiles+len(discovers))
 						So(racRequests[0], ShouldResemble, &transfer.Request{
@@ -3570,7 +3577,7 @@ func TestServer(t *testing.T) {
 						err = client.TriggerDiscovery(exampleSet2.ID(), false)
 						So(err, ShouldBeNil)
 
-						ok = <-racCalled
+						ok = waitForRacCalled(t, racCalled)
 						So(ok, ShouldBeTrue)
 						So(len(racRequests), ShouldEqual, numFiles+len(discovers)+len(set2Files))
 
@@ -3599,7 +3606,7 @@ func TestServer(t *testing.T) {
 						err = client.TriggerDiscovery(exampleSet3.ID(), false)
 						So(err, ShouldBeNil)
 
-						ok = <-racCalled
+						ok = waitForRacCalled(t, racCalled)
 						So(ok, ShouldBeTrue)
 						So(len(racRequests), ShouldEqual, numFiles+len(discovers)+len(set2Files)+len(discovers))
 
@@ -3635,7 +3642,7 @@ func TestServer(t *testing.T) {
 
 						s.queue.TriggerReadyAddedCallback(context.Background())
 
-						ok = <-racCalled
+						ok = waitForRacCalled(t, racCalled)
 						So(ok, ShouldBeTrue)
 						So(racCalls.Load(), ShouldEqual, 4)
 						So(len(racRequests), ShouldEqual, numFiles+len(discovers)+len(set2Files)+len(discovers))
@@ -4678,7 +4685,7 @@ func TestServer(t *testing.T) {
 								close(uploadResultsCh)
 								close(skippedResultsCh)
 
-								err = <-errCh
+								err = testutil.Receive(t, errCh, signalTimeout, "SendPutResultsToServer to return")
 								So(err, ShouldBeNil)
 
 								gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
@@ -4733,14 +4740,14 @@ func TestServer(t *testing.T) {
 								tsCh <- time.Now()
 							}()
 
-							ok := <-racCalled
+							ok := waitForRacCalled(t, racCalled)
 							So(ok, ShouldBeTrue)
 
 							tr := time.Now()
-							err = <-errCh
+							err = testutil.Receive(t, errCh, signalTimeout, "AddOrUpdateSet to return")
 							So(err, ShouldBeNil)
 
-							ts := <-tsCh
+							ts := testutil.Receive(t, tsCh, signalTimeout, "the AddOrUpdateSet goroutine's timestamp")
 							So(ts, ShouldHappenBefore, tr)
 						})
 					})
@@ -4802,7 +4809,7 @@ func TestServer(t *testing.T) {
 						err = client.TriggerDiscovery(exampleSet.ID(), false)
 						So(err, ShouldBeNil)
 
-						ok := <-racCalled
+						ok := waitForRacCalled(t, racCalled)
 						So(ok, ShouldBeTrue)
 
 						files, errg := client.GetFiles(exampleSet.ID())
@@ -5120,7 +5127,7 @@ func TestServer(t *testing.T) {
 					err = client.TriggerDiscovery(exampleSet.ID(), false)
 					So(err, ShouldBeNil)
 
-					ok := <-racCalled
+					ok := waitForRacCalled(t, racCalled)
 					So(ok, ShouldBeTrue)
 
 					gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
@@ -5348,7 +5355,7 @@ func TestServer(t *testing.T) {
 							err = client.TriggerDiscovery(exampleSet.ID(), false)
 							So(err, ShouldBeNil)
 
-							ok := <-racCalled
+							ok := waitForRacCalled(t, racCalled)
 							So(ok, ShouldBeTrue)
 
 							gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
@@ -5458,7 +5465,7 @@ func TestServer(t *testing.T) {
 							err = client.TriggerDiscovery(exampleSet.ID(), false)
 							So(err, ShouldBeNil)
 
-							ok := <-racCalled
+							ok := waitForRacCalled(t, racCalled)
 							So(ok, ShouldBeTrue)
 
 							gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
@@ -5765,7 +5772,7 @@ func TestServer(t *testing.T) {
 								err = client.TriggerDiscovery(exampleSet.ID(), false)
 								So(err, ShouldBeNil)
 
-								ok := <-racCalled
+								ok := waitForRacCalled(t, racCalled)
 								So(ok, ShouldBeTrue)
 
 								entries, errg = client.GetFiles(exampleSet.ID())
@@ -5922,7 +5929,7 @@ func TestServer(t *testing.T) {
 						So(entries[0].Status, ShouldEqual, set.UploadingEntry)
 						So(entries[0].LastError, ShouldContainSubstring, "upload stuck?")
 
-						So(<-errCh, ShouldBeNil)
+						So(testutil.Receive(t, errCh, signalTimeout, "SendPutResultsToServer to return"), ShouldBeNil)
 
 						gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
 						So(err, ShouldBeNil)
@@ -5974,7 +5981,7 @@ func TestServer(t *testing.T) {
 								minMBperSecondUploadSpeed, 1*time.Millisecond, 2*time.Millisecond, logger)
 						}()
 
-						err = <-errCh
+						err = testutil.Receive(t, errCh, signalTimeout, "SendPutResultsToServer to return")
 						So(err, ShouldNotBeNil)
 						So(err.Error(), ShouldContainSubstring, ErrKilledDueToStuck.Error())
 						So(time.Since(testStart), ShouldBeLessThan, slowDur/2)
@@ -6064,7 +6071,7 @@ func TestServer(t *testing.T) {
 					err = client.TriggerDiscovery(exampleSet.ID(), false)
 					So(err, ShouldBeNil)
 
-					ok := <-racCalled
+					ok := waitForRacCalled(t, racCalled)
 					So(ok, ShouldBeTrue)
 
 					requests, errg := client.GetSomeUploadRequests()
@@ -6100,7 +6107,7 @@ func TestServer(t *testing.T) {
 					err = client.TriggerDiscovery(exampleSet.ID(), false)
 					So(err, ShouldBeNil)
 
-					ok = <-racCalled
+					ok = waitForRacCalled(t, racCalled)
 					So(ok, ShouldBeTrue)
 
 					requests, errg = client.GetSomeUploadRequests()
@@ -6143,7 +6150,7 @@ func TestServer(t *testing.T) {
 					err = client.TriggerDiscovery(exampleSet.ID(), false)
 					So(err, ShouldBeNil)
 
-					ok := <-racCalled
+					ok := waitForRacCalled(t, racCalled)
 					So(ok, ShouldBeTrue)
 
 					putSetWithOneFile(t, handler, client, exampleSet, minMBperSecondUploadSpeed, logger)
@@ -6163,7 +6170,7 @@ func TestServer(t *testing.T) {
 					err = client.TriggerDiscovery(exampleSet.ID(), false)
 					So(err, ShouldBeNil)
 
-					ok := <-racCalled
+					ok := waitForRacCalled(t, racCalled)
 					So(ok, ShouldBeTrue)
 
 					putSetWithOneFile(t, handler, client, exampleSet, minMBperSecondUploadSpeed, logger)
@@ -6182,7 +6189,7 @@ func TestServer(t *testing.T) {
 
 					s.discoveryCoordinator.DiscoveryHappened(exampleSet.ID())
 
-					ok = <-racCalled
+					ok = waitForRacCalled(t, racCalled)
 					So(ok, ShouldBeTrue)
 
 					gotSet, errg = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
@@ -6212,7 +6219,7 @@ func TestServer(t *testing.T) {
 					err = client.TriggerDiscovery(exampleSet.ID(), false)
 					So(err, ShouldBeNil)
 
-					ok := <-racCalled
+					ok := waitForRacCalled(t, racCalled)
 					So(ok, ShouldBeTrue)
 
 					putRequests := func(requests []*transfer.Request) {
@@ -6248,7 +6255,7 @@ func TestServer(t *testing.T) {
 					err = client.TriggerDiscovery(exampleSet.ID(), false)
 					So(err, ShouldBeNil)
 
-					ok = <-racCalled
+					ok = waitForRacCalled(t, racCalled)
 					So(ok, ShouldBeTrue)
 
 					requests, errg = client.GetSomeUploadRequests()
@@ -6303,7 +6310,7 @@ func TestServer(t *testing.T) {
 					}
 
 					Convey("when the deleted file's upload result arrives during the removal", func() {
-						<-gated.reached
+						testutil.Receive(t, gated.reached, signalTimeout, "the removal to reach the gated remote removal")
 
 						putRequests(requests)
 
@@ -6315,7 +6322,7 @@ func TestServer(t *testing.T) {
 
 					Convey("when the deleted file's upload result arrives after its remote removal, "+
 						"before its database removal", func() {
-						<-gated.reached
+						testutil.Receive(t, gated.reached, signalTimeout, "the removal to reach the gated remote removal")
 
 						afterRemoteRemoval := &gatedRemoveFileHandler{
 							Handler: gated.Handler,
@@ -6325,7 +6332,7 @@ func TestServer(t *testing.T) {
 						s.storageHandler = afterRemoteRemoval
 
 						close(gated.gate)
-						<-afterRemoteRemoval.removed
+						testutil.Receive(t, afterRemoteRemoval.removed, signalTimeout, "the remote removal to finish")
 
 						putRequests(requests)
 
@@ -6377,7 +6384,7 @@ func TestServer(t *testing.T) {
 					err = client.TriggerDiscovery(exampleSet.ID(), false)
 					So(err, ShouldBeNil)
 
-					ok := <-racCalled
+					ok := waitForRacCalled(t, racCalled)
 					So(ok, ShouldBeTrue)
 
 					gotSet, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
@@ -6430,7 +6437,7 @@ func TestServer(t *testing.T) {
 					err = client.TriggerDiscovery(exampleSet.ID(), false)
 					So(err, ShouldBeNil)
 
-					ok := <-racCalled
+					ok := waitForRacCalled(t, racCalled)
 					So(ok, ShouldBeTrue)
 
 					gotSet, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
@@ -6459,7 +6466,7 @@ func TestServer(t *testing.T) {
 					err = client.TriggerDiscovery(exampleSet.ID(), false)
 					So(err, ShouldBeNil)
 
-					ok := <-racCalled
+					ok := waitForRacCalled(t, racCalled)
 					So(ok, ShouldBeTrue)
 
 					entries, errg := s.db.GetFileEntries(exampleSet.ID(), nil)
@@ -6524,7 +6531,7 @@ func TestServer(t *testing.T) {
 					err = client.TriggerDiscovery(exampleSet.ID(), false)
 					So(err, ShouldBeNil)
 
-					ok := <-racCalled
+					ok := waitForRacCalled(t, racCalled)
 					So(ok, ShouldBeTrue)
 
 					changed := testutil.WaitForFileChange(t, backupPath, lastMod)
@@ -6591,7 +6598,7 @@ func TestServer(t *testing.T) {
 					err = client.TriggerDiscovery(exampleSet.ID(), false)
 					So(err, ShouldBeNil)
 
-					ok := <-racCalled
+					ok := waitForRacCalled(t, racCalled)
 					So(ok, ShouldBeTrue)
 
 					gotSet, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
@@ -6627,7 +6634,7 @@ func TestServer(t *testing.T) {
 						err = client.TriggerDiscovery(exampleSet.ID(), false)
 						So(err, ShouldBeNil)
 
-						ok := <-racCalled
+						ok := waitForRacCalled(t, racCalled)
 						So(ok, ShouldBeTrue)
 
 						gotSet, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
@@ -6673,7 +6680,7 @@ func TestServer(t *testing.T) {
 						err = client.TriggerDiscovery(exampleSet.ID(), false)
 						So(err, ShouldBeNil)
 
-						ok := <-racCalled
+						ok := waitForRacCalled(t, racCalled)
 						So(ok, ShouldBeTrue)
 
 						otherRemoteDir := filepath.Join(localDir, "remote2")
@@ -6692,7 +6699,7 @@ func TestServer(t *testing.T) {
 						err = client.TriggerDiscovery(otherSet.ID(), false)
 						So(err, ShouldBeNil)
 
-						ok = <-racCalled
+						ok = waitForRacCalled(t, racCalled)
 						So(ok, ShouldBeTrue)
 
 						gotSet, errg := client.GetSetByID(otherSet.Requester, otherSet.ID())
@@ -6737,7 +6744,7 @@ func TestServer(t *testing.T) {
 						err = client.TriggerDiscovery(exampleSet.ID(), false)
 						So(err, ShouldBeNil)
 
-						ok := <-racCalled
+						ok := waitForRacCalled(t, racCalled)
 						So(ok, ShouldBeTrue)
 
 						otherRemoteDir := filepath.Join(localDir, "remote2")
@@ -6761,7 +6768,7 @@ func TestServer(t *testing.T) {
 						err = client.TriggerDiscovery(otherSet.ID(), false)
 						So(err, ShouldBeNil)
 
-						ok = <-racCalled
+						ok = waitForRacCalled(t, racCalled)
 						So(ok, ShouldBeTrue)
 
 						requests, errg := client.GetSomeUploadRequests()
@@ -6835,7 +6842,7 @@ func TestServer(t *testing.T) {
 						err = client.TriggerDiscovery(exampleSet.ID(), false)
 						So(err, ShouldBeNil)
 
-						ok := <-racCalled
+						ok := waitForRacCalled(t, racCalled)
 						So(ok, ShouldBeTrue)
 
 						otherSet := &set.Set{
@@ -6853,7 +6860,7 @@ func TestServer(t *testing.T) {
 						err = client.TriggerDiscovery(otherSet.ID(), false)
 						So(err, ShouldBeNil)
 
-						ok = <-racCalled
+						ok = waitForRacCalled(t, racCalled)
 						So(ok, ShouldBeTrue)
 
 						requests, errg := client.GetSomeUploadRequests()
@@ -6921,7 +6928,7 @@ func TestServer(t *testing.T) {
 							err = client.TriggerDiscovery(exampleSet.ID(), false)
 							So(err, ShouldBeNil)
 
-							So(<-racCalled, ShouldBeTrue)
+							So(waitForRacCalled(t, racCalled), ShouldBeTrue)
 
 							requests, errg := client.GetSomeUploadRequests()
 							So(errg, ShouldBeNil)
@@ -7000,7 +7007,7 @@ func TestServer(t *testing.T) {
 						err = client.TriggerDiscovery(exampleSet.ID(), false)
 						So(err, ShouldBeNil)
 
-						So(<-racCalled, ShouldBeTrue)
+						So(waitForRacCalled(t, racCalled), ShouldBeTrue)
 
 						requests, errg := client.GetSomeUploadRequests()
 						So(errg, ShouldBeNil)
@@ -7113,7 +7120,7 @@ func TestServer(t *testing.T) {
 						err = client.TriggerDiscovery(exampleSet.ID(), false)
 						So(err, ShouldBeNil)
 
-						ok := <-racCalled
+						ok := waitForRacCalled(t, racCalled)
 						So(ok, ShouldBeTrue)
 
 						gotSet, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
@@ -7163,7 +7170,7 @@ func TestServer(t *testing.T) {
 						err = client.TriggerDiscovery(exampleSet.ID(), false)
 						So(err, ShouldBeNil)
 
-						ok = <-racCalled
+						ok = waitForRacCalled(t, racCalled)
 						So(ok, ShouldBeTrue)
 
 						gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
@@ -7273,7 +7280,7 @@ func TestServer(t *testing.T) {
 								err = client.TriggerDiscovery(exampleSet.ID(), false)
 								So(err, ShouldBeNil)
 
-								ok := <-racCalled
+								ok := waitForRacCalled(t, racCalled)
 								So(ok, ShouldBeTrue)
 
 								gotSet, err = client.GetSetByID(exampleSet.Requester, exampleSet.ID())
@@ -7315,7 +7322,7 @@ func TestServer(t *testing.T) {
 						err = client.TriggerDiscovery(exampleSet.ID(), false)
 						So(err, ShouldBeNil)
 
-						ok := <-racCalled
+						ok := waitForRacCalled(t, racCalled)
 						So(ok, ShouldBeTrue)
 
 						handedOut := make([]*transfer.Request, 0, s.numClients)
@@ -7344,7 +7351,7 @@ func TestServer(t *testing.T) {
 								err = client.UpdateFileStatus(handedOut[1])
 								So(err, ShouldBeNil)
 
-								ok = <-racCalled
+								ok = waitForRacCalled(t, racCalled)
 								So(ok, ShouldBeTrue)
 
 								requests, errg = client.GetSomeUploadRequests()
@@ -7369,7 +7376,7 @@ func TestServer(t *testing.T) {
 						s.numClients = 3
 
 						So(client.TriggerDiscovery(exampleSet.ID(), false), ShouldBeNil)
-						So(<-racCalled, ShouldBeTrue)
+						So(waitForRacCalled(t, racCalled), ShouldBeTrue)
 
 						handedOut := make([]*transfer.Request, 0, s.numClients)
 
@@ -7393,7 +7400,7 @@ func TestServer(t *testing.T) {
 						So(client.AddOrUpdateSet(otherSet), ShouldBeNil)
 						So(client.MergeFiles(otherSet.ID(), []string{path3}), ShouldBeNil)
 						So(client.TriggerDiscovery(otherSet.ID(), false), ShouldBeNil)
-						So(<-racCalled, ShouldBeTrue)
+						So(waitForRacCalled(t, racCalled), ShouldBeTrue)
 
 						requests, errg := client.GetSomeUploadRequests()
 						So(errg, ShouldBeNil)
@@ -7450,7 +7457,7 @@ func TestServer(t *testing.T) {
 						err = client.TriggerDiscovery(exampleSet.ID(), false)
 						So(err, ShouldBeNil)
 
-						ok := <-racCalled
+						ok := waitForRacCalled(t, racCalled)
 						So(ok, ShouldBeTrue)
 
 						type handOutResult struct {
@@ -7494,7 +7501,7 @@ func TestServer(t *testing.T) {
 						failing.fail.Store(false)
 
 						if roundTimed {
-							round = <-roundDone
+							round = testutil.Receive(t, roundDone, signalTimeout, "the hand-out round to finish")
 						}
 
 						So(roundTimed, ShouldBeFalse)
@@ -7540,7 +7547,7 @@ func TestServer(t *testing.T) {
 						err = client.TriggerDiscovery(exampleSet.ID(), false)
 						So(err, ShouldBeNil)
 
-						ok := <-racCalled
+						ok := waitForRacCalled(t, racCalled)
 						So(ok, ShouldBeTrue)
 
 						requests, errg := client.GetSomeUploadRequests()
@@ -7563,7 +7570,7 @@ func TestServer(t *testing.T) {
 
 						setTTR(time.Millisecond)
 
-						ok = <-racCalled
+						ok = waitForRacCalled(t, racCalled)
 						So(ok, ShouldBeTrue)
 
 						testutil.Eventually(t, 5*time.Second, 10*time.Millisecond, func() bool {
@@ -7611,7 +7618,7 @@ func TestServer(t *testing.T) {
 						err = client.TriggerDiscovery(given.ID(), false)
 						So(err, ShouldBeNil)
 
-						ok := <-racCalled
+						ok := waitForRacCalled(t, racCalled)
 						So(ok, ShouldBeTrue)
 					}
 
@@ -7649,7 +7656,7 @@ func TestServer(t *testing.T) {
 						err = client.UpdateFileStatus(handedOut[0])
 						So(err, ShouldBeNil)
 
-						ok := <-racCalled
+						ok := waitForRacCalled(t, racCalled)
 						So(ok, ShouldBeTrue)
 
 						requests, errg := client.GetSomeUploadRequests()
@@ -7682,7 +7689,7 @@ func TestServer(t *testing.T) {
 					err = client.TriggerDiscovery(exampleSet.ID(), false)
 					So(err, ShouldBeNil)
 
-					ok := <-racCalled
+					ok := waitForRacCalled(t, racCalled)
 					So(ok, ShouldBeTrue)
 
 					gotSet, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
@@ -7710,7 +7717,7 @@ func TestServer(t *testing.T) {
 					err = client.TriggerDiscovery(exampleSet.ID(), false)
 					So(err, ShouldBeNil)
 
-					ok := <-racCalled
+					ok := waitForRacCalled(t, racCalled)
 					So(ok, ShouldBeTrue)
 
 					path2 := filepath.Join(dir, "file2")
@@ -7723,7 +7730,7 @@ func TestServer(t *testing.T) {
 					err = client.TriggerDiscovery(exampleSet.ID(), false)
 					So(err, ShouldBeNil)
 
-					ok = <-racCalled
+					ok = waitForRacCalled(t, racCalled)
 					So(ok, ShouldBeTrue)
 
 					gotSet, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
@@ -7750,7 +7757,7 @@ func TestServer(t *testing.T) {
 					err = client.TriggerDiscovery(exampleSet.ID(), false)
 					So(err, ShouldBeNil)
 
-					ok := <-racCalled
+					ok := waitForRacCalled(t, racCalled)
 					So(ok, ShouldBeTrue)
 
 					gotSet, errc := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
@@ -7821,7 +7828,7 @@ func TestServer(t *testing.T) {
 					err = client.TriggerDiscovery(bset.ID(), false)
 					So(err, ShouldBeNil)
 
-					So(<-racCalled, ShouldBeTrue)
+					So(waitForRacCalled(t, racCalled), ShouldBeTrue)
 
 					requests, errg := client.GetSomeUploadRequests()
 					So(errg, ShouldBeNil)
@@ -7921,7 +7928,7 @@ func TestServer(t *testing.T) {
 					err = client.TriggerDiscovery(uset.ID(), false)
 					So(err, ShouldBeNil)
 
-					So(<-racCalled, ShouldBeTrue)
+					So(waitForRacCalled(t, racCalled), ShouldBeTrue)
 
 					requests, errg := client.GetSomeUploadRequests()
 					So(errg, ShouldBeNil)
@@ -8063,7 +8070,7 @@ func TestServer(t *testing.T) {
 					err = client.TriggerDiscovery(mset.ID(), false)
 					So(err, ShouldBeNil)
 
-					So(<-racCalled, ShouldBeTrue)
+					So(waitForRacCalled(t, racCalled), ShouldBeTrue)
 
 					gotSet, errg := client.GetSetByID(mset.Requester, mset.ID())
 					So(errg, ShouldBeNil)
@@ -8140,7 +8147,7 @@ func TestServer(t *testing.T) {
 					err = client.TriggerDiscovery(fset.ID(), false)
 					So(err, ShouldBeNil)
 
-					So(<-racCalled, ShouldBeTrue)
+					So(waitForRacCalled(t, racCalled), ShouldBeTrue)
 
 					requests, errg := client.GetSomeUploadRequests()
 					So(errg, ShouldBeNil)
@@ -8256,7 +8263,7 @@ func TestServer(t *testing.T) {
 					err = client.TriggerDiscovery(lset.ID(), false)
 					So(err, ShouldBeNil)
 
-					So(<-racCalled, ShouldBeTrue)
+					So(waitForRacCalled(t, racCalled), ShouldBeTrue)
 
 					gotSet, errg := client.GetSetByID(lset.Requester, lset.ID())
 					So(errg, ShouldBeNil)
@@ -8328,7 +8335,7 @@ func TestServer(t *testing.T) {
 					err = client.TriggerDiscovery(hset.ID(), false)
 					So(err, ShouldBeNil)
 
-					So(<-racCalled, ShouldBeTrue)
+					So(waitForRacCalled(t, racCalled), ShouldBeTrue)
 
 					gotSet, errg := client.GetSetByID(hset.Requester, hset.ID())
 					So(errg, ShouldBeNil)
@@ -8419,7 +8426,7 @@ func TestServer(t *testing.T) {
 						So(err, ShouldBeNil)
 					}
 
-					So(<-racCalled, ShouldBeTrue)
+					So(waitForRacCalled(t, racCalled), ShouldBeTrue)
 
 					So(dfunc(), ShouldBeNil)
 
@@ -8480,7 +8487,7 @@ func TestServer(t *testing.T) {
 					err = client.TriggerDiscovery(rset.ID(), false)
 					So(err, ShouldBeNil)
 
-					So(<-racCalled, ShouldBeTrue)
+					So(waitForRacCalled(t, racCalled), ShouldBeTrue)
 
 					requests, errg := client.GetSomeUploadRequests()
 					So(errg, ShouldBeNil)
@@ -8612,7 +8619,7 @@ func TestServer(t *testing.T) {
 					err = client.TriggerDiscovery(bset.ID(), false)
 					So(err, ShouldBeNil)
 
-					So(<-racCalled, ShouldBeTrue)
+					So(waitForRacCalled(t, racCalled), ShouldBeTrue)
 
 					failAttempts := func(c *Client, n int) string {
 						var local string
@@ -8724,7 +8731,7 @@ func TestServer(t *testing.T) {
 					err = client.TriggerDiscovery(qset.ID(), false)
 					So(err, ShouldBeNil)
 
-					So(<-racCalled, ShouldBeTrue)
+					So(waitForRacCalled(t, racCalled), ShouldBeTrue)
 
 					testutil.Eventually(t, 10*time.Second, 10*time.Millisecond, func() bool {
 						got, errg := client.GetSomeUploadRequests()
@@ -8835,7 +8842,7 @@ func TestServer(t *testing.T) {
 					err = client.TriggerDiscovery(aset.ID(), false)
 					So(err, ShouldBeNil)
 
-					So(<-racCalled, ShouldBeTrue)
+					So(waitForRacCalled(t, racCalled), ShouldBeTrue)
 
 					requests, errg := client.GetSomeUploadRequests()
 					So(errg, ShouldBeNil)
@@ -8924,7 +8931,7 @@ func TestServer(t *testing.T) {
 						}
 
 						So(client.TriggerDiscovery(given.ID(), false), ShouldBeNil)
-						So(<-racCalled, ShouldBeTrue)
+						So(waitForRacCalled(t, racCalled), ShouldBeTrue)
 
 						return given
 					}
@@ -9033,6 +9040,14 @@ func createDBLocation(t *testing.T) string {
 	path := filepath.Join(tdir, "set.db")
 
 	return path
+}
+
+// waitForRacCalled returns the next readyAdded signal from the racCalled
+// channel, failing the test if none arrives within signalTimeout.
+func waitForRacCalled(t *testing.T, racCalled chan bool) bool {
+	t.Helper()
+
+	return testutil.Receive(t, racCalled, signalTimeout, "the queue's readyAdded callback")
 }
 
 // deleteEntryAsOldBuild edits the database at dbPath, whose server must be
@@ -9193,7 +9208,7 @@ func failReupload(t *testing.T, s *Server, client, adminClient *Client, racCalle
 	drainRacCalled(t, racCalled)
 
 	So(client.TriggerDiscovery(given.ID(), false), ShouldBeNil)
-	So(<-racCalled, ShouldBeTrue)
+	So(waitForRacCalled(t, racCalled), ShouldBeTrue)
 
 	requests, err := adminClient.GetSomeUploadRequests()
 	So(err, ShouldBeNil)
@@ -9326,7 +9341,7 @@ func createRemoteObject(t *testing.T, handler remove.Handler, meta map[string]st
 // channel. These can accumulate when SendPutResultsToServer processes failed
 // uploads, causing removeOrReleaseRequestFromQueue to Release items back to the
 // ready queue with delay=0, which triggers the readyAdded callback. Call this
-// before TriggerDiscovery to ensure the subsequent <-racCalled receives the
+// before TriggerDiscovery to ensure the subsequent waitForRacCalled receives the
 // discovery's signal rather than a stale one.
 func drainRacCalled(t *testing.T, racCalled chan bool) {
 	t.Helper()

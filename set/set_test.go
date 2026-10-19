@@ -5440,7 +5440,7 @@ func TestCloseDuringDiscovery(t *testing.T) {
 			discoverErrCh <- errd
 		}()
 
-		<-statStarted
+		testutil.Receive(t, statStarted, time.Minute, "discovery to start stat'ing")
 
 		closeErrCh := make(chan error, 1)
 
@@ -5451,7 +5451,7 @@ func TestCloseDuringDiscovery(t *testing.T) {
 		close(closeAttempted)
 
 		Convey("waits for the in-flight stat'ing, then closes cleanly", func() {
-			So(<-closeErrCh, ShouldBeNil)
+			So(testutil.Receive(t, closeErrCh, time.Minute, "Close to return"), ShouldBeNil)
 			So(hookCalls, ShouldEqual, len(files))
 
 			select {
