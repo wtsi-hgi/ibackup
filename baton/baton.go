@@ -95,7 +95,10 @@ type Baton struct {
 	putClient    atomic.Pointer[ex.Client]
 	metaClient   atomic.Pointer[ex.Client]
 	removeClient atomic.Pointer[ex.Client]
-	opTimeout    time.Duration
+
+	// opTimeout is the time.Duration timeoutOp waits. It is atomic because
+	// tests change it while background client stops may be reading it.
+	opTimeout atomic.Int64
 
 	// backoffSleeper does the sleeps between collection creation retries.
 	backoffSleeper backoff.Sleeper
@@ -112,7 +115,10 @@ func GetBatonHandler() (*Baton, error) {
 
 	_, err := ex.FindBaton()
 
-	return &Baton{opTimeout: operationTimeout, backoffSleeper: &btime.Sleeper{}}, err
+	b := &Baton{backoffSleeper: &btime.Sleeper{}}
+	b.opTimeout.Store(int64(operationTimeout))
+
+	return b, err
 }
 
 // getClients returns a snapshot of all our clients, any of which may be nil.
@@ -183,7 +189,7 @@ func (b *Baton) timeoutOp(op retry.Operation, path string) error {
 		errCh <- op()
 	}()
 
-	timer := time.NewTimer(b.opTimeout)
+	timer := time.NewTimer(time.Duration(b.opTimeout.Load()))
 
 	var err error
 
@@ -272,6 +278,28 @@ func (b *Baton) newClientPool(maxSize uint8) *ex.ClientPool {
 	}
 
 	return pool
+}
+
+// replaceCollClient replaces the collection client at the given index with a
+// new one, stopping the old one in the background, unless ctx has been
+// cancelled. If a new client can't be made, it keeps the old one.
+func (b *Baton) replaceCollClient(ctx context.Context, clientIndex int) {
+	if ctx.Err() != nil {
+		return
+	}
+
+	client, err := b.getNewClient()
+	if err != nil {
+		return
+	}
+
+	go func(oldClient *ex.Client) {
+		b.timeoutOp(func() error { //nolint:errcheck
+			oldClient.StopIgnoreError()
+
+			return nil
+		}, "")
+	}(b.swapCollClient(ctx, clientIndex, client))
 }
 
 // waitAfterClientStopped returns the error from errCh, or an ErrClientStopped
@@ -457,6 +485,8 @@ func (b *Baton) ensureCollection(ctx context.Context, clientIndex int, ri ex.Rod
 	}
 
 	if pathErr, ok := errors.AsType[errs.PathError](err); ok && pathErr.Msg == ErrOperationTimeout {
+		b.replaceCollClient(ctx, clientIndex)
+
 		return err
 	}
 
@@ -511,17 +541,8 @@ func (b *Baton) timeoutOpAndMakeNewClientOnError(
 ) retry.Operation {
 	return func() error {
 		err := b.timeoutCollOp(ctx, op, path)
-		if err != nil && ctx.Err() == nil {
-			client, errc := b.getNewClient()
-			if errc == nil {
-				go func(oldClient *ex.Client) {
-					b.timeoutOp(func() error { //nolint:errcheck
-						oldClient.StopIgnoreError()
-
-						return nil
-					}, "")
-				}(b.swapCollClient(ctx, clientIndex, client))
-			}
+		if err != nil {
+			b.replaceCollClient(ctx, clientIndex)
 		}
 
 		return err
