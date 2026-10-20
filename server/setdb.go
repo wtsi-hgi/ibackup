@@ -404,8 +404,7 @@ func (s *Server) putSet(c *gin.Context) {
 // read-only set or a transformer already used, so are bad requests; anything
 // else is a database failure.
 func addOrUpdateErrStatus(err error) int {
-	var setErr set.Error
-	if errors.As(err, &setErr) {
+	if _, ok := errors.AsType[set.Error](err); ok { //nolint:errcheck
 		return http.StatusBadRequest
 	}
 
@@ -2111,9 +2110,8 @@ func (s *Server) handleFileStatusUpdates() {
 func (s *Server) updateFileStatus(r *transfer.Request) error {
 	entry, err := s.db.SetEntryStatus(r)
 	if err != nil {
-		errs := &set.Error{}
-		if errors.As(err, errs) {
-			switch errs.Msg {
+		if setErr, ok := errors.AsType[set.Error](err); ok {
+			switch setErr.Msg {
 			case set.ErrInvalidEntry:
 				return s.dropRequest(r, "its file is no longer in its set")
 			case set.ErrInvalidSetID:
