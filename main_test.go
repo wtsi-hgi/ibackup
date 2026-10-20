@@ -2816,11 +2816,9 @@ func TestEdit(t *testing.T) {
 
 				s.addSetForTestingWithFlags(t, setName, transformer, "--path", dir)
 
-				So(os.Chmod(parent, 0), ShouldBeNil)
+				Reset(func() { So(os.Chmod(parent, userPerms), ShouldBeNil) })
 
-				defer func() {
-					So(os.Chmod(parent, userPerms), ShouldBeNil)
-				}()
+				So(os.Chmod(parent, 0), ShouldBeNil)
 
 				exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--add", otherFile)
 				So(exitCode, ShouldEqual, 0)

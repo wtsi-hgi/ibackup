@@ -2424,11 +2424,9 @@ func TestServer(t *testing.T) {
 								err = client.TrashFilesAndDirs(exampleSet.ID(), []string{file1local})
 								So(err, ShouldBeNil)
 
-								So(os.Chmod(dir0local, 0), ShouldBeNil)
+								Reset(func() { So(os.Chmod(dir0local, 0755), ShouldBeNil) })
 
-								defer func() {
-									So(os.Chmod(dir0local, 0755), ShouldBeNil)
-								}()
+								So(os.Chmod(dir0local, 0), ShouldBeNil)
 
 								err = client.TriggerDiscovery(exampleSet.ID(), false)
 								So(err, ShouldBeNil)
