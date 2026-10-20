@@ -27,7 +27,6 @@ package fofn
 
 import (
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -71,7 +70,7 @@ func TestWriteStatusFromRun(t *testing.T) {
 			So(counts.NotProcessed, ShouldEqual, 0)
 
 			_, statErr := os.Stat(statusPath + ".issues")
-			So(errors.Is(statErr, os.ErrNotExist), ShouldBeTrue)
+			So(statErr, ShouldWrap, os.ErrNotExist)
 		})
 
 		Convey("3 chunks, 1 buried with no report", func() {

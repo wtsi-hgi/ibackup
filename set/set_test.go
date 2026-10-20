@@ -586,14 +586,14 @@ func TestTrashSetCounts(t *testing.T) {
 				expectRejected := func() {
 					erra := db.AddOrUpdate(edited)
 					So(erra, ShouldNotBeNil)
-					So(errors.Is(erra, ErrTransformerUsedByTrash), ShouldBeTrue)
+					So(erra, ShouldWrap, ErrTransformerUsedByTrash)
 
 					// eg. a set whose transformer changed before that was
 					// rejected, then trashed a path; a removal error on the
 					// trash set doesn't matter.
 					erra = db.AddOrUpdate(&editedTrashSet)
 					So(erra, ShouldNotBeNil)
-					So(errors.Is(erra, ErrTransformerAlreadyUsed), ShouldBeTrue)
+					So(erra, ShouldWrap, ErrTransformerAlreadyUsed)
 					So(db.GetByID(trashSet.ID()).Transformer, ShouldEqual, given.Transformer)
 				}
 
@@ -1020,7 +1020,7 @@ func TestSetDB(t *testing.T) {
 					set.Hide = true
 					err = db.AddOrUpdate(set)
 					So(err, ShouldNotBeNil)
-					So(errors.Is(err, ErrSetIsNotWritable), ShouldBeTrue)
+					So(err, ShouldWrap, ErrSetIsNotWritable)
 
 					set.Hide = false
 
@@ -1093,13 +1093,13 @@ func TestSetDB(t *testing.T) {
 					So(entry, ShouldResemble, newEntry("/a/b.txt"))
 
 					entry, errr = db.GetFileEntryForSet(set2.ID(), "/not/a/file.txt")
-					So(errors.Is(errr, ErrInvalidEntry), ShouldBeTrue)
+					So(errr, ShouldWrap, ErrInvalidEntry)
 					So(entry, ShouldBeNil)
 				})
 
 				Convey("Then paths not in a set are rejected with a path not in set error", func() {
 					_, _, errv := db.ValidateFileAndDirPaths(set2, []string{"/a/b.txt", "/not/a/file.txt"})
-					So(errors.Is(errv, ErrPathNotInSet), ShouldBeTrue)
+					So(errv, ShouldWrap, ErrPathNotInSet)
 					So(errv.Error(), ShouldEqual,
 						"path(s) do not belong to the backup set : [/not/a/file.txt] [set2]")
 				})
@@ -1902,7 +1902,7 @@ func TestSetDB(t *testing.T) {
 
 						erra := db.AddOrUpdate(edited)
 						So(erra, ShouldNotBeNil)
-						So(errors.Is(erra, ErrTransformerAlreadyUsed), ShouldBeTrue)
+						So(erra, ShouldWrap, ErrTransformerAlreadyUsed)
 						So(db.GetByID(dirSet.ID()).Transformer, ShouldEqual, dirSet.Transformer)
 					}
 
@@ -3176,7 +3176,7 @@ func TestSetDB(t *testing.T) {
 					for range 2 {
 						_, errr := db.RemoveFileEntry(&remReq, entry)
 						So(errr, ShouldNotBeNil)
-						So(errors.Is(errr, ErrInvalidTransformerPath), ShouldBeTrue)
+						So(errr, ShouldWrap, ErrInvalidTransformerPath)
 
 						_, erre = db.GetFileEntryForSet(setl1.ID(), unlinked)
 						So(erre, ShouldBeNil)
@@ -3984,7 +3984,7 @@ func TestSetDB(t *testing.T) {
 					got.Transformer = editedTransformer
 					erra := db.AddOrUpdate(got)
 					So(erra, ShouldNotBeNil)
-					So(errors.Is(erra, ErrTransformerAlreadyUsed), ShouldBeTrue)
+					So(erra, ShouldWrap, ErrTransformerAlreadyUsed)
 					So(db.GetByID(setl1.ID()).Transformer, ShouldEqual, tmpRemoteTransformer)
 
 					entry, errg := db.GetFileEntryForSet(setl1.ID(), good)

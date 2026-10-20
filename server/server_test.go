@@ -1929,7 +1929,7 @@ func TestServer(t *testing.T) {
 
 							err = s.removeFileFromIRODSandDB(&remReq)
 
-							So(errors.Is(err, set.ErrInvalidEntry), ShouldBeTrue)
+							So(err, ShouldWrap, set.ErrInvalidEntry)
 						})
 
 						Convey("And given an inode bucket that's out of sync with iRODS", func() {
@@ -9863,7 +9863,7 @@ func TestSetDirWalksEndWhenWalkingIsImpossible(t *testing.T) {
 			for range 2 {
 				errw, ended := walkEnds()
 				So(ended, ShouldBeTrue)
-				So(errors.Is(errw, fs.ErrClosed), ShouldBeTrue)
+				So(errw, ShouldWrap, fs.ErrClosed)
 			}
 		})
 	})
