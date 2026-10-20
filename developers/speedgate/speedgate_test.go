@@ -314,7 +314,7 @@ func TestExtractBase(t *testing.T) {
 		So(strings.TrimSpace(string(got)), ShouldEqual, license)
 
 		_, err = os.Stat(filepath.Join(dir, ".git"))
-		So(errors.Is(err, os.ErrNotExist), ShouldBeTrue)
+		So(err, ShouldWrap, os.ErrNotExist)
 
 		want, err := os.ReadFile(filepath.Join(root, benchPkgDir, "upload_test.go"))
 		So(err, ShouldBeNil)

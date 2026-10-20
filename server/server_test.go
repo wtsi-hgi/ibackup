@@ -1929,10 +1929,7 @@ func TestServer(t *testing.T) {
 
 							err = s.removeFileFromIRODSandDB(&remReq)
 
-							var serr set.Error
-
-							So(errors.As(err, &serr), ShouldBeTrue)
-							So(serr.Msg, ShouldEqual, set.ErrInvalidEntry)
+							So(err, ShouldWrap, set.ErrInvalidEntry)
 						})
 
 						Convey("And given an inode bucket that's out of sync with iRODS", func() {
@@ -2526,7 +2523,7 @@ func TestServer(t *testing.T) {
 
 								err = client.AddOrUpdateSet(got)
 								So(err, ShouldNotBeNil)
-								So(err.Error(), ShouldContainSubstring, set.ErrPendingRemovals)
+								So(err.Error(), ShouldContainSubstring, set.ErrPendingRemovals.Error())
 								So(err, ShouldWrap, ErrInvalidInput)
 
 								close(resume)
@@ -5058,7 +5055,7 @@ func TestServer(t *testing.T) {
 							exampleSet.ReadOnly = false
 							err = client.AddOrUpdateSet(exampleSet)
 							So(err, ShouldNotBeNil)
-							So(err.Error(), ShouldContainSubstring, set.ErrSetIsNotWritable)
+							So(err.Error(), ShouldContainSubstring, set.ErrSetIsNotWritable.Error())
 							So(err, ShouldWrap, ErrInvalidInput)
 						})
 
@@ -9866,7 +9863,7 @@ func TestSetDirWalksEndWhenWalkingIsImpossible(t *testing.T) {
 			for range 2 {
 				errw, ended := walkEnds()
 				So(ended, ShouldBeTrue)
-				So(errors.Is(errw, fs.ErrClosed), ShouldBeTrue)
+				So(errw, ShouldWrap, fs.ErrClosed)
 			}
 		})
 	})

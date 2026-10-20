@@ -183,7 +183,7 @@ func TestConfig(t *testing.T) {
 				Metadata:    map[string]string{"bad:key": "val"},
 			})
 			So(err, ShouldNotBeNil)
-			So(errors.Is(err, ErrMetadataKeyColon), ShouldBeTrue)
+			So(err, ShouldWrap, ErrMetadataKeyColon)
 
 			_, statErr := os.Stat(filepath.Join(sub, "config.yml"))
 			So(os.IsNotExist(statErr), ShouldBeTrue)
@@ -198,7 +198,7 @@ func TestConfig(t *testing.T) {
 				Metadata:    map[string]string{"key": "val=ue"},
 			})
 			So(err, ShouldNotBeNil)
-			So(errors.Is(err, ErrMetadataDelimiter), ShouldBeTrue)
+			So(err, ShouldWrap, ErrMetadataDelimiter)
 
 			_, statErr := os.Stat(filepath.Join(sub, "config.yml"))
 			So(os.IsNotExist(statErr), ShouldBeTrue)
@@ -292,7 +292,7 @@ func TestConfig(t *testing.T) {
 
 			_, err := readConfig(sub)
 			So(err, ShouldNotBeNil)
-			So(errors.Is(err, ErrMetadataDelimiter), ShouldBeTrue)
+			So(err, ShouldWrap, ErrMetadataDelimiter)
 		})
 
 		Convey("ReadConfig rejects metadata value containing ;", func() {
@@ -307,7 +307,7 @@ func TestConfig(t *testing.T) {
 
 			_, err := readConfig(sub)
 			So(err, ShouldNotBeNil)
-			So(errors.Is(err, ErrMetadataDelimiter), ShouldBeTrue)
+			So(err, ShouldWrap, ErrMetadataDelimiter)
 		})
 
 		Convey("ReadConfig rejects metadata key containing =", func() {
@@ -322,7 +322,7 @@ func TestConfig(t *testing.T) {
 
 			_, err := readConfig(sub)
 			So(err, ShouldNotBeNil)
-			So(errors.Is(err, ErrMetadataDelimiter), ShouldBeTrue)
+			So(err, ShouldWrap, ErrMetadataDelimiter)
 		})
 	})
 

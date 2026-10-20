@@ -982,10 +982,7 @@ func (s *Server) removeFileFromIRODSandDB(removeReq *set.RemoveReq) error {
 // that was never in the set, or a request already complete, it returns the
 // error.
 func (s *Server) removeDeletedFileFromDB(removeReq *set.RemoveReq, err error) error {
-	setErr, ok := errors.AsType[set.Error](err)
-	notInSet := ok && setErr.Msg == set.ErrInvalidEntry
-
-	if !notInSet || removeReq.IsComplete || removeReq.RemoteRemovalStatus == set.NotRemoved {
+	if !errors.Is(err, set.ErrInvalidEntry) || removeReq.IsComplete || removeReq.RemoteRemovalStatus == set.NotRemoved {
 		return err
 	}
 
@@ -2110,13 +2107,11 @@ func (s *Server) handleFileStatusUpdates() {
 func (s *Server) updateFileStatus(r *transfer.Request) error {
 	entry, err := s.db.SetEntryStatus(r)
 	if err != nil {
-		if setErr, ok := errors.AsType[set.Error](err); ok {
-			switch setErr.Msg {
-			case set.ErrInvalidEntry:
-				return s.dropRequest(r, "its file is no longer in its set")
-			case set.ErrInvalidSetID:
-				return s.dropRequest(r, "its set was deleted")
-			}
+		switch {
+		case errors.Is(err, set.ErrInvalidEntry):
+			return s.dropRequest(r, "its file is no longer in its set")
+		case errors.Is(err, set.ErrInvalidSetID):
+			return s.dropRequest(r, "its set was deleted")
 		}
 
 		return err

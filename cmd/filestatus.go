@@ -135,9 +135,7 @@ func (fsg *fileStatusGetter) printFileStatuses(sets []*set.Set) error {
 func (fsg *fileStatusGetter) printFileStatusIfInSet(s *set.Set) error {
 	entry, err := fsg.db.GetFileEntryForSet(s.ID(), fsg.filePath)
 	if err != nil {
-		var errr set.Error
-
-		if ok := errors.As(err, &errr); ok && errr.Msg == set.ErrInvalidEntry {
+		if errors.Is(err, set.ErrInvalidEntry) {
 			return nil
 		}
 

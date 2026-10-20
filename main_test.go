@@ -1660,7 +1660,7 @@ func TestRemove(t *testing.T) {
 
 				Convey("You can no longer remove files from it", func() {
 					s.confirmOutputContains(t, []string{"remove", "--name", setName, "--path", file1}, 1,
-						set.ErrSetIsNotWritable)
+						set.ErrSetIsNotWritable.Error())
 				})
 			})
 
@@ -2115,7 +2115,7 @@ func TestTrashRemove(t *testing.T) {
 
 				Convey("You won't be able to trash remove a different file from this set", func() {
 					s.confirmOutputContains(t, []string{"trash", "--remove", "--name", setName, "--path", file2},
-						1, set.ErrPathNotInSet)
+						1, set.ErrPathNotInSet.Error())
 				})
 			})
 
@@ -2215,7 +2215,7 @@ func TestTrashRemove(t *testing.T) {
 				Convey("You cannot permanently remove that file", func() {
 					exitCode, output := s.runBinaryWithNoLogging(t, "trash", "--remove", "--name", setName, "--path", file1)
 					So(exitCode, ShouldEqual, 1)
-					So(output, ShouldContainSubstring, set.ErrPathNotInSet)
+					So(output, ShouldContainSubstring, set.ErrPathNotInSet.Error())
 				})
 			})
 
@@ -2482,7 +2482,7 @@ func TestTrashRemovePaths(t *testing.T) {
 			Convey("you can't change the set's transformer while its trash set holds the file, "+
 				"since the file's remote path depends on it", func() {
 				s.confirmOutputContains(t, []string{"edit", "--name", setName, "--transformer", newTransformer},
-					1, server.ErrInvalidInput.Error()+": "+set.ErrTransformerUsedByTrash)
+					1, server.ErrInvalidInput.Error()+": "+set.ErrTransformerUsedByTrash.Error())
 
 				Convey("but you can once the file is removed from the trash set", func() {
 					s.trashRemovePath(t, setName, file, 1)
@@ -3014,12 +3014,12 @@ func TestEdit(t *testing.T) {
 
 					Convey("And you can no longer edit it", func() {
 						s.confirmOutputContains(t, []string{"edit", "--name", setName}, 1,
-							server.ErrInvalidInput.Error()+": "+set.ErrSetIsNotWritable)
+							server.ErrInvalidInput.Error()+": "+set.ErrSetIsNotWritable.Error())
 					})
 
 					Convey("And you can no longer sync it", func() {
 						s.confirmOutputContains(t, []string{"sync", "--name", setName}, 1,
-							set.ErrSetIsNotWritable)
+							set.ErrSetIsNotWritable.Error())
 					})
 
 					Convey("And admin can make it writable", func() {
@@ -3039,7 +3039,7 @@ func TestEdit(t *testing.T) {
 				Convey("If the set is not complete, you cannot change the transformer", func() {
 					exitCode, output := s.runBinaryWithNoLogging(t, "edit", "--name", setName, "--transformer", "humgen")
 					So(exitCode, ShouldEqual, 1)
-					So(output, ShouldContainSubstring, server.ErrInvalidInput.Error()+": "+set.ErrTransformerInUse)
+					So(output, ShouldContainSubstring, server.ErrInvalidInput.Error()+": "+set.ErrTransformerInUse.Error())
 				})
 			})
 
@@ -3275,7 +3275,7 @@ func TestEdit(t *testing.T) {
 				Convey("If there are uploaded files, you cannot change the transformer", func() {
 					exitCode, output := s.runBinaryWithNoLogging(t, "edit", "--name", setName, "--transformer", "humgen")
 					So(exitCode, ShouldEqual, 1)
-					So(output, ShouldContainSubstring, server.ErrInvalidInput.Error()+": "+set.ErrTransformerAlreadyUsed)
+					So(output, ShouldContainSubstring, server.ErrInvalidInput.Error()+": "+set.ErrTransformerAlreadyUsed.Error())
 				})
 
 				Convey("You cannot add a non-existing file to a set", func() {
@@ -3554,7 +3554,7 @@ func TestEdit(t *testing.T) {
 
 				exitCode, output := s.runBinaryWithNoLogging(t, "edit", "--name", setName, "--add", setDir)
 				So(exitCode, ShouldEqual, 1)
-				So(output, ShouldContainSubstring, set.ErrPendingRemovals)
+				So(output, ShouldContainSubstring, set.ErrPendingRemovals.Error())
 			})
 		})
 	})

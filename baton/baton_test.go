@@ -662,6 +662,81 @@ func TestBatonConcurrentClientInit(t *testing.T) {
 		So(time.Since(start), ShouldBeLessThan, operationMinBackoff)
 	})
 
+	Convey("EnsureCollection returns a timed-out first ListItem's error without trying MkDir", t, func() {
+		coll := filepath.Join(remotePath, "ensure-list-timeout")
+
+		h, err := GetBatonHandler()
+		So(err, ShouldBeNil)
+		Reset(h.Cleanup)
+
+		So(h.EnsureCollection(remotePath), ShouldBeNil)
+
+		clientsBefore := h.getCollClients()
+
+		// No ListItem finishes within a nanosecond, and MkDir is retried with
+		// a backoff, so a backoff sleep means MkDir was tried.
+		sleeper := newSignallingSleeper()
+		h.backoffSleeper = sleeper
+		h.opTimeout.Store(int64(time.Nanosecond))
+
+		ensureDone := make(chan error, 1)
+
+		go func() {
+			ensureDone <- h.EnsureCollection(coll)
+		}()
+
+		var (
+			ensureErr         error
+			returned, retried bool
+		)
+
+		select {
+		case ensureErr = <-ensureDone:
+			returned = true
+		case <-sleeper.started:
+			retried = true
+		case <-time.After(promptReturn):
+		}
+
+		So(retried, ShouldBeFalse)
+		So(returned, ShouldBeTrue)
+		So(ensureErr, ShouldNotBeNil)
+		So(ensureErr.Error(), ShouldContainSubstring, ErrOperationTimeout)
+
+		// The timed-out client may be hung, so its worker must have replaced
+		// it with a new one, and stopped it, before returning.
+		clientsAfter := h.getCollClients()
+		So(len(clientsAfter), ShouldEqual, len(clientsBefore))
+
+		var replaced []*ex.Client
+
+		for i, client := range clientsBefore {
+			if clientsAfter[i] != client {
+				replaced = append(replaced, client)
+			}
+		}
+
+		So(len(replaced), ShouldEqual, 1)
+
+		stopped := false
+
+		for deadline := time.Now().Add(promptReturn); time.Now().Before(deadline); {
+			if !replaced[0].IsRunning() {
+				stopped = true
+
+				break
+			}
+
+			time.Sleep(clientStopCheckFreq)
+		}
+
+		So(stopped, ShouldBeTrue)
+
+		h.opTimeout.Store(int64(operationTimeout))
+
+		So(h.EnsureCollection(coll), ShouldBeNil)
+	})
+
 	Convey("CollectionsDone without an earlier EnsureCollection works", t, func() {
 		h, err := GetBatonHandler()
 		So(err, ShouldBeNil)
@@ -796,7 +871,7 @@ func TestBatonConcurrentClientInit(t *testing.T) {
 			bound     = opTimeout + operationMinBackoff
 		)
 
-		h.opTimeout = opTimeout
+		h.opTimeout.Store(int64(opTimeout))
 
 		var stuck, timedOut bool
 
@@ -840,7 +915,7 @@ func TestBatonConcurrentClientInit(t *testing.T) {
 			t.Logf("GetMeta never landed in the stopping-client window in %d attempts", attempts)
 		}
 
-		h.opTimeout = operationTimeout
+		h.opTimeout.Store(int64(operationTimeout))
 
 		_, err = h.GetMeta(fileRemote)
 		So(err, ShouldBeNil)

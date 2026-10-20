@@ -586,14 +586,14 @@ func TestTrashSetCounts(t *testing.T) {
 				expectRejected := func() {
 					erra := db.AddOrUpdate(edited)
 					So(erra, ShouldNotBeNil)
-					So(erra.Error(), ShouldContainSubstring, ErrTransformerUsedByTrash)
+					So(erra, ShouldWrap, ErrTransformerUsedByTrash)
 
 					// eg. a set whose transformer changed before that was
 					// rejected, then trashed a path; a removal error on the
 					// trash set doesn't matter.
 					erra = db.AddOrUpdate(&editedTrashSet)
 					So(erra, ShouldNotBeNil)
-					So(erra.Error(), ShouldContainSubstring, ErrTransformerAlreadyUsed)
+					So(erra, ShouldWrap, ErrTransformerAlreadyUsed)
 					So(db.GetByID(trashSet.ID()).Transformer, ShouldEqual, given.Transformer)
 				}
 
@@ -1020,7 +1020,7 @@ func TestSetDB(t *testing.T) {
 					set.Hide = true
 					err = db.AddOrUpdate(set)
 					So(err, ShouldNotBeNil)
-					So(err.Error(), ShouldStartWith, ErrSetIsNotWritable)
+					So(err, ShouldWrap, ErrSetIsNotWritable)
 
 					set.Hide = false
 
@@ -1093,8 +1093,15 @@ func TestSetDB(t *testing.T) {
 					So(entry, ShouldResemble, newEntry("/a/b.txt"))
 
 					entry, errr = db.GetFileEntryForSet(set2.ID(), "/not/a/file.txt")
-					So(errr, ShouldNotBeNil)
+					So(errr, ShouldWrap, ErrInvalidEntry)
 					So(entry, ShouldBeNil)
+				})
+
+				Convey("Then paths not in a set are rejected with a path not in set error", func() {
+					_, _, errv := db.ValidateFileAndDirPaths(set2, []string{"/a/b.txt", "/not/a/file.txt"})
+					So(errv, ShouldWrap, ErrPathNotInSet)
+					So(errv.Error(), ShouldEqual,
+						"path(s) do not belong to the backup set : [/not/a/file.txt] [set2]")
 				})
 
 				Convey("Then get all the Sets for a particular Requester", func() {
@@ -1895,7 +1902,7 @@ func TestSetDB(t *testing.T) {
 
 						erra := db.AddOrUpdate(edited)
 						So(erra, ShouldNotBeNil)
-						So(erra.Error(), ShouldContainSubstring, ErrTransformerAlreadyUsed)
+						So(erra, ShouldWrap, ErrTransformerAlreadyUsed)
 						So(db.GetByID(dirSet.ID()).Transformer, ShouldEqual, dirSet.Transformer)
 					}
 
@@ -3169,7 +3176,7 @@ func TestSetDB(t *testing.T) {
 					for range 2 {
 						_, errr := db.RemoveFileEntry(&remReq, entry)
 						So(errr, ShouldNotBeNil)
-						So(errr.Error(), ShouldContainSubstring, ErrInvalidTransformerPath)
+						So(errr, ShouldWrap, ErrInvalidTransformerPath)
 
 						_, erre = db.GetFileEntryForSet(setl1.ID(), unlinked)
 						So(erre, ShouldBeNil)
@@ -3977,7 +3984,7 @@ func TestSetDB(t *testing.T) {
 					got.Transformer = editedTransformer
 					erra := db.AddOrUpdate(got)
 					So(erra, ShouldNotBeNil)
-					So(erra.Error(), ShouldContainSubstring, ErrTransformerAlreadyUsed)
+					So(erra, ShouldWrap, ErrTransformerAlreadyUsed)
 					So(db.GetByID(setl1.ID()).Transformer, ShouldEqual, tmpRemoteTransformer)
 
 					entry, errg := db.GetFileEntryForSet(setl1.ID(), good)
@@ -4152,6 +4159,7 @@ func TestSetDB(t *testing.T) {
 					So(got.Replaced, ShouldEqual, 1)
 					So(got.Skipped, ShouldEqual, 1)
 					So(got.Orphaned, ShouldEqual, 0)
+					So(got.Abnormal, ShouldEqual, 0)
 					So(got.Status, ShouldEqual, Complete)
 
 					// The skipped file's size isn't counted as uploaded.
@@ -4204,22 +4212,59 @@ func TestSetDB(t *testing.T) {
 					So(got.LastCompletedSize, ShouldEqual, 15)
 				})
 
-				Convey("then replacing one with an abnormal file counts it only as abnormal", func() {
-					So(os.Remove(uploaded), ShouldBeNil)
-					So(syscall.Mkfifo(uploaded, userPerms), ShouldBeNil)
+				Convey("then replacing one with an abnormal file ignores that, keeping it counted as uploaded",
+					func() {
+						So(os.Remove(uploaded), ShouldBeNil)
+						So(syscall.Mkfifo(uploaded, userPerms), ShouldBeNil)
 
-					got, err = db.Discover(setl1.ID(), nil)
-					So(err, ShouldBeNil)
-					So(got.NumFiles, ShouldEqual, 3)
-					So(got.Abnormal, ShouldEqual, 1)
-					So(got.Uploaded, ShouldEqual, 0)
-					So(got.Replaced, ShouldEqual, 1)
-					So(got.Skipped, ShouldEqual, 1)
-					So(got.Status, ShouldEqual, Complete)
-					So(got.SizeTotal, ShouldEqual, 12)
-					So(got.SizeUploaded, ShouldEqual, 5)
-					So(got.LastCompletedSize, ShouldEqual, 12)
-				})
+						got, err = db.Discover(setl1.ID(), nil)
+						So(err, ShouldBeNil)
+						checkCounts(got)
+
+						entry, errg := db.GetFileEntryForSet(setl1.ID(), uploaded)
+						So(errg, ShouldBeNil)
+						So(entry.Status, ShouldEqual, Uploaded)
+						So(entry.Type, ShouldEqual, Regular)
+						So(entry.ShouldUpload(got), ShouldBeFalse)
+
+						Convey("and removing it leaves no abnormal count", func() {
+							removeFileEntryAndCount(db, setl1.ID(), uploaded)
+
+							got = db.GetByID(setl1.ID())
+							So(got.NumFiles, ShouldEqual, 2)
+							So(got.Uploaded, ShouldEqual, 0)
+							So(got.Abnormal, ShouldEqual, 0)
+							So(got.Replaced, ShouldEqual, 1)
+							So(got.Skipped, ShouldEqual, 1)
+							So(got.SizeTotal, ShouldEqual, 12)
+
+							for _, path := range []string{replaced, skipped} {
+								removeFileEntryAndCount(db, setl1.ID(), path)
+							}
+
+							got = db.GetByID(setl1.ID())
+							So(got.NumFiles, ShouldEqual, 0)
+							So(got.Uploaded, ShouldEqual, 0)
+							So(got.Replaced, ShouldEqual, 0)
+							So(got.Skipped, ShouldEqual, 0)
+							So(got.Abnormal, ShouldEqual, 0)
+							So(got.SizeTotal, ShouldEqual, 0)
+						})
+
+						Convey("and replacing that with a regular file doesn't upload it again", func() {
+							So(os.Remove(uploaded), ShouldBeNil)
+							internal.CreateTestFile(t, uploaded, "regular again")
+
+							got, err = db.Discover(setl1.ID(), nil)
+							So(err, ShouldBeNil)
+							checkCounts(got)
+
+							entry, errg = db.GetFileEntryForSet(setl1.ID(), uploaded)
+							So(errg, ShouldBeNil)
+							So(entry.Status, ShouldEqual, Uploaded)
+							So(entry.ShouldUpload(got), ShouldBeFalse)
+						})
+					})
 
 				Convey("then adding a new file completes once only that file is uploaded", func() {
 					newFile := filepath.Join(dir, "new")
