@@ -456,7 +456,7 @@ func (b *Baton) ensureCollection(ctx context.Context, clientIndex int, ri ex.Rod
 		return nil
 	}
 
-	if errors.Is(err, errs.PathError{Msg: ErrOperationTimeout, Path: ri.IPath}) {
+	if pathErr, ok := errors.AsType[errs.PathError](err); ok && pathErr.Msg == ErrOperationTimeout {
 		return err
 	}
 

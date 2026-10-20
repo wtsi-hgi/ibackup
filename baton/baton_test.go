@@ -662,6 +662,50 @@ func TestBatonConcurrentClientInit(t *testing.T) {
 		So(time.Since(start), ShouldBeLessThan, operationMinBackoff)
 	})
 
+	Convey("EnsureCollection returns a timed-out first ListItem's error without trying MkDir", t, func() {
+		coll := filepath.Join(remotePath, "ensure-list-timeout")
+
+		h, err := GetBatonHandler()
+		So(err, ShouldBeNil)
+		Reset(h.Cleanup)
+
+		So(h.EnsureCollection(remotePath), ShouldBeNil)
+
+		// No ListItem finishes within a nanosecond, and MkDir is retried with
+		// a backoff, so a backoff sleep means MkDir was tried.
+		sleeper := newSignallingSleeper()
+		h.backoffSleeper = sleeper
+		h.opTimeout = time.Nanosecond
+
+		ensureDone := make(chan error, 1)
+
+		go func() {
+			ensureDone <- h.EnsureCollection(coll)
+		}()
+
+		var (
+			ensureErr         error
+			returned, retried bool
+		)
+
+		select {
+		case ensureErr = <-ensureDone:
+			returned = true
+		case <-sleeper.started:
+			retried = true
+		case <-time.After(promptReturn):
+		}
+
+		So(retried, ShouldBeFalse)
+		So(returned, ShouldBeTrue)
+		So(ensureErr, ShouldNotBeNil)
+		So(ensureErr.Error(), ShouldContainSubstring, ErrOperationTimeout)
+
+		h.opTimeout = operationTimeout
+
+		So(h.EnsureCollection(coll), ShouldBeNil)
+	})
+
 	Convey("CollectionsDone without an earlier EnsureCollection works", t, func() {
 		h, err := GetBatonHandler()
 		So(err, ShouldBeNil)
