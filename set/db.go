@@ -305,11 +305,9 @@ func initDB(path string, readonly bool) (*bolt.DB, error) {
 // to finish before stopping the file pool they submit to. Transactions started
 // after that fail.
 func (d *DB) Close() error {
-	err := d.db.Close()
+	defer d.filePool.StopWait()
 
-	d.filePool.StopWait()
-
-	return err
+	return d.db.Close()
 }
 
 // AddOrUpdate adds or updates the given Set to the database. Errors if the set
