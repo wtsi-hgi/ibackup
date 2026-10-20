@@ -75,6 +75,28 @@ func RequireStable(
 	}
 }
 
+// Receive returns the next value received from ch, failing the test if none
+// arrives before the timeout expires, so that a signal that is never sent fails
+// the test instead of blocking it until the go test timeout. The message names
+// what the test is waiting for.
+func Receive[T any](tb testing.TB, ch <-chan T, timeout time.Duration, message string) T { //nolint:ireturn
+	tb.Helper()
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	select {
+	case v := <-ch:
+		return v
+	case <-timer.C:
+		tb.Fatalf("timed out after %s waiting for %s", timeout, message)
+	}
+
+	var zero T
+
+	return zero
+}
+
 // RetryUntilWorks retries f until it returns nil or the default timeout.
 func RetryUntilWorks(tb testing.TB, f func() error) error {
 	tb.Helper()

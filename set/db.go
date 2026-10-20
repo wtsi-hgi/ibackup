@@ -71,7 +71,9 @@ const (
 	ErrSetIsNotWritable       = "the set is read-only, you cannot change it"
 	ErrTransformerAlreadyUsed = "you cannot edit the transformer on a set with uploaded files"
 	ErrTransformerInUse       = "you cannot edit the transformer on a set with unfinished uploads"
-	ErrPendingRemovals        = "the set has unfinished removals, you cannot change it"
+	ErrTransformerUsedByTrash = "you cannot edit the transformer on a set with uploaded files in its trash; " +
+		"remove them from the trash or wait for them to expire"
+	ErrPendingRemovals = "the set has unfinished removals, you cannot change it"
 
 	setsBucket                    = "sets"
 	userToSetBucket               = "userLookup"
@@ -136,6 +138,14 @@ type RemoveReq struct {
 	// even if an upload result changed the entry's size meanwhile. Nil for
 	// requests stored before it existed, and for directories.
 	ObjectSize *uint64
+
+	// RemoteMeta is the sets and requester metadata of the file's remote
+	// object when a first attempt to update them started. Updating removes
+	// the old values before adding the new ones, so if adding fails, a retry
+	// takes any value now missing from the object from these, instead of
+	// seeing an object with no sets, which it would remove. Nil for requests
+	// stored before it existed, for directories, and until an update starts.
+	RemoteMeta map[string]string
 }
 
 func (rq RemoveReq) Key() string {
@@ -219,6 +229,10 @@ type DB struct {
 	remoteBackupHandler   transfer.Handler
 
 	rebackup atomic.Bool
+
+	// statSubmitHook, if set, is called before each pure file stat is
+	// submitted to filePool during discovery. Only tests set it.
+	statSubmitHook func()
 }
 
 // New returns a *DB that can be used to create or query a set database. Provide
@@ -286,8 +300,12 @@ func initDB(path string, readonly bool) (*bolt.DB, error) {
 
 // Close closes the database. Be sure to call this to finalise any writes to
 // disk correctly.
+//
+// It waits for in-flight transactions, such as a discovery stat'ing pure files,
+// to finish before stopping the file pool they submit to. Transactions started
+// after that fail.
 func (d *DB) Close() error {
-	d.filePool.StopWait()
+	defer d.filePool.StopWait()
 
 	return d.db.Close()
 }
@@ -309,12 +327,8 @@ func (d *DB) AddOrUpdate(set *Set) error { //nolint:funlen,gocognit,gocyclo
 			}
 
 			if set.Transformer != eset.Transformer {
-				if eset.Uploaded+eset.Skipped+eset.Replaced+eset.Orphaned > 0 {
-					return Error{Msg: ErrTransformerAlreadyUsed, id: id}
-				}
-
-				if eset.Status != Complete && eset.Error == "" {
-					return Error{Msg: ErrTransformerInUse, id: id}
+				if err := d.checkTransformerCanChange(tx, eset); err != nil {
+					return err
 				}
 			}
 
@@ -341,9 +355,132 @@ func (d *DB) AddOrUpdate(set *Set) error { //nolint:funlen,gocognit,gocyclo
 	return err
 }
 
+// checkTransformerCanChange returns an error if the given stored set's
+// transformer can't be changed, because files it uploaded or is uploading would
+// then have the wrong remote path.
+//
+// A trash set's transformer follows its original set's, and a trash set is never
+// discovered or uploaded to, so only the files trashed into it matter. Its
+// original set's transformer therefore can't change while it holds any, nor
+// while the original set has removal requests still to do: they remove or trash
+// files using the transformer they were made with, and their trashed files would
+// then be in a trash set whose transformer no longer matches.
+func (d *DB) checkTransformerCanChange(tx *bolt.Tx, eset *Set) error {
+	id := eset.ID()
+
+	if eset.IsTrash() {
+		if setHasFiles(tx, id) {
+			return Error{Msg: ErrTransformerAlreadyUsed, id: id}
+		}
+
+		return nil
+	}
+
+	if eset.Uploaded+eset.Skipped+eset.Replaced+eset.Orphaned > 0 {
+		return Error{Msg: ErrTransformerAlreadyUsed, id: id}
+	}
+
+	if err := d.checkNoTrashOrRemovals(tx, eset); err != nil {
+		return err
+	}
+
+	return d.checkNoUploads(tx, eset)
+}
+
+// checkNoUploads returns an error if the given stored set isn't complete and has
+// no Error, or if any of its file entries may have an object in iRODS from an
+// earlier or running upload.
+func (d *DB) checkNoUploads(tx *bolt.Tx, eset *Set) error {
+	id := eset.ID()
+
+	if eset.Status != Complete && eset.Error == "" {
+		return Error{Msg: ErrTransformerInUse, id: id}
+	}
+
+	if d.setHasRemoteObjects(tx, id) {
+		return Error{Msg: ErrTransformerAlreadyUsed, id: id}
+	}
+
+	return nil
+}
+
+// setHasRemoteObjects returns true if any file or discovered entry of the set
+// with the given ID may have an object in iRODS at the remote path of the set's
+// current transformer.
+//
+// The set's counts can't tell: a discovery resets them and only counts entries
+// as their upload results arrive, so they are all zero after a discovery fails,
+// or while its files are pending, eg. if queuing them failed.
+func (d *DB) setHasRemoteObjects(tx *bolt.Tx, setID string) bool {
+	for _, kind := range []string{fileBucket, discoveredBucket} {
+		b := getSubBucket(tx, setID, kind)
+		if b == nil {
+			continue
+		}
+
+		c := b.Cursor()
+
+		for k, v := c.First(); k != nil; k, v = c.Next() {
+			if d.decodeEntry(v).mayHaveRemoteObject() {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// checkNoTrashOrRemovals returns an error if the given stored set's trash set
+// holds any files, or the set has removal requests still to do.
+func (d *DB) checkNoTrashOrRemovals(tx *bolt.Tx, eset *Set) error {
+	id := eset.ID()
+
+	trashSet := BuildTrashSetFromSet(eset)
+	if setHasFiles(tx, trashSet.ID()) {
+		return Error{Msg: ErrTransformerUsedByTrash, id: id}
+	}
+
+	incomplete, err := d.countIncompleteRemoveRequests(tx, id)
+	if err != nil {
+		return err
+	}
+
+	if incomplete > 0 {
+		return Error{Msg: ErrPendingRemovals, id: id}
+	}
+
+	return nil
+}
+
+// setHasFiles returns true if the set with the given ID has any file entries.
+//
+// A trash set's file entries are only ever files that may be in iRODS: ones
+// that failed, went missing or were abnormal without an earlier upload are
+// never trashed. Its dir entries have no remote object, so don't count.
+func setHasFiles(tx *bolt.Tx, setID string) bool {
+	b := getSubBucket(tx, setID, fileBucket)
+	if b == nil {
+		return false
+	}
+
+	k, _ := b.Cursor().First()
+
+	return k != nil
+}
+
 func updateDatabaseSetWithUserSetDetails(dbSet, userSet *Set) error {
-	if dbSet.StartedDiscovery.After(dbSet.LastDiscovery) {
+	if dbSet.discovering() && !dbSet.discoveryFailed() {
 		return Error{Msg: ErrNoAddDuringDiscovery, id: dbSet.ID()}
+	}
+
+	// A trash set is only ever given to us fresh, from BuildTrashSetFromSet()
+	// on a trash request, so it has no user properties of its own beyond the
+	// Transformer; copying its empty rest would clear eg. the Error of a failed
+	// removal from the trash set.
+	if userSet.IsTrash() {
+		dbSet.Transformer = userSet.Transformer
+
+		return nil
 	}
 
 	dbSet.copyUserProperties(userSet)
@@ -404,6 +541,67 @@ func (d *DB) UpdateEntry(sid, key string, entry *Entry) error {
 		}
 
 		return b.Put([]byte(key), d.encodeToBytes(entry))
+	})
+}
+
+// MarkBuriedEntriesRetried records a user retry on each of the given set's file
+// entries that failed and whose retries ran out, so that they are queued again
+// (see Entry.ShouldBeQueued) until their next upload result.
+func (d *DB) MarkBuriedEntriesRetried(setID string) error {
+	return d.db.Update(func(tx *bolt.Tx) error {
+		setsBucket := tx.Bucket([]byte(setsBucket))
+
+		for _, entry := range d.getFailedFileEntriesWithTx(tx, setID, nil) {
+			if err := d.markFileEntryRetried(setID, entry.Path, setsBucket); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
+}
+
+// markFileEntryRetried records a retry on the given set's file entry for path,
+// if it failed and its retries ran out. Does nothing if there's no such entry.
+func (d *DB) markFileEntryRetried(setID, path string, setsBucket *bolt.Bucket) error {
+	for _, kind := range []string{fileBucket, discoveredBucket} {
+		entry, b := d.getEntryFromSubbucket(kind, setID, path, setsBucket)
+		if entry == nil {
+			continue
+		}
+
+		if entry.Status != Failed || entry.Attempts%AttemptsToBeConsideredFailing != 0 {
+			return nil
+		}
+
+		entry.Retried = true
+
+		return b.Put([]byte(path), d.encodeToBytes(entry))
+	}
+
+	return nil
+}
+
+// MarkRequestsRetried records a retry on the file entry of each of the given
+// requests that failed and whose retries ran out, so that they are queued again
+// (see Entry.ShouldBeQueued) until their next upload result, even if the
+// requests are lost first, eg. on a server restart.
+func (d *DB) MarkRequestsRetried(rs []*transfer.Request) error {
+	return d.db.Update(func(tx *bolt.Tx) error {
+		setsBucket := tx.Bucket([]byte(setsBucket))
+
+		for _, r := range rs {
+			setID, err := requestToSetID(r)
+			if err != nil {
+				return err
+			}
+
+			if err = d.markFileEntryRetried(setID, r.Local, setsBucket); err != nil {
+				return err
+			}
+		}
+
+		return nil
 	})
 }
 
@@ -690,7 +888,8 @@ func (d *DB) removeFileInTx(tx *bolt.Tx, removeReq *RemoveReq, before *Entry) (*
 }
 
 // cleanUpRemovedFile trashes the file of the given request, as it was before
-// the removal, if trashing a file that was uploaded; or, if removing it, removes
+// the removal, if trashing a file that was uploaded, even if a later upload of
+// it failed (see Entry.WasNotUploaded()); or, if removing it, removes
 // the removed entry from our inode records unless another set still has it.
 func (d *DB) cleanUpRemovedFile(tx *bolt.Tx, removeReq *RemoveReq, before, removed *Entry) error {
 	switch {
@@ -1031,19 +1230,40 @@ func (d *DBRO) getPathsWithPrefix(setID, bucketName, prefix string) ([]string, e
 }
 
 // MergeFileEntries sets the file paths for the given backup set. Only supply
-// absolute paths to files. It keeps the existing entries in the set and handles
-// duplicates by updating the existing entries. If the file is not already in
-// the set, it will be added with the status Registered.
+// absolute paths to files. It keeps the existing entries in the set unchanged,
+// for discovery to update: making them Registered would have discovery replace
+// them, losing their upload history (eg. RemoteObject). If the file is not
+// already in the set, it will be added with the status Registered.
 func (d *DB) MergeFileEntries(setID string, paths []string) error {
-	entries := make([]*Dirent, len(paths))
+	dirents := make([]*Dirent, len(paths))
 
 	for n, path := range paths {
-		entries[n] = &Dirent{
-			Path: path,
-		}
+		dirents[n] = &Dirent{Path: path}
 	}
 
-	return d.mergeEntries(setID, entries, fileBucket, Registered)
+	return d.addNewEntries(setID, dirents, fileBucket)
+}
+
+// addNewEntries adds the given dirents that have no stored (non-Registered)
+// entry in the given sub bucket of the given set, with the status Registered,
+// leaving the stored entries unchanged.
+func (d *DB) addNewEntries(setID string, dirents []*Dirent, bucketName string) error {
+	return d.db.Update(func(tx *bolt.Tx) error {
+		b, existing, err := d.getExistingEntries(tx, bucketName, setID)
+		if err != nil {
+			return err
+		}
+
+		added := make([]*Dirent, 0, len(dirents))
+
+		for _, dirent := range dirents {
+			if existing[dirent.Path] == nil {
+				added = append(added, dirent)
+			}
+		}
+
+		return d.createEntries(tx, b, existing, setID, added, Registered)
+	})
 }
 
 // mergeEntries sets the paths for the given backup set in a sub bucket with the
@@ -1057,18 +1277,26 @@ func (d *DB) mergeEntries(setID string, dirents []*Dirent, bucketName string, in
 			return err
 		}
 
-		// this sort is critical to database write speed.
-		slices.SortFunc(dirents, func(i, j *Dirent) int {
-			return strings.Compare(i.Path, j.Path)
-		})
-
-		ec, err := newEntryCreator(d, tx, b, existing, setID, initialStatus)
-		if err != nil {
-			return err
-		}
-
-		return ec.UpdateOrCreateEntries(dirents)
+		return d.createEntries(tx, b, existing, setID, dirents, initialStatus)
 	})
+}
+
+// createEntries updates the given existing entries of the given bucket, or
+// creates new ones with the given status, from the given dirents.
+func (d *DB) createEntries(tx *bolt.Tx, b *bolt.Bucket, existing map[string][]byte, setID string,
+	dirents []*Dirent, initialStatus EntryStatus,
+) error {
+	// this sort is critical to database write speed.
+	slices.SortFunc(dirents, func(i, j *Dirent) int {
+		return strings.Compare(i.Path, j.Path)
+	})
+
+	ec, err := newEntryCreator(d, tx, b, existing, setID, initialStatus)
+	if err != nil {
+		return err
+	}
+
+	return ec.UpdateOrCreateEntries(dirents)
 }
 
 // putEntryInTrash puts the given entry into the trash set for the given set.
@@ -1086,6 +1314,11 @@ func (d *DB) putEntryInTrash(tx *bolt.Tx, set *Set, entry *Entry) error {
 	}
 
 	entry.TrashDate = time.Now()
+
+	// the entry was trashed, so an earlier attempt's failure is resolved.
+	if strings.HasPrefix(entry.LastError, EntryRemovalErrorPrefix) {
+		entry.LastError = ""
+	}
 
 	return sfsb.Bucket.Put([]byte(entry.Path), d.encodeToBytes(entry))
 }
@@ -1409,10 +1642,12 @@ func newDirentFromPath(path string) *Dirent {
 
 // MergeDirEntries sets the directory paths for the given backup set. Only
 // supply absolute paths to directories. It keeps the existing entries in the
-// set and handles duplicates by updating the existing entries. If the dir is
-// not already in the set, it will be added with the status Registered.
+// set unchanged, for discovery to update: making them Registered would have
+// discovery treat them as new, so one now missing would be Missing instead of
+// Orphaned. If the dir is not already in the set, it will be added with the
+// status Registered.
 func (d *DB) MergeDirEntries(setID string, entries []*Dirent) error {
-	return d.mergeEntries(setID, entries, dirBucket, Registered)
+	return d.addNewEntries(setID, entries, dirBucket)
 }
 
 // getSetByID returns the Set with the given ID from the database, along with
@@ -1514,6 +1749,10 @@ func (d *DB) statPureFileEntries(setID string) error {
 		sfsb.Bucket.ForEach(func(k, v []byte) error { //nolint:errcheck
 			numEntries++
 			path := string(k)
+
+			if d.statSubmitHook != nil {
+				d.statSubmitHook()
+			}
 
 			d.filePool.Submit(func() {
 				direntCh <- newDirentFromPath(path)
@@ -1743,6 +1982,7 @@ func (d *DB) updateFileEntry(tx *bolt.Tx, setID string, r *transfer.Request, //n
 
 	entry.countedStatus, entry.countedSize, entry.countedIn = entry.Status, entry.Size, entry.CountedInDiscovery
 	entry.CountedInDiscovery = time.Time{}
+	entry.rememberRemoteObject()
 
 	if set.discovering() && !entry.isDir {
 		entry.CountedInDiscovery = set.StartedDiscovery
@@ -1755,6 +1995,7 @@ func (d *DB) updateFileEntry(tx *bolt.Tx, setID string, r *transfer.Request, //n
 	}
 
 	entry.LastAttempt = time.Now()
+	entry.Retried = false
 
 	if entry.Status == Pending || entry.Status == Failed {
 		entry.Attempts++
@@ -1857,6 +2098,8 @@ func requestStatusToEntryStatus(r *transfer.Request, entry *Entry) { //nolint:go
 	case transfer.RequestStatusMissing:
 		entry.Status = Missing
 		entry.unFailed = entry.Attempts > 1
+		entry.RemoteObject = false
+		entry.RemoteObjectKnown = true
 	case transfer.RequestStatusOrphaned:
 		entry.Status = Orphaned
 		entry.unFailed = entry.Attempts > 1
@@ -2089,6 +2332,53 @@ func (d *DBRO) getFileEntriesWithTx(tx *bolt.Tx, setID string, filter EntryFilte
 	return entries
 }
 
+// GetFailedFileEntries returns the given set's file entries (set and
+// discovered) that failed and haven't uploaded since, and that pass the filter
+// (all of them for a nil filter). It reads only the entries in our failed
+// lookup, so its cost depends on the number of failures, not entries.
+func (d *DBRO) GetFailedFileEntries(setID string, filter EntryFilter) ([]*Entry, error) {
+	var entries []*Entry
+
+	err := d.db.View(func(tx *bolt.Tx) error {
+		entries = d.getFailedFileEntriesWithTx(tx, setID, filter)
+
+		return nil
+	})
+
+	return entries, err
+}
+
+// getFailedFileEntriesWithTx gets the current file entries for the paths in our
+// failed lookup for the given set. The lookup's own copies aren't used, since
+// they can be out of date (eg. an entry failed again, then started uploading).
+func (d *DBRO) getFailedFileEntriesWithTx(tx *bolt.Tx, setID string, filter EntryFilter) []*Entry {
+	entries := make([]*Entry, 0)
+	setsBucket := tx.Bucket([]byte(setsBucket))
+	prefix := []byte(setID + separator)
+	c := tx.Bucket([]byte(failedBucket)).Cursor()
+
+	for k, _ := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, _ = c.Next() {
+		entry := d.getFileEntryFromSubbuckets(setID, string(k[len(prefix):]), setsBucket)
+		if entry != nil && (filter == nil || filter(entry)) {
+			entries = append(entries, entry)
+		}
+	}
+
+	return entries
+}
+
+// getFileEntryFromSubbuckets gets the file entry (set or discovered) for the
+// given path in the given set, or nil if there isn't one.
+func (d *DBRO) getFileEntryFromSubbuckets(setID, path string, setsBucket *bolt.Bucket) *Entry {
+	for _, kind := range []string{fileBucket, discoveredBucket} {
+		if entry, _ := d.getEntryFromSubbucket(kind, setID, path, setsBucket); entry != nil {
+			return entry
+		}
+	}
+
+	return nil
+}
+
 // GetFileEntryForSet returns the file entry for the given path in the given
 // set.
 func (d *DBRO) GetFileEntryForSet(setID, filePath string) (*Entry, error) {
@@ -2291,6 +2581,57 @@ func (d *DB) SetError(setID, errMsg string) error {
 	})
 }
 
+// SetRemovalError records the given error from removing a path on the given
+// set, as its Error starting with RemovalErrorPrefix, unless the set's latest
+// discovery failed: that Error is kept, as it is how we know the discovery is
+// no longer running, so the set can be edited. Returns whether the error was
+// recorded, and an error if the setID isn't in the database.
+func (d *DB) SetRemovalError(setID, errMsg string) (bool, error) {
+	recorded := false
+
+	err := d.updateSetProperties(setID, func(got *Set) {
+		if !got.discoveryFailed() {
+			got.SetError(RemovalErrorPrefix + errMsg)
+
+			recorded = true
+		}
+	})
+
+	return recorded && err == nil, err
+}
+
+// ClearRemovalError clears the given set's Error if it is a removal error,
+// one starting with RemovalErrorPrefix, leaving any other error, unless the
+// set still has a file whose removal failed (one whose LastError starts with
+// EntryRemovalErrorPrefix), as that failure isn't resolved yet. Returns an
+// error if the setID isn't in the database.
+func (d *DB) ClearRemovalError(setID string) error {
+	return d.db.Update(func(tx *bolt.Tx) error {
+		set, bid, b, err := d.getSetByID(tx, setID)
+		if err != nil || !strings.HasPrefix(set.Error, RemovalErrorPrefix) || d.hasFailedRemoval(tx, setID) {
+			return err
+		}
+
+		set.Error = ""
+
+		return b.Put(bid, d.encodeToBytes(set))
+	})
+}
+
+// hasFailedRemoval returns whether any of the given set's file entries has a
+// LastError from a failed removal.
+func (d *DB) hasFailedRemoval(tx *bolt.Tx, setID string) bool {
+	failed := false
+
+	getEntriesViewFunc(tx, setID, fileBucket, func(v []byte) {
+		if !failed && strings.HasPrefix(d.decodeEntry(v).LastError, EntryRemovalErrorPrefix) {
+			failed = true
+		}
+	})
+
+	return failed
+}
+
 // IncrementNumObjectRemoved increments the number of objects removed for the
 // given set.
 func (d *DB) IncrementNumObjectRemoved(setID string) error {
@@ -2300,13 +2641,17 @@ func (d *DB) IncrementNumObjectRemoved(setID string) error {
 }
 
 // UpdateSetTotalToRemove sets num of objects to be removed to provided value
-// and resets num of objects removed if the previous removal was successful
-// otherwise just increases number to be removed with provided value.
+// and resets num of objects removed and the size removed if the previous
+// removal was successful, otherwise just increases number to be removed with
+// provided value. The size is reset in the same transaction as the counts, so
+// a previous removal's last object, counted just before, can't leave its size
+// in the new removal's.
 func (d *DB) UpdateSetTotalToRemove(setID string, num uint64) error {
 	return d.updateSetProperties(setID, func(got *Set) {
 		if got.NumObjectsToBeRemoved == got.NumObjectsRemoved {
 			got.NumObjectsToBeRemoved = num
 			got.NumObjectsRemoved = 0
+			got.SizeRemoved = 0
 
 			return
 		}
@@ -2315,7 +2660,8 @@ func (d *DB) UpdateSetTotalToRemove(setID string, num uint64) error {
 	})
 }
 
-// ResetRemoveSize resets the size removed for the set.
+// ResetRemoveSize resets the size removed for the set, if its last removal
+// finished.
 func (d *DB) ResetRemoveSize(setID string) error {
 	return d.updateSetProperties(setID, func(got *Set) {
 		if got.NumObjectsToBeRemoved == got.NumObjectsRemoved {

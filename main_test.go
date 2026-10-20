@@ -102,11 +102,22 @@ const serverTokenBasename = ".ibackup.token"
 // must exceed that.
 const inProcessServerStopTimeout = 30 * time.Second
 
+// wrUploadTimeout bounds waits for uploads by put clients that wr runs. Making
+// each new collection takes about 4.6s on the test zone, so even a set of two
+// 1-byte files takes about 6s to complete, and a busy iRODS can add several
+// more seconds while other main-package tests run alongside. Waits return as
+// soon as the status is seen, so this only lengthens a failing wait.
+const wrUploadTimeout = 2 * time.Minute
+
 // prefetchedIRODSCollections is how many test collections are created ahead
 // of use, since most tests here make a new one for every Convey leaf.
 const prefetchedIRODSCollections = 4
 
 var cliMu sync.Mutex //nolint:gochecknoglobals
+
+// freePort picks the port for a test server; tests replace it to hand out a
+// port that is already taken.
+var freePort = freeport.GetFreePort //nolint:gochecknoglobals
 
 // irodsCollections hands out the tests' iRODS collections. TestMain sets it
 // before running the tests, and closes it after.
@@ -123,6 +134,9 @@ var errInvalidQueuesSpecified = errors.New("invalid queues specified")
 var errServerStopTimeout = errors.New("timeout waiting for server to stop")
 
 var errServerStartReturned = errors.New("server Start() returned before it answered")
+
+// serverStartAttempts bounds how many ports a test server tries to start on.
+const serverStartAttempts = 5
 
 var ErrStatusNotFound = errors.New("status not found")
 
@@ -1029,8 +1043,7 @@ func TestRemoveFile(t *testing.T) {
 
 				So(exitCode, ShouldEqual, 0)
 
-				s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
-					0, "Removal status: 0 / 1 objects removed")
+				s.confirmRemovalRequested(t, setName, 1)
 
 				s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 30*time.Second)
 
@@ -1445,8 +1458,7 @@ func TestRemoveDirs(t *testing.T) {
 
 					So(exitCode, ShouldEqual, 0)
 
-					s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
-						0, "Removal status: 0 / 4 objects removed")
+					s.confirmRemovalRequested(t, setName, 4)
 
 					s.waitForStatus(setName, "Removal status: 4 / 4 objects removed", 30*time.Second)
 				})
@@ -1655,8 +1667,7 @@ func TestRemove(t *testing.T) {
 			checkIfRemoveFullyCompleted := func(setName, fileName string) {
 				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", fileName)
 				So(exitCode, ShouldEqual, 0)
-				s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
-					0, "Removal status: 0 / 1 objects removed")
+				s.confirmRemovalRequested(t, setName, 1)
 				s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 10*time.Second)
 
 				s.confirmOutputDoesNotContain(t, []string{"status", "--name", set.TrashPrefix + setName, "-d"},
@@ -1676,7 +1687,7 @@ func TestRemove(t *testing.T) {
 
 				setNameWithFailures := "setWithFailures"
 				s.addSetForTesting(t, setNameWithFailures, transformer, dir3)
-				s.waitForStatus(setNameWithFailures, "\nStatus: complete (but with failures", 10*time.Second)
+				s.waitForStatus(setNameWithFailures, "\nStatus: complete (but with failures", wrUploadTimeout)
 
 				Convey("Remove will still work", func() {
 					checkIfRemoveFullyCompleted(setNameWithFailures, file)
@@ -2185,8 +2196,7 @@ func TestTrashRemove(t *testing.T) {
 						exitCode, _ := s.runBinary(t, "trash", "--remove", "--name", setName, "--path", dir1)
 						So(exitCode, ShouldEqual, 0)
 
-						s.confirmOutputContains(t, []string{"status", "--name", trashSetName, "-d"},
-							0, "Removal status: 0 / 4 objects removed")
+						s.confirmRemovalRequested(t, trashSetName, 4)
 
 						s.waitForStatus(trashSetName, "Removal status: 4 / 4 objects removed", timeout)
 					})
@@ -2407,7 +2417,116 @@ func TestTrashRemovePaths(t *testing.T) {
 				})
 			})
 		})
+
+		newRemotePath := filepath.Join(remotePath, "edited")
+		newTransformer := "prefix=" + fx.path + ":" + newRemotePath
+
+		Convey("And a set of files that failed to upload, with one of them removed", func() {
+			dir := filepath.Join(fx.path, "failing")
+			failed1 := filepath.Join(dir, "failed1")
+			failed2 := filepath.Join(dir, "failed2")
+
+			for _, file := range []string{failed1, failed2} {
+				internal.CreateTestFile(t, file, "some data")
+				So(os.Chmod(file, 0000), ShouldBeNil)
+			}
+
+			setName := "failedSet"
+			s.addSetForTestingWithItems(t, setName, fx.transformer, writeItemsFile(t, failed1, failed2))
+			s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Failed: 2")
+
+			s.removePath(t, setName, failed1, 1)
+
+			Convey("after you change the set's transformer, you can remove the other file, "+
+				"and its trash set's transformer follows the set's", func() {
+				exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--transformer", newTransformer)
+				So(exitCode, ShouldEqual, 0)
+
+				s.waitForStatus(setName, "\nStatus: complete", timeout)
+
+				s.removePath(t, setName, failed2, 1)
+
+				s.confirmOutputContains(t, []string{"status", "--name", set.TrashPrefix + setName}, 0,
+					"Transformer: "+newTransformer+"\n")
+
+				Convey("so a file uploaded with the new transformer and then trashed can be "+
+					"removed from the trash set and iRODS", func() {
+					file := filepath.Join(dir, "file")
+					internal.CreateTestFile(t, file, "some data")
+
+					exitCode, _ = s.runBinary(t, "edit", "--name", setName, "--add", file)
+					So(exitCode, ShouldEqual, 0)
+
+					fileRemote := filepath.Join(newRemotePath, "failing", "file")
+					So(waitForIlsPresent(t, fileRemote, timeout), ShouldBeNil)
+
+					s.waitForStatus(setName, "\nStatus: complete", timeout)
+					s.removePath(t, setName, file, 1)
+					s.trashRemovePath(t, setName, file, 1)
+
+					So(waitForIlsMissing(t, fileRemote, timeout), ShouldBeNil)
+				})
+			})
+		})
+
+		Convey("And a set with an uploaded file that was then removed", func() {
+			file := filepath.Join(fx.path, "trashed", "file")
+			internal.CreateTestFile(t, file, "some data")
+
+			setName := "trashedSet"
+			s.addSetForTestingWithItems(t, setName, fx.transformer, writeItemsFile(t, file))
+			s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Uploaded: 1")
+
+			s.removePath(t, setName, file, 1)
+
+			Convey("you can't change the set's transformer while its trash set holds the file, "+
+				"since the file's remote path depends on it", func() {
+				s.confirmOutputContains(t, []string{"edit", "--name", setName, "--transformer", newTransformer},
+					1, server.ErrInvalidInput.Error()+": "+set.ErrTransformerUsedByTrash)
+
+				Convey("but you can once the file is removed from the trash set", func() {
+					s.trashRemovePath(t, setName, file, 1)
+
+					exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--transformer", newTransformer)
+					So(exitCode, ShouldEqual, 0)
+				})
+			})
+		})
+
+		Convey("And a set of a folder whose only file failed to upload, with the folder removed", func() {
+			dir := filepath.Join(fx.path, "trashedDir")
+			file := filepath.Join(dir, "failed")
+			internal.CreateTestFile(t, file, "some data")
+			So(os.Chmod(file, 0000), ShouldBeNil)
+
+			setName := "trashedDirSet"
+			s.addSetForTestingWithFlags(t, setName, fx.transformer, "--path", dir)
+			s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Failed: 1")
+
+			s.removePath(t, setName, dir, 2)
+
+			Convey("you can change the set's transformer, since its trash set holds only the folder, "+
+				"which has no remote object", func() {
+				exitCode, output := s.runBinary(t, "edit", "--name", setName, "--transformer", newTransformer)
+				So(output, ShouldNotContainSubstring, "cannot edit the transformer")
+				So(exitCode, ShouldEqual, 0)
+
+				s.confirmOutputContains(t, []string{"status", "--name", setName}, 0,
+					"Transformer: "+newTransformer+"\n")
+			})
+		})
 	})
+}
+
+// writeItemsFile writes the given paths, one per line, to a new file in a temp
+// dir, returning the file's path.
+func writeItemsFile(t *testing.T, paths ...string) string {
+	t.Helper()
+
+	itemsFile := filepath.Join(t.TempDir(), "items")
+	So(os.WriteFile(itemsFile, []byte(strings.Join(paths, "\n")), userPerms), ShouldBeNil)
+
+	return itemsFile
 }
 
 func TestTrashRemoveShared(t *testing.T) {
@@ -2686,6 +2805,55 @@ func TestEdit(t *testing.T) {
 				})
 			})
 
+			Convey("And a set whose discovery failed because its directory became unreadable", func() {
+				setName := "testEditFailedDiscovery"
+				parent := filepath.Join(path, "parent")
+				dir := filepath.Join(parent, "dir")
+				So(os.MkdirAll(dir, userPerms), ShouldBeNil)
+
+				otherFile := filepath.Join(path, "other")
+				internal.CreateTestFileOfLength(t, otherFile, 1)
+
+				s.addSetForTestingWithFlags(t, setName, transformer, "--path", dir)
+
+				Reset(func() { So(os.Chmod(parent, userPerms), ShouldBeNil) })
+
+				So(os.Chmod(parent, 0), ShouldBeNil)
+
+				exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--add", otherFile)
+				So(exitCode, ShouldEqual, 0)
+
+				s.waitForStatus(setName, "\nError: ", 1*time.Minute)
+				s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, dir+": permission denied")
+
+				Convey("Status shows its discovery failed, not still running", func() {
+					exitCode, output := s.runBinary(t, "status", "--name", setName)
+					So(exitCode, ShouldEqual, 0)
+					So(output, ShouldContainSubstring, "\nDiscovery: failed; started\n")
+					So(output, ShouldNotContainSubstring, "Discovery: started")
+				})
+
+				Convey("You can still edit the set", func() {
+					exitCode, output := s.runBinaryWithNoLogging(t, "edit", "--name", setName,
+						"--description", "fixed")
+					So(output, ShouldBeEmpty)
+					So(exitCode, ShouldEqual, 0)
+
+					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0, "Description: fixed")
+				})
+
+				Convey("You can change its transformer", func() {
+					newTransformer := transformer + "/fixed"
+					exitCode, output := s.runBinaryWithNoLogging(t, "edit", "--name", setName,
+						"--transformer", newTransformer)
+					So(output, ShouldBeEmpty)
+					So(exitCode, ShouldEqual, 0)
+
+					s.confirmOutputContains(t, []string{"status", "--name", setName}, 0,
+						"Transformer: "+newTransformer+"\n")
+				})
+			})
+
 			Convey("And a monitored set", func() {
 				setName := "monitoredSet"
 				s.addSetForTestingWithFlag(t, setName, transformer, path, "--monitor", "1d")
@@ -2846,7 +3014,7 @@ func TestEdit(t *testing.T) {
 
 					Convey("And you can no longer edit it", func() {
 						s.confirmOutputContains(t, []string{"edit", "--name", setName}, 1,
-							set.ErrSetIsNotWritable)
+							server.ErrInvalidInput.Error()+": "+set.ErrSetIsNotWritable)
 					})
 
 					Convey("And you can no longer sync it", func() {
@@ -2871,7 +3039,7 @@ func TestEdit(t *testing.T) {
 				Convey("If the set is not complete, you cannot change the transformer", func() {
 					exitCode, output := s.runBinaryWithNoLogging(t, "edit", "--name", setName, "--transformer", "humgen")
 					So(exitCode, ShouldEqual, 1)
-					So(output, ShouldContainSubstring, set.ErrTransformerInUse)
+					So(output, ShouldContainSubstring, server.ErrInvalidInput.Error()+": "+set.ErrTransformerInUse)
 				})
 			})
 
@@ -3043,7 +3211,7 @@ func TestEdit(t *testing.T) {
 		path := t.TempDir()
 		transformer := "prefix=" + path + ":" + remotePath
 
-		timeout := 10 * time.Second
+		timeout := wrUploadTimeout
 
 		Convey("And some files", func() {
 			setDir1 := filepath.Join(path, "dir1")
@@ -3107,7 +3275,7 @@ func TestEdit(t *testing.T) {
 				Convey("If there are uploaded files, you cannot change the transformer", func() {
 					exitCode, output := s.runBinaryWithNoLogging(t, "edit", "--name", setName, "--transformer", "humgen")
 					So(exitCode, ShouldEqual, 1)
-					So(output, ShouldContainSubstring, set.ErrTransformerAlreadyUsed)
+					So(output, ShouldContainSubstring, server.ErrInvalidInput.Error()+": "+set.ErrTransformerAlreadyUsed)
 				})
 
 				Convey("You cannot add a non-existing file to a set", func() {
@@ -3378,7 +3546,7 @@ func TestEdit(t *testing.T) {
 			}
 
 			s.addSetForTesting(t, setName, transformer, setDir)
-			s.waitForStatus(setName, "Status: complete", 10*time.Second)
+			s.waitForStatus(setName, "Status: complete", timeout)
 
 			Convey("You cannot add files to the set during removals", func() {
 				exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", setDir)
@@ -3422,7 +3590,7 @@ func TestSync(t *testing.T) {
 		path := t.TempDir()
 		transformer := "prefix=" + path + ":" + remotePath
 
-		timeout := 10 * time.Second
+		timeout := wrUploadTimeout
 
 		Convey("sync requires --name", func() {
 			s.confirmOutputContains(t, []string{"sync"}, 1,
@@ -3780,7 +3948,7 @@ func (s *testServer) prepareConfig(t *testing.T) {
 
 	s.url = os.Getenv("IBACKUP_TEST_SERVER_URL")
 	if s.url == "" {
-		port, err := freeport.GetFreePort()
+		port, err := freePort()
 		So(err, ShouldBeNil)
 
 		s.url = fmt.Sprintf("localhost:%d", port)
@@ -3862,7 +4030,60 @@ func (s *testServer) startServer() {
 	s.startServerInProcess()
 }
 
+// startAndWait calls start, which must start the server on s.url and send on
+// s.srvErr when it stops, then waits for the server to answer. freePort's port
+// is only free when picked, so another process may take it before the server
+// binds. When portTaken says that is why the server stopped, and
+// IBACKUP_TEST_SERVER_URL didn't fix the URL, it moves s.url to a fresh port
+// and tries again, up to serverStartAttempts times.
+func (s *testServer) startAndWait(start func(), portTaken func(error) bool) {
+	for attempt := 1; ; attempt++ {
+		start()
+
+		err := s.waitForServer()
+
+		retry := attempt < serverStartAttempts && os.Getenv("IBACKUP_TEST_SERVER_URL") == "" &&
+			errors.Is(err, errServerStartReturned) && portTaken(err)
+		if !retry {
+			if !s.shouldFail {
+				So(err, ShouldBeNil)
+			}
+
+			return
+		}
+
+		<-s.srvErr
+
+		host, _, err := net.SplitHostPort(s.url)
+		So(err, ShouldBeNil)
+
+		port, err := freePort()
+		So(err, ShouldBeNil)
+
+		s.url = net.JoinHostPort(host, strconv.Itoa(port))
+	}
+}
+
+// startServerExternal runs the server binary, which logs to s.logFile why it
+// exits.
 func (s *testServer) startServerExternal() {
+	var logOffset int64
+
+	s.startAndWait(func() {
+		if info, err := os.Stat(s.logFile); err == nil {
+			logOffset = info.Size()
+		}
+
+		s.startServerProcess()
+	}, func(error) bool {
+		logged, err := os.ReadFile(s.logFile)
+
+		return err == nil && int64(len(logged)) >= logOffset &&
+			bytes.Contains(logged[logOffset:], []byte(syscall.EADDRINUSE.Error()))
+	})
+}
+
+func (s *testServer) startServerProcess() {
 	args := []string{
 		"server", "--cert", s.cert, "--key", s.key, "--logfile", s.logFile,
 		"-s", s.ldapServer, "-l", s.ldapLookup, "--url", s.url, "--slack_debounce", s.debouncePeriod,
@@ -3924,9 +4145,18 @@ func (s *testServer) startServerExternal() {
 	}()
 
 	err = s.cmd.Start()
-	So(err, ShouldBeNil)
 
-	s.waitForServer()
+	// The child has its own copy of pw; closing ours lets the decoder see EOF
+	// once the child exits.
+	errc := pw.Close()
+
+	So(err, ShouldBeNil)
+	So(errc, ShouldBeNil)
+
+	exited := make(chan error, 1)
+	s.srvErr = exited
+
+	go func() { exited <- s.cmd.Wait() }()
 }
 
 func (s *testServer) startServerInProcess() {
@@ -4003,17 +4233,10 @@ func (s *testServer) startServerInProcess() {
 		return
 	}
 
-	if !debugMode {
-		putCmd := fmt.Sprintf("%q put -s --url '%s' --cert '%s' ", resolveBinary(app), s.url, s.cert)
-		if s.logFile != "" {
-			putCmd += fmt.Sprintf("--log %s.client.", s.logFile)
-		}
+	jobsURL := s.url
 
-		logger := log15.New()
-		logger.SetHandler(log15.StreamHandler(logWriter, log15.LogfmtFormat()))
-		err = s.srv.EnableJobSubmission(putCmd, s.schedulerDeployment, "", strings.Join(s.queues, ","),
-			strings.Join(s.avoidQueues, ","), "", 10, logger)
-		So(err, ShouldBeNil)
+	if !debugMode {
+		s.enableJobSubmission(logWriter)
 	}
 
 	if s.remoteHardlinkPrefix != "" {
@@ -4030,11 +4253,32 @@ func (s *testServer) startServerInProcess() {
 		s.srv.EnableRemoteDBBackups(s.remoteDBFile, handler)
 	}
 
-	s.srvErr = make(chan error, 1)
+	s.startAndWait(func() {
+		if !debugMode && s.url != jobsURL {
+			s.enableJobSubmission(logWriter)
 
-	go func() { s.srvErr <- s.srv.Start(s.url, s.cert, s.key) }()
+			jobsURL = s.url
+		}
 
-	s.waitForServer()
+		srvErr, url := make(chan error, 1), s.url
+		s.srvErr = srvErr
+
+		go func() { srvErr <- s.srv.Start(url, s.cert, s.key) }()
+	}, func(err error) bool { return errors.Is(err, syscall.EADDRINUSE) })
+}
+
+// enableJobSubmission has the server submit put jobs that use s.url.
+func (s *testServer) enableJobSubmission(logWriter io.Writer) {
+	putCmd := fmt.Sprintf("%q put -s --url '%s' --cert '%s' ", resolveBinary(app), s.url, s.cert)
+	if s.logFile != "" {
+		putCmd += fmt.Sprintf("--log %s.client.", s.logFile)
+	}
+
+	logger := log15.New()
+	logger.SetHandler(log15.StreamHandler(logWriter, log15.LogfmtFormat()))
+	err := s.srv.EnableJobSubmission(putCmd, s.schedulerDeployment, "", strings.Join(s.queues, ","),
+		strings.Join(s.avoidQueues, ","), "", 10, logger)
+	So(err, ShouldBeNil)
 }
 
 func ensureHTTP2DisabledInEnv(env []string) []string {
@@ -4090,19 +4334,15 @@ func resolveBinary(name string) string {
 
 // waitForServer waits for the server to answer with our own cert, so that
 // another process's server on the same port can't satisfy it. It stops early
-// if an in-process server's Start() returns, eg. because the port was taken.
-func (s *testServer) waitForServer() {
+// if the server stops, eg. because the port was taken.
+func (s *testServer) waitForServer() error {
 	certPEM, err := os.ReadFile(s.cert)
 	So(err, ShouldBeNil)
 
 	roots := x509.NewCertPool()
 	So(roots.AppendCertsFromPEM(certPEM), ShouldBeTrue)
 
-	lastErr := s.dialServerUntilReady(roots)
-
-	if !s.shouldFail {
-		So(lastErr, ShouldBeNil)
-	}
+	return s.dialServerUntilReady(roots)
 }
 
 func (s *testServer) runBinary(t *testing.T, args ...string) (int, string) {
@@ -4138,6 +4378,25 @@ func (s *testServer) confirmOutputContains(t *testing.T, args []string, expected
 
 	So(exitCode, ShouldEqual, expectedCode)
 	So(actual, ShouldContainSubstring, expected)
+}
+
+// confirmRemovalRequested checks that status already shows a removal of total
+// objects for the named set, as it should as soon as remove or trash --remove
+// returns. The removal itself runs in the background and may have finished by
+// then, so any number of removed objects up to total is accepted.
+func (s *testServer) confirmRemovalRequested(t *testing.T, name string, total int) {
+	t.Helper()
+
+	exitCode, out := s.runBinaryWithNoLogging(t, "status", "--name", name, "-d")
+	So(exitCode, ShouldEqual, 0)
+
+	m := regexp.MustCompile(`Removal status: (\d+) / (\d+) objects removed`).FindStringSubmatch(out)
+	So(m, ShouldNotBeNil)
+
+	removed, err := strconv.Atoi(m[1])
+	So(err, ShouldBeNil)
+	So(m[2], ShouldEqual, strconv.Itoa(total))
+	So(removed, ShouldBeLessThanOrEqualTo, total)
 }
 
 func (s *testServer) confirmOutputDoesNotContain(t *testing.T, args []string, expectedCode int, //nolint:unparam
@@ -4180,7 +4439,7 @@ func (s *testServer) addSetForTestingWithFlags(t *testing.T, name, transformer s
 
 	waitTimeout := 1 * time.Minute
 	if s.schedulerDeployment != "" {
-		waitTimeout = 2 * time.Minute
+		waitTimeout = wrUploadTimeout
 	}
 
 	args := []string{"add", "--name", name, "--transformer", transformer}
@@ -4288,12 +4547,12 @@ func (s *testServer) Shutdown() error {
 
 	if s.external && s.cmd != nil {
 		err := s.cmd.Process.Signal(os.Interrupt)
-		errCh := make(chan error, 1)
-
-		go func() { errCh <- s.cmd.Wait() }()
+		if errors.Is(err, os.ErrProcessDone) {
+			err = nil
+		}
 
 		select {
-		case errb := <-errCh:
+		case errb := <-s.srvErr:
 			return errors.Join(err, errb)
 		case <-time.After(5 * time.Second):
 			return errors.Join(err, s.cmd.Process.Kill())
@@ -4371,6 +4630,74 @@ func TestE2EExternal(t *testing.T) {
 		So(exitCode, ShouldEqual, 0)
 		So(out, ShouldContainSubstring, "Name: "+setName)
 	})
+}
+
+func TestServerPortTaken(t *testing.T) {
+	Convey("When another process takes a test server's port before it binds", t, func() {
+		taken := listenOnLocalhost(t, 0)
+		_, takenPort, err := net.SplitHostPort(taken.Addr().String())
+		So(err, ShouldBeNil)
+
+		realFreePort := freePort
+		calls := 0
+		freePort = func() (int, error) {
+			calls++
+			if calls == 1 {
+				return strconv.Atoi(takenPort)
+			}
+
+			return realFreePort()
+		}
+
+		Reset(func() { freePort = realFreePort })
+
+		Convey("an in-process server starts on a fresh port", func() {
+			s := NewTestServer(t)
+
+			So(s.url, ShouldNotEndWith, ":"+takenPort)
+			s.confirmOutput(t, []string{"status"}, 0, noBackupSets)
+
+			Convey("and does so again when its port is taken while it is stopped", func() {
+				So(s.Shutdown(), ShouldBeNil)
+
+				_, port, err := net.SplitHostPort(s.url)
+				So(err, ShouldBeNil)
+
+				portNum, err := strconv.Atoi(port)
+				So(err, ShouldBeNil)
+
+				listenOnLocalhost(t, portNum)
+
+				s.startServer()
+
+				So(s.url, ShouldNotEndWith, ":"+port)
+				s.confirmOutput(t, []string{"status"}, 0, noBackupSets)
+			})
+		})
+
+		Convey("an external server starts on a fresh port", func() {
+			s := NewExternalTestServer(t)
+
+			So(s.url, ShouldNotEndWith, ":"+takenPort)
+
+			exitCode, out := runCLIExternal(t, s.env, "status", "--url", s.url, "--cert", s.cert)
+			So(exitCode, ShouldEqual, 0)
+			So(out, ShouldEqual, noBackupSets)
+		})
+	})
+}
+
+// listenOnLocalhost listens on the given port of 127.0.0.1 (0 for any free
+// one) until the test ends, standing in for another process using the port.
+func listenOnLocalhost(t *testing.T, port int) net.Listener {
+	t.Helper()
+
+	l, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port))) //nolint:noctx
+	So(err, ShouldBeNil)
+
+	Reset(func() { _ = l.Close() })
+
+	return l
 }
 
 func runCLIExternal(t *testing.T, env []string, args ...string) (int, string) {

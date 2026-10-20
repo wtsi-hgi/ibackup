@@ -41,6 +41,14 @@ import (
 const (
 	dateFormat            = "2006-01-02 15:04:05"
 	ErrInvalidTransformer = "invalid transformer"
+
+	// RemovalErrorPrefix starts the Error of a set whose removal of a path ran
+	// out of retries.
+	RemovalErrorPrefix = "Error when removing: "
+
+	// EntryRemovalErrorPrefix starts the LastError of an entry whose remote
+	// object could not be removed or updated by a removal of its path.
+	EntryRemovalErrorPrefix = "failed to remove: "
 )
 
 type Status int
@@ -251,13 +259,16 @@ func (s *Set) ID() string {
 }
 
 // Discovered provides a string representation of when discovery last completed,
-// or if it hasn't, when it started, or if it hasn't, says "not started".
+// or if it hasn't, when it started and whether it failed, or if it hasn't
+// started, says "not started".
 func (s *Set) Discovered() string {
 	discovered := ""
 
 	switch {
 	case s.StartedDiscovery.IsZero() && s.LastDiscovery.IsZero():
 		discovered = "not started"
+	case s.discoveryFailed():
+		discovered = "failed; started " + s.StartedDiscovery.Format(dateFormat)
 	case s.StartedDiscovery.After(s.LastDiscovery):
 		discovered = fmt.Sprintf("started %s", s.StartedDiscovery.Format(dateFormat))
 	default:
@@ -408,12 +419,9 @@ func (s *Set) countsValid() bool {
 func (s *Set) adjustBasedOnEntry(entry *Entry) {
 	if entry.newSize {
 		s.SizeTotal += entry.Size
-		s.SizeUploaded += entry.Size
 	}
 
-	if !dataUploaded(entry) {
-		s.SizeUploaded -= entry.Size
-	}
+	s.adjustUploadedSize(entry)
 
 	if entry.unFailed {
 		s.Failed--
@@ -435,13 +443,31 @@ func (s *Set) adjustBasedOnEntry(entry *Entry) {
 	}
 
 	s.entryStatusToSetCounts(entry)
+	s.reportIfRetriesRanOut(entry)
 }
 
 // dataUploaded returns true if the given entry's status means its data was
-// uploaded, so counts towards SizeUploaded; Skipped and Orphaned entries' data
-// wasn't.
+// uploaded, so counts towards SizeUploaded; Skipped, Orphaned, Failed and
+// Missing entries' data wasn't, nor was an upload's that hasn't finished.
 func dataUploaded(entry *Entry) bool {
-	return entry.Status != Skipped && entry.Status != Orphaned
+	return entry.Status == Uploaded || entry.Status == Replaced
+}
+
+// adjustUploadedSize keeps SizeUploaded counting the size of each entry whose
+// data was uploaded since our discovery: a result that makes the entry uploaded
+// adds its size, and one that replaces that status this round (eg. a re-run of
+// its request) takes it back, so a repeated result isn't counted twice. The
+// first result since discovery (newSize) replaces a status from before it.
+func (s *Set) adjustUploadedSize(entry *Entry) {
+	wasUploaded := !entry.newSize && dataUploaded(&Entry{Status: entry.countedStatus})
+	isUploaded := dataUploaded(entry)
+
+	switch {
+	case isUploaded && !wasUploaded:
+		s.SizeUploaded += entry.Size
+	case wasUploaded && !isUploaded:
+		s.SizeUploaded -= entry.countedSize
+	}
 }
 
 // discoveredSizeToSetCounts adds the size of the given entry, whose status
@@ -493,8 +519,7 @@ func (s *Set) entryStatusToSetCounts(entry *Entry) { //nolint:gocyclo
 		}
 
 		if entry.Attempts >= AttemptsToBeConsideredFailing {
-			s.Status = Failing
-			s.sendSlackMessage(slack.Error, "has failed uploads")
+			s.markFailing()
 		}
 	case Missing:
 		s.Missing++
@@ -503,6 +528,29 @@ func (s *Set) entryStatusToSetCounts(entry *Entry) { //nolint:gocyclo
 	case AbnormalEntry:
 		s.Abnormal++
 	}
+}
+
+// markFailing marks us Failing, as an entry has used up its upload attempts,
+// unless we're Complete: a Complete set already counted the entry's first
+// failure and has no other uploads ongoing, so stays Complete rather than
+// completing again.
+func (s *Set) markFailing() {
+	if s.Status != Complete {
+		s.Status = Failing
+	}
+}
+
+// reportIfRetriesRanOut sends "has failed uploads" if the given entry's upload
+// result used up its attempts. Like the server burying its request, that's at
+// every AttemptsToBeConsideredFailing attempts, so a user retry, which doesn't
+// reset Attempts, reports once more if its attempts run out too. Only upload
+// results call this, not recounts, so a recount doesn't report again.
+func (s *Set) reportIfRetriesRanOut(entry *Entry) {
+	if entry.Status != Failed || entry.Attempts == 0 || entry.Attempts%AttemptsToBeConsideredFailing != 0 {
+		return
+	}
+
+	s.sendSlackMessage(slack.Error, "has failed uploads")
 }
 
 func (s *Set) removedEntryStatusToSetCounts(entry *Entry) { //nolint:gocyclo
@@ -614,6 +662,15 @@ func (s *Set) discovering() bool {
 	return s.StartedDiscovery.After(s.LastDiscovery)
 }
 
+// discoveryFailed returns true if our latest discovery stopped with an error
+// instead of completing, so is no longer running. A discovery records its
+// failure as our Error, and starting one clears it; a removal can record an
+// error during a discovery, but always with RemovalErrorPrefix, and never over
+// a failed discovery's Error.
+func (s *Set) discoveryFailed() bool {
+	return s.discovering() && s.Error != "" && !strings.HasPrefix(s.Error, RemovalErrorPrefix)
+}
+
 // countEntryDuringDiscovery counts the given entry, updated by an upload result
 // that arrived during discovery, as discovery counts entries: by its status,
 // and its size if uploaded.
@@ -635,6 +692,7 @@ func (s *Set) countEntryDuringDiscovery(entry *Entry) {
 	entry.newFail = true
 
 	s.entryStatusToSetCounts(entry)
+	s.reportIfRetriesRanOut(entry)
 	s.discoveredSizeToSetCounts(entry)
 }
 
@@ -740,15 +798,24 @@ func (s *Set) checkIfUploading() {
 	s.sendSlackMessage(slack.Info, "started uploading files")
 }
 
+// checkIfComplete marks us Complete if every file is counted. If we already
+// are, a result that leaves us complete (eg. one replacing discovery's count of
+// a missing file) only updates our last completed counts: it doesn't complete
+// us again. Discovery resets our status, so each discovery can complete us.
 func (s *Set) checkIfComplete() {
 	if !(s.Uploaded+s.Replaced+s.Skipped+s.Failed+s.Missing+s.Orphaned+s.Abnormal == s.NumFiles) { //nolint:staticcheck,lll
 		return
 	}
 
-	s.Status = Complete
-	s.LastCompleted = time.Now()
 	s.LastCompletedCount = s.Uploaded + s.Replaced + s.Skipped + s.Failed
 	s.LastCompletedSize = s.SizeTotal
+
+	if s.Status == Complete {
+		return
+	}
+
+	s.Status = Complete
+	s.LastCompleted = time.Now()
 
 	s.sendSlackMessage(slack.Success, fmt.Sprintf("completed backup "+
 		"(%d newly uploaded; %d replaced; %d skipped; %d failed; %d missing; %d orphaned; %d abnormal; %s data uploaded)",
@@ -852,7 +919,10 @@ func (s *Set) RecoveryError(err error) {
 	s.sendSlackMessage(slack.Error, "could not be recovered: "+err.Error())
 }
 
-// copyUserProperties copies data from one set into another.
+// copyUserProperties copies data from one set into another. It leaves the
+// removal counts alone: we keep those as removals happen, and a given set (eg.
+// a fresh trash set, or one a client got before a removal it doesn't know about
+// progressed) has stale or zero counts.
 func (s *Set) copyUserProperties(copySet *Set) {
 	s.Transformer = copySet.Transformer
 	s.MonitorTime = copySet.MonitorTime
@@ -862,9 +932,6 @@ func (s *Set) copyUserProperties(copySet *Set) {
 	s.Error = copySet.Error
 	s.Warning = copySet.Warning
 	s.Metadata = copySet.Metadata
-	s.NumObjectsRemoved = copySet.NumObjectsRemoved
-	s.NumObjectsToBeRemoved = copySet.NumObjectsToBeRemoved
-	s.SizeRemoved = copySet.SizeRemoved
 	s.ReadOnly = copySet.ReadOnly
 	s.Hide = copySet.Hide
 	s.Frozen = copySet.Frozen

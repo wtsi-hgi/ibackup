@@ -190,6 +190,10 @@ type Server struct {
 	removalsMu     sync.Mutex
 	activeRemovals int
 
+	// removalSubmitMu is held while removeFilesAndDirs() queues requests and
+	// records their number.
+	removalSubmitMu sync.Mutex
+
 	mapMu               sync.RWMutex
 	creatingCollections map[string]bool
 	iRODSTracker        *iRODSTracker
@@ -200,6 +204,11 @@ type Server struct {
 	requestLogRIDs []string
 
 	discoveryCoordinator *discoveryCoordinator
+
+	// removalQueuedHook, if set, is called by removeFilesAndDirs() after it
+	// queues a removal's requests and before it records their number. Only for
+	// tests.
+	removalQueuedHook func()
 }
 
 // New creates a Server which can serve a REST API and website.
@@ -322,6 +331,34 @@ func (s *Server) dropUnremovableItem(item *queue.Item, sid string, err error) {
 	}
 }
 
+// waitForRemovalSubmissions waits for any removeFilesAndDirs() in progress, so
+// that a request it queued, which we may just have reserved, is in its set's
+// NumObjectsToBeRemoved before we count it removed. Otherwise a removal
+// requested after the last one finished, and reserved by that one's handler
+// while it waited for more, could be counted before UpdateSetTotalToRemove()
+// sees the counts equal, which then adds to the total instead of resetting
+// the counts.
+func (s *Server) waitForRemovalSubmissions() {
+	s.removalSubmitMu.Lock()
+	s.removalSubmitMu.Unlock() //nolint:staticcheck
+}
+
+// clearTrashSetRemovalError clears the removal error of the given set, if it
+// is a trash set, once its removals have finished with none failing, unless it
+// still holds a file whose removal failed earlier.
+// Otherwise nothing would clear it: a trash set is never discovered, and a
+// trash request keeps its Error.
+func (s *Server) clearTrashSetRemovalError(sid string) {
+	got := s.db.GetByID(sid)
+	if got == nil || !got.IsTrash() {
+		return
+	}
+
+	if err := s.db.ClearRemovalError(sid); err != nil {
+		s.Logger.Printf("could not clear removal error of set %s: %s", sid, err)
+	}
+}
+
 func determineQueueSize() (uint, error) {
 	maxMem, err := mem.GetAvailableMemory()
 	if err != nil {
@@ -418,6 +455,12 @@ func (s *Server) EnableJobSubmission(putCmd, deployment, cwd, queues, queuesAvoi
 		return err
 	}
 
+	if s.sched != nil {
+		if err := s.sched.Disconnect(); err != nil {
+			s.Logger.Printf("scheduler disconnect failed: %s", err)
+		}
+	}
+
 	s.sched = sched
 
 	req := client.DefaultRequirements()
@@ -447,6 +490,8 @@ func (s *Server) handleRemoveRequests(sid string) {
 		if err != nil {
 			break
 		}
+
+		s.waitForRemovalSubmissions()
 
 		s.discoveryCoordinator.WaitForDiscovery(sid)
 
@@ -521,9 +566,13 @@ func (s *Server) handleErrorOrReleaseItem(item *queue.Item, removeReq set.Remove
 	}
 
 	if item.Stats().Releases >= uint32(jobRetries) {
-		errs := s.db.SetError(removeReq.Set.ID(), "Error when removing: "+err.Error())
+		s.discoveryCoordinator.RemovalFailed(removeReq.Set.ID())
+
+		recorded, errs := s.db.SetRemovalError(removeReq.Set.ID(), err.Error())
 		if errs != nil {
 			s.Logger.Printf("Could not put error on set due to: %s\nError was: %s\n", errs.Error(), err.Error())
+		} else if !recorded {
+			s.Logger.Printf("removal error not put on set %s, as its discovery failed: %s", removeReq.Set.ID(), err)
 		}
 
 		return false
@@ -558,7 +607,7 @@ func (s *Server) finalizeRemoveReq(removeReq set.RemoveReq) error {
 }
 
 func (s *Server) finalizeRemoval(sid string) {
-	s.discoveryCoordinator.RemovalDone(sid)
+	s.discoveryCoordinator.RemovalDone(sid, func() { s.clearTrashSetRemovalError(sid) })
 
 	err := s.db.OptimiseRemoveBucket(sid)
 	if err != nil {

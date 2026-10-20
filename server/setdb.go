@@ -29,6 +29,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"net/http"
 	"os"
@@ -133,6 +134,7 @@ const (
 	ErrInvalidName    = gas.Error("set name contains invalid characters")
 	ErrSetNotComplete = gas.Error("set should be complete for this operation")
 	ErrNotAdmin       = gas.Error("you are not the server admin")
+	ErrNoPaths        = gas.Error("no paths given")
 	ErrBadSet         = gas.Error("set with that id does not exist")
 	ErrInvalidInput   = gas.Error("invalid input")
 	ErrInternal       = gas.Error("internal server error")
@@ -154,6 +156,23 @@ func isRemoteFileMissing(err error) bool {
 	pathErr, ok := errors.AsType[errs.PathError](err)
 
 	return ok && pathErr.Msg == internal.ErrFileDoesNotExist
+}
+
+// withRecordedRemoteMeta returns a copy of the given remote metadata with any
+// sets or requester value missing from it taken from the given recorded
+// metadata, since an earlier attempt that recorded them may have removed them
+// and then failed to add their new values.
+func withRecordedRemoteMeta(remoteMeta, recorded map[string]string) map[string]string {
+	meta := make(map[string]string, len(remoteMeta))
+	maps.Copy(meta, remoteMeta)
+
+	for key, value := range recorded {
+		if meta[key] == "" {
+			meta[key] = value
+		}
+	}
+
+	return meta
 }
 
 // LoadSetDB loads the given set.db or creates it if it doesn't exist.
@@ -370,7 +389,7 @@ func (s *Server) putSet(c *gin.Context) {
 
 	err = s.db.AddOrUpdate(given)
 	if err != nil {
-		c.AbortWithError(http.StatusInternalServerError, err) //nolint:errcheck
+		c.AbortWithError(addOrUpdateErrStatus(err), err) //nolint:errcheck
 
 		return
 	}
@@ -378,6 +397,18 @@ func (s *Server) putSet(c *gin.Context) {
 	s.handleNewlyDefinedSets(given)
 
 	c.Status(http.StatusOK)
+}
+
+// addOrUpdateErrStatus returns the HTTP status for the given error from
+// AddOrUpdate(). Its set.Errors reject the user's change, such as editing a
+// read-only set or a transformer already used, so are bad requests; anything
+// else is a database failure.
+func addOrUpdateErrStatus(err error) int {
+	if _, ok := errors.AsType[set.Error](err); ok { //nolint:errcheck
+		return http.StatusBadRequest
+	}
+
+	return http.StatusInternalServerError
 }
 
 func (s *Server) validatePutSetInputs(c *gin.Context, givenSet *set.Set) (int, error) {
@@ -530,9 +561,9 @@ func (s *Server) removePaths(c *gin.Context) {
 }
 
 // validateInputsForRemovals returns an error if the provided set is not a
-// trashed set, the user is not an admin or if any provided path is not in the
-// given set. Also returns the valid paths classified into a slice of filepaths
-// or dirpaths.
+// trashed set, the user is not an admin, no paths are provided or any provided
+// path is not in the given set. Also returns the valid paths classified into a
+// slice of filepaths or dirpaths.
 func (s *Server) validateInputsForRemovals(givenSet *set.Set, paths []string,
 	c *gin.Context) ([]string, []string, int, error) {
 	if !givenSet.IsTrash() {
@@ -541,6 +572,10 @@ func (s *Server) validateInputsForRemovals(givenSet *set.Set, paths []string,
 
 	if !s.AllowedAccess(c, "") {
 		return nil, nil, http.StatusUnauthorized, ErrNotAdmin
+	}
+
+	if len(paths) == 0 {
+		return nil, nil, http.StatusBadRequest, ErrNoPaths
 	}
 
 	files, dirs, err := s.db.ValidateFileAndDirPaths(givenSet, paths)
@@ -598,7 +633,7 @@ func (s *Server) deleteSet(c *gin.Context) {
 		return
 	}
 
-	s.registerDeletionCallback(set.ID())
+	s.registerDeletionCallback(set)
 
 	err = s.removeToTrashSet(set, paths, nil)
 	if err != nil {
@@ -606,6 +641,8 @@ func (s *Server) deleteSet(c *gin.Context) {
 
 		return
 	}
+
+	s.removeQueuedRequestsOfSet(set)
 }
 
 func (s *Server) removeExpired(c *gin.Context) {
@@ -683,6 +720,12 @@ func (s *Server) removeExpiredEntriesFromSet(givenSet *set.Set) error {
 		dirPaths[i] = e.Path
 	}
 
+	// a removal of nothing would still start a new removal, wiping the set's
+	// status of its last one.
+	if len(filePaths) == 0 && len(dirPaths) == 0 {
+		return nil
+	}
+
 	return s.removeFilesAndDirs(givenSet, filePaths, dirPaths, set.ToRemove)
 }
 
@@ -701,18 +744,83 @@ func (s *Server) getSetPaths(setID string) ([]string, error) {
 	return paths, nil
 }
 
-func (s *Server) registerDeletionCallback(setID string) {
-	s.discoveryCoordinator.OnRemovalsDone(setID, func() {
-		err := s.db.Delete(setID)
+// registerDeletionCallback arranges for the given set to be deleted from the
+// database once its removals are done, along with any of its upload requests
+// queued since deleteSet removed them, such as by a discovery that was running.
+// It doesn't wait for such a discovery, which could take hours; one that
+// queues requests after this cleanup has them dropped by updateFileStatus once
+// they are uploaded.
+func (s *Server) registerDeletionCallback(given *set.Set) {
+	s.discoveryCoordinator.OnRemovalsDone(given.ID(), func() {
+		err := s.db.Delete(given.ID())
 		if err != nil {
 			s.Logger.Print(err.Error())
+
+			return
 		}
+
+		s.removeQueuedRequestsOfSet(given)
 	})
 }
 
+// removeQueuedRequestsOfSet removes from our queue the upload requests of the
+// given set that no client is working on, so clients don't upload the files of
+// a deleted set. Results for those being worked on are dropped by
+// updateFileStatus.
+func (s *Server) removeQueuedRequestsOfSet(given *set.Set) {
+	for _, item := range s.queue.AllItems() {
+		r, ok := item.Data().(*transfer.Request)
+		if !ok || r.Set != given.Name || r.Requester != given.Requester {
+			continue
+		}
+
+		if err := s.removeWaitingRequest(item, r); err != nil {
+			s.Logger.Printf("queued request of deleted set not removed rid=%s err=%s", item.Key, err)
+		}
+	}
+}
+
+// removeWaitingRequest removes the given item, holding the given upload request,
+// from our queue unless a client is working on it, and releases any claim the
+// request still has on a remote data object from a reservation that expired, so
+// other sets' requests for it aren't held up. The check and the removal happen
+// under the queue's lock, so a client can't reserve the request in between and
+// then have its claim released. An item already gone from the queue is kept,
+// so that a newer request queued since under the same key isn't removed.
+func (s *Server) removeWaitingRequest(item *queue.Item, r *transfer.Request) error {
+	removed, err := s.queue.RemoveUnless(context.Background(), item.Key, func(any) bool {
+		state := item.State()
+
+		return state == queue.ItemStateRun || state == queue.ItemStateRemoved
+	})
+	if removed {
+		err = errors.Join(err, s.remoteClaims.release(r))
+	}
+
+	return err
+}
+
+// removeWaitingUploadOfFile removes from our queue the given set's upload
+// request for the given local and remote paths, unless a client is working on
+// it, so that a retry waiting there, or buried and later kicked by a retry of
+// the set, doesn't upload the file again once it has been removed.
+func (s *Server) removeWaitingUploadOfFile(given *set.Set, local, remote string) {
+	r := &transfer.Request{Local: local, Remote: remote, Requester: given.Requester, Set: given.Name}
+
+	item, err := s.queue.Get(r.ID())
+	if err != nil {
+		return
+	}
+
+	if err = s.removeWaitingRequest(item, r); err != nil {
+		s.Logger.Printf("queued request of removed file not removed rid=%s err=%s", item.Key, err)
+	}
+}
+
 // validateInputsForTrashing returns an error if the provided set is a trashed
-// set, not complete or if any provided path is not in the given set. Also
-// returns the valid paths classified into a slice of filepaths or dirpaths.
+// set or not complete, no paths are provided or any provided path is not in the
+// given set. Also returns the valid paths classified into a slice of filepaths
+// or dirpaths.
 func (s *Server) validateInputsForTrashing(givenSet *set.Set, paths []string) ([]string, []string, error) {
 	if givenSet.IsTrash() {
 		return nil, nil, ErrTrashSetName
@@ -722,16 +830,24 @@ func (s *Server) validateInputsForTrashing(givenSet *set.Set, paths []string) ([
 		return nil, nil, ErrSetNotComplete
 	}
 
+	if len(paths) == 0 {
+		return nil, nil, ErrNoPaths
+	}
+
 	return s.db.ValidateFileAndDirPaths(givenSet, paths)
 }
 
+// removeFilesAndDirs queues the removal of the given paths from the given set,
+// starts handling them, and adds their number to the set's removal counts. It
+// holds removalSubmitMu throughout, so a handler, which waits for it after
+// reserving a request, can't count a request removed before that number
+// includes it.
 func (s *Server) removeFilesAndDirs(set *set.Set, filePaths, dirPaths []string, action set.RemoveAction) error {
-	if err := s.db.ResetRemoveSize(set.ID()); err != nil {
-		return err
-	}
+	s.removalSubmitMu.Lock()
+	defer s.removalSubmitMu.Unlock()
 
 	if filePaths == nil && dirPaths == nil {
-		return nil
+		return s.db.ResetRemoveSize(set.ID())
 	}
 
 	numFilesSubmitted, err := s.submitFilesForRemoval(set, filePaths, action)
@@ -745,6 +861,10 @@ func (s *Server) removeFilesAndDirs(set *set.Set, filePaths, dirPaths []string, 
 	}
 
 	go s.handleRemoveRequests(set.ID())
+
+	if s.removalQueuedHook != nil {
+		s.removalQueuedHook()
+	}
 
 	return s.db.UpdateSetTotalToRemove(set.ID(), uint64(numFilesSubmitted+numObjsSubmitted)) //nolint:gosec
 }
@@ -875,33 +995,47 @@ func (s *Server) removeDeletedFileFromDB(removeReq *set.RemoveReq, err error) er
 	return s.db.RemoveDeletedFileEntry(removeReq)
 }
 
+// processRemoteFileRemoval removes the given request's file from the remote
+// storage, or updates its remote object's metadata, unless an earlier attempt
+// already did. First, even on a retry after that, it removes the file's upload
+// request from our queue, so that one queued again since (by a discovery, or a
+// recovery after a restart) isn't handed out after the remote removal. A retry
+// whose set's transformer can no longer be made (eg. after a restart with a
+// config lacking it) skips that and returns nil, so its database side runs.
 func (s *Server) processRemoteFileRemoval(removeReq *set.RemoveReq, entry *set.Entry) error {
+	transformer, err := removeReq.Set.MakeTransformer()
+	if err != nil {
+		if removeReq.RemoteRemovalStatus == set.Removed {
+			return nil
+		}
+
+		return err
+	}
+
+	rpath, err := transformer(removeReq.Path)
+
+	s.removeWaitingUploadOfFile(removeReq.Set, removeReq.Path, rpath)
+
 	if removeReq.RemoteRemovalStatus == set.Removed {
 		return nil
 	}
 
-	transformer, err := removeReq.Set.MakeTransformer()
-	if err != nil {
-		return err
-	}
-
 	mayMissInRemote := removeReq.RemoteRemovalStatus == set.AboutToBeRemoved && removeReq.Action == set.ToRemove
-	removeReq.RemoteRemovalStatus = set.AboutToBeRemoved
 
-	if removeReq.ObjectSize == nil {
-		size := entry.Size
-		removeReq.ObjectSize = &size
+	remoteMeta, err := s.getRemoteMeta(rpath, err)
+
+	if erru := s.markAboutToBeRemoved(removeReq, entry, remoteMeta, err); erru != nil {
+		return erru
 	}
 
-	err = s.db.UpdateRemoveRequest(*removeReq)
-	if err != nil {
-		return err
+	if err == nil {
+		err = s.updateOrRemoveRemoteFile(removeReq, transformer, rpath, remoteMeta, entry)
+	} else {
+		err = s.handleRemoteFileMetaError(err, removeReq, rpath, transformer, entry)
 	}
 
-	err = s.updateOrRemoveRemoteFile(removeReq, transformer, entry)
 	if err != nil && fileErrorCannotBeIgnored(err, mayMissInRemote) {
-		errorPrefix := "failed to remove: "
-		s.setErrorOnEntry(entry, removeReq.Set.ID(), removeReq.Path, errorPrefix+err.Error())
+		s.setErrorOnEntry(entry, removeReq.Set.ID(), removeReq.Path, set.EntryRemovalErrorPrefix+err.Error())
 
 		return err
 	}
@@ -915,25 +1049,67 @@ func fileErrorCannotBeIgnored(err error, mayMissInRemote bool) bool {
 	return !(mayMissInRemote && strings.Contains(err.Error(), internal.ErrFileDoesNotExist)) //nolint:staticcheck,lll
 }
 
-func (s *Server) updateOrRemoveRemoteFile(removeReq *set.RemoveReq, transformer transformer.PathTransformer,
-	entry *set.Entry,
+// getRemoteMeta returns the metadata of the remote object at the given remote
+// path, or the given error from transforming a local path to it.
+func (s *Server) getRemoteMeta(rpath string, transformErr error) (map[string]string, error) {
+	if transformErr != nil {
+		return nil, transformErr
+	}
+
+	return s.storageHandler.GetMeta(rpath)
+}
+
+// markAboutToBeRemoved stores the given request as about to be removed, before
+// anything changes the remote object, along with the size of the given entry
+// and, if the given metadata was read without error, its sets and requester
+// values, unless an earlier attempt already recorded them. Updating the
+// object's metadata removes the old values before adding the new ones, so a
+// retry after adding failed takes any value now missing from the object from
+// these, instead of seeing an object with no sets, which it would remove.
+func (s *Server) markAboutToBeRemoved(removeReq *set.RemoveReq, entry *set.Entry,
+	remoteMeta map[string]string, metaErr error,
 ) error {
-	rpath, err := transformer(removeReq.Path)
-	if err != nil {
-		return err
+	removeReq.RemoteRemovalStatus = set.AboutToBeRemoved
+
+	if removeReq.ObjectSize == nil {
+		size := entry.Size
+		removeReq.ObjectSize = &size
 	}
 
-	remoteMeta, err := s.storageHandler.GetMeta(rpath)
-	if err != nil {
-		return s.handleRemoteFileMetaError(err, removeReq, rpath, transformer, entry)
+	if metaErr == nil && removeReq.RemoteMeta == nil {
+		removeReq.RemoteMeta = map[string]string{
+			transfer.MetaKeySets:      remoteMeta[transfer.MetaKeySets],
+			transfer.MetaKeyRequester: remoteMeta[transfer.MetaKeyRequester],
+		}
 	}
 
-	var sets, requesters []string
+	return s.db.UpdateRemoveRequest(*removeReq)
+}
+
+// updateOrRemoveRemoteFile updates the sets and requester metadata of the given
+// request's remote object, or removes it if no set would hold it any more.
+// When trashing a file the set never uploaded (see Entry.WasNotUploaded()), it
+// leaves the object alone: the set has no object to trash, so any object at the
+// remote path is another set's, and the trash set gets no entry that would
+// expire a trash tag on it.
+func (s *Server) updateOrRemoveRemoteFile(removeReq *set.RemoveReq, transformer transformer.PathTransformer,
+	rpath string, remoteMeta map[string]string, entry *set.Entry,
+) error {
+	if removeReq.Action == set.ToTrash && entry.WasNotUploaded() {
+		return nil
+	}
+
+	metaBeforeUpdate := withRecordedRemoteMeta(remoteMeta, removeReq.RemoteMeta)
+
+	var (
+		sets, requesters []string
+		err              error
+	)
 
 	if removeReq.Action == set.ToRemove {
-		sets, requesters, err = s.handleSetsAndRequesters(removeReq.Path, removeReq.Set, remoteMeta)
+		sets, requesters, err = s.handleSetsAndRequesters(removeReq.Path, removeReq.Set, metaBeforeUpdate)
 	} else {
-		sets, requesters, err = s.handleSetMetadataForTrash(removeReq.Set, remoteMeta)
+		sets, requesters, err = s.handleSetMetadataForTrash(removeReq.Set, metaBeforeUpdate)
 	}
 
 	if err != nil {
@@ -969,8 +1145,8 @@ func (s *Server) removeRemoteFileAndHandleHardlink(lpath, rpath string, meta map
 
 // handleRemoteFileMetaError handles the given error from getting the metadata
 // of the given request's remote object. If the object doesn't exist and the
-// entry's status is not one that means it was never uploaded (failed, missing
-// or abnormal), the object was removed outside of ibackup (or by an earlier
+// entry doesn't say it was never uploaded (failed, missing or abnormal, with no
+// earlier upload), the object was removed outside of ibackup (or by an earlier
 // attempt), so this logs a warning and treats it as removed; when removing,
 // that includes removing a hardlink's inode file if no other hardlink needs
 // it. Otherwise it returns the error.
@@ -1047,12 +1223,20 @@ func (s *Server) getFilesWithSameInode(path string, inode uint64, transformer tr
 	return files, 0, err
 }
 
+// handleSetsAndRequesters returns the sets and requesters values that the
+// remote object of the given path, which has the given metadata, should have
+// once the given set no longer holds it: without the set's name unless another
+// set of that name holds the path, and without its requester unless another of
+// the requester's sets holds the path. The requester goes even when the sets
+// value already lacks the set's name, since adding the new values may have
+// added the sets value and then failed, leaving a retry with the recorded old
+// requester value.
 func (s *Server) handleSetsAndRequesters(path string, givenSet *set.Set,
 	meta map[string]string) ([]string, []string, error) {
 	sets := splitCommaSeparatedUnique(meta[transfer.MetaKeySets])
 	requesters := splitCommaSeparatedUnique(meta[transfer.MetaKeyRequester])
 
-	if !slices.Contains(sets, givenSet.Name) {
+	if !slices.Contains(sets, givenSet.Name) && !slices.Contains(requesters, givenSet.Requester) {
 		return sets, requesters, nil
 	}
 
@@ -1926,14 +2110,16 @@ func (s *Server) handleFileStatusUpdates() {
 func (s *Server) updateFileStatus(r *transfer.Request) error {
 	entry, err := s.db.SetEntryStatus(r)
 	if err != nil {
-		var errr error
-
-		errs := &set.Error{}
-		if errors.As(err, errs) && errs.Msg == set.ErrInvalidEntry {
-			errr = s.removeOrReleaseRequestFromQueue(r, entry)
+		if setErr, ok := errors.AsType[set.Error](err); ok {
+			switch setErr.Msg {
+			case set.ErrInvalidEntry:
+				return s.dropRequest(r, "its file is no longer in its set")
+			case set.ErrInvalidSetID:
+				return s.dropRequest(r, "its set was deleted")
+			}
 		}
 
-		return errors.Join(err, errr)
+		return err
 	}
 
 	if err = s.handleNewlyCompletedSets(r); err != nil {
@@ -1941,6 +2127,17 @@ func (s *Server) updateFileStatus(r *transfer.Request) error {
 	}
 
 	return s.trackUploadingAndStuckRequests(r, entry)
+}
+
+// dropRequest removes the given request, whose set has been deleted or no longer
+// has its file, from our queue whatever its status, and releases any claim it
+// has on a remote data object, so it isn't uploaded or retried again. The reason
+// is logged.
+func (s *Server) dropRequest(r *transfer.Request, reason string) error {
+	s.uploadTracker.uploadFinished(r)
+	s.Logger.Printf("request dropped rid=%s status=%s: %s", r.ID(), r.Status, reason)
+
+	return errors.Join(s.queue.Remove(context.Background(), r.ID()), s.remoteClaims.release(r))
 }
 
 // handleNewlyCompletedSets gets the set the given request is for, and if it has
@@ -2033,15 +2230,11 @@ func (s *Server) moveFinishedRequestInQueue(r *transfer.Request, entry *set.Entr
 	if r.Status == transfer.RequestStatusFailed {
 		s.updateQueueItemData(r)
 
-		attempts := 0
-		if entry != nil {
-			attempts = entry.Attempts
+		attempts := entry.Attempts
+		if attempts%set.AttemptsToBeConsideredFailing == 0 {
+			s.Logger.Printf("request buried rid=%s attempts=%d err=%s%s", r.ID(), attempts, r.Error, rSuffix)
 
-			if entry.Attempts%set.AttemptsToBeConsideredFailing == 0 {
-				s.Logger.Printf("request buried rid=%s attempts=%d err=%s%s", r.ID(), attempts, r.Error, rSuffix)
-
-				return s.queue.Bury(r.ID())
-			}
+			return s.queue.Bury(r.ID())
 		}
 
 		delay := s.failedUploadRetryDelay
@@ -2151,12 +2344,9 @@ func (s *Server) refillQueue() { //nolint:gocognit,gocyclo,funlen
 			break
 		}
 
-		transformer, err := given.MakeTransformer()
-		if err != nil || !given.LastDiscovery.After(given.LastCompleted) {
-			continue
-		}
+		var err error
 
-		hitLimit, err = s.enqueueSetFiles(given, transformer)
+		hitLimit, err = s.enqueueSet(given, false)
 		if err != nil {
 			s.Logger.Printf("failed to refill queue from set %s for %s: %s", given.Name, given.Requester, err)
 		}
@@ -2196,7 +2386,8 @@ func (s *Server) recoverRemoveQueue() error {
 // recoverSet checks the status of the given Set and recovers its state as
 // appropriate: discover it if it was previously in the middle of being
 // discovered; adds its remaining upload requests if it was previously in the
-// middle of uploading; otherwise do nothing.
+// middle of uploading, or the requests of its in-flight failed files if it had
+// completed with failures; otherwise do nothing.
 //
 // Returns true if the queue reached its limit while adding upload requests.
 func (s *Server) recoverSet(given *set.Set, discoverOnly bool) (bool, error) {
@@ -2206,13 +2397,19 @@ func (s *Server) recoverSet(given *set.Set, discoverOnly bool) (bool, error) {
 
 	s.monitorSet(given)
 
-	if given.LastDiscovery.After(given.LastCompleted) {
+	if given.LastDiscovery.After(given.LastCompleted) || given.Failed > 0 {
 		return s.enqueueSet(given, discoverOnly)
 	}
 
 	return false, nil
 }
 
+// enqueueSet adds the given set's upload requests to the queue (see
+// enqueueSetFiles), or, if it has completed, only those of its in-flight
+// entries (see enqueueInFlightSetFiles). With discoverOnly, it instead adds the
+// set to queuedSets, for refillQueue to do this later.
+//
+// Returns true if the queue reached its limit while adding upload requests.
 func (s *Server) enqueueSet(given *set.Set, discoverOnly bool) (bool, error) {
 	if discoverOnly {
 		s.queueMu.Lock()
@@ -2227,7 +2424,30 @@ func (s *Server) enqueueSet(given *set.Set, discoverOnly bool) (bool, error) {
 		return false, err
 	}
 
+	if !given.LastDiscovery.After(given.LastCompleted) {
+		return s.enqueueInFlightSetFiles(given, transformer)
+	}
+
 	return s.enqueueSetFiles(given, transformer)
+}
+
+// enqueueInFlightSetFiles adds the requests of the given completed set's file
+// entries that are in flight (see Entry.IsInFlight). A set completes once each
+// file has uploaded or failed at least once, so these are failed files waiting
+// for an automatic retry, buried ones a user retried, and either of those that
+// was uploading. Its other entries, eg. never-attempted missing ones, must not
+// be requested again, so this doesn't use Entry.ShouldBeQueued. Since in-flight
+// entries all failed, only the set's failed entries are read.
+func (s *Server) enqueueInFlightSetFiles(given *set.Set,
+	transformer transformer.PathTransformer) (bool, error) {
+	entries, err := s.db.GetFailedFileEntries(given.ID(), func(e *set.Entry) bool {
+		return e.IsInFlight()
+	})
+	if err != nil || len(entries) == 0 {
+		return false, err
+	}
+
+	return s.enqueueEntries(entries, given, transformer)
 }
 
 // retryFailedEntries adds failed entires in the set with the id specified in
@@ -2265,10 +2485,16 @@ func (s *Server) retryFailedSetFiles(given *set.Set) (int, error) {
 		return 0, err
 	}
 
-	s.RetryBuried(&BuriedFilter{
+	// Record the retry before kicking the buried requests, so that it isn't
+	// lost if the queue loses them before they run, eg. on a server restart.
+	if err = s.db.MarkBuriedEntriesRetried(given.ID()); err != nil {
+		return 0, err
+	}
+
+	s.kickItems(s.buriedItems(&BuriedFilter{
 		User: given.Requester,
 		Set:  given.Name,
-	})
+	}))
 
 	entries, err := s.db.GetFileEntries(given.ID(), nil)
 	if err != nil {

@@ -30,11 +30,76 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/wtsi-hgi/ibackup/baton/meta"
+	"github.com/wtsi-hgi/ibackup/errs"
 )
+
+func TestMockConcurrency(t *testing.T) {
+	Convey("A local handler can be used from many goroutines at once", t, func() {
+		lh := GetLocalHandler()
+		dir := t.TempDir()
+		removed := filepath.Join(dir, "removed")
+		kept := filepath.Join(dir, "kept")
+
+		CreateTestFileOfLength(t, kept, 1)
+
+		const n = 50
+
+		var wg sync.WaitGroup
+
+		wg.Add(4)
+
+		go func() {
+			defer wg.Done()
+
+			for range n {
+				lh.RemoveFile(removed) //nolint:errcheck
+			}
+		}()
+
+		go func() {
+			defer wg.Done()
+
+			for i := range n {
+				lh.AddMeta(kept, map[string]string{"key" + strconv.Itoa(i): "val"}) //nolint:errcheck
+			}
+		}()
+
+		go func() {
+			defer wg.Done()
+
+			for range n {
+				lh.QueryMeta(dir, map[string]string{"key0": "val"}) //nolint:errcheck
+				lh.Stat(kept)                                       //nolint:errcheck
+				lh.Put(filepath.Join(dir, "missing"), kept)         //nolint:errcheck
+				lh.Cleanup()
+			}
+		}()
+
+		go func() {
+			defer wg.Done()
+
+			other := filepath.Join(dir, "other")
+
+			for range n {
+				lh.MakeMetaFail(other)
+				lh.MakeStatFail(other)
+				lh.MakePutFail(other)
+				lh.CollectionsDone() //nolint:errcheck
+			}
+		}()
+
+		wg.Wait()
+
+		got, err := lh.GetMeta(kept)
+		So(err, ShouldBeNil)
+		So(got, ShouldHaveLength, n)
+	})
+}
 
 func TestMock(t *testing.T) {
 	Convey("Given a local handler", t, func() {
@@ -58,6 +123,12 @@ func TestMock(t *testing.T) {
 				exists, _, errs := lh.Stat(file1remote)
 				So(errs, ShouldBeNil)
 				So(exists, ShouldBeFalse)
+			})
+
+			Convey("Getting metadata of a file that's not been uploaded fails like baton", func() {
+				fileMeta, err := lh.GetMeta(file1remote)
+				So(fileMeta, ShouldBeNil)
+				So(err, ShouldResemble, errs.PathError{Msg: ErrFileDoesNotExist, Path: file1remote})
 			})
 
 			Convey("You can try to remove the file from iRODS and receive an error", func() {
@@ -92,6 +163,16 @@ func TestMock(t *testing.T) {
 					So(errm, ShouldBeNil)
 
 					So(lh.Meta[file1remote], ShouldResemble, meta)
+				})
+
+				Convey("But adding metadata with an empty value fails, like iRODS, adding none of it", func() {
+					errm := lh.AddMeta(file1remote, map[string]string{"ibackup:test:a": "1", "ibackup:test:b": ""})
+					So(errm, ShouldNotBeNil)
+					So(errm.Error(), ShouldContainSubstring, ErrEmptyMetaValue)
+
+					fileMeta, errg := lh.GetMeta(file1remote)
+					So(errg, ShouldBeNil)
+					So(fileMeta, ShouldBeEmpty)
 				})
 
 				Convey("And given metadata on the uploaded file", func() {
@@ -132,6 +213,16 @@ func TestMock(t *testing.T) {
 						So(errm, ShouldBeNil)
 
 						So(fileMeta, ShouldResemble, map[string]string{"ibackup:test:b": "2"})
+					})
+
+					Convey("But removing metadata with an empty value fails, like iRODS, removing none of it", func() {
+						errm := lh.RemoveMeta(file1remote, map[string]string{"ibackup:test:a": "1", "ibackup:test:b": ""})
+						So(errm, ShouldNotBeNil)
+						So(errm.Error(), ShouldContainSubstring, ErrEmptyMetaValue)
+
+						fileMeta, errg := lh.GetMeta(file1remote)
+						So(errg, ShouldBeNil)
+						So(fileMeta, ShouldResemble, meta)
 					})
 				})
 

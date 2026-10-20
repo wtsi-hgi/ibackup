@@ -125,6 +125,22 @@ type Entry struct {
 	// that counted our Status in the set's counts, if any.
 	CountedInDiscovery time.Time
 
+	// RemoteObject is true if an earlier upload left an object in iRODS that
+	// no later upload result showed to be gone. It is recorded when our
+	// uploaded Status gets replaced, since a discovery or a failed re-upload
+	// replaces it.
+	RemoteObject bool
+
+	// RemoteObjectKnown is true if RemoteObject can be trusted when false:
+	// this entry had no upload results before RemoteObject was recorded, or a
+	// Missing result has since shown it has no object. Entries stored before
+	// RemoteObject existed lack it, so their past uploads must be guessed.
+	RemoteObjectKnown bool
+
+	// Retried is true if a user or admin retry was requested for this entry
+	// after its retries ran out, and it has had no upload result since.
+	Retried bool
+
 	// countedStatus, countedSize and countedIn are the Status, Size and
 	// CountedInDiscovery this entry had before an upload result updated it.
 	countedStatus EntryStatus
@@ -170,10 +186,63 @@ func (e *Entry) ShouldUpload(given *Set) bool {
 	return !e.LastAttempt.After(given.LastDiscovery)
 }
 
+// ShouldBeQueued returns true if ShouldUpload() or IsInFlight() does. Its
+// request is then in the queue, or needs adding back if the queue lost it, eg.
+// on a server restart.
+func (e *Entry) ShouldBeQueued(given *Set) bool {
+	return e.ShouldUpload(given) || e.IsInFlight()
+}
+
+// IsInFlight returns true if this Entry was uploading, or failed and was
+// waiting to be retried: its failures since it was last buried are fewer than
+// AttemptsToBeConsideredFailing, or a user retried it since.
+func (e *Entry) IsInFlight() bool {
+	switch e.Status { //nolint:exhaustive
+	case UploadingEntry:
+		return true
+	case Failed:
+		return e.Retried || e.Attempts%AttemptsToBeConsideredFailing != 0
+	default:
+		return false
+	}
+}
+
 // IsUploaded returns true if the entry status indicates that it is currently
 // successfully uploaded.
 func (e *Entry) IsUploaded() bool {
 	return e.Status == Uploaded || e.Status == Replaced || e.Status == Skipped || e.Status == Orphaned
+}
+
+// rememberRemoteObject sets RemoteObject if our Status says we're uploaded, so
+// that it is kept once our Status is replaced. It sets RemoteObjectKnown if we
+// have never had an upload result, since RemoteObject then covers our whole
+// upload history.
+func (e *Entry) rememberRemoteObject() {
+	e.RemoteObject = e.RemoteObject || e.IsUploaded()
+	e.RemoteObjectKnown = e.RemoteObjectKnown || e.LastAttempt.IsZero()
+}
+
+// mayHaveRemoteObject returns true if this entry may have an object in iRODS
+// from an earlier upload, or is uploading one.
+//
+// A discovery makes an attempted entry Pending until its next upload result,
+// keeping its LastAttempt and LastError. Without RemoteObjectKnown (an older
+// build stored its upload results, and none since showed it missing), one
+// whose last attempt didn't fail may have been uploaded, while one whose last
+// attempt failed is treated like a Failed entry, as having no object.
+func (e *Entry) mayHaveRemoteObject() bool {
+	if e.RemoteObject {
+		return true
+	}
+
+	switch e.Status { //nolint:exhaustive
+	case UploadingEntry:
+		return true
+	case Pending:
+		return !e.RemoteObjectKnown && !e.LastAttempt.IsZero() && e.LastError == ""
+	default:
+		return e.IsUploaded()
+	}
 }
 
 // InodeStoragePath returns a relative path that the data for this entry could
@@ -209,6 +278,7 @@ func (e *Entry) updateTypeDestAndInode(newEntry *Entry) bool {
 	e.Type = newEntry.Type
 	e.Dest = newEntry.Dest
 	e.Inode = newEntry.Inode
+	e.rememberRemoteObject()
 
 	if e.IsUploaded() && newEntry.Status == Missing {
 		e.Status = Orphaned
@@ -220,8 +290,13 @@ func (e *Entry) updateTypeDestAndInode(newEntry *Entry) bool {
 }
 
 // WasNotUploaded checks whether the entry's status corresponds to a status in
-// which the entry could not be uploaded.
+// which the entry could not be uploaded, and no earlier upload left an object
+// in iRODS (RemoteObject), so it has no remote object to trash or remove.
 func (e *Entry) WasNotUploaded() bool {
+	if e.RemoteObject {
+		return false
+	}
+
 	switch e.Status {
 	case Failed, Missing, AbnormalEntry:
 		return true

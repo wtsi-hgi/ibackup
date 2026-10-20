@@ -31,6 +31,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -55,7 +56,8 @@ const ttr = 6 * time.Minute
 type discoveryCoordinator struct {
 	sync.Mutex
 	hasDiscoveryHappened map[string]bool
-	numRunningRemovals   map[string]uint8
+	numRunningRemovals   map[string]int
+	removalFailed        map[string]bool
 	muMap                map[string]*sync.Mutex
 	onRemovalsDone       map[string][]func()
 }
@@ -63,7 +65,8 @@ type discoveryCoordinator struct {
 func newDiscoveryCoordinator() *discoveryCoordinator {
 	return &discoveryCoordinator{
 		hasDiscoveryHappened: make(map[string]bool),
-		numRunningRemovals:   make(map[string]uint8),
+		numRunningRemovals:   make(map[string]int),
+		removalFailed:        make(map[string]bool),
 		muMap:                make(map[string]*sync.Mutex),
 		onRemovalsDone:       make(map[string][]func()),
 	}
@@ -144,15 +147,33 @@ func (dc *discoveryCoordinator) AllowDiscovery(sid string) {
 	dc.unlockSetMutex(sid)
 }
 
+// RemovalFailed records that a removal running on the provided set id failed
+// to remove something. Call it before recording the failure on the set.
+func (dc *discoveryCoordinator) RemovalFailed(sid string) {
+	dc.Lock()
+	defer dc.Unlock()
+
+	dc.removalFailed[sid] = true
+}
+
 // RemovalDone indicates this set is no longer removing only if all remove
-// commands containing this set have finished.
-func (dc *discoveryCoordinator) RemovalDone(sid string) {
+// commands containing this set have finished. If so, and none of them called
+// RemovalFailed(), it calls ifNoneFailed (when not nil) before returning,
+// while holding our lock, so a removal that starts and fails meanwhile records
+// its failure after ifNoneFailed has run.
+func (dc *discoveryCoordinator) RemovalDone(sid string, ifNoneFailed func()) {
 	dc.Lock()
 	defer dc.Unlock()
 
 	if dc.numRunningRemovals[sid] == 1 {
 		delete(dc.numRunningRemovals, sid)
 		delete(dc.hasDiscoveryHappened, sid)
+
+		if !dc.removalFailed[sid] && ifNoneFailed != nil {
+			ifNoneFailed()
+		}
+
+		delete(dc.removalFailed, sid)
 
 		callbacks := dc.onRemovalsDone[sid]
 		delete(dc.onRemovalsDone, sid)
@@ -413,26 +434,50 @@ func (s *Server) handleNewlyDefinedSets(given *set.Set) {
 // sending discovered file paths to the entriesCh. Closes the entriesCh when
 // done, then sends any error on the doneCh. Non-critical warnings during the
 // walk are sent to the warnChan.
-func (s *Server) doSetDirWalks(entries []*set.Entry, excludeTree ptrie.Trie[bool], given *set.Set, //nolint:funlen
+func (s *Server) doSetDirWalks(entries []*set.Entry, excludeTree ptrie.Trie[bool], given *set.Set,
 	entriesCh chan *set.Dirent, doneCh, warnChan chan error,
 ) {
 	errCh := make(chan error, len(entries))
 
-	s.dirPoolMu.Lock()
-
-	if s.dirPool == nil {
+	if err := s.submitSetDirWalks(entries, excludeTree, given, entriesCh, errCh, warnChan); err != nil {
 		close(entriesCh)
 
-		doneCh <- fs.ErrClosed
+		doneCh <- err
 
 		return
 	}
 
-	existing, errg := s.db.GetExistingDirs(given.ID())
-	if errg != nil {
-		doneCh <- errg
+	var err error
 
-		return
+	for range entries {
+		thisErr := <-errCh
+		if thisErr != nil {
+			err = thisErr
+		}
+	}
+
+	close(entriesCh)
+
+	doneCh <- err
+}
+
+// submitSetDirWalks submits a walk of each of the given dir entries to the dir
+// pool, each walk sending its result to the errCh. Returns an error, having
+// submitted nothing, if the server has stopped or the set's existing dirs can't
+// be read.
+func (s *Server) submitSetDirWalks(entries []*set.Entry, excludeTree ptrie.Trie[bool], given *set.Set,
+	entriesCh chan *set.Dirent, errCh, warnChan chan error,
+) error {
+	s.dirPoolMu.Lock()
+	defer s.dirPoolMu.Unlock()
+
+	if s.dirPool == nil {
+		return fs.ErrClosed
+	}
+
+	existing, err := s.db.GetExistingDirs(given.ID())
+	if err != nil {
+		return err
 	}
 
 	for _, entry := range entries {
@@ -445,20 +490,7 @@ func (s *Server) doSetDirWalks(entries []*set.Entry, excludeTree ptrie.Trie[bool
 		})
 	}
 
-	s.dirPoolMu.Unlock()
-
-	var err error
-
-	for i := 0; i < len(entries); i++ {
-		thisErr := <-errCh
-		if thisErr != nil {
-			err = thisErr
-		}
-	}
-
-	close(entriesCh)
-
-	doneCh <- err
+	return nil
 }
 
 // checkAndWalkDir checks if the given dir exists, and if it does, walks the dir
@@ -582,14 +614,17 @@ func determineDirStatus(dirStatErr error, entry *set.Entry,
 
 // enqueueSetFiles gets all the set's file entries (set and discovered), creates
 // put requests for them and adds them to the global put queue for uploading.
-// Skips entries that are missing or that have failed or uploaded since the last
-// discovery.
+// Skips entries that are abnormal, or that have uploaded or been buried since
+// the last discovery. Entries that are uploading or waiting to retry a failure
+// are included, since a restarted server's queue no longer has them; while
+// their requests are still queued, adding them is a duplicate, like adding a
+// pending entry that is already queued.
 //
 // Returns true if only some of the entries were added to the queue due to
 // reaching the queue limit.
 func (s *Server) enqueueSetFiles(given *set.Set, transformer transformer.PathTransformer) (bool, error) {
 	entries, err := s.db.GetFileEntries(given.ID(), func(e *set.Entry) bool {
-		return e.ShouldUpload(given)
+		return e.ShouldBeQueued(given)
 	})
 	if err != nil {
 		return false, err
@@ -599,50 +634,68 @@ func (s *Server) enqueueSetFiles(given *set.Set, transformer transformer.PathTra
 }
 
 // enqueueEntries converts the given entries to requests, stores those in items
-// and adds them the in-memory queue.
+// and adds them the in-memory queue. Entries whose requests are already in the
+// queue are skipped as duplicates, so that they don't take the place of new
+// requests when the queue limit is reached, but a queued one not yet running is
+// first given its new request's metadata, in case the set's metadata changed.
 //
 // Returns true if only some of the items were added to the queue due to
 // reaching the queue limit.
 func (s *Server) enqueueEntries(entries []*set.Entry, given *set.Set, transformer transformer.PathTransformer) (bool, error) { //nolint:gocognit,lll,funlen
 	queueSpaceLeft := max(int(s.maxQueueLength)-s.queue.Stats().Items, 0) //nolint:gosec
-	defs := make([]*queue.ItemDef, min(len(entries), queueSpaceLeft))
-	hitLimit := queueSpaceLeft < len(entries)
+	defs := make([]*queue.ItemDef, 0, min(len(entries), queueSpaceLeft))
+	hitLimit := false
+	queuedDups := 0
 
-	if hitLimit {
-		s.queueMu.Lock()
-		s.queuedSets = append(s.queuedSets, given)
-		s.queueMu.Unlock()
+	for _, entry := range entries {
+		if len(defs) == queueSpaceLeft {
+			hitLimit = true
 
-		entries = entries[:queueSpaceLeft]
-	}
+			break
+		}
 
-	if len(defs) == 0 {
-		return hitLimit, nil
-	}
-
-	for i, entry := range entries {
 		r, err := s.entryToRequest(entry, transformer, given)
 		if err != nil {
 			return false, err
 		}
 
-		defs[i] = &queue.ItemDef{
+		if item, errg := s.queue.Get(r.ID()); errg == nil && s.updateQueuedMeta(item, r) {
+			queuedDups++
+
+			continue
+		}
+
+		defs = append(defs, &queue.ItemDef{
 			Key:  r.ID(),
 			Data: r,
 			TTR:  ttr,
-		}
+		})
 	}
 
-	// Keep enqueue logging low-volume: one line per enqueue batch.
-	s.Logger.Printf(
-		"requests enqueued requester=%s set=%s count=%d",
-		given.Requester,
-		given.Name,
-		len(defs),
+	if hitLimit {
+		s.queueMu.Lock()
+		s.queuedSets = append(s.queuedSets, given)
+		s.queueMu.Unlock()
+	}
+
+	var (
+		dups int
+		err  error
 	)
 
-	_, dups, err := s.queue.AddMany(context.Background(), defs)
-	if dups > 0 {
+	if len(defs) > 0 {
+		// Keep enqueue logging low-volume: one line per enqueue batch.
+		s.Logger.Printf(
+			"requests enqueued requester=%s set=%s count=%d",
+			given.Requester,
+			given.Name,
+			len(defs),
+		)
+
+		_, dups, err = s.queue.AddMany(context.Background(), defs)
+	}
+
+	if dups += queuedDups; dups > 0 {
 		s.Logger.Printf(
 			"request enqueue had duplicates requester=%s set=%s duplicates=%d",
 			given.Requester,
@@ -654,6 +707,37 @@ func (s *Server) enqueueEntries(entries []*set.Entry, given *set.Set, transforme
 	}
 
 	return hitLimit, err
+}
+
+// updateQueuedMeta gives the given queued item's request the given request's
+// metadata (and the Symlink and Hardlink derived from the same entry), if
+// different, unless the item is running: a put client then already has the old
+// metadata, and its result will replace the queued request, so an update made
+// from data read before that result arrives must not overwrite it. Returns false
+// if the item is no longer in the queue.
+func (s *Server) updateQueuedMeta(item *queue.Item, r *transfer.Request) bool {
+	stats := item.Stats()
+	if stats.State == queue.ItemStateRun {
+		return true
+	}
+
+	queued := item.Data().(*transfer.Request) //nolint:errcheck,forcetypeassert
+	same := maps.Equal(queued.Meta.LocalMeta, r.Meta.LocalMeta) &&
+		queued.Symlink == r.Symlink && queued.Hardlink == r.Hardlink
+
+	if same {
+		return true
+	}
+
+	updated := queued.Clone()
+	updated.Meta = r.Meta
+	updated.Symlink = r.Symlink
+	updated.Hardlink = r.Hardlink
+
+	_, err := s.queue.UpdateUnlessRunning(context.Background(), item.Key, "", updated,
+		stats.Priority, stats.Delay, stats.TTR, nil, func() {})
+
+	return err == nil
 }
 
 // entryToRequest converts an Entry to a Request containing details of the given
@@ -692,7 +776,10 @@ func (s *Server) entryToRequest(entry *set.Entry, transformer transformer.PathTr
 }
 
 // markFailedEntries looks for buried items in the queue related to the given
-// set and marks the corresponding entries as failed.
+// set and marks the corresponding entries as failed, if they haven't been
+// attempted since the set's last discovery, which otherwise resets them to be
+// uploaded again. Entries already attempted since then still have their
+// failures recorded, so are left alone.
 func (s *Server) markFailedEntries(given *set.Set) {
 	s.forEachBuriedItem(&BuriedFilter{
 		User: given.Requester,
@@ -700,8 +787,20 @@ func (s *Server) markFailedEntries(given *set.Set) {
 	}, func(item *queue.Item) {
 		request := item.Data().(*transfer.Request) //nolint:errcheck,forcetypeassert
 
+		entry, err := s.db.GetFileEntryForSet(given.ID(), request.Local)
+		if err != nil {
+			s.Logger.Printf("failed to get entry for buried item for set %s for %s: %s\n",
+				given.Name, given.Requester, err)
+
+			return
+		}
+
+		if entry.LastAttempt.After(given.LastDiscovery) {
+			return
+		}
+
 		for range jobRetries {
-			_, err := s.db.SetEntryStatus(request)
+			_, err = s.db.SetEntryStatus(request)
 			if err != nil {
 				s.Logger.Printf("failed to mark entry as failed for buried item for set %s for %s: %s\n",
 					given.Name, given.Requester, err)

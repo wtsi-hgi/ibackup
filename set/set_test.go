@@ -52,6 +52,7 @@ import (
 const (
 	userPerms            = 0700
 	tmpRemoteTransformer = "prefix=/tmp:/remote"
+	editedTransformer    = "prefix=/local:/edited"
 )
 
 func TestSet(t *testing.T) {
@@ -158,6 +159,15 @@ func TestSet(t *testing.T) {
 			t3 := t2.Add(24 * time.Hour)
 			s.StartedDiscovery = t3
 			So(s.Discovered(), ShouldEqual, "started "+t3.Format(dateFormat))
+
+			s.Error = RemovalErrorPrefix + "remove failed"
+			So(s.Discovered(), ShouldEqual, "started "+t3.Format(dateFormat))
+
+			s.Error = "walk failed"
+			So(s.Discovered(), ShouldEqual, "failed; started "+t3.Format(dateFormat))
+
+			s.LastDiscovery = t3.Add(time.Hour)
+			So(s.Discovered(), ShouldEqual, "completed "+s.LastDiscovery.Format(dateFormat))
 		})
 
 		Convey("Count() and Size() return friendly strings", func() {
@@ -448,6 +458,30 @@ func TestTrashSetCounts(t *testing.T) {
 			So(fileCounts(db.GetByID(trashSet.ID())), ShouldResemble, setFileCounts{})
 		})
 
+		Convey("When trashing a file after an earlier attempt failed, the trash set's entry "+
+			"doesn't keep that attempt's removal error, but keeps any other error", func() {
+			for path, lastError := range map[string]string{
+				file: EntryRemovalErrorPrefix + "update operation failed",
+				link: "upload failed",
+			} {
+				entry, errg := db.GetFileEntryForSet(given.ID(), path)
+				So(errg, ShouldBeNil)
+
+				entry.LastError = lastError
+				So(db.UpdateEntry(given.ID(), path, entry), ShouldBeNil)
+
+				trash(path)
+			}
+
+			trashedFile, errg := db.GetFileEntryForSet(trashSet.ID(), file)
+			So(errg, ShouldBeNil)
+			So(trashedFile.LastError, ShouldBeEmpty)
+
+			trashedLink, errg := db.GetFileEntryForSet(trashSet.ID(), link)
+			So(errg, ShouldBeNil)
+			So(trashedLink.LastError, ShouldEqual, "upload failed")
+		})
+
 		Convey("When trashing them", func() {
 			// A trash set is never discovered, so its file counts aren't kept:
 			// they stay zero whatever is trashed or removed from it, and only its
@@ -475,6 +509,15 @@ func TestTrashSetCounts(t *testing.T) {
 				So(got.NumObjectsRemoved, ShouldEqual, 1)
 				So(got.SizeRemoved, ShouldEqual, 3)
 
+				// every trash request adds or updates a fresh trash set, which
+				// mustn't reset the stored removal counts.
+				freshTrashSet := BuildTrashSetFromSet(given)
+				So(db.AddOrUpdate(&freshTrashSet), ShouldBeNil)
+
+				got = db.GetByID(trashSet.ID())
+				So(got.NumObjectsRemoved, ShouldEqual, 1)
+				So(got.SizeRemoved, ShouldEqual, 3)
+
 				removeFromTrash(link)
 
 				got = db.GetByID(trashSet.ID())
@@ -485,6 +528,97 @@ func TestTrashSetCounts(t *testing.T) {
 				trashed, err = db.GetPureFileEntries(trashSet.ID())
 				So(err, ShouldBeNil)
 				So(trashed, ShouldBeEmpty)
+			})
+
+			Convey("then a later trash request keeps the trash set's error from a failed removal", func() {
+				errMsg := "Error when removing: remove operation failed"
+				So(db.SetError(trashSet.ID(), errMsg), ShouldBeNil)
+
+				freshTrashSet := BuildTrashSetFromSet(given)
+				So(db.AddOrUpdate(&freshTrashSet), ShouldBeNil)
+
+				So(db.GetByID(trashSet.ID()).Error, ShouldEqual, errMsg)
+			})
+
+			Convey("then ClearRemovalError clears a removal error, but no other error", func() {
+				So(db.SetError(trashSet.ID(), RemovalErrorPrefix+"remove operation failed"), ShouldBeNil)
+				So(db.ClearRemovalError(trashSet.ID()), ShouldBeNil)
+				So(db.GetByID(trashSet.ID()).Error, ShouldBeEmpty)
+
+				So(db.SetError(trashSet.ID(), "some other error"), ShouldBeNil)
+				So(db.ClearRemovalError(trashSet.ID()), ShouldBeNil)
+				So(db.GetByID(trashSet.ID()).Error, ShouldEqual, "some other error")
+
+				So(db.ClearRemovalError("missing"), ShouldNotBeNil)
+			})
+
+			Convey("then ClearRemovalError keeps a removal error while a file whose removal failed is "+
+				"still in the trash set, and clears it once that file is removed", func() {
+				// what the server records on the entry when removing its
+				// remote object fails.
+				failed, errg := db.GetFileEntryForSet(trashSet.ID(), file)
+				So(errg, ShouldBeNil)
+
+				failed.LastError = EntryRemovalErrorPrefix + "remove operation failed"
+				So(db.UpdateEntry(trashSet.ID(), file, failed), ShouldBeNil)
+
+				errMsg := RemovalErrorPrefix + "remove operation failed"
+				So(db.SetError(trashSet.ID(), errMsg), ShouldBeNil)
+
+				removeFromTrash(link)
+				So(db.ClearRemovalError(trashSet.ID()), ShouldBeNil)
+				So(db.GetByID(trashSet.ID()).Error, ShouldEqual, errMsg)
+
+				removeFromTrash(file)
+				So(db.ClearRemovalError(trashSet.ID()), ShouldBeNil)
+				So(db.GetByID(trashSet.ID()).Error, ShouldBeEmpty)
+			})
+
+			Convey("then the set's transformer can't change while the trash set holds any of them, and "+
+				"the trash set's transformer follows the set's once it holds none, even with a trashed dir", func() {
+				edited := db.GetByID(given.ID())
+				So(edited.Uploaded, ShouldEqual, 0)
+				So(edited.Status, ShouldEqual, Complete)
+
+				edited.Transformer = editedTransformer
+				editedTrashSet := BuildTrashSetFromSet(edited)
+
+				expectRejected := func() {
+					erra := db.AddOrUpdate(edited)
+					So(erra, ShouldNotBeNil)
+					So(erra.Error(), ShouldContainSubstring, ErrTransformerUsedByTrash)
+
+					// eg. a set whose transformer changed before that was
+					// rejected, then trashed a path; a removal error on the
+					// trash set doesn't matter.
+					erra = db.AddOrUpdate(&editedTrashSet)
+					So(erra, ShouldNotBeNil)
+					So(erra.Error(), ShouldContainSubstring, ErrTransformerAlreadyUsed)
+					So(db.GetByID(trashSet.ID()).Transformer, ShouldEqual, given.Transformer)
+				}
+
+				expectRejected()
+
+				// a trashed dir has no remote object, so doesn't block.
+				dirReq := NewRemoveRequest(localDir, db.GetByID(given.ID()), true, ToTrash)
+				So(db.SetRemoveRequests(given.ID(), []RemoveReq{dirReq}), ShouldBeNil)
+				So(db.RemoveDirEntry(&dirReq), ShouldBeNil)
+				expectRejected()
+
+				So(db.SetError(trashSet.ID(), RemovalErrorPrefix+"remove operation failed"), ShouldBeNil)
+				removeFromTrash(file)
+				expectRejected()
+
+				removeFromTrash(link)
+				So(db.ClearRemovalError(trashSet.ID()), ShouldBeNil)
+
+				dirs, errd := db.GetDirEntries(trashSet.ID(), nil)
+				So(errd, ShouldBeNil)
+				So(dirs, ShouldHaveLength, 1)
+
+				So(db.AddOrUpdate(edited), ShouldBeNil)
+				So(db.AddOrUpdate(&editedTrashSet), ShouldBeNil)
+				So(db.GetByID(trashSet.ID()).Transformer, ShouldEqual, edited.Transformer)
 			})
 
 			Convey("then trashing the same paths again before their earlier copies expire, then removing "+
@@ -1311,7 +1445,7 @@ func TestSetDB(t *testing.T) {
 						So(lastCompleted.IsZero(), ShouldBeFalse)
 						So(sets[0].LastCompletedSize, ShouldEqual, 15)
 						So(sets[0].LastCompletedCount, ShouldEqual, 4)
-						So(sets[0].SizeUploaded, ShouldEqual, 13)
+						So(sets[0].SizeUploaded, ShouldEqual, 7)
 
 						fEntries, err = db.GetFileEntries(sets[0].ID(), nil)
 						So(err, ShouldBeNil)
@@ -1350,6 +1484,7 @@ func TestSetDB(t *testing.T) {
 						So(lastCompleted2.After(lastCompleted), ShouldBeTrue)
 						So(sets[0].LastCompletedSize, ShouldEqual, 15)
 						So(sets[0].LastCompletedCount, ShouldEqual, 4)
+						So(sets[0].SizeUploaded, ShouldEqual, 13)
 
 						fEntries, err = db.GetFileEntries(sets[0].ID(), nil)
 						So(err, ShouldBeNil)
@@ -1579,6 +1714,344 @@ func TestSetDB(t *testing.T) {
 					err = db.AddOrUpdate(set)
 					So(err, ShouldNotBeNil)
 					So(err.Error(), ShouldStartWith, "can't add set while set is being discovered")
+
+					Convey("even if a removal failed during it", func() {
+						err = db.SetError(set.ID(), RemovalErrorPrefix+"failed")
+						So(err, ShouldBeNil)
+
+						err = db.AddOrUpdate(set)
+						So(err, ShouldNotBeNil)
+						So(err.Error(), ShouldStartWith, "can't add set while set is being discovered")
+					})
+
+					Convey("even after recording a removal error during it", func() {
+						recorded, errs := db.SetRemovalError(set.ID(), "remove failed")
+						So(errs, ShouldBeNil)
+						So(recorded, ShouldBeTrue)
+						So(db.GetByID(set.ID()).Error, ShouldEqual, RemovalErrorPrefix+"remove failed")
+
+						err = db.AddOrUpdate(set)
+						So(err, ShouldNotBeNil)
+						So(err.Error(), ShouldStartWith, "can't add set while set is being discovered")
+					})
+				})
+
+				Convey("Then re-add a set whose discovery failed before a removal failed", func() {
+					err = db.AddOrUpdate(set)
+					So(err, ShouldBeNil)
+
+					_, err = db.Discover(set.ID(), func([]*Entry) ([]*Dirent, []*Dirent, error) {
+						return nil, nil, errors.New("walk failed") //nolint:err113
+					})
+					So(err, ShouldNotBeNil)
+
+					recorded, errs := db.SetRemovalError(set.ID(), "remove failed")
+					So(errs, ShouldBeNil)
+					So(recorded, ShouldBeFalse)
+
+					got := db.GetByID(set.ID())
+					So(got, ShouldNotBeNil)
+					So(got.Error, ShouldEqual, "walk failed")
+					So(got.Discovered(), ShouldStartWith, "failed; started ")
+
+					set.Description = "fixed after removal"
+					err = db.AddOrUpdate(set)
+					So(err, ShouldBeNil)
+					So(db.GetByID(set.ID()).Description, ShouldEqual, set.Description)
+				})
+
+				Convey("Then re-add a set whose discovery failed", func() {
+					err = db.AddOrUpdate(set)
+					So(err, ShouldBeNil)
+
+					_, err = db.Discover(set.ID(), func([]*Entry) ([]*Dirent, []*Dirent, error) {
+						return nil, nil, errors.New("walk failed") //nolint:err113
+					})
+					So(err, ShouldNotBeNil)
+
+					got := db.GetByID(set.ID())
+					So(got, ShouldNotBeNil)
+					So(got.Error, ShouldEqual, "walk failed")
+					So(got.StartedDiscovery, ShouldHappenAfter, got.LastDiscovery)
+
+					set.Description = "fixed"
+					err = db.AddOrUpdate(set)
+					So(err, ShouldBeNil)
+
+					got = db.GetByID(set.ID())
+					So(got, ShouldNotBeNil)
+					So(got.Description, ShouldEqual, "fixed")
+				})
+
+				Convey("Then given a directory set with a file never uploaded", func() {
+					dirSet := &Set{Name: "dirSet", Requester: "jim", Transformer: "prefix=/local:/remote"}
+					So(db.AddOrUpdate(dirSet), ShouldBeNil)
+					So(db.MergeDirEntries(dirSet.ID(), createFileEnts([]string{"/g/h"})), ShouldBeNil)
+
+					discovered := "/g/h/l.txt"
+					discover := func() {
+						discoverASet(db, db.GetByID(dirSet.ID()), func() ([]*Dirent, []*Dirent, error) {
+							return createFileEnts([]string{discovered}), []*Dirent{}, nil
+						}, func() {})
+					}
+
+					discover()
+
+					expectTransformerChangeable := func() {
+						edited := db.GetByID(dirSet.ID())
+						edited.Transformer = editedTransformer
+						So(db.AddOrUpdate(edited), ShouldBeNil)
+						So(db.GetByID(dirSet.ID()).Transformer, ShouldEqual, edited.Transformer)
+					}
+
+					Convey("its transformer can change after it got an error", func() {
+						So(db.SetError(dirSet.ID(), "queuing files failed"), ShouldBeNil)
+						So(db.GetByID(dirSet.ID()).Status, ShouldEqual, PendingUpload)
+
+						expectTransformerChangeable()
+					})
+
+					Convey("its transformer can change after its file failed to upload "+
+						"and a discovery left it pending, with the set erroring", func() {
+						_, err = db.SetEntryStatus(&transfer.Request{
+							Local: discovered, Requester: dirSet.Requester, Set: dirSet.Name,
+							Size: 1, Status: transfer.RequestStatusFailed, Error: "put failed",
+						})
+						So(err, ShouldBeNil)
+
+						discover()
+
+						entries, errg := db.GetFileEntries(dirSet.ID(), nil)
+						So(errg, ShouldBeNil)
+						So(entries, ShouldHaveLength, 1)
+						So(entries[0].Status, ShouldEqual, Pending)
+						So(entries[0].LastAttempt.IsZero(), ShouldBeFalse)
+						So(entries[0].LastError, ShouldEqual, "put failed")
+
+						So(db.SetError(dirSet.ID(), "queuing files failed"), ShouldBeNil)
+
+						expectTransformerChangeable()
+					})
+
+					expectChangeableAfterResultAndRediscovery := func(status transfer.RequestStatus) {
+						_, err = db.SetEntryStatus(&transfer.Request{
+							Local: discovered, Requester: dirSet.Requester, Set: dirSet.Name,
+							Size: 1, Status: status,
+						})
+						So(err, ShouldBeNil)
+
+						discover()
+
+						entries, errg := db.GetFileEntries(dirSet.ID(), nil)
+						So(errg, ShouldBeNil)
+						So(entries, ShouldHaveLength, 1)
+						So(entries[0].Status, ShouldEqual, Pending)
+						So(entries[0].LastAttempt.IsZero(), ShouldBeFalse)
+						So(entries[0].LastError, ShouldBeBlank)
+
+						So(db.SetError(dirSet.ID(), "queuing files failed"), ShouldBeNil)
+
+						expectTransformerChangeable()
+					}
+
+					Convey("its transformer can change after its file went missing, "+
+						"reappeared and a discovery left it pending, with the set erroring", func() {
+						expectChangeableAfterResultAndRediscovery(transfer.RequestStatusMissing)
+					})
+
+					Convey("its transformer can change after its file failed with no error message "+
+						"and a discovery left it pending, with the set erroring", func() {
+						expectChangeableAfterResultAndRediscovery(transfer.RequestStatusFailed)
+					})
+				})
+
+				Convey("Then given a directory set with an uploaded file", func() {
+					dirSet := &Set{Name: "dirSet", Requester: "jim", Transformer: "prefix=/local:/remote"}
+					So(db.AddOrUpdate(dirSet), ShouldBeNil)
+					So(db.MergeDirEntries(dirSet.ID(), createFileEnts([]string{"/g/h"})), ShouldBeNil)
+
+					discovered := "/g/h/l.txt"
+					discover := func(given *Set) {
+						discoverASet(db, given, func() ([]*Dirent, []*Dirent, error) {
+							return createFileEnts([]string{discovered}), []*Dirent{}, nil
+						}, func() {})
+					}
+
+					discover(dirSet)
+
+					_, err = db.SetEntryStatus(&transfer.Request{
+						Local: discovered, Requester: dirSet.Requester, Set: dirSet.Name,
+						Size: 1, Status: transfer.RequestStatusUploaded,
+					})
+					So(err, ShouldBeNil)
+
+					got := db.GetByID(dirSet.ID())
+					So(got.Status, ShouldEqual, Complete)
+					So(got.Uploaded, ShouldEqual, 1)
+
+					expectTransformerUnchangeable := func() {
+						edited := db.GetByID(dirSet.ID())
+						edited.Transformer = editedTransformer
+
+						erra := db.AddOrUpdate(edited)
+						So(erra, ShouldNotBeNil)
+						So(erra.Error(), ShouldContainSubstring, ErrTransformerAlreadyUsed)
+						So(db.GetByID(dirSet.ID()).Transformer, ShouldEqual, dirSet.Transformer)
+					}
+
+					expectTransformerUnchangeable()
+
+					Convey("its transformer can't change after a discovery failed and reset its counts", func() {
+						_, err = db.Discover(dirSet.ID(), func([]*Entry) ([]*Dirent, []*Dirent, error) {
+							return nil, nil, errors.New("walk failed") //nolint:err113
+						})
+						So(err, ShouldNotBeNil)
+
+						got = db.GetByID(dirSet.ID())
+						So(got.Error, ShouldEqual, "walk failed")
+						So(got.Uploaded, ShouldEqual, 0)
+
+						entries, errg := db.GetFileEntries(dirSet.ID(), nil)
+						So(errg, ShouldBeNil)
+						So(entries, ShouldHaveLength, 1)
+						So(entries[0].Status, ShouldEqual, Uploaded)
+
+						expectTransformerUnchangeable()
+
+						got.Description = "fixed"
+						So(db.AddOrUpdate(got), ShouldBeNil)
+						So(db.GetByID(dirSet.ID()).Description, ShouldEqual, "fixed")
+					})
+
+					Convey("its transformer can't change after a discovery left its file pending "+
+						"and the set got an error", func() {
+						discover(got)
+
+						got = db.GetByID(dirSet.ID())
+						So(got.Status, ShouldEqual, PendingUpload)
+						So(got.Uploaded, ShouldEqual, 0)
+
+						entries, errg := db.GetFileEntries(dirSet.ID(), nil)
+						So(errg, ShouldBeNil)
+						So(entries, ShouldHaveLength, 1)
+						So(entries[0].Status, ShouldEqual, Pending)
+
+						So(db.SetError(dirSet.ID(), "queuing files failed"), ShouldBeNil)
+
+						expectTransformerUnchangeable()
+
+						Convey("or while it is uploading again", func() {
+							e, errs := db.SetEntryStatus(&transfer.Request{
+								Local: discovered, Requester: dirSet.Requester, Set: dirSet.Name,
+								Size: 1, Status: transfer.RequestStatusUploading,
+							})
+							So(errs, ShouldBeNil)
+							So(e.Status, ShouldEqual, UploadingEntry)
+
+							got = db.GetByID(dirSet.ID())
+							So(got.Uploaded, ShouldEqual, 0)
+							So(got.Error, ShouldNotBeBlank)
+
+							expectTransformerUnchangeable()
+						})
+
+						Convey("or if an older build stored it, with no record of its upload", func() {
+							err = db.db.Update(func(tx *bolt.Tx) error {
+								eg, b, errge := db.getEntry(tx, dirSet.ID(), discovered)
+								So(errge, ShouldBeNil)
+
+								eg.RemoteObject = false
+								eg.RemoteObjectKnown = false
+
+								return b.Put([]byte(discovered), db.encodeToBytes(eg))
+							})
+							So(err, ShouldBeNil)
+
+							expectTransformerUnchangeable()
+
+							Convey("but it can once its file and object went missing, "+
+								"it reappeared and a discovery left it pending", func() {
+								_, errs := db.SetEntryStatus(&transfer.Request{
+									Local: discovered, Requester: dirSet.Requester, Set: dirSet.Name,
+									Size: 1, Status: transfer.RequestStatusMissing,
+								})
+								So(errs, ShouldBeNil)
+
+								discover(db.GetByID(dirSet.ID()))
+
+								entries, errg = db.GetFileEntries(dirSet.ID(), nil)
+								So(errg, ShouldBeNil)
+								So(entries, ShouldHaveLength, 1)
+								So(entries[0].Status, ShouldEqual, Pending)
+								So(entries[0].LastError, ShouldBeBlank)
+
+								So(db.SetError(dirSet.ID(), "queuing files failed"), ShouldBeNil)
+
+								edited := db.GetByID(dirSet.ID())
+								edited.Transformer = editedTransformer
+								So(db.AddOrUpdate(edited), ShouldBeNil)
+								So(db.GetByID(dirSet.ID()).Transformer, ShouldEqual, editedTransformer)
+							})
+						})
+					})
+
+					setResult := func(status transfer.RequestStatus, errMsg string) {
+						_, errs := db.SetEntryStatus(&transfer.Request{
+							Local: discovered, Requester: dirSet.Requester, Set: dirSet.Name,
+							Size: 1, Status: status, Error: errMsg,
+						})
+						So(errs, ShouldBeNil)
+					}
+
+					Convey("its transformer can't change after its file failed to re-upload", func() {
+						discover(got)
+						setResult(transfer.RequestStatusFailed, "put failed")
+
+						got = db.GetByID(dirSet.ID())
+						So(got.Status, ShouldEqual, Complete)
+						So(got.Uploaded, ShouldEqual, 0)
+						So(got.Failed, ShouldEqual, 1)
+						So(got.Error, ShouldBeBlank)
+
+						expectTransformerUnchangeable()
+
+						Convey("even after a discovery left it pending and the set got an error", func() {
+							discover(got)
+
+							entries, errg := db.GetFileEntries(dirSet.ID(), nil)
+							So(errg, ShouldBeNil)
+							So(entries, ShouldHaveLength, 1)
+							So(entries[0].Status, ShouldEqual, Pending)
+							So(entries[0].LastError, ShouldEqual, "put failed")
+
+							So(db.SetError(dirSet.ID(), "queuing files failed"), ShouldBeNil)
+
+							expectTransformerUnchangeable()
+						})
+					})
+
+					Convey("its transformer can't change after a repeated upload of its file failed", func() {
+						setResult(transfer.RequestStatusFailed, "read failed")
+
+						got = db.GetByID(dirSet.ID())
+						So(got.Uploaded, ShouldEqual, 0)
+						So(got.Failed, ShouldEqual, 1)
+
+						expectTransformerUnchangeable()
+					})
+
+					Convey("its transformer can change after its file and its object went missing", func() {
+						discover(got)
+						setResult(transfer.RequestStatusMissing, "")
+
+						got = db.GetByID(dirSet.ID())
+						So(got.Status, ShouldEqual, Complete)
+						So(got.Missing, ShouldEqual, 1)
+
+						got.Transformer = editedTransformer
+						So(db.AddOrUpdate(got), ShouldBeNil)
+						So(db.GetByID(dirSet.ID()).Transformer, ShouldEqual, editedTransformer)
+					})
 				})
 
 				Convey("You can get sets with a particular file", func() {
@@ -1717,6 +2190,20 @@ func TestSetDB(t *testing.T) {
 					So(got.Hardlinks, ShouldEqual, 1)
 				})
 
+				Convey("then upload them, re-add them and rediscover, counting the hard link once", func() {
+					counts := setFileCounts{NumFiles: 3, Hardlinks: 1, Uploaded: 2, Missing: 1}
+
+					got := uploadPresentEntries(db, setl1)
+					So(got.Status, ShouldEqual, Complete)
+					So(fileCounts(got), ShouldResemble, counts)
+
+					reAddUploadedAndRediscover(db, setl1, []string{path1, path2, "/zmissing"}, counts)
+
+					entry, errg := db.GetFileEntryForSet(setl1.ID(), path2)
+					So(errg, ShouldBeNil)
+					So(entry.Type, ShouldEqual, Hardlink)
+				})
+
 				Convey("then start rediscovery and remove a hard link without breaking the counts", func() {
 					err = db.SetDiscoveryStarted(setl1.ID())
 					So(err, ShouldBeNil)
@@ -1814,6 +2301,15 @@ func TestSetDB(t *testing.T) {
 					So(got, ShouldNotBeNil)
 					So(err, ShouldBeNil)
 					So(got.Symlinks, ShouldEqual, 1)
+				})
+
+				Convey("then re-add them and rediscover, counting the symlink once", func() {
+					reAddUploadedAndRediscover(db, setl1, []string{path1, path2, "/zmissing"}, fileCounts(got))
+
+					entry, errg := db.GetFileEntryForSet(setl1.ID(), path2)
+					So(errg, ShouldBeNil)
+					So(entry.Type, ShouldEqual, Symlink)
+					So(entry.Dest, ShouldEqual, path1)
 				})
 
 				Convey("then remove a file and rediscover without the file being counted out twice", func() {
@@ -3304,6 +3800,205 @@ func TestSetDB(t *testing.T) {
 				})
 			})
 
+			Convey("And add a set with a failing upload, its failed file's size isn't counted as uploaded", func() {
+				setl1 := &Set{
+					Name:        "failedSize",
+					Requester:   "jim",
+					Transformer: tmpRemoteTransformer,
+				}
+
+				So(db.AddOrUpdate(setl1), ShouldBeNil)
+
+				dir := t.TempDir()
+				good := filepath.Join(dir, "good")
+				bad := filepath.Join(dir, "bad")
+
+				for _, path := range []string{good, bad} {
+					internal.CreateTestFile(t, path, "a")
+				}
+
+				So(db.MergeFileEntries(setl1.ID(), []string{good, bad}), ShouldBeNil)
+
+				_, err = db.Discover(setl1.ID(), nil)
+				So(err, ShouldBeNil)
+
+				sizes := map[string]uint64{good: 3, bad: 4}
+
+				setResult := func(path string, statuses ...transfer.RequestStatus) *Set {
+					for _, s := range statuses {
+						_, errs := db.SetEntryStatus(&transfer.Request{
+							Local:     path,
+							Requester: setl1.Requester,
+							Set:       setl1.Name,
+							Size:      sizes[path],
+							Status:    s,
+						})
+						So(errs, ShouldBeNil)
+					}
+
+					return db.GetByID(setl1.ID())
+				}
+
+				uploading, uploaded, failed := transfer.RequestStatusUploading,
+					transfer.RequestStatusUploaded, transfer.RequestStatusFailed
+
+				setResult(good, uploading, uploaded)
+				got := setResult(bad, uploading, failed)
+				So(got.Uploaded, ShouldEqual, 1)
+				So(got.Failed, ShouldEqual, 1)
+				So(got.Status, ShouldEqual, Complete)
+				So(got.SizeTotal, ShouldEqual, 7)
+				So(got.SizeUploaded, ShouldEqual, 3)
+
+				got = setResult(bad, uploading, failed)
+				So(got.Failed, ShouldEqual, 1)
+				So(got.SizeUploaded, ShouldEqual, 3)
+
+				Convey("then a retry that uploads it counts its size once", func() {
+					got = setResult(bad, uploading, uploaded)
+					So(got.Uploaded, ShouldEqual, 2)
+					So(got.Failed, ShouldEqual, 0)
+					So(got.SizeTotal, ShouldEqual, 7)
+					So(got.SizeUploaded, ShouldEqual, 7)
+				})
+
+				Convey("then a retry that replaces it counts its size once", func() {
+					got = setResult(bad, uploading, transfer.RequestStatusReplaced)
+					So(got.Replaced, ShouldEqual, 1)
+					So(got.SizeUploaded, ShouldEqual, 7)
+				})
+
+				Convey("then a re-run of the uploaded file's request doesn't count its size twice", func() {
+					got = setResult(good, uploading, uploaded)
+					So(got.SizeUploaded, ShouldEqual, 3)
+
+					got = setResult(good, uploaded)
+					So(got.SizeUploaded, ShouldEqual, 3)
+				})
+
+				Convey("then a retry that skips it doesn't count its size", func() {
+					got = setResult(bad, uploading, transfer.RequestStatusUnmodified)
+					So(got.Skipped, ShouldEqual, 1)
+					So(got.Failed, ShouldEqual, 0)
+					So(got.SizeUploaded, ShouldEqual, 3)
+				})
+
+				Convey("then rediscovering, a re-upload of the uploaded file that fails isn't counted as "+
+					"uploaded", func() {
+					got, err = db.Discover(setl1.ID(), nil)
+					So(err, ShouldBeNil)
+					So(got.SizeUploaded, ShouldEqual, 0)
+
+					setResult(bad, uploading, uploaded)
+					got = setResult(good, uploading, failed)
+					So(got.Uploaded, ShouldEqual, 1)
+					So(got.Failed, ShouldEqual, 1)
+					So(got.Status, ShouldEqual, Complete)
+					So(got.SizeTotal, ShouldEqual, 7)
+					So(got.SizeUploaded, ShouldEqual, 4)
+				})
+			})
+
+			Convey("And add a file set with an uploaded file and a failed file, then re-add its files and "+
+				"rediscover", func() {
+				setl1 := &Set{
+					Name:        "readded",
+					Requester:   "jim",
+					Transformer: tmpRemoteTransformer,
+				}
+
+				So(db.AddOrUpdate(setl1), ShouldBeNil)
+
+				dir := t.TempDir()
+				good := filepath.Join(dir, "good")
+				bad := filepath.Join(dir, "bad")
+				sizes := map[string]uint64{good: 3, bad: 4}
+
+				for _, path := range []string{good, bad} {
+					internal.CreateTestFile(t, path, "a")
+				}
+
+				So(db.MergeFileEntries(setl1.ID(), []string{good, bad}), ShouldBeNil)
+
+				_, err = db.Discover(setl1.ID(), nil)
+				So(err, ShouldBeNil)
+
+				setResult := func(path string, statuses ...transfer.RequestStatus) *Set {
+					for _, s := range statuses {
+						_, errs := db.SetEntryStatus(&transfer.Request{
+							Local:     path,
+							Requester: setl1.Requester,
+							Set:       setl1.Name,
+							Size:      sizes[path],
+							Status:    s,
+							Error:     "put failed",
+						})
+						So(errs, ShouldBeNil)
+					}
+
+					return db.GetByID(setl1.ID())
+				}
+
+				uploading, uploaded, failed := transfer.RequestStatusUploading,
+					transfer.RequestStatusUploaded, transfer.RequestStatusFailed
+
+				setResult(good, uploading, uploaded)
+				got := setResult(bad, uploading, failed)
+				So(got.Uploaded, ShouldEqual, 1)
+				So(got.Failed, ShouldEqual, 1)
+
+				So(db.MergeFileEntries(setl1.ID(), []string{good, bad}), ShouldBeNil)
+
+				got, err = db.Discover(setl1.ID(), nil)
+				So(err, ShouldBeNil)
+				So(got.Status, ShouldEqual, PendingUpload)
+				So(got.NumFiles, ShouldEqual, 2)
+				So(got.Uploaded+got.Failed, ShouldEqual, 0)
+				So(got.SizeUploaded, ShouldEqual, 0)
+
+				entries, errg := db.GetPureFileEntries(setl1.ID())
+				So(errg, ShouldBeNil)
+				So(entries, ShouldHaveLength, 2)
+
+				for _, entry := range entries {
+					So(entry.Status, ShouldEqual, Pending)
+					So(entry.Inode, ShouldNotEqual, 0)
+					So(entry.ShouldUpload(got), ShouldBeTrue)
+				}
+
+				Convey("failed re-uploads of both files keep its transformer from changing", func() {
+					setResult(bad, uploading, failed)
+					got = setResult(good, uploading, failed)
+					So(got.Status, ShouldEqual, Complete)
+					So(got.Uploaded, ShouldEqual, 0)
+					So(got.Failed, ShouldEqual, 2)
+					So(got.SizeUploaded, ShouldEqual, 0)
+
+					got.Transformer = editedTransformer
+					erra := db.AddOrUpdate(got)
+					So(erra, ShouldNotBeNil)
+					So(erra.Error(), ShouldContainSubstring, ErrTransformerAlreadyUsed)
+					So(db.GetByID(setl1.ID()).Transformer, ShouldEqual, tmpRemoteTransformer)
+
+					entry, errg := db.GetFileEntryForSet(setl1.ID(), good)
+					So(errg, ShouldBeNil)
+					So(entry.Status, ShouldEqual, Failed)
+					So(entry.LastError, ShouldEqual, "put failed")
+					So(entry.RemoteObject, ShouldBeTrue)
+				})
+
+				Convey("both files upload again and are counted once", func() {
+					setResult(good, uploading, transfer.RequestStatusUnmodified)
+					got = setResult(bad, uploading, uploaded)
+					So(got.Status, ShouldEqual, Complete)
+					So(got.Uploaded, ShouldEqual, 1)
+					So(got.Skipped, ShouldEqual, 1)
+					So(got.Failed, ShouldEqual, 0)
+					So(got.SizeTotal, ShouldEqual, 7)
+					So(got.SizeUploaded, ShouldEqual, 4)
+				})
+			})
+
 			Convey("And add a frozen set whose uploaded file is deleted locally, rediscovery stores and counts "+
 				"it as orphaned", func() {
 				setl1 := &Set{
@@ -3917,6 +4612,17 @@ func TestSetDB(t *testing.T) {
 						checkComplete(db.GetByID(setl1.ID()))
 					})
 
+					Convey("when a file's retries run out during discovery, it says once that the set has "+
+						"failed uploads", func() {
+						rediscover(nothing, func() {
+							slackWriter.Reset()
+							setResult(inFlight, transfer.RequestStatusFailed, transfer.RequestStatusFailed,
+								transfer.RequestStatusFailed)
+						})
+
+						So(strings.Count(slackWriter.String(), "has failed uploads"), ShouldEqual, 1)
+					})
+
 					Convey("when a file is deleted before rediscovery and the other's result arrives after "+
 						"discovery processes it, the deleted file stays counted missing", func() {
 						So(os.Remove(inFlight), ShouldBeNil)
@@ -4003,6 +4709,212 @@ func TestSetDB(t *testing.T) {
 				So(got.SizeTotal, ShouldEqual, 3)
 				So(got.Status, ShouldEqual, Complete)
 				So(strings.Count(slackWriter.String(), "completed backup"), ShouldEqual, 1)
+			})
+
+			Convey("And add a set with a missing file, its missing result doesn't complete it again", func() {
+				dir := t.TempDir()
+				present := filepath.Join(dir, "present")
+				missing := filepath.Join(dir, "missing")
+
+				internal.CreateTestFile(t, present, "abc")
+
+				addSet := func(name string, frozen bool, paths ...string) *Set {
+					s := &Set{Name: name, Requester: "jim", Transformer: tmpRemoteTransformer, Frozen: frozen}
+					So(db.AddOrUpdate(s), ShouldBeNil)
+					So(db.MergeFileEntries(s.ID(), paths), ShouldBeNil)
+
+					return s
+				}
+
+				discover := func(s *Set) *Set {
+					got, errd := db.Discover(s.ID(), nil)
+					So(errd, ShouldBeNil)
+
+					return got
+				}
+
+				setResult := func(s *Set, path string, status transfer.RequestStatus) *Set {
+					_, errs := db.SetEntryStatus(&transfer.Request{
+						Local:     path,
+						Requester: s.Requester,
+						Set:       s.Name,
+						Size:      3,
+						Status:    status,
+					})
+					So(errs, ShouldBeNil)
+
+					return db.GetByID(s.ID())
+				}
+
+				completions := func() int {
+					return strings.Count(slackWriter.String(), "completed backup")
+				}
+
+				Convey("when every file is missing", func() {
+					s := addSet("allMissing", false, missing)
+
+					slackWriter.Reset()
+					So(discover(s).Status, ShouldEqual, Complete)
+					So(slackWriter.String(), ShouldContainSubstring, "completed discovery and backup due to no files")
+
+					got := setResult(s, missing, transfer.RequestStatusMissing)
+					So(got.Missing, ShouldEqual, 1)
+					So(got.Status, ShouldEqual, Complete)
+					So(completions(), ShouldEqual, 0)
+				})
+
+				Convey("when the missing file's result comes last, and a rediscovery completes it again", func() {
+					s := addSet("missingLast", false, present, missing)
+
+					slackWriter.Reset()
+					So(discover(s).Status, ShouldEqual, PendingUpload)
+
+					setResult(s, present, transfer.RequestStatusUploading)
+					So(setResult(s, present, transfer.RequestStatusUploaded).Status, ShouldEqual, Complete)
+					So(completions(), ShouldEqual, 1)
+
+					got := setResult(s, missing, transfer.RequestStatusMissing)
+					So(got.Uploaded, ShouldEqual, 1)
+					So(got.Missing, ShouldEqual, 1)
+					So(got.Status, ShouldEqual, Complete)
+					So(completions(), ShouldEqual, 1)
+
+					So(discover(s).Status, ShouldEqual, PendingUpload)
+					setResult(s, missing, transfer.RequestStatusMissing)
+					So(completions(), ShouldEqual, 1)
+
+					setResult(s, present, transfer.RequestStatusUploading)
+					So(setResult(s, present, transfer.RequestStatusUnmodified).Status, ShouldEqual, Complete)
+					So(completions(), ShouldEqual, 2)
+				})
+
+				Convey("but a retried failed file's upload completes it again", func() {
+					s := addSet("failedThenRetried", false, present, missing)
+
+					slackWriter.Reset()
+					discover(s)
+					setResult(s, missing, transfer.RequestStatusMissing)
+					setResult(s, present, transfer.RequestStatusUploading)
+					So(setResult(s, present, transfer.RequestStatusFailed).Status, ShouldEqual, Complete)
+					So(completions(), ShouldEqual, 1)
+
+					setResult(s, present, transfer.RequestStatusUploading)
+					got := setResult(s, present, transfer.RequestStatusUploaded)
+					So(got.Uploaded, ShouldEqual, 1)
+					So(got.Failed, ShouldEqual, 0)
+					So(got.Status, ShouldEqual, Complete)
+					So(completions(), ShouldEqual, 2)
+				})
+
+				Convey("and a failed file failing its last retry says so, without completing it again", func() {
+					s := addSet("failedRetriesExhausted", false, present, missing)
+
+					slackWriter.Reset()
+					discover(s)
+					setResult(s, missing, transfer.RequestStatusMissing)
+
+					var got *Set
+
+					for range AttemptsToBeConsideredFailing - 1 {
+						setResult(s, present, transfer.RequestStatusUploading)
+						got = setResult(s, present, transfer.RequestStatusFailed)
+						So(got.Status, ShouldEqual, Complete)
+						So(slackWriter.String(), ShouldNotContainSubstring, "has failed uploads")
+					}
+
+					So(completions(), ShouldEqual, 1)
+
+					lastCompleted := got.LastCompleted
+
+					setResult(s, present, transfer.RequestStatusUploading)
+					got = setResult(s, present, transfer.RequestStatusFailed)
+
+					So(strings.Count(slackWriter.String(), "has failed uploads"), ShouldEqual, 1)
+					So(completions(), ShouldEqual, 1)
+					So(got.Failed, ShouldEqual, 1)
+					So(got.Missing, ShouldEqual, 1)
+					So(got.Status, ShouldEqual, Complete)
+					So(got.LastCompleted, ShouldEqual, lastCompleted)
+				})
+
+				failedUploads := func() int {
+					return strings.Count(slackWriter.String(), "has failed uploads")
+				}
+
+				failUntilRetriesRunOut := func(s *Set) {
+					for range AttemptsToBeConsideredFailing {
+						setResult(s, present, transfer.RequestStatusUploading)
+						setResult(s, present, transfer.RequestStatusFailed)
+					}
+				}
+
+				Convey("and a retried failed file says it failed once each time its retries run out", func() {
+					s := addSet("failedRetriedAgain", false, present, missing)
+
+					slackWriter.Reset()
+					discover(s)
+					setResult(s, missing, transfer.RequestStatusMissing)
+					failUntilRetriesRunOut(s)
+					So(failedUploads(), ShouldEqual, 1)
+
+					for range AttemptsToBeConsideredFailing - 1 {
+						setResult(s, present, transfer.RequestStatusUploading)
+						setResult(s, present, transfer.RequestStatusFailed)
+						So(failedUploads(), ShouldEqual, 1)
+					}
+
+					setResult(s, present, transfer.RequestStatusUploading)
+					got := setResult(s, present, transfer.RequestStatusFailed)
+
+					So(failedUploads(), ShouldEqual, 2)
+					So(completions(), ShouldEqual, 1)
+					So(got.Failed, ShouldEqual, 1)
+					So(got.Status, ShouldEqual, Complete)
+				})
+
+				Convey("and a recount doesn't say again that a failed file failed", func() {
+					s := addSet("failedRecounted", false, present, missing)
+
+					slackWriter.Reset()
+					discover(s)
+					setResult(s, missing, transfer.RequestStatusMissing)
+					failUntilRetriesRunOut(s)
+					So(failedUploads(), ShouldEqual, 1)
+
+					So(db.db.Update(func(tx *bolt.Tx) error {
+						got, bid, b, errt := db.getSetByID(tx, s.ID())
+						So(errt, ShouldBeNil)
+
+						got.Missing = got.NumFiles + 1
+
+						return b.Put(bid, db.encodeToBytes(got))
+					}), ShouldBeNil)
+
+					got := setResult(s, missing, transfer.RequestStatusMissing)
+					So(got.countsValid(), ShouldBeTrue)
+					So(got.Failed, ShouldEqual, 1)
+					So(got.Missing, ShouldEqual, 1)
+					So(failedUploads(), ShouldEqual, 1)
+				})
+
+				Convey("when a frozen set with a kept file is rediscovered", func() {
+					s := addSet("frozenMissing", true, present, missing)
+
+					discover(s)
+					setResult(s, present, transfer.RequestStatusUploading)
+					setResult(s, present, transfer.RequestStatusUploaded)
+					setResult(s, missing, transfer.RequestStatusMissing)
+
+					slackWriter.Reset()
+					So(discover(s).Status, ShouldEqual, Complete)
+					So(completions(), ShouldEqual, 1)
+
+					got := setResult(s, missing, transfer.RequestStatusMissing)
+					So(got.Uploaded, ShouldEqual, 1)
+					So(got.Missing, ShouldEqual, 1)
+					So(got.Status, ShouldEqual, Complete)
+					So(completions(), ShouldEqual, 1)
+				})
 			})
 		})
 	})
@@ -4441,10 +5353,122 @@ func setEntryToStatus(entry *Entry, given *Set, db *DB, status transfer.RequestS
 	setEntryToStatusWithSize(entry, given, db, status, 0)
 }
 
+// uploadPresentEntries reports an upload of each of the given set's file
+// entries that isn't missing, and returns the set afterwards.
+func uploadPresentEntries(db *DB, given *Set) *Set {
+	entries, err := db.GetPureFileEntries(given.ID())
+	So(err, ShouldBeNil)
+
+	for _, entry := range entries {
+		if entry.Status != Missing {
+			setEntryToUploaded(entry, given, db)
+		}
+	}
+
+	return db.GetByID(given.ID())
+}
+
+// reAddUploadedAndRediscover re-adds the given paths to the given set, whose
+// files have the given counts after an upload, rediscovers it and uploads its
+// files again, checking that its counts are the given ones again, with only
+// discovered statuses (missing) counted after the rediscovery.
+func reAddUploadedAndRediscover(db *DB, given *Set, paths []string, uploaded setFileCounts) {
+	So(db.MergeFileEntries(given.ID(), paths), ShouldBeNil)
+
+	discovered := uploaded
+	discovered.Uploaded = 0
+
+	got, err := db.Discover(given.ID(), nil)
+	So(err, ShouldBeNil)
+	So(got.Status, ShouldEqual, PendingUpload)
+	So(fileCounts(got), ShouldResemble, discovered)
+
+	got = uploadPresentEntries(db, given)
+	So(got.Status, ShouldEqual, Complete)
+	So(fileCounts(got), ShouldResemble, uploaded)
+}
+
 func boolToUint64(b bool) uint64 {
 	if b {
 		return 1
 	}
 
 	return 0
+}
+
+func TestCloseDuringDiscovery(t *testing.T) {
+	Convey("Closing the database while discovery stats pure files", t, func() {
+		internal.InitStatter(t)
+
+		db, err := New(filepath.Join(t.TempDir(), "set.db"), "", false)
+		So(err, ShouldBeNil)
+
+		given := &Set{Name: "closing", Requester: "closer", Transformer: tmpRemoteTransformer}
+		So(db.AddOrUpdate(given), ShouldBeNil)
+
+		localDir := t.TempDir()
+		files := make([]string, 3)
+
+		for i := range files {
+			files[i] = filepath.Join(localDir, "file"+strconv.Itoa(i))
+			internal.CreateTestFile(t, files[i], "abc")
+		}
+
+		So(db.MergeFileEntries(given.ID(), files), ShouldBeNil)
+
+		statStarted := make(chan struct{})
+		closeAttempted := make(chan struct{})
+
+		var hookCalls int
+
+		db.statSubmitHook = func() {
+			hookCalls++
+			if hookCalls != 1 {
+				return
+			}
+
+			close(statStarted)
+			<-closeAttempted
+
+			waitForFilePoolStopOrTimeout(db, 500*time.Millisecond)
+		}
+
+		discoverErrCh := make(chan error, 1)
+
+		go func() {
+			_, errd := db.Discover(given.ID(), nil)
+			discoverErrCh <- errd
+		}()
+
+		testutil.Receive(t, statStarted, time.Minute, "discovery to start stat'ing")
+
+		closeErrCh := make(chan error, 1)
+
+		go func() {
+			closeErrCh <- db.Close()
+		}()
+
+		close(closeAttempted)
+
+		Convey("waits for the in-flight stat'ing, then closes cleanly", func() {
+			So(testutil.Receive(t, closeErrCh, time.Minute, "Close to return"), ShouldBeNil)
+			So(hookCalls, ShouldEqual, len(files))
+
+			select {
+			case <-discoverErrCh:
+			case <-time.After(10 * time.Second):
+				So("discovery did not return after close", ShouldBeEmpty)
+			}
+		})
+	})
+}
+
+// waitForFilePoolStopOrTimeout returns once the given db's file pool has been
+// stopped, or after the given timeout.
+func waitForFilePoolStopOrTimeout(db *DB, timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+
+	for !db.filePool.Stopped() && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
 }
