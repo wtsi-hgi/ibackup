@@ -1528,22 +1528,33 @@ func (d *DBRO) GetRemoveRequestOfFile(sid, path string) (*RemoveReq, error) {
 }
 
 // findRemoveRequestOfFile does GetRemoveRequestOfFile()'s search in the given
-// removed bucket.
+// removed bucket, where a directory's request is stored under its path with a
+// trailing "/".
 func (d *DBRO) findRemoveRequestOfFile(b *bolt.Bucket, path string) *RemoveReq {
-	for key, dir := path, path; ; key = strings.TrimSuffix(dir, "/") + "/" {
-		if v := b.Get([]byte(key)); v != nil {
-			remReq := d.decodeRemoveRequest(v)
-
-			return &remReq
-		}
-
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return nil
-		}
-
-		dir = parent
+	if remReq := d.removeRequestAt(b, path); remReq != nil {
+		return remReq
 	}
+
+	for dir := filepath.Dir(path); dir != "/" && dir != "."; dir = filepath.Dir(dir) {
+		if remReq := d.removeRequestAt(b, dir+"/"); remReq != nil {
+			return remReq
+		}
+	}
+
+	return d.removeRequestAt(b, "/")
+}
+
+// removeRequestAt returns the remove request stored under the given key of the
+// given removed bucket, or nil if there is none.
+func (d *DBRO) removeRequestAt(b *bolt.Bucket, key string) *RemoveReq {
+	v := b.Get([]byte(key))
+	if v == nil {
+		return nil
+	}
+
+	remReq := d.decodeRemoveRequest(v)
+
+	return &remReq
 }
 
 func (d *DBRO) decodeRemoveRequest(v []byte) RemoveReq {

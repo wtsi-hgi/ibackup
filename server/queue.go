@@ -447,6 +447,8 @@ func (s *Server) RemoveBuried(bf *BuriedFilter) int {
 
 	s.forEachBuriedItem(bf, func(item *queue.Item) {
 		if err := s.queue.Remove(context.Background(), item.Key); err == nil {
+			s.forgetLateUndoMeta(item.Key)
+
 			n++
 		}
 	})
