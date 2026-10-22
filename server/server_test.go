@@ -488,6 +488,29 @@ func TestServerHelperFunctions(t *testing.T) {
 			So(isRemoved, ShouldBeFalse)
 		})
 	})
+
+	Convey("findAllOtherPathsToExclude excludes the siblings up to a removed folder", t, func() {
+		removed := t.TempDir()
+		entry := &set.Dirent{Path: filepath.Join(removed, "a", "b"), Mode: os.ModeDir}
+
+		for _, dir := range []string{entry.Path, filepath.Join(removed, "a", "x"), filepath.Join(removed, "c")} {
+			So(os.MkdirAll(dir, 0755), ShouldBeNil)
+		}
+
+		s := &Server{}
+
+		paths, err := s.findAllOtherPathsToExclude(entry, removed+"/")
+		So(err, ShouldBeNil)
+		So(paths, ShouldResemble, []set.RemoveReq{
+			{Path: filepath.Join(removed, "a", "x"), IsDir: true, IsComplete: true},
+			{Path: filepath.Join(removed, "c"), IsDir: true, IsComplete: true},
+		})
+
+		Convey("and fails if that folder is not an ancestor", func() {
+			_, err = s.findAllOtherPathsToExclude(entry, filepath.Join(removed, "c")+"/")
+			So(err, ShouldWrap, errMatchNotAncestor)
+		})
+	})
 }
 
 func TestDetermineQueueSize(t *testing.T) {
@@ -3367,6 +3390,90 @@ func TestServer(t *testing.T) {
 							So(errgt, ShouldBeNil)
 							So(trashed, ShouldHaveLength, 1)
 							So(trashed[0].Path, ShouldEqual, file)
+						})
+					})
+
+					Convey("And given a set with a folder holding a subfolder and siblings", func() {
+						topDir := filepath.Join(localDir, "top")
+						removedDir := filepath.Join(topDir, "dir")
+						subDir := filepath.Join(removedDir, "sub")
+						subFile := filepath.Join(subDir, "file")
+						otherFile := filepath.Join(removedDir, "other")
+						prefixFile := filepath.Join(removedDir, "su", "file")
+						keptFile := filepath.Join(topDir, "kept")
+
+						for _, path := range []string{subFile, otherFile, prefixFile, keptFile} {
+							So(os.MkdirAll(filepath.Dir(path), 0755), ShouldBeNil)
+							internal.CreateTestFile(t, path, "content")
+						}
+
+						So(client.MergeDirs(exampleSet.ID(), []string{topDir}), ShouldBeNil)
+						So(client.TriggerDiscovery(exampleSet.ID(), false), ShouldBeNil)
+						So(waitForRacCalled(t, racCalled), ShouldBeTrue)
+
+						makeGivenSetComplete(4, exampleSet.Name, adminClient)
+
+						entryPaths := func(entries []*set.Entry, err error) []string {
+							So(err, ShouldBeNil)
+
+							paths := make([]string, len(entries))
+							for i, entry := range entries {
+								paths[i] = entry.Path
+							}
+
+							slices.Sort(paths)
+
+							return paths
+						}
+
+						mergeSubDirAfterRemoval := func() {
+							waitForRemovals(t, s, client, exampleSet)
+
+							So(entryPaths(client.GetDirs(exampleSet.ID())), ShouldResemble, []string{topDir})
+
+							// files made after the removal in the removed folder are
+							// only excluded by it, including one whose name is a
+							// prefix of the subfolder's; one made outside it must
+							// still be discovered.
+							lateFile := filepath.Join(topDir, "late")
+							internal.CreateTestFile(t, filepath.Join(removedDir, "new"), "content")
+							internal.CreateTestFile(t, filepath.Join(removedDir, "s"), "content")
+							internal.CreateTestFile(t, lateFile, "content")
+
+							errCh := make(chan error, 1)
+
+							go func() {
+								errCh <- client.MergeDirs(exampleSet.ID(), []string{subDir})
+							}()
+
+							So(testutil.Receive(t, errCh, 10*time.Second, "MergeDirs to return"), ShouldBeNil)
+
+							So(entryPaths(client.GetDirs(exampleSet.ID())), ShouldResemble, []string{topDir, subDir})
+
+							before, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+							So(errg, ShouldBeNil)
+
+							So(client.TriggerDiscovery(exampleSet.ID(), false), ShouldBeNil)
+
+							testutil.Eventually(t, 30*time.Second, 25*time.Millisecond, func() bool {
+								got, errgs := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+
+								return errgs == nil && got.LastDiscovery.After(before.LastDiscovery)
+							}, "rediscovery")
+
+							So(entryPaths(client.GetFiles(exampleSet.ID())), ShouldResemble, []string{subFile, keptFile, lateFile})
+						}
+
+						Convey("Merging a subfolder of a removed folder re-adds just that subfolder", func() {
+							So(s.removeFilesAndDirs(exampleSet, nil, []string{removedDir}, set.ToRemove), ShouldBeNil)
+
+							mergeSubDirAfterRemoval()
+						})
+
+						Convey("Merging a subfolder of a trashed folder re-adds just that subfolder", func() {
+							So(client.TrashFilesAndDirs(exampleSet.ID(), []string{removedDir}), ShouldBeNil)
+
+							mergeSubDirAfterRemoval()
 						})
 					})
 

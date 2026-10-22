@@ -139,6 +139,8 @@ const (
 	ErrInvalidInput   = gas.Error("invalid input")
 	ErrInternal       = gas.Error("internal server error")
 
+	errMatchNotAncestor = gas.Error("removed folder is not an ancestor of the merged path")
+
 	paramRequester    = "requester"
 	paramSetID        = "id"
 	paramMakeWritable = "makeWritable"
@@ -1558,11 +1560,17 @@ func (s *Server) excludeFromRemovedBucket(entry *set.Dirent, match string,
 }
 
 // findAllOtherPathsToExclude finds every path that should be excluded but isn't
-// due to match being removed from removed bucket.
+// due to match being removed from removed bucket. It climbs from the entry's
+// parent up to match (a folder's match has a trailing "/"). It returns an error
+// if it reaches the root without meeting match, rather than excluding every
+// sibling of every ancestor. Only a non-clean entry path can cause that, such as
+// one with ".." segments, which isDirentRemovedFromSet matches on its raw string
+// prefix.
 func (s *Server) findAllOtherPathsToExclude(entry *set.Dirent, match string) ([]set.RemoveReq, error) {
 	var paths []set.RemoveReq
 
-	path := filepath.Dir(entry.Path)
+	match = filepath.Clean(match)
+	path := filepath.Dir(filepath.Clean(entry.Path))
 
 	for {
 		childPaths, err := findChildPathsToExclude(path, entry)
@@ -1576,7 +1584,12 @@ func (s *Server) findAllOtherPathsToExclude(entry *set.Dirent, match string) ([]
 			break
 		}
 
-		path = filepath.Dir(path)
+		parent := filepath.Dir(path)
+		if parent == path {
+			return nil, fmt.Errorf("%w: %s not under %s", errMatchNotAncestor, entry.Path, match)
+		}
+
+		path = parent
 	}
 
 	return paths, nil
@@ -1589,14 +1602,16 @@ func findChildPathsToExclude(path string, entry *set.Dirent) ([]set.RemoveReq, e
 	}
 
 	paths := make([]set.RemoveReq, 0, len(entries))
+	entryPath := filepath.Clean(entry.Path)
 
 	for _, dirEntry := range entries {
-		if strings.HasPrefix(entry.Path, filepath.Join(path, dirEntry.Name())) {
+		childPath := filepath.Join(path, dirEntry.Name())
+		if childPath == entryPath || strings.HasPrefix(entryPath, childPath+"/") {
 			continue
 		}
 
 		removeReq := set.RemoveReq{
-			Path:       filepath.Join(path, dirEntry.Name()),
+			Path:       childPath,
 			IsDir:      dirEntry.IsDir(),
 			IsComplete: true,
 		}
