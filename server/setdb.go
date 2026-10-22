@@ -159,20 +159,56 @@ func isRemoteFileMissing(err error) bool {
 }
 
 // withRecordedRemoteMeta returns a copy of the given remote metadata with any
-// sets or requester value missing from it taken from the given recorded
-// metadata, since an earlier attempt that recorded them may have removed them
-// and then failed to add their new values.
+// sets or requester names missing from its values added from the given
+// recorded metadata, since an earlier attempt that recorded them may have
+// removed them and then failed to add their new values. Something else may
+// also have put back only some of the names since, as a client's upload of a
+// late upload's retry adds just its own set and requester (see
+// undoLateUploadOfObject()).
 func withRecordedRemoteMeta(remoteMeta, recorded map[string]string) map[string]string {
 	meta := make(map[string]string, len(remoteMeta))
 	maps.Copy(meta, remoteMeta)
 
 	for key, value := range recorded {
-		if meta[key] == "" {
-			meta[key] = value
+		names := splitCommaSeparatedUnique(meta[key])
+
+		for _, name := range splitCommaSeparatedUnique(value) {
+			names = appendIfMissing(names, name)
 		}
+
+		meta[key] = strings.Join(names, ",")
 	}
 
 	return meta
+}
+
+// requestSet returns a set with just the name and requester of the given
+// request's set, enough for its ID.
+func requestSet(r *transfer.Request) *set.Set {
+	return &set.Set{Name: r.Set, Requester: r.Requester}
+}
+
+// lateUploadEntry returns an uploaded entry for the given request's file. Its
+// inode is unknown, so a hardlink's inode file is kept or removed by looking
+// for other remote hardlinks to it, as when its inode record has gone.
+func lateUploadEntry(r *transfer.Request) *set.Entry {
+	entry := &set.Entry{
+		Path:        r.Local,
+		Size:        r.UploadedSize(),
+		Status:      set.Uploaded,
+		Type:        set.Regular,
+		LastAttempt: time.Now(),
+	}
+
+	switch {
+	case r.Symlink != "":
+		entry.Type = set.Symlink
+		entry.Dest = r.Symlink
+	case r.Hardlink != "":
+		entry.Type = set.Hardlink
+	}
+
+	return entry
 }
 
 // LoadSetDB loads the given set.db or creates it if it doesn't exist.
@@ -1237,7 +1273,7 @@ func (s *Server) handleSetsAndRequesters(path string, givenSet *set.Set,
 		return sets, requesters, nil
 	}
 
-	numUserSets, numSetsWithGivenName, err := s.countSetsForPath(path, givenSet.Name, givenSet.Requester)
+	numUserSets, numSetsWithGivenName, err := s.countSetsForPath(path, givenSet)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1293,28 +1329,31 @@ func appendIfMissing(slice []string, element string) []string {
 	return append(slice, element)
 }
 
-// countSetsForPath gets all sets that contain the provided path and returns a
-// count for the number of sets with the same set name as given, and the number
-// of sets with the same requester as provided.
-func (s *Server) countSetsForPath(path, givenName, givenRequester string) (uint16, uint16, error) {
+// countSetsForPath gets all sets that contain the provided path and returns the
+// number of them with the given set's requester, and the number with its name.
+// The given set is always counted, once, even when it no longer has the path,
+// as when undoing an upload that finished after the path's removal from it.
+func (s *Server) countSetsForPath(path string, givenSet *set.Set) (uint16, uint16, error) {
 	setIDs, err := s.db.GetAllSetsForFile(path)
 	if err != nil {
 		return 0, 0, err
 	}
 
-	var (
-		numSetsWithRequester uint16
-		numSetsWithSetName   uint16
-	)
+	numSetsWithRequester, numSetsWithSetName := uint16(1), uint16(1)
+	givenID := givenSet.ID()
 
 	for _, setID := range setIDs {
+		if setID == givenID {
+			continue
+		}
+
 		set := s.db.GetByID(setID)
 
-		if set.Requester == givenRequester {
+		if set.Requester == givenSet.Requester {
 			numSetsWithRequester++
 		}
 
-		if set.Name == givenName {
+		if set.Name == givenSet.Name {
 			numSetsWithSetName++
 		}
 	}
@@ -2121,18 +2160,227 @@ func (s *Server) updateFileStatus(r *transfer.Request) error {
 		return err
 	}
 
+	if s.failedDuringRemoval(r) {
+		// the pending removal still has the file, so it sees the object itself.
+		s.uploadTracker.uploadFinished(r)
+
+		return s.removeDroppedRequest(r, "its file is being removed from its set")
+	}
+
 	return s.trackUploadingAndStuckRequests(r, entry)
 }
 
-// dropRequest removes the given request, whose set has been deleted or no longer
-// has its file, from our queue whatever its status, and releases any claim it
-// has on a remote data object, so it isn't uploaded or retried again. The reason
-// is logged.
+// failedDuringRemoval returns true if the given request failed while a removal
+// of its file from its set is pending. That removal kept the request while it
+// ran, so a retry released now would be handed out again after the removal.
+func (s *Server) failedDuringRemoval(r *transfer.Request) bool {
+	if r.Status != transfer.RequestStatusFailed {
+		return false
+	}
+
+	removeReq, err := s.storedRemovalOfFile(r)
+
+	return err == nil && removeReq != nil && !removeReq.IsComplete
+}
+
+// storedRemovalOfFile returns the remove request the given request's set
+// stored for its file, or for the nearest of its directories, or nil if there
+// is none. The exclusion records stored for the other paths of a removed
+// directory when a path under it is added back (see findChildPathsToExclude())
+// have no set or action, and only keep those paths out of discovery, so they
+// count as none.
+func (s *Server) storedRemovalOfFile(r *transfer.Request) (*set.RemoveReq, error) {
+	removeReq, err := s.db.GetRemoveRequestOfFile(requestSet(r).ID(), r.Local)
+	if err != nil || removeReq == nil || removeReq.Set == nil {
+		return nil, err
+	}
+
+	return removeReq, nil
+}
+
+// dropRequest handles a result for the given request, whose set has been
+// deleted or no longer has its file. An uploading status is ignored, keeping
+// the request running so that its final result still gets here. Whatever its
+// final result, any remote object left with the set's metadata, by this upload
+// or an earlier attempt, has that undone (see undoLateUpload()). Then the
+// request is removed from our queue (see removeDroppedRequest()). If the undo
+// fails, the request is instead retried like a failed upload, so that a
+// client's next attempt brings its result back here to be undone again.
 func (s *Server) dropRequest(r *transfer.Request, reason string) error {
+	if r.Status == transfer.RequestStatusUploading {
+		return nil
+	}
+
 	s.uploadTracker.uploadFinished(r)
+
+	if err := s.undoLateUpload(r); err != nil {
+		return s.retryLateUploadUndo(r, err)
+	}
+
+	delete(s.lateUndoMeta, r.ID())
+
+	return s.removeDroppedRequest(r, reason)
+}
+
+// removeDroppedRequest removes the given finished request from our queue
+// whatever its status, and releases any claim it has on a remote data object,
+// so it isn't uploaded or retried again, logging the given reason.
+func (s *Server) removeDroppedRequest(r *transfer.Request, reason string) error {
 	s.Logger.Printf("request dropped rid=%s status=%s: %s", r.ID(), r.Status, reason)
 
 	return errors.Join(s.queue.Remove(context.Background(), r.ID()), s.remoteClaims.release(r))
+}
+
+// undoLateUpload undoes what a client of the given request, whose set was
+// deleted or no longer has its file, did to its remote object, if the object
+// still has the set's name. Any status is checked, not only those of uploads
+// that leave the object with the set's metadata, since a retry after a failed
+// undo can report a missing or failed file while the object an earlier
+// attempt left is still there. The removal of the file (or of the set) ran
+// before or during the upload, so didn't see that, and this does what it would
+// have done. For a file the set trashed, including any of a deleted set, whose
+// deletion trashes its files, it puts the file in the trash set and tags the
+// object for it. Otherwise it takes the set (and its requester, unless another
+// of the requester's sets has the file) off the object, removing it if no set
+// is left.
+func (s *Server) undoLateUpload(r *transfer.Request) error {
+	removeReq, err := s.lateUploadRemoval(r)
+	if err != nil {
+		return err
+	}
+
+	meta, err := s.storageHandler.GetMeta(r.Remote)
+	if isRemoteFileMissing(err) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+
+	if !slices.Contains(splitCommaSeparatedUnique(meta[transfer.MetaKeySets]), r.Set) {
+		return nil
+	}
+
+	return s.undoLateUploadOfObject(r, removeReq, meta)
+}
+
+// lateUploadRemoval returns a new remove request, for the given request's file,
+// with the action and set of the removal its set stored for the file (or its
+// directory). Without one the set was deleted, perhaps then added again, or
+// only an exclusion record of a removed directory is left, so the request is
+// to trash, for the set if it exists.
+func (s *Server) lateUploadRemoval(r *transfer.Request) (*set.RemoveReq, error) {
+	stored, err := s.storedRemovalOfFile(r)
+	if err != nil {
+		return nil, err
+	}
+
+	if stored != nil {
+		return &set.RemoveReq{Path: r.Local, Set: stored.Set, Action: stored.Action}, nil
+	}
+
+	given, err := s.db.GetByNameAndRequester(r.Set, r.Requester)
+	if err != nil {
+		return nil, err
+	}
+
+	if given == nil {
+		given = requestSet(r)
+	}
+
+	return &set.RemoveReq{Path: r.Local, Set: given, Action: set.ToTrash}, nil
+}
+
+// putLateUploadInTrash puts the given entry in the trash set of the given set,
+// first making that trash set if it doesn't exist, as when the set never
+// trashed anything. A deleted set's trash set always exists, as its deletion
+// made it.
+func (s *Server) putLateUploadInTrash(given *set.Set, entry *set.Entry) error {
+	trashSet := set.BuildTrashSetFromSet(given)
+
+	if s.db.GetByID(trashSet.ID()) == nil {
+		if err := s.db.AddOrUpdate(&trashSet); err != nil {
+			return err
+		}
+	}
+
+	return s.db.PutLateUploadInTrash(given, entry)
+}
+
+// undoLateUploadOfObject does undoLateUpload()'s work on the given request's
+// remote object, which has the given metadata, for the given removal. When
+// trashing, the trash set gets the file first, so that a retry after the
+// object's update failed still finds the set's name on the object. When
+// removing, removing a hardlink needs the set's transformer.
+//
+// Updating the object's metadata removes the old values before adding the new
+// ones, so if adding fails the object is left with no sets or requester, and a
+// client's upload of the retry then adds back only its own. So, as a removal
+// does (see markAboutToBeRemoved()), the object's sets and requester values
+// before the first attempt are recorded, by request ID, and the names in them
+// are added to what later attempts see. The record is kept in memory, by the
+// single goroutine that handles status updates, so is lost on restart, when a
+// late result is rejected anyway.
+func (s *Server) undoLateUploadOfObject(r *transfer.Request, removeReq *set.RemoveReq,
+	meta map[string]string,
+) error {
+	entry := lateUploadEntry(r)
+
+	var (
+		pt  transformer.PathTransformer
+		err error
+	)
+
+	if removeReq.Action == set.ToTrash {
+		err = s.putLateUploadInTrash(removeReq.Set, entry)
+	} else {
+		pt, err = removeReq.Set.MakeTransformer()
+	}
+
+	if err != nil {
+		return err
+	}
+
+	removeReq.RemoteMeta = s.recordLateUndoMeta(r.ID(), meta)
+
+	s.Logger.Printf("undoing upload of %s to %s, which finished after its removal from set %s",
+		r.Local, r.Remote, removeReq.Set.ID())
+
+	return s.updateOrRemoveRemoteFile(removeReq, pt, r.Remote, meta, entry)
+}
+
+// recordLateUndoMeta returns the sets and requester values recorded for the
+// late upload with the given request ID, first recording those of the given
+// metadata if there are none yet.
+func (s *Server) recordLateUndoMeta(rid string, meta map[string]string) map[string]string {
+	if _, ok := s.lateUndoMeta[rid]; !ok {
+		s.lateUndoMeta[rid] = map[string]string{
+			transfer.MetaKeySets:      meta[transfer.MetaKeySets],
+			transfer.MetaKeyRequester: meta[transfer.MetaKeyRequester],
+		}
+	}
+
+	return s.lateUndoMeta[rid]
+}
+
+// retryLateUploadUndo makes the given request, whose late upload couldn't be
+// undone due to the given error, fail, so it is retried like a failed upload:
+// a client uploads it again (transferring nothing if the object is unchanged),
+// and its result comes back to dropRequest() to be undone again. Like a failed
+// upload, every third attempt buries it instead, until a retry of its set or
+// an admin kicks it.
+func (s *Server) retryLateUploadUndo(r *transfer.Request, undoErr error) error {
+	s.Logger.Printf("request upload undo failed rid=%s err=%s", r.ID(), undoErr)
+
+	r.Status = transfer.RequestStatusFailed
+	r.Error = "undoing upload of a file no longer in its set failed: " + undoErr.Error()
+
+	attempts := 1
+
+	if item, err := s.queue.Get(r.ID()); err == nil {
+		attempts += int(item.Stats().Releases)
+	}
+
+	return s.removeOrReleaseRequestFromQueue(r, &set.Entry{Attempts: attempts})
 }
 
 // handleNewlyCompletedSets gets the set the given request is for, and if it has

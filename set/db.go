@@ -1345,6 +1345,22 @@ func (d *DB) putEntryInTrash(tx *bolt.Tx, set *Set, entry *Entry) error {
 	return sfsb.Bucket.Put([]byte(entry.Path), d.encodeToBytes(entry))
 }
 
+// PutLateUploadInTrash puts the given entry, for a file the given set trashed
+// before an upload of it finished, into the given set's trash set, so that the
+// object that upload left expires, unless the trash set already has the file.
+func (d *DB) PutLateUploadInTrash(given *Set, entry *Entry) error {
+	trashSet := BuildTrashSetFromSet(given)
+
+	return d.db.Update(func(tx *bolt.Tx) error {
+		trashed, _ := d.getEntryFromSubbucket(fileBucket, trashSet.ID(), entry.Path, tx.Bucket([]byte(setsBucket)))
+		if trashed != nil {
+			return nil
+		}
+
+		return d.putEntryInTrash(tx, given, entry)
+	})
+}
+
 // BuildTrashSetFromSet builds a brand new set which copies the given set's
 // Requester and Transformer. Use this set to move trashed files to.
 func BuildTrashSetFromSet(givenSet *Set) Set {
@@ -1473,6 +1489,44 @@ func (d *DBRO) GetRemoveRequests(sid string) ([]RemoveReq, error) {
 	})
 
 	return remReqs, err
+}
+
+// GetRemoveRequestOfFile returns the given set's stored remove request for the
+// given file path or, without one, that of the nearest of its directories,
+// since a directory's removal drops its files' requests once complete (see
+// OptimiseRemoveBucket()). Returns nil if there's neither, including when the
+// set doesn't exist.
+func (d *DBRO) GetRemoveRequestOfFile(sid, path string) (*RemoveReq, error) {
+	var found *RemoveReq
+
+	err := d.db.View(func(tx *bolt.Tx) error {
+		if b := getSubBucket(tx, sid, removedBucket); b != nil {
+			found = d.findRemoveRequestOfFile(b, path)
+		}
+
+		return nil
+	})
+
+	return found, err
+}
+
+// findRemoveRequestOfFile does GetRemoveRequestOfFile()'s search in the given
+// removed bucket.
+func (d *DBRO) findRemoveRequestOfFile(b *bolt.Bucket, path string) *RemoveReq {
+	for key, dir := path, path; ; key = strings.TrimSuffix(dir, "/") + "/" {
+		if v := b.Get([]byte(key)); v != nil {
+			remReq := d.decodeRemoveRequest(v)
+
+			return &remReq
+		}
+
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return nil
+		}
+
+		dir = parent
+	}
 }
 
 func (d *DBRO) decodeRemoveRequest(v []byte) RemoveReq {

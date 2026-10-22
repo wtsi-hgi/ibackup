@@ -176,6 +176,11 @@ type Server struct {
 	failedUploadRetryDelay time.Duration
 	replicaLogging         bool
 
+	// lateUndoMeta holds, by request ID, the sets and requester values a late
+	// upload's remote object had before the first attempt to undo it (see
+	// undoLateUploadOfObject()). Only the status update goroutine uses it.
+	lateUndoMeta map[string]map[string]string
+
 	hungDebugTimeout    time.Duration
 	hungDebugStopCh     chan struct{}
 	hungDebugLastLog    atomic.Int64
@@ -250,6 +255,7 @@ func New(conf Config) (*Server, error) { //nolint:funlen
 		readOnly:               conf.ReadOnly,
 		storageHandler:         conf.StorageHandler,
 		requestLogged:          make(map[string]struct{}),
+		lateUndoMeta:           make(map[string]map[string]string),
 
 		discoveryCoordinator: newDiscoveryCoordinator(),
 	}
