@@ -1219,6 +1219,80 @@ func TestServer(t *testing.T) {
 						expectRemoteMeta(bobSet.Name, bobSet.Requester)
 					})
 
+					Convey("Given a file in two sets of one requester, removing it from one set while its upload "+
+						"runs keeps the object that upload then leaves, with the other set and their requester", func() {
+						givenFile1InSets(exampleSet.Name+","+exampleSet3.Name, exampleSet.Requester,
+							exampleSet, exampleSet3)
+
+						requests, errg := adminClient.GetSomeUploadRequests()
+						So(errg, ShouldBeNil)
+						So(requests, ShouldHaveLength, 2)
+
+						running := requestWithLocal(requests, file1local, exampleSet.Name)
+						running.Status = transfer.RequestStatusUploading
+						So(adminClient.UpdateFileStatus(running), ShouldBeNil)
+
+						err = s.removeFilesAndDirs(exampleSet, []string{file1local}, nil, set.ToRemove)
+						So(err, ShouldBeNil)
+
+						waitForRemovals(t, s, client, exampleSet)
+
+						expectRemoteMeta(exampleSet3.Name, exampleSet.Requester)
+
+						So(finishUploadAfterRemoval(t, s.storageHandler, adminClient, running), ShouldBeNil)
+
+						expectRemoteMeta(exampleSet3.Name, exampleSet.Requester)
+					})
+
+					Convey("Given a file in two sets of one requester, removing it from one set while its upload "+
+						"runs, then failing partway through undoing the object that upload leaves, keeps the "+
+						"other set on it once a retry is undone", func() {
+						givenFile1InSets(exampleSet.Name+","+exampleSet3.Name, exampleSet.Requester,
+							exampleSet, exampleSet3)
+
+						requests, errg := adminClient.GetSomeUploadRequests()
+						So(errg, ShouldBeNil)
+						So(requests, ShouldHaveLength, 2)
+
+						running := requestWithLocal(requests, file1local, exampleSet.Name)
+						running.Status = transfer.RequestStatusUploading
+						So(adminClient.UpdateFileStatus(running), ShouldBeNil)
+
+						err = s.removeFilesAndDirs(exampleSet, []string{file1local}, nil, set.ToRemove)
+						So(err, ShouldBeNil)
+
+						waitForRemovals(t, s, client, exampleSet)
+
+						unwrapped := s.storageHandler
+						failing := &failingAddMetaHandler{Handler: unwrapped}
+						failing.failures.Store(1)
+						s.storageHandler = failing
+
+						So(finishUploadAfterRemoval(t, unwrapped, adminClient, running), ShouldBeNil)
+						So(failing.failures.Load(), ShouldEqual, 0)
+
+						meta, errm := unwrapped.GetMeta(file1remote)
+						So(errm, ShouldBeNil)
+						So(meta[transfer.MetaKeySets], ShouldBeBlank)
+
+						// the other set's upload of the object holds its claim
+						// on it until done.
+						other := requestWithLocal(requests, file1local, exampleSet3.Name)
+						other.Status = transfer.RequestStatusUnmodified
+						So(adminClient.UpdateFileStatus(other), ShouldBeNil)
+
+						retries, errg := adminClient.GetSomeUploadRequests()
+						So(errg, ShouldBeNil)
+						So(retries, ShouldHaveLength, 1)
+						So(retries[0].Set, ShouldEqual, exampleSet.Name)
+
+						So(finishUploadAfterRemoval(t, unwrapped, adminClient, retries[0]), ShouldBeNil)
+
+						s.storageHandler = unwrapped
+
+						expectRemoteMeta(exampleSet3.Name, exampleSet.Requester)
+					})
+
 					Convey("Given a file in two sets, whose removal from one set updated its metadata, then "+
 						"stopped before recording that, a retry after another set uploaded it keeps that set", func() {
 						givenFile1InSets(exampleSet.Name+","+exampleSet3.Name, exampleSet.Requester,
@@ -2234,6 +2308,165 @@ func TestServer(t *testing.T) {
 							So(s.UploadingRequests(), ShouldBeEmpty)
 						})
 
+						trashSet := set.BuildTrashSetFromSet(exampleSet)
+
+						trashedPaths := func() []string {
+							files, errf := client.GetFiles(trashSet.ID())
+							So(errf, ShouldBeNil)
+
+							paths := make([]string, len(files))
+							for i, f := range files {
+								paths[i] = f.Path
+							}
+
+							return paths
+						}
+
+						expectFile1TaggedForTrash := func() {
+							meta, errm := handler.GetMeta(file1remote)
+							So(errm, ShouldBeNil)
+							So(meta[transfer.MetaKeySets], ShouldEqual, trashSet.Name)
+							So(meta[transfer.MetaKeyRequester], ShouldEqual, exampleSet.Requester)
+							So(trashedPaths(), ShouldContain, file1local)
+						}
+
+						for _, uploadingFirst := range []bool{true, false} {
+							when := "after"
+							if uploadingFirst {
+								when = "before"
+							}
+
+							Convey("Removing the whole set while an upload runs, reported uploading "+when+
+								" the removal, tags the object it then uploads for the trash set, which lists it", func() {
+								requests, errg := adminClient.GetSomeUploadRequests()
+								So(errg, ShouldBeNil)
+								So(requests, ShouldHaveLength, 2)
+
+								running := requestWithLocal(requests, file1local, exampleSet.Name)
+								running.Status = transfer.RequestStatusUploading
+
+								if uploadingFirst {
+									So(adminClient.UpdateFileStatus(running), ShouldBeNil)
+								}
+
+								So(client.RemoveSet(exampleSet.ID()), ShouldBeNil)
+								waitForSetDeletion()
+
+								if !uploadingFirst {
+									So(adminClient.UpdateFileStatus(running), ShouldBeNil)
+								}
+
+								erru := finishUploadAfterRemoval(t, handler, adminClient, running)
+
+								expectFile1TaggedForTrash()
+								So(erru, ShouldBeNil)
+								So(s.UploadingRequests(), ShouldBeEmpty)
+							})
+						}
+
+						Convey("Removing a folder while an upload in it runs, then adding back another path "+
+							"under it, tags the object the upload then leaves for the trash set", func() {
+							requests, errg := adminClient.GetSomeUploadRequests()
+							So(errg, ShouldBeNil)
+							So(requests, ShouldHaveLength, 2)
+
+							running := requestWithLocal(requests, file1local, exampleSet.Name)
+							running.Status = transfer.RequestStatusUploading
+							So(adminClient.UpdateFileStatus(running), ShouldBeNil)
+
+							So(s.removeFilesAndDirs(exampleSet, nil, []string{dir2local}, set.ToRemove), ShouldBeNil)
+							waitForRemovals(t, s, client, exampleSet)
+
+							// what adding back a sibling folder does to the
+							// folder's stored removal (see
+							// excludeFromRemovedBucket()): it is replaced by
+							// exclusion records, which have no set, for the
+							// folder's other paths. (MergeDirs() itself can't be
+							// used: findAllOtherPathsToExclude() never reaches
+							// the folder's stored path, which ends in "/".)
+							sibling := filepath.Join(dir2local, "sub")
+							So(os.Mkdir(sibling, 0755), ShouldBeNil)
+
+							exclusions, errf := findChildPathsToExclude(dir2local, &set.Dirent{Path: sibling, Mode: os.ModeDir})
+							So(errf, ShouldBeNil)
+							So(s.db.SetRemoveRequests(exampleSet.ID(), exclusions), ShouldBeNil)
+							So(s.db.RemoveFromRemovedBucket(dir2local+"/", exampleSet.ID()), ShouldBeNil)
+
+							excluded, errg := s.db.GetRemoveRequestOfFile(exampleSet.ID(), file1local)
+							So(errg, ShouldBeNil)
+							So(excluded, ShouldNotBeNil)
+							So(excluded.Path, ShouldEqual, file1local)
+							So(excluded.Set, ShouldBeNil)
+
+							erru := finishUploadAfterRemoval(t, handler, adminClient, running)
+
+							expectFile1TaggedForTrash()
+							So(erru, ShouldBeNil)
+							So(s.UploadingRequests(), ShouldBeEmpty)
+						})
+
+						Convey("Trashing a failed file while its retry is reserved tags the object the retry "+
+							"then uploads for the trash set, which lists it", func() {
+							changeSetFilesStatus(2, exampleSet.Name, adminClient, transfer.RequestStatusFailed)
+
+							requests, errg := adminClient.GetSomeUploadRequests()
+							So(errg, ShouldBeNil)
+							So(requests, ShouldHaveLength, 2)
+
+							So(client.TrashFilesAndDirs(exampleSet.ID(), []string{file1local}), ShouldBeNil)
+							waitForRemovals(t, s, client, exampleSet)
+
+							// a never-uploaded file has no object to trash.
+							So(trashedPaths(), ShouldBeEmpty)
+
+							running := requestWithLocal(requests, file1local, exampleSet.Name)
+							running.Status = transfer.RequestStatusUploading
+							So(adminClient.UpdateFileStatus(running), ShouldBeNil)
+
+							erru := finishUploadAfterRemoval(t, handler, adminClient, running)
+
+							expectFile1TaggedForTrash()
+							So(erru, ShouldBeNil)
+							So(s.UploadingRequests(), ShouldBeEmpty)
+						})
+
+						Convey("Trashing a failed file while its retry runs, which fails during the removal, "+
+							"doesn't hand that retry out again", func() {
+							changeSetFilesStatus(2, exampleSet.Name, adminClient, transfer.RequestStatusFailed)
+
+							requests, errg := adminClient.GetSomeUploadRequests()
+							So(errg, ShouldBeNil)
+							So(requests, ShouldHaveLength, 2)
+
+							for _, request := range requests {
+								request.Status = transfer.RequestStatusUploading
+								So(adminClient.UpdateFileStatus(request), ShouldBeNil)
+							}
+
+							gated := &gatedGetMetaHandler{
+								Handler: s.storageHandler,
+								reached: make(chan struct{}, 1),
+								gate:    make(chan struct{}),
+							}
+							s.storageHandler = gated
+
+							So(client.TrashFilesAndDirs(exampleSet.ID(), []string{file1local}), ShouldBeNil)
+							testutil.Receive(t, gated.reached, signalTimeout, "the removal to reach the gated remote metadata read")
+
+							running := requestWithLocal(requests, file1local, exampleSet.Name)
+							running.Status = transfer.RequestStatusFailed
+							running.Error = "connection reset"
+							So(adminClient.UpdateFileStatus(running), ShouldBeNil)
+
+							close(gated.gate)
+							waitForRemovals(t, s, client, exampleSet)
+
+							retries, errg := adminClient.GetSomeUploadRequests()
+							So(errg, ShouldBeNil)
+							So(retries, ShouldBeEmpty)
+							So(s.queue.Stats().Items, ShouldEqual, 1)
+						})
+
 						Convey("Trashing a failed file while its retry runs drops the retry's result, "+
 							"so it isn't retried again", func() {
 							changeSetFilesStatus(2, exampleSet.Name, adminClient, transfer.RequestStatusFailed)
@@ -2687,6 +2920,101 @@ func TestServer(t *testing.T) {
 										So(err, ShouldBeNil)
 									})
 								})
+							})
+
+							// removeFile1WhileReuploading rediscovers file1 with a
+							// newer mtime, reserves its re-upload and reports it
+							// uploading (and file2's unmodified), removes file1
+							// from the set with ToRemove (as a discovery of its
+							// local deletion would), and returns that still
+							// running re-upload.
+							removeFile1WhileReuploading := func() *transfer.Request {
+								later := time.Now().Add(time.Hour)
+								So(os.Chtimes(file1local, later, later), ShouldBeNil)
+
+								drainRacCalled(t, racCalled)
+								So(client.TriggerDiscovery(exampleSet.ID(), false), ShouldBeNil)
+								So(waitForRacCalled(t, racCalled), ShouldBeTrue)
+
+								requests, errg := adminClient.GetSomeUploadRequests()
+								So(errg, ShouldBeNil)
+								So(requests, ShouldHaveLength, 2)
+
+								running := requestWithLocal(requests, file1local, exampleSet.Name)
+								running.Status = transfer.RequestStatusUploading
+								So(adminClient.UpdateFileStatus(running), ShouldBeNil)
+
+								other := requestWithLocal(requests, file2local, exampleSet.Name)
+								other.Status = transfer.RequestStatusUnmodified
+								So(adminClient.UpdateFileStatus(other), ShouldBeNil)
+
+								So(s.removeFilesAndDirs(exampleSet, []string{file1local}, nil, set.ToRemove), ShouldBeNil)
+								waitForRemovals(t, s, client, exampleSet)
+
+								_, err = os.Stat(file1remote)
+								So(err, ShouldNotBeNil)
+
+								return running
+							}
+
+							Convey("Removing a file while its re-upload runs removes the object the re-upload "+
+								"then leaves", func() {
+								running := removeFile1WhileReuploading()
+
+								erru := finishUploadAfterRemoval(t, handler, adminClient, running)
+
+								_, err = os.Stat(file1remote)
+								So(err, ShouldNotBeNil)
+								So(erru, ShouldBeNil)
+								So(s.queue.Stats().Items, ShouldEqual, 0)
+								So(s.UploadingRequests(), ShouldBeEmpty)
+							})
+
+							Convey("Removing a file while its re-upload runs, then failing to undo the object "+
+								"the re-upload leaves, retries the upload, whose result then removes it", func() {
+								running := removeFile1WhileReuploading()
+
+								s.storageHandler = &failingGetMetaHandler{Handler: handler, failPath: file1remote}
+
+								So(finishUploadAfterRemoval(t, handler, adminClient, running), ShouldBeNil)
+
+								_, err = os.Stat(file1remote)
+								So(err, ShouldBeNil)
+
+								s.storageHandler = handler
+
+								retries, errg := adminClient.GetSomeUploadRequests()
+								So(errg, ShouldBeNil)
+								So(retries, ShouldHaveLength, 1)
+								So(retries[0].Local, ShouldEqual, file1local)
+
+								So(finishUploadAfterRemoval(t, handler, adminClient, retries[0]), ShouldBeNil)
+
+								_, err = os.Stat(file1remote)
+								So(err, ShouldNotBeNil)
+								So(s.queue.Stats().Items, ShouldEqual, 0)
+							})
+
+							Convey("Removing a file while its re-upload runs, then failing to undo the object "+
+								"the re-upload leaves, removes it when the retry reports the file missing", func() {
+								running := removeFile1WhileReuploading()
+
+								s.storageHandler = &failingGetMetaHandler{Handler: handler, failPath: file1remote}
+
+								So(finishUploadAfterRemoval(t, handler, adminClient, running), ShouldBeNil)
+
+								s.storageHandler = handler
+
+								retries, errg := adminClient.GetSomeUploadRequests()
+								So(errg, ShouldBeNil)
+								So(retries, ShouldHaveLength, 1)
+
+								retries[0].Status = transfer.RequestStatusMissing
+								So(adminClient.UpdateFileStatus(retries[0]), ShouldBeNil)
+
+								_, err = os.Stat(file1remote)
+								So(err, ShouldNotBeNil)
+								So(s.queue.Stats().Items, ShouldEqual, 0)
 							})
 
 							Convey("A trash request retried after a re-upload of its file failed puts the "+
@@ -6314,9 +6642,11 @@ func TestServer(t *testing.T) {
 
 					uploadStarts, uploadResults, skippedResults = p.Put()
 
+					// the removed file's uploading status keeps its request
+					// running, so its failed result is accepted and dropped.
 					err = client.SendPutResultsToServer(uploadStarts, uploadResults, skippedResults,
 						minMBperSecondUploadSpeed, minTimeForUpload, maxStuckTime, logger)
-					So(err, ShouldNotBeNil)
+					So(err, ShouldBeNil)
 
 					items := s.queue.AllItems()
 					So(len(items), ShouldEqual, 0)
@@ -9224,6 +9554,20 @@ func waitForRacCalled(t *testing.T, racCalled chan bool) bool {
 	return testutil.Receive(t, racCalled, signalTimeout, "the queue's readyAdded callback")
 }
 
+// requestWithLocal returns the request among the given ones with the given
+// local path and set name.
+func requestWithLocal(requests []*transfer.Request, local, setName string) *transfer.Request {
+	for _, r := range requests {
+		if r.Local == local && r.Set == setName {
+			return r
+		}
+	}
+
+	So(local, ShouldBeEmpty)
+
+	return nil
+}
+
 // deleteEntryAsOldBuild edits the database at dbPath, whose server must be
 // stopped, as a build before #193 left it when it stopped a file removal just
 // after deleting the file's entry from the given set: if trashSetID isn't blank,
@@ -9626,6 +9970,32 @@ func waitForRediscoveryQueued(t *testing.T, s *Server, client *Client, given *se
 	}()
 
 	testutil.Receive(t, released, timeout, "the rediscovery to queue its requests")
+}
+
+// finishUploadAfterRemoval does to the given request's remote object what a
+// client's upload of it does, as if that upload ran on after its file was
+// removed: it creates the object if it's gone, and adds the request's set and
+// requester to its metadata. Then it reports the request uploaded, returning
+// any error from that.
+func finishUploadAfterRemoval(t *testing.T, handler remove.Handler, client *Client, r *transfer.Request) error {
+	t.Helper()
+
+	meta, err := handler.GetMeta(r.Remote)
+	if err != nil {
+		createRemoteObject(t, handler, map[string]string{
+			transfer.MetaKeySets:      r.Set,
+			transfer.MetaKeyRequester: r.Requester,
+		}, r.Remote)
+	} else {
+		sets := appendIfMissing(splitCommaSeparatedUnique(meta[transfer.MetaKeySets]), r.Set)
+		requesters := appendIfMissing(splitCommaSeparatedUnique(meta[transfer.MetaKeyRequester]), r.Requester)
+
+		So(remove.UpdateSetsAndRequestersOnRemoteFile(handler, r.Remote, sets, requesters, meta), ShouldBeNil)
+	}
+
+	r.Status = transfer.RequestStatusUploaded
+
+	return client.UpdateFileStatus(r)
 }
 
 // hookedRemoteChangeHandler is a remove.Handler whose RemoveFile() and
