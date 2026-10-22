@@ -152,6 +152,74 @@ const (
 	allUsers = "all"
 )
 
+// liveSets are the sets in our database of a remote object's requesters, and
+// the sets in our database (of any requester) that have its path.
+type liveSets struct {
+	known   []*set.Set
+	holders []*set.Set
+}
+
+// withoutStaleNames returns the given set names less those in added, other
+// than the given one, that are stale: one of the object's requesters has a set
+// of that name, and none of our sets of that name has the path.
+func (l liveSets) withoutStaleNames(names, added []string, given string) []string {
+	return slices.DeleteFunc(names, func(name string) bool {
+		return name != given && slices.Contains(added, name) && l.isKnown(name) &&
+			!slices.ContainsFunc(l.holders, func(h *set.Set) bool { return h.Name == name })
+	})
+}
+
+// isKnown returns true if one of the object's requesters has a set of the given
+// name.
+func (l liveSets) isKnown(name string) bool {
+	return slices.ContainsFunc(l.known, func(k *set.Set) bool { return k.Name == name })
+}
+
+// withoutStaleRequesters returns the given requesters less those in added,
+// other than the given one, none of whose sets has the path.
+func (l liveSets) withoutStaleRequesters(requesters, added []string, given string) []string {
+	return slices.DeleteFunc(requesters, func(requester string) bool {
+		return requester != given && slices.Contains(added, requester) &&
+			!slices.ContainsFunc(l.holders, func(h *set.Set) bool { return h.Requester == requester })
+	})
+}
+
+// allKnown returns true if every one of the given names, other than the given
+// exception, isKnown().
+func (l liveSets) allKnown(names []string, except string) bool {
+	return !slices.ContainsFunc(names, func(name string) bool { return name != except && !l.isKnown(name) })
+}
+
+// liveSetsOfPath returns the liveSets of the remote object of the given path,
+// which has the given requesters, reading the sets of those requesters
+// (GetByRequester()) and the sets that have the path (GetAllSetsForFile() and
+// GetByID()).
+func (s *Server) liveSetsOfPath(path string, requesters []string) (liveSets, error) {
+	var live liveSets
+
+	for _, requester := range requesters {
+		sets, err := s.db.GetByRequester(requester)
+		if err != nil {
+			return liveSets{}, err
+		}
+
+		live.known = append(live.known, sets...)
+	}
+
+	holderIDs, err := s.db.GetAllSetsForFile(path)
+	if err != nil {
+		return liveSets{}, err
+	}
+
+	for _, id := range holderIDs {
+		if holder := s.db.GetByID(id); holder != nil {
+			live.holders = append(live.holders, holder)
+		}
+	}
+
+	return live, nil
+}
+
 func isRemoteFileMissing(err error) bool {
 	pathErr, ok := errors.AsType[errs.PathError](err)
 
@@ -182,6 +250,16 @@ func withRecordedRemoteMeta(remoteMeta, recorded map[string]string) map[string]s
 	return meta
 }
 
+// addedNames returns the names in the given key's value of merged that are not
+// in that of original.
+func addedNames(original, merged map[string]string, key string) []string {
+	had := splitCommaSeparatedUnique(original[key])
+
+	return slices.DeleteFunc(splitCommaSeparatedUnique(merged[key]), func(name string) bool {
+		return slices.Contains(had, name)
+	})
+}
+
 // requestSet returns a set with just the name and requester of the given
 // request's set, enough for its ID.
 func requestSet(r *transfer.Request) *set.Set {
@@ -209,6 +287,58 @@ func lateUploadEntry(r *transfer.Request) *set.Entry {
 	}
 
 	return entry
+}
+
+// withLiveRecordedRemoteMeta returns withRecordedRemoteMeta() of the given
+// metadata of the given path's remote object, less any set or requester name
+// it added back that our database shows is stale. Another set's removal may
+// have taken its name off the object since the names were recorded, and adding
+// that back would keep the object, held by no set, for ever.
+//
+// A set name is stale if one of our sets has that name and one of the
+// object's requesters, and none of our sets of that name has the path. Other
+// names, of deleted sets or another server's, are kept, as an object kept by
+// another server's set is not ours to remove (unless our database has a set
+// of the same name and requester, which we can't tell apart). A requester is
+// stale if none of the requester's sets has the path, and every set name the
+// object keeps is that of one of our sets with one of the object's
+// requesters, since a name not known for one of them could be the
+// requester's. The given set's name and requester are kept for the caller to
+// decide on.
+//
+// A set's entry for the path goes from our database only after its removal
+// has updated the remote object, so a name is only taken as stale once its
+// set's update is done. A late upload (see undoLateUploadOfObject()) can add a
+// set's name after that, but its undo removes the name anyway.
+func (s *Server) withLiveRecordedRemoteMeta(path string, given *set.Set,
+	remoteMeta, recorded map[string]string,
+) (map[string]string, error) {
+	meta := withRecordedRemoteMeta(remoteMeta, recorded)
+
+	addedSets := addedNames(remoteMeta, meta, transfer.MetaKeySets)
+	addedRequesters := addedNames(remoteMeta, meta, transfer.MetaKeyRequester)
+
+	if len(addedSets)+len(addedRequesters) == 0 {
+		return meta, nil
+	}
+
+	requesters := splitCommaSeparatedUnique(meta[transfer.MetaKeyRequester])
+
+	live, err := s.liveSetsOfPath(path, requesters)
+	if err != nil {
+		return nil, err
+	}
+
+	names := live.withoutStaleNames(splitCommaSeparatedUnique(meta[transfer.MetaKeySets]), addedSets, given.Name)
+
+	if live.allKnown(names, given.Name) {
+		requesters = live.withoutStaleRequesters(requesters, addedRequesters, given.Requester)
+	}
+
+	meta[transfer.MetaKeySets] = strings.Join(names, ",")
+	meta[transfer.MetaKeyRequester] = strings.Join(requesters, ",")
+
+	return meta, nil
 }
 
 // LoadSetDB loads the given set.db or creates it if it doesn't exist.
@@ -1132,12 +1262,13 @@ func (s *Server) updateOrRemoveRemoteFile(removeReq *set.RemoveReq, transformer 
 		return nil
 	}
 
-	metaBeforeUpdate := withRecordedRemoteMeta(remoteMeta, removeReq.RemoteMeta)
+	metaBeforeUpdate, err := s.withLiveRecordedRemoteMeta(removeReq.Path, removeReq.Set, remoteMeta,
+		removeReq.RemoteMeta)
+	if err != nil {
+		return err
+	}
 
-	var (
-		sets, requesters []string
-		err              error
-	)
+	var sets, requesters []string
 
 	if removeReq.Action == set.ToRemove {
 		sets, requesters, err = s.handleSetsAndRequesters(removeReq.Path, removeReq.Set, metaBeforeUpdate)

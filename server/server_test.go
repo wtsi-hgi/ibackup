@@ -76,6 +76,7 @@ var (
 	errSmallListOfFiles   = errors.New("unexpected small listOfFiles")
 	errInjectedRequeue    = errors.New("injected requeue failure")
 	errInjectedAddMeta    = errors.New("injected add meta failure")
+	errInjectedRemoveMeta = errors.New("injected remove meta failure")
 	errInjectedRemoveFile = errors.New("injected remove file failure")
 	// errInjectedGetMeta is a PathError like baton's timeout, to show that only
 	// a PathError for a missing file counts as the remote object being gone.
@@ -1281,6 +1282,153 @@ func TestServer(t *testing.T) {
 						So(s.processRemoteFileRemoval(&stored[0], entry), ShouldBeNil)
 
 						expectRemoteMeta(exampleSet3.Name+","+bobSet.Name, exampleSet.Requester+","+bobSet.Requester)
+					})
+
+					annSet := &set.Set{
+						Name:        "set5",
+						Requester:   "ann",
+						Transformer: exampleSet.Transformer,
+						MonitorTime: 0,
+					}
+
+					// failFirstRemovalAttempt makes a removal of file1 from the
+					// given set whose first attempt fails, with the given
+					// handler, after recording the remote object's metadata,
+					// and returns the request and file1's entry for a retry.
+					failFirstRemovalAttempt := func(given *set.Set, failing remove.Handler) (*set.RemoveReq, *set.Entry) {
+						stored, errg := client.GetSetByID(given.Requester, given.ID())
+						So(errg, ShouldBeNil)
+
+						entry, errg := s.db.GetFileEntryForSet(given.ID(), file1local)
+						So(errg, ShouldBeNil)
+
+						remReq := set.NewRemoveRequest(file1local, stored, false, set.ToRemove)
+						So(s.db.SetRemoveRequests(stored.ID(), []set.RemoveReq{remReq}), ShouldBeNil)
+
+						unwrapped := s.storageHandler
+						s.storageHandler = failing
+
+						So(s.processRemoteFileRemoval(&remReq, entry), ShouldNotBeNil)
+
+						s.storageHandler = unwrapped
+
+						So(remReq.RemoteMeta, ShouldNotBeNil)
+
+						return &remReq, entry
+					}
+
+					Convey("Given a file in two sets of one requester, whose removal from one set fails before "+
+						"changing its metadata, a retry after the other set's removal finished removes its "+
+						"remote object", func() {
+						givenFile1InSets(exampleSet.Name+","+exampleSet3.Name, exampleSet.Requester,
+							exampleSet, exampleSet3)
+
+						failing := &failingRemoveMetaHandler{Handler: s.storageHandler}
+						failing.failures.Store(1)
+
+						remReq, entry := failFirstRemovalAttempt(exampleSet, failing)
+						So(failing.failures.Load(), ShouldEqual, 0)
+						expectRemoteMeta(exampleSet.Name+","+exampleSet3.Name, exampleSet.Requester)
+
+						err = s.removeFilesAndDirs(exampleSet3, []string{file1local}, nil, set.ToRemove)
+						So(err, ShouldBeNil)
+
+						waitForRemovals(t, s, client, exampleSet3)
+
+						expectRemoteMeta(exampleSet.Name, exampleSet.Requester)
+
+						So(s.processRemoteFileRemoval(remReq, entry), ShouldBeNil)
+
+						_, err = os.Stat(file1remote)
+						So(errors.Is(err, fs.ErrNotExist), ShouldBeTrue)
+					})
+
+					Convey("Given a file in sets of three requesters, whose removal from one set fails before "+
+						"changing its metadata, a retry after another set's removal finished", func() {
+						// retryAfterBobsRemoval does that, with the given extra
+						// sets on the object.
+						retryAfterBobsRemoval := func(extra string) {
+							givenFile1InSets(exampleSet.Name+","+bobSet.Name+","+annSet.Name+extra,
+								exampleSet.Requester+","+bobSet.Requester+","+annSet.Requester,
+								exampleSet, bobSet, annSet)
+
+							failing := &failingRemoveMetaHandler{Handler: s.storageHandler}
+							failing.failures.Store(1)
+
+							remReq, entry := failFirstRemovalAttempt(exampleSet, failing)
+
+							err = s.removeFilesAndDirs(bobSet, []string{file1local}, nil, set.ToRemove)
+							So(err, ShouldBeNil)
+
+							waitForRemovals(t, s, adminClient, bobSet)
+
+							expectRemoteMeta(exampleSet.Name+","+annSet.Name+extra,
+								exampleSet.Requester+","+annSet.Requester)
+
+							So(s.processRemoteFileRemoval(remReq, entry), ShouldBeNil)
+						}
+
+						Convey("doesn't put back that set or its requester", func() {
+							retryAfterBobsRemoval("")
+
+							expectRemoteMeta(annSet.Name, annSet.Requester)
+						})
+
+						Convey("keeps that requester, but not that set, while the object has a set unknown "+
+							"to the server, which may be the requester's", func() {
+							retryAfterBobsRemoval(",set9")
+
+							expectRemoteMeta(annSet.Name+",set9", annSet.Requester+","+bobSet.Requester)
+						})
+					})
+
+					Convey("Given a file in two sets and in a set whose name the server knows only for another "+
+						"requester, whose removal from one set fails to add the new metadata, a retry after another "+
+						"set's upload put back only its own keeps the other sets and their requesters", func() {
+						daveSet := &set.Set{
+							Name:        "set6",
+							Requester:   "dave",
+							Transformer: exampleSet.Transformer,
+							MonitorTime: 0,
+						}
+
+						So(adminClient.AddOrUpdateSet(daveSet), ShouldBeNil)
+
+						// retryAfterBobsUpload does that, with the given extra
+						// sets on the object and the given sets holding the
+						// file.
+						retryAfterBobsUpload := func(extra string, given ...*set.Set) {
+							givenFile1InSets(exampleSet.Name+","+exampleSet3.Name+","+daveSet.Name+extra,
+								exampleSet.Requester+","+annSet.Requester, given...)
+
+							failing := &failingAddMetaHandler{Handler: s.storageHandler}
+							failing.failures.Store(1)
+
+							remReq, entry := failFirstRemovalAttempt(exampleSet, failing)
+							So(failing.failures.Load(), ShouldEqual, 0)
+
+							meta, errm := s.storageHandler.GetMeta(file1remote)
+							So(errm, ShouldBeNil)
+							So(meta[transfer.MetaKeySets], ShouldBeBlank)
+
+							So(s.storageHandler.AddMeta(file1remote, map[string]string{
+								transfer.MetaKeySets:      bobSet.Name,
+								transfer.MetaKeyRequester: bobSet.Requester,
+							}), ShouldBeNil)
+
+							So(s.processRemoteFileRemoval(remReq, entry), ShouldBeNil)
+
+							expectRemoteMeta(bobSet.Name+","+exampleSet3.Name+","+daveSet.Name+extra,
+								bobSet.Requester+","+exampleSet.Requester+","+annSet.Requester)
+						}
+
+						Convey("with a set unknown to the server on it too", func() {
+							retryAfterBobsUpload(",set9", exampleSet, exampleSet3)
+						})
+
+						Convey("with the uploading set holding the file too, so the server knows every name", func() {
+							retryAfterBobsUpload("", exampleSet, exampleSet3, bobSet)
+						})
 					})
 
 					Convey("Given a complete set, a removal interrupted by the server stopping "+
@@ -9828,6 +9976,24 @@ func (h *failingAddMetaHandler) AddMeta(path string, meta map[string]string) err
 	h.failures.Store(0)
 
 	return h.Handler.AddMeta(path, meta)
+}
+
+// failingRemoveMetaHandler is a remove.Handler whose RemoveMeta() fails with
+// errInjectedRemoveMeta, without changing anything, while failures is above 0,
+// decrementing it each time.
+type failingRemoveMetaHandler struct {
+	remove.Handler
+	failures atomic.Int64
+}
+
+func (h *failingRemoveMetaHandler) RemoveMeta(path string, meta map[string]string) error {
+	if h.failures.Add(-1) >= 0 {
+		return errInjectedRemoveMeta
+	}
+
+	h.failures.Store(0)
+
+	return h.Handler.RemoveMeta(path, meta)
 }
 
 // partialAddMetaHandler is a remove.Handler whose first AddMeta() adds only the
