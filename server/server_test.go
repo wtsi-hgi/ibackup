@@ -3440,6 +3440,10 @@ func TestServer(t *testing.T) {
 							internal.CreateTestFile(t, filepath.Join(removedDir, "s"), "content")
 							internal.CreateTestFile(t, lateFile, "content")
 
+							// MergeDirs is one request doing local database writes, so it
+							// returns in milliseconds. It used to loop forever here, so call
+							// it in a goroutine and fail within 10s instead of hanging the
+							// package's test run.
 							errCh := make(chan error, 1)
 
 							go func() {

@@ -6034,8 +6034,6 @@ func TestRetry(t *testing.T) {
 		path := t.TempDir()
 		transformer := "prefix=" + path + ":" + remotePath
 
-		timeout := wrUploadTimeout
-
 		Convey("retry requires --name", func() {
 			s.confirmOutputContains(t, []string{"retry"}, 1,
 				"Error: required flag(s) \"name\" not set")
@@ -6058,7 +6056,7 @@ func TestRetry(t *testing.T) {
 			setName := "failTest"
 			s.addSetForTesting(t, setName, transformer, path)
 
-			s.waitForStatus(setName, "\nStatus: complete (but with failures - try a retry)", timeout)
+			s.waitForStatus(setName, "\nStatus: complete (but with failures - try a retry)", wrUploadTimeout)
 
 			exitCode, output := s.runBinaryWithNoLogging(t, "status", "--name", setName, "-d")
 			So(exitCode, ShouldEqual, 0)
@@ -6074,7 +6072,7 @@ func TestRetry(t *testing.T) {
 				exitCode, _ = s.runBinary(t, "retry", "--name", setName)
 				So(exitCode, ShouldEqual, 0)
 
-				s.waitForStatus(setName, "Status: complete\n", timeout)
+				s.waitForStatus(setName, "Status: complete\n", wrUploadTimeout)
 
 				exitCode, output = s.runBinaryWithNoLogging(t, "status", "--name", setName, "-d")
 				So(exitCode, ShouldEqual, 0)
