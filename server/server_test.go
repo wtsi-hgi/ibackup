@@ -1397,7 +1397,7 @@ func TestServer(t *testing.T) {
 						So(s.processRemoteFileRemoval(remReq, entry), ShouldBeNil)
 
 						_, err = os.Stat(file1remote)
-						So(errors.Is(err, fs.ErrNotExist), ShouldBeTrue)
+						So(err, ShouldWrap, fs.ErrNotExist)
 					})
 
 					Convey("Given a file in sets of three requesters, whose removal from one set fails before "+
