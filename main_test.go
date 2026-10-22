@@ -371,7 +371,7 @@ func TestPuts(t *testing.T) {
 			setName := "failuresTest"
 			s.addSetForTesting(t, setName, transformer, path)
 
-			s.waitForStatus(setName, "\nStatus: complete (but with failures - try a retry)", 60*time.Second)
+			s.waitForStatus(setName, "\nStatus: complete (but with failures - try a retry)", wrUploadTimeout)
 		})
 
 		Convey("Given a file containing directory and file paths", func() {
@@ -413,6 +413,9 @@ func TestPuts(t *testing.T) {
 				exitCode, _ := s.runBinary(t, "add", "--items", tempTestFileOfPaths.Name(),
 					"--name", "testAddFiles", "--transformer", transformer)
 				So(exitCode, ShouldEqual, 0)
+
+				// file1 and file2 are only listed once dir1 has been walked
+				s.waitForStatus("testAddFiles", "\nDiscovery: completed", 30*time.Second)
 
 				s.confirmOutputContains(t, []string{"status", "--name", "testAddFiles", "-d"}, 0, "Directories:")
 				s.confirmOutputContains(t, []string{"status", "--name", "testAddFiles", "-d"}, 0,
@@ -505,7 +508,7 @@ Local Path	Status	Size	Attempts	Date	Error`+"\n"+
 			Convey("Add will apply default reason/review/remove metadata", func() {
 				s.addSetForTesting(t, setName, transformer, path)
 
-				s.waitForStatus(setName, "\nStatus: complete", 30*time.Second)
+				s.waitForStatus(setName, "\nStatus: complete", wrUploadTimeout)
 
 				testRemoteReviewRemove(t, filepath.Join(remotePath, "file1"),
 					"backup", now.AddDate(0, 6, 0), now.AddDate(1, 0, 0))
@@ -627,7 +630,7 @@ Global put client status (/10): 6 iRODS connections`)
 
 				releaseUploads()
 
-				s.waitForStatus(setName, "\nStatus: complete", 60*time.Second)
+				s.waitForStatus(setName, "\nStatus: complete", wrUploadTimeout)
 
 				s.confirmOutputContains(t, statusCmd, 0,
 					"Uploaded: 3; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0")
@@ -640,7 +643,7 @@ Global put client status (/10): 6 iRODS connections`)
 				statusCmd[2] = newName
 
 				s.addSetForTesting(t, newName, transformer, path)
-				s.waitForStatus(newName, "\nStatus: complete", 60*time.Second)
+				s.waitForStatus(newName, "\nStatus: complete", wrUploadTimeout)
 				s.confirmOutputContains(t, statusCmd, 0,
 					"Uploaded: 0; Replaced: 0; Skipped: 3; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0")
 				s.confirmOutputContains(t, statusCmd, 0,
@@ -652,7 +655,7 @@ Global put client status (/10): 6 iRODS connections`)
 				internal.CreateTestFile(t, file2, "some data2 updated")
 
 				s.addSetForTesting(t, newName, transformer, path)
-				s.waitForStatus(newName, "\nStatus: complete", 60*time.Second)
+				s.waitForStatus(newName, "\nStatus: complete", wrUploadTimeout)
 				s.confirmOutputContains(t, statusCmd, 0,
 					"Uploaded: 0; Replaced: 1; Skipped: 2; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0")
 				s.confirmOutputContains(t, statusCmd, 0,
@@ -662,7 +665,7 @@ Global put client status (/10): 6 iRODS connections`)
 				exitCode, _ := s.runBinary(t, "sync", "--name", newName)
 				So(exitCode, ShouldEqual, 0)
 
-				s.waitForStatus(newName, "\nStatus: complete", 60*time.Second)
+				s.waitForStatus(newName, "\nStatus: complete", wrUploadTimeout)
 				s.confirmOutputContains(t, statusCmd, 0,
 					"Uploaded: 0; Replaced: 1; Skipped: 2; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0")
 				s.confirmOutputContains(t, statusCmd, 0,
@@ -678,7 +681,7 @@ Global put client status (/10): 6 iRODS connections`)
 
 				s.addSetForTesting(t, setName, transformer, path)
 
-				s.waitForStatus(setName, "\nStatus: complete", 60*time.Second)
+				s.waitForStatus(setName, "\nStatus: complete", wrUploadTimeout)
 
 				statusCmd := []string{"status", "--name", setName, "-d"}
 
@@ -697,7 +700,7 @@ Global put client status (/10): 6 iRODS connections`)
 				exitCode, _ = s.runBinary(t, "sync", "--name", setName)
 				So(exitCode, ShouldEqual, 0)
 
-				s.waitForStatus(setName, "\nStatus: complete", 60*time.Second)
+				s.waitForStatus(setName, "\nStatus: complete", wrUploadTimeout)
 
 				exitCode, output = s.runBinary(t, statusCmd...)
 				So(exitCode, ShouldEqual, 0)
@@ -716,7 +719,7 @@ Global put client status (/10): 6 iRODS connections`)
 				setName := "setWithOrphanedDirs"
 				s.addSetForTesting(t, setName, transformer, path)
 
-				s.waitForStatus(setName, "\nStatus: complete", 10*time.Second)
+				s.waitForStatus(setName, "\nStatus: complete", wrUploadTimeout)
 
 				statusCmd := []string{"status", "--name", setName, "-d"}
 
@@ -730,7 +733,7 @@ Global put client status (/10): 6 iRODS connections`)
 				exitCode, _ = s.runBinary(t, "sync", "--name", setName)
 				So(exitCode, ShouldEqual, 0)
 
-				s.waitForStatus(setName, "\nStatus: complete", 10*time.Second)
+				s.waitForStatus(setName, "\nStatus: complete", wrUploadTimeout)
 
 				exitCode, output = s.runBinary(t, statusCmd...)
 				So(exitCode, ShouldEqual, 0)
@@ -763,7 +766,7 @@ Global put client status (/10): 6 iRODS connections`)
 			s.addSetForTesting(t, "hardlinkTest", transformer, path)
 
 			s.waitForStatus("hardlinkTest", "\nStatus: uploading", 60*time.Second)
-			s.waitForStatus("hardlinkTest", "\nStatus: complete\n", 60*time.Second)
+			s.waitForStatus("hardlinkTest", "\nStatus: complete\n", wrUploadTimeout)
 
 			output := getRemoteMeta(remoteFile)
 			So(output, ShouldNotContainSubstring, "ibackup:hardlink")
@@ -1143,7 +1146,7 @@ func TestRemoveFile(t *testing.T) {
 						s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 30*time.Second)
 
 						s.waitForStatus(setName, "\nDiscovery: completed", 10*time.Second)
-						s.waitForStatus(setName, "\nStatus: complete", 10*time.Second)
+						s.waitForStatus(setName, "\nStatus: complete", wrUploadTimeout)
 
 						s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
 							0, "Num files: 2; Symlinks: 0; Hardlinks: 0; Size "+
@@ -1153,7 +1156,7 @@ func TestRemoveFile(t *testing.T) {
 						exitCode, _ = s.runBinary(t, "sync", "--name", setName)
 
 						s.waitForStatus(setName, "\nDiscovery: completed", 10*time.Second)
-						s.waitForStatus(setName, "\nStatus: complete", 10*time.Second)
+						s.waitForStatus(setName, "\nStatus: complete", wrUploadTimeout)
 
 						s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
 							0, "Num files: 2; Symlinks: 0; Hardlinks: 0; Size "+
@@ -1358,7 +1361,7 @@ func TestRemoveDirs(t *testing.T) {
 			Convey("And with another set with the same name made by a different user", func() {
 				anotherUser := "anotherUser"
 				s.addSetForTestingWithFlag(t, setName, transformer, file2, "--user", anotherUser)
-				s.waitForStatusWithUser(setName, "\nStatus: complete", anotherUser, 10*time.Second)
+				s.waitForStatusWithUser(setName, "\nStatus: complete", anotherUser, wrUploadTimeout)
 
 				Convey("Remove will not remove the set name from the metadata", func() {
 					exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", file2)
@@ -1439,7 +1442,7 @@ func TestRemoveDirs(t *testing.T) {
 				setName = "nestedDirSet"
 
 				s.addSetForTesting(t, setName, transformer, dir1)
-				s.waitForStatus(setName, "\nStatus: complete", 30*time.Second)
+				s.waitForStatus(setName, "\nStatus: complete", wrUploadTimeout)
 
 				Convey("Remove removes the nested dir even though it wasnt specified in the set", func() {
 					s.removePath(t, setName, dir3, 2)
@@ -1707,7 +1710,7 @@ func TestRemove(t *testing.T) {
 				exitCode, _ := s.runBinary(t, "sync", "--name", setName)
 				So(exitCode, ShouldEqual, 0)
 
-				s.waitForStatus(setName, "\nStatus: complete\n", 10*time.Second)
+				s.waitForStatus(setName, "\nStatus: complete\n", wrUploadTimeout)
 
 				s.confirmOutputContains(t, statusCmd, 0, "file1\tabnormal")
 
@@ -1733,7 +1736,7 @@ func TestRemove(t *testing.T) {
 				e := os.Remove(file)
 				So(e, ShouldBeNil)
 
-				s.waitForStatus(setNameWithMissingFile, "\nStatus: complete", 10*time.Second)
+				s.waitForStatus(setNameWithMissingFile, "\nStatus: complete", wrUploadTimeout)
 				s.confirmOutputContains(t, []string{"status", "--name", setNameWithMissingFile, "-d"}, 0, file+"\tmissing")
 
 				Convey("Remove will still work", func() {
@@ -2131,7 +2134,7 @@ func TestTrashRemove(t *testing.T) {
 
 					So(exitCode, ShouldEqual, 0)
 
-					s.waitForStatusWithUser(setName2, "\nStatus: complete", username, 20*time.Second)
+					s.waitForStatusWithUser(setName2, "\nStatus: complete", username, wrUploadTimeout)
 
 					Convey("If the different user also removes files and folders", func() {
 						exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--user", username,
@@ -2187,7 +2190,7 @@ func TestTrashRemove(t *testing.T) {
 				trashSetName = set.TrashPrefix + setName
 
 				s.addSetForTesting(t, setName, transformer, dir1)
-				s.waitForStatus(setName, "\nStatus: complete", timeout)
+				s.waitForStatus(setName, "\nStatus: complete", wrUploadTimeout)
 
 				Convey("With the parent folder and all children removed", func() {
 					s.removePath(t, setName, dir1, 4)
@@ -2442,7 +2445,7 @@ func TestTrashRemovePaths(t *testing.T) {
 				exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--transformer", newTransformer)
 				So(exitCode, ShouldEqual, 0)
 
-				s.waitForStatus(setName, "\nStatus: complete", timeout)
+				s.waitForStatus(setName, "\nStatus: complete", wrUploadTimeout)
 
 				s.removePath(t, setName, failed2, 1)
 
@@ -2460,7 +2463,7 @@ func TestTrashRemovePaths(t *testing.T) {
 					fileRemote := filepath.Join(newRemotePath, "failing", "file")
 					So(waitForIlsPresent(t, fileRemote, timeout), ShouldBeNil)
 
-					s.waitForStatus(setName, "\nStatus: complete", timeout)
+					s.waitForStatus(setName, "\nStatus: complete", wrUploadTimeout)
 					s.removePath(t, setName, file, 1)
 					s.trashRemovePath(t, setName, file, 1)
 
@@ -2534,7 +2537,6 @@ func TestTrashRemoveShared(t *testing.T) {
 		fx := givenTrashRemoveServer(t)
 
 		s, remotePath, path, transformer := fx.s, fx.remotePath, fx.path, fx.transformer
-		timeout := fx.timeout
 
 		Convey("And a set with files and folders", func() {
 			givenTrashRemoveSet(t, fx)
@@ -2570,7 +2572,7 @@ func TestTrashRemoveShared(t *testing.T) {
 
 					s.addSetForTesting(t, "testHardlinks", transformer, linkPath2)
 
-					s.waitForStatus("testHardlinks", "\nStatus: complete", timeout)
+					s.waitForStatus("testHardlinks", "\nStatus: complete", wrUploadTimeout)
 
 					Convey("Removing a hardlink does not remove the inode file", func() {
 						remoteInode := getMetaValue(getRemoteMeta(filepath.Join(remotePath, "link")), "ibackup:remotehardlink")
@@ -2599,7 +2601,7 @@ func TestTrashRemoveShared(t *testing.T) {
 
 					So(exitCode, ShouldEqual, 0)
 
-					s.waitForStatusWithUser(setName2, "\nStatus: complete", "testUser", 20*time.Second)
+					s.waitForStatusWithUser(setName2, "\nStatus: complete", "testUser", wrUploadTimeout)
 
 					Convey("If you trash remove the file, instead, removes the metadata related to the set", func() {
 						output := getRemoteMeta(filepath.Join(remotePath, "file1"))
@@ -4914,7 +4916,7 @@ func TestList(t *testing.T) {
 
 			s.addSetForTestingWithFlags(t, setName, "prefix="+dir+":"+remote, "--items", tempTestFile.Name())
 
-			s.waitForStatus(setName, "Status: complete", 20*time.Second)
+			s.waitForStatus(setName, "Status: complete", wrUploadTimeout)
 
 			Convey("You can delete one of the files which doesn't affect list output and re-trigger the discovery", func() {
 				So(os.Remove(uploadFile2Path), ShouldBeNil)
@@ -4926,7 +4928,7 @@ func TestList(t *testing.T) {
 
 				exitCode, _ := s.runBinary(t, "sync", "--name", setName)
 				So(exitCode, ShouldEqual, 0)
-				s.waitForStatus(setName, "Status: complete", 20*time.Second)
+				s.waitForStatus(setName, "Status: complete", wrUploadTimeout)
 
 				Convey("Then list --uploaded shows all uploaded files, including orphans", func() {
 					s.confirmOutput(t, []string{"list", "--name", setName, "--local", "--uploaded"}, 0,
@@ -4997,7 +4999,7 @@ func TestList(t *testing.T) {
 					exitCode, _ := s.runBinary(t, "add", "-p", dir2,
 						"--name", setName2, "--transformer", "prefix="+dir2+":"+remotePath)
 					So(exitCode, ShouldEqual, 0)
-					s.waitForStatus(setName2, "Status: complete", 30*time.Second)
+					s.waitForStatus(setName2, "Status: complete", wrUploadTimeout)
 
 					err := s.Shutdown()
 					So(err, ShouldBeNil)
@@ -6032,7 +6034,7 @@ func TestRetry(t *testing.T) {
 		path := t.TempDir()
 		transformer := "prefix=" + path + ":" + remotePath
 
-		timeout := 30 * time.Second
+		timeout := wrUploadTimeout
 
 		Convey("retry requires --name", func() {
 			s.confirmOutputContains(t, []string{"retry"}, 1,
