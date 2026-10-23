@@ -127,8 +127,6 @@ const noBackupSets = `Global put queue status: 0 queued; 0 reserved to be worked
 Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
 no backup sets`
 
-var errTwoBackupsNotSeen = errors.New("2 backups were not seen")
-
 var errInvalidQueuesSpecified = errors.New("invalid queues specified")
 
 var errServerStopTimeout = errors.New("timeout waiting for server to stop")
@@ -145,7 +143,7 @@ var (
 	errIlsDidNotSucceed = errors.New("expected ils to succeed")
 )
 
-var errMismatchedDBBackupSizes = errors.New("mismatched db backup sizes")
+var errMismatchedDBBackups = errors.New("remote db backup differs from the local one")
 
 var errRemoteMetaMissing = errors.New("remote meta did not contain expected substring")
 
@@ -1892,6 +1890,55 @@ func removeFileFromIRODS(t *testing.T, path string) {
 
 	_, err := icmd.IRM("-f", path)
 	So(err, ShouldBeNil)
+}
+
+// backupHasSetDir reports whether the database backup at path holds the named
+// set with dir as one of its dirs, returning false on any error. The server
+// replaces the backup by renaming a new one over it, so reading it is safe.
+// Never pass it a database a server will open: the read-only handle it leaves
+// open would block that server.
+func backupHasSetDir(path, name, dir string) bool {
+	db, err := set.NewRO(path)
+	if err != nil {
+		return false
+	}
+
+	sets, err := db.GetAll()
+	if err != nil {
+		return false
+	}
+
+	for _, got := range sets {
+		if got.Name != name {
+			continue
+		}
+
+		dirs, err := db.GetDirEntries(got.ID(), nil)
+		if err != nil {
+			return false
+		}
+
+		return slices.ContainsFunc(dirs, func(entry *set.Entry) bool { return entry.Path == dir })
+	}
+
+	return false
+}
+
+// hashFile returns the hex sha256 of the file at path.
+func hashFile(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+
+	defer f.Close()
+
+	h := sha256.New()
+	if _, err = io.Copy(h, f); err != nil {
+		return "", err
+	}
+
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 func addFileToIRODS(t *testing.T, localPath, remotePath string) {
@@ -5887,34 +5934,18 @@ func TestBackup(t *testing.T) {
 		transformer, localDir, remoteDir := prepareForSetWithEmptyDir(t)
 		s.addSetForTesting(t, "testForBackup", transformer, localDir)
 
-		versionsSeen := 0
+		// Adding the set backs up the database before its dir is added, and
+		// discovery backs it up again, at least a second later, once the
+		// first backup has also been put in iRODS. Each wait covers one such
+		// gap and one put of this small database.
+		const backupWait = 30 * time.Second
 
-		sizeRe := regexp.MustCompile(` (\d+)\s+\d{4}-\d{2}-\d{2}\.\d{2}:\d{2}`)
-		foundSize := ""
+		testutil.Eventually(t, backupWait, 100*time.Millisecond, func() bool {
+			return backupHasSetDir(s.backupFile, "testForBackup", localDir)
+		}, "a local backup with the set's dir")
+
 		icmd := NewIcommander(t)
 		So(icmd, ShouldNotBeNil)
-
-		testutil.RetryUntilWorksCustom(t, func() error { //nolint:errcheck
-			out, err := icmd.ILS("-l", remotePath)
-			if err != nil {
-				return err
-			}
-
-			sizeStr := sizeRe.FindString(string(out))
-			if sizeStr != foundSize {
-				versionsSeen++
-				foundSize = sizeStr
-			}
-
-			if versionsSeen == 2 {
-				return nil
-			}
-
-			return errTwoBackupsNotSeen
-		}, 5*time.Second, 0)
-
-		localBackupExists := testutil.WaitForFile(t, s.backupFile)
-		So(localBackupExists, ShouldBeTrue)
 
 		err := testutil.RetryUntilWorksCustom(t, func() error {
 			out, err := icmd.IGET("-Kf", remotePath, gotPath)
@@ -5924,41 +5955,24 @@ func TestBackup(t *testing.T) {
 				return err
 			}
 
-			li, err := os.Stat(s.backupFile)
+			remoteHash, err := hashFile(gotPath)
 			if err != nil {
 				return err
 			}
 
-			ri, err := os.Stat(gotPath)
+			localHash, err := hashFile(s.backupFile)
 			if err != nil {
 				return err
 			}
 
-			if ri.Size() != li.Size() {
-				return errMismatchedDBBackupSizes
+			if remoteHash != localHash {
+				return errMismatchedDBBackups
 			}
 
 			return nil
-		}, 30*time.Second, 1*time.Second)
+		}, backupWait, 1*time.Second)
 
 		So(err, ShouldBeNil)
-
-		hashFile := func(path string) string {
-			f, err := os.Open(path)
-			So(err, ShouldBeNil)
-
-			defer f.Close()
-
-			s := sha256.New()
-			_, err = io.Copy(s, f)
-			So(err, ShouldBeNil)
-
-			return hex.EncodeToString(s.Sum(nil))
-		}
-
-		bh := hashFile(s.backupFile)
-		rh := hashFile(gotPath)
-		So(rh, ShouldEqual, bh)
 
 		Convey("Running a server with the retrieved db works correctly", func() {
 			bs := new(testServer)

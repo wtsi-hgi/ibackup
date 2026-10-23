@@ -4129,17 +4129,15 @@ func TestServer(t *testing.T) {
 
 							makeSetComplete(expectedRequests)
 
-							gotSet, err = client.GetSetByID(exampleSet2.Requester, exampleSet2.ID())
-							So(err, ShouldBeNil)
-							So(gotSet.Status, ShouldEqual, set.Complete)
-							So(gotSet.LastDiscovery, ShouldEqual, discovered)
-
 							waitForDiscovery(t, client, gotSet)
 
 							gotSet, err = client.GetSetByID(exampleSet2.Requester, exampleSet2.ID())
 							So(err, ShouldBeNil)
 							So(gotSet.Status, ShouldEqual, set.PendingUpload)
 							So(gotSet.LastDiscovery, ShouldHappenAfter, discovered)
+							So(gotSet.LastCompleted, ShouldHappenAfter, discovered)
+							So(gotSet.StartedDiscovery, ShouldHappenOnOrAfter,
+								gotSet.LastCompleted.Add(exampleSet2.MonitorTime))
 							discovered = gotSet.LastDiscovery
 
 							waitForDiscovery(t, client, gotSet)
@@ -4151,17 +4149,15 @@ func TestServer(t *testing.T) {
 
 							makeSetComplete(2)
 
-							gotSet, err = client.GetSetByID(exampleSet2.Requester, exampleSet2.ID())
-							So(err, ShouldBeNil)
-							So(gotSet.Status, ShouldEqual, set.Complete)
-							So(gotSet.LastDiscovery, ShouldEqual, discovered)
-
 							waitForDiscovery(t, client, gotSet)
 
 							gotSet, err = client.GetSetByID(exampleSet2.Requester, exampleSet2.ID())
 							So(err, ShouldBeNil)
 							So(gotSet.Status, ShouldEqual, set.PendingUpload)
 							So(gotSet.LastDiscovery, ShouldHappenAfter, discovered)
+							So(gotSet.LastCompleted, ShouldHappenAfter, discovered)
+							So(gotSet.StartedDiscovery, ShouldHappenOnOrAfter,
+								gotSet.LastCompleted.Add(exampleSet2.MonitorTime))
 						})
 
 						Convey("After discovery, empty monitored sets get discovered again after the discovery", func() {
@@ -8191,12 +8187,7 @@ func TestServer(t *testing.T) {
 					err = client.TriggerDiscovery(mset.ID(), false)
 					So(err, ShouldBeNil)
 
-					testutil.Eventually(t, 5*time.Second, 10*time.Millisecond, func() bool {
-						got, errs := client.GetSetByID(mset.Requester, mset.ID())
-
-						return errs == nil && got.LastDiscovery.After(firstDiscovery) &&
-							!got.LastDiscovery.Before(got.StartedDiscovery)
-					}, "the edit's discovery to finish")
+					waitForRediscoveryQueued(t, s, client, mset, firstDiscovery)
 
 					requests, errg := client.GetSomeUploadRequests()
 					So(errg, ShouldBeNil)
@@ -8311,12 +8302,7 @@ func TestServer(t *testing.T) {
 					err = client.TriggerDiscovery(fset.ID(), false)
 					So(err, ShouldBeNil)
 
-					testutil.Eventually(t, 5*time.Second, 10*time.Millisecond, func() bool {
-						got, errs := client.GetSetByID(fset.Requester, fset.ID())
-
-						return errs == nil && got.LastDiscovery.After(firstDiscovery) &&
-							!got.LastDiscovery.Before(got.StartedDiscovery)
-					}, "the edit's discovery to finish")
+					waitForRediscoveryQueued(t, s, client, fset, firstDiscovery)
 
 					buriedRequests, errb := client.BuriedRequests()
 					So(errb, ShouldBeNil)
@@ -8383,12 +8369,7 @@ func TestServer(t *testing.T) {
 					err = client.TriggerDiscovery(lset.ID(), false)
 					So(err, ShouldBeNil)
 
-					testutil.Eventually(t, 5*time.Second, 10*time.Millisecond, func() bool {
-						got, errs := client.GetSetByID(lset.Requester, lset.ID())
-
-						return errs == nil && got.LastDiscovery.After(firstDiscovery) &&
-							!got.LastDiscovery.Before(got.StartedDiscovery)
-					}, "the second discovery to finish")
+					waitForRediscoveryQueued(t, s, client, lset, firstDiscovery)
 
 					requests, errg := client.GetSomeUploadRequests()
 					So(errg, ShouldBeNil)
@@ -8470,12 +8451,7 @@ func TestServer(t *testing.T) {
 					err = client.TriggerDiscovery(hset.ID(), false)
 					So(err, ShouldBeNil)
 
-					testutil.Eventually(t, 5*time.Second, 10*time.Millisecond, func() bool {
-						got, errgs := client.GetSetByID(hset.Requester, hset.ID())
-
-						return errgs == nil && got.LastDiscovery.After(firstDiscovery) &&
-							!got.LastDiscovery.Before(got.StartedDiscovery)
-					}, "the second discovery to finish")
+					waitForRediscoveryQueued(t, s, client, hset, firstDiscovery)
 
 					requests, errg := client.GetSomeUploadRequests()
 					So(errg, ShouldBeNil)
@@ -9529,6 +9505,35 @@ func makePutter(t *testing.T, handler transfer.Handler, requests []*transfer.Req
 	So(qs.CreatingCollections, ShouldEqual, 0)
 
 	return p, d
+}
+
+// waitForRediscoveryQueued waits for a discovery of the given set, triggered
+// after the one that finished at firstDiscovery, to finish and then to queue
+// the set's requests, or give queued ones new details. A discovery records that
+// it finished before it queues them, and holds the set's discovery lock until it
+// has, so we then wait to take and release that lock. Each wait gets the 5s
+// these tests give a discovery of a few files; queuing them is part of that.
+func waitForRediscoveryQueued(t *testing.T, s *Server, client *Client, given *set.Set, firstDiscovery time.Time) {
+	t.Helper()
+
+	const timeout = 5 * time.Second
+
+	testutil.Eventually(t, timeout, 10*time.Millisecond, func() bool {
+		got, errg := client.GetSetByID(given.Requester, given.ID())
+
+		return errg == nil && got.LastDiscovery.After(firstDiscovery) &&
+			!got.LastDiscovery.Before(got.StartedDiscovery)
+	}, "the rediscovery to finish")
+
+	released := make(chan struct{})
+
+	go func() {
+		s.discoveryCoordinator.StartDiscovery(given.ID())
+		s.discoveryCoordinator.DiscoveryHappened(given.ID())
+		close(released)
+	}()
+
+	testutil.Receive(t, released, timeout, "the rediscovery to queue its requests")
 }
 
 // hookedRemoteChangeHandler is a remove.Handler whose RemoveFile() and
