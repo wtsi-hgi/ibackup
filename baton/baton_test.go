@@ -1179,6 +1179,30 @@ exec 3>&-;`)
 				So(err, ShouldNotBeNil)
 				So(err.Error(), ShouldContainSubstring, ErrClientStopped)
 			})
+
+			// Our baton-do never replies to a request sent before its client
+			// is stopped, so extendo ends that request with an empty response.
+			stopBeforeReplying := func(*ex.Envelope) {
+				h.Cleanup()
+			}
+
+			Convey("for a Put in flight", func() {
+				bh <- stopBeforeReplying
+
+				err = returnsWithin(put)
+				So(err, ShouldNotBeNil)
+				So(err.Error(), ShouldContainSubstring, ErrClientStopped)
+			})
+
+			Convey("for a Get in flight", func() {
+				bh <- stopBeforeReplying
+
+				err = returnsWithin(func() error {
+					return h.Get(filepath.Join(t.TempDir(), "file"), "/some/remote/file")
+				})
+				So(err, ShouldNotBeNil)
+				So(err.Error(), ShouldContainSubstring, ErrClientStopped)
+			})
 		})
 	})
 }
