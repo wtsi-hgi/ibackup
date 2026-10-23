@@ -498,16 +498,17 @@ func TestServerHelperFunctions(t *testing.T) {
 		}
 
 		s := &Server{}
+		given := &set.Set{Name: "set", Requester: "user"}
 
-		paths, err := s.findAllOtherPathsToExclude(entry, removed+"/")
+		paths, err := s.findAllOtherPathsToExclude(entry, removed+"/", given)
 		So(err, ShouldBeNil)
 		So(paths, ShouldResemble, []set.RemoveReq{
-			{Path: filepath.Join(removed, "a", "x"), IsDir: true, IsComplete: true},
-			{Path: filepath.Join(removed, "c"), IsDir: true, IsComplete: true},
+			{Path: filepath.Join(removed, "a", "x"), Set: given, IsDir: true, IsComplete: true},
+			{Path: filepath.Join(removed, "c"), Set: given, IsDir: true, IsComplete: true},
 		})
 
 		Convey("and fails if that folder is not an ancestor", func() {
-			_, err = s.findAllOtherPathsToExclude(entry, filepath.Join(removed, "c")+"/")
+			_, err = s.findAllOtherPathsToExclude(entry, filepath.Join(removed, "c")+"/", given)
 			So(err, ShouldWrap, errMatchNotAncestor)
 		})
 	})
@@ -914,6 +915,39 @@ func TestServer(t *testing.T) {
 
 					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldBeNil)
+
+					Convey("Set paths must be absolute, and are stored clean", func() {
+						for _, send := range []func(string, []string) error{
+							client.MergeFiles, client.MergeDirs, client.TrashFilesAndDirs, client.RemoveFilesAndDirs,
+						} {
+							err = send(exampleSet.ID(), []string{localDir, "relative/path"})
+							So(err, ShouldWrap, ErrInvalidInput)
+							So(err.Error(), ShouldContainSubstring, ErrRelativePath.Error()+": relative/path")
+						}
+
+						entryPaths := func(entries []*set.Entry, err error) []string {
+							So(err, ShouldBeNil)
+
+							paths := make([]string, len(entries))
+							for i, entry := range entries {
+								paths[i] = entry.Path
+							}
+
+							return paths
+						}
+
+						So(entryPaths(client.GetFiles(exampleSet.ID())), ShouldBeEmpty)
+						So(entryPaths(client.GetDirs(exampleSet.ID())), ShouldBeEmpty)
+
+						So(client.MergeFiles(exampleSet.ID(), []string{localDir + "/a/../file"}), ShouldBeNil)
+						So(client.MergeDirs(exampleSet.ID(), []string{localDir + "/b/../dir/", localDir + "//other/"}),
+							ShouldBeNil)
+
+						So(entryPaths(client.GetFiles(exampleSet.ID())), ShouldResemble,
+							[]string{filepath.Join(localDir, "file")})
+						So(entryPaths(client.GetDirs(exampleSet.ID())), ShouldResemble,
+							[]string{filepath.Join(localDir, "dir"), filepath.Join(localDir, "other")})
+					})
 
 					Convey("A removal started while another set's finished removals clean up the "+
 						"storage handler waits for that cleanup", func() {
@@ -3478,6 +3512,64 @@ func TestServer(t *testing.T) {
 							So(client.TrashFilesAndDirs(exampleSet.ID(), []string{removedDir}), ShouldBeNil)
 
 							mergeSubDirAfterRemoval()
+						})
+
+						Convey("Trashing a folder by a non-clean path trashes that folder", func() {
+							So(client.TrashFilesAndDirs(exampleSet.ID(), []string{subDir + "/../"}), ShouldBeNil)
+
+							mergeSubDirAfterRemoval()
+						})
+					})
+
+					Convey("Given a folder an older server stored with a trailing slash", func() {
+						topDir := filepath.Join(localDir, "top")
+						internal.CreateTestFile(t, filepath.Join(topDir, "file"), "content")
+
+						trashTopDirStoredAs := func(stored ...string) {
+							dirents := make([]*set.Dirent, len(stored))
+							for i, path := range stored {
+								dirents[i] = &set.Dirent{Path: path, Mode: os.ModeDir}
+							}
+
+							So(s.db.MergeDirEntries(exampleSet.ID(), dirents), ShouldBeNil)
+							So(client.TriggerDiscovery(exampleSet.ID(), false), ShouldBeNil)
+							So(waitForRacCalled(t, racCalled), ShouldBeTrue)
+
+							makeGivenSetComplete(1, exampleSet.Name, adminClient)
+
+							So(client.TrashFilesAndDirs(exampleSet.ID(), []string{topDir}), ShouldBeNil)
+
+							waitForRemovals(t, s, client, exampleSet)
+
+							got, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+							So(errg, ShouldBeNil)
+							So(got.NumObjectsRemoved, ShouldEqual, 2)
+							So(got.NumObjectsToBeRemoved, ShouldEqual, 2)
+
+							dirs, errg := client.GetDirs(exampleSet.ID())
+							So(errg, ShouldBeNil)
+							So(dirs, ShouldBeEmpty)
+
+							files, errg := client.GetFiles(exampleSet.ID())
+							So(errg, ShouldBeNil)
+							So(files, ShouldBeEmpty)
+
+							trashSet, errg := adminClient.GetSetByName(exampleSet.Requester, set.TrashPrefix+exampleSet.Name)
+							So(errg, ShouldBeNil)
+
+							trashedDirs, errg := client.GetDirs(trashSet.ID())
+							So(errg, ShouldBeNil)
+							So(trashedDirs, ShouldHaveLength, 1)
+							So(trashedDirs[0].Path, ShouldEqual, topDir)
+							So(trashedDirs[0].Type, ShouldEqual, set.Directory)
+						}
+
+						Convey("trashing it trashes it", func() {
+							trashTopDirStoredAs(topDir + "/")
+						})
+
+						Convey("trashing it when it is also stored without one trashes it once", func() {
+							trashTopDirStoredAs(topDir, topDir+"/")
 						})
 					})
 

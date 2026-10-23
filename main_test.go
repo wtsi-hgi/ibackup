@@ -4825,6 +4825,28 @@ func TestList(t *testing.T) {
 				1, "--local and --remote are mutually exclusive")
 		})
 
+		Convey("Relative paths in an added set's --files are made absolute", func() {
+			dir, err := filepath.EvalSymlinks(t.TempDir())
+			So(err, ShouldBeNil)
+
+			fofn := filepath.Join(dir, "fofn")
+			So(os.WriteFile(fofn, []byte("path/to/file\n\n"), userPerms), ShouldBeNil)
+
+			wd, err := os.Getwd()
+			So(err, ShouldBeNil)
+
+			Reset(func() { So(os.Chdir(wd), ShouldBeNil) })
+			So(os.Chdir(dir), ShouldBeNil)
+
+			exitCode, _ := s.runBinary(t, "add", "--files", fofn,
+				"--name", "testRelative", "--transformer", "prefix="+dir+":/remote")
+			So(exitCode, ShouldEqual, 0)
+
+			s.waitForStatus("testRelative", "Status: complete", 1*time.Second)
+
+			s.confirmOutput(t, []string{"list", "--name", "testRelative", "--local"}, 0, dir+"/path/to/file")
+		})
+
 		Convey("Given an added set defined with files", func() {
 			dir := t.TempDir()
 			tempTestFile, err := os.CreateTemp(dir, "testFileSet")

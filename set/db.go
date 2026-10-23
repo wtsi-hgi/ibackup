@@ -797,7 +797,9 @@ func (d *DB) validateFilePaths(set *Set, paths []string) ([]string, []string, er
 
 // validatePaths checks if the provided paths are in atleast one of the given
 // buckets for the set. Returns a slice of all valid paths and a slice of all
-// invalid paths.
+// invalid paths. A path matches any stored path that cleans to it, since older
+// servers stored paths as given (eg. a folder with a trailing slash), and each
+// valid path is returned as stored, so removals use the stored keys.
 func (d *DB) validatePaths(set *Set, bucket1, bucket2 string, paths []string) ([]string, []string, error) {
 	entriesMap, err := d.getPathToEntryMapFromBuckets([]string{bucket1, bucket2}, set.ID())
 	if err != nil {
@@ -810,8 +812,8 @@ func (d *DB) validatePaths(set *Set, bucket1, bucket2 string, paths []string) ([
 	)
 
 	for _, path := range paths {
-		if _, ok := entriesMap[path]; ok {
-			validPaths = append(validPaths, path)
+		if stored, ok := entriesMap[path]; ok {
+			validPaths = append(validPaths, stored...)
 
 			continue
 		}
@@ -822,8 +824,10 @@ func (d *DB) validatePaths(set *Set, bucket1, bucket2 string, paths []string) ([
 	return validPaths, invalidPaths, nil
 }
 
-func (d *DB) getPathToEntryMapFromBuckets(buckets []string, sid string) (map[string]bool, error) {
-	entriesMap := make(map[string]bool)
+// getPathToEntryMapFromBuckets returns the distinct paths stored in the given
+// buckets of the given set, keyed by their clean form.
+func (d *DB) getPathToEntryMapFromBuckets(buckets []string, sid string) (map[string][]string, error) {
+	entriesMap := make(map[string][]string)
 
 	for _, bucket := range buckets {
 		entries, err := d.getEntries(sid, bucket, nil)
@@ -832,7 +836,10 @@ func (d *DB) getPathToEntryMapFromBuckets(buckets []string, sid string) (map[str
 		}
 
 		for _, entry := range entries {
-			entriesMap[entry.Path] = false
+			clean := filepath.Clean(entry.Path)
+			if !slices.Contains(entriesMap[clean], entry.Path) {
+				entriesMap[clean] = append(entriesMap[clean], entry.Path)
+			}
 		}
 	}
 
@@ -1156,23 +1163,31 @@ func (d *DB) removeDirInTx(tx *bolt.Tx, removeReq *RemoveReq) error {
 	})
 }
 
-// trashDirEntry puts the given request's directory entry in the trash set.
-// Sets stored before the discovered folders bucket existed have no entry for a
-// discovered subfolder, so a new dir entry is trashed for one instead, keeping
-// the folder targetable in the trash set.
+// trashDirEntry puts the given request's directory entry in the trash set,
+// under its path without a trailing slash, even if an older server stored it
+// with one. Sets stored before the discovered folders bucket existed have no
+// entry for a discovered subfolder, so a new dir entry is trashed for one
+// instead, keeping the folder targetable in the trash set.
 func (d *DB) trashDirEntry(tx *bolt.Tx, removeReq *RemoveReq) error {
 	path := strings.TrimSuffix(removeReq.Path, "/")
 
 	entry, _, err := d.getEntry(tx, removeReq.Set.ID(), path)
 	if err != nil {
-		entry = &Entry{Path: path, isDir: true}
+		entry, _, err = d.getEntry(tx, removeReq.Set.ID(), path+"/")
 	}
+
+	if err != nil {
+		entry = &Entry{isDir: true}
+	}
+
+	entry.Path = path
 
 	return d.putEntryInTrash(tx, removeReq.Set, entry)
 }
 
-// deleteDirEntry deletes the given path, with or without a trailing slash,
-// from the given set's dir and discovered folders buckets.
+// deleteDirEntry deletes the given path from the given set's dir and
+// discovered folders buckets, both without and with a trailing slash, since
+// older servers stored a folder given with one that way.
 func deleteDirEntry(tx *bolt.Tx, setID, path string) error {
 	path = strings.TrimSuffix(path, "/")
 
@@ -1182,8 +1197,10 @@ func deleteDirEntry(tx *bolt.Tx, setID, path string) error {
 			continue
 		}
 
-		if err := b.Delete([]byte(path)); err != nil {
-			return err
+		for _, key := range []string{path, path + "/"} {
+			if err := b.Delete([]byte(key)); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -1522,7 +1539,7 @@ func (d *DB) OptimiseRemoveBucket(setID string) error {
 	curDir := "this is an impossible path prefix"
 
 	for _, remReq := range remReqs {
-		curDir, err = d.removeEntryIfRedundant(remReq, curDir)
+		curDir, err = d.removeEntryIfRedundant(setID, remReq, curDir)
 		if err != nil {
 			return err
 		}
@@ -1531,13 +1548,17 @@ func (d *DB) OptimiseRemoveBucket(setID string) error {
 	return nil
 }
 
-func (d *DB) removeEntryIfRedundant(remReq RemoveReq, curDir string) (string, error) {
+// removeEntryIfRedundant deletes the given complete request from the given
+// set's remove bucket if it is under the complete folder curDir. It uses setID
+// rather than the request's Set, which discovery-exclusion records stored by
+// older versions don't have.
+func (d *DB) removeEntryIfRedundant(setID string, remReq RemoveReq, curDir string) (string, error) {
 	if !remReq.IsComplete {
 		return curDir, nil
 	}
 
 	if strings.HasPrefix(remReq.Path, curDir) {
-		err := d.deleteObjectFromSubBucket(remReq.Path, remReq.Set.ID(), removedBucket)
+		err := d.deleteObjectFromSubBucket(remReq.Path, setID, removedBucket)
 		if err != nil {
 			return "", err
 		}

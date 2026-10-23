@@ -138,6 +138,7 @@ const (
 	ErrBadSet         = gas.Error("set with that id does not exist")
 	ErrInvalidInput   = gas.Error("invalid input")
 	ErrInternal       = gas.Error("internal server error")
+	ErrRelativePath   = gas.Error("path is not absolute")
 
 	errMatchNotAncestor = gas.Error("removed folder is not an ancestor of the merged path")
 
@@ -930,7 +931,24 @@ func (s *Server) makeItemsDefsFromDirPaths(givenSet *set.Set,
 	remReqs := make([]set.RemoveReq, 0, len(paths))
 	defs := make([]*queue.ItemDef, 0, len(paths))
 
+	// a dir an older server stored both with and without a trailing slash has
+	// two stored keys, which share one removed-bucket key and are deleted by
+	// one removal, and GetFoldersInDir() finds a dir stored with one inside
+	// itself, so each dir gets one request.
+	requested := make(map[string]bool)
+	isNewDir := func(path string) bool {
+		key := strings.TrimSuffix(path, "/")
+		isNew := !requested[key]
+		requested[key] = true
+
+		return isNew
+	}
+
 	for _, path := range paths {
+		if !isNewDir(path) {
+			continue
+		}
+
 		rq := set.NewRemoveRequest(path, givenSet, true, action)
 
 		dirFilepaths, err := s.db.GetFilesInDir(givenSet.ID(), path)
@@ -944,7 +962,8 @@ func (s *Server) makeItemsDefsFromDirPaths(givenSet *set.Set,
 		}
 
 		fileDefs, fileRemoveReqs := buildRemovalStructsFromPaths(givenSet, dirFilepaths, false, action)
-		folderDefs, folderRemoveReqs := buildRemovalStructsFromPaths(givenSet, dirFolderPaths, true, action)
+		folderDefs, folderRemoveReqs := buildRemovalStructsFromPaths(givenSet,
+			slices.DeleteFunc(dirFolderPaths, func(folder string) bool { return !isNewDir(folder) }), true, action)
 
 		remReqs = slices.Concat(remReqs, fileRemoveReqs, folderRemoveReqs)
 		defs = slices.Concat(defs, fileDefs, folderDefs)
@@ -1388,7 +1407,9 @@ func (s *Server) setErrorOnEntry(entry *set.Entry, sid, path string, errMsg stri
 }
 
 // bindPathsAndValidateSet gets the paths out of the JSON body, and the set id
-// from the URL parameter if Requester matches logged-in username.
+// from the URL parameter if Requester matches logged-in username. The paths
+// must be absolute, and are returned clean, since the set's paths are stored
+// and matched (including as string prefixes of removed folders) that way.
 func (s *Server) bindPathsAndValidateSet(c *gin.Context) (*set.Set, []string, bool) {
 	var bpaths [][]byte
 
@@ -1403,7 +1424,19 @@ func (s *Server) bindPathsAndValidateSet(c *gin.Context) (*set.Set, []string, bo
 		return nil, nil, false
 	}
 
-	return set, bytesToStrings(bpaths), true
+	paths := bytesToStrings(bpaths)
+
+	for i, path := range paths {
+		if !filepath.IsAbs(path) {
+			c.AbortWithError(http.StatusBadRequest, fmt.Errorf("%w: %s", ErrRelativePath, path)) //nolint:errcheck
+
+			return nil, nil, false
+		}
+
+		paths[i] = filepath.Clean(path)
+	}
+
+	return set, paths, true
 }
 
 // validateSet gets the id parameter from the given context and checks a
@@ -1475,7 +1508,7 @@ func (s *Server) putDirs(c *gin.Context) {
 		return
 	}
 
-	err = s.updateRemovedBucket(entries, givenSet.ID())
+	err = s.updateRemovedBucket(entries, givenSet)
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err) //nolint:errcheck
 
@@ -1488,7 +1521,9 @@ func (s *Server) putDirs(c *gin.Context) {
 // updateRemovedBucket removes the entry from the removed bucket if it was
 // previously removed from the given set, as it should no longer be excluded
 // from discovery.
-func (s *Server) updateRemovedBucket(entries []*set.Dirent, sid string) error {
+func (s *Server) updateRemovedBucket(entries []*set.Dirent, given *set.Set) error {
+	sid := given.ID()
+
 	excludeTree, err := s.buildExclusionTree(sid)
 	if err != nil {
 		return err
@@ -1500,7 +1535,7 @@ func (s *Server) updateRemovedBucket(entries []*set.Dirent, sid string) error {
 			continue
 		}
 
-		err = s.excludeFromRemovedBucket(entry, match, excludeTree, sid)
+		err = s.excludeFromRemovedBucket(entry, match, excludeTree, given)
 		if err != nil {
 			return err
 		}
@@ -1535,8 +1570,10 @@ func (s *Server) buildExclusionTree(sid string) (ptrie.Trie[bool], error) {
 // the entry's path is not equal to the given match (from exclude tree), the
 // bucket is repopulated with the other paths represented by the match.
 func (s *Server) excludeFromRemovedBucket(entry *set.Dirent, match string,
-	excludeTree ptrie.Trie[bool], sid string,
+	excludeTree ptrie.Trie[bool], given *set.Set,
 ) error {
+	sid := given.ID()
+
 	err := s.removeChildEntriesFromRemovedBucket(entry, excludeTree, sid)
 	if err != nil {
 		return err
@@ -1546,7 +1583,7 @@ func (s *Server) excludeFromRemovedBucket(entry *set.Dirent, match string,
 		return s.db.RemoveFromRemovedBucket(match, sid)
 	}
 
-	allOtherPaths, err := s.findAllOtherPathsToExclude(entry, match)
+	allOtherPaths, err := s.findAllOtherPathsToExclude(entry, match, given)
 	if err != nil {
 		return err
 	}
@@ -1560,20 +1597,26 @@ func (s *Server) excludeFromRemovedBucket(entry *set.Dirent, match string,
 }
 
 // findAllOtherPathsToExclude finds every path that should be excluded but isn't
-// due to match being removed from removed bucket. It climbs from the entry's
-// parent up to match (a folder's match has a trailing "/"). It returns an error
-// if it reaches the root without meeting match, rather than excluding every
-// sibling of every ancestor. Only a non-clean entry path can cause that, such as
-// one with ".." segments, which isDirentRemovedFromSet matches on its raw string
-// prefix.
-func (s *Server) findAllOtherPathsToExclude(entry *set.Dirent, match string) ([]set.RemoveReq, error) {
+// due to match being removed from the given set's removed bucket. It climbs
+// from the entry's parent up to match (a folder's match has a trailing "/").
+// The records it returns are completed discovery exclusions, not removals from
+// iRODS: they only keep the rest of the removed folder out of discovery.
+//
+// The entry's path must be absolute and clean, as bindPathsAndValidateSet
+// makes it, so match, which prefixes it, is one of its ancestors. Reaching the
+// root without meeting match therefore can't happen; the root stop is a
+// defensive one that returns an error rather than excluding every sibling of
+// every ancestor.
+func (s *Server) findAllOtherPathsToExclude(entry *set.Dirent, match string,
+	given *set.Set,
+) ([]set.RemoveReq, error) {
 	var paths []set.RemoveReq
 
 	match = filepath.Clean(match)
-	path := filepath.Dir(filepath.Clean(entry.Path))
+	path := filepath.Dir(entry.Path)
 
 	for {
-		childPaths, err := findChildPathsToExclude(path, entry)
+		childPaths, err := findChildPathsToExclude(path, entry, given)
 		if err != nil {
 			return nil, err
 		}
@@ -1581,37 +1624,35 @@ func (s *Server) findAllOtherPathsToExclude(entry *set.Dirent, match string) ([]
 		paths = append(paths, childPaths...)
 
 		if path == match {
-			break
+			return paths, nil
 		}
 
-		parent := filepath.Dir(path)
-		if parent == path {
+		if path == "/" {
 			return nil, fmt.Errorf("%w: %s not under %s", errMatchNotAncestor, entry.Path, match)
 		}
 
-		path = parent
+		path = filepath.Dir(path)
 	}
-
-	return paths, nil
 }
 
-func findChildPathsToExclude(path string, entry *set.Dirent) ([]set.RemoveReq, error) {
+func findChildPathsToExclude(path string, entry *set.Dirent, given *set.Set) ([]set.RemoveReq, error) {
 	entries, err := os.ReadDir(path)
 	if err != nil {
 		return nil, err
 	}
 
 	paths := make([]set.RemoveReq, 0, len(entries))
-	entryPath := filepath.Clean(entry.Path)
+	entryDir := entry.Path + "/"
 
 	for _, dirEntry := range entries {
 		childPath := filepath.Join(path, dirEntry.Name())
-		if childPath == entryPath || strings.HasPrefix(entryPath, childPath+"/") {
+		if strings.HasPrefix(entryDir, childPath+"/") {
 			continue
 		}
 
 		removeReq := set.RemoveReq{
 			Path:       childPath,
+			Set:        given,
 			IsDir:      dirEntry.IsDir(),
 			IsComplete: true,
 		}
