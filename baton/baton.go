@@ -32,6 +32,7 @@ package baton
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -237,8 +238,9 @@ func (b *Baton) putItem(item *ex.RodsItem) error {
 
 // untilClientStops carries out op, which uses client, returning any error from
 // it. Unlike timeoutOp it doesn't limit how long op can take, since transfers
-// can be long, but returns an error instead if client stops running and op
-// still hasn't returned soon after.
+// can be long, but returns an ErrClientStopped error instead if client stops
+// running and op still hasn't returned soon after, or if op fails because
+// client stopped before replying.
 //
 // extendo (v3.2.0 client.go send) blocks forever when sending a request to a
 // client whose Stop() began before the request was written, and no reply can
@@ -248,7 +250,7 @@ func untilClientStops(client *ex.Client, op retry.Operation, path string) error 
 	errCh := make(chan error, 1)
 
 	go func() {
-		errCh <- op()
+		errCh <- clientStoppedIfNoReply(op(), path)
 	}()
 
 	ticker := time.NewTicker(clientStopCheckFreq)
@@ -300,6 +302,21 @@ func (b *Baton) replaceCollClient(ctx context.Context, clientIndex int) {
 			return nil
 		}, "")
 	}(b.swapCollClient(ctx, clientIndex, client))
+}
+
+// clientStoppedIfNoReply returns an ErrClientStopped error in place of err if
+// err is the one extendo (v3.2.0 client.go send) gives a request that was
+// sent but whose client's output ended before a reply came: when extendo stops
+// reading baton-do's output, it closes the reply channels of requests still
+// waiting, and decoding the resulting empty reply fails with a JSON syntax
+// error. Replies extendo does pass on are already valid JSON, so this is the
+// only way that error arises. Otherwise returns err.
+func clientStoppedIfNoReply(err error, path string) error {
+	if _, ok := errors.AsType[*json.SyntaxError](err); ok { //nolint:errcheck
+		return errs.PathError{Msg: ErrClientStopped, Path: path}
+	}
+
+	return err
 }
 
 // waitAfterClientStopped returns the error from errCh, or an ErrClientStopped

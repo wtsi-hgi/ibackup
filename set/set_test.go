@@ -814,6 +814,21 @@ func TestSetDB(t *testing.T) {
 					})
 				})
 
+				Convey("Optimising drops a complete record with no Set under a complete folder", func() {
+					So(db.SetRemoveRequests(set.ID(), []RemoveReq{
+						{Path: "/a/b", Set: set, IsDir: true, IsComplete: true},
+						{Path: "/a/b/c", IsComplete: true},
+					}), ShouldBeNil)
+
+					So(func() { err = db.OptimiseRemoveBucket(set.ID()) }, ShouldNotPanic)
+					So(err, ShouldBeNil)
+
+					rrs, errg := db.GetRemoveRequests(set.ID())
+					So(errg, ShouldBeNil)
+					So(rrs, ShouldHaveLength, 1)
+					So(rrs[0].Path, ShouldEqual, "/a/b/")
+				})
+
 				Convey("You can get all paths containing a prefix", func() {
 					err = db.MergeFileEntries(set2.ID(), []string{"/a/a/j.txt", "/a/b/c/k.txt",
 						"/a/b/c/l.txt", "/a/b/d/m.txt", "/c/n.txt"})
