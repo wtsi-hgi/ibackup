@@ -53,8 +53,12 @@ You will need an ssl key and cert. You can generate self-signed ones like
 (replace "internal.domain" to the host you're run the server on):
 
 ```
-openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -sha256 -days 365 -subj '/CN=internal.domain' -addext "subjectAltName = DNS:internal.domain" -nodes
+openssl req -x509 -newkey rsa:4096 -nodes -sha256 -days 397 -keyout key.pem -out cert.pem -subj '/CN=internal.domain' -addext 'subjectAltName=DNS:internal.domain' -addext 'basicConstraints=critical,CA:FALSE' -addext 'keyUsage=critical,digitalSignature,keyEncipherment' -addext 'extendedKeyUsage=serverAuth'
 ```
+
+The extensions and the 397 day validity are needed for browsers (especially on
+macOS) to accept the cert, and the key must be RSA because the server also uses
+it to sign login tokens.
 
 Start the server process like this (changing the -s and -l option as appropriate
 for your own LDAP):
@@ -67,7 +71,7 @@ export no_proxy=localhost,127.0.0.1,.internal.domain
 wr manager start
 wr limit -g irods:10
 
-ibackup server -c cert.pem -k key.pem --logfile log -s ldap-ro.internal.sanger.ac.uk -l 'uid=%s,ou=people,dc=sanger,dc=ac,dc=uk' set.db &
+ibackup server --cert cert.pem -k key.pem --logfile log -s ldap-ro.internal.sanger.ac.uk -l 'uid=%s,ou=people,dc=sanger,dc=ac,dc=uk' set.db &
 ```
 
 Then you can add a new backup set on behalf of a user (setting -t as
