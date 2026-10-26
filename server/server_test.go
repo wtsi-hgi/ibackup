@@ -926,17 +926,6 @@ func TestServer(t *testing.T) {
 							So(err.Error(), ShouldContainSubstring, ErrRelativePath.Error()+": relative/path")
 						}
 
-						entryPaths := func(entries []*set.Entry, err error) []string {
-							So(err, ShouldBeNil)
-
-							paths := make([]string, len(entries))
-							for i, entry := range entries {
-								paths[i] = entry.Path
-							}
-
-							return paths
-						}
-
 						So(entryPaths(client.GetFiles(exampleSet.ID())), ShouldBeEmpty)
 						So(entryPaths(client.GetDirs(exampleSet.ID())), ShouldBeEmpty)
 
@@ -2567,15 +2556,7 @@ func TestServer(t *testing.T) {
 						trashSet := set.BuildTrashSetFromSet(exampleSet)
 
 						trashedPaths := func() []string {
-							files, errf := client.GetFiles(trashSet.ID())
-							So(errf, ShouldBeNil)
-
-							paths := make([]string, len(files))
-							for i, f := range files {
-								paths[i] = f.Path
-							}
-
-							return paths
+							return entryPaths(client.GetFiles(trashSet.ID()))
 						}
 
 						expectFile1TaggedForTrash := func() {
@@ -2632,26 +2613,18 @@ func TestServer(t *testing.T) {
 							So(s.removeFilesAndDirs(exampleSet, nil, []string{dir2local}, set.ToRemove), ShouldBeNil)
 							waitForRemovals(t, s, client, exampleSet)
 
-							// what adding back a sibling folder does to the
-							// folder's stored removal (see
-							// excludeFromRemovedBucket()): it is replaced by
-							// exclusion records, which have no set, for the
-							// folder's other paths. (MergeDirs() itself can't be
-							// used: findAllOtherPathsToExclude() never reaches
-							// the folder's stored path, which ends in "/".)
+							// adding back a sibling folder replaces the folder's
+							// stored removal with discovery-exclusion records for
+							// its other paths (see excludeFromRemovedBucket()),
+							// so only such a record covers file1.
 							sibling := filepath.Join(dir2local, "sub")
 							So(os.Mkdir(sibling, 0755), ShouldBeNil)
+							So(client.MergeDirs(exampleSet.ID(), []string{sibling}), ShouldBeNil)
 
-							exclusions, errf := findChildPathsToExclude(dir2local, &set.Dirent{Path: sibling, Mode: os.ModeDir})
-							So(errf, ShouldBeNil)
-							So(s.db.SetRemoveRequests(exampleSet.ID(), exclusions), ShouldBeNil)
-							So(s.db.RemoveFromRemovedBucket(dir2local+"/", exampleSet.ID()), ShouldBeNil)
-
-							excluded, errg := s.db.GetRemoveRequestOfFile(exampleSet.ID(), file1local)
+							stored, errg := s.db.GetRemoveRequests(exampleSet.ID())
 							So(errg, ShouldBeNil)
-							So(excluded, ShouldNotBeNil)
-							So(excluded.Path, ShouldEqual, file1local)
-							So(excluded.Set, ShouldBeNil)
+							So(stored, ShouldHaveLength, 1)
+							So(stored[0].Path, ShouldEqual, file1local)
 
 							erru := finishUploadAfterRemoval(t, handler, adminClient, running)
 
@@ -4040,19 +4013,6 @@ func TestServer(t *testing.T) {
 						So(waitForRacCalled(t, racCalled), ShouldBeTrue)
 
 						makeGivenSetComplete(4, exampleSet.Name, adminClient)
-
-						entryPaths := func(entries []*set.Entry, err error) []string {
-							So(err, ShouldBeNil)
-
-							paths := make([]string, len(entries))
-							for i, entry := range entries {
-								paths[i] = entry.Path
-							}
-
-							slices.Sort(paths)
-
-							return paths
-						}
 
 						mergeSubDirAfterRemoval := func() {
 							waitForRemovals(t, s, client, exampleSet)
@@ -9818,6 +9778,21 @@ func waitForRacCalled(t *testing.T, racCalled chan bool) bool {
 	t.Helper()
 
 	return testutil.Receive(t, racCalled, signalTimeout, "the queue's readyAdded callback")
+}
+
+// entryPaths returns the sorted paths of the given entries, asserting the given
+// error from getting them is nil.
+func entryPaths(entries []*set.Entry, err error) []string {
+	So(err, ShouldBeNil)
+
+	paths := make([]string, len(entries))
+	for i, entry := range entries {
+		paths[i] = entry.Path
+	}
+
+	slices.Sort(paths)
+
+	return paths
 }
 
 // requestWithLocal returns the request among the given ones with the given
