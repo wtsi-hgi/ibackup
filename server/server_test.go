@@ -9769,19 +9769,27 @@ func entryPaths(entries []*set.Entry, err error) []string {
 // finished, or one is waiting for an upload (see removeFileFromIRODSandDB()),
 // so that a test then finishing that upload finishes it after the removal
 // would have changed the object, had it not waited. A deleted set's removals
-// have finished.
+// have finished; any other error getting the set fails the test.
 func waitForRemovalToRunOrWait(t *testing.T, s *Server, client *Client, given *set.Set) {
 	t.Helper()
+
+	var err error
 
 	testutil.Eventually(t, removalWaitTimeout, removalPollInterval, func() bool {
 		if s.remoteClaims.removalsWaiting(given.ID()) {
 			return true
 		}
 
-		got, err := client.GetSetByID(given.Requester, given.ID())
+		var got *set.Set
+
+		got, err = client.GetSetByID(given.Requester, given.ID())
 
 		return err != nil || (got.NumObjectsRemoved == got.NumObjectsToBeRemoved && s.removeQueue.Stats().Items == 0)
 	}, "the removal to finish or wait for an upload")
+
+	if err != nil {
+		So(err, ShouldWrap, ErrBadSet)
+	}
 }
 
 // finishUpload does to the given request's remote object what a client's
