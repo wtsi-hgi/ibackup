@@ -127,8 +127,6 @@ const noBackupSets = `Global put queue status: 0 queued; 0 reserved to be worked
 Global put client status (/10): 0 iRODS connections; 0 creating collections; 0 currently uploading
 no backup sets`
 
-var errTwoBackupsNotSeen = errors.New("2 backups were not seen")
-
 var errInvalidQueuesSpecified = errors.New("invalid queues specified")
 
 var errServerStopTimeout = errors.New("timeout waiting for server to stop")
@@ -145,7 +143,7 @@ var (
 	errIlsDidNotSucceed = errors.New("expected ils to succeed")
 )
 
-var errMismatchedDBBackupSizes = errors.New("mismatched db backup sizes")
+var errMismatchedDBBackups = errors.New("remote db backup differs from the local one")
 
 var errRemoteMetaMissing = errors.New("remote meta did not contain expected substring")
 
@@ -371,7 +369,7 @@ func TestPuts(t *testing.T) {
 			setName := "failuresTest"
 			s.addSetForTesting(t, setName, transformer, path)
 
-			s.waitForStatus(setName, "\nStatus: complete (but with failures - try a retry)", 60*time.Second)
+			s.waitForStatus(setName, "\nStatus: complete (but with failures - try a retry)", wrUploadTimeout)
 		})
 
 		Convey("Given a file containing directory and file paths", func() {
@@ -413,6 +411,9 @@ func TestPuts(t *testing.T) {
 				exitCode, _ := s.runBinary(t, "add", "--items", tempTestFileOfPaths.Name(),
 					"--name", "testAddFiles", "--transformer", transformer)
 				So(exitCode, ShouldEqual, 0)
+
+				// file1 and file2 are only listed once dir1 has been walked
+				s.waitForStatus("testAddFiles", "\nDiscovery: completed", 30*time.Second)
 
 				s.confirmOutputContains(t, []string{"status", "--name", "testAddFiles", "-d"}, 0, "Directories:")
 				s.confirmOutputContains(t, []string{"status", "--name", "testAddFiles", "-d"}, 0,
@@ -505,7 +506,7 @@ Local Path	Status	Size	Attempts	Date	Error`+"\n"+
 			Convey("Add will apply default reason/review/remove metadata", func() {
 				s.addSetForTesting(t, setName, transformer, path)
 
-				s.waitForStatus(setName, "\nStatus: complete", 30*time.Second)
+				s.waitForStatus(setName, "\nStatus: complete", wrUploadTimeout)
 
 				testRemoteReviewRemove(t, filepath.Join(remotePath, "file1"),
 					"backup", now.AddDate(0, 6, 0), now.AddDate(1, 0, 0))
@@ -627,7 +628,7 @@ Global put client status (/10): 6 iRODS connections`)
 
 				releaseUploads()
 
-				s.waitForStatus(setName, "\nStatus: complete", 60*time.Second)
+				s.waitForStatus(setName, "\nStatus: complete", wrUploadTimeout)
 
 				s.confirmOutputContains(t, statusCmd, 0,
 					"Uploaded: 3; Replaced: 0; Skipped: 0; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0")
@@ -640,7 +641,7 @@ Global put client status (/10): 6 iRODS connections`)
 				statusCmd[2] = newName
 
 				s.addSetForTesting(t, newName, transformer, path)
-				s.waitForStatus(newName, "\nStatus: complete", 60*time.Second)
+				s.waitForStatus(newName, "\nStatus: complete", wrUploadTimeout)
 				s.confirmOutputContains(t, statusCmd, 0,
 					"Uploaded: 0; Replaced: 0; Skipped: 3; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0")
 				s.confirmOutputContains(t, statusCmd, 0,
@@ -652,7 +653,7 @@ Global put client status (/10): 6 iRODS connections`)
 				internal.CreateTestFile(t, file2, "some data2 updated")
 
 				s.addSetForTesting(t, newName, transformer, path)
-				s.waitForStatus(newName, "\nStatus: complete", 60*time.Second)
+				s.waitForStatus(newName, "\nStatus: complete", wrUploadTimeout)
 				s.confirmOutputContains(t, statusCmd, 0,
 					"Uploaded: 0; Replaced: 1; Skipped: 2; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0")
 				s.confirmOutputContains(t, statusCmd, 0,
@@ -662,7 +663,7 @@ Global put client status (/10): 6 iRODS connections`)
 				exitCode, _ := s.runBinary(t, "sync", "--name", newName)
 				So(exitCode, ShouldEqual, 0)
 
-				s.waitForStatus(newName, "\nStatus: complete", 60*time.Second)
+				s.waitForStatus(newName, "\nStatus: complete", wrUploadTimeout)
 				s.confirmOutputContains(t, statusCmd, 0,
 					"Uploaded: 0; Replaced: 1; Skipped: 2; Failed: 0; Missing: 0; Orphaned: 0; Abnormal: 0")
 				s.confirmOutputContains(t, statusCmd, 0,
@@ -678,7 +679,7 @@ Global put client status (/10): 6 iRODS connections`)
 
 				s.addSetForTesting(t, setName, transformer, path)
 
-				s.waitForStatus(setName, "\nStatus: complete", 60*time.Second)
+				s.waitForStatus(setName, "\nStatus: complete", wrUploadTimeout)
 
 				statusCmd := []string{"status", "--name", setName, "-d"}
 
@@ -697,7 +698,7 @@ Global put client status (/10): 6 iRODS connections`)
 				exitCode, _ = s.runBinary(t, "sync", "--name", setName)
 				So(exitCode, ShouldEqual, 0)
 
-				s.waitForStatus(setName, "\nStatus: complete", 60*time.Second)
+				s.waitForStatus(setName, "\nStatus: complete", wrUploadTimeout)
 
 				exitCode, output = s.runBinary(t, statusCmd...)
 				So(exitCode, ShouldEqual, 0)
@@ -716,7 +717,7 @@ Global put client status (/10): 6 iRODS connections`)
 				setName := "setWithOrphanedDirs"
 				s.addSetForTesting(t, setName, transformer, path)
 
-				s.waitForStatus(setName, "\nStatus: complete", 10*time.Second)
+				s.waitForStatus(setName, "\nStatus: complete", wrUploadTimeout)
 
 				statusCmd := []string{"status", "--name", setName, "-d"}
 
@@ -730,7 +731,7 @@ Global put client status (/10): 6 iRODS connections`)
 				exitCode, _ = s.runBinary(t, "sync", "--name", setName)
 				So(exitCode, ShouldEqual, 0)
 
-				s.waitForStatus(setName, "\nStatus: complete", 10*time.Second)
+				s.waitForStatus(setName, "\nStatus: complete", wrUploadTimeout)
 
 				exitCode, output = s.runBinary(t, statusCmd...)
 				So(exitCode, ShouldEqual, 0)
@@ -763,7 +764,7 @@ Global put client status (/10): 6 iRODS connections`)
 			s.addSetForTesting(t, "hardlinkTest", transformer, path)
 
 			s.waitForStatus("hardlinkTest", "\nStatus: uploading", 60*time.Second)
-			s.waitForStatus("hardlinkTest", "\nStatus: complete\n", 60*time.Second)
+			s.waitForStatus("hardlinkTest", "\nStatus: complete\n", wrUploadTimeout)
 
 			output := getRemoteMeta(remoteFile)
 			So(output, ShouldNotContainSubstring, "ibackup:hardlink")
@@ -1143,7 +1144,7 @@ func TestRemoveFile(t *testing.T) {
 						s.waitForStatus(setName, "Removal status: 1 / 1 objects removed", 30*time.Second)
 
 						s.waitForStatus(setName, "\nDiscovery: completed", 10*time.Second)
-						s.waitForStatus(setName, "\nStatus: complete", 10*time.Second)
+						s.waitForStatus(setName, "\nStatus: complete", wrUploadTimeout)
 
 						s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
 							0, "Num files: 2; Symlinks: 0; Hardlinks: 0; Size "+
@@ -1153,7 +1154,7 @@ func TestRemoveFile(t *testing.T) {
 						exitCode, _ = s.runBinary(t, "sync", "--name", setName)
 
 						s.waitForStatus(setName, "\nDiscovery: completed", 10*time.Second)
-						s.waitForStatus(setName, "\nStatus: complete", 10*time.Second)
+						s.waitForStatus(setName, "\nStatus: complete", wrUploadTimeout)
 
 						s.confirmOutputContains(t, []string{"status", "--name", setName, "-d"},
 							0, "Num files: 2; Symlinks: 0; Hardlinks: 0; Size "+
@@ -1358,7 +1359,7 @@ func TestRemoveDirs(t *testing.T) {
 			Convey("And with another set with the same name made by a different user", func() {
 				anotherUser := "anotherUser"
 				s.addSetForTestingWithFlag(t, setName, transformer, file2, "--user", anotherUser)
-				s.waitForStatusWithUser(setName, "\nStatus: complete", anotherUser, 10*time.Second)
+				s.waitForStatusWithUser(setName, "\nStatus: complete", anotherUser, wrUploadTimeout)
 
 				Convey("Remove will not remove the set name from the metadata", func() {
 					exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--path", file2)
@@ -1439,7 +1440,7 @@ func TestRemoveDirs(t *testing.T) {
 				setName = "nestedDirSet"
 
 				s.addSetForTesting(t, setName, transformer, dir1)
-				s.waitForStatus(setName, "\nStatus: complete", 30*time.Second)
+				s.waitForStatus(setName, "\nStatus: complete", wrUploadTimeout)
 
 				Convey("Remove removes the nested dir even though it wasnt specified in the set", func() {
 					s.removePath(t, setName, dir3, 2)
@@ -1707,7 +1708,7 @@ func TestRemove(t *testing.T) {
 				exitCode, _ := s.runBinary(t, "sync", "--name", setName)
 				So(exitCode, ShouldEqual, 0)
 
-				s.waitForStatus(setName, "\nStatus: complete\n", 10*time.Second)
+				s.waitForStatus(setName, "\nStatus: complete\n", wrUploadTimeout)
 
 				s.confirmOutputContains(t, statusCmd, 0, "file1\tabnormal")
 
@@ -1733,7 +1734,7 @@ func TestRemove(t *testing.T) {
 				e := os.Remove(file)
 				So(e, ShouldBeNil)
 
-				s.waitForStatus(setNameWithMissingFile, "\nStatus: complete", 10*time.Second)
+				s.waitForStatus(setNameWithMissingFile, "\nStatus: complete", wrUploadTimeout)
 				s.confirmOutputContains(t, []string{"status", "--name", setNameWithMissingFile, "-d"}, 0, file+"\tmissing")
 
 				Convey("Remove will still work", func() {
@@ -1889,6 +1890,55 @@ func removeFileFromIRODS(t *testing.T, path string) {
 
 	_, err := icmd.IRM("-f", path)
 	So(err, ShouldBeNil)
+}
+
+// backupHasSetDir reports whether the database backup at path holds the named
+// set with dir as one of its dirs, returning false on any error. The server
+// replaces the backup by renaming a new one over it, so reading it is safe.
+// Never pass it a database a server will open: the read-only handle it leaves
+// open would block that server.
+func backupHasSetDir(path, name, dir string) bool {
+	db, err := set.NewRO(path)
+	if err != nil {
+		return false
+	}
+
+	sets, err := db.GetAll()
+	if err != nil {
+		return false
+	}
+
+	for _, got := range sets {
+		if got.Name != name {
+			continue
+		}
+
+		dirs, err := db.GetDirEntries(got.ID(), nil)
+		if err != nil {
+			return false
+		}
+
+		return slices.ContainsFunc(dirs, func(entry *set.Entry) bool { return entry.Path == dir })
+	}
+
+	return false
+}
+
+// hashFile returns the hex sha256 of the file at path.
+func hashFile(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+
+	defer f.Close()
+
+	h := sha256.New()
+	if _, err = io.Copy(h, f); err != nil {
+		return "", err
+	}
+
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 func addFileToIRODS(t *testing.T, localPath, remotePath string) {
@@ -2131,7 +2181,7 @@ func TestTrashRemove(t *testing.T) {
 
 					So(exitCode, ShouldEqual, 0)
 
-					s.waitForStatusWithUser(setName2, "\nStatus: complete", username, 20*time.Second)
+					s.waitForStatusWithUser(setName2, "\nStatus: complete", username, wrUploadTimeout)
 
 					Convey("If the different user also removes files and folders", func() {
 						exitCode, _ := s.runBinary(t, "remove", "--name", setName, "--user", username,
@@ -2187,7 +2237,7 @@ func TestTrashRemove(t *testing.T) {
 				trashSetName = set.TrashPrefix + setName
 
 				s.addSetForTesting(t, setName, transformer, dir1)
-				s.waitForStatus(setName, "\nStatus: complete", timeout)
+				s.waitForStatus(setName, "\nStatus: complete", wrUploadTimeout)
 
 				Convey("With the parent folder and all children removed", func() {
 					s.removePath(t, setName, dir1, 4)
@@ -2442,7 +2492,7 @@ func TestTrashRemovePaths(t *testing.T) {
 				exitCode, _ := s.runBinary(t, "edit", "--name", setName, "--transformer", newTransformer)
 				So(exitCode, ShouldEqual, 0)
 
-				s.waitForStatus(setName, "\nStatus: complete", timeout)
+				s.waitForStatus(setName, "\nStatus: complete", wrUploadTimeout)
 
 				s.removePath(t, setName, failed2, 1)
 
@@ -2460,7 +2510,7 @@ func TestTrashRemovePaths(t *testing.T) {
 					fileRemote := filepath.Join(newRemotePath, "failing", "file")
 					So(waitForIlsPresent(t, fileRemote, timeout), ShouldBeNil)
 
-					s.waitForStatus(setName, "\nStatus: complete", timeout)
+					s.waitForStatus(setName, "\nStatus: complete", wrUploadTimeout)
 					s.removePath(t, setName, file, 1)
 					s.trashRemovePath(t, setName, file, 1)
 
@@ -2534,7 +2584,6 @@ func TestTrashRemoveShared(t *testing.T) {
 		fx := givenTrashRemoveServer(t)
 
 		s, remotePath, path, transformer := fx.s, fx.remotePath, fx.path, fx.transformer
-		timeout := fx.timeout
 
 		Convey("And a set with files and folders", func() {
 			givenTrashRemoveSet(t, fx)
@@ -2570,7 +2619,7 @@ func TestTrashRemoveShared(t *testing.T) {
 
 					s.addSetForTesting(t, "testHardlinks", transformer, linkPath2)
 
-					s.waitForStatus("testHardlinks", "\nStatus: complete", timeout)
+					s.waitForStatus("testHardlinks", "\nStatus: complete", wrUploadTimeout)
 
 					Convey("Removing a hardlink does not remove the inode file", func() {
 						remoteInode := getMetaValue(getRemoteMeta(filepath.Join(remotePath, "link")), "ibackup:remotehardlink")
@@ -2599,7 +2648,7 @@ func TestTrashRemoveShared(t *testing.T) {
 
 					So(exitCode, ShouldEqual, 0)
 
-					s.waitForStatusWithUser(setName2, "\nStatus: complete", "testUser", 20*time.Second)
+					s.waitForStatusWithUser(setName2, "\nStatus: complete", "testUser", wrUploadTimeout)
 
 					Convey("If you trash remove the file, instead, removes the metadata related to the set", func() {
 						output := getRemoteMeta(filepath.Join(remotePath, "file1"))
@@ -4776,6 +4825,28 @@ func TestList(t *testing.T) {
 				1, "--local and --remote are mutually exclusive")
 		})
 
+		Convey("Relative paths in an added set's --files are made absolute", func() {
+			dir, err := filepath.EvalSymlinks(t.TempDir())
+			So(err, ShouldBeNil)
+
+			fofn := filepath.Join(dir, "fofn")
+			So(os.WriteFile(fofn, []byte("path/to/file\n\n"), userPerms), ShouldBeNil)
+
+			wd, err := os.Getwd()
+			So(err, ShouldBeNil)
+
+			Reset(func() { So(os.Chdir(wd), ShouldBeNil) })
+			So(os.Chdir(dir), ShouldBeNil)
+
+			exitCode, _ := s.runBinary(t, "add", "--files", fofn,
+				"--name", "testRelative", "--transformer", "prefix="+dir+":/remote")
+			So(exitCode, ShouldEqual, 0)
+
+			s.waitForStatus("testRelative", "Status: complete", 1*time.Second)
+
+			s.confirmOutput(t, []string{"list", "--name", "testRelative", "--local"}, 0, dir+"/path/to/file")
+		})
+
 		Convey("Given an added set defined with files", func() {
 			dir := t.TempDir()
 			tempTestFile, err := os.CreateTemp(dir, "testFileSet")
@@ -4914,7 +4985,7 @@ func TestList(t *testing.T) {
 
 			s.addSetForTestingWithFlags(t, setName, "prefix="+dir+":"+remote, "--items", tempTestFile.Name())
 
-			s.waitForStatus(setName, "Status: complete", 20*time.Second)
+			s.waitForStatus(setName, "Status: complete", wrUploadTimeout)
 
 			Convey("You can delete one of the files which doesn't affect list output and re-trigger the discovery", func() {
 				So(os.Remove(uploadFile2Path), ShouldBeNil)
@@ -4926,7 +4997,7 @@ func TestList(t *testing.T) {
 
 				exitCode, _ := s.runBinary(t, "sync", "--name", setName)
 				So(exitCode, ShouldEqual, 0)
-				s.waitForStatus(setName, "Status: complete", 20*time.Second)
+				s.waitForStatus(setName, "Status: complete", wrUploadTimeout)
 
 				Convey("Then list --uploaded shows all uploaded files, including orphans", func() {
 					s.confirmOutput(t, []string{"list", "--name", setName, "--local", "--uploaded"}, 0,
@@ -4997,7 +5068,7 @@ func TestList(t *testing.T) {
 					exitCode, _ := s.runBinary(t, "add", "-p", dir2,
 						"--name", setName2, "--transformer", "prefix="+dir2+":"+remotePath)
 					So(exitCode, ShouldEqual, 0)
-					s.waitForStatus(setName2, "Status: complete", 30*time.Second)
+					s.waitForStatus(setName2, "Status: complete", wrUploadTimeout)
 
 					err := s.Shutdown()
 					So(err, ShouldBeNil)
@@ -5885,34 +5956,18 @@ func TestBackup(t *testing.T) {
 		transformer, localDir, remoteDir := prepareForSetWithEmptyDir(t)
 		s.addSetForTesting(t, "testForBackup", transformer, localDir)
 
-		versionsSeen := 0
+		// Adding the set backs up the database before its dir is added, and
+		// discovery backs it up again, at least a second later, once the
+		// first backup has also been put in iRODS. Each wait covers one such
+		// gap and one put of this small database.
+		const backupWait = 30 * time.Second
 
-		sizeRe := regexp.MustCompile(` (\d+)\s+\d{4}-\d{2}-\d{2}\.\d{2}:\d{2}`)
-		foundSize := ""
+		testutil.Eventually(t, backupWait, 100*time.Millisecond, func() bool {
+			return backupHasSetDir(s.backupFile, "testForBackup", localDir)
+		}, "a local backup with the set's dir")
+
 		icmd := NewIcommander(t)
 		So(icmd, ShouldNotBeNil)
-
-		testutil.RetryUntilWorksCustom(t, func() error { //nolint:errcheck
-			out, err := icmd.ILS("-l", remotePath)
-			if err != nil {
-				return err
-			}
-
-			sizeStr := sizeRe.FindString(string(out))
-			if sizeStr != foundSize {
-				versionsSeen++
-				foundSize = sizeStr
-			}
-
-			if versionsSeen == 2 {
-				return nil
-			}
-
-			return errTwoBackupsNotSeen
-		}, 5*time.Second, 0)
-
-		localBackupExists := testutil.WaitForFile(t, s.backupFile)
-		So(localBackupExists, ShouldBeTrue)
 
 		err := testutil.RetryUntilWorksCustom(t, func() error {
 			out, err := icmd.IGET("-Kf", remotePath, gotPath)
@@ -5922,41 +5977,24 @@ func TestBackup(t *testing.T) {
 				return err
 			}
 
-			li, err := os.Stat(s.backupFile)
+			remoteHash, err := hashFile(gotPath)
 			if err != nil {
 				return err
 			}
 
-			ri, err := os.Stat(gotPath)
+			localHash, err := hashFile(s.backupFile)
 			if err != nil {
 				return err
 			}
 
-			if ri.Size() != li.Size() {
-				return errMismatchedDBBackupSizes
+			if remoteHash != localHash {
+				return errMismatchedDBBackups
 			}
 
 			return nil
-		}, 30*time.Second, 1*time.Second)
+		}, backupWait, 1*time.Second)
 
 		So(err, ShouldBeNil)
-
-		hashFile := func(path string) string {
-			f, err := os.Open(path)
-			So(err, ShouldBeNil)
-
-			defer f.Close()
-
-			s := sha256.New()
-			_, err = io.Copy(s, f)
-			So(err, ShouldBeNil)
-
-			return hex.EncodeToString(s.Sum(nil))
-		}
-
-		bh := hashFile(s.backupFile)
-		rh := hashFile(gotPath)
-		So(rh, ShouldEqual, bh)
 
 		Convey("Running a server with the retrieved db works correctly", func() {
 			bs := new(testServer)
@@ -6032,8 +6070,6 @@ func TestRetry(t *testing.T) {
 		path := t.TempDir()
 		transformer := "prefix=" + path + ":" + remotePath
 
-		timeout := 30 * time.Second
-
 		Convey("retry requires --name", func() {
 			s.confirmOutputContains(t, []string{"retry"}, 1,
 				"Error: required flag(s) \"name\" not set")
@@ -6056,7 +6092,7 @@ func TestRetry(t *testing.T) {
 			setName := "failTest"
 			s.addSetForTesting(t, setName, transformer, path)
 
-			s.waitForStatus(setName, "\nStatus: complete (but with failures - try a retry)", timeout)
+			s.waitForStatus(setName, "\nStatus: complete (but with failures - try a retry)", wrUploadTimeout)
 
 			exitCode, output := s.runBinaryWithNoLogging(t, "status", "--name", setName, "-d")
 			So(exitCode, ShouldEqual, 0)
@@ -6072,7 +6108,7 @@ func TestRetry(t *testing.T) {
 				exitCode, _ = s.runBinary(t, "retry", "--name", setName)
 				So(exitCode, ShouldEqual, 0)
 
-				s.waitForStatus(setName, "Status: complete\n", timeout)
+				s.waitForStatus(setName, "Status: complete\n", wrUploadTimeout)
 
 				exitCode, output = s.runBinaryWithNoLogging(t, "status", "--name", setName, "-d")
 				So(exitCode, ShouldEqual, 0)

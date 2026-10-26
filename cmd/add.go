@@ -317,8 +317,10 @@ func updateAddDescFlag() {
 	}
 }
 
-// readPaths turns the line content (split as per splitter) of the given file.
-// If file is blank, returns nil.
+// readPaths turns the line content (split as per splitter) of the given file
+// into absolute paths, as the server requires, skipping blank lines (which
+// filepath.Abs would make the working directory). If file is blank, returns
+// nil.
 func readPaths(file string, splitter bufio.SplitFunc) []string {
 	if file == "" {
 		return nil
@@ -330,7 +332,16 @@ func readPaths(file string, splitter bufio.SplitFunc) []string {
 	var paths []string //nolint:prealloc
 
 	for scanner.Scan() {
-		paths = append(paths, scanner.Text())
+		if scanner.Text() == "" {
+			continue
+		}
+
+		path, err := filepath.Abs(scanner.Text())
+		if err != nil {
+			dief("failed to make path absolute: %s", err)
+		}
+
+		paths = append(paths, path)
 	}
 
 	serr := scanner.Err()

@@ -488,6 +488,30 @@ func TestServerHelperFunctions(t *testing.T) {
 			So(isRemoved, ShouldBeFalse)
 		})
 	})
+
+	Convey("findAllOtherPathsToExclude excludes the siblings up to a removed folder", t, func() {
+		removed := t.TempDir()
+		entry := &set.Dirent{Path: filepath.Join(removed, "a", "b"), Mode: os.ModeDir}
+
+		for _, dir := range []string{entry.Path, filepath.Join(removed, "a", "x"), filepath.Join(removed, "c")} {
+			So(os.MkdirAll(dir, 0755), ShouldBeNil)
+		}
+
+		s := &Server{}
+		given := &set.Set{Name: "set", Requester: "user"}
+
+		paths, err := s.findAllOtherPathsToExclude(entry, removed+"/", given)
+		So(err, ShouldBeNil)
+		So(paths, ShouldResemble, []set.RemoveReq{
+			{Path: filepath.Join(removed, "a", "x"), Set: given, IsDir: true, IsComplete: true},
+			{Path: filepath.Join(removed, "c"), Set: given, IsDir: true, IsComplete: true},
+		})
+
+		Convey("and fails if that folder is not an ancestor", func() {
+			_, err = s.findAllOtherPathsToExclude(entry, filepath.Join(removed, "c")+"/", given)
+			So(err, ShouldWrap, errMatchNotAncestor)
+		})
+	})
 }
 
 func TestDetermineQueueSize(t *testing.T) {
@@ -891,6 +915,39 @@ func TestServer(t *testing.T) {
 
 					err = client.AddOrUpdateSet(exampleSet)
 					So(err, ShouldBeNil)
+
+					Convey("Set paths must be absolute, and are stored clean", func() {
+						for _, send := range []func(string, []string) error{
+							client.MergeFiles, client.MergeDirs, client.TrashFilesAndDirs, client.RemoveFilesAndDirs,
+						} {
+							err = send(exampleSet.ID(), []string{localDir, "relative/path"})
+							So(err, ShouldWrap, ErrInvalidInput)
+							So(err.Error(), ShouldContainSubstring, ErrRelativePath.Error()+": relative/path")
+						}
+
+						entryPaths := func(entries []*set.Entry, err error) []string {
+							So(err, ShouldBeNil)
+
+							paths := make([]string, len(entries))
+							for i, entry := range entries {
+								paths[i] = entry.Path
+							}
+
+							return paths
+						}
+
+						So(entryPaths(client.GetFiles(exampleSet.ID())), ShouldBeEmpty)
+						So(entryPaths(client.GetDirs(exampleSet.ID())), ShouldBeEmpty)
+
+						So(client.MergeFiles(exampleSet.ID(), []string{localDir + "/a/../file"}), ShouldBeNil)
+						So(client.MergeDirs(exampleSet.ID(), []string{localDir + "/b/../dir/", localDir + "//other/"}),
+							ShouldBeNil)
+
+						So(entryPaths(client.GetFiles(exampleSet.ID())), ShouldResemble,
+							[]string{filepath.Join(localDir, "file")})
+						So(entryPaths(client.GetDirs(exampleSet.ID())), ShouldResemble,
+							[]string{filepath.Join(localDir, "dir"), filepath.Join(localDir, "other")})
+					})
 
 					Convey("A removal started while another set's finished removals clean up the "+
 						"storage handler waits for that cleanup", func() {
@@ -3370,6 +3427,152 @@ func TestServer(t *testing.T) {
 						})
 					})
 
+					Convey("And given a set with a folder holding a subfolder and siblings", func() {
+						topDir := filepath.Join(localDir, "top")
+						removedDir := filepath.Join(topDir, "dir")
+						subDir := filepath.Join(removedDir, "sub")
+						subFile := filepath.Join(subDir, "file")
+						otherFile := filepath.Join(removedDir, "other")
+						prefixFile := filepath.Join(removedDir, "su", "file")
+						keptFile := filepath.Join(topDir, "kept")
+
+						for _, path := range []string{subFile, otherFile, prefixFile, keptFile} {
+							So(os.MkdirAll(filepath.Dir(path), 0755), ShouldBeNil)
+							internal.CreateTestFile(t, path, "content")
+						}
+
+						So(client.MergeDirs(exampleSet.ID(), []string{topDir}), ShouldBeNil)
+						So(client.TriggerDiscovery(exampleSet.ID(), false), ShouldBeNil)
+						So(waitForRacCalled(t, racCalled), ShouldBeTrue)
+
+						makeGivenSetComplete(4, exampleSet.Name, adminClient)
+
+						entryPaths := func(entries []*set.Entry, err error) []string {
+							So(err, ShouldBeNil)
+
+							paths := make([]string, len(entries))
+							for i, entry := range entries {
+								paths[i] = entry.Path
+							}
+
+							slices.Sort(paths)
+
+							return paths
+						}
+
+						mergeSubDirAfterRemoval := func() {
+							waitForRemovals(t, s, client, exampleSet)
+
+							So(entryPaths(client.GetDirs(exampleSet.ID())), ShouldResemble, []string{topDir})
+
+							// files made after the removal in the removed folder are
+							// only excluded by it, including one whose name is a
+							// prefix of the subfolder's; one made outside it must
+							// still be discovered.
+							lateFile := filepath.Join(topDir, "late")
+							internal.CreateTestFile(t, filepath.Join(removedDir, "new"), "content")
+							internal.CreateTestFile(t, filepath.Join(removedDir, "s"), "content")
+							internal.CreateTestFile(t, lateFile, "content")
+
+							// MergeDirs is one request doing local database writes, so it
+							// returns in milliseconds. It used to loop forever here, so call
+							// it in a goroutine and fail within 10s instead of hanging the
+							// package's test run.
+							errCh := make(chan error, 1)
+
+							go func() {
+								errCh <- client.MergeDirs(exampleSet.ID(), []string{subDir})
+							}()
+
+							So(testutil.Receive(t, errCh, 10*time.Second, "MergeDirs to return"), ShouldBeNil)
+
+							So(entryPaths(client.GetDirs(exampleSet.ID())), ShouldResemble, []string{topDir, subDir})
+
+							before, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+							So(errg, ShouldBeNil)
+
+							So(client.TriggerDiscovery(exampleSet.ID(), false), ShouldBeNil)
+
+							testutil.Eventually(t, 30*time.Second, 25*time.Millisecond, func() bool {
+								got, errgs := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+
+								return errgs == nil && got.LastDiscovery.After(before.LastDiscovery)
+							}, "rediscovery")
+
+							So(entryPaths(client.GetFiles(exampleSet.ID())), ShouldResemble, []string{subFile, keptFile, lateFile})
+						}
+
+						Convey("Merging a subfolder of a removed folder re-adds just that subfolder", func() {
+							So(s.removeFilesAndDirs(exampleSet, nil, []string{removedDir}, set.ToRemove), ShouldBeNil)
+
+							mergeSubDirAfterRemoval()
+						})
+
+						Convey("Merging a subfolder of a trashed folder re-adds just that subfolder", func() {
+							So(client.TrashFilesAndDirs(exampleSet.ID(), []string{removedDir}), ShouldBeNil)
+
+							mergeSubDirAfterRemoval()
+						})
+
+						Convey("Trashing a folder by a non-clean path trashes that folder", func() {
+							So(client.TrashFilesAndDirs(exampleSet.ID(), []string{subDir + "/../"}), ShouldBeNil)
+
+							mergeSubDirAfterRemoval()
+						})
+					})
+
+					Convey("Given a folder an older server stored with a trailing slash", func() {
+						topDir := filepath.Join(localDir, "top")
+						internal.CreateTestFile(t, filepath.Join(topDir, "file"), "content")
+
+						trashTopDirStoredAs := func(stored ...string) {
+							dirents := make([]*set.Dirent, len(stored))
+							for i, path := range stored {
+								dirents[i] = &set.Dirent{Path: path, Mode: os.ModeDir}
+							}
+
+							So(s.db.MergeDirEntries(exampleSet.ID(), dirents), ShouldBeNil)
+							So(client.TriggerDiscovery(exampleSet.ID(), false), ShouldBeNil)
+							So(waitForRacCalled(t, racCalled), ShouldBeTrue)
+
+							makeGivenSetComplete(1, exampleSet.Name, adminClient)
+
+							So(client.TrashFilesAndDirs(exampleSet.ID(), []string{topDir}), ShouldBeNil)
+
+							waitForRemovals(t, s, client, exampleSet)
+
+							got, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
+							So(errg, ShouldBeNil)
+							So(got.NumObjectsRemoved, ShouldEqual, 2)
+							So(got.NumObjectsToBeRemoved, ShouldEqual, 2)
+
+							dirs, errg := client.GetDirs(exampleSet.ID())
+							So(errg, ShouldBeNil)
+							So(dirs, ShouldBeEmpty)
+
+							files, errg := client.GetFiles(exampleSet.ID())
+							So(errg, ShouldBeNil)
+							So(files, ShouldBeEmpty)
+
+							trashSet, errg := adminClient.GetSetByName(exampleSet.Requester, set.TrashPrefix+exampleSet.Name)
+							So(errg, ShouldBeNil)
+
+							trashedDirs, errg := client.GetDirs(trashSet.ID())
+							So(errg, ShouldBeNil)
+							So(trashedDirs, ShouldHaveLength, 1)
+							So(trashedDirs[0].Path, ShouldEqual, topDir)
+							So(trashedDirs[0].Type, ShouldEqual, set.Directory)
+						}
+
+						Convey("trashing it trashes it", func() {
+							trashTopDirStoredAs(topDir + "/")
+						})
+
+						Convey("trashing it when it is also stored without one trashes it once", func() {
+							trashTopDirStoredAs(topDir, topDir+"/")
+						})
+					})
+
 					Convey("And given a set with 100 files in one nested folder", func() {
 						dir1 := filepath.Join(localDir, "dir1/")
 						dir2 := filepath.Join(dir1, "dir2/")
@@ -4018,17 +4221,15 @@ func TestServer(t *testing.T) {
 
 							makeSetComplete(expectedRequests)
 
-							gotSet, err = client.GetSetByID(exampleSet2.Requester, exampleSet2.ID())
-							So(err, ShouldBeNil)
-							So(gotSet.Status, ShouldEqual, set.Complete)
-							So(gotSet.LastDiscovery, ShouldEqual, discovered)
-
 							waitForDiscovery(t, client, gotSet)
 
 							gotSet, err = client.GetSetByID(exampleSet2.Requester, exampleSet2.ID())
 							So(err, ShouldBeNil)
 							So(gotSet.Status, ShouldEqual, set.PendingUpload)
 							So(gotSet.LastDiscovery, ShouldHappenAfter, discovered)
+							So(gotSet.LastCompleted, ShouldHappenAfter, discovered)
+							So(gotSet.StartedDiscovery, ShouldHappenOnOrAfter,
+								gotSet.LastCompleted.Add(exampleSet2.MonitorTime))
 							discovered = gotSet.LastDiscovery
 
 							waitForDiscovery(t, client, gotSet)
@@ -4040,17 +4241,15 @@ func TestServer(t *testing.T) {
 
 							makeSetComplete(2)
 
-							gotSet, err = client.GetSetByID(exampleSet2.Requester, exampleSet2.ID())
-							So(err, ShouldBeNil)
-							So(gotSet.Status, ShouldEqual, set.Complete)
-							So(gotSet.LastDiscovery, ShouldEqual, discovered)
-
 							waitForDiscovery(t, client, gotSet)
 
 							gotSet, err = client.GetSetByID(exampleSet2.Requester, exampleSet2.ID())
 							So(err, ShouldBeNil)
 							So(gotSet.Status, ShouldEqual, set.PendingUpload)
 							So(gotSet.LastDiscovery, ShouldHappenAfter, discovered)
+							So(gotSet.LastCompleted, ShouldHappenAfter, discovered)
+							So(gotSet.StartedDiscovery, ShouldHappenOnOrAfter,
+								gotSet.LastCompleted.Add(exampleSet2.MonitorTime))
 						})
 
 						Convey("After discovery, empty monitored sets get discovered again after the discovery", func() {
@@ -8080,12 +8279,7 @@ func TestServer(t *testing.T) {
 					err = client.TriggerDiscovery(mset.ID(), false)
 					So(err, ShouldBeNil)
 
-					testutil.Eventually(t, 5*time.Second, 10*time.Millisecond, func() bool {
-						got, errs := client.GetSetByID(mset.Requester, mset.ID())
-
-						return errs == nil && got.LastDiscovery.After(firstDiscovery) &&
-							!got.LastDiscovery.Before(got.StartedDiscovery)
-					}, "the edit's discovery to finish")
+					waitForRediscoveryQueued(t, s, client, mset, firstDiscovery)
 
 					requests, errg := client.GetSomeUploadRequests()
 					So(errg, ShouldBeNil)
@@ -8200,12 +8394,7 @@ func TestServer(t *testing.T) {
 					err = client.TriggerDiscovery(fset.ID(), false)
 					So(err, ShouldBeNil)
 
-					testutil.Eventually(t, 5*time.Second, 10*time.Millisecond, func() bool {
-						got, errs := client.GetSetByID(fset.Requester, fset.ID())
-
-						return errs == nil && got.LastDiscovery.After(firstDiscovery) &&
-							!got.LastDiscovery.Before(got.StartedDiscovery)
-					}, "the edit's discovery to finish")
+					waitForRediscoveryQueued(t, s, client, fset, firstDiscovery)
 
 					buriedRequests, errb := client.BuriedRequests()
 					So(errb, ShouldBeNil)
@@ -8272,12 +8461,7 @@ func TestServer(t *testing.T) {
 					err = client.TriggerDiscovery(lset.ID(), false)
 					So(err, ShouldBeNil)
 
-					testutil.Eventually(t, 5*time.Second, 10*time.Millisecond, func() bool {
-						got, errs := client.GetSetByID(lset.Requester, lset.ID())
-
-						return errs == nil && got.LastDiscovery.After(firstDiscovery) &&
-							!got.LastDiscovery.Before(got.StartedDiscovery)
-					}, "the second discovery to finish")
+					waitForRediscoveryQueued(t, s, client, lset, firstDiscovery)
 
 					requests, errg := client.GetSomeUploadRequests()
 					So(errg, ShouldBeNil)
@@ -8359,12 +8543,7 @@ func TestServer(t *testing.T) {
 					err = client.TriggerDiscovery(hset.ID(), false)
 					So(err, ShouldBeNil)
 
-					testutil.Eventually(t, 5*time.Second, 10*time.Millisecond, func() bool {
-						got, errgs := client.GetSetByID(hset.Requester, hset.ID())
-
-						return errgs == nil && got.LastDiscovery.After(firstDiscovery) &&
-							!got.LastDiscovery.Before(got.StartedDiscovery)
-					}, "the second discovery to finish")
+					waitForRediscoveryQueued(t, s, client, hset, firstDiscovery)
 
 					requests, errg := client.GetSomeUploadRequests()
 					So(errg, ShouldBeNil)
@@ -9418,6 +9597,35 @@ func makePutter(t *testing.T, handler transfer.Handler, requests []*transfer.Req
 	So(qs.CreatingCollections, ShouldEqual, 0)
 
 	return p, d
+}
+
+// waitForRediscoveryQueued waits for a discovery of the given set, triggered
+// after the one that finished at firstDiscovery, to finish and then to queue
+// the set's requests, or give queued ones new details. A discovery records that
+// it finished before it queues them, and holds the set's discovery lock until it
+// has, so we then wait to take and release that lock. Each wait gets the 5s
+// these tests give a discovery of a few files; queuing them is part of that.
+func waitForRediscoveryQueued(t *testing.T, s *Server, client *Client, given *set.Set, firstDiscovery time.Time) {
+	t.Helper()
+
+	const timeout = 5 * time.Second
+
+	testutil.Eventually(t, timeout, 10*time.Millisecond, func() bool {
+		got, errg := client.GetSetByID(given.Requester, given.ID())
+
+		return errg == nil && got.LastDiscovery.After(firstDiscovery) &&
+			!got.LastDiscovery.Before(got.StartedDiscovery)
+	}, "the rediscovery to finish")
+
+	released := make(chan struct{})
+
+	go func() {
+		s.discoveryCoordinator.StartDiscovery(given.ID())
+		s.discoveryCoordinator.DiscoveryHappened(given.ID())
+		close(released)
+	}()
+
+	testutil.Receive(t, released, timeout, "the rediscovery to queue its requests")
 }
 
 // hookedRemoteChangeHandler is a remove.Handler whose RemoveFile() and
