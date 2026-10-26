@@ -774,11 +774,14 @@ func (s *Server) deleteSet(c *gin.Context) {
 		return
 	}
 
-	s.registerDeletionCallback(set)
+	// marked before the callback is registered, so that a removal of the set
+	// already running can't finish and clear the mark before it is made.
 	s.markSetDeleting(set.ID(), true)
+	s.registerDeletionCallback(set)
 
 	err = s.removeToTrashSet(set, paths, nil)
 	if err != nil {
+		s.markSetDeleting(set.ID(), false)
 		c.AbortWithError(http.StatusInternalServerError, err) //nolint:errcheck
 
 		return
