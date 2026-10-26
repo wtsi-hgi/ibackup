@@ -87,7 +87,7 @@ speed:
 	@d=$$(mktemp -d) && trap 'rm -rf "$$d"' EXIT && trap 'exit 130' INT TERM HUP && \
 	CGO_ENABLED=1 go build -tags netgo -o "$$d/speedgate" ./developers/speedgate && "$$d/speedgate"
 
-# curl -sSfL https://golangci-lint.run/install.sh | sh -s -- -b $(go env GOPATH)/bin v2.6.0
+# curl -sSfL https://golangci-lint.run/install.sh | sh -s -- -b $(go env GOPATH)/bin v2.13.2
 lint:
 	@golangci-lint run
 
