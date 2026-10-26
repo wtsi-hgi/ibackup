@@ -82,6 +82,11 @@ const (
 
 	retryDelay = 5 * time.Second
 
+	// removeReserveWait is how long a removal handler waits for a removal of
+	// its set to become ready, such as a failed one retried after retryDelay,
+	// before it stops.
+	removeReserveWait = retryDelay + 2*time.Second
+
 	maxRememberedRequestLogs = 100000
 
 	queueItem4K = 2
@@ -176,14 +181,10 @@ type Server struct {
 	failedUploadRetryDelay time.Duration
 	replicaLogging         bool
 
-	// lateUndoMeta holds, by request ID, the sets and requester values a late
-	// upload's remote object had before the first attempt to undo it (see
-	// undoLateUploadOfObject()). Only the status update goroutine records and
-	// reads them; a request leaving our queue another way, such as when its set
-	// is deleted, has its record deleted there too, so lateUndoMetaMu guards
-	// the map.
-	lateUndoMetaMu sync.Mutex
-	lateUndoMeta   map[string]map[string]string
+	// deletingSets has the IDs of the sets whose deletion (see deleteSet()) is
+	// in progress, whose upload requests are no longer given to clients.
+	deletingSetsMu sync.Mutex
+	deletingSets   map[string]struct{}
 
 	hungDebugTimeout    time.Duration
 	hungDebugStopCh     chan struct{}
@@ -259,12 +260,12 @@ func New(conf Config) (*Server, error) { //nolint:funlen
 		readOnly:               conf.ReadOnly,
 		storageHandler:         conf.StorageHandler,
 		requestLogged:          make(map[string]struct{}),
-		lateUndoMeta:           make(map[string]map[string]string),
+		deletingSets:           make(map[string]struct{}),
 
 		discoveryCoordinator: newDiscoveryCoordinator(),
 	}
 
-	s.remoteClaims = newRemoteClaims(s.queue)
+	s.remoteClaims = newRemoteClaims(s.queue, s.removeQueue)
 
 	// Ensure the atomic.Value is usable before any stores.
 	s.hungDebugLastRID.Store("")
@@ -506,6 +507,12 @@ func (s *Server) handleRemoveRequests(sid string) {
 		s.discoveryCoordinator.WaitForDiscovery(sid)
 
 		err = s.removeRequestFromIRODSandDB(&removeReq)
+		if errors.Is(err, errRemovalWaitingForUpload) {
+			s.discoveryCoordinator.AllowDiscovery(sid)
+
+			continue
+		}
+
 		if beenReleased := s.handleErrorOrReleaseItem(item, removeReq, err); beenReleased {
 			s.discoveryCoordinator.AllowDiscovery(sid)
 
@@ -527,14 +534,21 @@ func (s *Server) handleRemoveRequests(sid string) {
 // remove queue and converts it to a removeRequest. Items that aren't remove
 // requests can never be removed, so they are dropped from the queue with an
 // error on the set, and the next item is reserved instead. Returns an error if
-// nothing could be reserved, ie. the group has nothing ready or the queue is
-// closed; only the latter is logged.
+// nothing could be reserved, ie. the group has nothing ready, and none of its
+// removals is waiting for an upload (see removeFileFromIRODSandDB()), or the
+// queue is closed; only the latter is logged.
 func (s *Server) reserveRemoveRequest(reserveGroup string) (*queue.Item, set.RemoveReq, error) {
 	for {
-		item, err := s.removeQueue.Reserve(reserveGroup, retryDelay+2*time.Second)
+		item, err := s.removeQueue.Reserve(reserveGroup, removeReserveWait)
+		qerr, ok := err.(queue.Error) //nolint:errorlint
+		nothingReady := ok && errors.Is(qerr.Err, queue.ErrNothingReady)
+
+		if nothingReady && s.remoteClaims.removalsWaiting(reserveGroup) {
+			continue
+		}
+
 		if err != nil {
-			qerr, ok := err.(queue.Error) //nolint:errorlint
-			if !ok || !errors.Is(qerr.Err, queue.ErrNothingReady) {
+			if !nothingReady {
 				s.Logger.Print(err)
 			}
 
@@ -543,6 +557,8 @@ func (s *Server) reserveRemoveRequest(reserveGroup string) (*queue.Item, set.Rem
 
 		remReq, err := s.convertQueueItemToRemoveRequest(item.Data())
 		if err == nil {
+			s.remoteClaims.removalReserved(&remReq)
+
 			return item, remReq, nil
 		}
 
@@ -743,6 +759,11 @@ func (s *Server) stop() {
 
 	if err := s.queue.Destroy(); err != nil {
 		s.Logger.Printf("queue desrtroy failed: %s", err)
+	}
+
+	// so that removal handlers still waiting for uploads stop.
+	if err := s.removeQueue.Destroy(); err != nil {
+		s.Logger.Printf("remove queue destroy failed: %s", err)
 	}
 
 	s.Logger.Printf("gracefully shut down")

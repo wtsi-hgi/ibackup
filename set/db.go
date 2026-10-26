@@ -168,18 +168,6 @@ type RemoveReq struct {
 	// seeing an object with no sets, which it would remove. Nil for requests
 	// stored before it existed, for directories, and until an update starts.
 	RemoteMeta map[string]string
-
-	// IsExclusion is true for a record that removed nothing, but only keeps
-	// its path out of discovery: one of those stored for the other paths of a
-	// removed folder when a path under it is added back. Such records stored
-	// before this field existed have no Set instead.
-	IsExclusion bool
-}
-
-// isExclusion returns true if we are a record that only keeps our path out of
-// discovery (see IsExclusion).
-func (rq RemoveReq) isExclusion() bool {
-	return rq.IsExclusion || rq.Set == nil
 }
 
 func (rq RemoveReq) Key() string {
@@ -1374,22 +1362,6 @@ func (d *DB) putEntryInTrash(tx *bolt.Tx, set *Set, entry *Entry) error {
 	return sfsb.Bucket.Put([]byte(entry.Path), d.encodeToBytes(entry))
 }
 
-// PutLateUploadInTrash puts the given entry, for a file the given set trashed
-// before an upload of it finished, into the given set's trash set, so that the
-// object that upload left expires, unless the trash set already has the file.
-func (d *DB) PutLateUploadInTrash(given *Set, entry *Entry) error {
-	trashSet := BuildTrashSetFromSet(given)
-
-	return d.db.Update(func(tx *bolt.Tx) error {
-		trashed, _ := d.getEntryFromSubbucket(fileBucket, trashSet.ID(), entry.Path, tx.Bucket([]byte(setsBucket)))
-		if trashed != nil {
-			return nil
-		}
-
-		return d.putEntryInTrash(tx, given, entry)
-	})
-}
-
 // BuildTrashSetFromSet builds a brand new set which copies the given set's
 // Requester and Transformer. Use this set to move trashed files to.
 func BuildTrashSetFromSet(givenSet *Set) Set {
@@ -1518,59 +1490,6 @@ func (d *DBRO) GetRemoveRequests(sid string) ([]RemoveReq, error) {
 	})
 
 	return remReqs, err
-}
-
-// GetRemoveRequestOfFile returns the given set's stored remove request for the
-// given file path or, without one, that of the nearest of its directories,
-// since a directory's removal drops its files' requests once complete (see
-// OptimiseRemoveBucket()). Records that only keep a path out of discovery (see
-// RemoveReq.IsExclusion) removed nothing, so are passed over. Returns nil if
-// there's no request, including when the set doesn't exist.
-func (d *DBRO) GetRemoveRequestOfFile(sid, path string) (*RemoveReq, error) {
-	var found *RemoveReq
-
-	err := d.db.View(func(tx *bolt.Tx) error {
-		if b := getSubBucket(tx, sid, removedBucket); b != nil {
-			found = d.findRemoveRequestOfFile(b, path)
-		}
-
-		return nil
-	})
-
-	return found, err
-}
-
-// findRemoveRequestOfFile does GetRemoveRequestOfFile()'s search in the given
-// removed bucket, where a directory's request is stored under its path with a
-// trailing "/".
-func (d *DBRO) findRemoveRequestOfFile(b *bolt.Bucket, path string) *RemoveReq {
-	if remReq := d.removeRequestAt(b, path); remReq != nil {
-		return remReq
-	}
-
-	for dir := filepath.Dir(path); dir != "/" && dir != "."; dir = filepath.Dir(dir) {
-		if remReq := d.removeRequestAt(b, dir+"/"); remReq != nil {
-			return remReq
-		}
-	}
-
-	return d.removeRequestAt(b, "/")
-}
-
-// removeRequestAt returns the remove request stored under the given key of the
-// given removed bucket, or nil if there is none or it is an exclusion record.
-func (d *DBRO) removeRequestAt(b *bolt.Bucket, key string) *RemoveReq {
-	v := b.Get([]byte(key))
-	if v == nil {
-		return nil
-	}
-
-	remReq := d.decodeRemoveRequest(v)
-	if remReq.isExclusion() {
-		return nil
-	}
-
-	return &remReq
 }
 
 func (d *DBRO) decodeRemoveRequest(v []byte) RemoveReq {
