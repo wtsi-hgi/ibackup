@@ -82,10 +82,10 @@ const (
 
 	retryDelay = 5 * time.Second
 
-	// removeReserveWait is how long a removal handler waits for a removal of
-	// its set to become ready, such as a failed one retried after retryDelay,
-	// before it stops.
-	removeReserveWait = retryDelay + 2*time.Second
+	// defaultRemoveReserveWait is how long a removal handler waits for a
+	// removal of its set to become ready, such as a failed one retried after
+	// retryDelay, before it stops.
+	defaultRemoveReserveWait = retryDelay + 2*time.Second
 
 	maxRememberedRequestLogs = 100000
 
@@ -179,6 +179,7 @@ type Server struct {
 	uploadTracker          *uploadTracker
 	remoteClaims           *remoteClaims
 	failedUploadRetryDelay time.Duration
+	removeReserveWait      time.Duration
 	replicaLogging         bool
 
 	// deletingSets has the IDs of the sets whose deletion (see deleteSet()) is
@@ -219,6 +220,11 @@ type Server struct {
 	// queues a removal's requests and before it records their number. Only for
 	// tests.
 	removalQueuedHook func()
+
+	// removalStillWaitingHook, if set, is called by reserveRemoveRequest() each
+	// time its reservation finds nothing ready while a removal of its set waits
+	// for an upload, so it keeps waiting. Only for tests.
+	removalStillWaitingHook func()
 }
 
 // New creates a Server which can serve a REST API and website.
@@ -253,6 +259,7 @@ func New(conf Config) (*Server, error) { //nolint:funlen
 		stillRunningMsgFreq:    conf.StillRunningMsgFreq,
 		uploadTracker:          newUploadTracker(conf.Slacker, conf.SlackMessageDebounce),
 		failedUploadRetryDelay: retryDelayToUse,
+		removeReserveWait:      defaultRemoveReserveWait,
 		replicaLogging:         conf.ReplicaLogging,
 		hungDebugTimeout:       conf.HungDebugTimeout,
 		iRODSTracker:           newiRODSTracker(conf.Slacker, conf.SlackMessageDebounce),
@@ -539,11 +546,14 @@ func (s *Server) handleRemoveRequests(sid string) {
 // queue is closed; only the latter is logged.
 func (s *Server) reserveRemoveRequest(reserveGroup string) (*queue.Item, set.RemoveReq, error) {
 	for {
-		item, err := s.removeQueue.Reserve(reserveGroup, removeReserveWait)
-		qerr, ok := err.(queue.Error) //nolint:errorlint
-		nothingReady := ok && errors.Is(qerr.Err, queue.ErrNothingReady)
+		item, err := s.removeQueue.Reserve(reserveGroup, s.removeReserveWait)
+		nothingReady := errors.Is(err, queue.ErrNothingReady)
 
 		if nothingReady && s.remoteClaims.removalsWaiting(reserveGroup) {
+			if s.removalStillWaitingHook != nil {
+				s.removalStillWaitingHook()
+			}
+
 			continue
 		}
 

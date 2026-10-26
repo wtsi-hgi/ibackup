@@ -2584,18 +2584,24 @@ func TestServer(t *testing.T) {
 							So(other, ShouldNotBeNil)
 							So(finishUpload(t, handler, adminClient, other), ShouldBeNil)
 
+							// a removal handler stops once nothing of its set is
+							// ready for removeReserveWait, unless one waits for an
+							// upload; it is shortened so the leaf needn't wait long
+							// to see the handler carry on past that.
+							s.removeReserveWait = removalPollInterval
+							stillWaiting := make(chan struct{}, 1)
+							s.removalStillWaitingHook = func() {
+								select {
+								case stillWaiting <- struct{}{}:
+								default:
+								}
+							}
+
 							So(s.removeFilesAndDirs(exampleSet, []string{file1local, file2local}, nil,
 								set.ToRemove), ShouldBeNil)
 
-							testutil.Eventually(t, removalWaitTimeout, removalPollInterval, func() bool {
-								files, errf := client.GetFiles(exampleSet.ID())
-
-								return errf == nil && len(files) == 1 && s.remoteClaims.removalsWaiting(exampleSet.ID())
-							}, "file2's removal while file1's waits for its upload")
-
-							// a removal handler stops when nothing of its set is
-							// ready for this long, unless one waits for an upload.
-							time.Sleep(removeReserveWait)
+							testutil.Receive(t, stillWaiting, removalWaitTimeout,
+								"file2's removal, then nothing ready while file1's waits for its upload")
 
 							got, errg := client.GetSetByID(exampleSet.Requester, exampleSet.ID())
 							So(errg, ShouldBeNil)
