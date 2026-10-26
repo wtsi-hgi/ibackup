@@ -1276,6 +1276,36 @@ func TestServer(t *testing.T) {
 						So(after[0].Set, ShouldEqual, exampleSet3.Name)
 					})
 
+					Convey("Given a file in a set, the server stopping while its removal runs doesn't log a "+
+						"failure to release the removal's claim on its remote object", func() {
+						givenFile1InSets(exampleSet.Name, exampleSet.Requester, exampleSet)
+
+						gated := &gatedGetMetaHandler{
+							Handler: s.storageHandler,
+							reached: make(chan struct{}, 1),
+							gate:    make(chan struct{}),
+						}
+						release := sync.OnceFunc(func() { close(gated.gate) })
+						Reset(release)
+
+						s.storageHandler = gated
+
+						So(s.removeFilesAndDirs(exampleSet, []string{file1local}, nil, set.ToRemove), ShouldBeNil)
+						testutil.Receive(t, gated.reached, signalTimeout,
+							"the removal to reach the gated remote metadata read")
+
+						// as stop() does
+						So(s.queue.Destroy(), ShouldBeNil)
+						So(s.removeQueue.Destroy(), ShouldBeNil)
+
+						release()
+						waitForRemovalRunsToEnd(t, s)
+
+						_, err = os.Stat(file1remote)
+						So(err, ShouldWrap, fs.ErrNotExist)
+						So(logWriter.String(), ShouldNotContainSubstring, "releasing remote objects")
+					})
+
 					Convey("Given a file in two sets, whose removal from one set updated its metadata, then "+
 						"stopped before recording that, a retry after another set uploaded it keeps that set", func() {
 						givenFile1InSets(exampleSet.Name+","+exampleSet3.Name, exampleSet.Requester,

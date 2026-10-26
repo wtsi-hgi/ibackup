@@ -172,12 +172,20 @@ func (rc *remoteClaims) release(r *transfer.Request) error {
 }
 
 // satisfy makes the requests and removals waiting on a claim of the given path
-// ready to be reserved.
+// ready to be reserved. A queue closed by the server stopping has nothing left
+// to wait, so isn't an error.
 func (rc *remoteClaims) satisfy(path string) error {
 	key := remoteClaimDependencyPrefix + path
 
-	return errors.Join(rc.queue.SatisfyDependency(context.Background(), key),
-		rc.removeQueue.SatisfyDependency(context.Background(), key))
+	var errs error
+
+	for _, q := range []claimQueue{rc.queue, rc.removeQueue} {
+		if err := q.SatisfyDependency(context.Background(), key); !errors.Is(err, queue.ErrQueueClosed) {
+			errs = errors.Join(errs, err)
+		}
+	}
+
+	return errs
 }
 
 // claimForRemoval claims the given remote paths for the given file removal,
