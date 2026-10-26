@@ -504,8 +504,8 @@ func TestServerHelperFunctions(t *testing.T) {
 		paths, err := s.findAllOtherPathsToExclude(entry, removed+"/", given)
 		So(err, ShouldBeNil)
 		So(paths, ShouldResemble, []set.RemoveReq{
-			{Path: filepath.Join(removed, "a", "x"), Set: given, IsDir: true, IsComplete: true},
-			{Path: filepath.Join(removed, "c"), Set: given, IsDir: true, IsComplete: true},
+			{Path: filepath.Join(removed, "a", "x"), Set: given, IsDir: true, IsComplete: true, IsExclusion: true},
+			{Path: filepath.Join(removed, "c"), Set: given, IsDir: true, IsComplete: true, IsExclusion: true},
 		})
 
 		Convey("and fails if that folder is not an ancestor", func() {
@@ -2599,7 +2599,7 @@ func TestServer(t *testing.T) {
 						}
 
 						Convey("Removing a folder while an upload in it runs, then adding back another path "+
-							"under it, tags the object the upload then leaves for the trash set", func() {
+							"under it", func() {
 							requests, errg := adminClient.GetSomeUploadRequests()
 							So(errg, ShouldBeNil)
 							So(requests, ShouldHaveLength, 2)
@@ -2626,11 +2626,53 @@ func TestServer(t *testing.T) {
 							So(stored, ShouldHaveLength, 1)
 							So(stored[0].Path, ShouldEqual, file1local)
 
-							erru := finishUploadAfterRemoval(t, handler, adminClient, running)
+							Convey("tags the object the upload then leaves for the trash set", func() {
+								erru := finishUploadAfterRemoval(t, handler, adminClient, running)
 
-							expectFile1TaggedForTrash()
-							So(erru, ShouldBeNil)
-							So(s.UploadingRequests(), ShouldBeEmpty)
+								expectFile1TaggedForTrash()
+								So(erru, ShouldBeNil)
+								So(s.UploadingRequests(), ShouldBeEmpty)
+							})
+
+							Convey("then removing the set's folder removes the object the upload leaves "+
+								"during that removal", func() {
+								// until that removal completes, file1's exclusion
+								// record is nearer than the folder's real removal,
+								// which is the one the late upload's undo must do.
+								// The gate holds the removal at its file's remote
+								// metadata read until the undo reads its object's.
+								gated := &gatedGetMetaHandler{
+									Handler: s.storageHandler,
+									reached: make(chan struct{}, 1),
+									gate:    make(chan struct{}),
+								}
+								release := sync.OnceFunc(func() { close(gated.gate) })
+								Reset(release)
+
+								s.storageHandler = gated
+
+								So(s.removeFilesAndDirs(exampleSet, nil, []string{dir1local}, set.ToRemove), ShouldBeNil)
+								testutil.Receive(t, gated.reached, signalTimeout,
+									"the folder's removal to reach the gated remote metadata read")
+
+								leaveUploadedObject(t, handler, running)
+								running.Status = transfer.RequestStatusUploaded
+
+								updated := make(chan error, 1)
+
+								go func() { updated <- adminClient.UpdateFileStatus(running) }()
+
+								testutil.Receive(t, gated.reached, signalTimeout,
+									"the late upload's undo to reach the gated remote metadata read")
+								release()
+
+								So(testutil.Receive(t, updated, signalTimeout, "the late upload's result"), ShouldBeNil)
+								waitForRemovals(t, s, client, exampleSet)
+
+								_, errm := handler.GetMeta(file1remote)
+								So(errm, ShouldNotBeNil)
+								So(s.UploadingRequests(), ShouldBeEmpty)
+							})
 						})
 
 						Convey("Trashing a failed file while its retry is reserved tags the object the retry "+
@@ -10212,11 +10254,23 @@ func waitForRediscoveryQueued(t *testing.T, s *Server, client *Client, given *se
 }
 
 // finishUploadAfterRemoval does to the given request's remote object what a
-// client's upload of it does, as if that upload ran on after its file was
-// removed: it creates the object if it's gone, and adds the request's set and
-// requester to its metadata. Then it reports the request uploaded, returning
-// any error from that.
+// client's upload of it does (see leaveUploadedObject()), as if that upload ran
+// on after its file was removed. Then it reports the request uploaded,
+// returning any error from that.
 func finishUploadAfterRemoval(t *testing.T, handler remove.Handler, client *Client, r *transfer.Request) error {
+	t.Helper()
+
+	leaveUploadedObject(t, handler, r)
+
+	r.Status = transfer.RequestStatusUploaded
+
+	return client.UpdateFileStatus(r)
+}
+
+// leaveUploadedObject does to the given request's remote object what a client's
+// upload of it does: it creates the object if it's gone, and adds the request's
+// set and requester to its metadata.
+func leaveUploadedObject(t *testing.T, handler remove.Handler, r *transfer.Request) {
 	t.Helper()
 
 	meta, err := handler.GetMeta(r.Remote)
@@ -10233,10 +10287,6 @@ func finishUploadAfterRemoval(t *testing.T, handler remove.Handler, client *Clie
 
 		So(remove.UpdateSetsAndRequestersOnRemoteFile(handler, r.Remote, sets, requesters, meta), ShouldBeNil)
 	}
-
-	r.Status = transfer.RequestStatusUploaded
-
-	return client.UpdateFileStatus(r)
 }
 
 // hookedRemoteChangeHandler is a remove.Handler whose RemoveFile() and

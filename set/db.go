@@ -168,6 +168,18 @@ type RemoveReq struct {
 	// seeing an object with no sets, which it would remove. Nil for requests
 	// stored before it existed, for directories, and until an update starts.
 	RemoteMeta map[string]string
+
+	// IsExclusion is true for a record that removed nothing, but only keeps
+	// its path out of discovery: one of those stored for the other paths of a
+	// removed folder when a path under it is added back. Such records stored
+	// before this field existed have no Set instead.
+	IsExclusion bool
+}
+
+// isExclusion returns true if we are a record that only keeps our path out of
+// discovery (see IsExclusion).
+func (rq RemoveReq) isExclusion() bool {
+	return rq.IsExclusion || rq.Set == nil
 }
 
 func (rq RemoveReq) Key() string {
@@ -1511,8 +1523,9 @@ func (d *DBRO) GetRemoveRequests(sid string) ([]RemoveReq, error) {
 // GetRemoveRequestOfFile returns the given set's stored remove request for the
 // given file path or, without one, that of the nearest of its directories,
 // since a directory's removal drops its files' requests once complete (see
-// OptimiseRemoveBucket()). Returns nil if there's neither, including when the
-// set doesn't exist.
+// OptimiseRemoveBucket()). Records that only keep a path out of discovery (see
+// RemoveReq.IsExclusion) removed nothing, so are passed over. Returns nil if
+// there's no request, including when the set doesn't exist.
 func (d *DBRO) GetRemoveRequestOfFile(sid, path string) (*RemoveReq, error) {
 	var found *RemoveReq
 
@@ -1545,7 +1558,7 @@ func (d *DBRO) findRemoveRequestOfFile(b *bolt.Bucket, path string) *RemoveReq {
 }
 
 // removeRequestAt returns the remove request stored under the given key of the
-// given removed bucket, or nil if there is none.
+// given removed bucket, or nil if there is none or it is an exclusion record.
 func (d *DBRO) removeRequestAt(b *bolt.Bucket, key string) *RemoveReq {
 	v := b.Get([]byte(key))
 	if v == nil {
@@ -1553,6 +1566,9 @@ func (d *DBRO) removeRequestAt(b *bolt.Bucket, key string) *RemoveReq {
 	}
 
 	remReq := d.decodeRemoveRequest(v)
+	if remReq.isExclusion() {
+		return nil
+	}
 
 	return &remReq
 }

@@ -829,6 +829,29 @@ func TestSetDB(t *testing.T) {
 					So(rrs[0].Path, ShouldEqual, "/a/b/")
 				})
 
+				Convey("Getting a file's remove request passes over exclusion records, "+
+					"including those with no Set, to the nearest real one", func() {
+					So(db.SetRemoveRequests(set.ID(), []RemoveReq{
+						{Path: "/r", Set: set, IsDir: true, Action: ToRemove},
+						{Path: "/r/b", Set: set, IsComplete: true, IsExclusion: true},
+						{Path: "/r/c", Set: set, IsDir: true, IsComplete: true, IsExclusion: true},
+						{Path: "/r/d", IsComplete: true},
+						{Path: "/e", Set: set, IsComplete: true, IsExclusion: true},
+					}), ShouldBeNil)
+
+					for _, path := range []string{"/r/b", "/r/c/f", "/r/d"} {
+						got, errg := db.GetRemoveRequestOfFile(set.ID(), path)
+						So(errg, ShouldBeNil)
+						So(got, ShouldNotBeNil)
+						So(got.Path, ShouldEqual, "/r/")
+						So(got.Action, ShouldEqual, ToRemove)
+					}
+
+					got, errg := db.GetRemoveRequestOfFile(set.ID(), "/e")
+					So(errg, ShouldBeNil)
+					So(got, ShouldBeNil)
+				})
+
 				Convey("You can get all paths containing a prefix", func() {
 					err = db.MergeFileEntries(set2.ID(), []string{"/a/a/j.txt", "/a/b/c/k.txt",
 						"/a/b/c/l.txt", "/a/b/d/m.txt", "/c/n.txt"})

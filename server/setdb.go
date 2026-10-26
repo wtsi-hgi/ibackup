@@ -1815,10 +1815,11 @@ func findChildPathsToExclude(path string, entry *set.Dirent, given *set.Set) ([]
 		}
 
 		removeReq := set.RemoveReq{
-			Path:       childPath,
-			Set:        given,
-			IsDir:      dirEntry.IsDir(),
-			IsComplete: true,
+			Path:        childPath,
+			Set:         given,
+			IsDir:       dirEntry.IsDir(),
+			IsComplete:  true,
+			IsExclusion: true,
 		}
 
 		paths = append(paths, removeReq)
@@ -2371,15 +2372,9 @@ func (s *Server) failedDuringRemoval(r *transfer.Request) bool {
 // stored for its file, or for the nearest of its directories, or nil if there
 // is none. The exclusion records stored for the other paths of a removed
 // directory when a path under it is added back (see findChildPathsToExclude())
-// have no set or action, and only keep those paths out of discovery, so they
-// count as none.
+// only keep those paths out of discovery, so are passed over.
 func (s *Server) storedRemovalOfFile(r *transfer.Request) (*set.RemoveReq, error) {
-	removeReq, err := s.db.GetRemoveRequestOfFile(requestSet(r).ID(), r.Local)
-	if err != nil || removeReq == nil || removeReq.Set == nil {
-		return nil, err
-	}
-
-	return removeReq, nil
+	return s.db.GetRemoveRequestOfFile(requestSet(r).ID(), r.Local)
 }
 
 // dropRequest handles a result for the given request, whose set has been
@@ -2449,9 +2444,10 @@ func (s *Server) undoLateUpload(r *transfer.Request) error {
 
 // lateUploadRemoval returns a new remove request, for the given request's file,
 // with the action and set of the removal its set stored for the file (or its
-// directory). Without one the set was deleted, perhaps then added again, or
-// only an exclusion record of a removed directory is left, so the request is
-// to trash, for the set if it exists.
+// nearest directory with one, passing over exclusion records). Without one the
+// set was deleted, perhaps then added again, or only exclusion records of a
+// removed directory are left, so the request is to trash, for the set if it
+// exists.
 func (s *Server) lateUploadRemoval(r *transfer.Request) (*set.RemoveReq, error) {
 	stored, err := s.storedRemovalOfFile(r)
 	if err != nil {
