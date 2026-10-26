@@ -2541,6 +2541,39 @@ func TestServer(t *testing.T) {
 							So(err, ShouldWrap, fs.ErrNotExist)
 						})
 
+						Convey("Removing a file while its set's entries are being queued, as a queue refill or "+
+							"retry does, doesn't give out the request queued after the removal", func() {
+							entries, errg := s.db.GetFileEntries(exampleSet.ID(), nil)
+							So(errg, ShouldBeNil)
+							So(entryPaths(entries, nil), ShouldResemble, []string{file1local, file2local})
+
+							So(s.removeFilesAndDirs(exampleSet, []string{file1local}, nil, set.ToRemove), ShouldBeNil)
+							waitForRemovals(t, s, client, exampleSet)
+
+							_, err = os.Stat(file1remote)
+							So(err, ShouldWrap, fs.ErrNotExist)
+
+							transformer, errg := exampleSet.MakeTransformer()
+							So(errg, ShouldBeNil)
+
+							_, errg = s.enqueueEntries(entries, exampleSet, transformer)
+							So(errg, ShouldBeNil)
+
+							requests, errg := adminClient.GetSomeUploadRequests()
+							So(errg, ShouldBeNil)
+
+							for _, request := range requests {
+								So(finishUpload(t, handler, adminClient, request), ShouldBeNil)
+							}
+
+							So(requestWithLocal(requests, file1local, exampleSet.Name), ShouldBeNil)
+							So(requests, ShouldHaveLength, 1)
+
+							_, err = os.Stat(file1remote)
+							So(err, ShouldWrap, fs.ErrNotExist)
+							So(s.queue.Stats().Items, ShouldEqual, 0)
+						})
+
 						Convey("Removing files while one's upload runs removes the others without waiting for "+
 							"it, and finishes once that upload does", func() {
 							requests, errg := adminClient.GetSomeUploadRequests()
