@@ -121,3 +121,83 @@ func TestRemoteClaimsReleasedCount(t *testing.T) {
 		})
 	})
 }
+
+func TestRemoteClaimsWakeWaiters(t *testing.T) {
+	Convey("Given a running hardlink upload's claims, and a hardlink waiting on its inode path", t, func() {
+		ctx := context.Background()
+		q := queue.New(ctx, "put")
+		removeQueue := queue.New(ctx, "remove")
+
+		Reset(func() {
+			So(q.Destroy(), ShouldBeNil)
+			So(removeQueue.Destroy(), ShouldBeNil)
+		})
+
+		rc := newRemoteClaims(q, removeQueue)
+
+		hardlink := &transfer.Request{
+			Local: "/claimed/link", Remote: "/remote/file", Hardlink: "/remote/inode",
+			Requester: "claimer", Set: "claims",
+		}
+		_, _, err := q.AddMany(ctx, []*queue.ItemDef{{Key: hardlink.ID(), Data: hardlink, TTR: ttr}})
+		So(err, ShouldBeNil)
+
+		_, err = q.Reserve("", 0)
+		So(err, ShouldBeNil)
+
+		batch := make(map[string]bool)
+
+		claimed, err := rc.claim(hardlink, batch)
+		So(err, ShouldBeNil)
+		So(claimed, ShouldBeTrue)
+
+		waiter := &transfer.Request{
+			Local: "/waiting/link", Remote: "/remote/other", Hardlink: hardlink.Hardlink,
+			Requester: "waiter", Set: "waits",
+		}
+		_, _, err = q.AddMany(ctx, []*queue.ItemDef{{
+			Key: waiter.ID(), Data: waiter, TTR: ttr,
+			Dependencies: []string{remoteClaimDependencyPrefix + hardlink.Hardlink},
+		}})
+		So(err, ShouldBeNil)
+
+		waiterState := func() queue.ItemState {
+			item, errg := q.Get(waiter.ID())
+			So(errg, ShouldBeNil)
+
+			return item.State()
+		}
+
+		So(waiterState(), ShouldEqual, queue.ItemStateDependent)
+
+		Convey("a re-reservation that no longer uploads to the inode path makes the waiter ready", func() {
+			moved := *hardlink
+			moved.Hardlink = ""
+
+			claimed, err = rc.claim(&moved, make(map[string]bool))
+			So(err, ShouldBeNil)
+			So(claimed, ShouldBeTrue)
+			So(waiterState(), ShouldEqual, queue.ItemStateReady)
+		})
+
+		Convey("a re-reservation blocked by a regular file of its earlier batch makes the waiter ready", func() {
+			regular := &transfer.Request{
+				Local: "/claimed/file", Remote: hardlink.Remote, Requester: hardlink.Requester, Set: hardlink.Set,
+			}
+			_, _, err = q.AddMany(ctx, []*queue.ItemDef{{Key: regular.ID(), Data: regular, TTR: ttr}})
+			So(err, ShouldBeNil)
+
+			_, err = q.Reserve("", 0)
+			So(err, ShouldBeNil)
+
+			claimed, err = rc.claim(regular, batch)
+			So(err, ShouldBeNil)
+			So(claimed, ShouldBeTrue)
+
+			claimed, err = rc.claim(hardlink, make(map[string]bool))
+			So(err, ShouldBeNil)
+			So(claimed, ShouldBeFalse)
+			So(waiterState(), ShouldEqual, queue.ItemStateReady)
+		})
+	})
+}
