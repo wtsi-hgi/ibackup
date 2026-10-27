@@ -64,6 +64,9 @@ type remoteClaims struct {
 	holders     map[string]map[string]struct{}
 	paths       map[string]string
 	waiting     map[string]map[string]struct{}
+
+	// released counts the claims given up so far.
+	released uint64
 }
 
 func newRemoteClaims(q, removeQueue *queue.Queue) *remoteClaims {
@@ -287,6 +290,15 @@ func (rc *remoteClaims) removalsWaiting(sid string) bool {
 	return len(rc.waiting[sid]) > 0
 }
 
+// releasedCount returns the number of claims given up so far, so that a change
+// between two calls shows that one was given up in between.
+func (rc *remoteClaims) releasedCount() uint64 {
+	rc.Lock()
+	defer rc.Unlock()
+
+	return rc.released
+}
+
 // releaseRemoval gives up the claims on the given paths of the removal with the
 // given key, made by claimForRemoval(). Requests and removals waiting on a path
 // no longer claimed become ready to be reserved.
@@ -333,6 +345,7 @@ func (rc *remoteClaims) forget(holder, path string) bool {
 	if _, holding := holders[holder]; holding {
 		delete(holders, holder)
 		delete(rc.paths, holder)
+		rc.released++
 	}
 
 	if len(holders) > 0 {

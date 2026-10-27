@@ -1161,6 +1161,7 @@ func (s *Server) makeItemsDefsFromDirPaths(givenSet *set.Set,
 // errRemovalWaitingForUpload, and is retried once it finishes.
 func (s *Server) removeFileFromIRODSandDB(removeReq *set.RemoveReq) error {
 	sid, key := removeReq.Set.ID(), removeReq.Key()
+	released := s.remoteClaims.releasedCount()
 
 	entry, err := s.db.GetFileEntryForSet(sid, removeReq.Path)
 	if err != nil {
@@ -1184,11 +1185,13 @@ func (s *Server) removeFileFromIRODSandDB(removeReq *set.RemoveReq) error {
 		}
 	}()
 
-	// an upload that finished just before we claimed its object updated the
-	// entry.
-	entry, err = s.db.GetFileEntryForSet(sid, removeReq.Path)
-	if err != nil {
-		return s.removeDeletedFileFromDB(removeReq, err)
+	// an upload that finished after we read the entry, but before we claimed
+	// its object, updated the entry and then gave up its claim.
+	if s.remoteClaims.releasedCount() != released {
+		entry, err = s.db.GetFileEntryForSet(sid, removeReq.Path)
+		if err != nil {
+			return s.removeDeletedFileFromDB(removeReq, err)
+		}
 	}
 
 	err = s.processRemoteFileRemoval(removeReq, entry)
