@@ -63,33 +63,33 @@ func TestRemoteClaimsReleasedCount(t *testing.T) {
 
 		before := rc.releasedCount()
 
-		Convey("releasedCount() changes when the upload releases its claim", func() {
+		Convey("releasedCount() goes up by one when the upload releases its claim", func() {
 			So(rc.release(r), ShouldBeNil)
-			So(rc.releasedCount(), ShouldNotEqual, before)
+			So(rc.releasedCount(), ShouldEqual, before+1)
 		})
 
-		Convey("releasedCount() changes when the claim is unclaimed", func() {
+		Convey("releasedCount() goes up by one when the claim is unclaimed", func() {
 			So(rc.unclaim(r, batch), ShouldBeNil)
-			So(rc.releasedCount(), ShouldNotEqual, before)
+			So(rc.releasedCount(), ShouldEqual, before+1)
 		})
 
-		Convey("releasedCount() changes when a re-reservation onto a different path gives up the stale claim", func() {
+		Convey("releasedCount() goes up by one when a re-reservation onto a different path gives up the stale claim", func() {
 			moved := *r
 			moved.Hardlink = "/inode"
 
 			claimed, err = rc.claim(&moved, make(map[string]bool))
 			So(err, ShouldBeNil)
 			So(claimed, ShouldBeTrue)
-			So(rc.releasedCount(), ShouldNotEqual, before)
+			So(rc.releasedCount(), ShouldEqual, before+1)
 		})
 
-		Convey("releasedCount() changes when a removal gives up the claim of an upload no longer running", func() {
+		Convey("releasedCount() goes up by one when a removal gives up the claim of an upload no longer running", func() {
 			So(q.Release(ctx, r.ID()), ShouldBeNil)
 
 			claimed, err = rc.claimForRemoval(r.Set, removalKey, []string{r.RemoteDataPath()})
 			So(err, ShouldBeNil)
 			So(claimed, ShouldBeTrue)
-			So(rc.releasedCount(), ShouldNotEqual, before)
+			So(rc.releasedCount(), ShouldEqual, before+1)
 		})
 
 		Convey("releasedCount() doesn't change when a removal waits on the running upload", func() {

@@ -1186,8 +1186,9 @@ func (s *Server) removeFileFromIRODSandDB(removeReq *set.RemoveReq) error {
 	}()
 
 	// an upload that finished after we read the entry, but before we claimed
-	// its object, updated the entry and then gave up its claim. A stale claim
-	// claimForRemoval() gave up also changes the count, needlessly re-reading.
+	// its object, updated the entry and then gave up its claim. The count also
+	// changes when claimForRemoval() gives up the claim of an upload no longer
+	// running, which may have just recorded its result without releasing yet.
 	if s.remoteClaims.releasedCount() != released {
 		entry, err = s.db.GetFileEntryForSet(sid, removeReq.Path)
 		if err != nil {
@@ -2531,8 +2532,8 @@ func (s *Server) requeueEntry(given *set.Set, path string) error {
 // removeOrReleaseRequestFromQueue removes the given Request from our queue
 // unless it has failed. < 3 failures results in it being released, 3 results in
 // it being buried. Either way, any claim it has on a remote data object is
-// released, so the request's result must already be in its entry (see
-// remoteClaims.release()).
+// released. The request's result must already be in its entry before it leaves
+// the queue's run state (see remoteClaims.release()).
 func (s *Server) removeOrReleaseRequestFromQueue(r *transfer.Request, entry *set.Entry) error {
 	return errors.Join(s.moveFinishedRequestInQueue(r, entry), s.remoteClaims.release(r))
 }

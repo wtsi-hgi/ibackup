@@ -154,7 +154,9 @@ func (rc *remoteClaims) unclaim(r *transfer.Request, batch map[string]bool) erro
 // release gives up the given request's claim on its remote data object. Once no
 // request holds the claim, requests and removals waiting on it become ready to
 // be reserved. A finished upload must record its result in its entry before
-// calling this, so that a removal seeing the claim given up reads that result.
+// its request leaves our queue's run state, since from then claimForRemoval()
+// may give up the claim on its behalf; either way a removal seeing the claim
+// given up then reads that result.
 func (rc *remoteClaims) release(r *transfer.Request) error {
 	rid := r.ID()
 
