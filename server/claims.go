@@ -188,9 +188,10 @@ func (rc *remoteClaims) satisfy(path string) error {
 	return errs
 }
 
-// claimForRemoval claims the given remote paths for the given file removal,
-// which must be running in the remove queue, so that no upload of them is
-// given to a client until releaseRemoval(). It claims all of them or none.
+// claimForRemoval claims the given remote paths for the file removal with the
+// given key (see set.RemoveReq.Key()), of the set with the given ID, which must
+// be running in the remove queue, so that no upload of them is given to a
+// client until releaseRemoval(). It claims all of them or none.
 //
 // If an upload, or another removal, holds a claim on one of them, the removal
 // is instead requeued to wait until that claim is released, and false is
@@ -199,9 +200,7 @@ func (rc *remoteClaims) satisfy(path string) error {
 // no longer running, such as one whose reservation expired, doesn't hold up the
 // removal, and is given up, as claim() gives it up when the request is
 // reserved again.
-func (rc *remoteClaims) claimForRemoval(removeReq *set.RemoveReq, paths []string) (bool, error) {
-	key := removeReq.Key()
-
+func (rc *remoteClaims) claimForRemoval(sid, key string, paths []string) (bool, error) {
 	rc.Lock()
 	defer rc.Unlock()
 
@@ -215,7 +214,7 @@ func (rc *remoteClaims) claimForRemoval(removeReq *set.RemoveReq, paths []string
 			return false, err
 		}
 
-		rc.addWaiting(removeReq.Set.ID(), key)
+		rc.addWaiting(sid, key)
 
 		return false, nil
 	}
@@ -262,10 +261,14 @@ func (rc *remoteClaims) addWaiting(sid, key string) {
 // removalReserved records that the given removal, just reserved from the remove
 // queue, no longer waits on a claim, if it did.
 func (rc *remoteClaims) removalReserved(removeReq *set.RemoveReq) {
-	sid := removeReq.Set.ID()
-
 	rc.Lock()
 	defer rc.Unlock()
+
+	if len(rc.waiting) == 0 {
+		return
+	}
+
+	sid := removeReq.Set.ID()
 
 	delete(rc.waiting[sid], removeReq.Key())
 
@@ -284,12 +287,10 @@ func (rc *remoteClaims) removalsWaiting(sid string) bool {
 	return len(rc.waiting[sid]) > 0
 }
 
-// releaseRemoval gives up the given removal's claims on the given paths, made
-// by claimForRemoval(). Requests and removals waiting on a path no longer
-// claimed become ready to be reserved.
-func (rc *remoteClaims) releaseRemoval(removeReq *set.RemoveReq, paths []string) error {
-	key := removeReq.Key()
-
+// releaseRemoval gives up the claims on the given paths of the removal with the
+// given key, made by claimForRemoval(). Requests and removals waiting on a path
+// no longer claimed become ready to be reserved.
+func (rc *remoteClaims) releaseRemoval(key string, paths []string) error {
 	rc.Lock()
 
 	freed := slices.DeleteFunc(slices.Clone(paths), func(path string) bool {

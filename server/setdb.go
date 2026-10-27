@@ -245,6 +245,10 @@ func withRecordedRemoteMeta(remoteMeta, recorded map[string]string) map[string]s
 	maps.Copy(meta, remoteMeta)
 
 	for key, value := range recorded {
+		if meta[key] == value {
+			continue
+		}
+
 		names := splitCommaSeparatedUnique(meta[key])
 
 		for _, name := range splitCommaSeparatedUnique(value) {
@@ -260,6 +264,10 @@ func withRecordedRemoteMeta(remoteMeta, recorded map[string]string) map[string]s
 // addedNames returns the names in the given key's value of merged that are not
 // in that of original.
 func addedNames(original, merged map[string]string, key string) []string {
+	if original[key] == merged[key] {
+		return nil
+	}
+
 	had := splitCommaSeparatedUnique(original[key])
 
 	return slices.DeleteFunc(splitCommaSeparatedUnique(merged[key]), func(name string) bool {
@@ -1152,14 +1160,16 @@ func (s *Server) makeItemsDefsFromDirPaths(givenSet *set.Set,
 // holds one, the removal is requeued to wait for it, returning
 // errRemovalWaitingForUpload, and is retried once it finishes.
 func (s *Server) removeFileFromIRODSandDB(removeReq *set.RemoveReq) error {
-	entry, err := s.db.GetFileEntryForSet(removeReq.Set.ID(), removeReq.Path)
+	sid, key := removeReq.Set.ID(), removeReq.Key()
+
+	entry, err := s.db.GetFileEntryForSet(sid, removeReq.Path)
 	if err != nil {
 		return s.removeDeletedFileFromDB(removeReq, err)
 	}
 
 	paths := s.remotePathsOfEntry(removeReq.Set, entry)
 
-	claimed, err := s.remoteClaims.claimForRemoval(removeReq, paths)
+	claimed, err := s.remoteClaims.claimForRemoval(sid, key, paths)
 	if err != nil {
 		return err
 	}
@@ -1169,14 +1179,14 @@ func (s *Server) removeFileFromIRODSandDB(removeReq *set.RemoveReq) error {
 	}
 
 	defer func() {
-		if errr := s.remoteClaims.releaseRemoval(removeReq, paths); errr != nil {
+		if errr := s.remoteClaims.releaseRemoval(key, paths); errr != nil {
 			s.Logger.Printf("releasing remote objects of removed %s failed: %s", removeReq.Path, errr)
 		}
 	}()
 
 	// an upload that finished just before we claimed its object updated the
 	// entry.
-	entry, err = s.db.GetFileEntryForSet(removeReq.Set.ID(), removeReq.Path)
+	entry, err = s.db.GetFileEntryForSet(sid, removeReq.Path)
 	if err != nil {
 		return s.removeDeletedFileFromDB(removeReq, err)
 	}
@@ -1201,7 +1211,7 @@ func (s *Server) remotePathsOfEntry(given *set.Set, entry *set.Entry) []string {
 		return nil
 	}
 
-	r, err := s.entryToRequest(entry, transformer, given)
+	r, err := s.entryToRemotesRequest(entry, transformer)
 	if err != nil {
 		return nil
 	}
