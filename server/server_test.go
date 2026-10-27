@@ -1304,6 +1304,7 @@ func TestServer(t *testing.T) {
 						_, err = os.Stat(file1remote)
 						So(err, ShouldWrap, fs.ErrNotExist)
 						So(logWriter.String(), ShouldNotContainSubstring, "releasing remote objects")
+						So(logWriter.String(), ShouldNotContainSubstring, queue.ErrQueueClosed.Error())
 					})
 
 					Convey("Given a file in two sets, whose removal from one set updated its metadata, then "+

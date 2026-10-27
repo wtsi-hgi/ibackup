@@ -543,7 +543,7 @@ func (s *Server) handleRemoveRequests(sid string) {
 // error on the set, and the next item is reserved instead. Returns an error if
 // nothing could be reserved, ie. the group has nothing ready, and none of its
 // removals is waiting for an upload (see removeFileFromIRODSandDB()), or the
-// queue is closed; only the latter is logged.
+// queue was closed by the server stopping; other errors are logged.
 func (s *Server) reserveRemoveRequest(reserveGroup string) (*queue.Item, set.RemoveReq, error) {
 	for {
 		item, err := s.removeQueue.Reserve(reserveGroup, s.removeReserveWait)
@@ -558,7 +558,7 @@ func (s *Server) reserveRemoveRequest(reserveGroup string) (*queue.Item, set.Rem
 		}
 
 		if err != nil {
-			if !nothingReady {
+			if !nothingReady && !errors.Is(err, queue.ErrQueueClosed) {
 				s.Logger.Print(err)
 			}
 
@@ -629,6 +629,9 @@ func (s *Server) handleErrorOrReleaseItem(item *queue.Item, removeReq set.Remove
 	return err == nil
 }
 
+// finalizeRemoveReq records the given removal as complete and removes it from
+// the remove queue. A queue closed by the server stopping has nothing left to
+// remove it from, so isn't an error.
 func (s *Server) finalizeRemoveReq(removeReq set.RemoveReq) error {
 	if !removeReq.IsComplete {
 		removeReq.IsComplete = true
@@ -639,7 +642,12 @@ func (s *Server) finalizeRemoveReq(removeReq set.RemoveReq) error {
 		}
 	}
 
-	return s.removeQueue.Remove(context.Background(), removeReq.Key())
+	err := s.removeQueue.Remove(context.Background(), removeReq.Key())
+	if errors.Is(err, queue.ErrQueueClosed) {
+		return nil
+	}
+
+	return err
 }
 
 func (s *Server) finalizeRemoval(sid string) {
