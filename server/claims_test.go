@@ -68,6 +68,21 @@ func TestRemoteClaimsReleasedCount(t *testing.T) {
 			So(rc.releasedCount(), ShouldEqual, before+1)
 		})
 
+		Convey("releasedCount() goes up by one for each remote path when a hardlink upload releases its claims", func() {
+			So(rc.release(r), ShouldBeNil)
+
+			hardlink := *r
+			hardlink.Hardlink = "/inode"
+			before = rc.releasedCount()
+
+			claimed, err = rc.claim(&hardlink, make(map[string]bool))
+			So(err, ShouldBeNil)
+			So(claimed, ShouldBeTrue)
+
+			So(rc.release(&hardlink), ShouldBeNil)
+			So(rc.releasedCount(), ShouldEqual, before+2)
+		})
+
 		Convey("releasedCount() goes up by one when the claim is unclaimed", func() {
 			So(rc.unclaim(r, batch), ShouldBeNil)
 			So(rc.releasedCount(), ShouldEqual, before+1)

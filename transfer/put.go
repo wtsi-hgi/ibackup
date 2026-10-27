@@ -700,10 +700,12 @@ func headRead(path string) error {
 
 func noRead(_ string) error { return nil }
 
-// dedupRequests splits the given requests into a slice requests that have
-// unique Remote values, and a slice with duplicates. Also "prepares" all
-// requests, ensuring they have valid paths and that hardlinks will be handled
-// appropriately later.
+// dedupAndPrepareRequests splits the given requests into a slice of requests
+// that write to no remote path (see Request.Remotes()) of an earlier request,
+// and a slice with the rest, which are handled one at a time after the first
+// slice, so that no two requests write to the same remote path at once. Also
+// "prepares" all requests, ensuring they have valid paths and that hardlinks
+// will be handled appropriately later.
 func dedupAndPrepareRequests(requests []*Request) ([]*Request, []*Request, error) {
 	unique := make([]*Request, 0, len(requests))
 	seen := make(map[string]bool)
@@ -716,13 +718,17 @@ func dedupAndPrepareRequests(requests []*Request) ([]*Request, []*Request, error
 			return nil, nil, err
 		}
 
-		if seen[r.RemoteDataPath()] {
+		remotes := r.Remotes()
+
+		if slices.ContainsFunc(remotes, func(remote string) bool { return seen[remote] }) {
 			dups = append(dups, r)
 		} else {
 			unique = append(unique, r)
 		}
 
-		seen[r.RemoteDataPath()] = true
+		for _, remote := range remotes {
+			seen[remote] = true
+		}
 	}
 
 	return unique, dups, nil

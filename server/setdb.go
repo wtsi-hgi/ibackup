@@ -2079,10 +2079,10 @@ func (s *Server) getRequests(c *gin.Context) {
 // reserveRequests keeps reserving items from our queue until we have total
 // requests/s.numClients (but max 100) of them, or the queue is empty.
 //
-// Requests whose remote data object is being worked on by a different client
-// (eg. hardlinks sharing a remote inode file, or another set's request for the
-// same file) are not returned; they wait in the queue until that client is done
-// with it.
+// Requests writing to a remote path a different client is working on (eg.
+// hardlinks sharing a remote inode file, another set's request for the same
+// file, or a hardlink's empty file at another set's regular file's remote path)
+// are not returned; they wait in the queue until that client is done with it.
 //
 // Returns the Requests in the items.
 func (s *Server) reserveRequests() ([]*transfer.Request, error) {

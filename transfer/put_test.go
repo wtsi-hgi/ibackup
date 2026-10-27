@@ -510,6 +510,39 @@ func TestPutMock(t *testing.T) {
 			So(errs, ShouldBeNil)
 			So(info.Size(), ShouldEqual, len("abc123"))
 		})
+
+		Convey("A hardlink writing to the Remote of a regular request is uploaded after it, keeping both sets", func() {
+			localDir := t.TempDir()
+			regularLocal := filepath.Join(localDir, "regular")
+			linkLocal := filepath.Join(localDir, "file.link")
+
+			internal.CreateTestFile(t, regularLocal, "abc123")
+			internal.CreateTestFile(t, linkLocal, "def456")
+
+			remoteDir := t.TempDir()
+			remote := filepath.Join(remoteDir, "file")
+
+			regular := &Request{
+				Local: regularLocal, Remote: remote, Set: "aSet",
+				Meta: &Meta{LocalMeta: map[string]string{}},
+			}
+			hardlink := &Request{
+				Local: linkLocal, Remote: remote, Hardlink: filepath.Join(remoteDir, "inode.file"), Set: "bSet",
+				Meta: &Meta{LocalMeta: map[string]string{}},
+			}
+
+			unique, dups, err := dedupAndPrepareRequests([]*Request{regular, hardlink})
+			So(err, ShouldBeNil)
+			So(unique, ShouldHaveLength, 1)
+			So(unique[0], ShouldEqual, regular)
+			So(dups, ShouldHaveLength, 1)
+			So(dups[0], ShouldEqual, hardlink)
+
+			_, _, statusCounts := uploadRequests(t, lh, []*Request{regular, hardlink})
+
+			So(statusCounts[RequestStatusFailed], ShouldEqual, 0)
+			So(lh.Meta[remote][MetaKeySets], ShouldEqual, "aSet,bSet")
+		})
 	})
 
 	Convey("CreateCollections() also works with 0 or 1 requests", t, func() {

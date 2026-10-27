@@ -45,12 +45,14 @@ type claimQueue interface {
 	SatisfyDependency(ctx context.Context, key string) error
 }
 
-// remoteClaims makes sure that requests which upload to the same remote data
-// object (such as hardlinks sharing a remote inode file, or different sets'
-// requests for the same file) are only given to one put client at a time.
-// Concurrent uploads of the same iRODS object from different clients fail with
-// CATALOG_ALREADY_HAS_ITEM_BY_THAT_NAME, whereas a single client handles such
-// requests sequentially.
+// remoteClaims makes sure that requests which upload to the same remote path
+// (such as hardlinks sharing a remote inode file, different sets' requests for
+// the same file, or a hardlink's empty file at the path another set uploads a
+// regular file to) are only given to one put client at a time. Concurrent
+// uploads of the same iRODS object from different clients fail with
+// CATALOG_ALREADY_HAS_ITEM_BY_THAT_NAME, and their concurrent merges of its
+// metadata can lose a set's name, whereas a single client handles such requests
+// sequentially.
 //
 // It also makes a file's removal wait until no upload of its remote objects is
 // in progress, and stops such uploads being given out while the removal runs,
@@ -62,10 +64,11 @@ type remoteClaims struct {
 	queue       claimQueue
 	removeQueue claimQueue
 	holders     map[string]map[string]struct{}
-	paths       map[string]string
+	paths       map[string][]string
 	waiting     map[string]map[string]struct{}
 
-	// released counts the claims given up so far. removeFileFromIRODSandDB()
+	// released counts the claims given up so far, one for each path of a
+	// holder that gives up its claim on it. removeFileFromIRODSandDB()
 	// relies on it to skip reading a file's entry again when no claim was given
 	// up while it claimed the file's objects.
 	released uint64
@@ -76,48 +79,51 @@ func newRemoteClaims(q, removeQueue *queue.Queue) *remoteClaims {
 		queue:       q,
 		removeQueue: removeQueue,
 		holders:     make(map[string]map[string]struct{}),
-		paths:       make(map[string]string),
+		paths:       make(map[string][]string),
 		waiting:     make(map[string]map[string]struct{}),
 	}
 }
 
-// claim claims the remote data object (RemoteDataPath()) of the given request,
+// claim claims every remote path the given request uploads to (Remotes()),
 // which must be running in our queue, for the batch of requests being given to
-// one client. The batch map records the paths claimed for that batch.
+// one client. The batch map records the paths claimed for that batch. It claims
+// all of them or none: a hardlink also writes its empty file and metadata at
+// Remote, which another set may upload to as a regular file.
 //
 // A claim the request still holds from an earlier reservation (because it was
 // abandoned by a dead client, or released for retry) is stale and is given up
 // first.
 //
-// If a different client or a removal already holds the claim, the request is
-// instead requeued to wait until the claim is released, and false is returned.
+// If a different client or a removal already holds a claim on one of the paths,
+// the request is instead requeued to wait until that claim is released, and
+// false is returned.
 func (rc *remoteClaims) claim(r *transfer.Request, batch map[string]bool) (bool, error) {
-	path := r.RemoteDataPath()
+	paths := r.Remotes()
 	rid := r.ID()
 
 	rc.Lock()
 	defer rc.Unlock()
 
-	if err := rc.forgetStale(rid, path); err != nil {
+	freed, err := rc.forgetStale(rid, paths)
+	if err != nil {
 		return false, err
 	}
 
-	if _, held := rc.holders[path]; held && !batch[path] {
-		return false, rc.queue.Requeue(context.Background(), rid,
-			[]string{remoteClaimDependencyPrefix + path})
+	for _, path := range paths {
+		if _, held := rc.holders[path]; held && !batch[path] {
+			return false, errors.Join(rc.satisfyAll(freed), rc.queue.Requeue(context.Background(), rid,
+				[]string{remoteClaimDependencyPrefix + path}))
+		}
 	}
 
-	rc.hold(rid, path)
-	batch[path] = true
+	for _, path := range paths {
+		rc.addHolder(rid, path)
+		batch[path] = true
+	}
+
+	rc.paths[rid] = paths
 
 	return true, nil
-}
-
-// hold records that the given request holds a claim on the given path. You
-// must hold the lock.
-func (rc *remoteClaims) hold(rid, path string) {
-	rc.addHolder(rid, path)
-	rc.paths[rid] = path
 }
 
 // addHolder adds the given holder to those of the given path. You must hold the
@@ -132,51 +138,53 @@ func (rc *remoteClaims) addHolder(holder, path string) {
 	holders[holder] = struct{}{}
 }
 
-// unclaim gives up the claim that claim() just made for the given request for
+// unclaim gives up the claims that claim() just made for the given request for
 // the given batch, for a request that won't be given to the client after all.
 func (rc *remoteClaims) unclaim(r *transfer.Request, batch map[string]bool) error {
-	path := r.RemoteDataPath()
-
 	rc.Lock()
 
-	if rc.forget(r.ID(), path) {
-		rc.Unlock()
+	freed := rc.forgetAll(r.ID())
 
-		return nil
+	for _, path := range freed {
+		delete(batch, path)
 	}
 
-	delete(batch, path)
 	rc.Unlock()
 
-	return rc.satisfy(path)
+	return rc.satisfyAll(freed)
 }
 
-// release gives up the given request's claim on its remote data object. Once no
-// request holds the claim, requests and removals waiting on it become ready to
+// release gives up the given request's claims on its remote paths. Once no
+// request holds a claim, requests and removals waiting on it become ready to
 // be reserved. A finished upload must record its result in its entry before
 // its request leaves our queue's run state, since from then claimForRemoval()
-// may give up the claim on its behalf; either way a removal seeing the claim
+// may give up the claims on its behalf; either way a removal seeing a claim
 // given up then reads that result.
 func (rc *remoteClaims) release(r *transfer.Request) error {
-	rid := r.ID()
-
 	rc.Lock()
-
-	path, ok := rc.paths[rid]
-	if !ok {
-		rc.Unlock()
-
-		return nil
-	}
-
-	remaining := rc.forget(rid, path)
+	freed := rc.forgetAll(r.ID())
 	rc.Unlock()
 
-	if remaining {
-		return nil
+	return rc.satisfyAll(freed)
+}
+
+// forgetAll gives up all the claims of the given upload request, returning the
+// paths no longer claimed by anyone. You must hold the lock.
+func (rc *remoteClaims) forgetAll(rid string) []string {
+	return slices.DeleteFunc(slices.Clone(rc.paths[rid]), func(path string) bool {
+		return rc.forget(rid, path)
+	})
+}
+
+// satisfyAll calls satisfy() on each of the given paths.
+func (rc *remoteClaims) satisfyAll(paths []string) error {
+	var err error
+
+	for _, path := range paths {
+		err = errors.Join(err, rc.satisfy(path))
 	}
 
-	return rc.satisfy(path)
+	return err
 }
 
 // satisfy makes the requests and removals waiting on a claim of the given path
@@ -316,26 +324,24 @@ func (rc *remoteClaims) releaseRemoval(key string, paths []string) error {
 
 	rc.Unlock()
 
-	var err error
-
-	for _, path := range freed {
-		err = errors.Join(err, rc.satisfy(path))
-	}
-
-	return err
+	return rc.satisfyAll(freed)
 }
 
-// forgetStale gives up any claim the given request has from an earlier
-// reservation. If that claim was on a path other than the given one, and no
-// other request holds it, requests and removals waiting on it become ready. You
-// must hold the lock.
-func (rc *remoteClaims) forgetStale(rid, path string) error {
-	old, ok := rc.paths[rid]
-	if !ok || rc.forget(rid, old) || old == path {
-		return nil
-	}
+// forgetStale gives up any claims the given request has from an earlier
+// reservation. Requests and removals waiting on a path no longer claimed by
+// anyone, other than the given paths the request is about to claim again,
+// become ready. Those given paths that are no longer claimed are returned, so
+// that the caller can make their waiters ready if it doesn't claim them after
+// all. You must hold the lock.
+func (rc *remoteClaims) forgetStale(rid string, paths []string) ([]string, error) {
+	freed := rc.forgetAll(rid)
+	reclaimed := slices.DeleteFunc(slices.Clone(freed), func(path string) bool {
+		return !slices.Contains(paths, path)
+	})
 
-	return rc.satisfy(old)
+	return reclaimed, rc.satisfyAll(slices.DeleteFunc(freed, func(path string) bool {
+		return slices.Contains(paths, path)
+	}))
 }
 
 // forget removes the given holder's claim on the given path, if it has one,
@@ -349,7 +355,7 @@ func (rc *remoteClaims) forget(holder, path string) bool {
 
 	if _, holding := holders[holder]; holding {
 		delete(holders, holder)
-		delete(rc.paths, holder)
+		rc.forgetPath(holder, path)
 		rc.released++
 	}
 
@@ -360,4 +366,22 @@ func (rc *remoteClaims) forget(holder, path string) bool {
 	delete(rc.holders, path)
 
 	return false
+}
+
+// forgetPath removes the given path from those the given upload request holds,
+// if it's an upload request. You must hold the lock.
+func (rc *remoteClaims) forgetPath(rid, path string) {
+	paths, upload := rc.paths[rid]
+	if !upload {
+		return
+	}
+
+	paths = slices.DeleteFunc(paths, func(p string) bool { return p == path })
+	if len(paths) == 0 {
+		delete(rc.paths, rid)
+
+		return
+	}
+
+	rc.paths[rid] = paths
 }

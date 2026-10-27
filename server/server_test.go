@@ -8087,6 +8087,66 @@ func TestServer(t *testing.T) {
 						}
 					})
 
+					Convey("with remote hardlink location set, separate clients are not given a hardlink and "+
+						"another set's regular file with the same remote path at the same time", func() {
+						s.SetRemoteHardlinkLocation(filepath.Join(remoteDir, "mountpoints"))
+						s.numClients = 4
+
+						otherDir := filepath.Join(localDir, "other")
+						So(os.Mkdir(otherDir, userPerms), ShouldBeNil)
+
+						regular := filepath.Join(otherDir, filepath.Base(path2))
+						internal.CreateTestFileOfLength(t, regular, 1)
+
+						otherSet := &set.Set{
+							Name:        "set2",
+							Requester:   exampleSet.Requester,
+							Transformer: "prefix=" + otherDir + ":" + remoteDir,
+						}
+
+						So(client.AddOrUpdateSet(otherSet), ShouldBeNil)
+						So(client.MergeFiles(otherSet.ID(), []string{regular}), ShouldBeNil)
+
+						for _, given := range []*set.Set{exampleSet, otherSet} {
+							So(client.TriggerDiscovery(given.ID(), false), ShouldBeNil)
+							So(waitForRacCalled(t, racCalled), ShouldBeTrue)
+						}
+
+						handedOut := make([]*transfer.Request, 0, s.numClients)
+
+						for range s.numClients {
+							requests, errg := client.GetSomeUploadRequests()
+							So(errg, ShouldBeNil)
+
+							handedOut = append(handedOut, requests...)
+						}
+
+						hardlink := requestWithLocal(handedOut, path2, exampleSet.Name)
+						So(hardlink, ShouldNotBeNil)
+						So(hardlink.Hardlink, ShouldNotBeBlank)
+						So(requestWithLocal(handedOut, regular, otherSet.Name), ShouldBeNil)
+
+						Convey("until the hardlink's upload finishes", func() {
+							hardlink.Status = transfer.RequestStatusUploaded
+							So(client.UpdateFileStatus(hardlink), ShouldBeNil)
+							So(waitForRacCalled(t, racCalled), ShouldBeTrue)
+
+							handedOut = handedOut[:0]
+
+							for range s.numClients {
+								requests, errg := client.GetSomeUploadRequests()
+								So(errg, ShouldBeNil)
+
+								handedOut = append(handedOut, requests...)
+							}
+
+							r := requestWithLocal(handedOut, regular, otherSet.Name)
+							So(r, ShouldNotBeNil)
+							So(r.Remote, ShouldEqual, hardlink.Remote)
+							So(r.Hardlink, ShouldBeBlank)
+						})
+					})
+
 					Convey("with remote hardlink location set, removing a set whose hardlink upload claimed "+
 						"the inode file doesn't hold up another set's hardlink to it", func() {
 						s.SetRemoteHardlinkLocation(filepath.Join(remoteDir, "mountpoints"))
