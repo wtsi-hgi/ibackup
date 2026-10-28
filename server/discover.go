@@ -745,12 +745,8 @@ func (s *Server) updateQueuedMeta(item *queue.Item, r *transfer.Request) bool {
 func (s *Server) entryToRequest(entry *set.Entry, transformer transformer.PathTransformer,
 	given *set.Set,
 ) (*transfer.Request, error) {
-	r, err := transfer.NewRequestWithTransformedLocal(entry.Path, transformer)
+	r, err := s.entryToRemotesRequest(entry, transformer)
 	if err != nil {
-		return nil, err
-	}
-
-	if err = r.ValidatePaths(); err != nil {
 		return nil, err
 	}
 
@@ -766,10 +762,32 @@ func (s *Server) entryToRequest(entry *set.Entry, transformer transformer.PathTr
 		r.Meta.SetLocal(k, v)
 	}
 
+	if r.Hardlink != "" {
+		r.Meta.SetLocal(transfer.MetaKeyHardlink, entry.Dest)
+	}
+
+	return r, nil
+}
+
+// entryToRemotesRequest converts an Entry to a Request with just the local path
+// and the remote paths an upload of it writes to (see
+// transfer.Request.Remotes()), for working out those paths without the cost of
+// the rest of entryToRequest().
+func (s *Server) entryToRemotesRequest(entry *set.Entry,
+	transformer transformer.PathTransformer,
+) (*transfer.Request, error) {
+	r, err := transfer.NewRequestWithTransformedLocal(entry.Path, transformer)
+	if err != nil {
+		return nil, err
+	}
+
+	if err = r.ValidatePaths(); err != nil {
+		return nil, err
+	}
+
 	if entry.Type == set.Hardlink && s.remoteHardlinkLocation != "" {
 		r.Hardlink = filepath.Join(s.remoteHardlinkLocation,
 			entry.InodeStoragePath())
-		r.Meta.SetLocal(transfer.MetaKeyHardlink, entry.Dest)
 	}
 
 	return r, nil

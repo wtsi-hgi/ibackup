@@ -82,6 +82,11 @@ const (
 
 	retryDelay = 5 * time.Second
 
+	// defaultRemoveReserveWait is how long a removal handler waits for a
+	// removal of its set to become ready, such as a failed one retried after
+	// retryDelay, before it stops.
+	defaultRemoveReserveWait = retryDelay + 2*time.Second
+
 	maxRememberedRequestLogs = 100000
 
 	queueItem4K = 2
@@ -174,7 +179,13 @@ type Server struct {
 	uploadTracker          *uploadTracker
 	remoteClaims           *remoteClaims
 	failedUploadRetryDelay time.Duration
+	removeReserveWait      time.Duration
 	replicaLogging         bool
+
+	// deletingSets has the IDs of the sets whose deletion (see deleteSet()) is
+	// in progress, whose upload requests are no longer given to clients.
+	deletingSetsMu sync.Mutex
+	deletingSets   map[string]struct{}
 
 	hungDebugTimeout    time.Duration
 	hungDebugStopCh     chan struct{}
@@ -209,6 +220,11 @@ type Server struct {
 	// queues a removal's requests and before it records their number. Only for
 	// tests.
 	removalQueuedHook func()
+
+	// removalStillWaitingHook, if set, is called by reserveRemoveRequest() each
+	// time its reservation finds nothing ready while a removal of its set waits
+	// for an upload, so it keeps waiting. Only for tests.
+	removalStillWaitingHook func()
 }
 
 // New creates a Server which can serve a REST API and website.
@@ -243,6 +259,7 @@ func New(conf Config) (*Server, error) { //nolint:funlen
 		stillRunningMsgFreq:    conf.StillRunningMsgFreq,
 		uploadTracker:          newUploadTracker(conf.Slacker, conf.SlackMessageDebounce),
 		failedUploadRetryDelay: retryDelayToUse,
+		removeReserveWait:      defaultRemoveReserveWait,
 		replicaLogging:         conf.ReplicaLogging,
 		hungDebugTimeout:       conf.HungDebugTimeout,
 		iRODSTracker:           newiRODSTracker(conf.Slacker, conf.SlackMessageDebounce),
@@ -250,11 +267,12 @@ func New(conf Config) (*Server, error) { //nolint:funlen
 		readOnly:               conf.ReadOnly,
 		storageHandler:         conf.StorageHandler,
 		requestLogged:          make(map[string]struct{}),
+		deletingSets:           make(map[string]struct{}),
 
 		discoveryCoordinator: newDiscoveryCoordinator(),
 	}
 
-	s.remoteClaims = newRemoteClaims(s.queue)
+	s.remoteClaims = newRemoteClaims(s.queue, s.removeQueue)
 
 	// Ensure the atomic.Value is usable before any stores.
 	s.hungDebugLastRID.Store("")
@@ -496,6 +514,12 @@ func (s *Server) handleRemoveRequests(sid string) {
 		s.discoveryCoordinator.WaitForDiscovery(sid)
 
 		err = s.removeRequestFromIRODSandDB(&removeReq)
+		if errors.Is(err, errRemovalWaitingForUpload) {
+			s.discoveryCoordinator.AllowDiscovery(sid)
+
+			continue
+		}
+
 		if beenReleased := s.handleErrorOrReleaseItem(item, removeReq, err); beenReleased {
 			s.discoveryCoordinator.AllowDiscovery(sid)
 
@@ -517,14 +541,24 @@ func (s *Server) handleRemoveRequests(sid string) {
 // remove queue and converts it to a removeRequest. Items that aren't remove
 // requests can never be removed, so they are dropped from the queue with an
 // error on the set, and the next item is reserved instead. Returns an error if
-// nothing could be reserved, ie. the group has nothing ready or the queue is
-// closed; only the latter is logged.
+// nothing could be reserved, ie. the group has nothing ready, and none of its
+// removals is waiting for an upload (see removeFileFromIRODSandDB()), or the
+// queue was closed by the server stopping; other errors are logged.
 func (s *Server) reserveRemoveRequest(reserveGroup string) (*queue.Item, set.RemoveReq, error) {
 	for {
-		item, err := s.removeQueue.Reserve(reserveGroup, retryDelay+2*time.Second)
+		item, err := s.removeQueue.Reserve(reserveGroup, s.removeReserveWait)
+		nothingReady := errors.Is(err, queue.ErrNothingReady)
+
+		if nothingReady && s.remoteClaims.removalsWaiting(reserveGroup) {
+			if s.removalStillWaitingHook != nil {
+				s.removalStillWaitingHook()
+			}
+
+			continue
+		}
+
 		if err != nil {
-			qerr, ok := err.(queue.Error) //nolint:errorlint
-			if !ok || !errors.Is(qerr.Err, queue.ErrNothingReady) {
+			if !nothingReady && !errors.Is(err, queue.ErrQueueClosed) {
 				s.Logger.Print(err)
 			}
 
@@ -533,6 +567,8 @@ func (s *Server) reserveRemoveRequest(reserveGroup string) (*queue.Item, set.Rem
 
 		remReq, err := s.convertQueueItemToRemoveRequest(item.Data())
 		if err == nil {
+			s.remoteClaims.removalReserved(&remReq)
+
 			return item, remReq, nil
 		}
 
@@ -593,6 +629,9 @@ func (s *Server) handleErrorOrReleaseItem(item *queue.Item, removeReq set.Remove
 	return err == nil
 }
 
+// finalizeRemoveReq records the given removal as complete and removes it from
+// the remove queue. A queue closed by the server stopping has nothing left to
+// remove it from, so isn't an error.
 func (s *Server) finalizeRemoveReq(removeReq set.RemoveReq) error {
 	if !removeReq.IsComplete {
 		removeReq.IsComplete = true
@@ -603,7 +642,12 @@ func (s *Server) finalizeRemoveReq(removeReq set.RemoveReq) error {
 		}
 	}
 
-	return s.removeQueue.Remove(context.Background(), removeReq.Key())
+	err := s.removeQueue.Remove(context.Background(), removeReq.Key())
+	if errors.Is(err, queue.ErrQueueClosed) {
+		return nil
+	}
+
+	return err
 }
 
 func (s *Server) finalizeRemoval(sid string) {
@@ -733,6 +777,11 @@ func (s *Server) stop() {
 
 	if err := s.queue.Destroy(); err != nil {
 		s.Logger.Printf("queue desrtroy failed: %s", err)
+	}
+
+	// so that removal handlers still waiting for uploads stop.
+	if err := s.removeQueue.Destroy(); err != nil {
+		s.Logger.Printf("remove queue destroy failed: %s", err)
 	}
 
 	s.Logger.Printf("gracefully shut down")

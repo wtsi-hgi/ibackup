@@ -142,6 +142,10 @@ const (
 
 	errMatchNotAncestor = gas.Error("removed folder is not an ancestor of the merged path")
 
+	// errRemovalWaitingForUpload is the error of a file removal requeued to wait
+	// for an upload of its remote object (see removeFileFromIRODSandDB()).
+	errRemovalWaitingForUpload = gas.Error("removal waiting for an upload of its remote object")
+
 	paramRequester    = "requester"
 	paramSetID        = "id"
 	paramMakeWritable = "makeWritable"
@@ -155,6 +159,75 @@ const (
 	allUsers = "all"
 )
 
+// liveSets has the names of the sets in our database of a remote object's
+// requesters, and the names and requesters of the sets in our database (of any
+// requester) that have its path.
+type liveSets struct {
+	knownNames       map[string]bool
+	holderNames      map[string]bool
+	holderRequesters map[string]bool
+}
+
+// withoutStaleNames returns the given set names less those in added, other
+// than the given one, that are stale: one of the object's requesters has a set
+// of that name, and none of our sets of that name has the path.
+func (l liveSets) withoutStaleNames(names, added []string, given string) []string {
+	return slices.DeleteFunc(names, func(name string) bool {
+		return name != given && slices.Contains(added, name) && l.knownNames[name] && !l.holderNames[name]
+	})
+}
+
+// withoutStaleRequesters returns the given requesters less those in added,
+// other than the given one, none of whose sets has the path.
+func (l liveSets) withoutStaleRequesters(requesters, added []string, given string) []string {
+	return slices.DeleteFunc(requesters, func(requester string) bool {
+		return requester != given && slices.Contains(added, requester) && !l.holderRequesters[requester]
+	})
+}
+
+// allKnown returns true if one of the object's requesters has a set of each of
+// the given names, other than the given exception.
+func (l liveSets) allKnown(names []string, except string) bool {
+	return !slices.ContainsFunc(names, func(name string) bool { return name != except && !l.knownNames[name] })
+}
+
+// liveSetsOfPath returns the liveSets of the remote object of the given path,
+// which has the given requesters, reading the sets of those requesters
+// (GetByRequester()) and the sets that have the path (GetAllSetsForFile() and
+// GetByID()).
+func (s *Server) liveSetsOfPath(path string, requesters []string) (liveSets, error) {
+	live := liveSets{
+		knownNames:       make(map[string]bool),
+		holderNames:      make(map[string]bool),
+		holderRequesters: make(map[string]bool),
+	}
+
+	for _, requester := range requesters {
+		sets, err := s.db.GetByRequester(requester)
+		if err != nil {
+			return liveSets{}, err
+		}
+
+		for _, known := range sets {
+			live.knownNames[known.Name] = true
+		}
+	}
+
+	holderIDs, err := s.db.GetAllSetsForFile(path)
+	if err != nil {
+		return liveSets{}, err
+	}
+
+	for _, id := range holderIDs {
+		if holder := s.db.GetByID(id); holder != nil {
+			live.holderNames[holder.Name] = true
+			live.holderRequesters[holder.Requester] = true
+		}
+	}
+
+	return live, nil
+}
+
 func isRemoteFileMissing(err error) bool {
 	pathErr, ok := errors.AsType[errs.PathError](err)
 
@@ -162,20 +235,93 @@ func isRemoteFileMissing(err error) bool {
 }
 
 // withRecordedRemoteMeta returns a copy of the given remote metadata with any
-// sets or requester value missing from it taken from the given recorded
-// metadata, since an earlier attempt that recorded them may have removed them
-// and then failed to add their new values.
+// sets or requester names missing from its values added from the given
+// recorded metadata, since an earlier attempt that recorded them may have
+// removed them and then failed to add their new values. Something else may
+// also have put back only some of the names since, as another set's upload of
+// the object between attempts adds just its own set and requester.
 func withRecordedRemoteMeta(remoteMeta, recorded map[string]string) map[string]string {
 	meta := make(map[string]string, len(remoteMeta))
 	maps.Copy(meta, remoteMeta)
 
 	for key, value := range recorded {
-		if meta[key] == "" {
-			meta[key] = value
+		if meta[key] == value {
+			continue
 		}
+
+		names := splitCommaSeparatedUnique(meta[key])
+
+		for _, name := range splitCommaSeparatedUnique(value) {
+			names = appendIfMissing(names, name)
+		}
+
+		meta[key] = strings.Join(names, ",")
 	}
 
 	return meta
+}
+
+// addedNames returns the names in the given key's value of merged that are not
+// in that of original.
+func addedNames(original, merged map[string]string, key string) []string {
+	if original[key] == merged[key] {
+		return nil
+	}
+
+	had := splitCommaSeparatedUnique(original[key])
+
+	return slices.DeleteFunc(splitCommaSeparatedUnique(merged[key]), func(name string) bool {
+		return slices.Contains(had, name)
+	})
+}
+
+// requestSet returns a set with just the name and requester of the given
+// request's set, enough for its ID.
+func requestSet(r *transfer.Request) *set.Set {
+	return &set.Set{Name: r.Set, Requester: r.Requester}
+}
+
+// withLiveRecordedRemoteMeta returns withRecordedRemoteMeta() of the given
+// metadata of the given path's remote object, less any set or requester name
+// it added back that our database shows is stale, since another set's removal
+// may have taken it off the object since it was recorded. A set name is stale
+// if one of the object's requesters has a set of that name and none of our
+// sets of that name has the path, so names our database doesn't know for them
+// are kept. A requester is stale if none of its sets has the path, but only
+// when every set name kept is known, since an unknown one could be the
+// requester's. The given set's name and requester are left to the caller. A
+// set's entry for the path goes from our database only after its removal has
+// updated the remote object, so a name is only taken as stale once that update
+// is done.
+func (s *Server) withLiveRecordedRemoteMeta(path string, given *set.Set,
+	remoteMeta, recorded map[string]string,
+) (map[string]string, error) {
+	meta := withRecordedRemoteMeta(remoteMeta, recorded)
+
+	addedSets := addedNames(remoteMeta, meta, transfer.MetaKeySets)
+	addedRequesters := addedNames(remoteMeta, meta, transfer.MetaKeyRequester)
+
+	if len(addedSets)+len(addedRequesters) == 0 {
+		return meta, nil
+	}
+
+	requesters := splitCommaSeparatedUnique(meta[transfer.MetaKeyRequester])
+
+	live, err := s.liveSetsOfPath(path, requesters)
+	if err != nil {
+		return nil, err
+	}
+
+	names := live.withoutStaleNames(splitCommaSeparatedUnique(meta[transfer.MetaKeySets]), addedSets, given.Name)
+
+	if live.allKnown(names, given.Name) {
+		requesters = live.withoutStaleRequesters(requesters, addedRequesters, given.Requester)
+	}
+
+	meta[transfer.MetaKeySets] = strings.Join(names, ",")
+	meta[transfer.MetaKeyRequester] = strings.Join(requesters, ",")
+
+	return meta, nil
 }
 
 // LoadSetDB loads the given set.db or creates it if it doesn't exist.
@@ -636,10 +782,14 @@ func (s *Server) deleteSet(c *gin.Context) {
 		return
 	}
 
+	// marked before the callback is registered, so that a removal of the set
+	// already running can't finish and clear the mark before it is made.
+	s.markSetDeleting(set.ID(), true)
 	s.registerDeletionCallback(set)
 
 	err = s.removeToTrashSet(set, paths, nil)
 	if err != nil {
+		s.markSetDeleting(set.ID(), false)
 		c.AbortWithError(http.StatusInternalServerError, err) //nolint:errcheck
 
 		return
@@ -750,9 +900,8 @@ func (s *Server) getSetPaths(setID string) ([]string, error) {
 // registerDeletionCallback arranges for the given set to be deleted from the
 // database once its removals are done, along with any of its upload requests
 // queued since deleteSet removed them, such as by a discovery that was running.
-// It doesn't wait for such a discovery, which could take hours; one that
-// queues requests after this cleanup has them dropped by updateFileStatus once
-// they are uploaded.
+// It doesn't wait for such a discovery, which could take hours; requests it
+// queues are refused when reserved (see refuseUploadOfRemovedFile()).
 func (s *Server) registerDeletionCallback(given *set.Set) {
 	s.discoveryCoordinator.OnRemovalsDone(given.ID(), func() {
 		err := s.db.Delete(given.ID())
@@ -762,8 +911,31 @@ func (s *Server) registerDeletionCallback(given *set.Set) {
 			return
 		}
 
+		s.markSetDeleting(given.ID(), false)
 		s.removeQueuedRequestsOfSet(given)
 	})
+}
+
+// markSetDeleting records whether the set with the given ID is being deleted.
+func (s *Server) markSetDeleting(sid string, deleting bool) {
+	s.deletingSetsMu.Lock()
+	defer s.deletingSetsMu.Unlock()
+
+	if deleting {
+		s.deletingSets[sid] = struct{}{}
+	} else {
+		delete(s.deletingSets, sid)
+	}
+}
+
+// isSetDeleting returns true if the set with the given ID is being deleted.
+func (s *Server) isSetDeleting(sid string) bool {
+	s.deletingSetsMu.Lock()
+	defer s.deletingSetsMu.Unlock()
+
+	_, deleting := s.deletingSets[sid]
+
+	return deleting
 }
 
 // removeQueuedRequestsOfSet removes from our queue the upload requests of the
@@ -979,10 +1151,49 @@ func (s *Server) makeItemsDefsFromDirPaths(givenSet *set.Set,
 // storage, unless an earlier attempt already did, then from the database. The
 // database side is one transaction that also marks the request complete, so a
 // retry after a stop between the two only redoes the database side.
+//
+// An upload of the file (by any set) that is in progress would otherwise write
+// its set's metadata back on the object after the removal changed it, leaving
+// an object no set tracks. So the removal first claims the file's remote
+// objects (see remoteClaims.claimForRemoval()), holding them until the file has
+// gone from the set, so no upload of them is given out meanwhile. If an upload
+// holds one, the removal is requeued to wait for it, returning
+// errRemovalWaitingForUpload, and is retried once it finishes.
 func (s *Server) removeFileFromIRODSandDB(removeReq *set.RemoveReq) error {
-	entry, err := s.db.GetFileEntryForSet(removeReq.Set.ID(), removeReq.Path)
+	sid, key := removeReq.Set.ID(), removeReq.Key()
+	released := s.remoteClaims.releasedCount()
+
+	entry, err := s.db.GetFileEntryForSet(sid, removeReq.Path)
 	if err != nil {
 		return s.removeDeletedFileFromDB(removeReq, err)
+	}
+
+	paths := s.remotePathsOfEntry(removeReq.Set, entry)
+
+	claimed, err := s.remoteClaims.claimForRemoval(sid, key, paths)
+	if err != nil {
+		return err
+	}
+
+	if !claimed {
+		return errRemovalWaitingForUpload
+	}
+
+	defer func() {
+		if errr := s.remoteClaims.releaseRemoval(key, paths); errr != nil {
+			s.Logger.Printf("releasing remote objects of removed %s failed: %s", removeReq.Path, errr)
+		}
+	}()
+
+	// an upload that finished after we read the entry, but before we claimed
+	// its object, updated the entry and then gave up its claim. The count also
+	// changes when claimForRemoval() gives up the claim of an upload no longer
+	// running, which may have just recorded its result without releasing yet.
+	if s.remoteClaims.releasedCount() != released {
+		entry, err = s.db.GetFileEntryForSet(sid, removeReq.Path)
+		if err != nil {
+			return s.removeDeletedFileFromDB(removeReq, err)
+		}
 	}
 
 	err = s.processRemoteFileRemoval(removeReq, entry)
@@ -993,6 +1204,24 @@ func (s *Server) removeFileFromIRODSandDB(removeReq *set.RemoveReq) error {
 	_, err = s.db.RemoveFileEntry(removeReq, entry)
 
 	return err
+}
+
+// remotePathsOfEntry returns the remote paths an upload of the given entry of
+// the given set writes to (see transfer.Request.Remotes()), and so may hold a
+// claim on. Returns nil if no upload request can be made for the entry, as
+// then none was queued.
+func (s *Server) remotePathsOfEntry(given *set.Set, entry *set.Entry) []string {
+	transformer, err := given.MakeTransformer()
+	if err != nil {
+		return nil
+	}
+
+	r, err := s.entryToRemotesRequest(entry, transformer)
+	if err != nil {
+		return nil
+	}
+
+	return r.Remotes()
 }
 
 // removeDeletedFileFromDB handles the given error from getting the entry of the
@@ -1117,12 +1346,13 @@ func (s *Server) updateOrRemoveRemoteFile(removeReq *set.RemoveReq, transformer 
 		return nil
 	}
 
-	metaBeforeUpdate := withRecordedRemoteMeta(remoteMeta, removeReq.RemoteMeta)
+	metaBeforeUpdate, err := s.withLiveRecordedRemoteMeta(removeReq.Path, removeReq.Set, remoteMeta,
+		removeReq.RemoteMeta)
+	if err != nil {
+		return err
+	}
 
-	var (
-		sets, requesters []string
-		err              error
-	)
+	var sets, requesters []string
 
 	if removeReq.Action == set.ToRemove {
 		sets, requesters, err = s.handleSetsAndRequesters(removeReq.Path, removeReq.Set, metaBeforeUpdate)
@@ -1849,10 +2079,10 @@ func (s *Server) getRequests(c *gin.Context) {
 // reserveRequests keeps reserving items from our queue until we have total
 // requests/s.numClients (but max 100) of them, or the queue is empty.
 //
-// Requests whose remote data object is being worked on by a different client
-// (eg. hardlinks sharing a remote inode file, or another set's request for the
-// same file) are not returned; they wait in the queue until that client is done
-// with it.
+// Requests writing to a remote path a different client is working on (eg.
+// hardlinks sharing a remote inode file, another set's request for the same
+// file, or a hardlink's empty file at another set's regular file's remote path)
+// are not returned; they wait in the queue until that client is done with it.
 //
 // Returns the Requests in the items.
 func (s *Server) reserveRequests() ([]*transfer.Request, error) {
@@ -1876,7 +2106,7 @@ func (s *Server) reserveRequests() ([]*transfer.Request, error) {
 			s.releaseUnclaimedRequest(r, err)
 		}
 
-		if !claimed {
+		if !claimed || s.refuseUploadOfRemovedFile(r, batch) {
 			continue
 		}
 
@@ -1890,6 +2120,32 @@ func (s *Server) reserveRequests() ([]*transfer.Request, error) {
 	}
 
 	return requests, nil
+}
+
+// refuseUploadOfRemovedFile returns true, having removed it from our queue and
+// given up the claim it just made for the given batch, if the given request is
+// of a set being deleted, or of a file its set no longer has, as when it was
+// queued after the set's deletion or the file's removal dropped its waiting
+// requests, such as by a discovery that was running. Its claim means any
+// removal of its file has either finished, so the file has gone from the set,
+// or will wait for its upload.
+func (s *Server) refuseUploadOfRemovedFile(r *transfer.Request, batch map[string]bool) bool {
+	sid := requestSet(r).ID()
+
+	if !s.isSetDeleting(sid) {
+		_, err := s.db.GetFileEntryForSet(sid, r.Local)
+		if !errors.Is(err, set.ErrInvalidEntry) {
+			return false
+		}
+	}
+
+	s.Logger.Printf("request refused rid=%s: its set is being deleted or no longer has its file", r.ID())
+
+	if err := errors.Join(s.queue.Remove(context.Background(), r.ID()), s.remoteClaims.unclaim(r, batch)); err != nil {
+		s.Logger.Printf("refused request not removed rid=%s err=%s", r.ID(), err)
+	}
+
+	return true
 }
 
 // releaseUnclaimedRequest releases a reserved request whose remote data object
@@ -2181,10 +2437,16 @@ func (s *Server) updateFileStatus(r *transfer.Request) error {
 }
 
 // dropRequest removes the given request, whose set has been deleted or no longer
-// has its file, from our queue whatever its status, and releases any claim it
-// has on a remote data object, so it isn't uploaded or retried again. The reason
-// is logged.
+// has its file, from our queue whatever its final status, and releases any
+// claim it has on a remote data object, so it isn't uploaded or retried again.
+// The reason is logged. An uploading status is ignored, keeping the request and
+// its claim until its final result, so that nothing else writes to its remote
+// object while its client still does.
 func (s *Server) dropRequest(r *transfer.Request, reason string) error {
+	if r.Status == transfer.RequestStatusUploading {
+		return nil
+	}
+
 	s.uploadTracker.uploadFinished(r)
 	s.Logger.Printf("request dropped rid=%s status=%s: %s", r.ID(), r.Status, reason)
 
@@ -2270,7 +2532,8 @@ func (s *Server) requeueEntry(given *set.Set, path string) error {
 // removeOrReleaseRequestFromQueue removes the given Request from our queue
 // unless it has failed. < 3 failures results in it being released, 3 results in
 // it being buried. Either way, any claim it has on a remote data object is
-// released.
+// released. The request's result must already be in its entry before it leaves
+// the queue's run state (see remoteClaims.release()).
 func (s *Server) removeOrReleaseRequestFromQueue(r *transfer.Request, entry *set.Entry) error {
 	return errors.Join(s.moveFinishedRequestInQueue(r, entry), s.remoteClaims.release(r))
 }
